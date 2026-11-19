@@ -32,7 +32,8 @@ const stageSchema = z.object({
   ai: z.union([tierSchema, aiChoice]).optional(), at: clock.optional(),
   window: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d$/, "时间段必须写成 HH:mm-HH:mm").refine((s) => s.slice(0, 5) !== s.slice(6), "时间段的开始和结束不能相同").optional(),
   budget: budgetSchema.optional(), escalate: z.object({ to: tierSchema, max: z.number().int().min(0).max(100) }).strict().optional(),
-}).strict().refine((s) => !(typeof s.done === "object" && "signal" in s.done) || s.by === "owner" || s.by === "wait", { path: ["done"], message: "Git 信号只允许用于 owner 或 wait 承担的阶段" });
+  together: z.literal("push", { error: "together 只能写 push：同一次推送的几件事项一起做这一段" }).optional(),
+}).strict().refine((s) => !s.together || typeof s.by === "object" && "run" in s.by, { path: ["together"], message: "together 只用于由运行承担（by: { run: … }）的阶段" }).refine((s) => !(typeof s.done === "object" && "signal" in s.done) || s.by === "owner" || s.by === "wait", { path: ["done"], message: "Git 信号只允许用于 owner 或 wait 承担的阶段" });
 export const flowSchema = z.object({
   id: slug, name: text(200), description: text(2000).optional(),
   for: z.object({ kinds: z.array(z.enum(["todo", "waiting", "watch", "decision"], { error: "事项类型只能是 todo / waiting / watch / decision" })).optional(), spaces: z.array(text(100)).optional() }).strict().optional(),

@@ -5864,6 +5864,7 @@ def({
     })).min(1).max(200),
     commit: z.string().max(64).optional().describe("测试跑在哪个提交；不填时宿主按工作区当前的提交记（只有一个仓库时）"),
     run_id: z.string().optional().describe("只在设备的外部 Agent 编码时填：delegate_code 返回的运行 id"),
+    item: z.string().optional().describe("流程里一次验证几件事项时必填：这批结果属于哪件（事项 id），每件分开交"),
   }),
   handler: async (ctx, a) => {
     const art = await import("./artifacts.ts");
@@ -5889,6 +5890,11 @@ def({
       by = ctx.role ?? ctx.spec ?? "agent";
     }
     const me = getRun(ctx.app, runId);
+    const { stageItemsOf } = await import("../flows/engine.ts");
+    const listed = me.kind === "flow-stage" ? stageItemsOf(me.input) : [];
+    if (listed.length > 1 && !a.item) throw new HttpError(400, `这次一起验证几件事项（${listed.join("、")}）：report_tests 带 item，按事项分开交`);
+    if (a.item && !listed.includes(a.item)) throw new HttpError(400, `这次运行不验证事项 ${a.item}${listed.length ? `：只能是 ${listed.join("、")}` : ""}`);
+    const itemId = a.item ?? (listed.length === 1 ? listed[0] : null);
     const unknown: string[] = [];
     for (const t of a.tests) {
       if (!t.req) continue;
@@ -5917,7 +5923,7 @@ def({
     const own = dirs.filter((d) => existsSync(join(d, ".git")));
     if (!commit && own.length === 1) commit = git(own[0], ["rev-parse", "HEAD"]).stdout.trim() || undefined;
     const round = Number((me.input as { round?: number }).round ?? 1);
-    const results = rt.recordTests(ctx.app, { runId, workId, spaceId: me.spaceId, round, commit, by, tests });
+    const results = rt.recordTests(ctx.app, { runId, workId, spaceId: me.spaceId, round, commit, by, tests, itemId });
     const count = (s: string) => results.filter((r) => r.status === s).length;
     const mapped = results.filter((r) => r.nodeId).length;
     const files = results.reduce((n, r) => n + r.artifacts.length, 0);

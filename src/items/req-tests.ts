@@ -41,33 +41,35 @@ export type TestResult = {
   pruned: boolean;
   createdBy: string;
   at: string;
+  /** The item it was run for, when a flow stage run checked several items at once. */
+  itemId: string | null;
 };
 
 type Row = {
   owner_verdict?: "ok" | "wrong" | null; owner_note?: string | null; owner_at?: string | null;
   id: string; node_id: string | null; space_id: string | null; run_id: string; work_id: string | null; round: number; name: string; file: string;
-  status: string; mode: string; note: string; commit_sha: string; artifacts: string; pruned: number; created_by: string; at: string;
+  status: string; mode: string; note: string; commit_sha: string; artifacts: string; pruned: number; created_by: string; at: string; item_id?: string | null;
 };
 const toResult = (r: Row): TestResult => ({
   verdict: r.owner_verdict ?? null, verdictNote: r.owner_note ?? null, verdictAt: r.owner_at ?? null,
   id: r.id, nodeId: r.node_id, spaceId: r.space_id, runId: r.run_id, workId: r.work_id, round: r.round, name: r.name, file: r.file,
-  status: r.status as TestStatus, mode: r.mode, note: r.note, commit: r.commit_sha, artifacts: json(r.artifacts, []), pruned: !!r.pruned, createdBy: r.created_by, at: r.at,
+  status: r.status as TestStatus, mode: r.mode, note: r.note, commit: r.commit_sha, artifacts: json(r.artifacts, []), pruned: !!r.pruned, createdBy: r.created_by, at: r.at, itemId: r.item_id ?? null,
 });
 
 export type TestInput = { req?: string | null; name: string; file?: string; status: TestStatus; mode?: string; note?: string; artifacts?: Artifact[] };
 
 /** Records a run's results; then drops the artifacts of results older than the latest few of each test. */
-export function recordTests(app: App, o: { runId: string; workId: string | null; spaceId: string | null; round: number; commit?: string; by: string; tests: TestInput[] }): TestResult[] {
+export function recordTests(app: App, o: { runId: string; workId: string | null; spaceId: string | null; round: number; commit?: string; by: string; tests: TestInput[]; itemId?: string | null }): TestResult[] {
   const at = now();
   const made: TestResult[] = [];
   for (const t of o.tests) {
     const row: Row = {
       id: newId("qt"), node_id: t.req ?? null, space_id: o.spaceId, run_id: o.runId, work_id: o.workId, round: o.round, name: truncate(t.name, 300), file: truncate(t.file ?? "", 500),
       status: t.status, mode: truncate(t.mode ?? "", 40), note: truncate(t.note ?? "", 1000), commit_sha: (o.commit ?? "").slice(0, 64),
-      artifacts: JSON.stringify((t.artifacts ?? []).map((a) => a.id)), pruned: 0, created_by: o.by, at,
+      artifacts: JSON.stringify((t.artifacts ?? []).map((a) => a.id)), pruned: 0, created_by: o.by, at, item_id: o.itemId ?? null,
     };
-    run(app.db, `insert into req_tests (id, node_id, space_id, run_id, work_id, round, name, file, status, mode, note, commit_sha, artifacts, pruned, created_by, at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.id, row.node_id, row.space_id, row.run_id, row.work_id, row.round, row.name, row.file, row.status, row.mode, row.note, row.commit_sha, row.artifacts, row.pruned, row.created_by, row.at);
+    run(app.db, `insert into req_tests (id, node_id, space_id, run_id, work_id, round, name, file, status, mode, note, commit_sha, artifacts, pruned, created_by, at, item_id)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.id, row.node_id, row.space_id, row.run_id, row.work_id, row.round, row.name, row.file, row.status, row.mode, row.note, row.commit_sha, row.artifacts, row.pruned, row.created_by, row.at, row.item_id ?? null);
     made.push(toResult(row));
   }
   for (const t of made) pruneTest(app, t);

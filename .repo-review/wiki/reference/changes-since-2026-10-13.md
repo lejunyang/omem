@@ -15,6 +15,12 @@ updated: 2026-11-19
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 同一次推送的几件事项合用一个回归验证运行（11-19）
+
+- 流程段新字段 `together: push`（`src/flows/definitions.ts`，只用于运行阶段）。`src/flows/engine.ts`：`start` 里按 `pushKey`（事项跟着的交办 `output.pushed` 的仓库、分支、head）找同一流程同一段还在排队的运行，`joinBatch` 把事项加进 `input.items`；没有就新建，`not_before` 推后一分钟等同批的。`runFlowStage` 拆成 `prepareStage`（每件检查是否还在等这个运行、时间窗和额度）和 `runStageAgent`，多件时用 `batchTask` 拼任务。`stopStageRun` 代替直接 `cancelRun`：合用的运行只拿掉这一件。
+- `req_tests` 加 `item_id`（迁移末尾一条），`report_tests` 加 `item`（合用运行里必填）；`stageTests` 只取这件的结果，`stageShots` 不取合用运行里散放的图。`reportStage` 按 `input.items` 里这件的 `flowStartedAt` 核对。
+- 之前同一次推送的几件缺陷各开一个回归验证运行，同时登录同一个环境。
+
 ## 并进别的交办的修改没做时，流程不再当作修好（11-19）
 
 - `continue_code_run` 带 `item_id` 和 `new_item` 记成的修改项在 `origin.item` 记下来源事项（`src/agents/tools.ts` 的 `messageRound`，`code-loop.ts` 的 `ownerNote`）。

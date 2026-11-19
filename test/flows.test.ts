@@ -303,6 +303,51 @@ describe("只有本人能定的事", () => {
     await collectInbox(app, runId, { source: "agent", by: "assistant" });
     expect(flowView(app, item.id).stages.find((x) => x.id === "a")!.shots.map((a) => a.id)).toEqual(images);
   });
+  it("together: push：同一次推送的几件事项合用一个回归验证运行，结果按事项分开", async () => {
+    const app = appFor();
+    const pushed = (head: string) => [{ space: "personal", branch: "feat/refund", head }];
+    const make = (title: string, head: string) => {
+      const item = upsertItem(app, undefined, { title, spaceId: "personal" }, "user");
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: `修 ${title}`, input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
+      setRunOutput(app, r.id, { pushed: pushed(head) });
+      addMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
+      return item;
+    };
+    const a = make("退款金额不对", "a".repeat(40)), b = make("退款单号截断", "a".repeat(40)), c = make("别的分支", "c".repeat(40));
+    saveFlow(app, yaml([stage("verify", { together: "push" })]), "user");
+    for (const x of [a, b, c]) await startFlow(app, x.id, "demo", owner);
+    const runOf = (id: string) => getStage(app, id, "verify").control.runId!;
+    expect(runOf(a.id)).toBe(runOf(b.id));
+    expect(runOf(c.id)).not.toBe(runOf(a.id));
+    const shared = getRun(app, runOf(a.id));
+    expect(shared.title).toBe("2 件事项 · verify");
+    expect((shared.input.items as { itemId: string }[]).map((x) => x.itemId)).toEqual([a.id, b.id]);
+    expect(one<{ n: string | null }>(app.db, "select not_before n from runs where id=?", shared.id)?.n).toBeTruthy();
+    // Stopping one item's flow lets that item go; the run stays for the other.
+    const d = make("不修了", "a".repeat(40));
+    await startFlow(app, d.id, "demo", owner);
+    expect(runOf(d.id)).toBe(shared.id);
+    await stopFlow(app, d.id);
+    expect(getRun(app, shared.id).status).toBe("queued");
+    expect((getRun(app, shared.id).input.items as { itemId: string }[]).map((x) => x.itemId)).toEqual([a.id, b.id]);
+    expect(() => parseFlow(yaml([stage("x", { by: "owner", together: "push" })]))).toThrow("together");
+
+    const ctx: ToolContext = { app, runId: shared.id, spaceId: "personal", spaces: ["personal"], writable: ["personal"], tools: null, actor: "agent", userId: "owner" };
+    const test = (name: string, status = "passed") => [{ name, status, mode: "浏览器" }];
+    expect((await callTool(ctx, "report_tests", { tests: test("金额") })).text).toContain("带 item");
+    expect((await callTool(ctx, "report_tests", { tests: test("金额"), item: c.id })).isError).toBe(true);
+    expect((await callTool(ctx, "report_tests", { tests: test("金额"), item: a.id })).isError).toBe(false);
+    expect((await callTool(ctx, "report_tests", { tests: test("单号", "failed"), item: b.id })).isError).toBe(false);
+    const tests = (id: string) => flowView(app, id).stages[0].tests.map((t) => `${t.name}:${t.status}`);
+    expect(tests(a.id)).toEqual(["金额:passed"]);
+    expect(tests(b.id)).toEqual(["单号:failed"]);
+
+    await reportStage(app, a.id, "verify", { state: "done", note: "金额对了", evidence: [`run:${shared.id}`] }, { actor: "assistant", runId: shared.id, userId: "owner" });
+    expect(getStage(app, a.id, "verify").state).toBe("done");
+    expect(getStage(app, b.id, "verify").state).toBe("doing");
+    await reportStage(app, b.id, "verify", { state: "blocked", note: "单号仍截断", waitingOn: "重新修复" }, { actor: "assistant", runId: shared.id, userId: "owner" });
+    expect(getStage(app, b.id, "verify").state).toBe("blocked");
+  });
   it("阶段自己的运行已经问了本人，再报卡住等本人时不另发进度卡", async () => {
     const { app, item, s } = await setup([stage("a")]);
     const runId = s("a").by!;

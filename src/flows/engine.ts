@@ -100,7 +100,7 @@ async function answerUpstream(app: App, f: ItemFlow, d: FlowStage, s: StageRow, 
   resetStreak(app, f.itemId);
   if (isTrials(d)) await cancelTrials(app, f.itemId);
   if (isFixes(d)) await cancelFixReruns(app, f.itemId);
-  if (s.control.runId) cancelRun(app, s.control.runId);
+  if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
   // A delegation is stopped where it stands, never discarded: its workspace and branch stay for the redo.
   let kept = "";
   if (s.by?.startsWith("code-work:")) {
@@ -235,6 +235,61 @@ async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Dat
   return { s, execution: actual, waitUntil: until ?? (daily ? nextRoundAt(at, app.config.timezone, "day") : null) };
 }
 
+/** One item in a stage run (several when the stage is `together: push`). */
+type StageItem = { itemId: string; title: string; spaceId: string; flowStartedAt: string; round: number; task: string };
+const BATCH_WAIT_MS = 60_000;
+
+/** The items a flow stage run is for: the batch's, or the one it was started for. */
+export function stageItemsOf(input: Record<string, unknown>): string[] {
+  if (Array.isArray(input.items) && input.items.length) return (input.items as StageItem[]).map((x) => x.itemId);
+  return typeof input.itemId === "string" ? [input.itemId] : [];
+}
+function stageItemStart(input: Record<string, unknown>, itemId: string) {
+  return (Array.isArray(input.items) ? (input.items as StageItem[]).find((x) => x.itemId === itemId)?.flowStartedAt : undefined) ?? input.flowStartedAt;
+}
+
+/** What this item's change went out in: each repository's pushed head of the delegation it follows. */
+function pushKey(app: App, item: Item): string | null {
+  const w = latestCodeWork(app, item);
+  if (!w) return null;
+  const pushed = (getRun(app, w.rootId).output.pushed as { space: string; branch?: string; head?: string }[] | undefined)?.filter((p) => p.head) ?? [];
+  return pushed.length ? pushed.map((p) => `${p.space}@${p.branch ?? ""}@${p.head}`).sort().join(",") : null;
+}
+
+/** A run for the same stage and push that has not started yet takes this item too. */
+function joinBatch(app: App, f: ItemFlow, d: FlowStage, userId: string, key: string, entry: StageItem) {
+  const r = one<{ id: string }>(app.db, `select id from runs where kind='flow-stage' and status='queued' and coalesce(user_id,'owner')=?
+    and json_extract(input,'$.batchKey')=? and json_extract(input,'$.flowId')=? and json_extract(input,'$.stageId')=? order by created_at limit 1`, userId, key, f.id, d.id);
+  if (!r) return null;
+  const input = getRun(app, r.id).input;
+  const items = [...((input.items as StageItem[] | undefined) ?? []).filter((x) => x.itemId !== entry.itemId), entry];
+  run(app.db, "update runs set input=json_set(input,'$.items',json(?),'$.spaces',json(?)),title=? where id=?", JSON.stringify(items), JSON.stringify([...new Set(items.map((x) => x.spaceId))]), `${items.length} 件事项 · ${d.name}`, r.id);
+  return getRun(app, r.id);
+}
+
+/** Stops this item's stage run; a run shared with other items only lets this one go. */
+function stopStageRun(app: App, itemId: string, runId: string) {
+  const r = getRun(app, runId);
+  const items = Array.isArray(r.input.items) ? r.input.items as StageItem[] : [];
+  const rest = items.filter((x) => x.itemId !== itemId);
+  if (items.length > 1 && rest.length && ["queued", "running"].includes(r.status)) {
+    run(app.db, "update runs set input=json_set(input,'$.items',json(?)) where id=?", JSON.stringify(rest), runId);
+    return;
+  }
+  cancelRun(app, runId);
+}
+
+/** The task of a run for several items: what they share, then each item's own task. */
+function batchTask(d: FlowStage, key: string, items: StageItem[]) {
+  const heads = key.split(",").map((k) => { const [space, branch, head] = k.split("@"); return `${space}@${branch}（${head.slice(0, 8)}）`; }).join("、");
+  return [
+    `# 这一次一起做 ${items.length} 件事项的「${d.name}」`,
+    `它们的改动在同一次推送里：${heads}。环境、账号、登录这类能共用的只准备一次，然后按事项逐件做。结果按事项分开交：report_tests 带 item=<事项 id>，截图放进那件事项的用例里；每件事项各用一次 stage_report(item=<事项 id>, stage="${d.id}")。一件做不下去不影响别的件，照实报那一件。`,
+    `事项：${items.map((x) => `${x.itemId}「${x.title}」`).join("、")}`,
+    ...items.map((x) => `---\n\n# 事项 ${x.itemId}：${x.title}\n\n${x.task}`),
+  ].join("\n\n");
+}
+
 async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, confirmed = false, current = new Date()) {
   const at = current.toISOString();
   s = { ...s, control: { ...s.control, grantedGate: !confirmed && gateGranted(app, f.id, d, item.userId) } };
@@ -276,8 +331,13 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       let designId: string | undefined;
       if ("object" in d.by && d.by.object === "design") designId = obj?.ref.slice("design:".length) ?? createDesign(app, { spaceId: item.spaceId, title: item.title, origin: "own", itemId: item.id, userId: item.userId }).id;
       const name = "run" in d.by ? d.by.run.agent ?? "assistant" : "assistant";
-      const r = createRun(app, { kind: "flow-stage", spaceId: item.spaceId, title: `${item.title} · ${d.name}`, userId: item.userId,
-        input: { itemId: item.id, flowId: f.id, flowStartedAt: f.startedAt, round: f.round, stageId: d.id, stageTools: d.tools ?? [], execution: ai.execution, ownAI: !!d.ai && !ai.execution, agent: name, skill: "run" in d.by ? d.by.run.skill : undefined, designId, task: await stageTask(app, item, f, d, s.control.feedback), spaces: [item.spaceId] },
+      const task = await stageTask(app, item, f, d, s.control.feedback);
+      const batch = "run" in d.by && d.together === "push" ? pushKey(app, item) : null;
+      const entry: StageItem = { itemId: item.id, title: item.title, spaceId: item.spaceId, flowStartedAt: f.startedAt, round: f.round, task };
+      const r = (batch ? joinBatch(app, f, d, item.userId, batch, entry) : null) ?? createRun(app, { kind: "flow-stage", spaceId: item.spaceId, title: `${item.title} · ${d.name}`, userId: item.userId,
+        input: { itemId: item.id, flowId: f.id, flowStartedAt: f.startedAt, round: f.round, stageId: d.id, stageTools: d.tools ?? [], execution: ai.execution, ownAI: !!d.ai && !ai.execution, agent: name, skill: "run" in d.by ? d.by.run.skill : undefined, designId, task, spaces: [item.spaceId], ...(batch ? { batchKey: batch, items: [entry] } : {}) },
+        // Items pushed together reach this stage within moments of each other: wait a little for the rest.
+        ...(batch ? { notBefore: new Date(current.getTime() + BATCH_WAIT_MS).toISOString() } : {}),
         trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name }, by: userBy(app, item.userId), where: d.name } });
       carrier = r.id;
       control.runId = r.id;
@@ -391,7 +451,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       let s = getStage(app, itemId, d.id);
       if (!isTrials(d) && !isFixes(d) && s.state === "doing" && s.control.runId && d.budget?.minutes !== undefined && !s.control.reported && usedMinutes(app, s, at) >= d.budget.minutes) {
         const control = finishUsage(app, s, at);
-        cancelRun(app, s.control.runId);
+        stopStageRun(app, s.itemId, s.control.runId);
         changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: { ...control, reported: true, budgetExceeded: true } }, host, `到了这一段的时间预算（${d.budget.minutes} 分钟）`);
         changed = true; continue;
       }
@@ -541,7 +601,7 @@ function finishUsage(app: App, s: StageRow, at: Date): StageControl {
 function escalateStage(app: App, f: ItemFlow, d: FlowStage, s: StageRow, feedback: string, at = new Date(), refs = s.evidence) {
   if (!d.ai || !d.escalate || (s.control.escalations ?? 0) >= d.escalate.max) return false;
   withdraw(app, s);
-  if (s.control.runId) cancelRun(app, s.control.runId);
+  if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
   changeStage(app, f.itemId, d.id, "pending", { by: null, askId: null, waitingOn: null, control: { ...finishUsage(app, s, at), escalated: true, escalations: (s.control.escalations ?? 0) + 1, runId: undefined, reported: false, question: undefined, feedback } }, { ...host, runId: s.control.runId }, `换上一档的模型重做：${feedback}`, refs, "escalate");
   return true;
 }
@@ -559,7 +619,7 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     if (report.state === "skip" && s.state === "skipped") return flowView(app, itemId);
     // An old carrier cannot finish the replacement's attempt.
     if (by.runId && (s.by === s.control.runId && !!s.by) && s.by !== by.runId) throw new HttpError(409, "这不是当前阶段的承担运行");
-    if (by.runId && getRun(app, by.runId).input.flowStartedAt && (getRun(app, by.runId).input.flowStartedAt !== f.startedAt || getRun(app, by.runId).input.stageId !== stageId || s.control.runId !== by.runId)) throw new HttpError(409, "这次运行所属的流程、阶段或尝试已变化");
+    if (by.runId && getRun(app, by.runId).input.flowStartedAt && (stageItemStart(getRun(app, by.runId).input, itemId) !== f.startedAt || getRun(app, by.runId).input.stageId !== stageId || s.control.runId !== by.runId)) throw new HttpError(409, "这次运行所属的流程、阶段或尝试已变化");
     const evidence = report.evidence ?? [];
     if (report.state === "blocked" && report.unsure && escalateStage(app, f, d, s, report.note, new Date(), evidence)) {
       await advanceNow(app, itemId, "拿不准，升档重做");
@@ -676,7 +736,7 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
   }
   if (action === "hold" && s.control.grantedGate) {
     revokeGate(app, f.id, stageId, userId, itemId);
-    if (s.control.runId) cancelRun(app, s.control.runId);
+    if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
     s = { ...s, control: { ...finishUsage(app, s, new Date()), grantedGate: undefined, runId: undefined, question: "gate", confirmed: undefined, reported: false } };
   }
   resetStreak(app, itemId);
@@ -686,7 +746,7 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
   if (isStudy(f) && (isFixes(d) || d.tools?.includes("record_finding")) && (["done", "skip"].includes(action) || action === "confirm" && s.control.question === "done")) note = [note || "本人确认完成", pushSummary(app, f)].filter(Boolean).join("\n");
   if (action === "done" || action === "skip" || action === "confirm" && s.control.question === "done") {
     s = { ...s, control: finishUsage(app, s, new Date()) };
-    if (s.control.runId) cancelRun(app, s.control.runId);
+    if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
   }
   if (action === "reopen") { const feedback = ownerFeedback(app, f, s, note); await reopenNow(app, itemId, stageId, feedback, [], by, feedback); }
   else if (action === "hold") changeStage(app, itemId, stageId, "gated", { askId: null, control: { ...s.control, reminderAt: now(), reminders: 0 } }, by, note || "本人先别做，暂缓", [], "gate-hold");
@@ -715,7 +775,7 @@ async function reopenNow(app: App, itemId: string, stageId: string, reason: stri
   if (by.actor === "owner" && s.control.grantedGate) revokeGate(app, f.id, stageId, getItem(app, itemId).userId, itemId);
   withdraw(app, s);
   run(app.db, "update item_flows set ended_at=null,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", now(), itemId);
-  if (s.control.runId) cancelRun(app, s.control.runId);
+  if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
   changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, recorded: undefined, objectAfter: now(), grantedGate: undefined, gateLimit: undefined, reported: false, confirmed: undefined, question: undefined, feedback, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs, "reopen");
   const affected = new Set([stageId]);
   for (const d of f.definition.stages) {
@@ -731,7 +791,7 @@ async function end(app: App, id: string, note: string, how: FlowEnd) {
   if (!itemFlow(app, id) || itemFlow(app, id)!.endedAt) return;
   await cancelFixReruns(app, id);
   await cancelTrials(app, id);
-  for (const s of itemStages(app, id)) { withdraw(app, s); dropUpstream(app, s, "流程结束了"); if (s.state === "doing" && s.control.runId) cancelRun(app, s.control.runId); }
+  for (const s of itemStages(app, id)) { withdraw(app, s); dropUpstream(app, s, "流程结束了"); if (s.state === "doing" && s.control.runId) stopStageRun(app, s.itemId, s.control.runId); }
   run(app.db, "update item_flows set ended_at=?,next_round_at=null,updated_at=? where item_id=?", now(), now(), id);
   // Keep ending on the same audit/timeline path (no extra completion ping).
   const last = itemStages(app, id).at(-1);
@@ -819,7 +879,8 @@ const RANK = { failed: 0, skipped: 1, passed: 2 } as const;
 function stageTests(app: App, itemId: string, stageId: string, since: string, round: number, current?: string) {
   const runs = new Set(all<{ run_id: string }>(app.db, "select distinct run_id from item_stage_log where item_id = ? and stage_id = ? and at >= ? and round = ? and run_id is not null", itemId, stageId, since, round).map((r) => r.run_id));
   if (current) runs.add(current);
-  const results = latestEach(testsOfRuns(app, [...runs])).sort((a, b) => RANK[a.status] - RANK[b.status] || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  // A run for several items: only the results handed in for this one.
+  const results = latestEach(testsOfRuns(app, [...runs]).filter((t) => !t.itemId || t.itemId === itemId)).sort((a, b) => RANK[a.status] - RANK[b.status] || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   if (!results.length) return [];
   const shots = new Map(artifactsByIds(app, [...new Set(results.flatMap((r) => r.artifacts))]).map((a) => [a.id, a]));
   const titles = new Map(all<{ id: string; title: string }>(app.db, `select id, title from req_nodes where id in (select value from json_each(?))`, JSON.stringify([...new Set(results.flatMap((r) => r.nodeId ?? []))])).map((n) => [n.id, n.title]));
@@ -839,7 +900,9 @@ function stageShots(app: App, itemId: string, stageId: string, since: string, ro
   const runs = new Set(log);
   if (current) runs.add(current);
   const inTests = new Set(testsOfRuns(app, [...runs]).flatMap((t) => t.artifacts));
-  const list = runImages(app, [...runs], 40).filter((a) => !inTests.has(a.id));
+  // A run for several items keeps its pictures in each item's test results; the loose ones belong to no item in particular.
+  const shared = new Set(all<{ id: string }>(app.db, "select id from runs where id in (select value from json_each(?)) and json_array_length(json_extract(input,'$.items')) > 1", JSON.stringify([...runs])).map((r) => r.id));
+  const list = runImages(app, [...runs].filter((r) => !shared.has(r)), 40).filter((a) => !inTests.has(a.id));
   const sha = new Map(list.length ? all<{ id: string; sha: string | null }>(app.db, `select id, sha from run_artifacts where id in (${list.map(() => "?").join(",")})`, ...list.map((a) => a.id)).map((r) => [r.id, r.sha]) : []);
   const kept = new Map<string, (typeof list)[number]>();
   for (const a of list) {
@@ -928,11 +991,31 @@ export function attachFlows(app: App) {
 
 const runFlowStage: Parameters<typeof registerHandler>[1] = async (ctx) => {
   const input = ctx.run.input;
-  const itemId = String(input.itemId), stageId = String(input.stageId);
+  Object.assign(input, getRun(ctx.app, ctx.run.id).input);
+  const stageId = String(input.stageId);
+  const listed = Array.isArray(input.items) && input.items.length ? input.items as StageItem[] : null;
+  const entries = listed ?? [{ itemId: String(input.itemId), flowStartedAt: String(input.flowStartedAt) } as StageItem];
+  const ready: StageItem[] = [];
+  for (const e of entries) if (await prepareStage(ctx, e.itemId, stageId, e.flowStartedAt)) ready.push(e);
+  if (!ready.length) return { quiet: true, summary: "阶段已有新的状态或等待新的开始条件，不再执行这次运行" };
+  // Several items at once: the ones still waiting for this run, each with its own part of the task.
+  if (listed) {
+    run(ctx.app.db, "update runs set input=json_set(input,'$.items',json(?)) where id=?", JSON.stringify(ready), ctx.run.id);
+    input.items = ready;
+    if (ready.length > 1) input.task = batchTask(definition(itemFlow(ctx.app, ready[0].itemId)!, stageId), String(input.batchKey), ready);
+    else input.task = ready[0].task;
+  }
+  const itemId = ready[0].itemId;
+  const spaces = [...new Set(ready.map((e) => e.spaceId ?? getItem(ctx.app, e.itemId).spaceId))];
+  return runStageAgent(ctx, input, itemId, stageId, spaces);
+};
+
+/** Whether this item's stage still waits for this run: a queued run may reach the worker after its window or daily allowance changed. */
+async function prepareStage(ctx: Parameters<Parameters<typeof registerHandler>[1]>[0], itemId: string, stageId: string, flowStartedAt: unknown) {
+  const input = ctx.run.input;
   const f = itemFlow(ctx.app, itemId);
-  if (!f || f.endedAt || f.startedAt !== input.flowStartedAt) return { quiet: true, summary: "阶段已有新的状态，不再执行旧运行" };
-  // A queued run may reach the worker after its window or daily allowance changed.
-  const ready = await serial(ctx.app, itemId, async () => {
+  if (!f || f.endedAt || f.startedAt !== flowStartedAt) return false;
+  return serial(ctx.app, itemId, async () => {
     const current = getStage(ctx.app, itemId, stageId), flow = itemFlow(ctx.app, itemId)!;
     if (flow.endedAt || current.control.runId !== ctx.run.id || current.state !== "doing") return false;
     // Enqueue may wake a worker while the item queue is still preparing its workspace.
@@ -962,7 +1045,9 @@ const runFlowStage: Parameters<typeof registerHandler>[1] = async (ctx) => {
       return false;
     }
   });
-  if (!ready) return { quiet: true, summary: "阶段等待新的开始条件" };
+}
+
+async function runStageAgent(ctx: Parameters<Parameters<typeof registerHandler>[1]>[0], input: Record<string, unknown>, itemId: string, stageId: string, stageSpaces: string[]) {
   const item = getItem(ctx.app, itemId);
   if (typeof input.designId === "string") {
     const { getDesign } = await import("../designs/store.ts");
@@ -988,9 +1073,9 @@ const runFlowStage: Parameters<typeof registerHandler>[1] = async (ctx) => {
   const d = definition(itemFlow(ctx.app, itemId)!, stageId), planner = d.tools?.includes("propose_directions");
   const canPush = ctx.run.kind === "study-trial" && (isTrials(d) || isFixes(d)) && pushAuthorized(ctx.app, itemId);
   const addTools = ctx.run.kind === "study-trial" ? ["trial_report", "attach_artifact", ...d.tools ?? [], ...(canPush ? ["study_push"] : [])] : planner ? ["propose_directions", "attach_artifact"] : ["stage_report", "report_tests", "attach_artifact", ...d.tools ?? []];
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : [item.spaceId], cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
-};
+}
 registerHandler("flow-stage", runFlowStage);
 registerHandler("study-trial", runFlowStage);
 

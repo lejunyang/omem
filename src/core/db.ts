@@ -2100,6 +2100,9 @@ export const migrations: readonly string[] = [
   // status stays is an “updated” signal (flows/plugin-objects.ts).
   `alter table flow_objects add column revision text;
    alter table flow_objects add column revised_at text;`,
+  // A flow stage run done for several items at once (flows/engine.ts `together: push`): which item a
+  // test result belongs to, so each item's page shows its own.
+  `alter table req_tests add column item_id text;`,
 ];
 
 export type Db = DatabaseSync;

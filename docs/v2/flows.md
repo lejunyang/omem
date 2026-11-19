@@ -145,6 +145,8 @@ stages:
 
 `budget: { minutes: 240, trials: 8 }` 支持运行阶段和 `by: { object: trials, agent?, skill? }`。普通运行按本轮累计分钟由巡检取消并卡住，试验数字段只保存；trials 一次做一个试验，用满试验数或分钟则完成本轮阶段，剩下的留到下一轮。`escalate: { to: strong, max: 2 }` 用于指定了 AI 的这两类阶段，未交结果或拿不准时带反馈换档重做；trials 对同一个试验最多升档一次。事项本人可通过预算接口改副本的预算和升档上限；重开同一轮不会清空已用预算和升档次数。轮次、历史快照与课题细节见 `studies.md` 的两期实现。
 
+`together: push` 只用于运行阶段：几件事项跟着的交办推的是同一个提交（交办 `output.pushed` 里每个仓库的 `head` 都相同）、又走到同一流程的同一段时，合用一个运行。第一件到的建运行，延后一分钟开始（`not_before`），这期间到的同类事项并进这个运行（`input.items`，标题“N 件事项 · 段名”）；开始时只留下仍在等这个运行的事项，任务列出它们共用的推送和每件自己的任务。结果按事项分开：`report_tests` 必须带 `item`（结果记在 `req_tests.item_id`），每件各用一次 `stage_report`；事项页只显示自己的用例，合用运行里没放进用例的截图不归到任何一件。某件的流程停了或这一段被重开，只把它从合用的运行里拿掉，别的照做；所有件都拿掉才取消运行。没有推送记录的事项照常一件一个运行。实现在 `src/flows/engine.ts`（`pushKey`、`joinBatch`、`batchTask`、`prepareStage`、`stopStageRun`）。
+
 运行阶段还可写 `tools: [propose_directions]` 等临时工具，只接受 study 分组，不增加其他权限。定方向有尚未做完的已确认方向时直接跳过；台账、trials 对象与内置课题流程见 `studies.md`。课题非 manual 流程连着 `flows.idleRounds` 轮（默认 3）没有新发现，就停止自动开轮并告诉本人；manual 只显示计数。
 
 事项开始走流程时，把定义**复制一份**到这件事上（`item_flows.definition`）。之后改模板不影响进行中的事；在这件事上加一步、去一步、改关卡，只改这份副本，页面上标出“和模板不同的地方”。
