@@ -1,3 +1,4 @@
+import { requireItem } from "../items/access.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { latestEach, testsOfRuns } from "../items/req-tests.ts";
 import { artifactsByIds, runImages } from "../agents/artifacts.ts";
@@ -891,12 +892,18 @@ export function stopFlow(app: App, id: string, userId = "owner") {
 }
 
 const answerText = (ask: Ask) => (ask.answer ?? "").replace(new RegExp(`^${ask.options[ask.choice ?? -1]?.label ?? "(?!)"}[：:，,\\s]*`), "").trim();
+function requireStageAnswerer(app: App, itemId: string, recipient: string, by: string | null) {
+  if (by !== recipient) throw new HttpError(403, "流程关卡只能由事项本人回答");
+  const item = requireItem(app, itemId, by, "write");
+  if (item.userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");
+  return item;
+}
 registerAskHandler("flow-stage", async (app, ask, ctx) => {
   const itemId = String(ctx.itemId), stageId = String(ctx.stageId);
-  const item = getItem(app, itemId), f = itemFlow(app, itemId);
-  // Both the intended recipient and the actual author must be this item's owner.
-  if (!f || f.endedAt || f.startedAt !== ctx.startedAt || ask.userId !== item.userId || ask.answeredBy !== item.userId) return;
   await serial(app, itemId, async () => {
+    const item = requireStageAnswerer(app, itemId, ask.userId, ask.answeredBy);
+    const f = itemFlow(app, itemId);
+    if (!f || f.endedAt || f.startedAt !== ctx.startedAt) return;
     const s = getStage(app, itemId, stageId), d = definition(f, stageId);
     if (ctx.kind === "upstream") { if (s.control.upstream?.askId === ask.id && s.state === "doing") await answerUpstream(app, f, d, s, ask.choice === 0); return; }
     if (s.askId !== ask.id || s.control.question !== ctx.kind) return;
@@ -928,8 +935,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
     else if (ctx.kind === "gate" && ask.choice === 1) await actionNow(app, itemId, stageId, "hold", text, { actor: "owner" });
   });
 }, (app, ask, ctx, by) => {
-  const userId = getItem(app, String(ctx.itemId)).userId;
-  if (ask.userId !== userId || by !== userId) throw new HttpError(403, "流程关卡只能由事项本人回答");
+  requireStageAnswerer(app, String(ctx.itemId), ask.userId, by);
 });
 
 export function proposeFlow(app: App, raw: string, by: FlowActor) {

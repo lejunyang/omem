@@ -8,6 +8,8 @@ import { testApp } from "./helpers.ts";
 import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { cleanupFetched, mergeLibrary, snapshotStream, type Fetched } from "../src/core/pull.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { getAsk } from "../src/agents/asks.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
 import { appendToSource } from "../src/sources/store.ts";
@@ -33,6 +35,24 @@ afterEach(async () => {
 async function serverFor(app: App) { const s = await startServer(app, { port: 0, quiet: true }); servers.push(s); return s; }
 
 describe("流程 HTTP", () => {
+  it("成员降为只读后回答旧关卡，提问和阶段保持原状", async () => {
+    const app = fixture(), server = await serverFor(app);
+    createUser(app, { id: "member", name: "成员" });
+    createSpace(app, { id: "project", name: "项目" });
+    addMember(app, "project", "member", "editor");
+    saveFlow(app, raw, "owner");
+    const item = upsertItem(app, undefined, { title: "核验", spaceId: "project", userId: "member" }, "user");
+    await startFlow(app, item.id, "demo", { actor: "owner", userId: "member" });
+    const stage = getStage(app, item.id, "check");
+    const ask = getAsk(app, stage.askId!);
+    expect(ask.status).toBe("pending");
+    addMember(app, "project", "member", "reader");
+    const headers = { authorization: `Bearer ${createApiToken(app, "member", "test")}` };
+    const response = await server.inject({ method: "POST", url: `/api/asks/${ask.id}/answer`, headers, payload: { choice: 0 } });
+    expect(response.statusCode).toBe(403);
+    expect(getAsk(app, ask.id)).toEqual(ask);
+    expect(getStage(app, item.id, "check")).toEqual(stage);
+  });
   it("逐条签字可撤销，限本人和当前阶段轮次；全对仍等确认，返工带不对的结果且新结果不继承签字", async () => {
     const app = fixture(), server = await serverFor(app);
     saveFlow(app, JSON.stringify({ id: "demo", name: "示例验证", repeat: { from: "verify" }, stages: [
