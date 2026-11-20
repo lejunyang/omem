@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
 import { nodeId } from "../core/peers.ts";
-import { addWorkMessage, enqueueCoordination, queueAgentRound, refreshWork, saveWork, type AgentWork, type AssistantScope } from "./agent-work.ts";
+import { addWorkMessage, enqueueCoordination, queueAgentRound, refreshWork, markRound, type AgentWork, type AssistantScope } from "./agent-work.ts";
 import { cancelRun, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
 
@@ -35,7 +35,6 @@ export function dispatchBoard(app: App, work: AgentWork, plans: TaskPlan[], by: 
       attempt(app, workId, id, { ...plan, deadline_minutes: minutes }, by);
       return id;
     });
-    coordinateIfReady(app, workId);
     return ids;
   });
   app.emit({ type: "work", workId });
@@ -93,9 +92,7 @@ function finishAttempt(app: App, t: TaskRow, status: string, report: string, at 
   run(app.db, `update agent_work_tasks set status=?, report=?, updated_at=?, attempts=json_set(attempts,'$[#-1].status',?,'$[#-1].finishedAt',?,'$[#-1].result',?) where id=?`,
     status, truncate(report, 2000), at, status, at, truncate(report, 2000), t.id);
   const work = refreshWork(app, t.work_id)!;
-  const round = work.rounds.find(r => r.runId === t.run_id);
-  if (round) round.status = status === "done" ? "done" : "failed";
-  saveWork(app, work, [work.askRunId, ...work.rounds.map(r => r.runId)]);
+  markRound(app, work, t.run_id, status === "done" ? "done" : "failed");
 }
 
 export function settleBoardRun(app: App, r: Run) {

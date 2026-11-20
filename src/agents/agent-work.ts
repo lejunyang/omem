@@ -215,6 +215,12 @@ export function autoTurnsSinceOwner(app: App, work: AgentWork): number {
   )!.n;
 }
 
+export function markRound(app: App, work: AgentWork, runId: string, status: "done" | "failed") {
+  const round = work.rounds.find(r => r.runId === runId);
+  if (round) round.status = status;
+  saveWork(app, work, [work.askRunId, runId, ...work.rounds.map(r => r.runId)]);
+}
+
 /**
  * A specialist round finished (or failed): its report goes into the work conversation and the
  * main assistant takes a turn there as the one responsible for the work. It reads the report
@@ -227,11 +233,10 @@ export function onWorkRunSettled(app: App, run: Run): { work: AgentWork; coordin
   const work = refreshWork(app, workId);
   if (!work) return null;
   const status = run.status === "done" ? "done" : "failed";
-  const next: AgentWork = { ...work, rounds: work.rounds.map((r) => (r.runId === run.id ? { ...r, status } : r)) };
-  saveWork(app, next, [workId, run.id, ...work.rounds.map((r) => r.runId)]);
+  markRound(app, work, run.id, status);
   // Rounds of an older version's digest step are bookkeeping only; cancelled rounds wait for the owner.
-  if ((run.input as { role?: string }).role || run.status === "cancelled") return { work: next };
-  return { work: next, coordinateRunId: queueCoordination(app, next, run) };
+  if ((run.input as { role?: string }).role || run.status === "cancelled") return { work };
+  return { work, coordinateRunId: queueCoordination(app, work, run) };
 }
 
 function queueCoordination(app: App, work: AgentWork, run: Run): string {
