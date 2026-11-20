@@ -105,7 +105,7 @@ async function probeOn(profile: AgentProfile, app?: App, signal?: AbortSignal): 
     // A user's own account: in their account folder (the sandbox mounts the folder it starts in writable).
     const cwd = accountOf(profile)?.home ?? process.cwd();
     const cleanup = app ? await sessionCleanup(app, profile, { cwd }, e => { if (e.type === "status") console.log(`[omem] ${e.text}`); }) : undefined;
-    const r = await runAcp({ ...profile, model: undefined, effort: undefined }, { cwd, cleanup, prompt: "", probe: true, signal }, () => {});
+    const r = await runAcp({ ...profile, model: undefined, effort: undefined }, { app, cwd, cleanup, prompt: "", probe: true, signal }, () => {});
     const opts = r.probe?.options ?? [];
     const modelOpt = opts.find((o) => o.id === "model" || o.category === "model");
     const effortOpt = opts.find((o) => o.id !== "model" && (o.category === "thought_level" || /effort|reasoning/i.test(o.id)));

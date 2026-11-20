@@ -23,7 +23,7 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
 
 async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const disposable = !req.persistSession && !req.resumeSessionId;
-  if (profile.transport === "acp") return runAcp(profile, { ...req, cleanup: await sessionCleanup(app, profile, req, emit) }, emit);
+  if (profile.transport === "acp") return runAcp(profile, { ...req, app, cleanup: await sessionCleanup(app, profile, req, emit) }, emit);
   if (profile.transport === "doubao" || profile.transport === "doubao-cli") {
     // Doubao keeps every conversation in the owner's account: a one-off turn's session is deleted
     // once the turn is over, failed or not (ACP agents do the same with session/delete).

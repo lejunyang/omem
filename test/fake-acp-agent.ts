@@ -146,6 +146,11 @@ new AgentSideConnection(
       // FAKE_PROMPT_LOG=file: each turn's prompt, one JSON string a line (what the host sent).
       if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, JSON.stringify(prompt) + "\n");
       const say =(text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      if (process.env.FAKE_MODE === "permission") {
+        const response = await conn.requestPermission({ ...JSON.parse(prompt), sessionId: p.sessionId });
+        await say(JSON.stringify(response.outcome));
+        return { stopReason: "end_turn" };
+      }
       // Replay tests: prefer the arm that read the candidate, consistently in both blind orders.
       if (process.env.FAKE_MODE === "replay-judge") {
         const first = prompt.split("# 甲的回答\n\n")[1]?.split("# 乙的回答")[0] ?? "";
