@@ -30,6 +30,11 @@ export const clipSchema = z.object({
   pageUrl: z.string().max(2000).default(""),
   /** Continue a conversation (ask only). */
   conversationId: z.string().optional(),
+  /**
+   * ask with `turn: false`: only kept in that conversation, no turn (a demonstration's pick,
+   * remote/demos.ts; it is organized when the demonstration stops).
+   */
+  turn: z.boolean().default(true),
   images: z
     .array(z.object({ key: z.string().regex(/^[\w-]{1,40}$/), title: z.string().max(200).default(""), data: z.string().min(1) }))
     .max(20)
@@ -57,6 +62,8 @@ function storeImage(app: App, buf: Buffer, ext: string) {
 
 export async function saveClip(app: App, userId: string, input: ClipInput) {
   getSpace(app, input.space);
+  // Checked before any screenshot is kept: only into one of the sender's own conversations.
+  if (input.mode === "ask" && !input.turn) (await import("../remote/demos.ts")).noteTarget(app, userId, input.conversationId);
   const clip = newId("clip");
   const images = input.images.map((img) => {
     const data = img.data.replace(/^data:[\w/+.-]+;base64,/, "");
@@ -95,6 +102,11 @@ export async function saveClip(app: App, userId: string, input: ClipInput) {
     const note = importText(app, input.space, { title, text, kind: "note", uri: `clip/${clip}` });
     const run = scheduleIngest(app, input.space, [note.id, ...images.map((i) => i.sourceId)]);
     return { mode: "source" as const, sourceId: note.id, imageSources, ingestRun: run?.id ?? null };
+  }
+  if (!input.turn) {
+    const { notePick } = await import("../remote/demos.ts");
+    const messageId = notePick(app, userId, input.conversationId!, { title: input.title, text, pageUrl: input.pageUrl });
+    return { mode: "note" as const, conversationId: input.conversationId!, messageId, imageSources };
   }
   const r = await ask(app, { text, spaceId: input.space, conversationId: input.conversationId, userId });
   return { mode: "ask" as const, conversationId: r.conversationId, messageId: r.messageId, runId: r.runId, imageSources };

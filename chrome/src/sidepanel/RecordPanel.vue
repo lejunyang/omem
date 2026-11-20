@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { importFieldsForDemo } from "../shared/demo";
 import type { RecordingTarget } from "../shared/omem-client";
 import { stepTitle } from "../shared/recording";
+import type { DemoContext } from "./use-demo";
 import type { OmemContext } from "./use-omem";
 import { type TabChoice, useRecording } from "./use-recording";
 
 // 侧栏的「录制」：说要教什么、选标签页、开始；录的时候步骤一条条出现，可以加标记、删步骤；
 // 停下后选“整理成技能”（交给助手）或“只保存”，上传给 omem。录制的数据在后台和 IndexedDB 里，关掉侧栏不丢。
+// 演示中（shared/demo.ts）停下后只有“记进演示”：录制带上 demoId，演示结束时和别的材料一起整理。
 
-const props = defineProps<{ omem: OmemContext }>();
+const props = defineProps<{ omem: OmemContext; demo: DemoContext }>();
+const demoCurrent = props.demo.current;
 const emit = defineEmits<{ recording: [live: boolean] }>();
 const rec = useRecording();
 const { session, items, isRecording, notice, pointing, pointed, now, loading } = rec;
@@ -36,7 +40,7 @@ const editedGoal = ref("");
 type UploadState =
   | { phase: "sending"; organize: boolean }
   | { phase: "error"; message: string }
-  | { phase: "done"; organize: boolean; recordingId: string; link: string | null };
+  | { phase: "done"; organize: boolean; recordingId: string; link: string | null; demoGoal?: string };
 const uploadState = ref<UploadState | null>(null);
 
 async function refreshTabs(): Promise<void> {
@@ -134,12 +138,15 @@ async function discard(): Promise<void> {
 }
 
 async function upload(organize: boolean): Promise<void> {
-  uploadState.value = { phase: "sending", organize };
+  // 演示中上传的录制记进演示，不单独整理（选的关注和事项不用，演示自己连着）。
+  const demo = demoCurrent.value;
+  uploadState.value = { phase: "sending", organize: demo ? false : organize };
   try {
     if (editedGoal.value !== (session.value?.goal ?? "")) await rec.setGoal(editedGoal.value);
     const [kind, id] = target.value.split(":");
-    const result = await rec.upload(props.omem, { organize, ...(kind === "context" ? { contextId: id } : kind === "item" ? { itemId: id } : {}) });
-    uploadState.value = { phase: "done", organize, recordingId: result.recording.id, link: result.conversationId ? props.omem.webUrl(`/ask/${result.conversationId}`) : null };
+    const result = await rec.upload(props.omem, importFieldsForDemo(demo, { organize, ...(kind === "context" ? { contextId: id } : kind === "item" ? { itemId: id } : {}) }));
+    uploadState.value = { phase: "done", organize: demo ? false : organize, recordingId: result.recording.id, link: result.conversationId ? props.omem.webUrl(`/ask/${result.conversationId}`) : null, ...(demo ? { demoGoal: demo.goal } : {}) };
+    if (demo) void props.demo.refresh();
   } catch (error) {
     uploadState.value = { phase: "error", message: (error as Error).message };
   }
@@ -165,13 +172,14 @@ const kindLabel: Record<string, string> = { click: "点击", input: "填写", su
     <div v-if="uploadState && !session" class="send-result rec-result" :class="`is-${uploadState.phase}`" role="status" data-testid="record-upload-result">
       <template v-if="uploadState.phase === 'error'">上传失败：{{ uploadState.message }}</template>
       <template v-else-if="uploadState.phase === 'done'">
-        <span>{{ uploadState.organize ? "已交给助手整理成技能。" : "已保存到 omem。" }}录制 {{ uploadState.recordingId }}</span>
+        <span>{{ uploadState.demoGoal ? `已记进演示「${uploadState.demoGoal}」，结束时一起整理。` : uploadState.organize ? "已交给助手整理成技能。" : "已保存到 omem。" }}录制 {{ uploadState.recordingId }}</span>
         <a v-if="uploadState.link" :href="uploadState.link" target="_blank" rel="noreferrer">在 omem 中继续</a>
       </template>
     </div>
 
     <!-- 没有录制：说要教什么、选标签页 -->
     <div v-if="!session" class="rec-setup">
+      <p v-if="demoCurrent" class="demo-send-note">这次录制会记进演示「{{ demoCurrent.goal }}」。</p>
       <label class="rec-label" for="rec-goal">要教助手做什么</label>
       <textarea id="rec-goal" v-model="goal" class="filter-input rec-textarea" rows="3" placeholder="例如：在后台给某个商户开通退款权限" data-testid="record-goal" />
       <label class="rec-label" for="rec-tab">录哪个标签页</label>
@@ -256,7 +264,8 @@ const kindLabel: Record<string, string> = { click: "点击", input: "填写", su
       </ol>
 
       <footer v-if="!isRecording" class="composer rec-upload">
-        <select v-if="targets.length" v-model="target" class="preset-select rec-target" title="整理的消息发到哪里" aria-label="接着哪件事">
+        <p v-if="demoCurrent" class="demo-send-note">记进演示「{{ demoCurrent.goal }}」，演示结束时和拾取、飞书消息一起整理。</p>
+        <select v-else-if="targets.length" v-model="target" class="preset-select rec-target" title="整理的消息发到哪里" aria-label="接着哪件事">
           <option value="">新对话</option>
           <optgroup v-if="targets.some((t) => t.kind === 'context')" label="关注（发到它的对话）">
             <option v-for="t in targets.filter((x) => x.kind === 'context')" :key="t.id" :value="`context:${t.id}`">{{ t.name }}</option>
@@ -275,10 +284,15 @@ const kindLabel: Record<string, string> = { click: "点击", input: "填写", su
           </button>
           <span class="muted send-hint">{{ uploadHint }}</span>
           <span class="grow" />
-          <button class="button" type="button" :disabled="!canUpload" title="存进 omem，之后可以在对话里让助手整理" data-testid="record-save" @click="upload(false)">只保存</button>
-          <button class="button button-primary" type="button" :disabled="!canUpload" title="存进 omem 并交给助手，按技能 skill-from-recording 整理" data-testid="record-organize" @click="upload(true)">
-            整理成技能
+          <button v-if="demoCurrent" class="button button-primary" type="button" :disabled="!canUpload" title="存进 omem、记进这次演示，演示结束时一起整理" data-testid="record-demo" @click="upload(false)">
+            记进演示
           </button>
+          <template v-else>
+            <button class="button" type="button" :disabled="!canUpload" title="存进 omem，之后可以在对话里让助手整理" data-testid="record-save" @click="upload(false)">只保存</button>
+            <button class="button button-primary" type="button" :disabled="!canUpload" title="存进 omem 并交给助手，按技能 skill-from-recording 整理" data-testid="record-organize" @click="upload(true)">
+              整理成技能
+            </button>
+          </template>
         </div>
       </footer>
     </template>

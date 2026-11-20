@@ -1,0 +1,132 @@
+/* 侧栏的「演示」：没在演示时是一行按钮；演示中是一条带强调色左边框的横幅，告诉本人拾取和录制会记进演示 */
+.demo-bar {
+  display: grid;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.demo-bar.is-live {
+  padding-left: 11px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.demo-live,
+.demo-idle,
+.demo-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.demo-live strong {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.demo-goal {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-time {
+  flex-shrink: 0;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.demo-sub,
+.demo-tip,
+.demo-ended {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.demo-sub a,
+.demo-ended a {
+  margin-left: 6px;
+  color: var(--accent);
+}
+
+.demo-actions {
+  flex-wrap: wrap;
+}
+
+.demo-label {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.demo-textarea {
+  width: 100%;
+  min-height: 48px;
+  resize: vertical;
+}
+
+.demo-target {
+  width: 100%;
+}
+
+.demo-idle .button {
+  gap: 6px;
+}
+
+.demo-ended {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-error {
+  margin: 0;
+  color: var(--bad);
+  font-size: 12px;
+}
+
+/* 演示的点：强调色，演示中一呼一吸（和录制的红点区分开） */
+.demo-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.demo-bar.is-live .demo-dot {
+  animation: demo-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes demo-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-bar.is-live .demo-dot {
+    animation: none;
+  }
+}
+
+/* 演示中拾取篮和录制的发送区：一句说明发到哪里 */
+.demo-send-note {
+  margin: 0;
+  color: var(--accent);
+  font-size: 12px;
+}

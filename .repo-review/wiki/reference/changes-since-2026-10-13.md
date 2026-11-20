@@ -16,6 +16,14 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 演示：做一遍给助手看（11-20）
+
+- `src/remote/demos.ts`：一次演示是一个对话（渠道 `demo`，`ThreadSettings.demo`：目标、`contextId` / `itemId`、起止时间、整理方式），同一时间一个、只有本人。演示期间记进来的是不起一轮的本人消息（`meta.demo.kind`：`start`、`recording`、`pick`、`lark`、`remote`、`stop`、`organize`），按发生时间排；`stopDemo` 收本人在关注的群（连着事项时看事项的关注，都没有时看所有采集到的会话，`capturedChats` 沿 `(chat_id, create_ms)` 索引跳着取）里窗口内发的飞书消息、窗口内结束的远程录制，选了技能或经验时以本人名义发整理的消息（`organizeDemoText`）开始助手的一轮。接口 `GET/POST /api/demos`、`GET /api/demos/:id`、`POST /api/demos/:id/stop`（`src/remote/http.ts`，`routes.ts` 里都是 owner）。
+- `POST /api/remote/recordings/import` 多 `demoId`：录制记进演示（`attachRecording`），不单独整理。`POST /api/clips` 多 `turn`（默认 true）：`ask` 带 `conversationId` 且 `turn: false` 时只记进那个对话（演示里是一条拾取），回答 `mode: "note"`；对话必须是发的人自己的（`noteTarget`，在存截图之前查）。
+- `src/agents/commands.ts`：`/演示 <目标>`（在关注的群或关注的处理对话里发会连上它）、`/演示结束 [技能|经验|不整理]`；命令名可以是中文（`parseCommand`：中文命令可以和参数连写，取最长的前缀）。
+- 内置技能 `skills/library/skill-from-demo`：读时间线（录制、拾取、本人的飞书消息），复述做法，只问会变的和怎么算做成，再 `save_skill` 或写关注的经验 `关注/<名>/演示/<目标>.md`、事项的工作文件。`src/channels/listen-cases.ts` 的 `demoLessonsDir` / `demoLessonsOf`，`playbookOf` 默认把演示过的做法接在经验后面（`demos: false` 不接）；listen-coach 的任务里单独一节，`roles/listen-coach.md` 第 7 条：不抄进经验、不删，案例和它不符时在 `notes` 里提。
+- 扩展：`chrome/src/shared/demo.ts`（状态的规范化、整理方式、`clipForDemo`、`importFieldsForDemo`，单元测试 `demo.test.ts`）、侧栏顶部 `DemoBar.vue` 和 `use-demo.ts`（不存 storage，开着时每 15 秒读一次）；演示中拾取篮只有「记进演示」，录制上传只有「记进演示」。网页：`web/src/components/DemoControl.vue`，放在关注页头部和事项页。测试 `test/demos.test.ts`。
+
 ## 做梦读关注和数据提建议、coach 复盘别人的消息、周报（11-20）
 
 - `src/agents/proactive.ts`：做梦任务多一节“关注、自动建的事项、规则和指标”（`dreamMaterial`）——有新动静的关注（`listenDigest`：更新过的会话摘要、新案例计数和纠正、两三个例子、经验改没改、参数一行）、自动建事项的留下 / 不要（`autoItemDigest`）、规则触发统计（`ruleDigest`，按规则走 `rule_firings` 的索引）、超门槛的指标（`flaggedMetrics`）、本人近况和已有关注 / 指标的事项（`coverageText`）、最近一周做梦发过的通知。有这些新动静时没有记忆变化也整理。`roles/dreamer.md` 第 8 条：一晚最多三条建议放进一条通知，本人回复后由主助手照改；dreamer 加了只读的 `list_rules`、`metric_read`。

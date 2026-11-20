@@ -9,6 +9,7 @@ import {
   OWNER_ASKS_OPTIONS, perDayOptions, PREFILTER_OPTIONS, REPLY_OPTIONS, replyLabel, STRICTNESS_OPTIONS,
   type ChatDetail, type ListenDetail, type ListenKnobs, type ListenMemory, type ListenView,
 } from "../lib/listen";
+import DemoControl from "../components/DemoControl.vue";
 import Icon from "../components/Icon.vue";
 import ListenCases from "../components/ListenCases.vue";
 import ListenNewDialog from "../components/ListenNewDialog.vue";
@@ -271,6 +272,7 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
             <router-link v-for="g in c.groups" :key="g.id" class="gchip" :to="`/lark/chats/${encodeURIComponent(g.id)}`" :title="g.name">{{ oneLine(g.name) }}</router-link>
             <router-link v-if="c.item" class="gchip item" :to="`/items/${c.item.id}`">事项：{{ c.item.title }}</router-link>
           </div>
+          <DemoControl :context-id="c.id" :name="c.name" />
           <div v-if="!isDefault" class="controls row wrap">
             <UiCheckbox switch size="sm" :model-value="c.status === 'active'" :aria-label="`关注 ${c.name}`" @change="setStatus">{{ c.status === "active" ? "关注中" : "已暂停" }}</UiCheckbox>
             <span class="spacer" />
