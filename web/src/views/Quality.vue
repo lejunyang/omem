@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { get, onServerEvent, post } from "../api";
 import Skeleton from "../components/Skeleton.vue";
+import Markdown from "../components/Markdown.vue";
+import RichText from "../components/RichText.vue";
 import { fmtTime, runKindLabel } from "../store";
 
 type Finding = { kind: string; quote: string; problem: string; basis: string; fix?: string };
@@ -60,9 +62,9 @@ onBeforeUnmount(() => { request++; off(); });
       <article v-for="a in data.recent" :key="a.id" class="card pad stack">
         <div class="row wrap"><a class="grow" :href="a.category === 'level' ? (a.target.startsWith('level-source:') ? `#/sources/${a.target.slice(13)}` : '#/sources?review=1') : `#/wiki/${encodeURIComponent(a.spaceId)}/${a.target.split('/').map(encodeURIComponent).join('/')}`">{{ a.title ?? a.target }}</a><span class="badge" :class="{ danger: a.verdict === 'wrong' }">{{ a.category === "level" && a.verdict === "wrong" ? "定级不对" : (verdicts[a.verdict] ?? a.verdict) }}</span><time class="muted small">{{ fmtTime(a.at) }}</time></div>
         <p class="small">{{ a.category === "level" ? "定级" : "写作" }}：{{ runKindLabel[a.pipeline] ?? a.pipeline }} · {{ a.writerAi || '未记录 AI' }}<br>核对：{{ a.checkerAi || '未记录 AI' }} <span v-if="a.writerAi && a.writerAi === a.checkerAi" class="badge">和写的是同一个模型</span></p>
-        <p v-if="a.reviewReason" class="small">{{ a.suggestedLevel ? `建议级别：${levelLabels[a.suggestedLevel] ?? a.suggestedLevel}。` : "" }}{{ a.reviewReason }}</p>
+        <p v-if="a.reviewReason" class="small">{{ a.suggestedLevel ? `建议级别：${levelLabels[a.suggestedLevel] ?? a.suggestedLevel}。` : "" }}<RichText :text="a.reviewReason" :space="a.spaceId" /></p>
         <p class="small muted">抽到原因：{{ a.why }}</p>
-        <details v-if="a.findings.length"><summary>{{ a.findings.length }} 个问题</summary><div v-for="(f, i) in a.findings" :key="i" class="finding stack"><strong>{{ findingKinds[f.kind] ?? f.kind }}</strong><blockquote>{{ f.quote }}</blockquote><p>{{ f.problem }}</p><p class="small">依据：{{ f.basis }}</p><p v-if="f.fix" class="small">建议：{{ f.fix }}</p></div></details>
+        <details v-if="a.findings.length"><summary>{{ a.findings.length }} 个问题</summary><div v-for="(f, i) in a.findings" :key="i" class="finding stack"><strong>{{ findingKinds[f.kind] ?? f.kind }}</strong><blockquote><Markdown :source="f.quote" :space="a.spaceId" compact /></blockquote><RichText tag="p" :text="f.problem" :space="a.spaceId" breaks /><p class="small">依据：<RichText :text="f.basis" :space="a.spaceId" /></p><p v-if="f.fix" class="small">建议：<RichText :text="f.fix" :space="a.spaceId" /></p></div></details>
         <div class="row wrap small"><a v-if="a.fixRun" :href="`#/runs/${a.fixRun}`">查看修改运行</a><a v-if="a.auditRun" :href="`#/runs/${a.auditRun}`">查看抽检运行</a></div>
       </article>
     </template>

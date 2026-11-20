@@ -13,7 +13,8 @@ import { toast } from "../store";
  * reply they belong to. A question may carry a form and things to look at (docs/v2/interactive-ui.md):
  * the form is sent as a whole, with an optional note.
  */
-const props = defineProps<{ ask: Ask; compact?: boolean }>();
+/** `full`: opened on its own (a side sheet): nothing is clipped, and what opened it already says what kind it is. */
+const props = defineProps<{ ask: Ask; compact?: boolean; full?: boolean }>();
 const emit = defineEmits<{ answered: [Ask] }>();
 const text = ref("");
 const busy = ref(false);
@@ -26,7 +27,7 @@ const parts = computed(() => {
   const ps = (props.ask.question ?? "").trim().split(/\n\s*\n/);
   return { lead: ps[0] ?? "", body: ps.slice(1).join("\n\n") };
 });
-const long = computed(() => parts.value.body.length > 700);
+const long = computed(() => !props.full && parts.value.body.length > 700);
 const expanded = ref(false);
 
 async function answer(body: { choice?: number; approved?: boolean; value?: Record<string, unknown> }) {
@@ -49,12 +50,12 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
 
 <template>
   <div class="ask" :class="[ask.kind, { compact }]" role="group" :aria-label="title || '下一步'">
-    <div v-if="title" class="ask-title small">{{ title }}</div>
+    <div v-if="title && !full" class="ask-title small">{{ title }}</div>
     <div v-if="ask.askedBy" class="muted small">{{ ask.askedByName || ask.askedBy }} 的助手替 ta 问你，回答会交给 ta</div>
     <template v-if="ask.question">
-      <Markdown :class="{ 'ask-lead': !!parts.body }" :source="parts.lead" />
+      <Markdown :class="{ 'ask-lead': !!parts.body }" :source="parts.lead" compact />
       <div v-if="parts.body" class="ask-body" :class="{ clipped: long && !expanded }">
-        <Markdown class="ask-q" :source="parts.body" />
+        <Markdown class="ask-q" :source="parts.body" compact />
       </div>
       <button v-if="long" type="button" class="btn ghost sm more" @click="expanded = !expanded">{{ expanded ? "收起" : "展开全部" }}</button>
     </template>
@@ -132,9 +133,6 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
 .ask-title {
   font-weight: 600;
   color: var(--muted);
-}
-.ask-q :deep(p) {
-  margin: 0;
 }
 .gap {
   gap: 6px;

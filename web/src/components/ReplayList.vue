@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { get, post } from "../api";
 import { relTime, toast } from "../store";
 import Skeleton from "./Skeleton.vue";
+import { plainLine } from "../lib/markdown";
 
 /**
  * Nightly replays and their verdicts (src/agents/replay.ts): each past question answered again as of
@@ -54,7 +55,7 @@ const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v 
       <div v-for="r in list" :key="r.id" class="rp-row">
         <div class="rp-line">
           <span class="badge" :class="badge(r.verdict)">{{ r.verdictLabel }}</span>
-          <span class="q">{{ r.question }}</span>
+          <span class="q" :title="plainLine(r.question, 400)">{{ plainLine(r.question, 140) }}</span>
         </div>
         <div class="muted small">
           {{ relTime(r.at) }} · {{ SIGNAL[r.signal] ?? r.signal }} → <span class="mono">{{ r.axis }}</span> {{ r.axisLabel }}<template v-if="r.taskType"> · {{ r.taskType }}</template><template v-if="r.by === 'checks'"> · 由引用检查判定</template><template v-else-if="r.agree === false"> · 两种顺序不一致</template>

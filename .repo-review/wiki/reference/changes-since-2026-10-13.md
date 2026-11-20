@@ -17,6 +17,14 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 整理第一批：下一阶段的方案、短文字的渲染、工作页右栏（11-21）
+
+- 新文档 `docs/v2/next.md`：现在的形状（入口、主动行为、等本人处理的东西各有多少路），三条主干（关联、变化、出口）和多 Agent、插件、沙箱、权限、提示词、界面各自的分期。之后的整理按它排。
+- `web/src/lib/markdown.ts` 新增 `renderInline`（行内 Markdown 和引用，不出块）；`web/src/lib/plain.ts`（`unblock`、`plainLine`，没有 DOM 依赖，测试 `test/web-plain.test.ts`）；点引用的处理抽到 `web/src/lib/cite-click.ts`，`Markdown.vue` 和新组件 `components/RichText.vue` 共用。句号、分号后面的裸 `src:` / `mem:` 引用以前不认，现在也变成链接。
+- `Markdown.vue` 多 `compact`（`styles.css` 的 `.prose.compact`：14px / 1.7，标题不用衬线和底线），`AskCard` 用它；`AskCard` 多 `full`（单独打开时不截断、不重复写“需要你回答”）。
+- 抽检页（`views/Quality.vue`）的理由、引文、问题、依据、建议，事项页候选的“为什么建”（`views/Items.vue`），夜间复盘列表的问题标题（`components/ReplayList.vue`，取任务第一行的纯文字）不再露出裸引用和 Markdown 记号。
+- 工作页右栏 `components/WorkWaiting.vue` 重写：问题不再一条一张带表单的卡片，改成一两行的清单（第一句、种类、多久前；种类按 `handler` 归成 提问 / 审批 / 流程与编码 / 提议），多于 8 条时可按种类筛选并先列 8 条；点一条在新组件 `components/SideSheet.vue`（右侧抽屉）里回答。候选事项一行一条，“留下 / 不要”在行尾。
+
 ## 关注页重排、线的群由本人定、观察中的线（11-21）
 
 - 关注页 `web/src/views/ListenDetail.vue` 重写：标题右边是开关和删除，一行概况，群收成“N 个群”（点开是名字和最近一条消息多久前，取自 `/api/lark/captured`），原来页内的锚点导航换成标签页 在聊什么 / 经验和案例 / 记忆 / 处理记录 / 设置（`?tab=`）；群的页面是概况、在哪些关注里，再是 案例 / 记忆。嵌在线页面里只有开关和 设置 / 经验和案例 的切换，线页面的这个标签改叫“关注设置”。
