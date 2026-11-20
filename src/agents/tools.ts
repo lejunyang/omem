@@ -3996,6 +3996,8 @@ def({
       replaces: a.replaces,
       ...(a.tone ? { tone: a.tone } : {}),
       ...(a.urgency ? { urgency: a.urgency } : {}),
+      // Pushing a matter on suggests; its card must not offer to close or cancel the matter.
+      ...(a.entity_id && ctx.runId && one(ctx.app.db, "select 1 from runs where id = ? and json_extract(input, '$.listenAssist') is not null", ctx.runId) ? { plain: true } : {}),
       // A handling of someone looking for the owner starts only after the owner had their time with the message (mentions/mentions.ts).
       ...(ctx.runId && one(ctx.app.db, "select 1 from runs where id = ? and json_extract(input, '$.mention') is not null", ctx.runId) ? { graceDone: true } : {}),
     });

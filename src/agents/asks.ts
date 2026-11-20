@@ -539,8 +539,19 @@ export function describeAnswer(a: Ask): string {
 async function deliverAnswer(app: App, ask: Ask) {
   run(app.db, "update asks set consumed = 1 where id = ?", ask.id);
   if (!ask.conversationId) {
+    // A background agent asked and ended before the answer came: it starts again with the answer as its next step.
+    const { createRun, getRun } = await import("./runs.ts");
+    let prev;
+    try { prev = ask.runId ? getRun(app, ask.runId) : null; } catch { prev = null; }
+    const input = (prev?.input ?? {}) as { spec?: string; task?: string; triggers?: unknown; moreTriggers?: unknown; resumeSessionId?: unknown };
+    if (prev && prev.kind === "agent" && input.spec) {
+      const { triggers: _t, moreTriggers: _m, resumeSessionId: _s, ...rest } = input;
+      const task = ["# 本人的回答", "", `${describeAnswer(ask)}\n你（运行 ${prev.id}）问完就结束了，现在按这个回答接着把事情做完。之前的过程用 read_run 读运行 ${prev.id}。`, "", "# 原来的任务", "", input.task ?? ""].join("\n");
+      createRun(app, { kind: "agent", spaceId: prev.spaceId, title: `${input.spec}：按本人的回答接着做`, input: { ...rest, task, resumeFromRun: prev.id }, parentId: prev.parentId, lane: prev.lane, userId: ask.userId });
+      return;
+    }
     const { notify } = await import("../core/notify.ts");
-    notify(app, { userId: ask.userId, title: "已记下你的回答", body: `${describeAnswer(ask)}\n提问的任务已经结束；需要接着做时在对话里说一声。`, entity: "run", entityId: ask.runId ?? undefined });
+    notify(app, { userId: ask.userId, title: "已记下你的回答", body: `${describeAnswer(ask)}\n提问的任务已经结束；需要接着做时在对话里说一声。`, link: ask.runId ? `#/runs/${ask.runId}` : null });
     return;
   }
   const { receive } = await import("./inbox.ts");

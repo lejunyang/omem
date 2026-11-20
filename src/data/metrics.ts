@@ -173,7 +173,7 @@ export async function recordPoints(app: App, idOrName: string, points: { value: 
 async function tellChange(app: App, m: Metric, lines: string[]) {
   const body = `${lines.join("\n")}${m.description ? `\n\n${truncate(m.description, 200)}` : ""}`;
   const { notify } = await import("../core/notify.ts");
-  notify(app, { title: `指标「${m.name}」有变化`, body, urgency: "later", ...(m.itemId ? { entity: "item" as const, entityId: m.itemId } : {}), link: m.itemId ? `#/items/${m.itemId}` : "#/data" });
+  notify(app, { title: `指标「${m.name}」有变化`, body, urgency: "later", plain: true, ...(m.itemId ? { entity: "item" as const, entityId: m.itemId } : {}), link: m.itemId ? `#/items/${m.itemId}` : "#/data" });
   if (m.contextId) {
     const { getContext } = await import("../channels/listen.ts");
     const c = getContext(app, m.contextId);

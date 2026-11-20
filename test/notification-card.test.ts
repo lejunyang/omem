@@ -100,3 +100,12 @@ it("lets a later notification stand for an earlier one: the earlier card is the 
   expect(JSON.parse(before.context).replacedBy).toBe(done.id);
   expect(() => notify(app, { title: "别人的", body: "", replaces: "n_missing" })).toThrow(/没有可以更新的通知/);
 });
+
+it("an update about an item (a suggestion, a metric, a moved deadline) offers no button that closes or cancels it", () => {
+  const app = fresh();
+  const item = upsertItem(app, undefined, { title: "评审消息中心" });
+  const card = JSON.stringify(notificationCard(app, notify(app, { title: "前端还有 11 个讨论没清", body: "建议先交 AI 改已认可的 5 条。", entityId: item.id, plain: true })));
+  expect(card).not.toContain("item:done");
+  expect(card).not.toContain("item:cancel");
+  expect(card).toContain("前端还有 11 个讨论没清");
+});

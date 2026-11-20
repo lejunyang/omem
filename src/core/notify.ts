@@ -63,6 +63,8 @@ export type Notification = {
   urgency?: NotifyUrgency;
   /** An explicitly scheduled reminder (item remind_at): fires at its time even in quiet hours. */
   scheduled?: boolean;
+  /** About an item but not a nudge to finish it (a suggestion, a metric that moved, a deadline that changed): no 已处理 / 忽略 buttons, which would close or cancel the whole item. */
+  plain?: boolean;
   /** Deliver into this Feishu conversation id instead of the owner's private chat (a work topic). */
   larkConversationId?: string;
   /** The daily item digest: items that closed by themselves (can be reopened) and that close soon (can be kept); `candidates`: items the assistant made on its own, kept or not (items/auto.ts); `effects`: nightly replay suggestions to adopt or ignore. */
@@ -102,7 +104,7 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; candidates?: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; plain?: boolean; digest?: { closed: string[]; soon: string[]; candidates?: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
     /** The host already gave the owner their time before this run started (mentions/mentions.ts): no first-nudge grace. */
     graceDone?: boolean;
     reportTool?: string;
@@ -167,6 +169,7 @@ export function notify(
     userId: input.userId ?? "owner",
     urgency: input.urgency ?? "normal",
     ...(input.scheduled ? { scheduled: true } : {}),
+    ...(input.plain ? { plain: true } : {}),
     ...(input.digest ? { digest: input.digest } : {}),
     ...(replaced ? { replaces: replaced.id } : {}),
     // Updating a card that waited on the owner without saying how it reads now: it is settled (green).
@@ -181,7 +184,7 @@ export function notify(
   // straight to the channels, which edit that card without a ping.)
   const held = n.urgency === "later" && !replaced && app.config.notify.laterTimes.length > 0;
   if (held) n.held = true;
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, plain: n.plain, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
   // The earlier one is now history: read, and no longer waiting for the morning.
   if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });

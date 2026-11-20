@@ -347,3 +347,19 @@ describe("asking the owner", () => {
     expect(getAsk(app, q.id).status).toBe("answered");
   });
 });
+
+describe("an answer to a background run that already ended", () => {
+  it("starts that agent again with the answer instead of dropping it", async () => {
+    const app = testApp();
+    const runId = "r_bg_asker";
+    run(app.db, "insert into runs(id,kind,space_id,status,title,input,created_at) values(?,?,?,?,?,?,?)", runId, "agent", "personal", "done", "推进", JSON.stringify({ spec: "assistant", task: "推进这件事", listenAssist: "ctx_x" }), new Date().toISOString());
+    const ask = createAsk(app, { runId, question: "前端的 5 条先交给 AI 改吗？", options: [{ label: "改" }, { label: "先不" }] });
+    await answerAsk(app, ask.id, { choice: 0, by: "owner" });
+    await settleAsks(app, runId);
+    const next = all<{ input: string }>(app.db, "select input from runs where kind = 'agent' and id != ?", runId).map((r) => JSON.parse(r.input));
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ spec: "assistant", resumeFromRun: runId, listenAssist: "ctx_x" });
+    expect(next[0].task).toContain("改");
+    expect(one(app.db, "select 1 from notifications where title = '已记下你的回答'")).toBeUndefined();
+  });
+});

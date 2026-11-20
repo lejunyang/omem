@@ -268,7 +268,7 @@ function decidedDeadline(app: App, c: ChangeRow, runId: string) {
   const item = getItem(app, c.item_id), refs = json<string[]>(c.refs, []);
   applyDeadline(app, c, "agent", runId);
   const previous = one<{ id: string }>(app.db, "select id from notifications where title=? and json_extract(context,'$.entityId')=? order by rowid desc limit 1", `「${item.title}」截止时间变了`, item.id);
-  notify(app, { userId: item.userId, title: `「${item.title}」截止时间变了`, body: `${c.summary}\n新的截止时间：${c.due}\n${refs.join(" ")}`, urgency: "later", entity: "item", entityId: item.id, sourceRefs: refs, runId, link: `#/items/${item.id}`, ...(previous ? { replaces: previous.id } : {}) });
+  notify(app, { userId: item.userId, title: `「${item.title}」截止时间变了`, body: `${c.summary}\n新的截止时间：${c.due}\n${refs.join(" ")}`, urgency: "later", plain: true, entity: "item", entityId: item.id, sourceRefs: refs, runId, link: `#/items/${item.id}`, ...(previous ? { replaces: previous.id } : {}) });
 }
 function changesOfRun(app: App, r: Run) {
   const ids = json<string[]>(JSON.stringify(getRun(app, r.id).output.followChanges ?? []), []);

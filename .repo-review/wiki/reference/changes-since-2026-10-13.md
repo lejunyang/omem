@@ -17,6 +17,12 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 事项的建议卡不再带“已处理 / 忽略”；后台运行结束后才收到的回答接着做（11-20 夜）
+
+- `notify` 多了 `plain`：关于一件事项、但不是催它做完的通知（推进建议、指标变化、截止时间变了）不带“已处理 / 忽略”。这两个按钮会把整件事项标完成或取消，只留给提醒。推进运行（`input.listenAssist`）发的事项通知由 `notify` 工具自动标 `plain`。`src/core/notify.ts`、`src/channels/item-notification.ts`、`src/agents/tools.ts`、`src/data/metrics.ts`、`src/flows/follow.ts`。
+- 推进的任务不再让模型写“回一句…我就开始”（运行结束后接不到回复），只在截止前两天内会误期的风险用 normal，其余 later。`src/channels/listen-assist.ts`。
+- `ask_user` 由没有会话的后台 `agent` 运行发出、本人在它结束后才回答时，以前去调 `notify(entity: "run")` 并按事项去取，结果报错；现在用同一个角色和原来的任务再起一轮（`resumeFromRun`），回答写在任务最前面。别的运行仍然只通知一句。`src/agents/asks.ts` 的 `deliverAnswer`，测试在 `test/asks.test.ts`、`test/notification-card.test.ts`。
+
 ## 在跟的问题：回完接着跟，值班群收进关注（11-20）
 
 - `src/channels/listen-problems.ts`（表 `listen_problems`）：关注的处理和“有人找你”的处理看完一个求助的问题后用 `track_problem`（`wake` 分组，关注的处理轮和有人找你的处理才给）记状态：open / waiting / blocked / closed，已查清的、在等谁、怎样算完（没结的必填）、结论、`recheck_after`。一处一条，结了以后同一处来了别的问题另起一条，旧的留给 listen-coach。

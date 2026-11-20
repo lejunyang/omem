@@ -164,8 +164,8 @@ export function itemNotificationCard(app: App, n: Notification, images: CardImag
       ...(origin ? [{ markdown: origin }] : []),
       {
         buttons: [
-          { text: "已处理", value: `item:done:${n.entityId}`, style: "primary" },
-          { text: "忽略", value: `item:cancel:${n.entityId}` },
+          // Closing or cancelling the item fits a nudge to finish it, not a suggestion or an update about it.
+          ...(n.plain ? [] : [{ text: "已处理", value: `item:done:${n.entityId}`, style: "primary" as const }, { text: "忽略", value: `item:cancel:${n.entityId}` }]),
           ...linkButton(app, n.link).filter((b) => !urls.has(b.url!)),
           ...((n.actions ?? []).map((a) => ({ text: a.label, value: `item:act:${n.entityId}:${a.action}`, ...(a.style ? { style: a.style } : {}) }))),
         ],

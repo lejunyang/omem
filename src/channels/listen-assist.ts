@@ -109,6 +109,6 @@ function assistTask(app: App, c: ListenContext, item: ItemRow, mode: "suggest" |
     mode === "act"
       ? "能只读完成的直接做：用 upsert_item 的 materials_add 把找到的材料挂上，按 observation-plan 写观测计划并用 metric_define 定义指标、metric_record 记下基线，测试清单写成工作文件。要本人拍板或会改动东西的（编码、发消息、改事项状态）只提建议。"
       : "只提建议，不替本人动手。",
-    `最多三条建议，每条写清做什么、为什么（带依据：原件引用、指标、阶段）、本人回一句就能让你接着做的话。用 notify 发给本人（截止前两天内的风险用 urgent，其余 later），并用 write_file（mode=append，path=${assistPath(c)}，item=${item.id}）记下日期和这几条。和之前的建议比没有新东西就调用 stay_quiet。`,
+    `最多三条建议，每条写清做什么、为什么（带依据：原件引用、指标、阶段）、本人要做时从哪开始（事项页、流程页的哪一段，或对主助手说什么）。这次运行结束后接不到本人的回复，不要写“回一句…我就开始”。用 notify 发一条给本人（urgency later；只有截止前两天内、不处理就会误期的风险用 normal），并用 write_file（mode=append，path=${assistPath(c)}，item=${item.id}）记下日期和这几条。和之前的建议比没有新东西就调用 stay_quiet。`,
   ].filter((x) => x !== "").join("\n");
 }
