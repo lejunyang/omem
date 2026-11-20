@@ -18,7 +18,7 @@ import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
 import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
-import { codeWorkSince, findObject, latestCodeWork, objectKind } from "./objects.ts";
+import { codeWorkSettledAt, codeWorkSince, findObject, latestCodeWork, objectKind } from "./objects.ts";
 import { pollObjects } from "./plugin-objects.ts";
 import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
 import { agreedGate, gateGranted, resetGateStreak, revokeGate } from "./gates.ts";
@@ -186,6 +186,36 @@ function placesBrief(app: App, item: Item) {
 
 const ownerTurn = (app: App, f: ItemFlow, d: FlowStage, s: StageRow) =>
   question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
+/** What the owner wrote in this round when they finished, skipped or redid stages, newest first ("将问题发到 MR 吧"). */
+function ownerWords(app: App, f: ItemFlow, stages?: string[]) {
+  return all<{ stage_id: string; note: string; at: string }>(app.db, `select stage_id, note, at from item_stage_log where item_id=? and round=? and actor='owner' and (to_state in ('done','skipped') or event='refuse') and note<>''
+    ${stages ? `and stage_id in (select value from json_each(?))` : ""} and at>=? order by id desc limit 6`, f.itemId, f.round, ...(stages ? [JSON.stringify(stages)] : []), f.roundStartedAt)
+    .filter((r) => !ROUTINE.has(r.note) && !OWNER_DEFAULT.has(r.note) && !r.note.startsWith("上游「"));
+}
+function ownerSaidBrief(app: App, f: ItemFlow) {
+  const words = ownerWords(app, f);
+  return words.length ? `本人在这一轮前面几段说的（以这些为准）：\n${words.map((r) => `- 「${stageName(f, r.stage_id)}」：${truncate(r.note, 400)}`).join("\n")}` : "";
+}
+const OWNER_DEFAULT = new Set(["本人确认完成", "本人做完了", "本人确认", "本人同意开始", "本人判断这一段要做"]);
+/**
+ * The owner's turn comes right after they finished the stage before it with words that already settle
+ * it ("评审结论" finished with "将问题发到 MR 吧" settles "挑问题"): asking again is asking twice. A
+ * decision model reads the words against what this stage asks; unsure or unavailable asks the owner.
+ */
+async function ownerAlreadySaid(app: App, item: Item, f: ItemFlow, d: FlowStage) {
+  if (!d.needs.length || !decisionReady(app)) return null;
+  const said = ownerWords(app, f, d.needs).find((r) => {
+    const up = getStage(app, item.id, r.stage_id);
+    return up.state === "done" && up.note === r.note;
+  });
+  if (!said) return null;
+  const from = stageName(f, said.stage_id);
+  try {
+    const answer = await decide(app, { 事项: item.title, 本人在上一段说的: { 阶段: from, 原话: said.note }, 这一段: { 名称: d.name, 本人要做的: d.note ?? "", 完成条件: typeof d.done === "string" ? d.done : "本人说做完了" } },
+      { type: "yesno", instructions: "本人完成上一段时写了这句话。按这句话，这一段要本人做的事是否已经定了（等于本人对这一段说了“做完了”）？只是相关、只说了一部分、或还要本人另外去做，答否。" });
+    return answer?.choice === "yes" && (answer.probabilities.yes ?? 1) >= 0.7 ? { from, note: said.note } : null;
+  } catch { return null; }
+}
 /** The owner's turn, asked once its signal check found the stage not done yet. */
 function askOwnerNow(app: App, itemId: string, stageId: string, startedAt: string, attempt: number) {
   const f = itemFlow(app, itemId);
@@ -203,6 +233,7 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
   const review = latest?.branchReview ? latest : null;
   return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : materialsBrief(app, item.id, item.userId, { compact: true }), `截止时间：${item.dueAt ?? "未定"}`,
     changesBrief(app, item.id),
+    ownerSaidBrief(app, f),
     placesBrief(app, item),
     `## 流程：${f.definition.name}\n${f.definition.stages.map((s) => `- ${s.id} ${s.name}：${rows.find((r) => r.id === s.id)?.state ?? "pending"}`).join("\n")}`,
     `## 这一段：${d.name}（${d.id}）\n${d.note ?? ""}`,
@@ -310,6 +341,14 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
     const next = changeStage(app, item.id, d.id, "doing", { attempt: s.attempt + 1, enteredAt: at, control: { ...s.control, confirmed: undefined } }, host, "按确认的方向逐个去试");
     await tickTrials(app, item, f, d, next, current, stageAI);
     return true;
+  }
+  if (d.by === "owner" && !(typeof d.done === "object" && "signal" in d.done)) {
+    const said = await ownerAlreadySaid(app, item, f, d);
+    if (said) {
+      withdraw(app, s);
+      changeStage(app, item.id, d.id, "done", { by: "owner", waitingOn: null, askId: null, attempt: s.attempt + 1, enteredAt: at, evidence: [], control: { ...s.control, question: undefined, reported: true } }, host, `你在「${said.from}」时已经说了：${said.note}`);
+      return true;
+    }
   }
   const ai = await stageAI(app, f, d, s, current);
   s = ai.s;
@@ -495,6 +534,13 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
         catch (e) { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `无法开始：${(e as Error).message}`); }
       }
       s = getStage(app, itemId, d.id);
+      if (behindObject(app, item, d, s)) {
+        const kind = typeof d.done === "object" && "object" in d.done ? d.done.object : (d.by as { object: string }).object;
+        const obj = findObject(app, item, kind)!;
+        withdraw(app, s);
+        changeStage(app, itemId, d.id, "done", { by: obj.ref, waitingOn: null, askId: null, evidence: [...new Set([...s.evidence, obj.ref])], control: { ...finishUsage(app, s, at), reported: true } }, host, `卡住以后${objectKind(kind)?.label ?? kind}有了结果（${obj.status}），按它继续`, [obj.ref]);
+        changed = true; continue;
+      }
       // A stage carried by an object keeps following it while its run said it waits for that object
       // (a delegation still coding): only the owner's own turn stops it.
       const following = s.state === "blocked" && typeof d.by === "object" && "object" in d.by && s.waitingOn !== "owner" && !s.control.budgetExceeded && !!findObject(app, item, d.by.object);
@@ -591,6 +637,22 @@ function objectDone(d: FlowStage, obj: NonNullable<ReturnType<typeof findObject>
   return d.done === "confirm" ? false : obj.done;
 }
 
+/**
+ * A stage carried by a delegation or review, stuck (its run ended without a result, it reported a wait)
+ * and the object then reached what the stage waits for: that result is the stage's answer, not the
+ * stale "stuck". The owner's own block (three refusals) and a spent budget stay with the owner.
+ */
+function behindObject(app: App, item: Item, d: FlowStage, s: StageRow) {
+  if (s.state !== "blocked" || s.control.budgetExceeded || typeof d.by !== "object" || !("object" in d.by) || d.by.object.includes(":")) return false;
+  const kind = typeof d.done === "object" && "object" in d.done ? d.done.object : d.by.object;
+  if (kind !== "code-work") return false;
+  const obj = findObject(app, item, kind);
+  if (!obj || obj.dropped || !objectDone(d, obj)) return false;
+  const settled = codeWorkSettledAt(app, item);
+  if (!settled || settled <= s.since) return false;
+  const blockedBy = one<{ actor: string }>(app.db, "select actor from item_stage_log where item_id=? and stage_id=? and to_state='blocked' order by id desc limit 1", item.id, d.id)?.actor;
+  return blockedBy !== "owner";
+}
 function usedMinutes(app: App, s: StageRow, at: Date) {
   const r = s.control.runId ? one<{ status: string; started_at: string | null; finished_at: string | null }>(app.db, "select status,started_at,finished_at from runs where id=?", s.control.runId) : null;
   const start = r?.status === "queued" ? undefined : s.control.budgetStartedAt;
@@ -728,6 +790,8 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
   if (!f) throw new HttpError(409, "事项没有流程");
   const d = definition(f, stageId);
   let s = getStage(app, itemId, stageId);
+  // The owner's own turn done needs no reason: doing it was the point.
+  if (action === "done" && d.by === "owner" && s.state === "doing" && !note.trim()) note = "本人做完了";
   if (["skip", "done", "reopen"].includes(action) && !note.trim()) throw new HttpError(400, "需要写明原因或说明");
   if (action === "skip" && s.state === "done") throw new HttpError(409, "已完成阶段不能跳过，请先重开");
   if (action === "done" && !["doing", "blocked", "gated"].includes(s.state)) throw new HttpError(409, "只能手动完成进行中、卡住或等确认的阶段");

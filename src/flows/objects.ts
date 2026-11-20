@@ -40,6 +40,18 @@ export function codeWorkSince(app: App, item: Item, since: string): FlowObject |
 }
 
 /**
+ * When the delegation this item follows last finished something: a round, or a review of one (a branch
+ * review's conclusion comes from its review runs). A stage stuck before that is behind the object.
+ */
+export function codeWorkSettledAt(app: App, item: Item): string | null {
+  const w = latestCodeWork(app, item);
+  if (!w) return null;
+  const ids = w.roundList.map((x) => x.id);
+  const marks = ids.map(() => "?").join(",");
+  return one<{ at: string | null }>(app.db, `select max(finished_at) at from runs where finished_at is not null and (id in (${marks}) or parent_id in (${marks}))`, ...ids, ...ids)?.at ?? null;
+}
+
+/**
  * This item's change went into another item's delegation on the same branch (continue_code_run when=now with
  * item_id): the delegation is listed on this item too, and its flow follows it like its own.
  */

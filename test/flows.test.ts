@@ -473,6 +473,55 @@ describe("对象与工具", () => {
     expect(task).toContain("不要发起 delegate_code");
     expect(task).not.toContain("按这件事的需求点发起交办");
   });
+  it("跟着评审的段卡住以后评审才出结论：按结论完成，不再停在卡住；本人自己的卡住不动", async () => {
+    const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } }), stage("b", { by: "wait" })]);
+    const review = createRun(app, { kind: "code", spaceId: "personal", title: "同事分支的评审", input: { itemId: item.id, repos: ["personal"], branches: { personal: "feature/refund" } }, userId: "owner" });
+    addMaterials(app, item.id, [{ kind: "run", ref: review.id }], "owner");
+    await advance(app, item.id);
+    await reopenStage(app, item.id, "a", "群里说图标要换成耳麦", [], owner, { feedback: true });
+    const stageRun = s("a").by!;
+    run(app.db, "update runs set status='done' where id=?", stageRun);
+    await advance(app, item.id); expect(s("a").state).toBe("blocked");
+    // The review that was running all along concludes afterwards, in a review run under the delegation.
+    const later = new Date(Date.now() + 60_000).toISOString();
+    setRunOutput(app, review.id, { verdict: "changes-requested" }); run(app.db, "update runs set status='done', finished_at=? where id=?", later, review.id);
+    const child = createRun(app, { kind: "review", spaceId: "personal", title: "评审", parentId: review.id, userId: "owner" });
+    run(app.db, "update runs set status='done', finished_at=? where id=?", later, child.id);
+    await advance(app, item.id);
+    expect(s("a")).toMatchObject({ state: "done", by: `code-work:${review.id}` });
+    expect(s("a").note).toContain("有了结果");
+    expect(s("b").state).toBe("doing");
+    const other = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);
+    const r2 = createRun(other.app, { kind: "code", spaceId: "personal", title: "评审", input: { itemId: other.item.id, repos: ["personal"], branches: { personal: "feature/x" } }, userId: "owner" });
+    addMaterials(other.app, other.item.id, [{ kind: "run", ref: r2.id }], "owner");
+    run(other.app.db, "update item_stages set state='blocked', waiting_on='owner', since='2026-01-01T00:00:00.000Z' where item_id=? and stage_id='a'", other.item.id);
+    run(other.app.db, "insert into item_stage_log(item_id,stage_id,at,from_state,to_state,actor,run_id,refs,note,round) values(?,?,?,?,?,?,?,?,?,?)", other.item.id, "a", "2026-01-01T00:00:00.000Z", "doing", "blocked", "owner", null, "[]", "三次仍未确认", 1);
+    setRunOutput(other.app, r2.id, { verdict: "changes-requested" }); run(other.app.db, "update runs set status='done', finished_at=? where id=?", later, r2.id);
+    await advance(other.app, other.item.id);
+    expect(other.s("a").state).toBe("blocked");
+  });
+  it("本人完成上一段时写的话已经定了下一段：本人的段不再问，下一段的任务带上原话；拿不准就照常问", async () => {
+    const flow = [stage("a", { by: "wait" }), stage("pick", { by: "owner", note: "在评审概览里定每个问题", done: "定好了要发的问题" }), stage("send", { note: "把定为改的问题发到合并请求" })];
+    const { app, item, s } = await setup(flow, { autoAdvance: 20 });
+    vi.mocked(decisionReady).mockReturnValue(true);
+    vi.mocked(decide).mockResolvedValue({ choice: "yes", probabilities: { yes: 0.9, no: 0.1 }, confidence: 0.9, by: "test" });
+    await ownerAction(app, item.id, "a", "done", "问题都认可，发到 MR 吧");
+    expect(vi.mocked(decide).mock.calls[0][2]).toMatchObject({ type: "yesno" });
+    expect(JSON.stringify(vi.mocked(decide).mock.calls[0][1])).toContain("问题都认可，发到 MR 吧");
+    expect(s("pick")).toMatchObject({ state: "done", askId: null });
+    expect(s("pick").note).toContain("你在「a」时已经说了：问题都认可，发到 MR 吧");
+    expect(s("send").state).toBe("doing");
+    expect(String(getRun(app, s("send").by!).input.task)).toContain("「a」：问题都认可，发到 MR 吧");
+
+    const unsure = await setup(flow, { autoAdvance: 20 });
+    vi.mocked(decide).mockResolvedValue({ choice: "yes", probabilities: { yes: 0.55, no: 0.45 }, confidence: 0.55, by: "test" });
+    await ownerAction(unsure.app, unsure.item.id, "a", "done", "先看看");
+    expect(unsure.s("pick")).toMatchObject({ state: "doing", by: "owner", waitingOn: "owner" });
+    expect(unsure.s("pick").askId).toBeTruthy();
+    // The owner's own step is done without having to write why.
+    await ownerAction(unsure.app, unsure.item.id, "pick", "done", "");
+    expect(unsure.s("pick")).toMatchObject({ state: "done", note: "本人做完了" });
+  });
   it("运行没交结果也没发起交办：卡片分段写，内部编号连同代码引号一起去掉", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } })]);
     await reopenStage(app, item.id, "a", "按新稿改", [], owner, { feedback: true });

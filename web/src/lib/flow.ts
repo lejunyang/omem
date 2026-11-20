@@ -161,7 +161,7 @@ export function stageActions(s: FlowStage): FlowAction[] {
   if (s.question === "refuse" && ownerTurn(s)) return [{ action: "reopen", label: "还不行", reason: true }];
   if (s.question === "done" && ["doing", "gated"].includes(s.state)) return [{ action: "confirm", label: "确认" }, { action: "reopen", label: "还不行", reason: true }];
   if (s.state === "gated") return [{ action: "confirm", label: "开始" }, { action: "hold", label: "先别做" }, { action: "skip", label: "跳过这一段", reason: true }];
-  if (s.state === "doing" && s.by === "owner") return [{ action: "done", label: "做完了", reason: true }, { action: "skip", label: "跳过这一段", reason: true }];
+  if (s.state === "doing" && s.by === "owner") return [{ action: "done", label: "做完了" }, { action: "skip", label: "跳过这一段", reason: true }];
   return [];
 }
 export function nextWords(s: FlowStage) {

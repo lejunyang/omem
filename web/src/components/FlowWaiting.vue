@@ -13,7 +13,8 @@ import { nextWords, ownerTurn, stageActions, stageWords, type FlowAction, type F
  * (a review's findings decided, then "做完了" on the flow's own step), whatever that step is.
  * Given `flow`, it shows that view; else it reads the item's flow itself and keeps it current.
  */
-const props = defineProps<{ item: { id: string; title: string; spaceId: string }; flow?: FlowView | null; editable?: boolean; titled?: boolean }>();
+// `editable` defaults to true: Vue reads a boolean prop left out as false, which hid every button on run pages.
+const props = withDefaults(defineProps<{ item: { id: string; title: string; spaceId: string }; flow?: FlowView | null; editable?: boolean; titled?: boolean }>(), { flow: undefined, editable: true });
 const emit = defineEmits<{ changed: [view: FlowView | null] }>();
 const router = useRouter();
 
@@ -37,7 +38,7 @@ const off = onServerEvent((e) => { if (props.flow === undefined && e.type === "c
 const resync = onServerResync(() => void load());
 onBeforeUnmount(() => { ++seq; off(); resync(); });
 
-const may = computed(() => props.editable !== false);
+const may = computed(() => props.editable);
 const waiting = computed(() => (view.value?.flow?.endedAt ? [] : ((view.value?.stages ?? []) as FlowStage[]).filter((s) => ownerTurn(s) || s.state === "blocked")));
 const text = (s: FlowStage) => s.result || s.note;
 
@@ -51,6 +52,13 @@ function replyMeaning(s: FlowStage) {
 }
 /** The stage's buttons, less "reopen": with a box for words, sending them is the reopen. */
 const buttons = (s: FlowStage) => stageActions(s).filter((a) => !(a.action === "reopen" && replyMeaning(s)));
+/** A box whenever words do something here: sent on their own, or carried by a button (a reason, or how the owner's own step went). */
+const boxed = (s: FlowStage) => !!replyMeaning(s) || buttons(s).some((a) => a.reason) || s.state === "doing" && s.by === "owner";
+function placeholder(s: FlowStage) {
+  if (replyMeaning(s)) return `写一句话：${replyMeaning(s)}；点下面需要原因的按钮时也用这里的话`;
+  if (s.state === "doing" && s.by === "owner") return "可以写一句怎么定的、结果在哪，点「做完了」时一起记下；跳过要写原因";
+  return "写一句原因，再点下面的按钮";
+}
 async function act(s: FlowStage, a: FlowAction) {
   if (busy.value || !may.value) return;
   const note = replies.value[s.id]?.trim();
@@ -95,7 +103,7 @@ function discuss(s: FlowStage) {
       <p>{{ nextWords(s) }}</p>
       <Markdown v-if="s.state === 'blocked' && text(s)" :source="text(s)" class="prose" />
       <template v-if="may">
-        <textarea v-if="replyMeaning(s)" v-model="replies[s.id]" class="textarea" rows="2" :placeholder="`写一句话：${replyMeaning(s)}；点下面需要原因的按钮时也用这里的话`" />
+        <textarea v-if="boxed(s)" v-model="replies[s.id]" class="textarea" rows="2" :aria-label="`给「${s.name}」写的话`" :placeholder="placeholder(s)" />
         <div class="row wrap">
           <button v-for="(a, i) in buttons(s)" :key="a.label" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button>
           <button v-if="replyMeaning(s)" type="button" class="btn sm" :disabled="busy || !replies[s.id]?.trim()" @click="reply(s)">{{ replyMeaning(s) }}</button>

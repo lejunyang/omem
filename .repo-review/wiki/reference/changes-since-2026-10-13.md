@@ -16,6 +16,14 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 流程：评审出了结论不再停在卡住，本人上一段的话带到下一段（11-20）
+
+- `src/flows/engine.ts` 的 `behindObject`：跟着交办或评审的段卡住了（运行没交结果、报了等待），之后交办的一轮或它的评审运行才结束、状态到了这一段要的（如 `findings` / `review-ok`）：按结论完成，不再一直停在“卡住”。时间取 `objects.ts codeWorkSettledAt`（各轮和它们评审子运行最晚的 `finished_at`）；本人自己的卡住（三次不认可）和预算用完的不动。
+- `ownerAlreadySaid`：本人承担的段轮到时，前一段刚由本人带一句话完成（“将问题发送评论到 MR 里吧”），先用决策模型判断这句话是否已经定了这一段；判是（概率 ≥ 0.7）就记成做完，记录写“你在「…」时已经说了：…”，没配模型、判否或拿不准照常问本人。阶段任务（`stageTask`）多“本人在这一轮前面几段说的”（`ownerSaidBrief`），后面的段按本人原话做。
+- 本人自己的段点“做完了”不必写原因（宿主记“本人做完了”），跳过仍要写。
+- `web/src/components/FlowWaiting.vue`：`editable` 用 `withDefaults` 默认 true（Vue 把没传的布尔 prop 当 false，运行页上等你的卡片因此一个按钮都没有）；本人自己的段和要写原因的按钮都有输入框（之前“挑问题”没有框、点“做完了”又要求写原因）。
+- 测试：`test/flows.test.ts`“跟着评审的段卡住以后评审才出结论”“本人完成上一段时写的话已经定了下一段”。
+
 ## 流程：本人自己说的变化直接并进，编码段认出已在做的交办（11-20）
 
 - `src/flows/follow.ts`：批次里的行带 `owner`（聊天按 `sender_kind = 'owner'`，会话里本人自己的话；会话里同事的话按 `meta.asker` 标成同事，不再写成“本人”）。`note_item_change` 的 scope / decision 带 `decided: true`、引用里有本人那句话时记进运行的 `followOwnWords`；`finishFollow` 不为它们发卡片，按受影响的第一段分组，每段 `reopenStage` 一次（带反馈，actor 是本人，和本人在卡片上选“并进”一样），失败时改为出卡片问本人。`finishFollow` 现在返回 Promise（卡片和游标在同步部分已经定了）。
