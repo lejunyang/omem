@@ -3,6 +3,7 @@ import { all } from "../core/db.ts";
 import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { toAsk } from "../agents/asks.ts";
 import { draftSkillSummary } from "../agents/specs.ts";
+import { plainText } from "../search/present.ts";
 import { CHANGE_COLS, type changeLite } from "./changes.ts";
 import { listItems } from "./store.ts";
 
@@ -18,9 +19,7 @@ export type PendingAction = {
 
 function titleOf(text: string) {
   const paragraph = text.trim().split(/\r?\n\s*\n/, 1)[0];
-  const plain = paragraph.replace(/^\s*(?:#{1,6}|>|[-+*]|\d+[.)])\s+/gm, "").replace(/!?\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1")
-    .replace(/(\*\*|__|~~|`)(.+?)\1/g, "$2").replace(/\*([^*]+)\*/g, "$1").replace(/\s+/g, " ").trim();
+  const plain = plainText(paragraph);
   return plain.match(/^.*?(?:[。！？!?]|\.(?=\s|$)|$)/)?.[0] ?? plain;
 }
 

@@ -18,7 +18,7 @@ describe("pending actions", () => {
       ["theirs", "personal-member", "member", "candidate", null], ["revoked", "personal", "member", "candidate", null],
     ]) run(app.db, "insert into items(id,space_id,user_id,title,status,parent_id,kind,created_at,updated_at) values(?,?,?,?,?,?,'todo',?,?)", id, space, user, id, status, parent, at, at);
     for (const [id, user, item] of [["q", "owner", "leaf"], ["mine", "member", "theirs"], ["hidden", "member", "revoked"]])
-      run(app.db, `insert into asks(id,user_id,kind,question,options,status,created_at,context) values(?,?,'question',?,'[]','pending',?,?)`, id, user, "**要确认吗？** 下一句。\n\n理由", at, JSON.stringify({ handler: "item-follow", itemId: item }));
+      run(app.db, `insert into asks(id,user_id,kind,question,options,status,created_at,context) values(?,?,'question',?,'[]','pending',?,?)`, id, user, "**要确认**<b>吗</b>？ 下一句。\n\n理由", at, JSON.stringify({ handler: "item-follow", itemId: item }));
     run(app.db, `insert into asks(id,user_id,kind,question,options,status,created_at,context)
       values('hidden-line','member','question','建成工作线？','[]','pending',?,?)`, at,
       JSON.stringify({ handler: "line-propose", proposals: [{ items: ["revoked"] }] }));

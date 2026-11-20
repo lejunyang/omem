@@ -35,8 +35,10 @@ export function plainText(raw: string): string {
   t = t.replace(/<\/(td|th)\s*>/gi, " | ").replace(/<\/(tr|p|div|li|h[1-6]|ul|ol|table|blockquote|pre)\s*>/gi, "\n").replace(/<br\s*\/?>/gi, "\n");
   t = t.replace(/<!--[\s\S]*?-->/g, "").replace(/<\/?[A-Za-z][^<>]*>/g, "");
   t = t.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
-    if (/^#x/i.test(e)) return String.fromCodePoint(parseInt(e.slice(2), 16) || 32);
-    if (e[0] === "#" && /^#\d+$/.test(e)) return String.fromCodePoint(Number(e.slice(1)) || 32);
+    if (e[0] === "#") {
+      const code = /^#x/i.test(e) ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+      return code <= 0x10ffff ? String.fromCodePoint(code || 32) : m;
+    }
     return ENTITIES[e.toLowerCase()] ?? m;
   });
   // Markdown: images and links keep their text, wiki links their label.
