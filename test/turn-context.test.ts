@@ -11,6 +11,7 @@ import { upsertItem } from "../src/items/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { saveContext } from "../src/channels/listen.ts";
+import { settleChange } from "../src/flows/follow.ts";
 import { addChange } from "../src/items/changes.ts";
 import { defineMetric } from "../src/data/metrics.ts";
 import { one, run } from "../src/core/db.ts";
@@ -121,6 +122,22 @@ describe("当轮事项", async () => {
     expect(r.status).toBe("done");
     const prompt = JSON.parse(readFileSync(prompts, "utf8").trim().split("\n").at(-1)!) as string;
     for (const text of ["正在核对运费", "下一步 · 核对", "[范围] 部分退款", "[结果] 测试订单", "越过门槛 · 重试次数：15", "跟进运费口径。", `read_item(${line.id})`]) expect(prompt).toContain(text);
+  });
+
+  it("否决改期后在同一工作线追问，材料明确标出否决结果", async () => {
+    const line = upsertItem(app, undefined, { kind: "line", title: "项目验收" });
+    saveContext(app, { kind: "item", itemId: line.id, name: "验收进展" });
+    const at = new Date().toISOString();
+    run(app.db, "insert into item_changes(id,item_id,at,type,summary,due,refs,run_id,updated_at) values('deadline-demo',?,?,'deadline','验收延期到周五','2026-12-04','[]','demo',?)", line.id, at, at);
+    const latest = () => JSON.parse(readFileSync(prompts, "utf8").trim().split("\n").at(-1)!) as string;
+    const q = await (await ask({ itemId: line.id })).json();
+    await waitForRun(app, q.runId);
+    expect(latest()).toMatch(/近期变化（改期待定） · .*? \[截止\] 验收延期到周五/);
+    run(app.db, "update item_changes set status='asked' where id='deadline-demo'");
+    await settleChange(app, line.id, "deadline-demo", "dismiss", "owner");
+    const follow = await (await ask({ conversationId: q.conversationId, text: "最新安排是什么？" })).json();
+    await waitForRun(app, follow.runId);
+    expect(latest()).toMatch(/近期变化（已否决） · .*? \[截止\] 验收延期到周五/);
   });
 
   it("提问入口拒绝别人的事项，新会话持续记住入口事项", async () => {

@@ -8,7 +8,8 @@ import { descendantIds } from "../items/tree.ts";
 import type { itemFocus } from "./turn-context.ts";
 
 type Focus = ReturnType<typeof itemFocus>;
-type Change = { at: string; type: string; summary: string };
+type Change = { at: string; type: string; summary: string; status: string; due: string | null };
+const changeStates: Record<string, string> = { dismissed: "已否决", split: "已另开事项", merged: "已采纳", noted: "已记录" };
 const kinds: Record<string, string> = { scope: "范围", decision: "决定", deadline: "截止", blocker: "阻塞", info: "信息", stage: "阶段", result: "结果", owner: "负责人", resolved: "解决" };
 const stageStates: Record<string, string> = { doing: "进行中", blocked: "卡住", gated: "待确认" };
 const status: Record<string, string> = { open: "待办", waiting: "等待", snoozed: "稍后", done: "完成", expired: "已过期", cancelled: "取消", candidate: "候选" };
@@ -67,11 +68,14 @@ export function focusBlock(app: App, focus: Focus, userId: string) {
   const root = line?.id ?? item.id;
   const family = line ? [root, ...descendantIds(app, root)] : [item.id];
   const ids = all<{ id: string }>(app.db, `select id from items where id in (select value from json_each(?)) and user_id=? and (? is null or space_id in (select value from json_each(?)))`, JSON.stringify(family), userId, spaces && JSON.stringify(spaces), JSON.stringify(spaces)).map(r => r.id);
-  const changes = (asked: boolean) => all<Change>(app.db, `select at,type,summary from item_changes where item_id in (select value from json_each(?)) and noise=0
+  const changes = (asked: boolean) => all<Change>(app.db, `select at,type,summary,status,due from item_changes where item_id in (select value from json_each(?)) and noise=0
     and ${asked ? "status='asked'" : "status!='asked' and at>=?"} order by at desc,id desc limit ?`, JSON.stringify(ids), ...(asked ? [] : [new Date(Date.now() - 7 * 86400_000).toISOString()]), asked ? 3 : 5);
   for (const asked of [true, false]) {
     const label = asked ? "待定" : "近期变化";
-    block(label, changes(asked).map(c => `${label} · ${date(c.at)} [${kinds[c.type] ?? c.type}] ${compact(c.summary, 65)}`), asked ? 260 : 400);
+    block(label, changes(asked).map(c => {
+      const state = c.type === "deadline" && c.due && c.status === "noted" ? "改期待定" : changeStates[c.status] ?? c.status;
+      return `${asked ? label : `${label}（${state}）`} · ${date(c.at)} [${kinds[c.type] ?? c.type}] ${compact(c.summary, 65)}`;
+    }), asked ? 260 : 400);
   }
   block("指标", flaggedOnLine(app, ids, spaces).map(s => `越过门槛 · ${compact(s, 70)}`), 235);
   if (listen && (!spaces || (spaces.includes(listen.spaceId ?? item.spaceId)))) {
