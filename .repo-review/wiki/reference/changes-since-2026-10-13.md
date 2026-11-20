@@ -17,6 +17,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 插件订阅事项与评审、同步外部条目、直接采集指标（11-21）
+
+从 `packages/plugin-sdk/server.ts` 看三个接口，从 `src/plugins/process-hooks.ts` 看注册、声明校验与用户连接范围。`src/plugins/event-store.ts` 和 `event-delivery.ts` 负责同事务入队和按实体投递。事项同步通过 `/api/item-sync` 配置，指标从 `src/data/metrics.ts` 的 `collectDue` 进入。
+
 ## 设置页按“本人在想什么事”重新分组（11-21）
 
 - `web/src/views/Settings.vue` 从两千多行拆成导航、目录、读写配置的公共部分（`views/settings/ctx.ts`）和每个标签一个懒加载文件（`views/settings/*.vue`）。分组：知识（空间 / 采集 / 检索与记忆 / 占用）、助手（通知与打扰 / 代你回复 / 推进工作 / 自检与复盘 / 定时任务）、AI（后端与模型 / 插件）、渠道与协作（渠道 / 成员 / 设备 / 分享）、系统（安全 / 外观与说明）。原“AI”标签的 21 张卡只留 6 张和后端有关的，其余按用途搬走；“连接”改叫“采集”，关注不在设置里管。
