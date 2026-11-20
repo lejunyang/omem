@@ -366,13 +366,16 @@ describe("台账、发现、证据和权限", () => {
       expect((await callTool({ ...ctx(f), ...patch }, "close_direction", { direction: d, state: "done", conclusion: "完成" })).isError).toBe(true);
     }
   });
-  it("HTTP 按空间可读，写限本人，发现否决仅改这一条", async () => {
+  it("HTTP 按事项归属授权，发现否决仅改这一条", async () => {
     const f = await setup({ budget: { trials: 1 } }); await select(f, 2); await result(f, "failed");
     const t = trials(f.app, f.item.id)[0], d = direction(f.app, t.direction_id);
     const finding = recordFinding(f.app, { item: f.item.id, kind: "defect", title: "错误参数仍成功", repro: "demo-cli --bad 退出 0", trials: [t.id] });
     const server = await startServer(f.app, { port: 0, quiet: true }); servers.push(server); const url = `/api/items/${f.item.id}/study`;
     createUser(f.app, { id: "reader-study", name: "成员甲" }); const headers = { authorization: `Bearer ${createApiToken(f.app, "reader-study")}` };
-    expect((await server.inject({ url, headers })).statusCode).toBe(404); addMember(f.app, "personal", "reader-study", "editor"); expect((await server.inject({ url, headers })).statusCode).toBe(200);
+    expect((await server.inject({ url, headers })).statusCode).toBe(404);
+    addMember(f.app, "personal", "reader-study", "editor");
+    expect((await server.inject({ url, headers })).statusCode).toBe(404);
+    expect((await server.inject({ url })).statusCode).toBe(200);
     expect((await server.inject({ method: "POST", url: `${url}/findings/${finding}`, headers, payload: { state: "rejected" } })).statusCode).toBe(403);
     expect((await server.inject({ method: "POST", url: `${url}/findings/${finding}`, payload: { state: "rejected", reason: "这是预期行为" } })).json().findings[0]).toMatchObject({ state: "rejected", stateReason: "这是预期行为" });
     expect((await server.inject({ method: "POST", url: `${url}/directions/${d.id}/close`, payload: { state: "done", conclusion: "验收完成" } })).json().directions[0].state).toBe("done");

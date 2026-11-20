@@ -67,8 +67,8 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     if (!previous && item) {
       thread = updateThread(app, thread.id, { settings: { ...thread.settings, itemId: item.id } });
       if (canWrite(app, userId, item.spaceId)) {
-        const { addMaterials } = await import("../items/materials.ts");
-        addMaterials(app, item.id, [{ kind: "conversation", ref: thread.id }], userId, "user");
+        const { addLocalMaterials } = await import("../items/materials.ts");
+        addLocalMaterials(app, item.id, [{ kind: "conversation", ref: thread.id }], userId, "user");
       }
     }
     if (thread.userId !== userId && !canWrite(app, userId, thread.spaceId)) throw new HttpError(403, "不能在别人的会话里发消息");

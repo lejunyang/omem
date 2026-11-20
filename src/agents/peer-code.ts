@@ -173,7 +173,7 @@ export async function peerWorkspace(app: App, runId: string, caller: string, a: 
         const cmds = peerCommands(app, w.space);
         return `- ${w.space}：分支 ${w.branch}（从 ${w.base.slice(0, 8)} 起）${Object.keys(cmds).length ? `\n  可以运行的命令（action=run，command 写名字，args 追加参数）：\n${Object.entries(cmds).map(([k, v]) => `  - ${k}：${v}`).join("\n")}` : "\n  本人没有给这个仓库设可以运行的命令（仓库设置里的检查命令、准备命令、设备 Agent 可运行的命令）"}`;
       }).join("\n");
-      const item = input.itemId ? `\n\n${materialsBrief(app, input.itemId, runUser(app, root.id))}` : "";
+      const item = input.itemId ? `\n\n${await materialsBrief(app, input.itemId, runUser(app, root.id))}` : "";
       // What the business and its repositories say about how they work: their SPACE.md and the skills mounted on them.
       const { spaceGuide } = await import("../wiki/store.ts");
       const { spaceSkillsText } = await import("./specs.ts");

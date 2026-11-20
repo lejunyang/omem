@@ -1,8 +1,11 @@
+import { canReadRun } from "../auth/permissions.ts";
+import { sourceReadable, sourceVisible } from "../auth/visibility.ts";
+import { requireItem } from "./access.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError, json, now } from "../core/util.ts";
-import { accessibleSpaces } from "../core/users.ts";
+import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { reqBrief, findReq, pathText, reqPath } from "./requirements.ts";
 import { addItemEvent, getItem } from "./store.ts";
 import { objectMaterialBrief } from "../flows/plugin-objects.ts";
@@ -84,9 +87,25 @@ function resolve(app: App, kind: MaterialKind, ref: string): { spaceId: string |
  * Add materials to an item; the reader must be able to see each one (its space), and only its own
  * conversations and runs. Adding one that is there already updates its label and note.
  */
-export function addMaterials(app: App, itemId: string, list: MaterialInput[], userId: string, by: "user" | "agent" = "agent") {
-  const item = getItem(app, itemId);
-  if (item.userId !== userId) throw new HttpError(403, "不能修改他人的事项");
+export async function addMaterials(app: App, itemId: string, list: MaterialInput[], userId: string, by: "user" | "agent" = "agent") {
+  requireItem(app, itemId, userId, "write");
+  const attach = await prepareMaterials(app, list, userId, by);
+  return attach(itemId);
+}
+
+/** Resolve remote permissions before entering the transaction that may create the item. */
+export async function prepareMaterials(app: App, list: MaterialInput[], userId: string, by: "user" | "agent") {
+  for (const m of list) {
+    if (m.kind === "source" && !(await sourceReadable(app, userId, normalize(m)))) throw new HttpError(403, "不能访问这份原件");
+  }
+  return (itemId: string) => persistMaterials(app, itemId, list, userId, by);
+}
+
+// References without a remote source can participate in a synchronous database transaction.
+export const addLocalMaterials: (app: App, itemId: string, list: (MaterialInput & { kind: Exclude<MaterialKind, "source"> })[], userId: string, by?: "user" | "agent") => Material[] = persistMaterials;
+
+function persistMaterials(app: App, itemId: string, list: MaterialInput[], userId: string, by: "user" | "agent" = "agent") {
+  requireItem(app, itemId, userId, "write");
   const allowed = accessibleSpaces(app, userId);
   const added: Material[] = [];
   for (const m of list) {
@@ -95,6 +114,7 @@ export function addMaterials(app: App, itemId: string, list: MaterialInput[], us
     if (!ref || ref === "#") throw new HttpError(400, "材料缺少 ref");
     const r = resolve(app, m.kind, ref);
     if (allowed && r.spaceId && !allowed.includes(r.spaceId)) throw new HttpError(403, `不能访问空间 ${r.spaceId}`);
+    if (m.kind === "source" && sourceVisible(app, userId, ref) !== true) throw new HttpError(403, "不能访问这份原件");
     if (r.userId && r.userId !== userId) throw new HttpError(403, "只能加自己的会话和运行");
     const meta: Material["meta"] = {
       ...(m.kind === "repo" ? { space: ref.split("#")[0], branch: ref.split("#")[1] || undefined, base: m.base?.trim() || undefined } : {}),
@@ -112,8 +132,7 @@ export function addMaterials(app: App, itemId: string, list: MaterialInput[], us
 
 /** Remove by material id or by `kind:ref`. */
 export function removeMaterials(app: App, itemId: string, keys: (number | string)[], userId: string, by: "user" | "agent" = "agent") {
-  const item = getItem(app, itemId);
-  if (item.userId !== userId) throw new HttpError(403, "不能修改他人的事项");
+  requireItem(app, itemId, userId, "write");
   const gone: string[] = [];
   for (const key of keys) {
     const row = typeof key === "number" || /^\d+$/.test(key)
@@ -129,24 +148,28 @@ export function removeMaterials(app: App, itemId: string, keys: (number | string
 }
 
 /** Materials with their current state, limited to what this reader may see. */
-export function materialViews(app: App, itemId: string, userId: string): MaterialView[] {
+export async function materialViews(app: App, itemId: string, userId: string): Promise<MaterialView[]> {
   const allowed = accessibleSpaces(app, userId);
-  const item = getItem(app, itemId);
-  return itemMaterials(app, itemId).map((m) => {
+  const item = requireItem(app, itemId, userId, "read");
+  const views: MaterialView[] = [];
+  for (const m of itemMaterials(app, itemId)) {
     try {
       const r = resolve(app, m.kind, m.ref);
       if (m.kind === "object") r.spaceId = item.spaceId;
-      const readable = !allowed || !r.spaceId || allowed.includes(r.spaceId);
-      return { ...m, spaceId: r.spaceId, title: readable ? r.title : m.label, status: r.status ?? null, readable, changed: !!(m.meta.hash && r.hash && m.meta.hash !== r.hash), missing: m.kind !== "object" && r.status === "deleted" };
+      const readable = (!allowed || !r.spaceId || allowed.includes(r.spaceId))
+        && (m.kind !== "source" || await sourceReadable(app, userId, m.ref))
+        && (m.kind !== "run" || canReadRun(app, userId, m.ref));
+      if (readable || userId === OWNER) views.push({ ...m, spaceId: r.spaceId, title: readable ? r.title : m.label, status: r.status ?? null, readable, changed: !!(m.meta.hash && r.hash && m.meta.hash !== r.hash), missing: m.kind !== "object" && r.status === "deleted" });
     } catch {
-      return { ...m, spaceId: null, title: m.label, status: null, readable: false, changed: false, missing: true };
+      if (userId === OWNER) views.push({ ...m, spaceId: null, title: m.label, status: null, readable: false, changed: false, missing: true });
     }
-  });
+  }
+  return views;
 }
 
 /** Spaces a review or delegation of the item should be able to read. */
-export function materialSpaces(app: App, itemId: string, userId: string) {
-  return [...new Set(materialViews(app, itemId, userId).filter((m) => m.readable && !m.missing && m.spaceId && m.kind !== "run").map((m) => m.spaceId!))];
+export async function materialSpaces(app: App, itemId: string, userId: string) {
+  return [...new Set((await materialViews(app, itemId, userId)).filter((m) => m.readable && !m.missing && m.spaceId && m.kind !== "run").map((m) => m.spaceId!))];
 }
 
 const COMPACT_MATERIALS = 12, COMPACT_DETAIL = 1500;
@@ -157,9 +180,9 @@ const KIND_LABEL: Record<MaterialKind, string> = { source: "原件", conversatio
  * among them, the tree under them follows; `since` lists the business changes after that time (the
  * delegation's earlier rounds were built before them).
  */
-export function materialsBrief(app: App, itemId: string, userId: string, opts: { since?: string; compact?: boolean } = {}) {
+export async function materialsBrief(app: App, itemId: string, userId: string, opts: { since?: string; compact?: boolean } = {}) {
   const item = getItem(app, itemId);
-  const all_ = materialViews(app, itemId, userId).filter((m) => m.readable && !m.missing);
+  const all_ = (await materialViews(app, itemId, userId)).filter((m) => m.readable && !m.missing);
   const reqs = all_.filter((m) => m.kind === "req").map((m) => m.ref);
   const every = all_.filter((m) => m.kind !== "req");
   // A flow stage reads what it needs with tools: the latest materials and a short description are
@@ -187,7 +210,7 @@ export function materialsBrief(app: App, itemId: string, userId: string, opts: {
  */
 export function linkRunToItem(app: App, run: { id: string; title: string; input: Record<string, unknown> }, itemId: string, userId: string) {
   const branches = (run.input.branches ?? {}) as Record<string, { branch: string; base?: string }>;
-  addMaterials(app, itemId, [
+  addLocalMaterials(app, itemId, [
     { kind: "run", ref: run.id, label: run.title },
     ...Object.entries(branches).map(([space, b]) => ({ kind: "repo" as const, ref: space, branch: b.branch, base: b.base })),
   ], userId);

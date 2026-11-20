@@ -25,7 +25,7 @@ export function validateItemRefs(app: App, refs: string[], userId: string, scope
  * the cited lines of a source (chat lines without their time and message id), a memory, or a
  * conversation message. Null when the reference no longer resolves.
  */
-export function refExcerpt(app: App, ref: string, max = 60): { title: string; text: string; spaceId: string } | null {
+export function refExcerpt(app: App, ref: string, max = 60, userId = "owner"): { title: string; text: string; spaceId: string } | null {
   const m = /^(src|mem|msg):([A-Za-z0-9_-]+)(?:#L(\d+)(?:-L?(\d+))?)?/.exec(ref);
   if (!m) return null;
   const clip = (s: string) => {
@@ -37,7 +37,7 @@ export function refExcerpt(app: App, ref: string, max = 60): { title: string; te
     return r ? { title: "记忆", text: clip(r.text), spaceId: r.space_id } : null;
   }
   if (m[1] === "msg") {
-    const r = one<{ text: string; role: string; space_id: string }>(app.db, "select m.text, m.role, c.space_id from messages m join conversations c on c.id = m.conversation_id where m.id = ?", m[2]);
+    const r = one<{ text: string; role: string; space_id: string }>(app.db, "select m.text, m.role, c.space_id from messages m join conversations c on c.id = m.conversation_id where m.id = ? and (? = 'owner' or c.user_id = ?)", m[2], userId, userId);
     return r ? { title: r.role === "user" ? "本人说" : "助理说", text: clip(r.text), spaceId: r.space_id } : null;
   }
   const s = one<{ title: string; kind: string; text: string; space_id: string }>(app.db, "select title, kind, text, space_id from sources where id = ? and deleted_at is null", m[2]);

@@ -1,10 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { can } from "../auth/permissions.ts";
-import { accessibleSpaces, canWrite } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
-import { getItem } from "../items/store.ts";
+import { itemScope, requireItem } from "../items/access.ts";
 import { listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { flowView, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
@@ -14,7 +12,7 @@ import { gateGrants, revokeGate } from "./gates.ts";
 
 type CurrentStage = { item_id: string; title: string; space_id: string; user_id: string; due_at: string | null; flow_id: string; flow_name: string; round: number; stage_id: string; name: string; state: string; by: string | null; waiting_on: string | null; since: string };
 /** Shared selection for lists and the board: owner/blocked, doing, then the next pending/stale stage. */
-function currentStages(app: App, scope: { ids?: string[]; spaces?: string[] | null }) {
+function currentStages(app: App, scope: { ids?: string[]; spaceIds?: string[]; userId?: string }) {
   return all<CurrentStage>(app.db, `
     select * from (select f.item_id, i.title, i.space_id, coalesce(i.user_id,'owner') user_id, i.due_at,
       f.flow_id, json_extract(f.definition,'$.name') flow_name, f.round,
@@ -26,9 +24,10 @@ function currentStages(app: App, scope: { ids?: string[]; spaces?: string[] | nu
     join json_each(f.definition, '$.stages') d on json_extract(d.value, '$.id')=s.stage_id
     where f.ended_at is null
       ${scope.ids ? "and f.item_id in (select value from json_each(?))" : ""}
-      ${scope.spaces ? "and i.space_id in (select value from json_each(?))" : ""}
+      ${scope.userId ? "and i.user_id = ?" : ""}
+      ${scope.spaceIds ? "and i.space_id in (select value from json_each(?))" : ""}
       and s.state in ('gated','doing','blocked','stale','pending')
-    ) where position=1 order by since,item_id`, ...(scope.ids ? [JSON.stringify(scope.ids)] : []), ...(scope.spaces ? [JSON.stringify(scope.spaces)] : []));
+    ) where position=1 order by since,item_id`, ...(scope.ids ? [JSON.stringify(scope.ids)] : []), ...(scope.userId ? [scope.userId] : []), ...(scope.spaceIds ? [JSON.stringify(scope.spaceIds)] : []));
 }
 const waitsForOwner = (r: CurrentStage) => r.state === "gated" || r.state === "doing" && r.by === "owner" || r.waiting_on === "owner";
 /** One bounded query for the already permission-filtered item list; never loads flow bodies. */
@@ -39,7 +38,7 @@ export function itemFlowSummaries(app: App, ids: string[]) {
   return result;
 }
 export function flowBoard(app: App, userId: string, only?: "mine" | "blocked") {
-  return currentStages(app, { spaces: accessibleSpaces(app, userId) }).filter((r) => only === "mine" ? r.user_id === userId && waitsForOwner(r) : only === "blocked" ? r.state === "blocked" : true).map((r) => ({
+  return currentStages(app, itemScope(app, userId)).filter((r) => only === "mine" ? r.user_id === userId && waitsForOwner(r) : only === "blocked" ? r.state === "blocked" : true).map((r) => ({
     itemId: r.item_id, title: r.title, spaceId: r.space_id, flowId: r.flow_id, flowName: r.flow_name, round: r.round,
     stage: { id: r.stage_id, name: r.name, state: r.state }, waiting: waitsForOwner(r) ? "owner" as const : r.state === "blocked" ? "blocked" as const : null,
     since: r.since, stale: Date.now() - Date.parse(r.since) > app.config.flows.staleDays * 86400000, dueAt: r.due_at,
@@ -58,13 +57,8 @@ function body<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
   return r.data;
 }
 export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
-  const itemId = (req: FastifyRequest, write: boolean) => {
-    const { id } = req.params as { id: string };
-    const item = getItem(app, id), userId = who(req);
-    if (!can(app, userId, "space.read", item.spaceId)) throw new HttpError(404, "事项不存在");
-    if (write && (item.userId !== userId || !canWrite(app, userId, item.spaceId))) throw new HttpError(403, "只有事项本人能修改流程");
-    return id;
-  };
+  const itemId = (req: FastifyRequest, write: boolean) =>
+    requireItem(app, (req.params as { id: string }).id, who(req), write ? "write" : "read").id;
   // drafts: definitions the assistant wrote up (save_flow) still waiting for the owner's 启用 / 不用.
   server.get("/api/flows", async (req) => {
     const userId = who(req);

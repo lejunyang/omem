@@ -1,8 +1,10 @@
+import { restrictedSourceFilter } from "../auth/visibility.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { json, truncate } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { chatName, conclusionOf, scopeOf } from "../agents/run-scope.ts";
+import { itemScope } from "./access.ts";
 import { addMaterials } from "./materials.ts";
 import { getItem, toItem, type Item, type ItemRow } from "./store.ts";
 
@@ -25,6 +27,7 @@ export function placesOfRun(app: App, runId: string, keys = scopeOf(app, runId),
   const out: Place[] = [];
   const add = (p: Place) => { if (!out.some((x) => x.kind === p.kind && x.ref === p.ref)) out.push(p); };
   const spaces = reader ? accessibleSpaces(app, reader) : null;
+  const filter = reader ? restrictedSourceFilter(app, reader) : { sql: "1", params: [] };
   for (const k of keys) if (k.kind === "conversation") add({ kind: "conversation", ref: k.key });
   for (const k of keys) {
     if (k.kind !== "chat") continue;
@@ -33,16 +36,16 @@ export function placesOfRun(app: App, runId: string, keys = scopeOf(app, runId),
       ${reader ? "and user_id=?" : ""} order by external_id=? desc, updated_at desc limit ?`, topic, k.key, ...(reader ? [reader] : []), topic, reader ? 2 : 1);
     for (const c of conversations) add({ kind: "conversation", ref: c.id });
     if (conversations.length && !reader) continue;
-    const src = one<{ id: string; space_id: string }>(app.db, "select id, space_id from sources where uri=? and kind='chat' and deleted_at is null order by updated_at desc limit 1", `lark:${k.key}`);
-    if (src && (!spaces || spaces.includes(src.space_id))) add({ kind: "source", ref: src.id });
+    const src = one<{ id: string }>(app.db, `select id from sources where uri=? and kind='chat' and deleted_at is null and ${filter.sql}
+      ${spaces ? "and space_id in (select value from json_each(?))" : ""} order by updated_at desc limit 1`,
+      `lark:${k.key}`, ...filter.params, ...(spaces ? [JSON.stringify(spaces)] : []));
+    if (src) add({ kind: "source", ref: src.id });
   }
   return out;
 }
 
-const isChatSource = (app: App, id: string) => !!one(app.db, "select 1 from sources where id = ? and kind = 'chat'", id);
-
 /** A run wrote the item: link it to the run's places it is not linked to yet. Places the item's owner cannot see are left out. */
-export function linkRunPlaces(app: App, runId: string, itemId: string, userId: string): Place[] {
+export async function linkRunPlaces(app: App, runId: string, itemId: string, userId: string): Promise<Place[]> {
   let item: Item;
   try { item = getItem(app, itemId); } catch { return []; }
   if (item.userId !== userId) return [];
@@ -50,7 +53,7 @@ export function linkRunPlaces(app: App, runId: string, itemId: string, userId: s
   for (const p of placesOfRun(app, runId)) {
     if (one(app.db, "select 1 from item_materials where item_id = ? and kind = ? and ref = ?", itemId, p.kind, p.ref)) continue;
     try {
-      addMaterials(app, itemId, [{ kind: p.kind, ref: p.ref, note: `运行 ${runId} 在这里处理过这件事（自动关联）` }], userId, "agent");
+      await addMaterials(app, itemId, [{ kind: p.kind, ref: p.ref, note: `运行 ${runId} 在这里处理过这件事（自动关联）` }], userId, "agent");
       linked.push(p);
     } catch {
       // Not the item owner's conversation, or a space they cannot read: no link.
@@ -80,9 +83,13 @@ export function placeView(app: App, p: Place): PlaceView | null {
 /** The places an item goes on in that this reader may see, newest activity first. */
 export function itemPlaces(app: App, itemId: string, userId: string): PlaceView[] {
   const allowed = accessibleSpaces(app, userId);
-  const rows = all<{ kind: string; ref: string }>(app.db, "select kind, ref from item_materials where item_id = ? and kind in ('conversation','source') order by id", itemId);
+  const filter = restrictedSourceFilter(app, userId);
+  const rows = all<{ kind: string; ref: string }>(app.db, `select m.kind,m.ref from item_materials m
+    left join sources on m.kind='source' and sources.id=m.ref
+    left join conversations c on m.kind='conversation' and c.id=m.ref
+    where m.item_id=? and ((sources.kind='chat' and sources.deleted_at is null and ${filter.sql})
+      or (m.kind='conversation' and (?='owner' or c.user_id=?))) order by m.id`, itemId, ...filter.params, userId, userId);
   return rows
-    .filter((r) => r.kind === "conversation" || isChatSource(app, r.ref))
     .flatMap((r) => placeView(app, { kind: r.kind as Place["kind"], ref: r.ref }) ?? [])
     .filter((v) => !allowed || !v.spaceId || allowed.includes(v.spaceId))
     .sort((a, b) => (b.lastAt ?? "").localeCompare(a.lastAt ?? ""));
@@ -93,7 +100,7 @@ export function itemsAt(app: App, places: Place[], userId: string, limit = 3, in
   const convs = places.filter((p) => p.kind === "conversation").map((p) => p.ref);
   const srcs = places.filter((p) => p.kind === "source").map((p) => p.ref);
   if (!convs.length && !srcs.length) return [];
-  const spaces = accessibleSpaces(app, userId);
+  const { spaceIds: spaces } = itemScope(app, userId);
   const rows = all<ItemRow>(app.db,
     `select i.* from items i
       where i.user_id = ? ${includeClosed ? "" : "and i.status in ('open','waiting','snoozed')"}

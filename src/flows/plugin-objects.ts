@@ -1,3 +1,4 @@
+import { itemAccess, requireItem } from "../items/access.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { accessibleSpaces, canWrite, OWNER } from "../core/users.ts";
@@ -26,14 +27,11 @@ const view = (r: Row, canAct = false): ObjectView => {
 };
 export const objectView = (app: App, id: string, canAct = false) => { const r = row(app, id); return r ? view(r, canAct) : null; };
 export function assertObjectItem(app: App, itemId: string, userId: string, write = false) {
-  const item = getItem(app, itemId), spaces = accessibleSpaces(app, userId);
-  if (spaces && !spaces.includes(item.spaceId)) throw new HttpError(404, "没有这个事项");
-  if (write && (item.userId !== userId || !canWrite(app, userId, item.spaceId))) throw new HttpError(403, "只有事项本人能在可写空间关联对象");
-  return item;
+  return requireItem(app, itemId, userId, write ? "write" : "read");
 }
 export function itemObjects(app: App, itemId: string, userId: string) {
   const item = assertObjectItem(app, itemId, userId);
-  const canAct = item.userId === userId && canWrite(app, userId, item.spaceId);
+  const canAct = itemAccess(app, userId, item, "write");
   return all<Row>(app.db, "select o.* from item_materials m join flow_objects o on o.id=m.ref where m.item_id=? and m.kind='object' order by m.id desc", itemId).map((r) => view(r, canAct));
 }
 /**

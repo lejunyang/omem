@@ -267,12 +267,12 @@ function proposalSources(app: App, chats: string[], sources: string[], userId: s
 export const openLines = (app: App, userId = OWNER) => all<{ id: string; title: string; space_id: string }>(app.db, "select id, title, space_id from items where kind = 'line' and coalesce(user_id,'owner') = ? and status not in ('done','cancelled','expired','candidate') order by created_at", userId);
 
 /** Materials and loose items of a proposal into a line: only adds (what is there stays), each item that hangs under nothing. */
-function intoLine(app: App, lineId: string, p: { items: string[]; sources: string[] }, by: "agent" | "user", userId: string, runId?: string) {
+async function intoLine(app: App, lineId: string, p: { items: string[]; sources: string[] }, by: "agent" | "user", userId: string, runId?: string) {
   const have = new Set(all<{ ref: string }>(app.db, "select ref from item_materials where item_id = ? and kind = 'source'", lineId).map((r) => r.ref));
   const fresh = p.sources.filter((s) => !have.has(s));
   let materials = 0, hung = 0;
   for (const ref of fresh) {
-    try { materials += addMaterials(app, lineId, [{ kind: "source", ref }], userId, by).length; } catch { /* One it may not read is left out. */ }
+    try { materials += (await addMaterials(app, lineId, [{ kind: "source", ref }], userId, by)).length; } catch { /* One it may not read is left out. */ }
   }
   for (const id of p.items) {
     const it = one<{ parent_id: string | null; kind: string; status: string; user_id: string | null }>(app.db, "select parent_id, kind, status, user_id from items where id = ?", id);
@@ -287,7 +287,7 @@ function intoLine(app: App, lineId: string, p: { items: string[]; sources: strin
  * listed, or the same name) add to it at once; new ones wait for the card sent when the run ends
  * (linesCard). Names the owner said 不用 to are not asked again for 14 days.
  */
-export function proposeLines(app: App, runId: string, input: z.input<typeof proposeSchema>) {
+export async function proposeLines(app: App, runId: string, input: z.input<typeof proposeSchema>) {
   const a = proposeSchema.parse(input);
   const r = getRun(app, runId);
   if (r.kind !== "work-state" || r.status !== "running") throw new HttpError(403, "只有每晚的近况整理能提议工作线");
@@ -300,7 +300,7 @@ export function proposeLines(app: App, runId: string, input: z.input<typeof prop
     const sources = proposalSources(app, p.chats, p.sources, userId);
     const match = lines.find((l) => norm(l.title) === norm(p.name) || items.some((id) => id === l.id || rootOf(app, id) === l.id || descendantIds(app, l.id).includes(id)));
     if (match) {
-      const got = intoLine(app, match.id, { items, sources }, "agent", userId, runId);
+      const got = await intoLine(app, match.id, { items, sources }, "agent", userId, runId);
       out.push(`「${p.name}」就是已有的工作线 ${match.id}「${match.title}」：${got.materials || got.hung ? `补了 ${got.materials} 份材料，${got.hung} 件事项归到它下面` : "没有要补的"}`);
       continue;
     }
@@ -341,7 +341,7 @@ export async function createLine(app: App, p: { name: string; goal?: string; ite
   const spaces = (p.items ?? []).map((id) => one<{ space_id: string }>(app.db, "select space_id from items where id = ?", id)?.space_id).filter((x): x is string => !!x);
   const common = [...new Set(spaces)].sort((a, b) => spaces.filter((s) => s === b).length - spaces.filter((s) => s === a).length)[0];
   const line = upsertItem(app, undefined, { kind: "line", title: p.name, detail: p.goal ?? "", spaceId: p.spaceId ?? common ?? "personal", userId }, by);
-  intoLine(app, line.id, { items: p.items ?? [], sources: p.sources ?? [] }, by, userId);
+  await intoLine(app, line.id, { items: p.items ?? [], sources: p.sources ?? [] }, by, userId);
   const { setItemListening } = await import("../channels/listen-items.ts");
   setItemListening(app, line.id, true, { reply: "none", assist: "suggest" });
   return getItem(app, line.id);
@@ -358,7 +358,7 @@ registerAskHandler("line-propose", async (app, ask, ctx) => {
     else {
       const line = lines.find((l) => l.label === picked);
       const open = line && one<{ status: string }>(app.db, "select status from items where id = ?", line.id);
-      if (line && open && !isClosed(open.status)) intoLine(app, line.id, p, "user", userId);
+      if (line && open && !isClosed(open.status)) await intoLine(app, line.id, p, "user", userId);
     }
   }
 }, (_app, ask, _ctx, by) => {

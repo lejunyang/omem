@@ -1,3 +1,5 @@
+import { OWNER } from "../core/users.ts";
+import { one, run } from "../core/db.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -17,7 +19,7 @@ export const MAX_ATTACHMENTS = 20;
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 /** Keep one uploaded file; the same bytes keep the same name. */
-export function saveAttachment(app: App, buf: Buffer, filename: string, mime = ""): Omit<Attachment, "label"> {
+export function saveAttachment(app: App, buf: Buffer, filename: string, mime = "", userId = OWNER): Omit<Attachment, "label"> {
   if (buf.length > MAX_ATTACHMENT_BYTES) throw new HttpError(413, `${filename} 超过 ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB`);
   const fromMime = mime.startsWith("image/") ? `.${mime.slice(6).replace("jpeg", "jpg").replace(/\+.*$/, "")}` : "";
   const ext = (extname(filename).toLowerCase().replace(/[^.a-z0-9]/g, "") || fromMime || ".bin").slice(0, 12);
@@ -27,14 +29,16 @@ export function saveAttachment(app: App, buf: Buffer, filename: string, mime = "
     writeFileSync(join(app.filesDir, name), buf);
     markStoredFileAdded();
   }
+  if (userId !== OWNER) run(app.db, "insert or ignore into stored_file_uploads(name,user_id) values(?,?)", name, userId);
   return { name, filename: filename.replace(/[\r\n]/g, " ").slice(0, 200) || name, kind: IMAGE.test(ext) || mime.startsWith("image/") ? "image" : "file", size: buf.length };
 }
 
 /** The attachments a message may carry: stored files only, each named once. */
-export function checkAttachments(app: App, list: Attachment[]): Attachment[] {
+export function checkAttachments(app: App, list: Attachment[], userId = OWNER): Attachment[] {
   if (list.length > MAX_ATTACHMENTS) throw new HttpError(400, `一条消息最多 ${MAX_ATTACHMENTS} 个附件`);
   for (const a of list) {
     if (!/^[a-f0-9]{16}\.[a-z0-9]+$/.test(a.name) || !hasStoredFile(app, a.name)) throw new HttpError(400, `附件不存在：${a.filename || a.name}`);
+    if (userId !== OWNER && !one(app.db, "select 1 from stored_file_uploads where name=? and user_id=?", a.name, userId)) throw new HttpError(403, "请先上传附件");
   }
   return list;
 }

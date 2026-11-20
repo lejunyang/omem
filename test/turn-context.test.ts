@@ -6,7 +6,7 @@ import { createRun, runEvents, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import { resolveTurn } from "../src/agents/turn-context.ts";
-import { addMaterials, removeMaterials } from "../src/items/materials.ts";
+import { addLocalMaterials, removeMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 import { callTool } from "../src/agents/tools.ts";
@@ -37,7 +37,7 @@ describe("当轮事项", async () => {
     const resolve = () => resolveTurn(app, r.id, thread, [], "owner").context;
     expect(resolve().item).toBeUndefined();
     expect(resolve().candidates.map(c => c.itemId)).toContain(first.id);
-    for (const i of [first, second]) addMaterials(app, i.id, [{ kind: "conversation", ref: thread.id }], "owner");
+    for (const i of [first, second]) addLocalMaterials(app, i.id, [{ kind: "conversation", ref: thread.id }], "owner");
     run(app.db, "update items set updated_at='2000-01-01' where id=?", first.id);
     expect(resolve()).toMatchObject({ item: { id: second.id, via: "linked" }, candidates: [{ itemId: first.id, reason: "这个会话也挂在它上面" }] });
   });
@@ -69,7 +69,7 @@ describe("当轮事项", async () => {
     const assignment = parked(root.id);
     run(app.db, "update runs set output=? where id=?", JSON.stringify({ agentWork: { workConversationId: child.id } }), assignment.id);
     const item = upsertItem(app, undefined, { title: "交付检查" });
-    addMaterials(app, item.id, [{ kind: "run", ref: assignment.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: assignment.id }], "owner");
     expect(resolveTurn(app, parked(child.id).id, child, [], "owner").context.item).toEqual({ id: item.id, title: item.title, via: "explicit" });
   });
 

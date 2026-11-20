@@ -31,11 +31,11 @@ export const rootOf = (app: App, id: string) => ancestorIds(app, id).at(-1) ?? i
 export const childIds = (app: App, id: string) => all<{ id: string }>(app.db, "select id from items where parent_id = ? order by created_at, id", id).map((r) => r.id);
 
 /** Everything under an item, level by level (not the item itself). */
-export function descendantIds(app: App, id: string): string[] {
+export function descendantIds(app: App, id: string, spaces?: string[]): string[] {
   const out: string[] = [];
   let level = [id];
   for (let depth = 0; depth < MAX_DEPTH + 2 && level.length; depth++) {
-    const next = all<{ id: string }>(app.db, `select id from items where parent_id in (${level.map(() => "?").join(",")}) order by created_at, id`, ...level).map((r) => r.id).filter((x) => x !== id && !out.includes(x));
+    const next = all<{ id: string }>(app.db, `select id from items where parent_id in (${level.map(() => "?").join(",")}) ${spaces ? "and space_id in (select value from json_each(?))" : ""} order by created_at, id`, ...level, ...(spaces ? [JSON.stringify(spaces)] : [])).map((r) => r.id).filter((x) => x !== id && !out.includes(x));
     out.push(...next);
     level = next;
   }

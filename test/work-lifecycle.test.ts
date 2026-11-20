@@ -266,7 +266,7 @@ describe("工作线：观察期满", () => {
     // Each decision is a case the next look reads.
     const cases = lineEndCases(app, "owner");
     expect(cases.map((x) => x.outcome)).toEqual(expect.arrayContaining(["owner-ended", "keep-watching", "not-done"]));
-    const task = lineStateTask(app, saveContext(app, { kind: "item", itemId: b.line.id }), getItem(app, b.line.id), "suggest");
+    const task = await lineStateTask(app, saveContext(app, { kind: "item", itemId: b.line.id }), getItem(app, b.line.id), "suggest");
     expect(task).toContain("本人以前怎么定的");
     expect(task).toContain("本人选了再看一周");
     expect(task).toContain("在观察中");
