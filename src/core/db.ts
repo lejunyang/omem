@@ -1,4 +1,4 @@
-import { FILE_REFS_MIGRATION } from "./file-refs.ts";
+import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { noteSync, sqlName } from "./loop-monitor.ts";
 
@@ -2250,6 +2250,7 @@ export const migrations: readonly string[] = [
    alter table items add column watch_until text;`,
   METRIC_ORIGIN_MIGRATION,
   FILE_REFS_MIGRATION,
+  FILE_REF_TOMBSTONES_MIGRATION,
 ];
 
 export type Db = DatabaseSync;

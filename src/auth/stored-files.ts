@@ -29,7 +29,7 @@ export async function storedFileReadable(app: App, userId: string, name: string)
   const names = "select ? name union select original from file_variants where file=? and status='done'";
   if (one(app.db, `select 1 from stored_file_uploads where user_id=? and name in (${names}) limit 1`, userId, name, name)) return true;
   // Resolve messages in one query; several messages can refer to the same run.
-  const owners = all<{ kind: "source" | "run" | "user"; id: string }>(app.db, `
+  const owners = all<{ kind: "source" | "deleted" | "run" | "user"; id: string }>(app.db, `
     with names as (${names}), refs as (
       select origin,ref,target from stored_file_refs where name in (select name from names)
     ), chats as (
@@ -42,15 +42,15 @@ export async function storedFileReadable(app: App, userId: string, name: string)
       union select l.source_id from chats join lark_message_lines l on l.message_id=chats.id
       union select m.source_id from chats join lark_messages m on m.message_id=chats.id
     )
-    select 'source' kind,s.id from source_ids join sources s on s.id=source_ids.id where s.deleted_at is null
+    select case when s.deleted_at is null then 'source' else 'deleted' end kind,s.id from source_ids join sources s on s.id=source_ids.id
     union select 'run',target from refs where origin='run_events'
     union select case when m.run_id is null then 'user' else 'run' end, coalesce(m.run_id,c.user_id)
       from refs join messages m on m.id=refs.target join conversations c on c.id=m.conversation_id
       where refs.origin='messages'`, name, name);
   // Old clients could submit an attachment by name. A message reference cannot confer access to a restricted original.
-  const originals = owners.filter(owner => owner.kind === "source");
+  const originals = owners.filter(owner => owner.kind === "source" || owner.kind === "deleted");
   if (originals.length) {
-    for (const original of originals) if (await sourceReadable(app, userId, original.id)) return true;
+    for (const original of originals) if (original.kind === "source" && await sourceReadable(app, userId, original.id)) return true;
     return false;
   }
   for (const owner of owners) {

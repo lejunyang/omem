@@ -1,6 +1,6 @@
 /** Indexed reverse lookup of structured storage references. Text links carry no authority. */
 // Plugin-provided metadata on older sources could contain arbitrary file names.
-const hostSource = "s.deleted_at is null and (s.meta->>'originKey' is null or s.meta->>'capturedBy' is null)";
+const hostSource = "(s.meta->>'originKey' is null or s.meta->>'capturedBy' is null)";
 const origins = [
   {
     table: "sources", key: "id", columns: "id,meta,deleted_at",
@@ -43,6 +43,12 @@ ${origins.map(({ table, key, columns, rows }) => {
     create trigger ${view}_delete after delete on ${table} begin ${clear("old")} end;
     insert into stored_file_backfill select '${table}',0,max(rowid) from ${table} having max(rowid)>0;`;
 }).join("\n")}`;
+
+/** Refresh the source view on existing installations and index metadata retained in tombstones. */
+export const FILE_REF_TOMBSTONES_MIGRATION = `
+drop view file_refs_sources;
+create view file_refs_sources as ${origins[0].rows};
+insert or replace into stored_file_backfill select 'sources',0,max(rowid) from sources having max(rowid)>0;`;
 
 /** On an upgraded database only. The caller runs this in a worker; short transactions yield the writer lock. */
 export function backfillFileRefs(db: import("node:sqlite").DatabaseSync) {

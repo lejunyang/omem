@@ -6,7 +6,7 @@ import { setVisibility } from "../src/auth/visibility.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { createUser, createApiToken, addMember, removeMember } from "../src/core/users.ts";
-import { upsertSource } from "../src/sources/store.ts";
+import { deleteSource, upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -51,12 +51,19 @@ it("用原件、聊天上传者或运行的当前权限读取文件，包括压�
     addMessage(app, thread.id, "user", "附件", sharedRun.id, { attachments: [{ name: attached }] });
     addMessage(app, thread.id, "user", "旧引用", sharedRun.id, { attachments: [{ name: pdf }] });
     expect(await get(pdf)).toBe(404);
+    deleteSource(app, source.id);
+    for (const name of [pdf, media, copy, chatFile]) {
+      expect(await get(name)).toBe(404);
+      expect(await get(name, "b")).toBe(404);
+      expect(await get(name, "owner")).toBe(200);
+    }
     // Simulate records written before the ownership index existed.
     addRunEvent(app, sharedRun.id, "status", { note: "旧记录" });
-    run(app.db, "delete from stored_file_refs where origin in ('messages','run_events')");
-    for (const table of ["messages", "run_events"])
+    run(app.db, "delete from stored_file_refs where origin in ('messages','run_events','sources')");
+    for (const table of ["messages", "run_events", "sources"])
       run(app.db, `insert into stored_file_backfill select ?,0,max(rowid) from ${table}`, table);
     for (const name of [image, attached]) expect(await get(name)).toBe(200);
+    expect(await get(pdf)).toBe(404);
     removeMember(app, "team", "a");
     for (const name of [image, attached]) {
       expect(await get(name)).toBe(404);
