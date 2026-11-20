@@ -12,7 +12,10 @@ export function unblock(md: string): string {
 
 /** The first line of a text as plain words (a list row's title): no marks, no reference ids. */
 export function plainLine(md: string, max = 120): string {
-  const line = unblock(md).split("\n").find((l) => l.trim()) ?? "";
+  const lines = unblock(md).split("\n").map((l) => l.trim()).filter(Boolean);
+  // A first line of a word or two is a heading over what follows ("今天"): it reads with the next line.
+  const head = lines[0] ?? "";
+  const line = head.length < 8 && lines[1] ? `${head.replace(/[：:]$/, "")}：${lines[1].replace(/^·\s*/, "")}` : head;
   const plain = line
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_, target: string, label?: string) => label ?? target.split("/").pop() ?? target)

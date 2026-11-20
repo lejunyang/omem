@@ -22,4 +22,9 @@ describe("short texts outside a page (web/src/lib/plain.ts)", () => {
     expect(plainLine("")).toBe("");
     expect(plainLine("\n\n- 只有一条")).toBe("只有一条");
   });
+
+  it("reads a one-word heading together with the line under it", () => {
+    expect(plainLine("## 今天\n\n- 退款改造等你核对后推送\n- 发票抬头在观察")).toBe("今天：退款改造等你核对后推送");
+    expect(plainLine("要点：\n先核对部署")).toBe("要点：先核对部署");
+  });
 });
