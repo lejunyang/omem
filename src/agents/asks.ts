@@ -118,6 +118,10 @@ const toAsk = (r: Row): Ask => ({
   lapsed: ((JSON.parse(r.context ?? "{}") as { lapsed?: unknown }).lapsed as string | undefined) ?? null,
 });
 
+export function markAskSent(app: App, id: string) {
+  run(app.db, "update asks set context = json_remove(json_set(coalesce(context,'{}'), '$.sentAt', ?), '$.deferredUntil') where id = ?", now(), id);
+}
+
 export function getAsk(app: App, id: string): Ask {
   const r = one<Row>(app.db, "select * from asks where id = ?", id);
   if (!r) throw new HttpError(404, `没有这个提问：${id}`);

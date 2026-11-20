@@ -1,11 +1,11 @@
 import { briefParts } from "../agents/brief.ts";
-import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
+import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, markAskSent, uiLink, type Ask } from "../agents/asks.ts";
 import { viewCardBlocks, viewColor, viewSummary, viewTarget } from "./lark-ui.ts";
 import { fieldsText, normalizeAnswers, type UiField } from "../agents/ui-blocks.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { deliveryPlan, inQuietHours } from "../core/notify.ts";
-import { HttpError, now, truncate } from "../core/util.ts";
+import { HttpError, truncate } from "../core/util.ts";
 import { larkOpenIdOf, OWNER, userName } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
 import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, decidedBlocks, decidedColor, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, resultSummary, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
@@ -327,10 +327,6 @@ function askUrgency(app: App, ask: Ask) {
     left join runs r on r.id=m.run_id where c.id=? and c.user_id=? and m.created_at>=? and m.role='user'
     and (r.trigger is null or (r.trigger_by=? and json_extract(r.trigger,'$.via')='chat' and json_extract(r.trigger,'$.followUp') is null)) limit 1`,
     ask.conversationId, ask.userId, recent, `user:${ask.userId}`) ? "urgent" : "normal";
-}
-
-export function markAskSent(app: App, id: string) {
-  run(app.db, "update asks set context = json_remove(json_set(coalesce(context,'{}'), '$.sentAt', ?), '$.deferredUntil') where id = ?", now(), id);
 }
 
 async function postAsk(app: App, ask: Ask, to: NonNullable<ReturnType<typeof targetFor>>) {
