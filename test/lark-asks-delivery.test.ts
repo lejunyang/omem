@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { answerAsk, createAsk, lapseAsk } from "../src/agents/asks.ts";
+import { addMessage, createThread } from "../src/agents/threads.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { registerLarkAsks, releaseDeferredAsks } from "../src/channels/lark-asks.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
@@ -29,13 +30,18 @@ it("holds background cards until morning, sends live questions and approvals, sk
     run(app.db, "update runs set status='running' where id=?", live.id);
     createAsk(app, { runId: live.id, question: "选哪天？" });
     createAsk(app, { runId: null, kind: "approval", question: "批准？" });
-    await expect.poll(() => post.mock.calls.length).toBe(2);
+    createAsk(app, { runId: null, question: "确认关卡？", context: { handler: "flow-stage" } });
+    createAsk(app, { runId: null, question: "五点前确认？", context: { deadline: "2026-04-01T05:00:00+08:00" } });
+    const thread = createThread(app, { channel: "lark", key: "oc_example", spaceId: "personal" });
+    addMessage(app, thread.id, "user", "接着说");
+    createAsk(app, { runId: null, conversationId: thread.id, question: "接着选哪一项？" });
+    await expect.poll(() => post.mock.calls.length).toBe(5);
     await answerAsk(app, answered.id, { text: "不用", by: "owner" });
     lapseAsk(app, lapsed.id, "已结束");
     vi.setSystemTime(new Date("2026-04-01T09:00:00+08:00"));
     await Promise.all([releaseDeferredAsks(app), releaseDeferredAsks(app)]);
     await releaseDeferredAsks(app);
-    expect(post).toHaveBeenCalledTimes(4);
+    expect(post).toHaveBeenCalledTimes(7);
     expect(state()).toEqual({ later: null, sent: "2026-04-01T01:00:00.000Z" });
   } finally {
     vi.useRealTimers();
