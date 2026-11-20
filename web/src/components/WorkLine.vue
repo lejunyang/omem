@@ -42,8 +42,10 @@ async function refresh() {
         <span v-if="l.dueAt" :class="{ overdue }">截止 {{ dayLabel(l.dueAt) }}</span>
       </span>
       <span class="spacer" />
-      <router-link v-if="l.listen" :to="`/listen/${l.listen.id}`" class="lnk small muted" title="这条线的关注：读它的群和文档">关注中</router-link>
-      <button type="button" class="btn ghost sm" title="现在整理这条线的现状和下一步" @click="refresh"><Icon name="refresh" :size="14" />更新</button>
+      <span class="tools">
+        <router-link v-if="l.listen" :to="`/listen/${l.listen.id}`" class="lnk small muted" title="这条线的关注：读它的群和文档">关注中</router-link>
+        <button type="button" class="btn ghost sm" title="现在整理这条线的现状和下一步" @click="refresh"><Icon name="refresh" :size="14" />更新</button>
+      </span>
     </header>
     <p v-if="l.now" class="now">{{ l.now.text }}<span v-if="stale" class="muted small"> · {{ dayLabel(l.now.at) }}整理</span></p>
     <p v-else class="now muted">还没整理过这条线的现状。<button type="button" class="lnk" @click="refresh">现在整理</button></p>
@@ -65,6 +67,8 @@ async function refresh() {
 <style scoped>
 .line { padding: 16px 18px 14px; display: grid; gap: 10px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.tools { display: inline-flex; align-items: center; gap: 10px; align-self: center; }
+.tools .lnk { line-height: 1; }
 .name { font-family: var(--serif); font-size: 18px; font-weight: 650; color: var(--ink); line-height: 1.35; overflow-wrap: anywhere; min-width: 0; }
 .name:hover { text-decoration: none; color: var(--accent); }
 .state { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); white-space: nowrap; }

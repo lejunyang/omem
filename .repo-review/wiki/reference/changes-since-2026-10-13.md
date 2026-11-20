@@ -24,6 +24,10 @@ updated: 2026-11-20
 - 侧栏“今日”改名“工作”，“流程”打开 `/?view=stage`；本人打开 `/items/:id/flow` 转到 `/work/:id?tab=flow`。事项页改叫“全部事项”，线、有下层的、走流程的事项点开去工作项页。
 - `web/src/lib/markdown.ts`：写好的引用链接 `[文字](src:…#L3-L9)` 不再被“裸引用”的替换拆开（11-19 起带范围的引用显示成半截）。
 
+## 侧栏去掉本人的“流程”；工作线卡片头部对齐（11-21）
+
+- `web/src/App.vue`：本人的侧栏不再有“流程”（就是工作页的“按阶段”，流程定义从看板右上角进），成员仍有 `/board`；在 `/flows` 时高亮“工作”。`web/src/components/WorkLine.vue`：“关注中”和“更新”放进一个居中对齐的 `.tools`。截图 `work-overview` 重拍。
+
 ## 数据页分“工作数据 / omem 自己”两栏（11-21）
 
 - `web/src/views/Insights.vue` 顶部两栏，`?tab=work|omem`；没有 tab 时带报告筛选或明细的链接落到 omem 一栏，否则是工作数据；报告只在 omem 一栏打开时才请求。新组件 `web/src/components/MetricsBoard.vue`（`scope: work | omem`）。

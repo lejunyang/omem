@@ -39,8 +39,9 @@ const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; memb
   { to: "/ask", label: "问答", icon: "chat", member: true },
   { to: "/wiki", label: "Wiki", icon: "book", member: true },
   { to: "/items", label: "事项", icon: "checkbox", member: true },
-  // Items moving through a flow, by stage: the work page's 按阶段; each opens its own page.
-  { to: "/?view=stage", label: "流程", icon: "branch", member: true },
+  // Items moving through a flow, by stage: for the owner it is the work page's 按阶段 (no entry of its own);
+  // members, who have no work page, keep the board here.
+  { to: "/board", label: "流程", icon: "branch", member: true },
   { to: "/reqs", label: "需求", icon: "target", member: true },
   { to: "/memory", label: "记忆", icon: "brain", member: true },
   { to: "/sources", label: "原件", icon: "file", member: true },
@@ -73,10 +74,10 @@ async function addRemotePage() {
 }
 // Settings → 插件 changed an icon.
 watch(() => state.pluginsChanged, addPluginPages);
-const stageView = computed(() => route.path === "/" && route.query.view === "stage");
+// The owner's flows live on the work page (按阶段, and 流程定义 from there): 工作 stays lit for them.
 const isActive = (to: string, exact?: boolean) =>
-  to === "/" ? (route.path === "/" && !stageView.value) || route.path.startsWith("/work/")
-  : to === "/?view=stage" || to === "/board" ? stageView.value || route.path === "/flows" || route.path === "/board"
+  to === "/" ? route.path === "/" || route.path.startsWith("/work/") || (owner.value && route.path === "/flows")
+  : to === "/board" ? route.path === "/board" || route.path === "/flows"
   : exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/wiki" && route.path.startsWith("/graph"));
 
 function onKey(e: KeyboardEvent) {
@@ -91,8 +92,8 @@ function onKey(e: KeyboardEvent) {
 }
 const owner = computed(() => !state.me || state.me.role === "owner");
 const allowed = (n: { member?: boolean; perm?: string }) => owner.value || n.member || (!!n.perm && !!state.me?.perms.includes(n.perm));
-// The work page is the owner's: members find the flow board on its own page.
-const shownNav = computed(() => nav.value.filter(allowed).map((n) => (n.to === "/?view=stage" && !owner.value ? { ...n, to: "/board" } : n)));
+// The work page is the owner's: only members find the flow board in the nav.
+const shownNav = computed(() => nav.value.filter(allowed).filter((n) => !(n.to === "/board" && owner.value)));
 // Pages someone other than the owner may open: the nav they see, the graph (Wiki), their account.
 const open = computed(() => [...shownNav.value.map((n) => n.to), "/graph", "/account"]);
 // Landing on a page they cannot use (the start page, an old link) goes to 问答.
