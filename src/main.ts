@@ -1,4 +1,6 @@
 import "./agents/jobs.ts";
+// Registers the run handler, so a review queued before a restart still runs.
+import "./agents/outcome-review.ts";
 import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, scheduleNoteReview, sendItemDigests, sweepItems } from "./agents/jobs.ts";
 import { addRunEvent, createRun, listRuns, startWorker } from "./agents/runs.ts";
 import { startSessionCleanup } from "./agents/session-cleanup.ts";
@@ -46,6 +48,8 @@ registerScheduleKind("profile-review", (app) => {
 });
 // Nightly replay, after the profile reviews (agents/replay.ts); nothing runs until replay-judge has an AI.
 registerScheduleKind("replay", (app) => void import("./agents/replay.ts").then((m) => m.scheduleReplays(app)).catch((e) => console.warn(`[omem] 夜间复盘排队失败：${(e as Error).message}`)));
+// The nightly second reading of reply outcomes (agents/outcome-review.ts).
+registerScheduleKind("outcome-review", (app) => void import("./agents/outcome-review.ts").then((m) => m.scheduleOutcomeReview(app)).catch((e) => console.warn(`[omem] 复查回复结果排队失败：${(e as Error).message}`)));
 registerScheduleKind("rule", (app, s) => void import("./rules/engine.ts").then((m) => m.fireScheduledRule(app, String((s.config as { ruleId?: string }).ruleId))));
 registerScheduleKind("learn", (app) => learningTick(app));
 registerScheduleKind("activity", (app) => {

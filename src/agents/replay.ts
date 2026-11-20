@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { JUDGED_LABELS, REPLY_LABELS, replyOutcome, replyOutcomeText, reviseReply, type JudgedLabel } from "./reply-outcomes.ts";
+import { JUDGED_LABELS, OWNER_BY, REPLY_LABELS, replyOutcome, replyOutcomeText, reviseReply, type JudgedLabel } from "./reply-outcomes.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -825,7 +825,9 @@ registerHandler("replay", async (ctx) => {
       judged = { ...judged, by: "judge", agree: c.agree, orders: [ab.verdict, ba.verdict], runs: [ab.runId, ba.runId], reason };
       // Both readings of the same follow-up say the first label was wrong: the stronger model's reading stands.
       const relabel = ab.verdict?.original && ab.verdict.original === ba.verdict?.original ? ab.verdict.original : null;
-      if (relabel && replyOutcome(app, q.run.id)?.first && replyOutcome(app, q.run.id)!.label !== relabel) {
+      // What the owner set on the run page stands.
+      const was = replyOutcome(app, q.run.id);
+      if (relabel && was?.first && was.label !== relabel && was.revised?.by !== OWNER_BY) {
         reviseReply(app, q.run.id, relabel, `复盘评判（${judge.profile.model ?? judge.profile.id}）`, "两种顺序的评判读了同样的后续消息，都认为该这样标");
         judged = { ...judged, relabelled: relabel };
       }

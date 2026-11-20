@@ -25,7 +25,7 @@ export const CORE_TOOLS = new Set([
  */
 export const CODE_STARTERS = ["delegate_code", "review_branch", "continue_code_run", "settle_code_task"];
 
-export const ROLE_TOOLS = ["claim_commits", "note_item_change", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest", "submit_playbook"];
+export const ROLE_TOOLS = ["claim_commits", "note_item_change", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest", "submit_playbook", "review_reply_outcomes"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
 /**
  * A run allowed this few tools gets every one of them directly: a background role or profile
@@ -51,7 +51,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "track", label: "事项与需求", doc: "items", tools: ["req_tree", "req_read", "save_requirements", "split_requirements", "list_items", "read_item", "upsert_item", "settle_items", "propose_item_update", "list_item_proposals", "resolve_item_proposal"] },
   { id: "notifications", label: "事项通知排查", doc: "items", tools: ["repair_item_association", "inspect_item_notification", "read_item_repair", "refresh_item_notification", "ignore_notification_rule"] },
   { id: "wiki", label: "Wiki", doc: "wiki", tools: ["list_pages", "read_page", "write_page", "correct_page", "move_page", "confirm_page", "generate_wiki", "submit_plan", "submit_page_check", "submit_level_check", "settle_wiki_question"] },
-  { id: "delegate", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", "ask_agent", "list_ai_backends", "switch_run_ai", "list_runs", "read_run", "take_over_run", "revise_reply_outcome"] },
+  { id: "delegate", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", "ask_agent", "list_ai_backends", "switch_run_ai", "list_runs", "read_run", "take_over_run", "revise_reply_outcome", "review_reply_outcomes"] },
   { id: "skills", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "organize_skills", "save_agent", "propose_profile_change"] },
   { id: "remote", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },
   { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "wait_answer", "withdraw_ask", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },

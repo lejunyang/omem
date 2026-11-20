@@ -2163,6 +2163,15 @@ export const migrations: readonly string[] = [
      created_at text not null,
      primary key(metric_id, at, dims)
    );`,
+  // The nightly second reading of reply outcomes (agents/outcome-review.ts): whether a stronger model,
+  // with a day of what followed, agreed with the first label (`confirmed`) or changed it (`revised`, which
+  // also writes revised_*); why it was picked (signal / unsure / unclear / sample). The first label stays.
+  `alter table reply_outcomes add column checked text;
+   alter table reply_outcomes add column checked_label text;
+   alter table reply_outcomes add column checked_by text;
+   alter table reply_outcomes add column checked_why text;
+   alter table reply_outcomes add column checked_pick text;
+   alter table reply_outcomes add column checked_at text;`,
 ];
 
 export type Db = DatabaseSync;

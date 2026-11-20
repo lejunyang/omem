@@ -111,6 +111,7 @@ export const kindLabel: Record<string, string> = {
 };
 export const runKindLabel: Record<string, string> = {
   "quality-audit": "每晚抽检",
+  "outcome-review": "复查回复结果",
   external: "外部 Agent",
   ask: "问答",
   ingest: "整理新材料",

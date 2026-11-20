@@ -16,7 +16,7 @@ export type ScopeKey = { kind: ScopeKind; key: string; topic: string };
 /** How long after it ended a run still counts as “just done” for the runs sharing its scope. */
 export const RECENT_MINUTES = 30;
 /** Runs that are bookkeeping, not work anyone would do twice. */
-const IGNORED_KINDS = ["thread-summary", "wake", "note-review", "memory-review", "replay", "replay-arm", "replay-judge", "role-merge", "profile-review", "flow-review", "speaking-review", "sync", "learn-feed"];
+const IGNORED_KINDS = ["thread-summary", "wake", "note-review", "memory-review", "outcome-review", "replay", "replay-arm", "replay-judge", "role-merge", "profile-review", "flow-review", "speaking-review", "sync", "learn-feed"];
 
 type RunRow = { id: string; kind: string; input: string; lane: string | null; parent_id: string | null; user_id: string | null; created_at: string };
 

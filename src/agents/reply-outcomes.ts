@@ -13,8 +13,10 @@ import { HttpError, json, now, truncate } from "../core/util.ts";
  * at all is “silent” without asking a model, an emoji alone is read as it is.
  *
  * The first label can be wrong. Whoever looks at the run again with a stronger model — the night
- * replay's judge, the coach — reads the same follow-up and may revise it; the first label is kept
- * beside the revision, so how often the decision model was overruled can be counted.
+ * replay's judge, the coach, the nightly second reading (outcome-review.ts) — reads the follow-up and
+ * may revise it; the first label is kept beside the revision, so how often the decision model was
+ * overruled can be counted. The second reading also records when it agreed (`checked`). What the owner
+ * set (a revision on the run page) is never changed by anyone else.
  */
 export const REPLY_LABELS = {
   resolved: "解决了",
@@ -40,17 +42,26 @@ const GIVE_UP_MS = 7 * 86400_000;
 const RETRY_MS = 3600_000;
 
 export type FollowUp = { who: string; text: string; at: string };
-type Row = {
+export type OutcomeRow = {
   run_id: string; at: string; channel: string; chat_id: string | null; conversation_id: string | null; message_id: string | null;
   label: ReplyLabel | null; confidence: number | null; by: string | null; evidence: string; labelled_at: string | null;
   revised_label: ReplyLabel | null; revised_by: string | null; revised_why: string | null; revised_at: string | null; due_at: string;
+  checked: "confirmed" | "revised" | null; checked_label: ReplyLabel | null; checked_by: string | null; checked_why: string | null; checked_pick: string | null; checked_at: string | null;
 };
+type Row = OutcomeRow;
+/** Who stands for the owner in `by` / `revised_by`: what they set is ground truth, nobody else changes it. */
+export const OWNER_BY = "本人";
 export type ReplyOutcome = {
   runId: string; at: string; dueAt: string;
-  /** The label in force: the revision when there is one; a first label the model was unsure of counts as 看不出. */
+  /**
+   * The label in force: the revision when there is one; a first label the model was unsure of counts as
+   * 看不出, unless the nightly second reading agreed with it.
+   */
   label: ReplyLabel | null; text: string;
   first: { label: ReplyLabel; confidence: number | null; by: string; at: string } | null;
   revised: { label: ReplyLabel; by: string; why: string; at: string } | null;
+  /** The nightly second reading (outcome-review.ts): agreed with the first label, or changed it. */
+  checked: { verdict: "confirmed" | "revised"; label: ReplyLabel; by: string; why: string; pick: string; at: string } | null;
   evidence: FollowUp[];
 };
 
@@ -118,7 +129,7 @@ function followUps(app: App, o: Row, until: string): FollowUp[] {
 }
 
 /** Reactions people put on the run's messages; OK / DONE and the like only say "seen" and are left out. */
-function reactions(app: App, runId: string) {
+export function reactions(app: App, runId: string) {
   const rows = all<{ actor_kind: string; emoji: string; polarity: string; at: string }>(
     app.db,
     "select actor_kind, emoji, polarity, at from feedback where run_id = ? and removed_at is null and on_bot = 1 and actor_kind != 'bot' and polarity in ('positive','negative')",
@@ -132,7 +143,7 @@ function reactions(app: App, runId: string) {
 }
 
 /** The question the reply answered and the reply itself, short enough for a decision model. */
-function exchange(app: App, o: Row) {
+export function exchange(app: App, o: Pick<Row, "run_id" | "at" | "chat_id" | "conversation_id">) {
   const asked = o.conversation_id
     ? all<{ text: string }>(app.db, "select text from messages where conversation_id = ? and role = 'user' and created_at <= ? and json_extract(meta, '$.command') is null order by created_at desc limit 2", o.conversation_id, o.at).reverse().map((m) => m.text)
     : o.chat_id
@@ -226,14 +237,27 @@ export async function labelReplies(app: App, { limit = 12, at = now() }: { limit
 
 function view(app: App, o: Row): ReplyOutcome {
   const unsure = !!o.label && judged(o.label) && o.confidence !== null && o.confidence < app.config.replies.outcome.threshold;
-  const label = o.revised_label ?? (unsure ? "unrelated" : o.label);
+  // A stronger reading that agreed with an unsure first label settles it.
+  const label = o.revised_label ?? (unsure && o.checked !== "confirmed" ? "unrelated" : o.label);
   return {
     runId: o.run_id, at: o.at, dueAt: o.due_at, label, text: label ? REPLY_LABELS[label] : "还没到判断的时候",
     first: o.label ? { label: o.label, confidence: o.confidence, by: o.by ?? "", at: o.labelled_at ?? "" } : null,
     revised: o.revised_label ? { label: o.revised_label, by: o.revised_by ?? "", why: o.revised_why ?? "", at: o.revised_at ?? "" } : null,
+    checked: o.checked && o.checked_label ? { verdict: o.checked, label: o.checked_label, by: o.checked_by ?? "", why: o.checked_why ?? "", pick: o.checked_pick ?? "", at: o.checked_at ?? "" } : null,
     evidence: json<FollowUp[]>(o.evidence, []),
   };
 }
+
+/** The owner set this label themselves (a revision on the run page): nobody else changes it. */
+export const ownerJudged = (o: Pick<Row, "by" | "revised_by">) => o.revised_by === OWNER_BY || o.by === OWNER_BY || o.by === "owner";
+
+/**
+ * A label the nightly second reading may look at again: one the decision model gave, or a host's
+ * “没人接话” (more may have been said later). Never the owner's, nor one an emoji set (a reaction is
+ * what someone said about it), nor one somebody already revised or the reading already saw.
+ */
+export const reviewable = (o: Pick<Row, "label" | "by" | "revised_label" | "revised_by" | "checked">) =>
+  !!o.label && !o.revised_label && !o.checked && !ownerJudged(o) && (o.label === "silent" ? o.by === "宿主" : judged(o.label) && o.by !== "表情" && o.by !== "宿主");
 
 export function replyOutcome(app: App, runId: string): ReplyOutcome | null {
   const o = one<Row>(app.db, "select * from reply_outcomes where run_id = ?", runId);
@@ -246,6 +270,7 @@ export function replyOutcomeText(o: ReplyOutcome): string {
   const first = o.first ? `${REPLY_LABELS[o.first.label]}（${o.first.by}${o.first.confidence !== null ? `，把握 ${o.first.confidence.toFixed(2)}` : ""}）` : "";
   return [
     o.revised ? `按后续消息标的结果：${REPLY_LABELS[o.revised.label]}（${o.revised.by} 改判：${o.revised.why || "没写原因"}；原先标的是 ${first}）` : `按后续消息标的结果：${o.first && o.first.label !== o.label ? `${o.text}（${first}，把握不够）` : first}`,
+    ...(o.checked?.verdict === "confirmed" ? [`夜里复查（${o.checked.by}）同意这个标注：${o.checked.why || "没写原因"}`] : []),
     ...(o.evidence.length ? ["依据的后续消息：", ...o.evidence.map((l) => `- ${l.who}：${l.text}`)] : []),
   ].join("\n");
 }
@@ -256,8 +281,36 @@ export function reviseReply(app: App, runId: string, label: string, by: string, 
   const cur = replyOutcome(app, runId);
   if (!cur) throw new HttpError(404, "这次运行没有记录到发出的回复，没有可改的结果");
   if (!cur.first) throw new HttpError(400, "这条回复还没到判断的时候，等第一次标注出来再改");
+  if (by !== OWNER_BY && cur.revised?.by === OWNER_BY) throw new HttpError(409, "本人改判过这条，以本人的为准，不再改");
   if (cur.label !== label) run(app.db, "update reply_outcomes set revised_label = ?, revised_by = ?, revised_why = ?, revised_at = ? where run_id = ?", label, truncate(by, 80), truncate(why.trim(), 400), now(), runId);
   return replyOutcome(app, runId)!;
+}
+
+/** What the nightly second reading may answer: the judged labels, or that nobody said anything about it. */
+export const CHECK_LABELS = [...JUDGED_LABELS, "silent"] as const;
+export type CheckLabel = (typeof CHECK_LABELS)[number];
+
+/**
+ * The nightly second reading's answer for one reply (outcome-review.ts). The same label as the first
+ * one is recorded as `confirmed` (an unsure first label then counts as it is); another one is a
+ * revision like any other (revised_*) and `revised`. The first label stays either way.
+ */
+export function checkReply(app: App, runId: string, r: { label: string; by: string; why: string; pick?: string | null }): { verdict: "confirmed" | "revised"; outcome: ReplyOutcome } {
+  if (!(CHECK_LABELS as readonly unknown[]).includes(r.label)) throw new HttpError(400, `结果只能是 ${CHECK_LABELS.join(" / ")}`);
+  const o = one<Row>(app.db, "select * from reply_outcomes where run_id = ?", runId);
+  if (!o) throw new HttpError(404, "这次运行没有记录到发出的回复");
+  if (!o.label) throw new HttpError(400, "这条回复还没有第一遍的标注");
+  if (o.checked) throw new HttpError(409, "这条已经复查过");
+  if (o.revised_label) throw new HttpError(409, `这条已经被${o.revised_by ?? "别人"}改判过，以那次为准`);
+  if (!reviewable(o)) throw new HttpError(409, "这条是本人标的或按表情记的，不复查");
+  const by = truncate(r.by, 80), why = truncate(r.why.trim(), 400), at = now();
+  const verdict = r.label === o.label ? "confirmed" : "revised";
+  if (verdict === "confirmed")
+    run(app.db, "update reply_outcomes set checked = 'confirmed', checked_label = ?, checked_by = ?, checked_why = ?, checked_pick = ?, checked_at = ? where run_id = ? and checked is null", r.label, by, why, r.pick ?? null, at, runId);
+  else
+    run(app.db, "update reply_outcomes set revised_label = ?, revised_by = ?, revised_why = ?, revised_at = ?, checked = 'revised', checked_label = ?, checked_by = ?, checked_why = ?, checked_pick = ?, checked_at = ? where run_id = ? and checked is null and revised_label is null",
+      r.label, truncate(`夜里复查（${by}）`, 80), why, at, r.label, by, why, r.pick ?? null, at, runId);
+  return { verdict, outcome: replyOutcome(app, runId)! };
 }
 
 export type ReplyCount = { judged: number; resolved: number; followup: number; corrected: number; taken_over: number; unclear: number };

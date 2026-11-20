@@ -786,6 +786,16 @@ async function saveReplyHours(raw: string) {
   await saveConfig({ replies: { ...config.value.replies, outcome: { ...(config.value.replies?.outcome ?? {}), afterHours: v } } }, `回复发出 ${v} 小时后判断有没有用`);
   void load();
 }
+async function saveReplyReview(patch: Record<string, unknown>, note: string) {
+  const outcome = config.value.replies?.outcome ?? {};
+  await saveConfig({ replies: { ...config.value.replies, outcome: { ...outcome, review: { ...(outcome.review ?? {}), ...patch } } } }, note);
+  void load();
+}
+function saveReplyReviewMax(raw: string) {
+  const n = Number(raw);
+  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(1, Math.min(200, Math.round(n))) : 30;
+  return saveReplyReview({ max: v }, `每晚最多复查 ${v} 条回复结果`);
+}
 const TIERS = [{ id: "strong", label: "好的" }, { id: "standard", label: "中档" }, { id: "cheap", label: "省的" }] as const;
 /** Which backend, model and effort a tier stands for; null leaves the tier unset (the role's own AI is used). */
 async function saveTier(id: (typeof TIERS)[number]["id"], v: { agent?: string; model?: string; effort?: string } | null) {
@@ -1152,10 +1162,14 @@ async function saveEdit() {
       <FlowSettings :flows="config.flows" :studies="config.studies" @save="(partial, note) => saveConfig(partial, note).then(() => load())" />
       <div class="card pad stack">
         <div class="section-title">回复发出后看有没有用</div>
-        <HelpText>助手的回答发出几小时后，宿主取同一个会话或群里之后大家说的话，请决策模型标一个结果：解决了、被追问、被纠正、别人接手了、看不出；没人接话的不问模型。结果记在那次运行上（运行页能看到依据的那几句话，标错了你可以改），也给夜间复盘、coach 和整理消息的运行参考；复盘评判和 coach 认为标错时会改判。数据页的“做得怎么样”按它统计。没配决策模型时只记“没人接话”，其余等配好再判。</HelpText>
+        <HelpText>助手的回答发出几小时后，宿主取同一个会话或群里之后大家说的话，请决策模型标一个结果：解决了、被追问、被纠正、别人接手了、看不出；没人接话的不问模型。结果记在那次运行上（运行页能看到依据的那几句话，标错了你可以改），也给夜间复盘、coach 和整理消息的运行参考；每晚的复查、复盘评判和 coach 认为标错时会改判，你改过的谁都不再动。数据页的“做得怎么样”按它统计。没配决策模型时只记“没人接话”，其余等配好再判。</HelpText>
         <UiCheckbox :model-value="config.replies?.outcome?.enabled !== false" switch @change="(v: boolean) => saveConfig({ replies: { ...config.replies, outcome: { ...(config.replies?.outcome ?? {}), enabled: v } } }, v ? '回复发出后会看后续' : '不再看回复的后续')">按回复之后大家说的话，判断它有没有用</UiCheckbox>
         <label class="field"><span>发出几小时后判断（1–72）</span>
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="72" :value="config.replies?.outcome?.afterHours ?? 6" @change="saveReplyHours(($event.target as HTMLInputElement).value)" />
+        </label>
+        <UiCheckbox :model-value="config.replies?.outcome?.review?.enabled !== false" switch @change="(v: boolean) => saveReplyReview({ enabled: v }, v ? '每晚复查回复结果' : '不再复查回复结果')">每晚复查：一到三天前的回答，由 outcome-reviewer 带着发出后一整天的消息重看第一遍的标注，同意的记同意，不对的改判（本人标的和按表情记的不碰；在 Agent 页给它选一个比决策模型强的模型）</UiCheckbox>
+        <label class="field"><span>每晚最多复查几条（1–200，其中随机抽 {{ config.replies?.outcome?.review?.sample ?? 5 }} 条有把握的）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="200" :value="config.replies?.outcome?.review?.max ?? 30" @change="saveReplyReviewMax(($event.target as HTMLInputElement).value)" />
         </label>
       </div>
       <div class="card pad stack">
