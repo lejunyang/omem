@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { get } from "../api";
-import HelpText from "./HelpText.vue";
+import SetCard from "./SetCard.vue";
+import SetRow from "./SetRow.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
 
@@ -66,42 +67,45 @@ function reset() { dirty.value = false; problem.value = ""; envs.value = (props.
 </script>
 
 <template>
-  <div class="card pad stack">
-    <div class="section-title">流程进行中，自己跟进群和文档</div>
-    <HelpText>一件事按流程推进时，它关联的群、会话和文档里有了新内容，助手攒成一批读一遍，说清这件事变了什么。影响到已经在做或做完的阶段时先问你；只是信息的记在事项页上。文档只读新增或改过的行。读这些内容的是角色 item-follow，在 Agent 页给它选模型。</HelpText>
-    <UiCheckbox :model-value="follow.enabled" switch @change="(v: boolean) => saveFollow({ enabled: v }, v ? '流程进行中会跟进群和文档' : '不再跟进群和文档')">流程进行中跟进它的群、会话和文档</UiCheckbox>
-    <label class="field"><span>那边安静多少分钟后读这一批（0–1440）</span>
-      <input class="input narrow" type="number" inputmode="numeric" min="0" max="1440" :value="follow.quietMinutes" :disabled="!follow.enabled" @change="saveFollow({ quietMinutes: number(($event.target as HTMLInputElement).value, 0, 1440, 20) }, '已保存')" />
-    </label>
-    <label class="field"><span>攒够多少条就不等安静了（1–1000）</span>
-      <input class="input narrow" type="number" inputmode="numeric" min="1" max="1000" :value="follow.maxMessages" :disabled="!follow.enabled" @change="saveFollow({ maxMessages: number(($event.target as HTMLInputElement).value, 1, 1000, 30) }, '已保存')" />
-    </label>
-    <label class="field"><span>一件事一天最多读几批（0 是不限；到了以后剩下的攒到第二天）</span>
-      <input class="input narrow" type="number" inputmode="numeric" min="0" max="200" :value="follow.maxRunsPerDay ?? 12" :disabled="!follow.enabled" @change="saveFollow({ maxRunsPerDay: number(($event.target as HTMLInputElement).value, 0, 200, 12) }, '已保存')" />
-    </label>
-  </div>
+  <SetCard id="set-flow-follow" title="流程进行中，跟进群和文档">
+    <template #help>一件事按流程推进时，它关联的群、会话和文档里有了新内容，助手攒成一批读一遍，说清这件事变了什么。影响到已经在做或做完的阶段时先问你；只是信息的记在事项页上。文档只读新增或改过的行。读这些内容的是角色 item-follow，在 Agent 页给它选模型。</template>
+    <SetRow label="流程进行中跟进它的群、会话和文档">
+      <UiCheckbox :model-value="follow.enabled" switch aria-label="流程进行中跟进它的群、会话和文档" @change="(v: boolean) => saveFollow({ enabled: v }, v ? '流程进行中会跟进群和文档' : '不再跟进群和文档')" />
+    </SetRow>
+    <SetRow label="那边安静多少分钟后读这一批" hint="0–1440" :off="!follow.enabled">
+      <input class="input set-num" type="number" inputmode="numeric" min="0" max="1440" aria-label="那边安静多少分钟后读这一批" :value="follow.quietMinutes" :disabled="!follow.enabled" @change="saveFollow({ quietMinutes: number(($event.target as HTMLInputElement).value, 0, 1440, 20) }, '已保存')" />
+    </SetRow>
+    <SetRow label="攒够多少条就不等安静了" hint="1–1000" :off="!follow.enabled">
+      <input class="input set-num" type="number" inputmode="numeric" min="1" max="1000" aria-label="攒够多少条就不等安静了" :value="follow.maxMessages" :disabled="!follow.enabled" @change="saveFollow({ maxMessages: number(($event.target as HTMLInputElement).value, 1, 1000, 30) }, '已保存')" />
+    </SetRow>
+    <SetRow label="一件事一天最多读几批" hint="0 是不限；到了以后剩下的攒到第二天" :off="!follow.enabled">
+      <input class="input set-num" type="number" inputmode="numeric" min="0" max="200" aria-label="一件事一天最多读几批" :value="follow.maxRunsPerDay ?? 12" :disabled="!follow.enabled" @change="saveFollow({ maxRunsPerDay: number(($event.target as HTMLInputElement).value, 0, 200, 12) }, '已保存')" />
+    </SetRow>
+  </SetCard>
 
-  <div class="card pad stack">
-    <div class="section-title">总是同意的关卡，问一次要不要以后直接开始</div>
-    <HelpText>流程里“开始前先问你”的阶段，你连着直接点“开始”到下面的次数，助手问一次：以后轮到它就直接开始吗？你同意了才改。之后你重开过这一段，或让它停下，就退回每次问你。流程定义里写了不能改的关卡（推送、上线这类）不参与。已经改成直接开始的，在 流程 页那份流程里能看到、能改回去。</HelpText>
-    <UiCheckbox :model-value="ladder.enabled" switch @change="(v: boolean) => saveLadder({ enabled: v }, v ? '连着同意以后会问你要不要直接开始' : '关卡一律每次问你')">连着同意以后，问我要不要改成直接开始</UiCheckbox>
-    <label class="field"><span>连着同意几次以后问（2–50）</span>
-      <input class="input narrow" type="number" inputmode="numeric" min="2" max="50" :value="ladder.after" :disabled="!ladder.enabled" @change="saveLadder({ after: number(($event.target as HTMLInputElement).value, 2, 50, 5) }, '已保存')" />
-    </label>
-  </div>
+  <SetCard id="set-gate-ladder" title="总是同意的关卡">
+    <template #help>流程里“开始前先问你”的阶段，你连着直接点“开始”到下面的次数，助手问一次：以后轮到它就直接开始吗？你同意了才改。之后你重开过这一段，或让它停下，就退回每次问你。流程定义里写了不能改的关卡（推送、上线这类）不参与。已经改成直接开始的，在流程页那份流程里能看到、能改回去。</template>
+    <SetRow label="连着同意以后，问我要不要改成直接开始">
+      <UiCheckbox :model-value="ladder.enabled" switch aria-label="连着同意以后，问我要不要改成直接开始" @change="(v: boolean) => saveLadder({ enabled: v }, v ? '连着同意以后会问你要不要直接开始' : '关卡一律每次问你')" />
+    </SetRow>
+    <SetRow label="连着同意几次以后问" hint="2–50" :off="!ladder.enabled">
+      <input class="input set-num" type="number" inputmode="numeric" min="2" max="50" aria-label="连着同意几次以后问" :value="ladder.after" :disabled="!ladder.enabled" @change="saveLadder({ after: number(($event.target as HTMLInputElement).value, 2, 50, 5) }, '已保存')" />
+    </SetRow>
+  </SetCard>
 
-  <div class="card pad stack">
-    <div class="section-title">你直接做的提交，事后挂回事项上</div>
-    <HelpText>你没经过助手、直接在仓库里写代码并提交时，助手会看这些提交属于哪件事，在一张卡片上请你选：挂到某件已有的事上、新建一件、或不用管。你选了才会动；挂到已有的事上时，它流程里还没开始的编码那一段会记成已经做了。只看你自己写的、本地分支上的新提交，不翻以前的；零碎的提交（改格式、升依赖）不会来问。判断的是角色 commit-claim，在 Agent 页给它选模型。</HelpText>
-    <UiCheckbox :model-value="commits.enabled" switch @change="(v: boolean) => saveCommits({ enabled: v }, v ? '会看你直接做的提交' : '不再看你直接做的提交')">看我直接在仓库里做的提交属于哪件事</UiCheckbox>
-    <label class="field"><span>分支安静多少分钟以后再来问（1–1440）</span>
-      <input class="input narrow" type="number" inputmode="numeric" min="1" max="1440" :value="commits.quietMinutes" :disabled="!commits.enabled" @change="saveCommits({ quietMinutes: number(($event.target as HTMLInputElement).value, 1, 1440, 30) }, '已保存')" />
-    </label>
-  </div>
+  <SetCard id="set-commit-claim" title="你直接做的提交挂回事项">
+    <template #help>你没经过助手、直接在仓库里写代码并提交时，助手会看这些提交属于哪件事，在一张卡片上请你选：挂到某件已有的事上、新建一件、或不用管。你选了才会动；挂到已有的事上时，它流程里还没开始的编码那一段会记成已经做了。只看你自己写的、本地分支上的新提交；零碎的提交（改格式、升依赖）不会来问。判断的是角色 commit-claim，在 Agent 页给它选模型。</template>
+    <SetRow label="看我直接在仓库里做的提交属于哪件事">
+      <UiCheckbox :model-value="commits.enabled" switch aria-label="看我直接在仓库里做的提交属于哪件事" @change="(v: boolean) => saveCommits({ enabled: v }, v ? '会看你直接做的提交' : '不再看你直接做的提交')" />
+    </SetRow>
+    <SetRow label="分支安静多少分钟以后再来问" hint="1–1440" :off="!commits.enabled">
+      <input class="input set-num" type="number" inputmode="numeric" min="1" max="1440" aria-label="分支安静多少分钟以后再来问" :value="commits.quietMinutes" :disabled="!commits.enabled" @change="saveCommits({ quietMinutes: number(($event.target as HTMLInputElement).value, 1, 1440, 30) }, '已保存')" />
+    </SetRow>
+  </SetCard>
 
-  <div class="card pad stack">
-    <div class="section-title">课题的试验可以在哪跑</div>
-    <HelpText>课题的每个方向写明它的试验在哪个环境里跑，只能用这里登记的。本机不用登记，它一直在：试验在宿主给课题单独建的工作区里跑，不碰你的仓库目录；能不能在本机执行别人仓库的脚本，在每个课题自己的范围里开。别的环境（云端会话、托管的流水线）在这里登记：说明里写清怎么把文件带过去、怎么读回结果，试验的运行会照着做。选了“派给设备”的环境，试验交给你配对过的那台设备：它按仓库的远端地址找到自己的那份仓库，在它自己的工作区里切到方向确认时的提交，用它自己的模型跑完，把结果和证据文件送回这里。</HelpText>
+  <SetCard id="set-study-envs" title="课题的试验在哪跑">
+    <template #help>课题的每个方向写明它的试验在哪个环境里跑，只能用这里登记的。本机不用登记，它一直在：试验在给课题单独建的工作区里跑，不碰你的仓库目录；能不能在本机执行别人仓库的脚本，在每个课题自己的范围里开。别的环境（云端会话、托管的流水线）在这里登记：说明里写清怎么把文件带过去、怎么读回结果，试验的运行会照着做。选了“派给设备”的环境，试验交给你配对过的那台设备：它找到自己的那份仓库，切到方向确认时的提交，用它自己的模型跑完，把结果和证据文件送回这里。</template>
+    <div class="set-pad">
     <div v-for="(e, i) in envs" :key="i" class="env">
       <div class="env-line">
         <label class="field env-name"><span>名字</span><input v-model="e.name" class="input" placeholder="云端会话" @input="touch" /></label>
@@ -130,12 +134,12 @@ function reset() { dirty.value = false; problem.value = ""; envs.value = (props.
       <button v-if="dirty" type="button" class="btn ghost sm" @click="reset">放弃改动</button>
       <button v-if="dirty" type="button" class="btn primary sm" @click="saveEnvs">保存</button>
     </div>
-  </div>
+    </div>
+  </SetCard>
 </template>
 
 <style scoped>
-.narrow { width: 120px; }
-.env { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.env { display: grid; gap: 8px; padding: 4px 0 12px; border-bottom: 1px solid var(--line); }
 .env-line { display: flex; flex-wrap: wrap; gap: 8px 12px; }
 .env-name { flex: 2 1 160px; }
 .env-id { flex: 1 1 110px; }

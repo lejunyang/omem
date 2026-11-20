@@ -3,11 +3,14 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { linkifyPaths, renderCharts, renderMarkdown, renderMermaid } from "../lib/markdown";
 import { layoutCallouts, sizeTables } from "../lib/doc-layout";
-import { openCitation, state } from "../store";
+import { citeClick } from "../lib/cite-click";
 import { previewFromClick } from "../lib/image-preview";
 
-/** `runId`: the text is about a coding run (a review finding); `路径:行` opens that run's file instead of an indexed original. */
-const props = withDefaults(defineProps<{ source: string; space?: string; linkify?: boolean; existingPages?: string[]; breaks?: boolean; runId?: string }>(), { linkify: true });
+/**
+ * `runId`: the text is about a coding run (a review finding); `路径:行` opens that run's file instead of an indexed original.
+ * `compact`: the text sits in a card, a rail or a drawer, not on a reading page (styles.css `.prose.compact`).
+ */
+const props = withDefaults(defineProps<{ source: string; space?: string; linkify?: boolean; existingPages?: string[]; breaks?: boolean; runId?: string; compact?: boolean }>(), { linkify: true });
 const root = ref<HTMLElement>();
 const router = useRouter();
 const emit = defineEmits<{ rendered: [el: HTMLElement] }>();
@@ -39,30 +42,10 @@ watch(html, enhance);
 function onClick(e: MouseEvent) {
   // A picture opens in the page's preview with the text's other pictures, not in a new tab.
   if (previewFromClick(e, root.value)) return;
-  const a = (e.target as HTMLElement).closest("a") as HTMLAnchorElement | null;
-  if (!a) return;
-  const cite = a.dataset.cite;
-  if (cite) {
-    e.preventDefault();
-    const from = a.dataset.from ? Number(a.dataset.from) : undefined;
-    const to = a.dataset.to ? Number(a.dataset.to) : undefined;
-    const replace = !(e.target as HTMLElement).closest(".drawer");
-    if (cite === "source" && a.dataset.uri && props.runId) openCitation({ kind: "file", runId: props.runId, path: a.dataset.uri, from, to }, replace);
-    else if (cite === "source") openCitation(a.dataset.uri ? { kind: "source", uri: a.dataset.uri, space: props.space ?? state.space, from, to, label: a.textContent ?? "" } : { kind: "source", id: a.dataset.ref, from, to, label: a.textContent ?? "" }, replace);
-    else if (cite === "memory") openCitation({ kind: "memory", id: a.dataset.ref! }, replace);
-    else if (cite === "message") openCitation({ kind: "message", id: a.dataset.ref! }, replace);
-    return;
-  }
-  if (a.dataset.wiki) {
-    e.preventDefault();
-    const target = a.dataset.wiki;
-    const [space, slug] = target.includes(":") ? target.split(":") : [props.space ?? state.space, target];
-    if ((e.target as HTMLElement).closest(".drawer")) openCitation({ kind: "page", space, slug });
-    else router.push(`/wiki/${space}/${slug}`);
-  }
+  citeClick(e, { space: props.space, runId: props.runId, go: (path) => void router.push(path) });
 }
 </script>
 
 <template>
-  <div ref="root" class="prose" v-html="html" @click="onClick" />
+  <div ref="root" class="prose" :class="{ compact }" v-html="html" @click="onClick" />
 </template>

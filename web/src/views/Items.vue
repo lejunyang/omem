@@ -22,6 +22,7 @@ import DesignStart from "../components/DesignStart.vue";
 import type { DesignSummary } from "../lib/designs";
 import { fmtTime, itemKindLabel, openCitation, relTime, state, toast } from "../store";
 import { refAction } from "../lib/refs";
+import RichText from "../components/RichText.vue";
 import { pageParam } from "../lib/route";
 
 const route = useRoute();
@@ -264,7 +265,7 @@ async function addNote() {
           <div class="cand-main">
             <router-link :to="`/items/${c.id}`" class="ttl">{{ c.title }}</router-link>
             <div class="small muted">{{ candidateWhen(c) }}</div>
-            <div v-if="c.auto?.why" class="small why">{{ c.auto.why }}</div>
+            <RichText v-if="c.auto?.why" tag="div" class="small why" :text="c.auto.why" :lines="3" />
           </div>
           <div class="cand-actions row">
             <button class="btn sm primary" :disabled="deciding === c.id" @click="decide(c, true)">留下</button>
@@ -315,7 +316,7 @@ async function addNote() {
         </header>
         <div v-if="detail.item.status === 'candidate'" class="cand-banner">
           <p><strong>候选：</strong>{{ detail.auto?.by ? `${detail.auto.by}自己建的` : "助手自己建的" }}，你还没说要不要。在你决定之前它不提醒、不进上面的列表。</p>
-          <p v-if="detail.auto?.why" class="small why">{{ detail.auto.why }}</p>
+          <RichText v-if="detail.auto?.why" tag="p" class="small why" :text="detail.auto.why" />
           <div class="row">
             <button class="btn sm primary" :disabled="deciding === detail.item.id" @click="decide(detail.item, true)">留下</button>
             <button class="btn sm ghost" :disabled="deciding === detail.item.id" @click="decide(detail.item, false)">不要</button>

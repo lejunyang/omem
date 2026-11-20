@@ -4,11 +4,11 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { accessibleSpaces, canWrite } from "../core/users.ts";
-import { all, one } from "../core/db.ts";
+import { all, one, tx } from "../core/db.ts";
 import { HttpError, json } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { descendantIds, rootOf } from "../items/tree.ts";
-import { changeOf, defineMetric, figureSeries, latestOf, listMetrics, metricPoints, metricTable, metricViewSchema, nextTake, readMetric, requireMetric } from "./metrics.ts";
+import { changeOf, defineMetric, latestOf, listMetrics, metricPoints, metricTable, metricViewSchema, nextTake, readMetric, requireMetric, tileSeries } from "./metrics.ts";
 
 /**
  * Metrics on the web: the list (an item's and those under it, a 关注's, or all one may read), one metric
@@ -37,13 +37,15 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
     const root = q.item ? getItem(app, rootOf(app, q.item)) : null;
     const visibleRoot = root && itemAccess(app, who(req), root, "read") ? root.id : null;
     const list = listMetrics(app, { itemIds, contextId: q.context, spaces: readable(req), includeDropped: q.dropped === "1" }).filter((m) => !q.source || m.source === q.source);
+    // The last six weeks of points, enough for a tile's course however many ways a metric is split.
+    const since = new Date(Date.now() - 42 * 86400_000).toISOString();
     return list.map((m) => {
-      const pts = metricPoints(app, m.id, { limit: 120 });
-      const fig = figureSeries(m, pts);
+      const pts = metricPoints(app, m.id, { since, limit: 4000 });
+      const fig = tileSeries(m, pts);
       // Which matter, and which work line above it, the metric watches: the data page groups by the line.
       const line = q.item ? visibleRoot : m.itemId ? rootOf(app, m.itemId) : null;
       return {
-        ...m, change: changeOf(m, fig.values.map((value) => ({ value }))), spark: fig.values.slice(-30), figure: fig.name, latest: latestOf(metricTable(m, pts)), points: pts.length, nextAt: nextTake(m),
+        ...m, change: changeOf(m, fig.values.map((value) => ({ value }))), spark: fig.values.slice(-30), figure: fig.name, groups: fig.groups, latest: latestOf(metricTable(m, pts)), points: pts.length, nextAt: nextTake(m),
         plan: planOf(m.planRef), itemTitle: m.itemId ? title(m.itemId) : null, lineId: line, lineTitle: line ? title(line) : null,
       };
     });
@@ -76,6 +78,21 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
     if (spaces && !spaces.includes(m.spaceId)) throw new HttpError(404, "没有这个指标");
     const q = z.object({ days: z.coerce.number().int().min(1).max(365).optional() }).parse(req.query ?? {});
     return readMetric(app, m.id, { days: q.days });
+  });
+
+  // Several proposals decided at once (a group, or all of them): kept, or dropped with an optional word why.
+  // All or nothing: a metric one may not change stops the batch before any write.
+  server.post("/api/metrics/decide", async (req) => {
+    const b = z.object({ ids: z.array(z.string().min(1)).min(1).max(200), status: z.enum(["active", "dropped"]), note: z.string().trim().max(300).optional() }).safeParse(req.body ?? {});
+    if (!b.success) throw new HttpError(400, `参数错误：${b.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("；")}`);
+    const ms = [...new Set(b.data.ids)].map((id) => requireMetric(app, id));
+    const spaces = readable(req);
+    for (const m of ms) {
+      if (spaces && !spaces.includes(m.spaceId)) throw new HttpError(404, "没有这个指标");
+      if (!canWrite(app, who(req), m.spaceId)) throw new HttpError(403, `不能改指标「${m.name}」`);
+    }
+    const done = tx(app.db, () => ms.map((m) => defineMetric(app, { id: m.id, name: m.name, status: b.data.status, ...(b.data.note ? { ownerNote: b.data.note } : {}) }, { by: "owner" })));
+    return { changed: done.map((m) => ({ id: m.id, status: m.status })) };
   });
 
   // Keep (status active), drop (dropped, with an optional word why), pause, or change what it is and how it is drawn.

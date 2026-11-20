@@ -61,7 +61,7 @@ export function keyVars(kind: string, key: string, baseUrl?: string): Record<str
 export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command">): Record<string, string> {
   if (!profile.keyRef) return {};
   const key = keyOf(profile.keyRef);
-  if (!key) throw new Error(`后端 ${profile.id} 用的 API key（${profile.keyRef}）还没有填写：设置 → AI → API key`);
+  if (!key) throw new Error(`后端 ${profile.id} 用的 API key（${profile.keyRef}）还没有填写：设置 → 后端与模型 → API key`);
   const s = `${profile.id} ${profile.command}`;
   return keyVars(/claude/.test(s) ? "anthropic" : /codex/.test(s) ? "openai" : "", key);
 }
