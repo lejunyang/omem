@@ -176,6 +176,28 @@ new AgentSideConnection(
         if (Number.isFinite(used)) await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "usage_update", used, size: 1000 } });
         if (process.env.FAKE_OTHER_USAGE) await conn.sessionUpdate({ sessionId: "unrelated-session", update: { sessionUpdate: "usage_update", used: 950, size: 1000 } });
       }
+      if (process.env.FAKE_MODE === "board") {
+        const label = /^材料编号 (\w+)$/m.exec(prompt)?.[1];
+        if (!label || prompt.includes("请用 work_review 逐块验收")) {
+          await say("汇总已交付。");
+          return { stopReason: "end_turn" };
+        }
+        if (label === "fail" && state.model === "m1") throw new Error("材料缺失");
+        if (label === "permissions") {
+          const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+          const client = new Client({ name: "board-worker", version: "1" });
+          await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) } as Record<string,string> }));
+          try {
+            const listed = (await client.listTools()).tools;
+            const help = await client.callTool({ name: "omem_help", arguments: {} });
+            const offered = listed.map(t => t.name).join(" ") + JSON.stringify(help.content);
+            await say("工具核对：" + ["dispatch_work","work_review","run_agent","ask_agent","lark_send","notify"].filter(name => new RegExp(`\\b${name}\\b`).test(offered)).join(","));
+          } finally { await client.close(); }
+        }
+        await new Promise(resolve => setTimeout(resolve, label === "slow" ? 30000 : 400));
+        await say("材料报告 " + label);
+        return { stopReason: "end_turn" };
+      }
       if (process.env.FAKE_MODE === "wiki") {
         const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
         const client = new Client({ name: "fake-wiki", version: "1" });
