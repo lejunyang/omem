@@ -83,6 +83,8 @@ import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows,
 import type { SearchOptions } from "../search/search.ts";
 
 export type ToolContext = {
+  /** Host-only identity of the ACP prompt currently using this token and the command wrappers. */
+  commandTurn?: string;
   app: App;
   runId: string | null;
   /** Default space for tools that take an optional `space`. */
@@ -7146,6 +7148,13 @@ export function issueToolToken(ctx: Omit<ToolContext, "app">) {
 export function retargetToolToken(token: string, runId: string | null) {
   const ctx = tokens.get(token);
   if (ctx) ctx.runId = runId;
+}
+export function beginCommandTurn(token: string) {
+  const ctx = tokens.get(token);
+  if (!ctx) return;
+  const turn = randomBytes(18).toString("base64url");
+  ctx.commandTurn = turn;
+  return () => { if (ctx.commandTurn === turn) delete ctx.commandTurn; };
 }
 export function revokeToolToken(token: string) {
   tokens.delete(token);

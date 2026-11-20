@@ -148,7 +148,12 @@ new AgentSideConnection(
       const say =(text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
       if (process.env.FAKE_MODE === "permission") {
         const response = await conn.requestPermission({ ...JSON.parse(prompt), sessionId: p.sessionId });
-        await say(JSON.stringify(response.outcome));
+        if (process.env.FAKE_EXEC_ACME && response.outcome.outcome === "selected" && response.outcome.optionId === "yes") {
+          const output = process.platform === "win32"
+            ? execFileSync("cmd.exe", ["/d", "/c", "acme write"], { encoding: "utf8" })
+            : execFileSync("acme", ["write"], { encoding: "utf8" });
+          await say(JSON.stringify({ ...response.outcome, output: output.trim() }));
+        } else await say(JSON.stringify(response.outcome));
         return { stopReason: "end_turn" };
       }
       // Replay tests: prefer the arm that read the candidate, consistently in both blind orders.

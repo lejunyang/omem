@@ -1,8 +1,9 @@
 import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
+import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { gateOperation } from "./command-gate.ts";
-import { auditOperation, decide, operationWho, type Operation } from "./operation-policy.ts";
+import { auditOperation, decide, digest, operationWho, type Operation } from "./operation-policy.ts";
 import { toolContextForToken, type ToolContext } from "./tools.ts";
 
 type ToolCall = RequestPermissionRequest["toolCall"];
@@ -20,7 +21,7 @@ function operations(call: ToolCall, cwd: string): Operation[] {
     if (typeof executable !== "string" || !executable) return [];
     if (!vector && !input.executable && /\s/.test(executable)) return [];
     const argv = vector ? vector.slice(1) : input.argv ?? input.args;
-    return [{ kind: "command", executable: basename(executable), argv: stringArray(argv) ? argv : undefined,
+    return [{ kind: "command", executable, argv: stringArray(argv) ? argv : undefined,
       cwd: typeof input.cwd === "string" ? resolve(cwd, input.cwd) : cwd }];
   }
   const kind = call.kind;
@@ -33,7 +34,7 @@ function operations(call: ToolCall, cwd: string): Operation[] {
 }
 
 export async function acpPermission(request: RequestPermissionRequest, opts: {
-  app?: App; token?: string; runId?: string | null; backend: string; cwd: string; writable: boolean;
+  app?: App; token?: string; runId?: string | null; backend: string; cwd: string; writable: boolean; guardedDir?: string;
 }) {
   const { toolCall: call, options } = request;
   const kind = call.kind ?? "other";
@@ -47,11 +48,18 @@ export async function acpPermission(request: RequestPermissionRequest, opts: {
     if (!ctx) allowed = false;
     else {
       const who = operationWho(ctx);
-      for (const op of ops) {
+      for (const raw of ops) {
+        const op = raw.kind === "command" ? { ...raw, executable: basename(raw.executable) } : raw;
         const { rule, action } = decide(opts.app, op, who);
         if (action === "log") auditOperation(opts.app, op, who, rule, action, allowed ? "允许" : "拒绝");
         if (action === "deny" || (action === "approve" && allowed)) {
-          const gate = await gateOperation(opts.app, ctx, op);
+          const wrapper = opts.guardedDir && op.kind === "command" ? resolve(opts.guardedDir, op.executable) : undefined;
+          const throughWrapper = wrapper && raw.kind === "command" && existsSync(wrapper)
+            && (raw.executable === basename(raw.executable) || resolve(raw.cwd!, raw.executable) === wrapper)
+            && options.some(option => option.kind === "allow_once");
+          const gate = await gateOperation(opts.app, ctx, op, {
+            stage: throughWrapper ? "before-wrapper" : undefined,
+          }, !ctx.runId && opts.token ? digest(opts.token) : undefined);
           if (gate.decision !== "allow") {
             allowed = false;
             message = gate.message;

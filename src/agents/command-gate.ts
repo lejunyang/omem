@@ -358,11 +358,11 @@ function record(app: App, runId: string | null, actor: string, action: string, c
 
 /** A protected command an agent's process is about to run (POST /api/command-gate). */
 export async function commandGate(app: App, ctx: ToolContext, req: { command: string; args: string[]; cwd: string; approver?: string; reason?: string }, session?: string): Promise<Decision> {
-  return gateOperation(app, ctx, { kind: "command", executable: req.command, argv: req.args, cwd: req.cwd }, req, session);
+  return gateOperation(app, ctx, { kind: "command", executable: req.command, argv: req.args, cwd: req.cwd }, { ...req, stage: "wrapper" }, session);
 }
 
 /** Both ACP and PATH consult the current rule again before using an approval. */
-export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string} = {}, session?: string): Promise<Decision> {
+export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"} = {}, session?: string): Promise<Decision> {
   const who = operationWho(ctx);
   const decision = decide(app, op, who);
   const policy = decision.rule;
@@ -391,11 +391,15 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
       json_extract(context,'$.scope') = 'run' and status='answered' and approved=1 and json_extract(context,'$.grantUntil') > ?
       and exists(select 1 from runs where id=? and status='running') limit 1`, runKey, now(), runId);
     if (reusable) return true;
+    // A reserved grant can only finish at the wrapper during the prompt that reserved it.
+    const wrapperTurn = req.stage === "wrapper" ? ctx.commandTurn ?? null : null;
     const grant = one<{id:string}>(app.db, `select id from asks where json_extract(context,'$.key')=? and json_extract(context,'$.chain')=?
       and status='answered' and approved=1 and coalesce(json_extract(context,'$.scope'),'once')='once'
       and (run_id is ? or json_extract(context,'$.retryRunId')=? or json_extract(context,'$.reuse')='window')
-      and json_extract(context,'$.grantUntil') > ? and coalesce(json_extract(context,'$.used'),0)=0 order by answered_at desc limit 1`, key,chain,runId,runId,now());
-    return !!grant && useGrant(app, grant.id);
+      and json_extract(context,'$.grantUntil') > ? and coalesce(json_extract(context,'$.used'),0)=0
+      and (json_extract(context,'$.wrapperTurn') is null or json_extract(context,'$.wrapperTurn') = ?)
+      order by json_extract(context,'$.wrapperTurn') is not null desc, answered_at desc limit 1`, key,chain,runId,runId,now(),wrapperTurn);
+    return !!grant && useGrant(app, grant.id, wrapperTurn, req.stage === "before-wrapper" ? ctx.commandTurn : undefined);
   };
   if (takeGrant()) {
     auditOperation(app, op, who, policy, "allow", "使用已有授权");
@@ -436,11 +440,16 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   return { decision: "pending", message: `这条命令需要 ${approverName} 批准，审批卡片已发出；批准后会唤醒你，届时原样重新执行这条命令。不要改用其他路径或方式绕过。` };
 }
 
-/** Marks a once-only approval used; false when another request took it first. */
-function useGrant(app: App, id: string) {
+/** Reserve a one-shot for this prompt or consume it at the final check. */
+function useGrant(app: App, id: string, wrapperTurn: string | null, reserveForTurn?: string) {
   const g = safeJson(one<{ context: string }>(app.db, "select context from asks where id = ?", id)?.context) as GateContext;
   if (g.reuse === "window") return true;
-  return run(app.db, "update asks set context = json_set(context, '$.used', 1) where id = ? and coalesce(json_extract(context, '$.used'), 0) = 0", id).changes > 0;
+  if (reserveForTurn)
+    return run(app.db, `update asks set context=json_set(context,'$.wrapperTurn',?) where id=?
+      and json_extract(context,'$.wrapperTurn') is null and coalesce(json_extract(context,'$.used'),0)=0`, reserveForTurn, id).changes > 0;
+  return run(app.db, `update asks set context=json_set(context,'$.used',1) where id=?
+    and (json_extract(context,'$.wrapperTurn') is null or json_extract(context,'$.wrapperTurn')=?)
+    and coalesce(json_extract(context,'$.used'),0)=0`, id, wrapperTurn).changes > 0;
 }
 
 async function openAsk(

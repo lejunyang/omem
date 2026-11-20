@@ -104,7 +104,9 @@ export type AcpHandle = {
 
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
   if (opts.signal?.aborted) throw new Error("CANCELLED");
-  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env }, sandbox: accountOf(profile) });
+  const env = { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env };
+  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env, sandbox: accountOf(profile) });
+  const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => {
@@ -180,6 +182,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         const { acpPermission } = await import("./acp-permission.ts");
         const { optionId, message } = await acpPermission(request, {
           app: opts.app, token: opts.mcp?.token, runId: opts.runId, backend: profile.id, cwd: opts.cwd,
+          guardedDir: guardedToken ? env.OMEM_COMMAND_GATE : undefined,
           writable: !!(opts.allowWrites || opts.fullAccess),
         });
         emit({ type: "status", text: message });
@@ -550,11 +553,13 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
           if (signal?.reason instanceof NetworkUnavailableError) close();
         };
         signal?.addEventListener("abort", onAbort, { once: true });
+        const endCommandTurn = guardedToken ? (await import("./tools.ts")).beginCommandTurn(guardedToken) : undefined;
         try {
           const result = await Promise.race([connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] }), failed]).catch((e) => { throw promptError(e); });
           if (signal?.aborted) throw new Error("CANCELLED");
           return { text, reply: replyFromSegments(segments), stopReason: result.stopReason, sessionId, agent: agentName, contextUsage };
         } finally {
+          endCommandTurn?.();
           idleW.close();
           (queueW as ReturnType<typeof idleWatchdog> | null)?.close();
           promptQueue = null;

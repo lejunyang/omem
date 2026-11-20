@@ -16,7 +16,7 @@ function fixture() {
     await new Promise(r => setTimeout(r,20));
     return listAsks(app,{status:"pending"})[0]!;
   };
-  return {app,rule:rule!,invoke,ask};
+  return {app,ctx,rule:rule!,invoke,ask};
 }
 it("binds a late one-shot approval to the member, directory and rule revision", async () => {
   const {app,rule,invoke,ask} = fixture();
@@ -51,4 +51,17 @@ it("persists only the approved rule and consumes competing once requests atomica
   await answerAsk(app,(await ask()).id,{approved:true,by:"owner",choice:2});
   expect((await next).decision).toBe("allow");
   expect(app.config.security.operationRules[0]?.action).toBe("allow");
+});
+
+it("reserves once for a single ACP prompt and atomically consumes only at its wrapper", async () => {
+  const { app, ctx, ask } = fixture();
+  const op = { kind: "command" as const, executable: "acme", argv: ["write"], cwd: "/a" };
+  const check = (stage: "before-wrapper" | "wrapper", commandTurn: string) =>
+    gateOperation(app, { ...ctx, commandTurn }, op, { stage });
+  const pair = [check("before-wrapper", "original"), check("before-wrapper", "original")];
+  await answerAsk(app, (await ask()).id, { approved: true, by: "owner", choice: 0 });
+  expect((await Promise.all(pair)).map(r => r.decision).sort()).toEqual(["allow", "deny"]);
+  expect((await check("wrapper", "next")).decision).toBe("pending");
+  expect((await Promise.all([check("wrapper", "original"), check("wrapper", "original")]))
+    .map(r => r.decision).sort()).toEqual(["allow", "pending"]);
 });
