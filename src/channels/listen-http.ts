@@ -66,7 +66,8 @@ function view(app: App, c: ListenContext) {
   return {
     ...c,
     groups: groupNames(app, c.chats),
-    item: c.itemId ? one<{ id: string; title: string; status: string }>(app.db, "select id, title, status from items where id = ?", c.itemId) ?? null : null,
+    // A matter's line, and whether it launched and is being watched (items/lifecycle.ts): the page says so.
+    item: c.itemId ? one<{ id: string; title: string; status: string; phase: "watching" | null; watchUntil: string | null }>(app.db, "select id, title, status, phase, watch_until watchUntil from items where id = ?", c.itemId) ?? null : null,
     summaryAt: t?.summaryAt ?? null,
     stats: { cases: s.cases ?? 0, corrections: s.corrections ?? 0, ownReplies: s.ownReplies ?? 0, lastCase: s.last },
   };
@@ -151,7 +152,9 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
     const b = parse(z.object({ name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).max(200).optional(), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().nullable().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), status: z.enum(["active", "paused"]).optional(), expiresAt: z.string().nullable().optional() }), req.body);
     // The owner writing the brief here is confirming it.
     const brief = b.brief ? { ...b.brief, at: c.brief?.at ?? now(), confirmedAt: now() } : undefined;
-    const next = saveContext(app, { id: c.id, kind: c.kind, name: b.name, chats: b.chats, note: b.note, spec: b.spec, spaceId: b.spaceId, brief, knobs: cleanKnobs(b.knobs), status: b.status, expiresAt: b.expiresAt });
+    // A matter's groups follow its items: the owner's choice is kept as added / taken out (listen-items.ts).
+    const groups = b.chats && c.kind === "item" && c.itemId ? (await import("./listen-items.ts")).itemChatsPatch(app, c.itemId, b.chats) : { chats: b.chats };
+    const next = saveContext(app, { id: c.id, kind: c.kind, name: b.name, ...groups, note: b.note, spec: b.spec, spaceId: b.spaceId, brief, knobs: cleanKnobs(b.knobs), status: b.status, expiresAt: b.expiresAt });
     return view(app, next);
   });
 

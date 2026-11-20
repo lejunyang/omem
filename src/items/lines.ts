@@ -7,6 +7,7 @@ import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { createAsk, cancelAsk, registerAskHandler } from "../agents/asks.ts";
 import { createRun, getRun, setRunOutput } from "../agents/runs.ts";
 import { CODE_STARTERS } from "../agents/tool-help.ts";
+import type { RefTarget } from "./changes.ts";
 import { validateItemRefs } from "./evidence.ts";
 import { addMaterials } from "./materials.ts";
 import { setParent } from "./parent.ts";
@@ -31,7 +32,11 @@ import { checkParent, descendantIds, rootOf } from "./tree.ts";
 export { lineStateSchema, NEXT_KINDS, proposeSchema };
 export type NextKind = (typeof NEXT_KINDS)[number];
 export type NextStatus = "open" | "doing" | "done" | "declined" | "expired";
-export type NextLite = { id: string; itemId: string; text: string; why: string; refs: string[]; kind: NextKind; status: NextStatus; runId: string | null; createdAt: string; updatedAt: string; decidedAt: string | null };
+export type NextLite = {
+  id: string; itemId: string; text: string; why: string; refs: string[]; kind: NextKind; status: NextStatus; runId: string | null; createdAt: string; updatedAt: string; decidedAt: string | null;
+  /** On the work pages: the references naming an item or a run (items/changes.ts refTargets). */
+  refTargets?: Record<string, RefTarget>;
+};
 type NextRow = { id: string; item_id: string; text: string; why: string; refs: string; kind: NextKind; status: NextStatus; run_id: string | null; created_at: string; updated_at: string; decided_at: string | null };
 const toNext = (r: NextRow): NextLite => ({ id: r.id, itemId: r.item_id, text: r.text, why: r.why, refs: json<string[]>(r.refs, []), kind: r.kind, status: r.status, runId: r.run_id, createdAt: r.created_at, updatedAt: r.updated_at, decidedAt: r.decided_at });
 

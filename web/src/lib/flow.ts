@@ -175,10 +175,24 @@ export function nextWords(s: FlowStage) {
   if (s.waitingSignal) return `轮到你：${task}。${s.waitingSignal.type === "git.merged" ? "合进目标分支" : "推到远端"}以后这一段会自己完成，后面的阶段接着走；也可以直接点做完。`;
   return `轮到你：${task}。做完点一下，后面的阶段会接着走。`;
 }
+/**
+ * Where a reference that is no citation opens: a plan, a run (`r0…`, `run:`, `code-work:`), an item's page
+ * (`i0…`, `item:`). Anything else (a stage, a metric's name, a platform object) is no link: null, shown as text,
+ * so it never opens an empty runs page.
+ */
 export function evidenceLink(ref: string) {
-  if (ref.startsWith("src:")) return null;
-  if (ref.startsWith("design:")) return `#/design/${encodeURIComponent(ref.slice(7))}`;
-  return `#/runs/${encodeURIComponent(ref.replace(/^(run:|code-work:)/, ""))}`;
+  const r = ref.trim();
+  if (r.startsWith("design:")) return `#/design/${encodeURIComponent(r.slice(7))}`;
+  const run = RUN_REF.exec(r);
+  if (run) return `#/runs/${encodeURIComponent(run[1] ?? run[2])}`;
+  const item = ITEM_REF.exec(r);
+  if (item) return `#/work/${encodeURIComponent(item[1] ?? item[2])}`;
+  return null;
 }
+/** A run: named with its prefix (any id), or a bare run id; an item likewise (src/items/changes.ts reads them the same way). */
+const RUN_REF = /^(?:(?:run|code-work):([\w-]+)|(r[0-9a-z]{15,30}))$/;
+const ITEM_REF = /^(?:item:([\w-]+)|(i[0-9a-z]{15,30}))$/;
+/** What such a link is, in a word (“方案 / 运行 / 事项”). */
+export const evidenceWord = (ref: string) => (ref.startsWith("design:") ? "方案" : ITEM_REF.test(ref.trim()) ? "事项" : "运行");
 export const actorWords = (actor: string) => ({ owner: "你", user: "你", host: "omem", assistant: "助理" }[actor] ?? actor);
 export const objectStatusWords = (status: string) => ({ drafting: "在写", review: "等你确认", approved: "已通过", assessed: "已评估", recorded: "已记录", ended: "已结束", running: "进行中", reviewing: "评审中", peer: "等外部 Agent", "owner-tasks": "等你决定", sync: "同步有冲突", stopped: "已停止", assistant: "助手在处理", paused: "已暂停", "review-open": "有问题待定", "review-ok": "评审通过", confirmed: "还没开始试", active: "在试", done: "完成，等你处理", findings: "等你决定要改的问题", design: "确认方案", plan: "确认评审计划", "no-changes": "没有改动", stalled: "停住了" }[status] ?? "等待进展");

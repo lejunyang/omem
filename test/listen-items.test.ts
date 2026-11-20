@@ -97,6 +97,7 @@ describe("事情型关注", () => {
     const queued = listRuns(app, { kind: "item-follow" });
     expect(queued).toHaveLength(1);
     expect(String(queued[0].input.task)).toContain("这件事没有在走的流程");
+    expect(String(queued[0].input.task)).not.toContain("## 观察期");
     run(app.db, "update runs set status='running' where id=?", queued[0].id);
     expect(() => noteItemChange(app, queued[0].id, { item: item.id, type: "scope", summary: "范围变了", stages: ["code"], refs: [ref] })).toThrow("没有在走的流程");
     noteItemChange(app, queued[0].id, { item: item.id, type: "deadline", summary: "小王提出改到 12 月 8 日", due: "2026-12-08", refs: [ref] });
@@ -116,6 +117,18 @@ describe("事情型关注", () => {
     expect(followAnchor(app, item.id)).toBeNull();
     await followContexts(app);
     expect(itemContext(app, item.id)!.status).toBe("paused");
+  });
+
+  it("tells item-follow what still matters once the line launched and is being watched", async () => {
+    const { app, item, message } = setup();
+    app.config.flows.follow.maxMessages = 1;
+    setItemListening(app, item.id, true);
+    run(app.db, "update items set phase = 'watching', phase_since = ?, watch_until = null where id = ?", new Date().toISOString(), item.id);
+    await followContexts(app);
+    message("上线后有用户说退款按钮点了没反应");
+    await followContexts(app);
+    const [queued] = listRuns(app, { kind: "item-follow" });
+    expect(String(queued.input.task)).toContain("## 观察期\n这件事已经上线，在观察期：只关心报错、用户反馈和数据异常，普通讨论不用处理。");
   });
 
   it("keeps the 关注's groups the item's linked chats on each pass, and the chat index with them", async () => {
@@ -145,6 +158,7 @@ describe("事情型关注", () => {
     expect(made.text).toContain("只读");
     const c = itemContext(app, item.id)!;
     expect(c).toMatchObject({ chats: ["oc_shop"], expiresAt: null, knobs: { reply: "none" } });
+    // A group capture never saw is refused (adding a known one: the test below).
     expect((await callTool(tools, "set_chat_watch", { item: item.id, chat_id: "oc_x" })).isError).toBe(true);
     expect((await callTool(tools, "set_chat_watch", { item: item.id, reply: "draft" })).text).toContain("brief");
     const on = await callTool(tools, "set_chat_watch", { item: item.id, reply: "draft", brief: BRIEF });
@@ -171,6 +185,61 @@ describe("事情型关注", () => {
     expect(note).toContain(`事项 ${item.id}「示例商城退款」`);
     expect(note).toContain("截止 2026-12-01");
     expect(note).toContain("小王提出运费也要退");
+    expect(note).not.toContain("观察期");
+    // The line launched and is being watched: the handler is told what still matters, no knob changes.
+    run(app.db, "update items set phase = 'watching', phase_since = ?, watch_until = ? where id = ?", new Date().toISOString(), "2026-12-05T04:00:00Z", item.id);
+    const watched = await watchedNote(app, t, threadMessages(app, t.id));
+    expect(watched).toContain("这件事已经上线，在观察期，观察到 12 月 5 日：只关心报错、用户反馈和数据异常，普通讨论不用处理。");
+    expect(getContext(app, c.id)!.knobs).toEqual(c.knobs);
+  });
+
+  it("the owner picks the matter's groups on the line page or by asking: kept through every sync with its items", async () => {
+    const { app, item, src } = setup();
+    const c = setItemListening(app, item.id, true)!;
+    run(app.db, "insert into lark_cursors(chat_id,name,kind) values('oc_ops','值班群','group'), ('oc_dm','小王','p2p')");
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const put = (chats: string[]) => server.inject({ method: "PUT", url: `/api/listen/${c.id}`, payload: { chats } });
+      // Add a group the items do not link, let go of the one they do.
+      expect((await put(["oc_ops"])).statusCode).toBe(200);
+      expect(getContext(app, c.id)).toMatchObject({ chats: ["oc_ops"], added: ["oc_ops"], dropped: ["oc_shop"] });
+      await followContexts(app);
+      expect(getContext(app, c.id)!.chats).toEqual(["oc_ops"]);
+      expect(chatListened(app, "oc_ops")).toBe(true);
+      expect(chatListened(app, "oc_shop")).toBe(false);
+      // The line's page lists what its 关注 reads.
+      const d = (await server.inject(`/api/work/${item.id}`)).json();
+      expect(d.chats.map((x: { chatId: string }) => x.chatId)).toEqual(["oc_ops"]);
+      expect(d.listen).toEqual({ id: c.id, status: "active" });
+      // A new chat linked to the item still comes in; a private chat or an unknown one is refused.
+      const dev = appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_dev", title: "开发群", lines: ["x"], meta: { chatId: "oc_dev" } });
+      addMaterials(app, item.id, [{ kind: "source", ref: dev.id }], "owner");
+      await followContexts(app);
+      expect(getContext(app, c.id)!.chats.sort()).toEqual(["oc_dev", "oc_ops"]);
+      expect((await put(["oc_ops", "oc_dm"])).statusCode).toBe(400);
+      expect((await put(["oc_ops", "oc_nobody"])).statusCode).toBe(400);
+      // Taking the group back clears what was dropped.
+      expect((await put(["oc_ops", "oc_dev", "oc_shop"])).json()).not.toHaveProperty("dropped");
+      await followContexts(app);
+      expect(getContext(app, c.id)!.chats.sort()).toEqual(["oc_dev", "oc_ops", "oc_shop"]);
+      expect(getContext(app, c.id)!.dropped).toBeUndefined();
+      void src;
+    } finally {
+      await server.close();
+    }
+    // Asking the assistant does the same: by the 关注's name, one more group (chat_id) or the whole list (chats).
+    const tools = ownerTools(app);
+    run(app.db, "insert into lark_cursors(chat_id,name,kind) values('oc_qa','测试群','group')");
+    expect((await callTool(tools, "set_chat_watch", { context: "示例商城退款", chat_id: "oc_qa" })).isError).toBe(false);
+    expect(getContext(app, c.id)!.chats.sort()).toEqual(["oc_dev", "oc_ops", "oc_qa", "oc_shop"]);
+    expect((await callTool(tools, "set_chat_watch", { context: "「示例商城退款」的关注", chats: ["oc_qa"], listen: "addressed" })).isError).toBe(false);
+    expect(getContext(app, c.id)).toMatchObject({ chats: ["oc_qa"], knobs: { listen: "addressed" } });
+    await followContexts(app);
+    expect(getContext(app, c.id)!.chats).toEqual(["oc_qa"]);
+    const none = await callTool(tools, "set_chat_watch", { context: "没有这个", depth: "answer" });
+    expect(none.isError).toBe(true);
+    expect(none.text).toContain("示例商城退款");
   });
 });
 

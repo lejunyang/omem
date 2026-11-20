@@ -7,7 +7,7 @@ import { HttpError, json, now, zonedParts, zoneMidnight } from "../core/util.ts"
 import { listAsks, type Ask } from "../agents/asks.ts";
 import { chatName } from "../agents/owner-now.ts";
 import { itemContext, listContexts } from "../channels/listen.ts";
-import { CHANGE_COLS, CHANGE_TYPES, changeLite, lineTimeline, type ChangeLite } from "./changes.ts";
+import { CHANGE_COLS, CHANGE_TYPES, changeLite, lineTimeline, refTargets, type ChangeLite } from "./changes.ts";
 import { endedLines, endReason, guardsOf, setLinePhase } from "./lifecycle.ts";
 import { decideNext, nextOf, type NextLite } from "./lines.ts";
 import { materialViews } from "./materials.ts";
@@ -68,6 +68,14 @@ export function childrenOf(app: App, id: string, depth = 0): Child[] {
   });
 }
 
+/** The next steps of an item as the work pages show them: with what their references name (an item, a run). */
+function nextView(app: App, itemId: string, userId: string): NextLite[] {
+  return nextOf(app, itemId, ["open", "doing"]).map((n) => {
+    const targets = refTargets(app, n.refs, userId);
+    return targets ? { ...n, refTargets: targets } : n;
+  });
+}
+
 /** Midnight of today where the owner is, as an ISO time. */
 const todayStart = (app: App) => zoneMidnight(zonedParts(new Date(), app.config.timezone).date, app.config.timezone).toISOString();
 
@@ -81,7 +89,7 @@ function lineView(app: App, item: Item): Line {
     id: item.id, title: item.title, kind: item.kind, status: item.status, dueAt: item.dueAt, spaceId: item.spaceId, now: item.now,
     counts: { changes: counts.n, today: counts.today, lastAt: counts.last },
     timeline: lineTimeline(app, item.id, { limit: 6 }).reverse(),
-    next: nextOf(app, item.id, ["open", "doing"]),
+    next: nextView(app, item.id, item.userId),
     children: childrenOf(app, item.id),
     listen: c && c.status === "active" ? { id: c.id, assist: c.knobs.assist ?? "off" } : null,
     phase: item.phase, phaseSince: item.phaseSince, watchUntil: item.watchUntil,
@@ -157,15 +165,16 @@ export function workActivities(app: App, userId: string, q: { from?: string; to?
       order by c.at desc, c.id desc limit 2000`, userId, start, end, ...types, ...origins, ...(ids ?? []))
     .filter((r) => !allowed || allowed.includes(r.space_id));
   const byDay = new Map<string, number>();
+  for (const r of rows) { const d = zonedParts(r.at, tz).date; byDay.set(d, (byDay.get(d) ?? 0) + 1); }
+  // Every row counts in its day; only the ones shown are looked up further (their line, what their references name).
   const lines = new Map<string, { id: string; title: string }>();
-  const items = rows.map((r) => changeLite(app, r, lines));
-  for (const c of items) { const d = zonedParts(c.at, tz).date; byDay.set(d, (byDay.get(d) ?? 0) + 1); }
+  const items = rows.slice(0, 300).map((r) => changeLite(app, r, lines));
   const days: { date: string; count: number }[] = [];
   for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`) && days.length < 400; t += 86400_000) {
     const d = new Date(t).toISOString().slice(0, 10);
     days.push({ date: d, count: byDay.get(d) ?? 0 });
   }
-  return { days, items: items.slice(0, 300) };
+  return { days, items };
 }
 
 /** Message counts of the line's groups: all of them, and day by day over the last 14 days where the owner is, by the (chat_id, create_ms) index. */
@@ -189,14 +198,15 @@ export async function workDetail(app: App, id: string, userId: string) {
   if (allowed && !allowed.includes(item.spaceId)) throw new HttpError(403, `不能访问空间 ${item.spaceId}`);
   const ancestors = ancestorIds(app, id).reverse().map((a) => ({ id: a, title: one<{ title: string }>(app.db, "select title from items where id = ?", a)?.title ?? a }));
   const root = rootOf(app, id);
-  const { itemChats } = await import("../channels/listen-items.ts");
-  let chats: string[] = [];
-  try { chats = itemChats(app, root); } catch { /* the line is gone */ }
+  const { contextChats } = await import("../channels/listen-items.ts");
   const c = itemContext(app, root);
+  // The groups its 关注 reads (the items' chats, with the owner's additions and removals on the line page).
+  let chats: string[] = [];
+  try { chats = contextChats(app, root, c); } catch { /* the line is gone */ }
   const f = flowLite(app, id);
   const closed = isClosed(item.status);
   return {
-    item, ancestors, now: item.now, next: nextOf(app, id, ["open", "doing"]),
+    item, ancestors, now: item.now, next: nextView(app, id, userId),
     // Its life (items/lifecycle.ts): the phase, when it ended and why, its closing summary, how many under it are open.
     phase: item.phase, phaseSince: item.phaseSince, watchUntil: item.watchUntil,
     summary: item.now?.summary ?? null,
@@ -206,7 +216,7 @@ export async function workDetail(app: App, id: string, userId: string) {
     timeline: lineTimeline(app, id, { limit: 200 }),
     chats: chatActivity(app, chats),
     materials: materialViews(app, id, userId),
-    listen: c ? { id: c.id } : null,
+    listen: c ? { id: c.id, status: c.status } : null,
     flow: f ? { ...f, waitingOn: f.stages.find((s) => s.id === f.current?.id)?.waitingOn ?? null } : null,
   };
 }

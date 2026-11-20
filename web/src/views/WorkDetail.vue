@@ -20,6 +20,7 @@ import ItemFlowPage from "./ItemFlowPage.vue";
 import ListenDetail from "./ListenDetail.vue";
 import WorkPhase from "../components/WorkPhase.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
+import { groupOptions, oneLine } from "../lib/listen";
 import { pageParam } from "../lib/route";
 import {
   byWeek, dayLabel, daysAgo, flatChildren, itemStatusLabel, nextKindLabel, waitsForOwner, weekColumns,
@@ -36,7 +37,7 @@ import { itemKindLabel, relTime, state, toast } from "../store";
 type WItem = Item & { parentId: string | null; now: LineNow | null };
 type Detail = {
   item: WItem; ancestors: { id: string; title: string }[]; now: LineNow | null; next: NextLite[]; children: Child[]; timeline: ChangeLite[];
-  chats: ChatActivity[]; materials: Material[]; listen: { id: string } | null; flow: (FlowLite & { waitingOn: string | null }) | null;
+  chats: ChatActivity[]; materials: Material[]; listen: { id: string; status: "active" | "paused" } | null; flow: (FlowLite & { waitingOn: string | null }) | null;
   /** Its life (src/items/lifecycle.ts). */
   phase: "watching" | null; phaseSince: string | null; watchUntil: string | null; summary: string | null;
   ended: { at: string | null; status: string; reason: string | null } | null; openUnder: number;
@@ -125,7 +126,7 @@ const tabs = computed(() => {
     { key: "items" as Tab, label: `工作项${kids ? ` ${kids}` : ""}` },
     ...(x.flow || !isLine.value ? [{ key: "flow" as Tab, label: "流程" }] : []),
     { key: "people" as Tab, label: "人和群" },
-    ...(x.listen ? [{ key: "listen" as Tab, label: "关注" }] : []),
+    ...(x.listen ? [{ key: "listen" as Tab, label: "关注设置" }] : []),
     { key: "data" as Tab, label: `数据${metricCount.value ? ` ${metricCount.value}` : ""}` },
   ];
 });
@@ -227,6 +228,47 @@ const kidLine = (c: Child) => [
 const people = computed(() => d.value?.now?.people ?? []);
 /** One of the categorical chart colours per name, the same for the same name. */
 const hue = (name: string) => `var(--chart-${([...name].reduce((h, ch) => h + ch.charCodeAt(0), 0) % 8) + 1})`;
+
+// The groups the line's 关注 reads: added or let go here (PUT /api/listen/:id; the server keeps the choice
+// apart from the groups its items link, src/channels/listen-items.ts), from the groups capture knows.
+const captured = ref<{ chatId: string; name: string; kind: string }[]>([]);
+const addChat = ref<string | null>(null);
+const groupBusy = ref(false);
+watch([tab, () => d.value?.listen?.id], ([t, lid]) => {
+  if (t === "people" && lid && !captured.value.length) void get<{ chats: { chatId: string; name: string; kind: string }[] }>("/api/lark/captured").then((r) => (captured.value = r.chats)).catch(() => {});
+}, { immediate: true });
+const addable = computed(() => {
+  const have = new Set((d.value?.chats ?? []).map((c) => c.chatId));
+  return groupOptions(captured.value).filter((o) => !have.has(o.value)).map((o) => ({ ...o, value: o.value as string | null }));
+});
+async function setGroups(chats: string[], done: string) {
+  const lid = d.value?.listen?.id;
+  if (!lid || groupBusy.value) return;
+  groupBusy.value = true;
+  try {
+    await put(`/api/listen/${encodeURIComponent(lid)}`, { chats });
+    toast(done, "ok");
+    addChat.value = null;
+    await load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    groupBusy.value = false;
+  }
+}
+function addGroup(chatId: string | null) {
+  const x = d.value;
+  if (!chatId || !x) return;
+  const name = captured.value.find((c) => c.chatId === chatId)?.name ?? chatId;
+  void setGroups([...x.chats.map((c) => c.chatId), chatId], `开始关注「${oneLine(name)}」：这条线的关注之后也读它的新消息`);
+}
+async function dropGroup(c: ChatActivity) {
+  const x = d.value;
+  if (!x) return;
+  const name = oneLine(c.name) || c.chatId;
+  const ok = await confirmDialog(`不再关注「${name}」？`, { message: "这条线的关注不再读这个群的新消息。群的采集、已有的记忆和挂着的资料不受影响；要再看它，在下面加回来。", okText: "不再关注" });
+  if (ok) void setGroups(x.chats.map((y) => y.chatId).filter((id) => id !== c.chatId), `不再关注「${name}」`);
+}
 
 // ---- 问这条线 ----------------------------------------------------------------------------------------
 const ASK_KEY = "omem.workAsk";
@@ -392,13 +434,17 @@ const editing = ref(false);
             </section>
             <section class="sub">
               <h3 class="sh">相关群聊</h3>
-              <p v-if="!d.chats.length" class="muted small">这条线还没有群。给它的关注加上群，或把群聊挂成材料。</p>
+              <p v-if="!d.chats.length" class="muted small">{{ d.listen ? "这条线的关注还没有群：在下面加一个，或把群聊挂成资料。" : "这条线还没有群。把群聊挂成资料；点上面的“更新”会建好它的关注，之后可以在这里加群。" }}</p>
               <div v-for="c in d.chats" :key="c.chatId" class="chat">
                 <Icon name="chat" :size="16" />
                 <span class="cm"><span class="cn">{{ c.name || c.chatId }}</span><span class="small muted">消息 {{ c.total }} 条{{ c.lastAt ? ` · 最近 ${relTime(c.lastAt)}` : "" }}</span></span>
                 <Sparkline class="spark" :values="c.perDay" :label="`${c.name} 最近 14 天每天的消息：${c.perDay.join('、')}`" />
+                <button v-if="d.listen && editable" type="button" class="btn ghost sm drop" :disabled="groupBusy" :title="`这条线的关注不再读「${c.name || c.chatId}」`" @click="dropGroup(c)">不再关注</button>
               </div>
-              <p v-if="d.chats.length" class="small muted cap">右边是最近 14 天每天的消息数。</p>
+              <p v-if="d.chats.length" class="small muted cap">{{ d.listen ? "这条线的关注读这些群。" : "" }}右边是最近 14 天每天的消息数。</p>
+              <div v-if="d.listen && editable && addable.length" class="row wrap add-group">
+                <UiSelect v-model="addChat" :options="addable" :search-at="0" placeholder="再关注一个群…" aria-label="再关注一个群" width="min(320px, 100%)" :disabled="groupBusy" @change="addGroup" />
+              </div>
             </section>
             <section class="sub">
               <h3 class="sh">相关资料</h3>
@@ -406,7 +452,7 @@ const editing = ref(false);
             </section>
           </template>
 
-          <!-- 关注 -->
+          <!-- 关注设置: what its 关注 is told and how it reads and replies; the groups are in 人和群. -->
           <template v-else-if="tab === 'listen' && d.listen">
             <ListenDetail :id="d.listen.id" embedded />
           </template>
@@ -522,7 +568,9 @@ const editing = ref(false);
 .cm { flex: 1; min-width: 0; display: grid; gap: 1px; }
 .cn { font-size: 14px; overflow-wrap: anywhere; }
 .spark { width: 120px; flex: none; }
+.chat .drop { flex: none; }
 .cap { margin: 2px 0 0; }
+.add-group { margin-top: 6px; }
 
 @media (max-width: 1000px) {
   .work-detail.asking { grid-template-columns: minmax(0, 1fr); }

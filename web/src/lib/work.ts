@@ -4,12 +4,18 @@
  */
 import { toWallDate } from "./time.js";
 
+/** What a reference that is no citation names (src/items/changes.ts refTargets): an item or a run of the same person. */
+export type RefTarget = { kind: "item" | "run"; id: string; title: string };
 export type ChangeLite = {
   id: string; at: string; type: string; summary: string; detail: string | null; risk: string | null; next: string | null;
   refs: string[]; status: string; origin: string; noise: boolean; itemId: string; itemTitle: string; lineId: string; lineTitle: string;
+  refTargets?: Record<string, RefTarget>;
 };
 export type NextKind = "read" | "test" | "code" | "ask" | "data";
-export type NextLite = { id: string; itemId: string; text: string; why: string; refs: string[]; kind: NextKind; status: "open" | "doing" | "done" | "declined" | "expired"; runId: string | null; createdAt: string; updatedAt: string; decidedAt: string | null };
+export type NextLite = {
+  id: string; itemId: string; text: string; why: string; refs: string[]; kind: NextKind; status: "open" | "doing" | "done" | "declined" | "expired"; runId: string | null; createdAt: string; updatedAt: string; decidedAt: string | null;
+  refTargets?: Record<string, RefTarget>;
+};
 export type StageLite = { id: string; name: string; state: string; enteredAt: string | null; doneAt: string | null; waitingOn: string | null };
 export type FlowLite = { name: string; stages: StageLite[]; current: { id: string; name: string; state: string } | null };
 export type Child = { id: string; title: string; kind: string; status: string; dueAt: string | null; parentId: string | null; waitingOn: string | null; flow: FlowLite | null; children?: Child[] };
@@ -194,6 +200,21 @@ export function refLabel(r: string, i: number) {
   if (r.startsWith("design:")) return "方案";
   if (/^r0/.test(r)) return `运行 ${i + 1}`;
   return r.length > 24 ? `${r.slice(0, 22)}…` : r;
+}
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+/**
+ * The references that are no citation, as the side sheet lists them under 来源: an item by its title (its
+ * page under 工作), a run by its title, a plan; the server says which ones name something (`refTargets`).
+ * Anything else — an id nothing answers to, a stage, a metric's name — is plain text, never a link to an empty page.
+ */
+export function otherRefs(refs: string[], targets: Record<string, RefTarget> = {}) {
+  return refs.filter((r) => !/^(src|mem|msg):/.test(r)).map((r) => {
+    const t = targets[r];
+    if (t?.kind === "item") return { r, label: `事项：${clip(t.title, 40)}`, title: t.title, link: `#/work/${encodeURIComponent(t.id)}` };
+    if (t?.kind === "run") return { r, label: `运行：${clip(t.title, 30)}`, title: t.title, link: `#/runs/${encodeURIComponent(t.id)}` };
+    if (r.startsWith("design:")) return { r, label: "方案", title: r, link: `#/design/${encodeURIComponent(r.slice(7))}` };
+    return { r, label: clip(r, 24), title: r, link: null };
+  });
 }
 /** The references as one line of Markdown links, so src: / mem: / msg: open in the citation drawer. */
 export function refsMarkdown(refs: string[]) {

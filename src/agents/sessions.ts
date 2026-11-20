@@ -251,6 +251,8 @@ export async function watchedNote(app: App, t: Thread, messages: ThreadMessage[]
   const revise = k.reply !== "none" && c.brief && trial.correctionsSinceBrief(app, c) >= trial.REVISE_AFTER;
   // A matter's 关注: where the matter stands, so questions about it are answered from that.
   const matter = c.kind === "item" && c.itemId ? (await import("../channels/listen-items.ts")).itemStateText(app, c.itemId) : "";
+  // Its line launched and is being watched (items/lifecycle.ts): only what goes wrong after launch matters now.
+  const watching = c.kind === "item" && c.itemId ? (await import("../channels/listen-items.ts")).watchingNote(app, c.itemId) : "";
   // The problems it is helping with in these groups (listen-problems.ts): new messages are read against them.
   const batchChats = [...new Set(messages.map((m) => m.meta.chatId).filter((x): x is string => typeof x === "string"))];
   const problems = (await import("../channels/listen-problems.ts")).problemsText(app, c.id, batchChats.length ? batchChats : c.chats);
@@ -268,6 +270,7 @@ export async function watchedNote(app: App, t: Thread, messages: ThreadMessage[]
     ...(memories ? ["", `## 相关的记忆\n\n${memories}`] : []),
     "",
     "- 多数消息不用管。只在有用时动手：能查到资料或结论回答别人的、值得排查的、本人需要知道或决定的。",
+    ...(watching ? [`- ${watching}`] : []),
     "- 群里有人求助的问题（值班群的一张单、同事问的一个问题）按问题跟，不按消息跟：已经在跟的，先对照上面记下的状态看这一批带来了什么——等的人回了、补了信息或数据、对方说还不行或有新现象、出现新的卡点、看起来已经解决要确认——只做因此要做的事；只是“收到”“稍等”、闲聊、重复已知的，不再查、不再回。别人已经在处理、给出了结论的，不抢着重复。",
     "- 每看完一个求助的问题，用 track_problem 记下它现在的状态：有了有效结论（对方照做就能解决、或已确认解决）记 closed；在等别人处理或对方回话记 waiting，写清等谁、等什么和怎样算完，该隔一段时间回查的加 recheck_after；还要接着查记 open；要本人拍板记 blocked（并 notify 本人）。只是看了一眼、不是求助的消息不用记。按上面的经验，这类问题回完一般不用跟的，直接记 closed。",
     ...(recheck ? ["- 这一轮是定好的回查：去核对那个问题现在的状态（只读），有变化就按上面处理并更新 track_problem；没变化、也不用做什么就 stay_quiet。不在群里发“还在等”之类的话。"] : []),

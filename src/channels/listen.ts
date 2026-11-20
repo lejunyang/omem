@@ -50,7 +50,7 @@ export type ListenKnobs = {
   meetings: "off" | "ask" | "listen";
   /** Meeting topics the owner said not to ask about again (“这个会以后不用问”, channels/listen-meetings.ts). */
   meetingSkip?: string[];
-  /** Read what the other 关注 are discussing (read only, never posting across). */
+  /** Planned: read what the other 关注 are discussing (read only, never posting across). Stored and accepted, nothing reads it yet; the web does not show it. */
   seeOthers: boolean;
   /** A matter's 关注: push it on about once a day — off / suggest (three suggestions at most) / act (the read-only part done at once) (listen-assist.ts). */
   assist?: "off" | "suggest" | "act";
@@ -82,6 +82,12 @@ export type ListenContext = {
   byFlow?: boolean;
   /** Groups a rule handed over with their first message (`context` action `adopt`), and when: let go when their problems are closed and they went quiet. */
   adopted?: Record<string, string>;
+  /**
+   * A matter's 关注: its groups are its items' linked chats (listen-items.ts), with the ones the owner added
+   * here and without the ones they took out here. Kept apart so the next sync with the items keeps both.
+   */
+  added?: string[];
+  dropped?: string[];
   expiresAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -115,7 +121,7 @@ type Row = {
   id: string; kind: ListenKind; name: string; chats: string; item_id: string | null; spec: string; space_id: string | null;
   conversation_id: string | null; settings: string; status: "active" | "paused"; expires_at: string | null; created_at: string; updated_at: string;
 };
-type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; playbookFile?: string; byFlow?: boolean; adopted?: Record<string, string> };
+type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; playbookFile?: string; byFlow?: boolean; adopted?: Record<string, string>; added?: string[]; dropped?: string[] };
 
 function toContext(r: Row): ListenContext {
   const s = json<Stored>(r.settings, {});
@@ -137,6 +143,8 @@ function toContext(r: Row): ListenContext {
     playbookFile: s.playbookFile,
     ...(s.byFlow ? { byFlow: true } : {}),
     ...(s.adopted && Object.keys(s.adopted).length ? { adopted: s.adopted } : {}),
+    ...(s.added?.length ? { added: s.added } : {}),
+    ...(s.dropped?.length ? { dropped: s.dropped } : {}),
     expiresAt: r.expires_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -151,6 +159,26 @@ export function requireContext(app: App, id: string): ListenContext {
   const c = getContext(app, id);
   if (!c) throw new HttpError(404, `没有这个关注：${id}`);
   return c;
+}
+
+/**
+ * A 关注 by its id, or by the name the owner calls it (“把退款值班的关注改成只看 @ 我的”): the one with that
+ * name, else the one whose name contains it. Several or none: an error naming the candidates, so the
+ * caller can ask or pass the id.
+ */
+export function contextByIdOrName(app: App, key: string): ListenContext {
+  const byId = getContext(app, key.trim());
+  if (byId) return byId;
+  // “「退款值班」的关注”, “退款值班关注”, “退款值班”: the name itself.
+  const k = key.trim().replace(/(?<=.)的?关注$/, "").trim().replace(/^「(.*)」$/, "$1").trim();
+  const every = listContexts(app);
+  const exact = every.filter((c) => c.name === k);
+  if (exact.length === 1) return exact[0];
+  const near = every.filter((c) => c.name.toLowerCase().includes(k.toLowerCase()));
+  if (near.length === 1) return near[0];
+  const named = (list: ListenContext[]) => list.slice(0, 20).map((c) => `${c.id}「${c.name}」${c.status === "active" ? "" : "（已暂停）"}`).join("、");
+  if (near.length) throw new HttpError(400, `有 ${near.length} 个关注的名字里有「${k}」，传 id 指明是哪个：${named(near)}`);
+  throw new HttpError(404, `没有叫「${k}」的关注。现有的：${named(every) || "（没有）"}`);
 }
 
 const live = (c: ListenContext, at = now()) => c.status === "active" && (!c.expiresAt || c.expiresAt > at);
@@ -202,6 +230,9 @@ export type ContextInput = {
   /** true: made for a flow (ends with it); false: the owner's own from now on. */
   byFlow?: boolean;
   adopted?: Record<string, string>;
+  /** A matter's 关注: groups added / taken out by the owner beyond its items' (an empty list clears it). */
+  added?: string[];
+  dropped?: string[];
   expiresAt?: string | null;
   /** An existing conversation to keep (a watch moved here). */
   conversationId?: string;
@@ -240,6 +271,10 @@ export function saveContext(app: App, input: ContextInput, chatName: (chatId: st
       // Adopted groups no longer among its groups (the owner removed one) are not adopted any more.
       const adopted = Object.fromEntries(Object.entries(input.adopted ?? prev?.adopted ?? {}).filter(([c]) => chats.includes(c)));
       return Object.keys(adopted).length ? { adopted } : {};
+    })(),
+    ...(() => {
+      const added = input.added ?? prev?.added ?? [], dropped = input.dropped ?? prev?.dropped ?? [];
+      return { ...(added.length ? { added } : {}), ...(dropped.length ? { dropped } : {}) };
     })(),
   };
   const spaceId = input.spaceId === undefined ? (prev?.spaceId ?? null) : input.spaceId;
