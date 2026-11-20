@@ -123,6 +123,10 @@ describe("协同任务板", async () => {
     expect((await review([{ task: tasks[0].id, decision: "accept" },redo])).isError).toBe(false);
     await wave(id,2);
     const after = readBoard(app,id);
+    const message = threadMessages(app, after.workConversationId).filter(m => m.meta.board === id).at(-1)!.text;
+    expect(message).toContain("已有决定：接受");
+    expect(message).not.toContain("本轮验收 ID：" + tasks[0].id);
+    expect(message).toContain("本轮验收 ID：" + tasks[1].id);
     expect(after.tasks[0].attempts).toEqual(before.tasks[0].attempts);
     expect(after.tasks[1]).toMatchObject({ status: "done", report: "材料报告 fail" });
     const second = after.tasks[1].attempts[1];
@@ -137,9 +141,12 @@ describe("协同任务板", async () => {
   }, 90000);
 
   it("可选块不挡协调，运行超时后标失败，迟到的收尾不再触发协调", async () => {
-    const { id,tasks } = await dispatch(["ok","slow"],[{}, { required: false }]);
-    await wave(id,1);
-    expect(readBoard(app,id).tasks[1].status).toBe("running");
+    const { id,tasks } = await dispatch(["autoaccept","slow"],[{}, { required: false }]);
+    const turn = await wave(id,1);
+    const board = readBoard(app,id);
+    expect(board.tasks[0]).toMatchObject({ status: "accepted", verdict: { by: turn.id } });
+    expect(board.tasks[1].status).toBe("running");
+    expect(board.status).toBe("summarized");
     run(app.db,"update agent_work_tasks set deadline_at=? where id=?","2000-01-01",tasks[1].id);
     maintainBoards(app);
     expect((await waitForRun(app,tasks[1].attempts[0].runId)).status).toBe("cancelled");

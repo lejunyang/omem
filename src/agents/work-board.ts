@@ -90,10 +90,15 @@ function coordinateIfReady(app: App, workId: string) {
   const tasks = snapshot(app, workId, true);
   const work = refreshWork(app, workId)!;
   const reports = tasks.map(t => {
+    const heading = `# ${t.seq}. ${t.title}（${t.id}，${t.status}）`;
+    if (t.status === "accepted" || t.status === "blocked")
+      return `${heading}\n已有决定：${t.status === "accepted" ? "接受" : "阻塞"} ${t.verdict?.note ?? ""}`;
+    if (t.status === "cancelled") return heading;
+    if (t.status !== "done" && t.status !== "failed") return `${heading}\n可选块仍在执行，本轮可先汇总必选结果。`;
     const a = t.attempts.at(-1)!;
-    return `# ${t.seq}. ${t.title}（${t.id}，${t.status}）\n验收条件：${t.accept}\n执行：${t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · ${a.executionMs} ms\n报告（运行 ${a.runId}）：\n${reportPage(t.answer || t.report, a.runId)}`;
+    return `${heading}\n本轮验收 ID：${t.id}\n验收条件：${t.accept}\n执行：${t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · ${a.executionMs} ms\n报告（运行 ${a.runId}）：\n${reportPage(t.answer || t.report, a.runId)}`;
   });
-  const text = [`任务板 ${workId}。请用 work_review 逐块验收。重做后结束本轮；全部接受或阻塞后向本人汇总，每个论断注明来自哪一块。`, ...reports].join("\n\n");
+  const text = [`任务板 ${workId}。请对标有“本轮验收 ID”的块用 work_review 提交决定。退回重做后结束本轮；其余情况验收完即可向本人汇总，每个论断注明来自哪一块。`, ...reports].join("\n\n");
   const msg = addWorkMessage(app, work, { role: "assistant", text, meta: { command: true, board: workId } });
   enqueueCoordination(app, work, msg, tasks.filter(t => t.attempts.at(-1)?.finishedAt).map(t => t.attempts.at(-1)!.runId), `验收：${work.title}`);
 }
