@@ -24,11 +24,13 @@ import UiSelect from "../components/UiSelect.vue";
  * One 关注 (/listen/:id) or one Feishu group (/lark/chats/:chatId), on one layout: what it is and its
  * settings, what its groups are discussing, the lessons, the cases the owner corrects, memories drawn
  * from its groups and its recent handling. A group's page lists the 关注 it is in and starts or joins one.
+ * `id` + `embedded`: one 关注 inside a work line's page (views/WorkDetail.vue, its 关注 tab), without the crumbs.
  */
+const props = defineProps<{ id?: string; embedded?: boolean }>();
 const route = useRoute();
 const router = useRouter();
-const listenId = computed(() => (typeof route.params.id === "string" ? route.params.id : ""));
-const chatId = computed(() => (typeof route.params.chatId === "string" ? route.params.chatId : ""));
+const listenId = computed(() => props.id ?? (typeof route.params.id === "string" ? route.params.id : ""));
+const chatId = computed(() => (props.id ? "" : typeof route.params.chatId === "string" ? route.params.chatId : ""));
 
 const detail = ref<ListenDetail | null>(null);
 const chat = ref<ChatDetail | null>(null);
@@ -245,8 +247,8 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
 </script>
 
 <template>
-  <div class="listen-page">
-    <nav class="crumbs small muted"><router-link to="/settings?tab=connect">设置 · 连接</router-link><span>/</span><span>{{ chatId ? "飞书群" : "关注" }}</span></nav>
+  <div class="listen-page" :class="{ embedded }">
+    <nav v-if="!embedded" class="crumbs small muted"><router-link to="/settings?tab=connect">设置 · 连接</router-link><span>/</span><span>{{ chatId ? "飞书群" : "关注" }}</span></nav>
     <Skeleton v-if="loading" variant="text" :rows="7" />
     <div v-else-if="error && !detail && !chat" class="empty">
       <h3>打不开这一页</h3>
@@ -271,7 +273,7 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
           </div>
           <div v-if="c.groups.length || c.item" class="groups">
             <router-link v-for="g in c.groups" :key="g.id" class="gchip" :to="`/lark/chats/${encodeURIComponent(g.id)}`" :title="g.name">{{ oneLine(g.name) }}</router-link>
-            <router-link v-if="c.item" class="gchip item" :to="`/items/${c.item.id}`">事项：{{ c.item.title }}</router-link>
+            <router-link v-if="c.item" class="gchip item" :to="`/work/${c.item.id}`">工作线：{{ c.item.title }}</router-link>
           </div>
           <DemoControl :context-id="c.id" :name="c.name" />
           <div v-if="!isDefault" class="controls row wrap">
@@ -440,6 +442,11 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
   display: grid;
   gap: 28px;
   min-width: 0;
+}
+.listen-page.embedded {
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
 .crumbs {
   display: flex;

@@ -131,14 +131,20 @@ onBeforeUnmount(() => {
   offResync();
 });
 
+/** Items with others under them (open ones), by id. */
+const parents = computed(() => new Set(items.value.filter((i) => i.parentId && !closedStatuses.includes(i.status)).map((i) => i.parentId!)));
+const titleOf = (id: string) => items.value.find((i) => i.id === id)?.title ?? "";
+/** A line, an item with items under it, or one in a flow opens its own page under 工作 (views/WorkDetail.vue). */
+const pageOf = (i: Item) => (i.kind === "line" || i.flow || parents.value.has(i.id) ? `/work/${i.id}` : `/items/${i.id}`);
 const columns = computed(() => {
   const open = items.value.filter((i) => !closedStatuses.includes(i.status) && i.status !== "candidate");
   return [
+    { key: "line", title: "工作线", icon: "target", items: open.filter((i) => i.kind === "line") },
     { key: "decision", title: "需要你决定", icon: "alert", items: open.filter((i) => i.kind === "decision") },
     { key: "todo", title: "待办与提醒", icon: "checkbox", items: open.filter((i) => i.kind === "todo" || i.kind === "reminder") },
     { key: "waiting", title: "等待回复", icon: "user", items: open.filter((i) => i.kind === "waiting") },
     { key: "watch", title: "持续关注", icon: "eye", items: open.filter((i) => i.kind === "watch") },
-  ].filter((c) => c.items.length || c.key !== "decision");
+  ].filter((c) => c.items.length || (c.key !== "decision" && c.key !== "line"));
 });
 const closedStatuses = ["done", "cancelled", "expired"];
 const closed = computed(() => items.value.filter((i) => closedStatuses.includes(i.status)));
@@ -225,8 +231,8 @@ async function addNote() {
   <div class="page items">
     <div class="page-head">
       <div>
-        <h1>事项</h1>
-        <p>待办、提醒、等待回复和持续关注。助理会在材料更新时推进它们，只在需要你时通知。</p>
+        <h1>全部事项</h1>
+        <p>工作线、待办、提醒、等待回复和持续关注。助理会在材料更新时推进它们，只在需要你时通知；工作线和它下面的事在 <router-link to="/">工作</router-link> 页看。</p>
       </div>
       <span class="spacer" />
       <button class="btn primary sm" @click="adding = true"><Icon name="plus" :size="15" />新建事项</button>
@@ -272,7 +278,7 @@ async function addNote() {
       <section v-for="c in columns" :key="c.key" class="col">
         <h2 class="section-title row"><Icon :name="c.icon" :size="14" />{{ c.title }} <span class="count">{{ c.items.length }}</span></h2>
         <div class="cards">
-          <router-link v-for="i in c.items" :key="i.id" :to="i.flow ? `/items/${i.id}/flow` : `/items/${i.id}`" class="card item" :class="{ on: detail?.item.id === i.id, p1: i.priority === 1 }">
+          <router-link v-for="i in c.items" :key="i.id" :to="pageOf(i)" class="card item" :class="{ on: detail?.item.id === i.id, p1: i.priority === 1 }">
             <div class="row top">
               <button class="check" :title="'标记完成'" @click.prevent="setStatus(i, 'done')"><Icon name="check" :size="12" /></button>
               <span class="ttl" :title="i.title">{{ i.title }}</span>
@@ -282,6 +288,7 @@ async function addNote() {
               <span v-if="i.remindAt" :class="{ due: new Date(i.remindAt) < new Date() }"><Icon name="bell" :size="12" /> {{ fmtTime(i.remindAt) }}</span>
               <span v-if="i.dueAt"><Icon name="clock" :size="12" /> 截止 {{ fmtTime(i.dueAt) }}</span>
               <span v-if="i.waitingOn" class="wait"><Icon name="user" :size="12" /><span>{{ i.waitingOn }}</span></span>
+              <span v-if="i.parentId && titleOf(i.parentId)" class="under" :title="titleOf(i.parentId)">在「{{ titleOf(i.parentId) }}」下</span>
               <span v-if="closesSoon(i)" class="expiring" :title="i.expiryText">{{ closesSoon(i) }}</span>
               <span v-if="i.spaceId !== 'personal'" class="badge space" :title="spaceName(i.spaceId)">{{ spaceName(i.spaceId) }}</span>
             </div>
@@ -443,6 +450,7 @@ async function addNote() {
   margin: -4px 0 12px;
 }
 .flow-tag { max-width: 50%; white-space: normal; overflow-wrap: anywhere; flex-shrink: 0; }
+.under { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .backlog {
   gap: 10px;
   margin-bottom: 18px;

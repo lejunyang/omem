@@ -23,9 +23,11 @@ type Detail = { item: { id: string; title: string; detail: string; spaceId: stri
 type Shot = StageTest["artifacts"][number];
 type Stage = FlowStage;
 
+/** `embedded`: the 流程 tab of a work item's page (views/WorkDetail.vue), which has the title, the stage track and what waits for the owner above it. */
+const props = defineProps<{ id?: string; embedded?: boolean }>();
 const route = useRoute(), router = useRouter();
 const spaceName = (sid: string) => state.spaces.find((s) => s.id === sid)?.name ?? sid;
-const id = computed(() => String(route.params.id ?? ""));
+const id = computed(() => props.id ?? String(route.params.id ?? ""));
 const detail = ref<Detail | null>(null), flow = ref<FlowView | null>(null);
 const loading = ref(true), error = ref("");
 let seq = 0;
@@ -87,12 +89,12 @@ function openRef(r: string) {
 </script>
 
 <template>
-  <div class="page flow-page">
-    <nav class="crumbs small muted"><router-link to="/items">事项</router-link><span>/</span><router-link to="/board">流程</router-link></nav>
+  <div class="flow-page" :class="{ page: !embedded, embedded }">
+    <nav v-if="!embedded" class="crumbs small muted"><router-link to="/items">事项</router-link><span>/</span><router-link to="/board">流程</router-link></nav>
     <Skeleton v-if="loading" variant="text" :rows="6" />
     <p v-else-if="error && !item" class="error" role="alert">{{ error }}</p>
     <template v-else-if="item">
-      <header class="head">
+      <header v-if="!embedded" class="head">
         <h1>{{ item.title }}</h1>
         <div class="meta small muted row wrap">
           <span v-if="flow?.flow">{{ flow.flow.name }}</span>
@@ -111,7 +113,7 @@ function openRef(r: string) {
       <p v-if="!flow?.flow" class="muted">这件事没有在走流程。<router-link :to="`/items/${item.id}`">到事项里开始一个</router-link></p>
       <p v-if="error" class="error small" role="alert">{{ error }}</p>
 
-      <FlowWaiting :item="{ id: item.id, title: item.title, spaceId: item.spaceId }" :flow="flow" :editable="editable" @changed="(v) => (v ? (flow = v) : load())" />
+      <FlowWaiting v-if="!embedded" :item="{ id: item.id, title: item.title, spaceId: item.spaceId }" :flow="flow" :editable="editable" @changed="(v) => (v ? (flow = v) : load())" />
 
       <!-- A study's directions, trials and findings: where its directions are chosen ("在下面的……里选一个"). -->
       <ItemStudy v-if="flow?.flow?.study" class="study" :item-id="item.id" :editable="editable" :choosing="!ended && stages.some((s) => s.asking === 'direction')" />
@@ -179,6 +181,7 @@ function openRef(r: string) {
 
 <style scoped>
 .flow-page { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 20px; }
+.flow-page.embedded { max-width: none; margin: 0; padding: 0; }
 .crumbs { display: flex; gap: 6px; }
 .head h1 { font-family: var(--serif); font-size: 26px; line-height: 1.3; margin: 0 0 6px; overflow-wrap: anywhere; }
 .meta { gap: 6px; align-items: center; }

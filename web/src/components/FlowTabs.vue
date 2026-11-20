@@ -2,13 +2,13 @@
 import { useRoute } from "vue-router";
 import { state } from "../store";
 
-/** The 流程 page's two parts: items moving through flows, and the flows themselves (the owner's). */
+/** The 流程 page's two parts: items moving through flows (the work page's 按阶段), and the flows themselves (the owner's). */
 const route = useRoute();
 </script>
 
 <template>
   <nav class="flow-tabs" aria-label="流程">
-    <router-link to="/board" class="tab" :class="{ on: route.path === '/board' }">进行中</router-link>
+    <router-link :to="!state.me || state.me.role === 'owner' ? '/?view=stage' : '/board'" class="tab" :class="{ on: route.path === '/' || route.path === '/board' }">进行中</router-link>
     <router-link v-if="!state.me || state.me.role === 'owner'" to="/flows" class="tab" :class="{ on: route.path === '/flows' }">流程定义</router-link>
   </nav>
 </template>

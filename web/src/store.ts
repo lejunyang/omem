@@ -182,6 +182,7 @@ export const itemKindLabel: Record<string, string> = {
   reminder: "提醒",
   watch: "关注",
   decision: "待决定",
+  line: "工作线",
 };
 
 export function fmtTime(iso: string | null | undefined, withTime = true) {
