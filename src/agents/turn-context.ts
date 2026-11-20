@@ -1,13 +1,12 @@
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
-import { accessibleSpaces } from "../core/users.ts";
 import type { RunContext } from "./runs.ts";
 import { contextOfConversation, itemContext } from "../channels/listen.ts";
 import { itemFlow, itemStages } from "../flows/store.ts";
 import { candidatesAt, itemsAt, placesOfRun } from "../items/places.ts";
-import { getItem, isClosed, type Item } from "../items/store.ts";
+import { canReadItem, findItem, getItem, isClosed, type Item } from "../items/store.ts";
 import { lineLike, rootOf } from "../items/tree.ts";
-import { addScope, chatOfConversation } from "./run-scope.ts";
+import { addScope, scopeOf } from "./run-scope.ts";
 import type { Thread, ThreadMessage } from "./threads.ts";
 
 export type TurnContext = {
@@ -19,11 +18,6 @@ export type TurnContext = {
   stage?: { id: string; name: string; state: string };
   candidates: { itemId: string; title: string; reason: string }[];
 };
-
-function readable(app: App, item: Item, userId: string) {
-  const spaces = accessibleSpaces(app, userId);
-  return item.userId === userId && (!spaces || spaces.includes(item.spaceId));
-}
 
 const turns = new WeakMap<RunContext, ResolvedTurn>();
 export function contextForTurn(ctx: RunContext, thread: Thread, messages: ThreadMessage[], userId: string) {
@@ -39,7 +33,7 @@ export function contextForTurn(ctx: RunContext, thread: Thread, messages: Thread
 /** Shared by a conversation and by the specialist jobs already bound to an item. */
 export function itemFocus(app: App, item: Item, via: "explicit" | "linked", flow = itemFlow(app, item.id)) {
   const root = item.parentId ? getItem(app, rootOf(app, item.id)) : item;
-  const line = readable(app, root, item.userId) && lineLike(app, root) ? root : undefined;
+  const line = canReadItem(app, root, item.userId) && lineLike(app, root) ? root : undefined;
   const listen = line && itemContext(app, line.id);
   const stages = flow && !flow.endedAt ? itemStages(app, item.id) : [];
   const active = flow?.definition.stages.find(d => stages.some(s => s.id === d.id && ["doing", "blocked", "gated"].includes(s.state)));
@@ -63,12 +57,9 @@ function cardItem(app: App, messageId: string, userId: string) {
 }
 
 export function resolveTurn(app: App, runId: string, thread: Thread, messages: ThreadMessage[], userId: string) {
-  const here = placesOfRun(app, runId);
-  const chat = chatOfConversation(app, thread.id);
-  if (chat) {
-    const source = one<{ id: string }>(app.db, "select id from sources where uri=? and kind='chat' and deleted_at is null order by updated_at desc limit 1", `lark:${chat.chatId}`);
-    if (source && !here.some(p => p.ref === source.id)) here.push({ kind: "source", ref: source.id });
-  }
+  const keys = scopeOf(app, runId);
+  const here = placesOfRun(app, runId, keys, userId);
+  const chat = keys.find(k => k.kind === "chat");
   const linked = itemsAt(app, here, userId, 4, true);
   const listening = thread.channel === "listen" ? contextOfConversation(app, thread.id) : null;
   let explicit: string | undefined;
@@ -80,13 +71,21 @@ export function resolveTurn(app: App, runId: string, thread: Thread, messages: T
     if (explicit) break;
   }
   explicit ??= thread.settings.itemId ?? listening?.itemId ?? (chat?.topic ? cardItem(app, chat.topic, userId) : undefined);
-  const explicitItem = explicit && one(app.db, "select 1 from items where id=?", explicit) ? getItem(app, explicit) : undefined;
-  const item = explicitItem && readable(app, explicitItem, userId) ? explicitItem : linked[0];
+  if (!explicit && thread.parentId) {
+    // Older work conversations kept the assignment on the run or its item material.
+    explicit = one<{ id: string }>(app.db, `select coalesce(json_extract(r.input,'$.itemId'), m.item_id) id
+      from runs r left join item_materials m on m.kind='run' and m.ref=r.id
+      where json_extract(r.output,'$.agentWork.workConversationId')=?
+        and (json_extract(r.input,'$.itemId') is not null or m.item_id is not null)
+      order by r.created_at desc, r.id, m.id limit 1`, thread.id)?.id;
+  }
+  const explicitItem = explicit ? findItem(app, explicit) : undefined;
+  const item = explicitItem && canReadItem(app, explicitItem, userId) ? explicitItem : linked[0];
   const focus = item && itemFocus(app, item, item === explicitItem ? "explicit" : "linked");
   const context: TurnContext = {
     ...focus?.context,
     conversationId: thread.id,
-    ...(chat && { chat: { chatId: chat.chatId, threadId: chat.topic || undefined } }),
+    ...(chat && { chat: { chatId: chat.key, threadId: chat.topic || undefined } }),
     candidates: item ? linked.filter(i => i.id !== item.id).slice(0, 3).map(i => ({ itemId: i.id, title: i.title, reason: "这个会话也挂在它上面" }))
       : candidatesAt(app, here, userId).map(c => ({ itemId: c.item.id, title: c.item.title, reason: c.reasons.join("，") })),
   };

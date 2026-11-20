@@ -6,7 +6,7 @@ import { createRun, runEvents, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import { resolveTurn } from "../src/agents/turn-context.ts";
-import { addMaterials } from "../src/items/materials.ts";
+import { addMaterials, removeMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 import { callTool } from "../src/agents/tools.ts";
@@ -14,7 +14,8 @@ import { saveContext } from "../src/channels/listen.ts";
 import { addChange } from "../src/items/changes.ts";
 import { defineMetric } from "../src/data/metrics.ts";
 import { one, run } from "../src/core/db.ts";
-import { createUser } from "../src/core/users.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { boot } from "../src/main.ts";
 
 describe("当轮事项", async () => {
@@ -39,6 +40,37 @@ describe("当轮事项", async () => {
     for (const i of [first, second]) addMaterials(app, i.id, [{ kind: "conversation", ref: thread.id }], "owner");
     run(app.db, "update items set updated_at='2000-01-01' where id=?", first.id);
     expect(resolve()).toMatchObject({ item: { id: second.id, via: "linked" }, candidates: [{ itemId: first.id, reason: "这个会话也挂在它上面" }] });
+  });
+
+  it("只读事项记在会话侧；从事项移除会话后清除显式绑定", async () => {
+    const user = createUser(app, { name: "示例成员" });
+    const space = createSpace(app, { id: "sample", name: "示例项目" });
+    addMember(app, space.id, user.id, "reader");
+    const item = upsertItem(app, undefined, { title: "项目验收", kind: "line", spaceId: space.id, userId: user.id });
+    const response = await fetch(app.baseUrl + "/api/ask", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + createApiToken(app, user.id, "测试") }, body: JSON.stringify({ itemId: item.id, text: "进展如何？" }) });
+    expect(response.status).toBe(200);
+    const q = await response.json();
+    const r = await waitForRun(app, q.runId);
+    expect(r.output.turnContext).toMatchObject({ item: { id: item.id } });
+    expect(one(app.db, "select 1 from item_materials where item_id=?", item.id)).toBeUndefined();
+
+    const mine = upsertItem(app, undefined, { title: "单独一条线", kind: "line" });
+    const first = await (await ask({ itemId: mine.id })).json();
+    await waitForRun(app, first.runId);
+    removeMaterials(app, mine.id, ["conversation:" + first.conversationId], "owner");
+    const next = await (await ask({ conversationId: first.conversationId })).json();
+    expect((await waitForRun(app, next.runId)).output.turnContext).not.toHaveProperty("item");
+  });
+
+  it("从旧工作会话所对应的交办材料识别事项", () => {
+    const root = createThread(app, { channel: "web", spaceId: "personal" });
+    const child = createThread(app, { channel: "web", spaceId: "personal", parentId: root.id });
+    const parked = (conversationId: string) => createRun(app, { kind: "ask", title: "交办", userId: "owner", input: { conversationId }, notBefore: new Date(Date.now() + 60_000).toISOString() });
+    const assignment = parked(root.id);
+    run(app.db, "update runs set output=? where id=?", JSON.stringify({ agentWork: { workConversationId: child.id } }), assignment.id);
+    const item = upsertItem(app, undefined, { title: "交付检查" });
+    addMaterials(app, item.id, [{ kind: "run", ref: assignment.id }], "owner");
+    expect(resolveTurn(app, parked(child.id).id, child, [], "owner").context.item).toEqual({ id: item.id, title: item.title, via: "explicit" });
   });
 
   it("本人当轮的新事项、关键变化和进展默认归线，空 parent、候选和后台保留原行为", async () => {

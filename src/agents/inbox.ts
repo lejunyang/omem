@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { requireReadableItem } from "../items/store.ts";
 import { mayJoinTurn } from "./steer.ts";
 import { canWrite, OWNER, personalSpaceId, turnSpaceFor } from "../core/users.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
@@ -57,19 +58,18 @@ export type Received = { thread: Thread; messageId: string | null; runId: string
 
 export async function receive(app: App, inb: Inbound): Promise<Received> {
   const userId = inb.userId ?? OWNER;
-  if (inb.itemId) {
-    const { requireReadableItem } = await import("../items/store.ts");
-    requireReadableItem(app, inb.itemId, userId);
-  }
+  const item = inb.itemId ? requireReadableItem(app, inb.itemId, userId) : undefined;
   let thread: Thread;
   let started: Received["started"] = null;
   if (inb.conversationId) {
     const previous = findThread(app, inb.conversationId);
     thread = previous ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
-    if (!previous && inb.itemId) {
-      thread = updateThread(app, thread.id, { settings: { ...thread.settings, itemId: inb.itemId } });
-      const { addMaterials } = await import("../items/materials.ts");
-      addMaterials(app, inb.itemId, [{ kind: "conversation", ref: thread.id }], userId, "user");
+    if (!previous && item) {
+      thread = updateThread(app, thread.id, { settings: { ...thread.settings, itemId: item.id } });
+      if (canWrite(app, userId, item.spaceId)) {
+        const { addMaterials } = await import("../items/materials.ts");
+        addMaterials(app, item.id, [{ kind: "conversation", ref: thread.id }], userId, "user");
+      }
     }
     if (thread.userId !== userId && !canWrite(app, userId, thread.spaceId)) throw new HttpError(403, "不能在别人的会话里发消息");
   } else if (inb.channel && inb.chatId) {

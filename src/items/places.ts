@@ -4,7 +4,7 @@ import { json, truncate } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { chatName, conclusionOf, scopeOf } from "../agents/run-scope.ts";
 import { addMaterials } from "./materials.ts";
-import { getItem, type Item } from "./store.ts";
+import { getItem, toItem, type Item, type ItemRow } from "./store.ts";
 
 /**
  * One piece of work in several places (docs/v2/awareness.md §3): an item is linked to the
@@ -21,17 +21,20 @@ export type PlaceView = Place & { title: string; spaceId: string | null; lastAt:
 const OPEN = ["open", "waiting", "snoozed"];
 
 /** The places of a run's scope: its conversations, and the chats it works in (their conversation when omem has one, else the captured chat). */
-export function placesOfRun(app: App, runId: string): Place[] {
+export function placesOfRun(app: App, runId: string, keys = scopeOf(app, runId), reader?: string): Place[] {
   const out: Place[] = [];
   const add = (p: Place) => { if (!out.some((x) => x.kind === p.kind && x.ref === p.ref)) out.push(p); };
-  const keys = scopeOf(app, runId);
+  const spaces = reader ? accessibleSpaces(app, reader) : null;
   for (const k of keys) if (k.kind === "conversation") add({ kind: "conversation", ref: k.key });
   for (const k of keys) {
     if (k.kind !== "chat") continue;
-    const conv = one<{ id: string }>(app.db, "select id from conversations where channel like 'lark%' and status = 'active' and external_id in (?, ?) order by external_id = ? desc, updated_at desc limit 1", k.topic ? `${k.key}#${k.topic}` : k.key, k.key, k.topic ? `${k.key}#${k.topic}` : k.key);
-    if (conv) { add({ kind: "conversation", ref: conv.id }); continue; }
-    const src = one<{ id: string }>(app.db, "select id from sources where uri = ? and kind = 'chat' and deleted_at is null order by updated_at desc limit 1", `lark:${k.key}`);
-    if (src) add({ kind: "source", ref: src.id });
+    const topic = k.topic ? `${k.key}#${k.topic}` : k.key;
+    const conversations = all<{ id: string }>(app.db, `select id from conversations where channel like 'lark%' and status='active' and external_id in (?,?)
+      ${reader ? "and user_id=?" : ""} order by external_id=? desc, updated_at desc limit ?`, topic, k.key, ...(reader ? [reader] : []), topic, reader ? 2 : 1);
+    for (const c of conversations) add({ kind: "conversation", ref: c.id });
+    if (conversations.length && !reader) continue;
+    const src = one<{ id: string; space_id: string }>(app.db, "select id, space_id from sources where uri=? and kind='chat' and deleted_at is null order by updated_at desc limit 1", `lark:${k.key}`);
+    if (src && (!spaces || spaces.includes(src.space_id))) add({ kind: "source", ref: src.id });
   }
   return out;
 }
@@ -91,14 +94,14 @@ export function itemsAt(app: App, places: Place[], userId: string, limit = 3, in
   const srcs = places.filter((p) => p.kind === "source").map((p) => p.ref);
   if (!convs.length && !srcs.length) return [];
   const spaces = accessibleSpaces(app, userId);
-  const ids = all<{ id: string }>(app.db,
-    `select distinct i.id from item_materials m join items i on i.id = m.item_id
+  const rows = all<ItemRow>(app.db,
+    `select i.* from items i
       where i.user_id = ? ${includeClosed ? "" : "and i.status in ('open','waiting','snoozed')"}
         ${spaces ? "and i.space_id in (select value from json_each(?))" : ""}
-        and ((m.kind = 'conversation' and m.ref in (${convs.map(() => "?").join(",") || "''"})) or (m.kind = 'source' and m.ref in (${srcs.map(() => "?").join(",") || "''"})))
+        and i.id in (select m.item_id from item_materials m where (m.kind = 'conversation' and m.ref in (${convs.map(() => "?").join(",") || "''"})) or (m.kind = 'source' and m.ref in (${srcs.map(() => "?").join(",") || "''"})))
       order by i.updated_at desc, i.id limit ?`,
     userId, ...(spaces ? [JSON.stringify(spaces)] : []), ...convs, ...srcs, limit);
-  return ids.map((r) => getItem(app, r.id));
+  return rows.map(toItem);
 }
 
 const placeLine = (v: PlaceView, tz: string) =>

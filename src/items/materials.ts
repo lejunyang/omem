@@ -121,6 +121,7 @@ export function removeMaterials(app: App, itemId: string, keys: (number | string
       : one<Row>(app.db, "select * from item_materials where item_id = ? and kind = ? and ref = ?", itemId, key.split(":")[0], key.split(":").slice(1).join(":"));
     if (!row) continue;
     run(app.db, "delete from item_materials where id = ?", row.id);
+    if (row.kind === "conversation") run(app.db, "update conversations set settings=json_remove(settings,'$.itemId') where id=? and json_extract(settings,'$.itemId')=?", row.ref, itemId);
     gone.push(row.label);
   }
   if (gone.length) addItemEvent(app, itemId, "updated", `移除材料：${gone.join("、")}`, by);

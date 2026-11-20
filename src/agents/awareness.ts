@@ -1,4 +1,4 @@
-import type { ResolvedTurn } from "./turn-context.ts";
+import type { ResolvedTurn, TurnContext } from "./turn-context.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
@@ -63,10 +63,13 @@ export function awarenessNote(app: App, runId: string | null | undefined, withTo
   try {
     const r = getRun(app, runId);
     const userId = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", runId)?.user_id ?? OWNER;
+    const context = turn?.context ?? r.input.turnContext as TurnContext | undefined;
+    const hints = context?.candidates.map(c => `- ${c.itemId}「${truncate(c.title, 60)}」：${c.reason}`) ?? [];
     const parts = [
       relatedNote(app, runId),
-      itemPlacesNote(app, runId, userId, withTools, turn?.here, turn?.linked),
-      turn ? (turn.context.candidates.length ? ["# 可能是同一件事的在办事项", ...turn.context.candidates.map(c => `- ${c.itemId}「${truncate(c.title, 60)}」：${c.reason}`), ...(withTools ? ["用 read_item 核实后再关联。"] : [])].join("\n") : "") : r.kind === "ask" || r.kind === "agent" ? candidatesNote(app, runId, userId, withTools) : "",
+      turn || !context ? itemPlacesNote(app, runId, userId, withTools, turn?.here, turn?.linked) : "",
+      hints.length ? ["# 可能是同一件事的在办事项", ...hints, ...(withTools ? ["用 read_item 核实后再关联。"] : [])].join("\n") : "",
+      !context && (r.kind === "ask" || r.kind === "agent") ? candidatesNote(app, runId, userId, withTools) : "",
     ].filter(Boolean);
     return parts.length ? `\n\n---\n\n${parts.join("\n\n")}` : "";
   } catch (e) {
