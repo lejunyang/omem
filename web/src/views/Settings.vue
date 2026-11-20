@@ -1,110 +1,105 @@
 <script setup lang="ts">
-import RepoLessons from "../components/RepoLessons.vue";
-import NotificationSettings from "../components/NotificationSettings.vue";
-import ApprovalSettings from "../components/ApprovalSettings.vue";
-import HelpText from "../components/HelpText.vue";
-import AssistantsSettings from "../components/AssistantsSettings.vue";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
-import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
-import AiRouting from "../components/AiRouting.vue";
-import AiDefaults from "../components/AiDefaults.vue";
-import AiCapacity from "../components/AiCapacity.vue";
-import AgentAccountsAdmin from "../components/AgentAccountsAdmin.vue";
-import AiNetworkConditions from "../components/AiNetworkConditions.vue";
-import AiBackend, { type AgentLoad } from "../components/AiBackend.vue";
-import { network } from "../lib/network-status";
-import AiModels from "../components/AiModels.vue";
-import ReplaySettings from "../components/ReplaySettings.vue";
-import FlowSettings from "../components/FlowSettings.vue";
-import { detectProbe, probes as shared } from "../lib/probes";
-import Icon from "../components/Icon.vue";
-import CronEditor from "../components/CronEditor.vue";
-import UiCheckbox from "../components/UiCheckbox.vue";
+import { defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { state } from "../store";
+import { provideSettings } from "./settings/ctx";
+import Skeleton from "../components/Skeleton.vue";
 import UiSegmented from "../components/UiSegmented.vue";
-import UiSelect from "../components/UiSelect.vue";
-import PluginChannels from "../components/PluginChannels.vue";
-import PluginsSettings from "../components/PluginsSettings.vue";
-import StorageUsage from "../components/StorageUsage.vue";
-import ShareSettings from "../components/ShareSettings.vue";
+import ApprovalSettings from "../components/ApprovalSettings.vue";
 import CommandRulesSettings from "../components/CommandRulesSettings.vue";
-import DoubaoSendStatus from "../components/DoubaoSendStatus.vue";
-import MembersSettings from "../components/MembersSettings.vue";
-import ProviderApps from "../components/ProviderApps.vue";
-import LarkCapturedChats, { type CapturedChat } from "../components/LarkCapturedChats.vue";
-import ListenContexts from "../components/ListenContexts.vue";
-import { byChat, groupOptions, type ListenView } from "../lib/listen";
-import FederationSettings from "../components/FederationSettings.vue";
-import PeerSettings from "../components/PeerSettings.vue";
-import CodeIndexPanel from "../components/CodeIndexPanel.vue";
-import { codeIndexLabel } from "../lib/code-index";
-import { fmtTime, kindLabel, loadSpaces, relTime, state, toast } from "../store";
-import { nestedSpaces } from "../lib/spaces";
-import { confirmDialog, promptDialog } from "../lib/dialog";
-import { setTimeZone } from "../lib/time";
 
-type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string };
-type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
-type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "connect" | "members" | "peers" | "shares" | "security" | "plugins" | "storage" | "about";
-const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "connect", "members", "peers", "shares", "security", "plugins", "storage", "about"];
-// The tabs by what they are about (the page's left column).
+/**
+ * The settings page: the categories on the left (by what the owner is thinking about), the open one in
+ * the middle (each a component in views/settings/, loaded when first opened), its cards on the right.
+ * The configuration is loaded once here and shared with the tabs (settings/ctx.ts).
+ */
+type Tab = "spaces" | "connect" | "search" | "storage" | "notify" | "reply" | "advance" | "review" | "schedules" | "agents" | "plugins" | "lark" | "members" | "peers" | "shares" | "security" | "about";
 const NAV: { label: string; tabs: [Tab, string][] }[] = [
-  { label: "知识", tabs: [["spaces", "空间"], ["connect", "连接"], ["search", "检索"], ["storage", "占用"]] },
-  { label: "AI 与任务", tabs: [["agents", "AI"], ["schedules", "定时任务"], ["plugins", "插件"]] },
+  { label: "知识", tabs: [["spaces", "空间"], ["connect", "采集"], ["search", "检索与记忆"], ["storage", "占用"]] },
+  { label: "助手", tabs: [["notify", "通知与打扰"], ["reply", "代你回复"], ["advance", "推进工作"], ["review", "自检与复盘"], ["schedules", "定时任务"]] },
+  { label: "AI", tabs: [["agents", "后端与模型"], ["plugins", "插件"]] },
   { label: "渠道与协作", tabs: [["lark", "渠道"], ["members", "成员"], ["peers", "设备"], ["shares", "分享"]] },
   { label: "系统", tabs: [["security", "安全"], ["about", "外观与说明"]] },
 ];
-// Other pages link to a tab (?tab=agents from the Agent page's nightly replay).
-const settingsRoute = useRoute();
-const asked = settingsRoute.query.tab;
-const tab = ref<Tab>(TABS.includes(asked as Tab) ? (asked as Tab) : "spaces");
-// A link to another tab from inside the settings (成员 → 连接) changes only the query.
+const TABS = NAV.flatMap((g) => g.tabs.map(([t]) => t));
+const VIEWS: Partial<Record<Tab, ReturnType<typeof defineAsyncComponent>>> = {
+  spaces: defineAsyncComponent(() => import("./settings/Spaces.vue")),
+  connect: defineAsyncComponent(() => import("./settings/Connect.vue")),
+  search: defineAsyncComponent(() => import("./settings/Search.vue")),
+  storage: defineAsyncComponent(() => import("../components/StorageUsage.vue")),
+  notify: defineAsyncComponent(() => import("./settings/Notify.vue")),
+  reply: defineAsyncComponent(() => import("./settings/Reply.vue")),
+  advance: defineAsyncComponent(() => import("./settings/Advance.vue")),
+  review: defineAsyncComponent(() => import("./settings/Review.vue")),
+  schedules: defineAsyncComponent(() => import("./settings/Schedules.vue")),
+  agents: defineAsyncComponent(() => import("./settings/Agents.vue")),
+  plugins: defineAsyncComponent(() => import("../components/PluginsSettings.vue")),
+  lark: defineAsyncComponent(() => import("./settings/Lark.vue")),
+  members: defineAsyncComponent(() => import("./settings/Members.vue")),
+  peers: defineAsyncComponent(() => import("./settings/Peers.vue")),
+  shares: defineAsyncComponent(() => import("../components/ShareSettings.vue")),
+};
+/**
+ * Cards that can be linked to (`?card=<id>`, the card's element id is `set-<id>`), by the tab they are in.
+ * Cards that moved keep working from the old links: `?tab=lark&focus=mentions` and the like.
+ */
+const CARDS: Record<string, Tab> = {
+  mentions: "reply", guests: "reply", commands: "reply", invite: "reply", "reply-check": "reply", "reply-outcome": "reply",
+  "notify-times": "notify", progress: "notify",
+  "auto-advance": "advance", "flow-follow": "advance", "gate-ladder": "advance", "commit-claim": "advance", design: "advance", "study-envs": "advance", "item-expiry": "advance",
+  audit: "review", replay: "review",
+  backends: "agents", tiers: "agents", fallback: "agents",
+  "memory-quality": "search", rerank: "search", embeddings: "search", "passive-memory": "search",
+  "agent-accounts": "members", desktop: "peers", "web-url": "peers",
+  "lark-docs": "connect", "lark-capture": "connect", platforms: "connect",
+  timezone: "schedules",
+};
+const route = useRoute();
+const router = useRouter();
+/** Where a link points: its tab, and the card to scroll to (from `card`, or an old link's `focus`). */
+function target(q: typeof route.query): { tab: Tab; card: string | null } {
+  const raw = typeof q.card === "string" ? q.card : typeof q.focus === "string" ? q.focus : null;
+  const card = raw === "network-conditions" ? "backends" : raw;
+  const asked = typeof q.tab === "string" && TABS.includes(q.tab as Tab) ? (q.tab as Tab) : null;
+  if (card && CARDS[card]) return { tab: CARDS[card], card };
+  // The AI sub-sections (?section=decision) are in 后端与模型.
+  if (!asked && typeof q.section === "string") return { tab: "agents", card: null };
+  return { tab: asked ?? "spaces", card };
+}
+const first = target(route.query);
+const tab = ref<Tab>(first.tab);
+let pendingCard: string | null = first.card;
+function show(t: Tab) {
+  if (tab.value === t) return;
+  tab.value = t;
+  void router.replace({ query: { tab: t } });
+}
+// A link to another tab or card while the page is open (the same route, so no remount).
 watch(
-  () => settingsRoute.query.tab,
-  (t) => {
-    if (TABS.includes(t as Tab)) tab.value = t as Tab;
+  () => route.query,
+  (q) => {
+    const t = target(q);
+    tab.value = t.tab;
+    if (t.card) {
+      pendingCard = t.card;
+      scrollToCard();
+    }
   },
 );
-// Settings → AI is split by category: the agents (general), the models omem calls itself, and the API keys.
-type AiSection = "general" | "voice" | "decision" | "image" | "keys";
-const AI_SECTIONS: { value: AiSection; label: string }[] = [
-  { value: "general", label: "通用" },
-  { value: "voice", label: "语音" },
-  { value: "decision", label: "决策" },
-  { value: "image", label: "图片生成" },
-  { value: "keys", label: "API key" },
-];
-const route = useRoute();
-const sectionOf = (v: unknown): AiSection => (AI_SECTIONS.some((s) => s.value === v) ? (v as AiSection) : "general");
-const aiSection = ref<AiSection>(sectionOf(route.query.section));
-// A link to another section while the page is open (the same route, so no remount).
-watch(() => route.query.section, (v) => {
-  if (v === undefined) return;
-  aiSection.value = sectionOf(v);
-  tab.value = "agents";
-});
-const config = ref<any>(null);
-const auditFields = [
-  { key: 'max', label: '每晚最多几页', max: 100 },
-  { key: 'perPipeline', label: '每类运行最多几页', max: 50 },
-  { key: 'strictMax', label: '加严时每晚最多几页', max: 100 },
-  { key: 'levels', label: '每晚最多抽检几条定级（0 关闭）', max: 100 },
-] as const;
-function saveAudit(change: Record<string, unknown>) {
-  return saveConfig({ quality: { ...config.value.quality, audit: { ...config.value.quality.audit, ...change } } });
+/** Scroll to the linked card once it is rendered (the tab loads on its own, its cards after their data). */
+function scrollToCard(tries = 0) {
+  if (!pendingCard) return;
+  const el = document.getElementById(`set-${pendingCard}`);
+  if (el) {
+    el.scrollIntoView({ block: "start" });
+    pendingCard = null;
+  } else if (tries < 40) window.setTimeout(() => scrollToCard(tries + 1), 100);
 }
-function auditNumber(event: Event, key: string, max: number, percentage = false) {
-  const input = event.target as HTMLInputElement;
-  const value = Number(input.value);
-  if (!input.value || !Number.isFinite(value) || value < (percentage || key === 'levels' ? 0 : 1) || value > max || (!percentage && !Number.isInteger(value))) {
-    input.value = String(config.value.quality.audit[key] * (percentage ? 100 : 1));
-    toast('请输入范围内的数字', 'error');
-    return;
-  }
-  void saveAudit({ [key]: percentage ? value / 100 : value });
-}
+
+const { config, home, load, saveConfig } = provideSettings();
+
 // The page's own contents (the right column): the cards of the open tab, by their titles. Read from
-// what is rendered, so cards of the sub-pages (members, devices, plugins…) are listed too.
+// what is rendered, so cards of the sub-components (members, devices, plugins…) are listed too.
 const content = ref<HTMLElement>();
 const toc = ref<{ id: string; title: string }[]>([]);
 const tocAt = ref("");
@@ -117,10 +112,10 @@ function buildToc() {
   const out: { id: string; title: string }[] = [];
   let i = 0;
   for (const card of el.querySelectorAll<HTMLElement>(".card")) {
-    if (card.parentElement?.closest(".card") || card.closest(".modal")) continue;
-    const first = card.firstElementChild;
-    // A card's title: a <strong> or a .section-title, the first child itself or inside its first row.
-    const heading = first?.matches("strong, .section-title") ? first : first?.querySelector("strong, .section-title");
+    if (card.parentElement?.closest(".card") || card.closest(".modal") || card.closest("[data-no-toc]")) continue;
+    const head = card.firstElementChild;
+    // A card's title: its .set-title, or a <strong> / .section-title first in it or inside its first row.
+    const heading = head?.matches("strong, .section-title, .set-title") ? head : head?.querySelector(".set-title, strong, .section-title");
     const title = (heading?.textContent ?? "").trim();
     if (!title || title.length > 24) continue;
     card.id ||= `set-${tab.value}-${i++}`;
@@ -134,16 +129,6 @@ function buildToc() {
   }, { rootMargin: "-8% 0px -70% 0px" });
   for (const t of out) tocSpy.observe(document.getElementById(t.id)!);
 }
-// What became of the drafted replies to people who looked for the owner, and what the owner wrote themselves (渠道 → 有人找你).
-type ReplyStats = { samples: number; drafts: number; sent: number; edited: number; dropped: number; ownReplies: number; noReply: number; reasons: Record<string, number>; typicalLength: number };
-const replyStats = ref<ReplyStats | null>(null);
-const REASON: Record<string, string> = { "no-need": "不用回", verbose: "太啰嗦", "no-conclusion": "没有结论", self: "我自己回" };
-const reasonText = (r: Record<string, number>) => Object.entries(r).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${REASON[k] ?? k} ${n}`).join("、");
-watch(tab, (t) => {
-  if (t === "lark") void get<{ replies: ReplyStats | null }>("/api/mentions").then((r) => (replyStats.value = r.replies)).catch(() => {});
-  // The open category stays in sight in the narrow layout's scrolling row.
-  void nextTick(() => document.querySelector(".set-nav button.on")?.scrollIntoView({ block: "nearest", inline: "center" }));
-}, { immediate: true });
 const tocSoon = () => {
   clearTimeout(tocTimer);
   tocTimer = window.setTimeout(buildToc, 150);
@@ -152,1698 +137,63 @@ function goCard(id: string) {
   tocAt.value = id;
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
+watch(tab, () => {
+  // The open category stays in sight in the narrow layout's scrolling row.
+  void nextTick(() => document.querySelector(".set-nav button.on")?.scrollIntoView({ block: "nearest", inline: "center" }));
+}, { immediate: true });
 onMounted(() => {
   tocWatch = new MutationObserver(tocSoon);
   if (content.value) tocWatch.observe(content.value, { childList: true, subtree: true });
   tocSoon();
+  void load().then(() => scrollToCard());
 });
 onBeforeUnmount(() => {
   tocWatch?.disconnect();
   tocSpy?.disconnect();
   clearTimeout(tocTimer);
 });
-/** The host Feishu has to trust for the web app (H5 可信域名). */
-const webHost = computed(() => {
-  try {
-    return new URL(config.value?.webUrl ?? "").host;
-  } catch {
-    return "";
-  }
-});
-type ModelSource = { via: "local" | "osdk" | "hub"; path?: string; syncing?: boolean; error?: string; osdk: boolean; known: boolean; cached?: boolean; size?: string };
-type RerankStatus = { enabled: boolean; model: string; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number; source?: ModelSource };
-/** Where a local model comes from, in the owner's words (search/local-models.ts: osdk first, then its own download). */
-function sourceLine(s: ModelSource | null | undefined) {
-  if (!s) return "";
-  const size = s.size ? `（${s.size}）` : "";
-  if (s.via === "local") return `从本地目录加载：${s.path}`;
-  if (s.via === "osdk") return `由 osdk 下载并锁定版本，离线加载：${s.path}`;
-  if (s.syncing) return `osdk 正在下载模型${size}，下完自动改用它。${s.cached ? "这期间先用以前自己下载的那份。" : "下完之前这项功能不生效。"}`;
-  if (s.error) return `osdk 没能下载（${s.error}），改为自己从 Hugging Face 下载${s.cached ? "，已经下好" : size}。十分钟后再试 osdk。`;
-  if (!s.osdk) return `这台机器没有 osdk：模型在第一次使用时自己从 Hugging Face 下载${s.cached ? "，已经下好" : size}，放在依赖目录的缓存里，不锁定版本，重装依赖后要重新下载。`;
-  if (!s.known) return `这个模型不在 omem 交给 osdk 管理的清单里：第一次使用时自己从 Hugging Face 下载${s.cached ? "，已经下好" : ""}。`;
-  return `有 osdk：下一次用到时由 osdk 下载并锁定版本${size}${s.cached ? "；这之前先用以前自己下载的那份" : ""}。`;
-}
-const rerank = ref<RerankStatus | null>(null);
-const embeddingSource = ref<ModelSource | null>(null);
-const profiles = ref<Profile[]>([]);
-const home = ref("");
-const schedules = ref<Schedule[]>([]);
-const next = ref<Record<string, string | null>>({});
-const labels = ref<Record<string, string>>({});
-const newSpace = ref({ name: "", kind: "project", rootPath: "", description: "", init: false });
-const creatingSpace = ref(false);
-const editing = ref<Space | null>(null);
-const guide = ref("");
-/** Skills a space can mount (settings.skills): its own way of doing things, offered to runs there. */
-const skillOptions = ref<{ value: string; label: string; hint?: string }[]>([]);
-const spaceSkills = computed<string[]>({
-  get: () => (Array.isArray(editing.value?.settings.skills) ? (editing.value!.settings.skills as string[]) : []),
-  set: (v) => { if (editing.value) editing.value.settings.skills = v; },
-});
-const profileJson = ref("");
-type Policy = "ingest" | "involved" | "store" | "skip";
-const larkChats = ref<{ chatId: string; name: string; mode: string; kind: string; muted: boolean; policy: Policy }[]>([]);
-const captured = ref<CapturedChat[]>([]);
-/** Recent chats capture has not read: the rest are in the chat list below. */
-const recentNew = computed(() => {
-  const known = new Set(captured.value.map((c) => c.chatId));
-  return larkChats.value.filter((c) => !known.has(c.chatId));
-});
-const policyOptions: { value: Policy; label: string; hint: string }[] = [
-  { value: "ingest", label: "保存并整理", hint: "每批新消息都交给助理整理成记忆和事项" },
-  { value: "involved", label: "与我有关时整理", hint: "保存；本人发言、被 @ 或参与的话题有新消息时才整理" },
-  { value: "store", label: "只保存", hint: "可检索、可引用，不整理" },
-  { value: "skip", label: "不读取", hint: "" },
-];
-const policyLabel = Object.fromEntries(policyOptions.map((o) => [o.value, o.label])) as Record<Policy, string>;
-const chatKindLabel: Record<string, string> = { p2p: "单聊", bot: "机器人单聊", "own-bot": "omem 机器人", group: "群聊", topic: "话题群" };
-const policyKinds: [string, string, string][] = [
-  ["p2p", "单聊（人）", "和同事的一对一聊天"],
-  ["bot", "机器人单聊", "通知、审批、工单助手等应用发来的消息"],
-  ["group", "普通群", ""],
-  ["topic", "话题群", "按话题回复的群"],
-  ["muted", "免打扰的会话", "你设置了免打扰的群和单聊，优先于上面的类型"],
-];
-async function loadCaptured() {
-  captured.value = (await get<{ chats: CapturedChat[] }>("/api/lark/captured").catch(() => ({ chats: [] as CapturedChat[] }))).chats;
-}
-// 关注 (连接 → above the chat list): the list, the groups a new one can read, and each chat's chips.
-const listens = ref<ListenView[] | null>(null);
-async function loadListens() {
-  listens.value = await get<ListenView[]>("/api/listen").catch(() => []);
-}
-const listenGroups = computed(() => groupOptions(captured.value));
-const listenByChat = computed(() => byChat(listens.value ?? []));
-/** How 有人找你 answers, from 渠道 → 有人找你 (the default 关注's knobs are not what it uses). */
-const defaultReply = computed(() => {
-  const m = config.value?.mentions;
-  if (m?.enabled === false) return "已关闭";
-  const word: Record<string, string> = { off: "只提醒你", draft: "先给你看", auto: "直接回" };
-  const r = m?.reply?.lark ?? {};
-  return `群里${word[r.group ?? "off"] ?? r.group}，私聊${m?.p2p === false ? "不算" : (word[r.p2p ?? "off"] ?? r.p2p)}`;
-});
-/** One chat changed (subscription, space, policy): replace its row, drop it if it is no longer listed, add it if new. */
-function capturedChanged(chatId: string, chat: CapturedChat | null) {
-  const rest = captured.value.filter((c) => c.chatId !== chatId);
-  const at = captured.value.findIndex((c) => c.chatId === chatId);
-  if (!chat) captured.value = rest;
-  else if (at < 0) captured.value = [chat, ...rest];
-  else captured.value = captured.value.map((c) => (c.chatId === chatId ? chat : c));
-}
-async function setChatPolicy(c: { chatId: string }, policy: Policy | "") {
-  const r = await put<{ chat: CapturedChat | null }>(`/api/lark/chats/${encodeURIComponent(c.chatId)}/policy`, { policy: policy || null });
-  toast(policy ? `已改为：${policyLabel[policy]}` : "已恢复默认", "ok");
-  if (r.chat) capturedChanged(c.chatId, r.chat);
-  if (larkChats.value.length) void loadLarkChats();
-}
-function setKindPolicy(kind: string, policy: Policy) {
-  const capture = config.value.lark.capture;
-  void saveConfig({ lark: { ...config.value.lark, capture: { ...capture, policies: { ...capture.policies, [kind]: policy } } } }, "已保存采集方式");
-}
-const larkError = ref("");
-async function loadLarkChats() {
-  larkError.value = "";
-  try {
-    larkChats.value = (await get<{ chats: typeof larkChats.value }>("/api/lark/chats")).chats;
-  } catch (e) {
-    larkError.value = (e as Error).message;
-  }
-}
-/** Subscribe to a recent chat into the current space; it then shows in the chat list. */
-async function subscribeRecent(c: { chatId: string; name: string }) {
-  try {
-    const r = await put<{ chat: CapturedChat | null }>(`/api/lark/chats/${encodeURIComponent(c.chatId)}/subscription`, { subscribed: true, name: c.name, spaceId: state.space });
-    capturedChanged(c.chatId, r.chat);
-    toast(`已订阅：${c.name}`, "ok");
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-async function pollNow() {
-  try {
-    await post("/api/lark/poll");
-    toast("采集完成，新消息交给助理整理", "ok");
-    void loadCaptured();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-
-const savingGuestSpaces = ref(false);
-const guestSpaceOptions = computed(() => [
-  ...state.spaces.map((s) => ({ value: s.id, label: s.name, hint: s.id })),
-  ...(config.value?.lark.guests?.spaces ?? []).filter((id: string) => !state.spaces.some((s) => s.id === id)).map((id: string) => ({ value: id, label: `空间不存在：${id}`, hint: "取消选择可移除" })),
-].map((o) => ({ ...o, disabled: savingGuestSpaces.value })));
-async function saveGuestSpaces(spaces: string[]) {
-  if (savingGuestSpaces.value) return;
-  savingGuestSpaces.value = true;
-  try {
-    await saveGuests({ spaces });
-  } finally {
-    savingGuestSpaces.value = false;
-  }
-}
-function saveGuests(patch: Record<string, unknown>, note = "已保存访客设置") {
-  const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false };
-  return saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
-}
-const skipKeys = [
-  { key: "read" as const, label: "已读" },
-  { key: "reacted" as const, label: "回了表情" },
-  { key: "replied" as const, label: "在那里回复了" },
-];
-function saveMentions(patch: Record<string, unknown>, note = "已保存") {
-  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } };
-  void saveConfig({ mentions: { ...cur, ...patch } }, note);
-}
-/** Answering the asker is per channel (`mentions.reply.<channel>`); Feishu is the one there is. */
-function saveMentionReply(patch: Record<string, unknown>) {
-  const reply = config.value.mentions?.reply ?? {};
-  saveMentions({ reply: { ...reply, lark: { ...(reply.lark ?? { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" }), ...patch } } });
-}
-function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
-  const cur = config.value.lark.commands ?? { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30, signedVia: "lark-cli" };
-  void saveConfig({ lark: { ...config.value.lark, commands: { ...cur, ...patch } } }, note);
-}
-
-function saveCapture(patch: Record<string, unknown>, note = "已保存") {
-  void saveConfig({ lark: { ...config.value.lark, capture: { ...config.value.lark.capture, ...patch } } }, note);
-}
-const intIn = (e: Event, min: number, max: number, dflt: number) => Math.max(min, Math.min(max, Math.round(Number((e.target as HTMLInputElement).value) || dflt)));
-
-type Crawl = { id: string; rootTitle?: string; root: string; status: "running" | "paused" | "done" | "stopped"; read: number; queued: number; failed: number; skipped: number; depth: number; maxDocs: number; batch: number | null; updatedAt: string; errors: string[] };
-const crawls = ref<Crawl[]>([]);
-const crawlLabel: Record<Crawl["status"], string> = { running: "进行中", paused: "已暂停", done: "已完成", stopped: "已停止" };
-async function loadCrawls() {
-  crawls.value = (await get<{ crawls: Crawl[] }>("/api/lark/wiki-crawls").catch(() => ({ crawls: [] }))).crawls.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-async function crawlOp(c: Crawl, op: "continue" | "stop") {
-  await post(`/api/lark/wiki-crawls/${c.id}/${op}`, {});
-  toast(op === "stop" ? "已停止" : "已继续", "ok");
-  await loadCrawls();
-}
-
-type Need = { label: string; anyOf: string[] };
-const perms = ref<{ user: { name: string | null } | null; unknown: boolean; missing: Need[] } | null>(null);
-const permsLoading = ref(false);
-const grantUrl = ref("");
-async function checkPerms() {
-  permsLoading.value = true;
-  try {
-    perms.value = await get("/api/lark/user-permissions");
-  } catch (e) {
-    toast((e as Error).message, "error");
-  } finally {
-    permsLoading.value = false;
-  }
-}
-// The bot apps' permissions and event subscriptions (src/channels/lark-bot-check.ts).
-type BotEvent = { name: string; label: string; optional?: boolean };
-type BotCheck = {
-  ref: string;
-  appId: string;
-  name?: string;
-  error?: string;
-  scopes: { missing: string[]; unknown: boolean; link: string | null };
-  members?: { missing: string[]; features: string[]; link: string | null };
-  docs?: { missing: string[]; link: string | null };
-  events: { subscribed: string[] | null; missing: BotEvent[]; unpublished: string[]; mode: string | null; link: string };
-  callbacks: { subscribed: string[] | null; missing: { name: string; label: string }[] };
-  reactionsQuiet: { days: number; botMessages: number; reactions: number; everReceived: boolean; quiet: boolean };
-};
-const botCheck = ref<BotCheck[] | null>(null);
-const botChecking = ref(false);
-const scanLinks = ref<Record<string, string>>({});
-async function checkBots() {
-  botChecking.value = true;
-  try {
-    botCheck.value = (await get<{ bots: BotCheck[] }>("/api/lark/bot-check")).bots;
-  } catch (e) {
-    toast((e as Error).message, "error");
-  } finally {
-    botChecking.value = false;
-  }
-}
-async function scanBot(ref_: string) {
-  try {
-    const r = await post<{ url?: string; error?: string }>(`/api/lark/bot-check/${ref_}/scan`, {});
-    if (r.url) {
-      // The link is shown only when the browser blocked the new tab.
-      const opened = window.open(r.url, "_blank");
-      if (opened) {
-        opened.opener = null;
-        toast("在打开的页面里用飞书扫码确认，确认后会收到通知", "ok");
-      } else scanLinks.value = { ...scanLinks.value, [ref_]: r.url };
-    } else toast(r.error ?? "没有拿到扫码链接", "error");
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-const required = (b: BotCheck) => b.events.missing.filter((e) => !e.optional);
-const optional = (b: BotCheck) => b.events.missing.filter((e) => e.optional);
-
-async function grantPerms() {
-  try {
-    const r = await post<{ url: string | null }>("/api/lark/user-permissions", {});
-    grantUrl.value = r.url ?? "";
-    toast(r.url ? "授权链接也发到了飞书私聊" : "没有缺的权限", "ok");
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-
-async function load() {
-  const s = await get<{ config: any; agents: Profile[]; home: string; rerank: RerankStatus; embeddingSource?: ModelSource | null }>("/api/settings");
-  embeddingSource.value = s.embeddingSource ?? null;
-  config.value = s.config;
-  rerank.value = s.rerank;
-  profiles.value = s.agents;
-  home.value = s.home;
-  // A link to one card (the rules page's last entry opens 有人找你: ?tab=lark&focus=mentions).
-  if (route.query.focus === "mentions" && tab.value === "lark") void nextTick(() => document.getElementById("settings-mentions")?.scrollIntoView({ block: "start" }));
-  network.policies = s.config.agents.networkPolicies ?? [];
-  if (route.query.focus === "network-conditions" && tab.value === "agents") void nextTick(() => document.getElementById("settings-backends")?.scrollIntoView({ block: "start" }));
-  const sc = await get<{ schedules: Schedule[]; next: Record<string, string | null>; labels: Record<string, string> }>("/api/schedules");
-  schedules.value = sc.schedules;
-  next.value = sc.next;
-  labels.value = sc.labels;
-}
-onMounted(() => {
-  void load();
-  void loadCaptured();
-  void loadListens();
-  void loadCrawls();
-  // `?space=<id>` (from a page that needs one of its settings, e.g. a preview command): open it.
-  const want = route.query.space;
-  if (typeof want === "string" && tab.value === "spaces") {
-    const s = state.spaces.find((x) => x.id === want);
-    if (s) void openSpace(s);
-    else void loadSpaces().then(() => {
-      const t = state.spaces.find((x) => x.id === want);
-      if (t) void openSpace(t);
-    });
-  }
-});
-// Opening the Agent tab fills role dropdowns from cached probes (probing once when there is none).
-watch(
-  () => [tab.value, profiles.value.length] as const,
-  ([t]) => {
-    if (t === "agents" && profiles.value.length) void loadProbes();
-  },
-);
-
-async function saveCoverage(key: "nightly" | "perSpace", event: Event) {
-  const input = event.target as HTMLInputElement;
-  const value = Number(input.value);
-  if (!input.value.trim() || !Number.isSafeInteger(value) || value < 0) {
-    input.value = String(config.value.wiki.coverage[key]);
-    toast("请填写 0 或正整数", "error");
-    return;
-  }
-  await saveConfig({ wiki: { ...config.value.wiki, coverage: { ...config.value.wiki.coverage, [key]: value } } });
-}
-
-async function saveConfig(partial: Record<string, unknown>, note = "已保存") {
-  try {
-    const r = await put<{ config: any; restart?: string[] }>("/api/settings", partial);
-    config.value = r.config;
-    if (r.restart?.length) toast(`${note}。${r.restart.join("、")}要重启服务后才生效（omem service restart）`, "info");
-    else toast(note, "ok");
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-async function createSpace() {
-  if (creatingSpace.value) return;
-  creatingSpace.value = true;
-  const init = newSpace.value.kind === "repo" && newSpace.value.init;
-  const input = { ...newSpace.value, rootPath: newSpace.value.rootPath.trim(), init: init || undefined };
-  try {
-    await post("/api/spaces", { ...input, rootPath: input.rootPath || undefined });
-    toast(init ? "已新建仓库和空间，可以交办编码了" : input.rootPath ? "已创建，正在导入目录" : "已创建空间", "ok");
-    newSpace.value = { name: "", kind: "project", rootPath: "", description: "", init: false };
-    await loadSpaces();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  } finally {
-    creatingSpace.value = false;
-  }
-}
-// ---- repositories under a business space (docs/v2/coding-work.md 第 4 节) ----
-/** The cards: business spaces (each listing its repositories) and repositories that belong to no business. */
-const spaceCards = computed(() => nestedSpaces(state.spaces).filter((x) => !x.child).map((x) => x.space));
-const reposOf = (id: string) => state.spaces.filter((c) => c.parentId === id);
-const isRepo = (s: Space) => s.kind === "repo" && !!s.rootPath;
-type RepoSuggestion = { space: string; name: string; reasons: string[] };
-const suggestions = ref<RepoSuggestion[]>([]);
-const newRepo = ref("");
-const addingRepo = ref(false);
-async function loadSuggestions(id: string) {
-  suggestions.value = await get<RepoSuggestion[]>(`/api/spaces/${id}/repo-suggestions`).catch(() => []);
-}
-async function moveRepo(repo: string, parent: string | null) {
-  try {
-    await post(`/api/spaces/${repo}/parent`, { parent });
-    toast(parent ? `已归到 ${state.spaces.find((s) => s.id === parent)?.name ?? parent} 下` : "已移出，现在是独立仓库", "ok");
-    await loadSpaces();
-    if (editing.value && !isRepo(editing.value)) await loadSuggestions(editing.value.id);
-    if (editing.value?.id === repo) editing.value.parentId = parent;
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-async function addRepo() {
-  const at = newRepo.value.trim();
-  if (!editing.value || !at || addingRepo.value) return;
-  addingRepo.value = true;
-  try {
-    // The name comes from the directory or the link; it can be renamed in the repository's settings.
-    const name = (at.replace(/[\\/]+$/, "").replace(/\.git$/, "").split(/[\\/:]/).pop() || at).trim();
-    await post("/api/spaces", { name, kind: "repo", rootPath: at, parent: editing.value.id });
-    toast(`已添加 ${name}，正在导入代码`, "ok");
-    newRepo.value = "";
-    await loadSpaces();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  } finally {
-    addingRepo.value = false;
-  }
-}
-const syncRepo = async (id: string) => {
-  try { await post(`/api/spaces/${id}/sync`); toast("已开始同步", "ok"); } catch (e) { toast((e as Error).message, "error"); }
-};
-/** Business spaces a repository can go under. */
-const parentOptions = computed(() => [{ value: "", label: "不属于任何业务（独立仓库）" }, ...state.spaces.filter((s) => s.kind !== "repo" && !s.parentId && s.kind !== "worktree").map((s) => ({ value: s.id, label: s.name }))]);
-async function openSpace(s: Space) {
-  editing.value = { ...s, settings: { ...s.settings } };
-  related.value = (s.related ?? []).filter((r) => !r.via);
-  suggestions.value = [];
-  newRepo.value = "";
-  if (!isRepo(s)) void loadSuggestions(s.id);
-  newRelated.value = { space: "", note: "" };
-  slots.value = [];
-  repoBranch.value = null;
-  const detail = await get<{ guide: string; content?: { label: string; count: number }[] }>(`/api/spaces/${s.id}`);
-  guide.value = detail.guide;
-  spaceContentOf.value = detail.content ?? [];
-  if (s.rootPath && s.kind === "repo") void loadRepoBranches(s.id);
-  if (!skillOptions.value.length) skillOptions.value = (await get<{ name: string; description: string; status: string }[]>("/api/skills").catch(() => [])).map((k) => ({ value: k.name, label: k.status === "draft" ? `${k.name}（草稿）` : k.name, hint: k.description }));
-  if (s.rootPath) slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
-}
-type WorkspaceSlot = { path: string; state: "free" | "leased" | "invalid" | "dirty"; run?: string; branch?: string | null; reason?: string };
-const SLOT_STATE: Record<WorkspaceSlot["state"], string> = { free: "空闲", leased: "借出", invalid: "不可用", dirty: "空闲（有残留，借出时清掉）" };
-const slots = ref<WorkspaceSlot[]>([]);
-const related = ref<SpaceRelation[]>([]);
-const newRelated = ref({ space: "", note: "" });
-/** Last folder of a repo path, without the hash suffix added to cloned repos. */
-const dirName = (p: string) => (p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p).replace(/-[0-9a-f]{12}$/, "");
-function submoduleTip(s: { settings?: Record<string, any> }) {
-  const sm = s.settings?.submodules;
-  if (!sm) return "";
-  const failed = (sm.failed ?? []).map((f: { path: string; error: string }) => `${f.path}：${f.error}`);
-  if (failed.length) return `拉取失败：\n${failed.join("\n")}`;
-  if (!sm.managed && sm.ready < sm.total) return "其余子模块需要在仓库里运行 git submodule update --init --recursive";
-  return "子模块都已检出并索引";
-}
-const relatable = computed(() => state.spaces.filter((s) => editing.value && s.id !== editing.value.id && s.parentId !== editing.value.id && s.id !== editing.value.parentId && !related.value.some((r) => r.space === s.id)).map((s) => ({ value: s.id, label: s.name })));
-async function addRelated() {
-  if (!editing.value || !newRelated.value.space) return;
-  try {
-    related.value = (await post<SpaceRelation[]>(`/api/spaces/${editing.value.id}/related`, newRelated.value)).filter((r) => !r.via);
-    newRelated.value = { space: "", note: "" };
-    await loadSpaces();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-async function removeRelated(r: SpaceRelation) {
-  if (!editing.value) return;
-  related.value = (await del<SpaceRelation[]>(`/api/spaces/${editing.value.id}/related/${encodeURIComponent(r.space)}`)).filter((x) => !x.via);
-  await loadSpaces();
-}
-async function saveSpace() {
-  if (!editing.value) return;
-  const s = editing.value;
-  if (typeof s.settings.setupCommand === "string" && !s.settings.setupCommand.trim()) delete s.settings.setupCommand;
-  // A mirror of another server's space is set up by subscribing, not here.
-  const { mirror: _mirror, ...settings } = s.settings;
-  await patch(`/api/spaces/${s.id}`, { name: s.name, description: s.description, settings, guide: guide.value });
-  toast("空间已保存", "ok");
-  editing.value = null;
-  await loadSpaces();
-}
-/** Point the space being edited at another checkout of its repository; false when it did not happen. */
-async function relink(path: string): Promise<boolean> {
-  const s = editing.value;
-  if (!s) return false;
-  try {
-    type Result = { done: true; old: string; root: string } | { done: false; pending: { run: string; title: string }[] };
-    let r = await post<Result>(`/api/spaces/${s.id}/relink`, { path });
-    if (!r.done) {
-      const list = r.pending.map((p) => `· ${p.title}`).join("\n");
-      const ok = await confirmDialog(`丢弃 ${r.pending.length} 个没确认的交办？`, { message: `它们的工作区和分支在原来的仓库 ${s.rootPath} 里，换目录前要先处理：\n${list}\n\n要保留就先去运行页确认（推送），再回来换。`, okText: "丢弃并换目录", danger: true });
-      if (!ok) return false;
-      r = await post<Result>(`/api/spaces/${s.id}/relink`, { path, discard: true });
-      if (!r.done) return false;
-    }
-    toast(`仓库目录改为 ${r.root}，正在重新导入`, "ok");
-    s.rootPath = r.root;
-    s.settings = (await get<Space>(`/api/spaces/${s.id}`)).settings;
-    slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
-    await loadSpaces();
-    return true;
-  } catch (e) {
-    toast((e as Error).message, "error");
-    return false;
-  }
-}
-/** The branch the repository's own directory has checked out: delegations cut their work from it, and land on it when there is no origin. */
-const repoBranch = ref<{ current: string; pick: string; options: { value: string; label: string }[] } | null>(null);
-const switchingBranch = ref(false);
-async function loadRepoBranches(id: string) {
-  const b = await get<{ current: string; branches: { name: string; remote: boolean }[] }>(`/api/spaces/${id}/branches`).catch(() => null);
-  if (!b || editing.value?.id !== id) return;
-  const local = b.branches.filter((x) => !x.remote).map((x) => x.name);
-  const remoteOnly = b.branches.filter((x) => x.remote && !local.includes(x.name.replace(/^origin\//, ""))).map((x) => x.name.replace(/^origin\//, ""));
-  repoBranch.value = { current: b.current, pick: b.current, options: [...local.map((n) => ({ value: n, label: n })), ...remoteOnly.map((n) => ({ value: n, label: `${n}（只在 origin）` }))] };
-}
-async function switchRepoBranch() {
-  const s = editing.value, b = repoBranch.value;
-  if (!s || !b || b.pick === b.current || switchingBranch.value) return;
-  switchingBranch.value = true;
-  try {
-    await put(`/api/spaces/${s.id}/branches`, { current: b.pick });
-    toast(`仓库目录切到了 ${b.pick}，正在重新导入`, "ok");
-    await loadRepoBranches(s.id);
-  } catch (e) {
-    toast((e as Error).message, "error");
-  } finally {
-    switchingBranch.value = false;
-  }
-}
-/** What the space being edited still holds; only an empty one can be deleted. */
-const spaceContentOf = ref<{ label: string; count: number }[]>([]);
-const canDelete = computed(() => !!editing.value && editing.value.kind !== "personal" && editing.value.kind !== "worktree" && (!state.me || state.me.role === "owner"));
-async function removeSpace() {
-  const s = editing.value;
-  if (!s) return;
-  if (spaceContentOf.value.length) return toast(`${s.name} 里还有内容，不能删除：${spaceContentOf.value.map((c) => `${c.label} ${c.count}`).join("、")}`, "error");
-  const ok = await confirmDialog(`删除空间「${s.name}」？`, { message: `它是空的，删掉后从空间列表里消失，成员和与其他空间的关联一起删除。${s.rootPath ? `仓库目录 ${s.rootPath} 不动。` : ""}`, okText: "删除", danger: true });
-  if (!ok) return;
-  try {
-    await del(`/api/spaces/${s.id}`);
-    toast("空间已删除", "ok");
-    editing.value = null;
-    await loadSpaces();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-async function changeRoot() {
-  const s = editing.value;
-  if (!s) return;
-  const path = (await promptDialog("换一个仓库目录", { message: "填同一个仓库（git remote 相同）在这台机器上的另一份克隆，比如你平时开发的目录。交办从它当前的提交切出工作分支，在这里检出的分支每轮结束会自动快进。", value: s.rootPath ?? "", placeholder: "/home/me/code/app", okText: "换" }))?.trim();
-  if (path && path !== s.rootPath) await relink(path);
-}
-async function toggleSchedule(s: Schedule) {
-  await put(`/api/schedules/${s.id}`, { enabled: !s.enabled });
-  void load();
-}
-async function saveCron(s: Schedule, cron: string) {
-  try {
-    await put(`/api/schedules/${s.id}`, { cron });
-    toast("已更新", "ok");
-    void load();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-function zoneOffset(z: string) {
-  try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: z, timeZoneName: "shortOffset" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value ?? "";
-  } catch {
-    return "";
-  }
-}
-const zoneOptions = computed(() => {
-  const all = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
-  const cur = config.value?.timezone as string | undefined;
-  return [...new Set([...(cur ? [cur] : []), browserZone, "UTC", ...all])].map((z) => ({ value: z, label: z, hint: zoneOffset(z) }));
-});
-async function saveTimezone(z: string) {
-  if (!z || z === config.value?.timezone) return;
-  await saveConfig({ timezone: z }, `时区改为 ${z}`);
-  setTimeZone(config.value?.timezone);
-  void load();
-}
-async function saveScheduleConfig(s: Schedule, config: Record<string, unknown>) {
-  await put(`/api/schedules/${s.id}`, { config: { ...s.config, ...config } });
-  toast("已保存", "ok");
-  void load();
-}
-const itemKinds = [["todo", "待办"], ["decision", "待决定"], ["watch", "关注"], ["waiting", "等待回复"], ["reminder", "提醒过后"]] as const;
-async function saveHeartbeat(patch: { gate?: "off" | "decision"; sweepHours?: number }) {
-  await saveConfig({ heartbeat: { ...config.value.heartbeat, ...patch } }, "已保存巡检预筛设置");
-}
-async function saveSweepHours(raw: string) {
-  const n = Number(raw);
-  if (!raw.trim() || !Number.isFinite(n) || n < 1 || n > 72) return toast("小时数要在 1 到 72 之间", "error");
-  await saveHeartbeat({ sweepHours: n });
-}
-async function saveItems(patch: Record<string, unknown>) {
-  await saveConfig({ items: { ...config.value.items, ...patch } }, "已保存事项收尾设置");
-}
-async function saveItemDays(kind: string, raw: string) {
-  const n = Math.round(Number(raw));
-  if (!Number.isFinite(n) || n < 1 || n > 365) return toast("天数要在 1 到 365 之间", "error");
-  await saveItems({ days: { ...config.value.items.days, [kind]: n } });
-}
-async function saveWorkState(key: "days" | "people", raw: string, min: number, max: number) {
-  const n = Math.round(Number(raw));
-  if (!Number.isFinite(n) || n < min || n > max) return toast(`要在 ${min} 到 ${max} 之间`, "error");
-  await saveConfig({ workState: { ...config.value.workState, [key]: n } }, "已保存");
-}
-async function runNow(s: Schedule) {
-  await post(`/api/schedules/${s.id}/run`);
-  toast("已触发", "ok", "#/runs");
-}
-const defaultProfile = computed({
-  get: () => config.value?.agents.default ?? "",
-  set: (v: string) => saveConfig({ agents: { ...config.value.agents, default: v || undefined } }),
-});
-type Fallback = { profile: string; model?: string; effort?: string };
-const fallbacks = computed<Fallback[]>(() => config.value?.agents.fallback ?? []);
-async function saveFallbacks(list: Fallback[], message = "已保存兜底顺序") {
-  await saveConfig({ agents: { ...config.value.agents, fallback: list } }, message);
-  void load();
-}
-function setFallback(i: number, patch: Partial<Fallback>) {
-  const list = fallbacks.value.map((f, j) => {
-    if (j !== i) return f;
-    const next = { ...f, ...patch };
-    return Object.fromEntries(Object.entries(next).filter(([, v]) => v)) as Fallback;
-  });
-  void saveFallbacks(list);
-}
-function moveFallback(i: number) {
-  const list = [...fallbacks.value];
-  [list[i - 1], list[i]] = [list[i], list[i - 1]];
-  void saveFallbacks(list);
-}
-function addFallback() {
-  const used = new Set(fallbacks.value.map((f) => f.profile));
-  const next = installedProfiles.value.find((p) => !used.has(p.id) && p.id !== config.value.agents.default) ?? installedProfiles.value[0];
-  if (next) void saveFallbacks([...fallbacks.value, { profile: next.id }], "已添加兜底");
-}
-const queueMinuteOptions = computed(() => {
-  const cur = config.value?.agents.queueTimeoutMinutes ?? 30;
-  return [...new Set([5, 10, 15, 30, 60, 120, 240, cur])].sort((a, b) => a - b).map((v) => ({ value: String(v), label: v < 60 ? `${v} 分钟` : `${v / 60} 小时` }));
-});
-async function saveQueueMinutes(v: string) {
-  await saveConfig({ agents: { ...config.value.agents, queueTimeoutMinutes: Number(v) } }, `排队最多等待 ${v} 分钟`);
-  void load();
-}
-async function saveAutoAdvance(key: "turns" | "codeRounds", raw: string) {
-  const [min, max, fallback] = key === "turns" ? [0, 50, 6] : [1, 20, 3];
-  const n = Number(raw);
-  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
-  const cur = config.value.agents.autoAdvance ?? { turns: 6, codeRounds: 3 };
-  await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, [key]: v } } }, key === "turns" ? `多 Agent 自动推进最多 ${v} 次` : `编码交办自动推进到第 ${v} 轮`);
-  void load();
-}
-async function saveFlows(key: "autoAdvance" | "staleDays", raw: string) {
-  const [max, fallback] = key === "autoAdvance" ? [20, 3] : [365, 2];
-  const n = Number(raw);
-  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(1, Math.min(max, Math.round(n))) : fallback;
-  await saveConfig({ flows: { ...(config.value.flows ?? {}), [key]: v } }, key === "autoAdvance" ? `流程连着自己开始 ${v} 段后先问你` : `停在等你的阶段 ${v} 天后提醒`);
-  void load();
-}
-async function saveReplyHours(raw: string) {
-  const n = Number(raw);
-  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(1, Math.min(72, Math.round(n))) : 6;
-  await saveConfig({ replies: { ...config.value.replies, outcome: { ...(config.value.replies?.outcome ?? {}), afterHours: v } } }, `回复发出 ${v} 小时后判断有没有用`);
-  void load();
-}
-async function saveReplyReview(patch: Record<string, unknown>, note: string) {
-  const outcome = config.value.replies?.outcome ?? {};
-  await saveConfig({ replies: { ...config.value.replies, outcome: { ...outcome, review: { ...(outcome.review ?? {}), ...patch } } } }, note);
-  void load();
-}
-function saveReplyReviewMax(raw: string) {
-  const n = Number(raw);
-  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(1, Math.min(200, Math.round(n))) : 30;
-  return saveReplyReview({ max: v }, `每晚最多复查 ${v} 条回复结果`);
-}
-const TIERS = [{ id: "strong", label: "好的" }, { id: "standard", label: "中档" }, { id: "cheap", label: "省的" }] as const;
-/** Which backend, model and effort a tier stands for; null leaves the tier unset (the role's own AI is used). */
-async function saveTier(id: (typeof TIERS)[number]["id"], v: { agent?: string; model?: string; effort?: string } | null) {
-  const tiers = { ...(config.value.agents.tiers ?? {}) };
-  if (!v?.agent) delete tiers[id];
-  else tiers[id] = { profile: v.agent, ...(v.model ? { model: v.model } : {}), ...(v.effort ? { effort: v.effort } : {}) };
-  await saveConfig({ agents: { ...config.value.agents, tiers } }, v?.agent ? `“${TIERS.find((t) => t.id === id)!.label}”这一档已设置` : "这一档不配了");
-  void load();
-}
-async function savePreCheck(v: boolean) {
-  const cur = config.value.agents.autoAdvance ?? { turns: 6, codeRounds: 3 };
-  await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, preCheck: v } } }, v ? "新交办开始编码前先做检查" : "新交办直接开始编码");
-  void load();
-}
-/** agents.progress: what reaches Feishu while agents work (process messages, thinking bubbles). */
-async function saveProgress(patch: { messages?: string; thinking?: string }) {
-  const cur = config.value.agents.progress ?? { messages: "milestones", thinking: "own" };
-  const next = { ...cur, ...patch };
-  await saveConfig({ agents: { ...config.value.agents, progress: next } }, patch.messages
-    ? next.messages === "all" ? "多 Agent 工作的每轮回复都发到话题" : "多 Agent 工作只在完成和卡住时发消息"
-    : `思考气泡：${({ all: "全部显示", own: "只在回答你的消息时显示", off: "关闭" } as Record<string, string>)[next.thinking]}`);
-  void load();
-}
-/** agents.design (docs/v2/coding-plan.md §3): whether delegations write a design first, and who confirms it. */
-async function saveDesign(patch: { mode?: string; confirm?: string }) {
-  const cur = config.value.agents.design ?? { mode: "auto", confirm: "owner" };
-  const next = { ...cur, ...patch };
-  await saveConfig({ agents: { ...config.value.agents, design: next } }, patch.mode ? `方案先行：${({ auto: "按编码前检查的判断", always: "每次交办都先写方案", never: "不写方案" } as Record<string, string>)[next.mode]}` : next.confirm === "assistant" ? "没有要你定的问题时由助手确认方案" : "方案都由你确认");
-  void load();
-}
-async function addProfile() {
-  try {
-    const p = JSON.parse(profileJson.value);
-    const list = [...config.value.agents.profiles.filter((x: Profile) => x.id !== p.id), p];
-    await saveConfig({ agents: { ...config.value.agents, profiles: list } }, "已保存 Agent 配置");
-    profileJson.value = "";
-    void load();
-  } catch (e) {
-    toast(`配置不是合法 JSON：${(e as Error).message}`, "error");
-  }
-}
-type ProbeData = { agent: string; models: string[]; efforts: string[]; effortsByModel?: Record<string, string[]>; error?: string; at?: string };
-/** Effort levels for a model on a backend: per model when the probe knows them, else all levels. */
-function effortsOf(profileId: string | undefined, model?: string | null): string[] {
-  const d = probes.value[profileId ?? ""]?.data;
-  if (!d) return [];
-  if (d.effortsByModel && model && model in d.effortsByModel) return d.effortsByModel[model];
-  return d.efforts;
-}
-// Shared with the profile forms (lib/probes.ts): a backend is asked once per tab unless refreshed.
-const probes = computed(() => {
-  const out: Record<string, { loading?: boolean; error?: string; data?: ProbeData }> = {};
-  for (const id of new Set([...Object.keys(shared.data), ...Object.keys(shared.pending)])) {
-    const d = shared.data[id] as ProbeData | undefined;
-    out[id] = { loading: !!shared.pending[id], ...(d?.error ? { error: d.error } : d ? { data: d } : {}) };
-  }
-  return out;
-});
-/** Backends that can report their models and effort levels. */
-const probeable = (p: Profile) => p.transport === "acp" || p.transport === "doubao-cli";
-async function probe(p: Profile, refresh = true) {
-  if (!probeable(p)) return;
-  await detectProbe(p.id, refresh);
-}
-/** Read cached probes (or probe once) for every installed ACP agent so role dropdowns can fill. */
-async function loadProbes() {
-  await Promise.all(installedProfiles.value.filter((p) => probeable(p) && !probes.value[p.id]).map((p) => probe(p, false)));
-}
-// Other Feishu bots (lark.bots): who answers for each.
-type LarkBot = { id: string; appId: string; agent: string; enabled: boolean; ownerOpenId?: string };
-const specs = ref<{ name: string; description: string }[]>([]);
-watch(tab, (t) => {
-  if (t === "lark" && !specs.value.length) void get<{ name: string; description: string }[]>("/api/agents").then((s) => (specs.value = s)).catch(() => {});
-}, { immediate: true });
-function botAgentOptions(current: string) {
-  const list = [{ value: "assistant", label: "主助手角色（独立会话）" }, ...specs.value.map((s) => ({ value: s.name, label: s.name, hint: s.description }))];
-  return list.some((o) => o.value === current) ? list : [...list, { value: current, label: current, hint: "档案不存在" }];
-}
-function saveBot(i: number, patch: Partial<LarkBot>) {
-  const bots = [...(config.value.lark.bots as LarkBot[])];
-  bots[i] = { ...bots[i], ...patch };
-  void saveConfig({ lark: { ...config.value.lark, bots } }, `已保存机器人 ${bots[i].id}`);
-}
-async function removeBot(i: number) {
-  const b = config.value.lark.bots[i] as LarkBot;
-  if (!(await confirmDialog(`移除机器人 ${b.id}？`, { message: "它的会话记录保留；凭据仍在 secrets/lark.json，重启服务后不再连接。", okText: "移除", danger: true }))) return;
-  void saveConfig({ lark: { ...config.value.lark, bots: (config.value.lark.bots as LarkBot[]).filter((_, j) => j !== i) } }, `已移除机器人 ${b.id}`);
-}
-const installedProfiles = computed(() => profiles.value.filter((p) => p.installed));
-const profileOptions = computed(() => installedProfiles.value.map((p) => ({ value: p.id, label: p.name ?? p.id, hint: p.networkReason ?? p.id })));
-function saveReview(patch: Record<string, unknown>) {
-  const memory = config.value.memory;
-  void saveConfig({ memory: { ...memory, review: { ...memory.review, ...patch } } }, "已保存记忆复核设置");
-}
-function saveNoteReview(patch: Record<string, unknown>) {
-  void saveConfig({ notes: { ...config.value.notes, review: { ...config.value.notes.review, ...patch } } }, "已保存标注复核设置");
-}
-function savePassive(patch: Record<string, unknown>) {
-  const memory = config.value.memory;
-  void saveConfig({ memory: { ...memory, passive: { ...memory.passive, ...patch } } }, "已保存相关记忆设置");
-}
-async function saveRerank(patch: Record<string, unknown>) {
-  await saveConfig({ rerank: { ...config.value.rerank, ...patch } }, "已保存重排设置");
-  rerank.value = (await get<{ rerank: RerankStatus }>("/api/settings")).rerank;
-}
-const rerankLine = computed(() => {
-  const r = rerank.value;
-  if (!r?.enabled) return "";
-  const tail = r.timeouts ? `，${r.timeouts} 次超时没用上` : "";
-  if (r.state === "ready") return `已加载 · 用过 ${r.calls} 次${r.lastMs ? `，上一次 ${(r.lastMs / 1000).toFixed(1)} 秒` : ""}${tail}`;
-  if (r.state === "loading") return r.source?.syncing ? "模型还在下载" : "正在下载或加载模型（第一次要下载，可能要几分钟），这期间检索保持原来的顺序";
-  if (r.state === "failed") return `加载失败：${r.error}`;
-  return "还没用过（第一次检索时加载）";
-});
-function numberIn(e: Event, min: number, max: number, fallback: number) {
-  const n = Number((e.target as HTMLInputElement).value);
-  return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
-}
-const compareDraft = ref({ profile: "", model: "", effort: "" });
-function addCompare() {
-  if (!compareDraft.value.profile) return;
-  const c = { profile: compareDraft.value.profile, ...(compareDraft.value.model.trim() ? { model: compareDraft.value.model.trim() } : {}), ...(compareDraft.value.effort.trim() ? { effort: compareDraft.value.effort.trim() } : {}) };
-  void saveConfig({ memory: { ...config.value.memory, compare: [...config.value.memory.compare, c] } }, "已添加对比模型");
-  compareDraft.value = { profile: "", model: "", effort: "" };
-}
-function removeCompare(i: number) {
-  void saveConfig({ memory: { ...config.value.memory, compare: config.value.memory.compare.filter((_: unknown, j: number) => j !== i) } }, "已移除对比模型");
-}
-function modelOptionsFor(profileId: string | undefined, key: "model" | "effort", current?: string, model?: string) {
-  const offered = (key === "model" ? probes.value[profileId ?? ""]?.data?.models : effortsOf(profileId, model ?? profiles.value.find((x) => x.id === profileId)?.model)) ?? [];
-  const list = current && !offered.includes(current) ? [current, ...offered] : offered;
-  return [{ value: "", label: "跟随默认" }, ...list.map((v) => ({ value: v, label: v }))];
-}
-const probedModels = computed(() => Object.fromEntries(installedProfiles.value.map((p) => [p.id, probes.value[p.id]?.data?.models ?? []])));
-function saveCapacity(v: { concurrency: number; interactiveConcurrency: number; perModel: number; quotaAvoidAbove: number; quotaPerDayBelow: number }) {
-  const capacity = { ...config.value.agents.capacity, perModel: v.perModel, quotaAvoidAbove: v.quotaAvoidAbove, quotaPerDayBelow: v.quotaPerDayBelow };
-  void saveConfig({ concurrency: v.concurrency, interactiveConcurrency: v.interactiveConcurrency, agents: { ...config.value.agents, capacity } }, "已保存并行设置");
-}
-/** A change from one backend's block (AiBackend.vue): part of config.agents. */
-async function saveAgents(patch: Record<string, unknown>, note: string) {
-  await saveConfig({ agents: { ...config.value.agents, ...patch } }, note);
-  void load();
-}
-/** The installed backends by account: an ACP agent and its CLI fallback are one (their `source`), ACP first. */
-const backendGroups = computed(() => {
-  const groups = new Map<string, Profile[]>();
-  for (const p of installedProfiles.value) {
-    const key = p.source ?? p.id;
-    groups.set(key, [...(groups.get(key) ?? []), p]);
-  }
-  return [...groups].map(([source, list]) => ({ source, profiles: [...list].sort((a, b) => Number(b.transport === "acp") - Number(a.transport === "acp")) }));
-});
-/** Backends a network condition names that are not installed here: their conditions are listed apart. */
-const orphanNetwork = computed(() => {
-  const installed = new Set(installedProfiles.value.map((p) => p.id));
-  return [...new Set(network.policies.flatMap((p) => p.backends))].filter((id) => !installed.has(id));
-});
-const agentLoad = ref<AgentLoad | null>(null);
-async function loadAgentLoad() {
-  agentLoad.value = await get<AgentLoad>("/api/agents/load").catch(() => null);
-}
-watch(tab, (t) => { if (t === "agents") void loadAgentLoad(); }, { immediate: true });
-const missingProfiles = computed(() => profiles.value.filter((p) => !p.installed));
-// Desktop and browser control (ai-auto-desktop's aad): optional, installed through osdk.
-type Desktop = { installed: boolean; version: string | null; via: "path" | "osdk" | null; spec: string };
-const desktop = ref<Desktop | null>(null);
-const desktopBusy = ref(false);
-watch(tab, (t) => {
-  if (t === "agents" && !desktop.value) void get<Desktop>("/api/desktop").then((d) => (desktop.value = d)).catch(() => {});
-}, { immediate: true });
-async function installDesktop() {
-  desktopBusy.value = true;
-  try {
-    desktop.value = await post<Desktop>("/api/desktop/install", {});
-    toast(`已安装 aad ${desktop.value.version ?? ""}`);
-  } catch (e) {
-    toast((e as Error).message, "error");
-  } finally {
-    desktopBusy.value = false;
-  }
-}
-type RegistryAgent = { id: string; name: string; version: string; description?: string; website?: string; added: boolean; ways: string[] };
-const registry = ref<RegistryAgent[] | null>(null);
-const registryBusy = ref("");
-async function loadRegistry() {
-  try {
-    registry.value = await get("/api/agent-registry");
-  } catch (e) {
-    toast(`读取 ACP 注册表失败：${(e as Error).message}`, "error");
-  }
-}
-async function addFromRegistry(a: RegistryAgent, via?: string) {
-  registryBusy.value = a.id;
-  try {
-    const r = await post<{ profile: Profile }>(`/api/agent-registry/${a.id}`, via ? { via } : {});
-    toast(`已添加 ${a.name}：${r.profile.command} ${r.profile.args.join(" ")}。第一次用前先在终端运行它登录。`);
-    a.added = true;
-    void load();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  } finally {
-    registryBusy.value = "";
-  }
-}
-const editingProfile = ref<string | null>(null);
-const editJson = ref("");
-function editProfile(p: Profile) {
-  const { installed, install, ...rest } = p;
-  editingProfile.value = editingProfile.value === p.id ? null : p.id;
-  editJson.value = JSON.stringify(rest, null, 2);
-}
-async function saveEdit() {
-  try {
-    const p = JSON.parse(editJson.value);
-    if (!p.id) return toast("配置需要 id", "error");
-    const list = [...config.value.agents.profiles.filter((x: Profile) => x.id !== p.id && x.id !== editingProfile.value), p];
-    await saveConfig({ agents: { ...config.value.agents, profiles: list } }, `已保存 ${p.name ?? p.id}`);
-    editingProfile.value = null;
-    void load();
-  } catch (e) {
-    toast(`配置不是合法 JSON：${(e as Error).message}`, "error");
-  }
-}
 </script>
 
 <template>
   <div class="page settings">
-    <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small">数据目录：{{ home }}</p></div></div>
+    <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small muted">数据目录：{{ home }}</p></div></div>
     <div class="set-layout">
-    <nav class="set-nav" aria-label="设置分类">
-      <div v-for="g in NAV" :key="g.label" class="group">
-        <span>{{ g.label }}</span>
-        <button v-for="[k, l] in g.tabs" :key="k" type="button" :class="{ on: tab === k }" :aria-current="tab === k ? 'page' : undefined" @click="tab = k">{{ l }}</button>
-      </div>
-    </nav>
-    <div ref="content" class="set-content">
-
-    <section v-if="tab === 'spaces'" class="stack">
-      <HelpText lead>空间把不同领域的知识分开：每个空间有自己的原件、Wiki、记忆和事项。助理默认在当前空间和它的相关空间里调查，需要时才查所有空间；整理、复核这类只管一个空间的任务也能读相关空间，但只写自己的。代码仓库挂在它所属的业务空间下（业务空间的设置里“添加仓库”），检索、交办、评审和编码记录都算在业务空间里；不属于任何业务的仓库单独列出。</HelpText>
-      <div class="spaces">
-        <div v-for="s in spaceCards" :key="s.id" class="card pad sp">
-          <div class="row sp-head">
-            <strong class="ellipsis" :title="s.name">{{ s.name }}</strong><span class="badge">{{ kindLabel[s.kind] ?? s.kind }}</span>
-            <span class="spacer" />
-            <button class="btn ghost sm icon" :aria-label="`设置 ${s.name}`" title="设置" @click="openSpace(s)"><Icon name="settings" :size="15" /></button>
-          </div>
-          <p class="sp-desc small" :class="{ muted: !s.description }" :title="s.description">{{ s.description || "没有说明" }}</p>
-          <div v-if="s.rootPath" class="sp-line small muted" :title="s.rootPath"><Icon name="folder" :size="13" /><span class="mono ellipsis">{{ dirName(s.rootPath) }}</span></div>
-          <div v-if="s.related?.some((r) => !r.via)" class="sp-line small muted" :title="s.related.filter((r) => !r.via).map((r) => r.name).join('、')"><Icon name="link" :size="13" /><span class="ellipsis">{{ s.related.filter((r) => !r.via).map((r) => r.name).join("、") }}</span></div>
-          <div v-for="c in reposOf(s.id)" :key="c.id" class="sp-repo small">
-            <Icon name="code" :size="13" /><span class="ellipsis" :title="c.rootPath ?? ''">{{ c.name }}<span class="muted mono"> · {{ dirName(c.rootPath ?? "") }}</span></span>
-            <span class="spacer" />
-            <button class="btn ghost sm icon" :aria-label="`设置 ${c.name}`" title="仓库设置" @click="openSpace(c)"><Icon name="settings" :size="15" /></button>
-          </div>
-          <div class="sp-meta small muted">
-            <span>{{ s.sources ?? 0 }} 份原件</span><span>{{ s.pages ?? 0 }} 个页面</span>
-            <span v-if="s.settings?.submodules" :class="{ warn: s.settings.submodules.failed?.length }" :title="submoduleTip(s)">子模块 {{ s.settings.submodules.ready }}/{{ s.settings.submodules.total }}<template v-if="s.settings.submodules.failed?.length"> · {{ s.settings.submodules.failed.length }} 个失败</template></span>
-          </div>
+      <nav class="set-nav" aria-label="设置分类">
+        <div v-for="g in NAV" :key="g.label" class="group">
+          <span>{{ g.label }}</span>
+          <button v-for="[k, l] in g.tabs" :key="k" type="button" :class="{ on: tab === k }" :aria-current="tab === k ? 'page' : undefined" @click="show(k)">{{ l }}</button>
         </div>
-      </div>
-      <form class="card pad stack" :aria-busy="creatingSpace" @submit.prevent="createSpace">
-        <strong>新建空间</strong>
-        <div class="grid2">
-          <label class="field"><span>名称</span><input v-model="newSpace.name" class="input" required :disabled="creatingSpace" placeholder="例如：项目A、英语学习、omem 仓库" /></label>
-          <div class="field"><span>类型</span><UiSelect v-model="newSpace.kind" aria-label="空间类型" :disabled="creatingSpace" :options="[{ value: 'project', label: '项目' }, { value: 'repo', label: '代码仓库' }, { value: 'learning', label: '学习' }, { value: 'topic', label: '通用' }]" /></div>
-        </div>
-        <label class="field">
-          <span>{{ newSpace.kind === 'repo' && newSpace.init ? '新仓库放在哪（可选）' : newSpace.kind === 'repo' ? '仓库目录或 Git 地址（可选）' : '关联目录（代码仓库或文档目录，可选）' }}</span>
-          <input v-model="newSpace.rootPath" class="input mono" :disabled="creatingSpace" :placeholder="newSpace.kind === 'repo' && newSpace.init ? '不填：omem 数据目录的 repos/<空间 id>' : newSpace.kind === 'repo' ? 'https://example.com/team/app.git 或 /home/me/code/app' : 'E:\\Projects\\app 或 /home/me/code/app'" />
-          <span v-if="newSpace.kind === 'repo' && newSpace.init" class="hint">填运行 omem 的机器上不存在或空的绝对路径。omem 在那里 git init 并做一次空提交，之后就能交办编码。</span>
-          <span v-else-if="newSpace.kind === 'repo'" class="hint">自动识别本地目录和 HTTP(S) / SSH Git 地址。Git 地址会克隆到 omem 数据目录的 repos/；私有仓库使用服务器已有的 Git/SSH 凭据，链接里不要填密码或令牌。</span>
-          <span v-if="!(newSpace.kind === 'repo' && newSpace.init)" class="hint">本地目录填运行 omem 的机器上已有的绝对路径。创建后导入文本文件（遵守 .gitignore），之后可同步更新。</span>
-        </label>
-        <UiCheckbox v-if="newSpace.kind === 'repo'" v-model="newSpace.init" :disabled="creatingSpace">新建一个空仓库（从零开始的项目）</UiCheckbox>
-        <label class="field"><span>说明</span><input v-model="newSpace.description" class="input" :disabled="creatingSpace" placeholder="这个空间收什么、给谁读" /></label>
-        <div class="row"><span v-if="creatingSpace" class="small muted" role="status">正在创建空间，Git 仓库克隆可能需要几分钟…</span><span class="spacer" /><button class="btn primary" :disabled="creatingSpace || !newSpace.name.trim()">{{ creatingSpace ? '正在创建…' : '创建' }}</button></div>
-      </form>
-    </section>
-
-    <section v-else-if="tab === 'agents' && config" class="stack">
-      <UiSegmented v-model="aiSection" size="sm" aria-label="AI 分类" :options="AI_SECTIONS" />
-      <AiModels v-if="aiSection !== 'general'" :section="aiSection" :config="config" @save="(ai, note) => saveConfig({ ai }, note)" @changed="load" />
-      <template v-else>
-      <p class="muted">理解、写作和编码交给 Agent：你已安装并登录的，或用 API key 生成的（在“API key”里添加）。同一个账号的 ACP 和命令行合在一起，点开设置默认模型、适合做什么、网络条件和用量。</p>
-      <div id="settings-backends" class="card backends">
-        <strong class="sr-title">后端</strong>
-        <AiBackend v-for="g in backendGroups" :key="g.source" :source="g.source" :profiles="g.profiles" :all="profiles" :config="config" :load="agentLoad" @save="saveAgents" @reload="loadAgentLoad" @network="(v) => (config.agents.networkPolicies = v)" />
-        <div v-if="!backendGroups.length" class="prow muted">还没有可用的 Agent，从下面任选一个安装。</div>
-        <div v-if="orphanNetwork.length" class="orphan">
-          <div class="small muted">没装的后端上还有网络条件：</div>
-          <AiNetworkConditions :scope="orphanNetwork" :backends="profiles" no-add @saved="(v) => (config.agents.networkPolicies = v)" />
-        </div>
-        <details v-if="missingProfiles.length" class="more">
-          <summary class="small muted">其他支持的 Agent（{{ missingProfiles.length }} 个，未安装）</summary>
-          <div v-for="p in missingProfiles" :key="p.id" class="prow">
-            <span class="badge">未找到</span>
-            <div class="grow">
-              <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.command }} {{ p.args.join(" ") }}</span></div>
-              <div v-if="p.install" class="muted small mono">安装：{{ p.install }}</div>
-            </div>
-            <button class="btn ghost sm" @click="editProfile(p)">{{ editingProfile === p.id ? "收起" : "编辑" }}</button>
-          </div>
-          <template v-for="p in missingProfiles" :key="'edit-' + p.id">
-            <div v-if="editingProfile === p.id" class="edit-box stack">
-              <textarea v-model="editJson" class="textarea mono" rows="9" />
-              <div class="row"><span class="spacer" /><button class="btn ghost sm" @click="editingProfile = null">取消</button><button class="btn primary sm" @click="saveEdit">保存</button></div>
-            </div>
-          </template>
-        </details>
-      </div>
-      <div class="card pad stack">
-        <div class="section-title">默认 AI 与档位</div>
-        <div class="field"><span>默认 Agent</span>
-          <UiSelect v-model="defaultProfile" width="320px" aria-label="默认 Agent" :options="[{ value: '', label: '自动（第一个已安装的）' }, ...profileOptions]" />
-          <span class="hint">各角色和自定义档案用哪个 AI 在 <RouterLink to="/agents">Agent 档案</RouterLink> 里设。</span>
-        </div>
-        <HelpText>流程里的阶段可以写用哪一档模型（<code>ai: strong</code> / <code>standard</code> / <code>cheap</code>），这里定每一档是哪个后端、模型和强度。定方向这类要判断的事用好的，没人看着时反复去试的用省的。没配的档位用那个角色自己的 AI；流程指定了档位时不会换到别的后端，额度用完就等。</HelpText>
-        <div v-for="t in TIERS" :key="t.id" class="stack">
-          <div class="row"><strong class="small">{{ t.label }}</strong><span class="muted small">{{ t.id }}</span><span class="spacer" /><button v-if="config.agents.tiers?.[t.id]" class="btn ghost sm" @click="saveTier(t.id, null)">不配</button></div>
-          <AiDefaults :model-value="{ agent: config.agents.tiers?.[t.id]?.profile, model: config.agents.tiers?.[t.id]?.model, effort: config.agents.tiers?.[t.id]?.effort }" :backends="profiles.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => saveTier(t.id, v)" />
-        </div>
-      </div>
-      <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
-      <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" @save="saveCapacity" />
-      <AgentAccountsAdmin @policies="(v) => (config.agents.accounts = v)" />
-      <div class="card pad stack">
-        <div class="section-title">排队与兜底</div>
-        <HelpText>后端排队、被限流、额度快用完或出故障时换一个后端接着做。配了决策模型时，换谁、按什么顺序由它按 任务选型 里的总体偏好和候选说明决定（运行前选 AI 时一起排好，没选过的运行在第一次要换时问一次），运行里写明顺序来自哪里；下面是没有决策模型时的顺序，也是决策模型没排到的后端的顺序。模型满了时按这个顺序找有空位的。</HelpText>
-        <div class="row wrap">
-          <span class="small">排队最多等</span>
-          <UiSelect :model-value="String(config.agents.queueTimeoutMinutes ?? 30)" size="sm" width="120px" aria-label="排队最多等待" :options="queueMinuteOptions" @change="saveQueueMinutes" />
-          <span class="muted small">排队期间不算空闲超时</span>
-        </div>
-        <div v-if="fallbacks.length" class="fb-list">
-        <div v-for="(f, i) in fallbacks" :key="i" class="row wrap fb-row">
-          <span class="fb-n small muted">{{ i + 1 }}</span>
-          <UiSelect :model-value="f.profile" size="sm" width="200px" aria-label="兜底后端" :options="profileOptions" @change="(v) => setFallback(i, { profile: v, model: undefined, effort: undefined })" />
-          <UiSelect :model-value="f.model ?? ''" size="sm" width="180px" aria-label="兜底模型" :options="modelOptionsFor(f.profile, 'model', f.model)" @change="(v) => setFallback(i, { model: v || undefined, effort: undefined })" />
-          <UiSelect :model-value="f.effort ?? ''" size="sm" width="120px" aria-label="兜底强度" :options="modelOptionsFor(f.profile, 'effort', f.effort, f.model)" @change="(v) => setFallback(i, { effort: v || undefined })" />
-          <span class="spacer" />
-          <button class="btn ghost sm" :disabled="i === 0" @click="moveFallback(i)">上移</button>
-          <button class="btn ghost sm icon" aria-label="移除" @click="saveFallbacks(fallbacks.filter((_, j) => j !== i), '已移除兜底')"><Icon name="x" :size="14" /></button>
-        </div>
-        </div>
-        <div class="row"><button class="btn sm" :disabled="!installedProfiles.length" @click="addFallback"><Icon name="plus" :size="13" />添加兜底</button><span v-if="!fallbacks.length" class="muted small">还没有兜底：后端失败时直接报错。</span></div>
-      </div>
-      <div class="card pad stack">
-        <div class="section-title">自动推进</div>
-        <p class="muted small">没等你回复时，助理最多替你往下推几步。到上限后它会汇报进展、问你是否继续；你回一句“继续”，计数重新开始。</p>
-        <label class="field"><span>多 Agent 工作：你上次说话后最多自动交办几次（0–50，0 表示每轮都先问你）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="50" :value="config.agents.autoAdvance?.turns ?? 6" @change="saveAutoAdvance('turns', ($event.target as HTMLInputElement).value)" />
-        </label>
-        <label class="field"><span>编码交办：评审要求修改时自动改到第几轮（1–20）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="20" :value="config.agents.autoAdvance?.codeRounds ?? 3" @change="saveAutoAdvance('codeRounds', ($event.target as HTMLInputElement).value)" />
-        </label>
-        <label class="field"><span>流程：没有人参与时，连着自己开始几段以后先问你一声（1–20）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="20" :value="config.flows?.autoAdvance ?? 3" @change="saveFlows('autoAdvance', ($event.target as HTMLInputElement).value)" />
-        </label>
-        <label class="field"><span>流程：停在等你的阶段，过几天提醒一次（1–365，之后每次间隔加倍）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="365" :value="config.flows?.staleDays ?? 2" @change="saveFlows('staleDays', ($event.target as HTMLInputElement).value)" />
-        </label>
-        <UiCheckbox :model-value="config.agents.autoAdvance?.preCheck !== false" switch @change="savePreCheck">编码前检查：新交办开始编码前，先查改动会碰到什么、这里以前出过什么问题、改完要回归什么（角色“编码前检查”，在 Agent 页选模型）</UiCheckbox>
-      </div>
-      <FlowSettings :flows="config.flows" :studies="config.studies" @save="(partial, note) => saveConfig(partial, note).then(() => load())" />
-      <div class="card pad stack">
-        <div class="section-title">回复发出后看有没有用</div>
-        <HelpText>助手的回答发出几小时后，宿主取同一个会话或群里之后大家说的话，请决策模型标一个结果：解决了、被追问、被纠正、别人接手了、看不出；没人接话的不问模型。结果记在那次运行上（运行页能看到依据的那几句话，标错了你可以改），也给夜间复盘、coach 和整理消息的运行参考；每晚的复查、复盘评判和 coach 认为标错时会改判，你改过的谁都不再动。数据页的“做得怎么样”按它统计。没配决策模型时只记“没人接话”，其余等配好再判。</HelpText>
-        <UiCheckbox :model-value="config.replies?.outcome?.enabled !== false" switch @change="(v: boolean) => saveConfig({ replies: { ...config.replies, outcome: { ...(config.replies?.outcome ?? {}), enabled: v } } }, v ? '回复发出后会看后续' : '不再看回复的后续')">按回复之后大家说的话，判断它有没有用</UiCheckbox>
-        <label class="field"><span>发出几小时后判断（1–72）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="72" :value="config.replies?.outcome?.afterHours ?? 6" @change="saveReplyHours(($event.target as HTMLInputElement).value)" />
-        </label>
-        <UiCheckbox :model-value="config.replies?.outcome?.review?.enabled !== false" switch @change="(v: boolean) => saveReplyReview({ enabled: v }, v ? '每晚复查回复结果' : '不再复查回复结果')">每晚复查：一到三天前的回答，由 outcome-reviewer 带着发出后一整天的消息重看第一遍的标注，同意的记同意，不对的改判（本人标的和按表情记的不碰；在 Agent 页给它选一个比决策模型强的模型）</UiCheckbox>
-        <label class="field"><span>每晚最多复查几条（1–200，其中随机抽 {{ config.replies?.outcome?.review?.sample ?? 5 }} 条有把握的）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="200" :value="config.replies?.outcome?.review?.max ?? 30" @change="saveReplyReviewMax(($event.target as HTMLInputElement).value)" />
-        </label>
-      </div>
-      <div class="card pad stack">
-        <div class="section-title">回复发出前的检查</div>
-        <HelpText>回复里只有“我核对一下”“收到，我看看”，或只有“可能”“建议进一步确认”这类退路、没有结论和依据时，先不发，退回给 Agent 重写一次：要么给出结果和依据，要么说清缺哪一个信息，没有人在等的那一轮可以直接不说话。只拦这几种明显不是回答的样子，不判断回答对不对；它已经安排了之后回来（定了唤醒、交办了任务）时不拦。每次退回都记在那次运行里。</HelpText>
-        <UiCheckbox :model-value="config.replies?.check !== false" switch @change="(v) => saveConfig({ replies: { ...(config.replies ?? {}), check: v } }, v ? '已打开回复检查' : '已关闭回复检查')">空话和只有退路的回复退回重写一次</UiCheckbox>
-      </div>
-      <div class="card pad stack">
-        <div class="section-title">过程消息</div>
-        <p class="muted small">Agent 干活时飞书里能看到多少过程。过程都留在网页的运行页和工作会话里，这里只决定发不发到飞书。</p>
-        <div class="field"><span>多 Agent 工作的话题里</span>
-          <UiSegmented :model-value="config.agents.progress?.messages ?? 'milestones'" style="justify-self: start" size="sm" aria-label="多 Agent 工作的过程消息" :options="[{ value: 'milestones', label: '只在完成和卡住时发' }, { value: 'all', label: '全部发' }]" @change="(v) => saveProgress({ messages: v })" />
-          <span class="hint">只在完成和卡住时发：话题里只有一张原地更新的进度卡（第几轮、谁在做什么、最近一步、运行记录链接）；做完、要你决定或卡住、回答你在话题里说的话时才发消息。全部发：主助手每轮看完报告的回复都发出来。</span>
-        </div>
-        <div class="field"><span>思考气泡</span>
-          <UiSegmented :model-value="config.agents.progress?.thinking ?? 'own'" style="justify-self: start" size="sm" aria-label="思考气泡" :options="[{ value: 'own', label: '只在回答我的消息时' }, { value: 'all', label: '全部' }, { value: 'off', label: '关' }]" @change="(v) => saveProgress({ thinking: v })" />
-          <span class="hint">只在回答我的消息时：你自己发的消息，回答它的那一轮显示思考气泡；交办出去的 Agent、主助手看报告、唤醒、规则触发的运行都不显示。</span>
-        </div>
-      </div>
-      <div class="card pad stack">
-        <div class="section-title">方案先行</div>
-        <HelpText>值得的交办在编码前先写一份方案：几个决定，每个说清改什么、为什么、不选什么，有要你定的就问你。你确认后编码 Agent 照它做，评审也对照它看。写方案的是角色“写方案”，在 Agent 页给它选最强的模型。</HelpText>
-        <div class="field"><span>什么时候先写方案</span>
-          <UiSegmented :model-value="config.agents.design?.mode ?? 'auto'" style="justify-self: start" size="sm" aria-label="什么时候先写方案" :options="[{ value: 'auto', label: '自动', title: '编码前检查认为要改现有分工或接口、有几种说得通的做法、或任务要求重构时' }, { value: 'always', label: '总是' }, { value: 'never', label: '从不' }]" @change="(v) => saveDesign({ mode: v })" />
-          <span class="hint">自动：编码前检查认为要改现有的分工或接口、有两种以上说得通的做法、或任务要求重构收敛时才写。仓库空间的设置里也可以让某个仓库总是先写；你对助手说“不用方案，直接改”时这次不写。</span>
-        </div>
-        <div class="field"><span>谁来确认</span>
-          <UiSegmented :model-value="config.agents.design?.confirm ?? 'owner'" style="justify-self: start" size="sm" aria-label="谁来确认方案" :options="[{ value: 'owner', label: '我确认' }, { value: 'assistant', label: '没有要我定的问题时由助手确认' }]" @change="(v) => saveDesign({ confirm: v })" />
-        </div>
-      </div>
-      <div v-if="config.quality?.audit" class="card pad stack">
-        <strong>每晚抽检</strong>
-        <HelpText>助手在整理材料、修正页面时自己写的页面没有人逐页看；每晚抽几页由核对角色对照原件和代码看一遍，有事实问题的交回修改。某一类运行写的页面准确率掉到门槛以下，就改成它写的每一页都看，直到恢复。核对角色用的模型在 Agent 页给 wiki-checker 选，最好和写作的不是同一个。</HelpText>
-        <UiCheckbox :model-value="config.quality.audit.enabled" switch @change="(v) => saveAudit({ enabled: v })">启用每晚抽检</UiCheckbox>
-        <label v-for="f in auditFields" :key="f.key" class="field"><span>{{ f.label }}</span><input class="input" style="width: min(100%, 160px)" type="number" :min="f.key === 'levels' ? 0 : 1" :max="f.max" step="1" :value="config.quality.audit[f.key]" @change="auditNumber($event, f.key, f.max)" /></label>
-        <label class="field"><span>低于多少算不合格（%）</span><input class="input" style="width: min(100%, 160px)" type="number" min="0" max="100" :value="config.quality.audit.threshold * 100" @change="auditNumber($event, 'threshold', 100, true)" /></label>
-        <UiSegmented :model-value="config.quality.audit.fix" aria-label="抽检后交回修改" :options="[{ value: 'off', label: '不交回' }, { value: 'wrong', label: '有事实问题的交回修改' }, { value: 'all', label: '写法问题也交回' }]" @change="(v) => saveAudit({ fix: v })" />
-        <a class="small" href="#/quality">查看抽检结果</a>
-      </div>
-      <div v-if="config.memory" class="card pad stack">
-        <div class="section-title">记忆质量</div>
-        <HelpText>新记忆写入前会先过一遍规则检查（免责式、超长（400 字以上）、转述原件、事件复述、无来源、重复），不合格的退回给模型并说明原因。之后每小时由复核模型逐条保留、改写或撤回；复核模型最好和写入的不是同一个，避免一个模型的习惯由它自己评判。结果在“记忆 → 质量”里按模型统计。</HelpText>
-        <UiCheckbox :model-value="config.notes.review.enabled" switch @change="(v) => saveNoteReview({ enabled: v })">复核原件标注</UiCheckbox>
-        <label class="field"><span>每批标注数</span><input class="input" type="number" min="1" max="100" :value="config.notes.review.batch" @change="(e) => saveNoteReview({ batch: Math.max(1, Math.min(100, Math.round(Number((e.target as HTMLInputElement).value) || 20))) })" /></label>
-        <HelpText>Agent 给原件加的标注先按一半的分量起作用；每小时由另一个模型对照原文和依据复核一批，保留的按八成分量起作用，撤回的不再起作用，拿不准的留给你；只有你自己确认的“有误”“不检索”才会把段落从检索结果里拿掉。复核用的模型在 Agent 页给 note-reviewer 选，最好和写标注的不是同一个。</HelpText>
-        <UiCheckbox :model-value="config.memory.review.enabled" switch @change="(v) => saveReview({ enabled: v })">复核新记忆（只有复核保留或本人写的经验、偏好才会放进每次运行的提示里）</UiCheckbox>
-        <div class="row wrap">
-          <span class="small muted">复核用</span>
-          <UiSelect :model-value="config.memory.review.profile ?? ''" size="sm" width="200px" aria-label="复核后端" :options="[{ value: '', label: '按角色“复核记忆”的设置' }, ...profileOptions]" @change="(v) => saveReview({ profile: v || undefined })" />
-          <UiSelect :model-value="config.memory.review.model ?? ''" size="sm" width="180px" aria-label="复核模型" :options="modelOptionsFor(config.memory.review.profile, 'model', config.memory.review.model)" @change="(v) => saveReview({ model: v || undefined })" />
-          <UiSelect :model-value="config.memory.review.effort ?? ''" size="sm" width="120px" aria-label="复核强度" :options="modelOptionsFor(config.memory.review.profile, 'effort', config.memory.review.effort, config.memory.review.model)" @change="(v) => saveReview({ effort: v || undefined })" />
-        </div>
-        <div class="section-title" style="margin-top: 8px">对比运行</div>
-        <HelpText>每次整理新材料时，再用下面的模型各跑一遍：它们的写入只记录不生效，经过同样的检查和复核，用来横向比较哪个模型记得更好。每多一个模型，整理的花费多一份。</HelpText>
-        <div v-for="(c, i) in config.memory.compare" :key="i" class="row cmp-row">
-          <span class="mono small grow">{{ [c.profile, c.model, c.effort].filter(Boolean).join(" · ") }}</span>
-          <button class="btn ghost sm icon" aria-label="移除" @click="removeCompare(i)"><Icon name="x" :size="14" /></button>
-        </div>
-        <div class="row wrap">
-          <UiSelect v-model="compareDraft.profile" size="sm" width="200px" aria-label="对比后端" placeholder="选择后端" :options="profileOptions" />
-          <UiSelect v-if="(probes[compareDraft.profile]?.data?.models.length ?? 0) > 0" v-model="compareDraft.model" size="sm" width="180px" aria-label="对比模型" :options="modelOptionsFor(compareDraft.profile, 'model')" />
-          <input v-else v-model="compareDraft.model" class="input sm-input" placeholder="模型（可选）" />
-          <UiSelect v-if="effortsOf(compareDraft.profile, compareDraft.model || undefined).length" v-model="compareDraft.effort" size="sm" width="120px" aria-label="对比强度" :options="modelOptionsFor(compareDraft.profile, 'effort', undefined, compareDraft.model || undefined)" />
-          <input v-else v-model="compareDraft.effort" class="input sm-input" style="width: 110px" placeholder="强度（可选）" />
-          <button class="btn sm" :disabled="!compareDraft.profile" @click="addCompare">添加</button>
-        </div>
-      </div>
-      <ReplaySettings v-if="config.replay" :value="config.replay" :backends="profileOptions" :model-options="modelOptionsFor" @save="(replay, note) => saveConfig({ replay }, note)" />
-      <div v-if="desktop" class="card pad stack">
-        <div class="row">
-          <div class="section-title grow">桌面与浏览器控制</div>
-          <span v-if="desktop.installed" class="badge ok">已安装{{ desktop.version ? ` ${desktop.version}` : "" }}</span>
-          <span v-else class="badge">未安装</span>
-        </div>
-        <HelpText>
-          ai-auto-desktop（<span class="mono">aad</span>）让带命令行的 Agent 看和操作本机的桌面程序与浏览器：先读出界面结构，再对读到的元素动手。用法在内置技能 <span class="mono">desktop-control</span>：默认只看，动手前先问你，不输入密码。装好后导航里会出现“远程”：在网页上操作这台机器的浏览器页面或桌面，并把做一遍的过程录成技能。
-          <template v-if="desktop.installed && desktop.via === 'osdk'">在 osdk 安装目录里，omem 启动 Agent 时会把它加进 PATH。</template>
-        </HelpText>
-        <div class="row">
-          <button class="btn ghost sm" :disabled="desktopBusy" @click="installDesktop">{{ desktopBusy ? "安装中…" : desktop.installed ? "更新到最新" : "安装" }}</button>
-          <span class="muted small">经 osdk 安装 <span class="mono">{{ desktop.spec }}</span>；终端里 <span class="mono">omem setup desktop</span> 同样可用并带环境检查</span>
-        </div>
-      </div>
-      <div class="card pad stack">
-        <div class="row"><div class="section-title grow">ACP 注册表</div><button class="btn ghost sm" @click="loadRegistry">{{ registry ? "刷新" : "浏览" }}</button></div>
-        <HelpText>任何支持 Agent Client Protocol 的 Agent 都能接入。这里列出官方注册表里的 Agent，可以用 npx / uvx 运行，或下载对应平台的程序到数据目录。</HelpText>
-        <div v-for="a in registry ?? []" :key="a.id" class="prow">
-          <div class="grow">
-            <div><strong>{{ a.name }}</strong> <span class="muted small mono">{{ a.id }} v{{ a.version }}</span></div>
-            <div v-if="a.description" class="muted small">{{ a.description }}</div>
-          </div>
-          <span v-if="a.added" class="badge ok">已可用</span>
-          <template v-else>
-            <button v-for="w in a.ways" :key="w" class="btn ghost sm" :disabled="!!registryBusy" @click="addFromRegistry(a, w)">{{ registryBusy === a.id ? "添加中…" : w === "binary" ? "下载" : w }}</button>
-            <span v-if="!a.ways.length" class="muted small">本机不可用</span>
-          </template>
-        </div>
-      </div>
-      <div class="card pad stack">
-        <div class="section-title">添加或修改 Agent 配置</div>
-        <textarea v-model="profileJson" class="textarea mono" rows="9" placeholder='{"id":"codex-sol","name":"Codex · Sol","transport":"acp","command":"codex-acp","args":[],"model":"gpt-6.1-sol","effort":"low"}' />
-        <div class="row"><span class="muted small">transport：acp / claude-cli / codex-cli / doubao-cli。model、effort 必须是该 Agent 支持的值。</span><span class="spacer" /><button class="btn primary sm" :disabled="!profileJson.trim()" @click="addProfile">保存</button></div>
-      </div>
-      </template>
-    </section>
-
-    <section v-else-if="tab === 'schedules'" class="stack">
-      <div v-if="config" class="card pad stack">
-        <strong>时区</strong>
-        <HelpText>下面各项任务的时间、免打扰和稍后汇总的时刻、每天的计数和额度，以及网页、飞书消息、给助手的材料里的时间，都按这个时区算，不看服务器和浏览器所在的时区。服务和它启动的 Agent 也用这个时区。改了马上生效，定时任务按新时区重新排。</HelpText>
-        <div class="row wrap">
-          <UiSelect :model-value="config.timezone" :options="zoneOptions" width="300px" aria-label="时区" @change="(z) => saveTimezone(z as string)" />
-          <span v-if="browserZone !== config.timezone" class="muted small">这个浏览器在 {{ browserZone }}</span>
-        </div>
-      </div>
-      <p class="muted">后台任务按上面的时区运行。到期提醒直接发送；巡检在关注、等待中的事项有新材料时按预筛结果调用助手。</p>
-      <div v-if="config?.wiki?.coverage" class="card pad stack">
-        <strong>重点文档补写</strong>
-        <HelpText>每晚把还没被 Wiki 引用的重点文档写进页面。按贴链接、引用和事项等计数排序，沿用规划、写作和核对；30 天内不重复选，关闭自动整理的空间不参加。Wiki 顶部可以展开候选和手动补写。每晚总额设为 0 停止自动补写；每空间额度为 0 时手动也暂停。</HelpText>
-        <div class="row wrap">
-          <label class="field"><span>每晚总额（份）</span><input class="input" style="width: 120px; max-width: 100%" type="number" min="0" step="1" inputmode="numeric" :value="config.wiki.coverage.nightly" @change="saveCoverage('nightly', $event)" /></label>
-          <label class="field"><span>每空间最多（份）</span><input class="input" style="width: 120px; max-width: 100%" type="number" min="0" step="1" inputmode="numeric" :value="config.wiki.coverage.perSpace" @change="saveCoverage('perSpace', $event)" /></label>
-        </div>
-      </div>
-      <div v-if="config?.heartbeat" class="card pad stack">
-        <strong>巡检预筛</strong>
-        <HelpText>巡检默认每 15 分钟一次。打开后先让决策模型看一眼新材料和关注、等待中的事项有没有关系，没关系就不启动助手；被跳过的材料每隔下面设定的小时数由助手完整看一遍。没有配置决策模型时这个开关不起作用，可在 <a href="#/settings?tab=agents&amp;section=decision">AI → 决策</a> 配置。</HelpText>
-        <UiCheckbox :model-value="config.heartbeat.gate === 'decision'" switch @change="(v) => saveHeartbeat({ gate: v ? 'decision' : 'off' })">先预筛新材料</UiCheckbox>
-        <label class="field"><span>完整补看的间隔（小时，1–72）</span>
-          <input class="input" style="width: 120px; max-width: 100%" type="number" inputmode="decimal" min="1" max="72" step="any" :value="config.heartbeat.sweepHours" @change="saveSweepHours(($event.target as HTMLInputElement).value)" />
-        </label>
-      </div>
-      <div v-if="config?.items" class="card pad stack">
-        <div class="section-title">事项自动收尾</div>
-        <HelpText>做完的事不用回来点完成。一件事项在下面的天数里没有新进展（你改动它、或有新的材料记进来），就标为“过期”；截止或提醒时间还没到的不会过期，提醒在时间过后一天过期。过期不算完成，有新进展会自动重新打开。由“事项收尾”任务每小时执行，每天的“事项清点”卡片里可以逐条保留或恢复。</HelpText>
-        <UiCheckbox :model-value="config.items.expiry" switch @change="(v) => saveItems({ expiry: v })">没有进展的事项按期限自动过期</UiCheckbox>
-        <div v-if="config.items.expiry" class="row wrap days">
-          <label v-for="[k, l] in itemKinds" :key="k" class="field"><span>{{ l }}（天）</span>
-            <input class="input" type="number" inputmode="numeric" min="1" max="365" :value="config.items.days[k]" @change="saveItemDays(k, ($event.target as HTMLInputElement).value)" />
-          </label>
-        </div>
-        <UiCheckbox :model-value="config.items.infer" switch @change="(v) => saveItems({ infer: v })">你在来源会话里回过话、回了表情的事项，交给助理判断是否已经办了并关掉（DONE 表情直接关）</UiCheckbox>
-      </div>
-      <div v-for="s in schedules" :key="s.id" class="card pad sched">
-        <div class="row wrap">
-          <UiCheckbox :model-value="s.enabled" switch @change="toggleSchedule(s)"><strong>{{ labels[s.kind] ?? s.kind }}</strong></UiCheckbox>
-          <span class="spacer" />
-          <button class="btn sm" @click="runNow(s)"><Icon name="play" :size="13" />立即运行</button>
-        </div>
-        <CronEditor :model-value="s.cron" :timezone="config?.timezone" @change="(c) => saveCron(s, c)" />
-        <template v-if="s.kind === 'work-state' && config?.workState">
-          <p class="muted small">结果在 Wiki 的个人空间：<a href="#/wiki/personal/state/work">工作近况</a>和 people/ 下的人物卡，可以直接改；页面里“本人补充”一节整理时原样保留。</p>
-          <div class="row wrap days">
-            <label class="field"><span>看最近几天</span><input class="input" type="number" inputmode="numeric" min="3" max="60" :value="config.workState.days" @change="saveWorkState('days', ($event.target as HTMLInputElement).value, 3, 60)" /></label>
-            <label class="field"><span>每晚最多更新几张人物卡</span><input class="input" type="number" inputmode="numeric" min="0" max="50" :value="config.workState.people" @change="saveWorkState('people', ($event.target as HTMLInputElement).value, 0, 50)" /></label>
-          </div>
-          <UiCheckbox :model-value="config.workState.inject" switch @change="(v) => saveConfig({ workState: { ...config.workState, inject: v } }, '已保存')">把近况摘要带进对话、巡检、有人找你的分诊和会后说明</UiCheckbox>
-        </template>
-        <label v-if="s.kind === 'lark-curate'" class="field"><span>筛选方向</span><textarea class="textarea" rows="2" :value="s.config.direction ?? ''" placeholder="例如：和项目A、后端架构、我负责的模块相关的群；需要我回复或决定的讨论" @change="saveScheduleConfig(s, { direction: ($event.target as HTMLTextAreaElement).value })" /></label>
-        <div class="muted small">上次：{{ s.lastRunAt ? fmtTime(s.lastRunAt) : "从未" }}<template v-if="!s.enabled"> · 已停用</template></div>
-      </div>
-    </section>
-
-    <section v-else-if="tab === 'search' && config" class="stack">
-      <p class="muted">全文检索始终可用（中文按双字切分，代码按标识符切分）。开启向量检索可改善换说法的提问，向量在后台逐步生成。</p>
-      <div class="card pad stack">
-        <div class="section-title">向量检索</div>
-        <div class="field"><span>用哪种向量</span>
-          <UiSegmented :model-value="config.embeddings.provider" aria-label="向量检索" :options="[{ value: 'none', label: '关闭' }, { value: 'local', label: '本地模型（transformers.js）' }, { value: 'openai', label: 'OpenAI 兼容接口' }]" @change="(v) => saveConfig({ embeddings: { ...config.embeddings, provider: v } })" />
-        </div>
-        <label class="field"><span>模型</span><input class="input mono" :value="config.embeddings.model" @change="saveConfig({ embeddings: { ...config.embeddings, model: ($event.target as HTMLInputElement).value } })" /><span class="hint">本地默认 Xenova/bge-small-zh-v1.5（也可以填本地目录）。有 osdk 时由 osdk 下载并锁定版本，没有才自己下载。</span></label>
-        <p v-if="config.embeddings.provider === 'local' && sourceLine(embeddingSource)" class="small" :class="embeddingSource?.error ? 'warn-text' : 'muted'">{{ sourceLine(embeddingSource) }}</p>
-        <label v-if="config.embeddings.provider === 'openai'" class="field"><span>接口地址</span><input class="input mono" :value="config.embeddings.url ?? ''" placeholder="https://api.openai.com/v1" @change="saveConfig({ embeddings: { ...config.embeddings, url: ($event.target as HTMLInputElement).value } })" /></label>
-      </div>
-      <div v-if="config.rerank" class="card pad stack">
-        <div class="section-title">重排</div>
-        <HelpText>检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。机器上有 osdk 时模型由 osdk 下载并锁定版本，没有才自己下载；改这里的设置不用重启服务。</HelpText>
-        <UiCheckbox :model-value="config.rerank.enabled" switch @change="(v) => saveRerank({ enabled: v })">开启</UiCheckbox>
-        <p v-if="rerankLine" class="small" :class="rerank?.state === 'failed' ? 'warn-text' : 'muted'">{{ rerankLine }}</p>
-        <p v-if="config.rerank.enabled && sourceLine(rerank?.source)" class="small" :class="rerank?.source?.error ? 'warn-text' : 'muted'">{{ sourceLine(rerank?.source) }}</p>
-        <template v-if="config.rerank.enabled">
-          <label class="field"><span>模型</span><input class="input mono" :value="config.rerank.model" @change="saveRerank({ model: ($event.target as HTMLInputElement).value.trim() || config.rerank.model })" /><span class="hint">osdk 下载的本地目录，或 Hugging Face 上的 ONNX 模型 id（首次使用时下载，不锁定版本）。</span></label>
-          <div class="row wrap days">
-            <label class="field"><span>重排条数</span><input class="input" type="number" inputmode="numeric" min="5" max="100" :value="config.rerank.top" @change="saveRerank({ top: numberIn($event, 5, 100, config.rerank.top) })" /></label>
-            <label class="field"><span>每条 token</span><input class="input" type="number" inputmode="numeric" min="128" max="1024" step="64" :value="config.rerank.maxTokens" @change="saveRerank({ maxTokens: numberIn($event, 128, 1024, config.rerank.maxTokens) })" /></label>
-            <label class="field"><span>线程数</span><input class="input" type="number" inputmode="numeric" min="0" max="256" :value="config.rerank.threads" @change="saveRerank({ threads: numberIn($event, 0, 256, config.rerank.threads) })" /></label>
-            <label class="field"><span>超时（秒）</span><input class="input" type="number" inputmode="numeric" min="1" max="120" :value="config.rerank.timeoutMs / 1000" @change="saveRerank({ timeoutMs: numberIn($event, 1, 120, config.rerank.timeoutMs / 1000) * 1000 })" /></label>
-          </div>
-          <HelpText>重排前 20 条、每条 512 token 时效果和前 50 条差不多；条数或 token 减半大约快一倍，排序略差。线程数 0 表示用全部核，和别的任务抢 CPU 时调小。</HelpText>
-        </template>
-      </div>
-      <div v-if="config.memory?.passive" class="card pad stack">
-        <div class="section-title">对话前带上相关记忆</div>
-        <HelpText>你发消息时，先按这条消息找相似的记忆（事实、约定、人物、决定），相似度过了门槛的最多 {{ config.memory.passive.limit }} 条附在消息后面，助理不用先想起来去查。没过门槛就什么都不加。需要开启向量检索。门槛越高带得越少、越准：0.6 时，有相关记忆的问题约八成能带上，带上的约 96% 相关；无关的问题约一成会带上一两条（bge-small-zh，见 docs/v2/evaluation.md）。</HelpText>
-        <UiCheckbox :model-value="config.memory.passive.enabled" switch @change="(v) => savePassive({ enabled: v })">开启</UiCheckbox>
-        <label class="field"><span>相似度门槛（0.4–0.9）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="decimal" min="0.4" max="0.9" step="0.025" :value="config.memory.passive.threshold" @change="savePassive({ threshold: Math.max(0.4, Math.min(0.9, Number(($event.target as HTMLInputElement).value) || 0.6)) })" />
-          <span v-if="config.rerank?.enabled" class="hint">开着重排时只在重排超时的时候用。</span>
-        </label>
-        <label v-if="config.rerank?.enabled" class="field"><span>重排门槛（0–1）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="decimal" min="0.05" max="0.95" step="0.05" :value="config.rerank.passiveThreshold" @change="saveRerank({ passiveThreshold: Math.max(0.05, Math.min(0.95, Number(($event.target as HTMLInputElement).value) || 0.5)) })" />
-          <span class="hint">开着重排时，先按相似度 0.4 以上取候选，再只带重排打分过这个门槛的。</span>
-        </label>
-      </div>
-    </section>
-
-    <section v-else-if="tab === 'lark' && config" class="stack">
-      <NotificationSettings v-if="!state.me || state.me.role === 'owner'" :config="config" :save="saveConfig" />
-      <p class="muted">飞书机器人是日常指挥入口：私聊可以提问、交代事项、交办任务；机器人所在的群聊会被保存为聊天原件并交给助理整理。通知也会发到私聊。</p>
-      <UiCheckbox :model-value="config.lark.enabled" switch @change="(v) => saveConfig({ lark: { ...config.lark, enabled: v } })">启用飞书机器人</UiCheckbox>
-      <div class="card pad stack">
-        <div class="row">
-          <strong>机器人应用</strong><span class="spacer" />
-          <span v-if="config.lark.appId" class="badge">已绑定 {{ config.lark.appId }} · {{ config.lark.ownerOpenId ? '本人已确认' : '待确认本人' }}</span>
-          <span v-else class="badge">未绑定</span>
-        </div>
-        <HelpText>在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书机器人：扫码创建新机器人，或绑定 lark-cli 里已有的应用；权限、长连接事件和卡片回调一并申请，不用在开放平台手工配置，也不用复制 App Secret。密钥只存在本机 <span class="mono">secrets/lark.json</span>（环境变量 {{ config.lark.appSecretEnv }} 可覆盖）。</HelpText>
-        <label class="field"><span>本人 open_id（setup 扫码通常自动填）</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="不知道可先私聊机器人一句，再运行 omem setup" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
-      </div>
-      <div v-if="config.lark.appId" class="card pad stack">
-        <div class="row wrap">
-          <strong>机器人权限与事件</strong><span class="spacer" />
-          <button class="btn sm" :disabled="botChecking" @click="checkBots">{{ botChecking ? "检查中…" : "检查" }}</button>
-        </div>
-        <HelpText>omem 用到的应用权限（机器人的、成员连接飞书的）、事件订阅和卡片回调。缺什么都点“扫码更新”，在飞书里确认后一次补齐；之后在开发者后台发布新版本才生效，再点“检查”看结果。在后台手动加的权限同样要发布新版本才算开通。</HelpText>
-        <div v-for="b in botCheck ?? []" :key="b.ref" class="bot-row stack">
-          <div class="row wrap">
-            <strong>{{ b.name ?? b.ref }}</strong><span class="muted small mono">{{ b.appId }}</span><span class="spacer" />
-            <button class="btn sm" @click="scanBot(b.ref)">扫码更新</button>
-          </div>
-          <p v-if="b.error" class="small warn-text">{{ b.error }}</p>
-          <div class="small">
-            权限：
-            <template v-if="b.scopes.unknown">读不到已开通的权限</template>
-            <template v-else-if="b.scopes.missing.length">缺 {{ b.scopes.missing.length }} 项<div class="muted mono break">{{ b.scopes.missing.join("、") }}</div></template>
-            <span v-else class="badge accent">齐全</span>
-          </div>
-          <div v-if="b.members" class="small">
-            成员连接飞书：
-            <template v-if="b.members.missing.length">{{ b.members.features.join("、") }}还缺 {{ b.members.missing.length }} 项用户身份的权限<div class="muted mono break">{{ b.members.missing.join("、") }}</div></template>
-            <span v-else class="badge accent">齐全</span>
-          </div>
-          <div v-if="b.docs" class="small">
-            文档变化规则：
-            <template v-if="b.docs.missing.length">订阅文档、表格的变化还缺 {{ b.docs.missing.length }} 项权限<div class="muted mono break">{{ b.docs.missing.join("、") }}</div></template>
-            <span v-else class="badge accent">齐全</span>
-          </div>
-          <div class="small">
-            事件：
-            <template v-if="b.events.subscribed === null">
-              飞书没有告诉 omem 订阅了哪些（应用信息和线上版本里都没有）；扫码更新会一并订阅 omem 用到的事件<template v-if="b.reactionsQuiet.quiet">；最近 {{ b.reactionsQuiet.days }} 天机器人发了 {{ b.reactionsQuiet.botMessages }} 条消息，一个表情事件都没收到，多半没订阅表情事件</template><template v-else-if="!b.reactionsQuiet.everReceived">；还没收到过表情事件</template>。
-            </template>
-            <template v-else-if="required(b).length">缺 {{ required(b).map((e) => e.label).join("、") }}<div class="muted mono break">{{ required(b).map((e) => e.name).join("、") }}</div></template>
-            <span v-else class="badge accent">已订阅</span>
-            <span v-if="b.events.subscribed !== null && optional(b).length" class="muted">（可选，未订阅：{{ optional(b).map((e) => e.label).join("、") }}）</span>
-            <div v-if="b.events.unpublished.length" class="warn-text">已订阅但线上版本还没有：{{ b.events.unpublished.join("、") }}，发布新版本后生效</div>
-          </div>
-          <div v-if="b.callbacks.missing.length" class="small warn-text">卡片回调未订阅：{{ b.callbacks.missing.map((c) => `${c.label}（${c.name}）`).join("、") }}</div>
-          <a v-if="scanLinks[b.ref]" class="small" :href="scanLinks[b.ref]" target="_blank" rel="noopener">浏览器拦下了扫码页面，点这里打开（确认后会收到通知）</a>
-        </div>
-      </div>
-      <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>
-      <div class="field">
-        <UiCheckbox :model-value="!!config.lark.webApp" switch :disabled="!config.webUrl || !config.lark.appId" @change="(v) => saveConfig({ lark: { ...config.lark, webApp: v } }, v ? '已打开飞书网页应用' : '已关闭飞书网页应用')">飞书网页应用：表单和交互页在飞书侧边栏里打开，不用再登录</UiCheckbox>
-        <span v-if="!config.webUrl || !config.lark.appId" class="muted small">先填上面的网页地址{{ config.lark.appId ? "" : "并接入飞书机器人" }}。</span>
-        <span v-else class="muted small">打开前在飞书开发者后台给主机器人的应用（{{ config.lark.appId }}）：添加“网页应用”能力，桌面端和移动端主页都填 <span class="mono">{{ config.webUrl.replace(/\/+$/, "") }}/lark/</span>；安全设置的<strong>重定向 URL</strong> 加上 <span class="mono">{{ config.webUrl.replace(/\/+$/, "") }}/lark/</span>（免登接口要求调用它的页面地址在这个列表里，只加 H5 可信域名不够），H5 可信域名加上 <span class="mono">{{ webHost }}</span>；然后发布版本。手机和电脑都要能访问这个地址。打开后卡片上的“打开填写”“打开交互页”会在飞书侧边栏里打开。</span>
-      </div>
-
-      <AssistantsSettings />
-
-      <div class="card pad stack">
-        <strong>助手之间的转交</strong>
-        <div class="row small"><span>机器人之间连续转交最多</span><UiSelect :model-value="String(config.lark.botRelay ?? 4)" size="sm" width="90px" aria-label="机器人之间连续转交上限" :options="['0', '1', '2', '4', '6', '10'].map((v) => ({ value: v, label: `${v} 次` }))" @change="(v) => saveConfig({ lark: { ...config.lark, botRelay: Number(v) } }, `机器人之间连续转交最多 ${v} 次`)" /><span class="muted">，之后等有人发话</span></div>
-      </div>
-
-      <div class="card pad stack">
-        <strong>盯群</strong>
-        <HelpText>助手盯着的群（你让它“帮我盯一下这个群”的）每攒一批消息交给它看一次。配了决策模型时，每批先由它判断有没有助手能介入的事（按盯这个群的目的和群里的情况，不一定是找你的：替别人解答、帮忙查东西也算）：只是闲聊、“稍等”“收到”、进度播报的就不交给助手，省下一次完整运行；@ 你或 @ 机器人的消息不筛，判断出错时照常交给助手。单个群可以让助手按你的话单独开关。</HelpText>
-        <UiCheckbox :model-value="config.lark.watchPrefilter !== false" switch @change="(v) => saveConfig({ lark: { ...config.lark, watchPrefilter: v } }, v ? '盯群的每批消息先由决策模型筛一遍' : '盯群的每批消息都交给助手看')">每批消息先由决策模型筛一遍</UiCheckbox>
-      </div>
-
-      <div id="settings-mentions" class="card pad stack">
-        <strong>有人找你</strong>
-        <HelpText>在 omem 采集的聊天渠道里（现在是飞书），有人在群里 @ 你，或同事私聊你，过几分钟你还没处理（哪些算处理过在下面选）时：先用决策模型（一次很小的判断）看是什么事——不用管、简短提醒你，还是值得先查；值得查的交给主助手（或某个 Agent 档案）以你的身份读上下文、查事项和资料，再提醒你结论和建议的回复。你回复那条提醒就接着和它聊这件事。查不出来、出错或超时，照常发简短提醒（谁、在哪、说了什么）。分诊的判断标准是“有人找你·分诊”角色，在“Agent”页可以改。</HelpText>
-        <HelpText>它排在所有规则之后：规则在这条消息上触发过（不论做了什么）或正等着处理它，这里就不管；规则还在判断时先等一等。规则页列表最后一条就是它。</HelpText>
-        <UiCheckbox :model-value="config.mentions?.enabled !== false" switch @change="(v) => saveMentions({ enabled: v }, v ? '有人找你时先分诊再提醒' : '已关闭：有人找你时不再分诊')">有人找你时先分诊再提醒</UiCheckbox>
-        <UiCheckbox :model-value="config.mentions?.p2p !== false" switch :disabled="config.mentions?.enabled === false" @change="(v) => saveMentions({ p2p: v })">私聊也算（同事私聊你的消息）</UiCheckbox>
-        <label class="field"><span>消息发出后等几分钟再开始（0–240，给你自己先看的时间）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="240" :disabled="config.mentions?.enabled === false" :value="config.mentions?.delayMinutes ?? 3" @change="saveMentions({ delayMinutes: Math.max(0, Math.min(240, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) })" />
-        </label>
-        <div class="field"><span>你做了这些就算已经处理，不再分诊</span>
-          <div class="row wrap">
-            <UiCheckbox v-for="k in skipKeys" :key="k.key" :model-value="config.mentions?.skipWhen?.[k.key] !== false" :disabled="config.mentions?.enabled === false" @change="(v) => saveMentions({ skipWhen: { read: true, reacted: true, replied: true, ...(config.mentions?.skipWhen ?? {}), [k.key]: v } }, v ? `${k.label}算已处理` : `${k.label}不再算已处理`)">{{ k.label }}</UiCheckbox>
-          </div>
-          <span class="muted small">都不勾时，只要没有规则接手，过了上面的时间就分诊。</span>
-        </div>
-        <label class="field"><span>分诊说明（写给判断的模型：哪些人、哪些群、哪类事一定要查或不用管）</span>
-          <textarea class="textarea" rows="3" :disabled="config.mentions?.enabled === false" :value="config.mentions?.guidance ?? ''" placeholder="例如：项目 A 群里问接口和数据口径的都先查；行政通知、团建不用提醒；小王找我的一律提醒" @change="saveMentions({ guidance: ($event.target as HTMLTextAreaElement).value.trim() })" />
-        </label>
-        <div class="field"><span>没有配置决策模型时</span>
-          <UiSelect
-            :model-value="config.mentions?.noDecision ?? 'general'"
-            width="100%"
-            aria-label="没有决策模型时怎么分诊"
-            :disabled="config.mentions?.enabled === false"
-            :options="[
-              { value: 'general', label: '用通用模型分诊（助手的后端，一次不带工具的调用）' },
-              { value: 'notify', label: '不分诊，都发简短提醒' },
-              { value: 'handle', label: '不分诊，都交给助手先查（最费）' },
-            ]"
-            @change="(v) => saveMentions({ noDecision: v })"
-          />
-        </div>
-        <div class="row wrap small">
-          <span>每天最多分诊</span>
-          <input class="input" style="width: 90px" type="number" inputmode="numeric" min="0" max="1000" :disabled="config.mentions?.enabled === false" :value="config.mentions?.perDay?.triage ?? 80" @change="saveMentions({ perDay: { ...(config.mentions?.perDay ?? { triage: 80, handle: 20 }), triage: Math.max(0, Math.min(1000, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
-          <span>次，交给助手查</span>
-          <input class="input" style="width: 90px" type="number" inputmode="numeric" min="0" max="500" :disabled="config.mentions?.enabled === false" :value="config.mentions?.perDay?.handle ?? 20" @change="saveMentions({ perDay: { ...(config.mentions?.perDay ?? { triage: 80, handle: 20 }), handle: Math.max(0, Math.min(500, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
-          <span class="muted">次；超过就只发简短提醒</span>
-        </div>
-        <label class="field"><span>查背景最多几分钟，超过就发简短提醒（1–60）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="60" :disabled="config.mentions?.enabled === false" :value="config.mentions?.timeoutMinutes ?? 10" @change="saveMentions({ timeoutMinutes: intIn($event, 1, 60, 10) })" />
-        </label>
-        <strong class="small">回复对方</strong>
-        <p v-if="replyStats?.samples" class="muted small">近 60 天 {{ replyStats.samples }} 条找你的消息：<template v-if="replyStats.drafts">拟了 {{ replyStats.drafts }} 条回复，照发 {{ replyStats.sent }}、改后发 {{ replyStats.edited }}、没发 {{ replyStats.dropped }}<template v-if="reasonText(replyStats.reasons)">（{{ reasonText(replyStats.reasons) }}）</template>；</template>你自己回了 {{ replyStats.ownReplies }} 条<template v-if="replyStats.typicalLength">，通常 {{ replyStats.typicalLength }} 字左右</template>，没回 {{ replyStats.noReply }} 条。之后的分诊和草稿会参照这些：你怎么回、回多长、哪些不回。</p>
-        <HelpText>查完以后要不要替你回对方，按渠道分别设（现在只有飞书）。草稿：提醒旁边多一张卡片，你可以改了再点发送。自动：分诊也认为不用你拍板时直接回，回了什么会写在提醒里，每次都记进审计；拿不准时仍是草稿。飞书群里由机器人在对方那条消息的话题里回（机器人不在群里时用你的身份把它拉进来）。草稿连续照发到设定的次数后（群里和私聊分开数，改过或没发的一条会重新数），会问你一次要不要把这一类改成自动，你点了才改；自动回复的提醒被你点了不满意的表情，这一类立刻改回草稿。</HelpText>
-        <div class="row wrap small"><span style="min-width: 4em">飞书群里</span>
-          <UiSegmented size="sm" aria-label="群里回复对方" :model-value="config.mentions?.reply?.lark?.group ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentionReply({ group: v })" />
-        </div>
-        <div class="row wrap small"><span style="min-width: 4em">飞书私聊</span>
-          <UiSegmented size="sm" aria-label="私聊回复对方" :model-value="config.mentions?.reply?.lark?.p2p ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentionReply({ p2p: v })" />
-        </div>
-        <div v-if="[config.mentions?.reply?.lark?.group, config.mentions?.reply?.lark?.p2p].some((m) => m === 'draft' || m === 'auto')" class="row wrap small">
-          <span>连续照发</span>
-          <input class="input" style="width: 80px" type="number" inputmode="numeric" min="0" max="100" aria-label="连续照发多少次草稿后问要不要改成自动" :value="config.mentions?.reply?.promoteAfter ?? 10" @change="saveMentions({ reply: { ...(config.mentions?.reply ?? {}), promoteAfter: Math.max(0, Math.min(100, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
-          <span>次草稿后，问我要不要改成自动</span><span class="muted">0 = 不问</span>
-        </div>
-        <div v-if="(config.mentions?.reply?.lark?.p2p ?? 'off') !== 'off'" class="row wrap small"><span style="min-width: 4em">私聊怎么回</span>
-          <UiSegmented size="sm" aria-label="私聊怎么回" :model-value="config.mentions?.reply?.lark?.p2pVia ?? 'group'" :options="[{ value: 'group', label: '拉你、对方和机器人的群' }, { value: 'signed', label: '以你的身份回，带署名' }]" @change="(v: string) => saveMentionReply({ p2pVia: v })" />
-        </div>
-        <template v-if="(config.mentions?.reply?.lark?.p2p ?? 'off') !== 'off' && config.mentions?.reply?.lark?.p2pVia === 'signed'">
-          <div class="row wrap small"><span style="min-width: 4em">以你的身份</span>
-            <UiSegmented size="sm" aria-label="以你的身份怎么发" :model-value="config.mentions?.reply?.lark?.signedVia ?? 'lark-cli'" :options="[{ value: 'lark-cli', label: '用 lark-cli 发' }, { value: 'doubao', label: '经豆包发送' }]" @change="(v: string) => saveMentionReply({ signedVia: v })" />
-          </div>
-          <template v-if="config.mentions?.reply?.lark?.signedVia === 'doubao'">
-            <HelpText>企业不让 lark-cli 以你的身份发私聊时用这个：每条回复建一个新的豆包会话，只交给它定稿的回复和对方是谁（姓名、邮箱、id），让它原样发出，用完删除会话；发完用 lark-cli 读那个私聊核对。没核对上或没发出都会单独告诉你，不算回复成功。</HelpText>
-            <DoubaoSendStatus />
-          </template>
-        </template>
-      </div>
-
-      <div class="card pad stack">
-        <strong>访客提问</strong>
-        <HelpText>没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的后端和模型在“Agent”页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</HelpText>
-        <UiCheckbox :model-value="!!config.lark.guests?.enabled" switch @change="(v) => saveGuests({ enabled: v }, v ? '已开启访客提问' : '已关闭访客提问')">回答未登记的人和别的机器人</UiCheckbox>
-        <UiCheckbox :model-value="!!config.lark.guests?.p2p" switch :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ p2p: v })">也回答未登记的人与机器人的私聊（只读下方“开放给访客的空间”）</UiCheckbox>
-        <UiCheckbox :model-value="!!config.lark.guests?.fullAccess" switch :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ fullAccess: v }, v ? '已对访客打开完全访问' : '已对访客关闭完全访问')">回答访客时完全访问：命令不进沙箱、不经审批</UiCheckbox>
-        <p v-if="config.lark.guests?.fullAccess" class="muted small">回答访客的运行（“回答访客”角色，以及你在群里时由助理回答访客的那一轮）里，命令不再受后端沙箱限制、也不经审批，访客的话可能让它在这台机器上执行命令。只在回答访客的后端本来就不带本机命令行、或你信任群里的人时打开。</p>
-        <div class="field"><span>你也在群里时</span>
-          <UiSelect
-            :model-value="config.lark.guests?.ownerPresent ?? 'guest'"
-            width="100%"
-            aria-label="你也在群里时怎么回答访客"
-            :disabled="!config.lark.guests?.enabled"
-            :options="[
-              { value: 'guest', label: '和别处一样：把关后由“回答访客”受限回答' },
-              { value: 'gated', label: '把关后由助理回答（像你自己问的一样，能用全部资料和工具）' },
-              { value: 'free', label: '不把关，直接由助理回答' },
-            ]"
-            @change="(v) => saveGuests({ ownerPresent: v })"
-          />
-        </div>
-        <div class="field"><span>开放给访客的空间（可多选）</span>
-          <UiSelect
-            :model-value="(config.lark.guests?.spaces ?? []) as string[]"
-            multiple
-            :options="guestSpaceOptions"
-            :disabled="!config.lark.guests?.enabled"
-            aria-label="开放给访客的空间"
-            placeholder="未选择空间"
-            @change="saveGuestSpaces"
-          />
-          <span class="muted small">私聊只读这里选中的空间；未选择时没有知识库资料可查。群聊还可读群所属的非个人空间。此设置对所有访客生效。</span>
-        </div>
-        <label class="field"><span>每人每小时最多提问（1–200）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="200" :value="config.lark.guests?.perHour ?? 20" @change="saveGuests({ perHour: Math.max(1, Math.min(200, Math.round(Number(($event.target as HTMLInputElement).value) || 20))) })" />
-        </label>
-      </div>
-
-      <div class="card pad stack">
-        <strong>私聊指令</strong>
-        <HelpText>在你和别人的私聊里输入指令（每分钟用 lark-cli 读一次你发的私聊消息）。只有你亲手发出指令时，omem 才会以你的身份在那个私聊里发一条消息，结尾带上署名。</HelpText>
-        <UiCheckbox :model-value="!!config.lark.commands?.enabled" switch @change="(v) => saveCommands({ enabled: v }, v ? '已开启私聊指令' : '已关闭私聊指令')">开启私聊指令</UiCheckbox>
-        <label class="field"><span>代回：读最近的私聊（和指令后面的说明）处理，并以你的身份回复对方</span>
-          <input class="input mono" style="width: 200px" :value="config.lark.commands?.ai ?? '/ai'" @change="saveCommands({ ai: ($event.target as HTMLInputElement).value.trim() || '/ai' })" />
-        </label>
-        <label class="field"><span>拉群：建一个你、对方和机器人的群，机器人在群里接着处理</span>
-          <input class="input mono" style="width: 200px" :value="config.lark.commands?.group ?? '/ai拉群'" @change="saveCommands({ group: ($event.target as HTMLInputElement).value.trim() || '/ai拉群' })" />
-        </label>
-        <div class="row wrap small"><span>代回怎么发</span>
-          <UiSegmented size="sm" aria-label="代回怎么发" :model-value="config.lark.commands?.signedVia ?? 'lark-cli'" :options="[{ value: 'lark-cli', label: '用 lark-cli 发' }, { value: 'doubao', label: '经豆包发送' }]" @change="(v: string) => saveCommands({ signedVia: v })" />
-        </div>
-        <template v-if="config.lark.commands?.signedVia === 'doubao'">
-          <HelpText>每次代回建一个新的豆包会话，只交给它定稿的回复和对方是谁，让它原样发出，用完删除；发完读私聊核对，没核对上或没发出会单独告诉你。</HelpText>
-          <DoubaoSendStatus />
-        </template>
-        <label class="field"><span>代回消息结尾的署名</span>
-          <input class="input" :value="config.lark.commands?.signature ?? '（此消息由 AI 代发）'" @change="saveCommands({ signature: ($event.target as HTMLInputElement).value.trim() || '（此消息由 AI 代发）' })" />
-        </label>
-        <label class="field"><span>读最近多少条私聊（1–100）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="100" :value="config.lark.commands?.context ?? 30" @change="saveCommands({ context: Math.max(1, Math.min(100, Math.round(Number(($event.target as HTMLInputElement).value) || 30))) })" />
-        </label>
-      </div>
-
-      <div class="card pad stack">
-        <strong>拉人进群</strong>
-        <HelpText>助手可以用你的身份把人或机器人拉进你所在的群（lark_invite）。拉人进群每次都要你批准，卡片上列出每个群和每个人。拉机器人（omem 自己的，或在你的群里见过、认得出名字的）默认直接拉，事后在回复里告诉你。</HelpText>
-        <UiCheckbox :model-value="!!config.lark.invite?.botApproval" switch @change="(v) => saveConfig({ lark: { ...config.lark, invite: { ...(config.lark.invite ?? {}), botApproval: v } } }, v ? '拉机器人进群也要你批准' : '拉机器人进群不用批准')">拉机器人进群也要我批准</UiCheckbox>
-      </div>
-
-      <PluginChannels />
-      <div class="card pad stack">
-        <UiCheckbox :model-value="config.telegram.enabled" switch @change="(v) => saveConfig({ telegram: { ...config.telegram, enabled: v } })"><strong>Telegram 机器人</strong></UiCheckbox>
-        <p class="muted small">用 @BotFather 创建机器人，把 token 放在环境变量 <span class="mono">{{ config.telegram.tokenEnv }}</span>。首次给机器人发消息会回复你的 chat id。</p>
-        <label class="field"><span>本人 chat id</span><input class="input mono" :value="config.telegram.ownerChatId ?? ''" @change="saveConfig({ telegram: { ...config.telegram, ownerChatId: ($event.target as HTMLInputElement).value || undefined } })" /></label>
-      </div>
-
-      <div class="card pad stack">
-        <UiCheckbox :model-value="config.onebot.enabled" switch @change="(v) => saveConfig({ onebot: { ...config.onebot, enabled: v } })"><strong>QQ / 微信 机器人（OneBot v11）</strong></UiCheckbox>
-        <HelpText>连接 NapCat、LLOneBot、Lagrange 等 OneBot 实现（正向 WebSocket）。私聊里只有本人能指挥助理；群消息保存为聊天原件并交给助理整理。</HelpText>
-        <div class="grid2">
-          <label class="field"><span>WebSocket 地址</span><input class="input mono" :value="config.onebot.url ?? ''" placeholder="ws://127.0.0.1:3001" @change="saveConfig({ onebot: { ...config.onebot, url: ($event.target as HTMLInputElement).value || undefined } })" /></label>
-          <label class="field"><span>显示名</span><input class="input" :value="config.onebot.name" @change="saveConfig({ onebot: { ...config.onebot, name: ($event.target as HTMLInputElement).value } })" /></label>
-        </div>
-        <label class="field"><span>本人账号（QQ 号 / 微信 id）</span><input class="input mono" :value="config.onebot.ownerUserId ?? ''" @change="saveConfig({ onebot: { ...config.onebot, ownerUserId: ($event.target as HTMLInputElement).value || undefined } })" /></label>
-      </div>
-    </section>
-
-    <section v-else-if="tab === 'connect' && config" class="stack">
-      <p class="muted">omem 从哪些平台读内容：你本人的飞书（lark-cli 的个人登录，只读），以及成员各自连接的 Notion、GitHub、Google、钉钉等平台。机器人和聊天渠道在“渠道”里，谁能登录在“成员”里。</p>
-      <div class="section-title">你的飞书</div>
-      <div class="card pad stack">
-        <strong>飞书文档</strong>
-        <HelpText>读飞书文档时，它链接的文档和它在知识库里的子页面一起导入，层数从最先给的那篇算起（不是每篇子文档各算一遍）。整个知识库或很大的目录交给助理用“知识库爬取”分批读，进度存在库里，可以配合定时规则每天读一批。</HelpText>
-        <div class="grid2">
-          <label class="field"><span>跟随层数（0–5，0 = 只读这一篇）</span>
-            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="5" :value="config.lark.capture.docLinkDepth ?? 2" @change="saveCapture({ docLinkDepth: intIn($event, 0, 5, 2) })" />
-          </label>
-          <label class="field"><span>一次导入最多读多少篇</span>
-            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" :value="config.lark.capture.docMaxPerImport ?? 100" @change="saveCapture({ docMaxPerImport: intIn($event, 1, 100000, 100) })" />
-          </label>
-          <label class="field"><span>每篇最多跟随的链接</span>
-            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" :value="config.lark.capture.docMaxLinked ?? 30" @change="saveCapture({ docMaxLinked: intIn($event, 0, 10000, 30) })" />
-          </label>
-          <label class="field"><span>每个知识库页面最多读的子页面</span>
-            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" :value="config.lark.capture.docWikiChildren ?? 50" @change="saveCapture({ docWikiChildren: intIn($event, 0, 10000, 50) })" />
-          </label>
-          <label class="field"><span>知识库爬取默认最多读多少篇</span>
-            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" :value="config.lark.capture.wikiCrawlMaxDocs ?? 2000" @change="saveCapture({ wikiCrawlMaxDocs: intIn($event, 1, 100000, 2000) })" />
-          </label>
-        </div>
-        <template v-if="crawls.length">
-          <div class="row"><div class="section-title grow">知识库爬取</div><button class="btn sm" @click="loadCrawls">刷新</button></div>
-          <div v-for="c in crawls" :key="c.id" class="row sub wrap">
-            <span class="grow ellipsis">{{ c.rootTitle || c.root }}</span>
-            <span class="badge" :class="{ accent: c.status === 'running', warn: c.status === 'paused' }">{{ crawlLabel[c.status] }}</span>
-            <span class="muted small nowrap">读了 {{ c.read }} · 待读 {{ c.queued }}{{ c.failed ? ` · 失败 ${c.failed}` : "" }} · {{ c.depth }} 层{{ c.batch ? ` · 每批 ${c.batch}` : "" }}</span>
-            <button v-if="c.status === 'paused'" class="btn sm" @click="crawlOp(c, 'continue')">继续</button>
-            <button v-if="c.status === 'running' || c.status === 'paused'" class="btn sm" @click="crawlOp(c, 'stop')">停止</button>
-          </div>
-        </template>
-        <div class="section-title">以你的身份写文档</div>
-        <HelpText>你让助理整理成文档时，它用 lark-cli 以你的身份新建、编辑和移动飞书文档。放在你的个人文档库或你自己的云空间文件夹里直接做；放进别人也在用的知识库、别人的文件夹或文档时，每次新建、编辑、覆盖和移动都会先把具体位置发给你批准。lark-cli 缺权限时会把授权链接发到你的飞书私聊。</HelpText>
-        <div class="row wrap">
-          <button class="btn sm" :disabled="permsLoading" @click="checkPerms">{{ permsLoading ? "检查中…" : "检查 lark-cli 授权" }}</button>
-          <span v-if="perms?.user?.name" class="muted small">已登录：{{ perms.user.name }}</span>
-          <span v-if="perms && !perms.unknown && !perms.missing.length" class="badge accent">权限齐全</span>
-        </div>
-        <p v-if="perms && perms.unknown" class="small warn-text">读不到 lark-cli 的登录信息：先在运行 omem 的电脑上运行 lark-cli auth login。</p>
-        <template v-if="perms && perms.missing.length">
-          <div v-for="m in perms.missing" :key="m.label" class="muted small">缺：{{ m.label }}（{{ m.anyOf.join(" 或 ") }}）</div>
-          <div class="row wrap"><button class="btn sm primary" @click="grantPerms">去授权</button><a v-if="grantUrl" class="small" :href="grantUrl" target="_blank" rel="noopener">在飞书里打开授权链接</a></div>
-        </template>
-      </div>
-
-      <ListenContexts :items="listens" :groups="listenGroups" :default-reply="defaultReply" @created="(v) => (listens = [...(listens ?? []), v])" />
-
-      <div class="card pad stack">
-        <div class="row wrap"><strong>个人消息采集（只读）</strong><span class="spacer" /><button class="btn sm" @click="loadLarkChats">读取最近会话</button><button class="btn sm" @click="pollNow">立即采集</button></div>
-        <HelpText>使用本机 lark-cli 的个人登录读取会话；除了你亲手发出的私聊指令（见下）和规则里的“拉机器人进群”，从不以你的身份发消息或操作（写文档见上面“飞书文档”）；定时采集在“定时任务”中开启。omem 机器人自己的私聊和它在群里发的消息不会被采集。</HelpText>
-        <div class="field">
-          <span>采集范围</span>
-          <UiSegmented
-            :model-value="config.lark.capture.mode"
-            aria-label="采集范围"
-            :options="[{ value: 'all', label: '所有有新消息的会话' }, { value: 'subscribed', label: '只读订阅的会话' }, { value: 'off', label: '关闭' }]"
-            @change="(v) => saveConfig({ lark: { ...config.lark, capture: { ...config.lark.capture, mode: v } } }, '已保存采集范围')"
-          />
-          <span class="hint">任何范围下，群里 @你 的消息都会单独读取（不读的会话除外）。</span>
-        </div>
-        <div class="field">
-          <span>按会话类型处理</span>
-          <div class="policies">
-            <div v-for="[k, l, h] in policyKinds" :key="k" class="policy-row">
-              <div class="grow"><div>{{ l }}</div><div v-if="h" class="muted small">{{ h }}</div></div>
-              <UiSelect :model-value="config.lark.capture.policies?.[k] ?? 'ingest'" size="sm" width="180px" :aria-label="`${l} 的处理方式`" :options="policyOptions" @change="(v) => setKindPolicy(k, v)" />
+      </nav>
+      <div ref="content" class="set-content">
+        <section v-if="tab === 'security'" class="stack">
+          <ApprovalSettings v-if="config && (!state.me || state.me.role === 'owner')" :config="config" :save="saveConfig" />
+          <CommandRulesSettings />
+        </section>
+        <section v-else-if="tab === 'about'" class="stack">
+          <div class="card set-card">
+            <header class="set-card-head"><h3 class="set-title">外观</h3></header>
+            <div class="set-row">
+              <div class="set-row-text"><div class="set-row-label">主题</div></div>
+              <div class="set-row-ctl"><UiSegmented v-model="state.theme" size="sm" aria-label="主题" :options="[{ value: 'auto', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]" /></div>
             </div>
           </div>
-          <span class="hint">订阅的会话按“保存并整理”。单个会话可以在下面单独设置，优先于类型。</span>
-        </div>
-        <div v-if="larkError" class="badge danger">{{ larkError }}</div>
-        <template v-if="larkChats.length">
-          <div class="section-title">最近会话里还没采集过的</div>
-          <div v-if="!recentNew.length" class="muted small">最近的会话都在下面的列表里。</div>
-          <div v-for="c in recentNew" :key="c.chatId" class="row sub">
-            <UiCheckbox :model-value="false" size="sm" :aria-label="`订阅 ${c.name}`" @change="subscribeRecent(c)" /><span class="grow ellipsis" :title="c.name">{{ c.name }}</span>
-            <span class="badge">{{ chatKindLabel[c.kind] ?? c.kind }}</span>
-            <span v-if="c.muted" class="badge warn">免打扰</span>
-            <UiSelect :model-value="c.policy" size="sm" width="150px" aria-label="处理方式" :options="policyOptions" @change="(v) => setChatPolicy(c, v)" />
-          </div>
-        </template>
-        <LarkCapturedChats v-if="captured.length" :chats="captured" :policy-options="policyOptions" :listens="listenByChat" @updated="capturedChanged" />
-      </div>
-
-      <div class="section-title">其他平台</div>
-      <ProviderApps />
-    </section>
-    <section v-else-if="tab === 'members'" class="stack">
-      <MembersSettings />
-    </section>
-    <section v-else-if="tab === 'peers'" class="stack">
-      <div v-if="config" class="card pad stack">
-        <strong>这台 omem 的网页地址</strong>
-      <label class="field"><span>从飞书、手机或其他设备打开 omem 用的地址；登录回调、邀请链接和分享链接也用它</span><input class="input mono" :value="config.webUrl ?? ''" placeholder="如 http://192.0.2.10:4317，或反向代理的地址" @change="saveConfig({ webUrl: ($event.target as HTMLInputElement).value.trim() }, '已保存网页地址')" /><span class="muted small">填了以后，通知卡片里的“打开链接”和插件页的链接（如英语练习）在飞书里能直接打开，回答里引用的代码、工作文件、记忆和 Wiki 变成只读分享链接（设置 → 分享）；从其他设备打开还需要令牌（<span class="mono">omem link</span>）。</span></label>
-      </div>
-      <PeerSettings />
-      <FederationSettings />
-    </section>
-    <section v-else-if="tab === 'shares'" class="stack">
-      <ShareSettings />
-    </section>
-    <section v-else-if="tab === 'security'" class="stack">
-      <ApprovalSettings v-if="config && (!state.me || state.me.role === 'owner')" :config="config" :save="saveConfig" />
-      <CommandRulesSettings />
-    </section>
-    <section v-else-if="tab === 'plugins'" class="stack">
-      <PluginsSettings />
-    </section>
-    <section v-else-if="tab === 'storage'" class="stack">
-      <StorageUsage />
-    </section>
-    <section v-else-if="tab === 'about'" class="stack">
-      <div class="field"><span>主题</span><UiSegmented v-model="state.theme" aria-label="主题" :options="[{ value: 'auto', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]" /></div>
-      <div class="card pad small stack">
-        <div><kbd>Ctrl K</kbd> 搜索或提问 · <kbd>Ctrl J</kbd> 保存材料 · <kbd>Esc</kbd> 关闭引用层</div>
-        <div class="muted">omem 也可以作为 MCP 服务给其他 Agent 使用：<span class="mono">omem mcp</span>（加 <span class="mono">--read-only</span> 只开放读取）。</div>
-      </div>
-    </section>
-    </div>
-    <aside v-if="toc.length" class="set-toc" aria-label="本页内容">
-      <span class="muted small">本页</span>
-      <a v-for="t in toc" :key="t.id" href="#" :class="{ on: tocAt === t.id }" @click.prevent="goCard(t.id)">{{ t.title }}</a>
-    </aside>
-    </div>
-
-    <div v-if="editing" class="modal-overlay" @mousedown.self="editing = null">
-      <div class="modal stack">
-        <div class="row"><strong>空间设置：{{ editing.id }}</strong><span class="spacer" /><button class="btn ghost sm icon" @click="editing = null"><Icon name="x" /></button></div>
-        <label class="field"><span>名称</span><input v-model="editing.name" class="input" /></label>
-        <label class="field"><span>说明</span><input v-model="editing.description" class="input" /></label>
-        <UiCheckbox v-if="!editing.settings.mirror" v-model="editing.settings.local" title="这个空间的内容不出这台机器：不能共享给别的 omem，在这个空间里的运行也不会用从别人的 omem 借来的 AI">仅本机：不共享、不同步，也不交给借来的 AI</UiCheckbox>
-        <div v-if="isRepo(editing)" class="field">
-          <span>所属业务空间</span>
-          <UiSelect :model-value="editing.parentId ?? ''" :options="parentOptions" aria-label="所属业务空间" @update:model-value="(v) => moveRepo(editing!.id, v || null)" />
-          <span class="hint">挂到业务空间下后，在业务空间里检索、交办、评审都包括这个仓库，交办记在业务空间。</span>
-        </div>
-        <div v-else class="field">
-          <span>仓库</span>
-          <div v-for="r in suggestions" :key="r.space" class="row wrap suggest small">
-            <span class="grow">可能也属于这里：<strong>{{ r.name }}</strong>（{{ r.reasons.join("；") }}）</span>
-            <button class="btn sm" @click="moveRepo(r.space, editing!.id)">归到这里</button>
-            <button class="btn ghost sm" @click="suggestions = suggestions.filter((x) => x.space !== r.space)">不是</button>
-          </div>
-          <div v-for="c in reposOf(editing.id)" :key="c.id" class="row repo-row">
-            <div class="grow fit"><strong>{{ c.name }}</strong> <span class="muted small">{{ codeIndexLabel(c) }}</span><div class="mono small muted slot-path" :title="c.rootPath ?? ''">{{ c.rootPath }}</div></div>
-            <button class="btn ghost sm" @click="syncRepo(c.id)">同步</button>
-            <button class="btn sm" @click="openSpace(c)">设置</button>
-            <button class="btn ghost sm danger" @click="moveRepo(c.id, null)">移出</button>
-          </div>
-          <div class="row">
-            <input v-model="newRepo" class="input mono grow" placeholder="添加仓库：本地路径或 Git 链接" aria-label="添加仓库" :disabled="addingRepo" @keydown.enter.prevent="addRepo" />
-            <button class="btn sm" :disabled="!newRepo.trim() || addingRepo" @click="addRepo">添加</button>
-          </div>
-          <span class="hint">添加后导入代码（遵守 .gitignore）；在这个空间里检索、交办、评审都包括它，编码记录记在这里。仓库自己的检查命令、目录等在它的“设置”里。</span>
-        </div>
-        <div class="field">
-          <span>相关空间（别的业务：互相调用、共用约定；在其中一个工作时会一起查另一个）</span>
-          <div v-for="r in related" :key="r.space" class="row rel">
-            <strong>{{ r.name }}</strong><span v-if="r.origin === 'agent'" class="badge" :title="r.evidence || undefined">Agent 发现</span>
-            <span class="muted small grow">{{ r.note || "（没有说明）" }}</span>
-            <button class="btn ghost sm icon" :aria-label="`移除与 ${r.name} 的关联`" @click="removeRelated(r)"><Icon name="x" :size="14" /></button>
-          </div>
-          <div v-if="relatable.length" class="row wrap">
-            <UiSelect v-model="newRelated.space" size="sm" width="180px" aria-label="选择空间" placeholder="选择空间" :options="relatable" />
-            <input v-model="newRelated.note" class="input grow" style="min-width: 200px" placeholder="是什么关系，如“调用它的订单接口”" @keydown.enter.prevent="addRelated" />
-            <button class="btn sm" :disabled="!newRelated.space" @click="addRelated">添加</button>
-          </div>
-          <span class="hint">移除 Agent 发现的关联后，它不会再被自动加回。</span>
-        </div>
-        <label class="field"><span>空间指南（SPACE.md，Agent 每次工作前都会读）</span><textarea v-model="guide" class="textarea mono" rows="10" /></label>
-        <div class="field">
-          <span>这个空间的技能</span>
-          <UiSelect v-model="spaceSkills" multiple width="320px" aria-label="这个空间的技能" placeholder="不挂技能" :options="skillOptions" />
-          <span class="hint">这里的做法写成技能（数据目录的 library/_skills，不放进仓库），挂到空间上：在这个空间里的运行、改到这个仓库的编码和评审会先看到它，别的空间不提供。比如这个仓库怎么跑测试、用例里怎么写需求点 id、怎么把结果交给 report_tests。</span>
-        </div>
-        <UiCheckbox :model-value="editing.settings.autoIngest !== false && (editing.kind !== 'repo' || editing.settings.autoIngest === true)" @change="(v) => (editing!.settings.autoIngest = v)">新材料保存后让助理整理（更新记忆、事项、相关页面）</UiCheckbox>
-        <UiCheckbox v-if="editing.rootPath" :model-value="editing.settings.design === 'always'" @change="(v) => (editing!.settings.design = v ? 'always' : null)">这个仓库的交办总是先写方案（不管设置 → AI 里的“方案先行”怎么设）</UiCheckbox>
-        <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /><span class="hint">每轮编码结束后宿主在工作区运行，结果交给评审，评审不再自己跑测试。命令里可以用环境变量 OMEM_BASE（这次改动的起点提交），如用 <code>git diff --name-only $OMEM_BASE</code> 只测改到的部分。</span></label>
-        <RepoLessons v-if="editing.kind === 'repo' && (!state.me || state.me.role === 'owner')" :key="editing.id" :space="editing.id" />
-        <template v-if="editing.rootPath">
-          <div v-if="editing.kind === 'repo'" class="field fit">
-            <span>仓库目录（交办从这里当前的提交切出工作分支）</span>
-            <div class="row fit">
-              <span class="mono small grow slot-path" :title="editing.rootPath">{{ editing.rootPath }}</span>
-              <button class="btn sm" @click="changeRoot">换目录</button>
+          <div class="card set-card">
+            <header class="set-card-head"><h3 class="set-title">快捷键与接入</h3></header>
+            <div class="set-pad small">
+              <div><kbd>Ctrl K</kbd> 搜索或提问 · <kbd>Ctrl J</kbd> 保存材料 · <kbd>Esc</kbd> 关闭引用层</div>
+              <div class="muted">omem 也可以作为 MCP 服务给其他 Agent 使用：<span class="mono">omem mcp</span>（加 <span class="mono">--read-only</span> 只开放读取）。</div>
             </div>
-            <span class="hint">同一个仓库在别处的克隆（remote 相同）可以换过来，比如你平时开发的目录。在这个目录检出交办的分支，每轮的提交会自动快进过来。</span>
           </div>
-          <div v-if="editing.kind === 'repo' && repoBranch" class="field fit">
-            <span>仓库目录检出的分支（新的交办从它切出；仓库没有 origin 时，确认交办会合回这条分支）</span>
-            <div class="row fit">
-              <UiSelect v-model="repoBranch.pick" class="grow" aria-label="仓库目录检出的分支" :options="repoBranch.options" :disabled="switchingBranch" />
-              <button class="btn sm" :disabled="switchingBranch || repoBranch.pick === repoBranch.current" @click="switchRepoBranch">{{ switchingBranch ? "切换中…" : "切换" }}</button>
-            </div>
-            <span class="hint">现在是 <code>{{ repoBranch.current }}</code>。目录里有没提交的改动时不切换。</span>
-          </div>
-          <CodeIndexPanel :space-id="editing.id" @config="(c) => (editing!.settings.codeIndex = c)" />
-          <label class="field">
-            <span>准备命令（新工作区或锁文件变了时，编码前运行）</span>
-            <input v-model="editing.settings.setupCommand" class="input mono" placeholder="不填按锁文件自动选（pnpm / yarn / npm / bun）；填 none 不准备" />
-          </label>
-          <label v-if="editing.kind === 'repo'" class="field">
-            <span>设备的外部 Agent 可以运行的命令（它经 --peer 交办编码时；一行一个“名字: 命令”，检查和准备命令自动包含）</span>
-            <textarea v-model="editing.settings.peerCommands" class="textarea mono" rows="3" placeholder="test: npx vitest run&#10;lint: npx eslint" />
-          </label>
-          <label v-if="editing.kind === 'repo'" class="field">
-            <span>预览命令（在交办的工作区里起服务，从你的电脑打开看效果；一行一个“名字: 命令”，只有一条可以不写名字）</span>
-            <textarea v-model="editing.settings.previewCommands" class="textarea mono" rows="3" placeholder="主站: pnpm --dir apps/main dev & pnpm --dir apps/sub dev & wait&#10;H5: pnpm --dir wap/h5 dev" />
-            <span class="hint">端口不用填：omem 认出命令开的端口，按同样的端口号转到你电脑上（经 omem peer open 打开 omem 时），写死 localhost 端口的项目也能用。同一仓库同时只开一个，没人看 30 分钟后停掉。</span>
-          </label>
-          <div v-if="editing.kind === 'repo'" class="field fit">
-            <span>交办工作区</span>
-            <span class="hint">omem 按需在数据目录里建，最多 4 个，闲着的会收回给新的交办；被忽略的文件（node_modules 等）一直保留，不用设置。</span>
-            <ul v-if="slots.length" class="slots">
-              <li v-for="s in slots" :key="s.path" class="row">
-                <span class="mono small grow slot-path" :title="s.path">{{ s.path }}</span>
-                <span v-if="s.branch" class="mono small">{{ s.branch }}</span>
-                <span class="badge" :title="s.reason || undefined">{{ SLOT_STATE[s.state] }}</span>
-                <a v-if="s.run" class="small" :href="`#/runs/${s.run}`">运行</a>
-              </li>
-            </ul>
-            <span v-else class="muted small">还没有，第一次交办时建。</span>
-          </div>
-        </template>
-        <UiCheckbox :model-value="editing.settings.autoLint !== false" @change="(v) => (editing!.settings.autoLint = v)">原件变化后自动检查受影响的 Wiki 页面（稳定半小时后，一次最多 10 页）</UiCheckbox>
-        <UiCheckbox :model-value="editing.settings.autoOrganize !== false" @change="(v) => (editing!.settings.autoOrganize = v)">自动把顶层散落、挤在一起的 Wiki 页面整理进目录</UiCheckbox>
-        <UiCheckbox v-if="editing.kind === 'repo'" :model-value="editing.settings.commitClaim !== false" @change="(v) => (editing!.settings.commitClaim = v)">本人直接在这个仓库提交后，问这些提交属于哪件事</UiCheckbox>
-        <UiCheckbox v-if="editing.kind !== 'personal'" :model-value="!!editing.settings.larkAccess" @change="(v) => (editing!.settings.larkAccess = v)">飞书文档按各人的飞书权限显示（成员要连接飞书，飞书说他能看的才显示全文；你不受限）</UiCheckbox>
-        <p v-if="editing.settings.mirror" class="muted small">这是 {{ editing.settings.mirror.peer }} 的空间的只读镜像，内容由同步写入。</p>
-        <div class="row">
-          <button v-if="canDelete" class="btn ghost danger" :title="spaceContentOf.length ? `还有内容，不能删除：${spaceContentOf.map((c) => `${c.label} ${c.count}`).join('、')}` : '删除这个空的空间'" :disabled="spaceContentOf.length > 0" @click="removeSpace">删除空间</button>
-          <span class="spacer" /><button class="btn primary" @click="saveSpace">保存</button>
-        </div>
+        </section>
+        <section v-else class="stack">
+          <component :is="VIEWS[tab]" v-if="VIEWS[tab]" :key="tab" />
+          <Skeleton v-else :rows="4" />
+        </section>
       </div>
+      <aside v-if="toc.length" class="set-toc" aria-label="本页内容">
+        <span class="muted small">本页</span>
+        <a v-for="t in toc" :key="t.id" href="#" :class="{ on: tocAt === t.id }" @click.prevent="goCard(t.id)">{{ t.title }}</a>
+      </aside>
     </div>
   </div>
 </template>
@@ -1855,25 +205,26 @@ async function saveEdit() {
 }
 .set-layout {
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr) 160px;
-  gap: 28px;
+  grid-template-columns: 136px minmax(0, 1fr) 160px;
+  gap: 32px;
   align-items: start;
 }
 .set-content {
   min-width: 0;
+  max-width: 880px;
 }
 .set-nav {
   position: sticky;
   top: 12px;
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 .set-nav .group {
   display: grid;
   gap: 1px;
 }
 .set-nav .group > span {
-  padding: 0 10px 3px;
+  padding: 0 10px 4px;
   font-size: 12px;
   color: var(--muted);
 }
@@ -1883,6 +234,7 @@ async function saveEdit() {
   padding: 6px 10px;
   border-radius: 7px;
   text-align: left;
+  font-size: 14px;
   color: var(--ink-2);
   cursor: pointer;
   white-space: nowrap;
@@ -1911,7 +263,7 @@ async function saveEdit() {
   padding-bottom: 4px;
 }
 .set-toc a {
-  padding: 3px 0;
+  padding: 4px 0;
   color: var(--muted);
   text-decoration: none;
   overflow: hidden;
@@ -1927,9 +279,20 @@ async function saveEdit() {
 .set-content :deep(.card) {
   scroll-margin-top: 12px;
 }
+/* Cards of the older sub-components title themselves with a small grey .section-title or a <strong>:
+   in the settings they read as the same 15px card title as SetCard's. */
+.set-content :deep(.card.pad > .section-title:first-child),
+.set-content :deep(.card.pad > strong:first-child),
+.set-content :deep(.card.pad > .row:first-child > .section-title),
+.set-content :deep(.card.pad > .row:first-child > strong:first-child) {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: var(--ink);
+}
 @media (max-width: 1200px) {
   .set-layout {
-    grid-template-columns: 140px minmax(0, 1fr);
+    grid-template-columns: 136px minmax(0, 1fr);
   }
   .set-toc {
     display: none;
@@ -1938,7 +301,7 @@ async function saveEdit() {
 @media (max-width: 760px) {
   .set-layout {
     grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
+    gap: 16px;
   }
   .set-nav {
     position: static;
@@ -1947,302 +310,13 @@ async function saveEdit() {
     overflow-x: auto;
     scrollbar-width: none;
     border-bottom: 1px solid var(--line);
-    padding-bottom: 6px;
+    padding-bottom: 8px;
   }
   .set-nav .group {
     display: contents;
   }
   .set-nav .group > span {
     display: none;
-  }
-}
-.spaces {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
-  gap: 12px;
-  min-width: 0;
-}
-.slots {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
-  min-width: 0;
-}
-.fit {
-  min-width: 0;
-}
-.slot-path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Rows sit flush (the card's gap would double the spacing), divided by a line. */
-.fb-list {
-  display: grid;
-}
-.fb-row {
-  padding: 6px 0;
-  border-top: 1px solid var(--line);
-}
-.fb-row:last-child {
-  border-bottom: 1px solid var(--line);
-}
-.fb-n {
-  width: 16px;
-}
-.sp {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.sp-head {
-  min-width: 0;
-}
-.sp-head strong {
-  min-width: 0;
-  font-size: 15px;
-}
-/* The gear buttons keep their size and line up in one column, however long the name before them. */
-.sp-head .btn,
-.sp-repo .btn {
-  flex: none;
-  margin: -4px -6px -4px 0;
-}
-.sp-desc {
-  margin: 0;
-  color: var(--ink-2);
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-.sp-desc.muted {
-  color: var(--muted);
-}
-.sp-desc + .sp-line,
-.sp-desc + .sp-meta {
-  margin-top: 2px;
-}
-.sp-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-.sp-meta .warn {
-  color: var(--warn);
-}
-.sp-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.sp-line svg {
-  flex: none;
-}
-.sp-repo {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding-left: 2px;
-}
-.sp-repo svg {
-  flex: none;
-  color: var(--muted);
-}
-.sp-repo > .ellipsis {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-.suggest {
-  background: var(--accent-soft);
-  border-radius: 8px;
-  padding: 6px 10px;
-  gap: 6px 10px;
-}
-.repo-row {
-  gap: 6px;
-  padding: 6px 0;
-  border-top: 1px solid var(--line);
-  min-width: 0;
-}
-.grid2 {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 12px;
-}
-.prow {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.prow:last-child {
-  border-bottom: 0;
-}
-.grow {
-  flex: 1;
-  min-width: 0;
-}
-.prow .grow .mono {
-  overflow-wrap: anywhere;
-}
-.prow .badge,
-.prow .btn {
-  flex-shrink: 0;
-}
-.more summary {
-  cursor: pointer;
-  padding: 8px 12px;
-}
-.bot-row {
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-.break {
-  overflow-wrap: anywhere;
-}
-.backends > .sr-title {
-  display: block;
-  padding: 14px 16px 10px;
-}
-.backends > .more,
-.orphan {
-  border-top: 1px solid var(--line);
-}
-.orphan {
-  display: grid;
-  gap: 8px;
-  padding: 12px 16px;
-}
-.chip {
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 999px;
-  padding: 1px 10px;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: 12px;
-}
-.chip.on {
-  background: var(--ink);
-  color: var(--bg);
-  border-color: var(--ink);
-}
-.edit-box {
-  padding: 10px 14px 14px;
-  border-top: 1px solid var(--line);
-  background: var(--hover);
-}
-.roles {
-  display: grid;
-  gap: 6px;
-}
-.role-row {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr);
-  gap: 10px;
-  align-items: center;
-}
-.role-model {
-  display: grid;
-  grid-template-columns: 1fr 110px;
-  gap: 6px;
-}
-.warn-text {
-  color: var(--warn);
-  margin: 0;
-}
-.policies {
-  display: grid;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-.policy-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
-}
-.policy-row:last-child {
-  border-bottom: 0;
-}
-.sub {
-  padding: 4px 0;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-.sub > .grow {
-  min-width: 140px;
-}
-.nowrap {
-  white-space: nowrap;
-}
-.sm-input {
-  width: 160px;
-  height: 30px;
-  padding: 4px 9px;
-  font-size: 13px;
-}
-.cmp-row {
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-@media (max-width: 760px) {
-  .role-row {
-    grid-template-columns: 1fr;
-  }
-}
-.days {
-  gap: 10px;
-}
-.days .field {
-  width: 110px;
-}
-.sched {
-  display: grid;
-  gap: 6px;
-}
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 12, 16, 0.35);
-  z-index: 55;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: 6vh;
-}
-.modal {
-  width: min(640px, calc(100vw - 24px));
-  max-height: 88vh;
-  overflow: auto;
-  background: var(--panel);
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-lg);
-  padding: 18px;
-}
-@media (max-width: 640px) {
-  .grid2 {
-    grid-template-columns: 1fr;
-  }
-  .policy-row {
-    flex-wrap: wrap;
   }
 }
 </style>

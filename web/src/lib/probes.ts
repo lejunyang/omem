@@ -41,7 +41,7 @@ export function fullAccessHint(backend: { id: string; name?: string; transport?:
   if (backend.transport === "codex-cli" || backend.transport === "claude-cli") return `${backend.name ?? backend.id} 支持（命令行参数）。${consequence}`;
   if (backend.transport && backend.transport !== "acp") return `${backend.name ?? backend.id} 没有完全访问，开了也仍按它自己的方式运行。`;
   const modes = probes.data[backend.id]?.modes;
-  if (!modes) return `${backend.name ?? backend.id} 还不知道是否支持：在设置 → Agent 里重新检测一次。${consequence}`;
+  if (!modes) return `${backend.name ?? backend.id} 还不知道是否支持：在设置 → 后端与模型 里重新检测一次。${consequence}`;
   const mode = modes.find((m) => FULL_MODES.includes(m));
   return mode ? `${backend.name ?? backend.id} 支持（${mode}）。${consequence}` : `${backend.name ?? backend.id} 没有完全访问模式，开了也仍按沙箱和审批运行。`;
 }

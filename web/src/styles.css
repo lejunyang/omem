@@ -976,3 +976,151 @@ input[type="number"].input::-webkit-outer-spin-button {
   padding: 4px 9px;
   font-size: 13px;
 }
+
+/* ---------- settings ---------- */
+/* A settings card (components/SetCard): a 15px title, at most one line under it, then rows. */
+.set-card {
+  min-width: 0;
+}
+.set-card-head {
+  display: grid;
+  gap: 4px;
+  padding: 16px 18px 12px;
+  min-width: 0;
+}
+.set-card-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.set-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.set-card-title > .set-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.set-card-body {
+  display: grid;
+  min-width: 0;
+}
+/* Free content inside a card (lists, editors): the same inset as the rows, a line above. */
+.set-pad {
+  display: grid;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+/* One setting per row (components/SetRow): name and a sentence on the left, the control on the right. */
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+.set-row-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.set-row-label {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.set-row-hint {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.set-row-ctl {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+/* Rows that edit several lines (text, lists): the control goes under the name, full width. */
+.set-row.block {
+  flex-direction: column;
+  align-items: stretch;
+}
+.set-row.block > .set-row-text {
+  flex: none;
+}
+.set-row.block > .set-row-ctl {
+  display: grid;
+  justify-content: stretch;
+  gap: 8px;
+}
+.set-row.off > .set-row-text {
+  opacity: 0.55;
+}
+.set-num.input {
+  width: 84px;
+  height: 30px;
+  padding: 4px 9px;
+  font-size: 13px;
+}
+/* A one-line pointer to where something else lives. */
+.set-link {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 12px 18px;
+  font-size: 13px;
+  color: var(--ink-2);
+  min-width: 0;
+}
+.set-link a {
+  white-space: nowrap;
+}
+/* A long technical string (path, command line, id): one line, the whole of it on hover, copyable. */
+.mono-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.mono-line > code {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  background: none;
+  padding: 0;
+}
+@media (max-width: 640px) {
+  .set-row {
+    flex-wrap: wrap;
+    padding: 12px 14px;
+  }
+  .set-row-ctl {
+    justify-content: flex-start;
+  }
+  .set-card-head,
+  .set-pad,
+  .set-link {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}

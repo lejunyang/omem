@@ -67,7 +67,7 @@ onBeforeUnmount(() => returnFocus?.focus?.());
         <div class="field">
           <span>哪些群</span>
           <UiSelect v-model="form.chats" multiple :options="groups" placeholder="从已采集的群里选" aria-label="关注哪些群" :search-at="6" />
-          <span class="hint">只列出已经采集到的群；没看到的先在 设置 → 连接 的飞书会话里订阅。</span>
+          <span class="hint">只列出已经采集到的群；没看到的先在 设置 → 采集 → 消息采集 的飞书会话里订阅。</span>
         </div>
         <label class="field"><span>名字（可选）</span><input v-model="form.name" class="input" maxlength="80" placeholder="不填就用群名" /></label>
         <label class="field"><span>你想让它做什么（可选）</span><textarea v-model="form.note" class="textarea" rows="2" maxlength="2000" placeholder="例如：值班群里问接口报错的先查日志再回，产品问排期的告诉我" /></label>

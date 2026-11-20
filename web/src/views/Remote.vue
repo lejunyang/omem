@@ -502,7 +502,7 @@ const counts = (r: Recording) => {
     </div>
     <div v-else-if="!available" class="empty">
       <h1>远程操作</h1>
-      <p class="muted">这台机器还没有装 ai-auto-desktop（aad）。到 设置 → AI 里安装后，这里可以打开本机的浏览器页面或桌面，远程操作并录制成技能。</p>
+      <p class="muted">这台机器还没有装 ai-auto-desktop（aad）。到 设置 → 设备 → 桌面与浏览器控制 里安装后，这里可以打开本机的浏览器页面或桌面，远程操作并录制成技能。</p>
       <router-link to="/settings" class="btn">去设置</router-link>
     </div>
     <template v-else>
@@ -558,7 +558,7 @@ const counts = (r: Recording) => {
               <UiSelect v-model="settings.clipboardMaxMb" :options="fileLimitOptions" aria-label="传文件上限" width="180px" />
               <span class="hint">这边 Ctrl+V 粘贴的文件传到远程再粘贴；远程复制的文件在画面角上给下载。用 http + IP 打开时，带回的图片也只能下载（浏览器只让 https 或本机地址的网页写图片进剪贴板）。</span>
             </div>
-            <p v-else-if="!richClipboard && settings.clipboard" class="muted small">aad 0.0.9 起，图片、富文本和文件也能两个方向复制粘贴：到 设置 → AI 的“桌面与浏览器控制”点“更新到最新”。</p>
+            <p v-else-if="!richClipboard && settings.clipboard" class="muted small">aad 0.0.9 起，图片、富文本和文件也能两个方向复制粘贴：到 设置 → 设备 的“桌面与浏览器控制”点“更新到最新”。</p>
             <div class="row foot">
               <span class="muted small grow">
                 <template v-if="probing">正在检测这台机器能用的视频编码（可能要半分钟）…</template>

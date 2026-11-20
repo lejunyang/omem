@@ -178,7 +178,7 @@ export function shieldSection(c: Ctx): Section {
   const s = section("shield", "替你挡了多少", "别人在群里 @ 你或私聊你时，omem 先看了多少、筛掉多少、替你查了多少，以及你看到提醒以后的反应。");
   if (c.viewer !== OWNER) return { ...s, empty: "这一块只有主人能看。" };
   const rs = c.runs.filter(r => r.kind === "mention" && !(r.waited && r.waited > 0));
-  if (!rs.length) return { ...s, empty: "还没有记录。打开 设置 → 渠道 → 有人找你 以后，这里会出现。" };
+  if (!rs.length) return { ...s, empty: "还没有记录。打开 设置 → 代你回复 → 有人找你 以后，这里会出现。" };
   const triaged = rs.filter(r => !!r.triage), screened = rs.filter(r => r.status === "done" && r.quiet && !r.triage && !r.handled && !r.joined);
   const handled = rs.filter(r => r.handled || r.joined);
   const ss = samples(c).filter(x => handled.some(r => r.id === x.id));
