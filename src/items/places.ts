@@ -4,6 +4,7 @@ import { all, one } from "../core/db.ts";
 import { json, truncate } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { chatName, conclusionOf, scopeOf } from "../agents/run-scope.ts";
+import { itemScope } from "./access.ts";
 import { addMaterials } from "./materials.ts";
 import { getItem, type Item } from "./store.ts";
 
@@ -93,12 +94,14 @@ export function itemsAt(app: App, places: Place[], userId: string, limit = 3): I
   const convs = places.filter((p) => p.kind === "conversation").map((p) => p.ref);
   const srcs = places.filter((p) => p.kind === "source").map((p) => p.ref);
   if (!convs.length && !srcs.length) return [];
+  const { spaceIds } = itemScope(app, userId);
+  const spaceFilter = spaceIds ? "and i.space_id in (select value from json_each(?))" : "";
   const ids = all<{ id: string }>(app.db,
     `select distinct i.id from item_materials m join items i on i.id = m.item_id
-      where i.user_id = ? and i.status in (${OPEN.map(() => "?").join(",")})
+      where i.user_id = ? ${spaceFilter} and i.status in (${OPEN.map(() => "?").join(",")})
         and ((m.kind = 'conversation' and m.ref in (${convs.map(() => "?").join(",") || "''"})) or (m.kind = 'source' and m.ref in (${srcs.map(() => "?").join(",") || "''"})))
       order by i.updated_at desc limit ?`,
-    userId, ...OPEN, ...convs, ...srcs, limit);
+    userId, ...(spaceIds ? [JSON.stringify(spaceIds)] : []), ...OPEN, ...convs, ...srcs, limit);
   return ids.map((r) => getItem(app, r.id));
 }
 
