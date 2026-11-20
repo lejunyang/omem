@@ -376,7 +376,9 @@ const answered = computed(() => allMetrics.value.find(m => m.key === "shield:ans
               </div>
             </template>
           </div>
-          <!-- NotifyEffect 接在这里 -->
+          <div v-if="c.id === 'notify'" class="sec notify-effect">
+            <!-- NotifyEffect 接在这里（提醒一节的最后，和上面的“替你挡了多少”同一层） -->
+          </div>
         </section>
 
         <section id="chapter-long" class="chapter" aria-labelledby="h-long">
@@ -445,6 +447,7 @@ const answered = computed(() => allMetrics.value.find(m => m.key === "shield:ans
 .chapter > h2 + .sec, .chapter > h2 + .help-text { margin-top: -16px; }
 .sec { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .sec + .sec { padding-top: 24px; border-top: 1px dashed var(--line); }
+.notify-effect:empty { display: none; }
 .sec-head { display: grid; gap: 4px; max-width: 56em; min-width: 0; }
 .sec-head h3 { margin: 0; font-size: 15px; font-weight: 650; }
 .sec > p { margin: 0; }
