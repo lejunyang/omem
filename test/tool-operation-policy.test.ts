@@ -25,7 +25,7 @@ it.each(["allow", "deny"] as const)("applies %s to the actual tool and audits th
   const { app, ctx, invoke } = setup(action);
   app.config.approvals.tools = ["list_spaces"];
   expect((await invoke()).isError).toBe(action === "deny");
-  expect(all(app.db, "select action,target from audit_events where action like 'operation.%'")).toEqual([{ action: "operation." + action, target: "list_spaces" }]);
+  expect(all(app.db, "select action,target from audit_events where action = ?", "tool." + action)).toEqual([{ action: "tool." + action, target: "list_spaces" }]);
   ctx.tools!.clear();
   expect((await invoke()).text).toContain("不可用");
   expect(listAsks(app)).toHaveLength(0);
@@ -115,7 +115,7 @@ it("records a delegated refusal without running the tool or promoting it", async
   await invoke();
   const [ask] = listAsks(app, { userId: reviewer.id });
   await answerAsk(app, ask.id, { approved: false, by: reviewer.id });
-  expect(all(app.db, "select json_extract(detail,'$.result') result from audit_events where action='operation.approve' order by rowid"))
+  expect(all(app.db, "select json_extract(detail,'$.result') result from audit_events where action='tool.approve' order by rowid"))
     .toEqual([{ result: "pending" }, { result: "refused" }]);
 });
 
