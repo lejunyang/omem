@@ -65,7 +65,7 @@ export function snapshotOmemUsage(app: App, opts: { now?: Date; maxDays?: number
     if (!last || d > last) days.push(d);
   }
   if (!days.length) return [];
-  for (const def of DEFS) if (!getMetric(app, def.id)) defineMetric(app, { id: def.id, name: def.name, description: def.description, unit: def.unit, source: "omem", query: "omem 每天自己统计（宿主写入，不用取数）", schedule: "none" });
+  for (const def of DEFS) if (!getMetric(app, def.id)) defineMetric(app, { id: def.id, name: def.name, description: def.description, unit: def.unit, source: "omem", query: "omem 每天自己统计（宿主写入，不用取数）", schedule: "none", why: "omem 自己每天做了多少、做得怎么样，原始记录过期以后也能回看" }, { by: "omem" });
   const at = new Date().toISOString();
   const take = (def: Def, day: string) => {
     const from = dayStart(tz, day).toISOString();

@@ -17,6 +17,15 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 指标：从哪来、由本人确认、按指标的画法画（11-21）
+
+- `src/data/metrics.ts`：`Metric` 多 `why`、`planRef`、`definedBy`（owner / agent / omem）、`definedRun`、`confirmedAt`、`droppedAt`、`ownerNote`、`view`，状态多 `proposed`、`dropped`。迁移 `db.ts METRIC_ORIGIN_MIGRATION`：以前的工作指标改成提议，omem 自己的算已确认。`defineMetric(app, input, { by, runId })`：agent 新建的一律是提议（要 `why`），不能留下、不要或要回本人不要过的；`recordPoints` 只对 active 的通知；`collectDue` 取 active 和 proposed；`metricDecisions` / `metricLessons` 读本人最近的取舍。
+- 画法：`metricTable`（按维度组合或 `view.compareBy` 分组）、`metricCharts`（line / area / bar / stack / compare / pie / table / number，`ratio` 另画占比）、`figureSeries`、`latestOf`、`nextTake`；`readMetric` 多 `kind`、`charts`、`table`、`latest`，`metricText` 带全部图表块。
+- 工具 `metric_define`（`src/agents/tools.ts`）按 `ownTurn` 区分本人和后台，多 `why`、`plan_ref`、`view`、`status: dropped`；`metric_record` 写明提议没有通知；`metric_read` 列表带“本人对 AI 提议的指标最近是这么定的”。看线的运行（`channels/listen-assist.ts`）的“数据”一节标出提议、act 档带取舍。线结束和重新打开（`items/lifecycle.ts`）照顾提议。
+- 接口（`src/data/http.ts`）：`GET /api/metrics` 多 `figure`、`latest`、`nextAt`、`plan`，`item=` 含下面的事项，`dropped=1`；`PUT /api/metrics/:id` 多名字、单位、why、基线、画法、`status: dropped` 和 `note`；`/api/metrics/files` 多 `report` 和 `item=`。
+- 网页：`packages/plugin-sdk/charts.ts` 的 `metricsElement` 多 `select`（数字本身是按钮，`aria-expanded`），`MetricItem` 多 `tag`；`components/charts/MetricRow.vue` 多 `keys`、`selected`、`select` 事件，只在内容变了才重画、只有数变了才重新数；`components/MetricsBoard.vue` 重写（待确认的筛选、详情按画法、一两天写成文字、没取过写何时取、保留 / 改 / 不要、报表点开画图、`item` 范围）；`ItemMetrics.vue` 改成套这块板。
+- 技能 `observation-plan`（少而准、why / plan_ref、view、报表）、`data-sources`、`skills/omem/references/data.md`。演示库多两个提议（按端并排、只有一天的新旧对比）和一份两张图的报表，新截图 `insights-report`，重拍 `insights-work`。
+
 ## 工作线（四）：自己结束，结束了去哪看（11-21）
 
 - 新文件 `src/items/lifecycle.ts`：进行中 → 观察中 → 已结束。迁移加 `items.phase`、`phase_since`、`watch_until`，`Item` 多 `phase`、`phaseSince`、`watchUntil`，`LineNow` 多 `summary`、`summaryAt`；配置 `workLines.watchDays`（默认 14）。

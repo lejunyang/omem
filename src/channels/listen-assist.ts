@@ -8,6 +8,7 @@ import { declinedNext, nextOf } from "../items/lines.ts";
 import { materialsBrief } from "../items/materials.ts";
 import { getItem, type Item } from "../items/store.ts";
 import { descendantIds } from "../items/tree.ts";
+import { metricLessons } from "../data/metrics.ts";
 import { itemContext, listContexts, type ListenContext } from "./listen.ts";
 
 /**
@@ -134,7 +135,7 @@ export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "sug
   walk(item.id, 0);
   const ownFlow = flowText(app, item.id);
   const changes = lineTimeline(app, item.id, { limit: 20 });
-  const metrics = all<{ name: string; item_id: string }>(app.db, `select name, item_id from metrics where status = 'active' and item_id in (${ids.map(() => "?").join(",")})`, ...ids);
+  const metrics = all<{ name: string; item_id: string; status: string }>(app.db, `select name, item_id, status from metrics where status in ('active','proposed') and item_id in (${ids.map(() => "?").join(",")})`, ...ids);
   const plan = one<{ id: string }>(app.db, `select id from sources where kind = 'work' and deleted_at is null and uri like 'work/观测/%' and json_extract(meta, '$.links.item') in (${ids.map(() => "?").join(",")}) limit 1`, ...ids);
   const summary = c.conversationId ? one<{ summary: string | null }>(app.db, "select summary from conversations where id = ?", c.conversationId)?.summary : null;
   const declined = declinedNext(app, item.id);
@@ -142,6 +143,8 @@ export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "sug
   const local = localStamp(new Date(), tz).slice(0, 10);
   const watching = item.phase === "watching";
   const cases = lineEndCases(app, item.userId, 10);
+  // What the owner kept and dropped of the metrics agents proposed, for a run that may propose more.
+  const lessons = mode === "act" ? metricLessons(app, { spaces: [...new Set([item.spaceId, "personal"])] }) : "";
   return [
     `# 看这条${item.kind === "line" ? "工作线" : "事"}现在的样子：${item.title}（${item.id}）`,
     "",
@@ -152,7 +155,7 @@ export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "sug
     `\n${materialsBrief(app, item.id, item.userId, { compact: true })}`,
     summary ? `\n## 它的群里最近在聊\n\n${truncate(summary, 1500)}` : "",
     changes.length ? `\n## 关键变化（新的在前，含下面的工作项）\n\n${changes.map((x) => `- ${localStamp(x.at, tz).slice(5)} [${x.type}·${x.origin}]${x.itemId !== item.id ? `「${truncate(x.itemTitle, 30)}」` : ""} ${truncate(x.summary, 160)}`).join("\n")}` : "\n## 关键变化\n\n（还没有记下的变化）",
-    `\n## 数据\n\n${plan ? "已有观测计划。" : "还没有观测计划。"}${metrics.length ? `指标：${metrics.map((m) => m.name).join("、")}（metric_read 看变化）。` : "还没有指标。"}`,
+    `\n## 数据\n\n${plan ? "已有观测计划。" : "还没有观测计划。"}${metrics.length ? `指标：${metrics.map((m) => `${m.name}${m.status === "proposed" ? "（AI 提议，待本人确认）" : ""}`).join("、")}（metric_read 看变化）。` : "还没有指标。"}${lessons ? `\n\n${lessons}` : ""}`,
     item.now ? `\n## 上次写的现状（${localStamp(item.now.at, tz)}）\n\n${item.now.text}${item.now.people.length ? `\n人：${item.now.people.map((p) => `${p.name}（${p.role}）`).join("、")}` : ""}${item.now.weeks.length ? `\n${item.now.weeks.map((w) => `${w.label}：${w.text}`).join("\n")}` : ""}` : "",
     open.length ? `\n## 还没定的下一步（这次交的会替换没开始的那些）\n\n${open.map((n) => `- [${n.status === "doing" ? "在做" : "没定"}] ${n.text}`).join("\n")}` : "",
     declined.length ? `\n## 本人说“不用”的下一步（不要再提同样的）\n\n${declined.map((n) => `- ${n.text}${n.why ? `（当时的理由：${truncate(n.why, 80)}）` : ""}`).join("\n")}` : "",

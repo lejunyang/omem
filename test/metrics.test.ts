@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createRun, listRuns } from "../src/agents/runs.ts";
 import { threadMessages } from "../src/agents/threads.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
-import { all, one, run } from "../src/core/db.ts";
+import { all, METRIC_ORIGIN_MIGRATION, one, openDb, run } from "../src/core/db.ts";
 import { saveContext } from "../src/channels/listen.ts";
-import { collectDue, defineMetric, metricPoints, readMetric, recordPoints } from "../src/data/metrics.ts";
+import { collectDue, defineMetric, getMetric, listMetrics, metricLessons, metricPoints, metricText, readMetric, recordPoints } from "../src/data/metrics.ts";
 import { snapshotOmemUsage } from "../src/data/omem-usage.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { testApp } from "./helpers.ts";
@@ -89,6 +89,179 @@ describe("metrics", () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+describe("where metrics come from and what the owner decides", () => {
+  const background = (app: ReturnType<typeof testApp>) => tool(app, createRun(app, { kind: "agent", title: "写观测计划", input: { spec: "assistant", task: "写观测计划" } }).id);
+
+  it("a background agent proposes (taken, never told); the owner's own tools define outright", async () => {
+    const app = testApp();
+    const item = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "退款申请页改版" } as never, "user");
+    const bg = background(app);
+    expect((await callTool(bg, "metric_define", { name: "退款接口报错率", query: "前端监控：/refund/apply 的接口失败率", item: item.id })).text).toMatch(/why/);
+    const made = await callTool(bg, "metric_define", { name: "退款接口报错率", why: "上线后退款接口有没有更容易出错", plan_ref: "src:s0abc#L3-L8", query: "前端监控：/refund/apply 的接口失败率", item: item.id, schedule: "daily", direction: "down-good" });
+    expect(made.text).toContain("等本人在数据页");
+    const id = /（(m[0-9a-z]+)）/.exec(made.text)![1];
+    expect(getMetric(app, id)).toMatchObject({ status: "proposed", definedBy: "agent", confirmedAt: null, why: "上线后退款接口有没有更容易出错", planRef: "src:s0abc#L3-L8" });
+    expect(getMetric(app, id)!.definedRun).toBeTruthy();
+    // Still taken on schedule…
+    expect(await collectDue(app)).toHaveLength(1);
+    // …but a change past the threshold is not told.
+    for (const [i, v] of [0.4, 0.42, 0.41].entries()) await recordPoints(app, id, [{ value: v, at: day(4 - i) }]);
+    const out = await callTool(bg, "metric_record", { metric: id, points: [{ value: 1.2, at: day(0) }] });
+    expect(out.text).toContain("待本人确认，没有通知");
+    expect(all(app.db, "select 1 from notifications where title like '%退款接口报错率%'")).toHaveLength(0);
+    expect(one(app.db, "select 1 from item_events where item_id = ? and text like '指标变化%'", item.id)).toBeUndefined();
+    // A background agent cannot keep or drop it.
+    expect((await callTool(bg, "metric_define", { id, name: "退款接口报错率", status: "active" })).isError).toBe(false);
+    expect(getMetric(app, id)!.status).toBe("proposed");
+    expect((await callTool(bg, "metric_define", { id, name: "退款接口报错率", status: "dropped" })).isError).toBe(true);
+    // The owner's own tools (no run): active at once.
+    const own = await callTool(tool(app), "metric_define", { name: "部分退款占比", why: "部分发货退款有多少", query: "订单库：部分退款占比" });
+    expect(getMetric(app, "部分退款占比")).toMatchObject({ status: "active", definedBy: "owner" });
+    expect(own.text).toContain("在看");
+  });
+
+  it("keeps, changes and drops through the page; a drop stops it and teaches the next proposals", async () => {
+    const app = testApp();
+    const item = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "新版退款" } as never, "user");
+    const bg = background(app);
+    await callTool(bg, "metric_define", { name: "退款接口报错率", why: "上线后接口有没有更容易出错", query: "前端监控：失败率", item: item.id, direction: "down-good", schedule: "daily" });
+    await callTool(bg, "metric_define", { name: "入口曝光 PV", why: "新入口有没有被看到", query: "埋点平台：entry_expose 的 PV", item: item.id, schedule: "daily" });
+    const kept = getMetric(app, "退款接口报错率")!;
+    const dropped = getMetric(app, "入口曝光 PV")!;
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const list = (await server.inject({ method: "GET", url: `/api/metrics?item=${item.id}` })).json() as { id: string; status: string; why: string; nextAt: string | null }[];
+      expect(list.map((m) => m.status)).toEqual(["proposed", "proposed"]);
+      expect(list[0].nextAt).toBeTruthy();
+      // 保留 (and 改 at once).
+      const k = (await server.inject({ method: "PUT", url: `/api/metrics/${kept.id}`, payload: { status: "active", why: "部分发货上线后退款接口有没有更容易出错", threshold: 0.5, view: { kind: "bar" } } })).json();
+      expect(k).toMatchObject({ status: "active", why: "部分发货上线后退款接口有没有更容易出错", threshold: 0.5, view: { kind: "bar" } });
+      expect(k.confirmedAt).toBeTruthy();
+      expect((await server.inject({ method: "PUT", url: `/api/metrics/${kept.id}`, payload: { view: { kind: "spiral" } } })).statusCode).toBe(400);
+      // 不要, with a word why.
+      const d = (await server.inject({ method: "PUT", url: `/api/metrics/${dropped.id}`, payload: { status: "dropped", note: "曝光不说明问题，看完成率" } })).json();
+      expect(d).toMatchObject({ status: "dropped", ownerNote: "曝光不说明问题，看完成率" });
+      expect((await server.inject({ method: "GET", url: `/api/metrics?item=${item.id}` })).json().map((m: { id: string }) => m.id)).toEqual([kept.id]);
+      expect((await server.inject({ method: "GET", url: `/api/metrics?item=${item.id}&dropped=1` })).json()).toHaveLength(2);
+    } finally {
+      await server.close();
+    }
+    // Kept: its changes are told now.
+    for (const [i, v] of [0.4, 0.42, 0.41].entries()) await recordPoints(app, kept.id, [{ value: v, at: day(4 - i) }]);
+    await recordPoints(app, kept.id, [{ value: 1.3, at: day(0) }]);
+    expect(one(app.db, "select 1 from notifications where title like '%退款接口报错率%'")).toBeTruthy();
+    // Dropped: not taken, not recorded, not proposed again.
+    run(app.db, "update metrics set last_at = null");
+    const ids = await collectDue(app);
+    expect(listRuns(app, { kind: "agent" }).find((r) => r.id === ids[0])?.input.metricCollect).toEqual([kept.id]);
+    await expect(recordPoints(app, dropped.id, [{ value: 3 }])).rejects.toThrow(/不要/);
+    const again = await callTool(bg, "metric_define", { name: "入口曝光 PV", why: "再看看", query: "埋点平台" });
+    expect(again.isError).toBe(true);
+    expect(again.text).toContain("曝光不说明问题");
+    // The decisions go to the next proposals.
+    const lessons = metricLessons(app);
+    expect(lessons).toContain("留下「退款接口报错率」");
+    expect(lessons).toContain("不要「入口曝光 PV」");
+    expect(lessons).toContain("本人说：曝光不说明问题");
+    expect((await callTool(bg, "metric_read", {})).text).toContain("本人对 AI 提议的指标最近是这么定的");
+    const next = await callTool(bg, "metric_define", { name: "申请完成率", why: "改版后用户能不能顺利提交", query: "埋点平台：apply_submit / apply_open" });
+    expect(next.text).toContain("不要「入口曝光 PV」");
+  });
+
+  it("draws by the metric's view: series by a dimension, their shares, the newest parts", async () => {
+    const app = testApp();
+    const m = defineMetric(app, { name: "新旧平台下单量", unit: "单", query: "BI：按平台的下单量", view: { kind: "compare", compareBy: "side", ratio: true, focus: "新" } });
+    await recordPoints(app, m.id, [
+      { value: 300, at: day(1), dims: { side: "旧" } }, { value: 100, at: day(1), dims: { side: "新" } },
+      { value: 200, at: day(0), dims: { side: "旧", 端: "PC" } }, { value: 100, at: day(0), dims: { side: "旧", 端: "H5" } }, { value: 300, at: day(0), dims: { side: "新" } },
+    ]);
+    const r = readMetric(app, m.id);
+    expect(r.kind).toBe("compare");
+    expect(r.charts).toHaveLength(2);
+    expect(r.charts[0].series.map((s) => [s.name, s.values])).toEqual([["新", [100, 300]], ["旧", [300, 300]]]);
+    expect(r.charts[1]).toMatchObject({ unit: "%", series: [{ name: "新 占比", values: [25, 50] }] });
+    expect(r.latest).toEqual({ label: day(0).slice(5, 10), values: [{ name: "新", value: 300 }, { name: "旧", value: 300 }] });
+    // The text for a report carries both charts.
+    expect(metricText(app, m.id, { chart: true }).match(/```chart/g)).toHaveLength(2);
+    // Parts of the newest day as a dial; a figure only draws no chart.
+    defineMetric(app, { id: m.id, name: m.name, view: { kind: "pie", compareBy: "side" } });
+    const pie = readMetric(app, m.id).charts[0];
+    expect(pie.kind).toBe("pie");
+    expect([...pie.labels].sort()).toEqual(["新", "旧"].sort());
+    defineMetric(app, { id: m.id, name: m.name, view: { kind: "number" } });
+    expect(readMetric(app, m.id).charts).toEqual([]);
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const listed = (await server.inject({ method: "GET", url: "/api/metrics" })).json()[0];
+      expect(listed).toMatchObject({ view: { kind: "number" }, status: "active", definedBy: "owner" });
+      expect(listed.latest.values).toHaveLength(3);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("migrates: work metrics defined before become proposals, omem's own count as kept", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const path = join(mkdtempSync(join(tmpdir(), "omem-metrics-")), "omem.db");
+    // The metrics table as it was before this migration, with three metrics in it; then the migration.
+    const db = openDb(path);
+    for (const c of ["why", "plan_ref", "defined_by", "defined_run", "confirmed_at", "dropped_at", "owner_note", "view"]) db.exec(`alter table metrics drop column ${c}`);
+    const at = new Date().toISOString();
+    for (const [id, source, status] of [["m1", "前端监控", "active"], ["m2", "埋点平台", "paused"], ["omem.runs", "omem", "active"]]) db.prepare("insert into metrics(id,name,source,query,status,created_at,updated_at) values(?,?,?,?,?,?,?)").run(id, id, source, "q", status, at, at);
+    db.exec(METRIC_ORIGIN_MIGRATION);
+    expect(db.prepare("select id, status, defined_by, confirmed_at is not null confirmed from metrics order by id").all().map((r) => ({ ...r }))).toEqual([
+      { id: "m1", status: "proposed", defined_by: "agent", confirmed: 0 },
+      { id: "m2", status: "paused", defined_by: "agent", confirmed: 0 },
+      { id: "omem.runs", status: "active", defined_by: "omem", confirmed: 1 },
+    ]);
+    db.close();
+  });
+
+  it("lists reports: files under 数据/报表/ and work files with charts, an item's and those under it", async () => {
+    const app = testApp();
+    const { createLine } = await import("../src/items/lines.ts");
+    const { setParent } = await import("../src/items/parent.ts");
+    const { writeWorkFile } = await import("../src/sources/work.ts");
+    const line = await createLine(app, { name: "示例商城 · 退款改造", goal: "部分发货只退已发货的行" }, "owner");
+    const req = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "退款申请页改版" } as never, "user");
+    setParent(app, req.id, line.id);
+    const chart = '```chart\n{"kind":"pie","labels":["整单","部分"],"series":[{"name":"退款单","values":[3,1]}]}\n```';
+    writeWorkFile(app, { spaceId: "personal", path: "数据/报表/退款构成.md", title: "退款构成", text: `# 退款构成\n\n${chart}`, links: { item: req.id } });
+    writeWorkFile(app, { spaceId: "personal", path: "笔记/上线一周.md", title: "上线一周", text: `结论\n\n${chart}`, links: { item: line.id } });
+    writeWorkFile(app, { spaceId: "personal", path: "笔记/别的.md", title: "别的", text: "没有图" });
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const files = (await server.inject({ method: "GET", url: "/api/metrics/files" })).json() as { path: string; kind: string; charts: boolean }[];
+      expect(files.map((f) => [f.path, f.kind]).sort()).toEqual([["数据/报表/退款构成.md", "report"], ["笔记/上线一周.md", "report"]]);
+      const forLine = (await server.inject({ method: "GET", url: `/api/metrics/files?item=${line.id}` })).json() as { path: string }[];
+      expect(forLine).toHaveLength(2);
+      const forReq = (await server.inject({ method: "GET", url: `/api/metrics/files?item=${req.id}` })).json() as { path: string }[];
+      expect(forReq.map((f) => f.path)).toEqual(["数据/报表/退款构成.md"]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a line that ends stops its proposals too, and opened again they are proposals again", async () => {
+    const app = testApp();
+    const { createLine } = await import("../src/items/lines.ts");
+    const line = await createLine(app, { name: "示例商城 · 退款改造", goal: "部分发货只退已发货的行" }, "owner");
+    const bg = background(app);
+    await callTool(bg, "metric_define", { name: "退款接口报错率", why: "接口有没有更容易出错", query: "前端监控：失败率", item: line.id, schedule: "daily" });
+    defineMetric(app, { name: "部分退款占比", query: "订单库", itemId: line.id, schedule: "daily" });
+    upsertItem(app, line.id, { status: "done" } as never, "user");
+    expect(listMetrics(app, { itemId: line.id }).map((m) => m.status)).toEqual(["paused", "paused"]);
+    const { keepItem } = await import("../src/items/expiry.ts");
+    keepItem(app, line.id, "user");
+    expect(Object.fromEntries(listMetrics(app, { itemId: line.id }).map((m) => [m.name, m.status]))).toEqual({ 退款接口报错率: "proposed", 部分退款占比: "active" });
   });
 });
 

@@ -69,8 +69,12 @@ export type MetricItem = {
   link?: string;
   /** A longer explanation, shown on hover. */
   hint?: string;
+  /** A short word beside the label in a warm pill (“待确认”). */
+  tag?: string;
 };
 export type MetricGroup = { title?: string; items: MetricItem[]; note?: string };
+/** `select`: every figure is a button that opens its details (omem's own pages); the page marks the open one with `aria-expanded`. */
+export type MetricsOptions = { select?: (index: number) => void };
 
 const EASE = "cubic-bezier(.22,.7,.25,1)";
 const CSS = `
@@ -154,10 +158,13 @@ a.oc-row:hover .oc-row-label { text-decoration: underline; text-underline-offset
 .oc-metrics { display: grid; grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); row-gap: 18px; overflow: hidden; }
 @container (max-width: 520px) { .oc-metrics { grid-template-columns: repeat(var(--cols-narrow, 2), minmax(0, 1fr)); } }
 .oc-metric { display: grid; gap: 3px; align-content: start; min-width: 0; padding: 2px 18px; margin-left: -1px; border-left: 1px solid var(--line); color: inherit; text-decoration: none; }
-a.oc-metric { border-radius: 0 6px 6px 0; }
-a.oc-metric:hover { background: var(--hover); }
-a.oc-metric:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+a.oc-metric, button.oc-metric { border-radius: 0 6px 6px 0; }
+button.oc-metric { font: inherit; text-align: left; background: none; border: 0; border-left: 1px solid var(--line); padding-top: 6px; padding-bottom: 8px; cursor: pointer; transition: background-color .15s, box-shadow .15s; }
+a.oc-metric:hover, button.oc-metric:hover { background: var(--hover); }
+a.oc-metric:focus-visible, button.oc-metric:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+button.oc-metric[aria-expanded="true"] { background: var(--accent-soft, var(--hover)); box-shadow: inset 0 -2px 0 var(--accent); }
 .oc-mlabel { color: var(--muted); font-size: 11.5px; letter-spacing: .1em; overflow-wrap: anywhere; }
+.oc-mtag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--warn-soft, var(--hover)); color: var(--warn, var(--ink-2)); font-size: 10.5px; letter-spacing: .04em; line-height: 17px; vertical-align: 1px; white-space: nowrap; }
 .oc-mvalue { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
 .oc-mvalue b { font: 650 30px/1.15 var(--sans); letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .oc-mvalue span { color: var(--muted); font-size: 12px; letter-spacing: .06em; }
@@ -1136,15 +1143,16 @@ export function sparkline(doc: Document, values: number[], label?: string) {
 }
 
 /** One figure: its small spaced label, the number, the change (arrow, and green or red by whether that way is good) with its basis, and its recent course. */
-function metricEl(doc: Document, m: MetricItem) {
+function metricEl(doc: Document, m: MetricItem, select?: () => void) {
   const t = trendOf(m);
   const tone = !t ? "" : t === "flat" || m.good === "none" ? "neutral" : t === (m.good ?? "up") ? "good" : "bad";
   const change = m.change?.trim();
   const arrow = change && t && !/^[↑↓→▲▼]/.test(change) ? `${{ up: "↑", down: "↓", flat: "→" }[t]} ` : "";
-  const el = linkOr(doc, m.link, "oc-metric", { title: m.hint });
+  const el = select ? h(doc, "button", { type: "button", class: "oc-metric", title: m.hint, "aria-expanded": "false" }) : linkOr(doc, m.link, "oc-metric", { title: m.hint });
+  if (select) el.addEventListener("click", select);
   const value = String(m.value);
   el.append(
-    h(doc, "span", { class: "oc-mlabel" }, m.label),
+    h(doc, "span", { class: "oc-mlabel" }, m.label, m.tag ? h(doc, "span", { class: "oc-mtag" }, m.tag) : null),
     h(doc, "span", { class: "oc-mvalue", "aria-label": `${value}${m.unit?.trim() ?? ""}` }, h(doc, "b", { class: "oc-count", "aria-hidden": "true" }, value), m.unit?.trim() ? h(doc, "span", { "aria-hidden": "true" }, m.unit.trim()) : null),
   );
   if (change || m.note) el.append(h(doc, "span", { class: "oc-mfoot" }, change ? h(doc, "span", { class: "oc-delta", "data-tone": tone || "neutral" }, `${arrow}${change}`) : null, m.note ? h(doc, "span", {}, m.note) : null));
@@ -1153,11 +1161,12 @@ function metricEl(doc: Document, m: MetricItem) {
 }
 
 /** A row of figures divided by hairlines: as even as the count allows (up to four in a row), two to a row when narrow. Numbers count up when first seen. */
-export function metricsElement(doc: Document, g: MetricGroup) {
+export function metricsElement(doc: Document, g: MetricGroup, opts: MetricsOptions = {}) {
   ensureChartStyle(doc);
   const n = g.items.length;
   const cols = n <= 4 ? n : n <= 6 ? 3 : 4;
-  const row = h(doc, "div", { class: "oc-metrics", style: `--cols:${cols};--cols-narrow:${Math.min(2, n)}` }, ...g.items.map((m) => metricEl(doc, m)));
+  const select = opts.select;
+  const row = h(doc, "div", { class: "oc-metrics", style: `--cols:${cols};--cols-narrow:${Math.min(2, n)}` }, ...g.items.map((m, i) => metricEl(doc, m, select ? () => select(i) : undefined)));
   const el = h(doc, "div", { class: "oc-mgroup" },
     g.title ? h(doc, "span", { class: "oc-mtitle" }, g.title) : null,
     row,
