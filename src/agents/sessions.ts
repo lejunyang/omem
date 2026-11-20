@@ -10,6 +10,7 @@ import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
 import { distinctProfiles, failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, quietAfterAll, quietSet, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
+import { contextForTurn } from "./turn-context.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
 import { chatSettings, describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
@@ -338,6 +339,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const app = ctx.app;
   await refreshForRun(app);
   const t = getThread(app, threadId);
+  const resolved = contextForTurn(ctx, t, messages, userId);
   const { actor, label } = actorFor(app, t);
   const lark = larkScope(t, userId);
   // Someone who cannot read the conversation's space still gets their turn, in a space of theirs.
@@ -451,7 +453,7 @@ ${renderMessages(messages, app)}
 ${WAKE_NOTE}`
         : watched
         ? (withTools ? watchedText!.full : watchedText!.facts)
-        : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${withTools ? NEW_TURN_NOTE : "回答本人的新消息。"}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${currentBrief}` : ""}`) + (promptOverride ? "" : awarenessNote(app, ctx.run.id, withTools));
+        : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${withTools ? NEW_TURN_NOTE : "回答本人的新消息。"}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${currentBrief}` : ""}`) + (promptOverride ? "" : awarenessNote(app, ctx.run.id, withTools, resolved));
     const context = fresh ? `# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString(), ownerCold(currentBrief), withTools)}\n\n---\n\n` : "";
     return { prompt: `（${selected.now}）\n\n${context}${newPart}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
   };

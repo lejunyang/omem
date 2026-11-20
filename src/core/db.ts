@@ -2268,6 +2268,9 @@ export const migrations: readonly string[] = [
   create index work_task_run on agent_work_tasks(run_id);`,
   `alter table session_cleanup add column failed_at text;
    alter table session_cleanup add column failure_reason text;`,
+  `create index notifications_pushed_message on notifications(json_extract(context,'$.pushed.messageId'));
+   create index notifications_lark_message on notifications(json_extract(context,'$.larkMessageId'));
+   create index listen_contexts_conversation on listen_contexts(conversation_id);`,
 ];
 
 export type Db = DatabaseSync;

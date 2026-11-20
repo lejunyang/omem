@@ -86,16 +86,18 @@ export function itemPlaces(app: App, itemId: string, userId: string): PlaceView[
 }
 
 /** Open items of this person linked to any of these places. */
-export function itemsAt(app: App, places: Place[], userId: string, limit = 3): Item[] {
+export function itemsAt(app: App, places: Place[], userId: string, limit = 3, includeClosed = false): Item[] {
   const convs = places.filter((p) => p.kind === "conversation").map((p) => p.ref);
   const srcs = places.filter((p) => p.kind === "source").map((p) => p.ref);
   if (!convs.length && !srcs.length) return [];
+  const spaces = accessibleSpaces(app, userId);
   const ids = all<{ id: string }>(app.db,
     `select distinct i.id from item_materials m join items i on i.id = m.item_id
-      where i.user_id = ? and i.status in (${OPEN.map(() => "?").join(",")})
+      where i.user_id = ? ${includeClosed ? "" : "and i.status in ('open','waiting','snoozed')"}
+        ${spaces ? "and i.space_id in (select value from json_each(?))" : ""}
         and ((m.kind = 'conversation' and m.ref in (${convs.map(() => "?").join(",") || "''"})) or (m.kind = 'source' and m.ref in (${srcs.map(() => "?").join(",") || "''"})))
-      order by i.updated_at desc limit ?`,
-    userId, ...OPEN, ...convs, ...srcs, limit);
+      order by i.updated_at desc, i.id limit ?`,
+    userId, ...(spaces ? [JSON.stringify(spaces)] : []), ...convs, ...srcs, limit);
   return ids.map((r) => getItem(app, r.id));
 }
 
@@ -103,9 +105,7 @@ const placeLine = (v: PlaceView, tz: string) =>
   `  - ${v.kind === "conversation" ? "会话" : "群聊原件"}「${truncate(v.title, 40)}」（${v.kind === "conversation" ? v.ref : `src:${v.ref}`}${v.lastAt ? `，最近 ${new Date(v.lastAt).toLocaleString("zh-CN", { hour12: false, timeZone: tz, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}）${v.summary ? `：${v.summary}` : ""}`;
 
 /** “这件事还在这些会话里进行”: for the items linked to this run's places, the other places they go on in; "" when none. */
-export function itemPlacesNote(app: App, runId: string, userId: string, withTools = true): string {
-  const here = placesOfRun(app, runId);
-  const items = itemsAt(app, here, userId);
+export function itemPlacesNote(app: App, runId: string, userId: string, withTools = true, here = placesOfRun(app, runId), items = itemsAt(app, here, userId)): string {
   const parts: string[] = [];
   for (const item of items) {
     const others = itemPlaces(app, item.id, userId).filter((v) => !here.some((p) => p.kind === v.kind && p.ref === v.ref)).slice(0, 5);
@@ -153,6 +153,10 @@ export type Candidate = { item: Item; score: number; reasons: string[] };
 export function placeCandidates(app: App, runId: string, userId: string, limit = 3): Candidate[] {
   const here = placesOfRun(app, runId);
   if (!here.length || itemsAt(app, here, userId, 1).length) return [];
+  return candidatesAt(app, here, userId, limit);
+}
+
+export function candidatesAt(app: App, here: Place[], userId: string, limit = 3) {
   const mats = here.map((p) => placeMaterial(app, p));
   const text = mats.map((m) => m.text).join("\n");
   return materialCandidates(app, text, userId, limit, {

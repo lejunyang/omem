@@ -132,10 +132,11 @@ export { addMessage, conversationMessages, ensureConversation } from "./threads.
  * Ask the assistant (web, CLI, tests). Goes through the same inbox as chat
  * channels: commands, thread resolution, burst merging, per-thread lanes.
  */
-export async function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; channel?: string; externalId?: string; userId?: string; meta?: Record<string, unknown> }) {
+export async function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; itemId?: string; channel?: string; externalId?: string; userId?: string; meta?: Record<string, unknown> }) {
   const r = await receive(app, {
     userId: input.userId,
     text: input.text,
+    itemId: input.itemId,
     ...(input.meta ? { meta: input.meta } : {}),
     spaceId: input.spaceId,
     conversationId: input.conversationId ?? (input.externalId ? undefined : newId("c")),

@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { lapseItemAsks } from "../agents/ask-expiry.ts";
 import { all, one, run, tx } from "../core/db.ts";
+import { scopeFor } from "../core/users.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { emitOmem } from "../rules/omem-events.ts";
 import { noteAutoOutcome } from "./auto-cases.ts";
@@ -104,6 +105,13 @@ export function getItem(app: App, id: string): Item {
   const r = one<Row>(app.db, "select * from items where id = ?", id);
   if (!r) throw new HttpError(404, `事项不存在：${id}`);
   return toItem(r);
+}
+
+export function requireReadableItem(app: App, id: string, userId: string, spaces: string[] | null = null) {
+  const item = getItem(app, id);
+  const readable = scopeFor(app, userId, spaces);
+  if ((readable && !readable.includes(item.spaceId)) || item.userId !== userId) throw new HttpError(403, "不能读取该事项");
+  return item;
 }
 
 export function itemEvents(app: App, id: string): ItemEvent[] {

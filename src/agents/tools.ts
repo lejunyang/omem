@@ -2661,9 +2661,8 @@ def({
   description: "读取一件事项的全貌：完整字段、当前来源、全部时间线、材料、工作文件，以及它在哪些会话和群里进行（places：每处最近的一句话或摘要）、正在为它跑的运行（runs）、它的上层（parent）和挂在下面的事项（children）；工作线另有“现在”（now）和还没定的下一步（next）。纠正前先读。跨空间发现仍只读。",
   schema: z.object({ item_id: z.string() }),
   handler: async (ctx, a) => {
-    const item = getItem(ctx.app, a.item_id);
-    const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
-    if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
+    const { requireReadableItem } = await import("../items/store.ts");
+    const item = requireReadableItem(ctx.app, a.item_id, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(ctx.app, { item: item.id }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");

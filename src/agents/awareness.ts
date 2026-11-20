@@ -1,3 +1,4 @@
+import type { ResolvedTurn } from "./turn-context.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
@@ -57,15 +58,15 @@ export function isBackground(app: App, r: Run) {
  * The run's awareness sections (related runs, the item's other places, candidates), separated from
  * the task by a rule; "" when there is nothing. Never fails a run.
  */
-export function awarenessNote(app: App, runId: string | null | undefined, withTools = true): string {
+export function awarenessNote(app: App, runId: string | null | undefined, withTools = true, turn?: ResolvedTurn): string {
   if (!runId) return "";
   try {
     const r = getRun(app, runId);
     const userId = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", runId)?.user_id ?? OWNER;
     const parts = [
       relatedNote(app, runId),
-      itemPlacesNote(app, runId, userId, withTools),
-      r.kind === "ask" || r.kind === "agent" ? candidatesNote(app, runId, userId, withTools) : "",
+      itemPlacesNote(app, runId, userId, withTools, turn?.here, turn?.linked),
+      turn ? (turn.context.candidates.length ? ["# 可能是同一件事的在办事项", ...turn.context.candidates.map(c => `- ${c.itemId}「${truncate(c.title, 60)}」：${c.reason}`), ...(withTools ? ["用 read_item 核实后再关联。"] : [])].join("\n") : "") : r.kind === "ask" || r.kind === "agent" ? candidatesNote(app, runId, userId, withTools) : "",
     ].filter(Boolean);
     return parts.length ? `\n\n---\n\n${parts.join("\n\n")}` : "";
   } catch (e) {

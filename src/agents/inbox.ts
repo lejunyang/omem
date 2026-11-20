@@ -24,6 +24,7 @@ export type Inbound = Partial<ThreadAddress> & {
   text: string;
   /** Web / CLI: an explicit conversation (thread) id. */
   conversationId?: string;
+  itemId?: string;
   /** What was being discussed around the message (group lines before an @mention). */
   context?: string;
   contextLabel?: string;
@@ -55,10 +56,20 @@ export type Received = { thread: Thread; messageId: string | null; runId: string
 
 export async function receive(app: App, inb: Inbound): Promise<Received> {
   const userId = inb.userId ?? OWNER;
+  if (inb.itemId) {
+    const { requireReadableItem } = await import("../items/store.ts");
+    requireReadableItem(app, inb.itemId, userId);
+  }
   let thread: Thread;
   let started: Received["started"] = null;
   if (inb.conversationId) {
-    thread = findThread(app, inb.conversationId) ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
+    const previous = findThread(app, inb.conversationId);
+    thread = previous ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
+    if (!previous && inb.itemId) {
+      thread = updateThread(app, thread.id, { settings: { ...thread.settings, itemId: inb.itemId } });
+      const { addMaterials } = await import("../items/materials.ts");
+      addMaterials(app, inb.itemId, [{ kind: "conversation", ref: thread.id }], userId, "user");
+    }
     if (thread.userId !== userId && !canWrite(app, userId, thread.spaceId)) throw new HttpError(403, "不能在别人的会话里发消息");
   } else if (inb.channel && inb.chatId) {
     const r = resolveThread(app, { ...(inb as ThreadAddress), userId, spaceId: inb.spaceId ?? (inb.isGroup ? undefined : personalSpaceId(userId)) });
@@ -134,7 +145,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     }
   }
 
-  const meta: Record<string, unknown> = { ...inb.meta, ...(userId === OWNER ? {} : { userId }) };
+  const meta: Record<string, unknown> = { ...inb.meta, ...(inb.itemId ? { itemId: inb.itemId } : {}), ...(userId === OWNER ? {} : { userId }) };
   if (inb.fromAsk) meta.fromAsk = true;
   if (inb.context) {
     meta.context = inb.context;
