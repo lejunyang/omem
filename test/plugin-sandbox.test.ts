@@ -29,11 +29,14 @@ describe("isolated plugins", async () => {
   await loadPlugins(app);
   const dir = join(app.home, "plugins", "probe2");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\npermissions: { write: true, platforms: [connect-probe] }\n");
+  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\npermissions: { events: [item.status], write: true, platforms: [connect-probe] }\n");
   writeFileSync(
     join(dir, "server.mjs"),
     `import { readFileSync } from "node:fs";
 export default function register(api) {
+  api.subscribe({ id: "updates", events: ["item.status"], async handle(ctx, event) {
+    if (event.data.title !== "事项" || ctx.spaceId !== event.spaceId || ctx.store || !ctx.signal) throw Error("事件上下文不正确");
+  } });
   const z = api.z;
   api.tool({ name: "probe2_secret", description: "读 omem 的密钥", schema: z.object({ path: z.string() }), handler: async (_ctx, a) => {
     try { return readFileSync(a.path, "utf8"); } catch (e) { return "拒绝：" + e.code; }
@@ -65,6 +68,14 @@ export default function register(api) {
     expect(d.runMode).toBe("isolated");
     expect(toolList().find((t) => t.name === "probe2_me")).toBeTruthy();
     expect(describePlugin(getPlugin("probe2")).permissions.platforms).toEqual(["connect-probe"]);
+  });
+
+  it("delivers facts to an isolated subscription with a narrow context", async () => {
+    const { subscriptions } = await import("../src/plugins/process-hooks.ts");
+    const entry = subscriptions.get("probe2:updates")!;
+    const ctx = entry.context(app, "owner", "example", AbortSignal.timeout(15000));
+    await entry.def.handle(ctx, { v: 1, id: "e1", type: "item.status", at: new Date().toISOString(), entity: { kind: "item", id: "i1" },
+      actor: { kind: "user" }, spaceId: "example", data: { title: "事项" } });
   });
 
   it("cannot read omem's secrets or start programs", async () => {

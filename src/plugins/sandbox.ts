@@ -26,12 +26,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(here, f)).find((f) => existsSync(f))!;
 
 type Declared = {
+  subscriptions: Pick<import("./types.ts").Subscription, "id" | "events">[];
   objects: Omit<PluginObject, "match" | "read">[];
   hooks?: { name: string; label?: string }[];
   tools: { name: string; description: string; jsonSchema: Record<string, unknown>; write: boolean; page: boolean; approval: boolean; whenConnected: boolean }[];
   platforms: (Omit<PluginPlatform, "readers"> & { readers: { kind: string; label: string; id: string; read: boolean; changes: boolean }[] })[];
 };
-type Pending = { ok: (v: any) => void; fail: (e: Error) => void; ctx?: ToolContext; timer: NodeJS.Timeout };
+type Pending = { ok: (v: any) => void; fail: (e: Error) => void; ctx?: ToolContext; eventCtx?: import("./types.ts").CallContext; timer: NodeJS.Timeout };
 
 export type Sandbox = { tools: Declared["tools"]; platforms: string[]; stop(): void };
 
@@ -40,7 +41,7 @@ const CALL_MS = 5 * 60_000;
 export async function startSandbox(
   app: App,
   plugin: { id: string; dir: string; server: string; services: { name: string }[] },
-  opts: { prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
+  opts: { subscribe: import("./types.ts").ProcessApi["subscribe"]; prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
 ): Promise<Sandbox> {
   const data = join(app.home, "plugin-data", plugin.id);
   mkdirSync(data, { recursive: true });
@@ -57,20 +58,29 @@ export async function startSandbox(
   const conns = new Map<string, PluginConnection>();
   let dead: string | null = null;
 
-  const ask = (msg: Record<string, unknown>, ctx?: ToolContext) =>
+  function releaseHandles(call: number) {
+    for (const [handle, owner] of eventHandles) if (owner === call) {
+      conns.delete(handle);
+      eventHandles.delete(handle);
+    }
+  }
+  const ask = (msg: Record<string, unknown>, ctx?: ToolContext, eventCtx?: import("./types.ts").CallContext) =>
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
-      const callMs = String(msg.t).startsWith("object.") || msg.t === "hook" ? 15000 : CALL_MS;
+      const callMs = String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event") ? 15000 : CALL_MS;
       const timer = setTimeout(() => {
         pending.delete(id);
+        releaseHandles(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
-      pending.set(id, { ok, fail, ctx, timer });
+      pending.set(id, { ok, fail, ctx, eventCtx, timer });
       child.send({ ...msg, id });
     });
-  const handle = (c: PluginConnection) => {
+  const eventHandles = new Map<string, number>();
+  const handle = (c: PluginConnection, eventCall?: number) => {
     const h = `c${++seq}`;
+    if (eventCall !== undefined) eventHandles.set(h, eventCall);
     conns.set(h, c);
     // Kept for the call or reading that asked; old ones go.
     if (conns.size > 500) conns.delete(conns.keys().next().value!);
@@ -79,6 +89,15 @@ export async function startSandbox(
 
   /** What the process asks back, answered as the call in progress. */
   async function answer(op: string, a: Record<string, any>) {
+    const eventCtx = pending.get(a.call)?.eventCtx;
+    if (eventCtx) {
+      eventCtx.signal.throwIfAborted();
+      if (op === "connection") {
+        const c = await eventCtx.connection(String(a.provider));
+        return c ? handle(c, a.call) : null;
+      }
+      if (op !== "fetch" || eventHandles.get(a.handle) !== a.call) throw new Error("当前调用没有此权限");
+    } else if (op === "fetch" && eventHandles.has(a.handle)) throw new Error("连接已经失效");
     const ctx = pending.get(a.call)?.ctx;
     const need = () => {
       if (!ctx) throw new Error("这个请求不属于正在进行的调用");
@@ -140,6 +159,7 @@ export async function startSandbox(
         const p = pending.get(m.id);
         if (!p) return;
         pending.delete(m.id);
+        releaseHandles(m.id);
         clearTimeout(p.timer);
         if (m.ok) p.ok(m.value);
         else p.fail(new Error(m.error));
@@ -164,6 +184,15 @@ export async function startSandbox(
     throw e;
   });
 
+  try {
+    for (const sub of declared.subscriptions ?? []) opts.subscribe({
+      ...sub,
+      handle: (ctx, event) => ask({ t: "event", name: sub.id, event, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx),
+    });
+  } catch (error) {
+    child.kill();
+    throw error;
+  }
   const undo: (() => void)[] = [];
   for (const def of declared.objects ?? []) undo.push(registerObject(plugin.id, {
     ...def,

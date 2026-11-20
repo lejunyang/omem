@@ -3,6 +3,7 @@ import { authFetch, loginProvider, registerLoginProvider } from "../auth/provide
 import { registerAuthenticator } from "../auth/authenticators.ts";
 import { registerAgentLogin } from "../agents/agent-logins.ts";
 import { accountCatalog } from "../agents/catalog.ts";
+import { registerProcessHooks } from "./process-hooks.ts";
 import { registerFeatures } from "../auth/features.ts";
 import { appConfig } from "../auth/apps.ts";
 import { listConnections } from "../auth/vault.ts";
@@ -93,6 +94,9 @@ export const manifestSchema = z.object({
    */
   permissions: z
     .object({
+      events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution"])).default([]),
+      itemProvider: z.boolean().default(false),
+      metricProvider: z.boolean().default(false),
       write: z.boolean().default(false),
       connectors: z.array(z.string()).default([]),
       platforms: z.array(z.string()).default([]),
@@ -100,7 +104,7 @@ export const manifestSchema = z.object({
       /** Backends it brings a login method for (`api.agentLogin`, docs/v2/agent-accounts.md §6): it writes credentials into members' account folders. */
       agentLogin: z.array(z.string()).default([]),
     })
-    .default({ write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
+    .default({ events: [], itemProvider: false, metricProvider: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
 }).refine((m) => Object.keys(m.mcp).every((n) => /^[a-z][a-z0-9-]{0,39}$/.test(`${m.id}-${n}`)), "MCP 服务加插件前缀后最多 40 个字符")
   .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符")
   .superRefine((m, ctx) => {
@@ -238,6 +242,7 @@ async function loadCode(app: App, p: LoadedPlugin) {
   const prefix = `${manifest.id}_`;
   if (p.source === "data" && trustMode(app, manifest.id) === "isolated") return loadIsolated(app, p);
   const api: PluginApi = {
+    ...registerProcessHooks(manifest, p.connectors),
     id: manifest.id,
     object(def) { p.connectors.push(registerObject(manifest.id, def)); },
     hook(def) { p.connectors.push(registerHook(manifest.id, def)); },
@@ -346,6 +351,7 @@ async function loadIsolated(app: App, p: LoadedPlugin) {
   const server = serverFile(p.dir, manifest);
   if (!server || !existsSync(server)) return;
   const sb = await startSandbox(app, { id: manifest.id, dir: p.dir, server, services: manifest.services }, {
+    subscribe: registerProcessHooks(manifest, p.connectors).subscribe,
     prefix: `${manifest.id}_`,
     packageRoot: packageRoot(),
     connected: connectedTo(manifest.id),
