@@ -95,6 +95,7 @@ async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: str
   const attempt = () =>
     runRole(ctx.app, {
       role,
+      requiredTools: role === "item-keeper" ? ["settle_items"] : undefined,
       spaceId,
       spaces,
       alsoRead: readSpaces,
@@ -330,7 +331,7 @@ async function runAgentTask(ctx: RunContext) {
     const same = previous.input.spec === name && JSON.stringify(previous.input.execution) === JSON.stringify(execution) && JSON.stringify(previous.input.assistantScope) === JSON.stringify(assistantScope);
     if (same && previous.status === "done") resumeSessionId = previous.output.sessionId as string | undefined;
   }
-  if (agentWorkId) {
+  if (agentWorkId && !ctx.run.input.boardTaskId) {
     const { refreshWork, workContext } = await import("./agent-work.ts");
     const work = refreshWork(ctx.app, agentWorkId);
     if (work) {
@@ -378,7 +379,7 @@ async function runAgentTask(ctx: RunContext) {
       onEvent: (e) => ctx.event(e.type, e),
       resumeSessionId: resume,
       // A rule's run keeps its session for a trigger that joins after it ends (rules/actions.ts).
-      persistSession: !!agentWorkId || !!silent || !!meeting || (!!triggers && !!ctx.run.lane),
+      persistSession: (!!agentWorkId && !ctx.run.input.boardTaskId) || !!silent || !!meeting || (!!triggers && !!ctx.run.lane),
       lark: assistantScope?.lark ?? lark,
     });
   const previousSession = resumeSessionId ?? getRun(ctx.app, ctx.run.id).output.sessionId;
@@ -792,6 +793,7 @@ registerHandler("memory-review", async (ctx) => {
   ].join("\n");
   const r = await runRole(app, {
     role: "memory-reviewer",
+    requiredTools: ["review_memories"],
     spaceId,
     spaces: [spaceId],
     task,
@@ -1194,6 +1196,7 @@ registerHandler("heartbeat", async (ctx) => {
   (await import("./ask-expiry.ts")).sweepStaleAsks(app);
   await (await import("../channels/notify-read.ts")).syncNotificationReads(app).catch((e: Error) => console.warn("[omem] 同步通知已读失败：", e.message));
   releaseLater(app);
+  await (await import("../channels/lark-asks.ts")).releaseDeferredAsks(app);
   await (await import("../flows/engine.ts")).flowReminders(app);
   labelOutcomes(app);
   labelDecisions(app, { limit: 200 });

@@ -9,6 +9,8 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
+import { dispatchBoard, cancelBoard, readBoard, reportPage, reviewBoard } from "./work-board.ts";
+import { workInConversation, refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
 import { executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
 import { designBodySchema } from "../designs/types.ts";
@@ -72,7 +74,7 @@ import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
-import { CODE_STARTERS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
+import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
@@ -1065,7 +1067,7 @@ def({
 function assistantTaskScope(ctx: ToolContext) {
   return {
     spaces: ctx.writable ?? ctx.spaces,
-    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...CODE_STARTERS])],
+    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS])],
     userId: ctx.userId,
     lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private },
   };
@@ -1079,7 +1081,7 @@ function assistantTaskScope(ctx: ToolContext) {
 const LEND_DENIED = new Set([
   "lark_write", "lark_invite", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize",
   "lark_send", "lark_react", "lark_card", "lark_send_file", "reply_to_asker", "meeting_suggest",
-  "run_agent", "ask_agent", ...CODE_STARTERS,
+  "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS,
   "stay_quiet", "report_rule_failure", ...ROLE_TOOLS,
 ]);
 const MAX_LENT_TOOLS = 12;
@@ -1124,7 +1126,7 @@ function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, 
 
 /** What a rule's run hands on: where it may answer, how, and on whose behalf the rule fired. */
 const RULE_DELIVERY = ["rule", "lark", "threadId", "replyAt", "silent", "hideThinking", "conversationId", "fullAccess"] as const;
-const HANDOFF_DENIED = ["run_agent", "ask_agent", ...CODE_STARTERS, "save_rule", "set_chat_watch"];
+const HANDOFF_DENIED = ["run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS, "save_rule", "set_chat_watch"];
 
 /**
  * run_agent inside a rule's run: the chosen agent takes this trigger over within the rule's limits —
@@ -1174,6 +1176,99 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
   });
   return `已在规则「${rule.name}」的范围内交给 ${spec.name}（运行 ${r.id}）：它按规则的回复方式在原来的群或话题里处理，话题里的后续回复仍回到你这里。你这一轮不要再在群里回复同一件事，调用 stay_quiet 结束（还有别的事要做就先做完）。`;
 }
+
+function openDelegatedTopic(ctx: ToolContext, conversationId: string, work: AgentWork) {
+  const larkChat = one<{ channel: string; external_id: string | null }>(ctx.app.db, "select channel, external_id from conversations where id = ?", conversationId);
+  const inChat = !!larkChat?.external_id && (larkChat.channel === "lark" || larkChat.channel.startsWith("lark:")) && !larkChat.external_id.includes("#");
+  // The topic opens under the owner's message this turn answers; a turn nobody sent (a wake-up, a
+  // result handed back) opens it under this work's own latest message here (agents/home.ts).
+  const anchor = inChat
+    ? one<{ id: string }>(ctx.app.db, "select json_extract(meta, '$.externalId') id from messages where run_id = ? and role = 'user' and json_extract(meta, '$.externalId') is not null order by created_at desc limit 1", ctx.runId!)?.id
+      ?? replyAnchor(ctx.app, ctx.runId, conversationId) ?? undefined
+    : undefined;
+  if (anchor) void openWorkTopic(ctx.app, work, anchor);
+  return { inChat, anchor };
+}
+
+const boardExecution = z.union([executionSchema, z.enum(["strong", "standard", "cheap"])]);
+function resolveBoardExecution(ctx: ToolContext, value?: z.infer<typeof boardExecution>) {
+  if (typeof value !== "string") return validateExecution(ctx.app, value, ctx.userId);
+  const tier = ctx.app.config.agents.tiers[value];
+  if (!tier) throw new HttpError(400, `请先配置 ${value} 档位，或指定后端与模型`);
+  return validateExecution(ctx.app, { ...tier, source: "auto", reason: `任务板选用 ${value} 档` }, ctx.userId);
+}
+
+function boardOrigin(ctx: ToolContext) {
+  const origin = ctx.runId && getRun(ctx.app, ctx.runId);
+  if (ctx.peer || !origin || origin.input.rule || typeof origin.input.conversationId !== "string")
+    throw new HttpError(403, "任务板只在本机会话中使用");
+  return { id: origin.id, conversation: origin.input.conversationId };
+}
+
+function authorizedWork(ctx: ToolContext, id: string, edit: boolean) {
+  const origin = boardOrigin(ctx);
+  const work = refreshWork(ctx.app, id);
+  if (!work || work.askRunId !== id || !canReadRun(ctx.app, ctx.userId ?? OWNER, id)) throw new HttpError(404, "找不到工作会话");
+  const parent = getRun(ctx.app, id);
+  if (parent.spaceId) space(ctx, parent.spaceId);
+  if (edit && (!([work.workConversationId, work.rootConversationId].includes(origin.conversation)) || runUser(ctx.app, id) !== (ctx.userId ?? OWNER)))
+    throw new HttpError(403, "请在发起或承接这项工作的会话中操作");
+  return work;
+}
+
+def({
+  name: "dispatch_work", write: true,
+  description: "并行派出 2～6 块互不依赖、能分别验收的调查。每块写明目标、材料和验收条件；一两步能完成或各块要互等时不用。派出后结束回合，必选块收齐会再叫你。",
+  schema: z.object({ title: z.string().trim().min(1).max(160), work_id: z.string().optional(), tasks: z.array(z.object({
+    title: z.string().trim().min(1).max(160), goal: z.string().trim().min(1), accept: z.string().trim().min(1),
+    agent: z.string().optional(), execution: boardExecution.optional(), required: z.boolean().optional(), deadline_minutes: z.number().int().positive().max(525600).optional(),
+  })).min(2).max(6) }),
+  handler: async (ctx, a) => {
+    const origin = boardOrigin(ctx);
+    const plans = a.tasks.map(t => {
+      const spec = t.agent && t.agent !== "assistant" ? readAgentSpec(ctx.app, t.agent) : undefined;
+      if (spec && spec.status !== "active") throw new HttpError(400, `档案 ${spec.name} 尚未启用`);
+      const spaceId = space(ctx, spec?.space ?? ctx.spaceId);
+      const scope = assistantTaskScope(ctx);
+      if (spec && !spec.spaces.includes("*")) scope.spaces = [spaceId, ...spec.spaces].filter(id => !scope.spaces || scope.spaces.includes(id));
+      scope.denyTools.push(...LEND_DENIED, "notify", "ask_user", "suggest_next", "show", "wake",
+        "flow_start", "improve_start", "switch_run_ai", "generate_wiki");
+      scope.lark = { chats: [], draft: false, urgent: false, private: false };
+      return { ...t, execution: resolveBoardExecution(ctx, t.execution), scope, spaceId };
+    });
+    const existing = a.work_id ?? refreshWork(ctx.app, origin.id)?.askRunId ?? workInConversation(ctx.app, origin.conversation)?.askRunId;
+    const current = existing ? authorizedWork(ctx, existing, true) : null;
+    if (current) await autoTurnGuard(ctx, current);
+    const work = current ?? createAgentWork(ctx.app, { askRunId: origin.id, rootConversationId: origin.conversation, spaceId: ctx.spaceId, title: a.title, startMessage: a.title });
+    const ids = dispatchBoard(ctx.app, work, plans, origin.id);
+    if (!current) openDelegatedTopic(ctx, origin.conversation, work);
+    if (origin.id !== work.askRunId) setRunOutput(ctx.app, origin.id, { boardId: work.askRunId });
+    return JSON.stringify({ work_id: work.askRunId, tasks: ids.map((id,i) => ({ id, title: plans[i].title })), message: "这一回合到此为止，告诉本人已经分头在做，不要等、不要轮询。必选块都有结果后会再叫你。" });
+  },
+});
+
+def({
+  name: "work_status", description: "本人问进度或需要核对历史验收时读任务板。派出后不要轮询。",
+  schema: z.object({ work_id: z.string() }),
+  handler: (ctx, a) => { authorizedWork(ctx, a.work_id, false); return JSON.stringify(readBoard(ctx.app, a.work_id)); },
+});
+
+def({
+  name: "work_review", write: true, description: "协调回合按验收条件接受、标阻塞或退回已结束的块。退回写明缺口，可以换档位，每块最多重做两次；还有重做就结束本轮。",
+  schema: z.object({ work_id: z.string(), decisions: z.array(z.object({ task: z.string(), decision: z.enum(["accept","redo","block"]), note: z.string().optional(), execution: boardExecution.optional() })).min(1).max(30) }),
+  handler: async (ctx, a) => {
+    const work = authorizedWork(ctx, a.work_id, true);
+    if (a.decisions.some(d => d.decision === "redo")) await autoTurnGuard(ctx, work);
+    reviewBoard(ctx.app, a.work_id, a.decisions.map(d => ({ ...d, execution: resolveBoardExecution(ctx, d.execution) })), ctx.runId!);
+    return a.decisions.some(d => d.decision === "redo") ? "已退回重做，结束本轮；结果齐后会再叫你。" : "已记录验收决定。";
+  },
+});
+
+def({
+  name: "work_cancel", write: true, description: "工作撤销时取消整板或指定块的未完成运行。退回补证据用 work_review。",
+  schema: z.object({ work_id: z.string(), task: z.string().optional() }),
+  handler: (ctx, a) => { authorizedWork(ctx, a.work_id, true); cancelBoard(ctx.app, a.work_id, a.task); return "已取消"; },
+});
 
 def({
   name: "run_agent",
@@ -1227,15 +1322,7 @@ def({
         execution, assistantScope, extraTools,
       });
       // Open the Feishu topic from the message that triggered this ask (lark only).
-      const larkChat = one<{ channel: string; external_id: string | null }>(ctx.app.db, "select channel, external_id from conversations where id = ?", conversationId);
-      const inChat = !!larkChat?.external_id && (larkChat.channel === "lark" || larkChat.channel.startsWith("lark:")) && !larkChat.external_id.includes("#");
-      // The topic opens under the owner's message this turn answers; a turn nobody sent (a wake-up, a
-      // result handed back) opens it under this work's own latest message here (agents/home.ts).
-      const anchor = inChat
-        ? one<{ id: string }>(ctx.app.db, "select json_extract(meta, '$.externalId') id from messages where run_id = ? and role = 'user' and json_extract(meta, '$.externalId') is not null order by created_at desc limit 1", ctx.runId!)?.id
-          ?? replyAnchor(ctx.app, ctx.runId, conversationId) ?? undefined
-        : undefined;
-      if (anchor) void import("./agent-work.ts").then(({ openWorkTopic }) => openWorkTopic(ctx.app, w.work, anchor));
+      const { inChat, anchor } = openDelegatedTopic(ctx, conversationId, w.work);
       if (inChat && !anchor) return `已在独立工作会话把这件事交给 ${spec.name}，运行 ${w.runId}。这里没有这件事自己的飞书消息可以挂话题，它的结论和要本人决定的事会直接发在本会话（不是话题），不要说“已在话题里”。`;
       return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}${lentNote}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
@@ -1668,13 +1755,18 @@ function runSteps(events: { type: string; data: unknown }[], status: string): st
 
 def({
   name: "read_run",
-  description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。",
-  schema: z.object({ run_id: z.string() }),
+  description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。按任务板报告的续页提示传 offset 读取下一段。",
+  schema: z.object({ run_id: z.string(), offset: z.number().int().nonnegative().optional().describe("任务板报告的起点，首段为 0，续页用上页给出的值") }),
   handler: async (ctx, a) => {
     const r = getRun(ctx.app, a.run_id);
     if (r.spaceId) space(ctx, r.spaceId);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
     if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
+    if (a.offset !== undefined) {
+      if (!canReadRun(ctx.app, ctx.userId ?? OWNER, r.id)) throw new HttpError(404, "找不到运行");
+      if (!r.input.boardTaskId || typeof r.output.answer !== "string") throw new HttpError(400, "该运行没有任务板报告");
+      return reportPage(r.output.answer, r.id, a.offset);
+    }
     const children = listRuns(ctx.app, { parentId: r.id, limit: 200 }).filter(child => !child.spaceId || !allowed || allowed.includes(child.spaceId));
     const childText = children.length ? `\n子运行：\n${children.map(child => `- ${child.id} [${child.kind}/${child.status}] ${child.title}${child.error ? ` · ${truncate(child.error, 200)}` : ""}`).join("\n")}\n` : "";
     const events = runEvents(ctx.app, r.id).filter((e) => e.type !== "thought");
@@ -5422,6 +5514,8 @@ def({
     if (!visible(root)) throw new HttpError(403, "不能访问该运行的空间");
     if (root.kind === "code" || root.kind === "review") throw new HttpError(400, "编码交办换 AI 用 continue_code_run 的 execution / review_execution");
     const targets = [root, ...(a.with_children === false ? [] : listRuns(ctx.app, { parentId: root.id, limit: 500 }).filter((r) => visible(r) && r.kind !== "code" && r.kind !== "review"))];
+    if (targets.some(r => r.input.boardTaskId && ["queued", "running", "failed"].includes(r.status)))
+      throw new HttpError(409, "任务板子任务换 AI 请用 work_review 退回并指定 execution；只切换发起运行可传 with_children=false");
     const { cancelRun } = await import("./runs.ts");
     const done: string[] = [];
     for (const r of targets) {
@@ -6757,7 +6851,7 @@ export const toolAlwaysApproves = (name: string) => alwaysApprove.has(name);
 // ------------------------------------------------------------------ registry
 
 export function toolList(filter?: Set<string> | null) {
-  return tools.filter((t) => !filter || filter.has(t.name));
+  return tools.filter((t) => !filter || (filter.has(t.name) && (!WORK_BOARD_TOOLS.includes(t.name) || filter.has("run_agent"))));
 }
 
 /** Leave out the tools that are not for this person now (Tool.available). */
@@ -6791,7 +6885,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const tool = tools.find((t) => t.name === name);
   if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
-  if (!tool || (ctx.tools && !ctx.tools.has(name))) return { text: `工具 ${name} 不可用`, isError: true };
+  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))) return { text: `工具 ${name} 不可用`, isError: true };
   mark(`tool ${name}`);
   // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
   if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };

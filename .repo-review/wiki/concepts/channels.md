@@ -117,7 +117,7 @@ flowchart LR
 7. 搜索 @ 本人、但这次没读到的群消息（免打扰群里的 @ 也在这里），写入 `personal` 空间的 `lark:mentions`；设置为“不读取”的会话除外。
 8. 日程、妙记按小时读；最后每个空间动过的原件各调一次 `scheduleIngest`，ingest 的任务里会写明原件是单聊、机器人单聊、群聊还是话题群。
 
-订阅由 Agent 工具 `list_lark_chats` / `set_lark_subscription` 或 HTTP 接口维护；单个会话的采集方式用工具 `set_lark_capture_policy` 或 `PUT /api/lark/chats/:id/policy` 改，网页在 设置 → 渠道。`GET /api/lark/captured` 列出采集过的会话及其类型、免打扰、是否参与过、当前方式。调度项 `lark-poll` 默认每 10 分钟，但**默认关闭**。
+订阅由 Agent 工具 `list_lark_chats` / `set_lark_subscription` 或 HTTP 接口维护；单个会话的采集方式用工具 `set_lark_capture_policy` 或 `PUT /api/lark/chats/:id/policy` 改，网页在 设置 → 采集 → 消息采集。`GET /api/lark/captured` 列出采集过的会话及其类型、免打扰、是否参与过、当前方式。调度项 `lark-poll` 默认每 10 分钟，但**默认关闭**。
 
 `previewUnsubscribed` 是给 curate 用的：列出没订阅、没被排除（kv 键 `lark_curate_excluded`）的非单聊，取最近三天各 12 条预览。`curate` 运行把预览交给 `curator` 角色，由它判断哪些群值得订阅；没有设置“筛选方向”时直接安静退出（[lark-personal.ts:118-135](../../../src/channels/lark-personal.ts#L118-L135)，[jobs.ts:338-350](../../../src/agents/jobs.ts#L338-L350)）。是否真的订阅，仍要走 `set_lark_subscription` 这个写入工具。
 

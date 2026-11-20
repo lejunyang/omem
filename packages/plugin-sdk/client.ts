@@ -40,7 +40,7 @@ export type Omem = {
   stream(name: string): OmemStream;
   /**
    * A voice conversation (the manifest says `voice: true`). The shell takes the microphone and talks to
-   * the voice model of settings → AI → 语音 with `instructions` and no tools; this page gets the
+   * the voice model of Settings → 后端与模型 → 语音 with `instructions` and no tools; this page gets the
    * transcript as it grows and the whole of it at the end, never the audio. Call it from a click: the
    * shell refuses a start the person did not just ask for (the promise rejects, `code: "gesture"`).
    */

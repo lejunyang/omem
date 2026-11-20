@@ -304,6 +304,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       return runs.get(runId)!;
     };
     return (e: AppEvent) => {
+      if (e.type === "work") return readable(e.workId);
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
       if (e.type === "notification") return one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
       if (e.type === "ask") return one<{ user_id: string }>(app.db, "select user_id from asks where id = ?", e.id)?.user_id === userId;
@@ -558,6 +559,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.put("/api/digest-jobs/:id", async (req) => {
     ownerOnly(req);
     return (await import("../agents/digest.ts")).updateDigestJob(app, (req.params as { id: string }).id, req.body);
+  });
+  server.get("/api/agents/session-cleanup/failures", async () => {
+    const { failedSessionCleanups } = await import("../agents/session-cleanup.ts");
+    return { failures: failedSessionCleanups(app) };
+  });
+  server.post("/api/agents/session-cleanup/retry", async (req) => {
+    const { backendKey, sessionId } = q(z.object({ backendKey: z.string().min(1), sessionId: z.string().min(1) }), req.body);
+    const { retryFailedSessionCleanup } = await import("../agents/session-cleanup.ts");
+    if (!retryFailedSessionCleanup(app, backendKey, sessionId)) throw new HttpError(404, "找不到这条已停止重试的清理记录");
+    return { queued: true };
   });
   // Models in use now against their limits, and how each did in the last 7 days.
   // Network conditions are local owner settings; interface names and affected runs stay private.
@@ -1618,6 +1629,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!work) throw new HttpError(404, "没有这次交办");
     return work;
   });
+  server.get("/api/agent-work/:id/board", async (req) => {
+    const { readBoard } = await import("../agents/work-board.ts");
+    return readBoard(app, (req.params as { id: string }).id);
+  });
   // Who may read it is checked by the route (src/auth/routes.ts); its sub-runs only as far as they are readable too.
   server.get("/api/runs/:id", async (req) => {
     const id = (req.params as { id: string }).id;
@@ -1629,7 +1644,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       .filter((c, i, a) => a.findIndex((d) => d.id === c.id) === i)
       .filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
     const diff = r.kind === "code" ? codeDiffView(app, id) : null;
-    return { run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
+    const boardId = r.input.boardTaskId ? r.parentId : r.output.boardId ?? id;
+    const board = typeof boardId === "string" && one(app.db, "select 1 from agent_work_tasks where work_id=? limit 1", boardId)
+      && canReadRun(app, who(req), boardId) ? { workId: boardId, taskId: r.input.boardTaskId } : undefined;
+    return { board, run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
   });
   // The owner read the follow-up and says the label is wrong (agents/reply-outcomes.ts).
   server.post("/api/runs/:id/reply-outcome", async (req) => {

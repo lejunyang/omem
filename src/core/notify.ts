@@ -37,6 +37,21 @@ export function inQuietHours(app: App, at = new Date()) {
   return quietStart > quietEnd ? h >= quietStart || h < quietEnd : h >= quietStart && h < quietEnd;
 }
 
+/** Batch timing belongs to notify; quiet hours apply at the Feishu outlet. */
+export function deliveryPlan(app: App, input: { urgency?: NotifyUrgency; scheduled?: boolean; replaces?: string; outlet: "notify" | "lark" }, at = new Date()):
+  { when: "now" } | { when: "later"; at?: string } {
+  if (input.outlet === "notify") {
+    return input.urgency === "later" && !input.replaces && app.config.notify.laterTimes.length ? { when: "later" } : { when: "now" };
+  }
+  if (input.urgency === "urgent" || input.scheduled || !inQuietHours(app, at)) return { when: "now" };
+  let next = at;
+  do {
+    const { minute } = zonedParts(next, app.config.timezone);
+    next = new Date(Math.floor(next.getTime() / 60000) * 60000 + (60 - minute) * 60000);
+  } while (inQuietHours(app, next));
+  return { when: "later", at: next.toISOString() };
+}
+
 export type Notification = {
   id: string;
   at: string;
@@ -180,7 +195,7 @@ export function notify(
   };
   // Not for now: it waits for the next set time of day. (The newer state of a card already sent goes
   // straight to the channels, which edit that card without a ping.)
-  const held = n.urgency === "later" && !replaced && app.config.notify.laterTimes.length > 0;
+  const held = deliveryPlan(app, { ...n, outlet: "notify" }).when === "later";
   if (held) n.held = true;
   run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, plain: n.plain, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
   // The earlier one is now history: read, and no longer waiting for the morning.

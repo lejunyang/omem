@@ -19,7 +19,7 @@ import { addNotificationSink, deferNotification, markPushed, markQuiet, markRead
 import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
-import { inQuietHours, QUIET_HANDLED } from "../core/notify.ts";
+import { deliveryPlan, inQuietHours, QUIET_HANDLED } from "../core/notify.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress } from "./lark-code-progress.ts";
@@ -482,7 +482,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     }
     // Push policy: non-urgent nudges wait for the morning (sent then if still unread); and when the
     // triggering message is already read by the owner, the change has been seen — no ping (urgent always pushes).
-    if (!deferred && n.urgency !== "urgent" && !n.scheduled && inQuietHours(app)) {
+    if (!deferred && deliveryPlan(app, { ...n, outlet: "lark" }).when === "later") {
       if (n.urgency !== "silent") deferNotification(app, n.id);
       return;
     }

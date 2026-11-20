@@ -296,7 +296,7 @@ api.agentLogin(login);
 - 续签：按 `expiresAt` 提前 10 分钟（最短 1 分钟一次）调用 `refresh`，时间记在库里，重启后照常；返回 null 或抛错时登录态改成“登录过期”并通知这个人，账号目录留着。没有 `refresh` 时到 `expiresAt` 直接算过期。
 - “我的 AI 账号”里一个后端同时列出它自己的登录方式和插件提供的，成员选一个；登录态记下是用哪种方式登录的。
 - 插件自己的配置（应用标识、站点、接口地址这类）写成清单的 `settings`，本人在 设置 → 插件 里填；`login`、`refresh`、`logout` 从 `ctx.settings` 读到本人填的值。登录方式以外的代码（鉴权方式的 `verify` 等）用 `api.settings()` 读，每次用时读，改了不用重新加载；只有在 omem 里运行的插件有 `api.settings()`，隔离运行的在工具的 `ctx.settings()` 里读。
-- 主人要填的应用配置写 `appFields`（client id、secret、站点），在设置 → 连接 → 其他平台里填，存在 `secrets/connector-apps.json`，插件用 `api.appConfig(id)` 读；接口地址依赖它时 `apiBase` 写成函数。令牌不是 Bearer 时用 `sign(app, { url, headers }, secret)` 放进请求头或 query。插件自己发的请求（换令牌、查账号）用 `api.fetch`。
+- 主人要填的应用配置写 `appFields`（client id、secret、站点），在设置 → 采集 → 其他平台里填，存在 `secrets/connector-apps.json`，插件用 `api.appConfig(id)` 读；接口地址依赖它时 `apiBase` 写成函数。令牌不是 Bearer 时用 `sign(app, { url, headers }, secret)` 放进请求头或 query。插件自己发的请求（换令牌、查账号）用 `api.fetch`。
 - 工具写 `whenConnected: true`：只在这次运行的人连了本插件的某个连接器（`<插件 id>-…`）时给出。
 - 工具里 `ctx.saveSource({ uri, title, text, space? })` 存原件：`uri` 写 `平台:编号`，同一个 uri 再存是更新，也作 origin_key。
 - 内置的 `connect` 插件就是这样接入几百个平台的，见 docs/v2/connectors.md。
@@ -446,7 +446,7 @@ streams:
 
 ## 语音
 
-清单写 `voice: true` 的插件，页面可以和语音模型（设置 → AI → 语音，docs/v2/ai-models.md）对话。宿主只负责接通，说什么由插件定：
+清单写 `voice: true` 的插件，页面可以和语音模型（设置 → 后端与模型 → 语音，docs/v2/ai-models.md）对话。宿主只负责接通，说什么由插件定：
 
 ```ts
 const status = await omem.voiceStatus();   // { allowed, ready, detail, api, model }；没配好时 detail 说明原因
@@ -462,7 +462,7 @@ const record = await call.stop();           // 或 await call.ended：{ transcri
 - **麦克风和连接在外壳里**：沙箱页面没有 omem 的来源，不给它麦克风。页面发 `voice-start`，外壳（`web/src/views/Plugin.vue`）用 `web/src/lib/voice.ts` 拿麦克风、建 WebRTC 连接、放对方的声音，只把转写的文字转给页面；页面拿不到音频，也拿不到连接用的临时凭证（外壳不替页面转发 `voice/…`）。浏览器的麦克风授权是给 omem 的地址的，在 omem 里授过一次就行。
 - **只在点击之后开始**：外壳收到 `voice-start` 时检查本人刚在页面里点过（点击的激活会传到外壳的窗口），没有就拒绝（`code: "gesture"`），页面再放一个按钮让本人点。进行中外壳顶上显示“<页面名>正在使用麦克风”，带“静音”和“结束”，本人随时可以停；离开页面时自动结束。同一时间只有一段。
 - **宿主给的会话**：`GET /api/plugins/:id/voice` 是状态；`POST …/voice/realtime/secret`（Realtime：临时凭证）和 `POST …/voice/live/sdp`（GPT-Live：omem 用 key 开会话）带上插件的 `instructions`。插件的会话不带任何 omem 工具，也不进 `voice_sessions`；记录怎么存、交给谁评价由插件自己做（英语练习把它当成一个内容块，见下）。没声明 `voice` 的插件调这两个接口得到 403。
-- **没配语音模型时**：状态里 `ready: false`，`detail` 写原因；页面应说明去 设置 → AI → 语音 配置（`omem.navigate("/settings?tab=agents&section=voice")`），不要把入口藏起来。
+- **没配语音模型时**：状态里 `ready: false`，`detail` 写原因；页面应说明去 设置 → 后端与模型 → 语音 配置（`omem.navigate("/settings?tab=agents&section=voice")`），不要把入口藏起来。
 
 ### 例子：看机器状态
 
@@ -523,7 +523,7 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 ### 不在插件页里的时候
 
-插件档案在别的会话里（比如飞书里 `/as english-tutor`）交出内容块时，宿主替本人新开一个这个插件的会话，把块放进去，工具结果里给 Agent 一个链接 `#/plugin/<id>?session=<会话>`，让它发给本人。配置了网页地址（`config.webUrl`，设置 → 渠道）时链接是完整地址，飞书里能直接打开；页面打开时停在那个会话上。同一个地址也让通知卡片里的页面链接能从飞书打开。
+插件档案在别的会话里（比如飞书里 `/as english-tutor`）交出内容块时，宿主替本人新开一个这个插件的会话，把块放进去，工具结果里给 Agent 一个链接 `#/plugin/<id>?session=<会话>`，让它发给本人。配置了网页地址（`config.webUrl`，设置 → 设备 → 网页地址）时链接是完整地址，飞书里能直接打开；页面打开时停在那个会话上。同一个地址也让通知卡片里的页面链接能从飞书打开。
 
 ## 存储
 

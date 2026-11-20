@@ -2,7 +2,7 @@
 
 > 状态：三期都已实现（第一、二期 2026-11-20 上午，第一期剩下的几项和第三期的插件登录 2026-11-20 晚），还没在真机上跑过。和 [multi-user.md](multi-user.md) 的关系：那里写的是“成员的运行用本人配置的后端”，这份把它改成“可以用成员自己的账号”。
 >
-> 已实现：启动时检查 bubblewrap（`src/agents/sandbox.ts`，`omem diag` 的 `agentAccounts`）；Agent 目录的 `account` 字段（Codex、Claude Code、TraeX、豆包命令行，`src/agents/catalog.ts`），登录、检查、退出用的命令可以和 ACP 的命令不同（`account.cli`）；本人自己加的后端（`agents.profiles`）也能写 `account`，保存时按同一套规则检查（不认识的字段、`{home}` 写在 env 的值以外、env 里 `{home}` 以外的绝对路径 / `~` / `${…}` 都拒绝，本机的安装写 `mounts`），按它的 source 当后端；账号目录的建立和删除、`prepareRun` 按发起人选账号、设置 `agents.accounts`（`owner` / `own` / `own-or-other`，`src/agents/accounts.ts`）；ACP、命令行兜底、会话清理和归档、豆包命令行都经同一个 `launch` 进沙箱；后台会话池、对话会话的 key 和会话清理的记录带上账号。额度按账号：成员账号的套餐额度在他的沙箱里读（Codex 的 app-server、Claude 的 `/usage`），存在 `<后端>@acct:<用户>` 下，他的运行按自己的额度避让，额度用完只在他自己的运行里跳过（`acct:<用户>/` 前缀），本人的记录不变；成员正在用的账号由额度巡检每 15 分钟读，其余在他打开“我的 AI 账号”时读（超过两小时才读），页面上有“重新读取”。探测缓存按账号：`probe:<档案>@acct:<用户>`，登录成功后在他的沙箱里探测一次，他的运行、`/model`、`list_ai_backends`、临时选型的校验用他自己的结果（没有时退回本机的）。技能：本人开着接管 Agent 技能时，omem 的说明和各组总入口也写进每个账号目录里对应的技能目录（按账号目录展开 `skills.write`，和写本机的是同一个写法），建账号目录、整理分组、还原时都跟着。`own-or-other`：成员没登录这个后端时，按这次运行的兜底顺序换一个他登录过、或允许借用的后端，都没有才失败；它和 `own` 的后端都不进他的兜底链。停用成员时：停掉他进行中的登录，在沙箱里跑各后端的退出（尽力而为），删掉令牌、插件的秘密、登录态和整个账号目录，写一条 `audit_events`（`agent-accounts.remove-all`）；重新启用后要重新登录。登录页：账号 → 我的 AI 账号（设备码 / 二维码登录、粘贴令牌、插件的登录方式、检查、额度、退出），点“登录”后链接和验证码也由机器人发到他的飞书私聊；本人在 设置 → AI → 成员的 AI 账号 设规则（三选一）、看谁用什么方式登了什么、让人退出（接口在 `src/server/agent-accounts-http.ts`）。插件登录（第 6 节）：`api.agentLogin`（`src/agents/agent-logins.ts` 登记，流程在 `accounts.ts`），清单声明 `permissions.agentLogin`，只在本人信任并选“在 omem 里运行”时生效；续签每分钟按 kv 里记的时间检查一次（`tickAgentLogins`），重启不丢。
+> 已实现：启动时检查 bubblewrap（`src/agents/sandbox.ts`，`omem diag` 的 `agentAccounts`）；Agent 目录的 `account` 字段（Codex、Claude Code、TraeX、豆包命令行，`src/agents/catalog.ts`），登录、检查、退出用的命令可以和 ACP 的命令不同（`account.cli`）；本人自己加的后端（`agents.profiles`）也能写 `account`，保存时按同一套规则检查（不认识的字段、`{home}` 写在 env 的值以外、env 里 `{home}` 以外的绝对路径 / `~` / `${…}` 都拒绝，本机的安装写 `mounts`），按它的 source 当后端；账号目录的建立和删除、`prepareRun` 按发起人选账号、设置 `agents.accounts`（`owner` / `own` / `own-or-other`，`src/agents/accounts.ts`）；ACP、命令行兜底、会话清理和归档、豆包命令行都经同一个 `launch` 进沙箱；后台会话池、对话会话的 key 和会话清理的记录带上账号。额度按账号：成员账号的套餐额度在他的沙箱里读（Codex 的 app-server、Claude 的 `/usage`），存在 `<后端>@acct:<用户>` 下，他的运行按自己的额度避让，额度用完只在他自己的运行里跳过（`acct:<用户>/` 前缀），本人的记录不变；成员正在用的账号由额度巡检每 15 分钟读，其余在他打开“我的 AI 账号”时读（超过两小时才读），页面上有“重新读取”。探测缓存按账号：`probe:<档案>@acct:<用户>`，登录成功后在他的沙箱里探测一次，他的运行、`/model`、`list_ai_backends`、临时选型的校验用他自己的结果（没有时退回本机的）。技能：本人开着接管 Agent 技能时，omem 的说明和各组总入口也写进每个账号目录里对应的技能目录（按账号目录展开 `skills.write`，和写本机的是同一个写法），建账号目录、整理分组、还原时都跟着。`own-or-other`：成员没登录这个后端时，按这次运行的兜底顺序换一个他登录过、或允许借用的后端，都没有才失败；它和 `own` 的后端都不进他的兜底链。停用成员时：停掉他进行中的登录，在沙箱里跑各后端的退出（尽力而为），删掉令牌、插件的秘密、登录态和整个账号目录，写一条 `audit_events`（`agent-accounts.remove-all`）；重新启用后要重新登录。登录页：账号 → 我的 AI 账号（设备码 / 二维码登录、粘贴令牌、插件的登录方式、检查、额度、退出），点“登录”后链接和验证码也由机器人发到他的飞书私聊；本人在 设置 → 成员 → 成员的 AI 账号 设规则（三选一）、看谁用什么方式登了什么、让人退出（接口在 `src/server/agent-accounts-http.ts`）。插件登录（第 6 节）：`api.agentLogin`（`src/agents/agent-logins.ts` 登记，流程在 `accounts.ts`），清单声明 `permissions.agentLogin`，只在本人信任并选“在 omem 里运行”时生效；续签每分钟按 kv 里记的时间检查一次（`tickAgentLogins`），重启不丢。
 >
 > 和下文不同的：登录态放在 kv（`agent_account:<用户>:<后端>`，只在本机，带 `method`：`native` 或 `<插件>:<id>`，插件登录还有 `expiresAt` / `refreshAt`），令牌放在 `secrets/vault.db`（提供方 `agent:<后端>`），插件的秘密是提供方 `agent:<后端>:<插件>:<id>`，都不在“已连接的应用”里出现。成员的登录入口在“账号”页而不是“设置”页（成员看不到设置页）。删除用户还没有（只能停用，停用时删账号目录）。插件登录方式没有 `refresh` 时，到 `expiresAt` 直接算过期；插件不在了（停用、撤销信任）时登录态留着，到期才算过期。运行时 profile 上带账号的字段叫 `ownAccount`（`account` 留给配置里的 spec）。
 >
@@ -69,7 +69,7 @@ account?: {
 2. 发起人是成员，且他在这个后端有账号（目录存在且上次 `status` 是已登录）→ 在沙箱里启动，HOME 是他的账号目录，合并 `account.env`（展开 `{home}`），令牌型的再加 `tokenEnv`。
 3. 成员没有账号 → 看设置 `agents.accounts.<后端>`：
    - `owner`（默认，等于现在的行为）：借用本人的；
-   - `own`：这个后端只能用自己的账号，运行失败，提示“在 设置 → 我的 AI 账号 里登录 <后端>”；
+   - `own`：这个后端只能用自己的账号，运行失败，提示“在 账号 → 我的 AI 账号 里登录 <后端>”；
    - `own-or-other`：按任务选型换一个他有账号、或允许借用的后端。
 
 访客（不是 omem 用户的人）不受影响：访客模式照旧用本人设的后端，它本来就只读。
@@ -91,7 +91,7 @@ account?: {
 - “登录”：宿主在这个人的账号目录里起 `login` 命令，从输出里认出链接和验证码显示在页面上（也可以发到他的飞书私聊），等命令结束后跑 `status` 确认。命令超时或失败就清掉进程，目录留着可以重试。
 - 令牌型：粘贴令牌，存进 omem 的密钥库（`secrets/vault.db`，按用户），不进账号目录、不进配置文件。
 - “退出”：跑 `logout` 后删目录。
-- 本人在设置里能看到每个成员登了哪些后端（不显示令牌），能替他退出。
+- 本人在 设置 → 成员 → 成员的 AI 账号 能看到每个成员登了哪些后端（不显示令牌），能替他退出。
 
 ### 6. 插件提供登录方式
 
@@ -142,7 +142,7 @@ api.agentLogin({
 ### 6.6 支持哪些系统
 
 - 第一期只支持 Linux，并且要求装了 bubblewrap、允许非特权用户命名空间（启动时检查一次）。
-- 不满足条件的机器（macOS、Windows、没有 bubblewrap 的 Linux）不提供多账号：设置页不显示“我的 AI 账号”和各后端的规则，成员的运行照旧借用本人的后端。
+- 不满足条件的机器（macOS、Windows、没有 bubblewrap 的 Linux）不提供多账号：账号页不显示“我的 AI 账号”，设置 → 成员 不显示“成员的 AI 账号”，成员的运行照旧借用本人的后端。
 - macOS 以后再看：钥匙串、豆包命令行的数据目录（`~/Library/Application Support`）、sandbox-exec 都要单独验证。
 - Windows 以后再看，候选做法（都还没试）：
   - **每人一个本地 Windows 账号**，用那个账号的身份启动 Agent（CreateProcessWithLogon 一类）：文件隔离由系统权限保证，相当于 Linux 上每人一个系统用户。sandbox-runtime 在 Windows 上就是这样做的（还是 alpha）。要管理员建账号，并保存每个账号的登录凭据。优先试这个。

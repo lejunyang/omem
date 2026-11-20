@@ -17,6 +17,7 @@ const apps: ReturnType<typeof testApp>[] = [];
 afterEach(() => { setLarkClient(null); vi.useRealTimers(); for (const app of apps.splice(0)) app.db.close(); });
 function fixture() {
   const app = testApp(); apps.push(app);
+  app.config.notify.quietStart = app.config.notify.quietEnd;
   app.config.lark.ownerOpenId = "ou_owner";
   if (!registered) { registerLarkAsks(app, () => "ou_owner"); registered = true; }
   const thread = createThread(app, { channel: "lark", key: "oc_test", spaceId: "personal", userId: "owner" });

@@ -89,7 +89,7 @@ type Row = {
   value: string | null;
 };
 
-const toAsk = (r: Row): Ask => ({
+export const toAsk = (r: Row): Ask => ({
   id: r.id,
   runId: r.run_id,
   conversationId: r.conversation_id,
@@ -117,6 +117,10 @@ const toAsk = (r: Row): Ask => ({
   toName: ((JSON.parse(r.context ?? "{}") as { toName?: unknown }).toName as string | undefined) ?? null,
   lapsed: ((JSON.parse(r.context ?? "{}") as { lapsed?: unknown }).lapsed as string | undefined) ?? null,
 });
+
+export function markAskSent(app: App, id: string) {
+  run(app.db, "update asks set context = json_remove(json_set(coalesce(context,'{}'), '$.sentAt', ?), '$.deferredUntil') where id = ?", now(), id);
+}
 
 export function getAsk(app: App, id: string): Ask {
   const r = one<Row>(app.db, "select * from asks where id = ?", id);

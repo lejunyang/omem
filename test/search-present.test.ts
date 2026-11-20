@@ -15,6 +15,9 @@ describe("plainText", () => {
     expect(t).toContain("权限点&角色");
     expect(t).toContain("表名 | 含义");
   });
+  it("keeps out-of-range character references readable", () => {
+    expect(plainText("&#X41; &#65; &#x110000; &#1114112;")).toBe("A A &#x110000; &#1114112;");
+  });
   it("shortens bare addresses and removes table rules and fences", () => {
     expect(plainText("见 https://tenant.larkoffice.com/docx/AbCd123?x=1 说明")).toBe("见 tenant.larkoffice.com/… 说明");
     expect(plainText("| a | b |\n|---|---|\n| 1 | 2 |\n```js\nlet x = 1;\n```")).toBe("a | b 1 | 2 let x = 1;");

@@ -303,7 +303,7 @@ onBeforeUnmount(() => {
             <input v-model="goal" class="input" maxlength="300" aria-label="这次想刻意练的说法（可选）" placeholder="这次想刻意练的说法（可选），例如：用 Could I… / I'd like… 点餐" />
             <div v-if="voice0 && !voice0.ready" class="voice-note">
               <p><strong>语音模型还没配好</strong></p>
-              <p class="small muted">{{ voice0.detail }}。口语对话要用 OpenAI 的语音模型：到 设置 → AI → 语音 选好提供方（先在 API key 里添加 OpenAI 的 key），回来就能开始。</p>
+              <p class="small muted">{{ voice0.detail }}。口语对话要用 OpenAI 的语音模型：到 设置 → 后端与模型 → 语音 选好提供方（先在 API key 里添加 OpenAI 的 key），回来就能开始。</p>
               <div class="row"><button class="btn sm" type="button" @click="api?.navigate('/settings?tab=agents&section=voice')">打开语音设置</button></div>
             </div>
           </template>
