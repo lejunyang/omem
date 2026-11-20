@@ -274,9 +274,7 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
       sessionPrompt({ resumed: true }, req, req.prompt, emit);
     } catch (e) {
       if (signal?.aborted) throw new Error("CANCELLED");
-      // The caller rebuilds a retained conversation from its history. A temporary
-      // task already carries its complete body and can open a replacement here.
-      if (req.persistSession || (e as Error).message === "CANCELLED") throw e;
+      if (req.callerRebuildsOnResumeFailure || (e as Error).message === "CANCELLED") throw e;
       emit({ type: "status", text: `无法继续之前的豆包会话，改为新会话：${(e as Error).message.slice(0, 120)}` });
       sessionId = undefined;
     }

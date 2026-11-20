@@ -77,6 +77,8 @@ export type AgentRequest = {
   /** CLI transports: keep the agent's own session on disk and/or continue one. */
   persistSession?: boolean;
   resumeSessionId?: string;
+  /** The caller rebuilds the full first turn if the backend cannot resume. */
+  callerRebuildsOnResumeFailure?: boolean;
   /** Provider queue budget (ms); 0/undefined = unlimited while queued. */
   queueTimeoutMs?: number;
 };

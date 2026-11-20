@@ -129,6 +129,27 @@ describe("doubao backend", () => {
     await vi.waitFor(() => expect(retired).toEqual(["S1"]));
   });
 
+  it("replaces and keeps a lost session when the caller supplies the full task", async () => {
+    const app = authorizedApp();
+    const requests: string[] = [];
+    setDoubaoFetchForTests(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      requests.push(`${init?.method ?? "GET"} ${path}`);
+      if (path.endsWith("/old/events")) return new Response(null, { status: 404 });
+      if (path.endsWith("/v1/sessions")) {
+        const first = JSON.parse(String(init?.body)).initial_events[0].contents[0].text;
+        expect(first).toBe("角色说明\n\n---\n\n最近的私聊和本轮要求");
+        return ok({ id: "new", messages: [{ id: "Q1" }] });
+      }
+      return stream([["message.completed", {}]]);
+    });
+    const result = await runBackend(app, profile, {
+      cwd: app.home, system: "角色说明", prompt: "最近的私聊和本轮要求", resumeSessionId: "old", persistSession: true,
+    }, () => {});
+    expect(result.sessionId).toBe("new");
+    expect(requests).toEqual(["POST /open-apis/agent/v1/sessions/old/events", "POST /open-apis/agent/v1/sessions", "GET /open-apis/agent/v1/sessions/new/events/Q1"]);
+  });
+
   it.each([true, false])("releases only the replacement of a temporary task (stream succeeds=%s)", async (success) => {
     const app = authorizedApp();
     const deleted: string[] = [];

@@ -487,6 +487,7 @@ ${WAKE_NOTE}`
             mcp: prep.mcp,
             extraMcp: prep.extraMcp,
             persistSession: true,
+            callerRebuildsOnResumeFailure: true,
             resumeSessionId: resume ? t.agentSession! : undefined,
           },
           emit,
