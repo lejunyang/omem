@@ -20,7 +20,7 @@ import Skeleton from "../../components/Skeleton.vue";
 import UiSegmented from "../../components/UiSegmented.vue";
 import UiSelect from "../../components/UiSelect.vue";
 
-/** 设置 → AI → 后端与模型: the backends, the default AI and tiers, task routing, capacity, fallbacks, adding a backend. */
+/** 设置 → 后端与模型: the backends, the default AI and tiers, task routing, capacity, fallbacks, adding a backend. */
 const { config, profiles, load, saveConfig } = useSettings();
 const { installedProfiles, profileOptions, modelOptionsFor, loadProbes } = useBackends(profiles);
 
