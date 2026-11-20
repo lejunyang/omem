@@ -1,3 +1,5 @@
+import { providerDeviceTables } from "../items/provider-schema.ts";
+
 /** The same standalone program runs locally for HTTP snapshots and on the SSH host.
  * Only data and Git objects travel: repository hooks, credentials and ignored files stay put. */
 export const snapshotScript = String.raw`
@@ -14,6 +16,7 @@ const parts = Array.isArray(opt.parts) ? opt.parts : ['library', 'files', 'repos
 const DEVICE = ['api_tokens', 'cli_logins', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines', 'shares', 'session_cleanup', 'remote_recordings', 'lark_doc_subscriptions', 'platform_watches', 'flow_signals', 'item_follow_cursors', 'git_commit_cursors', 'plugin_deliveries', 'plugin_events', 'plugin_subscriptions'];
 const DERIVED = ['chunks', 'symbols', 'code_refs'];
 const VECTOR_TRIGGERS = ['vector_log_insert', 'vector_log_update', 'vector_log_delete'];
+DEVICE.push(...${JSON.stringify(providerDeviceTables)});
 // The other side's clock when the snapshot was taken: what the next pull asks changes since.
 const takenAt = new Date().toISOString();
 // Only rows changed after this moment, for the tables that say when a row changed and are most of the

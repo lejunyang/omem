@@ -53,6 +53,8 @@ describe("complete portable pulls", () => {
       "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors", "git_commit_cursors",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
+      // Subscriptions and pending external writes are tied to this device's connections.
+      "item_provider_targets", "item_provider_links", "item_provider_writes",
       // Decision material and the source-to-sweep links remain private to this device.
       "decisions", "decision_sweeps",
       // Which messages link which document (sources/doc-links.ts): rebuilt from lark_messages.
@@ -95,10 +97,19 @@ describe("complete portable pulls", () => {
       run(app.db, "insert into item_follow_cursors(item_id,source_id,started_at,line,source_updated_at,updated_at) values('demo',?,'2026-11-15',12,'2026-11-15','2026-11-15')", source);
     for (const [app, commit] of [[local, "local_commit"], [remote, "remote_commit"]] as const)
       run(app.db, "insert into git_commit_cursors(space_id,branch,commit_id,updated_at,tip,tip_at) values('demo','main',?,'2026-11-15',?,'2026-11-15')", commit, commit);
+    for (const [app, id] of [[local, "local"], [remote, "remote"]] as const) {
+      const item = upsertItem(app, undefined, { title: "外部事项" });
+      run(app.db, `insert into item_provider_targets(id,provider,target,user_id,space_id,mode,import_mode,cursor)
+        values(?,'demo:issues','repo','owner','personal','confirm','direct','page2')`, id);
+      run(app.db, "insert into item_provider_links(item_id,target_id,external_key,synced_at,snapshot) values(?,?,'a','2026-11-21','{}')", item.id, id);
+      run(app.db, "insert into item_provider_writes(id,item_id,status,revision,state) values(?,?,'done','v1','pending')", id, item.id);
+    }
     const f = await snapshot(remote);
     let localClosed = false;
     try {
       const copied = App.open(f.dbDir);
+      expect(all(copied.db, "select * from item_provider_targets")).toEqual([]);
+      expect(all(copied.db, "select * from item_provider_writes")).toEqual([]);
       try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); expect(all(copied.db, "select * from item_follow_cursors")).toEqual([]); expect(all(copied.db, "select * from git_commit_cursors")).toEqual([]); }
       finally { copied.db.close(); }
       mergeLibrary(local, f);
@@ -108,6 +119,8 @@ describe("complete portable pulls", () => {
       local.db.close(); localClosed = true;
       overwriteLocal(local.home, f);
       const after = App.open(local.home);
+      expect(all(after.db, "select id,cursor from item_provider_targets")).toEqual([{ id: "local", cursor: null }]);
+      expect(all(after.db, "select * from item_provider_writes")).toEqual([]);
       expect(all(after.db, "select commit_id from git_commit_cursors")).toEqual([{ commit_id: "local_commit" }]);
       try { expect(all(after.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]); expect(all(after.db, "select source_id,line from item_follow_cursors")).toEqual([{ source_id: "local_source", line: 12 }]); }
       finally { after.db.close(); }

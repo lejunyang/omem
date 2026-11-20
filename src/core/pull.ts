@@ -1,3 +1,4 @@
+import { providerDeviceTables } from "../items/provider-schema.ts";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -97,7 +98,7 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
   const deviceData = new Map<string, Row[]>();
   if (existsSync(join(home, "omem.db"))) {
     const old = openDb(join(home, "omem.db"));
-    try { for (const table of deviceTables) deviceData.set(table, all<Row>(old, `select * from ${table}`)); }
+    try { for (const table of [...deviceTables, ...providerDeviceTables]) deviceData.set(table, all<Row>(old, `select * from ${table}`)); }
     finally { old.close(); }
   }
   const backup = `${home}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
@@ -123,6 +124,22 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
           run(db, `delete from ${table}`);
           const cols = columns(db, table);
           for (const row of deviceData.get(table) ?? []) db.prepare(`insert into ${table}(${cols.join(",")}) values(${cols.map(() => "?").join(",")})`).run(...cols.map((c) => row[c]));
+        }
+        // Credentials and pending external actions belong to this device. A full overwrite may
+        // remove local users, spaces or items; restore links only where the item's owner still matches.
+        for (const table of providerDeviceTables) run(db, `delete from ${table}`);
+        for (const table of [...providerDeviceTables].reverse()) {
+          for (const row of deviceData.get(table) ?? []) {
+            if (table === "item_provider_targets" && !db.prepare("select 1 from users, spaces where users.id=? and spaces.id=?").get(row.user_id, row.space_id)) continue;
+            if (table === "item_provider_links" && !db.prepare(`select 1 from items i join item_provider_targets t on i.user_id=t.user_id and i.space_id=t.space_id
+                where i.id=? and t.id=?`).get(row.item_id, row.target_id)) {
+              run(db, "update item_provider_targets set cursor=null where id=?", row.target_id);
+              continue;
+            }
+            if (table === "item_provider_writes" && !db.prepare("select 1 from item_provider_links where item_id=?").get(row.item_id)) continue;
+            const cols = Object.keys(row);
+            run(db, `insert into ${table}(${cols.join(",")}) values(${cols.map(() => "?").join(",")})`, ...cols.map(c => row[c]));
+          }
         }
         run(db, "update chunks set embedding = null where embedding is not null");
         run(db, "update memories set embedding = null where embedding is not null");

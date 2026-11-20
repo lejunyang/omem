@@ -1,3 +1,4 @@
+import { migrateItemProviders } from "../items/provider-schema.ts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { noteSync, sqlName } from "./loop-monitor.ts";
 
@@ -2277,6 +2278,7 @@ export function openDb(path: string): Db {
       throw error;
     }
   }
+  migrateItemProviders(db);
   return db;
 }
 

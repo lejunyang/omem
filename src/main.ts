@@ -96,6 +96,7 @@ registerScheduleKind("quality-audit", (app) => void import("./quality/audit.ts")
 registerScheduleKind("archive-sweep", (app) => {
   import("./sources/homing.ts").then((m) => m.startSweep(app)).catch((e) => console.warn("[omem] 个人空间归位巡检失败：", e.message));
 });
+registerScheduleKind("item-provider-sync", (app) => void import("./items/providers.ts").then(m => m.syncItemProviders(app)).catch(e => console.warn("[omem] 事项同步失败", e)));
 registerScheduleKind("platform-sync", (app) => void import("./plugins/platforms.ts").then((m) => m.syncWatches(app)).catch((e) => console.warn(`[omem] 平台同步失败：${(e as Error).message}`)));
 registerScheduleKind("lark-kb-read", (app) => {
   import("./channels/lark-knowledge.ts")
