@@ -77,7 +77,8 @@ async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: 
   } else {
     const token = issueToolToken({ ...scope, runId });
     try {
-      const handle = await openAcp(prep.profile, { ...req, app, mcp: { ...prep.mcp, token } }, emit);
+      const mcp = { ...prep.mcp, token, env: { ...prep.mcp.env, OMEM_TOKEN: token } };
+      const handle = await openAcp(prep.profile, { ...req, app, mcp }, emit);
       if (req.signal?.aborted) { await handle.discard(); throw new Error("CANCELLED"); }
       entry = { key, token, handle, busy: true, usedAt: Date.now() };
       // Another completed entry may have removed the empty pool while this one connected.

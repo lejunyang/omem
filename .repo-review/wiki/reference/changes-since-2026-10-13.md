@@ -19,7 +19,7 @@ updated: 2026-11-21
 
 ## ACP 批准的命令由垫片核销（11-21）
 
-ACP 在执行前批准经 PATH 调用的命令，垫片在同一轮中核销一次授权。可从 `src/agents/acp-permission.ts` 和 `src/agents/command-gate.ts` 读起。
+ACP 在执行前批准经 PATH 调用的命令，垫片在同一轮中核销一次授权。后台会话池把同一会话令牌交给 ACP 和子进程，每轮将令牌指向当前运行。可从 `src/agents/acp-permission.ts` 和 `src/agents/command-gate.ts` 读起。
 
 ## 工具仅记录规则保留原审批（11-21）
 
