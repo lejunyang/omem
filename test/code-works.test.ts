@@ -4,7 +4,7 @@ import { addTask } from "../src/agents/code-tasks.ts";
 import { createRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
 import { run } from "../src/core/db.ts";
 import { OWNER } from "../src/core/users.ts";
-import { addMaterials } from "../src/items/materials.ts";
+import { addLocalMaterials } from "../src/items/materials.ts";
 import { saveReqs } from "../src/items/requirements.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { testApp } from "./helpers.ts";
@@ -65,7 +65,7 @@ describe("coding work for the run page", () => {
     try {
       const { keys } = saveReqs(app, [{ op: "add", key: "m", kind: "module", title: "售后" }, { op: "add", key: "f", parent: "$m", kind: "feature", title: "可退金额只算未发货的行" }], { by: "user", label: "本人" }, { canWrite: () => {}, canRead: () => {}, defaultSpace: "personal" });
       const item = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "退款改造", userId: OWNER }, "user");
-      addMaterials(app, item.id, [{ kind: "req", ref: keys.m }], OWNER, "user");
+      addLocalMaterials(app, item.id, [{ kind: "req", ref: keys.m }], OWNER, "user");
       const root = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款按行算", itemId: item.id, repos: ["mall-web"] } });
       const round = createRun(app, { kind: "code", spaceId: "personal", title: "交办第 2 轮", input: { continueFrom: root.id, round: 2 } });
       done(app, root.id, round.id);

@@ -38,7 +38,7 @@ export function placesOfRun(app: App, runId: string): Place[] {
 }
 
 /** A run wrote the item: link it to the run's places it is not linked to yet. Places the item's owner cannot see are left out. */
-export function linkRunPlaces(app: App, runId: string, itemId: string, userId: string): Place[] {
+export async function linkRunPlaces(app: App, runId: string, itemId: string, userId: string): Promise<Place[]> {
   let item: Item;
   try { item = getItem(app, itemId); } catch { return []; }
   if (item.userId !== userId) return [];
@@ -46,7 +46,7 @@ export function linkRunPlaces(app: App, runId: string, itemId: string, userId: s
   for (const p of placesOfRun(app, runId)) {
     if (one(app.db, "select 1 from item_materials where item_id = ? and kind = ? and ref = ?", itemId, p.kind, p.ref)) continue;
     try {
-      addMaterials(app, itemId, [{ kind: p.kind, ref: p.ref, note: `运行 ${runId} 在这里处理过这件事（自动关联）` }], userId, "agent");
+      await addMaterials(app, itemId, [{ kind: p.kind, ref: p.ref, note: `运行 ${runId} 在这里处理过这件事（自动关联）` }], userId, "agent");
       linked.push(p);
     } catch {
       // Not the item owner's conversation, or a space they cannot read: no link.

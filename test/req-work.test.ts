@@ -12,7 +12,7 @@ import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { OWNER } from "../src/core/users.ts";
-import { addMaterials } from "../src/items/materials.ts";
+import { addLocalMaterials } from "../src/items/materials.ts";
 import { saveReqs } from "../src/items/requirements.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { reqWork, reqWorkMarks } from "../src/items/work.ts";
@@ -39,7 +39,7 @@ describe("coding seen from the requirement tree", () => {
     ], { by: "user", label: "本人" }, { canWrite: () => {}, canRead: () => {}, defaultSpace: "shop" });
     const page = tree.keys.page, amount = tree.keys.amount;
     const item = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "退款改造", userId: OWNER }, "user");
-    addMaterials(app, item.id, [{ kind: "req", ref: page }], OWNER, "user");
+    addLocalMaterials(app, item.id, [{ kind: "req", ref: page }], OWNER, "user");
 
     const ctx: ToolContext = { app, runId: null, spaceId: "shop", spaces: null, tools: null, actor: "agent" };
     const started = await callTool(ctx, "delegate_code", { repo_spaces: ["shop-api"], task: "退款只按未发货的行计算", item_id: item.id });

@@ -28,7 +28,7 @@ async function setup(stages: object[] = [{ id: "code", name: "编码", by: "wait
   const item = upsertItem(app, undefined, { title: "示例商城退款", detail: "退商品款", dueAt: "2026-12-01" }, "user");
   const src = appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_example", title: "示例商城讨论", lines: ["原来的需求"], meta: { chatId: "oc_example" } });
   run(app.db, "insert into lark_messages(message_id,chat_id,source_id,line,content,create_ms) values('history','oc_example',?,1,'原来的需求',?)", src.id, Date.now() - 3600000);
-  addMaterials(app, item.id, [{ kind: "source", ref: src.id }], "owner");
+  await addMaterials(app, item.id, [{ kind: "source", ref: src.id }], "owner");
   saveFlow(app, YAML.stringify({ id: "demo", name: "示例交付", stages }), "owner");
   await startFlow(app, item.id, "demo", owner);
   let line = 1;
@@ -338,7 +338,7 @@ describe("流程上下文跟进", () => {
     const t = await setup();
     const doc = upsertSource(t.app, { spaceId: "personal", kind: "meeting", uri: "meeting:demo", title: "示例讨论", text: "原会议内容" });
     const thread = createThread(t.app, { spaceId: "personal", channel: "lark", key: "oc_example#omt_demo" });
-    addMaterials(t.app, t.item.id, [{ kind: "source", ref: doc.id }, { kind: "conversation", ref: thread.id }], "owner");
+    await addMaterials(t.app, t.item.id, [{ kind: "source", ref: doc.id }, { kind: "conversation", ref: thread.id }], "owner");
     await followContexts(t.app); expect(flowView(t.app, t.item.id).follow).toHaveLength(2);
     const before = flowView(t.app, t.item.id).follow.find((s) => s.sourceId === doc.id)!;
     expect(before.pending).toBe(0);
@@ -352,7 +352,7 @@ describe("流程上下文跟进", () => {
   it("普通会话忽略助手；多行消息引用实际转录行号", async () => {
     const t = await setup(); const c = createThread(t.app, { spaceId: "personal", channel: "web" });
     addMessage(t.app, c.id, "user", "历史\n第二行"); addMessage(t.app, c.id, "assistant", "已知道");
-    addMaterials(t.app, t.item.id, [{ kind: "conversation", ref: c.id }], "owner");
+    await addMaterials(t.app, t.item.id, [{ kind: "conversation", ref: c.id }], "owner");
     await followContexts(t.app);
     const source = one<{ id: string }>(t.app.db, "select id from sources where uri=?", `conversation:${c.id}`)!;
     addMessage(t.app, c.id, "assistant", "助手的新进展"); await followContexts(t.app); expect(t.queued()).toHaveLength(0);
@@ -382,7 +382,7 @@ describe("原件查找、文档的新行和在事项页逐条处理", () => {
     const t = await setup();
     run(t.app.db, "delete from item_materials where item_id=? and kind='source'", t.item.id);
     const thread = createThread(t.app, { spaceId: "personal", channel: "lark", key: "oc_example#omt_demo" });
-    addMaterials(t.app, t.item.id, [{ kind: "conversation", ref: thread.id }], "owner");
+    await addMaterials(t.app, t.item.id, [{ kind: "conversation", ref: thread.id }], "owner");
     await followContexts(t.app);
     expect(flowView(t.app, t.item.id).follow.map((f) => f.sourceId)).toEqual([t.src.id]);
     t.app.config.flows.follow.enabled = false;
@@ -391,7 +391,7 @@ describe("原件查找、文档的新行和在事项页逐条处理", () => {
   it("文档更新后只交以前没有的行；只删行不起运行", async () => {
     const t = await setup();
     const doc = upsertSource(t.app, { spaceId: "personal", kind: "doc", uri: "doc:plan", title: "退款方案", text: "退商品款\n七天内原路退回" });
-    addMaterials(t.app, t.item.id, [{ kind: "source", ref: doc.id }], "owner");
+    await addMaterials(t.app, t.item.id, [{ kind: "source", ref: doc.id }], "owner");
     await followContexts(t.app);
     run(t.app.db, "update sources set text=?,updated_at=? where id=?", "退商品款\n七天内原路退回\n部分发货的运费也退", later(1000), doc.id);
     await followContexts(t.app, new Date(Date.now() + 21 * 60000));

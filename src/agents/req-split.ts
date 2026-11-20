@@ -66,7 +66,7 @@ async function scopeItem(app: App, runId: string, itemId: string, userId: string
   // added under an existing page scopes just that feature, not the whole page).
   const tops = touched.filter((n) => !reqPath(app, n!).slice(0, -1).some((a) => ids.has(a.id))).map((n) => n!.id);
   if (!tops.length) return 0;
-  const { addMaterials } = await import("../items/materials.ts");
-  addMaterials(app, itemId, tops.map((ref) => ({ kind: "req" as const, ref })), userId, "agent");
+  const { addLocalMaterials } = await import("../items/materials.ts");
+  addLocalMaterials(app, itemId, tops.map((ref) => ({ kind: "req" as const, ref })), userId, "agent");
   return tops.length;
 }

@@ -184,7 +184,7 @@ describe("reviewing an existing branch", () => {
       const { upsertSource } = await import("../src/sources/store.ts");
       const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "prd-refund.md", title: "退款需求", text: "# 退款\n\n只退未发货的行。\n" });
       const item = upsertItem(app, undefined, { spaceId: "personal", title: "退款需求", kind: "todo" }, "user");
-      addMaterials(app, item.id, [{ kind: "source", ref: `src:${doc.id}#L1-L3`, note: "需求原文" }], "owner", "user");
+      await addMaterials(app, item.id, [{ kind: "source", ref: `src:${doc.id}#L1-L3`, note: "需求原文" }], "owner", "user");
       const r = createBranchReview(app, { repos: ["shop-api"], branch: "feature/refund", task: "评审退款分支", fetch: false, itemId: item.id });
       expect(itemMaterials(app, item.id).map((m) => `${m.kind}:${m.ref}`).sort()).toEqual([`repo:shop-api#feature/refund`, `run:${r.id}`, `source:${doc.id}`].sort());
       await exec(r);

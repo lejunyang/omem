@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { addMaterials, materialsBrief } from "../src/items/materials.ts";
+import { addLocalMaterials, materialsBrief } from "../src/items/materials.ts";
 import { findReq, ownerCorrections, recordReqStatus, reqDetail, reqTree, reqVersions, saveReqs, type ReqOp, type ReqWriter } from "../src/items/requirements.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { search } from "../src/search/search.ts";
@@ -80,7 +80,7 @@ describe("requirement trees", () => {
     const amount = reqTree(app, "shop").find((n) => n.kind === "feature")!;
     const page = reqTree(app, "shop").find((n) => n.kind === "page")!;
     const item = upsertItem(app, undefined, { spaceId: "shop", title: "退款只退未发货的行", kind: "todo" }, "user");
-    addMaterials(app, item.id, [{ kind: "req", ref: `req:${page.id}` }], "owner", "user");
+    addLocalMaterials(app, item.id, [{ kind: "req", ref: `req:${page.id}` }], "owner", "user");
     const since = new Date(Date.now() - 60_000).toISOString();
     recordReqStatus(app, "r-demo", 1, [{ req: amount.id, status: "partial", locations: [{ file: "refund.ts", start: 1, end: 3 }] }, { status: "extra" }]);
     const brief = materialsBrief(app, item.id, "owner", { since });

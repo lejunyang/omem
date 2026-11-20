@@ -2513,7 +2513,7 @@ def({
       parentLine = parent ? `\n归到 ${parent}「${getItem(ctx.app, parent).title}」下面。` : "\n已从上层移出。";
     }
     const { addMaterials, removeMaterials } = await import("../items/materials.ts");
-    const added = materialsAdd?.length ? addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
+    const added = materialsAdd?.length ? await addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
     const removed = materialsRemove?.length ? removeMaterials(ctx.app, item.id, materialsRemove, ctx.userId ?? OWNER, ctx.actor) : 0;
     const materialsLine = added.length || removed ? `\n材料：${added.length ? `加入 ${added.map((m) => `#${m.id} ${m.label}`).join("、")}` : ""}${added.length && removed ? "；" : ""}${removed ? `移除 ${removed} 项` : ""}` : "";
     // A problem worked through over several steps is worth keeping as a case (see roles/_common.md).
@@ -6866,7 +6866,7 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
     const text = await asLarkUser(ctx.app, ctx.userId ?? OWNER, () => withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data)), ctx.runId);
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
     const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : tool.write ? followWork(ctx, parsed.data as Record<string, unknown>) : "";
-    const linked = afterToolCall(ctx.app, ctx.runId, ctx.userId, name, parsed.data as Record<string, unknown>, String(text));
+    const linked = await afterToolCall(ctx.app, ctx.runId, ctx.userId, name, parsed.data as Record<string, unknown>, String(text));
     return { text: text + moved + linked + (await steering(ctx)), isError: false };
   } catch (error) {
     return { text: (error as Error).message + (await steering(ctx)), isError: true };

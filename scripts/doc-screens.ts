@@ -665,7 +665,7 @@ run(app.db, "update designs set status='approved',feedback=? where id=?", JSON.s
 const flowRun = createRun(app, { kind: "code", spaceId: "shop", title: "退款改造：评审通过", input: { itemId: flowItem.id, repos: ["shop"], task: "按已确认方案实现退款行分摊并验证" } });
 setRunOutput(app, flowRun.id, { verdict: "approved", reviewStage: "done", coderSummary: "只退已发货行，分摊尾差、负数和金额精度的测试已通过。", check: { command: "node test.js", code: 0, output: "退款回归断言全部通过" } });
 run(app.db, "update runs set status='done',started_at=?,finished_at=? where id=?", flowAt(16), flowAt(12), flowRun.id);
-addMaterials(app, flowItem.id, [{ kind: "run", ref: flowRun.id }, { kind: "source", ref: prd }], "owner");
+await addMaterials(app, flowItem.id, [{ kind: "run", ref: flowRun.id }, { kind: "source", ref: prd }], "owner");
 run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,updated_at,started_by) values(?,?,?,?,?,?)", flowItem.id, delivery.id, JSON.stringify(delivery), flowAt(28), flowAt(4), "owner");
 for (const [i, d] of delivery.stages.entries()) {
   const finished = i < 3, active = d.id === "push";
@@ -698,7 +698,7 @@ const exportFix = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", ti
 setParent(app, exportFix.id, refundLine.id);
 upsertItem(app, exportFix.id, { status: "done" }, "user");
 const qaChat = upsertSource(app, { spaceId: "shop", kind: "chat", uri: "lark:oc_demo_refund_qa", title: "退款改造测试群", text: "[11-18 10:00] 小李: 回放脚本在测试环境跑通了", meta: { chatId: "oc_demo_refund_qa", chatMode: "group" } }).id;
-addMaterials(app, refundLine.id, [{ kind: "source", ref: qaChat }], "owner");
+await addMaterials(app, refundLine.id, [{ kind: "source", ref: qaChat }], "owner");
 // Messages per day in the two groups over the last two weeks (the 14-day activity of 人和群).
 for (const [chatId, perDay] of [["oc_demo_refund", [3, 5, 2, 0, 0, 8, 12, 9, 4, 0, 1, 14, 18, 11]], ["oc_demo_refund_qa", [0, 0, 1, 2, 0, 0, 0, 3, 6, 2, 0, 0, 5, 7]]] as const) {
   perDay.forEach((n, i) => {

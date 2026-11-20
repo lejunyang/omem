@@ -287,14 +287,14 @@ function itemsOfCall(name: string, args: Record<string, unknown>, text: string):
  * After a tool call succeeded: an item it read or wrote joins the run's scope; an item it wrote is
  * linked to the run's places (items/places.ts). Returns a line for the tool's result, or "".
  */
-export function afterToolCall(app: App, runId: string | null | undefined, userId: string | undefined, name: string, args: Record<string, unknown>, text: string): string {
+export async function afterToolCall(app: App, runId: string | null | undefined, userId: string | undefined, name: string, args: Record<string, unknown>, text: string): Promise<string> {
   if (!runId) return "";
   try {
     const ids = itemsOfCall(name, args, text);
     if (!ids.length || !one(app.db, "select 1 from runs where id = ?", runId)) return "";
     for (const id of ids) addScope(app, runId, "item", id);
     if (name !== "upsert_item") return "";
-    const linked = linkRunPlaces(app, runId, ids[0], userId ?? OWNER);
+    const linked = await linkRunPlaces(app, runId, ids[0], userId ?? OWNER);
     const names = linked.flatMap((p) => placeView(app, p)?.title ?? []);
     return names.length ? `\n已把这件事关联到${names.map((n) => `「${truncate(n, 30)}」`).join("、")}：之后在这些地方工作的运行会看到它在别处的进展。不是同一件事就用 materials_remove 取消。` : "";
   } catch (e) {

@@ -253,7 +253,7 @@ if (process.argv.includes("--requirements")) {
   const { ensurePersonalSpace } = await import("../src/core/spaces.ts");
   const { createRun, setRunOutput } = await import("../src/agents/runs.ts");
   const { saveReqs } = await import("../src/items/requirements.ts");
-  const { addMaterials } = await import("../src/items/materials.ts");
+  const { addLocalMaterials } = await import("../src/items/materials.ts");
   const { upsertItem } = await import("../src/items/store.ts");
   const { reqWork } = await import("../src/items/work.ts");
   const option = (key: string, fallback: number) => {
@@ -269,7 +269,7 @@ if (process.argv.includes("--requirements")) {
     ensurePersonalSpace(app);
     const { keys } = saveReqs(app, [{ op: "add", key: "page", kind: "page", title: "退款验收" }], { by: "user", label: "本人" }, { defaultSpace: "personal", canWrite: () => {}, canRead: () => {} });
     const item = upsertItem(app, undefined, { spaceId: "personal", title: "退款改造", kind: "todo", userId: "owner" }, "user");
-    addMaterials(app, item.id, [{ kind: "req", ref: keys.page }], "owner", "user");
+    addLocalMaterials(app, item.id, [{ kind: "req", ref: keys.page }], "owner", "user");
     const payload = "+code\n".repeat(Math.ceil(bytes / 6)).slice(0, bytes);
     for (let w = 0; w < works; w++) {
       let root = "";
@@ -279,7 +279,7 @@ if (process.argv.includes("--requirements")) {
         setRunOutput(app, r.id, { verdict: "approved", patches: [{ patch: payload }] });
         app.db.prepare("update runs set status = 'done' where id = ?").run(r.id);
       }
-      addMaterials(app, item.id, [{ kind: "run", ref: root }], "owner", "user");
+      addLocalMaterials(app, item.id, [{ kind: "run", ref: root }], "owner", "user");
     }
     const prepare = app.db.prepare.bind(app.db);
     let queries = 0;

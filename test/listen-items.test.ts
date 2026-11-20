@@ -34,12 +34,12 @@ const owner = { actor: "owner", userId: "owner" };
 const BRIEF = { handle: ["问这件事进展的"], skip: ["闲聊"], valid: "说得出依据" };
 
 /** An item linked to a captured group chat, with a way to add lines to that chat. */
-function setup() {
+async function setup() {
   const app = testApp(); apps.push(app); app.config.flows.autoAdvance = 20;
   const item = upsertItem(app, undefined, { title: "示例商城退款", detail: "退商品款", dueAt: "2026-12-01" }, "user");
   const src = appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_shop", title: "示例商城讨论", lines: ["原来的需求"], meta: { chatId: "oc_shop" } });
   run(app.db, "insert into lark_messages(message_id,chat_id,source_id,line,content,create_ms) values('history','oc_shop',?,1,'原来的需求',?)", src.id, Date.now() - 3600000);
-  addMaterials(app, item.id, [{ kind: "source", ref: src.id }], "owner");
+  await addMaterials(app, item.id, [{ kind: "source", ref: src.id }], "owner");
   let line = 1;
   const message = (content = "小王说截止时间要改到 12 月 8 日") => {
     line++;
@@ -59,7 +59,7 @@ const msgEvent = (id: string, chatId: string, text: string): RuleEvent => ({
 
 describe("事情型关注", () => {
   it("a flow makes the item's 关注 (only reading, its groups), ends it with the flow; startup does the same for running flows", async () => {
-    const { app, item } = setup();
+    const { app, item } = await setup();
     flow(app);
     await startFlow(app, item.id, "demo", owner);
     const c = itemContext(app, item.id)!;
@@ -85,7 +85,7 @@ describe("事情型关注", () => {
   });
 
   it("follows an item the owner keeps a 关注 on with no flow: changes without stages, a proposed deadline asked", async () => {
-    const { app, item, message } = setup();
+    const { app, item, message } = await setup();
     app.config.flows.follow.maxMessages = 1;
     const c = setItemListening(app, item.id, true)!;
     expect(c).toMatchObject({ kind: "item", status: "active", chats: ["oc_shop"] });
@@ -120,7 +120,7 @@ describe("事情型关注", () => {
   });
 
   it("tells item-follow what still matters once the line launched and is being watched", async () => {
-    const { app, item, message } = setup();
+    const { app, item, message } = await setup();
     app.config.flows.follow.maxMessages = 1;
     setItemListening(app, item.id, true);
     run(app.db, "update items set phase = 'watching', phase_since = ?, watch_until = null where id = ?", new Date().toISOString(), item.id);
@@ -132,14 +132,14 @@ describe("事情型关注", () => {
   });
 
   it("keeps the 关注's groups the item's linked chats on each pass, and the chat index with them", async () => {
-    const { app, item, src } = setup();
+    const { app, item, src } = await setup();
     const c = setItemListening(app, item.id, true)!;
     const other = appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_dev", title: "开发群", lines: ["x"], meta: { chatId: "oc_dev" } });
     const conv = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_test#omt_1" });
     // A private chat is no group of the matter.
     run(app.db, "insert into lark_cursors(chat_id,name,kind) values('oc_p2p','小王','p2p')");
     const p2p = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_p2p" });
-    addMaterials(app, item.id, [{ kind: "source", ref: other.id }, { kind: "conversation", ref: conv.id }, { kind: "conversation", ref: p2p.id }], "owner");
+    await addMaterials(app, item.id, [{ kind: "source", ref: other.id }, { kind: "conversation", ref: conv.id }, { kind: "conversation", ref: p2p.id }], "owner");
     await followContexts(app);
     expect(getContext(app, c.id)!.chats.sort()).toEqual(["oc_dev", "oc_shop", "oc_test"]);
     expect(chatListened(app, "oc_dev")).toBe(true);
@@ -151,7 +151,7 @@ describe("事情型关注", () => {
   });
 
   it("set_chat_watch(item) sets the matter's 关注: groups from the item, replies need a brief, remove pauses it", async () => {
-    const { app, item } = setup();
+    const { app, item } = await setup();
     const tools = ownerTools(app);
     const made = await callTool(tools, "set_chat_watch", { item: item.id });
     expect(made.isError).toBe(false);
@@ -173,7 +173,7 @@ describe("事情型关注", () => {
   });
 
   it("an item 关注 that only reads takes no group messages; with replies on, its handler is told where the matter stands", async () => {
-    const { app, item } = setup();
+    const { app, item } = await setup();
     setItemListening(app, item.id, true);
     expect(await routeWatchedMessages(app, "oc_shop", "示例商城讨论", [{ id: "om_1", time: String(Date.now()), sender: "小王", text: "退款什么时候上线" }])).toBe(0);
     run(app.db, "insert into item_changes(id,item_id,at,type,summary,refs,run_id,updated_at,status) values('ic_1',?,?,'scope','小王提出运费也要退','[]','r_x',?,'noted')", item.id, new Date().toISOString(), new Date().toISOString());
@@ -194,7 +194,7 @@ describe("事情型关注", () => {
   });
 
   it("the owner picks the matter's groups on the line page or by asking: kept through every sync with its items", async () => {
-    const { app, item, src } = setup();
+    const { app, item, src } = await setup();
     const c = setItemListening(app, item.id, true)!;
     run(app.db, "insert into lark_cursors(chat_id,name,kind) values('oc_ops','值班群','group'), ('oc_dm','小王','p2p')");
     const { startServer } = await import("../src/server/http.ts");
@@ -214,7 +214,7 @@ describe("事情型关注", () => {
       expect(d.listen).toEqual({ id: c.id, status: "active" });
       // A new chat linked to the item still comes in; a private chat or an unknown one is refused.
       const dev = appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_dev", title: "开发群", lines: ["x"], meta: { chatId: "oc_dev" } });
-      addMaterials(app, item.id, [{ kind: "source", ref: dev.id }], "owner");
+      await addMaterials(app, item.id, [{ kind: "source", ref: dev.id }], "owner");
       await followContexts(app);
       expect(getContext(app, c.id)!.chats.sort()).toEqual(["oc_dev", "oc_ops"]);
       expect((await put(["oc_ops", "oc_dm"])).statusCode).toBe(400);

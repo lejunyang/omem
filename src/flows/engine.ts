@@ -13,7 +13,7 @@ import { roleNames, type RoleName } from "../core/config.ts";
 import { userBy } from "../core/run-trigger.ts";
 import { findAgentSpec, readSkill, skillUsable } from "../agents/specs.ts";
 import { getItem, type Item } from "../items/store.ts";
-import { addMaterials, materialsBrief } from "../items/materials.ts";
+import { addLocalMaterials, materialsBrief } from "../items/materials.ts";
 import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
 import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
@@ -380,7 +380,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
         trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name }, by: userBy(app, item.userId), where: d.name } });
       carrier = r.id;
       control.runId = r.id;
-      addMaterials(app, item.id, [{ kind: "run", ref: r.id, label: r.title }], item.userId);
+      addLocalMaterials(app, item.id, [{ kind: "run", ref: r.id, label: r.title }], item.userId);
     }
   } else if (d.by === "owner") {
     carrier = "owner";

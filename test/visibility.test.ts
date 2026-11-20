@@ -6,6 +6,8 @@ import { callTool, issueToolToken, toolContextForToken } from "../src/agents/too
 import { setAuthFetchForTests } from "../src/auth/providers.ts";
 import { storeConnection } from "../src/auth/vault.ts";
 import { keptHere, setVisibility, sourceReadable, sourceVisible } from "../src/auth/visibility.ts";
+import { upsertItem } from "../src/items/store.ts";
+import { itemMaterials } from "../src/items/materials.ts";
 import { one } from "../src/core/db.ts";
 import { fedSearch, serviceAccount, setShares } from "../src/core/federation.ts";
 import { createSpace, updateSpace } from "../src/core/spaces.ts";
@@ -74,6 +76,18 @@ describe("who may see a source", async () => {
     expect(ids).not.toContain(secret.id);
     const r = await callTool(ctx("ann"), "write_page", { page: "notes", title: "笔记", summary: "x", body: `见 [单聊](src:${secret.id}#L1-L1)`, space: "proj" });
     expect(r.text).toMatch(/不能引用只对部分人开放的原件/);
+  });
+
+  it.each([true, false])("首次添加飞书原件按来源答复决定是否写入材料（%s）", async (allowed) => {
+    updateSpace(app, "proj", { settings: { larkAccess: true } });
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "ann", scopes: [], accessToken: "at_ann", expiresIn: 7200 });
+    const documentId = allowed ? "doc_ok" : "doc_no";
+    const source = upsertSource(app, { spaceId: "proj", kind: "doc", uri: `material:${documentId}`, title: "测试材料", text: "", meta: { documentId } });
+    const item = upsertItem(app, undefined, { spaceId: "proj", userId: "ann", title: "添加材料" }, "user");
+    expect(sourceVisible(app, "ann", source.id)).toBe("check");
+    const res = await as("ann", `/api/items/${item.id}/materials`, { method: "POST", body: JSON.stringify({ materials: [{ kind: "source", ref: source.id }] }) });
+    expect(res.status).toBe(allowed ? 200 : 403);
+    expect(itemMaterials(app, item.id).map(m => m.ref)).toEqual(allowed ? [source.id] : []);
   });
 
   it("a space's Feishu documents in full only for those Feishu lets read them", async () => {

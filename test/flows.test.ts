@@ -11,7 +11,7 @@ import { createUser } from "../src/core/users.ts";
 import { answerAsk, createAsk, getAsk } from "../src/agents/asks.ts";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { addMaterials } from "../src/items/materials.ts";
+import { addLocalMaterials } from "../src/items/materials.ts";
 import { itemEvents, upsertItem } from "../src/items/store.ts";
 import { createDesign, decideDesign, setDesignStatus } from "../src/designs/store.ts";
 import { flowSchema, flowsFor, listFlows, parseFlow, readFlow, removeFlow, saveFlow, seedBuiltinFlows } from "../src/flows/definitions.ts";
@@ -102,7 +102,7 @@ describe("阶段推进", () => {
     const app = appFor();
     const item = upsertItem(app, undefined, { title: "示例商城退款", detail: `最新：按行退款已提测。${"很早以前的过程记录。".repeat(600)}`, spaceId: "personal" }, "user");
     const runs = Array.from({ length: 20 }, (_, i) => createRun(app, { kind: "agent", spaceId: "personal", title: `第 ${i + 1} 次交办` }).id);
-    addMaterials(app, item.id, runs.map((ref) => ({ kind: "run" as const, ref })), item.userId);
+    addLocalMaterials(app, item.id, runs.map((ref) => ({ kind: "run" as const, ref })), item.userId);
     saveFlow(app, yaml([stage("a")]), "user");
     await startFlow(app, item.id, "demo", owner);
     const task = getRun(app, getStage(app, item.id, "a").by!).input.task as string;
@@ -318,7 +318,7 @@ describe("只有本人能定的事", () => {
       const item = upsertItem(app, undefined, { title, spaceId: "personal" }, "user");
       const r = createRun(app, { kind: "code", spaceId: "personal", title: `修 ${title}`, input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
       setRunOutput(app, r.id, { pushed: pushed(head) });
-      addMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
+      addLocalMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
       return item;
     };
     const a = make("退款金额不对", "a".repeat(40)), b = make("退款单号截断", "a".repeat(40)), c = make("别的分支", "c".repeat(40));
@@ -397,7 +397,7 @@ describe("对象与工具", () => {
     const { app, item, s } = await setup([stage("a", { done: { object: "code-work", status: "done" } }), stage("b", { by: { object: "code-work" }, done: "confirm" })]);
     const carrier = s("a").by!;
     const code = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { itemId: item.id } });
-    addMaterials(app, item.id, [{ kind: "run", ref: code.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: code.id }], "owner");
     await reportStage(app, item.id, "a", { state: "done", note: "材料已交", evidence: [carrier] }, { actor: "assistant", runId: carrier });
     expect(s("a").state).toBe("doing");
     setRunOutput(app, code.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", code.id);
@@ -410,7 +410,7 @@ describe("对象与工具", () => {
   it("编码对象从 run 材料找交办，评审 approved 后完成（无需应用）；事件能找到关联事项", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
     const r = createRun(app, { kind: "code", spaceId: "personal", title: "实现退款", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
-    addMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
     await advance(app, item.id); expect(s("a").by).toBe(`code-work:${r.id}`);
     setRunOutput(app, r.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", r.id);
     app.emit({ type: "changed", entity: "code-task", id: r.id }); await advance(app, item.id);
@@ -423,14 +423,14 @@ describe("对象与工具", () => {
   it("跟着交办的段被自己的运行报成等交办，交办评审通过后照样完成；等本人的不跟", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
     const r = createRun(app, { kind: "code", spaceId: "personal", title: "同一分支上别的事项的交办", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
-    addMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
     run(app.db, "update item_stages set state='blocked', waiting_on='同分支的交办编码与评审' where item_id=? and stage_id='a'", item.id);
     setRunOutput(app, r.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", r.id);
     await advance(app, item.id);
     expect(s("a").state).toBe("done"); expect(s("b").state).toBe("doing");
     const other = await setup([stage("a", { by: { object: "code-work" } })]);
     const r2 = createRun(other.app, { kind: "code", spaceId: "personal", title: "交办", input: { itemId: other.item.id, repos: ["personal"] }, userId: "owner" });
-    addMaterials(other.app, other.item.id, [{ kind: "run", ref: r2.id }], "owner");
+    addLocalMaterials(other.app, other.item.id, [{ kind: "run", ref: r2.id }], "owner");
     run(other.app.db, "update item_stages set state='blocked', waiting_on='owner' where item_id=? and stage_id='a'", other.item.id);
     await advance(other.app, other.item.id);
     expect(other.s("a").state).toBe("blocked");
@@ -438,14 +438,14 @@ describe("对象与工具", () => {
   it("跟着交办的段按本人意见重做：运行发起交办后结束，段跟着新交办走，不报卡住", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
     const old = createRun(app, { kind: "code", spaceId: "personal", title: "第一次交办", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
-    addMaterials(app, item.id, [{ kind: "run", ref: old.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: old.id }], "owner");
     setRunOutput(app, old.id, { verdict: "approved" }); run(app.db, "update runs set status='done', created_at='2026-01-01T00:00:00.000Z' where id=?", old.id);
     await advance(app, item.id); expect(s("a").state).toBe("done");
     await reopenStage(app, item.id, "a", "设计稿换了图标，按新稿改", [], owner, { feedback: true });
     const stageRun = s("a").by!;
     expect(getRun(app, stageRun).kind).toBe("flow-stage");
     const next = createRun(app, { kind: "code", spaceId: "personal", title: "换图标", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
-    addMaterials(app, item.id, [{ kind: "run", ref: next.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: next.id }], "owner");
     setRunOutput(app, stageRun, { text: "已交办换图标" }); run(app.db, "update runs set status='done' where id=?", stageRun);
     await advance(app, item.id);
     expect(s("a")).toMatchObject({ state: "doing", by: `code-work:${next.id}` });
@@ -456,12 +456,12 @@ describe("对象与工具", () => {
   it("本人先直接交办了，变化再并进：运行确认改动已在那次交办里后结束，段跟着它走，不报卡住", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
     const old = createRun(app, { kind: "code", spaceId: "personal", title: "第一次交办", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
-    addMaterials(app, item.id, [{ kind: "run", ref: old.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: old.id }], "owner");
     setRunOutput(app, old.id, { verdict: "approved" }); run(app.db, "update runs set status='done', created_at='2026-01-01T00:00:00.000Z' where id=?", old.id);
     await advance(app, item.id); expect(s("a").state).toBe("done");
     // The owner asked the assistant for the change directly: a new delegation of this item, while the stage is done.
     const direct = createRun(app, { kind: "code", spaceId: "personal", title: "退款单加运费说明", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
-    addMaterials(app, item.id, [{ kind: "run", ref: direct.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: direct.id }], "owner");
     await advance(app, item.id); expect(s("a").state).toBe("done");
     await reopenStage(app, item.id, "a", "本人要求退款单加运费说明", [], owner, { feedback: true });
     const stageRun = s("a").by!;
@@ -473,7 +473,7 @@ describe("对象与工具", () => {
   it("跟着分支评审的段按本人意见重做：任务是带 rereview_of 复审，不发起编码交办", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);
     const review = createRun(app, { kind: "code", spaceId: "personal", title: "同事分支的评审", input: { itemId: item.id, repos: ["personal"], branches: { personal: "feature/refund" } }, userId: "owner" });
-    addMaterials(app, item.id, [{ kind: "run", ref: review.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: review.id }], "owner");
     await advance(app, item.id); expect(s("a").by).toBe(`code-work:${review.id}`);
     await reopenStage(app, item.id, "a", "群里说图标要换成耳麦", [], owner, { feedback: true });
     const task = String(getRun(app, s("a").by!).input.task);
@@ -484,7 +484,7 @@ describe("对象与工具", () => {
   it("跟着评审的段卡住以后评审才出结论：按结论完成，不再停在卡住；本人自己的卡住不动", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } }), stage("b", { by: "wait" })]);
     const review = createRun(app, { kind: "code", spaceId: "personal", title: "同事分支的评审", input: { itemId: item.id, repos: ["personal"], branches: { personal: "feature/refund" } }, userId: "owner" });
-    addMaterials(app, item.id, [{ kind: "run", ref: review.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: review.id }], "owner");
     await advance(app, item.id);
     await reopenStage(app, item.id, "a", "群里说图标要换成耳麦", [], owner, { feedback: true });
     const stageRun = s("a").by!;
@@ -501,7 +501,7 @@ describe("对象与工具", () => {
     expect(s("b").state).toBe("doing");
     const other = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);
     const r2 = createRun(other.app, { kind: "code", spaceId: "personal", title: "评审", input: { itemId: other.item.id, repos: ["personal"], branches: { personal: "feature/x" } }, userId: "owner" });
-    addMaterials(other.app, other.item.id, [{ kind: "run", ref: r2.id }], "owner");
+    addLocalMaterials(other.app, other.item.id, [{ kind: "run", ref: r2.id }], "owner");
     run(other.app.db, "update item_stages set state='blocked', waiting_on='owner', since='2026-01-01T00:00:00.000Z' where item_id=? and stage_id='a'", other.item.id);
     run(other.app.db, "insert into item_stage_log(item_id,stage_id,at,from_state,to_state,actor,run_id,refs,note,round) values(?,?,?,?,?,?,?,?,?,?)", other.item.id, "a", "2026-01-01T00:00:00.000Z", "doing", "blocked", "owner", null, "[]", "三次仍未确认", 1);
     setRunOutput(other.app, r2.id, { verdict: "changes-requested" }); run(other.app.db, "update runs set status='done', finished_at=? where id=?", later, r2.id);
@@ -555,7 +555,7 @@ describe("对象与工具", () => {
   it("对象下游待复核时直接重读对象，仍完成就恢复 done", async () => {
     const { app, item, s } = await setup([stage("a", { by: "wait" }), stage("b", { by: { object: "code-work" } }), stage("c", { by: "wait" })], { autoAdvance: 20 });
     const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { itemId: item.id } });
-    addMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
     setRunOutput(app, r.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", r.id);
     await ownerAction(app, item.id, "a", "done", "需求已确认"); expect(s("b").state).toBe("done");
     await reopenStage(app, item.id, "a", "补充需求", [], owner); expect(s("b").state).toBe("stale");

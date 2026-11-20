@@ -284,7 +284,7 @@ describe("上下文跟进：同一个群在两个空间各有一份", () => {
     const mine = appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_demo", title: "示例群", lines: ["原来的需求"], meta: { chatId: "oc_demo" } });
     const other = appendToSource(app, { spaceId: "proj", kind: "chat", uri: "lark:oc_demo", title: "示例群", lines: ["别的", "原来的需求"], meta: { chatId: "oc_demo" } });
     run(app.db, "update sources set captured_at='2020-01-01T00:00:00.000Z' where id=?", other.id);
-    addMaterials(app, i.id, [{ kind: "source", ref: other.id }, { kind: "source", ref: mine.id }], "owner");
+    await addMaterials(app, i.id, [{ kind: "source", ref: other.id }, { kind: "source", ref: mine.id }], "owner");
     saveFlow(app, flow([{ id: "code", name: "编码", by: "wait" }]), "owner");
     await startFlow(app, i.id, "demo", owner);
     expect(flowView(app, i.id).follow.map((p) => p.sourceId)).toEqual([mine.id]);
@@ -305,7 +305,7 @@ describe("上下文跟进：同一个群在两个空间各有一份", () => {
     const a = appendToSource(app, { spaceId: "proj", kind: "doc", uri: "lark:doc:demo", title: "需求文档", lines: ["第一版"] });
     const b = appendToSource(app, { spaceId: "proj-b", kind: "doc", uri: "lark:doc:demo", title: "需求文档", lines: ["第一版"] });
     run(app.db, "update sources set captured_at='2020-01-01T00:00:00.000Z' where id=?", b.id);
-    addMaterials(app, i.id, [{ kind: "source", ref: a.id }, { kind: "source", ref: b.id }], "owner");
+    await addMaterials(app, i.id, [{ kind: "source", ref: a.id }, { kind: "source", ref: b.id }], "owner");
     saveFlow(app, flow([{ id: "code", name: "编码", by: "wait" }]), "owner");
     await startFlow(app, i.id, "demo", owner);
     expect(flowView(app, i.id).follow.map((p) => p.sourceId)).toEqual([b.id]);

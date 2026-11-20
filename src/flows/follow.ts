@@ -8,7 +8,7 @@ import { notify } from "../core/notify.ts";
 import { createRun, getRun, registerHandler, setRunOutput, type Run } from "../agents/runs.ts";
 import { answerAsk, cancelAsk, createAsk, registerAskHandler } from "../agents/asks.ts";
 import { addItemEvent, getItem, isClosed, upsertItem } from "../items/store.ts";
-import { addMaterials, materialsBrief } from "../items/materials.ts";
+import { prepareMaterials, materialsBrief } from "../items/materials.ts";
 import { findReq } from "../items/requirements.ts";
 import { itemContext } from "../channels/listen.ts";
 import { itemFlow, itemStages, type ItemFlow } from "./store.ts";
@@ -448,10 +448,12 @@ async function applyChoice(app: App, itemId: string, c: ChangeRow, choice: numbe
       throw e;
     }
   } else if (choice === 1) {
+    const refs = json<string[]>(c.refs, []);
+    const materials = [...new Set(refs.map((r) => r.slice(4).split("#")[0]))].map((ref) => ({ kind: "source" as const, ref }));
+    const attach = await prepareMaterials(app, materials, item.userId, "user");
     tx(app.db, () => {
-      const refs = json<string[]>(c.refs, []);
       const created = upsertItem(app, undefined, { title: c.summary, detail: `${c.detail ?? c.summary}\n\n${refs.join("\n")}`, spaceId: item.spaceId, userId: item.userId, sourceRefs: refs }, "user");
-      addMaterials(app, created.id, [...new Set(refs.map((r) => r.slice(4).split("#")[0]))].map((ref) => ({ kind: "source" as const, ref })), item.userId, "user");
+      attach(created.id);
       addItemEvent(app, itemId, "updated", `另开事项 ${created.id}：${c.summary}`, "user", refs);
       run(app.db, "update item_changes set status='split',updated_at=? where id=?", now(), c.id);
     });
