@@ -1,12 +1,17 @@
+import { upsertSource } from "../src/sources/store.ts";
+import { setVisibility } from "../src/auth/visibility.ts";
+import { ruleVisible, ruleSummary } from "../src/rules/visibility.ts";
+import { ruleInputSchema } from "../src/rules/types.ts";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createRun, stopWorker } from "../src/agents/runs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { can, canReadRun, spacesWith } from "../src/auth/permissions.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
-import { toolAllowed } from "../src/auth/tools.ts";
+import { toolAllowed, trimTools } from "../src/auth/tools.ts";
 import { notify } from "../src/core/notify.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { addMember, createApiToken, createUser, setUserRole } from "../src/core/users.ts";
@@ -14,9 +19,26 @@ import { boot } from "../src/main.ts";
 import { registeredRoutes } from "../src/server/http.ts";
 import { remember } from "../src/memory/store.ts";
 import { writePage } from "../src/wiki/store.ts";
-import { run as sqlRun } from "../src/core/db.ts";
+import { migrations, run as sqlRun } from "../src/core/db.ts";
 
 describe("roles and permissions", async () => {
+  it.each(["global", "space"])("preserves a pre-existing custom observer role (%s) on upgrade", scope => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`create table roles(id text primary key,scope text); create table users(id text,role text);
+        create table space_members(user_id text,space_id text,role text); create table rules(space_id text,created_at text);
+        create table invites(role text,spaces text);`);
+      db.prepare("insert into roles values ('observer',?),('observer-custom',?)").run(scope, scope);
+      db.exec(`insert into users values('demo','observer'); insert into space_members values('demo','team','observer');
+        insert into invites values('observer','[{"space":"team","role":"observer"}]');`);
+      db.exec(migrations.find(m => m.includes("create table member_capability_overrides"))!);
+      expect(db.prepare("select scope from roles where id='observer-custom-old'").get()?.scope).toBe(scope);
+      const assignment = scope === "global" ? "users" : "space_members";
+      expect(db.prepare(`select role from ${assignment}`).get()?.role).toBe("observer-custom-old");
+      const invite = db.prepare("select role,json_extract(spaces,'$[0].role') space from invites").get()!;
+      expect(invite[scope === "global" ? "role" : "space"]).toBe("observer-custom-old");
+    } finally { db.close(); }
+  });
   it("keeps repository lesson curation owner-only", () => {
     for (const key of ["GET /api/spaces/:id/lessons", "POST /api/spaces/:id/lessons", "PUT /api/spaces/:id/lessons/:lesson", "DELETE /api/spaces/:id/lessons/:lesson"])
       expect(ROUTE_RULES[key]).toBe("owner");
@@ -63,52 +85,103 @@ describe("roles and permissions", async () => {
 
   it("shares work and items with observers only in readable spaces", async () => {
     createUser(app, { id: "observer-test", name: "观察者", role: "observer" });
-    addMember(app,"team","observer-test","reader");
-    tokens["observer-test"] = createApiToken(app,"observer-test","test");
-    const make = async (space:string) => (await fetch(base+"/api/items",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind:"line",space,title:"项目进度"})})).json();
+    addMember(app, "team", "observer-test", "reader");
+    tokens["observer-test"] = createApiToken(app, "observer-test", "test");
+    const make = async (space: string) => (await fetch(base + "/api/items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "line", space, title: "项目进度" }) })).json();
     const visible = await make("team"), hidden = await make("other");
-    const work = await json("observer-test","/api/work");
-    expect(work.lines.map((line:{id:string})=>line.id)).toContain(visible.id);
-    expect(work.lines.map((line:{id:string})=>line.id)).not.toContain(hidden.id);
+    const work = await json("observer-test", "/api/work");
+    expect(work.lines.map((line: { id: string }) => line.id)).toContain(visible.id);
+    expect(work.lines.map((line: { id: string }) => line.id)).not.toContain(hidden.id);
     expect(work).not.toHaveProperty("waiting");
-    expect((await json("observer-test","/api/items/"+visible.id)).can).toEqual({edit:false,operate:false});
-    expect((await as("observer-test","/api/items/"+hidden.id)).status).toBe(404);
-    expect((await as("observer-test","/api/items/"+visible.id,{method:"PATCH",body:'{"title":"编辑"}'})).status).toBe(403);
-    expect((await as("observer-test","/api/rules")).status).toBe(200);
+    expect((await json("observer-test", "/api/items/" + visible.id)).can).toEqual({ edit: false, operate: false });
+    expect((await as("observer-test", "/api/items/" + hidden.id)).status).toBe(404);
+    expect((await as("observer-test", "/api/items/" + visible.id, { method: "PATCH", body: '{"title":"编辑"}' })).status).toBe(403);
+    expect((await as("observer-test", "/api/rules")).status).toBe(200);
   });
 
   it("applies a revoked run capability to lists, details and the next SSE event", async () => {
     const id = "stream-reader";
-    createUser(app,{id,name:"观察者",role:"observer"});
-    addMember(app,"team",id,"reader");
-    tokens[id] = createApiToken(app,id,"test");
-    const code = createRun(app,{kind:"code",title:"编码记录",spaceId:"team",userId:"owner",input:{spaces:["team"]}});
-    const mixed = createRun(app,{kind:"code",title:"编码记录",spaceId:"team",userId:"owner",input:{spaces:["team","other"]}});
-    expect((await as(id,`/api/runs/${code.id}/reviews`)).status).toBe(200);
-    expect((await as(id,`/api/runs/${mixed.id}/reviews`)).status).toBe(404);
-    expect((await json(id,"/api/runs/"+code.id)).can.operate).toBe(false);
-    expect((await as(id,`/api/runs/${code.id}/retry`,{method:"POST"})).status).toBe(403);
-    const put = async (deny:boolean) => fetch(base+"/api/members/"+id+"/capabilities",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({preset:"observer",overrides:deny ? [{scope_kind:"space",scope_id:"team",capability:"runs.view",effect:"deny"}] : []})});
+    createUser(app, { id, name: "观察者", role: "observer" });
+    addMember(app, "team", id, "reader");
+    tokens[id] = createApiToken(app, id, "test");
+    const code = createRun(app, { kind: "code", title: "编码记录", spaceId: "team", userId: "owner", input: { spaces: ["team"] } });
+    const mixed = createRun(app, { kind: "code", title: "编码记录", spaceId: "team", userId: "owner", input: { spaces: ["team", "other"] } });
+    expect((await as(id, `/api/runs/${code.id}/reviews`)).status).toBe(200);
+    expect((await as(id, `/api/runs/${mixed.id}/reviews`)).status).toBe(404);
+    expect((await json(id, "/api/runs/" + code.id)).can.operate).toBe(false);
+    expect((await as(id, `/api/runs/${code.id}/retry`, { method: "POST" })).status).toBe(403);
+    const put = async (deny: boolean) => fetch(base + "/api/members/" + id + "/capabilities", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ preset: "observer", overrides: deny ? [{ scope_kind: "space", scope_id: "team", capability: "runs.view", effect: "deny" }] : [] }) });
     const controller = new AbortController();
-    const response = await as(id,"/api/events",{signal:controller.signal});
+    const response = await as(id, "/api/events", { signal: controller.signal });
     const reader = response.body!.getReader();
-    const readUntil = async (end:string) => {
+    const readUntil = async (end: string) => {
       let text = "";
       while (!text.includes(end)) text += new TextDecoder().decode((await reader.read()).value);
       return text;
     };
     try {
-      app.emit({type:"run",runId:code.id,status:"first"});
+      app.emit({ type: "run", runId: code.id, status: "first" });
       await readUntil("first");
       expect((await put(true)).status).toBe(200);
-      app.emit({type:"run",runId:code.id,status:"revoked"});
-      app.emit({type:"changed",entity:"space",id:"team"});
+      app.emit({ type: "run", runId: code.id, status: "revoked" });
+      app.emit({ type: "changed", entity: "space", id: "team" });
       expect(await readUntil("changed")).not.toContain("revoked");
-      expect((await as(id,"/api/runs/"+code.id)).status).toBe(404);
-      expect((await json(id,"/api/runs")).runs.map((r:{id:string})=>r.id)).not.toContain(code.id);
+      expect((await as(id, "/api/runs/" + code.id)).status).toBe(404);
+      expect((await json(id, "/api/runs")).runs.map((r: { id: string }) => r.id)).not.toContain(code.id);
       expect((await put(false)).status).toBe(200);
-      expect((await as(id,"/api/runs/"+code.id)).status).toBe(200);
+      expect((await as(id, "/api/runs/" + code.id)).status).toBe(200);
     } finally { controller.abort(); }
+  });
+
+  it("reports capability origins, prioritizes denial and trims observer tool tokens", async () => {
+    const id = "cap-test";
+    createUser(app, { id, name: "项目成员" });
+    addMember(app, "team", id, "reader");
+    tokens[id] = createApiToken(app, id, "test");
+    const path = "/api/members/" + id + "/capabilities";
+    const put = (preset: string, overrides: object[]) => fetch(base + path, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ preset, overrides }) });
+    expect((await as(id, path)).status).toBe(403);
+    const catalog = await (await fetch(base + "/api/capabilities")).json();
+    expect(catalog).toHaveLength(24);
+    expect((await as(id, "/api/rules")).status).toBe(403);
+    const member = await (await put("member", [{ capability: "rules.view", scope_kind: "global", effect: "allow" }])).json();
+    expect(member.effective["rules.view"]).toBe("override");
+    expect(member.effective["wiki.view"].team).toBe("spaceRole");
+    expect((await as(id, "/api/rules")).status).toBe(200);
+    await put("observer", [{ capability: "wiki.view", scope_kind: "space", scope_id: "team", effect: "deny" }, { capability: "wiki.view", scope_kind: "global", effect: "allow" }]);
+    const me = await json(id, "/api/me");
+    expect(me.caps).toContain("ask.send");
+    expect(me.spaceCaps["runs.view"]).toContain("team");
+    expect(me.spaceCaps["wiki.view"]).not.toContain("team");
+    expect(me.spaceCaps["sources.view"]).not.toContain("personal");
+    expect((await as(id, "/api/wiki/team")).status).toBe(403);
+    const names = new Set(["search", "read_item", "list_items", "upsert_item", "remember", "write_page", "delegate_code", "lark_send", "lark_write"]);
+    trimTools(app, id, names);
+    expect([...names]).toEqual(["search", "read_item", "list_items"]);
+    const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "team", spaces: ["team"], tools: names, actor: "agent", userId: id }))!;
+    expect((await callTool(ctx, "list_items", {})).isError).toBe(false);
+    expect((await callTool(ctx, "remember", {})).isError).toBe(true);
+    expect((await as(id, "/api/assistants", { method: "POST", body: "{}" })).status).toBe(403);
+    expect((await as(id, "/api/metrics")).status).toBe(200);
+  });
+
+  it("keeps rule scripts, nested space conditions and restricted originals out of read-only views", async () => {
+    const rule = {
+      ...ruleInputSchema.parse({ name: "示例规则", description: "运行检查", conditions: { any: [{ field: "doc.space", op: "equals", value: "other" }] }, actions: [{ type: "script", runtime: "node", code: "// private example" }] }),
+      id: "rule-sample", createdAt: "", updatedAt: "", createdBy: "owner", hits: 0, lastFiredAt: null, temporary: null
+    };
+    expect(ruleVisible(rule, new Set(["team"]))).toBe(false);
+    expect(ruleVisible(rule, new Set(["other"]))).toBe(true);
+    expect(ruleSummary(rule).actions).toEqual([{ type: "script" }]);
+    const source = upsertSource(app, { spaceId: "team", kind: "note", uri: "sample:limited", title: "仅授权者可读", text: "文稿" });
+    setVisibility(app, source.id, "restricted");
+    const id = "limited-reader";
+    createUser(app, { id, name: "只读用户", role: "observer" });
+    addMember(app, "team", id, "reader");
+    tokens[id] = createApiToken(app, id, "test");
+    expect((await as(id, "/api/sources/" + source.id)).status).toBe(403);
+    expect(await (await as(id, "/api/sources/paths?space=team")).text()).not.toContain(source.id);
+    expect((await json(id, "/api/lookup?id=" + source.id)).hits).toEqual([]);
   });
 
   it("keeps decision calibration owner-only", async () => {

@@ -2275,8 +2275,24 @@ export const migrations: readonly string[] = [
     user_id text not null references users(id), capability text not null,
     scope_kind text not null check(scope_kind in ('global','space')), scope_id text not null,
     effect text not null check(effect in ('allow','deny')), created_at text not null, created_by text not null,
+    updated_at text not null default '', revoked integer not null default 0,
     primary key(user_id,capability,scope_kind,scope_id)
-  );`,
+  );
+  create index members_by_user on space_members(user_id,space_id);
+  create index rules_by_space on rules(space_id,created_at);
+  -- Preserve an existing custom role when reserving the built-in observer id.
+  create temp table former_observer as
+    with recursive ids(id) as (select 'observer-custom' union all select id || '-old' from ids where id in (select id from roles))
+    select id, (select scope from roles where id='observer') scope from ids
+    where id not in (select id from roles) and exists(select 1 from roles where id='observer');
+  update users set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='global');
+  update invites set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='global');
+  update space_members set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='space');
+  update invites set spaces=(select json_group_array(json(case when json_extract(value,'$.role')='observer'
+    then json_set(value,'$.role',(select id from former_observer)) else value end)) from json_each(invites.spaces))
+    where exists(select 1 from former_observer where scope='space') and exists(select 1 from json_each(invites.spaces) where json_extract(value,'$.role')='observer');
+  update roles set id=(select id from former_observer) where id='observer';
+  drop table former_observer;`,
 ];
 
 export type Db = DatabaseSync;

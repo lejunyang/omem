@@ -152,8 +152,8 @@ function checkMeetingRule(app: App, r: ReturnType<typeof ruleInputSchema.parse>)
   }
 }
 
-export function listRules(app: App, opts: { enabledOnly?: boolean } = {}): Rule[] {
-  return all<Row>(app.db, `select * from rules ${opts.enabledOnly ? "where enabled = 1" : ""} order by created_at`).map(toRule);
+export function listRules(app: App, opts: { enabledOnly?: boolean; spaces?: string[] | null } = {}): Rule[] {
+  return all<Row>(app.db, `select * from rules where ${opts.enabledOnly ? "enabled=1" : "1"} ${opts.spaces ? "and (space_id is null or space_id in (select value from json_each(?)))" : ""} order by created_at`, ...(opts.spaces ? [JSON.stringify(opts.spaces)] : [])).map(toRule);
 }
 
 export function getRule(app: App, id: string): Rule {

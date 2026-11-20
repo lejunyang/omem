@@ -17,6 +17,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 成员按能力读取工作和评审（11-21）
+
+`src/auth/capabilities.ts` 定义能力、作用域和旧权限映射。从 `src/auth/routes.ts` 看接口登记，从 `src/items/access.ts` 和 `src/auth/run-scope.ts` 看对象和列表的范围。观察者读取共享工作线与事项；运行记录、评审差异与事件流检查完整运行范围。成员管理接口的请求示例见 `docs/v2/multi-user.md`。
+
 ## 读取事项材料时续查飞书权限（11-21）
 
 事项材料的来源权限缓存满一天后，网页详情和 `read_item` 会等待飞书核对，再展示该成员仍可读的文档。从 `src/items/materials.ts` 的 `materialViews` 读起。

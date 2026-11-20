@@ -1,3 +1,5 @@
+import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
+import { globalCapability, spacesWithCapability } from "../auth/capabilities.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { lessonInput, proposeLesson } from "./code-lessons.ts";
 import { claimCommits, claimSchema } from "../flows/commits.ts";
@@ -31,7 +33,7 @@ import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpace
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
-import { toolAllowed } from "../auth/tools.ts";
+import { toolAllowed, toolCapabilities } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf, LARK_DOMAIN_FEATURES } from "../auth/features.ts";
 import { can, canReadRun, requirePerm } from "../auth/permissions.ts";
@@ -197,8 +199,8 @@ function codeVersionHead(ctx: ToolContext, hits: { type: string; sourceKind?: st
   return lines.length ? `代码来自：\n${lines.join("\n")}\n\n` : "";
 }
 /** Reject objects that live outside the spaces this caller may write. */
-function inScope(ctx: ToolContext, spaceId: string, what: string) {
-  if (!canWrite(ctx.app, ctx.userId ?? OWNER, spaceId)) throw new HttpError(403, `无权修改空间 ${spaceId}`);
+function inScope(ctx: ToolContext, spaceId: string, what: string, permission: "items.edit" | "items.operate" | "memory.write" = "memory.write") {
+  if (!can(ctx.app, ctx.userId ?? OWNER, permission, spaceId)) throw new HttpError(403, `无权修改空间 ${spaceId}`);
   const w = ctx.writable ?? ctx.spaces;
   if (w && !w.includes(spaceId))
     throw new HttpError(403, ctx.spaces && ctx.spaces.includes(spaceId) ? `空间 ${spaceId} 这次只能读，不能修改其中的${what}；写进当前空间 ${ctx.spaceId}` : `本次任务不能修改空间 ${spaceId} 中的${what}`);
@@ -232,7 +234,7 @@ function wikiSpace(ctx: ToolContext, requested?: string | null) {
 }
 /** The current space and the related ones this caller may read. */
 function homeSpaces(ctx: ToolContext) {
-  return [ctx.spaceId, ...relatedIds(ctx.app, ctx.spaceId).filter((id) => !ctx.spaces || ctx.spaces.includes(id))];
+  return [ctx.spaceId, ...relatedIds(ctx.app, ctx.spaceId)].filter(id => !ctx.spaces || ctx.spaces.includes(id));
 }
 /** Spaces to read: '*' = all readable, a space id = that one (a business space with its repositories), nothing = current + related. */
 function spacesFor(ctx: ToolContext, requested?: string | null, all = false) {
@@ -267,7 +269,8 @@ function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
     const id = clean.replace(/^msg:/, "");
     const row = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(ctx.app.db, "select * from messages where id = ?", id);
     if (!row) throw new HttpError(404, `找不到消息 ${id}；它可能还没被采集。用 read_conversation 读它所在的会话，或检查 id 是否写对`);
-    const c = one<{ space_id: string }>(ctx.app.db, "select space_id from conversations where id = ?", row.conversation_id);
+    const c = one<{ space_id: string; user_id: string }>(ctx.app.db, "select space_id,user_id from conversations where id = ?", row.conversation_id);
+    if (ctx.userId && ctx.userId !== OWNER && (c?.user_id !== ctx.userId || !can(ctx.app, ctx.userId, "conversations.view"))) throw new HttpError(404, "消息不存在");
     if (scope && c && !scope.includes(c.space_id)) throw new HttpError(403, `本次运行不能访问该消息所在空间 ${c.space_id}`);
     return `__msg__:${id}`;
   }
@@ -275,7 +278,7 @@ function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
     const id = clean.replace(/^mem:/, "");
     const row = one<{ id: string; space_id: string; status: string }>(ctx.app.db, "select id, space_id, status from memories where id = ?", id);
     if (!row) throw new HttpError(404, `记忆不存在：${id}`);
-    if (scope && !scope.includes(row.space_id)) throw new HttpError(403, `本次运行不能访问空间 ${row.space_id} 的记忆`);
+    if ((scope && !scope.includes(row.space_id)) || !can(ctx.app, ctx.userId ?? OWNER, "memories.view", row.space_id)) throw new HttpError(403, `本次运行不能访问空间 ${row.space_id} 的记忆`);
     return `__mem__:${id}`;
   }
   const byId = one<{ id: string; space_id: string }>(ctx.app.db, "select id, space_id from sources where id = ?", canonicalSourceId(ctx.app, clean));
@@ -2534,14 +2537,17 @@ def({
     materials_remove: z.array(z.string()).optional().describe("要移除的材料：材料编号，或 kind:ref"),
   }),
   handler: async (ctx, a) => {
-    const existing = a.id ? requireItem(ctx.app, a.id, ctx.userId ?? OWNER, "write") : null;
+    const operation = a.id && Object.keys(a).every(key => ["id", "status", "note", "space"].includes(key));
+    const existing = a.id ? requireItem(ctx.app, a.id, ctx.userId ?? OWNER, operation ? "operate" : "write") : null;
+    if (existing && !operation && (a.status || a.note)) requireItem(ctx.app, existing.id, ctx.userId ?? OWNER, "operate");
     if (existing) {
-      inScope(ctx, existing.spaceId, "事项");
+      inScope(ctx, existing.spaceId, "事项", operation ? "items.operate" : "items.edit");
       if (existing.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
       if (a.space && a.space !== existing.spaceId) throw new HttpError(400, "事项 id 与空间不匹配");
     }
     const userId = ctx.userId ?? OWNER;
-    const spaceId = existing?.spaceId ?? writeSpace(ctx, a.space);
+    const spaceId = existing?.spaceId ?? space(ctx, a.space);
+    if (!existing) inScope(ctx, spaceId, "事项", "items.edit");
     if (!existing && !itemAccess(ctx.app, userId, { spaceId, userId }, "write")) throw new HttpError(403, "不能在这个空间创建事项");
     // Removal may revoke stale/deleted refs, but must match this item's exact old set.
     if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
@@ -2665,21 +2671,21 @@ def({
   schema: z.object({ item_id: z.string() }),
   handler: async (ctx, a) => {
     const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
-    const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
-    if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
+    const readable = itemScope(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces).spaceIds ?? null;
+    if (readable && !readable.includes(item.spaceId)) throw new HttpError(403, "不能读取该事项");
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(ctx.app, { item: item.id, spaces: readable, userId: ctx.userId ?? OWNER }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");
-    const materials = (await materialViews(ctx.app, item.id, ctx.userId ?? OWNER)).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
+    const materials = (await materialViews(ctx.app, item.id, ctx.userId ?? OWNER)).filter(m => !readable || (m.spaceId && readable.includes(m.spaceId))).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
     // Where the work goes on and what is running for it (items/places.ts).
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
-    const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
-    const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER).filter((r) => r.id !== ctx.runId);
+    const places = (item.userId === (ctx.userId ?? OWNER) ? itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER) : []).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
+    const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER, item.userId !== (ctx.userId ?? OWNER)).filter((r) => r.id !== ctx.runId);
     // Where it hangs and what hangs under it (items/tree.ts); a line's suggested next steps (items/lines.ts).
     const parent = item.parentId ? one<{ id: string; title: string; kind: string; status: string }>(ctx.app.db, "select id, title, kind, status from items where id = ? and (? is null or space_id in (select value from json_each(?)))", item.parentId, readable && JSON.stringify(readable), readable && JSON.stringify(readable)) ?? null : null;
     const children = all<{ id: string; title: string; kind: string; status: string; due_at: string | null }>(ctx.app.db, "select id, title, kind, status, due_at from items where parent_id = ? and (? is null or space_id in (select value from json_each(?))) order by created_at", item.id, readable && JSON.stringify(readable), readable && JSON.stringify(readable)).map((c) => ({ id: c.id, title: c.title, kind: c.kind, status: c.status, dueAt: c.due_at }));
     const next = all<{ id: string; text: string; why: string; kind: string; status: string; created_at: string }>(ctx.app.db, "select id, text, why, kind, status, created_at from item_next where item_id = ? and status in ('open','doing') order by created_at desc limit 10", item.id);
-    return JSON.stringify({ item, ...(parent ? { parent } : {}), ...(children.length ? { children } : {}), ...(next.length ? { next } : {}), flow: (await import("../flows/engine.ts")).flowView(ctx.app, item.id), events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
+    return JSON.stringify({ item, ...(parent ? { parent } : {}), ...(children.length ? { children } : {}), ...(next.length ? { next } : {}), flow: can(ctx.app,ctx.userId ?? OWNER,"flows.view",item.spaceId) ? (await import("../flows/engine.ts")).flowView(ctx.app, item.id) : null, events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
   },
 });
 def({
@@ -2751,7 +2757,7 @@ def({
   schema: z.object({ item_id: z.string(), note: z.string().trim().min(1), source_refs: z.array(z.string()).min(1) }),
   handler: (ctx, a) => {
     const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
-    const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
+    const readable = itemScope(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces).spaceIds ?? null;
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能发现该事项");
     writeSpace(ctx);
     validateItemRefs(ctx.app, a.source_refs, ctx.userId ?? OWNER, ctx.spaces);
@@ -3703,7 +3709,10 @@ def({
   handler: async (ctx) => {
     const { listRules } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
-    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以查看任务规则");
+    if (ctx.userId && ctx.userId !== OWNER && !can(ctx.app, ctx.userId, "rules.edit")) {
+      const spaces = new Set(scopeFor(ctx.app, ctx.userId, ctx.spaces));
+      return JSON.stringify(listRules(ctx.app).filter(r => !r.temporary && (!r.spaceId || r.spaceId === ctx.spaceId) && ruleVisible(r, spaces)).map(ruleSummary));
+    }
     const rules = listRules(ctx.app).filter(r => !r.spaceId || r.spaceId === ctx.spaceId);
     return rules.length
       ? rules.map((r) => `- ${r.id} ${r.enabled ? "" : "（未启用）"}「${r.name}」：${r.description}\n  触发 ${r.trigger.event}${r.trigger.once === "chat" ? "（每群一次）" : ""} · 条件 ${describe(r.conditions)} · 判断 ${r.judge} · 动作 ${r.actions.map((a) => a.type + ("spec" in a ? `:${a.spec}` : "")).join("、")} · 命中 ${r.hits} 次`).join("\n")
@@ -6888,6 +6897,12 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   mark(`tool ${name}`);
   // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
   if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };
+  const cap = toolCapabilities[name];
+  if (ctx.userId && ctx.userId !== OWNER && cap && !globalCapability(cap) && cap !== "items.view") {
+    const range = spacesWithCapability(ctx.app, ctx.userId, cap) ?? [];
+    if (name === "upsert_item") range.push(...spacesWithCapability(ctx.app, ctx.userId, "items.operate") ?? []);
+    ctx = { ...ctx, spaces: range.filter(id => !ctx.spaces || ctx.spaces.includes(id)) };
+  }
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };

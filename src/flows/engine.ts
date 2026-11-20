@@ -925,7 +925,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
 }, (app, ask, ctx, by) => {
   if (ask.userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");
   const itemId = String(ctx.itemId);
-  if (requireItem(app, itemId, by, "write").userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");
+  if (requireItem(app, itemId, by, "flow").userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");
   const f = running(app, itemId);
   const s = getStage(app, itemId, String(ctx.stageId));
   const current = ctx.kind === "upstream" ? s.control.upstream?.askId === ask.id && s.state === "doing" : s.askId === ask.id && s.control.question === ctx.kind;

@@ -361,7 +361,7 @@ export function nodePath(cat: Catalog, key: string): string {
 
 // ---- one level of the tree, with counts --------------------------------------------------------
 
-export type TreeFilter = { kind?: string; level?: string; q?: string };
+export type TreeFilter = { hiddenSources?: Set<string>; kind?: string; level?: string; q?: string };
 export type TreeEntry = {
   key: string;
   title: string;
@@ -391,12 +391,13 @@ const emptyLevels = (): Record<Level, number> => ({ focus: 0, normal: 0, referen
 export function treeChildren(app: App, spaceId: string, key: string, f: TreeFilter = {}) {
   const cat = catalog(app, spaceId);
   if (key !== ROOT && !cat.nodes.has(key)) return { path: [], nodes: [] as TreeEntry[], total: 0 };
-  const filtering = !!(f.kind || f.level || f.q);
+  const filtering = !!(f.kind || f.level || f.q || f.hiddenSources?.size);
   const q = f.q?.toLowerCase();
   const notes = new Map(all<{ source_id: string; n: number }>(app.db, `select n.source_id, count(*) n from source_notes n join sources s on s.id = n.source_id
     where s.space_id = ? and s.deleted_at is null and ${NOTE_ACTIVE_SQL("n")} group by 1`, spaceId).map((r) => [r.source_id, r.n]));
   const stats = new Map<string, { count: number; levels: Record<Level, number>; notes: number }>();
   for (const r of cat.rows.values()) {
+    if (f.hiddenSources?.has(r.id)) continue;
     const eff = effectiveLevel(r).level;
     if (f.kind && r.kind !== f.kind) continue;
     if (f.level && eff !== f.level) continue;
@@ -413,6 +414,7 @@ export function treeChildren(app: App, spaceId: string, key: string, f: TreeFilt
   const levels = new Map(nodeLevels(app, spaceId, { all: true }).map((l) => [l.key, l]));
   const visible = (k: string) => (filtering ? (stats.get(k)?.count ?? 0) > 0 : true);
   const homes = new Map(all<{ token: string; space_id: string }>(app.db, "select token, space_id from wiki_node_homes").map((h) => [`wn:${h.token}`, h.space_id]));
+  if (f.hiddenSources?.size && !visible(key)) return { path: [], nodes: [], total: 0 };
   const nodes: TreeEntry[] = [];
   for (const k of cat.children.get(key) ?? []) {
     if (!visible(k)) continue;

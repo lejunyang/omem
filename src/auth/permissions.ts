@@ -125,18 +125,24 @@ export const isOwner = (app: App, userId: string) => who(app, userId)?.role === 
 const WRITES = new Set<Perm>(["source.write", "memory.write", "wiki.write", "capture.route"]);
 const mirrored = (app: App, spaceId: string) => !!one<{ m: string | null }>(app.db, "select json_extract(settings, '$.mirror') m from spaces where id = ?", spaceId)?.m;
 
-type Target = { kind: "run" | "item" | "source" | "design"; id: string };
+type Target = { kind: "run" | "item" | "source" | "design"; id: string } | { spaceId: string; userId: string; status?: string };
 export function can(app: App, userId: string, perm: Perm | Capability, target?: string | Target | null): boolean {
   if (target && typeof target === "object") {
     if (!isCapability(perm)) return false;
-    if (target.kind === "run") return canAccessRun(app,userId,target.id,perm);
+    if ("spaceId" in target) {
+      const own = target.userId === userId;
+      if (!own && !isOwner(app, userId) && (perm !== "items.view" || target.status === "candidate")) return false;
+      return !!capabilityAccess(app, userId, target.spaceId).source(perm, target.spaceId, own);
+    }
+    if (target.kind === "run") return canAccessRun(app, userId, target.id, perm);
     const table = { item: "items", source: "sources", design: "designs" }[target.kind];
-    const row = one<{space_id:string; owner:string | null}>(app.db,`select space_id,${target.kind === "item" ? "user_id" : "null"} owner from ${table} where id=?`,target.id);
-    if (!row) return false;
-    const own = row.owner === userId;
-    if (target.kind === "item" && perm !== "items.view" && !own && !isOwner(app,userId)) return false;
-    if (target.kind === "source" && sourceVisible(app,userId,target.id) !== true) return false;
-    return !!capabilityAccess(app,userId,row.space_id).source(perm,row.space_id,own);
+    if (target.kind === "item") {
+      const item = one<{ spaceId: string; userId: string; status: string }>(app.db, "select space_id spaceId,coalesce(user_id,'owner') userId,status from items where id=?", target.id);
+      return !!item && can(app, userId, perm, item);
+    }
+    const row = one<{ space_id: string }>(app.db, `select space_id from ${table} where id=?`, target.id);
+    if (!row || (target.kind === "source" && sourceVisible(app, userId, target.id) !== true)) return false;
+    return can(app, userId, perm, row.space_id);
   }
   const spaceId = target;
   if (isCapability(perm)) return !!capabilityAccess(app, userId, spaceId ?? undefined).source(perm, spaceId ?? undefined);
@@ -147,8 +153,8 @@ export function can(app: App, userId: string, perm: Perm | Capability, target?: 
   if (u.role === "owner") return true;
   const g = grants(app, u.role);
   if (perm in GLOBAL_PERMS) return g.has(perm);
-  if (!spaceId) return false;
-  if (g.has(`${perm}@*`) && !othersPersonal(app, spaceId, userId)) return true;
+  if (!spaceId || othersPersonal(app, spaceId, userId)) return false;
+  if (g.has(`${perm}@*`)) return true;
   // A repository under a business space also goes by the business space's members.
   const parent = one<{ parent_id: string | null }>(app.db, "select parent_id from spaces where id = ?", spaceId)?.parent_id ?? spaceId;
   return all<{ role: string }>(app.db, "select role from space_members where space_id in (?, ?) and user_id = ?", spaceId, parent, userId).some((m) => grants(app, spaceRole(m.role)).has(perm));
@@ -168,6 +174,7 @@ export function spacesWith(app: App, userId: string, perm: SpacePerm): string[] 
   for (const m of all<{ space_id: string; role: string }>(app.db, "select space_id, role from space_members where user_id = ?", userId)) if (grants(app, spaceRole(m.role)).has(perm)) out.add(m.space_id);
   // A business space's repositories go with it: they are not granted on their own.
   for (const c of all<{ id: string; parent_id: string }>(app.db, "select id, parent_id from spaces where parent_id is not null")) if (out.has(c.parent_id)) out.add(c.id);
+  for (const s of all<{ id: string }>(app.db, "select id from spaces where kind='personal' and owner_id!=?", userId)) out.delete(s.id);
   return [...out];
 }
 
@@ -192,27 +199,29 @@ export function requirePerm(app: App, userId: string, perm: Perm | Capability, s
  * (its events may quote any of them), or `runs.read.all` (still not into other people's personal spaces).
  */
 export function canReadRun(app: App, userId: string, runId: string): boolean {
-  return canAccessRun(app,userId,runId,"runs.view");
+  return canAccessRun(app, userId, runId, "runs.view");
 }
 
 export function runAudience(app: App, userId: string, cap: Capability = "runs.view"): RunAudience | undefined {
-  if (isOwner(app,userId)) return undefined;
-  const access = capabilityAccess(app,userId);
-  const has = (space:string, own:boolean) => access.source("runs.view",space,own) && access.source(cap,space,own);
-  const range = (own:boolean) => access.spaces.filter(s => has(s.id,own)).map(s => s.id);
-  const unscoped = !access.overrides.some(o => o.effect === "deny" && (o.capability === cap || o.capability === "runs.view"));
-  return { userId, spaces:range(false), ownSpaces:range(true), empty:unscoped && can(app,userId,"runs.read.all"), ownUnscoped:unscoped && (cap === "runs.view" || cap === "runs.operate" && access.preset !== "observer") };
+  if (isOwner(app, userId)) return undefined;
+  const access = capabilityAccess(app, userId);
+  const has = (space: string, own: boolean) => access.source("runs.view", space, own) && access.source(cap, space, own);
+  const range = (own: boolean) => access.spaces.filter(s => has(s.id, own)).map(s => s.id);
+  const unscoped = access.active && !access.overrides.some(o => o.effect === "deny" && (o.capability === cap || o.capability === "runs.view"));
+  const ownUnscoped = unscoped && (cap === "runs.view" || cap === "runs.operate" && access.preset !== "observer");
+  const empty = unscoped && can(app, userId, "runs.read.all") && (cap === "runs.view" || cap === "runs.operate");
+  return { userId, spaces: range(false), ownSpaces: range(true), empty, ownUnscoped, ownEmpty: ownUnscoped };
 }
 
 export function canAccessRun(app: App, userId: string, id: string, cap: Capability) {
-  const viewer = runAudience(app,userId,cap);
+  const viewer = runAudience(app, userId, cap);
   if (!viewer) return true;
   const filter = runPredicate(viewer);
-  const row = one<{user_id:string}>(app.db,`select user_id from runs where id=? and ${filter.sql}`,id,...filter.params);
-  return !!row && (cap !== "runs.operate" || row.user_id === userId || can(app,userId,"runs.read.all"));
+  const row = one<{ user_id: string }>(app.db, `select user_id from runs where id=? and ${filter.sql}`, id, ...filter.params);
+  return !!row && (cap !== "runs.operate" || row.user_id === userId || can(app, userId, "runs.read.all"));
 }
 
-export const runReadableSpaces = (app: App,userId:string) => runAudience(app,userId)?.spaces ?? null;
+export const runReadableSpaces = (app: App, userId: string) => runAudience(app, userId)?.spaces ?? null;
 
 // ---- audit -------------------------------------------------------------------
 

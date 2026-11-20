@@ -12,7 +12,7 @@ export const pullTables: Table[] = [
   { name: "users", key: ["id"] },
   { name: "identities", key: ["channel", "external_id"] },
   { name: "space_members", key: ["space_id", "user_id"] },
-  { name: "member_capability_overrides", key: ["user_id", "capability", "scope_kind", "scope_id"], newer: "created_at" },
+  { name: "member_capability_overrides", key: ["user_id", "capability", "scope_kind", "scope_id"], newer: "updated_at" },
   { name: "roles", key: ["id"], newer: "updated_at" },
   { name: "space_relations", key: ["space_a", "space_b"], newer: "updated_at" },
   { name: "space_relation_declines", key: ["space_a", "space_b"], newer: "at" },

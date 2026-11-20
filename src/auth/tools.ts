@@ -1,3 +1,4 @@
+import { capabilityAccess, globalCapability, type Capability } from "./capabilities.ts";
 import type { App } from "../core/app.ts";
 import { TOOL_GROUPS } from "../agents/tool-help.ts";
 import { can, isOwner, type GlobalPerm } from "./permissions.ts";
@@ -20,8 +21,6 @@ const BY_TOOL: Record<string, GlobalPerm> = {
   save_skill: "agents.manage",
   save_agent: "agents.manage",
   propose_profile_change: "agents.manage",
-  save_rule: "agents.manage",
-  list_rules: "agents.manage",
   attention_rules: "agents.manage",
   propose_archive_rule: "agents.manage",
   digest_sources: "agents.manage",
@@ -37,13 +36,28 @@ export function toolPermission(name: string): GlobalPerm | null {
   return (group && BY_GROUP[group.id]) || null;
 }
 
-export function toolAllowed(app: App, userId: string | undefined | null, name: string) {
+export const toolCapabilities: Record<string, Capability> = {
+  list_rules: "rules.view", save_rule: "rules.edit", list_items: "items.view", read_item: "items.view",
+  upsert_item: "items.edit", search: "search.use", read_source: "sources.view",
+  list_pages: "wiki.view", read_page: "wiki.view", recall: "memories.view", req_read: "requirements.view", req_tree: "requirements.view",
+};
+function allowed(app: App, userId: string, name: string, access: ReturnType<typeof capabilityAccess>) {
+  const cap = toolCapabilities[name];
+  if (cap) {
+    if (globalCapability(cap)) return !!access.source(cap);
+    return access.range(cap, cap === "items.view")?.length !== 0 || (name === "upsert_item" && access.range("items.operate")?.length !== 0);
+  }
+  if (access.preset === "observer") return name === "list_spaces";
   const perm = toolPermission(name);
-  return !perm || !userId || isOwner(app, userId) || can(app, userId, perm);
+  return !perm || can(app, userId, perm);
 }
 
-/** Take out of a run's tools what its user may not use. */
+export function toolAllowed(app: App, userId: string | undefined | null, name: string) {
+  return !userId || isOwner(app, userId) || allowed(app, userId, name, capabilityAccess(app, userId));
+}
+
 export function trimTools(app: App, userId: string, tools: Set<string>) {
   if (isOwner(app, userId)) return;
-  for (const t of [...tools]) if (!toolAllowed(app, userId, t)) tools.delete(t);
+  const access = capabilityAccess(app, userId);
+  for (const t of tools) if (!allowed(app, userId, t, access)) tools.delete(t);
 }

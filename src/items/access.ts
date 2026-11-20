@@ -1,3 +1,4 @@
+import { can } from "../auth/permissions.ts";
 import { capabilityAccess } from "../auth/capabilities.ts";
 import type { App } from "../core/app.ts";
 import { OWNER, scopeFor } from "../core/users.ts";
@@ -14,10 +15,8 @@ export function itemScope(app: App, userId: string, spaces: string[] | null = nu
 
 type Mode = "read" | "write" | "operate" | "flow";
 export function itemAccess(app: App, userId: string, item: Pick<Item, "userId" | "spaceId">, mode: Mode) {
-  const own = item.userId === userId;
   const cap = { read: "items.view", write: "items.edit", operate: "items.operate", flow: "flows.operate" } as const;
-  if (!own && userId !== OWNER && mode !== "read") return false;
-  return !!capabilityAccess(app,userId,item.spaceId).source(cap[mode],item.spaceId,own);
+  return can(app, userId, cap[mode], item);
 }
 
 export function requireItem(app: App, id: string, userId: string, mode: Mode) {

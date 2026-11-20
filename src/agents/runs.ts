@@ -170,7 +170,7 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: RunAudience };
+type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: RunAudience; reviewAudience?: RunAudience };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
@@ -226,7 +226,9 @@ export function listRuns(app: App, opts: RunFilter & { limit?: number; offset?: 
   const cols = opts.brief
     ? "*, json_object('task', substr(coalesce(json_extract(input,'$.task'), json_extract(input,'$.text'), ''), 1, 600), 'wake', json_extract(input,'$.wake')) as input, '{}' as output"
     : "*";
-  return all<Row>(app.db, `select ${cols} from runs ${w.sql} order by created_at desc limit ? offset ?`, ...w.params, limit, opts.offset ?? 0).map(toRun);
+  const review = opts.reviewAudience && runPredicate(opts.reviewAudience);
+  const hidden = review ? `, (kind in ('code','review') and not ${review.sql}) hide_review` : "";
+  return all<Row & { hide_review?:number }>(app.db, `select ${cols}${hidden} from runs ${w.sql} order by created_at desc limit ? offset ?`, ...(review?.params ?? []), ...w.params, limit, opts.offset ?? 0).map(row => row.hide_review ? { ...toRun(row), input:{}, output:{}, error:null } : toRun(row));
 }
 
 export function countRuns(app: App, opts: RunFilter = {}) {

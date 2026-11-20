@@ -25,7 +25,7 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
   };
   const visible = (req: FastifyRequest, id: string): Design => {
     const d = getDesign(app, id);
-    const allowed = spacesWithCapability(app,who(req),"designs.view");
+    const allowed = spacesWithCapability(app, who(req), "designs.view");
     if (allowed && !allowed.includes(d.spaceId)) throw new HttpError(404, `没有方案 ${id}`);
     return d;
   };
@@ -36,7 +36,7 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
 
   server.get("/api/designs", async (req) => {
     const o = parse(z.object({ item: z.string().optional(), space: z.string().optional(), work: z.string().optional(), limit: z.coerce.number().optional() }), req.query);
-    return { designs: listDesigns(app, { item: o.item, space: o.space, work: o.work, spaces: spacesWithCapability(app,who(req),"designs.view"), limit: o.limit }) };
+    return { designs: listDesigns(app, { item: o.item, space: o.space, work: o.work, spaces: spacesWithCapability(app, who(req), "designs.view"), limit: o.limit }) };
   });
 
   server.get("/api/designs/:id", async (req) => {
@@ -49,10 +49,10 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
     const reqs = d.itemId
       ? all<{ id: string; title: string; kind: string }>(app.db, "select n.id, n.title, n.kind from item_materials m join req_nodes n on n.id = m.ref where m.kind = 'req' and n.status = 'active' and m.item_id = ? order by m.id", d.itemId)
       : [];
-    const review = !d.workId || canAccessRun(app,who(req),d.workId,"code.review.view");
+    const review = !d.workId || canAccessRun(app, who(req), d.workId, "code.review.view");
     const workRow = d.workId && review ? one<{ id: string; title: string; branches: string | null }>(app.db, "select id, title, json_extract(input, '$.branches') branches from runs where id = ?", d.workId) : undefined;
     const work = workRow ? { rootId: workRow.id, title: workRow.title, branchReview: !!workRow.branches } : null;
-    const { changes, outside } = review ? await designChanges(app, shown) : {changes:[],outside:[]};
+    const { changes, outside } = review ? await designChanges(app, shown) : { changes: [], outside: [] };
     return {
       ...designSummary(shown),
       revision: o.revision ?? d.revision,
@@ -66,9 +66,11 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
 
   server.get("/api/designs/:id/diff", async (req) => {
     const o = parse(z.object({ decision: z.string().min(1) }), req.query);
-    const design = visible(req,(req.params as {id:string}).id);
-    if (design.workId && !canAccessRun(app,who(req),design.workId,"code.review.view")) throw new HttpError(404,"没有可读的差异");
-    return designDiff(app,design,o.decision);
+    const design = visible(req, (req.params as { id: string }).id);
+    if (design.workId && !canAccessRun(app, who(req), design.workId, "code.review.view")) throw new HttpError(404, "没有可读的差异");
+    const result = await designDiff(app,design,o.decision);
+    const spaces = spacesWithCapability(app,who(req),"code.review.view");
+    return {patches:result.patches.filter(p => !spaces || spaces.includes(p.space))};
   });
 
   server.post("/api/designs", async (req) => {

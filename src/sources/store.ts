@@ -1,3 +1,4 @@
+import { restrictedSourceFilter } from "../auth/visibility.ts";
 import { prepareArchive, finishArchive, moveSource } from "./archive.ts";
 import { applyAttentionRules, effectiveLevel, levelSql, relocateNotes } from "./attention.ts";
 import { watchCatalog } from "./catalog.ts";
@@ -262,9 +263,14 @@ export function readSource(app: App, id: string, from?: number, to?: number, las
   return { source: { ...source, lines: total }, lineStart: start, lineEnd: end, text: total ? sliceLines(text, start, end) : "" };
 }
 
-export function listSources(app: App, opts: { spaceId?: string; kind?: string; q?: string; limit?: number; offset?: number; includeDeleted?: boolean; level?: string }) {
+export function listSources(app: App, opts: { userId?: string; spaceId?: string; kind?: string; q?: string; limit?: number; offset?: number; includeDeleted?: boolean; level?: string }) {
   const where: string[] = [];
   const params: (string | number)[] = [];
+  if (opts.userId) {
+    const filter = restrictedSourceFilter(app, opts.userId);
+    where.push(filter.sql);
+    params.push(...filter.params);
+  }
   if (opts.spaceId) {
     where.push("space_id = ?");
     params.push(opts.spaceId);
@@ -295,9 +301,14 @@ export function listSources(app: App, opts: { spaceId?: string; kind?: string; q
  * page is wrong (folder counts, missing folders), and paging a collapsed tree never scrolls.
  * Only what the tree shows, no line counts (those scan every text).
  */
-export function listSourcePaths(app: App, opts: { spaceId: string; kind?: string; q?: string }) {
+export function listSourcePaths(app: App, opts: { userId?: string; spaceId: string; kind?: string; q?: string }) {
   const where = ["space_id = ?", "deleted_at is null"];
   const params: string[] = [opts.spaceId];
+  if (opts.userId) {
+    const filter = restrictedSourceFilter(app, opts.userId);
+    where.push(filter.sql);
+    params.push(...filter.params);
+  }
   if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
   if (opts.q) where.push("(title like ? or uri like ?)"), params.push(`%${opts.q}%`, `%${opts.q}%`);
   return all<{ id: string; kind: string; uri: string; title: string; updatedAt: string }>(

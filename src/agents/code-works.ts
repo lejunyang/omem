@@ -94,8 +94,8 @@ export type WorkFilter = {
 
 function workPredicate(viewer: RunAudience) {
   const root = runPredicate(viewer);
-  const round = runPredicate(viewer,"x");
-  return { sql: `${root.sql} and not exists(select 1 from runs x where json_extract(x.input,'$.continueFrom')=runs.id and not ${round.sql})`, params:[...root.params,...round.params] };
+  const round = runPredicate(viewer, "x");
+  return { sql: `${root.sql} and not exists(select 1 from runs x where json_extract(x.input,'$.continueFrom')=runs.id and not ${round.sql})`, params: [...root.params, ...round.params] };
 }
 
 export function listCodeWorks(app: App, f: WorkFilter = {}): CodeWork[] {
@@ -134,7 +134,7 @@ export function codeWork(app: App, runId: string, visibleTo?: WorkFilter["visibl
   const r = all<{ root: string }>(app.db, "select coalesce(json_extract(input, '$.continueFrom'), id) root from runs where id = ? and kind = 'code'", runId)[0];
   if (!r) return null;
   const filter = visibleTo && workPredicate(visibleTo);
-  const root = all<RootRow>(app.db, `select ${ROOT_COLS} from runs where id = ? ${filter ? "and " + filter.sql : ""}`, r.root,...filter?.params ?? [])[0];
+  const root = all<RootRow>(app.db, `select ${ROOT_COLS} from runs where id = ? ${filter ? "and " + filter.sql : ""}`, r.root, ...filter?.params ?? [])[0];
   if (!root) return null;
   const [work] = buildWorks(app, [root]);
   const roundList = roundsOf(app, [root.id]).map((x, i) => ({ id: x.id, round: x.round ?? i + 1, status: x.status, title: x.title, verdict: x.verdict, createdAt: x.created_at, finishedAt: x.finished_at }));
