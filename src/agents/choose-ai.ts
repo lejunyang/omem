@@ -113,7 +113,7 @@ function ranked(keys: string[], probabilities: Record<string, number>, first?: s
  */
 export async function chooseAI(
   app: App,
-  o: { scene: ChooseScene; task: string; who: string; current: AgentProfile; userId?: string; signal?: AbortSignal; onStatus?: (text: string) => void; onRecord?: (r: ChoiceRecord) => void },
+  o: { scene: ChooseScene; task: string; who: string; current: AgentProfile; accepts?: (profile: AgentProfile) => boolean; userId?: string; signal?: AbortSignal; onStatus?: (text: string) => void; onRecord?: (r: ChoiceRecord) => void },
 ): Promise<ChooseResult | null> {
   const r = app.config.agents.routing;
   const current = label({ profile: o.current.id, model: o.current.model, effort: o.current.effort });
@@ -137,6 +137,10 @@ export async function chooseAI(
   // backend the owner keeps to own accounts that they have not logged in to (agents/accounts.ts).
   const others = candidateProfiles(app, left).map((c) => accountFor(app, o.userId, c)).filter((c) => {
     if (same({ profile: c.id, model: c.model, effort: c.effort })) return false;
+    if (o.accepts && !o.accepts(c)) {
+      left.push(`${c.id}：本次任务需要 omem 工具`);
+      return false;
+    }
     const blocked = o.userId ? accountBlocked(app, o.userId, c) : null;
     if (blocked) {
       left.push(`${label({ profile: c.id, model: c.model, effort: c.effort })}：${blocked}`);
@@ -155,6 +159,10 @@ export async function chooseAI(
   const opts: Record<string, { pick: AiPick | null; profile: AgentProfile; text: string }> = {
     keep: { pick: null, profile: o.current, text: `按原来的设置用 ${current}（${state(app, accountFor(app, o.userId, o.current))}）` },
   };
+  if (o.accepts && !o.accepts(o.current)) {
+    delete opts.keep;
+    left.push(`${current}：本次任务需要 omem 工具`);
+  }
   others.forEach((c, i) => {
     opts[`c${i + 1}`] = { pick: { profile: c.id, model: c.model, effort: c.effort }, profile: strip(c), text: `${label({ profile: c.id, model: c.model, effort: c.effort })}：${c.when}（${state(app, c)}）` };
   });

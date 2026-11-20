@@ -30,7 +30,7 @@ import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionPar
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { trimTools } from "../auth/tools.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
-import { expandTools } from "./tool-help.ts";
+import { expandTools, ROLE_TOOLS } from "./tool-help.ts";
 import { applyOverlay, GUEST_ROLES, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
 import { mcpServersFor } from "./mcp-servers.ts";
@@ -39,6 +39,7 @@ import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
 import { accountBlocked, accountFor, withAccount } from "./accounts.ts";
+import { addRunEvent } from "./runs.ts";
 import { accountOf } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -274,6 +275,8 @@ export async function lessonsForTask(app: App, input: LessonInput) {
 }
 
 export type RoleRunInput = {
+  /** Tools the caller needs for delivery. An empty list explicitly permits a text-only answer. */
+  requiredTools?: string[];
   execution?: Execution;
   /** Which choice setting applies when nothing pins the AI (choose-ai.ts): a rule's run, or any other task (the default). */
   choose?: ChooseScene;
@@ -434,9 +437,14 @@ function workRepos(app: App, runId: string | null): string[] {
   return [];
 }
 
+function accountProfile(app: App, input: Parameters<typeof resolveRunProfile>[1] & { userId?: string }) {
+  const resolved = resolveRunProfile(app, input);
+  return withAccount(app, input.userId ?? OWNER, resolved, () => failoverProfiles(app, input.actor, resolved).slice(1));
+}
+
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
+  input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -444,8 +452,7 @@ export function prepareRun(
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
   // A member's run uses their own account of the backend when they logged in to it (agents/accounts.ts);
   // not logged in to one that must be their own, it may move on in the run's fallback order (`own-or-other`).
-  const resolved = resolveRunProfile(app, input);
-  const profile = withAccount(app, userId, resolved, () => failoverProfiles(app, input.actor, resolved).slice(1));
+  const profile = input.profile ?? accountProfile(app, input);
   if (!input.shadow) recordRunAI(app, input.runId, profile, false);
   if (role && input.runId && !input.shadow) run(app.db, "update runs set roles = coalesce(roles, '|') || ? || '|' where id = ? and instr(coalesce(roles, ''), ?) = 0", roleName, input.runId, `|${roleName}|`);
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
@@ -740,6 +747,14 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)), input.userId);
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
+  const declared = input.spec ? (input.spec.tools.length ? expandTools(input.spec.tools) : DEFAULT_SPEC_TOOLS) : loadRole(input.role, app).tools;
+  const selectedTools = [...declared.filter(t => !input.denyTools?.includes(t)), ...(input.addTools ?? [])];
+  const handIn = input.reviewLead ? ["rule_review"] : input.reviewCheck ? ["submit_review"] : selectedTools.filter(t => ROLE_TOOLS.includes(t) && (!input.replay || input.replay.tools.includes(t)));
+  const required = input.requiredTools ?? [...new Set(handIn)];
+  const textAnswer = (input.role === "assistant" || input.role === "guest") && !input.choose && !input.spec;
+  const needsAccess = required.length > 0 || (input.requiredTools === undefined && declared.length > 0 && !textAnswer);
+  const requirement = required.length ? required.join("、") : "omem 工具";
+  const supports = (profile: AgentProfile) => !needsAccess || backendCapabilities(profile).omemAccess !== "none";
   const told = await lessonsOfTask(app, input);
   const lessons = told.text;
   // Nothing pins the AI (no execution, no caller's pick, not a session being continued, not a coding
@@ -751,7 +766,11 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // Checks, replays and comparisons run on what their caller set and are not choices of their own.
   const internal = !!(input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName || input.ownAI);
   const scene = input.choose ?? "tasks";
-  const say = (text: string) => input.onEvent?.({ type: "status", text });
+  const say = (text: string) => {
+    const event = { type: "status" as const, text };
+    if (input.onEvent) input.onEvent(event);
+    else if (input.runId) addRunEvent(app, input.runId, "status", event);
+  };
   const notChosen = (reason: string) => {
     const current = resolveRunProfile(app, { actor, profileId: input.profileId, model: input.model, effort: input.effort });
     input.onEvent?.(choiceEvent({ scene, outcome: "skipped", current: aiLabel({ profile: current.id, model: current.model, effort: current.effort }), reason }));
@@ -764,39 +783,53 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   else if (input.profileId || input.model || input.effort) notChosen("发起这次运行时已经定了 AI");
   else {
     const current = resolveRunProfile(app, { actor });
-    chosen = await chooseAI(app, { scene, task: input.task, who: input.spec?.name ?? input.role, current, userId: input.userId, signal: input.signal, onStatus: say, onRecord: (r) => input.onEvent?.(choiceEvent(r)) });
+    chosen = await chooseAI(app, { scene, accepts: supports, task: input.task, who: input.spec?.name ?? input.role, current, userId: input.userId, signal: input.signal, onStatus: say, onRecord: (r) => input.onEvent?.(choiceEvent(r)) });
     const pick = chosen?.pick;
     if (pick) {
       own = current;
       input = { ...input, profileId: pick.profile, model: pick.model, effort: pick.effort };
     }
   }
-  const base = prepareRun(app, { actor, lessons, recallNote: told.recallNote, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
-  // (A member's run moved to another backend by `own-or-other` is not the named one any more.)
-  if (execution && base.profile.id === execution.profile) {
-    try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }, input.userId); }
-    catch (e) { revokeToolToken(base.token); throw e; }
-  }
+  const primary = accountProfile(app, { ...input, actor });
+  const prepare = (profile: AgentProfile) => prepareRun(app, { ...input, actor, profile, lessons, lessonIds: told.ids, recallNote: told.recallNote });
+  if (execution && primary.id === execution.profile) validateExecution(app, { ...execution, model: primary.model, effort: primary.effort }, input.userId);
   // A run (a role's or an Agent 档案's) may move to its other configured backends when its model is
   // full, and to the fallbacks when the backend is busy, out of quota, or breaks down (failoverProfiles).
   // An AI the owner or the assistant named for this run is used first and alone while it can take the
   // run (a full model waits for it, a nearly spent account is still used); only when it cannot —
   // busy, out of quota, broke down — does the run move on, unless the owner set `pinnedFallback: never`.
-  const pinned = !!execution;
+
   // The order to move on in: the chooser's ranking by the owner's routing notes when it ran, then the
   // static order (the role's other backends, the fallbacks, the candidates) for whatever it did not rank.
-  const single = !!input.shadow || execution?.source === "flow" || (pinned && app.config.agents.routing.pinnedFallback === "never");
-  const chain = single ? [base.profile] : chosen ? distinctProfiles([base.profile, ...chosen.order, ...failoverProfiles(app, actor, base.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, base.profile, own);
+  const single = !!input.shadow || execution?.source === "flow" || (execution && app.config.agents.routing.pinnedFallback === "never");
+  const candidates = single ? [primary] : chosen ? distinctProfiles([primary, ...chosen.order, ...failoverProfiles(app, actor, primary, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, primary, own);
   // A space kept on this machine only is never handed to an AI borrowed from someone else's server (core/mesh.ts):
   // such backends are passed over; when the run starts on one, it says so instead.
   // A backend the owner keeps to members' own accounts, which this member has not logged in to, is no fallback.
-  for (let k = chain.length - 1; k > 0; k--) if (accountBlocked(app, input.userId ?? OWNER, chain[k])) chain.splice(k, 1);
+  for (let k = candidates.length - 1; k > 0; k--) if (accountBlocked(app, input.userId ?? OWNER, candidates[k])) candidates.splice(k, 1);
   // The member's own accounts on the rest, so their quota and spent marks (not the owner's) decide the order.
-  for (let k = 1; k < chain.length; k++) chain[k] = accountFor(app, input.userId, chain[k]);
+  for (let k = 1; k < candidates.length; k++) candidates[k] = accountFor(app, input.userId, candidates[k]);
   if (localOnly(app, input.spaceId)) {
-    if (lentByOthers(app, chain[0])) throw new HttpError(400, `这个空间设了“仅本机”，不能用别人的 omem 借出的 AI（${chain[0].id}）：给这次运行或这个角色换一个本机的后端`);
-    for (let k = chain.length - 1; k > 0; k--) if (lentByOthers(app, chain[k])) chain.splice(k, 1);
+    if (lentByOthers(app, candidates[0])) throw new HttpError(400, `这个空间设了“仅本机”，不能用别人的 omem 借出的 AI（${candidates[0].id}）：给这次运行或这个角色换一个本机的后端`);
+    for (let k = candidates.length - 1; k > 0; k--) if (lentByOthers(app, candidates[k])) candidates.splice(k, 1);
   }
+  const chain = candidates.filter(p => {
+    if (supports(p)) return true;
+    say(`跳过后端 ${p.id}：本次运行需要 ${requirement}，该后端没有 omem 工具通道`);
+    return false;
+  });
+  if (!chain.length) throw new Error(`没有可交付这次任务的后端：需要 ${requirement}`);
+  const primaryKept = primary === chain[0];
+  const pinned = !!execution && primaryKept;
+  const base = prepare(chain[0]);
+  const missing = required.filter(name => !base.tools.has(name));
+  if (missing.length) {
+    revokeToolToken(base.token);
+    const reason = `本次运行缺少必需工具：${missing.join("、")}`;
+    say(reason);
+    throw new Error(reason);
+  }
+  if (!primaryKept && !input.shadow) recordRunAI(app, input.runId, base.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
   let orderBy: OrderSource = chosen ? chosen.by : "static";
   let orderReason = chosen?.reason ?? "";
   /**
@@ -879,7 +912,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       const moved = slot.index > 0;
       i += slot.index;
       const profile = chain[i];
-      const prep = i === 0 ? base : prepareRun(app, { actor, lessons, recallNote: told.recallNote, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
+      const prep = i === 0 ? base : prepare(profile);
       // A check may fall back inside the code run: its AI belongs on the review, not over the coder's.
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       try {
@@ -887,20 +920,20 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
         const req = {
           runId: input.runId,
-          strictSelection: execution && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
+          strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
           cwd: prep.cwd,
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           capabilities: prep.capabilities,
           parts: prep.parts,
-          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}`,
+          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
           signal: input.signal,
           mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
           extraMcp: prep.extraMcp,
-          resumeSessionId: i === 0 ? input.resumeSessionId ?? (restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined,
+          resumeSessionId: primaryKept && i === 0 ? input.resumeSessionId ?? (restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined,
           persistSession: input.persistSession ?? !!input.resumeSessionId,
           queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
         };
@@ -915,7 +948,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
           emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
         }
-        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution && i === 0 ? `（${execution.source === "flow" ? "流程指定" : execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution && pinned && i === 0 ? `（${execution.source === "flow" ? "流程指定" : execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
         writesBefore = writes();
