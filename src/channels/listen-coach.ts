@@ -19,7 +19,25 @@ const lane = (id: string) => `listen-coach:${id}`;
 
 /** Cases the owner had a say in, since the last lessons (or all). */
 function freshCases(app: App, c: ListenContext) {
-  return one<{ n: number }>(app.db, "select count(*) n from reply_samples where context_id = ? and (decision in ('sent','edited','dropped','disliked') or owner_reply is not null or verdict is not null) and max(created_at, coalesce(decided_at, ''), coalesce(owner_reply_at, '')) > ?", c.id, c.playbookAt ?? "")?.n ?? 0;
+  const cases = one<{ n: number }>(app.db, "select count(*) n from reply_samples where context_id = ? and (decision in ('sent','edited','dropped','disliked') or owner_reply is not null or verdict is not null) and max(created_at, coalesce(decided_at, ''), coalesce(owner_reply_at, '')) > ?", c.id, c.playbookAt ?? "")?.n ?? 0;
+  // Problems followed to their end (listen-problems.ts) teach how far to follow: each counts as a case.
+  const closed = one<{ n: number }>(app.db, "select count(*) n from listen_problems where context_id = ? and state = 'closed' and closed_at > ?", c.id, c.playbookAt ?? "")?.n ?? 0;
+  return cases + closed;
+}
+
+/** Problems it followed: how many rounds each took, what it waited for, how it ended (the newest first). */
+function problemsMaterial(app: App, c: ListenContext) {
+  const rows = all<{ title: string; state: string; known: string; awaiting: string; done_when: string; conclusion: string; rounds: number; created_at: string; updated_at: string; closed_at: string | null }>(app.db,
+    `select title, state, known, awaiting, done_when, conclusion, rounds, created_at, updated_at, closed_at from listen_problems
+      where context_id = ? and (state = 'closed' or updated_at < ?) order by coalesce(closed_at, updated_at) desc limit 30`,
+    c.id, new Date(Date.now() - 2 * 86400_000).toISOString());
+  const hours = (a: string, b: string) => Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 3600_000));
+  return rows.map((p) => [
+    `- ${p.state === "closed" ? `已结，跟了 ${p.rounds} 轮、${hours(p.created_at, p.closed_at ?? p.updated_at)} 小时` : `还没结（${p.state}），跟了 ${p.rounds} 轮，${hours(p.updated_at, new Date().toISOString())} 小时没有动静`}：${truncate(p.title, 80)}`,
+    p.done_when ? `  当时定的“怎样算完”：${truncate(p.done_when, 160)}` : "",
+    p.awaiting ? `  在等：${truncate(p.awaiting, 120)}` : "",
+    p.conclusion ? `  结论：${truncate(p.conclusion, 200)}` : "",
+  ].filter(Boolean).join("\n")).join("\n");
 }
 
 /** Queue listen-coach for a 关注 (by hand, or when it is due). Returns the run, or null when one is waiting. */
@@ -42,7 +60,7 @@ export function coachDue(app: App) {
   return n;
 }
 
-function coachTask(app: App, c: ListenContext) {
+export function coachTask(app: App, c: ListenContext) {
   const rows = all<CaseLite>(
     app.db,
     `select id, context_id, chat_id, chat_kind, chat_name, settled_at, asker_id, asker_name, ask, draft, decision, final, reason, owner_reply, verdict, note, scene, checked, created_at
@@ -51,6 +69,7 @@ function coachTask(app: App, c: ListenContext) {
   );
   const playbook = playbookOf(app, c, 12000, { demos: false });
   const shown = demoLessonsOf(app, c, 6000);
+  const problems = problemsMaterial(app, c);
   return [
     `# 关注「${c.name}」（${c.id}）`,
     "",
@@ -65,6 +84,7 @@ function coachTask(app: App, c: ListenContext) {
     "",
     casesText(rows) || "（没有）",
     "",
+    ...(problems ? ["## 跟过的问题（助手回完以后接着跟的，新的在前）", "", problems, ""] : []),
     "按角色说明整理成场景，用 submit_playbook 交完整的新版本；案例不够看出规律就 stay_quiet。",
   ].filter((x) => x !== "").join("\n");
 }
@@ -77,7 +97,7 @@ registerHandler("listen-coach", async (ctx) => {
   return { quiet: true, text: r.text };
 });
 
-export type Scene = { name: string; when: string; reply: "yes" | "no" | "depends"; check?: string; answer?: string; avoid?: string; cases?: string[] };
+export type Scene = { name: string; when: string; reply: "yes" | "no" | "depends"; check?: string; answer?: string; follow?: string; avoid?: string; cases?: string[] };
 
 function render(c: ListenContext, scenes: Scene[], cases: Map<string, CaseLite>, notes?: string) {
   const replyWord = { yes: "要回", no: "不回", depends: "看情况" } as const;
@@ -98,6 +118,7 @@ function render(c: ListenContext, scenes: Scene[], cases: Map<string, CaseLite>,
       `- 要不要回：${replyWord[s.reply]}`,
       ...(s.check ? [`- 查什么：${s.check}`] : []),
       ...(s.answer ? [`- 怎么回：${s.answer}`] : []),
+      ...(s.follow ? [`- 回完怎么跟：${s.follow}`] : []),
       ...(s.avoid ? [`- 别这样：${s.avoid}`] : []),
       ...(s.cases?.length ? [`- 例子：${s.cases.slice(0, 5).map(example).join("；")}`] : []),
     ]),

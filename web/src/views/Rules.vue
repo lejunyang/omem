@@ -23,7 +23,7 @@ type Unless = "owner-engaged" | "answered";
 type Action =
   | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string }; fullAccess?: boolean }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
-  | { type: "context"; context: string }
+  | { type: "context"; context: string; adopt?: boolean }
   | { type: "invite-bot" }
   | { type: "forward"; to: { chatId: string; name: string; kind: "group" | "p2p" | "origin" }; note: string }
   | { type: "wait-message"; chatId: string; name: string; minutes: number; contains: string; matches: string; onTimeout: "notify" | "none" }
@@ -795,7 +795,8 @@ function startFrom(text: string) {
                 <UiSelect v-model="a.context" size="sm" width="260px" :options="contextOptions" placeholder="选择关注" aria-label="关注" @change="touch" />
                 <RouterLink v-if="a.context" class="small" :to="`/listen/${a.context}`">打开这个关注</RouterLink>
               </div>
-              <small class="muted">触发的事件进这个关注的会话，由它带着说明、案例和经验处理。</small>
+              <UiCheckbox :model-value="!!a.adopt" size="sm" @update:model-value="(v: boolean | unknown[]) => { a.adopt = v === true || undefined; touch() }">把触发的群收进这个关注</UiCheckbox>
+              <small class="muted">触发的事件进这个关注的会话，由它带着说明、案例和经验处理。{{ a.adopt ? "群收进来以后，之后的消息也送到这个关注；群里跟着的问题都结了、安静三天后放回。适合每次都是新群的场景（一单一群的值班群）。" : "" }}</small>
             </template>
             <template v-else-if="a.type === 'watch'">
               <div class="row wrap">

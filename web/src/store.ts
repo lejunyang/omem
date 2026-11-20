@@ -152,6 +152,7 @@ export const runKindLabel: Record<string, string> = {
   "replay-arm": "复盘重答",
   "replay-judge": "复盘评判",
   mention: "有人找你",
+  "problem-follow": "在跟的问题",
 };
 export const statusLabel: Record<string, string> = {
   queued: "排队中",

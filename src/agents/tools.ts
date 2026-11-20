@@ -3363,7 +3363,7 @@ def({
 def({
   name: "submit_playbook",
   description:
-    "交一个「关注」整理好的经验（只给 listen-coach 用）：按场景写，每个场景写什么时候算、要不要回、查什么、怎么回、别怎样，列出依据的案例 id；整份替换旧的经验。说明本身该改时在 brief 里交完整的新说明，宿主发给本人确认。",
+    "交一个「关注」整理好的经验（只给 listen-coach 用）：按场景写，每个场景写什么时候算、要不要回、查什么、怎么回、回完怎么跟、别怎样，列出依据的案例 id；整份替换旧的经验。说明本身该改时在 brief 里交完整的新说明，宿主发给本人确认。",
   write: true,
   schema: z.object({
     scenes: z
@@ -3374,6 +3374,7 @@ def({
           reply: z.enum(["yes", "no", "depends"]).describe("要不要回；depends 时在 when 或 answer 里写清看什么定"),
           check: z.string().trim().max(600).optional().describe("回之前查什么：哪个技能、哪类日志或代码、哪份文档，查到什么程度算有结论"),
           answer: z.string().trim().max(600).optional().describe("怎么回：长短、口吻、先结论还是先依据、给不给链接、@ 谁"),
+          follow: z.string().trim().max(400).optional().describe("回完要不要跟、跟到哪算完：一般回完就结，还是要等谁处理完再核对一次、等多久回查；从“跟过的问题”里看出来"),
           avoid: z.string().trim().max(300).optional().describe("本人明确不想要的做法"),
           cases: z.array(z.string()).max(20).optional().describe("依据的案例 id（rs…）"),
         }),
@@ -3917,6 +3918,27 @@ def({
     const r = scheduleWake(ctx.app, { at, note: a.note, target, setBy, skipIfOwnerSpoke: a.skip_if_owner_replies });
     return `已设唤醒 ${r.id}：${at}${target.spec && !target.resumeRunId ? `唤醒 ${target.spec}` : "唤醒你"}。不需要了用 cancel_wake 取消。`;
   },
+});
+
+def({
+  name: "track_problem",
+  description:
+    "关注的处理和“有人找你”的处理用：看完一个群或话题里有人求助的问题后，记下它现在的状态，给你自己之后接着跟用（一个群或话题一条，再记就是更新）。" +
+    "state：open 还在查；waiting 在等别人处理、等对方回话或补材料（写 awaiting）；blocked 要本人拍板才能往下走；closed 有了有效结论（写 conclusion：结论和依据，对方照做就能解决），或者不用管了（写为什么）。" +
+    "没结的要写 done_when（怎样算完，如“值班同学清理完，再查员工列表里没有这条关系”）。之后这里有新消息时，会带着这个状态判断有没有新信息，再交给你；到 recheck_after（30m、2h、1d）还没动静也会叫你回查一次。",
+  write: true,
+  schema: z.object({
+    chat_id: z.string().optional().describe("问题所在的群；有人找你的处理、只有一个群的关注可以不填"),
+    topic_id: z.string().optional().describe("问题在某个话题里时填话题 id；整个群就是一件事（如一个工单群）不填"),
+    title: z.string().describe("一句话：谁遇到了什么问题"),
+    state: z.enum(["open", "waiting", "blocked", "closed"]),
+    known: z.string().optional().describe("已经查清的：现象、原因、排除了什么，带依据"),
+    awaiting: z.string().optional().describe("waiting：在等谁、等什么"),
+    done_when: z.string().optional().describe("没结的：怎样算这件事完了"),
+    conclusion: z.string().optional().describe("closed：结论和依据"),
+    recheck_after: z.string().optional().describe("多久以后没动静也回查一次：30m、2h、1d，最多 7 天"),
+  }),
+  handler: async (ctx, a) => (await import("../channels/listen-problems.ts")).trackProblem(ctx.app, ctx.runId, a),
 });
 
 def({

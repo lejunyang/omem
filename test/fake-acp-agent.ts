@@ -639,6 +639,8 @@ ${JSON.stringify({ check, tools })}`);
       // FAKE_MODE=mention: someone looking for the owner (mentions/mentions.ts). The triage on the general model
       // answers FAKE_TRIAGE (JSON); a handling reads the cited line, replies to the asker when it may
       // (FAKE_REPLY), then writes the reminder — or stays quiet (FAKE_MENTION=quiet), or says nothing (=silent).
+      // FAKE_TRACK (JSON): where the matter stands afterwards (track_problem); a follow-up of it
+      // (“你在跟的问题有了动静”) tracks FAKE_TRACK_NEXT instead and writes a short reminder.
       if (process.env.FAKE_MODE === "mention") {
         if (prompt.includes('只输出 JSON：{"action"')) {
           await say(process.env.FAKE_TRIAGE ?? '{"action":"handle","what":"问退款口径","handler":"assistant","urgency":"normal","canProgress":true,"reason":"在问一个能查的问题"}');
@@ -653,6 +655,11 @@ ${JSON.stringify({ check, tools })}`);
           const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
           const ref = /src:[A-Za-z0-9_-]+#L\d+/.exec(prompt)?.[0];
           const read = ref ? await call("read_source", { source: ref.slice(4).split("#")[0] }) : null;
+          if (prompt.includes("你在跟的问题有了动静") && process.env.FAKE_TRACK_NEXT) {
+            const tracked = await call("track_problem", JSON.parse(process.env.FAKE_TRACK_NEXT));
+            await say(`跟进：${((tracked.content as { text?: string }[])[0]?.text ?? "")}`);
+            return { stopReason: "end_turn" as const };
+          }
           if (process.env.FAKE_MENTION === "quiet") {
             if (process.env.FAKE_REPLY) await call("reply_to_asker", { text: process.env.FAKE_REPLY });
             await call("stay_quiet", { reason: "群里已经有人回答了" });
@@ -662,6 +669,10 @@ ${JSON.stringify({ check, tools })}`);
           if (process.env.FAKE_MENTION === "silent") return { stopReason: "end_turn" as const };
           const replied = process.env.FAKE_REPLY ? await call("reply_to_asker", { text: process.env.FAKE_REPLY }) : null;
           const said = replied ? ((replied.content as { text?: string }[])[0]?.text ?? "") : "";
+          if (process.env.FAKE_TRACK) {
+            const tracked = await call("track_problem", JSON.parse(process.env.FAKE_TRACK));
+            if (tracked.isError) throw new Error(JSON.stringify(tracked.content));
+          }
           await say(`小王问退款口径：按未发货行算，可以直接回\n\n小王要退款金额的算法，案例页写明只退未发货的行。${read && !read.isError ? "（读了原件）" : ""}${said ? `\n\n回复：${said}` : ""}\n\n[原消息](${ref})`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };

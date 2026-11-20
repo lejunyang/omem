@@ -55,7 +55,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "skills", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "organize_skills", "save_agent", "propose_profile_change"] },
   { id: "remote", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },
   { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "wait_answer", "withdraw_ask", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
-  { id: "wake", label: "唤醒与规则", doc: "owner", tools: ["wake", "cancel_wake", "list_rules", "save_rule", "report_rule_failure"] },
+  { id: "wake", label: "唤醒、规则与在跟的问题", doc: "owner", tools: ["wake", "cancel_wake", "track_problem", "list_rules", "save_rule", "report_rule_failure"] },
   { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["propose_repo_lesson", "delegate_code", "review_branch", "share_review", "continue_code_run", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
   { id: "improve", label: "改进循环：度量、留下或回退", doc: "code", tools: ["improve_start", "improve_round", "improve_status"] },
   { id: "design", label: "方案：读、评估别人的方案、确认", doc: "code", tools: ["read_design", "assess_design", "settle_design"] },

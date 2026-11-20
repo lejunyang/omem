@@ -51,6 +51,10 @@ export function deriveScope(app: App, r: RunRow): ScopeKey[] {
     for (const m of mention.messageIds ?? []) add("message", m);
   } else if (r.kind === "ask" || r.kind === "agent") conversation(inp.conversationId);
   conversation(inp.threadId);
+  if (r.kind === "problem-follow" && typeof inp.problemId === "string") {
+    const p = one<{ chat_id: string; topic_id: string }>(app.db, "select chat_id, topic_id from listen_problems where id = ?", inp.problemId);
+    if (p) add("chat", p.chat_id, p.topic_id);
+  }
   if (r.kind === "mention") {
     add("chat", inp.chatId, inp.topicId ?? "");
     for (const m of (inp.messageIds as string[] | undefined) ?? []) add("message", m);

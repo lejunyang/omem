@@ -172,7 +172,8 @@ export const actionSchema = z.discriminatedUnion("type", [
    * 交给关注: hand the event to a 「关注」 (channels/listen.ts, its id): it lands in that 关注's conversation
    * like a message of its groups, and its handler takes it up with its brief, cases and lessons.
    */
-  z.object({ type: z.literal("context"), context: z.string().trim().min(1) }),
+  // adopt: the group it came from joins the 关注 (later messages come too) until its problems are closed and it went quiet (listen.ts `adoptChat`).
+  z.object({ type: z.literal("context"), context: z.string().trim().min(1), adopt: z.boolean().optional() }),
   z.object({ type: z.literal("invite-bot") }),
   /**
    * Post the triggering message (with where it came from and the owner's `note`) into another chat

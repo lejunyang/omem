@@ -85,7 +85,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `skills` | 技能与 Agent 档案 | 同上 |
 | `remote` | 远程操作的录制：列出、读步骤和请求，整理成技能（配合 `save_skill` 的 `from_recording`） | [references/remote.md](references/remote.md) |
 | `ask` | 问本人（可带表单或交互页）、等回答、下一步按钮、在回答下展示表格和图表、写交互页、通知本人 | [references/owner.md](references/owner.md) |
-| `wake` | 定时或按消息唤醒、规则 | 同上 |
+| `wake` | 定时或按消息唤醒、规则、在跟的问题 | 同上 |
 | `coding` | 编码交办、评审、修改项、应用改动 | [references/code.md](references/code.md) |
 | `improve` | 改进循环：度量、留下或回退 | [编码](references/code.md) |
 | `design` | 方案：读方案、跟进别人的技术方案（评估、重新评估）、转达本人对自己方案的确认、标意见状态 | 同上 |

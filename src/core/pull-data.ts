@@ -82,6 +82,8 @@ export const pullTables: Table[] = [
   { name: "reply_samples", key: ["id"], newer: "max(created_at, coalesce(decided_at, ''), coalesce(settled_at, ''))" },
   // 「关注」(channels/listen.ts): the owner's settings for each, whichever node changed them last.
   { name: "listen_contexts", key: ["id"], newer: "updated_at" },
+  // The problems each 关注 follows (channels/listen-problems.ts): where each stands, its last update wins.
+  { name: "listen_problems", key: ["id"], newer: "updated_at" },
   // Metrics (src/data/metrics.ts): definitions by their last change, points as recorded.
   { name: "metrics", key: ["id"], newer: "updated_at" },
   { name: "metric_points", key: ["metric_id", "at", "dims"], newer: "created_at" },

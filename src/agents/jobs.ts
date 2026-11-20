@@ -62,6 +62,7 @@ import "./digest.ts";
 import "./work-state-job.ts";
 // 「关注」's lessons from its cases (channels/listen-coach.ts).
 import "../channels/listen-coach.ts";
+import "../channels/listen-problems.ts";
 import "../quality/audit.ts";
 import "../wiki/corrections.ts";
 // Also registers the mention handler (someone looking for the owner: triage, then maybe a handling).
@@ -1154,11 +1155,15 @@ registerHandler("heartbeat", async (ctx) => {
   expireWorkFiles(app);
   await expireTemporaryRules(app);
   await (await import("../channels/listen.ts")).expireContexts(app);
+  // Groups rules handed to a 关注 (`adopt`) whose problems are closed and that went quiet go back.
+  (await import("../channels/listen.ts")).releaseAdopted(app);
   // 「关注」: the owner's own answers in its groups become cases; enough new cases and listen-coach writes lessons.
   try {
     const coach = await import("../channels/listen-coach.ts");
     coach.collectOwnerReplies(app);
     coach.coachDue(app);
+    // Problems a 关注 or 有人找你 is following whose time to look again came (listen-problems.ts).
+    await (await import("../channels/listen-problems.ts")).problemsDue(app);
   } catch (e) {
     console.warn(`[omem] 关注的案例和经验：${(e as Error).message}`);
   }

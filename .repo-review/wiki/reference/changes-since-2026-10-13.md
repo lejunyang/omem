@@ -10,11 +10,21 @@ updated: 2026-11-20
 
 **这个文件只留最近的改动**，新的加在最前面。更早的移到了同目录的归档里，找旧改动时按关键词在这几个文件里搜，不用整份读：
 
+- [2026-11-18](./changes-2026-11-18.md)（25 节）：要本人回答的内容分段写、图片和文件并进 @ 机器人的一轮、事项的流程页、技能分组整理、浏览器长期资料、重启后接着做、ACP 适配器升级、会议里叫机器人和回答提问、知识库爬取暂停、订阅会话并进飞书会话、设置 → AI 按后端整理，以及流程和插件对象的设计稿（11-15）。
 - [2026-11-15 至 11-17](./changes-2026-11-15-to-17.md)（45 节）：流程第二至四期（上下文跟进、Git 信号、补录与签字、看板、提交认领）、课题第一至三期、插件的对象与信号和界面插槽、数据页与图表、回复发出后有没有用、时区、AI 后端的网络条件与 DNS 诊断、机器人改文档和 lark-cli 重新授权等渠道修正。
 - [2026-11 上半月](./changes-2026-11-first-half.md)（11-03 至 11-15 凌晨，166 节）：多人登录与权限、连接器与插件、界面块与交互页、远程使用、方案与变更说明、有人找你、会话感知、工作近况、代码索引、材料归位、组网、Wiki 写后核对，以及调研建议的头两轮（召回、巡检预筛、抽检、评审、通知、场景包、技能试用）。
 - [2026-10](./changes-2026-10.md)（10-13 至 10-31，128 节）：规则页与规则引擎、多 Agent 协作、访客与私聊指令、分档评审、多个飞书机器人、会议规则、插件、设备的外部 Agent、夜间复盘、原件治理、需求树。
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
+
+## 在跟的问题：回完接着跟，值班群收进关注（11-20）
+
+- `src/channels/listen-problems.ts`（表 `listen_problems`）：关注的处理和“有人找你”的处理看完一个求助的问题后用 `track_problem`（`wake` 分组，关注的处理轮和有人找你的处理才给）记状态：open / waiting / blocked / closed，已查清的、在等谁、怎样算完（没结的必填）、结论、`recheck_after`。一处一条，结了以后同一处来了别的问题另起一条，旧的留给 listen-coach。
+- 有人找你：`routeWatchedMessages` 开头对没结的问题排 `problem-follow`（十分钟后、每个问题一条，机器人自己的和记下之前的消息不算）；到点按问题状态预筛（场景 watch），不用看的记 `seen_ms`，要看的经 `mentions.ts continueProblem` 交回原来那次处理（同一会话）。同一处有没结的问题时后来 @ 本人的消息并进那次处理（`recentHandling`：话题里的问题谁发的都算，整个群的问题只算原来提问的人）。处理任务第 3、7 步改为回完用 `track_problem` 记下、不问本人要不要接着跟；本人点“不发”时 `dropProblemOf`。分诊后再查一次 `ruleOn`，分诊期间触发的规则优先。
+- 关注：`prefilterBatch` 的材料多“在跟的问题”，说明改为只有给问题带来新东西才算要看；`watchedNote` 带问题列表和“按问题跟，不按消息跟”的做法；回查（`problemsDue`）往关注的处理对话里放一条 `meta.recheck`。
+- 规则的 `context` 动作多 `adopt`：触发的群收进关注（`listen.ts adoptChat`，`settings.adopted` 记时间），问题都结了、三天没有消息和问题更新时放回（`releaseAdopted`，心跳）；规则页的“交给关注”多一个勾选。
+- `listen-coach.ts`：已结的问题算新案例，任务多“跟过的问题”；场景多 `follow`（回完怎么跟），`roles/listen-coach.md`、`submit_playbook`。
+- 文档：`docs/v2/mentions.md`“回完接着跟”、`skills/omem/references/owner.md`“在跟的问题”；测试 `test/listen-problems.test.ts`、`test/lark-mentions.test.ts`。
 
 ## 流程：评审出了结论不再停在卡住，本人上一段的话带到下一段（11-20）
 
@@ -253,156 +263,3 @@ updated: 2026-11-20
 - aad 0.0.9 的 assist 两个方向都能传文字、富文本、图片和文件。omem 这边：远程页的画面设置把“复制的文字带回”换成“剪贴板互通”，加了文件上限（`remoteSettings.clipboardMaxMb`，默认 100，`src/remote/settings.ts`）；不是 100 时给 aad 加 `--clipboard-max-mb`，只在 aad 0.0.9 及以后（`clipboardFiles`），旧版不认这个选项会起不来。转发不用改：上传走查看页的 WebSocket，带回的东西是同一路径下的 GET。
 - 设置 → AI 的“更新到最新”和 `omem setup desktop` 以前跑 `osdk install github:…`，已经装了一个版本时 osdk 只说“already installed”，从来没更新过。现在先 `osdk list-remote` 找最新的 release，装 `github:…@<版本>`（`src/core/tools.ts` 的 `installTool`）。
 - aad 查看页的状态行、按钮、粘贴提示和“远程剪贴板”托盘换成 omem 的样子：查看页经 omem 转发、同源，远程页在它加载时把 omem 的配色、字体、圆角和阴影的值写进一段样式（`Remote.vue` 的 `skinViewer`），切换深浅色时重写。
-
-## 要本人回答的内容分段写（11-18）
-
-- `src/agents/brief.ts`：`checkBrief` 在 `ask_user`、`report_task`、`settle_code_task`、`rule_dispute`、`stage_report` 上退回不分段的长文字；`roles/_common.md` 加“给本人看的问题和报告”，`roles/coder.md` 的 blocked 写法同步。
-- 卡片：`src/channels/lark-asks.ts` 的 `briefBlocks`（首句加粗、放得下的展开、其余折叠），编码修改项卡片标题截短、记录单独折叠；`code-tasks.ts` 的 `taskText` 用加粗小标题、本人原话与完成标准相同时不重复；`web/src/components/AskCard.vue` 首句加粗、长正文可展开；流程关卡卡片首句是问题。
-- `reviseAsk`（`src/agents/asks.ts`，sink 的 `revised` 原地重画飞书卡片）和 `POST /api/asks/:id/question`。
-- 网页：侧栏“流程”（看板），事项列表里走流程的事项打开流程页；`Ask.vue` 输入框按文字变化自动撑开（含预填）。
-
-## 单独发的图片和文件并进 @ 机器人的那一轮（11-18）
-
-- 飞书的图片、文件消息不能带 @。`src/channels/lark-bot.ts` 的 `processEvent` 记下每个成员在哪个群（话题）里最近一次 @ 了机器人（`recentAsks`）；两分钟内同一个人在同一处单独发的图片、文件标为 `followsAsk`，像 @ 一样交给 `handle`，不再等内容窗口，正在跑的那一轮直接收到。访客不并。
-- 私聊里发的图片、文件也进对话（之前只存成原件、回一句“已保存”）：照旧存为原件，没写要做什么时按 `contentWaitMs` 等后面的话。
-
-## 飞书 @ 机器人的富文本消息带上图片（11-18）
-
-- 修正：@ 机器人时一起发的图片、视频在富文本（post）里，`src/channels/lark-bot.ts` 的 `messageText` 只取 `text` / `href`，图片节点被丢掉，Agent 收到的这一轮没有图。现在 `img` 写成 `![Image](img_…)`、`media` 写成 `[Media: file_…]`（和采集记录的写法一致）。
-- 新函数 `attachmentNote`：消息带附件时在这一轮的文字和引用的消息后面附一行 message_id 与 file_key，Agent 用 `lark_message_file` 读；之前这一轮不带消息 id，只有回看历史时才找得到。
-
-## 事项的流程页（11-18）
-
-- 新页面 `web/src/views/ItemFlowPage.vue`（路由 `/items/:id/flow`）：等你的段（按钮、一句话、在对话里讨论）、背景、各段结果全文与插图、接下来、来源、流程记录。看板、今日页、飞书进度卡（`src/flows/store.ts` 的 `link`）指向它；`ItemFlow.vue` 加“打开流程页”。
-- `flowView` 的阶段加 `result`（执行者最后写的全文，`stageResult`）。`flow-stage` 提问只回文字不点按钮：开始 / 判断关卡按文字开始，“做完了吗”按文字重做。
-- `web/src/views/Ask.vue` 认 `?draft=&space=` 预填输入框。
-- 跟着对象的段在 blocked 且等的不是本人时仍跟随对象（`advance` 里的 `following`）；编码交办段的任务说明改为发起或并进交办后直接结束。
-
-## 别的事项的修改并进同一分支的交办（11-18）
-
-- `message_code_run` 加 `item_id`：交办记到那个事项（`joinCodeWork`，`src/flows/objects.ts`，材料 `meta.joined`），`latestCodeWork` 认它，流程编码阶段跟着走。`delegate_code` 的同分支拒绝说明改为指向这条路、不问本人。续交办的工具改用 `codeSpace`，流程阶段的运行能续项目下仓库的交办。
-
-## 技能分组的自动整理和分组树（11-18）
-
-- 后台角色 `skill-organizer`（`roles/skill-organizer.md`，运行类型 `skill-organize`，`src/agents/jobs.ts`）：新收进来的、说明变了的技能，以及本人没分组的技能满 8 个时，放进分组和用途、必要时建组写说明，做完通知。要看的技能按 `skill-groups.json` 里的 `seen`（上次看到的说明）判断，`main.ts` 每分钟调 `scheduleSkillOrganize`（`src/agents/agent-skills.ts`）。`agentSkills.autoOrganize` 默认开。
-- 本人（或主助手按本人的话）改的分组、用途、组说明记 `userSet`，整理角色的 `organize_skills` 跳过它们，也不能改开关。`POST /api/agent-skills/organize`（可带 `group` 重整一组）。
-- 网页：技能列表上方的分组树 `web/src/components/SkillTree.vue`；分组页按用途分节、可折叠，去掉用途标签和每行的用途输入框，改为“移动”对话框（`web/src/lib/skill-move.ts`）；技能页顶上回到分组；Agent 页导航改为 `router.push`，后退可用。`/api/skills` 带 `purpose`。测试 `test/agent-skills.test.ts`。
-
-## 本人放弃一个提问（11-18）
-
-- `POST /api/asks/:id/dismiss`（`src/server/http.ts`）：本人的、还在等的、不是宿主决定卡片的提问按失效关闭（`lapseAsk`），飞书卡片随之变成已失效。`web/src/views/Home.vue` 的“等你回答”每条加“不用了”。测试 `test/ask-dismiss.test.ts`。
-
-## 运行交的截图按附件压缩设置压（11-18）
-
-- `src/core/media.ts` 加 `compressImageFile`：按 `media.auto` 的模式、质量、长边、最小体积压一张不在 `files/` 里的图片，小 10% 以上才给出压缩后的文件。
-- `src/agents/artifacts.ts` 的 `collectInbox`、`attachPath` 收下后对图片调它，替换文件并更新 `run_artifacts` 的 entry、mime、size、sha。测试 `test/artifact-compress.test.ts`。
-
-## 进度卡和事项页带阶段截图（11-18）
-
-- 阶段运行报做完或卡住时，它交过的截图最近 4 张跟着进度卡走：`src/flows/store.ts` 收 `runImages`，`notify` 的 `images` 存在通知上，`src/channels/lark-bot.ts` 发卡前用 `item-notification.ts` 的 `cardImages` 上传（按机器人缓存）。这时说明保留分段、最长 1200 字。
-- `flowView` 每段加 `shots`（`engine.ts` 的 `stageShots`，去掉已归到用例的），`ItemFlow.vue` 在“最近”下面列出。
-- `roles/_common.md` 的“流程里的一个阶段”：看到的画面交成截图、不要只留在 `/tmp`；复现、定位类的 `note` 分段写现象、步骤、原因、要改什么。
-
-## 流程的一段能交办到业务空间下的仓库（11-18）
-
-- 流程阶段的运行只能写事项所在的业务空间，相关的仓库空间只能读，`delegate_code` 因此拒绝交办，缺陷流程的“修复”全部卡住。
-- `src/agents/tools.ts` 加 `codeSpace`：要交办的仓库是本次可写的业务空间下的仓库时放行；别处的仓库照旧拒绝，往仓库空间写内容也照旧拒绝。测试 `test/delegate-scope.test.ts`。
-
-## 浏览器长期资料和网页操作沉淀（11-18）
-
-- 内置技能 `desktop-control` 带 `scripts/browser.mjs`：按名字开 Chrome，资料长期放在 `remote/profiles/<名>`（和“远程”页同一处），开着就复用；默认无界面；`--header` 按域名加请求头；每次启动生成一个小扩展，拦下页面打开本机程序的 `xxx://` 链接（Chrome 的“要打开 xdg-open 吗”原生弹窗还会挡住页面输入）。
-- 技能新增“做通了就留下来”：动手前先找已有技能和脚本，做通的网页操作用 `save_skill` 存成技能和脚本，凭据只在运行时读。原来“不要改用脚本模拟”的说法改成只禁止用脚本绕过被拒绝的操作。
-- 起因：复现缺陷的运行每次用新的临时资料，大页面冷加载几十秒，再从头一步步登录；复用资料后同一页面 6 秒。
-
-## 重启打断的后台运行在原会话里接着做（11-18）
-
-- 以前重启只把 running 的运行改回 queued，重新开始时开新会话、从头做，也不知道重启前发过什么，容易重发消息。
-- `src/agents/runs.ts` 的 `markRestarted`（`startWorker` 里、改回 queued 之前）：给每个运行的 input 记 `restarted`（写入条数；12 小时内开始的 ACP 运行再记最后一个会话、它的 AI、目录和原来的 `ready`），并把那个会话在 `session_cleanup` 里设为 -1，免得启动时被当作临时会话删掉。
-- `src/agents/runner.ts` 的 `takeRestart`：这次运行重新开始后的第一轮 `runAgent` 取走它（记 `used`），AI 和目录都相同就用 `resumeSessionId` 恢复；任务前加 `restartNote`（重启前的写入清单）。原来是临时会话的，这一轮结束后设回 `ready = 1` 交给清理。后台池（`reuseSession`）遇到要恢复的会话时不走池。
-- `src/agents/session-cleanup.ts` 的 `releaseRetainedSessions`：运行没用上保留的会话就结束了，也把它还给清理。
-
-## 卡片的 allowed 认 lark-cli 读到的 open_id（11-18）
-
-- open_id 按应用区分：Agent 用 `lark_read` 列群成员拿到的是 lark-cli 那个应用的 id，写进 `lark_card` 的 `allowed` 后，被指定的人点按钮只看到“只有 ou_… 可以处理”，卡片开头也 @ 不到他。
-- `src/agents/tools.ts` 的 `lark_card`：主机器人发卡时按 `lark_people` 把 `cli_open_id` 换成本机器人看到的 `bot_open_id` 再记录。
-- `src/channels/lark-actions.ts` 的 `mayAct`：点击时操作人的 `bot_open_id` / `user_id` 经 `lark_people` 对应到的任一个 id 在 `allowed` 里都算，已经发出去的旧卡片也能点。
-- 别人点了被拒时，提示里的处理人写成“姓名（邮箱）”（`personLabel`，按 `lark_people` 认任一个 id），超过三人写“等 N 人”；以前对 lark-cli 的 id 查不到名字，只显示 ou_…。
-- `lark_card` 的说明写明 `allowed` 可以比 @ 的人多：给 `mentions` 时只 @ 这些人。
-
-## 流程的进度卡只说发生了什么，阶段任务只带摘要（11-18）
-
-- `src/flows/store.ts`：`changeStage` 只在助手或宿主让一段做完、跳过、卡住、待复核时记一行进度，流程走完时也记（`engine.ts` 的 `end`）；开始、关卡和本人自己的操作不发卡。卡片正文是这些行加一行“现在 · 在做 / 等你开始 / 卡住”，不再列全部阶段；去掉运行和提问编号，`waitText` 防止“等等本人”。
-- `src/items/materials.ts` 的 `materialsBrief`、`src/items/requirements.ts` 的 `reqBrief` 加 `compact`：流程阶段的任务里说明截到 1500 字、材料最近 12 份、需求点只列标题，进行的地方最近 5 处（`engine.ts` 的 `placesBrief`）。一件做了很多轮的事以前给部署这类阶段带了约 40KB 的历史。
-- `stage_report` 的说明要求 note、waiting_on 写给本人看，不带内部编号。
-- 本人承担、以 Git 信号完成的阶段（推送）轮到时先跑一次 `checkGitSignals`，没推才问本人（`engine.ts` 的 `askOwnerNow`）；以前代码早就推了也会先发一张“轮到你：推送”。
-- 阶段的运行先 `ask_user` 问了本人、接着报卡住等本人时，不再另发一张“卡住了”的进度卡（`store.ts`，按运行里还没答的提问判断）。
-- 流程的提问卡片改成同一个版式（`engine.ts` 的 `askText`）：“事项 · 段”、要定什么，再按需要列结果、这一段做什么、前面各段的结果、确认后接着哪几段、依据数目。以前是一句话塞进全部说明，完成确认不写是哪件事。
-
-## 接管 Agent 自带的技能，按分组给总入口（11-18）
-
-- 新的 `src/agents/agent-skills.ts` 和 `skill-groups.ts`，设计见 `docs/v2/agent-skills.md`。打开 `agentSkills.takeOver`（默认关）后，定时扫描 `catalog.ts` 里各条目 `skills.read` 列出的目录（Codex：`$CODEX_HOME/skills`、`~/.agents/skills`；TraeX：`$TRAE_HOME/skills`、`~/.agents/skills`；Claude Code：`$CLAUDE_CONFIG_DIR/skills`），把里面的技能复制进 `library/_skills`。原件移进 `agent-skills/backup/<时间>/` 并写 manifest，链接只删除。技能按名称前缀归组，分组、用途和开关记在 `library/skill-groups.json`。
-- 每个 Agent 只往一个目录（`skills.write`）写 omem 说明和每个启用分组的总入口，这些目录带 `.omem-managed` 标记。组大时按用途拆成 `purposes/NN.md`。
-- 运行时的技能目录每组只占一行，停用的技能不列出。`read_skill` 可以读分组的总入口，`list_skills` 新增 `group` 参数。新工具 `organize_skills` 放在 `skills` 分组，设备和影子运行不能用。
-- Agent 页的技能列表按组折叠，另有分组页和“Agent 自带的技能”面板。`GET /api/skills` 不再返回正文。新增命令 `omem skills`。
-
-## 设置 → AI 能看 ACP 适配器版本并升级（11-18）
-
-- 展开一个后端时，ACP 那一行下面显示 npm 适配器（codex-acp、claude-agent-acp……）的已装版本和公开源上的最新版，有新版时可以点“升级”，确认后升级。装法和远程命令 `agent-upgrade` 是同一套，都在 `src/agents/adapter.ts`：只升目录里那个已经装好的包，从 `osdk.toml` 的公开源装，装进命令实际所在的 npm 前缀，版本变了就重新检测模型。
-- 检测到的模型里有的没有思考强度、别的模型有时，提示可能是适配器比这个模型旧（11-18 codex-acp 2.5.0 和 gpt-6.2-sol 就是这样）。
-- 接口：`GET /api/agents/:id/adapter`、`POST /api/agents/:id/adapter/upgrade`，权限同设置。
-
-## 远程升级 ACP 适配器从公开源装（11-18）
-
-- `peer call <设备> agent-upgrade` 原来用那台机器自己的 npm 设置装 `@latest`，公司镜像落后时会装回旧版（codex-acp 停在 2.5.0，不认识 Codex 新的默认模型，Agent 页上这个模型没有思考强度）。现在带 `--registry` 用 `osdk.toml` 的 `[registries.npm]`（`src/core/peer-exec.ts` 的 `publicNpmRegistry`），和依赖安装一致。
-- 换了源仍是旧版：npm 报告装成功了，但装进的是 omem 进程里 npm 自己的全局目录，命令实际找到的那份没动。现在装进命令所在的那个前缀（`peer-inspect.ts` 的 `adapterPrefix`，结果里返回 `prefix`）。另外可以给 `version`（如 `2.7.0`）装指定版本，这一次带 `--min-release-age=0` 和 `--before=<现在>`，不受发布时长下限限制；装完的版本不是要的版本时 `ok` 为 false。
-
-## 会议里叫机器人：主助手来查、可设叫法和口头叫它、旁听时按会议性质主动查（11-18）
-
-- 同一天前一版把会上提问交给访客角色。改为默认由主助手按本人的权限查（`answerBy: assistant`，运行沿用规则运行的禁用项，但不限于规则的空间，`lane = meeting-answer:<id>`），访客路径保留为 `answerBy: guest`。起运行前先由决策模型判断是不是在问它（“访客提问把关”打开且可用时），只是提到它的不起运行。
-- 叫它的方式：机器人的名字，加规则里的 `answerNames`（如“助理”）；`answerSpoken` 打开时口头叫它也算。
-- 主动查（`proactive`、`meetingKind`、`proactiveMax`）：旁听窗口按会议性质和新的内置技能 `skills/library/meeting-assist` 查会上提到的点，用新工具 `meeting_suggest`（`ROLE_TOOLS`，只在 `input.meeting.suggest` 的旁听运行里给）交给本人，卡片上可“发到会里”。这时旁听运行按本人的权限查。
-- 规则页“拉机器人入会”加了“会上主动查”、会议性质、“也叫它”、“说话时叫它也算”、“谁来查”。设计在 `docs/v2/rules.md`“在会里回答和主动查”，测试 `test/meeting-rules.test.ts`。
-
-## 会议里回答提问：按访客处理，先给本人看，有上限、能暂停（11-18）
-
-- 会议规则的“在会中聊天里回答点名机器人的问题”原来交给本人的旁听档案，用 `meeting_send` 直接发到会里，读的是本人的范围。现在由 `src/channels/meeting-answers.ts` 接手：提问按访客处理（`askAsGuest`，门卫先判断，`guest` 角色只读会议所在空间和对访客开放的空间，答案截到 200 字以内），再按规则的控制项发出。旁听档案只对本人说，`meeting_send` 工具去掉了。
-- 规则动作 `meeting-bot` 新增 `answerFrom`（all / owner）、`answerMode`（draft 默认 / auto）、`answerMax`（默认 5）、`answerSpoken`（默认关）。草稿发卡片到本人私聊（`card_interactions.purpose = meeting-answer`，“发到会里 / 不发 / 这场会不再回答”）；直接发时先回 `OneSecond` 表情，两次至少隔一分钟。本人在会中聊天发 `/ai 停`、`/ai 继续` 暂停和恢复。
-- 状态记在 `lark_meetings.answers`（新列），每次发出写 `audit_events`（`lark.meeting-answer`），会后纪要或通知列出回答了什么、哪些没回答和原因。不再需要旁听档案才能回答。
-- 规则页“拉机器人入会”动作里加了这几项设置。设计在 `docs/v2/rules.md`“在会中聊天里回答”，测试 `test/meeting-rules.test.ts`。飞书公开文档里没有机器人在会议里出声的接口（`vc/v1/bots/*` 在内测，只能发文字和表情），所以没有做语音。
-
-## 知识库爬取：掉登录、断网时暂停，不再把整个队列记成失败（11-18）
-
-- 爬取（`src/channels/lark-wiki.ts` 的 `crawlLoop`）原来只在“缺少飞书权限”时暂停。lark-cli 的本人登录掉了（token_missing）时，每篇都当成单独的失败移出队列，一夜把队列清空、标成完成，失败页面的子页面也没再列出来。现在掉登录、授权被拒、网络错误（`CRAWL_HALT`）和连续 10 篇失败都让爬取暂停，这一篇留在队列里，继续时接着读；暂停原因记在爬取的 `halted`，继续时清掉。
-- 一篇读不了（没有这篇的权限）时仍列出它的子页面；列子页面失败单独记一次失败。
-- 每晚读取（`src/channels/lark-knowledge.ts` 的 `readDaily`）遇到这类暂停时当晚停下，原因写进 `lark_kb_last_read` 的 `skipped`，不再让每个知识库各撞一次。
-
-## 有人找你：分诊结果分行写、处理运行挂在下面、唤醒不再算成又找了你（11-18）
-
-- 分诊结果（`src/mentions/triage.ts` 的 `triageSummary`）：第一行写决定，下面每行一个决策模型的回答（“做法：先查再告诉本人（把握 0.85）”“交给：主助手（把握 0.85）”），说明括号里是把握；不再在结尾贴处理运行的 id。
-- 处理运行不是 mention 运行的子运行（不改 `parentId`，它以本人的身份跑，归属和工作区按自己算），运行详情接口把 `output.handleRun` / `joined` 一起列进“后续任务”（`src/server/http.ts`）。运行列表按完整 id 搜时也列出安静结束的运行（`runWhere`）。
-- 每天次数到上限时，简短提醒和运行结果写清是哪一项、上限几次、在 设置 → 渠道 → 有人找你 改（提醒里是链接，`capNote`）。
-- 继承来的触发（`src/core/run-trigger.ts`）带 `followUp: "wake" | "child"`：显示成“小李 · 接着「有人找你」的唤醒”；运行页“触发人”的次数只算本人亲自触发的，按人筛选仍能找到这些后续。之前存下的唤醒（有 `parentId` 且 `input.wake`）读出来时一样补上。
-
-## 设置 → 连接：订阅的会话并进“飞书会话”一个列表（11-18）
-
-- 原来的“订阅的会话”和“已采集过的会话”两个列表合成一个“飞书会话”（`web/src/components/LarkCapturedChats.vue`）：每行有订阅开关、采集到的空间和处理方式，元信息一行写类型、免打扰、参与过、最近消息；全部会话（`capturedChats` 去掉了 `limit 500`），显示总数，虚拟滚动，可按名称筛选或只看已订阅的，标题悬停看全名。“读取最近会话”只列还没采集过的。
-- 订阅条目去掉了 `since`：最早那版采集留下的字段，后来读到哪里记在 `lark_cursors`，它一直是空的，所以订阅列表总显示“尚未采集”。
-- 接口：`GET/PUT /api/lark/subscriptions` 换成 `PUT /api/lark/chats/:id/subscription`（`setSubscribed`）和 `/space`（`setChatSpace`：写会话自己的空间绑定，和 `/space` 命令同一处，订阅里的空间跟着改）。列表里的空间是 `captureSpace` 的结果，批量版 `ownerCaptureSpaces`（`src/core/capture-space.ts`）和单个的共用一条优先顺序；三千多个会话约 50ms。
-
-## 远程画面可以单独打开和全屏（11-18）
-
-- 远程页地址栏右边加了“单独打开”和“全屏操作”（`web/src/views/Remote.vue`）。单独打开是新路由 `#/remote/<会话>`（`web/src/main.ts` 的 `/remote/:id?`），`App.vue` 对它不画侧栏，只留对话框和提示；页面只有地址栏和画面，会话结束时给回远程页的链接。
-- 全屏对地址栏和画面这一块调 `requestFullscreen`，Chromium 安全上下文里再 `navigator.keyboard.lock()`，Esc、Alt+Tab 送到远程，按住 Esc 退出。图标 `maximize` / `minimize` 加进 `web/src/lib/icons.ts`。
-
-## 设置 → AI 按后端整理、网络条件的状态写清查到了什么（11-18）
-
-- 设置 → AI → 通用（`web/src/views/Settings.vue`、新组件 `web/src/components/AiBackend.vue`）：已装的后端按账号（`source`）合并，ACP 和命令行成一行，可折叠。点开后有默认模型（两份配置一起改）、适合做什么、网络条件、用量（在用、整个账号和单个模型的上限、账号额度和本账号的阈值）。外面只留默认 AI 与档位、任务选型（开关、总体偏好、运行前自动选）、并行（总数和默认值）。
-- 任务选型的候选（`agents.routing.candidates`）改为每个后端一条（不带模型）加可选的模型各一条，界面不再写 effort；旧的带 effort 的候选照常生效。模型那条的说明会带上后端那条（`src/agents/choose-ai.ts` 的 `candidateWhen`，助手环境说明 `runner.ts` 的 `routingGuide` 同样）；排顺序时先找模型那条。
-- 账号额度的阈值可以按账号另设：`agents.capacity.quotaBySource.<source>.avoidAbove / perDayBelow`，没设的用 `quotaAvoidAbove / quotaPerDayBelow`（`src/agents/quota.ts` 的 `quotaAvoid`）。
-- 网络条件（`web/src/components/AiNetworkConditions.vue`、`web/src/lib/network-status.ts`）：放进各后端里，状态由一个共享的轮询维护；新加的默认勾上这个账号的几个后端。IPv6、DNS 的原因和提示改成写清查到了什么（`src/agents/network-diagnostics.ts`），去掉每次都附的“这是配置检查，不能证明……”和“DNS 不返回 AAAA 不能证明……”两条，DNS 没问题时显示“没发现问题”。
-- 设置页右侧目录（`buildToc`）也认 `.section-title` 做卡片标题，以前只认 `<strong>`，所以 AI 页只列出三项。
-- 数据页（`web/src/views/Insights.vue`）的导出从标题旁挪到筛选右边，点开选 Markdown 或 CSV。空间卡片里仓库行的设置按钮不再被长名字挤窄，和空间的设置按钮对齐。
-
-## 设计稿：流程、插件的对象与信号（11-15，流程部分另行实现）
-
-- `docs/v2/flows.md`：一件事怎么自己往前走。流程定义是一份阶段清单，每个阶段声明前提、承担者、怎样算完成和进入前的关卡，流转由前提推出来，不画连线；跳过、并行、重开、补录、只改这一件事的副本都是一等操作，复杂的编排留在阶段内部（交办、技能）。另写了信号的来源和归属、事项订阅它的群和文档、插件要补的四样接口和两种安装方式。成效页的实现与边界见上条及该设计稿第 10 节。

@@ -32,6 +32,13 @@
 - note 写足复查对象、口径和工作文件，醒来时未必记得细节。提醒本人做事用事项的 remind_at，不用唤醒。
 - 醒来后只有要本人做或决定的事、或者事情有了结果（办成、办不成、对方不用了）才写给本人；别人还在跟、又排了下次复查这类进展记进事项，调用 `stay_quiet`。
 
+## 在跟的问题
+
+- `track_problem(title, state, chat_id?, topic_id?, known?, awaiting?, done_when?, conclusion?, recheck_after?)`：只有关注的处理（某个群、某件事）和“有人找你”的处理能用。看完一个群或话题里有人求助的问题（值班群的一张单、群里同事问的一个问题）后记它现在的状态，一个群或话题一条，再记就是更新。
+- state：`open` 还在查；`waiting` 在等别人处理、等对方回话或补材料，写 `awaiting`（等谁、等什么）；`blocked` 要本人拍板才能往下走；`closed` 有了有效结论（`conclusion` 写结论和依据，对方照做就能解决），或者不用管了（写为什么）。没结的写 `done_when`（怎样算完，如“值班同学清理完，再查员工列表里没有这条关系”）。
+- 之后这里有新消息时，宿主先对照这个状态判断有没有新信息（等的人回了、补了数据、对方说还不行、新的卡点、看起来解决了要确认），有才交给你；`recheck_after`（30m、2h、1d，最多 7 天）到了还没动静也会叫你回查一次。所以不用为了跟进再设 `wake`，也不用发“还在等”之类的话；没有新东西的一轮调用 `stay_quiet`。
+- 关注的经验会从已结的问题里学“这类问题回完要不要跟、跟到哪算完”。
+
 ## 规则
 
 - `list_rules` / `save_rule(description, rule?, enabled?)`：本人的规则（遇到什么情况自动叫哪个 Agent 做什么，见 docs/v2/rules.md）。只在本人明确要求时建；不给 `rule` 时由模型从原话生成条件和动作；默认不启用；在会话中保存后，宿主会在回复送达后展示启用确认卡片。本人点击直接启用，无需 AI 续轮；规则修改后旧卡片失效。不要再用 `ask_user` 或 `suggest_next` 重复生成启用按钮；也可到规则页核对。会议规则（本人入会时拉机器人进会、记录、旁听）和文档变化规则（`trigger.event = doc`，`trigger.docs` 列文档链接）保存后结果里带权限检查，缺的权限和申请链接原样告诉本人。事项上挂的平台对象变了状态（“合并请求被关掉时告诉我”）用 `trigger.event = object`，`trigger.objectKind` 写对象类型全名（如 `github:pull-request`），`trigger.objectStatuses` 写新状态（不写是任意）；对象“有更新”（状态没变，新提交、新评论）加 `trigger.objectChanges: ["updated"]`（两种都要写 `["status", "updated"]`）；条件只能用 `object.*` 字段（`object.change` 是 status / updated，`object.note` 是这次变了什么），动作同文档变化规则（不需要群的几种）。omem 自己的事（“评审结束 / 运行失败 / 提问被回答 / 事项改了状态 / 流程到了某一段时……”）用 `trigger.event = omem`，`trigger.omemTypes` 至少写一种：`run.done`、`run.failed`、`review.done`、`code.applied`、`code.discarded`、`ask.answered`、`ask.expired`、`item.created`、`item.status`、`flow.stage`、`plugin.signal`；条件只能用 `omem.*` 字段（`omem.kind`、`omem.profile`、`omem.status`、`omem.item`、`omem.flow`、`omem.stage`……），动作同上。这种规则起的运行不会再叫醒这种规则。

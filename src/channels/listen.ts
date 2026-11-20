@@ -80,6 +80,8 @@ export type ListenContext = {
   playbookFile?: string;
   /** A matter's 关注 made because a flow started on the item (listen-items.ts): it ends with the flow, until the owner takes it on. */
   byFlow?: boolean;
+  /** Groups a rule handed over with their first message (`context` action `adopt`), and when: let go when their problems are closed and they went quiet. */
+  adopted?: Record<string, string>;
   expiresAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -113,7 +115,7 @@ type Row = {
   id: string; kind: ListenKind; name: string; chats: string; item_id: string | null; spec: string; space_id: string | null;
   conversation_id: string | null; settings: string; status: "active" | "paused"; expires_at: string | null; created_at: string; updated_at: string;
 };
-type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; playbookFile?: string; byFlow?: boolean };
+type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; playbookFile?: string; byFlow?: boolean; adopted?: Record<string, string> };
 
 function toContext(r: Row): ListenContext {
   const s = json<Stored>(r.settings, {});
@@ -134,6 +136,7 @@ function toContext(r: Row): ListenContext {
     playbookAt: s.playbookAt,
     playbookFile: s.playbookFile,
     ...(s.byFlow ? { byFlow: true } : {}),
+    ...(s.adopted && Object.keys(s.adopted).length ? { adopted: s.adopted } : {}),
     expiresAt: r.expires_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -198,6 +201,7 @@ export type ContextInput = {
   playbookFile?: string;
   /** true: made for a flow (ends with it); false: the owner's own from now on. */
   byFlow?: boolean;
+  adopted?: Record<string, string>;
   expiresAt?: string | null;
   /** An existing conversation to keep (a watch moved here). */
   conversationId?: string;
@@ -232,6 +236,11 @@ export function saveContext(app: App, input: ContextInput, chatName: (chatId: st
     playbookAt: input.playbookAt ?? prev?.playbookAt,
     playbookFile: input.playbookFile ?? prev?.playbookFile,
     ...((input.byFlow ?? prev?.byFlow) ? { byFlow: true } : {}),
+    ...(() => {
+      // Adopted groups no longer among its groups (the owner removed one) are not adopted any more.
+      const adopted = Object.fromEntries(Object.entries(input.adopted ?? prev?.adopted ?? {}).filter(([c]) => chats.includes(c)));
+      return Object.keys(adopted).length ? { adopted } : {};
+    })(),
   };
   const spaceId = input.spaceId === undefined ? (prev?.spaceId ?? null) : input.spaceId;
   const expiresAt = input.expiresAt === undefined ? (prev?.expiresAt ?? null) : input.expiresAt;
@@ -293,6 +302,39 @@ export function removeContext(app: App, id: string) {
   run(app.db, "delete from listen_contexts where id = ?", id);
   if (c.conversationId) run(app.db, "update conversations set status = 'archived' where id = ?", c.conversationId);
   indexChats(app, c.chats);
+}
+
+/** A place's groups adopted from rules go back this long after their last message or problem, once none is open. */
+export const ADOPT_RELEASE_MS = 3 * 86400_000;
+
+/** A rule hands a group's first message over with `adopt`: the group joins the 关注 (no-op when it is already one of its groups). */
+export function adoptChat(app: App, c: ListenContext, chatId: string): boolean {
+  if (c.kind !== "place" || c.chats.includes(chatId)) return false;
+  saveContext(app, { id: c.id, kind: c.kind, chats: [...c.chats, chatId], adopted: { ...(c.adopted ?? {}), [chatId]: now() } });
+  return true;
+}
+
+/** Adopted groups whose problems are all closed and that went quiet go back (heartbeat, with expireContexts). */
+export function releaseAdopted(app: App, at = Date.now()) {
+  const out: { context: string; chat: string }[] = [];
+  for (const c of listContexts(app, { kind: "place" })) {
+    const keep = { ...(c.adopted ?? {}) };
+    for (const [chatId, since] of Object.entries(c.adopted ?? {})) {
+      if (one(app.db, "select 1 from listen_problems where context_id = ? and chat_id = ? and state != 'closed'", c.id, chatId)) continue;
+      const lastProblem = one<{ at: string | null }>(app.db, "select max(updated_at) at from listen_problems where context_id = ? and chat_id = ?", c.id, chatId)?.at;
+      const lastMessage = one<{ ms: number | null }>(app.db, "select max(create_ms) ms from lark_messages where chat_id = ?", chatId)?.ms ?? 0;
+      const last = Math.max(Date.parse(since), lastProblem ? Date.parse(lastProblem) : 0, lastMessage);
+      if (at - last < ADOPT_RELEASE_MS) continue;
+      delete keep[chatId];
+      out.push({ context: c.id, chat: chatId });
+    }
+    if (Object.keys(keep).length === Object.keys(c.adopted ?? {}).length) continue;
+    const chats = c.chats.filter((x) => !(x in (c.adopted ?? {})) || x in keep);
+    // The last group of a place cannot go: it stays until another comes or the owner removes the 关注.
+    if (!chats.length) continue;
+    saveContext(app, { id: c.id, kind: c.kind, chats, adopted: keep });
+  }
+  return out;
 }
 
 /** 关注 past their time stop (heartbeat); the owner is told. */

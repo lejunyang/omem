@@ -22,6 +22,7 @@ import { dispatchRuleEvent, forgetChatBots } from "../src/rules/engine.ts";
 import { deleteRule, endJudging, ruleClaim, saveRule, startJudging } from "../src/rules/store.ts";
 import type { RuleEvent } from "../src/rules/types.ts";
 import { boot } from "../src/main.ts";
+import { routeWatchedMessages } from "../src/channels/lark-watch.ts";
 
 const fake = (id: string, env: Record<string, string>) => ({ id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env });
 
@@ -39,6 +40,12 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
           fake("handle-silent", { FAKE_MODE: "mention", FAKE_MENTION: "silent" }),
           fake("handle-reply", { FAKE_MODE: "mention", FAKE_REPLY: "按未发货的行算，已发货的不退。" }),
           fake("handle-reply-quiet", { FAKE_MODE: "mention", FAKE_MENTION: "quiet", FAKE_REPLY: "按未发货的行算。" }),
+          fake("handle-track", {
+            FAKE_MODE: "mention",
+            FAKE_REPLY: "这条关系要值班同学清理，已经转给他们了。",
+            FAKE_TRACK: JSON.stringify({ title: "小王的员工号解绑不了", state: "waiting", known: "关系残留在员工列表里", awaiting: "值班同学清理残留关系", done_when: "清理完，再查员工列表里没有这条关系", recheck_after: "2h" }),
+            FAKE_TRACK_NEXT: JSON.stringify({ title: "小王的员工号解绑不了", state: "closed", conclusion: "值班同学清理完，小王确认能解绑了" }),
+          }),
           fake("handle-dies", { FAKE_DIE: "1" }),
           fake("handle-hangs", { FAKE_STALL: "before" }),
           fake("triage-notify", { FAKE_MODE: "mention", FAKE_TRIAGE: '{"action":"notify","what":"约周五评审","handler":"assistant","urgency":"normal","canProgress":false,"reason":"只是约时间"}' }),
@@ -499,6 +506,92 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     app.config.mentions.reply.lark.group = "off";
     app.config.agents.default = "handle";
   }, 90000);
+
+  it("after the handling it follows the matter: new messages there are screened and come back to the same handling until it is closed", async () => {
+    useDecision(true);
+    decision.action = "handle";
+    decision.progress = 0.9;
+    app.config.agents.default = "handle-track";
+    const m = msg("员工号解绑不了，提示还有关系", { thread_id: "omt_p1" });
+    store([m]);
+    const h = handlingOf((await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id)).id);
+    expect(h.input.task).toContain("用 track_problem 记下它现在的状态");
+    await waitForRun(app, h.id);
+    type P = { id: string; context_id: string; state: string; awaiting: string; run_id: string; recheck_at: string | null; conclusion: string };
+    const problem = () => one<P>(app.db, "select * from listen_problems where chat_id = 'oc_team' and topic_id = 'omt_p1'")!;
+    expect(problem()).toMatchObject({ context_id: "listen_default", state: "waiting", awaiting: "值班同学清理残留关系", run_id: h.id });
+    expect(problem().recheck_at).toBeTruthy();
+
+    // Someone else answers in the topic without @-ing the owner: one follow-up, a while later.
+    const route = (x: LarkMessage) => routeWatchedMessages(app, "oc_team", "项目 A 讨论群", [{ id: x.message_id, time: x.create_time, sender: x.sender!.name!, senderId: x.sender!.id, text: String(x.content), topicId: x.thread_id ?? undefined }]);
+    const queued = () => all<{ id: string; not_before: string | null }>(app.db, "select id, not_before from runs where kind = 'problem-follow' and status = 'queued'");
+    const li = { id: "ou_li", name: "小李", sender_type: "user" };
+    const ack = msg("收到，我看下", { thread_id: "omt_p1", sender: li, mentions: [], create_time: String(Date.now() + 1000) });
+    store([ack]);
+    await route(ack);
+    await route(ack);
+    expect(queued()).toHaveLength(1);
+    expect(Date.parse(queued()[0].not_before!)).toBeGreaterThan(Date.now() + 5 * 60_000);
+    // Nothing new for it (the screening says so): left alone, and not screened again.
+    decision.progress = 0.1;
+    const f1 = queued()[0].id;
+    run(app.db, "update runs set not_before = null where id = ?", f1);
+    const skipped = await waitForRun(app, f1);
+    expect(skipped.quiet).toBe(true);
+    expect(skipped.output.summary).toContain("没有给这个问题带来要做的");
+    await route(ack);
+    expect(queued()).toHaveLength(0);
+
+    // Something new: back to the same handling, with what it noted last time; it closes the matter.
+    decision.progress = 0.9;
+    const done = msg("清理好了，你再试试", { thread_id: "omt_p1", sender: li, mentions: [], create_time: String(Date.now() + 2000) });
+    store([done]);
+    await route(done);
+    const f2 = queued()[0].id;
+    run(app.db, "update runs set not_before = null where id = ?", f2);
+    const looked = await waitForRun(app, f2);
+    const next = getRun(app, String(looked.output.handleRun));
+    expect(next.input.resumeFromRun).toBe(h.id);
+    expect(next.input.task).toContain("你在跟的问题有了动静");
+    expect(next.input.task).toContain("在等：值班同学清理残留关系");
+    expect(next.input.task).toContain("清理好了，你再试试");
+    await waitForRun(app, next.id);
+    expect(problem()).toMatchObject({ state: "closed", conclusion: "值班同学清理完，小王确认能解绑了", recheck_at: null });
+    // Closed: later talk there is not followed.
+    const after = msg("谢谢", { thread_id: "omt_p1", sender: li, mentions: [], create_time: String(Date.now() + 3000) });
+    store([after]);
+    await route(after);
+    expect(queued()).toHaveLength(0);
+    app.config.agents.default = "handle";
+  }, 120000);
+
+  it("a rule that fires on the message while the triage judges it takes it", async () => {
+    useDecision(true);
+    decision.action = "handle";
+    const told = saveRule(app, { name: "被 @ 就通知", description: "有人 @ 我就通知我", enabled: true, conditions: { field: "message.mentionsOwner", op: "is", value: true }, judge: "code", actions: [{ type: "notify" }] });
+    const m = msg("退款单 456 怎么算？", { thread_id: "omt_race" });
+    store([m]);
+    // The rule fires during the triage's model call.
+    let fired = false;
+    const before = decision.calls;
+    const wrap = (async (url: string, init: RequestInit) => {
+      if (!fired) { fired = true; await dispatchRuleEvent(app, ruleEvent(m)); }
+      decision.calls++;
+      const q = JSON.parse(String(init.body)).questions[0];
+      if (q.type === "predicate") return new Response(JSON.stringify({ answers: [{ type: "predicate", name: "q", probability: 0.9 }] }));
+      const values = (q.choices as { value: string }[]).map((c) => c.value);
+      const choice = values.includes("ignore") ? "handle" : "assistant";
+      return new Response(JSON.stringify({ answers: [{ type: "choice", name: "q", choice, probabilities: values.map((v) => ({ value: v, probability: v === choice ? 0.8 : 0.1 })) }] }));
+    }) as unknown as typeof fetch;
+    setDecisionFetchForTests(wrap);
+    const r = await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id);
+    expect(decision.calls).toBeGreaterThan(before);
+    expect(r.quiet).toBe(true);
+    expect(r.output.summary).toContain("分诊期间规则「被 @ 就通知」处理了");
+    expect(r.output.handleRun).toBeUndefined();
+    deleteRule(app, told.id);
+    useDecision(true);
+  }, 60000);
 
   it("the same chat messages are not notified about twice; a new state replaces the old one", () => {
     const m = msg("@勒 这周能上线吗？");

@@ -225,14 +225,18 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
  * not routed to it again (lark-watch.ts).
  */
 async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type: "context" }>, e: RuleEvent, reason: string): Promise<ActionResult> {
-  const { getContext, LISTEN_CHANNEL } = await import("../channels/listen.ts");
-  const c = getContext(app, a.context);
+  const { adoptChat, getContext, LISTEN_CHANNEL } = await import("../channels/listen.ts");
+  let c = getContext(app, a.context);
   if (!c || c.kind === "default") throw new HttpError(404, `没有这个关注：${a.context}`);
   if (c.status !== "active" || (c.expiresAt && c.expiresAt <= now())) throw new HttpError(409, `关注「${c.name}」已经停下，没有交过去；要接着交，先在 连接 → 飞书会话 里重新打开它`);
   if (!c.conversationId) throw new HttpError(409, `关注「${c.name}」还没有会话`);
+  const conversationId = c.conversationId;
+  // The group joins the 关注 (a new on-call group per ticket): what comes next there goes to it too.
+  const adopted = !!a.adopt && e.chat?.kind === "group" && adoptChat(app, c, e.chat.id);
+  if (adopted) c = getContext(app, a.context)!;
   const m = e.message;
   if (m) {
-    const there = one<{ id: string; status: string | null }>(app.db, "select x.id, r.status from messages x left join runs r on r.id = x.run_id where x.conversation_id = ? and json_extract(x.meta, '$.externalId') = ? order by x.created_at desc limit 1", c.conversationId, m.id);
+    const there = one<{ id: string; status: string | null }>(app.db, "select x.id, r.status from messages x left join runs r on r.id = x.run_id where x.conversation_id = ? and json_extract(x.meta, '$.externalId') = ? order by x.created_at desc limit 1", conversationId, m.id);
     if (there?.status === "queued") {
       run(app.db, "update messages set meta = json_set(meta, '$.rule', ?, '$.addressed', json('true')) where id = ?", rule.id, there.id);
       return { action: "context", ok: true, detail: `这条消息已经在关注「${c.name}」等着看的一批里，标为规则要处理的` };
@@ -243,7 +247,7 @@ async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type
   const text = [`规则「${rule.name}」交给这个关注：${eventSummary(e)}`, `本人的规则：${rule.description}`, reason ? `判断：${reason}` : ""].filter(Boolean).join("\n") + where;
   const { receive } = await import("../agents/inbox.ts");
   const r = await receive(app, {
-    conversationId: c.conversationId,
+    conversationId,
     channel: LISTEN_CHANNEL,
     // Never the owner's own words: a person's message keeps its sender, anything else is the rule's.
     speaker: e.sender?.name || `规则「${rule.name}」`,
@@ -254,7 +258,7 @@ async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type
     mergeMs: Math.min(c.knobs.batchMinutes * 60_000, 30_000),
     fixedWindow: true,
   });
-  return { action: "context", ok: true, detail: `交给关注「${c.name}」`, ...(r.runId ? { runId: r.runId } : {}) };
+  return { action: "context", ok: true, detail: `交给关注「${c.name}」${adopted ? "，并把这个群收进关注" : ""}`, ...(r.runId ? { runId: r.runId } : {}) };
 }
 
 /** The AI the owner picked for this rule's runs: the run's `execution`, as run_agent passes one. */

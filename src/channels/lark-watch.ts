@@ -7,6 +7,7 @@ import { rulesNaming } from "../rules/store.ts";
 import { ownerContextParts } from "../agents/owner-now.ts";
 import { chatListened, contextOfConversation, contextsOfChat, expireContexts, LISTEN_CHANNEL, listContexts, type ListenContext } from "./listen.ts";
 import { briefText, lessonsText } from "./watch-trial.ts";
+import { followProblemMessages, problemsText } from "./listen-problems.ts";
 
 /**
  * Feishu messages of the groups 「关注」 read (channels/listen.ts). Messages arrive from the bot (real
@@ -66,6 +67,8 @@ function takes(c: ListenContext, m: ChatMessage, who: Who, at: number | null) {
 
 /** Hand new messages of a group to the 关注 reading it. Returns how many messages were handed over. */
 export async function routeWatchedMessages(app: App, chatId: string, chatName: string, messages: ChatMessage[], opts: { botOpenId?: string | null; ownerId?: string } = {}) {
+  // A problem 有人找你 is following here (listen-problems.ts): its follow-up looks at the new messages a while later.
+  followProblemMessages(app, chatId, messages, opts);
   if (!chatListened(app, chatId)) return 0;
   await expireContexts(app);
   // A matter's 关注 that only reads is followed by flows/follow.ts (item-follow notes what changed): its
@@ -182,6 +185,8 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
   if (ctx.knobs.listen !== "relevant" || !(ctx.knobs.prefilter ?? app.config.lark.watchPrefilter !== false)) return null;
   if (batch.some((m) => m.meta.addressed)) return null;
   const { decisionReady } = await import("../core/decision.ts");
+  const batchChats = [...new Set(batch.map((m) => m.meta.chatId).filter((x): x is string => typeof x === "string"))];
+  const problems = problemsText(app, ctx.id, batchChats.length ? batchChats : ctx.chats);
   if (!decisionReady(app)) return null;
   const { findThread, threadMessages } = await import("../agents/threads.ts");
   const t = findThread(app, conversationId);
@@ -207,11 +212,12 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
       相关的记忆: (await memoriesFor(app, `${ctx.name} ${ctx.note ?? ""}\n${batchText}`.slice(0, 2000), ctx.spaceId ?? undefined)) || "（无）",
       之前的摘要: t?.summary || "（无）",
       最近的处理: said.map((m) => m.text.slice(0, 400)).join("\n---\n") || "（无）",
+      在跟的问题: problems || "（无）",
       这一批之前的群聊: group.map((m) => `${String(m.meta.speaker)}：${m.text.slice(0, 200)}`).join("\n") || "（无）",
       这一批消息: batchText,
     }, {
       type: "yesno",
-      instructions: "这是本人让助手关注的一个或几个群新来的一批消息。助手在这里的用处由关注的目的、说明和经验决定：不一定是找本人的事，也可能是替群里的人解答问题、查东西、排查报上来的问题、跟进之前处理过的事。判断这一批里有没有助手能有效介入的：有人提问或求助、要查什么、报了问题或异常、和关注的目的相关、或是在接着之前助手处理的事，选“要看”；只是闲聊、客套、“稍等”“收到”、进度播报、系统通知，没人需要帮忙，选“不用看”。只落在说明里“不处理”那类的、本人的决定和经验里不想要的那类，选“不用看”。拿不准选“要看”。",
+      instructions: "这是本人让助手关注的一个或几个群新来的一批消息。助手在这里的用处由关注的目的、说明和经验决定：不一定是找本人的事，也可能是替群里的人解答问题、查东西、排查报上来的问题、跟进之前处理过的事。判断这一批里有没有助手能有效介入的：有人提出新的问题或求助、要查什么、报了问题或异常、和关注的目的相关，选“要看”。对“在跟的问题”里的事，只有这一批给它带来了新东西才选“要看”：等的人回复了或说处理完了、补了信息、数据或截图、提问的人说还不行或有新现象、出现新的卡点、看起来已经解决要确认收尾；已经结了的问题有人又说没解决，也选“要看”。只是闲聊、客套、“稍等”“收到”、进度播报、系统通知、重复已知的情况，没人需要帮忙，选“不用看”。只落在说明里“不处理”那类的、本人的决定和经验里不想要的那类，选“不用看”。拿不准选“要看”。",
       yes: "要看",
       no: "不用看",
     }, { signal, ref: log?.ref });

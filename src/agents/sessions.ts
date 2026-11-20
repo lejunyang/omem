@@ -251,11 +251,16 @@ export async function watchedNote(app: App, t: Thread, messages: ThreadMessage[]
   const revise = k.reply !== "none" && c.brief && trial.correctionsSinceBrief(app, c) >= trial.REVISE_AFTER;
   // A matter's 关注: where the matter stands, so questions about it are answered from that.
   const matter = c.kind === "item" && c.itemId ? (await import("../channels/listen-items.ts")).itemStateText(app, c.itemId) : "";
+  // The problems it is helping with in these groups (listen-problems.ts): new messages are read against them.
+  const batchChats = [...new Set(messages.map((m) => m.meta.chatId).filter((x): x is string => typeof x === "string"))];
+  const problems = (await import("../channels/listen-problems.ts")).problemsText(app, c.id, batchChats.length ? batchChats : c.chats);
+  const recheck = messages.some((m) => typeof m.meta.recheck === "string");
   return [
     head,
     "",
     `本人要你关注${c.chats.length > 1 ? `这 ${c.chats.length} 个群` : "这个群"}：${c.note ?? (c.kind === "item" ? `这件事（${c.name}）在群里的进展和问题` : "（没有写目的）")}${c.expiresAt ? `；到 ${localStamp(c.expiresAt, app.config.timezone)}` : ""}。${c.chats.length > 1 ? "每条消息末尾写着它在哪个群；同一件事在几个群里出现时可以连起来看。" : ""}`,
     ...(matter ? ["", matter] : []),
+    ...(problems ? ["", `## 你在这些群里跟着的问题（上次记下的状态）\n\n${problems}`] : []),
     ...(trial.briefText(c) ? ["", trial.briefText(c)] : []),
     ...(playbook ? ["", `## 这个关注的经验（listen-coach 按以往的案例总结的，和本人的决定冲突时以本人为准）\n\n${playbook}`] : []),
     ...(cases.length ? ["", `## 相近的案例\n\n${casesText(cases)}`] : []),
@@ -263,6 +268,9 @@ export async function watchedNote(app: App, t: Thread, messages: ThreadMessage[]
     ...(memories ? ["", `## 相关的记忆\n\n${memories}`] : []),
     "",
     "- 多数消息不用管。只在有用时动手：能查到资料或结论回答别人的、值得排查的、本人需要知道或决定的。",
+    "- 群里有人求助的问题（值班群的一张单、同事问的一个问题）按问题跟，不按消息跟：已经在跟的，先对照上面记下的状态看这一批带来了什么——等的人回了、补了信息或数据、对方说还不行或有新现象、出现新的卡点、看起来已经解决要确认——只做因此要做的事；只是“收到”“稍等”、闲聊、重复已知的，不再查、不再回。别人已经在处理、给出了结论的，不抢着重复。",
+    "- 每看完一个求助的问题，用 track_problem 记下它现在的状态：有了有效结论（对方照做就能解决、或已确认解决）记 closed；在等别人处理或对方回话记 waiting，写清等谁、等什么和怎样算完，该隔一段时间回查的加 recheck_after；还要接着查记 open；要本人拍板记 blocked（并 notify 本人）。只是看了一眼、不是求助的消息不用记。按上面的经验，这类问题回完一般不用跟的，直接记 closed。",
+    ...(recheck ? ["- 这一轮是定好的回查：去核对那个问题现在的状态（只读），有变化就按上面处理并更新 track_problem；没变化、也不用做什么就 stay_quiet。不在群里发“还在等”之类的话。"] : []),
     `- ${depth}。`,
     `- ${ownerAsks}。`,
     `- ${othersAsks}。`,
@@ -324,7 +332,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const denyTools = (ctx.run.input as { denyTools?: string[] }).denyTools;
   // One agent session serves every kind of turn, so it always has stay_quiet; the tool refuses a turn
   // that answers someone (quiet.ts), and only the turns allowed to stay quiet mention it.
-  const addTools = ["stay_quiet"];
+  const addTools = ["stay_quiet", ...(t.channel === "listen" ? ["track_problem"] : [])];
   // A turn answering a colleague in a group (ownerPresent gated / free) runs with the guest setting.
   const fullAccess = messages.some((m) => typeof m.meta?.asker === "string") ? app.config.lark.guests.fullAccess : undefined;
   // The AI of this thread: the owner's pick (/model, the thread's backend) if any; otherwise the one

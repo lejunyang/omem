@@ -2172,6 +2172,31 @@ export const migrations: readonly string[] = [
    alter table reply_outcomes add column checked_why text;
    alter table reply_outcomes add column checked_pick text;
    alter table reply_outcomes add column checked_at text;`,
+  // The problems a 关注 (or 有人找你) is helping with, one open per group or topic (channels/listen-problems.ts):
+  // where each stands (open / waiting / blocked / closed), what is known, who or what it waits for, when
+  // it counts as done, the conclusion, and when to look again. New messages there are read against it.
+  `create table listen_problems (
+     id text primary key,
+     context_id text not null,
+     chat_id text not null,
+     topic_id text not null default '',
+     title text not null,
+     state text not null,
+     known text not null default '',
+     awaiting text not null default '',
+     done_when text not null default '',
+     conclusion text not null default '',
+     recheck_at text,
+     run_id text,
+     rounds integer not null default 1,
+     seen_ms integer not null default 0,
+     created_at text not null,
+     updated_at text not null,
+     closed_at text
+   );
+   create index listen_problems_place on listen_problems(context_id, chat_id, topic_id, updated_at);
+   create index listen_problems_chat on listen_problems(chat_id, state);
+   create index listen_problems_recheck on listen_problems(recheck_at) where recheck_at is not null;`,
 ];
 
 export type Db = DatabaseSync;

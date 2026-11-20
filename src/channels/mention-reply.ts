@@ -96,6 +96,8 @@ export async function decideMentionReply(app: App, payload: { runId: string; tex
   if (!send || !text) {
     audit(app, OWNER, "lark.mention-reply.drop", m.chatId, { runId: payload.runId, reason });
     noteDecision(app, payload.runId, "dropped", null, reason);
+    // The owner keeps this one: what the handling would have followed after the reply is not followed.
+    (await import("./listen-problems.ts")).dropProblemOf(app, payload.runId, `本人没有发这条回复${reason ? `（${reason}）` : ""}，不再跟`);
     const why = reason && reason in DROP_REASONS ? DROP_REASONS[reason as DropReason] : "";
     return buildCard({ title: "没有回复", color: "grey", blocks: [{ markdown: `${whereOf(m)}：${truncate(payload.text, 600)}` }, ...decidedBlocks({ ...decided, verdict: why ? `决定不发（${why}）` : "决定不发" })] });
   }
