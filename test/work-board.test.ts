@@ -114,7 +114,7 @@ describe("协同任务板", async () => {
   },60000);
 
   it("档案的子任务拿不到交办和发消息工具", async () => {
-    saveAgentSpec(app,{ name:"material-check",description:"核对材料",prompt:"逐项核对",status:"active",tools:["group:delegate","group:lark-msg","notify"] },"user");
+    saveAgentSpec(app,{ name:"material-check",description:"核对材料",prompt:"逐项核对",status:"active",tools:["group:delegate","group:lark-msg","group:ask"] },"user");
     const { id } = await dispatch(["permissions","ok"],[{ agent:"material-check" }]);
     await wave(id,1);
     expect(readBoard(app,id).tasks[0].report).toMatch(/工具核对：\s*材料报告 permissions/);

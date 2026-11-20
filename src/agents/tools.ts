@@ -9,7 +9,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
-import { boardTools, dispatchBoard, cancelBoard, readBoard, reviewBoard } from "./work-board.ts";
+import { dispatchBoard, cancelBoard, readBoard, reviewBoard } from "./work-board.ts";
 import { refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
 import { executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
@@ -74,7 +74,7 @@ import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
-import { CODE_STARTERS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
+import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
@@ -1067,7 +1067,7 @@ def({
 function assistantTaskScope(ctx: ToolContext) {
   return {
     spaces: ctx.writable ?? ctx.spaces,
-    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...boardTools, ...CODE_STARTERS])],
+    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS])],
     userId: ctx.userId,
     lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private },
   };
@@ -1081,7 +1081,7 @@ function assistantTaskScope(ctx: ToolContext) {
 const LEND_DENIED = new Set([
   "lark_write", "lark_invite", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize",
   "lark_send", "lark_react", "lark_card", "lark_send_file", "reply_to_asker", "meeting_suggest",
-  "run_agent", "ask_agent", ...boardTools, ...CODE_STARTERS,
+  "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS,
   "stay_quiet", "report_rule_failure", ...ROLE_TOOLS,
 ]);
 const MAX_LENT_TOOLS = 12;
@@ -1126,7 +1126,7 @@ function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, 
 
 /** What a rule's run hands on: where it may answer, how, and on whose behalf the rule fired. */
 const RULE_DELIVERY = ["rule", "lark", "threadId", "replyAt", "silent", "hideThinking", "conversationId", "fullAccess"] as const;
-const HANDOFF_DENIED = ["run_agent", "ask_agent", ...boardTools, ...CODE_STARTERS, "save_rule", "set_chat_watch"];
+const HANDOFF_DENIED = ["run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS, "save_rule", "set_chat_watch"];
 
 /**
  * run_agent inside a rule's run: the chosen agent takes this trigger over within the rule's limits —
@@ -1231,7 +1231,8 @@ def({
       const spaceId = space(ctx, spec?.space ?? ctx.spaceId);
       const scope = assistantTaskScope(ctx);
       if (spec && !spec.spaces.includes("*")) scope.spaces = [spaceId, ...spec.spaces].filter(id => !scope.spaces || scope.spaces.includes(id));
-      scope.denyTools.push(...LEND_DENIED, "notify", "ask_user", "wake", "run_workflow", "flow_start", "generate_wiki");
+      scope.denyTools.push(...LEND_DENIED, "notify", "ask_user", "suggest_next", "show", "wake",
+        "flow_start", "improve_start", "switch_run_ai", "generate_wiki");
       scope.lark = { chats: [], draft: false, urgent: false, private: false };
       return { ...t, execution: resolveBoardExecution(ctx, t.execution), scope, spaceId };
     });
@@ -6843,7 +6844,7 @@ export const toolAlwaysApproves = (name: string) => alwaysApprove.has(name);
 // ------------------------------------------------------------------ registry
 
 export function toolList(filter?: Set<string> | null) {
-  return tools.filter((t) => !filter || (filter.has(t.name) && (!boardTools.includes(t.name) || filter.has("run_agent"))));
+  return tools.filter((t) => !filter || (filter.has(t.name) && (!WORK_BOARD_TOOLS.includes(t.name) || filter.has("run_agent"))));
 }
 
 /** Leave out the tools that are not for this person now (Tool.available). */
@@ -6877,7 +6878,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const tool = tools.find((t) => t.name === name);
   if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
-  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (boardTools.includes(name) && !ctx.tools.has("run_agent"))))) return { text: `工具 ${name} 不可用`, isError: true };
+  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))) return { text: `工具 ${name} 不可用`, isError: true };
   mark(`tool ${name}`);
   // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
   if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };

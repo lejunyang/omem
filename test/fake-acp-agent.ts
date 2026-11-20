@@ -189,9 +189,8 @@ new AgentSideConnection(
           await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) } as Record<string,string> }));
           try {
             const listed = (await client.listTools()).tools;
-            const help = await client.callTool({ name: "omem_help", arguments: {} });
-            const offered = listed.map(t => t.name).join(" ") + JSON.stringify(help.content);
-            await say("工具核对：" + ["dispatch_work","work_review","run_agent","ask_agent","lark_send","notify"].filter(name => new RegExp(`\\b${name}\\b`).test(offered)).join(","));
+            const offered = listed.map(t => t.name).join(" ") + " " + (listed.find(t => t.name === "omem_call")?.description ?? "");
+            await say("工具核对：" + ["dispatch_work","work_status","work_cancel","work_review","run_agent","ask_agent","lark_send","notify","suggest_next","show"].filter(name => new RegExp(`\\b${name}\\b`).test(offered)).join(","));
           } finally { await client.close(); }
         }
         await new Promise(resolve => setTimeout(resolve, label === "slow" ? 30000 : 400));

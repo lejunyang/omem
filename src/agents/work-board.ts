@@ -6,7 +6,6 @@ import { addWorkMessage, enqueueCoordination, queueAgentRound, refreshWork, save
 import { cancelRun, getRun, setRunOutput, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
 
-export const boardTools = ["dispatch_work", "work_status", "work_review", "work_cancel"];
 const active = "('pending','running','rejected')";
 type Attempt = { runId: string; status: Run["status"]; queuedAt: string; startedAt: string | null; finishedAt: string | null; result: string | null; device: string };
 type Verdict = { by: string; at: string; decision: Decision["decision"]; note: string };
