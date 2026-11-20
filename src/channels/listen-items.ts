@@ -1,8 +1,9 @@
 import type { App } from "../core/app.ts";
-import { all, one } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { getItem, isClosed } from "../items/store.ts";
+import { descendantIds, rootOf } from "../items/tree.ts";
 import { itemContext, listContexts, saveContext, type ContextInput, type ListenContext, type ListenKnobs } from "./listen.ts";
 
 /**
@@ -12,16 +13,21 @@ import { itemContext, listContexts, saveContext, type ContextInput, type ListenC
  * on, follow.ts notes what changes in those places (role item-follow) even with no flow; with replies on,
  * its handler also answers about the matter in its groups. A flow starting on an item makes one
  * (`byFlow`), which ends with the flow until the owner takes it on (setItemListening, set_chat_watch with `item`).
+ *
+ * Only top-level items have one (docs/v2/status.md “工作线”): a work item under a line goes on in the line's 关注,
+ * whose groups are the line's and those of everything under it. A flow starting on a work item makes or
+ * keeps the top-level one; a 关注 a work item had before it was hung under a line folds into it.
  */
 
 /** Chats that are no group (a private chat, a bot's): an item's 关注 never reads those. */
 const PRIVATE = new Set(["p2p", "bot", "own-bot"]);
 
-/** The groups an item goes on in, as its person may see them. */
+/** The groups an item goes on in, with those of everything under it, as its person may see them. */
 export function itemChats(app: App, itemId: string): string[] {
   const item = getItem(app, itemId), allowed = accessibleSpaces(app, item.userId);
   const out = new Set<string>();
-  for (const m of all<{ kind: string; ref: string }>(app.db, "select kind, ref from item_materials where item_id = ? and kind in ('source','conversation') order by id", itemId)) {
+  const ids = [itemId, ...descendantIds(app, itemId)];
+  for (const m of all<{ kind: string; ref: string }>(app.db, `select kind, ref from item_materials where item_id in (${ids.map(() => "?").join(",")}) and kind in ('source','conversation') order by id`, ...ids)) {
     let chat: string | undefined;
     if (m.kind === "source") {
       const s = one<{ uri: string; space_id: string }>(app.db, "select uri, space_id from sources where id = ? and kind = 'chat' and deleted_at is null", m.ref);
@@ -56,6 +62,8 @@ function upsertItemContext(app: App, itemId: string, patch: Partial<ContextInput
 /** Keep an item 关注's groups the item's own (the chat index follows through saveContext); a closed matter's stops. */
 export function syncItemContext(app: App, c: ListenContext): ListenContext {
   if (c.kind !== "item" || !c.itemId) return c;
+  // A work item's own 关注 folds into its line's (foldChildContexts), never kept in step on its own.
+  if (one(app.db, "select 1 from items where id = ? and parent_id is not null", c.itemId)) return c;
   const status = one<{ status: string }>(app.db, "select status from items where id = ?", c.itemId)?.status;
   if (status && isClosed(status)) return c.status === "active" ? saveContext(app, { id: c.id, kind: "item", status: "paused" }) : c;
   let chats: string[];
@@ -82,28 +90,40 @@ export function syncItemContexts(app: App) {
  */
 export function setItemListening(app: App, itemId: string, on: boolean, knobs?: Partial<ListenKnobs>): ListenContext | null {
   getItem(app, itemId);
-  if (on) return upsertItemContext(app, itemId, { status: "active", byFlow: false, ...(knobs ? { knobs } : {}) });
-  const prev = itemContext(app, itemId);
+  // A work item under a line is followed in the line's 关注.
+  const root = rootOf(app, itemId);
+  if (on) return upsertItemContext(app, root, { status: "active", byFlow: false, ...(knobs ? { knobs } : {}) });
+  const prev = itemContext(app, root);
   return prev ? saveContext(app, { id: prev.id, kind: "item", status: "paused", byFlow: false, ...(knobs ? { knobs } : {}) }) : null;
 }
 
-/** A flow started on the item: its 关注 is made if missing (only reading); one the owner turned off stays off. */
+/**
+ * A flow started on the item: the 关注 of its top-level item (itself, or the line it hangs under) is made
+ * if missing (only reading), or kept in step; one the owner turned off stays off.
+ */
 export function flowStarted(app: App, itemId: string): ListenContext | null {
-  const prev = itemContext(app, itemId);
+  const root = rootOf(app, itemId);
+  const prev = itemContext(app, root);
   if (prev && !prev.byFlow) return prev.status === "active" ? syncItemContext(app, prev) : prev;
-  return upsertItemContext(app, itemId, { status: "active", byFlow: true });
+  if (prev?.status === "active") return syncItemContext(app, prev);
+  return upsertItemContext(app, root, { status: "active", byFlow: true });
 }
 
-/** The flow ended: a 关注 that was only there for it pauses with it. */
+/** A flow ended: a 关注 that was only there for flows pauses once none runs on the line or under it. */
 export function flowEnded(app: App, itemId: string) {
-  const c = itemContext(app, itemId);
-  if (c?.byFlow && c.status === "active") saveContext(app, { id: c.id, kind: "item", status: "paused" });
+  const root = rootOf(app, itemId);
+  const c = itemContext(app, root);
+  if (!c?.byFlow || c.status !== "active") return;
+  const ids = [root, ...descendantIds(app, root)];
+  if (one(app.db, `select 1 from item_flows where ended_at is null and item_id in (${ids.map(() => "?").join(",")}) limit 1`, ...ids)) return;
+  saveContext(app, { id: c.id, kind: "item", status: "paused" });
 }
 
-/** At startup: items whose flow runs now get their 关注 (idempotent). */
+/** At startup: the top-level items of those whose flow runs now get their 关注 (idempotent). */
 export function migrateItemContexts(app: App) {
   let made = 0;
-  for (const { item_id: id } of all<{ item_id: string }>(app.db, "select item_id from item_flows where ended_at is null")) {
+  const roots = new Set(all<{ item_id: string }>(app.db, "select item_id from item_flows where ended_at is null").map((r) => rootOf(app, r.item_id)));
+  for (const id of roots) {
     if (itemContext(app, id)) continue;
     try {
       upsertItemContext(app, id, { status: "active", byFlow: true });
@@ -113,6 +133,40 @@ export function migrateItemContexts(app: App) {
     }
   }
   return made;
+}
+
+/** A line's 关注 after its items changed (one hung under it or taken out): its groups follow. */
+export function syncRootContext(app: App, rootId: string) {
+  const c = itemContext(app, rootId);
+  return c && c.status === "active" ? syncItemContext(app, c) : c;
+}
+
+const FOLDED = "已并进";
+/**
+ * A 关注 a work item had of its own before it was hung under a line (idempotent; at startup and right
+ * after an item gets a parent): its cases and problems go to the top-level item's 关注 (made if missing,
+ * only reading), and it is paused with a note saying where it went.
+ */
+export function foldChildContexts(app: App) {
+  let folded = 0;
+  for (const c of listContexts(app, { kind: "item" })) {
+    if (!c.itemId || c.note?.startsWith(FOLDED)) continue;
+    if (!one(app.db, "select 1 from items where id = ? and parent_id is not null", c.itemId)) continue;
+    const root = rootOf(app, c.itemId);
+    try {
+      let top = itemContext(app, root);
+      if (!top) top = upsertItemContext(app, root, { status: c.status === "active" ? "active" : "paused", byFlow: !!c.byFlow, knobs: { reply: "none" } });
+      run(app.db, "update reply_samples set context_id = ? where context_id = ?", top.id, c.id);
+      run(app.db, "update listen_problems set context_id = ? where context_id = ?", top.id, c.id);
+      const was = c.note ? ` 原来的说明：${c.note}` : "";
+      saveContext(app, { id: c.id, kind: "item", status: "paused", note: `${FOLDED}「${truncate(top.name, 40)}」（${top.id}）：这件事归到了上层，案例和在跟的问题都在那边。${was}` });
+      if (top.status === "active") syncItemContext(app, top);
+      folded++;
+    } catch (e) {
+      console.warn(`[omem] 没能把事项 ${c.itemId} 的关注并到上层：${(e as Error).message}`);
+    }
+  }
+  return folded;
 }
 
 const STAGE_STATE: Record<string, string> = { doing: "进行中", gated: "等本人确认", blocked: "卡住", stale: "待复核" };

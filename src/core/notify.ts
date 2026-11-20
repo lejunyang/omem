@@ -5,7 +5,6 @@ import { validateItemRefs } from "../items/evidence.ts";
 import { canWrite } from "./users.ts";
 import { HttpError, json, newId, now, zonedParts } from "./util.ts";
 
-export type NotifyAction = { label: string; action: string; style?: "primary" | "danger" | "default" };
 
 /**
  * normal: respect quiet hours and read state; urgent: pushes even at night; silent: in-app only;
@@ -57,7 +56,6 @@ export type Notification = {
   /** Negative feedback was applied once; a null rule means a one-off, not a reusable lesson. */
   negativeHandledAt?: string;
   ignoreRule?: { id: string; rule: string } | null;
-  actions?: NotifyAction[];
   /** `flow`: an item's flow progress card (flows/store.ts progress): sections, and no buttons that close the item. */
   view?: "flow";
   urgency?: NotifyUrgency;
@@ -104,7 +102,7 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; plain?: boolean; digest?: { closed: string[]; soon: string[]; candidates?: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; plain?: boolean; digest?: { closed: string[]; soon: string[]; candidates?: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
     /** The host already gave the owner their time before this run started (mentions/mentions.ts): no first-nudge grace. */
     graceDone?: boolean;
     reportTool?: string;
@@ -174,7 +172,7 @@ export function notify(
     ...(replaced ? { replaces: replaced.id } : {}),
     // Updating a card that waited on the owner without saying how it reads now: it is settled (green).
     ...(input.tone ? { tone: input.tone } : replaced && one<{ t: string | null }>(app.db, "select json_extract(context, '$.tone') t from notifications where id = ?", replaced.id)?.t === "warning" ? { tone: "done" as const } : {}),
-    ...(input.entityId ? { entity: input.entity ?? "item", entityId: input.entityId, actions: input.actions ?? [] } : {}),
+    ...(input.entityId ? { entity: input.entity ?? "item", entityId: input.entityId } : {}),
     ...(input.replyDraft ? { replyDraft: input.replyDraft } : {}),
     ...(input.images?.length ? { images: input.images } : {}),
     ...(input.view ? { view: input.view } : {}),
@@ -184,7 +182,7 @@ export function notify(
   // straight to the channels, which edit that card without a ping.)
   const held = n.urgency === "later" && !replaced && app.config.notify.laterTimes.length > 0;
   if (held) n.held = true;
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, plain: n.plain, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, plain: n.plain, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
   // The earlier one is now history: read, and no longer waiting for the morning.
   if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });

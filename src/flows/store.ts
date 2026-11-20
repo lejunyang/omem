@@ -4,6 +4,7 @@ import { notify } from "../core/notify.ts";
 import { runImages } from "../agents/artifacts.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
 import { addItemEvent, getItem } from "../items/store.ts";
+import { addChange } from "../items/changes.ts";
 import { emitOmem } from "../rules/omem-events.ts";
 import type { FlowDefinition } from "./definitions.ts";
 import type { Execution } from "../agents/execution.ts";
@@ -88,6 +89,18 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
     const item = getItem(app, itemId);
     emitOmem(app, { type: "flow.stage", id: `${itemId}#${id}#${f.round}`, title: `${item.title}：${name}`, flow: f.id, stage: id, status, ...(was ? { from: was } : {}), space: item.spaceId, item: { id: itemId, title: item.title }, text: note.slice(0, 2000), ...(by.runId ? { runId: by.runId } : {}) });
   }
+  // The line's timeline (items/changes.ts): a stage done, stuck, or now waiting on the owner. One row per
+  // move; never a card (the owner's questions are the stage's own asks, the progress card is below).
+  const turned = status !== was ? STAGE_TURN[status] : undefined;
+  if (turned) {
+    const wait = next.waitingOn ? waitText(next.waitingOn) : "";
+    addChange(app, {
+      itemId, type: "stage", origin: "flow", runId: by.runId ?? null, refs,
+      summary: `「${name}」${turned}${status === "blocked" && wait ? `，${wait}` : ""}${by.actor === "owner" && status === "done" ? "（本人标的）" : ""}`,
+      detail: note ? cardText(note, 2000) : null,
+      next: status === "waiting-owner" || status === "gated" || (status === "blocked" && ownerWait(next.waitingOn)) ? "在工作页上处理这一段" : null,
+    });
+  }
   // Starts, gates (they have their own question card) and the owner's own clicks say nothing new to the
   // owner; a result, a skip, a stop or a re-check written by an Agent or the host does.
   const what = !changed || by.actor === "owner" ? null : state === "done" ? "做完了" : state === "skipped" ? "跳过了" : state === "blocked" ? `卡住了${next.waitingOn ? `，${waitText(next.waitingOn)}` : ""}` : state === "stale" ? "要复核" : null;
@@ -95,12 +108,16 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
   const asked = state === "blocked" && !!by.runId && !!one(app.db, "select 1 from asks where run_id=? and status='pending' limit 1", by.runId);
   // A result or a stop from a run carries what it saw: its screenshots go on the card too.
   const images = what && by.runId && (state === "done" || state === "blocked") ? runImages(app, [by.runId]).map((a) => a.id) : [];
-  if (what && !asked) markProgress(app, itemId, { head: `「${name}」${what}`, note: note ? cardText(note, state === "done" || state === "blocked" ? 3000 : 300) : "" }, state === "blocked" && next.waitingOn === "owner", images);
+  if (what && !asked) markProgress(app, itemId, { head: `「${name}」${what}`, note: note ? cardText(note, state === "done" || state === "blocked" ? 3000 : 300) : "" }, state === "blocked" && ownerWait(next.waitingOn), images);
   return next;
 }
 
 /** "等本人确认" and "本人确认" both read as one 等. */
 export const waitText = (w: string) => `等${w === "owner" ? "你" : w.replace(/^等+/, "")}`;
+/** A stage stuck on the owner: `owner`, or what an Agent wrote as “本人…” / “你…”. */
+export const ownerWait = (w: string | null | undefined) => !!w && (w === "owner" || /^等*(本人|你)(?!们)/.test(w));
+/** The moves that go on the line's timeline, and how they read. */
+const STAGE_TURN: Record<string, string> = { done: "做完", blocked: "卡住", "waiting-owner": "等你", gated: "等你开始" };
 // Run, question and other internal ids mean nothing on a card the owner reads (in code quotes too).
 // A result keeps its paragraphs (conclusion, steps, cause); other lines stay one line.
 const cardText = (note: string, max = 300) => {
@@ -134,12 +151,14 @@ const MARK: Partial<Record<StageState, string>> = { done: "✓", skipped: "跳�
 
 /**
  * A card in sections: what happened in one bold line, what each stage said, where the flow stands
- * (every stage in order), and what comes next or what the owner can do. A newer card replaces the
- * previous one; questions for the owner stay separate asks.
+ * (every stage in order), and what comes next or what the owner can do. Sent only when a stage now
+ * waits on the owner; after that, what happens edits that card (`replaces`) instead of pinging again.
+ * What happened otherwise is on the line's timeline (items/changes.ts). Questions stay separate asks.
  */
 export function progress(app: App, id: string, lines: ProgressLine[], ownerWaiting = false, images: string[] = []) {
   const f = itemFlow(app, id);
   if (!f) return;
+  if (!ownerWaiting && !f.card) return;
   const item = getItem(app, id);
   const rows = itemStages(app, id);
   const stateOf = (stageId: string) => rows.find((r) => r.id === stageId)?.state ?? "pending";
@@ -161,6 +180,6 @@ export function progress(app: App, id: string, lines: ProgressLine[], ownerWaiti
     ...doing.map((d) => `「${d.name}」在做，有结果再告诉你。`),
   ];
   const body = [`**${lead}**`, ...said, `${PROGRESS_TAIL[0]}\n${chain}`, next.length ? `${PROGRESS_TAIL[1]}\n${next.map((x) => `- ${x}`).join("\n")}` : ""].filter(Boolean).join("\n\n");
-  const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/items/${id}/flow`, images: images.slice(-4), view: "flow", ...(ownerWaiting ? { tone: "warning" as const } : {}) });
+  const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/work/${id}`, images: images.slice(-4), view: "flow", ...(ownerWaiting ? { tone: "warning" as const } : {}) });
   run(app.db, "update item_flows set card=? where item_id=?", n.id, id);
 }

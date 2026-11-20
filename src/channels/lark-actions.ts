@@ -286,7 +286,8 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       keepItem(app, id, "user");
       return { toast: { type: "success", content: op === "reopen" ? `已恢复「${item.title}」` : `已保留「${item.title}」，期限重新计算` } };
     }
-    const m = /^item:(done|cancel|act):([^:]+)(?::([\s\S]*))?$/.exec(act);
+    // A nudge to finish an item (a reminder, a deadline): 已处理 closes it, 忽略 drops it and is a lesson.
+    const m = /^item:(done|cancel):([^:]+)$/.exec(act);
     if (itemId && m) {
       const [, op, id] = m;
       const { getItem, upsertItem } = await import("../items/store.ts");

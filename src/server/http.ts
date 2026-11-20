@@ -80,7 +80,7 @@ import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { refExcerpt } from "../items/evidence.ts";
-import { getItem, itemEvents, listItems, upsertItem } from "../items/store.ts";
+import { getItem, ITEM_KINDS, itemEvents, listItems, upsertItem } from "../items/store.ts";
 import { addMaterials, itemsOfRun, linkRunToItem, materialViews, removeMaterials, type MaterialView } from "../items/materials.ts";
 import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
@@ -1362,7 +1362,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // -------------------------------------------------------------------- items
   const itemBody = z.object({
     space: z.string().optional(),
-    kind: z.enum(["todo", "waiting", "reminder", "watch", "decision"]).optional(),
+    kind: z.enum(ITEM_KINDS).optional(),
+    parent: z.string().nullable().optional(),
     title: z.string().optional(),
     detail: z.string().optional(),
     status: z.enum(["open", "waiting", "snoozed", "done", "cancelled", "expired"]).optional(),
@@ -1538,12 +1539,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { removed: removeMaterials(app, p.id, [Number(p.mid)], who(req), "user") };
   });
   server.post("/api/items", async (req) => {
-    const b = q(itemBody, req.body);
-    return upsertItem(app, undefined, { ...b, spaceId: b.space ?? "personal" }, "user");
+    const { parent, ...b } = q(itemBody, req.body);
+    // Hung under a line from the start: items/tree.ts checks it is the same person's and the levels.
+    if (parent) getItem(app, parent);
+    const made = upsertItem(app, undefined, { ...b, spaceId: b.space ?? "personal" }, "user");
+    return parent ? (await import("../items/parent.ts")).setParent(app, made.id, parent, "user") : made;
   });
   server.patch("/api/items/:id", async (req) => {
-    const b = q(itemBody, req.body);
-    return upsertItem(app, (req.params as { id: string }).id, b, "user");
+    const { parent, ...b } = q(itemBody, req.body);
+    const id = (req.params as { id: string }).id;
+    const updated = upsertItem(app, id, b, "user");
+    return parent !== undefined ? (await import("../items/parent.ts")).setParent(app, id, parent, "user") : updated;
   });
 
   // --------------------------------------------------------------------- runs

@@ -12,6 +12,7 @@ import { addMaterials, materialsBrief } from "../items/materials.ts";
 import { findReq } from "../items/requirements.ts";
 import { itemContext } from "../channels/listen.ts";
 import { itemFlow, itemStages, type ItemFlow } from "./store.ts";
+import { CHANGE_TYPES } from "../items/changes.ts";
 
 type Source = { id: string; kind: string; title: string; space_id: string; updated_at: string; uri: string; captured_at: string };
 type Cursor = { source_id: string; line: number; source_updated_at: string; started_at: string; seen: string | null };
@@ -21,15 +22,16 @@ type Cursor = { source_id: string; line: number; source_updated_at: string; star
  */
 type Part = { source: string; from: number; to: number; updatedAt: string; lines: { line: number; text: string; owner?: boolean }[]; seen?: number[] };
 type Batch = { startedAt: string; parts: Part[] };
-type ChangeRow = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; req: string | null; stages: string; refs: string; run_id: string; status: string; ask_id: string | null; due: string | null };
-const viewChange = (r: ChangeRow) => ({ id: r.id, itemId: r.item_id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, req: r.req, stages: json<string[]>(r.stages, []), refs: json<string[]>(r.refs, []), runId: r.run_id, status: r.status, askId: r.ask_id, due: r.due });
+type ChangeRow = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; req: string | null; stages: string; refs: string; run_id: string; status: string; ask_id: string | null; due: string | null; risk?: string | null; next?: string | null; origin?: string; noise?: number };
+const viewChange = (r: ChangeRow) => ({ id: r.id, itemId: r.item_id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, req: r.req, stages: json<string[]>(r.stages, []), refs: json<string[]>(r.refs, []), runId: r.run_id, status: r.status, askId: r.ask_id, due: r.due, risk: r.risk ?? null, next: r.next ?? null, origin: r.origin ?? "follow", noise: !!r.noise });
+/** What following the item's places found (origin `follow`); the other writers' changes are on the line's timeline (items/changes.ts). */
 export function recentChanges(app: App, id: string) {
-  return all<ChangeRow>(app.db, "select * from item_changes where item_id=? order by at desc,id desc limit 10", id).map(viewChange);
+  return all<ChangeRow>(app.db, "select * from item_changes where item_id=? and origin='follow' order by at desc,id desc limit 10", id).map(viewChange);
 }
 /** What the item page lists: every change still waiting for the owner, and the ten that were last noted or settled. */
 export function shownChanges(app: App, id: string) {
   const waiting = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and status='asked' order by at desc,id desc limit 40", id).map(viewChange);
-  const recent = all<ChangeRow>(app.db, "select * from item_changes where item_id=? order by updated_at desc,id desc limit 10", id).map(viewChange);
+  const recent = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and origin='follow' order by updated_at desc,id desc limit 10", id).map(viewChange);
   return [...waiting, ...recent.filter((c) => !waiting.some((w) => w.id === c.id))].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
 }
 export function changesBrief(app: App, id: string) {
@@ -249,7 +251,7 @@ async function patrol(app: App, at: Date) {
   }
 }
 
-export const changeSchema = z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info"]), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional(), decided: z.boolean().optional() });
+export const changeSchema = z.object({ item: z.string(), type: z.enum(CHANGE_TYPES), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), risk: z.string().trim().max(1000).optional(), next: z.string().trim().max(1000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional(), decided: z.boolean().optional() });
 /**
  * The item's deadline moves to the time a change names. Whatever other proposal was still waiting for
  * the owner is settled by it.
@@ -308,8 +310,8 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   // The person's own word on what is to be done (they said it, or told the assistant to do it): settled, not asked about again.
   const ownWord = !!a.decided && (a.type === "scope" || a.type === "decision") && saidByOwner(batch, a.refs);
   // A retried run may hand in the same finding after the first run already updated a deadline.
-  const old = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and type=? and summary=? and refs=? and detail is ? and stages=? and req is ? and due is ? order by at desc limit 10", a.item, a.type, a.summary, JSON.stringify(a.refs), detail, JSON.stringify(a.stages ?? []), a.req ?? null, due).find((c) => {
-    const previous = getRun(app, c.run_id).input.batch as Batch | undefined;
+  const old = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and origin='follow' and type=? and summary=? and refs=? and detail is ? and stages=? and req is ? and due is ? order by at desc limit 10", a.item, a.type, a.summary, JSON.stringify(a.refs), detail, JSON.stringify(a.stages ?? []), a.req ?? null, due).find((c) => {
+    const previous = c.run_id && one(app.db, "select 1 from runs where id=?", c.run_id) ? getRun(app, c.run_id).input.batch as Batch | undefined : undefined;
     return previous?.startedAt === batch.startedAt && a.refs.every((ref) => {
       const source = ref.slice(4).split("#")[0], before = previous.parts.find((p) => p.source === source), current = batch.parts.find((p) => p.source === source);
       return before && current && (["chat", "conversation"].includes(sourcesOf(app, a.item).find((s) => s.id === source)!.kind) || before.updatedAt === current.updatedAt);
@@ -323,7 +325,7 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   if (changesOfRun(app, r).length >= 30) throw new HttpError(400, "一批最多记 30 条变化，请合并同一件事的表述");
   const id = newId("ic"), at = now();
   tx(app.db, () => {
-    run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,req,stages,refs,run_id,updated_at,due) values(?,?,?,?,?,?,?,?,?,?,?,?)", id, a.item, at, a.type, a.summary, detail, a.req ?? null, JSON.stringify(a.stages ?? []), JSON.stringify(a.refs), runId, at, due);
+    run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,req,stages,refs,run_id,updated_at,due,risk,next,origin) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'follow')", id, a.item, at, a.type, a.summary, detail, a.req ?? null, JSON.stringify(a.stages ?? []), JSON.stringify(a.refs), runId, at, due, a.risk || null, a.next || null);
     // Somebody proposing another date is not a decision: it stays as noted and the owner is asked when the batch is done.
     if (a.type === "deadline" && a.decided) decidedDeadline(app, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!, runId);
   });

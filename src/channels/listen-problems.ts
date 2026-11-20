@@ -3,6 +3,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, localStamp, newId, now, truncate } from "../core/util.ts";
 import { createRun, getRun, registerHandler } from "../agents/runs.ts";
+import { addChange } from "../items/changes.ts";
 import { contextOfConversation, defaultContext, DEFAULT_CONTEXT_ID, getContext, LISTEN_CHANNEL, type ListenContext } from "./listen.ts";
 
 /**
@@ -137,6 +138,18 @@ export function trackProblem(app: App, runId: string | null | undefined, input: 
     run(app.db,
       `update listen_problems set title=?, state=?, known=?, awaiting=?, done_when=?, conclusion=?, recheck_at=?, run_id=?, rounds=?, updated_at=?, closed_at=? where id = ?`,
       ...fields, prev!.rounds + (prev!.run_id === runId ? 0 : 1), at, a.state === "closed" ? at : null, prev!.id);
+  }
+  // A matter's 关注 reached a conclusion: it goes on the item's timeline (items/changes.ts), noted only.
+  const concluded = a.state === "closed" && (fresh || prev!.state !== "closed");
+  if (concluded && s.context.kind === "item" && s.context.itemId) {
+    try {
+      addChange(app, {
+        itemId: s.context.itemId, origin: "problem", runId, type: fresh || prev!.state === "open" ? "info" : "resolved",
+        summary: `「${truncate(a.title, 60)}」有了结论：${truncate(a.conclusion ?? "", 120)}`, detail: [a.known ? `已查清：${a.known}` : "", a.conclusion ? `结论：${a.conclusion}` : ""].filter(Boolean).join("\n") || null,
+      });
+    } catch (e) {
+      console.warn(`[omem] 在跟的问题的结论没有记进事项：${(e as Error).message}`);
+    }
   }
   const next = a.state === "closed"
     ? "记为已结。之后这里再有人问新的问题照常处理。"

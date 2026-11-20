@@ -287,8 +287,16 @@ describe("只有本人能定的事", () => {
     writeFileSync(join(inbox, "repro-01-下载后仍是全量.png"), Buffer.from("89504e470d0a1a0a", "hex"));
     await collectInbox(app, runId, { source: "agent", by: "assistant" });
     const note = "已复现：只留 1 列，导出仍是 7 列。\n\n步骤：测试环境 → 数据明细 → 自定义列只留访问人数 → 下载。\n\n原因：导出接口只收日期区间，没有列参数。";
+    // A result alone sends no card (it is on the line's timeline); once a card went out because the
+    // stage waited on the owner, the result edits that card, screenshots and all.
+    await reportStage(app, item.id, "a", { state: "blocked", note: "要本人给测试账号", waitingOn: "本人" }, { actor: "assistant", runId, userId: "owner" });
+    const first = itemFlow(app, item.id)!.card!;
+    expect(first).toBeTruthy();
     await reportStage(app, item.id, "a", { state: "done", note, evidence: [`run:${runId}`] }, { actor: "assistant", runId, userId: "owner" });
-    const n = one<{ body: string; context: string }>(app.db, "select body, context from notifications where json_extract(context, '$.entityId') = ? order by at desc limit 1", item.id)!;
+    expect(itemFlow(app, item.id)!.card).not.toBe(first);
+    expect(one<{ summary: string; detail: string }>(app.db, "select summary, detail from item_changes where item_id = ? and origin = 'flow' and summary like '%做完'", item.id)).toMatchObject({ summary: "「a」做完", detail: expect.stringContaining("已复现") });
+    const n = one<{ body: string; context: string }>(app.db, "select body, context from notifications where id = ?", itemFlow(app, item.id)!.card!)!;
+    expect(JSON.parse(n.context).replaces).toBe(first);
     expect(n.body).toContain("已复现：只留 1 列，导出仍是 7 列。\n\n步骤：");
     const images = JSON.parse(n.context).images as string[];
     expect(images).toHaveLength(1);

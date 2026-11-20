@@ -5,7 +5,11 @@ import { HttpError, json, newId, now } from "../core/util.ts";
 import { emitOmem } from "../rules/omem-events.ts";
 import { noteAutoOutcome } from "./auto-cases.ts";
 
-export type ItemKind = "todo" | "waiting" | "reminder" | "watch" | "decision";
+/** `line`: a work line (items/lines.ts): what the owner is pushing on these weeks, with its work items hung under it. */
+export type ItemKind = "todo" | "waiting" | "reminder" | "watch" | "decision" | "line";
+export const ITEM_KINDS = ["todo", "waiting", "reminder", "watch", "decision", "line"] as const;
+/** Where a line stands (items/lines.ts submitLineState): one sentence as of today, the people and what each does, the last weeks. */
+export type LineNow = { text: string; people: { name: string; openId?: string; role: string }[]; weeks: { label: string; text: string }[]; at: string; runId: string | null };
 /**
  * expired: closed by itself after its period passed with no progress (src/items/expiry.ts), not done.
  * candidate: made by the assistant on its own and not yet wanted (src/items/auto.ts): out of the lists,
@@ -32,6 +36,10 @@ export type Item = {
   closedAt: string | null;
   /** Whose item it is (the owner unless omem has more users). */
   userId: string;
+  /** The item it hangs under (a line, or a requirement a defect belongs to): items/tree.ts. */
+  parentId: string | null;
+  /** A line's state as last written (items/lines.ts). */
+  now: LineNow | null;
 };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
 
@@ -52,6 +60,8 @@ type Row = {
   updated_at: string;
   closed_at: string | null;
   user_id: string;
+  parent_id: string | null;
+  now: string | null;
 };
 const toItem = (r: Row): Item => ({
   id: r.id,
@@ -70,6 +80,8 @@ const toItem = (r: Row): Item => ({
   updatedAt: r.updated_at,
   closedAt: r.closed_at,
   userId: r.user_id ?? "owner",
+  parentId: r.parent_id ?? null,
+  now: json<LineNow | null>(r.now, null),
 });
 
 export function getItem(app: App, id: string): Item {
@@ -90,7 +102,7 @@ export function addItemEvent(app: App, itemId: string, kind: string, text: strin
   run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor,run_id) values(?,?,?,?,?,?,?)", itemId, now(), kind, text, JSON.stringify(sourceRefs), actor, runId ?? null);
 }
 
-export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt">> & { note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
+export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt" | "parentId" | "now">> & { note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
 
 const FIELD_LABEL: Record<string, string> = {
   title: "标题",
@@ -205,10 +217,12 @@ function fmt(v: unknown) {
   return String(v);
 }
 
-export function listItems(app: App, opts: { spaceIds?: string[]; spaceId?: string; status?: string; kind?: string; q?: string; limit?: number; userId?: string }) {
+export function listItems(app: App, opts: { spaceIds?: string[]; spaceId?: string; status?: string; kind?: string; q?: string; limit?: number; userId?: string; parentId?: string; topLevel?: boolean }) {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (opts.userId) where.push("user_id = ?"), params.push(opts.userId);
+  if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
+  if (opts.topLevel) where.push("parent_id is null");
   if (opts.spaceIds) { where.push(`space_id in (${opts.spaceIds.map(() => "?").join(",") || "NULL"})`); params.push(...opts.spaceIds); }
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.status === "active") where.push("status in ('open','waiting','snoozed')");

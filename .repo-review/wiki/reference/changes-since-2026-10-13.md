@@ -17,6 +17,13 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 工作线（一）：事项上下层、关注只建在顶层、关键变化多个来源（11-20 夜）
+
+- 事项多了 `parent_id` 和类型 `line`（工作线）：需求、缺陷、评审挂在线下，缺陷可挂在需求下，最多三层（`src/items/tree.ts` 的 `checkParent` / `writeParent`，`src/items/parent.ts` 的 `setParent`）。`upsert_item` 的 `parent`，`list_items` 写出上层和下面几件、可按 `parent` 过滤，`read_item` 带 `parent` / `children`。工作线只由本人建：后台运行建 `line` 在工具和 `items/auto.ts` 的门上都被拒；线下还有没结的事项时不自动过期。
+- 关注只建在顶层（`src/channels/listen-items.ts`）：`itemChats` 连下面各项的群；子事项开始流程建或同步的是顶层的关注；`foldChildContexts`（启动和挂上层之后，幂等）把子事项原来关注的案例和在跟的问题搬到顶层，原来的暂停。
+- `item_changes` 多了 `risk`、`next`、`origin`、`noise`，类型多了 stage / result / owner / resolved。宿主自己写、只记不问的来源：流程阶段做完 / 卡住 / 等本人（`flows/store.ts changeStage`）、指标越过门槛（`data/metrics.ts`）、在跟的问题有了结论（`channels/listen-problems.ts`）。`src/items/changes.ts` 的 `lineTimeline` 把一条线和下面各项的变化合在一起。
+- 卡片：去掉 `item:act` 和 `notify` 的 `actions`；流程进度卡只在转到等本人时发，之后改那一张，链接 `#/work/<事项>`；事项卡发出时记下卡片，`replaces` 真去改原卡片（`src/channels/lark-bot.ts`）。
+
 ## 事项的建议卡不再带“已处理 / 忽略”；后台运行结束后才收到的回答接着做（11-20 夜）
 
 - `notify` 多了 `plain`：关于一件事项、但不是催它做完的通知（推进建议、指标变化、截止时间变了）不带“已处理 / 忽略”。这两个按钮会把整件事项标完成或取消，只留给提醒。推进运行（`input.listenAssist`）发的事项通知由 `notify` 工具自动标 `plain`。`src/core/notify.ts`、`src/channels/item-notification.ts`、`src/agents/tools.ts`、`src/data/metrics.ts`、`src/flows/follow.ts`。

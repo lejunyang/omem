@@ -136,8 +136,12 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   const moved = (await import("./channels/listen.ts")).migrateWatches(app);
   if (moved) console.log(`[omem] 把 ${moved} 个盯群换成了关注`);
   // Items whose flow runs get their matter's 关注 (channels/listen-items.ts).
-  const made = (await import("./channels/listen-items.ts")).migrateItemContexts(app);
+  const listenItems = await import("./channels/listen-items.ts");
+  const made = listenItems.migrateItemContexts(app);
   if (made) console.log(`[omem] 给 ${made} 件在走流程的事项建了关注`);
+  // A work item's own 关注 from before it hung under a line goes into the line's (idempotent).
+  const folded = listenItems.foldChildContexts(app);
+  if (folded) console.log(`[omem] 把 ${folded} 个工作项的关注并进了上层`);
   // omem's own events (runs, reviews, questions, items, flow stages, plugin signals) as rule triggers.
   (await import("./rules/omem-events.ts")).attachOmemEvents(app);
   const { loadPlugins } = await import("./plugins/registry.ts");
