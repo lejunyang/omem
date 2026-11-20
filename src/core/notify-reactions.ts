@@ -51,7 +51,7 @@ async function applyNegative(app: App, id: string, via: "reaction" | "ignore") {
     if (demoted) {
       tx(app.db, () => {
         run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.negativeHandledAt', ?) where id = ?", at, id);
-        notify(app, { title: "替你回复改回先给你看草稿", body: demotedText(demoted), link: "#/settings?tab=lark&focus=mentions", urgency: "later" });
+        notify(app, { title: "替你回复改回先给你看草稿", body: demotedText(demoted), link: "#/settings?card=mentions", urgency: "later" });
       });
       return;
     }

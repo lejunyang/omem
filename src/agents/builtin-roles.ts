@@ -110,7 +110,7 @@ function writeOverlay(app: App, name: string, o: RoleOverlay) {
 
 /** Turn 完全访问 on or off for a built-in role (the owner, on the Agent page). */
 export function setRoleFullAccess(app: App, name: string, on: boolean) {
-  if (GUEST_ROLES.includes(check(name))) throw new HttpError(400, "访客的完全访问在 设置 → 渠道 → 访客提问 里设");
+  if (GUEST_ROLES.includes(check(name))) throw new HttpError(400, "访客的完全访问在 设置 → 代你回复 → 访客提问 里设");
   writeOverlay(app, name, { ...roleOverlay(app, name), fullAccess: on });
   commitLibrary(app.libraryDir, `user: ${on ? "turn on" : "turn off"} full access of built-in role ${name}`);
   return roleState(app, name);

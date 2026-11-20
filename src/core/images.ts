@@ -24,7 +24,7 @@ export function imageReady(app: App) {
 
 export async function generateImage(app: App, o: { prompt: string; size?: string; quality?: string; background?: string; signal?: AbortSignal }): Promise<GeneratedImage> {
   const st = categoryStatus(app.config, "image", app.home);
-  if (!st.ready) throw new HttpError(409, `图片生成模型不可用：${st.detail}（设置 → AI → 图片生成）`);
+  if (!st.ready) throw new HttpError(409, `图片生成模型不可用：${st.detail}（设置 → 后端与模型 → 图片生成）`);
   const p = app.config.ai.providers.find((x) => x.id === st.provider)!;
   const cfg = app.config.ai.image;
   const size = o.size || cfg.size;

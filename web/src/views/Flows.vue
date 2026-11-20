@@ -260,7 +260,7 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
               </li>
             </ol>
             <p v-if="shown?.repeatDescription && !reading?.problem" class="small note">一轮一轮转：{{ shown.repeatDescription }}。</p>
-            <p v-if="shown?.stages && !reading?.problem" class="muted small note">没有人参与的情况下连着自己开始了几段，下一段会先问你一声；这个数在 设置 → AI → 自动推进 里改。</p>
+            <p v-if="shown?.stages && !reading?.problem" class="muted small note">没有人参与的情况下连着自己开始了几段，下一段会先问你一声；这个数在 设置 → 推进工作 → 自动推进 里改。</p>
             <button v-if="!showSource" type="button" class="btn ghost sm source-toggle" @click="showSource = true"><Icon name="code" :size="14" />查看定义（YAML）</button>
           </section>
 
@@ -281,7 +281,7 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
                 <dt><code>when</code></dt>
                 <dd>一句话，说明什么情况下才需要这一段；不符合时跳过。</dd>
                 <dt><code>ai</code></dt>
-                <dd>这一段的运行用哪一档模型：<code>strong</code> 好的、<code>standard</code> 中档、<code>cheap</code> 省的（各用哪个模型在 设置 → AI → 模型档位 里配）。加 <code>escalate: { to: strong, max: 2 }</code>，交不出结果或拿不准时换那一档重做，每轮最多 2 次。</dd>
+                <dd>这一段的运行用哪一档模型：<code>strong</code> 好的、<code>standard</code> 中档、<code>cheap</code> 省的（各用哪个模型在 设置 → 后端与模型 → 默认 AI 与档位 里配）。加 <code>escalate: { to: strong, max: 2 }</code>，交不出结果或拿不准时换那一档重做，每轮最多 2 次。</dd>
                 <dt><code>at</code>、<code>window</code></dt>
                 <dd><code>at: "10:00"</code> 这一轮里不早于这个时刻开始；<code>window: "01:00-06:00"</code> 只在这个时间段里开始，可以跨午夜。</dd>
                 <dt><code>budget</code></dt>

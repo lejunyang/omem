@@ -303,8 +303,8 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     const cap = app.config.mentions.perDay.triage;
     // How many, and where to change it.
     expect(notifiedBy(r.id)!.body).toContain(`分诊已到每天 ${cap} 次的上限`);
-    expect(notifiedBy(r.id)!.body).toContain("#/settings?tab=lark&focus=mentions");
-    expect(r.output.summary).toContain("设置 → 渠道 → 有人找你");
+    expect(notifiedBy(r.id)!.body).toContain("#/settings?card=mentions");
+    expect(r.output.summary).toContain("设置 → 代你回复 → 有人找你");
     app.config.mentions.perDay.triage = 80;
   }, 30000);
 
