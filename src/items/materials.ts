@@ -5,7 +5,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError, json, now } from "../core/util.ts";
-import { accessibleSpaces } from "../core/users.ts";
+import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { reqBrief, findReq, pathText, reqPath } from "./requirements.ts";
 import { addItemEvent, getItem } from "./store.ts";
 import { objectMaterialBrief } from "../flows/plugin-objects.ts";
@@ -161,7 +161,7 @@ export function materialViews(app: App, itemId: string, userId: string): Materia
     } catch {
       return { ...m, spaceId: null, title: m.label, status: null, readable: false, changed: false, missing: true };
     }
-  });
+  }).filter(m => userId === OWNER || m.readable);
 }
 
 /** Spaces a review or delegation of the item should be able to read. */

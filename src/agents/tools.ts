@@ -2578,7 +2578,7 @@ def({
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(ctx.app, { item: item.id, spaces: readable, userId: ctx.userId ?? OWNER }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");
-    const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).filter(m => (ctx.userId ?? OWNER) === OWNER || m.readable).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
+    const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
     // Where the work goes on and what is running for it (items/places.ts).
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));

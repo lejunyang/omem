@@ -48,6 +48,9 @@ it("按事项归属和当前的空间授权列出、读取和修改事项", asyn
     const detail = (await server.inject({ url, headers })).json();
     expect(detail.files).toEqual([]);
     expect(detail.materials).toEqual([]);
+    run(app.db, "insert into item_materials(item_id,kind,ref,label,added_by,created_at) values(?,'source','missing','旧材料','user','2026-11-01')", personal.id);
+    expect((await server.inject({ url, headers })).json().materials).toEqual([]);
+    expect((await server.inject({ url })).json().materials).toContainEqual(expect.objectContaining({ ref: "missing", missing: true }));
     expect(detail.places).toEqual([]);
     addMember(app, "team", "a", "reader");
     expect((await server.inject({ method: "PATCH", url, payload: { parent: null, title: "改名" }, headers })).statusCode).toBe(403);
