@@ -299,6 +299,9 @@ function coordinationNote(app: App, workId: string, messages: ThreadMessage[]) {
   // The count includes this turn.
   const done = work ? Math.max(0, autoTurnsSinceOwner(app, work) - 1) : 0;
   const owner = messages.some((m) => m.role === "user");
+  if (messages.some(m => m.meta.board === workId)) {
+    return [renderMessages(messages, app), done >= maxAutoTurns(app) ? "连续自动推进已到上限，请向本人汇报，由本人决定是否继续。" : ""].join("\n");
+  }
   const quietProgress = progressMessages(app) === "milestones";
   return [
     `# 协作进展`,

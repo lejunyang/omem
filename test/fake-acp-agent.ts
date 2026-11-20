@@ -176,6 +176,40 @@ new AgentSideConnection(
         if (Number.isFinite(used)) await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "usage_update", used, size: 1000 } });
         if (process.env.FAKE_OTHER_USAGE) await conn.sessionUpdate({ sessionId: "unrelated-session", update: { sessionUpdate: "usage_update", used: 950, size: 1000 } });
       }
+      if (process.env.FAKE_MODE === "board") {
+        const label = /^材料编号 (\w+)$/m.exec(prompt)?.[1];
+        if (!label || /任务板 \w+。请对标有/.test(prompt)) {
+          const board = /任务板 (\w+)。/.exec(prompt);
+          if (board && prompt.includes("材料报告 autoaccept")) {
+            const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+            const client = new Client({ name: "board-reviewer", version: "1" });
+            await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) } as Record<string,string> }));
+            try {
+              const decisions = [...prompt.matchAll(/^本轮验收 ID：(wt\w+)$/gm)].map(m => ({ task: m[1], decision: "accept" }));
+              const args = { work_id: board[1], decisions };
+              const direct = (await client.listTools()).tools.some(t => t.name === "work_review");
+              const result = await client.callTool(direct ? { name: "work_review", arguments: args } : { name: "omem_call", arguments: { tool: "work_review", args } });
+              if (result.isError) throw new Error(JSON.stringify(result.content));
+            } finally { await client.close(); }
+          }
+          await say("汇总已交付。");
+          return { stopReason: "end_turn" };
+        }
+        if (label === "fail" && state.model === "m1") throw new Error("材料缺失");
+        if (label === "permissions") {
+          const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+          const client = new Client({ name: "board-worker", version: "1" });
+          await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) } as Record<string,string> }));
+          try {
+            const listed = (await client.listTools()).tools;
+            const offered = listed.map(t => t.name).join(" ") + " " + (listed.find(t => t.name === "omem_call")?.description ?? "");
+            await say("工具核对：" + ["dispatch_work","work_status","work_cancel","work_review","run_agent","ask_agent","lark_send","notify","suggest_next","show"].filter(name => new RegExp(`\\b${name}\\b`).test(offered)).join(","));
+          } finally { await client.close(); }
+        }
+        await new Promise(resolve => setTimeout(resolve, label === "slow" ? 30000 : 400));
+        await say(label === "longreport" ? "材".repeat(7999) + "📄" + "料".repeat(1000) + "核验依据：原件第九行" + "文".repeat(9000) : "材料报告 " + label);
+        return { stopReason: "end_turn" };
+      }
       if (process.env.FAKE_MODE === "wiki") {
         const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
         const client = new Client({ name: "fake-wiki", version: "1" });

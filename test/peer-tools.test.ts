@@ -54,6 +54,7 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     const full = peerToolNames();
     expect(full.has("upsert_item") && full.has("set_source_attention") && full.has("organize_memories") && full.has("supersede") && full.has("forget")).toBe(true);
     expect(full.has("wake") || full.has("lark_card")).toBe(false);
+    for (const name of ["dispatch_work", "work_review", "work_cancel", "work_status"]) expect(full.has(name)).toBe(false);
     const ro = await peerJson<{ tools: { name: string }[] }>(laptop, "server", "/api/peer/tools?readOnly=1");
     expect(ro.tools.map((t) => t.name)).not.toContain("remember");
     // help does not open a run

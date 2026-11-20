@@ -2256,6 +2256,16 @@ export const migrations: readonly string[] = [
    create index pending_profiles on profile_proposals(created_at desc) where status='pending';
    create index pending_drafts on card_interactions(created_at desc) where status='open' and purpose in ('draft','mention-reply','watch-draft','meeting-answer');
    create index pending_user_asks on asks(user_id,created_at desc,id) where status='pending';`,
+  `create table agent_work_tasks (
+    id text primary key, work_id text not null references runs(id) on delete cascade, seq integer not null,
+    title text not null, goal text not null, accept text not null, agent text, execution text, scope text not null, space_id text,
+    required integer not null default 1, status text not null default 'pending',
+    attempts text not null default '[]', report text not null default '', verdict text,
+    run_id text, notice integer not null default 1, deadline_minutes integer not null,
+    deadline_at text not null, created_at text not null, updated_at text not null, unique(work_id,seq)
+  );
+  create index work_task_active on agent_work_tasks(deadline_at) where status in ('pending','running','rejected');
+  create index work_task_run on agent_work_tasks(run_id);`,
 ];
 
 export type Db = DatabaseSync;
