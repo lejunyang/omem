@@ -21,6 +21,8 @@ updated: 2026-11-21
 
 从 `packages/plugin-sdk/server.ts` 看三个接口，从 `src/plugins/process-hooks.ts` 看注册、声明校验与用户连接范围。`src/plugins/event-store.ts` 和 `event-delivery.ts` 负责同事务入队和按实体投递。事项同步通过 `/api/item-sync` 配置，指标从 `src/data/metrics.ts` 的 `collectDue` 进入。
 
+事项按提供者、用户、连接账号和外部键去重。同页先建映射，再把子项挂到同空间的父项。导入时间线和回写确认写明外部来源，入口是 `src/items/providers.ts`。跨空间去重、三层限制及冲突回写的回归用例在 `test/item-providers.test.ts`。
+
 ## 设置页重新分组后的路径（11-21）
 
 从 [快速开始](../../../site/guide/getting-started.md) 看日常设置，从 [验收清单](../../../docs/v2/acceptance.md) 查各功能的操作步骤。下表的旧入口均从“设置”进入。
