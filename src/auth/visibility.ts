@@ -4,7 +4,7 @@ import { HttpError, json, now } from "../core/util.ts";
 import { findSpace } from "../core/spaces.ts";
 import { readLarkSecrets } from "../channels/lark-setup.ts";
 import { accessToken } from "./connections.ts";
-import { can, isOwner } from "./permissions.ts";
+import { can, isOwner, spacesWith } from "./permissions.ts";
 import { authFetch } from "./providers.ts";
 
 /**
@@ -32,6 +32,17 @@ export function setVisibility(app: App, sourceId: string, visibility: "space" | 
   for (const v of viewers) run(app.db, "insert into source_viewers(source_id,user_id,evidence,at) values(?,?,'granted',?) on conflict(source_id,user_id) do nothing", sourceId, v, now());
 }
 export const viewersOf = (app: App, sourceId: string) => all<{ user_id: string }>(app.db, "select user_id from source_viewers where source_id = ?", sourceId).map((r) => r.user_id);
+
+/** SQL for the restricted flag on a list of sources already scoped by space.
+ * Work files and chats have no additional external document permission to check. */
+export function restrictedSourceFilter(app: App, userId: string) {
+  const manages = spacesWith(app, userId, "space.manage");
+  if (!manages) return { sql: "1", params: [] };
+  return {
+    sql: "(sources.visibility != 'restricted' or sources.space_id in (select value from json_each(?)) or exists (select 1 from source_viewers v where v.source_id=sources.id and v.user_id=?))",
+    params: [JSON.stringify(manages), userId],
+  };
+}
 
 /** Not to be sent elsewhere (another server, a share link): restricted, or under the Feishu access check. */
 export function keptHere(app: App, sourceId: string) {

@@ -1,3 +1,6 @@
+import { upsertSource } from "../src/sources/store.ts";
+import { setVisibility } from "../src/auth/visibility.ts";
+import { run } from "../src/core/db.ts";
 import { expect, it } from "vitest";
 import { createSpace } from "../src/core/spaces.ts";
 import { addMember, createApiToken, createUser, removeMember } from "../src/core/users.ts";
@@ -35,7 +38,20 @@ it("按事项归属和当前的空间授权列出、读取和修改事项", asyn
     for (const suffix of ["keep", "candidate"]) {
       expect((await server.inject({ method: "POST", url: `/api/items/${candidate.id}/${suffix}`, payload: { keep: true }, headers })).statusCode).toBe(403);
     }
+    const line = upsertItem(app, undefined, { kind: "line", title: "项目线", userId: "a", spaceId: "team" });
+    const url = "/api/items/" + personal.id;
+    expect((await server.inject({ method: "PATCH", url, payload: { parent: line.id }, headers })).statusCode).toBe(200);
+    const chat = upsertSource(app, { kind: "chat", uri: "demo:chat", title: "受限讨论", text: "讨论摘要", spaceId: "team" });
+    const work = upsertSource(app, { kind: "work", uri: "work/记录", title: "工作记录", text: "内容", spaceId: "team", meta: { links: { item: personal.id } } });
+    run(app.db, "insert into item_materials(item_id,kind,ref,label,added_by,created_at) values(?,'source',?,?,'user','2026-11-01')", personal.id, chat.id, "讨论");
+    for (const src of [chat, work]) setVisibility(app, src.id, "restricted");
+    const detail = (await server.inject({ url, headers })).json();
+    expect(detail.files).toEqual([]);
+    expect(detail.materials).toEqual([]);
+    expect(detail.places).toEqual([]);
     addMember(app, "team", "a", "reader");
+    expect((await server.inject({ method: "PATCH", url, payload: { parent: null, title: "改名" }, headers })).statusCode).toBe(403);
+    expect((await server.inject({ url, headers })).json().item).toMatchObject({ parentId: line.id, title: personal.title });
     expect((await create("team")).statusCode).toBe(403);
     expect((await server.inject({ url: "/api/items/" + mine.id, headers })).statusCode).toBe(200);
     removeMember(app, "team", "a");

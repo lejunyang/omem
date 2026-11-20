@@ -21,3 +21,9 @@ export function requireItem(app: App, id: string, userId: string, mode: "read" |
   }
   return item;
 }
+
+/** Moving a child writes an event to the old and new parent's timelines. */
+export function writableParents(app: App, userId: string, before: string | null, after: string | null | undefined) {
+  if (after === undefined || before === after) return [];
+  return [before, after].flatMap(id => id ? [requireItem(app, id, userId, "write")] : []);
+}

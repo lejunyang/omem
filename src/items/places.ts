@@ -1,3 +1,4 @@
+import { restrictedSourceFilter } from "../auth/visibility.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { json, truncate } from "../core/util.ts";
@@ -35,8 +36,6 @@ export function placesOfRun(app: App, runId: string): Place[] {
   }
   return out;
 }
-
-const isChatSource = (app: App, id: string) => !!one(app.db, "select 1 from sources where id = ? and kind = 'chat'", id);
 
 /** A run wrote the item: link it to the run's places it is not linked to yet. Places the item's owner cannot see are left out. */
 export function linkRunPlaces(app: App, runId: string, itemId: string, userId: string): Place[] {
@@ -77,9 +76,13 @@ export function placeView(app: App, p: Place): PlaceView | null {
 /** The places an item goes on in that this reader may see, newest activity first. */
 export function itemPlaces(app: App, itemId: string, userId: string): PlaceView[] {
   const allowed = accessibleSpaces(app, userId);
-  const rows = all<{ kind: string; ref: string }>(app.db, "select kind, ref from item_materials where item_id = ? and kind in ('conversation','source') order by id", itemId);
+  const filter = restrictedSourceFilter(app, userId);
+  const rows = all<{ kind: string; ref: string }>(app.db, `select m.kind,m.ref from item_materials m
+    left join sources on m.kind='source' and sources.id=m.ref
+    left join conversations c on m.kind='conversation' and c.id=m.ref
+    where m.item_id=? and ((sources.kind='chat' and sources.deleted_at is null and ${filter.sql})
+      or (m.kind='conversation' and (?='owner' or c.user_id=?))) order by m.id`, itemId, ...filter.params, userId, userId);
   return rows
-    .filter((r) => r.kind === "conversation" || isChatSource(app, r.ref))
     .flatMap((r) => placeView(app, { kind: r.kind as Place["kind"], ref: r.ref }) ?? [])
     .filter((v) => !allowed || !v.spaceId || allowed.includes(v.spaceId))
     .sort((a, b) => (b.lastAt ?? "").localeCompare(a.lastAt ?? ""));

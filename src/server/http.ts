@@ -1,5 +1,5 @@
 import { storedFileReadable } from "../auth/stored-files.ts";
-import { itemAccess, itemScope, requireItem } from "../items/access.ts";
+import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { networkInterfacesView, networkPoliciesView, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies } from "../agents/network-policy.ts";
 import { lessonInput, listLessons, saveLesson, removeLesson } from "../agents/code-lessons.ts";
 import { ROLE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
@@ -1438,18 +1438,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     for (const ref of item.sourceRefs) {
       const sourceId = /^src:([\w-]+)/.exec(ref)?.[1];
       if (sourceId && !(await sourceReadable(app, who(req), sourceId))) continue;
-      const ex = refExcerpt(app, ref, 120);
+      const ex = refExcerpt(app, ref, 120, who(req));
       if (ex && (!allowed || allowed.includes(ex.spaceId))) excerpts[ref] = { title: ex.title, text: ex.text };
     }
     const { listWorkFiles } = await import("../sources/work.ts");
-    const files = listWorkFiles(app, { item: id, spaces: allowed });
+    const files = listWorkFiles(app, { item: id, spaces: allowed, userId: who(req) });
     const { itemExpiry } = await import("../items/expiry.ts");
     // Where the work goes on and what runs for it now (items/places.ts): only for the item's own person.
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const mine = item.userId === who(req);
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     const a = autoInfo(app, id);
-    return { item, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
+    return { item, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).filter(m => who(req) === OWNER || m.readable).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.
@@ -1545,17 +1545,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Hung under a line from the start: items/tree.ts checks it is the same person's and the levels.
     const userId = who(req), spaceId = b.space ?? personalSpaceId(userId);
     if (!itemAccess(app, userId, { userId, spaceId }, "write")) throw new HttpError(403, "不能在这个空间创建事项");
-    if (parent) requireItem(app, parent, userId, "write");
+    writableParents(app, userId, null, parent);
     const made = upsertItem(app, undefined, { ...b, spaceId, userId }, "user");
     return parent ? (await import("../items/parent.ts")).setParent(app, made.id, parent, "user") : made;
   });
   server.patch("/api/items/:id", async (req) => {
     const { parent, ...b } = q(itemBody, req.body);
     const id = (req.params as { id: string }).id;
-    requireItem(app, id, who(req), "write");
-    if (parent) requireItem(app, parent, who(req), "write");
+    const { checkParent } = await import("../items/tree.ts");
+    const { setParent } = await import("../items/parent.ts");
+    const before = requireItem(app, id, who(req), "write");
+    writableParents(app, who(req), before.parentId, parent);
+    if (parent) checkParent(app, id, parent);
     const updated = upsertItem(app, id, b, "user");
-    return parent !== undefined ? (await import("../items/parent.ts")).setParent(app, id, parent, "user") : updated;
+    return parent !== undefined ? setParent(app, id, parent, "user") : updated;
   });
 
   // --------------------------------------------------------------------- runs

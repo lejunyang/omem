@@ -1,3 +1,4 @@
+import { restrictedSourceFilter } from "../auth/visibility.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { getSpace } from "../core/spaces.ts";
@@ -71,9 +72,13 @@ export function writeWorkFile(
 export type WorkFile = { id: string; spaceId: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; links: WorkLinks; lines: number };
 
 /** Live working files tied to an item or a rule (or all of them in some spaces). */
-export function listWorkFiles(app: App, opts: { item?: string; rule?: string; spaces?: string[] | null; limit?: number } = {}): WorkFile[] {
+export function listWorkFiles(app: App, opts: { item?: string; rule?: string; spaces?: string[] | null; userId?: string; limit?: number } = {}): WorkFile[] {
   const where = ["kind = 'work'", "deleted_at is null"];
   const params: string[] = [];
+  if (opts.userId) {
+    const filter = restrictedSourceFilter(app, opts.userId);
+    where.push(filter.sql); params.push(...filter.params);
+  }
   if (opts.item) where.push("json_extract(meta, '$.links.item') = ?"), params.push(opts.item);
   if (opts.rule) where.push("json_extract(meta, '$.links.rule') = ?"), params.push(opts.rule);
   if (opts.spaces) where.push(`space_id in (${opts.spaces.map(() => "?").join(",") || "''"})`), params.push(...opts.spaces);

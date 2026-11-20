@@ -1,4 +1,4 @@
-import { itemAccess, itemScope, requireItem } from "../items/access.ts";
+import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { lessonInput, proposeLesson } from "./code-lessons.ts";
 import { claimCommits, claimSchema } from "../flows/commits.ts";
 import { queueCodeWork } from "./code-delegate.ts";
@@ -2458,12 +2458,11 @@ def({
     const onItsOwn = !ownTurn(ctx);
     // A work line is the owner's to make (or to take from the nightly proposal card): never on its own.
     if (onItsOwn && a.kind === "line" && existing?.kind !== "line") throw new HttpError(403, "工作线只由本人建：这不是本人这一轮亲口要的。觉得这几件事该成一条线，在给本人的话里提出来（每晚的近况整理也会提议）");
-    if (a.parent) {
-      const p = requireItem(ctx.app, a.parent, ctx.userId ?? OWNER, "write");
+    for (const p of writableParents(ctx.app, userId, existing?.parentId ?? null, a.parent)) {
       inScope(ctx, p.spaceId, "上层事项");
       if (p.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能挂到本人自己的事项下");
-      if (existing) (await import("../items/tree.ts")).checkParent(ctx.app, existing.id, a.parent);
     }
+    if (existing && a.parent) (await import("../items/tree.ts")).checkParent(ctx.app, existing.id, a.parent);
     if (existing?.status === "candidate" && onItsOwn && a.status)
       throw new HttpError(403, `「${existing.title}」是候选事项，留不留由本人定（每天的事项清点或事项页）。可以记进展，不能改它的状态`);
     // The owner's own turn keeping or dropping an item the assistant made on its own is the owner's choice (items/auto-cases.ts).
@@ -2577,9 +2576,9 @@ def({
     const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
     const { listWorkFiles } = await import("../sources/work.ts");
-    const files = listWorkFiles(ctx.app, { item: item.id, spaces: readable }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
+    const files = listWorkFiles(ctx.app, { item: item.id, spaces: readable, userId: ctx.userId ?? OWNER }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");
-    const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
+    const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).filter(m => (ctx.userId ?? OWNER) === OWNER || m.readable).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
     // Where the work goes on and what is running for it (items/places.ts).
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
