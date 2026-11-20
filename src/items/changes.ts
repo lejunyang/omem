@@ -12,12 +12,14 @@ import { descendantIds, rootOf } from "./tree.ts";
  * - `flow`: a stage done, stuck, or waiting on the owner (flows/store.ts changeStage);
  * - `metric`: a metric of the item moved past its mark (data/metrics.ts);
  * - `problem`: a problem its 关注 was following got its conclusion (channels/listen-problems.ts);
- * - `owner`: what the owner settled themselves.
+ * - `owner`: what the owner settled themselves;
+ * - `line`: the line's own life (items/lifecycle.ts): it went into 观察, its watch was extended, it
+ *   ended (with its closing summary) or opened again.
  *
  * All but `follow` are written as `noted`: they never ask and never make cards. A line's timeline is its
  * own changes together with those of everything under it.
  */
-export type ChangeOrigin = "follow" | "flow" | "metric" | "problem" | "owner";
+export type ChangeOrigin = "follow" | "flow" | "metric" | "problem" | "owner" | "line";
 export const CHANGE_TYPES = ["scope", "decision", "deadline", "blocker", "info", "stage", "result", "owner", "resolved"] as const;
 export type ChangeType = (typeof CHANGE_TYPES)[number];
 

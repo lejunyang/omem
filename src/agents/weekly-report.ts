@@ -104,6 +104,24 @@ function itemChanges(app: App, since: string) {
   });
 }
 
+/** Work lines that ended this week with their closing summary, and those that went into 观察 (items/lifecycle.ts). */
+export function linesEnded(app: App, since: string) {
+  const ended = all<{ id: string; title: string; status: string; closed_at: string; now: string | null }>(app.db,
+    `select i.id, i.title, i.status, i.closed_at, i.now from items i where i.parent_id is null and i.status in ('done','cancelled') and i.closed_at > ? and coalesce(i.user_id,'owner') = 'owner'
+       and (i.kind = 'line' or i.phase is not null or exists(select 1 from items c where c.parent_id = i.id) or exists(select 1 from item_events e where e.item_id = i.id and e.kind = 'line-end'))
+     order by i.closed_at limit 15`, since);
+  const watching = all<{ id: string; title: string; phase_since: string; watch_until: string | null }>(app.db,
+    "select id, title, phase_since, watch_until from items where parent_id is null and phase = 'watching' and phase_since > ? and status in ('open','waiting','snoozed') and coalesce(user_id,'owner') = 'owner' order by phase_since limit 15", since);
+  const reason = (id: string) => one<{ text: string }>(app.db, "select text from item_events where item_id = ? and kind = 'line-end' order by id desc limit 1", id)?.text.replace(/\n?<!--[\s\S]*?-->\s*$/, "").trim();
+  return [
+    ...ended.map((l) => {
+      const summary = json<{ summary?: string } | null>(l.now, null)?.summary;
+      return `- ${l.id}「${truncate(l.title, 50)}」${l.status === "cancelled" ? "放弃了" : "结束了"}（${localStamp(l.closed_at, app.config.timezone, { short: true }).slice(0, 5)}${reason(l.id) ? `；${truncate(reason(l.id)!, 100)}` : ""}）${summary ? `\n  收尾小结：${truncate(summary.replace(/\s+/g, " "), 600)}` : ""}`;
+    }),
+    ...watching.map((l) => `- ${l.id}「${truncate(l.title, 50)}」进入观察（${localStamp(l.phase_since, app.config.timezone, { short: true }).slice(0, 5)} 起${l.watch_until ? `，到 ${localStamp(l.watch_until, app.config.timezone, { short: true }).slice(0, 5)}` : ""}）`),
+  ];
+}
+
 /** Meetings this week, with the summary the meeting's agent wrote at the end when there is one. */
 function meetings(app: App, since: string) {
   return all<{ meeting_id: string; topic: string; started_at: string; source_id: string | null }>(app.db, "select meeting_id, topic, started_at, source_id from lark_meetings where started_at > ? order by started_at limit 20", since).map((m) => {
@@ -146,6 +164,7 @@ export function weeklyTask(app: App, since: string, until: string, label: string
     current ? `## 这周已经有一份（src:${current.id}，可能是本人改过的）\n\n在它的基础上更新，本人写的地方原样保留：\n\n${truncate(current.text, 6000)}` : "",
     lines ? `## 本人近况（work-state 整理的这几周在推进的线；全文 read_page(space="personal", page="state/work")）\n\n${lines}` : "",
     listen.text ? listen.text.replace(/^### /, "## ") : "",
+    section("本周结束和进入观察的工作线（结束的带收尾小结）", linesEnded(app, since)),
     section("事项本周的变化（已结束的在前）", itemChanges(app, since)),
     section("流程进展", flowProgress(app, since)),
     section("编码交办和评审", coding(app, since)),

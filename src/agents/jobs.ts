@@ -947,7 +947,7 @@ registerHandler("item-settle", async (ctx) => {
  * and the candidates the assistant made on its own, each with 留下 / 不要 (items/auto.ts).
  */
 export async function sendItemDigests(app: App) {
-  const { digestFor, digestBody, markDigestSent } = await import("../items/expiry.ts");
+  const { digestFor, digestBody, isLineEnded, markDigestSent } = await import("../items/expiry.ts");
   const { candidatesBody, pendingCandidates } = await import("../items/auto.ts");
   const sent = [];
   // Last night's replays go to the owner's card as a section of their own (agents/replay.ts); none ran → no section.
@@ -962,14 +962,15 @@ export async function sendItemDigests(app: App) {
     const section = user_id === OWNER ? replays : null;
     const candidates = pendingCandidates(app, user_id, 6);
     if (!d && !section && !candidates.length) continue;
-    const handled = d ? d.closed.filter((c) => c.status !== "expired").length : 0;
-    const expired = d ? d.closed.length - handled : 0;
-    const parts = [handled ? `${handled} 件看起来已办` : "", expired ? `${expired} 件已过期` : "", d?.soon.length ? `${d.soon.length} 件明天过期` : "", candidates.length ? `${candidates.length} 件要不要跟` : "", section ? "昨晚复盘" : ""].filter(Boolean);
+    const lines = d ? d.closed.filter(isLineEnded).length : 0;
+    const handled = d ? d.closed.filter((c) => c.status !== "expired" && !isLineEnded(c)).length : 0;
+    const expired = d ? d.closed.length - handled - lines : 0;
+    const parts = [lines ? `${lines} 条工作线结束` : "", handled ? `${handled} 件看起来已办` : "", expired ? `${expired} 件已过期` : "", d?.soon.length ? `${d.soon.length} 件明天过期` : "", candidates.length ? `${candidates.length} 件要不要跟` : "", section ? "昨晚复盘" : ""].filter(Boolean);
     sent.push(
       notify(app, {
         title: `事项清点：${parts.join("，")}`,
         body: [d ? digestBody(app, d) : "", candidates.length ? candidatesBody(app, candidates) : "", section?.text ?? ""].filter(Boolean).join("\n\n"),
-        link: d || candidates.length ? "#/items" : "#/agents",
+        link: lines && !handled && !expired && !d?.soon.length && !candidates.length ? "#/" : d || candidates.length ? "#/items" : "#/agents",
         userId: user_id,
         digest: { closed: d?.closed.map((c) => c.id) ?? [], soon: d?.soon.map((s) => s.item.id) ?? [], ...(candidates.length ? { candidates: candidates.map((c) => c.id) } : {}), ...(section?.effects.length ? { effects: section.effects.map((e) => e.id) } : {}) },
       }),
@@ -1181,6 +1182,8 @@ registerHandler("heartbeat", async (ctx) => {
     // Where each line stands (channels/listen-assist.ts), and once a day one card with their next steps (items/lines.ts).
     await (await import("../channels/listen-assist.ts")).assistDue(app);
     (await import("../items/lines.ts")).lineNextDue(app);
+    // Lines that look done go into 观察 without a question; watched ones past their window end by themselves (items/lifecycle.ts).
+    (await import("../items/lifecycle.ts")).lineLifecycleDue(app);
     (await import("../data/omem-usage.ts")).snapshotOmemUsage(app);
   } catch (e) {
     console.warn(`[omem] 指标：${(e as Error).message}`);

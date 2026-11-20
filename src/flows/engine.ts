@@ -877,6 +877,10 @@ async function end(app: App, id: string, note: string, how: FlowEnd) {
   try { saveReview(app, id, how); } catch (e) { console.warn(`[omem] 流程回顾没有存下：${(e as Error).message}`); }
   // A 关注 made for this flow ends with it; one the owner keeps goes on.
   try { (await import("../channels/listen-items.ts")).flowEnded(app, id); } catch (e) { console.warn(`[omem] 事项的关注没有停下：${(e as Error).message}`); }
+  // A top-level item whose flow ran to its end, with nothing open under it, goes into 观察 (items/lifecycle.ts).
+  if (how === "completed") {
+    try { (await import("../items/lifecycle.ts")).flowCompleted(app, id); } catch (e) { console.warn(`[omem] 工作线没有进入观察：${(e as Error).message}`); }
+  }
 }
 export function stopFlow(app: App, id: string, userId = "owner") {
   return serial(app, id, async () => {

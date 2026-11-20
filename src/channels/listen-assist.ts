@@ -3,6 +3,7 @@ import { all, one, run } from "../core/db.ts";
 import { HttpError, json, localStamp, now, truncate } from "../core/util.ts";
 import { CODE_STARTERS } from "../agents/tool-help.ts";
 import { lineTimeline } from "../items/changes.ts";
+import { lineEndCases, md } from "../items/lifecycle.ts";
 import { declinedNext, nextOf } from "../items/lines.ts";
 import { materialsBrief } from "../items/materials.ts";
 import { getItem, type Item } from "../items/store.ts";
@@ -139,10 +140,13 @@ export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "sug
   const declined = declinedNext(app, item.id);
   const open = nextOf(app, item.id, ["open", "doing"]);
   const local = localStamp(new Date(), tz).slice(0, 10);
+  const watching = item.phase === "watching";
+  const cases = lineEndCases(app, item.userId, 10);
   return [
     `# 看这条${item.kind === "line" ? "工作线" : "事"}现在的样子：${item.title}（${item.id}）`,
     "",
     `今天是 ${local}。状态 ${item.status}${item.dueAt ? `，截止 ${item.dueAt.slice(0, 16).replace("T", " ")}` : "，没有截止时间"}${ownFlow ? `；${ownFlow}` : ""}。`,
+    watching ? `\n## 这条线在观察中（${item.phaseSince ? md(app, item.phaseSince) : ""}起，到 ${item.watchUntil ? md(app, item.watchUntil) : ""}）\n\n它看起来已经做完、上线了。观察期里宿主照读它的群、照取指标，期满没有新问题会自动结束。这次的下一步只写上线后的事：看上线后的数据、查上线后冒出的问题、回答还没结的疑问；没有这类事就不写下一步。` : "",
     item.detail ? `\n目标：${truncate(item.detail, 600)}` : "",
     tree.length ? `\n## 下面的工作项\n\n${tree.join("\n")}` : "\n## 下面的工作项\n\n（没有，这件事自己就是一项工作）",
     `\n${materialsBrief(app, item.id, item.userId, { compact: true })}`,
@@ -152,6 +156,7 @@ export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "sug
     item.now ? `\n## 上次写的现状（${localStamp(item.now.at, tz)}）\n\n${item.now.text}${item.now.people.length ? `\n人：${item.now.people.map((p) => `${p.name}（${p.role}）`).join("、")}` : ""}${item.now.weeks.length ? `\n${item.now.weeks.map((w) => `${w.label}：${w.text}`).join("\n")}` : ""}` : "",
     open.length ? `\n## 还没定的下一步（这次交的会替换没开始的那些）\n\n${open.map((n) => `- [${n.status === "doing" ? "在做" : "没定"}] ${n.text}`).join("\n")}` : "",
     declined.length ? `\n## 本人说“不用”的下一步（不要再提同样的）\n\n${declined.map((n) => `- ${n.text}${n.why ? `（当时的理由：${truncate(n.why, 80)}）` : ""}`).join("\n")}` : "",
+    cases.length ? `\n## 本人以前怎么定的（各条线什么时候算结束，新的在前）\n\n${cases.map((c) => `- ${localStamp(c.at, tz).slice(5, 10)}「${truncate(c.title, 30)}」${truncate(c.text, 200)}`).join("\n")}\n\n本人恢复过、说过“还没完”的那类情况，判断时更保守；本人自己结束、自动结束后没恢复的那类，可以照着判断。` : "",
     "",
     "# 要你做的",
     "",
@@ -160,6 +165,13 @@ export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "sug
     "2. people：这条线上的人和各自做什么（负责后端、提需求、测试、评审……），最多 8 个，不写本人。",
     "3. weeks：本周·至今N天、上周、2周前、3周前，每周一句；那周没动静写“暂无进展”。",
     `4. next：最多三条具体的下一步，每条写清做什么、为什么现在做（why）、依据（refs：原件引用、事项 id、阶段、指标），kind 选 read / test / code / ask / data。本人会在每天的下一步卡片上点“就这么做”或“不用”，点了就有助手去做，所以要能直接动手，不写“关注一下”“推进一下”。`,
+    [
+      "5. phase（可选，没把握就不填）：这条线到了哪一段。只按材料里的事实判断：群里或需求系统里写了“已发布”“已全量”“上线完成”，流程走完了，下面的工作项都结了，本人说过做完了。",
+      `   - ${watching ? "还在观察：不用填；观察期里又出了要返工的大问题、回滚了，才填 active" : "还在做：不用填"}；`,
+      "   - 做完了、上线后还要看一阵（上线后的缺陷、上线后的指标、还没回答的问题）：state = watching，可以给 days（观察几天，最多 60）；",
+      "   - 确实结束了（需求在需求系统里关了，上线后也没有新问题；取消了写 cancelled）：state = done，refs 放依据；",
+      "   - reason 一句话写依据，confidence 写 0 到 1 的把握。宿主只在把握够的时候动：进入观察要 0.6 以上，结束要 0.8 以上、有依据、线下也没有没结的事；拿不准时宿主会问本人一次。",
+    ].join("\n"),
     mode === "act"
       ? "交之前，能只读完成的先做：用 upsert_item 的 materials_add 把找到的材料挂上，按 observation-plan 写观测计划并用 metric_define 定义指标、metric_record 记下基线。改代码、发消息、改事项状态都只作为下一步提出来。"
       : "只看不动手：要做的都写成下一步。",

@@ -8,11 +8,12 @@ import { listAsks, type Ask } from "../agents/asks.ts";
 import { chatName } from "../agents/owner-now.ts";
 import { itemContext, listContexts } from "../channels/listen.ts";
 import { CHANGE_COLS, CHANGE_TYPES, changeLite, lineTimeline, type ChangeLite } from "./changes.ts";
+import { endedLines, endReason, guardsOf, setLinePhase } from "./lifecycle.ts";
 import { decideNext, nextOf, type NextLite } from "./lines.ts";
 import { materialViews } from "./materials.ts";
 import { setParent } from "./parent.ts";
-import { getItem, listItems, type Item, type LineNow } from "./store.ts";
-import { ancestorIds, descendantIds, rootOf } from "./tree.ts";
+import { getItem, isClosed, listItems, type Item, type LineNow } from "./store.ts";
+import { ancestorIds, descendantIds, openUnder, rootOf } from "./tree.ts";
 
 /**
  * The work page (docs/v2/status.md “工作线”): every line with where it stands, its last key changes ending in its
@@ -28,6 +29,10 @@ export type Line = {
   id: string; title: string; kind: string; status: string; dueAt: string | null; spaceId: string; now: LineNow | null;
   counts: { changes: number; today: number; lastAt: string | null }; timeline: ChangeLite[]; next: NextLite[]; children: Child[];
   listen: { id: string; assist: string } | null;
+  /** Its phase (items/lifecycle.ts): null 进行中, `watching` 观察中 until `watchUntil`. */
+  phase: "watching" | null; phaseSince: string | null; watchUntil: string | null;
+  /** While watching, what still holds it: metrics past their mark this week, problems not closed, items not closed. */
+  watch?: { flaggedMetrics: number; openProblems: number; openItems: number };
 };
 export type GateLite = { itemId: string; title: string; flowName: string; stage: { id: string; name: string; state: string }; since: string; askId: string | null };
 export type ChatActivity = { chatId: string; name: string; total: number; perDay: number[]; lastAt: string | null };
@@ -71,6 +76,7 @@ function lineView(app: App, item: Item): Line {
   const marks = ids.map(() => "?").join(",");
   const counts = one<{ n: number; today: number; last: string | null }>(app.db, `select count(*) n, coalesce(sum(at >= ?), 0) today, max(at) last from item_changes where item_id in (${marks}) and noise = 0`, todayStart(app), ...ids)!;
   const c = itemContext(app, item.id);
+  const g = item.phase === "watching" ? guardsOf(app, item) : null;
   return {
     id: item.id, title: item.title, kind: item.kind, status: item.status, dueAt: item.dueAt, spaceId: item.spaceId, now: item.now,
     counts: { changes: counts.n, today: counts.today, lastAt: counts.last },
@@ -78,6 +84,8 @@ function lineView(app: App, item: Item): Line {
     next: nextOf(app, item.id, ["open", "doing"]),
     children: childrenOf(app, item.id),
     listen: c && c.status === "active" ? { id: c.id, assist: c.knobs.assist ?? "off" } : null,
+    phase: item.phase, phaseSince: item.phaseSince, watchUntil: item.watchUntil,
+    ...(g ? { watch: { flaggedMetrics: g.flaggedMetrics, openProblems: g.openProblems, openItems: g.openItems } } : {}),
   };
 }
 
@@ -93,7 +101,7 @@ export function workOverview(app: App, userId: string) {
   const withChildren = new Set(all<{ parent_id: string }>(app.db, `select distinct parent_id from items where parent_id is not null and ${OPEN}`).map((r) => r.parent_id));
   const flowing = new Set(all<{ item_id: string }>(app.db, "select item_id from item_flows where ended_at is null").map((r) => r.item_id));
   const listened = new Set(listContexts(app, { kind: "item", activeOnly: true }).map((c) => c.itemId).filter((x): x is string => !!x));
-  const isLine = (i: Item) => i.kind === "line" || withChildren.has(i.id) || flowing.has(i.id) || listened.has(i.id);
+  const isLine = (i: Item) => i.kind === "line" || i.phase === "watching" || withChildren.has(i.id) || flowing.has(i.id) || listened.has(i.id);
   const lines = top.filter(isLine).sort((a, b) => Number(b.kind === "line") - Number(a.kind === "line") || b.updatedAt.localeCompare(a.updatedAt)).map((i) => lineView(app, i));
   const loose = top.filter((i) => !isLine(i)).map(lite);
 
@@ -120,7 +128,9 @@ export function workOverview(app: App, userId: string) {
   const places = listContexts(app, { kind: "place", activeOnly: true }).map((c) => ({
     id: c.id, name: c.name, openProblems: one<{ n: number }>(app.db, "select count(*) n from listen_problems where context_id = ? and state != 'closed'", c.id)?.n ?? 0,
   }));
-  return { lines, loose, waiting: { total, asks, gates, candidates, changes: changeViews, drafts }, places };
+  // Lines that ended lately (items/lifecycle.ts); older ones page through /api/work/ended.
+  const ended = endedLines(app, userId, { limit: 20, spaces: allowed });
+  return { lines, loose, waiting: { total, asks, gates, candidates, changes: changeViews, drafts }, places, ended: ended.items, endedMore: ended.more };
 }
 
 /** Changes of the caller's items by day, filtered by type, origin and line; the days of the range with their counts. */
@@ -184,8 +194,14 @@ export async function workDetail(app: App, id: string, userId: string) {
   try { chats = itemChats(app, root); } catch { /* the line is gone */ }
   const c = itemContext(app, root);
   const f = flowLite(app, id);
+  const closed = isClosed(item.status);
   return {
     item, ancestors, now: item.now, next: nextOf(app, id, ["open", "doing"]),
+    // Its life (items/lifecycle.ts): the phase, when it ended and why, its closing summary, how many under it are open.
+    phase: item.phase, phaseSince: item.phaseSince, watchUntil: item.watchUntil,
+    summary: item.now?.summary ?? null,
+    ended: closed ? { at: item.closedAt, status: item.status, reason: endReason(app, id) } : null,
+    openUnder: openUnder(app, id),
     children: childrenOf(app, id),
     timeline: lineTimeline(app, id, { limit: 200 }),
     chats: chatActivity(app, chats),
@@ -207,7 +223,21 @@ export function registerWorkRoutes(server: FastifyInstance, app: App, who: (req:
     const q = body(z.object({ from: z.string().optional(), to: z.string().optional(), type: z.string().optional(), origin: z.string().optional(), line: z.string().optional(), noise: z.coerce.boolean().optional() }), req.query);
     return workActivities(app, who(req), q);
   });
+  server.get("/api/work/ended", async (req) => {
+    const q = body(z.object({ before: z.string().max(40).optional(), q: z.string().max(100).optional(), limit: z.coerce.number().int().min(1).max(100).optional() }), req.query);
+    return endedLines(app, who(req), { ...q, spaces: accessibleSpaces(app, who(req)) });
+  });
   server.get("/api/work/:id", async (req) => workDetail(app, (req.params as { id: string }).id, who(req)));
+  // 进行中 / 观察中 / 结束 / 放弃 from the line's page (items/lifecycle.ts); ending with items open under it needs closeChildren.
+  server.put("/api/work/:id/phase", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const b = body(z.object({ phase: z.enum(["active", "watching", "done", "cancelled"]), closeChildren: z.boolean().optional(), days: z.number().int().min(1).max(60).optional(), reason: z.string().max(300).optional() }), req.body);
+    const allowed = accessibleSpaces(app, who(req));
+    const before = getItem(app, id);
+    if (allowed && !allowed.includes(before.spaceId)) throw new HttpError(403, `不能访问空间 ${before.spaceId}`);
+    const it = setLinePhase(app, id, who(req), b);
+    return { id: it.id, status: it.status, phase: it.phase, phaseSince: it.phaseSince, watchUntil: it.watchUntil, closedAt: it.closedAt };
+  });
   server.post("/api/work/:id/refresh", async (req) => {
     const { refreshLine } = await import("../channels/listen-assist.ts");
     const r = await refreshLine(app, (req.params as { id: string }).id, who(req));

@@ -56,10 +56,27 @@ function height(app: App, id: string): number {
   return h;
 }
 
-export const hasOpenChildren = (app: App, id: string) => descendantIds(app, id).some((c) => {
-  const s = one<{ status: string }>(app.db, "select status from items where id = ?", c)?.status;
-  return !!s && !isClosed(s) && s !== "candidate";
-});
+export const hasOpenChildren = (app: App, id: string) => openUnder(app, id) > 0;
+
+/** How many items under one are still open (candidates do not count). */
+export function openUnder(app: App, id: string) {
+  return descendantIds(app, id).filter((c) => {
+    const s = one<{ status: string }>(app.db, "select status from items where id = ?", c)?.status;
+    return !!s && !isClosed(s) && s !== "candidate";
+  }).length;
+}
+
+/**
+ * A top-level item the work page shows as a line (items/lifecycle.ts owns its end, not expiry): kind
+ * `line`, something hung under it, a flow (running or run), a phase of its own, or an active 关注.
+ */
+export function lineLike(app: App, item: { id: string; kind: string; parentId: string | null; phase?: string | null }) {
+  if (item.parentId) return false;
+  if (item.kind === "line" || item.phase) return true;
+  return !!one(app.db, `select 1 where exists(select 1 from items where parent_id = ? and status != 'candidate')
+      or exists(select 1 from item_flows where item_id = ?)
+      or exists(select 1 from listen_contexts where kind = 'item' and item_id = ? and status = 'active')`, item.id, item.id, item.id);
+}
 
 /**
  * Whether `id` may hang under `parent`: same person, a parent its person may read, no cycle, three
