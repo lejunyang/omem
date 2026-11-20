@@ -9,13 +9,13 @@ import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { cleanupFetched, mergeLibrary, snapshotStream, type Fetched } from "../src/core/pull.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { getAsk } from "../src/agents/asks.ts";
+import { answerAsk, getAsk } from "../src/agents/asks.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
 import { appendToSource } from "../src/sources/store.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
-import { advance, ownerAction, reportStage, startFlow, startRound } from "../src/flows/engine.ts";
+import { advance, ownerAction, reportStage, startFlow, startRound, studyOperation } from "../src/flows/engine.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
 import { createRun, getRun, startWorker, stopWorker } from "../src/agents/runs.ts";
@@ -52,6 +52,22 @@ describe("流程 HTTP", () => {
     expect(response.statusCode).toBe(403);
     expect(getAsk(app, ask.id)).toEqual(ask);
     expect(getStage(app, item.id, "check")).toEqual(stage);
+
+    addMember(app, "project", "member", "editor");
+    let release!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    const locked = studyOperation(app, item.id, () => hold);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const queued = answerAsk(app, ask.id, { choice: 0, by: "member", deferEffects: true });
+    addMember(app, "project", "member", "reader");
+    release();
+    await locked;
+    await expect(queued).rejects.toMatchObject({ status: 403 });
+    expect(getAsk(app, ask.id)).toEqual(ask);
+    expect(getStage(app, item.id, "check")).toEqual(stage);
+    addMember(app, "project", "member", "editor");
+    expect((await answerAsk(app, ask.id, { choice: 0, by: "member" })).status).toBe("answered");
+    expect(getStage(app, item.id, "check").state).toBe("doing");
   });
   it("逐条签字可撤销，限本人和当前阶段轮次；全对仍等确认，返工带不对的结果且新结果不继承签字", async () => {
     const app = fixture(), server = await serverFor(app);
