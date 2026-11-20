@@ -90,7 +90,7 @@ registerAskHandler("reply-promote", async (app, ask, context) => {
   if (!channel.reply?.setMode || channel.reply.mode(app, kind) !== "draft") return;
   channel.reply.setMode(app, kind, "auto");
   audit(app, OWNER, "mention-reply.promote", `${channel.id}:${kind}`, { askId: ask.id });
-  run(app.db, "update asks set result = ? where id = ?", `以后给${kindLabel(kind)}的回复，不用你拍板的直接发、发完告诉你；要改回在 设置 → 渠道 → 有人找你`, ask.id);
+  run(app.db, "update asks set result = ? where id = ?", `以后给${kindLabel(kind)}的回复，不用你拍板的直接发、发完告诉你；要改回在 设置 → 代你回复 → 有人找你`, ask.id);
 });
 
 /**
@@ -120,5 +120,5 @@ export function demoteReplyFor(app: App, runId: string | null | undefined): { ki
 
 /** For the note to the owner after a demotion. */
 export const demotedText = (d: { kind: Kind; who: string }) =>
-  `你对替你回复 ${d.who} 的那条表示了不满意，以后给${kindLabel(d.kind)}的回复先给你看草稿，你点了才发。要改回直接发，在 设置 → 渠道 → 有人找你。`;
+  `你对替你回复 ${d.who} 的那条表示了不满意，以后给${kindLabel(d.kind)}的回复先给你看草稿，你点了才发。要改回直接发，在 设置 → 代你回复 → 有人找你。`;
 

@@ -176,7 +176,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
           <summary>推过 {{ data.pushes.length }} 次</summary>
           <ul><li v-for="x in data.pushes" :key="x.id"><span class="mono">{{ x.remote }} {{ x.branch }}</span><span class="muted"> · {{ x.commit.slice(0, 8) }} · {{ fmtTime(x.at) }}</span><span v-if="x.note" class="muted prior">{{ x.note }}</span></li></ul>
         </details>
-        <p class="muted">试验在宿主给这个课题单独建的工作区里跑，不碰你的仓库目录。别的执行环境在 设置 → AI 里登记。</p>
+        <p class="muted">试验在宿主给这个课题单独建的工作区里跑，不碰你的仓库目录。别的执行环境在 设置 → 推进工作 → 课题的试验在哪跑 里登记。</p>
       </div>
     </details>
     <Skeleton v-if="loading" variant="text" :rows="3" />

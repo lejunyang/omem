@@ -130,7 +130,7 @@ function spend(app: App, kind: "triage" | "handle") {
 
 /** Today's allowance spent: how many, and where to change it (in the reminder: a link; on the run page: the path). */
 function capNote(app: App, kind: "triage" | "handle", link: boolean) {
-  const where = link ? `[设置 → 渠道 → 有人找你](${webLink(app, "#/settings?tab=lark&focus=mentions")})` : "设置 → 渠道 → 有人找你";
+  const where = link ? `[设置 → 代你回复 → 有人找你](${webLink(app, "#/settings?card=mentions")})` : "设置 → 代你回复 → 有人找你";
   return `今天“有人找你”${kind === "handle" ? "交给助手查" : "分诊"}已到每天 ${app.config.mentions.perDay[kind]} 次的上限，只发简短提醒；上限在 ${where} 里改`;
 }
 

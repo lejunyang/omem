@@ -44,7 +44,7 @@ const rate = (c: Counts) => (c.positive + c.negative ? Math.round((c.positive / 
     <p v-else-if="failed" class="muted small">{{ failed }}</p>
     <template v-else-if="stats">
       <p class="muted small">
-        机器人近 30 天发了 {{ stats.botMessages }} 条消息<template v-if="stats.lastReactionAt">，最近一次收到表情 {{ relTime(stats.lastReactionAt) }}</template><template v-else>，还没有收到表情事件（设置 → 渠道 → 检查机器人权限与事件）</template>。确认类表情（OK、DONE、+1…）只表示收到，不算好坏。
+        机器人近 30 天发了 {{ stats.botMessages }} 条消息<template v-if="stats.lastReactionAt">，最近一次收到表情 {{ relTime(stats.lastReactionAt) }}</template><template v-else>，还没有收到表情事件（设置 → 渠道 → 机器人权限与事件 → 检查）</template>。确认类表情（OK、DONE、+1…）只表示收到，不算好坏。
       </p>
       <div v-for="r in rows" :key="r.key" class="fb-row">
         <span class="name mono ellipsis" :title="r.key">{{ r.key }}</span>

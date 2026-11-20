@@ -35,7 +35,7 @@ export function hasGrant(app: App, openId: string) {
 /** A link for this person to authorize omem's app as themselves (valid half an hour; the page checks it is them). */
 export function grantLink(app: App, who: { openId: string; name: string }) {
   const base = (app.config.webUrl || app.baseUrl || "").replace(/\/+$/, "");
-  if (!/^https?:\/\//.test(base)) throw new HttpError(400, "没有配置 omem 的网页地址（设置 → 安全 → 网页地址），发不了授权链接");
+  if (!/^https?:\/\//.test(base)) throw new HttpError(400, "没有配置 omem 的网页地址（设置 → 设备 → 网页地址），发不了授权链接");
   run(app.db, "delete from kv where key glob 'lark_grant:*' and cast(json_extract(value, '$.at') as integer) < ?", Date.now() - GRANT_MS);
   const ticket = randomBytes(18).toString("base64url");
   run(app.db, "insert into kv(key,value) values(?,?)", `lark_grant:${ticket}`, JSON.stringify({ openId: who.openId, name: who.name, at: Date.now() } satisfies Ticket));

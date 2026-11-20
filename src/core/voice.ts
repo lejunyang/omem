@@ -36,7 +36,7 @@ export function setVoiceFetchForTests(f: Fetch | null) {
 
 function provider(app: App) {
   const st = categoryStatus(app.config, "voice", app.home);
-  if (!st.ready) throw new HttpError(409, `语音模型不可用：${st.detail}（设置 → AI → 语音）`);
+  if (!st.ready) throw new HttpError(409, `语音模型不可用：${st.detail}（设置 → 后端与模型 → 语音）`);
   const p = app.config.ai.providers.find((x) => x.id === st.provider)!;
   return { base: baseOf(p), key: keyOf(p.id, app.home), model: st.model!, api: app.config.ai.voice.api, voice: app.config.ai.voice.voice || "marin" };
 }

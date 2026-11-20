@@ -210,7 +210,7 @@ const CODE_CONTEXT = 12, CODE_LINES = 240, MAX_EVIDENCE = 120;
  */
 export async function shareReview(app: App, runId: string, userId = OWNER) {
   const base = webBase(app);
-  if (!base) throw new HttpError(400, "omem 没有配置对外网址（设置 → 系统 → 网页地址），分享链接打不开");
+  if (!base) throw new HttpError(400, "omem 没有配置对外网址（设置 → 设备 → 网页地址），分享链接打不开");
   const r = one<{ id: string; kind: string; title: string; output: string; input: string; finished_at: string | null; created_at: string; space_id: string | null }>(app.db, "select id, kind, title, output, input, finished_at, created_at, space_id from runs where id = ?", runId);
   if (!r || r.kind !== "code") throw new HttpError(404, "没有这次评审");
   const out = json<{ codeChain?: { rounds: string[] }; reviewLead?: { summary?: string } }>(r.output, {});

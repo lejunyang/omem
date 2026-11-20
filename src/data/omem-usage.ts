@@ -15,7 +15,8 @@ type Def = { id: string; name: string; description: string; unit: string; sql: s
 const DEFS: Def[] = [
   {
     id: "omem.runs", name: "omem 运行数", unit: "次", description: "每天开始的运行，按类型、结果和触发方式分。",
-    sql: "select kind, status, coalesce(trigger, '') trigger, count(*) value from runs where created_at >= ? and created_at < ? group by 1, 2, 3", dims: ["kind", "status", "trigger"],
+    // `trigger` keeps how the run came in (its trigger's via), not the whole trigger: that names people and chats.
+    sql: "select kind, status, coalesce(case when json_valid(trigger) then json_extract(trigger, '$.via') else trigger end, '') trigger, count(*) value from runs where created_at >= ? and created_at < ? group by 1, 2, 3", dims: ["kind", "status", "trigger"],
   },
   {
     id: "omem.run_minutes", name: "omem 运行时长", unit: "分钟", description: "每天结束的运行花的时间（开始到结束），按类型分。",

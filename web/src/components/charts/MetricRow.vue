@@ -17,6 +17,8 @@ const props = defineProps({
   note: String,
   keys: Array as PropType<string[]>,
   selected: { type: String as PropType<string | null>, default: null },
+  /** Every figure the same shape (a grid of many): see MetricGroup.even. */
+  even: Boolean,
 });
 const emit = defineEmits<{ select: [key: string] }>();
 const el = ref<HTMLElement>();
@@ -32,7 +34,7 @@ function mark() {
 }
 function draw() {
   if (!el.value) return;
-  const sig = JSON.stringify([props.items, props.title, props.note, props.keys]);
+  const sig = JSON.stringify([props.items, props.title, props.note, props.keys, props.even]);
   if (sig === drawn) return;
   drawn = sig;
   // Drawn again for something else than the numbers (a tag, a note): the numbers do not count up again.
@@ -41,7 +43,7 @@ function draw() {
   else el.value.removeAttribute("data-chart-still");
   drawnValues = values;
   const keys = props.keys;
-  el.value.replaceChildren(metricsElement(document, { title: props.title, note: props.note, items: props.items }, keys ? { select: (i) => keys[i] !== undefined && emit("select", keys[i]) } : {}));
+  el.value.replaceChildren(metricsElement(document, { title: props.title, note: props.note, items: props.items, even: props.even }, keys ? { select: (i) => keys[i] !== undefined && emit("select", keys[i]) } : {}));
   mark();
 }
 onMounted(draw);
