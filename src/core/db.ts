@@ -2257,8 +2257,7 @@ export const migrations: readonly string[] = [
     deadline_at text not null, created_at text not null, updated_at text not null, unique(work_id,seq)
   );
   create index work_task_active on agent_work_tasks(deadline_at) where status in ('pending','running','rejected');
-  create index work_task_run on agent_work_tasks(run_id);
-  create index run_last_usage on run_events(run_id,seq desc) where type='usage';`,
+  create index work_task_run on agent_work_tasks(run_id);`,
 ];
 
 export type Db = DatabaseSync;

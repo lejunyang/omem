@@ -10,7 +10,7 @@ import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
 import { boardTools, dispatchBoard, cancelBoard, readBoard, reviewBoard } from "./work-board.ts";
-import { refreshWork, createAgentWork, openWorkTopic, workInConversation, type AgentWork } from "./agent-work.ts";
+import { refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
 import { executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
 import { designBodySchema } from "../designs/types.ts";
@@ -1235,7 +1235,10 @@ def({
       scope.lark = { chats: [], draft: false, urgent: false, private: false };
       return { ...t, execution: resolveBoardExecution(ctx, t.execution), scope, spaceId };
     });
-    const existing = a.work_id ?? refreshWork(ctx.app, origin.id)?.askRunId ?? workInConversation(ctx.app, origin.conversation)?.askRunId;
+    const turn = getRun(ctx.app, origin.id);
+    const coordinating = turn.input.coordinate as { workId?: string } | undefined;
+    const existing = a.work_id ?? refreshWork(ctx.app, origin.id)?.askRunId ?? coordinating?.workId
+      ?? findThread(ctx.app, origin.conversation)?.settings.agentWorkId;
     const current = existing ? authorizedWork(ctx, existing, true) : null;
     if (current) await autoTurnGuard(ctx, current);
     const work = current ?? createAgentWork(ctx.app, { askRunId: origin.id, rootConversationId: origin.conversation, spaceId: ctx.spaceId, title: a.title, startMessage: a.title });

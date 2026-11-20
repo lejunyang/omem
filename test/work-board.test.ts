@@ -6,7 +6,7 @@ import { boot } from "../src/main.ts";
 import { all, run } from "../src/core/db.ts";
 import { createUser, createApiToken } from "../src/core/users.ts";
 import { createThread, threadMessages } from "../src/agents/threads.ts";
-import { createRun, getRun, stopWorker, waitForRun } from "../src/agents/runs.ts";
+import { __testHandlers, createRun, getRun, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { maintainBoards, readBoard } from "../src/agents/work-board.ts";
@@ -85,7 +85,7 @@ describe("协同任务板", async () => {
     expect(after.tasks[0].attempts).toEqual(before.tasks[0].attempts);
     expect(after.tasks[1]).toMatchObject({ status: "done", report: "材料报告 fail" });
     const second = after.tasks[1].attempts[1];
-    expect(second.ai.model).toBe("m2");
+    expect(second.model).toBe("m2");
     expect(getRun(app,second.runId).input.task).toContain(redo.note);
     expect((await review([redo])).isError).toBe(false);
     await wave(id,3);
@@ -118,6 +118,38 @@ describe("协同任务板", async () => {
     const { id } = await dispatch(["permissions","ok"],[{ agent:"material-check" }]);
     await wave(id,1);
     expect(readBoard(app,id).tasks[0].report).toMatch(/工具核对：\s*材料报告 permissions/);
+  },60000);
+
+  it("旧执行者在取消后清理期间仍占板内名额，迟到结果保留在旧尝试", async () => {
+    const original = __testHandlers.get("agent")!;
+    const limit = app.config.agents.workBoard.concurrency;
+    const cleanup = Promise.withResolvers<void>();
+    let starts = 0;
+    app.config.agents.workBoard.concurrency = 1;
+    __testHandlers.set("agent", async ctx => {
+      if (starts++ !== 0) return original(ctx);
+      await cleanup.promise;
+      return { answer: "旧尝试的报告" };
+    });
+    try {
+      const { id, ctx, tasks } = await dispatch(["first","second"]);
+      await vi.waitFor(() => expect(starts).toBe(1));
+      expect((await callTool(ctx, "work_cancel", { work_id: id })).isError).toBe(false);
+      await wave(id, 1);
+      expect((await callTool(ctx, "work_review", { work_id: id, decisions: [{ task: tasks[0].id, decision: "redo" }] })).isError).toBe(false);
+      expect(starts).toBe(1);
+      const retryId = readBoard(app,id).tasks[0].attempts[1].runId;
+      expect(getRun(app,retryId).status).toBe("queued");
+      cleanup.resolve();
+      await wave(id, 2);
+      expect(readBoard(app,id).tasks[0]).toMatchObject({
+        status: "done", report: "材料报告 first", attempts: [{ result: "已取消" }, { result: "材料报告 first" }],
+      });
+    } finally {
+      cleanup.resolve();
+      __testHandlers.set("agent", original);
+      app.config.agents.workBoard.concurrency = limit;
+    }
   },60000);
 
   it("重启收回失去运行的块，保留排队的块，收齐只协调一次", async () => {

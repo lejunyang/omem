@@ -17,6 +17,8 @@ import { appendToSource } from "../sources/store.ts";
  * a group's topics are separate threads is a per-chat setting (`mode`).
  */
 export type ThreadSettings = {
+  /** Origin of an independent AgentWork conversation. */
+  agentWorkId?: string;
   /** Agent spec that answers in this thread instead of the assistant. */
   spec?: string;
   /** Backend agent profile override (codex, claude…). */

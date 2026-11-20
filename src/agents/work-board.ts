@@ -8,7 +8,7 @@ import type { Execution } from "./execution.ts";
 
 export const boardTools = ["dispatch_work", "work_status", "work_review", "work_cancel"];
 const active = "('pending','running','rejected')";
-type Attempt = { runId: string; queuedAt: string; startedAt: string | null; finishedAt: string | null; result: string | null; device: string };
+type Attempt = { runId: string; status: Run["status"]; queuedAt: string; startedAt: string | null; finishedAt: string | null; result: string | null; device: string };
 type Verdict = { by: string; at: string; decision: Decision["decision"]; note: string };
 type TaskRow = { id: string; work_id: string; seq: number; title: string; goal: string; accept: string; agent: string | null; execution: string | null; required: number; status: string; attempts: string; report: string; verdict: string | null; run_id: string; scope: string; space_id: string | null; deadline_minutes: number; deadline_at: string; created_at: string; updated_at: string };
 export type TaskPlan = { title: string; goal: string; accept: string; agent?: string; execution?: Execution; required?: boolean; deadline_minutes?: number; spaceId?: string; scope: AssistantScope };
@@ -19,7 +19,7 @@ function attempt(app: App, workId: string, id: string, plan: TaskPlan, by: strin
   const task = [plan.title, plan.goal, "验收条件：" + plan.accept, note && "退回理由：" + note].filter(Boolean).join("\n\n");
   const runId = queueAgentRound(app, work, { task, taskId: id, agent: plan.agent ?? "assistant", execution: plan.execution, assistantScope: plan.scope, spaceId: plan.spaceId, queuedBy: by });
   const queuedAt = now();
-  const entry: Attempt = { runId, queuedAt, startedAt: null, finishedAt: null, result: null, device: nodeId(app) };
+  const entry: Attempt = { runId, status: "queued", queuedAt, startedAt: null, finishedAt: null, result: null, device: nodeId(app) };
   run(app.db, "update agent_work_tasks set run_id=?, attempts=json_insert(attempts,'$[#]',json(?)), deadline_at=?, updated_at=? where id=?",
     runId, JSON.stringify(entry), new Date(Date.parse(queuedAt) + plan.deadline_minutes! * 60000).toISOString(), queuedAt, id);
 }
@@ -27,6 +27,7 @@ function attempt(app: App, workId: string, id: string, plan: TaskPlan, by: strin
 export function dispatchBoard(app: App, work: AgentWork, plans: TaskPlan[], by: string) {
   const workId = work.askRunId;
   const ids = tx(app.db, () => {
+    run(app.db, "update conversations set settings=json_set(settings,'$.agentWorkId',?) where id=?", workId, work.workConversationId);
     let seq = one<{ n: number }>(app.db, "select coalesce(max(seq),0) n from agent_work_tasks where work_id=?", workId)!.n;
     const ids = plans.map(plan => {
       const id = newId("wt"), at = now();
@@ -49,13 +50,14 @@ function snapshot(app: App, workId: string, full = false) {
   const rows = all<TaskRow>(app.db, "select * from agent_work_tasks where work_id=? order by seq", workId);
   const attempts = all<AttemptRow>(app.db, `select t.id task,a.value entry,r.ai,r.profile_id,
     (select json_extract(data,'$.used') from run_events where run_id=r.id and type='usage' order by seq desc limit 1) used,
-    ${full ? "case when r.id=t.run_id then substr(json_extract(r.output,'$.answer'),1,8001) end" : "null"} answer
+    ${full ? "case when r.id=t.run_id and json_extract(a.value,'$.status')='done' then substr(json_extract(r.output,'$.answer'),1,8001) end" : "null"} answer
     from agent_work_tasks t join json_each(t.attempts) a left join runs r on r.id=json_extract(a.value,'$.runId') where t.work_id=? order by t.seq,a.key`, workId);
   return rows.map(t => {
     const history = attempts.filter(a => a.task === t.id).map(a => {
       const e: Attempt = JSON.parse(a.entry);
       const end = Date.parse(e.finishedAt ?? now());
-      return { ...e, ai: a.ai ? JSON.parse(a.ai) : null, backend: a.ai ? JSON.parse(a.ai).profile : a.profile_id, used: a.used,
+      const ai = a.ai ? JSON.parse(a.ai) as Run["ai"] : null;
+      return { ...e, ai, backend: ai?.profile ?? a.profile_id, model: ai?.model ?? null, used: a.used,
         queuedMs: (e.startedAt ? Date.parse(e.startedAt) : end) - Date.parse(e.queuedAt), executionMs: e.startedAt ? end - Date.parse(e.startedAt) : 0 };
     });
     return { id: t.id, workId, seq: t.seq, title: t.title, goal: t.goal, accept: t.accept, agent: t.agent, required: !!t.required,
@@ -99,8 +101,8 @@ function coordinateIfReady(app: App, workId: string) {
 }
 
 function finishAttempt(app: App, t: TaskRow, status: string, report: string, at = now()) {
-  run(app.db, `update agent_work_tasks set status=?, report=?, updated_at=?, attempts=json_set(attempts,'$[#-1].finishedAt',?,'$[#-1].result',?) where id=?`,
-    status, truncate(report, 2000), at, at, truncate(report, 2000), t.id);
+  run(app.db, `update agent_work_tasks set status=?, report=?, updated_at=?, attempts=json_set(attempts,'$[#-1].status',?,'$[#-1].finishedAt',?,'$[#-1].result',?) where id=?`,
+    status, truncate(report, 2000), at, status, at, truncate(report, 2000), t.id);
   const work = refreshWork(app, t.work_id)!;
   const round = work.rounds.find(r => r.runId === t.run_id);
   if (round) round.status = status === "done" ? "done" : "failed";
@@ -155,21 +157,29 @@ export function cancelBoard(app: App, workId: string, task?: string) {
 
 // Only live tasks are indexed here. Repair the gap between a run settling and the board consuming it.
 export function maintainBoards(app: App, restart = false) {
-  const rows = all<TaskRow & { state: string | null; ended: string | null; answer: string | null; error: string | null }>(app.db,
-    `select t.*, r.status state,r.finished_at ended,substr(json_extract(r.output,'$.answer'),1,2000) answer,r.error
-    from agent_work_tasks t left join runs r on r.id=t.run_id where t.status in ${active} ${restart ? "" : "and t.deadline_at<=?"}`, ...(restart ? [] : [now()]));
-  for (const t of rows) {
-    if (restart && t.state === "queued" && t.deadline_at > now()) continue;
-    tx(app.db, () => {
+  if (!restart && !one(app.db, `select 1 from agent_work_tasks where status in ${active} and deadline_at<=? limit 1`, now())) return;
+  const changed = tx(app.db, () => {
+    // Read the current attempt under the write lock: another process may have just retried it.
+    const rows = all<TaskRow & { state: string | null; ended: string | null; answer: string | null; error: string | null }>(app.db,
+      `select t.*, r.status state,r.finished_at ended,substr(json_extract(r.output,'$.answer'),1,2000) answer,r.error
+       from agent_work_tasks t left join runs r on r.id=t.run_id where t.status in ${active}
+       ${restart ? "and (r.id is null or r.status!='queued' or t.deadline_at<=?)" : "and t.deadline_at<=? limit 100"}`, now());
+    const boards = new Set<string>();
+    for (const t of rows) {
       const ended = t.state && ["done","failed","cancelled"].includes(t.state);
       const timeout = (t.ended ?? now()) >= t.deadline_at;
       if (!ended && t.state) {
         cancelRun(app, t.run_id);
-        if (restart && t.state === "running") run(app.db,"update runs set status='failed',error='服务重启',finished_at=? where id=?",now(),t.run_id);
+        if (restart && t.state === "running") {
+          run(app.db, "update runs set status='failed',error='服务重启',finished_at=? where id=?", now(), t.run_id);
+        }
       }
-      finishAttempt(app, t, ended && !timeout ? t.state! : "failed", timeout ? "超时" : ended ? t.error || t.answer || "已结束" : "服务重启", t.ended ?? now());
-      coordinateIfReady(app, t.work_id);
-    });
-    app.emit({ type: "work", workId: t.work_id });
-  }
+      const report = timeout ? "超时" : ended ? t.error || t.answer || "已结束" : "服务重启";
+      finishAttempt(app, t, ended && !timeout ? t.state! : "failed", report, t.ended ?? now());
+      boards.add(t.work_id);
+    }
+    for (const id of boards) coordinateIfReady(app, id);
+    return boards;
+  });
+  for (const workId of changed) app.emit({ type: "work", workId });
 }

@@ -4,7 +4,7 @@ import { withBot } from "../core/bot-context.ts";
 import { trySettleCodeChain } from "./code-chain.ts";
 import { recordRunStart } from "./run-scope.ts";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now, localStamp } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
 import { triggerFor, withFollowUp, type RunTrigger } from "../core/run-trigger.ts";
@@ -434,10 +434,29 @@ export function queueReason(app: App, r: Run): string | null {
   return `等${cls === "interactive" ? "对话" : cls === "bulk" ? "存量整理" : "后台任务"}空位：同时最多 ${limit} 个，正在运行 ${running} 个${ahead ? `，前面还排着 ${ahead} 个` : ""}`;
 }
 
-// The work index bounds this count to one board. Recheck it in the atomic claim below.
-const boardSlot = `(json_extract(q.input,'$.boardTaskId') is null or
-  (select count(*) from agent_work_tasks t join runs live on live.id=t.run_id
-   where t.work_id=q.parent_id and live.status='running') < ?)`;
+// Count physical attempts, including a cancelled worker that is still releasing its slot.
+const boardSlot = `(json_extract(q.input,'$.boardTaskId') is null or (
+  (select count(*) from runs live where live.parent_id=q.parent_id and live.status='running'
+    and json_extract(live.input,'$.boardTaskId') is not null) < ?
+  and exists (select 1 from agent_work_tasks t where t.run_id=q.id and t.deadline_at>?)
+))`;
+
+function claimRun(app: App, row: Row) {
+  const input = JSON.parse(row.input);
+  const at = now();
+  if (!input.boardTaskId)
+    return run(app.db, "update runs set status='running',started_at=? where id=? and status='queued'", at, row.id).changes === 1;
+  const claimed = tx(app.db, () => {
+    const changed = run(app.db, `update runs as q set status='running',started_at=?
+      where id=? and status='queued' and ${boardSlot}`, at, row.id, app.config.agents.workBoard.concurrency, at).changes;
+    if (!changed) return false;
+    run(app.db, `update agent_work_tasks set status='running',updated_at=?,
+      attempts=json_set(attempts,'$[#-1].status','running','$[#-1].startedAt',?) where run_id=?`, at, at, row.id);
+    return true;
+  });
+  if (claimed) app.emit({ type: "work", workId: input.agentWorkId });
+  return claimed;
+}
 
 function nextRunnable(app: App): Row | undefined {
   const open = (["interactive", "background", "bulk"] as Cls[]).filter((c) => active[c] < limitOf(app, c));
@@ -451,7 +470,7 @@ function nextRunnable(app: App): Row | undefined {
        and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'queued'
          and (r.created_at < q.created_at or (r.created_at = q.created_at and r.rowid < q.rowid))))
      order by q.created_at limit 100`,
-    now(), app.config.agents.workBoard.concurrency,
+    now(), app.config.agents.workBoard.concurrency, now(),
   );
   const seenLanes = new Set<string>();
   for (const c of candidates) {
@@ -503,12 +522,7 @@ function kick(app: App) {
       continue;
     }
     // Atomic claim: several processes (server, CLI) may share one library.
-    if (run(app.db, `update runs as q set status='running', started_at=? where id=? and status='queued' and ${boardSlot}`, now(), next.id, app.config.agents.workBoard.concurrency).changes !== 1) continue;
-    const input = JSON.parse(next.input);
-    if (input.boardTaskId) {
-      run(app.db, "update agent_work_tasks set status='running',updated_at=?,attempts=json_set(attempts,'$[#-1].startedAt',?) where run_id=?", now(), now(), next.id);
-      app.emit({ type: "work", workId: input.agentWorkId });
-    }
+    if (!claimRun(app, next)) continue;
     app.emit({ type: "run", runId: next.id, status: "running" });
     // What it works on (the chat, conversation, messages and items its input names), for the runs beside it.
     recordRunStart(app, next.id);
@@ -581,7 +595,10 @@ function kick(app: App) {
 /** Multi-agent work: a finished or failed round hands over to the main assistant (agent-work.ts). */
 function settleWorkRound(app: App, r: Run) {
   if (r.kind !== "agent" || !(r.input as { agentWorkId?: string }).agentWorkId) return;
-  if (r.input.boardTaskId) { settleBoardRun(app, getRun(app, r.id)); return; }
+  if (r.input.boardTaskId) {
+    settleBoardRun(app, getRun(app, r.id));
+    return;
+  }
   import("./agent-work.ts")
     .then(({ onWorkRunSettled }) => onWorkRunSettled(app, getRun(app, r.id)))
     .catch((e) => console.warn(`[omem] 多 Agent 工作推进失败：${(e as Error).message}`));
