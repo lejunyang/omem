@@ -41,6 +41,7 @@ import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
 import { ITEM_KINDS, listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
+import { lineStateSchema, proposeSchema } from "../items/line-schemas.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
 import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFolder, relocateFolder, removeFolder } from "../memory/folders.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
@@ -2328,6 +2329,22 @@ def({
     if (ctx.role !== "item-follow" || !ctx.runId) throw new HttpError(403, "只有 item-follow 能交事项变化");
     flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs);
     return JSON.stringify((await import("../flows/follow.ts")).noteItemChange(ctx.app, ctx.runId, a));
+  },
+});
+def({
+  name: "submit_line_state", description: "交这次看一条工作线（或一件顶层事项）的结果：一句“截至今天……”（now）、相关的人和各自的角色、最近几周各一句、最多三条下一步。宿主存到这条线上，下一步放进本人每天的下一步卡片；不用再通知本人。只给看工作线现状的运行交结果。",
+  write: true, schema: lineStateSchema,
+  handler: async (ctx, a) => {
+    if (!ctx.runId) throw new HttpError(403, "只有看工作线现状的运行能交");
+    return (await import("../items/lines.ts")).submitLineState(ctx.app, ctx.runId, a);
+  },
+});
+def({
+  name: "propose_lines", description: "每晚整理近况时，把本人这几周在推进的几条线交给宿主：名字、目标、相关事项、群和文档。和已有工作线对得上的（同名，或列了它下面的事项）宿主直接补材料、把没挂的事项挂上去；新的由宿主发一张卡片问本人要不要建。只给 work-state 角色交结果。",
+  write: true, schema: proposeSchema,
+  handler: async (ctx, a) => {
+    if (ctx.role !== "work-state" || !ctx.runId || (ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有每晚的近况整理能提议工作线");
+    return (await import("../items/lines.ts")).proposeLines(ctx.app, ctx.runId, a);
   },
 });
 def({

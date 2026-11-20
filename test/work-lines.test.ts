@@ -1,28 +1,36 @@
 import { rmSync } from "node:fs";
+import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { listAsks } from "../src/agents/asks.ts";
-import { createRun } from "../src/agents/runs.ts";
+import { answerAsk, getAsk, listAsks } from "../src/agents/asks.ts";
+import { createRun, getRun } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { CODE_STARTERS } from "../src/agents/tool-help.ts";
 import { getContext, itemContext, saveContext } from "../src/channels/listen.ts";
 import { foldChildContexts, itemChats } from "../src/channels/listen-items.ts";
+import { assistDue, refreshLine } from "../src/channels/listen-assist.ts";
 import { trackProblem } from "../src/channels/listen-problems.ts";
 import { defineMetric, recordPoints } from "../src/data/metrics.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
-import { reportStage, startFlow } from "../src/flows/engine.ts";
+import { ownerAction, reportStage, startFlow } from "../src/flows/engine.ts";
 import { lineTimeline } from "../src/items/changes.ts";
 import { itemExpiry } from "../src/items/expiry.ts";
+import { decideNext, lineNextDue, linesCard, nextOf, nextRunDone, proposeLines, submitLineState } from "../src/items/lines.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import { setParent } from "../src/items/parent.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
 import { rootOf } from "../src/items/tree.ts";
+import { startServer } from "../src/server/http.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { appendToSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: App[] = [];
+const servers: FastifyInstance[] = [];
 afterEach(async () => {
+  for (const s of servers.splice(0)) await s.close();
   await new Promise((r) => setImmediate(r));
   for (const app of apps.splice(0)) { app.events.emit("close"); app.db.close(); rmSync(app.home, { force: true, recursive: true }); }
 });
@@ -160,3 +168,173 @@ describe("工作线：时间线", () => {
   });
 });
 
+describe("工作线：现状和下一步", () => {
+  it("每天看一次顶层的线（子事项不单独看），交的现状存在线上，旧的没开始的下一步过期", async () => {
+    const app = fresh();
+    const line = upsertItem(app, undefined, { kind: "line", title: "示例商城 · 退款改造", detail: "12 月上线" }, "user");
+    const req = upsertItem(app, undefined, { title: "退款单显示运费" }, "user");
+    setParent(app, req.id, line.id);
+    saveContext(app, { kind: "item", itemId: line.id });
+    const ids = await assistDue(app);
+    expect(ids).toHaveLength(1);
+    const r = getRun(app, ids[0]);
+    expect(r.input.lineState).toBe(line.id);
+    expect(String(r.input.task)).toContain("submit_line_state");
+    expect(String(r.input.task)).toContain("退款单显示运费");
+    expect((r.input.assistantScope as { denyTools: string[] }).denyTools).toEqual(expect.arrayContaining(["notify", "lark_send", "delegate_code"]));
+    run(app.db, "update runs set status = 'running' where id = ?", r.id);
+    submitLineState(app, r.id, { now: "截至今天，运费一栏做完，等测试账号", people: [{ name: "小王", role: "负责后端" }], weeks: [{ label: "本周·至今3天", text: "做完运费一栏" }], next: [{ text: "读退款回调文档，确认重试次数", why: "测试卡在回调", refs: [], kind: "read" }, { text: "补运费的测试", why: "", refs: [], kind: "test" }] });
+    const first = nextOf(app, line.id);
+    expect(first).toHaveLength(2);
+    expect(getItem(app, line.id).now).toMatchObject({ text: "截至今天，运费一栏做完，等测试账号", people: [{ name: "小王", role: "负责后端" }], runId: r.id });
+    submitLineState(app, r.id, { now: "截至今天，等测试账号", next: [{ text: "问小王要测试账号", why: "测试卡住两天", refs: [], kind: "ask" }] });
+    expect(nextOf(app, line.id).map((n) => n.text)).toEqual(["问小王要测试账号"]);
+    expect(nextOf(app, line.id, ["expired"])).toHaveLength(2);
+    expect(all(app.db, "select id from notifications")).toHaveLength(0);
+    // A work item under the line has no look of its own, and a line's 关注 is made on 更新.
+    expect(() => submitLineState(app, createRun(app, { kind: "agent", title: "x", input: { lineState: req.id } }).id, { now: "x" })).toThrow();
+    const lone = upsertItem(app, undefined, { title: "项目 A" }, "user");
+    const again = await refreshLine(app, lone.id, "owner");
+    expect(getRun(app, again.id).input.lineState).toBe(lone.id);
+    expect(itemContext(app, lone.id)!.knobs).toMatchObject({ reply: "none", assist: "suggest" });
+    await expect(refreshLine(app, req.id, "owner")).rejects.toThrow(/工作线上更新/);
+  });
+
+  it("每天一张卡列各条线的下一步；就这么做起一轮，不用记下来", async () => {
+    const app = fresh();
+    app.config.notify.laterTimes = ["09:30"];
+    const a = upsertItem(app, undefined, { kind: "line", title: "项目 A" }, "user");
+    const b = upsertItem(app, undefined, { kind: "line", title: "示例商城 · 退款改造" }, "user");
+    for (const [line, steps] of [[a, ["读接口文档", "改重试逻辑"]], [b, ["看退款失败数"]]] as const) {
+      const r = running(app, "agent", { lineState: line.id });
+      submitLineState(app, r.id, { now: "截至今天", next: steps.map((text, i) => ({ text, why: "依据", refs: [], kind: i === 1 ? "code" : steps.length === 1 ? "data" : "read" })) });
+    }
+    const morning = new Date("2026-11-20T00:00:00Z"); // 08:00 where the owner is: not yet
+    expect(lineNextDue(app, morning)).toBeNull();
+    const ask = lineNextDue(app, new Date("2026-11-20T02:00:00Z"))!;
+    expect(ask.ui!.fields).toHaveLength(3);
+    expect(ask.question).toContain("项目 A");
+    expect(ask.question).toContain("示例商城 · 退款改造");
+    expect(lineNextDue(app, new Date("2026-11-20T05:00:00Z"))).toBeNull();
+    const read = nextOf(app, a.id).find((n) => n.kind === "read")!, code = nextOf(app, a.id).find((n) => n.kind === "code")!, [data] = nextOf(app, b.id);
+    await answerAsk(app, ask.id, { value: { [read.id]: "就这么做", [code.id]: "就这么做", [data.id]: "不用" }, by: "owner" });
+    const runs = all<{ id: string; lane: string; input: string }>(app.db, "select id, lane, input from runs where json_extract(input, '$.lineNext') is not null order by created_at");
+    expect(runs).toHaveLength(2);
+    expect(runs.every((r) => r.lane === `line-next:${a.id}`)).toBe(true);
+    const readDeny = JSON.parse(runs.find((r) => JSON.parse(r.input).lineNext === read.id)!.input).assistantScope.denyTools as string[];
+    const codeDeny = JSON.parse(runs.find((r) => JSON.parse(r.input).lineNext === code.id)!.input).assistantScope.denyTools as string[];
+    for (const t of ["lark_send", "lark_card", "lark_write", "lark_invite", "save_rule", "set_chat_watch", ...CODE_STARTERS]) expect(readDeny).toContain(t);
+    expect(codeDeny).not.toContain("delegate_code");
+    expect(nextOf(app, a.id).map((n) => n.status)).toEqual(["doing", "doing"]);
+    // Its run ends: the step is done, the line's 关注 and the owner hear the conclusion.
+    saveContext(app, { kind: "item", itemId: a.id });
+    const readRun = runs.find((r) => JSON.parse(r.input).lineNext === read.id)!.id;
+    await nextRunDone(app, read.id, readRun, "接口文档写了重试三次，间隔一分钟。");
+    expect(nextOf(app, a.id, ["done"]).map((n) => n.id)).toEqual([read.id]);
+    expect(one<{ title: string; link: string }>(app.db, "select title, link from notifications where title like '%下一步做完了'")).toMatchObject({ link: `#/work/${a.id}` });
+    expect(nextOf(app, b.id, ["declined"]).map((n) => n.text)).toEqual(["看退款失败数"]);
+    // The next look reads what the owner said 不用 to.
+    saveContext(app, { kind: "item", itemId: b.id });
+    const look = getRun(app, (await assistDue(app)).find((id) => getRun(app, id).input.lineState === b.id)!);
+    expect(String(look.input.task)).toContain("看退款失败数");
+    expect(() => decideNext(app, data.id, "declined", "owner")).toThrow();
+    expect(getAsk(app, ask.id).status).toBe("answered");
+  });
+});
+
+describe("工作线：每晚提议", () => {
+  it("和已有的线对上的补材料、挂事项；新的发一张卡，建 / 不用 / 并进", async () => {
+    const app = fresh();
+    const line = upsertItem(app, undefined, { kind: "line", title: "示例商城 · 退款改造" }, "user");
+    const req = upsertItem(app, undefined, { title: "退款单显示运费" }, "user");
+    const loose = upsertItem(app, undefined, { title: "运费口径" }, "user");
+    const other = upsertItem(app, undefined, { title: "项目 A 的接口" }, "user");
+    setParent(app, req.id, line.id);
+    const doc = appendToSource(app, { spaceId: "personal", kind: "doc", uri: "doc:refund", title: "退款设计", lines: ["设计"] });
+    chat(app, other.id, "oc_a");
+    const r = running(app, "work-state");
+    const said = proposeLines(app, r.id, { lines: [
+      { name: "退款改造", goal: "", items: [req.id, loose.id], chats: [], sources: [`src:${doc.id}`] },
+      { name: "项目 A 上线", goal: "12 月上线", items: [other.id], chats: ["oc_a"], sources: [] },
+      { name: "没人要的线", goal: "", items: [], chats: [], sources: [] },
+    ] });
+    expect(said).toContain("就是已有的工作线");
+    expect(getItem(app, loose.id).parentId).toBe(line.id);
+    expect(one(app.db, "select 1 from item_materials where item_id = ? and kind = 'source' and ref = ?", line.id, doc.id)).toBeTruthy();
+    const ask = linesCard(app, r.id)!;
+    expect(ask.question).toContain("要建成工作线吗");
+    expect(ask.ui!.fields!.map((f) => f.label)).toEqual(["项目 A 上线", "没人要的线"]);
+    expect((ask.ui!.fields![0] as { options: string[] }).options).toEqual(["建", "不用", "并进「示例商城 · 退款改造」"]);
+    expect(linesCard(app, r.id)).toBeNull();
+    const [p1, p2] = ask.ui!.fields!.map((f) => f.id);
+    await answerAsk(app, ask.id, { value: { [p1]: "建", [p2]: "不用" }, by: "owner" });
+    const made = one<{ id: string }>(app.db, "select id from items where kind = 'line' and title = '项目 A 上线'")!;
+    expect(getItem(app, other.id).parentId).toBe(made.id);
+    expect(getItem(app, made.id).detail).toBe("12 月上线");
+    expect(itemContext(app, made.id)).toMatchObject({ status: "active", knobs: { reply: "none", assist: "suggest" } });
+    expect(itemContext(app, made.id)!.chats).toEqual(["oc_a"]);
+    // 不用: not asked again for two weeks.
+    const r2 = running(app, "work-state");
+    expect(proposeLines(app, r2.id, { lines: [{ name: "没人要的线", goal: "", items: [], chats: [], sources: [] }] })).toContain("两周内不再问");
+    expect(() => proposeLines(app, running(app, "agent").id, { lines: [{ name: "x" }] })).toThrow(/近况整理/);
+  });
+});
+
+describe("工作线：接口", () => {
+  it("GET /api/work 和 /api/work/:id 的形状；挂上层、下一步、对我没用", async () => {
+    const app = fresh();
+    flow(app);
+    const server = await startServer(app, { port: 0, quiet: true }); servers.push(server);
+    const line = upsertItem(app, undefined, { kind: "line", title: "示例商城 · 退款改造" }, "user");
+    const req = upsertItem(app, undefined, { title: "退款单显示运费" }, "user");
+    const loose = upsertItem(app, undefined, { title: "买牛奶" }, "user");
+    const started = upsertItem(app, undefined, { title: "项目 A" }, "user");
+    chat(app, line.id, "oc_line");
+    expect((await server.inject({ method: "PUT", url: `/api/items/${req.id}/parent`, payload: { parent: line.id } })).statusCode).toBe(200);
+    await startFlow(app, req.id, "demo", owner);
+    await ownerAction(app, req.id, "code", "done", "本人做完了");
+    await startFlow(app, started.id, "demo", owner);
+    const r = running(app, "agent", { lineState: line.id });
+    submitLineState(app, r.id, { now: "截至今天，编码做完", next: [{ text: "补测试", why: "", refs: [], kind: "test" }] });
+    const w = (await server.inject("/api/work")).json();
+    expect(Object.keys(w).sort()).toEqual(["lines", "loose", "places", "waiting"]);
+    expect(w.lines.map((l: { id: string }) => l.id)).toEqual([line.id, started.id]);
+    const l = w.lines[0];
+    expect(Object.keys(l).sort()).toEqual(["children", "counts", "dueAt", "id", "kind", "listen", "next", "now", "spaceId", "status", "timeline", "title"]);
+    expect(l.now.text).toBe("截至今天，编码做完");
+    expect(l.counts.changes).toBeGreaterThan(0);
+    expect(l.timeline.at(-1).summary).toContain("「编码」做完");
+    expect(l.next.map((n: { text: string }) => n.text)).toEqual(["补测试"]);
+    expect(l.children[0]).toMatchObject({ id: req.id, parentId: line.id, flow: { name: "示例交付", current: { id: "test" } } });
+    expect(l.children[0].flow.stages.map((s: { state: string }) => s.state)).toEqual(["done", "doing", "pending"]);
+    expect(l.listen).toMatchObject({ assist: "suggest" });
+    expect(w.loose.map((i: { id: string }) => i.id)).toEqual([loose.id]);
+    expect(Object.keys(w.waiting).sort()).toEqual(["asks", "candidates", "changes", "drafts", "gates", "total"]);
+    const d = (await server.inject(`/api/work/${req.id}`)).json();
+    expect(Object.keys(d).sort()).toEqual(["ancestors", "chats", "children", "flow", "item", "listen", "materials", "next", "now", "timeline"]);
+    expect(d.ancestors).toEqual([{ id: line.id, title: line.title }]);
+    expect(d.flow.current.id).toBe("test");
+    const top = (await server.inject(`/api/work/${line.id}`)).json();
+    expect(top.chats[0]).toMatchObject({ chatId: "oc_line", total: 1 });
+    expect(top.chats[0].perDay).toHaveLength(14);
+    expect(top.chats[0].perDay.reduce((a: number, b: number) => a + b, 0)).toBe(1);
+    expect(top.materials.length).toBe(1);
+    const act = (await server.inject(`/api/work/activities?line=${line.id}`)).json();
+    expect(act.days).toHaveLength(30);
+    expect(act.items.length).toBe(top.timeline.length);
+    const change = top.timeline[0];
+    expect((await server.inject({ method: "PUT", url: `/api/item-changes/${change.id}/noise`, payload: { noise: true } })).json()).toEqual({ id: change.id, noise: true });
+    expect((await server.inject(`/api/work/${line.id}`)).json().timeline).toHaveLength(top.timeline.length - 1);
+    const next = top.next[0];
+    const doing = (await server.inject({ method: "PUT", url: `/api/item-next/${next.id}`, payload: { status: "doing" } })).json();
+    expect(doing).toMatchObject({ status: "doing" });
+    expect(getRun(app, doing.runId).lane).toBe(`line-next:${line.id}`);
+    expect((await server.inject({ method: "POST", url: `/api/work/${line.id}/refresh` })).json()).toMatchObject({ status: "queued" });
+    expect((await server.inject({ method: "PUT", url: `/api/items/${req.id}/parent`, payload: { parent: req.id } })).statusCode).toBe(400);
+    // Owner-only routes.
+    createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "personal", "reader", "editor");
+    const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
+    expect((await server.inject({ url: "/api/work", headers })).statusCode).toBe(403);
+    expect((await server.inject({ url: `/api/work/${line.id}`, headers })).statusCode).toBe(403);
+  });
+});

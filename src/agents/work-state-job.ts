@@ -203,6 +203,16 @@ export function markPeopleSeen(app: App, people: Pick<PersonFacts, "id" | "last"
 
 const lastKey = "work_state_at";
 
+/** The owner's open work lines and what hangs under them, so propose_lines can say which one a line already is. */
+export function linesText(app: App): string {
+  const lines = all<{ id: string; title: string; detail: string }>(app.db, "select id, title, detail from items where kind = 'line' and coalesce(user_id,'owner') = 'owner' and status not in ('done','cancelled','expired','candidate') order by created_at limit 20");
+  if (!lines.length) return "## 已有的工作线\n（还没有）";
+  return `## 已有的工作线（${lines.length}）\n${lines.map((l) => {
+    const kids = all<{ id: string; title: string }>(app.db, "select id, title from items where parent_id = ? and status not in ('done','cancelled','expired') order by created_at limit 12", l.id);
+    return `- ${l.id}「${truncate(l.title, 50)}」${l.detail ? `：${truncate(l.detail.replace(/\s+/g, " "), 80)}` : ""}${kids.length ? `\n  下面：${kids.map((k) => `${k.id}「${truncate(k.title, 30)}」`).join("、")}` : ""}`;
+  }).join("\n")}`;
+}
+
 export function workStateTask(app: App, facts: WorkFacts, people: PersonFacts[]): string {
   const page = pageOrNull(app, WORK_STATE_PAGE);
   const mine = page ? sectionOf(page.body, OWNER_SECTION) : null;
@@ -215,6 +225,8 @@ export function workStateTask(app: App, facts: WorkFacts, people: PersonFacts[])
     "# 事实",
     "",
     workFactsText(app, facts),
+    "",
+    linesText(app),
     "",
     people.length
       ? `# 人物卡（今晚轮到 ${people.length} 人：他们有新消息；每晚最多 ${app.config.workState.people} 人）\n\n${people
@@ -244,5 +256,8 @@ registerHandler("work-state", async (ctx) => {
   run(app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", lastKey, at);
   markPeopleSeen(app, people);
-  return { summary: r.text.trim(), people: people.length };
+  // The new lines it proposed (propose_lines) go to the owner on one card (items/lines.ts).
+  let card: string | null = null;
+  try { card = (await import("../items/lines.ts")).linesCard(app, ctx.run.id)?.id ?? null; } catch (e) { ctx.event("status", { text: `提议工作线的卡片没发出：${(e as Error).message}` }); }
+  return { summary: r.text.trim(), people: people.length, ...(card ? { linesAsk: card } : {}) };
 });

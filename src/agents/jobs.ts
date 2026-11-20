@@ -60,6 +60,8 @@ import "./wakes.ts";
 import "./digest.ts";
 // The nightly write-up of the owner's work state and person cards (agents/work-state-job.ts).
 import "./work-state-job.ts";
+// Work lines: the daily next-step card and the line proposals' card answer here (items/lines.ts).
+import "../items/lines.ts";
 // 「关注」's lessons from its cases (channels/listen-coach.ts).
 import "../channels/listen-coach.ts";
 import "../channels/listen-problems.ts";
@@ -357,7 +359,9 @@ async function runAgentTask(ctx: RunContext) {
       // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
       choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
-      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []), ...lent],
+      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []),
+        // A look at a line hands in what it found (items/lines.ts); it may also find nothing new.
+        ...((ctx.run.input as { lineState?: string }).lineState ? ["submit_line_state", "stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []), ...lent],
       execution,
       // A rule's switch turns it on for its runs; left off, they follow the agent's own setting (prepareRun),
       // like every other run of that agent. (Off used to mean off even with the assistant on full access:
@@ -405,6 +409,9 @@ async function runAgentTask(ctx: RunContext) {
       return replyOf(again).trim();
     });
   }
+  // A line's next step the owner said 就这么做 to: done, its conclusion goes to the line and the owner (items/lines.ts).
+  const lineNext = (ctx.run.input as { lineNext?: string }).lineNext;
+  if (lineNext) await (await import("../items/lines.ts")).nextRunDone(ctx.app, lineNext, ctx.run.id, answer).catch((e: Error) => console.warn(`[omem] 下一步的结果没有记好：${e.message}`));
   // A meeting listened to for a 「关注」: what it noted, and the summary, go into that 关注's conversation too.
   const listenMeeting = (ctx.run.input as { listenMeeting?: import("../channels/listen-meetings.ts").ListenMeetingRun }).listenMeeting;
   if (listenMeeting && !quietReason(ctx.app, ctx.run.id)) (await import("../channels/listen-meetings.ts")).noteMeetingRun(ctx.app, listenMeeting, ctx.run.id, answer);
@@ -1171,8 +1178,9 @@ registerHandler("heartbeat", async (ctx) => {
   try {
     const data = await import("../data/metrics.ts");
     await data.collectDue(app);
-    // Matters with proactive help on (channels/listen-assist.ts).
+    // Where each line stands (channels/listen-assist.ts), and once a day one card with their next steps (items/lines.ts).
     await (await import("../channels/listen-assist.ts")).assistDue(app);
+    (await import("../items/lines.ts")).lineNextDue(app);
     (await import("../data/omem-usage.ts")).snapshotOmemUsage(app);
   } catch (e) {
     console.warn(`[omem] 指标：${(e as Error).message}`);

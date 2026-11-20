@@ -17,6 +17,13 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 工作线（二）：每条线的现状和下一步、每晚提议、工作页接口（11-20 夜）
+
+- 原来的“主动推进”改成看一条线的现状（`src/channels/listen-assist.ts`）：只看顶层事项的关注，任务带线和下面各项、`lineTimeline`、上次的现状、本人说“不用”的下一步；运行用角色工具 `submit_line_state` 交 `now`（存进 `items.now`）和最多三条下一步（表 `item_next`，旧的没开始的变 `expired`），不再 notify、不再写 `推进.md`。`POST /api/work/:id/refresh` 马上看一次。
+- 每天一张下一步卡片（`src/items/lines.ts` 的 `lineNextDue`，心跳里，`notify.laterTimes` 最早的时间或 10:00）：各条线一起，每条“就这么做 / 不用”（处理器 `line-next`）。就这么做起一轮 `agent`（lane `line-next:<线>`，不能发消息、拉人、建规则，不是 code 的不能交办编码），结束后标 done、结论进线的关注会话；不用记下，下次看这条线时读到。
+- 每晚的 work-state 多了 `propose_lines`（`roles/work-state.md`）：对得上已有线的补材料、挂事项；新的一晚一张卡（处理器 `line-propose`：建 / 不用 / 并进某条），“不用”两周内不再问。
+- 工作页接口 `src/items/work-http.ts`：`GET /api/work`、`/api/work/activities`、`/api/work/:id`，`PUT /api/items/:id/parent`、`/api/item-next/:id`、`/api/item-changes/:id/noise`，都只给本人。网页还没做。
+
 ## 工作线（一）：事项上下层、关注只建在顶层、关键变化多个来源（11-20 夜）
 
 - 事项多了 `parent_id` 和类型 `line`（工作线）：需求、缺陷、评审挂在线下，缺陷可挂在需求下，最多三层（`src/items/tree.ts` 的 `checkParent` / `writeParent`，`src/items/parent.ts` 的 `setParent`）。`upsert_item` 的 `parent`，`list_items` 写出上层和下面几件、可按 `parent` 过滤，`read_item` 带 `parent` / `children`。工作线只由本人建：后台运行建 `line` 在工具和 `items/auto.ts` 的门上都被拒；线下还有没结的事项时不自动过期。

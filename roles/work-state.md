@@ -1,6 +1,6 @@
 ---
 description: 每晚整理本人的工作近况（在推进的几条线、最近活跃的会话文档和编码）和常打交道的人的人物卡
-tools: [list_spaces, search, scan, read_source, list_sources, list_pages, read_page, write_page, recall, list_items, read_item, list_conversations, read_conversation, list_runs, read_run, list_skills, read_skill, lark_read]
+tools: [list_spaces, search, scan, read_source, list_sources, list_pages, read_page, write_page, recall, list_items, read_item, list_conversations, read_conversation, list_runs, read_run, list_skills, read_skill, lark_read, propose_lines]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -35,6 +35,15 @@ modes: [read-only, default, plan]
 ### 要追踪的对象
 
 本人补充里提到要追踪的对象，先 `list_skills` 看有没有对应的技能（查某个内部系统、某类单子的状态的做法放在技能里），有就 `read_skill` 照着查当前状态，写回“要追踪的对象”；没有技能、或技能要用你没有的工具，就写“没有查状态的技能”，不要自己猜一个查法。
+
+## 工作线：propose_lines
+
+页面里“在推进的事”的每条线，整理完以后用 `propose_lines` 交一份给宿主：名字、目标（做成什么样算完，有截止时间就写）、属于它的事项 id、在聊这件事的群（chat_id 或群聊原件 `src:`）、相关文档（`src:`）。宿主拿它和任务里“已有的工作线”比对：
+
+- 同名，或你列的事项已经在某条线下面的，就是那条线：宿主只补它还没有的材料，把列出的、还没挂在任何线下的事项挂过去。所以已有的线照样交，事项和材料写全。
+- 对不上的是新线：宿主在整理结束后发一张卡片问本人要不要建，本人选“建 / 不用 / 并进某条”。本人两周内说过“不用”的同名线不会再问。
+
+一条线是本人要达成的一件事，不是一个群或一份文档；一次最多八条，只交有事项或材料支撑的。几周没动静、已经结束的线不交。没有在推进的线就不调用。
 
 ## 人物卡：people/<名字>
 

@@ -1683,6 +1683,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Each person's own AI accounts (docs/v2/agent-accounts.md).
   registerAgentAccountRoutes(server, app, who);
   registerFlowRoutes(server, app, who);
+  // Work lines (items/work-http.ts): the work page, a line's page, parents, next steps, refresh.
+  (await import("../items/work-http.ts")).registerWorkRoutes(server, app, who);
   // 「关注」(channels/listen-http.ts): 连接 → 飞书会话.
   (await import("../channels/listen-http.ts")).registerListenRoutes(server, app, who);
   // Metrics (src/data/): an item's numbers, omem's own use.
