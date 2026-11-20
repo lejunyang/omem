@@ -1,36 +1,65 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { OWNER } from "../core/users.ts";
-import { now, truncate } from "../core/util.ts";
+import { HttpError, json, localStamp, now, truncate } from "../core/util.ts";
 import { CODE_STARTERS } from "../agents/tool-help.ts";
-import { listContexts, type ListenContext } from "./listen.ts";
+import { lineTimeline } from "../items/changes.ts";
+import { declinedNext, nextOf } from "../items/lines.ts";
+import { materialsBrief } from "../items/materials.ts";
+import { getItem, type Item } from "../items/store.ts";
+import { descendantIds } from "../items/tree.ts";
+import { itemContext, listContexts, type ListenContext } from "./listen.ts";
 
 /**
- * Proactive help on a matter (an item 「关注」 with `assist` on): about once a day, or soon after the item
- * changed, the assistant looks at where the matter stands and pushes it on — context nobody linked yet
- * (documents, groups, code), progress against the deadline, the next step of its flow stage (tests to
- * write or run, coding to start, a review waiting), and its data (an observation plan, metrics that
- * moved). `suggest`: at most three concrete suggestions to the owner, each with its evidence; `act`: the
- * read-only part is done at once (materials linked, the observation plan written and its metrics
- * defined, a test checklist drafted), and what needs the owner is suggested. It never starts coding,
- * posts in groups or changes the item's status by itself. Suggestions go into a work file next to the
- * 关注's lessons, so the next look does not repeat them.
+ * Where a line stands (docs/v2/status.md “工作线”): about once a day, or soon after something on it changed, a
+ * top-level item's 「关注」 with `assist` on gets a run that reads the line and everything under it
+ * (state, flow stages, key changes, materials, metrics, what its groups talk about, the last state and
+ * the next steps the owner said 不用 to) and hands in `submit_line_state`: one sentence as of today,
+ * the people and their roles, the last weeks, at most three next steps. The host stores them; the
+ * owner sees the next steps of all lines once a day on one card (items/lines.ts lineNextDue), never a
+ * notification from this run. `act`: the read-only part (materials, an observation plan, metrics) is
+ * done before handing in. It never codes, posts in groups or changes an item's status, and may stay
+ * quiet when nothing changed since the last state.
  */
 const GAP_MS = 20 * 3600_000;
 const PER_DAY = 8;
 const lane = (id: string) => `listen-assist:${id}`;
 const key = (id: string) => `listen_assist:${id}`;
 
-export function assistPath(c: Pick<ListenContext, "name" | "id">) {
-  const name = c.name.replace(/[\\/:*?"<>|#\s]+/g, " ").trim().slice(0, 40) || c.id;
-  return `关注/${name}/推进.md`;
+/** What the run may not use: no coding, posting, rules or watches of its own, and no notifications (the host keeps what it hands in). */
+export const lineStateDenied = (mode: "suggest" | "act") => [...CODE_STARTERS, "apply_code_run", "code_git_action", "save_rule", "set_chat_watch", "lark_send", "lark_card", "lark_write", "lark_invite", "run_agent", "notify", ...(mode === "suggest" ? ["metric_define", "metric_record"] : [])];
+
+/** The latest change on the line or under it, as the item's own `updated_at` does not move when a work item does. */
+function lastMoved(app: App, item: Item) {
+  const ids = [item.id, ...descendantIds(app, item.id)];
+  const r = one<{ at: string | null }>(app.db, `select max(updated_at) at from items where id in (${ids.map(() => "?").join(",")})`, ...ids);
+  return r?.at ?? item.updatedAt;
 }
 
-type ItemRow = { id: string; title: string; detail: string; status: string; due_at: string | null; space_id: string; updated_at: string; kind: string };
+function queue(app: App, c: ListenContext, item: Item, mode: "suggest" | "act", why: string) {
+  return import("../agents/runs.ts").then(({ createRun }) => {
+    const r = createRun(app, {
+      kind: "agent",
+      spaceId: item.spaceId,
+      lane: lane(c.id),
+      title: `看「${truncate(item.title, 40)}」的现状`,
+      userId: item.userId,
+      input: {
+        spec: "assistant",
+        task: lineStateTask(app, c, item, mode),
+        listenAssist: c.id,
+        lineState: item.id,
+        why,
+        assistantScope: { spaces: [...new Set([item.spaceId, "personal"])], userId: item.userId, denyTools: lineStateDenied(mode), lark: { chats: [], draft: true } },
+      },
+    });
+    run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", key(c.id), now());
+    return r;
+  });
+}
 
-/** Heartbeat: item 关注 with `assist` on whose matter is alive get their look, at most once in 20 hours. */
+/** Heartbeat: top-level item 关注 with `assist` on whose matter is alive get their look, at most once in 20 hours. */
 export async function assistDue(app: App, at = Date.now()) {
-  const { createRun, runsInLane } = await import("../agents/runs.ts");
+  const { runsInLane } = await import("../agents/runs.ts");
   const start = new Date(at);
   start.setHours(0, 0, 0, 0);
   let today = one<{ n: number }>(app.db, "select count(*) n from runs where kind = 'agent' and json_extract(input, '$.listenAssist') is not null and created_at >= ?", start.toISOString())?.n ?? 0;
@@ -39,76 +68,101 @@ export async function assistDue(app: App, at = Date.now()) {
     if (today >= PER_DAY) break;
     const mode = c.knobs.assist ?? "off";
     if (mode === "off" || !c.itemId) continue;
-    const item = one<ItemRow>(app.db, "select id, title, detail, status, due_at, space_id, updated_at, kind from items where id = ?", c.itemId);
-    if (!item || !["open", "waiting", "snoozed"].includes(item.status)) continue;
+    let item: Item;
+    try { item = getItem(app, c.itemId); } catch { continue; }
+    // A work item under a line is looked at with its line (its own 关注 folds into the line's).
+    if (item.parentId || !["open", "waiting", "snoozed"].includes(item.status)) continue;
     const last = one<{ value: string }>(app.db, "select value from kv where key = ?", key(c.id))?.value;
-    const changed = !last || item.updated_at > last;
-    const soon = !!item.due_at && Date.parse(item.due_at) - at < 3 * 86400_000;
+    const changed = !last || lastMoved(app, item) > last || !!one(app.db, `select 1 from item_changes where item_id in (${[item.id, ...descendantIds(app, item.id)].map(() => "?").join(",")}) and at > ? limit 1`, item.id, ...descendantIds(app, item.id), last);
+    const soon = !!item.dueAt && Date.parse(item.dueAt) - at < 3 * 86400_000;
     const stale = !last || at - Date.parse(last) >= GAP_MS;
-    // A quiet matter is looked at only when something moved or its deadline is near.
+    // A quiet line is looked at only when something moved or its deadline is near.
     if (!stale || (!changed && !soon && last)) continue;
     if (runsInLane(app, lane(c.id)).length) continue;
-    const r = createRun(app, {
-      kind: "agent",
-      spaceId: item.space_id,
-      lane: lane(c.id),
-      title: `推进「${truncate(item.title, 40)}」`,
-      userId: OWNER,
-      input: {
-        spec: "assistant",
-        task: assistTask(app, c, item, mode as "suggest" | "act"),
-        listenAssist: c.id,
-        assistantScope: {
-          spaces: [item.space_id, "personal"],
-          userId: OWNER,
-          // Pushing on is suggesting and reading: no coding, no posting, no rules or watches of its own.
-          denyTools: [...CODE_STARTERS, "apply_code_run", "code_git_action", "save_rule", "set_chat_watch", "lark_send", "lark_card", "lark_write", "lark_invite", "run_agent", ...(mode === "suggest" ? ["metric_define", "metric_record"] : [])],
-          lark: { chats: [], draft: true },
-        },
-      },
-    });
-    run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", key(c.id), now());
+    const r = await queue(app, c, item, mode as "suggest" | "act", changed ? "有新变化" : "截止时间近了");
     created.push(r.id);
     today++;
   }
   return created;
 }
 
-function assistTask(app: App, c: ListenContext, item: ItemRow, mode: "suggest" | "act") {
-  const changes = all<{ kind: string; summary: string; status: string; at: string }>(app.db, "select type kind, summary, status, at from item_changes where item_id = ? order by at desc limit 8", item.id);
-  const events = all<{ kind: string; text: string; at: string }>(app.db, "select kind, text, at from item_events where item_id = ? order by at desc limit 8", item.id);
-  const flow = one<{ name: string; stage: string; state: string }>(
-    app.db,
-    `select json_extract(f.definition,'$.name') name, s.stage_id stage, s.state state from item_flows f join item_stages s on s.item_id = f.item_id
-     where f.item_id = ? and f.ended_at is null and s.state in ('doing','gated','blocked','pending') order by case s.state when 'doing' then 0 when 'gated' then 1 when 'blocked' then 2 else 3 end limit 1`,
-    item.id,
-  );
-  const metrics = all<{ name: string }>(app.db, "select name from metrics where item_id = ? and status = 'active'", item.id).map((m) => m.name);
-  const plan = one<{ id: string }>(app.db, "select id from sources where kind = 'work' and deleted_at is null and uri like 'work/观测/%' and json_extract(meta, '$.links.item') = ? limit 1", item.id);
+/**
+ * The page's “更新” on a line: its look now, whatever the daily rhythm says. A top-level item with no
+ * 关注 yet gets one (only reading, suggesting). Returns the run, or the one already queued or running.
+ */
+export async function refreshLine(app: App, itemId: string, by: string) {
+  const item = getItem(app, itemId);
+  if (item.userId !== by) throw new HttpError(403, "只能更新自己的工作线");
+  if (item.parentId) throw new HttpError(400, "这件事挂在上层下面：在它的工作线上更新");
+  let c = itemContext(app, item.id);
+  if (!c || c.status !== "active") {
+    const { setItemListening } = await import("./listen-items.ts");
+    c = setItemListening(app, item.id, true, c ? {} : { reply: "none", assist: "suggest" })!;
+  }
+  const { runsInLane, getRun } = await import("../agents/runs.ts");
+  const busy = runsInLane(app, lane(c.id));
+  if (busy.length) return getRun(app, busy[0].id);
+  const mode = c.knobs.assist && c.knobs.assist !== "off" ? c.knobs.assist : "suggest";
+  return queue(app, c, item, mode, "本人点了更新");
+}
+
+const STATE: Record<string, string> = { pending: "未到", gated: "等你开始", doing: "进行中", blocked: "卡住", done: "完成", skipped: "跳过", stale: "待复核" };
+
+/** An item's running flow, stage by stage, or "". */
+function flowText(app: App, id: string) {
+  const f = one<{ definition: string; ended_at: string | null }>(app.db, "select definition, ended_at from item_flows where item_id = ?", id);
+  if (!f || f.ended_at) return "";
+  const stages = json<{ name?: string; stages?: { id: string; name: string }[] }>(f.definition, {});
+  const rows = new Map(all<{ stage_id: string; state: string; waiting_on: string | null }>(app.db, "select stage_id, state, waiting_on from item_stages where item_id = ?", id).map((s) => [s.stage_id, s]));
+  return `流程「${stages.name ?? ""}」：${(stages.stages ?? []).map((s) => { const r = rows.get(s.id); return `${s.name}（${STATE[r?.state ?? "pending"] ?? r?.state}${r?.waiting_on ? `，等${r.waiting_on.replace(/^等+/, "")}` : ""}）`; }).join(" → ")}`;
+}
+
+/** One work item as the look reads it: kind, state, due, flow stages. */
+function itemLine(app: App, it: { id: string; title: string; kind: string; status: string; due_at: string | null; waiting_on: string | null }, depth: number) {
+  const flow = flowText(app, it.id);
+  return `${"  ".repeat(depth)}- ${it.id}「${truncate(it.title, 60)}」[${it.kind}/${it.status}]${it.due_at ? ` 截止 ${it.due_at.slice(0, 10)}` : ""}${it.waiting_on ? ` 等 ${it.waiting_on}` : ""}${flow ? `；${flow}` : ""}`;
+}
+
+export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "suggest" | "act") {
+  const tz = app.config.timezone;
+  const ids = [item.id, ...descendantIds(app, item.id)];
+  type Row = { id: string; title: string; kind: string; status: string; due_at: string | null; waiting_on: string | null; parent_id: string | null };
+  const rows = all<Row>(app.db, `select id, title, kind, status, due_at, waiting_on, parent_id from items where id in (${ids.map(() => "?").join(",")}) order by created_at`, ...ids);
+  const tree: string[] = [];
+  const walk = (parent: string, depth: number) => { for (const r of rows.filter((x) => x.parent_id === parent)) { tree.push(itemLine(app, r, depth)); walk(r.id, depth + 1); } };
+  walk(item.id, 0);
+  const ownFlow = flowText(app, item.id);
+  const changes = lineTimeline(app, item.id, { limit: 20 });
+  const metrics = all<{ name: string; item_id: string }>(app.db, `select name, item_id from metrics where status = 'active' and item_id in (${ids.map(() => "?").join(",")})`, ...ids);
+  const plan = one<{ id: string }>(app.db, `select id from sources where kind = 'work' and deleted_at is null and uri like 'work/观测/%' and json_extract(meta, '$.links.item') in (${ids.map(() => "?").join(",")}) limit 1`, ...ids);
   const summary = c.conversationId ? one<{ summary: string | null }>(app.db, "select summary from conversations where id = ?", c.conversationId)?.summary : null;
-  const before = one<{ text: string }>(app.db, "select text from sources where uri = ? and deleted_at is null order by captured_at desc limit 1", `work/${assistPath(c)}`)?.text;
+  const declined = declinedNext(app, item.id);
+  const open = nextOf(app, item.id, ["open", "doing"]);
+  const local = localStamp(new Date(), tz).slice(0, 10);
   return [
-    `# 推进这件事：${item.title}（${item.id}）`,
+    `# 看这条${item.kind === "line" ? "工作线" : "事"}现在的样子：${item.title}（${item.id}）`,
     "",
-    `状态 ${item.status}${item.due_at ? `，截止 ${item.due_at.slice(0, 16).replace("T", " ")}` : "，没有截止时间"}${flow ? `；流程「${flow.name}」现在在「${flow.stage}」（${flow.state}）` : ""}。`,
-    item.detail ? truncate(item.detail, 600) : "",
+    `今天是 ${local}。状态 ${item.status}${item.dueAt ? `，截止 ${item.dueAt.slice(0, 16).replace("T", " ")}` : "，没有截止时间"}${ownFlow ? `；${ownFlow}` : ""}。`,
+    item.detail ? `\n目标：${truncate(item.detail, 600)}` : "",
+    tree.length ? `\n## 下面的工作项\n\n${tree.join("\n")}` : "\n## 下面的工作项\n\n（没有，这件事自己就是一项工作）",
+    `\n${materialsBrief(app, item.id, item.userId, { compact: true })}`,
     summary ? `\n## 它的群里最近在聊\n\n${truncate(summary, 1500)}` : "",
-    changes.length ? `\n## 最近的变化\n\n${changes.map((x) => `- ${x.at.slice(5, 16).replace("T", " ")} ${x.kind}（${x.status}）：${truncate(x.summary, 160)}`).join("\n")}` : "",
-    events.length ? `\n## 事项时间线（新的在前）\n\n${events.map((x) => `- ${x.at.slice(5, 16).replace("T", " ")} ${truncate(x.text, 160)}`).join("\n")}` : "",
-    `\n## 数据\n\n${plan ? "已有观测计划。" : "还没有观测计划。"}${metrics.length ? `指标：${metrics.join("、")}（metric_read(item=${item.id}) 看变化）。` : "还没有指标。"}`,
-    before ? `\n## 之前给本人的建议（不要重复，已经做了的不再提）\n\n${truncate(before, 2500)}` : "",
+    changes.length ? `\n## 关键变化（新的在前，含下面的工作项）\n\n${changes.map((x) => `- ${localStamp(x.at, tz).slice(5)} [${x.type}·${x.origin}]${x.itemId !== item.id ? `「${truncate(x.itemTitle, 30)}」` : ""} ${truncate(x.summary, 160)}`).join("\n")}` : "\n## 关键变化\n\n（还没有记下的变化）",
+    `\n## 数据\n\n${plan ? "已有观测计划。" : "还没有观测计划。"}${metrics.length ? `指标：${metrics.map((m) => m.name).join("、")}（metric_read 看变化）。` : "还没有指标。"}`,
+    item.now ? `\n## 上次写的现状（${localStamp(item.now.at, tz)}）\n\n${item.now.text}${item.now.people.length ? `\n人：${item.now.people.map((p) => `${p.name}（${p.role}）`).join("、")}` : ""}${item.now.weeks.length ? `\n${item.now.weeks.map((w) => `${w.label}：${w.text}`).join("\n")}` : ""}` : "",
+    open.length ? `\n## 还没定的下一步（这次交的会替换没开始的那些）\n\n${open.map((n) => `- [${n.status === "doing" ? "在做" : "没定"}] ${n.text}`).join("\n")}` : "",
+    declined.length ? `\n## 本人说“不用”的下一步（不要再提同样的）\n\n${declined.map((n) => `- ${n.text}${n.why ? `（当时的理由：${truncate(n.why, 80)}）` : ""}`).join("\n")}` : "",
     "",
     "# 要你做的",
     "",
-    "看这件事现在卡在哪、下一步是什么，找出本人还没想到或还没顾上的：",
-    "1. 上下文：和这件事有关、还没挂到事项上的文档、群、会话、代码（search、read_source、list_conversations）。",
-    "2. 进度：对照截止时间和流程阶段，有没有要提前处理的风险（谁在等谁、哪段卡住了）。",
-    "3. 下一步：按阶段想具体的动作——该写或该跑的测试、该开始的编码交办、等着的评审、该找的人。",
-    `4. 数据：${plan ? "指标有没有异常变化、观测计划缺了什么" : "这是需求类的事就按技能 observation-plan 想观测计划"}。`,
-    "",
+    "读这条线和下面的工作项（read_item、list_items parent=…、read_source、list_conversations），弄清它现在到哪了、谁在做什么、卡在哪，然后用 submit_line_state 交：",
+    "1. now：一句“截至今天……”，120 字以内，说到哪了、卡在哪、离截止还有多远。只写有依据的事实。",
+    "2. people：这条线上的人和各自做什么（负责后端、提需求、测试、评审……），最多 8 个，不写本人。",
+    "3. weeks：本周·至今N天、上周、2周前、3周前，每周一句；那周没动静写“暂无进展”。",
+    `4. next：最多三条具体的下一步，每条写清做什么、为什么现在做（why）、依据（refs：原件引用、事项 id、阶段、指标），kind 选 read / test / code / ask / data。本人会在每天的下一步卡片上点“就这么做”或“不用”，点了就有助手去做，所以要能直接动手，不写“关注一下”“推进一下”。`,
     mode === "act"
-      ? "能只读完成的直接做：用 upsert_item 的 materials_add 把找到的材料挂上，按 observation-plan 写观测计划并用 metric_define 定义指标、metric_record 记下基线，测试清单写成工作文件。要本人拍板或会改动东西的（编码、发消息、改事项状态）只提建议。"
-      : "只提建议，不替本人动手。",
-    `最多三条建议，每条写清做什么、为什么（带依据：原件引用、指标、阶段）、本人要做时从哪开始（事项页、流程页的哪一段，或对主助手说什么）。这次运行结束后接不到本人的回复，不要写“回一句…我就开始”。用 notify 发一条给本人（urgency later；只有截止前两天内、不处理就会误期的风险用 normal），并用 write_file（mode=append，path=${assistPath(c)}，item=${item.id}）记下日期和这几条。和之前的建议比没有新东西就调用 stay_quiet。`,
+      ? "交之前，能只读完成的先做：用 upsert_item 的 materials_add 把找到的材料挂上，按 observation-plan 写观测计划并用 metric_define 定义指标、metric_record 记下基线。改代码、发消息、改事项状态都只作为下一步提出来。"
+      : "只看不动手：要做的都写成下一步。",
+    "不要用 notify，也不要在群里说话：宿主会把你交的放到工作页和每天的卡片上。和上次写的现状比没有新东西、下一步也一样时，调用 stay_quiet。",
   ].filter((x) => x !== "").join("\n");
 }

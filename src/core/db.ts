@@ -2197,6 +2197,32 @@ export const migrations: readonly string[] = [
    create index listen_problems_place on listen_problems(context_id, chat_id, topic_id, updated_at);
    create index listen_problems_chat on listen_problems(chat_id, state);
    create index listen_problems_recheck on listen_problems(recheck_at) where recheck_at is not null;`,
+  // Work lines (items/lines.ts, docs/v2/status.md “工作线”): an item hangs under another (a line, kind `line`, or a
+  // requirement a defect belongs to; three levels at most). A line says where it stands in one sentence
+  // with its people and the last weeks (`now`), and suggests its next steps (`item_next`). The key
+  // changes of every item come from several writers now: where each came from, its risk and next step,
+  // and whether the owner said it was of no use to them.
+  `alter table items add column parent_id text;
+   alter table items add column now text;
+   create index items_parent on items(parent_id);
+   create table item_next (
+     id text primary key,
+     item_id text not null references items(id),
+     text text not null,
+     why text not null default '',
+     refs text not null default '[]',
+     kind text not null default 'read',
+     status text not null default 'open',
+     run_id text,
+     created_at text not null,
+     updated_at text not null,
+     decided_at text
+   );
+   create index item_next_item on item_next(item_id, status, created_at);
+   alter table item_changes add column risk text;
+   alter table item_changes add column next text;
+   alter table item_changes add column origin text not null default 'follow';
+   alter table item_changes add column noise integer not null default 0;`,
 ];
 
 export type Db = DatabaseSync;

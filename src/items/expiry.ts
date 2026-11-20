@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { now, truncate, localStamp } from "../core/util.ts";
 import { getItem, isClosed, itemEvents, listItems, upsertItem, type Item, type ItemKind } from "./store.ts";
+import { hasOpenChildren } from "./tree.ts";
 
 /**
  * Items close themselves, so the owner never has to tick off what they already handled.
@@ -19,7 +20,7 @@ import { getItem, isClosed, itemEvents, listItems, upsertItem, type Item, type I
  */
 
 const DAY = 86_400_000;
-export const kindLabel: Record<ItemKind, string> = { todo: "待办", decision: "待决定", watch: "关注", waiting: "等待回复", reminder: "提醒" };
+export const kindLabel: Record<ItemKind, string> = { todo: "待办", decision: "待决定", watch: "关注", waiting: "等待回复", reminder: "提醒", line: "工作线" };
 
 const kv = (app: App, key: string) => one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value ?? null;
 const setKv = (app: App, key: string, value: string) => run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", key, value);
@@ -52,7 +53,9 @@ export function itemExpiry(app: App, item: Item): Expiry | null {
     const anchor = item.remindAt ?? item.dueAt ?? reminded;
     if (anchor) return { at: new Date(Date.parse(anchor) + days.reminder * DAY).toISOString(), text: `提醒时间过后 ${days.reminder} 天` };
   }
-  const period = days[item.kind === "reminder" ? "todo" : item.kind];
+  // A work line lasts while something under it is still open; with nothing left it goes by a todo's period.
+  if (item.kind === "line" && hasOpenChildren(app, item.id)) return null;
+  const period = days[item.kind === "reminder" || item.kind === "line" ? "todo" : item.kind];
   const base = Date.parse(lastActivity(app, item)) + period * DAY;
   const anchor = item.dueAt ?? item.remindAt;
   const held = anchor ? Date.parse(anchor) + DAY : 0;

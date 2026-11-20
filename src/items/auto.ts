@@ -23,7 +23,7 @@ import { addItemEvent, getItem, upsertItem, type Item, type ItemKind } from "./s
 
 export const CANDIDATE_DAYS = 3;
 const DAY = 86_400_000;
-const KIND: Record<ItemKind, string> = { todo: "待办", decision: "待决定", watch: "关注", waiting: "等待回复", reminder: "提醒" };
+const KIND: Record<ItemKind, string> = { todo: "待办", decision: "待决定", watch: "关注", waiting: "等待回复", reminder: "提醒", line: "工作线" };
 const flat = (s: string, n: number) => truncate(s.replace(/\s+/g, " ").trim(), n);
 const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
@@ -109,6 +109,8 @@ export type GateVerdict = { keep: boolean; how: string };
 
 /** Decide whether an auto item is made at once or as a candidate. */
 export async function gateItem(app: App, p: GateInput, signal?: AbortSignal): Promise<GateVerdict> {
+  // A work line is the owner's to make (items/lines.ts: by hand, through the API, or from the nightly proposal card).
+  if (p.kind === "line") throw new HttpError(403, "工作线只由本人建，后台运行不能自己建");
   let failed = "";
   try {
     const r = await decideScene(app, "item", await gateMaterial(app, p), { type: "choice", instructions: INSTRUCTIONS, options: OPTIONS }, { timeoutMs: 20_000, signal, ref: p.runId ?? undefined });

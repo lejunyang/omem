@@ -21,6 +21,20 @@ updated: 2026-11-20
 
 - `learnFromHistory`（`src/channels/listen-coach.ts`）和 `POST /api/listen/:id/learn {chats, days}`：给定群里本人最近 N 天的回答记成关注的案例（引用的那条，或两小时内别人最近的一句），去重，够 5 条排 listen-coach。用于新建值班关注时拿已经结了的工单群先学一版经验。测试在 `test/listen.test.ts`。
 
+## 工作线（二）：每条线的现状和下一步、每晚提议、工作页接口（11-20 夜）
+
+- 原来的“主动推进”改成看一条线的现状（`src/channels/listen-assist.ts`）：只看顶层事项的关注，任务带线和下面各项、`lineTimeline`、上次的现状、本人说“不用”的下一步；运行用角色工具 `submit_line_state` 交 `now`（存进 `items.now`）和最多三条下一步（表 `item_next`，旧的没开始的变 `expired`），不再 notify、不再写 `推进.md`。`POST /api/work/:id/refresh` 马上看一次。
+- 每天一张下一步卡片（`src/items/lines.ts` 的 `lineNextDue`，心跳里，`notify.laterTimes` 最早的时间或 10:00）：各条线一起，每条“就这么做 / 不用”（处理器 `line-next`）。就这么做起一轮 `agent`（lane `line-next:<线>`，不能发消息、拉人、建规则，不是 code 的不能交办编码），结束后标 done、结论进线的关注会话；不用记下，下次看这条线时读到。
+- 每晚的 work-state 多了 `propose_lines`（`roles/work-state.md`）：对得上已有线的补材料、挂事项；新的一晚一张卡（处理器 `line-propose`：建 / 不用 / 并进某条），“不用”两周内不再问。
+- 工作页接口 `src/items/work-http.ts`：`GET /api/work`、`/api/work/activities`、`/api/work/:id`，`PUT /api/items/:id/parent`、`/api/item-next/:id`、`/api/item-changes/:id/noise`，都只给本人。网页还没做。
+
+## 工作线（一）：事项上下层、关注只建在顶层、关键变化多个来源（11-20 夜）
+
+- 事项多了 `parent_id` 和类型 `line`（工作线）：需求、缺陷、评审挂在线下，缺陷可挂在需求下，最多三层（`src/items/tree.ts` 的 `checkParent` / `writeParent`，`src/items/parent.ts` 的 `setParent`）。`upsert_item` 的 `parent`，`list_items` 写出上层和下面几件、可按 `parent` 过滤，`read_item` 带 `parent` / `children`。工作线只由本人建：后台运行建 `line` 在工具和 `items/auto.ts` 的门上都被拒；线下还有没结的事项时不自动过期。
+- 关注只建在顶层（`src/channels/listen-items.ts`）：`itemChats` 连下面各项的群；子事项开始流程建或同步的是顶层的关注；`foldChildContexts`（启动和挂上层之后，幂等）把子事项原来关注的案例和在跟的问题搬到顶层，原来的暂停。
+- `item_changes` 多了 `risk`、`next`、`origin`、`noise`，类型多了 stage / result / owner / resolved。宿主自己写、只记不问的来源：流程阶段做完 / 卡住 / 等本人（`flows/store.ts changeStage`）、指标越过门槛（`data/metrics.ts`）、在跟的问题有了结论（`channels/listen-problems.ts`）。`src/items/changes.ts` 的 `lineTimeline` 把一条线和下面各项的变化合在一起。
+- 卡片：去掉 `item:act` 和 `notify` 的 `actions`；流程进度卡只在转到等本人时发，之后改那一张，链接 `#/work/<事项>`；事项卡发出时记下卡片，`replaces` 真去改原卡片（`src/channels/lark-bot.ts`）。
+
 ## 事项的建议卡不再带“已处理 / 忽略”；后台运行结束后才收到的回答接着做（11-20 夜）
 
 - `notify` 多了 `plain`：关于一件事项、但不是催它做完的通知（推进建议、指标变化、截止时间变了）不带“已处理 / 忽略”。这两个按钮会把整件事项标完成或取消，只留给提醒。推进运行（`input.listenAssist`）发的事项通知由 `notify` 工具自动标 `plain`。`src/core/notify.ts`、`src/channels/item-notification.ts`、`src/agents/tools.ts`、`src/data/metrics.ts`、`src/flows/follow.ts`。

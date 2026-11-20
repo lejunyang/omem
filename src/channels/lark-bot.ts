@@ -468,10 +468,13 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const earlier = n.replaces ? notificationCardOf(app, n.replaces) : null;
     const images = n.images?.length ? await cardImages(app, n) : [];
     if (earlier) {
-      const { updateLarkCard } = await import("./lark-send.ts");
+      const { updateLarkCard, recordInteraction } = await import("./lark-send.ts");
       try {
         await updateLarkCard(earlier.messageId, notificationCard(app, n, images), earlier.bot);
         setNotificationCard(app, n.id, earlier.messageId, earlier.bot);
+        // An item's card now stands for the newer notification: its buttons act on that one.
+        if (n.entity === "item" && n.entityId && !n.digest)
+          recordInteraction(app, { messageId: earlier.messageId, chatId: ("chatId" in to ? to.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId }, ...(earlier.bot ? { bot: earlier.bot } : {}) });
         return;
       } catch (e) {
         console.warn(`[omem] 更新原通知卡片失败，改为发新卡片：${(e as Error).message}`);
@@ -522,11 +525,12 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       return;
     }
     if (n.entity === "item" && n.entityId) {
-      // Actionable item card: 已处理 / 忽略 resolve the item directly, no agent turn.
+      // Actionable item card: 已处理 / 忽略 resolve the item directly, no agent turn. Kept as the
+      // notification's card, so a newer state (`replaces`: a flow's progress) edits it instead of pinging.
       const { recordInteraction } = await import("./lark-send.ts");
       const sent = await sendLark(target, { card });
       recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId } });
-      markPushed(app, n.id, "lark", sent.messageId);
+      setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
       return;
     }
     const sent = await sendLark(target, { card });

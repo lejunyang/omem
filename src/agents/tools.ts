@@ -40,7 +40,8 @@ import { checkBrief } from "./brief.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
-import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
+import { ITEM_KINDS, listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
+import { lineStateSchema, proposeSchema } from "../items/line-schemas.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
 import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFolder, relocateFolder, removeFolder } from "../memory/folders.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
@@ -1600,10 +1601,11 @@ def({
 
 def({
   name: "list_items",
-  description: "查看事项（待办、等待回复、提醒、关注、待决定）及其最近进展。active 不含 expired（一段时间没有进展、自动过期的）和 candidate（助手自己建、还等本人决定要不要的候选）；新材料和一件已过期的事项有关时，用 status=expired 找到它再 upsert_item 记进展，它会重新打开，不要另建。自己想新建前可以用 status=candidate 看看是不是已经在候选里。",
+  description: "查看事项（待办、等待回复、提醒、关注、待决定、工作线）及其最近进展。每件写出它挂在哪件下面（上层）和下面有几件。active 不含 expired（一段时间没有进展、自动过期的）和 candidate（助手自己建、还等本人决定要不要的候选）；新材料和一件已过期的事项有关时，用 status=expired 找到它再 upsert_item 记进展，它会重新打开，不要另建。自己想新建前可以用 status=candidate 看看是不是已经在候选里。parent 只列挂在这件下面的。",
   schema: z.object({
     status: z.enum(["active", "open", "waiting", "snoozed", "done", "cancelled", "expired", "candidate", "all"]).optional(),
-    kind: z.enum(["todo", "waiting", "reminder", "watch", "decision"]).optional(),
+    kind: z.enum(ITEM_KINDS).optional(),
+    parent: z.string().optional().describe("只列挂在这件事项下面的"),
     query: z.string().optional(),
     space: z.string().optional(),
     with_timeline: z.boolean().optional(),
@@ -1612,11 +1614,13 @@ def({
     const discovery = scopeFor(ctx.app, ctx.userId ?? OWNER, (a.space === "*" && ctx.itemDiscoverySpaces !== undefined ? ctx.itemDiscoverySpaces : spacesFor(ctx, a.space)) ?? null);
     // A replay arm: items that did not exist yet are left out, and so is their later progress.
     const asOf = ctx.view?.asOf;
-    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceIds: discovery ?? undefined, userId: ctx.userId ?? "owner", limit: 100 }).filter((i) => !asOf || i.createdAt <= asOf);
+    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceIds: discovery ?? undefined, userId: ctx.userId ?? "owner", limit: 100, parentId: a.parent }).filter((i) => !asOf || i.createdAt <= asOf);
     if (!items.length) return "没有符合条件的事项。";
+    const under = new Map(all<{ parent_id: string; n: number }>(ctx.app.db, `select parent_id, count(*) n from items where parent_id in (${items.map(() => "?").join(",")}) and status not in ('done','cancelled','expired','candidate') group by parent_id`, ...items.map((i) => i.id)).map((r) => [r.parent_id, r.n]));
+    const tree = (i: { parentId: string | null; id: string }) => `${i.parentId ? ` 上层 ${i.parentId}` : ""}${under.get(i.id) ? ` 下面 ${under.get(i.id)} 件在办` : ""}`;
     return items
       .map((i) => {
-        const head = `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? ` 截止 ${i.dueAt}` : ""}${i.remindAt ? ` 提醒 ${i.remindAt}` : ""}${i.waitingOn ? ` 等待 ${i.waitingOn}` : ""}（空间 ${i.spaceId}；${(!ctx.writable || ctx.writable.includes(i.spaceId)) && canWrite(ctx.app, ctx.userId ?? OWNER, i.spaceId) ? "可写" : "只读：用 propose_item_update 路由，勿挂到其他事项"}）${i.detail ? "\n  " + truncate(i.detail, 200) : ""}`;
+        const head = `- ${i.id} [${i.kind}/${i.status}] ${i.title}${tree(i)}${i.dueAt ? ` 截止 ${i.dueAt}` : ""}${i.remindAt ? ` 提醒 ${i.remindAt}` : ""}${i.waitingOn ? ` 等待 ${i.waitingOn}` : ""}（空间 ${i.spaceId}；${(!ctx.writable || ctx.writable.includes(i.spaceId)) && canWrite(ctx.app, ctx.userId ?? OWNER, i.spaceId) ? "可写" : "只读：用 propose_item_update 路由，勿挂到其他事项"}）${i.detail ? "\n  " + truncate(i.detail, 200) : ""}`;
         if (!a.with_timeline) return head;
         return head + "\n" + itemEvents(ctx.app, i.id).filter((e) => !asOf || e.at <= asOf).slice(-6).map((e) => `    · ${localStamp(e.at, ctx.app.config.timezone)} ${e.actor}: ${truncate(e.text, 160)} [事件 ${e.id}] ${e.sourceRefs.join(" ")}`).join("\n");
       })
@@ -2318,13 +2322,29 @@ def({
 });
 
 def({
-  name: "note_item_change", description: "交代这批新内容让本次跟进的事项变了什么；每条带批次内原件的行引用，deadline 必须填 due。只给 item-follow 角色交结果。",
-  write: true, schema: z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info"]), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional(),
+  name: "note_item_change", description: "交代这批新内容让本次跟进的事项变了什么；一条只说一个变化，每条带批次内原件的行引用，deadline 必须填 due。只给 item-follow 角色交结果。",
+  write: true, schema: z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info", "stage", "result", "owner", "resolved"]).describe("scope 范围 / decision 决定 / deadline 时间 / blocker 阻塞或风险 / info 其他信息 / stage 某一段做完或卡住 / result 关键结果、数据越过门槛 / owner 负责人变了 / resolved 之前的风险解除了"), summary: z.string().trim().min(1).max(500).describe("一句话：变了什么"), detail: z.string().max(6000).optional().describe("原因和经过"), risk: z.string().trim().max(1000).optional().describe("这条变化带来的风险（没有就不填）"), next: z.string().trim().max(1000).optional().describe("接下来要做什么、谁做（没有就不填）"), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional(),
     decided: z.boolean().optional().describe("deadline：新时间是本人说的，或材料写明已经定了，填 true，截止时间直接改；scope / decision：本人自己拍板、或本人直接让助手去做的，填 true，引用里有本人那句话时直接并进、不再问本人。只是有人提议就不填，由本人定") }),
   handler: async (ctx, a) => {
     if (ctx.role !== "item-follow" || !ctx.runId) throw new HttpError(403, "只有 item-follow 能交事项变化");
     flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs);
     return JSON.stringify((await import("../flows/follow.ts")).noteItemChange(ctx.app, ctx.runId, a));
+  },
+});
+def({
+  name: "submit_line_state", description: "交这次看一条工作线（或一件顶层事项）的结果：一句“截至今天……”（now）、相关的人和各自的角色、最近几周各一句、最多三条下一步。宿主存到这条线上，下一步放进本人每天的下一步卡片；不用再通知本人。只给看工作线现状的运行交结果。",
+  write: true, schema: lineStateSchema,
+  handler: async (ctx, a) => {
+    if (!ctx.runId) throw new HttpError(403, "只有看工作线现状的运行能交");
+    return (await import("../items/lines.ts")).submitLineState(ctx.app, ctx.runId, a);
+  },
+});
+def({
+  name: "propose_lines", description: "每晚整理近况时，把本人这几周在推进的几条线交给宿主：名字、目标、相关事项、群和文档。和已有工作线对得上的（同名，或列了它下面的事项）宿主直接补材料、把没挂的事项挂上去；新的由宿主发一张卡片问本人要不要建。只给 work-state 角色交结果。",
+  write: true, schema: proposeSchema,
+  handler: async (ctx, a) => {
+    if (ctx.role !== "work-state" || !ctx.runId || (ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有每晚的近况整理能提议工作线");
+    return (await import("../items/lines.ts")).proposeLines(ctx.app, ctx.runId, a);
   },
 });
 def({
@@ -2390,11 +2410,12 @@ async function notOwnersBusiness(ctx: ToolContext, refs: string[]) {
 def({
   name: "upsert_item",
   description:
-    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。会话和群聊也是这件事“在哪里进行”：你写了事项，宿主会把它关联到你这次所在的会话或群；同一件事在别的会话里也在谈，用 materials_add（kind=conversation，或群聊原件 kind=source）关联过去，不是同一件事用 materials_remove 取消。不是本人这一轮亲口要你建的（整理、巡检、简报、有人找你、规则、唤醒后的轮次）新建时必须写 why；宿主再判断一次，把握不够的先作为候选（candidate：不提醒、不进列表），由本人在每天的事项清点或事项页上决定留不留。",
+    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定 / line 工作线（本人这几周在推进的一条线，只有本人这一轮亲口要时才建）。parent 把事项挂到上层：需求、缺陷、评审挂到它所属的工作线下，缺陷也可以挂在它的需求下，最多三层；null 移出。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。会话和群聊也是这件事“在哪里进行”：你写了事项，宿主会把它关联到你这次所在的会话或群；同一件事在别的会话里也在谈，用 materials_add（kind=conversation，或群聊原件 kind=source）关联过去，不是同一件事用 materials_remove 取消。不是本人这一轮亲口要你建的（整理、巡检、简报、有人找你、规则、唤醒后的轮次）新建时必须写 why；宿主再判断一次，把握不够的先作为候选（candidate：不提醒、不进列表），由本人在每天的事项清点或事项页上决定留不留。",
   write: true,
   schema: z.object({
     id: z.string().optional(),
-    kind: z.enum(["todo", "waiting", "reminder", "watch", "decision"]).optional(),
+    kind: z.enum(ITEM_KINDS).optional(),
+    parent: z.string().nullable().optional().describe("上层事项的 id（它属于的工作线，或缺陷所属的需求）；null 从上层移出。最多三层，只能挂到本人自己的事项下"),
     title: z.string().optional(),
     why: z.string().trim().max(400).optional().describe("新建、且不是本人这一轮亲口要的事项时必填：一句话说本人为什么会要它——本人自己的话并带引用（src:…#L… 或 msg:…），或它属于本人的哪个「关注」（写关注的名字），或它服务本人近况里正在推进的哪条线。说不出来就不要建：有价值的结论写进记忆或页面"),
     detail: z.string().optional(),
@@ -2430,6 +2451,14 @@ def({
     if (!existing) await notOwnersBusiness(ctx, a.source_refs ?? []);
     // Not the owner's own turn: a new item has to say why the owner would want it, and may start as a candidate (items/auto.ts).
     const onItsOwn = !ownTurn(ctx);
+    // A work line is the owner's to make (or to take from the nightly proposal card): never on its own.
+    if (onItsOwn && a.kind === "line" && existing?.kind !== "line") throw new HttpError(403, "工作线只由本人建：这不是本人这一轮亲口要的。觉得这几件事该成一条线，在给本人的话里提出来（每晚的近况整理也会提议）");
+    if (a.parent) {
+      const p = getItem(ctx.app, a.parent);
+      inScope(ctx, p.spaceId, "上层事项");
+      if (p.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能挂到本人自己的事项下");
+      if (existing) (await import("../items/tree.ts")).checkParent(ctx.app, existing.id, a.parent);
+    }
     if (existing?.status === "candidate" && onItsOwn && a.status)
       throw new HttpError(403, `「${existing.title}」是候选事项，留不留由本人定（每天的事项清点或事项页）。可以记进展，不能改它的状态`);
     // The owner's own turn keeping or dropping an item the assistant made on its own is the owner's choice (items/auto-cases.ts).
@@ -2447,9 +2476,9 @@ def({
     }
 
     // Only adding or removing materials leaves the item's fields (and its timeline) as they are.
-    const { materials_add: materialsAdd, materials_remove: materialsRemove, why: _why, ...fields } = a;
+    const { materials_add: materialsAdd, materials_remove: materialsRemove, why: _why, parent, ...fields } = a;
     const onlyMaterials = existing && Object.entries(fields).every(([k, v]) => k === "id" || k === "space" || v === undefined);
-    const item = onlyMaterials ? existing : upsertItem(
+    let item = onlyMaterials ? existing : upsertItem(
       ctx.app,
       a.id,
       {
@@ -2473,6 +2502,12 @@ def({
       ctx.runId ?? undefined,
     );
     if (gate && a.why) (await import("../items/auto.ts")).markAuto(ctx.app, item.id, a.why, gate, ctx.runId);
+    // Hung under a line (or a requirement), or taken out: items/parent.ts checks the levels and folds its 关注.
+    let parentLine = "";
+    if (parent !== undefined && (parent ?? null) !== item.parentId) {
+      item = (await import("../items/parent.ts")).setParent(ctx.app, item.id, parent, ctx.actor, ctx.runId ?? undefined);
+      parentLine = parent ? `\n归到 ${parent}「${getItem(ctx.app, parent).title}」下面。` : "\n已从上层移出。";
+    }
     const { addMaterials, removeMaterials } = await import("../items/materials.ts");
     const added = materialsAdd?.length ? addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
     const removed = materialsRemove?.length ? removeMaterials(ctx.app, item.id, materialsRemove, ctx.userId ?? OWNER, ctx.actor) : 0;
@@ -2482,7 +2517,7 @@ def({
     const { itemExpiry } = await import("../items/expiry.ts");
     const expiry = existing ? null : itemExpiry(ctx.app, item);
     const candidate = !existing && item.status === "candidate" ? `\n先作为候选（${gate?.how ?? ""}）：不提醒、不进事项列表，本人在每天的事项清点或事项页上决定留不留，${(await import("../items/auto.ts")).CANDIDATE_DAYS} 天没答就放下。给本人的话里不要说“已建事项、到时提醒”。` : "";
-    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${expiry ? `（期限：${expiry.text}，之后自动过期）` : ""}${candidate}${materialsLine}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
+    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${expiry ? `（期限：${expiry.text}，之后自动过期）` : ""}${candidate}${parentLine}${materialsLine}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
   },
 });
 
@@ -2530,7 +2565,7 @@ def({
 
 def({
   name: "read_item",
-  description: "读取一件事项的全貌：完整字段、当前来源、全部时间线、材料、工作文件，以及它在哪些会话和群里进行（places：每处最近的一句话或摘要）、正在为它跑的运行（runs）。纠正前先读。跨空间发现仍只读。",
+  description: "读取一件事项的全貌：完整字段、当前来源、全部时间线、材料、工作文件，以及它在哪些会话和群里进行（places：每处最近的一句话或摘要）、正在为它跑的运行（runs）、它的上层（parent）和挂在下面的事项（children）；工作线另有“现在”（now）和还没定的下一步（next）。纠正前先读。跨空间发现仍只读。",
   schema: z.object({ item_id: z.string() }),
   handler: async (ctx, a) => {
     const item = getItem(ctx.app, a.item_id);
@@ -2544,7 +2579,11 @@ def({
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
     const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER).filter((r) => r.id !== ctx.runId);
-    return JSON.stringify({ item, flow: (await import("../flows/engine.ts")).flowView(ctx.app, item.id), events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
+    // Where it hangs and what hangs under it (items/tree.ts); a line's suggested next steps (items/lines.ts).
+    const parent = item.parentId ? one<{ id: string; title: string; kind: string; status: string }>(ctx.app.db, "select id, title, kind, status from items where id = ?", item.parentId) ?? null : null;
+    const children = all<{ id: string; title: string; kind: string; status: string; due_at: string | null }>(ctx.app.db, "select id, title, kind, status, due_at from items where parent_id = ? order by created_at", item.id).map((c) => ({ id: c.id, title: c.title, kind: c.kind, status: c.status, dueAt: c.due_at }));
+    const next = all<{ id: string; text: string; why: string; kind: string; status: string; created_at: string }>(ctx.app.db, "select id, text, why, kind, status, created_at from item_next where item_id = ? and status in ('open','doing') order by created_at desc limit 10", item.id);
+    return JSON.stringify({ item, ...(parent ? { parent } : {}), ...(children.length ? { children } : {}), ...(next.length ? { next } : {}), flow: (await import("../flows/engine.ts")).flowView(ctx.app, item.id), events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
   },
 });
 def({
@@ -3188,6 +3227,8 @@ def({
     if ((ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "只有本人可以设置关注");
     const L = await import("../channels/listen.ts");
     const I = await import("../channels/listen-items.ts");
+    // A work item under a line is followed in the line's 关注 (items/tree.ts).
+    if (a.item) a = { ...a, item: (await import("../items/tree.ts")).rootOf(ctx.app, a.item) };
     let prev = a.context ? L.requireContext(ctx.app, a.context) : a.item ? L.itemContext(ctx.app, a.item) : null;
     if (a.item && prev && prev.itemId !== a.item) throw new HttpError(400, `关注 ${prev.id} 不是事项 ${a.item} 的`);
     // A matter's 关注: its groups are the item's linked chats.

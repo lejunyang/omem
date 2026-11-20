@@ -186,6 +186,9 @@ async function tellChange(app: App, m: Metric, lines: string[]) {
     try {
       const { addItemEvent } = await import("../items/store.ts");
       addItemEvent(app, m.itemId, "note", `指标变化：${lines.join("；")}`, "agent");
+      // A key result on the line's timeline (items/changes.ts), noted only.
+      const { addChange } = await import("../items/changes.ts");
+      addChange(app, { itemId: m.itemId, type: "result", origin: "metric", summary: `指标变化：${truncate(lines[0] ?? m.name, 200)}${lines.length > 1 ? ` 等 ${lines.length} 处` : ""}`, detail: lines.length > 1 ? lines.join("\n") : m.description ? truncate(m.description, 300) : null });
     } catch {
       // The item may be gone; the notification still says it.
     }
