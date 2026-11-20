@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setTimeZone } from "../web/src/lib/time.ts";
-import { byMonth, byWeek, changeTone, dayKeyLabel, dayLabel, endedLine, flatChildren, refsMarkdown, shortDay, stageTone, waitsForOwner, weekColumns, weekLabel, type ChangeLite, type Child } from "../web/src/lib/work.ts";
+import { byMonth, byWeek, changeTone, dayKeyLabel, dayLabel, endedLine, flatChildren, otherRefs, refsMarkdown, shortDay, stageTone, waitsForOwner, weekColumns, weekLabel, type ChangeLite, type Child } from "../web/src/lib/work.ts";
+import { evidenceLink, evidenceWord } from "../web/src/lib/flow.ts";
 
 // 2026-11-20 is a Friday; 15:00 in Shanghai.
 const now = Date.parse("2026-11-20T07:00:00Z");
@@ -54,6 +55,22 @@ describe("工作页的呈现（web/src/lib/work）", () => {
 
   it("来源只把 src / mem / msg 写成引用链接", () => {
     expect(refsMarkdown(["src:s1#L3-L9", "r0abc", "mem:m1"])).toBe("[原件 1](src:s1#L3-L9)　[记忆 2](mem:m1)");
+  });
+
+  it("其余的来源：事项和运行按服务端给的标题链接，方案链到方案，认不出的只写字", () => {
+    const item = "i0mwabcdef0123456789", runId = "r0mwabcdef0123456789";
+    const shown = otherRefs([item, `code-work:${runId}`, "design:d1", "i0mwzzzzzz9999999999", "github:pr:12", "src:s1"], {
+      [item]: { kind: "item", id: item, title: "一个很长很长很长很长很长很长很长很长很长很长很长很长的事项标题" },
+      [`code-work:${runId}`]: { kind: "run", id: runId, title: "编码交办" },
+    });
+    expect(shown.map((o) => o.link)).toEqual([`#/work/${item}`, `#/runs/${runId}`, "#/design/d1", null, null]);
+    expect(shown[0].label.length).toBeLessThanOrEqual(43);
+    expect(shown[0].title).toContain("事项标题");
+    expect(shown[1].label).toBe("运行：编码交办");
+    // The flow page's evidence: a run, a plan or an item opens; a platform object or a word is text.
+    expect([runId, `run:${runId}`, `code-work:${runId}`, "design:d1", item, `item:${item}`, "github:pr:12", "编码阶段"].map(evidenceLink))
+      .toEqual([`#/runs/${runId}`, `#/runs/${runId}`, `#/runs/${runId}`, "#/design/d1", `#/work/${item}`, `#/work/${item}`, null, null]);
+    expect([runId, item, "design:d1"].map(evidenceWord)).toEqual(["运行", "事项", "方案"]);
   });
 
   it("已结束的线按本人时区的月份分组，一行写小结的第一句，没有就写原因", () => {

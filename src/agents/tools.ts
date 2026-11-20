@@ -3181,24 +3181,24 @@ def({
   name: "set_chat_watch",
   description:
     "设一个「关注」：之后它的群里的消息按批交给你（spec=assistant，默认）或一个更合适的 Agent 档案，在一个上下文里读，有能回答的、要排查的、要本人知道的再动手，其余不管。本人说“帮我盯一下这个群”“这个群有问题你先帮我排查”“这几个群都是 X 需求的，帮我看着”时用；长期的分工（报警群→告警 Agent）也用它。" +
-    "一个关注可以有几个群（chat_id 加 chats），一个群也可以在几个关注里（不同的事分散在几个群）：同一条消息只由最具体的那个关注回复。改已有的关注传 context（关注 id；只传 chat_id 时改这个群唯一的那个）。" +
-    "关注一件事传 item（事项 id，不传 chat_id）：群就是事项关联的群，默认只读（新内容记成这件事的变化），本人要你在这些群里回答这件事的问题时再给 reply 和 brief。" +
-    "note 写本人要的东西（原话）；until 按本人的说法定（2h、3d、ISO 时间；本人说长期才用 never，默认 3d）；batch_minutes 是攒多久看一次（默认 10，@本人或机器人的消息 30 秒内就看）。" +
+    "一个关注可以有几个群（chat_id 加 chats），一个群也可以在几个关注里（不同的事分散在几个群）：同一条消息只由最具体的那个关注回复。改已有的关注传 context：关注 id，或本人叫它的名字（“把退款值班的关注改成只看 @ 我的”传 context=退款值班）；只传 chat_id 时改这个群唯一的那个。本人在网页上关注页的“设置”里能调的，这里都能改，本人对你说一句就行。" +
+    "关注一件事传 item（事项 id）：群默认是这件事和下面各项关联的群，默认只读（新内容记成这件事的变化），本人要你在这些群里回答这件事的问题时再给 reply 和 brief。本人要多看一个群传 chat_id，要它只看某几个群传 chats（完整列表，没列的就不看了）：之后照这个读，事项的材料变了也不会改回去。" +
+    "note 写本人要的东西（原话）；until 按本人的说法定（2h、3d、ISO 时间；本人说长期才用 never，默认 3d）；batch_minutes 是来了新消息后等几分钟、攒成一批再看（默认 10；@ 本人或机器人的 30 秒内就看；没有新消息不会看）。" +
     "要在群里回复的（reply 为 draft、auto）必须带 brief：先读这些群最近的消息（read_conversation 或 lark_chat_history），按本人的话拟出要处理哪些消息、哪些不处理、什么样的结论才值得发；宿主把它发给本人确认（只有本人看得到的卡片），本人可以改。" +
     "reply=auto 也先试运行：回复先是只有本人看得到的草稿，本人连续照发几条后宿主会问要不要直接发；只有本人明确说“不用给我看、直接发”时才传 trial=false。" +
-    "其余是可调的做法，本人没说就不传（用默认）：listen（addressed 只看找本人或机器人的 / relevant 预筛后看相关的，默认 / all 全看）、depth（answer 只答能直接答的 / investigate 值得查的主动查，默认）、owner_asks（问本人或要本人拍板的：notify 只私下告诉本人，默认 / draft 拟草稿给本人 / answer 可以直接答）、others_asks（找别人或别的机器人的：leave 不接，默认 / handle）、backlog（关注开始前没人答的问题：off / 24h 默认 / 72h）、strictness（0.5–0.95，越高越少打扰）、per_day（每天最多处理几批，默认 20）、meetings（群里开会时：off / ask 问本人要不要进会，默认 / listen 直接旁听）。" +
+    "其余是可调的做法，本人没说就不传（用默认）：listen 看哪些消息（addressed 只看 @ 本人或机器人的 / relevant 和说明相关的，默认 / all 每条都看）、prefilter（看相关的时先用小模型筛一遍：false 每批都交给你）、depth 查到什么程度（answer 能直接答的才答，不去查 / investigate 值得查的去查技能、日志、代码，默认）、owner_asks 问本人或要本人拍板的（notify 只私下告诉本人，默认 / draft 拟一条回复给本人看 / answer 可以替本人答）、others_asks 找别人或别的机器人的（leave 不管，默认 / handle 能帮上也处理）、backlog 关注开始前还没人答的（off 不管 / 24h 最近一天的，默认 / 72h 最近三天的）、strictness 打扰门槛（0.5–0.95，越高越少打扰）、per_day 每天最多看几批（默认 20，@ 本人或机器人的不受限）、meetings 群里开会时（off 不管 / ask 问本人要不要进会，默认 / listen 直接进会旁听）、assist 事情型关注主动推进（off / suggest / act）。" +
     "本人说“别自动回了”是改 reply（draft 或 none），不是 remove；说不用关注了才 remove=true。机器人不在群里时回复不了、也收不到实时消息：先用 lark_invite（bots: [\"self\"]）把 omem 的机器人拉进群。",
   write: true,
   schema: z.object({
     chat_id: z.string().optional().describe("群 chat_id（oc_…）：当前群从会话里看，分享的群在消息里，也可用 list_lark_chats 查"),
     chats: z.array(z.string()).max(20).optional().describe("同一个关注的其余群（合成一个上下文）；改已有关注时传完整的群列表"),
-    context: z.string().optional().describe("要改的关注 id（ctx…）"),
-    item: z.string().optional().describe("事项 id：设这件事的关注（群取事项关联的群）"),
+    context: z.string().optional().describe("要改的关注：id（ctx…）或本人叫它的名字"),
+    item: z.string().optional().describe("事项 id：设这件事的关注（群默认取事项关联的群）"),
     name: z.string().max(80).optional().describe("关注的名字，例如“单 B 值班”“异常通知需求”；不传用群名（事项用事项标题）"),
     spec: z.string().optional().describe("谁来处理：assistant（主助手，默认）或 Agent 档案名"),
     note: z.string().optional().describe("本人要的东西，原话"),
     until: z.string().optional().describe("到什么时候：2h、3d、ISO 时间或 never；默认 3d"),
-    batch_minutes: z.number().min(0).max(24 * 60).optional().describe("攒多少分钟的消息看一次，默认 10"),
+    batch_minutes: z.number().min(0).max(24 * 60).optional().describe("来了新消息后等几分钟、攒成一批再看，默认 10；0 是来一条看一条"),
     reply: z.enum(["none", "draft", "auto"]).optional(),
     brief: z
       .object({
@@ -3229,12 +3229,16 @@ def({
     const I = await import("../channels/listen-items.ts");
     // A work item under a line is followed in the line's 关注 (items/tree.ts).
     if (a.item) a = { ...a, item: (await import("../items/tree.ts")).rootOf(ctx.app, a.item) };
-    let prev = a.context ? L.requireContext(ctx.app, a.context) : a.item ? L.itemContext(ctx.app, a.item) : null;
+    // The owner names a 关注 the way they call it (“退款值班的关注”): its id or its name.
+    let prev = a.context ? L.contextByIdOrName(ctx.app, a.context) : a.item ? L.itemContext(ctx.app, a.item) : null;
     if (a.item && prev && prev.itemId !== a.item) throw new HttpError(400, `关注 ${prev.id} 不是事项 ${a.item} 的`);
     // A matter's 关注: its groups are the item's linked chats.
     const item = a.item ? getItem(ctx.app, a.item) : prev?.kind === "item" && prev.itemId ? getItem(ctx.app, prev.itemId) : null;
     if (item && item.userId !== "owner") throw new HttpError(403, "只能关注本人自己的事项");
-    if (item && (a.chat_id || a.chats)) throw new HttpError(400, "事情型关注的群跟着事项走：要加群，先用 upsert_item 的 materials_add 把群关联到这件事");
+    // The owner adds a group to it (chat_id) or says which groups it reads (chats): kept beyond the items' own (listen-items.ts).
+    const itemGroups = item && (a.chat_id || a.chats)
+      ? I.itemChatsPatch(ctx.app, item.id, [...(a.chats ?? I.contextChats(ctx.app, item.id, prev)), ...(a.chat_id ? [a.chat_id] : [])])
+      : null;
     if (!prev && !item && a.chat_id) {
       const mine = L.contextsOfChat(ctx.app, a.chat_id).filter((c) => c.kind === "place");
       if (mine.length > 1 && (a.remove || !a.chats)) throw new HttpError(400, `这个群在几个关注里，传 context 指明改哪个：${mine.map((c) => `${c.id}「${c.name}」`).join("、")}`);
@@ -3249,7 +3253,7 @@ def({
       return `不再关注「${prev.name}」（案例和经验留着，在 连接 → 飞书会话 里可以重新打开）。`;
     }
     const kind = prev?.kind ?? (item ? "item" : "place");
-    const chats = item ? I.itemChats(ctx.app, item.id) : [...new Set([...(a.chat_id ? [a.chat_id] : []), ...(a.chats ?? [])])];
+    const chats = item ? (itemGroups?.chats ?? I.contextChats(ctx.app, item.id, prev)) : [...new Set([...(a.chat_id ? [a.chat_id] : []), ...(a.chats ?? [])])];
     if (!prev && !item && !chats.length) throw new HttpError(400, "要关注哪个群：传 chat_id（几个群再加 chats）");
     const { groupName, seedContext } = await import("../channels/lark-watch.ts");
     // A matter's 关注 lasts as long as the matter unless the owner said otherwise.
@@ -3291,6 +3295,7 @@ def({
         expiresAt,
         // Set by the owner's word: no longer only there for a flow.
         ...(item ? { itemId: item.id, byFlow: false } : {}),
+        ...(itemGroups ? { added: itemGroups.added, dropped: itemGroups.dropped } : {}),
         ...(prev && prev.status !== "active" ? { status: "active" as const } : {}),
       },
       (id) => groupName(ctx.app, id),

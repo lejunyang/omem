@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { truncate } from "../core/util.ts";
+import { HttpError, truncate, zonedParts } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { getItem, isClosed } from "../items/store.ts";
 import { descendantIds, rootOf } from "../items/tree.ts";
@@ -45,7 +45,31 @@ export function itemChats(app: App, itemId: string): string[] {
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
 
-/** Make the item's 关注 or change it; its groups are always the item's. */
+/** The groups a matter's 关注 reads: its items' linked chats, with what the owner added there and without what they took out. */
+export function contextChats(app: App, itemId: string, c?: Pick<ListenContext, "added" | "dropped"> | null): string[] {
+  const dropped = new Set(c?.dropped ?? []);
+  return [...new Set([...itemChats(app, itemId), ...(c?.added ?? [])])].filter((x) => !dropped.has(x));
+}
+
+/**
+ * The owner sets which groups a matter's 关注 reads (the line page's 人和群, PUT /api/listen/:id, set_chat_watch):
+ * what the items do not link is kept as added, what they link but is left out as dropped, so the next sync
+ * with the items keeps the choice. An added group must be a group capture knows (not a private chat).
+ */
+export function itemChatsPatch(app: App, itemId: string, chats: string[]): { chats: string[]; added: string[]; dropped: string[] } {
+  const want = [...new Set(chats.map((x) => x.trim()).filter(Boolean))];
+  const base = itemChats(app, itemId);
+  const added = want.filter((x) => !base.includes(x));
+  for (const chat of added) {
+    const kind = one<{ kind: string }>(app.db, "select kind from lark_cursors where chat_id = ?", chat)?.kind;
+    const known = kind !== undefined || !!one(app.db, "select 1 from sources where uri = ? and kind = 'chat' and deleted_at is null", `lark:${chat}`);
+    if (!/^oc_[\w-]+$/.test(chat) || !known) throw new HttpError(400, `没有采集过这个群：${chat}`);
+    if (kind && PRIVATE.has(kind)) throw new HttpError(400, `${chat} 是私聊，关注只读群`);
+  }
+  return { chats: want, added, dropped: base.filter((x) => !want.includes(x)) };
+}
+
+/** Make the item's 关注 or change it; its groups are always the item's (with the owner's additions and removals). */
 function upsertItemContext(app: App, itemId: string, patch: Partial<ContextInput>): ListenContext {
   const item = getItem(app, itemId);
   const prev = itemContext(app, itemId);
@@ -53,7 +77,7 @@ function upsertItemContext(app: App, itemId: string, patch: Partial<ContextInput
     id: prev?.id,
     kind: "item",
     itemId,
-    chats: itemChats(app, itemId),
+    chats: contextChats(app, itemId, prev),
     ...(prev ? {} : { name: item.title, spaceId: item.spaceId, expiresAt: null }),
     ...patch,
   });
@@ -68,7 +92,7 @@ export function syncItemContext(app: App, c: ListenContext): ListenContext {
   if (status && isClosed(status)) return c.status === "active" ? saveContext(app, { id: c.id, kind: "item", status: "paused" }) : c;
   let chats: string[];
   try {
-    chats = itemChats(app, c.itemId);
+    chats = contextChats(app, c.itemId, c);
   } catch {
     // The item is gone: its 关注 keeps what it had; nothing follows it any more.
     return c;
@@ -172,6 +196,19 @@ export function foldChildContexts(app: App) {
 const STAGE_STATE: Record<string, string> = { doing: "进行中", gated: "等本人确认", blocked: "卡住", stale: "待复核" };
 
 /** A few lines on where the matter stands, for its handler: the item, its flow's stage, the latest changes. */
+/**
+ * The line a matter's 关注 is on has launched and is being watched (items/lifecycle.ts, phase `watching`):
+ * one line for whoever reads its groups (the handler, item-follow) on what still matters. Empty otherwise.
+ */
+export function watchingNote(app: App, itemId: string): string {
+  let root: string;
+  try { root = rootOf(app, itemId); } catch { return ""; }
+  const r = one<{ phase: string | null; watch_until: string | null }>(app.db, "select phase, watch_until from items where id = ?", root);
+  if (r?.phase !== "watching") return "";
+  const until = r.watch_until ? (() => { const p = zonedParts(r.watch_until!, app.config.timezone); return `，观察到 ${p.month} 月 ${p.day} 日`; })() : "";
+  return `这件事已经上线，在观察期${until}：只关心报错、用户反馈和数据异常，普通讨论不用处理。`;
+}
+
 export function itemStateText(app: App, itemId: string): string {
   let item;
   try {

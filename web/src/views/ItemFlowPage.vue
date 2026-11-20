@@ -10,7 +10,7 @@ import ShotGrid from "../components/ShotGrid.vue";
 import Skeleton from "../components/Skeleton.vue";
 import FlowWaiting from "../components/FlowWaiting.vue";
 import type { Material } from "../components/ItemMaterials.vue";
-import { evidenceLink, ownerTurn, stageWords, testWords, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
+import { evidenceLink, evidenceWord, ownerTurn, stageWords, testWords, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
 import { refAction } from "../lib/refs";
 import { fmtTime, openCitation, relTime, state } from "../store";
 
@@ -62,7 +62,9 @@ const others = (list: Shot[] | undefined) => (list ?? []).filter((a) => a.kind !
 const when = (s: Stage) => s.doneAt ? `${fmtTime(s.doneAt)} 完成` : s.enteredAt ? `${relTime(s.enteredAt)}开始` : "";
 const dot = (s: Stage) => s.state === "done" ? "ok" : ownerTurn(s) || s.state === "blocked" ? "warn" : s.state === "doing" ? "accent" : "quiet";
 const sources = computed(() => (detail.value?.materials ?? []).filter((m) => !m.missing));
-const refLabel = (r: string, i: number) => r.startsWith("src:") ? `原件 ${i + 1}` : r.startsWith("design:") ? "方案" : r.startsWith("code-work:") ? "编码交办" : `运行 ${i + 1}`;
+const refLabel = (r: string, i: number) => r.startsWith("src:") ? `原件 ${i + 1}` : r.startsWith("code-work:") ? "编码交办" : `${evidenceWord(r)} ${i + 1}`;
+/** A reference opens something only when it is a citation, a run, a plan or an item; the rest is text. */
+const opens = (r: string) => !!refAction(r) || !!evidenceLink(r);
 
 /** Take the stage into a conversation: the assistant gets the item and stage to read, the owner writes the rest. */
 function discuss(s?: Stage) {
@@ -144,7 +146,7 @@ function openRef(r: string) {
             依据：
             <a v-if="s.object" :href="s.object.link">{{ s.object.title }}（{{ s.object.statusLabel ?? s.object.status }}）</a>
             <a v-else-if="s.carrier.link" :href="s.carrier.link">这一段的运行</a>
-            <a v-for="(r, i) in s.evidence" :key="r" href="#" :title="r" @click.prevent="openRef(r)">{{ refLabel(r, i) }}</a>
+            <template v-for="(r, i) in s.evidence" :key="r"><a v-if="opens(r)" href="#" :title="r" @click.prevent="openRef(r)">{{ refLabel(r, i) }}</a><span v-else :title="r">{{ r.length > 24 ? `${r.slice(0, 22)}…` : r }}</span></template>
           </p>
         </section>
 

@@ -17,6 +17,15 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 关注页重排、线的群由本人定、观察中的线（11-21）
+
+- 关注页 `web/src/views/ListenDetail.vue` 重写：标题右边是开关和删除，一行概况，群收成“N 个群”（点开是名字和最近一条消息多久前，取自 `/api/lark/captured`），原来页内的锚点导航换成标签页 在聊什么 / 经验和案例 / 记忆 / 处理记录 / 设置（`?tab=`）；群的页面是概况、在哪些关注里，再是 案例 / 记忆。嵌在线页面里只有开关和 设置 / 经验和案例 的切换，线页面的这个标签改叫“关注设置”。
+- 设置的说法：`web/src/lib/listen.ts` 的选项改成本人的话，新增 `KNOB`（每项的名字和一行说明）；“怎么挑”“挑的门槛”只在“挑和说明有关的”时出现，只读的事情型关注只显示回复、开会、主动推进。`seeOthers` 没有地方用，网页拿掉了（接口照收）。
+- 线的群：`src/channels/listen-items.ts` 新增 `contextChats`、`itemChatsPatch`，关注的设置里多 `added`、`dropped`（`src/channels/listen.ts`），同步时不再被事项材料改回去。`PUT /api/listen/:id {chats}` 对事情型关注按这个存；`GET /api/work/:id` 的 `chats` 是关注实际读的群，`listen` 多 `status`；`WorkDetail.vue` 的“人和群”加“不再关注”和“再关注一个群…”。
+- `set_chat_watch`：`context` 认名字（`listen.ts contextByIdOrName`）；事情型关注可以 `chat_id` 加群、`chats` 给完整列表；说明里的参数换成和网页一样的说法。
+- 观察中的线：`listen-items.ts watchingNote`，`agents/sessions.ts watchedNote` 和 `flows/follow.ts` 的跟进任务多一句“已经上线，只关心报错、用户反馈和数据异常”；`/api/listen` 的 `item` 带 `phase`、`watchUntil`，关注页显示同一句。
+- 修正：侧栏“来源”里的事项 id 以前一律链到运行页（打开是空的）。`src/items/changes.ts refTargets` 给变化和下一步里的事项、运行 id 查出标题（`ChangeLite` / `NextLite` 的 `refTargets`），`web/src/lib/work.ts otherRefs` 按它链接，其余只写字；`web/src/lib/flow.ts evidenceLink` 只给运行、方案、事项链接，`ItemFlow.vue`、`ItemFlowPage.vue` 认不出的依据写成字。`/api/work/activities` 只给显示的 300 条做这些查找。
+
 ## 工作线（四）：自己结束，结束了去哪看（11-21）
 
 - 新文件 `src/items/lifecycle.ts`：进行中 → 观察中 → 已结束。迁移加 `items.phase`、`phase_since`、`watch_until`，`Item` 多 `phase`、`phaseSince`、`watchUntil`，`LineNow` 多 `summary`、`summaryAt`；配置 `workLines.watchDays`（默认 14）。

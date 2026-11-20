@@ -15,7 +15,8 @@ import { trackProblem } from "../src/channels/listen-problems.ts";
 import { defineMetric, recordPoints } from "../src/data/metrics.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
 import { ownerAction, reportStage, startFlow } from "../src/flows/engine.ts";
-import { lineTimeline } from "../src/items/changes.ts";
+import { addChange, lineTimeline } from "../src/items/changes.ts";
+import { otherRefs } from "../web/src/lib/work.ts";
 import { itemExpiry } from "../src/items/expiry.ts";
 import { decideNext, lineNextDue, linesCard, nextOf, nextRunDone, proposeLines, submitLineState } from "../src/items/lines.ts";
 import { addMaterials } from "../src/items/materials.ts";
@@ -337,5 +338,44 @@ describe("工作线：接口", () => {
     const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
     expect((await server.inject({ url: "/api/work", headers })).statusCode).toBe(403);
     expect((await server.inject({ url: `/api/work/${line.id}`, headers })).statusCode).toBe(403);
+  });
+
+  it("来源里的事项和运行带上标题（refTargets），认不出的、别人的不给，网页照这个链接", async () => {
+    const app = fresh();
+    const server = await startServer(app, { port: 0, quiet: true }); servers.push(server);
+    const line = upsertItem(app, undefined, { kind: "line", title: "示例商城 · 退款改造" }, "user");
+    const req = upsertItem(app, undefined, { title: "退款单显示运费" }, "user");
+    setParent(app, req.id, line.id);
+    createUser(app, { id: "reader", name: "成员甲" });
+    const theirs = upsertItem(app, undefined, { title: "成员甲的事", userId: "reader" }, "user");
+    const checked = createRun(app, { kind: "agent", spaceId: "personal", title: "核对退款金额", input: {} });
+    const r = running(app, "agent", { lineState: line.id });
+    submitLineState(app, r.id, { now: "截至今天，金额口径定了", next: [{ text: "补测试", why: "", refs: [req.id, `run:${checked.id}`, "i0nothere0000000000", theirs.id, "编码阶段"], kind: "test" }] });
+    addChange(app, { itemId: req.id, type: "decision", origin: "owner", summary: "运费按实付退", refs: [`item:${req.id}`, checked.id] });
+    addChange(app, { itemId: req.id, type: "info", origin: "owner", summary: "只有一句话" });
+
+    const d = (await server.inject(`/api/work/${line.id}`)).json();
+    expect(d.next[0].refTargets).toEqual({
+      [req.id]: { kind: "item", id: req.id, title: "退款单显示运费" },
+      [`run:${checked.id}`]: { kind: "run", id: checked.id, title: "核对退款金额" },
+    });
+    const decided = d.timeline.find((c: { summary: string }) => c.summary === "运费按实付退");
+    expect(decided.refTargets).toEqual({ [`item:${req.id}`]: { kind: "item", id: req.id, title: "退款单显示运费" }, [checked.id]: { kind: "run", id: checked.id, title: "核对退款金额" } });
+    expect(d.timeline.find((c: { summary: string }) => c.summary === "只有一句话")).not.toHaveProperty("refTargets");
+    // The work page's cards and the timeline by day carry the same.
+    const w = (await server.inject("/api/work")).json();
+    expect(w.lines[0].next[0].refTargets[req.id].title).toBe("退款单显示运费");
+    const act = (await server.inject(`/api/work/activities?line=${line.id}`)).json();
+    expect(act.items.find((c: { summary: string }) => c.summary === "运费按实付退").refTargets[checked.id].kind).toBe("run");
+
+    // On the web: those link by name; an id nothing answers to, someone else's item and a word stay text.
+    const shown = otherRefs(d.next[0].refs, d.next[0].refTargets);
+    expect(shown.map((o) => [o.label, o.link])).toEqual([
+      ["事项：退款单显示运费", `#/work/${req.id}`],
+      ["运行：核对退款金额", `#/runs/${checked.id}`],
+      ["i0nothere0000000000", null],
+      [theirs.id, null],
+      ["编码阶段", null],
+    ]);
   });
 });

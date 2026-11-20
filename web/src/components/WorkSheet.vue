@@ -4,8 +4,7 @@ import { put } from "../api";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import { fmtTime, toast } from "../store";
-import { changeTone, changeTypeLabel, nextKindLabel, nextStatusLabel, originLabel, refLabel, refsMarkdown, type ChangeLite, type NextLite } from "../lib/work";
-import { evidenceLink } from "../lib/flow";
+import { changeTone, changeTypeLabel, nextKindLabel, nextStatusLabel, originLabel, otherRefs, refsMarkdown, type ChangeLite, type NextLite } from "../lib/work";
 
 /**
  * One key change or one next step, opened from a timeline on the side: what it is, why, what it
@@ -39,8 +38,8 @@ const c = computed(() => props.change ?? null);
 const n = computed(() => props.next ?? null);
 const refs = computed(() => (c.value?.refs ?? n.value?.refs ?? []));
 const cited = computed(() => refsMarkdown(refs.value));
-/** References that are not citations (a run, a plan): links to their pages where there is one. */
-const others = computed(() => refs.value.filter((r) => !/^(src|mem|msg):/.test(r)).map((r, i) => ({ r, label: refLabel(r, i), link: evidenceLink(r) })));
+/** References that are not citations: an item or a run by its title, linked; anything unknown as text. */
+const others = computed(() => otherRefs(refs.value, c.value?.refTargets ?? n.value?.refTargets));
 
 async function noise(on: boolean) {
   if (!c.value) return;
@@ -113,8 +112,8 @@ async function decide(status: "doing" | "declined" | "done") {
           <Markdown v-if="cited" :source="cited" class="prose refs" />
           <p v-if="others.length" class="others small">
             <template v-for="o in others" :key="o.r">
-              <a v-if="o.link" :href="o.link">{{ o.label }}</a>
-              <span v-else class="mono muted" :title="o.r">{{ o.label }}</span>
+              <a v-if="o.link" :href="o.link" :title="o.title" @click="emit('close')">{{ o.label }}</a>
+              <span v-else class="mono muted" :title="o.title">{{ o.label }}</span>
             </template>
           </p>
         </section>

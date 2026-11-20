@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, onServerEvent, onServerResync, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, minutesWords, nextWords, objectStatusWords, ownerTurn, reviewHow, reviewNotes, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, verdictWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
+import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, evidenceWord, minutesWords, nextWords, objectStatusWords, ownerTurn, reviewHow, reviewNotes, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, verdictWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
 import ItemStudy from "./ItemStudy.vue";
 import PluginSlots from "./PluginSlots.vue";
 import RankBars from "./charts/RankBars.vue";
@@ -232,7 +232,7 @@ async function stop() {
           </template>
           <template v-if="stage.evidence.length">
             <dt>依据</dt>
-            <dd class="evidence"><template v-for="(r, i) in stage.evidence" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原件 {{ i + 1 }}</a><a v-else :href="evidenceLink(r)!" :title="r">{{ r.startsWith("design:") ? "方案" : "运行" }} {{ i + 1 }}</a></template></dd>
+            <dd class="evidence"><template v-for="(r, i) in stage.evidence" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原件 {{ i + 1 }}</a><a v-else-if="evidenceLink(r)" :href="evidenceLink(r)!" :title="r">{{ evidenceWord(r) }} {{ i + 1 }}</a><span v-else class="muted" :title="r">{{ r.length > 24 ? `${r.slice(0, 22)}…` : r }}</span></template></dd>
           </template>
           <template v-if="stage.descriptions?.ai">
             <dt>模型</dt>

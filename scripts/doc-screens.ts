@@ -34,7 +34,7 @@ import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import type { ChangeType } from "../src/items/changes.ts";
 import { createLine } from "../src/items/lines.ts";
-import { itemContext } from "../src/channels/listen.ts";
+import { itemContext, saveContext } from "../src/channels/listen.ts";
 import { setParent } from "../src/items/parent.ts";
 import { parseFlow } from "../src/flows/definitions.ts";
 import { changeStage } from "../src/flows/store.ts";
@@ -781,6 +781,13 @@ endedDemo("客服 · 退款话术整理", "把常见的退款问题整理成话�
 // One the assistant made on its own and the owner has not said yes to.
 const cand = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "跟进：退款原因的统计口径", priority: 3 }, "agent");
 run(app.db, "update items set status = 'candidate' where id = ?", cand.id);
+// A 关注 over the two refund groups that drafts replies (#/listen/:id, its settings in the owner's words).
+const dutyListen = saveContext(app, {
+  kind: "place", name: "退款问题答疑", chats: ["oc_demo_refund", "oc_demo_refund_qa"], spaceId: "shop", expiresAt: null,
+  note: "有人报退款金额不对的，先按订单号查退款单和分摊明细再回；问上线时间的告诉我，不用回。",
+  brief: { handle: ["报退款金额不对、带订单号或截图的", "测试同学问回放结果的"], skip: ["闲聊和表情", "产品讨论需求口径的"], valid: "查到了退款单或代码依据，说得出哪一行算错、为什么", at: ago(3), confirmedAt: ago(3) },
+  knobs: { reply: "draft" },
+});
 // 问这条线: one question already asked in the line's 关注 conversation (or a conversation of its own).
 const lineChat = itemContext(app, refundLine.id)?.conversationId ?? createThread(app, { channel: "web", spaceId: "shop", title: "问这条线：示例商城 · 退款改造", userId: "owner" }).id;
 addMessage(app, lineChat, "user", "现在卡在哪？");
@@ -936,6 +943,17 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.waitForTimeout(400);
   } },
   { name: "work-line", path: `/work/${refundLine.id}`, init: { "omem.workAsk": "1", "omem.lineAsk": JSON.stringify({ [refundLine.id]: lineChat }) } },
+  // A 关注's settings, scrolled to the knobs: each with what it does in practice.
+  { name: "listen-settings", path: `/listen/${dutyListen.id}?tab=settings`, prepare: async (p) => {
+    await p.locator(".knobs-title").first().evaluate((el) => {
+      el.scrollIntoView({ block: "start" });
+      // The end of the brief above it shows where the knobs sit.
+      let s: HTMLElement | null = el.parentElement;
+      while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
+      (s ?? document.scrollingElement)?.scrollBy(0, -130);
+    });
+    await p.waitForTimeout(400);
+  } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },
   { name: "insights-work", path: "/insights?tab=work", space: "shop", prepare: async (p) => { await p.getByRole("button", { name: "退款接口报错率" }).click(); await p.waitForTimeout(800); } },
   { name: "ask-citations", path: `/ask/${t.id}` },

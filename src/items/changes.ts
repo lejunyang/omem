@@ -26,8 +26,40 @@ export type ChangeType = (typeof CHANGE_TYPES)[number];
 export type ChangeLite = {
   id: string; at: string; type: string; summary: string; detail: string | null; risk: string | null; next: string | null;
   refs: string[]; status: string; origin: string; noise: boolean; itemId: string; itemTitle: string; lineId: string; lineTitle: string;
+  /** The references that are no citation and name an item or a run of the same person (refTargets); only when there are any. */
+  refTargets?: Record<string, RefTarget>;
 };
-type Row = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; risk: string | null; next: string | null; refs: string; status: string; origin: string; noise: number; title: string };
+type Row = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; risk: string | null; next: string | null; refs: string; status: string; origin: string; noise: number; title: string; item_user?: string };
+
+/**
+ * What a reference that is no citation names, so the web can link it by name: an item (its page under
+ * 工作) or a run, both of the same person. Changes and next steps cite these as `i0…` / `item:i0…` and
+ * `r0…` / `run:r0…` / `code-work:r0…`; anything else (a stage, a metric's name, a word) is left out and
+ * shown as plain text. One lookup by primary key per such reference; citations (src: / mem: / msg:) cost nothing.
+ */
+export type RefTarget = { kind: "item" | "run"; id: string; title: string };
+const ITEM_REF = /^(?:item:([\w-]+)|(i[0-9a-z]{15,30}))$/;
+const RUN_REF = /^(?:(?:run|code-work):([\w-]+)|(r[0-9a-z]{15,30}))$/;
+export function refTargets(app: App, refs: string[], userId: string): Record<string, RefTarget> | undefined {
+  const out: Record<string, RefTarget> = {};
+  for (const ref of refs) {
+    const r = ref.trim();
+    const item = ITEM_REF.exec(r);
+    if (item) {
+      const id = item[1] ?? item[2];
+      const row = one<{ title: string; u: string }>(app.db, "select title, coalesce(user_id,'owner') u from items where id = ?", id);
+      if (row && row.u === userId) out[ref] = { kind: "item", id, title: row.title };
+      continue;
+    }
+    const runRef = RUN_REF.exec(r);
+    if (runRef) {
+      const id = runRef[1] ?? runRef[2];
+      const row = one<{ title: string; kind: string; u: string }>(app.db, "select title, kind, coalesce(user_id,'owner') u from runs where id = ?", id);
+      if (row && row.u === userId) out[ref] = { kind: "run", id, title: row.title || row.kind };
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 const titleOf = (app: App, id: string) => one<{ title: string }>(app.db, "select title from items where id = ?", id)?.title ?? id;
 export function changeLite(app: App, r: Row, lines = new Map<string, { id: string; title: string }>()): ChangeLite {
@@ -37,12 +69,15 @@ export function changeLite(app: App, r: Row, lines = new Map<string, { id: strin
     line = { id, title: id === r.item_id ? r.title : titleOf(app, id) };
     lines.set(r.item_id, line);
   }
+  const refs = json<string[]>(r.refs, []);
+  const targets = refTargets(app, refs, r.item_user ?? "owner");
   return {
-    id: r.id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, risk: r.risk, next: r.next, refs: json<string[]>(r.refs, []),
+    id: r.id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, risk: r.risk, next: r.next, refs,
     status: r.status, origin: r.origin ?? "follow", noise: !!r.noise, itemId: r.item_id, itemTitle: r.title, lineId: line.id, lineTitle: line.title,
+    ...(targets ? { refTargets: targets } : {}),
   };
 }
-export const CHANGE_COLS = "c.id, c.item_id, c.at, c.type, c.summary, c.detail, c.risk, c.next, c.refs, c.status, c.origin, c.noise, i.title";
+export const CHANGE_COLS = "c.id, c.item_id, c.at, c.type, c.summary, c.detail, c.risk, c.next, c.refs, c.status, c.origin, c.noise, i.title, coalesce(i.user_id,'owner') item_user";
 
 /** A change one of the host's writers saw (never `follow`): noted, no card, on the item's timeline. */
 export function addChange(app: App, c: { itemId: string; type: ChangeType; summary: string; detail?: string | null; risk?: string | null; next?: string | null; refs?: string[]; runId?: string | null; origin: Exclude<ChangeOrigin, "follow"> }) {
