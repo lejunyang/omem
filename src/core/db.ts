@@ -2248,6 +2248,7 @@ export const migrations: readonly string[] = [
    alter table items add column phase_since text;
    alter table items add column watch_until text;`,
   METRIC_ORIGIN_MIGRATION,
+  `create index asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;`,
 ];
 
 export type Db = DatabaseSync;

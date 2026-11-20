@@ -475,6 +475,7 @@ async function sendCard(app: App, askId: string, c: GateContext, runId: string |
   if (!app.config.lark?.enabled || !c.lark) return;
   const sent = await sendLark({ userId: c.lark.id, userIdType: c.lark.idType, bot: "main" }, { card: buildCard(commandCard(app, c, runId) as never) });
   // The approver, and the owner, may press it.
+  (await import("../channels/lark-asks.ts")).markAskSent(app, askId);
   recordInteraction(app, { messageId: sent.messageId, chatId: null, conversationId: null, runId, purpose: "command-gate", allowed: [c.lark.id, ...(c.ownerLark && c.ownerLark !== c.lark.id ? [c.ownerLark] : [])], payload: { askId }, bot: "main" });
 }
 
