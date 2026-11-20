@@ -3,7 +3,8 @@ import { authFetch, loginProvider, registerLoginProvider } from "../auth/provide
 import { registerAuthenticator } from "../auth/authenticators.ts";
 import { registerAgentLogin } from "../agents/agent-logins.ts";
 import { accountCatalog } from "../agents/catalog.ts";
-import { registerProcessHooks } from "./process-hooks.ts";
+import { replaceSubscriptions } from "./event-store.ts";
+import { registerProcessHooks, subscriptions } from "./process-hooks.ts";
 import { registerFeatures } from "../auth/features.ts";
 import { appConfig } from "../auth/apps.ts";
 import { listConnections } from "../auth/vault.ts";
@@ -238,6 +239,10 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
 
 /** Run the plugin's server code: its tools and blocks register. Data plugins only once trusted. */
 async function loadCode(app: App, p: LoadedPlugin) {
+  await loadPluginCode(app, p);
+  replaceSubscriptions(app, p.manifest.id, [...subscriptions.values()].filter(s => s.plugin === p.manifest.id).map(s => s.def));
+}
+async function loadPluginCode(app: App, p: LoadedPlugin) {
   const { manifest } = p;
   const prefix = `${manifest.id}_`;
   if (p.source === "data" && trustMode(app, manifest.id) === "isolated") return loadIsolated(app, p);
@@ -406,6 +411,7 @@ export function untrustPlugin(app: App, id: string) {
   if (p.source !== "data") throw new HttpError(400, `插件 ${id} 是内置的`);
   setTrust(app, id, null);
   unloadCode(p);
+  replaceSubscriptions(app, id, []);
   p.trust = hasCode(p.dir, p.manifest) ? "required" : "none";
   p.specs = readSpecs(p);
   return describePlugin(p);

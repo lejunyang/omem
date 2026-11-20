@@ -178,6 +178,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     else if (e.type === "status") console.log(`[omem] ${e.text}`);
   });
   if (opts.background !== false) {
+    (await import("./plugins/event-delivery.ts")).startPluginDelivery(app);
     startMemoryWatch();
     startLoopMonitor();
     // Plugins linked for development (omem plugin link): loaded again when their files or links change.

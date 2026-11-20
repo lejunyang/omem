@@ -3,7 +3,8 @@ import { withBot } from "../core/bot-context.ts";
 import { trySettleCodeChain } from "./code-chain.ts";
 import { recordRunStart } from "./run-scope.ts";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { enqueuePluginEvent } from "../plugins/event-store.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError, json, newId, now, localStamp } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
 import { triggerFor, withFollowUp, type RunTrigger } from "../core/run-trigger.ts";
@@ -235,13 +236,22 @@ export function countRuns(app: App, opts: RunFilter = {}) {
 }
 
 export function setRunOutput(app: App, id: string, output: Record<string, unknown>) {
-  const prev = getRun(app, id).output;
-  run(app.db, "update runs set output = ? where id = ?", JSON.stringify({ ...prev, ...output }), id);
-  // A delegation applied or discarded, a review ended: rules about omem's own events hear of it (rules/omem-events.ts).
-  if ("appliedAt" in output || "discardedAt" in output || "reviewStage" in output) {
+  function write() {
+    const prev = getRun(app, id).output;
+    run(app.db, "update runs set output = ? where id = ?", JSON.stringify({ ...prev, ...output }), id);
+    if (!("appliedAt" in output || "discardedAt" in output || "reviewStage" in output)) return null;
     const facts = runOutputFacts(app, id, prev, output);
-    if (facts) emitOmem(app, facts);
+    if (facts?.type === "review.done") {
+      const lead = output.reviewLead as { verdict?: string } | undefined;
+      enqueuePluginEvent(app, "review.finished", facts.space ?? null, () => ({
+        userId: runUser(app, id), entity: { kind: "run", id }, actor: { kind: "host" },
+        data: { runId: id, verdict: facts.status || lead?.verdict, findingCount: facts.newFindings ?? 0 },
+      }));
+    }
+    return facts;
   }
+  const facts = output.reviewStage === "done" ? withinTx(app.db, write) : write();
+  if (facts) emitOmem(app, facts);
 }
 
 // ---- events -------------------------------------------------------------

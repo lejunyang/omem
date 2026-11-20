@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { findingEvent } from "../plugins/event-store.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { isBranchReview, worktreesOf } from "./code.ts";
 import { isBranchWork } from "./code-branch.ts";
 import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
-import { createRun, getRun, type Run } from "./runs.ts";
+import { createRun, getRun, runUser, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
 import type { RoundReview } from "./code-steer.ts";
 import { OWNER } from "../core/users.ts";
@@ -34,17 +35,23 @@ function findingOf(app: App, runIds: string[], id: number) {
   return one<Row>(app.db, `select f.*, r.check_name, r.round, r.code_run_id from review_findings f join reviews r on r.id = f.review_id where f.id = ? and r.code_run_id in (${marks})`, id, ...runIds);
 }
 
-export function setFindingDecision(app: App, runId: string, findingId: number, decision: Decision | null, note = "") {
+export function setFindingDecision(app: App, runId: string, findingId: number, decision: Decision | null, note = "", actor: "agent" | "user" = "user") {
   const f = findingOf(app, workRuns(app, runId), findingId);
   if (!f) throw new HttpError(404, `问题 #${findingId} 不属于这次交办或评审`);
   if (decision === "wontfix" && !note.trim()) throw new HttpError(400, "不改要写一句理由（业务上怎么定的）");
-  run(app.db, "update review_findings set decision = ?, decision_note = ? where id = ?", decision, decision ? note.trim() : "", findingId);
-  // A business decision outlives this review: it goes on the item, which later work reads.
-  const itemId = (getRun(app, f.code_run_id).input as { itemId?: string }).itemId;
-  if (decision === "wontfix" && itemId && one(app.db, "select 1 from items where id = ?", itemId)) {
-    run(app.db, "insert into item_events(item_id, at, kind, text, source_refs, actor) values(?,?,?,?,?,?)", itemId, now(), "decision", `评审问题「${f.title}」不改：${note.trim()}`, "[]", "user");
-  }
-  return { id: findingId, decision, note: decision ? note.trim() : "" };
+  const reason = decision ? note.trim() : "";
+  if (f.decision === decision && f.decision_note === reason) return { id: findingId, decision, note: reason };
+  withinTx(app.db, () => {
+    run(app.db, "update review_findings set decision = ?, decision_note = ? where id = ?", decision, reason, findingId);
+    // A business decision outlives this review: it goes on the item, which later work reads.
+    const ownerRun = getRun(app, f.code_run_id);
+    const itemId = (ownerRun.input as { itemId?: string }).itemId;
+    if (decision === "wontfix" && itemId && one(app.db, "select 1 from items where id = ?", itemId)) {
+      run(app.db, "insert into item_events(item_id, at, kind, text, source_refs, actor) values(?,?,?,?,?,?)", itemId, now(), "decision", `评审问题「${f.title}」不改：${note.trim()}`, "[]", "user");
+    }
+    findingEvent(app, "finding.decision", { id: ownerRun.id, spaceId: ownerRun.spaceId, userId: runUser(app, ownerRun.id) }, f, decision, reason, actor);
+  });
+  return { id: findingId, decision, note: reason };
 }
 
 /**
@@ -57,7 +64,7 @@ export function setFindingSuggestion(app: App, runId: string, findingId: number,
   if (!f) throw new HttpError(404, `问题 #${findingId} 不属于这次交办或评审`);
   const t = text.trim();
   run(app.db, "update review_findings set owner_suggestion = ? where id = ?", t && t !== f.suggestion.trim() ? t : null, findingId);
-  if (t && !f.decision) run(app.db, "update review_findings set decision = 'fix', decision_note = '' where id = ?", findingId);
+  if (t && !f.decision) setFindingDecision(app, runId, findingId, "fix");
   const after = one<{ owner_suggestion: string | null; decision: Decision | null }>(app.db, "select owner_suggestion, decision from review_findings where id = ?", findingId)!;
   return { id: findingId, ownerSuggestion: after.owner_suggestion, decision: after.decision };
 }
@@ -260,7 +267,7 @@ export function itemOnBranch(app: App, repos: string[], branch: string | null | 
 }
 
 // `withSameBranch`: the owner looked at the other reviews of the same branch too (sameBranchWork); their findings may be chosen, and what is left there waits as well.
-export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; execution?: Execution; reviewExecution?: Execution; applyFirst?: boolean; withSameBranch?: boolean }, userId: string): Promise<Run> {
+export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; execution?: Execution; reviewExecution?: Execution; applyFirst?: boolean; withSameBranch?: boolean; actor?: "agent" | "user" }, userId: string): Promise<Run> {
   const runs = workRuns(app, runId);
   const last = getRun(app, runs.at(-1)!);
   if (!req.findingIds.length && !req.text?.trim()) throw new HttpError(400, "选几个要改的问题，或者写下要改什么");
@@ -273,10 +280,27 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     for (const id of [...runs, ...others.flatMap((o) => workRuns(app, o.rootId))]) cancelHostAsks(app, id, ROUND_ASKS);
     // Each chosen finding remembers the round that takes it on, so its review (when that is another
     // one of the branch, or an older one opened later) shows it as being fixed rather than open.
-    for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '', fixed_by = ? where id = ?", next.id, f.id);
-    // What the owner left unpicked waits (“暂不改”) and stays in view in the rounds after this one.
-    for (const latest of [last.id, ...others.map((o) => o.latestId)])
-      run(app.db, `update review_findings set decision = 'later' where decision is null and severity != 'nit' and state in ('open', 'accepted') and review_id in (select id from reviews where code_run_id = ?)${chosen.length ? ` and id not in (${chosen.map(() => "?").join(",")})` : ""}`, latest, ...chosen.map((f) => f.id));
+    withinTx(app.db, () => {
+      const owners = new Map<string, { id: string; userId: string; spaceId: string | null }>();
+      const publish = (id: string, f: Pick<FindingRow, "id" | "file_path" | "line">, decision: Decision) => {
+        let owner = owners.get(id);
+        if (!owner) {
+          owner = { id, userId, spaceId: getRun(app, id).spaceId };
+          owners.set(id, owner);
+        }
+        findingEvent(app, "finding.decision", owner, f, decision, "", req.actor ?? "user");
+      };
+      for (const f of chosen) {
+        run(app.db, "update review_findings set decision = 'fix', decision_note = '', fixed_by = ? where id = ?", next.id, f.id);
+        if (f.decision !== "fix" || f.decision_note) publish(f.code_run_id, f, "fix");
+      }
+      for (const latest of [last.id, ...others.map(o => o.latestId)]) {
+        const deferred = all<Pick<FindingRow, "id" | "file_path" | "line">>(app.db, `update review_findings set decision = 'later'
+          where decision is null and severity != 'nit' and state in ('open','accepted') and review_id in (select id from reviews where code_run_id=?)
+          returning id,file_path,line`, latest);
+        for (const f of deferred) publish(latest, f, "later");
+      }
+    });
     return next;
   };
   const task = [

@@ -2,12 +2,13 @@ import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
 import type { CallContext, ItemProvider, MetricProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
+
 import { pluginSpaces } from "./spaces.ts";
 
 type Entry<T> = {
+  spaces: readonly string[];
   plugin: string;
   def: T;
-  spaces: readonly string[];
   context(app: App, userId: string, spaceId: string, signal: AbortSignal): CallContext;
 };
 export const subscriptions = new Map<string, Entry<Subscription>>();
@@ -16,14 +17,27 @@ export const metricProviders = new Map<string, Entry<MetricProvider>>();
 
 export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[]): ProcessApi {
   const spaces = pluginSpaces(manifest).map(s => s.id);
-  const context: Entry<Subscription>["context"] = (app, userId, spaceId, signal) => ({
-    userId, spaceId, signal,
-    async connection(provider) {
-      signal.throwIfAborted();
-      if (!manifest.connectors.some(c => c.provider === provider)) throw new Error("连接未获授权");
-      return pluginConnection(app, userId, provider);
-    },
-  });
+  const lifetime = new AbortController();
+  undo.push(() => lifetime.abort());
+  const context: Entry<Subscription>["context"] = (app, userId, spaceId, callSignal) => {
+    const signal = AbortSignal.any([lifetime.signal, callSignal]);
+    return {
+      userId, spaceId, signal,
+      async connection(provider) {
+        signal.throwIfAborted();
+        if (!manifest.connectors.some(c => c.provider === provider)) throw new Error("连接未获授权");
+        const c = pluginConnection(app, userId, provider);
+        if (!c) return null;
+        return {
+          ...c,
+          fetch(path, init = {}) {
+            signal.throwIfAborted();
+            return c.fetch(path, { ...init, signal: init.signal ? AbortSignal.any([signal, init.signal]) : signal });
+          },
+        };
+      },
+    };
+  };
   function add<T extends { id: string }>(map: Map<string, Entry<T>>, def: T) {
     if (!/^[a-z][a-z0-9-]{0,47}$/.test(def.id)) throw new Error("插件能力 id 无效");
     const key = manifest.id + ":" + def.id;

@@ -5075,10 +5075,10 @@ async function fixFindings(ctx: ToolContext, a: ContinueArgs, execution: Executi
     const review = await roundReviewOf(ctx, a);
     for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const { setFindingDecision, startFix } = await import("./review-fix.ts");
-    for (const id of a.later ?? []) setFindingDecision(ctx.app, r.id, id, "later");
-    for (const w of a.wontfix ?? []) setFindingDecision(ctx.app, r.id, w.id, "wontfix", w.reason);
+    for (const id of a.later ?? []) setFindingDecision(ctx.app, r.id, id, "later", "", ctx.actor);
+    for (const w of a.wontfix ?? []) setFindingDecision(ctx.app, r.id, w.id, "wontfix", w.reason, ctx.actor);
     if (!a.fix?.length && !a.task?.trim()) return `已记下：${(a.later ?? []).length} 个暂不改，${(a.wontfix ?? []).length} 个不改。没有要改的，没有开始修改。`;
-    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.task, review, execution, reviewExecution, applyFirst: a.apply_first }, ctx.userId ?? OWNER);
+    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.task, actor: ctx.actor, review, execution, reviewExecution, applyFirst: a.apply_first }, ctx.userId ?? OWNER);
     return `已开始修改，运行 ${next.id}（${next.title}）：改 ${(a.fix ?? []).length} 个问题${a.task?.trim() ? "和补充的要求" : ""}，暂不改 ${(a.later ?? []).length} 个，不改 ${(a.wontfix ?? []).length} 个。完成后会检查、评审并通知。`;
 }
 
