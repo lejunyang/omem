@@ -136,7 +136,7 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
 
   server.post("/api/listen", async (req) => {
     owner(req);
-    const b = parse(z.object({ name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).min(1).max(20), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), expiresAt: z.string().nullable().optional() }), req.body);
+    const b = parse(z.object({ name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).min(1).max(200), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), expiresAt: z.string().nullable().optional() }), req.body);
     const knobs = cleanKnobs(b.knobs);
     if ((knobs.reply ?? "draft") !== "none" && !b.brief?.handle.length) throw new HttpError(400, "要在群里回复的关注先写要处理哪些消息（或回复方式选“只看不回”）");
     const { groupName, seedContext } = await import("./lark-watch.ts");
@@ -148,7 +148,7 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
   server.put("/api/listen/:id", async (req) => {
     owner(req);
     const c = requireContext(app, (req.params as { id: string }).id);
-    const b = parse(z.object({ name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).max(20).optional(), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().nullable().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), status: z.enum(["active", "paused"]).optional(), expiresAt: z.string().nullable().optional() }), req.body);
+    const b = parse(z.object({ name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).max(200).optional(), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().nullable().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), status: z.enum(["active", "paused"]).optional(), expiresAt: z.string().nullable().optional() }), req.body);
     // The owner writing the brief here is confirming it.
     const brief = b.brief ? { ...b.brief, at: c.brief?.at ?? now(), confirmedAt: now() } : undefined;
     const next = saveContext(app, { id: c.id, kind: c.kind, name: b.name, chats: b.chats, note: b.note, spec: b.spec, spaceId: b.spaceId, brief, knobs: cleanKnobs(b.knobs), status: b.status, expiresAt: b.expiresAt });

@@ -22,7 +22,7 @@ updated: 2026-11-20
 - `src/channels/listen-problems.ts`（表 `listen_problems`）：关注的处理和“有人找你”的处理看完一个求助的问题后用 `track_problem`（`wake` 分组，关注的处理轮和有人找你的处理才给）记状态：open / waiting / blocked / closed，已查清的、在等谁、怎样算完（没结的必填）、结论、`recheck_after`。一处一条，结了以后同一处来了别的问题另起一条，旧的留给 listen-coach。
 - 有人找你：`routeWatchedMessages` 开头对没结的问题排 `problem-follow`（十分钟后、每个问题一条，机器人自己的和记下之前的消息不算）；到点按问题状态预筛（场景 watch），不用看的记 `seen_ms`，要看的经 `mentions.ts continueProblem` 交回原来那次处理（同一会话）。同一处有没结的问题时后来 @ 本人的消息并进那次处理（`recentHandling`：话题里的问题谁发的都算，整个群的问题只算原来提问的人）。处理任务第 3、7 步改为回完用 `track_problem` 记下、不问本人要不要接着跟；本人点“不发”时 `dropProblemOf`。分诊后再查一次 `ruleOn`，分诊期间触发的规则优先。
 - 关注：`prefilterBatch` 的材料多“在跟的问题”，说明改为只有给问题带来新东西才算要看；`watchedNote` 带问题列表和“按问题跟，不按消息跟”的做法；回查（`problemsDue`）往关注的处理对话里放一条 `meta.recheck`。
-- 规则的 `context` 动作多 `adopt`：触发的群收进关注（`listen.ts adoptChat`，`settings.adopted` 记时间），问题都结了、三天没有消息和问题更新时放回（`releaseAdopted`，心跳）；规则页的“交给关注”多一个勾选。
+- 规则的 `context` 动作多 `adopt`：触发的群收进关注（`listen.ts adoptChat`，`settings.adopted` 记时间），问题都结了、三天没有消息和问题更新时放回（`releaseAdopted`，心跳）；规则页的“交给关注”多一个勾选。收进来的群会让一个关注超过 20 个群，`/api/listen` 的 `chats` 上限因此放到 200（页面上从群加进关注、改群列表时整份提交）。
 - `listen-coach.ts`：已结的问题算新案例，任务多“跟过的问题”；场景多 `follow`（回完怎么跟），`roles/listen-coach.md`、`submit_playbook`。
 - 文档：`docs/v2/mentions.md`“回完接着跟”、`skills/omem/references/owner.md`“在跟的问题”；测试 `test/listen-problems.test.ts`、`test/lark-mentions.test.ts`。
 
