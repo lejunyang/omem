@@ -24,13 +24,13 @@ it("bounds standing instructions for a fixed space, skill library and four lesso
       { role: "item-keeper", target: 6169 },
       { role: "memory-reviewer", target: 5958 },
     ],
-    // Lower these measured ceilings as the unmarked role and common sections shrink.
+    // No tools on this kind of backend: every section about a tool is gone (measured 1,851–2,442 after the role files were split).
     doubao: [
-      { role: "assistant", target: 16500, temporaryLimit: 18489 },
-      { role: "gatekeeper", target: 3000, temporaryLimit: 4093 },
-      { role: "replay-judge", target: 3000, temporaryLimit: 4222 },
-      { role: "summarizer", target: 3000, temporaryLimit: 3631 },
-      { role: "mention-triage", target: 3000, temporaryLimit: 4022 },
+      { role: "assistant", target: 3000 },
+      { role: "gatekeeper", target: 3000 },
+      { role: "replay-judge", target: 3000 },
+      { role: "summarizer", target: 3000 },
+      { role: "mention-triage", target: 3000 },
     ],
   };
   for (const [transport, roles] of Object.entries(budgets)) {
