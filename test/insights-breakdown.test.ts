@@ -40,7 +40,7 @@ it("拆开一个数：按天、按维度，记录和明细同一套，带上谁�
   expect(dim("by")!.rows[0]).toEqual({ value: "user:owner", label: "你", count: 2 });
   expect(dim("status")!.rows.map(r => r.label)).toEqual(["做完", "失败"]);
   // Newest first, with who, how long and how it ended; never what was asked.
-  expect(b.records[0]).toMatchObject({ by: "user:member-a", result: "失败" });
+  expect(b.records[0]).toMatchObject({ by: "member-a", result: "失败" });
   expect(b.records.at(-1)).toMatchObject({ by: "你", seconds: 30, result: "做完" });
   expect(JSON.stringify(b)).not.toContain("不应返回的提问正文");
   // The period before (October 17–31) is counted for the comparison.

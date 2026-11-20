@@ -931,11 +931,14 @@ run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,compon
   await series("退款申请完成率", [63, 62, 64, 63, 61, 62, 60, 58, 57, 55, 54, 52, 51, 49], { 端: "手机" });
   defineMetric(app, { name: "新旧申请页的提交数", unit: "单", source: "订单库（只读副本）", query: "订单库：当天从新申请页和旧申请页提交的退款单数，dims.side 写 新 / 旧", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "neutral", why: "灰度期间新申请页的量追上旧页了没有", planRef: `src:${plan.id}#L17-L17`, view: { kind: "compare", compareBy: "side", ratio: true, focus: "新" } }, proposed);
   await recordPoints(app, "新旧申请页的提交数", [{ value: 1284, at: day(1), dims: { side: "新" } }, { value: 2906, at: day(1), dims: { side: "旧" } }]);
+  // Two more on the ticket line, not taken yet: the list of proposals groups them by line.
+  defineMetric(app, { name: "退款类工单分对的比例", unit: "%", source: "工单系统", query: "工单系统：退款类工单里自动分类和人工复核一致的比例，按天", itemId: ticketLine.id, spaceId: "shop", schedule: "daily", direction: "up-good", why: "自动分类上线后，退款类工单有没有分到对的人手里" }, proposed);
+  defineMetric(app, { name: "转人工的工单数", unit: "单", source: "工单系统", query: "工单系统：当天从自动分类转人工处理的工单数", itemId: ticketLine.id, spaceId: "shop", schedule: "daily", direction: "down-good", why: "分不清的工单有多少还要人来分" }, proposed);
   snapshotOmemUsage(app, { maxDays: 30 });
 }
 
 // ---- capture ----------------------------------------------------------------------------------
-const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
+const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
   console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);

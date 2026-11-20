@@ -4,7 +4,7 @@ import { all, one } from "../core/db.ts";
 import type { Direction, Trial, Finding } from "../studies/store.ts";
 import { fixVerified } from "../studies/fix.ts";
 import { flowLog, reviewStages, type ReviewStageDef } from "../flows/review.ts";
-import { accessibleSpaces, OWNER } from "../core/users.ts";
+import { accessibleSpaces, OWNER, userName } from "../core/users.ts";
 import { runReadableSpaces } from "../auth/permissions.ts";
 import { DECISION_SCENES } from "../core/decision-scenes.ts";
 import { HttpError, localStamp } from "../core/util.ts";
@@ -562,16 +562,24 @@ export function insightRecords(app: App, viewer: string, input: Filters, metricK
   return { records: records.slice(offset, offset + 100), total: records.length };
 }
 /** The ways a number's records are split in its breakdown, in the order the drawer shows them. */
-const DIMS: { key: string; label: string; of: (r: RunRow) => string | null; name?: (v: string) => string }[] = [
+const DIMS: { key: string; label: string; of: (r: RunRow) => string | null; name?: (v: string, app: App) => string }[] = [
   { key: "scene", label: "场景", of: r => sceneOf(r) },
   { key: "profile", label: "Agent", of: r => r.spec ?? r.roles?.split("|").filter(Boolean)[0] ?? null },
   { key: "space", label: "空间", of: r => r.space_id },
   { key: "model", label: "模型", of: r => parseAi(r.ai).model ?? null },
-  { key: "by", label: "谁触发的", of: r => r.trigger_by ?? (r.user_id ? `user:${r.user_id}` : null), name: v => v === "user:owner" ? "你" : v },
+  { key: "by", label: "谁触发的", of: r => r.trigger_by ?? (r.user_id ? `user:${r.user_id}` : null), name: (v, app) => personName(app, v) },
   { key: "chat", label: "在哪个会话", of: r => r.place },
   { key: "status", label: "结果", of: r => r.status, name: v => RUN_STATUS[v] ?? v },
 ];
 const UNKNOWN = "没记下";
+/** Who started a run, in words: you, a member by name; someone from a channel by the channel and the end of their id. */
+function personName(app: App, key: string) {
+  if (key === "user:owner") return "你";
+  if (key.startsWith("user:")) return userName(app, key.slice(5));
+  const at = key.indexOf(":");
+  if (at <= 0) return key;
+  return `${({ lark: "飞书", web: "网页", mcp: "外部 Agent" } as Record<string, string>)[key.slice(0, at)] ?? key.slice(0, at)}用户 …${key.slice(at + 1).slice(-4)}`;
+}
 const BREAKDOWN_TOP = 8, BREAKDOWN_PAGE = 100;
 /**
  * A number taken apart for the drawer: the same records as its record list (same filters, same
@@ -610,11 +618,14 @@ export function insightBreakdown(app: App, viewer: string, input: Filters, metri
     const d = localDay(t, tz);
     if (perDay.has(d)) { perDay.set(d, perDay.get(d)! + 1); dated++; }
   }
+  const names = new Map<string, string>();
+  const named = (d: typeof DIMS[number], v: string) => { const k = `${d.key}:${v}`; let n = names.get(k); if (n === undefined) names.set(k, n = d.name?.(v, app) ?? v); return n; };
   const dims = DIMS.flatMap(d => {
     const counts = new Map<string, number>();
     for (const r of picked) { const v = valueOf(d, rowOf(r)); if (v !== null) counts.set(v, (counts.get(v) ?? 0) + 1); }
-    if (counts.size < 2 && !picks.some(p => p.dim === d)) return [];
-    const rows = [...counts].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, label: value === UNKNOWN ? UNKNOWN : d.name?.(value) ?? value, count }));
+    // A split says something only with two groups it knows apart (not one group and the unrecorded).
+    if ([...counts.keys()].filter(v => v !== UNKNOWN).length < 2 && !picks.some(p => p.dim === d)) return [];
+    const rows = [...counts].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, label: value === UNKNOWN ? UNKNOWN : named(d, value), count }));
     return [{ key: d.key, label: d.label, rows: rows.slice(0, BREAKDOWN_TOP), more: Math.max(0, rows.length - BREAKDOWN_TOP) }];
   });
   const enrich = (r: RecordRef) => {
@@ -623,7 +634,7 @@ export function insightBreakdown(app: App, viewer: string, input: Filters, metri
     const by = DIMS.find(d => d.key === "by")!;
     const who = by.of(row);
     const seconds = row.started_at && row.finished_at ? (Date.parse(row.finished_at) - Date.parse(row.started_at)) / 1000 : NaN;
-    return { ...r, ...(who ? { by: by.name!(who) } : {}), ...(Number.isFinite(seconds) && seconds >= 0 ? { seconds: Math.round(seconds) } : {}), result: RUN_STATUS[row.status] ?? row.status };
+    return { ...r, ...(who ? { by: named(by, who) } : {}), ...(Number.isFinite(seconds) && seconds >= 0 ? { seconds: Math.round(seconds) } : {}), result: RUN_STATUS[row.status] ?? row.status };
   };
   const q = opts.q?.trim().toLowerCase();
   const listed = (q ? picked.filter(r => `${r.label} ${typeof r.value === "string" ? r.value : ""}`.toLowerCase().includes(q)) : picked)
@@ -643,7 +654,7 @@ export function insightBreakdown(app: App, viewer: string, input: Filters, metri
     key: metricKey, label: m?.label ?? metricKey, value: m?.value ?? records.length, ...(m?.unit ? { unit: m.unit } : {}), ...(m?.note ? { note: m.note } : {}), ...(previous !== undefined ? { previous } : {}),
     from: cached.f.from, to: cached.f.to, all: records.length, total: listed.length,
     daily: dated ? { labels: days, values: days.map(d => perDay.get(d)!) } : null,
-    dims, picks: picks.map(p => ({ dim: p.dim.key, value: p.value, label: `${p.dim.label}：${p.value === UNKNOWN ? UNKNOWN : p.dim.name?.(p.value) ?? p.value}` })),
+    dims, picks: picks.map(p => ({ dim: p.dim.key, value: p.value, label: `${p.dim.label}：${p.value === UNKNOWN ? UNKNOWN : named(p.dim, p.value)}` })),
     records: listed.slice(offset, offset + BREAKDOWN_PAGE).map(enrich),
   };
 }
