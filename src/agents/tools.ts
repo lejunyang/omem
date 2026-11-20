@@ -3339,6 +3339,8 @@ def({
     description: z.string().max(2000).optional().describe("口径和注意的地方"),
     unit: z.string().max(20).optional(),
     source: z.string().max(200).optional().describe("哪个系统（按数据源目录的叫法）"),
+    providerId: z.string().min(1).nullable().optional().describe("插件数据源全名；传 null 改回 Agent 按 query 取数"),
+    providerQuery: z.unknown().optional().describe("按数据源查询结构填写的参数"),
     query: z.string().max(4000).optional().describe("怎么查：技能名、命令或查询语句、参数和时间范围，另一个 Agent 照着能取到同样的数"),
     item: z.string().optional().describe("关联的事项 id"),
     context: z.string().optional().describe("关联的关注 id"),
@@ -3351,7 +3353,7 @@ def({
     status: z.enum(["active", "paused", "dropped"]).optional().describe("本人亲口说留下 active / 暂停 paused / 不要 dropped；后台运行不用传"),
   }),
   handler: async (ctx, a) => {
-    const { defineMetric, metricLessons } = await import("../data/metrics.ts");
+    const { defineMetric, getMetric, metricLessons } = await import("../data/metrics.ts");
     if (a.item) {
       const item = getItem(ctx.app, a.item);
       inScope(ctx, item.spaceId, "指标关联的事项");
@@ -3362,11 +3364,14 @@ def({
     }
     // The owner's own turn (or their tools, the web) defines it; anything else proposes it.
     const by = ownTurn(ctx) ? ("owner" as const) : ("agent" as const);
+    const prev = getMetric(ctx.app, a.id ?? a.name);
+    if (prev) inScope(ctx, prev.spaceId, "指标");
     const m = defineMetric(ctx.app, {
       id: a.id, name: a.name, why: a.why, planRef: a.plan_ref, description: a.description, unit: a.unit, source: a.source, query: a.query,
-      itemId: a.item, contextId: a.context, spaceId: a.space ? writeSpace(ctx, a.space) : undefined,
+      providerId: a.providerId, providerQuery: a.providerQuery,
+      itemId: a.item, contextId: a.context, spaceId: writeSpace(ctx, a.space ?? prev?.spaceId),
       schedule: a.schedule, baseline: a.baseline, threshold: a.threshold, direction: a.direction, view: a.view, status: a.status,
-    }, { by, runId: ctx.runId });
+    }, { by, runId: ctx.runId, userId: ctx.userId ?? OWNER });
     const taking = `采集：${m.schedule}${m.schedule === "none" ? "" : "，后台到时间按查法取数"}。现在就有数的用 metric_record 记下。`;
     if (m.status !== "proposed") return `已${a.id ? "更新" : "保存"}指标「${m.name}」（${m.id}）：${m.status === "active" ? "在看" : m.status === "paused" ? "暂停" : "本人不要了，不再取数"}。${m.status === "dropped" ? "" : taking}`;
     const lessons = metricLessons(ctx.app, { spaces: ctx.spaces });

@@ -1,16 +1,16 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
-import { OWNER } from "../core/users.ts";
+import { metricProviders } from "../plugins/process-hooks.ts";
+import { canWrite, OWNER } from "../core/users.ts";
 import { HttpError, json, newId, now, truncate } from "../core/util.ts";
 
 /**
  * Metrics: the numbers of the owner's work the assistant keeps an eye on — events tracked by a
  * feature, errors and usage after a release, an old platform against its replacement. omem keeps the
  * definitions (what it measures and why, which system holds it and how to read it, which item or 关注 it
- * serves, how often to take it, what change matters, how it is drawn) and the points; reading the
- * systems themselves is the agents' work through skills (the systems are the owner's, described in
- * their data directory).
+ * serves, how often to take it, what change matters, how it is drawn) and the points; the configured
+ * provider or an agent with the appropriate skills reads the system.
  *
  * Where a metric comes from: the owner (on the web, or in their own turn with the assistant) defines it
  * outright; a background agent (an observation plan, a line's daily look) only proposes it. A proposal
@@ -54,6 +54,12 @@ export type Metric = {
   query: string;
   /** The observation plan section it came from: `src:<id>#L起-L止`. */
   planRef: string | null;
+  providerId?: string;
+  providerQuery?: unknown;
+  providerUserId?: string;
+  lastAttemptAt?: string;
+  lastError?: string;
+  lastErrorAt?: string;
   itemId: string | null;
   contextId: string | null;
   spaceId: string;
@@ -85,7 +91,7 @@ type Row = {
   space_id: string; schedule: MetricSchedule; settings: string; status: MetricStatus; defined_by: MetricDefiner; defined_run: string | null; confirmed_at: string | null;
   dropped_at: string | null; owner_note: string | null; view: string | null; last_at: string | null; created_at: string; updated_at: string;
 };
-type Settings = Pick<Metric, "baseline" | "threshold" | "direction">;
+type Settings = Pick<Metric, "baseline" | "threshold" | "direction" | "providerId" | "providerQuery" | "providerUserId" | "lastAttemptAt" | "lastError" | "lastErrorAt">;
 
 const DEFAULT_THRESHOLD = 0.3;
 const SCHEDULE_MS: Record<Exclude<MetricSchedule, "none">, number> = { hourly: 3600_000, daily: 86400_000, weekly: 7 * 86400_000 };
@@ -125,14 +131,15 @@ export function listMetrics(app: App, opts: { itemId?: string; itemIds?: string[
   return all<Row>(app.db, `select * from metrics ${where.length ? `where ${where.join(" and ")}` : ""} order by updated_at desc limit 500`, ...params).map(toMetric);
 }
 
-export type MetricInput = Partial<Omit<Metric, "lastAt" | "createdAt" | "updatedAt" | "baseline" | "planRef" | "view" | "definedBy" | "definedRun" | "confirmedAt" | "droppedAt">> & {
+export type MetricInput = Partial<Omit<Metric, "lastAt" | "createdAt" | "updatedAt" | "baseline" | "planRef" | "view" | "definedBy" | "definedRun" | "confirmedAt" | "droppedAt" | "providerId" | "providerUserId" | "lastAttemptAt" | "lastError" | "lastErrorAt">> & {
   name: string;
+  providerId?: string | null;
   baseline?: number | null;
   planRef?: string | null;
   view?: MetricView | null;
 };
 /** Who is defining: the owner (the web, their own turn), a background agent (and its run), or omem itself. */
-export type MetricBy = { by: MetricDefiner; runId?: string | null };
+export type MetricBy = { by: MetricDefiner; runId?: string | null; userId?: string };
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
 
@@ -144,7 +151,17 @@ const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
 export function defineMetric(app: App, input: MetricInput, by: MetricBy = { by: "owner" }): Metric {
   const prev = input.id ? getMetric(app, input.id) : getMetric(app, input.name);
   const agent = by.by === "agent";
-  if (!prev && !input.query?.trim()) throw new HttpError(400, "新指标要写查法（query）：哪个系统、用哪个技能或命令、什么参数，后台照着取数");
+  const providerId = input.providerId === undefined ? prev?.providerId : input.providerId ?? undefined;
+  const providerChanged = input.providerId !== undefined || input.providerQuery !== undefined || (input.spaceId !== undefined && input.spaceId !== prev?.spaceId);
+  const providerQuery = input.providerQuery !== undefined ? input.providerQuery : providerId === prev?.providerId ? prev?.providerQuery : undefined;
+  if (providerId && providerChanged) {
+    const entry = metricProviders.get(providerId);
+    if (!entry) throw new HttpError(400, `指标数据源不可用：${providerId}`);
+    const checked = entry.def.querySchema.safeParse(providerQuery);
+    if (!checked.success) throw new HttpError(400, `数据源查询不符合要求：${checked.error.message}`);
+  }
+  if (!providerId && input.providerQuery !== undefined) throw new HttpError(400, "providerQuery 需要指定 providerId");
+  if (!providerId && (!prev || prev.providerId) && !(input.query ?? prev?.query)?.trim()) throw new HttpError(400, "新指标要写查法（query）：哪个系统、用哪个技能或命令、什么参数，后台照着取数");
   if (!prev && agent && !input.why?.trim()) throw new HttpError(400, "提议新指标要写 why：这个数回答本人的什么问题（一句话），本人凭它决定要不要");
   if (input.threshold !== undefined && !(input.threshold > 0 && input.threshold <= 10)) throw new HttpError(400, "threshold 是相对变化，例如 0.3 表示 30%");
   if (input.planRef && !/^src:[\w-]+(#L\d+(-L?\d+)?)?$/.test(input.planRef.trim())) throw new HttpError(400, "planRef 写观测计划那一节的引用：src:<原件id>#L起-L止");
@@ -197,6 +214,10 @@ export function defineMetric(app: App, input: MetricInput, by: MetricBy = { by: 
     updatedAt: at,
   };
   const settings: Settings = { ...(m.baseline !== undefined ? { baseline: m.baseline } : {}), ...(m.threshold !== undefined ? { threshold: m.threshold } : {}), ...(m.direction ? { direction: m.direction } : {}) };
+  if (providerId) {
+    Object.assign(settings, { providerId, providerQuery, providerUserId: providerChanged ? by.userId ?? OWNER : prev?.providerUserId });
+    if (!providerChanged) Object.assign(settings, { lastAttemptAt: prev?.lastAttemptAt, lastError: prev?.lastError, lastErrorAt: prev?.lastErrorAt });
+  }
   run(
     app.db,
     `insert into metrics(id,name,description,why,unit,source,query,plan_ref,item_id,context_id,space_id,schedule,settings,status,defined_by,defined_run,confirmed_at,dropped_at,owner_note,view,last_at,created_at,updated_at)
@@ -462,7 +483,8 @@ export function latestOf(t: MetricTable): { label: string; values: { name: strin
 /** When the next point is due: null when it is not taken on a schedule (or not taken at all); now when never taken yet. */
 export function nextTake(m: Metric): string | null {
   if (m.schedule === "none" || !COLLECTED.includes(m.status)) return null;
-  return m.lastAt ? new Date(Date.parse(m.lastAt) + SCHEDULE_MS[m.schedule]).toISOString() : now();
+  const last = latestAttempt(m);
+  return last ? new Date(Date.parse(last) + SCHEDULE_MS[m.schedule]).toISOString() : now();
 }
 
 /** Points and figures of a metric for a reply or a report: series, newest against the baseline, and the charts its view draws. */
@@ -494,6 +516,8 @@ export function metricText(app: App, idOrName: string, opts: { days?: number; di
     m.description,
     `状态：${STATUS_TEXT[m.status]}${m.planRef ? `；来自观测计划 ${m.planRef}` : ""}${m.view ? `；网页上画成 ${m.view.kind}${m.view.compareBy ? `（按 ${m.view.compareBy} 并排${m.view.ratio ? "，带占比" : ""}）` : ""}` : ""}`,
     `来源：${m.source || "（没写）"}；查法：${truncate(m.query, 400)}`,
+    m.providerId ? `指标数据源：${metricProviders.get(m.providerId)?.def.label ?? m.providerId}（${m.providerId}）` : "",
+    m.lastError ? `最近采集失败（${m.lastErrorAt}）：${m.lastError}` : "",
     `采集：${m.schedule}${m.lastAt ? `，最近 ${m.lastAt.slice(0, 16).replace("T", " ")}` : "，还没有数据"}${m.itemId ? `；事项 ${m.itemId}` : ""}${m.contextId ? `；关注 ${m.contextId}` : ""}`,
   ].filter(Boolean);
   const changes = r.changes.filter((c) => c.change).map((c) => `- ${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}${c.change!.flagged ? "（超过门槛）" : ""}`);
@@ -548,17 +572,109 @@ export function metricLessons(app: App, opts: { spaces?: string[] | null; limit?
 /** Collection runs a day at most (all metrics together): a guard against a schedule gone wrong. */
 const COLLECT_PER_DAY = 40;
 
-/** Heartbeat: scheduled metrics (kept ones and proposals) whose time came get one collection run for the batch (grouped by space). */
-export function collectDue(app: App, at = Date.now()) {
-  const due = listMetrics(app, { collected: true }).filter((m) => m.schedule !== "none" && (!m.lastAt || at - Date.parse(m.lastAt) >= SCHEDULE_MS[m.schedule] - 5 * 60_000));
-  if (!due.length) return [];
+function latestAttempt(m: Metric) {
+  return m.lastAttemptAt && (!m.lastAt || m.lastAttemptAt > m.lastAt) ? m.lastAttemptAt : m.lastAt;
+}
+
+const providerPoint = z.object({
+  metricId: z.string(), at: z.union([z.iso.datetime({ offset: true }), z.iso.date()]),
+  value: z.number().finite(), dims: z.record(z.string().min(1).max(120), z.string().max(500)).optional(),
+  source: z.string().max(2000).optional(),
+});
+
+function sameBinding(app: App, m: Metric) {
+  const current = getMetric(app, m.id);
+  return current && current.schedule !== "none" && COLLECTED.includes(current.status) && current.spaceId === m.spaceId && current.providerId === m.providerId &&
+    current.providerUserId === m.providerUserId && JSON.stringify(current.providerQuery) === JSON.stringify(m.providerQuery);
+}
+
+function collectionResult(app: App, m: Metric, at: string, error?: string) {
+  const patch = { lastAttemptAt: at, lastErrorAt: error ? at : null, lastError: error ?? null };
+  run(app.db, "update metrics set settings=json_patch(settings,?), updated_at=? where id=?", JSON.stringify(patch), at, m.id);
+}
+
+async function collectProvider(app: App, batch: Metric[], at: number) {
+  const first = batch[0];
+  const to = new Date(at).toISOString();
+  const entry = metricProviders.get(first.providerId!);
+  const userId = first.providerUserId!;
+  try {
+    if (!entry) throw new Error(`指标数据源不可用：${first.providerId}`);
+    if (!canWrite(app, userId, first.spaceId)) throw new Error("连接用户已失去指标空间的写权限");
+    const signal = AbortSignal.timeout(15_000);
+    const ctx = entry.context(app, userId, first.spaceId, signal);
+    const metrics = batch.map(m => ({ id: m.id, query: entry.def.querySchema.parse(m.providerQuery) }));
+    const starts = batch.map(m => m.lastAt ? Date.parse(m.lastAt) : at - SCHEDULE_MS[m.schedule as Exclude<MetricSchedule, "none">]);
+    const from = new Date(Math.min(...starts)).toISOString();
+    const raw = await Promise.race([
+      entry.def.collect(ctx, { metrics, from, to }),
+      new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true })),
+    ]);
+    const grouped = new Map(batch.map(m => [m.id, [] as z.infer<typeof providerPoint>[]]));
+    for (const p of z.array(providerPoint).max(10000).parse(raw)) {
+      const rows = grouped.get(p.metricId);
+      if (!rows) throw new Error("数据源返回了本批之外的指标");
+      rows.push(p);
+    }
+    for (const m of batch) {
+      if (!sameBinding(app, m) || entry !== metricProviders.get(m.providerId!) || !canWrite(app, userId, m.spaceId)) continue;
+      const rows = grouped.get(m.id)!;
+      if (rows.length) await recordPoints(app, m.id, rows.map(p => ({ at: p.at.length === 10 ? p.at : new Date(p.at).toISOString(), value: p.value, dims: p.dims, note: p.source })));
+      if (sameBinding(app, m)) collectionResult(app, m, to);
+    }
+  } catch (e) {
+    const error = truncate(e instanceof Error ? e.message : String(e), 500) || "指标采集失败";
+    const failed = batch.filter(m => sameBinding(app, m));
+    for (const m of failed) collectionResult(app, m, to, error);
+    const newlyFailed = failed.filter(m => !m.lastError && m.status === "active");
+    if (newlyFailed.length && canWrite(app, userId, first.spaceId)) {
+      const { notify } = await import("../core/notify.ts");
+      notify(app, { userId, title: `指标采集失败：${entry?.def.label ?? first.providerId}`,
+        body: `${newlyFailed.map(m => m.name).join("、")}：${error}`, urgency: "later", plain: true });
+    }
+  }
+}
+
+const collecting = new WeakMap<App, Promise<string[]>>();
+export function collectDue(app: App, at = Date.now()): Promise<string[]> {
+  const pending = collecting.get(app);
+  if (pending) return pending;
+  const work = collectScheduled(app, at).finally(() => collecting.delete(app));
+  collecting.set(app, work);
+  return work;
+}
+
+async function collectScheduled(app: App, at: number) {
+  const due = listMetrics(app, { collected: true }).filter(m => {
+    const last = latestAttempt(m);
+    return m.schedule !== "none" && (!last || at - Date.parse(last) >= SCHEDULE_MS[m.schedule] - 5 * 60_000);
+  });
+  const batches = new Map<string, Metric[]>();
+  const agentMetrics: Metric[] = [];
+  for (const m of due) {
+    if (!m.providerId) { agentMetrics.push(m); continue; }
+    const key = JSON.stringify([m.providerId, m.providerUserId, m.spaceId]);
+    const batch = batches.get(key);
+    if (batch) batch.push(m);
+    else batches.set(key, [m]);
+  }
+  const created = await queueAgentMetrics(app, agentMetrics, at);
+  for (const batch of batches.values()) {
+    const current = batch.filter(m => sameBinding(app, m));
+    if (current.length) await collectProvider(app, current, at);
+  }
+  return created;
+}
+
+async function queueAgentMetrics(app: App, agentMetrics: Metric[], at: number) {
+  if (!agentMetrics.length) return [];
   const start = new Date(at);
   start.setHours(0, 0, 0, 0);
   const today = one<{ n: number }>(app.db, "select count(*) n from runs where kind = 'agent' and json_extract(input, '$.metricCollect') is not null and created_at >= ?", start.toISOString())?.n ?? 0;
   if (today >= COLLECT_PER_DAY) return [];
   const created: string[] = [];
   const bySpace = new Map<string, Metric[]>();
-  for (const m of due) bySpace.set(m.spaceId, [...(bySpace.get(m.spaceId) ?? []), m]);
+  for (const m of agentMetrics) bySpace.set(m.spaceId, [...(bySpace.get(m.spaceId) ?? []), m]);
   return import("../agents/runs.ts").then(({ createRun, runsInLane }) => {
     for (const [space, ms] of bySpace) {
       const lane = `metric-collect:${space}`;

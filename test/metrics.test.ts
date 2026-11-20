@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { metricProviders } from "../src/plugins/process-hooks.ts";
+import type { MetricProvider } from "../packages/plugin-sdk/server.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { addMember, createUser } from "../src/core/users.ts";
+import { describe, expect, it, vi } from "vitest";
 import { createRun, listRuns } from "../src/agents/runs.ts";
 import { threadMessages } from "../src/agents/threads.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
@@ -60,6 +65,84 @@ describe("metrics", () => {
     expect((r.input.assistantScope as { denyTools: string[] }).denyTools).toContain("lark_send");
     // Queued already: no second run.
     expect(await collectDue(app)).toHaveLength(0);
+  });
+
+  it("configures a provider through the tool and HTTP and batches queries separately from agent runs", async () => {
+    const app = testApp();
+    const providerId = "sample:requests";
+    const collect = vi.fn<MetricProvider["collect"]>(async (_ctx, req) =>
+      req.metrics.map(m => ({ metricId: m.id, at: req.to, value: Number(m.query), dims: { kind: "requests" }, source: "daily report" })));
+    metricProviders.set(providerId, {
+      plugin: "sample", spaces: [], def: { id: "requests", label: "请求计数", querySchema: z.number().int(), collect },
+      context: (_app, userId, spaceId, signal) => ({ userId, spaceId, signal, connection: async () => null }),
+    });
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      expect((await server.inject("/api/metrics/providers")).json()).toContainEqual(expect.objectContaining({
+        id: providerId, label: "请求计数", querySchema: expect.objectContaining({ type: "integer" }),
+      }));
+      const t = tool(app);
+      const args = { name: "请求总数", providerId, schedule: "daily" };
+      expect((await callTool(t, "metric_define", { ...args, providerQuery: "bad" })).isError).toBe(true);
+      expect((await callTool(t, "metric_define", { ...args, providerQuery: 3 })).isError).toBe(false);
+      const m = defineMetric(app, { name: "失败次数", query: "按日报取数", schedule: "daily" });
+      const url = `/api/metrics/${m.id}`;
+      expect((await server.inject({ method: "PUT", url, payload: { providerId, providerQuery: "bad" } })).statusCode).toBe(400);
+      expect((await server.inject({ method: "PUT", url, payload: { providerId, providerQuery: 2 } })).json()).toMatchObject({ providerId, providerQuery: 2 });
+      const legacy = defineMetric(app, { name: "访问人数", query: "读取访问日报", schedule: "daily" });
+      createSpace(app, { id: "project", name: "示例项目" });
+      createUser(app, { id: "editor", name: "编辑" });
+      addMember(app, "project", "editor", "editor");
+      for (const [userId, value] of [["owner", 4], ["editor", 5]] as const) {
+        defineMetric(app, { name: `项目请求 ${value}`, spaceId: "project", providerId, providerQuery: value, schedule: "daily" }, { by: "owner", userId });
+      }
+      await Promise.all([collectDue(app), collectDue(app)]);
+      expect(collect.mock.calls.map(([ctx, req]) => [ctx.userId, ctx.spaceId, req.metrics.map(row => row.query).sort()])).toEqual(expect.arrayContaining([
+        ["owner", "personal", [2, 3]], ["owner", "project", [4]], ["editor", "project", [5]],
+      ]));
+      expect(collect).toHaveBeenCalledTimes(3);
+      expect(listRuns(app, { kind: "agent" }).map(r => r.input.metricCollect)).toEqual([[legacy.id]]);
+      expect(metricPoints(app, m.id)).toMatchObject([{ value: 2, dims: { kind: "requests" }, note: "daily report" }]);
+      expect((await callTool(t, "metric_read", { metric: m.id })).text).toContain("请求计数");
+      expect((await server.inject({ method: "PUT", url, payload: { providerId: null } })).json().providerId).toBeUndefined();
+    } finally {
+      metricProviders.delete(providerId);
+      await server.close();
+    }
+  });
+
+  it("rejects invalid provider batches before writing and records one notification until recovery", async () => {
+    const app = testApp();
+    const providerId = "sample:daily";
+    const collect = vi.fn<MetricProvider["collect"]>();
+    metricProviders.set(providerId, {
+      plugin: "sample", spaces: [], def: { id: "daily", label: "日报", querySchema: z.string(), collect },
+      context: (_app, userId, spaceId, signal) => ({ userId, spaceId, signal, connection: async () => null }),
+    });
+    try {
+      const m = defineMetric(app, { name: "完成次数", providerId, providerQuery: "done", schedule: "daily" });
+      const start = Date.now();
+      const p = { metricId: m.id, at: day(0), value: 1 };
+      collect.mockResolvedValueOnce([p, { ...p, metricId: "unrequested" }])
+        .mockResolvedValueOnce([p, { ...p, at: "invalid" }])
+        .mockRejectedValueOnce(new Error("数据源离线")).mockResolvedValueOnce([p]);
+      for (let i = 0; i < 3; i++) {
+        const at = start + i * 86400_000;
+        expect(await collectDue(app, at)).toEqual([]);
+        expect(getMetric(app, m.id)).toMatchObject({ lastAt: null, lastErrorAt: new Date(at).toISOString(), lastError: expect.any(String) });
+        expect(metricPoints(app, m.id)).toEqual([]);
+        await collectDue(app, at + 60_000);
+        expect(collect).toHaveBeenCalledTimes(i + 1);
+      }
+      expect(getMetric(app, m.id)?.lastError).toBe("数据源离线");
+      expect(all(app.db, "select 1 from notifications where title like '指标采集失败%'")).toHaveLength(1);
+      await collectDue(app, start + 3 * 86400_000);
+      expect(getMetric(app, m.id)?.lastError).toBeUndefined();
+      expect(metricPoints(app, m.id)).toMatchObject([{ value: 1 }]);
+    } finally {
+      metricProviders.delete(providerId);
+    }
   });
 
   it("keeps omem's own use day by day, once per day", () => {
