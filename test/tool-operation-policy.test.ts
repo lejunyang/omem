@@ -21,7 +21,7 @@ function setup(action: OperationRule["action"]) {
   return { app, ctx, rule, invoke };
 }
 
-it.each(["allow", "deny", "log"] as const)("applies %s to the actual tool and audits the decision", async action => {
+it.each(["allow", "deny"] as const)("applies %s to the actual tool and audits the decision", async action => {
   const { app, ctx, invoke } = setup(action);
   app.config.approvals.tools = ["list_spaces"];
   expect((await invoke()).isError).toBe(action === "deny");
@@ -29,6 +29,32 @@ it.each(["allow", "deny", "log"] as const)("applies %s to the actual tool and au
   ctx.tools!.clear();
   expect((await invoke()).text).toContain("不可用");
   expect(listAsks(app)).toHaveLength(0);
+});
+
+it("logs the call and waits for ordinary approval before executing it once", async () => {
+  const { app, ctx, rule } = setup("log");
+  const name = "sample_count";
+  let calls = 0;
+  registerTool({ name, description: "", schema: z.object({}), handler: () => String(++calls) });
+  try {
+    rule.match = { kind: "tool", name };
+    ctx.tools!.add(name);
+    app.config.approvals.tools = [name];
+    await callTool(ctx, name, {});
+    const pending = listAsks(app, { status: "pending" });
+    expect(pending).toHaveLength(1);
+    expect(calls).toBe(0);
+    expect(all(app.db, "select target from audit_events where action = 'tool.log'")).toEqual([{ target: name }]);
+    expect((await answerAsk(app, pending[0].id, { approved: true, by: "owner" })).result).toBe("1");
+    expect(calls).toBe(1);
+  } finally { unregisterTools([name]); }
+});
+
+it("logs a reported tool and sends its completion notice", async () => {
+  const { app, invoke } = setup("log");
+  app.config.approvals.report = ["list_spaces"];
+  expect((await invoke()).isError).toBe(false);
+  expect(all(app.db, "select title from notifications")).toContainEqual({ title: "助理 已调用 list_spaces" });
 });
 
 it("runs the rule-approved call once and keeps the plugin's mandatory confirmation", async () => {

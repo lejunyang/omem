@@ -17,6 +17,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 工具仅记录规则保留原审批（11-21）
+
+工具命中 log 后仍按原设置询问或在完成时告知。入口在 `src/agents/tools.ts`。
+
 ## 高危操作按范围匹配和授权（11-21）
 
 规则从 `src/agents/operation-policy.ts` 读起，配置迁移在 `src/core/config.ts`。授权按成员、目标与规则版本核销，审批卡片见 `src/agents/command-gate.ts`。接口、规则包和各执行点覆盖的字段见 `docs/v2/command-gate.md`。

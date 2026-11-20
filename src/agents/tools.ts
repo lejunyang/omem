@@ -6964,7 +6964,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
     const stopped = await checkToolOperation(ctx, op, who, decision);
     if (stopped) return stopped;
   }
-  const legacy = ctx.actor === "agent" && !ctx.approved && !decision?.rule;
+  const legacy = ctx.actor === "agent" && !ctx.approved && (!decision?.rule || decision.action === "log");
   if ((legacy && ctx.app.config.approvals.tools.includes(name)) || (ctx.actor === "agent" && !ctx.approved && alwaysApprove.has(name)))
     return held(ctx, name, parsed.data);
   // A memory, note or page written into a mirror of another node's space is written on its home (core/mesh-write.ts).
