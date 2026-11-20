@@ -75,7 +75,7 @@
 
 `reply_outcomes`，一次运行一行：发出时间、渠道、会话或群、第一遍的标注（`label` / `confidence` / `by` / `evidence`）、改判（`revised_label` / `revised_by` / `revised_why`）、夜里复查（`checked` 同意或改判、`checked_label` / `checked_by` / `checked_why`、为什么挑它 `checked_pick`、`checked_at`）、该判的时间（`due_at`）。随运行一起拉取到别的设备。
 
-设置在 设置 → AI →“回复发出后看有没有用”：开关、等几小时、每晚复查的开关和每晚最多几条（`replies.outcome.review` 里还有 `batch`、`sample`、`days`）。关掉以后不再登记，已经标的留着。
+设置在 设置 → 代你回复 → 回复发出后看有没有用：开关、等几小时、每晚复查的开关和每晚最多几条（`replies.outcome.review` 里还有 `batch`、`sample`、`days`）。关掉以后不再登记，已经标的留着。
 
 ## 没做的
 

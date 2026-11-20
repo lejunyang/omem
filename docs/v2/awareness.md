@@ -94,7 +94,7 @@ omem 里每个会话（飞书群、群里的话题、私聊、网页对话）是
 
 ## 7. 进展稍后发，反应交回判断者
 
-`notify` 的四级：normal 遵守免打扰，urgent 可立即推，silent 只留网页，later 是不需要本人现在做什么的进展或结果。需要本人处理、决定、回复的不用 later。later 默认按服务器时钟 09:30、13:30、18:30 一起发，一两条原样、超过两条一份清单（清单只列最新的 12 条，更早的只报条数，全部都在网页的通知里）；读过或超过 48 小时的不补推。设置 → 渠道可编辑 `notify.laterTimes`（最多 12 项），空数组使新通知立即发。Telegram、OneBot 也走同一通知接收器，接收汇总的标题与正文。
+`notify` 的四级：normal 遵守免打扰，urgent 可立即推，silent 只留网页，later 是不需要本人现在做什么的进展或结果。需要本人处理、决定、回复的不用 later。later 默认按服务器时钟 09:30、13:30、18:30 一起发，一两条原样、超过两条一份清单（清单只列最新的 12 条，更早的只报条数，全部都在网页的通知里）；读过或超过 48 小时的不补推。设置 → 通知与打扰 → 通知时间 可编辑 `notify.laterTimes`（最多 12 项），空数组使新通知立即发。Telegram、OneBot 也走同一通知接收器，接收汇总的标题与正文。
 
 巡检杂务在所有提前返回之前释放通知、标注效果。`notifications.outcome / outcome_at` 在创建超过 48 小时后一次标注，每轮最多 300 条，只看本人的；silent、被新通知替换和汇总清单本身跳过，并入汇总的原条目标 bundled。其余依次取首个：
 
@@ -105,13 +105,13 @@ omem 里每个会话（飞书群、群里的话题、私聊、网页对话）是
 | known | 飞书因“你已经在飞书上看过或处理了，没有再推”静默，免提醒规则造成的静默不算 |
 | read / unread | 有 / 没有 read_at，且不满足上面的条件 |
 
-本人对飞书通知卡片回负面表情时，`notify-reactions.ts` 按 `context.larkMessageId`（没有时取 `pushed.messageId`）找到通知，复用“忽略”按钮的 `learnIgnoreFromNotification`，由模型总结带对象和场景边界的免提醒规则。通知的 `ignoreRule` 保存规则 ID 与文字，`negativeHandledAt` 标记已处理；模型认为一次性事件时保存空规则，不告知。每条只学一次，按钮和表情共用记录；成功学到规则后发一条 later 告知，通知页能查看、删除忽略规则，也能看到哪条通知生成了哪条规则。紧急通知和工具完成汇报不学忽略规则；`notify.learnFromReactions` 默认 true，可在设置 → 渠道 → 提醒的效果关闭，手动点“忽略”仍生效。
+本人对飞书通知卡片回负面表情时，`notify-reactions.ts` 按 `context.larkMessageId`（没有时取 `pushed.messageId`）找到通知，复用“忽略”按钮的 `learnIgnoreFromNotification`，由模型总结带对象和场景边界的免提醒规则。通知的 `ignoreRule` 保存规则 ID 与文字，`negativeHandledAt` 标记已处理；模型认为一次性事件时保存空规则，不告知。每条只学一次，按钮和表情共用记录；成功学到规则后发一条 later 告知，通知页能查看、删除忽略规则，也能看到哪条通知生成了哪条规则。紧急通知和工具完成汇报不学忽略规则；`notify.learnFromReactions` 默认 true，可在数据页“omem 自己”一栏的“提醒”一节关闭，手动点“忽略”仍生效。
 
 负反馈先在表情到达时处理，`labelOutcomes` 将通知标为 negative 时也调用同一路径，补上服务停机期间已入库而未处理的反应。规则本身不另作统计证据。发言和事项动作是观察信号，不证明由提醒促成；超过 48 小时标注后不持续追改。查询待标注通知按只含合格行的时间索引、统计按本人 / 时间索引，事项按 item / 时间，聊天按 chat / create_ms，原件按主键，测试用 `explain query plan` 核对。
 
 `outcomeStats` 默认 30 天，sender 按 runId 对应的 runs.kind（没有运行的为 host），sourceId 按引用指向的聊天原件。并入汇总清单发出的（bundled）不计入 sent，也不归入其余五列：一条清单里的单条说明不了本人对它的反应。`outcomeLine` 少于 5 条为空；巡检预筛的“本人对以往巡检提醒的反应”、巡检任务的“本人对以往提醒的反应”、聊天整理及找人分诊的“本人对这个会话里以往提醒的反应”用同一句计数交给判断者。只供判断参照，宿主不按低处理率自动禁用提醒。
 
-本人可从 `GET /api/notifications/outcomes?days=30` 看各运行类型及提醒最多的 20 个聊天原件；至少 8 条且无 acted 的会话在设置页可确认后创建既有语义免提醒规则。`POST /api/notifications/outcomes/ignore` 接受 sourceId，宿主读原件标题生成规则，保留点名和限时例外；这两个接口只给本人。
+本人可从 `GET /api/notifications/outcomes?days=30` 看各运行类型及提醒最多的 20 个聊天原件；至少 8 条且无 acted 的会话可在数据页“omem 自己”一栏的“提醒”一节确认创建既有的语义免提醒规则。`POST /api/notifications/outcomes/ignore` 接受 sourceId，宿主读原件标题生成规则，保留点名和限时例外；这两个接口只给本人。
 
 飞书的会议结束或本人离会进入 `meetingEnded` 时，调用 `releaseLater(app, new Date(), { now: true })`，立即放出已攒的不急通知，不占用当天的定时发送时段。即使没有安排机器人旁听也生效；这一切片不增加会中扣留通知的条件。
 

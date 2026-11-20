@@ -68,7 +68,7 @@ export default function register(api: PluginApi) {
   const packOf = (d: Def) => api.platforms().find((p) => p.provider === `${api.id}-${d.id}`) ?? null;
   const connected = async (ctx: PluginContext, d: Def) => {
     const c = await ctx.connection(`${api.id}-${d.id}`);
-    if (!c) throw new Error(`本人还没有连接${d.label}：请本人在 omem 的账号页“已连接的应用”里连接（主人要先在 设置 → 连接 → 其他平台 打开它）`);
+    if (!c) throw new Error(`本人还没有连接${d.label}：请本人在 omem 的账号页“已连接的应用”里连接（主人要先在 设置 → 采集 → 其他平台 打开它）`);
     return c;
   };
 

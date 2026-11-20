@@ -82,7 +82,7 @@ flowchart TD
 
 每次排入生成与 `wiki_coverage_tries(space_id, source_id, at, generation_id)` 的写入在一个事务中，generation_id 是规划运行 id；失败或空计划也算尝试，30 天内不重复选，被任何页面引用后自行退出。此表在 `pull-data.ts` 登记，设备拉取时合并。候选列表不含冷却中的文档，覆盖分母仍包含它们。
 
-空间 Wiki 顶部显示“重点文档 X / Y 份已写进页面”，展开前 20 份候选及各项数字，“现在写这几份”只运行当前空间，沿用每空间额度与冷却期；手动调用可用于关闭自动整理的空间。`GET /api/wiki/:space/coverage` 和 `POST /api/wiki/:space/coverage/run` 均需 `wiki.write`，POST 保留调用者身份。设置 → 定时任务可调整额度、关闭任务；只读 peer 命令 `wiki-coverage` 返回所有空间的覆盖数字。
+空间 Wiki 顶部显示“重点文档 X / Y 份已写进页面”，展开前 20 份候选及各项数字，“现在写这几份”只运行当前空间，沿用每空间额度与冷却期；手动调用可用于关闭自动整理的空间。`GET /api/wiki/:space/coverage` 和 `POST /api/wiki/:space/coverage/run` 均需 `wiki.write`，POST 保留调用者身份。在 设置 → 定时任务 点开“重点文档补写”那一行可调整额度、关闭任务；只读 peer 命令 `wiki-coverage` 返回所有空间的覆盖数字。
 
 ## 4. 没做的部分
 
