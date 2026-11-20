@@ -32,7 +32,7 @@ type Declared = {
   tools: { name: string; description: string; jsonSchema: Record<string, unknown>; write: boolean; page: boolean; approval: boolean; whenConnected: boolean }[];
   platforms: (Omit<PluginPlatform, "readers"> & { readers: { kind: string; label: string; id: string; read: boolean; changes: boolean }[] })[];
 };
-type Pending = { ok: (v: any) => void; fail: (e: Error) => void; ctx?: ToolContext; eventCtx?: import("./types.ts").CallContext; timer: NodeJS.Timeout };
+type Pending = { connections: Map<string, PluginConnection>; ok: (v: any) => void; fail: (e: Error) => void; ctx?: ToolContext; eventCtx?: import("./types.ts").CallContext; timer: NodeJS.Timeout };
 
 export type Sandbox = { tools: Declared["tools"]; platforms: string[]; stop(): void };
 
@@ -55,50 +55,35 @@ export async function startSandbox(
   });
   let seq = 0;
   const pending = new Map<number, Pending>();
-  const conns = new Map<string, PluginConnection>();
   let dead: string | null = null;
 
-  function releaseHandles(call: number) {
-    for (const [handle, owner] of eventHandles) if (owner === call) {
-      conns.delete(handle);
-      eventHandles.delete(handle);
-    }
+  function connectionHandle(call: Pending, connection: PluginConnection) {
+    const handle = `c${++seq}`;
+    call.connections.set(handle, connection);
+    return { handle, account: connection.account, scopes: connection.scopes, base: connection.base };
   }
-  const ask = (msg: Record<string, unknown>, ctx?: ToolContext, eventCtx?: import("./types.ts").CallContext) =>
+  const ask = (msg: Record<string, unknown>, ctx?: ToolContext, eventCtx?: import("./types.ts").CallContext, readerConnection?: PluginConnection) =>
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
       const callMs = String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event") ? 15000 : CALL_MS;
       const timer = setTimeout(() => {
         pending.delete(id);
-        releaseHandles(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
-      pending.set(id, { ok, fail, ctx, eventCtx, timer });
-      child.send({ ...msg, id });
+      const call: Pending = { ok, fail, ctx, eventCtx, timer, connections: new Map() };
+      pending.set(id, call);
+      child.send({ ...msg, id, ...(readerConnection ? { conn: connectionHandle(call, readerConnection) } : {}) });
     });
-  const eventHandles = new Map<string, number>();
-  const handle = (c: PluginConnection, eventCall?: number) => {
-    const h = `c${++seq}`;
-    if (eventCall !== undefined) eventHandles.set(h, eventCall);
-    conns.set(h, c);
-    // Kept for the call or reading that asked; old ones go.
-    if (conns.size > 500) conns.delete(conns.keys().next().value!);
-    return { handle: h, account: c.account, scopes: c.scopes, base: c.base };
-  };
-
   /** What the process asks back, answered as the call in progress. */
   async function answer(op: string, a: Record<string, any>) {
-    const eventCtx = pending.get(a.call)?.eventCtx;
+    const call = pending.get(a.call);
+    const eventCtx = call?.eventCtx;
     if (eventCtx) {
       eventCtx.signal.throwIfAborted();
-      if (op === "connection") {
-        const c = await eventCtx.connection(String(a.provider));
-        return c ? handle(c, a.call) : null;
-      }
-      if (op !== "fetch" || eventHandles.get(a.handle) !== a.call) throw new Error("当前调用没有此权限");
-    } else if (op === "fetch" && eventHandles.has(a.handle)) throw new Error("连接已经失效");
-    const ctx = pending.get(a.call)?.ctx;
+      if (op !== "connection" && op !== "fetch") throw new Error("当前调用没有此权限");
+    }
+    const ctx = call?.ctx;
     const need = () => {
       if (!ctx) throw new Error("这个请求不属于正在进行的调用");
       return ctx;
@@ -108,7 +93,7 @@ export async function startSandbox(
         need();
         return emitPluginSignal(app, plugin.id, a.signal);
       case "fetch": {
-        const c = conns.get(a.handle);
+        const c = call?.connections.get(a.handle);
         if (!c) throw new Error("连接已经失效");
         const r = await c.fetch(a.path, a.init ?? {});
         const headers: [string, string][] = [];
@@ -116,9 +101,8 @@ export async function startSandbox(
         return { status: r.status, headers, body: Buffer.from(await r.arrayBuffer()).toString("base64") };
       }
       case "connection": {
-        const x = need();
-        const c = pluginConnection(app, x.userId ?? OWNER, String(a.provider));
-        return c ? handle(c) : null;
+        const c = eventCtx ? await eventCtx.connection(String(a.provider)) : pluginConnection(app, need().userId ?? OWNER, String(a.provider));
+        return c ? connectionHandle(call!, c) : null;
       }
       case "store.get":
       case "store.put":
@@ -159,7 +143,6 @@ export async function startSandbox(
         const p = pending.get(m.id);
         if (!p) return;
         pending.delete(m.id);
-        releaseHandles(m.id);
         clearTimeout(p.timer);
         if (m.ok) p.ok(m.value);
         else p.fail(new Error(m.error));
@@ -233,8 +216,8 @@ export async function startSandbox(
           kind: r.kind,
           label: r.label,
           id: r.id,
-          read: r.read ? (c, target) => ask({ t: "read", provider: def.provider, kind: r.kind, target, conn: handle(c) }) : undefined,
-          changes: r.changes ? (c, target, cursor) => ask({ t: "changes", provider: def.provider, kind: r.kind, target, cursor, conn: handle(c) }) : undefined,
+          read: r.read ? (c, target) => ask({ t: "read", provider: def.provider, kind: r.kind, target }, undefined, undefined, c) : undefined,
+          changes: r.changes ? (c, target, cursor) => ask({ t: "changes", provider: def.provider, kind: r.kind, target, cursor }, undefined, undefined, c) : undefined,
         })),
       }),
     );

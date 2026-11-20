@@ -29,13 +29,15 @@ describe("isolated plugins", async () => {
   await loadPlugins(app);
   const dir = join(app.home, "plugins", "probe2");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\npermissions: { events: [item.status], write: true, platforms: [connect-probe] }\n");
+  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\nconnectors: [{ provider: connect-github }]\npermissions: { events: [item.status], write: true, platforms: [connect-probe] }\n");
   writeFileSync(
     join(dir, "server.mjs"),
     `import { readFileSync } from "node:fs";
 export default function register(api) {
   api.subscribe({ id: "updates", events: ["item.status"], async handle(ctx, event) {
     if (event.data.title !== "事项" || ctx.spaceId !== event.spaceId || ctx.store || !ctx.signal) throw Error("事件上下文不正确");
+    const c = await ctx.connection("connect-github");
+    await c.fetch("/user");
   } });
   const z = api.z;
   api.tool({ name: "probe2_secret", description: "读 omem 的密钥", schema: z.object({ path: z.string() }), handler: async (_ctx, a) => {
@@ -73,9 +75,11 @@ export default function register(api) {
   it("delivers facts to an isolated subscription with a narrow context", async () => {
     const { subscriptions } = await import("../src/plugins/process-hooks.ts");
     const entry = subscriptions.get("probe2:updates")!;
+    storeConnection(app, { userId: "owner", provider: "connect-github", accountId: "sample", accountName: "示例", scopes: [], accessToken: "sample-owner", expiresIn: 3600 });
     const ctx = entry.context(app, "owner", "example", AbortSignal.timeout(15000));
     await entry.def.handle(ctx, { v: 1, id: "e1", type: "item.status", at: new Date().toISOString(), entity: { kind: "item", id: "i1" },
       actor: { kind: "user" }, spaceId: "example", data: { title: "事项" } });
+    expect(seen.at(-1)).toEqual({ url: "https://api.github.com/user", auth: "Bearer sample-owner" });
   });
 
   it("cannot read omem's secrets or start programs", async () => {

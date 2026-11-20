@@ -29,7 +29,7 @@ const unsupported = (what: string) => () => {
 };
 
 /** A connection's view: its fetch goes through omem, which adds the token. */
-function connectionOf(c: { handle: string; account: string; scopes: string[]; base: string | null }, call?: number): PluginConnection {
+function connectionOf(c: { handle: string; account: string; scopes: string[]; base: string | null }, call: number): PluginConnection {
   return {
     account: c.account,
     scopes: c.scopes,
@@ -66,7 +66,7 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
     present: unsupported("内容块"),
     connection: async (provider: string) => {
       const info = await rpc<{ handle: string; account: string; scopes: string[]; base: string | null } | null>("connection", { provider, call });
-      return info ? connectionOf(info) : null;
+      return info ? connectionOf(info, call) : null;
     },
     saveSource: (input: unknown) => rpc("saveSource", { input, call }),
     watches: {
@@ -153,7 +153,7 @@ process.on("message", async (m: Msg) => {
         userId: m.userId, spaceId: m.spaceId, signal: AbortSignal.timeout(15000),
         async connection(provider) {
           const c = await rpc("connection", { call: m.id, provider });
-          return c ? connectionOf(c, m.id) : null;
+          return c ? connectionOf(c, m.id!) : null;
         },
       }, m.event);
     } else if (m.t === "call") {
@@ -172,7 +172,7 @@ process.on("message", async (m: Msg) => {
       value = (await def.handle(contextOf({ ...m.ctx, call: m.id }, process.env.OMEM_PLUGIN_ID!), m.req)) ?? null;
     } else if (m.t === "read" || m.t === "changes") {
       const r = readers.get(`${m.provider} ${m.kind}`);
-      const conn = connectionOf(m.conn);
+      const conn = connectionOf(m.conn, m.id!);
       if (m.t === "read" && r?.read) value = await r.read(conn, m.target);
       else if (m.t === "changes" && r?.changes) value = await r.changes(conn, m.target, m.cursor ?? null);
       else throw new Error(`没有读取器 ${m.provider} ${m.kind}`);
