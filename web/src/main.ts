@@ -4,7 +4,7 @@ import App from "./App.vue";
 import { setNavigation } from "./api";
 import { preloadWhenIdle, preloadable } from "./preload";
 import { compositionGuard } from "./lib/composition";
-import { toast } from "./store";
+import { state, toast } from "./store";
 import "./styles.css";
 
 // `pattern` is the router pattern; `key` is the nav base used for hover/idle preloading.
@@ -14,12 +14,18 @@ const view = (pattern: string, loader: () => Promise<unknown>, key = pattern.rep
 const routes: RouteRecordRaw[] = [
   view("/quality", () => import("./views/Quality.vue")),
   view("/insights", () => import("./views/Insights.vue")),
-  view("/", () => import("./views/Home.vue")),
+  // The start page: the work lines, by time and by stage (views/Work.vue); a line's or work item's own page.
+  view("/", () => import("./views/Work.vue")),
+  view("/work/:id", () => import("./views/WorkDetail.vue"), "/work"),
   view("/ask/:id?", () => import("./views/Ask.vue"), "/ask"),
   view("/ui/:id", () => import("./views/UiItem.vue"), "/ui"),
   view("/graph/:space?", () => import("./views/Graph.vue"), "/graph"),
   view("/wiki/:space?/:slug(.*)*", () => import("./views/Wiki.vue"), "/wiki"),
-  view("/items/:id/flow", () => import("./views/ItemFlowPage.vue"), "/items"),
+  // An item's flow is a tab of its page under 工作 (the owner's); members keep the flow page itself.
+  {
+    ...view("/items/:id/flow", () => import("./views/ItemFlowPage.vue"), "/items"),
+    beforeEnter: (to) => (!state.me || state.me.role === "owner" ? { path: `/work/${String(to.params.id)}`, query: { tab: "flow" } } : true),
+  } as RouteRecordRaw,
   view("/items/:id?", () => import("./views/Items.vue"), "/items"),
   view("/reqs/:id?", () => import("./views/Requirements.vue"), "/reqs"),
   view("/designs", () => import("./views/Designs.vue")),
@@ -37,6 +43,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/rules/tasks", redirect: (to) => ({ path: "/rules", query: to.query }) },
   view("/rules", () => import("./views/Rules.vue")),
   view("/flows", () => import("./views/Flows.vue")),
+  // The flow board: the owner's nav opens it as the work page's 按阶段 (/?view=stage), members here.
   view("/board", () => import("./views/Board.vue")),
   view("/notifications", () => import("./views/Notifications.vue")),
   view("/settings", () => import("./views/Settings.vue")),
@@ -63,7 +70,7 @@ setNavigation((to) => void router.isReady().then(() => router.replace(to)));
 // After the first view has settled, pull every other chunk at idle; a share link or a login page
 // (opened by someone who may never see the app) does not.
 const BARE_START = /^\/(share\/|login|cli-login)/;
-router.isReady().then(() => !BARE_START.test(router.currentRoute.value.path) && preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/designs", "/design", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/flows", "/notifications", "/settings", "/listen", "/account"]));
+router.isReady().then(() => !BARE_START.test(router.currentRoute.value.path) && preloadWhenIdle(["/", "/work", "/ask", "/graph", "/wiki", "/items", "/designs", "/design", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/flows", "/notifications", "/settings", "/listen", "/account"]));
 
 // After the service is updated, chunks the open page knows by their old names are gone. Opening a
 // view that needs one reloads once (the new index points at the new chunks); a part of a page that

@@ -34,12 +34,13 @@ const loadError = ref("");
 // `member`: pages anyone else can use too (within the spaces they can read); `perm`: a global permission
 // that opens the page (src/auth/permissions.ts). The rest is the owner's.
 const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; member?: boolean; perm?: string }[]>([
-  { to: "/", label: "今日", icon: "home", exact: true },
+  // The work lines (views/Work.vue): the start page.
+  { to: "/", label: "工作", icon: "home", exact: true },
   { to: "/ask", label: "问答", icon: "chat", member: true },
   { to: "/wiki", label: "Wiki", icon: "book", member: true },
   { to: "/items", label: "事项", icon: "checkbox", member: true },
-  // Items moving through a flow, by stage; each opens its own flow page.
-  { to: "/board", label: "流程", icon: "branch", member: true },
+  // Items moving through a flow, by stage: the work page's 按阶段; each opens its own page.
+  { to: "/?view=stage", label: "流程", icon: "branch", member: true },
   { to: "/reqs", label: "需求", icon: "target", member: true },
   { to: "/memory", label: "记忆", icon: "brain", member: true },
   { to: "/sources", label: "原件", icon: "file", member: true },
@@ -72,8 +73,11 @@ async function addRemotePage() {
 }
 // Settings → 插件 changed an icon.
 watch(() => state.pluginsChanged, addPluginPages);
+const stageView = computed(() => route.path === "/" && route.query.view === "stage");
 const isActive = (to: string, exact?: boolean) =>
-  exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/board" && route.path === "/flows") || (to === "/wiki" && route.path.startsWith("/graph"));
+  to === "/" ? (route.path === "/" && !stageView.value) || route.path.startsWith("/work/")
+  : to === "/?view=stage" || to === "/board" ? stageView.value || route.path === "/flows" || route.path === "/board"
+  : exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/wiki" && route.path.startsWith("/graph"));
 
 function onKey(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;
@@ -87,7 +91,8 @@ function onKey(e: KeyboardEvent) {
 }
 const owner = computed(() => !state.me || state.me.role === "owner");
 const allowed = (n: { member?: boolean; perm?: string }) => owner.value || n.member || (!!n.perm && !!state.me?.perms.includes(n.perm));
-const shownNav = computed(() => nav.value.filter(allowed));
+// The work page is the owner's: members find the flow board on its own page.
+const shownNav = computed(() => nav.value.filter(allowed).map((n) => (n.to === "/?view=stage" && !owner.value ? { ...n, to: "/board" } : n)));
 // Pages someone other than the owner may open: the nav they see, the graph (Wiki), their account.
 const open = computed(() => [...shownNav.value.map((n) => n.to), "/graph", "/account"]);
 // Landing on a page they cannot use (the start page, an old link) goes to 问答.

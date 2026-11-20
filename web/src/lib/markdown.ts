@@ -93,9 +93,10 @@ function preprocess(md: string) {
     .replace(/\b(src|href)="omem-file:([\w.-]+)"/g, (_, a: string, name: string) => `${a}="${escapeHtml(authUrl(`/api/files/${encodeURIComponent(name)}`))}"`)
     .replace(/<a\b([^>]*?)\bhref="src:([\w-]+)"/g, (_, pre: string, id: string) => `<a${pre}href="#" class="cite doc" data-cite="source" data-ref="${id}"`)
     .replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_, target: string, label?: string) => `[${(label ?? target.split("/").pop() ?? target).replace(/[[\]]/g, "")}](wiki:${encodeURIComponent(target.trim())})`)
-    .replace(/(^|[\s（(，,])((?:mem|msg):[a-z0-9]{8,})/g, (_, pre, ref) => `${pre}[${ref.startsWith("mem") ? "记忆" : "消息"}](${ref})`)
+    // A bare reference in parentheses counts, a written link's target `](mem:…)` / `](src:…#L3-L9)` does not.
+    .replace(/(^|[\s（，,]|(?<!\])\()((?:mem|msg):[a-z0-9]{8,})/g, (_, pre, ref) => `${pre}[${ref.startsWith("mem") ? "记忆" : "消息"}](${ref})`)
     // A bare source reference (src:<id>#L起-L止) in an Agent's question or note opens the original like a written link.
-    .replace(/(^|[\s（(，,、：:])src:([\w-]{8,})(#L\d+(?:-L?\d+)?)?(?![\w#)\]])/g, (_, pre: string, id: string, at = "") => `${pre}[原文${at ? ` ${at.slice(1)}` : ""}](src:${id}${at})`);
+    .replace(/(^|[\s（，,、：:]|(?<!\])\()src:([\w-]{8,})(#L\d+(?:-L?\d+)?)?(?![\w#)\]-])/g, (_, pre: string, id: string, at = "") => `${pre}[原文${at ? ` ${at.slice(1)}` : ""}](src:${id}${at})`);
 }
 
 export function renderMarkdown(md: string, opts: { breaks?: boolean } = {}): string {
