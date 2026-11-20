@@ -2271,6 +2271,12 @@ export const migrations: readonly string[] = [
    alter table session_cleanup add column failure_reason text;`,
   FILE_REFS_MIGRATION,
   FILE_REF_TOMBSTONES_MIGRATION,
+  `create table member_capability_overrides (
+    user_id text not null references users(id), capability text not null,
+    scope_kind text not null check(scope_kind in ('global','space')), scope_id text not null,
+    effect text not null check(effect in ('allow','deny')), created_at text not null, created_by text not null,
+    primary key(user_id,capability,scope_kind,scope_id)
+  );`,
 ];
 
 export type Db = DatabaseSync;

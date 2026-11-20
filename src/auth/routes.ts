@@ -1,3 +1,4 @@
+import { spacesWithCapability, globalCapability, type Capability } from "./capabilities.ts";
 import type { FastifyRequest } from "fastify";
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
@@ -20,10 +21,11 @@ import { requireReadable } from "./visibility.ts";
  *   `note:p.id` (a note on a source).
  * - `{ run }`: the run in `:id` must be one the user may read (permissions.ts canReadRun).
  */
-export type RouteRule = "public" | "self" | "owner" | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
+export type RouteRule = "public" | "self" | "owner" | { cap: Capability; at: string } | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
 
 const g = (perm: GlobalPerm): RouteRule => ({ g: perm });
 const s = (perm: SpacePerm, at: string): RouteRule => ({ s: perm, at });
+const cap = (cap: Capability, at = "global"): RouteRule => ({ cap, at });
 const RUN: RouteRule = { run: "read" };
 const AGENTS = g("agents.manage");
 const SETTINGS = g("settings.manage");
@@ -56,6 +58,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/share/:token": "public",
   "GET /api/shares": "self",
   "DELETE /api/shares/:id": "self",
+  "GET /api/capabilities": cap("settings.members"),
+  "GET /api/members/:id/capabilities": cap("settings.members"),
+  "PUT /api/members/:id/capabilities": cap("settings.members"),
   "GET /api/me": "self",
   // Each person's own AI accounts (docs/v2/agent-accounts.md): the handlers act on the caller's own only.
   "GET /api/me/agent-accounts": "self",
@@ -539,9 +544,14 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
     if (!canReadRun(app, userId, String((req.params as { id?: string }).id ?? ""))) throw new HttpError(404, "运行不存在");
     return;
   }
+  if ("cap" in rule && globalCapability(rule.cap)) return requirePerm(app, userId, rule.cap);
+  if ("cap" in rule && rule.at === "list") {
+    if (spacesWithCapability(app,userId,rule.cap)?.length === 0) throw new HttpError(403, "没有可查看的空间");
+    return;
+  }
   const space = locate(app, req, rule.at);
   if (!space) throw new HttpError(rule.at.includes(":") ? 404 : 400, rule.at.includes(":") ? "要找的内容不存在" : "要指定空间");
-  if (!can(app, userId, rule.s, space)) requirePerm(app, userId, rule.s, space);
+  requirePerm(app, userId, "cap" in rule ? rule.cap : rule.s, space);
   if (rule.at.startsWith("src:")) {
     const id = String((req.params as { id?: string }).id ?? "");
     await requireReadable(app, userId, aliasTarget(app, id) ?? id);

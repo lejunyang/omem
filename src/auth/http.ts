@@ -1,11 +1,12 @@
+import { capabilityCatalog, globalCapability, isCapability, memberCapabilities } from "./capabilities.ts";
 import { grantScopes, guestUserId, readGrant } from "./grants.ts";
 import type { TLSSocket } from "node:tls";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
+import { all, run, tx } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
-import { HttpError } from "../core/util.ts";
+import { HttpError, now } from "../core/util.ts";
 import { addMember, createUser, emailHolder, findUser, getUser, identitiesOf, listUsers, ownTokens, OWNER, removeMember, revokeOwnToken, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
 import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
 import { connectionsOf, connectWithCredentials, disconnect, setChatCapture, setFeatureOff } from "./connections.ts";
@@ -106,6 +107,31 @@ function page(title: string, body: string) {
 }
 
 export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string, authOf: (req: FastifyRequest) => RequestAuth | null) {
+  server.get("/api/capabilities", async () => capabilityCatalog(app));
+  server.get("/api/members/:id/capabilities", async req => memberCapabilities(app, getUser(app, (req.params as {id:string}).id).id));
+  server.put("/api/members/:id/capabilities", async req => {
+    const id = (req.params as {id:string}).id;
+    const actor = who(req);
+    const body = z.object({ preset: z.string(), overrides: z.array(z.object({
+      capability: z.string(), scope_kind: z.enum(["global","space"]), scope_id: z.string().default(""), effect: z.enum(["allow","deny"]),
+    })) }).safeParse(req.body);
+    if (!body.success) throw new HttpError(400, "成员能力格式有误");
+    const { preset, overrides } = body.data;
+    const seen = new Set<string>();
+    for (const o of overrides) {
+      if (!isCapability(o.capability) || (o.scope_kind === "space" ? globalCapability(o.capability) || !findSpace(app,o.scope_id) : !!o.scope_id)) throw new HttpError(400, "能力或作用域有误");
+      const key = JSON.stringify([o.capability,o.scope_kind,o.scope_id]);
+      if (seen.has(key)) throw new HttpError(400, "同一能力和作用域只能设置一次");
+      seen.add(key);
+    }
+    tx(app.db, () => {
+      setUserRole(app,id,preset);
+      run(app.db,"delete from member_capability_overrides where user_id=?",id);
+      for (const o of overrides) run(app.db,"insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,?,?,?,?,?,?)",id,o.capability,o.scope_kind,o.scope_id,o.effect,now(),actor);
+      audit(app,actor,"member.capabilities",id,{preset,overrides});
+    });
+    return memberCapabilities(app,id);
+  });
   const parse = <T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> => {
     const r = schema.safeParse(value ?? {});
     if (!r.success) throw new HttpError(400, r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));

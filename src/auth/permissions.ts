@@ -1,3 +1,4 @@
+import { capabilityAccess, isCapability, type Capability } from "./capabilities.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, now, slugify } from "../core/util.ts";
@@ -53,6 +54,7 @@ export const BUILTIN_ROLES: Role[] = [
   },
   { id: "member", name: "成员", scope: "global", builtin: true, description: "能新建空间、连接飞书、生成分享链接；只能用被加入的空间", permissions: ["spaces.create", "connector.use", "share.external", "tools.external"] },
   { id: "viewer", name: "访客", scope: "global", builtin: true, description: "只读被加入的空间，可以提问", permissions: ["tools.external"] },
+  { id: "observer", name: "网页只读观察者", scope: "global", builtin: true, description: "阅读获准空间的工作并提问", permissions: [] },
   { id: "reader", name: "只读", scope: "space", builtin: true, description: "检索和阅读", permissions: ["space.read"] },
   { id: "contributor", name: "贡献者", scope: "space", builtin: true, description: "只读 + 导入原件、写记忆和事项", permissions: ["space.read", "source.write", "memory.write"] },
   { id: "editor", name: "编辑", scope: "space", builtin: true, description: "贡献者 + 写 Wiki、采集进来、看别人的运行", permissions: ["space.read", "source.write", "memory.write", "wiki.write", "capture.route", "runs.read"] },
@@ -121,9 +123,11 @@ export const isOwner = (app: App, userId: string) => who(app, userId)?.role === 
 const WRITES = new Set<Perm>(["source.write", "memory.write", "wiki.write", "capture.route"]);
 const mirrored = (app: App, spaceId: string) => !!one<{ m: string | null }>(app.db, "select json_extract(settings, '$.mirror') m from spaces where id = ?", spaceId)?.m;
 
-export function can(app: App, userId: string, perm: Perm, spaceId?: string | null): boolean {
+export function can(app: App, userId: string, perm: Perm | Capability, spaceId?: string | null): boolean {
+  if (isCapability(perm)) return !!capabilityAccess(app, userId, spaceId ?? undefined).source(perm, spaceId ?? undefined);
   const u = who(app, userId);
   if (!u?.active) return false;
+  if (u.role === "observer" && perm !== "space.read") return false;
   if (spaceId && WRITES.has(perm) && mirrored(app, spaceId)) return false;
   if (u.role === "owner") return true;
   const g = grants(app, u.role);
@@ -142,6 +146,7 @@ export function spacesWith(app: App, userId: string, perm: SpacePerm): string[] 
   const u = who(app, userId);
   if (!u?.active) return [];
   if (u.role === "owner") return null;
+  if (u.role === "observer" && perm !== "space.read") return [];
   const out = new Set<string>();
   if (grants(app, u.role).has(`${perm}@*`))
     for (const s of all<{ id: string; kind: string; owner_id: string }>(app.db, "select id, kind, owner_id from spaces")) if (s.kind !== "personal" || s.owner_id === userId) out.add(s.id);
@@ -161,7 +166,7 @@ export function globalPerms(app: App, userId: string): GlobalPerm[] {
   return all.filter((p) => g.has(p));
 }
 
-export function requirePerm(app: App, userId: string, perm: Perm, spaceId?: string | null) {
+export function requirePerm(app: App, userId: string, perm: Perm | Capability, spaceId?: string | null) {
   if (can(app, userId, perm, spaceId)) return;
   const label = (GLOBAL_PERMS as Record<string, string>)[perm] ?? (SPACE_PERMS as Record<string, string>)[perm] ?? perm;
   throw new HttpError(403, spaceId ? `在空间 ${spaceId} 没有权限：${label}` : `没有权限：${label}`);

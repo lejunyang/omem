@@ -50,6 +50,17 @@ describe("roles and permissions", async () => {
     fetch(base + path, { ...init, headers: { authorization: `Bearer ${tokens[user]}`, ...(init.body ? { "content-type": "application/json" } : {}), ...(init.headers as Record<string, string>) } });
   const json = async (user: string, path: string, init: RequestInit = {}) => (await as(user, path, init)).json();
 
+  it("preserves the four original roles' representative route responses", async () => {
+    for (const [path, expected] of [
+      ["/api/work", [200, 403, 403, 403]],
+      ["/api/rules", [200, 200, 403, 403]],
+      ["/api/wiki/team", [200, 200, 200, 200]],
+    ] as const) {
+      const responses = await Promise.all([fetch(base + path), ...["cat", "ann", "dan"].map(id => as(id, path))]);
+      expect(responses.map(r => r.status)).toEqual(expected);
+    }
+  });
+
   it("keeps decision calibration owner-only", async () => {
     expect(ROUTE_RULES["GET /api/ai/decision/report"]).toBe("owner");
     expect((await as("ann", "/api/ai/decision/report")).status).toBe(403);
