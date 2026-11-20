@@ -1,0 +1,10 @@
+name: 示例发布规则
+version: "1"
+rules:
+  - id: publish
+    title: 发布前请本人确认
+    match:
+      kind: command
+      executable: acme
+      subcommand: [publish]
+    action: approve
