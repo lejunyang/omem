@@ -1,3 +1,8 @@
+import "../src/agents/jobs.ts";
+import { __testHandlers, createRun } from "../src/agents/runs.ts";
+import { upsertItem } from "../src/items/store.ts";
+import { remember } from "../src/memory/store.ts";
+import { one } from "../src/core/db.ts";
 import { resolve } from "node:path";
 import { expect, it } from "vitest";
 import { runRole } from "../src/agents/runner.ts";
@@ -20,3 +25,42 @@ it("moves a role run to the next backend when the first fails before doing anyth
   app.config.agents.fallback = [];
   await expect(runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "再总结" })).rejects.toThrow();
 }, 60_000);
+
+it.each([true, false])("skips text-only profiles for item upkeep (cloud primary = %s)", async cloudFirst => {
+  const app = testApp();
+  app.baseUrl = "http://127.0.0.1:1";
+  const local = { id: "local", transport: "acp" as const, command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "echo" }, idleTimeoutMs: 20_000 };
+  app.config.agents.profiles = [local, { ...local, id: "cloud", transport: "doubao" }];
+  app.config.agents.default = cloudFirst ? "cloud" : "local";
+  app.config.agents.fallback = [{ profile: cloudFirst ? "local" : "cloud" }];
+  const events: AgentEvent[] = [];
+  const r = await runRole(app, { role: "item-keeper", spaceId: "personal", runId: null, task: "复核事项", onEvent: e => events.push(e) });
+  expect(r.profileId).toBe("local");
+  expect(events).toContainEqual(expect.objectContaining({ type: "status", text: expect.stringMatching(/跳过后端 cloud.*settle_items/) }));
+  app.db.close();
+});
+
+it("keeps the item cursor and memory verdict pending when no backend can deliver", async () => {
+  const app = testApp();
+  app.baseUrl = "http://127.0.0.1:1";
+  app.config.agents.default = "doubao";
+  const item = upsertItem(app, undefined, { title: "确认项目 A 排期" });
+  const memory = remember(app, { spaceId: "personal", kind: "fact", content: "项目 A 周五验收。", createdBy: "agent" });
+  for (const kind of ["item-settle", "memory-review"] as const) {
+    const run = createRun(app, { kind, spaceId: "personal", title: "复核", input: { task: "查看进展", checks: [{ id: item.id, latestMs: 42 }] } });
+    const events: unknown[] = [];
+    await expect(__testHandlers.get(kind)!({ app, run, signal: new AbortController().signal, event: (_, e) => events.push(e), output() {} })).rejects.toThrow(/需要 (settle_items|review_memories)/);
+    expect(events).toContainEqual(expect.objectContaining({ text: expect.stringMatching(/跳过后端 doubao/) }));
+  }
+  expect(one(app.db, "select * from item_checks where item_id = ?", item.id)).toBeUndefined();
+  expect(one(app.db, "select review_verdict, reviewed_at from memories where id = ?", memory.id)).toEqual({ review_verdict: null, reviewed_at: null });
+  app.db.close();
+});
+
+it("checks explicit hand-in tools against the final role permissions", async () => {
+  const app = testApp();
+  app.baseUrl = "http://127.0.0.1:1";
+  app.config.agents.profiles = [{ id: "local", transport: "acp", command: process.execPath, args: [], env: {}, idleTimeoutMs: 1000 }];
+  await expect(runRole(app, { role: "item-keeper", profileId: "local", requiredTools: ["settle_items"], denyTools: ["settle_items"], runId: null, spaceId: "personal", task: "复核" })).rejects.toThrow("缺少必需工具：settle_items");
+  app.db.close();
+});

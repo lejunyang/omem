@@ -49,7 +49,7 @@ describe("complete portable pulls", () => {
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
       // Live goals measure this machine's delegation worktree; unlike portable task/checkpoint history, never resume them on a pulled device.
-      "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors", "git_commit_cursors",
+      "agent_work_tasks", "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors", "git_commit_cursors",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
       // Decision material and the source-to-sweep links remain private to this device.

@@ -66,6 +66,21 @@ describe("choosing the AI before a run", () => {
     expect(statuses(failed).some((t) => /自动选 AI 没有选成，用原来的 slow · m1（决策模型：出错/.test(t))).toBe(true);
   }, 60_000);
 
+  it("offers only capable profiles when the default cannot deliver a role's result", async () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.default = "doubao";
+    app.config.agents.profiles.push(fakeAgent("candidate-a"), fakeAgent("candidate-b"));
+    app.config.agents.routing.automatic = true;
+    app.config.agents.routing.choose.tasks = "decision";
+    app.config.agents.routing.candidates = ["candidate-a", "candidate-b"].map(profile => ({ profile, when: "整理任务" }));
+    const bodies = withDecision(app, () => ({ answers: [{ type: "choice", name: "q", choice: "c1", probabilities: [] }] }));
+    const result = await runRole(app, { role: "item-keeper", spaceId: "personal", runId: null, task: "复核事项" });
+    expect(result.profileId).toBe("candidate-a");
+    expect(bodies[0].questions[0].choices.map((c: { value: string }) => c.value)).toEqual(["c1", "c2"]);
+    app.db.close();
+  });
+
   it("records every choice in the run, also when there was none and why", async () => {
     const app = testApp();
     app.baseUrl = "http://127.0.0.1:1";

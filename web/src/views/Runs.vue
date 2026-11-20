@@ -13,6 +13,7 @@ import UiSelect from "../components/UiSelect.vue";
 import { pageParam } from "../lib/route";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
+import TaskBoard from "../components/TaskBoard.vue";
 import ContextUsage from "../components/ContextUsage.vue";
 import CodeWork from "../components/CodeWork.vue";
 import CodeWorkList from "../components/CodeWorkList.vue";
@@ -70,7 +71,7 @@ type RunContextInfo = {
   work: { id: string; title: string; rounds: { runId: string; agent: string; kind: string; status: string; title: string }[] } | null;
 };
 type ReplyOutcome = { label: string | null; text: string; dueAt: string; first: { label: string; confidence: number | null; by: string } | null; revised: { label: string; by: string; why: string } | null; checked?: { verdict: "confirmed" | "revised"; label: string; by: string; why: string } | null; evidence: { who: string; text: string }[] };
-const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo; reply?: ReplyOutcome | null } | null>(null);
+const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; board?: { workId: string; taskId?: string }; patches?: { space: string; patch: string }[]; context?: RunContextInfo; reply?: ReplyOutcome | null } | null>(null);
 /** What a reply came to, judged from what people said after it; the owner may overrule the label. */
 const REPLY_LABELS: Record<string, string> = { resolved: "解决了", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "看不出", silent: "没人接话", unjudged: "没判" };
 const REVISABLE = ["resolved", "followup", "corrected", "taken_over", "unrelated"];
@@ -462,6 +463,10 @@ const kindOptions = computed(() => [
         <section v-if="finalText" class="block">
           <div class="section-title">结果</div>
           <div class="card pad"><Markdown :source="String(finalText)" :space="detail.run.spaceId ?? undefined" /></div>
+        </section>
+
+        <section v-if="detail.board" class="block">
+          <TaskBoard :work-id="detail.board.workId" :focus="detail.board.taskId" />
         </section>
 
         <section v-if="detail.children.length" class="block">

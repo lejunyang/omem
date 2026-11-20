@@ -11,6 +11,7 @@ import { createRun, getRun, type Run } from "./runs.ts";
  */
 export async function retryRun(app: App, id: string, userId?: string): Promise<Run & { continued?: boolean }> {
   const r = getRun(app, id);
+  if (r.input.boardTaskId) throw new HttpError(409, "任务板子任务请用 work_review 退回重做，以便保留验收和尝试记录");
   if (r.status === "queued" || r.status === "running") throw new HttpError(409, "这次运行还没结束");
   const owner = userId ?? one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id ?? undefined;
   if (r.kind === "code") {

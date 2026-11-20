@@ -9,7 +9,7 @@ import ListenNewDialog from "./ListenNewDialog.vue";
 import Skeleton from "./Skeleton.vue";
 
 /**
- * 设置 → 连接: every 关注, the built-in 有人找你 first, each opening its page; and a new one.
+ * Every 关注 (once listed under 设置 → 连接; unused since the settings regrouping), the built-in 有人找你 first, each opening its page; and a new one.
  * `defaultReply`: how 有人找你 replies, which lives in 渠道 → 有人找你 rather than on the 关注.
  */
 const props = defineProps<{ items: ListenView[] | null; groups: { value: string; label: string; hint?: string }[]; defaultReply: string }>();

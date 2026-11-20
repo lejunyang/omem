@@ -937,6 +937,46 @@ run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,compon
   snapshotOmemUsage(app, { maxDays: 30 });
 }
 
+// ---- a work board: three parts done side by side, one sent back once (the run page, shot run-board)
+const boardThread = createThread(app, { channel: "web", spaceId: "shop", title: "上月退款单为什么对不上", userId: "owner" });
+const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月退款单为什么对不上", input: { conversationId: boardThread.id } });
+{
+  const { createAgentWork } = await import("../src/agents/agent-work.ts");
+  const { dispatchBoard, reviewBoard, settleBoardRun } = await import("../src/agents/work-board.ts");
+  const { getRun } = await import("../src/agents/runs.ts");
+  const scope = { spaces: ["shop"], denyTools: [], lark: { chats: null } };
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const work = createAgentWork(app, { askRunId: boardAsk.id, rootConversationId: boardThread.id, spaceId: "shop", title: "核对上月退款单的三处差异", startMessage: "核对上月退款单的三处差异" });
+  const [bills, logs, coupons] = dispatchBoard(app, work, [
+    { title: "对账单和订单库逐笔对", goal: "把上月对账单里的退款行和订单库的退款记录按订单号逐笔对上，列出金额不一致的。", accept: "交一张差异表：订单号、对账单金额、订单库金额、差额；每行带出处。", execution: { profile: "codex", model: "gpt-6.2-sol", effort: "low", source: "auto", reason: "清点和对照，写得出验收条件" }, scope },
+    { title: "查部分发货订单的退款日志", goal: "差额集中在部分发货的订单：查这些订单的退款日志，确认走的是旧的整单比例还是新的按行分摊。", accept: "每个订单给出走了哪条路径和依据的日志行；说不清的单独列出。", execution: { profile: "codex", model: "gpt-6.2-sol", effort: "low", source: "auto", reason: "按订单号查日志" }, scope },
+    { title: "核对满减券的分摊口径", goal: "对照《退款改造需求》和客服口径，确认满减券在部分退款时该怎么分摊。", accept: "一句结论加两处原文引用；两边不一致就都列出来。", scope },
+  ], boardAsk.id);
+  const runOf = (task: string) => one<{ run_id: string }>(app.db, "select run_id from agent_work_tasks where id = ?", task)!.run_id;
+  const finish = (task: string, answer: string, started: number, finished: number) => {
+    const id = runOf(task);
+    run(app.db, "update runs set status='done', started_at=?, finished_at=?, output=json_set(coalesce(output,'{}'),'$.answer',?), ai=? where id=?", ago(started), ago(finished), answer, JSON.stringify({ profile: "codex", model: "gpt-6.2-sol", effort: "low" }), id);
+    settleBoardRun(app, getRun(app, id));
+  };
+  finish(bills, "37 笔退款里 5 笔金额不一致，差额合计 86.40 元，都是部分发货的订单。\n\n| 订单 | 对账单 | 订单库 | 差额 |\n| --- | --- | --- | --- |\n| A1027 | 120.00 | 96.00 | 24.00 |\n| A1033 | 88.00 | 70.40 | 17.60 |", 16, 9);
+  finish(logs, "5 个订单都走了旧的整单比例。", 15.8, 11);
+  reviewBoard(app, boardAsk.id, [
+    { task: bills, decision: "accept", note: "差异表和对账单逐行对得上" },
+    { task: logs, decision: "redo", note: "没有给日志行：每个订单贴出判断走旧路径的那一行", execution: { profile: "codex", model: "gpt-6.2-sol", effort: "high", source: "auto", reason: "退回重做，升一档" } },
+  ], "owner");
+  // The course of each part: when it waited and ran (the two still going started a while ago).
+  const course = (task: string, patch: (attempts: Record<string, unknown>[]) => void, status?: string) => {
+    const attempts = JSON.parse(one<{ attempts: string }>(app.db, "select attempts from agent_work_tasks where id = ?", task)!.attempts) as Record<string, unknown>[];
+    patch(attempts);
+    run(app.db, `update agent_work_tasks set attempts = ?${status ? ", status = ?" : ""} where id = ?`, ...[JSON.stringify(attempts), ...(status ? [status] : []), task]);
+  };
+  course(bills, (a) => Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(16), finishedAt: ago(9) }));
+  course(logs, (a) => { Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(15.8), finishedAt: ago(11) }); Object.assign(a[1], { queuedAt: ago(8), startedAt: ago(7.6), status: "running" }); }, "running");
+  course(coupons, (a) => Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(11), status: "running" }), "running");
+  for (const task of [logs, coupons]) run(app.db, "update runs set status='running', started_at=?, ai=? where id=?", ago(task === logs ? 7.6 : 11), JSON.stringify({ profile: "codex", model: "gpt-6.2-sol", effort: task === logs ? "high" : "medium" }), runOf(task));
+  run(app.db, "update runs set status='done', started_at=?, finished_at=?, output=json_set(coalesce(output,'{}'),'$.answer',?) where id=?", ago(17), ago(16), "已经分三块在查：对账单逐笔对、部分发货订单的退款日志、满减券的分摊口径。三块都有结果后我再汇总给你。", boardAsk.id);
+}
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -993,6 +1033,11 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
       while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
       (s ?? document.scrollingElement)?.scrollBy(0, -130);
     });
+    await p.waitForTimeout(400);
+  } },
+  // A piece of work split into parts done side by side: who has each, the track of when they ran, one sent back.
+  { name: "run-board", path: `/runs/${boardAsk.id}`, prepare: async (p) => {
+    await p.locator(".tb .rows .row").nth(1).click();
     await p.waitForTimeout(400);
   } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },

@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { HttpError, json, now, zonedParts, zoneMidnight } from "../core/util.ts";
-import { listAsks, type Ask } from "../agents/asks.ts";
+import { pendingActions, pendingView } from "./pending.ts";
 import { chatName } from "../agents/owner-now.ts";
 import { itemContext, listContexts } from "../channels/listen.ts";
 import { CHANGE_COLS, CHANGE_TYPES, changeLite, lineTimeline, refTargets, type ChangeLite } from "./changes.ts";
@@ -103,7 +103,7 @@ function myItems(app: App, userId: string, opts: { status?: string } = {}) {
   return listItems(app, { status: opts.status ?? "active", userId, limit: 2000, ...(allowed ? { spaceIds: allowed } : {}) });
 }
 
-export function workOverview(app: App, userId: string) {
+export async function workOverview(app: App, userId: string) {
   const items = myItems(app, userId);
   const top = items.filter((i) => !i.parentId);
   const withChildren = new Set(all<{ parent_id: string }>(app.db, `select distinct parent_id from items where parent_id is not null and ${OPEN}`).map((r) => r.parent_id));
@@ -113,32 +113,15 @@ export function workOverview(app: App, userId: string) {
   const lines = top.filter(isLine).sort((a, b) => Number(b.kind === "line") - Number(a.kind === "line") || b.updatedAt.localeCompare(a.updatedAt)).map((i) => lineView(app, i));
   const loose = top.filter((i) => !isLine(i)).map(lite);
 
-  const asks: Ask[] = listAsks(app, { status: "pending", userId, limit: 100 }).filter((a) => a.kind !== "suggestion");
-  const askIds = new Set(asks.map((a) => a.id));
   const allowed = accessibleSpaces(app, userId);
-  const gates: GateLite[] = all<{ item_id: string; title: string; space_id: string; flow_name: string; stage_id: string; name: string; state: string; since: string; ask_id: string | null }>(app.db,
-    `select f.item_id, i.title, i.space_id, json_extract(f.definition,'$.name') flow_name, s.stage_id, json_extract(d.value,'$.name') name, s.state, s.since, s.ask_id
-       from item_flows f join items i on i.id = f.item_id join item_stages s on s.item_id = f.item_id
-       join json_each(f.definition, '$.stages') d on json_extract(d.value,'$.id') = s.stage_id
-      where f.ended_at is null and coalesce(i.user_id,'owner') = ? and (s.state = 'gated' or s.waiting_on = 'owner' or (s.state = 'doing' and s."by" = 'owner'))
-      order by s.since`, userId)
-    .filter((r) => !allowed || allowed.includes(r.space_id))
-    .map((r) => ({ itemId: r.item_id, title: r.title, flowName: r.flow_name ?? "", stage: { id: r.stage_id, name: r.name ?? r.stage_id, state: r.state }, since: r.since, askId: r.ask_id }));
-  const candidates = myItems(app, userId, { status: "candidate" }).map(lite);
-  const changes = all<Parameters<typeof changeLite>[1] & { ask_id: string | null; space_id: string }>(app.db,
-    `select ${CHANGE_COLS}, c.ask_id, i.space_id from item_changes c join items i on i.id = c.item_id where c.status = 'asked' and coalesce(i.user_id,'owner') = ? order by c.at desc limit 60`, userId)
-    .filter((r) => !allowed || allowed.includes(r.space_id));
-  const lines2 = new Map<string, { id: string; title: string }>();
-  const changeViews = changes.map((r) => changeLite(app, r, lines2));
-  const drafts = one<{ n: number }>(app.db, "select count(*) n from card_interactions where purpose in ('draft','mention-reply') and status = 'open' and created_at >= ?", new Date(Date.now() - 2 * 86400_000).toISOString())?.n ?? 0;
-  const total = asks.length + gates.filter((g) => !g.askId || !askIds.has(g.askId)).length + candidates.length + changes.filter((c) => !c.ask_id || !askIds.has(c.ask_id)).length + drafts;
-
+  const { pending, asks, gates, candidates, changes, drafts, roots } = await pendingView(app, userId);
+  const changeViews = changes.map(r => changeLite(app, r, roots));
   const places = listContexts(app, { kind: "place", activeOnly: true }).map((c) => ({
     id: c.id, name: c.name, openProblems: one<{ n: number }>(app.db, "select count(*) n from listen_problems where context_id = ? and state != 'closed'", c.id)?.n ?? 0,
   }));
   // Lines that ended lately (items/lifecycle.ts); older ones page through /api/work/ended.
   const ended = endedLines(app, userId, { limit: 20, spaces: allowed });
-  return { lines, loose, waiting: { total, asks, gates, candidates, changes: changeViews, drafts }, places, ended: ended.items, endedMore: ended.more };
+  return { lines, loose, pending, waiting: { total: pending.length, asks, gates, candidates: candidates.map(lite), changes: changeViews, drafts }, places, ended: ended.items, endedMore: ended.more };
 }
 
 /** Changes of the caller's items by day, filtered by type, origin and line; the days of the range with their counts. */
@@ -228,6 +211,7 @@ function body<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
 }
 
 export function registerWorkRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
+  server.get("/api/pending", async (req) => pendingActions(app, who(req)));
   server.get("/api/work", async (req) => workOverview(app, who(req)));
   server.get("/api/work/activities", async (req) => {
     const q = body(z.object({ from: z.string().optional(), to: z.string().optional(), type: z.string().optional(), origin: z.string().optional(), line: z.string().optional(), noise: z.coerce.boolean().optional() }), req.query);

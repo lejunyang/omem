@@ -32,6 +32,8 @@ const PEERS = g("peers.manage");
 const USERS = g("users.manage");
 
 export const ROUTE_RULES: Record<string, RouteRule> = {
+  "GET /api/agents/session-cleanup/failures": "owner",
+  "POST /api/agents/session-cleanup/retry": "owner",
   "GET /api/agents/network-policies": "owner",
   "PUT /api/agents/network-policies": "owner",
   "POST /api/agents/network-policies/:id/check": "owner",
@@ -258,6 +260,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/items/:id/flow/round": "self",
   "POST /api/items/:id/flow/stages/:stage/budget": "self",
   // Work lines (items/work-http.ts, docs/v2/status.md “工作线”): the owner's own page for now.
+  "GET /api/pending": "self",
   "GET /api/work": "owner",
   "GET /api/work/activities": "owner",
   "GET /api/work/:id": "owner",
@@ -305,6 +308,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "PATCH /api/assistants/:id": "self",
   "DELETE /api/assistants/:id": "self",
   "GET /api/runs/:id": RUN,
+  "GET /api/agent-work/:id/board": RUN,
   "POST /api/runs/:id/share-review": RUN,
   "POST /api/runs/:id/cancel": RUN,
   "POST /api/runs/:id/retry": RUN,

@@ -2248,9 +2248,31 @@ export const migrations: readonly string[] = [
    alter table items add column phase_since text;
    alter table items add column watch_until text;`,
   METRIC_ORIGIN_MIGRATION,
-  `create index asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
-   create index asks_operation_run on asks(json_extract(context,'$.runKey'),status);
-   create index asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
+  `create index asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;`,
+  `create index pending_stages on item_stages(since) where state='gated' or waiting_on='owner' or (state='doing' and "by"='owner');
+   create index pending_changes on item_changes(at desc) where status='asked';
+   create index pending_updates on item_update_proposals(user_id,created_at desc) where status='pending';
+   create index pending_metrics on metrics(created_at desc) where status='proposed';
+   create index pending_profiles on profile_proposals(created_at desc) where status='pending';
+   create index pending_drafts on card_interactions(created_at desc) where status='open' and purpose in ('draft','mention-reply','watch-draft','meeting-answer');
+   create index pending_user_asks on asks(user_id,created_at desc,id) where status='pending';`,
+  `create table agent_work_tasks (
+    id text primary key, work_id text not null references runs(id) on delete cascade, seq integer not null,
+    title text not null, goal text not null, accept text not null, agent text, execution text, scope text not null, space_id text,
+    required integer not null default 1, status text not null default 'pending',
+    attempts text not null default '[]', report text not null default '', verdict text,
+    run_id text, notice integer not null default 1, deadline_minutes integer not null,
+    deadline_at text not null, created_at text not null, updated_at text not null, unique(work_id,seq)
+  );
+  create index work_task_active on agent_work_tasks(deadline_at) where status in ('pending','running','rejected');
+  create index work_task_run on agent_work_tasks(run_id);`,
+  `alter table session_cleanup add column failed_at text;
+   alter table session_cleanup add column failure_reason text;`,
+  // The feature branch used the asks_deferred migration number for its operation indexes.
+  `create index if not exists asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;
+   create index if not exists asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
+   create index if not exists asks_operation_run on asks(json_extract(context,'$.runKey'),status);
+   create index if not exists asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
 ];
 
 export type Db = DatabaseSync;

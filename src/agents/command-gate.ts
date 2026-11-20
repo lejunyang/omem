@@ -19,7 +19,7 @@ import { now, truncate, webLink } from "../core/util.ts";
 import { findUser, listUsers, OWNER, userName } from "../core/users.ts";
 import { audit } from "../auth/permissions.ts";
 import { addRunEvent } from "./runs.ts";
-import { cancelAsk, createAsk, getAsk, registerAskHandler, type Ask } from "./asks.ts";
+import { cancelAsk, createAsk, getAsk, markAskSent, registerAskHandler, type Ask } from "./asks.ts";
 import type { ToolContext } from "./tools.ts";
 import { buildCard, cardText, closeInteraction, larkOwnerOpenId, recordInteraction, sendLark, updateLarkCard } from "../channels/lark-send.ts";
 
@@ -520,6 +520,7 @@ async function sendCard(app: App, askId: string, c: GateContext, runId: string |
   if (!app.config.lark?.enabled || !c.lark) return;
   const sent = await sendLark({ userId: c.lark.id, userIdType: c.lark.idType, bot: "main" }, { card: buildCard(commandCard(app, c, runId) as never) });
   // The approver, and the owner, may press it.
+  markAskSent(app, askId);
   recordInteraction(app, { messageId: sent.messageId, chatId: null, conversationId: null, runId, purpose: "command-gate", allowed: [c.lark.id, ...(c.ownerLark && c.ownerLark !== c.lark.id ? [c.ownerLark] : [])], payload: { askId }, bot: "main" });
 }
 

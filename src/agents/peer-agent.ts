@@ -5,7 +5,7 @@ import { accessibleSpaces, OWNER, personalSpaceId, userName } from "../core/user
 import { can } from "../auth/permissions.ts";
 import { trimTools } from "../auth/tools.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
-import { ROLE_TOOLS, TOOL_GROUPS } from "./tool-help.ts";
+import { ROLE_TOOLS, TOOL_GROUPS, WORK_BOARD_TOOLS } from "./tool-help.ts";
 import { addRunEvent, createRun, flushRunText, getRun, setRunOutput } from "./runs.ts";
 import { callTool, mcpTools, toolList, type ToolContext } from "./tools.ts";
 
@@ -30,6 +30,7 @@ import { callTool, mcpTools, toolList, type ToolContext } from "./tools.ts";
  * test/peer-tools.test.ts fails when a new tool is in neither this list nor PEER_ALLOWED.
  */
 export const PEER_DENY = new Set([
+  ...WORK_BOARD_TOOLS,
   "propose_directions", "trial_report", "read_ledger", "record_finding", "close_direction", "study_push",
   "report_rule_failure",
   "lark_send", "lark_react", "meeting_suggest", "lark_card", "lark_send_file", "lark_message_file", "lark_chat_history", "lark_read", "lark_write", "lark_invite", "lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize", "lark_wiki_crawl",

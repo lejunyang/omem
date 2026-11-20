@@ -1,9 +1,10 @@
 import { briefParts } from "../agents/brief.ts";
-import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
+import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, markAskSent, uiLink, type Ask } from "../agents/asks.ts";
 import { viewCardBlocks, viewColor, viewSummary, viewTarget } from "./lark-ui.ts";
 import { fieldsText, normalizeAnswers, type UiField } from "../agents/ui-blocks.ts";
 import type { App } from "../core/app.ts";
-import { one, run } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
+import { deliveryPlan, inQuietHours } from "../core/notify.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { larkOpenIdOf, OWNER, userName } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
@@ -312,7 +313,68 @@ export async function foldIntoAsk(app: App, runId: string, chatId: string, answe
   return inter.message_id;
 }
 
+function askUrgency(app: App, ask: Ask) {
+  if (ask.kind === "approval" || ask.handler === "flow-stage") return "urgent";
+  const deadline = one<{ deadline: string | null }>(app.db, `select coalesce(json_extract(context,'$.deadline'),json_extract(context,'$.expiresAt')) deadline from asks where id = ?`, ask.id)?.deadline;
+  if (deadline) {
+    const next = deliveryPlan(app, { outlet: "lark" });
+    const latest = Math.max(Date.now() + 3600_000, next.when === "later" && next.at ? Date.parse(next.at) : 0);
+    if (Date.parse(deadline) <= latest) return "urgent";
+  }
+  if (ask.handler || ask.kind !== "question") return "normal";
+  const r = one<{ kind: string; status: string; via: string | null; by: string | null; follow: string | null; parent_id: string | null }>(app.db,
+    `select kind, status, json_extract(trigger,'$.via') via, trigger_by "by", json_extract(trigger,'$.followUp') follow, parent_id from runs where id = ?`, ask.runId);
+  if (r && (r.kind !== "ask" || r.follow || r.parent_id || (r.via && (r.via !== "chat" || r.by !== `user:${ask.userId}`)))) return "normal";
+  if (r?.status === "running") return "urgent";
+  const recent = new Date(Date.now() - 30 * 60_000).toISOString();
+  return one(app.db, `select 1 from messages m join conversations c on c.id=m.conversation_id
+    left join runs r on r.id=m.run_id where c.id=? and c.user_id=? and m.created_at>=? and m.role='user'
+    and json_extract(m.meta,'$.speaker') is null and json_extract(m.meta,'$.asker') is null and json_extract(m.meta,'$.metric') is null
+    and (r.trigger is null or (r.trigger_by=? and json_extract(r.trigger,'$.via')='chat' and json_extract(r.trigger,'$.followUp') is null)) limit 1`,
+    ask.conversationId, ask.userId, recent, `user:${ask.userId}`) ? "urgent" : "normal";
+}
+
+async function postAsk(app: App, ask: Ask, to: NonNullable<ReturnType<typeof targetFor>>) {
+  const who = answererId(app, ask, to.bot);
+  const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
+  const card = bindCard(askCard(app, ask, { mention: groupMention(app, to.chatId, who) }), id);
+  try {
+    const sent = await sendLark(to.target, { card });
+    bindInteraction(app, id, sent.messageId);
+    markAskSent(app, ask.id);
+    // A click may have completed while the send request was still returning.
+    const current = getAsk(app, ask.id);
+    if (current.status !== "pending") await updateLarkCard(sent.messageId, askCard(app, current), to.bot).catch(() => {});
+  } catch (error) {
+    if (!getInteraction(app, id)?.messageId) run(app.db, "update card_interactions set status = 'expired' where id = ?", id);
+    throw error;
+  }
+}
+
+const registered = new WeakMap<App, () => string | undefined>();
+const sending = new Set<string>();
+
+export async function releaseDeferredAsks(app: App, at = new Date()) {
+  const owner = registered.get(app);
+  if (!owner || inQuietHours(app, at)) return;
+  const rows = all<{ id: string }>(app.db, `select id from asks where status='pending'
+    and json_extract(context,'$.deferredUntil') <= ? order by json_extract(context,'$.deferredUntil') limit 100`, at.toISOString());
+  for (const { id } of rows) {
+    if (sending.has(id)) continue;
+    // Recheck after awaiting the previous card; another heartbeat or an answer can settle it.
+    if (!one(app.db, "select 1 from asks where id=? and status='pending' and json_extract(context,'$.deferredUntil') is not null", id)) continue;
+    const ask = getAsk(app, id);
+    const to = targetFor(app, ask, owner());
+    if (!to) continue;
+    sending.add(id);
+    try { await postAsk(app, ask, to); }
+    catch (e) { console.warn("[omem] 提问卡补发失败", e); }
+    finally { sending.delete(id); }
+  }
+}
+
 export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined) {
+  registered.set(app, ownerOpenId);
   addViewSink(async (app, view) => {
     const to = viewTarget(app, view.conversationId);
     if (!to) return false;
@@ -323,18 +385,11 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
     async show(app, ask) {
       const to = targetFor(app, ask, ownerOpenId());
       if (!to) return false;
-      const who = answererId(app, ask, to.bot);
-      const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
-      const card = bindCard(askCard(app, ask, { mention: groupMention(app, to.chatId, who) }), id);
-      try {
-        const sent = await sendLark(to.target, { card });
-        bindInteraction(app, id, sent.messageId);
-        // A click may have completed while the send request was still returning.
-        const current = getAsk(app, ask.id);
-        if (current.status !== "pending") await updateLarkCard(sent.messageId, askCard(app, current), to.bot).catch(() => {});
-      } catch (error) {
-        if (!getInteraction(app, id)?.messageId) run(app.db, "update card_interactions set status = 'expired' where id = ?", id);
-        throw error;
+      const plan = deliveryPlan(app, { outlet: "lark", urgency: askUrgency(app, ask) });
+      if (plan.when === "later") {
+        run(app.db, "update asks set context = json_set(coalesce(context,'{}'), '$.deferredUntil', ?) where id = ?", plan.at!, ask.id);
+      } else {
+        await postAsk(app, ask, to);
       }
       return true;
     },

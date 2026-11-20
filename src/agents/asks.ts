@@ -89,7 +89,7 @@ type Row = {
   value: string | null;
 };
 
-function toAsk(r: Row, requester?: string): Ask {
+export function toAsk(r: Row, requester?: string): Ask {
   const context = JSON.parse(r.context ?? "{}") as { operationApproval?: unknown; askedBy?: string; toName?: string; lapsed?: string; handler?: string };
   // A delegated approver sees the decision, not data returned using the requester's privileges.
   const hidePayload = context.operationApproval && context.askedBy !== r.user_id && requester !== context.askedBy;
@@ -121,6 +121,10 @@ function toAsk(r: Row, requester?: string): Ask {
     toName: context.toName ?? null,
     lapsed: context.lapsed ?? null,
   };
+}
+
+export function markAskSent(app: App, id: string) {
+  run(app.db, "update asks set context = json_remove(json_set(coalesce(context,'{}'), '$.sentAt', ?), '$.deferredUntil') where id = ?", now(), id);
 }
 
 export function getAsk(app: App, id: string, requester?: string): Ask {

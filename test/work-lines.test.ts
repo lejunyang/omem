@@ -299,7 +299,9 @@ describe("工作线：接口", () => {
     const r = running(app, "agent", { lineState: line.id });
     submitLineState(app, r.id, { now: "截至今天，编码做完", next: [{ text: "补测试", why: "", refs: [], kind: "test" }] });
     const w = (await server.inject("/api/work")).json();
-    expect(Object.keys(w).sort()).toEqual(["ended", "endedMore", "lines", "loose", "places", "waiting"]);
+    expect(Object.keys(w).sort()).toEqual(["ended", "endedMore", "lines", "loose", "pending", "places", "waiting"]);
+    expect((await server.inject("/api/pending")).json()).toEqual(w.pending);
+    expect(w.waiting.total).toBe(w.pending.length);
     expect(w.lines.map((l: { id: string }) => l.id)).toEqual([line.id, started.id]);
     const l = w.lines[0];
     expect(Object.keys(l).sort()).toEqual(["children", "counts", "dueAt", "id", "kind", "listen", "next", "now", "phase", "phaseSince", "spaceId", "status", "timeline", "title", "watchUntil"]);
@@ -336,6 +338,9 @@ describe("工作线：接口", () => {
     // Owner-only routes.
     createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "personal", "reader", "editor");
     const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
+    const memberPending = await server.inject({ url: "/api/pending", headers });
+    expect(memberPending.statusCode).toBe(200);
+    expect(memberPending.json()).toEqual([]);
     expect((await server.inject({ url: "/api/work", headers })).statusCode).toBe(403);
     expect((await server.inject({ url: `/api/work/${line.id}`, headers })).statusCode).toBe(403);
   });

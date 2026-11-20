@@ -11,7 +11,7 @@ import UiSegmented from "../components/UiSegmented.vue";
 import WorkChange from "../components/WorkChange.vue";
 import WorkLine from "../components/WorkLine.vue";
 import WorkSheet from "../components/WorkSheet.vue";
-import WorkWaiting, { type Waiting } from "../components/WorkWaiting.vue";
+import WorkWaiting, { type PendingAction, type Waiting } from "../components/WorkWaiting.vue";
 import { promptDialog } from "../lib/dialog";
 import { dayKey, fmt } from "../lib/time";
 import { byMonth, dayKeyLabel, dayLabel, endedLine, ORIGIN_FILTERS, TYPE_FILTERS, type ChangeLite, type EndedLine, type ItemLite, type Line, type NextLite, type Place } from "../lib/work";
@@ -25,7 +25,7 @@ import { fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel, toas
  * owner; below, items under no line and what ran lately.
  */
 type View = "lines" | "time" | "stage";
-type Overview = { lines: Line[]; loose: ItemLite[]; waiting: Waiting; places: Place[]; ended: EndedLine[]; endedMore: boolean };
+type Overview = { lines: Line[]; loose: ItemLite[]; pending?: PendingAction[]; waiting: Waiting; places: Place[]; ended: EndedLine[]; endedMore: boolean };
 type HomeBits = { runs: Run[]; study: { total: number; due: number; reviewedToday: number }; notifications: { id: string; at: string; title: string; body: string; link: string | null; unread?: boolean }[] };
 
 const route = useRoute(), router = useRouter();
@@ -357,7 +357,7 @@ async function ask(text = question.value) {
           </div>
         </form>
         <Skeleton v-if="!data" variant="list" :rows="4" />
-        <WorkWaiting v-else :waiting="data.waiting" @changed="load" @change="openChange" />
+        <WorkWaiting v-else :waiting="data.waiting" :pending="data.pending" @changed="load" @change="openChange" />
         <PluginSlots at="today" />
         <section v-if="data?.places.length" class="places">
           <h2 class="section-title">在跟的问题</h2>

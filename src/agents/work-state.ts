@@ -151,12 +151,12 @@ function pageOrNull(app: App, slug: string) {
 }
 
 /** The work state in a few hundred characters: the page's 摘要 section (else its summary line), capped. */
-export function workStateBrief(app: App, chars = app.config.workState.briefChars): string {
+export function workStateBrief(app: App, chars = app.config.workState.briefChars, withTools = true): string {
   const p = pageOrNull(app, WORK_STATE_PAGE);
   if (!p) return "";
   const s = sectionOf(p.body, SUMMARY_SECTION);
   const text = (s ? s.text.replace(/^##[^\n]*\n/, "") : String(p.meta.summary ?? "")).trim();
-  return text ? `${truncate(text, chars)}\n（整理于 ${String(p.meta.updated ?? p.updatedAt.slice(0, 10))}；全文 read_page(space="personal", page="${WORK_STATE_PAGE}")）` : "";
+  return text ? `${truncate(text, chars)}\n（整理于 ${String(p.meta.updated ?? p.updatedAt.slice(0, 10))}${withTools ? `；全文 read_page(space="personal", page="${WORK_STATE_PAGE}")` : ""}）` : "";
 }
 
 /** When the page last changed (its file time), to tell whether a running conversation saw this version. */

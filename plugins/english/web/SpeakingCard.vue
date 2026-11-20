@@ -107,7 +107,7 @@ onBeforeUnmount(() => void call?.stop());
     <template v-if="open">
       <div v-if="status && !ready" class="note">
         <p><strong>语音模型还没配好</strong></p>
-        <p class="small muted">{{ status.detail }}。口语练习要用 OpenAI 的语音模型：到 设置 → AI → 语音 选好提供方（先在 API key 里添加 OpenAI 的 key），回来就能开始。</p>
+        <p class="small muted">{{ status.detail }}。口语练习要用 OpenAI 的语音模型：到 设置 → 后端与模型 → 语音 选好提供方（先在 API key 里添加 OpenAI 的 key），回来就能开始。</p>
         <div class="row"><button class="btn sm" type="button" @click="settings">打开语音设置</button></div>
       </div>
 

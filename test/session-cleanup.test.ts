@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { startServer } from "../src/server/http.ts";
+import { createApiToken, createUser, setUserRole } from "../src/core/users.ts";
 import { App } from "../src/core/app.ts";
 import { all, migrations, run } from "../src/core/db.ts";
 import { DatabaseSync } from "node:sqlite";
@@ -273,7 +275,7 @@ describe("unified ACP cleanup", () => {
 });
 
 describe("a cleanup that keeps failing", () => {
-  it("is retried less and less often and dropped in the end", async () => {
+  it("backs off, keeps the twelfth failure and stops retrying after restart", async () => {
     const app = testApp(); opened.push(app);
     // An ACP session whose backend configuration is gone: every attempt fails.
     run(app.db, "insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values('acp:x','gone-1','acp','missing','x',null,?,null,?,1,'')", app.home, process.pid);
@@ -285,7 +287,46 @@ describe("a cleanup that keeps failing", () => {
     // Two minutes after the first failure, not one.
     expect(Date.parse(first.retry_at) - Date.now()).toBeGreaterThan(100_000);
     for (let i = 0; i < 11; i++) await sweep();
-    expect(all(app.db, "select 1 from session_cleanup")).toEqual([]);
     expect(said.at(-1)).toContain("不再重试");
+    const reopened = App.open(app.home); opened.push(reopened);
+    due(reopened);
+    await recoverSessionCleanup(reopened, () => { throw new Error("unexpected retry"); });
+    expect(all(reopened.db, "select attempts,failed_at,failure_reason from session_cleanup")).toEqual([{
+      attempts: 12, failed_at: expect.stringMatching(/^\d{4}-/), failure_reason: expect.stringContaining("配置已变更或移除"),
+    }]);
+  });
+
+  it("lets only the owner list failures and requeue a single recorded backend", async () => {
+    const app = authorized();
+    const url = "/api/agents/session-cleanup";
+    const payload = { backendKey: "doubao:cli_bot", sessionId: "same" };
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      for (const key of [payload.backendKey, "doubao:other"]) {
+        run(app.db, `insert into session_cleanup(backend_key,session_id,transport,app_id,cwd,owner_pid,ready,retry_at,attempts,failed_at,failure_reason)
+          values(?,?,'doubao-cli',?,?,?,1,'',12,?,?)`, key, payload.sessionId, key.slice(7), app.home, process.pid, new Date().toISOString(), "删除失败");
+      }
+      createUser(app, { id: "member", name: "示例成员" });
+      const headers = { authorization: `Bearer ${createApiToken(app, "member", "cleanup-test")}` };
+      for (const role of ["member", "admin"] as const) {
+        setUserRole(app, "member", role);
+        expect((await server.inject({ method: "GET", url: url + "/failures", headers })).statusCode).toBe(403);
+        expect((await server.inject({ method: "POST", url: url + "/retry", headers, payload })).statusCode).toBe(403);
+      }
+      const failures = async () => (await server.inject({ method: "GET", url: url + "/failures" })).json().failures;
+      expect(await failures()).toHaveLength(2);
+      const retry = () => server.inject({ method: "POST", url: url + "/retry", payload });
+      expect((await retry()).json()).toEqual({ queued: true });
+      expect((await retry()).statusCode).toBe(404);
+      expect(await failures()).toMatchObject([{ backendKey: "doubao:other", sessionId: "same", attempts: 12, reason: "删除失败" }]);
+      const deleted = vi.fn();
+      setDoubaoFetchForTests(async (_input, init) => {
+        if (init?.method === "DELETE") deleted();
+        return ok({ session: { status: "idle" } });
+      });
+      await recoverSessionCleanup(app, () => {});
+      expect(deleted).toHaveBeenCalledTimes(1);
+      expect(pending(app)).toMatchObject([{ app_id: "other" }]);
+    } finally { await server.close(); }
   });
 });

@@ -16,7 +16,11 @@ import { changeTone, changeTypeLabel, type ChangeLite, type GateLite, type ItemL
  * a question opens beside the page to be answered, so thirty of them do not make thirty forms.
  */
 export type Waiting = { total: number; asks: Ask[]; gates: GateLite[]; candidates: ItemLite[]; changes: ChangeLite[]; drafts: number };
-const props = defineProps<{ waiting: Waiting }>();
+/** One thing waiting for the owner, whatever kind it is (src/items/pending.ts). */
+export type PendingAction = { id: string; via: string; group: string; label: string; title: string; href: string; count?: number; createdAt: string; lineTitle?: string };
+const props = defineProps<{ waiting: Waiting; pending?: PendingAction[] }>();
+/** What waits on another page (metrics to confirm, proposed changes to a profile, skill drafts): a line each, leading there. */
+const elsewhere = computed(() => (props.pending ?? []).filter((p) => ["metric", "profile", "skill", "item-update"].includes(p.via)));
 const emit = defineEmits<{ changed: []; change: [c: ChangeLite] }>();
 const askIds = computed(() => new Set(props.waiting.asks.map((a) => a.id)));
 /** A gate whose card is already among the questions is answered there. */
@@ -98,7 +102,7 @@ async function decide(i: ItemLite, keep: boolean) {
     deciding.value = null;
   }
 }
-const nothing = computed(() => !props.waiting.asks.length && !gates.value.length && !changes.value.length && !props.waiting.candidates.length && !props.waiting.drafts);
+const nothing = computed(() => !props.waiting.asks.length && !gates.value.length && !changes.value.length && !props.waiting.candidates.length && !props.waiting.drafts && !elsewhere.value.length);
 </script>
 
 <template>
@@ -155,6 +159,15 @@ const nothing = computed(() => !props.waiting.asks.length && !gates.value.length
           <button class="btn sm ghost" :disabled="deciding === i.id" @click="decide(i, false)">不要</button>
         </span>
       </div>
+    </div>
+
+    <div v-if="elsewhere.length" class="group">
+      <h3>在别的页面等你确认</h3>
+      <a v-for="p in elsewhere" :key="p.id" :href="p.href" class="li">
+        <span class="dot accent" />
+        <span class="grow"><span class="t clamp">{{ p.title }}</span><span class="m"><b>{{ p.label }}</b><template v-if="p.lineTitle"> · {{ p.lineTitle }}</template> · {{ relTime(p.createdAt) }}</span></span>
+        <Icon name="right" :size="14" class="go" />
+      </a>
     </div>
 
     <p v-if="waiting.drafts" class="drafts small"><Icon name="send" :size="14" />{{ waiting.drafts }} 条回复草稿在飞书里等你点发送</p>
