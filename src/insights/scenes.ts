@@ -14,7 +14,7 @@ export const sceneTable = {
   "wiki-organize": "整理（后台）", "wiki-resolve": "整理（后台）", "wiki-migrate": "整理（后台）", "wiki-sweep": "整理（后台）",
   dream: "整理（后台）", sync: "整理（后台）", curate: "整理（后台）", "memory-review": "整理（后台）", "memory-organize": "整理（后台）", "skill-organize": "整理（后台）",
   "role-merge": "整理（后台）", "profile-review": "整理（后台）", "flow-review": "整理（后台）", triage: "整理（后台）", digest: "整理（后台）",
-  replay: "整理（后台）", "replay-arm": "整理（后台）", "replay-judge": "整理（后台）", "kb-scout": "整理（后台）", "quality-audit": "整理（后台）", "listen-coach": "整理（后台）",
+  replay: "整理（后台）", "replay-arm": "整理（后台）", "replay-judge": "整理（后台）", "kb-scout": "整理（后台）", "quality-audit": "整理（后台）", "listen-coach": "整理（后台）", "outcome-review": "整理（后台）",
 } satisfies Record<RunKind, Scene>;
 
 export const profileScenes: Record<string, Scene> = {

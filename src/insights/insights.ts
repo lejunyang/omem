@@ -258,7 +258,7 @@ export function qualitySection(c: Ctx): Section {
   if (outcomes.length) {
     const kindOf = new Map(c.runs.map(r => [r.id, r.kind]));
     const rowOf = (o: typeof outcomes[number]) => ({ guest: "别人问机器人的", "rule-fire": "规则触发的回答", agent: "交给 Agent 的" } as Record<string, string>)[kindOf.get(o.runId) ?? ""] ?? "对话里的回答";
-    const refs = (xs: typeof outcomes) => xs.map(o => ({ id: o.runId, at: o.at, label: `回复 · ${o.text}${o.revised ? "（改判过）" : ""}`, link: `#/runs/${o.runId}` }));
+    const refs = (xs: typeof outcomes) => xs.map(o => ({ id: o.runId, at: o.at, label: `回复 · ${o.text}${o.revised ? "（改判过）" : o.checked?.verdict === "confirmed" ? "（复查同意）" : ""}`, link: `#/runs/${o.runId}` }));
     const cols: [string, string, (o: typeof outcomes[number]) => boolean][] = [
       ["resolved", "解决了", o => o.label === "resolved"], ["followup", "被追问", o => o.label === "followup"], ["corrected", "被纠正", o => o.label === "corrected"],
       ["taken", "别人接手了", o => o.label === "taken_over"], ["unclear", "看不出", o => ["unrelated", "silent", "unjudged"].includes(o.label!)],
@@ -271,7 +271,18 @@ export function qualitySection(c: Ctx): Section {
     s.metrics.push(metric(c, "quality:reply:rate", "回复有用的占比", ratio(clear.filter(o => o.label === "resolved").length, clear.length), refs(clear), "%", "解决了 ÷（解决了 + 被追问 + 被纠正 + 别人接手了）。没人接话和看不出的不算。按回复发出几小时后大家说的话判断，不是表情。"));
     const revised = outcomes.filter(o => o.revised);
     const modelled = outcomes.filter(o => o.first && o.first.confidence !== null);
-    if (modelled.length) s.metrics.push(metric(c, "quality:reply:revised", "被复盘改判的", revised.length, refs(revised), undefined, `第一遍由决策模型标（${modelled.length} 条）；夜间复盘的评判和 coach 重读同样的后续消息，认为标错了就改。改判得多，说明决策模型在这件事上不可靠。`));
+    if (modelled.length) s.metrics.push(metric(c, "quality:reply:revised", "被复盘改判的", revised.length, refs(revised), undefined, `第一遍由决策模型标（${modelled.length} 条）；夜里复查、夜间复盘的评判和 coach 重读后续消息，认为标错了就改，本人也可以在运行页改。改判得多，说明决策模型在这件事上不可靠。`));
+    // The nightly second reading (agents/outcome-review.ts): how often it agreed with the first label.
+    const checked = outcomes.filter(o => o.checked);
+    if (checked.length) {
+      const agreed = (xs: typeof outcomes) => xs.filter(o => o.checked!.verdict === "confirmed").length;
+      const sampled = checked.filter(o => o.checked!.pick === "sample");
+      s.metrics.push(
+        metric(c, "quality:reply:checked", "夜里复查过的", checked.length, refs(checked), undefined, "回答发出一到三天后，由 outcome-reviewer 带着发出后一整天的消息重看第一遍的标注；同意的记同意，不同意的改判（第一遍的标注留着）。本人标的和按表情记的不复查。"),
+        metric(c, "quality:reply:agree", "复查同意第一遍的占比", ratio(agreed(checked), checked.length), refs(checked), "%", "复查同意 ÷ 复查过的。复查先挑后来的动静对不上的、把握不够的和标成看不出的，所以这个比例比第一遍整体的准确率低；随机抽的那部分单算一个数。"),
+      );
+      if (sampled.length) s.metrics.push(metric(c, "quality:reply:agree:sample", "随机抽查里同意第一遍的占比", ratio(agreed(sampled), sampled.length), refs(sampled), "%", "只算每晚随机抽的、第一遍有把握的回答：最接近第一遍平常有多准。条数少时只作参考。"));
+    }
   }
   const replay = replayRows(c);
   for (const [key, label] of [["win", "夜间复盘：改了更好"], ["tie", "夜间复盘：没差别"], ["loss", "夜间复盘：改了更差"]]) if (replay.length) {

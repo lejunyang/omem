@@ -22,6 +22,13 @@ updated: 2026-11-20
 - `src/agents/profile-jobs.ts`：复盘主助手时另选“有人找你”的处理和关注处理会话里的轮次（`assistantRuns`），证据带它们的案例（`reply_samples.handle_run`）和所在关注的说明与经验；关注里的轮次不读“之后本人说”（那个会话里是群里别人的话）；每晚挑档案时案例里的纠正也算信号。`roles/coach.md` 加了怎么看这类运行。
 - `src/agents/weekly-report.ts`：定时任务 `weekly-report`（周五 17:00，默认开）排 `brief` 运行（`mode: weekly`），材料是本周的关注、事项、流程、编码、会议、指标、近况和上一份周报（与 kv `weekly_report_written:<周>` 比出本人改的行），只写 `周报/<年>-W<周>.md`，宿主发一条 later 通知。`roles/brief.md` 加了“周报”一节。测试 `test/proactive-material.test.ts`。
 
+## 每晚复查回复结果（11-20）
+
+- `src/agents/outcome-review.ts`：定时任务 `outcome-review`（05:20，默认开，`replies.outcome.review`：`max` 30、`batch` 10、`sample` 5、`days` 3）挑一到三天前、第一遍由决策模型标的回答（本人标的、本人改判过的、按表情记的、已改判或复查过的不挑；宿主的“没人接话”只在后来有动静时挑），先挑几条查询就能算出的对不上的信号（提问的人又问了、本人自己答了、负面表情、“不对”这类话），再挑把握低的、看不出的，另随机抽几条有把握的；每批一个运行，交给新角色 `outcome-reviewer`（`roles/outcome-reviewer.md`），材料是发出后一整天的消息、本人之后的动作、表情、同群相近的案例。
+- 新的交结果工具 `review_reply_outcomes`（`ROLE_TOOLS`，分组 `delegate`）→ `reply-outcomes.ts` 的 `checkReply`：同一个结果记 `checked = 'confirmed'`（把握低的第一遍不再按看不出算），不同就写 `revised_*`（“夜里复查（模型）”）并记 `checked = 'revised'`；`reply_outcomes` 新增 `checked*` 六列（迁移在最后），拉取的 `newer` 带上 `checked_at`。
+- 本人改判过的别人不再改：`reviseReply` 对别人返回 409，复盘评判跳过。
+- 数据页“做得怎么样”多“夜里复查过的”“复查同意第一遍的占比”“随机抽查里同意第一遍的占比”；`omem.reply_outcomes` 多 `review` 维度，`judge` 分出本人 / 表情 / 宿主 / 模型，每天记新的一天时前四天重算（`omem-usage.ts` 的 `retake`）。运行页复查同意时多一行；设置 → AI 里可以关复查、改每晚条数。测试 `test/outcome-review.test.ts`。
+
 ## 更新时 SSH 拉不下来就改用 https（11-20）
 
 - `scripts/upgrade.ts`：`git pull --ff-only` 失败时，把 SSH 形式的 origin 换成同一仓库的 https 地址（`scripts/git-url.ts` 的 `httpsOf`）再拉当前分支；进程管理器起的服务里 ssh 认不出当前用户（`No user exists for uid …`）或没有 agent 时，远程 `update` 也能拉到代码。测试 `test/git-url.test.ts`。

@@ -1714,6 +1714,39 @@ def({
 });
 
 def({
+  name: "review_reply_outcomes",
+  description:
+    "交夜里复查回复结果的结论（只给 outcome-reviewer 用）：任务里的每条回答给一个结果和一句依据。和第一遍一样的记为同意，不一样的改判，第一遍的标注留着。label：resolved 提问的人接受了 / followup 同一件事被追问 / corrected 被指出不对 / taken_over 本人或别人自己答了 / unrelated 之后有话但看不出它有没有用 / silent 之后一天里没人就这件事说过话。why 写哪句话或哪个动作说明了什么。",
+  write: true,
+  schema: z.object({
+    verdicts: z.array(z.object({
+      run_id: z.string(),
+      label: z.enum(["resolved", "followup", "corrected", "taken_over", "unrelated", "silent"]),
+      why: z.string().trim().min(2).max(400),
+    })).min(1).max(30),
+  }),
+  handler: async (ctx, a) => {
+    if (ctx.role !== "outcome-reviewer") throw new HttpError(403, "只有 outcome-reviewer 能交复查回复结果的结论");
+    const me = ctx.runId ? one<{ kind: string; input: string }>(ctx.app.db, "select kind, input from runs where id = ?", ctx.runId) : undefined;
+    if (me?.kind !== "outcome-review") throw new HttpError(400, "review_reply_outcomes 只在夜里复查回复结果的运行里用");
+    const { batchOf } = await import("./outcome-review.ts");
+    const { checkReply, REPLY_LABELS } = await import("./reply-outcomes.ts");
+    const picks = new Map(batchOf(me.input).map((p) => [p.runId, p]));
+    const by = [ctx.agentProfile, ctx.model].filter(Boolean).join(" · ") || "outcome-reviewer";
+    return a.verdicts.map((v) => {
+      const p = picks.get(v.run_id);
+      if (!p) return `${v.run_id} 不在这次要复查的回答里，跳过`;
+      try {
+        const r = checkReply(ctx.app, v.run_id, { label: v.label, by, why: v.why, pick: p.pick });
+        return `${v.run_id} ${r.verdict === "confirmed" ? `同意：${REPLY_LABELS[v.label]}` : `改判为 ${REPLY_LABELS[v.label]}`}`;
+      } catch (e) {
+        return `${v.run_id} 跳过：${(e as Error).message}`;
+      }
+    }).join("\n");
+  },
+});
+
+def({
   name: "take_over_run",
   description:
     "接手一个正在后台办同一件事的运行（“同时在办的相关工作”里列出的：巡检、有人找你的处理、盯群、唤醒、规则触发的 Agent）：停下它，并拿到它已经查到的——最后写的文字、写过的工作文件、碰过的事项、已经发出的消息，接着做而不用重查。只在本人正在问你同一件事、由你来回答更合适时用；它已经结束的也可以用来取它的结果。编码交办和评审用 stop_code_run。",

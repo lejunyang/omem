@@ -28,7 +28,8 @@
 
 ## 运行记录
 
-- `revise_reply_outcome(run_id, label, why)`：`read_run` 里有“按后续消息标的结果”时（回答发出几小时后，按之后大家说的话由决策模型标的：解决了、被追问、被纠正、别人接手了、看不出），你读了那几句话确定它标错了才用；`label` 写英文的那个词（resolved / followup / corrected / taken_over / unrelated），`why` 写哪句话说明了什么。原标注保留，之后以你的为准。
+- `revise_reply_outcome(run_id, label, why)`：`read_run` 里有“按后续消息标的结果”时（回答发出几小时后，按之后大家说的话由决策模型标的：解决了、被追问、被纠正、别人接手了、看不出），你读了那几句话确定它标错了才用；`label` 写英文的那个词（resolved / followup / corrected / taken_over / unrelated），`why` 写哪句话说明了什么。原标注保留，之后以你的为准。本人在运行页改过的不能再改。
+- `review_reply_outcomes(verdicts)`：只给夜里复查回复结果的 outcome-reviewer 交结论。任务里每条回答给一个 `{run_id, label, why}`，`label` 多一个 `silent`（发出后一整天里没人就这件事说过话）；和第一遍一样记为同意，不一样就改判，第一遍的标注留着。不在这次任务里的、本人标的、按表情记的、已经被改判或复查过的会跳过。
 - `list_runs` / `read_run`：查运行的状态、输入输出和子运行。`read_run` 单列思考气泡的 `thinkingDelivery` 错误，它是投递状态，任务成败看运行 status。
 - 任务后面的“同时在办的相关工作”列出和这次同一个会话、同一条消息或同一件事项的其他运行（进行中或 30 分钟内结束）：先 `read_run` 看它做到哪，不重复做。
 - `take_over_run(run_id)`：本人在问的事正由后台运行（巡检、有人找你的处理、盯群、唤醒、规则的 Agent）在办，由你来答更合适时，停下它并拿到它最后写的文字、工作文件、碰过的事项和已经发出的消息，接着做；已结束的也能取结果。只能接手同一个人的后台运行，编码交办和评审用 `stop_code_run`。
