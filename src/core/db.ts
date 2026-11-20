@@ -2248,6 +2248,8 @@ export const migrations: readonly string[] = [
    alter table items add column phase_since text;
    alter table items add column watch_until text;`,
   METRIC_ORIGIN_MIGRATION,
+  `alter table session_cleanup add column failed_at text;
+   alter table session_cleanup add column failure_reason text;`,
 ];
 
 export type Db = DatabaseSync;

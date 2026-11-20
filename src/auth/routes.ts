@@ -32,6 +32,8 @@ const PEERS = g("peers.manage");
 const USERS = g("users.manage");
 
 export const ROUTE_RULES: Record<string, RouteRule> = {
+  "GET /api/agents/session-cleanup/failures": "owner",
+  "POST /api/agents/session-cleanup/retry": "owner",
   "GET /api/agents/network-policies": "owner",
   "PUT /api/agents/network-policies": "owner",
   "POST /api/agents/network-policies/:id/check": "owner",

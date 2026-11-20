@@ -557,6 +557,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ownerOnly(req);
     return (await import("../agents/digest.ts")).updateDigestJob(app, (req.params as { id: string }).id, req.body);
   });
+  server.get("/api/agents/session-cleanup/failures", async () => {
+    const { failedSessionCleanups } = await import("../agents/session-cleanup.ts");
+    return { failures: failedSessionCleanups(app) };
+  });
+  server.post("/api/agents/session-cleanup/retry", async (req) => {
+    const { backendKey, sessionId } = q(z.object({ backendKey: z.string().min(1), sessionId: z.string().min(1) }), req.body);
+    const { retryFailedSessionCleanup } = await import("../agents/session-cleanup.ts");
+    if (!retryFailedSessionCleanup(app, backendKey, sessionId)) throw new HttpError(404, "找不到这条已停止重试的清理记录");
+    return { queued: true };
+  });
   // Models in use now against their limits, and how each did in the last 7 days.
   // Network conditions are local owner settings; interface names and affected runs stay private.
   networkPoliciesView(app);
