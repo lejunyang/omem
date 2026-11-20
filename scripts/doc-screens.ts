@@ -996,28 +996,28 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.waitForTimeout(400);
   } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },
-  // A proposal opened: its chart by device, why it exists, where it came from, 保留 / 改 / 不要.
+  // One number opened in the drawer: by day, split by scene / space / model / who, then its records.
+  { name: "insights-detail", path: "/insights?tab=omem&detail=usage%3Atotal", space: "personal", prepare: async (p) => {
+    await p.locator(".sheet .splits").waitFor();
+    await p.waitForTimeout(600);
+  } },
+  // The proposals to decide, by line; one opened: its chart by device, why it exists, where it came from, 保留 / 改 / 不要.
   { name: "insights-work", path: "/insights?tab=work", space: "shop", prepare: async (p) => {
-    await p.getByRole("button", { name: /退款申请完成率/ }).click();
+    await p.locator("button.c-name", { hasText: "退款申请完成率" }).click();
     await p.waitForTimeout(900);
-    await p.locator(".group").first().evaluate((el) => {
+    await p.locator(".c-row.on").evaluate((row) => {
+      const el = row.closest(".c-group") ?? row;
       let s: HTMLElement | null = el.parentElement;
       while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
-      const box = el.getBoundingClientRect();
-      (s ?? document.scrollingElement)?.scrollBy(0, box.top - 24);
+      (s ?? document.scrollingElement)?.scrollBy(0, el.getBoundingClientRect().top - 24);
     });
     await p.waitForTimeout(300);
   } },
-  // A report the assistant wrote (a work file under 数据/报表/), its two charts drawn on the page.
+  // A report the assistant wrote (a work file under 数据/报表/), its two charts drawn in the drawer.
   { name: "insights-report", path: "/insights?tab=work", space: "shop", prepare: async (p) => {
-    await p.getByRole("button", { name: "退款改造上线一周" }).click();
+    await p.getByRole("button", { name: /报表/ }).click();
+    await p.locator(".sheet .prose").waitFor();
     await p.waitForTimeout(1200);
-    await p.locator(".report").evaluate((el) => {
-      let s: HTMLElement | null = el.parentElement;
-      while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
-      (s ?? document.scrollingElement)?.scrollBy(0, el.getBoundingClientRect().top - 160);
-    });
-    await p.waitForTimeout(300);
   } },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },

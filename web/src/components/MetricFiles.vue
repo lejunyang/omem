@@ -113,7 +113,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 
 <style scoped>
 .files { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 0; font-size: 13px; color: var(--muted); min-width: 0; }
-.files > * + *::before { content: "·"; margin: 0 8px; color: var(--muted); }
+.files > * + *::before { content: "·" / ""; margin: 0 8px; color: var(--muted); }
 .files a, .link { color: var(--ink-2); text-decoration: none; }
 .link { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 .files a:hover, .link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
