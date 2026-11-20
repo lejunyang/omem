@@ -2271,6 +2271,11 @@ export const migrations: readonly string[] = [
    alter table session_cleanup add column failure_reason text;`,
   FILE_REFS_MIGRATION,
   FILE_REF_TOMBSTONES_MIGRATION,
+  // The feature branch used the asks_deferred migration number for its operation indexes.
+  `create index if not exists asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;
+   create index if not exists asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
+   create index if not exists asks_operation_run on asks(json_extract(context,'$.runKey'),status);
+   create index if not exists asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
 ];
 
 export type Db = DatabaseSync;

@@ -610,6 +610,7 @@ ${WAKE_NOTE}`
           handle = await openAcp(
             used,
             {
+              app,
               signal: networkAttempt.signal,
               env: networkEnvironment(app, used),
               cwd: curPrep.cwd,
@@ -662,7 +663,7 @@ ${WAKE_NOTE}`
           const again = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
           const handle = await openAcp(
             networkProfile(app, again.profile),
-            { signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
+            { app, signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
             emit,
           );
           l = { threadId, key: stepKey, handle, token: again.token, lastUsed: Date.now(), busy: true };

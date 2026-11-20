@@ -89,34 +89,39 @@ type Row = {
   value: string | null;
 };
 
-export const toAsk = (r: Row): Ask => ({
-  id: r.id,
-  runId: r.run_id,
-  conversationId: r.conversation_id,
-  userId: r.user_id,
-  kind: r.kind,
-  question: r.question,
-  options: JSON.parse(r.options),
-  allowText: !!r.allow_text,
-  tool: r.tool,
-  args: r.args ? JSON.parse(r.args) : null,
-  status: r.status,
-  answer: r.answer,
-  choice: r.choice,
-  approved: r.approved === null ? null : !!r.approved,
-  result: r.result,
-  consumed: !!r.consumed,
-  shownAt: r.shown_at,
-  createdAt: r.created_at,
-  answeredAt: r.answered_at,
-  answeredBy: r.answered_by,
-  handler: ((JSON.parse(r.context ?? "{}") as { handler?: unknown }).handler as string | undefined) ?? null,
-  ui: r.ui ? (JSON.parse(r.ui) as AskUi) : null,
-  value: r.value ? (JSON.parse(r.value) as Record<string, unknown>) : null,
-  askedBy: ((JSON.parse(r.context ?? "{}") as { askedBy?: unknown }).askedBy as string | undefined) ?? null,
-  toName: ((JSON.parse(r.context ?? "{}") as { toName?: unknown }).toName as string | undefined) ?? null,
-  lapsed: ((JSON.parse(r.context ?? "{}") as { lapsed?: unknown }).lapsed as string | undefined) ?? null,
-});
+export function toAsk(r: Row, requester?: string): Ask {
+  const context = JSON.parse(r.context ?? "{}") as { operationApproval?: unknown; askedBy?: string; toName?: string; lapsed?: string; handler?: string };
+  // A delegated approver sees the decision, not data returned using the requester's privileges.
+  const hidePayload = context.operationApproval && context.askedBy !== r.user_id && requester !== context.askedBy;
+  return {
+    id: r.id,
+    runId: r.run_id,
+    conversationId: r.conversation_id,
+    userId: r.user_id,
+    kind: r.kind,
+    question: r.question,
+    options: JSON.parse(r.options),
+    allowText: !!r.allow_text,
+    tool: r.tool,
+    args: !hidePayload && r.args ? JSON.parse(r.args) : null,
+    status: r.status,
+    answer: r.answer,
+    choice: r.choice,
+    approved: r.approved === null ? null : !!r.approved,
+    result: hidePayload && r.result ? (r.result.startsWith("失败：") ? "失败：详情仅向发起人显示" : "详情仅向发起人显示") : r.result,
+    consumed: !!r.consumed,
+    shownAt: r.shown_at,
+    createdAt: r.created_at,
+    answeredAt: r.answered_at,
+    answeredBy: r.answered_by,
+    handler: context.handler ?? null,
+    ui: r.ui ? (JSON.parse(r.ui) as AskUi) : null,
+    value: r.value ? (JSON.parse(r.value) as Record<string, unknown>) : null,
+    askedBy: context.askedBy ?? null,
+    toName: context.toName ?? null,
+    lapsed: context.lapsed ?? null,
+  };
+}
 
 export function markAskSent(app: App, id: string) {
   run(app.db, "update asks set context = json_remove(json_set(coalesce(context,'{}'), '$.sentAt', ?), '$.deferredUntil') where id = ?", now(), id);
@@ -128,8 +133,8 @@ function askRow(app: App, id: string): Row {
   return r;
 }
 
-export function getAsk(app: App, id: string): Ask {
-  return toAsk(askRow(app, id));
+export function getAsk(app: App, id: string, requester?: string): Ask {
+  return toAsk(askRow(app, id), requester);
 }
 
 export function listAsks(app: App, opts: { status?: Ask["status"]; conversationId?: string; userId?: string; runId?: string; limit?: number } = {}): Ask[] {
@@ -139,7 +144,7 @@ export function listAsks(app: App, opts: { status?: Ask["status"]; conversationI
   if (opts.conversationId) where.push("conversation_id = ?") && params.push(opts.conversationId);
   if (opts.userId) where.push("user_id = ?") && params.push(opts.userId);
   if (opts.runId) where.push("run_id = ?") && params.push(opts.runId);
-  return all<Row>(app.db, `select * from asks ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit ${opts.limit ?? 50}`, ...params).map(toAsk);
+  return all<Row>(app.db, `select * from asks ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit ${opts.limit ?? 50}`, ...params).map(r => toAsk(r));
 }
 
 /** Channels that show asks (the Feishu bot registers one); `closed` updates what was shown once it is settled. */
@@ -300,7 +305,7 @@ export const ROUND_ASKS = ["review-done", "review-plan", "review-escalation", "r
 /** Host asks of a run settled some other way (the owner acted on the web page): their cards stop taking answers. */
 export function cancelHostAsks(app: App, runId: string, handler: string | string[]) {
   const names = Array.isArray(handler) ? handler : [handler];
-  const open = all<Row>(app.db, `select * from asks where run_id = ? and status = 'pending' and json_extract(context, '$.handler') in (${names.map(() => "?").join(",")})`, runId, ...names).map(toAsk);
+  const open = all<Row>(app.db, `select * from asks where run_id = ? and status = 'pending' and json_extract(context, '$.handler') in (${names.map(() => "?").join(",")})`, runId, ...names).map(r => toAsk(r));
   if (!open.length) return;
   run(app.db, `update asks set status = 'cancelled', answered_at = ? where id in (${open.map(() => "?").join(",")})`, now(), ...open.map((a) => a.id));
   for (const a of open) closed(app, { ...a, status: "cancelled" });
@@ -330,7 +335,7 @@ export function lapseAsk(app: App, id: string, reason: string) {
 }
 
 function cancelOpen(app: App, conversationId: string, kind: AskKind) {
-  const open = all<Row>(app.db, "select * from asks where conversation_id = ? and kind = ? and status = 'pending'", conversationId, kind).map(toAsk);
+  const open = all<Row>(app.db, "select * from asks where conversation_id = ? and kind = ? and status = 'pending'", conversationId, kind).map(r => toAsk(r));
   if (!open.length) return;
   run(app.db, `update asks set status = 'cancelled', answered_at = ? where id in (${open.map(() => "?").join(",")})`, now(), ...open.map((a) => a.id));
   for (const a of open) closed(app, { ...a, status: "cancelled" });
@@ -365,8 +370,8 @@ function closed(app: App, ask: Ask) {
 const waiters = new Map<string, Set<(a: Ask) => void>>();
 
 /** Wait up to `ms` for an answer; marks it consumed when it arrives while waiting. */
-export function waitForAnswer(app: App, id: string, ms: number): Promise<Ask> {
-  const first = getAsk(app, id);
+export function waitForAnswer(app: App, id: string, ms: number, requester?: string): Promise<Ask> {
+  const first = getAsk(app, id, requester);
   if (first.status !== "pending") return Promise.resolve(consume(app, first));
   return new Promise((resolve) => {
     const set = waiters.get(id) ?? new Set();
@@ -375,7 +380,8 @@ export function waitForAnswer(app: App, id: string, ms: number): Promise<Ask> {
       clearTimeout(timer);
       set.delete(done);
       if (!set.size) waiters.delete(id);
-      resolve(a.status === "pending" ? a : consume(app, a));
+      const answer = requester && requester === a.askedBy && requester !== a.userId ? getAsk(app, id, requester) : a;
+      resolve(a.status === "pending" ? a : consume(app, answer));
     };
     const timer = setTimeout(() => done(getAsk(app, id)), ms);
     set.add(done);
@@ -480,9 +486,8 @@ async function recordAnswer(app: App, before: Ask, context: Record<string, unkno
   // Persist and acknowledge a channel click before running effects that may block on Git.
   const finish = async (): Promise<Ask> => {
     // An approval the host handles itself (a command held by the command rules) has no tool to run.
-    if (before.kind === "approval" && approved && executor && !before.handler) {
-      const ctx = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}");
-      const r = await executor(app, getAsk(app, id), ctx).catch((e: Error) => ({ text: e.message, isError: true }));
+    if (before.kind === "approval" && executor && !before.handler && (approved || context.operationApproval)) {
+      const r = await executor(app, getAsk(app, id, before.askedBy ?? undefined), context).catch((e: Error) => ({ text: e.message, isError: true }));
       run(app.db, "update asks set result = ? where id = ?", `${r.isError ? "失败：" : ""}${truncate(forOwner(r.text), 4000)}`, id);
     }
     const ask = getAsk(app, id);
@@ -546,14 +551,15 @@ export function describeAnswer(a: Ask): string {
   if (a.status === "cancelled") return a.lapsed ? `提问 ${a.id} 已失效：${a.lapsed}。` : `提问 ${a.id} 已失效（本人已经在对话里接着说了）。`;
   if (a.kind === "approval")
     return a.approved
-      ? `本人批准了 ${a.tool}${a.answer ? `（附言：${a.answer}）` : ""}。执行结果：${a.result ?? "（无）"}`
-      : `本人拒绝了 ${a.tool}${a.answer ? `，理由：${a.answer}` : "（没有说理由）"}。按理由调整做法，不要换个方式绕过。`;
+      ? `${who}批准了 ${a.tool}${a.answer ? `（附言：${a.answer}）` : ""}。执行结果：${a.result ?? "（无）"}`
+      : `${who}拒绝了 ${a.tool}${a.answer ? `，理由：${a.answer}` : "（没有说理由）"}。按理由调整做法，不要换个方式绕过。`;
   if (a.value) return `${who}${a.ui?.fields?.length ? "填好了" : "在交互页里选好了"}「${truncate(a.question, 80)}」：\n${a.answer ?? ""}\n结构化的值：${truncate(JSON.stringify(a.value), 4000)}`;
   return `${who}回答了「${truncate(a.question, 80)}」：${a.answer ?? "（空）"}`;
 }
 
 /** An answer nobody waited for: a message in the conversation, so the next turn has it. */
 async function deliverAnswer(app: App, ask: Ask) {
+  if (ask.askedBy && ask.askedBy !== ask.userId) ask = getAsk(app, ask.id, ask.askedBy);
   run(app.db, "update asks set consumed = 1 where id = ?", ask.id);
   if (!ask.conversationId) {
     // A background agent asked and ended before the answer came: it starts again with the answer as its next step.
@@ -564,11 +570,11 @@ async function deliverAnswer(app: App, ask: Ask) {
     if (prev && prev.kind === "agent" && input.spec) {
       const { triggers: _t, moreTriggers: _m, resumeSessionId: _s, ...rest } = input;
       const task = ["# 本人的回答", "", `${describeAnswer(ask)}\n你（运行 ${prev.id}）问完就结束了，现在按这个回答接着把事情做完。之前的过程用 read_run 读运行 ${prev.id}。`, "", "# 原来的任务", "", input.task ?? ""].join("\n");
-      createRun(app, { kind: "agent", spaceId: prev.spaceId, title: `${input.spec}：按本人的回答接着做`, input: { ...rest, task, resumeFromRun: prev.id }, parentId: prev.parentId, lane: prev.lane, userId: ask.userId });
+      createRun(app, { kind: "agent", spaceId: prev.spaceId, title: `${input.spec}：按本人的回答接着做`, input: { ...rest, task, resumeFromRun: prev.id }, parentId: prev.parentId, lane: prev.lane, userId: ask.askedBy ?? ask.userId });
       return;
     }
     const { notify } = await import("../core/notify.ts");
-    notify(app, { userId: ask.userId, title: "已记下你的回答", body: `${describeAnswer(ask)}\n提问的任务已经结束；需要接着做时在对话里说一声。`, link: ask.runId ? `#/runs/${ask.runId}` : null });
+    notify(app, { userId: ask.askedBy ?? ask.userId, title: "已记下你的回答", body: `${describeAnswer(ask)}\n提问的任务已经结束；需要接着做时在对话里说一声。`, link: ask.runId ? `#/runs/${ask.runId}` : null });
     return;
   }
   const { receive } = await import("./inbox.ts");
@@ -610,7 +616,7 @@ export async function answerFromMessage(app: App, conversationId: string, text: 
 }
 
 async function takeAnswer(app: App, conversationId: string, text: string, userId: string): Promise<boolean> {
-  const open =all<Row>(app.db, "select * from asks where conversation_id = ? and user_id = ? and status = 'pending' and shown_at is not null order by created_at desc", conversationId, userId).map(toAsk);
+  const open =all<Row>(app.db, "select * from asks where conversation_id = ? and user_id = ? and status = 'pending' and shown_at is not null order by created_at desc", conversationId, userId).map(r => toAsk(r));
   if (!open.length) return false;
   const pick = /^\s*(\d{1,2})\s*[.。、)）]?\s*$/.exec(text);
   if (pick) {

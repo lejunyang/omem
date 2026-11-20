@@ -29,7 +29,7 @@ import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
-import { accessibleSpaces, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
+import { accessibleSpaces, activeUser, identityOwner, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
@@ -72,6 +72,8 @@ import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, sk
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
+import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
+import type { OperationRule } from "../core/config.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
@@ -82,6 +84,8 @@ import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows,
 import type { SearchOptions } from "../search/search.ts";
 
 export type ToolContext = {
+  /** Host-only identity of the ACP prompt currently using this token and the command wrappers. */
+  commandTurn?: string;
   app: App;
   runId: string | null;
   /** Default space for tools that take an optional `space`. */
@@ -110,6 +114,8 @@ export type ToolContext = {
   larkPowers?: { urgent: boolean; private: boolean };
   /** This call was approved by the owner (a held call running after the OK): do not hold it again. */
   approved?: boolean;
+  /** Single-invocation rule approval. A tool can still require its own confirmation. */
+  operationGrant?: { key: string; expiresAt: number; approver: string; resolved?: { from: unknown; target: string } };
   /** A person pressed an object's action button on this item's page (src/flows/object-actions.ts): the call is about that item and object. */
   objectAction?: { item: string; object: string };
   /** Built-in role of the run (ingest, dreamer…); background roles must cite sources for memories. */
@@ -3592,7 +3598,10 @@ def({
       const question = inv.inviteQuestion(resolved, a.reason);
       // The card shows the whole list: well within a Feishu card's size (about 30 KB) and a Markdown block's 20k characters.
       if (Buffer.byteLength(question) > 20_000) throw new HttpError(400, "这次的名单太长，审批卡片放不下：分几次调用");
-      const r = await held(ctx, "lark_invite", normalized, question);
+      // Keep the policy decision for the submitted names and bind the native card to the resolved IDs.
+      const grant = ctx.operationGrant;
+      const snapshot = grant ? { ...ctx, operationGrant: { ...grant, resolved: { from: a, target: digest(normalized) } } } : ctx;
+      const r = await held(snapshot, "lark_invite", normalized, question);
       if (r.isError) throw new HttpError(403, r.text);
       return r.text;
     }
@@ -3860,8 +3869,8 @@ def({
   handler: async (ctx, a) => {
     const { getAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
     const ask = getAsk(ctx.app, a.ask_id);
-    if (ask.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不是这次运行提的问题");
-    const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? ASK_WAIT_MAX) * 1000);
+    if (ask.userId !== (ctx.userId ?? OWNER) && ask.askedBy !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不是这次运行提的问题");
+    const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? ASK_WAIT_MAX) * 1000, ctx.userId ?? OWNER);
     return got.status === "pending" ? `本人还没回答（${ask.id}）。` : describeAnswer(got);
   },
 });
@@ -6873,6 +6882,66 @@ const metaArgs = { omem_help: z.object({ topic: z.string().optional() }), omem_c
 /** Tools whose write into a mirror space goes to the space's home (core/mesh-write.ts FORWARDED). */
 const MIRROR_FORWARDED = new Set(["remember", "supersede", "forget", "save_note", "write_page"]);
 
+async function toolRuleApprover(app: App, entry = "owner") {
+  // Tools have no trusted nomination channel. Like commands, "run" defaults to the owner.
+  if (entry === "owner" || entry === "run") return OWNER;
+  let id: string | null = entry.slice(5);
+  if (entry.startsWith("lark:")) {
+    const { resolveMention } = await import("../channels/lark-people.ts");
+    const person = await resolveMention(app, id);
+    id = "all" in person ? null : identityOwner(app, "lark", person.userId);
+  }
+  if (!id || !activeUser(findUser(app, id))) throw new Error("规则指定的审批人没有可用的 omem 账号");
+  return id;
+}
+
+function approvalKey(who: OperationWho, op: Operation, rule: OperationRule) {
+  return digest([who, rule.id, rule.revision, fingerprint(op, rule)]);
+}
+
+async function checkToolOperation(
+  ctx: ToolContext, op: { kind: "tool"; name: string; args: Record<string, unknown> },
+  who: OperationWho, { rule, action }: ReturnType<typeof decide>,
+) {
+  const { name, args } = op;
+  if (rule && action === "deny") {
+    auditOperation(ctx.app, op, who, rule, action, "denied");
+    return { text: `操作规则「${rule.title || rule.id}」拒绝调用 ${name}`, isError: true };
+  }
+  const key = rule && action === "approve" ? approvalKey(who, op, rule) : undefined;
+  const grant = ctx.operationGrant;
+  // Some native approvals resolve human names to stable IDs. Check both the original rule
+  // and the IDs on the native card, including any deny rule specific to those IDs.
+  let approvedKey = key;
+  let approvedRule = rule;
+  if (grant?.resolved) {
+    const original = { ...op, args: grant.resolved.from };
+    const decision = decide(ctx.app, original, who);
+    approvedRule = decision.rule;
+    approvedKey = approvedRule && decision.action === "approve" && digest(args) === grant.resolved.target
+      ? approvalKey(who, original, approvedRule) : undefined;
+  }
+  if (grant && (grant.key !== approvedKey || Date.now() >= grant.expiresAt)) {
+    auditOperation(ctx.app, op, who, rule, "approve", "stale", grant.approver);
+    return { text: "工具审批已失效，成员、规则或参数已变更，或已超过有效期。", isError: true };
+  }
+  if (rule && key && (!grant || approvedRule?.id !== rule.id)) {
+    let approver: string;
+    try { approver = await toolRuleApprover(ctx.app, rule.approval?.approver); }
+    catch (e) {
+      auditOperation(ctx.app, op, who, rule, action, "approver unavailable");
+      return { text: (e as Error).message, isError: true };
+    }
+    const expiresAt = Date.now() + (rule.approval?.expiresSeconds ?? 86400) * 1000;
+    auditOperation(ctx.app, op, who, rule, action, "pending", approver);
+    return held({ ...ctx, operationGrant: { key, expiresAt, approver } }, name, args,
+      `${userName(ctx.app, who.member)} 的助理要调用 ${name}。规则「${rule.title || rule.id}」要求批准本次调用。\n空间 ${ctx.spaceId}，参数指纹 ${fingerprint(op, rule).slice(0, 12)}，有效期至 ${new Date(expiresAt).toISOString()}。`,
+      { operationApproval: rule, askedBy: who.member, toName: userName(ctx.app, approver) }, rule);
+  }
+  if (rule) auditOperation(ctx.app, op, who, rule, action, grant ? "approved" : "allowed", grant?.approver);
+  return null;
+}
+
 export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
   if (name === "omem_help" || name === "omem_call") {
     const parsed = metaArgs[name].safeParse(args ?? {});
@@ -6884,14 +6953,26 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const tool = tools.find((t) => t.name === name);
   if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
-  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))) return { text: `工具 ${name} 不可用`, isError: true };
+  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))
+      || (tool.available && !tool.available(ctx.app, ctx.userId ?? OWNER))) {
+    return { text: `工具 ${name} 不可用`, isError: true };
+  }
   mark(`tool ${name}`);
   // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
   if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
-  if (ctx.actor === "agent" && !ctx.approved && (ctx.app.config.approvals.tools.includes(name) || alwaysApprove.has(name))) return held(ctx, name, parsed.data as Record<string, unknown>);
+  const op = { kind: "tool" as const, name, args: parsed.data };
+  const who = operationWho(ctx);
+  const decision = ctx.actor === "agent" ? decide(ctx.app, op, who) : undefined;
+  if (decision && (decision.rule || ctx.operationGrant)) {
+    const stopped = await checkToolOperation(ctx, op, who, decision);
+    if (stopped) return stopped;
+  }
+  const legacy = ctx.actor === "agent" && !ctx.approved && (!decision?.rule || decision.action === "log");
+  if ((legacy && ctx.app.config.approvals.tools.includes(name)) || (ctx.actor === "agent" && !ctx.approved && alwaysApprove.has(name)))
+    return held(ctx, name, parsed.data);
   // A memory, note or page written into a mirror of another node's space is written on its home (core/mesh-write.ts).
   if (tool.write && MIRROR_FORWARDED.has(name)) {
     const { forwardToHome } = await import("../core/mesh-write.ts");
@@ -6900,7 +6981,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const out = await runTool(ctx, tool, name, parsed.data);
   // On the middle rung (approval-ladder.ts): done without asking, and the owner is told what was done.
-  if (ctx.actor === "agent" && !ctx.approved && (ctx.app.config.approvals.report ?? []).includes(name))
+  if (legacy && (ctx.app.config.approvals.report ?? []).includes(name))
     (await import("./approval-ladder.ts")).reportDone(ctx.app, { who: ctx.spec ?? ctx.role ?? "助理", userId: ctx.userId, runId: ctx.runId }, name, parsed.data as Record<string, unknown>, out);
   return out;
 }
@@ -6983,29 +7064,38 @@ async function steering(ctx: ToolContext) {
  * A tool listed in `approvals.tools`: the call waits for the owner's OK. Approved, it runs with
  * the context it was made in (also after this run has ended); refused, the reason goes back.
  */
-async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string, extraContext?: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
+async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string, extraContext?: Record<string, unknown>, rule?: OperationRule): Promise<{ text: string; isError: boolean }> {
   const { createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
   const { app, tools: allowed, ...rest } = ctx;
   const ask = createAsk(app, {
     runId: ctx.runId,
-    userId: ctx.userId ?? OWNER,
+    userId: rule ? ctx.operationGrant!.approver : ctx.userId ?? OWNER,
     kind: "approval",
     question: question ?? `${ctx.spec ?? ctx.role ?? "助理"} 要调用 ${name}：\n${truncate(JSON.stringify(args, null, 1), 1500)}`,
     tool: name,
     args,
     context: { ...rest, tools: allowed ? [...allowed] : null, ...extraContext },
   });
-  const got = await waitForAnswer(app, ask.id, app.config.approvals.waitSeconds * 1000);
+  const got = await waitForAnswer(app, ask.id, (rule?.approval?.waitSeconds ?? app.config.approvals.waitSeconds) * 1000, ctx.userId ?? OWNER);
   if (got.status === "pending")
-    return { text: `${name} 需要本人批准（${ask.id}），还在等。可以先做别的，再 wait_answer(ask_id="${ask.id}") 看结果；批准后宿主会执行并把结果告诉你，不要自己重复调用。`, isError: false };
-  return { text: describeAnswer(got), isError: !got.approved };
+    return { text: `${name} 需要${ask.toName ?? "本人"}批准（${ask.id}），还在等。可以先做别的，再 wait_answer(ask_id="${ask.id}") 看结果；批准后宿主会执行并把结果告诉你，不要自己重复调用。`, isError: false };
+  return { text: describeAnswer(got), isError: !got.approved || !!got.result?.startsWith("失败：") };
 }
 
 setApprovalExecutor(async (app, ask, snapshot) => {
-  const tool = tools.find((t) => t.name === ask.tool);
-  if (!tool) return { text: `工具 ${ask.tool} 已不存在`, isError: true };
-  const s = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null };
-  const out = await runTool({ ...s, app, tools: s.tools ? new Set(s.tools) : null, approved: true }, tool, ask.tool!, ask.args ?? {});
+  const { operationApproval, askedBy: _asker, toName: _recipient, ...s } = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null; operationApproval?: OperationRule; askedBy?: string; toName?: string };
+  const member = s.userId ?? OWNER;
+  const approver = operationApproval ? s.operationGrant?.approver : member;
+  if (!ask.tool || !approver || ask.userId !== approver || ask.answeredBy !== approver ||
+      !activeUser(findUser(app, approver)) || !activeUser(findUser(app, member)) || ask.runId !== s.runId || (ask.runId && runUser(app, ask.runId) !== member))
+    return { text: "审批人或运行成员已变化，工具审批已失效。", isError: true };
+  const ctx: ToolContext = { ...s, app, spaces: scopeFor(app, member, s.spaces), tools: s.tools ? new Set(s.tools) : null, approved: !operationApproval || s.approved };
+  if (!ask.approved) {
+    auditOperation(app, { kind: "tool", name: ask.tool, args: ask.args }, operationWho(ctx), operationApproval, "approve", "refused", approver);
+    return { text: "已拒绝", isError: false };
+  }
+  const out = await callTool(ctx, ask.tool, ask.args ?? {});
+  if (operationApproval || out.isError) return out;
   // The owner keeps approving this tool: ask once whether it may run and be reported instead (approval-ladder.ts).
   void import("./approval-ladder.ts").then((m) => m.suggestPromotion(app, ask, (t) => !alwaysApprove.has(t))).catch((e) => console.warn(`[omem] 审批阶梯：${(e as Error).message}`));
   return out;
@@ -7062,6 +7152,13 @@ export function issueToolToken(ctx: Omit<ToolContext, "app">) {
 export function retargetToolToken(token: string, runId: string | null) {
   const ctx = tokens.get(token);
   if (ctx) ctx.runId = runId;
+}
+export function beginCommandTurn(token: string) {
+  const ctx = tokens.get(token);
+  if (!ctx) return;
+  const turn = randomBytes(18).toString("base64url");
+  ctx.commandTurn = turn;
+  return () => { if (ctx.commandTurn === turn) delete ctx.commandTurn; };
 }
 export function revokeToolToken(token: string) {
   tokens.delete(token);
