@@ -1617,7 +1617,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const diff = r.kind === "code" ? codeDiffView(app, id) : null;
     const boardId = r.input.boardTaskId ? r.parentId : r.output.boardId ?? id;
     const board = typeof boardId === "string" && one(app.db, "select 1 from agent_work_tasks where work_id=? limit 1", boardId)
-      ? { workId: boardId, taskId: r.input.boardTaskId } : undefined;
+      && canReadRun(app, who(req), boardId) ? { workId: boardId, taskId: r.input.boardTaskId } : undefined;
     return { board, run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
   });
   // The owner read the follow-up and says the label is wrong (agents/reply-outcomes.ts).

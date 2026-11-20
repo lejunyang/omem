@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/main.ts";
 import { all, run } from "../src/core/db.ts";
-import { createUser, createApiToken } from "../src/core/users.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { addMember, createUser, createApiToken } from "../src/core/users.ts";
 import { createThread, getThread, threadMessages } from "../src/agents/threads.ts";
 import { __testHandlers, cancelRun, createRun, getRun, runUser, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
@@ -63,6 +64,41 @@ describe("协同任务板", async () => {
     createUser(app, { id: "reader", name: "读者" });
     const token = createApiToken(app, "reader", "test");
     expect((await fetch(app.baseUrl + "/api/agent-work/" + id + "/board",{ headers: { authorization: "Bearer " + token } })).status).toBe(404);
+  }, 60000);
+
+  it("仅有子运行权限时，详情省略任务板入口，事件流过滤该板", async () => {
+    const space = "material";
+    createSpace(app, { id: space, name: "核对材料" });
+    createUser(app, { id: "editor", name: "编辑" });
+    addMember(app, space, "editor", "editor");
+    saveAgentSpec(app, { name: "narrow", space, description: "核对一份材料", prompt: "核对原件" }, "user");
+    const { id, tasks } = await dispatch(["first", "second"], [{ agent: "narrow" }]);
+    await wave(id, 1);
+    const childId = tasks[0].attempts[0].runId;
+    const headers = { authorization: "Bearer " + createApiToken(app, "editor", "test") };
+    const get = (path: string) => fetch(app.baseUrl + path, { headers });
+    expect((await get("/api/agent-work/" + id + "/board")).status).toBe(404);
+    const detail = await get("/api/runs/" + childId);
+    expect(detail.status).toBe(200);
+    const body = await detail.json();
+    expect(body.run.id).toBe(childId);
+    expect(body).not.toHaveProperty("board");
+
+    const controller = new AbortController();
+    try {
+      const response = await fetch(app.baseUrl + "/api/events", { headers, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]) });
+      const stream = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+      app.emit({ type: "work", workId: id });
+      app.emit({ type: "run", runId: childId, status: "done" });
+      let received = "";
+      while (!received.includes(childId)) {
+        const chunk = await stream.read();
+        if (chunk.done) break;
+        received += chunk.value;
+      }
+      expect(received).toContain(childId);
+      expect(received).not.toContain(`"workId":"${id}"`);
+    } finally { controller.abort(); }
   }, 60000);
 
   it("长报告可从协调消息的续页起点读到中段依据和尾页", async () => {
