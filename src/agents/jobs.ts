@@ -268,7 +268,6 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
   // The work conversation keeps the reply either way (the assistant's next turn reads it there).
   const id = target === workConv ? null : addMessage(ctx.app, workConv, "assistant", answer, ctx.run.id, full);
   await deliverToThread(ctx.app, target, answer, full);
-  if (!meta.failed) (await import("./work-board.ts")).noteBoardSummary(ctx.app, coordinate.workId, ctx.run.id);
   return id;
 }
 

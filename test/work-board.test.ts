@@ -91,6 +91,7 @@ describe("协同任务板", async () => {
     await wave(id,3);
     expect((await review([redo])).text).toContain("最多重做 2 次");
     expect((await review([{ task: tasks[1].id, decision: "block", note: "证据有冲突" }])).isError).toBe(false);
+    expect(readBoard(app,id).status).toBe("summarized");
     expect(readBoard(app,id).tasks[1].verdict?.note).toBe("证据有冲突");
   }, 90000);
 
