@@ -70,6 +70,13 @@ describe("协同任务板", async () => {
     await wave(id,1);
     const before = readBoard(app,id);
     expect(before.tasks.map(t => t.status)).toEqual(["done","failed"]);
+    const failed = before.tasks[1].attempts[0].runId;
+    const retry = await fetch(app.baseUrl + "/api/runs/" + failed + "/retry", { method: "POST" });
+    expect(retry.status).toBe(409);
+    for (const target of [failed, id]) {
+      const swap = await callTool(ctx, "switch_run_ai", { run_id: target, execution: { profile: "fake", model: "m2", reason: "核对原件" } });
+      expect(swap.text).toContain("work_review");
+    }
     const review = (decisions: unknown[]) => callTool(ctx,"work_review",{ work_id: id, decisions });
     const redo = { task: tasks[1].id, decision: "redo", note: "补齐原件", execution: "strong" };
     expect((await review([{ task: tasks[0].id, decision: "accept" },redo])).isError).toBe(false);

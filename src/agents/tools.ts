@@ -5503,6 +5503,8 @@ def({
     if (!visible(root)) throw new HttpError(403, "不能访问该运行的空间");
     if (root.kind === "code" || root.kind === "review") throw new HttpError(400, "编码交办换 AI 用 continue_code_run 的 execution / review_execution");
     const targets = [root, ...(a.with_children === false ? [] : listRuns(ctx.app, { parentId: root.id, limit: 500 }).filter((r) => visible(r) && r.kind !== "code" && r.kind !== "review"))];
+    if (targets.some(r => r.input.boardTaskId && ["queued", "running", "failed"].includes(r.status)))
+      throw new HttpError(409, "任务板子任务换 AI 请用 work_review 退回并指定 execution；只切换发起运行可传 with_children=false");
     const { cancelRun } = await import("./runs.ts");
     const done: string[] = [];
     for (const r of targets) {
