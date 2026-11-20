@@ -52,6 +52,8 @@ export type ListenKnobs = {
   meetingSkip?: string[];
   /** Read what the other 关注 are discussing (read only, never posting across). */
   seeOthers: boolean;
+  /** A matter's 关注: push it on about once a day — off / suggest (three suggestions at most) / act (the read-only part done at once) (listen-assist.ts). */
+  assist?: "off" | "suggest" | "act";
   /** Minutes new messages are collected before the handler looks. */
   batchMinutes: number;
   /** false: every batch goes to the handler unscreened. */
@@ -101,7 +103,7 @@ export const DEFAULT_KNOBS: ListenKnobs = {
 };
 const KIND_KNOBS: Record<ListenKind, Partial<ListenKnobs>> = {
   place: {},
-  item: { reply: "none", listen: "relevant" },
+  item: { reply: "none", listen: "relevant", assist: "suggest" },
   default: { listen: "addressed" },
 };
 /** Who replies when several 关注 got the same message: the most specific. */

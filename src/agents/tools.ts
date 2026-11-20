@@ -3179,6 +3179,7 @@ def({
     strictness: z.number().min(0.5).max(0.95).optional(),
     per_day: z.number().int().min(1).max(500).optional(),
     meetings: z.enum(["off", "ask", "listen"]).optional(),
+    assist: z.enum(["off", "suggest", "act"]).optional().describe("事情型关注：主动推进，off / suggest 只提建议（默认）/ act 只读的事先做"),
     prefilter: z.boolean().optional().describe("false：每批都交给你，不先筛（本人要求这个群每批都看时）"),
     space: z.string().optional().describe("这些群的材料与记录放哪个空间"),
     remove: z.boolean().optional().describe("不再关注（本人说不用关注了时）"),
@@ -3230,6 +3231,7 @@ def({
       ...(a.strictness !== undefined ? { strictness: a.strictness } : {}),
       ...(a.per_day !== undefined ? { perDay: a.per_day } : {}),
       ...(a.meetings ? { meetings: a.meetings } : {}),
+      ...(a.assist ? { assist: a.assist } : {}),
       ...(a.prefilter !== undefined ? { prefilter: a.prefilter } : {}),
       ...(a.batch_minutes !== undefined ? { batchMinutes: a.batch_minutes } : {}),
     };

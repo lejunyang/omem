@@ -86,6 +86,10 @@ updated: 2026-11-20
 - 网页：`web/src/components/AgentAccounts.vue`（账号页“我的 AI 账号”）、`AgentAccountsAdmin.vue`（设置 → AI “成员的 AI 账号”）。`osdk.toml` 加 `[sys.pkg]`，只声明 apt / dnf 的 bubblewrap，`scripts/upgrade.ts` 不跑 `osdk pkg apply`。
 - 设计里没做的（额度按账号读、探测缓存按账号分、技能同步进账号目录、`own-or-other`、插件登录）和没在真机上验的写在 `docs/v2/agent-accounts.md` 开头。测试 `test/agent-accounts.test.ts`。
 
+## 事情型关注主动推进（11-20）
+
+- `src/channels/listen-assist.ts`：`ListenKnobs.assist`（off / suggest / act，事情型默认 suggest）。`assistDue`（心跳）对活着的事项、有变化或快到截止、离上次 20 小时以上的起一次只读推进运行，任务里有事项状态、流程阶段、最近变化和时间线、关注会话摘要、观测计划和指标、上次的建议（工作文件 `关注/<名>/推进.md`）；最多三条建议用 notify 发出。`quiet.ts` 允许它 stay_quiet。网页关注详情多了“主动推进”，`set_chat_watch` 和 `/api/listen` 认 `assist`。测试 `test/listen-assist.test.ts`。
+
 ## 工作上的指标、数据源目录和观测计划；omem 自己的用量按天存（11-20）
 
 - `src/data/metrics.ts`：表 `metrics`、`metric_points`（主键 metric_id + at + dims，同一点再记会替换；两张都进拉取）。`defineMetric`（新指标必须写查法）、`recordPoints`（和基线比：固定的 `baseline`，或前 7 个点的中位数；超过 `threshold`（默认 0.3）时 `notify` 稍后档、写进关联关注的会话、事项时间线）、`readMetric`（序列、变化、`ChartSpec`）、`collectDue`（到时间的指标按空间起一次 `kind = agent` 的只读取数运行，`input.metricCollect`，禁发消息、交办、建事项；每天最多 40 次；`quiet.ts` 允许它 `stay_quiet`）。

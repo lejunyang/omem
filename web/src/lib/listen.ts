@@ -17,6 +17,7 @@ export type ListenKnobs = {
   perDay: number;
   meetings: "off" | "ask" | "listen";
   seeOthers: boolean;
+  assist?: "off" | "suggest" | "act";
   batchMinutes: number;
   prefilter?: boolean;
 };
@@ -109,6 +110,11 @@ export const BACKLOG_OPTIONS: Opt<ListenKnobs["backlog"]>[] = [
   { value: "off", label: "不处理" },
   { value: "24h", label: "最近 24 小时" },
   { value: "72h", label: "最近 72 小时" },
+];
+export const ASSIST_OPTIONS: { value: "off" | "suggest" | "act"; label: string }[] = [
+  { value: "off", label: "不主动" },
+  { value: "suggest", label: "只提建议" },
+  { value: "act", label: "能做的先做" },
 ];
 export const MEETING_OPTIONS: Opt<ListenKnobs["meetings"]>[] = [
   { value: "off", label: "不管" },

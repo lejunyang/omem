@@ -1166,6 +1166,8 @@ registerHandler("heartbeat", async (ctx) => {
   try {
     const data = await import("../data/metrics.ts");
     await data.collectDue(app);
+    // Matters with proactive help on (channels/listen-assist.ts).
+    await (await import("../channels/listen-assist.ts")).assistDue(app);
     (await import("../data/omem-usage.ts")).snapshotOmemUsage(app);
   } catch (e) {
     console.warn(`[omem] 指标：${(e as Error).message}`);

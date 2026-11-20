@@ -30,6 +30,7 @@ const knobsSchema = z
     seeOthers: z.boolean().nullable(),
     batchMinutes: z.number().min(0).max(24 * 60).nullable(),
     meetingSkip: z.array(z.string().trim().min(1).max(200)).max(50).nullable(),
+    assist: z.enum(["off", "suggest", "act"]).nullable(),
     prefilter: z.boolean().nullable(),
   })
   .partial();

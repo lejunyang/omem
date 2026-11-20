@@ -11,7 +11,7 @@ import { hostToldOwner } from "./code-chain.ts";
  */
 export function mayStayQuiet(app: App, run: Run): boolean {
   const input = run.input as { wake?: unknown; rule?: unknown; silent?: unknown; meeting?: unknown; mention?: unknown; coordinate?: unknown; fromAsk?: unknown; handoff?: { kind?: string }; conversationId?: string; messageIds?: string[] };
-  const collect = (run.input as { metricCollect?: unknown }).metricCollect;
+  const collect = (run.input as { metricCollect?: unknown; listenAssist?: unknown }).metricCollect ?? (run.input as { listenAssist?: unknown }).listenAssist;
   if (run.kind === "agent") return !!(input.wake || input.rule || input.silent || input.meeting || input.mention || collect);
   if (run.kind === "ask") {
     // Tasks handed back for the assistant to settle: the owner needs to hear only what is left for them.

@@ -5,7 +5,7 @@ import { del, get, onServerEvent, post, put } from "../api";
 import { fmtTime, memoryKindLabel, openCitation, relTime, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import {
-  BACKLOG_OPTIONS, batchOptions, DEPTH_OPTIONS, groupOptions, KIND_LABEL, lines, LISTEN_OPTIONS, MEETING_OPTIONS, oneLine, OTHERS_ASKS_OPTIONS, OUTCOME_LABEL,
+  BACKLOG_OPTIONS, batchOptions, DEPTH_OPTIONS, groupOptions, KIND_LABEL, lines, LISTEN_OPTIONS, MEETING_OPTIONS, ASSIST_OPTIONS, oneLine, OTHERS_ASKS_OPTIONS, OUTCOME_LABEL,
   OWNER_ASKS_OPTIONS, perDayOptions, PREFILTER_OPTIONS, REPLY_OPTIONS, replyLabel, STRICTNESS_OPTIONS,
   type ChatDetail, type ListenDetail, type ListenKnobs, type ListenMemory, type ListenView,
 } from "../lib/listen";
@@ -74,6 +74,7 @@ const groupOpts = computed(() => groupOptions(captured.value, c.value?.groups ??
 
 // ---- settings form -----------------------------------------------------------------------------
 type KnobForm = Pick<ListenKnobs, "listen" | "depth" | "reply" | "ownerAsks" | "othersAsks" | "backlog" | "meetings" | "seeOthers" | "batchMinutes" | "perDay"> & {
+  assist: "off" | "suggest" | "act";
   strictness: number | null;
   prefilter: "global" | "on" | "off";
 };
@@ -88,7 +89,7 @@ function toForm(v: ListenView): Form {
     valid: v.brief?.valid ?? "",
     knobs: {
       listen: k.listen, depth: k.depth, reply: k.reply, ownerAsks: k.ownerAsks, othersAsks: k.othersAsks, backlog: k.backlog, meetings: k.meetings,
-      seeOthers: !!k.seeOthers, batchMinutes: k.batchMinutes, perDay: k.perDay, strictness: k.strictness ?? null,
+      seeOthers: !!k.seeOthers, assist: k.assist ?? "off", batchMinutes: k.batchMinutes, perDay: k.perDay, strictness: k.strictness ?? null,
       prefilter: k.prefilter === undefined ? "global" : k.prefilter ? "on" : "off",
     },
   };
@@ -316,6 +317,7 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
                 <div class="field"><span>找别人或别的机器人的</span><UiSegmented v-model="form.knobs.othersAsks" class="knob" size="sm" aria-label="找别人或别的机器人的" :options="OTHERS_ASKS_OPTIONS" /></div>
                 <div class="field"><span>关注开始前没人答的</span><UiSegmented v-model="form.knobs.backlog" class="knob" size="sm" aria-label="关注开始前没人答的" :options="BACKLOG_OPTIONS" /></div>
                 <div class="field"><span>群里开会时</span><UiSegmented v-model="form.knobs.meetings" class="knob" size="sm" aria-label="群里开会时" :options="MEETING_OPTIONS" /></div>
+                <div v-if="c.kind === 'item'" class="field"><span>主动推进</span><UiSegmented v-model="form.knobs.assist" class="knob" size="sm" aria-label="主动推进" :options="ASSIST_OPTIONS" /></div>
                 <div class="field"><span>门槛（越高越少打扰）</span><UiSelect v-model="form.knobs.strictness" size="sm" width="220px" aria-label="门槛" :options="STRICTNESS_OPTIONS" /></div>
                 <div class="field"><span>多久看一批</span><UiSelect v-model="form.knobs.batchMinutes" size="sm" width="220px" aria-label="多久看一批" :options="batchOptions(form.knobs.batchMinutes)" /></div>
                 <div class="field"><span>每天最多</span><UiSelect v-model="form.knobs.perDay" size="sm" width="220px" aria-label="每天最多处理几批" :options="perDayOptions(form.knobs.perDay)" /></div>
