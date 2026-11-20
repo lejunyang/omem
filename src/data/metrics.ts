@@ -212,12 +212,42 @@ export function defineMetric(app: App, input: MetricInput, by: MetricBy = { by: 
 
 const dimsKey = (d: Record<string, string> | undefined) => JSON.stringify(Object.fromEntries(Object.entries(d ?? {}).sort(([a], [b]) => a.localeCompare(b))));
 
+/**
+ * A dimension value that is a whole JSON object (omem's own run counts kept the run's trigger as it was
+ * stored, before they kept only how it came in) reads as that `via`; points that become the same series
+ * and time that way are added up.
+ */
+function readDims(raw: string): Record<string, string> {
+  const d = json<Record<string, string>>(raw, {});
+  for (const [k, v] of Object.entries(d)) {
+    if (typeof v !== "string" || !v.startsWith("{")) continue;
+    const o = json<{ via?: unknown } | null>(v, null);
+    if (o && typeof o === "object") d[k] = typeof o.via === "string" && o.via ? o.via : "其他";
+  }
+  return d;
+}
+
 export function metricPoints(app: App, metricId: string, opts: { since?: string; dims?: Record<string, string>; limit?: number } = {}): MetricPoint[] {
-  return all<{ at: string; value: number; dims: string; note: string | null; run_id: string | null }>(
+  const rows = all<{ at: string; value: number; dims: string; note: string | null; run_id: string | null }>(
     app.db,
     `select at, value, dims, note, run_id from metric_points where metric_id = ? ${opts.since ? "and at >= ?" : ""} ${opts.dims ? "and dims = ?" : ""} order by at desc limit ?`,
     metricId, ...(opts.since ? [opts.since] : []), ...(opts.dims ? [dimsKey(opts.dims)] : []), opts.limit ?? 500,
-  ).reverse().map((r) => ({ at: r.at, value: r.value, dims: json(r.dims, {}), note: r.note, runId: r.run_id }));
+  ).reverse();
+  const out: MetricPoint[] = [];
+  const seen = new Map<string, MetricPoint>();
+  for (const r of rows) {
+    const legacy = r.dims.includes('"{');
+    const p = { at: r.at, value: r.value, dims: legacy ? readDims(r.dims) : json<Record<string, string>>(r.dims, {}), note: r.note, runId: r.run_id };
+    const k = `${p.at}|${dimsKey(p.dims)}`;
+    const same = seen.get(k);
+    if (same) {
+      same.value += p.value;
+      continue;
+    }
+    seen.set(k, p);
+    out.push(p);
+  }
+  return out;
 }
 
 const median = (xs: number[]) => {
@@ -300,6 +330,8 @@ async function tellChange(app: App, m: Metric, lines: string[]) {
 
 /** Units whose values are averaged, not added, when several points fall into one series and time. */
 const AVERAGED = /^(%|‰|ms|毫秒|秒|分钟|小时|天|倍|分)$/;
+/** Whether a metric's series add up to a whole (counts) rather than average (rates, durations). */
+export const additive = (m: Pick<Metric, "unit">) => !AVERAGED.test(m.unit.trim());
 /** A chart for the page or a report (the subset of packages/plugin-sdk/charts.ts ChartSpec built here). */
 export type MetricChart = {
   kind: "line" | "area" | "bar" | "hbar" | "pie";
@@ -400,6 +432,26 @@ export function figureSeries(m: Metric, points: MetricPoint[]): { values: number
   return { values: ps.map((p) => p.value), name: ps.length && Object.keys(ps[0].dims).length ? Object.values(ps[0].dims).join(" / ") : null };
 }
 
+/**
+ * The series a tile on the page shows, one tile per metric however many combinations of dimensions it
+ * has: the focus group (compareBy); the only series; the sum of all of them for counts (omem's own
+ * daily numbers are counts and totals, minutes included); else the newest point's series, named.
+ * `groups`: how many series there are (the details compare them).
+ */
+export function tileSeries(m: Metric, points: MetricPoint[]): { values: number[]; name: string | null; groups: number } {
+  const t = metricTable(m, points);
+  const groups = t.series.length;
+  if (m.view?.compareBy || groups <= 1) return { ...figureSeries(m, points), groups };
+  if (additive(m) || m.source === "omem") {
+    const values = t.labels.flatMap((_, i) => {
+      const xs = t.series.map((s) => s.values[i]).filter((v): v is number => v !== null);
+      return xs.length ? [round1(xs.reduce((a, b) => a + b, 0))] : [];
+    });
+    return { values, name: null, groups };
+  }
+  return { ...figureSeries(m, points), groups };
+}
+
 /** The newest time and each series' value then (the tile, the few-points line). */
 export function latestOf(t: MetricTable): { label: string; values: { name: string; value: number }[] } | null {
   const i = t.labels.length - 1;
@@ -417,7 +469,8 @@ export function nextTake(m: Metric): string | null {
 export function readMetric(app: App, idOrName: string, opts: { days?: number; dims?: Record<string, string> } = {}) {
   const m = requireMetric(app, idOrName);
   const since = new Date(Date.now() - (opts.days ?? 30) * 86400_000).toISOString();
-  const points = metricPoints(app, m.id, { since, dims: opts.dims });
+  // Up to a few thousand points: a metric split many ways has dozens a day.
+  const points = metricPoints(app, m.id, { since, dims: opts.dims, limit: 6000 });
   const bySeries = new Map<string, MetricPoint[]>();
   for (const p of points) {
     const k = dimsKey(p.dims);

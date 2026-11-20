@@ -931,11 +931,14 @@ run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,compon
   await series("退款申请完成率", [63, 62, 64, 63, 61, 62, 60, 58, 57, 55, 54, 52, 51, 49], { 端: "手机" });
   defineMetric(app, { name: "新旧申请页的提交数", unit: "单", source: "订单库（只读副本）", query: "订单库：当天从新申请页和旧申请页提交的退款单数，dims.side 写 新 / 旧", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "neutral", why: "灰度期间新申请页的量追上旧页了没有", planRef: `src:${plan.id}#L17-L17`, view: { kind: "compare", compareBy: "side", ratio: true, focus: "新" } }, proposed);
   await recordPoints(app, "新旧申请页的提交数", [{ value: 1284, at: day(1), dims: { side: "新" } }, { value: 2906, at: day(1), dims: { side: "旧" } }]);
+  // Two more on the ticket line, not taken yet: the list of proposals groups them by line.
+  defineMetric(app, { name: "退款类工单分对的比例", unit: "%", source: "工单系统", query: "工单系统：退款类工单里自动分类和人工复核一致的比例，按天", itemId: ticketLine.id, spaceId: "shop", schedule: "daily", direction: "up-good", why: "自动分类上线后，退款类工单有没有分到对的人手里" }, proposed);
+  defineMetric(app, { name: "转人工的工单数", unit: "单", source: "工单系统", query: "工单系统：当天从自动分类转人工处理的工单数", itemId: ticketLine.id, spaceId: "shop", schedule: "daily", direction: "down-good", why: "分不清的工单有多少还要人来分" }, proposed);
   snapshotOmemUsage(app, { maxDays: 30 });
 }
 
 // ---- capture ----------------------------------------------------------------------------------
-const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
+const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
   console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
@@ -993,28 +996,28 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.waitForTimeout(400);
   } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },
-  // A proposal opened: its chart by device, why it exists, where it came from, 保留 / 改 / 不要.
+  // One number opened in the drawer: by day, split by scene / space / model / who, then its records.
+  { name: "insights-detail", path: "/insights?tab=omem&detail=usage%3Atotal", space: "personal", prepare: async (p) => {
+    await p.locator(".sheet .splits").waitFor();
+    await p.waitForTimeout(600);
+  } },
+  // The proposals to decide, by line; one opened: its chart by device, why it exists, where it came from, 保留 / 改 / 不要.
   { name: "insights-work", path: "/insights?tab=work", space: "shop", prepare: async (p) => {
-    await p.getByRole("button", { name: /退款申请完成率/ }).click();
+    await p.locator("button.c-name", { hasText: "退款申请完成率" }).click();
     await p.waitForTimeout(900);
-    await p.locator(".group").first().evaluate((el) => {
+    await p.locator(".c-row.on").evaluate((row) => {
+      const el = row.closest(".c-group") ?? row;
       let s: HTMLElement | null = el.parentElement;
       while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
-      const box = el.getBoundingClientRect();
-      (s ?? document.scrollingElement)?.scrollBy(0, box.top - 24);
+      (s ?? document.scrollingElement)?.scrollBy(0, el.getBoundingClientRect().top - 24);
     });
     await p.waitForTimeout(300);
   } },
-  // A report the assistant wrote (a work file under 数据/报表/), its two charts drawn on the page.
+  // A report the assistant wrote (a work file under 数据/报表/), its two charts drawn in the drawer.
   { name: "insights-report", path: "/insights?tab=work", space: "shop", prepare: async (p) => {
-    await p.getByRole("button", { name: "退款改造上线一周" }).click();
+    await p.getByRole("button", { name: /报表/ }).click();
+    await p.locator(".sheet .prose").waitFor();
     await p.waitForTimeout(1200);
-    await p.locator(".report").evaluate((el) => {
-      let s: HTMLElement | null = el.parentElement;
-      while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
-      (s ?? document.scrollingElement)?.scrollBy(0, el.getBoundingClientRect().top - 160);
-    });
-    await p.waitForTimeout(300);
   } },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },
