@@ -93,6 +93,7 @@ export const pullTables: Table[] = [
   { name: "source_cites", key: ["source_id", "ref"] },
   { name: "source_aliases", key: ["alias_id"] },
   // Compressed media: the variant file travels with files/, this row says which reference it answers.
+  { name: "stored_file_uploads", key: ["name", "user_id"] },
   { name: "file_variants", key: ["original"], newer: "created_at" },
   // Nightly replays and what they changed (agents/replay.ts).
   { name: "replays", key: ["id"], newer: "coalesce(finished_at, at)" },

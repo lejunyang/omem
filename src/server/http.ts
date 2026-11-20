@@ -1,3 +1,4 @@
+import { storedFileReadable } from "../auth/stored-files.ts";
 import { itemAccess, itemScope, requireItem } from "../items/access.ts";
 import { networkInterfacesView, networkPoliciesView, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies } from "../agents/network-policy.ts";
 import { lessonInput, listLessons, saveLesson, removeLesson } from "../agents/code-lessons.ts";
@@ -727,6 +728,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   /** A stored original (images, PDFs, videos with Range support). */
   async function sendStoredFile(req: FastifyRequest, reply: FastifyReply, name: string) {
     if (!/^[a-f0-9]{16}\.[a-z0-9]+$/.test(name)) throw new HttpError(400, "bad name");
+    if (!(await storedFileReadable(app, who(req), name))) throw new HttpError(404, "not found");
     // A compressed copy (core/media.ts) answers for the original name; its type is the copy's.
     const { storedName } = await import("../core/stored-files.ts");
     const actual = storedName(app, name);
@@ -846,7 +848,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const userId = who(req);
     if (b.space && userId !== OWNER && !(accessibleSpaces(app, userId) ?? []).includes(b.space)) throw new HttpError(403, `不能访问空间 ${b.space}`);
     const { checkAttachments } = await import("../agents/attachments.ts");
-    const attachments = checkAttachments(app, b.attachments ?? []);
+    const attachments = checkAttachments(app, b.attachments ?? [], userId);
     const text = b.text.trim() || attachments.map((a) => `[${a.label}]`).join(" ");
     if (!text) throw new HttpError(400, "消息是空的");
     return ask(app, { text, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
@@ -855,7 +857,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/ask/attachments", async (req) => {
     const { saveAttachment } = await import("../agents/attachments.ts");
     const saved = [];
-    for await (const part of req.files()) saved.push(saveAttachment(app, await part.toBuffer(), part.filename, part.mimetype));
+    for await (const part of req.files()) saved.push(saveAttachment(app, await part.toBuffer(), part.filename, part.mimetype, who(req)));
     if (!saved.length) throw new HttpError(400, "没有收到文件");
     return { files: saved };
   });

@@ -6713,6 +6713,7 @@ export function saveSourceFor(ctx: ToolContext, input: { space?: string; kind?: 
   if (!/^[a-z][\w.-]*:\S+$/.test(input.uri) || input.uri.length > 500) throw new HttpError(400, "uri 要写成 平台:对象 的形式（例如 notion:page/abc），不超过 500 个字符");
   if (!input.text.trim()) throw new HttpError(400, `${input.title || input.uri} 没有正文`);
   const spaceId = writeSpace(ctx, input.space);
+  if (input.meta && ("original" in input.meta || "media" in input.meta)) throw new HttpError(400, "存储文件归属由宿主在保存文件时登记");
   const r = upsertSource(ctx.app, { spaceId, kind: input.kind ?? "doc", uri: input.uri, title: input.title.trim().slice(0, 300) || input.uri, text: input.text, meta: { ...(input.meta ?? {}), originKey: input.uri, capturedBy: ctx.userId ?? OWNER } });
   return { id: r.id, created: r.status === "created", changed: r.status !== "unchanged", space: spaceId };
 }
