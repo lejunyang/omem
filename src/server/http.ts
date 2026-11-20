@@ -1,3 +1,5 @@
+import { randomUUID as operationId } from "node:crypto";
+import { currentRules, enforcedBy, saveOperationRules } from "../agents/operation-policy.ts";
 import { networkInterfacesView, networkPoliciesView, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies } from "../agents/network-policy.ts";
 import { lessonInput, listLessons, saveLesson, removeLesson } from "../agents/code-lessons.ts";
 import { ROLE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
@@ -56,8 +58,8 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueRe
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, commandRuleSchema, configSchema, networkPolicySchema, saveConfig } from "../core/config.ts";
-import { approverChoices, commandGate, syncCommandGate } from "../agents/command-gate.ts";
+import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, commandRuleSchema, configSchema, networkPolicySchema, saveConfig } from "../core/config.ts";
+import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, rezoneScheduler, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
@@ -272,6 +274,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
     return commandGate(app, ctx, b);
   });
+  const rulesView = () => currentRules(app).map(r => ({ ...r, enforcedBy: enforcedBy[r.match.kind] }));
+  server.get("/api/security/operation-rules", async () => ({ rules: rulesView() }));
+  server.put("/api/security/operation-rules", async (req) => {
+    const b = q(z.object({ rules: operationRulesSchema }), req.body);
+    saveOperationRules(app, b.rules);
+    commandGateDir(app);
+    audit(app, who(req), "operation.rules", "security", { count: b.rules.length });
+    return { rules: rulesView() };
+  });
   // The command rules: the owner's own, never an agent's (no tool writes them).
   server.get("/api/security/command-rules", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "命令规则只有本人能看和改");
@@ -280,11 +291,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.put("/api/security/command-rules", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "命令规则只有本人能看和改");
     const b = q(z.object({ rules: z.array(commandRuleSchema).max(200) }), req.body);
-    const next = structuredClone(app.config);
-    next.security = { ...next.security, commandRules: b.rules };
-    saveConfig(next, app.home);
-    Object.assign(app.config, next);
-    syncCommandGate(app.home, b.rules);
+    const incoming = migrateCommands(b.rules);
+    const next = currentRules(app).flatMap(r => {
+      if (!legacyCommand(r)) return [r];
+      const replacement = incoming.shift();
+      return replacement ? [{ ...replacement, id: r.id }] : [];
+    });
+    saveOperationRules(app, [...next, ...incoming.map(r => ({ ...r, id: operationId() }))]);
+    commandGateDir(app);
     audit(app, who(req), "command.rules", "security", { count: b.rules.length });
     return { rules: app.config.security.commandRules };
   });
