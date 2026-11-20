@@ -95,7 +95,7 @@ const canLogin = (b: Backend) => b.methods.length > 0;
 <template>
   <template v-if="mine?.supported">
     <h2 class="section-title">我的 AI 账号</h2>
-    <p v-if="mine.owner" class="muted small">你用运行 omem 的这台机器上已有的登录，不用在这里登录。成员没登录时借不借用你的，在 <router-link to="/settings?tab=agents">设置 → AI</router-link> 里按后端设。</p>
+    <p v-if="mine.owner" class="muted small">你用运行 omem 的这台机器上已有的登录，不用在这里登录。成员没登录时借不借用你的，在 <router-link to="/settings?card=agent-accounts">设置 → 成员 → 成员的 AI 账号</router-link> 里按后端设。</p>
     <template v-else>
       <p class="muted small">在这里登录以后，你发起的运行就用你自己的账号，额度和使用记录算在你名下。这台机器上所有人的 Agent 都以同一个系统用户运行，靠沙箱把各人的账号目录隔开：你的运行看不到别人的目录，也看不到 omem 主人的登录。点“登录”后，链接和验证码也会由机器人发到你的飞书私聊。</p>
       <div class="list">

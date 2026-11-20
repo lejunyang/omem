@@ -3,7 +3,8 @@ import { onMounted, ref } from "vue";
 import { del, get, put } from "../api";
 import { fmtTime, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
-import HelpText from "./HelpText.vue";
+import SetCard from "./SetCard.vue";
+import SetRow from "./SetRow.vue";
 import UiSegmented from "./UiSegmented.vue";
 
 /**
@@ -69,17 +70,16 @@ async function remove(person: Overview["people"][number], b: { id: string; name:
 </script>
 
 <template>
-  <div v-if="data?.supported" class="card pad stack">
-    <strong>成员的 AI 账号</strong>
-    <HelpText>成员可以在自己的“账号”页登录各个后端，之后他发起的运行就用他自己的账号，额度和使用记录算在他名下。这台机器上所有人的 Agent 都以同一个系统用户运行，靠 bubblewrap 沙箱把各人的账号目录隔开：成员的运行看不到你的登录、omem 的数据目录和别人的账号目录。下面按后端设定成员没登录时怎么办：借用你的登录（和以前一样）；换别的后端（按这次运行的选型和兜底顺序，换一个他登录过、或允许借用的后端，都没有才失败）；或者这个后端只能用他自己的账号（运行失败并提示他去登录）。你自己的运行不受影响，照旧用这台机器上的登录。插件可以给某个后端加登录方式（比如用公司账号登录），成员在自己的页面上选。停用一个成员时，他的所有登录和账号目录一并删除。</HelpText>
-    <div v-for="b in data.backends" :key="b.id" class="row wrap line">
-      <span class="name">{{ b.name }}</span>
-      <span class="spacer" />
+  <SetCard v-if="data?.supported" id="set-agent-accounts" title="成员的 AI 账号">
+    <template #help>成员可以在自己的“账号”页登录各个后端，之后他发起的运行就用他自己的账号，额度和使用记录算在他名下。这台机器上所有人的 Agent 都以同一个系统用户运行，靠 bubblewrap 沙箱把各人的账号目录隔开：成员的运行看不到你的登录、omem 的数据目录和别人的账号目录。下面按后端设定成员没登录时怎么办：借用你的登录（和以前一样）；换别的后端（按这次运行的选型和兜底顺序，换一个他登录过、或允许借用的后端，都没有才失败）；或者这个后端只能用他自己的账号（运行失败并提示他去登录）。你自己的运行不受影响，照旧用这台机器上的登录。插件可以给某个后端加登录方式（比如用公司账号登录），成员在自己的页面上选。停用一个成员时，他的所有登录和账号目录一并删除。</template>
+    <div class="set-pad small muted head">成员没登录时，每个后端怎么办<template v-if="data.bwrap"> · bubblewrap {{ data.bwrap }}</template></div>
+    <SetRow v-for="b in data.backends" :key="b.id" :label="b.name">
       <UiSegmented :model-value="b.policy" size="sm" :aria-label="`${b.name}：成员没登录时`" :options="OPTIONS" @change="(v) => setPolicy(b.id, v)" />
-    </div>
-    <div class="small muted">{{ data.people.length ? "已登录的成员" : "还没有成员登录自己的账号。" }}<template v-if="data.bwrap"> · bubblewrap {{ data.bwrap }}</template></div>
+    </SetRow>
+    <div class="set-pad">
+    <div class="small muted">{{ data.people.length ? "已登录的成员" : "还没有成员登录自己的账号。" }}</div>
     <div v-for="p in data.people" :key="p.userId" class="stack person">
-      <span class="small"><strong>{{ p.name }}</strong> <span class="muted mono">{{ p.userId }}</span></span>
+      <span class="small"><strong>{{ p.name }}</strong></span>
       <div v-for="b in p.backends" :key="b.id" class="row wrap line">
         <span>{{ b.name }}</span>
         <span class="badge" :class="{ accent: b.state === 'logged-in', danger: b.state === 'expired', warn: b.state === 'logging-in' }">{{ STATE[b.state] }}</span>
@@ -90,7 +90,8 @@ async function remove(person: Overview["people"][number], b: { id: string; name:
         <button class="btn ghost sm danger" @click="remove(p, b)">让他退出</button>
       </div>
     </div>
-  </div>
+    </div>
+  </SetCard>
 </template>
 
 <style scoped>
@@ -100,8 +101,11 @@ async function remove(person: Overview["people"][number], b: { id: string; name:
   border-top: 1px solid var(--line);
   padding-top: 6px;
 }
-.name {
-  min-width: 0;
+.head {
+  padding-bottom: 4px;
+}
+.head + :deep(.set-row) {
+  border-top: 0;
 }
 .person {
   gap: 4px;

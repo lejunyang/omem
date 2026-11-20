@@ -74,6 +74,61 @@ describe("metrics", () => {
     expect(snapshotOmemUsage(app, { maxDays: 3 })).toEqual([]);
   });
 
+  it("keeps how a run came in, not its whole trigger, and reads older whole triggers as their via", () => {
+    const app = testApp();
+    const yesterday = new Date(Date.now() - 86400_000).toISOString();
+    for (const where of ["示例群 A", "示例群 B"]) createRun(app, { kind: "ask", title: "a", input: {}, trigger: { via: "chat", where, by: { key: "user:owner", name: "你" } } } as never);
+    run(app.db, "update runs set created_at = ?, started_at = ?, finished_at = ?, status = 'done'", yesterday, yesterday, yesterday);
+    snapshotOmemUsage(app, { maxDays: 3 });
+    const pts = metricPoints(app, "omem.runs").filter((p) => p.dims.kind === "ask");
+    expect(pts).toEqual([expect.objectContaining({ value: 2, dims: { kind: "ask", status: "done", trigger: "chat" } })]);
+    // Points kept before: one per whole trigger. They read as the via, added up.
+    for (const where of ["示例群 A", "示例群 B"])
+      run(app.db, "insert into metric_points(metric_id,at,value,dims,created_at) values(?,?,?,?,?)", "omem.runs", "2026-01-02", 3, JSON.stringify({ kind: "ask", status: "done", trigger: JSON.stringify({ via: "lark", where }) }), yesterday);
+    const old = metricPoints(app, "omem.runs").filter((p) => p.at === "2026-01-02");
+    expect(old).toEqual([expect.objectContaining({ value: 6, dims: { kind: "ask", status: "done", trigger: "lark" } })]);
+    expect(JSON.stringify(readMetric(app, "omem.runs", { days: 400 }).table)).not.toContain("示例群");
+  });
+
+  it("shows one tile per metric: the total of a count split by dimensions, the focus group of a comparison", async () => {
+    const app = testApp();
+    const counts = defineMetric(app, { name: "退款单数", unit: "单", query: "订单库：每天的退款单，按端" });
+    await recordPoints(app, counts.id, [{ value: 3, at: day(1), dims: { 端: "PC" } }, { value: 4, at: day(1), dims: { 端: "手机" } }, { value: 5, at: day(0), dims: { 端: "PC" } }, { value: 1, at: day(0), dims: { 端: "手机" } }]);
+    const rate = defineMetric(app, { name: "完成率", unit: "%", query: "埋点：完成率，按端", view: { kind: "compare", compareBy: "端", focus: "手机" } });
+    await recordPoints(app, rate.id, [{ value: 70, at: day(0), dims: { 端: "PC" } }, { value: 50, at: day(0), dims: { 端: "手机" } }]);
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const list = (await server.inject({ method: "GET", url: "/api/metrics" })).json() as { id: string; spark: number[]; figure: string | null; groups: number }[];
+      expect(list.find((m) => m.id === counts.id)).toMatchObject({ spark: [7, 6], figure: null, groups: 2 });
+      expect(list.find((m) => m.id === rate.id)).toMatchObject({ spark: [50], figure: "手机", groups: 2 });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("decides several proposals at once, all or nothing", async () => {
+    const app = testApp();
+    const by = { by: "agent" as const };
+    const a = defineMetric(app, { name: "接口报错率", unit: "%", query: "监控：报错率", why: "上线后有没有更容易出错" }, by);
+    const b = defineMetric(app, { name: "页面曝光", unit: "次", query: "埋点：曝光", why: "有没有人看" }, by);
+    const c = defineMetric(app, { name: "提交数", unit: "单", query: "订单库：提交数", why: "量追上了没有" }, by);
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const kept = (await server.inject({ method: "POST", url: "/api/metrics/decide", payload: { ids: [a.id, b.id], status: "active" } })).json();
+      expect(kept.changed).toEqual([{ id: a.id, status: "active" }, { id: b.id, status: "active" }]);
+      expect(getMetric(app, a.id)?.confirmedAt).toBeTruthy();
+      expect((await server.inject({ method: "POST", url: "/api/metrics/decide", payload: { ids: [c.id, "no-such-metric"], status: "dropped" } })).statusCode).toBe(404);
+      expect(getMetric(app, c.id)?.status).toBe("proposed");
+      expect((await server.inject({ method: "POST", url: "/api/metrics/decide", payload: { ids: [c.id], status: "dropped", note: "看提交数就够了" } })).json().changed[0].status).toBe("dropped");
+      expect(getMetric(app, c.id)?.ownerNote).toBe("看提交数就够了");
+      expect((await server.inject({ method: "POST", url: "/api/metrics/decide", payload: { ids: [], status: "active" } })).statusCode).toBe(400);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("serves an item's metrics to the web", async () => {
     const app = testApp();
     const item = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "迁移" } as never, "user");

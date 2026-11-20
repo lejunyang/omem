@@ -240,7 +240,7 @@ async function remove() {
   try {
     await del(`/api/listen/${encodeURIComponent(v.id)}`);
     toast(`已删除：${v.name}`, "ok");
-    void router.push("/settings?tab=connect");
+    void router.push("/");
   } catch (e) {
     toast((e as Error).message, "error");
   }
@@ -297,12 +297,12 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
 
 <template>
   <div class="listen-page" :class="{ embedded }">
-    <nav v-if="!embedded" class="crumbs small muted"><router-link to="/settings?tab=connect">设置 · 连接</router-link><span>/</span><span>{{ chatId ? "飞书群" : "关注" }}</span></nav>
+    <nav v-if="!embedded" class="crumbs small muted"><router-link to="/">工作</router-link><span>/</span><span>{{ chatId ? "飞书群" : "关注" }}</span></nav>
     <Skeleton v-if="loading" variant="text" :rows="7" />
     <div v-else-if="error && !detail && !chat" class="empty">
       <h3>打不开这一页</h3>
       <p>{{ error }}</p>
-      <router-link class="btn" to="/settings?tab=connect">回到关注列表</router-link>
+      <router-link class="btn" to="/">回到工作页</router-link>
     </div>
 
     <template v-else-if="detail || chat">
@@ -462,7 +462,7 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
         <!-- 设置 -->
         <section v-else-if="tab === 'settings' && detail && c" class="chapter settings">
           <p v-if="isDefault" class="muted small">
-            有人找你的回复方式、分诊和每天的次数在 <router-link to="/settings?tab=lark&focus=mentions">设置 → 渠道 → 有人找你</router-link> 里调；这里写它该处理什么。
+            有人找你的回复方式、分诊和每天的次数在 <router-link to="/settings?card=mentions">设置 → 代你回复 → 有人找你</router-link> 里调；这里写它该处理什么。
           </p>
           <p v-else class="tell small">也可以直接跟助手说，比如“把「{{ c.name }}」的关注改成只看 @ 我的”“这个关注别自动回了”：它改的就是这一页的设置。</p>
           <div class="card pad form">
