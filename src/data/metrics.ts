@@ -173,7 +173,13 @@ export async function recordPoints(app: App, idOrName: string, points: { value: 
 async function tellChange(app: App, m: Metric, lines: string[]) {
   const body = `${lines.join("\n")}${m.description ? `\n\n${truncate(m.description, 200)}` : ""}`;
   const { notify } = await import("../core/notify.ts");
-  notify(app, { title: `指标「${m.name}」有变化`, body, urgency: "later", plain: true, ...(m.itemId ? { entity: "item" as const, entityId: m.itemId } : {}), link: m.itemId ? `#/items/${m.itemId}` : "#/data" });
+  // A change in the numbers is not a first nudge about a new item (no grace period), and a notification
+  // the host declines (the same thing just told) must not lose the timeline and conversation below.
+  try {
+    notify(app, { title: `指标「${m.name}」有变化`, body, urgency: "later", plain: true, graceDone: true, ...(m.itemId ? { entity: "item" as const, entityId: m.itemId } : {}), link: m.itemId ? `#/work/${m.itemId}` : `#/insights?tab=${m.source === "omem" ? "omem" : "work"}&metric=${m.id}` });
+  } catch (e) {
+    console.warn(`[omem] 指标「${m.name}」的变化没有通知本人：${(e as Error).message}`);
+  }
   if (m.contextId) {
     const { getContext } = await import("../channels/listen.ts");
     const c = getContext(app, m.contextId);

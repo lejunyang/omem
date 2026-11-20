@@ -13,6 +13,7 @@ import MetricRow from "../components/charts/MetricRow.vue";
 import RankBars from "../components/charts/RankBars.vue";
 import BarChart from "../components/charts/BarChart.vue";
 import TrendChart from "../components/charts/TrendChart.vue";
+import MetricsBoard from "../components/MetricsBoard.vue";
 import type { ChartSpec, MetricItem } from "@omem-ai/plugin-sdk/charts";
 import { dayKey, fmt, fromWallDate, timeZone } from "../lib/time";
 
@@ -29,6 +30,11 @@ let seq = 0, detailSeq = 0;
 const q = (name: string) => typeof route.query[name] === "string" ? route.query[name] as string : "";
 const filterNames = ["from", "to", "space", "by", "scene", "profile", "model", "bot", "chat", "compare", "housekeeping"];
 const query = computed(() => new URLSearchParams(filterNames.flatMap(k => q(k) ? [[k, q(k)]] : [])));
+// Two kinds of data, never mixed: the owner's work (metrics, catalog, observation plans) and omem's own
+// usage. A link that carries the report's filters (or a detail) means omem's; otherwise work comes first.
+const tab = computed<"work" | "omem">(() => q("tab") === "omem" || q("tab") === "work" ? q("tab") as "work" | "omem" : filterNames.some(k => q(k)) || q("detail") ? "omem" : "work");
+const tabs = [{ value: "work", label: "工作数据" }, { value: "omem", label: "omem 自己" }];
+function setTab(value: string) { void router.replace({ path: "/insights", query: value === "omem" ? { ...route.query, tab: value } : { tab: value } }); }
 const periods = [{ value: "7", label: "7 天" }, { value: "30", label: "30 天" }, { value: "90", label: "90 天" }, { value: "custom", label: "自定义" }];
 const period = computed(() => {
   if (q("period") === "custom") return "custom";
@@ -101,8 +107,9 @@ async function loadRecords(more = false) {
   } catch (e) { if (n === detailSeq) recordError.value = (e as Error).message; }
   finally { if (n === detailSeq) recordLoading.value = false; }
 }
-watch(() => query.value.toString(), () => void load(), { immediate: true });
-watch(() => `${query.value}&${q("detail")}`, () => void loadRecords(), { immediate: true });
+// The usage report is counted on demand: only when its tab is open.
+watch(() => tab.value === "omem" ? query.value.toString() : null, (v) => { if (v !== null) void load(); }, { immediate: true });
+watch(() => tab.value === "omem" ? `${query.value}&${q("detail")}` : null, (v) => { if (v !== null) void loadRecords(); }, { immediate: true });
 onBeforeUnmount(() => { seq++; detailSeq++; });
 const allMetrics = computed(() => (data.value?.sections ?? []).flatMap(s => [...s.metrics, ...s.charts.flatMap(c => c.points ?? [])]));
 const detailMetric = computed(() => allMetrics.value.find(m => m.key === q("detail")));
@@ -202,9 +209,14 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
     <div class="page-head">
       <div class="grow">
         <h1>数据</h1>
-        <p>omem 和机器人这段时间做了什么。每个数都是从记录里数出来的，点一下能看到是哪些。</p>
+        <p v-if="tab === 'work'">你工作上的数：需求的埋点、上线后的报错和使用、新旧平台的对比。助手按观测计划定义、按时去各系统取。</p>
+        <p v-else>omem 和机器人这段时间做了什么。每个数都是从记录里数出来的，点一下能看到是哪些。</p>
       </div>
     </div>
+    <UiSegmented class="tabs" :model-value="tab" :options="tabs" aria-label="看哪类数据" @update:model-value="setTab" />
+
+    <MetricsBoard v-if="tab === 'work'" scope="work" :focus="q('metric') || undefined" />
+    <template v-else>
 
     <div class="toolbar">
       <UiSegmented :model-value="period" :options="periods" size="sm" aria-label="看哪一段时间" @update:model-value="choosePeriod" />
@@ -306,6 +318,14 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
         <p class="muted small">统计于 {{ fmt(data.generatedAt, { hour12: false }) }}，日期按 {{ data.timezone }} 算。别人问机器人的内容只计数，不显示。</p>
       </section>
     </template>
+    <section class="sec" aria-labelledby="data-omem-usage">
+      <div class="sec-head">
+        <h2 id="data-omem-usage">每天存下的用量</h2>
+        <p>运行数、运行时长、各 AI 的运行、回答被判成什么、案例、新会话，按天存一份，原始记录过期以后还能看长期的走势。</p>
+      </div>
+      <MetricsBoard scope="omem" :focus="q('metric') || undefined" />
+    </section>
+    </template>
   </div>
 </template>
 
@@ -317,6 +337,7 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
 .export-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; min-width: 168px; display: grid; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
 .export-menu a { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 6px; color: inherit; text-decoration: none; font-size: 13px; }
 .export-menu a:hover, .export-menu a:focus-visible { background: var(--hover); }
+.tabs { margin: 4px 0 18px; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 10px; }
 .filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; padding: 14px 0 6px; border-top: 1px solid var(--line); }
 .filters-foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }

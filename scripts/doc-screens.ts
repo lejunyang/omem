@@ -49,6 +49,9 @@ import { upsertSource } from "../src/sources/store.ts";
 import { addSourceNote, setAttention, setNodeLevel } from "../src/sources/attention.ts";
 import { recordWikiNodes } from "../src/channels/lark-wiki.ts";
 import { writePage } from "../src/wiki/store.ts";
+import { defineMetric, recordPoints } from "../src/data/metrics.ts";
+import { snapshotOmemUsage } from "../src/data/omem-usage.ts";
+import { writeWorkFile } from "../src/sources/work.ts";
 
 const serveOnly = process.argv.includes("--serve");
 // --only=a,b: capture just these (the others keep their files).
@@ -826,6 +829,39 @@ run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,compon
   { type: "chart", title: "退款单的构成", kind: "pie", unit: "单", labels: ["整单退款", "部分退款", "仅退运费", "其他"], series: [{ name: "退款单", values: [341, 97, 30, 14] }] },
 ]), new Date().toISOString());
 
+// ---- work metrics for the data page's 工作数据 tab (fictional systems and numbers) --------------
+{
+  writeWorkFile(app, { spaceId: "shop", path: "数据/数据源目录.md", title: "数据源目录", text: `# 数据源目录
+
+## 前端监控
+
+- 页面报错、白屏、接口失败率；按页面和版本查。
+
+## 埋点平台
+
+- 退款申请页、售后详情的点击和提交事件。
+
+## 订单库（只读副本）
+
+- 退款单数、退款金额、部分退款的占比。
+` });
+  writeWorkFile(app, { spaceId: "shop", path: "观测/退款改造.md", title: "退款改造", text: `# 退款改造的观测计划
+
+- 上线前：申请页的“仅退已发货”选择要埋点。
+- 上线后：退款接口报错率、部分退款占比、退款金额对账差异。
+`, links: { item: refundLine.id } });
+  writeWorkFile(app, { spaceId: "shop", path: "数据/采集/11-19 日指标采集.md", title: "11-19 日指标采集", text: "三个指标都取到了，报错率比前一周高。" });
+  const day = (n: number) => new Date(Date.now() - n * 86400_000).toISOString();
+  const series = async (name: string, values: number[]) => recordPoints(app, name, values.map((value, i) => ({ value, at: day(values.length - 1 - i) })));
+  defineMetric(app, { name: "退款接口报错率", unit: "%", source: "前端监控", query: "前端监控：退款申请页 /refund/apply 的接口失败率，按天", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "down-good", description: "部分发货改造上线后最该盯的护栏指标" });
+  await series("退款接口报错率", [0.42, 0.38, 0.4, 0.45, 0.41, 0.39, 0.43, 0.4, 0.44, 0.47, 0.52, 0.61, 0.66, 0.72]);
+  defineMetric(app, { name: "部分退款占比", unit: "%", source: "订单库（只读副本）", query: "订单库：当天退款单里只退部分行的比例", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "neutral" });
+  await series("部分退款占比", [8, 9, 8, 10, 11, 10, 12, 13, 12, 14, 15, 15, 16, 17]);
+  defineMetric(app, { name: "仅退已发货的选择次数", unit: "次", source: "埋点平台", query: "埋点平台：refund_apply_shipped_only 的点击数，按天", itemId: flowItem.id, spaceId: "shop", schedule: "daily", direction: "up-good" });
+  await series("仅退已发货的选择次数", [0, 0, 0, 0, 0, 0, 0, 3, 9, 14, 22, 30, 41, 55]);
+  snapshotOmemUsage(app, { maxDays: 30 });
+}
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -862,7 +898,8 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "work-overview", path: "/" },
   { name: "work-timeline", path: "/?view=time" },
   { name: "work-line", path: `/work/${refundLine.id}`, init: { "omem.workAsk": "1", "omem.lineAsk": JSON.stringify({ [refundLine.id]: lineChat }) } },
-  { name: "insights", path: "/insights", space: "personal" },
+  { name: "insights", path: "/insights?tab=omem", space: "personal" },
+  { name: "insights-work", path: "/insights?tab=work", space: "shop", prepare: async (p) => { await p.getByRole("button", { name: "退款接口报错率" }).click(); await p.waitForTimeout(800); } },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },
   { name: "wiki-tree-mobile", path: "/wiki/shop/refund/cases/partial-shipment-over-refund", width: 390, prepare: async (p) => { await p.getByRole("button", { name: "目录" }).click(); await p.waitForTimeout(400); } },

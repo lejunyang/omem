@@ -24,6 +24,12 @@ updated: 2026-11-20
 - 侧栏“今日”改名“工作”，“流程”打开 `/?view=stage`；本人打开 `/items/:id/flow` 转到 `/work/:id?tab=flow`。事项页改叫“全部事项”，线、有下层的、走流程的事项点开去工作项页。
 - `web/src/lib/markdown.ts`：写好的引用链接 `[文字](src:…#L3-L9)` 不再被“裸引用”的替换拆开（11-19 起带范围的引用显示成半截）。
 
+## 数据页分“工作数据 / omem 自己”两栏（11-21）
+
+- `web/src/views/Insights.vue` 顶部两栏，`?tab=work|omem`；没有 tab 时带报告筛选或明细的链接落到 omem 一栏，否则是工作数据；报告只在 omem 一栏打开时才请求。新组件 `web/src/components/MetricsBoard.vue`（`scope: work | omem`）。
+- `GET /api/metrics` 每条多了 `itemTitle`、`lineId`、`lineTitle`（`rootOf`）；新 `GET /api/metrics/files` 列工作文件里 `数据/`、`观测/` 下的（数据源目录、观测计划、采集记录）。
+- `src/data/metrics.ts` 的 `tellChange`：通知带 `graceDone`，通知失败只记日志，时间线和关注会话照写；链接改到 `#/work/<事项>` 或 `#/insights?tab=…&metric=…`。测试 `test/metrics.test.ts`，截图 `insights`、`insights-work`（`scripts/doc-screens.ts` 加了演示指标）。
+
 ## 关注从历史学（11-20 夜）
 
 - `learnFromHistory`（`src/channels/listen-coach.ts`）和 `POST /api/listen/:id/learn {chats, days}`：给定群里本人最近 N 天的回答记成关注的案例（引用的那条，或两小时内别人最近的一句），去重，够 5 条排 listen-coach。用于新建值班关注时拿已经结了的工单群先学一版经验。测试在 `test/listen.test.ts`。

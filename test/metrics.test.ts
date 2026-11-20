@@ -91,3 +91,36 @@ describe("metrics", () => {
     }
   });
 });
+
+describe("metrics on the data page", () => {
+  it("groups work metrics by their line, lists the data work files, and a change on a brand-new item still records and tells", async () => {
+    const app = testApp();
+    app.config.notify.firstNudgeDelayMinutes = 30;
+    const { createLine } = await import("../src/items/lines.ts");
+    const { setParent } = await import("../src/items/parent.ts");
+    const { writeWorkFile } = await import("../src/sources/work.ts");
+    const line = await createLine(app, { name: "示例商城 · 退款改造", goal: "部分发货只退已发货的行" }, "owner");
+    const req = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "退款申请页改版" } as never, "user");
+    setParent(app, req.id, line.id);
+    const m = defineMetric(app, { name: "退款接口报错率", unit: "%", query: "前端监控：/refund/apply 的接口失败率", itemId: req.id, direction: "down-good" });
+    defineMetric(app, { name: "omem 运行数", unit: "次", source: "omem", query: "omem 自己按天存" });
+    // Points into a matter made a minute ago: no first-nudge grace for a change in the numbers.
+    for (const [i, v] of [0.4, 0.42, 0.39, 0.41].entries()) await recordPoints(app, m.id, [{ value: v, at: new Date(Date.now() - (5 - i) * 86400_000).toISOString() }]);
+    await expect(recordPoints(app, m.id, [{ value: 0.9 }])).resolves.toBeTruthy();
+    expect(one(app.db, "select link from notifications where title like '%退款接口报错率%'")).toMatchObject({ link: `#/work/${req.id}` });
+    writeWorkFile(app, { spaceId: "personal", path: "数据/数据源目录.md", title: "数据源目录", text: "# 目录" });
+    writeWorkFile(app, { spaceId: "personal", path: "观测/退款改造.md", title: "退款改造", text: "# 计划", links: { item: line.id } });
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const list = (await server.inject({ method: "GET", url: "/api/metrics" })).json() as { name: string; itemTitle: string | null; lineId: string | null; lineTitle: string | null; source: string }[];
+      expect(list.find((x) => x.name === "退款接口报错率")).toMatchObject({ itemTitle: "退款申请页改版", lineId: line.id, lineTitle: "示例商城 · 退款改造" });
+      expect(list.find((x) => x.name === "omem 运行数")).toMatchObject({ source: "omem", lineId: null });
+      const files = (await server.inject({ method: "GET", url: "/api/metrics/files" })).json() as { path: string; kind: string; itemId: string | null }[];
+      expect(files.map((f) => [f.path, f.kind]).sort()).toEqual([["数据/数据源目录.md", "catalog"], ["观测/退款改造.md", "plan"]]);
+      expect(files.find((f) => f.kind === "plan")?.itemId).toBe(line.id);
+    } finally {
+      await server.close();
+    }
+  });
+});

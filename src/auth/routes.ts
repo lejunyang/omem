@@ -221,6 +221,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // items and requirements (the handlers check whose item it is)
   // metrics (src/data/http.ts): readable spaces only; editing needs write access to the metric's space
   "GET /api/metrics": "self",
+  "GET /api/metrics/files": "self",
   "GET /api/metrics/:id": "self",
   "PUT /api/metrics/:id": "self",
   "GET /api/flows": "self",
