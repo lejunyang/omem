@@ -1,6 +1,6 @@
 # 有人找你：预筛、分诊、处理、回复
 
-代码：`src/mentions/mentions.ts`（预筛、调度、兜底、回复对方的检查）、`src/mentions/triage.ts`（分诊的材料和判断）、`src/mentions/channel.ts`（渠道接口）；飞书的实现在 `src/channels/lark-mentions.ts`（哪些消息算找本人、读消息和上下文、已读）和 `src/channels/mention-reply.ts`（在飞书上回复对方）、`src/channels/doubao-send.ts`（经豆包以本人身份发私聊）；`roles/mention-triage.md`（分诊标准）。设置：`mentions`（设置 → 渠道 → 有人找你），回复方式按渠道放在 `mentions.reply.<渠道>`（现在只有 `mentions.reply.lark`）。
+代码：`src/mentions/mentions.ts`（预筛、调度、兜底、回复对方的检查）、`src/mentions/triage.ts`（分诊的材料和判断）、`src/mentions/channel.ts`（渠道接口）；飞书的实现在 `src/channels/lark-mentions.ts`（哪些消息算找本人、读消息和上下文、已读）和 `src/channels/mention-reply.ts`（在飞书上回复对方）、`src/channels/doubao-send.ts`（经豆包以本人身份发私聊）；`roles/mention-triage.md`（分诊标准）。设置：`mentions`（设置 → 代你回复 → 有人找你），回复方式按渠道放在 `mentions.reply.<渠道>`（现在只有 `mentions.reply.lark`）。
 
 ## 目标
 
@@ -235,6 +235,6 @@ listen-coach 整理经验时带上“跟过的问题”（跟了几轮、多久�
 - 草稿档的说明改成：查到了能直接给对方的结论（答案、数据、明确的时间或决定）才拟回复，否则不拟，只在提醒里说清情况；回复先说结论，一两句，不铺垫、不客套、不复述问题、不解释怎么查的。
 - 长度：本人自己的回复有了中位数以后，`reply_to_asker` 收到远长于它的回复（超过 4 倍且超过 120 字）时拒一次，告诉它本人通常多少字、让它改短；原样再交一次就通过。只拦一次，不替它改。
 
-设置 → 渠道 → 有人找你 显示近 60 天的统计（`GET /api/mentions` 的 `replies`）：多少条消息、拟了几条、照发 / 改后发 / 没发和原因、本人自己回了几条和通常的字数、没回几条。
+设置 → 代你回复 → 有人找你 显示近 60 天的统计（`GET /api/mentions` 的 `replies`）：多少条消息、拟了几条、照发 / 改后发 / 没发和原因、本人自己回了几条和通常的字数、没回几条。
 
 **没做的**：把样本提炼成一页“本人的回复习惯”（每晚由工作近况的整理一并写），以及按会话类型学“什么时候直接自动回”。先看带例子的草稿通过率有没有上来。
