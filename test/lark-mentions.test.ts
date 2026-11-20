@@ -23,6 +23,7 @@ import { deleteRule, endJudging, ruleClaim, saveRule, startJudging } from "../sr
 import type { RuleEvent } from "../src/rules/types.ts";
 import { boot } from "../src/main.ts";
 import { routeWatchedMessages } from "../src/channels/lark-watch.ts";
+import { trackProblem } from "../src/channels/listen-problems.ts";
 
 const fake = (id: string, env: Record<string, string>) => ({ id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env });
 
@@ -564,6 +565,29 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     expect(queued()).toHaveLength(0);
     app.config.agents.default = "handle";
   }, 120000);
+
+  it("a problem about a whole chat: later @s of the person who asked join it; someone else's are triaged", async () => {
+    useDecision(true);
+    decision.action = "handle";
+    app.config.agents.default = "handle";
+    const side = { id: "oc_side", name: "示例群", kind: "group" as const };
+    const first = handling({ chatId: "oc_side", chatName: "示例群" });
+    trackProblem(app, first, { title: "小王的退款单对不上", state: "waiting", awaiting: "财务同学核对", done_when: "财务核对完，金额一致" });
+    const mine = msg("@勒 补充一下，是 3 号那单", { chat_id: "oc_side" });
+    store([mine], "oc_side");
+    const joined = await waitForRun(app, queueMention(app, side, [mine], "ou_owner")!.id);
+    expect(joined.output.joined).toBe(first);
+    const calls = decision.calls;
+    const other = msg("@勒 周会改到几点？", { chat_id: "oc_side", sender: { id: "ou_li", name: "小李", sender_type: "user" } });
+    store([other], "oc_side");
+    const triaged = await waitForRun(app, queueMention(app, side, [other], "ou_owner")!.id);
+    expect(triaged.output.joined).toBeUndefined();
+    expect(decision.calls).toBeGreaterThan(calls);
+    if (triaged.output.handleRun) {
+      expect(getRun(app, String(triaged.output.handleRun)).input.resumeFromRun).toBeUndefined();
+      await waitForRun(app, String(triaged.output.handleRun));
+    }
+  }, 90000);
 
   it("a rule that fires on the message while the triage judges it takes it", async () => {
     useDecision(true);
