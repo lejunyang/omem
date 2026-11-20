@@ -872,20 +872,58 @@ run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,compon
 
 - 退款单数、退款金额、部分退款的占比。
 ` });
-  writeWorkFile(app, { spaceId: "shop", path: "观测/退款改造.md", title: "退款改造", text: `# 退款改造的观测计划
+  const plan = writeWorkFile(app, { spaceId: "shop", path: "观测/退款改造.md", title: "退款改造的观测计划", text: `# 退款改造的观测计划
 
-- 上线前：申请页的“仅退已发货”选择要埋点。
-- 上线后：退款接口报错率、部分退款占比、退款金额对账差异。
+## 要回答的问题
+
+1. 部分发货的订单只退已发货的行以后，退款接口有没有更容易出错？
+2. 用户能不能顺利把退款申请交上去，PC 和手机上一样吗？
+3. 新申请页的量追上旧页了没有？
+
+## 上线前
+
+- 申请页的“仅退已发货”选择要埋点。
+
+## 上线后看什么
+
+- 退款接口报错率（前端监控，按天），超过 30% 的变化要警觉。
+- 退款申请的完成率：打开申请页到提交成功，按端分开看。
+- 新旧申请页的提交数：灰度期间并排看，新页的占比。
 `, links: { item: refundLine.id } });
   writeWorkFile(app, { spaceId: "shop", path: "数据/采集/11-19 日指标采集.md", title: "11-19 日指标采集", text: "三个指标都取到了，报错率比前一周高。" });
+  // A report the assistant wrote: two charts in one work file, drawn on the page.
+  writeWorkFile(app, { spaceId: "shop", path: "数据/报表/退款改造上线一周.md", title: "退款改造上线一周", links: { item: refundLine.id }, text: `# 退款改造上线一周
+
+**结论：部分退款已经占到退款单的两成，错算集中在满减分摊；报错率上升主要来自手机端。**
+
+取数：订单库只读副本，11 月 13 日到 19 日；报错来自前端监控。
+
+\`\`\`chart
+{"kind":"pie","title":"退款单的构成","unit":"单","labels":["整单退款","部分退款","仅退运费","其他"],"series":[{"name":"退款单","values":[341,97,30,14]}]}
+\`\`\`
+
+\`\`\`chart
+{"kind":"hbar","title":"退款接口报错按页面","unit":"次","labels":["申请页（手机）","申请页（PC）","售后详情","导出"],"series":[{"name":"报错","values":[86,31,12,4]}]}
+\`\`\`
+
+手机端申请页的报错里，七成是选择“仅退已发货”之后金额重新计算超时。
+` });
   const day = (n: number) => new Date(Date.now() - n * 86400_000).toISOString();
-  const series = async (name: string, values: number[]) => recordPoints(app, name, values.map((value, i) => ({ value, at: day(values.length - 1 - i) })));
-  defineMetric(app, { name: "退款接口报错率", unit: "%", source: "前端监控", query: "前端监控：退款申请页 /refund/apply 的接口失败率，按天", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "down-good", description: "部分发货改造上线后最该盯的护栏指标" });
+  const series = async (name: string, values: number[], dims?: Record<string, string>) => recordPoints(app, name, values.map((value, i) => ({ value, at: day(values.length - 1 - i), ...(dims ? { dims } : {}) })));
+  defineMetric(app, { name: "退款接口报错率", unit: "%", source: "前端监控", query: "前端监控：退款申请页 /refund/apply 的接口失败率，按天", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "down-good", why: "部分发货只退已发货的行以后，退款接口有没有更容易出错", planRef: `src:${plan.id}#L13-L15`, description: "部分发货改造上线后最该盯的护栏指标" });
   await series("退款接口报错率", [0.42, 0.38, 0.4, 0.45, 0.41, 0.39, 0.43, 0.4, 0.44, 0.47, 0.52, 0.61, 0.66, 0.72]);
-  defineMetric(app, { name: "部分退款占比", unit: "%", source: "订单库（只读副本）", query: "订单库：当天退款单里只退部分行的比例", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "neutral" });
+  defineMetric(app, { name: "部分退款占比", unit: "%", source: "订单库（只读副本）", query: "订单库：当天退款单里只退部分行的比例", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "neutral", why: "部分发货的退款有多少，改造影响多大" });
   await series("部分退款占比", [8, 9, 8, 10, 11, 10, 12, 13, 12, 14, 15, 15, 16, 17]);
-  defineMetric(app, { name: "仅退已发货的选择次数", unit: "次", source: "埋点平台", query: "埋点平台：refund_apply_shipped_only 的点击数，按天", itemId: flowItem.id, spaceId: "shop", schedule: "daily", direction: "up-good" });
+  defineMetric(app, { name: "仅退已发货的选择次数", unit: "次", source: "埋点平台", query: "埋点平台：refund_apply_shipped_only 的点击数，按天", itemId: flowItem.id, spaceId: "shop", schedule: "daily", direction: "up-good", why: "新加的“仅退已发货”有没有人用", view: { kind: "bar" } });
   await series("仅退已发货的选择次数", [0, 0, 0, 0, 0, 0, 0, 3, 9, 14, 22, 30, 41, 55]);
+  // Two the assistant proposed from the plan, waiting for the owner: by device over two weeks, and new against old with one day so far.
+  const planRun = createRun(app, { kind: "agent", spaceId: "shop", title: "给退款改造写观测计划", input: { spec: "assistant", task: "按 observation-plan 给退款改造写观测计划" } });
+  const proposed = { by: "agent" as const, runId: planRun.id };
+  defineMetric(app, { name: "退款申请完成率", unit: "%", source: "埋点平台", query: "埋点平台：refund_apply_submit_success ÷ refund_apply_open，按天、按端（PC / 手机）", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "up-good", why: "改版后用户能不能顺利把退款申请交上去，PC 和手机上一样吗", planRef: `src:${plan.id}#L16-L16`, view: { kind: "compare", compareBy: "端" } }, proposed);
+  await series("退款申请完成率", [71, 72, 70, 73, 72, 74, 73, 72, 74, 75, 76, 75, 77, 78], { 端: "PC" });
+  await series("退款申请完成率", [63, 62, 64, 63, 61, 62, 60, 58, 57, 55, 54, 52, 51, 49], { 端: "手机" });
+  defineMetric(app, { name: "新旧申请页的提交数", unit: "单", source: "订单库（只读副本）", query: "订单库：当天从新申请页和旧申请页提交的退款单数，dims.side 写 新 / 旧", itemId: refundLine.id, spaceId: "shop", schedule: "daily", direction: "neutral", why: "灰度期间新申请页的量追上旧页了没有", planRef: `src:${plan.id}#L17-L17`, view: { kind: "compare", compareBy: "side", ratio: true, focus: "新" } }, proposed);
+  await recordPoints(app, "新旧申请页的提交数", [{ value: 1284, at: day(1), dims: { side: "新" } }, { value: 2906, at: day(1), dims: { side: "旧" } }]);
   snapshotOmemUsage(app, { maxDays: 30 });
 }
 
@@ -937,7 +975,29 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   } },
   { name: "work-line", path: `/work/${refundLine.id}`, init: { "omem.workAsk": "1", "omem.lineAsk": JSON.stringify({ [refundLine.id]: lineChat }) } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },
-  { name: "insights-work", path: "/insights?tab=work", space: "shop", prepare: async (p) => { await p.getByRole("button", { name: "退款接口报错率" }).click(); await p.waitForTimeout(800); } },
+  // A proposal opened: its chart by device, why it exists, where it came from, 保留 / 改 / 不要.
+  { name: "insights-work", path: "/insights?tab=work", space: "shop", prepare: async (p) => {
+    await p.getByRole("button", { name: /退款申请完成率/ }).click();
+    await p.waitForTimeout(900);
+    await p.locator(".group").first().evaluate((el) => {
+      let s: HTMLElement | null = el.parentElement;
+      while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
+      const box = el.getBoundingClientRect();
+      (s ?? document.scrollingElement)?.scrollBy(0, box.top - 24);
+    });
+    await p.waitForTimeout(300);
+  } },
+  // A report the assistant wrote (a work file under 数据/报表/), its two charts drawn on the page.
+  { name: "insights-report", path: "/insights?tab=work", space: "shop", prepare: async (p) => {
+    await p.getByRole("button", { name: "退款改造上线一周" }).click();
+    await p.waitForTimeout(1200);
+    await p.locator(".report").evaluate((el) => {
+      let s: HTMLElement | null = el.parentElement;
+      while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
+      (s ?? document.scrollingElement)?.scrollBy(0, el.getBoundingClientRect().top - 160);
+    });
+    await p.waitForTimeout(300);
+  } },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },
   { name: "wiki-tree-mobile", path: "/wiki/shop/refund/cases/partial-shipment-over-refund", width: 390, prepare: async (p) => { await p.getByRole("button", { name: "目录" }).click(); await p.waitForTimeout(400); } },
