@@ -245,3 +245,29 @@ describe("「关注」", () => {
   });
 });
 
+
+describe("learning a 关注 from history", () => {
+  it("turns the owner's past answers in closed groups into cases, quoted or not, once, and queues the coach", async () => {
+    const app = testApp();
+    const { learnFromHistory } = await import("../src/channels/listen-coach.ts");
+    const c = saveContext(app, { kind: "place", name: "工单群", chats: ["oc_live"], knobs: { reply: "none" } });
+    const day = 86400_000, t = Date.now() - 3 * day;
+    const msg = (id: string, chat: string, kind: string, text: string, at: number, parent: string | null = null) =>
+      run(app.db, "insert into lark_messages(message_id,chat_id,parent_id,sender_name,sender_kind,content,create_ms) values(?,?,?,?,?,?,?)", id, chat, parent, kind === "owner" ? "本人" : kind === "app" ? "工单机器人" : "小王", kind, text, at);
+    for (let i = 0; i < 5; i++) {
+      const chat = `oc_old${i}`;
+      msg(`om_card${i}`, chat, "app", "工单卡片", t + i * 1000);
+      msg(`om_q${i}`, chat, "user", `UID ${i} 员工号解绑失败`, t + i * 1000 + 10);
+      // Two answer by quoting; the rest just answer right after.
+      msg(`om_a${i}`, chat, "owner", `查了，是主账号已注销 ${i}`, t + i * 1000 + 20, i < 2 ? `om_q${i}` : null);
+    }
+    msg("om_late", "oc_old0", "owner", "两个月前的回答", Date.now() - 50 * day);
+    const r = learnFromHistory(app, c.id, { chats: ["oc_old0", "oc_old1", "oc_old2", "oc_old3", "oc_old4"], days: 30 });
+    expect(r).toMatchObject({ chats: 5, added: 5 });
+    expect(r.coachRunId).toBeTruthy();
+    expect(one(app.db, "select ask, owner_reply, source from reply_samples where id = 'rs_own_om_a3'")).toMatchObject({ ask: "UID 3 员工号解绑失败", owner_reply: "查了，是主账号已注销 3", source: "watch" });
+    // Again: nothing new, nothing doubled.
+    expect(learnFromHistory(app, c.id, { chats: ["oc_old0"], days: 30 }).added).toBe(0);
+    expect(one<{ n: number }>(app.db, "select count(*) n from reply_samples where context_id = ?", c.id)!.n).toBe(5);
+  });
+});

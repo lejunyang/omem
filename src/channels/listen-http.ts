@@ -168,6 +168,14 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
     return r ? { runId: r.id } : { queued: false, message: "已经有一次整理在排队" };
   });
 
+  // Learn from history: the owner's past answers in these chats become this 关注's cases (read-only).
+  server.post("/api/listen/:id/learn", async (req) => {
+    owner(req);
+    const b = parse(z.object({ chats: z.array(z.string().regex(/^oc_[\w-]+$/)).min(1).max(300), days: z.number().int().min(1).max(60).default(30) }), req.body);
+    const { learnFromHistory } = await import("./listen-coach.ts");
+    return learnFromHistory(app, (req.params as { id: string }).id, b);
+  });
+
   server.get("/api/lark/chats/:id/detail", async (req) => {
     owner(req);
     const chatId = (req.params as { id: string }).id;

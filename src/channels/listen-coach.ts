@@ -163,6 +163,49 @@ export async function submitPlaybook(app: App, runId: string | null, input: { sc
  * screening skipped the batch): a reply or quote of someone else's message, by the owner, since the last
  * pass. A case that already holds the asked message gets the owner's words instead of a new one.
  */
+/**
+ * Learn from history (the owner asks once, e.g. right after making a 关注 for oncall groups): in the given
+ * chats — often closed ones the 关注 no longer watches — every answer the owner wrote in the last `days`
+ * becomes a case of this 关注, paired with what it answered (the quoted message, else the latest message
+ * from someone else shortly before). Read-only towards Feishu; the coach is queued when it found enough.
+ */
+export function learnFromHistory(app: App, contextId: string, opts: { chats: string[]; days: number }) {
+  const c = requireContext(app, contextId);
+  const since = Date.now() - Math.min(Math.max(opts.days, 1), 60) * 86400_000;
+  const chats = [...new Set(opts.chats)].slice(0, 300);
+  let added = 0, seen = 0;
+  for (const chatId of chats) {
+    const name = one<{ name: string }>(app.db, "select name from lark_cursors where chat_id = ?", chatId)?.name ?? chatId;
+    const mine = all<{ message_id: string; parent_id: string | null; content: string; create_ms: number }>(
+      app.db,
+      "select message_id, parent_id, content, create_ms from lark_messages where chat_id = ? and create_ms > ? and sender_kind = 'owner' and msg_type in ('text','post') and trim(content) != '' order by create_ms limit 100",
+      chatId, since,
+    );
+    for (const m of mine) {
+      seen++;
+      type Asked = { message_id: string; sender_name: string; sender_kind: string; content: string };
+      const quoted = m.parent_id ? one<Asked>(app.db, "select message_id, sender_name, sender_kind, content from lark_messages where message_id = ?", m.parent_id) : undefined;
+      // Unquoted, it answers the latest thing someone else said shortly before (two hours at most).
+      const asked = quoted && quoted.sender_kind !== "owner" && quoted.sender_kind !== "app"
+        ? quoted
+        : one<Asked>(app.db, "select message_id, sender_name, sender_kind, content from lark_messages where chat_id = ? and create_ms < ? and create_ms > ? and sender_kind = 'user' and trim(content) != '' order by create_ms desc limit 1", chatId, m.create_ms, m.create_ms - 2 * 3600_000);
+      if (!asked) continue;
+      if (one(app.db, "select 1 from reply_samples where id = ? or (context_id = ? and instr(message_ids, ?) > 0)", `rs_own_${m.message_id}`, c.id, asked.message_id)) continue;
+      const at = new Date(m.create_ms).toISOString();
+      run(
+        app.db,
+        `insert into reply_samples(id,channel,chat_id,chat_kind,chat_name,asker_name,ask,message_ids,last_ms,owner_reply,owner_reply_at,settled_at,created_at,context_id,source)
+         values(?,'lark',?,'group',?,?,?,?,?,?,?,?,?,?,?)`,
+        `rs_own_${m.message_id}`, chatId, name, asked.sender_name, truncate(asked.content, 800), JSON.stringify([asked.message_id]), m.create_ms,
+        truncate(m.content, 800), at, at, at, c.id, c.kind === "item" ? "item" : "watch",
+      );
+      added++;
+    }
+  }
+  const coach = added >= COACH_AFTER ? queueCoach(app, c.id) : null;
+  return { chats: chats.length, ownerMessages: seen, added, coachRunId: coach?.id ?? null };
+}
+
 export function collectOwnerReplies(app: App) {
   const key = "listen_owner_replies_ms";
   const from = Number(one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value ?? Date.now() - 3600_000);

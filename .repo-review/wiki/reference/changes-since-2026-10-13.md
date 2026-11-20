@@ -17,6 +17,10 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 关注从历史学（11-20 夜）
+
+- `learnFromHistory`（`src/channels/listen-coach.ts`）和 `POST /api/listen/:id/learn {chats, days}`：给定群里本人最近 N 天的回答记成关注的案例（引用的那条，或两小时内别人最近的一句），去重，够 5 条排 listen-coach。用于新建值班关注时拿已经结了的工单群先学一版经验。测试在 `test/listen.test.ts`。
+
 ## 事项的建议卡不再带“已处理 / 忽略”；后台运行结束后才收到的回答接着做（11-20 夜）
 
 - `notify` 多了 `plain`：关于一件事项、但不是催它做完的通知（推进建议、指标变化、截止时间变了）不带“已处理 / 忽略”。这两个按钮会把整件事项标完成或取消，只留给提醒。推进运行（`input.listenAssist`）发的事项通知由 `notify` 工具自动标 `plain`。`src/core/notify.ts`、`src/channels/item-notification.ts`、`src/agents/tools.ts`、`src/data/metrics.ts`、`src/flows/follow.ts`。
