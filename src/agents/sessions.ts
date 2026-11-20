@@ -393,8 +393,9 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // The owner's own turns carry the work state of the last weeks (agents/work-state.ts): with a new
   // session's background, and again in a running one once the nightly write-up changed it. In a group,
   // the cards of the people who write there. Not for a colleague's question, nor turns nobody typed.
-  const ownerTurn = userId === "owner" && !coordinate && !handoff && !watched && !woken && !messages.some((m) => typeof m.meta?.asker === "string");
-  const personalTurn = !coordinate && !handoff && !watched && !woken && !messages.some(m => m.meta.asker);
+  const personalTurn = !coordinate && !handoff && !watched && !woken && !messages.some(m => typeof m.meta.asker === "string");
+  const ownerTurn = userId === "owner" && personalTurn;
+  ctx.output({ personalTurn });
   const focus = personalTurn && resolved.focus && !promptOverride ? focusBlock(app, resolved.focus, userId) : undefined;
   const brief = ownerTurn && !resolved.context.item && app.config.workState.inject ? workStateBrief(app) : "";
   const briefStamp = brief ? workStateStamp(app) : null;

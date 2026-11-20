@@ -274,7 +274,7 @@ export const describeChange = (m: Metric, c: MetricChange) =>
   `${m.name}：${c.value}${m.unit}${c.base !== null ? `（基线 ${Math.round(c.base * 100) / 100}${m.unit}${c.rel !== null ? `，${pct(c.rel)}` : ""}）` : ""}${c.good === null ? "" : c.good ? "，向好" : "，变差"}`;
 
 /** Record points (from a collection run or by hand); a change past the threshold of a kept metric is told. Returns the change of each series touched. */
-export async function recordPoints(app: App, idOrName: string, points: { value: number; at?: string; dims?: Record<string, string>; note?: string }[], runId: string | null = null) {
+export async function recordPoints(app: App, idOrName: string, points: { value: number; at?: string; dims?: Record<string, string>; note?: string }[], runId: string | null = null, defaultItemId?: string) {
   const m = requireMetric(app, idOrName);
   if (m.status === "dropped") throw new HttpError(409, `本人不要指标「${m.name}」了，不用再记它的数`);
   if (!points.length) throw new HttpError(400, "没有要记的点");
@@ -291,11 +291,11 @@ export async function recordPoints(app: App, idOrName: string, points: { value: 
   const changes = series.map((d) => ({ dims: json<Record<string, string>>(d, {}), change: changeOf(m, metricPoints(app, m.id, { dims: json(d, {}), limit: 30 })) }));
   const flagged = changes.filter((c) => c.change?.flagged);
   // A proposal (or a paused metric) is taken but never told: the owner has not said they want it.
-  if (flagged.length && m.status === "active") await tellChange(app, m, flagged.map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}`));
+  if (flagged.length && m.status === "active") await tellChange(app, m, flagged.map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}`), m.itemId ?? defaultItemId);
   return changes;
 }
 
-async function tellChange(app: App, m: Metric, lines: string[]) {
+async function tellChange(app: App, m: Metric, lines: string[], itemId?: string) {
   const body = `${lines.join("\n")}${m.why ? `\n\n${truncate(m.why, 200)}` : m.description ? `\n\n${truncate(m.description, 200)}` : ""}`;
   const { notify } = await import("../core/notify.ts");
   // A change in the numbers is not a first nudge about a new item (no grace period), and a notification
@@ -313,13 +313,13 @@ async function tellChange(app: App, m: Metric, lines: string[]) {
       addMessage(app, c.conversationId, "user", `（指标变化）${body}`, null, { command: true, metric: m.id });
     }
   }
-  if (m.itemId) {
+  if (itemId) {
     try {
       const { addItemEvent } = await import("../items/store.ts");
-      addItemEvent(app, m.itemId, "note", `指标变化：${lines.join("；")}`, "agent");
+      addItemEvent(app, itemId, "note", `指标变化：${lines.join("；")}`, "agent");
       // A key result on the line's timeline (items/changes.ts), noted only.
       const { addChange } = await import("../items/changes.ts");
-      addChange(app, { itemId: m.itemId, type: "result", origin: "metric", summary: `指标变化：${truncate(lines[0] ?? m.name, 200)}${lines.length > 1 ? ` 等 ${lines.length} 处` : ""}`, detail: lines.length > 1 ? lines.join("\n") : m.why || m.description ? truncate(m.why || m.description, 300) : null });
+      addChange(app, { itemId, type: "result", origin: "metric", summary: `指标变化：${truncate(lines[0] ?? m.name, 200)}${lines.length > 1 ? ` 等 ${lines.length} 处` : ""}`, detail: lines.length > 1 ? lines.join("\n") : m.why || m.description ? truncate(m.why || m.description, 300) : null });
     } catch {
       // The item may be gone; the notification still says it.
     }
