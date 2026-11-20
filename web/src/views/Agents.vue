@@ -212,7 +212,7 @@ const roleDetail = ref<RoleDetail | null>(null);
 const missingRoleMcp = computed(() => (roleDetail.value?.role.overlay?.mcp ?? []).filter((n) => !mcpServers.value.some((s) => s.name === n)));
 const roleText = ref("");
 const roleAi = ref({ agent: "", model: "", effort: "" });
-/** 完全访问 of a built-in role: its runs for you (guests have their own switch under 设置 → 渠道 → 访客提问). */
+/** 完全访问 of a built-in role: its runs for you (guests have their own switch under 设置 → 代你回复 → 访客提问). */
 async function setRoleFullAccess(on: boolean) {
   try {
     const st = await put<RoleState>(`/api/roles/${encodeURIComponent(roleName.value!)}/full-access`, { on });

@@ -528,7 +528,7 @@ const judgeWithHint = computed(() => {
   if (!form.value) return "";
   if ((form.value.judgeWith ?? "decision") === "general") return "通用模型读完规则和讨论再判断，会写理由；慢一些、贵一些。";
   const d = options.value.decision;
-  return d?.ready ? `用 ${d.detail}：只给出是 / 否和概率，快、便宜；出错时按 设置 → AI → 决策 的设置处理。` : "还没有可用的决策模型（设置 → AI → 决策），现在用通用模型判断。";
+  return d?.ready ? `用 ${d.detail}：只给出是 / 否和概率，快、便宜；出错时按 设置 → 后端与模型 → 决策 的设置处理。` : "还没有可用的决策模型（设置 → 后端与模型 → 决策），现在用通用模型判断。";
 });
 const judgeHint = computed(() =>
   !form.value ? "" : form.value.judge === "code" ? "只看条件：便宜、可预期。" : form.value.judge === "code+ai" ? "条件先缩小范围，命中的再请模型按原话确认。" : "每条事件都请模型按原话判断（每小时最多 60 次）。建议至少加一个群名之类的条件，改成“条件 + AI”。",
@@ -572,10 +572,10 @@ function startFrom(text: string) {
         </div>
         <p v-if="!loading && !rules.length" class="muted small hint">还没有任务规则。点 ＋ 新建，或对助理说“以后值班群里我被 @ 就把机器人拉进去”。</p>
         <div v-if="!loading && mentions" class="li fallback" title="排在所有规则之后：规则在这条消息上触发过或正等着处理它时不管；不能删除，在设置里开关和调整">
-          <router-link class="grow pick" to="/settings?tab=lark&focus=mentions">
+          <router-link class="grow pick" to="/settings?card=mentions">
             <div class="row"><span class="badge">最后</span><strong class="ellipsis">没有规则处理的、找你的消息 → 有人找你</strong></div>
             <div class="muted small clamp">有人 @ 你{{ mentions.p2p ? "或私聊你" : "" }}、{{ mentions.delayMinutes }} 分钟后你还没处理，又没有规则接手时：先分诊，再提醒你或交给助手查。</div>
-            <div class="muted small">{{ mentions.enabled ? `已开启 · 今天分诊 ${mentions.today.triage}/${mentions.perDay.triage} 次，查背景 ${mentions.today.handle}/${mentions.perDay.handle} 次` : "已关闭" }} · 在设置 → 渠道里调整</div>
+            <div class="muted small">{{ mentions.enabled ? `已开启 · 今天分诊 ${mentions.today.triage}/${mentions.perDay.triage} 次，查背景 ${mentions.today.handle}/${mentions.perDay.handle} 次` : "已关闭" }} · 在设置 → 代你回复里调整</div>
           </router-link>
         </div>
         <template v-if="wakes.length">
@@ -590,7 +590,7 @@ function startFrom(text: string) {
           </div>
         </template>
         <template v-if="watches.length">
-          <div class="group row muted small" title="本人让助手看着的群：消息按批交给它，到期自动停止"><span class="grow">关注</span><router-link to="/settings?tab=connect" class="muted">全部</router-link></div>
+          <div class="group row muted small" title="本人让助手看着的群：消息按批交给它，到期自动停止"><span class="grow">关注</span><router-link to="/" class="muted">全部</router-link></div>
           <div v-for="w in watches" :key="w.contextId" class="li wake">
             <router-link class="grow pick" :to="`/listen/${encodeURIComponent(w.contextId)}`">
               <div class="row"><span class="badge">关注</span><span class="ellipsis small">{{ w.name }}</span></div>
@@ -781,7 +781,7 @@ function startFrom(text: string) {
               </div>
               <div class="row wrap">
                 <UiCheckbox :model-value="!!a.ai" size="sm" @change="(v) => toggleAI(a, v)">指定 AI</UiCheckbox>
-                <small class="muted">{{ a.ai ? "这条规则交出去的运行用下面选的后端、模型和思考强度。" : `不指定就用档案自己的设置${specAgent(a.spec) ? `（${specAgent(a.spec)}）` : ""}，按 设置 → AI → 任务选型 可在开始前自动换成更合适的候选，出错时换兜底；模型写在要求里不会生效。` }}</small>
+                <small class="muted">{{ a.ai ? "这条规则交出去的运行用下面选的后端、模型和思考强度。" : `不指定就用档案自己的设置${specAgent(a.spec) ? `（${specAgent(a.spec)}）` : ""}，按 设置 → 后端与模型 → 任务选型 可在开始前自动换成更合适的候选，出错时换兜底；模型写在要求里不会生效。` }}</small>
               </div>
               <AiDefaults v-if="a.ai" :model-value="{ agent: a.ai.profile, model: a.ai.model, effort: a.ai.effort }" :backends="options.backends ?? []" :default-backend="specAgent(a.spec)" @update:model-value="(v) => setAI(a, v)" @change="touch" />
               <div class="row wrap">
@@ -856,7 +856,7 @@ function startFrom(text: string) {
                       <span class="small">段</span>
                     </span>
                   </div>
-                  <small class="muted">预筛用设置 → AI 里的决策模型判断这一段有没有和你有关的，没配置决策模型时每段都看；跳过的这一段会和下一段一起再判断。连看的几段共用一个 Agent 会话，缓存命中好；到了段数换新会话，带上前面记下的事。</small>
+                  <small class="muted">预筛用设置 → 后端与模型 → 决策 里的决策模型判断这一段有没有和你有关的，没配置决策模型时每段都看；跳过的这一段会和下一段一起再判断。连看的几段共用一个 Agent 会话，缓存命中好；到了段数换新会话，带上前面记下的事。</small>
                 </template>
                 <div class="row wrap">
                   <UiCheckbox :model-value="!!a.proactive" size="sm" @change="(v) => ((a.proactive = v), touch())">会上主动查</UiCheckbox>

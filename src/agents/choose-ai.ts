@@ -127,7 +127,7 @@ export async function chooseAI(
   if (mode === "off") return skip(`这类运行（${SCENE[o.scene]}）设成了“不选”`);
   if (!r.candidates.length) return skip("任务选型里没有候选");
   const useDecision = decisionReady(app);
-  if (!useDecision && mode !== "always") return skip("没有配置决策模型（设置 → AI → 决策），这类运行只在有决策模型时选");
+  if (!useDecision && mode !== "always") return skip("没有配置决策模型（设置 → 后端与模型 → 决策），这类运行只在有决策模型时选");
   const same = (p: AiPick) => p.profile === o.current.id && (p.model ?? "") === (o.current.model ?? "") && (p.effort ?? "") === (o.current.effort ?? "");
   // Options the run would not get anyway are not offered: left out (limit 0, quota spent, daily cap)
   // or set aside when a slot is taken (nearly spent, just broke down), so a pick is not overruled after

@@ -3114,6 +3114,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(insightFilters.extend({ metric: z.string().max(800), offset: z.coerce.number().int().min(0).default(0) }), req.query);
     return insightRecords(app, who(req), o, o.metric, o.offset);
   });
+  // One number taken apart for the data page's drawer: by day, by scene / agent / space / model / who / where, and its records.
+  server.get("/api/insights/breakdown", async (req) => {
+    const { insightBreakdown, insightFilters } = await import("../insights/insights.ts");
+    const o = q(insightFilters.extend({
+      metric: z.string().max(800), offset: z.coerce.number().int().min(0).default(0), q: z.string().max(200).optional(),
+      pick: z.union([z.string().max(400), z.array(z.string().max(400)).max(7)]).optional(),
+    }), req.query);
+    return insightBreakdown(app, who(req), o, o.metric, { picks: o.pick === undefined ? [] : [o.pick].flat(), q: o.q, offset: o.offset });
+  });
   server.get("/api/insights/export", async (req, reply) => {
     const { exportInsights, insightFilters } = await import("../insights/insights.ts");
     const o = q(insightFilters.extend({ format: z.enum(["md", "csv"]).default("md") }), req.query);

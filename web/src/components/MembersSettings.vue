@@ -3,11 +3,15 @@ import HelpText from "./HelpText.vue";
 import { computed, nextTick, onMounted, ref } from "vue";
 import { del, get, patch, post, put } from "../api";
 import type { Provider } from "./ProviderApps.vue";
+import Icon from "./Icon.vue";
+import MonoLine from "./MonoLine.vue";
+import SetCard from "./SetCard.vue";
+import SetRow from "./SetRow.vue";
 import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
 import UiSelect from "./UiSelect.vue";
-import { fmtTime, state, toast } from "../store";
+import { fmtTime, relTime, state, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 
 /**
@@ -226,231 +230,247 @@ async function toggleLog() {
 const userName = (id: string) => (id === "owner" ? "本人" : users.value?.find((u) => u.id === id)?.name ?? id);
 const inviteStatus = (i: Invite) => (i.revokedAt ? "已撤销" : i.usedAt ? `${userName(i.usedBy ?? "")} 已使用` : Date.parse(i.expiresAt) <= Date.now() ? "已过期" : `${fmtTime(i.expiresAt, false)} 前有效`);
 const isOwner = computed(() => state.me?.role === "owner");
+// What is folded: one person at a time, the invite and add-by-email forms, the roles table.
+const openUser = ref<string | null>(null);
+const showInvite = ref(false);
+const showAhead = ref(false);
+const showRoles = ref(false);
+const liveInvites = computed(() => invites.value.filter((i) => !i.revokedAt && !i.usedAt && Date.parse(i.expiresAt) > Date.now()).length);
+const initial = (name: string) => [...(name.trim() || "?")][0].toUpperCase();
 onMounted(() => load().catch(fail));
 </script>
 
 <template>
   <div class="stack">
-    <p class="muted">让别人用自己的账号登录 omem。运行 omem 的这台机器和你配对过的设备一直算作你本人，不用登录。每个人有一个全局角色，在加入的每个空间里有一个空间角色。</p>
+    <HelpText lead>让别人用自己的账号登录 omem。运行 omem 的这台机器和你配对过的设备一直算作你本人，不用登录。每个人有一个全局角色，在加入的每个空间里有一个空间角色。</HelpText>
     <Skeleton v-if="!auth" variant="text" :rows="6" />
     <template v-else>
-      <div class="card pad stack">
-        <UiCheckbox :model-value="auth.enabled" switch @change="(v) => saveAuth({ enabled: v })">打开多人登录</UiCheckbox>
-        <p class="muted small">打开后，从别的机器打开网页会看到登录页；经同一台机器上的反向代理（带 X-Forwarded-For）进来的请求也要登录。</p>
-        <p v-if="!webUrl" class="small warn-text">还没有填“网页地址”（设置 → 设备）：登录回调、邀请链接和机器人发的登录链接都要用它。</p>
-        <div v-for="p in logins" :key="p.id" class="provider stack">
+      <SetCard title="登录与邀请">
+        <template #help>打开后，从别的机器打开网页会看到登录页；经同一台机器上的反向代理（带 X-Forwarded-For）进来的请求也要登录。GitHub、Google、钉钉、微信等能确认身份的平台，在采集 → 其他平台里填好应用信息后出现在这里。</template>
+        <SetRow label="打开多人登录">
+          <template v-if="!webUrl" #hint><span class="warn-text">还没有填网页地址（设备页）：登录回调、邀请链接和机器人发的登录链接都要用它</span></template>
+          <UiCheckbox :model-value="auth.enabled" switch aria-label="打开多人登录" @change="(v) => saveAuth({ enabled: v })" />
+        </SetRow>
+        <SetRow v-for="p in logins" :key="p.id" :off="!(auth.providers.includes(p.id) || auth.primary === p.id)">
+          <template #label>
+            <UiCheckbox :model-value="auth.providers.includes(p.id) || auth.primary === p.id" :disabled="auth.primary === p.id" @change="(v) => toggleProvider(p.id, v)">用{{ p.label }}登录</UiCheckbox>
+            <span v-if="auth.primary === p.id" class="badge accent primary-badge">主要登录方</span>
+          </template>
+          <template v-if="p.unavailable || p.callback" #hint>
+            <span v-if="p.unavailable" class="warn-text">暂时不能用：{{ p.unavailable }}</span>
+            <span v-else class="cb"><span>开发者后台的重定向 URL 要加上</span><MonoLine :text="p.callback!" copy /></span>
+          </template>
+          <span class="small muted">新账号</span>
+          <UiSegmented :model-value="auth.signup[p.id] ?? 'approve'" size="sm" :aria-label="`${p.label}新账号`" :options="SIGNUP" @change="(v) => saveAuth({ signup: { ...auth!.signup, [p.id]: v as 'approve' } })" />
+        </SetRow>
+        <SetRow label="主要登录方" hint="设了以后只能用它登录，其他方式只能在账号页绑定">
+          <UiSelect :model-value="auth.primary ?? ''" size="sm" width="200px" aria-label="主要登录方" :options="[{ value: '', label: '不设（打开的都能登录）' }, ...logins.map((p) => ({ value: p.id, label: p.label }))]" @change="setPrimary" />
+        </SetRow>
+        <SetRow label="邀请链接" :hint="liveInvites ? `${liveInvites} 个还有效；用它登录的人直接建好账号，链接只能用一次` : '用它登录的人直接建好账号，不用再批准；链接只能用一次'">
+          <button class="btn ghost sm" :aria-expanded="showInvite" @click="showInvite = !showInvite">{{ showInvite ? "收起" : "生成或查看" }}</button>
+        </SetRow>
+        <div v-if="showInvite" class="set-pad">
           <div class="row wrap">
-            <UiCheckbox :model-value="auth.providers.includes(p.id) || auth.primary === p.id" :disabled="auth.primary === p.id" @change="(v) => toggleProvider(p.id, v)">{{ p.label }}</UiCheckbox>
-            <span v-if="auth.primary === p.id" class="badge accent">主要登录方</span>
-            <span class="spacer" />
-            <span class="small muted">新账号</span>
-            <UiSegmented :model-value="auth.signup[p.id] ?? 'approve'" size="sm" :aria-label="`${p.label}新账号`" :options="SIGNUP" @change="(v) => saveAuth({ signup: { ...auth!.signup, [p.id]: v as 'approve' } })" />
+            <span class="small muted">全局角色</span>
+            <UiSelect v-model="form.role" size="sm" width="120px" aria-label="邀请的全局角色" :options="globalRoles.filter((r) => isOwner || r.id === 'member').map((r) => ({ value: r.id, label: r.name }))" />
+            <UiSelect :model-value="''" size="sm" width="160px" placeholder="加入空间…" aria-label="邀请加入的空间" :options="spaceOptions.filter((o) => !form.spaces.some((s) => s.space === o.value))" @change="(v) => form.spaces.push({ space: v, role: 'reader' })" />
           </div>
-          <p v-if="p.unavailable" class="small warn-text">暂时不能用：{{ p.unavailable }}</p>
-          <p v-if="p.callback" class="small muted">开发者后台的重定向 URL 要加上：<span class="mono break">{{ p.callback }}</span><button class="btn ghost sm" @click="copy(p.callback)">复制</button></p>
+          <div v-if="form.spaces.length" class="small chips">
+            <span v-for="s in form.spaces" :key="s.space" class="space-chip">
+              <span class="ellipsis">{{ spaceOptions.find((o) => o.value === s.space)?.label ?? s.space }}</span>
+              <UiSelect v-model="s.role" variant="inline" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" />
+              <button class="x" aria-label="去掉" title="去掉这个空间" @click="form.spaces = form.spaces.filter((x) => x.space !== s.space)">×</button>
+            </span>
+          </div>
+          <div class="row wrap">
+            <input v-model="form.note" class="input sm grow-in" placeholder="备注（对方能看到，如：项目 A 的同事）" maxlength="200" aria-label="邀请备注" />
+            <UiSelect v-model="form.days" size="sm" width="96px" aria-label="有效期" :options="[{ value: '1', label: '1 天' }, { value: '7', label: '7 天' }, { value: '30', label: '30 天' }]" />
+            <UiCheckbox v-if="auth.primary" v-model="form.allowAny" size="sm">允许用其他方式登录</UiCheckbox>
+            <button class="btn sm primary" @click="createInvite">生成邀请链接</button>
+          </div>
+          <div v-if="made" class="made"><MonoLine :text="made" copy /><span class="muted small">只显示这一次。</span></div>
+          <div v-for="i in invites" :key="i.id" class="line small">
+            <span class="ellipsis grow" :title="i.note">{{ i.note || "（无备注）" }}</span>
+            <span class="muted ellipsis">{{ roleName(i.role) }}{{ i.spaces.length ? ` · ${i.spaces.length} 个空间` : "" }}</span>
+            <span class="muted nowrap">{{ inviteStatus(i) }}</span>
+            <button v-if="!i.revokedAt && !i.usedAt" class="btn ghost sm danger" @click="revoke(i)">撤销</button>
+          </div>
         </div>
-        <p class="muted small">GitHub、Google、钉钉、微信等能确认身份的平台，在 <a href="#/settings?tab=connect">设置 → 连接 → 其他平台</a> 里填好应用信息后出现在这里。</p>
-        <div class="field">
-          <span>主要登录方</span>
-          <UiSelect :model-value="auth.primary ?? ''" width="220px" aria-label="主要登录方" :options="[{ value: '', label: '不设（打开的都能登录）' }, ...logins.map((p) => ({ value: p.id, label: p.label }))]" @change="setPrimary" />
-          <span class="hint">设了以后只能用它登录，其他方式只能在账号页绑定。</span>
-        </div>
-      </div>
-
-
-      <template v-if="pending.length">
-        <h2 class="section-title">等待批准</h2>
-        <div class="list">
-          <div v-for="u in pending" :key="u.id" class="card pad row wrap">
-            <img v-if="u.avatar" :src="u.avatar" alt="" class="avatar" referrerpolicy="no-referrer" />
-            <div class="stack tight">
-              <strong>{{ u.name }}</strong>
-              <span class="muted small">{{ u.identities.filter((i) => i.kind === "login").map((i) => i.provider).join("、") }}登录 · {{ fmtTime(u.createdAt) }}{{ u.email ? ` · ${u.email}` : "" }}</span>
-            </div>
+        <SetRow label="按邮箱添加成员" hint="先建好账号、分好空间；谁用这个邮箱来就直接对应到这个账号">
+          <button class="btn ghost sm" :aria-expanded="showAhead" @click="showAhead = !showAhead">{{ showAhead ? "收起" : "添加" }}</button>
+        </SetRow>
+        <div v-if="showAhead" class="set-pad">
+          <div class="row wrap">
+            <input v-model="ahead.name" class="input sm grow-in" placeholder="名字" maxlength="60" aria-label="名字" />
+            <input v-model="ahead.email" class="input sm grow-in" type="email" placeholder="邮箱" maxlength="200" aria-label="邮箱" />
+          </div>
+          <div class="row wrap">
+            <span class="small muted">全局角色</span>
+            <UiSelect v-model="ahead.role" size="sm" width="120px" aria-label="全局角色" :options="globalRoles.filter((r) => isOwner || r.id === 'member').map((r) => ({ value: r.id, label: r.name }))" />
+            <UiSelect :model-value="''" size="sm" width="160px" placeholder="加入空间…" aria-label="加入的空间" :options="spaceOptions.filter((o) => !ahead.spaces.some((s) => s.space === o.value))" @change="(v) => ahead.spaces.push({ space: v, role: 'reader' })" />
+          </div>
+          <div v-if="ahead.spaces.length" class="small chips">
+            <span v-for="s in ahead.spaces" :key="s.space" class="space-chip">
+              <span class="ellipsis">{{ spaceOptions.find((o) => o.value === s.space)?.label ?? s.space }}</span>
+              <UiSelect v-model="s.role" variant="inline" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" />
+              <button class="x" aria-label="去掉" title="去掉这个空间" @click="ahead.spaces = ahead.spaces.filter((x) => x.space !== s.space)">×</button>
+            </span>
+          </div>
+          <div class="row wrap">
+            <UiCheckbox v-if="auth.primary" v-model="ahead.loginAny" size="sm">允许用{{ label(auth.primary) }}以外的方式登录网页</UiCheckbox>
             <span class="spacer" />
+            <button class="btn sm primary" :disabled="!ahead.name.trim() || !ahead.email.trim()" @click="addAhead">添加</button>
+          </div>
+        </div>
+      </SetCard>
+
+      <SetCard v-if="pending.length" title="等待批准">
+        <template #aside><span class="badge warn">{{ pending.length }}</span></template>
+        <div v-for="u in pending" :key="u.id" class="person-row">
+          <span class="avatar" aria-hidden="true"><img v-if="u.avatar" :src="u.avatar" alt="" referrerpolicy="no-referrer" /><template v-else>{{ initial(u.name) }}</template></span>
+          <span class="p-name ellipsis">{{ u.name }}</span>
+          <span class="p-meta ellipsis">{{ u.identities.filter((i) => i.kind === "login").map((i) => i.provider).join("、") }}登录 · {{ fmtTime(u.createdAt) }}{{ u.email ? ` · ${u.email}` : "" }}</span>
+          <span class="p-ops">
             <button class="btn sm primary" @click="act(u, { approve: true }, `已批准 ${u.name}`)">批准</button>
             <button class="btn ghost sm danger" @click="disable(u)">拒绝</button>
-          </div>
+          </span>
         </div>
-      </template>
+      </SetCard>
 
-      <h2 class="section-title">成员</h2>
-      <Skeleton v-if="!users" variant="text" :rows="4" />
-      <div v-else class="list">
-        <div v-for="u in others" :key="u.id" class="card pad stack" :class="{ dead: u.disabledAt }">
-          <div class="row wrap">
-            <img v-if="u.avatar" :src="u.avatar" alt="" class="avatar" referrerpolicy="no-referrer" />
-            <div class="stack tight">
-              <strong>{{ u.name }} <span class="muted small mono">{{ u.id }}</span></strong>
-              <span class="muted small">{{ u.disabledAt ? "已停用 · " : "" }}最近登录 {{ u.lastSeenAt ? fmtTime(u.lastSeenAt) : "没有" }}<template v-if="u.role !== 'owner'"> · <button class="link-btn" :title="`改 ${u.name} 的邮箱`" @click="editEmail(u)">{{ u.email || "没有邮箱" }}</button></template><template v-else-if="u.email"> · {{ u.email }}</template></span>
+      <SetCard title="成员">
+        <template #aside><span class="muted small">{{ others.length }} 人</span></template>
+        <Skeleton v-if="!users" variant="list" :rows="4" />
+        <div v-for="u in others" v-else :key="u.id" class="person" :class="{ dead: u.disabledAt, open: openUser === u.id }">
+          <button type="button" class="person-row as-btn" :aria-expanded="openUser === u.id" @click="openUser = openUser === u.id ? null : u.id">
+            <span class="avatar" aria-hidden="true"><img v-if="u.avatar" :src="u.avatar" alt="" referrerpolicy="no-referrer" /><template v-else>{{ initial(u.name) }}</template></span>
+            <span class="p-name ellipsis">{{ u.name }}</span>
+            <span class="p-role">{{ u.disabledAt ? "已停用" : roleName(u.role) }}</span>
+            <span class="p-meta">{{ u.role === "owner" ? "全部空间" : `${u.spaces.length} 个空间` }}</span>
+            <span class="p-meta p-seen" :title="u.lastSeenAt ? fmtTime(u.lastSeenAt) : ''">{{ u.lastSeenAt ? relTime(u.lastSeenAt) : "没登录过" }}</span>
+            <Icon name="down" :size="14" class="p-chev" />
+          </button>
+          <div v-if="openUser === u.id" class="p-body">
+            <div class="p-line small">
+              <span class="p-k">编号</span><code class="muted">{{ u.id }}</code>
             </div>
-            <span class="spacer" />
-            <span v-if="u.role === 'owner'" class="badge accent">主人</span>
-            <UiSelect v-else-if="isOwner" :model-value="u.role" size="sm" width="130px" :aria-label="`${u.name}的全局角色`" :options="globalRoles.map((r) => ({ value: r.id, label: r.name, hint: r.builtin ? '' : '自定义' }))" @change="(v) => act(u, { role: v }, '已改角色')" />
-            <span v-else class="badge">{{ roleName(u.role) }}</span>
-            <template v-if="u.role !== 'owner'">
+            <div class="p-line small">
+              <span class="p-k">邮箱</span>
+              <button v-if="u.role !== 'owner'" class="link-btn" :title="`改 ${u.name} 的邮箱`" @click="editEmail(u)">{{ u.email || "没有邮箱，点这里填" }}</button>
+              <span v-else>{{ u.email || "—" }}</span>
+            </div>
+            <div v-if="u.role !== 'owner' && isOwner" class="p-line small">
+              <span class="p-k">全局角色</span>
+              <UiSelect :model-value="u.role" size="sm" width="130px" :aria-label="`${u.name}的全局角色`" :options="globalRoles.map((r) => ({ value: r.id, label: r.name, hint: r.builtin ? '' : '自定义' }))" @change="(v) => act(u, { role: v }, '已改角色')" />
+            </div>
+            <div class="p-line small">
+              <span class="p-k">登录身份</span>
+              <span class="chips">
+                <span v-for="a in accounts(u)" :key="a.key" class="badge" :title="idsHint(a)">
+                  {{ a.provider }} · {{ a.display }}
+                  <button v-if="u.role !== 'owner'" class="x" :aria-label="`解绑 ${a.provider}账号`" title="解绑这个账号" @click="unbind(u, a)">×</button>
+                </span>
+                <span v-if="!u.identities.length" class="muted">没有绑定任何身份</span>
+              </span>
+            </div>
+            <div v-if="u.role !== 'owner'" class="p-line small">
+              <span class="p-k">空间</span>
+              <span class="chips">
+                <span v-for="s in u.spaces" :key="s.space" class="space-chip">
+                  <span class="ellipsis">{{ s.name }}</span>
+                  <span v-if="s.space.startsWith('personal')" class="muted">{{ roleName(s.role) }}</span>
+                  <UiSelect v-else variant="inline" :model-value="s.role === 'owner' ? 'manager' : s.role" :aria-label="`${s.name}里的角色`" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, s.space, v)" />
+                  <button v-if="!s.space.startsWith('personal')" class="x" :aria-label="`移出 ${s.name}`" title="移出这个空间" @click="setSpace(u, s.space, null)">×</button>
+                </span>
+                <span class="space-chip add">
+                  <UiSelect variant="inline" :model-value="adding[u.id] ?? ''" placeholder="＋ 加入空间" aria-label="加入空间" :options="spaceOptions.filter((o) => !u.spaces.some((s) => s.space === o.value))" @change="(v) => (adding[u.id] = v)" />
+                  <UiSelect v-if="adding[u.id]" variant="inline" :model-value="''" placeholder="选角色" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, adding[u.id], v)" />
+                </span>
+              </span>
+            </div>
+            <UiCheckbox v-if="u.role !== 'owner' && auth.primary" :model-value="u.loginAny" size="sm" @change="(v) => act(u, { loginAny: v }, '已保存')">允许用{{ label(auth.primary) }}以外的方式登录（企业外的人）</UiCheckbox>
+            <div v-if="u.role !== 'owner'" class="row wrap">
+              <span class="spacer" />
               <button v-if="!u.disabledAt" class="btn ghost sm" @click="signOutAll(u)">让所有设备退出</button>
               <button v-if="u.disabledAt" class="btn sm" @click="act(u, { disabled: false }, '已启用')">启用</button>
               <button v-else class="btn ghost sm danger" @click="disable(u)">停用</button>
-            </template>
-          </div>
-          <div class="small chips">
-            <span v-for="a in accounts(u)" :key="a.key" class="badge" :title="idsHint(a)">
-              {{ a.provider }} · {{ a.display }}
-              <button v-if="u.role !== 'owner'" class="x" :aria-label="`解绑 ${a.provider}账号`" title="解绑这个账号" @click="unbind(u, a)">×</button>
-            </span>
-            <span v-if="!u.identities.length" class="muted">没有绑定任何身份</span>
-          </div>
-          <template v-if="u.role !== 'owner'">
-            <div class="small chips">
-              <span class="muted">空间：</span>
-              <span v-for="s in u.spaces" :key="s.space" class="space-chip">
-                <span class="ellipsis">{{ s.name }}</span>
-                <span v-if="s.space.startsWith('personal')" class="muted">{{ roleName(s.role) }}</span>
-                <UiSelect v-else variant="inline" :model-value="s.role === 'owner' ? 'manager' : s.role" :aria-label="`${s.name}里的角色`" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, s.space, v)" />
-                <button v-if="!s.space.startsWith('personal')" class="x" :aria-label="`移出 ${s.name}`" title="移出这个空间" @click="setSpace(u, s.space, null)">×</button>
-              </span>
-              <span class="space-chip add">
-                <UiSelect variant="inline" :model-value="adding[u.id] ?? ''" placeholder="＋ 加入空间" aria-label="加入空间" :options="spaceOptions.filter((o) => !u.spaces.some((s) => s.space === o.value))" @change="(v) => (adding[u.id] = v)" />
-                <UiSelect v-if="adding[u.id]" variant="inline" :model-value="''" placeholder="选角色" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, adding[u.id], v)" />
-              </span>
             </div>
-            <UiCheckbox v-if="auth.primary" :model-value="u.loginAny" size="sm" @change="(v) => act(u, { loginAny: v }, '已保存')">允许用{{ label(auth.primary) }}以外的方式登录（企业外的人）</UiCheckbox>
-          </template>
-        </div>
-      </div>
-
-      <h2 class="section-title">按邮箱添加成员</h2>
-      <div class="card pad stack">
-        <HelpText>先建好账号、分好空间。之后谁用这个邮箱来——飞书本企业的账号登录，或从命令行带着鉴权插件认得的凭据——就直接对应到这个账号，不用再批准。</HelpText>
-        <div class="row wrap">
-          <input v-model="ahead.name" class="input" placeholder="名字" maxlength="60" aria-label="名字" />
-          <input v-model="ahead.email" class="input" type="email" placeholder="邮箱" maxlength="200" aria-label="邮箱" />
-        </div>
-        <div class="row wrap">
-          <span class="small muted">全局角色</span>
-          <UiSelect v-model="ahead.role" size="sm" width="120px" aria-label="全局角色" :options="globalRoles.filter((r) => isOwner || r.id === 'member').map((r) => ({ value: r.id, label: r.name }))" />
-          <UiSelect :model-value="''" size="sm" width="160px" placeholder="加入空间…" aria-label="加入的空间" :options="spaceOptions.filter((o) => !ahead.spaces.some((s) => s.space === o.value))" @change="(v) => ahead.spaces.push({ space: v, role: 'reader' })" />
-        </div>
-        <div v-if="ahead.spaces.length" class="small chips">
-          <span v-for="s in ahead.spaces" :key="s.space" class="space-chip">
-            <span class="ellipsis">{{ spaceOptions.find((o) => o.value === s.space)?.label ?? s.space }}</span>
-            <UiSelect v-model="s.role" variant="inline" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" />
-            <button class="x" aria-label="去掉" title="去掉这个空间" @click="ahead.spaces = ahead.spaces.filter((x) => x.space !== s.space)">×</button>
-          </span>
-        </div>
-        <div class="row wrap">
-          <UiCheckbox v-if="auth.primary" v-model="ahead.loginAny" size="sm">允许用{{ label(auth.primary) }}以外的方式登录网页（还没有{{ label(auth.primary) }}的人）</UiCheckbox>
-          <span class="spacer" />
-          <button class="btn sm primary" :disabled="!ahead.name.trim() || !ahead.email.trim()" @click="addAhead">添加</button>
-        </div>
-      </div>
-
-      <h2 class="section-title">邀请链接</h2>
-      <div class="card pad stack">
-        <p class="muted small">用邀请链接登录的人直接建好账号，不用再批准，带上选的全局角色并加入下面的空间。链接只能用一次。</p>
-        <div class="row wrap">
-          <span class="small muted">全局角色</span>
-          <UiSelect v-model="form.role" size="sm" width="120px" aria-label="邀请的全局角色" :options="globalRoles.filter((r) => isOwner || r.id === 'member').map((r) => ({ value: r.id, label: r.name }))" />
-          <UiSelect :model-value="''" size="sm" width="160px" placeholder="加入空间…" aria-label="邀请加入的空间" :options="spaceOptions.filter((o) => !form.spaces.some((s) => s.space === o.value))" @change="(v) => form.spaces.push({ space: v, role: 'reader' })" />
-        </div>
-        <div v-if="form.spaces.length" class="small chips">
-          <span v-for="s in form.spaces" :key="s.space" class="space-chip">
-            <span class="ellipsis">{{ spaceOptions.find((o) => o.value === s.space)?.label ?? s.space }}</span>
-            <UiSelect v-model="s.role" variant="inline" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" />
-            <button class="x" aria-label="去掉" title="去掉这个空间" @click="form.spaces = form.spaces.filter((x) => x.space !== s.space)">×</button>
-          </span>
-        </div>
-        <div class="row wrap">
-          <input v-model="form.note" class="input" placeholder="备注（对方能看到，如：项目 A 的同事）" maxlength="200" />
-          <UiSelect v-model="form.days" size="sm" width="110px" aria-label="有效期" :options="[{ value: '1', label: '1 天' }, { value: '7', label: '7 天' }, { value: '30', label: '30 天' }]" />
-          <UiCheckbox v-if="auth.primary" v-model="form.allowAny" size="sm">允许用其他方式登录</UiCheckbox>
-          <button class="btn sm primary" @click="createInvite">生成邀请链接</button>
-        </div>
-        <div v-if="made" class="made row wrap">
-          <span class="mono small break">{{ made }}</span>
-          <button class="btn sm" @click="copy(made)">复制</button>
-          <span class="muted small">只显示这一次。</span>
-        </div>
-        <div v-for="i in invites" :key="i.id" class="row wrap small invite">
-          <span>{{ i.note || "（无备注）" }}</span>
-          <span class="muted">{{ roleName(i.role) }}{{ i.spaces.length ? " · " + i.spaces.map((s) => `${s.space}（${roleName(s.role)}）`).join("、") : "" }}</span>
-          <span class="spacer" />
-          <span class="muted">{{ inviteStatus(i) }}</span>
-          <button v-if="!i.revokedAt && !i.usedAt" class="btn ghost sm danger" @click="revoke(i)">撤销</button>
-        </div>
-      </div>
-
-      <h2 class="section-title">角色</h2>
-      <div class="card pad stack">
-        <HelpText>全局角色决定能不能改 Agent、规则、建空间等全库共用的事，也可以给“所有空间”的权限（别人的个人空间除外）；空间角色决定在一个空间里能读、写什么。内置角色不能改，复制一份再改。</HelpText>
-        <div v-if="draft" class="card pad stack editor">
-          <strong>{{ draft.id ? "编辑角色" : `新建${draft.scope === "global" ? "全局" : "空间"}角色` }}</strong>
-          <input v-model="draft.name" class="input" placeholder="名字，如：审稿人" maxlength="40" />
-          <input v-model="draft.description" class="input" placeholder="一句话说明" maxlength="200" />
-          <div class="perm-grid">
-            <UiCheckbox v-for="p in permChoices(draft.scope)" :key="p" v-model="draft.permissions" :value="p" size="sm">{{ permLabel(p) }}</UiCheckbox>
           </div>
-          <div class="row"><button class="btn sm primary" @click="saveRole">保存</button><button class="btn ghost sm" @click="draft = null">取消</button></div>
         </div>
-        <div v-for="scope in ['global', 'space'] as const" :key="scope" class="stack roles">
-          <div class="row"><strong>{{ scope === "global" ? "全局角色" : "空间角色" }}</strong><span class="spacer" /><button v-if="isOwner" class="btn ghost sm" @click="editRole(undefined, scope)">新建</button></div>
-          <div v-for="r in (roles?.roles ?? []).filter((x) => x.scope === scope)" :key="r.id" class="role">
-            <div class="row wrap">
-              <strong>{{ r.name }}</strong><span class="muted small mono">{{ r.id }}</span><span v-if="!r.builtin" class="badge">自定义</span>
-              <span class="spacer" />
-              <template v-if="isOwner && r.id !== 'owner'">
-                <button class="btn ghost sm" @click="editRole(r)">{{ r.builtin ? "复制" : "编辑" }}</button>
-                <button v-if="!r.builtin" class="btn ghost sm danger" @click="deleteRole(r)">删除</button>
-              </template>
+      </SetCard>
+
+      <slot name="after-members" />
+
+      <SetCard title="角色">
+        <template #help>全局角色决定能不能改 Agent、规则、建空间等全库共用的事，也可以给“所有空间”的权限（别人的个人空间除外）；空间角色决定在一个空间里能读、写什么。内置角色不能改，复制一份再改。</template>
+        <SetRow label="角色对照" :hint="`${(roles?.roles ?? []).filter((r) => r.scope === 'global').length} 个全局角色、${(roles?.roles ?? []).filter((r) => r.scope === 'space').length} 个空间角色，各自有哪些权限`">
+          <button class="btn ghost sm" :aria-expanded="showRoles" @click="showRoles = !showRoles">{{ showRoles ? "收起" : "展开" }}</button>
+        </SetRow>
+        <template v-if="showRoles">
+          <div v-if="draft" class="set-pad editor">
+            <strong>{{ draft.id ? "编辑角色" : `新建${draft.scope === "global" ? "全局" : "空间"}角色` }}</strong>
+            <input v-model="draft.name" class="input sm" placeholder="名字，如：审稿人" maxlength="40" aria-label="角色名字" />
+            <input v-model="draft.description" class="input sm" placeholder="一句话说明" maxlength="200" aria-label="角色说明" />
+            <div class="perm-grid">
+              <UiCheckbox v-for="p in permChoices(draft.scope)" :key="p" v-model="draft.permissions" :value="p" size="sm">{{ permLabel(p) }}</UiCheckbox>
             </div>
-            <p class="muted small">{{ r.description }}</p>
-            <p class="small perms">{{ r.id === "owner" ? "全部" : r.permissions.map(permLabel).join("、") || "（没有额外权限）" }}</p>
+            <div class="row"><button class="btn sm primary" @click="saveRole">保存</button><button class="btn ghost sm" @click="draft = null">取消</button></div>
           </div>
+          <div v-for="scope in ['global', 'space'] as const" :key="scope" class="set-pad roles">
+            <div class="row"><span class="small muted">{{ scope === "global" ? "全局角色" : "空间角色" }}</span><span class="spacer" /><button v-if="isOwner" class="btn ghost sm" @click="editRole(undefined, scope)">新建</button></div>
+            <div v-for="r in (roles?.roles ?? []).filter((x) => x.scope === scope)" :key="r.id" class="role">
+              <div class="role-name">
+                <span>{{ r.name }}</span><span v-if="!r.builtin" class="badge">自定义</span>
+                <span class="spacer" />
+                <template v-if="isOwner && r.id !== 'owner'">
+                  <button class="btn ghost sm" @click="editRole(r)">{{ r.builtin ? "复制" : "编辑" }}</button>
+                  <button v-if="!r.builtin" class="btn ghost sm danger" @click="deleteRole(r)">删除</button>
+                </template>
+              </div>
+              <p v-if="r.description" class="muted small">{{ r.description }}</p>
+              <p class="small perms">{{ r.id === "owner" ? "全部" : r.permissions.map(permLabel).join("、") || "（没有额外权限）" }}</p>
+            </div>
+          </div>
+        </template>
+        <SetRow label="改动记录" hint="谁改了角色、成员、身份、邀请和分享">
+          <button class="btn ghost sm" :aria-expanded="showLog" @click="toggleLog">{{ showLog ? "收起" : "查看" }}</button>
+        </SetRow>
+        <div v-if="showLog" class="set-pad small">
+          <div v-for="a in log" :key="a.id" class="line">
+            <span class="muted nowrap">{{ fmtTime(a.at) }}</span>
+            <span>{{ userName(a.actor) }} {{ ACTIONS[a.action] ?? a.action }}</span>
+            <code class="muted ellipsis">{{ a.target }}</code>
+            <span v-if="a.detail.role || a.detail.user" class="muted">{{ [a.detail.user ? userName(String(a.detail.user)) : "", a.detail.role ? roleName(String(a.detail.role)) : ""].filter(Boolean).join(" → ") }}</span>
+          </div>
+          <p v-if="!log.length" class="muted">还没有改动。</p>
         </div>
-      </div>
-
-      <div class="row"><button class="btn ghost sm" @click="toggleLog">{{ showLog ? "收起改动记录" : "看改动记录" }}</button></div>
-      <div v-if="showLog" class="card pad stack small">
-        <div v-for="a in log" :key="a.id" class="row wrap log">
-          <span class="muted">{{ fmtTime(a.at) }}</span>
-          <span>{{ userName(a.actor) }} {{ ACTIONS[a.action] ?? a.action }}</span>
-          <span class="mono muted">{{ a.target }}</span>
-          <span v-if="a.detail.role || a.detail.user" class="muted">{{ [a.detail.user ? userName(String(a.detail.user)) : "", a.detail.role ? roleName(String(a.detail.role)) : ""].filter(Boolean).join(" → ") }}</span>
-        </div>
-        <p v-if="!log.length" class="muted">还没有改动。</p>
-      </div>
+      </SetCard>
     </template>
   </div>
 </template>
 
 <style scoped>
-.provider {
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-  gap: 4px;
+.warn-text {
+  color: var(--warn);
 }
-.list {
+.primary-badge {
+  margin-left: 8px;
+}
+.cb {
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   gap: 8px;
 }
-.list .card {
-  gap: 8px;
+.grow-in {
+  flex: 1 1 180px;
   min-width: 0;
 }
-.dead {
-  opacity: 0.65;
-}
-.tight {
-  gap: 2px;
+.grow {
+  flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
 }
-.avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  flex: none;
+.nowrap {
+  white-space: nowrap;
 }
 .chips {
   display: flex;
@@ -460,9 +480,6 @@ onMounted(() => load().catch(fail));
   min-width: 0;
 }
 .badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
   max-width: 100%;
   overflow-wrap: anywhere;
 }
@@ -497,15 +514,120 @@ onMounted(() => load().catch(fail));
 .x:hover {
   color: var(--danger);
 }
-.break {
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
 .made {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   background: var(--sunken);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
+}
+.line {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+.line .btn {
+  flex: none;
+}
+/* One person per row: initial, name, role, spaces, last seen; the rest opens under it. */
+.person {
+  border-top: 1px solid var(--line);
+}
+.person.dead .person-row {
+  opacity: 0.6;
+}
+.person-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1.2fr) minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 0.8fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+}
+.person > .person-row {
+  border-top: 0;
+}
+.as-btn {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.as-btn:hover {
+  background: var(--hover);
+}
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.p-name {
+  font-size: 14px;
+  color: var(--ink);
+}
+.p-role {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.p-meta {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.p-ops {
+  display: flex;
+  gap: 4px;
+  grid-column: span 3;
+  justify-content: flex-end;
+}
+.p-chev {
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.person.open .p-chev {
+  transform: rotate(180deg);
+}
+.p-body {
+  display: grid;
+  gap: 10px;
+  padding: 4px 18px 16px 58px;
+  min-width: 0;
+}
+.p-line {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.p-line > .p-k {
+  color: var(--muted);
+}
+.p-line > :not(.p-k) {
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
 }
 .link-btn {
   all: unset;
@@ -518,28 +640,25 @@ onMounted(() => load().catch(fail));
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.invite,
-.log {
-  border-top: 1px solid var(--line);
-  padding-top: 6px;
-  gap: 8px;
-}
-.input {
-  flex: 1;
-  min-width: 180px;
-}
 .roles {
-  gap: 6px;
+  gap: 0;
 }
 .role {
+  padding: 8px 0;
   border-top: 1px solid var(--line);
-  padding-top: 8px;
   min-width: 0;
+}
+.role-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
 }
 .role p {
   margin: 2px 0 0;
 }
 .perms {
+  color: var(--ink-2);
   overflow-wrap: anywhere;
 }
 .editor {
@@ -549,5 +668,24 @@ onMounted(() => load().catch(fail));
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 6px 12px;
+}
+@media (max-width: 640px) {
+  .person-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto auto;
+    padding: 8px 14px;
+  }
+  .person-row .p-meta {
+    display: none;
+  }
+  .p-ops {
+    grid-column: 1 / -1;
+  }
+  .p-body {
+    padding: 4px 14px 16px;
+  }
+  .p-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
 }
 </style>

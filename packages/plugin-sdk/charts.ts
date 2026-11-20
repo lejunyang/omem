@@ -71,8 +71,11 @@ export type MetricItem = {
   hint?: string;
   /** A short word beside the label in a warm pill (“待确认”). */
   tag?: string;
+  /** No number yet: this line (“还没取到 · 下次 02:50”) stands where the number would, at its height, instead of a dash. */
+  pending?: string;
 };
-export type MetricGroup = { title?: string; items: MetricItem[]; note?: string };
+/** `even`: every figure the same shape — the label at most two lines, the line under the number one — so a grid of many lines up. */
+export type MetricGroup = { title?: string; items: MetricItem[]; note?: string; even?: boolean };
 /** `select`: every figure is a button that opens its details (omem's own pages); the page marks the open one with `aria-expanded`. */
 export type MetricsOptions = { select?: (index: number) => void };
 
@@ -172,6 +175,13 @@ button.oc-metric[aria-expanded="true"] { background: var(--accent-soft, var(--ho
 .oc-delta { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 .oc-delta[data-tone="good"] { color: var(--ok); }
 .oc-delta[data-tone="bad"] { color: var(--danger); }
+.oc-even .oc-metrics { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+@container (max-width: 520px) { .oc-even .oc-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.oc-mpending { display: flex; align-items: center; min-height: 34.5px; font-size: 12.5px; color: var(--ink-2); }
+.oc-even .oc-mlabel { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; line-height: 1.5; }
+.oc-even .oc-mfoot { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }
+.oc-even .oc-mfoot > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.oc-even .oc-mfoot > .oc-delta { flex: none; }
 .oc-spark { width: 100%; max-width: 150px; height: auto; display: block; margin-top: 6px; overflow: visible; }
 .oc-spark-hair { stroke: var(--chart-seq-2); stroke-width: 1; }
 .oc-spark-line { fill: none; stroke: var(--chart-seq-3); stroke-width: 1.25; stroke-linejoin: round; stroke-linecap: round; }
@@ -1152,8 +1162,10 @@ function metricEl(doc: Document, m: MetricItem, select?: () => void) {
   if (select) el.addEventListener("click", select);
   const value = String(m.value);
   el.append(
-    h(doc, "span", { class: "oc-mlabel" }, m.label, m.tag ? h(doc, "span", { class: "oc-mtag" }, m.tag) : null),
-    h(doc, "span", { class: "oc-mvalue", "aria-label": `${value}${m.unit?.trim() ?? ""}` }, h(doc, "b", { class: "oc-count", "aria-hidden": "true" }, value), m.unit?.trim() ? h(doc, "span", { "aria-hidden": "true" }, m.unit.trim()) : null),
+    h(doc, "span", { class: "oc-mlabel", title: m.hint ? undefined : m.label }, m.label, m.tag ? h(doc, "span", { class: "oc-mtag" }, m.tag) : null),
+    m.pending
+      ? h(doc, "span", { class: "oc-mpending" }, m.pending)
+      : h(doc, "span", { class: "oc-mvalue", "aria-label": `${value}${m.unit?.trim() ?? ""}` }, h(doc, "b", { class: "oc-count", "aria-hidden": "true" }, value), m.unit?.trim() ? h(doc, "span", { "aria-hidden": "true" }, m.unit.trim()) : null),
   );
   if (change || m.note) el.append(h(doc, "span", { class: "oc-mfoot" }, change ? h(doc, "span", { class: "oc-delta", "data-tone": tone || "neutral" }, `${arrow}${change}`) : null, m.note ? h(doc, "span", {}, m.note) : null));
   if (m.spark && m.spark.length > 1) el.append(sparkline(doc, m.spark, `${m.label}最近的走势：${m.spark.map(full).join("、")}`));
@@ -1167,7 +1179,7 @@ export function metricsElement(doc: Document, g: MetricGroup, opts: MetricsOptio
   const cols = n <= 4 ? n : n <= 6 ? 3 : 4;
   const select = opts.select;
   const row = h(doc, "div", { class: "oc-metrics", style: `--cols:${cols};--cols-narrow:${Math.min(2, n)}` }, ...g.items.map((m, i) => metricEl(doc, m, select ? () => select(i) : undefined)));
-  const el = h(doc, "div", { class: "oc-mgroup" },
+  const el = h(doc, "div", { class: g.even ? "oc-mgroup oc-even" : "oc-mgroup" },
     g.title ? h(doc, "span", { class: "oc-mtitle" }, g.title) : null,
     row,
     g.note ? h(doc, "p", { class: "oc-note" }, g.note) : null);

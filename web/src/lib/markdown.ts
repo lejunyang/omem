@@ -17,6 +17,9 @@ import xml from "highlight.js/lib/languages/xml";
 import yamlLang from "highlight.js/lib/languages/yaml";
 import { Marked } from "marked";
 import { docBlocks } from "./doc-layout";
+import { unblock } from "./plain";
+
+export { plainLine } from "./plain";
 
 for (const [name, lang] of Object.entries({ bash, css, diff, go, java, javascript, json: jsonLang, markdown: markdownLang, python, rust, sql, typescript, xml, yaml: yamlLang }))
   hljs.registerLanguage(name, lang);
@@ -94,14 +97,27 @@ function preprocess(md: string) {
     .replace(/<a\b([^>]*?)\bhref="src:([\w-]+)"/g, (_, pre: string, id: string) => `<a${pre}href="#" class="cite doc" data-cite="source" data-ref="${id}"`)
     .replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_, target: string, label?: string) => `[${(label ?? target.split("/").pop() ?? target).replace(/[[\]]/g, "")}](wiki:${encodeURIComponent(target.trim())})`)
     // A bare reference in parentheses counts, a written link's target `](mem:…)` / `](src:…#L3-L9)` does not.
-    .replace(/(^|[\s（，,]|(?<!\])\()((?:mem|msg):[a-z0-9]{8,})/g, (_, pre, ref) => `${pre}[${ref.startsWith("mem") ? "记忆" : "消息"}](${ref})`)
+    .replace(/(^|[\s（，,、：:。；;]|(?<!\])\()((?:mem|msg):[a-z0-9]{8,})/g, (_, pre, ref) => `${pre}[${ref.startsWith("mem") ? "记忆" : "消息"}](${ref})`)
     // A bare source reference (src:<id>#L起-L止) in an Agent's question or note opens the original like a written link.
-    .replace(/(^|[\s（，,、：:]|(?<!\])\()src:([\w-]{8,})(#L\d+(?:-L?\d+)?)?(?![\w#)\]-])/g, (_, pre: string, id: string, at = "") => `${pre}[原文${at ? ` ${at.slice(1)}` : ""}](src:${id}${at})`);
+    .replace(/(^|[\s（，,、：:。；;]|(?<!\])\()src:([\w-]{8,})(#L\d+(?:-L?\d+)?)?(?![\w#)\]-])/g, (_, pre: string, id: string, at = "") => `${pre}[原文${at ? ` ${at.slice(1)}` : ""}](src:${id}${at})`);
 }
+
+const KEPT_ATTRS = ["data-cite", "data-ref", "data-uri", "data-from", "data-to", "data-wiki", "data-mermaid", "data-chart", "target"];
 
 export function renderMarkdown(md: string, opts: { breaks?: boolean } = {}): string {
   const html = marked.parse(preprocess(md ?? ""), { async: false, breaks: !!opts.breaks }) as string;
-  return DOMPurify.sanitize(html, { ADD_ATTR: ["data-cite", "data-ref", "data-uri", "data-from", "data-to", "data-wiki", "data-mermaid", "data-chart", "target"] });
+  return DOMPurify.sanitize(html, { ADD_ATTR: KEPT_ATTRS });
+}
+
+/**
+ * A short text shown in a line or a few (a reason, a summary, a row's subtitle): emphasis, code, links
+ * and references as in a page, nothing that makes a block. Lines join into one unless `breaks`.
+ */
+export function renderInline(md: string, opts: { breaks?: boolean } = {}): string {
+  const flat = unblock(md);
+  const text = opts.breaks ? flat : flat.replace(/\s*\n\s*/g, " ");
+  const html = marked.parseInline(preprocess(text), { async: false, breaks: !!opts.breaks }) as string;
+  return DOMPurify.sanitize(html, { ADD_ATTR: KEPT_ATTRS });
 }
 
 let mermaidLoader: Promise<typeof import("mermaid").default> | null = null;

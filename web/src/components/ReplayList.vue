@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { get, post } from "../api";
 import { relTime, toast } from "../store";
 import Skeleton from "./Skeleton.vue";
+import { plainLine } from "../lib/markdown";
 
 /**
  * Nightly replays and their verdicts (src/agents/replay.ts): each past question answered again as of
@@ -50,11 +51,11 @@ const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v 
     <p v-else-if="failed" class="muted small">{{ failed }}</p>
     <template v-else-if="list">
       <p v-if="status?.notice" class="warn small">{{ status.notice }} <RouterLink :to="{ path: '/agents', query: { tab: 'agents', role: 'replay-judge' } }">打开 replay-judge</RouterLink></p>
-      <p v-if="!list.length" class="muted small">还没有复盘。打开设置 → AI → 夜间复盘的定时，或点“立即运行”。</p>
+      <p v-if="!list.length" class="muted small">还没有复盘。打开设置 → 自检与复盘 → 夜间复盘的定时，或点“立即运行”。</p>
       <div v-for="r in list" :key="r.id" class="rp-row">
         <div class="rp-line">
           <span class="badge" :class="badge(r.verdict)">{{ r.verdictLabel }}</span>
-          <span class="q">{{ r.question }}</span>
+          <span class="q" :title="plainLine(r.question, 400)">{{ plainLine(r.question, 140) }}</span>
         </div>
         <div class="muted small">
           {{ relTime(r.at) }} · {{ SIGNAL[r.signal] ?? r.signal }} → <span class="mono">{{ r.axis }}</span> {{ r.axisLabel }}<template v-if="r.taskType"> · {{ r.taskType }}</template><template v-if="r.by === 'checks'"> · 由引用检查判定</template><template v-else-if="r.agree === false"> · 两种顺序不一致</template>

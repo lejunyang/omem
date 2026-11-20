@@ -7,6 +7,7 @@ import { networkBlock } from "../lib/network-status";
 import { toast } from "../store";
 import { fmt } from "../lib/time";
 import Icon from "./Icon.vue";
+import MonoLine from "./MonoLine.vue";
 import UiSelect from "./UiSelect.vue";
 import AiNetworkConditions from "./AiNetworkConditions.vue";
 
@@ -247,7 +248,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
         <div v-for="p in profiles" :key="p.id" class="cmd">
           <div class="row small">
             <span class="badge">{{ KIND[p.transport] ?? p.transport }}</span>
-            <span class="mono grow ell">{{ p.command }} {{ p.args.join(" ") }}</span>
+            <MonoLine class="cmd-line" :text="`${p.command} ${p.args.join(' ')}`.trim()" copy />
             <button class="btn ghost sm" @click="editProfile(p)">{{ editing === p.id ? "收起" : "编辑配置" }}</button>
           </div>
           <div v-if="p === acp && (checking || adapter?.package)" class="row wrap small adapter">
@@ -358,6 +359,10 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
 .part p { margin: 0; }
 .lbl { min-width: 2.5em; }
 .cmd { display: grid; gap: 8px; min-width: 0; }
+/* The command line can be a long path: it stays on its row, ellipsized, whole on hover and copyable. */
+.cmd > .row { min-width: 0; }
+.cmd-line { flex: 1 1 0; }
+.be-body > * { min-width: 0; }
 .adapter { padding-left: 2px; }
 .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mrow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: start; }

@@ -54,7 +54,7 @@ describe("voice for plugin pages", () => {
       expect(before.detail).toBeTruthy();
       const refused = await server.inject({ method: "POST", url: "/api/plugins/english/voice/realtime/secret", payload: { instructions: "Play a waiter." } });
       expect(refused.statusCode).toBe(409);
-      expect(refused.json().error).toMatch(/设置 → AI → 语音/);
+      expect(refused.json().error).toMatch(/设置 → 后端与模型 → 语音/);
 
       const calls = withVoice(app);
       expect((await server.inject({ url: "/api/plugins/english/voice" })).json()).toMatchObject({ allowed: true, ready: true, api: "realtime" });
