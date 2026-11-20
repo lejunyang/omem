@@ -3,7 +3,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
 import { nodeId } from "../core/peers.ts";
 import { addWorkMessage, enqueueCoordination, queueAgentRound, refreshWork, saveWork, type AgentWork, type AssistantScope } from "./agent-work.ts";
-import { cancelRun, type Run } from "./runs.ts";
+import { cancelRun, getRun, setRunOutput, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
 
 export const boardTools = ["dispatch_work", "work_status", "work_review", "work_cancel"];
@@ -36,6 +36,7 @@ export function dispatchBoard(app: App, work: AgentWork, plans: TaskPlan[], by: 
       attempt(app, workId, id, { ...plan, deadline_minutes: minutes }, by);
       return id;
     });
+    setRunOutput(app, workId, { boardSummaryRunId: null });
     coordinateIfReady(app, workId);
     return ids;
   });
@@ -70,8 +71,16 @@ export function readBoard(app: App, id: string) {
   const work = refreshWork(app, id)!;
   const required = tasks.filter(t => t.required || t.verdict?.decision === "redo");
   const status = required.some(t => ["pending","running","rejected"].includes(t.status)) ? "running"
-    : tasks.some(t => ["done","failed"].includes(t.status)) ? "review" : "summarized";
+    : getRun(app, id).output.boardSummaryRunId ? "summarized" : "review";
   return { workId: id, title: work.title, askRunId: id, rootConversationId: work.rootConversationId, workConversationId: work.workConversationId, status, tasks };
+}
+
+export function noteBoardSummary(app: App, workId: string, runId: string) {
+  if (!one(app.db, "select 1 from agent_work_tasks where work_id=? limit 1", workId)) return;
+  if (one(app.db, `select 1 from agent_work_tasks where work_id=? and (required=1 or verdict is not null)
+    and status not in ('accepted','blocked','cancelled') limit 1`, workId)) return;
+  setRunOutput(app, workId, { boardSummaryRunId: runId });
+  app.emit({ type: "work", workId });
 }
 
 // Called inside the same write transaction as settlement. Clearing notice consumes this wave once.
@@ -123,6 +132,7 @@ export function reviewBoard(app: App, workId: string, decisions: Decision[], by:
         if (JSON.parse(t.attempts).length >= 3) throw new HttpError(400, "每块最多重做 2 次，请接受或标阻塞");
         const execution = d.execution ?? JSON.parse(t.execution ?? "null") ?? undefined;
         run(app.db, "update agent_work_tasks set notice=1, execution=? where id=?", JSON.stringify(execution ?? null), t.id);
+        setRunOutput(app, workId, { boardSummaryRunId: null });
         attempt(app, workId, t.id, { ...t, required: !!t.required, agent: t.agent ?? undefined, scope: JSON.parse(t.scope), spaceId: t.space_id ?? undefined, execution }, by, d.note);
       }
     }

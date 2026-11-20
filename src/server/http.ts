@@ -1600,6 +1600,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!work) throw new HttpError(404, "没有这次交办");
     return work;
   });
+  server.get("/api/agent-work/:id/board", async (req) => {
+    const { readBoard } = await import("../agents/work-board.ts");
+    return readBoard(app, (req.params as { id: string }).id);
+  });
   // Who may read it is checked by the route (src/auth/routes.ts); its sub-runs only as far as they are readable too.
   server.get("/api/runs/:id", async (req) => {
     const id = (req.params as { id: string }).id;
@@ -1611,7 +1615,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       .filter((c, i, a) => a.findIndex((d) => d.id === c.id) === i)
       .filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
     const diff = r.kind === "code" ? codeDiffView(app, id) : null;
-    return { run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
+    const boardId = r.input.boardTaskId ? r.parentId : r.output.boardId ?? id;
+    const board = typeof boardId === "string" && one(app.db, "select 1 from agent_work_tasks where work_id=? limit 1", boardId)
+      ? { workId: boardId, taskId: r.input.boardTaskId } : undefined;
+    return { board, run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
   });
   // The owner read the follow-up and says the label is wrong (agents/reply-outcomes.ts).
   server.post("/api/runs/:id/reply-outcome", async (req) => {
