@@ -31,7 +31,7 @@ export type McpAccess = {
 
 /** Internal host callbacks: the backend reports ownership before exposing a new session. */
 export type SessionCleanup = {
-  created(sessionId: string): void;
+  created(sessionId: string, retain?: boolean): void;
   discard(sessionId: string, operation?: () => Promise<void>): Promise<void>;
   /** Archive disposable backend helpers after a turn, even when its parent is kept. */
   children?(sessionId: string): Promise<void>;

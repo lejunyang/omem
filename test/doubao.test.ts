@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { one } from "../src/core/db.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { checkDoubaoApp, doubaoAccessToken, readDoubaoTokens, runDoubao, saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
@@ -168,7 +169,7 @@ describe("doubao backend", () => {
     expect(deleted).toEqual(["replacement"]);
   });
 
-  it.each([undefined, "old"])("cancels the opening POST without starting another request (resume=%s)", async (resumeSessionId) => {
+  it("cancels the resume POST without starting another request", async () => {
     const app = authorizedApp();
     const cancel = new AbortController();
     const requests: string[] = [];
@@ -180,9 +181,88 @@ describe("doubao backend", () => {
       init?.signal?.throwIfAborted();
       throw new Error("opening POST missed cancellation");
     });
-    await expect(runBackend(app, profile, { cwd: app.home, prompt: "任务", signal: cancel.signal, resumeSessionId }, () => {})).rejects.toThrow("CANCELLED");
-    expect(requests).toEqual([`/open-apis/agent/v1/sessions${resumeSessionId ? "/old/events" : ""}`]);
+    await expect(runBackend(app, profile, { cwd: app.home, prompt: "任务", signal: cancel.signal, resumeSessionId: "old" }, () => {})).rejects.toThrow("CANCELLED");
+    expect(requests).toEqual(["/open-apis/agent/v1/sessions/old/events"]);
     expect(openingSignal?.aborted).toBe(true);
+  });
+
+  it.each([
+    { resumeSessionId: undefined, persistSession: false },
+    { resumeSessionId: "old", persistSession: true },
+  ])("collects the receipt after cancellation and releases the new session ($resumeSessionId, keep=$persistSession)", async ({ resumeSessionId, persistSession }) => {
+    const app = authorizedApp();
+    const cancel = new AbortController();
+    const events: AgentEvent[] = [];
+    const operations: string[] = [];
+    let readyAtReceipt: number | undefined;
+    setDoubaoFetchForTests(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      operations.push(`${init?.method} ${path}`);
+      if (path.endsWith("/old/events")) return new Response(null, { status: 404 });
+      if (path.endsWith("/v1/sessions")) {
+        const { uuid } = JSON.parse(String(init?.body));
+        expect(events).toContainEqual({ type: "status", text: `正在创建豆包会话（请求 ${uuid}）` });
+        // The server has created the session. Its receipt body is still in flight.
+        const body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            cancel.abort();
+            await Promise.resolve();
+            init?.signal?.throwIfAborted();
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({ code: 0, data: { id: "late", messages: [{ id: "Q1" }] } })));
+            controller.close();
+          },
+        });
+        return new Response(body);
+      }
+      if (persistSession && init?.method === "DELETE") return new Response(null, { status: 503 });
+      if (path.endsWith("/late/events")) expect(JSON.parse(String(init?.body)).events[0].type).toBe("user.interrupt");
+      return ok({});
+    });
+    await expect(runBackend(app, profile, {
+      cwd: app.home, prompt: "任务", signal: cancel.signal, resumeSessionId, persistSession,
+    }, e => {
+      events.push(e);
+      if (e.type === "session") {
+        readyAtReceipt = one<{ ready: number }>(app.db, "select ready from session_cleanup where session_id = ?", e.sessionId)?.ready;
+      }
+    })).rejects.toThrow("CANCELLED");
+    expect(readyAtReceipt).toBe(0);
+    expect(events).toContainEqual({ type: "session", sessionId: "late", resumed: false });
+    expect(operations).toEqual([
+      ...(resumeSessionId ? ["POST /open-apis/agent/v1/sessions/old/events"] : []),
+      "POST /open-apis/agent/v1/sessions", "POST /open-apis/agent/v1/sessions/late/events", "DELETE /open-apis/agent/v1/sessions/late",
+    ]);
+    const pending = one(app.db, "select ready, attempts from session_cleanup where session_id = ?", "late");
+    if (persistSession) expect(pending).toMatchObject({ ready: 1, attempts: 1 });
+    else expect(pending).toBeUndefined();
+  });
+
+  it("records the create request when the receipt deadline expires after cancellation", async () => {
+    const app = authorizedApp();
+    const cancel = new AbortController();
+    const deadline = new AbortController();
+    const events: AgentEvent[] = [];
+    let uuid = "";
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal);
+    try {
+      setDoubaoFetchForTests(async (_url, init) => {
+        uuid = JSON.parse(String(init?.body)).uuid;
+        cancel.abort();
+        expect(init?.signal?.aborted).toBe(false);
+        return new Response(new ReadableStream({
+          pull(controller) {
+            deadline.abort(new Error("receipt deadline"));
+            controller.error(init?.signal?.reason);
+          },
+        }));
+      });
+      await expect(runDoubao(profile, { cwd: app.home, prompt: "任务", signal: cancel.signal }, e => events.push(e), { home: app.home, app: botApp })).rejects.toThrow("CANCELLED");
+      expect(timeout).toHaveBeenCalledWith(30_000);
+      expect(events).toContainEqual({ type: "status", text: `取消时未取得豆包会话 ID（创建请求 ${uuid}）：receipt deadline` });
+      expect(events.some(e => e.type === "session")).toBe(false);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("interrupts and deletes a temporary session cancelled as soon as its id arrives", async () => {

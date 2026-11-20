@@ -197,13 +197,17 @@ type Message = { id: string; role: "user" | "assistant"; status: string; reply_i
 type Item = { id: string; type: string; seq?: number; text?: string; summary?: { text: string }[]; artifact_type?: string; name?: string; document?: { url?: string }; file?: { url?: string }; link?: { url?: string }; image?: { url?: string } };
 
 async function api<T>(token: string, method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const requestSignal = deadline(30_000, signal);
   const r = await fetchImpl(`${DOUBAO_BASE}${path}`, {
     method,
     headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
-    signal: deadline(30_000, signal),
+    signal: requestSignal,
   });
-  const v = (await r.json().catch(() => null)) as Envelope<T> | null;
+  const v = (await r.json().catch(() => {
+    requestSignal.throwIfAborted();
+    return null;
+  })) as Envelope<T> | null;
   if (!v || v.code !== 0) {
     const code = v?.code ?? r.status;
     const msg = `豆包接口 ${method} ${path.replace(/\/\d{6,}/g, "/…")}：${code} ${v?.msg ?? r.statusText}`;
@@ -281,7 +285,16 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   }
   if (!sessionId) {
     if (signal?.aborted) throw new Error("CANCELLED");
-    const d = await api<{ id: string; messages: Message[] }>(token, "POST", "/v1/sessions", { uuid: randomUUID(), initial_events: [userMessage(false)] }, signal);
+    const uuid = randomUUID();
+    emit({ type: "status", text: `正在创建豆包会话（请求 ${uuid}）` });
+    if (signal?.aborted) throw new Error("CANCELLED");
+    // Once sent, keep reading the receipt up to api's 30s deadline: the server may
+    // have created the session already. The run signal still stops the reply stream.
+    const d = await api<{ id: string; messages: Message[] }>(token, "POST", "/v1/sessions", { uuid, initial_events: [userMessage(false)] }).catch(error => {
+      if (!signal?.aborted) throw error;
+      emit({ type: "status", text: `取消时未取得豆包会话 ID（创建请求 ${uuid}）：${(error as Error).message}` });
+      throw new Error("CANCELLED");
+    });
     sessionId = d.id;
     // 读取回复前交出 ID，单次运行失败后也能清理会话。
     emit({ type: "session", sessionId, resumed: false });

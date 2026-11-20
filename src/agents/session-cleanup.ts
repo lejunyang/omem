@@ -52,7 +52,7 @@ export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<
       on conflict(backend_key,session_id) do update set run_id = coalesce(excluded.run_id, session_cleanup.run_id), owner_pid = excluded.owner_pid, ready = excluded.ready`, backend, id, profile.transport, profile.id, hash, appId, req.cwd, req.runId ?? null, process.pid, ready, now());
   };
   return {
-    created(id) { record(id, req.persistSession || id === req.resumeSessionId ? -1 : 0); },
+    created(id, retain = req.persistSession || id === req.resumeSessionId) { record(id, retain ? -1 : 0); },
     active(id, active) {
       const key = sessionKey(app, { backend_key: backend, session_id: id });
       if (active) activeTurns.add(key);

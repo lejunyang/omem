@@ -28,10 +28,12 @@ async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (
     // Doubao keeps every conversation in the owner's account: a one-off turn's session is deleted
     // once the turn is over, failed or not (ACP agents do the same with session/delete).
     const cleanup = await sessionCleanup(app, profile, req, emit);
-    const made = new Set<string>();
+    const discardAfterTurn = new Map<string, boolean>();
     const remember = (id: string) => {
-      made.add(id);
-      cleanup.created(id);
+      // A create receipt arriving after cancellation has no caller to retain the new session.
+      const retain = !!req.persistSession && !(profile.transport === "doubao" && req.signal?.aborted);
+      cleanup.created(id, retain);
+      discardAfterTurn.set(id, !retain);
     };
     const track = (e: AgentEvent) => {
       if (e.type === "session" && !e.resumed) remember(e.sessionId);
@@ -39,10 +41,10 @@ async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (
     };
     try {
       const r = await runDoubaoTurn(app, profile, req, track);
-      if (r.sessionId && r.sessionId !== req.resumeSessionId && !made.has(r.sessionId)) remember(r.sessionId);
+      if (r.sessionId && r.sessionId !== req.resumeSessionId && !discardAfterTurn.has(r.sessionId)) remember(r.sessionId);
       return r;
     } finally {
-      if (!req.persistSession) for (const id of made) await cleanup.discard(id);
+      for (const [id, discard] of discardAfterTurn) if (discard) await cleanup.discard(id);
     }
   }
   // The CLIs take no system prompt here: the instructions open a new session, a resumed one has them
