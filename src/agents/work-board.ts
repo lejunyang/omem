@@ -1,0 +1,165 @@
+import type { App } from "../core/app.ts";
+import { all, one, run, tx } from "../core/db.ts";
+import { HttpError, newId, now, truncate } from "../core/util.ts";
+import { nodeId } from "../core/peers.ts";
+import { addWorkMessage, enqueueCoordination, queueAgentRound, refreshWork, saveWork, type AgentWork, type AssistantScope } from "./agent-work.ts";
+import { cancelRun, type Run } from "./runs.ts";
+import type { Execution } from "./execution.ts";
+
+export const boardTools = ["dispatch_work", "work_status", "work_review", "work_cancel"];
+const active = "('pending','running','rejected')";
+type Attempt = { runId: string; queuedAt: string; startedAt: string | null; finishedAt: string | null; result: string | null; device: string };
+type Verdict = { by: string; at: string; decision: Decision["decision"]; note: string };
+type TaskRow = { id: string; work_id: string; seq: number; title: string; goal: string; accept: string; agent: string | null; execution: string | null; required: number; status: string; attempts: string; report: string; verdict: string | null; run_id: string; scope: string; space_id: string | null; deadline_minutes: number; deadline_at: string; created_at: string; updated_at: string };
+export type TaskPlan = { title: string; goal: string; accept: string; agent?: string; execution?: Execution; required?: boolean; deadline_minutes?: number; spaceId?: string; scope: AssistantScope };
+export type Decision = { task: string; decision: "accept" | "redo" | "block"; note?: string; execution?: Execution };
+
+function attempt(app: App, workId: string, id: string, plan: TaskPlan, by: string, note?: string) {
+  const work = refreshWork(app, workId)!;
+  const task = [plan.title, plan.goal, "验收条件：" + plan.accept, note && "退回理由：" + note].filter(Boolean).join("\n\n");
+  const runId = queueAgentRound(app, work, { task, taskId: id, agent: plan.agent ?? "assistant", execution: plan.execution, assistantScope: plan.scope, spaceId: plan.spaceId, queuedBy: by });
+  const queuedAt = now();
+  const entry: Attempt = { runId, queuedAt, startedAt: null, finishedAt: null, result: null, device: nodeId(app) };
+  run(app.db, "update agent_work_tasks set run_id=?, attempts=json_insert(attempts,'$[#]',json(?)), deadline_at=?, updated_at=? where id=?",
+    runId, JSON.stringify(entry), new Date(Date.parse(queuedAt) + plan.deadline_minutes! * 60000).toISOString(), queuedAt, id);
+}
+
+export function dispatchBoard(app: App, work: AgentWork, plans: TaskPlan[], by: string) {
+  const workId = work.askRunId;
+  const ids = tx(app.db, () => {
+    let seq = one<{ n: number }>(app.db, "select coalesce(max(seq),0) n from agent_work_tasks where work_id=?", workId)!.n;
+    const ids = plans.map(plan => {
+      const id = newId("wt"), at = now();
+      const minutes = plan.deadline_minutes ?? app.config.agents.workBoard.deadlineMinutes;
+      run(app.db, `insert into agent_work_tasks(id,work_id,seq,title,goal,accept,agent,execution,scope,space_id,required,deadline_minutes,deadline_at,created_at,updated_at)
+        values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, workId, ++seq, plan.title, plan.goal, plan.accept, plan.agent ?? null, JSON.stringify(plan.execution ?? null), JSON.stringify(plan.scope), plan.spaceId ?? null, Number(plan.required !== false), minutes, at, at, at);
+      attempt(app, workId, id, { ...plan, deadline_minutes: minutes }, by);
+      return id;
+    });
+    coordinateIfReady(app, workId);
+    return ids;
+  });
+  app.emit({ type: "work", workId });
+  return ids;
+}
+
+type AttemptRow = { task: string; entry: string; ai: string | null; profile_id: string | null; used: number | null; answer: string | null };
+function snapshot(app: App, workId: string, full = false) {
+  const rows = all<TaskRow>(app.db, "select * from agent_work_tasks where work_id=? order by seq", workId);
+  const attempts = all<AttemptRow>(app.db, `select t.id task,a.value entry,r.ai,r.profile_id,
+    (select json_extract(data,'$.used') from run_events where run_id=r.id and type='usage' order by seq desc limit 1) used,
+    ${full ? "case when r.id=t.run_id then substr(json_extract(r.output,'$.answer'),1,8001) end" : "null"} answer
+    from agent_work_tasks t join json_each(t.attempts) a left join runs r on r.id=json_extract(a.value,'$.runId') where t.work_id=? order by t.seq,a.key`, workId);
+  return rows.map(t => {
+    const history = attempts.filter(a => a.task === t.id).map(a => {
+      const e: Attempt = JSON.parse(a.entry);
+      const end = Date.parse(e.finishedAt ?? now());
+      return { ...e, ai: a.ai ? JSON.parse(a.ai) : null, backend: a.ai ? JSON.parse(a.ai).profile : a.profile_id, used: a.used,
+        queuedMs: (e.startedAt ? Date.parse(e.startedAt) : end) - Date.parse(e.queuedAt), executionMs: e.startedAt ? end - Date.parse(e.startedAt) : 0 };
+    });
+    return { id: t.id, workId, seq: t.seq, title: t.title, goal: t.goal, accept: t.accept, agent: t.agent, required: !!t.required,
+      execution: t.execution ? JSON.parse(t.execution) : null, status: t.status, attempts: history, report: t.report,
+      verdict: t.verdict ? JSON.parse(t.verdict) as Verdict : null, deadlineAt: t.deadline_at, createdAt: t.created_at, updatedAt: t.updated_at,
+      ...(full ? { answer: attempts.find(a => a.task === t.id && a.answer)?.answer } : {}) };
+  });
+}
+
+export function readBoard(app: App, id: string) {
+  const tasks = snapshot(app, id);
+  if (!tasks.length) throw new HttpError(404, "找不到任务板");
+  const work = refreshWork(app, id)!;
+  const required = tasks.filter(t => t.required || t.verdict?.decision === "redo");
+  const status = required.some(t => ["pending","running","rejected"].includes(t.status)) ? "running"
+    : tasks.some(t => ["done","failed"].includes(t.status)) ? "review" : "summarized";
+  return { workId: id, title: work.title, askRunId: id, rootConversationId: work.rootConversationId, workConversationId: work.workConversationId, status, tasks };
+}
+
+// Called inside the same write transaction as settlement. Clearing notice consumes this wave once.
+function coordinateIfReady(app: App, workId: string) {
+  if (one(app.db, `select 1 from agent_work_tasks where work_id=? and (required=1 or json_extract(verdict,'$.decision')='redo') and status in ${active} limit 1`, workId)) return;
+  if (!run(app.db, "update agent_work_tasks set notice=0 where work_id=? and notice=1", workId).changes) return;
+  const tasks = snapshot(app, workId, true);
+  const work = refreshWork(app, workId)!;
+  const reports = tasks.map(t => {
+    const a = t.attempts.at(-1)!;
+    return `# ${t.seq}. ${t.title}（${t.id}，${t.status}）\n验收条件：${t.accept}\n执行：${t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · ${a.executionMs} ms\n报告（全文 read_run ${a.runId}）：\n${truncate(t.answer || t.report, 8000)}`;
+  });
+  const text = [`任务板 ${workId}。请用 work_review 逐块验收。重做后结束本轮；全部接受或阻塞后向本人汇总，每个论断注明来自哪一块。`, ...reports].join("\n\n");
+  const msg = addWorkMessage(app, work, { role: "assistant", text, meta: { command: true, board: workId } });
+  enqueueCoordination(app, work, msg, tasks.filter(t => t.attempts.at(-1)?.finishedAt).map(t => t.attempts.at(-1)!.runId), `验收：${work.title}`);
+}
+
+function finishAttempt(app: App, t: TaskRow, status: string, report: string, at = now()) {
+  run(app.db, `update agent_work_tasks set status=?, report=?, updated_at=?, attempts=json_set(attempts,'$[#-1].finishedAt',?,'$[#-1].result',?) where id=?`,
+    status, truncate(report, 2000), at, at, truncate(report, 2000), t.id);
+  const work = refreshWork(app, t.work_id)!;
+  const round = work.rounds.find(r => r.runId === t.run_id);
+  if (round) round.status = status === "done" ? "done" : "failed";
+  saveWork(app, work, [work.askRunId, ...work.rounds.map(r => r.runId)]);
+}
+
+export function settleBoardRun(app: App, r: Run) {
+  const workId = String(r.input.agentWorkId);
+  tx(app.db, () => {
+    const t = one<TaskRow>(app.db, `select * from agent_work_tasks where run_id=? and status in ${active}`, r.id);
+    if (!t) return;
+    const late = (r.finishedAt ?? now()) >= t.deadline_at;
+    finishAttempt(app, t, late ? "failed" : r.status, late ? "超时" : String(r.error || r.output.answer || (r.status === "cancelled" ? "已取消" : "（没有输出）")), r.finishedAt ?? now());
+    coordinateIfReady(app, workId);
+  });
+  app.emit({ type: "work", workId });
+}
+
+export function reviewBoard(app: App, workId: string, decisions: Decision[], by: string) {
+  tx(app.db, () => {
+    for (const d of decisions) {
+      const t = one<TaskRow>(app.db, "select * from agent_work_tasks where work_id=? and id=?", workId, d.task);
+      if (!t || !["done","failed","cancelled"].includes(t.status)) throw new HttpError(400, "只能验收本板已结束的块");
+      const at = now();
+      const verdict: Verdict = { by, at, decision: d.decision, note: d.note ?? "" };
+      const status = { redo: "rejected", block: "blocked", accept: "accepted" }[d.decision];
+      run(app.db, "update agent_work_tasks set status=?, verdict=?, updated_at=? where id=?", status, JSON.stringify(verdict), at, t.id);
+      if (d.decision === "redo") {
+        if (JSON.parse(t.attempts).length >= 3) throw new HttpError(400, "每块最多重做 2 次，请接受或标阻塞");
+        const execution = d.execution ?? JSON.parse(t.execution ?? "null") ?? undefined;
+        run(app.db, "update agent_work_tasks set notice=1, execution=? where id=?", JSON.stringify(execution ?? null), t.id);
+        attempt(app, workId, t.id, { ...t, required: !!t.required, agent: t.agent ?? undefined, scope: JSON.parse(t.scope), spaceId: t.space_id ?? undefined, execution }, by, d.note);
+      }
+    }
+  });
+  app.emit({ type: "work", workId });
+}
+
+export function cancelBoard(app: App, workId: string, task?: string) {
+  tx(app.db, () => {
+    const rows = all<TaskRow>(app.db, `select * from agent_work_tasks where work_id=? ${task ? "and id=?" : ""}`, workId, ...(task ? [task] : []));
+    if (!rows.length) throw new HttpError(404, "找不到任务板或子任务");
+    for (const t of rows.filter(t => ["pending","running","rejected"].includes(t.status))) {
+      cancelRun(app, t.run_id);
+      finishAttempt(app, t, "cancelled", "已取消");
+    }
+    coordinateIfReady(app, workId);
+  });
+  app.emit({ type: "work", workId });
+}
+
+// Only live tasks are indexed here. Repair the gap between a run settling and the board consuming it.
+export function maintainBoards(app: App, restart = false) {
+  const rows = all<TaskRow & { state: string | null; ended: string | null; answer: string | null; error: string | null }>(app.db,
+    `select t.*, r.status state,r.finished_at ended,substr(json_extract(r.output,'$.answer'),1,2000) answer,r.error
+    from agent_work_tasks t left join runs r on r.id=t.run_id where t.status in ${active} ${restart ? "" : "and t.deadline_at<=?"}`, ...(restart ? [] : [now()]));
+  for (const t of rows) {
+    if (restart && t.state === "queued" && t.deadline_at > now()) continue;
+    tx(app.db, () => {
+      const ended = t.state && ["done","failed","cancelled"].includes(t.state);
+      const timeout = (t.ended ?? now()) >= t.deadline_at;
+      if (!ended && t.state) {
+        cancelRun(app, t.run_id);
+        if (restart && t.state === "running") run(app.db,"update runs set status='failed',error='服务重启',finished_at=? where id=?",now(),t.run_id);
+      }
+      finishAttempt(app, t, ended && !timeout ? t.state! : "failed", timeout ? "超时" : ended ? t.error || t.answer || "已结束" : "服务重启", t.ended ?? now());
+      coordinateIfReady(app, t.work_id);
+    });
+    app.emit({ type: "work", workId: t.work_id });
+  }
+}

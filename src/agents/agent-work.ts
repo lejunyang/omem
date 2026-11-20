@@ -3,7 +3,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { now, truncate } from "../core/util.ts";
 import { addMessage, createThread, getThread } from "./threads.ts";
-import { createRun, getRun, queuedInLane, updateQueuedRun, type Run } from "./runs.ts";
+import { createRun, queuedInLane, updateQueuedRun, type Run } from "./runs.ts";
 
 /**
  * Multi-agent work handed off by the main assistant. It is one conversation (a Feishu topic, or
@@ -80,8 +80,12 @@ export function startAgentWork(app: App, input: {
   anchorLarkMessageId?: string;
   extraTools?: string[];
 }): { work: AgentWork; runId: string; larkThreadMessageId?: string } {
-  const root = getThread(app, input.rootConversationId);
-  const lark = root?.channel === "lark" || !!root?.channel.startsWith("lark:");
+  const work = createAgentWork(app, input);
+  const runId = queueAgentRound(app, work, { agent: input.agent, task: input.task, execution: input.execution, assistantScope: input.assistantScope, queuedBy: input.askRunId, extraTools: input.extraTools });
+  return { work, runId };
+}
+
+export function createAgentWork(app: App, input: { askRunId: string; rootConversationId: string; spaceId: string; title: string; startMessage: string; agent?: string }): AgentWork {
   const workThread = createWorkThread(app, { rootId: input.rootConversationId, spaceId: input.spaceId, title: input.title });
   const work: AgentWork = {
     askRunId: input.askRunId,
@@ -94,14 +98,12 @@ export function startAgentWork(app: App, input: {
     awaitingUser: false,
     runs: 0,
   };
-  const ask = getRun(app, input.askRunId);
   saveWork(app, work, [input.askRunId]);
 
   // Record the request in the work conversation.
   addWorkMessage(app, work, { role: "user", text: input.startMessage, meta: { agentWork: true, spec: input.agent } });
 
-  const runId = queueAgentRound(app, work, { agent: input.agent, task: input.task, execution: input.execution, assistantScope: input.assistantScope, queuedBy: input.askRunId, extraTools: input.extraTools });
-  return { work, runId };
+  return work;
 }
 
 function createWorkThread(app: App, i: { rootId: string; spaceId: string; title: string }) {
@@ -128,6 +130,7 @@ export type AgentRoundInput = {
   assistantScope?: AssistantScope;
   execution?: Execution;
   agent: string;
+  taskId?: string;
   task: string;
   spaceId?: string;
   /** The run that handed this round out (a coordination turn, the owner's turn in the topic). */
@@ -143,7 +146,8 @@ export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): 
     kind: "agent",
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
-    input: { spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
+    userId: a.assistantScope?.userId,
+    input: { ...(a.taskId ? { boardTaskId: a.taskId, spaces: a.assistantScope?.spaces } : {}), spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
     parentId: work.askRunId,
   });
   const id = r.id;
@@ -242,18 +246,23 @@ function queueCoordination(app: App, work: AgentWork, run: Run): string {
     runId: run.id,
     meta: { agentReport: { agent, runId: run.id, status: run.status, round }, record: true },
   });
+  return enqueueCoordination(app, work, messageId, [run.id], `协调：${agent} 第 ${round} 轮${run.status === "done" ? "完成" : "失败"}`);
+}
+
+export function enqueueCoordination(app: App, work: AgentWork, messageId: string, sourceRunIds: string[], title: string): string {
   // The owner may have written in the topic meanwhile: one turn takes both.
   const waiting = queuedInLane(app, work.workConversationId, "ask");
   if (waiting) {
     const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
-    const coordinate = { workId: work.askRunId, sourceRunIds: [...(((waiting.input.coordinate as { sourceRunIds?: string[] } | undefined)?.sourceRunIds) ?? []), run.id] };
+    const coordinate = { workId: work.askRunId, sourceRunIds: [...(((waiting.input.coordinate as { sourceRunIds?: string[] } | undefined)?.sourceRunIds) ?? []), ...sourceRunIds] };
     if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids, coordinate } })) return waiting.id;
   }
   const r = createRun(app, {
     kind: "ask",
     spaceId: getThread(app, work.workConversationId).spaceId,
-    title: truncate(`协调：${agent} 第 ${round} 轮${run.status === "done" ? "完成" : "失败"}`, 60),
-    input: { conversationId: work.workConversationId, messageIds: [messageId], coordinate: { workId: work.askRunId, sourceRunIds: [run.id] } },
+    userId: getThread(app, work.workConversationId).userId,
+    title: truncate(title, 60),
+    input: { userId: getThread(app, work.workConversationId).userId, conversationId: work.workConversationId, messageIds: [messageId], coordinate: { workId: work.askRunId, sourceRunIds } },
     lane: work.workConversationId,
     parentId: work.askRunId,
   });

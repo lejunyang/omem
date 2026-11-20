@@ -302,6 +302,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       return runs.get(runId)!;
     };
     return (e: AppEvent) => {
+      if (e.type === "work") return readable(e.workId);
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
       if (e.type === "notification") return one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
       if (e.type === "ask") return one<{ user_id: string }>(app.db, "select user_id from asks where id = ?", e.id)?.user_id === userId;

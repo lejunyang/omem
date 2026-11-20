@@ -2248,6 +2248,17 @@ export const migrations: readonly string[] = [
    alter table items add column phase_since text;
    alter table items add column watch_until text;`,
   METRIC_ORIGIN_MIGRATION,
+  `create table agent_work_tasks (
+    id text primary key, work_id text not null references runs(id) on delete cascade, seq integer not null,
+    title text not null, goal text not null, accept text not null, agent text, execution text, scope text not null, space_id text,
+    required integer not null default 1, status text not null default 'pending',
+    attempts text not null default '[]', report text not null default '', verdict text,
+    run_id text, notice integer not null default 1, deadline_minutes integer not null,
+    deadline_at text not null, created_at text not null, updated_at text not null, unique(work_id,seq)
+  );
+  create index work_task_active on agent_work_tasks(deadline_at) where status in ('pending','running','rejected');
+  create index work_task_run on agent_work_tasks(run_id);
+  create index run_last_usage on run_events(run_id,seq desc) where type='usage';`,
 ];
 
 export type Db = DatabaseSync;

@@ -402,6 +402,7 @@ export const configSchema = z.object({
        * `parallelCoders`: how many helpers the coder of a round may hand groups of tasks to (0: none).
        * `preCheck`: a new delegation's first round is checked before coding (agents/pre-check.ts).
        */
+      workBoard: z.object({ concurrency: z.number().int().min(1).max(6).default(3), deadlineMinutes: z.number().int().positive().default(30) }).default({ concurrency: 3, deadlineMinutes: 30 }),
       autoAdvance: z.object({ turns: z.number().int().min(0).max(50).default(6), codeRounds: z.number().int().min(1).max(20).default(3), codeRoundsMax: z.number().int().min(1).max(50).default(12), taskLoop: z.boolean().default(true), parallelCoders: z.number().int().min(0).max(8).default(3), preCheck: z.boolean().default(true) }).default({ turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }),
       /**
        * How many runs one model of one source takes at a time (`perModel`, or a `limits` entry for a
@@ -471,7 +472,7 @@ export const configSchema = z.object({
        */
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

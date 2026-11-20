@@ -330,7 +330,7 @@ async function runAgentTask(ctx: RunContext) {
     const same = previous.input.spec === name && JSON.stringify(previous.input.execution) === JSON.stringify(execution) && JSON.stringify(previous.input.assistantScope) === JSON.stringify(assistantScope);
     if (same && previous.status === "done") resumeSessionId = previous.output.sessionId as string | undefined;
   }
-  if (agentWorkId) {
+  if (agentWorkId && !ctx.run.input.boardTaskId) {
     const { refreshWork, workContext } = await import("./agent-work.ts");
     const work = refreshWork(ctx.app, agentWorkId);
     if (work) {
@@ -378,7 +378,7 @@ async function runAgentTask(ctx: RunContext) {
       onEvent: (e) => ctx.event(e.type, e),
       resumeSessionId: resume,
       // A rule's run keeps its session for a trigger that joins after it ends (rules/actions.ts).
-      persistSession: !!agentWorkId || !!silent || !!meeting || (!!triggers && !!ctx.run.lane),
+      persistSession: (!!agentWorkId && !ctx.run.input.boardTaskId) || !!silent || !!meeting || (!!triggers && !!ctx.run.lane),
       lark: assistantScope?.lark ?? lark,
     });
   const previousSession = resumeSessionId ?? getRun(ctx.app, ctx.run.id).output.sessionId;
