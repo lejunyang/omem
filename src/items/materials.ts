@@ -1,3 +1,6 @@
+import { canReadRun } from "../auth/permissions.ts";
+import { sourceVisible } from "../auth/visibility.ts";
+import { requireItem } from "./access.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
@@ -85,8 +88,7 @@ function resolve(app: App, kind: MaterialKind, ref: string): { spaceId: string |
  * conversations and runs. Adding one that is there already updates its label and note.
  */
 export function addMaterials(app: App, itemId: string, list: MaterialInput[], userId: string, by: "user" | "agent" = "agent") {
-  const item = getItem(app, itemId);
-  if (item.userId !== userId) throw new HttpError(403, "不能修改他人的事项");
+  requireItem(app, itemId, userId, "write");
   const allowed = accessibleSpaces(app, userId);
   const added: Material[] = [];
   for (const m of list) {
@@ -95,6 +97,7 @@ export function addMaterials(app: App, itemId: string, list: MaterialInput[], us
     if (!ref || ref === "#") throw new HttpError(400, "材料缺少 ref");
     const r = resolve(app, m.kind, ref);
     if (allowed && r.spaceId && !allowed.includes(r.spaceId)) throw new HttpError(403, `不能访问空间 ${r.spaceId}`);
+    if (m.kind === "source" && sourceVisible(app, userId, ref) !== true) throw new HttpError(403, "不能访问这份原件");
     if (r.userId && r.userId !== userId) throw new HttpError(403, "只能加自己的会话和运行");
     const meta: Material["meta"] = {
       ...(m.kind === "repo" ? { space: ref.split("#")[0], branch: ref.split("#")[1] || undefined, base: m.base?.trim() || undefined } : {}),
@@ -112,8 +115,7 @@ export function addMaterials(app: App, itemId: string, list: MaterialInput[], us
 
 /** Remove by material id or by `kind:ref`. */
 export function removeMaterials(app: App, itemId: string, keys: (number | string)[], userId: string, by: "user" | "agent" = "agent") {
-  const item = getItem(app, itemId);
-  if (item.userId !== userId) throw new HttpError(403, "不能修改他人的事项");
+  requireItem(app, itemId, userId, "write");
   const gone: string[] = [];
   for (const key of keys) {
     const row = typeof key === "number" || /^\d+$/.test(key)
@@ -130,12 +132,14 @@ export function removeMaterials(app: App, itemId: string, keys: (number | string
 /** Materials with their current state, limited to what this reader may see. */
 export function materialViews(app: App, itemId: string, userId: string): MaterialView[] {
   const allowed = accessibleSpaces(app, userId);
-  const item = getItem(app, itemId);
+  const item = requireItem(app, itemId, userId, "read");
   return itemMaterials(app, itemId).map((m) => {
     try {
       const r = resolve(app, m.kind, m.ref);
       if (m.kind === "object") r.spaceId = item.spaceId;
-      const readable = !allowed || !r.spaceId || allowed.includes(r.spaceId);
+      const readable = (!allowed || !r.spaceId || allowed.includes(r.spaceId))
+        && (m.kind !== "source" || sourceVisible(app, userId, m.ref) === true)
+        && (m.kind !== "run" || canReadRun(app, userId, m.ref));
       return { ...m, spaceId: r.spaceId, title: readable ? r.title : m.label, status: r.status ?? null, readable, changed: !!(m.meta.hash && r.hash && m.meta.hash !== r.hash), missing: m.kind !== "object" && r.status === "deleted" };
     } catch {
       return { ...m, spaceId: null, title: m.label, status: null, readable: false, changed: false, missing: true };

@@ -39,10 +39,10 @@ describe("item materials", () => {
 
   it("only takes what the user may see", () => {
     createUser(app, { id: "u2", name: "小王" });
-    addMember(app, "docs", "u2");
+    addMember(app, "docs", "u2", "editor");
     const item = upsertItem(app, undefined, { spaceId: "docs", title: "小王的事", userId: "u2" }, "user");
     expect(() => addMaterials(app, item.id, [{ kind: "source", ref: hidden.id }], "u2")).toThrow(/不能访问/);
-    expect(() => addMaterials(app, item.id, [{ kind: "source", ref: prd.id }], "owner")).toThrow(/他人/);
+    expect(addMaterials(app, item.id, [{ kind: "source", ref: prd.id }], "owner")).toHaveLength(1);
     expect(addMaterials(app, item.id, [{ kind: "source", ref: prd.id }], "u2")).toHaveLength(1);
   });
 

@@ -205,7 +205,7 @@ describe("流程 HTTP", () => {
     await startFlow(app, privateItem.id, "demo", { actor: "owner" });
     expect((await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(404);
     addMember(app, "personal", "member-a", "editor");
-    expect((await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(200);
+    expect((await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(404);
     expect((await server.inject({ method: "POST", url: `/api/items/${privateItem.id}/flow/stages/check/confirm`, payload: {}, headers })).statusCode).toBe(403);
     expect((await server.inject({ method: "DELETE", url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(403);
     expect((await server.inject({ method: "PUT", url: "/api/flows/demo", payload: { yaml: raw }, headers })).statusCode).toBe(403);

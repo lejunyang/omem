@@ -116,7 +116,7 @@ describe("对象动作的声明", () => {
     const i = item(), o = await attachObject(app, i.id, url(), "owner");
     expect(o.actions).toEqual([{ id: "merge", label: "合并", confirm: "检查没过时平台会拒绝。" }]);
     createUser(app, { id: "member", name: "成员甲" }); addMember(app, "personal", "member", "reader");
-    expect(itemObjects(app, i.id, "member")[0].actions).toEqual([]);
+    expect(() => itemObjects(app, i.id, "member")).toThrow("事项不存在");
     expect(materialsBrief(app, i.id, "owner")).toContain("可做：合并（工具 actprobe_merge，key=1）");
     expect(materialsBrief(app, i.id, "owner")).toContain(`object:${o.id}`);
     set("1", { status: "closed" }); run(app.db, "update flow_objects set checked_at='2000-01-01T00:00:00.000Z'");

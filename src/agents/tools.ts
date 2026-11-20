@@ -1,3 +1,4 @@
+import { itemAccess, itemScope, requireItem } from "../items/access.ts";
 import { lessonInput, proposeLesson } from "./code-lessons.ts";
 import { claimCommits, claimSchema } from "../flows/commits.ts";
 import { queueCodeWork } from "./code-delegate.ts";
@@ -1612,12 +1613,12 @@ def({
     with_timeline: z.boolean().optional(),
   }),
   handler: (ctx, a) => {
-    const discovery = scopeFor(ctx.app, ctx.userId ?? OWNER, (a.space === "*" && ctx.itemDiscoverySpaces !== undefined ? ctx.itemDiscoverySpaces : spacesFor(ctx, a.space)) ?? null);
+    const discovery = itemScope(ctx.app, ctx.userId ?? OWNER, (a.space === "*" && ctx.itemDiscoverySpaces !== undefined ? ctx.itemDiscoverySpaces : spacesFor(ctx, a.space)) ?? null);
     // A replay arm: items that did not exist yet are left out, and so is their later progress.
     const asOf = ctx.view?.asOf;
-    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceIds: discovery ?? undefined, userId: ctx.userId ?? "owner", limit: 100, parentId: a.parent }).filter((i) => !asOf || i.createdAt <= asOf);
+    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, ...discovery, userId: ctx.userId ?? OWNER, limit: 100, parentId: a.parent }).filter((i) => !asOf || i.createdAt <= asOf);
     if (!items.length) return "没有符合条件的事项。";
-    const under = new Map(all<{ parent_id: string; n: number }>(ctx.app.db, `select parent_id, count(*) n from items where parent_id in (${items.map(() => "?").join(",")}) and status not in ('done','cancelled','expired','candidate') group by parent_id`, ...items.map((i) => i.id)).map((r) => [r.parent_id, r.n]));
+    const under = new Map(all<{ parent_id: string; n: number }>(ctx.app.db, `select parent_id, count(*) n from items where parent_id in (${items.map(() => "?").join(",")}) and (? is null or space_id in (select value from json_each(?))) and status not in ('done','cancelled','expired','candidate') group by parent_id`, ...items.map((i) => i.id), JSON.stringify(discovery.spaceIds) ?? null, JSON.stringify(discovery.spaceIds) ?? null).map((r) => [r.parent_id, r.n]));
     const tree = (i: { parentId: string | null; id: string }) => `${i.parentId ? ` 上层 ${i.parentId}` : ""}${under.get(i.id) ? ` 下面 ${under.get(i.id)} 件在办` : ""}`;
     return items
       .map((i) => {
@@ -2214,7 +2215,7 @@ def({
 });
 
 function flowItem(ctx: ToolContext, id: string, write: boolean) {
-  const item = getItem(ctx.app, id);
+  const item = requireItem(ctx.app, id, ctx.userId ?? OWNER, write ? "write" : "read");
   const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
   const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, write ? ctx.writable ?? ctx.spaces : ctx.spaces);
   if (item.userId !== (ctx.userId ?? OWNER) || readable && !readable.includes(item.spaceId) || allowed && !allowed.includes(item.spaceId)) throw new HttpError(403, "不能访问或修改该事项的流程");
@@ -2441,12 +2442,15 @@ def({
     materials_remove: z.array(z.string()).optional().describe("要移除的材料：材料编号，或 kind:ref"),
   }),
   handler: async (ctx, a) => {
-    const existing = a.id ? getItem(ctx.app, a.id) : null;
+    const existing = a.id ? requireItem(ctx.app, a.id, ctx.userId ?? OWNER, "write") : null;
     if (existing) {
       inScope(ctx, existing.spaceId, "事项");
       if (existing.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
       if (a.space && a.space !== existing.spaceId) throw new HttpError(400, "事项 id 与空间不匹配");
     }
+    const userId = ctx.userId ?? OWNER;
+    const spaceId = existing?.spaceId ?? writeSpace(ctx, a.space);
+    if (!existing && !itemAccess(ctx.app, userId, { spaceId, userId }, "write")) throw new HttpError(403, "不能在这个空间创建事项");
     // Removal may revoke stale/deleted refs, but must match this item's exact old set.
     if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
     if (!existing) await notOwnersBusiness(ctx, a.source_refs ?? []);
@@ -2455,7 +2459,7 @@ def({
     // A work line is the owner's to make (or to take from the nightly proposal card): never on its own.
     if (onItsOwn && a.kind === "line" && existing?.kind !== "line") throw new HttpError(403, "工作线只由本人建：这不是本人这一轮亲口要的。觉得这几件事该成一条线，在给本人的话里提出来（每晚的近况整理也会提议）");
     if (a.parent) {
-      const p = getItem(ctx.app, a.parent);
+      const p = requireItem(ctx.app, a.parent, ctx.userId ?? OWNER, "write");
       inScope(ctx, p.spaceId, "上层事项");
       if (p.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能挂到本人自己的事项下");
       if (existing) (await import("../items/tree.ts")).checkParent(ctx.app, existing.id, a.parent);
@@ -2483,7 +2487,7 @@ def({
       ctx.app,
       a.id,
       {
-        spaceId: existing ? undefined : writeSpace(ctx, a.space),
+        spaceId: existing ? undefined : spaceId,
         kind: a.kind,
         title: a.title,
         detail: a.detail,
@@ -2541,7 +2545,7 @@ def({
     const out: string[] = [];
     for (const v of a.verdicts) {
       try {
-        const item = getItem(ctx.app, v.item_id);
+        const item = requireItem(ctx.app, v.item_id, ctx.userId ?? OWNER, "write");
         inScope(ctx, item.spaceId, "事项");
         if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
         if (v.verdict === "keep") {
@@ -2569,11 +2573,11 @@ def({
   description: "读取一件事项的全貌：完整字段、当前来源、全部时间线、材料、工作文件，以及它在哪些会话和群里进行（places：每处最近的一句话或摘要）、正在为它跑的运行（runs）、它的上层（parent）和挂在下面的事项（children）；工作线另有“现在”（now）和还没定的下一步（next）。纠正前先读。跨空间发现仍只读。",
   schema: z.object({ item_id: z.string() }),
   handler: async (ctx, a) => {
-    const item = getItem(ctx.app, a.item_id);
+    const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
     const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
     const { listWorkFiles } = await import("../sources/work.ts");
-    const files = listWorkFiles(ctx.app, { item: item.id }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
+    const files = listWorkFiles(ctx.app, { item: item.id, spaces: readable }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");
     const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
     // Where the work goes on and what is running for it (items/places.ts).
@@ -2581,8 +2585,8 @@ def({
     const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
     const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER).filter((r) => r.id !== ctx.runId);
     // Where it hangs and what hangs under it (items/tree.ts); a line's suggested next steps (items/lines.ts).
-    const parent = item.parentId ? one<{ id: string; title: string; kind: string; status: string }>(ctx.app.db, "select id, title, kind, status from items where id = ?", item.parentId) ?? null : null;
-    const children = all<{ id: string; title: string; kind: string; status: string; due_at: string | null }>(ctx.app.db, "select id, title, kind, status, due_at from items where parent_id = ? order by created_at", item.id).map((c) => ({ id: c.id, title: c.title, kind: c.kind, status: c.status, dueAt: c.due_at }));
+    const parent = item.parentId ? one<{ id: string; title: string; kind: string; status: string }>(ctx.app.db, "select id, title, kind, status from items where id = ? and (? is null or space_id in (select value from json_each(?)))", item.parentId, readable && JSON.stringify(readable), readable && JSON.stringify(readable)) ?? null : null;
+    const children = all<{ id: string; title: string; kind: string; status: string; due_at: string | null }>(ctx.app.db, "select id, title, kind, status, due_at from items where parent_id = ? and (? is null or space_id in (select value from json_each(?))) order by created_at", item.id, readable && JSON.stringify(readable), readable && JSON.stringify(readable)).map((c) => ({ id: c.id, title: c.title, kind: c.kind, status: c.status, dueAt: c.due_at }));
     const next = all<{ id: string; text: string; why: string; kind: string; status: string; created_at: string }>(ctx.app.db, "select id, text, why, kind, status, created_at from item_next where item_id = ? and status in ('open','doing') order by created_at desc limit 10", item.id);
     return JSON.stringify({ item, ...(parent ? { parent } : {}), ...(children.length ? { children } : {}), ...(next.length ? { next } : {}), flow: (await import("../flows/engine.ts")).flowView(ctx.app, item.id), events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
   },
@@ -2629,7 +2633,7 @@ def({
     if (!n || n.user_id !== (ctx.userId ?? OWNER)) throw new HttpError(403, "通知不属于本人");
     const context = JSON.parse(n.context);
     if (!context.entityId || context.entityId !== inter.payload.itemId) throw new HttpError(409, "通知与交互关联不一致，先修复关联");
-    const item = getItem(ctx.app, context.entityId);
+    const item = requireItem(ctx.app, context.entityId, ctx.userId ?? OWNER, "write");
     inScope(ctx, item.spaceId, "事项卡片");
     if (item.userId !== n.user_id) throw new HttpError(403, "事项用户不匹配");
     validateItemRefs(ctx.app, context.sourceRefs ?? [], n.user_id, ctx.spaces);
@@ -2655,7 +2659,7 @@ def({
   write: true,
   schema: z.object({ item_id: z.string(), note: z.string().trim().min(1), source_refs: z.array(z.string()).min(1) }),
   handler: (ctx, a) => {
-    const item = getItem(ctx.app, a.item_id);
+    const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
     const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能发现该事项");
     writeSpace(ctx);
@@ -3353,7 +3357,7 @@ def({
   handler: async (ctx, a) => {
     const { defineMetric, metricLessons } = await import("../data/metrics.ts");
     if (a.item) {
-      const item = getItem(ctx.app, a.item);
+      const item = requireItem(ctx.app, a.item, ctx.userId ?? OWNER, "write");
       inScope(ctx, item.spaceId, "指标关联的事项");
     }
     if (a.context) {
@@ -4036,7 +4040,7 @@ def({
   }),
   handler: (ctx, a) => {
     if (a.entity_id) {
-      const item = getItem(ctx.app, a.entity_id);
+      const item = requireItem(ctx.app, a.entity_id, ctx.userId ?? OWNER, "write");
       inScope(ctx, item.spaceId, "事项通知");
       if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能通知他人的事项");
       const event = a.event_id === undefined ? itemEvents(ctx.app, item.id).at(-1) : itemEvents(ctx.app, item.id).find((e) => e.id === a.event_id);
@@ -4110,7 +4114,7 @@ def({
     const { writeWorkFile } = await import("../sources/work.ts");
     let spaceId = writeSpace(ctx, a.space);
     if (a.item) {
-      const item = getItem(ctx.app, a.item);
+      const item = requireItem(ctx.app, a.item, ctx.userId ?? OWNER, "write");
       inScope(ctx, item.spaceId, "事项");
       if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能给他人的事项挂文件");
       if (!a.space) spaceId = item.spaceId;
@@ -4817,7 +4821,7 @@ def({
 
 /** An item the caller owns and may see, for linking a delegation or review to it. */
 function itemFor(ctx: ToolContext, id: string) {
-  const item = getItem(ctx.app, id);
+  const item = requireItem(ctx.app, id, ctx.userId ?? OWNER, "write");
   inScope(ctx, item.spaceId, "事项");
   if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能使用他人的事项");
   return item.id;
@@ -6372,7 +6376,7 @@ def({
     if (a.design_id) d = await readableDesign(ctx, a.design_id);
     else if (a.run_id) d = await readableDesign(ctx, (await designOfRunId(ctx, a.run_id)).id);
     else if (a.item_id) {
-      const item = getItem(ctx.app, a.item_id);
+      const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
       if (!canRead(ctx, item.spaceId) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读这个事项");
       const list = s.designsOfItem(ctx.app, item.id).filter((x) => canRead(ctx, x.spaceId));
       if (!list.length) throw new HttpError(404, `事项 ${item.id} 上没有方案`);

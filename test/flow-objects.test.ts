@@ -119,7 +119,7 @@ describe("插件对象注册与挂接", () => {
     expect((await s.inject({ method: "POST", url: base, payload: { url: "https://unknown.test/1" } })).statusCode).toBe(400);
     createUser(app, { id: "member", name: "成员甲" }); addMember(app, "personal", "member", "reader");
     const headers = { authorization: `Bearer ${createApiToken(app, "member", "test")}` };
-    expect((await s.inject({ url: base, headers })).statusCode).toBe(200);
+    expect((await s.inject({ url: base, headers })).statusCode).toBe(404);
     expect((await s.inject({ method: "POST", url: base, headers, payload: { url: url() } })).statusCode).toBe(403);
     expect((await s.inject({ method: "DELETE", url: `${base}/${obj.id}`, headers })).statusCode).toBe(403);
     const readonly = item("member");

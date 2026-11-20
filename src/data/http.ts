@@ -1,3 +1,4 @@
+import { requireItem } from "../items/access.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
@@ -15,6 +16,10 @@ import { changeOf, defineMetric, figureSeries, latestOf, listMetrics, metricPoin
  */
 export function registerMetricRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   const readable = (req: FastifyRequest) => accessibleSpaces(app, who(req));
+  const visibleBranch = (id: string, req: FastifyRequest) => {
+    requireItem(app, id, who(req), "read");
+    return [id, ...descendantIds(app, id, readable(req) ?? undefined)];
+  };
   const title = (id: string) => one<{ title: string }>(app.db, "select title from items where id = ?", id)?.title ?? null;
   /** The observation plan a metric came from: `src:<id>#…` to the work file and its title. */
   const planOf = (ref: string | null) => {
@@ -26,7 +31,7 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
   server.get("/api/metrics", async (req) => {
     const q = z.object({ item: z.string().optional(), context: z.string().optional(), source: z.string().optional(), dropped: z.string().optional() }).parse(req.query ?? {});
     // An item's metrics are its own and those of the items under it (a line shows its requirements').
-    const itemIds = q.item ? [q.item, ...descendantIds(app, q.item)] : undefined;
+    const itemIds = q.item ? visibleBranch(q.item, req) : undefined;
     const list = listMetrics(app, { itemIds, contextId: q.context, spaces: readable(req), includeDropped: q.dropped === "1" }).filter((m) => !q.source || m.source === q.source);
     return list.map((m) => {
       const pts = metricPoints(app, m.id, { limit: 120 });
@@ -52,7 +57,7 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
       `select id, title, uri, space_id, meta, updated_at, instr(text, '\`\`\`chart') > 0 charts from sources
        where kind = 'work' and deleted_at is null and (uri like 'work/数据/%' or uri like 'work/观测/%' or instr(text, '\`\`\`chart') > 0) order by updated_at desc limit 300`,
     );
-    const under = q.item ? new Set([q.item, ...descendantIds(app, q.item)]) : null;
+    const under = q.item ? new Set(visibleBranch(q.item, req)) : null;
     return rows.filter((r) => !spaces || spaces.includes(r.space_id)).map((r) => {
       const path = r.uri.replace(/^work\//, "");
       const kind = /数据源目录/.test(path) ? "catalog" : /^观测\//.test(path) ? "plan" : /^数据\/报表\//.test(path) || r.charts ? "report" : "note";
