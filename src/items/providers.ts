@@ -94,7 +94,11 @@ function applyExternal(app: App, t: Target, def: ItemProvider, ext: ExternalItem
   const status = localStatus(def, ext.status);
   const snapshot = JSON.stringify(ext);
   if (!link) {
-    const item = upsertItem(app, undefined, { userId: t.user_id, spaceId: t.space_id, title: ext.title, kind: ext.kind, status: t.import_mode === "candidate" ? "candidate" : status, detail: detail(ext), providerUrl: ext.url });
+    const item = upsertItem(app, undefined, {
+      userId: t.user_id, spaceId: t.space_id, title: ext.title, kind: ext.kind,
+      status: t.import_mode === "candidate" ? "candidate" : status, detail: detail(ext), providerUrl: ext.url,
+      note: `从「${def.label}」导入「${ext.title}」（${ext.key}） ${ext.url}`,
+    });
     run(app.db, `insert into external_item_links(item_id,target_id,provider,user_id,subjects,external_key,snapshot,synced_at,revision)
       values(?,?,?,?,?,?,?,?,?)`, item.id, t.id, t.provider, t.user_id, t.subjects, ext.key, snapshot, now(), ext.revision ?? null);
     return item.id;
@@ -116,7 +120,7 @@ function applyExternal(app: App, t: Target, def: ItemProvider, ext: ExternalItem
     title: local.title === prev.title ? ext.title : undefined,
     detail: local.detail === detail(prev) ? detail(ext) : undefined,
     status: !write && local.status === localStatus(def, prev.status) ? status : local.status,
-    note: `外部更新：${ext.title}（${ext.status}） ${ext.url}${write && write.revision !== ext.revision ? "；回写因版本冲突暂停" : ""}`,
+    note: `「${def.label}」更新：${ext.title}（${ext.status}） ${ext.url}${write && write.revision !== ext.revision ? "；回写因版本冲突暂停" : ""}`,
   });
   return local.id;
 }
@@ -148,7 +152,7 @@ onItemStatus((app, before, after) => {
     writeId, after.id, matches[0], ext.revision, t.mode === "direct" ? "ready" : "pending");
   if (t.mode === "confirm") {
     const ask = createAsk(app, { runId: null, userId: after.userId, allowText: false,
-      question: `要把「${after.title}」在 ${ext.url} 的状态从 ${ext.status} 改为 ${matches[0]} 吗？`,
+      question: `要把「${def.label}」的 ${ext.key}「${after.title}」从 ${ext.status} 改为 ${matches[0]} 吗？\n${ext.url}`,
       options: [{ label: "确认回写" }, { label: "只改本地" }], context: { handler: "item-provider-write", item: after.id, writeId } });
     run(app.db, "update item_provider_writes set ask_id=? where id=?", ask.id, writeId);
   }

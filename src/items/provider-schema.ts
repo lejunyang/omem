@@ -26,6 +26,8 @@ export function migrateItemProviders(db: Db) {
         id text primary key, item_id text not null unique references external_item_links(item_id) on delete cascade,
         status text not null, revision text not null, ask_id text, state text not null, error text
       );
+      create index if not exists external_item_links_target on external_item_links(target_id,item_id);
+      create index if not exists item_provider_targets_enabled on item_provider_targets(enabled);
     `);
     if (legacy) db.exec(`
       insert into external_item_links(item_id,target_id,provider,user_id,subjects,external_key,synced_at,snapshot,dismissed,revision,error)

@@ -39,12 +39,14 @@ it("persists the page cursor with its items, deduplicates overlapping targets, a
   await syncTarget(app, "owner", t.id);
   const [id] = ids();
   expect(getItem(app, id).status).toBe("candidate");
+  expect(itemEvents(app, id)).toContainEqual(expect.objectContaining({ kind: "created", text: expect.stringContaining("从「示例条目」导入") }));
   decideCandidate(app, id, true, "owner");
   upsertItem(app, id, { title: "本地标题" });
   items = [{ ...ext, revision: "2", title: "外部新标题", status: "closed" }];
   await syncTarget(app, "owner", t.id);
   expect(pull.mock.lastCall?.[1].cursor).toBe("page1");
   expect(getItem(app, id)).toMatchObject({ title: "本地标题", status: "done" });
+  expect(itemEvents(app, id)).toContainEqual(expect.objectContaining({ kind: "updated", text: expect.stringContaining("「示例条目」更新：外部新标题（closed）") }));
   expect(providerState(app, "owner", id)?.write).toBeNull();
   const n = itemEvents(app, id).length;
   const other = configureTarget(app, "owner", { ...config, target: "org" });
@@ -59,6 +61,7 @@ it("checks the subscriber, confirms precisely one revision, and retires the appr
   const [id] = ids();
   upsertItem(app, id, { status: "done" });
   const write = providerState(app, "owner", id)!.write!;
+  expect(getAsk(app, write.ask_id!).question).toContain("「示例条目」的 a");
   await expect(answerAsk(app, write.ask_id!, { by: "other", choice: 0 })).rejects.toThrow("订阅人");
   expect(setStatus).not.toHaveBeenCalled();
   await answerAsk(app, write.ask_id!, { by: "owner", choice: 0 });
