@@ -7,6 +7,8 @@ import AssistantsSettings from "../components/AssistantsSettings.vue";
 import AgentAccounts from "../components/AgentAccounts.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import Skeleton from "../components/Skeleton.vue";
+import HelpText from "../components/HelpText.vue";
+import MonoLine from "../components/MonoLine.vue";
 import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
 
@@ -217,7 +219,7 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
 </script>
 
 <template>
-  <div class="page stack" style="max-width: 760px">
+  <div class="page stack account">
     <div class="page-head"><div><h1>账号</h1><p>登录方式和登录过的设备。</p></div></div>
     <div v-if="notice" class="card pad small" :class="notice.kind === 'err' ? 'err' : 'ok'">{{ notice.text }}</div>
     <Skeleton v-if="!acc" variant="text" :rows="6" />
@@ -250,7 +252,7 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
         </div>
         <p v-if="!acc.providers.length" class="muted small">还没有打开任何登录方式。</p>
       </div>
-      <p v-if="aliases.length" class="muted small">渠道里的身份（机器人靠它认出你）：{{ aliases.map((a) => `${a.provider} ${a.externalId}`).join("、") }}</p>
+      <p v-if="aliases.length" class="muted small aliases"><span>渠道里的身份（机器人靠它认出你）：</span><span v-for="a in aliases" :key="`${a.provider}:${a.externalId}`" class="alias">{{ a.provider }} <MonoLine :text="a.externalId" copy /></span></p>
 
       <AssistantsSettings own />
 
@@ -260,9 +262,8 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
         <p class="small">助手刚才以你的身份用飞书时缺少权限：<span class="mono">{{ askScopes }}</span>。授权后再让助手试一次。</p>
         <div class="row"><button class="btn sm primary" @click="connect('lark', [], askScopes)">去飞书授权</button></div>
       </div>
-      <p class="muted small">连接后，助手和后台采集以你的身份读你在这个平台上能看到的内容；写入（文档、表格）不在你自己的文件里时先问你。令牌只存在运行 omem 的这台机器上。</p>
+      <HelpText>连接后，助手和后台采集以你的身份读你在这个平台上能看到的内容；写入（文档、表格）不在你自己的文件里时先问你。令牌只存在运行 omem 的这台机器上。<template v-if="state.me?.role === 'owner'">你本人用 lark-cli 的登录读写飞书（设置 → 采集），不用在这里连接；可以连接的其他平台在 设置 → 采集 → 其他平台 里开放。</template></HelpText>
       <div v-if="conns && !conns.may" class="card pad muted small">你的角色不能连接第三方平台，需要的话请 omem 的主人调整。</div>
-      <p v-if="state.me?.role === 'owner'" class="muted small">你本人用 lark-cli 的登录读写飞书（设置 → 采集），不用在这里连接。可以连接的其他平台在 设置 → 采集 → 其他平台 里开放。</p>
       <input v-if="offeredProviders.length > 6" v-model="connQuery" class="input" type="search" placeholder="搜平台" aria-label="搜可以连接的平台" />
       <div v-for="p in shownProviders" :key="p.id" class="card pad stack">
         <div class="row wrap">
@@ -397,6 +398,9 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
 </template>
 
 <style scoped>
+.account { max-width: 760px; }
+.aliases { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.alias { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .cmd {
   overflow-wrap: anywhere;
 }

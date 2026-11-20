@@ -4,6 +4,7 @@ import { get } from "../api";
 import { relTime } from "../store";
 import Skeleton from "./Skeleton.vue";
 import UiSegmented from "./UiSegmented.vue";
+import HelpText from "./HelpText.vue";
 
 /**
  * Emoji reactions on what the Feishu bots sent, by profile/role and by model (src/channels/lark-feedback.ts).
@@ -35,7 +36,8 @@ const rate = (c: Counts) => (c.positive + c.negative ? Math.round((c.positive / 
 <template>
   <section class="fb">
     <div class="fb-head">
-      <h3>飞书里的表情反馈 <span class="muted small">近 30 天</span></h3>
+      <h3>飞书里的表情反馈</h3>
+      <span class="muted small">近 30 天</span>
       <span class="spacer" />
       <UiSegmented v-model="who" size="sm" aria-label="谁的表情" :options="[{ value: 'owner', label: '本人' }, { value: 'others', label: '其他用户' }, { value: 'guests', label: '访客' }]" />
       <UiSegmented v-model="by" size="sm" aria-label="分组" :options="[{ value: 'profile', label: '按档案' }, { value: 'model', label: '按模型' }]" />
@@ -43,9 +45,9 @@ const rate = (c: Counts) => (c.positive + c.negative ? Math.round((c.positive / 
     <Skeleton v-if="!stats && !failed" :rows="3" />
     <p v-else-if="failed" class="muted small">{{ failed }}</p>
     <template v-else-if="stats">
-      <p class="muted small">
-        机器人近 30 天发了 {{ stats.botMessages }} 条消息<template v-if="stats.lastReactionAt">，最近一次收到表情 {{ relTime(stats.lastReactionAt) }}</template><template v-else>，还没有收到表情事件（设置 → 渠道 → 机器人权限与事件 → 检查）</template>。确认类表情（OK、DONE、+1…）只表示收到，不算好坏。
-      </p>
+      <HelpText>
+        机器人发了 {{ stats.botMessages }} 条消息<template v-if="stats.lastReactionAt">，最近一次收到表情 {{ relTime(stats.lastReactionAt) }}</template><template v-else>，还没有收到表情事件（设置 → 渠道 → 机器人权限与事件 → 检查）</template>。确认类表情（OK、DONE、+1…）只表示收到，不算好坏。
+      </HelpText>
       <div v-for="r in rows" :key="r.key" class="fb-row">
         <span class="name mono ellipsis" :title="r.key">{{ r.key }}</span>
         <span class="counts small">
@@ -84,7 +86,8 @@ const rate = (c: Counts) => (c.positive + c.negative ? Math.round((c.positive / 
 }
 .fb-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 650;
 }
 .fb-row {
   display: flex;
@@ -98,6 +101,7 @@ const rate = (c: Counts) => (c.positive + c.negative ? Math.round((c.positive / 
 .name {
   flex: 1 1 160px;
   min-width: 0;
+  font-size: 13px;
 }
 .counts {
   display: flex;

@@ -287,7 +287,7 @@ const lastReading = computed(() => {
       <div class="grow">
         <router-link to="/sources" class="back small"><Icon name="left" :size="14" />原件</router-link>
         <h1>飞书知识库</h1>
-        <p>你在飞书里能看到的知识库。助理按你写的方向提议放进哪个空间；归入已有空间和“不读”默认直接生效，新建空间等你确认；每晚从已归入的知识库读一些文档，读进对应空间再整理。只读飞书，不会改动知识库。</p>
+        <p>你在飞书里能看到的知识库：助理提议放进哪个空间，每晚读一些进来；只读，不改动知识库。</p>
       </div>
       <div class="row wrap gap">
         <button class="btn sm" :disabled="data?.discovery.running" @click="discover"><Icon name="search" :size="14" />{{ data?.discovery.running ? "发现中…" : "立即发现" }}</button>
@@ -363,9 +363,8 @@ const lastReading = computed(() => {
             <p class="muted small sample">目录：{{ sampleText(k) }}</p>
 
             <div v-if="k.proposal && (k.status === 'proposed' || k.status === 'later' || k.status === 'new')" class="proposal small">
-              <div><strong>建议：{{ proposalText(k.proposal) }}</strong><template v-if="k.proposal.action === 'map' || k.proposal.action === 'create'"> · 优先级{{ PRIORITY[k.proposal.priority] }} · 初始{{ LEVEL[k.proposal.level] }}</template></div>
+              <div><strong>建议：{{ proposalText(k.proposal) }}</strong><template v-if="k.proposal.action === 'map' || k.proposal.action === 'create'"> · 优先级{{ PRIORITY[k.proposal.priority] }} · 初始{{ LEVEL[k.proposal.level] }}</template><span v-if="k.proposal.reason" class="muted"> — {{ k.proposal.reason }}</span></div>
               <div v-if="k.proposal.newSpace" class="muted">新空间：{{ k.proposal.newSpace.id }} · {{ k.proposal.newSpace.description }}</div>
-              <div class="muted">{{ k.proposal.reason }}</div>
             </div>
 
             <div v-if="k.status === 'mapped' && !k.goneAt" class="mapped small">
@@ -511,9 +510,10 @@ const lastReading = computed(() => {
 }
 .kb {
   display: grid;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 4px;
+  margin-bottom: 8px;
   min-width: 0;
+  padding: 12px 14px;
 }
 .kb.gone {
   opacity: 0.65;
@@ -529,16 +529,14 @@ const lastReading = computed(() => {
 .desc,
 .sample {
   margin: 0;
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .proposal {
-  background: var(--sunken);
-  border-radius: 8px;
-  padding: 8px 10px;
+  margin-top: 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line-strong);
   display: grid;
   gap: 2px;
   overflow-wrap: anywhere;
@@ -575,6 +573,7 @@ const lastReading = computed(() => {
   grid-column: 1 / -1;
 }
 .actions {
-  padding-top: 2px;
+  padding-top: 4px;
+  gap: 4px;
 }
 </style>

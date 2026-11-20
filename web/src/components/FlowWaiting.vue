@@ -4,6 +4,8 @@ import { useRouter } from "vue-router";
 import { get, onServerEvent, onServerResync, post } from "../api";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
+import RichText from "./RichText.vue";
+import { readableIds } from "../lib/work";
 import { nextWords, ownerTurn, stageActions, stageWords, type FlowAction, type FlowStage, type FlowView } from "../lib/flow";
 
 /**
@@ -55,10 +57,12 @@ const buttons = (s: FlowStage) => stageActions(s).filter((a) => !(a.action === "
 /** A box whenever words do something here: sent on their own, or carried by a button (a reason, or how the owner's own step went). */
 const boxed = (s: FlowStage) => !!replyMeaning(s) || buttons(s).some((a) => a.reason) || s.state === "doing" && s.by === "owner";
 function placeholder(s: FlowStage) {
-  if (replyMeaning(s)) return `写一句话：${replyMeaning(s)}；点下面需要原因的按钮时也用这里的话`;
-  if (s.state === "doing" && s.by === "owner") return "可以写一句怎么定的、结果在哪，点「做完了」时一起记下；跳过要写原因";
+  if (replyMeaning(s)) return `写一句话：${replyMeaning(s)}，或作为按钮的原因`;
+  if (s.state === "doing" && s.by === "owner") return "怎么定的、结果在哪（可不写）；跳过要写原因";
   return "写一句原因，再点下面的按钮";
 }
+/** The stage's instruction can run to a paragraph: two lines, the rest on demand. */
+const opened = ref<Record<string, boolean>>({});
 async function act(s: FlowStage, a: FlowAction) {
   if (busy.value || !may.value) return;
   const note = replies.value[s.id]?.trim();
@@ -100,8 +104,11 @@ function discuss(s: FlowStage) {
     <p v-if="error" class="error small" role="alert">{{ error }}</p>
     <section v-for="s in waiting" :key="`w-${s.id}`" class="turn" :aria-label="`等你：${s.name}`">
       <div class="turn-head"><Icon :name="s.state === 'blocked' ? 'alert' : 'check'" :size="16" /><strong>{{ s.state === "blocked" ? "卡住了" : "等你" }}：{{ s.name }}</strong></div>
-      <p>{{ nextWords(s) }}</p>
-      <Markdown v-if="s.state === 'blocked' && text(s)" :source="text(s)" class="prose" />
+      <div class="words">
+        <RichText tag="p" class="small" :text="readableIds(nextWords(s))" :space="item.spaceId" :lines="opened[s.id] ? undefined : 2" />
+        <button v-if="nextWords(s).length > 120" type="button" class="lnk small" :aria-expanded="!!opened[s.id]" @click="opened[s.id] = !opened[s.id]">{{ opened[s.id] ? "收起" : "展开" }}</button>
+      </div>
+      <Markdown v-if="s.state === 'blocked' && text(s)" :source="readableIds(text(s))" :space="item.spaceId" compact />
       <template v-if="may">
         <textarea v-if="boxed(s)" v-model="replies[s.id]" class="textarea" rows="2" :aria-label="`给「${s.name}」写的话`" :placeholder="placeholder(s)" />
         <div class="row wrap">
@@ -121,4 +128,8 @@ function discuss(s: FlowStage) {
 .turn { border: 1px solid var(--warn); border-left-width: 3px; border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; background: var(--warn-soft); min-width: 0; }
 .turn-head { display: flex; gap: 6px; align-items: center; }
 .turn p { margin: 0; }
+.words { display: grid; gap: 2px; justify-items: start; color: var(--ink-2); min-width: 0; }
+.words :deep(code), .turn :deep(.prose code) { font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
+.lnk { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.lnk:hover { text-decoration: underline; }
 </style>
