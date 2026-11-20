@@ -10,7 +10,7 @@ import { DECISION_SCENES } from "../core/decision-scenes.ts";
 import { HttpError, localStamp } from "../core/util.ts";
 import { replyOutcomes } from "../agents/reply-outcomes.ts";
 import { sceneOf, scenes, sceneTable } from "./scenes.ts";
-import type { Metric, RecordRef, Section, Report } from "./types.ts";
+import type { Breakdown, Metric, RecordRef, Section, Report } from "./types.ts";
 
 const flag = z.preprocess(v => v === "true" || v === "1" ? true : v === "false" || v === "0" ? false : v, z.boolean().default(false));
 export const insightFilters = z.object({
@@ -187,7 +187,7 @@ export function shieldSection(c: Ctx): Section {
     `select id, at, outcome, json_extract(context, '$.runId') run_id from notifications where user_id = 'owner' and at >= ? and at < ?
       and coalesce(json_extract(context, '$.urgency'), '') != 'silent' and json_extract(context, '$.replacedBy') is null and json_extract(context, '$.bundle') is null
       and coalesce(outcome, '') != 'bundled'`, c.f.start, c.f.end).filter(n => c.ids.has(n.run_id) && (c.runs.find(r => r.id === n.run_id)?.via === "mention" || c.runs.find(r => r.id === n.run_id)?.kind === "mention"));
-  const noticeRefs = (ns: typeof notices) => ns.map(n => ({ id: n.id, at: n.at, label: `通知 · ${n.outcome ?? "待标注"}`, link: "#/notifications", value: n.outcome ?? "待标注" }));
+  const noticeRefs = (ns: typeof notices) => ns.map(n => ({ id: n.id, at: n.at, label: `通知 · ${n.outcome ?? "待标注"}`, link: "#/notifications", value: n.outcome ?? "待标注", run: n.run_id }));
   const delivered = rs.filter(r => answers.some(a => a.id === r.id) || notices.some(n => n.run_id === r.id || n.run_id === r.handled || n.run_id === r.joined));
   const steps: [string, string, RunRow[]][] = [["reached", "找你的（批）", rs], ["screened", "不用管，直接筛掉", screened], ["triaged", "分诊过的", triaged], ["handled", "替你去查的", handled], ["delivered", "提醒了你或替你答了", delivered]];
   for (const [key, label, rows] of steps) s.metrics.push(metric(c, `shield:${key}`, label, rows.length, refs(rows)));
@@ -251,7 +251,7 @@ export function qualitySection(c: Ctx): Section {
   const audits = all<{ id: string; at: string; verdict: string; audit_run: string | null; space_id: string; category: string }>(c.app.db, "select id, at, verdict, audit_run, space_id, category from quality_audits where at >= ? and at < ?", c.f.start, c.f.end).filter(r => c.ids.has(r.audit_run ?? ""));
   for (const category of ["page", "level"]) {
     const as = audits.filter(a => a.category === category && a.verdict !== "unchecked");
-    if (as.length) s.metrics.push(metric(c, `quality:audit:${category}`, category === "page" ? "写作抽检准确率" : "定级抽检准确率", ratio(as.filter(a => a.verdict !== "wrong").length, as.length), as.map(a => ({ id: a.id, at: a.at, label: `抽检 · ${a.verdict}`, link: "#/quality" })), "%", "只算核完的。只有写法问题、事实没错的算准确。"));
+    if (as.length) s.metrics.push(metric(c, `quality:audit:${category}`, category === "page" ? "写作抽检准确率" : "定级抽检准确率", ratio(as.filter(a => a.verdict !== "wrong").length, as.length), as.map(a => ({ id: a.id, at: a.at, label: `抽检 · ${a.verdict}`, link: "#/quality", ...(a.audit_run ? { run: a.audit_run } : {}) })), "%", "只算核完的。只有写法问题、事实没错的算准确。"));
   }
   // How replies went, read from what people said afterwards (agents/reply-outcomes.ts): a small table by who was answered.
   const outcomes = replyOutcomes(c.app, c.f.start, c.f.end).filter(o => o.label && c.ids.has(o.runId));
@@ -305,7 +305,7 @@ export function qualitySection(c: Ctx): Section {
 }
 type ReplayRow = { id: string; at: string; base_run_id: string; verdict: string | null; skill: string | null };
 function replayRows(c: Ctx) { return all<ReplayRow>(c.app.db, "select id, at, base_run_id, verdict, json_extract(variant, '$.skillName') skill from replays where at >= ? and at < ?", c.f.start, c.f.end).filter(r => c.ids.has(r.base_run_id)); }
-const replayRefs = (xs: ReplayRow[]) => xs.map(r => ({ id: r.id, at: r.at, label: `复盘 · ${r.verdict ?? "未裁决"}`, link: "#/agents" }));
+const replayRefs = (xs: ReplayRow[]) => xs.map(r => ({ id: r.id, at: r.at, label: `复盘 · ${r.verdict ?? "未裁决"}`, link: "#/agents", run: r.base_run_id }));
 export function deliverySection(c: Ctx): Section {
   const s = section("delivery", "编码交付", "交给 omem 写代码的事：发起了多少、评审通过多少、已经用上多少。同一次交办的后续几轮算在一起。");
   const roots = c.runs.filter(r => r.kind === "code" && !r.root);
@@ -521,7 +521,7 @@ export function costSection(c: Ctx): Section {
   return s;
 }
 const builders = [usageSection, coverageSection, shieldSection, othersSection, qualitySection, deliverySection, flowsSection, studySection, knowledgeSection, costSection];
-type Cached = { at: number; report: Report; records: Map<string, RecordRef[]> };
+type Cached = { at: number; report: Report; records: Map<string, RecordRef[]>; runs: Map<string, RunRow>; visible: (r: RunRow) => boolean; f: Normal };
 const cache = new WeakMap<App, Map<string, Cached>>();
 export function clearInsightsCache(app: App) { cache.delete(app); }
 function compute(app: App, viewer: string, input: Filters): Cached {
@@ -547,7 +547,7 @@ function compute(app: App, viewer: string, input: Filters): Cached {
     }
   }).filter(s => !s.empty || s.id !== "study" && (s.id !== "flows" || s.notes.length > 0));
   const unique = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((s): s is string => !!s))].sort();
-  const result: Cached = { at: Date.now(), records: c.records, report: { from: f.from, to: f.to, timezone: app.config.timezone, owner: viewer === OWNER, scenes, sceneTable, generatedAt: new Date().toISOString(), sections,
+  const result: Cached = { at: Date.now(), records: c.records, runs: new Map(c.runs.map(r => [r.id, r])), visible: c.visible, f, report: { from: f.from, to: f.to, timezone: app.config.timezone, owner: viewer === OWNER, scenes, sceneTable, generatedAt: new Date().toISOString(), sections,
     options: { spaces: unique(c.runs.map(r => r.space_id)), people: unique(c.runs.map(r => r.trigger_by)), profiles: unique(c.runs.flatMap(r => [r.spec, ...(r.roles ?? "").split("|")])), models: unique(c.runs.map(r => parseAi(r.ai).model)), bots: unique(c.runs.map(r => r.bot)), chats: unique(c.runs.map(r => r.place)) } } };
   for (const [k, v] of entries) if (Date.now() - v.at >= 180_000) entries.delete(k);
   if (entries.size >= 8) entries.delete(entries.keys().next().value!);
@@ -560,6 +560,92 @@ export function insightRecords(app: App, viewer: string, input: Filters, metricK
   if (!records) throw new HttpError(404, "没有这项统计的明细");
   offset = Math.max(0, Math.floor(offset) || 0);
   return { records: records.slice(offset, offset + 100), total: records.length };
+}
+/** The ways a number's records are split in its breakdown, in the order the drawer shows them. */
+const DIMS: { key: string; label: string; of: (r: RunRow) => string | null; name?: (v: string) => string }[] = [
+  { key: "scene", label: "场景", of: r => sceneOf(r) },
+  { key: "profile", label: "Agent", of: r => r.spec ?? r.roles?.split("|").filter(Boolean)[0] ?? null },
+  { key: "space", label: "空间", of: r => r.space_id },
+  { key: "model", label: "模型", of: r => parseAi(r.ai).model ?? null },
+  { key: "by", label: "谁触发的", of: r => r.trigger_by ?? (r.user_id ? `user:${r.user_id}` : null), name: v => v === "user:owner" ? "你" : v },
+  { key: "chat", label: "在哪个会话", of: r => r.place },
+  { key: "status", label: "结果", of: r => r.status, name: v => RUN_STATUS[v] ?? v },
+];
+const UNKNOWN = "没记下";
+const BREAKDOWN_TOP = 8, BREAKDOWN_PAGE = 100;
+/**
+ * A number taken apart for the drawer: the same records as its record list (same filters, same
+ * visibility), counted by day of the period, split by scene / agent / space / model / who / where /
+ * how it ended (a split with a single group says nothing and is left out), narrowed by the drawer's
+ * own picks (`dim:value`) and a search over the record titles, newest first, a page at a time.
+ * Everything comes from the report's cache: the period's runs were read once through the time
+ * index; runs a record names outside them (later rounds of a delegation) are read in a few batches.
+ * Records keep their counted-only titles: what someone asked is never shown.
+ */
+export function insightBreakdown(app: App, viewer: string, input: Filters, metricKey: string, opts: { picks?: string[]; q?: string; offset?: number } = {}): Breakdown {
+  const cached = compute(app, viewer, input);
+  const records = cached.records.get(metricKey);
+  if (!records) throw new HttpError(404, "没有这项统计的明细");
+  const m = cached.report.sections.flatMap(s => [...s.metrics, ...s.charts.flatMap(c => c.points ?? [])]).find(x => x.key === metricKey);
+  // The run behind each record: named, linked, or the record is the run itself.
+  const runOf = (r: RecordRef) => r.run ?? r.link.match(/^#\/runs\/([^/?#]+)/)?.[1] ?? (cached.runs.has(r.id) ? r.id : undefined);
+  const missing = [...new Set(records.map(runOf).filter((id): id is string => !!id && !cached.runs.has(id)))].slice(0, 5000);
+  const extra = new Map<string, RunRow>();
+  for (let i = 0; i < missing.length; i += 500) {
+    const ids = missing.slice(i, i + 500);
+    for (const r of all<RunRow>(app.db, `select ${RUN_COLUMNS} from runs where id in (${ids.map(() => "?").join(",")})`, ...ids)) if (cached.visible(r)) extra.set(r.id, r);
+  }
+  const rowOf = (r: RecordRef) => { const id = runOf(r); return id ? cached.runs.get(id) ?? extra.get(id) : undefined; };
+  const picks = (opts.picks ?? []).flatMap(p => { const i = p.indexOf(":"); const dim = DIMS.find(d => d.key === p.slice(0, i)); return i > 0 && dim ? [{ dim, value: p.slice(i + 1) }] : []; });
+  const valueOf = (d: typeof DIMS[number], row: RunRow | undefined) => row ? d.of(row) ?? UNKNOWN : null;
+  const picked = records.filter(r => picks.every(p => valueOf(p.dim, rowOf(r)) === p.value));
+  const tz = app.config.timezone;
+  // By day: only records dated inside the period (a page's state or a running total has no day).
+  const days = Array.from({ length: cached.f.days }, (_, i) => dayAdd(cached.f.from, i));
+  const perDay = new Map(days.map(d => [d, 0]));
+  let dated = 0;
+  for (const r of picked) {
+    const t = Date.parse(r.at);
+    if (!Number.isFinite(t)) continue;
+    const d = localDay(t, tz);
+    if (perDay.has(d)) { perDay.set(d, perDay.get(d)! + 1); dated++; }
+  }
+  const dims = DIMS.flatMap(d => {
+    const counts = new Map<string, number>();
+    for (const r of picked) { const v = valueOf(d, rowOf(r)); if (v !== null) counts.set(v, (counts.get(v) ?? 0) + 1); }
+    if (counts.size < 2 && !picks.some(p => p.dim === d)) return [];
+    const rows = [...counts].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, label: value === UNKNOWN ? UNKNOWN : d.name?.(value) ?? value, count }));
+    return [{ key: d.key, label: d.label, rows: rows.slice(0, BREAKDOWN_TOP), more: Math.max(0, rows.length - BREAKDOWN_TOP) }];
+  });
+  const enrich = (r: RecordRef) => {
+    const row = rowOf(r);
+    if (!row) return { ...r };
+    const by = DIMS.find(d => d.key === "by")!;
+    const who = by.of(row);
+    const seconds = row.started_at && row.finished_at ? (Date.parse(row.finished_at) - Date.parse(row.started_at)) / 1000 : NaN;
+    return { ...r, ...(who ? { by: by.name!(who) } : {}), ...(Number.isFinite(seconds) && seconds >= 0 ? { seconds: Math.round(seconds) } : {}), result: RUN_STATUS[row.status] ?? row.status };
+  };
+  const q = opts.q?.trim().toLowerCase();
+  const listed = (q ? picked.filter(r => `${r.label} ${typeof r.value === "string" ? r.value : ""}`.toLowerCase().includes(q)) : picked)
+    .slice().sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0) || 0);
+  let previous = m?.previous;
+  // Against the period before, unless the report already compared it (or the number has no earlier self).
+  if (previous === undefined && m && !/^(knowledge:(lessons|pages|read)|usage:(week|day):)/.test(metricKey) && !/:\d{4}-\d{2}-\d{2}/.test(metricKey)) {
+    const f = cached.f;
+    try {
+      const before = compute(app, viewer, { ...input, from: dayAdd(f.from, -f.days), to: dayAdd(f.from, -1), compare: false }).report;
+      const p = before.sections.flatMap(s => s.metrics).find(x => x.key === metricKey);
+      if (p) previous = p.value;
+    } catch { /* the period before may fall outside what can be counted */ }
+  }
+  return {
+    key: metricKey, label: m?.label ?? metricKey, value: m?.value ?? records.length, ...(m?.unit ? { unit: m.unit } : {}), ...(m?.note ? { note: m.note } : {}), ...(previous !== undefined ? { previous } : {}),
+    from: cached.f.from, to: cached.f.to, all: records.length, total: listed.length,
+    daily: dated ? { labels: days, values: days.map(d => perDay.get(d)!) } : null,
+    dims, picks: picks.map(p => ({ dim: p.dim.key, value: p.value, label: `${p.dim.label}：${p.value === UNKNOWN ? UNKNOWN : p.dim.name?.(p.value) ?? p.value}` })),
+    records: listed.slice(offset, offset + BREAKDOWN_PAGE).map(enrich),
+  };
 }
 export function exportInsights(app: App, viewer: string, input: Filters, format: "md" | "csv") {
   const report = insights(app, viewer, input);
