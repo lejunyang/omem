@@ -147,26 +147,28 @@ export function removeMaterials(app: App, itemId: string, keys: (number | string
 }
 
 /** Materials with their current state, limited to what this reader may see. */
-export function materialViews(app: App, itemId: string, userId: string): MaterialView[] {
+export async function materialViews(app: App, itemId: string, userId: string): Promise<MaterialView[]> {
   const allowed = accessibleSpaces(app, userId);
   const item = requireItem(app, itemId, userId, "read");
-  return itemMaterials(app, itemId).map((m) => {
+  const views: MaterialView[] = [];
+  for (const m of itemMaterials(app, itemId)) {
     try {
       const r = resolve(app, m.kind, m.ref);
       if (m.kind === "object") r.spaceId = item.spaceId;
       const readable = (!allowed || !r.spaceId || allowed.includes(r.spaceId))
-        && (m.kind !== "source" || sourceVisible(app, userId, m.ref) === true)
+        && (m.kind !== "source" || await sourceReadable(app, userId, m.ref))
         && (m.kind !== "run" || canReadRun(app, userId, m.ref));
-      return { ...m, spaceId: r.spaceId, title: readable ? r.title : m.label, status: r.status ?? null, readable, changed: !!(m.meta.hash && r.hash && m.meta.hash !== r.hash), missing: m.kind !== "object" && r.status === "deleted" };
+      if (readable || userId === OWNER) views.push({ ...m, spaceId: r.spaceId, title: readable ? r.title : m.label, status: r.status ?? null, readable, changed: !!(m.meta.hash && r.hash && m.meta.hash !== r.hash), missing: m.kind !== "object" && r.status === "deleted" });
     } catch {
-      return { ...m, spaceId: null, title: m.label, status: null, readable: false, changed: false, missing: true };
+      if (userId === OWNER) views.push({ ...m, spaceId: null, title: m.label, status: null, readable: false, changed: false, missing: true });
     }
-  }).filter(m => userId === OWNER || m.readable);
+  }
+  return views;
 }
 
 /** Spaces a review or delegation of the item should be able to read. */
-export function materialSpaces(app: App, itemId: string, userId: string) {
-  return [...new Set(materialViews(app, itemId, userId).filter((m) => m.readable && !m.missing && m.spaceId && m.kind !== "run").map((m) => m.spaceId!))];
+export async function materialSpaces(app: App, itemId: string, userId: string) {
+  return [...new Set((await materialViews(app, itemId, userId)).filter((m) => m.readable && !m.missing && m.spaceId && m.kind !== "run").map((m) => m.spaceId!))];
 }
 
 const COMPACT_MATERIALS = 12, COMPACT_DETAIL = 1500;
@@ -177,9 +179,9 @@ const KIND_LABEL: Record<MaterialKind, string> = { source: "原件", conversatio
  * among them, the tree under them follows; `since` lists the business changes after that time (the
  * delegation's earlier rounds were built before them).
  */
-export function materialsBrief(app: App, itemId: string, userId: string, opts: { since?: string; compact?: boolean } = {}) {
+export async function materialsBrief(app: App, itemId: string, userId: string, opts: { since?: string; compact?: boolean } = {}) {
   const item = getItem(app, itemId);
-  const all_ = materialViews(app, itemId, userId).filter((m) => m.readable && !m.missing);
+  const all_ = (await materialViews(app, itemId, userId)).filter((m) => m.readable && !m.missing);
   const reqs = all_.filter((m) => m.kind === "req").map((m) => m.ref);
   const every = all_.filter((m) => m.kind !== "req");
   // A flow stage reads what it needs with tools: the latest materials and a short description are

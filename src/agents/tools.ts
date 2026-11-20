@@ -2578,7 +2578,7 @@ def({
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(ctx.app, { item: item.id, spaces: readable, userId: ctx.userId ?? OWNER }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");
-    const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
+    const materials = (await materialViews(ctx.app, item.id, ctx.userId ?? OWNER)).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
     // Where the work goes on and what is running for it (items/places.ts).
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
@@ -6409,7 +6409,7 @@ def({
     const as = await import("../designs/assess.ts");
     const sources = await as.resolveDesignSources(ctx.app, a.sources, { userId: ctx.userId ?? OWNER, spaces: ctx.spaces });
     if (a.design_id) await readableDesign(ctx, a.design_id);
-    const { design, run: r } = as.startAssessment(ctx.app, {
+    const { design, run: r } = await as.startAssessment(ctx.app, {
       title: a.title, sources, repos, spaceId: target, userId: ctx.userId ?? OWNER, itemId: item?.id, author: a.author, note: a.note, designId: a.design_id, parentId: ctx.runId, ai: execution, readable: ctx.spaces,
     });
     return `已开始评估，运行 ${r.id}，方案 ${design.id}${design.revision ? `（第 ${design.revision + 1} 版）` : ""}；完成后会通知本人，结果也会回到这里。`;

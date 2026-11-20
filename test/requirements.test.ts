@@ -83,7 +83,7 @@ describe("requirement trees", () => {
     addLocalMaterials(app, item.id, [{ kind: "req", ref: `req:${page.id}` }], "owner", "user");
     const since = new Date(Date.now() - 60_000).toISOString();
     recordReqStatus(app, "r-demo", 1, [{ req: amount.id, status: "partial", locations: [{ file: "refund.ts", start: 1, end: 3 }] }, { status: "extra" }]);
-    const brief = materialsBrief(app, item.id, "owner", { since });
+    const brief = await materialsBrief(app, item.id, "owner", { since });
     expect(brief).toContain(`[功能 ${amount.id}] 退款金额只算未发货的商品行（上一次评审：部分实现）`);
     expect(brief).toContain("验收：部分发货只退未发货部分，运费不退");
     expect(brief).toMatch(/业务变更（上一轮之后）[\s\S]*运营决定运费一律不退/);

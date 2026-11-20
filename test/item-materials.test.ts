@@ -25,12 +25,12 @@ describe("item materials", () => {
     const list = itemMaterials(app, item.id);
     expect(list).toHaveLength(2);
     expect(list.find((m) => m.kind === "source")!.meta.note).toBe("以这份为准");
-    expect(materialSpaces(app, item.id, "owner")).toEqual(["docs"]);
-    expect(materialsBrief(app, item.id, "owner")).toContain(`src:${prd.id}`);
+    expect(await materialSpaces(app, item.id, "owner")).toEqual(["docs"]);
+    expect(await materialsBrief(app, item.id, "owner")).toContain(`src:${prd.id}`);
 
     upsertSource(app, { spaceId: "docs", kind: "doc", uri: "prd.md", title: "退款需求文档", text: "第二版\n" });
-    expect(materialViews(app, item.id, "owner").find((m) => m.kind === "source")!.changed).toBe(true);
-    expect(materialsBrief(app, item.id, "owner")).toContain("加入后有更新");
+    expect((await materialViews(app, item.id, "owner")).find((m) => m.kind === "source")!.changed).toBe(true);
+    expect(await materialsBrief(app, item.id, "owner")).toContain("加入后有更新");
 
     expect(removeMaterials(app, item.id, [`space:docs`], "owner", "user")).toBe(1);
     expect(itemMaterials(app, item.id).map((m) => m.kind)).toEqual(["source"]);

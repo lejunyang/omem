@@ -1449,7 +1449,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const mine = item.userId === who(req);
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     const a = autoInfo(app, id);
-    return { item, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
+    return { item, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.

@@ -228,7 +228,7 @@ describe("reviewing an existing branch", () => {
       setFindingDecision(app, r.id, nit.id, "wontfix", "命名沿用源仓库，运营已确认");
       // The reason is a business decision on the item, which later work reads.
       expect(itemEvents(app, item.id).some((e) => e.kind === "decision" && e.text.includes("运营已确认"))).toBe(true);
-      expect(materialsBrief(app, item.id, "owner")).toContain("命名沿用源仓库");
+      expect(await materialsBrief(app, item.id, "owner")).toContain("命名沿用源仓库");
 
       const ctx: ToolContext = { app, runId: null, spaceId: "shop-api", spaces: null, tools: null, actor: "agent" };
       const res = await callTool(ctx, "continue_code_run", { run_id: r.id, fix: [major.id], later: [minor.id], task: "另外：部分退款要记操作日志" });

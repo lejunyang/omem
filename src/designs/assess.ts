@@ -49,12 +49,14 @@ const sourceSpace = (app: App, ref: string) => one<{ space_id: string }>(app.db,
  * Start (or restart, on `designId`) the assessment of an outside design. The caller has checked the
  * spaces: `spaceId` writable, `repos` and `sources` readable (resolveDesignSources).
  */
-export function startAssessment(app: App, o: {
+export async function startAssessment(app: App, o: {
   title: string; sources: string[]; repos: string[]; spaceId: string; userId: string;
   itemId?: string | null; author?: string | null; note?: string; designId?: string; parentId?: string | null; ai?: Execution;
   /** What the caller may read at most (null: everything). */
   readable: string[] | null;
-}): { design: Design; run: Run } {
+}): Promise<{ design: Design; run: Run }> {
+  const itemId = o.itemId ?? (o.designId ? getDesign(app, o.designId).itemId : null);
+  const spaces = itemId ? await materialSpaces(app, itemId, o.userId) : [];
   let design: Design;
   if (o.designId) {
     const d = getDesign(app, o.designId);
@@ -68,7 +70,7 @@ export function startAssessment(app: App, o: {
     design = createDesign(app, { spaceId: o.spaceId, itemId: o.itemId, title: o.title, origin: "external", author: o.author, sources: o.sources, repos: o.repos, userId: o.userId });
   }
   const allowed = scopeFor(app, o.userId, o.readable);
-  const wanted = [design.spaceId, ...design.repos, ...design.sources.flatMap((s) => sourceSpace(app, s) ?? []), ...(design.itemId ? materialSpaces(app, design.itemId, o.userId) : [])];
+  const wanted = [design.spaceId, ...design.repos, ...design.sources.flatMap((s) => sourceSpace(app, s) ?? []), ...spaces];
   const readSpaces = [...new Set(wanted)].filter((id) => findSpace(app, id) && (!allowed || allowed.includes(id)));
   const r = createRun(app, {
     kind: "design",
@@ -81,7 +83,7 @@ export function startAssessment(app: App, o: {
   return { design: getDesign(app, design.id), run: r };
 }
 
-function assessTask(app: App, design: Design, o: { note?: string; userId: string }) {
+async function assessTask(app: App, design: Design, o: { note?: string; userId: string }) {
   const docs = design.sources.map((s) => {
     const row = one<{ title: string; space_id: string }>(app.db, "select title, space_id from sources where id = ?", s.replace(/^src:/, ""));
     return `- ${s}${row ? `《${row.title}》（空间 ${row.space_id}）` : ""}`;
@@ -91,7 +93,7 @@ function assessTask(app: App, design: Design, o: { note?: string; userId: string
     "# 评估技术方案",
     `这是别人写的技术方案${design.author ? `（作者 ${design.author}）` : ""}《${design.title}》。按角色说明里“评估别人的方案”做：先如实提取作者决定了什么，再回到代码核对每个决定依赖的事实，最后写意见。用 submit_design 交一次结果（方案 ${design.id}）。`,
     `## 方案文档\n\n${docs.join("\n")}\n\n用 read_source 读全文（长文档按 source_outline 分段读）。`,
-    design.itemId ? materialsBrief(app, design.itemId, o.userId) : "",
+    design.itemId ? await materialsBrief(app, design.itemId, o.userId) : "",
     repos.length ? `## 要核对的仓库\n\n${repos.join("\n")}\n\n用 search、find_symbol、read_source（space 写仓库 id）核对方案依赖的事实，code_history 看这些文件以前出过什么问题。` : "没有指定仓库：只能按文档本身评估，依赖代码的事实写成要问作者的（question），不要猜。",
     o.note ? `## 本人关心的\n\n${o.note}` : "",
     design.revision
@@ -114,7 +116,7 @@ registerHandler("design", async (ctx) => {
       role: "designer",
       spaceId: before.spaceId,
       alsoRead: readSpaces,
-      task: assessTask(ctx.app, before, { note, userId: user }),
+      task: await assessTask(ctx.app, before, { note, userId: user }),
       runId: ctx.run.id,
       signal: ctx.signal,
       onEvent: (e) => ctx.event(e.type, e),

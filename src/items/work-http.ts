@@ -215,7 +215,7 @@ export async function workDetail(app: App, id: string, userId: string) {
     children: childrenOf(app, id),
     timeline: lineTimeline(app, id, { limit: 200 }),
     chats: chatActivity(app, chats),
-    materials: materialViews(app, id, userId),
+    materials: await materialViews(app, id, userId),
     listen: c ? { id: c.id, status: c.status } : null,
     flow: f ? { ...f, waitingOn: f.stages.find((s) => s.id === f.current?.id)?.waitingOn ?? null } : null,
   };

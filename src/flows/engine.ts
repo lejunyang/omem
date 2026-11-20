@@ -232,7 +232,7 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
   // A stage following a review of someone's branch: redoing it means reviewing again, never coding.
   const latest = typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" ? latestCodeWork(app, item) : null;
   const review = latest?.branchReview ? latest : null;
-  return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : materialsBrief(app, item.id, item.userId, { compact: true }), `截止时间：${item.dueAt ?? "未定"}`,
+  return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : await materialsBrief(app, item.id, item.userId, { compact: true }), `截止时间：${item.dueAt ?? "未定"}`,
     changesBrief(app, item.id),
     ownerSaidBrief(app, f),
     placesBrief(app, item),

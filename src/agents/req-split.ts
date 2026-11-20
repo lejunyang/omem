@@ -35,7 +35,7 @@ registerHandler("req-split", async (ctx) => {
   const fixes = ownerCorrections(ctx.app, { spaceId, limit: 15 });
   const task = [
     `给事项 ${itemId} 拆需求点，写进空间 ${spaceId} 的需求树。`,
-    materialsBrief(ctx.app, itemId, user),
+    await materialsBrief(ctx.app, itemId, user),
     tree.length ? `空间 ${spaceId} 现有的需求树（前四层，不含测试点；完整的用 req_tree 看）：\n${tree.map((n) => `${"  ".repeat(n.depth)}- ${n.id} ${n.title}`).join("\n")}` : `空间 ${spaceId} 还没有需求树。`,
     fixes.lines.length ? `## 本人以前对拆分结果的修改（同样的问题这次不要再出现）\n\n${fixes.lines.join("\n")}` : "",
     note ? `## 本人的要求\n\n${note}` : "",
@@ -44,7 +44,7 @@ registerHandler("req-split", async (ctx) => {
   const r = await runRole(ctx.app, {
     role: "req-splitter",
     spaceId,
-    alsoRead: materialSpaces(ctx.app, itemId, user),
+    alsoRead: await materialSpaces(ctx.app, itemId, user),
     task,
     runId: ctx.run.id,
     signal: ctx.signal,

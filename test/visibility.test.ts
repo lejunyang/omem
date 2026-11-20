@@ -7,8 +7,8 @@ import { setAuthFetchForTests } from "../src/auth/providers.ts";
 import { storeConnection } from "../src/auth/vault.ts";
 import { keptHere, setVisibility, sourceReadable, sourceVisible } from "../src/auth/visibility.ts";
 import { upsertItem } from "../src/items/store.ts";
-import { itemMaterials } from "../src/items/materials.ts";
-import { one } from "../src/core/db.ts";
+import { addMaterials, itemMaterials } from "../src/items/materials.ts";
+import { one, run } from "../src/core/db.ts";
 import { fedSearch, serviceAccount, setShares } from "../src/core/federation.ts";
 import { createSpace, updateSpace } from "../src/core/spaces.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
@@ -88,6 +88,28 @@ describe("who may see a source", async () => {
     const res = await as("ann", `/api/items/${item.id}/materials`, { method: "POST", body: JSON.stringify({ materials: [{ kind: "source", ref: source.id }] }) });
     expect(res.status).toBe(allowed ? 200 : 403);
     expect(itemMaterials(app, item.id).map(m => m.ref)).toEqual(allowed ? [source.id] : []);
+  });
+
+  it.each(["网页详情", "read_item"])("%s 按飞书最新答复展示缓存过期的事项材料", async (entry) => {
+    updateSpace(app, "proj", { settings: { larkAccess: true } });
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "ann", scopes: [], accessToken: "at_ann", expiresIn: 7200 });
+    const item = upsertItem(app, undefined, { spaceId: "proj", userId: "ann", title: "复核材料" }, "user");
+    const docs = ["doc_ok", "doc_no"].map(documentId => upsertSource(app, {
+      spaceId: "proj", kind: "doc", uri: `material:${entry}:${documentId}`, title: documentId, text: "", meta: { documentId },
+    }));
+    await addMaterials(app, item.id, docs.map(doc => ({ kind: "source", ref: doc.id })), "owner");
+    const expired = new Date(Date.now() - 2 * 86400_000).toISOString();
+    for (const doc of docs) {
+      run(app.db, "insert into source_access(source_id,user_id,allowed,checked_at) values(?,'ann',?,?)", doc.id, Number(doc.id === docs[1].id), expired);
+    }
+    const read = async () => entry === "网页详情"
+      ? (await (await as("ann", `/api/items/${item.id}`)).json()).materials
+      : JSON.parse((await callTool(ctx("ann"), "read_item", { item_id: item.id })).text).materials;
+    const before = asked.length;
+    expect(await read()).toEqual([expect.objectContaining({ title: "doc_ok" })]);
+    expect(asked).toHaveLength(before + 2);
+    expect(await read()).toEqual([expect.objectContaining({ title: "doc_ok" })]);
+    expect(asked).toHaveLength(before + 2);
   });
 
   it("a space's Feishu documents in full only for those Feishu lets read them", async () => {
