@@ -832,6 +832,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
           context,
           contextLabel: m.topicId ? "话题里" : "群里",
           externalMessageId: m.messageId,
+          topicRootId: m.rootId,
           openTopic: async () => {
             const topic = await openLarkTopic(m.messageId);
             replyMessageId = topic.messageId;

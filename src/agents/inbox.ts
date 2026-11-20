@@ -30,6 +30,7 @@ export type Inbound = Partial<ThreadAddress> & {
   contextLabel?: string;
   /** Channel message id, so later replies can land in the right place (topic). */
   externalMessageId?: string;
+  topicRootId?: string;
   /** The message this one replies to / quotes (Feishu 引用回复): sender, readable text and optional origin link. */
   quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
   /** Wait this long for more messages before starting (defaults to sessions.mergeMs for chats, 0 for web). */
@@ -155,6 +156,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     if (score !== null && score >= app.config.guard.threshold) meta.contextSuspect = Math.round(score * 100) / 100;
   }
   if (inb.externalMessageId) meta.externalId = inb.externalMessageId;
+  if (inb.topicRootId) meta.topicRootId = inb.topicRootId;
   if (inb.quote) meta.quote = inb.quote;
   if (inb.speaker) meta.speaker = inb.speaker;
   if (inb.asker) meta.asker = inb.asker;
