@@ -179,6 +179,19 @@ new AgentSideConnection(
       if (process.env.FAKE_MODE === "board") {
         const label = /^材料编号 (\w+)$/m.exec(prompt)?.[1];
         if (!label || prompt.includes("请用 work_review 逐块验收")) {
+          const board = /任务板 (\w+)。/.exec(prompt);
+          if (board && prompt.includes("材料报告 autoaccept")) {
+            const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+            const client = new Client({ name: "board-reviewer", version: "1" });
+            await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) } as Record<string,string> }));
+            try {
+              const decisions = [...prompt.matchAll(/（(wt\w+)，done）/g)].map(m => ({ task: m[1], decision: "accept" }));
+              const args = { work_id: board[1], decisions };
+              const direct = (await client.listTools()).tools.some(t => t.name === "work_review");
+              const result = await client.callTool(direct ? { name: "work_review", arguments: args } : { name: "omem_call", arguments: { tool: "work_review", args } });
+              if (result.isError) throw new Error(JSON.stringify(result.content));
+            } finally { await client.close(); }
+          }
           await say("汇总已交付。");
           return { stopReason: "end_turn" };
         }

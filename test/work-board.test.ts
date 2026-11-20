@@ -5,8 +5,8 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/main.ts";
 import { all, run } from "../src/core/db.ts";
 import { createUser, createApiToken } from "../src/core/users.ts";
-import { createThread, threadMessages } from "../src/agents/threads.ts";
-import { __testHandlers, createRun, getRun, stopWorker, waitForRun } from "../src/agents/runs.ts";
+import { createThread, getThread, threadMessages } from "../src/agents/threads.ts";
+import { __testHandlers, cancelRun, createRun, getRun, runUser, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { maintainBoards, readBoard } from "../src/agents/work-board.ts";
@@ -63,6 +63,29 @@ describe("协同任务板", async () => {
     createUser(app, { id: "reader", name: "读者" });
     const token = createApiToken(app, "reader", "test");
     expect((await fetch(app.baseUrl + "/api/agent-work/" + id + "/board",{ headers: { authorization: "Bearer " + token } })).status).toBe(404);
+  }, 60000);
+
+  it("共享会话的成员派出任务板后以自己的身份验收", async () => {
+    const userId = "member";
+    createUser(app, { id: userId, name: "成员" });
+    const spaceId = "personal-member";
+    const thread = createThread(app, { spaceId, channel: "web", userId: "owner" });
+    const origin = createRun(app, { kind: "ask", title: "成员发起", spaceId, userId, input: { conversationId: thread.id, userId } });
+    const ctx: ToolContext = { app, runId: origin.id, spaceId, spaces: [spaceId], tools: null, actor: "agent", userId };
+    const tasks = ["autoaccept", "ok"].map(title => ({ title, goal: "材料编号 " + title, accept: "给出原件" }));
+    const result = await callTool(ctx, "dispatch_work", { title: "成员核对", tasks });
+    expect(result.isError, result.text).toBe(false);
+    const { workConversationId } = readBoard(app, origin.id);
+    expect(getThread(app, workConversationId).userId).toBe(userId);
+    const waiting = createRun(app, { kind: "ask", title: "其他成员留言", userId: "owner", spaceId, lane: workConversationId,
+      input: { conversationId: workConversationId }, notBefore: new Date(Date.now() + 60000).toISOString() });
+    await vi.waitFor(() => expect(coordinates(origin.id)).toHaveLength(1), { timeout: 15000 });
+    expect(getRun(app, waiting.id).input.coordinate).toBeUndefined();
+    cancelRun(app, waiting.id);
+    const coordinator = await wave(origin.id, 1);
+    expect(coordinator.lane).toBe(workConversationId);
+    expect(runUser(app, coordinator.id)).toBe(userId);
+    expect(readBoard(app, origin.id).tasks.map(t => [t.status, t.verdict?.by])).toEqual(tasks.map(() => ["accepted", coordinator.id]));
   }, 60000);
 
   it("失败不挡验收，换模型只重做原块，两次后只能接受或阻塞", async () => {
