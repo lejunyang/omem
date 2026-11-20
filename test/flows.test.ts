@@ -445,6 +445,23 @@ describe("对象与工具", () => {
     setRunOutput(app, next.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", next.id);
     await advance(app, item.id); expect(s("a").state).toBe("done");
   });
+  it("本人先直接交办了，变化再并进：运行确认改动已在那次交办里后结束，段跟着它走，不报卡住", async () => {
+    const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
+    const old = createRun(app, { kind: "code", spaceId: "personal", title: "第一次交办", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
+    addMaterials(app, item.id, [{ kind: "run", ref: old.id }], "owner");
+    setRunOutput(app, old.id, { verdict: "approved" }); run(app.db, "update runs set status='done', created_at='2026-01-01T00:00:00.000Z' where id=?", old.id);
+    await advance(app, item.id); expect(s("a").state).toBe("done");
+    // The owner asked the assistant for the change directly: a new delegation of this item, while the stage is done.
+    const direct = createRun(app, { kind: "code", spaceId: "personal", title: "退款单加运费说明", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
+    addMaterials(app, item.id, [{ kind: "run", ref: direct.id }], "owner");
+    await advance(app, item.id); expect(s("a").state).toBe("done");
+    await reopenStage(app, item.id, "a", "本人要求退款单加运费说明", [], owner, { feedback: true });
+    const stageRun = s("a").by!;
+    setRunOutput(app, stageRun, { text: "运费说明已在现有交办里" }); run(app.db, "update runs set status='done' where id=?", stageRun);
+    await advance(app, item.id);
+    expect(s("a")).toMatchObject({ state: "doing", by: `code-work:${direct.id}` });
+    expect(String(getRun(app, stageRun).input.task)).toContain("要改的已经在里面");
+  });
   it("跟着分支评审的段按本人意见重做：任务是带 rereview_of 复审，不发起编码交办", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);
     const review = createRun(app, { kind: "code", spaceId: "personal", title: "同事分支的评审", input: { itemId: item.id, repos: ["personal"], branches: { personal: "feature/refund" } }, userId: "owner" });

@@ -114,6 +114,28 @@ describe("流程上下文跟进", () => {
     expect(getRun(t.app, s.control.runId!).input.task).toContain("本人说还不行，原因：小王提出运费也要退");
     expect(getRun(t.app, s.control.runId!).input.task).toContain("[scope/merged]");
   });
+  it("本人自己说的范围变化直接并进，同一段几条合成一次重开；别人提的照样问", async () => {
+    const t = await setup([{ id: "code", name: "编码", by: { run: {} } }, { id: "end", name: "收尾", by: "wait" }]);
+    const original = getStage(t.app, t.item.id, "code").control.runId;
+    t.app.config.flows.follow.maxMessages = 1;
+    const said = t.message("owner", 0, "帮我把部分发货的运费也退了"), also = t.message("owner", 0, "退款单上也要显示运费");
+    const proposed = t.message("user", 0, "小王提出优惠券也要退");
+    await followContexts(t.app);
+    const r = t.queued()[0]; run(t.app.db, "update runs set status='running' where id=?", r.id);
+    noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: "本人要求运费也退", stages: ["code"], refs: [said], decided: true });
+    noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: "本人要求退款单显示运费", stages: ["code"], refs: [also], decided: true });
+    // Said to be settled, but only a colleague said it: still the owner's to decide.
+    noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: "小王提出优惠券也要退", stages: ["code"], refs: [proposed], decided: true });
+    await finishFollow(t.app, getRun(t.app, r.id));
+    const asks = listAsks(t.app, { runId: r.id });
+    expect(asks).toHaveLength(1); expect(asks[0].question).toContain("优惠券");
+    expect(recentChanges(t.app, t.item.id).map((c) => [c.summary, c.status])).toEqual(expect.arrayContaining([["本人要求运费也退", "merged"], ["本人要求退款单显示运费", "merged"], ["小王提出优惠券也要退", "asked"]]));
+    const s = getStage(t.app, t.item.id, "code"); expect(s.control.runId).not.toBe(original);
+    const task = String(getRun(t.app, s.control.runId!).input.task);
+    expect(task).toContain("本人要求运费也退"); expect(task).toContain("本人要求退款单显示运费");
+    expect(all(t.app.db, "select 1 from item_stage_log where item_id=? and stage_id='code' and event='reopen'", t.item.id)).toHaveLength(1);
+    expect(one(t.app.db, "select outcome from flow_signals where json_extract(keys,'$.runId')=?", r.id)).toEqual({ outcome: "记了 3 条变化，问了本人 1 条，按本人的话并进 2 条" });
+  });
   it("从流程开始时的末尾订阅；不到安静时间继续攒，安静后由巡检起运行", async () => {
     const t = await setup();
     expect(flowView(t.app, t.item.id).follow[0]).toMatchObject({ sourceId: t.src.id, line: 1, pending: 0 });

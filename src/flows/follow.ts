@@ -15,8 +15,11 @@ import { itemFlow, itemStages, type ItemFlow } from "./store.ts";
 
 type Source = { id: string; kind: string; title: string; space_id: string; updated_at: string; uri: string; captured_at: string };
 type Cursor = { source_id: string; line: number; source_updated_at: string; started_at: string; seen: string | null };
-/** `seen`: a document's line hashes as of this batch, kept so the next batch is only the lines that are new. */
-type Part = { source: string; from: number; to: number; updatedAt: string; lines: { line: number; text: string }[]; seen?: number[] };
+/**
+ * `seen`: a document's line hashes as of this batch, kept so the next batch is only the lines that are new.
+ * `owner` on a line: the item's person said it themselves (a chat message of theirs, their own turn in a conversation).
+ */
+type Part = { source: string; from: number; to: number; updatedAt: string; lines: { line: number; text: string; owner?: boolean }[]; seen?: number[] };
 type Batch = { startedAt: string; parts: Part[] };
 type ChangeRow = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; req: string | null; stages: string; refs: string; run_id: string; status: string; ask_id: string | null; due: string | null };
 const viewChange = (r: ChangeRow) => ({ id: r.id, itemId: r.item_id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, req: r.req, stages: json<string[]>(r.stages, []), refs: json<string[]>(r.refs, []), runId: r.run_id, status: r.status, askId: r.ask_id, due: r.due });
@@ -88,10 +91,10 @@ function docLines(app: App, id: string) {
 }
 const hashesOf = (lines: { text: string }[]) => [...new Set(lines.filter((l) => l.text.trim()).map((l) => lineHash(l.text.trim())))];
 const isDoc = (s: Source) => s.kind !== "chat" && s.kind !== "conversation";
-const conversationRows = `with numbered as (select role,text,created_at,json_extract(meta,'$.speaker') speaker,
+const conversationRows = `with numbered as (select role,text,created_at,json_extract(meta,'$.speaker') speaker,json_extract(meta,'$.asker') asker,
   sum(2+length(text)-length(replace(text,char(10),''))) over (order by rowid) - (length(text)-length(replace(text,char(10),''))) line_end
   from messages where conversation_id=(select substr(uri,14) from sources where id=?) and json_extract(meta,'$.command') is null)
-  select role,text,created_at,line_end,speaker from numbered`;
+  select role,text,created_at,line_end,speaker,asker from numbered`;
 function tail(app: App, s: Source) {
   if (s.kind === "conversation") return one<{ line: number }>(app.db, "select coalesce(sum(2+length(text)-length(replace(text,char(10),''))),0) line from messages where conversation_id=(select substr(uri,14) from sources where id=?) and json_extract(meta,'$.command') is null", s.id)!.line;
   return one<{ line: number }>(app.db, "select coalesce(max(line),0) line from (select max(line) line from lark_message_lines where source_id=? union all select max(line) from lark_messages where source_id=?)", s.id, s.id)!.line;
@@ -156,12 +159,14 @@ function partsOf(app: App, id: string): { parts: Part[]; count: number; latest: 
     if (!p.count) continue;
     count += p.count;
     if (s.kind === "chat") {
-      const rows = all<{ line: number; text: string }>(app.db, chatLines("line,substr(sender_name,1,80) || '（' || sender_kind || '）：' || substr(content,1,1200) text", " order by line limit 200"), ...chatArgs(s, c));
+      const rows = all<{ line: number; text: string; owner: number }>(app.db, chatLines("line,substr(sender_name,1,80) || '（' || sender_kind || '）：' || substr(content,1,1200) text,sender_kind='owner' owner", " order by line limit 200"), ...chatArgs(s, c))
+        .map(({ owner, ...l }) => owner ? { ...l, owner: true } : l);
       parts.push({ source: s.id, from: rows[0].line, to: rows.at(-1)!.line, updatedAt: s.updated_at, lines: rows });
     } else if (s.kind === "conversation") {
       // Each non-command message appends a blank line then a heading and its possibly multiline text.
-      const messages = all<{ line_end: number; text: string; speaker: string | null }>(app.db, `select line_end,substr(text,1,1200) text,speaker from (${conversationRows}) where line_end>? and role='user' order by line_end limit 200`, s.id, c.line);
-      const rows = messages.flatMap((m) => m.text.split("\n").map((text, i) => ({ line: m.line_end + i, text: `${i === 0 ? `${m.speaker || "本人"}：` : ""}${text}` })));
+      const messages = all<{ line_end: number; text: string; speaker: string | null; asker: string | null }>(app.db, `select line_end,substr(text,1,1200) text,speaker,asker from (${conversationRows}) where line_end>? and role='user' order by line_end limit 200`, s.id, c.line);
+      // A colleague's turn in a conversation (a group the bot answers in) is theirs, not the owner's.
+      const rows = messages.flatMap((m) => m.text.split("\n").map((text, i) => ({ line: m.line_end + i, text: `${i === 0 ? `${m.speaker || (m.asker ? `${m.asker}（同事）` : "本人")}：` : ""}${text}`, ...(!m.speaker && !m.asker ? { owner: true } : {}) })));
       parts.push({ source: s.id, from: rows[0].line, to: rows.at(-1)!.line, updatedAt: s.updated_at, lines: rows });
     } else {
       // A changed document is read once, a bounded excerpt, and only its lines that were not there before go on.
@@ -269,10 +274,18 @@ function changesOfRun(app: App, r: Run) {
   const ids = json<string[]>(JSON.stringify(getRun(app, r.id).output.followChanges ?? []), []);
   return all<ChangeRow>(app.db, `select * from item_changes where item_id=? and (run_id=? or id in (${ids.map(() => "?").join(",") || "''"})) order by at,id`, String(r.input.itemId), r.id, ...ids);
 }
-function handedIn(app: App, runId: string, row: ChangeRow) {
-  const ids = getRun(app, runId).output.followChanges as string[] | undefined;
-  setRunOutput(app, runId, { followChanges: [...new Set([...(ids ?? []), row.id])] });
+function handedIn(app: App, runId: string, row: ChangeRow, ownWord = false) {
+  const out = getRun(app, runId).output, ids = out.followChanges as string[] | undefined, own = out.followOwnWords as string[] | undefined;
+  setRunOutput(app, runId, { followChanges: [...new Set([...(ids ?? []), row.id])], ...(ownWord ? { followOwnWords: [...new Set([...(own ?? []), row.id])] } : {}) });
   return viewChange(row);
+}
+/** Some line a change cites is the person's own (Part `owner`): what they said themselves, not someone's proposal. */
+function saidByOwner(batch: Batch, refs: string[]) {
+  return refs.some((ref) => {
+    const m = /^src:([^#\s]+)#L(\d+)(?:-L?(\d+))?$/.exec(ref);
+    const p = m && batch.parts.find((p) => p.source === m[1]);
+    return !!p && p.lines.some((l) => l.owner && l.line >= Number(m[2]) && l.line <= Number(m[3] ?? m[2]));
+  });
 }
 export function noteItemChange(app: App, runId: string, input: z.input<typeof changeSchema>) {
   const a = changeSchema.parse(input), r = getRun(app, runId), batch = r.input.batch as Batch;
@@ -292,6 +305,8 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   if (a.req) { const req = findReq(app, a.req); if (!req || req.spaceId !== item.spaceId) throw new HttpError(400, "需求点不在事项空间里"); }
   if (a.type === "deadline" && !z.union([z.string().date(), z.string().datetime({ offset: true })]).safeParse(a.due).success) throw new HttpError(400, "deadline 必须填写 ISO 时间或日期 due");
   const detail = a.detail ?? null, due = a.type === "deadline" ? a.due! : null;
+  // The person's own word on what is to be done (they said it, or told the assistant to do it): settled, not asked about again.
+  const ownWord = !!a.decided && (a.type === "scope" || a.type === "decision") && saidByOwner(batch, a.refs);
   // A retried run may hand in the same finding after the first run already updated a deadline.
   const old = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and type=? and summary=? and refs=? and detail is ? and stages=? and req is ? and due is ? order by at desc limit 10", a.item, a.type, a.summary, JSON.stringify(a.refs), detail, JSON.stringify(a.stages ?? []), a.req ?? null, due).find((c) => {
     const previous = getRun(app, c.run_id).input.batch as Batch | undefined;
@@ -303,7 +318,7 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   if (old) {
     // The same finding, now said to be settled, while the first one was only a proposal.
     if (a.type === "deadline" && a.decided && ["noted", "asked"].includes(old.status)) tx(app.db, () => decidedDeadline(app, old, runId));
-    return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", old.id)!);
+    return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", old.id)!, ownWord && old.status === "noted");
   }
   if (changesOfRun(app, r).length >= 30) throw new HttpError(400, "一批最多记 30 条变化，请合并同一件事的表述");
   const id = newId("ic"), at = now();
@@ -312,30 +327,47 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
     // Somebody proposing another date is not a decision: it stays as noted and the owner is asked when the batch is done.
     if (a.type === "deadline" && a.decided) decidedDeadline(app, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!, runId);
   });
-  return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!);
+  return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!, ownWord);
 }
 
 const choices = ["并进这件事", "另开一件事", "不用管"];
 const deadlineChoices = ["改成这个时间", "不改"];
 const HEADS: Record<string, string> = { scope: "范围变了", decision: "有了新决定", blocker: "有阻塞" };
-function askChanges(app: App, r: Run) {
-  const id = String(r.input.itemId), item = getItem(app, id), flow = followAnchor(app, id)?.flow;
+/** Changes of this batch that touch a stage under way or done: what folding in would reopen. */
+function reopening(app: App, r: Run) {
+  const id = String(r.input.itemId), flow = followAnchor(app, id)?.flow;
   // With no flow running there are no stages to reopen: only a proposed deadline is asked about.
+  const stages = flow ? itemStages(app, id) : [];
+  return changesOfRun(app, r).filter((c) => c.status === "noted" && ["scope", "decision", "blocker"].includes(c.type))
+    .filter((c) => json<string[]>(c.stages, []).some((id) => stages.some((s) => s.id === id && ["doing", "done"].includes(s.state))));
+}
+/** The person's own word in this batch (`followOwnWords`): folded in as if they had chosen 并进 on the card. */
+function ownWords(app: App, r: Run) {
+  const own = new Set(json<string[]>(JSON.stringify(getRun(app, r.id).output.followOwnWords ?? []), []));
+  return reopening(app, r).filter((c) => own.has(c.id) && c.type !== "blocker");
+}
+function askChanges(app: App, r: Run, except: ChangeRow[] = []) {
+  const changes = reopening(app, r).filter((c) => !except.some((x) => x.id === c.id));
+  // At most three cards for these. Each field in the overflow card remains an independent owner choice.
+  const groups = changes.length <= 3 ? changes.map((c) => [c]) : [changes.slice(0, 1), changes.slice(1, 2), changes.slice(2)];
+  for (const group of groups) askGroup(app, r, group);
+  askDeadline(app, r);
+}
+function askGroup(app: App, r: Run, rows: ChangeRow[]) {
+  const id = String(r.input.itemId), item = getItem(app, id), flow = followAnchor(app, id)?.flow;
   const stages = flow ? itemStages(app, id) : [], definitions = flow?.definition.stages ?? [];
   const states: Record<string, string> = { doing: "进行中", done: "已完成", pending: "未开始", blocked: "卡住", gated: "等本人确认", stale: "待复核", skipped: "已跳过" };
   const impact = (ids: string[]) => ids.map((id) => `${definitions.find((s) => s.id === id)?.name ?? id}（${states[stages.find((s) => s.id === id)?.state ?? "pending"]}）`).join("、");
-  const changes = changesOfRun(app, r).filter((c) => c.status === "noted" && ["scope", "decision", "blocker"].includes(c.type)).map(viewChange)
-    .filter((c) => c.stages.some((id) => stages.some((s) => s.id === id && ["doing", "done"].includes(s.state))));
-  // At most three cards for these. Each field in the overflow card remains an independent owner choice.
-  const groups = changes.length <= 3 ? changes.map((c) => [c]) : [changes.slice(0, 1), changes.slice(1, 2), changes.slice(2)];
-  for (const group of groups) {
-    const ask = createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
-      question: `「${item.title}」有新变化：\n\n${group.map((c) => [`**${HEADS[c.type] ?? "有变化"}：${c.summary}**`, c.detail ?? "", `- 影响：${impact(c.stages)}`, `- 原话：${c.refs.map((r, i) => `[${i + 1}](${r})`).join(" ")}`].filter(Boolean).join("\n")).join("\n\n")}`,
-      options: group.length === 1 ? choices.map((label) => ({ label })) : [],
-      ui: group.length === 1 ? null : { fields: group.map((c) => ({ id: c.id, type: "choice" as const, label: c.summary.slice(0, 200), required: true, options: choices })) },
-      context: { handler: "item-follow", itemId: id, startedAt: (r.input.batch as Batch).startedAt, changes: group.map((c) => c.id) } });
-    for (const c of group) run(app.db, "update item_changes set status='asked',ask_id=?,updated_at=? where id=?", ask.id, now(), c.id);
-  }
+  const group = rows.map(viewChange);
+  const ask = createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
+    question: `「${item.title}」有新变化：\n\n${group.map((c) => [`**${HEADS[c.type] ?? "有变化"}：${c.summary}**`, c.detail ?? "", `- 影响：${impact(c.stages)}`, `- 原话：${c.refs.map((r, i) => `[${i + 1}](${r})`).join(" ")}`].filter(Boolean).join("\n")).join("\n\n")}`,
+    options: group.length === 1 ? choices.map((label) => ({ label })) : [],
+    ui: group.length === 1 ? null : { fields: group.map((c) => ({ id: c.id, type: "choice" as const, label: c.summary.slice(0, 200), required: true, options: choices })) },
+    context: { handler: "item-follow", itemId: id, startedAt: (r.input.batch as Batch).startedAt, changes: group.map((c) => c.id) } });
+  for (const c of group) run(app.db, "update item_changes set status='asked',ask_id=?,updated_at=? where id=?", ask.id, now(), c.id);
+}
+function askDeadline(app: App, r: Run) {
+  const id = String(r.input.itemId), item = getItem(app, id);
   // A proposed deadline is the owner's to accept, whatever stage the flow is at. One card: the latest proposal of the batch.
   const proposal = changesOfRun(app, r).filter((c) => c.type === "deadline" && c.due).at(-1);
   if (proposal?.status === "noted" && proposal.due !== item.dueAt) {
@@ -346,15 +378,47 @@ function askChanges(app: App, r: Run) {
     run(app.db, "update item_changes set status='asked',ask_id=?,updated_at=? where id=?", ask.id, now(), proposal.id);
   }
 }
-export function finishFollow(app: App, r: Run) {
+/**
+ * The batch is done: what only the person can settle is asked on cards, their own word is folded in
+ * without asking (the returned promise, after the cards and the cursor are settled).
+ */
+export function finishFollow(app: App, r: Run): Promise<void> {
   const id = String(r.input.itemId), batch = r.input.batch as Batch, f = followAnchor(app, id);
-  if (!f || f.startedAt !== batch.startedAt) return;
-  askChanges(app, r);
+  if (!f || f.startedAt !== batch.startedAt) return Promise.resolve();
+  const own = ownWords(app, r);
+  askChanges(app, r, own);
   const changes = changesOfRun(app, r), counts = { total: changes.length, asked: changes.filter((c) => c.status === "asked").length };
   tx(app.db, () => {
     commitBatch(app, id, batch);
-    run(app.db, "update flow_signals set outcome=? where type='context.batch' and item_id=? and json_extract(keys,'$.runId')=?", counts.total ? `记了 ${counts.total} 条变化，问了本人 ${counts.asked} 条` : "看过，没有变化", id, r.id);
+    run(app.db, "update flow_signals set outcome=? where type='context.batch' and item_id=? and json_extract(keys,'$.runId')=?", counts.total ? `记了 ${counts.total} 条变化，问了本人 ${counts.asked} 条${own.length ? `，按本人的话并进 ${own.length} 条` : ""}` : "看过，没有变化", id, r.id);
   });
+  return mergeOwnWords(app, r, own);
+}
+/**
+ * What the person said themselves is folded in as their 并进 would be: the first stage each touches is
+ * reopened once with all of them (one reopen per stage, so a second does not stop the run the first
+ * started). Where that cannot be done, they are asked after all.
+ */
+async function mergeOwnWords(app: App, r: Run, own: ChangeRow[]) {
+  const itemId = String(r.input.itemId), f = itemFlow(app, itemId);
+  if (!own.length || !f || f.endedAt) return;
+  const item = getItem(app, itemId), byStage = new Map<string, ChangeRow[]>();
+  for (const c of own) {
+    const stage = f.definition.stages.find((s) => json<string[]>(c.stages, []).includes(s.id));
+    if (stage) byStage.set(stage.id, [...byStage.get(stage.id) ?? [], c]);
+  }
+  const { reopenStage } = await import("./engine.ts");
+  for (const [stageId, group] of byStage) {
+    const ids = group.map((c) => c.id);
+    run(app.db, `update item_changes set status='merged',updated_at=? where id in (${ids.map(() => "?").join(",")}) and status='noted'`, now(), ...ids);
+    try {
+      await reopenStage(app, itemId, stageId, group.map((c) => `${c.summary}\n${c.detail ?? ""}`.trim()).join("\n\n"), [...new Set(group.flatMap((c) => json<string[]>(c.refs, [])))], { actor: "owner", userId: item.userId }, { feedback: true, startedAt: f.startedAt });
+    } catch (e) {
+      console.warn(`[omem] 本人说的变化没能并进，改为问本人：${(e as Error).message}`);
+      run(app.db, `update item_changes set status='noted',updated_at=? where id in (${ids.map(() => "?").join(",")})`, now(), ...ids);
+      askGroup(app, r, group.map((c) => one<ChangeRow>(app.db, "select * from item_changes where id=?", c.id)!));
+    }
+  }
 }
 
 /** Apply the owner's decision on one change: 0 fold it into this item, 1 make it an item of its own, 2 leave it. */
@@ -442,7 +506,7 @@ registerHandler("item-follow", async (ctx) => {
   const { runRole } = await import("../agents/runner.ts");
   try {
     const result = await runRole(ctx.app, { role: "item-follow", spaceId: item.spaceId, spaces: ctx.run.input.spaces as string[], task: String(ctx.run.input.task), runId: ctx.run.id, userId: item.userId, signal: ctx.signal, onEvent: (e) => ctx.event(e.type, e) });
-    finishFollow(ctx.app, ctx.run);
+    await finishFollow(ctx.app, ctx.run);
     return { quiet: true, text: result.text };
   } catch (e) {
     outcome("提炼未完成，保留游标待重试");

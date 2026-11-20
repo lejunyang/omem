@@ -16,6 +16,13 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 流程：本人自己说的变化直接并进，编码段认出已在做的交办（11-20）
+
+- `src/flows/follow.ts`：批次里的行带 `owner`（聊天按 `sender_kind = 'owner'`，会话里本人自己的话；会话里同事的话按 `meta.asker` 标成同事，不再写成“本人”）。`note_item_change` 的 scope / decision 带 `decided: true`、引用里有本人那句话时记进运行的 `followOwnWords`；`finishFollow` 不为它们发卡片，按受影响的第一段分组，每段 `reopenStage` 一次（带反馈，actor 是本人，和本人在卡片上选“并进”一样），失败时改为出卡片问本人。`finishFollow` 现在返回 Promise（卡片和游标在同步部分已经定了）。
+- `src/flows/engine.ts`：跟着编码交办的段按反馈重做，运行没交 stage_report 就结束时，除了运行开始后发起或续上的交办，事项上在这一段上次完成之后发起或动过的交办也算（`item_stage_log` 里这一段最近一次 done 的时间），段跟着它走，不报“没有交代结果”。阶段任务里写明“要改的已在事项上在做的交办里就交代一句结束”。
+- 起因：本人在群里直接让助手改需求、助手已交办，跟进仍把本人这句话当成待定的范围变化出卡片；本人选并进后编码段的运行发现交办已经在做，按说明结束，宿主只认运行开始之后的交办，报成卡住等本人。
+- `roles/item-follow.md`、`note_item_change` 的 `decided` 说明、`skills/omem/references/flows.md`；测试 `test/flow-follow.test.ts`、`test/flows.test.ts`。
+
 ## 演示：做一遍给助手看（11-20）
 
 - `src/remote/demos.ts`：一次演示是一个对话（渠道 `demo`，`ThreadSettings.demo`：目标、`contextId` / `itemId`、起止时间、整理方式），同一时间一个、只有本人。演示期间记进来的是不起一轮的本人消息（`meta.demo.kind`：`start`、`recording`、`pick`、`lark`、`remote`、`stop`、`organize`），按发生时间排；`stopDemo` 收本人在关注的群（连着事项时看事项的关注，都没有时看所有采集到的会话，`capturedChats` 沿 `(chat_id, create_ms)` 索引跳着取）里窗口内发的飞书消息、窗口内结束的远程录制，选了技能或经验时以本人名义发整理的消息（`organizeDemoText`）开始助手的一轮。接口 `GET/POST /api/demos`、`GET /api/demos/:id`、`POST /api/demos/:id/stop`（`src/remote/http.ts`，`routes.ts` 里都是 owner）。
