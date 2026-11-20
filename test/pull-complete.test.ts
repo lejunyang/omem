@@ -18,10 +18,10 @@ import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 import { testApp } from "./helpers.ts";
 
-async function snapshot(app: App): Promise<Fetched> {
+async function snapshot(app: App, selection?: Parameters<typeof snapshotStream>[1]): Promise<Fetched> {
   const dir = mkdtempSync(join(tmpdir(), "omem-snap-test-"));
   const archive = join(dir, "snapshot.tar");
-  await pipeline(await snapshotStream(app), createWriteStream(archive));
+  await pipeline(await snapshotStream(app, selection), createWriteStream(archive));
   execFileSync("tar", ["-xf", "snapshot.tar"], { cwd: dir });
   rmSync(archive);
   return { dbDir: dir, libraryDir: join(dir, "library"), filesDir: join(dir, "files"), fetchedFiles: readdirSync(join(dir, "files")) };
@@ -60,6 +60,31 @@ describe("complete portable pulls", () => {
     const covered = new Set(["spaces", "sources", "lark_people", ...pullTables.map((t) => t.name)]);
     const tables = all<{ name: string }>(app.db, "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name not like '%_fts%' and name not like 'memory_fts%'");
     expect(tables.map((t) => t.name).filter((n) => !derived.has(n) && !device.has(n) && !covered.has(n))).toEqual([]);
+  });
+
+  it("strips provider cursors, external account links and pending writes while retaining the imported item", async () => {
+    const app = testApp();
+    const item = upsertItem(app, undefined, { title: "外部条目" });
+    const at = new Date().toISOString();
+    run(app.db, `insert into item_provider_targets(id,provider,target,user_id,space_id,mode,import_mode,cursor)
+      values('target','sample:issues','project','owner','personal','direct','direct','page-2')`);
+    run(app.db, `insert into item_provider_links(item_id,target_id,external_key,synced_at,snapshot) values(?,'target','one',?,'{}')`, item.id, at);
+    run(app.db, `insert into item_provider_writes(id,item_id,status,revision,state) values('write',?,'done','v1','ready')`, item.id);
+    run(app.db, "insert into plugin_subscriptions(plugin,subscriber,type) values('sample','sample:work','item.status')");
+    run(app.db, "insert into plugin_events(seq,id,at,user_id,body) values(1,'event',?,'owner','{}')", at);
+    run(app.db, "insert into plugin_deliveries(subscriber,seq,entity) values('sample:work',1,?)", item.id);
+    const copy = await snapshot(app, { parts: ["files"], strip: true });
+    const restored = App.open(copy.dbDir);
+    try {
+      for (const table of ["item_provider_targets", "item_provider_links", "item_provider_writes", "plugin_events", "plugin_deliveries", "plugin_subscriptions"]) {
+        expect(one(restored.db, `select count(*) n from ${table}`)).toEqual({ n: 0 });
+      }
+      expect(one(restored.db, "select title from items where id=?", item.id)).toEqual({ title: "外部条目" });
+    } finally {
+      restored.db.close();
+      cleanupFetched(copy);
+      app.db.close();
+    }
   });
 
   it("keeps Git signals and follow cursors on this device during snapshots, merges and overwrites", async () => {
