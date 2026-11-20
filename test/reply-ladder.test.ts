@@ -67,7 +67,7 @@ it("asks once, after enough drafts in a row sent unchanged, whether such replies
   expect(mode("group")).toBe("off");
   // Saved, not only in memory; and on record.
   expect(loadConfig(app.home).mentions.reply.lark.p2p).toBe("auto");
-  expect(getAsk(app, q.id).result).toContain("设置 → 渠道 → 有人找你");
+  expect(getAsk(app, q.id).result).toContain("设置 → 代你回复 → 有人找你");
   expect(one<{ n: number }>(app.db, "select count(*) n from audit_events where action = 'mention-reply.promote'")?.n).toBe(1);
 });
 

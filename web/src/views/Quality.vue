@@ -43,7 +43,7 @@ onBeforeUnmount(() => { request++; off(); });
 
 <template>
   <div class="page quality stack">
-    <div class="page-head row wrap"><h1 class="grow">每晚抽检</h1><a href="#/settings?tab=agents">抽检设置</a><button class="btn primary" :disabled="busy" @click="audit">{{ busy ? '正在排队…' : '现在抽检' }}</button></div>
+    <div class="page-head row wrap"><h1 class="grow">每晚抽检</h1><a href="#/settings?card=audit">抽检设置</a><button class="btn primary" :disabled="busy" @click="audit">{{ busy ? '正在排队…' : '现在抽检' }}</button></div>
     <p v-if="error" role="alert">{{ error }} <button class="btn sm" @click="load">重试</button></p>
     <p v-if="notice" role="status">{{ notice }} <a v-if="runId" :href="`#/runs/${runId}`">查看运行</a></p>
     <Skeleton v-if="!data && !error" :rows="5" />

@@ -30,7 +30,7 @@ function save() {
     <UiCheckbox v-model="draft.automatic" switch>允许按任务自动选择 AI</UiCheckbox>
     <label class="field"><span>总体偏好</span><textarea v-model="draft.guidance" class="input" rows="4" maxlength="8000" placeholder="例如：简单整理优先快模型；涉及多个模块的改动用较强的推理模型；评审尽量用不同于编码的模型。" /></label>
     <div class="section-title">运行前自动选</div>
-    <HelpText>没有指定 AI 的运行，开始前从下面的候选和它原来的 AI 里挑一个：按总体偏好、各候选的适用说明、现在的时间、占用和账号额度。决策模型（设置 → AI → 决策）一两秒就能选完；“总是选”在没有决策模型时让通用模型选（多等十几秒）。选中的先用，原来的 AI 和兜底排在后面，出错照样换。规则指定的 AI、助手交办时选的 AI、对话里 /model 选的不会被改。</HelpText>
+    <HelpText>没有指定 AI 的运行，开始前从下面的候选和它原来的 AI 里挑一个：按总体偏好、各候选的适用说明、现在的时间、占用和账号额度。决策模型（设置 → 后端与模型 → 决策）一两秒就能选完；“总是选”在没有决策模型时让通用模型选（多等十几秒）。选中的先用，原来的 AI 和兜底排在后面，出错照样换。规则指定的 AI、助手交办时选的 AI、对话里 /model 选的不会被改。</HelpText>
     <div class="choose">
       <span class="small">和助手的对话（新开 Agent 会话时选，会话延续期间不换）</span>
       <UiSegmented v-model="draft.choose.conversation" size="sm" aria-label="对话" :options="[OFF, DECISION]" />

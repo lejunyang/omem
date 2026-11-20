@@ -1,7 +1,7 @@
 import { ref } from "vue";
 
 /**
- * The time zone the page shows times in: the service's `config.timezone` (设置 → 通用), not the
+ * The time zone the page shows times in: the service's `config.timezone` (设置 → 定时任务 → 时区), not the
  * browser's. Set once `/api/me` (or a share link) answers; until then, and for a zone the browser
  * does not know, the browser's own zone. A ref, so what renders before it is set renders again.
  */
