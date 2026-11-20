@@ -26,7 +26,6 @@ function attempt(app: App, workId: string, id: string, plan: TaskPlan, by: strin
 export function dispatchBoard(app: App, work: AgentWork, plans: TaskPlan[], by: string) {
   const workId = work.askRunId;
   const ids = tx(app.db, () => {
-    run(app.db, "update conversations set settings=json_set(settings,'$.agentWorkId',?) where id=?", workId, work.workConversationId);
     let seq = one<{ n: number }>(app.db, "select coalesce(max(seq),0) n from agent_work_tasks where work_id=?", workId)!.n;
     const ids = plans.map(plan => {
       const id = newId("wt"), at = now();

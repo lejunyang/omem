@@ -84,7 +84,7 @@ export function startAgentWork(app: App, input: {
 }
 
 export function createAgentWork(app: App, input: { askRunId: string; rootConversationId: string; spaceId: string; title: string; startMessage: string; agent?: string }): AgentWork {
-  const workThread = createWorkThread(app, { rootId: input.rootConversationId, askRunId: input.askRunId, spaceId: input.spaceId, title: input.title });
+  const workThread = createWorkThread(app, { rootId: input.rootConversationId, spaceId: input.spaceId, title: input.title });
   const work: AgentWork = {
     askRunId: input.askRunId,
     rootConversationId: input.rootConversationId,
@@ -104,7 +104,7 @@ export function createAgentWork(app: App, input: { askRunId: string; rootConvers
   return work;
 }
 
-function createWorkThread(app: App, i: { rootId: string; askRunId: string; spaceId: string; title: string }) {
+function createWorkThread(app: App, i: { rootId: string; spaceId: string; title: string }) {
   const root = getThread(app, i.rootId);
   return createThread(app, {
     spaceId: i.spaceId,
@@ -113,7 +113,7 @@ function createWorkThread(app: App, i: { rootId: string; askRunId: string; space
     key: root.key,
     title: i.title,
     parentId: i.rootId,
-    settings: { ...root.settings, agentWorkId: i.askRunId, spec: undefined, links: [i.rootId] },
+    settings: { ...root.settings, spec: undefined, links: [i.rootId] },
     userId: root.userId,
   });
 }
@@ -315,7 +315,7 @@ export async function openWorkTopic(app: App, work: AgentWork, anchorMessageId: 
 export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string; execution?: Execution; assistantScope?: AssistantScope; queuedBy?: string | null; extraTools?: string[] }): { work: AgentWork; runId: string } {
   const prev = refreshWork(app, opts.askRunId);
   if (!prev) throw new Error("找不到要继续的工作");
-  const workThread = createWorkThread(app, { rootId: opts.rootConversationId, askRunId: opts.askRunId, spaceId: opts.spaceId, title: opts.title });
+  const workThread = createWorkThread(app, { rootId: opts.rootConversationId, spaceId: opts.spaceId, title: opts.title });
   const work: AgentWork = {
     ...prev,
     askRunId: opts.askRunId,
