@@ -208,7 +208,8 @@ describe("协同任务板", async () => {
   it("旧执行者在取消后清理期间仍占板内名额，迟到结果保留在旧尝试", async () => {
     const original = __testHandlers.get("agent")!;
     const limit = app.config.agents.workBoard.concurrency;
-    const cleanup = Promise.withResolvers<void>();
+    const cleanup = { resolve: () => {}, promise: Promise.resolve() };
+    cleanup.promise = new Promise<void>((resolve) => { cleanup.resolve = resolve; });
     let starts = 0;
     app.config.agents.workBoard.concurrency = 1;
     __testHandlers.set("agent", async ctx => {

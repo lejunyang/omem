@@ -42,6 +42,8 @@ export function dispatchBoard(app: App, work: AgentWork, plans: TaskPlan[], by: 
 }
 
 const reportPageSize = 8000;
+/** How long an attempt ran, as a person says it. */
+const took = (ms: number) => ms < 90_000 ? `${Math.max(1, Math.round(ms / 1000))} 秒` : `${Math.round(ms / 60_000)} 分钟`;
 
 export function reportPage(answer: string, runId: string, offset = 0) {
   let end = offset + reportPageSize;
@@ -96,7 +98,7 @@ function coordinateIfReady(app: App, workId: string) {
     if (t.status === "cancelled") return heading;
     if (t.status !== "done" && t.status !== "failed") return `${heading}\n可选块仍在执行，本轮可先汇总必选结果。`;
     const a = t.attempts.at(-1)!;
-    return `${heading}\n本轮验收 ID：${t.id}\n验收条件：${t.accept}\n执行：${t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · ${a.executionMs} ms\n报告（运行 ${a.runId}）：\n${reportPage(t.answer || t.report, a.runId)}`;
+    return `${heading}\n本轮验收 ID：${t.id}\n验收条件：${t.accept}\n执行：${t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · 用时 ${took(a.executionMs)}\n报告（运行 ${a.runId}）：\n${reportPage(t.answer || t.report, a.runId)}`;
   });
   const text = [`任务板 ${workId}。请对标有“本轮验收 ID”的块用 work_review 提交决定。退回重做后结束本轮；其余情况验收完即可向本人汇总，每个论断注明来自哪一块。`, ...reports].join("\n\n");
   const msg = addWorkMessage(app, work, { role: "assistant", text, meta: { command: true, board: workId } });
