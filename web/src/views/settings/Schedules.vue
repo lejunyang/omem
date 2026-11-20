@@ -153,6 +153,7 @@ async function saveWorkState(key: "days" | "people", raw: string, min: number, m
 
     <p v-if="error" class="card set-link" role="alert"><span class="grow">读不到定时任务：{{ error }}</span><button class="btn sm" @click="loadSchedules">重试</button></p>
     <Skeleton v-else-if="!schedules" variant="list" :rows="6" />
+    <p v-else-if="!schedules.length" class="card set-link"><span class="grow">还没有定时任务：服务启动时会建好内置的那些，规则里的定时会自己加进来。</span><button class="btn sm" @click="loadSchedules">刷新</button></p>
     <SetCard v-for="g in grouped" v-else :id="`set-sched-${g.id}`" :key="g.id" :title="g.label">
       <template #aside><span class="muted small">{{ g.rows.filter((s) => s.enabled).length }}/{{ g.rows.length }} 开着</span></template>
       <div v-for="s in g.rows" :key="s.id" class="job" :class="{ open: open === s.id, off: !s.enabled }">
