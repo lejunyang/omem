@@ -31,8 +31,11 @@ describe("pending actions", () => {
     for (const [id, item] of [["m1", "line"], ["m2", "leaf"]])
       run(app.db, "insert into metrics(id,name,item_id,status,created_at,updated_at) values(?,?,?,'proposed',?,?)", id, id, item, at, at);
     run(app.db, "insert into metrics(id,name,space_id,status,created_at,updated_at) values('private','自己的指标','personal-member','proposed',?,?)", at, at);
+    const recentDraft = new Date(Date.now() - 86_400_000).toISOString();
+    const oldDraft = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    run(app.db, "insert into card_interactions(id,purpose,created_at) values('old-draft','draft',?)", oldDraft);
     for (const purpose of ["draft", "mention-reply", "watch-draft", "meeting-answer", "draft"]) {
-      run(app.db, "insert into card_interactions(id,purpose,created_at) values(lower(hex(randomblob(8))),?,?)", purpose, at);
+      run(app.db, "insert into card_interactions(id,purpose,created_at) values(lower(hex(randomblob(8))),?,?)", purpose, recentDraft);
     }
     for (const id of ["a", "b"])
       run(app.db, "insert into profile_proposals(id,target,kind,title,body,created_at) values(?,'assistant','prompt','调整','{}',?)", id, at);
@@ -58,9 +61,10 @@ describe("pending actions", () => {
     expect(waiting.total).toBe(pending.length);
   });
   it("includes owned candidates", () => expect(via("candidate")).toMatchObject([{ id: "candidate:leaf" }]));
-  it("groups four kinds of drafts by purpose", () => {
+  it("groups only the last two days of drafts by purpose", async () => {
     expect(via("draft")).toHaveLength(4);
     expect(via("draft")).toContainEqual(expect.objectContaining({ id: "draft:draft", count: 2 }));
+    expect((await workOverview(app, "owner")).waiting.drafts).toBe(5);
   });
   it("groups metric proposals under their common root", () => expect(via("metric")).toMatchObject([{ id: "metric:line", lineTitle: "line", count: 2 }]));
   it("groups profile proposals", () => expect(via("profile")).toMatchObject([{ count: 2 }]));

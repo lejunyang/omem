@@ -134,11 +134,12 @@ export async function pendingView(app: App, userId: string) {
 
   let drafts = 0;
   if (userId === OWNER) {
+    const draftSince = new Date(Date.now() - 2 * 86_400_000).toISOString();
     const cards = rows<{ purpose: string; at: string; count: number }>(`select purpose,max(at) at,count(*) count from (
       select c.purpose,c.created_at at from card_interactions c left join runs r on r.id=c.run_id left join conversations t on t.id=c.conversation_id
       where c.status='open' and c.purpose in ('draft','mention-reply','watch-draft','meeting-answer')
-        and coalesce(r.user_id,t.user_id,'owner')=? and ${visible("r.space_id")} and ${visible("t.space_id")}
-      order by c.created_at desc limit 100) group by purpose`, userId);
+        and c.created_at >= ? and coalesce(r.user_id,t.user_id,'owner')=? and ${visible("r.space_id")} and ${visible("t.space_id")}
+      order by c.created_at desc limit 100) group by purpose`, draftSince, userId);
     for (const c of cards) {
       drafts += c.count;
       add("draft", c.purpose, "reply", "草稿", `${c.count} 条回复草稿在飞书里等你点发送`, c.at, { count: c.count, href: app.config.lark.appId ? `https://applink.feishu.cn/client/bot/open?appId=${encodeURIComponent(app.config.lark.appId)}` : "#/work" });
