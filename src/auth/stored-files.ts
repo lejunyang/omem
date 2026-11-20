@@ -33,8 +33,7 @@ export async function storedFileReadable(app: App, userId: string, name: string)
     with names as (${names}), refs as (
       select origin,ref,target from stored_file_refs where name in (select name from names)
     ), chats as (
-      select r.ref id from refs r join lark_messages m on m.message_id=r.ref
-        where r.origin='lark_messages' and r.target=coalesce(m.source_id,'')
+      select ref id from refs where origin='lark_messages'
       union select substr(key,10,instr(key,'/')-10) from kv
         where key glob 'lark_res:*' and value in (select name from names)
     ), source_ids as (

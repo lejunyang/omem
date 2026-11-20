@@ -2,6 +2,7 @@ import { it, expect } from "vitest";
 import { addRunEvent, createRun } from "../src/agents/runs.ts";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import { saveAttachment } from "../src/agents/attachments.ts";
+import { persistChatMessages } from "../src/channels/lark-messages.ts";
 import { setVisibility } from "../src/auth/visibility.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -69,5 +70,33 @@ it("用原件、聊天上传者或运行的当前权限读取文件，包括压�
       expect(await get(name)).toBe(404);
       expect(await get(name, "b")).toBe(200);
     }
+  } finally { await server.close(); app.db.close(); }
+});
+
+it("同一群消息的各人聊天副本与解析原件分别授权附件", async () => {
+  const app = testApp();
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    for (const id of ["a", "b"]) createUser(app, { id, name: id });
+    const headers = { authorization: `Bearer ${createApiToken(app, "b", "test")}` };
+    const name = saveAttachment(app, Buffer.from("原始附件"), "file.txt").name;
+    const download = () => server.inject({ url: "/api/files/" + name, headers });
+    const message = { message_id: "demo-file", msg_type: "file", content: "附件", create_time: "1770000000000" };
+    const capture = (userId: string, sourceId?: string) => persistChatMessages(app, {
+      chatId: "demo-group", name: "项目讨论", spaceId: "personal-" + userId, userId, messages: [message],
+      resources: new Map([[message.message_id, { attachment: { type: "file", file: name, sourceId } }]]),
+    });
+    capture("a");
+    const chatB = capture("b");
+    expect((await download()).statusCode).toBe(200);
+    const parsed = upsertSource(app, { spaceId: "personal-a", kind: "doc", uri: "demo:parsed", title: "解析文档", text: "正文" });
+    capture("a", parsed.id);
+    expect((await download()).statusCode).toBe(200);
+    expect((await server.inject({ url: "/api/sources/" + parsed.id, headers })).statusCode).not.toBe(200);
+    deleteSource(app, chatB.id!);
+    expect((await download()).statusCode).toBe(404);
+    const thread = createThread(app, { spaceId: "personal-b", userId: "b", channel: "web" });
+    addMessage(app, thread.id, "user", "以前的附件", null, { attachments: [{ name }] });
+    expect((await download()).statusCode).toBe(404);
   } finally { await server.close(); app.db.close(); }
 });
