@@ -9,7 +9,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
-import { dispatchBoard, cancelBoard, readBoard, reviewBoard } from "./work-board.ts";
+import { dispatchBoard, cancelBoard, readBoard, reportPage, reviewBoard } from "./work-board.ts";
 import { workInConversation, refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
 import { executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
@@ -1755,13 +1755,18 @@ function runSteps(events: { type: string; data: unknown }[], status: string): st
 
 def({
   name: "read_run",
-  description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。",
-  schema: z.object({ run_id: z.string() }),
+  description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。按任务板报告的续页提示传 offset 读取下一段。",
+  schema: z.object({ run_id: z.string(), offset: z.number().int().nonnegative().optional().describe("任务板报告的起点，首段为 0，续页用上页给出的值") }),
   handler: async (ctx, a) => {
     const r = getRun(ctx.app, a.run_id);
     if (r.spaceId) space(ctx, r.spaceId);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
     if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
+    if (a.offset !== undefined) {
+      if (!canReadRun(ctx.app, ctx.userId ?? OWNER, r.id)) throw new HttpError(404, "找不到运行");
+      if (!r.input.boardTaskId || typeof r.output.answer !== "string") throw new HttpError(400, "该运行没有任务板报告");
+      return reportPage(r.output.answer, r.id, a.offset);
+    }
     const children = listRuns(ctx.app, { parentId: r.id, limit: 200 }).filter(child => !child.spaceId || !allowed || allowed.includes(child.spaceId));
     const childText = children.length ? `\n子运行：\n${children.map(child => `- ${child.id} [${child.kind}/${child.status}] ${child.title}${child.error ? ` · ${truncate(child.error, 200)}` : ""}`).join("\n")}\n` : "";
     const events = runEvents(ctx.app, r.id).filter((e) => e.type !== "thought");

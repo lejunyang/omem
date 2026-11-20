@@ -65,6 +65,24 @@ describe("协同任务板", async () => {
     expect((await fetch(app.baseUrl + "/api/agent-work/" + id + "/board",{ headers: { authorization: "Bearer " + token } })).status).toBe(404);
   }, 60000);
 
+  it("长报告可从协调消息的续页起点读到中段依据和尾页", async () => {
+    const { id, ctx } = await dispatch(["longreport", "ok"]);
+    await wave(id, 1);
+    const board = readBoard(app, id);
+    const message = threadMessages(app, board.workConversationId).find(m => m.meta.board === id)!.text;
+    expect(message).not.toContain("核验依据");
+    const readNext = async (text: string) => {
+      const [, run_id, offset] = /报告续页：read_run run_id=(\w+) offset=(\d+)/.exec(text)!;
+      const result = await callTool(ctx, "read_run", { run_id, offset: Number(offset) });
+      expect(result.isError, result.text).toBe(false);
+      return result.text;
+    };
+    const middle = await readNext(message);
+    expect(middle.startsWith("📄")).toBe(true);
+    expect(middle).toContain("核验依据：原件第九行");
+    expect(await readNext(middle)).toMatch(/^文+$/);
+  }, 60000);
+
   it("共享会话的成员派出任务板后以自己的身份验收", async () => {
     const userId = "member";
     createUser(app, { id: userId, name: "成员" });

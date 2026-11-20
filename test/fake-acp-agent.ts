@@ -207,7 +207,7 @@ new AgentSideConnection(
           } finally { await client.close(); }
         }
         await new Promise(resolve => setTimeout(resolve, label === "slow" ? 30000 : 400));
-        await say("材料报告 " + label);
+        await say(label === "longreport" ? "材".repeat(7999) + "📄" + "料".repeat(1000) + "核验依据：原件第九行" + "文".repeat(9000) : "材料报告 " + label);
         return { stopReason: "end_turn" };
       }
       if (process.env.FAKE_MODE === "wiki") {

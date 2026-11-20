@@ -41,12 +41,22 @@ export function dispatchBoard(app: App, work: AgentWork, plans: TaskPlan[], by: 
   return ids;
 }
 
+const reportPageSize = 8000;
+
+export function reportPage(answer: string, runId: string, offset = 0) {
+  let end = offset + reportPageSize;
+  if (end >= answer.length) return answer.slice(offset);
+  // Keep both halves of a supplementary character on the same page.
+  if (/[\uD800-\uDBFF]/.test(answer[end - 1])) end--;
+  return answer.slice(offset, end) + `\n（报告续页：read_run run_id=${runId} offset=${end}）`;
+}
+
 type AttemptRow = { task: string; entry: string; ai: string | null; profile_id: string | null; used: number | null; answer: string | null };
 function snapshot(app: App, workId: string, full = false) {
   const rows = all<TaskRow>(app.db, "select * from agent_work_tasks where work_id=? order by seq", workId);
   const attempts = all<AttemptRow>(app.db, `select t.id task,a.value entry,r.ai,r.profile_id,
     (select json_extract(data,'$.used') from run_events where run_id=r.id and type='usage' order by seq desc limit 1) used,
-    ${full ? "case when r.id=t.run_id and json_extract(a.value,'$.status')='done' then substr(json_extract(r.output,'$.answer'),1,8001) end" : "null"} answer
+    ${full ? `case when r.id=t.run_id and json_extract(a.value,'$.status')='done' then substr(json_extract(r.output,'$.answer'),1,${reportPageSize + 1}) end` : "null"} answer
     from agent_work_tasks t join json_each(t.attempts) a left join runs r on r.id=json_extract(a.value,'$.runId') where t.work_id=? order by t.seq,a.key`, workId);
   return rows.map(t => {
     const history = attempts.filter(a => a.task === t.id).map(a => {
@@ -81,7 +91,7 @@ function coordinateIfReady(app: App, workId: string) {
   const work = refreshWork(app, workId)!;
   const reports = tasks.map(t => {
     const a = t.attempts.at(-1)!;
-    return `# ${t.seq}. ${t.title}（${t.id}，${t.status}）\n验收条件：${t.accept}\n执行：${t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · ${a.executionMs} ms\n报告（全文 read_run ${a.runId}）：\n${truncate(t.answer || t.report, 8000)}`;
+    return `# ${t.seq}. ${t.title}（${t.id}，${t.status}）\n验收条件：${t.accept}\n执行：${t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · ${a.executionMs} ms\n报告（运行 ${a.runId}）：\n${reportPage(t.answer || t.report, a.runId)}`;
   });
   const text = [`任务板 ${workId}。请用 work_review 逐块验收。重做后结束本轮；全部接受或阻塞后向本人汇总，每个论断注明来自哪一块。`, ...reports].join("\n\n");
   const msg = addWorkMessage(app, work, { role: "assistant", text, meta: { command: true, board: workId } });
