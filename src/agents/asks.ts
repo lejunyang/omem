@@ -89,7 +89,7 @@ type Row = {
   value: string | null;
 };
 
-const toAsk = (r: Row): Ask => ({
+export const toAsk = (r: Row): Ask => ({
   id: r.id,
   runId: r.run_id,
   conversationId: r.conversation_id,
