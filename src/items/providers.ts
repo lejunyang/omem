@@ -8,22 +8,24 @@ import { findSpace } from "../core/spaces.ts";
 import { HttpError, newId, now } from "../core/util.ts";
 import { itemProviders } from "../plugins/process-hooks.ts";
 import type { CallContext, ExternalItem, ItemProvider } from "../plugins/types.ts";
+import { writeParent } from "./tree.ts";
 import { addItemEvent, getItem, onItemStatus, upsertItem } from "./store.ts";
 
 export const targetInput = z.object({
-  provider: z.string().min(1), target: z.string().trim().min(1).max(500), spaceId: z.string().min(1),
+  provider: z.string().min(1).max(128), target: z.string().trim().min(1).max(500), spaceId: z.string().min(1).max(500),
   importMode: z.enum(["candidate", "direct"]).default("candidate"),
   mode: z.enum(["confirm", "direct"]).default("confirm"), enabled: z.boolean().default(true),
 });
 type Target = { import_mode: "candidate" | "direct"; subjects: string; id: string; provider: string; target: string; space_id: string; user_id: string; mode: "confirm" | "direct"; enabled: number; cursor: string | null; error: string | null };
-type Link = { synced_at: string; item_id: string; target_id: string; snapshot: string; dismissed: number };
+type Link = { direction: "pull" | "push"; revision: string | null; error: string | null; synced_at: string; item_id: string; target_id: string; snapshot: string; dismissed: number };
 type Write = { ask_id: string | null; id: string; item_id: string; status: string; revision: string; state: string; error: string | null };
+const statusResult = z.object({ status: z.string().min(1).max(128), revision: z.string().min(1).max(500).optional() });
 const pageSchema = z.object({
-  items: z.array(z.object({
-    key: z.string().min(1).max(500), url: z.httpUrl(), title: z.string().trim().min(1).max(1000), status: z.string().min(1),
-    kind: z.enum(["todo", "watch"]).optional(), assignee: z.string().optional(), parentKey: z.string().optional(),
-    updatedAt: z.iso.datetime({ offset: true }), revision: z.string().min(1).optional(), summary: z.string().optional(),
-  })).max(500), cursor: z.string().optional(), done: z.boolean(),
+  items: z.array(statusResult.extend({
+    key: z.string().min(1).max(500), url: z.httpUrl().max(4096), title: z.string().trim().min(1).max(1000),
+    kind: z.enum(["todo", "watch"]).optional(), assignee: z.string().max(500).optional(), parentKey: z.string().min(1).max(500).optional(),
+    updatedAt: z.iso.datetime({ offset: true }).max(64), summary: z.string().max(65536).optional(),
+  })).max(500), cursor: z.string().max(8192).optional(), done: z.boolean(),
 });
 
 function targetFor(app: App, user: string, id: string) {
@@ -55,7 +57,7 @@ export function configureTarget(app: App, userId: string, input: z.input<typeof 
       values(?,?,?,?,?,?,?,?) on conflict(user_id,space_id,provider,target) do update set mode=excluded.mode,enabled=excluded.enabled,import_mode=excluded.import_mode returning id`,
       newId("pt"), t.provider, t.target, userId, t.spaceId, t.mode, Number(t.enabled), t.importMode)!;
     // Revoking direct write must also revoke queued work, even if direct write is later re-enabled.
-    const obsolete = all<Write>(app.db, `select w.* from item_provider_writes w join item_provider_links l on l.item_id=w.item_id
+    const obsolete = all<Write>(app.db, `select w.* from item_provider_writes w join external_item_links l on l.item_id=w.item_id
       where l.target_id=? and (?=0 or (?='confirm' and w.state='ready'))`, saved.id, Number(t.enabled), t.mode);
     for (const w of obsolete) {
       if (w.ask_id) lapseAsk(app, w.ask_id, "同步目标已暂停");
@@ -78,26 +80,35 @@ const localStatus = (def: ItemProvider, external: string) => {
 };
 const detail = (ext: ExternalItem) => [ext.summary, ext.url].filter(Boolean).join("\n\n");
 const writeFor = (app: App, item: string) => one<Write>(app.db, "select * from item_provider_writes where item_id=?", item);
-const linkFor = (app: App, item: string) => one<Link>(app.db, "select * from item_provider_links where item_id=?", item);
+const linkFor = (app: App, item: string) => one<Link>(app.db, "select * from external_item_links where item_id=?", item);
+
+function externalLink(app: App, t: Target, key: string) {
+  return one<Link & { space_id: string; item_space: string }>(app.db, `select l.*, t.space_id, i.space_id as item_space from external_item_links l
+    join item_provider_targets t on t.id=l.target_id join items i on i.id=l.item_id
+    where l.provider=? and l.user_id=? and l.subjects=? and l.external_key=?`, t.provider, t.user_id, t.subjects, key);
+}
 
 function applyExternal(app: App, t: Target, def: ItemProvider, ext: ExternalItem) {
+  const link = externalLink(app, t, ext.key);
+  if (link && (link.space_id !== t.space_id || link.item_space !== t.space_id)) return;
   const status = localStatus(def, ext.status);
-  const link = one<Link>(app.db, `select l.* from item_provider_links l join item_provider_targets t on t.id=l.target_id
-    where t.user_id=? and t.space_id=? and t.provider=? and t.subjects=? and l.external_key=?`, t.user_id, t.space_id, t.provider, t.subjects, ext.key);
   const snapshot = JSON.stringify(ext);
   if (!link) {
-    const item = upsertItem(app, undefined, { userId: t.user_id, spaceId: t.space_id, title: ext.title, kind: ext.kind, status: t.import_mode === "candidate" ? "candidate" : status, detail: detail(ext) });
-    run(app.db, "insert into item_provider_links(item_id,target_id,external_key,snapshot,synced_at) values(?,?,?,?,?)", item.id, t.id, ext.key, snapshot, now());
-    return;
+    const item = upsertItem(app, undefined, { userId: t.user_id, spaceId: t.space_id, title: ext.title, kind: ext.kind, status: t.import_mode === "candidate" ? "candidate" : status, detail: detail(ext), providerUrl: ext.url });
+    run(app.db, `insert into external_item_links(item_id,target_id,provider,user_id,subjects,external_key,snapshot,synced_at,revision)
+      values(?,?,?,?,?,?,?,?,?)`, item.id, t.id, t.provider, t.user_id, t.subjects, ext.key, snapshot, now(), ext.revision ?? null);
+    return item.id;
   }
   const prev: ExternalItem = JSON.parse(link.snapshot);
-  if (link.snapshot === snapshot || Date.parse(ext.updatedAt) < Date.parse(prev.updatedAt)) return;
-  run(app.db, "update item_provider_links set snapshot=?,synced_at=? where item_id=?", snapshot, now(), link.item_id);
+  if (Date.parse(ext.updatedAt) < Date.parse(prev.updatedAt)) return;
+  run(app.db, "update external_item_links set snapshot=?,synced_at=?,revision=?,direction='pull' where item_id=?", snapshot, now(), ext.revision ?? null, link.item_id);
+  if (link.snapshot === snapshot) return link.dismissed ? undefined : link.item_id;
   if (link.dismissed) return;
   const local = getItem(app, link.item_id);
   if (local.userId !== t.user_id || local.spaceId !== t.space_id) throw new Error("事项归属已变化");
   const write = writeFor(app, local.id);
   if (write && write.revision !== ext.revision) {
+    run(app.db, "update external_item_links set error=? where item_id=?", "外部版本已变化，请重新核对", local.id);
     if (write.ask_id) lapseAsk(app, write.ask_id, "外部版本已变化");
     run(app.db, "update item_provider_writes set state='conflict',error=? where id=?", "外部版本已变化，请重新核对", write.id);
   }
@@ -107,6 +118,7 @@ function applyExternal(app: App, t: Target, def: ItemProvider, ext: ExternalItem
     status: !write && local.status === localStatus(def, prev.status) ? status : local.status,
     note: `外部更新：${ext.title}（${ext.status}） ${ext.url}${write && write.revision !== ext.revision ? "；回写因版本冲突暂停" : ""}`,
   });
+  return local.id;
 }
 
 // Called with the same semantics as the lifecycle hooks. Candidate decisions are local only.
@@ -114,7 +126,7 @@ onItemStatus((app, before, after) => {
   const link = linkFor(app, after.id);
   if (!link) return;
   if (before.status === "candidate") {
-    run(app.db, "update item_provider_links set dismissed=? where item_id=?", Number(after.status === "cancelled"), after.id);
+    run(app.db, "update external_item_links set dismissed=? where item_id=?", Number(after.status === "cancelled"), after.id);
     return;
   }
   const previous = writeFor(app, after.id);
@@ -152,7 +164,7 @@ export function providerState(app: App, user: string, itemId: string) {
   const target = one<Target>(app.db, "select * from item_provider_targets where id=? and user_id=?", link.target_id, user);
   if (!target) throw new HttpError(404, "找不到订阅");
   if (target.space_id !== item.spaceId) throw new HttpError(403, "事项空间已变化");
-  return { target, syncedAt: link.synced_at, external: JSON.parse(link.snapshot) as ExternalItem, write: writeFor(app, itemId) ?? null };
+  return { target, syncedAt: link.synced_at, direction: link.direction, error: link.error, external: JSON.parse(link.snapshot) as ExternalItem, write: writeFor(app, itemId) ?? null };
 }
 
 /** Local status changes on a linked item can schedule an action using the subscriber's connection. */
@@ -164,14 +176,15 @@ export function checkProviderEdit(app: App, user: string, itemId: string) {
 // Bind the target to the connected accounts used on its first pull. A replacement login
 // must never receive a write approved for the old account, even when its issue keys match.
 function boundContext(app: App, t: Target, base: CallContext, writing: boolean) {
-  const subjects: Record<string, string> = JSON.parse(t.subjects);
+  const expected: Record<string, string> = JSON.parse(t.subjects);
+  const subjects: Record<string, string> = {};
   const entry = itemProviders.get(t.provider);
   const ctx: CallContext = { ...base, async connection(provider) {
     const current = () => findConnection(app, t.user_id, provider)?.accountId;
+    const account = current();
     const conn = await base.connection(provider);
     if (!conn) return null;
-    const account = current();
-    if (!account || (Object.hasOwn(subjects, provider) ? subjects[provider] !== account : writing))
+    if (!account || account !== current() || (Object.hasOwn(expected, provider) ? expected[provider] !== account : writing))
       throw new HttpError(409, "连接账号已变化，请核对订阅");
     subjects[provider] = account;
     return { ...conn, fetch(path, init) {
@@ -218,10 +231,12 @@ async function sendWrite(app: App, user: string, item: string, writeId: string, 
   if (!setStatus || localStatus(entry.def, write.status) !== getItem(app, item).status) throw new HttpError(409, "状态或提供者能力已变化");
   const { ctx } = boundContext(app, target, entry.context(app, user, target.space_id, AbortSignal.timeout(30_000)), true);
   try {
-    const result = await bounded(ctx.signal, setStatus({ ...ctx, idempotencyKey: write.id }, { key: external.key, status: write.status, expectedRevision: write.revision }));
+    const response = await bounded(ctx.signal, setStatus({ ...ctx, idempotencyKey: write.id },
+      { key: external.key, status: write.status, expectedRevision: write.revision }));
+    const result = statusResult.parse(response);
     if (result.status !== write.status) throw new HttpError(409, "外部返回的状态与请求不一致");
     tx(app.db, () => {
-      run(app.db, "update item_provider_links set snapshot=? where item_id=?", JSON.stringify({ ...external, ...result, revision: result.revision }), item);
+      run(app.db, "update external_item_links set snapshot=?,revision=?,synced_at=?,direction='push',error=null where item_id=?", JSON.stringify({ ...external, ...result, revision: result.revision }), result.revision ?? null, now(), item);
       run(app.db, "delete from item_provider_writes where id=?", write.id);
       if (write.ask_id) lapseAsk(app, write.ask_id, "这次回写已完成");
       addItemEvent(app, item, "provider", `已回写 ${external.url}（${result.status}）`, "host");
@@ -229,8 +244,11 @@ async function sendWrite(app: App, user: string, item: string, writeId: string, 
   } catch (e) {
     const message = (e as Error).message;
     const code = (e as { status?: number }).status;
-    run(app.db, "update item_provider_writes set state=?,error=? where id=?", code === 409 || code === 412 ? "conflict" : "failed", message, write.id);
-    addItemEvent(app, item, "provider", `回写暂停：${message}`, "host");
+    tx(app.db, () => {
+      run(app.db, "update external_item_links set direction='push',error=? where item_id=?", message, item);
+      run(app.db, "update item_provider_writes set state=?,error=? where id=?", code === 409 || code === 412 ? "conflict" : "failed", message, write.id);
+      addItemEvent(app, item, "provider", `回写暂停：${message}`, "host");
+    });
     throw e;
   }
 }
@@ -255,25 +273,42 @@ export function syncTarget(app: App, user: string, id: string) {
   return withTarget(t, async () => {
     if (!t.enabled) throw new HttpError(409, "订阅已暂停");
     const entry = providerFor(t.provider, t.space_id);
-    const { ctx, subjects } = boundContext(app, t, entry.context(app, user, t.space_id, AbortSignal.timeout(30_000)), false);
+    const base = entry.context(app, user, t.space_id, AbortSignal.timeout(30_000));
     let cursor = t.cursor;
     try {
       for (let page = 0; page < 10; page++) {
+        const { ctx, subjects } = boundContext(app, t, base, false);
         const result = pageSchema.parse(await bounded(ctx.signal, entry.def.pull(ctx, { target: t.target, cursor: cursor ?? undefined })));
         ctx.signal.throwIfAborted();
         const current = targetFor(app, user, id);
         if (!current.enabled || current.import_mode !== t.import_mode || current.cursor !== cursor || itemProviders.get(t.provider) !== entry) throw new HttpError(409, "订阅或提供者已变化");
         if (!result.done && (!result.cursor || cursor === result.cursor)) throw new Error("分页游标没有推进");
         tx(app.db, () => {
-          t.subjects = JSON.stringify(subjects, Object.keys(subjects).sort());
+          const identity = JSON.stringify(subjects, Object.keys(subjects).sort());
+          if (identity !== t.subjects && (t.subjects !== "{}" || one(app.db, "select 1 from external_item_links where target_id=?", id)))
+            throw new HttpError(409, "连接账号已变化，请核对订阅");
+          t.subjects = identity;
           run(app.db, "update item_provider_targets set subjects=? where id=?", t.subjects, id);
-          for (const ext of result.items) applyExternal(app, t, entry.def, ext);
+          const parents = new Map<string, string | undefined>();
+          for (const ext of result.items) {
+            const item = applyExternal(app, t, entry.def, ext);
+            if (item) parents.set(item, ext.parentKey);
+          }
+          for (const [child, key] of parents) {
+            if (!key) continue;
+            const parent = externalLink(app, t, key);
+            if (parent?.space_id !== t.space_id || parent.item_space !== t.space_id || parent.dismissed) continue;
+            // Reparenting also writes to the old parent's timeline. Keep a manual link to another space private.
+            const foreignParent = one(app.db, `select 1 from items c join items p on p.id=c.parent_id
+              where c.id=? and p.space_id<>?`, child, t.space_id);
+            if (!foreignParent) writeParent(app, child, parent.item_id, "agent");
+          }
           cursor = result.cursor ?? cursor;
           run(app.db, "update item_provider_targets set cursor=?,error=null where id=?", cursor, id);
         });
         if (result.done) break;
       }
-      const ready = all<Write>(app.db, `select w.* from item_provider_writes w join item_provider_links l on l.item_id=w.item_id
+      const ready = all<Write>(app.db, `select w.* from item_provider_writes w join external_item_links l on l.item_id=w.item_id
         where l.target_id=? and w.state='ready'`, id);
       for (const w of ready) await sendWrite(app, user, w.item_id, w.id, true);
     } catch (e) {

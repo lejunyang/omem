@@ -1449,7 +1449,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     const item = getItem(app, id);
     const synced = providerState(app, who(req), id);
-    const external = synced && { ...synced.external, provider: synced.target.provider, syncedAt: synced.syncedAt, write: synced.write };
+    const external = synced && { ...synced.external, provider: synced.target.provider, syncedAt: synced.syncedAt, direction: synced.direction, error: synced.error, write: synced.write };
     // A readable excerpt per reference, only from spaces this reader may see.
     const allowed = accessibleSpaces(app, who(req));
     const excerpts: Record<string, { title: string; text: string }> = {};

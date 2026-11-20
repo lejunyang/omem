@@ -54,7 +54,7 @@ describe("complete portable pulls", () => {
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
       // Subscriptions and pending external writes are tied to this device's connections.
-      "item_provider_targets", "item_provider_links", "item_provider_writes",
+      "item_provider_targets", "external_item_links", "item_provider_writes",
       // Decision material and the source-to-sweep links remain private to this device.
       "decisions", "decision_sweeps",
       // Which messages link which document (sources/doc-links.ts): rebuilt from lark_messages.
@@ -64,21 +64,23 @@ describe("complete portable pulls", () => {
     expect(tables.map((t) => t.name).filter((n) => !derived.has(n) && !device.has(n) && !covered.has(n))).toEqual([]);
   });
 
-  it("strips provider cursors, external account links and pending writes while retaining the imported item", async () => {
+  it.each([{ legacy: false, strip: true }, { legacy: true, strip: false }])(
+    "removes provider links and pending writes while retaining the imported item (legacy=$legacy, strip=$strip)", async ({ legacy, strip }) => {
     const app = testApp();
     const item = upsertItem(app, undefined, { title: "外部条目" });
     const at = new Date().toISOString();
     run(app.db, `insert into item_provider_targets(id,provider,target,user_id,space_id,mode,import_mode,cursor)
       values('target','sample:issues','project','owner','personal','direct','direct','page-2')`);
-    run(app.db, `insert into item_provider_links(item_id,target_id,external_key,synced_at,snapshot) values(?,'target','one',?,'{}')`, item.id, at);
+    run(app.db, `insert into external_item_links(item_id,target_id,provider,user_id,subjects,external_key,synced_at,snapshot) values(?,'target','sample:issues','owner','{}','one',?,'{}')`, item.id, at);
     run(app.db, `insert into item_provider_writes(id,item_id,status,revision,state) values('write',?,'done','v1','ready')`, item.id);
     run(app.db, "insert into plugin_subscriptions(plugin,subscriber,type) values('sample','sample:work','item.status')");
     run(app.db, "insert into plugin_events(seq,id,at,user_id,body) values(1,'event',?,'owner','{}')", at);
     run(app.db, "insert into plugin_deliveries(subscriber,seq,entity) values('sample:work',1,?)", item.id);
-    const copy = await snapshot(app, { parts: ["files"], strip: true });
+    if (legacy) app.db.exec("alter table external_item_links rename to item_provider_links");
+    const copy = await snapshot(app, { parts: ["files"], strip });
     const restored = App.open(copy.dbDir);
     try {
-      for (const table of ["item_provider_targets", "item_provider_links", "item_provider_writes", "plugin_events", "plugin_deliveries", "plugin_subscriptions"]) {
+      for (const table of ["item_provider_targets", "external_item_links", "item_provider_writes", "plugin_events", "plugin_deliveries", "plugin_subscriptions"]) {
         expect(one(restored.db, `select count(*) n from ${table}`)).toEqual({ n: 0 });
       }
       expect(one(restored.db, "select title from items where id=?", item.id)).toEqual({ title: "外部条目" });
@@ -101,7 +103,7 @@ describe("complete portable pulls", () => {
       const item = upsertItem(app, undefined, { title: "外部事项" });
       run(app.db, `insert into item_provider_targets(id,provider,target,user_id,space_id,mode,import_mode,cursor)
         values(?,'demo:issues','repo','owner','personal','confirm','direct','page2')`, id);
-      run(app.db, "insert into item_provider_links(item_id,target_id,external_key,synced_at,snapshot) values(?,?,'a','2026-11-21','{}')", item.id, id);
+      run(app.db, "insert into external_item_links(item_id,target_id,provider,user_id,subjects,external_key,synced_at,snapshot) values(?,?,'demo:issues','owner','{}','a','2026-11-21','{}')", item.id, id);
       run(app.db, "insert into item_provider_writes(id,item_id,status,revision,state) values(?,?,'done','v1','pending')", id, item.id);
     }
     const f = await snapshot(remote);

@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { storeConnection } from "../src/auth/vault.ts";
+import { migrateItemProviders } from "../src/items/provider-schema.ts";
 import { answerAsk, getAsk } from "../src/agents/asks.ts";
 import { all } from "../src/core/db.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { configureTarget, decideProviderWrite, providerState, syncTarget } from "../src/items/providers.ts";
 import { getItem, itemEvents, upsertItem } from "../src/items/store.ts";
+import { writeParent } from "../src/items/tree.ts";
 import { decideCandidate } from "../src/items/auto.ts";
 import { manifestSchema } from "../src/plugins/registry.ts";
 import { registerProcessHooks } from "../src/plugins/process-hooks.ts";
@@ -24,7 +27,7 @@ beforeEach(() => {
   undo = [];
   pull.mockReset().mockImplementation(async () => ({ items, cursor: "page1", done: true }));
   setStatus.mockReset().mockImplementation(async (_ctx, req) => ({ status: req.status, revision: "2" }));
-  const api = registerProcessHooks(manifestSchema.parse({ id: "demo", name: "示例", permissions: { itemProvider: true, write: true } }), undo);
+  const api = registerProcessHooks(manifestSchema.parse({ id: "demo", name: "示例", connectors: [{ provider: "demo-account" }], permissions: { itemProvider: true, write: true } }), undo);
   api.itemProvider({ id: "issues", label: "示例条目", statuses: { open: "active", closed: "done" }, pull, setStatus });
 });
 afterEach(() => { for (const f of undo) f(); });
@@ -61,7 +64,7 @@ it("checks the subscriber, confirms precisely one revision, and retires the appr
   await answerAsk(app, write.ask_id!, { by: "owner", choice: 0 });
   expect(setStatus.mock.calls).toEqual([[expect.objectContaining({ idempotencyKey: write.id, userId: "owner", spaceId: "personal" }),
     { key: "a", expectedRevision: "1", status: "closed" }]]);
-  expect(providerState(app, "owner", id)).toMatchObject({ external: { revision: "2", status: "closed" }, write: null });
+  expect(providerState(app, "owner", id)).toMatchObject({ external: { revision: "2", status: "closed" }, direction: "push", error: null, write: null });
   await expect(decideProviderWrite(app, "owner", id, write.id, true)).rejects.toThrow("已变化");
 });
 
@@ -74,6 +77,7 @@ it("direct write uses the same precondition and a changed remote revision blocks
   await syncTarget(app, "owner", t.id);
   const conflict = providerState(app, "owner", id)!.write!;
   expect(conflict.state).toBe("conflict");
+  expect(providerState(app, "owner", id)).toMatchObject({ direction: "pull", error: conflict.error });
   await expect(decideProviderWrite(app, "owner", id, conflict.id, true)).rejects.toThrow("外部版本");
   expect(setStatus).not.toHaveBeenCalled();
   await decideProviderWrite(app, "owner", id, conflict.id, false);
@@ -138,4 +142,112 @@ it("enforces subscription ownership through the HTTP item read, local edit and w
     expect(getItem(app, id).status).toBe("open");
     expect(setStatus).not.toHaveBeenCalled();
   } finally { await server.close(); }
+});
+
+it("同一连接主体跨目标和空间重复导入一个外部键", async () => {
+  storeConnection(app, { userId: "owner", provider: "demo-account", accountId: "one", accountName: "账号", scopes: [], accessToken: "test" });
+  pull.mockImplementation(async ctx => {
+    await ctx.connection("demo-account");
+    return { items, done: true };
+  });
+  createSpace(app, { id: "team", name: "团队", kind: "project" });
+  const first = configureTarget(app, "owner", config);
+  const other = configureTarget(app, "owner", { ...config, spaceId: "team" });
+  const overlap = configureTarget(app, "owner", { ...config, target: "another" });
+  items.push({ ...ext, key: "child", parentKey: ext.key, title: "子事项" });
+  await syncTarget(app, "owner", first.id);
+  await syncTarget(app, "owner", overlap.id);
+  const [parent] = all<{ id: string }>(app.db, "select id from items where parent_id is null");
+  items = items.map(i => ({ ...i, title: "另一个空间", summary: "私有", revision: "2" }));
+  await syncTarget(app, "owner", other.id);
+  expect(ids()).toHaveLength(2);
+  expect(all(app.db, "select title,parent_id from items where space_id='personal' order by rowid")).toEqual([
+    { title: ext.title, parent_id: null }, { title: "子事项", parent_id: parent.id },
+  ]);
+  expect(providerState(app, "owner", parent.id)?.external).toEqual(ext);
+  items = [{ ...ext, key: "separate", parentKey: ext.key }];
+  await syncTarget(app, "owner", other.id);
+  expect(all(app.db, "select parent_id from items where space_id='team'")).toEqual([{ parent_id: null }]);
+  expect(all(app.db, "select distinct subjects from external_item_links")).toEqual([{ subjects: '{"demo-account":"one"}' }]);
+  storeConnection(app, { userId: "owner", provider: "demo-account", accountId: "two", accountName: "账号", scopes: [], accessToken: "test2" });
+  const secondAccount = configureTarget(app, "owner", { ...config, spaceId: "team", target: "second" });
+  items = [{ ...ext, key: "child", parentKey: ext.key }];
+  await syncTarget(app, "owner", secondAccount.id);
+  expect(all(app.db, "select i.parent_id from items i join external_item_links l on i.id=l.item_id where l.target_id=?", secondAccount.id))
+    .toEqual([{ parent_id: null }]);
+});
+
+it("导入已存在的外部父事项后识别子事项的 parentKey", async () => {
+  const t = configureTarget(app, "owner", config);
+  await syncTarget(app, "owner", t.id);
+  const [parent] = ids();
+  items = [{ ...ext, key: "child", parentKey: ext.key }];
+  await syncTarget(app, "owner", t.id);
+  const [child] = ids().filter(id => id !== parent);
+  expect(getItem(app, child).parentId).toBe(parent);
+  createSpace(app, { id: "team", name: "团队", kind: "project" });
+  const manual = upsertItem(app, undefined, { spaceId: "team", title: "手动归类" });
+  writeParent(app, child, manual.id);
+  const history = itemEvents(app, manual.id);
+  await syncTarget(app, "owner", t.id);
+  expect(getItem(app, child).parentId).toBe(manual.id);
+  expect(itemEvents(app, manual.id)).toEqual(history);
+});
+
+it("resolves child-first pages and rolls back cycles and deep trees", async () => {
+  const t = configureTarget(app, "owner", config);
+  items.unshift({ ...ext, key: "child", parentKey: ext.key });
+  await syncTarget(app, "owner", t.id);
+  const links = all<{ item_id: string }>(app.db, "select item_id from external_item_links order by rowid");
+  expect(getItem(app, links[0].item_id).parentId).toBe(links[1].item_id);
+  items = [{ ...ext, parentKey: "child" }];
+  await expect(syncTarget(app, "owner", t.id)).rejects.toThrow("成环");
+  items = [{ ...ext, key: "grandchild", parentKey: "child" }, { ...ext, key: "leaf", parentKey: "grandchild" }];
+  await expect(syncTarget(app, "owner", t.id)).rejects.toThrow("最多三层");
+  expect(ids()).toHaveLength(2);
+});
+
+it("includes the provider URL in created and status events without the imported body", async () => {
+  app.config.plugins.eventSpaces.demo = ["personal"];
+  app.db.exec("insert into plugin_subscriptions values ('demo','demo:test','item.created'),('demo','demo:test','item.status')");
+  const t = configureTarget(app, "owner", { ...config, importMode: "direct" });
+  items = [{ ...ext, summary: "仅供事项详情" }];
+  await syncTarget(app, "owner", t.id);
+  upsertItem(app, ids()[0], { status: "done" });
+  const bodies = all<{ body: string }>(app.db, "select body from plugin_events order by seq").map(r => r.body);
+  expect(bodies.map(body => JSON.parse(body))).toMatchObject([
+    { type: "item.created", data: { links: [ext.url] } }, { type: "item.status", data: { links: [ext.url] } },
+  ]);
+  expect(bodies.join("")).not.toContain(items[0].summary);
+});
+
+it("migrates the first legacy mapping and its pending write on reopen", () => {
+  const a = configureTarget(app, "owner", config);
+  const b = configureTarget(app, "owner", { ...config, target: "second" });
+  const original = upsertItem(app, undefined, { title: "初次导入" });
+  const duplicate = upsertItem(app, undefined, { title: "重复导入" });
+  app.db.exec(`drop table item_provider_writes;
+    drop table external_item_links;
+    create table item_provider_links(item_id text primary key, target_id text, external_key text, synced_at text, snapshot text, dismissed integer);
+    create table item_provider_writes(id text primary key, item_id text references item_provider_links(item_id), status text, revision text, ask_id text, state text, error text);`);
+  for (const [target, item] of [[a, original], [b, duplicate]] as const) {
+    app.db.prepare("insert into item_provider_links values(?,?,'a','2026-11-21',?,0)").run(item.id, target.id, JSON.stringify(ext));
+    app.db.prepare("insert into item_provider_writes values(?,?,'closed','1',null,'failed','无法连接')").run(target.id, item.id);
+  }
+  migrateItemProviders(app.db);
+  migrateItemProviders(app.db);
+  expect(all(app.db, "select item_id,revision,error from external_item_links")).toEqual([{ item_id: original.id, revision: "1", error: "无法连接" }]);
+  expect(all(app.db, "select item_id from item_provider_writes")).toEqual([{ item_id: original.id }]);
+  expect(ids()).toHaveLength(2);
+  expect(all(app.db, "pragma foreign_key_check")).toEqual([]);
+});
+
+it("rejects oversized provider fields before saving items or advancing the page", async () => {
+  const target = configureTarget(app, "owner", config);
+  for (const field of ["status", "url", "assignee", "parentKey", "revision", "summary"] as const) {
+    items = [ext, { ...ext, key: "invalid", [field]: "https://example.org/" + "a".repeat(65537) }];
+    await expect(syncTarget(app, "owner", target.id)).rejects.toThrow(field);
+    expect(ids()).toEqual([]);
+    expect(pull.mock.lastCall?.[1].cursor).toBeUndefined();
+  }
 });

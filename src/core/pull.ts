@@ -131,12 +131,12 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
         for (const table of [...providerDeviceTables].reverse()) {
           for (const row of deviceData.get(table) ?? []) {
             if (table === "item_provider_targets" && !db.prepare("select 1 from users, spaces where users.id=? and spaces.id=?").get(row.user_id, row.space_id)) continue;
-            if (table === "item_provider_links" && !db.prepare(`select 1 from items i join item_provider_targets t on i.user_id=t.user_id and i.space_id=t.space_id
+            if (table === "external_item_links" && !db.prepare(`select 1 from items i join item_provider_targets t on i.user_id=t.user_id and i.space_id=t.space_id
                 where i.id=? and t.id=?`).get(row.item_id, row.target_id)) {
               run(db, "update item_provider_targets set cursor=null where id=?", row.target_id);
               continue;
             }
-            if (table === "item_provider_writes" && !db.prepare("select 1 from item_provider_links where item_id=?").get(row.item_id)) continue;
+            if (table === "item_provider_writes" && !db.prepare("select 1 from external_item_links where item_id=?").get(row.item_id)) continue;
             const cols = Object.keys(row);
             run(db, `insert into ${table}(${cols.join(",")}) values(${cols.map(() => "?").join(",")})`, ...cols.map(c => row[c]));
           }

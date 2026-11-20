@@ -117,7 +117,7 @@ describe("platform packs", async () => {
     const config = { provider: "github:issues", target: "acme/docs", spaceId: "personal-ann" };
     const t = configureTarget(app, "ann", config);
     await syncTarget(app, "ann", t.id);
-    const links = all<{ item_id: string }>(app.db, "select item_id from item_provider_links");
+    const links = all<{ item_id: string }>(app.db, "select item_id from external_item_links");
     expect(links).toHaveLength(1);
     expect(providerState(app, "ann", links[0].item_id)?.external.key).toBe("acme/docs#1");
     await syncTarget(app, "ann", t.id);

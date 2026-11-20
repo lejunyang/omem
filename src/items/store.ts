@@ -119,7 +119,7 @@ export function addItemEvent(app: App, itemId: string, kind: string, text: strin
   run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor,run_id) values(?,?,?,?,?,?,?)", itemId, now(), kind, text, JSON.stringify(sourceRefs), actor, runId ?? null);
 }
 
-export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt" | "parentId" | "now" | "phase" | "phaseSince" | "watchUntil">> & { note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
+export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt" | "parentId" | "now" | "phase" | "phaseSince" | "watchUntil">> & { providerUrl?: string; note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
 
 const FIELD_LABEL: Record<string, string> = {
   title: "标题",
@@ -143,12 +143,19 @@ export function onItemStatus(fn: StatusHook) {
   if (!statusHooks.includes(fn)) statusHooks.push(fn);
 }
 
-function itemFact(app: App, item: Pick<Item, "spaceId" | "id" | "kind" | "status" | "title" | "parentId" | "userId">, from: ItemStatus | null, actor: "user" | "agent") {
-  enqueuePluginEvent(app, from === null ? "item.created" : "item.status", item.spaceId, () => ({
-    entity: { kind: "item", id: item.id }, actor: { kind: actor }, userId: item.userId,
-    data: { title: item.title, kind: item.kind, from, status: item.status, parentId: item.parentId,
-      links: all<{ link: string }>(app.db, "select o.link from item_materials m join flow_objects o on o.id=m.ref where m.item_id=? and m.kind='object' order by m.id limit 100", item.id).map(o => o.link) },
-  }));
+function itemFact(app: App, item: Pick<Item, "spaceId" | "id" | "kind" | "status" | "title" | "parentId" | "userId">, from: ItemStatus | null, actor: "user" | "agent", createdUrl?: string) {
+  enqueuePluginEvent(app, from === null ? "item.created" : "item.status", item.spaceId, () => {
+    const providerUrl = createdUrl ?? one<{ url: string }>(app.db, `select json_extract(l.snapshot,'$.url') as url
+      from external_item_links l join item_provider_targets t on t.id=l.target_id
+      where l.item_id=? and l.user_id=? and t.space_id=?`, item.id, item.userId, item.spaceId)?.url;
+    const materials = all<{ link: string }>(app.db, `select o.link from item_materials m join flow_objects o on o.id=m.ref
+      where m.item_id=? and m.kind='object' order by m.id limit 100`, item.id);
+    const links = [...new Set([...(providerUrl ? [providerUrl] : []), ...materials.map(o => o.link)])];
+    return {
+      entity: { kind: "item", id: item.id }, actor: { kind: actor }, userId: item.userId,
+      data: { title: item.title, kind: item.kind, from, status: item.status, parentId: item.parentId, links },
+    };
+  });
 }
 
 /** Create or update an item; every change is recorded on its timeline with who made it. */
@@ -180,7 +187,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
         at,
         input.userId ?? "owner",
       );
-      itemFact(app, { id: newIdValue, kind, status, title: input.title!, parentId: null, spaceId: input.spaceId ?? "personal", userId: input.userId ?? "owner" }, null, actor);
+      itemFact(app, { id: newIdValue, kind, status, title: input.title!, parentId: null, spaceId: input.spaceId ?? "personal", userId: input.userId ?? "owner" }, null, actor, input.providerUrl);
       addItemEvent(app, newIdValue, "created", input.note || `创建：${input.title}`, actor, input.sourceRefs ?? [], runId);
     });
     app.emit({ type: "changed", entity: "item", id: newIdValue, spaceId: input.spaceId ?? "personal" });
