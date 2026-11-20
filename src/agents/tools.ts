@@ -42,6 +42,7 @@ import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
 import { ITEM_KINDS, listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { lineStateSchema, proposeSchema } from "../items/line-schemas.ts";
+import { metricViewSchema } from "../data/metrics.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
 import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFolder, relocateFolder, removeFolder } from "../memory/folders.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
@@ -3322,12 +3323,15 @@ const dimsSchema = z.record(z.string(), z.string()).optional().describe("维度�
 def({
   name: "metric_define",
   description:
-    "定义或修改一个指标：本人工作上要看的数据（某个功能的埋点事件量、上线后的报错数和使用量、旧平台和新平台的对比……）。写清它在哪个系统、用哪个技能或命令怎么查（query，后台按它取数），关联到事项（item）或关注（context），采集频率（schedule），什么变化要告诉本人（threshold 相对变化、direction 哪个方向是好）。同名的指标会被更新。只读系统的查法，不写会改动线上的操作。",
+    "定义或修改一个指标：本人工作上要看的数据（某个功能的埋点事件量、上线后的报错数和使用量、旧平台和新平台的对比……）。写清它回答本人的什么问题（why）、来自观测计划的哪一节（plan_ref）、在哪个系统、用哪个技能或命令怎么查（query，后台按它取数），关联到事项（item）或关注（context），采集频率（schedule），什么变化要告诉本人（threshold 相对变化、direction 哪个方向是好），网页上怎么画（view）。同名的指标会被更新。只读系统的查法，不写会改动线上的操作。" +
+    "不是本人这一轮亲口要的（后台、观测计划、看线的运行）新建的指标是提议：照样按时取数，变化不通知，等本人在数据页留下、改或不要；本人不要过的不能再提。少而准：只提本人真会问的问题对应的数。本人在对话里说留下某个提议传 status=active，说不要传 dropped。",
   write: true,
   schema: z.object({
     id: z.string().optional().describe("要改的指标 id（m…）；新建不传"),
     name: z.string().trim().min(2).max(120),
-    description: z.string().max(2000).optional().describe("它衡量什么、为什么要看、口径"),
+    why: z.string().trim().max(300).optional().describe("一句话：这个数回答本人的什么问题（“部分发货改造上线后退款接口有没有变得更容易出错”）。新建必填，本人凭它决定要不要"),
+    plan_ref: z.string().max(200).optional().describe("来自观测计划的哪一节：src:<原件id>#L起-L止"),
+    description: z.string().max(2000).optional().describe("口径和注意的地方"),
     unit: z.string().max(20).optional(),
     source: z.string().max(200).optional().describe("哪个系统（按数据源目录的叫法）"),
     query: z.string().max(4000).optional().describe("怎么查：技能名、命令或查询语句、参数和时间范围，另一个 Agent 照着能取到同样的数"),
@@ -3338,10 +3342,11 @@ def({
     baseline: z.number().optional().describe("固定的参照值；不传就和前几次的中位数比"),
     threshold: z.number().optional().describe("相对变化超过多少要告诉本人，0.3 表示 30%，默认 0.3"),
     direction: z.enum(["up-good", "down-good", "neutral"]).optional(),
-    status: z.enum(["active", "paused"]).optional(),
+    view: metricViewSchema.optional().describe("网页上怎么画：分维度的（新 / 旧）用 compare + compareBy，看构成用 pie，只要一个数用 number；不传是走势线"),
+    status: z.enum(["active", "paused", "dropped"]).optional().describe("本人亲口说留下 active / 暂停 paused / 不要 dropped；后台运行不用传"),
   }),
   handler: async (ctx, a) => {
-    const { defineMetric } = await import("../data/metrics.ts");
+    const { defineMetric, metricLessons } = await import("../data/metrics.ts");
     if (a.item) {
       const item = getItem(ctx.app, a.item);
       inScope(ctx, item.spaceId, "指标关联的事项");
@@ -3350,12 +3355,17 @@ def({
       if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的指标能关联关注");
       (await import("../channels/listen.ts")).requireContext(ctx.app, a.context);
     }
+    // The owner's own turn (or their tools, the web) defines it; anything else proposes it.
+    const by = ownTurn(ctx) ? ("owner" as const) : ("agent" as const);
     const m = defineMetric(ctx.app, {
-      id: a.id, name: a.name, description: a.description, unit: a.unit, source: a.source, query: a.query,
+      id: a.id, name: a.name, why: a.why, planRef: a.plan_ref, description: a.description, unit: a.unit, source: a.source, query: a.query,
       itemId: a.item, contextId: a.context, spaceId: a.space ? writeSpace(ctx, a.space) : undefined,
-      schedule: a.schedule, baseline: a.baseline, threshold: a.threshold, direction: a.direction, status: a.status,
-    });
-    return `已${a.id ? "更新" : "保存"}指标「${m.name}」（${m.id}），采集：${m.schedule}${m.schedule === "none" ? "" : "，后台到时间按查法取数"}。现在就有数的用 metric_record 记下。`;
+      schedule: a.schedule, baseline: a.baseline, threshold: a.threshold, direction: a.direction, view: a.view, status: a.status,
+    }, { by, runId: ctx.runId });
+    const taking = `采集：${m.schedule}${m.schedule === "none" ? "" : "，后台到时间按查法取数"}。现在就有数的用 metric_record 记下。`;
+    if (m.status !== "proposed") return `已${a.id ? "更新" : "保存"}指标「${m.name}」（${m.id}）：${m.status === "active" ? "在看" : m.status === "paused" ? "暂停" : "本人不要了，不再取数"}。${m.status === "dropped" ? "" : taking}`;
+    const lessons = metricLessons(ctx.app, { spaces: ctx.spaces });
+    return `已${a.id ? "更新" : "提议"}指标「${m.name}」（${m.id}）：等本人在数据页留下、改或不要；照样取数，变化不通知本人。${taking}${lessons ? `\n\n${lessons}` : ""}`;
   },
 });
 
@@ -3372,7 +3382,8 @@ def({
     const m = requireMetric(ctx.app, a.metric);
     inScope(ctx, m.spaceId, "指标");
     const changes = await recordPoints(ctx.app, m.id, a.points, ctx.runId);
-    const lines = changes.filter((c) => c.change).map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}${c.change!.flagged ? "（超过门槛，已告诉本人）" : ""}`);
+    const told = m.status === "active" ? "（超过门槛，已告诉本人）" : m.status === "proposed" ? "（超过门槛；指标还待本人确认，没有通知）" : "（超过门槛；指标暂停中，没有通知）";
+    const lines = changes.filter((c) => c.change).map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}${c.change!.flagged ? told : ""}`);
     return `已记 ${a.points.length} 个点。${lines.length ? `\n${lines.join("\n")}` : ""}`;
   },
 });
@@ -3396,8 +3407,10 @@ def({
       return M.metricText(ctx.app, m.id, { days: a.days, dims: a.dims, chart: a.chart });
     }
     const list = M.listMetrics(ctx.app, { itemId: a.item, contextId: a.context, spaces: ctx.spaces });
-    if (!list.length) return "还没有指标。要看的数据先用 metric_define 定义（查法写清），参考数据源目录和技能 observation-plan。";
-    return list.map((m) => `- ${m.id}「${m.name}」${m.unit ? `（${m.unit}）` : ""} · ${m.source || "来源没写"} · ${m.schedule}${m.itemId ? ` · 事项 ${m.itemId}` : ""}${m.status === "paused" ? " · 暂停" : ""}`).join("\n") + `\n\n${M.metricsSummary(ctx.app, list.slice(0, 30))}`;
+    const lessons = M.metricLessons(ctx.app, { spaces: ctx.spaces });
+    if (!list.length) return `还没有指标。要看的数据先用 metric_define 定义（why 和查法写清），参考数据源目录和技能 observation-plan。${lessons ? `\n\n${lessons}` : ""}`;
+    const state = (m: (typeof list)[number]) => (m.status === "paused" ? " · 暂停" : m.status === "proposed" ? " · 待本人确认" : "");
+    return list.map((m) => `- ${m.id}「${m.name}」${m.unit ? `（${m.unit}）` : ""} · ${m.source || "来源没写"} · ${m.schedule}${m.itemId ? ` · 事项 ${m.itemId}` : ""}${state(m)}${m.why ? `\n  回答：${truncate(m.why, 120)}` : ""}`).join("\n") + `\n\n${M.metricsSummary(ctx.app, list.slice(0, 30))}${lessons ? `\n\n${lessons}` : ""}`;
   },
 });
 

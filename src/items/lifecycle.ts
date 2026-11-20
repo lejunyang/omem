@@ -292,7 +292,8 @@ function lineClosed(app: App, before: Item, after: Item, actor: "agent" | "user"
     saveContext(app, { id: c.id, kind: "item", status: "paused", note: `${ENDED_NOTE}（${md(app, now())}），关注先停下；重新打开这条线会接着读。${c.note ? ` 原来的说明：${c.note}` : ""}` });
   }
   const ids = [after.id, ...descendantIds(app, after.id)];
-  paused.metrics = all<{ id: string }>(app.db, `select id from metrics where status = 'active' and (item_id in (${ids.map(() => "?").join(",")}) or (? is not null and context_id = ?))`, ...ids, c?.id ?? null, c?.id ?? null).map((r) => r.id);
+  // Proposals stop being taken too; opened again, they are proposals again (the owner has not decided).
+  paused.metrics = all<{ id: string }>(app.db, `select id from metrics where status in ('active','proposed') and (item_id in (${ids.map(() => "?").join(",")}) or (? is not null and context_id = ?))`, ...ids, c?.id ?? null, c?.id ?? null).map((r) => r.id);
   if (paused.metrics.length) run(app.db, `update metrics set status = 'paused', updated_at = ? where id in (${paused.metrics.map(() => "?").join(",")})`, now(), ...paused.metrics);
   run(app.db, "update item_next set status = 'expired', updated_at = ? where item_id = ? and status = 'open'", now(), after.id);
   for (const a of all<{ id: string }>(app.db, "select id from asks where status = 'pending' and json_extract(context, '$.handler') = 'line-end' and json_extract(context, '$.lineId') = ?", after.id)) cancelAsk(app, a.id, "这条线已经结束了");
@@ -309,7 +310,7 @@ function lineReopened(app: App, before: Item, after: Item, actor: "agent" | "use
   const rec = json<Paused | null>(kv(app, PAUSED(after.id)) ?? "null", null);
   const c = rec?.context ? getContext(app, rec.context) : itemContext(app, after.id);
   if (c && c.status !== "active" && (rec?.context === c.id || c.note?.startsWith(ENDED_NOTE))) saveContext(app, { id: c.id, kind: "item", status: "active", note: rec?.context === c.id ? rec.note : "" });
-  if (rec?.metrics.length) run(app.db, `update metrics set status = 'active', updated_at = ? where status = 'paused' and id in (${rec.metrics.map(() => "?").join(",")})`, now(), ...rec.metrics);
+  if (rec?.metrics.length) run(app.db, `update metrics set status = case when confirmed_at is null and defined_by = 'agent' then 'proposed' else 'active' end, updated_at = ? where status = 'paused' and id in (${rec.metrics.map(() => "?").join(",")})`, now(), ...rec.metrics);
   dropKv(app, PAUSED(after.id));
   setPhase(app, after.id, null, null);
   if (actor === "user") {

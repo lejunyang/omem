@@ -21,6 +21,25 @@ export const FILL_WIKI_NODES = `
     select json_extract(meta, '$.wikiParentNodeToken'), json_extract(meta, '$.wikiSpaceId'), coalesce(json_extract(meta, '$.wikiParentTitle'), '')
     from sources where kind = 'doc' and deleted_at is null and coalesce(json_extract(meta, '$.wikiParentNodeToken'), '') != '';
 `;
+/**
+ * Where a metric came from and whether the owner wants it (src/data/metrics.ts): what question it
+ * answers (`why`), the observation-plan section it came from (`plan_ref`, a src: ref), who defined it
+ * (owner / agent / omem, and the run), when the owner kept it (`confirmed_at`) or dropped it
+ * (`dropped_at`, status `dropped`, with the owner's word in `owner_note`), and how it is drawn (`view`,
+ * JSON). A background agent's metric is `proposed` until the owner decides; it is still taken but its
+ * changes are never told. None of the metrics before this were confirmed by the owner: the work ones
+ * become proposals (paused ones stay paused, unconfirmed), omem's own usage counts as kept. Exported for tests.
+ */
+export const METRIC_ORIGIN_MIGRATION = `alter table metrics add column why text not null default '';
+   alter table metrics add column plan_ref text;
+   alter table metrics add column defined_by text not null default 'agent';
+   alter table metrics add column defined_run text;
+   alter table metrics add column confirmed_at text;
+   alter table metrics add column dropped_at text;
+   alter table metrics add column owner_note text;
+   alter table metrics add column view text;
+   update metrics set defined_by = 'omem', confirmed_at = created_at where source = 'omem';
+   update metrics set status = 'proposed' where source != 'omem' and status = 'active';`;
 
 export const migrations: readonly string[] = [
   `
@@ -2228,6 +2247,7 @@ export const migrations: readonly string[] = [
   `alter table items add column phase text;
    alter table items add column phase_since text;
    alter table items add column watch_until text;`,
+  METRIC_ORIGIN_MIGRATION,
 ];
 
 export type Db = DatabaseSync;
