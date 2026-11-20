@@ -250,10 +250,18 @@ function fmt(v: unknown) {
   return String(v);
 }
 
-export function listItems(app: App, opts: { spaceIds?: string[]; spaceId?: string; status?: string; kind?: string; q?: string; limit?: number; userId?: string; parentId?: string; topLevel?: boolean }) {
+export function listItems(app: App, opts: { sharedSpaces?: string[]; spaceIds?: string[]; spaceId?: string; status?: string; kind?: string; q?: string; limit?: number; userId?: string; parentId?: string; topLevel?: boolean }) {
   const where: string[] = [];
   const params: (string | number)[] = [];
-  if (opts.userId) where.push("user_id = ?"), params.push(opts.userId);
+  if (opts.userId) {
+    if (opts.sharedSpaces?.length) {
+      where.push("(user_id = ? or (status != 'candidate' and space_id in (select value from json_each(?))))");
+      params.push(opts.userId, JSON.stringify(opts.sharedSpaces));
+    } else {
+      where.push("user_id = ?");
+      params.push(opts.userId);
+    }
+  }
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
   if (opts.topLevel) where.push("parent_id is null");
   if (opts.spaceIds) { where.push(`space_id in (${opts.spaceIds.map(() => "?").join(",") || "NULL"})`); params.push(...opts.spaceIds); }

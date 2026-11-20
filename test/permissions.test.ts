@@ -61,6 +61,22 @@ describe("roles and permissions", async () => {
     }
   });
 
+  it("shares work and items with observers only in readable spaces", async () => {
+    createUser(app, { id: "observer-test", name: "观察者", role: "observer" });
+    addMember(app,"team","observer-test","reader");
+    tokens["observer-test"] = createApiToken(app,"observer-test","test");
+    const make = async (space:string) => (await fetch(base+"/api/items",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind:"line",space,title:"项目进度"})})).json();
+    const visible = await make("team"), hidden = await make("other");
+    const work = await json("observer-test","/api/work");
+    expect(work.lines.map((line:{id:string})=>line.id)).toContain(visible.id);
+    expect(work.lines.map((line:{id:string})=>line.id)).not.toContain(hidden.id);
+    expect(work).not.toHaveProperty("waiting");
+    expect((await json("observer-test","/api/items/"+visible.id)).can).toEqual({edit:false,operate:false});
+    expect((await as("observer-test","/api/items/"+hidden.id)).status).toBe(404);
+    expect((await as("observer-test","/api/items/"+visible.id,{method:"PATCH",body:'{"title":"编辑"}'})).status).toBe(403);
+    expect((await as("observer-test","/api/rules")).status).toBe(200);
+  });
+
   it("keeps decision calibration owner-only", async () => {
     expect(ROUTE_RULES["GET /api/ai/decision/report"]).toBe("owner");
     expect((await as("ann", "/api/ai/decision/report")).status).toBe(403);

@@ -1,3 +1,4 @@
+import { can } from "../auth/permissions.ts";
 import { canReadRun } from "../auth/permissions.ts";
 import { sourceReadable, sourceVisible } from "../auth/visibility.ts";
 import { requireItem } from "./access.ts";
@@ -156,7 +157,9 @@ export async function materialViews(app: App, itemId: string, userId: string): P
       const r = resolve(app, m.kind, m.ref);
       if (m.kind === "object") r.spaceId = item.spaceId;
       const readable = (!allowed || !r.spaceId || allowed.includes(r.spaceId))
-        && (m.kind !== "source" || await sourceReadable(app, userId, m.ref))
+        && (m.kind !== "conversation" || userId === OWNER || one<{user_id:string}>(app.db,"select user_id from conversations where id=?",m.ref)?.user_id === userId)
+        && (m.kind !== "source" || (can(app,userId,"sources.view",r.spaceId) && await sourceReadable(app, userId, m.ref)))
+        && (m.kind !== "req" || can(app,userId,"requirements.view",r.spaceId))
         && (m.kind !== "run" || canReadRun(app, userId, m.ref));
       if (readable || userId === OWNER) views.push({ ...m, spaceId: r.spaceId, title: readable ? r.title : m.label, status: r.status ?? null, readable, changed: !!(m.meta.hash && r.hash && m.meta.hash !== r.hash), missing: m.kind !== "object" && r.status === "deleted" });
     } catch {

@@ -1,8 +1,9 @@
+import { spacesWithCapability } from "../auth/capabilities.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { accessibleSpaces } from "../core/users.ts";
+import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { HttpError, json, now, zonedParts, zoneMidnight } from "../core/util.ts";
 import { pendingActions, pendingView } from "./pending.ts";
 import { chatName } from "../agents/owner-now.ts";
@@ -57,13 +58,13 @@ export function flowLite(app: App, itemId: string): FlowLite | null {
 }
 
 /** The items under one, level by level (candidates left out), open ones first. */
-export function childrenOf(app: App, id: string, depth = 0): Child[] {
+export function childrenOf(app: App, id: string, depth = 0, spaces?: string[]): Child[] {
   if (depth > 3) return [];
   const rows = all<{ id: string; title: string; kind: string; status: string; due_at: string | null; parent_id: string | null; waiting_on: string | null }>(app.db,
-    `select id, title, kind, status, due_at, parent_id, waiting_on from items where parent_id = ? and status != 'candidate'
-      order by case when status in ('done','cancelled','expired') then 1 else 0 end, created_at, id`, id);
+    `select id, title, kind, status, due_at, parent_id, waiting_on from items where parent_id = ? and status != 'candidate' ${spaces ? "and space_id in (select value from json_each(?))" : ""}
+      order by case when status in ('done','cancelled','expired') then 1 else 0 end, created_at, id`, id, ...(spaces ? [JSON.stringify(spaces)] : []));
   return rows.map((r) => {
-    const kids = childrenOf(app, r.id, depth + 1);
+    const kids = childrenOf(app, r.id, depth + 1, spaces);
     return { id: r.id, title: r.title, kind: r.kind, status: r.status, dueAt: r.due_at, parentId: r.parent_id, waitingOn: r.waiting_on, flow: flowLite(app, r.id), ...(kids.length ? { children: kids } : {}) };
   });
 }
@@ -135,23 +136,24 @@ export function workActivities(app: App, userId: string, q: { from?: string; to?
   const end = zoneMidnight(new Date(Date.parse(`${to}T00:00:00Z`) + 86400_000).toISOString().slice(0, 10), tz).toISOString();
   const types = q.type ? q.type.split(",").filter((t) => (CHANGE_TYPES as readonly string[]).includes(t)) : [];
   const origins = q.origin ? q.origin.split(",").filter(Boolean) : [];
-  const ids = q.line ? [q.line, ...descendantIds(app, q.line)] : null;
-  if (q.line && getItem(app, q.line).userId !== userId) throw new HttpError(403, "不能查看他人的工作线");
-  const allowed = accessibleSpaces(app, userId);
+  const allowed = spacesWithCapability(app,userId,"work.view");
+  const ids = q.line ? [q.line, ...descendantIds(app, q.line, allowed ?? undefined)] : null;
+  if (q.line && (getItem(app, q.line).userId !== OWNER || (allowed && !allowed.includes(getItem(app,q.line).spaceId)))) throw new HttpError(403, "不能查看他人的工作线");
   const rows = all<Parameters<typeof changeLite>[1] & { space_id: string }>(app.db,
     `select ${CHANGE_COLS}, i.space_id from item_changes c join items i on i.id = c.item_id
       where coalesce(i.user_id,'owner') = ? and c.at >= ? and c.at < ?
+        ${allowed ? "and i.space_id in (select value from json_each(?)) and i.status!='candidate' and c.status='noted'" : ""}
         ${types.length ? `and c.type in (${types.map(() => "?").join(",")})` : ""}
         ${origins.length ? `and c.origin in (${origins.map(() => "?").join(",")})` : ""}
         ${ids ? `and c.item_id in (${ids.map(() => "?").join(",")})` : ""}
         ${q.noise ? "" : "and c.noise = 0"}
-      order by c.at desc, c.id desc limit 2000`, userId, start, end, ...types, ...origins, ...(ids ?? []))
+      order by c.at desc, c.id desc limit 2000`, OWNER, start, end, ...(allowed ? [JSON.stringify(allowed)] : []), ...types, ...origins, ...(ids ?? []))
     .filter((r) => !allowed || allowed.includes(r.space_id));
   const byDay = new Map<string, number>();
   for (const r of rows) { const d = zonedParts(r.at, tz).date; byDay.set(d, (byDay.get(d) ?? 0) + 1); }
   // Every row counts in its day; only the ones shown are looked up further (their line, what their references name).
   const lines = new Map<string, { id: string; title: string }>();
-  const items = rows.slice(0, 300).map((r) => changeLite(app, r, lines));
+  const items = rows.slice(0, 300).map(r => allowed ? {id:r.id, at:r.at, type:r.type, summary:r.summary, itemId:r.item_id, itemTitle:r.title} : changeLite(app, r, lines));
   const days: { date: string; count: number }[] = [];
   for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`) && days.length < 400; t += 86400_000) {
     const d = new Date(t).toISOString().slice(0, 10);
@@ -210,18 +212,41 @@ function body<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
   return r.data;
 }
 
+/** Only the line and its visible descendants. Owner queues, proposed changes and reference previews stay private. */
+function sharedLine(app: App, item: Item, spaces: string[]) {
+  const ids = [item.id, ...descendantIds(app,item.id,spaces)];
+  const timeline = all(app.db, `select c.id,c.at,c.type,c.summary,c.detail,c.risk,c.next,c.item_id itemId
+    from item_changes c join items i on i.id=c.item_id where c.item_id in (select value from json_each(?))
+    and c.noise=0 and c.status='noted' and i.status!='candidate' order by c.at desc limit 200`, JSON.stringify(ids));
+  return { ...lite(item), phase: item.phase, now: item.now?.summary, flow: flowLite(app,item.id),
+    children: childrenOf(app,item.id,0,spaces), timeline,
+    next: nextOf(app,item.id,["open","doing"]).map(({id,text,why,status}) => ({id,text,why,status})) };
+}
 export function registerWorkRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   server.get("/api/pending", async (req) => pendingActions(app, who(req)));
-  server.get("/api/work", async (req) => workOverview(app, who(req)));
+  server.get("/api/work", async (req) => {
+    if (who(req) === OWNER) return workOverview(app, OWNER);
+    const spaces = spacesWithCapability(app,who(req),"work.view")!;
+    const lines = listItems(app,{userId:OWNER,spaceIds:spaces,kind:"line",status:"active",topLevel:true,limit:200});
+    const ended = endedLines(app,OWNER,{spaces});
+    return { lines: lines.map(i => sharedLine(app,i,spaces)), ended: ended.items, endedMore: ended.more };
+  });
   server.get("/api/work/activities", async (req) => {
     const q = body(z.object({ from: z.string().optional(), to: z.string().optional(), type: z.string().optional(), origin: z.string().optional(), line: z.string().optional(), noise: z.coerce.boolean().optional() }), req.query);
     return workActivities(app, who(req), q);
   });
   server.get("/api/work/ended", async (req) => {
     const q = body(z.object({ before: z.string().max(40).optional(), q: z.string().max(100).optional(), limit: z.coerce.number().int().min(1).max(100).optional() }), req.query);
-    return endedLines(app, who(req), { ...q, spaces: accessibleSpaces(app, who(req)) });
+    return endedLines(app, OWNER, { ...q, spaces: spacesWithCapability(app,who(req),"work.view") });
   });
-  server.get("/api/work/:id", async (req) => workDetail(app, (req.params as { id: string }).id, who(req)));
+  server.get("/api/work/:id", async (req) => {
+    const id = (req.params as {id:string}).id;
+    if (who(req) === OWNER) return workDetail(app,id,OWNER);
+    const item = getItem(app,id);
+    const spaces = spacesWithCapability(app,who(req),"work.view")!;
+    if (item.userId !== OWNER || item.status === "candidate" || !spaces.includes(item.spaceId) || (!item.parentId && item.kind !== "line")) throw new HttpError(404,"工作线不存在");
+    return sharedLine(app,item,spaces);
+  });
   // 进行中 / 观察中 / 结束 / 放弃 from the line's page (items/lifecycle.ts); ending with items open under it needs closeChildren.
   server.put("/api/work/:id/phase", async (req) => {
     const id = (req.params as { id: string }).id;

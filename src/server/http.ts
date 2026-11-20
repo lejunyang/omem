@@ -1,4 +1,4 @@
-import { memberCapabilities } from "../auth/capabilities.ts";
+import { spacesWithCapability, memberCapabilities } from "../auth/capabilities.ts";
 import { storedFileReadable } from "../auth/stored-files.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { networkInterfacesView, networkPoliciesView, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies } from "../agents/network-policy.ts";
@@ -1446,7 +1446,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     const item = requireItem(app, id, who(req), "read");
     // A readable excerpt per reference, only from spaces this reader may see.
-    const allowed = accessibleSpaces(app, who(req));
+    const allowed = spacesWithCapability(app, who(req), "sources.view");
     const excerpts: Record<string, { title: string; text: string }> = {};
     for (const ref of item.sourceRefs) {
       const sourceId = /^src:([\w-]+)/.exec(ref)?.[1];
@@ -1462,7 +1462,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const mine = item.userId === who(req);
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     const a = autoInfo(app, id);
-    return { item, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
+    return { can: { edit: itemAccess(app, who(req), item, "write"), operate: itemAccess(app, who(req), item, "operate") }, item, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.
@@ -1567,7 +1567,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     const { checkParent } = await import("../items/tree.ts");
     const { setParent } = await import("../items/parent.ts");
-    const before = requireItem(app, id, who(req), "write");
+    const content = Object.keys(b).some(key => !["status", "note"].includes(key)) || parent !== undefined;
+    const before = requireItem(app, id, who(req), content ? "write" : "operate");
+    if (content && (b.status || b.note)) requireItem(app, id, who(req), "operate");
     writableParents(app, who(req), before.parentId, parent);
     if (parent) checkParent(app, id, parent);
     const updated = upsertItem(app, id, b, "user");
@@ -2485,12 +2487,22 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ------------------------------------------------------------------- rules
+  const ruleView = (req: FastifyRequest) => {
+    type Rule = import("../rules/types.ts").Rule;
+    const spaces = accessibleSpaces(app, who(req));
+    return {
+      edit: can(app, who(req), "rules.edit"),
+      visible: (r: Rule) => !r.spaceId || !spaces || spaces.includes(r.spaceId),
+      summary: (r: Rule) => ({ id: r.id, name: r.name, description: r.description, enabled: r.enabled, spaceId: r.spaceId, event: r.trigger.event, actions: r.actions.map(a => ({ type: a.type })) }),
+    };
+  };
   server.get("/api/rules", async (req) => {
     const o = q(z.object({ space: z.string().optional() }), req.query);
     const { listRules } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
     // Temporary wake-up rules are listed with the timed wakes (/api/wakes).
-    return listRules(app).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
+    const view = ruleView(req);
+    return listRules(app).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).filter(view.visible).map(r => view.edit ? { ...r, conditionText: describe(r.conditions) } : view.summary(r));
   });
   // 有人找你, listed last on the rules page: the default for messages looking for the owner that no rule took.
   server.get("/api/mentions", async (req) => {
@@ -2518,6 +2530,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getRule, listFirings } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
     const r = getRule(app, id);
+    const view = ruleView(req);
+    if (!view.visible(r)) throw new HttpError(404, "规则不存在");
+    if (!view.edit) return view.summary(r);
     return { ...r, conditionText: describe(r.conditions), firings: listFirings(app, id) };
   });
   // What a rule needs from Feishu (meetings: lark-cli and bot permissions), with links to fix the gaps.
