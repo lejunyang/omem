@@ -17,6 +17,8 @@ import { lineLike } from "./tree.ts";
  *   reason (a DONE reaction closes it without a model). Each piece of evidence is judged once.
  * - Items already past their deadline when this arrived (the backlog) wait for the owner to
  *   look at the preview and apply it once, rather than vanishing on the first sweep.
+ * - Work lines, and top-level items shown as lines (tree.ts lineLike), take part in neither: they
+ *   are watched first and end by themselves (items/lifecycle.ts); the digest reports those too.
  */
 
 const DAY = 86_400_000;
@@ -134,6 +136,8 @@ export async function handledCandidates(app: App, opts: { maxReactionChecks?: nu
   const out: Candidate[] = [];
   for (const item of listItems(app, { status: "active", userId: opts.userId, limit: 100_000 })) {
     if (!backlog && item.createdAt < since) continue;
+    // A line is not closed by one reply in its chat: its lifecycle ends it (items/lifecycle.ts).
+    if (lineLike(app, item)) continue;
     const chatRefs = item.sourceRefs.filter((r) => r.startsWith("src:"));
     if (!chatRefs.length) continue;
     const f = ownerFollowUp(app, chatRefs);
