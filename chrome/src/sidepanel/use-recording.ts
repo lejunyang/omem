@@ -151,7 +151,7 @@ export function useRecording() {
   }
 
   /** 上传：读库里的步骤、请求和要带的截图，交给 omem；成功后清掉这次录制。 */
-  async function upload(omem: OmemContext, options: { organize: boolean; contextId?: string; itemId?: string }): Promise<RecordingImportResponse> {
+  async function upload(omem: OmemContext, options: { organize: boolean; contextId?: string; itemId?: string; demoId?: string }): Promise<RecordingImportResponse> {
     const current = session.value;
     if (!current) throw new Error("没有录制");
     const [steps, requests] = await Promise.all([listSteps(), listRequests()]);
@@ -161,7 +161,14 @@ export function useRecording() {
       const blob = await getImage(key).catch(() => null);
       if (blob) images.push({ key, data: await imageForUpload(blob) });
     }
-    const result = await omem.importRecording({ ...plan.body, images, organize: options.organize, ...(options.contextId ? { contextId: options.contextId } : {}), ...(options.itemId ? { itemId: options.itemId } : {}) });
+    const result = await omem.importRecording({
+      ...plan.body,
+      images,
+      organize: options.organize,
+      ...(options.contextId ? { contextId: options.contextId } : {}),
+      ...(options.itemId ? { itemId: options.itemId } : {}),
+      ...(options.demoId ? { demoId: options.demoId } : {})
+    });
     await discard();
     return result;
   }

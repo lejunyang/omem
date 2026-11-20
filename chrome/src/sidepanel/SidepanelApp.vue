@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from "vue";
+import { clipForDemo } from "../shared/demo";
 import { buildClip } from "../shared/pick-clip";
 import type { PickStartMode } from "../shared/pick-messages";
 import { imageForUpload } from "./image-data";
+import DemoBar from "./DemoBar.vue";
 import OmemConnections from "./OmemConnections.vue";
 import PickComposer from "./PickComposer.vue";
 import PickRecordDetail from "./PickRecordDetail.vue";
 import RecordPanel from "./RecordPanel.vue";
+import { useDemo } from "./use-demo";
 import { useOmem } from "./use-omem";
 import { usePickBasket } from "./use-pick-basket";
 
 const basket = usePickBasket();
 const omem = useOmem();
 const { status: omemStatus, active: omemActive, spaces: omemSpaces, space: omemSpace } = omem;
+/** 演示（shared/demo.ts）：进行中时拾取篮的发送改成记进演示，录制上传带上它。 */
+const demo = useDemo(omem);
+const { current: demoCurrent } = demo;
 const showConnections = ref(false);
 
 /** 侧栏两页：拾取篮和录制。打开侧栏时如果正在录制，直接显示录制。 */
@@ -27,8 +33,9 @@ function onRecordingState(live: boolean): void {
 
 /** 发送的状态：发出去以后问答要等助手回答，这里轮询对话把回答显示出来。 */
 type SendState =
-  | { phase: "sending"; mode: "ask" | "source" }
-  | { phase: "error"; mode: "ask" | "source"; message: string }
+  | { phase: "sending"; mode: "ask" | "source" | "demo" }
+  | { phase: "error"; mode: "ask" | "source" | "demo"; message: string }
+  | { phase: "done"; mode: "demo"; goal: string; link: string | null }
   | { phase: "done"; mode: "ask"; conversationId: string; link: string | null; reply: string | null; waiting: boolean }
   | { phase: "done"; mode: "source"; sourceId: string; link: string | null };
 const sendState = ref<SendState | null>(null);
@@ -101,27 +108,35 @@ async function copyMarkdown(): Promise<void> {
   setTimeout(() => (copyState.value = ""), 1800);
 }
 
-const canSend = computed(() => hasDraft.value && omemStatus.value.state === "ok" && !!omemSpace.value && sendState.value?.phase !== "sending");
+const canSend = computed(() => hasDraft.value && omemStatus.value.state === "ok" && (!!omemSpace.value || !!demoCurrent.value) && sendState.value?.phase !== "sending");
 const sendHint = computed(() => {
   if (!omemActive.value) return "先连接 omem";
   if (omemStatus.value.state === "error") return omemStatus.value.message;
   if (omemStatus.value.state !== "ok") return "正在连接 omem";
-  if (!omemSpace.value) return "这个账号没有可以写入的空间";
+  if (!omemSpace.value && !demoCurrent.value) return "这个账号没有可以写入的空间";
   return hasDraft.value ? "" : "先写点什么，或引用一条记录";
 });
 
 /** 问 omem：作为一条消息发到问答（新对话）；存为原件：存成一篇笔记。截图都会变成图片原件。 */
-async function send(mode: "ask" | "source"): Promise<void> {
+async function send(mode: "ask" | "source" | "demo"): Promise<void> {
   const clip = buildClip(draft.value, records.value);
   if (!clip) return;
   clearTimeout(pollTimer);
+  // 演示中：发到演示的对话里，只记下、不起一轮；发出去的那一刻演示若已在别处结束，就按普通的问答发。
+  const inDemo = mode === "demo" ? demoCurrent.value : null;
   sendState.value = { phase: "sending", mode };
   try {
     const byId = new Map(records.value.map((record) => [record.id, record]));
     const images = await Promise.all(
       clip.images.map(async (image) => ({ key: image.key, title: image.title, data: await imageForUpload(byId.get(image.recordId)!.image) }))
     );
-    const result = await omem.send({ mode, title: clip.title, text: clip.text, pageUrl: clip.pageUrl, images });
+    const base = { mode: mode === "source" ? ("source" as const) : ("ask" as const), space: omemSpace.value, title: clip.title, text: clip.text, pageUrl: clip.pageUrl, images };
+    const result = await omem.send(clipForDemo(base, inDemo));
+    if (result.mode === "note") {
+      sendState.value = { phase: "done", mode: "demo", goal: inDemo?.goal ?? "", link: omem.webUrl(`/ask/${result.conversationId}`) };
+      void demo.refresh();
+      return;
+    }
     if (result.mode === "source") {
       sendState.value = { phase: "done", mode: "source", sourceId: result.sourceId, link: omem.webUrl(`/sources/${result.sourceId}`) };
       return;
@@ -218,9 +233,10 @@ function time(value: number): string {
       </button>
     </div>
     <OmemConnections v-if="showConnections" :omem="omem" @close="showConnections = false" />
+    <DemoBar :omem="omem" :demo="demo" />
 
     <!-- 录制一直挂着（v-show）：切到拾取篮时它的状态和计时不断，标签上的红点也靠它报告 -->
-    <RecordPanel v-show="view === 'record'" :omem="omem" @recording="onRecordingState" />
+    <RecordPanel v-show="view === 'record'" :omem="omem" :demo="demo" @recording="onRecordingState" />
 
     <p v-if="notice && view === 'pick'" class="basket-notice">
       <span>{{ notice }}</span>
@@ -272,8 +288,13 @@ function time(value: number): string {
         @focus-record="focusRecord"
       />
       <div v-if="sendState" class="send-result" :class="`is-${sendState.phase}`" role="status" data-testid="send-result">
-        <template v-if="sendState.phase === 'sending'">{{ sendState.mode === "ask" ? "正在发给 omem…" : "正在保存为原件…" }}</template>
+        <template v-if="sendState.phase === 'sending'">{{ sendState.mode === "demo" ? "正在记进演示…" : sendState.mode === "ask" ? "正在发给 omem…" : "正在保存为原件…" }}</template>
         <template v-else-if="sendState.phase === 'error'">发送失败：{{ sendState.message }}</template>
+        <template v-else-if="sendState.mode === 'demo'">
+          <span>已记进演示「{{ sendState.goal }}」，结束时一起整理。</span>
+          <a v-if="sendState.link" :href="sendState.link" target="_blank" rel="noreferrer">看演示的对话</a>
+          <button class="button button-ghost" type="button" @click="clearAfterSend">清空输入框</button>
+        </template>
         <template v-else-if="sendState.mode === 'source'">
           <span>已保存为原件，omem 会接着整理。</span>
           <a v-if="sendState.link" :href="sendState.link" target="_blank" rel="noreferrer">在 omem 中查看</a>
@@ -294,7 +315,12 @@ function time(value: number): string {
         </button>
         <button class="button button-ghost" type="button" :disabled="!hasDraft" data-testid="pick-copy-markdown" @click="copyMarkdown">{{ copyState || "复制 Markdown" }}</button>
       </div>
-      <div class="composer-actions">
+      <div v-if="demoCurrent" class="composer-actions">
+        <span class="muted send-hint">{{ sendHint || `指给助手看：记进演示「${demoCurrent.goal}」` }}</span>
+        <span class="grow" />
+        <button class="button button-primary" type="button" :disabled="!canSend" data-testid="pick-demo" title="记进这次演示（截图和元素上下文一起），演示结束时交给助手整理" @click="send('demo')">记进演示</button>
+      </div>
+      <div v-else class="composer-actions">
         <span class="muted send-hint">{{ sendHint }}</span>
         <span class="grow" />
         <button class="button" type="button" :disabled="!canSend" data-testid="pick-save-source" title="存成 omem 的一篇笔记原件，截图一起存" @click="send('source')">存为原件</button>

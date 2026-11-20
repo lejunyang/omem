@@ -42,6 +42,8 @@ export type ThreadSettings = {
   lark?: { chats: string[] | null; draft?: boolean };
   /** The version of the owner's work state (agents/work-state.ts) this thread's agent was last given. */
   workStateSeen?: string | null;
+  /** A demonstration's conversation (remote/demos.ts): what is shown, about which 关注 or item, and when. */
+  demo?: { goal: string; contextId: string | null; itemId: string | null; startedAt: string; stoppedAt: string | null; organize: "skill" | "lessons" | "none" | null };
 };
 export type Thread = {
   id: string;

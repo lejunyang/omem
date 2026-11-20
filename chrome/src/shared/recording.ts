@@ -312,6 +312,8 @@ export interface ImportRequest {
   organize: boolean;
   contextId?: string;
   itemId?: string;
+  /** 演示中录的：记进那次演示，演示结束时一起整理（shared/demo.ts） */
+  demoId?: string;
 }
 
 const STATIC = new Set(["Image", "Stylesheet", "Script", "Font", "Media"]);

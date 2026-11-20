@@ -123,12 +123,15 @@ export interface ClipRequest {
   text: string;
   pageUrl: string;
   conversationId?: string;
+  /** false：只记进 conversationId 那个对话、不起一轮（演示中的拾取，shared/demo.ts） */
+  turn?: boolean;
   images: Array<{ key: string; title: string; data: string }>;
 }
 
 export type ClipResponse =
   | { mode: "ask"; conversationId: string; messageId: string | null; runId: string | null }
-  | { mode: "source"; sourceId: string; ingestRun: string | null };
+  | { mode: "source"; sourceId: string; ingestRun: string | null }
+  | { mode: "note"; conversationId: string; messageId: string };
 
 export interface ConversationMessage {
   id: string;

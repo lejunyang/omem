@@ -17,10 +17,34 @@ export function playbookPath(c: Pick<ListenContext, "name" | "id"> & { playbookF
   return `关注/${name}/经验.md`;
 }
 
-/** The lessons listen-coach wrote for a 关注 (its work file), as text; empty when there are none yet. */
-export function playbookOf(app: App, c: Pick<ListenContext, "name" | "id"> & { playbookFile?: string }, max = 4000) {
+/**
+ * Where the lessons the owner showed by doing go (a demonstration organized by skill-from-demo,
+ * remote/demos.ts): next to the 关注's 经验.md, one file per demonstration. listen-coach does not
+ * rewrite them; the handlers read them with the lessons.
+ */
+export function demoLessonsDir(c: Pick<ListenContext, "name" | "id"> & { playbookFile?: string }) {
+  const path = playbookPath(c);
+  return `${path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : path}/演示`;
+}
+
+/** The demonstrated lessons of a 关注 (newest first), as text; empty when there are none. */
+export function demoLessonsOf(app: App, c: Pick<ListenContext, "name" | "id"> & { playbookFile?: string }, max = 3000) {
+  const prefix = `work/${demoLessonsDir(c)}/`;
+  // A range on uri, not LIKE: a 关注's name may hold `_` or `%`.
+  const rows = all<{ title: string; text: string }>(app.db, "select title, text from sources where uri >= ? and uri < ? and kind = 'work' and deleted_at is null order by updated_at desc limit 10", prefix, `${prefix}￿`);
+  return rows.length ? truncate(rows.map((r) => `### ${r.title}\n\n${r.text.trim()}`).join("\n\n"), max) : "";
+}
+
+/**
+ * The lessons listen-coach wrote for a 关注 (its work file), as text, followed by what the owner
+ * demonstrated (`demos: false` leaves those out); empty when there are none yet.
+ */
+export function playbookOf(app: App, c: Pick<ListenContext, "name" | "id"> & { playbookFile?: string }, max = 4000, opts: { demos?: boolean } = {}) {
   const row = one<{ text: string }>(app.db, "select text from sources where uri = ? and deleted_at is null order by captured_at desc limit 1", `work/${playbookPath(c)}`);
-  return row ? truncate(row.text.trim(), max) : "";
+  const own = row ? row.text.trim() : "";
+  const shown = opts.demos === false ? "" : demoLessonsOf(app, c, Math.max(1000, Math.floor(max / 2)));
+  const text = [own, shown ? `## 本人演示过的做法\n\n${shown}` : ""].filter(Boolean).join("\n\n");
+  return text ? truncate(text, max) : "";
 }
 
 /**

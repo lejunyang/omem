@@ -396,6 +396,11 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/remote/recordings/:id/organize": g("desktop.control"),
   // A recording from the owner's own Chrome (the extension's 录制, remote/import.ts).
   "POST /api/remote/recordings/import": "owner",
+  // Demonstrations (remote/demos.ts): the owner shows how a piece of work goes, one at a time.
+  "GET /api/demos": "owner",
+  "POST /api/demos": "owner",
+  "GET /api/demos/:id": "owner",
+  "POST /api/demos/:id/stop": "owner",
 
   // plugins: each person's own sessions and records
   "GET /api/plugins": "self",

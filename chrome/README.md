@@ -47,6 +47,10 @@ pnpm --filter omem-chrome run build
 - 密码、验证码、卡号一类的输入框只记“填了”。请求用 `chrome.webRequest` 只观察（不连调试器）：方法、地址、状态、耗时、请求头和请求体；同时开着这个页面的 DevTools 时，devtools 页面补上响应体。cookie、令牌、密码在扩展里就换成占位，规则同 omem 远程录制（aad 的 `redact_network`）。
 - 录制中的数据在 IndexedDB `omem-record`，上传成功或放弃后清空。上传接口 `POST /api/remote/recordings/import`（只有 omem 的本人），omem 写成和远程页浏览器录制一样的文件。设计和边界见仓库的 `docs/v2/remote.md`「在自己的 Chrome 里录」。
 
+## 演示
+
+侧栏顶部的「演示」：写一句要教什么（可选一个关注或事项），「开始演示」后顶部一直有一条横幅（计时、记下了什么、结束）。演示中拾取篮只有「记进演示」（发到演示的对话、不起一轮，`POST /api/clips` 带 `turn: false`），录制停止后只有「记进演示」（上传带 `demoId`）。结束时选「整理成经验」「整理成技能」或「只结束」，omem 收进本人这段时间在飞书里发的消息，交给助手整理。演示的状态只在 omem 那边（网页和飞书命令也能开始、结束），扩展不存 storage，开着侧栏时每 15 秒读一次 `GET /api/demos`。只有 omem 的本人能演示。设计见仓库的 `docs/v2/remote.md`「演示」；代码 `src/shared/demo.ts`（单元测试 `demo.test.ts`）、`src/sidepanel/DemoBar.vue`、`use-demo.ts`。
+
 代码：`src/background/recording-service.ts`（注入、步骤、webRequest、截图、REC）、`src/inject/recorder.ts`（页面里的记录脚本和指出元素）、`src/panel/recording-bridge.ts`（DevTools 开着时补响应体）、`src/shared/recording.ts`（遮盖、敏感输入框、合并、上传内容，单元测试 `recording.test.ts`）、`src/sidepanel/RecordPanel.vue`；e2e `e2e/record.e2e.test.ts`。
 
 ## 连接 omem

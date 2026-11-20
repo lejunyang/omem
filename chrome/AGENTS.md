@@ -3,7 +3,7 @@
 ## 项目目标
 
 - omem 仓库里的 Chrome 扩展（pnpm workspace 包 `omem-chrome`，目录 `chrome/`）。仓库根目录的 AGENTS.md 同样适用（公开仓库、不写真实信息、提交约定）；这里只写扩展自己的约定。
-- 核心能力：DevTools「网络」面板（请求观测、高级筛选、筛选方案、响应搜索、Mock、Initiator、Network 控制项）、资源搜索、用户状态、设备模拟，「拾取」（截图、元素样式、间距，侧栏拾取篮），以及「录制」（侧栏，把本人的操作、请求和截图交给 omem 整理成技能；设计在仓库 `docs/v2/remote.md`「在自己的 Chrome 里录」）。
+- 核心能力：DevTools「网络」面板（请求观测、高级筛选、筛选方案、响应搜索、Mock、Initiator、Network 控制项）、资源搜索、用户状态、设备模拟，「拾取」（截图、元素样式、间距，侧栏拾取篮），以及「录制」（侧栏，把本人的操作、请求和截图交给 omem 整理成技能；设计在仓库 `docs/v2/remote.md`「在自己的 Chrome 里录」）和「演示」（侧栏顶部，进行中时拾取和录制都记进 omem 的一次演示；状态只在 omem 那边，扩展不存，`src/shared/demo.ts`；设计在 `docs/v2/remote.md`「演示」）。
 - 需求、设计、任务和验证记录维护在 `docs/` 下；「不用 CDP 的默认模式」和「拾取」的设计在 `docs/changes/no-cdp-and-pick/`。
 
 ## 开发命令

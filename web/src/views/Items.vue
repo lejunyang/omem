@@ -14,6 +14,7 @@ import ItemPlaces, { type Place, type ItemRun } from "../components/ItemPlaces.v
 import ItemFlow from "../components/ItemFlow.vue";
 import ItemObjects from "../components/ItemObjects.vue";
 import ItemListen from "../components/ItemListen.vue";
+import DemoControl from "../components/DemoControl.vue";
 import ItemMetrics from "../components/ItemMetrics.vue";
 import PluginSlots from "../components/PluginSlots.vue";
 import DesignRow from "../components/DesignRow.vue";
@@ -353,6 +354,7 @@ async function addNote() {
         <ItemFlow :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
         <ItemMetrics :item-id="detail.item.id" />
         <ItemListen :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id)" />
+        <DemoControl class="item-demo" :item-id="detail.item.id" :name="detail.item.title" />
         <ItemObjects :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
         <PluginSlots at="item.panel" :item-id="detail.item.id" :space="detail.item.spaceId" />
         <ItemPlaces :places="detail.places ?? []" :runs="detail.runs ?? []" />
@@ -437,6 +439,9 @@ async function addNote() {
 </template>
 
 <style scoped>
+.item-demo {
+  margin: -4px 0 12px;
+}
 .flow-tag { max-width: 50%; white-space: normal; overflow-wrap: anywhere; flex-shrink: 0; }
 .backlog {
   gap: 10px;

@@ -53,7 +53,7 @@ const commands: Record<string, Command> = {
         ...["space", "agent", "model", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
         "",
         "**快捷**",
-        ...["remember", "todo", "search", "review", "runs", "whoami", "login"].map(line),
+        ...["remember", "todo", "search", "review", "runs", "whoami", "login", "演示", "演示结束"].map(line),
         "",
         "其他文字照常交给助理。",
       ].join("\n"),
@@ -428,6 +428,47 @@ const commands: Record<string, Command> = {
       return `在浏览器里打开，点“登录”：${base}/api/auth/link/${code}\n\n5 分钟内有效，只能用一次，不要转发给别人。`;
     },
   },
+  演示: {
+    usage: "/演示 <要教什么>",
+    help: "开始一次演示：之后在 Chrome 扩展里拾取、录制，和你在飞书里发的消息都记进这次演示，/演示结束 后交给助手整理（在关注的群里发会连上那个关注）；不带内容看现在的演示",
+    run: async ({ app, thread, args, inb }) => {
+      if ((inb.userId ?? OWNER) !== OWNER) return "只有本人可以演示。";
+      const demos = await import("../remote/demos.ts");
+      const goal = args.trim();
+      if (!goal || goal === "结束") {
+        if (goal === "结束") return commands["演示结束"].run({ app, thread, args: "", inb });
+        const d = demos.currentDemo(app);
+        return d ? `正在演示「${d.goal}」（${d.id}${d.context ? `，关注「${d.context.name}」` : ""}），${demoCounts(d)}。做完发 /演示结束。` : "现在没有在演示。用法：/演示 要教什么（例如 /演示 值班群里有人报退款失败时怎么查）";
+      }
+      const L = await import("../channels/listen.ts");
+      // Sent in a 关注's handling conversation or in one of its groups: the demonstration is about it.
+      const context = L.contextOfConversation(app, thread.id) ?? (thread.key ? L.contextsOfChat(app, chatKey(thread))[0] ?? null : null);
+      const d = demos.startDemo(app, OWNER, { goal, contextId: context?.id ?? null });
+      return [
+        `开始演示「${d.goal}」（${d.id}${d.context ? `，关注「${d.context.name}」` : ""}）。`,
+        "在 Chrome 扩展里拾取和录制会记进这次演示，你在飞书里发的消息结束时一起收。",
+        `做完发 /演示结束（默认整理成${d.context ? "这个关注的经验" : "技能"}；也可以 /演示结束 技能、/演示结束 经验、/演示结束 不整理）。`,
+      ].join("\n");
+    },
+  },
+  演示结束: {
+    usage: "/演示结束 [技能|经验|不整理]",
+    help: "结束现在的演示，交给助手整理成技能或经验（不整理：只结束）",
+    run: async ({ app, args, inb }) => {
+      if ((inb.userId ?? OWNER) !== OWNER) return "只有本人可以演示。";
+      const demos = await import("../remote/demos.ts");
+      const d = demos.currentDemo(app);
+      if (!d) return "现在没有在演示。";
+      const organize = parseDemoOrganize(args, !!(d.context || d.item));
+      if (!organize) return "用法：/演示结束 [技能|经验|不整理]";
+      if (organize === "lessons" && !d.context && !d.item) return "这次演示没有连着关注或事项，整理不成经验：发 /演示结束 技能，或 /演示结束 不整理。";
+      const r = await demos.stopDemo(app, OWNER, d.id, organize);
+      const base = app.config.webUrl?.trim().replace(/\/+$/, "");
+      const where = base ? `${base}/#/ask/${r.conversationId}` : `会话 ${r.conversationId}`;
+      const got = demoCounts(r.demo);
+      return organize === "none" ? `演示「${d.goal}」结束，${got}，先不整理。之后要整理，在 ${where} 里跟助手说。` : `演示「${d.goal}」结束，${got}。助手在整理成${organize === "skill" ? "技能" : "经验"}，会先跟你确认：${where}`;
+    },
+  },
   runs: {
     usage: "/runs",
     help: "最近的后台任务",
@@ -473,14 +514,44 @@ function line(name: string) {
   return `${c.usage} — ${c.help}`;
 }
 
+/** What `/演示结束 …` asks for; without a word, lessons when the demonstration is about a 关注 or an item. */
+export function parseDemoOrganize(args: string, linked: boolean): "skill" | "lessons" | "none" | null {
+  const a = args.trim();
+  if (!a) return linked ? "lessons" : "skill";
+  if (/^(技能|skill|步骤|流程)$/i.test(a)) return "skill";
+  if (/^(经验|lessons?|做法)$/i.test(a)) return "lessons";
+  if (/^(不整理|只结束|none|不用)$/i.test(a)) return "none";
+  return null;
+}
+
+const demoCounts = (d: { entries: { recording: number; pick: number; lark: number; remote: number } }) => {
+  const e = d.entries;
+  const parts = [e.recording + e.remote ? `录制 ${e.recording + e.remote} 个` : "", e.pick ? `拾取 ${e.pick} 条` : "", e.lark ? `飞书消息 ${e.lark} 段` : ""].filter(Boolean);
+  return parts.length ? `记下${parts.join("、")}` : "还没记下东西";
+};
+
+/**
+ * `/name args`; Chinese names may run into their arguments (`/演示给商户开通退款`): the longest
+ * Chinese command the word starts with takes the rest as arguments.
+ */
+export function parseCommand(text: string): { name: string; args: string } | null {
+  const m = /^\/([a-z]+|[一-鿿]+)(?:@\S+)?(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  if (!m) return null;
+  const word = m[1].toLowerCase();
+  const args = (m[2] ?? "").trim();
+  if (commands[word] || /^[a-z]+$/.test(word)) return { name: word, args };
+  const name = Object.keys(commands).filter((k) => /^[一-鿿]/.test(k) && word.startsWith(k)).sort((a, b) => b.length - a.length)[0];
+  return name ? { name, args: `${word.slice(name.length)} ${args}`.trim() } : null;
+}
+
 /** Run a slash command; null when the text is not a known command. */
 export async function runCommand(app: App, thread: Thread, text: string, inb: Inbound): Promise<CommandResult | null> {
-  const m = /^\/([a-z]+)(?:@\S+)?(?:\s+([\s\S]*))?$/i.exec(text.trim());
-  if (!m) return null;
-  const cmd = commands[m[1].toLowerCase()];
+  const p = parseCommand(text);
+  if (!p) return null;
+  const cmd = commands[p.name];
   if (!cmd) return null;
   try {
-    return await cmd.run({ app, thread, args: (m[2] ?? "").trim(), inb });
+    return await cmd.run({ app, thread, args: p.args, inb });
   } catch (e) {
     return `命令失败：${(e as Error).message}`;
   }

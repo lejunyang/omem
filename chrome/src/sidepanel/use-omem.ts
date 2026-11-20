@@ -26,6 +26,7 @@ import {
   requestFor,
   startLogin
 } from "../shared/omem-client";
+import { type DemoInfo, type DemoList, type DemoOrganize, normalizeDemo, normalizeDemoList } from "../shared/demo";
 import type { ImportRequest } from "../shared/recording";
 
 export type ConnectionStatus = { state: "idle" } | { state: "checking" } | { state: "ok"; me: OmemMe } | { state: "error"; message: string; relogin: boolean };
@@ -212,11 +213,41 @@ export function useOmem() {
     if (name.trim()) await update(id, { name: name.trim() });
   }
 
-  async function send(clip: Omit<ClipRequest, "space">): Promise<ClipResponse> {
+  /** 发拾取篮：默认发到选中的空间；演示中由调用方指定演示的空间和对话（shared/demo.ts clipForDemo）。 */
+  async function send(clip: Omit<ClipRequest, "space"> & { space?: string }): Promise<ClipResponse> {
     const connection = active.value;
     if (!connection) throw new Error("还没有连接 omem");
-    if (!space.value) throw new Error("这个账号没有可以写入的空间");
-    return requestFor(connection, connections.value)<ClipResponse>("/api/clips", { body: { ...clip, space: space.value }, timeoutMs: 120_000 });
+    const target = clip.space || space.value;
+    if (!target) throw new Error("这个账号没有可以写入的空间");
+    return requestFor(connection, connections.value)<ClipResponse>("/api/clips", { body: { ...clip, space: target }, timeoutMs: 120_000 });
+  }
+
+  /** 现在的演示和最近几次；不是本人（403）、旧版 omem 没有这个接口（404）时当作没有演示。 */
+  async function demos(): Promise<DemoList> {
+    const connection = active.value;
+    if (!connection || status.value.state !== "ok" || status.value.me.id !== "owner") return { current: null, recent: [] };
+    try {
+      return normalizeDemoList(await requestFor(connection, connections.value)<unknown>("/api/demos"));
+    } catch (error) {
+      if (error instanceof OmemError && (error.status === 403 || error.status === 404)) return { current: null, recent: [] };
+      throw error;
+    }
+  }
+
+  async function startDemo(body: { goal: string; contextId?: string; itemId?: string }): Promise<DemoInfo> {
+    const connection = active.value;
+    if (!connection) throw new Error("还没有连接 omem");
+    const demo = normalizeDemo(await requestFor(connection, connections.value)<unknown>("/api/demos", { body }));
+    if (!demo) throw new Error("omem 没有回答演示的状态");
+    return demo;
+  }
+
+  /** 结束演示：omem 收进飞书消息和远程录制，整理时交给助手（回答里有对话 id）。 */
+  async function stopDemo(id: string, organize: DemoOrganize): Promise<{ demo: DemoInfo | null; conversationId: string }> {
+    const connection = active.value;
+    if (!connection) throw new Error("还没有连接 omem");
+    const result = await requestFor(connection, connections.value)<{ demo: unknown; conversationId: string }>(`/api/demos/${encodeURIComponent(id)}/stop`, { body: { organize }, timeoutMs: 60_000 });
+    return { demo: normalizeDemo(result.demo), conversationId: result.conversationId };
   }
 
   /** 录制交给 omem：只有本人能上传（本人的令牌）；截图可能有几十张，等久一点。 */
@@ -265,6 +296,7 @@ export function useOmem() {
     check,
     connections,
     conversation,
+    demos,
     importRecording,
     listPeers,
     loaded,
@@ -278,7 +310,9 @@ export function useOmem() {
     setSpace,
     space,
     spaces: writableSpaces,
+    startDemo,
     status,
+    stopDemo,
     webUrl
   };
 }

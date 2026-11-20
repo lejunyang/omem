@@ -11,6 +11,7 @@ import { desktopControl } from "../core/tools.ts";
 import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
+import { attachRecording, getDemo, listDemos, requireDemo, startDemo, stopDemo } from "./demos.ts";
 import { importRecording, importSchema } from "./import.ts";
 import { fromExtension, getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
 import { assistOf, browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
@@ -223,12 +224,30 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
   server.post("/api/remote/recordings/import", async (req) => {
     const b = q(importSchema, req.body);
     const userId = who(req);
+    // Made during a demonstration: it goes on that timeline and waits for the demonstration's stop.
+    if (b.demoId) {
+      const demo = requireDemo(app, b.demoId, userId);
+      const r = importRecording(app, userId, { ...b, conversationId: demo.conversationId });
+      attachRecording(app, demo.id, r, b.startedAt ?? null, userId);
+      return { recording: getRecording(app, r.id), conversationId: demo.conversationId, demoId: demo.id };
+    }
     const context = b.contextId ? (await import("../channels/listen.ts")).requireContext(app, b.contextId) : null;
     const item = b.itemId ? (await import("../items/store.ts")).getItem(app, b.itemId) : null;
     const r = importRecording(app, userId, b);
     if (!b.organize) return { recording: r, conversationId: null };
     const sent = await organize(app, r, userId, b.conversationId ?? context?.conversationId, item ? { item: { id: item.id, title: item.title } } : undefined);
     return { recording: getRecording(app, r.id), conversationId: sent.conversationId };
+  });
+  // Demonstrations (demos.ts): the owner shows how a piece of work goes; one at a time.
+  server.get("/api/demos", async (req) => listDemos(app, who(req)));
+  server.post("/api/demos", async (req) => {
+    const b = q(z.object({ goal: z.string().max(2000), contextId: z.string().max(100).nullable().optional(), itemId: z.string().max(100).nullable().optional() }), req.body);
+    return startDemo(app, who(req), b);
+  });
+  server.get("/api/demos/:id", async (req) => getDemo(app, (req.params as { id: string }).id, who(req)));
+  server.post("/api/demos/:id/stop", async (req) => {
+    const b = q(z.object({ organize: z.enum(["skill", "lessons", "none"]).default("skill") }), req.body);
+    return stopDemo(app, who(req), (req.params as { id: string }).id, b.organize);
   });
   server.get("/api/remote/recordings/:id", async (req) => {
     const r = getRecording(app, (req.params as { id: string }).id, who(req));

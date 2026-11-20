@@ -3,7 +3,7 @@ import { all, one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { createRun, registerHandler, runsInLane } from "../agents/runs.ts";
 import { writeWorkFile } from "../sources/work.ts";
-import { casesText, playbookOf, playbookPath, type CaseLite } from "./listen-cases.ts";
+import { casesText, demoLessonsDir, demoLessonsOf, playbookOf, playbookPath, type CaseLite } from "./listen-cases.ts";
 import { defaultContext, getContext, listContexts, requireContext, saveContext, type ListenContext } from "./listen.ts";
 import { briefText } from "./watch-trial.ts";
 
@@ -49,7 +49,8 @@ function coachTask(app: App, c: ListenContext) {
      from reply_samples where context_id = ? and (decision is not null or owner_reply is not null or verdict is not null) order by created_at desc limit 80`,
     c.id,
   );
-  const playbook = playbookOf(app, c, 12000);
+  const playbook = playbookOf(app, c, 12000, { demos: false });
+  const shown = demoLessonsOf(app, c, 6000);
   return [
     `# 关注「${c.name}」（${c.id}）`,
     "",
@@ -59,6 +60,7 @@ function coachTask(app: App, c: ListenContext) {
     "",
     `## 现在的经验\n\n${playbook || "（还没有，这是第一次整理）"}`,
     "",
+    ...(shown ? [`## 本人演示过的做法（${demoLessonsDir(c)}/ 下的文件，单独保存，宿主会和经验一起给处理的助手看）\n\n${shown}`, ""] : []),
     `## 最近的案例（新的在前，共 ${rows.length} 个；[id] 是案例 id）`,
     "",
     casesText(rows) || "（没有）",

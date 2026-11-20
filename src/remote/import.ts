@@ -78,6 +78,8 @@ export const importSchema = z.object({
   contextId: z.string().max(100).optional(),
   /** An item the recording is about: named in the organizing message. */
   itemId: z.string().max(100).optional(),
+  /** A demonstration it was made in (remote/demos.ts): it goes on that timeline, organized when the demonstration stops. */
+  demoId: z.string().max(100).optional(),
 });
 export type RecordingImport = z.infer<typeof importSchema>;
 type Step = RecordingImport["steps"][number];
