@@ -1,0 +1,48 @@
+import { expect, it } from "vitest";
+import { createSpace } from "../src/core/spaces.ts";
+import { agentProfileSchema, type RoleName } from "../src/core/config.ts";
+import { prepareRun } from "../src/agents/runner.ts";
+import { seedBuiltinSkills } from "../src/agents/specs.ts";
+import { revokeToolToken } from "../src/agents/tools.ts";
+import { testApp } from "./helpers.ts";
+
+it("bounds standing instructions for a fixed space, skill library and four lessons", () => {
+  const app = testApp();
+  app.baseUrl = "http://127.0.0.1:1";
+  createSpace(app, { id: "project-a", name: "项目 A" });
+  seedBuiltinSkills(app, process.cwd());
+  const lessons = "- 偏好：直接回答。\n- 偏好：日期写全。\n- 偏好：列出依据。\n- 经验：先核对版本。";
+  type Budget = { role: RoleName; target: number; temporaryLimit?: number };
+  const budgets: Record<"acp" | "doubao-cli" | "doubao", Budget[]> = {
+    acp: [
+      { role: "assistant", target: 34976 },
+      { role: "item-keeper", target: 6090 },
+      { role: "memory-reviewer", target: 5879 },
+    ],
+    "doubao-cli": [
+      { role: "assistant", target: 35055 },
+      { role: "item-keeper", target: 6169 },
+      { role: "memory-reviewer", target: 5958 },
+    ],
+    // Lower these measured ceilings as the unmarked role and common sections shrink.
+    doubao: [
+      { role: "assistant", target: 16500, temporaryLimit: 18489 },
+      { role: "gatekeeper", target: 3000, temporaryLimit: 4093 },
+      { role: "replay-judge", target: 3000, temporaryLimit: 4222 },
+      { role: "summarizer", target: 3000, temporaryLimit: 3631 },
+      { role: "mention-triage", target: 3000, temporaryLimit: 4022 },
+    ],
+  };
+  for (const [transport, roles] of Object.entries(budgets)) {
+    const profile = agentProfileSchema.parse({ id: "candidate", command: "test", transport });
+    app.config.agents.profiles = [profile];
+    for (const { role, target, temporaryLimit } of roles) {
+      const prep = prepareRun(app, { actor: { role }, profileId: profile.id, spaceId: "project-a", runId: null, lessons });
+      revokeToolToken(prep.token);
+      const largest = Object.entries(prep.parts).filter(([k]) => k !== "lessonCount").sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+      expect.soft(prep.system.length, JSON.stringify({ transport, role, target, temporaryLimit, largest })).toBeLessThanOrEqual(temporaryLimit ?? target);
+    }
+  }
+  app.db.close();
+});

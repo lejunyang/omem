@@ -2266,6 +2266,8 @@ export const migrations: readonly string[] = [
   );
   create index work_task_active on agent_work_tasks(deadline_at) where status in ('pending','running','rejected');
   create index work_task_run on agent_work_tasks(run_id);`,
+  `alter table session_cleanup add column failed_at text;
+   alter table session_cleanup add column failure_reason text;`,
 ];
 
 export type Db = DatabaseSync;

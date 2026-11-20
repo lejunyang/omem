@@ -94,10 +94,10 @@ export async function passiveRecall(
 }
 
 /** The block a chat turn (or a task) carries; empty when nothing passed the gate. */
-export function passiveBlock(hits: PassiveHit[], about: "这条消息" | "这次任务" = "这条消息"): string {
+export function passiveBlock(hits: PassiveHit[], about: "这条消息" | "这次任务" = "这条消息", withTools = true): string {
   if (!hits.length) return "";
   const lines = hits.map(({ memory: m }) => `- mem:${m.id} [${m.kind}${m.agent ? "，本档案" : ""}] ${m.subject ? m.subject + "：" : ""}${m.content}（${m.validFrom?.slice(0, 10) ?? "?"} 起）`);
-  return `## 可能相关的记忆\n\n按${about}自动找到的，只供参考：不相关就忽略，不要为了用上而提起；用到时照常写 mem:<id>，要核实或找更多用 recall。\n\n${lines.join("\n")}`;
+  return `## 可能相关的记忆\n\n按${about}自动找到的，只供参考：不相关就忽略，不要为了用上而提起；用到时照常写 mem:<id>${withTools ? "，要核实或找更多用 recall" : ""}。\n\n${lines.join("\n")}`;
 }
 
 /** Cosine between two memories' vectors above which they are probably about the same thing (bge-small-zh, see docs/v2/evaluation.md). */

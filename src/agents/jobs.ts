@@ -95,6 +95,7 @@ async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: str
   const attempt = () =>
     runRole(ctx.app, {
       role,
+      requiredTools: role === "item-keeper" ? ["settle_items"] : undefined,
       spaceId,
       spaces,
       alsoRead: readSpaces,
@@ -792,6 +793,7 @@ registerHandler("memory-review", async (ctx) => {
   ].join("\n");
   const r = await runRole(app, {
     role: "memory-reviewer",
+    requiredTools: ["review_memories"],
     spaceId,
     spaces: [spaceId],
     task,

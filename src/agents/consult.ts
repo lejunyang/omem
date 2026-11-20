@@ -47,6 +47,7 @@ export async function consultAgent(app: App, i: {
       role: i.spec ? "assistant" : i.role ?? "assistant",
       ...(i.spec ? { spec: i.spec } : {}),
       execution: i.execution,
+      requiredTools: [],
       spaceId: i.spaceId,
       task: `${i.askedBy} 在工作中向你请教（只回答问题，不要接手它的整件工作）：\n\n${i.question}`,
       runId: r.id,

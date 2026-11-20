@@ -103,7 +103,7 @@ const placeLine = (v: PlaceView, tz: string) =>
   `  - ${v.kind === "conversation" ? "会话" : "群聊原件"}「${truncate(v.title, 40)}」（${v.kind === "conversation" ? v.ref : `src:${v.ref}`}${v.lastAt ? `，最近 ${new Date(v.lastAt).toLocaleString("zh-CN", { hour12: false, timeZone: tz, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}）${v.summary ? `：${v.summary}` : ""}`;
 
 /** “这件事还在这些会话里进行”: for the items linked to this run's places, the other places they go on in; "" when none. */
-export function itemPlacesNote(app: App, runId: string, userId: string): string {
+export function itemPlacesNote(app: App, runId: string, userId: string, withTools = true): string {
   const here = placesOfRun(app, runId);
   const items = itemsAt(app, here, userId);
   const parts: string[] = [];
@@ -113,7 +113,7 @@ export function itemPlacesNote(app: App, runId: string, userId: string): string 
     parts.push([`- 事项 ${item.id}「${truncate(item.title, 60)}」[${item.kind}/${item.status}]`, ...others.map((v) => placeLine(v, app.config.timezone))].join("\n"));
   }
   if (!parts.length) return "";
-  return ["# 这件事还在这些会话里进行", "", "这个会话关联的事项，也在下面这些地方进行（最近的一句话或摘要）：", ...parts, "", "read_item 看一件事的全貌（时间线、各会话、工作文件、正在跑的运行）。"].join("\n");
+  return ["# 这件事还在这些会话里进行", "", "这个会话关联的事项，也在下面这些地方进行（最近的一句话或摘要）：", ...parts, ...(withTools ? ["", "read_item 看一件事的全貌（时间线、各会话、工作文件、正在跑的运行）。"] : [])].join("\n");
 }
 
 // ---- candidates ------------------------------------------------------------------------------
@@ -192,7 +192,7 @@ export function materialCandidates(app: App, text: string, userId: string, limit
 }
 
 /** “可能是同一件事的事项”, or "". */
-export function candidatesNote(app: App, runId: string, userId: string): string {
+export function candidatesNote(app: App, runId: string, userId: string, withTools = true): string {
   const list = placeCandidates(app, runId, userId);
   if (!list.length) return "";
   const conv = placesOfRun(app, runId)[0];
@@ -202,8 +202,7 @@ export function candidatesNote(app: App, runId: string, userId: string): string 
     "",
     "宿主按引用、链接或单号、人、共同的词和时间猜的，不一定对：",
     ...list.map((c) => `- ${c.item.id}「${truncate(c.item.title, 60)}」[${c.item.kind}/${c.item.status}]：${c.reasons.join("，")}`),
-    "",
-    `读过确认是同一件事，用 upsert_item(id, materials_add=[${ref}]) 关联到这里；不是就不用管。`,
+    ...(withTools ? ["", `读过确认是同一件事，用 upsert_item(id, materials_add=[${ref}]) 关联到这里；不是就不用管。`] : []),
   ].join("\n");
 }
 

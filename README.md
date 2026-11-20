@@ -317,6 +317,8 @@ npm install -g @omem-ai/cli
 
 一次性 Codex CLI / TraeX CLI 任务使用 `--ephemeral`，Claude CLI 使用 `--no-session-persistence`。TraeX 的该参数适用于 `exec`，不适用于 `acp serve`；选 `traex-cli` 使用原生临时模式。ACP 没有通用的不落盘开关：后端声明支持 `session/delete` 时，omem 在临时会话释放时请求移出后端列表；当前 Codex ACP 实际执行归档，磁盘上仍可能保留历史。TraeX ACP 未声明 `session/delete`，释放时改用目录中声明的 `traex archive <会话 ID>`。其他后端可在后端配置中声明 `archiveArgs`，通过同一个可执行程序归档；既无协议清理也无归档命令时，会在运行中提示历史可能仍保留，不能保证所有 ACP 都能归档。会话闲置、超过占用阈值、取消或正常停服时都清理，原来的 Agent 进程已经退出或连接已断时另起一个进程清理；omem 自身被强杀或清理失败时仍可能留下记录。普通聊天和需要续轮的编码/交办会话保留恢复能力；聊天换成新的 Agent 会话时清理旧的。既有历史不批量处理。豆包 CLI 和 OpenAPI 的单次运行结束或失败后，会通过这台机器上的 OpenAPI 授权（`omem doubao login`）删除这次建的会话；授权过期且无法刷新时需要重新登录。每次任务在 omem 内仍有独立运行记录和工具调用归属。
 
+后端会话清理连续失败 12 次后停止自动重试，并在本机保留失败时间和原因。本人可用 `GET /api/agents/session-cleanup/failures` 查看记录。恢复后端配置或授权后，向 `POST /api/agents/session-cleanup/retry` 提交该条记录的 `backendKey` 和 `sessionId`，宿主从下一次清理扫描起重新尝试。
+
 每个网页对话、飞书私聊、群、群里的话题（Telegram 论坛话题同理）各是一个会话，接着上下文继续聊：
 
 - **连续**：回复后 Agent 进程保留一段时间（默认 20 分钟），下一条消息直接进同一个 Agent 会话；释放或重启后用 Agent 自己的会话恢复（Claude Code、Codex 都支持）；都不行时，新会话会拿到本会话的滚动摘要和最近消息，需要细节时自己读原话。
