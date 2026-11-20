@@ -60,14 +60,14 @@ it("HTTP 两个筛选按读权限与事项本人，完成和停止的流程均�
   const server = await startServer(app, { port: 0, quiet: true }); servers.push(server);
   const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
   const get = async (only = "") => (await server.inject({ url: `/api/flows/board${only ? `?only=${only}` : ""}`, headers })).json();
-  expect((await get()).map((r: { itemId: string }) => r.itemId).sort()).toEqual([sharedId, mine].sort());
+  expect((await get()).map((r: { itemId: string }) => r.itemId).sort()).toEqual([mine]);
   expect((await get("mine")).map((r: { itemId: string }) => r.itemId)).toEqual([mine]);
   expect(await get("blocked")).toEqual([]);
   await reportStage(app, mine, "check", { state: "blocked", note: "等本人", waitingOn: "owner" }, { actor: "assistant" });
   expect((await get("blocked"))[0]).toMatchObject({ itemId: mine, waiting: "owner", stage: { state: "blocked" } });
   expect((await get("mine"))[0].itemId).toBe(mine);
   expect((await server.inject({ url: "/api/flows/board?only=bad", headers })).statusCode).toBe(400);
-  expect((await get()).some((r: { itemId: string }) => [privateId, ended, stopped].includes(r.itemId))).toBe(false);
+  expect((await get()).some((r: { itemId: string }) => [privateId, sharedId, ended, stopped].includes(r.itemId))).toBe(false);
 });
 
 it("几十件流程一次列全，事项摘要支持有界的 id 集合，空集合不返回别的事项", async () => {

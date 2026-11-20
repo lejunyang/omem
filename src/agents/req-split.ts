@@ -35,7 +35,7 @@ registerHandler("req-split", async (ctx) => {
   const fixes = ownerCorrections(ctx.app, { spaceId, limit: 15 });
   const task = [
     `给事项 ${itemId} 拆需求点，写进空间 ${spaceId} 的需求树。`,
-    materialsBrief(ctx.app, itemId, user),
+    await materialsBrief(ctx.app, itemId, user),
     tree.length ? `空间 ${spaceId} 现有的需求树（前四层，不含测试点；完整的用 req_tree 看）：\n${tree.map((n) => `${"  ".repeat(n.depth)}- ${n.id} ${n.title}`).join("\n")}` : `空间 ${spaceId} 还没有需求树。`,
     fixes.lines.length ? `## 本人以前对拆分结果的修改（同样的问题这次不要再出现）\n\n${fixes.lines.join("\n")}` : "",
     note ? `## 本人的要求\n\n${note}` : "",
@@ -44,7 +44,7 @@ registerHandler("req-split", async (ctx) => {
   const r = await runRole(ctx.app, {
     role: "req-splitter",
     spaceId,
-    alsoRead: materialSpaces(ctx.app, itemId, user),
+    alsoRead: await materialSpaces(ctx.app, itemId, user),
     task,
     runId: ctx.run.id,
     signal: ctx.signal,
@@ -66,7 +66,7 @@ async function scopeItem(app: App, runId: string, itemId: string, userId: string
   // added under an existing page scopes just that feature, not the whole page).
   const tops = touched.filter((n) => !reqPath(app, n!).slice(0, -1).some((a) => ids.has(a.id))).map((n) => n!.id);
   if (!tops.length) return 0;
-  const { addMaterials } = await import("../items/materials.ts");
-  addMaterials(app, itemId, tops.map((ref) => ({ kind: "req" as const, ref })), userId, "agent");
+  const { addLocalMaterials } = await import("../items/materials.ts");
+  addLocalMaterials(app, itemId, tops.map((ref) => ({ kind: "req" as const, ref })), userId, "agent");
   return tops.length;
 }

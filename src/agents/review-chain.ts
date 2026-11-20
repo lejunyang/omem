@@ -94,7 +94,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const cwd = opts.cwd ?? (multi ? join(app.runsDir, root, "work") : worktrees[0] && workDirOf(worktrees[0]));
   const { materialSpaces, materialsBrief } = await import("../items/materials.ts");
   const owner = runUser(app, run.id);
-  const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
+  const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ? await materialSpaces(app, input.itemId, owner) : [])])];
   const indexed = out.indexedSpaces ?? [];
   const since = opts.since;
   const ranged = since ? worktrees.map((w) => {
@@ -143,7 +143,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const rereview = branchReview ? (await import("./rereview.ts")).rereviewText(app, run.id, worktrees.map((w) => ({ space: w.space, path: workDirOf(w), tip: w.tip }))) : "";
   const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
-    input.itemId ? materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
+    input.itemId ? await materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
     decisionsBrief(app, [...workRuns(app, run.id), ...(input.fromReview ? workRuns(app, input.fromReview) : [])]),
     note ? `## 本人确认评审计划时补充\n\n${note}` : "",
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${opts.dirs?.[w.space] ?? w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",

@@ -122,10 +122,14 @@ export function markAskSent(app: App, id: string) {
   run(app.db, "update asks set context = json_remove(json_set(coalesce(context,'{}'), '$.sentAt', ?), '$.deferredUntil') where id = ?", now(), id);
 }
 
-export function getAsk(app: App, id: string): Ask {
+function askRow(app: App, id: string): Row {
   const r = one<Row>(app.db, "select * from asks where id = ?", id);
   if (!r) throw new HttpError(404, `没有这个提问：${id}`);
-  return toAsk(r);
+  return r;
+}
+
+export function getAsk(app: App, id: string): Ask {
+  return toAsk(askRow(app, id));
 }
 
 export function listAsks(app: App, opts: { status?: Ask["status"]; conversationId?: string; userId?: string; runId?: string; limit?: number } = {}): Ask[] {
@@ -396,23 +400,24 @@ let executor: Executor | null = null;
  * the answer runs a registered handler instead of going back to an agent as a message.
  */
 type AskHandler = (app: App, ask: Ask, context: Record<string, unknown>) => Promise<void>;
-const askHandlers = new Map<string, AskHandler>();
-const askGuards = new Map<string, (app: App, ask: Ask, context: Record<string, unknown>, by: string, answer: Ask) => void>();
+type AskGuard = (app: App, ask: Ask, context: Record<string, unknown>, by: string, answer: Ask) => void;
+type AnswerScope = (app: App, context: Record<string, unknown>, answer: () => Promise<Ask>) => Promise<Ask>;
+const askHandlers = new Map<string, { handle: AskHandler; guard?: AskGuard; scope?: AnswerScope }>();
 /** Small deterministic actions commit with the answer, before acknowledging the click. */
 const askActions = new Map<string, (app: App, ask: Ask, context: Record<string, unknown>) => string>();
 export function registerAskAction(name: string, action: (app: App, ask: Ask, context: Record<string, unknown>) => string) {
   askActions.set(name, action);
 }
 export const isImmediateAsk = (ask: Ask) => !!ask.handler && askActions.has(ask.handler);
-export function registerAskHandler(name: string, h: AskHandler, guard?: (app: App, ask: Ask, context: Record<string, unknown>, by: string, answer: Ask) => void) {
-  askHandlers.set(name, h);
-  if (guard) askGuards.set(name, guard);
-  else askGuards.delete(name);
+export function registerAskHandler(name: string, handle: AskHandler, guard?: AskGuard, scope?: AnswerScope) {
+  askHandlers.set(name, { handle, guard, scope });
 }
 
 export function setApprovalExecutor(e: Executor) {
   executor = e;
 }
+
+type AnswerInput = { choice?: number | null; text?: string; value?: Record<string, unknown>; approved?: boolean; by: string; viaMessage?: boolean; deferEffects?: boolean };
 
 /**
  * Record an answer: a choice (index into the options), free text, or approve/refuse. Then an
@@ -420,8 +425,18 @@ export function setApprovalExecutor(e: Executor) {
  * to the conversation as a message once the asking run has ended (`viaMessage`: the owner's own
  * chat message already carried it).
  */
-export async function answerAsk(app: App, id: string, input: { choice?: number | null; text?: string; value?: Record<string, unknown>; approved?: boolean; by: string; viaMessage?: boolean; deferEffects?: boolean }): Promise<Ask> {
-  const before = getAsk(app, id);
+export async function answerAsk(app: App, id: string, input: AnswerInput): Promise<Ask> {
+  const row = askRow(app, id);
+  const before = toAsk(row);
+  const context = JSON.parse(row.context ?? "{}") as Record<string, unknown>;
+  const scope = before.handler && askHandlers.get(before.handler)?.scope;
+  // An answer tied to a flow must be saved and acted on under the same item lock.
+  if (scope) return scope(app, context, () => recordAnswer(app, getAsk(app, id), context, { ...input, deferEffects: false }));
+  return recordAnswer(app, before, context, input);
+}
+
+async function recordAnswer(app: App, before: Ask, context: Record<string, unknown>, input: AnswerInput): Promise<Ask> {
+  const id = before.id;
   if (before.status !== "pending") throw new HttpError(409, before.status === "cancelled" ? "这个提问已经失效了" : "这个提问已经回答过了");
   const option = input.choice !== undefined && input.choice !== null ? before.options[input.choice] : undefined;
   if (input.choice !== undefined && input.choice !== null && !option) throw new HttpError(400, "没有这个选项");
@@ -441,8 +456,8 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
     : value
       ? text ?? truncate(JSON.stringify(value), 2000)
       : [option?.label, text].filter(Boolean).join("：") || null;
-  const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
-  if (before.handler) askGuards.get(before.handler)?.(app, before, context, input.by, { ...before, answer, choice: option ? input.choice! : null, answeredBy: input.by });
+  const handler = before.handler ? askHandlers.get(before.handler) : undefined;
+  handler?.guard?.(app, before, context, input.by, { ...before, answer, choice: option ? input.choice! : null, answeredBy: input.by });
   const action = before.handler ? askActions.get(before.handler) : undefined;
   const changed = tx(app.db, () => {
     if (getAsk(app, id).status !== "pending") throw new HttpError(409, "这个提问已经处理过了");
@@ -473,11 +488,9 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
     const ask = getAsk(app, id);
     closed(app, ask);
     if (action) return ask;
-    const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
-    const handler = typeof context.handler === "string" ? askHandlers.get(context.handler) : undefined;
     if (handler) {
       run(app.db, "update asks set consumed = 1 where id = ?", id);
-      await handler(app, ask, context);
+      await handler.handle(app, ask, context);
       return getAsk(app, id);
     }
     if (ask.kind === "suggestion") {

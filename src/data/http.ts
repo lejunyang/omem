@@ -1,9 +1,12 @@
+import { restrictedSourceFilter } from "../auth/visibility.ts";
+import { itemAccess, requireItem } from "../items/access.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { accessibleSpaces, canWrite } from "../core/users.ts";
 import { all, one, tx } from "../core/db.ts";
 import { HttpError, json } from "../core/util.ts";
+import { getItem } from "../items/store.ts";
 import { descendantIds, rootOf } from "../items/tree.ts";
 import { changeOf, defineMetric, latestOf, listMetrics, metricPoints, metricTable, metricViewSchema, nextTake, readMetric, requireMetric, tileSeries } from "./metrics.ts";
 
@@ -15,6 +18,10 @@ import { changeOf, defineMetric, latestOf, listMetrics, metricPoints, metricTabl
  */
 export function registerMetricRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   const readable = (req: FastifyRequest) => accessibleSpaces(app, who(req));
+  const visibleBranch = (id: string, req: FastifyRequest) => {
+    requireItem(app, id, who(req), "read");
+    return [id, ...descendantIds(app, id, readable(req) ?? undefined)];
+  };
   const title = (id: string) => one<{ title: string }>(app.db, "select title from items where id = ?", id)?.title ?? null;
   /** The observation plan a metric came from: `src:<id>#…` to the work file and its title. */
   const planOf = (ref: string | null) => {
@@ -26,7 +33,9 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
   server.get("/api/metrics", async (req) => {
     const q = z.object({ item: z.string().optional(), context: z.string().optional(), source: z.string().optional(), dropped: z.string().optional() }).parse(req.query ?? {});
     // An item's metrics are its own and those of the items under it (a line shows its requirements').
-    const itemIds = q.item ? [q.item, ...descendantIds(app, q.item)] : undefined;
+    const itemIds = q.item ? visibleBranch(q.item, req) : undefined;
+    const root = q.item ? getItem(app, rootOf(app, q.item)) : null;
+    const visibleRoot = root && itemAccess(app, who(req), root, "read") ? root.id : null;
     const list = listMetrics(app, { itemIds, contextId: q.context, spaces: readable(req), includeDropped: q.dropped === "1" }).filter((m) => !q.source || m.source === q.source);
     // The last six weeks of points, enough for a tile's course however many ways a metric is split.
     const since = new Date(Date.now() - 42 * 86400_000).toISOString();
@@ -34,7 +43,7 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
       const pts = metricPoints(app, m.id, { since, limit: 4000 });
       const fig = tileSeries(m, pts);
       // Which matter, and which work line above it, the metric watches: the data page groups by the line.
-      const line = m.itemId ? rootOf(app, m.itemId) : null;
+      const line = q.item ? visibleRoot : m.itemId ? rootOf(app, m.itemId) : null;
       return {
         ...m, change: changeOf(m, fig.values.map((value) => ({ value }))), spark: fig.values.slice(-30), figure: fig.name, groups: fig.groups, latest: latestOf(metricTable(m, pts)), points: pts.length, nextAt: nextTake(m),
         plan: planOf(m.planRef), itemTitle: m.itemId ? title(m.itemId) : null, lineId: line, lineTitle: line ? title(line) : null,
@@ -49,12 +58,13 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
   server.get("/api/metrics/files", async (req) => {
     const q = z.object({ item: z.string().optional() }).parse(req.query ?? {});
     const spaces = readable(req);
+    const under = q.item ? new Set(visibleBranch(q.item, req)) : null;
+    const filter = under ? restrictedSourceFilter(app, who(req)) : { sql: "1", params: [] };
     const rows = all<{ id: string; title: string; uri: string; space_id: string; meta: string; updated_at: string; charts: number }>(
       app.db,
       `select id, title, uri, space_id, meta, updated_at, instr(text, '\`\`\`chart') > 0 charts from sources
-       where kind = 'work' and deleted_at is null and (uri like 'work/数据/%' or uri like 'work/观测/%' or instr(text, '\`\`\`chart') > 0) order by updated_at desc limit 300`,
+       where kind = 'work' and deleted_at is null and ${filter.sql} and (uri like 'work/数据/%' or uri like 'work/观测/%' or instr(text, '\`\`\`chart') > 0) order by updated_at desc limit 300`, ...filter.params,
     );
-    const under = q.item ? new Set([q.item, ...descendantIds(app, q.item)]) : null;
     return rows.filter((r) => !spaces || spaces.includes(r.space_id)).map((r) => {
       const path = r.uri.replace(/^work\//, "");
       const kind = /数据源目录/.test(path) ? "catalog" : /^观测\//.test(path) ? "plan" : /^数据\/报表\//.test(path) || r.charts ? "report" : "note";

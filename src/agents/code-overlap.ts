@@ -125,7 +125,7 @@ export async function checkScope(app: App, run: Run) {
   const worktrees = worktreesOf(app, rootId);
   const input = run.input as { readSpaces?: string[]; itemId?: string };
   const { materialSpaces } = await import("../items/materials.ts");
-  const spaces = [...new Set([run.spaceId!, ...worktrees.map((w) => w.space), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, runUser(app, run.id)) : [])])];
+  const spaces = [...new Set([run.spaceId!, ...worktrees.map((w) => w.space), ...(input.readSpaces ?? []), ...(input.itemId ? await materialSpaces(app, input.itemId, runUser(app, run.id)) : [])])];
   const indexed = (run.output.indexedSpaces ?? getRun(app, rootId).output.indexedSpaces ?? []) as string[];
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
   const multi = worktrees.length > 1;

@@ -1,10 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { can } from "../auth/permissions.ts";
-import { canWrite } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
-import { getItem } from "../items/store.ts";
+import { requireItem } from "../items/access.ts";
 import { studyOperation } from "../flows/engine.ts";
 import { closeDirection, direction, setFindingState } from "./store.ts";
 import { chooseDirection, studyView } from "./service.ts";
@@ -16,12 +14,8 @@ import { registerPeerTrialRoutes } from "./remote-host.ts";
 export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   // Trials another of the owner's devices hands to this one (remote-host.ts).
   registerPeerTrialRoutes(server, app, who);
-  const itemId = (req: FastifyRequest, write: boolean) => {
-    const item = getItem(app, (req.params as { id: string }).id), user = who(req);
-    if (!can(app, user, "space.read", item.spaceId)) throw new HttpError(404, "事项不存在");
-    if (write && (item.userId !== user || !canWrite(app, user, item.spaceId))) throw new HttpError(403, "只有事项本人能修改课题");
-    return item.id;
-  };
+  const itemId = (req: FastifyRequest, write: boolean) =>
+    requireItem(app, (req.params as { id: string }).id, who(req), write ? "write" : "read").id;
   server.get("/api/items/:id/study", async (req) => studyView(app, itemId(req, false)));
   server.get("/api/items/:id/study/scope", async (req) => scopeView(app, itemId(req, false)));
   server.put("/api/items/:id/study/scope", async (req) => {

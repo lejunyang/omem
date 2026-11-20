@@ -10,7 +10,7 @@ import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { applyCodeRun } from "../src/agents/code.ts";
 import { confirmBranchRun } from "../src/agents/code-branch.ts";
 import { actCodeGit, readCodeGit } from "../src/agents/code-git.ts";
-import { addMaterials } from "../src/items/materials.ts";
+import { addLocalMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { describeStage, parseFlow, saveFlow } from "../src/flows/definitions.ts";
 import { flowReminders, flowView, ownerAction, reopenStage, startFlow, stopFlow } from "../src/flows/engine.ts";
@@ -51,7 +51,7 @@ async function setup(options: { count?: number; type?: GitSignal; by?: "owner" |
     return { space, path, remote, base, head, branch: "feat/refund" };
   });
   const work = createRun(app, { kind: "code", spaceId: repos[0].space, title: "实现退款", input: { itemId: item.id, repos: repos.map((r) => r.space) }, userId: "owner" });
-  addMaterials(app, item.id, [{ kind: "run", ref: work.id }], "owner");
+  addLocalMaterials(app, item.id, [{ kind: "run", ref: work.id }], "owner");
   run(app.db, "update runs set status='done' where id=?", work.id);
   setRunOutput(app, work.id, { verdict: "approved", worktrees: repos.map((r) => ({ ...r, commits: true, newBranch: true, cutFrom: "main", targetBranch: r.branch })),
     ...(options.applied === false ? {} : { appliedAt: new Date().toISOString(), appliedTo: repos.map(({ space, path, branch, base, head }) => ({ space, path, branch, base, head })) }) });
@@ -122,7 +122,7 @@ describe("Git 完成信号", () => {
     run(t.app.db, "delete from item_materials where item_id=? and kind='run'", t.item.id);
     await checkGitSignals(t.app); await checkGitSignals(t.app);
     expect(signals(t.app)).toHaveLength(1); expect(signals(t.app)[0].outcome).toContain("没有关联");
-    addMaterials(t.app, t.item.id, [{ kind: "run", ref: t.work.id }], "owner");
+    addLocalMaterials(t.app, t.item.id, [{ kind: "run", ref: t.work.id }], "owner");
     git(t.repos[0].path, ["remote", "remove", "origin"]);
     await checkGitSignals(t.app); expect(t.s().state).toBe("doing"); expect(signals(t.app).at(-1)!.outcome).toContain("没有远端");
   });

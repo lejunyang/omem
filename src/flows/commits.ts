@@ -11,7 +11,7 @@ import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } f
 import type { WorktreeRef } from "../agents/worktree-index.ts";
 import type { AppliedTarget } from "../agents/code.ts";
 import { addItemEvent, getItem, upsertItem } from "../items/store.ts";
-import { addMaterials } from "../items/materials.ts";
+import { addLocalMaterials } from "../items/materials.ts";
 import { materialCandidates } from "../items/places.ts";
 import { itemFlow, getStage } from "./store.ts";
 
@@ -235,7 +235,7 @@ registerAskHandler("commit-claim", async (app, ask, ctx) => {
   tx(app.db, () => {
     let item = "item" in claim ? writableItem(app, claim.item, OWNER) : upsertItem(app, undefined, { title: claim.title, detail: claim.detail, kind: "todo", spaceId: c.space_id, userId: OWNER }, "user");
     itemId = item.id;
-    addMaterials(app, item.id, [{ kind: "repo", ref: c.space_id, branch: c.branch }], OWNER, "user");
+    addLocalMaterials(app, item.id, [{ kind: "repo", ref: c.space_id, branch: c.branch }], OWNER, "user");
     addItemEvent(app, item.id, "updated", `本人确认：${c.space_id} 的 ${c.branch} 分支上 ${b.commits.length} 条提交归到这件事；${claim.reason}`, "user", [`run:${b.runId}`]);
     const finished = !("item" in claim) && !claim.ongoing;
     if (finished) item = upsertItem(app, item.id, { status: "done", note: "提交已经做完这件事，记为已完成" }, "user");

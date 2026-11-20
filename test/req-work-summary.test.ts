@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRun, setRunOutput } from "../src/agents/runs.ts";
-import { addMaterials } from "../src/items/materials.ts";
+import { addLocalMaterials } from "../src/items/materials.ts";
 import { itemWork } from "../src/items/work.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { run } from "../src/core/db.ts";
@@ -19,7 +19,7 @@ describe("coding summaries for requirements", () => {
         const round = createRun(app, { kind: "code", spaceId: "personal", title: `复验 ${i}`, input: { continueFrom: root.id, task: patch, round: 2 } });
         setRunOutput(app, round.id, { patches: [{ patch }], verdict: "approved", repos: [{ check: { output: patch } }] });
         run(app.db, "update runs set status = 'done' where id in (?, ?)", root.id, round.id);
-        addMaterials(app, item.id, [{ kind: "run", ref: root.id }, { kind: "run", ref: round.id }], OWNER, "user");
+        addLocalMaterials(app, item.id, [{ kind: "run", ref: root.id }, { kind: "run", ref: round.id }], OWNER, "user");
       }
       const prepare = app.db.prepare.bind(app.db);
       let largestResult = 0;
@@ -56,7 +56,7 @@ describe("coding summaries for requirements", () => {
       setRunOutput(app, root.id, { worktree: "legacy-work", branch: "feature/refund", base: "main" });
       const round = createRun(app, { kind: "code", spaceId: "personal", title: "复验", input: { continueFrom: root.id } });
       run(app.db, "update runs set status = 'done' where id in (?, ?)", root.id, round.id);
-      addMaterials(app, item.id, [{ kind: "run", ref: round.id }], OWNER, "user");
+      addLocalMaterials(app, item.id, [{ kind: "run", ref: round.id }], OWNER, "user");
       expect(itemWork(app, item)[0]).toMatchObject({ branch: "feature/refund", branchWork: false, stage: "owner", rounds: [root.id, round.id] });
       const review = createRun(app, { kind: "review", spaceId: "personal", title: "评审", input: {}, parentId: round.id });
       expect(itemWork(app, item)[0].stage).toBe("reviewing");

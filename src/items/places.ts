@@ -1,8 +1,10 @@
+import { restrictedSourceFilter } from "../auth/visibility.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { json, truncate } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { chatName, conclusionOf, scopeOf } from "../agents/run-scope.ts";
+import { itemScope } from "./access.ts";
 import { addMaterials } from "./materials.ts";
 import { getItem, type Item } from "./store.ts";
 
@@ -36,10 +38,8 @@ export function placesOfRun(app: App, runId: string): Place[] {
   return out;
 }
 
-const isChatSource = (app: App, id: string) => !!one(app.db, "select 1 from sources where id = ? and kind = 'chat'", id);
-
 /** A run wrote the item: link it to the run's places it is not linked to yet. Places the item's owner cannot see are left out. */
-export function linkRunPlaces(app: App, runId: string, itemId: string, userId: string): Place[] {
+export async function linkRunPlaces(app: App, runId: string, itemId: string, userId: string): Promise<Place[]> {
   let item: Item;
   try { item = getItem(app, itemId); } catch { return []; }
   if (item.userId !== userId) return [];
@@ -47,7 +47,7 @@ export function linkRunPlaces(app: App, runId: string, itemId: string, userId: s
   for (const p of placesOfRun(app, runId)) {
     if (one(app.db, "select 1 from item_materials where item_id = ? and kind = ? and ref = ?", itemId, p.kind, p.ref)) continue;
     try {
-      addMaterials(app, itemId, [{ kind: p.kind, ref: p.ref, note: `运行 ${runId} 在这里处理过这件事（自动关联）` }], userId, "agent");
+      await addMaterials(app, itemId, [{ kind: p.kind, ref: p.ref, note: `运行 ${runId} 在这里处理过这件事（自动关联）` }], userId, "agent");
       linked.push(p);
     } catch {
       // Not the item owner's conversation, or a space they cannot read: no link.
@@ -77,9 +77,13 @@ export function placeView(app: App, p: Place): PlaceView | null {
 /** The places an item goes on in that this reader may see, newest activity first. */
 export function itemPlaces(app: App, itemId: string, userId: string): PlaceView[] {
   const allowed = accessibleSpaces(app, userId);
-  const rows = all<{ kind: string; ref: string }>(app.db, "select kind, ref from item_materials where item_id = ? and kind in ('conversation','source') order by id", itemId);
+  const filter = restrictedSourceFilter(app, userId);
+  const rows = all<{ kind: string; ref: string }>(app.db, `select m.kind,m.ref from item_materials m
+    left join sources on m.kind='source' and sources.id=m.ref
+    left join conversations c on m.kind='conversation' and c.id=m.ref
+    where m.item_id=? and ((sources.kind='chat' and sources.deleted_at is null and ${filter.sql})
+      or (m.kind='conversation' and (?='owner' or c.user_id=?))) order by m.id`, itemId, ...filter.params, userId, userId);
   return rows
-    .filter((r) => r.kind === "conversation" || isChatSource(app, r.ref))
     .flatMap((r) => placeView(app, { kind: r.kind as Place["kind"], ref: r.ref }) ?? [])
     .filter((v) => !allowed || !v.spaceId || allowed.includes(v.spaceId))
     .sort((a, b) => (b.lastAt ?? "").localeCompare(a.lastAt ?? ""));
@@ -90,12 +94,14 @@ export function itemsAt(app: App, places: Place[], userId: string, limit = 3): I
   const convs = places.filter((p) => p.kind === "conversation").map((p) => p.ref);
   const srcs = places.filter((p) => p.kind === "source").map((p) => p.ref);
   if (!convs.length && !srcs.length) return [];
+  const { spaceIds } = itemScope(app, userId);
+  const spaceFilter = spaceIds ? "and i.space_id in (select value from json_each(?))" : "";
   const ids = all<{ id: string }>(app.db,
     `select distinct i.id from item_materials m join items i on i.id = m.item_id
-      where i.user_id = ? and i.status in (${OPEN.map(() => "?").join(",")})
+      where i.user_id = ? ${spaceFilter} and i.status in (${OPEN.map(() => "?").join(",")})
         and ((m.kind = 'conversation' and m.ref in (${convs.map(() => "?").join(",") || "''"})) or (m.kind = 'source' and m.ref in (${srcs.map(() => "?").join(",") || "''"})))
       order by i.updated_at desc limit ?`,
-    userId, ...OPEN, ...convs, ...srcs, limit);
+    userId, ...(spaceIds ? [JSON.stringify(spaceIds)] : []), ...OPEN, ...convs, ...srcs, limit);
   return ids.map((r) => getItem(app, r.id));
 }
 

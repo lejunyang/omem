@@ -40,10 +40,10 @@ const owner = { actor: "owner", userId: "owner" };
 const agent = { actor: "assistant", userId: "owner" };
 const flow = (app: App) => saveFlow(app, YAML.stringify({ id: "demo", name: "示例交付", stages: [{ id: "code", name: "编码", by: "wait" }, { id: "test", name: "测试", by: "wait" }, { id: "end", name: "结束", by: "wait" }] }), "owner");
 /** A captured group chat with one message, linked to an item. */
-function chat(app: App, itemId: string, chatId: string) {
+async function chat(app: App, itemId: string, chatId: string) {
   const src = appendToSource(app, { spaceId: "personal", kind: "chat", uri: `lark:${chatId}`, title: `${chatId} 讨论`, lines: ["开始"], meta: { chatId } });
   run(app.db, "insert into lark_messages(message_id,chat_id,source_id,line,sender_kind,sender_name,content,create_ms) values(?,?,?,1,'user','小王','开始',?)", `m_${chatId}`, chatId, src.id, Date.now() - 3600_000);
-  addMaterials(app, itemId, [{ kind: "source", ref: src.id }], "owner");
+  await addMaterials(app, itemId, [{ kind: "source", ref: src.id }], "owner");
   return src;
 }
 const running = (app: App, kind: Parameters<typeof createRun>[1]["kind"], input: Record<string, unknown> = {}) => {
@@ -104,8 +104,8 @@ describe("工作线：关注只建在顶层", () => {
     flow(app);
     const line = upsertItem(app, undefined, { kind: "line", title: "示例商城 · 退款改造" }, "user");
     const req = upsertItem(app, undefined, { title: "退款单显示运费" }, "user");
-    chat(app, line.id, "oc_line");
-    chat(app, req.id, "oc_req");
+    await chat(app, line.id, "oc_line");
+    await chat(app, req.id, "oc_req");
     setParent(app, req.id, line.id);
     await startFlow(app, req.id, "demo", owner);
     expect(itemContext(app, req.id)).toBeNull();
@@ -115,11 +115,11 @@ describe("工作线：关注只建在顶层", () => {
     expect(itemChats(app, line.id).sort()).toEqual(["oc_line", "oc_req"]);
   });
 
-  it("挂到线下以后，子事项原来的关注把案例搬到顶层并暂停；再跑一遍不变", () => {
+  it("挂到线下以后，子事项原来的关注把案例搬到顶层并暂停；再跑一遍不变", async () => {
     const app = fresh();
     const line = upsertItem(app, undefined, { kind: "line", title: "项目 A" }, "user");
     const bug = upsertItem(app, undefined, { title: "缺陷一" }, "user");
-    chat(app, bug.id, "oc_bug");
+    await chat(app, bug.id, "oc_bug");
     const own = saveContext(app, { kind: "item", itemId: bug.id, name: "缺陷一", chats: ["oc_bug"] });
     run(app.db, "insert into reply_samples(id, channel, chat_id, chat_kind, ask, last_ms, created_at, context_id) values('case_1','lark','oc_bug','group','怎么退运费',?,?,?)", Date.now(), new Date().toISOString(), own.id);
     setParent(app, bug.id, line.id);
@@ -253,9 +253,9 @@ describe("工作线：每晚提议", () => {
     const other = upsertItem(app, undefined, { title: "项目 A 的接口" }, "user");
     setParent(app, req.id, line.id);
     const doc = appendToSource(app, { spaceId: "personal", kind: "doc", uri: "doc:refund", title: "退款设计", lines: ["设计"] });
-    chat(app, other.id, "oc_a");
+    await chat(app, other.id, "oc_a");
     const r = running(app, "work-state");
-    const said = proposeLines(app, r.id, { lines: [
+    const said = await proposeLines(app, r.id, { lines: [
       { name: "退款改造", goal: "", items: [req.id, loose.id], chats: [], sources: [`src:${doc.id}`] },
       { name: "项目 A 上线", goal: "12 月上线", items: [other.id], chats: ["oc_a"], sources: [] },
       { name: "没人要的线", goal: "", items: [], chats: [], sources: [] },
@@ -277,8 +277,8 @@ describe("工作线：每晚提议", () => {
     expect(itemContext(app, made.id)!.chats).toEqual(["oc_a"]);
     // 不用: not asked again for two weeks.
     const r2 = running(app, "work-state");
-    expect(proposeLines(app, r2.id, { lines: [{ name: "没人要的线", goal: "", items: [], chats: [], sources: [] }] })).toContain("两周内不再问");
-    expect(() => proposeLines(app, running(app, "agent").id, { lines: [{ name: "x" }] })).toThrow(/近况整理/);
+    expect(await proposeLines(app, r2.id, { lines: [{ name: "没人要的线", goal: "", items: [], chats: [], sources: [] }] })).toContain("两周内不再问");
+    await expect(proposeLines(app, running(app, "agent").id, { lines: [{ name: "x" }] })).rejects.toThrow(/近况整理/);
   });
 });
 
@@ -291,7 +291,7 @@ describe("工作线：接口", () => {
     const req = upsertItem(app, undefined, { title: "退款单显示运费" }, "user");
     const loose = upsertItem(app, undefined, { title: "买牛奶" }, "user");
     const started = upsertItem(app, undefined, { title: "项目 A" }, "user");
-    chat(app, line.id, "oc_line");
+    await chat(app, line.id, "oc_line");
     expect((await server.inject({ method: "PUT", url: `/api/items/${req.id}/parent`, payload: { parent: line.id } })).statusCode).toBe(200);
     await startFlow(app, req.id, "demo", owner);
     await ownerAction(app, req.id, "code", "done", "本人做完了");

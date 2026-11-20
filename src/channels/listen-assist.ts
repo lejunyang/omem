@@ -38,7 +38,7 @@ function lastMoved(app: App, item: Item) {
 }
 
 function queue(app: App, c: ListenContext, item: Item, mode: "suggest" | "act", why: string) {
-  return import("../agents/runs.ts").then(({ createRun }) => {
+  return import("../agents/runs.ts").then(async ({ createRun }) => {
     const r = createRun(app, {
       kind: "agent",
       spaceId: item.spaceId,
@@ -47,7 +47,7 @@ function queue(app: App, c: ListenContext, item: Item, mode: "suggest" | "act", 
       userId: item.userId,
       input: {
         spec: "assistant",
-        task: lineStateTask(app, c, item, mode),
+        task: await lineStateTask(app, c, item, mode),
         listenAssist: c.id,
         lineState: item.id,
         why,
@@ -125,7 +125,7 @@ function itemLine(app: App, it: { id: string; title: string; kind: string; statu
   return `${"  ".repeat(depth)}- ${it.id}「${truncate(it.title, 60)}」[${it.kind}/${it.status}]${it.due_at ? ` 截止 ${it.due_at.slice(0, 10)}` : ""}${it.waiting_on ? ` 等 ${it.waiting_on}` : ""}${flow ? `；${flow}` : ""}`;
 }
 
-export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "suggest" | "act") {
+export async function lineStateTask(app: App, c: ListenContext, item: Item, mode: "suggest" | "act") {
   const tz = app.config.timezone;
   const ids = [item.id, ...descendantIds(app, item.id)];
   type Row = { id: string; title: string; kind: string; status: string; due_at: string | null; waiting_on: string | null; parent_id: string | null };
@@ -152,7 +152,7 @@ export function lineStateTask(app: App, c: ListenContext, item: Item, mode: "sug
     watching ? `\n## 这条线在观察中（${item.phaseSince ? md(app, item.phaseSince) : ""}起，到 ${item.watchUntil ? md(app, item.watchUntil) : ""}）\n\n它看起来已经做完、上线了。观察期里宿主照读它的群、照取指标，期满没有新问题会自动结束。这次的下一步只写上线后的事：看上线后的数据、查上线后冒出的问题、回答还没结的疑问；没有这类事就不写下一步。` : "",
     item.detail ? `\n目标：${truncate(item.detail, 600)}` : "",
     tree.length ? `\n## 下面的工作项\n\n${tree.join("\n")}` : "\n## 下面的工作项\n\n（没有，这件事自己就是一项工作）",
-    `\n${materialsBrief(app, item.id, item.userId, { compact: true })}`,
+    `\n${await materialsBrief(app, item.id, item.userId, { compact: true })}`,
     summary ? `\n## 它的群里最近在聊\n\n${truncate(summary, 1500)}` : "",
     changes.length ? `\n## 关键变化（新的在前，含下面的工作项）\n\n${changes.map((x) => `- ${localStamp(x.at, tz).slice(5)} [${x.type}·${x.origin}]${x.itemId !== item.id ? `「${truncate(x.itemTitle, 30)}」` : ""} ${truncate(x.summary, 160)}`).join("\n")}` : "\n## 关键变化\n\n（还没有记下的变化）",
     `\n## 数据\n\n${plan ? "已有观测计划。" : "还没有观测计划。"}${metrics.length ? `指标：${metrics.map((m) => `${m.name}${m.status === "proposed" ? "（AI 提议，待本人确认）" : ""}`).join("、")}（metric_read 看变化）。` : "还没有指标。"}${lessons ? `\n\n${lessons}` : ""}`,

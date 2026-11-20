@@ -45,7 +45,7 @@ export async function readRunFile(app: App, runId: string, o: { space?: string; 
     return { from: wt && existsSync(wt.path) ? "worktree" : "repo", space, path, bytes: () => readFileSync(full), size: statSync(full).size };
   }
   const { materialSpaces } = await import("../items/materials.ts");
-  const readable = [...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, userId) : [])].filter((s) => !allowed || allowed.includes(s));
+  const readable = [...(input.readSpaces ?? []), ...(input.itemId ? await materialSpaces(app, input.itemId, userId) : [])].filter((s) => !allowed || allowed.includes(s));
   for (const space of readable) {
     const path = o.path.startsWith(`${space}/`) ? o.path.slice(space.length + 1) : o.path;
     const s = one<{ id: string }>(app.db, "select id from sources where space_id = ? and uri = ? and deleted_at is null", space, path);
