@@ -705,7 +705,7 @@ for (const [chatId, perDay] of [["oc_demo_refund", [3, 5, 2, 0, 0, 8, 12, 9, 4, 
     for (let k = 0; k < n; k++) run(app.db, "insert into lark_messages(message_id,chat_id,sender_name,content,create_ms) values(?,?,?,?,?)", `om_demo_${chatId}_${i}_${k}`, chatId, "小王", "（演示消息）", Date.now() - (13 - i) * 86400_000 - (k + 1) * 600_000);
   });
 }
-const noteChange = (itemId: string, at: string, c: { type: ChangeType; summary: string; detail?: string; risk?: string; next?: string; refs?: string[]; origin: "follow" | "flow" | "metric" | "problem" | "owner"; status?: string }) => {
+const noteChange = (itemId: string, at: string, c: { type: ChangeType; summary: string; detail?: string; risk?: string; next?: string; refs?: string[]; origin: "follow" | "flow" | "metric" | "problem" | "owner" | "line"; status?: string }) => {
   const id = `ic_demo_${Math.abs([...c.summary].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 7))}`;
   run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,refs,run_id,status,updated_at,risk,next,origin) values(?,?,?,?,?,?,?,'',?,?,?,?,?)",
     id, itemId, at, c.type, c.summary, c.detail ?? null, JSON.stringify(c.refs ?? []), c.status ?? "noted", at, c.risk ?? null, c.next ?? null, c.origin);
@@ -751,6 +751,33 @@ noteChange(ticketLine.id, ago(5, 3), { type: "stage", origin: "follow", summary:
 noteChange(ticketLine.id, ago(1, 2), { type: "result", origin: "metric", summary: "试点一周，退款类工单 76% 分对", detail: "错分的多是“物流太慢要退款”这类两头都沾的。" });
 run(app.db, "update items set now = ? where id = ?", JSON.stringify({ text: "截至今天，自动分类在退款类工单上试了一周，分对 76%；话术库整理了一半。", people: [{ name: "小赵", role: "客服组长" }], weeks: [{ label: "本周", text: "试点一周，分对 76%。" }, { label: "上周", text: "定好分类标签。" }, { label: "2 周前", text: "决定先在退款类工单上试。" }, { label: "3 周前", text: "" }], at: ago(0, 3), runId: null }), ticketLine.id);
 run(app.db, "insert into item_next(id,item_id,text,why,refs,kind,status,run_id,created_at,updated_at) values(?,?,?,?,?,?,'open',null,?,?)", "nx_demo_t", ticketLine.id, "把错分的 40 单按原因归一下类", "看是标签定义的问题还是模型的问题", "[]", "data", nextAt, nextAt);
+// 观察中 (items/lifecycle.ts): a line whose requirement shipped, watched until 9 days from now; one
+// metric moved past its mark after the launch. Closing its requirement puts it into 观察 by itself; the
+// dates are then set to the demo's own.
+const invoiceLine = await createLine(app, { name: "示例商城 · 发票抬头改版", goal: "开票页可以保存多个抬头，下单时选一个，11 月中旬全量。", spaceId: "shop" }, "owner");
+const invoiceReq = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "开票页保存多个抬头", priority: 2 }, "user");
+setParent(app, invoiceReq.id, invoiceLine.id);
+upsertItem(app, invoiceReq.id, { status: "done" }, "user");
+run(app.db, "update items set created_at = ?, phase = 'watching', phase_since = ?, watch_until = ? where id = ?", ago(24), ago(5, 2), new Date(Date.now() + 9 * 86400_000).toISOString(), invoiceLine.id);
+run(app.db, "delete from item_changes where item_id = ? and origin = 'line'", invoiceLine.id);
+noteChange(invoiceLine.id, ago(12, 3), { type: "decision", origin: "follow", summary: "抬头最多存 10 个，下单时默认用上次那个" });
+noteChange(invoiceLine.id, ago(5, 2), { type: "stage", origin: "line", summary: "进入观察：群里说 11 月 16 日已全量", detail: "观察 14 天：这期间关注照读它的群、指标照取，每天的现状只提上线后的事；没有新问题会自动结束。" });
+noteChange(invoiceLine.id, ago(1, 5), { type: "result", origin: "metric", summary: "开票失败率从 0.8% 升到 1.3%", detail: "多出来的失败都是抬头里带了全角括号。" });
+run(app.db, "update items set now = ? where id = ?", JSON.stringify({ text: "截至今天，多抬头 11 月 16 日全量；开票失败率略升，都是带全角括号的抬头，小王在看。", people: [{ name: "小王", role: "负责后端" }], weeks: [{ label: "本周", text: "失败率略升，查到是全角括号。" }, { label: "上周", text: "11 月 16 日全量。" }, { label: "2 周前", text: "定下最多存 10 个抬头。" }, { label: "3 周前", text: "" }], at: ago(0, 4), runId: null }), invoiceLine.id);
+// 已结束: two lines that ended, one by itself with its closing summary, one the owner dropped last month.
+const endedDemo = (title: string, goal: string, days: number, status: "done" | "cancelled", reason: string, outcome: string, summary: string | null) => {
+  const l = upsertItem(app, undefined, { spaceId: "shop", kind: "line", title, detail: goal }, "user");
+  const at = ago(days);
+  run(app.db, "update items set status = ?, closed_at = ?, created_at = ?, updated_at = ?, now = ? where id = ?", status, at, ago(days + 35), at,
+    summary ? JSON.stringify({ text: "截至结束，已全量，上线后没有新问题。", people: [], weeks: [], at, runId: null, summary, summaryAt: at }) : null, l.id);
+  run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor) values(?,?,'line-end',?,'[]',?)", l.id, at, `${reason}（${status === "done" ? "观察了 14 天" : "在进行中"}、下面 0 件没结）\n<!-- line-end ${JSON.stringify({ outcome })} -->`, outcome === "auto-ended" ? "agent" : "user");
+  noteChange(l.id, at, { type: "resolved", origin: "line", summary: `结束：${reason.replace(/^[^：]*：/, "")}`, ...(summary ? { detail: summary } : {}) });
+  return l;
+};
+endedDemo("示例商城 · 优惠券叠加规则", "满减券和店铺券可以叠加使用，10 月底全量。", 9, "done", "自动结束：观察了 14 天，没有新问题", "auto-ended",
+  "满减券和店铺券可以叠加，先算满减再算店铺券，10 月 28 日全量。\n\n**关键决定**：叠加后最低实付 0.01 元，不倒贴；平台券暂不参与叠加。\n\n**上线后**：两周里叠加使用率 18%，退款错算和客诉都没有增加。\n\n**还剩**：平台券叠加放到明年一季度，由阿青提需求。");
+endedDemo("客服 · 退款话术整理", "把常见的退款问题整理成话术，给新客服用。", 36, "cancelled", "本人放弃了这条线：并进了“客服工单提效”", "owner-cancelled", null);
+
 // One the assistant made on its own and the owner has not said yes to.
 const cand = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "跟进：退款原因的统计口径", priority: 3 }, "agent");
 run(app.db, "update items set status = 'candidate' where id = ?", cand.id);
@@ -897,6 +924,17 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   // The start page (工作): the two lines, then 按时间, then one line's own page with 问这条线 open.
   { name: "work-overview", path: "/" },
   { name: "work-timeline", path: "/?view=time" },
+  // Below the lines: the one being watched, then the lines that ended, by month.
+  { name: "work-ended", path: "/", init: { "omem.workEnded": "1" }, prepare: async (p) => {
+    await p.locator(".watching").evaluate((el) => {
+      el.scrollIntoView({ block: "start" });
+      // A little of the last line above it shows where the group sits.
+      let s: HTMLElement | null = el.parentElement;
+      while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
+      (s ?? document.scrollingElement)?.scrollBy(0, -90);
+    });
+    await p.waitForTimeout(400);
+  } },
   { name: "work-line", path: `/work/${refundLine.id}`, init: { "omem.workAsk": "1", "omem.lineAsk": JSON.stringify({ [refundLine.id]: lineChat }) } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },
   { name: "insights-work", path: "/insights?tab=work", space: "shop", prepare: async (p) => { await p.getByRole("button", { name: "退款接口报错率" }).click(); await p.waitForTimeout(800); } },

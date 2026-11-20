@@ -14,7 +14,7 @@ import WorkSheet from "../components/WorkSheet.vue";
 import WorkWaiting, { type Waiting } from "../components/WorkWaiting.vue";
 import { promptDialog } from "../lib/dialog";
 import { dayKey, fmt } from "../lib/time";
-import { dayKeyLabel, ORIGIN_FILTERS, TYPE_FILTERS, type ChangeLite, type ItemLite, type Line, type NextLite, type Place } from "../lib/work";
+import { byMonth, dayKeyLabel, dayLabel, endedLine, ORIGIN_FILTERS, TYPE_FILTERS, type ChangeLite, type EndedLine, type ItemLite, type Line, type NextLite, type Place } from "../lib/work";
 import { fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
 /**
@@ -25,7 +25,7 @@ import { fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel, toas
  * owner; below, items under no line and what ran lately.
  */
 type View = "lines" | "time" | "stage";
-type Overview = { lines: Line[]; loose: ItemLite[]; waiting: Waiting; places: Place[] };
+type Overview = { lines: Line[]; loose: ItemLite[]; waiting: Waiting; places: Place[]; ended: EndedLine[]; endedMore: boolean };
 type HomeBits = { runs: Run[]; study: { total: number; due: number; reviewedToday: number }; notifications: { id: string; at: string; title: string; body: string; link: string | null; unread?: boolean }[] };
 
 const route = useRoute(), router = useRouter();
@@ -118,7 +118,54 @@ const off = onServerEvent((e) => {
   if (e.type === "run" || e.type === "notification") void loadHome();
 });
 const offResync = onServerResync(() => { void load(); void loadHome(); void loadActs(); });
-onBeforeUnmount(() => { ++seq; ++actSeq; off(); offResync(); clearTimeout(timer); });
+onBeforeUnmount(() => { ++seq; ++actSeq; ++endedSeq; off(); offResync(); clearTimeout(timer); clearTimeout(endedTimer); });
+
+// ---- 观察中 and 已结束 (src/items/lifecycle.ts) ---------------------------------------------------
+const active = computed(() => (data.value?.lines ?? []).filter((l) => l.phase !== "watching"));
+const watching = computed(() => (data.value?.lines ?? []).filter((l) => l.phase === "watching"));
+const watchHolds = (l: Line) => [
+  l.watch?.flaggedMetrics ? { text: `${l.watch.flaggedMetrics} 处指标越过门槛`, warn: true } : null,
+  l.watch?.openProblems ? { text: `${l.watch.openProblems} 个问题没结`, warn: true } : null,
+  l.watch?.openItems ? { text: `${l.watch.openItems} 件没结`, warn: false } : null,
+].filter((x): x is { text: string; warn: boolean } => !!x);
+
+const ENDED_KEY = "omem.workEnded";
+const endedOpen = ref((() => { try { return localStorage.getItem(ENDED_KEY) === "1"; } catch { return false; } })());
+function toggleEnded() {
+  endedOpen.value = !endedOpen.value;
+  try { localStorage.setItem(ENDED_KEY, endedOpen.value ? "1" : "0"); } catch { /* private mode */ }
+}
+// What the list shows: the overview's recent ones until the owner searches or pages back.
+const endedQ = ref("");
+const endedRows = ref<EndedLine[]>([]), endedMore = ref(false), endedBusy = ref(false), endedOwn = ref(false);
+watch(data, (d) => { if (d && !endedOwn.value) { endedRows.value = d.ended; endedMore.value = d.endedMore; } });
+let endedSeq = 0;
+async function loadEnded(more = false) {
+  const n = ++endedSeq;
+  endedBusy.value = true;
+  const last = endedRows.value.at(-1);
+  const q = new URLSearchParams({ ...(endedQ.value.trim() ? { q: endedQ.value.trim() } : {}), ...(more && last?.closedAt ? { before: last.closedAt } : {}) });
+  try {
+    const r = await get<{ items: EndedLine[]; more: boolean }>(`/api/work/ended?${q.toString()}`);
+    if (n !== endedSeq) return;
+    endedRows.value = more ? [...endedRows.value, ...r.items] : r.items;
+    endedMore.value = r.more;
+    endedOwn.value = more || !!endedQ.value.trim();
+  } catch (e) {
+    if (n === endedSeq) toast((e as Error).message, "error");
+  } finally {
+    if (n === endedSeq) endedBusy.value = false;
+  }
+}
+let endedTimer: ReturnType<typeof setTimeout> | undefined;
+watch(endedQ, () => {
+  clearTimeout(endedTimer);
+  endedTimer = setTimeout(() => {
+    if (!endedQ.value.trim() && data.value) { ++endedSeq; endedOwn.value = false; endedRows.value = data.value.ended; endedMore.value = data.value.endedMore; endedBusy.value = false; return; }
+    void loadEnded();
+  }, 300);
+});
+const endedGroups = computed(() => byMonth(endedRows.value));
 
 // ---- the rest ------------------------------------------------------------------------------------
 const dateLine = computed(() => fmt(Date.now(), { month: "long", day: "numeric", weekday: "long" }));
@@ -168,7 +215,7 @@ async function ask(text = question.value) {
       <div class="title">
         <div class="muted small">{{ dateLine }}</div>
         <h1>本月在推进</h1>
-        <p v-if="data" class="muted small">{{ data.lines.length }} 条工作线{{ todayChanges ? ` · 今天 ${todayChanges} 条变化` : "" }}</p>
+        <p v-if="data" class="muted small">{{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}{{ todayChanges ? ` · 今天 ${todayChanges} 条变化` : "" }}</p>
       </div>
       <span class="spacer" />
       <div class="tools row wrap">
@@ -191,7 +238,51 @@ async function ask(text = question.value) {
               <p class="muted small">工作线是这几周你在推进的一件事，相关的需求、缺陷、待办挂在它下面。每晚整理近况时，助手会从你做过的事里提议几条，你在卡片上点“建”；也可以自己建。走流程的事项、挂了别的事项的事项也会显示在这里。</p>
               <div><button class="btn sm primary" @click="newLine"><Icon name="plus" :size="14" />新建工作线</button></div>
             </div>
-            <WorkLine v-for="l in data.lines" :key="l.id" :line="l" @change="openChange" @next="openNext" />
+            <WorkLine v-for="l in active" :key="l.id" :line="l" @change="openChange" @next="openNext" />
+
+            <!-- 观察中: done, watched a while; nothing new and it ends by itself. -->
+            <section v-if="watching.length" class="watching" aria-labelledby="watching-title">
+              <h2 id="watching-title" class="section-title row">观察中 <span class="count">{{ watching.length }}</span><span class="spacer" /><span class="small muted hint">期间照读群、照取指标，没有新问题会自己结束</span></h2>
+              <div class="wgrid">
+                <router-link v-for="l in watching" :key="l.id" :to="`/work/${l.id}`" class="wcard">
+                  <span class="whead">
+                    <span class="wtitle">{{ l.title }}</span>
+                    <span v-if="l.watchUntil" class="wuntil">观察到 {{ dayLabel(l.watchUntil) }}</span>
+                  </span>
+                  <span v-if="l.now" class="wnow">{{ l.now.text }}</span>
+                  <span class="wholds">
+                    <span v-for="h in watchHolds(l)" :key="h.text" class="hold" :class="{ warn: h.warn }">{{ h.text }}</span>
+                    <span v-if="!watchHolds(l).length" class="hold ok">没有新问题</span>
+                  </span>
+                </router-link>
+              </div>
+            </section>
+
+            <!-- 已结束: by month, searchable, older ones page in. -->
+            <section v-if="data.ended.length || endedQ" class="ended" aria-labelledby="ended-title">
+              <h2 id="ended-title" class="section-title">
+                <button type="button" class="etoggle" :aria-expanded="endedOpen" aria-controls="ended-body" @click="toggleEnded">
+                  <Icon name="right" :size="14" class="chev" :class="{ open: endedOpen }" />已结束 <span class="count">{{ data.ended.length }}{{ data.endedMore ? "+" : "" }}</span>
+                </button>
+              </h2>
+              <div v-if="endedOpen" id="ended-body" class="ebody">
+                <label class="esearch"><Icon name="search" :size="14" /><input v-model="endedQ" type="search" placeholder="搜以前的线：名字、目标、小结" aria-label="搜已结束的工作线" /></label>
+                <Skeleton v-if="endedBusy && !endedRows.length" variant="list" :rows="3" />
+                <p v-else-if="!endedRows.length" class="muted small">{{ endedQ.trim() ? "没有找到这样的线。" : "还没有结束的线。" }}</p>
+                <div v-for="g in endedGroups" :key="g.key" class="month">
+                  <h3 class="mhead">{{ g.label }}<span class="muted">{{ g.items.length }} 条</span></h3>
+                  <router-link v-for="e in g.items" :key="e.id" :to="`/work/${e.id}`" class="erow">
+                    <Icon :name="e.status === 'cancelled' ? 'x' : 'check'" :size="14" class="eicon" :class="{ dropped: e.status === 'cancelled' }" />
+                    <span class="emain">
+                      <span class="etitle">{{ e.title }}</span>
+                      <span class="eline">{{ endedLine(e) }}</span>
+                    </span>
+                    <span class="ewhen">{{ e.status === "cancelled" ? "放弃" : "结束" }} · {{ e.closedAt ? dayLabel(e.closedAt) : "" }}</span>
+                  </router-link>
+                </div>
+                <button v-if="endedMore" type="button" class="btn sm more-btn" :disabled="endedBusy" @click="loadEnded(true)">{{ endedBusy ? "加载中…" : "查看更多" }}</button>
+              </div>
+            </section>
 
             <section v-if="data.loose.length" class="loose">
               <h2 class="section-title row">不在任何线里的事项 <span class="count">{{ data.loose.length }}</span><span class="spacer" /><router-link to="/items" class="small">全部事项</router-link></h2>
@@ -302,6 +393,54 @@ async function ask(text = question.value) {
 .main { display: grid; gap: 14px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .rail { display: grid; gap: 22px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .empty-lines { display: grid; gap: 8px; }
+
+/* 观察中: smaller cards, two to a row where there is room. */
+.watching { margin-top: 10px; min-width: 0; }
+.watching .section-title { flex-wrap: wrap; gap: 4px 8px; }
+.watching .hint { font-weight: 400; }
+.wgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 10px; }
+.wcard {
+  display: grid; gap: 6px; align-content: start; min-width: 0; padding: 12px 14px;
+  border: 1px solid var(--line); border-left: 3px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-radius: var(--radius); background: var(--panel); color: inherit;
+}
+.wcard:hover { text-decoration: none; border-color: var(--line-strong); border-left-color: var(--accent); }
+.wcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.whead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.wtitle { font-family: var(--serif); font-size: 15.5px; font-weight: 650; color: var(--ink); overflow-wrap: anywhere; min-width: 0; }
+.wuntil { font-size: 12px; color: var(--accent); white-space: nowrap; }
+.wnow { font-size: 13px; line-height: 1.6; color: var(--ink-2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.wholds { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.hold { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--sunken); color: var(--ink-2); }
+.hold.warn { background: var(--warn-soft); color: var(--warn); }
+.hold.ok { background: none; padding: 1px 0; color: var(--muted); }
+
+/* 已结束: a disclosure, then months of one-line rows. */
+.ended { margin-top: 10px; min-width: 0; border-top: 1px solid var(--line); padding-top: 12px; }
+.ended .section-title { margin: 0; }
+.etoggle { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font: inherit; color: inherit; border-radius: 6px; }
+.etoggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chev { color: var(--muted); transition: transform 0.15s ease; }
+.chev.open { transform: rotate(90deg); }
+.ebody { display: grid; gap: 10px; margin-top: 10px; min-width: 0; }
+.esearch { display: flex; align-items: center; gap: 6px; max-width: 420px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); }
+.esearch:focus-within { border-color: var(--accent); }
+.esearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13.5px; color: var(--ink); }
+.month { display: grid; min-width: 0; }
+.mhead { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em; color: var(--muted); margin: 4px 0 2px; }
+.mhead .muted { font-weight: 400; letter-spacing: 0; }
+.erow { display: flex; gap: 10px; align-items: flex-start; padding: 8px 8px; margin: 0 -8px; border-radius: 8px; color: inherit; min-width: 0; }
+.erow:hover { background: var(--hover); text-decoration: none; }
+.eicon { margin-top: 3px; color: var(--ok); flex: none; }
+.eicon.dropped { color: var(--muted); }
+.emain { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.etitle { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+.eline { font-size: 12.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ewhen { flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; margin-top: 2px; }
+@media (max-width: 560px) {
+  .erow { flex-wrap: wrap; }
+  .ewhen { margin-left: 24px; order: 3; }
+}
 .count { margin-left: 4px; color: var(--muted); font-weight: 400; }
 .loose { margin-top: 14px; }
 .loose .list, .recent .list { margin: 0 -12px; }

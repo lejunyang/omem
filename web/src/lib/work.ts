@@ -13,12 +13,17 @@ export type NextLite = { id: string; itemId: string; text: string; why: string; 
 export type StageLite = { id: string; name: string; state: string; enteredAt: string | null; doneAt: string | null; waitingOn: string | null };
 export type FlowLite = { name: string; stages: StageLite[]; current: { id: string; name: string; state: string } | null };
 export type Child = { id: string; title: string; kind: string; status: string; dueAt: string | null; parentId: string | null; waitingOn: string | null; flow: FlowLite | null; children?: Child[] };
-export type LineNow = { text: string; people: { name: string; openId?: string; role: string }[]; weeks: { label: string; text: string }[]; at: string; runId: string | null };
+export type LineNow = { text: string; people: { name: string; openId?: string; role: string }[]; weeks: { label: string; text: string }[]; at: string; runId: string | null; summary?: string; summaryAt?: string };
 export type Line = {
   id: string; title: string; kind: string; status: string; dueAt: string | null; spaceId: string; now: LineNow | null;
   counts: { changes: number; today: number; lastAt: string | null }; timeline: ChangeLite[]; next: NextLite[]; children: Child[];
   listen: { id: string; assist: string } | null;
+  /** src/items/lifecycle.ts: null 进行中, `watching` 观察中 until `watchUntil`. */
+  phase: "watching" | null; phaseSince: string | null; watchUntil: string | null;
+  watch?: { flaggedMetrics: number; openProblems: number; openItems: number };
 };
+/** A line that ended (GET /api/work `ended`, /api/work/ended). */
+export type EndedLine = { id: string; title: string; status: string; closedAt: string | null; summary: string | null; reason: string | null; spaceId: string };
 export type ItemLite = { id: string; title: string; kind: string; status: string; dueAt: string | null; remindAt: string | null; waitingOn: string | null; spaceId: string; updatedAt: string };
 export type GateLite = { itemId: string; title: string; flowName: string; stage: { id: string; name: string; state: string }; since: string; askId: string | null };
 export type ChatActivity = { chatId: string; name: string; total: number; perDay: number[]; lastAt: string | null };
@@ -29,7 +34,7 @@ export const changeTypeLabel: Record<string, string> = {
   scope: "范围", decision: "决定", deadline: "时间", blocker: "风险", info: "信息", stage: "阶段", result: "结果", owner: "负责人", resolved: "解除",
 };
 /** Where a change was seen. */
-export const originLabel: Record<string, string> = { follow: "群聊和文档", flow: "流程", metric: "指标", problem: "在跟的问题", owner: "你定的" };
+export const originLabel: Record<string, string> = { follow: "群聊和文档", flow: "流程", metric: "指标", problem: "在跟的问题", owner: "你定的", line: "观察与结束" };
 export const nextKindLabel: Record<NextKind, string> = { read: "读", test: "测", code: "改", ask: "问", data: "数据" };
 export const nextStatusLabel: Record<NextLite["status"], string> = { open: "没定", doing: "在做", done: "做完", declined: "不用", expired: "已过期" };
 export const itemStatusLabel: Record<string, string> = { open: "进行中", waiting: "等待中", snoozed: "稍后", done: "完成", cancelled: "取消", expired: "过期", candidate: "候选" };
@@ -60,6 +65,7 @@ export const ORIGIN_FILTERS: { key: string; label: string }[] = [
   { key: "metric", label: "指标" },
   { key: "problem", label: "问题" },
   { key: "owner", label: "你定的" },
+  { key: "line", label: "观察与结束" },
 ];
 
 const DAY = 86_400_000;
@@ -88,6 +94,29 @@ export function dayKeyLabel(key: string, today: string) {
   const words = `${y !== ty ? `${y} 年 ` : ""}${m} 月 ${d} 日`;
   return diff === 0 ? `${words} · 今天` : diff === 1 ? `${words} · 昨天` : words;
 }
+/** "12/05" (another year: "2025/12/05"): a short date for a pill. */
+export function shortDay(at: string, now = Date.now()) {
+  const d = wallDay(at), t = wallDay(now);
+  return `${d.getFullYear() !== t.getFullYear() ? `${d.getFullYear()}/` : ""}${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+}
+/** Ended lines grouped by the month they ended in (set zone), newest first: "2026 年 11 月". */
+export function byMonth<T extends { closedAt: string | null }>(rows: T[]) {
+  const out: { key: string; label: string; items: T[] }[] = [];
+  for (const r of rows) {
+    const d = r.closedAt ? wallDay(r.closedAt) : null;
+    const key = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` : "";
+    let g = out.find((x) => x.key === key);
+    if (!g) out.push((g = { key, label: d ? `${d.getFullYear()} 年 ${d.getMonth() + 1} 月` : "不知道哪天", items: [] }));
+    g.items.push(r);
+  }
+  return out;
+}
+/** What an ended line's row says in one line: its closing summary's first sentence, else why it ended. */
+export function endedLine(e: Pick<EndedLine, "summary" | "reason" | "status">) {
+  const first = (e.summary ?? "").split(/\n/).filter((l) => !/^\s*#/.test(l)).map((l) => l.replace(/^[>*\-\s]+/, "").replace(/\*\*/g, "").trim()).find(Boolean);
+  return first || e.reason || (e.status === "cancelled" ? "放弃了" : "结束了");
+}
+
 /** "14:05" in the set zone. */
 export function clock(at: string) {
   const d = toWallDate(at);
