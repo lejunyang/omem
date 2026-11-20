@@ -272,6 +272,8 @@ npm install -g @omem-ai/cli
 | 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；或对助理说“我想练英语开会表达，每天 8 张，晚上九点提醒我”建学习目标；聊天里 `/review` 复习；可与 Anki 互相导入导出（制表符文本） |
 | 减少巡检、材料整理在后端的重复会话 | 默认按权限与角色复用后台 ACP 会话，超过 60% 上下文换新；不支持用量报告的后端保持单次任务 |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
+| 每周五拿到一份周报初稿 | 定时任务“周报”默认开着（周五 17:00，可改）：简报角色按你的工作近况把这周的「关注」、事项和流程、编码交办和评审、会议、指标写进个人空间的 `周报/<年>-W<周>.md`，发一条不急的通知。直接在文件里改，下周它会照你删改后的结构和说法写 |
+| 让夜间整理顺手提改进建议 | 不用设置：做梦每晚也看各个「关注」的新案例和你的取舍、你对自动建的事项的留与不要、规则触发和失败、超过门槛的指标，对照你的近况，在一条“夜间整理的建议”通知里最多提三条（某个群问你的可以先拟草稿、值得加的规则或流程、该开的关注、该盯的指标），回复“好”由主助手照改 |
 | 早上简报里直接拿到备好的东西 | 开着“简报”和“工作近况”时，简报会先按你这段时间在推进的几条线，替你把今天用得上的准备做掉（查出会上要用的数字、理好要回的消息的背景、先读一遍要评审的文档并列出问题），放进工作文件，在简报的“已备好”里一条一句带链接。它只读、不发消息、不替你做决定；没有值得备的就不列 |
 | 看记忆写得好不好、哪个模型写得好 | “记忆 → 质量”：按模型看写入数、被退回的原因、复核结果；`omem memories stats`。旧记忆可用 `omem memories check` 过一遍检查 |
 | 调研一个问题 | 给调研档案挂 `research` 技能和检索工具，在 Agent 页选一个或多个 MCP 服务（网页搜索标为只读）；先查库，再查外部、核对独立来源，报告开头给结论。内部名字、未公开数字和代码不得放进外部查询 |
@@ -633,7 +635,7 @@ src/quality   每晚抽检助手自主写入的页面和定级；页面按运行
 src/insights  数据页：固定场景表、按权限与期间聚合、记录明细、三分钟缓存、Markdown/CSV 导出（不含消息正文）
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）；场景包导入（contributions.ts：规则、MCP、流程）、打包（pack.ts）、插件渠道（channels.ts）；界面插槽（slots.ts）、开发目录链接（links.ts）、安装与源码构建（install.ts）
-src/agents    ACP/CLI 运行、后端网络条件（network-policy.ts）与 IPv6 / DNS 诊断（network-diagnostics.ts、network-request.ts）与 Agent 目录（catalog.ts）、成员自己的 AI 账号（accounts.ts：账号目录、登录、按发起人选账号、插件登录的续签；agent-logins.ts：插件登记的登录方式；sandbox.ts：bubblewrap 检查和启动参数）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、技能分组与接管 Agent 自带的技能目录（skill-groups.ts、agent-skills.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
+src/agents    ACP/CLI 运行、后端网络条件（network-policy.ts）与 IPv6 / DNS 诊断（network-diagnostics.ts、network-request.ts）与 Agent 目录（catalog.ts）、成员自己的 AI 账号（accounts.ts：账号目录、登录、按发起人选账号、插件登录的续签；agent-logins.ts：插件登记的登录方式；sandbox.ts：bubblewrap 检查和启动参数）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、技能分组与接管 Agent 自带的技能目录（skill-groups.ts、agent-skills.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；做梦和复盘读的关注、自动建事项、规则和指标的近况（proactive.ts），周报（weekly-report.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
               MCP 服务配置与密钥（mcp-servers.ts）、连接检测和工具列表（mcp-test.ts）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导

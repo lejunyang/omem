@@ -2,7 +2,7 @@ import { ownerCorrections } from "../items/requirements.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { now, truncate, localStamp } from "../core/util.ts";
+import { json, now, truncate, localStamp } from "../core/util.ts";
 import { isBuiltinRole, listRoleStates, mergeRole, resolveRoleMerge, roleOverrideText, roleSourceText } from "./builtin-roles.ts";
 import { askModel } from "./oneshot.ts";
 import { profileDetail } from "./profiles.ts";
@@ -12,8 +12,14 @@ import { createRun, registerHandler, runsInLane } from "./runs.ts";
 import { listAgentSpecs, readAgentSpec } from "./specs.ts";
 import { runReactions, runReactionsText } from "../channels/lark-feedback.ts";
 import { replayCoachText } from "./replay.ts";
+import { casesText, playbookOf, type CaseLite } from "../channels/listen-cases.ts";
+import { contextOfConversation, DEFAULT_CONTEXT_ID, getContext } from "../channels/listen.ts";
+import { briefText } from "../channels/watch-trial.ts";
 
-/** Which runs show a built-in role at work (an agent spec's are its `agent` runs). */
+/**
+ * Which runs show a built-in role at work (an agent spec's are its `agent` runs). The assistant's are
+ * picked by assistantRuns: the owner's asks, someone looking for the owner, and the 关注 handlers.
+ */
 const ROLE_RUNS: Record<string, string[]> = {
   assistant: ["ask"],
   ingest: ["ingest"],
@@ -43,21 +49,66 @@ const ROLE_RUNS: Record<string, string[]> = {
   "work-state": ["work-state"],
 };
 
-type EvidenceRun = { id: string; kind: string; status: string; title: string; error: string | null; created_at: string; finished_at: string | null; input: string; output: string | null };
+type EvidenceRun = { id: string; kind: string; status: string; title: string; error: string | null; created_at: string; finished_at: string | null; input: string; output: string | null; lane?: string | null; quiet?: number };
+
+const COLS = "id, kind, status, title, error, created_at, finished_at, input, output, lane, quiet";
+const NEGATIVE = "(select count(*) from feedback f where f.run_id = runs.id and f.polarity = 'negative' and f.removed_at is null and f.on_bot = 1)";
+/** The run's case (reply_samples.handle_run) shows the owner having a say against it: not sent, edited, disliked, marked, or answered by themselves. */
+const CASE_SIGNAL = "exists (select 1 from reply_samples s where s.handle_run = runs.id and (s.decision in ('edited','dropped','disliked') or s.owner_reply is not null or s.verdict is not null))";
+/** A turn of a 「关注」's handling conversation (channels/listen.ts): its lane is the conversation. */
+const LISTEN_LANE = "lane in (select id from conversations where channel = 'listen')";
+
+/**
+ * Besides the owner's own asks, the assistant handles someone looking for the owner (mentions/: `agent`
+ * runs with `input.mention`) and the messages of each 「关注」 (`ask` turns in its conversation). Those
+ * get a share of their own, the ones whose case the owner corrected first; a quiet one counts when the
+ * owner replied where it stayed quiet.
+ */
+function assistantRuns(app: App, since: string, limit: number): EvidenceRun[] {
+  const share = Math.max(1, Math.ceil(limit / 4));
+  const order = `order by ${CASE_SIGNAL} desc, ${NEGATIVE} > 0 desc, created_at desc limit ?`;
+  const mentions = all<EvidenceRun>(app.db, `select ${COLS} from runs where kind = 'agent' and created_at > ? and json_extract(input, '$.mention') is not null and status in ('done','failed') and (quiet = 0 or ${CASE_SIGNAL}) ${order}`, since, share);
+  const listen = all<EvidenceRun>(app.db, `select ${COLS} from runs where kind = 'ask' and created_at > ? and ${LISTEN_LANE} and status in ('done','failed') and (quiet = 0 or ${CASE_SIGNAL}) ${order}`, since, share);
+  const asks = all<EvidenceRun>(app.db, `select ${COLS} from runs where kind = 'ask' and created_at > ? and not coalesce(${LISTEN_LANE}, 0) and status in ('done','failed') and quiet = 0 order by ${NEGATIVE} > 0 desc, created_at desc limit ?`, since, Math.max(1, limit - mentions.length - listen.length));
+  return [...asks, ...mentions, ...listen];
+}
 
 /**
  * The profile's runs since its last review (newest last). Runs someone reacted to negatively come
  * first when there are more than `limit` (lark-feedback.ts), then the newest.
  */
 function recentRuns(app: App, name: string, since: string, limit = 12): EvidenceRun[] {
-  const cols = "id, kind, status, title, error, created_at, finished_at, input, output";
-  const negative = "(select count(*) from feedback f where f.run_id = runs.id and f.polarity = 'negative' and f.removed_at is null and f.on_bot = 1)";
-  const rows = isBuiltinRole(name)
-    ? (ROLE_RUNS[name] ?? []).length
-      ? all<EvidenceRun>(app.db, `select ${cols} from runs where kind in (${ROLE_RUNS[name].map(() => "?").join(",")}) and created_at > ? and status in ('done','failed') and quiet = 0 order by ${negative} > 0 desc, created_at desc limit ?`, ...ROLE_RUNS[name], since, limit)
-      : []
-    : all<EvidenceRun>(app.db, `select ${cols} from runs where kind = 'agent' and json_extract(input, '$.spec') = ? and created_at > ? and status in ('done','failed') order by ${negative} > 0 desc, created_at desc limit ?`, name, since, limit);
+  const rows = name === "assistant"
+    ? assistantRuns(app, since, limit)
+    : isBuiltinRole(name)
+      ? (ROLE_RUNS[name] ?? []).length
+        ? all<EvidenceRun>(app.db, `select ${COLS} from runs where kind in (${ROLE_RUNS[name].map(() => "?").join(",")}) and created_at > ? and status in ('done','failed') and quiet = 0 order by ${NEGATIVE} > 0 desc, created_at desc limit ?`, ...ROLE_RUNS[name], since, limit)
+        : []
+      : all<EvidenceRun>(app.db, `select ${COLS} from runs where kind = 'agent' and json_extract(input, '$.spec') = ? and created_at > ? and status in ('done','failed') order by ${NEGATIVE} > 0 desc, created_at desc limit ?`, name, since, limit);
   return rows.sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** Which of the assistant's kinds of work a run was: someone looking for the owner, a 关注's handling, or neither. */
+function workOf(app: App, r: EvidenceRun): { label: string; contextId: string | null } | null {
+  if (r.kind === "agent" && json<{ mention?: unknown }>(r.input, {}).mention) return { label: "有人找你", contextId: DEFAULT_CONTEXT_ID };
+  if (r.kind !== "ask" || !r.lane) return null;
+  const c = contextOfConversation(app, r.lane);
+  return c ? { label: `关注「${c.name}」的处理`, contextId: c.id } : null;
+}
+
+/** The cases a run handled (reply_samples.handle_run): what was asked, what it did, what the owner made of it. */
+function runCases(app: App, runId: string) {
+  return all<CaseLite>(
+    app.db,
+    `select id, context_id, chat_id, chat_kind, chat_name, settled_at, asker_id, asker_name, ask, draft, decision, final, reason, owner_reply, verdict, note, scene, checked, created_at
+     from reply_samples where handle_run = ? order by created_at limit 6`,
+    runId,
+  );
+}
+
+/** Whether a run's case shows the owner correcting it (a signal for the nightly pass, like a correction in chat). */
+function caseSignal(app: App, runId: string) {
+  return !!one(app.db, `select 1 from runs where id = ? and ${CASE_SIGNAL}`, runId);
 }
 
 /** What the run produced that this profile is answerable for. */
@@ -101,14 +152,22 @@ export function reviewTask(app: App, name: string, since: string) {
   const d = profileDetail(app, name);
   const identity = isBuiltinRole(name) ? (() => { const r = loadRole(name, app); return `内置角色 ${name}${r.customized ? "（本人自定义过）" : ""}：${r.description}\n工具：${r.tools.join(", ") || "无"}\n\n${r.body.trim()}`; })() : (() => { const s = readAgentSpec(app, name); return `Agent 档案 ${name}：${s.description}\n工具：${s.tools.join(", ") || "默认只读"}\n\n${s.prompt}`; })();
   const runs = recentRuns(app, name, since);
+  // The 关注 the assistant's runs worked for: their lessons go along once, to check the runs against.
+  const contexts = new Set<string>();
   const evidence = runs.map((r) => {
-    const said = ownerAfter(app, r);
+    const work = name === "assistant" ? workOf(app, r) : null;
+    if (work?.contextId) contexts.add(work.contextId);
+    // A 关注's conversation is the group's messages: what the owner made of the run is in its cases.
+    const inGroup = !!work && work.contextId !== DEFAULT_CONTEXT_ID;
+    const said = inGroup ? [] : ownerAfter(app, r);
+    const cases = work ? runCases(app, r.id) : [];
     return [
-      `### ${r.id}（${r.kind}/${r.status}，${localStamp(r.created_at, app.config.timezone)}）${r.title}`,
+      `### ${r.id}（${r.kind}/${r.status}${work ? ` · ${work.label}` : ""}，${localStamp(r.created_at, app.config.timezone)}）${r.title}`,
       r.error ? `错误：${truncate(r.error, 300)}` : "",
-      `产出：${truncate(resultOf(name, r).trim() || "（无）", 1500)}`,
+      `产出：${truncate(resultOf(name, r).trim() || (r.quiet ? "（没有回复，stay_quiet）" : "（无）"), 1500)}`,
       ...(name === "req-splitter" ? [reqFixesText(app, r.id)] : []),
-      said.length ? `之后本人说：\n${said.map((m) => `- msg:${m.id}（${localStamp(m.created_at, app.config.timezone)}）${truncate(m.text.replace(/\s+/g, " "), 400)}`).join("\n")}` : "之后本人没有说什么",
+      ...(work ? [cases.length ? `它处理的案例（本人的取舍、自己回的话、在网页上的纠正）：\n${casesText(cases)}` : "它处理的消息还没有记成案例"] : []),
+      said.length ? `之后本人说：\n${said.map((m) => `- msg:${m.id}（${localStamp(m.created_at, app.config.timezone)}）${truncate(m.text.replace(/\s+/g, " "), 400)}`).join("\n")}` : inGroup ? "" : "之后本人没有说什么",
       (() => {
         const r_ = runReactionsText(app, r.id);
         return r_ ? `飞书里对它的回复加的表情：${r_}（确认收到类表情只表示看到了，不算好坏）` : "";
@@ -117,11 +176,18 @@ export function reviewTask(app: App, name: string, since: string) {
   });
   // Nightly replay's single-variable comparisons on its questions (agents/replay.ts): reference, small samples.
   const replayed = replayCoachText(app, name);
+  const lessons = [...contexts].slice(0, 4).flatMap((id) => {
+    const c = getContext(app, id);
+    if (!c) return [];
+    const text = playbookOf(app, c, 1500);
+    return [`## 「${c.name}」${c.id}\n\n${[briefText(c), text ? `经验（listen-coach 按案例写的）：\n${text}` : "（还没有经验）"].filter(Boolean).join("\n\n")}`];
+  });
   return {
     runs: runs.length,
     task: [
       `# 复盘对象\n\n${identity}`,
       ...(replayed ? [`# 夜间复盘（近 28 天，只换了一处的重答对比；样本小，同一结论反复出现才算数）\n\n${replayed}`] : []),
+      ...(lessons.length ? [`# 这些运行所在关注的说明和经验（对照看运行有没有照着做、本人的取舍和经验有没有矛盾）\n\n${lessons.join("\n\n")}`] : []),
       `# 挂的技能\n\n${d.skills.map((s) => `- ${s.name}：${s.description}`).join("\n") || "（没有）"}`,
       `# 专属记忆\n\n${d.memories.map((m) => `- ${m.id} [${m.kind}] ${truncate(m.content, 200)}`).join("\n") || "（没有）"}`,
       `# 待本人确认的建议\n\n${d.proposals.filter((p) => p.status === "pending").map((p) => `- ${p.id} [${p.kind}] ${p.title}`).join("\n") || "（没有）"}`,
@@ -168,7 +234,7 @@ export function nightlyProfileReviews(app: App) {
     const since = one<{ value: string }>(app.db, "select value from kv where key = ?", `profile_review_at:${name}`)?.value ?? new Date(Date.now() - 14 * 86400_000).toISOString();
     const runs = recentRuns(app, name, since, 30);
     if (runs.length < 3) continue;
-    if (!runs.some((r) => r.status === "failed" || ownerAfter(app, r).length || runReactions(app, r.id).some((x) => x.actor_kind === "owner" && (x.polarity === "negative" || x.polarity === "positive")))) continue;
+    if (!runs.some((r) => r.status === "failed" || ownerAfter(app, r).length || caseSignal(app, r.id) || runReactions(app, r.id).some((x) => x.actor_kind === "owner" && (x.polarity === "negative" || x.polarity === "positive")))) continue;
     scheduleProfileReview(app, name);
     queued++;
   }

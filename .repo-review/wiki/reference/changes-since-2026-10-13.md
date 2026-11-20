@@ -16,6 +16,12 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 做梦读关注和数据提建议、coach 复盘别人的消息、周报（11-20）
+
+- `src/agents/proactive.ts`：做梦任务多一节“关注、自动建的事项、规则和指标”（`dreamMaterial`）——有新动静的关注（`listenDigest`：更新过的会话摘要、新案例计数和纠正、两三个例子、经验改没改、参数一行）、自动建事项的留下 / 不要（`autoItemDigest`）、规则触发统计（`ruleDigest`，按规则走 `rule_firings` 的索引）、超门槛的指标（`flaggedMetrics`）、本人近况和已有关注 / 指标的事项（`coverageText`）、最近一周做梦发过的通知。有这些新动静时没有记忆变化也整理。`roles/dreamer.md` 第 8 条：一晚最多三条建议放进一条通知，本人回复后由主助手照改；dreamer 加了只读的 `list_rules`、`metric_read`。
+- `src/agents/profile-jobs.ts`：复盘主助手时另选“有人找你”的处理和关注处理会话里的轮次（`assistantRuns`），证据带它们的案例（`reply_samples.handle_run`）和所在关注的说明与经验；关注里的轮次不读“之后本人说”（那个会话里是群里别人的话）；每晚挑档案时案例里的纠正也算信号。`roles/coach.md` 加了怎么看这类运行。
+- `src/agents/weekly-report.ts`：定时任务 `weekly-report`（周五 17:00，默认开）排 `brief` 运行（`mode: weekly`），材料是本周的关注、事项、流程、编码、会议、指标、近况和上一份周报（与 kv `weekly_report_written:<周>` 比出本人改的行），只写 `周报/<年>-W<周>.md`，宿主发一条 later 通知。`roles/brief.md` 加了“周报”一节。测试 `test/proactive-material.test.ts`。
+
 ## 更新时 SSH 拉不下来就改用 https（11-20）
 
 - `scripts/upgrade.ts`：`git pull --ff-only` 失败时，把 SSH 形式的 origin 换成同一仓库的 https 地址（`scripts/git-url.ts` 的 `httpsOf`）再拉当前分支；进程管理器起的服务里 ssh 认不出当前用户（`No user exists for uid …`）或没有 agent 时，远程 `update` 也能拉到代码。测试 `test/git-url.test.ts`。

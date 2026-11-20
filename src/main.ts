@@ -52,6 +52,8 @@ registerScheduleKind("activity", (app) => {
   import("./sources/activity.ts").then((m) => m.recordCodeActivity(app)).catch((e) => console.warn("[omem] 记录代码活动失败：", e.message));
 });
 registerScheduleKind("brief", (app) => createRun(app, { kind: "brief", spaceId: "personal", title: "简报" }));
+// The weekly report: the brief role on the week's material, written to a work file (agents/weekly-report.ts).
+registerScheduleKind("weekly-report", (app) => void import("./agents/weekly-report.ts").then((m) => m.scheduleWeeklyReport(app)).catch((e) => console.warn(`[omem] 周报排队失败：${(e as Error).message}`)));
 registerScheduleKind("lark-curate", (app, s) => createRun(app, { kind: "curate", spaceId: "personal", title: "筛选值得关注的飞书群", input: { direction: (s.config as { direction?: string }).direction } }));
 registerScheduleKind("lark-poll", (app) => {
   import("./channels/lark-personal.ts").then((m) => m.pollLark(app)).catch((e) => console.warn("[omem] 飞书消息采集失败：", e.message));

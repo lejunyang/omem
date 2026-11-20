@@ -1306,7 +1306,11 @@ registerHandler("dream", async (ctx) => {
   const stock = dreamStockBatch(app, since);
   const seen = new Set(pairs.map((p) => [p.a.id, p.b.id].sort().join("|")));
   const stockPairs = sameTopicPairs(app, stock.ids, 15).filter((p) => !seen.has([p.a.id, p.b.id].sort().join("|")));
-  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps) && !merge && !stockPairs.length && !consolidate.length) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
+  // What the 关注, the assistant's own items, the rules and the metrics showed since (agents/proactive.ts):
+  // material for proposals to the owner, read against what the owner works on these weeks.
+  const { workStateBrief } = await import("./work-state.ts");
+  const proactive = (await import("./proactive.ts")).dreamMaterial(app, since, workStateBrief(app, 1500));
+  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps) && !merge && !stockPairs.length && !consolidate.length && !proactive.has) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
   const relations = listSpaces(app).flatMap((s) => relatedSpaces(app, s.id).filter((r) => s.id < r.space).map((r) => `- ${s.id} ↔ ${r.space}${r.note ? `：${r.note}` : ""}`));
   const task = [
     `上次整理：${since}`,
@@ -1339,6 +1343,7 @@ ${shortcomingsText(gaps)}
 能补的就补：缺的事实或约定从原件里找到后记下来；同一类错误反复出现就写一条 experience 记忆，过程复杂的写成案例页（cases/）；需要本人提供的知识建一个 todo 事项问本人。补不了或本来就答得对的不用管。`
       : "",
     candidates.length ? `可能相关、还没关联的空间（宿主从引用、链接、依赖声明、标签里看到的迹象；读过后判断无关的，用 relate_spaces decline=true 记下原因，同样的迹象就不会再列出）：\n${candidates.map((c) => `- ${c.a} ↔ ${c.b}：${c.signals.join("；")}`).join("\n")}` : "",
+    proactive.text,
     itemLessons(app, "dream"),
     "需要更多上下文时用 recall（可加 include_history）和 list_items 查同主题的其他记录。",
   ]
@@ -1354,6 +1359,8 @@ ${shortcomingsText(gaps)}
 // -------------------------------------------------------------------- brief
 
 registerHandler("brief", async (ctx) => {
+  // The weekly report is the same role on the week's material (agents/weekly-report.ts).
+  if ((ctx.run.input as { mode?: string }).mode === "weekly") return (await import("./weekly-report.ts")).weeklyReport(ctx);
   const app = ctx.app;
   const until = now();
   const since = one<{ value: string }>(app.db, "select value from kv where key = 'brief_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
