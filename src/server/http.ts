@@ -1,5 +1,5 @@
 import { randomUUID as operationId } from "node:crypto";
-import { currentRules, enforcedBy, saveOperationRules } from "../agents/operation-policy.ts";
+import { currentRules, digest, enforcedBy, saveOperationRules } from "../agents/operation-policy.ts";
 import { networkInterfacesView, networkPoliciesView, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies } from "../agents/network-policy.ts";
 import { lessonInput, listLessons, saveLesson, removeLesson } from "../agents/code-lessons.ts";
 import { ROLE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
@@ -272,7 +272,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     const b = q(z.object({ command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
-    return commandGate(app, ctx, b);
+    return commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
   });
   const rulesView = () => currentRules(app).map(r => ({ ...r, enforcedBy: enforcedBy[r.match.kind] }));
   server.get("/api/security/operation-rules", async () => ({ rules: rulesView() }));

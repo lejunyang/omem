@@ -2248,6 +2248,9 @@ export const migrations: readonly string[] = [
    alter table items add column phase_since text;
    alter table items add column watch_until text;`,
   METRIC_ORIGIN_MIGRATION,
+  `create index asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
+   create index asks_operation_run on asks(json_extract(context,'$.runKey'),status);
+   create index asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
 ];
 
 export type Db = DatabaseSync;

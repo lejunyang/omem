@@ -107,6 +107,6 @@ export function fingerprint(op: Operation, rule: OperationRule) {
 }
 export function auditOperation(app: App, op: Operation, who: OperationWho, rule: OperationRule|undefined, action: string, result: string, approver?: string) {
   const target = op.kind === "command" ? op.executable : op.kind === "file" ? op.path : op.kind === "tool" ? op.name : op.method + " " + new URL(op.url).host + new URL(op.url).pathname;
-  audit(app, who.member, "operation."+action, target.slice(0,300), { kind: op.kind, member: who.member, runId: who.runId, ruleId: rule?.id, revision: rule?.revision, action, result, approver,
+  audit(app, who.member, op.kind+"."+action, target.slice(0,300), { kind: op.kind, member: who.member, runId: who.runId, ruleId: rule?.id, revision: rule?.revision, action, result, approver,
     ...(op.kind === "command" ? { argsHash: digest(op.argv ?? []), commandLine: [op.executable,...(rule?.match.kind === "command" ? rule.match.subcommand ?? [] : [])].join(" ").slice(0,200) } : {}) });
 }
