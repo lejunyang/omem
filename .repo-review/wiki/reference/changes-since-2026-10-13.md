@@ -17,6 +17,13 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 工作线（三）：工作页（11-20 夜）
+
+- 首页 `#/` 换成 `web/src/views/Work.vue`：“本月在推进”，按工作线 / 按时间 / 按阶段（流程看板抽成 `components/FlowBoard.vue`，`/board` 只给成员用）；右栏 `components/WorkWaiting.vue` 把等本人的合在一处。原 `Home.vue` 删掉，最近通知和后台运行收在工作页下方。
+- 线和工作项的页 `#/work/:id`（`web/src/views/WorkDetail.vue`）：阶段条 `components/WorkStageTrack.vue`、点线时间线 `components/WorkTimeline.vue`、变化卡 `components/WorkChange.vue`、右侧详情 `components/WorkSheet.vue`、编辑 `components/WorkEdit.vue`、问这条线 `components/LineAsk.vue`；流程标签嵌入 `ItemFlowPage`（`embedded`），关注标签嵌入 `ListenDetail`（`id` + `embedded`）。呈现用的函数在 `web/src/lib/work.ts`（`test/work-web.test.ts`）。
+- 侧栏“今日”改名“工作”，“流程”打开 `/?view=stage`；本人打开 `/items/:id/flow` 转到 `/work/:id?tab=flow`。事项页改叫“全部事项”，线、有下层的、走流程的事项点开去工作项页。
+- `web/src/lib/markdown.ts`：写好的引用链接 `[文字](src:…#L3-L9)` 不再被“裸引用”的替换拆开（11-19 起带范围的引用显示成半截）。
+
 ## 关注从历史学（11-20 夜）
 
 - `learnFromHistory`（`src/channels/listen-coach.ts`）和 `POST /api/listen/:id/learn {chats, days}`：给定群里本人最近 N 天的回答记成关注的案例（引用的那条，或两小时内别人最近的一句），去重，够 5 条排 listen-coach。用于新建值班关注时拿已经结了的工单群先学一版经验。测试在 `test/listen.test.ts`。
@@ -26,7 +33,7 @@ updated: 2026-11-20
 - 原来的“主动推进”改成看一条线的现状（`src/channels/listen-assist.ts`）：只看顶层事项的关注，任务带线和下面各项、`lineTimeline`、上次的现状、本人说“不用”的下一步；运行用角色工具 `submit_line_state` 交 `now`（存进 `items.now`）和最多三条下一步（表 `item_next`，旧的没开始的变 `expired`），不再 notify、不再写 `推进.md`。`POST /api/work/:id/refresh` 马上看一次。
 - 每天一张下一步卡片（`src/items/lines.ts` 的 `lineNextDue`，心跳里，`notify.laterTimes` 最早的时间或 10:00）：各条线一起，每条“就这么做 / 不用”（处理器 `line-next`）。就这么做起一轮 `agent`（lane `line-next:<线>`，不能发消息、拉人、建规则，不是 code 的不能交办编码），结束后标 done、结论进线的关注会话；不用记下，下次看这条线时读到。
 - 每晚的 work-state 多了 `propose_lines`（`roles/work-state.md`）：对得上已有线的补材料、挂事项；新的一晚一张卡（处理器 `line-propose`：建 / 不用 / 并进某条），“不用”两周内不再问。
-- 工作页接口 `src/items/work-http.ts`：`GET /api/work`、`/api/work/activities`、`/api/work/:id`，`PUT /api/items/:id/parent`、`/api/item-next/:id`、`/api/item-changes/:id/noise`，都只给本人。网页还没做。
+- 工作页接口 `src/items/work-http.ts`：`GET /api/work`、`/api/work/activities`、`/api/work/:id`，`PUT /api/items/:id/parent`、`/api/item-next/:id`、`/api/item-changes/:id/noise`，都只给本人。网页见上面“工作线（三）”。
 
 ## 工作线（一）：事项上下层、关注只建在顶层、关键变化多个来源（11-20 夜）
 

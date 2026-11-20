@@ -32,6 +32,10 @@ import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
+import type { ChangeType } from "../src/items/changes.ts";
+import { createLine } from "../src/items/lines.ts";
+import { itemContext } from "../src/channels/listen.ts";
+import { setParent } from "../src/items/parent.ts";
 import { parseFlow } from "../src/flows/definitions.ts";
 import { changeStage } from "../src/flows/store.ts";
 import { createDesign, getDesign, setConcernState, submitRevision } from "../src/designs/store.ts";
@@ -673,6 +677,94 @@ for (const [i, d] of delivery.stages.entries()) {
   run(app.db, "update item_stage_log set at=? where item_id=? and stage_id=?", flowAt(active ? 4 : 24 - i * 6), flowItem.id, d.id);
 }
 
+// ---- two work lines for the work page (#/, #/work/:id) -----------------------------------------
+// 示例商城 · 退款改造: the requirement above (in its flow, waiting for the owner to push) with a defect
+// under it, a few more work items, key changes of every kind and origin over three weeks, where it
+// stands and two next steps; 客服工单提效: a smaller one. Times are relative to now.
+const refundLine = await createLine(app, { name: "示例商城 · 退款改造", goal: "部分发货的订单只退已发货的行，满减按各行实付比例分摊，12 月初全量上线。\n上线前用上月的退款单回放一遍，申请页、售后详情和导出三处金额要一致。", sources: [prd, chat], spaceId: "shop" }, "owner");
+const ago = (days: number, hours = 0) => new Date(Date.now() - days * 86400_000 - hours * 3600_000).toISOString();
+run(app.db, "update items set due_at = ?, created_at = ? where id = ?", new Date(Date.now() + 12 * 86400_000).toISOString(), ago(20), refundLine.id);
+setParent(app, flowItem.id, refundLine.id);
+const negDefect = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "缺陷：满减分摊到最后一行出现负数", detail: "大额满减券的订单，最后一行承担尾差时可退金额变成负数。", priority: 1, waitingOn: "小王" }, "user");
+setParent(app, negDefect.id, flowItem.id);
+const replay = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "上月退款单回放对账", dueAt: new Date(Date.now() + 5 * 86400_000).toISOString(), priority: 2 }, "user");
+setParent(app, replay.id, refundLine.id);
+const couponAsk = one<{ id: string }>(app.db, "select id from items where title = ?", "等小李确认满减券的分摊口径");
+if (couponAsk) setParent(app, couponAsk.id, refundLine.id);
+const exportFix = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "导出任务改用 refundLineAmounts", priority: 3 }, "user");
+setParent(app, exportFix.id, refundLine.id);
+upsertItem(app, exportFix.id, { status: "done" }, "user");
+const qaChat = upsertSource(app, { spaceId: "shop", kind: "chat", uri: "lark:oc_demo_refund_qa", title: "退款改造测试群", text: "[11-18 10:00] 小李: 回放脚本在测试环境跑通了", meta: { chatId: "oc_demo_refund_qa", chatMode: "group" } }).id;
+addMaterials(app, refundLine.id, [{ kind: "source", ref: qaChat }], "owner");
+// Messages per day in the two groups over the last two weeks (the 14-day activity of 人和群).
+for (const [chatId, perDay] of [["oc_demo_refund", [3, 5, 2, 0, 0, 8, 12, 9, 4, 0, 1, 14, 18, 11]], ["oc_demo_refund_qa", [0, 0, 1, 2, 0, 0, 0, 3, 6, 2, 0, 0, 5, 7]]] as const) {
+  perDay.forEach((n, i) => {
+    for (let k = 0; k < n; k++) run(app.db, "insert into lark_messages(message_id,chat_id,sender_name,content,create_ms) values(?,?,?,?,?)", `om_demo_${chatId}_${i}_${k}`, chatId, "小王", "（演示消息）", Date.now() - (13 - i) * 86400_000 - (k + 1) * 600_000);
+  });
+}
+const noteChange = (itemId: string, at: string, c: { type: ChangeType; summary: string; detail?: string; risk?: string; next?: string; refs?: string[]; origin: "follow" | "flow" | "metric" | "problem" | "owner"; status?: string }) => {
+  const id = `ic_demo_${Math.abs([...c.summary].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 7))}`;
+  run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,refs,run_id,status,updated_at,risk,next,origin) values(?,?,?,?,?,?,?,'',?,?,?,?,?)",
+    id, itemId, at, c.type, c.summary, c.detail ?? null, JSON.stringify(c.refs ?? []), c.status ?? "noted", at, c.risk ?? null, c.next ?? null, c.origin);
+  return id;
+};
+// The stage changes the flow fixture above wrote just now are told again below at their own times.
+run(app.db, "delete from item_changes where item_id = ? and origin = 'flow'", flowItem.id);
+noteChange(refundLine.id, ago(17, 3), { type: "scope", origin: "follow", summary: "退款范围收窄：未发货的行走取消流程，不在退款里算", detail: "产品在讨论群里确认，未发货的行由取消流程处理，退款只算已发货的行。", refs: [`src:${chat}#L5-L5`, `src:${prd}#L7-L7`] });
+noteChange(refundLine.id, ago(13, 5), { type: "decision", origin: "follow", summary: "满减按各行实付比例分摊，尾差归最后一行", detail: "阿青在群里定的口径，和需求文档第 8 行一致。", refs: [`src:${chat}#L3-L3`, `src:${prd}#L8-L9`] });
+noteChange(flowItem.id, ago(10, 2), { type: "stage", origin: "flow", summary: "「澄清需求」做完：三处退款金额的口径对齐了", refs: [`src:${prd}#L7-L10`] });
+noteChange(refundLine.id, ago(7, 6), { type: "deadline", origin: "follow", summary: "全量上线从 11 月 28 日推到 12 月 2 日", detail: "回放上月数据要多两天准备测试账号。", risk: "再往后推会撞上 12 月的大促封板", next: "回放脚本本周内跑通", refs: [`src:${chat}#L2-L2`] });
+noteChange(refundLine.id, ago(4, 1), { type: "result", origin: "metric", summary: "测试环境退款错算率从 2.1% 降到 0.3%", detail: "按已发货行计算后，剩下的错算都来自满减分摊。" });
+noteChange(negDefect.id, ago(2, 4), { type: "blocker", origin: "problem", summary: "满减分摊到最后一行出现负数", detail: "大额满减券的订单，最后一行承担尾差后可退金额为负。", risk: "这类订单上线后会退出负数金额", next: "小王改成超出部分顺延到前一行，再补回归用例", refs: [`src:${chat}#L6-L6`] });
+noteChange(flowItem.id, ago(0, 4), { type: "stage", origin: "flow", summary: "编码评审通过，等你核对分支后推送", next: "核对分支，推送后进预发验收" });
+noteChange(refundLine.id, ago(0, 2), { type: "resolved", origin: "follow", summary: "发货状态接口联调通过，之前的阻塞解除", refs: [`src:${chat}#L1-L1`] });
+noteChange(refundLine.id, ago(0, 1), { type: "scope", origin: "follow", status: "asked", summary: "阿青提出：退款原因要加“仅退运费”", detail: "阿青在群里提出要在退款原因里加一项“仅退运费”，影响申请页和导出。", risk: "加进来会重开“编码”这一段", refs: [`src:${chat}#L4-L4`] });
+run(app.db, "update items set now = ? where id = ?", JSON.stringify({
+  text: "截至今天，按已发货行退款的编码评审已通过，等你核对后推送；满减分摊的负数缺陷已复现，小王在改；上月退款单回放排在推送之后。",
+  people: [{ name: "小王", role: "负责后端，在改负数缺陷" }, { name: "阿青", role: "产品，定退款口径" }, { name: "小李", role: "测试，准备回放数据" }, { name: "老周", role: "客服，提问题" }],
+  weeks: [
+    { label: "本周", text: "编码评审通过，等你推送；复现了满减分摊的负数缺陷，发货状态接口联调通过。" },
+    { label: "上周", text: "上线推到 12 月 2 日；测试环境错算率降到 0.3%，回放脚本开始准备。" },
+    { label: "2 周前", text: "定下满减按实付比例分摊、尾差归最后一行；需求澄清做完。" },
+    { label: "3 周前", text: "" },
+  ],
+  at: ago(0, 1), runId: null,
+}), refundLine.id);
+const nextAt = ago(0, 1);
+for (const [i, n] of [
+  { text: "推送前用上月 200 单回放一遍退款金额", kind: "test", why: "评审只跑了单元测试，三处金额口径是否一致要拿真实数据看", refs: [`src:${prd}#L10-L10`] },
+  { text: "问小李满减券的分摊口径什么时候能定", kind: "ask", why: "口径没定，负数缺陷怎么改跟着它", refs: [`src:${chat}#L2-L2`] },
+].entries()) run(app.db, "insert into item_next(id,item_id,text,why,refs,kind,status,run_id,created_at,updated_at) values(?,?,?,?,?,?,'open',null,?,?)", `nx_demo_${i}`, refundLine.id, n.text, n.why, JSON.stringify(n.refs), n.kind, nextAt, nextAt);
+
+const ticketLine = await createLine(app, { name: "客服工单提效", goal: "工单进来先自动分类，常见问题用话术库直接回，人工只处理剩下的。", spaceId: "shop" }, "owner");
+run(app.db, "update items set created_at = ? where id = ?", ago(15), ticketLine.id);
+for (const [title, status] of [["工单自动分类试点", "open"], ["客服话术库整理", "open"], ["工单分类的标签定义", "done"]] as const) {
+  const t = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title, priority: 2 }, "user");
+  setParent(app, t.id, ticketLine.id);
+  if (status === "done") upsertItem(app, t.id, { status: "done" }, "user");
+}
+noteChange(ticketLine.id, ago(9, 2), { type: "decision", origin: "owner", summary: "先在退款类工单上试自动分类" });
+noteChange(ticketLine.id, ago(5, 3), { type: "stage", origin: "follow", summary: "分类标签定好了：退款、物流、质量、其他" });
+noteChange(ticketLine.id, ago(1, 2), { type: "result", origin: "metric", summary: "试点一周，退款类工单 76% 分对", detail: "错分的多是“物流太慢要退款”这类两头都沾的。" });
+run(app.db, "update items set now = ? where id = ?", JSON.stringify({ text: "截至今天，自动分类在退款类工单上试了一周，分对 76%；话术库整理了一半。", people: [{ name: "小赵", role: "客服组长" }], weeks: [{ label: "本周", text: "试点一周，分对 76%。" }, { label: "上周", text: "定好分类标签。" }, { label: "2 周前", text: "决定先在退款类工单上试。" }, { label: "3 周前", text: "" }], at: ago(0, 3), runId: null }), ticketLine.id);
+run(app.db, "insert into item_next(id,item_id,text,why,refs,kind,status,run_id,created_at,updated_at) values(?,?,?,?,?,?,'open',null,?,?)", "nx_demo_t", ticketLine.id, "把错分的 40 单按原因归一下类", "看是标签定义的问题还是模型的问题", "[]", "data", nextAt, nextAt);
+// One the assistant made on its own and the owner has not said yes to.
+const cand = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "跟进：退款原因的统计口径", priority: 3 }, "agent");
+run(app.db, "update items set status = 'candidate' where id = ?", cand.id);
+// 问这条线: one question already asked in the line's 关注 conversation (or a conversation of its own).
+const lineChat = itemContext(app, refundLine.id)?.conversationId ?? createThread(app, { channel: "web", spaceId: "shop", title: "问这条线：示例商城 · 退款改造", userId: "owner" }).id;
+addMessage(app, lineChat, "user", "现在卡在哪？");
+addMessage(app, lineChat, "assistant", [
+  "卡在两处：",
+  "",
+  "1. **推送等你**：编码评审已通过，分支在等你核对后推送；推送后才进预发验收。",
+  "2. **满减分摊的负数缺陷**：大额满减券的订单最后一行会退成负数，小王在改成超出部分顺延到前一行（[群聊](src:" + chat + "#L6-L6)）。它的改法还取决于小李那边的分摊口径，口径没定前别合进推送的分支。",
+  "",
+  "上月退款单回放排在推送之后，脚本已在测试环境跑通。",
+].join("\n"));
+// The refund line is the one moved last: it comes first.
+run(app.db, "update items set updated_at = ? where id = ?", ago(0, 6), ticketLine.id);
+
 // ---- a month of runs for the data page (#/insights) -------------------------------------------
 // Fictional counts only: who asked, in which demo chat, with which made-up model.
 {
@@ -766,7 +858,10 @@ async function prepareNetworkDemo(page: Page) {
 }
 const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; before?: (page: Page) => Promise<void>; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "item-flow", path: `/items/${flowItem.id}`, width: 1440, prepare: async (p) => { await p.getByRole("region", { name: "事项流程", exact: true }).scrollIntoViewIfNeeded(); } },
-  { name: "today", path: "/" },
+  // The start page (工作): the two lines, then 按时间, then one line's own page with 问这条线 open.
+  { name: "work-overview", path: "/" },
+  { name: "work-timeline", path: "/?view=time" },
+  { name: "work-line", path: `/work/${refundLine.id}`, init: { "omem.workAsk": "1", "omem.lineAsk": JSON.stringify({ [refundLine.id]: lineChat }) } },
   { name: "insights", path: "/insights", space: "personal" },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },
