@@ -18,7 +18,8 @@ import WorkSheet from "../components/WorkSheet.vue";
 import WorkStageTrack from "../components/WorkStageTrack.vue";
 import ItemFlowPage from "./ItemFlowPage.vue";
 import ListenDetail from "./ListenDetail.vue";
-import { promptDialog } from "../lib/dialog";
+import WorkPhase from "../components/WorkPhase.vue";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 import { pageParam } from "../lib/route";
 import {
   byWeek, dayLabel, daysAgo, flatChildren, itemStatusLabel, nextKindLabel, waitsForOwner, weekColumns,
@@ -36,6 +37,9 @@ type WItem = Item & { parentId: string | null; now: LineNow | null };
 type Detail = {
   item: WItem; ancestors: { id: string; title: string }[]; now: LineNow | null; next: NextLite[]; children: Child[]; timeline: ChangeLite[];
   chats: ChatActivity[]; materials: Material[]; listen: { id: string } | null; flow: (FlowLite & { waitingOn: string | null }) | null;
+  /** Its life (src/items/lifecycle.ts). */
+  phase: "watching" | null; phaseSince: string | null; watchUntil: string | null; summary: string | null;
+  ended: { at: string | null; status: string; reason: string | null } | null; openUnder: number;
 };
 type Tab = "timeline" | "items" | "flow" | "people" | "listen" | "data";
 
@@ -75,7 +79,37 @@ const isLine = computed(() => item.value?.kind === "line" || (top.value && !!d.v
 const editable = computed(() => !!item.value && (!state.me || item.value.userId === state.me.id));
 const spaceName = (sid: string) => state.spaces.find((s) => s.id === sid)?.name ?? sid;
 const kindWord = computed(() => (!item.value ? "" : isLine.value ? "工作线" : item.value.parentId ? `工作项 · ${itemKindLabel[item.value.kind] ?? item.value.kind}` : itemKindLabel[item.value.kind] ?? item.value.kind));
-const tone = computed(() => (item.value?.status === "waiting" ? "warn" : ["done", "cancelled", "expired"].includes(item.value?.status ?? "") ? "quiet" : "ok"));
+const tone = computed(() => (d.value?.phase === "watching" ? "watch" : item.value?.status === "waiting" ? "warn" : ["done", "cancelled", "expired"].includes(item.value?.status ?? "") ? "quiet" : "ok"));
+const stateWord = computed(() => {
+  if (!item.value) return "";
+  if (d.value?.ended) return item.value.status === "cancelled" ? "已放弃" : "已结束";
+  if (d.value?.phase === "watching") return "观察中";
+  return itemStatusLabel[item.value.status] ?? item.value.status;
+});
+
+// ---- 观察中 / 已结束 (src/items/lifecycle.ts) ----------------------------------------------------------
+const phasing = ref(false), busyPhase = ref(false);
+async function setPhase(phase: "active" | "watching" | "done" | "cancelled", days?: number) {
+  const x = d.value;
+  if (!x || busyPhase.value) return;
+  let closeChildren = false;
+  if ((phase === "done" || phase === "cancelled") && x.openUnder > 0) {
+    const ok = await confirmDialog(`一起结束 ${x.openUnder} 件？`, { message: `「${x.item.title}」下面还有 ${x.openUnder} 件没结。结束这条线会把它们一起${phase === "cancelled" ? "取消" : "结束"}；不想这样就先把它们移出这条线。`, okText: `一起结束 ${x.openUnder} 件` });
+    if (!ok) return;
+    closeChildren = true;
+  }
+  busyPhase.value = true;
+  try {
+    await put(`/api/work/${x.item.id}/phase`, { phase, ...(closeChildren ? { closeChildren } : {}), ...(days ? { days } : {}) });
+    phasing.value = false;
+    toast(phase === "watching" ? "先观察：期满没有新问题会自己结束" : phase === "active" ? (x.ended ? "重新打开了，关注和指标接着来" : "回到进行中") : phase === "cancelled" ? "放弃了这条线" : "结束了，助手在写收尾小结", "ok");
+    void load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    busyPhase.value = false;
+  }
+}
 
 // The goal: the first line of the detail; the rest opens on demand (`expanded`, above).
 const goal = computed(() => (item.value?.detail ?? "").trim().split(/\n/)[0]?.replace(/^#+\s*/, "") ?? "");
@@ -219,7 +253,7 @@ const editing = ref(false);
       </div>
       <template v-else-if="d && item">
         <header class="hero">
-          <div class="kind small"><span class="state" :class="tone"><i />{{ itemStatusLabel[item.status] ?? item.status }}</span><span class="muted">{{ kindWord }}</span></div>
+          <div class="kind small"><span class="state" :class="tone"><i />{{ stateWord }}</span><span class="muted">{{ kindWord }}</span></div>
           <h1>{{ item.title }}</h1>
           <p v-if="goal && !expanded" class="goal">{{ goal }}<button v-if="more" type="button" class="lnk small" @click="expanded = true">展开</button></p>
           <div v-else-if="expanded" class="goal-full"><Markdown :source="item.detail" class="prose" /><button type="button" class="lnk small" @click="expanded = false">收起</button></div>
@@ -231,10 +265,35 @@ const editing = ref(false);
           </p>
           <div class="acts row wrap">
             <button v-if="editable" type="button" class="btn ghost sm" @click="editing = true"><Icon name="edit" :size="14" />编辑</button>
-            <button v-if="top" type="button" class="btn ghost sm" title="现在整理现状和下一步" @click="refresh"><Icon name="refresh" :size="14" />更新</button>
+            <button v-if="top && !d.ended" type="button" class="btn ghost sm" title="现在整理现状和下一步" @click="refresh"><Icon name="refresh" :size="14" />更新</button>
+            <button v-if="top && editable && !d.ended" type="button" class="btn ghost sm" title="先观察、现在结束或放弃" @click="phasing = true"><Icon name="flag" :size="14" />收尾</button>
             <button type="button" class="btn sm" :class="{ primary: !askOpen }" :aria-pressed="askOpen" @click="setAsk(!askOpen)"><Icon name="chat" :size="14" />问这条{{ isLine ? "线" : "工作项" }}</button>
           </div>
         </header>
+
+        <!-- 观察中 / 已结束: where the line is in its life, and the one thing to do about it. -->
+        <section v-if="d.ended && top" class="phase ended" aria-label="这条线已结束">
+          <div class="ph-head">
+            <Icon :name="item.status === 'cancelled' ? 'x' : 'check'" :size="16" class="ph-icon" :class="{ dropped: item.status === 'cancelled' }" />
+            <span class="ph-text"><strong>{{ item.status === "cancelled" ? "已放弃" : "已结束" }}</strong><template v-if="d.ended.at"> · {{ dayLabel(d.ended.at) }}</template><template v-if="d.ended.reason"> · {{ d.ended.reason }}</template></span>
+            <button v-if="editable" type="button" class="btn sm" :disabled="busyPhase" @click="setPhase('active')"><Icon name="refresh" :size="14" />重新打开</button>
+          </div>
+          <div v-if="d.summary" class="ph-summary">
+            <div class="ph-label small muted">收尾小结</div>
+            <Markdown :source="d.summary" class="prose" />
+          </div>
+          <p v-else-if="d.ended.at && daysAgo(d.ended.at) < 1 && (item.kind === 'line' || d.children.length)" class="small muted ph-note">收尾小结还在写，写好会出现在这里。</p>
+        </section>
+        <section v-else-if="d.phase === 'watching' && top" class="phase watch" aria-label="这条线在观察中">
+          <div class="ph-head">
+            <Icon name="eye" :size="16" class="ph-icon" />
+            <span class="ph-text"><strong>观察中</strong><template v-if="d.watchUntil"> · 到 {{ dayLabel(d.watchUntil) }}</template> · 期间群和指标照看；没有新问题会自动结束</span>
+            <span v-if="editable" class="row ph-acts">
+              <button type="button" class="btn sm" :disabled="busyPhase" @click="setPhase('done')">现在结束</button>
+              <button type="button" class="btn sm ghost" :disabled="busyPhase" @click="setPhase('active')">回到进行中</button>
+            </span>
+          </div>
+        </section>
 
         <section v-if="d.flow" class="flow" aria-label="流程进度">
           <div class="flow-head small muted">{{ d.flow.name }}<template v-if="d.flow.current"> · 现在在「{{ d.flow.current.name }}」</template></div>
@@ -364,6 +423,7 @@ const editing = ref(false);
     <LineAsk v-if="askOpen && item" class="ask" :item-id="item.id" :title="item.title" :space-id="item.spaceId" :listen-id="d?.listen?.id ?? null" :line="isLine" @close="setAsk(false)" />
     <WorkSheet v-if="sheet" :change="sheet.change" :next="sheet.next" :line-title="item?.title" @close="sheet = null" @changed="load" />
     <WorkEdit v-if="editing && item" :item="item" @close="editing = false" @saved="load" />
+    <WorkPhase v-if="phasing && item" :title="item.title" :watching="d?.phase === 'watching'" @close="phasing = false" @pick="(p, days) => setPhase(p, days)" />
   </div>
 </template>
 
@@ -390,6 +450,24 @@ const editing = ref(false);
 .acts { gap: 6px; justify-content: center; }
 
 .flow { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); min-width: 0; }
+.state.watch { color: var(--accent); }
+.state.watch i { background: transparent; border: 1.5px solid var(--accent); width: 8px; height: 8px; box-sizing: border-box; }
+
+/* 观察中 / 已结束: one band under the title. */
+.phase { display: grid; gap: 10px; padding: 12px 16px; border-radius: var(--radius); border: 1px solid var(--line); min-width: 0; }
+.phase.watch { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.phase.ended { background: var(--sunken); }
+.ph-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.ph-icon { flex: none; }
+.phase.watch .ph-icon { color: var(--accent); }
+.phase.ended .ph-icon { color: var(--ok); }
+.phase.ended .ph-icon.dropped { color: var(--muted); }
+.ph-text { flex: 1; min-width: min(240px, 100%); font-size: 14px; line-height: 1.6; color: var(--ink-2); overflow-wrap: anywhere; }
+.ph-text strong { color: var(--ink); }
+.ph-acts { gap: 6px; flex: none; }
+.ph-summary { display: grid; gap: 4px; padding-top: 10px; border-top: 1px dashed var(--line-strong); min-width: 0; }
+.ph-label { letter-spacing: 0.04em; font-weight: 600; }
+.ph-note { margin: 0; }
 .h2 { font-family: var(--serif); font-size: 18px; font-weight: 650; margin: 0 0 10px; }
 .busy-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; align-items: start; }
 .busy-grid.solo { grid-template-columns: minmax(0, 1fr); }

@@ -5,7 +5,7 @@ import Icon from "./Icon.vue";
 import WorkStageTrack from "./WorkStageTrack.vue";
 import WorkTimeline from "./WorkTimeline.vue";
 import { itemKindLabel, toast } from "../store";
-import { dayLabel, daysAgo, flatChildren, itemStatusLabel, waitsForOwner, type ChangeLite, type Line, type NextLite } from "../lib/work";
+import { dayLabel, daysAgo, flatChildren, itemStatusLabel, shortDay, waitsForOwner, type ChangeLite, type Line, type NextLite } from "../lib/work";
 
 /**
  * One line on the work page: its name, where it stands as of its last look, its last key changes
@@ -34,7 +34,8 @@ async function refresh() {
   <article class="line card" :aria-labelledby="`line-${l.id}`">
     <header class="head">
       <router-link :id="`line-${l.id}`" :to="`/work/${l.id}`" class="name">{{ l.title }}</router-link>
-      <span class="state" :class="tone"><i />{{ itemStatusLabel[l.status] ?? l.status }}</span>
+      <span v-if="l.phase === 'watching'" class="state watch" :title="l.watchUntil ? `观察到 ${dayLabel(l.watchUntil)}，期间没有新问题会自动结束` : undefined"><i />观察中<template v-if="l.watchUntil"> · 到 {{ shortDay(l.watchUntil) }}</template></span>
+      <span v-else class="state" :class="tone"><i />{{ itemStatusLabel[l.status] ?? l.status }}</span>
       <span class="facts">
         <span v-if="l.kind !== 'line'">{{ itemKindLabel[l.kind] ?? l.kind }}</span>
         <span>{{ l.counts.changes }} 条{{ l.counts.lastAt ? ` · ${dayLabel(l.counts.lastAt)}` : "" }}</span>
@@ -75,6 +76,8 @@ async function refresh() {
 .state i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .state.ok i { background: var(--ok); }
 .state.warn i { background: var(--warn); }
+.state.watch { color: var(--accent); }
+.state.watch i { background: transparent; border: 1.5px solid var(--accent); width: 8px; height: 8px; box-sizing: border-box; }
 .facts { display: inline-flex; flex-wrap: wrap; gap: 0 10px; font-size: 12px; color: var(--muted); }
 .today { color: var(--ink-2); }
 .overdue { color: var(--danger); }

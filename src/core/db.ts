@@ -2223,6 +2223,11 @@ export const migrations: readonly string[] = [
    alter table item_changes add column next text;
    alter table item_changes add column origin text not null default 'follow';
    alter table item_changes add column noise integer not null default 0;`,
+  // A line's lifecycle (items/lifecycle.ts): 进行中 (phase null) → 观察中 (`watching` until `watch_until`)
+  // → 已结束 (status done / cancelled, closed_at). `phase_since`: when it entered its phase.
+  `alter table items add column phase text;
+   alter table items add column phase_since text;
+   alter table items add column watch_until text;`,
 ];
 
 export type Db = DatabaseSync;

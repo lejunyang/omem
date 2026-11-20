@@ -1255,6 +1255,13 @@ export const configSchema = z.object({
     autoAdvance: z.number().int().min(1).max(20).default(3),
     staleDays: z.number().min(1).max(365).default(2),
   }).default(() => ({ commits: { enabled: true, quietMinutes: 30 }, autoAdvance: 3, staleDays: 2, idleRounds: 3, gateLadder: { enabled: true, after: 5 }, follow: { enabled: true, quietMinutes: 20, maxMessages: 30, maxRunsPerDay: 12 } })),
+  /**
+   * Work lines (items/lifecycle.ts): a line that looks done is watched `watchDays` (its 关注 still reads its
+   * groups, its metrics are still taken) and ends by itself once nothing new came up in that time.
+   */
+  workLines: z.object({
+    watchDays: z.number().int().min(1).max(60).default(14),
+  }).default(() => ({ watchDays: 14 })),
   workState: z
     .object({
       days: z.number().int().min(3).max(60).default(21),

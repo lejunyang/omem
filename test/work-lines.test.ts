@@ -67,10 +67,11 @@ describe("工作线：上下层", () => {
     expect(() => setParent(app, line.id, line.id)).toThrow(/自己/);
     const other = upsertItem(app, undefined, { title: "别人的", userId: "member" } as never, "user");
     expect(() => setParent(app, other.id, line.id)).toThrow(/同一个人/);
-    // A line with something open under it does not expire; with nothing left it goes by a todo's period.
+    // A line never expires: with everything under it done it goes into 观察, and its lifecycle ends it (items/lifecycle.ts).
     expect(itemExpiry(app, getItem(app, line.id))).toBeNull();
     for (const id of [bug.id, req.id]) upsertItem(app, id, { status: "done" }, "user");
-    expect(itemExpiry(app, getItem(app, line.id))?.text).toContain("14 天");
+    expect(itemExpiry(app, getItem(app, line.id))).toBeNull();
+    expect(getItem(app, line.id).phase).toBe("watching");
     expect(all(app.db, "select text from item_events where item_id = ? and text like '归到「%'", req.id)).toEqual([{ text: "归到「示例商城 · 退款改造」下面" }]);
     expect(all(app.db, "select text from item_events where item_id = ? and text like '%归到这里'", req.id)).toEqual([{ text: "「运费退了两次」归到这里" }]);
   });
@@ -297,10 +298,10 @@ describe("工作线：接口", () => {
     const r = running(app, "agent", { lineState: line.id });
     submitLineState(app, r.id, { now: "截至今天，编码做完", next: [{ text: "补测试", why: "", refs: [], kind: "test" }] });
     const w = (await server.inject("/api/work")).json();
-    expect(Object.keys(w).sort()).toEqual(["lines", "loose", "places", "waiting"]);
+    expect(Object.keys(w).sort()).toEqual(["ended", "endedMore", "lines", "loose", "places", "waiting"]);
     expect(w.lines.map((l: { id: string }) => l.id)).toEqual([line.id, started.id]);
     const l = w.lines[0];
-    expect(Object.keys(l).sort()).toEqual(["children", "counts", "dueAt", "id", "kind", "listen", "next", "now", "spaceId", "status", "timeline", "title"]);
+    expect(Object.keys(l).sort()).toEqual(["children", "counts", "dueAt", "id", "kind", "listen", "next", "now", "phase", "phaseSince", "spaceId", "status", "timeline", "title", "watchUntil"]);
     expect(l.now.text).toBe("截至今天，编码做完");
     expect(l.counts.changes).toBeGreaterThan(0);
     expect(l.timeline.at(-1).summary).toContain("「编码」做完");
@@ -311,7 +312,7 @@ describe("工作线：接口", () => {
     expect(w.loose.map((i: { id: string }) => i.id)).toEqual([loose.id]);
     expect(Object.keys(w.waiting).sort()).toEqual(["asks", "candidates", "changes", "drafts", "gates", "total"]);
     const d = (await server.inject(`/api/work/${req.id}`)).json();
-    expect(Object.keys(d).sort()).toEqual(["ancestors", "chats", "children", "flow", "item", "listen", "materials", "next", "now", "timeline"]);
+    expect(Object.keys(d).sort()).toEqual(["ancestors", "chats", "children", "ended", "flow", "item", "listen", "materials", "next", "now", "openUnder", "phase", "phaseSince", "summary", "timeline", "watchUntil"]);
     expect(d.ancestors).toEqual([{ id: line.id, title: line.title }]);
     expect(d.flow.current.id).toBe("test");
     const top = (await server.inject(`/api/work/${line.id}`)).json();

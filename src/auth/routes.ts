@@ -255,6 +255,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/work/activities": "owner",
   "GET /api/work/:id": "owner",
   "POST /api/work/:id/refresh": "owner",
+  // A line's lifecycle (items/lifecycle.ts): its phase, and the lines that ended.
+  "GET /api/work/ended": "owner",
+  "PUT /api/work/:id/phase": "owner",
   "PUT /api/items/:id/parent": "owner",
   "PUT /api/item-next/:id": "owner",
   "PUT /api/item-changes/:id/noise": "owner",

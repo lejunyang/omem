@@ -21,6 +21,14 @@ export const lineStateSchema = z.object({
     refs: z.array(z.string().trim().max(200)).max(10).default([]).describe("依据：src:…#L…、mem:…、事项 id、阶段、指标名"),
     kind: z.enum(NEXT_KINDS).describe("read 读材料理清 / test 写或跑测试 / code 改代码 / ask 去问人 / data 看数据"),
   })).max(3).default([]),
+  phase: z.object({
+    state: z.enum(["active", "watching", "done", "cancelled"]).describe("active 还在做 / watching 做完了、上线后还要看一阵 / done 确实结束了 / cancelled 不做了"),
+    reason: z.string().trim().min(1).max(300).describe("依据的一句话：需求已全量、流程走完、工作项都结了、本人说做完了……"),
+    refs: z.array(z.string().trim().max(200)).max(10).default([]).describe("依据：src:…#L…、mem:…、事项 id、阶段"),
+    confidence: z.number().min(0).max(1).describe("把握，0 到 1"),
+    days: z.number().int().min(1).max(365).optional().describe("watching 时建议观察几天（宿主最多按 60 天算）"),
+  }).optional().describe("这条线到了哪一段（没把握就不填）：宿主按把握决定进入观察、结束，拿不准的问本人一次"),
+  summary: z.string().trim().min(1).max(4000).optional().describe("只在给结束的线写收尾时填：做成了什么、关键决定、上线后数字怎么样、还剩什么"),
 });
 
 /** `propose_lines`: the lines the nightly work-state sees the owner pushing on. */

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setTimeZone } from "../web/src/lib/time.ts";
-import { byWeek, changeTone, dayKeyLabel, dayLabel, flatChildren, refsMarkdown, stageTone, waitsForOwner, weekColumns, weekLabel, type ChangeLite, type Child } from "../web/src/lib/work.ts";
+import { byMonth, byWeek, changeTone, dayKeyLabel, dayLabel, endedLine, flatChildren, refsMarkdown, shortDay, stageTone, waitsForOwner, weekColumns, weekLabel, type ChangeLite, type Child } from "../web/src/lib/work.ts";
 
 // 2026-11-20 is a Friday; 15:00 in Shanghai.
 const now = Date.parse("2026-11-20T07:00:00Z");
@@ -54,5 +54,18 @@ describe("工作页的呈现（web/src/lib/work）", () => {
 
   it("来源只把 src / mem / msg 写成引用链接", () => {
     expect(refsMarkdown(["src:s1#L3-L9", "r0abc", "mem:m1"])).toBe("[原件 1](src:s1#L3-L9)　[记忆 2](mem:m1)");
+  });
+
+  it("已结束的线按本人时区的月份分组，一行写小结的第一句，没有就写原因", () => {
+    const rows = [
+      { id: "a", closedAt: "2026-11-30T17:00:00Z", summary: "## 做成了什么\n按已发货行退款，12 月 2 日全量。", reason: "自动结束：观察了 14 天", status: "done" },
+      { id: "b", closedAt: "2026-11-10T04:00:00Z", summary: null, reason: "本人结束了这条线", status: "done" },
+      { id: "c", closedAt: "2026-10-31T17:30:00Z", summary: null, reason: null, status: "cancelled" },
+    ];
+    // 11-30 17:00 UTC is 12-01 01:00 in Shanghai.
+    expect(byMonth(rows).map((g) => [g.label, g.items.map((x) => x.id)])).toEqual([["2026 年 12 月", ["a"]], ["2026 年 11 月", ["b", "c"]]]);
+    expect(rows.map(endedLine)).toEqual(["按已发货行退款，12 月 2 日全量。", "本人结束了这条线", "放弃了"]);
+    expect(shortDay("2026-12-05T04:00:00Z", now)).toBe("12/05");
+    expect(shortDay("2027-01-05T04:00:00Z", now)).toBe("2027/01/05");
   });
 });

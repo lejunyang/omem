@@ -10,6 +10,7 @@ import { CODE_STARTERS } from "../agents/tool-help.ts";
 import { validateItemRefs } from "./evidence.ts";
 import { addMaterials } from "./materials.ts";
 import { setParent } from "./parent.ts";
+import { judgePhase, saveWrapUp } from "./lifecycle.ts";
 import { addItemEvent, getItem, isClosed, upsertItem, type LineNow } from "./store.ts";
 import { checkParent, descendantIds, rootOf } from "./tree.ts";
 
@@ -65,13 +66,22 @@ function lineOfRun(app: App, runId: string) {
 export function submitLineState(app: App, runId: string, input: z.input<typeof lineStateSchema>) {
   const a = lineStateSchema.parse(input);
   const item = lineOfRun(app, runId);
-  const evidence = a.next.flatMap((n) => n.refs).filter((r) => /^(src|mem|msg):/.test(r));
+  const evidence = [...a.next.flatMap((n) => n.refs), ...(a.phase?.refs ?? [])].filter((r) => /^(src|mem|msg):/.test(r));
   validateItemRefs(app, evidence, item.userId);
+  // The wrap-up after the line ended (items/lifecycle.ts): its closing summary, no next steps.
+  if ((getRun(app, runId).input as { lineWrapUp?: boolean }).lineWrapUp) {
+    if (!a.summary) throw new HttpError(400, "收尾要写 summary：做成了什么、关键决定、上线后数字怎么样、还剩什么");
+    saveWrapUp(app, item, a.now, a.summary, runId);
+    setRunOutput(app, runId, { lineState: { itemId: item.id, wrapUp: true } });
+    return `已把收尾小结记在「${truncate(item.title, 40)}」上。不用再通知本人，用一句话结束。`;
+  }
   const at = now();
-  const state: LineNow = { text: a.now, people: a.people.map((p) => ({ name: p.name, ...(p.open_id ? { openId: p.open_id } : {}), role: p.role })), weeks: a.weeks, at, runId };
+  const state: LineNow = { ...(item.now?.summary ? { summary: item.now.summary, summaryAt: item.now.summaryAt } : {}), text: a.now, people: a.people.map((p) => ({ name: p.name, ...(p.open_id ? { openId: p.open_id } : {}), role: p.role })), weeks: a.weeks, at, runId };
   const ids: string[] = [];
+  const closed = isClosed(item.status);
   tx(app.db, () => {
     run(app.db, "update items set now = ? where id = ?", JSON.stringify(state), item.id);
+    if (closed) return;
     run(app.db, "update item_next set status = 'expired', updated_at = ? where item_id = ? and status = 'open'", at, item.id);
     for (const n of a.next) {
       const id = newId("nx");
@@ -79,9 +89,11 @@ export function submitLineState(app: App, runId: string, input: z.input<typeof l
       ids.push(id);
     }
   });
-  setRunOutput(app, runId, { lineState: { itemId: item.id, next: ids } });
+  // Where the look thinks the line is: the host acts only with enough confidence (items/lifecycle.ts).
+  const phase = a.phase && !closed ? judgePhase(app, item.id, a.phase, runId) : "";
+  setRunOutput(app, runId, { lineState: { itemId: item.id, next: ids, ...(a.phase ? { phase: { ...a.phase, applied: phase } } : {}) } });
   app.emit({ type: "changed", entity: "item", id: item.id, spaceId: item.spaceId });
-  return `已记下「${truncate(item.title, 40)}」的现状${ids.length ? `和 ${ids.length} 条下一步（本人每天在一张卡片上一起看各条线的下一步）` : "（这次没有下一步）"}。不用再通知本人，用一句话结束。`;
+  return `已记下「${truncate(item.title, 40)}」的现状${ids.length ? `和 ${ids.length} 条下一步（本人每天在一张卡片上一起看各条线的下一步）` : "（这次没有下一步）"}。${phase}不用再通知本人，用一句话结束。`;
 }
 
 /** The owner's latest 不用 on this line's suggestions: the look reads them so it does not suggest them again. */

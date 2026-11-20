@@ -82,6 +82,9 @@ describe("items close themselves", () => {
     const chat = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_x", title: "项目 A 群", text: [line(t, "小王", "@本人 员工号要加白", "om_1"), line(t + 60_000, "本人（本人）", "已经加白了", "om_2")].join("\n") });
     const item = upsertItem(app, undefined, { title: "给员工号加白", sourceRefs: [`src:${chat.id}#L1`] });
     run(app.db, "update items set created_at = ? where id = ?", ago(0.1), item.id);
+    // A work line from the same chat is not closed by a reply there: its lifecycle ends it.
+    const lineItem = upsertItem(app, undefined, { kind: "line", title: "项目 A 上线", sourceRefs: [`src:${chat.id}#L1`] });
+    run(app.db, "update items set created_at = ? where id = ?", ago(0.1), lineItem.id);
     applyBacklog(app);
 
     let cs = await handledCandidates(app);

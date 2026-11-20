@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，这里只留最近的；更早的按时间段放在同目录的归档文件里。读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-20
+updated: 2026-11-21
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -16,6 +16,15 @@ updated: 2026-11-20
 - [2026-10](./changes-2026-10.md)（10-13 至 10-31，128 节）：规则页与规则引擎、多 Agent 协作、访客与私聊指令、分档评审、多个飞书机器人、会议规则、插件、设备的外部 Agent、夜间复盘、原件治理、需求树。
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
+
+## 工作线（四）：自己结束，结束了去哪看（11-21）
+
+- 新文件 `src/items/lifecycle.ts`：进行中 → 观察中 → 已结束。迁移加 `items.phase`、`phase_since`、`watch_until`，`Item` 多 `phase`、`phaseSince`、`watchUntil`，`LineNow` 多 `summary`、`summaryAt`；配置 `workLines.watchDays`（默认 14）。
+- 进入观察不问本人：流程走完（`flows/engine.ts end` 调 `flowCompleted`）、线下都结了且有完成的（`store.ts` 新的 `onItemStatus` 钩子里看子事项关闭）、一个待办期限没动静，或看线的运行交 `submit_line_state` 的 `phase`（`items/line-schemas.ts`，把握 ≥ 0.6）。看线的任务（`channels/listen-assist.ts lineStateTask`）多“这条线在观察中”“本人以前怎么定的”和 phase 的判断说明。
+- 结束：心跳里 `lineLifecycleDue`（`agents/jobs.ts`）按守卫结束、悄悄延期或问一次（`line-end` 卡，14 天一条、每天两张）；结束时停关注和指标、下一步过期、排一轮收尾（`queueWrapUp`，`submit_line_state` 交 `summary`，`lines.ts` 里 `lineWrapUp` 的分支）；重新打开时恢复。自动结束的事件以“工作线自动结束”开头，`items/expiry.ts digestFor` 把它算进清点，`digestBody` 单列“工作线已结束”。
+- `items/expiry.ts itemExpiry`：显示成线的顶层事项（`tree.ts lineLike`）不再过期。`items/changes.ts` 来源多 `line`。周报（`agents/weekly-report.ts linesEnded`）多一节“本周结束和进入观察的工作线”。
+- 接口：`PUT /api/work/:id/phase`、`GET /api/work/ended`；`GET /api/work` 多 `ended`、`endedMore`，线带阶段；`GET /api/work/:id` 多 `phase`、`summary`、`ended`、`openUnder`（`auth/routes.ts` 只给本人）。
+- 网页：`web/src/views/Work.vue` 进行中下面是“观察中”小卡和默认收起的“已结束”（按月、搜索、查看更多）；`WorkLine.vue` 的状态点写“观察中 · 到 12/05”；`WorkDetail.vue` 标题下的观察中 / 已结束说明带（收尾小结、重新打开），头部“收尾”打开新组件 `components/WorkPhase.vue`。`lib/work.ts` 多 `shortDay`、`byMonth`、`endedLine`。演示库（`scripts/doc-screens.ts`）多一条观察中的线、两条结束的线，新截图 `work-ended`。
 
 ## 工作线（三）：工作页（11-20 夜）
 

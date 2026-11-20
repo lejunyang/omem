@@ -9,7 +9,13 @@ import { noteAutoOutcome } from "./auto-cases.ts";
 export type ItemKind = "todo" | "waiting" | "reminder" | "watch" | "decision" | "line";
 export const ITEM_KINDS = ["todo", "waiting", "reminder", "watch", "decision", "line"] as const;
 /** Where a line stands (items/lines.ts submitLineState): one sentence as of today, the people and what each does, the last weeks. */
-export type LineNow = { text: string; people: { name: string; openId?: string; role: string }[]; weeks: { label: string; text: string }[]; at: string; runId: string | null };
+export type LineNow = {
+  text: string; people: { name: string; openId?: string; role: string }[]; weeks: { label: string; text: string }[]; at: string; runId: string | null;
+  /** The closing summary written once the line ended (items/lifecycle.ts): what shipped, key decisions, the numbers after launch, what is left. */
+  summary?: string; summaryAt?: string;
+};
+/** Where a line is in its life (items/lifecycle.ts): null 进行中, `watching` 观察中 until `watchUntil`; 已结束 is a closed status. */
+export type LinePhase = "watching";
 /**
  * expired: closed by itself after its period passed with no progress (src/items/expiry.ts), not done.
  * candidate: made by the assistant on its own and not yet wanted (src/items/auto.ts): out of the lists,
@@ -40,6 +46,10 @@ export type Item = {
   parentId: string | null;
   /** A line's state as last written (items/lines.ts). */
   now: LineNow | null;
+  /** A line's phase and since when; while watching, until when (items/lifecycle.ts). */
+  phase: LinePhase | null;
+  phaseSince: string | null;
+  watchUntil: string | null;
 };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
 
@@ -62,6 +72,9 @@ type Row = {
   user_id: string;
   parent_id: string | null;
   now: string | null;
+  phase: string | null;
+  phase_since: string | null;
+  watch_until: string | null;
 };
 const toItem = (r: Row): Item => ({
   id: r.id,
@@ -82,6 +95,9 @@ const toItem = (r: Row): Item => ({
   userId: r.user_id ?? "owner",
   parentId: r.parent_id ?? null,
   now: json<LineNow | null>(r.now, null),
+  phase: r.phase === "watching" ? "watching" : null,
+  phaseSince: r.phase_since ?? null,
+  watchUntil: r.watch_until ?? null,
 });
 
 export function getItem(app: App, id: string): Item {
@@ -102,7 +118,7 @@ export function addItemEvent(app: App, itemId: string, kind: string, text: strin
   run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor,run_id) values(?,?,?,?,?,?,?)", itemId, now(), kind, text, JSON.stringify(sourceRefs), actor, runId ?? null);
 }
 
-export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt" | "parentId" | "now">> & { note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
+export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt" | "parentId" | "now" | "phase" | "phaseSince" | "watchUntil">> & { note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
 
 const FIELD_LABEL: Record<string, string> = {
   title: "标题",
@@ -114,6 +130,17 @@ const FIELD_LABEL: Record<string, string> = {
   waitingOn: "等待对象",
   kind: "类型",
 };
+
+/**
+ * Who hears of an item's status moving (after it is written): a line's lifecycle (items/lifecycle.ts)
+ * pauses its 关注 and metrics when it ends and restores them when it opens again. A hook that throws is
+ * logged and never undoes the change.
+ */
+export type StatusHook = (app: App, before: Item, after: Item, actor: "agent" | "user") => void;
+const statusHooks: StatusHook[] = [];
+export function onItemStatus(fn: StatusHook) {
+  if (!statusHooks.includes(fn)) statusHooks.push(fn);
+}
 
 function itemTx<T>(app: App, fn: () => T): T {
   return app.db.isTransaction ? fn() : tx(app.db, fn);
@@ -205,6 +232,12 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
     try { noteAutoOutcome(app, old, next.status, actor); } catch (e) { console.warn(`[omem] 记录自动事项的取舍失败：${(e as Error).message}`); }
   }
   if (next.status !== old.status) emitOmem(app, { type: "item.status", id, title: next.title, kind: next.kind, status: next.status, from: old.status, space: old.spaceId, item: { id, title: next.title }, ...(runId ? { runId } : {}) });
+  if (next.status !== old.status && statusHooks.length) {
+    const after = getItem(app, id);
+    for (const h of statusHooks) {
+      try { h(app, old, after, actor); } catch (e) { console.warn(`[omem] 事项状态变化的后续处理失败：${(e as Error).message}`); }
+    }
+  }
   // An item that ended gives back the workspaces its delegations still hold (their branches stay).
   if (closing) void import("../agents/code-branch.ts").then((m) => m.releaseItemWorkspaces(app, id)).catch(() => {});
   // …and what its runs still ask lapses, its notifications count as read (agents/ask-expiry.ts).

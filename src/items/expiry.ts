@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { now, truncate, localStamp } from "../core/util.ts";
 import { getItem, isClosed, itemEvents, listItems, upsertItem, type Item, type ItemKind } from "./store.ts";
-import { hasOpenChildren } from "./tree.ts";
+import { lineLike } from "./tree.ts";
 
 /**
  * Items close themselves, so the owner never has to tick off what they already handled.
@@ -17,6 +17,8 @@ import { hasOpenChildren } from "./tree.ts";
  *   reason (a DONE reaction closes it without a model). Each piece of evidence is judged once.
  * - Items already past their deadline when this arrived (the backlog) wait for the owner to
  *   look at the preview and apply it once, rather than vanishing on the first sweep.
+ * - Work lines, and top-level items shown as lines (tree.ts lineLike), take part in neither: they
+ *   are watched first and end by themselves (items/lifecycle.ts); the digest reports those too.
  */
 
 const DAY = 86_400_000;
@@ -53,8 +55,8 @@ export function itemExpiry(app: App, item: Item): Expiry | null {
     const anchor = item.remindAt ?? item.dueAt ?? reminded;
     if (anchor) return { at: new Date(Date.parse(anchor) + days.reminder * DAY).toISOString(), text: `提醒时间过后 ${days.reminder} 天` };
   }
-  // A work line lasts while something under it is still open; with nothing left it goes by a todo's period.
-  if (item.kind === "line" && hasOpenChildren(app, item.id)) return null;
+  // A work line (or a top-level item shown as one) never expires: its lifecycle ends it (items/lifecycle.ts).
+  if (lineLike(app, item)) return null;
   const period = days[item.kind === "reminder" || item.kind === "line" ? "todo" : item.kind];
   const base = Date.parse(lastActivity(app, item)) + period * DAY;
   const anchor = item.dueAt ?? item.remindAt;
@@ -134,6 +136,8 @@ export async function handledCandidates(app: App, opts: { maxReactionChecks?: nu
   const out: Candidate[] = [];
   for (const item of listItems(app, { status: "active", userId: opts.userId, limit: 100_000 })) {
     if (!backlog && item.createdAt < since) continue;
+    // A line is not closed by one reply in its chat: its lifecycle ends it (items/lifecycle.ts).
+    if (lineLike(app, item)) continue;
     const chatRefs = item.sourceRefs.filter((r) => r.startsWith("src:"));
     if (!chatRefs.length) continue;
     const f = ownerFollowUp(app, chatRefs);
@@ -200,7 +204,7 @@ export function digestFor(app: App, userId: string, at = new Date()) {
     `select i.id, i.title, i.status, e.text from items i join item_events e on e.item_id = i.id
       where i.user_id = ? and i.status in ('expired', 'done', 'cancelled') and i.closed_at > ? and e.actor = 'agent'
         and e.id = (select max(id) from item_events where item_id = i.id)
-        and (e.text like '自动过期%' or e.text like '推断%')
+        and (e.text like '自动过期%' or e.text like '推断%' or e.text like '${LINE_ENDED}%')
       order by i.closed_at`,
     userId,
     last,
@@ -215,11 +219,17 @@ export function markDigestSent(app: App, userId: string, at = new Date()) {
   setKv(app, `item_digest:${userId}`, at.toISOString());
 }
 
+/** A line that ended by itself (items/lifecycle.ts) says so with this, so the digest offers to reopen it. */
+export const LINE_ENDED = "工作线自动结束";
+export const isLineEnded = (c: { text: string }) => c.text.startsWith(LINE_ENDED);
+
 /** One line per item, ready for a card or the in-app notification. */
 export function digestBody(app: App, d: NonNullable<ReturnType<typeof digestFor>>) {
-  const expired = d.closed.filter((c) => c.status === "expired");
-  const handled = d.closed.filter((c) => c.status !== "expired");
+  const lines = d.closed.filter(isLineEnded);
+  const expired = d.closed.filter((c) => c.status === "expired" && !isLineEnded(c));
+  const handled = d.closed.filter((c) => c.status !== "expired" && !isLineEnded(c));
   return [
+    lines.length ? `**工作线已结束（${lines.length}）**\n${lines.map((c) => `- ${c.title}：${truncate(c.text.split("\n")[0].replace(new RegExp(`^${LINE_ENDED}：`), "").replace(/。?不对的话.*$/, ""), 80)}`).join("\n")}` : "",
     handled.length ? `**看起来已经处理了（${handled.length}）**\n${handled.map((c) => `- ${c.title}：${truncate(c.text.split("\n")[0].replace(/^推断(已处理|不再需要)：/, "").replace(/。?不对的话在事项页恢复。$/, ""), 80)}`).join("\n")}` : "",
     expired.length ? `**没有新进展，已自动过期（${expired.length}）**\n${expired.map((c) => `- ${c.title}`).join("\n")}` : "",
     d.soon.length ? `**明天会自动过期（${d.soon.length}）**\n${d.soon.map((s) => `- ${s.item.title}：${s.expiry.text}`).join("\n")}` : "",
