@@ -57,15 +57,15 @@ export function isBackground(app: App, r: Run) {
  * The run's awareness sections (related runs, the item's other places, candidates), separated from
  * the task by a rule; "" when there is nothing. Never fails a run.
  */
-export function awarenessNote(app: App, runId: string | null | undefined): string {
+export function awarenessNote(app: App, runId: string | null | undefined, withTools = true): string {
   if (!runId) return "";
   try {
     const r = getRun(app, runId);
     const userId = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", runId)?.user_id ?? OWNER;
     const parts = [
       relatedNote(app, runId),
-      itemPlacesNote(app, runId, userId),
-      r.kind === "ask" || r.kind === "agent" ? candidatesNote(app, runId, userId) : "",
+      itemPlacesNote(app, runId, userId, withTools),
+      r.kind === "ask" || r.kind === "agent" ? candidatesNote(app, runId, userId, withTools) : "",
     ].filter(Boolean);
     return parts.length ? `\n\n---\n\n${parts.join("\n\n")}` : "";
   } catch (e) {

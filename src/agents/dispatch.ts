@@ -4,7 +4,8 @@ import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
 import { retireRecordedSession, sessionCleanup } from "./session-cleanup.ts";
-import { DOUBAO_TOOL_NOTE, runDoubaoCli } from "./doubao-cli.ts";
+import { backendCapabilities } from "./capabilities.ts";
+import { runDoubaoCli } from "./doubao-cli.ts";
 import { probeFor } from "./probe.ts";
 import { resolveModelOption } from "./models.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
@@ -15,7 +16,7 @@ import { revokeToolToken } from "./tools.ts";
 /** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   try {
-    return await withNetworkPolicy(app, profile, { signal: req.signal, runId: req.runId, stop: () => { if (req.mcp) revokeToolToken(req.mcp.token); } }, (p, signal) => runOn(app, p, { ...req, signal, env: { ...req.env, ...networkEnvironment(app, p) } }, quotaEvents(app, p, emit)));
+    return await withNetworkPolicy(app, profile, { signal: req.signal, runId: req.runId, stop: () => { if (req.mcp) revokeToolToken(req.mcp.token); } }, (p, signal) => runOn(app, p, { ...req, capabilities: backendCapabilities(p), signal, env: { ...req.env, ...networkEnvironment(app, p) } }, quotaEvents(app, p, emit)));
   } finally {
     afterTurn(app, profile);
   }
@@ -61,8 +62,7 @@ async function runDoubaoTurn(app: App, profile: AgentProfile, req: AgentRequest,
   // The CLI requires its exact offered spelling, including spaces and capitalization.
   // Resolve here so profile defaults, role overrides and automatic choices all use the probe.
   if (profile.model) profile = { ...profile, model: resolveModelOption(profile.model, probeFor(app, profile)?.models ?? []).value };
-  const system = req.mcp ? [req.system, DOUBAO_TOOL_NOTE].filter(Boolean).join("\n\n") : req.system;
-  return runDoubaoCli(profile, { ...req, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, { ...req, system }, req.prompt, emit), system: undefined }, emit);
+  return runDoubaoCli(profile, { ...req, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, req, req.prompt, emit), system: undefined }, emit);
 }
 
 /**

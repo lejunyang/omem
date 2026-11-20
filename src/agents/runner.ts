@@ -23,7 +23,8 @@ import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, exc
 import { aiLabel, candidateProfiles, candidateWhen, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
-import { DOUBAO_CLI_INSTALL } from "./doubao-cli.ts";
+import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
+import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
@@ -43,12 +44,12 @@ import { accountOf } from "./sandbox.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** What a run is told about the spaces related to its own. */
-function relatedGuide(related: { space: string; name: string; kind: string; note: string }[], readOnly: boolean) {
+function relatedGuide(related: { space: string; name: string; kind: string; note: string }[], readOnly: boolean, hasTools: boolean) {
   return [
     ...related.map((r) => `- ${r.space}（${r.name}，${kindLabel(r.kind)}）${r.note ? `：${r.note}` : ""}`),
     "",
-    `search、scan、find_symbol 不指定 space 时会同时查当前空间和这些空间，结果里标出所在空间；只查当前空间就传 space。问题或材料涉及它们（调用、依赖、共用的约定）时去读它们的原件和页面，不要只凭当前空间下结论。${readOnly ? "这次对这些空间只能读：记忆、事项、页面只写进当前空间，用到它们的材料时照常引用原件。" : ""}`,
-  ].join("\n");
+    hasTools ? `search、scan、find_symbol 不指定 space 时会同时查当前空间和这些空间，结果里标出所在空间；只查当前空间就传 space。问题或材料涉及它们（调用、依赖、共用的约定）时去读它们的原件和页面，不要只凭当前空间下结论。${readOnly ? "这次对这些空间只能读：记忆、事项、页面只写进当前空间，用到它们的材料时照常引用原件。" : ""}` : "",
+  ].join("\n").trimEnd();
 }
 export type Role = { name: string; description: string; tools: string[]; writes: boolean; modes: string[]; skills: string[]; body: string; customized: boolean };
 
@@ -98,22 +99,25 @@ export function loadRole(name: string, app?: App): Role {
  * is followed by `<!-- tools: a b -->` stays when the run has any of them (a coder reads nothing
  * about items, wake-ups or how to write memories).
  */
-export function commonGuide(tools: Set<string>) {
-  return toolSections(readFileSync(join(rolesDir(), "_common.md"), "utf8"), tools);
+export function commonGuide(tools: Set<string>, capabilities = backendCapabilities({ transport: "acp" })) {
+  const guide = readFileSync(join(rolesDir(), "_common.md"), "utf8");
+  // The preamble before the first section describes the MCP interface.
+  const sections = capabilities.omemAccess === "mcp" ? guide : guide.slice(guide.search(/^## /m));
+  const body = toolSections(sections, tools, capabilities.localTools);
+  return capabilities.omemAccess === "shell-bridge" ? DOUBAO_TOOL_NOTE + "\n\n" + body : body;
 }
 
-/** A guide without its sections about tools this run does not have (roles may have such sections too). */
-export function toolSections(text: string, tools: Set<string>) {
-  return text
-    .replace(/\r\n/g, "\n")
-    .split(/(?=^## )/m)
-    .flatMap((part) => {
-      const m = /^(## [^\n]*\n)<!-- tools: ([^>]*?) -->\n/.exec(part);
-      if (!m) return [part];
-      return m[2].split(/\s+/).some((t) => tools.has(t)) ? [part.replace(m[0], m[1])] : [];
-    })
-    .join("")
-    .trim();
+/** Adjacent markers below a heading all apply. A tools marker matches any listed name. */
+export function toolSections(text: string, tools: Set<string>, localTools = true) {
+  return text.replace(/\r\n/g, "\n").split(/(?=^## )/m).flatMap(part => {
+    const header = /^(## [^\n]*\n)((?:<!-- (?:tools|needs): [^>\n]+ -->\n?)+)/.exec(part);
+    if (!header) return [part];
+    for (const [, kind, value] of header[2].matchAll(/<!-- (tools|needs): (.*?) -->/g)) {
+      if (kind === "needs" ? !(value === "local" ? localTools : value === "tools" && tools.size > 0)
+        : !value.split(/\s+/).some(t => tools.has(t))) return [];
+    }
+    return [header[1] + part.slice(header[0].length)];
+  }).join("").trim();
 }
 
 export function listAgentProfiles(app: App) {
@@ -184,7 +188,7 @@ function lessonRows(app: App, spaceId: string, userId: string, spec: string | nu
 const lessonLines = (rows: Lesson[]) => rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
 
 /** The preferences and experience a run is told, and which memories those are (passive recall and the recall accounting leave them out or count them). */
-export type LessonSet = { text: string; ids: string[] };
+export type LessonSet = { text: string; ids: string[]; recallNote?: string };
 
 /** Preferences a conversation carries whatever it turns out to be about. */
 const STANDING_PREFS = 60;
@@ -204,7 +208,7 @@ const ABOUT_CHARS = 2000;
 function lessonSet(app: App, rows: Lesson[], own: string, left: number, canRecall: boolean): LessonSet {
   const where = left > 0 && canRecall ? ownFolderNote(app, own) : "";
   const note = where ? `你自己的经验还有 ${left} 条没列在这里，按目录放着；做到相关的事时用 recall(folder="目录", query="关键词") 查：\n${where}` : "";
-  return { text: [lessonLines(rows), note].filter(Boolean).join("\n\n"), ids: rows.map((r) => r.id) };
+  return { text: lessonLines(rows), recallNote: note, ids: rows.map((r) => r.id) };
 }
 
 /**
@@ -265,7 +269,8 @@ export async function lessonIdsForTask(app: App, input: LessonInput) {
 }
 
 export async function lessonsForTask(app: App, input: LessonInput) {
-  return (await lessonsOfTask(app, input)).text;
+  const told = await lessonsOfTask(app, input);
+  return [told.text, told.recallNote].filter(Boolean).join("\n\n");
 }
 
 export type RoleRunInput = {
@@ -345,6 +350,8 @@ export type Actor = { role: RoleName } | { spec: AgentSpec };
 
 export type PreparedRun = {
   profile: AgentProfile;
+  capabilities: BackendCapabilities;
+  tools: Set<string>;
   cwd: string;
   /**
    * Standing instructions: shared rules, role or spec, environment, learned context. Without the
@@ -429,7 +436,7 @@ function workRepos(app: App, runId: string | null): string[] {
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -485,6 +492,8 @@ export function prepareRun(
   // Not what the person it works for may not do (src/auth/tools.ts), nor what needs something they lack.
   trimTools(app, userId, tools);
   dropUnavailable(app, userId, tools);
+  const capabilities = backendCapabilities(profile);
+  if (capabilities.omemAccess === "none") tools.clear();
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
   const scoped = scopeFor(app, userId, spaces)?.filter(id => !input.readScope || input.readScope.includes(id)) ?? (input.readScope ?? null);
@@ -503,23 +512,23 @@ export function prepareRun(
   const repoGuides = repos.map((r) => ({ r, text: spaceGuide(app, r.id).trim() })).filter((g) => g.text).map((g) => `## 仓库 ${g.r.name}（${g.r.id}）的说明（SPACE.md）\n\n${g.text}`).join("\n\n");
   // Skills mounted on the space, the business it belongs to and the repositories it works in.
   const parent = space.parentId ? findSpace(app, space.parentId) : null;
-  const mounted = guest ? { text: "", names: [] as string[] } : spaceSkillsText(app, [space, ...(parent ? [parent] : []), ...repos]);
+  const mounted = !tools.has("read_skill") ? { text: "", names: [] as string[] } : spaceSkillsText(app, [space, ...(parent ? [parent] : []), ...repos]);
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
   // The main assistant's own are the ones taught to `assistant` (a nightly review writes them there).
-  const told: LessonSet = guest ? { text: "", ids: [] } : input.lessons !== undefined ? { text: input.lessons, ids: input.lessonIds ?? [] } : standingLessons(app, space.id, userId, spec?.name ?? roleName, tools.has("recall"));
-  const lessons = told.text;
-  const skills = guest ? "" : skillIndex(app, spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills, mounted.names);
+  const told: LessonSet = guest ? { text: "", ids: [] } : input.lessons !== undefined ? { text: input.lessons, recallNote: input.recallNote, ids: input.lessonIds ?? [] } : standingLessons(app, space.id, userId, spec?.name ?? roleName, tools.has("recall"));
+  const lessons = [told.text, tools.has("recall") && told.recallNote].filter(Boolean).join("\n\n");
+  const skills = !tools.has("read_skill") ? "" : skillIndex(app, spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills, mounted.names);
   // Only what this run can do with them: an assistant run by a rule may consult but not hand work over.
   const agentUse = tools.has("run_agent") ? "可用 run_agent 交给它们" : tools.has("ask_agent") ? "这次运行不能交办，需要它们的专长时用 ask_agent 请教" : "";
   const agents = roleName === "assistant" && !spec && agentUse ? agentIndex(app) : "";
   const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
-    : `# 角色：${role!.description}\n\n${toolSections(role!.body, tools)}`;
-  const common = commonGuide(tools);
+    : `# 角色：${role!.description}\n\n${toolSections(role!.body, tools, capabilities.localTools)}`;
+  const common = commonGuide(tools, capabilities);
   // Who else is on the network (core/mesh.ts): for the owner's own assistant and profiles that can ask.
   const mesh = userId === OWNER && tools.has("ask_agent") ? meshNote(app) : "";
-  const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
+  const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
   const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
   // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
@@ -528,6 +537,8 @@ export function prepareRun(
   const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
   return {
     profile,
+    capabilities,
+    tools,
     cwd,
     system,
     // A replay arm answers as of the question's time.
@@ -760,7 +771,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       input = { ...input, profileId: pick.profile, model: pick.model, effort: pick.effort };
     }
   }
-  const base = prepareRun(app, { actor, lessons, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
+  const base = prepareRun(app, { actor, lessons, recallNote: told.recallNote, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
   // (A member's run moved to another backend by `own-or-other` is not the named one any more.)
   if (execution && base.profile.id === execution.profile) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }, input.userId); }
@@ -819,18 +830,17 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   /** Who the first AI was, for the words when the run moves on. */
   const firstWho = pinned ? `原指定的 AI（${aiLabel(execution!)}）` : own ? `自动选中的 AI（${aiLabel({ profile: chain[0].id, model: chain[0].model })}）` : "默认后端";
   // Other runs on the same chat, message or item, and where its item goes on elsewhere (awareness.ts).
-  const aware = internal ? "" : (await import("./awareness.ts")).awarenessNote(app, input.runId);
+  const { awarenessNote } = await import("./awareness.ts");
   // Memories close to the task that its instructions did not carry (memory/passive.ts), for the runs
   // that answer or act. The roles that keep the knowledge in order look memories up themselves, and
   // a replay arm is given its own (replay.ts). A comparison run sees the same and is not counted.
-  let task = input.task;
+  let hits: Awaited<ReturnType<typeof passiveRecall>> = [];
   if (base.recall && !input.replay && recallPurpose(input.spec?.name ?? input.role) === "answer") {
     const by = { runId: input.runId, profile: base.profile.id, spec: base.recall.agent ?? undefined };
     const count = !!input.runId && !input.shadow;
     if (count) recordRecalls(app, told.ids, { ...by, via: "lesson" });
     try {
-      const hits = await passiveRecall(app, { text: input.task.slice(0, ABOUT_CHARS), spaces: base.recall.spaces, userId: base.recall.userId, spec: base.recall.own, exclude: new Set(told.ids) });
-      if (hits.length) task = [input.task, passiveBlock(hits, "这次任务")].join("\n\n");
+      hits = await passiveRecall(app, { text: input.task.slice(0, ABOUT_CHARS), spaces: base.recall.spaces, userId: base.recall.userId, spec: base.recall.own, exclude: new Set(told.ids) });
       if (count) recordRecalls(app, hits.map((h) => h.memory.id), { ...by, via: "passive" });
     } catch (e) {
       console.warn("[omem] 给任务带上相关记忆失败：", (e as Error).message);
@@ -869,16 +879,19 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       const moved = slot.index > 0;
       i += slot.index;
       const profile = chain[i];
-      const prep = i === 0 ? base : prepareRun(app, { actor, lessons, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
+      const prep = i === 0 ? base : prepareRun(app, { actor, lessons, recallNote: told.recallNote, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
       // A check may fall back inside the code run: its AI belongs on the review, not over the coder's.
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       try {
+        const aware = internal ? "" : awarenessNote(app, input.runId, prep.tools.size > 0);
+        const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
         const req = {
           runId: input.runId,
           strictSelection: execution && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
           cwd: prep.cwd,
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
+          capabilities: prep.capabilities,
           parts: prep.parts,
           prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}`,
           allowWrites: prep.allowWrites,

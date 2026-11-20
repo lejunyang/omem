@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { prepareRun, runRole } from "../src/agents/runner.ts";
+import { prepareRun, runRole, toolSections } from "../src/agents/runner.ts";
 import { remember } from "../src/memory/store.ts";
 import type { App } from "../src/core/app.ts";
 import { createRun } from "../src/agents/runs.ts";
@@ -33,6 +33,13 @@ async function setup(env: Record<string, string>) {
 }
 
 describe("what the instructions carry", () => {
+  it("combines tool names and capability markers under a heading", () => {
+    const text = "intro\r\n## A\r\n<!-- needs: local -->\r\n<!-- tools: search scan -->\r\nfiles\r\n## B\r\n<!-- needs: tools -->\r\nlookup";
+    expect(toolSections(text, new Set(["scan"]))).toBe("intro\n## A\nfiles\n## B\nlookup");
+    expect(toolSections(text, new Set(["scan"]), false)).toBe("intro\n## B\nlookup");
+    expect(toolSections(text, new Set(), true)).toBe("intro");
+  });
+
   it("leaves out the shared guide's sections about tools the run does not have", () => {
     const app = testApp();
     app.baseUrl = "http://127.0.0.1:1";
@@ -94,7 +101,7 @@ describe("standing instructions", () => {
     expect(next.prompt).toContain("按评审修改：补上测试");
     expect(first.sent).toMatchObject({ via: "message", message: first.prompt.length, parts: { lessonCount: 0 } });
     expect(next.sent).toMatchObject({ via: "resumed", message: next.prompt.length });
-    expect(next.sent.parts).toBeUndefined();
+    expect(next.sent).toMatchObject({ systemSent: false, omemAccess: "mcp", localTools: true });
   }, 60000);
 
   it("go in as the system prompt when the agent takes one, without the clock", async () => {
@@ -108,6 +115,7 @@ describe("standing instructions", () => {
     const next = await turn("按评审修改：补上测试", first.session);
     expect(next).toMatchObject({ session: first.session, resumed: true, system: first.system });
     expect(next.prompt).not.toContain("# 角色：");
+    expect(next.sent).toMatchObject({ via: "system", systemSent: true });
     expect(first.sent).toMatchObject({ via: "system", instructions: first.system!.length });
   }, 60000);
 });
