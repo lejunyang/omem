@@ -23,7 +23,6 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
 }
 
 async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
-  const disposable = !req.persistSession && !req.resumeSessionId;
   if (profile.transport === "acp") return runAcp(profile, { ...req, cleanup: await sessionCleanup(app, profile, req, emit) }, emit);
   if (profile.transport === "doubao" || profile.transport === "doubao-cli") {
     // Doubao keeps every conversation in the owner's account: a one-off turn's session is deleted
@@ -40,10 +39,10 @@ async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (
     };
     try {
       const r = await runDoubaoTurn(app, profile, req, track);
-      if (r.sessionId && r.sessionId !== req.resumeSessionId) remember(r.sessionId);
+      if (r.sessionId && r.sessionId !== req.resumeSessionId && !made.has(r.sessionId)) remember(r.sessionId);
       return r;
     } finally {
-      if (disposable) for (const id of made) await cleanup.discard(id);
+      if (!req.persistSession) for (const id of made) await cleanup.discard(id);
     }
   }
   // The CLIs take no system prompt here: the instructions open a new session, a resumed one has them

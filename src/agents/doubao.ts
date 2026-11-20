@@ -82,23 +82,28 @@ function tokenFrom(appId: string, t: { access_token: string; refresh_token?: str
 /** App credentials omem can use for the OAuth calls: its bot (and any app it keeps a secret for). */
 export type DoubaoApp = { appId: string; secret: string; name?: string };
 
-async function oauthToken(app: DoubaoApp, body: Record<string, string>) {
+function deadline(ms: number, signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(ms);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+async function oauthToken(app: DoubaoApp, body: Record<string, string>, signal?: AbortSignal) {
   const r = await fetchImpl(`${FEISHU}/authen/v2/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ client_id: app.appId, client_secret: app.secret, ...body }),
-    signal: AbortSignal.timeout(20_000),
+    signal: deadline(20_000, signal),
   });
   return (await r.json()) as { access_token?: string; refresh_token?: string; expires_in?: number; refresh_token_expires_in?: number; scope?: string; error?: string; error_description?: string; code?: number; msg?: string };
 }
 
 /** A usable access token for this app, refreshed when it is about to expire; null when the owner must authorize again. */
-export async function doubaoAccessToken(home: string, app: DoubaoApp): Promise<string | null> {
+export async function doubaoAccessToken(home: string, app: DoubaoApp, signal?: AbortSignal): Promise<string | null> {
   const t = readDoubaoTokens(home)[app.appId];
   if (!t) return null;
   if (Date.parse(t.expiresAt) - Date.now() > 5 * 60_000) return t.accessToken;
   if (!t.refreshToken || (t.refreshExpiresAt && Date.parse(t.refreshExpiresAt) < Date.now())) return null;
-  const r = await oauthToken(app, { grant_type: "refresh_token", refresh_token: t.refreshToken });
+  const r = await oauthToken(app, { grant_type: "refresh_token", refresh_token: t.refreshToken }, signal);
   if (!r.access_token) return null;
   const next = tokenFrom(app.appId, r as { access_token: string });
   // Feishu may not return a new refresh token on every refresh.
@@ -196,7 +201,7 @@ async function api<T>(token: string, method: string, path: string, body?: unknow
     method,
     headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
-    signal: signal ?? AbortSignal.timeout(30_000),
+    signal: deadline(30_000, signal),
   });
   const v = (await r.json().catch(() => null)) as Envelope<T> | null;
   if (!v || v.code !== 0) {
@@ -252,9 +257,10 @@ function artifactLine(it: Item) {
  */
 export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void, ctx: { home: string; app: DoubaoApp }): Promise<AgentResult> {
   if (req.probe) return { text: "", stopReason: "probe", agent: "豆包", probe: { agent: "豆包 OpenAPI", modes: [], options: [] } };
-  const token = await doubaoAccessToken(ctx.home, ctx.app);
-  if (!token) throw new Error("豆包还没有授权：在运行 omem 的电脑上执行 omem doubao login（或网页 Agent 页的豆包授权）");
   const signal = req.signal;
+  if (signal?.aborted) throw new Error("CANCELLED");
+  const token = await doubaoAccessToken(ctx.home, ctx.app, signal);
+  if (!token) throw new Error("豆包还没有授权：在运行 omem 的电脑上执行 omem doubao login（或网页 Agent 页的豆包授权）");
   // The standing instructions open a new session; a resumed one already has them. What went is
   // reported once the session is known (a resume that fails becomes a new session).
   const userMessage = (resumed: boolean) => ({ type: "user.message", contents: [{ type: "text", text: withInstructions({ resumed }, req.system, req.prompt) }] });
@@ -262,18 +268,22 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   let queryId: string;
   if (sessionId) {
     try {
-      const d = await api<{ messages: Message[] }>(token, "POST", `/v1/sessions/${sessionId}/events`, { uuid: randomUUID(), events: [userMessage(true)] });
+      const d = await api<{ messages: Message[] }>(token, "POST", `/v1/sessions/${sessionId}/events`, { uuid: randomUUID(), events: [userMessage(true)] }, signal);
       queryId = d.messages[0].id;
       emit({ type: "session", sessionId, resumed: true });
       sessionPrompt({ resumed: true }, req, req.prompt, emit);
     } catch (e) {
-      if ((e as Error).message === "CANCELLED") throw e;
+      if (signal?.aborted) throw new Error("CANCELLED");
+      // The caller rebuilds a retained conversation from its history. A temporary
+      // task already carries its complete body and can open a replacement here.
+      if (req.persistSession || (e as Error).message === "CANCELLED") throw e;
       emit({ type: "status", text: `无法继续之前的豆包会话，改为新会话：${(e as Error).message.slice(0, 120)}` });
       sessionId = undefined;
     }
   }
   if (!sessionId) {
-    const d = await api<{ id: string; messages: Message[] }>(token, "POST", "/v1/sessions", { uuid: randomUUID(), initial_events: [userMessage(false)] });
+    if (signal?.aborted) throw new Error("CANCELLED");
+    const d = await api<{ id: string; messages: Message[] }>(token, "POST", "/v1/sessions", { uuid: randomUUID(), initial_events: [userMessage(false)] }, signal);
     sessionId = d.id;
     // 读取回复前交出 ID，单次运行失败后也能清理会话。
     emit({ type: "session", sessionId, resumed: false });
@@ -283,8 +293,7 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   emit({ type: "status", text: "已连接 豆包" });
 
   const ctrl = new AbortController();
-  const onAbort = () => ctrl.abort();
-  signal?.addEventListener("abort", onAbort, { once: true });
+  const streamSignal = signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal;
   let idle: ReturnType<typeof setTimeout> | null = null;
   let gotOutput = false;
   const touch = () => {
@@ -296,8 +305,9 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   let replyId: string | undefined;
   let status = "in_progress";
   try {
+    streamSignal.throwIfAborted();
     touch();
-    const r = await fetchImpl(`${DOUBAO_BASE}/v1/sessions/${sessionId}/events/${queryId!}`, { headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" }, signal: ctrl.signal });
+    const r = await fetchImpl(`${DOUBAO_BASE}/v1/sessions/${sessionId}/events/${queryId!}`, { headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" }, signal: streamSignal });
     if (!r.ok || !r.body) throw new Error(`豆包消息流打不开：HTTP ${r.status} ${(await r.text().catch(() => "")).slice(0, 200)}`);
     for await (const f of sse(r.body)) {
       touch();
@@ -361,7 +371,6 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
     throw e;
   } finally {
     if (idle) clearTimeout(idle);
-    signal?.removeEventListener("abort", onAbort);
   }
   // The stream ended without a final frame (dropped connection): the stored reply is authoritative.
   if (status === "in_progress" && replyId) {

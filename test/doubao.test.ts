@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { checkDoubaoApp, doubaoAccessToken, readDoubaoTokens, runDoubao, saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
 import { runBackend } from "../src/agents/dispatch.ts";
+import { createRun } from "../src/agents/runs.ts";
+import { threadTurn } from "../src/agents/sessions.ts";
+import { addMessage, createThread, getThread, threadMessages } from "../src/agents/threads.ts";
 import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 import { testApp } from "./helpers.ts";
 
@@ -14,6 +17,14 @@ const stream = (frames: [string, unknown][]) =>
 const future = () => new Date(Date.now() + 3600_000).toISOString();
 
 afterEach(() => setDoubaoFetchForTests(null));
+
+function authorizedApp() {
+  const app = testApp();
+  saveLarkSecret(app.home, { appId: botApp.appId, appSecret: botApp.secret });
+  app.config.lark.appId = botApp.appId;
+  saveDoubaoToken(app.home, { appId: botApp.appId, accessToken: "u-1", expiresAt: future(), savedAt: "" });
+  return app;
+}
 
 describe("doubao backend", () => {
   it("creates a session, streams the reply and keeps the session to continue", async () => {
@@ -57,10 +68,7 @@ describe("doubao backend", () => {
   });
 
   it.each(["stream-unavailable", "reply-failed"])("deletes a new OpenAPI session when %s, while keeping resumed sessions", async (failure) => {
-    const app = testApp();
-    saveLarkSecret(app.home, { appId: botApp.appId, appSecret: botApp.secret });
-    app.config.lark.appId = botApp.appId;
-    saveDoubaoToken(app.home, { appId: botApp.appId, accessToken: "u-1", expiresAt: future(), savedAt: "" });
+    const app = authorizedApp();
     const deleted: string[] = [];
     setDoubaoFetchForTests(async (input, init) => {
       const url = String(input);
@@ -82,6 +90,94 @@ describe("doubao backend", () => {
     await expect(runBackend(app, profile, { cwd: app.home, prompt: "继续", resumeSessionId: "S2" }, () => {})).rejects.toThrow(error);
     await expect(runBackend(app, profile, { cwd: app.home, prompt: "聊天", persistSession: true }, () => {})).rejects.toThrow(error);
     expect(deleted).toEqual(["S1"]);
+  });
+
+  it("rebuilds the full first turn when a thread loses its cloud session", async () => {
+    const app = authorizedApp();
+    app.baseUrl = "http://localhost";
+    app.config.agents.profiles = [profile];
+    const thread = createThread(app, { channel: "web", spaceId: "personal", settings: { profile: profile.id } });
+    const created: string[] = [];
+    const resumed: string[] = [];
+    const retired: string[] = [];
+    setDoubaoFetchForTests(async (url, init) => {
+      if (init?.method === "DELETE") {
+        retired.push(String(url).split("/").at(-1)!);
+        return ok({});
+      }
+      if (init?.method === "GET" || !init?.method) return stream([["message.completed", {}]]);
+      const body = JSON.parse(String(init.body));
+      if (body.events) {
+        resumed.push(body.events[0].contents[0].text);
+        return new Response(null, { status: 404 });
+      }
+      created.push(body.initial_events[0].contents[0].text);
+      return ok({ id: `S${created.length}`, messages: [{ id: "Q1" }] });
+    });
+    const turn = (text: string) => {
+      addMessage(app, thread.id, "user", text);
+      const run = createRun(app, { kind: "ask", title: text, input: { conversationId: thread.id } });
+      return threadTurn({ app, run, signal: new AbortController().signal, event() {}, output() {} }, thread.id, threadMessages(app, thread.id).slice(-1));
+    };
+    await turn("样品选蓝色");
+    expect(await turn("要两份")).toMatchObject({ mode: "fresh" });
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]).not.toContain("# 会话背景");
+    expect(created).toHaveLength(2);
+    for (const part of ["# 会话背景", "样品选蓝色", "要两份"]) expect(created[1]).toContain(part);
+    expect(getThread(app, thread.id)).toMatchObject({ agentSession: "S2", agentTurns: 1 });
+    await vi.waitFor(() => expect(retired).toEqual(["S1"]));
+  });
+
+  it.each([true, false])("releases only the replacement of a temporary task (stream succeeds=%s)", async (success) => {
+    const app = authorizedApp();
+    const deleted: string[] = [];
+    setDoubaoFetchForTests(async (url, init) => {
+      if (init?.method === "DELETE") { deleted.push(String(url).split("/").at(-1)!); return ok({}); }
+      if (String(url).endsWith("/old/events")) return new Response(null, { status: 404 });
+      if (String(url).endsWith("/v1/sessions")) {
+        expect(JSON.parse(String(init?.body)).initial_events[0].contents[0].text).toBe("角色说明\n\n---\n\n完整任务");
+        return ok({ id: "replacement", messages: [{ id: "Q1" }] });
+      }
+      return success ? stream([["message.completed", {}]]) : new Response(null, { status: 503 });
+    });
+    const result = runBackend(app, profile, { cwd: app.home, system: "角色说明", prompt: "完整任务", resumeSessionId: "old" }, () => {});
+    if (success) expect((await result).sessionId).toBe("replacement");
+    else await expect(result).rejects.toThrow(/503/);
+    expect(deleted).toEqual(["replacement"]);
+  });
+
+  it.each([undefined, "old"])("cancels the opening POST without starting another request (resume=%s)", async (resumeSessionId) => {
+    const app = authorizedApp();
+    const cancel = new AbortController();
+    const requests: string[] = [];
+    let openingSignal: AbortSignal | null | undefined;
+    setDoubaoFetchForTests(async (url, init) => {
+      requests.push(new URL(String(url)).pathname);
+      openingSignal = init?.signal;
+      cancel.abort();
+      init?.signal?.throwIfAborted();
+      throw new Error("opening POST missed cancellation");
+    });
+    await expect(runBackend(app, profile, { cwd: app.home, prompt: "任务", signal: cancel.signal, resumeSessionId }, () => {})).rejects.toThrow("CANCELLED");
+    expect(requests).toEqual([`/open-apis/agent/v1/sessions${resumeSessionId ? "/old/events" : ""}`]);
+    expect(openingSignal?.aborted).toBe(true);
+  });
+
+  it("interrupts and deletes a temporary session cancelled as soon as its id arrives", async () => {
+    const app = authorizedApp();
+    const cancel = new AbortController();
+    const operations: string[] = [];
+    setDoubaoFetchForTests(async (url, init) => {
+      if (String(url).endsWith("/v1/sessions") && init?.method === "POST") return ok({ id: "new", messages: [{ id: "Q1" }] });
+      operations.push(`${init?.method ?? "GET"} ${new URL(String(url)).pathname}`);
+      if (init?.method === "POST") expect(JSON.parse(String(init.body)).events[0].type).toBe("user.interrupt");
+      return ok({});
+    });
+    await expect(runBackend(app, profile, { cwd: app.home, prompt: "任务", signal: cancel.signal }, (e) => {
+      if (e.type === "session") cancel.abort();
+    })).rejects.toThrow("CANCELLED");
+    expect(operations).toEqual(["POST /open-apis/agent/v1/sessions/new/events", "DELETE /open-apis/agent/v1/sessions/new"]);
   });
 
   it("refreshes an expiring token and keeps the old refresh token when none comes back", async () => {
