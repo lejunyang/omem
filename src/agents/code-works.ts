@@ -1,3 +1,4 @@
+import { runPredicate, type RunAudience } from "../auth/run-scope.ts";
 import { preCheckOf, type PreCheck } from "./pre-check.ts";
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
@@ -88,8 +89,14 @@ export type WorkFilter = {
   ended?: boolean;
   limit?: number;
   /** Someone other than the owner: their own work and the work in spaces they may read. */
-  visibleTo?: { userId: string; spaces: string[] };
+  visibleTo?: RunAudience;
 };
+
+function workPredicate(viewer: RunAudience) {
+  const root = runPredicate(viewer);
+  const round = runPredicate(viewer,"x");
+  return { sql: `${root.sql} and not exists(select 1 from runs x where json_extract(x.input,'$.continueFrom')=runs.id and not ${round.sql})`, params:[...root.params,...round.params] };
+}
 
 export function listCodeWorks(app: App, f: WorkFilter = {}): CodeWork[] {
   const where = ["kind = 'code'", "json_extract(input, '$.continueFrom') is null"];
@@ -104,9 +111,9 @@ export function listCodeWorks(app: App, f: WorkFilter = {}): CodeWork[] {
     where.push(`id in (${f.roots.map(() => "?").join(",")})`), params.push(...f.roots);
   }
   if (f.visibleTo) {
-    const v = f.visibleTo;
-    where.push(`(coalesce(user_id, 'owner') = ?${v.spaces.length ? ` or space_id in (${v.spaces.map(() => "?").join(",")})` : ""})`);
-    params.push(v.userId, ...v.spaces);
+    const filter = workPredicate(f.visibleTo);
+    where.push(filter.sql);
+    params.push(...filter.params);
   }
   const q = f.q?.trim();
   if (q) {
@@ -126,9 +133,9 @@ export function listCodeWorks(app: App, f: WorkFilter = {}): CodeWork[] {
 export function codeWork(app: App, runId: string, visibleTo?: WorkFilter["visibleTo"]): CodeWorkDetail | null {
   const r = all<{ root: string }>(app.db, "select coalesce(json_extract(input, '$.continueFrom'), id) root from runs where id = ? and kind = 'code'", runId)[0];
   if (!r) return null;
-  const root = all<RootRow>(app.db, `select ${ROOT_COLS} from runs where id = ?`, r.root)[0];
+  const filter = visibleTo && workPredicate(visibleTo);
+  const root = all<RootRow>(app.db, `select ${ROOT_COLS} from runs where id = ? ${filter ? "and " + filter.sql : ""}`, r.root,...filter?.params ?? [])[0];
   if (!root) return null;
-  if (visibleTo && (root.user_id ?? "owner") !== visibleTo.userId && !visibleTo.spaces.includes(root.space_id ?? "")) return null;
   const [work] = buildWorks(app, [root]);
   const roundList = roundsOf(app, [root.id]).map((x, i) => ({ id: x.id, round: x.round ?? i + 1, status: x.status, title: x.title, verdict: x.verdict, createdAt: x.created_at, finishedAt: x.finished_at }));
   const artifacts = all<{ n: number }>(app.db, "select count(*) n from run_artifacts where work_id = ?", root.id)[0]?.n ?? 0;

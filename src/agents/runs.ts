@@ -1,3 +1,4 @@
+import { runPredicate, type RunAudience } from "../auth/run-scope.ts";
 import { maintainBoards, settleBoardRun } from "./work-board.ts";
 import { releaseRun } from "./capacity.ts";
 import { withBot } from "../core/bot-context.ts";
@@ -169,7 +170,7 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: { userId: string; spaces: string[] } };
+type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: RunAudience };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
@@ -183,11 +184,9 @@ function runWhere(opts: RunFilter) {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (opts.visibleTo) {
-    const v = opts.visibleTo;
-    const others = v.spaces.length
-      ? ` or (scope is not null and json_array_length(scope) > 0 and not exists (select 1 from json_each(runs.scope) j where j.value not in (${v.spaces.map(() => "?").join(",")})))`
-      : "";
-    where.push(`(coalesce(user_id, 'owner') = ?${others})`), params.push(v.userId, ...v.spaces);
+    const filter = runPredicate(opts.visibleTo);
+    where.push(filter.sql);
+    params.push(...filter.params);
   }
   if (opts.id) where.push("id = ?"), params.push(opts.id);
   const kinds = (opts.kind ?? "").split(",").map((k) => k.trim()).filter(Boolean);

@@ -77,6 +77,40 @@ describe("roles and permissions", async () => {
     expect((await as("observer-test","/api/rules")).status).toBe(200);
   });
 
+  it("applies a revoked run capability to lists, details and the next SSE event", async () => {
+    const id = "stream-reader";
+    createUser(app,{id,name:"观察者",role:"observer"});
+    addMember(app,"team",id,"reader");
+    tokens[id] = createApiToken(app,id,"test");
+    const code = createRun(app,{kind:"code",title:"编码记录",spaceId:"team",userId:"owner",input:{spaces:["team"]}});
+    const mixed = createRun(app,{kind:"code",title:"编码记录",spaceId:"team",userId:"owner",input:{spaces:["team","other"]}});
+    expect((await as(id,`/api/runs/${code.id}/reviews`)).status).toBe(200);
+    expect((await as(id,`/api/runs/${mixed.id}/reviews`)).status).toBe(404);
+    expect((await json(id,"/api/runs/"+code.id)).can.operate).toBe(false);
+    expect((await as(id,`/api/runs/${code.id}/retry`,{method:"POST"})).status).toBe(403);
+    const put = async (deny:boolean) => fetch(base+"/api/members/"+id+"/capabilities",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({preset:"observer",overrides:deny ? [{scope_kind:"space",scope_id:"team",capability:"runs.view",effect:"deny"}] : []})});
+    const controller = new AbortController();
+    const response = await as(id,"/api/events",{signal:controller.signal});
+    const reader = response.body!.getReader();
+    const readUntil = async (end:string) => {
+      let text = "";
+      while (!text.includes(end)) text += new TextDecoder().decode((await reader.read()).value);
+      return text;
+    };
+    try {
+      app.emit({type:"run",runId:code.id,status:"first"});
+      await readUntil("first");
+      expect((await put(true)).status).toBe(200);
+      app.emit({type:"run",runId:code.id,status:"revoked"});
+      app.emit({type:"changed",entity:"space",id:"team"});
+      expect(await readUntil("changed")).not.toContain("revoked");
+      expect((await as(id,"/api/runs/"+code.id)).status).toBe(404);
+      expect((await json(id,"/api/runs")).runs.map((r:{id:string})=>r.id)).not.toContain(code.id);
+      expect((await put(false)).status).toBe(200);
+      expect((await as(id,"/api/runs/"+code.id)).status).toBe(200);
+    } finally { controller.abort(); }
+  });
+
   it("keeps decision calibration owner-only", async () => {
     expect(ROUTE_RULES["GET /api/ai/decision/report"]).toBe("owner");
     expect((await as("ann", "/api/ai/decision/report")).status).toBe(403);

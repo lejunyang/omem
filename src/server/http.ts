@@ -1,3 +1,4 @@
+import { canAccessRun, runAudience } from "../auth/permissions.ts";
 import { spacesWithCapability, memberCapabilities } from "../auth/capabilities.ts";
 import { storedFileReadable } from "../auth/stored-files.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
@@ -55,7 +56,7 @@ import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePage
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
-import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEvents } from "../agents/runs.ts";
+import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEvents, runUser } from "../agents/runs.ts";
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -300,11 +301,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
    */
   const eventFilter = (userId: string) => {
     if (userId === OWNER) return () => true;
-    const runs = new Map<string, boolean>();
-    const readable = (runId: string) => {
-      if (!runs.has(runId)) runs.set(runId, canReadRun(app, userId, runId));
-      return runs.get(runId)!;
-    };
+    const readable = (id:string) => canReadRun(app,userId,id);
     return (e: AppEvent) => {
       if (e.type === "work") return readable(e.workId);
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
@@ -1492,7 +1489,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // The delegations and branch reviews done for the items this node belongs to (items/work.ts).
     const work = (await import("../items/work.ts")).reqWork(app, d.node.id, who(req));
     // The same entries as the run page's “编码” view (src/agents/code-works.ts), with the item each was done for.
-    const works = (await import("../agents/code-works.ts")).listCodeWorks(app, { roots: work.map((w) => w.rootId), ended: true });
+    const works = (await import("../agents/code-works.ts")).listCodeWorks(app, { roots: work.map((w) => w.rootId), ended: true, visibleTo:runAudience(app,who(req),"code.work.view") });
     // Test results (items/req-tests.ts): the latest of each test, then earlier ones, with their kept artifacts.
     const rt = await import("../items/req-tests.ts");
     const { artifactsByIds } = await import("../agents/artifacts.ts");
@@ -1580,8 +1577,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/runs", async (req) => {
     const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), by: z.string().max(200).optional(), via: z.string().max(40).optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     // Someone other than the owner: their own runs and the ones they may read (src/auth/permissions.ts).
-    const spaces = runReadableSpaces(app, who(req));
-    const visibleTo = spaces === null ? undefined : { userId: who(req), spaces };
+    const visibleTo = runAudience(app,who(req));
     const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, by: o.by, via: o.via, visibleTo };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
@@ -1613,13 +1609,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Coding work, one entry per delegation or branch review (src/agents/code-works.ts): the run page's “编码” view.
   server.get("/api/code-works", async (req) => {
     const o = q(z.object({ space: z.string().optional(), q: z.string().optional(), ended: z.coerce.boolean().optional(), limit: z.coerce.number().optional() }), req.query);
-    const spaces = runReadableSpaces(app, who(req));
+    const visibleTo = runAudience(app,who(req),"code.work.view");
     const { listCodeWorks } = await import("../agents/code-works.ts");
-    return listCodeWorks(app, { spaces: o.space ? spaceFamily(app, o.space) : undefined, q: o.q, ended: o.ended, limit: o.limit, visibleTo: spaces === null ? undefined : { userId: who(req), spaces } });
+    return listCodeWorks(app, { spaces: o.space ? spaceFamily(app, o.space) : undefined, q: o.q, ended: o.ended, limit: o.limit, visibleTo });
   });
   server.get("/api/code-works/:id", async (req) => {
-    const spaces = runReadableSpaces(app, who(req));
-    const work = (await import("../agents/code-works.ts")).codeWork(app, (req.params as { id: string }).id, spaces === null ? undefined : { userId: who(req), spaces });
+    const visibleTo = runAudience(app,who(req),"code.work.view");
+    const work = (await import("../agents/code-works.ts")).codeWork(app, (req.params as { id: string }).id, visibleTo);
     if (!work) throw new HttpError(404, "没有这次交办");
     return work;
   });
@@ -1637,11 +1633,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const children = [...listRuns(app, { parentId: id }), ...linked.flatMap((x) => listRuns(app, { id: x, includeQuiet: true }))]
       .filter((c, i, a) => a.findIndex((d) => d.id === c.id) === i)
       .filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
-    const diff = r.kind === "code" ? codeDiffView(app, id) : null;
+    const diff = r.kind === "code" && canAccessRun(app,who(req),id,"code.review.view") ? codeDiffView(app, id) : null;
     const boardId = r.input.boardTaskId ? r.parentId : r.output.boardId ?? id;
     const board = typeof boardId === "string" && one(app.db, "select 1 from agent_work_tasks where work_id=? limit 1", boardId)
       && canReadRun(app, who(req), boardId) ? { workId: boardId, taskId: r.input.boardTaskId } : undefined;
-    return { board, run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
+    return { can: { operate: canAccessRun(app,who(req),id,"runs.operate"), edit: can(app,who(req),"code.delegate") && (who(req) === OWNER || runUser(app,id) === who(req)) }, board, run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r, who(req)), writes: runWrites(app, r).filter(w => {
+      if (who(req) === OWNER) return true;
+      const t = w.target;
+      if (!t) return runUser(app,id) === who(req);
+      if (t.kind === "source") return can(app,who(req),"sources.view",t);
+      if (t.kind === "item") return can(app,who(req),"items.view",t);
+      if (t.kind === "rule") return can(app,who(req),"rules.view") && (!w.space || can(app,who(req),"space.read",w.space));
+      return can(app,who(req),t.kind === "page" ? "wiki.view" : "memories.view", w.space);
+    }), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
   });
   // The owner read the follow-up and says the label is wrong (agents/reply-outcomes.ts).
   server.post("/api/runs/:id/reply-outcome", async (req) => {
@@ -1851,10 +1855,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // ---- delegations driven by tasks (docs/v2/coding-loop.md; agents/code-tasks.ts, code-loop.ts)
   server.get("/api/runs/:id/tasks", async (req) => {
     const id = (req.params as { id: string }).id;
-    ownRun(req, id);
     const t = await import("../agents/code-tasks.ts");
     if (!t.isTaskWork(app, id)) return { taskMode: false };
     const rootId = t.workRootOf(app, id);
+    if (!canAccessRun(app,who(req),rootId,"code.work.view")) throw new HttpError(404,"交办不存在");
     const last = t.lastRound(app, rootId);
     const w = t.workState(app, rootId);
     return {
@@ -1964,7 +1968,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // One task's change, a stretch between checkpoints, everything since the viewer last looked, or the branch against another.
   server.get("/api/runs/:id/task-diff", async (req) => {
     const id = (req.params as { id: string }).id;
-    ownRun(req, id);
     const o = q(z.object({ tasks: z.string().regex(/^[\dTt, ]+$/).optional(), from: z.coerce.number().int().min(0).optional(), to: z.coerce.number().int().min(0).optional(), since: z.enum(["viewed"]).optional(), base: z.string().max(200).regex(/^(?!-)[\w./-]+$/, "分支名不对").optional(), work: z.enum(["1"]).optional() }), req.query);
     const t = await import("../agents/code-tasks.ts");
     // Tasks and checkpoints only exist on a task-driven work; the whole change (`work`) and the branch
@@ -1974,6 +1977,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const taskWork = t.isTaskWork(app, id);
     if (!taskWork && byTask) throw new HttpError(400, "这次交办不是按修改项推进的：只能看全部改动（work=1）或和某个分支比较（base=）");
     const rootId = t.workRootOf(app, id);
+    if (!canAccessRun(app,who(req),rootId,"code.review.view")) throw new HttpError(404,"交办不存在");
     const tasks = o.tasks ? o.tasks.split(/[,\s]+/).filter(Boolean).map((x) => t.parseTaskRef(x)) : undefined;
     const { worktreesOf } = await import("../agents/code.ts");
     const work = !o.base && (!!o.work || (!taskWork && !byTask));
@@ -2038,7 +2042,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (r.kind !== "code") throw new HttpError(400, "只有编码交办有评审");
     const { checkLabel, lookName, reviewChecks, reviewsOf } = await import("../agents/review.ts");
     const chain = (r.output as { codeChain?: { rounds: string[] } }).codeChain;
-    const rounds = (chain?.rounds ?? [r.id]).map((id) => getRun(app, id));
+    const rounds = (chain?.rounds ?? [r.id]).filter(id => canAccessRun(app,who(req),id,"code.review.view")).map((id) => getRun(app, id));
     const checks = reviewChecks(app);
     const infos = new Map(checks.map((c) => [c.name, c]));
     // A second look by another model is the check under its look name (code-overlap.ts).
@@ -2054,7 +2058,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         runId: x.id, round: (x.input as { round?: number }).round ?? 1, status: x.status,
         plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null, stage: x.output.reviewStage ?? null,
         lead: x.output.reviewLead ?? null, stop: x.output.reviewStop ?? null, changePoints: (x.output.changePoints as { points?: unknown[] } | undefined)?.points ?? null, ask: askOf(x.output.reviewAskId), acceptedByOwner: !!x.output.acceptedByOwner,
-        reviewRuns: reviewRuns(x.id),
+        reviewRuns: reviewRuns(x.id).filter(child => canAccessRun(app,who(req),child.id,"code.review.view")),
       })),
       reviews: reviewsOf(app, rounds.map((x) => x.id)),
       labels,
@@ -3366,17 +3370,17 @@ const TURNS_BEFORE = 5;
  * Where a run sits: the conversation it answers in (and whether that is a Feishu topic or a work
  * session of a multi-agent task), the run that started it, and the rounds of the work it is part of.
  */
-function runContext(app: App, r: ReturnType<typeof getRun>) {
+function runContext(app: App, r: ReturnType<typeof getRun>, userId: string) {
   const input = r.input as { conversationId?: string; threadId?: string; agentWorkId?: string; sourceRunId?: string };
   const convId = input.conversationId ?? input.threadId ?? null;
   const conv = convId
-    ? one<{ id: string; title: string; channel: string; external_id: string | null; parent_id: string | null; status: string }>(app.db, "select id, title, channel, external_id, parent_id, status from conversations where id = ?", convId)
+    ? one<{ id: string; title: string; channel: string; external_id: string | null; parent_id: string | null; status: string }>(app.db, "select id, title, channel, external_id, parent_id, status from conversations where id = ? and (? = 'owner' or user_id=?)", convId,userId,userId)
     : undefined;
   const brief = (id: string | null | undefined) =>
-    id ? one<{ id: string; kind: string; title: string; status: string; created_at: string }>(app.db, "select id, kind, title, status, created_at from runs where id = ?", id) : undefined;
+    id && canReadRun(app,userId,id) ? one<{ id: string; kind: string; title: string; status: string; created_at: string }>(app.db, "select id, kind, title, status, created_at from runs where id = ?", id) : undefined;
   const parent = brief(r.parentId);
   const workId = input.agentWorkId ?? ((r.output as { agentWork?: { askRunId?: string } }).agentWork?.askRunId === r.id ? r.id : undefined);
-  const work = workId ? (getRun(app, workId).output as { agentWork?: { title: string; workConversationId: string; rootConversationId: string; rounds: { runId: string; agent: string }[] } }).agentWork : undefined;
+  const work = workId && userId === OWNER ? (getRun(app, workId).output as { agentWork?: { title: string; workConversationId: string; rootConversationId: string; rounds: { runId: string; agent: string }[] } }).agentWork : undefined;
   // Other turns in the same conversation: one line of work in Feishu is one conversation here. Only
   // for a run that is itself one of them: a run that merely reports there (someone looking for the
   // owner, a meeting's summary going to the owner's chat with the bot) has nothing to do with what
@@ -3411,7 +3415,7 @@ function runContext(app: App, r: ReturnType<typeof getRun>) {
   const itemIds = [...new Set([...(own ? [own] : []), ...itemsOfRun(app, root).map((i) => i.id), ...itemsOfRun(app, r.id).map((i) => i.id)])];
   return {
     conversation,
-    items: itemIds.flatMap((id) => one<{ id: string; title: string; status: string }>(app.db, "select id, title, status from items where id = ?", id) ?? []),
+    items: itemIds.filter(id => can(app,userId,"items.view",{kind:"item",id})).flatMap((id) => one<{ id: string; title: string; status: string }>(app.db, "select id, title, status from items where id = ?", id) ?? []),
     parent: parent ? { id: parent.id, kind: parent.kind, title: parent.title, status: parent.status } : null,
     source: input.sourceRunId ? brief(input.sourceRunId) ?? null : null,
     work: work

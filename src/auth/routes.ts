@@ -314,16 +314,16 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/assistants/scan": "self",
   "PATCH /api/assistants/:id": "self",
   "DELETE /api/assistants/:id": "self",
-  "GET /api/runs/:id": RUN,
+  "GET /api/runs/:id": cap("runs.view","run:p.id"),
   "GET /api/agent-work/:id/board": RUN,
   "POST /api/runs/:id/share-review": RUN,
-  "POST /api/runs/:id/cancel": RUN,
-  "POST /api/runs/:id/retry": RUN,
+  "POST /api/runs/:id/cancel": cap("runs.operate","run:p.id"),
+  "POST /api/runs/:id/retry": cap("runs.operate","run:p.id"),
   "POST /api/runs/:id/reply-outcome": "owner",
   "GET /api/runs/:id/folders": CODE,
   "GET /api/code-runs/at": CODE,
-  "GET /api/code-works": CODE,
-  "GET /api/code-works/:id": CODE,
+  "GET /api/code-works": cap("code.work.view","list"),
+  "GET /api/code-works/:id": cap("code.work.view","run:p.id"),
   "POST /api/delegate": CODE,
   "POST /api/review-branch": CODE,
   "GET /api/review-settings": CODE,
@@ -334,7 +334,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // Previews of a delegation's workspace (docs/v2/preview.md): the owner's commands and servers.
   "GET /api/runs/:id/previews": "owner",
   "GET /api/runs/:id/artifacts": RUN,
-  "DELETE /api/runs/:id/artifacts/:artifact": RUN,
+  "DELETE /api/runs/:id/artifacts/:artifact": cap("runs.operate","run:p.id"),
   // The key in the path is the capability (agents/artifacts.ts): a report's own files load without a cookie.
   "GET /api/artifacts/:token/*": "public",
   "GET /api/previews": "owner",
@@ -351,7 +351,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "PUT round-review", "GET file", "GET file/raw", "GET blob",
     ].map((r) => {
       const [m, p] = r.split(" ");
-      return [`${m} /api/runs/:id/${p}`, CODE];
+      const read = m === "GET" && (p === "tasks" ? "code.work.view" : ["reviews","task-diff"].includes(p) ? "code.review.view" : null);
+      return [`${m} /api/runs/:id/${p}`, read ? cap(read,"run:p.id") : CODE];
     }),
   ),
 
@@ -554,6 +555,10 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   if ("cap" in rule && globalCapability(rule.cap)) return requirePerm(app, userId, rule.cap);
   if ("cap" in rule && rule.at === "list") {
     if (spacesWithCapability(app,userId,rule.cap)?.length === 0) throw new HttpError(403, "没有可查看的空间");
+    return;
+  }
+  if ("cap" in rule && rule.at === "run:p.id") {
+    if (!can(app,userId,rule.cap,{kind:"run",id:String((req.params as {id:string}).id)})) throw new HttpError(rule.cap === "runs.operate" ? 403 : 404,"没有这次运行的权限");
     return;
   }
   const space = locate(app, req, rule.at);

@@ -1,3 +1,5 @@
+import { runPredicate, type RunAudience } from "./run-scope.ts";
+import { sourceVisible } from "./visibility.ts";
 import { capabilityAccess, isCapability, type Capability } from "./capabilities.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -123,7 +125,20 @@ export const isOwner = (app: App, userId: string) => who(app, userId)?.role === 
 const WRITES = new Set<Perm>(["source.write", "memory.write", "wiki.write", "capture.route"]);
 const mirrored = (app: App, spaceId: string) => !!one<{ m: string | null }>(app.db, "select json_extract(settings, '$.mirror') m from spaces where id = ?", spaceId)?.m;
 
-export function can(app: App, userId: string, perm: Perm | Capability, spaceId?: string | null): boolean {
+type Target = { kind: "run" | "item" | "source" | "design"; id: string };
+export function can(app: App, userId: string, perm: Perm | Capability, target?: string | Target | null): boolean {
+  if (target && typeof target === "object") {
+    if (!isCapability(perm)) return false;
+    if (target.kind === "run") return canAccessRun(app,userId,target.id,perm);
+    const table = { item: "items", source: "sources", design: "designs" }[target.kind];
+    const row = one<{space_id:string; owner:string | null}>(app.db,`select space_id,${target.kind === "item" ? "user_id" : "null"} owner from ${table} where id=?`,target.id);
+    if (!row) return false;
+    const own = row.owner === userId;
+    if (target.kind === "item" && perm !== "items.view" && !own && !isOwner(app,userId)) return false;
+    if (target.kind === "source" && sourceVisible(app,userId,target.id) !== true) return false;
+    return !!capabilityAccess(app,userId,row.space_id).source(perm,row.space_id,own);
+  }
+  const spaceId = target;
   if (isCapability(perm)) return !!capabilityAccess(app, userId, spaceId ?? undefined).source(perm, spaceId ?? undefined);
   const u = who(app, userId);
   if (!u?.active) return false;
@@ -177,29 +192,27 @@ export function requirePerm(app: App, userId: string, perm: Perm | Capability, s
  * (its events may quote any of them), or `runs.read.all` (still not into other people's personal spaces).
  */
 export function canReadRun(app: App, userId: string, runId: string): boolean {
-  const r = one<{ user_id: string | null; space_id: string | null; scope: string | null }>(app.db, "select user_id, space_id, scope from runs where id = ?", runId);
-  if (!r) return false;
-  const u = who(app, userId);
-  if (!u?.active) return false;
-  if (u.role === "owner" || (r.user_id ?? "owner") === userId) return true;
-  // No recorded scope: a run of the owner's that could read everything, or one from before scopes were
-  // recorded. Those stay with their user (and the owner).
-  const spaces = r.scope === null ? null : json<string[] | null>(r.scope, null);
-  if (spaces === null) return false;
-  if (!spaces.length) return grants(app, u.role).has("runs.read.all");
-  if (grants(app, u.role).has("runs.read.all")) return spaces.every((s) => !othersPersonal(app, s, userId));
-  return spaces.every((s) => can(app, userId, "runs.read", s));
+  return canAccessRun(app,userId,runId,"runs.view");
 }
 
-/** The spaces in which the user may read other people's runs (the list filter of canReadRun); null: all runs. */
-export function runReadableSpaces(app: App, userId: string): string[] | null {
-  const u = who(app, userId);
-  if (!u?.active) return [];
-  if (u.role === "owner") return null;
-  if (grants(app, u.role).has("runs.read.all"))
-    return all<{ id: string; kind: string; owner_id: string }>(app.db, "select id, kind, owner_id from spaces").filter((s) => s.kind !== "personal" || s.owner_id === userId).map((s) => s.id);
-  return spacesWith(app, userId, "runs.read") ?? [];
+export function runAudience(app: App, userId: string, cap: Capability = "runs.view"): RunAudience | undefined {
+  if (isOwner(app,userId)) return undefined;
+  const access = capabilityAccess(app,userId);
+  const has = (space:string, own:boolean) => access.source("runs.view",space,own) && access.source(cap,space,own);
+  const range = (own:boolean) => access.spaces.filter(s => has(s.id,own)).map(s => s.id);
+  const unscoped = !access.overrides.some(o => o.effect === "deny" && (o.capability === cap || o.capability === "runs.view"));
+  return { userId, spaces:range(false), ownSpaces:range(true), empty:unscoped && can(app,userId,"runs.read.all"), ownUnscoped:unscoped && (cap === "runs.view" || cap === "runs.operate" && access.preset !== "observer") };
 }
+
+export function canAccessRun(app: App, userId: string, id: string, cap: Capability) {
+  const viewer = runAudience(app,userId,cap);
+  if (!viewer) return true;
+  const filter = runPredicate(viewer);
+  const row = one<{user_id:string}>(app.db,`select user_id from runs where id=? and ${filter.sql}`,id,...filter.params);
+  return !!row && (cap !== "runs.operate" || row.user_id === userId || can(app,userId,"runs.read.all"));
+}
+
+export const runReadableSpaces = (app: App,userId:string) => runAudience(app,userId)?.spaces ?? null;
 
 // ---- audit -------------------------------------------------------------------
 
