@@ -1,4 +1,5 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
@@ -208,6 +209,24 @@ export function listSkills(app: App, opts: { includeDrafts?: boolean } = {}): Sk
     } catch {}
   }
   return out;
+}
+
+/** Owner's skill library is file-backed. Read manifests only, without walking attached files. */
+export async function draftSkillSummary(app: App) {
+  const dir = skillsDir(app);
+  if (!existsSync(dir)) return null;
+  let count = 0, at = "";
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !NAME.test(entry.name)) continue;
+    try {
+      const path = skillPath(app, entry.name, "SKILL.md");
+      if (splitFrontmatter(await readFile(path, "utf8")).meta.status !== "draft") continue;
+      const updated = (await stat(path)).mtime.toISOString();
+      if (updated > at) at = updated;
+      if (++count === 100) break;
+    } catch { /* listSkills also omits incomplete or invalid manifests */ }
+  }
+  return count ? { count, at } : null;
 }
 
 export function findSkill(app: App, name: string) {

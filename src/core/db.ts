@@ -2248,6 +2248,14 @@ export const migrations: readonly string[] = [
    alter table items add column phase_since text;
    alter table items add column watch_until text;`,
   METRIC_ORIGIN_MIGRATION,
+  `create index asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;`,
+  `create index pending_stages on item_stages(since) where state='gated' or waiting_on='owner' or (state='doing' and "by"='owner');
+   create index pending_changes on item_changes(at desc) where status='asked';
+   create index pending_updates on item_update_proposals(user_id,created_at desc) where status='pending';
+   create index pending_metrics on metrics(created_at desc) where status='proposed';
+   create index pending_profiles on profile_proposals(created_at desc) where status='pending';
+   create index pending_drafts on card_interactions(created_at desc) where status='open' and purpose in ('draft','mention-reply','watch-draft','meeting-answer');
+   create index pending_user_asks on asks(user_id,created_at desc,id) where status='pending';`,
 ];
 
 export type Db = DatabaseSync;

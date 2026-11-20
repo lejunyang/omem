@@ -98,6 +98,7 @@ it("@s the person who has to answer an ask card in a group, not in a private cha
     registerLarkAsks(app, () => "ou_owner");
     sinkRegistered = true;
   }
+  app.config.notify.quietStart = app.config.notify.quietEnd;
   const posted = poster();
   const ask = async (key: string, kind: "question" | "approval" = "question") => {
     const t = createThread(app, { channel: "lark", key, spaceId: "personal", userId: "owner" });

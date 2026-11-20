@@ -253,6 +253,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/items/:id/flow/round": "self",
   "POST /api/items/:id/flow/stages/:stage/budget": "self",
   // Work lines (items/work-http.ts, docs/v2/status.md “工作线”): the owner's own page for now.
+  "GET /api/pending": "self",
   "GET /api/work": "owner",
   "GET /api/work/activities": "owner",
   "GET /api/work/:id": "owner",
