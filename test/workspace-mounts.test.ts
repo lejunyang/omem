@@ -254,7 +254,8 @@ describe("delegation sandbox mounts", () => {
     expect(getTask(app, round.id, another.seq).state).toBe("coding");
   });
 
-  it.skipIf(!sandboxSupport().ok).each(["refused", "crashed"])("merges accepted helper work and preserves a %s handoff", async failure => {
+  it.skipIf(!sandboxSupport().ok).each(["refused", "crashed", "oversized-status"])("merges accepted helper work and preserves a %s handoff", async failure => {
+    const oversized = failure === "oversized-status";
     const repos = [repository(failure + "-a"), repository(failure + "-b")];
     const round = createRun(app, { kind: "code", spaceId: repos[0].id, title: "多仓交付", input: { taskMode: true } });
     app.db.prepare("update runs set status = 'running' where id = ?").run(round.id);
@@ -277,11 +278,15 @@ describe("delegation sandbox mounts", () => {
       const result = await callTool(ctx, "finish_task", { task: tasks[0], summary: "第一项完成" });
       expect(result.isError, result.text).toBe(false);
       run(`cd ${repos[0].id} && echo part > part && git add part && git commit -qm "Omem-Task: T2"`);
-      run(`cd ${repos[1].id} && echo received > accepted && git add accepted && git commit -qm "Omem-Task: T2"`);
+      if (!oversized) run(`cd ${repos[1].id} && echo received > accepted && git add accepted && git commit -qm "Omem-Task: T2"`);
       const second = await callTool(ctx, "finish_task", { task: tasks[1], summary: "两仓的改动均已完成" });
       expect(second.isError, second.text).toBe(false);
       expect(getTask(app, round.id, tasks[1]).state).toBe("done");
       run(`cd ${repos[1].id} && git switch -qc private && echo other > other && git add other && git commit -qm "Omem-Task: T2" && echo draft > draft`);
+      if (oversized) {
+        // More than 128 KiB of porcelain output at the worktree root.
+        run(`cd ${repos[1].id}; i=0; while [ "$i" -lt 800 ]; do : > "${"f".repeat(180)}$i"; i=$((i+1)); done`);
+      }
       if (failure === "crashed") throw new Error("助手异常退出");
       return { text: "完成" } as Awaited<ReturnType<typeof runner.runRole>>;
     });
@@ -300,11 +305,11 @@ describe("delegation sandbox mounts", () => {
       });
       const run = getRun(app, ids[0]);
       expect(run.error).toContain(failure === "crashed" ? "助手异常退出" : repos[1].id);
-      expect(run.output.commits).toMatchObject({ [repos[0].id]: [expect.any(String), expect.any(String)], [repos[1].id]: [expect.any(String)] });
+      expect(run.output.commits).toMatchObject({ [repos[0].id]: [expect.any(String), expect.any(String)], [repos[1].id]: oversized ? [] : [expect.any(String)] });
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:first").toString()).toBe("first\n=======\n");
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:part").toString()).toBe("part\n");
-      expect(repos[1].git("-C", trees[1].path, "show", "HEAD:accepted").toString()).toBe("received\n");
-      expect(run.output.refusals).toMatchObject([{ space: repos[1].id, tasks: [tasks[1]], unknown: true, worktree: "dirty" }]);
+      if (!oversized) expect(repos[1].git("-C", trees[1].path, "show", "HEAD:accepted").toString()).toBe("received\n");
+      expect(run.output.refusals).toMatchObject([{ space: repos[1].id, tasks: [tasks[1]], unknown: true, worktree: oversized ? "unknown" : "dirty" }]);
       const failed = (run.output.worktrees as typeof trees)[1];
       expect(readFileSync(join(failed.path, "draft"), "utf8")).toBe("draft\n");
       const privateDir = join(app.runsDir, run.id, "member-git", failed.space, "git");

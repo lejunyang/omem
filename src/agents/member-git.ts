@@ -198,20 +198,18 @@ export async function inspectUnreceivedMemberGit(app: App, actor: string, space:
   try {
     const state: State = JSON.parse(readFileSync(file, "utf8"));
     const ns = gitNamespace(state, root, true);
-    const script = `
-set -eu
-export GIT_DIR=/member GIT_WORK_TREE=/work GIT_OPTIONAL_LOCKS=0 GIT_NO_REPLACE_OBJECTS=1
-ulimit -f 128
-git -c core.fsmonitor=false status --porcelain --untracked-files=normal > /view/status
-if test -s /view/status; then printf 'dirty'; else printf 'clean'; fi
-git log --max-count=101 --format='%x00%B' "$1..HEAD" --
-`;
-    const { stdout } = await promisify(execFile)(ns.file, [...ns.args, "/bin/sh", "-c", script, "inspect", state.base],
+    const read = (...args: string[]) => promisify(execFile)(ns.file, [...ns.args, "git", ...hooksOff,
+      "--no-optional-locks", "--git-dir=/member", "--work-tree=/work", ...args],
       { encoding: "utf8", timeout: 5000, maxBuffer: 65536 });
-    const [status, ...messages] = stdout.split("\0");
-    return { messages, worktree: status === "clean" ? "clean" : "dirty" } as const;
+    const [log, status] = await Promise.allSettled([
+      read("log", "--max-count=101", "--format=%x00%B", state.base + "..HEAD", "--"),
+      read("status", "--porcelain", "--untracked-files=normal"),
+    ]);
+    const messages = log.status === "fulfilled" ? log.value.stdout.split("\0").slice(1) : null;
+    const worktree = status.status === "rejected" ? "unknown" : status.value.stdout ? "dirty" : "clean";
+    return { messages, worktree } as const;
   } catch {
-    return { messages: [], worktree: "unknown" } as const;
+    return { messages: null, worktree: "unknown" } as const;
   }
 }
 
