@@ -199,6 +199,26 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     expect(JSON.parse(stage.gateReview!.failed[0].reason)).toEqual([{text:refs[0]}]);
     saveGateChecks(app,"inspect",[]);
   });
+  it("结构化站内链接解码后只向检查交付同空间且可读的原件", async () => {
+    createSpace(app,{id:"proofs",name:"其他材料"});
+    const [local,other] = ["personal","proofs"].map(spaceId =>
+      upsertSource(app,{spaceId,kind:"note",title:"核对材料",uri:"note:link",text:"依据"}).id);
+    const encoded = (id:string) => "%73" + id.slice(1,3) + "%" + id.charCodeAt(3).toString(16) + id.slice(4);
+    const evidence = [
+      {text:"可见原件",link:"#/%73ources/" + encoded(local) + "?from=2&to=3"},
+      {text:"其他原件",link:"#/sources/" + encoded(other) + "#L2"},
+      {text:"其他空间",link:"https://example.org/#/Sources/" + encoded(other)},
+      {text:"公开说明",link:"https://example.org/check"},
+    ];
+    const item = await begin([job()]);
+    saveGateChecks(app,"inspect",[{id:"stagekit:refs",mandatory:true}]);
+    const runId = flowView(app,item).stages[0].by!;
+    await reportStage(app,item,"job",{state:"done",note:"交回依据",evidence:[runId],pluginEvidence:evidence},{actor:"stagekit:job",runId});
+    const stage = flowView(app,item).stages[0];
+    expect(stage.pluginEvidence).toEqual(evidence);
+    expect(JSON.parse(stage.gateReview!.failed[0].reason)).toEqual([evidence[0],evidence[3]]);
+    saveGateChecks(app,"inspect",[]);
+  });
   it("必须的检查超时暂停，非必须的检查超时放行并记下原因", async () => {
     const item = await begin([{id:"mark",name:"人工检查",by:"wait"}]);
     saveGateChecks(app,"inspect",[{id:"stagekit:slow",mandatory:true}]);

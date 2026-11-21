@@ -52,8 +52,38 @@ export function saveGateChecks(app: App, id: string, checks: Check[]) {
 }
 const verdict = z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), reason: z.string().trim().min(1).max(2000), evidence: evidenceSchema.optional() })]);
 
+/** Vue uses hash history: the route path ends before its query and line anchor. */
+function sourceRouteId(hash: string): string | undefined {
+  const path = hash.slice(1).split(/[?#]/, 1)[0];
+  try {
+    const decoded = decodeURIComponent(path);
+    if (/^\/sources\/kb\/?$/i.test(decoded)) return;
+    const match = /^\/sources\/(.+?)\/?$/i.exec(decoded);
+    return match?.[1];
+  } catch {
+    // A malformed escape cannot establish that this local reference is readable.
+    return "";
+  }
+}
+
+function evidenceSourceIds(e: FlowEvidence) {
+  const ids = Array.from(e.text.matchAll(/\bsrc:([\w-]+)/g), m => m[1]);
+  const routes = Array.from(e.text.matchAll(/#\/[^\s)\]）]+/g), m => m[0]);
+  if (e.link) {
+    const url = URL.parse(e.link);
+    if (url?.protocol === "src:") ids.push(url.pathname);
+    else if (e.link.startsWith("#/")) routes.push(e.link);
+    else if (url?.hash.startsWith("#/")) routes.push(url.hash);
+  }
+  for (const route of routes) {
+    const id = sourceRouteId(route);
+    if (id !== undefined) ids.push(id);
+  }
+  return ids;
+}
+
 function gateEvidence(app: App, user: string, space: string, evidence: FlowEvidence[]) {
-  const ids = evidence.map(e => Array.from((e.text + "\n" + (e.link ?? "")).matchAll(/(?:\bsrc:|#\/sources\/)([\w-]+)/g), m => m[1]));
+  const ids = evidence.map(evidenceSourceIds);
   const referenced = [...new Set(ids.flat())];
   if (!referenced.length) return evidence;
   const readable = can(app,user,"sources.view",space) ? readableSourceIds(app,user,referenced,space) : new Set<string>();
