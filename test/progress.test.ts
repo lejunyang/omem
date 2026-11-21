@@ -85,6 +85,21 @@ describe("进度投影", () => {
         decisions: [{ result: "fix" }, { result: "fix" }] }] });
   });
 
+  it("单项重评保留内嵌首试，整轮独立评审只记实际评审运行", () => {
+    const { app, add } = fixture();
+    add("code", "code", null, {}, { reviewPlan: { checks: ["style", "logic"] } });
+    for (const check of ["style", "logic"]) recordReview(app, { codeRunId: "code", round: 1, check, verdict: "approved", summary: "完成", findings: [] });
+    add("retry", "review", "code", { only: ["style"] });
+    for (const id of ["code", "retry"]) run(app.db, "insert into run_events values(?,1,?,'usage',?)", id, at, '{"input":5,"output":3}');
+    const review = runProgress(app, "code", owner).find(b => b.kind === "review")!;
+    expect(review.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["code", "retry"], ["code"]]);
+    expect(review.tasks[0].usage).toEqual({ runs: 2, missing: 0, input: 10, output: 6 });
+    expect(review.usage).toEqual(review.tasks[0].usage);
+    run(app.db, "update runs set input='{}' where id='retry'");
+    expect(runProgress(app, "code", owner).find(b => b.kind === "review")?.tasks.map(t => t.attempts.map(a => a.runId)))
+      .toEqual([["retry"], ["retry"]]);
+  });
+
   it("流程保留关卡和依赖，课题默认只展开当前轮，重跑仍归原试验", () => {
     const { app, item, add } = fixture();
     const definition = { id: "flow", name: "核验", stages: [{ id: "plan", name: "方向", by: "owner", tools: ["propose_directions"], needs: [] }, { id: "try", name: "试验", by: "wait", needs: ["plan"] }] };

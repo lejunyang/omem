@@ -132,10 +132,12 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
     const result = results.at(-1);
     const attempts = children.filter(r => r.onlyChecks ? (JSON.parse(r.onlyChecks) as string[]).includes(name)
       : planned(graph.nodes.get(r.parent!)!).includes(name) || results.some(review => review.code_run_id === r.parent));
-    const ids = attempts.map(r => r.id);
-    for (const review of results) {
-      if (!attempts.some(r => r.parent === review.code_run_id)) ids.push(review.code_run_id);
-    }
+    const ids = rounds.flatMap(round => {
+      const runs = attempts.filter(r => r.parent === round.id);
+      // A selective retry follows a check already attempted in this coding round.
+      const embedded = runs.length ? !!runs[0].onlyChecks : results.some(r => r.code_run_id === round.id);
+      return [...(embedded ? [round.id] : []), ...runs.map(r => r.id)];
+    });
     const decisions = results.flatMap(r => r.findings).flatMap(f => {
       const rows: Decision[] = [];
       if (f.state !== "open") rows.push({ ref: String(f.id), by: "评审负责人", result: f.state, note: f.triage_note });
