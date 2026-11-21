@@ -20,6 +20,14 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 插件第四期：流程提供者、完成检查与 ACP 目录（2026-11-21）
+
+- 完成信号和 Git 共用巡检，证据留在阶段，失败退避；从 `src/flows/plugin-signals.ts` 读起。
+- 运行器由本人确认，持久运行恢复同键作业，期限取消；从 `src/flows/plugin-runner.ts`、`src/agents/runs.ts` 读起。
+- 结果检查默认关闭，只能收紧，强制错误暂停，本人单次越过留审计；从 `src/flows/plugin-gates.ts`、`src/flows/engine.ts` 读起。
+- backends 声明进入信任指纹与统一目录，停用移出，保存配置显示来源；从 `src/plugins/backends.ts`、`src/agents/catalog.ts`、`src/plugins/trust.ts` 读起。
+- 文件示例在 `examples/plugins/stagekit/`。网页选择、阶段证据与错误、检查设置、后端来源待接，字段见 `docs/v2/flows.md`。
+
 ## 设置页按区域显示，接上通知出口、出网代理、云端工具和成员的例行整理（2026-11-21）
 
 网页侧。设置页先读 `GET /api/settings/sections`，判断都在 `web/src/lib/settings-access.ts`（纯函数）和 `lib/caps.ts` 的 `settingsArea` / `settingsKey` / `settingsCard`；`Settings.vue` 的 `TAB_KEYS` 写每个分类读写哪些配置键，`SetCard` / `SetRow` / `SetGate` 带 `keys` 后决定显示和只读（`lib/set-readonly.ts`，只读的控件 `inert`），`settings/ctx.ts` 把保存的 403 换成指出键的一句话。新卡：`components/NotifyOutlets.vue`（`/api/notify/outlets`，账号页也用）、`EgressSettings.vue`（`/api/security/egress`）、`CloudToolsSettings.vue`（`/api/cloud-tools`）；成员详情的例行整理在 `MembersSettings.vue`（`/api/work/routine?user=`）。演示数据和截图在 `scripts/doc-screens.ts`（`settings-outlets`、`settings-egress`、`settings-cloud-tools`、`settings-member`）。

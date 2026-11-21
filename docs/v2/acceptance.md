@@ -312,6 +312,14 @@ npx vue-tsc --noEmit -p web/tsconfig.json
 
 <a id="plugin-process-hooks"></a>
 
+## 插件第四期：信号、运行器、完成检查与 ACP 后端（2026-11-21）
+
+- `test/flow-plugin.test.ts` 在进程内与隔离模式验证信号完成带证据、参数拒绝、失败退避、停用后人工完成；本人确认运行器、成员不能自启；丢回执后同键恢复、期限取消、失败保留当前阶段。
+- 同一文件验证检查否决与证据、只有本人能单次越过、下一次重新检查、必须的超时暂停、非必须的超时放行与日志；签字后检查原结果，交回失败后旧越过卡片失效，进度视图可读运行器尝试。既有行为回归用 `test/flow-*.test.ts`、`test/flows*.test.ts`。
+- `test/plugin-backends.test.ts` 两种模式验证未信任不可选、信任后统一目录和假 ACP 回合、停用后来源与拒绝启动、改启动参数重新确认；开发目录信任也绑定声明。只启动 `test/fake-acp-agent.ts`。
+- 安装 `examples/plugins/stagekit`，按 README 保存本机检查流程，由本人确认。在插件数据目录的 ready.txt 写 ready，检查信号完成和文件证据；用 checks API 启用验收词检查，缺词时核对卡片与越过审计。
+- 网页验收留待接入：流程定义选 signals/runners、阶段 pluginEvidence 与 waitingSignal 的“问不到”、流程设置 gates/checks、AI 的 pluginBackend 来源和停用原因。接口见 flows.md 末节。
+
 ## 插件通知出口（2026-11-21）
 
 - 运行 `npx vitest run test/plugin-notifier.test.ts --maxWorkers=2`。在隔离进程和宿主进程各验证一次免打扰后补送、汇总释放、同键更新、超时重试及网页已推送状态。

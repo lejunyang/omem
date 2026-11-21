@@ -274,6 +274,7 @@ npm install -g @omem-ai/cli
 | 把工作配置交给别人 | 设置 → 插件 → 打成场景包，勾选空间、档案、技能、规则、流程、MCP，填名字并写出目录；对方用 `omem plugin install <目录>` 安装。MCP 值不导出，文本含已存密钥或用户目录绝对路径会先拒绝 |
 | 装别人写的插件 | 设置 → 插件 → 安装插件，填 `npm:包名@版本` 或 `github:owner/repo#tag`（或 `omem plugin install …`）；看过它声明的权限后点“信任并运行”。包是源码时先列出要运行的装依赖和构建命令，你确认了才运行。不想用的插件（内置的也可以）在同一页关掉，不用重启 |
 | 边写插件边试 | `omem plugin link <目录>`：不复制，改了文件运行中的 omem 自动重新加载；带代码的信任一次（按目录记），之后改代码不用再确认；设置页标“开发中”，只在这台设备上。`omem plugin unlink <id>` 去掉 |
+| 用插件判断完成或执行流程阶段 | 信任后可写插件完成信号和确定性运行器；运行器另由本人确认流程，结果检查按流程启用。写法见 [插件开发](docs/v2/plugins.md#流程的完成信号)，网页入口待接 |
 | 插件的内容放到事项页、流程阶段和工作页 | 插件代码里 `api.slot("item.panel", { block, when: { object } })`：比如合并请求的检查结果显示在挂着它的事项侧栏，不用打开插件页；按看的人和事项空间取数，插件停用就消失。写法见 [docs/v2/plugins.md](docs/v2/plugins.md) |
 | 做一个自己的小插件（复盘、问卷、打卡） | 在数据目录建 `plugins/<id>/plugin.yaml`、`agents/<名>.md`（可带 `skills/`、`settings`），重启后侧栏出现它的页面：和它的 Agent 对话，Agent 能发表单让你填、画图给你看。不加载数据目录里的代码。格式见 [docs/v2/plugins.md](docs/v2/plugins.md) |
 | 插件读一种文件格式，或为 Wiki 增加写作模板 | 注册 `api.sourceParser` 或 `api.wikiPageKind`。上传、目录导入和网址导入可按格式解析；插件读成表格或条目的原件在原件页按表格或条目显示，每行都能引用；Wiki 可以按类型检查正文、定期核对，页头显示类型，编辑和新建时可选。示例在 `examples/plugins/formats`，参见 [插件开发](docs/v2/plugins.md)。 |

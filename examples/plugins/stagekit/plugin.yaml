@@ -1,0 +1,5 @@
+id: stagekit
+name: 本机阶段示例
+description: 用文件演示完成信号、确定性作业和结果检查。
+permissions:
+  flow: { signal: true, run: true, gate: true }
