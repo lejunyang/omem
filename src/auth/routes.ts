@@ -1,3 +1,4 @@
+import { requireMemberAction, type MemberAction } from "./member-management.ts";
 import { capabilityAccess, spacesWithCapability, globalCapability, type Capability } from "./capabilities.ts";
 import type { FastifyRequest } from "fastify";
 import type { App } from "../core/app.ts";
@@ -16,12 +17,13 @@ import { requireReadable } from "./visibility.ts";
  * - `self`: anyone logged in and approved; the handler keeps to their own data and readable spaces.
  * - `owner`: the owner only (the owner's own learning, the start page).
  * - `{ g }`: a global permission.
+ * - `{ member }`: a member-management action, optionally against the account or invite in :id.
  * - `{ s, at }`: a permission in the space found at `at`: `p.id` / `q.space` / `b.space` (route
  *   param, query, body) or through what the id names: `src:p.id` (a source), `mem:p.id` (a memory),
  *   `note:p.id` (a note on a source).
  * - `{ run }`: the run in `:id` must be one the user may read (permissions.ts canReadRun).
  */
-export type RouteRule = "handler" | "public" | "self" | "owner" | { cap: Capability; at: string } | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
+export type RouteRule = "handler" | "public" | "self" | "owner" | { cap: Capability; at: string } | { member: MemberAction; target?: boolean } | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
 
 const g = (perm: GlobalPerm): RouteRule => ({ g: perm });
 const s = (perm: SpacePerm, at: string): RouteRule => ({ s: perm, at });
@@ -58,9 +60,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/share/:token": "public",
   "GET /api/shares": "self",
   "DELETE /api/shares/:id": "self",
-  "GET /api/capabilities": cap("settings.members"),
-  "GET /api/members/:id/capabilities": cap("settings.members"),
-  "PUT /api/members/:id/capabilities": cap("settings.members"),
+  "GET /api/capabilities": { member: "read" },
+  "GET /api/members/:id/capabilities": { member: "read", target: true },
+  "PUT /api/members/:id/capabilities": { member: "manage", target: true },
   "GET /api/me": "self",
   // Each person's own AI accounts (docs/v2/agent-accounts.md): the handlers act on the caller's own only.
   "GET /api/me/agent-accounts": "self",
@@ -529,15 +531,15 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "DELETE /api/auth/identities": "self",
   "GET /api/auth/providers": USERS,
   "PUT /api/auth/providers/:id/app": USERS,
-  "GET /api/users": USERS,
-  "POST /api/users": USERS,
-  "PATCH /api/users/:id": USERS,
-  "DELETE /api/users/:id/sessions": USERS,
-  "DELETE /api/users/:id/identities": USERS,
-  "PUT /api/users/:id/spaces": USERS,
-  "GET /api/invites": USERS,
-  "POST /api/invites": USERS,
-  "DELETE /api/invites/:id": USERS,
+  "GET /api/users": { member: "read" },
+  "POST /api/users": { member: "manage" },
+  "PATCH /api/users/:id": { member: "manage", target: true },
+  "DELETE /api/users/:id/sessions": { member: "identity", target: true },
+  "DELETE /api/users/:id/identities": { member: "identity", target: true },
+  "PUT /api/users/:id/spaces": { member: "manage", target: true },
+  "GET /api/invites": { member: "read" },
+  "POST /api/invites": { member: "manage" },
+  "DELETE /api/invites/:id": { member: "revokeInvite", target: true },
   "GET /api/access/roles": "self",
   "POST /api/access/roles": USERS,
   "PUT /api/access/roles/:id": USERS,
@@ -597,6 +599,7 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   }
   if (rule === "public" || rule === "self") return;
   if (rule === "owner") throw new HttpError(403, "这个接口只对 omem 的主人开放");
+  if ("member" in rule) return requireMemberAction(app, userId, rule.member, rule.target ? (req.params as { id: string }).id : undefined);
   if ("g" in rule) return requirePerm(app, userId, rule.g);
   if ("run" in rule) {
     if (!canReadRun(app, userId, String((req.params as { id?: string }).id ?? ""))) throw new HttpError(404, "运行不存在");

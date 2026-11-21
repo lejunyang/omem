@@ -55,6 +55,7 @@ export const legacyCapabilities: Record<string, Capability[]> = {
 const personal: Capability[] = ["ask.send", "conversations.view", "notifications.view", "runs.operate"];
 function presetGrants(role: string, permissions: string[], cap: Capability) {
   if (role === "owner") return true;
+  if (cap === "settings.members" && role === "admin") return true;
   if (cap === "remote.view" || cap === "remote.operate") return false;
   if (cap.startsWith("settings.") && cap !== "settings.members") return cap === "settings.members.view" && (role === "admin" || permissions.includes("users.manage"));
   if (role === "observer") return cap.endsWith(".view") || cap === "ask.send" || cap === "search.use";
@@ -97,10 +98,6 @@ export function capabilityAccess(app: App, userId: string, targetSpace?: string 
     const localEffect = space && effects.get(JSON.stringify([cap, "space", space]));
     if (global === "deny" || localEffect === "deny") return null;
     if (global === "allow" || localEffect === "allow") return "override";
-    if (cap === "settings.members") {
-      const edit = source("settings.members.edit");
-      if (edit) return edit;
-    }
     if (cap === "settings.members.view") {
       const manage = source("settings.members");
       if (manage) return manage;
