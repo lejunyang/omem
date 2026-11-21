@@ -22,10 +22,14 @@ const settings = (app: App, user: string) => app.config.notify.outlets[user] ?? 
 const kindOf = (a: Ask) => a.handler ? "handler:" + a.handler : a.kind;
 const ordinary = (kind: string) => kind === "question" || kind === "suggestion";
 type OutletSetting = z.infer<typeof outletSettings>[number];
+function permittedAskKinds(app: App, userId: string) {
+  const owner = isOwner(app, userId);
+  const grants = app.config.notify.outletAskGrants[userId];
+  return (outlet: string, kind: string) => owner || ordinary(kind) || !!grants?.[outlet]?.includes(kind);
+}
 function allowsAsk(app: App, ask: Ask, setting?: OutletSetting) {
   const kind = kindOf(ask);
-  return !!setting?.askKinds.includes(kind) && (ordinary(kind) || isOwner(app, ask.userId)
-    || !!app.config.notify.outletAskGrants[ask.userId]?.[setting.id]?.includes(kind));
+  return !!setting?.askKinds.includes(kind) && permittedAskKinds(app, ask.userId)(setting.id, kind);
 }
 const recipient = (app: App, id: string) => ({ id, identities: identitiesOf(app, id).map(i => ({ provider: i.channel, subject: i.external_id })) });
 const resolution = z.object({ ok: z.boolean(), hint: z.string().max(500).optional() });
@@ -209,13 +213,16 @@ export async function answerFromOutlet(app: App, plugin: string, input: unknown)
 
 export async function listOutlets(app: App, userId: string) {
   const user = recipient(app, userId);
+  const permitted = permittedAskKinds(app, userId);
   const plugins = await Promise.all([...notifiers].map(async ([id, e]) => {
     const signal = deliverySignal(e.lifetime);
     const reachable = await untilAbort(signal, () => reach(e.def, user, signal)).catch(err => ({ ok: false, hint: String(err).slice(0,500) }));
     const history = one<{updated: string; error: string | null}>(app.db,
       "select updated,error from outlet_deliveries where user_id=? and outlet=? and updated is not null order by updated desc limit 1", userId, id);
+    const saved = settings(app, userId).find(s => s.id === id);
+    const setting = saved ? { ...saved, askKinds: saved.askKinds.filter(kind => permitted(id, kind)) } : null;
     return { id, name: e.def.name, plugin: e.plugin, builtin: false, supportsAsk: !!e.def.ask, reachable,
-      setting: settings(app, userId).find(s => s.id === id) ?? null, lastDelivery: history?.updated ?? null, lastError: history?.error ?? null };
+      setting, lastDelivery: history?.updated ?? null, lastError: history?.error ?? null };
   }));
   const lark = larkReachable(app, userId);
   return [...["web","lark"].map(id => ({ id, name: id === "web" ? "网页" : "飞书", plugin: null, builtin: true, supportsAsk: true,
@@ -234,8 +241,9 @@ export function setOutlets(app: App, requester: string, body: { userId?: string;
   if (isOwner(app, requester)) {
     const grants = Object.fromEntries(body.outlets.map(s => [s.id, s.askKinds.filter(kind => !ordinary(kind))]));
     outletAskGrants = { ...outletAskGrants, [userId]: grants };
-  } else if (body.outlets.some(s => s.askKinds.some(kind => !ordinary(kind) && !outletAskGrants[userId]?.[s.id]?.includes(kind)))) {
-    throw new HttpError(403, "此类提问需要本人为这个出口授权");
+  } else {
+    const permitted = permittedAskKinds(app, userId);
+    if (body.outlets.some(s => s.askKinds.some(kind => !permitted(s.id, kind)))) throw new HttpError(403, "此类提问需要本人为这个出口授权");
   }
   const next = { ...app.config, notify: { ...app.config.notify, outlets, outletAskGrants } };
   saveConfig(next, app.home);

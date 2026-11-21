@@ -325,10 +325,17 @@ it.each(["isolated", "inprocess"] as const)("%s 受托成员的审批出口由�
   const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
   const first = { ...setting, id: "delegate:first", askKinds: ["approval"] };
   const second = { ...setting, id: "delegate:second" };
-  const put = (byOwner: boolean, outlets: typeof first[]) => server.inject({
+  const put = (byOwner: boolean, outlets: typeof app.config.notify.outlets[string]) => server.inject({
     method: "PUT", url: "/api/notify/outlets", headers: byOwner ? undefined : headers, payload: { userId: "member", outlets },
   });
   try {
+    app.config.notify.outlets.member = [{ ...first, askKinds: ["question", "approval", "handler:command-gate"] }];
+    const list = await server.inject({ url: "/api/notify/outlets", headers });
+    expect(list.statusCode).toBe(200);
+    const saved = list.json().outlets.find((row: { id: string }) => row.id === first.id).setting;
+    expect(saved).toEqual({ ...first, askKinds: ["question"] });
+    expect((await put(false, [{ ...saved, minUrgency: "urgent", askKinds: [...saved.askKinds, "suggestion"] }])).statusCode).toBe(200);
+    expect(app.config.notify.outlets.member[0]).toMatchObject({ minUrgency: "urgent", askKinds: ["question", "suggestion"] });
     expect((await put(false, [first])).statusCode).toBe(403);
     expect((await put(true, [first, second])).statusCode).toBe(200);
     expect((await put(false, [first, { ...second, askKinds: ["approval"] }])).statusCode).toBe(403);
