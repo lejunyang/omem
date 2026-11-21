@@ -8,7 +8,11 @@ import { allProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
 import { listAgentProfiles } from "../src/agents/runner.ts";
 import { backendHosts } from "../src/agents/egress-policy.ts";
-import { openAcp } from "../src/agents/acp.ts";
+import * as spawn from "../src/agents/spawn.ts";
+import { sessionCleanup } from "../src/agents/session-cleanup.ts";
+import { archiveSession } from "../src/agents/session-archive.ts";
+import { one } from "../src/core/db.ts";
+import { deleteAcpSession, openAcp } from "../src/agents/acp.ts";
 import { setTrust, trustState } from "../src/plugins/trust.ts";
 
 describe.each(["isolated", "inprocess"] as const)("声明式 ACP %s", mode => {
@@ -37,12 +41,22 @@ describe.each(["isolated", "inprocess"] as const)("声明式 ACP %s", mode => {
     const handle = await openAcp(profile,{cwd:app.home});
     try { expect(JSON.parse((await handle.prompt("检查",() => {})).text)).toMatchObject({turn:1}); }
     finally { handle.close(); }
+    const cleanup = await sessionCleanup(app,profile,{cwd:app.home},() => {});
+    cleanup.created(handle.sessionId);
     app.config.agents.profiles.push(profile);
     await setPluginEnabled(app,"backendkit",false);
     expect(catalogEntry(entry.id)).toBeUndefined();
     expect(backendAvailable(profile,app.home)).toBe(false);
     expect(listAgentProfiles(app).find(p => p.id === entry.id)?.pluginBackend).toMatchObject({plugin:"backendkit",available:false});
-    await expect(openAcp(profile,{cwd:app.home})).rejects.toThrow("停用");
+    const launches = vi.spyOn(spawn,"launch");
+    try {
+      await expect(openAcp(profile,{cwd:app.home})).rejects.toThrow("停用");
+      await expect(deleteAcpSession(profile,handle.sessionId,app.home)).rejects.toThrow("停用");
+      await expect(archiveSession({...profile,archiveArgs:["--version"]},handle.sessionId,app.home)).rejects.toThrow("停用");
+      await cleanup.discard(handle.sessionId);
+      expect(one(app.db,"select attempts,ready from session_cleanup where session_id=?",handle.sessionId)).toMatchObject({attempts:0,ready:1});
+      expect(launches).not.toHaveBeenCalled();
+    } finally { launches.mockRestore(); }
     await setPluginEnabled(app,"backendkit",true);
     expect(backendAvailable(profile,app.home)).toBe(true);
     app.config.agents.profiles = [];

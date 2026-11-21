@@ -177,6 +177,11 @@ export function pluginBackendStatus(profile: Pick<AgentProfile, "id" | "source" 
   const available = !!e && acpCatalog.some(c => c.id === id && c.plugin === e.plugin);
   return { plugin: e?.plugin ?? profile.plugin!, name: e?.pluginName ?? profile.plugin!, available, ...(!available && { reason: "这个后端来自已停用或未信任的插件" }) };
 }
+export class PluginBackendUnavailable extends Error {}
+export function requirePluginBackend(profile: Pick<AgentProfile, "id" | "source" | "plugin" | "peer">) {
+  const status = !profile.peer && pluginBackendStatus(profile);
+  if (status && !status.available) throw new PluginBackendUnavailable(status.reason);
+}
 export function referencedPluginProfiles(ids: Set<string>) {
   return [...pluginOrigins.values()].filter(e => ids.has(e.id)).map(catalogProfile);
 }
