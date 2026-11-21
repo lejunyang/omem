@@ -26,13 +26,14 @@ export const sectionByPath: Record<string, Section> = {
   "agents.progress": "assistant", "agents.design": "assistant", "agents.autoAdvance": "assistant",
   "agents.workBoard": "assistant", "lark.capture": "knowledge", "lark.knowledge": "knowledge",
   "lark.commands": "assistant", "lark.guests": "assistant", "lark.invite": "assistant",
+  "agents.cloudTools": "security",
 };
 
 // Identity, credentials, command execution and network destinations stay under the owner's control.
 export const ownerSettings = [
   "mentions.reply", "lark.commands", "lark.invite", "lark.guests", "lark.bots", "lark.ownerOpenId",
   "lark.appSecretEnv", "lark.appId", "lark.capture", "lark.defaultSpace", "telegram", "onebot", "security", "approvals",
-  "agents.accounts", "agents.accountIsolation", "agents.networkPolicies", "agents.profiles", "ai.providers",
+  "agents.accounts", "agents.accountIsolation", "agents.networkPolicies", "agents.profiles", "agents.cloudTools", "ai.providers",
   "host", "port", "token", "https", "webUrl", "shares.expiryDays", "auth", "node", "backups", "studies.envs", "ide",
   "documents.converter", "embeddings.url", "embeddings.apiKeyEnv", "mcp", "agentSkills", "plugins",
 ];

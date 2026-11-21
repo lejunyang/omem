@@ -16,7 +16,7 @@ import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
 import { chatSettings, describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
 import { retargetToolToken, revokeToolToken } from "./tools.ts";
-import { replyOf, sessionPrompt, type AgentEvent } from "./types.ts";
+import { isAgentRunError, replyOf, sessionPrompt, type AgentEvent } from "./types.ts";
 import { autoTurnsSinceOwner, maxAutoTurns, progressMessages, refreshWork } from "./agent-work.ts";
 import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
@@ -394,7 +394,9 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // Tool tokens are scoped to the sender, so each person gets their own agent session.
   // A member's own account (agents/accounts.ts) is part of the key: a session never continues under another account.
   const keyOf = (p: AgentProfile) => `${p.id}|${label}|${prep.cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(p) ? `|${accountTag(p)}` : ""}`;
-  const sessionKey = keyOf(prep.profile);
+  const cloudKey = (selected: typeof prep) => selected.capabilities.omemAccess === "http"
+    ? "|http:" + [selected.capabilities.cloudHttp, ...selected.tools].join(",") : "";
+  const sessionKey = keyOf(prep.profile) + cloudKey(prep);
   const watched = messages.some((m) => typeof m.meta.speaker === "string");
   const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
   const handoff = (ctx.run.input as { handoff?: { kind: string } }).handoff;
@@ -431,7 +433,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   }
   let sentFocus = false;
   const turnMessage = (selected: typeof prep, fresh: boolean, carry = "") => {
-    const withTools = selected.tools.size > 0;
+    const withTools = selected.tools.size > 0 && selected.capabilities.omemAccess !== "http";
     const currentBrief = brief && !withTools ? workStateBrief(app, undefined, false) : brief;
     const seen = t.settings.focusSeen;
     sentFocus = !!focus && (fresh || seen?.hash !== focus.hash || t.agentTurns + 1 - seen.turn >= 20);
@@ -491,7 +493,7 @@ ${WAKE_NOTE}`
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
   const save = (sessionId: string | undefined, turns: number, on: AgentProfile = prep.profile) =>
-    updateThread(app, threadId, { agentProfile: keyOf(on), agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns, ...(sentFocus && focus ? { settings: { ...getThread(app, threadId).settings, focusSeen: { hash: focus.hash, turn: turns } } } : {}) });
+    updateThread(app, threadId, { agentProfile: keyOf(on) + cloudKey(on === prep.profile ? prep : curPrep), agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns, ...(sentFocus && focus ? { settings: { ...getThread(app, threadId).settings, focusSeen: { hash: focus.hash, turn: turns } } } : {}) });
   // The session this thread had is not coming back once a new one replaced it: remove it from the
   // backend's own list (Codex, TraeX, Doubao keep every session the owner can browse).
   const retireReplaced = (sessionId: string | undefined) => {
@@ -503,7 +505,7 @@ ${WAKE_NOTE}`
     if (old) void retireSession(app, old, t.agentSession, t.agentCwd ?? prep.cwd, (e) => e.type === "status" && console.warn(`[omem] ${e.text}`));
   };
 
-  let sandboxFailure: SandboxStartError | undefined;
+  let firstFailure: Error | undefined;
   if (prep.profile.transport !== "acp") {
     // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
     try {
@@ -515,6 +517,7 @@ ${WAKE_NOTE}`
           {
             cwd: prep.cwd,
             runId: ctx.run.id,
+            capabilities: prep.capabilities,
             system: prep.system,
             parts: prep.parts,
             ...turnMessage(prep, !resume),
@@ -535,7 +538,7 @@ ${WAKE_NOTE}`
       try {
         r = await run(canResume);
       } catch (e) {
-        if (!canResume || e instanceof SandboxStartError || (e as Error).message === "CANCELLED") throw e;
+        if (!canResume || (isAgentRunError(e) && e.kind === "queue") || e instanceof SandboxStartError || (e as Error).message === "CANCELLED") throw e;
         emit({ type: "status", text: "无法继续之前的 Agent 会话，改为新会话" });
         r = await run(false);
         mode = "fresh";
@@ -544,8 +547,10 @@ ${WAKE_NOTE}`
       retireReplaced(r.sessionId);
       return { text: replyOf(r), agent: r.agent, profileId: prep.profile.id, mode };
     } catch (e) {
-      if (!(e instanceof SandboxStartError)) throw e;
-      sandboxFailure = e;
+      if (ctx.signal?.aborted) throw e;
+      if (isAgentRunError(e) && e.kind === "queue") noteBreakdown(app, prep.profile, e, emit);
+      else if (!(e instanceof SandboxStartError)) throw e;
+      firstFailure = e;
     } finally {
       revokeToolToken(prep.token);
     }
@@ -583,12 +588,12 @@ ${WAKE_NOTE}`
   const hasNext = (i: number) => chain.slice(i + 1).some((_, k) => usable(i + 1 + k));
   const writeCount = () => one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", ctx.run.id)!.n;
   /** Why the previous backend was left, and what it already wrote (for the one taking over). */
-  if (sandboxFailure && !hasNext(0)) throw sandboxFailure;
-  let left = sandboxFailure?.message ?? "";
+  if (firstFailure && !hasNext(0)) throw firstFailure;
+  let left = firstFailure?.message ?? "";
   let carry = "";
   let writesBefore = 0;
   let quietBefore = false;
-  for (let step = sandboxFailure ? 1 : 0; step < chain.length; step++) {
+  for (let step = firstFailure ? 1 : 0; step < chain.length; step++) {
     if (!usable(step)) continue;
     writesBefore = writeCount();
     quietBefore = quietSet(app, ctx.run.id);
@@ -614,6 +619,7 @@ ${WAKE_NOTE}`
           {
             cwd: curPrep.cwd,
             runId: ctx.run.id,
+            capabilities: curPrep.capabilities,
             system: curPrep.system,
             parts: curPrep.parts,
             ...turnMessage(curPrep, true, carry),

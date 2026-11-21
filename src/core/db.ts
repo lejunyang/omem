@@ -2385,6 +2385,12 @@ export const migrations: readonly string[] = [
    create index remote_grants_recent on remote_grants(user_id,revoked_at) where ended is not null;
    create index remote_grant_candidates on member_capability_overrides(capability,user_id)
      where capability in ('remote.view','remote.operate') and revoked=0 and effect='allow';`,
+  // How many tool calls a run made over the cloud HTTP path, and its last error (agents/cloud-tools.ts).
+  `create table cloud_tool_usage (
+     run_id text primary key references runs(id) on delete cascade, calls integer not null, errors integer not null default 0,
+     last_error text, at text not null
+   );
+   create index cloud_tool_usage_at on cloud_tool_usage(at);`,
 ];
 
 export type Db = DatabaseSync;

@@ -153,6 +153,7 @@ async function perform(app: App, p: Pending, recovering: boolean): Promise<boole
 }
 
 async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, operation?: () => Promise<void>, profile?: AgentProfile) {
+  (await import("./cloud-tools.ts")).revokeCloud(app, p.session_id);
   const key = sessionKey(app, p);
   if (busy.has(key)) return;
   busy.add(key);

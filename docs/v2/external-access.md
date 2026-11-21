@@ -2,6 +2,8 @@
 
 状态：设计，2026-10-20。实现前先按本文核对，有变化改本文。
 
+文末的[云端后端调只读工具](#云端后端调只读工具)已实现，可以独立启用。
+
 ## 1. 要解决的问题
 
 助手在飞书里回复时，会引用代码、原件和运行记录。现在这些引用只有两种结果：
@@ -100,3 +102,52 @@ create table shares (
 3. `/s/:token` 只读页面（原件、Wiki、运行三种）。验收：1440 与 390 宽度无横向溢出；行段高亮正确；页面里没有指向其他对象的链接。
 4. `resolveCitations` 接入，带权限检查。验收：飞书里引用代码原件得到可点开的链接；其他用户的会话里引用不了本人私有空间的原件。
 5. 同步 README、状态表（`docs/v2/status.md`）、acceptance、wiki changes。
+
+## 云端后端调只读工具
+
+无 MCP 的云端会话默认只收到宿主选好的材料。想让它自己核对原文，先把 `webUrl` 配成云端能访问的公网 HTTPS 地址。反向代理使用路径前缀时，把前缀也写进去。
+
+公网入口只转发探测和云端工具请求。下面的 Nginx 配置适用于独立域名、路径从根开始的部署。把 `map` 放进 `http` 块，把 `location` 放进该域名已有证书的 HTTPS `server` 块。带头工具请求必须携带云端运行凭据，宿主再检查有效期、次数和本轮权限。
+
+```nginx
+map "$request_method:$uri:$http_authorization" $cloud_tools_allowed {
+    default 0;
+    "~^(GET|POST):/api/cloud-tools/challenge/[a-f0-9-]+:(Bearer probe-[a-f0-9-]+)?$" 1;
+    "~^GET:/api/tools:Bearer oct_[A-Za-z0-9_-]+$" 1;
+    "~^POST:/api/tools/[a-z_]+:Bearer oct_[A-Za-z0-9_-]+$" 1;
+    "~^GET:/api/tools/turn/oct_[A-Za-z0-9_-]+(/[a-z_]+)?:$" 1;
+}
+
+location / {
+    access_log off;
+    error_log /dev/null;
+    if ($cloud_tools_allowed = 0) { return 403; }
+    proxy_pass_request_headers off;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header Content-Type $content_type;
+    proxy_pass http://127.0.0.1:4317/;
+}
+```
+
+全局 HTTP 令牌在本机配置文件中管理。通用设置接口省略该字段，保存其他设置时保留本机的值。
+
+状态、探测、确认、撤销和云端选项的修改需要本人的 API 令牌或已登录的本人会话。本机 CLI 未配置全局令牌时，会在本机库中登记一次性探测凭据的哈希。服务端只在发起探测时接受它，收到请求就核销。CLI 中途退出时，尚未使用的凭据也会在签发后 60 秒失效。从主干库首次升级到云端工具时，原有手工令牌继续有效。升级前已有 `cloud_tool_usage` 表的库会一次性撤销旧探测命令可能遗留的本人 API 令牌。这些库的旧记录只标有名称 `cloud-tools probe` 且客户端为空，手工创建的本人令牌若也符合这两个条件，升级后需重新签发。
+
+1. 运行 `omem cloud-tools probe <后端档案 ID>`。宿主开一个临时会话，验证后端能带 Authorization 测试头发 GET、POST JSON 并读回回执（`header`）。做不到时，后端可另试无头 GET，沿响应里的 next 地址提交 JSON 查询参数并读回回执（`url`）。两种都失败时返回原因。测试值没有库权限，会话用完即清理。
+2. 本人核对结果，向 `POST /api/cloud-tools/probe/confirm` 提交 `{"backend":"档案 ID","id":"这次探测的 id"}`。换公网地址或重新探测后需要重新确认。
+3. 在配置的 `agents.cloudTools` 里设置下列选项。通过 API 修改时，在已有设置上更新，使用 `PUT /api/settings` 保存。下一轮生效。
+
+| 选项 | 默认值 | 用途 |
+| --- | --- | --- |
+| enabled | false | 本人控制总开关 |
+| backends | [] | 逐个填写已探测的后端档案 ID |
+| tools | search、read_source | 前者找线索，后者按行核对原文。可另选 read_page 阅读 Wiki、read_item 阅读事项。每轮只提供角色和成员也有权使用的工具 |
+| ttlMinutes | 15 | 凭据有效分钟数，范围 1–30。运行结束、取消或会话清理时提前作废 |
+| maxCalls | 32 | 同一运行共用的次数上限，范围 1–100。查看参数、调用成功和工具返回错误都计次 |
+| credentialIn | channel | 优先由适配器的安全通道交付。后端缺少安全通道时保持关闭。只有本人选 message 才会把凭据写入当轮消息 |
+
+选 **message** 意味着这串凭据会留在云端那次会话的历史里，直到会话被删除。它只读，只在设置的几分钟内有效，只能调勾选的工具，只能读这次运行获准的空间。宿主只保存凭据的哈希。只支持 URL 的后端每请求一次就换一个地址，沿响应的 `next` 继续。对外反向代理应关闭这些工具路径的原始 URL 访问日志。
+
+在运行页查看工具名、参数和结果状态，对应事件带 `via: cloud-http`。凭据签发和作废进审计记录。单个工具结果超过 32 KB 时只保留开头并提示缩小范围。次数用完、过期、被拒时应停止请求。
+
+本人可用 `GET /api/cloud-tools` 看地址、各后端最近的探测时间和结论、当前有效凭据数，以及最近 50 个使用记录中的次数和错误。设置页的探测操作调用 `POST /api/cloud-tools/probe`，请求体为 `{"backend":"档案 ID"}`。全部作废用 `POST /api/cloud-tools/revoke`，返回本次撤销的数量。要阻止后续运行签发新凭据，同时关闭总开关。

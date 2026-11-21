@@ -77,6 +77,8 @@ import { HttpError, slugify, useProcessZone, validZone } from "../core/util.ts";
 import { loopbackIp, trustedLocal, viaProxy } from "./origin.ts";
 import { listenSecure, type SecureListener } from "./secure.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
+import { cloudRequest, cloudUsage, revokeCloud } from "../agents/cloud-tools.ts";
+import { cloudBackendStatus, cloudAddress, checkCloudAddress, confirmProbe, probeCloud, probeReceipt } from "../agents/cloud-probe.ts";
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute, requestReviewAudience } from "../auth/routes.ts";
@@ -164,7 +166,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // parsed (some rules find the space in it).
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
-    mark(`${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`);
+    const route = req.routeOptions.url;
+    mark(`${req.method} ${route ?? req.url.split("?")[0]}`);
+    const token = bearer(req);
+    if (typeof token === "string" && token.startsWith("oct_") && !(req.headers.authorization?.startsWith("Bearer oct_") &&
+      ((req.method === "GET" && route === "/api/tools") || (req.method === "POST" && route === "/api/tools/:name"))))
+      throw new HttpError(403, "云端凭据只允许指定的只读工具接口");
+    if (req.routeOptions.url === "/api/cloud-tools/challenge/:nonce") return;
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).
     if (req.routeOptions.url === "/api/remote/agent-browser") return; // Authenticated by gateCaller.
@@ -219,6 +227,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ...u, caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
   });
 
+  server.route({ method: ["GET", "POST"], url: "/api/cloud-tools/challenge/:nonce", handler: async (req, reply) => {
+    reply.header("cache-control", "no-store");
+    const query = (req.query as { args?: string }).args;
+    let args = req.body;
+    if (req.method === "GET" && query) {
+      try { args = JSON.parse(query); } catch { throw new HttpError(400, "args 需要 JSON 参数对象"); }
+    }
+    return probeReceipt(app, (req.params as { nonce: string }).nonce, req.method, req.headers.authorization, args);
+  } });
+  server.get("/api/cloud-tools", async () => {
+    const url = cloudAddress(app);
+    let addressError = url ? null : "请配置公网 HTTPS webUrl";
+    if (url) await checkCloudAddress(url).catch(e => { addressError = e.message; });
+    return { ...app.config.agents.cloudTools, ...cloudUsage(app), url, addressError,
+      profiles: cloudBackendStatus(app) };
+  });
+  server.post("/api/cloud-tools/revoke", async () => ({ revoked: revokeCloud(app) }));
+  server.post("/api/cloud-tools/probe", async req => probeCloud(app, (req.body as { backend: string }).backend));
+  server.post("/api/cloud-tools/probe/confirm", async req => {
+    const { backend, id } = req.body as { backend: string; id: string };
+    return confirmProbe(app, backend, id);
+  });
   // ---------------------------------------------------------------- tools/MCP
   // A run's token, or a stand-in for another device's tools (its agent runs here, core/peer-acp.ts).
   const toolBackend = async (req: FastifyRequest) => {
@@ -264,8 +294,31 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (ms > 60_000) console.warn(`[omem] 工具 ${label} 用了 ${Math.round(ms / 1000)} 秒${runId ? `（运行 ${runId}）` : ""}`);
     }
   };
-  server.get("/api/tools", async (req) => ({ tools: await (await toolBackend(req)).list() }));
-  server.post("/api/tools/:name", async (req) => (await toolBackend(req)).call((req.params as { name: string }).name, req.body));
+  server.get("/api/tools", async (req, reply) => {
+    if (req.headers.authorization?.startsWith("Bearer oct_")) {
+      reply.header("cache-control", "no-store");
+      return cloudRequest(app, bearer(req), "header");
+    }
+    return { tools: await (await toolBackend(req)).list() };
+  });
+  server.post("/api/tools/:name", async (req, reply) => {
+    const { name } = req.params as { name: string };
+    if (req.headers.authorization?.startsWith("Bearer oct_")) {
+      reply.header("cache-control", "no-store");
+      return cloudRequest(app, bearer(req), "header", name, req.body);
+    }
+    return (await toolBackend(req)).call(name, req.body);
+  });
+  const signedTool = async (req: FastifyRequest, reply: FastifyReply) => {
+    reply.header("cache-control", "no-store").header("referrer-policy", "no-referrer");
+    const { key, name } = req.params as { key: string; name?: string };
+    let args: unknown;
+    try { args = JSON.parse((req.query as { args?: string }).args ?? "{}"); }
+    catch { throw new HttpError(400, "args 需要 JSON 参数对象"); }
+    return cloudRequest(app, key, "url", name, args);
+  };
+  server.get("/api/tools/turn/:key", signedTool);
+  server.get("/api/tools/turn/:key/:name", signedTool);
   const mcp = async (req: FastifyRequest, reply: FastifyReply) => {
     const mcpServer = createMcpServer(await toolBackend(req));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -3383,6 +3436,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       changedSettings(app.config, next, access.edit, access.owner);
     }
     if (proposed.security?.includes("approvals")) next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
+    // The global HTTP credential is managed in local configuration, never through this route.
+    next.token = app.config.token;
+    // Which cloud backends may call tools over HTTP is the owner's, signed in as themselves (not a request trusted only for coming from this machine).
+    if (JSON.stringify(next.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools) && (who(req) !== OWNER || authOf(req)?.via === "local"))
+      throw new HttpError(403, "只有本人可以修改云端工具设置");
     // Outlet preferences and delegated approval grants change through the per-member outlet route.
     next.notify.outlets = app.config.notify.outlets;
     next.notify.outletAskGrants = app.config.notify.outletAskGrants;

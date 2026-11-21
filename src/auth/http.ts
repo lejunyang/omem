@@ -1,5 +1,6 @@
 import { ownerOnlyMemberGrants, requireDelegableChanges, requireMemberSpaceGrant } from "./member-management.ts";
 import { capabilityAccess, capabilityCatalog, globalCapability, isCapability, memberCapabilities, type Override } from "./capabilities.ts";
+import { consumeProbeTicket } from "./cloud-probe-ticket.ts";
 import { grantScopes, guestUserId, readGrant } from "./grants.ts";
 import type { TLSSocket } from "node:tls";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -46,7 +47,8 @@ export function bearerToken(req: FastifyRequest) {
 export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
   const token = bearerToken(req);
   if (token) {
-    const userId = userForToken(app, token);
+    const localProbe = req.method === "POST" && req.routeOptions.url === "/api/cloud-tools/probe" && consumeProbeTicket(app, token);
+    const userId = localProbe ? OWNER : userForToken(app, token);
     if (userId) return { userId, via: "token", restricted: false, sessionHash: null };
     // One an authenticator plugin checked before this request was resolved (authenticators.ts checkBearer).
     const b = knownBearer(token);
@@ -59,6 +61,8 @@ export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
     if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req.raw)) return null;
     return { userId: s.userId, via: "session", restricted: s.restricted, sessionHash: s.idHash };
   }
+  // A public reverse proxy may look identical to a local client, even down to Host.
+  if (req.routeOptions.url?.startsWith("/api/cloud-tools")) return null;
   if (!app.config.token && trustedLocal(req.raw, req.ip ?? "", { refuseProxied: app.config.auth.enabled })) return { userId: OWNER, via: "local", restricted: false, sessionHash: null };
   return null;
 }

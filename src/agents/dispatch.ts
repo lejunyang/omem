@@ -11,12 +11,20 @@ import { resolveModelOption } from "./models.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { networkEnvironment, withNetworkPolicy } from "./network-policy.ts";
-import { revokeToolToken } from "./tools.ts";
+import { cloudTurn } from "./cloud-tools.ts";
+import { toolContextForToken, revokeToolToken } from "./tools.ts";
 
 /** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   try {
-    return await withNetworkPolicy(app, profile, { signal: req.signal, runId: req.runId, stop: () => { if (req.mcp) revokeToolToken(req.mcp.token); } }, (p, signal) => runOn(app, p, { ...req, capabilities: backendCapabilities(p), signal, env: { ...req.env, ...networkEnvironment(app, p) } }, quotaEvents(app, p, emit)));
+    return await withNetworkPolicy(app, profile, { signal: req.signal, runId: req.runId, stop: () => { if (req.mcp) revokeToolToken(req.mcp.token); } }, (p, signal) => {
+      const turn = { ...req, capabilities: req.capabilities ?? backendCapabilities(p), signal, env: { ...req.env, ...networkEnvironment(app, p) } };
+      const events = quotaEvents(app, p, emit);
+      if (turn.capabilities.omemAccess !== "http") return runOn(app, p, turn, events);
+      const ctx = req.mcp && toolContextForToken(app, req.mcp.token);
+      if (!ctx) throw new Error("缺少本轮的工具权限");
+      return cloudTurn(app, profile, ctx, turn, events, (request, watch) => runOn(app, p, request, watch));
+    });
   } finally {
     afterTurn(app, profile);
   }

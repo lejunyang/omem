@@ -45,7 +45,7 @@ describe("complete portable pulls", () => {
     const app = testApp();
     // lark_message_lines: a pulled chat keeps its first copy in lark_messages.source_id / line; source_viewers is what this device saw.
     const derived = new Set(["stored_file_refs", "stored_file_backfill", "vector_log", "chunks", "symbols", "code_refs", "pages", "page_rowids", "page_links", "page_cites", "page_aliases", "memory_rowids", "req_rowids", "lark_message_lines", "source_viewers", "source_access"]);
-    const device = new Set(["egress_runs", "kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "peer_grants", "fed_outbox", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "remote_recordings", "remote_grants", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
+    const device = new Set(["cloud_tool_usage", "egress_runs", "kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "peer_grants", "fed_outbox", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "remote_recordings", "remote_grants", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
       "plugin_events", "plugin_deliveries", "plugin_subscriptions", "outlet_deliveries",
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
@@ -426,6 +426,8 @@ describe("complete portable pulls", () => {
     run(remote.db, "insert or replace into kv(key,value) values('capture_demo','remote cursor')");
     for (const [app, id] of [[local, "local-session"], [remote, "remote-session"]] as const)
       run(app.db, "insert into session_cleanup(backend_key,session_id,transport,owner_pid,retry_at) values('doubao:app',?,'doubao-cli',1,'')", id);
+    const cloudRun = createRun(remote, { kind: "ask", title: "远端读取" });
+    run(remote.db, "insert into cloud_tool_usage(run_id,calls,at) values(?,2,?)", cloudRun.id, cloudRun.createdAt);
     const bin = mkdtempSync(join(tmpdir(), "omem-ssh-test-"));
     writeFileSync(join(bin, "ssh"), '#!/bin/sh\nexec /bin/sh -c "$4"\n');
     chmodSync(join(bin, "ssh"), 0o755);
@@ -439,7 +441,10 @@ describe("complete portable pulls", () => {
     local.db.close();
     try {
       const copied = App.open(f.dbDir);
-      try { expect(all(copied.db, "select * from session_cleanup")).toEqual([]); }
+      try {
+        expect(all(copied.db, "select * from session_cleanup")).toEqual([]);
+        expect(all(copied.db, "select * from cloud_tool_usage")).toEqual([]);
+      }
       finally { copied.db.close(); }
       const backup = overwriteLocal(home, f);
       expect(readFileSync(join(home, "files/0123456789abcdef.pdf"), "utf8")).toBe("document");

@@ -16,7 +16,7 @@ const opt = optJson ? JSON.parse(optJson) : {};
 const parts = Array.isArray(opt.parts) ? opt.parts : ['library', 'files', 'repos', 'runs'];
 // What this device keeps to itself, and what a merge rebuilds from the sources it takes (search
 // chunks, code outline): neither travels in a stripped snapshot.
-const DEVICE = ['api_tokens', 'cli_logins', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines', 'shares', 'session_cleanup', 'remote_recordings', 'lark_doc_subscriptions', 'platform_watches', 'flow_signals', 'item_follow_cursors', 'git_commit_cursors', 'plugin_deliveries', 'plugin_events', 'plugin_subscriptions', 'outlet_deliveries'];
+const DEVICE = ['cloud_tool_usage', 'api_tokens', 'cli_logins', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines', 'shares', 'session_cleanup', 'remote_recordings', 'lark_doc_subscriptions', 'platform_watches', 'flow_signals', 'item_follow_cursors', 'git_commit_cursors', 'plugin_deliveries', 'plugin_events', 'plugin_subscriptions', 'outlet_deliveries'];
 const DERIVED = ['chunks', 'symbols', 'code_refs'];
 const VECTOR_TRIGGERS = ['vector_log_insert', 'vector_log_update', 'vector_log_delete'];
 DEVICE.push(...${JSON.stringify(snapshotProviderTables)});
