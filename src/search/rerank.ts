@@ -1,4 +1,6 @@
 import type { App } from "../core/app.ts";
+import { searchPost } from "./api.ts";
+import type { Config } from "../core/config.ts";
 import { loadLocalModel } from "./embeddings.ts";
 import { pluginScores, selectedReranker, pluginHitFilter, type RerankCandidate, type SharedSearchAccess } from "./providers.ts";
 import { OWNER } from "../core/users.ts";
@@ -74,26 +76,61 @@ async function getScorer(app: App): Promise<Scorer | null> {
   return entry.scorer;
 }
 
-/** Score the whole batch with one provider, reserving time for a local fallback. */
+export async function apiScores(app: App, cfg: Config["rerank"], query: string, passages: string[], budget: number) {
+  if (!cfg.api) throw new Error("请填写云端重排模型和接口");
+  type Row = { index: number; relevance_score?: number; score?: number };
+  const body = await searchPost(app, cfg.api, "/rerank", {
+    model: cfg.api.model, query: query.slice(0, 1000),
+    // Estimate one token as two UTF-16 code units.
+    documents: passages.map(p => p.slice(0, cfg.maxTokens * 2)), top_n: passages.length,
+  }, AbortSignal.timeout(Math.min(cfg.api.timeoutMs, budget))) as {
+    results?: Row[]; data?: Row[];
+  };
+  const results = body?.results ?? body?.data;
+  if (!Array.isArray(results) || results.length !== passages.length) throw new Error("重排结果数量与候选不符");
+  const scores: number[] = [];
+  for (const r of results) {
+    const score = r?.relevance_score ?? r?.score;
+    if (!Number.isInteger(r?.index) || r.index < 0 || r.index >= passages.length ||
+        scores[r.index] !== undefined || typeof score !== "number" || !Number.isFinite(score))
+      throw new Error("重排结果的索引或分数无效");
+    scores[r.index] = score;
+  }
+  return scores;
+}
+
+const lastCall = new WeakMap<App, { selected: string; lastMs: number; lastError: string | null }>();
+/** Each provider scores the entire candidate list in input order. Only plugins have a local fallback. */
 export async function rerankScores(app: App, query: string, candidates: RerankCandidate[],
   { timeoutMs, userId = OWNER, shared }: { timeoutMs?: number; userId?: string; shared?: SharedSearchAccess } = {}) {
-  if (!app.config.rerank.enabled || !candidates.length || !query.trim()) return { scores: null, provider: null };
-  const entry = selectedReranker(app);
-  let provider: string | null = app.config.rerank.provider;
+  const cfg = app.config.rerank;
+  if (!cfg.enabled || !candidates.length || !query.trim()) return { scores: null, provider: null };
+  const started = Date.now();
+  const budget = Math.min(timeoutMs ?? Infinity, cfg.timeoutMs);
+  const selected = cfg.provider;
+  let provider = selected;
+  const passages = candidates.map(c => c.text);
   let scores: number[] | null = null;
-  if (entry && candidates.every(c => !entry.spaces.length || entry.spaces.includes(c.spaceId)) &&
-      candidates.every(pluginHitFilter(app, candidates, userId, shared))) {
-    const budget = Math.min(timeoutMs ?? Infinity, app.config.rerank.timeoutMs);
-    const deadline = Date.now() + budget;
-    scores = await pluginScores(app, entry, query, candidates, userId, Math.max(1, Math.floor(budget / 2)));
-    timeoutMs = Math.max(0, deadline - Date.now());
-  }
-  if (!scores) {
-    scores = await builtinScores(app, query, candidates.map(c => c.text), timeoutMs);
-    provider = scores ? "local" : null;
-  }
-  lastProvider.set(app, provider);
-  return { scores, provider };
+  let error: string | null = null;
+  try {
+    if (selected === "api") {
+      if (candidates.every(pluginHitFilter(app, candidates, userId, shared)))
+        scores = await apiScores(app, cfg, query, passages, budget);
+    } else {
+      const entry = selectedReranker(app);
+      if (entry && candidates.every(c => !entry.spaces.length || entry.spaces.includes(c.spaceId)) &&
+          candidates.every(pluginHitFilter(app, candidates, userId, shared))) {
+        scores = await pluginScores(app, entry, query, candidates, userId, Math.max(1, Math.floor(budget / 2)));
+      }
+      if (!scores) {
+        provider = "local";
+        scores = await builtinScores(app, query, passages, Math.max(0, started + budget - Date.now()));
+      }
+    }
+  } catch (e) { error = (e as Error).message; }
+  lastCall.set(app, { selected, lastMs: Date.now() - started, lastError: error ?? (scores ? null : stats.error || "重排未返回分数") });
+  lastProvider.set(app, scores ? provider : null);
+  return { scores, provider: scores ? provider : null };
 }
 
 async function builtinScores(app: App, query: string, passages: string[], timeoutMs?: number) {
@@ -158,7 +195,14 @@ export async function rerankLocally(app: App, query: string, passages: string[],
 
 export function rerankStatus(app: App) {
   const c = app.config.rerank;
-  return { enabled: c.enabled, provider: c.enabled ? (selectedReranker(app) ? c.provider : "local") : null, lastProvider: lastProvider.get(app) ?? null, model: c.model, ...stats, source: modelSource(c.model) };
+  const call = lastCall.get(app);
+  const last = call?.selected === c.provider ? call : null;
+  return { ...stats, enabled: c.enabled, provider: c.enabled ? c.provider : null, lastProvider: last ? lastProvider.get(app) : null,
+    model: c.provider === "api" ? c.api?.model : c.provider === "local" ? c.model : null,
+    lastMs: last?.lastMs ?? 0, lastError: last?.lastError ?? null,
+    ...(c.provider === "api" && { state: last ? last.lastError ? "failed" : "ready" : "idle", error: last?.lastError ?? "" }),
+    source: c.provider === "local" ? modelSource(c.model) : null };
+
 }
 /** Whether the model failed to load in this process (the read process tells the main one through an error). */
 export const rerankLoadError = () => (stats.state === "failed" ? stats.error || "重排模型没有加载成功" : "");

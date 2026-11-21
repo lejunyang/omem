@@ -739,7 +739,9 @@ export const configSchema = z.object({
   rerank: z
     .object({
       enabled: z.boolean().default(false),
-      provider: z.string().regex(/^(local|plugin:[a-z0-9-]+:[a-z0-9-]+)$/).default("local"),
+      provider: z.string().regex(/^(local|api|plugin:[a-z0-9-]+:[a-z0-9-]+)$/).default("local"),
+      /** The external service receives the query and the top documents. */
+      api: z.object({ ...searchApiFields, model: z.string().min(1) }).optional(),
       /** Model id or local directory (osdk `rerank-m3`). */
       model: z.string().default("onnx-community/bge-reranker-v2-m3-ONNX"),
       top: z.number().int().min(5).max(100).default(20),

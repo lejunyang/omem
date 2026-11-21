@@ -79,17 +79,16 @@ export async function passiveRecall(
   const limit = input.limit ?? cfg.limit;
   const rr = app.config.rerank;
   if (rr.enabled) {
-    const pool = await nearMemories(app, { ...near, threshold: Math.min(RERANK_PREFILTER, threshold), limit: Math.max(limit, rr.top) });
+    const pool = await nearMemories(app, { ...near, threshold: Math.min(RERANK_PREFILTER, threshold), limit: rr.provider === "api" ? rr.top : Math.max(limit, rr.top) });
     if (!pool.length) return [];
     const candidates = pool.map(({ memory: m }) => ({
       type: "memory" as const, id: m.id, spaceId: m.spaceId, text: m.subject ? `${m.subject}：${m.content}` : m.content,
     }));
     const { scores, provider } = await rerankScores(app, input.text, candidates, { timeoutMs: RERANK_WAIT_MS, userId: input.userId });
     if (scores) {
-      const gate = provider === "local" ? rr.passiveThreshold : rr.pluginPassiveThreshold ?? rr.passiveThreshold;
+      const gate = provider === "local" ? rr.passiveThreshold : rr.pluginPassiveThreshold;
       return pool
-        .map((h, i) => ({ ...h, score: scores[i] }))
-        .filter((h) => h.score >= gate)
+        .flatMap((h, i) => (gate === undefined ? h.score >= threshold : scores[i] >= gate) ? [{ ...h, score: scores[i] }] : [])
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
     }

@@ -35,7 +35,7 @@ export const ownerSettings = [
   "lark.appSecretEnv", "lark.appId", "lark.capture", "lark.defaultSpace", "telegram", "onebot", "security", "approvals",
   "agents.accounts", "agents.accountIsolation", "agents.networkPolicies", "agents.profiles", "agents.cloudTools", "ai.providers",
   "host", "port", "token", "https", "webUrl", "shares.expiryDays", "auth", "node", "backups", "studies.envs", "ide",
-  "documents.converter", "embeddings", "mcp", "agentSkills", "plugins",
+  "documents.converter", "embeddings", "rerank", "mcp", "agentSkills", "plugins",
 ];
 const privatePaths = new Set(["agents.profiles", "agents.networkPolicies", "mcp", "ai.providers"]);
 const splitRoots = new Set([...Object.keys(sectionByPath), ...ownerSettings, "embeddings.provider"].filter(p => p.includes(".")).map(p => p.split(".")[0]));
