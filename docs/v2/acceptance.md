@@ -56,7 +56,7 @@
 
 准备：一台 Linux，服务以普通用户运行，装好 bubblewrap（`apt install bubblewrap`，或在仓库里 `osdk pkg apply`）；打开多人登录，有一个成员小王。
 
-- `omem diag` 的 `agentAccounts` 是 `{ ok: true, bwrap, version }`。在没装 bubblewrap、或 `sysctl kernel.unprivileged_userns_clone=0` 的机器上是 `ok: false` 并写明原因；这时小王的账号页没有“我的 AI 账号”，本人的设置 → 成员 没有“成员的 AI 账号”，小王的运行照旧借用本人的后端。macOS、Windows 上同样没有。
+- `omem diag` 的 `agentAccounts` 是 `{ ok: true, bwrap, version }`。在没装 bubblewrap、或 `sysctl kernel.unprivileged_userns_clone=0` 的机器上是 `ok: false` 并写明原因；默认 prefer 时，小王的账号页没有“我的 AI 账号”，本人的设置 → 成员 没有“成员的 AI 账号”，小王的运行照旧借用本人的后端。macOS、Windows 上同样没有。
 - 小王在账号页“我的 AI 账号”点 Codex 的“登录”：浏览器打开设备码页面，页面上显示验证码；在那里登录后几秒内状态变成“已登录”和账号名。数据目录下出现 `accounts/<小王的 id>/home/.codex`，权限 0700。
 - 小王问助手一个问题（后端是 Codex）：运行在 bwrap 里（`ps` 能看到 bwrap 和它下面的 codex-acp），Codex 的会话记录写进小王的账号目录，不写进服务用户的 `~/.codex`；运行里调用 omem 的工具照常。让 Agent 在终端里 `ls ~`、`ls <数据目录>`、`cat <服务用户的 HOME>/.codex/auth.json`：只看到小王自己的账号目录，数据目录和服务用户的 HOME 是空的。
 - 小王给 Claude Code “粘贴令牌”（在自己电脑上 `claude setup-token` 生成）：令牌不出现在 `config.json` 和账号目录里，只在 `secrets/vault.db`；“检查”后显示已登录；之后用 Claude Code 的运行带着这个令牌。
@@ -64,6 +64,10 @@
 - 本人在设置 → 成员 → 成员的 AI 账号 把 Codex 设成“只能用自己的”：另一个没登录 Codex 的成员发起用 Codex 的运行，运行失败，写着“Codex 只能用自己的账号：在 账号 → 我的 AI 账号 里登录 Codex 后再试”；他的运行换到兜底时也不会换到 Codex。改回“借用本人的”后他的运行照旧用本人的登录。
 - 本人的总览里能看到小王登了哪些后端（看不到令牌），点“让他退出”后小王那个后端的目录被删掉；小王自己点“退出”同样删掉，最后一个后端退出时整个 `accounts/<id>` 被删。退出后他之前留下的待清理会话记录直接作废，不再报清理失败。
 - 本人自己的运行、定时任务和访客回答不受影响，照旧用这台机器上的登录；本人的额度显示不因小王的运行变化。
+- 成员发起多仓交办，主编码、助手、解冲突、拆分和评审的工具身份均为该成员，各自的模型仍按角色配置。两个工作树里的修改都能保存在宿主工作区，调用 `finish_task` 后由宿主提交。核对 Git 公共目录的只读挂载和本轮工作树的可写挂载。原定的沙箱内直接提交仍待验收。宿主安装依赖与仓库检查的审计和运行事件可追到同一成员和交办。
+- 在没有 bubblewrap 的机器上，`agents.accountIsolation` 取默认值 `prefer` 的成员运行应留下未隔离原因。改为 `require` 后应在启动前报错，本人的对话照常。在支持隔离的机器上给成员配置可隔离的备用，验证主选不能隔离时改走备用。比较账号接口的 `isolation` 与诊断的 `agentAccounts`。
+- 使用设备 ACP 时，在执行节点配置成员范围的命令规则，核对命令垫片请求执行节点的闸门及其成员审计。严格模式在发起节点跳过设备后端。
+
 - 自动验证：`test/agent-accounts.test.ts`（bwrap 参数、沙箱里的环境、各平台的检查结果、选账号的三种情况、令牌只进密钥库、接口权限、会话清理记录带账号）。上面几条都还没在真机上走过。
 
 ## 流程卡住与本人的段（2026-11-20）
