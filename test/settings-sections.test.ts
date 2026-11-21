@@ -15,6 +15,8 @@ it("maps every schema key including optional settings, and reserves identity and
 it("projects sections, rejects mixed writes atomically and audits changed keys without values", async () => {
   const app = testApp();
   app.config.shares.expiryDays = 7;
+  app.config.notify.outletAskGrants.other = { mailbox: ["approval"] };
+  app.config.notify.outlets.other = [];
   const server = await startServer(app, { port: 0, quiet: true });
   try {
     createUser(app, { id: "reader", name: "读者", role: "observer" });
@@ -31,6 +33,11 @@ it("projects sections, rejects mixed writes atomically and audits changed keys w
     expect(view.config.agents.accounts).toBeUndefined();
     expect(view.config.security).toBeUndefined();
     expect(view.config.token).toBeUndefined();
+    expect(view.config.notify).not.toHaveProperty("outlets");
+    expect(view.config.notify).not.toHaveProperty("outletAskGrants");
+    const owner = (await server.inject({ url: "/api/settings?section=assistant" })).json();
+    expect(owner.config.notify.outletAskGrants.other.mailbox).toEqual(["approval"]);
+    expect(owner.config.notify.outlets.other).toEqual([]);
     expect(view.home).toBeUndefined();
     expect((await put({ ...view.config, port: app.config.port + 1, timezone: "UTC" })).statusCode).toBe(403);
     const hidden = await put({ mentions: { reply: { lark: { group: "auto" } } } });

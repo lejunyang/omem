@@ -205,6 +205,7 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 
 - 打开设置时取 `GET /api/settings/sections`。返回的 `sections` 按区域列出 view 和 edit，`keys` 标出配置键及跨区子键，较具体的路径优先。例如 `agents.accounts` 属于成员区，`agents.autoAdvance` 属于助手区。按 view 显示标签，按 edit 开放编辑。对其他成员，`ownerOnly` 清单内的字段始终只读。
 - 切换区域时取 `GET /api/settings?section=knowledge` 等。省略 section 返回全部可读区域；无可读区域时返回 403。配置在 `config` 中。服务令牌不返回，成员也读不到包含账号环境变量的 Agent 档案。
+- 成员读取设置时省略 `notify.outlets` 和 `notify.outletAskGrants`。出口设置经 `/api/notify/outlets` 读写。
 - 保存时向 `PUT /api/settings` 提交配置键，支持整区回传。只要有一项实际变化越权，整份更新返回 403；成功写入后可在审计记录按 `settings.update` 查看操作者、区域和改动键名。
 - 本人身份回复（含豆包发送）、登录与对外访问、对等设备、账号隔离、启动命令及操作规则由本人管理。操作规则与网络策略仍使用各自的专用编辑接口。
 

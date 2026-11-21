@@ -35,9 +35,9 @@ export const ownerSettings = [
   "lark.appSecretEnv", "lark.appId", "lark.capture", "lark.defaultSpace", "telegram", "onebot", "security", "approvals",
   "agents.accounts", "agents.accountIsolation", "agents.networkPolicies", "agents.profiles", "agents.cloudTools", "ai.providers",
   "host", "port", "token", "https", "webUrl", "shares.expiryDays", "auth", "node", "backups", "studies.envs", "ide",
-  "documents.converter", "embeddings.url", "embeddings.apiKeyEnv", "mcp", "agentSkills", "plugins",
+  "notify.outlets", "notify.outletAskGrants", "documents.converter", "embeddings.url", "embeddings.apiKeyEnv", "mcp", "agentSkills", "plugins",
 ];
-const privatePaths = new Set(["agents.profiles", "agents.networkPolicies", "mcp", "ai.providers"]);
+const privatePaths = new Set(["notify.outlets", "notify.outletAskGrants", "agents.profiles", "agents.networkPolicies", "mcp", "ai.providers"]);
 const splitRoots = new Set([...Object.keys(sectionByPath), ...ownerSettings].filter(p => p.includes(".")).map(p => p.split(".")[0]));
 type Values = Record<string, unknown>;
 const object = (v: unknown): v is Values => !!v && typeof v === "object" && !Array.isArray(v);
