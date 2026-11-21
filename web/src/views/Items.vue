@@ -13,6 +13,7 @@ import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import ItemPlaces, { type Place, type ItemRun } from "../components/ItemPlaces.vue";
 import ItemFlow from "../components/ItemFlow.vue";
 import ItemObjects from "../components/ItemObjects.vue";
+import ItemChain from "../components/ItemChain.vue";
 import ItemExternal from "../components/ItemExternal.vue";
 import type { ItemExternal as External } from "../lib/item-sync";
 import ItemListen from "../components/ItemListen.vue";
@@ -405,6 +406,7 @@ async function addNote() {
         <ItemListen :item-id="detail.item.id" :editable="canEdit" />
         <DemoControl v-if="canEdit" class="item-demo" :item-id="detail.item.id" :name="detail.item.title" />
         <ItemObjects :item-id="detail.item.id" :editable="canEdit" />
+        <ItemChain :item-id="detail.item.id" />
         <PluginSlots at="item.panel" :item-id="detail.item.id" :space="detail.item.spaceId" />
         <ItemPlaces :places="detail.places ?? []" :runs="detail.runs ?? []" />
         <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" :readonly="!canEdit" @changed="loadDetail" />

@@ -68,9 +68,13 @@ const trae = process.env.FAKE_TRAE === "1";
 /** A fixed answer for every prompt (a judge that always says the same thing). */
 const fixed = process.env.FAKE_SAY;
 const TRAE_EFFORTS: Record<string, string[]> = { m1: [], m2: ["low", "medium", "high"], m3: ["low", "xhigh"] };
+// FAKE_LATE_EFFORT=ms: the effort option is missing until ms after start (an adapter that opens sessions
+// before its model list is loaded); it is then announced with a config_option_update.
+const lateEffort = Number(process.env.FAKE_LATE_EFFORT ?? 0);
+const startedAt = Date.now();
 const traeOptions = (model: string) => [
   { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: Object.keys(TRAE_EFFORTS).map((v) => ({ value: v, name: v })) },
-  ...(TRAE_EFFORTS[model].length ? [{ id: "reasoning_effort", name: "Effort", category: "thought_level", type: "select", currentValue: TRAE_EFFORTS[model][0], options: TRAE_EFFORTS[model].map((v) => ({ value: v, name: v })) }] : []),
+  ...(TRAE_EFFORTS[model].length && Date.now() - startedAt >= lateEffort ? [{ id: "reasoning_effort", name: "Effort", category: "thought_level", type: "select", currentValue: TRAE_EFFORTS[model][0], options: TRAE_EFFORTS[model].map((v) => ({ value: v, name: v })) }] : []),
 ];
 const reviewModels = process.env.FAKE_REVIEW_MODELS?.split(",");
 const reviewModelOptions = (model: string) => [{ id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: reviewModels!.map((value) => ({ value, name: value })) }];
@@ -97,6 +101,8 @@ new AgentSideConnection(
           models: { currentModelId: "m1", availableModels: [{ modelId: "m1", name: "M1" }, { modelId: "m2", name: "M2" }] },
         } as never;
       if (reviewModels) return { sessionId: id, configOptions: reviewModelOptions(state.model) } as never;
+      if (trae && lateEffort && process.env.FAKE_LATE_EFFORT_ANNOUNCE)
+        setTimeout(() => void conn.sessionUpdate({ sessionId: id, update: { sessionUpdate: "config_option_update", configOptions: traeOptions(state.model) } } as never), Math.max(0, lateEffort - (Date.now() - startedAt)) + 30);
       if (trae) return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] }, configOptions: traeOptions("m1") } as never;
       return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }, { id: "read-only", name: "ro" }] } };
     },
