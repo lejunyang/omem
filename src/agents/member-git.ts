@@ -190,18 +190,28 @@ export function receivedMemberHead(app: App, actor: string, space: string): stri
   return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as State).base : undefined;
 }
 
-/** Read a bounded log for attributing refused work. A rejected tip never becomes a source for importing or cherry-picking. */
-export async function refusedMemberMessages(app: App, actor: string, space: string) {
+/** Inspect an interrupted handoff in a read-only namespace. Only an accepted tip can be picked. */
+export async function inspectUnreceivedMemberGit(app: App, actor: string, space: string) {
   const root = location(app, actor, space);
+  const file = join(root, "state");
+  if (!existsSync(file)) return null;
   try {
-    const state: State = JSON.parse(readFileSync(join(root, "state"), "utf8"));
+    const state: State = JSON.parse(readFileSync(file, "utf8"));
     const ns = gitNamespace(state, root, true);
-    const { stdout } = await promisify(execFile)(ns.file, [...ns.args, "git", ...hooksOff, "--git-dir=/member",
-      "log", "--max-count=101", "--format=%x00%B", state.base + "..HEAD", "--"],
+    const script = `
+set -eu
+export GIT_DIR=/member GIT_WORK_TREE=/work GIT_OPTIONAL_LOCKS=0 GIT_NO_REPLACE_OBJECTS=1
+ulimit -f 128
+git -c core.fsmonitor=false status --porcelain --untracked-files=normal > /view/status
+if test -s /view/status; then printf 'dirty'; else printf 'clean'; fi
+git log --max-count=101 --format='%x00%B' "$1..HEAD" --
+`;
+    const { stdout } = await promisify(execFile)(ns.file, [...ns.args, "/bin/sh", "-c", script, "inspect", state.base],
       { encoding: "utf8", timeout: 5000, maxBuffer: 65536 });
-    return stdout.split("\0").slice(1);
+    const [status, ...messages] = stdout.split("\0");
+    return { messages, worktree: status === "clean" ? "clean" : "dirty" } as const;
   } catch {
-    return [];
+    return { messages: [], worktree: "unknown" } as const;
   }
 }
 

@@ -1,4 +1,4 @@
-import { commitWorktree, receivedMemberHead, refusedMemberMessages } from "./member-git.ts";
+import { commitWorktree, receivedMemberHead, inspectUnreceivedMemberGit } from "./member-git.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -37,7 +37,7 @@ export type RoundContext = {
   spaces: string[];
   where: (dir: string, wt: WorktreeRef) => string;
 };
-type Refusal = { space: string; reason: string; tasks: number[]; unknown: boolean };
+type Refusal = { space: string; reason: string; tasks: number[]; unknown: boolean; worktree: "clean" | "dirty" | "unknown" };
 type Helper = { runId: string; n: number; tasks: number[]; worktrees: WorktreeRef[]; done: Promise<void> };
 const rounds = new Map<string, RoundContext & { helpers: Helper[] }>();
 
@@ -107,10 +107,20 @@ const HELPER_BRIEF = [
   "做完后宿主把你的提交合进工作分支。",
 ].join("\n");
 
+async function inspectHandoff(app: App, actor: string, space: string, reason: string, refused: boolean): Promise<Refusal | null> {
+  const view = await inspectUnreceivedMemberGit(app, actor, space);
+  if (!refused && (!view || (view.worktree === "clean" && !view.messages.length))) return null;
+  const byCommit = view?.messages.map(commitTaskNumbers) ?? [];
+  const worktree = view?.worktree ?? "unknown";
+  const unknown = worktree !== "clean" || !byCommit.length || byCommit.length > 100 || byCommit.some(tasks => !tasks.length);
+  return { space, reason, tasks: [...new Set(byCommit.flat())], unknown, worktree };
+}
+
 /** One helper: its own workspaces, the coder there, then what it committed (or left) recorded on its run. */
 async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper, heads: Record<string, string>, note: string) {
   const round = rounds.get(roundRunId)!;
   const log = (text: string) => addRunEvent(app, h.runId, "status", { text });
+  const refused = new Map<string, string>();
   try {
     // Where every run's workspaces live (runs/<run>/work/<space>): a pool lease counts only through that link.
     const base = join(app.runsDir, h.runId, "work");
@@ -152,26 +162,29 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
     // Left uncommitted: one task still open takes it, else it is merged without a task.
     const open = h.tasks.filter((s) => getTask(app, rootId, s).state === "coding");
     const message = `编码助手 ${h.n} 没提交的改动${open.length === 1 ? `\n\nOmem-Task: ${taskLabel(open[0])}` : ""}`;
-    const refusals: Refusal[] = [];
     for (const wt of h.worktrees) {
       try {
         await commitWorktree(app, h.runId, wt.space, wt.slot ?? wt.path, message, identity);
       } catch (e) {
-        const messages = await refusedMemberMessages(app, h.runId, wt.space);
-        const byCommit = messages.map(commitTaskNumbers);
-        const unknown = !messages.length || messages.length > 100 || byCommit.some(tasks => !tasks.length);
-        refusals.push({ space: wt.space, reason: (e as Error).message, tasks: [...new Set(byCommit.flat())], unknown });
+        refused.set(wt.space, (e as Error).message);
       }
     }
-    if (refusals.length) {
-      setRunOutput(app, h.runId, { refusals });
-      throw new Error(refusals.map(r => `${r.space}：${r.reason}${r.unknown ? "（未归属改动待核对）" : ""}`).join("；"));
-    }
+    if (refused.size) throw new Error([...refused].map(([space, reason]) => `${space}：${reason}`).join("；"));
     setRunOutput(app, h.runId, { answer: replyOf(res).trim(), ai: res.ai });
     sql(app.db, "update runs set status = 'done', profile_id = ?, finished_at = ? where id = ?", res.profileId, now(), h.runId);
     app.emit({ type: "run", runId: h.runId, status: "done" });
     round.event("status", { text: `编码助手 ${h.n} 做完了：${h.tasks.map(taskLabel).join("、")}` });
   } catch (e) {
+    const refusals: Refusal[] = [];
+    for (const wt of h.worktrees) {
+      if (refused.size && !refused.has(wt.space)) continue;
+      const receipt = await inspectHandoff(app, h.runId, wt.space, refused.get(wt.space) ?? (e as Error).message, refused.has(wt.space));
+      if (receipt) {
+        refusals.push(receipt);
+        if (receipt.unknown) log(`${wt.space}：未交付改动的归属待核对，保留助手工作树`);
+      }
+    }
+    setRunOutput(app, h.runId, { worktrees: h.worktrees, refusals });
     flushRunText(app, h.runId);
     sql(app.db, "update runs set status = 'failed', error = ?, finished_at = ? where id = ?", (e as Error).message, now(), h.runId);
     addRunEvent(app, h.runId, "error", { message: (e as Error).message });

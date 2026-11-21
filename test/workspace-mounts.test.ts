@@ -254,14 +254,14 @@ describe("delegation sandbox mounts", () => {
     expect(getTask(app, round.id, another.seq).state).toBe("coding");
   });
 
-  it.skipIf(!sandboxSupport().ok)("merges accepted helper work and keeps a refused repository recoverable", async () => {
-    const repos = [repository("partial-a"), repository("partial-b")];
+  it.skipIf(!sandboxSupport().ok).each(["refused", "crashed"])("merges accepted helper work and preserves a %s handoff", async failure => {
+    const repos = [repository(failure + "-a"), repository(failure + "-b")];
     const round = createRun(app, { kind: "code", spaceId: repos[0].id, title: "多仓交付", input: { taskMode: true } });
     app.db.prepare("update runs set status = 'running' where id = ?").run(round.id);
     const trees = repos.map(repo => ({ ...leased(round.id, repo), branch: "", base: repo.git("rev-parse", "HEAD").toString().trim() }));
     const tasks = repos.map(repo => addTask(app, round.id, { title: repo.id, kind: "build" }, "host").seq);
     for (const seq of tasks) updateTask(app, round.id, seq, { state: "coding", coderRun: round.id });
-    const home = join(app.home, "partial-helper-home");
+    const home = join(app.home, "partial-helper-home-" + failure);
     mkdirSync(home);
     const fake = vi.spyOn(runner, "runRole").mockImplementation(async (_, input) => {
       const actor = input.runId!;
@@ -272,16 +272,17 @@ describe("delegation sandbox mounts", () => {
           { userId: "member", backend: "test", home, env: {}, hide: [app.home], ro: [] }, plan);
         execFileSync(cmd.file, cmd.args, { env: cmd.env });
       };
-      run('cd partial-a && echo first > first && git add first && git commit -qm "Omem-Task: T1"');
+      run(`cd ${repos[0].id} && echo first > first && git add first && git commit -qm "Omem-Task: T1"`);
       const ctx = { app, runId: actor, spaceId: repos[0].id, spaces: null, tools: null, actor: "agent", role: "coder" } as ToolContext;
       const result = await callTool(ctx, "finish_task", { task: tasks[0], summary: "第一项完成" });
       expect(result.isError, result.text).toBe(false);
-      run('cd partial-a && echo part > part && git add part && git commit -qm "Omem-Task: T2"');
-      run('cd partial-b && echo received > accepted && git add accepted && git commit -qm "Omem-Task: T2"');
+      run(`cd ${repos[0].id} && echo part > part && git add part && git commit -qm "Omem-Task: T2"`);
+      run(`cd ${repos[1].id} && echo received > accepted && git add accepted && git commit -qm "Omem-Task: T2"`);
       const second = await callTool(ctx, "finish_task", { task: tasks[1], summary: "两仓的改动均已完成" });
       expect(second.isError, second.text).toBe(false);
       expect(getTask(app, round.id, tasks[1]).state).toBe("done");
-      run('cd partial-b && git switch -qc private && echo other > other && git add other && git commit -qm "Omem-Task: T2" && echo draft > draft');
+      run(`cd ${repos[1].id} && git switch -qc private && echo other > other && git add other && git commit -qm "Omem-Task: T2" && echo draft > draft`);
+      if (failure === "crashed") throw new Error("助手异常退出");
       return { text: "完成" } as Awaited<ReturnType<typeof runner.runRole>>;
     });
     try {
@@ -298,12 +299,12 @@ describe("delegation sandbox mounts", () => {
         execFileSync(cmd.file, cmd.args, { env: cmd.env });
       });
       const run = getRun(app, ids[0]);
-      expect(run.error).toContain("partial-b");
-      expect(run.output.commits).toMatchObject({ "partial-a": [expect.any(String), expect.any(String)], "partial-b": [expect.any(String)] });
+      expect(run.error).toContain(failure === "crashed" ? "助手异常退出" : repos[1].id);
+      expect(run.output.commits).toMatchObject({ [repos[0].id]: [expect.any(String), expect.any(String)], [repos[1].id]: [expect.any(String)] });
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:first").toString()).toBe("first\n=======\n");
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:part").toString()).toBe("part\n");
       expect(repos[1].git("-C", trees[1].path, "show", "HEAD:accepted").toString()).toBe("received\n");
-      expect(run.output.refusals).toMatchObject([{ space: "partial-b", tasks: [tasks[1]], unknown: false }]);
+      expect(run.output.refusals).toMatchObject([{ space: repos[1].id, tasks: [tasks[1]], unknown: true, worktree: "dirty" }]);
       const failed = (run.output.worktrees as typeof trees)[1];
       expect(readFileSync(join(failed.path, "draft"), "utf8")).toBe("draft\n");
       const privateDir = join(app.runsDir, run.id, "member-git", failed.space, "git");
@@ -311,7 +312,7 @@ describe("delegation sandbox mounts", () => {
       expect(settleCodingRound(app, round.id, round.id, trees, 1, ids).finished).toEqual([tasks[0]]);
       const partial = getTask(app, round.id, tasks[1]);
       expect(partial.state).toBe("todo");
-      expect(partial.notes.at(-1)?.text).toContain("partial-b：成员工作区已切换分支");
+      expect(partial.notes.at(-1)?.text).toContain(repos[1].id + "：" + (failure === "crashed" ? "助手异常退出" : "成员工作区已切换分支"));
     } finally { fake.mockRestore(); }
   });
 
