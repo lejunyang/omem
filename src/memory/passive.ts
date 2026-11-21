@@ -15,8 +15,8 @@ export type PassiveHit = { memory: Memory; score: number };
 type NearInput = {
   text: string;
   spaces: string[] | null;
-  /** Spaces whose material is in the query, independently of which memories can match. */
-  sourceSpaces?: readonly string[];
+  /** Spaces whose material is in the query. Null means some material has no known origin. */
+  sourceSpaces?: readonly string[] | null;
   threshold: number;
   limit: number;
   /** Whose memories count: personal ones of this user and shared ones (null = any user). */

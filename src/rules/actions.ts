@@ -253,7 +253,8 @@ async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type
     speaker: e.sender?.name || `规则「${rule.name}」`,
     text,
     ...(m ? { externalMessageId: m.id } : {}),
-    meta: { rule: rule.id, addressed: true, ...(e.chat && c.chats.includes(e.chat.id) ? { chatId: e.chat.id } : {}) },
+    meta: { rule: rule.id, addressed: true, sourceChatId: e.chat?.id,
+      ...(e.chat && c.chats.includes(e.chat.id) ? { chatId: e.chat.id } : {}) },
     // Looked at soon, like a message for the owner or the bot, without pushing the 关注's batch back.
     mergeMs: Math.min(c.knobs.batchMinutes * 60_000, 30_000),
     fixedWindow: true,

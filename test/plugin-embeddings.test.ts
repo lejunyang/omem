@@ -7,7 +7,11 @@ import { createSpace } from "../src/core/spaces.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
 import { memoriesFor } from "../src/channels/lark-watch.ts";
-import { setChatSettings } from "../src/agents/threads.ts";
+import { findThread, setChatSettings, threadMessages } from "../src/agents/threads.ts";
+import { watchedNote } from "../src/agents/sessions.ts";
+import { saveContext } from "../src/channels/listen.ts";
+import { runActions } from "../src/rules/actions.ts";
+import { saveRule } from "../src/rules/store.ts";
 import { remember } from "../src/memory/store.ts";
 import { embedPending, embedPendingMemories, embedQuery, embeddingHealth, resetEmbedder } from "../src/search/embeddings.ts";
 import { encodeBatch } from "../src/search/embedding-provider.ts";
@@ -108,11 +112,45 @@ it("关注可查个人记忆时仍按群消息来源授权，混合批次不外�
   embed.mockClear();
   setChatSettings(app, "lark", "project-group", { spaceId: "allowed" });
   const watched = (text: string, spaceId: string | null, chats: string[]) =>
-    memoriesFor(app, text, { spaceId, chats }, chats.map(chatId => ({ meta: { chatId } })));
+    memoriesFor(app, text, { spaceId }, chats.map(chatId => ({ meta: { chatId } })));
   expect(await watched("项目群的原始消息", "allowed", ["project-group"])).toBe("");
   expect(await watched("两个群的合并消息", null, ["personal-group", "project-group"])).toBe("");
   expect(embed).not.toHaveBeenCalled();
   expect(await watched("个人空间的一条消息", null, ["personal-group"])).toContain("personal资料");
+  expect(embed).toHaveBeenCalledTimes(1);
+});
+
+it("规则转入未加入关注的项目群消息时，跟进处理不向个人空间插件发送正文", async () => {
+  const app = fixture();
+  const undo: (() => void)[] = [];
+  cleanup.push(() => undo.reverse().forEach(stop => stop()));
+  const api = registerProcessHooks(manifestSchema.parse({ id: "vector", name: "向量", spaces: [{ id: "personal", name: "个人" }], permissions: { embedder: true } }), undo);
+  const embed = vi.fn(async (texts: string[]) => texts.map(() => [1, 0]));
+  api.embedder({ id: "small", name: "示例", model: "first", dimensions: 2, embed });
+  setChatSettings(app, "lark", "project-group", { spaceId: "allowed" });
+  const watch = saveContext(app, { kind: "place", name: "个人关注", spaceId: "personal", chats: ["personal-group"] });
+  const rule = saveRule(app, { name: "项目提醒", description: "项目消息交给个人关注", judge: "code",
+    conditions: { all: [{ field: "chat.id", op: "equals", value: "project-group" }] },
+    actions: [{ type: "context", context: watch.id }] });
+  const [result] = await runActions(app, rule, {
+    key: "lark:project-message", kind: "message", at: new Date().toISOString(), via: "capture",
+    chat: { id: "project-group", name: "项目群", kind: "group" },
+    message: { id: "project-message", text: "项目群的跟进材料", type: "text", mentionsOwner: false, mentionsBot: false },
+  }, "");
+  expect(result.ok).toBe(true);
+  const thread = findThread(app, watch.conversationId!)!;
+  const [message] = threadMessages(app, thread.id);
+  expect(message.meta.sourceChatId).toBe("project-group");
+  expect(message.meta).not.toHaveProperty("chatId");
+  expect(await watchedNote(app, thread, [message])).toContain("项目群的跟进材料");
+  expect(embed).not.toHaveBeenCalled();
+
+  // A mixed batch containing an older forwarded message with no recorded origin.
+  const personal = { ...message, meta: { chatId: "personal-group", speaker: "读者" } };
+  const legacy = { ...message, meta: { rule: rule.id, speaker: "规则" } };
+  await watchedNote(app, thread, [personal, legacy]);
+  expect(embed).not.toHaveBeenCalled();
+  await watchedNote(app, thread, [personal]);
   expect(embed).toHaveBeenCalledTimes(1);
 });
 

@@ -294,11 +294,11 @@ export async function testEmbedding(app: App, cfg: Config["embeddings"]) {
 }
 
 /** One vector, or null when the configured provider is unavailable. */
-export async function embedQuery(app: App, text: string, kind: Kind = "query", spaces?: readonly string[] | null, sourceSpaces?: readonly string[]): Promise<Float32Array | null> {
+export async function embedQuery(app: App, text: string, kind: Kind = "query", spaces?: readonly string[] | null, sourceSpaces?: readonly string[] | null): Promise<Float32Array | null> {
   if (app.config.embeddings.provider === "none") return null;
   const e = await getEmbedder(app);
   if (!e || !stillSelected(app, e)) return null;
-  if (e.spaces && sourceSpaces?.some(id => !e.spaces!.includes(id))) return null;
+  if (e.spaces && (sourceSpaces === null || sourceSpaces?.some(id => !e.spaces!.includes(id)))) return null;
   if (e.spaces && spaces && !spaces.some(s => e.spaces!.includes(s))) return null;
   return (await encode(app, e, [text.slice(0, 2000)], kind))?.[0] ?? null;
 }

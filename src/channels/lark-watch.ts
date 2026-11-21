@@ -239,17 +239,24 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
   }
 }
 
+/** A rule can forward a group outside the watch. Older messages may have no recorded origin. */
+function watchSourceSpaces(app: App, watchSpace: string | null, batch: { meta: Record<string, unknown> }[]) {
+  const chats = new Set<string>();
+  for (const { meta } of batch) {
+    const source = meta.sourceChatId ?? meta.chatId;
+    if (typeof source !== "string" || !source) return null;
+    chats.add(source);
+  }
+  const spaces = Array.from(chats, id => captureSpace(app, id));
+  if (watchSpace) spaces.push(watchSpace);
+  return spaces;
+}
+
 /** The owner's memories closest to the groups and the batch (instructions and lessons included), a few lines. */
-export async function memoriesFor(app: App, text: string, { spaceId, chats }: Pick<ListenContext, "spaceId" | "chats">, batch: { meta: Record<string, unknown> }[], limit = 5) {
+export async function memoriesFor(app: App, text: string, { spaceId }: Pick<ListenContext, "spaceId">, batch: { meta: Record<string, unknown> }[], limit = 5) {
   try {
     const { nearMemories } = await import("../memory/passive.ts");
-    // A watch can combine groups bound to different spaces and the watch's own note.
-    const sourceSpaces = spaceId ? [spaceId] : [];
-    if (app.config.embeddings.provider.startsWith("plugin:")) {
-      const chatIds = batch.flatMap(m => typeof m.meta.chatId === "string" ? [m.meta.chatId] : chats);
-      for (const chat of new Set(chatIds)) sourceSpaces.push(captureSpace(app, chat));
-      if (!sourceSpaces.length) sourceSpaces.push(captureSpace(app));
-    }
+    const sourceSpaces = app.config.embeddings.provider.startsWith("plugin:") ? watchSourceSpaces(app, spaceId, batch) : undefined;
     const hits = await nearMemories(app, { text, sourceSpaces, spaces: [...new Set(["personal", ...(spaceId ? [spaceId] : [])])], userId: "owner", threshold: app.config.memory.passive.threshold, limit });
     return hits.map(({ memory: m }) => `- ${m.subject ? `${m.subject}：` : ""}${m.content.replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
   } catch {
