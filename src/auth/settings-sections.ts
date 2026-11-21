@@ -33,7 +33,7 @@ export const ownerSettings = [
   "mentions.reply", "lark.commands", "lark.invite", "lark.guests", "lark.bots", "lark.ownerOpenId",
   "lark.appSecretEnv", "lark.appId", "lark.capture", "lark.defaultSpace", "telegram", "onebot", "security", "approvals",
   "agents.accounts", "agents.accountIsolation", "agents.networkPolicies", "agents.profiles", "ai.providers",
-  "host", "port", "token", "https", "webUrl", "auth", "node", "backups", "studies.envs", "ide",
+  "host", "port", "token", "https", "webUrl", "shares.expiryDays", "auth", "node", "backups", "studies.envs", "ide",
   "documents.converter", "embeddings.url", "embeddings.apiKeyEnv", "mcp", "agentSkills", "plugins",
 ];
 const privatePaths = new Set(["agents.profiles", "agents.networkPolicies", "mcp", "ai.providers"]);

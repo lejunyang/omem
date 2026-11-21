@@ -8,11 +8,12 @@ import { startServer } from "../src/server/http.ts";
 it("maps every schema key including optional settings, and reserves identity and host controls", () => {
   expect(Object.keys(settingSections).sort()).toEqual(Object.keys(configSchema.shape).sort());
   expect(ownerSettings).toEqual(expect.arrayContaining(["mentions.reply", "lark.commands", "security", "agents.accounts",
-    "agents.accountIsolation", "host", "https", "token", "node", "backups"]));
+    "agents.accountIsolation", "host", "https", "shares.expiryDays", "token", "node", "backups"]));
 });
 
 it("projects sections, rejects mixed writes atomically and audits changed keys without values", async () => {
   const app = testApp();
+  app.config.shares.expiryDays = 7;
   const server = await startServer(app, { port: 0, quiet: true });
   try {
     createUser(app, { id: "reader", name: "读者", role: "observer" });
@@ -20,7 +21,7 @@ it("projects sections, rejects mixed writes atomically and audits changed keys w
     const get = (url: string) => server.inject({ url, headers });
     const put = (payload: object) => server.inject({ method: "PUT", url: "/api/settings", headers, payload });
     expect((await get("/api/settings")).statusCode).toBe(403);
-    for (const capability of ["settings.assistant.view", "settings.assistant.edit", "settings.security.view"]) {
+    for (const capability of ["settings.assistant.view", "settings.assistant.edit", "settings.security.view", "settings.channels.edit"]) {
       app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values('reader',?,'global','','allow','0','owner','0')").run(capability);
     }
     expect((await get("/api/settings/sections")).json().sections.assistant).toEqual({ view: true, edit: true });
@@ -35,6 +36,11 @@ it("projects sections, rejects mixed writes atomically and audits changed keys w
     expect(hidden.statusCode).toBe(403);
     expect(hidden.body).toContain("mentions.reply");
     const tz = app.config.timezone === "UTC" ? "Asia/Tokyo" : "UTC";
+    expect((await put({ shares: { expiryDays: app.config.shares.expiryDays } })).statusCode).toBe(200);
+    const refused = await put({ timezone: tz, shares: { expiryDays: 0 } });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.body).toContain("shares.expiryDays");
+    expect(app.config.timezone).not.toBe(tz);
     const saved = await put({ ...view.config, port: app.config.port, timezone: tz });
     expect(saved.statusCode, saved.body).toBe(200);
     expect(saved.json().config).not.toHaveProperty("port");
