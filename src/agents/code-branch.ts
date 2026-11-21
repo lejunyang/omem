@@ -1,3 +1,4 @@
+import { renameMemberGit } from "./member-git.ts";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { App } from "../core/app.ts";
@@ -160,6 +161,11 @@ export async function planBranch(repo: Space, runId: string, opts: { from?: stri
   return { branch: name, base, newBranch: true, ...(cutFrom ? { cutFrom } : {}) };
 }
 
+/** Only the unnamed branch created by this delegation can be named during coding. */
+export function temporaryWorkBranch(wt: Pick<WorktreeRef, "branch" | "newBranch">, first: string, explicit?: string) {
+  return !!wt.newBranch && !explicit && wt.branch === `omem/${first}`;
+}
+
 /**
  * A run that is not running or queued may lose its idle workspace to another run — except a
  * delegation an outside Agent codes (peer-code.ts): between rounds its uncommitted edits live in
@@ -181,7 +187,7 @@ const idle = (app: App) => (id: string) => {
  * The round's worktree of a work branch at `path`: a lent slot when one can be had (taken back
  * from an idle delegation if need be), else a worktree of its own there. Then placed on the branch.
  */
-export function branchWorktree(app: App, repo: Space, runId: string, path: string, wt: WorktreeRef | BranchPlan, log: (text: string) => void): { wt: WorktreeRef; note: string } {
+export function branchWorktree(app: App, repo: Space, runId: string, path: string, wt: WorktreeRef | BranchPlan, log: (text: string) => void, naming?: "tool" | "git"): { wt: WorktreeRef; note: string } {
   const root = repo.rootPath!;
   const ref: WorktreeRef = "space" in wt
     ? { ...wt }
@@ -197,7 +203,7 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
       if (!made.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${made.stderr}`);
     }
   }
-  return { wt: ref, note: placeOnBranch(root, ref, { fresh }) };
+  return { wt: ref, note: placeOnBranch(root, ref, { fresh, naming }) };
 }
 
 /**
@@ -206,7 +212,7 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
  * previous round could not put back on the branch stay where they are. Returns what the coding
  * Agent should know about it.
  */
-export function placeOnBranch(root: string, wt: WorktreeRef, opts: { fresh?: boolean } = {}): string {
+export function placeOnBranch(root: string, wt: WorktreeRef, opts: { fresh?: boolean; naming?: "tool" | "git" } = {}): string {
   const dir = workDirOf(wt);
   // Keep interrupted operations (including picks/reverts) in place for the conflict resolver.
   if (syncInProgress(dir) || hasSyncStash(dir)) return `工作区里有一次没做完的同步（${wt.branch}），宿主会先把它做完。`;
@@ -238,9 +244,11 @@ export function placeOnBranch(root: string, wt: WorktreeRef, opts: { fresh?: boo
   }
   const moved = elsewhere ? git(dir, ["checkout", "-q", "--detach", tip]) : git(dir, ["checkout", "-q", wt.branch]);
   if (!moved.ok) throw new Error(`没能把工作区切到分支 ${wt.branch}：${moved.stderr.trim().slice(0, 300)}`);
-  return elsewhere
-    ? `分支 ${wt.branch} 正在 ${elsewhere} 检出（本人在那里运行和验证），所以工作区停在它最新提交的游离 HEAD 上。照常提交，宿主在这一轮结束后把提交快进到那里；不要切换分支，也不要改分支名。`
-    : `你在分支 ${wt.branch} 上。${wt.newBranch && wt.branch.startsWith("omem/") ? `这是临时名字：按这次的功能起一个合适的分支名（参照仓库已有分支的命名习惯，如 feat/xxx、fix/xxx），用 \`git branch -m ${wt.branch} <新名字>\` 改。` : ""}`;
+  if (elsewhere) return `分支 ${wt.branch} 正在 ${elsewhere} 检出（本人在那里运行和验证），所以工作区停在它最新提交的游离 HEAD 上。照常提交，宿主在这一轮结束后把提交快进到那里；不要切换分支，也不要改分支名。`;
+  const note = `你在分支 ${wt.branch} 上。`;
+  if (!opts.naming) return note;
+  const how = opts.naming === "tool" ? `调用 name_work_branch，space 填 ${wt.space}，name 填新名字。` : `用 git branch -m ${wt.branch} <新名字> 改。`;
+  return `${note}这是临时名字，请按仓库惯例和改动用途命名。${how}`;
 }
 
 export type Settled = { committed: string | null; branch: string; renamed?: string; followed?: string; followError?: string };
@@ -342,6 +350,31 @@ export function branchStatus(app: App, runId: string) {
       pushedAt: ((out.pushed ?? []) as { space: string; at: string }[]).find((p) => p.space === wt.space)?.at ?? null,
     };
   });
+}
+
+/** Called only by the round's lead coder, for the temporary branch assigned by the host. */
+export function nameCodingBranch(app: App, actor: string, space: string, name: string) {
+  const run = getRun(app, actor);
+  if (run.kind !== "code" || run.status !== "running") throw new HttpError(409, "只能由进行中的主编码命名分支");
+  const first = String(run.input.continueFrom ?? actor);
+  const trees = run.output.worktrees as WorktreeRef[];
+  const wt = trees?.find(w => w.space === space && w.commits);
+  const old = `omem/${first}`;
+  const named = getRun(app, first).input.branchNames as Record<string, string> | undefined;
+  if (!wt || !temporaryWorkBranch(wt, first, named?.[space]))
+    throw new HttpError(409, "只能命名这次交办自动分配的临时分支");
+  const root = getSpace(app, space).rootPath!;
+  if (name === old || name.startsWith("-") || !git(root, ["check-ref-format", "refs/heads/" + name]).ok)
+    throw new HttpError(400, "请提供新的有效分支名");
+  if (!renameMemberGit(app, actor, space, old, name)) {
+    if (checkedOutAt(root, old) !== workDirOf(wt)) throw new HttpError(409, "工作树未检出分配的临时分支");
+    const r = git(root, ["-c", "core.hooksPath=/dev/null", "branch", "-m", "--", old, name]);
+    if (!r.ok) throw new HttpError(409, r.stderr.trim());
+  }
+  wt.branch = wt.targetBranch = name;
+  saveWts(app, actor, trees);
+  if (first !== actor) saveWts(app, first, trees);
+  return { branch: name };
 }
 
 /** Rename the work branch (everywhere it is checked out too). */

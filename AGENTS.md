@@ -1,6 +1,6 @@
 # omem v2：开发约定
 
-先读 README.md 和 docs/v2/architecture.md。每项能力做到哪一步在 docs/v2/status.md，验收步骤在 docs/v2/acceptance.md：这两份都很长，按关键词搜对应的行，不要整份读。docs/archive 是 v1 的历史资料，其中的“当前”“进度”只对应当时。本仓库的 Wiki 在 `.repo-review/wiki/`（主体生成于 2026-10-13；之后的改动列在 `reference/changes-since-2026-10-13.md`，它只留最近的，更早的在同目录的 `changes-2026-10.md`、`changes-2026-11-first-half.md`、`changes-2026-11-15-to-17.md`、`changes-2026-11-18.md`，找旧改动按关键词搜；记忆、渠道、参考三页已同步到 10-18，其他页面以代码为准）。
+先读 README.md 和 docs/v2/architecture.md。每项能力做到哪一步在 docs/v2/status.md，验收步骤在 docs/v2/acceptance.md：这两份都很长，按关键词搜对应的行，不要整份读。docs/archive 是 v1 的历史资料，其中的“当前”“进度”只对应当时。本仓库的 Wiki 在 `.repo-review/wiki/`（主体生成于 2026-10-13；之后的改动列在 `reference/changes-since-2026-10-13.md`，它只留最近的，更早的在同目录的 `changes-2026-10.md`、`changes-2026-11-first-half.md`、`changes-2026-11-15-to-17.md`、`changes-2026-11-18.md`、`changes-2026-11-19.md`，找旧改动按关键词搜；记忆、渠道、参考三页已同步到 10-18，其他页面以代码为准）。
 
 ## 仓库里的几类说明
 

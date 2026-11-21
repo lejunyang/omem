@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fetchBranch, fetchBranchAsync, git, resolveRef } from "../core/git.ts";
 import { HttpError } from "../core/util.ts";
@@ -55,7 +55,11 @@ export function settleDiffBase(wt: WorktreeRef) {
   if (git(wt.path, ["merge-base", "--is-ancestor", wt.diffBaseNext, "HEAD"]).ok) wt.diffBase = wt.diffBaseNext;
   delete wt.diffBaseNext;
 }
-const unmerged = (path: string) => git(path, ["diff", "--name-only", "--diff-filter=U"]).stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+export function unmerged(path: string) {
+  const result = git(path, ["diff", "--name-only", "--diff-filter=U", "-z"]);
+  if (!result.ok) throw new Error(result.stderr);
+  return result.stdout.split("\0").filter(Boolean);
+}
 
 /** An unfinished Git operation belongs to this worktree, including a sequenced pick/revert. */
 export function syncInProgress(path: string): SyncOperation | null {
@@ -76,15 +80,31 @@ export function syncInProgress(path: string): SyncOperation | null {
   return null;
 }
 
-/** Files that still carry conflict markers (resolved in the index but not in the text). */
-function withMarkers(path: string, files: string[]) {
-  return files.filter((f) => {
-    try {
-      return /^(<{7}|>{7}) /m.test(readFileSync(join(path, f), "utf8"));
-    } catch {
-      return false;
-    }
-  });
+/** Only a regular file inside the checkout can be host-staged as a resolved text conflict. */
+function hasMarkers(root: string, file: string, size: number): boolean | undefined {
+  const path = join(root, file);
+  if (!lstatSync(path, { throwIfNoEntry: false })?.isFile() || realpathSync(path) !== path) return;
+  return Array.from(readFileSync(path, "utf8").matchAll(/^(<+|>+|\|+) /gm)).some(m => m[1].length === size);
+}
+
+export async function resolveConflicts(path: string, files: string[], label: string, resolver: Resolver) {
+  const root = realpathSync(path);
+  const attrs = git(path, ["check-attr", "-z", "--stdin", "conflict-marker-size"], files.join("\0") + "\0");
+  if (!attrs.ok) throw new Error(attrs.stderr);
+  const fields = attrs.stdout.split("\0");
+  const sizes = new Map<string, number>();
+  for (let i = 0; i + 2 < fields.length; i += 3) sizes.set(fields[i], Number(fields[i + 2]) || 7);
+  const markers = (f: string) => hasMarkers(root, f, sizes.get(f)!);
+  const marked = files.filter(markers);
+  await resolver(files, label);
+  const after = new Map(files.map(f => [f, markers(f)]));
+  const remainingMarkers = files.filter(f => after.get(f));
+  const ready = marked.filter(f => after.get(f) === false);
+  if (ready.length) {
+    const result = git(path, ["--literal-pathspecs", "add", "--", ...ready]);
+    if (!result.ok) throw new Error(result.stderr);
+  }
+  return [...new Set([...unmerged(path), ...remainingMarkers])];
 }
 
 /** The newest of a branch's local and origin copies: the remote one when the local is behind it. */
@@ -115,10 +135,8 @@ export async function finishSync(path: string, label: string, resolver: Resolver
     let files = unmerged(path);
     if (files.length) {
       conflicts.push(...files.filter((f) => !conflicts.includes(f)));
-      await resolver(files, label);
-      files = [...new Set([...unmerged(path), ...withMarkers(path, files)])];
+      files = await resolveConflicts(path, files, label, resolver);
       if (files.length) return { op, label, conflicts: files };
-      git(path, ["add", "-A"]);
     }
     const r = proceed(path, op);
     // Nothing left to commit in this step (the resolution took one side entirely): skip it.
@@ -205,10 +223,8 @@ export async function popStash(path: string, resolver: Resolver): Promise<SyncSt
   if (!again.ok) {
     const files = unmerged(path);
     if (!files.length) throw new HttpError(409, `放回未提交的改动失败：${again.stderr.slice(0, 600)}`);
-    await resolver(files, "放回同步前的改动");
-    const left = [...new Set([...unmerged(path), ...withMarkers(path, files)])];
+    const left = await resolveConflicts(path, files, "放回同步前的改动", resolver);
     if (left.length) return { op: "merge", label: "放回同步前的改动", conflicts: left };
-    git(path, ["add", "-A"]);
   }
   git(path, ["stash", "drop", "-q", ref]);
   rmSync(stashMark(path), { force: true });

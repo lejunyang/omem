@@ -32,7 +32,6 @@ const bothSides: Resolver = async (files) => {
   for (const f of files) {
     const text = readFileSync(join(wtPath, f), "utf8").replace(/^(<{7}|={7}|>{7}).*\n/gm, "");
     writeFileSync(join(wtPath, f), text);
-    sh(wtPath, "add", f);
   }
 };
 const giveUp: Resolver = async () => {};

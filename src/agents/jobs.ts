@@ -36,7 +36,7 @@ import { describeFlags, guardSource } from "../sources/guard.ts";
 import { learningProgress, studyStats } from "../learn/cards.ts";
 import { getGoal, listGoals, localClock, upsertGoal } from "../learn/goals.ts";
 import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
-import { createRun, getRun, listRuns, registerHandler, updateQueuedRun, type RunContext } from "./runs.ts";
+import { createRun, getRun, listRuns, runUser, registerHandler, updateQueuedRun, type RunContext } from "./runs.ts";
 import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
 import { relationCandidates } from "../core/space-candidates.ts";
 import { nearMemories, sameTopicPairs } from "../memory/passive.ts";
@@ -107,7 +107,6 @@ async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: str
         if (e.type === "tool") acted = true;
         ctx.event(e.type, e);
       },
-      userId: one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? undefined,
       reuseSession: ["heartbeat", "ingest", "dreamer", "brief", "curator", "tutor", "wiki-writer", "wiki-linter"].includes(role),
     });
   const started = Date.now();
@@ -177,7 +176,7 @@ registerHandler("ask", async (ctx) => {
   }
   let r;
   try {
-    r = await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner");
+    r = await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id));
   } catch (e) {
     // Nobody waits on a coordination turn: say it stopped, where the owner follows the work.
     if (coordinate && !ctx.signal.aborted) await deliverCoordination(ctx, coordinate, `协调这一轮时出错，工作停在这里：${(e as Error).message}\n\n回复这条话题可以让我接着做。`, { failed: true }).catch(() => {});
@@ -191,9 +190,9 @@ registerHandler("ask", async (ctx) => {
     return { answer, messageId: id, session: r.mode };
   }
   // Nobody waits on it and the owner spoke in its scope meanwhile: one more turn with their words first (awareness.ts).
-  answer = await recheckAnswer(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner", prompt)).text);
+  answer = await recheckAnswer(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id), prompt)).text);
   // A reply that says nothing (only what it is about to do, a bare “收到”, only ways out): back to it once (reply-check.ts).
-  answer = await reviseHollow(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner", prompt)).text);
+  answer = await reviseHollow(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id), prompt)).text);
   // It said it has nothing to say (stay_quiet, only where nobody waits on the turn): nothing is posted.
   const quiet = quietReason(ctx.app, ctx.run.id);
   // Woken by a wake-up it set: nobody waits on it either.
@@ -372,7 +371,7 @@ async function runAgentTask(ctx: RunContext) {
       spaces: assistantScope?.spaces,
       // A run may also be denied tools of its own (a meeting's windows: nothing reaches the owner until it ends).
       denyTools: [...(assistantScope?.denyTools ?? []), ...(((ctx.run.input as { denyTools?: string[] }).denyTools) ?? [])],
-      userId: assistantScope?.userId ?? one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? undefined,
+      userId: assistantScope?.userId,
       spaceId: ctx.run.spaceId ?? spec?.space ?? "personal",
       task: turnTask,
       runId: ctx.run.id,

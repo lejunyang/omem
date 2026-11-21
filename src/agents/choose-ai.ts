@@ -208,7 +208,7 @@ export async function chooseAI(
     "选项：",
     ...Object.entries(opts).map(([k, v]) => `- ${k}：${v.text}`),
   ].join("\n");
-  const v = jsonIn<{ order?: unknown; choice?: string; reason?: string }>(await askModel(app, prompt, { timeoutMs: 60_000, signal: o.signal }).catch(() => null));
+  const v = jsonIn<{ order?: unknown; choice?: string; reason?: string }>(await askModel(app, prompt, { timeoutMs: 60_000, signal: o.signal, userId: o.userId }).catch(() => null));
   const given = [...(Array.isArray(v?.order) ? v!.order : []), v?.choice].filter((k): k is string => typeof k === "string" && !!opts[k]);
   if (!given.length) {
     record({ outcome: "failed", by: "通用模型", reason: "没有给出可用的选择，按原来的设置", options });

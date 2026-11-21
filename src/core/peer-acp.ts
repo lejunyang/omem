@@ -8,6 +8,9 @@ import type { Duplex } from "node:stream";
 import type { App } from "./app.ts";
 import { allProfiles } from "./config.ts";
 import { nodeId } from "./peers.ts";
+import { OWNER } from "./users.ts";
+import { commandGateDir } from "../agents/command-gate.ts";
+import { agentToolEnv } from "../agents/tool-cli.ts";
 import { connectOption, peerRoute } from "./peer-tunnel.ts";
 
 /**
@@ -86,8 +89,9 @@ export function servableAgent(app: App, id: string) {
   return allProfiles(app.config).find((p) => p.id === id && p.transport === "acp" && !p.peer) ?? null;
 }
 
-/** The upgraded `/api/peer/acp?agent=<id>&node=<caller>` (the caller is already checked as the owner). */
-export async function serveAcp(app: App, req: IncomingMessage, socket: Duplex, head: Buffer) {
+/** The upgrade is authenticated as the owner or a member with a lending grant. */
+export async function serveAcp(app: App, req: IncomingMessage, socket: Duplex, head: Buffer, authenticatedUser: string) {
+  const { issueToolToken, revokeToolToken } = await import("../agents/tools.ts");
   const { launch, stop } = await import("../agents/spawn.ts");
   const { backendAvailable } = await import("../agents/availability.ts");
   const { mcpBridge } = await import("../agents/runner.ts");
@@ -97,13 +101,23 @@ export async function serveAcp(app: App, req: IncomingMessage, socket: Duplex, h
   const caller = (url.searchParams.get("node") ?? "peer").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40) || "peer";
   const cwd = join(app.home, "peer-acp", caller);
   mkdirSync(cwd, { recursive: true });
+  // Only our own paired devices may speak for their initiating member.
+  const userId = authenticatedUser === OWNER ? url.searchParams.get("member") || OWNER : authenticatedUser;
+  let gateToken: string | undefined;
   let child: ReturnType<typeof launch> | undefined;
   let network: Awaited<ReturnType<typeof beginNetworkAttempt>> | undefined;
   try {
     network = await beginNetworkAttempt(app, profile, { stop: () => { if (child) stop(child); socket.end(); } });
     if (socket.destroyed || network.signal.aborted) { network.close(); return; }
-    child = launch(profile.command, profile.args, { cwd, env: network.profile.env });
+    const gate = commandGateDir(app);
+    let env = network.profile.env;
+    if (gate) {
+      gateToken = issueToolToken({ runId: null, spaceId: "", spaces: [], tools: new Set(), actor: "agent", userId, agentProfile: profile.id });
+      env = agentToolEnv(app.home, app.baseUrl, gateToken, gate, env);
+    }
+    child = launch(profile.command, profile.args, { cwd, env });
   } catch (e) {
+    if (gateToken) revokeToolToken(gateToken);
     network?.close();
     return void socket.end(`HTTP/1.1 503 Service Unavailable\r\ncontent-type: text/plain; charset=utf-8\r\nconnection: close\r\n\r\n${(e as Error).message}`);
   }
@@ -170,6 +184,7 @@ export async function serveAcp(app: App, req: IncomingMessage, socket: Duplex, h
   }, head);
   serving.add(socket);
   const done = () => {
+    if (gateToken) revokeToolToken(gateToken);
     serving.delete(socket);
     network?.close();
     if (child) stop(child);
@@ -185,8 +200,10 @@ export async function serveAcp(app: App, req: IncomingMessage, socket: Duplex, h
 type McpSpec = { name: string; type?: string; url?: string; headers?: { name: string; value: string }[]; command?: string; args?: string[]; env?: { name: string; value: string }[] };
 
 /** Open the upgraded connection to `agent` on device `id` (through its `via` chain). */
-export function connectAcp(app: App, id: string, agent: string): Promise<{ socket: Duplex; head: Buffer }> {
-  const r = peerRoute(app, id, `/api/peer/acp?agent=${encodeURIComponent(agent)}&node=${encodeURIComponent(nodeId(app))}`, 0);
+export function connectAcp(app: App, id: string, agent: string, member?: string): Promise<{ socket: Duplex; head: Buffer }> {
+  const query = new URLSearchParams({ agent, node: nodeId(app) });
+  if (member) query.set("member", member);
+  const r = peerRoute(app, id, `/api/peer/acp?${query}`, 0);
   const target = new URL(r.path, r.url);
   return new Promise((ok, fail) => {
     const req = (target.protocol === "https:" ? httpsRequest : httpRequest)(target, {
@@ -229,7 +246,7 @@ async function mcpClient(spec: McpSpec) {
  * the MCP servers each session named.
  */
 export async function runAcpBridge(app: App, id: string, agent: string) {
-  const { socket, head } = await connectAcp(app, id, agent);
+  const { socket, head } = await connectAcp(app, id, agent, process.env.OMEM_PEER_MEMBER);
   const specs = new Map<string, McpSpec>();
   const clients = new Map<string, ReturnType<typeof mcpClient>>();
   const send = (f: Frame) => socket.writable && socket.write(JSON.stringify(f) + "\n");

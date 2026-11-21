@@ -1,8 +1,13 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { ask } from "../src/agents/jobs.ts";
+import { runRole } from "../src/agents/runner.ts";
+import { auditLog } from "../src/auth/permissions.ts";
+import { setGrants } from "../src/core/mesh.ts";
+import { serviceAccount } from "../src/core/federation.ts";
+import { createUser, personalSpaceId } from "../src/core/users.ts";
 import { waitForRun } from "../src/agents/runs.ts";
 import { addPeer, invite } from "../src/core/peers.ts";
 import { allProfiles, saveConfig } from "../src/core/config.ts";
@@ -50,6 +55,26 @@ describe("an ACP agent of another device", () => {
     expect(listMemories(laptop.app, {}).map((m) => m.content)).toContain("FAKE: 和小王什么时候同步");
     expect(listMemories(device.app, {}).map((m) => m.content)).not.toContain("FAKE: 和小王什么时候同步");
   }, 90_000);
+
+  it.each(["paired", "lent"])("enforces the %s device's member rule in the launched process", async (connection) => {
+    const device = await node("device-gate", {
+      agents: { profiles: [{ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "peer-gate" } }] },
+    });
+    const laptop = await node("laptop-gate", {});
+    const actor = connection === "paired" ? "reader" : serviceAccount(device.app, "Borrower");
+    if (connection === "lent") setGrants(device.app, actor, [{ kind: "ai", name: "fake" }]);
+    device.app.config.security.operationRules = [{ id: "member-write", revision: 1, enabled: true, scope: { members: [actor] }, match: { kind: "command", executable: "acme" }, action: "deny" }];
+    await addPeer(laptop.app, invite(device.app, { url: device.app.baseUrl, userId: connection === "lent" ? actor : undefined }).code);
+    laptop.app.config.agents.profiles = [{ id: "remote", transport: "acp", command: "omem", args: [], env: { OMEM_HOME: laptop.home }, idleTimeoutMs: 60_000, peer: { id: "device-gate", agent: "fake" } }];
+    saveConfig(laptop.app.config, laptop.home);
+    const member = createUser(laptop.app, { id: "reader", name: "Reader" });
+    const result = await runRole(laptop.app, { role: "summarizer", profileId: "remote", userId: member.id, spaceId: personalSpaceId(member.id), runId: null, task: "检查命令规则" });
+    const env = JSON.parse(result.text);
+    expect(env.url).toBe(device.app.baseUrl);
+    expect(env.path.split(delimiter)[0]).toBe(join(device.home, "bin", "guarded"));
+    expect(env.status).toBe(126);
+    expect(auditLog(device.app)).toContainEqual(expect.objectContaining({ actor, action: "command.deny", target: "acme" }));
+  }, 60_000);
 
   it("refuses without the owner's token and for agents the device does not have", async () => {
     const { connectAcp } = await import("../src/core/peer-acp.ts");

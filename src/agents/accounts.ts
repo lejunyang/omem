@@ -123,8 +123,8 @@ function isLink(p: string) {
  * own skill folders (agent-skills.ts), while the owner has the takeover on.
  */
 export function ensureAccountHome(app: App, userId: string, entry?: AccountEntry) {
-  let made = privateDir(app.home, join("accounts", userId, "home"));
   const home = accountHome(app, userId);
+  let made = privateDir(app.home, join("accounts", userId, "home"));
   for (const d of entry?.account.dirs ?? []) made = privateDir(home, d) || made;
   if (made && app.config.agentSkills.takeOver) {
     try {
@@ -151,20 +151,21 @@ export function accountEnv(app: App, userId: string, entry: AccountEntry): Recor
   return Object.fromEntries(Object.entries(entry.account.env).map(([k, v]) => [k, expandHome(v, home)]));
 }
 
+function localAccount(app: App, userId: string, backend: string): SandboxAccount {
+  return { userId, backend, home: accountHome(app, userId), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir()] };
+}
+
 /** What a run (or a login) with this user's account of this backend carries (agents/sandbox.ts). */
 export function accountRun(app: App, userId: string, entry: AccountEntry): SandboxAccount {
-  const home = accountHome(app, userId);
+  const base = localAccount(app, userId, entry.id);
   const spec = entry.account;
   const token = spec.tokenEnv ? accountToken(app, userId, entry.id) : null;
   const env = accountEnv(app, userId, entry);
   if (spec.tokenEnv && token) env[spec.tokenEnv] = token;
   return {
-    userId,
-    backend: entry.id,
-    home,
+    ...base,
     env,
-    hide: [app.home],
-    ro: [join(app.home, "bin"), omemInstallDir(), ...(spec.mounts ?? []).map((m) => expandPath(m))],
+    ro: [...base.ro, ...(spec.mounts ?? []).map((m) => expandPath(m))],
   };
 }
 
@@ -210,55 +211,71 @@ export function loggedIn(app: App, userId: string, backend: string) {
 
 /** A person who can have accounts here: an active omem user other than the owner (not a guest). */
 function member(app: App, userId: string) {
-  if (userId === OWNER || !SAFE_ID.test(userId)) return false;
+  if (userId === OWNER) return false;
   const u = findUser(app, userId);
   return !!u && u.role !== "owner" && u.kind === "person";
 }
 
-/**
- * Why this user's run cannot start on this backend as it is (the owner set it to own accounts —
- * only, or before trying another backend — and they have not logged in), or null. Used to leave
- * such backends out of a run's fallbacks.
- */
+/** Where this profile executes and whether it can use a member HOME on this node. */
+function isolationCapability(p: AgentProfile) {
+  if (p.peer) return { execution: "peer", supported: false, reason: "设备代跑尚未隔离成员账号" };
+  if (p.transport === "doubao") return { execution: "cloud", supported: false, reason: "云端后端没有本机进程沙箱" };
+  if (p.keyRef) return { execution: "local", supported: false, reason: "这个档案使用共享密钥" };
+  const { ok, reason } = sandboxSupport();
+  return { execution: "local", supported: ok, reason };
+}
+
+export function isolationStatus(app: App) {
+  return {
+    ...sandboxSupport(),
+    mode: app.config.agents.accountIsolation,
+    profiles: allProfiles(app.config).map(p => ({ id: p.id, ...isolationCapability(p) })),
+  };
+}
+
+/** Account selection and fallbacks use the same eligibility check. */
 export function accountBlocked(app: App, userId: string, p: AgentProfile): string | null {
-  if (accountOf(p) || !member(app, userId)) return null;
+  if (!member(app, userId)) return null;
+  const strict = app.config.agents.accountIsolation === "require";
+  if (!SAFE_ID.test(userId)) return strict ? "这台机器不能隔离成员的运行：成员 ID 不适合作为账号目录" : null;
+  const capability = isolationCapability(p);
+  if (!capability.supported) return strict ? `这台机器不能隔离成员的运行：${capability.reason}` : null;
   const entry = accountEntryFor(app, p);
-  if (!entry || !sandboxSupport().ok || loggedIn(app, userId, entry.id)) return null;
+  if (!entry || loggedIn(app, userId, entry.id)) return null;
   const policy = accountPolicy(app, entry.id);
   if (policy === "own") return `${entry.name} 只能用自己的账号：在 账号 → 我的 AI 账号 里登录 ${entry.name} 后再试`;
   if (policy === "own-or-other") return `${entry.name} 要用自己的账号（没登录时换别的后端）：在 账号 → 我的 AI 账号 里登录 ${entry.name}`;
-  return null;
+  return strict ? `这台机器不能隔离成员的运行：借用 ${entry.name} 的本人登录需要本人的 HOME，请先登录自己的账号` : null;
 }
 
-/** The profile with this user's own account when they are logged in to its backend; else as it is. Never throws. */
+export function unisolatedReason(app: App, userId: string, p: AgentProfile): string | undefined {
+  if (accountOf(p) || !member(app, userId)) return;
+  return isolationCapability(p).reason ?? (accountEntryFor(app, p) ? "这个后端借用本人的登录" : "这个后端沿用服务进程的环境");
+}
+
 export function accountFor<P extends AgentProfile>(app: App, userId: string | undefined, p: P): P {
-  if (!userId || accountOf(p) || !member(app, userId) || !sandboxSupport().ok) return p;
+  if (!userId || !SAFE_ID.test(userId) || accountOf(p) || !member(app, userId) || !isolationCapability(p).supported) return p;
   const entry = accountEntryFor(app, p);
-  return entry && loggedIn(app, userId, entry.id) ? { ...p, ownAccount: accountRun(app, userId, entry) } : p;
+  if (entry && loggedIn(app, userId, entry.id)) return { ...p, ownAccount: accountRun(app, userId, entry) };
+  if (!entry && app.config.agents.accountIsolation === "require") {
+    ensureAccountHome(app, userId);
+    return { ...p, ownAccount: localAccount(app, userId, p.id) };
+  }
+  return p;
 }
 
-/**
- * The profile a run of this user starts with (runner.ts prepareRun). The owner, a backend without an
- * account entry, or a machine without the sandbox: unchanged. A member logged in to it: their account.
- * Not logged in: the owner's rule — borrow the owner's login, fail with what to do, or (`own-or-other`)
- * the first of `others` (the run's fallback order) they are logged in to or may borrow.
- */
 export function withAccount<P extends AgentProfile>(app: App, userId: string, p: P, others?: () => AgentProfile[]): P {
-  if (accountOf(p)) return p;
-  if (!member(app, userId)) return p;
-  const entry = accountEntryFor(app, p);
-  if (!entry || !sandboxSupport().ok) return p;
-  if (loggedIn(app, userId, entry.id)) return { ...p, ownAccount: accountRun(app, userId, entry) };
-  const policy = accountPolicy(app, entry.id);
-  if (policy === "owner") return p;
-  if (policy === "own-or-other") {
+  const reason = accountBlocked(app, userId, p);
+  if (!reason) return accountFor(app, userId, p);
+  const policy = accountPolicy(app, sourceOf(p));
+  if (app.config.agents.accountIsolation === "require" || policy === "own-or-other") {
     for (const q of others?.() ?? []) {
-      if (sourceOf(q) === sourceOf(p) || accountBlocked(app, userId, q) || !backendAvailable(q, app.home)) continue;
-      return withAccount(app, userId, q as P);
+      if (accountBlocked(app, userId, q) || !backendAvailable(q, app.home)) continue;
+      return accountFor(app, userId, q as P);
     }
-    throw new Error(`${entry.name} 要用你自己的账号，你还没登录；也没有别的你登录过、或允许借用的后端可换：在 账号 → 我的 AI 账号 里登录 ${entry.name} 后再试`);
+    throw new Error(`${reason}；也没有别的符合条件的后端可换`);
   }
-  throw new Error(accountBlocked(app, userId, p) ?? `${entry.name} 只能用自己的账号`);
+  throw new Error(reason);
 }
 
 /**
@@ -267,14 +284,8 @@ export function withAccount<P extends AgentProfile>(app: App, userId: string, p:
  */
 export function recordedAccount<P extends AgentProfile>(app: App, userId: string, p: P): P | null {
   const entry = accountEntryFor(app, p);
-  if (!entry || !SAFE_ID.test(userId) || userId === OWNER || !existsSync(accountHome(app, userId))) return null;
-  return { ...p, ownAccount: accountRun(app, userId, entry) };
-}
-
-/** Carry the account of `from` onto another profile of the same run (a fallback step keeps its user's account). */
-export function carryAccount<P extends AgentProfile>(from: AgentProfile, to: P): P {
-  const a = accountOf(from);
-  return a && !accountOf(to) ? { ...to, ownAccount: a } : to;
+  if (p.peer || p.keyRef || p.transport === "doubao" || !SAFE_ID.test(userId) || userId === OWNER || !existsSync(accountHome(app, userId))) return null;
+  return { ...p, ownAccount: entry ? accountRun(app, userId, entry) : localAccount(app, userId, p.id) };
 }
 
 // ---------------------------------------------------------------- commands in the user's sandbox
@@ -789,6 +800,7 @@ export function myAccounts(app: App, userId: string) {
   const s = sandboxSupport();
   const self = userId !== OWNER && member(app, userId);
   return {
+    isolation: isolationStatus(app),
     supported: s.ok,
     ...(s.ok ? {} : { reason: s.reason }),
     owner: !self,
@@ -820,7 +832,7 @@ export function allAccounts(app: App) {
             .filter((b) => b.state !== "none" || accountToken(app, u.id, b.id)),
         }))
     : [];
-  return { supported: s.ok, ...(s.ok ? {} : { reason: s.reason }), bwrap: s.version ?? null, backends: s.ok ? accountEntries(app).map((e) => ({ id: e.id, name: e.name, policy: accountPolicy(app, e.id) })) : [], people };
+  return { isolation: isolationStatus(app), supported: s.ok, ...(s.ok ? {} : { reason: s.reason }), bwrap: s.version ?? null, backends: s.ok ? accountEntries(app).map((e) => ({ id: e.id, name: e.name, policy: accountPolicy(app, e.id) })) : [], people };
 }
 
 /** Members logged in to a backend whose plan quota can be read, with the profile to read it on (quota.ts startQuotaWatch). */

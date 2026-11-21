@@ -100,10 +100,15 @@ export type SandboxPlan = {
   hide: string[];
   ro: string[];
   rw: string[];
+  /** Host-assigned pool links to recreate inside the private run directory. */
+  links?: { path: string; target: string }[];
+  pointers?: { source: string; path: string }[];
   cwd: string;
   command: string;
   args: string[];
 };
+
+export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointers">;
 
 /**
  * bubblewrap's arguments for a plan. Pure. Mounts go from the shallowest path to the deepest, so a
@@ -125,7 +130,9 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
   for (const p of plan.rw) add(p, "rw");
   const sorted = [...ops.values()].sort((a, b) => depth(a.path) - depth(b.path) || rank[a.kind] - rank[b.kind] || a.path.localeCompare(b.path));
   const mounts = sorted.flatMap((o) => (o.kind === "tmpfs" ? ["--tmpfs", o.path] : o.kind === "ro" ? ["--ro-bind-try", o.path, o.path] : ["--bind", o.path, o.path]));
-  return ["--die-with-parent", "--unshare-pid", "--unshare-user", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", ...mounts, "--chdir", plan.cwd, "--", plan.command, ...plan.args];
+  const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
+  const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
+  return ["--die-with-parent", "--unshare-pid", "--unshare-user", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, "--chdir", plan.cwd, "--", plan.command, ...plan.args];
 }
 
 /** Variables of the service that do not go into a user's sandbox: credentials, and paths into what is hidden. */
@@ -183,7 +190,7 @@ export function omemInstallDir() {
  * What `launch` starts instead of the command, for a run of one user's own account: bwrap with
  * the mounts worked out from where the command really lives.
  */
-export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount): { file: string; args: string[]; env: Record<string, string> } {
+export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts): { file: string; args: string[]; env: Record<string, string> } {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
   const hide = [...new Set([...acct.hide, homedir(), "/tmp"].filter((p) => isAbsolute(p) && existsSync(p)).map(real))];
@@ -198,10 +205,11 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   ro.add(omemInstallDir());
   // Only what a hidden folder would otherwise take away needs mounting again.
   const roList = [...ro].filter((p) => isAbsolute(p)).map(real).filter((p) => hide.some((h) => inside(p, h)));
-  const rw = [acct.home, cwd, ...(runEnv.OMEM_ARTIFACTS ? [runEnv.OMEM_ARTIFACTS] : [])].map(real);
+  const rw = [real(acct.home), ...(workspace?.rw ?? [real(cwd)])];
+  if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ hide, ro: roList, rw, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
+    args: bwrapArgs({ hide, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
     env: sandboxEnv(process.env, runEnv, acct, hide, nodeBin),
   };
 }

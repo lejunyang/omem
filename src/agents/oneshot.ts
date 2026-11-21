@@ -1,5 +1,7 @@
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
+import { accountBlocked, accountFor } from "./accounts.ts";
+import { accountOf } from "./sandbox.ts";
 import { runBackend } from "./dispatch.ts";
 import { profileFor } from "./runner.ts";
 import { replyOf } from "./types.ts";
@@ -9,7 +11,7 @@ import { replyOf } from "./types.ts";
  * notification muted, merge two versions of a role). The assistant's backend first, one other
  * as fallback; null when none answers, and callers fall back to doing nothing.
  */
-export async function askModel(app: App, prompt: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<string | null> {
+export async function askModel(app: App, prompt: string, opts: { timeoutMs?: number; signal?: AbortSignal; userId?: string } = {}): Promise<string | null> {
   const profiles = allProfiles(app.config);
   let base: AgentProfile | undefined;
   try {
@@ -23,10 +25,11 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
   timer.unref();
   opts.signal?.addEventListener("abort", () => ctrl.abort(), { once: true });
   try {
-    for (const profile of chain.slice(0, 2)) {
+    for (const candidate of chain.filter(p => !opts.userId || !accountBlocked(app, opts.userId, p)).slice(0, 2)) {
       if (ctrl.signal.aborted) break;
       try {
-        const r = await runBackend(app, profile, { cwd: app.home, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
+        const profile = accountFor(app, opts.userId, candidate);
+        const r = await runBackend(app, profile, { cwd: accountOf(profile)?.home ?? app.home, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
         const text = replyOf(r).trim();
         if (text) return text;
       } catch {

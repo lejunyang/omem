@@ -21,7 +21,7 @@ import { backendAvailable } from "./availability.ts";
 import { excluded, downReason } from "./capacity.ts";
 import { quotaAvoid } from "./quota.ts";
 import type { Execution } from "./execution.ts";
-import { thirdFixText, workRootOf } from "./code-tasks.ts";
+import { thirdFixText, workOwner, workRootOf } from "./code-tasks.ts";
 import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
 import { replyOf } from "./types.ts";
@@ -261,7 +261,7 @@ export async function requestSplit(app: App, runId: string, opts: { note?: strin
   }
   return createRun(app, {
     kind: "review", spaceId: last.spaceId, title: `${revise ? "重新整理需求拆分" : "需求拆分"}：${last.title.slice(0, 60)}`,
-    input: { codeRunId: last.id, splitOnly: true, revise, note: opts.note?.trim() || undefined, ...(opts.execution ? { execution: opts.execution } : {}) }, parentId: last.id, userId: opts.userId,
+    input: { codeRunId: last.id, splitOnly: true, revise, note: opts.note?.trim() || undefined, ...(opts.execution ? { execution: opts.execution } : {}) }, parentId: last.id, userId: workOwner(app, workRootOf(app, last.id), opts.userId),
   });
 }
 

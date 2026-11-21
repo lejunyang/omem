@@ -1,3 +1,4 @@
+import type { WorktreeRef } from "./worktree-index.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
@@ -87,7 +88,7 @@ export function wantsPreCheck(app: App, root: Run) {
  * Runs the check for a delegation's first round (in its workspace, read-only) and keeps the brief
  * on the run. Not done, it says why and coding goes on without it.
  */
-export async function runPreCheck(app: App, o: { run: Run; task: string; spaces: string[]; cwd: string; repos: { id: string; name: string; dir: string }[]; signal: AbortSignal; event: (type: string, data: unknown) => void }): Promise<PreCheck | null> {
+export async function runPreCheck(app: App, o: { run: Run; task: string; spaces: string[]; cwd: string; worktrees: WorktreeRef[]; repos: { id: string; name: string; dir: string }[]; signal: AbortSignal; event: (type: string, data: unknown) => void }): Promise<PreCheck | null> {
   const { runRole } = await import("./runner.ts");
   o.event("status", { phase: "pre-check", text: "编码前检查：查这次改动会碰到什么、这里以前出过什么问题" });
   const stop = new AbortController();
@@ -107,6 +108,8 @@ export async function runPreCheck(app: App, o: { run: Run; task: string; spaces:
       ].join("\n\n"),
       runId: o.run.id,
       cwd: o.cwd,
+      worktrees: o.worktrees,
+      worktreeAccess: "read",
       signal: stop.signal,
       onEvent: (e) => o.event(e.type, { ...e, phase: "pre-check" }),
     });

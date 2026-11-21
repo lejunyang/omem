@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
-import { idleWatchdog, launch, stop } from "./spawn.ts";
+import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { isQuotaMessage } from "./capacity.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
@@ -55,6 +55,7 @@ export function modelNotes(option: SessionConfigOption | undefined, available?: 
 }
 
 export type AcpOpenOptions = {
+  workspace?: AgentRequest["workspace"];
   app?: App;
   runId?: string | null;
   signal?: AbortSignal;
@@ -105,7 +106,7 @@ export type AcpHandle = {
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
   if (opts.signal?.aborted) throw new Error("CANCELLED");
   const env = { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env };
-  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env, sandbox: accountOf(profile) });
+  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, sandbox: accountOf(profile) });
   const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
   let stderr = "";
@@ -578,7 +579,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     if (!(opts.signal?.reason instanceof NetworkUnavailableError)) await discard?.();
     close();
     await stopped;
-    throw explain(error, profile);
+    throw sandboxStartError(accountOf(profile), stderr) ?? explain(error, profile);
   }
 }
 
@@ -654,7 +655,7 @@ export async function cleanupAcpSession(profile: AgentProfile, sessionId: string
 
 /** One prompt turn against an ACP agent (Codex/TraeX/Claude Code adapters…). */
 export async function runAcp(profile: AgentProfile, req: AgentRequest & { app?: App }, emit: (e: AgentEvent) => void): Promise<AgentResult> {
-  const handle = await openAcp(profile, { app: req.app, runId: req.runId, signal: req.signal, cwd: req.cwd, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const handle = await openAcp(profile, { app: req.app, runId: req.runId, signal: req.signal, cwd: req.cwd, workspace: req.workspace, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");

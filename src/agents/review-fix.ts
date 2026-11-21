@@ -10,6 +10,7 @@ import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
 import { createRun, getRun, runUser, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
 import type { RoundReview } from "./code-steer.ts";
+import { workOwner } from "./code-tasks.ts";
 import { OWNER } from "../core/users.ts";
 
 /**
@@ -269,9 +270,10 @@ export function itemOnBranch(app: App, repos: string[], branch: string | null | 
 // `withSameBranch`: the owner looked at the other reviews of the same branch too (sameBranchWork); their findings may be chosen, and what is left there waits as well.
 export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; execution?: Execution; reviewExecution?: Execution; applyFirst?: boolean; withSameBranch?: boolean; actor?: "agent" | "user" }, userId: string): Promise<Run> {
   const runs = workRuns(app, runId);
+  const initiator = workOwner(app, runs[0], userId);
   const last = getRun(app, runs.at(-1)!);
   if (!req.findingIds.length && !req.text?.trim()) throw new HttpError(400, "选几个要改的问题，或者写下要改什么");
-  const others = req.withSameBranch ? sameBranchWork(app, runId, userId) : [];
+  const others = req.withSameBranch ? sameBranchWork(app, runId, initiator) : [];
   const pool = [...runs, ...others.flatMap((o) => workRuns(app, o.rootId))];
   const chosen = req.findingIds.map((id) => findingOf(app, pool, id) ?? (() => { throw new HttpError(404, `问题 #${id} 不属于这次交办或评审，也不属于同一分支的其他评审`); })());
   const accepted = (next: Run) => {
@@ -324,7 +326,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   const applied = !branchReview && !!(last.output.appliedAt || root.output.appliedAt) && !last.output.discardedAt && isBranchWork(worktreesOf(app, root.id));
   const confirmedOn: Record<string, string> = applied ? Object.fromEntries(worktreesOf(app, root.id).filter((w) => w.commits && w.targetBranch).map((w) => [w.space, w.targetBranch!])) : {};
   // A reviewed branch that a delegation is already changing: the fix is that delegation's next round.
-  const into = branchReview || applied ? openDelegationOn(app, repos, Object.values(input.branches ?? {})[0]?.branch ?? Object.values(confirmedOn)[0], userId) : last;
+  const into = branchReview || applied ? openDelegationOn(app, repos, Object.values(input.branches ?? {})[0]?.branch ?? Object.values(confirmedOn)[0], initiator) : last;
   if (into && (branchReview || applied) && ["queued", "running"].includes(into.status))
     throw new HttpError(409, `交办 ${into.id}（${into.title}）正在改同一个分支，等这一轮结束再改；要马上加要求，补充给正在编码的 Agent（运行页“补充”或 continue_code_run 带 when=now）`);
   if (req.applyFirst && (!into || into !== last)) throw new HttpError(400, "分支评审没有可应用的改动；先应用要在交办编码上做");
@@ -362,7 +364,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     const chain = codeChainFor(app, into) ?? (into.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
     // Work on the branch that landed after this delegation started (another delegation applied):
     // bring it in before coding, so the fix is made on the latest code.
-    const landed = !branchReview && branchWork(app, into.id, userId).some((w) => !!w.appliedAt && w.appliedAt > root.createdAt);
+    const landed = !branchReview && branchWork(app, into.id, initiator).some((w) => !!w.appliedAt && w.appliedAt > root.createdAt);
     // The owner starts this round here: this machine's coding and review Agents do it, also when an
     // outside Agent coded or reviewed the rounds before (their peerCoder / peerReviewer stay behind).
     const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}), ...(req.execution ? { execution: req.execution } : {}), ...(landed ? { sync: { pull: true } } : {}), peerCoder: undefined, peerReviewer: undefined };
@@ -401,7 +403,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     },
     // Under the conversation that asked for the review, so progress and results go back there.
     parentId: root.parentId,
-    userId,
+    userId: initiator,
   });
   // Task-driven: each chosen finding is a task its check verifies, the owner's words one more.
   if (r.input.taskMode) {
@@ -468,7 +470,7 @@ export function queueStandaloneFix(app: App, rootId: string, expectedLastId: str
       throw new HttpError(409, "原工作区缺失，不能续轮；请重新交办");
     const sessionId = rounds.map(r => r.output.coderSessionId).filter(Boolean).at(-1);
     const next = createRun(app, {
-      kind: "code", spaceId: last.spaceId, userId,
+      kind: "code", spaceId: last.spaceId, userId: workOwner(app, rootId, userId),
       title: truncate(`交办第 ${rounds.length + 1} 轮：${task.split("\n")[0]}`, 80),
       // The last round's Git work is its own; this round does only what it is asked.
       input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, moveToTargetMode: undefined, reviewOnly: undefined, peerFinished: undefined, ...extraInput, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },

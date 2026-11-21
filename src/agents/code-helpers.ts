@@ -1,3 +1,4 @@
+import { commitWorktree, receivedMemberHead, inspectUnreceivedMemberGit } from "./member-git.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -5,9 +6,10 @@ import { git } from "../core/git.ts";
 import { run as sql } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import type { Execution } from "./execution.ts";
-import { addWorktree, shell } from "./code.ts";
+import { addWorktree, recordHostCommand, shell } from "./code.ts";
+import { unmerged, resolveConflicts } from "./code-sync.ts";
 import { identity } from "./code-branch.ts";
-import { getTask, taskLabel, taskText, updateTask, workRootOf } from "./code-tasks.ts";
+import { commitsByTask, commitTaskNumbers, getTask, taskLabel, taskText, updateTask, workRootOf } from "./code-tasks.ts";
 import { runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import { getSpace, type Space } from "../core/spaces.ts";
@@ -35,6 +37,7 @@ export type RoundContext = {
   spaces: string[];
   where: (dir: string, wt: WorktreeRef) => string;
 };
+type Refusal = { space: string; reason: string; tasks: number[]; unknown: boolean };
 type Helper = { runId: string; n: number; tasks: number[]; worktrees: WorktreeRef[]; done: Promise<void> };
 const rounds = new Map<string, RoundContext & { helpers: Helper[] }>();
 
@@ -104,10 +107,19 @@ const HELPER_BRIEF = [
   "做完后宿主把你的提交合进工作分支。",
 ].join("\n");
 
+async function inspectHandoff(app: App, actor: string, space: string, reason: string, refused: boolean): Promise<Refusal | null> {
+  const view = await inspectUnreceivedMemberGit(app, actor, space);
+  if (!refused && (!view || (view.worktree === "clean" && !view.incomplete && !view.messages.length))) return null;
+  const byCommit = view?.messages.map(commitTaskNumbers) ?? [];
+  const unknown = view?.worktree !== "clean" || !byCommit.length || view.incomplete || byCommit.some(tasks => !tasks.length);
+  return { space, reason, tasks: [...new Set(byCommit.flat())], unknown };
+}
+
 /** One helper: its own workspaces, the coder there, then what it committed (or left) recorded on its run. */
 async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper, heads: Record<string, string>, note: string) {
   const round = rounds.get(roundRunId)!;
   const log = (text: string) => addRunEvent(app, h.runId, "status", { text });
+  const refused = new Map<string, string>();
   try {
     // Where every run's workspaces live (runs/<run>/work/<space>): a pool lease counts only through that link.
     const base = join(app.runsDir, h.runId, "work");
@@ -120,7 +132,7 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
       const command = setupCommandFor(repo, dir);
       const key = command ? setupKey(dir, command) : null;
       if (command && key) {
-        log(`准备依赖：${command}`);
+        recordHostCommand(app, getRun(app, roundRunId), repo.id, "setup", h.runId);
         const r = await shell(command, dir, round.signal);
         if (r.code === 0) setupDone(dir, key);
         else log(`准备命令失败，退出码 ${r.code}`);
@@ -140,24 +152,38 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
       task: [HELPER_BRIEF, note.trim() ? `## 编码负责人的交代\n\n${note.trim()}` : "", `## 这几项\n\n${tasks.map((t) => taskText(app, t)).join("\n\n")}`, where].filter(Boolean).join("\n\n"),
       runId: h.runId,
       cwd,
+      worktrees: h.worktrees,
+      worktreeAccess: "commit",
       signal: round.signal,
       onEvent: (e) => addRunEvent(app, h.runId, e.type, e),
     });
     flushRunText(app, h.runId);
     // Left uncommitted: one task still open takes it, else it is merged without a task.
     const open = h.tasks.filter((s) => getTask(app, rootId, s).state === "coding");
+    const message = `编码助手 ${h.n} 没提交的改动${open.length === 1 ? `\n\nOmem-Task: ${taskLabel(open[0])}` : ""}`;
     for (const wt of h.worktrees) {
-      const dir = wt.slot ?? wt.path;
-      if (!git(dir, ["status", "--porcelain"]).stdout.trim()) continue;
-      git(dir, ["add", "-A"]);
-      git(dir, [...identity(dir), "commit", "-q", "--no-verify", "-m", `编码助手 ${h.n} 没提交的改动${open.length === 1 ? `\n\nOmem-Task: ${taskLabel(open[0])}` : ""}`]);
+      try {
+        await commitWorktree(app, h.runId, wt.space, wt.slot ?? wt.path, message, identity);
+      } catch (e) {
+        refused.set(wt.space, (e as Error).message);
+      }
     }
-    const commits = Object.fromEntries(h.worktrees.map((w) => [w.space, git(w.slot ?? w.path, ["rev-list", "--reverse", `${heads[w.space]}..HEAD`]).stdout.split("\n").filter(Boolean)]));
-    setRunOutput(app, h.runId, { commits, answer: replyOf(res).trim(), ai: res.ai });
+    if (refused.size) throw new Error([...refused].map(([space, reason]) => `${space}：${reason}`).join("；"));
+    setRunOutput(app, h.runId, { answer: replyOf(res).trim(), ai: res.ai });
     sql(app.db, "update runs set status = 'done', profile_id = ?, finished_at = ? where id = ?", res.profileId, now(), h.runId);
     app.emit({ type: "run", runId: h.runId, status: "done" });
-    round.event("status", { text: `编码助手 ${h.n} 做完了：${h.tasks.map(taskLabel).join("、")}（${Object.values(commits).flat().length} 个提交）` });
+    round.event("status", { text: `编码助手 ${h.n} 做完了：${h.tasks.map(taskLabel).join("、")}` });
   } catch (e) {
+    const refusals: Refusal[] = [];
+    for (const wt of h.worktrees) {
+      if (refused.size && !refused.has(wt.space)) continue;
+      const receipt = await inspectHandoff(app, h.runId, wt.space, refused.get(wt.space) ?? (e as Error).message, refused.has(wt.space));
+      if (receipt) {
+        refusals.push(receipt);
+        if (receipt.unknown) log(`${wt.space}：未交付改动的归属待核对，保留助手工作树`);
+      }
+    }
+    setRunOutput(app, h.runId, { worktrees: h.worktrees, refusals });
     flushRunText(app, h.runId);
     sql(app.db, "update runs set status = 'failed', error = ?, finished_at = ? where id = ?", (e as Error).message, now(), h.runId);
     addRunEvent(app, h.runId, "error", { message: (e as Error).message });
@@ -180,19 +206,50 @@ export async function joinHelpers(app: App, roundRunId: string, resolve: (wt: Wo
   round.event("status", { text: `等编码助手做完：${round.helpers.map((h) => `编码助手 ${h.n}`).join("、")}` });
   await Promise.allSettled(round.helpers.map((h) => h.done));
   for (const h of round.helpers) {
-    const commits = (getRun(app, h.runId).output.commits ?? {}) as Record<string, string[]>;
-    let merged = true;
-    for (const wt of round.worktrees) {
-      const shas = commits[wt.space] ?? [];
+    const run = getRun(app, h.runId);
+    const commits: Record<string, string[]> = {};
+    const problems = new Map<number, string>();
+    const refusals = (run.output.refusals ?? []) as Refusal[];
+    for (const r of refusals) {
+      for (const seq of r.tasks) problems.set(seq, `${r.space}：${r.reason}`);
+    }
+    const landed = new Set<number>();
+    let picked = 0;
+    const keep = new Set<string>();
+    for (const source of h.worktrees) {
+      const wt = round.worktrees.find(w => w.space === source.space)!;
+      const dir = getSpace(app, wt.space).rootPath!;
+      // A failed receipt can mean that the helper's host HEAD was moved externally.
+      // Only the last validated member tip is eligible for delivery.
+      const tip = receivedMemberHead(app, h.runId, wt.space) ?? git(source.path, ["rev-parse", "HEAD"]).stdout.trim();
+      const changes = commitsByTask(dir, source.start!, tip);
+      const shas = commits[wt.space] = changes.map(c => c.sha);
+      const refusal = refusals.find(r => r.space === wt.space);
+      if (refusal?.unknown) {
+        for (const c of changes) for (const seq of c.tasks) problems.set(seq, `${wt.space}：${refusal.reason}（未归属改动待核对）`);
+      }
       if (!shas.length) continue;
-      if (!(await pick(wt, shas, `合并编码助手 ${h.n} 的提交`, resolve, round.signal))) { merged = false; break; }
+      const merged = await pick(wt, shas, `合并编码助手 ${h.n} 的提交`, resolve, round.signal);
+      if (merged) picked += shas.length;
+      else keep.add(wt.space);
+      for (const c of changes) {
+        for (const seq of c.tasks.length ? c.tasks : h.tasks) {
+          if (merged) landed.add(seq);
+          else problems.set(seq, `${wt.space}：助手提交拣选冲突`);
+        }
+      }
     }
-    round.event("status", { text: merged ? `已合并编码助手 ${h.n} 的 ${Object.values(commits).flat().length} 个提交` : `编码助手 ${h.n} 的提交合不进来，它的项下一轮在合并后的代码上重做` });
-    if (!merged) for (const seq of h.tasks) {
-      const t = getTask(app, rootId, seq);
-      if (["verify", "done", "coding"].includes(t.state)) updateTask(app, rootId, seq, { state: "todo", commits: Object.fromEntries(Object.keys(t.commits).map((s) => [s, []])) }, { by: "host", kind: "host", text: `编码助手 ${h.n} 的改动和别的改动冲突，没合进去；在合并后的代码上重做` });
+    setRunOutput(app, h.runId, { commits });
+    for (const seq of h.tasks) {
+      const task = getTask(app, rootId, seq);
+      const reason = problems.get(seq) ?? (run.status === "failed" && (task.state === "coding" || !landed.has(seq)) ? run.error : null);
+      if (reason && ["coding", "verify", "done"].includes(task.state)) {
+        updateTask(app, rootId, seq, { state: "todo" }, { by: "host", kind: "host", text: `助手交付未完成：${reason}。工作树保留在助手运行 ${h.runId}。` });
+      }
     }
+    round.event("status", { text: `已合并编码助手 ${h.n} 的 ${picked} 个提交${run.error ? `；${run.error}` : ""}${keep.size ? `；拣选失败：${[...keep].join("、")}` : ""}` });
     for (const wt of h.worktrees) {
+      if (run.status === "failed" || keep.has(wt.space)) continue;
       if (wt.slot) releaseWorkspace(h.runId, { path: wt.path, slot: wt.slot });
       else if (existsSync(wt.path)) git(getSpace(app, wt.space).rootPath!, ["worktree", "remove", "--force", wt.path]);
     }
@@ -206,11 +263,10 @@ async function pick(wt: WorktreeRef, shas: string[], label: string, resolve: (wt
   const before = git(dir, ["rev-parse", "HEAD"]).stdout.trim();
   let r = git(dir, [...identity(dir), "cherry-pick", "--allow-empty", "--keep-redundant-commits", ...shas]);
   for (let i = 0; !r.ok && i < shas.length; i++) {
-    const files = git(dir, ["diff", "--name-only", "--diff-filter=U"]).stdout.split("\n").filter(Boolean);
+    const files = unmerged(dir);
     if (!files.length || signal.aborted) break;
-    await resolve(wt, files, label).catch(() => {});
-    if (git(dir, ["diff", "--name-only", "--diff-filter=U"]).stdout.trim()) break;
-    git(dir, ["add", "-A"]);
+    const left = await resolveConflicts(dir, files, label, (paths, reason) => resolve(wt, paths, reason)).catch(() => files);
+    if (left.length) break;
     r = git(dir, [...identity(dir), "-c", "core.editor=true", "cherry-pick", "--continue"]);
   }
   if (r.ok) return true;

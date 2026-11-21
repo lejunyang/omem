@@ -38,8 +38,11 @@ import { commandGateDir } from "./command-gate.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
-import { accountBlocked, accountFor, withAccount } from "./accounts.ts";
-import { addRunEvent } from "./runs.ts";
+import { accountBlocked, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
+import { addRunEvent, runUser } from "./runs.ts";
+import { SandboxStartError } from "./spawn.ts";
+import { workspaceMounts } from "./workspaces.ts";
+import type { WorktreeRef } from "./worktree-index.ts";
 import { accountOf } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -275,6 +278,9 @@ export async function lessonsForTask(app: App, input: LessonInput) {
 }
 
 export type RoleRunInput = {
+  /** Host-assigned trees for this invocation (helpers carry their own leases). */
+  worktrees?: WorktreeRef[];
+  worktreeAccess?: "read" | "commit";
   /** Tools the caller needs for delivery. An empty list explicitly permits a text-only answer. */
   requiredTools?: string[];
   execution?: Execution;
@@ -442,17 +448,25 @@ function accountProfile(app: App, input: Parameters<typeof resolveRunProfile>[1]
   return withAccount(app, input.userId ?? OWNER, resolved, () => failoverProfiles(app, input.actor, resolved).slice(1));
 }
 
+/** Called for the selected attempt, including a conversation reusing a live process. */
+export function recordIsolation(app: App, runId: string | null, userId: string, profile: AgentProfile) {
+  const reason = unisolatedReason(app, userId, profile);
+  if (!reason) return;
+  if (app.config.agents.accountIsolation === "require") throw new Error(`这台机器不能隔离成员的运行：${reason}`);
+  if (runId) addRunEvent(app, runId, "status", { text: `这次运行没有隔离：${reason}`, profile: profile.id });
+}
+
 export function prepareRun(
   app: App,
   input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
-  const userId = input.userId ?? OWNER;
+  const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
   const role = spec ? null : loadRole((input.actor as { role: RoleName }).role, app);
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
   // A member's run uses their own account of the backend when they logged in to it (agents/accounts.ts);
   // not logged in to one that must be their own, it may move on in the run's fallback order (`own-or-other`).
-  const profile = input.profile ?? accountProfile(app, input);
+  const profile = input.profile ?? accountProfile(app, { ...input, userId });
   if (!input.shadow) recordRunAI(app, input.runId, profile, false);
   if (role && input.runId && !input.shadow) run(app.db, "update runs set roles = coalesce(roles, '|') || ? || '|' where id = ? and instr(coalesce(roles, ''), ?) = 0", roleName, input.runId, `|${roleName}|`);
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
@@ -552,7 +566,11 @@ export function prepareRun(
     now: `现在：${localTime(app, input.replay?.view.asOf)}`,
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
-    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app)),...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
+    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: {
+      ...agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app)),
+      ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
+      ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
+    } },
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
@@ -743,6 +761,7 @@ function runAI(app: App, runId: string | null): Execution | undefined {
 }
 
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
+  input = { ...input, userId: input.userId ?? runUser(app, input.runId) };
   await refreshForRun(app);
   const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)), input.userId);
   input = { ...input, ...executionArgs(execution) };
@@ -916,17 +935,20 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       // A check may fall back inside the code run: its AI belongs on the review, not over the coder's.
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       try {
+        recordIsolation(app, input.runId, input.userId!, prep.profile);
         const aware = internal ? "" : awarenessNote(app, input.runId, prep.tools.size > 0);
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
+        const workspace = input.worktrees && accountOf(prep.profile) ? workspaceMounts(app, input.worktrees, input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined, input.worktreeAccess === "read" ? "read" : "write") : undefined;
         const req = {
           runId: input.runId,
           strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
           cwd: prep.cwd,
+          workspace,
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           capabilities: prep.capabilities,
           parts: prep.parts,
-          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}`,
+          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
@@ -984,7 +1006,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         noteBreakdown(app, prep.profile, e, emit);
         const untouched = !acted && writes() === writesBefore;
         // The AI named for the run moves on only when it cannot take it (busy or broke down).
-        const movable = pinned && i === 0 ? busy || down : busy || untouched || down;
+        const movable = e instanceof SandboxStartError || (pinned && i === 0 ? busy || down : busy || untouched || down);
         if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !movable || i === chain.length - 1) throw e;
         if (!untouched) carry = (await import("./retry.ts")).partialAttemptNote(app, input.runId, writesBefore, e, aiLabel({ profile: prep.profile.id, model: prep.profile.model }));
         leftBecause = { busy, untouched, why: (e as Error).message.slice(0, 120), first: i === 0 };

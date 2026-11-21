@@ -1,9 +1,12 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { git, gitAsync } from "../core/git.ts";
-import type { Space } from "../core/spaces.ts";
+import { getSpace, type Space } from "../core/spaces.ts";
 import { now, sha256 } from "../core/util.ts";
+import type { WorkspaceMounts } from "./sandbox.ts";
+import { memberGitMount } from "./member-git.ts";
+import type { WorktreeRef } from "./worktree-index.ts";
 
 /**
  * Workspaces for delegated coding (docs/v2/ide.md). A new worktree per delegation has no
@@ -59,6 +62,33 @@ const dirty = (path: string) => git(path, ["status", "--porcelain"]).stdout.trim
 /** Where processes for a worktree run: the slot itself for a leased one (tools resolve links differently). */
 export function workDirOf(wt: { path: string }) {
   return isLink(wt.path) ? real(wt.path) : wt.path;
+}
+
+/** Mount only host-assigned trees. The checkout being edited cannot choose its Git mount via .git. */
+export function workspaceMounts(app: App, trees: (Pick<WorktreeRef, "space" | "path" | "slot"> & Partial<Pick<WorktreeRef, "branch" | "commits">>)[], runId?: string, access: "read" | "write" = "write"): WorkspaceMounts {
+  const ro = new Set<string>();
+  const links: NonNullable<WorkspaceMounts["links"]> = [];
+  const pointers: NonNullable<WorkspaceMounts["pointers"]> = [];
+  const metadata: string[] = [];
+  const workdirs = trees.map(tree => {
+    const root = getSpace(app, tree.space).rootPath;
+    const common = root && commonDir(root);
+    if (!common) throw new Error(`找不到 ${tree.space} 的 Git 公共目录`);
+    ro.add(common);
+    const dir = tree.slot ?? tree.path;
+    if (isLink(dir)) throw new Error(`工作树目录变成了符号链接：${dir}`);
+    const target = realpathSync(dir);
+    if (access === "write" && runId && tree.commits) {
+      const mount = memberGitMount(app, runId, tree.space, target, common, tree.branch);
+      metadata.push(mount.dir);
+      pointers.push({ source: mount.pointer, path: join(target, ".git") });
+    }
+    // Recreate this run's links in the hidden data directory without exposing the host parent.
+    if (trees.length > 1 && tree.slot) links.push({ path: join(realpathSync(dirname(tree.path)), basename(tree.path)), target });
+    return target;
+  });
+  if (access === "read") return { ro: [...ro, ...workdirs], rw: [], links };
+  return { ro: [...ro], rw: [...workdirs, ...metadata], links, ...(pointers.length ? { pointers } : {}) };
 }
 
 export function managedSlot(app: App, repoId: string, n: number) {

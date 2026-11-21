@@ -1,3 +1,4 @@
+import { receiveMemberGit } from "./member-git.ts";
 import { checkLessons, lessonsText } from "./code-lessons.ts";
 import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
@@ -5,6 +6,8 @@ import { killPid } from "../core/procs.ts";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
+import { toolAllowed } from "../auth/tools.ts";
+import { audit } from "../auth/permissions.ts";
 import { all, one } from "../core/db.ts";
 import { defaultBaseRef, fetchBranchAsync, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
@@ -17,7 +20,7 @@ import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { addRunEvent, createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { leasedTo, leaseWorkspace, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "./workspaces.ts";
-import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, siblingsText, withDiffBase } from "./code-branch.ts";
+import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, temporaryWorkBranch, siblingsText, withDiffBase } from "./code-branch.ts";
 import { replyOf } from "./types.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
@@ -199,14 +202,26 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
  */
 export type Check = { command: string; code: number; output: string; ms: number; commit?: string; base?: string; at?: string };
 
+/** Attribute service-side commands before launch, including a failed or interrupted invocation. */
+export function recordHostCommand(app: App, run: Run, space: string, operation: "setup" | "check", helperRunId?: string) {
+  const userId = runUser(app, run.id);
+  const workId = String(run.input.continueFrom ?? run.id);
+  const runId = helperRunId ?? run.id;
+  const detail = { executor: "host", userId, workId, runId, ...(helperRunId && { roundId: run.id }), space, operation };
+  audit(app, "host", `code.${operation}`, runId, detail);
+  addRunEvent(app, runId, "status", { ...detail, text: `宿主为 ${userId} 的交办 ${workId} 在 ${space} ${operation === "setup" ? "准备依赖" : "执行仓库检查"}` });
+  return userId;
+}
+
 /** One execution path for repository checks and improvement measurements, including command rules. */
 export async function repositoryCommand(app: App, run: Run, wt: WorktreeRef, command: string, signal: AbortSignal, timeoutMs?: number): Promise<Check> {
   const base = wt.commits ? changeBase(wt.path, wt) : git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const { commandGateDir, withGatePath } = await import("./command-gate.ts");
   const { issueToolToken, revokeToolToken } = await import("./tools.ts");
+  const userId = recordHostCommand(app, run, wt.space, "check");
   const gate = commandGateDir(app);
-  const token = gate ? issueToolToken({ runId: run.id, spaceId: wt.space, spaces: [wt.space], tools: new Set(), actor: "agent", userId: runUser(app, run.id) }) : null;
+  const token = gate ? issueToolToken({ runId: run.id, spaceId: wt.space, spaces: [wt.space], tools: new Set(), actor: "agent", userId }) : null;
   const env = withGatePath({ ...process.env, ...(base ? { OMEM_BASE: base } : {}), OMEM_ARTIFACTS: artifactInbox(app, run.id), ...(token ? { OMEM_URL: app.baseUrl, OMEM_TOKEN: token } : {}) }, gate);
   try {
     const result = await shell(command, workDirOf(wt), signal, timeoutMs, Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined)));
@@ -302,7 +317,10 @@ export async function runCodeTask(ctx: RunContext) {
   const multi = repos.length > 1;
   const dir = join(app.runsDir, rootRunId);
   const workDir = join(dir, "work");
-  const branch = `omem/${rootRunId}`;
+  const owner = runUser(app, run.id);
+  const canNameBranch = toolAllowed(app, owner, "name_work_branch");
+  const explicitNames = (continueFrom ? getRun(app, rootRunId).input : input).branchNames as Record<string, string> | undefined;
+  const nameable = new Set<string>();
   mkdirSync(join(dir, "patches"), { recursive: true });
   const known = worktreesOf(app, rootRunId);
   const worktrees: WorktreeRef[] = [];
@@ -313,7 +331,11 @@ export async function runCodeTask(ctx: RunContext) {
     const was = known.find((w) => w.space === repo.id);
     // A work branch: every round places a workspace (kept, or lent again) on the branch's latest commit.
     if (was?.commits || (!was && !input.branches)) {
-      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? (await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id], base: input.startCommits?.[repo.id] })), log);
+      const plan = was ?? await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id], base: input.startCommits?.[repo.id] });
+      const temporary = temporaryWorkBranch(plan, rootRunId, explicitNames?.[repo.id]);
+      if (temporary && canNameBranch) nameable.add(repo.id);
+      const naming = temporary && input.peerCoder ? "git" : nameable.has(repo.id) ? "tool" : undefined;
+      const { wt, note } = branchWorktree(app, repo, rootRunId, path, plan, log, naming);
       worktrees.push(wt);
       branchNotes[repo.id] = note;
       if (!was) log(`${repo.id} 的工作分支 ${wt.branch}（${wt.newBranch ? `从${wt.cutFrom ? ` ${wt.cutFrom} 的` : ""} ${wt.base.slice(0, 8)} 切出` : `已有分支，从 ${wt.base.slice(0, 8)} 接着做`}），工作区 ${workDirOf(wt)}`);
@@ -366,7 +388,6 @@ export async function runCodeTask(ctx: RunContext) {
     : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${workDirOf(worktrees[0])}）\n\n## 分支\n\n${branchText(0)}`;
   const cwd = multi ? workDir : workDirOf(worktrees[0]);
   // The run's space may be a project; the agents read it and every repository (and their related spaces).
-  const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? []), ...(input.itemId ? await materialSpaces(app, input.itemId, owner) : [])])];
   // Later rounds also see the business changes to the requirement points since the delegation began.
   const began = continueFrom ? getRun(app, continueFrom).createdAt : undefined;
@@ -402,6 +423,7 @@ ${input.task}
     const key = command ? setupKey(dir, command) : null;
     if (!command || !key) continue;
     ctx.event("status", { text: `准备依赖${multi ? `（${repo.id}）` : ""}：${command}` });
+    recordHostCommand(app, run, repo.id, "setup");
     const r = await shell(command, dir, ctx.signal);
     if (ctx.signal.aborted) throw new Error("已取消");
     if (r.code === 0) {
@@ -460,7 +482,7 @@ ${input.task}
   let pre = pc.preCheckOf(app, rootRunId) ?? (retried ? pc.preCheckOf(app, retried.id) : null);
   if (pre && retried && !continueFrom) setRunOutput(app, rootRunId, { preCheck: pre });
   if (!pre && !continueFrom && !retried && !ranBefore && !skipCoder && !gitOnly && !input.peerCoder && !input.branches && !input.syncResume && pc.wantsPreCheck(app, run)) {
-    pre = await pc.runPreCheck(app, { run, task: `${input.task}${itemBrief}`, spaces, cwd, repos: repos.map((r, i) => ({ id: r.id, name: r.name, dir: workDirOf(worktrees[i]) })), signal: ctx.signal, event: ctx.event });
+    pre = await pc.runPreCheck(app, { run, task: `${input.task}${itemBrief}`, spaces, cwd, worktrees, repos: repos.map((r, i) => ({ id: r.id, name: r.name, dir: workDirOf(worktrees[i]) })), signal: ctx.signal, event: ctx.event });
   }
   if (pre && !continueFrom) coderTask = `${coderTask}\n\n${pc.preCheckText(pre, "coder")}`;
   // The design (designs/work.ts): written and confirmed before a new delegation's first round codes,
@@ -593,6 +615,7 @@ ${input.task}
         task: [conflictTask(wt, files, label, String(getRun(app, rootRunId).input.task ?? input.task)), lessonsText(app, [wt.space])].filter(Boolean).join("\n\n"),
         runId: run.id,
         cwd: workDirOf(wt),
+        worktrees: [wt],
         signal: ctx.signal,
         onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
       });
@@ -619,13 +642,15 @@ ${input.task}
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
       role: "coder",
-      addTools: [...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests", ...(describes ? ["submit_design"] : [])],
+      addTools: [...(nameable.size ? ["name_work_branch"] : []), ...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests", ...(describes ? ["submit_design"] : [])],
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,
       task: [task, lessonsText(app, repos.map(r => r.id))].filter(Boolean).join("\n\n"),
       runId: run.id,
       cwd,
+      worktrees,
+      worktreeAccess: "commit",
       signal: ctx.signal,
       resumeSessionId,
       persistSession: true,
@@ -711,6 +736,7 @@ ${input.task}
         moved = now !== mark;
         mark = now;
       }
+      for (const wt of worktrees) await receiveMemberGit(app, run.id, wt.space, wt.path, run.title);
     } finally {
       // The helpers finish, and what they committed is picked onto the work branch (conflicts to the coder).
       if (helpers) helperRuns = await helpers.joinHelpers(app, run.id, (wt, files, label) => resolverFor(wt)(files, label));
@@ -1281,7 +1307,7 @@ ${truncate(task, 3000)}
 要求：
 1. 读两边的改动（\`git diff\`、\`git log --merge\`、\`git show :2:<文件>\` / \`:3:<文件>\`），按两边的意图合并，不要简单地选一边丢掉另一边的功能。
 2. 业务上拿不准取舍的（两边都改了同一个规则、同一个接口）用 ask_user 问本人，给出选项并说明各自的后果；本人没回答前不要猜。
-3. 解决后删掉所有冲突标记，对这些文件 \`git add\`；能跑检查命令就跑一下。
+3. 解决后删掉所有冲突标记，宿主会暂存已清除标记的冲突文件；能跑检查命令就跑一下。
 4. 不要 commit，不要继续或中止 merge / rebase / cherry-pick / revert，宿主会接着做。
 5. 结束时逐个文件说明怎么解决的；实在解决不了的，说明卡在哪里（会交给本人）。`;
 }

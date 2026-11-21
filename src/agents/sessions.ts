@@ -8,7 +8,7 @@ import { truncate, localStamp } from "../core/util.ts";
 import { turnSpaceFor, userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
-import { distinctProfiles, failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, quietAfterAll, quietSet, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
+import { distinctProfiles, failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, quietAfterAll, quietSet, recordIsolation, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { focusBlock } from "./turn-focus.ts";
 import { contextForTurn, explicitItemFocus, type ResolvedTurn } from "./turn-context.ts";
@@ -22,7 +22,8 @@ import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
 import { WAKE_NOTE } from "./wakes.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
-import { accountBlocked, accountFor, carryAccount, recordedAccount } from "./accounts.ts";
+import { accountBlocked, accountFor, recordedAccount } from "./accounts.ts";
+import { SandboxStartError } from "./spawn.ts";
 import { accountTag } from "./sandbox.ts";
 import { afterTurn, noteRateLimit } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
@@ -360,7 +361,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   let chosen: ChooseResult | null = null;
   if (!pinned && (!t.agentSession || t.agentTurns >= app.config.sessions.maxTurns) && !live.has(threadId)) {
     const current = resolveRunProfile(app, { actor });
-    chosen = await chooseAI(app, { scene: "conversation", task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }), onRecord: (r) => ctx.event("status", choiceEvent(r)) });
+    chosen = await chooseAI(app, { scene: "conversation", userId, task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }), onRecord: (r) => ctx.event("status", choiceEvent(r)) });
     const pick = chosen?.pick;
     auto = pick ? { profile: pick.profile, model: pick.model, effort: pick.effort } : null;
     if (JSON.stringify(auto) !== JSON.stringify(t.settings.auto ?? null)) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, auto } });
@@ -481,9 +482,11 @@ ${WAKE_NOTE}`
     if (old) void retireSession(app, old, t.agentSession, t.agentCwd ?? prep.cwd, (e) => e.type === "status" && console.warn(`[omem] ${e.text}`));
   };
 
+  let sandboxFailure: SandboxStartError | undefined;
   if (prep.profile.transport !== "acp") {
     // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
     try {
+      recordIsolation(app, ctx.run.id, userId, prep.profile);
       const run = async (resume: boolean) =>
         runBackend(
           app,
@@ -511,7 +514,7 @@ ${WAKE_NOTE}`
       try {
         r = await run(canResume);
       } catch (e) {
-        if (!canResume || (e as Error).message === "CANCELLED") throw e;
+        if (!canResume || e instanceof SandboxStartError || (e as Error).message === "CANCELLED") throw e;
         emit({ type: "status", text: "无法继续之前的 Agent 会话，改为新会话" });
         r = await run(false);
         mode = "fresh";
@@ -519,6 +522,9 @@ ${WAKE_NOTE}`
       save(r.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
       retireReplaced(r.sessionId);
       return { text: replyOf(r), agent: r.agent, profileId: prep.profile.id, mode };
+    } catch (e) {
+      if (!(e instanceof SandboxStartError)) throw e;
+      sandboxFailure = e;
     } finally {
       revokeToolToken(prep.token);
     }
@@ -556,11 +562,12 @@ ${WAKE_NOTE}`
   const hasNext = (i: number) => chain.slice(i + 1).some((_, k) => usable(i + 1 + k));
   const writeCount = () => one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", ctx.run.id)!.n;
   /** Why the previous backend was left, and what it already wrote (for the one taking over). */
-  let left = "";
+  if (sandboxFailure && !hasNext(0)) throw sandboxFailure;
+  let left = sandboxFailure?.message ?? "";
   let carry = "";
   let writesBefore = 0;
   let quietBefore = false;
-  for (let step = 0; step < chain.length; step++) {
+  for (let step = sandboxFailure ? 1 : 0; step < chain.length; step++) {
     if (!usable(step)) continue;
     writesBefore = writeCount();
     quietBefore = quietSet(app, ctx.run.id);
@@ -571,13 +578,14 @@ ${WAKE_NOTE}`
       revokeToolToken(curPrep.token);
       curPrep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess });
       // The fallback runs with this member's own account of it when they have one (prepareRun chose it).
-      used = carryAccount(curPrep.profile, used);
+      used = curPrep.profile;
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
       emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to: aiLabel({ profile: used.id, model: used.model, effort: used.effort }), why: left || "默认后端不可用", orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
     }
     let networkAttempt: Awaited<ReturnType<typeof beginNetworkAttempt>> | undefined;
     let networkStopped: Promise<void> | undefined;
     try {
+      recordIsolation(app, ctx.run.id, userId, used);
       if (used.transport !== "acp") {
         const r = await runBackend(
           app,
@@ -729,7 +737,7 @@ ${WAKE_NOTE}`
       // model) waits a while (capacity.ts noteFailure).
       const down = !busy && isBackendDown(e);
       noteBreakdown(app, used, e, emit);
-      if ((e as Error).message === "CANCELLED" || ctx.signal?.aborted || !(busy || down) || !hasNext(step)) throw e;
+      if ((e as Error).message === "CANCELLED" || ctx.signal?.aborted || !(busy || down || e instanceof SandboxStartError) || !hasNext(step)) throw e;
       const why = (e as Error).message.slice(0, 120);
       left = busy ? `${used.name ?? used.id} 不可用（${why}）` : `${used.name ?? used.id} 出错（${why}）`;
       carry = writeCount() > writesBefore ? (await import("./retry.ts")).partialAttemptNote(app, ctx.run.id, writesBefore, e, aiLabel({ profile: used.id, model: used.model })) : "";

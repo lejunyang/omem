@@ -1,3 +1,4 @@
+import { commitWorktree } from "./member-git.ts";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
@@ -469,14 +470,18 @@ export function gitDirOf(app: App, wt: WorktreeRef): string | null {
   return root ?? null;
 }
 
+export function commitTaskNumbers(message: string): number[] {
+  const tasks = [...message.matchAll(/^Omem-Task:\s*(.+)$/gim)].flatMap((m) => [...m[1].matchAll(/[Tt]?(\d+)/g)].map((x) => Number(x[1])));
+  return [...new Set(tasks)];
+}
+
 /** Commits from..to and the tasks their messages name (`Omem-Task: T3`, several allowed); `revert`: the host's revert of a task. */
 export function commitsByTask(dir: string, from: string, to = "HEAD"): { sha: string; tasks: number[]; subject: string; revert: boolean }[] {
   const log = git(dir, ["log", "--reverse", "--format=%H%x1f%s%x1f%B%x1e", `${from}..${to}`]);
   if (!log.ok) return [];
   return log.stdout.split("\x1e").map((x) => x.trim()).filter(Boolean).map((entry) => {
     const [sha, subject, body] = entry.split("\x1f");
-    const tasks = [...(body ?? "").matchAll(/^Omem-Task:\s*(.+)$/gim)].flatMap((m) => [...m[1].matchAll(/[Tt]?(\d+)/g)].map((x) => Number(x[1])));
-    return { sha, subject, tasks: [...new Set(tasks)], revert: /^Omem-Revert:/im.test(body ?? "") };
+    return { sha, subject, tasks: commitTaskNumbers(body ?? ""), revert: /^Omem-Revert:/im.test(body ?? "") };
   });
 }
 
@@ -611,15 +616,12 @@ export function settleCodingRound(app: App, rootId: string, runId: string, workt
  * repository's Git metadata): what is uncommitted in each worktree becomes this task's commit.
  * Returns the repositories committed in.
  */
-export function commitTask(app: App, rootId: string, seq: number, worktrees: WorktreeRef[], identity: (dir: string) => string[]): string[] {
+export async function commitTask(app: App, actor: string, rootId: string, seq: number, worktrees: WorktreeRef[], identity: (dir: string) => string[]): Promise<string[]> {
   const t = getTask(app, rootId, seq);
   const made: string[] = [];
+  const message = `${truncate(t.title, 72)}\n\nOmem-Task: ${taskLabel(seq)}`;
   for (const wt of worktrees) {
-    if (!existsSync(wt.path)) continue;
-    if (!git(wt.path, ["status", "--porcelain"]).stdout.trim()) continue;
-    git(wt.path, ["add", "-A"]);
-    const c = git(wt.path, [...identity(wt.path), "commit", "-q", "--no-verify", "-m", `${truncate(t.title, 72)}\n\nOmem-Task: ${taskLabel(seq)}`]);
-    if (c.ok) made.push(wt.space);
+    if (await commitWorktree(app, actor, wt.space, wt.path, message, identity)) made.push(wt.space);
   }
   return made;
 }
@@ -1023,7 +1025,11 @@ export function ownerQuestionText(app: App, t: CodeTask) {
 }
 
 /** Owner of the work, for asks and notifications. */
-export const workOwner = (app: App, rootId: string) => runUser(app, rootId);
+export function workOwner(app: App, rootId: string, requestedBy?: string) {
+  const owner = runUser(app, rootId);
+  if (requestedBy && requestedBy !== OWNER && requestedBy !== owner) throw new HttpError(403, "只能继续自己的交办");
+  return owner;
+}
 
 /**
  * Who the work waits on now, for the assistant's turn: the tasks it settles itself (each in full) and

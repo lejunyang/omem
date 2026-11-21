@@ -1184,7 +1184,7 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
       ].join("\n"),
     },
     parentId: ctx.runId,
-    userId: OWNER,
+    userId: ctx.userId,
   });
   return `已在规则「${rule.name}」的范围内交给 ${spec.name}（运行 ${r.id}）：它按规则的回复方式在原来的群或话题里处理，话题里的后续回复仍回到你这里。你这一轮不要再在群里回复同一件事，调用 stay_quiet 结束（还有别的事要做就先做完）。`;
 }
@@ -1338,7 +1338,7 @@ def({
       if (inChat && !anchor) return `已在独立工作会话把这件事交给 ${spec.name}，运行 ${w.runId}。这里没有这件事自己的飞书消息可以挂话题，它的结论和要本人决定的事会直接发在本会话（不是话题），不要说“已在话题里”。`;
       return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}${lentNote}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
-    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId });
+    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId, userId: ctx.userId });
     return `已交给 ${spec.name}，运行 ${r.id}${lentNote}，完成后结果会发回本会话。`;
   },
 });
@@ -5600,7 +5600,7 @@ def({
         run(ctx.app.db, "update runs set input = ? where id = ? and status = 'queued'", JSON.stringify(input), r.id);
         done.push(`${r.id} 改为新 AI 排队`);
       } else if (r.status === "running" || r.status === "failed") {
-        const next = createRun(ctx.app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane });
+        const next = createRun(ctx.app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane, userId: runUser(ctx.app, r.id) });
         // Whoever waits on the old run (a chat channel answering the owner) follows the new one (channels/common.ts).
         setRunOutput(ctx.app, r.id, { replacedBy: next.id });
         if (r.status === "running") cancelRun(ctx.app, r.id);
@@ -5742,6 +5742,19 @@ def({
     const res = applyCodeRun(ctx.app, a.run_id, { squash: a.squash_message?.trim() || undefined, force: a.force }) as ReturnType<typeof applyCodeRun> & { pushed?: { space: string; branch: string; forced?: boolean }[]; notes?: string[] };
     if (res.pushed) return `已确认运行 ${a.run_id}：\n${[...res.pushed.map((p) => `- ${p.space}：推送 ${p.branch} 到 origin${p.forced ? "（覆盖了远端）" : ""}`), ...(res.notes ?? []).map((n) => `- ${n}`)].join("\n")}\n工作区已归还，分支保留。`;
     return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n可在网页填写提交信息，或在本人要求后先 code_git_status 再 code_git_action 提交或推送。编码用的 worktree 已删除，接收工作区保留。`;
+  },
+});
+
+def({
+  name: "name_work_branch",
+  description: "主编码给本轮在指定仓库自动分配的临时分支命名。宿主和成员私有 Git 同步改名，已有分支不能覆盖。",
+  write: true,
+  schema: z.object({ space: z.string(), name: z.string().min(1).max(200) }),
+  handler: async (ctx, a) => {
+    inScope(ctx, a.space, "工作分支");
+    if (ctx.role !== "coder" || !ctx.runId || runUser(ctx.app, ctx.runId) !== (ctx.userId ?? OWNER))
+      throw new HttpError(403, "只有本轮主编码可以命名工作分支");
+    return JSON.stringify((await import("./code-branch.ts")).nameCodingBranch(ctx.app, ctx.runId, a.space, a.name));
   },
 });
 
@@ -6304,7 +6317,7 @@ def({
     // What it did not commit is this task's: one commit per task, also where the agent cannot commit.
     const { worktreesOf } = await import("./code.ts");
     const { identity } = await import("./code-branch.ts");
-    const committed = t.commitTask(ctx.app, rootId, seq, worktrees ?? worktreesOf(ctx.app, rootId), identity);
+    const committed = await t.commitTask(ctx.app, actor, rootId, seq, worktrees ?? worktreesOf(ctx.app, rootId), identity);
     // The round's own commits are on the work branch already (a helper's are picked there at the round's end).
     if (!helper) t.attributeCommits(ctx.app, rootId, worktreesOf(ctx.app, rootId), seq);
     // Screenshots and reports it left in OMEM_ARTIFACTS while doing it are this task's.
