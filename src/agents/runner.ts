@@ -1046,7 +1046,10 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
           emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
         }
-        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution && pinned && i === 0 ? `（${execution.source === "flow" ? "流程指定" : execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        const accessLabel = profile.transport === "doubao-cli"
+          ? (prep.doubaoPermission === "always_allow" ? " · 完全访问" : " · 风险审批")
+          : (prep.fullAccess ? " · 完全访问" : "");
+        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${accessLabel}${execution && pinned && i === 0 ? `（${execution.source === "flow" ? "流程指定" : execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
         writesBefore = writes();

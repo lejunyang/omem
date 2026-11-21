@@ -96,9 +96,14 @@ describe("doubao cli", () => {
         app.config.agents.fullAccess = mode;
         const answer = await askModel(app, "判断");
         expect(JSON.parse(answer!)).toMatchObject({ reason: expected });
-        const r = await runRole(app, { role: "guest", guestTurn: true, fullAccess: true, spaceId: "personal",
-          task: "回答访客", runId: null, profileId: profile.id });
-        expect(JSON.parse(r.text)).toMatchObject({ reason: expected });
+        const events: string[] = [];
+        const r = await runRole(app, { role: "guest", fullAccess: true, spaceId: "personal",
+          task: "回答访客", runId: null, profileId: profile.id, onEvent: e => { if (e.type === "status") events.push(e.text); } });
+        const permission = JSON.parse(r.text).reason;
+        expect(permission).toBe(expected);
+        expect(events.filter(text => text.startsWith("使用 AI："))).toEqual([
+          expect.stringMatching(permission === "always_allow" ? / · 完全访问$/ : / · 风险审批$/),
+        ]);
       }
     } finally {
       setSandboxSupportForTests(undefined); vi.unstubAllEnvs(); app.db.close();

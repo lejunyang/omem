@@ -96,6 +96,8 @@
 
 12. 只读档案以 `/tmp` 为工作目录，确认可在里面创建本轮私有文件，宿主临时文件不可见，批准挂载的子目录可写。
 
+13. 用豆包回答访客，核对「使用 AI」状态与替身收到的 `--permission-mode`。`ask_risky` 显示「风险审批」，`always_allow` 显示「完全访问」。
+
 自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 成员用自己的 AI 账号：额度、模型、技能、换后端、停用、插件登录（2026-11-20 晚，docs/v2/agent-accounts.md）
