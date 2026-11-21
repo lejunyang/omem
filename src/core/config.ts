@@ -303,6 +303,14 @@ export const egressSchema = z.object({
   waitSeconds: z.number().int().min(1).max(300).default(90),
 });
 
+export const sandboxPaths = z.array(z.string().trim().min(1).max(1024)).max(32);
+export const ownSandboxSchema = z.object({
+  mode: z.enum(["off", "prefer", "require"]).default("off"),
+  writable: sandboxPaths.default([]),
+  hidden: sandboxPaths.default([]),
+}).strict();
+export const fullAccessMode = z.enum(["per-role", "sandboxed", "all"]);
+
 export const configSchema = z.object({
   /**
    * Listen address. All interfaces by default, so other devices can pair with this one;
@@ -512,6 +520,8 @@ export const configSchema = z.object({
       progress: z.object({ messages: z.enum(["milestones", "all"]).default("milestones"), thinking: z.enum(["all", "own", "off"]).default("own") }).default({ messages: "milestones", thinking: "own" }),
       profiles: z.array(agentProfileSchema).default([]),
       networkPolicies: networkPoliciesSchema,
+      ownSandbox: ownSandboxSchema.default({ mode: "off", writable: [], hidden: [] }),
+      fullAccess: fullAccessMode.default("per-role"),
       accountIsolation: z.enum(["prefer", "require"]).default("prefer"),
       /**
        * Members' runs on a backend that can use their own account (docs/v2/agent-accounts.md), when
@@ -522,7 +532,7 @@ export const configSchema = z.object({
        */
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ accountIsolation: "prefer" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
