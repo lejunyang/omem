@@ -96,6 +96,9 @@ const CHANGE_LEDGER_MIGRATION = `alter table item_changes add column source_key 
    );
    create index owner_choices_recent on owner_choices(user_id,at desc);`;
 
+// Older local probe commands persisted an owner API token until the CLI exited normally.
+const REVOKE_LEGACY_PROBE_TOKENS = `delete from api_tokens where user_id='owner' and label='cloud-tools probe' and client='';`;
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2367,8 +2370,7 @@ export const migrations: readonly string[] = [
      last_error text, at text not null
    );
    create index if not exists cloud_tool_usage_at on cloud_tool_usage(at);`,
-  // Older local probe commands persisted an owner API token until the CLI exited normally.
-  `delete from api_tokens where user_id='owner' and label='cloud-tools probe' and client='';`,
+  REVOKE_LEGACY_PROBE_TOKENS,
 ];
 
 export type Db = DatabaseSync;
@@ -2390,11 +2392,16 @@ export function openDb(path: string): Db {
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");
     try {
+      // A library installing cloud tools for the first time can only have manual tokens.
+      // Skip the following revocation in the same commit as table creation, even on restart.
+      const firstCloudInstall = migrations[i + 1] === REVOKE_LEGACY_PROBE_TOKENS &&
+        !db.prepare("select 1 from sqlite_schema where type='table' and name='cloud_tool_usage'").get();
       // A capabilities database may already have migrated its observer role at the
       // version main used for the metric series index. Supply that missing index once.
       const fromCapabilitiesBranch = migrations[i] === MEMBER_CAPABILITIES_MIGRATION
         && db.prepare("select 1 from sqlite_schema where type='table' and name='member_capability_overrides'").get();
       db.exec(fromCapabilitiesBranch ? METRIC_SERIES_INDEX : migrations[i]);
+      if (firstCloudInstall) i++;
       db.exec(`pragma user_version = ${i + 1}`);
       db.exec("commit");
     } catch (error) {

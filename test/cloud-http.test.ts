@@ -83,28 +83,35 @@ it("requires authentication at the upstream when a loopback proxy forwards manag
   }
 });
 
-it("revokes leftover owner probe tokens when upgrading a cloud-tools library", () => {
+it.each([
+  { schema: "main", hasCloudUsage: false, hasChangeLedger: true },
+  { schema: "pre-merge cloud-tools", hasCloudUsage: true, hasChangeLedger: false },
+  { schema: "merged cloud-tools", hasCloudUsage: true, hasChangeLedger: true },
+])("preserves manual tokens and cleans up legacy probe tokens when upgrading from $schema", ({ hasCloudUsage, hasChangeLedger }) => {
   const home = mkdtempSync(join(tmpdir(), "omem-cloud-upgrade-"));
   const db = new DatabaseSync(join(home, "omem.db"));
   // Before the merge the cloud usage table occupied the change ledger's version.
   const usage = migrations.findIndex(sql => sql.includes("create table if not exists cloud_tool_usage"));
   expect(usage).toBeGreaterThan(1);
+  db.exec("begin");
   for (const sql of migrations.slice(0, usage - 1)) db.exec(sql);
-  db.exec(migrations[usage]);
-  db.exec(`pragma user_version=${usage}`);
+  if (hasChangeLedger) db.exec(migrations[usage - 1]);
+  if (hasCloudUsage) db.exec(migrations[usage]);
+  db.exec(`pragma user_version=${hasCloudUsage && hasChangeLedger ? usage + 1 : usage}`);
+  db.exec("commit");
   const old = new App(home, loadConfig(home), db);
   const label = "cloud-tools probe";
   createUser(old, { id: "member-a", name: "成员" });
-  const leftover = createApiToken(old, "owner", label);
+  const matchingToken = createApiToken(old, "owner", label);
   const member = createApiToken(old, "member-a", label);
   const otherClient = createApiToken(old, "owner", label, "another-client");
   const otherLabel = createApiToken(old, "owner", "personal-cli");
-  expect(userForToken(old, leftover)).toBe("owner");
+  expect(userForToken(old, matchingToken)).toBe("owner");
   old.db.close();
 
   const app = App.open(home);
   try {
-    expect(userForToken(app, leftover)).toBeNull();
+    expect(userForToken(app, matchingToken)).toBe(hasCloudUsage ? null : "owner");
     expect(userForToken(app, member)).toBe("member-a");
     expect(userForToken(app, otherClient)).toBe("owner");
     expect(userForToken(app, otherLabel)).toBe("owner");
