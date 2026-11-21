@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -11,9 +11,54 @@ import { prepareRun } from "../src/agents/runner.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { agentSpecSchema } from "../src/agents/specs.ts";
 import { launch } from "../src/agents/spawn.ts";
+import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 afterEach(() => { vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); });
+
+// A successful sandbox settings example requires POSIX mount paths.
+it.skipIf(process.platform === "win32")("validates and returns the externally edited backend on a sandbox PUT", async () => {
+  const app = testApp();
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
+  const path = join(app.home, "config.json");
+  const url = app.baseUrl + "/api/security/sandbox";
+  const patch = { mode: "require", writable: [], hidden: [], fullAccess: "per-role" };
+  const put = () => fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
+  const audits = app.db.prepare("select detail from audit_events where action = 'sandbox.settings'");
+  const before = structuredClone(app.config.agents);
+  const editBackend = (state: string) => {
+    const profile = { id: "codex", transport: "acp", command: "fixture", env: { CODEX_HOME: state } };
+    const text = JSON.stringify({ agents: { profiles: [profile], fullAccess: "sandboxed" } });
+    writeFileSync(path, text);
+    return text;
+  };
+  const valid = realpathSync(mkdtempSync(join(tmpdir(), "external-state-")));
+  try {
+    const privateDir = join(app.home, "secrets");
+    const edited = editBackend(privateDir);
+    const rejected = await put();
+    expect(rejected.status).toBe(400);
+    expect(await rejected.text()).toContain(privateDir);
+    expect(readFileSync(path, "utf8")).toBe(edited);
+    expect(app.config.agents).toEqual(before);
+    expect(audits.all()).toHaveLength(0);
+
+    editBackend(valid);
+    const saved = await put();
+    expect(saved.status).toBe(200);
+    const status = await saved.json();
+    const effective = { ...patch, fullAccess: "sandboxed" };
+    expect(status).toMatchObject({ ...effective, defaults: { exampleBackend: "codex", writable: expect.arrayContaining([valid]) } });
+    expect(await (await fetch(url)).json()).toEqual(status);
+    const agents = { profiles: [{ id: "codex", env: { CODEX_HOME: valid } }], ownSandbox: { mode: "require" }, fullAccess: "sandboxed" };
+    expect(app.config.agents).toMatchObject(agents);
+    expect(JSON.parse(readFileSync(path, "utf8")).agents).toMatchObject(agents);
+    expect(audits.all().map(row => JSON.parse(String(row.detail)))).toEqual([effective]);
+  } finally {
+    await server.close(); app.db.close();
+    rmSync(app.home, { recursive: true, force: true }); rmSync(valid, { recursive: true, force: true });
+  }
+});
 
 it.skipIf(process.platform !== "linux")("reports exactly the writable plan used to launch multiple worktrees", async () => {
   const app = testApp();

@@ -1479,9 +1479,12 @@ export function mergeConfig(base: unknown, ours: unknown, theirs: unknown): unkn
  * Save a config. The service, `omem setup` and CLI commands each hold the config they loaded; a
  * plain write of the whole object would undo what another of them (or a hand edit) changed since.
  * So only the fields this process changed are written over the file as it is now, and `config`
- * becomes the merged result (callers then copy it into `app.config`).
+ * becomes the merged result (callers then copy it into `app.config`). A synchronous validation
+ * callback can return a response based on that result. If it throws, the save is not applied.
  */
-export function saveConfig(config: Config, home = omemHome()) {
+export function saveConfig(config: Config, home?: string): void;
+export function saveConfig<T>(config: Config, home: string, validate: (candidate: Config) => T): T;
+export function saveConfig<T>(config: Config, home = omemHome(), validate?: (candidate: Config) => T) {
   mkdirSync(home, { recursive: true });
   const path = configPath(home);
   const base = loadedAs.get(resolve(home));
@@ -1501,15 +1504,18 @@ export function saveConfig(config: Config, home = omemHome()) {
     if (r.success) parsed = r.data;
     else merged = config;
   }
-  const security = (parsed ?? config).security;
+  if (parsed && process.env.OMEM_PORT) parsed.port = Number(process.env.OMEM_PORT);
+  const candidate = parsed ?? config;
+  const result = validate?.(candidate);
+  const security = candidate.security;
   const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules } };
   writeFileSync(path, JSON.stringify(persisted, null, 2) + "\n");
   if (parsed) {
-    if (process.env.OMEM_PORT) parsed.port = Number(process.env.OMEM_PORT);
     // Only the sections the file changed are replaced: others keep their objects (some are held by reference).
     for (const k of Object.keys(parsed) as (keyof Config)[]) if (!same(config[k], parsed[k])) (config as Record<string, unknown>)[k] = parsed[k];
   }
   loadedAs.set(resolve(home), structuredClone(config));
+  return result;
 }
 
 export function allProfiles(config: Config): AgentProfile[] {
