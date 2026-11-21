@@ -1,3 +1,4 @@
+import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
 import { globalCapability, spacesWithCapability } from "../auth/capabilities.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
@@ -1895,7 +1896,7 @@ def({
     page: z.string().describe("页面路径，如 overview、retrieval/how-search-works；index 是空间目录页"),
     title: z.string(),
     summary: z.string().describe("一两句话：用户读完能得到什么"),
-    kind: z.enum(["index", "guide", "concept", "howto", "reference", "topic", "person", "project", "log", "case"]).optional().describe("case：一个解决过的问题（现象、判断、原因、解法、适用条件），放在 cases/ 下"),
+    kind: z.string().min(1).optional().describe("可用 index、guide、concept、howto、reference、topic、person、project、log、case 或本空间已注册的插件类型。case：一个解决过的问题（现象、判断、原因、解法、适用条件），放在 cases/ 下"),
     body: z.string().describe("正文 Markdown，不要再写一级标题"),
     space: z.string().optional(),
     reason: z.string().optional().describe("这次修改的原因，写入版本历史"),
@@ -1929,27 +1930,30 @@ def({
     const wv = await import("../wiki/verify.ts");
     const slug = checkSlug(a.page);
     const draft = wv.draftTarget(ctx.app, ctx.runId, id, slug);
-    const before = existed ? readPage(ctx.app, id, slug).body : null;
-    const checked = wc.checkPageWrite(ctx.app, { spaceId: id, slug, kind: a.kind, title: a.title, body: a.body.replace(/^#\s+.+\n+/, ""), before, readable: ctx.spaces, restoreLost: wv.refusals(ctx.app, ctx.runId, "lost-entries") > 0 || !ctx.runId });
+    const previous = existed ? readPage(ctx.app, id, slug) : null;
+    const before = previous?.body ?? null;
+    const kind = a.kind ?? previous?.meta.kind ?? "page";
+    if (!knownKind(id, kind) && previous?.meta.kind !== kind) throw new HttpError(400, "未注册的页面类型：" + kind);
+    const checked = wc.checkPageWrite(ctx.app, { spaceId: id, slug, kind, title: a.title, body: a.body.replace(/^#\s+.+\n+/, ""), before, readable: ctx.spaces, restoreLost: wv.refusals(ctx.app, ctx.runId, "lost-entries") > 0 || !ctx.runId });
     // Diagrams that will not draw (mermaid's own parser, the one the web page uses).
     checked.errors.push(...(await wc.mermaidIssues(checked.body)));
+    // Check the text that will be saved, including the owner's own section.
+    const body = before !== null && ctx.actor === "agent" ? keepOwnerSection(before, checked.body) : checked.body;
+    const ownerKept = body !== checked.body;
+    checked.errors.push(...await checkKind(ctx.app, id, ctx.userId ?? OWNER, kind, { slug, title: a.title, body }));
     if (checked.errors.length) {
       wv.noteWriteCheck(ctx.app, ctx.runId, { rejected: [...new Set(checked.errors.map((e) => e.kind))] });
       throw new HttpError(400, `页面没有保存，先改这些地方再提交：\n${checked.errors.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}`);
     }
     if (checked.fixes.length) wv.noteWriteCheck(ctx.app, ctx.runId, { restored: 1 });
-    // The section headed 本人补充 is the owner's (agents/work-state.ts): an agent's rewrite keeps it word for word.
-    const kept = before !== null && ctx.actor === "agent" ? keepOwnerSection(before, checked.body) : checked.body;
-    const ownerKept = kept !== checked.body;
-    const body = kept;
     const questions = (a.questions ?? []).map((q) => (typeof q === "string" ? { question: q } : q)).filter((q) => q.question.trim());
     const notes = checked.notes.length ? `\n${checked.notes.map((n) => `- ${n}`).join("\n")}` : "";
     if (draft) {
-      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind: a.kind ?? "page", body, reason: a.reason, questions });
+      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind, body, reason: a.reason, questions });
       setRunOutput(ctx.app, ctx.runId!, { writeNotes: checked.notes });
       return `已保存页面 ${id}/${slug} 的草稿（${wc.textLength(body)} 字）：写作结束后由核对角色对照原件和代码核对，有问题会交回给你改，通过后发布。${notes}`;
     }
-    const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, runId: ctx.runId, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
+    const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind }, body }, { actor: ctx.actor, runId: ctx.runId, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
     appendLog(ctx.app, id, `${existed ? "更新" : "新建"} [[${p.slug}]]${a.reason ? "：" + a.reason : ""}`);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: new Date().toISOString() } });
     // What the writer was not sure of: kept as the page's open questions (wiki/questions.ts), not in the page.
@@ -5622,7 +5626,7 @@ def({
         z.object({
           slug: z.string(),
           title: z.string(),
-          kind: z.enum(["index", "guide", "concept", "howto", "reference", "topic", "person", "project", "log", "case"]).describe("和 write_page 的 kind 相同；目录说明页用 index，解决过的问题用 case"),
+          kind: z.string().min(1).describe("和 write_page 的 kind 相同；目录说明页用 index，解决过的问题用 case"),
           question: z.string().describe("这页要回答的用户问题"),
           outline: z.string().describe("计划的讲解路线：用哪个真实例子、按什么顺序讲"),
           entry_points: z.array(z.string()).describe("调查入口：文件路径、符号或文档"),
@@ -5648,6 +5652,7 @@ def({
     // The same topic already written in a related space: the plan says whether to link there or why to write here (wiki/checks.ts).
     const { sameTopicElsewhere } = await import("../wiki/checks.ts");
     const target = getRun(ctx.app, ctx.runId).spaceId ?? ctx.spaceId;
+    for (const page of a.pages) if (!knownKind(target, page.kind)) throw new HttpError(400, "未注册的页面类型：" + page.kind);
     const unexplained = a.pages
       .filter((p) => !p.overlap && p.kind !== "index")
       .map((p) => ({ p, same: sameTopicElsewhere(ctx.app, target, p.title, ctx.spaces) }))

@@ -16,6 +16,7 @@ import { all, one, run } from "../core/db.ts";
 import { createRun } from "../agents/runs.ts";
 import { json } from "../core/util.ts";
 import { getSpace } from "../core/spaces.ts";
+import { kindList } from "../plugins/formats.ts";
 import { APPEND_ONLY, listPages, organizeNeeds, staleDetail } from "./store.ts";
 
 /** A changed original is looked at once it has been quiet this long (a document still being edited is not). */
@@ -47,7 +48,23 @@ function writeChecked(app: App, spaceId: string, checked: Checked, live: Set<str
 export function pagesToCheck(app: App, spaceId: string, at = Date.now(), opts: { settled?: boolean } = {}) {
   const checked = readChecked(app, spaceId);
   const out: { slug: string; since: number }[] = [];
+  const kinds = kindList(spaceId).filter(k => k.upkeep);
+  const policies = new Map(kinds.map(k => [k.kind, k.upkeep!]));
+  const custom = kinds.length ? all<{ slug: string; kind: string; updated_at: string }>(app.db,
+    `select slug, kind, updated_at from pages where space_id = ? and kind in (${kinds.map(() => "?").join(",")})`, spaceId, ...policies.keys()) : [];
+  const scheduled = new Set<string>();
+  const skipChanged = new Set<string>();
+  for (const page of custom) {
+    const policy = policies.get(page.kind)!;
+    if (policy.onSourcesChanged === false) skipChanged.add(page.slug);
+    const last = Math.max(Date.parse(page.updated_at), Date.parse(checked[page.slug]) || 0);
+    if (policy.everyDays && at - last >= policy.everyDays * PAGE_COOLDOWN_MS) {
+      out.push({ slug: page.slug, since: last });
+      scheduled.add(page.slug);
+    }
+  }
   for (const p of staleDetail(app, spaceId)) {
+    if (skipChanged.has(p.slug) || scheduled.has(p.slug)) continue;
     const relevant = p.sources.filter((s) => s.deleted || !APPEND_ONLY.has(s.kind));
     if (!relevant.length) continue;
     if (opts.settled !== false && relevant.some((s) => !s.deleted && at - Date.parse(s.updatedAt) < SETTLE_MS)) continue;
@@ -82,7 +99,7 @@ export function runWikiUpkeep(app: App, at = Date.now()) {
           const checked = readChecked(app, spaceId);
           for (const s of slugs) checked[s] = new Date(at).toISOString();
           writeChecked(app, spaceId, checked, new Set(listPages(app, spaceId).map((p) => p.slug)));
-          const r = createRun(app, { kind: "wiki-lint", spaceId, title: `检查受影响页面（${slugs.length} 页，原件变了）`, input: { pages: slugs, auto: true } });
+          const r = createRun(app, { kind: "wiki-lint", spaceId, title: `检查受影响页面（${slugs.length} 页）`, input: { pages: slugs, auto: true } });
           made.push({ kind: "wiki-lint", spaceId, runId: r.id, pages: slugs.length });
         }
       }

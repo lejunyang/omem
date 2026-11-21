@@ -1,3 +1,4 @@
+import { kindBrief } from "../plugins/formats.ts";
 import { labelDecisions } from "../core/decision-log.ts";
 import { studyBrief } from "./study-brief.ts";
 import { labelReplies, replyLine } from "./reply-outcomes.ts";
@@ -1026,6 +1027,7 @@ registerHandler("wiki-plan", async (ctx) => {
     "wiki-planner",
     spaceId,
     [
+      kindBrief(spaceId),
       focus ? `本人的要求：${focus}` : "为这个空间规划完整的 Wiki。",
       indexes.synced.length ? `规划前已同步这些代码空间的索引：${indexes.synced.join("、")}。` : "",
       indexes.notes.join("\n"),

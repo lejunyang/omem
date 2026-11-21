@@ -16,7 +16,7 @@ import { extractCites, extractLinks, folderOf, listPages, resolveSlug, resolveSo
 export const HARD_LENGTH = 12000;
 export const SOFT_LENGTH = 6000;
 
-export type Issue = { kind: "lost-entries" | "cite-missing" | "cite-deleted" | "cite-range" | "cite-unreachable" | "plain-code" | "too-long" | "mermaid"; text: string };
+export type Issue = { kind: "lost-entries" | "cite-missing" | "cite-deleted" | "cite-range" | "cite-unreachable" | "plain-code" | "too-long" | "mermaid" | "plugin-kind"; text: string };
 
 /** What a reader reads: link targets (`](src:…)`, `](https://…)`) and front matter do not count. */
 export function textLength(body: string) {

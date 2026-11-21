@@ -1155,6 +1155,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // --------------------------------------------------------------------- wiki
+  server.get("/api/wiki/kinds", async req => kindList(formatScope(req, "wiki.view")));
   server.get("/api/wiki/:space", async (req) => {
     const space = (req.params as { space: string }).space;
     syncWiki(app, space);
@@ -1251,7 +1252,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.put("/api/wiki/:space/page/*", async (req) => {
     const { space, "*": slug } = req.params as { space: string; "*": string };
     const b = q(z.object({ title: z.string(), summary: z.string().optional(), kind: z.string().optional(), body: z.string() }), req.body);
-    return writePage(app, space, slug, { meta: { title: b.title, summary: b.summary, kind: b.kind }, body: b.body }, { actor: "user" });
+    const kind = b.kind ?? (pageExists(app, space, slug) ? readPage(app, space, slug).meta.kind : undefined);
+    const issues = await checkKind(app, space, who(req), kind, { slug, title: b.title, body: b.body });
+    if (issues.length) throw new HttpError(400, issues.map(i => i.text).join("\n"));
+    return writePage(app, space, slug, { meta: { title: b.title, summary: b.summary, kind }, body: b.body }, { actor: "user" });
   });
   server.delete("/api/wiki/:space/page/*", async (req) => {
     const { space, "*": slug } = req.params as { space: string; "*": string };

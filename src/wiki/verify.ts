@@ -11,6 +11,7 @@
  *
  * The host's own checks on every write are in checks.ts. docs/v2/wiki-verify.md.
  */
+import { kindBrief } from "../plugins/formats.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
@@ -233,6 +234,7 @@ export async function writeAndVerify(ctx: RunContext) {
   const pageQuestions = listQuestions(app, { spaceId, page: brief.slug, status: ["open", "needs-owner", "answered"], limit: RESOLVE_LIMIT });
   const task = [
     `页面：${brief.slug}「${brief.title}」（类型：${brief.kind}）`,
+    kindBrief(spaceId, brief.kind),
     `用户问题：${brief.question}`,
     `讲解路线：${brief.outline}`,
     `调查入口：${(brief.entry_points ?? []).join("、") || "自行调查"}`,

@@ -194,6 +194,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/notifications/read": "self",
 
   // wiki
+  "GET /api/wiki/kinds": cap("wiki.view", "list"),
   "GET /api/wiki/:space": cap("wiki.view", "p.space"),
   "GET /api/wiki/:space/page/*": cap("wiki.view", "p.space"),
   "PUT /api/wiki/:space/page/*": s("wiki.write", "p.space"),
