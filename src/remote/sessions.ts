@@ -235,14 +235,20 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
 export async function attachAgentPage(app: App, opts: {
   userId: string; runId: string; spaceId: string; profile: string; pageId: string; port: number; detach: () => void;
 }) {
+  const existing = () => [...live.values()].find(s => s.origin?.runId === opts.runId && s.userId === opts.userId &&
+    s.browser?.port === opts.port && s.browser.pageId === opts.pageId);
+  const reuse = (session: Live) => {
+    opts.detach();
+    return { session, added: false };
+  };
+  const registered = existing();
+  if (registered) return reuse(registered);
   const source = ["--browser-port", String(opts.port), "--page", opts.pageId];
   const assist = await startAssist(source);
-  const same = [...live.values()].find(s => s.origin?.runId === opts.runId && s.userId === opts.userId &&
-    s.browser?.port === opts.port && s.browser.pageId === opts.pageId);
-  if (same) {
+  const concurrent = existing();
+  if (concurrent) {
     assist.proc.kill();
-    opts.detach();
-    return { session: same, added: false };
+    return reuse(concurrent);
   }
   const session = add(app, { userId: opts.userId, kind: "browser", source, assist, title: opts.profile,
     origin: { runId: opts.runId, spaceId: opts.spaceId, detach: opts.detach },

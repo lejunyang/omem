@@ -166,11 +166,15 @@ describe("browser session grants", () => {
       "open", "demo", "--url", "https://example.test/"], { env });
     try {
       expect((await api("/agent-browser", "POST", { profile: "demo", pageId }, actorToken)).ok).toBe(false);
+      const log = join(app.home, "registration.jsonl");
+      process.env.FAKE_AAD_LOG = log;
       const { sessionId } = JSON.parse((await launch()).stdout);
       expect(JSON.parse((await launch()).stdout).sessionId).toBe(sessionId);
+      const calls = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+      expect(calls.filter(args => args[0] === "assist")).toHaveLength(1);
       const list = await (await api("", "GET", undefined, actorToken)).json();
       expect(list.sessions).toContainEqual(expect.objectContaining({ id: sessionId, ownerId: actor, runId: job.id, mine: true }));
-      expect(runEvents(app, job.id)).toContainEqual(expect.objectContaining({ data: expect.objectContaining({ link: "#/remote/" + sessionId }) }));
+      expect(runEvents(app, job.id).filter(e => "link" in e.data && e.data.link === "#/remote/" + sessionId)).toHaveLength(1);
       cap("view");
       expect((await (await api("", "GET", undefined, token)).json()).sessions.map((s: {id:string}) => s.id)).not.toContain(sessionId);
       expect((await api("/sessions/" + sessionId + "/grants", "POST", { userId: member, mode: "view" }, actorToken)).ok).toBe(true);
@@ -180,6 +184,7 @@ describe("browser session grants", () => {
       await ended;
       expect((await fetch(viewer.url, { headers: { cookie: viewer.cookie } })).ok).toBe(false);
     } finally {
+      delete process.env.FAKE_AAD_LOG;
       for (const client of ws.clients) client.terminate();
       revokeToolToken(prep.token);
       ws.close();
