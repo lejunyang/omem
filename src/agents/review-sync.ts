@@ -49,13 +49,14 @@ export function reviewSyncView(app: App, id: string, user: string) {
     }), pending: pending(app, id) };
 }
 
-function anchorFor(file: string | null, line: number | null, head: string | null | undefined, repos: string[]): DiffAnchor | undefined {
+function anchorFor(f: FindingRow, repos: string[]): DiffAnchor | undefined {
+  const { file_path: file, line, reviewed_head: head } = f;
   if (!file || !line) return;
   const spaces = repos;
   const space = spaces.length === 1 ? spaces[0] : spaces.find(s => file.startsWith(s + "/"));
   const path = spaces.length > 1 && space ? file.slice(space.length + 1) : file;
   if (!space || !head || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(head) || path.startsWith("/") || path.split("/").includes("..")) return;
-  return { path, line, side: "RIGHT", head };
+  return { path, line, side: f.diff_side ?? "RIGHT", head, ...(f.start_line ? { startLine: f.start_line } : {}) };
 }
 
 export function offerReviewPublish(app: App, id: string, selection?: { object: string; findings: number[] }) {
@@ -128,7 +129,7 @@ async function publish(app: App, id: string, user: string, object: string, ids: 
   for (const f of selected) await exclusive(app, f.id, async () => {
     const fid = f.id;
     if (!current.get(fid, f.external ?? null, String(review.input.itemId), object) || reviewProviders.get(target.provider) !== entry) return;
-    const anchor = anchorFor(f.file_path, f.line, f.reviewed_head, review.input.repos as string[] ?? [review.spaceId!]);
+    const anchor = anchorFor(f, review.input.repos as string[] ?? [review.spaceId!]);
     const ext: ReviewExternal = { object, provider: target.provider, anchor, syncedAt: now() };
     try {
       if (!anchor) throw Object.assign(new Error("缺少评审时的提交、文件或行号"), { code: "REVIEW_ANCHOR_OUTDATED" });

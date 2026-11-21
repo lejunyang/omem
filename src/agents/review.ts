@@ -349,6 +349,8 @@ export const findingSchema = z.object({
   severity: z.enum(SEVERITIES),
   file: z.string().max(500).optional(),
   line: z.number().int().min(1).optional(),
+  startLine: z.number().int().positive().optional(),
+  side: z.enum(["LEFT","RIGHT"]).optional(),
   title: z.string().min(1).max(200),
   detail: z.string().max(4000).default(""),
   suggestion: z.string().max(4000).default(""),
@@ -356,7 +358,7 @@ export const findingSchema = z.object({
   confidence: z.enum(["high", "medium", "low"]).default("medium"),
   /** The design's decision it is about (designs/), when the work goes by one; none: outside the design. */
   decision: z.string().max(12).optional(),
-});
+}).refine(f => !f.startLine || !!f.line && f.startLine <= f.line, "起始行应小于等于结束行");
 export type Finding = z.infer<typeof findingSchema>;
 /**
  * A requirement's change point and where the change implements it (docs/v2/review.md §6, “变更”):
@@ -412,7 +414,7 @@ export const inlineRefs = (...texts: (string | null | undefined)[]) =>
   texts.flatMap((t) => [...(t ?? "").matchAll(/(?<![\w/])(src|mem):([A-Za-z0-9_-]+)/g)].map((m) => `${m[1]}:${m[2]}`));
 
 export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; independence: Independence | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
-export type FindingRow = { id: number; review_id: string; reviewed_head?: string | null; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; design_decision?: string | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null; resolution?: "fixed" | "still" | "moot" | "unchecked" | null; resolution_note?: string | null; checked_run?: string | null; resolved_run?: string | null; external?: string | null };
+export type FindingRow = { id: number; review_id: string; reviewed_head?: string | null; start_line?: number | null; diff_side?: "LEFT" | "RIGHT" | null; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; design_decision?: string | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null; resolution?: "fixed" | "still" | "moot" | "unchecked" | null; resolution_note?: string | null; checked_run?: string | null; resolved_run?: string | null; external?: string | null };
 /** The suggestion to act on: the owner's rewrite when there is one (review-fix.ts setFindingSuggestion). */
 export const suggestionOf = (f: Pick<FindingRow, "suggestion" | "owner_suggestion">) => f.owner_suggestion?.trim() || f.suggestion;
 
@@ -456,8 +458,8 @@ export function recordReview(app: App, r: { codeRunId: string; round: number; ch
     for (const f of r.findings) {
       const namedRepo = repoSpaces.find(space => f.file?.startsWith(space + "/"));
       bumpLessonRefs(app, namedRepo ? [namedRepo] : repoSpaces, [f.detail, ...f.evidence].join("\n"));
-      run(app.db, "insert into review_findings(review_id, severity, file_path, line, title, detail, suggestion, evidence, confidence, design_decision, reviewed_head) values(?,?,?,?,?,?,?,?,?,?,?)",
-        id, f.severity, f.file ?? null, f.line ?? null, f.title, f.detail, f.suggestion, JSON.stringify(f.evidence), f.confidence, f.decision ?? null, heads[namedRepo ?? (repoSpaces.length === 1 ? repoSpaces[0] : "")] ?? null);
+      run(app.db, "insert into review_findings(review_id, severity, file_path, line, title, detail, suggestion, evidence, confidence, design_decision, reviewed_head, start_line, diff_side) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        id, f.severity, f.file ?? null, f.line ?? null, f.title, f.detail, f.suggestion, JSON.stringify(f.evidence), f.confidence, f.decision ?? null, heads[namedRepo ?? (repoSpaces.length === 1 ? repoSpaces[0] : "")] ?? null, f.startLine ?? null, f.side ?? null);
     }
   });
   return id;

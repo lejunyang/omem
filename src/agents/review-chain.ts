@@ -311,7 +311,12 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
   // An outside Agent on a paired device already submitted every check (and the split, if it made one).
   const peer = input.peerReviewer;
-  const reviewHeads = Object.fromEntries(worktrees.map(w => [w.space, w.tip ?? git(workDirOf(w), ["rev-parse", "HEAD"]).stdout.trim()]));
+  const reviewHeads = Object.fromEntries(worktrees.map(w => {
+    if (w.tip) return [w.space, w.tip];
+    const dir = workDirOf(w);
+    const status = git(dir, ["status", "--porcelain"]);
+    return [w.space, status.ok && !status.stdout.trim() ? git(dir, ["rev-parse", "HEAD"]).stdout.trim() : null];
+  }));
   setRunOutput(app, run.id, { reviewStage: "checks", reviewHeads });
   // A retry of some checks keeps what the others concluded this round (a check without a usable result runs anyway).
   const kept = new Map(opts.only && !opts.task && !peer ? plan.checks.flatMap((name) => {

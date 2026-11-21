@@ -30,7 +30,7 @@ beforeEach(() => {
   run(app.db,"insert into item_materials(item_id,kind,ref,created_at) values(?,'object','obj','a')",item);
   setRunOutput(app,id,{ reviewHeads: { personal: "a".repeat(40) } });
   recordReview(app,{ codeRunId:id, round:1, check:"reviewer", verdict:"changes_requested", summary:"问题", findings:[1,2,3,4].map(line =>
-    ({ title: "问题" + line, severity:"major", detail:"说明", file:"a.ts", line, suggestion:"修改", confidence:"high", evidence:[] })) });
+    ({ title: "问题" + line, severity:"major", detail:"说明", file:"a.ts", line, ...(line === 2 ? { side: "LEFT" as const, startLine: 1 } : {}), suggestion:"修改", confidence:"high", evidence:[] })) });
   publish.mockReset().mockImplementation(async (_ctx, req) => ({ id:String(req.findingId),url:"https://example.org/comment/" + req.findingId }));
   readThread.mockReset().mockResolvedValue({ state:"open" });
   resolve.mockReset().mockResolvedValue({ state:"resolved" });
@@ -99,7 +99,7 @@ it("多个对象时只发本人在卡片里选中的对象与问题",async () =>
   const fid = view().findings[1].id;
   await answerAsk(app,view().pending[0].id,{by:"owner",value:{object:"2. 项目 B",findings:{[fid]:{choice:"发布"}}}});
   expect(publish).toHaveBeenCalledTimes(1);
-  expect(publish.mock.calls[0][1]).toMatchObject({findingId:fid,objectKey:"pr-2"});
+  expect(publish.mock.calls[0][1]).toMatchObject({findingId:fid,objectKey:"pr-2",anchor:{side:"LEFT",startLine:1,line:2}});
 });
 
 it("平台先结束讨论时撤回尚未确认的结束卡",async () => {

@@ -2303,6 +2303,8 @@ export const migrations: readonly string[] = [
      where json_extract(external,'$.delivery')='published' and json_extract(external,'$.state') in ('open','replied');
    create index review_thread_object on review_findings(json_extract(external,'$.object'),coalesce(json_extract(external,'$.checkedAt'),''),id)
      where json_extract(external,'$.delivery')='published' and json_extract(external,'$.state') in ('open','replied');`,
+  `alter table review_findings add column start_line integer;
+   alter table review_findings add column diff_side text;`,
 ];
 
 export type Db = DatabaseSync;
