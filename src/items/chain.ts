@@ -8,11 +8,10 @@ import { STATUS_LABELS as DESIGN_STATUS, ORIGIN_LABELS } from "../designs/types.
 import { objectView } from "../flows/plugin-objects.ts";
 import { fixVerified } from "../studies/fix.ts";
 import { findings as studyFindings } from "../studies/store.ts";
-import { itemAccess, requireItem } from "./access.ts";
+import { requireItem } from "./access.ts";
 import { findReq, reqStatuses } from "./requirements.ts";
 import { testState, testsOf, testsOfWork } from "./req-tests.ts";
-import { getItem } from "./store.ts";
-import { descendantIds } from "./tree.ts";
+import { visibleBranchIds } from "./member-work.ts";
 
 /**
  * 需求 → 发现 → 方案 → 交付 on one work item (docs/v2/next.md 分期三): a read-only projection of what is
@@ -195,25 +194,25 @@ const empty = (s: ChainSegments) => !s.reqs.length && !s.findings.length && !s.d
 export function itemChain(app: App, itemId: string, userId: string): ItemChain {
   const item = requireItem(app, itemId, userId, "read");
   const c: Ctx = { app, userId, spaces: accessibleSpaces(app, userId), owner: userId === OWNER };
-  const kids = descendantIds(app, itemId).slice(0, CHAIN_MAX.children);
+  const ids = visibleBranchIds(app, item, userId).slice(0, CHAIN_MAX.children + 1);
+  const titles = new Map(all<{ id: string; title: string }>(app.db,
+    "select id,title from items where id in (select value from json_each(?))", JSON.stringify(ids)).map(r => [r.id, r.title]));
   const seen = new Set<string>();
   const groups: ChainGroup[] = [];
   let moreGroups = 0;
-  for (const id of [itemId, ...kids]) {
-    const it = id === itemId ? item : getItem(app, id);
-    if (id !== itemId && !itemAccess(app, userId, it, "read")) continue;
+  for (const id of ids) {
     if (groups.length >= CHAIN_MAX.groups) {
       // Counted only: a full chain for each would be the work the cap is there to avoid.
       if (!empty(chainOf(c, id, new Set(seen)))) moreGroups++;
       continue;
     }
     const s = chainOf(c, id, seen);
-    if (!empty(s)) groups.push({ item: { id: it.id, title: it.title }, ...s });
+    if (!empty(s)) groups.push({ item: { id, title: titles.get(id)! }, ...s });
   }
   const every = groups.flatMap((g) => [...g.reqs, ...g.findings, ...g.designs, ...g.works]);
   const works = groups.flatMap((g) => g.works.filter((e) => e.kind === "work"));
   return {
-    itemId, line: kids.length > 0, groups, moreGroups,
+    itemId, line: ids.length > 1, groups, moreGroups,
     counts: {
       reqs: every.filter((e) => e.kind === "req").length, findings: every.filter((e) => e.kind === "finding").length,
       designs: every.filter((e) => e.kind === "design").length, works: works.length,

@@ -12,6 +12,7 @@ import { run as sqlRun } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { addChange } from "../src/items/changes.ts";
+import { defineMetric } from "../src/data/metrics.ts";
 import { lineRoutine } from "../src/items/member-routine.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
 import { queueWrapUp } from "../src/items/lifecycle.ts";
@@ -100,6 +101,30 @@ describe("members' work lines", async () => {
     for (const secret of ["隐藏的合同评审", "隐藏变化", "合同评审卡住了", "隐藏的理由", "去问合同进度", away.id]) expect(text).not.toContain(secret);
     // Their own “等我的”: nothing waits for them.
     expect(work.waiting.total).toBe(0);
+  });
+
+  it("链路和指标只计算工作线上可见分支，直接请求隐藏子项也不可读", async () => {
+    const line = item({ spaceId: "proj", kind: "line", title: "联调验证" });
+    const visible = item({ spaceId: "proj", title: "可见工作" });
+    const hidden = item({ spaceId: "proj", title: "等本人处理", status: "waiting" });
+    const nested = item({ spaceId: "proj", title: "等待项的子项" });
+    under(visible.id, line.id);
+    under(hidden.id, line.id);
+    under(nested.id, hidden.id);
+    for (const child of [visible, hidden, nested]) {
+      defineMetric(app, { itemId: child.id, spaceId: "proj", name: child.title, query: "日报" });
+      sqlRun(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,round,created_at,updated_at) values(?,?,'defect',?,'步骤','[]','new',1,?,?)",
+        child.id, child.id, child.title, child.createdAt, child.createdAt);
+    }
+    const chain = await get("obs", `/api/items/${line.id}/chain`);
+    expect(chain.groups.map((g: {item: {id: string}}) => g.item.id)).toEqual([visible.id]);
+    expect(chain.counts.findings).toBe(1);
+    expect((await get(null, `/api/items/${line.id}/chain`)).counts.findings).toBe(3);
+    expect((await get("obs", `/api/metrics?item=${line.id}`)).map((m: {itemId: string}) => m.itemId)).toEqual([visible.id]);
+    expect(await get(null, `/api/metrics?item=${line.id}`)).toHaveLength(3);
+    for (const url of [`/api/items/${nested.id}/chain`, `/api/metrics?item=${nested.id}`]) {
+      expect((await call("obs", url)).status).toBe(404);
+    }
   });
 
   it("keeps a line's page to what the observer may read", async () => {
