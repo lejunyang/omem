@@ -5,7 +5,7 @@ import { runPredicate } from "../auth/run-scope.ts";
 import { can, canReadRun, runAudience } from "../auth/permissions.ts";
 import { requireItem } from "../items/access.ts";
 import { describeStage } from "../flows/definitions.ts";
-import { itemFlow, itemStages, waitText } from "../flows/store.ts";
+import { itemFlow, itemStages, waitText, type ItemFlow } from "../flows/store.ts";
 import { findings, isStudy, type Direction, type Trial } from "../studies/store.ts";
 import { listCheckpoints, recordedTasks, type TaskState } from "./code-tasks.ts";
 import { reviewsOf } from "./review.ts";
@@ -166,11 +166,8 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
     rounds.at(-1)!.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined);
 }
 
-function flowViews(app: App, graph: Forest, id: string, title: string, history: boolean) {
-  const f = itemFlow(app, id);
-  if (!f) return [];
-  const rows = itemStages(app, id);
-  const instance = [...graph.nodes.values()].filter(r => r.item === id && r.flowStart === f.startedAt);
+function flowView(graph: Forest, f: ItemFlow, instance: Node[], rows: ReturnType<typeof itemStages>, state?: ProgressView["state"]) {
+  const id = f.itemId;
   const tasks = f.definition.stages.flatMap(d => {
     const s = rows.find(s => s.id === d.id);
     if (!graph.sees(s?.control.runId)) return [];
@@ -184,10 +181,12 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
   });
   const visibleStages = new Set(tasks.map(t => t.id));
   for (const t of tasks) t.needs = t.needs?.filter(n => visibleStages.has(n));
-  const block = view(graph, { kind: "flow", id: id + "/" + f.startedAt, title: f.definition.name, itemId: id, tasks },
-    f.endedAt ? tasks.every(t => ["accepted", "cancelled"].includes(t.state)) ? "done" : "cancelled" : undefined);
-  if (f.roundClosedAt && !f.endedAt) { block.state = "waiting"; block.waitingOn = "等下一轮"; }
-  if (!isStudy(f)) return [block];
+  return view(graph, { kind: "flow", id: id + "/" + f.startedAt, title: f.definition.name, itemId: id, tasks },
+    state, { waitingOn: state === "waiting" ? "等下一轮" : undefined });
+}
+
+function studyView(app: App, graph: Forest, f: ItemFlow, instance: Node[], title: string, history: boolean, state?: ProgressView["state"]) {
+  const id = f.itemId;
   const roundFilter = history ? "" : " and round=?";
   const params = history ? [id] : [id, f.round];
   const ds = all<Direction>(app.db, "select * from study_directions where item_id=?" + roundFilter + " order by round,created_at", ...params);
@@ -235,7 +234,7 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
   }
   const current = studyTasks.filter(t => t.round === f.round);
   const study = view(graph, { kind: "study", id, itemId: id, title, tasks: studyTasks },
-    f.endedAt || f.roundClosedAt ? block.state : current.length ? undefined : "running", {
+    state ?? (current.length ? undefined : "running"), {
       stateTasks: current,
       usage: graph.usage([...instance.filter(r => r.trial).map(r => r.id), ...studyTasks.flatMap(t => t.attempts.map(a => a.runId))]),
     });
@@ -251,7 +250,23 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
   }
   study.previousRounds = [...counts.values()].sort((a, b) => a.round - b.round)
     .map(c => ({ ...c, usage: graph.usage(instance.filter(r => r.trial && r.round === c.round).map(r => r.id)) }));
-  return [block, study];
+  return study;
+}
+
+function itemFlowViews(app: App, graph: Forest, f: ItemFlow, title: string, history: boolean, showFlow: boolean) {
+  const study = isStudy(f);
+  if (!showFlow && !study) return [];
+  const instance = [...graph.nodes.values()].filter(r => r.item === f.itemId && r.flowStart === f.startedAt);
+  const rows = showFlow || f.endedAt ? itemStages(app, f.itemId) : [];
+  const ended = f.endedAt && f.definition.stages.every(d => {
+    const stage = rows.find(s => s.id === d.id);
+    return !graph.sees(stage?.control.runId) || stage?.state === "done" || stage?.state === "skipped";
+  });
+  const state = f.endedAt ? ended ? "done" : "cancelled" : f.roundClosedAt ? "waiting" : undefined;
+  const blocks: ProgressView[] = [];
+  if (showFlow) blocks.push(flowView(graph, f, instance, rows, state));
+  if (study) blocks.push(studyView(app, graph, f, instance, title, history, state));
+  return blocks;
 }
 
 function workViews(app: App, graph: Forest, reader: Reader, linkedItem?: string) {
@@ -298,11 +313,10 @@ export function runProgress(app: App, id: string, reader: Reader, history = fals
       throw e;
     }
     if (reader.spaces && !reader.spaces.includes(row.spaceId)) continue;
-    if (!can(app, reader.user, "flows.view", row.spaceId)) continue;
     const f = itemFlow(app, item);
     if (f && [...graph.nodes.values()].some(r => r.item === item && r.flowStart === f.startedAt)) {
       const related = itemForest(app, item, reader);
-      views.push(...flowViews(app, related, item, row.title, history));
+      views.push(...itemFlowViews(app, related, f, row.title, history, can(app, reader.user, "flows.view", row.spaceId)));
     }
   }
   return views;
@@ -326,7 +340,8 @@ export function itemProgress(app: App, id: string, reader: Reader, history = fal
   const item = requireItem(app, id, reader.user, "read");
   if (reader.spaces && !reader.spaces.includes(item.spaceId)) throw new HttpError(404, "事项不存在");
   const graph = itemForest(app, id, reader);
-  const flows = can(app, reader.user, "flows.view", item.spaceId) ? flowViews(app, graph, id, item.title, history) : [];
+  const f = itemFlow(app, id);
+  const flows = f ? itemFlowViews(app, graph, f, item.title, history, can(app, reader.user, "flows.view", item.spaceId)) : [];
   const views = [...flows, ...workViews(app, graph, reader, id)];
   const active = (v: ProgressView) => Number(v.state === "waiting" || v.state === "running");
   return views.sort((a, b) => active(b) - active(a)).slice(0, Math.min(100, limit));

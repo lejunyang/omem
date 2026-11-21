@@ -235,11 +235,27 @@ describe("进度投影", () => {
     expect(kinds()).toEqual(Array(2).fill(["code", "flow", "review", "study"]));
     const server = await startServer(app, { port: 0, quiet: true });
     try {
-      const result = await server.inject({ url: "/api/members/reader/capabilities", method: "PUT", payload: {
-        preset: "observer", overrides: ["flows.view", "code.work.view"].map(capability => ({ capability, scope_kind: "space", scope_id: "shared", effect: "deny" })),
-      } });
-      expect(result.statusCode).toBe(200);
-      expect(kinds()).toEqual([["review"], ["review"]]);
+      const headers = { authorization: "Bearer " + createApiToken(app, "reader", "test") };
+      for (const [capability, expected] of [
+        ["flows.view", ["code", "review", "study"]], ["code.work.view", ["flow", "review", "study"]],
+      ] as const) {
+        const result = await server.inject({ url: "/api/members/reader/capabilities", method: "PUT", payload: {
+          preset: "member", overrides: ["items.view", "runs.view", "code.review.view", "flows.view", "code.work.view"].map(key => ({
+            capability: key, scope_kind: "space", scope_id: "shared", effect: key === capability ? "deny" : "allow",
+          })),
+        } });
+        expect(result.statusCode).toBe(200);
+        for (const url of ["/api/items/" + item.id + "/progress", "/api/runs/code/progress"]) {
+          const response = await server.inject({ url, headers });
+          expect(response.statusCode).toBe(200);
+          expect(response.json().map((v: { kind: string }) => v.kind).sort()).toEqual(expected);
+        }
+        for (const args of [{ item_id: item.id }, { run_id: "code" }]) {
+          const reply = await callTool({ app, runId: null, spaceId: "shared", userId: "reader", actor: "agent", spaces: ["shared"], tools: null }, "work_status", args);
+          expect(reply.isError, reply.text).toBe(false);
+          expect(Array.from(reply.text.matchAll(/（(code|flow|review|study) · /g), m => m[1]).sort()).toEqual(expected);
+        }
+      }
     } finally { await server.close(); }
   });
 
