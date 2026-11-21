@@ -327,7 +327,7 @@ export async function runCodeTask(ctx: RunContext) {
     const was = known.find((w) => w.space === repo.id);
     // A work branch: every round places a workspace (kept, or lent again) on the branch's latest commit.
     if (was?.commits || (!was && !input.branches)) {
-      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? (await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id], base: input.startCommits?.[repo.id] })), log);
+      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? (await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id], base: input.startCommits?.[repo.id] })), log, !input.peerCoder);
       worktrees.push(wt);
       branchNotes[repo.id] = note;
       if (!was) log(`${repo.id} 的工作分支 ${wt.branch}（${wt.newBranch ? `从${wt.cutFrom ? ` ${wt.cutFrom} 的` : ""} ${wt.base.slice(0, 8)} 切出` : `已有分支，从 ${wt.base.slice(0, 8)} 接着做`}），工作区 ${workDirOf(wt)}`);
@@ -635,7 +635,7 @@ ${input.task}
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
       role: "coder",
-      addTools: [...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests", ...(describes ? ["submit_design"] : [])],
+      addTools: [...(worktrees.some(w => w.newBranch && w.branch === branch) ? ["name_work_branch"] : []), ...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests", ...(describes ? ["submit_design"] : [])],
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,

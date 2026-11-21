@@ -5715,6 +5715,19 @@ def({
 });
 
 def({
+  name: "name_work_branch",
+  description: "主编码给本轮在指定仓库自动分配的临时分支命名。宿主和成员私有 Git 同步改名，已有分支不能覆盖。",
+  write: true,
+  schema: z.object({ space: z.string(), name: z.string().min(1).max(200) }),
+  handler: async (ctx, a) => {
+    inScope(ctx, a.space, "工作分支");
+    if (ctx.role !== "coder" || !ctx.runId || runUser(ctx.app, ctx.runId) !== (ctx.userId ?? OWNER))
+      throw new HttpError(403, "只有本轮主编码可以命名工作分支");
+    return JSON.stringify((await import("./code-branch.ts")).nameCodingBranch(ctx.app, ctx.runId, a.space, a.name));
+  },
+});
+
+def({
   name: "code_branch",
   description:
     "交办工作分支上的操作（只对本人，本人要求时用；进行中的交办先等这一轮结束）：status 列出每个仓库的工作分支、切出点、提交、推送状态和检出位置；rename 改分支名；checkout_main 把仓库目录切到这条分支（目录要干净），之后每轮的提交会快进到那里，本人可以在仓库目录直接运行验证；squash 把分支压缩成一个提交。把另一个分支合并（或变基）进来用 continue_code_run 的 sync（不写 task 就只做同步）；确认推送用 apply_code_run。",

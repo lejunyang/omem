@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { closeSync, copyFileSync, createReadStream, readSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -6,7 +6,7 @@ import type { App } from "../core/app.ts";
 import { git } from "../core/git.ts";
 import { sandboxSupport } from "./sandbox.ts";
 
-type State = { tree: string; admin: string; common: string; ref: string; base: string; format: string; pending?: string };
+type State = { tree: string; admin: string; common: string; ref: string; base: string; format: string; renameTo?: string; pending?: string };
 
 const location = (app: App, actor: string, space: string) => join(app.runsDir, actor, "member-git", space);
 const hooksOff = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "--no-replace-objects"];
@@ -92,7 +92,7 @@ if test "$tip" != "$2"; then
 fi
 `;
 
-async function exportPack(state: State, root: string, message: string, file: string) {
+function gitNamespace(state: State, root: string) {
   const support = sandboxSupport();
   if (!support.ok || !support.bwrap) throw new Error("接收成员提交需要可用的 bubblewrap");
   // The trusted binary and runtime libraries, the worktree, and the base objects are read-only.
@@ -102,17 +102,61 @@ async function exportPack(state: State, root: string, message: string, file: str
     ...["/usr", "/bin", "/lib", "/lib64"].flatMap(p => ["--ro-bind-try", p, p]), "--dev", "/dev", "--tmpfs", "/view",
     "--bind", join(root, "git"), "/member", "--ro-bind", state.tree, "/work", "--ro-bind", join(state.common, "objects"), "/base",
     "--ro-bind", join(state.common, "objects"), join(state.common, "objects"),
-    "--chdir", "/work", "--", "/bin/sh", "-c", exportScript, "git-export", state.ref || "refs/heads/work", state.base, message, state.format];
+    "--chdir", "/work", "--"];
+  return { file: support.bwrap, args };
+}
+
+async function exportPack(state: State, root: string, message: string, file: string) {
+  const ns = gitNamespace(state, root);
+  const args = [...ns.args, "/bin/sh", "-c", exportScript, "git-export", state.ref || "refs/heads/work", state.base, message, state.format];
   const fd = openSync(file, "wx", 0o600);
   try {
     await new Promise<void>((ok, fail) => {
-      const proc = spawn(support.bwrap!, args, { stdio: ["ignore", fd, "pipe"], timeout: 120_000 });
+      const proc = spawn(ns.file, args, { stdio: ["ignore", fd, "pipe"], timeout: 120_000 });
       let error = "";
       proc.stderr!.on("data", chunk => { error = (error + chunk).slice(-2048); });
       proc.on("error", fail);
       proc.on("close", code => code === 0 ? ok() : fail(new Error(error.trim() || "导出成员提交失败")));
     });
   } finally { closeSync(fd); }
+}
+
+/** A receipt records the requested name before either namespace moves, so the same request can resume. */
+export function renameMemberGit(app: App, actor: string, space: string, old: string, next: string) {
+  const root = location(app, actor, space);
+  const file = join(root, "state");
+  if (!existsSync(file)) return false;
+  if (receiving.has(root)) throw new Error("正在接收此工作树的提交");
+  const state: State = JSON.parse(readFileSync(file, "utf8"));
+  const ref = "refs/heads/" + next;
+  const previous = "refs/heads/" + old;
+  const host = (...args: string[]) => checked(state.common, ["--git-dir", state.admin, ...args]);
+  const current = host("symbolic-ref", "HEAD");
+  if (state.ref === ref && current === ref) return true;
+  if (state.ref !== previous || state.pending || (state.renameTo && state.renameTo !== ref) || host("rev-parse", "HEAD") !== state.base)
+    throw new Error("工作树的接收登记或预期基点已变化");
+  if (current !== previous && !(state.renameTo === ref && current === ref)) throw new Error("宿主工作树已切换分支");
+  if (current === previous && git(state.common, ["show-ref", "--verify", "--quiet", ref]).ok) throw new Error(`已经有分支 ${next}`);
+  const ns = gitNamespace(state, root);
+  const script = `
+set -eu
+export GIT_DIR=/member GIT_WORK_TREE=/work
+current=$(git symbolic-ref HEAD)
+if test "$current" = "refs/heads/$1"; then
+  git -c core.hooksPath=/dev/null -c core.fsmonitor=false branch -m -- "$1" "$2"
+elif test "$3" != resume || test "$current" != "refs/heads/$2"; then
+  echo '成员工作区已切换分支' >&2; exit 1
+fi
+`;
+  save(file, { ...state, renameTo: ref });
+  const r = spawnSync(ns.file, [...ns.args, "/bin/sh", "-c", script, "rename", old, next, state.renameTo ? "resume" : "start"], { encoding: "utf8", timeout: 10000 });
+  if (r.status !== 0) {
+    if (!state.renameTo && r.status !== null) save(file, state);
+    throw new Error(r.stderr?.trim() || "成员分支改名没有完成");
+  }
+  if (current === previous) host("branch", "-m", "--", old, next);
+  save(file, { ...state, ref, renameTo: undefined });
+  return true;
 }
 
 /** Validate the pack in Git's indexer before changing a reference. No remote, tags or FETCH_HEAD. */
@@ -156,6 +200,7 @@ export async function receiveMemberGit(app: App, actor: string, space: string, t
   const pack = join(root, "incoming.pack");
   try {
     const state: State = JSON.parse(readFileSync(file, "utf8"));
+    if (state.renameTo) throw new Error("工作分支正在改名，请先完成改名");
     if (realpathSync(tree) !== state.tree) throw new Error("交办工作树已变化");
     const args = ["--git-dir", state.admin, "--work-tree", state.tree];
     const host = (...cmd: string[]) => checked(state.common, [...args, ...cmd]);

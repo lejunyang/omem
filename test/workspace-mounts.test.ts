@@ -11,6 +11,8 @@ import { addTask, commitTask, getTask, settleCodingRound, updateTask } from "../
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { leaseWorkspace, workspaceMounts } from "../src/agents/workspaces.ts";
+import { saveRole } from "../src/auth/permissions.ts";
+import { createUser, addMember } from "../src/core/users.ts";
 import { createSpace, getSpace } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
 
@@ -203,6 +205,48 @@ describe("delegation sandbox mounts", () => {
     expect(git("show", "HEAD:remaining")).toBe("last");
     expect(git("log", "-1", "--format=%B")).toContain("Omem-Task: T" + task.seq);
     expect(getTask(app, round.id, task.seq).state).toBe(task.verifier ? "verify" : "done");
+  });
+
+  it.skipIf(!sandboxSupport().ok)("names the assigned member branch and rejects a private branch switch", async () => {
+    const repo = repository("named");
+    const role = saveRole(app, { name: "developer", scope: "global", permissions: ["code.delegate"] });
+    createUser(app, { id: "branch-member", name: "成员", role: role.id });
+    addMember(app, repo.id, "branch-member", "manager");
+    const round = createRun(app, { kind: "code", userId: "branch-member", spaceId: repo.id, title: "分支命名", input: { taskMode: true } });
+    app.db.prepare("update runs set status = 'running' where id = ?").run(round.id);
+    const old = "omem/" + round.id;
+    const wt = { ...leased(round.id, repo), branch: old, newBranch: true, base: repo.git("rev-parse", "HEAD").toString().trim() };
+    repo.git("-C", wt.path, "switch", "-qc", old);
+    setRunOutput(app, round.id, { worktrees: [wt] });
+    const home = join(app.home, "branch-member-home");
+    mkdirSync(home);
+    const plan = workspaceMounts(app, [wt], round.id);
+    const run = (script: string) => {
+      const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec", script], {}, wt.slot,
+        { userId: "branch-member", backend: "test", home, env: {}, hide: [app.home], ro: [] }, plan);
+      return execFileSync(cmd.file, cmd.args, { env: cmd.env, encoding: "utf8" }).trim();
+    };
+    const ctx = { app, userId: "branch-member", runId: round.id, spaceId: repo.id, spaces: [repo.id], tools: null, actor: "agent", role: "coder" } as ToolContext;
+    const tip = run('echo change > first && git add first && git commit -qm "Omem-Task: T1" && git rev-parse HEAD');
+    const name = (branch: string) => callTool(ctx, "name_work_branch", { space: repo.id, name: branch });
+    repo.git("branch", "reserved");
+    expect((await name("reserved")).isError).toBe(true);
+    const named = await name("feat/example");
+    expect(named.isError, named.text).toBe(false);
+    expect(run("git branch --show-current")).toBe("feat/example");
+    expect(getRun(app, round.id).output.worktrees).toMatchObject([{ branch: "feat/example", targetBranch: "feat/example" }]);
+    const task = addTask(app, round.id, { title: "第一项", kind: "build" }, "host");
+    updateTask(app, round.id, task.seq, { state: "coding", coderRun: round.id });
+    const finish = (seq: number) => callTool(ctx, "finish_task", { task: seq, summary: "交付" });
+    expect((await finish(task.seq)).isError).toBe(false);
+    expect(repo.git("rev-parse", "refs/heads/feat/example").toString().trim()).toBe(tip);
+    expect(getTask(app, round.id, task.seq).state).toBe("done");
+    const another = addTask(app, round.id, { title: "第二项", kind: "build" }, "host");
+    updateTask(app, round.id, another.seq, { state: "coding", coderRun: round.id });
+    run('git switch -qc other && git commit --allow-empty -qm other');
+    expect((await finish(another.seq)).isError).toBe(true);
+    expect(repo.git("rev-parse", "refs/heads/feat/example").toString().trim()).toBe(tip);
+    expect(getTask(app, round.id, another.seq).state).toBe("coding");
   });
 
   it.skipIf(!sandboxSupport().ok)("merges accepted helper work and keeps a refused repository recoverable", async () => {

@@ -28,7 +28,7 @@ export const CODE_STARTERS = ["delegate_code", "review_branch", "continue_code_r
 /** Local conversation work. These tools require run_agent and are never lent to workers. */
 export const WORK_BOARD_TOOLS = ["dispatch_work", "work_status", "work_review", "work_cancel"];
 
-export const ROLE_TOOLS = ["claim_commits", "note_item_change", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest", "submit_playbook", "review_reply_outcomes", "submit_line_state", "propose_lines"];
+export const ROLE_TOOLS = ["name_work_branch", "claim_commits", "note_item_change", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest", "submit_playbook", "review_reply_outcomes", "submit_line_state", "propose_lines"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
 /**
  * A run allowed this few tools gets every one of them directly: a background role or profile
@@ -62,7 +62,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["propose_repo_lesson", "delegate_code", "review_branch", "share_review", "continue_code_run", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
   { id: "improve", label: "改进循环：度量、留下或回退", doc: "code", tools: ["improve_start", "improve_round", "improve_status"] },
   { id: "design", label: "方案：读、评估别人的方案、确认", doc: "code", tools: ["read_design", "assess_design", "settle_design"] },
-  { id: "git", label: "代码仓库与 Git", doc: "code", tools: ["list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "code_history"] },
+  { id: "git", label: "代码仓库与 Git", doc: "code", tools: ["name_work_branch", "list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "code_history"] },
   { id: "code-handin", label: "编码与评审角色交结果", doc: "code", tools: ["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "submit_brief", "submit_design"] },
   { id: "code-results", label: "编码的验证结果：截图、报告与测试结果", doc: "code", tools: ["attach_artifact", "report_tests"] },
   { id: "lark-msg", label: "飞书消息与卡片", doc: "lark", tools: ["lark_send", "lark_react", "meeting_suggest", "lark_card", "lark_send_file", "lark_message_file", "lark_chat_history", "reply_to_asker"] },

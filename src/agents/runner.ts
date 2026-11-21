@@ -948,7 +948,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           system: prep.system,
           capabilities: prep.capabilities,
           parts: prep.parts,
-          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，保留当前分支名；宿主按这个分支接收提交。" : ""}`,
+          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
