@@ -6,6 +6,7 @@ import { draftSkillSummary } from "../agents/specs.ts";
 import { plainText } from "../search/present.ts";
 import { CHANGE_COLS, type changeLite } from "./changes.ts";
 import { listItems } from "./store.ts";
+import { contentVersion, fingerprint, mayPropose } from "./choices.ts";
 
 export type PendingAction = {
   id: string;
@@ -50,13 +51,15 @@ export type PendingMetric = { id: string; name: string; why: string; unit: strin
 /** The metrics agents proposed that wait for the person (the data page's “等你确认”), newest first. */
 export function pendingMetrics(app: App, userId: string, limit = 100): PendingMetric[] {
   const { visible, rows } = scoped(app, userId);
-  return rows<PendingMetric>(
-    `select m.id,m.name,coalesce(m.why,'') why,coalesce(m.unit,'') unit,i.id itemId,m.created_at at from metrics m left join listen_contexts l on l.id=m.context_id
+  // A proposal the person put off (以后再说) or said no to in another place stays out until that runs out (items/choices.ts).
+  return rows<PendingMetric & { q: string }>(
+    `select m.id,m.name,coalesce(m.why,'') why,coalesce(m.unit,'') unit,i.id itemId,m.created_at at,coalesce(m.query,'') q from metrics m left join listen_contexts l on l.id=m.context_id
      left join items i on i.id=coalesce(m.item_id,l.item_id) left join runs r on r.id=m.defined_run
      left join spaces home on home.id=m.space_id and home.kind='personal'
      where m.status='proposed' and coalesce(i.user_id,r.user_id,home.owner_id,'owner')=? and ${visible("m.space_id")}
        and ${visible("l.space_id")} and ${visible("i.space_id")} and ${visible("r.space_id")}
-     order by m.created_at desc limit ?`, userId, limit);
+     order by m.created_at desc limit ?`, userId, limit)
+    .filter((m) => mayPropose(app, userId, "metric", fingerprint(m.name), fingerprint(m.q)).ok).map(({ q: _q, ...m }) => m);
 }
 
 export type PendingProfileProposal = { id: string; target: string; kind: "prompt" | "skill" | "settings"; title: string; reason: string; at: string; noticedAt: string | null };
@@ -65,10 +68,12 @@ export type PendingProfileProposal = { id: string; target: string; kind: "prompt
 export function pendingProfileProposals(app: App, userId: string, limit = 100): PendingProfileProposal[] {
   if (userId !== OWNER) return [];
   const { visible, rows } = scoped(app, userId);
-  return rows<PendingProfileProposal>(`select p.id,p.target,p.kind,p.title,coalesce(p.reason,'') reason,p.created_at at,p.expiry_notice_at noticedAt
+  // Put off or said no to in another place (items/choices.ts): left out until that runs out or the change reads differently.
+  return rows<PendingProfileProposal & { body: string }>(`select p.id,p.target,p.kind,p.title,coalesce(p.reason,'') reason,p.created_at at,p.expiry_notice_at noticedAt,p.body
     from profile_proposals p left join runs r on r.id=p.run_id
     where p.status='pending' and coalesce(r.user_id,'owner')=? and ${visible("r.space_id")}
-    order by p.expiry_notice_at is null, p.created_at desc limit ?`, userId, limit);
+    order by p.expiry_notice_at is null, p.created_at desc limit ?`, userId, limit)
+    .filter((p) => mayPropose(app, userId, "profile", `${p.target}:${p.kind}:${fingerprint(p.title)}`, contentVersion(p.body)).ok).map(({ body: _b, ...p }) => p);
 }
 
 /** Both endpoints use these same visible source rows, including the per-change card association. */

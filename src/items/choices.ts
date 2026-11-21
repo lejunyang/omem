@@ -16,6 +16,7 @@ export const CHOICE_KINDS = {
   "item-candidate": "助手自己建的候选事项要不要（按标题）",
   metric: "提议的指标要不要（按名字）",
   "meeting-item": "一场会的结果要不要记到某件事项",
+  profile: "复盘提的档案改动要不要（按档案和标题）",
 } as const;
 export type ChoiceKind = keyof typeof CHOICE_KINDS;
 export type Choice = "keep" | "drop" | "later" | "merged";
@@ -30,6 +31,7 @@ export const CHANGED: Record<ChoiceKind, { days: number | null; versioned: boole
   "item-candidate": { days: 14, versioned: false, why: "说过不要的同名候选两周内不再建" },
   metric: { days: null, versioned: true, why: "说过不要的指标不再提，换了查法才可以再提" },
   "meeting-item": { days: null, versioned: false, why: "说过不用记的，这场会的结果不再问要不要记到这件事" },
+  profile: { days: 30, versioned: true, why: "说过不要的档案改动一个月内不再提，内容改了才可以再提" },
 };
 /** “以后再说” waits this long by default. */
 export const LATER_DAYS = 7;
@@ -37,6 +39,12 @@ export const LATER_DAYS = 7;
 export type ChoiceRow = { user_id: string; kind: string; target: string; version: string | null; choice: Choice; into_ref: string | null; reason: string | null; until: string | null; via: string | null; at: string };
 
 /** A stable key for an object named in words: spaces, quotes and case do not matter. */
+/** A short fingerprint of a longer content (a proposal's body), for “the object changed”. */
+export function contentVersion(text: string) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36);
+}
 export const fingerprint = (s: string) => s.replace(/[\s「」“”"'·・\-—_/]+/g, "").toLowerCase().slice(0, 120);
 
 /** Record a choice (the latest wins). `until`: when a 以后再说 or a 还没完 runs out (defaults from CHANGED / LATER_DAYS). */

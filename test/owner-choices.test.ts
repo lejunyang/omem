@@ -82,6 +82,24 @@ describe("本人取舍的统一记录", () => {
     expect(mayPropose(app, "owner", "item-candidate", fingerprint("周报")).ok).toBe(true);
   });
 
+  it("复盘提的档案改动：说过不要的不再提，内容变了可以；以后再说的不进待处理", async () => {
+    const app = fresh();
+    const { createProposal, rejectProposal } = await import("../src/agents/proposals.ts");
+    const { pendingMetrics, pendingProfileProposals } = await import("../src/items/pending.ts");
+    const input = { target: "assistant", kind: "prompt" as const, title: "回答先给结论", reason: "本人改过三次", content: { prompt: "先给结论。" }, runId: null };
+    const id = createProposal(app, input);
+    rejectProposal(app, id);
+    expect(() => createProposal(app, input)).toThrow(/不再提/);
+    const next = createProposal(app, { ...input, content: { prompt: "先给结论，再列依据。" } });
+    expect(pendingProfileProposals(app, "owner").map((p) => p.id)).toEqual([next]);
+    recordChoice(app, { userId: "owner", kind: "profile", target: `assistant:prompt:${fingerprint("回答先给结论")}`, choice: "later" });
+    expect(pendingProfileProposals(app, "owner")).toEqual([]);
+    const m = defineMetric(app, { name: "退款失败数", why: "看失败多不多", query: "退款记录表" }, { by: "agent" });
+    expect(pendingMetrics(app, "owner").map((x) => x.id)).toEqual([m.id]);
+    recordChoice(app, { userId: "owner", kind: "metric", target: fingerprint("退款失败数"), choice: "later" });
+    expect(pendingMetrics(app, "owner")).toEqual([]);
+  });
+
   it("提问里带上对象：通用的回答路径记下；助手看这条线时带上最近的取舍", async () => {
     const app = fresh();
     const line = upsertItem(app, undefined, { kind: "line", title: "示例商城 · 退款改造" }, "user");
