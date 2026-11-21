@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -21,10 +21,11 @@ type Echo = { session: string; turn: number; resumed: boolean; cold: boolean; ms
 
 describe("threads: continuity, merging, lanes, commands", async () => {
   const home = mkdtempSync(join(tmpdir(), "omem-threads-"));
+  const prompts = join(home, "prompts.jsonl");
   writeFileSync(
     join(home, "config.json"),
     JSON.stringify({
-      agents: { default: "fake", profiles: [{ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "thread", FAKE_DELAY: "300" } }] },
+      agents: { default: "fake", profiles: [{ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "thread", FAKE_DELAY: "300", FAKE_PROMPT_LOG: prompts } }] },
       sessions: { mergeMs: 400, liveMinutes: 5, maxLive: 2, maxTurns: 40, idleHours: 12 },
     }),
   );
@@ -106,6 +107,23 @@ describe("threads: continuity, merging, lanes, commands", async () => {
     const t1 = getRun(app, p1.runId!);
     const t2 = getRun(app, p2.runId!);
     expect(Date.parse(t2.startedAt!)).toBeGreaterThanOrEqual(Date.parse(t1.finishedAt!));
+  }, 60000);
+
+  it.each(["lark", "lark:extra"])("sends group reply instructions for owner and colleague turns on %s", async (channel) => {
+    const group = { channel, chatId: "oc_group_reply", isGroup: true, context: "群里正在讨论退款规则。", mergeMs: 0 };
+    for (const asker of [undefined, "小王"]) {
+      const text = asker ? "请更新我的文档。" : "退款规则是什么？";
+      const turn = await receive(app, { ...group, asker, text, externalMessageId: asker ? "om_colleague" : "om_owner" });
+      await answer(turn.runId);
+      const prompt = readFileSync(prompts, "utf8").trimEnd().split("\n")
+        .map((line): string => JSON.parse(line))
+        .find((entry) => entry.includes(`msg:${turn.messageId}`));
+      expect(prompt).toContain(text);
+      expect(prompt).toContain("回答要结合它");
+      expect(prompt).toContain("你最后写的文字就是回复");
+      expect(prompt).toContain("同一件事不要再用 `lark_send` 往这个群发一遍");
+      expect(prompt?.includes("他的文档要写成什么样、他要的口径，他说了就算")).toBe(!!asker);
+    }
   }, 60000);
 
   it("separates topics, honours /mode, renews idle chats and passes group context", async () => {
