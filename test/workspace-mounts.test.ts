@@ -277,6 +277,10 @@ describe("delegation sandbox mounts", () => {
       const result = await callTool(ctx, "finish_task", { task: tasks[0], summary: "第一项完成" });
       expect(result.isError, result.text).toBe(false);
       run('cd partial-a && echo part > part && git add part && git commit -qm "Omem-Task: T2"');
+      run('cd partial-b && echo received > accepted && git add accepted && git commit -qm "Omem-Task: T2"');
+      const second = await callTool(ctx, "finish_task", { task: tasks[1], summary: "两仓的改动均已完成" });
+      expect(second.isError, second.text).toBe(false);
+      expect(getTask(app, round.id, tasks[1]).state).toBe("done");
       run('cd partial-b && git switch -qc private && echo other > other && git add other && git commit -qm "Omem-Task: T2" && echo draft > draft');
       return { text: "完成" } as Awaited<ReturnType<typeof runner.runRole>>;
     });
@@ -295,15 +299,19 @@ describe("delegation sandbox mounts", () => {
       });
       const run = getRun(app, ids[0]);
       expect(run.error).toContain("partial-b");
-      expect(run.output.commits).toMatchObject({ "partial-a": [expect.any(String), expect.any(String)], "partial-b": [] });
+      expect(run.output.commits).toMatchObject({ "partial-a": [expect.any(String), expect.any(String)], "partial-b": [expect.any(String)] });
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:first").toString()).toBe("first\n=======\n");
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:part").toString()).toBe("part\n");
+      expect(repos[1].git("-C", trees[1].path, "show", "HEAD:accepted").toString()).toBe("received\n");
+      expect(run.output.refusals).toMatchObject([{ space: "partial-b", tasks: [tasks[1]], unknown: false }]);
       const failed = (run.output.worktrees as typeof trees)[1];
       expect(readFileSync(join(failed.path, "draft"), "utf8")).toBe("draft\n");
       const privateDir = join(app.runsDir, run.id, "member-git", failed.space, "git");
       expect(repos[1].git("--git-dir", privateDir, "show", "HEAD:other").toString()).toBe("other\n");
       expect(settleCodingRound(app, round.id, round.id, trees, 1, ids).finished).toEqual([tasks[0]]);
-      expect(getTask(app, round.id, tasks[1]).state).toBe("todo");
+      const partial = getTask(app, round.id, tasks[1]);
+      expect(partial.state).toBe("todo");
+      expect(partial.notes.at(-1)?.text).toContain("partial-b：成员工作区已切换分支");
     } finally { fake.mockRestore(); }
   });
 

@@ -1,4 +1,5 @@
-import { spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { closeSync, copyFileSync, createReadStream, readSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -92,7 +93,7 @@ if test "$tip" != "$2"; then
 fi
 `;
 
-function gitNamespace(state: State, root: string) {
+function gitNamespace(state: State, root: string, readOnly = false) {
   const support = sandboxSupport();
   if (!support.ok || !support.bwrap) throw new Error("接收成员提交需要可用的 bubblewrap");
   // The trusted binary and runtime libraries, the worktree, and the base objects are read-only.
@@ -100,7 +101,7 @@ function gitNamespace(state: State, root: string) {
   const args = ["--die-with-parent", "--unshare-all", "--clearenv", "--setenv", "PATH", "/usr/bin:/bin",
     "--setenv", "GIT_CONFIG_NOSYSTEM", "1", "--setenv", "HOME", "/empty", "--dir", "/empty",
     ...["/usr", "/bin", "/lib", "/lib64"].flatMap(p => ["--ro-bind-try", p, p]), "--dev", "/dev", "--tmpfs", "/view",
-    "--bind", join(root, "git"), "/member", "--ro-bind", state.tree, "/work", "--ro-bind", join(state.common, "objects"), "/base",
+    readOnly ? "--ro-bind" : "--bind", join(root, "git"), "/member", "--ro-bind", state.tree, "/work", "--ro-bind", join(state.common, "objects"), "/base",
     "--ro-bind", join(state.common, "objects"), join(state.common, "objects"),
     "--chdir", "/work", "--"];
   return { file: support.bwrap, args };
@@ -187,6 +188,21 @@ async function importPack(state: State, file: string) {
 export function receivedMemberHead(app: App, actor: string, space: string): string | undefined {
   const file = join(location(app, actor, space), "state");
   return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as State).base : undefined;
+}
+
+/** Read a bounded log for attributing refused work. A rejected tip never becomes a source for importing or cherry-picking. */
+export async function refusedMemberMessages(app: App, actor: string, space: string) {
+  const root = location(app, actor, space);
+  try {
+    const state: State = JSON.parse(readFileSync(join(root, "state"), "utf8"));
+    const ns = gitNamespace(state, root, true);
+    const { stdout } = await promisify(execFile)(ns.file, [...ns.args, "git", ...hooksOff, "--git-dir=/member",
+      "log", "--max-count=101", "--format=%x00%B", state.base + "..HEAD", "--"],
+      { encoding: "utf8", timeout: 5000, maxBuffer: 65536 });
+    return stdout.split("\0").slice(1);
+  } catch {
+    return [];
+  }
 }
 
 const receiving = new Set<string>();

@@ -470,14 +470,18 @@ export function gitDirOf(app: App, wt: WorktreeRef): string | null {
   return root ?? null;
 }
 
+export function commitTaskNumbers(message: string): number[] {
+  const tasks = [...message.matchAll(/^Omem-Task:\s*(.+)$/gim)].flatMap((m) => [...m[1].matchAll(/[Tt]?(\d+)/g)].map((x) => Number(x[1])));
+  return [...new Set(tasks)];
+}
+
 /** Commits from..to and the tasks their messages name (`Omem-Task: T3`, several allowed); `revert`: the host's revert of a task. */
 export function commitsByTask(dir: string, from: string, to = "HEAD"): { sha: string; tasks: number[]; subject: string; revert: boolean }[] {
   const log = git(dir, ["log", "--reverse", "--format=%H%x1f%s%x1f%B%x1e", `${from}..${to}`]);
   if (!log.ok) return [];
   return log.stdout.split("\x1e").map((x) => x.trim()).filter(Boolean).map((entry) => {
     const [sha, subject, body] = entry.split("\x1f");
-    const tasks = [...(body ?? "").matchAll(/^Omem-Task:\s*(.+)$/gim)].flatMap((m) => [...m[1].matchAll(/[Tt]?(\d+)/g)].map((x) => Number(x[1])));
-    return { sha, subject, tasks: [...new Set(tasks)], revert: /^Omem-Revert:/im.test(body ?? "") };
+    return { sha, subject, tasks: commitTaskNumbers(body ?? ""), revert: /^Omem-Revert:/im.test(body ?? "") };
   });
 }
 

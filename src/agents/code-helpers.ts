@@ -1,4 +1,4 @@
-import { commitWorktree, receivedMemberHead } from "./member-git.ts";
+import { commitWorktree, receivedMemberHead, refusedMemberMessages } from "./member-git.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -9,7 +9,7 @@ import type { Execution } from "./execution.ts";
 import { addWorktree, recordHostCommand, shell } from "./code.ts";
 import { unmerged, resolveConflicts } from "./code-sync.ts";
 import { identity } from "./code-branch.ts";
-import { commitsByTask, getTask, taskLabel, taskText, updateTask, workRootOf } from "./code-tasks.ts";
+import { commitsByTask, commitTaskNumbers, getTask, taskLabel, taskText, updateTask, workRootOf } from "./code-tasks.ts";
 import { runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import { getSpace, type Space } from "../core/spaces.ts";
@@ -37,6 +37,7 @@ export type RoundContext = {
   spaces: string[];
   where: (dir: string, wt: WorktreeRef) => string;
 };
+type Refusal = { space: string; reason: string; tasks: number[]; unknown: boolean };
 type Helper = { runId: string; n: number; tasks: number[]; worktrees: WorktreeRef[]; done: Promise<void> };
 const rounds = new Map<string, RoundContext & { helpers: Helper[] }>();
 
@@ -151,15 +152,21 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
     // Left uncommitted: one task still open takes it, else it is merged without a task.
     const open = h.tasks.filter((s) => getTask(app, rootId, s).state === "coding");
     const message = `编码助手 ${h.n} 没提交的改动${open.length === 1 ? `\n\nOmem-Task: ${taskLabel(open[0])}` : ""}`;
-    const failures: string[] = [];
+    const refusals: Refusal[] = [];
     for (const wt of h.worktrees) {
       try {
         await commitWorktree(app, h.runId, wt.space, wt.slot ?? wt.path, message, identity);
       } catch (e) {
-        failures.push(`${wt.space}：${(e as Error).message}`);
+        const messages = await refusedMemberMessages(app, h.runId, wt.space);
+        const byCommit = messages.map(commitTaskNumbers);
+        const unknown = !messages.length || messages.length > 100 || byCommit.some(tasks => !tasks.length);
+        refusals.push({ space: wt.space, reason: (e as Error).message, tasks: [...new Set(byCommit.flat())], unknown });
       }
     }
-    if (failures.length) throw new Error(failures.join("；"));
+    if (refusals.length) {
+      setRunOutput(app, h.runId, { refusals });
+      throw new Error(refusals.map(r => `${r.space}：${r.reason}${r.unknown ? "（未归属改动待核对）" : ""}`).join("；"));
+    }
     setRunOutput(app, h.runId, { answer: replyOf(res).trim(), ai: res.ai });
     sql(app.db, "update runs set status = 'done', profile_id = ?, finished_at = ? where id = ?", res.profileId, now(), h.runId);
     app.emit({ type: "run", runId: h.runId, status: "done" });
@@ -190,6 +197,10 @@ export async function joinHelpers(app: App, roundRunId: string, resolve: (wt: Wo
     const run = getRun(app, h.runId);
     const commits: Record<string, string[]> = {};
     const problems = new Map<number, string>();
+    const refusals = (run.output.refusals ?? []) as Refusal[];
+    for (const r of refusals) {
+      for (const seq of r.tasks) problems.set(seq, `${r.space}：${r.reason}`);
+    }
     const landed = new Set<number>();
     let picked = 0;
     const keep = new Set<string>();
@@ -201,6 +212,10 @@ export async function joinHelpers(app: App, roundRunId: string, resolve: (wt: Wo
       const tip = receivedMemberHead(app, h.runId, wt.space) ?? git(source.path, ["rev-parse", "HEAD"]).stdout.trim();
       const changes = commitsByTask(dir, source.start!, tip);
       const shas = commits[wt.space] = changes.map(c => c.sha);
+      const refusal = refusals.find(r => r.space === wt.space);
+      if (refusal?.unknown) {
+        for (const c of changes) for (const seq of c.tasks) problems.set(seq, `${wt.space}：${refusal.reason}（未归属改动待核对）`);
+      }
       if (!shas.length) continue;
       const merged = await pick(wt, shas, `合并编码助手 ${h.n} 的提交`, resolve, round.signal);
       if (merged) picked += shas.length;
