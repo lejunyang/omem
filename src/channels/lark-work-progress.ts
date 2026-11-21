@@ -4,6 +4,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { truncate, webLink } from "../core/util.ts";
 import { getRun, type Run } from "../agents/runs.ts";
+import { findPeer, nodeId } from "../core/peers.ts";
 import { findThread } from "../agents/threads.ts";
 import { progressMessages, refreshWork, workInConversation, type AgentWork } from "../agents/agent-work.ts";
 import { buildCard, sendLark, updateLarkCard } from "./lark-send.ts";
@@ -60,6 +61,12 @@ export function workProgressView(app: App, work: AgentWork): { live: boolean; li
     stepOf = undefined;
     status = work.awaitingUser ? "停下了，等你回复" : last?.status === "failed" ? "最近一轮失败了，主助手的说明在下面" : "这一轮的结论或问题已发在下面；回复这个话题可以接着做";
   }
+  const parallel = live.filter(r => r.kind === "agent").slice(0,6).map(r => {
+    const input = JSON.parse(r.input) as { spec?: string; task?: string; boardDevice?: { device: string; mode: string } };
+    const device = input.boardDevice;
+    const name = device ? findPeer(app,device.device)?.back?.name ?? device.device : nodeId(app);
+    return `- ${firstLine(input.task ?? "")} · ${input.spec ?? "Agent"} · ${name}${device?.mode === "borrow" ? "（借后端）" : device?.mode === "remote" ? "（在对方跑）" : ""}`;
+  });
   const history = work.rounds.slice(-5).map((r, i, list) => {
     const n = rounds - list.length + i + 1;
     const state = r.status === "queued" ? (live.some((x) => x.id === r.runId && x.status === "running") ? "进行中" : "排队中") : r.status === "done" ? "完成" : "失败";
@@ -72,6 +79,7 @@ export function workProgressView(app: App, work: AgentWork): { live: boolean; li
     lines: [
       `**第 ${rounds} 轮** · ${status}`,
       ...(step ? [`最近：${step}`] : []),
+      ...parallel,
       ...(history.length > 1 ? ["", ...history] : []),
     ],
     link: link ? webLink(app, `#/runs/${link}`) : null,

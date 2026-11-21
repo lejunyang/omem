@@ -40,7 +40,7 @@ async function setup() {
   there.config.node.acceptWork = "read";
   for (const a of [here,there]) {
     a.config.agents.default = "fake";
-    a.config.agents.profiles = [{ id:"fake", transport:"acp", command:process.execPath,args:[resolve("test/fake-acp-agent.ts")],env:{FAKE_MODE:"device-work"},idleTimeoutMs:60000 }];
+    a.config.agents.profiles = [{ id:"fake", transport:"acp", command:process.execPath,args:[resolve("test/fake-acp-agent.ts")],env:{FAKE_MODE:"device-work",OMEM_ARTIFACTS:""},idleTimeoutMs:60000 }];
     servers.push(await startServer(a,{port:0,quiet:true}));
     saveConfig(a.config,a.home);
   }
@@ -80,6 +80,7 @@ it("remote 起在对方，用对方的库、只读工具和目录；产物、用
   expect(task.attempts[0].remoteUrl).toContain(id);
   expect(all(f.here.db,"select id from run_artifacts where run_id=?",t.attempts[0].runId)).toHaveLength(1);
   const progress = runProgress(f.here,f.id,{user:"owner"});
+  expect(progress[0].tasks[0].attempts[0]).toMatchObject({device:"lab",mode:"remote",remoteRunId:id});
   expect(progress[0].usage).toMatchObject({input:100,output:20,cached:10});
 },60000);
 it("remote 要写时两边授权且对方开启，工具层允许范围内记忆写入",async () => {
@@ -160,6 +161,7 @@ it("设备尝试共享任务板并发上限，远端运行跨本机重启继续�
   run(f.here.db,"update runs set status='done' where id=?",board.tasks[1].attempts[0].runId);
   await f.poll(); expect(f.remoteRuns()).toHaveLength(1);
   maintainBoards(f.here,true); expect(readBoard(f.here,f.id).tasks[0].status).not.toBe("failed");
+  expect(workProgressView(f.here,refreshWork(f.here,f.id)!).lines.join("\n")).toContain("lab（在对方跑）");
 });
 it("大文本证据限量返回，二进制超限留在对方并给出运行地址",async () => {
   const f = await setup(); const t = await f.dispatch(); await f.poll(); const id = f.remoteRuns()[0].id;

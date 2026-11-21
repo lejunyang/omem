@@ -25,7 +25,7 @@ updated: 2026-11-21
 - `dispatch_work` 每块可指定 device、mode 和 access。borrow 借 ACP 在本机只读，remote 在对方同名空间起运行。选择前核对配对、在线、协议与空间权限；在线设备只返回后端空位和仓库空间名称。读 `src/agents/work-device.ts`、`tools.ts`。
 - 接活四条命令放进 peerCommands，经既有 /api/peer/exec 按配对令牌校验；node.acceptWork 默认关闭，acceptWorkFrom 按配对标识覆盖。远端档案按名字找，找不到用主助手；只读令牌拒写，写模式只开放任务空间的记忆、页面和事项。读 `src/agents/peer-work.ts`、`runner.ts`。
 - 尝试记设备、模式、远端运行、期限与幂等键；本地轮询队列按索引限批处理，短时断网恢复继续，到期或失联一小时失败。取消先到也作废幂等键，重派后旧结果只记迟到。产物复用课题的 2 MB / 8 MB 上限，远端用量进入本地运行。读 `src/agents/work-board.ts`、`studies/remote.ts`。
-- readBoard 和统一进度返回设备显示名、模式、远端链接、期限和迟到字段；飞书卡片并列标设备。接活开关与进度网页细节待接入。双临时 App 和假 ACP 的验证见 `test/work-board-peer.test.ts`。
+- readBoard 和统一进度返回 deviceName、mode、remoteRunId、remoteUrl、deadline、lateAt；远端用量跟随本地尝试去重汇总。飞书卡片并列标设备，从 `src/agents/progress.ts`、`progress-runs.ts`、`src/channels/lark-work-progress.ts` 读起。接活开关与进度网页细节待接入。双临时 App 和假 ACP 的验证见 `test/work-board-peer.test.ts`。
 
 ## 设置页按区域显示，接上通知出口、出网代理、云端工具和成员的例行整理（2026-11-21）
 
