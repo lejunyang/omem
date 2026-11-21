@@ -72,9 +72,13 @@ const TRAE_EFFORTS: Record<string, string[]> = { m1: [], m2: ["low", "medium", "
 // before its model list is loaded); it is then announced with a config_option_update.
 const lateEffort = Number(process.env.FAKE_LATE_EFFORT ?? 0);
 const startedAt = Date.now();
+// FAKE_CUT_UNTIL=epoch ms (FAKE_CUT=effort|model, effort by default): until then every session lists a cut-down
+// catalog (no effort option, or no model m2), as an adapter does when it could not fetch its model list.
+const cutUntil = Number(process.env.FAKE_CUT_UNTIL ?? 0);
+const cut = () => (Date.now() < cutUntil ? process.env.FAKE_CUT ?? "effort" : "");
 const traeOptions = (model: string) => [
-  { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: Object.keys(TRAE_EFFORTS).map((v) => ({ value: v, name: v })) },
-  ...(TRAE_EFFORTS[model].length && Date.now() - startedAt >= lateEffort ? [{ id: "reasoning_effort", name: "Effort", category: "thought_level", type: "select", currentValue: TRAE_EFFORTS[model][0], options: TRAE_EFFORTS[model].map((v) => ({ value: v, name: v })) }] : []),
+  { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: Object.keys(TRAE_EFFORTS).filter((v) => cut() !== "model" || v !== "m2").map((v) => ({ value: v, name: v })) },
+  ...(TRAE_EFFORTS[model].length && Date.now() - startedAt >= lateEffort && cut() !== "effort" ? [{ id: "reasoning_effort", name: "Effort", category: "thought_level", type: "select", currentValue: TRAE_EFFORTS[model][0], options: TRAE_EFFORTS[model].map((v) => ({ value: v, name: v })) }] : []),
 ];
 const reviewModels = process.env.FAKE_REVIEW_MODELS?.split(",");
 const reviewModelOptions = (model: string) => [{ id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: reviewModels!.map((value) => ({ value, name: value })) }];
@@ -103,6 +107,12 @@ new AgentSideConnection(
       if (reviewModels) return { sessionId: id, configOptions: reviewModelOptions(state.model) } as never;
       if (trae && lateEffort && process.env.FAKE_LATE_EFFORT_ANNOUNCE)
         setTimeout(() => void conn.sessionUpdate({ sessionId: id, update: { sessionUpdate: "config_option_update", configOptions: traeOptions(state.model) } } as never), Math.max(0, lateEffort - (Date.now() - startedAt)) + 30);
+      // FAKE_LAUNCHED=model:effort: the session starts on them (an adapter given a launch-time config) and says so in models.currentModelId.
+      const launched = process.env.FAKE_LAUNCHED?.split(":");
+      if (trae && launched) {
+        state.model = launched[0];
+        return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] }, models: { currentModelId: launched[0] + "[" + launched[1] + "]", availableModels: [] }, configOptions: traeOptions(launched[0]) } as never;
+      }
       if (trae) return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] }, configOptions: traeOptions("m1") } as never;
       return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }, { id: "read-only", name: "ro" }] } };
     },

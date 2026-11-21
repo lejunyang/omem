@@ -4,6 +4,7 @@ import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
+import { launchConfigEnv } from "./catalog.ts";
 import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { isQuotaMessage } from "./capacity.ts";
@@ -103,15 +104,62 @@ export type AcpHandle = {
   probe?: AgentProbe;
 };
 
-/** How long a run that named a thinking level waits for the agent to list that setting before failing. */
-let effortWaitMs = 12_000;
+/** How long a run that named a thinking level waits, within one session, for the agent to list that setting. */
+let effortWaitMs = 3_000;
 export function setEffortWaitForTests(ms: number) {
   effortWaitMs = ms;
 }
 
+/**
+ * How long to wait before opening a fresh session when the agent listed less than it is known to have
+ * (openAcpOnce `cutDown`): for a run whose model or level was named, and for the others (which go on with
+ * the agent's defaults once these are used up).
+ */
+let catalogRetryMs = { named: [15_000, 30_000, 60_000, 120_000], other: [15_000, 45_000] };
+export function setCatalogRetryForTests(v: typeof catalogRetryMs) {
+  const before = catalogRetryMs;
+  catalogRetryMs = v;
+  return before;
+}
+
+/**
+ * Open a session, and open a fresh one after a wait when the agent's list of models or thinking levels
+ * came back cut down. An adapter that cannot fetch its model catalog at that moment (a flaky network, a
+ * login being refreshed) serves a shorter built-in list without thinking levels; seen on a real machine,
+ * the same backend lists everything again a minute or a few later, and a session started on the cut-down
+ * list tends to hang. A run that named its model or level keeps trying for some minutes and then fails
+ * with a retryable error; one that did not goes on with the agent's defaults after two tries.
+ */
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
+  const named = !!(opts.strictSelection?.model || opts.strictSelection?.effort);
+  const waits = named ? catalogRetryMs.named : catalogRetryMs.other;
+  for (let attempt = 0; ; attempt++) {
+    const last = attempt >= waits.length;
+    try {
+      return await openAcpOnce(profile, last && !named ? { ...opts, tolerateCatalog: true } : opts, emitSetup);
+    } catch (e) {
+      if (!(e instanceof Error) || (e as { kind?: string }).kind !== "catalog" || last || opts.probe || opts.signal?.aborted) throw e;
+      const wait = waits[attempt];
+      emitSetup({ type: "status", text: `${e.message}；${Math.round(wait / 1000)} 秒后重开会话再试（第 ${attempt + 1} 次）` });
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => { clearTimeout(timer); reject(new Error("CANCELLED")); };
+        const timer = setTimeout(() => { opts.signal?.removeEventListener("abort", onAbort); resolve(); }, wait);
+        opts.signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+  }
+}
+
+async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { tolerateCatalog?: boolean }, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
   if (opts.signal?.aborted) throw new Error("CANCELLED");
-  const env = { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env };
+  // What this backend listed the last time it was probed (probe.ts): what it is known to have.
+  const probes = opts.app && !opts.probe ? await import("./probe.ts") : null;
+  const known = probes ? probes.cachedProbe(opts.app!, profile.id, accountOf(profile)?.userId) : null;
+  // The model and level go in at launch where the backend takes them (catalog.ts launchConfig): the session then
+  // runs on them even while its catalog lists neither. A level the backend is known not to have for the model is left out.
+  const levelKnown = !profile.effort || !probes || !known || !!known.error || probes.effortsFor(known, profile.model).includes(profile.effort);
+  const atLaunch = opts.probe ? {} : launchConfigEnv(profile, { model: profile.model, effort: levelKnown ? profile.effort : null });
+  const env = { ...profile.env, ...keyEnv(profile), ...atLaunch, ...opts.mcp?.env, ...opts.env };
   const child = await (await import("./egress-run.ts")).launchRun(profile, opts, sandbox => launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, sandbox }));
   const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
@@ -143,6 +191,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   let contextUsage: AgentResult["contextUsage"];
   let sessionId = "";
   let discard: (() => Promise<void>) | undefined;
+  /** Set when setup gives up on a session it resumed that is still good (a cut-down catalog): it is not deleted. */
+  let keepSession = false;
   // Text between tool calls; the last segment is the reply proper (see replyFromSegments).
   let segments: string[] = [""];
   // Whether the model produced anything real (text, thought, tool call) in the current turn.
@@ -427,6 +477,22 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       await discard();
       return { sessionId, agent: agentName, resumed, system: false, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, discard, steer: async () => "unsupported", probe };
     }
+    // What this backend listed the last time it was probed (probe.ts). A session that lists less than that
+    // got a cut-down catalog: not “this agent has no such model / level”, but “not right now” (see openAcp).
+    // The model and level the session itself says it is on (“model[level]” or “model/level”), which is how one
+    // started on a launch-time config shows them when its catalog lists neither.
+    const onNow = /^(.*?)(?:\[([^\]]+)\]|\/([^/]+))?$/.exec(session.models?.currentModelId ?? "");
+    const levelNow = onNow?.[2] ?? onNow?.[3] ?? null;
+    const cutDown = (key: "model" | "effort", value: string, offered: string[]) => {
+      if (opts.tolerateCatalog || !probes || !known || known.error) return;
+      const usual = key === "model" ? known.models ?? [] : probes.effortsFor(known, profile.model);
+      if (!(key === "model" ? resolveModelOption(value, usual).matched : usual.includes(value))) return;
+      // A session being resumed is kept: the next try picks it up again.
+      keepSession = resumed;
+      const now = offered.length ? `这次只列出 ${offered.slice(0, 12).join("、")}` : key === "effort" ? "这次没有列出思考强度" : "这次没有列出模型";
+      // Either it could not fetch its model catalog just now, or it no longer has this one and the probe is old: the same from here.
+      throw agentRunError(`指定的${key === "model" ? "模型" : "思考强度"} ${value} 这次不可用：${agentName} 上次检测时有它，${now}（多半是它这会儿没取到模型目录；一直这样就在 设置 → AI 里重新检测）`, "catalog");
+    };
     for (const [key, value] of [
       ["model", profile.model],
       ["effort", profile.effort],
@@ -434,7 +500,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       if (!value) continue;
       const find = () => options.find((o) => (key === "model" ? isModelOption(o) : o.category === "thought_level" || /effort|reasoning/.test(o.id)));
       let option = find();
-      if (!option && key === "effort") {
+      if (!option && key === "effort" && levelNow !== value) {
         // An adapter may list the thinking levels only in its answer to a model choice, or some seconds after the
         // session opens: one has opened sessions before its model list was loaded, and a run that named a level
         // then failed within a second and passed when retried. So ask again by choosing the model it already has,
@@ -475,6 +541,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         const ids = session.models.availableModels.map((m) => m.modelId);
         const chosen = resolveModelOption(value, ids);
         if (!chosen.matched) {
+          cutDown("model", value, ids);
           if (opts.strictSelection?.model) throw new Error(`指定模型 ${value} 不可用，可选：${ids.join(", ")}`);
           emitSetup({ type: "status", text: `该 Agent 没有 ${value}，可选：${ids.join(", ")}；用它的默认模型` });
           continue;
@@ -483,7 +550,13 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         if (chosen.value !== value) emitSetup({ type: "status", text: `模型名按 ${value} 匹配为 ${chosen.value}` });
         continue;
       }
+      if (!option && key === "effort" && levelNow === value && (!profile.model || onNow?.[1] === ((options.find(isModelOption) as { currentValue?: string } | undefined)?.currentValue ?? onNow?.[1]))) {
+        // Started on this level (the launch-time config): nothing to choose, though the agent lists no levels now.
+        emitSetup({ type: "status", text: `思考强度 ${value} 已在启动时指定（后端这次没有列出思考强度）` });
+        continue;
+      }
       if (!option) {
+        cutDown(key, value, []);
         if (opts.strictSelection?.[key]) throw new Error(`该 Agent 不支持设置 ${key}，无法使用指定值 ${value}`);
         emitSetup({ type: "status", text: `该 Agent 不支持设置 ${key}，使用其默认值` });
         continue;
@@ -491,6 +564,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       const values = optionValues(option);
       const chosen = key === "model" ? resolveModelOption(value, values) : { value, matched: values.includes(value) };
       if (!chosen.matched) {
+        cutDown(key, value, values);
         if (opts.strictSelection?.[key]) throw new Error(`指定 ${key}=${value} 不可用，可选：${values.join(", ")}`);
         // Never kill the conversation over a model name: fall back to the agent default.
         emitSetup({ type: "status", text: `该 Agent 没有 ${value}，可选：${values.join(", ")}；用它的默认${key === "model" ? "模型" : "思考强度"}` });
@@ -628,7 +702,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   } catch (error) {
     opts.signal?.removeEventListener("abort", onSetupAbort);
     setupWatch.close();
-    if (!(opts.signal?.reason instanceof NetworkUnavailableError)) await discard?.();
+    if (!(opts.signal?.reason instanceof NetworkUnavailableError) && !keepSession) await discard?.();
     close();
     await stopped;
     throw sandboxStartError(accountOf(profile), stderr) ?? explain(error, profile);

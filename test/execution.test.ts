@@ -177,7 +177,13 @@ describe("temporary AI choices", () => {
         expect(result.profileId).toBe("second"); expect(events.join("")).toContain("queued-ok m3");
       }
       saveProbe(app, "second", { at: new Date().toISOString(), agent: "second", models: ["removed-model"], efforts: [] });
-      await expect(runRole(app, { role: "reviewer", spaceId: "personal", task: "核对", runId: null, execution: { ...choice, model: "removed-model", effort: undefined } })).rejects.toThrow(/不可用/);
+      // The last probe listed a model the backend no longer has: a few fresh sessions are tried (it may only have
+      // failed to fetch its catalog), then the run fails saying the model is unavailable.
+      const { setCatalogRetryForTests } = await import("../src/agents/acp.ts");
+      const waits = setCatalogRetryForTests({ named: [50, 50], other: [50] });
+      try {
+        await expect(runRole(app, { role: "reviewer", spaceId: "personal", task: "核对", runId: null, execution: { ...choice, model: "removed-model", effort: undefined } })).rejects.toThrow(/不可用/);
+      } finally { setCatalogRetryForTests(waits); }
       saveProbe(app, "second", { at: new Date().toISOString(), agent: "second", models: ["m1", "m2", "m3"], efforts: ["xhigh"] });
       const result = await callTool({ app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent" }, "ask_agent", { name: "specialist", question: "检查", execution: choice });
       expect(result.isError).toBe(false); expect(result.text).toContain("queued-ok m3");

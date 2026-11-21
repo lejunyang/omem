@@ -96,7 +96,8 @@ export type AgentProbe = {
   modelNotes?: Record<string, string>;
 };
 /** Why a run failed; used to decide whether a fallback backend/model is worth trying. */
-export type AgentFailureKind = "queue" | "idle" | "rate-limit" | "quota" | "other";
+/** `catalog`: the agent listed fewer models or thinking levels than it is known to have (acp.ts openAcp): openAcp tries fresh sessions itself; the runner does not move a named run elsewhere for it. */
+export type AgentFailureKind = "queue" | "idle" | "rate-limit" | "quota" | "catalog" | "other";
 export type AgentResult = {
   /** Latest measured context occupancy, not cumulative billed tokens. */
   contextUsage?: { used: number; size: number };
