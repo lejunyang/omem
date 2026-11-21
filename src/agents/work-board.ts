@@ -1,4 +1,4 @@
-import { workCommand, type BoardDevice, type Destination } from "./work-device.ts";
+import { workAgentSpec, workCommand, type BoardDevice, type Destination } from "./work-device.ts";
 import type { WorkResult, WorkRequest } from "./peer-work.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
@@ -60,10 +60,10 @@ export function reportPage(answer: string, runId: string, offset = 0) {
   return answer.slice(offset, end) + `\n（报告续页：read_run run_id=${runId} offset=${end}）`;
 }
 
-type AttemptRow = { task: string; entry: string; ai: string | null; profile_id: string | null; used: number | null; answer: string | null };
+type AttemptRow = { agent: string | null; task: string; entry: string; ai: string | null; profile_id: string | null; used: number | null; answer: string | null };
 function snapshot(app: App, workId: string, full = false, visible?: ReadonlySet<string>) {
   const rows = all<TaskRow>(app.db, "select * from agent_work_tasks where work_id=? order by seq", workId);
-  const attempts = all<AttemptRow>(app.db, `select t.id task,a.value entry,r.ai,r.profile_id,
+  const attempts = all<AttemptRow>(app.db, `select t.id task,a.value entry,r.ai,r.profile_id,json_extract(r.input,'$.spec') agent,
     (select json_extract(data,'$.used') from run_events where run_id=r.id and type='usage' order by seq desc limit 1) used,
     ${full ? `case when r.id=t.run_id and json_extract(a.value,'$.status')='done' then substr(json_extract(r.output,'$.answer'),1,${reportPageSize + 1}) end` : "null"} answer
     from agent_work_tasks t join json_each(t.attempts) a left join runs r on r.id=json_extract(a.value,'$.runId') where t.work_id=? order by t.seq,a.key`, workId);
@@ -72,7 +72,7 @@ function snapshot(app: App, workId: string, full = false, visible?: ReadonlySet<
       const e: Attempt = JSON.parse(a.entry);
       const end = Date.parse(e.finishedAt ?? now());
       const ai = a.ai ? JSON.parse(a.ai) as Run["ai"] : null;
-      return { ...e, deviceName: findPeer(app,e.device)?.back?.name ?? e.device, ai, backend: ai?.profile ?? a.profile_id, model: ai?.model ?? null, used: a.used,
+      return { ...e, agent: a.agent, deviceName: findPeer(app,e.device)?.back?.name ?? e.device, ai, backend: ai?.profile ?? a.profile_id, model: ai?.model ?? null, used: a.used,
         queuedMs: (e.startedAt ? Date.parse(e.startedAt) : end) - Date.parse(e.queuedAt), executionMs: e.startedAt ? end - Date.parse(e.startedAt) : 0 };
     });
     return { id: t.id, workId, seq: t.seq, title: t.title, goal: t.goal, accept: t.accept, agent: t.agent, required: !!t.required,
@@ -105,7 +105,7 @@ function coordinateIfReady(app: App, workId: string) {
     if (t.status === "cancelled") return heading;
     if (t.status !== "done" && t.status !== "failed") return `${heading}\n可选块仍在执行，本轮可先汇总必选结果。`;
     const a = t.attempts.at(-1)!;
-    return `${heading}\n本轮验收 ID：${t.id}\n验收条件：${t.accept}\n执行：${a.deviceName} ${a.mode === "remote" ? "在对方跑" : a.mode === "borrow" ? "借后端" : "本机"} · ${t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · 用时 ${took(a.executionMs)}\n报告（运行 ${a.runId}）：\n${reportPage(t.answer || t.report, a.runId)}`;
+    return `${heading}\n本轮验收 ID：${t.id}\n验收条件：${t.accept}\n执行：${a.deviceName} ${a.mode === "remote" ? "在对方跑" : a.mode === "borrow" ? "借后端" : "本机"} · ${a.agent ?? t.agent ?? "临时助手"} · ${a.backend ?? "未知后端"} · ${a.ai?.model ?? "未知模型"} · 用时 ${took(a.executionMs)}\n报告（运行 ${a.runId}）：\n${reportPage(t.answer || t.report, a.runId)}`;
   });
   const text = [`任务板 ${workId}。请对标有“本轮验收 ID”的块用 work_review 提交决定。退回重做后结束本轮；其余情况验收完即可向本人汇总，每个论断注明来自哪一块。`, ...reports].join("\n\n");
   const msg = addWorkMessage(app, work, { role: "assistant", text, meta: { command: true, board: workId } });
@@ -148,7 +148,8 @@ export function reviewBoard(app: App, workId: string, decisions: Decision[], by:
         if (JSON.parse(t.attempts).length >= 3) throw new HttpError(400, "每块最多重做 2 次，请接受或标阻塞");
         const execution = d.device === "local" ? d.execution : d.execution ?? JSON.parse(t.execution ?? "null") ?? undefined;
         run(app.db, "update agent_work_tasks set notice=1, execution=? where id=?", JSON.stringify(execution ?? null), t.id);
-        attempt(app, workId, t.id, { ...t, required: !!t.required, agent: t.agent ?? undefined, scope: JSON.parse(t.scope), spaceId: t.space_id ?? undefined, execution, boardDevice: d.boardDevice }, by, d.note);
+        const agent = d.boardDevice?.mode === "remote" ? t.agent ?? undefined : workAgentSpec(app, t.agent ?? undefined, t.space_id!)?.name ?? "assistant";
+        attempt(app, workId, t.id, { ...t, required: !!t.required, agent, scope: JSON.parse(t.scope), spaceId: t.space_id ?? undefined, execution, boardDevice: d.boardDevice }, by, d.note);
       }
     }
   });

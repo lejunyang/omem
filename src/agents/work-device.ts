@@ -3,10 +3,20 @@ import { allProfiles } from "../core/config.ts";
 import { findPeer, listPeers, peerFetch } from "../core/peers.ts";
 import { HttpError } from "../core/util.ts";
 import type { WorkInventory } from "./peer-work.ts";
+import { findAgentSpec } from "./specs.ts";
 import type { Execution } from "./execution.ts";
 
 export type Destination = { device?: string; mode?: "borrow" | "remote"; access?: "read" | "write" };
 export type BoardDevice = { device: string; mode: "borrow" | "remote"; access: "read" | "write"; backend?: string };
+
+/** Resolve the requested work profile on the device that owns the tools. */
+export function workAgentSpec(app: App, name: string | undefined, space: string) {
+  const spec = name && name !== "assistant" ? findAgentSpec(app, name) : null;
+  if (!spec || spec.status !== "active") return undefined;
+  if (spec.space && spec.space !== space && !spec.spaces.includes("*") && !spec.spaces.includes(space))
+    throw new HttpError(403, "档案无权访问任务空间");
+  return spec;
+}
 
 export async function workCommand<T>(app: App, device: string, command: string, args: unknown, timeoutMs = 10000): Promise<T> {
   const res = await peerFetch(app, device, "/api/peer/exec", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({command,args}), timeoutMs });

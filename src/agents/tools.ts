@@ -1319,7 +1319,7 @@ def({
       const t = board.tasks.find(t => t.id === d.task);
       if (!t) throw new HttpError(400,"找不到本板的块");
       const last = t.attempts.at(-1)!;
-      const target = { device: d.device ?? (last.mode ? last.device : undefined), mode: d.mode ?? (d.device === "local" ? "borrow" : last.mode), access: d.access ?? (d.device === "local" ? "read" : last.access) };
+      const target = { device: d.device ?? (last.mode ? last.device : undefined), mode: d.mode ?? (d.device === "local" ? "borrow" : last.mode), access: d.access ?? (d.device === "local" || d.mode === "borrow" ? "read" : last.access) };
       const execution = resolveBoardExecution(ctx,d.execution ?? (target.device === "local" ? undefined : t.execution),target.device);
       const boardDevice = await selectDevice(ctx.app,target,ctx.userId ?? OWNER,getRun(ctx.app,last.runId).spaceId!,execution);
       return { ...d, execution, boardDevice };

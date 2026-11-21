@@ -8,7 +8,7 @@ import { nodeId } from "../core/peers.ts";
 import { can } from "../auth/permissions.ts";
 import { cancelRun, createRun, getRun, type RunContext } from "./runs.ts";
 import { backendLimitOf, backendUsedOf, excluded, limitOf, usedOf } from "./capacity.ts";
-import { findAgentSpec } from "./specs.ts";
+import { workAgentSpec } from "./work-device.ts";
 
 export type WorkCaller = { user: string; token: string };
 const key = z.string().regex(/^[\w-]{1,100}$/);
@@ -73,9 +73,7 @@ export async function runIncomingWork(ctx: RunContext) {
   const remaining = Date.parse(req.deadline) - Date.now();
   if (remaining <= 0) throw new Error("任务期限已过");
   const space = getSpace(app, req.space);
-  const found = req.agent && findAgentSpec(app, req.agent);
-  const spec = found && found.status === "active" ? found : undefined;
-  if (spec?.space && spec.space !== space.id && !spec.spaces.includes("*") && !spec.spaces.includes(space.id)) throw new HttpError(403, "对方档案无权访问任务空间");
+  const spec = workAgentSpec(app, req.agent, space.id);
   const { runRole, listAgentProfiles, resolveRunProfile } = await import("./runner.ts");
   const preferred = resolveRunProfile(app, { actor: spec ? { spec } : { role: "assistant" } });
   const available = listAgentProfiles(app).filter(p => p.installed && !p.peer && p.transport === "acp" && !excluded(app,p));

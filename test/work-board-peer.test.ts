@@ -17,6 +17,7 @@ import { createThread } from "../src/agents/threads.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { __testHandlers, createRun, getRun, setRunOutput, addRunEvent, trackAbort } from "../src/agents/runs.ts";
 import { readBoard, pollBoardPeers, maintainBoards } from "../src/agents/work-board.ts";
+import { saveAgentSpec } from "../src/agents/specs.ts";
 import { runRole } from "../src/agents/runner.ts";
 import { artifactInbox, artifactsByIds, collectInbox } from "../src/agents/artifacts.ts";
 import { runProgress } from "../src/agents/progress.ts";
@@ -100,6 +101,27 @@ it("borrow 借对方假 ACP 后端，在本机读库并记录设备，写入被�
   const { settleBoardRun } = await import("../src/agents/work-board.ts"); settleBoardRun(f.here,getRun(f.here,id));
   expect(readBoard(f.here,f.id).tasks[0].status).toBe("done");
   expect(f.remoteRuns()).toHaveLength(0); expect(readBoard(f.here,f.id).tasks[0].attempts[0]).toMatchObject({device:"lab",mode:"borrow"});
+},60000);
+it.each(["local","borrow"])("远端独有档案退回 %s 时，排队前选用本机主助手并执行",async target => {
+  const f = await setup();
+  saveAgentSpec(f.there,{name:"peer-reader",description:"核对材料",prompt:"核对设备材料",tools:["search","read_source"]},"user");
+  importText(f.here,"personal",{title:"设备材料",text:"设备材料只存在本机。"});
+  const t = await f.dispatch("remote",{agent:"peer-reader"}); await f.poll();
+  const remoteId = f.remoteRuns()[0].id;
+  async function handle(app: App,id: string) {
+    const r = getRun(app,id);
+    const result = await __testHandlers.get(r.kind)!({app,run:r,signal:new AbortController().signal,
+      event:(type,data)=>addRunEvent(app,id,type,data),output:data=>setRunOutput(app,id,data)});
+    return (result as {answer:string}).answer;
+  }
+  await f.complete(remoteId,await handle(f.there,remoteId)); await f.poll();
+  const redo = await callTool(f.ctx,"work_review",{work_id:f.id,decisions:[{task:t.id,decision:"redo",note:"核对本机材料",
+    ...(target === "local" ? {device:"local"} : {mode:"borrow"})}]});
+  expect(redo.isError,redo.text).toBe(false);
+  const attempts = readBoard(f.here,f.id).tasks[0].attempts;
+  expect(attempts.map(a => a.agent)).toEqual(["peer-reader","assistant"]);
+  expect(attempts[1]).toMatchObject({device:target === "local" ? "desk" : "lab", status:"queued"});
+  expect(await handle(f.here,attempts[1].runId)).toContain("只存在本机");
 },60000);
 it("未开启接活、空间缺失、非映射成员、未配对及旧协议均明确拒绝",async () => {
   const f = await setup(); f.there.config.node.acceptWork = "off";
