@@ -609,6 +609,10 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
     return;
   }
   const space = locate(app, req, rule.at);
+  if ("cap" in rule && rule.cap === "flows.view" && rule.at === "item:p.id") {
+    if (!space || !can(app, userId, rule.cap, space)) throw new HttpError(404, "事项不存在");
+    return;
+  }
   if (!space) throw new HttpError(rule.at.includes(":") ? 404 : 400, rule.at.includes(":") ? "要找的内容不存在" : "要指定空间");
   requirePerm(app, userId, "cap" in rule ? rule.cap : rule.s, space);
   if (rule.at.startsWith("src:")) {

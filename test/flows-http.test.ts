@@ -271,7 +271,11 @@ describe("流程 HTTP", () => {
     saveFlow(app, raw, "user");
     const privateItem = upsertItem(app, undefined, { title: "个人事项", spaceId: "personal" }, "user");
     await startFlow(app, privateItem.id, "demo", { actor: "owner" });
-    expect((await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(404);
+    const hidden = await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers });
+    const missing = await server.inject({ url: "/api/items/missing-item/flow", headers });
+    expect(hidden.statusCode).toBe(404);
+    expect(missing.statusCode).toBe(404);
+    expect(hidden.json()).toEqual(missing.json());
     addMember(app, "personal", "member-a", "editor");
     expect((await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(404);
     expect((await server.inject({ method: "POST", url: `/api/items/${privateItem.id}/flow/stages/check/confirm`, payload: {}, headers })).statusCode).toBe(403);
