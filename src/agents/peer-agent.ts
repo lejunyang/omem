@@ -7,7 +7,7 @@ import { trimTools } from "../auth/tools.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
 import { ROLE_TOOLS, TOOL_GROUPS, WORK_BOARD_TOOLS } from "./tool-help.ts";
 import { addRunEvent, createRun, flushRunText, getRun, setRunOutput } from "./runs.ts";
-import { callTool, mcpTools, toolList, type ToolContext } from "./tools.ts";
+import { callTool, dropUnavailable, mcpTools, toolList, type ToolContext } from "./tools.ts";
 
 /**
  * An outside Agent working on this instance's data from another device: the Claude Code on a
@@ -101,8 +101,9 @@ export function peerToolContext(app: App, scope: PeerAgentScope, runId: string |
   if (spaces && !spaces.includes(spaceId)) throw new HttpError(asked ? 400 : 403, asked ? `默认空间 ${spaceId} 不在限定的空间里` : `没有空间 ${spaceId} 的权限`);
   const caller = clean(scope.caller, 40, "peer");
   const tools = peerToolNames({ readOnly: scope.readOnly });
+  trimTools(app, userId, tools, { spaces });
+  dropUnavailable(app, userId, tools);
   if (userId !== OWNER) {
-    trimTools(app, userId, tools);
     // Being the coder or reviewer of a delegation is for those who may delegate code.
     if (!can(app, userId, "code.delegate")) for (const t of PEER_REVIEW_TOOLS) tools.delete(t);
   }

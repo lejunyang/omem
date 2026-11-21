@@ -216,7 +216,7 @@ describe("roles and permissions", async () => {
     // An account that can read both projects still uses the narrower run scope.
     expect((await list("cat", null)).text).toContain("private-flow");
     expect((await list("cat", ["team"])).text).not.toContain("private-flow");
-    expect(JSON.parse((await list("ann", ["other"])).text).flows).toEqual([]);
+    expect((await list("ann", ["other"])).isError).toBe(true);
 
     const limited = "limited-flow-reader";
     createUser(app, { id: limited, name: "流程读者" });
@@ -600,6 +600,6 @@ describe("roles and permissions", async () => {
     const token = issueToolToken({ runId: null, spaceId: "team", spaces: ["team"], tools: null, actor: "agent", userId: "ann" });
     const ctx = toolContextForToken(app, token)!;
     expect((await callTool(ctx, "save_rule", {})).text).toMatch(/没有这项权限/);
-    expect((await callTool(ctx, "write_page", { page: "x", title: "x", summary: "x", body: "x", space: "team" })).text).toMatch(/不能写 Wiki|无权/);
+    expect((await callTool(ctx, "write_page", { page: "x", title: "x", summary: "x", body: "x", space: "team" })).text).toMatch(/不能写 Wiki|无权|没有这项权限/);
   });
 });

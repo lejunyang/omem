@@ -1,3 +1,4 @@
+import { spacesWithCapability } from "../auth/capabilities.ts";
 import { lentByOthers, localOnly, meshNote } from "../core/mesh.ts";
 import { REVIEW_TOOLS } from "./review.ts";
 import { existsSync, readFileSync } from "node:fs";
@@ -172,14 +173,16 @@ function lessonRows(app: App, spaceId: string, userId: string, spec: string | nu
   const vetted = app.config.memory.review.enabled ? "and (created_by = 'user' or review_verdict = 'keep')" : "";
   // A replay arm: the lessons as they stood at the question's time, minus what its variant leaves out.
   const w = memoryWhere(view, "memories");
+  const allowed = spacesWithCapability(app, userId, "memories.view");
   return all<Lesson>(
     app.db,
     // A profile's own experience goes with it whatever space it runs in (an investigator learns from
     // the on-call groups of one project space and is called from the personal space).
-    `select id, kind, subject, content, agent, ${vectors ? "embedding" : "null as embedding"} from memories where ${view ? w.sql : "status = 'active'"} ${vetted} and (agent is null or agent = ?) and (
+    `select id, kind, subject, content, agent, ${vectors ? "embedding" : "null as embedding"} from memories where ${view ? w.sql : "status = 'active'"} ${vetted} ${allowed ? "and space_id in (select value from json_each(?))" : ""} and (agent is null or agent = ?) and (
        (kind = 'preference' and space_id in (?, ?) and coalesce(user_id, 'owner') = ?) or (kind = 'experience' and (space_id = ? or agent = ?))
      ) order by kind = 'preference' desc, agent is not null desc, updated_at desc limit 2000`,
     ...(view ? w.params : []),
+    ...(allowed ? [JSON.stringify(allowed)] : []),
     spec ?? "",
     personalSpaceId(userId),
     spaceId,
@@ -209,8 +212,8 @@ const TASK_LESSONS = 8;
 /** A task can be a whole diff; what it is about is at its start. */
 const ABOUT_CHARS = 2000;
 
-function lessonSet(app: App, rows: Lesson[], own: string, left: number, canRecall: boolean): LessonSet {
-  const where = left > 0 && canRecall ? ownFolderNote(app, own) : "";
+function lessonSet(app: App, rows: Lesson[], own: string, left: number, canRecall: boolean, userId: string): LessonSet {
+  const where = left > 0 && canRecall ? ownFolderNote(app, own, 12, spacesWithCapability(app, userId, "memories.view")) : "";
   const note = where ? `你自己的经验还有 ${left} 条没列在这里，按目录放着；做到相关的事时用 recall(folder="目录", query="关键词") 查：\n${where}` : "";
   return { text: lessonLines(rows), recallNote: note, ids: rows.map((r) => r.id) };
 }
@@ -225,7 +228,7 @@ function standingLessons(app: App, spaceId: string, userId: string, own: string,
   const prefs = rows.filter((r) => r.kind === "preference").slice(0, STANDING_PREFS);
   const exp = rows.filter((r) => r.kind === "experience" && r.agent);
   const shown = exp.length <= OWN_WHOLE ? exp : exp.slice(0, OWN_RECENT);
-  return lessonSet(app, [...prefs, ...shown], own, exp.length - shown.length, canRecall);
+  return lessonSet(app, [...prefs, ...shown], own, exp.length - shown.length, canRecall, userId);
 }
 
 /**
@@ -254,7 +257,7 @@ async function taskLessons(app: App, spaceId: string, userId: string, own: strin
     return scored.length ? scored.sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.r) : list.slice(0, n);
   };
   const told = closest(exp, OWN_WHOLE);
-  return lessonSet(app, [...mine.filter((r) => r.kind === "preference").slice(0, OWN_PREFS), ...told, ...closest(shared, TASK_LESSONS)], own, exp.length - told.length, canRecall);
+  return lessonSet(app, [...mine.filter((r) => r.kind === "preference").slice(0, OWN_PREFS), ...told, ...closest(shared, TASK_LESSONS)], own, exp.length - told.length, canRecall, userId);
 }
 
 type LessonInput = { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string; replay?: ReplayArm };
@@ -511,7 +514,6 @@ export function prepareRun(
   // A replay arm reads and nothing else, whatever its role or profile may do elsewhere.
   if (input.replay) for (const t of [...tools]) if (!input.replay.tools.includes(t)) tools.delete(t);
   // Not what the person it works for may not do (src/auth/tools.ts), nor what needs something they lack.
-  trimTools(app, userId, tools);
   dropUnavailable(app, userId, tools);
   const capabilities = backendCapabilities(profile);
   if (capabilities.omemAccess === "none") tools.clear();
@@ -524,6 +526,7 @@ export function prepareRun(
   const allowed = scopeFor(app, userId, input.readScope ?? null);
   const related = guest ? [] : relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
+  trimTools(app, userId, tools, { spaces: readable, writable: scoped ?? undefined });
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const account = accountOf(profile);
@@ -531,6 +534,7 @@ export function prepareRun(
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
   const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const memorySpaces = spacesWithCapability(app, userId, "memories.view");
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
   const repos = guest ? [] : workRepos(app, input.runId).filter((id) => id !== space.id).flatMap((id) => findSpace(app, id) ?? []);
@@ -586,7 +590,7 @@ export function prepareRun(
     lessonIds: told.ids,
     // Guests never see the owner's memories unasked. `agent` names the run in the recall accounting
     // (none for the main assistant); `own` is whose memories it sees besides the shared ones.
-    recall: guest ? null : { spaces: readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), own: spec?.name ?? roleName, userId },
+    recall: guest ? null : { spaces: memorySpaces?.filter(id => !readable || readable.includes(id)) ?? readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), own: spec?.name ?? roleName, userId },
   };
 }
 

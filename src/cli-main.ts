@@ -8,7 +8,7 @@ import { ask, scheduleIngest, scheduleSpaceSync, type PageBrief } from "./agents
 import { createMcpServer } from "./agents/mcp-server.ts";
 import { listAgentProfiles } from "./agents/runner.ts";
 import { createRun, getRun, waitForRun, type Run } from "./agents/runs.ts";
-import { callTool, mcpTools, toolSchemas } from "./agents/tools.ts";
+import { callTool, contextToolNames, mcpTools, toolSchemas } from "./agents/tools.ts";
 import { toolArgs } from "./agents/tool-cli.ts";
 import { ROLE_TOOLS } from "./agents/tool-help.ts";
 import { READ_ONLY_TOOLS } from "./agents/peer-agent.ts";
@@ -1706,7 +1706,7 @@ program
       return;
     }
     const ctx = externalToolContext(o);
-    const server = createMcpServer({ list: async () => mcpTools(ctx.tools), call: (name, args) => callTool(ctx, name, args) });
+    const server = createMcpServer({ list: async () => mcpTools(contextToolNames(ctx)), call: (name, args) => callTool(ctx, name, args) });
     await server.connect(new StdioServerTransport());
   });
 

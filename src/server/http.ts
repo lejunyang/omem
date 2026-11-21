@@ -64,7 +64,7 @@ import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
 import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewRounds, queueReason, runEvents, runUser } from "../agents/runs.ts";
-import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
+import { callTool, contextToolNames, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, networkPolicySchema, saveConfig } from "../core/config.ts";
@@ -235,7 +235,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       console.warn(`[omem] 工具调用被拒：令牌无效（${req.method} ${req.url}；常见于服务重启前开的 Agent 会话）`);
       throw new HttpError(401, "无效的工具令牌");
     }
-    return { list: async () => mcpTools(ctx.tools), call: (name: string, args: unknown) => tracedCall(ctx, name, args) };
+    return { list: async () => mcpTools(contextToolNames(ctx)), call: (name: string, args: unknown) => tracedCall(ctx, name, args) };
   };
   /**
    * Each call an agent makes from outside the process is recorded on its run when it arrives and

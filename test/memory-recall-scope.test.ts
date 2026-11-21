@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { roleNames, upkeepRoles } from "../src/core/config.ts";
 import { all, run } from "../src/core/db.ts";
+import { addMember, createUser } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { lessonsForTask, lessonIdsForTask, prepareRun, runRole } from "../src/agents/runner.ts";
 import { agentSpecSchema } from "../src/agents/specs.ts";
@@ -83,6 +84,23 @@ describe("memory recall scope", () => {
     memory(app, "跨空间的经验", { spaceId: "project-a", agent: "investigator", folder: "调查" });
     expect(ownFolderNote(app, "investigator")).toContain("空间 personal · 发布");
     expect(ownFolderNote(app, "investigator")).toContain("空间 project-a · 调查");
+  });
+
+  it("keeps memories denied in one space out of standing, task and passive recall", async () => {
+    const app = setup();
+    const user = createUser(app, { id: "reader", name: "项目成员" });
+    for (const spaceId of ["shared", "other"]) {
+      createSpace(app, { id: spaceId, name: spaceId });
+      addMember(app, spaceId, user.id, "reader");
+      memory(app, `项目经验-${spaceId}`, { spaceId, agent: "investigator" });
+    }
+    run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,'memories.view','space','other','deny',current_timestamp,'owner')", user.id);
+    const prep = prepareRun(app, { userId: user.id, runId: null, actor: { spec: spec() }, spaceId: "shared", spaces: ["shared", "other"] });
+    expect(prep.recall?.spaces).toEqual(["shared"]);
+    for (const instructions of [prep.system, await lessonsForTask(app, { ...task(), spaceId: "shared", userId: user.id })]) {
+      expect(instructions).toContain("项目经验-shared");
+      expect(instructions).not.toContain("项目经验-other");
+    }
   });
 
   it("selects 12 own experiences by task, caps shared lessons at 8 and rejects unvetted ones", async () => {
