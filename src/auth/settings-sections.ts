@@ -64,7 +64,11 @@ export const ownerControls: Record<string, string[]> = {
     "DELETE /api/agent-accounts/:user/:backend",
   ],
   "agents.accountIsolation": [],
-  "agents.networkPolicies": [],
+  "agents.networkPolicies": [
+    "GET /api/agents/network-policies",
+    "PUT /api/agents/network-policies",
+    "POST /api/agents/network-policies/:id/check",
+  ],
   "agents.profiles": [
     "POST /api/agent-registry/:id",
     "POST /api/agents/:id/adapter/upgrade",
@@ -85,6 +89,7 @@ export const ownerControls: Record<string, string[]> = {
   "token": [],
   "https": [],
   "webUrl": [],
+  "remoteGrants": [],
   "shares.expiryDays": [],
   "auth": [
     "PUT /api/auth/providers/:id/app",
@@ -145,7 +150,13 @@ export const ownerControls: Record<string, string[]> = {
   "documents.converter": [],
   "embeddings.url": [],
   "embeddings.apiKeyEnv": [],
-  "mcp": [],
+  "mcp": [
+    "GET /api/mcp",
+    "PUT /api/mcp/:name",
+    "DELETE /api/mcp/:name",
+    "POST /api/mcp/:name/test",
+    "PUT /api/roles/:name/mcp",
+  ],
   "agentSkills": [],
   "plugins": [
     "POST /api/plugins/install",

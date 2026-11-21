@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { testApp } from "./helpers.ts";
-import { createApiToken, createUser } from "../src/core/users.ts";
+import { upsertSource } from "../src/sources/store.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
+import { createSpace } from "../src/core/spaces.ts";
 import { saveRole } from "../src/auth/permissions.ts";
 import { configSchema } from "../src/core/config.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
@@ -44,6 +46,7 @@ it("projects sections, rejects mixed writes atomically and audits changed keys w
     expect(owner.config.notify.outlets.other).toEqual([]);
     expect(view.home).toBeUndefined();
     expect((await put({ ...view.config, port: app.config.port + 1, timezone: "UTC" })).statusCode).toBe(403);
+    expect((await put({ remoteGrants: { defaultHours: 4, maxHours: 24 } })).statusCode).toBe(403);
     const hidden = await put({ mentions: { reply: { lark: { group: "auto" } } } });
     expect(hidden.statusCode).toBe(403);
     expect(hidden.body).toContain("mentions.reply");
@@ -107,7 +110,7 @@ it("checks section grants on the card APIs and omits host settings from member r
     const groups = {
       AI: ["ai", "/api/ai", "/api/agents/load"],
       knowledge: ["knowledge", "/api/storage", "/api/search/providers", "/api/lark/captured", "/api/lark/wiki-crawls"],
-      assistant: ["assistant", "/api/schedules", "/api/replays"],
+      assistant: ["assistant", "/api/schedules", "/api/replays", "/api/agents", "/api/mentions"],
       channels: ["channels", "/api/desktop"],
       members: ["members", "/api/auth/providers"],
     };
@@ -116,6 +119,14 @@ it("checks section grants on the card APIs and omits host settings from member r
       app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values('cards',?,'global','','allow','0','owner')").run(`settings.${area}.view`);
       for (const url of urls) expect((await get(url)).statusCode, url).toBe(200);
     }
+    createSpace(app, { id: "proj", name: "项目" });
+    addMember(app, "proj", "cards", "reader");
+    for (const id of ["shown", "hidden"]) {
+      const src = upsertSource(app, { spaceId: "proj", kind: "chat", uri: `lark:${id}`, title: id, text: "一段聊天" });
+      app.db.prepare("insert into lark_cursors(chat_id,name) values(?,?)").run(id,id);
+      if (id === "hidden") app.db.prepare("update sources set visibility='restricted' where id=?").run(src.id);
+    }
+    expect((await get("/api/lark/captured")).json().chats.map((c: {chatId: string}) => c.chatId)).toEqual(["shown"]);
     app.config.ai.providers = [{ id: "demo", name: "测试", kind: "openai", baseUrl: "https://example.com/private", backends: [] }];
     expect((await get("/api/ai")).json().providers[0]).toEqual({ id: "demo", name: "测试", kind: "openai", hasKey: false, keyHint: "" });
     app.config.guard.modelDir = "private-model-directory";

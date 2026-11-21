@@ -82,7 +82,7 @@ import { cloudBackendStatus, cloudAddress, checkCloudAddress, confirmProbe, prob
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute, requestReviewAudience } from "../auth/routes.ts";
-import { hiddenSourceIds, sourceReadable, hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
+import { restrictedSourceFilter, hiddenSourceIds, sourceReadable, hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
 import { registerCodeIndexRoutes } from "../sources/code-index-http.ts";
 import { audit, can, canAccessRun, runAudience, canReadRun, globalPerms, isOwner, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
@@ -1024,7 +1024,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ----------------------------------------------------------- agents & skills
-  server.get("/api/agents", async () => listAgentSpecs(app, { includeDrafts: true }));
+  server.get("/api/agents", async req => {
+    const specs = listAgentSpecs(app, { includeDrafts: true });
+    return who(req) === OWNER ? specs : specs.map(({ name, description, status, agent, model, effort }) => ({ name, description, status, agent, model, effort }));
+  });
   // A spec with what it has learned (attached skills, its own memories, proposals, usage).
   server.get("/api/agents/:name", async (req) => {
     const name = (req.params as { name: string }).name;
@@ -2885,8 +2888,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Chats capture has read, with kind, mute state and what is done with them.
   server.get("/api/lark/captured", async req => {
     const { capturedChats } = await import("../channels/lark-personal.ts");
-    const spaces = accessibleSpaces(app, who(req));
-    return { chats: capturedChats(app).filter(c => !spaces || spaces.includes(c.spaceId)), policies: app.config.lark.capture.policies };
+    const user = who(req);
+    const policies = app.config.lark.capture.policies;
+    if (user === OWNER) return { chats: capturedChats(app), policies };
+    const scope = spacesWithCapability(app, user, "sources.view");
+    const filter = restrictedSourceFilter(app, user);
+    const chats = all(app.db, `select c.chat_id chatId, sources.title name, sources.space_id spaceId, c.kind,
+        case when c.last_time>0 then strftime('%Y-%m-%dT%H:%M:%fZ',c.last_time/1000.0,'unixepoch') end lastMessageAt
+      from sources join lark_cursors c on c.chat_id=substr(sources.uri,6)
+      where sources.space_id in (select value from json_each(?)) and sources.kind='chat'
+        and sources.deleted_at is null and sources.uri like 'lark:%' and ${filter.sql}
+      order by c.last_time desc,c.chat_id limit 500`, JSON.stringify(scope), ...filter.params);
+    return { chats, policies };
   });
   // History before the first read, a few pages per poll into monthly archive sources.
   server.post("/api/lark/chats/:id/backfill", async (req) => {

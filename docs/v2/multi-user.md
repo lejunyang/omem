@@ -221,10 +221,12 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 | GET agents/load | AI | agents.manage → view | 当前负载和近期统计，省略账号额度 |
 | GET plugins、plugins/:id；PUT plugins/:id/settings、plugins/:id/icon | AI | 读仍对登录用户开放，写由 settings.manage → edit | 列表、详情和改图标响应只含展示字段。插件偏好属于当前用户 |
 | GET lark/bot-check、desktop | 渠道 | settings.manage、desktop.control → view | 机器人的缺失权限及事件。桌面工具返回安装状态 |
-| GET lark/captured、lark/wiki-crawls | 知识 | settings.manage → view | 仅可读空间的采集记录。爬取省略入口、错误和队列细节 |
+| GET lark/captured、lark/wiki-crawls | 知识 | settings.manage → view | 采集会话只列有权查看原件的最近 500 条，返回 chatId、name、spaceId、kind、lastMessageAt。爬取省略入口、错误和队列细节 |
 | GET search/providers | 知识 | settings.manage → view | 提供者标识、名称、插件和延迟 |
 | GET storage、media；POST storage/scan | 知识 | 原路由 settings.manage，处理函数限本人 → view / edit | 扫描时间、数据库与文件分类统计。省略目录、文件明细、日志。媒体返回工具状态和配置 |
+| GET agents、mentions | 助手 | agents.manage → view | 档案的名称、说明、状态与模型。提醒返回用量，私人回复统计省略 |
 | GET schedules、replays；PUT schedules/:id | 助手 | agents.manage → view / edit | 定时任务按空间过滤，省略运行参数，成员可改周期和启停。复盘返回状态和汇总 |
+| PUT agent-role-model；GET review-settings、review-options，PUT review-settings | AI / 助手 | 已按对应区域 view / edit 授权 | 角色模型配置与评审表单沿用原字段 |
 | GET auth/providers | 成员 | users.manage → view | 登录方式和回调地址，省略应用配置和诊断信息 |
 | GET spaces、spaces/:id | 知识 | 登录及空间读取权限延续 | 空间列表省略仓库路径和内部设置，仅列可读空间 |
 | 对等设备、外部访问、出网、操作规则、AI 账号和密钥、后端安装及插件信任 | 对应区域 | 专用管理权限或本人 → 本人 | 成员不接收凭据、启动命令或设备连接资料 |
