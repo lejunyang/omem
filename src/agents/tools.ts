@@ -6052,6 +6052,8 @@ def({
       severity: z.enum(["blocker", "major", "minor", "nit"]).describe("blocker 阻断 / major 严重 / minor 一般 / nit 提示"),
       file: z.string().max(500).optional().describe("仓库内路径；几个仓库时写成 仓库空间id/路径"),
       line: z.number().int().min(1).optional(),
+      startLine: z.number().int().min(1).optional().describe("多行问题的起始行，line 填结束行"),
+      side: z.enum(["LEFT", "RIGHT"]).optional().describe("删除侧填 LEFT，默认用改动后的 RIGHT"),
       title: z.string().min(1).max(200),
       detail: z.string().max(4000).optional().describe("Markdown：现在的实现、源实现（迁移时）、触发条件、问题，各点后面直接带引用 [说明](路径:起-止)、[说明](src:<原件id>#L起-L止)（任务里的“每条问题怎么写”）"),
       suggestion: z.string().max(4000).optional(),

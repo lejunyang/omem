@@ -477,7 +477,7 @@ async function runLook(app: App, rootId: string, look: LookState) {
   let snap: ReturnType<typeof snapshot> | null = null;
   try {
     snap = snapshot(worktreesOf(app, rootId), join(app.runsDir, child.id, "snap"), look.heads);
-    setRunOutput(app, reviewed.id, { reviewPlan: { ...plan, looks: [...new Set([...(plan.looks ?? []), ...names])] } });
+    setRunOutput(app, reviewed.id, { lookReviewHeads: look.heads, reviewPlan: { ...plan, looks: [...new Set([...(plan.looks ?? []), ...names])] } });
     const ctx = await reviewContext(app, reviewed.id, undefined, { since: look.since, to: look.heads, dirs: snap.dirs, cwd: snap.cwd });
     const round = look.round;
     const outcomes = await Promise.allSettled(look.checks.map(async (c) => {

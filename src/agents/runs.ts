@@ -10,6 +10,7 @@ import { all, one, run, tx, withinTx } from "../core/db.ts";
 import { HttpError, json, newId, now, localStamp } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
 import { triggerFor, withFollowUp, type RunTrigger } from "../core/run-trigger.ts";
+import { offerReviewPublish } from "./review-sync.ts";
 import { emitOmem, runOutputFacts } from "../rules/omem-events.ts";
 
 export type RunKind = "commit-claim" | "item-follow" | "flow-review" | "study-trial" | "peer-trial" | "flow-stage" | "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "note-review" | "memory-review" | "memory-organize" | "skill-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state" | "quality-audit" | "wiki-sweep" | "listen-coach" | "outcome-review" | "problem-follow";
@@ -274,6 +275,7 @@ export function setRunOutput(app: App, id: string, output: Record<string, unknow
     if (!("appliedAt" in output || "discardedAt" in output || "reviewStage" in output)) return null;
     const facts = runOutputFacts(app, id, prev, output);
     if (facts?.type === "review.done") {
+      offerReviewPublish(app, id);
       const lead = output.reviewLead as { verdict?: string } | undefined;
       enqueuePluginEvent(app, "review.finished", facts.space ?? null, () => ({
         userId: runUser(app, id), entity: { kind: "run", id }, actor: { kind: "host" },

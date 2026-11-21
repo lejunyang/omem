@@ -95,7 +95,8 @@ export const manifestSchema = z.object({
    */
   permissions: z
     .object({
-      events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution"])).default([]),
+      events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution", "finding.thread"])).default([]),
+      reviewProvider: z.boolean().default(false),
       itemProvider: z.boolean().default(false),
       metricProvider: z.boolean().default(false),
       write: z.boolean().default(false),
@@ -105,7 +106,7 @@ export const manifestSchema = z.object({
       /** Backends it brings a login method for (`api.agentLogin`, docs/v2/agent-accounts.md §6): it writes credentials into members' account folders. */
       agentLogin: z.array(z.string()).default([]),
     })
-    .default({ events: [], itemProvider: false, metricProvider: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
+    .default({ events: [], reviewProvider: false, itemProvider: false, metricProvider: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
 }).refine((m) => Object.keys(m.mcp).every((n) => /^[a-z][a-z0-9-]{0,39}$/.test(`${m.id}-${n}`)), "MCP 服务加插件前缀后最多 40 个字符")
   .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符")
   .superRefine((m, ctx) => {
@@ -356,7 +357,7 @@ async function loadIsolated(app: App, p: LoadedPlugin) {
   const server = serverFile(p.dir, manifest);
   if (!server || !existsSync(server)) return;
   const sb = await startSandbox(app, { id: manifest.id, dir: p.dir, server, services: manifest.services }, {
-    subscribe: registerProcessHooks(manifest, p.connectors).subscribe,
+    ...registerProcessHooks(manifest, p.connectors),
     prefix: `${manifest.id}_`,
     packageRoot: packageRoot(),
     connected: connectedTo(manifest.id),

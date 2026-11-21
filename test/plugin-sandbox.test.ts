@@ -29,11 +29,21 @@ describe("isolated plugins", async () => {
   await loadPlugins(app);
   const dir = join(app.home, "plugins", "probe2");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\nconnectors: [{ provider: connect-github }]\npermissions: { events: [item.status], write: true, platforms: [connect-probe] }\n");
+  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\nconnectors: [{ provider: connect-github }]\npermissions: { reviewProvider: true, events: [item.status], write: true, platforms: [connect-probe] }\n");
   writeFileSync(
     join(dir, "server.mjs"),
     `import { readFileSync } from "node:fs";
 export default function register(api) {
+  api.reviewProvider({ id: "reviews", label: "讨论", objectKind: "pr",
+    async publish(ctx, req) {
+      if (ctx.store || ctx.userId !== "owner" || !ctx.signal || ctx.idempotencyKey !== "test-key") throw Error("上下文不符");
+      if (req.anchor.line === 2) throw Object.assign(Error("位置已变化"), { code: "REVIEW_ANCHOR_OUTDATED" });
+      await (await ctx.connection("connect-github")).fetch("/user");
+      return { id: "thread", url: "https://example.org/thread" };
+    },
+    async readThread(ctx) { return { state: ctx.idempotencyKey ? "invalid" : "open" }; },
+    async resolve(ctx) { return { state: ctx.idempotencyKey === "test-key" ? "resolved" : "invalid" }; },
+  });
   api.subscribe({ id: "updates", events: ["item.status"], async handle(ctx, event) {
     if (event.data.title !== "事项" || ctx.spaceId !== event.spaceId || ctx.store || !ctx.signal) throw Error("事件上下文不正确");
     const c = await ctx.connection("connect-github");
@@ -80,6 +90,20 @@ export default function register(api) {
     await entry.def.handle(ctx, { v: 1, id: "e1", type: "item.status", at: new Date().toISOString(), entity: { kind: "item", id: "i1" },
       actor: { kind: "user" }, spaceId: "example", data: { title: "事项" } });
     expect(seen.at(-1)).toEqual({ url: "https://api.github.com/user", auth: "Bearer sample-owner" });
+  });
+
+  it("代理评审的读写上下文、平台引用和锚点错误", async () => {
+    const { reviewProviders } = await import("../src/plugins/process-hooks.ts");
+    const entry = reviewProviders.get("probe2:reviews")!;
+    storeConnection(app, { userId: "owner", provider: "connect-github", accountId: "sample", accountName: "示例", scopes: [], accessToken: "test-owner", expiresIn: 3600 });
+    const ctx = entry.context(app,"owner","example",AbortSignal.timeout(15000));
+    const write = { ...ctx, idempotencyKey:"test-key" };
+    const req = { objectKey:"pr", findingId:1, body:"说明", anchor:{path:"code.ts",line:1,side:"RIGHT" as const,head:"a".repeat(40)} };
+    const ref = await entry.def.publish(write,req);
+    expect(seen.at(-1)?.auth).toBe("Bearer test-owner");
+    expect(await entry.def.readThread(ctx,ref)).toEqual({state:"open"});
+    expect(await entry.def.resolve!(write,ref)).toEqual({state:"resolved"});
+    await expect(entry.def.publish(write,{ ...req, anchor:{...req.anchor,line:2} })).rejects.toMatchObject({code:"REVIEW_ANCHOR_OUTDATED"});
   });
 
   it("cannot read omem's secrets or start programs", async () => {

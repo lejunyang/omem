@@ -867,7 +867,7 @@ ${input.task}
     // The run ends here so it holds no slot while the other device reviews; its last submission
     // queues the `review` run that rules (review-chain.ts, peerSubmitted).
     ctx.event("status", { text: `评审项「${plan.checks.join("、")}」等设备 ${input.peerReviewer.caller} 的外部 Agent 提交（review_task 取材料）` });
-    ctx.output({ verdict: "awaiting-peer", reviewStage: "peer" });
+    ctx.output({ verdict: "awaiting-peer", reviewStage: "peer", reviewHeads: Object.fromEntries(worktrees.map(w => [w.space,w.tip])) });
     return { verdict: "awaiting-peer" };
   }
   if (plan.confirmPlan && !previousPlan) {
