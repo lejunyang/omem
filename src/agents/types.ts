@@ -64,6 +64,8 @@ export type AgentRequest = {
   mcp?: McpAccess;
   /** Allow edit/delete/move tool kinds (coding in a worktree). */
   allowWrites?: boolean;
+  /** Selected during preparation, separate from omem's write permission. */
+  doubaoPermission?: "always_allow" | "ask_risky";
   /** Preferred session modes in order, e.g. ["read-only"] or ["acceptEdits", "auto"]. */
   modes?: string[];
   /**

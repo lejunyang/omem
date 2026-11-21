@@ -22,6 +22,8 @@ updated: 2026-11-22
 
 ## 2026-11-22 · 本人沙箱的目录与审批
 
+普通运行、短问答和复盘评判在启动前共用 `src/agents/own-sandbox.ts` 的权限计算。豆包 CLI 读取独立的审批参数，已隔离的只读任务可以关闭后端审批，omem 的工具和写权限仍按只读处理。
+
 `PUT /api/security/sandbox` 先用候选配置生成完整响应。示例路径校验失败返回 400，配置和审计保留原状，见 `src/server/http.ts`。
 
 沙箱目录随每轮任务正文发送。`src/agents/runner.ts` 和 `sessions.ts` 共用当轮说明，CLI 与 ACP 恢复会话时会收到新挂载和新产物路径。

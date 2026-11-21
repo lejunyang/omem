@@ -11,8 +11,9 @@ import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 import { testApp } from "./helpers.ts";
 import { all } from "../src/core/db.ts";
 import { saveProbe } from "../src/agents/probe.ts";
-import { prepareRun } from "../src/agents/runner.ts";
-import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { askModel } from "../src/agents/oneshot.ts";
+import { prepareRun, runRole } from "../src/agents/runner.ts";
+import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 
 const fake: AgentProfile = { id: "doubao-cli", transport: "doubao-cli", command: process.execPath, args: [resolve("test/fake-doubao-cli.ts")], env: {}, idleTimeoutMs: 60_000 };
@@ -21,8 +22,8 @@ describe("doubao cli", () => {
   it("passes model, effort, a permission mode by whether it may write, and the working directory", () => {
     const p = { ...fake, command: "doubao", args: [], model: "Auto", effort: "low" };
     expect(doubaoArgs(p, { cwd: "/w", prompt: "" }, "hi")).toEqual(["-p", "hi", "--model", "Auto", "--effort", "low", "--permission-mode", "ask_risky", "-C", "/w"]);
-    expect(doubaoArgs(p, { cwd: "/w", prompt: "", allowWrites: true, resumeSessionId: "9" }, "hi").slice(0, 2)).toEqual(["--resume", "9"]);
-    expect(doubaoArgs(p, { cwd: "/w", prompt: "", allowWrites: true }, "hi")).toContain("always_allow");
+    expect(doubaoArgs(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow", resumeSessionId: "9" }, "hi").slice(0, 2)).toEqual(["--resume", "9"]);
+    expect(doubaoArgs(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow" }, "hi")).toContain("always_allow");
   });
 
   it("keeps risky approval for unboxed guest turns in every global mode", () => {
@@ -39,7 +40,7 @@ describe("doubao cli", () => {
           try {
             expect(prep.isolation.box).toBeUndefined();
             expect(prep.fullAccess).toBe(true);
-            expect(doubaoArgs(fake, { app, cwd: prep.cwd, prompt: "", allowWrites: prep.allowWrites, fullAccess: prep.fullAccess }, "hi")).toContain("ask_risky");
+            expect(doubaoArgs(fake, { app, cwd: prep.cwd, prompt: "", doubaoPermission: prep.doubaoPermission, fullAccess: prep.fullAccess }, "hi")).toContain("ask_risky");
           } finally { revokeToolToken(prep.token); }
         }
       }
@@ -64,8 +65,8 @@ describe("doubao cli", () => {
             expect(prep.isolation.box).toBeDefined();
             expect(prep.fullAccess).toBe(true);
             expect(prep.acpWritable).toBe(false);
-            expect(prep.allowWrites).toBe(transport === "doubao-cli" && mode === "sandboxed");
-            if (transport === "doubao-cli") expect(doubaoArgs(profile, { cwd: prep.cwd, prompt: "", allowWrites: prep.allowWrites }, "hi"))
+            expect(prep.allowWrites).toBe(false);
+            if (transport === "doubao-cli") expect(doubaoArgs(profile, { cwd: prep.cwd, prompt: "", doubaoPermission: prep.doubaoPermission }, "hi"))
               .toContain(mode === "sandboxed" ? "always_allow" : "ask_risky");
           } finally { revokeToolToken(prep.token); }
         }
@@ -75,6 +76,35 @@ describe("doubao cli", () => {
       rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(!sandboxSupport().ok)("applies prepared approval to guest replies and tool-free one-shot judgements", async () => {
+    const app = testApp();
+    const home = mkdtempSync(join(tmpdir(), "approval-home-"));
+    vi.stubEnv("HOME", home);
+    app.baseUrl = "http://127.0.0.1:1";
+    const profile = { ...fake, env: { FAKE_PERMISSION: "1" } };
+    // askModel can try a second backend. Both candidates run the fixture.
+    app.config.agents.profiles = [profile, { ...profile, id: "codex" }];
+    app.config.agents.default = profile.id;
+    try {
+      app.config.agents.ownSandbox.mode = "prefer";
+      for (const [support, mode, expected] of [
+        [true, "sandboxed", "always_allow"], [false, "sandboxed", "ask_risky"],
+        [true, "all", "ask_risky"], [true, "per-role", "ask_risky"],
+      ] as const) {
+        setSandboxSupportForTests(support ? undefined : { ok: false, reason: "fixture" });
+        app.config.agents.fullAccess = mode;
+        const answer = await askModel(app, "判断");
+        expect(JSON.parse(answer!)).toMatchObject({ reason: expected });
+        const r = await runRole(app, { role: "guest", guestTurn: true, fullAccess: true, spaceId: "personal",
+          task: "回答访客", runId: null, profileId: profile.id });
+        expect(JSON.parse(r.text)).toMatchObject({ reason: expected });
+      }
+    } finally {
+      setSandboxSupportForTests(undefined); vi.unstubAllEnvs(); app.db.close();
+      rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+    }
+  }, 30000);
 
   it("runs a turn: the prompt reaches it, the session comes from stderr, the run's env reaches it", async () => {
     // A live service may also have prompt files in the system temp directory.

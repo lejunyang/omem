@@ -62,7 +62,7 @@ export function doubaoArgs(profile: AgentProfile, req: AgentRequest, prompt: str
   if (profile.model) args.push("--model", profile.model);
   if (profile.effort) args.push("--effort", profile.effort);
   // It has no read-only mode; outside coding it asks before risky operations (no one answers, so they fail).
-  args.push("--permission-mode", req.allowWrites ? "always_allow" : "ask_risky");
+  args.push("--permission-mode", req.doubaoPermission ?? "ask_risky");
   args.push("-C", req.cwd);
   return args;
 }

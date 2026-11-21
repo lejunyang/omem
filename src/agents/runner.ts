@@ -380,6 +380,7 @@ export type PreparedRun = {
   mcp: McpAccess;
   extraMcp: Record<string, McpServerSpec>;
   allowWrites: boolean;
+  doubaoPermission: ReturnType<typeof runAccess>["doubaoPermission"];
   modes: string[];
   /** Commands outside the backend's sandbox, no approvals (see prepareRun). */
   fullAccess: boolean;
@@ -572,8 +573,9 @@ export function prepareRun(
     if (under(target, isolation.box.data) && !under(target, canonical(space.rootPath ?? spaceDir(app, space.id))))
       throw new Error("档案的工作目录不属于本空间，不能从 omem 数据目录挂回沙箱");
   }
-  const { force, fullAccess, acpWritable } = runAccess(app.config.agents.fullAccess, userId === OWNER && !input.shadow, guestTurn,
-    !!isolation.box, allowWrites && !isolation.box?.readOnly, legacyFull);
+  const accessMode = runAccess(app.config.agents.fullAccess, {
+    owner: userId === OWNER && !input.shadow, guest: guestTurn, box: isolation.box, allowWrites, legacyFull,
+  });
   const memorySpaces = spacesWithCapability(app, userId, "memories.view");
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
@@ -614,7 +616,7 @@ export function prepareRun(
   return {
     isolation,
     workspace,
-    acpWritable,
+    ...accessMode,
     profile,
     capabilities,
     tools,
@@ -634,9 +636,7 @@ export function prepareRun(
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
-    // Doubao's permission mode follows writable roles or the host's forced mode, not legacy full access.
-    allowWrites: profile.transport === "doubao-cli" ? allowWrites || force : allowWrites,
-    fullAccess,
+    allowWrites,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,
     lessonIds: told.ids,
@@ -1024,7 +1024,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           parts: prep.parts,
           scene: prep.scene,
           prompt: `${turnHeader(prep)}\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${prep.awareness}${sceneUpdate}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
-          allowWrites: prep.allowWrites,
+          allowWrites: prep.allowWrites, doubaoPermission: prep.doubaoPermission,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
           acpWritable: prep.acpWritable,

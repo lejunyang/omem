@@ -99,8 +99,10 @@ it("covers backend mode and ACP writes for every role, sandbox and global select
     let i = 0;
     for (const mode of ["per-role", "sandboxed", "all"] as const) for (const boxed of [false, true]) {
       const force = expected[i++];
-      expect(runAccess(mode, owner, guest, boxed, writes, false), role).toEqual({ force, fullAccess: force, acpWritable: writes });
-      expect(runAccess(mode, owner, guest, boxed, writes, true)).toEqual({ force, fullAccess: true, acpWritable: !boxed || writes });
+      const run = { owner, guest, box: boxed ? { readOnly: !writes } : undefined, allowWrites: writes };
+      const doubaoPermission = writes || force ? "always_allow" : "ask_risky";
+      expect(runAccess(mode, run), role).toEqual({ doubaoPermission, fullAccess: force, acpWritable: writes });
+      expect(runAccess(mode, { ...run, legacyFull: true })).toEqual({ doubaoPermission, fullAccess: true, acpWritable: !boxed || writes });
     }
   }
 });

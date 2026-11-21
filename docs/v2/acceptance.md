@@ -92,6 +92,8 @@
 
 10. 让示例后端状态目录指向私有数据，再 PUT 新配置。应返回 400 和路径原因，磁盘、内存配置和成功审计数均保持原值。
 
+11. 用豆包 CLI 替身做一次短问答和一次双序复盘。已隔离的 `sandboxed` 轮次均传 `always_allow`，短问答回退或选 `all` 时传 `ask_risky`。
+
 自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 成员用自己的 AI 账号：额度、模型、技能、换后端、停用、插件登录（2026-11-20 晚，docs/v2/agent-accounts.md）

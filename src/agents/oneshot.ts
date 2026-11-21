@@ -1,3 +1,4 @@
+import { runAccess } from "./own-sandbox.ts";
 import { ownRun } from "./own-run.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
@@ -32,7 +33,8 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
         const profile = accountFor(app, opts.userId, candidate);
         const cwd = accountOf(profile)?.home ?? app.home;
         const isolation = ownRun(app, profile, cwd, true);
-        const r = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, fullAccess: !!isolation.box && app.config.agents.fullAccess === "sandboxed" && (!opts.userId || opts.userId === "owner"), prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
+        const access = runAccess(app.config.agents.fullAccess, { owner: !opts.userId || opts.userId === "owner", box: isolation.box, allowWrites: false });
+        const r = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, ...access, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
         const text = replyOf(r).trim();
         if (text) return text;
       } catch {

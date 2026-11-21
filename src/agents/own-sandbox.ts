@@ -98,9 +98,13 @@ export function shortPath(path: string, home = homedir()) {
  * Member / borrowed login   P/P         P/P        P/P
  * ACP mutation permission stays at its legacy value except a read-only mount always vetoes it.
  */
-export function runAccess(mode: Config["agents"]["fullAccess"], owner: boolean, guest: boolean,
-  sandboxed: boolean, writes: boolean, legacyFull: boolean) {
-  const force = (mode === "sandboxed" && sandboxed && (owner || guest)) ||
-    (mode === "all" && owner && writes && !guest);
-  return { force, fullAccess: legacyFull || force, acpWritable: sandboxed && (guest || !writes) ? false : writes || legacyFull };
+export function runAccess(mode: Config["agents"]["fullAccess"], run: {
+  owner: boolean; guest?: boolean; box?: Pick<OwnSandbox, "readOnly">; allowWrites: boolean; legacyFull?: boolean;
+}) {
+  const force = (mode === "sandboxed" && !!run.box && (run.owner || run.guest)) ||
+    (mode === "all" && run.owner && run.allowWrites && !run.box?.readOnly && !run.guest);
+  // Doubao historically granted always_allow to writable roles, independent of the per-role full switch.
+  const doubaoPermission = run.allowWrites || force ? "always_allow" : "ask_risky";
+  return { fullAccess: !!run.legacyFull || !!force, doubaoPermission,
+    acpWritable: !run.box?.readOnly && (run.allowWrites || !!run.legacyFull) } as const;
 }
