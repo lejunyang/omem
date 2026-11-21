@@ -2198,6 +2198,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ object: z.string().min(1).max(500), findings: z.array(z.number().int().positive()).min(1).max(500) }), req.body);
     return (await import("../agents/review-sync.ts")).offerReviewPublish(app, id, b);
   });
+  server.post("/api/runs/:id/review-sync/resolve", async req => {
+    const { id } = req.params as { id: string };
+    ownRun(req, id);
+    if (who(req) !== OWNER) throw new HttpError(403, "须由本人发起结束讨论");
+    const b = q(z.object({ findings: z.array(z.number().int().positive()).min(1).max(500) }), req.body);
+    return (await import("../agents/review-sync.ts")).offerReviewResolve(app, id, b.findings);
+  });
+  server.post("/api/runs/:id/review-sync/refresh", async req => {
+    const { id } = req.params as { id: string };
+    ownRun(req, id);
+    return (await import("../agents/review-sync.ts")).refreshThreads(app, { runId: id, viewer: who(req) });
+  });
   // The comment a finding was posted as on the platform the change is reviewed on, and its state.
   server.put("/api/runs/:id/findings/:fid/external", async (req) => {
     const { id, fid } = req.params as { id: string; fid: string };

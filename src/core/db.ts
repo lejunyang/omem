@@ -2298,6 +2298,11 @@ export const migrations: readonly string[] = [
    create index if not exists plugin_deliveries_due on plugin_deliveries(subscriber,state,due,seq);
    create index if not exists plugin_deliveries_order on plugin_deliveries(subscriber,entity,seq) where state!='done';`,
   `alter table review_findings add column reviewed_head text;`,
+  `create index review_findings_checked_run on review_findings(checked_run) where checked_run is not null;
+   create index review_thread_due on review_findings(coalesce(json_extract(external,'$.checkedAt'),''),id)
+     where json_extract(external,'$.delivery')='published' and json_extract(external,'$.state') in ('open','replied');
+   create index review_thread_object on review_findings(json_extract(external,'$.object'),coalesce(json_extract(external,'$.checkedAt'),''),id)
+     where json_extract(external,'$.delivery')='published' and json_extract(external,'$.state') in ('open','replied');`,
 ];
 
 export type Db = DatabaseSync;

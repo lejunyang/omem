@@ -95,7 +95,7 @@ export const manifestSchema = z.object({
    */
   permissions: z
     .object({
-      events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution"])).default([]),
+      events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution", "finding.thread"])).default([]),
       reviewProvider: z.boolean().default(false),
       itemProvider: z.boolean().default(false),
       metricProvider: z.boolean().default(false),

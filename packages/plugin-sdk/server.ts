@@ -8,7 +8,7 @@ export type CallContext = {
   connection(provider: string): Promise<PluginConnection | null>;
 };
 export type WriteContext = CallContext & { idempotencyKey: string };
-export type EventType = "item.status" | "item.created" | "review.finished" | "finding.decision" | "finding.resolution";
+export type EventType = "item.status" | "item.created" | "review.finished" | "finding.decision" | "finding.resolution" | "finding.thread";
 export type PluginEventV1 = {
   v: 1; id: string; type: EventType; at: string;
   entity: { kind: "item" | "run" | "finding"; id: string };

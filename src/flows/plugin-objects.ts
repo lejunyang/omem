@@ -123,7 +123,10 @@ async function readObject(app: App, def: RegisteredObject, key: string, item: It
 /** After a read outside the object lock: the linked items' flows move on, and the rules hear of a change. */
 async function settle(app: App, r: ReadResult, extra: string[] = []) {
   await wake(app, [...r.changedItems, ...extra]);
-  if (r.change) await objectRuleEvent(app, r.id, r.change);
+  if (r.change) {
+    await objectRuleEvent(app, r.id, r.change);
+    await (await import("../agents/review-sync.ts")).refreshThreads(app, { object: r.id });
+  }
 }
 
 /**
@@ -196,6 +199,7 @@ export async function refreshObject(app: App, id: string, prefer?: string): Prom
     });
     if (!result) return false;
     await settle(app, result);
+    if (!result.change) await (await import("../agents/review-sync.ts")).refreshThreads(app, { object: id });
     return true;
   } catch {
     return false;
