@@ -2337,6 +2337,12 @@ export const migrations: readonly string[] = [
      created_by text not null, created_at text not null, revoked_at text
    );
    create unique index remote_grants_member on remote_grants(session_id,user_id) where revoked_at is null;`,
+  `create table egress_runs (
+     run_id text primary key, seq integer not null, updated_at text not null,
+     foreign key(run_id,seq) references run_events(run_id,seq) on delete cascade
+   );
+   create index egress_recent on egress_runs(updated_at desc);
+   create index asks_egress_pending on asks(created_at desc) where status='pending' and json_type(context,'$.egressFallback') is not null;`,
 ];
 
 export type Db = DatabaseSync;

@@ -308,6 +308,7 @@ function writeEvent(app: App, runId: string, type: string, data: unknown) {
   const at = now();
   run(app.db, "insert into run_events(run_id,seq,at,type,data) values(?,?,?,?,?)", runId, seq, at, type, JSON.stringify(data));
   app.emit({ type: "run-event", runId, seq, event: { type, data, at } });
+  return seq;
 }
 
 export function flushRunText(app: App, runId: string) {
@@ -347,7 +348,7 @@ export function addRunEvent(app: App, runId: string, type: string, data: unknown
     return;
   }
   flushText(app, runId);
-  writeEvent(app, runId, type, data);
+  return writeEvent(app, runId, type, data);
 }
 
 export function runEvents(app: App, runId: string, afterSeq = 0) {

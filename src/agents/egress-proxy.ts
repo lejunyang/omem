@@ -41,7 +41,14 @@ export async function startProxy(path: string, opts: ProxyOptions) {
   const usage = new Map<string, HostUsage>();
   const sockets = new Set<Duplex>();
   const lifetime = new AbortController();
-  const local = new Set(Object.values(networkInterfaces()).flat().map(i => i?.address));
+  const hostAddresses = new BlockList();
+  hostAddresses.addSubnet("127.0.0.0", 8);
+  hostAddresses.addAddress("0.0.0.0");
+  hostAddresses.addAddress("::", "ipv6");
+  for (const nic of Object.values(networkInterfaces()).flat()) {
+    if (nic) hostAddresses.addAddress(nic.address, isIP(nic.address) === 6 ? "ipv6" : "ipv4");
+  }
+  const local = (ip: string) => hostAddresses.check(ip, isIP(ip) === 6 ? "ipv6" : "ipv4");
   let closed = false;
   let connecting = 0;
   async function dial(url: URL, ip: string, port: number) {
@@ -84,7 +91,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
     if (!opts.callback) return false;
     const entry = new URL(opts.callback.target ?? opts.callback.origin);
     return Number(url.port || (url.protocol === "https:" ? 443 : 80)) === Number(entry.port || 80)
-      && (local.has(ip) || ip.startsWith("127.") || ip === "::1");
+      && local(ip);
   }
   function refuse(r: HostUsage, message: string): never {
     r.denied++;
@@ -124,7 +131,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
         }
         body = Buffer.concat(chunks);
       }
-      await gate({ url, method: req.method!, body, tunnel: false, private: local.has(ip) || privateAddress(ip), contentType: req.headers["content-type"] }, r);
+      await gate({ url, method: req.method!, body, tunnel: false, private: local(ip) || privateAddress(ip), contentType: req.headers["content-type"] }, r);
     }
     if (closed || res.destroyed) return;
     const h = headers(req.headers);
@@ -194,7 +201,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
       const r = row(url);
       const ip = await address(url);
       if (servicePort(url, ip)) refuse(r, "宿主入口需要本次运行令牌");
-      await gate({ url, method: "CONNECT", private: local.has(ip) || privateAddress(ip), tunnel: true }, r);
+      await gate({ url, method: "CONNECT", private: local(ip) || privateAddress(ip), tunnel: true }, r);
       if (closed || socket.destroyed) return;
       const peer = await dial(url, ip, Number(url.port || 443));
       if (closed || socket.destroyed) { peer.destroy(); return; }

@@ -106,7 +106,7 @@ export type AcpHandle = {
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
   if (opts.signal?.aborted) throw new Error("CANCELLED");
   const env = { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env };
-  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, sandbox: accountOf(profile) });
+  const child = await (await import("./egress-run.ts")).launchRun(profile, opts, sandbox => launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, sandbox }));
   const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
   let stderr = "";

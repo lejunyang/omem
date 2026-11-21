@@ -7249,8 +7249,16 @@ export function beginCommandTurn(token: string) {
   ctx.commandTurn = turn;
   return () => { if (ctx.commandTurn === turn) delete ctx.commandTurn; };
 }
+const tokenCleanups = new Map<string, Set<() => void>>();
+export function onToolTokenRevoked(token: string, close: () => void) {
+  const set = tokenCleanups.get(token) ?? new Set();
+  tokenCleanups.set(token,set);
+  set.add(close);
+  return () => { set.delete(close); if (!set.size) tokenCleanups.delete(token); };
+}
 export function revokeToolToken(token: string) {
   tokens.delete(token);
+  for (const close of tokenCleanups.get(token) ?? []) close();
 }
 export function toolContextForToken(app: App, token: string): ToolContext | null {
   const ctx = tokens.get(token);

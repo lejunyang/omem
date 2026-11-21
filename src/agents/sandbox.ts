@@ -11,8 +11,7 @@ import { fileURLToPath } from "node:url";
  * command it runs) sees neither the owner's logins nor another user's account folder. Read-only again
  * inside them: the agent's install, the Node runtime, omem's code (the stdio MCP bridge) and its
  * `bin` (the `omem` shim and the command gate). Writable: the account folder, the run's working folder
- * and the run's artifacts folder. The network is shared: omem's tools are reached over
- * http://127.0.0.1.
+ * and the run's artifacts folder. Network-isolated runs reach the proxy through a Unix socket.
  *
  * Linux only, and only with a bubblewrap that can start (unprivileged user namespaces allowed):
  * `sandboxSupport` checks once. Everywhere else members keep borrowing the owner's backends.
@@ -57,6 +56,7 @@ export function sandboxSupport(): SandboxSupport {
 /** Tests: pretend the check came out this way (undefined: check again). */
 export function setSandboxSupportForTests(v: SandboxSupport | undefined) {
   cached = v;
+  networkSupport = undefined;
 }
 
 function onPath(name: string, env: NodeJS.ProcessEnv) {
@@ -136,12 +136,20 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
   const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
   const n = plan.network;
   const relay = n ? [process.execPath, fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)), String(n.callbackPort ?? 0)] : [];
-  return ["--die-with-parent", "--unshare-pid", "--unshare-user", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links,
-    ...(n ? ["--unshare-net", "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
+  // A read-only host root still exposes live filesystem sockets. Networked runs start with
+  // the runtime directories and explicit run mounts, leaving host service sockets outside.
+  const root = n ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
+  return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links,
+    ...(n ? ["--unshare-net", "--tmpfs", "/run", ...(n.secrets && existsSync(n.secrets) ? ["--tmpfs", n.secrets] : []), "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
     "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
 }
 
-export type SandboxNetwork = { socket: string; callbackPort?: number; bundle?: string };
+export function egressRequested(config: import("../core/config.ts").Config, profile: object) {
+  const mode = config.security.egress.mode;
+  return !!accountOf(profile) && mode !== "off" && (mode === "all-sandboxed" || config.agents.accountIsolation === "require");
+}
+
+export type SandboxNetwork = { socket: string; secrets?: string; callbackPort?: number; bundle?: string };
 let networkSupport: SandboxSupport | undefined;
 export function egressSupport(): SandboxSupport {
   const s = sandboxSupport();
@@ -219,9 +227,12 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   ro.add(dirname(nodeBin));
   ro.add(installRoot(real(process.execPath)));
   ro.add(omemInstallDir());
-  // Only what a hidden folder would otherwise take away needs mounting again.
-  const roList = [...ro].filter((p) => isAbsolute(p)).map(real).filter((p) => hide.some((h) => inside(p, h)));
-  const rw = [real(acct.home), ...(workspace?.rw ?? [real(cwd)])];
+  const dependencies = join(omemInstallDir(), "node_modules");
+  if (acct.network && existsSync(dependencies)) ro.add(real(dependencies));
+  const absolute = [...ro].filter(p => isAbsolute(p));
+  const roList = acct.network ? [...new Set([...absolute, ...absolute.map(real)])] :
+    absolute.map(real).filter(p => hide.some(h => inside(p, h)));
+  const rw = [real(acct.home), ...(acct.network && real(acct.home) !== acct.home ? [acct.home] : []), ...(workspace?.rw ?? [real(cwd)])];
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
