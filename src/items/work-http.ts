@@ -142,7 +142,7 @@ export function workActivities(app: App, userId: string, q: { from?: string; to?
   const rows = all<Parameters<typeof changeLite>[1] & { space_id: string }>(app.db,
     `select ${CHANGE_COLS}, i.space_id from item_changes c join items i on i.id = c.item_id
       where coalesce(i.user_id,'owner') = ? and c.at >= ? and c.at < ?
-        ${allowed ? "and i.space_id in (select value from json_each(?)) and i.status!='candidate' and c.status='noted'" : ""}
+        ${allowed ? "and i.space_id in (select value from json_each(?)) and i.status not in ('candidate','waiting','snoozed') and c.status='noted'" : ""}
         ${types.length ? `and c.type in (${types.map(() => "?").join(",")})` : ""}
         ${origins.length ? `and c.origin in (${origins.map(() => "?").join(",")})` : ""}
         ${ids ? `and c.item_id in (${ids.map(() => "?").join(",")})` : ""}
@@ -216,17 +216,17 @@ function body<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
 function sharedLines(app: App, spaces: string[], id?: string) {
   const scope = JSON.stringify(spaces);
   const isLine = `(i.kind='line' or i.phase='watching' or exists(select 1 from item_flows f where f.item_id=i.id and f.ended_at is null)
-     or exists(select 1 from items c where c.parent_id=i.id and c.status!='candidate' and c.space_id in (select value from json_each(:spaces)))
+     or exists(select 1 from items c where c.parent_id=i.id and c.status not in ('candidate','waiting','snoozed') and c.space_id in (select value from json_each(:spaces)))
      or exists(select 1 from listen_contexts c where c.item_id=i.id and c.kind='item' and c.status='active'))`;
-  const root = id ? `i.id=:id and (i.parent_id is not null or ${isLine})` : `i.parent_id is null and i.status in ('open','waiting','snoozed') and ${isLine}`;
+  const root = id ? `i.id=:id and (i.parent_id is not null or ${isLine})` : `i.parent_id is null and i.status='open' and ${isLine}`;
   type Entry = { id: string; parentId: string | null; title: string; kind: string; status: string; spaceId: string; phase: string | null; summary: string | null; root: string };
   const rows = app.db.prepare(`with recursive roots as (
     select i.id from items i where i.user_id='owner' and i.space_id in (select value from json_each(:spaces))
-      and i.status!='candidate' and ${root} order by i.updated_at desc limit 200
+      and i.status not in ('candidate','waiting','snoozed') and ${root} order by i.updated_at desc limit 200
   ), tree(id,root,depth) as (
     select id,id,0 from roots union all
     select i.id,t.root,t.depth+1 from items i join tree t on i.parent_id=t.id where t.depth<3
-      and i.user_id='owner' and i.status!='candidate' and i.space_id in (select value from json_each(:spaces))
+      and i.user_id='owner' and i.status not in ('candidate','waiting','snoozed') and i.space_id in (select value from json_each(:spaces))
   ) select i.id,i.parent_id parentId,i.title,i.kind,i.status,i.space_id spaceId,i.phase,json_extract(i.now,'$.summary') summary,t.root
     from tree t join items i on i.id=t.id limit 2000`).all(id ? { spaces: scope, id } : { spaces: scope }) as Entry[];
   const ids = JSON.stringify(rows.map(r => r.id));

@@ -102,6 +102,14 @@ describe("roles and permissions", async () => {
     tokens["observer-test"] = createApiToken(app, "observer-test", "test");
     const make = async (space: string) => (await fetch(base + "/api/items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "line", space, title: "项目进度" }) })).json();
     const visible = await make("team"), hidden = await make("other");
+    for (const status of ["waiting", "snoozed"]) {
+      const child = await make("team");
+      sqlRun(app.db, "update items set status=?,parent_id=? where id=?", status, visible.id, child.id);
+      expect(JSON.stringify(await json("observer-test", "/api/work/" + visible.id))).not.toContain(child.id);
+      expect((await as("observer-test", "/api/work/" + child.id)).status).toBe(404);
+      sqlRun(app.db, "update items set parent_id=null where id=?", child.id);
+      expect(JSON.stringify(await json("observer-test", "/api/work"))).not.toContain(child.id);
+    }
     const work = await json("observer-test", "/api/work");
     expect(work.lines.map((line: { id: string }) => line.id)).toContain(visible.id);
     expect(work.lines.map((line: { id: string }) => line.id)).not.toContain(hidden.id);
