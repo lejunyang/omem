@@ -122,4 +122,4 @@ Agent 给原件、目录、知识库和会话设置的关注程度会每晚抽�
 
 被动记忆的非本地重排门槛仍叫 `pluginPassiveThreshold`，可用负数、零或大于一的分数；空着按余弦门槛筛选。更换服务或重排模型后要重新定门槛。
 
-当前版本可以通过配置和 API 使用这些能力，设置页的云端字段与检测按钮待接入。`POST /api/search/embeddings/test` 接收未保存的向量配置，返回连通性、维度、耗时和脱敏错误；`POST /api/search/rerank/test` 接收重排配置，返回固定示例的顺序、分数、耗时和错误。检测只发固定文本，不带库里的资料。`GET /api/search/providers` 可查看当前来源、积压和最近错误。
+当前版本可以通过配置和 API 使用这些能力，设置页的云端字段与检测按钮待接入。`POST /api/search/embeddings/test` 接收未保存的向量配置，返回连通性、维度、耗时和脱敏错误；`POST /api/search/rerank/test` 接收重排配置，返回固定示例的顺序、分数、耗时和错误。检测只发固定文本，不带库里的资料。向量检测和保存都可以部分更新：省略的字段沿用已保存值，`keyRef`、`url` 和 `dimensions` 传 `null` 分别恢复环境变量、默认地址和模型默认维度。`GET /api/search/providers` 可查看当前来源、积压和最近错误。

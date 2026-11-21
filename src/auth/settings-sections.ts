@@ -63,7 +63,13 @@ export function settingsPatch(config: Config, body: unknown): Values {
   const result = { ...config };
   for (const [key, val] of Object.entries(body)) {
     if (!Object.hasOwn(settingSections, key)) throw new HttpError(400, `不认识的设置：${key}`);
-    if (splitRoots.has(key) && object(val)) Object.assign(result, { [key]: { ...(config[key as keyof Config] as Values), ...val } });
+    if (splitRoots.has(key) && object(val)) {
+      const merged = { ...(config[key as keyof Config] as Values), ...val };
+      if (key === "embeddings") {
+        for (const field of ["keyRef", "url", "dimensions"]) if (merged[field] === null) delete merged[field];
+      }
+      Object.assign(result, { [key]: merged });
+    }
     else Object.assign(result, { [key]: val });
   }
   return result;

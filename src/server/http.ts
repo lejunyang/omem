@@ -3403,7 +3403,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/search/providers", async () => searchProviderStatus(app));
   server.post("/api/search/embeddings/test", async req => {
-    const cfg = q(configSchema.shape.embeddings, { ...app.config.embeddings, ...(req.body as object) });
+    const cfg = q(configSchema.shape.embeddings, settingsPatch(app.config, { embeddings: req.body ?? {} }).embeddings);
     const at = Date.now();
     try { return { ok: true, dimensions: await testEmbedding(app, cfg), elapsedMs: Date.now() - at, error: null }; }
     catch (e) { return { ok: false, dimensions: null, elapsedMs: Date.now() - at, error: (e as Error).message.slice(0, 500) }; }

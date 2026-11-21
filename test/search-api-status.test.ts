@@ -8,14 +8,14 @@ import { startServer } from "../src/server/http.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { embedPending, resetEmbedder, EMBEDDING_TEST_TEXT } from "../src/search/embeddings.ts";
 import { RERANK_TEST_QUERY, RERANK_TEST_DOCUMENTS, setRerankerForTests } from "../src/search/rerank.ts";
-import { configSchema } from "../src/core/config.ts";
+import { configSchema, loadConfig, saveConfig } from "../src/core/config.ts";
 import { all } from "../src/core/db.ts";
 
 import { registerProcessHooks } from "../src/plugins/process-hooks.ts";
 import { manifestSchema } from "../src/plugins/registry.ts";
 
 const close: (() => Promise<unknown> | void)[] = [];
-afterEach(async () => { for (const fn of close.splice(0).reverse()) await fn(); resetEmbedder(); vi.restoreAllMocks(); });
+afterEach(async () => { for (const fn of close.splice(0).reverse()) await fn(); resetEmbedder(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 async function fixture() {
   const app = testApp();
@@ -114,6 +114,41 @@ it("未传检测配置时使用已保存配置，仍只发固定样例", async (
   }
   expect(calls[0].body.input).toEqual([EMBEDDING_TEST_TEXT]);
   expect(calls[1].body.documents).toEqual(RERANK_TEST_DOCUMENTS);
+});
+
+it("检测与保存可清除服务商、地址和维度，保存前预览重建", async () => {
+  const { app, server, calls, url } = await fixture();
+  app.config.embeddings = configSchema.shape.embeddings.parse({ provider: "api", model: "embed", keyRef: "remote", url: "https://example.org/old", dimensions: 2 });
+  saveConfig(app.config, app.home);
+  const clear = { url: null, dimensions: null };
+  const probe = (payload: object) => server.inject({ method: "POST", url: "/api/search/embeddings/test", payload });
+  const save = (embeddings: object, token = "") => server.inject({ method: "PUT", url: "/api/settings?confirmEmbedding=" + token, payload: { embeddings } });
+  expect((await probe(clear)).json().ok).toBe(true);
+  expect(calls.at(-1)).toMatchObject({ path: "/embeddings", auth: "Bearer example-private-key" });
+  expect(calls.at(-1)!.body).not.toHaveProperty("dimensions");
+  const preview = await save(clear);
+  expect(preview.statusCode).toBe(409);
+  expect(app.config.embeddings.dimensions).toBe(2);
+  expect((await save(clear, preview.json().token)).statusCode).toBe(200);
+  expect(loadConfig(app.home).embeddings.url).toBeUndefined();
+  expect(app.config.embeddings.dimensions).toBeUndefined();
+
+  vi.stubEnv("TEST_VECTOR_ENV_KEY", "example-env-key");
+  const realFetch = globalThis.fetch;
+  const outbound = vi.spyOn(globalThis, "fetch").mockImplementation((address, init) => {
+    expect(address).toBe("https://api.openai.com/v1/embeddings");
+    return realFetch(url + "/embeddings", init);
+  });
+  const useEnv = { keyRef: null, apiKeyEnv: "TEST_VECTOR_ENV_KEY" };
+  expect((await probe(useEnv)).json().ok).toBe(true);
+  expect(app.config.embeddings.keyRef).toBe("remote");
+  const defaults = await save(useEnv);
+  expect(defaults.statusCode).toBe(409);
+  expect((await save(useEnv, defaults.json().token)).statusCode).toBe(200);
+  expect(loadConfig(app.home).embeddings.keyRef).toBeUndefined();
+  expect((await probe({})).json().ok).toBe(true);
+  expect(outbound).toHaveBeenCalledTimes(2);
+  expect(calls.slice(-2).map(c => c.auth)).toEqual(["Bearer example-env-key", "Bearer example-env-key"]);
 });
 
 it("有知识设置编辑权的成员仍改不了向量和重排，也调用不了检测", async () => {
