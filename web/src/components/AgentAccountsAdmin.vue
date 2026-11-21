@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { del, get, put } from "../api";
-import { fmtTime, toast } from "../store";
+import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
 import SetCard from "./SetCard.vue";
 import SetRow from "./SetRow.vue";
@@ -31,6 +31,8 @@ const emit = defineEmits<{ policies: [accounts: Record<string, Policy>]; mode: [
 
 const data = ref<Overview | null>(null);
 async function load() {
+  // The owner's to see and set: nobody else asks.
+  if (state.me && state.me.role !== "owner") return;
   try {
     data.value = await get<Overview>("/api/agent-accounts");
   } catch {

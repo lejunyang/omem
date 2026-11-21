@@ -99,10 +99,14 @@ const allowed = (n: NavEntry) =>
 // The owner finds the flow board on the work page (按阶段); everyone else in the nav.
 const shownNav = computed(() => nav.value.filter(allowed).filter((n) => !(n.to === "/board" && owner.value)));
 // Pages someone other than the owner may open: the nav they see, a line's page under 工作, the graph (Wiki), their account.
-const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account"]);
+const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account", ...(hasPerm("users.manage") ? ["/settings"] : [])]);
 // Landing on a page they cannot use (the start page, an old link) goes to 问答, without drawing it first
 // (its requests would only come back refused).
-const pathOpen = computed(() => owner.value || !state.me || bare.value || open.value.some((p) => route.path === p || route.path.startsWith(p + "/")));
+// Until the router has resolved the address the page was opened at (its view loads on demand), the path
+// still reads "/": judging then would send a member's deep link to 问答.
+const routed = ref(false);
+void router.isReady().then(() => (routed.value = true));
+const pathOpen = computed(() => owner.value || !state.me || !routed.value || bare.value || open.value.some((p) => route.path === p || route.path.startsWith(p + "/")));
 watch(pathOpen, (ok) => {
   if (!ok) void router.replace("/ask");
 });
@@ -174,7 +178,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
       <div class="foot row">
         <router-link v-if="owner" to="/notifications" class="btn ghost sm icon bell" title="通知" @mouseenter="preloadRoute('/notifications')"><Icon name="bell" :size="17" /><span v-if="state.unread" class="dot">{{ state.unread > 9 ? "9+" : state.unread }}</span></router-link>
         <router-link to="/account" class="btn ghost sm icon" :title="state.me ? `账号：${state.me.name}` : '账号'" @mouseenter="preloadRoute('/account')"><Icon name="user" :size="17" /></router-link>
-        <router-link v-if="owner" to="/settings" class="btn ghost sm icon" title="设置" @mouseenter="preloadRoute('/settings')"><Icon name="settings" :size="17" /></router-link>
+        <router-link v-if="owner || hasPerm('users.manage')" to="/settings" class="btn ghost sm icon" :title="owner ? '设置' : '成员与记录'" @mouseenter="preloadRoute('/settings')"><Icon name="settings" :size="17" /></router-link>
         <button class="btn ghost sm icon" :title="`主题：${state.theme}`" @click="cycleTheme"><Icon :name="state.theme === 'dark' ? 'moon' : 'sun'" :size="17" /></button>
       </div>
     </aside>
