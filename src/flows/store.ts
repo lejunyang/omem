@@ -95,7 +95,7 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
   if (turned) {
     const wait = next.waitingOn ? waitText(next.waitingOn) : "";
     addChange(app, {
-      itemId, type: "stage", origin: "flow", runId: by.runId ?? null, refs,
+      itemId, type: "stage", origin: "flow", runId: by.runId ?? null, refs, source: `stage:${id}:${status}@${at}`,
       summary: `「${name}」${turned}${status === "blocked" && wait ? `，${wait}` : ""}${by.actor === "owner" && status === "done" ? "（本人标的）" : ""}`,
       detail: note ? cardText(note, 2000) : null,
       next: status === "waiting-owner" || status === "gated" || (status === "blocked" && ownerWait(next.waitingOn)) ? "在工作页上处理这一段" : null,

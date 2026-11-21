@@ -128,12 +128,13 @@ export function trackProblem(app: App, runId: string | null | undefined, input: 
   if (a.state !== "closed" && !doneWhen) throw new HttpError(400, "还没结的要写 done_when：怎样算这件事完了（对方确认能用了、某人处理完并回查到某状态……）");
   const recheckAt = a.state === "closed" || !a.recheck_after ? null : recheckTime(a.recheck_after);
   const at = now();
+  const problemId = fresh ? newId("lp") : prev!.id;
   const fields = [a.title, a.state, a.known ?? (fresh ? "" : prev!.known), a.state === "closed" ? "" : a.awaiting ?? "", doneWhen, a.conclusion ?? (fresh ? "" : prev!.conclusion), recheckAt, runId] as const;
   if (fresh) {
     run(app.db,
       `insert into listen_problems(id,context_id,chat_id,topic_id,title,state,known,awaiting,done_when,conclusion,recheck_at,run_id,rounds,created_at,updated_at,closed_at)
          values(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`,
-      newId("lp"), s.context.id, chatId, topicId, ...fields, at, at, a.state === "closed" ? at : null);
+      problemId, s.context.id, chatId, topicId, ...fields, at, at, a.state === "closed" ? at : null);
   } else {
     run(app.db,
       `update listen_problems set title=?, state=?, known=?, awaiting=?, done_when=?, conclusion=?, recheck_at=?, run_id=?, rounds=?, updated_at=?, closed_at=? where id = ?`,
@@ -144,7 +145,7 @@ export function trackProblem(app: App, runId: string | null | undefined, input: 
   if (concluded && s.context.kind === "item" && s.context.itemId) {
     try {
       addChange(app, {
-        itemId: s.context.itemId, origin: "problem", runId, type: fresh || prev!.state === "open" ? "info" : "resolved",
+        itemId: s.context.itemId, origin: "problem", runId, source: `problem:${problemId}`, type: fresh || prev!.state === "open" ? "info" : "resolved",
         summary: `「${truncate(a.title, 60)}」有了结论：${truncate(a.conclusion ?? "", 120)}`, detail: [a.known ? `已查清：${a.known}` : "", a.conclusion ? `结论：${a.conclusion}` : ""].filter(Boolean).join("\n") || null,
       });
     } catch (e) {

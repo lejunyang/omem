@@ -12,7 +12,7 @@ import { prepareMaterials, materialsBrief } from "../items/materials.ts";
 import { findReq } from "../items/requirements.ts";
 import { itemContext } from "../channels/listen.ts";
 import { itemFlow, itemStages, type ItemFlow } from "./store.ts";
-import { CHANGE_TYPES } from "../items/changes.ts";
+import { CHANGE_TYPES, recordChange } from "../items/changes.ts";
 
 type Source = { id: string; kind: string; title: string; space_id: string; updated_at: string; uri: string; captured_at: string };
 type Cursor = { source_id: string; line: number; source_updated_at: string; started_at: string; seen: string | null };
@@ -330,13 +330,16 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
     return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", old.id)!, ownWord && old.status === "noted");
   }
   if (changesOfRun(app, r).length >= 30) throw new HttpError(400, "一批最多记 30 条变化，请合并同一件事的表述");
-  const id = newId("ic"), at = now();
-  tx(app.db, () => {
-    run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,req,stages,refs,run_id,updated_at,due,risk,next,origin) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'follow')", id, a.item, at, a.type, a.summary, detail, a.req ?? null, JSON.stringify(a.stages ?? []), JSON.stringify(a.refs), runId, at, due, a.risk || null, a.next || null);
+  // The one way into the ledger (items/changes.ts): the same message already noted by another writer
+  // (the assistant's upsert_item, an earlier batch) is added to, not noted twice.
+  const rec = tx(app.db, () => {
+    const got = recordChange(app, { itemId: a.item, type: a.type, summary: a.summary, detail, req: a.req ?? null, stages: a.stages ?? [], refs: a.refs, runId, due, risk: a.risk || null, next: a.next || null, origin: "follow" })!;
+    const row = one<ChangeRow>(app.db, "select * from item_changes where id=?", got.id)!;
     // Somebody proposing another date is not a decision: it stays as noted and the owner is asked when the batch is done.
-    if (a.type === "deadline" && a.decided) decidedDeadline(app, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!, runId);
+    if (a.type === "deadline" && a.decided && row.due && ["noted", "asked"].includes(row.status)) decidedDeadline(app, row, runId);
+    return got;
   });
-  return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!, ownWord);
+  return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", rec.id)!, ownWord && rec.status === "noted");
 }
 
 const choices = ["并进这件事", "另开一件事", "不用管"];

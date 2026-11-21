@@ -104,6 +104,19 @@ describe("流程上下文跟进", () => {
     expect(agent).toHaveBeenLastCalledWith(t.app, expect.objectContaining({ role: "item-follow", runId: r.id, userId: "owner", spaces: ["personal"] }));
     expect(flowView(t.app, t.item.id).follow[0]).toMatchObject({ line: 2, pending: 0 });
   });
+  it("助手已经从同一条消息记下的变化，跟进时补进那一条，不另记", async () => {
+    const t = await setup();
+    const { r, ref } = await t.processing();
+    const { addChange } = await import("../src/items/changes.ts");
+    const first = addChange(t.app, { itemId: t.item.id, type: "scope", summary: "运费也要退", refs: [ref], origin: "owner" });
+    const got = noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: "小王提出部分发货的运费也要退", detail: "群里提的", refs: [ref] });
+    expect(got.id).toBe(first);
+    expect(all(t.app.db, "select 1 from item_changes where item_id=? and type='scope'", t.item.id)).toHaveLength(1);
+    expect(one(t.app.db, "select summary, detail, origin from item_changes where id=?", first)).toEqual({ summary: "小王提出部分发货的运费也要退", detail: "群里提的", origin: "owner" });
+    // The message now says what it became.
+    const { handlingOf } = await import("../src/core/handling.ts");
+    expect(handlingOf(t.app, "msg_2").map((h) => [h.actor, h.decision, h.changeId])).toEqual(expect.arrayContaining([["assistant", "noted", first], ["follow", "noted", first]]));
+  });
   it("并进正在运行的阶段，新任务包含变化反馈和最近变化", async () => {
     const t = await setup([{ id: "code", name: "编码", by: { run: {} } }, { id: "end", name: "收尾", by: "wait" }]);
     const original = getStage(t.app, t.item.id, "code").control.runId;

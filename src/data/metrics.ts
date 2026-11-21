@@ -312,11 +312,13 @@ export async function recordPoints(app: App, idOrName: string, points: { value: 
   const changes = series.map((d) => ({ dims: json<Record<string, string>>(d, {}), change: changeOf(m, metricPoints(app, m.id, { dims: json(d, {}), limit: 30 })) }));
   const flagged = changes.filter((c) => c.change?.flagged);
   // A proposal (or a paused metric) is taken but never told: the owner has not said they want it.
-  if (flagged.length && m.status === "active") await tellChange(app, m, flagged.map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}`), m.itemId ?? defaultItemId);
+  // The newest point recorded names this crossing in the change ledger: collecting the same points again is the same change.
+  const newest = points.map((p) => p.at ?? at).sort().at(-1) ?? at;
+  if (flagged.length && m.status === "active") await tellChange(app, m, flagged.map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}`), m.itemId ?? defaultItemId, `metric:${m.id}@${newest}`);
   return changes;
 }
 
-async function tellChange(app: App, m: Metric, lines: string[], itemId?: string) {
+async function tellChange(app: App, m: Metric, lines: string[], itemId?: string, source?: string) {
   const body = `${lines.join("\n")}${m.why ? `\n\n${truncate(m.why, 200)}` : m.description ? `\n\n${truncate(m.description, 200)}` : ""}`;
   const { notify } = await import("../core/notify.ts");
   // A change in the numbers is not a first nudge about a new item (no grace period), and a notification
@@ -336,11 +338,11 @@ async function tellChange(app: App, m: Metric, lines: string[], itemId?: string)
   }
   if (itemId) {
     try {
+      // A key result on the line's timeline (items/changes.ts), noted only; the same crossing told again is not a second one.
+      const { recordChange } = await import("../items/changes.ts");
+      const noted = recordChange(app, { itemId, type: "result", origin: "metric", source, summary: `指标变化：${truncate(lines[0] ?? m.name, 200)}${lines.length > 1 ? ` 等 ${lines.length} 处` : ""}`, detail: lines.length > 1 ? lines.join("\n") : m.why || m.description ? truncate(m.why || m.description, 300) : null });
       const { addItemEvent } = await import("../items/store.ts");
-      addItemEvent(app, itemId, "note", `指标变化：${lines.join("；")}`, "agent");
-      // A key result on the line's timeline (items/changes.ts), noted only.
-      const { addChange } = await import("../items/changes.ts");
-      addChange(app, { itemId, type: "result", origin: "metric", summary: `指标变化：${truncate(lines[0] ?? m.name, 200)}${lines.length > 1 ? ` 等 ${lines.length} 处` : ""}`, detail: lines.length > 1 ? lines.join("\n") : m.why || m.description ? truncate(m.why || m.description, 300) : null });
+      if (noted?.created) addItemEvent(app, itemId, "note", `指标变化：${lines.join("；")}`, "agent");
     } catch {
       // The item may be gone; the notification still says it.
     }

@@ -72,6 +72,30 @@ const TURN_CONTEXT_LINK_INDEXES = `create index if not exists notifications_push
 
 const METRIC_SERIES_INDEX = `create index if not exists metric_points_series_at on metric_points(metric_id,dims,at);`;
 
+/**
+ * The change ledger (items/changes.ts recordChange, docs/v2/architecture.md “变化台账”): a change's source
+ * key and every key it was seen by, who added to it later; who handled an event and who stepped aside
+ * (core/handling.ts, on the existing handled_messages); the owner's choices on proposals (items/choices.ts).
+ */
+const CHANGE_LEDGER_MIGRATION = `alter table item_changes add column source_key text;
+   alter table item_changes add column sources text;
+   alter table item_changes add column added text;
+   create unique index item_changes_source on item_changes(item_id,type,source_key) where source_key is not null;
+   alter table handled_messages add column actor text;
+   alter table handled_messages add column decision text;
+   alter table handled_messages add column change_id text;
+   alter table handled_messages add column reason text;
+   create index if not exists handled_messages_message on handled_messages(message_id);
+   create index if not exists rule_handled_key on rule_handled(key);
+   create index if not exists rule_firings_event on rule_firings(event_key);
+   create table owner_choices (
+     user_id text not null, kind text not null, target text not null, version text,
+     choice text not null check(choice in ('keep','drop','later','merged')), into_ref text, reason text,
+     until text, via text, at text not null, updated_at text not null,
+     primary key(user_id,kind,target)
+   );
+   create index owner_choices_recent on owner_choices(user_id,at desc);`;
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2337,6 +2361,7 @@ export const migrations: readonly string[] = [
      created_by text not null, created_at text not null, revoked_at text
    );
    create unique index remote_grants_member on remote_grants(session_id,user_id) where revoked_at is null;`,
+  CHANGE_LEDGER_MIGRATION,
 ];
 
 export type Db = DatabaseSync;

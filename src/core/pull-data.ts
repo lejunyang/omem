@@ -34,6 +34,8 @@ export const pullTables: Table[] = [
   { name: "item_changes", key: ["id"], newer: "updated_at" },
   // A line's suggested next steps (items/lines.ts): travel with the item, the owner's latest answer wins.
   { name: "item_next", key: ["id"], newer: "updated_at" },
+  // What the owner (or a member) kept, dropped or put off among proposals (items/choices.ts): the latest answer wins.
+  { name: "owner_choices", key: ["user_id", "kind", "target"], newer: "updated_at" },
   { name: "conversations", key: ["id"], newer: "updated_at", local: ["agent_session", "agent_cwd"] },
   { name: "runs", key: ["id"], newer: "coalesce(finished_at, started_at, created_at)", local: ["profile_id", "lane", "not_before"] },
   { name: "cards", key: ["id"], newer: "due_at" },
