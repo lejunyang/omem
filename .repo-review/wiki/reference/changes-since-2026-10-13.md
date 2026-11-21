@@ -19,6 +19,13 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 插件检索、原件格式和页面类型的网页
+
+- 设置 → 检索与记忆 加了“插件参与检索”（`web/src/components/SearchProviders.vue`）：读 `GET /api/search/providers`，逐个打开召回、限定空间，选用哪个重排，选了插件重排时可填 `rerank.pluginPassiveThreshold`。保存走设置页的 `saveConfig`（整份 `search` / `rerank`）。没有插件提供者也没配过时整张卡不出现。
+- 原件带 `meta.display` 时，原件页默认按表格或条目显示（`web/src/components/SourceStructured.vue`，切行和行号在 `web/src/lib/source-display.ts`），超过 300 行用 `VirtualList`。选中一行只是把行号写进地址的 `from` / `to`，引用格式和引用抽屉不变；有 `display` 的原件一次读全文，因为行号指向整份正文。元信息写解析器的名字，找不到时写“读它的插件停用了”。
+- 设置 → 采集 → 其他平台 末尾列出解析器（`web/src/components/SourceParsers.vue`）。Wiki 页头显示类型（`GET /api/wiki/kinds` 找名字，找不到照原样写），编辑和“写一页新文章”可以选类型；接口不给模板正文，所以没有“用模板开始”。
+- 演示数据（`scripts/doc-screens.ts`）加了一个进程内注册的检索插件、一个解析器插件（两份原件、一个页面类型和一页 Wiki），截图 `search-providers`、`source-table`。
+
 ## 指定了思考强度的运行偶尔一开始就失败（11-21）
 
 - 现象：本人指定了模型和强度的交办，开始时报“该 Agent 不支持设置 effort，无法使用指定值 high”，重试有时就好。`src/agents/acp.ts` 建好会话后先设模型再找强度的设置项；模型已经是想要的那个时不会设模型，手里只有会话刚建好时的那份设置项，有的适配器那时还没列出强度。

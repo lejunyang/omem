@@ -53,12 +53,12 @@ const toc = ref<{ id: string; text: string; level: number }[]>([]);
 const filter = ref("");
 const runs = ref<Run[]>([]);
 const editing = ref(false);
-const draft = ref({ title: "", summary: "", body: "" });
+const draft = ref({ title: "", summary: "", body: "", kind: "" });
 const rewriteOpen = ref(false);
 const rewriteNote = ref("");
 const planOpen = ref(false);
 const newOpen = ref(false);
-const newPage = ref({ title: "", question: "", outline: "", slug: "", folder: "" });
+const newPage = ref({ title: "", question: "", outline: "", slug: "", folder: "", kind: "guide" });
 const planFocus = ref("");
 const navOpen = ref(false);
 const version = ref<{ hash: string; diff: string } | null>(null);
@@ -226,14 +226,41 @@ function showFolder(path: string) {
   tree.value?.openFolder(path);
 }
 
+/**
+ * Page kinds this space can use (`GET /api/wiki/kinds`): the built-in ones and those plugins add,
+ * each with when to use it. A page whose plugin kind is gone keeps the kind's name as it was.
+ */
+type PageKind = { kind: string; label: string; describe: string; plugin: string | null; hasTemplate: boolean };
+const kinds = ref<PageKind[]>([]);
+let kindsSeq = 0;
+watch(space, async (s) => {
+  const seq = ++kindsSeq;
+  try {
+    const list = await get<PageKind[]>(`/api/wiki/kinds?space=${encodeURIComponent(s)}`);
+    if (seq === kindsSeq) kinds.value = list;
+  } catch {
+    if (seq === kindsSeq) kinds.value = [];
+  }
+}, { immediate: true });
+const kindOf = (k?: string) => (k ? kinds.value.find((x) => x.kind === k) : undefined);
+const kindLabel = (k?: string) => kindOf(k)?.label ?? k ?? "";
+function kindOptions(current?: string) {
+  const list = kinds.value.map((k) => ({ value: k.kind, label: k.label, hint: k.plugin ? `${k.describe}（插件 ${k.plugin}）` : k.label === k.describe ? k.kind : k.describe }));
+  if (current && !kinds.value.some((k) => k.kind === current)) list.push({ value: current, label: current, hint: "插件已停用，照原样保留" });
+  return list;
+}
 function startEdit() {
   if (!page.value) return;
-  draft.value = { title: page.value.meta.title, summary: page.value.meta.summary ?? "", body: page.value.body };
+  draft.value = { title: page.value.meta.title, summary: page.value.meta.summary ?? "", body: page.value.body, kind: page.value.meta.kind ?? "" };
   editing.value = true;
 }
 async function saveEdit() {
   if (!page.value) return;
-  await put(`/api/wiki/${space.value}/page/${page.value.slug}`, { ...draft.value, kind: page.value.meta.kind });
+  try {
+    await put(`/api/wiki/${space.value}/page/${page.value.slug}`, { title: draft.value.title, summary: draft.value.summary, body: draft.value.body, kind: draft.value.kind || page.value.meta.kind });
+  } catch (e) {
+    return toast((e as Error).message, "error");
+  }
   toast("已保存（已记入页面历史）", "ok");
   await loadPage();
 }
@@ -262,9 +289,9 @@ async function rewrite() {
 async function createPage() {
   const name = newPage.value.slug.trim() || newPage.value.title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60);
   const slug = name.includes("/") || !newPage.value.folder ? name : `${newPage.value.folder}/${name}`;
-  await post(`/api/wiki/${space.value}/write`, { slug, title: newPage.value.title, question: newPage.value.question, outline: newPage.value.outline, kind: "guide", entry_points: [] });
+  await post(`/api/wiki/${space.value}/write`, { slug, title: newPage.value.title, question: newPage.value.question, outline: newPage.value.outline, kind: newPage.value.kind || "guide", entry_points: [] });
   newOpen.value = false;
-  newPage.value = { title: "", question: "", outline: "", slug: "", folder: "" };
+  newPage.value = { title: "", question: "", outline: "", slug: "", folder: "", kind: "guide" };
   toast("助理开始调查并写作这一页", "ok");
   void loadSpace();
 }
@@ -406,6 +433,11 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
       <article v-else-if="editing" class="article editor">
         <input v-model="draft.title" class="input title-input" />
         <input v-model="draft.summary" class="input" placeholder="摘要：用户读完能得到什么" />
+        <div v-if="kinds.length" class="kind-row">
+          <span class="muted small">类型</span>
+          <UiSelect v-model="draft.kind" size="sm" width="180px" aria-label="页面类型" :options="kindOptions(page.meta.kind)" placeholder="没有类型" />
+          <span v-if="kindOf(draft.kind)?.plugin" class="muted small kind-why">{{ kindOf(draft.kind)?.describe }}</span>
+        </div>
         <textarea v-model="draft.body" class="textarea body-input" spellcheck="false" />
         <div class="row">
           <span class="muted small">支持 Markdown、[[页面链接]]、[说明](src:原件id#L1-L5) 引用、mermaid 图。</span>
@@ -426,6 +458,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         <h1 class="title">{{ page.meta.title }}</h1>
         <p v-if="page.meta.summary" class="lead">{{ page.meta.summary }}</p>
         <div class="meta row wrap">
+          <span v-if="page.meta.kind" class="badge kind-badge" :title="kindOf(page.meta.kind)?.describe ?? `类型 ${page.meta.kind}（提供它的插件停用了）`">{{ kindLabel(page.meta.kind) }}</span>
           <span class="muted small">更新于 {{ page.meta.updated ?? fmtTime(page.updatedAt, false) }}</span>
           <span v-if="page.context.sources.length" class="muted small">· 引用 {{ page.context.sources.length }} 份原件</span>
           <button
@@ -523,6 +556,11 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
           <span>放在哪个目录</span>
           <UiSelect v-model="newPage.folder" aria-label="目录" :options="[{ value: '', label: '顶层（之后由助理归类）' }, ...folders.map((f) => ({ value: f.path, label: f.path, hint: f.count + ' 页' }))]" />
         </div>
+        <div v-if="kinds.length" class="field">
+          <span>写成哪种页面</span>
+          <UiSelect v-model="newPage.kind" aria-label="页面类型" :options="kindOptions()" />
+          <span v-if="kindOf(newPage.kind)?.plugin" class="hint">{{ kindOf(newPage.kind)?.describe }}<template v-if="kindOf(newPage.kind)?.hasTemplate">助理会按这个类型的模板写。</template></span>
+        </div>
         <label class="field"><span>用户问题</span><textarea v-model="newPage.question" class="textarea" rows="3" placeholder="用户读完应该能回答什么、能做什么" /></label>
         <label class="field"><span>讲解思路（可选）</span><textarea v-model="newPage.outline" class="textarea" rows="2" placeholder="例如：先用一个真实例子走完全流程，再讲设计取舍" /></label>
         <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!newPage.title.trim() || !newPage.question.trim()" @click="createPage">开始写作</button></div>
@@ -541,6 +579,23 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
 </template>
 
 <style scoped>
+.kind-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.kind-why {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.kind-badge {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .page-loading {
   max-width: 760px;
   margin: 0 auto;

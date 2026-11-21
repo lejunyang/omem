@@ -9,6 +9,7 @@ import HelpText from "../../components/HelpText.vue";
 import LarkCapturedChats, { type CapturedChat } from "../../components/LarkCapturedChats.vue";
 import ProviderApps from "../../components/ProviderApps.vue";
 import SetCard from "../../components/SetCard.vue";
+import SourceParsers from "../../components/SourceParsers.vue";
 import SetRow from "../../components/SetRow.vue";
 import Skeleton from "../../components/Skeleton.vue";
 import UiCheckbox from "../../components/UiCheckbox.vue";
@@ -27,7 +28,7 @@ const SUBS: { value: Sub; label: string }[] = [
   { value: "platforms", label: "其他平台" },
 ];
 const route = useRoute();
-const fromCard: Record<string, Sub> = { "lark-docs": "docs", "lark-capture": "capture", platforms: "platforms" };
+const fromCard: Record<string, Sub> = { "lark-docs": "docs", "lark-capture": "capture", platforms: "platforms", "source-parsers": "platforms" };
 const sub = ref<Sub>(fromCard[String(route.query.card ?? "")] ?? (SUBS.some((s) => s.value === route.query.sub) ? (route.query.sub as Sub) : "docs"));
 
 // 关注: only how many there are, and where they live now.
@@ -270,6 +271,7 @@ onMounted(() => {
 
     <template v-else>
       <div id="set-platforms"><ProviderApps /></div>
+      <SourceParsers />
     </template>
   </div>
 </template>
