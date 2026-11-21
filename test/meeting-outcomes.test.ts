@@ -72,6 +72,18 @@ describe("会议结束后，把决定结构化地写到关联的事项", () => {
     expect(meetingLinks(t.app, "m_demo", "owner").confirmed.map((c) => c.item.id)).toContain(other.id);
   });
 
+  it("本人说“不用”记到那件事，同一场会再交也不再问", async () => {
+    const t = await setup();
+    const other = upsertItem(t.app, undefined, { title: "退款接口文档" }, "user");
+    await callTool(t.ctx(t.summaryRun().id), "meeting_outcomes", t.outcomes(other.id));
+    const ask = listAsks(t.app, { status: "pending" }).find((a) => a.handler === "meeting-outcomes")!;
+    await answerAsk(t.app, ask.id, { choice: 1, by: "owner" });
+    const again = await callTool(t.ctx(t.summaryRun().id), "meeting_outcomes", t.outcomes(other.id));
+    expect(again.text).toContain("不再问");
+    expect(listAsks(t.app, { status: "pending" }).filter((a) => a.handler === "meeting-outcomes")).toHaveLength(0);
+    expect(changes(t.app, other.id)).toHaveLength(0);
+  });
+
   it("别的空间的事项写不进去；引用要是这场会的记录；会中旁听不交", async () => {
     const t = await setup();
     createSpace(t.app, { id: "other", name: "别的项目" });

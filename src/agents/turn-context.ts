@@ -9,6 +9,7 @@ import { lineLike, rootOf } from "../items/tree.ts";
 import { addScope, scopeOf } from "./run-scope.ts";
 import type { Thread, ThreadMessage } from "./threads.ts";
 import { handlingText } from "../core/handling.ts";
+import { lineChoices } from "../items/choices.ts";
 import { truncate } from "../core/util.ts";
 
 export type TurnContext = {
@@ -51,6 +52,10 @@ export function itemFocus(app: App, item: Item, via: "explicit" | "linked", flow
     listen: listen ? { id: listen.id, name: listen.name } : undefined,
     stage: active && stage && { id: active.id, name: active.name, state: stage.state },
   };
+  // The person's latest choices on this line's proposals (items/choices.ts): what not to propose again.
+  const top = line ?? item;
+  const choices = lineChoices(app, item.userId, top.id, [...new Set([item.id, top.id])], [top.title, item.title]);
+  if (choices.length) context.choices = choices;
   return { context, item, line, listen, stage, flow, stages };
 }
 

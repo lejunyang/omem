@@ -4,6 +4,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { metricProviders } from "../plugins/process-hooks.ts";
 import { canWrite, OWNER } from "../core/users.ts";
 import { HttpError, json, newId, now, truncate } from "../core/util.ts";
+import { fingerprint, mayPropose, recordChoice } from "../items/choices.ts";
 
 /**
  * Metrics: the numbers of the owner's work the assistant keeps an eye on — events tracked by a
@@ -173,6 +174,12 @@ export function defineMetric(app: App, input: MetricInput, by: MetricBy = { by: 
   if (input.status === "proposed") throw new HttpError(400, "status 只能是 active、paused 或 dropped");
   if (!prev && input.status === "dropped") throw new HttpError(400, "还没有这个指标，不用标“不要”");
   if (agent) {
+    // Said 不要 to a metric of this name before (it may have been removed since, or named a little
+    // differently): not proposed again unless its query changed (items/choices.ts, the one record of choices).
+    if (!prev) {
+      const said = mayPropose(app, by.userId ?? OWNER, "metric", fingerprint(input.name), fingerprint(input.query ?? ""));
+      if (!said.ok) throw new HttpError(409, `${said.why}，不要再提议同样的指标；查法变了才可以再提`);
+    }
     if (prev?.status === "dropped") throw new HttpError(409, `本人不要这个指标（${day(prev.droppedAt)}${prev.ownerNote ? `，本人说：${prev.ownerNote}` : ""}），不要再提议同样的；本人在对话里亲口要回来时才能改`);
     if (input.status === "dropped") throw new HttpError(403, "要不要一个指标由本人定：不再需要的写进 why 或说明，本人在数据页点“不要”");
     // A proposal stays one until the owner decides; a kept metric may be paused and resumed.
@@ -185,6 +192,9 @@ export function defineMetric(app: App, input: MetricInput, by: MetricBy = { by: 
       droppedAt = null;
     }
     if (status === "dropped" && prev?.status !== "dropped") droppedAt = at;
+    // The owner's word on an agent's proposal, in the one record of choices (items/choices.ts).
+    if (prev?.definedBy === "agent" && status !== prev.status && (status === "dropped" || (status === "active" && prev.status === "proposed")))
+      recordChoice(app, { userId: by.userId ?? OWNER, kind: "metric", target: fingerprint(prev.name), version: fingerprint(input.query ?? prev.query), choice: status === "dropped" ? "drop" : "keep", reason: input.ownerNote ?? null, via: "web" });
   }
   const m: Metric = {
     id: prev?.id ?? input.id ?? newId("m"),

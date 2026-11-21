@@ -8,6 +8,7 @@ import { getRun, runUser } from "./runs.ts";
 import { recordChange } from "../items/changes.ts";
 import { itemsAt, materialCandidates, type Place } from "../items/places.ts";
 import { getItem, isClosed, upsertItem, type Item } from "../items/store.ts";
+import { mayPropose } from "../items/choices.ts";
 
 /**
  * After a meeting: its decisions, to-dos and open questions as changes of the item it is about
@@ -172,6 +173,9 @@ export function submitOutcomes(app: App, runId: string | null | undefined, space
     return `已记到「${item.title}」（${link.why}）：新记 ${w.created} 条，补进已有的 ${w.updated} 条${w.deadline ? `；${w.deadline}` : ""}。`;
   }
   // Not a confirmed link: one question per meeting and item; a newer hand-in replaces the waiting one.
+  // Said 不用 to this meeting on this item before (items/choices.ts): not asked again.
+  const said = mayPropose(app, userId, "meeting-item", `${meetingId}>${item.id}`);
+  if (!said.ok) return `「${item.title}」：${said.why}（这场会的结果不记到它上面），不再问。`;
   const waiting = one<{ id: string }>(app.db, "select id from asks where status = 'pending' and json_extract(context, '$.handler') = 'meeting-outcomes' and json_extract(context, '$.meetingId') = ? and json_extract(context, '$.itemId') = ?", meetingId, item.id);
   if (waiting) cancelAsk(app, waiting.id, "换成了新交的结果");
   const count = all_.length;
