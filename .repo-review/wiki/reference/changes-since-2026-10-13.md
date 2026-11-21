@@ -26,6 +26,8 @@ updated: 2026-11-21
 
 退回本机和改借后端时，`work-device.ts` 按本机启用的档案选择执行者。对方独有的档案由本机主助手接手。远端调查可使用接活设备的技能、平台读取工具与档案标为只读的认证 MCP，见 `src/agents/runner.ts`。
 
+直连中断后，反向请求沿用原配对的派单身份。签名只对当前命令、参数和反向凭据有效。传输入口在 `src/core/peers.ts`，接活端核验在 `src/agents/peer-work.ts`。
+
 ## 2026-11-21：任务板可以派到其他设备
 
 - `dispatch_work` 每块可指定 device、mode 和 access。borrow 借 ACP 在本机只读，remote 在对方同名空间起运行。选择前核对配对、在线、协议与空间权限；在线设备只返回后端空位和仓库空间名称。读 `src/agents/work-device.ts`、`tools.ts`。

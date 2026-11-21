@@ -160,12 +160,14 @@ AI：愿意借出的后端——名字、模型、此刻是否排队、今天还
 
 | command | args | 返回 |
 | --- | --- | --- |
-| work-info | 可选 target: {space, access}、remote | 协议 version=1、后端名称和空位、仓库空间名称、接活策略 |
+| work-info | 可选 target: {space, access}、remote | 协议 version=1，routedWork 表示支持保留派单身份的反向转发；后端名称和空位、仓库空间名称、接活策略 |
 | work-accept | key、from、goal、accept、space、access、deadline；可选 agent、model、effort | runId；同一配对令牌与 key 重发复用 |
 | work-status | key | 状态、最后回答、产物、用量、实际 AI 与起止时间 |
 | work-cancel | key | 取消状态；先到的取消也会作废幂等键 |
 
 本机按到期索引、每批最多 4 次、约每 10 秒取状态。期限到了或失联一小时记失败，可重派；旧尝试迟到只记在旧记录。取消断网时继续重试，对方的运行还受原期限限制。单个证据 2 MB、合计 8 MB，文本超限截断，其他大文件附对方运行地址；回答上限 64,000 字符。对方原件引用标明设备名。直连时尝试给出 remoteUrl；经中间节点或反向连接时用 `omem peer open <设备>` 打开那边的网页，再看 remoteRunId 对应运行。
+
+直连转到反向通道时，发送端用原配对凭据签名该条命令、参数和反向凭据的摘要。接活设备核验两份仍然有效的本人配对凭据，按原配对执行接活策略、幂等查重、查询与取消。即使首次接活的响应丢失，沿反向连接重发也会找到同一运行。只有反向通道的设备沿用它唯一的配对凭据。
 
 设备页需要呈现接活三档与按配对来源的覆盖。`GET /api/settings?section=channels` 返回 `config.node`，`PUT /api/settings` 可单独提交 `{node: {acceptWork}}`，设备 ID 和来源覆盖会保留。提交 `acceptWorkFrom` 时用完整映射替换旧映射；移除某个来源即可让它继承全局设置，提交空对象可清除全部覆盖。`GET /api/peers` 的 paired[].id 与 label 用于显示覆盖对应的来源。进度页需要显示每次尝试的设备名、模式、期限、迟到标记和远端运行入口。本期交付服务端及飞书卡片，网页控件另行接入。
 

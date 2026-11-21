@@ -1,16 +1,17 @@
+import { createHmac } from "node:crypto";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, tx } from "../core/db.ts";
 import { getSpace, spaceDir } from "../core/spaces.ts";
 import { canWrite, OWNER } from "../core/users.ts";
-import { HttpError, now, sha256, truncate } from "../core/util.ts";
+import { HttpError, now, sameSecret, sha256, truncate } from "../core/util.ts";
 import { nodeId } from "../core/peers.ts";
 import { can } from "../auth/permissions.ts";
 import { cancelRun, createRun, getRun, type RunContext } from "./runs.ts";
 import { backendLimitOf, backendUsedOf, excluded, limitOf, usedOf } from "./capacity.ts";
 import { workAgentSpec } from "./work-device.ts";
 
-export type WorkCaller = { user: string; token: string };
+export type WorkCaller = { user: string; token: string; workPair?: string };
 const key = z.string().regex(/^[\w-]{1,100}$/);
 const scope = z.object({ space: z.string().min(1).max(200), access: z.enum(["read", "write"]).default("read") }).strict();
 const request = scope.extend({
@@ -25,7 +26,41 @@ function pairing(app: App, caller?: WorkCaller) {
   const hash = sha256(caller?.token ?? "");
   if (caller?.user !== OWNER || !one(app.db, "select 1 from api_tokens where token_hash=? and user_id=? and label like 'peer:%'", hash, caller.user))
     throw new HttpError(403, "派活需要本人设备的配对令牌");
-  return hash.slice(0, 16);
+  return caller.workPair ?? hash.slice(0, 16);
+}
+
+// Bind the command to both credentials without sending the direct bearer down the reverse tunnel.
+function workRouteMac(pairHash: string, transportToken: string, command: string, args: object) {
+  return createHmac("sha256", pairHash).update(JSON.stringify(["omem/work/v1", sha256(transportToken), command, args])).digest("hex");
+}
+
+// Both transports authenticate as a paired owner. On fallback the original pairing also signs the
+// operation, its arguments and the particular reverse credential. A node name never grants access.
+const routed = z.object({
+  request: z.record(z.string(), z.unknown()), pair: z.string().regex(/^[a-f0-9]{16}$/), mac: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+
+/** The final hop uses its usual direct pairing even when the HTTP request travels back over a tunnel. */
+export function reverseWorkBody(body: string, directToken: string, backToken: string) {
+  let message;
+  try { message = JSON.parse(body); } catch { return body; }
+  if (!message || !Object.hasOwn(workCommands,message.command)) return body;
+  const request = message.args ?? {};
+  const hash = sha256(directToken);
+  return JSON.stringify({ ...message, args: { request, pair: hash.slice(0,16), mac: workRouteMac(hash,backToken,message.command,request) } });
+}
+
+export function unpackWorkCommand(app: App, name: string, args: unknown, caller?: WorkCaller) {
+  if (!args || typeof args !== "object" || !("request" in args)) return {args,caller};
+  const envelope = routed.safeParse(args);
+  if (!envelope.success) throw new HttpError(400,"设备派单凭据格式错误");
+  const {request, pair, mac} = envelope.data;
+  if (!caller || caller.user !== OWNER) throw new HttpError(403,"派活需要本人设备的配对令牌");
+  const origin = one<{token_hash:string}>(app.db,
+    "select token_hash from api_tokens where token_hash glob ? and user_id=? and label like 'peer:%'", pair + "*", OWNER);
+  if (!origin || !sameSecret(mac, workRouteMac(origin.token_hash,caller.token,name,request)))
+    throw new HttpError(403,"反向连接的派单与原配对不符");
+  return {args:request,caller:{...caller,workPair:pair}};
 }
 
 function checkScope(app: App, pair: string, target: z.infer<typeof scope>, remote: boolean) {
@@ -45,7 +80,7 @@ async function inventory(app: App, args: { target?: z.infer<typeof scope>; remot
   const backends = listAgentProfiles(app).filter(p => p.installed && !p.peer && p.transport === "acp" && !excluded(app, p)).map(p => ({
     id: p.id, name: p.name ?? p.id, free: Math.max(0, Math.min(limitOf(app,p) - usedOf(app,p), (backendLimitOf(app,p) ?? Infinity) - backendUsedOf(app,p))),
   }));
-  return { version: 1, device: nodeId(app), backends, repos: all<{ id: string; name: string }>(app.db, "select id,name from spaces where kind='repo' order by id limit 500"),
+  return { version: 1, routedWork: true, device: nodeId(app), backends, repos: all<{ id: string; name: string }>(app.db, "select id,name from spaces where kind='repo' order by id limit 500"),
     acceptWork: app.config.node.acceptWorkFrom?.[pair] ?? app.config.node.acceptWork ?? "off" };
 }
 

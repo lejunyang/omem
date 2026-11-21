@@ -48,7 +48,7 @@ export async function selectDevice(app: App, target: Destination, user: string, 
   let info: WorkInventory;
   try { info = await workCommand(app,device,"work-info",{target:{space,access},remote:mode === "remote"}); }
   catch (e) { throw new HttpError(400,`无法派到 ${device}：${(e as Error).message}`); }
-  if (info.version !== 1) throw new HttpError(400,`${device} 的派单协议版本不兼容`);
+  if (info.version !== 1 || (mode === "remote" && !info.routedWork)) throw new HttpError(400,`${device} 的派单协议版本不兼容`);
   if (!info.backends.length) throw new HttpError(400,`${device} 没有可用的 ACP 后端`);
   if (mode === "remote") return { device, mode, access };
   const alias = allProfiles(app.config).find(p => p.id === execution?.profile && p.peer?.id === device);

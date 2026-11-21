@@ -1,70 +1,28 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { FastifyInstance } from "fastify";
-import { afterEach, expect, it, vi } from "vitest";
-import { testApp } from "./helpers.ts";
+import { expect, it, vi } from "vitest";
+import { setupBoardPeers as setup } from "./work-board-peer-fixture.ts";
 import type { App } from "../src/core/app.ts";
-import { all, one, run } from "../src/core/db.ts";
+import { all, run } from "../src/core/db.ts";
 import { now } from "../src/core/util.ts";
-import { addPeer, invite, savePeers, listPeers } from "../src/core/peers.ts";
+import { savePeers, listPeers } from "../src/core/peers.ts";
 import { createApiToken, createUser, pairedTokens } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { saveConfig } from "../src/core/config.ts";
-import { startServer } from "../src/server/http.ts";
 import { importText } from "../src/sources/import.ts";
 import { listMemories } from "../src/memory/store.ts";
-import { createThread } from "../src/agents/threads.ts";
-import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { __testHandlers, createRun, getRun, setRunOutput, addRunEvent, startWorker, stopWorker, waitForRun, trackAbort } from "../src/agents/runs.ts";
-import { readBoard, pollBoardPeers, maintainBoards } from "../src/agents/work-board.ts";
+import { callTool } from "../src/agents/tools.ts";
+import { __testHandlers, getRun, setRunOutput, addRunEvent, startWorker, stopWorker, waitForRun, trackAbort } from "../src/agents/runs.ts";
+import { readBoard, maintainBoards } from "../src/agents/work-board.ts";
 import { saveMcpServer } from "../src/agents/mcp-servers.ts";
 import { saveAgentSpec, saveSkill } from "../src/agents/specs.ts";
-import { artifactInbox, artifactsByIds, collectInbox } from "../src/agents/artifacts.ts";
+import { artifactInbox, collectInbox } from "../src/agents/artifacts.ts";
 import { runProgress } from "../src/agents/progress.ts";
 import { workProgressView } from "../src/channels/lark-work-progress.ts";
 import { refreshWork } from "../src/agents/agent-work.ts";
 import { selectDevice, workCommand, workDevices } from "../src/agents/work-device.ts";
-import { closeAcpServing } from "../src/core/peer-acp.ts";
-import { releaseAll } from "../src/agents/sessions.ts";
 import { PEER_LOST_MS } from "../src/studies/remote.ts";
 import { MAX_EVIDENCE_FILE } from "../src/studies/remote-host.ts";
 
-const apps: App[] = [], servers: FastifyInstance[] = [];
-afterEach(async () => {
-  vi.restoreAllMocks(); releaseAll(); closeAcpServing();
-  for (const s of servers.splice(0)) await s.close();
-  for (const a of apps.splice(0)) { a.events.emit("close"); a.db.close(); rmSync(a.home,{recursive:true,force:true}); }
-});
-async function setup() {
-  const here = testApp(), there = testApp(); apps.push(here,there);
-  here.config.node.id = "desk"; there.config.node.id = "lab";
-  there.config.node.acceptWork = "read";
-  for (const a of [here,there]) {
-    a.config.agents.default = "fake";
-    a.config.agents.profiles = [{ id:"fake", transport:"acp", command:process.execPath,args:[resolve("test/fake-acp-agent.ts")],env:{FAKE_MODE:"device-work",OMEM_ARTIFACTS:""},idleTimeoutMs:60000 }];
-    servers.push(await startServer(a,{port:0,quiet:true}));
-    saveConfig(a.config,a.home);
-  }
-  await addPeer(here,invite(there,{url:there.baseUrl!,label:"desk"}).code);
-  const thread = createThread(here,{spaceId:"personal",channel:"web"});
-  const origin = createRun(here,{kind:"ask",spaceId:"personal",title:"核对材料",input:{conversationId:thread.id}});
-  const ctx: ToolContext = {app:here,runId:origin.id,userId:"owner",actor:"agent",spaceId:"personal",spaces:null,tools:null};
-  const dispatch = async (mode = "remote", extra = {}) => {
-    const result = await callTool(ctx,"dispatch_work",{title:"设备材料核对",tasks:[
-      {title:"设备调查",goal:"读设备材料",accept:"给出证据",device:"lab",mode,execution:{profile:"fake",source:"user",reason:"假后端验证"},...extra},
-      {title:"辅助核对",goal:"读另一份",accept:"给出行号",required:false},
-    ]});
-    expect(result.isError,result.text).toBe(false);
-    return readBoard(here,origin.id).tasks[0];
-  };
-  const poll = async () => { run(here.db,"update board_peer_polls set next_at=?",now()); await pollBoardPeers(here); };
-  const remoteRuns = () => all<{id:string}>(there.db,"select id from runs where kind='peer-work' order by rowid");
-  const complete = async (id:string, answer = "核对报告 [依据](src:remote-source#L1-L2)") => {
-    run(there.db,"update runs set status='done',started_at=?,finished_at=?,ai=? where id=?",now(),now(),JSON.stringify({profile:"fake",model:"small"}),id);
-    setRunOutput(there,id,{answer}); addRunEvent(there,id,"usage",{input:100,output:20,cached:10});
-  };
-  return {here,there,ctx,id:origin.id,dispatch,poll,remoteRuns,complete};
-}
 it("remote 起在对方，用对方的库、只读工具和目录；产物、用量、设备进度回本机",async () => {
   const f = await setup(); importText(f.there,"personal",{title:"设备材料",text:"设备材料：项目 A 的检查安排。"});
   const t = await f.dispatch("remote",{agent:"missing-profile"}); await f.poll();
@@ -151,7 +109,10 @@ it("未开启接活、空间缺失、非映射成员、未配对及旧协议均�
   const info = await workDevices(f.here,"owner"); expect(info[0]).toMatchObject({device:"lab",version:1});
   expect(JSON.stringify(info)).not.toContain("设备材料：");
   const spy = vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({result:{version:0}}),{status:200}));
-  await expect(selectDevice(f.here,{device:"lab"},"owner","personal")).rejects.toThrow("版本不兼容"); spy.mockRestore();
+  await expect(selectDevice(f.here,{device:"lab"},"owner","personal")).rejects.toThrow("版本不兼容");
+  spy.mockResolvedValue(new Response(JSON.stringify({result:{version:1}}),{status:200}));
+  await expect(selectDevice(f.here,{device:"lab",mode:"remote"},"owner","personal")).rejects.toThrow("版本不兼容");
+  spy.mockRestore();
 });
 it("单改全局接活档位保留设备 ID 和禁用来源，显式移除覆盖后继承全局",async () => {
   const f = await setup();
