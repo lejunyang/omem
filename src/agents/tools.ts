@@ -3675,6 +3675,39 @@ def({
   },
 });
 
+def({
+  name: "ask_member_progress",
+  description:
+    "替本人向一位成员要本人一条工作线或一件事项的进展：item_id、问谁（member：omem 用户的 id 或名字）、问什么（一两句）。宿主先核对对方读得到这件事（观察者不能问），给对方建一条提问：出现在 ta 的“等我的”里，ta 绑定了飞书时由 omem 的机器人私聊发卡；同一件事对同一个人还有没答的就改那一条，不另建。" +
+    "ta 回答后，原话记成这件事的一条变化，并在不急的通知里告诉本人；ta 选“现在说不了”的，几天内不再问 ta 同一件事。默认先给本人一张确认（问谁、问什么），本人点了才发；本人这一轮亲口让你去问的直接发。只在本人要知道进展、而进展在别人手里时用，不要替本人催人。",
+  write: true,
+  schema: z.object({
+    item_id: z.string().describe("本人的工作线或事项 id"),
+    member: z.string().trim().min(1).max(100).describe("问谁：omem 用户的 id 或名字"),
+    question: z.string().trim().min(2).max(300).describe("问什么，一两句，直接对 ta 说（用“你”，不要写“替本人”“本人”），写清要知道的那一点，不要写成催促"),
+  }),
+  handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的运行能替本人向成员要进展");
+    const m = await import("../items/member-progress.ts");
+    const { item, member } = m.checkProgressAsk(ctx.app, a.item_id, a.member);
+    const w = ctx.spaces;
+    if (w && !w.includes(item.spaceId)) throw new HttpError(403, `本次任务不能读空间 ${item.spaceId}`);
+    const since = m.unableSince(ctx.app, item.id, member.id);
+    if (since) return `${member.name} 在 ${since.slice(0, 10)} 说了现在说不了，${m.PROGRESS_COOLDOWN_MS / 86_400_000} 天内不再问 ta 这件事。告诉本人这一点，不要换个说法再问。`;
+    const normalized = { item_id: item.id, member: member.id, question: a.question.trim() };
+    const direct = ctx.actor === "user" || ctx.approved || ownerAskedThisTurn(ctx);
+    if (!direct) {
+      const pending = one<{ id: string }>(ctx.app.db, "select id from asks where user_id = ? and tool = 'ask_member_progress' and status = 'pending' and args = ? order by created_at desc limit 1", OWNER, JSON.stringify(normalized));
+      if (pending) return `同样的提问正在等本人确认（${pending.id}），用 wait_answer 等结果，不要重复申请。`;
+      const r = await held(ctx, "ask_member_progress", normalized, `要替你问 ${member.name}「${item.title}」的进展吗？\n\n${a.question.trim()}\n\n确认后发给 ta（ta 的待处理清单；绑定了飞书时机器人私聊发卡）。`);
+      if (r.isError) throw new HttpError(403, r.text);
+      return r.text;
+    }
+    const r = await m.askMemberProgress(ctx.app, { itemId: item.id, member: member.id, question: a.question, runId: ctx.runId, by: OWNER });
+    return `${r.updated ? "已改了还没答的那条提问" : "已去问"} ${r.member.name}（${r.askId}）：「${r.item.title}」。ta 回答后会记成这件事的一条变化并告诉本人；在回复里告诉本人你去问了谁、问了什么，不要等 ta 回答。`;
+  },
+});
+
 /** "2h", "3d", "45m" or an ISO time, within 30 days. */
 function untilTime(when: string) {
   const m = /^(\d+(?:\.\d+)?)\s*(m|min|h|d)$/i.exec(when.trim());

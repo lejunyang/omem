@@ -1,0 +1,8 @@
+id: localnotice
+name: 本机文件通知
+version: '1'
+permissions:
+  notify:
+    deliver: true
+    ask: true
+  write: true

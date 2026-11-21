@@ -188,6 +188,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/ui/pages/:id": "self",
   "POST /api/asks/:id/draft": "self",
   "GET /api/ui/:id": "self",
+  "GET /api/notify/outlets": "self",
+  "PUT /api/notify/outlets": "self",
+  "POST /api/notify/outlets/:id/test": "self",
   "GET /api/notifications": cap("notifications.view", "global"),
   "GET /api/notifications/outcomes": "owner",
   "POST /api/notifications/outcomes/ignore": "owner",
@@ -282,13 +285,19 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/work": cap("work.view", "list"),
   "GET /api/work/activities": cap("work.view", "list"),
   "GET /api/work/:id": cap("work.view", "list"),
-  "POST /api/work/:id/refresh": "owner",
+  // A member's own lines (items/member-work.ts): only their own items; the handlers check the item again.
+  "POST /api/work/:id/refresh": cap("items.operate", "item:p.id"),
   // A line's lifecycle (items/lifecycle.ts): its phase, and the lines that ended.
   "GET /api/work/ended": cap("work.view", "list"),
-  "PUT /api/work/:id/phase": "owner",
-  "PUT /api/items/:id/parent": "owner",
-  "PUT /api/item-next/:id": "owner",
-  "PUT /api/item-changes/:id/noise": "owner",
+  "PUT /api/work/:id/phase": cap("items.operate", "item:p.id"),
+  "PUT /api/items/:id/parent": cap("items.edit", "item:p.id"),
+  "PUT /api/item-next/:id": "self",
+  "PUT /api/item-changes/:id/noise": "self",
+  "POST /api/work/:id/next": cap("items.edit", "item:p.id"),
+  // “今天” as it reads for the person, and the routine work on their own lines (items/member-routine.ts).
+  "GET /api/work/today": "self",
+  "GET /api/work/routine": "self",
+  "PUT /api/work/routine": "self",
   "GET /api/item-sync": g("connector.use"),
   "PUT /api/item-sync": g("connector.use"),
   "POST /api/item-sync/:id/pull": g("connector.use"),
@@ -572,6 +581,20 @@ export const routeKey = (req: FastifyRequest) => `${req.method} ${req.routeOptio
  * Throws when this user may not use this route. The owner may use every one. A source a route names
  * must also be one this person may read (restricted ones, Feishu access: src/auth/visibility.ts).
  */
+export function requireAskAccess(app: App, userId: string, id: string) {
+  if (one<{role:string}>(app.db, "select role from users where id=?", userId)?.role !== "observer") return;
+  requirePerm(app, userId, "ask.send");
+  const ordinary = one(app.db, `select 1 from asks a join conversations c on c.id=a.conversation_id
+    join runs r on r.id=a.run_id and r.kind='ask' and coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))=c.id
+    where a.id=? and a.kind='question' and a.tool is null and a.args is null
+    and json_extract(a.context,'$.handler') is null
+    and json_extract(a.context,'$.askedBy') is null
+    and json_extract(a.context,'$.operationApproval') is null
+    and a.user_id=? and c.user_id=a.user_id and r.user_id=a.user_id`, id, userId);
+  if (ordinary) return;
+  throw new HttpError(403, "观察者不能回答这项提问");
+}
+
 export async function checkRoute(app: App, req: FastifyRequest, userId: string) {
   if (isOwner(app, userId)) return;
   const rule = ROUTE_RULES[routeKey(req)] ?? ROUTE_RULES[`* ${req.routeOptions.url}`];
@@ -579,15 +602,7 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   if (rule === "self" && !["GET", "HEAD", "OPTIONS"].includes(req.method) && one<{ role: string }>(app.db, "select role from users where id=?", userId)?.role === "observer") {
     const path = routeKey(req);
     if (path === "POST /api/asks/:id/answer" || path === "POST /api/asks/:id/dismiss") {
-      requirePerm(app, userId, "ask.send");
-      const ordinary = one(app.db, `select 1 from asks a join conversations c on c.id=a.conversation_id
-        join runs r on r.id=a.run_id and r.kind='ask' and coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))=c.id
-        where a.id=? and a.kind='question' and a.tool is null and a.args is null
-        and json_extract(a.context,'$.handler') is null
-        and json_extract(a.context,'$.askedBy') is null
-        and json_extract(a.context,'$.operationApproval') is null
-        and a.user_id=? and c.user_id=a.user_id and r.user_id=a.user_id`, (req.params as {id:string}).id, userId);
-      if (ordinary) return;
+      return requireAskAccess(app, userId, (req.params as {id:string}).id);
     }
     throw new HttpError(403, "观察者不能执行这项操作");
   }

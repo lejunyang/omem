@@ -54,6 +54,8 @@ const HANDLERS: Record<string, { label: string; group: Group }> = {
   "approval-promote": { label: "以后自动", group: "propose" },
   "flow-gate-promote": { label: "以后自动", group: "propose" },
   "command-gate": { label: "命令", group: "approve" },
+  // The owner's assistant asking a member how one of the owner's lines is going (src/items/member-progress.ts).
+  "member-progress": { label: "问进展", group: "ask" },
 };
 function kindOf(a: Ask): { label: string; group: Group } {
   const known = a.handler ? HANDLERS[a.handler] : undefined;

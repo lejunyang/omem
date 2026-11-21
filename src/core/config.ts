@@ -289,6 +289,12 @@ export function legacyCommand(r: OperationRule): CommandRule | undefined {
 export const capturePolicy = z.enum(["ingest", "involved", "store", "skip"]);
 export type CapturePolicy = z.infer<typeof capturePolicy>;
 
+const outletSetting = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/),
+  minUrgency: z.enum(["later", "normal", "urgent"]).default("later"),
+  askKinds: z.array(z.string().min(1).max(100)).max(64).default(["question"]),
+}).strict();
+export const outletSettings = z.array(outletSetting).max(64).refine(xs => new Set(xs.map(x => x.id)).size === xs.length, "出口重复");
 export const configSchema = z.object({
   /**
    * Listen address. All interfaces by default, so other devices can pair with this one;
@@ -1126,6 +1132,8 @@ export const configSchema = z.object({
    */
   notify: z
     .object({
+      outlets: z.record(z.string(), outletSettings).default({}),
+      outletAskGrants: z.record(z.string(), z.record(z.string(), z.array(z.string()))).default({}),
       onlyUnread: z.boolean().default(true),
       learnFromReactions: z.boolean().default(true),
       firstNudgeDelayMinutes: z.number().int().min(0).default(30),
@@ -1140,7 +1148,7 @@ export const configSchema = z.object({
        */
       today: z.object({ enabled: z.boolean().default(true), at: z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/).default("09:30") }).default({ enabled: true, at: "09:30" }),
     })
-    .default({ onlyUnread: true, learnFromReactions: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9, laterTimes: ["09:30", "13:30", "18:30"], today: { enabled: true, at: "09:30" } }),
+    .default({ outlets: {}, outletAskGrants: {}, onlyUnread: true, learnFromReactions: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9, laterTimes: ["09:30", "13:30", "18:30"], today: { enabled: true, at: "09:30" } }),
   /**
    * MCP servers the owner set up for agents (Agent 页 → MCP, agents/mcp-servers.ts): a command to
    * start (stdio) or a URL (HTTP). An Agent 档案 names the ones it uses (`mcpServers`), a built-in

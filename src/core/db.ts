@@ -2362,18 +2362,31 @@ export const migrations: readonly string[] = [
    );
    create unique index remote_grants_member on remote_grants(session_id,user_id) where revoked_at is null;`,
   CHANGE_LEDGER_MIGRATION,
+  `create table outlet_deliveries (
+    seq integer primary key, outlet text not null, object_id text not null, user_id text not null,
+    op text not null, dedup text not null, urgency text not null, state text not null default 'pending', due integer not null,
+    attempts integer not null default 0, updated text, error text, ref text, identities text,
+    unique(outlet, object_id, op)
+  );
+  create index outlet_due on outlet_deliveries(state,due);
+  create index outlet_history on outlet_deliveries(user_id,outlet,updated desc);
+  create index outlet_dedup on outlet_deliveries(outlet,dedup,seq);
+  create unique index outlet_ask_ref on outlet_deliveries(outlet,ref,user_id) where op='ask';
+  create index outlet_object on outlet_deliveries(object_id,op);`,
+  `create index notifications_pushed_at on notifications(user_id,json_extract(context,'$.pushed.channel'),json_extract(context,'$.pushed.at') desc)
+    where json_extract(context,'$.pushed.channel') is not null;`,
   `create index if not exists progress_runs_item on runs(json_extract(input,'$.itemId'),created_at desc) where json_extract(input,'$.itemId') is not null;
    create index if not exists progress_thread_item on conversations(json_extract(settings,'$.itemId')) where json_extract(settings,'$.itemId') is not null;
    create index if not exists progress_board_item on runs(json_extract(output,'$.turnContext.item.id'),created_at desc) where json_extract(output,'$.turnContext.item.id') is not null;
    create index if not exists progress_tokens on run_events(run_id,seq desc) where type='usage' and json_type(data,'$.input')='integer' and json_type(data,'$.output')='integer';`,
   `create index if not exists progress_review_checks on run_events(run_id,json_extract(data,'$.check'))
      where json_extract(data,'$.phase')='reviewer';`,
-  `create table code_task_run_history (
+  `create table if not exists code_task_run_history (
      work_id text not null, seq integer not null, run_id text not null,
      primary key(work_id, seq, run_id),
      foreign key(work_id, seq) references code_tasks(work_id, seq) on delete cascade
    );
-   create trigger code_task_reassigned after update of coder_run on code_tasks
+   create trigger if not exists code_task_reassigned after update of coder_run on code_tasks
    when old.coder_run is not null and old.coder_run is not new.coder_run begin
      insert into code_task_run_history(work_id,seq,run_id) values(old.work_id,old.seq,old.coder_run)
        on conflict(work_id,seq,run_id) do nothing;
@@ -2396,6 +2409,12 @@ export function openDb(path: string): Db {
   if ((version === ledgerVersion || version === ledgerVersion + 1) &&
       !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
     version = ledgerVersion - 1;
+  }
+  // The progress branch had up to three migrations after the ledger before notification outlets landed.
+  // Replay from the first outlet migration. The progress migrations preserve existing history on replay.
+  if (version > ledgerVersion && version <= ledgerVersion + 3 &&
+      !db.prepare("select 1 from sqlite_schema where type='table' and name='outlet_deliveries'").get()) {
+    version = ledgerVersion;
   }
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");
