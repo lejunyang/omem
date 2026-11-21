@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { doubaoArgs, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
-import type { AgentProfile } from "../src/core/config.ts";
+import { agentProfileSchema, type AgentProfile } from "../src/core/config.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
 import { runBackend } from "../src/agents/dispatch.ts";
 import { saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
@@ -11,6 +11,9 @@ import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 import { testApp } from "./helpers.ts";
 import { all } from "../src/core/db.ts";
 import { saveProbe } from "../src/agents/probe.ts";
+import { prepareRun } from "../src/agents/runner.ts";
+import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { revokeToolToken } from "../src/agents/tools.ts";
 
 const fake: AgentProfile = { id: "doubao-cli", transport: "doubao-cli", command: process.execPath, args: [resolve("test/fake-doubao-cli.ts")], env: {}, idleTimeoutMs: 60_000 };
 
@@ -20,6 +23,57 @@ describe("doubao cli", () => {
     expect(doubaoArgs(p, { cwd: "/w", prompt: "" }, "hi")).toEqual(["-p", "hi", "--model", "Auto", "--effort", "low", "--permission-mode", "ask_risky", "-C", "/w"]);
     expect(doubaoArgs(p, { cwd: "/w", prompt: "", allowWrites: true, resumeSessionId: "9" }, "hi").slice(0, 2)).toEqual(["--resume", "9"]);
     expect(doubaoArgs(p, { cwd: "/w", prompt: "", allowWrites: true }, "hi")).toContain("always_allow");
+  });
+
+  it("keeps risky approval for unboxed guest turns in every global mode", () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    setSandboxSupportForTests({ ok: false, reason: "fixture unavailable" });
+    try {
+      for (const sandbox of ["off", "prefer"] as const) for (const mode of ["per-role", "sandboxed", "all"] as const) {
+        app.config.agents.ownSandbox.mode = sandbox;
+        app.config.agents.fullAccess = mode;
+        for (const role of ["guest", "assistant"] as const) {
+          const prep = prepareRun(app, { actor: { role }, guestTurn: true, fullAccess: true,
+            spaceId: "personal", runId: null, profile: fake });
+          try {
+            expect(prep.isolation.box).toBeUndefined();
+            expect(prep.fullAccess).toBe(true);
+            expect(doubaoArgs(fake, { app, cwd: prep.cwd, prompt: "", allowWrites: prep.allowWrites, fullAccess: prep.fullAccess }, "hi")).toContain("ask_risky");
+          } finally { revokeToolToken(prep.token); }
+        }
+      }
+    } finally { setSandboxSupportForTests(undefined); app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(process.platform !== "linux")("forces Doubao mode only in the prepared sandbox and preserves other backends' write permission", () => {
+    const app = testApp();
+    const home = mkdtempSync(join(tmpdir(), "doubao-mode-"));
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("XDG_DATA_HOME", join(home, ".local/share"));
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.ownSandbox.mode = "require";
+    setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+    try {
+      for (const mode of ["per-role", "sandboxed", "all"] as const) {
+        app.config.agents.fullAccess = mode;
+        for (const transport of ["doubao-cli", "acp", "codex-cli", "claude-cli"] as const) {
+          const profile = agentProfileSchema.parse({ id: "fixture", transport, command: process.execPath });
+          const prep = prepareRun(app, { actor: { role: "guest" }, spaceId: "personal", runId: null, fullAccess: true, profile });
+          try {
+            expect(prep.isolation.box).toBeDefined();
+            expect(prep.fullAccess).toBe(true);
+            expect(prep.acpWritable).toBe(false);
+            expect(prep.allowWrites).toBe(transport === "doubao-cli" && mode === "sandboxed");
+            if (transport === "doubao-cli") expect(doubaoArgs(profile, { cwd: prep.cwd, prompt: "", allowWrites: prep.allowWrites }, "hi"))
+              .toContain(mode === "sandboxed" ? "always_allow" : "ask_risky");
+          } finally { revokeToolToken(prep.token); }
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); app.db.close();
+      rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("runs a turn: the prompt reaches it, the session comes from stderr, the run's env reaches it", async () => {

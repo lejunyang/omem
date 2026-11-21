@@ -567,7 +567,7 @@ export function prepareRun(
     if (under(target, isolation.box.data) && !under(target, canonical(space.rootPath ?? spaceDir(app, space.id))))
       throw new Error("档案的工作目录不属于本空间，不能从 omem 数据目录挂回沙箱");
   }
-  const { fullAccess, acpWritable } = runAccess(app.config.agents.fullAccess, userId === OWNER && !input.shadow, guestTurn,
+  const { force, fullAccess, acpWritable } = runAccess(app.config.agents.fullAccess, userId === OWNER && !input.shadow, guestTurn,
     !!isolation.box, allowWrites && !isolation.box?.readOnly, legacyFull);
   const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   const memorySpaces = spacesWithCapability(app, userId, "memories.view");
@@ -624,7 +624,8 @@ export function prepareRun(
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
-    allowWrites,
+    // Doubao's permission mode follows writable roles or the host's forced mode, not legacy full access.
+    allowWrites: profile.transport === "doubao-cli" ? allowWrites || force : allowWrites,
     fullAccess,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,

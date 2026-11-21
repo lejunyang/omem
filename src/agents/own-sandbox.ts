@@ -102,5 +102,5 @@ export function runAccess(mode: Config["agents"]["fullAccess"], owner: boolean, 
   sandboxed: boolean, writes: boolean, legacyFull: boolean) {
   const force = (mode === "sandboxed" && sandboxed && (owner || guest)) ||
     (mode === "all" && owner && writes && !guest);
-  return { fullAccess: legacyFull || force, acpWritable: sandboxed && (guest || !writes) ? false : writes || legacyFull };
+  return { force, fullAccess: legacyFull || force, acpWritable: sandboxed && (guest || !writes) ? false : writes || legacyFull };
 }

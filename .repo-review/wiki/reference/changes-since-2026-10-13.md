@@ -22,6 +22,8 @@ updated: 2026-11-21
 
 ## 2026-11-21 · 本机登录沙箱与统一的完全访问模式
 
+豆包 CLI 的审批模式在准备运行时按可写角色和 `runAccess` 的强制档位决定，参数层不再读取全局设置或合并后的完全访问标记。未隔离的访客沿用风险审批，ACP、Codex 和 Claude 的模式及 ACP 独立写权限保持原计算。`test/doubao-cli.test.ts` 覆盖沙箱关闭、不支持时回退和已隔离的档位组合，`test/full-access.test.ts` 覆盖角色行为表。
+
 多仓库运行在准备阶段收集分配的工作树、快照、核对过的产物目录及后端状态目录，再应用隐藏与只读规则。启动参数、运行状态和 Agent 当轮说明共用这份挂载计划；设置接口的默认示例也经过相同的状态目录校验。Git links/pointers、只读工作树与可写快照沿用原规则。回归覆盖 `test/own-run.test.ts`、`test/workspace-mounts.test.ts` 和 `test/own-sandbox-linux.test.ts`。
 
 从 `src/agents/own-run.ts` 看本地运行选择，从 `own-sandbox.ts` 看挂载和后端模式。工作区及 ACP 写权限按角色保留，`GET/PUT /api/security/sandbox` 供本人检查和保存设置。配置组合及使用范围见 [本人的运行进沙箱](../../../docs/v2/agent-accounts.md#本人的运行进沙箱)。
