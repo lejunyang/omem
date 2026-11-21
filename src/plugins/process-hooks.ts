@@ -1,5 +1,6 @@
 import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
+import { run } from "../core/db.ts";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
 import type { StageGate, StageRunner, FlowSignal, Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
@@ -16,6 +17,13 @@ type Entry<T> = {
   context(app: App, userId: string, spaceId: string, signal: AbortSignal): CallContext;
 };
 export const stageGates = new Map<string, Entry<StageGate>>();
+/** Remember only declarations from a successfully loaded plugin, including for older owner settings. */
+export function rememberGateScopes(app: App, plugin: string) {
+  for (const [id, entry] of stageGates) {
+    if (entry.plugin === plugin) run(app.db, "insert or replace into kv(key,value) values(?,?)",
+      "flow-gate-scope:" + id, JSON.stringify({ ...entry.def.applies, spaces: entry.spaces }));
+  }
+}
 export const stageRunners = new Map<string, Entry<StageRunner> & { settings(app: App, user: string): Record<string, unknown> }>();
 export const flowSignals = new Map<string, Entry<FlowSignal>>();
 export const notifiers = new Map<string, Entry<Notifier> & { lifetime: AbortSignal }>();

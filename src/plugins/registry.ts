@@ -5,7 +5,7 @@ import { registerAgentLogin } from "../agents/agent-logins.ts";
 import { accountCatalog, declarePluginBackends, registerPluginBackends } from "../agents/catalog.ts";
 import { pluginBackendSchema } from "./backends.ts";
 import { replaceSubscriptions } from "./event-store.ts";
-import { registerProcessHooks, subscriptions } from "./process-hooks.ts";
+import { registerProcessHooks, rememberGateScopes, subscriptions } from "./process-hooks.ts";
 import { registerFeatures } from "../auth/features.ts";
 import { appConfig } from "../auth/apps.ts";
 import { listConnections } from "../auth/vault.ts";
@@ -252,6 +252,7 @@ async function loadCode(app: App, p: LoadedPlugin) {
   p.connectors.push(registerPluginBackends(p.manifest.id));
   await loadPluginCode(app, p);
   replaceSubscriptions(app, p.manifest.id, [...subscriptions.values()].filter(s => s.plugin === p.manifest.id).map(s => s.def));
+  rememberGateScopes(app, p.manifest.id);
 }
 async function loadPluginCode(app: App, p: LoadedPlugin) {
   const { manifest } = p;

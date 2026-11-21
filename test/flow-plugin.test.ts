@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
-import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
+import { forgetPlugin, loadPlugins, reloadPlugin, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { parseFlow, saveFlow } from "../src/flows/definitions.ts";
 import { flowView, ownerAction, startFlow, reportStage, updateStageBudget, recordStage } from "../src/flows/engine.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
@@ -155,6 +155,35 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     }
     await setPluginEnabled(app,"stagekit",true);
     saveGateChecks(app,"inspect",[]);
+  });
+  it("检查收窄后随即停用，旧配置和新配置都按最近生效的声明处理", async () => {
+    const first = {id:"first",name:"准备",by:"wait"}, more = {id:"more",name:"收尾",by:"wait",needs:[]};
+    const checks = [{id:"stagekit:first",mandatory:true}];
+    const file = join(dir,"server.mjs");
+    const load = async (source:string) => {
+      writeFileSync(file,source);
+      await reloadPlugin(app,"stagekit");
+      await trustPlugin(app,"stagekit",mode);
+    };
+    try {
+      await load(stagePlugin.replace('stages:["first"]','stages:["first","more"]'));
+      saveFlow(app,raw([first,more]),"owner");
+      saveGateChecks(app,"inspect",checks);
+      await load(stagePlugin);
+      await setPluginEnabled(app,"stagekit",false);
+      // The first format saved no declaration; the next saved a snapshot when enabled.
+      for (const check of [checks[0], {...checks[0],scope:{stages:["first","more"],spaces:[]}}]) {
+        run(app.db,"update kv set value=? where key='flow-checks:inspect'",JSON.stringify([check]));
+        const item = await begin([first,more]);
+        await ownerAction(app,item,"more","done","完成收尾");
+        expect(flowView(app,item).stages[1].state).toBe("done");
+        await ownerAction(app,item,"first","done","完成准备");
+        expect(flowView(app,item).stages[0].gateReview?.failed[0].reason).toContain("问不到");
+      }
+    } finally {
+      saveGateChecks(app,"inspect",[]);
+      await setPluginEnabled(app,"stagekit",true);
+    }
   });
   it("补录的跨空间引用只留在事项上，检查只收到同空间原件", async () => {
     createSpace(app,{id:"other",name:"项目 B"});

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { one, run } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { HttpError, untilAbort } from "../core/util.ts";
 import { createAsk, cancelAsk } from "../agents/asks.ts";
 import { getItem } from "../items/store.ts";
@@ -17,20 +17,27 @@ export const gateChecksSchema = z.array(z.object({
   stages: z.array(z.string()).max(20).optional(), mandatory: z.boolean().default(false),
 }).strict()).max(30).refine(v => new Set(v.map(c => c.id)).size === v.length, "检查不能重复");
 type Check = z.infer<typeof gateChecksSchema>[number];
-type StoredCheck = Check & { scope?: { stages?: string[]; spaces: readonly string[] } };
+type StoredCheck = Check & { scope?: { flows?: string[]; stages?: string[]; spaces: readonly string[] } };
 export type CompletionPatch = Partial<Omit<StageRow, "itemId" | "id" | "state">>;
 export type GateReview = { summary: string; refs: string[];
   failed: { id: string; reason: string; evidence?: z.infer<typeof evidenceSchema> }[] };
 function storedChecks(app: App, id: string): StoredCheck[] {
-  const saved = one<{ value: string }>(app.db, "select value from kv where key=?", "flow-checks:" + id);
-  return saved ? JSON.parse(saved.value) : [];
+  const rows = all<{check: string; scope: string | null}>(app.db, `select c.value as "check", latest.value as scope
+    from kv enabled cross join json_each(enabled.value) c
+    left join kv latest on latest.key='flow-gate-scope:' || json_extract(c.value,'$.id')
+    where enabled.key=?`, "flow-checks:" + id);
+  return rows.map(row => {
+    const check = JSON.parse(row.check) as StoredCheck;
+    if (row.scope) check.scope = JSON.parse(row.scope);
+    return check;
+  });
 }
 export function checksForFlow(app: App, id: string): Check[] {
   return storedChecks(app,id).map(({scope: _, ...check}) => check);
 }
 export function saveGateChecks(app: App, id: string, checks: Check[]) {
   const f = readFlow(app, id), validated = gateChecksSchema.parse(checks);
-  const stored = validated.map(c => {
+  for (const c of validated) {
     const entry = stageGates.get(c.id);
     if (!entry) throw new HttpError(400, "检查不可用：" + c.id);
     if (entry.def.applies?.flows && !entry.def.applies.flows.includes(id)) throw new HttpError(400, "检查不适用于这个流程");
@@ -38,9 +45,8 @@ export function saveGateChecks(app: App, id: string, checks: Check[]) {
       if (!f.stages.some(s => s.id === stage) || entry.def.applies?.stages && !entry.def.applies.stages.includes(stage))
         throw new HttpError(400, "检查不适用于这个阶段：" + stage);
     }
-    return { ...c, scope: {stages:entry.def.applies?.stages, spaces:entry.spaces} };
-  });
-  run(app.db, "insert or replace into kv(key,value) values(?,?)", "flow-checks:" + id, JSON.stringify(stored));
+  }
+  run(app.db, "insert or replace into kv(key,value) values(?,?)", "flow-checks:" + id, JSON.stringify(validated));
   audit(app, "owner", "flow.checks", id, { checks: validated });
   return validated;
 }
@@ -72,7 +78,7 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
     const entry = stageGates.get(check.id);
     const applies = entry ? entry.def.applies : check.scope;
     const spaces = entry?.spaces ?? check.scope?.spaces;
-    if (entry?.def.applies?.flows && !entry.def.applies.flows.includes(f.id)) continue;
+    if (!entry && !check.scope || applies?.flows && !applies.flows.includes(f.id)) continue;
     if (applies?.stages && !applies.stages.includes(stageId) || spaces?.length && !spaces.includes(item.spaceId)) continue;
     let reason: string | undefined;
     try {
