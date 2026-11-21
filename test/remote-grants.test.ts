@@ -1,10 +1,17 @@
+import { execFile } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { promisify } from "node:util";
+import { prepareRun } from "../src/agents/runner.ts";
+import { revokeToolToken } from "../src/agents/tools.ts";
+import { createRun, runEvents } from "../src/agents/runs.ts";
 import { once } from "node:events";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import WebSocket from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 import { createSession } from "../src/auth/sessions.ts";
 import { all, run } from "../src/core/db.ts";
-import { createApiToken, createUser, updateUser } from "../src/core/users.ts";
+import { createApiToken, createUser, personalSpaceId, updateUser } from "../src/core/users.ts";
 import { setToolResolverForTests } from "../src/core/tools.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
@@ -85,6 +92,53 @@ describe("browser session grants", () => {
     await ended;
     expect((await fetch(operator.url, { headers: { cookie: operator.cookie } })).ok).toBe(false);
     expect(all<{ action: string }>(app.db, "select action from audit_events where target=? order by id", id).map(r => r.action)).toEqual(["remote.grant","remote.grant","remote.revoke"]);
+  });
+
+  it("registers the skill's opened tab with the run identity and detaches when the page closes", async () => {
+    const actor = "agent-user";
+    createUser(app, { id: actor, name: "运行主人" });
+    const actorToken = createApiToken(app, actor);
+    const spaceId = personalSpaceId(actor);
+    const job = createRun(app, { kind: "agent", title: "浏览器", spaceId, userId: actor });
+    const prep = prepareRun(app, { actor: { role: "assistant" }, runId: job.id, spaceId, userId: actor, profileId: "codex" });
+    const root = join(app.home, "remote", "profiles", "@" + actor), dir = join(root, "demo");
+    mkdirSync(dir, { recursive: true });
+    expect(prep.mcp.env?.OMEM_BROWSER_PROFILES).toBe(root);
+    const pageId = "PAGE1";
+    const cdp = createServer((req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(req.url === "/json/version" ? {} : { id: pageId }));
+    });
+    const ws = new WebSocketServer({ server: cdp, path: "/devtools/page/" + pageId });
+    ws.on("connection", client => client.on("message", () => client.send(JSON.stringify({ id: 1, result: { arguments: ["--user-data-dir=" + dir] } }))));
+    cdp.listen(0, "127.0.0.1");
+    await once(cdp, "listening");
+    const port = (cdp.address() as { port: number }).port;
+    writeFileSync(join(dir, "DevToolsActivePort"), port + "\n/devtools/browser/demo");
+    const env = { ...process.env, ...prep.mcp.env, OMEM_CHROME: join(app.home, "unused-chrome") };
+    const launch = () => promisify(execFile)(process.execPath, [join(import.meta.dirname, "../skills/library/desktop-control/scripts/browser.mjs"),
+      "open", "demo", "--url", "https://example.test/"], { env });
+    try {
+      expect((await api("/agent-browser", "POST", { profile: "demo", pageId }, actorToken)).ok).toBe(false);
+      const { sessionId } = JSON.parse((await launch()).stdout);
+      expect(JSON.parse((await launch()).stdout).sessionId).toBe(sessionId);
+      const list = await (await api("", "GET", undefined, actorToken)).json();
+      expect(list.sessions).toContainEqual(expect.objectContaining({ id: sessionId, ownerId: actor, runId: job.id, mine: true }));
+      expect(runEvents(app, job.id)).toContainEqual(expect.objectContaining({ data: expect.objectContaining({ link: "#/remote/" + sessionId }) }));
+      cap("view");
+      expect((await (await api("", "GET", undefined, token)).json()).sessions.map((s: {id:string}) => s.id)).not.toContain(sessionId);
+      expect((await api("/sessions/" + sessionId + "/grants", "POST", { userId: member, mode: "view" }, actorToken)).ok).toBe(true);
+      const viewer = await connect(sessionId);
+      const ended = once(viewer.ws, "close");
+      for (const client of ws.clients) client.terminate();
+      await ended;
+      expect((await fetch(viewer.url, { headers: { cookie: viewer.cookie } })).ok).toBe(false);
+    } finally {
+      for (const client of ws.clients) client.terminate();
+      revokeToolToken(prep.token);
+      ws.close();
+      cdp.close();
+    }
   });
 
   it.each(["expiry", "disable", "close"])("disconnects a silent viewer on %s", async reason => {

@@ -27,7 +27,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const home = process.env.OMEM_HOME || join(homedir(), ".omem");
-const root = join(home, "remote", "profiles");
+const root = process.env.OMEM_BROWSER_PROFILES || join(home, "remote", "profiles");
 const [cmd, name, ...rest] = process.argv.slice(2);
 
 const fail = (msg) => {
@@ -181,14 +181,29 @@ async function shot() {
   }
 }
 
+async function announce(port, details, tab) {
+  const opened = { profile: name, port, ...details };
+  if (process.env.OMEM_BROWSER_PROFILES) {
+    const page = tab ?? (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === "page");
+    if (!page?.id) fail("browser has no page to register");
+    const r = await fetch(new URL("/api/remote/agent-browser", process.env.OMEM_URL), {
+      method: "POST", redirect: "error", headers: { "Content-Type": "application/json", authorization: "Bearer " + process.env.OMEM_TOKEN },
+      body: JSON.stringify({ profile: name, pageId: page.id }),
+    });
+    if (!r.ok) fail(`browser opened, remote registration failed (${r.status}): ${await r.text()}`);
+    opened.sessionId = (await r.json()).id;
+  }
+  console.log(JSON.stringify(opened));
+}
+
 async function open() {
   const dir = dirOf(name);
   mkdirSync(dir, { recursive: true });
   const url = opt("--url")[0];
   const running = await alive(dir);
   if (running) {
-    if (url) await fetch(`http://127.0.0.1:${running}/json/new?${encodeURI(url)}`, { method: "PUT" });
-    console.log(JSON.stringify({ profile: name, port: running, reused: true }));
+    const page = url ? await (await fetch(`http://127.0.0.1:${running}/json/new?${encodeURIComponent(url)}`, { method: "PUT" })).json() : null;
+    await announce(running, { reused: true }, page);
     return;
   }
   rmSync(join(dir, "DevToolsActivePort"), { force: true });
@@ -197,6 +212,7 @@ async function open() {
     `--user-data-dir=${dir}`,
     "--remote-debugging-address=127.0.0.1",
     "--remote-debugging-port=0",
+    "--enable-automation",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-dev-shm-usage",
@@ -216,11 +232,12 @@ async function open() {
     if (port) {
       // The page guard installs with the profile: open the page once it is there, not as the
       // start page of a new profile (that load can beat it).
+      let page;
       if (url) {
         await new Promise((r) => setTimeout(r, 1500));
-        await fetch(`http://127.0.0.1:${port}/json/new?${encodeURI(url)}`, { method: "PUT" });
+        page = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: "PUT" })).json();
       }
-      console.log(JSON.stringify({ profile: name, port, pid: child.pid, reused: false }));
+      await announce(port, { pid: child.pid, reused: false }, page);
       return;
     }
     await new Promise((r) => setTimeout(r, 200));
@@ -248,6 +265,12 @@ async function list() {
 }
 
 if (cmd === "open") await open();
+else if (cmd === "register") {
+  const pageId = opt("--page-id")[0];
+  const port = await alive(dirOf(name));
+  if (!process.env.OMEM_BROWSER_PROFILES || !port || !pageId) fail("register needs a managed profile and --page-id");
+  await announce(port, { reused: true }, { id: pageId });
+}
 else if (cmd === "shot") await shot();
 else if (cmd === "close") await close();
 else if (cmd === "list") await list();

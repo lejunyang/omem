@@ -19,6 +19,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 浏览器会话交给成员
+
+远程会话支持有期限的只看或操作授权。管理和列表从 `src/remote/http.ts`、`grants.ts` 读起；画面按会话和模式校验，断开和过滤在 `proxy.ts`。技能打开的浏览器登记到运行，来源校验在 `agent-browser.ts`。接口和返回示例见 `docs/v2/remote.md`。
+
 ## HTTP 规则的判定入口：浏览器里的请求发出前来问（11-21）
 
 - `src/agents/http-gate.ts`：`httpWatch` 给出这个调用方现在要问哪些请求（生效的、动作不是放行的 HTTP 规则的主机和方法，带 `revision`），`httpGate` 判一个请求（JSON 请求体才参与 `body.jsonPath`），走命令同一个 `gateOperation`。接口 `GET / POST /api/operation-gate/http`，和命令垫片同样只认本机带运行令牌的请求。
