@@ -10,6 +10,7 @@ import { createRun, getRun, queuedInLane, registerHandler, setRunOutput, updateQ
 import { quietReason } from "../agents/quiet.ts";
 import { larkBy } from "../core/run-trigger.ts";
 import { ruleClaim, rulesJudging } from "../rules/store.ts";
+import { noteYield, yieldTo } from "../core/handling.ts";
 import { handledKey, mentionChannel, mentionChannels, MENTION_FOLLOW_MS, type MentionChannel, type MentionChat, type MentionInfo, type MentionMessage, type Replied, type ReplyMode } from "./channel.ts";
 
 export type { MentionChannel, MentionChat, MentionInfo, MentionMessage } from "./channel.ts";
@@ -202,9 +203,15 @@ registerHandler("mention", async (ctx: RunContext) => {
     const rule = ruleOn(app, channel, input.chatId, m);
     if (rule) {
       taken.push(`规则「${rule.rule}」${rule.waiting ? "在等着处理" : "处理了"}`);
+      noteYield(app, { event: m.id, actor: "mention", to: `规则「${rule.rule}」`, reason: rule.waiting ? "规则在等着处理这条消息" : "规则处理了这条消息", runId: ctx.run.id });
       continue;
     }
-    if (channel.takenElsewhere(app, input.chatId, m)) continue;
+    if (channel.takenElsewhere(app, input.chatId, m)) {
+      // Who: the path before this one that took it (core/handling.ts REPLY_ORDER), or the 关注 replying in this chat.
+      const holder = yieldTo(app, "mention", m.id);
+      noteYield(app, { event: m.id, actor: "mention", to: holder?.label ?? "这个群的关注", reason: holder ? `${holder.label}已经接手` : "这个群的关注在管这里的回复", runId: ctx.run.id });
+      continue;
+    }
     if (await channel.ownerSeen(app, m, app.config.mentions.skipWhen)) continue;
     open.push(m);
   }

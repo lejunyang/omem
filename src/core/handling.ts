@@ -122,9 +122,34 @@ export function yieldTo(app: App, actor: Handler, event: string): Handling | nul
 
 const DECISION: Record<HandlingDecision, string> = { replied: "回复了", drafted: "起草了回复", noted: "记成了变化", ignored: "判断不用管", handed: "交给了别处", taken: "接手了", read: "只读了", yielded: "让开了" };
 /** A few short lines for a person or an agent: “关注「项目 A」接手了；跟进记成了变化 ic…；有人找你让开了（因为…）”. */
-export function handlingText(app: App, event: string, limit = 6): string {
-  const list = handlingOf(app, event).slice(-limit);
+export function handlingText(app: App, event: string, limit = 6, except: Handler[] = []): string {
+  const list = handlingOf(app, event).filter((h) => !except.includes(h.actor)).slice(-limit);
   return list.map((h) => `${h.label}${DECISION[h.decision] ?? h.decision}${h.changeId ? `（变化 ${h.changeId}）` : ""}${h.decision === "yielded" && h.by ? `，因为${h.by}已经在处理` : ""}${h.reason ? `：${h.reason}` : ""}`).join("；");
+}
+
+/**
+ * For read_source on a chat: the lines between `from` and `to` whose message someone handled, each with
+ * what became of it (“L12 关注「项目 A」接手了；跟进记成了变化 ic…”). At most `limit` lines; "" when none.
+ */
+export function handlingOfLines(app: App, sourceId: string, from: number, to: number, limit = 8): string {
+  const lines = all<{ line: number; message_id: string }>(app.db, `select line, message_id from lark_message_lines where source_id = ? and line between ? and ?
+    union select line, message_id from lark_messages where source_id = ? and line between ? and ? order by line limit 400`, sourceId, from, to, sourceId, from, to);
+  if (!lines.length) return "";
+  const ids = [...new Set(lines.map((l) => l.message_id))];
+  const marks = ids.map(() => "?").join(",");
+  const had = new Set([
+    ...all<{ message_id: string }>(app.db, `select distinct message_id from handled_messages where message_id in (${marks}) and channel not like 'lark-bot%'`, ...ids).map((r) => r.message_id),
+    ...all<{ key: string }>(app.db, `select distinct key from rule_handled where key in (${marks})`, ...ids.map((id) => `lark:${id}`)).map((r) => r.key.slice(5)),
+  ]);
+  const out: string[] = [];
+  for (const l of lines) {
+    if (out.length >= limit) break;
+    if (!had.has(l.message_id)) continue;
+    const text = handlingText(app, l.message_id, 4);
+    if (text) out.push(`L${l.line} ${text}`);
+    had.delete(l.message_id);
+  }
+  return out.join("\n");
 }
 
 /** How many times paths stepped aside on the events behind these changes, with who and why (the timeline's 让开). */

@@ -66,6 +66,8 @@ export function awarenessNote(app: App, runId: string | null | undefined, withTo
     const context = turn?.context ?? r.input.turnContext as TurnContext | undefined;
     const hints = context?.candidates.map(c => `- ${c.itemId}「${truncate(c.title, 60)}」：${c.reason}`) ?? [];
     const parts = [
+      // What other paths already made of the message this turn answers (turn-context.ts, core/handling.ts).
+      context?.handled ? `# 这条消息别处已经处理过\n${context.handled}\n已经记成的变化不用再记一遍；要补充（比如定下了日期）就引用同一条消息再记，宿主会补进原来那一条。别处负责回复的，不要再回一遍。` : "",
       relatedNote(app, runId),
       turn || !context ? itemPlacesNote(app, runId, userId, withTools, turn?.here, turn?.linked) : "",
       hints.length ? ["# 可能是同一件事的在办事项", ...hints, ...(withTools ? ["用 read_item 核实后再关联。"] : [])].join("\n") : "",

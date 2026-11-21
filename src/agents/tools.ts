@@ -592,7 +592,10 @@ def({
     const notes = notesOn(sourceNotes(ctx.app, s.id).filter((n) => n.status !== "rejected"), r.lineStart, r.lineEnd);
     const noteText_ = notes.length ? `\n标注（以标注为准，不要引用已过时、有误或不检索的段落作为现状）：\n${notes.map((n) => `- #${n.id} ${noteText(n)}${n.by === "owner" ? "（本人）" : n.status === "confirmed" ? "（本人确认）" : ""}`).join("\n")}` : "";
     const version = s.kind === "code" || s.kind === "doc" ? codeVersion(ctx.app, s.spaceId) : null;
-    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${level}${version ? `\n代码来自：${version}` : ""}${file}${warn}${replayNote}${noteText_}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
+    // A chat: which of these messages some path already handled, and what each became (core/handling.ts). Not for a guest.
+    const handled = s.kind === "chat" && ctx.role !== "guest" && !view ? (await import("../core/handling.ts")).handlingOfLines(ctx.app, s.id, r.lineStart, r.lineEnd) : "";
+    const handledText = handled ? `\n已经有人处理过的消息（谁接手了、记成了什么、谁让开了；回复的只有一个）：\n${handled}` : "";
+    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${level}${version ? `\n代码来自：${version}` : ""}${file}${warn}${replayNote}${noteText_}${handledText}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
   },
 });
 

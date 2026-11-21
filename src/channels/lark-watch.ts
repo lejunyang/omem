@@ -8,6 +8,7 @@ import { ownerContextParts } from "../agents/owner-now.ts";
 import { chatListened, contextOfConversation, contextsOfChat, expireContexts, LISTEN_CHANNEL, listContexts, type ListenContext } from "./listen.ts";
 import { briefText, lessonsText } from "./watch-trial.ts";
 import { followProblemMessages, problemsText } from "./listen-problems.ts";
+import { HANDLERS, noteYield } from "../core/handling.ts";
 
 /**
  * Feishu messages of the groups 「关注」 read (channels/listen.ts). Messages arrive from the bot (real
@@ -79,8 +80,12 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
   const who = { ownerOpenId: opts.ownerId ?? app.config.lark.ownerOpenId, botOpenId: opts.botOpenId };
   let n = 0;
   for (const m of messages) {
-    // Each message once, whichever path saw it first.
-    if (one(app.db, "select 1 from handled_messages where channel = 'lark' and message_id = ?", m.id)) continue;
+    // Each message once, whichever path saw it first. Asked of the bot itself: the 关注 step aside, and say so.
+    const seen = one<{ rule: string }>(app.db, "select rule from handled_messages where channel = 'lark' and message_id = ?", m.id);
+    if (seen) {
+      if (seen.rule === "direct") noteYield(app, { event: m.id, actor: "watch", to: HANDLERS.direct, reason: "有人 @ 了机器人，由当场回答的那一轮处理" });
+      continue;
+    }
     // Never react to our own posts (the bot's open_id in real time, its app id when captured).
     if (m.senderId && (m.senderId === opts.botOpenId || m.senderId === app.config.lark.appId)) continue;
     const at = sentMs(m.time);

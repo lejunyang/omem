@@ -246,6 +246,18 @@ async function watchedMaterial(app: App, messages: ThreadMessage[], { listening:
   const lessons = trial.lessonsText(app, c);
   const memories = await memoriesFor(app, `${c.name} ${c.note ?? ""}\n${batchText}`.slice(0, 2000), c.spaceId ?? undefined, 6);
   const led = messages.filter((m) => typeof m.meta.lead === "string");
+  // A message a path before the 关注 took (someone @-ed the bot, a rule fired on it): that one replies,
+  // this batch only notes it (core/handling.ts REPLY_ORDER). Recorded as this 关注 stepping aside.
+  const { noteYield, yieldTo } = await import("../core/handling.ts");
+  const held = messages.flatMap((m) => {
+    const ext = typeof m.meta.externalId === "string" ? m.meta.externalId : null;
+    // A message a rule handed to this very 关注 is this 关注's to answer.
+    if (!ext || m.meta.rule) return [];
+    const h = yieldTo(app, "watch", ext);
+    if (!h) return [];
+    noteYield(app, { event: ext, actor: "watch", to: h.label, reason: `${h.label}已经接手这条消息的回复` });
+    return [`${String(m.meta.speaker ?? "")}的「${m.text.replace(/\n（飞书消息[\s\S]*$/, "").slice(0, 30)}」→ ${h.label}`];
+  });
   const reply =
     k.reply === "auto" ? "可以直接用 lark_send 回复（reply_to 填那条消息，几个群时 chat_id 由 reply_to 定）；本人对哪条不满意，这个关注就改回先给本人看草稿"
     : k.reply === "draft" ? `要回复就用 lark_send（reply_to 填那条消息），会先变成只有本人看得到的草稿卡片，本人照发、改了再发或选为什么不发${k.wantsAuto ? `；这是试运行，本人连续照发 ${k.promoteAfter} 条后宿主会问要不要直接发` : ""}。只有达到“值得回复的结论”的才拟草稿，拿不准就不拟`
@@ -289,6 +301,7 @@ async function watchedMaterial(app: App, messages: ThreadMessage[], { listening:
     `- ${othersAsks}。`,
     ...(messages.some((m) => m.meta.backlog) ? ["- 标着“关注开始前发的”是之前的消息：只处理到现在还没人答、又在说明范围内的问题，别人已经答过的不再回。"] : []),
     ...(led.length ? [`- 这几条消息也在别的关注里，由它们负责回复，你这里只记下、需要时告诉本人：${[...new Set(led.map((m) => `${String(m.meta.speaker ?? "")}的「${m.text.replace(/\n（飞书消息[\s\S]*$/, "").slice(0, 30)}」→ ${String(m.meta.leadName ?? m.meta.lead)}`))].join("；")}。`] : []),
+    ...(held.length ? [`- 这几条消息已经有别的处理者接手了回复，你这里不回、只记下：${[...new Set(held)].join("；")}。`] : []),
     `- 回复：${reply}。同一件事的后续回在它原来的话题里，不为它另开话题。不在群里 @ 本人。`,
     "- @ 机器人的消息由当场回答的那一轮处理，不会送到这里；要知道它答了什么，用 list_conversations / read_conversation 读这个群的会话。",
     "- 某个话题独立又要深入处理（一次排查、一个需求），可以 run_agent(own_topic=true) 交给合适的 Agent 在它的话题里做，你这里继续看全群。",
