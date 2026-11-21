@@ -7,7 +7,8 @@ import { git, gitAsync, resolveRef } from "../core/git.ts";
 import { remoteKey, remoteKeys } from "../core/repositories.ts";
 import { findSpace, listSpaces, spaceFamily, type Space } from "../core/spaces.ts";
 import { HttpError, now } from "../core/util.ts";
-import { baselineRef, codeIndexConfig, codeIndexState, hasOrigin, patchState, usesBaseline, workKeyOf } from "./code-baseline.ts";
+import { parserList } from "../plugins/formats.ts";
+import { baselineParserKey, baselineRef, codeIndexConfig, codeIndexState, hasOrigin, patchState, usesBaseline, workKeyOf } from "./code-baseline.ts";
 
 /**
  * Keeping repository spaces' code indexes current (docs/v2/code-index.md): fetch each repository
@@ -102,7 +103,7 @@ export async function refreshRepoSpaces(app: App, opts: { spaces?: string[]; for
     for (const s of group) {
       const at = now();
       if (fetched !== undefined) patchState(app, s.id, fetched ? { fetchedAt: at, error: null, errorAt: null } : { error: fetchError, errorAt: at });
-      const need = await needsSync(s, opts.force);
+      const need = await needsSync(app, s, opts.force);
       const pending = syncPending(app, s.id);
       if (need && !pending) scheduleSpaceSync(app, s.id);
       report.spaces.push({ id: s.id, fetched, synced: need && !pending, reason: pending ? "已有同步在排队" : need ? "索引落后" : "没有变化", ...(fetchError ? { error: fetchError } : {}) });
@@ -135,7 +136,7 @@ function overlayFor(app: App, spaces: string[], branch: string) {
 }
 
 /** Whether the space's index is behind: the baseline's commit moved, or (read from the directory) HEAD or the working tree changed. */
-async function needsSync(s: Repo, force?: boolean) {
+async function needsSync(app: App, s: Repo, force?: boolean) {
   if (force) return true;
   const st = codeIndexState(s);
   if (!s.settings.lastSync) return true;
@@ -143,7 +144,7 @@ async function needsSync(s: Repo, force?: boolean) {
     const ref = baselineRef(s.rootPath, codeIndexConfig(s));
     if (!ref) return false;
     const tip = resolveRef(s.rootPath, ref);
-    return !!tip && (st?.mode !== "baseline" || st.ref !== ref || st.commit !== tip.commit);
+    return !!tip && (st?.mode !== "baseline" || st.ref !== ref || st.commit !== tip.commit || (st.parserKey ?? "") !== baselineParserKey(app, parserList(s.id)));
   }
   // `git status` can take a while on a large working tree: off the main thread.
   const head = (await gitAsync(s.rootPath, ["rev-parse", "HEAD"])).stdout.trim();

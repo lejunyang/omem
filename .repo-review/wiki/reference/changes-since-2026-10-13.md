@@ -19,6 +19,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 仓库基线采用原件解析器（2026-11-21）
+
+从 `src/sources/code-baseline.ts` 读起。仓库同步把 Git blob 交给文件导入使用的解析器；已索引的文件在解析器版本或选择变化时重新读取，保留原件 ID。
+
 ## 插件定义原件格式和 Wiki 页面类型（11-21）
 
 - 上传、目录导入和 URL 导入按插件匹配规则选择解析器。原件保存 Markdown、解析器版本和结构化行范围。读 `src/plugins/formats.ts`、`src/sources/import.ts` 和 `src/sources/import-process.ts`。

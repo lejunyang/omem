@@ -104,8 +104,15 @@ function builtinFile(file: string) {
   return DOC_EXT.has(ext) || IMAGE_EXT.has(ext) || classify(file) !== "doc" || /\.(md|mdx|markdown|txt|rst|adoc)$/i.test(file);
 }
 
-function fileParser(app: App, parsers: FileParsers, file: string, mime?: string) {
+export function fileParser(app: App, parsers: FileParsers, file: string, mime?: string) {
   if (parsers.list.length) return pickParser(parsers.list, app.config.documents.parserOrder ?? [], file, builtinFile(file), mime);
+}
+
+/** A baseline import supplies Git bytes here, even if the working-tree file differs. */
+export async function parseFileBytes(app: App, parsers: FileParsers, key: string, file: string, bytes: Buffer, mimeType?: string) {
+  const parsed = await parsers.parse(key, { name: basename(file), mimeType, bytes });
+  return { kind: "doc" as const, title: parsed.title ?? basename(file), text: parsed.text, mime: mimeType,
+    meta: { parser: parsed.parser, fields: parsed.meta, display: parsed.display, original: keepOriginal(app, file, bytes) } };
 }
 
 /** Import one file into a space. Binary documents are converted; originals are kept in files/. */
@@ -118,10 +125,8 @@ export async function importFile(app: App, spaceId: string, file: string, uri?: 
   const parser = fileParser(app, parsers, path, options.mime);
   if (parser) {
     if (statSync(path).size > MAX_INPUT) throw new HttpError(413, "解析输入超过 200 MiB");
-    const bytes = readFileSync(path);
-    const parsed = await parsers.parse(parser.id, { name: basename(path), mimeType: options.mime, bytes });
-    return upsertSource(app, { archive, spaceId, kind: "doc", uri: id, title: parsed.title ?? basename(path), text: parsed.text, mime: options.mime,
-      meta: { parser: parsed.parser, fields: parsed.meta, display: parsed.display, original: keepOriginal(app, path, bytes), directoryRoot: options.directoryRoot } });
+    const source = await parseFileBytes(app, parsers, parser.id, path, readFileSync(path), options.mime);
+    return upsertSource(app, { ...source, archive, spaceId, uri: id, meta: { ...source.meta, directoryRoot: options.directoryRoot } });
   }
   if (DOC_EXT.has(ext)) {
     const stored = keepOriginal(app, path);
@@ -208,7 +213,7 @@ export async function syncDirectoryLocally(app: App, spaceId: string, onProgress
   const baseline = await import("./code-baseline.ts");
   if (baseline.usesBaseline(space)) {
     if (!baseline.codeIndexConfig(space).mode) space = updateSpace(app, spaceId, { settings: { ...space.settings, codeIndex: { ...baseline.codeIndexConfig(space), mode: "baseline" } } });
-    return baseline.syncBaselineLocally(app, spaceId, onProgress);
+    return baseline.syncBaselineLocally(app, spaceId, onProgress, { parsers });
   }
   const report = emptyReport();
   // Space settings may exclude paths (archives, vendored docs): prefixes or simple globs.
