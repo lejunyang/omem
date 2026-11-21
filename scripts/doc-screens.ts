@@ -21,7 +21,7 @@ import { findAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createSession, pluginContext } from "../src/plugins/blocks.ts";
 import { getPlugin, loadPlugins } from "../src/plugins/registry.ts";
-import { itemProviders, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
+import { itemProviders, notifiers, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { registerFormats } from "../src/plugins/formats.ts";
 import type { PluginManifest } from "../src/plugins/registry.ts";
@@ -1175,6 +1175,25 @@ writePage(app, "shop", "ops/runbook-negative-amount", { meta: { title: "退款�
   "## 怎么处理", "请用户刷新后重新提交；仍是负数的转值班。", "", "## 找谁", "后端值班：小王。",
 ].join("\n") }, { actor: "wiki-writer" });
 
+// ---- 通知出口 (src/plugins/notifier.ts): a fictional plugin with two outlets, registered in process ----
+// One can carry questions; the other cannot reach anyone (its hint shows when the row opens). The owner
+// has the first on for normal and above; the `settings-outlets` shot shows it.
+{
+  const context = (_app: App, userId: string, spaceId: string, signal: AbortSignal) => ({ userId, spaceId, signal, connection: async () => null });
+  const lifetime = new AbortController().signal;
+  notifiers.set("pager:phone", { plugin: "pager", spaces: [], context, lifetime, def: {
+    id: "phone", name: "手机推送（演示）",
+    async deliver() { return { ref: "demo" }; },
+    async ask() { return { ref: "demo-ask" }; },
+  } });
+  notifiers.set("pager:desk", { plugin: "pager", spaces: [], context, lifetime, def: {
+    id: "desk", name: "桌面提醒（演示）",
+    async resolve() { return { ok: false, hint: "这台电脑上没有装桌面提醒的客户端（演示）" }; },
+    async deliver() { throw new Error("客户端没有响应（演示）"); },
+  } });
+  app.config.notify.outlets = { owner: [{ id: "pager:phone", minUrgency: "normal", askKinds: ["question"] }] };
+}
+
 // ---- other people (src/auth/capabilities.ts) ---------------------------------------------------
 // 小周 reads the shop's work as a read-only observer; 小林 is a member with two capabilities set
 // apart from the preset and one space set on its own. Their tokens log the page in as them.
@@ -1185,12 +1204,18 @@ addMember(app, "shop", xiaolin.id, "contributor");
 addMember(app, "refund", xiaolin.id, "reader");
 for (const [capability, kind, scope, effect] of [["work.view", "global", "", "allow"], ["items.operate", "global", "", "deny"], ["items.view", "space", "shop", "allow"]] as const)
   run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,?,?,?,?,?,?)", xiaolin.id, capability, kind, scope, effect, new Date().toISOString(), "owner", new Date().toISOString());
+// Settings by area (src/auth/settings-sections.ts): 小林 sees and changes the assistant area; 小周 reads
+// the knowledge and assistant areas. The `settings-member` shot opens the page as 小林.
+for (const [user, capability] of [[xiaolin.id, "settings.assistant.view"], [xiaolin.id, "settings.assistant.edit"], [xiaozhou.id, "settings.knowledge.view"], [xiaozhou.id, "settings.assistant.view"]] as const)
+  run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,'global','','allow',?,?,?)", user, capability, new Date().toISOString(), "owner", new Date().toISOString());
 // 小吴: a member with nothing set apart, to compare the nav against the preset.
 const xiaowu = createUser(app, { id: "xiaowu", name: "小吴", role: "member" });
 addMember(app, "shop", xiaowu.id, "reader");
 const xiaozhouToken = createApiToken(app, xiaozhou.id, "演示");
 const xiaolinToken = createApiToken(app, xiaolin.id, "演示");
 const xiaowuToken = createApiToken(app, xiaowu.id, "演示");
+// The owner signed in with a token: the cloud tools card is not served to a page opened straight on the machine.
+const ownerToken = createApiToken(app, "owner", "演示");
 // 小林's own line (src/items/member-work.ts), and what waits for him: the owner's assistant asked him how
 // the refund API is going (src/items/member-progress.ts).
 {
@@ -1232,7 +1257,7 @@ const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0)
 const url = app.baseUrl;
 if (serveOnly) {
   console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
-  console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}`);
+  console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
   const cleanup = async () => { await server.close(); app.db.close(); rmSync(home, { recursive: true, force: true }); process.exit(); };
   process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
   await new Promise(() => {});
@@ -1569,6 +1594,51 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.getByRole("button", { name: "小林能做什么" }).click();
     await p.locator(".mc-cap").first().waitFor();
     await p.locator(".mc-cap", { hasText: "看事项" }).getByRole("button", { name: /空间另设/ }).click();
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 通知与打扰 → 通知出口: the demo plugin's two outlets under the built-in ones, the second opened.
+  { name: "settings-outlets", path: "/settings?card=notify-outlets", prepare: async (p) => {
+    await p.locator("#set-notify-outlets .ol").first().waitFor();
+    await p.getByRole("button", { name: "手机推送（演示）的更多设置" }).click();
+    await p.locator("#set-notify-outlets").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 安全 → 出网代理. The demo machine has no sandbox, so this machine's support and the runs' hosts
+  // are answered here (fictional hosts); saving still goes to the demo server.
+  { name: "settings-egress", path: "/settings?card=egress", before: async (p) => {
+    await p.route("**/api/security/egress", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const data = await (await route.fetch()).json();
+      const host = (h: string, count: number, denied = 0) => ({ host: h, count, bytes: count * 2048, denied, backend: false, ...(denied ? { lastDeniedAt: Date.now() - 40 * 60_000, error: "没有规则放行" } : {}) });
+      await route.fulfill({ json: { ...data, support: { ok: true }, inspect: data.inspect.length ? data.inspect : ["api.example.com"], inspectionAvailable: true,
+        runs: [{ runId: r.id, hosts: [host("registry.npmjs.org", 42), host("api.example.com", 6, 2), host("github.com", 3)] }, { runId: null, hosts: [host("pypi.org", 8)] }],
+        denied: [{ runId: r.id, host: "api.example.com", count: 2, at: Date.now() - 40 * 60_000, reason: "没有规则放行" }] } });
+    });
+  }, prepare: async (p) => {
+    await p.locator("#set-egress .eg-run-row").first().click();
+    await p.locator("#set-egress").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 安全 → 云端后端调只读工具: the owner with a token. The demo has no public address or cloud
+  // backend, so the status is answered here with a fictional one.
+  { name: "settings-cloud-tools", path: "/settings?card=cloud-tools", init: { "omem-token": ownerToken }, before: async (p) => {
+    await p.route("**/api/cloud-tools", (route) => route.fulfill({ json: {
+      enabled: true, tools: ["search", "read_source"], ttlMinutes: 15, maxCalls: 32, backends: ["doubao-cloud"], credentialIn: "channel",
+      url: "https://omem.example.com", addressError: null, activeCredentials: 1,
+      recent: [{ runId: r.id, calls: 5, errors: 1, lastError: "read_source：没有这一行（演示）", at: new Date(Date.now() - 25 * 60_000).toISOString() }],
+      profiles: [
+        { backend: "doubao-cloud", probe: { id: "p1", url: "https://omem.example.com", at: new Date(Date.now() - 2 * 86400_000).toISOString(), mode: "header", reason: "", confirmed: true } },
+        { backend: "web-agent", probe: { id: "p2", url: "https://omem.example.com", at: new Date(Date.now() - 3600_000).toISOString(), mode: "url", reason: "", confirmed: false }, reason: "需要本人确认当前地址的成功探测" },
+      ],
+    } }));
+  }, prepare: async (p) => {
+    await p.locator("#set-cloud-tools .ct-backend").first().waitFor();
+    await p.locator("#set-cloud-tools").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // The settings page as 小林 sees it: only the assistant area, and in it what only the owner changes stays read-only.
+  { name: "settings-member", path: "/settings?tab=reply", init: { "omem-token": xiaolinToken }, prepare: async (p) => {
+    await p.locator("#set-guests").scrollIntoViewIfNeeded();
     await p.waitForTimeout(300);
   } },
   // The owner's lines as the read-only observer 小周 sees them (src/items/member-work.ts).

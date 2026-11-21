@@ -1233,4 +1233,24 @@ a.pg-out { color: var(--accent); }
   .pg-task { grid-template-columns: 8px minmax(0, 1fr) auto; }
   .pg-outs { grid-column: 2 / -1; grid-row: 2; }
   .pg-task.deep { padding-left: 16px; }
+/* ---------- settings 2 ---------- */
+/* A settings card someone may read but not change (SetCard `keys`): the same card, its controls out of
+   reach (`inert`), a small grey tag beside the title. Not greyed out as a whole. */
+.set-ro-badge {
+  font-weight: 400;
+  color: var(--muted);
+}
+.set-row-ctl.ro,
+.set-row-ctl.ro * {
+  cursor: default;
+}
+/* 设置 → 成员: the routine switch in a member's opened row. */
+.p-routine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.p-routine > span {
+  min-width: 0;
 }

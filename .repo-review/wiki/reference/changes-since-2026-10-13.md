@@ -20,6 +20,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 设置页按区域显示，接上通知出口、出网代理、云端工具和成员的例行整理（2026-11-21）
+
+网页侧。设置页先读 `GET /api/settings/sections`，判断都在 `web/src/lib/settings-access.ts`（纯函数）和 `lib/caps.ts` 的 `settingsArea` / `settingsKey` / `settingsCard`；`Settings.vue` 的 `TAB_KEYS` 写每个分类读写哪些配置键，`SetCard` / `SetRow` / `SetGate` 带 `keys` 后决定显示和只读（`lib/set-readonly.ts`，只读的控件 `inert`），`settings/ctx.ts` 把保存的 403 换成指出键的一句话。新卡：`components/NotifyOutlets.vue`（`/api/notify/outlets`，账号页也用）、`EgressSettings.vue`（`/api/security/egress`）、`CloudToolsSettings.vue`（`/api/cloud-tools`）；成员详情的例行整理在 `MembersSettings.vue`（`/api/work/routine?user=`）。演示数据和截图在 `scripts/doc-screens.ts`（`settings-outlets`、`settings-egress`、`settings-cloud-tools`、`settings-member`）。
+
 ## 网页：统一的进度视图，远程授权按原因结束，Wiki 用模板开始（2026-11-21）
 
 - 进度视图从 `web/src/components/ProgressBoard.vue` 和 `web/src/lib/progress.ts` 读起：读 `GET /api/runs/:id/progress` 或 `/api/items/:id/progress`，一块一行摘要，展开是任务的紧凑行，只读、每项链到自己的页面。运行页（`views/Runs.vue`）用它替换原来的任务板位置，任务板一块可展开原来的 `TaskBoard`；接口不存在时照旧显示 `TaskBoard`。`views/WorkDetail.vue` 和 `views/Items.vue` 各加一个“在做的”。刷新跟着 `run`、`work`、`changed item` 事件。

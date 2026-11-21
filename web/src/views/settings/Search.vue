@@ -6,6 +6,7 @@ import HelpText from "../../components/HelpText.vue";
 import Icon from "../../components/Icon.vue";
 import SearchProviders from "../../components/SearchProviders.vue";
 import SetCard from "../../components/SetCard.vue";
+import SetGate from "../../components/SetGate.vue";
 import SetRow from "../../components/SetRow.vue";
 import Skeleton from "../../components/Skeleton.vue";
 import UiCheckbox from "../../components/UiCheckbox.vue";
@@ -75,7 +76,7 @@ function removeCompare(i: number) {
   <div v-else class="stack">
     <HelpText lead>全文检索始终可用（中文按双字切分，代码按标识符切分）。开启向量检索可改善换说法的提问，向量在后台逐步生成。</HelpText>
 
-    <SetCard id="set-embeddings" title="向量检索">
+    <SetCard v-if="config.embeddings" id="set-embeddings" title="向量检索" :keys="['embeddings']">
       <SetRow label="用哪种向量">
         <UiSegmented :model-value="config.embeddings.provider" size="sm" aria-label="向量检索" :options="[{ value: 'none', label: '关闭' }, { value: 'local', label: '本地模型' }, { value: 'openai', label: 'OpenAI 兼容接口' }]" @change="(v) => saveConfig({ embeddings: { ...config.embeddings, provider: v } })" />
       </SetRow>
@@ -91,7 +92,7 @@ function removeCompare(i: number) {
       </SetRow>
     </SetCard>
 
-    <SetCard v-if="config.rerank" id="set-rerank" title="重排">
+    <SetCard v-if="config.rerank" id="set-rerank" title="重排" :keys="['rerank']">
       <template #help>检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。改这里的设置不用重启服务。</template>
       <SetRow label="开启重排">
         <template v-if="rerankLine" #hint><span :class="{ 'warn-text': rerank?.state === 'failed' }">{{ rerankLine }}</span></template>
@@ -114,9 +115,9 @@ function removeCompare(i: number) {
       </template>
     </SetCard>
 
-    <SearchProviders />
+    <SetGate :keys="['search']" owner><SearchProviders /></SetGate>
 
-    <SetCard v-if="config.memory?.passive" id="set-passive-memory" title="对话前带上相关记忆">
+    <SetCard v-if="config.memory?.passive" id="set-passive-memory" title="对话前带上相关记忆" :keys="['memory']">
       <template #help>你发消息时，先按这条消息找相似的记忆（事实、约定、人物、决定），相似度过了门槛的最多 {{ config.memory.passive.limit }} 条附在消息后面，助理不用先想起来去查。没过门槛就什么都不加。需要开启向量检索。门槛越高带得越少、越准：0.6 时，有相关记忆的问题约八成能带上，带上的约 96% 相关；无关的问题约一成会带上一两条（bge-small-zh，见 docs/v2/evaluation.md）。</template>
       <SetRow label="开启" hint="需要开启向量检索">
         <UiCheckbox :model-value="config.memory.passive.enabled" switch aria-label="对话前带上相关记忆" @change="(v) => savePassive({ enabled: v })" />
@@ -129,7 +130,7 @@ function removeCompare(i: number) {
       </SetRow>
     </SetCard>
 
-    <SetCard v-if="config.memory" id="set-memory-quality" title="记忆质量">
+    <SetCard v-if="config.memory" id="set-memory-quality" title="记忆质量" :keys="['memory', 'notes']">
       <template #help>新记忆写入前会先过一遍规则检查（免责式、超长（400 字以上）、转述原件、事件复述、无来源、重复），不合格的退回给模型并说明原因。之后每小时由复核模型逐条保留、改写或撤回；复核模型最好和写入的不是同一个，避免一个模型的习惯由它自己评判。结果在“记忆 → 质量”里按模型统计。</template>
       <SetRow label="复核新记忆" hint="只有复核保留或本人写的经验、偏好才会放进每次运行的提示里">
         <UiCheckbox :model-value="config.memory.review.enabled" switch aria-label="复核新记忆" @change="(v) => saveReview({ enabled: v })" />

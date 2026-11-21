@@ -1,6 +1,8 @@
 import { computed, inject, provide, ref, type InjectionKey, type Ref } from "vue";
 import { get, put } from "../../api";
-import { toast } from "../../store";
+import { state, toast } from "../../store";
+import { setSettingsSections, settingsSections } from "../../lib/caps";
+import { saveRefusal, type SettingsSections } from "../../lib/settings-access";
 import { network } from "../../lib/network-status";
 import { detectProbe, probes as shared } from "../../lib/probes";
 
@@ -20,6 +22,10 @@ export type SettingsCtx = {
   rerank: Ref<RerankStatus | null>;
   embeddingSource: Ref<ModelSource | null>;
   load: () => Promise<void>;
+  /** Who may see and change what here (`GET /api/settings/sections`), handed on to lib/caps.ts. */
+  loadSections: () => Promise<void>;
+  /** The owner's display name, for “只有 ×× 能改” (`/api/me` for the owner, the member list for others). */
+  ownerName: Ref<string>;
   saveConfig: (partial: Record<string, unknown>, note?: string) => Promise<void>;
 };
 
@@ -31,14 +37,25 @@ export function provideSettings(): SettingsCtx {
   const home = ref("");
   const rerank = ref<RerankStatus | null>(null);
   const embeddingSource = ref<ModelSource | null>(null);
+  const ownerName = ref(state.me?.role === "owner" ? state.me.name : "主人");
+  async function loadSections() {
+    // An older server has no areas: the page falls back to the old permissions (lib/caps.ts).
+    setSettingsSections(await get<SettingsSections>("/api/settings/sections").catch(() => null));
+    if (state.me && state.me.role !== "owner") {
+      const users = await get<{ role: string; name: string }[]>("/api/users").catch(() => null);
+      const owner = Array.isArray(users) ? users.find((u) => u.role === "owner") : undefined;
+      if (owner?.name) ownerName.value = owner.name;
+    } else if (state.me?.name) ownerName.value = state.me.name;
+  }
   async function load() {
-    const s = await get<{ config: any; agents: Profile[]; home: string; rerank: RerankStatus; embeddingSource?: ModelSource | null }>("/api/settings");
+    // Someone else gets only the areas they may see: the parts left out stay missing.
+    const s = await get<{ config: any; agents?: Profile[]; home?: string; rerank?: RerankStatus; embeddingSource?: ModelSource | null }>("/api/settings");
     embeddingSource.value = s.embeddingSource ?? null;
     config.value = s.config;
-    rerank.value = s.rerank;
-    profiles.value = s.agents;
-    home.value = s.home;
-    network.policies = s.config.agents.networkPolicies ?? [];
+    rerank.value = s.rerank ?? null;
+    profiles.value = s.agents ?? [];
+    home.value = s.home ?? "";
+    network.policies = s.config.agents?.networkPolicies ?? [];
   }
   async function saveConfig(partial: Record<string, unknown>, note = "已保存") {
     try {
@@ -47,13 +64,16 @@ export function provideSettings(): SettingsCtx {
       if (r.restart?.length) toast(`${note}。${r.restart.join("、")}要重启服务后才生效（omem service restart）`, "info");
       else toast(note, "ok");
     } catch (e) {
-      toast((e as Error).message, "error");
+      toast(saveRefusal((e as Error).message, settingsSections(), ownerName.value), "error");
     }
   }
-  const ctx = { config, profiles, home, rerank, embeddingSource, load, saveConfig };
+  const ctx = { config, profiles, home, rerank, embeddingSource, load, loadSections, ownerName, saveConfig };
   provide(KEY, ctx);
   return ctx;
 }
+
+/** The same, or null outside the settings page (a card shown on the account page too). */
+export const settingsContext = (): SettingsCtx | null => inject(KEY, null);
 
 export function useSettings(): SettingsCtx {
   const ctx = inject(KEY);

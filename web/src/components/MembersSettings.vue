@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import HelpText from "./HelpText.vue";
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { routineText, type Routine } from "../lib/routine";
 import { del, get, patch, post, put } from "../api";
 import type { Provider } from "./ProviderApps.vue";
 import Icon from "./Icon.vue";
@@ -13,7 +14,7 @@ import UiSegmented from "./UiSegmented.vue";
 import UiSelect from "./UiSelect.vue";
 import { fmtTime, relTime, state, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { hasCap } from "../lib/caps";
+import { hasCap, settingsKey } from "../lib/caps";
 import MemberCaps, { type Capability, type MemberCapsData } from "./MemberCaps.vue";
 
 /**
@@ -75,8 +76,8 @@ const ACTIONS: Record<string, string> = {
 };
 
 async function load() {
-  // The configuration is asked for only by someone who may read it.
-  const settings = !state.me || state.me.role === "owner" || state.me.perms.includes("settings.manage") ? get<{ config: { auth: Auth; webUrl?: string } }>("/api/settings").catch(() => null) : Promise.resolve(null);
+  // The login settings are asked for only by someone who may change them (lib/caps.ts: `auth` is the owner's).
+  const settings = settingsKey("auth").edit ? get<{ config: { auth: Auth; webUrl?: string } }>("/api/settings").catch(() => null) : Promise.resolve(null);
   const [s, p, u, i, r] = await Promise.all([settings, get<Provider[]>("/api/auth/providers"), get<User[]>("/api/users"), get<Invite[]>("/api/invites"), get<Roles>("/api/access/roles")]);
   auth.value = s?.config.auth ?? null;
   webUrl.value = s?.config.webUrl ?? "";
@@ -264,6 +265,26 @@ const openUser = ref<string | null>(null);
 const showInvite = ref(false);
 const showAhead = ref(false);
 const showRoles = ref(false);
+// The routine look at a member's own lines (src/items/member-routine.ts), read when their row opens.
+// null: the server could not say (an older one has no such interface: then the line does not show).
+const routines = ref<Record<string, Routine | null>>({});
+watch(openUser, async (id) => {
+  const u = id ? users.value?.find((x) => x.id === id) : null;
+  if (!u || u.role === "owner" || !mayManage.value || id! in routines.value) return;
+  try {
+    routines.value = { ...routines.value, [u.id]: await get<Routine>(`/api/work/routine?user=${encodeURIComponent(u.id)}`) };
+  } catch (e) {
+    if ((e as { status?: number }).status !== 404) routines.value = { ...routines.value, [u.id]: null };
+  }
+});
+async function setRoutine(u: User, on: boolean) {
+  try {
+    routines.value = { ...routines.value, [u.id]: await put<Routine>("/api/work/routine", { on, user: u.id }) };
+    toast(on ? `已替${u.name}打开线的例行整理` : `已关掉${u.name}的线的例行整理`, "ok");
+  } catch (e) {
+    fail(e);
+  }
+}
 const liveInvites = computed(() => invites.value.filter((i) => !i.revokedAt && !i.usedAt && Date.parse(i.expiresAt) > Date.now()).length);
 const initial = (name: string) => [...(name.trim() || "?")][0].toUpperCase();
 onMounted(() => load().catch(fail));
@@ -425,6 +446,14 @@ onMounted(() => load().catch(fail));
                   <UiSelect variant="inline" :model-value="adding[u.id] ?? ''" placeholder="＋ 加入空间" aria-label="加入空间" :options="spaceOptions.filter((o) => !u.spaces.some((s) => s.space === o.value))" @change="(v) => (adding[u.id] = v)" />
                   <UiSelect v-if="adding[u.id]" variant="inline" :model-value="''" placeholder="选角色" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, adding[u.id], v)" />
                 </span>
+              </span>
+            </div>
+            <div v-if="u.role !== 'owner' && mayManage && routines[u.id] !== undefined" class="p-line small">
+              <span class="p-k">例行整理</span>
+              <span v-if="routines[u.id] === null" class="muted">读不到</span>
+              <span v-else class="p-routine">
+                <UiCheckbox :model-value="routines[u.id]!.on" switch size="sm" :aria-label="`替${u.name}打开线的例行整理`" @change="(v) => setRoutine(u, v)" />
+                <span :class="routines[u.id]!.on && !routines[u.id]!.ready ? 'warn-text' : 'muted'">{{ routineText(routines[u.id]!, u.name) }}</span>
               </span>
             </div>
             <UiCheckbox v-if="u.role !== 'owner' && auth?.primary" :model-value="u.loginAny" size="sm" @change="(v) => act(u, { loginAny: v }, '已保存')">允许用{{ label(auth.primary) }}以外的方式登录（企业外的人）</UiCheckbox>

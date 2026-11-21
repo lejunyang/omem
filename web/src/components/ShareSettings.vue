@@ -97,7 +97,7 @@ onMounted(load);
   <div class="stack">
     <HelpText lead>飞书里的回答引用了 omem 自己的东西（代码、工作文件、记忆、Wiki）时，发送那一刻会把被引的部分复制成一个只读分享，回答里的 (1) (2) 链接打开它。打开不用令牌，只能看到那条消息引用的部分；文档和飞书消息直接链到原处，不经过这里。</HelpText>
     <div v-if="!webUrl" class="card set-link warn-box">还没有填网页地址：没有地址就不生成分享，回答里这类引用会直接省略。<RouterLink :to="{ path: '/settings', query: { card: 'web-url' } }">去设备页填</RouterLink></div>
-    <SetCard title="有效期">
+    <SetCard title="有效期" :keys="['shares.expiryDays']">
       <SetRow label="新分享的有效期" hint="只影响之后新建的分享">
         <UiSelect :model-value="String(expiry)" size="sm" width="140px" aria-label="新分享的有效期" :options="EXPIRY" @change="saveExpiry" />
       </SetRow>

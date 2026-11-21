@@ -5,6 +5,7 @@ import { fmtTime, relTime, toast } from "../../store";
 import { setTimeZone } from "../../lib/time";
 import { cronText } from "../../lib/cron-text";
 import { useSettings } from "./ctx";
+import { hasPerm } from "../../lib/caps";
 import CronEditor from "../../components/CronEditor.vue";
 import Icon from "../../components/Icon.vue";
 import SetCard from "../../components/SetCard.vue";
@@ -36,7 +37,10 @@ async function loadSchedules() {
     error.value = (e as Error).message;
   }
 }
+/** The task list answers whoever manages agents (`agents.manage`) only; others see the time zone. */
+const jobs = computed(() => hasPerm("agents.manage"));
 onMounted(() => {
+  if (!jobs.value) return;
   void loadSchedules();
   void get<{ id: string; name: string }[]>("/api/rules").then((list) => (rules.value = Object.fromEntries(list.map((r) => [r.id, r.name])))).catch(() => {});
 });
@@ -144,14 +148,14 @@ async function saveWorkState(key: "days" | "people", raw: string, min: number, m
 
 <template>
   <div class="stack">
-    <SetCard v-if="config" id="set-timezone" title="时区">
+    <SetCard v-if="config && config.timezone" id="set-timezone" title="时区" :keys="['timezone']">
       <template #help>任务的时间、免打扰和稍后汇总的时刻、每天的计数和额度，以及网页、飞书消息、给助手的材料里的时间，都按这个时区算，不看服务器和浏览器所在的时区。服务和它启动的 Agent 也用这个时区。改了马上生效，定时任务按新时区重新排。</template>
       <SetRow label="时区" :hint="browserZone !== config.timezone ? `这个浏览器在 ${browserZone}` : '和这个浏览器一致'">
         <UiSelect :model-value="config.timezone" :options="zoneOptions" size="sm" width="240px" aria-label="时区" @change="(z) => saveTimezone(z as string)" />
       </SetRow>
     </SetCard>
 
-    <p v-if="error" class="card set-link" role="alert"><span class="grow">读不到定时任务：{{ error }}</span><button class="btn sm" @click="loadSchedules">重试</button></p>
+    <template v-if="jobs"><p v-if="error" class="card set-link" role="alert"><span class="grow">读不到定时任务：{{ error }}</span><button class="btn sm" @click="loadSchedules">重试</button></p>
     <Skeleton v-else-if="!schedules" variant="list" :rows="6" />
     <p v-else-if="!schedules.length" class="card set-link"><span class="grow">还没有定时任务：服务启动时会建好内置的那些，规则里的定时会自己加进来。</span><button class="btn sm" @click="loadSchedules">刷新</button></p>
     <SetCard v-for="g in grouped" v-else :id="`set-sched-${g.id}`" :key="g.id" :title="g.label">
@@ -214,7 +218,7 @@ async function saveWorkState(key: "days" | "people", raw: string, min: number, m
           <p v-else-if="s.kind === 'outcome-review'" class="small muted">每晚复查几条，在 <RouterLink :to="{ path: '/settings', query: { card: 'reply-outcome' } }">代你回复 → 回复发出后看有没有用</RouterLink> 里设。</p>
         </div>
       </div>
-    </SetCard>
+    </SetCard></template>
   </div>
 </template>
 

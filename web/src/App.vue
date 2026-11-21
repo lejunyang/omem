@@ -12,7 +12,7 @@ import Icon from "./components/Icon.vue";
 import { get, setLiveEvents } from "./api";
 import { loadSpaces, refreshUnread, state } from "./store";
 import { spaceOptions } from "./lib/spaces";
-import { capAnywhere, hasCap, hasPerm } from "./lib/caps";
+import { capAnywhere, hasCap, hasPerm, settingsAnywhere, settingsArea } from "./lib/caps";
 import { preloadRoute } from "./preload";
 import { setTimeZone } from "./lib/time";
 
@@ -99,6 +99,9 @@ function onKey(e: KeyboardEvent) {
   }
 }
 const owner = computed(() => !state.me || state.me.role === "owner");
+/** The settings page: any area of the settings (lib/caps.ts), or the members and the trail for whoever manages members. */
+const settingsEntry = computed(() => owner.value || settingsAnywhere() || hasPerm("users.manage"));
+const settingsLabel = computed(() => (owner.value || ["knowledge", "assistant", "ai", "channels", "system"].some((a) => settingsArea(a as "ai", "view")) ? "设置" : "成员与记录"));
 const allowed = (n: NavEntry) =>
   owner.value || !!n.member || (!!n.cap && hasCap(n.cap)) || (!!n.space && capAnywhere(n.space, { own: n.own })) || (!!n.perm && hasPerm(n.perm));
 // The owner finds the flow board on the work page (按阶段); everyone else in the nav.
@@ -106,7 +109,7 @@ const shownNav = computed(() => nav.value
   .map(n => n.to === "/agents" && !hasPerm("agents.manage") ? reviewEntry : n)
   .filter(allowed).filter(n => !(n.to === "/board" && owner.value)));
 // Pages someone other than the owner may open: the nav they see, a line's page under 工作, the graph (Wiki), their account.
-const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account", ...(hasPerm("users.manage") ? ["/settings"] : []),
+const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account", ...(settingsEntry.value ? ["/settings"] : []),
   // 远程 joins the nav only after asking whether this machine has it: a link opened straight at it is judged before that.
   ...(hasPerm("desktop.control") || hasCap("remote.view") || hasCap("remote.operate") ? ["/remote"] : [])]);
 // Landing on a page they cannot use (the start page, an old link) goes to 问答, without drawing it first
@@ -188,7 +191,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
       <div class="foot row">
         <router-link v-if="owner" to="/notifications" class="btn ghost sm icon bell" title="通知" @mouseenter="preloadRoute('/notifications')"><Icon name="bell" :size="17" /><span v-if="state.unread" class="dot">{{ state.unread > 9 ? "9+" : state.unread }}</span></router-link>
         <router-link to="/account" class="btn ghost sm icon" :title="state.me ? `账号：${state.me.name}` : '账号'" @mouseenter="preloadRoute('/account')"><Icon name="user" :size="17" /></router-link>
-        <router-link v-if="owner || hasPerm('users.manage')" to="/settings" class="btn ghost sm icon" :title="owner ? '设置' : '成员与记录'" @mouseenter="preloadRoute('/settings')"><Icon name="settings" :size="17" /></router-link>
+        <router-link v-if="settingsEntry" to="/settings" class="btn ghost sm icon" :title="settingsLabel" @mouseenter="preloadRoute('/settings')"><Icon name="settings" :size="17" /></router-link>
         <button class="btn ghost sm icon" :title="`主题：${state.theme}`" @click="cycleTheme"><Icon :name="state.theme === 'dark' ? 'moon' : 'sun'" :size="17" /></button>
       </div>
     </aside>
