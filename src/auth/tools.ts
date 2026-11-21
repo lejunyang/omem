@@ -37,7 +37,8 @@ type ToolScope = { spaces: string[] | null; writable?: string[] };
 const unrestricted: ToolScope = { spaces: null };
 
 export function toolCapability(name: string): ToolCapability {
-  return toolCapabilities[name] ?? TOOL_GROUPS.find(g => g.tools.includes(name))?.capability ?? "owner";
+  if (Object.hasOwn(toolCapabilities, name)) return toolCapabilities[name];
+  return TOOL_GROUPS.find(g => g.tools.includes(name))?.capability ?? "owner";
 }
 
 /** One permission snapshot per call or directory listing. */
@@ -54,8 +55,9 @@ export function memberToolAccess(app: App, userId: string, scope: ToolScope = un
     if (!access.active) return { ...denied, reason: "成员账号未启用" };
     if (["create_space", "connect_repository"].includes(name) && scope.spaces !== null)
       return { ...denied, reason: "这项操作需要本人在不限空间的会话中发起" };
+    if (cap === "owner") return userId === OWNER && access.preset === "owner"
+      ? scope : { ...denied, reason: "这项操作仅限本人" };
     if (access.preset === "owner") return scope;
-    if (cap === "owner") return { ...denied, reason: "这项操作仅限本人" };
     if (cap === "memory.write" || cap === "wiki.write") {
       if (!legacy.has(cap)) legacy.set(cap, writableInRun(spacesWith(app, userId, cap) ?? []));
       const writable = legacy.get(cap)!;

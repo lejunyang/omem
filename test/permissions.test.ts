@@ -12,7 +12,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { createRun, stopWorker } from "../src/agents/runs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { capabilityKeys } from "../src/auth/capabilities.ts";
-import { can, canReadRun, spacesWith } from "../src/auth/permissions.ts";
+import { can, canReadRun, saveRole, spacesWith } from "../src/auth/permissions.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
 import { toolAllowed, trimTools } from "../src/auth/tools.ts";
 import { notify } from "../src/core/notify.ts";
@@ -592,6 +592,14 @@ describe("roles and permissions", async () => {
   });
 
   it("leaves out tools the run's person may not use", async () => {
+    const otherOwner = createUser(app, { id: "co-owner", name: "协管人", role: "owner" });
+    for (const tool of ["set_learning_goal", "lark_invite", "unknown_write"]) expect(toolAllowed(app, otherOwner.id, tool)).toBe(false);
+    saveRole(app, { id: "review-delegate", name: "编码评审", scope: "global", permissions: ["code.delegate"] });
+    const coder = createUser(app, { id: "coder", name: "编码成员", role: "review-delegate" });
+    for (const tool of ["review_task", "report_tests", "finish_task"]) {
+      expect(toolAllowed(app, coder.id, tool)).toBe(true);
+      expect(toolAllowed(app, "ann", tool)).toBe(false);
+    }
     expect(toolAllowed(app, "ann", "search")).toBe(true);
     expect(toolAllowed(app, "ann", "delegate_code")).toBe(false);
     expect(toolAllowed(app, "ann", "save_rule")).toBe(false);
