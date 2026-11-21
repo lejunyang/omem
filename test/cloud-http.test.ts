@@ -39,8 +39,13 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
     let text: string;
     if (challenge) {
       expect(req.mcp).toBeUndefined();
-      const receipt = await server.inject({ url: challenge[0], headers: mode === "header" ? { "x-omem-probe": challenge[1] } : {} });
-      text = receipt.body;
+      const headers = mode === "header" ? { authorization: "Bearer probe-" + challenge[1] } : {};
+      const list = await server.inject({ url: challenge[0], headers });
+      const url = new URL(list.json().next).pathname;
+      const args = { probe: challenge[1] };
+      const receipt = mode === "header" ? await server.inject({ url, method: "POST", headers, payload: args })
+        : await server.inject({ url, query: { args: JSON.stringify(args) } });
+      text = receipt.json().receipt;
     } else {
       expect(req.system).toContain("云端只读工具");
       expect(req.system).not.toContain("oct_");

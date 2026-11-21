@@ -1,6 +1,7 @@
+import { fakeCloudReceipt } from "./fake-cloud-probe.ts";
 import { expect, it, vi } from "vitest";
 import { cloudRequest, cloudTurn, cloudUsage, revokeCloud } from "../src/agents/cloud-tools.ts";
-import { confirmProbe, probeCloud, probeReceipt } from "../src/agents/cloud-probe.ts";
+import { confirmProbe, probeCloud } from "../src/agents/cloud-probe.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { createRun, runEvents } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
@@ -18,7 +19,7 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
   Object.assign(app.config.agents.cloudTools, { enabled: true, backends: [profile.id], credentialIn: "message", maxCalls: 5 });
   const probe = await probeCloud(app, profile.id, async (_app, _p, req) => {
     const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
-    return { text: probeReceipt(app, nonce, mode === "header" ? nonce : ""), agent: "test", stopReason: "end_turn" };
+    return { text: fakeCloudReceipt(app, nonce, mode), agent: "test", stopReason: "end_turn" };
   });
   confirmProbe(app, profile.id, probe.id);
   createSpace(app, { id: "team", name: "项目 A" });

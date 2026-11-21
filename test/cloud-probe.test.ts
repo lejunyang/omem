@@ -1,3 +1,4 @@
+import { fakeCloudReceipt } from "./fake-cloud-probe.ts";
 import { expect, it } from "vitest";
 import { agentProfileSchema, cloudToolsSchema } from "../src/core/config.ts";
 import { cloudAccess, cloudAddress, confirmProbe, probeCloud, probeReceipt } from "../src/agents/cloud-probe.ts";
@@ -13,7 +14,7 @@ it("requires a confirmed callback and an independently returned receipt", async 
     const probe = await probeCloud(app, profile.id, async (_app, _p, req) => {
       expect(req.mcp).toBeUndefined();
       const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
-      const text = expected ? probeReceipt(app, nonce, expected === "header" ? nonce : "") : "";
+      const text = expected ? fakeCloudReceipt(app, nonce, expected) : "";
       return { text, agent: "test", stopReason: "end_turn" };
     });
     expect(probe.mode).toBe(expected);
@@ -29,6 +30,25 @@ it("requires a confirmed callback and an independently returned receipt", async 
   }
   app.db.close();
 });
+
+it.each(["GET only", "stripped Authorization", "missing JSON", "missing receipt", "URL without arguments"])(
+  "rejects an incomplete probe (%s)", async limitation => {
+    const app = testApp();
+    app.config.webUrl = "https://8.8.8.8";
+    const probe = await probeCloud(app, "doubao", async (_app, _profile, req) => {
+      const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
+      const auth = limitation === "URL without arguments" ? undefined : "Bearer probe-" + nonce;
+      const { next } = probeReceipt(app, nonce, "GET", auth);
+      const call = () => probeReceipt(app, next!.split("/").pop()!, auth ? "POST" : "GET",
+        limitation === "stripped Authorization" ? undefined : auth, limitation === "missing JSON" || !auth ? {} : { probe: nonce });
+      if (limitation === "missing receipt") call();
+      else if (limitation !== "GET only") expect(call).toThrow();
+      return { text: "", agent: "test", stopReason: "end_turn" };
+    });
+    expect(probe.mode).toBe(false);
+    expect(probe.reason).toMatch(/Authorization|JSON|回执/);
+    app.db.close();
+  });
 
 it("limits credentials to selected read tools and public HTTPS", () => {
   expect(cloudToolsSchema.parse({})).toMatchObject({ enabled: false, credentialIn: "channel", backends: [] });

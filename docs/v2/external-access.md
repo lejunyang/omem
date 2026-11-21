@@ -107,7 +107,7 @@ create table shares (
 
 无 MCP 的云端会话默认只收到宿主选好的材料。想让它自己核对原文，先把 `webUrl` 配成云端能访问的公网 HTTPS 地址。反向代理使用路径前缀时，把前缀也写进去。
 
-1. 运行 `omem cloud-tools probe <后端档案 ID>`。宿主开一个临时会话，只给探测地址和一个随机请求头，让后端复述只有响应里才有的回执。会话走现有清理流程。结果为 `header`（可带指定请求头）、`url`（只读回了回执）或 `false`（见原因）。
+1. 运行 `omem cloud-tools probe <后端档案 ID>`。宿主开一个临时会话，验证后端能带 Authorization 测试头发 GET、POST JSON 并读回回执（`header`）。做不到时，后端可另试无头 GET，沿响应里的 next 地址提交 JSON 查询参数并读回回执（`url`）。两种都失败时返回原因。测试值没有库权限，会话用完即清理。
 2. 本人核对结果，向 `POST /api/cloud-tools/probe/confirm` 提交 `{"backend":"档案 ID","id":"这次探测的 id"}`。换公网地址或重新探测后需要重新确认。
 3. 在配置的 `agents.cloudTools` 里设置下列选项。通过 API 修改时，在已有设置上更新，使用 `PUT /api/settings` 保存。下一轮生效。
 

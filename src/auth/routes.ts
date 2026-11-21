@@ -40,6 +40,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/cloud-tools": "owner",
   "POST /api/cloud-tools/probe": "owner",
   "POST /api/cloud-tools/probe/confirm": "owner",
+  "POST /api/cloud-tools/challenge/:nonce": "public",
   "GET /api/cloud-tools/challenge/:nonce": "public",
   "GET /api/agents/session-cleanup/failures": "owner",
   "POST /api/agents/session-cleanup/retry": "owner",

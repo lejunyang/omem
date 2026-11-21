@@ -48,7 +48,7 @@ TUN 里换节点不一定改变网卡，最晚到出口结果过期才发现出�
 
 ### 让云端会话核对原文
 
-默认关闭。先配置公网 HTTPS 的 `webUrl`，运行 `omem cloud-tools probe <后端档案 ID>`，由本人确认它读回的探测结果。启用 `agents.cloudTools.enabled` 后，还要在 `backends` 点名档案。默认只给检索和按行读原件，也可选读 Wiki 或事项。每轮仍受成员和空间权限约束。
+默认关闭。先配置公网 HTTPS 的 `webUrl`，运行 `omem cloud-tools probe <后端档案 ID>`，由本人确认探测结果。探测分别验证带鉴权头的 POST JSON 和无头 GET 参数调用，成功需要读回最终回执。启用 `agents.cloudTools.enabled` 后，还要在 `backends` 点名档案。默认只给检索和按行读原件，也可选读 Wiki 或事项。每轮仍受成员和空间权限约束。
 
 默认要求安全通道。本人改选 `credentialIn: "message"` 后，这串只读凭据会留在云端会话历史里，直到会话被删除。默认有效 15 分钟，每次运行最多请求 32 次，本轮结束立即作废。运行页能看到它查了什么。本人可用 `GET /api/cloud-tools` 查状态，用 `POST /api/cloud-tools/revoke` 撤销当前全部凭据。
 

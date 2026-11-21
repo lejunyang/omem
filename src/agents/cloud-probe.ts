@@ -35,7 +35,7 @@ export async function checkCloudAddress(url: string) {
 }
 
 function fingerprint(p: AgentProfile) {
-  return createHash("sha256").update(JSON.stringify([p.transport, p.command, p.args, p.env])).digest("hex");
+  return createHash("sha256").update(JSON.stringify(["http-probe-v2", p.transport, p.command, p.args, p.env])).digest("hex");
 }
 const key = (id: string) => "cloud-tools:probe:" + id;
 export function lastProbe(app: App, id: string): Probe | null {
@@ -61,13 +61,29 @@ function cloudProfile(app: App, id: string) {
   if (!p || backendCapabilities(p).where !== "cloud") throw new HttpError(400, "请选择一个云端后端");
   return p;
 }
-const challenges = new Map<string, { app: App; receipt: string; arrived: boolean; header: boolean }>();
-export function probeReceipt(app: App, nonce: string, header: unknown) {
-  const entry = challenges.get(nonce);
+type ProbeMode = Exclude<CloudHttp, false>;
+type Challenge = {
+  app: App; url: string; nonce: string; next: Record<ProbeMode, string>; receipts: Record<ProbeMode, string>;
+  failure: string;
+};
+const challenges = new Map<string, Challenge>();
+
+export function probeReceipt(app: App, key: string, method: string, authorization?: string, args?: unknown) {
+  const entry = challenges.get(key);
   if (!entry || entry.app !== app) throw new HttpError(404, "探测已结束");
-  entry.arrived = true;
-  entry.header ||= header === nonce;
-  return entry.receipt;
+  const header = authorization === "Bearer probe-" + entry.nonce;
+  if (key === entry.nonce && method === "GET") {
+    entry.failure = "未完成带 Authorization 的 POST JSON 或无头 GET 参数调用";
+    return { next: entry.url + "/api/cloud-tools/challenge/" + entry.next[header ? "header" : "url"] };
+  }
+  const mode = key === entry.next.header ? "header" : "url";
+  if (key !== entry.next[mode] || (mode === "header" ? method !== "POST" || !header : method !== "GET" || authorization !== undefined)
+      || (args as { probe?: unknown } | null)?.probe !== entry.nonce) {
+    entry.failure = mode === "header" ? "缺少 Authorization 测试头或有效的 POST JSON 参数" : "未能用无头 GET 传入 JSON 参数";
+    throw new HttpError(400, entry.failure);
+  }
+  entry.failure = "后端没有读回工具响应中的回执";
+  return { receipt: entry.receipts[mode] };
 }
 
 export async function probeCloud(app: App, backend: string, execute?: typeof runBackend) {
@@ -76,21 +92,24 @@ export async function probeCloud(app: App, backend: string, execute?: typeof run
   if (!url) throw new HttpError(400, "请配置公网 HTTPS webUrl");
   await checkCloudAddress(url);
   const nonce = randomUUID();
-  const entry = { app, receipt: "回执 " + randomUUID(), arrived: false, header: false };
-  challenges.set(nonce, entry);
+  const entry: Challenge = { app, url, nonce, next: { header: randomUUID(), url: randomUUID() },
+    receipts: { header: randomUUID(), url: randomUUID() }, failure: "没有收到探测请求" };
+  const keys = [nonce, ...Object.values(entry.next)];
+  for (const key of keys) challenges.set(key, entry);
   let mode: CloudHttp = false;
   let reason = "没有收到探测请求";
   try {
     const turn = execute ?? (await import("./dispatch.ts")).runBackend;
     const result = await turn(app, p, { cwd: app.home, signal: AbortSignal.timeout(90_000),
-      prompt: `读取 ${url}/api/cloud-tools/challenge/${nonce}，能设置请求头时带 X-Omem-Probe: ${nonce}。原样回复响应正文。` }, () => {});
-    if (entry.arrived && result.text.includes(entry.receipt)) {
-      mode = entry.header ? "header" : "url";
-      reason = entry.header ? "读回了回执并带了指定请求头" : "读回了回执，请求未带指定头";
-    } else if (entry.arrived) reason = "请求到了，后端没有读回回执";
+      prompt: `GET ${url}/api/cloud-tools/challenge/${nonce}，带 Authorization: Bearer probe-${nonce}（无权限的测试值）。` +
+        `向响应中的 next 地址带相同头 POST JSON {"probe":"${nonce}"}。如果做不到，从原地址重新无头 GET，` +
+        `再无头 GET 新的 next 地址，查询参数 args 为 URL 编码的 {"probe":"${nonce}"}。回复最终响应的 receipt。` }, () => {});
+    mode = result.text.includes(entry.receipts.header) ? "header" : result.text.includes(entry.receipts.url) ? "url" : false;
+    reason = mode === "header" ? "带 Authorization 的 GET、POST JSON 和回执均已验证"
+      : mode === "url" ? "无头 GET、后续地址的 JSON 参数和回执均已验证" : entry.failure;
   } catch (error) {
     reason = "探测会话失败：" + (error as Error).message.slice(0, 240);
-  } finally { challenges.delete(nonce); }
+  } finally { for (const key of keys) challenges.delete(key); }
   return save(app, backend, { id: nonce, url, fingerprint: fingerprint(p), at: new Date().toISOString(), mode, reason, confirmed: false });
 }
 

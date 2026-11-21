@@ -226,10 +226,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ...u, caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
   });
 
-  server.get("/api/cloud-tools/challenge/:nonce", async (req, reply) => {
+  server.route({ method: ["GET", "POST"], url: "/api/cloud-tools/challenge/:nonce", handler: async (req, reply) => {
     reply.header("cache-control", "no-store");
-    return probeReceipt(app, (req.params as { nonce: string }).nonce, req.headers["x-omem-probe"]);
-  });
+    const query = (req.query as { args?: string }).args;
+    let args = req.body;
+    if (req.method === "GET" && query) {
+      try { args = JSON.parse(query); } catch { throw new HttpError(400, "args 需要 JSON 参数对象"); }
+    }
+    return probeReceipt(app, (req.params as { nonce: string }).nonce, req.method, req.headers.authorization, args);
+  } });
   server.get("/api/cloud-tools", async () => {
     const url = cloudAddress(app);
     let addressError = url ? null : "请配置公网 HTTPS webUrl";

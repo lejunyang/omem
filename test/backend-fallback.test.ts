@@ -1,3 +1,4 @@
+import { fakeCloudReceipt } from "./fake-cloud-probe.ts";
 import "../src/agents/jobs.ts";
 import { __testHandlers, createRun } from "../src/agents/runs.ts";
 import { upsertItem } from "../src/items/store.ts";
@@ -5,7 +6,7 @@ import { remember } from "../src/memory/store.ts";
 import { one } from "../src/core/db.ts";
 import { resolve } from "node:path";
 import { expect, it } from "vitest";
-import { confirmProbe, probeCloud, probeReceipt } from "../src/agents/cloud-probe.ts";
+import { confirmProbe, probeCloud } from "../src/agents/cloud-probe.ts";
 import { runRole } from "../src/agents/runner.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
 import { testApp } from "./helpers.ts";
@@ -38,7 +39,7 @@ it.each([true, false])("skips text-only profiles for item upkeep (cloud primary 
   Object.assign(app.config.agents.cloudTools, { enabled: true, credentialIn: "message", backends: ["cloud"] });
   const probe = await probeCloud(app, "cloud", async (_app, _p, req) => {
     const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
-    return { text: probeReceipt(app, nonce, nonce), agent: "test", stopReason: "end_turn" };
+    return { text: fakeCloudReceipt(app, nonce, "header"), agent: "test", stopReason: "end_turn" };
   });
   confirmProbe(app, "cloud", probe.id);
   const runId = createRun(app, { kind: "ask", title: "复核事项" }).id;

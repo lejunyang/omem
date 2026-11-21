@@ -1,3 +1,4 @@
+import { fakeCloudReceipt } from "./fake-cloud-probe.ts";
 import { expect, it } from "vitest";
 import { createSpace } from "../src/core/spaces.ts";
 import { agentProfileSchema, type RoleName } from "../src/core/config.ts";
@@ -48,7 +49,7 @@ it("bounds standing instructions for a fixed space, skill library and four lesso
 });
 
 it("bounds the HTTP instructions for each cloud role including every allowed tool", async () => {
-  const { confirmProbe, probeCloud, probeReceipt } = await import("../src/agents/cloud-probe.ts");
+  const { confirmProbe, probeCloud } = await import("../src/agents/cloud-probe.ts");
   const app = testApp();
   app.baseUrl = "http://127.0.0.1:1";
   app.config.webUrl = "https://8.8.8.8";
@@ -58,7 +59,7 @@ it("bounds the HTTP instructions for each cloud role including every allowed too
   cfg.credentialIn = "message";
   const probe = await probeCloud(app, "doubao", async (_app, _p, req) => {
     const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
-    return { text: probeReceipt(app, nonce, nonce), agent: "test", stopReason: "end_turn" };
+    return { text: fakeCloudReceipt(app, nonce, "header"), agent: "test", stopReason: "end_turn" };
   });
   confirmProbe(app, "doubao", probe.id);
   for (const role of ["assistant", "gatekeeper", "summarizer", "replay-judge", "mention-triage"] as const) {
