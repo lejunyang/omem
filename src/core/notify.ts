@@ -348,6 +348,18 @@ export function deferNotification(app: App, id: string) {
   run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.deferred', 1) where id = ?", id);
 }
 
+// Both outlet workers run in the host. Reserve every id in a card together, so an
+// overlapping worker re-reads the receipts only after the earlier send has settled.
+const deferredPushes = new WeakMap<App, Map<string, Promise<void>>>();
+export async function withDeferredPush(app: App, ids: string[], send: () => Promise<void>) {
+  let active = deferredPushes.get(app);
+  if (!active) deferredPushes.set(app, active = new Map());
+  const turn = Promise.allSettled(ids.map(id => active.get(id))).then(send);
+  for (const id of ids) active.set(id, turn);
+  try { await turn; }
+  finally { for (const id of ids) if (active.get(id) === turn) active.delete(id); }
+}
+
 /** The pushes quiet hours held back, taken once: those still unread and less than a day old come back to send. */
 export function takeDeferred(app: App): Notification[] {
   const rows = all<{ id: string; at: string; title: string; body: string; link: string | null; user_id: string; read_at: string | null; context: string | null }>(app.db, "select * from notifications where json_extract(context, '$.deferred') = 1 order by at");

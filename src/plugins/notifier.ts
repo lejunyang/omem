@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { activeUser, canWrite, findUser, getUser, identitiesOf, identityOwner, larkOpenIdOf } from "../core/users.ts";
 import { HttpError, json, now, untilAbort, webLink } from "../core/util.ts";
-import { addNotificationSink, deliveryPlan, markPushed, notify, type Notification } from "../core/notify.ts";
+import { addNotificationSink, deliveryPlan, withDeferredPush, markPushed, notify, type Notification } from "../core/notify.ts";
 import { answerAsk, getAsk, type Ask } from "../agents/asks.ts";
 import { larkBotInfo } from "../channels/lark-send.ts";
 import { askUrgency } from "../agents/ask-urgency.ts";
@@ -43,20 +43,22 @@ function expiry(app: App, a: Ask) {
 }
 const live = (ask: Ask, deadline: string | null) => ask.status === "pending" && (!deadline || deadline > now());
 
-function enqueue(app: App, outlet: string, id: string, user: string, op: Op, dedup: string, ref: string | null = null, urgency: OutNotification["urgency"] = "normal") {
+function enqueue(app: App, outlet: string, id: string, user: string, op: Op, dedup: string, ref: string | null = null, urgency: OutNotification["urgency"] = "normal", state = "pending") {
   if (op === "notification" && dedup !== id) {
     run(app.db, "update outlet_deliveries set state='skipped' where outlet=? and dedup=? and state='deferred'", outlet, dedup);
   }
-  run(app.db, "insert into outlet_deliveries(outlet,object_id,user_id,op,dedup,due,ref,urgency) values(?,?,?,?,?,?,?,?) on conflict(outlet,object_id,op) do nothing",
-    outlet, id, user, op, dedup, Date.now(), ref, urgency);
+  run(app.db, "insert into outlet_deliveries(outlet,object_id,user_id,op,dedup,due,ref,urgency,state) values(?,?,?,?,?,?,?,?,?) on conflict(outlet,object_id,op) do nothing",
+    outlet, id, user, op, dedup, Date.now(), ref, urgency, state);
 }
 
 export function startNotifierOutlets(app: App) {
   const remove = addNotificationSink((n, source, originalUrgency) => {
     if (source !== app || n.askId) return;
     for (const s of settings(app, n.userId)) {
-      if (notifiers.has(s.id) && rank[originalUrgency] >= rank[s.minUrgency])
-        enqueue(app, s.id, n.id, n.userId, "notification", n.dedupKey ?? n.id, null, originalUrgency);
+      if (notifiers.has(s.id) && rank[originalUrgency] >= rank[s.minUrgency]) {
+        const deferred = deliveryPlan(app, { ...n, outlet: "plugin" }).when === "later";
+        enqueue(app, s.id, n.id, n.userId, "notification", n.dedupKey ?? n.id, null, originalUrgency, deferred ? "deferred" : "pending");
+      }
     }
   });
   const show = (a: Ask) => {
@@ -168,7 +170,7 @@ async function attempt(app: App, row: Delivery) {
     if (row.op === "retract" && !notifiers.has(row.outlet)) return;
     const failure = retryFailure(row.attempts, error);
     run(app.db, "update outlet_deliveries set state=?,attempts=?,due=?,updated=?,error=? where seq=?",
-      failure.state, failure.attempts, failure.due, now(), failure.error, row.seq);
+      failure.state === "pending" ? row.state : failure.state, failure.attempts, failure.due, now(), failure.error, row.seq);
   }
 }
 
@@ -177,7 +179,9 @@ export async function drainOutlets(app: App) {
     and (op!='retract' or outlet in (select value from json_each(?)))
     and not exists(select 1 from outlet_deliveries p where p.outlet=d.outlet and p.dedup=d.dedup and p.state in ('pending','deferred') and p.seq<d.seq)
     order by due limit 32`, Date.now(), JSON.stringify([...notifiers.keys()]));
-  await Promise.all(rows.map(row => attempt(app, row)));
+  await Promise.all(rows.map(row => row.op === "notification" && row.state === "deferred"
+    ? withDeferredPush(app, [row.object_id], () => attempt(app, row))
+    : attempt(app, row)));
 }
 
 const answer = z.object({

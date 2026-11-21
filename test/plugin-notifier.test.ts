@@ -4,7 +4,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { staleDays, sweepStaleAsks } from "../src/agents/ask-expiry.ts";
 import { cancelAsk, createAsk, getAsk, waitForAnswer } from "../src/agents/asks.ts";
 import { one, run } from "../src/core/db.ts";
-import { addNotificationSink, deferNotification, markPushed, takeDeferred, listNotifications, notify, releaseLater } from "../src/core/notify.ts";
+import { notifiers } from "../src/plugins/process-hooks.ts";
+import { larkNotificationOutlet } from "../src/channels/lark-bot.ts";
+import { setLarkClient } from "../src/channels/lark-send.ts";
+import { addNotificationSink, listNotifications, notify, releaseLater } from "../src/core/notify.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { createApiToken, createUser, linkIdentity } from "../src/core/users.ts";
 import { answerFromOutlet, drainOutlets, startNotifierOutlets } from "../src/plugins/notifier.ts";
@@ -108,27 +111,89 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
     } finally { vi.useRealTimers(); app.config.notify.quietStart = app.config.notify.quietEnd = 0; }
   });
 
-  it.each(["plugin", "lark"])("早晨由 %s 先补送时只推一次", async first => {
+  it.each(["成功", "失败"])("飞书首张卡%s时，交错的补送按通知接手", async outcome => {
+    const lark = larkNotificationOutlet(app);
+    app.config.lark.ownerOpenId = "ou_demo";
     app.config.notify.quietStart = 22;
     app.config.notify.quietEnd = 9;
+    let release!: () => void;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    let started!: () => void;
+    const sending = new Promise<void>(resolve => { started = resolve; });
+    const create = vi.fn(async () => {
+      started();
+      await paused;
+      if (outcome === "失败") throw new Error("模拟飞书投递失败");
+      return { code: 0, data: { message_id: "demo-card" } };
+    });
+    setLarkClient({ im: { message: { create } } });
     try {
       vi.setSystemTime(new Date("2026-11-21T23:00:00Z"));
-      const n = notify(app, { title: "夜间进展" });
-      deferNotification(app, n.id);
+      const first = notify(app, { title: "先发的卡", link: "#/ui/first" });
+      const second = notify(app, { title: "后一条进展" });
+      await lark.push(first);
+      await lark.push(second);
       await drainOutlets(app);
-      expect(existsSync(file(n.id))).toBe(false);
       vi.setSystemTime(new Date("2026-11-22T09:01:00Z"));
-      if (first === "plugin") {
-        await drainOutlets(app);
-        expect(message(n.id).title).toBe("夜间进展");
-        expect(takeDeferred(app)).toEqual([]);
-      } else {
-        expect(takeDeferred(app).map(row => row.id)).toEqual([n.id]);
-        markPushed(app, n.id, "lark");
-        await drainOutlets(app);
-        expect(existsSync(file(n.id))).toBe(false);
+      const larkDelivery = lark.sendDeferred();
+      await sending;
+      const pluginDelivery = drainOutlets(app);
+      try {
+        await vi.waitFor(() => expect(existsSync(file(second.id))).toBe(true));
+        expect(existsSync(file(first.id))).toBe(false);
+      } finally {
+        release();
+        await Promise.all([pluginDelivery, larkDelivery]);
       }
-    } finally { vi.useRealTimers(); app.config.notify.quietStart = app.config.notify.quietEnd = 0; }
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(existsSync(file(first.id))).toBe(outcome === "失败");
+      const records = listNotifications(app);
+      expect(records.find(n => n.id === first.id)?.pushed?.channel).toBe(outcome === "成功" ? "lark" : outlet);
+      expect(records.find(n => n.id === second.id)?.pushed?.channel).toBe(outlet);
+    } finally {
+      release();
+      setLarkClient(null);
+      vi.useRealTimers();
+      app.config.notify.quietStart = app.config.notify.quietEnd = 0;
+    }
+  });
+
+  it("插件补送失败后飞书接手，插件重试沿用飞书回执", async () => {
+    const lark = larkNotificationOutlet(app);
+    app.config.lark.ownerOpenId = "ou_demo";
+    app.config.notify.quietStart = 22;
+    app.config.notify.quietEnd = 9;
+    const create = vi.fn(async () => ({ code: 0, data: { message_id: "demo-receipt" } }));
+    setLarkClient({ im: { message: { create } } });
+    let fail!: () => void;
+    const blocked = new Promise<void>(resolve => { fail = resolve; });
+    const deliver = vi.spyOn(notifiers.get(outlet)!.def, "deliver").mockImplementationOnce(async () => {
+      await blocked;
+      throw new Error("模拟插件投递失败");
+    });
+    try {
+      vi.setSystemTime(new Date("2026-11-21T23:00:00Z"));
+      const n = notify(app, { title: "待补送" });
+      await lark.push(n);
+      vi.setSystemTime(new Date("2026-11-22T09:01:00Z"));
+      const pluginDelivery = drainOutlets(app);
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(1));
+      const larkDelivery = lark.sendDeferred();
+      fail();
+      await Promise.all([pluginDelivery, larkDelivery]);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(listNotifications(app).find(row => row.id === n.id)?.pushed?.channel).toBe("lark");
+      vi.setSystemTime(new Date("2026-11-22T09:02:00Z"));
+      await drainOutlets(app);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect(existsSync(file(n.id))).toBe(false);
+    } finally {
+      fail();
+      deliver.mockRestore();
+      setLarkClient(null);
+      vi.useRealTimers();
+      app.config.notify.quietStart = app.config.notify.quietEnd = 0;
+    }
   });
 
   it.each([1, 3])("普通门槛保留 %i 条低优先级进展在网页", async count => {

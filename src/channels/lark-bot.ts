@@ -14,8 +14,8 @@ import { scheduleIngest } from "../agents/jobs.ts";
 import { registerThreadSender, retryChannelReply } from "../agents/inbox.ts";
 import { getRun, setRunOutput } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
-import { one, run } from "../core/db.ts";
-import { addNotificationSink, deferNotification, markPushed, markQuiet, markReadIds, notificationCardOf, setNotificationCard, takeDeferred } from "../core/notify.ts";
+import { all, one, run } from "../core/db.ts";
+import { addNotificationSink, deferNotification, markPushed, markQuiet, markReadIds, notificationCardOf, setNotificationCard, takeDeferred, withDeferredPush, type Notification } from "../core/notify.ts";
 import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
@@ -30,7 +30,7 @@ import { finishCot } from "./lark-cot.ts";
 import { showThinking, watchAgentBubbles } from "./lark-agent-cot.ts";
 import { watchWorkProgress } from "./lark-work-progress.ts";
 import { handleCardAction } from "./lark-actions.ts";
-import { buildCard, larkBotInfo, larkOwnerOpenId, onLarkSent, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark, updateLarkCard } from "./lark-send.ts";
+import { buildCard, larkBotInfo, larkOwnerOpenId, onLarkSent, openLarkTopic, postedByOmem, reactLark, sendLark, type Target, setLarkBotClient, unreactLark, updateLarkCard } from "./lark-send.ts";
 import { bindAnswerer, botChannel, botRoster, chatContext, contextLines, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, topicIsolated, type BotRef } from "./lark-bots.ts";
 import { chatRecordSpace, readChatHistory } from "./lark-bot-history.ts";
 import { larkAppSecret } from "./lark-setup.ts";
@@ -224,6 +224,146 @@ function kv(app: App, key: string, value?: string) {
   if (value === undefined) return one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value;
   run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", key, value);
   return value;
+}
+
+export function larkNotificationOutlet(app: App) {
+  const cfg = app.config.lark;
+  // Background work tied to a conversation goes there (its Feishu topic, through its bot), never as
+  // a private DM; the rest reaches the owner through the main bot.
+  const notifyConversation = (n: Notification) => {
+    const cid = n.larkConversationId;
+    if (!cid) return null;
+    const t = one<{ channel: string; external_id: string | null; last: string | null; topic: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastTopicId') topic, json_extract(settings, '$.lastMessageId') last from conversations where id = ? and (channel = 'lark' or channel like 'lark:%')", cid);
+    if (!t?.external_id) return null;
+    const [chatId, topic] = t.external_id.split("#");
+    const inThread = !!(t.topic ?? topic);
+    // In the chat itself only the work's own message is quoted (agents/home.ts), else none.
+    return { chatId, inThread, replyTo: (inThread ? t.last : replyAnchor(app, n.runId, cid)) ?? undefined, bot: botOfChannel(t.channel) };
+  };
+  const targetOf = (n: Notification) => {
+    const inThread = notifyConversation(n);
+    const target = inThread
+      ? (inThread.replyTo ? { replyTo: inThread.replyTo, inThread: inThread.inThread } : { chatId: inThread.chatId })
+      : n.userId === OWNER
+        ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
+        : { userId: larkOpenIdOf(app, n.userId) ?? "" };
+    if (!target || (!("userId" in target) && !("chatId" in target) && !("replyTo" in target)) || ("userId" in target && !target.userId)) return null;
+    return target;
+  };
+  const push = (n: Notification, deferred = false) => withBot(notifyConversation(n)?.bot, async () => {
+    const to = targetOf(n);
+    if (!to) return;
+    // A handling of someone looking for the owner (mentions/mentions.ts): its card carries the run, so replying to it carries on with that work.
+    const target = { ...to, purpose: "notification" as const, ...(isMentionRun(app, n.runId) ? { runId: n.runId } : {}) };
+    // The newer state of a card already sent (an authorization now done): edit that card, no new ping.
+    const earlier = n.replaces ? notificationCardOf(app, n.replaces) : null;
+    const images = n.images?.length ? await cardImages(app, n) : [];
+    if (earlier) {
+      const { updateLarkCard, recordInteraction } = await import("./lark-send.ts");
+      try {
+        await updateLarkCard(earlier.messageId, notificationCard(app, n, images), earlier.bot);
+        setNotificationCard(app, n.id, earlier.messageId, earlier.bot);
+        // An item's card now stands for the newer notification: its buttons act on that one.
+        if (n.entity === "item" && n.entityId && !n.digest)
+          recordInteraction(app, { messageId: earlier.messageId, chatId: ("chatId" in to ? to.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId }, ...(earlier.bot ? { bot: earlier.bot } : {}) });
+        return;
+      } catch (e) {
+        console.warn(`[omem] 更新原通知卡片失败，改为发新卡片：${(e as Error).message}`);
+      }
+    }
+    // Push policy: non-urgent nudges wait for the morning (sent then if still unread); and when the
+    // triggering message is already read by the owner, the change has been seen — no ping (urgent always pushes).
+    if (!deferred && deliveryPlan(app, { ...n, outlet: "lark" }).when === "later") {
+      if (n.urgency !== "silent") deferNotification(app, n.id);
+      return;
+    }
+    // Lessons from "忽略": a class of nudges the owner dismissed stays in-app.
+    {
+      const { aiIgnoreMatch } = await import("../core/notify-ai-gate.ts");
+      const hit = await aiIgnoreMatch(app, n).catch(() => null);
+      if (hit) { console.info(`[omem] 通知按忽略规则静默：${hit.rule.id}（${hit.reason}）`); markQuiet(app, n.id, "按你的免提醒规则没有推到飞书"); return; }
+    }
+    // Suppress when the owner has clearly seen/handled the triggering chat:
+    // read status, an OK/DONE reaction, or a later reply in the same topic.
+    // A run that already went through the same check before it posted (agents/awareness.ts) decided with it; only a push held overnight is checked again.
+    if (app.config.notify.onlyUnread && n.sourceRefs?.length) {
+      const { ownerAlreadyHandled } = await import("./notify-gate.ts");
+      // The owner is already on it in Feishu: read as well as not pushed. A run that went through the
+      // check before sending (awareness.ts) has had this looked at already.
+      const { checkedBeforeSend } = await import("../agents/awareness.ts");
+      if ((deferred || !checkedBeforeSend(app, n.runId)) && await ownerAlreadyHandled(app, n).catch(() => false)) { markQuiet(app, n.id, QUIET_HANDLED); markReadIds(app, [n.id]); return; }
+    }
+    // A handling's reminder with the reply it drafted: one card, the reminder on top and the draft to send under it.
+    if (n.replyDraft && n.runId) {
+      const m = mentionOf(app, n.runId);
+      if (m) {
+        const { draftMentionReply } = await import("./mention-reply.ts");
+        const { resolveCitationsSync } = await import("./common.ts");
+        const r = await draftMentionReply(app, n.runId, m, n.replyDraft, { title: n.title, markdown: resolveCitationsSync(app, n.body) }, target);
+        setRunOutput(app, n.runId, { mentionReply: { draft: r.id } });
+        setNotificationCard(app, n.id, r.messageId, notifyConversation(n)?.bot);
+        return;
+      }
+    }
+    // Cards keep external notification links; internal routes stay in the web app.
+    const card = notificationCard(app, n, images);
+    if (n.digest) {
+      // Item digest: each button keeps or reopens one item; the card stays usable for the others.
+      const { recordInteraction } = await import("./lark-send.ts");
+      const sent = await sendLark(target, { card });
+      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { digest: true, itemIds: [...n.digest.closed, ...n.digest.soon, ...(n.digest.candidates ?? [])], effectIds: n.digest.effects ?? [], notificationId: n.id, userId: n.userId } });
+      markPushed(app, n.id, "lark", sent.messageId);
+      return;
+    }
+    if (n.entity === "item" && n.entityId) {
+      // Actionable item card: 已处理 / 忽略 resolve the item directly, no agent turn. Kept as the
+      // notification's card, so a newer state (`replaces`: a flow's progress) edits it instead of pinging.
+      const { recordInteraction } = await import("./lark-send.ts");
+      const sent = await sendLark(target, { card });
+      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId } });
+      setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
+      return;
+    }
+    const sent = await sendLark(target, { card });
+    setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
+  });
+  return { push, sendDeferred: () => sendDeferredLark(app, push, targetOf) };
+}
+
+/** Morning delivery. A batch snapshot can become stale while the previous card is in flight. */
+async function sendDeferredLark(app: App, push: (n: Notification, deferred: boolean) => Promise<void>, targetOf: (n: Notification) => Target | null) {
+  if (inQuietHours(app)) return;
+  const byUser = new Map<string, Notification[]>();
+  for (const n of takeDeferred(app)) {
+    const items = byUser.get(n.userId);
+    if (items) items.push(n);
+    else byUser.set(n.userId, [n]);
+  }
+  const sendCard = (items: Notification[]) => {
+    const ids = items.map(n => n.id);
+    return withDeferredPush(app, ids, async () => {
+      const pending = new Set(all<{ id: string }>(app.db, `select id from notifications where id in (select value from json_each(?))
+        and read_at is null and json_extract(context,'$.pushed') is null and json_extract(context,'$.quiet') is null and at>?`,
+        JSON.stringify(ids), new Date(Date.now() - 86400000).toISOString()).map(row => row.id));
+      const remaining = items.filter(n => pending.has(n.id));
+      if (remaining.length <= 3) {
+        for (const n of remaining) await push(n, true).catch(e => console.warn("[omem] 夜间通知补发失败", e));
+        return;
+      }
+      const target = targetOf(remaining[0]);
+      if (!target) return;
+      const lines = remaining.map(n => `- ${n.title}`).join("\n");
+      const sent = await sendLark({ ...target, purpose: "notification" }, { card: buildCard({ title: `夜里的 ${remaining.length} 条通知`, blocks: [{ markdown: lines }, { note: "详情在网页的通知里" }] }) });
+      for (const n of remaining) markPushed(app, n.id, "lark", sent.messageId);
+    }).catch(e => console.warn("[omem] 夜间通知补发失败", e));
+  };
+  for (const items of byUser.values()) {
+    const ownCard = (n: Notification) => !!n.replyDraft || (n.link ?? "").startsWith("#/ui/");
+    for (const n of items.filter(ownCard)) await sendCard([n]);
+    const rest = items.filter(n => !ownCard(n));
+    if (rest.length > 3) await sendCard(rest);
+    else for (const n of rest) await sendCard([n]);
+  }
 }
 
 /**
@@ -437,132 +577,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     await sent((await reply(chatId, markdown, quote, typeof meta.larkInThread === "boolean" ? meta.larkInThread : !!topic, note, { runId: cite.runId, conversationId: thread.id, ...(meta.recoverReply ? { uuid: `reply-${runId ?? omemId}` } : {}) })).messageId);
   }
 
-  // Background work tied to a conversation goes there (its Feishu topic, through its bot), never as
-  // a private DM; the rest reaches the owner through the main bot.
-  const notifyConversation = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0]) => {
-    const cid = (n as { larkConversationId?: string }).larkConversationId;
-    if (!cid) return null;
-    const t = one<{ channel: string; external_id: string | null; last: string | null; topic: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastTopicId') topic, json_extract(settings, '$.lastMessageId') last from conversations where id = ? and (channel = 'lark' or channel like 'lark:%')", cid);
-    if (!t?.external_id) return null;
-    const [chatId, topic] = t.external_id.split("#");
-    const inThread = !!(t.topic ?? topic);
-    // In the chat itself only the work's own message is quoted (agents/home.ts), else none.
-    return { chatId, inThread, replyTo: (inThread ? t.last : replyAnchor(app, n.runId, cid)) ?? undefined, bot: botOfChannel(t.channel) };
-  };
-  const targetOf = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0]) => {
-    const inThread = notifyConversation(n);
-    const target = inThread
-      ? (inThread.replyTo ? { replyTo: inThread.replyTo, inThread: inThread.inThread } : { chatId: inThread.chatId })
-      : n.userId === OWNER
-        ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
-        : { userId: larkOpenIdOf(app, n.userId) ?? "" };
-    if (!target || (!("userId" in target) && !("chatId" in target) && !("replyTo" in target)) || ("userId" in target && !target.userId)) return null;
-    return target;
-  };
-  const push = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0], deferred = false) => withBot(notifyConversation(n)?.bot, async () => {
-    const to = targetOf(n);
-    if (!to) return;
-    // A handling of someone looking for the owner (mentions/mentions.ts): its card carries the run, so replying to it carries on with that work.
-    const target = { ...to, purpose: "notification" as const, ...(isMentionRun(app, n.runId) ? { runId: n.runId } : {}) };
-    // The newer state of a card already sent (an authorization now done): edit that card, no new ping.
-    const earlier = n.replaces ? notificationCardOf(app, n.replaces) : null;
-    const images = n.images?.length ? await cardImages(app, n) : [];
-    if (earlier) {
-      const { updateLarkCard, recordInteraction } = await import("./lark-send.ts");
-      try {
-        await updateLarkCard(earlier.messageId, notificationCard(app, n, images), earlier.bot);
-        setNotificationCard(app, n.id, earlier.messageId, earlier.bot);
-        // An item's card now stands for the newer notification: its buttons act on that one.
-        if (n.entity === "item" && n.entityId && !n.digest)
-          recordInteraction(app, { messageId: earlier.messageId, chatId: ("chatId" in to ? to.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId }, ...(earlier.bot ? { bot: earlier.bot } : {}) });
-        return;
-      } catch (e) {
-        console.warn(`[omem] 更新原通知卡片失败，改为发新卡片：${(e as Error).message}`);
-      }
-    }
-    // Push policy: non-urgent nudges wait for the morning (sent then if still unread); and when the
-    // triggering message is already read by the owner, the change has been seen — no ping (urgent always pushes).
-    if (!deferred && deliveryPlan(app, { ...n, outlet: "lark" }).when === "later") {
-      if (n.urgency !== "silent") deferNotification(app, n.id);
-      return;
-    }
-    // Lessons from "忽略": a class of nudges the owner dismissed stays in-app.
-    {
-      const { aiIgnoreMatch } = await import("../core/notify-ai-gate.ts");
-      const hit = await aiIgnoreMatch(app, n).catch(() => null);
-      if (hit) { console.info(`[omem] 通知按忽略规则静默：${hit.rule.id}（${hit.reason}）`); markQuiet(app, n.id, "按你的免提醒规则没有推到飞书"); return; }
-    }
-    // Suppress when the owner has clearly seen/handled the triggering chat:
-    // read status, an OK/DONE reaction, or a later reply in the same topic.
-    // A run that already went through the same check before it posted (agents/awareness.ts) decided with it; only a push held overnight is checked again.
-    if (app.config.notify.onlyUnread && n.sourceRefs?.length) {
-      const { ownerAlreadyHandled } = await import("./notify-gate.ts");
-      // The owner is already on it in Feishu: read as well as not pushed. A run that went through the
-      // check before sending (awareness.ts) has had this looked at already.
-      const { checkedBeforeSend } = await import("../agents/awareness.ts");
-      if ((deferred || !checkedBeforeSend(app, n.runId)) && await ownerAlreadyHandled(app, n).catch(() => false)) { markQuiet(app, n.id, QUIET_HANDLED); markReadIds(app, [n.id]); return; }
-    }
-    // A handling's reminder with the reply it drafted: one card, the reminder on top and the draft to send under it.
-    if (n.replyDraft && n.runId) {
-      const m = mentionOf(app, n.runId);
-      if (m) {
-        const { draftMentionReply } = await import("./mention-reply.ts");
-        const { resolveCitationsSync } = await import("./common.ts");
-        const r = await draftMentionReply(app, n.runId, m, n.replyDraft, { title: n.title, markdown: resolveCitationsSync(app, n.body) }, target);
-        setRunOutput(app, n.runId, { mentionReply: { draft: r.id } });
-        setNotificationCard(app, n.id, r.messageId, notifyConversation(n)?.bot);
-        return;
-      }
-    }
-    // Cards keep external notification links; internal routes stay in the web app.
-    const card = notificationCard(app, n, images);
-    if (n.digest) {
-      // Item digest: each button keeps or reopens one item; the card stays usable for the others.
-      const { recordInteraction } = await import("./lark-send.ts");
-      const sent = await sendLark(target, { card });
-      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { digest: true, itemIds: [...n.digest.closed, ...n.digest.soon, ...(n.digest.candidates ?? [])], effectIds: n.digest.effects ?? [], notificationId: n.id, userId: n.userId } });
-      markPushed(app, n.id, "lark", sent.messageId);
-      return;
-    }
-    if (n.entity === "item" && n.entityId) {
-      // Actionable item card: 已处理 / 忽略 resolve the item directly, no agent turn. Kept as the
-      // notification's card, so a newer state (`replaces`: a flow's progress) edits it instead of pinging.
-      const { recordInteraction } = await import("./lark-send.ts");
-      const sent = await sendLark(target, { card });
-      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId } });
-      setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
-      return;
-    }
-    const sent = await sendLark(target, { card });
-    setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
-  });
-  if (!extra) addNotificationSink(n => push(n));
-
-  // After quiet hours, what waited and is still unread goes out: a few one by one, more as one list.
-  const sendDeferred = async () => {
-    if (inQuietHours(app)) return;
-    const byUser = new Map<string, ReturnType<typeof takeDeferred>>();
-    for (const n of takeDeferred(app)) byUser.set(n.userId, [...(byUser.get(n.userId) ?? []), n]);
-    for (const all of byUser.values()) {
-      // A reminder carrying a drafted reply, or one that opens something to answer (a form, `#/ui/`), keeps
-      // its own card: a list of titles has nowhere to send from or answer in.
-      const own = (x: (typeof all)[number]) => !!x.replyDraft || (x.link ?? "").startsWith("#/ui/");
-      for (const n of all.filter(own)) await push(n, true).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
-      const items = all.filter((x) => !own(x));
-      if (!items.length) continue;
-      if (items.length <= 3) {
-        for (const n of items) await push(n, true).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
-        continue;
-      }
-      const target = targetOf(items[0]);
-      if (!target) continue;
-      const { buildCard } = await import("./lark-send.ts");
-      const lines = items.map((n) => `- ${n.title}`).join("\n");
-      const sent = await sendLark({ ...target, purpose: "notification" }, { card: buildCard({ title: `夜里的 ${items.length} 条通知`, blocks: [{ markdown: lines }, { note: "详情在网页的通知里" }] }) }).catch((e) => void console.warn("[omem] 夜间通知补发失败", e));
-      if (sent) for (const n of items) markPushed(app, n.id, "lark", sent.messageId);
-    }
-  };
-  if (!extra) setInterval(() => void sendDeferred().catch(() => {}), 5 * 60_000).unref();
+  if (!extra) {
+    const outlet = larkNotificationOutlet(app);
+    addNotificationSink(n => outlet.push(n));
+    setInterval(() => void outlet.sendDeferred().catch(() => {}), 5 * 60_000).unref();
+  }
 
   const pending = new Map<string, NodeJS.Timeout>();
   const lastCapture = new Map<string, string>();
