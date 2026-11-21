@@ -432,7 +432,6 @@ new AgentSideConnection(
             const files = [...prompt.matchAll(/^- (\S+)$/gm)].map((m) => m[1]).filter((f) => existsSync(join(cwd, f)));
             for (const f of files) {
               writeFileSync(join(cwd, f), readFileSync(join(cwd, f), "utf8").replace(/^(<{7}|={7}|>{7}).*\r?\n/gm, ""));
-              execFileSync("git", ["add", f], { cwd });
             }
             await say(`合并了两边：${files.join("、")}`);
             return { stopReason: "end_turn" as const };
@@ -626,13 +625,12 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
           } finally { await client.close(); }
           return { stopReason: "end_turn" as const };
         }
-        // Git conflicts the host hands over: keep both sides and stage them (FAKE_CONFLICT=giveup leaves them).
+        // Git conflicts the host hands over: keep both sides for the host to stage (FAKE_CONFLICT=giveup leaves them).
         if (prompt.includes("# 解决 Git 冲突")) {
           const cwd = cwds.get(p.sessionId)!;
           const files = [...prompt.matchAll(/^- (\S+)$/gm)].map((m) => m[1]).filter((f) => existsSync(join(cwd, f)));
           if (process.env.FAKE_CONFLICT !== "giveup") for (const f of files) {
             writeFileSync(join(cwd, f), readFileSync(join(cwd, f), "utf8").replace(/^(<{7}|={7}|>{7}).*\r?\n/gm, ""));
-            execFileSync("git", ["add", f], { cwd });
           }
           await say(process.env.FAKE_CONFLICT === "giveup" ? "解决不了" : `合并了两边：${files.join("、")}`);
           return { stopReason: "end_turn" as const };

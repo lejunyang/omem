@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { sandboxCommand, sandboxSupport } from "../src/agents/sandbox.ts";
+import { finishSync } from "../src/agents/code-sync.ts";
 import { receiveMemberGit } from "../src/agents/member-git.ts";
 import { addTask, commitTask, getTask, updateTask } from "../src/agents/code-tasks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
@@ -128,6 +129,33 @@ describe("delegation sandbox mounts", () => {
     git("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "--allow-empty", "-qm", "concurrent");
     await expect(accept()).rejects.toThrow("预期基点已变化");
     expect(git("log", "-1", "--format=%s")).toBe("concurrent");
+  });
+
+  it.skipIf(!sandboxSupport().ok)("stages only the conflicted file edited in the member sandbox", async () => {
+    const repo = repository("resolve-text");
+    const file = "决策 [1].txt";
+    const commit = (cwd: string, value: string) => {
+      writeFileSync(join(cwd, file), value);
+      execFileSync("git", ["--literal-pathspecs", "add", "--", file], { cwd });
+      execFileSync("git", ["-c", "user.name=T", "-c", "user.email=test@example.org", "commit", "-qm", value], { cwd });
+    };
+    commit(repo.root, "base");
+    const wt = leased("resolve-round", repo);
+    commit(wt.slot, "ours");
+    commit(repo.root, "theirs");
+    const tip = repo.git("rev-parse", "HEAD").toString().trim();
+    expect(() => execFileSync("git", ["-c", "user.name=T", "-c", "user.email=test@example.org", "merge", tip], { cwd: wt.slot })).toThrow();
+    const home = join(app.home, "resolve-home");
+    mkdirSync(home);
+    const left = await finishSync(wt.path, "合并", async files => {
+      expect(files).toEqual([file]);
+      const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec", 'echo combined > "$1"; echo draft > draft', "sh", file],
+        {}, wt.slot, { userId: "member", backend: "test", home, env: {}, hide: [app.home], ro: [] }, workspaceMounts(app, [wt]));
+      execFileSync(cmd.file, cmd.args, { env: cmd.env });
+    });
+    expect(left).toBeNull();
+    expect(repo.git("-C", wt.slot, "show", "HEAD:" + file).toString()).toBe("combined\n");
+    expect(repo.git("-C", wt.slot, "status", "--porcelain").toString().trim()).toBe("?? draft");
   });
 
   it.skipIf(!sandboxSupport().ok).each(["lead", "helper"])("finish_task receives a partial commit and the %s's remaining files", async (role) => {

@@ -7,6 +7,7 @@ import { run as sql } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import type { Execution } from "./execution.ts";
 import { addWorktree, shell } from "./code.ts";
+import { unmerged, resolveConflicts } from "./code-sync.ts";
 import { identity } from "./code-branch.ts";
 import { getTask, taskLabel, taskText, updateTask, workRootOf } from "./code-tasks.ts";
 import { runRole } from "./runner.ts";
@@ -205,11 +206,10 @@ async function pick(wt: WorktreeRef, shas: string[], label: string, resolve: (wt
   const before = git(dir, ["rev-parse", "HEAD"]).stdout.trim();
   let r = git(dir, [...identity(dir), "cherry-pick", "--allow-empty", "--keep-redundant-commits", ...shas]);
   for (let i = 0; !r.ok && i < shas.length; i++) {
-    const files = git(dir, ["diff", "--name-only", "--diff-filter=U"]).stdout.split("\n").filter(Boolean);
+    const files = unmerged(dir);
     if (!files.length || signal.aborted) break;
-    await resolve(wt, files, label).catch(() => {});
-    if (git(dir, ["diff", "--name-only", "--diff-filter=U"]).stdout.trim()) break;
-    git(dir, ["add", "-A"]);
+    const left = await resolveConflicts(dir, files, label, (paths, reason) => resolve(wt, paths, reason)).catch(() => files);
+    if (left.length) break;
     r = git(dir, [...identity(dir), "-c", "core.editor=true", "cherry-pick", "--continue"]);
   }
   if (r.ok) return true;
