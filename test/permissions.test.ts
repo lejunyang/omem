@@ -337,7 +337,9 @@ describe("roles and permissions", async () => {
     const put = (preset: string, overrides: object[]) => fetch(base + path, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ preset, overrides }) });
     expect((await as(id, path)).status).toBe(403);
     const catalog = await (await fetch(base + "/api/capabilities")).json();
-    expect(catalog).toHaveLength(24);
+    expect(catalog).toHaveLength(26);
+    for (const key of ["remote.view", "remote.operate"])
+      expect(catalog).toContainEqual(expect.objectContaining({ key, scope: "global", presets: ["owner"] }));
     expect((await as(id, "/api/rules")).status).toBe(403);
     const member = await (await put("member", [{ capability: "rules.view", scope_kind: "global", effect: "allow" }])).json();
     expect(member.effective["rules.view"]).toBe("override");

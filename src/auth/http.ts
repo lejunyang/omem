@@ -136,6 +136,7 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       for (const o of overrides) run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,?,?,?,?,?,?) on conflict(user_id,capability,scope_kind,scope_id) do update set effect=excluded.effect,created_at=excluded.created_at,created_by=excluded.created_by,updated_at=excluded.updated_at,revoked=0", id, o.capability, o.scope_kind, o.scope_id, o.effect, at, actor, at);
       audit(app, actor, "member.capabilities", id, { preset, overrides });
     });
+    app.events.emit("member-access", id);
     return memberCapabilities(app, id);
   });
   const parse = <T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> => {

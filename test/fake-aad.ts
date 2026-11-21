@@ -1,7 +1,8 @@
 // A stand-in for ai-auto-desktop's `aad` in remote operation tests (src/remote): the commands omem
 // runs, answering the way the real ones do. Each call is appended to FAKE_AAD_LOG as a JSON line.
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import { WebSocketServer } from "ws";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,14 +29,15 @@ function assist() {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(`<title>viewer</title>path=${u.pathname}`);
   });
-  server.on("upgrade", (req, socket) => {
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
     const u = new URL(req.url ?? "/", "http://x");
     if (u.pathname !== "/ws" || u.searchParams.get("token") !== token) return void socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
-    const accept = createHash("sha1").update(`${req.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
-    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-    const text = Buffer.from(`ready ${args.join(" ")}`);
-    const head = text.length < 126 ? [0x81, text.length] : [0x81, 126, text.length >> 8, text.length & 0xff];
-    socket.write(Buffer.concat([Buffer.from(head), text]));
+    wss.handleUpgrade(req, socket, head, ws => {
+      ws.send(`ready ${args.join(" ")}`);
+      ws.send(Buffer.from([1, 2, 3]));
+      ws.on("message", (data, binary) => ws.send(data, { binary }));
+    });
   });
   server.listen(0, "127.0.0.1", () => {
     const port = (server.address() as { port: number }).port;

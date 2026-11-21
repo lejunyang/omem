@@ -35,7 +35,7 @@ type Live = {
   /** Desktop sessions: the one window shared, when not the whole screen; a recording watches it. */
   window?: string;
   recording?: { id: string; done?: Promise<any>; proc?: ChildProcess };
-  viewers: number;
+  connections: Set<{ userId: string; mode: Mode }>;
   idleSince: number;
 };
 
@@ -51,7 +51,7 @@ export const sessionView = (s: Live) => ({
   browser: s.browser ? { name: s.browser.name, url: s.browser.url, profile: s.browser.profile } : null,
   window: s.window ?? null,
   recording: s.recording?.id ?? null,
-  viewers: s.viewers,
+  viewers: s.connections.size,
 });
 
 export function viewerAccess(app: App, s: Live, user: string) {
@@ -83,7 +83,7 @@ export function listSessions(app: App, user: string) {
     const grant = assigned.find(g => g.userId === user && access.source(`remote.${g.mode}`));
     if (!(manager && desktop) && !grant) return [];
     return [{ ...sessionView(s), ownerId: s.userId, ownerName: owners.get(s.userId), mine,
-      grant: grant ?? null, ...(manager ? { grants: assigned } : {}), runId: null }];
+      grant: grant ?? null, ...(manager ? { connections: [...s.connections], grants: assigned.map(g => ({ ...g, connected: [...s.connections].some(c => c.userId === g.userId) })) } : {}), runId: null }];
   });
 }
 
@@ -97,14 +97,6 @@ export function getSession(id: string, userId?: string): Live {
 export function assistOf(id: string) {
   const s = live.get(id);
   return s ? { port: s.assist.port, token: s.assist.token } : null;
-}
-
-/** A viewer connected (+1) or left (-1): sessions nobody looks at end after a while. */
-export function viewing(id: string, delta: number) {
-  const s = live.get(id);
-  if (!s) return;
-  s.viewers = Math.max(0, s.viewers + delta);
-  s.idleSince = Date.now();
 }
 
 /** The address the page should load: the viewer with its token. */
@@ -132,12 +124,12 @@ function watchAssist(app: App, s: Live) {
   });
 }
 
-function add(app: App, s: Omit<Live, "viewers" | "idleSince" | "createdAt" | "id">) {
-  const session: Live = { ...s, id: newId("rs"), createdAt: now(), viewers: 0, idleSince: Date.now() };
+function add(app: App, s: Omit<Live, "connections" | "idleSince" | "createdAt" | "id">) {
+  const session: Live = { ...s, id: newId("rs"), createdAt: now(), connections: new Set(), idleSince: Date.now() };
   live.set(session.id, session);
   watchAssist(app, session);
   sweeper ??= setInterval(() => {
-    for (const x of live.values()) if (!x.viewers && Date.now() - x.idleSince > IDLE_MS) void closeSession(app, x.id);
+    for (const x of live.values()) if (!x.connections.size && Date.now() - x.idleSince > IDLE_MS) void closeSession(app, x.id);
   }, 60_000);
   sweeper.unref();
   return session;
