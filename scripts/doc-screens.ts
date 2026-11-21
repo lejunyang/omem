@@ -1013,6 +1013,24 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   skill("acme-cli", "用 acme 命令行建合并请求、发版", acmeWrites("2", [{ id: "branch-delete", title: "删远端分支前问本人", match: { kind: "command", executable: "acme", subcommand: ["branch", "delete"] }, action: "approve" }]));
 }
 
+// 设置 → 安全 → 记录: what the rules above did in two runs, what went out in the owner's name, a few changes.
+{
+  const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const event = (minutes: number, actor: string, action: string, target: string, detail: Record<string, unknown>) =>
+    run(app.db, "insert into audit_events(at,actor,action,target,detail) values(?,?,?,?,?)", at(minutes), actor, action, target, JSON.stringify(detail));
+  event(60 * 50, "owner", "operation.pack.enable", "skill:acme-cli", { scope: { spaces: ["shop"] } });
+  event(60 * 49, "owner", "operation.rules", "security", { count: 5 });
+  event(60 * 27, "owner", "token.cli", "owner", {});
+  event(60 * 26, "agent", "lark.mention-reply", "oc_demo_refund_qa", { runId: r.id, by: "auto", text: "部分发货的订单只退已发货的行，运费按已发货行的实付比例退；周四上线后生效。" });
+  event(60 * 25, "owner", "lark.mention-reply.drop", "oc_demo_refund", { runId: r.id, reason: "对方已经撤回了问题" });
+  event(60 * 5, "owner", "file.deny", "config/.env", { kind: "file", member: "owner", runId: r.id, ruleId: "demo-env", revision: 1, action: "deny", result: "策略判定" });
+  event(95, "owner", "command.deny", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-prod", revision: 1, action: "deny", result: "策略判定", commandLine: "acme deploy" });
+  event(42, "owner", "command.approve", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-mr", revision: 1, action: "approve", result: "策略判定", commandLine: "acme mr create" });
+  event(41, "owner", "command.ask", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-mr", revision: 1, command: "acme", cwd: "~/work/shop", approver: "本人", result: "等 本人 批准（规则指定）" });
+  event(38, "owner", "command.approve", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-mr", revision: 1, command: "acme", cwd: "~/work/shop", approver: "本人", result: "本人 批准" });
+  event(38, "owner", "command.allow", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-mr", revision: 1, command: "acme", cwd: "~/work/shop", approver: "本人", result: "本人 批准，放行" });
+}
+
 // 设置 → 推进工作 → 事项同步: a platform to read entries from, the way a plugin offers one. Nothing is
 // subscribed here: the `item-sync` shot subscribes through the page, so no other shot has its items.
 {
@@ -1217,6 +1235,13 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "design-own", path: `/design/${ownDesign.id}` },
   { name: "design-external", path: `/design/${extDesign.id}` },
   { name: "review-change-mobile", path: `/runs/${r.id}`, width: 390, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.waitForTimeout(400); } },
+  // 设置 → 安全 → 记录: the trail with one row open.
+  { name: "security-audit", path: "/settings?card=trail", prepare: async (p) => {
+    const card = p.locator("#set-trail");
+    await card.locator("button.au-row").nth(1).click();
+    await card.scrollIntoViewIfNeeded();
+    await p.waitForTimeout(400);
+  } },
   // 事项同步, last: subscribing through the page reads the demo platform, and the items it brings in stay out of the shots above.
   { name: "item-sync", path: "/settings?card=item-sync", prepare: async (p) => {
     const card = p.locator("#set-item-sync");

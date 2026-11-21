@@ -7,6 +7,7 @@ import { all } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { addMember, createUser, emailHolder, findUser, getUser, identitiesOf, listUsers, ownTokens, OWNER, removeMember, revokeOwnToken, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
+import { AUDIT_GROUPS, auditRows } from "./audit-view.ts";
 import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
 import { connectionsOf, connectWithCredentials, disconnect, setChatCapture, setFeatureOff } from "./connections.ts";
 import { appView, setAppConfig } from "./apps.ts";
@@ -528,6 +529,12 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   server.get("/api/access/audit", async (req) => {
     manager(req);
     return auditLog(app);
+  });
+  // The same trail as a page shows it (设置 → 安全 → 记录): in plain words, by name, grouped and paged.
+  server.get("/api/security/audit", async (req) => {
+    manager(req);
+    const o = parse(z.object({ group: z.enum(AUDIT_GROUPS).optional(), before: z.coerce.number().int().positive().optional(), limit: z.coerce.number().int().min(1).max(200).optional() }), req.query ?? {});
+    return auditRows(app, who(req), o);
   });
 
   server.get("/api/invites", async (req) => {

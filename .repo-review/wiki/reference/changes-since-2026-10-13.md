@@ -17,6 +17,13 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 设置 → 安全 → 记录（11-21）
+
+- `audit_events` 以前只有 `GET /api/access/audit` 原样返回最近 200 条，没有页面读它。新加 `src/auth/audit-view.ts` 的 `auditRows`：把每条记录说成“谁、做了什么、对谁、结果”，成员、群、空间和关注显示名字，规则带标题（没标题的用它匹配的东西），分四类（`ops` 规则的判定和批准、`identity` 以本人身份发出的、`access` 成员登录分享、`other`），按 id 往前翻。规则判定的行，执行人写成“某人的运行”；批准和拒绝写做决定的人。认不出的动作照原名显示。
+- 接口 `GET /api/security/audit?group=&before=&limit=`（要 `users.manage`）；`detail`（当时记下的原样内容）只给本人。
+- 网页 `web/src/components/AuditTrail.vue`，在 设置 → 安全 最下面（`?card=trail`）：一行一条（颜色点表示放行 / 等批准 / 拒绝），右上按类筛，点开看原样内容和“看这次运行”。
+- 演示数据加了十一条虚构的记录，截图 `security-audit`；测试 `test/audit-view.test.ts`。
+
 ## 工作页文字里的事项和运行 id 显示成标题（11-21）
 
 - `GET /api/work/:id` 多一个页面级的 `refTargets`：`textTargets`（`src/items/changes.ts`）扫目标、现状、每周一句、收尾原因、下一步和变化的文字，认出本人的事项（`i0m…`）和运行（`r0m…`）id，配上标题；认不出的、别人的不给。

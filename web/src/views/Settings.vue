@@ -7,6 +7,7 @@ import Skeleton from "../components/Skeleton.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import ApprovalSettings from "../components/ApprovalSettings.vue";
 import OperationRulesSettings from "../components/OperationRulesSettings.vue";
+import AuditTrail from "../components/AuditTrail.vue";
 
 /**
  * The settings page: the categories on the left (by what the owner is thinking about), the open one in
@@ -53,7 +54,7 @@ const CARDS: Record<string, Tab> = {
   "agent-accounts": "members", desktop: "peers", "web-url": "peers",
   "lark-docs": "connect", "lark-capture": "connect", platforms: "connect",
   timezone: "schedules",
-  "operation-rules": "security", "rule-packs": "security", "tool-approvals": "security",
+  "operation-rules": "security", "rule-packs": "security", "tool-approvals": "security", trail: "security",
 };
 /** Cards that were renamed: the old link lands on the new card. */
 const RENAMED: Record<string, string> = { "network-conditions": "backends", "command-rules": "operation-rules" };
@@ -174,6 +175,7 @@ onBeforeUnmount(() => {
             <ApprovalSettings v-if="config" :config="config" :save="saveConfig" />
           </template>
           <p v-else class="card set-link muted">操作规则和工具审批只有本人能看和改。</p>
+          <AuditTrail v-if="!state.me || state.me.role === 'owner' || state.me.perms.includes('users.manage')" />
         </section>
         <section v-else-if="tab === 'about'" class="stack">
           <div class="card set-card">
