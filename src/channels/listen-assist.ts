@@ -1,6 +1,8 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, json, localStamp, now, truncate } from "../core/util.ts";
+import { HttpError, localStamp, now, truncate } from "../core/util.ts";
+import { itemFocus } from "../agents/turn-context.ts";
+import { itemFlow, itemStages } from "../flows/store.ts";
 import { CODE_STARTERS } from "../agents/tool-help.ts";
 import { lineTimeline } from "../items/changes.ts";
 import { lineEndCases, md } from "../items/lifecycle.ts";
@@ -39,6 +41,7 @@ function lastMoved(app: App, item: Item) {
 
 function queue(app: App, c: ListenContext, item: Item, mode: "suggest" | "act", why: string) {
   return import("../agents/runs.ts").then(async ({ createRun }) => {
+    const focus = itemFocus(app, item, "explicit");
     const r = createRun(app, {
       kind: "agent",
       spaceId: item.spaceId,
@@ -47,7 +50,8 @@ function queue(app: App, c: ListenContext, item: Item, mode: "suggest" | "act", 
       userId: item.userId,
       input: {
         spec: "assistant",
-        task: await lineStateTask(app, c, item, mode),
+        task: await lineStateTask(app, c, item, mode, focus),
+        turnContext: focus.context,
         listenAssist: c.id,
         lineState: item.id,
         why,
@@ -111,12 +115,13 @@ export async function refreshLine(app: App, itemId: string, by: string) {
 const STATE: Record<string, string> = { pending: "未到", gated: "等你开始", doing: "进行中", blocked: "卡住", done: "完成", skipped: "跳过", stale: "待复核" };
 
 /** An item's running flow, stage by stage, or "". */
-function flowText(app: App, id: string) {
-  const f = one<{ definition: string; ended_at: string | null }>(app.db, "select definition, ended_at from item_flows where item_id = ?", id);
-  if (!f || f.ended_at) return "";
-  const stages = json<{ name?: string; stages?: { id: string; name: string }[] }>(f.definition, {});
-  const rows = new Map(all<{ stage_id: string; state: string; waiting_on: string | null }>(app.db, "select stage_id, state, waiting_on from item_stages where item_id = ?", id).map((s) => [s.stage_id, s]));
-  return `流程「${stages.name ?? ""}」：${(stages.stages ?? []).map((s) => { const r = rows.get(s.id); return `${s.name}（${STATE[r?.state ?? "pending"] ?? r?.state}${r?.waiting_on ? `，等${r.waiting_on.replace(/^等+/, "")}` : ""}）`; }).join(" → ")}`;
+function flowText(app: App, id: string, flow = itemFlow(app, id), stages = flow && !flow.endedAt ? itemStages(app, id) : []) {
+  if (!flow || flow.endedAt) return "";
+  const rows = new Map(stages.map(s => [s.id, s]));
+  return `流程「${flow.definition.name}」：${flow.definition.stages.map(s => {
+    const r = rows.get(s.id);
+    return `${s.name}（${STATE[r?.state ?? "pending"]}${r?.waitingOn ? `，等${r.waitingOn.replace(/^等+/, "")}` : ""}）`;
+  }).join(" → ")}`;
 }
 
 /** One work item as the look reads it: kind, state, due, flow stages. */
@@ -125,7 +130,7 @@ function itemLine(app: App, it: { id: string; title: string; kind: string; statu
   return `${"  ".repeat(depth)}- ${it.id}「${truncate(it.title, 60)}」[${it.kind}/${it.status}]${it.due_at ? ` 截止 ${it.due_at.slice(0, 10)}` : ""}${it.waiting_on ? ` 等 ${it.waiting_on}` : ""}${flow ? `；${flow}` : ""}`;
 }
 
-export async function lineStateTask(app: App, c: ListenContext, item: Item, mode: "suggest" | "act") {
+export async function lineStateTask(app: App, c: ListenContext, item: Item, mode: "suggest" | "act", focus = itemFocus(app, item, "explicit")) {
   const tz = app.config.timezone;
   const ids = [item.id, ...descendantIds(app, item.id)];
   type Row = { id: string; title: string; kind: string; status: string; due_at: string | null; waiting_on: string | null; parent_id: string | null };
@@ -133,7 +138,7 @@ export async function lineStateTask(app: App, c: ListenContext, item: Item, mode
   const tree: string[] = [];
   const walk = (parent: string, depth: number) => { for (const r of rows.filter((x) => x.parent_id === parent)) { tree.push(itemLine(app, r, depth)); walk(r.id, depth + 1); } };
   walk(item.id, 0);
-  const ownFlow = flowText(app, item.id);
+  const ownFlow = flowText(app, item.id, focus.flow, focus.stages);
   const changes = lineTimeline(app, item.id, { limit: 20 });
   const metrics = all<{ name: string; item_id: string; status: string }>(app.db, `select name, item_id, status from metrics where status in ('active','proposed') and item_id in (${ids.map(() => "?").join(",")})`, ...ids);
   const plan = one<{ id: string }>(app.db, `select id from sources where kind = 'work' and deleted_at is null and uri like 'work/观测/%' and json_extract(meta, '$.links.item') in (${ids.map(() => "?").join(",")}) limit 1`, ...ids);

@@ -26,12 +26,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(here, f)).find((f) => existsSync(f))!;
 
 type Declared = {
+  subscriptions: Pick<import("./types.ts").Subscription, "id" | "events">[];
   objects: Omit<PluginObject, "match" | "read">[];
   hooks?: { name: string; label?: string }[];
   tools: { name: string; description: string; jsonSchema: Record<string, unknown>; write: boolean; page: boolean; approval: boolean; whenConnected: boolean }[];
   platforms: (Omit<PluginPlatform, "readers"> & { readers: { kind: string; label: string; id: string; read: boolean; changes: boolean }[] })[];
 };
-type Pending = { ok: (v: any) => void; fail: (e: Error) => void; ctx?: ToolContext; timer: NodeJS.Timeout };
+type Pending = { connections: Map<string, PluginConnection>; ok: (v: any) => void; fail: (e: Error) => void; ctx?: ToolContext; eventCtx?: import("./types.ts").CallContext; timer: NodeJS.Timeout };
 
 export type Sandbox = { tools: Declared["tools"]; platforms: string[]; stop(): void };
 
@@ -40,7 +41,7 @@ const CALL_MS = 5 * 60_000;
 export async function startSandbox(
   app: App,
   plugin: { id: string; dir: string; server: string; services: { name: string }[] },
-  opts: { prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
+  opts: { subscribe: import("./types.ts").ProcessApi["subscribe"]; prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
 ): Promise<Sandbox> {
   const data = join(app.home, "plugin-data", plugin.id);
   mkdirSync(data, { recursive: true });
@@ -54,32 +55,35 @@ export async function startSandbox(
   });
   let seq = 0;
   const pending = new Map<number, Pending>();
-  const conns = new Map<string, PluginConnection>();
   let dead: string | null = null;
 
-  const ask = (msg: Record<string, unknown>, ctx?: ToolContext) =>
+  function connectionHandle(call: Pending, connection: PluginConnection) {
+    const handle = `c${++seq}`;
+    call.connections.set(handle, connection);
+    return { handle, account: connection.account, scopes: connection.scopes, base: connection.base };
+  }
+  const ask = (msg: Record<string, unknown>, ctx?: ToolContext, eventCtx?: import("./types.ts").CallContext, readerConnection?: PluginConnection) =>
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
-      const callMs = String(msg.t).startsWith("object.") || msg.t === "hook" ? 15000 : CALL_MS;
+      const callMs = String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event") ? 15000 : CALL_MS;
       const timer = setTimeout(() => {
         pending.delete(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
-      pending.set(id, { ok, fail, ctx, timer });
-      child.send({ ...msg, id });
+      const call: Pending = { ok, fail, ctx, eventCtx, timer, connections: new Map() };
+      pending.set(id, call);
+      child.send({ ...msg, id, ...(readerConnection ? { conn: connectionHandle(call, readerConnection) } : {}) });
     });
-  const handle = (c: PluginConnection) => {
-    const h = `c${++seq}`;
-    conns.set(h, c);
-    // Kept for the call or reading that asked; old ones go.
-    if (conns.size > 500) conns.delete(conns.keys().next().value!);
-    return { handle: h, account: c.account, scopes: c.scopes, base: c.base };
-  };
-
   /** What the process asks back, answered as the call in progress. */
   async function answer(op: string, a: Record<string, any>) {
-    const ctx = pending.get(a.call)?.ctx;
+    const call = pending.get(a.call);
+    const eventCtx = call?.eventCtx;
+    if (eventCtx) {
+      eventCtx.signal.throwIfAborted();
+      if (op !== "connection" && op !== "fetch") throw new Error("当前调用没有此权限");
+    }
+    const ctx = call?.ctx;
     const need = () => {
       if (!ctx) throw new Error("这个请求不属于正在进行的调用");
       return ctx;
@@ -89,7 +93,7 @@ export async function startSandbox(
         need();
         return emitPluginSignal(app, plugin.id, a.signal);
       case "fetch": {
-        const c = conns.get(a.handle);
+        const c = call?.connections.get(a.handle);
         if (!c) throw new Error("连接已经失效");
         const r = await c.fetch(a.path, a.init ?? {});
         const headers: [string, string][] = [];
@@ -97,9 +101,8 @@ export async function startSandbox(
         return { status: r.status, headers, body: Buffer.from(await r.arrayBuffer()).toString("base64") };
       }
       case "connection": {
-        const x = need();
-        const c = pluginConnection(app, x.userId ?? OWNER, String(a.provider));
-        return c ? handle(c) : null;
+        const c = eventCtx ? await eventCtx.connection(String(a.provider)) : pluginConnection(app, need().userId ?? OWNER, String(a.provider));
+        return c ? connectionHandle(call!, c) : null;
       }
       case "store.get":
       case "store.put":
@@ -164,6 +167,15 @@ export async function startSandbox(
     throw e;
   });
 
+  try {
+    for (const sub of declared.subscriptions ?? []) opts.subscribe({
+      ...sub,
+      handle: (ctx, event) => ask({ t: "event", name: sub.id, event, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx),
+    });
+  } catch (error) {
+    child.kill();
+    throw error;
+  }
   const undo: (() => void)[] = [];
   for (const def of declared.objects ?? []) undo.push(registerObject(plugin.id, {
     ...def,
@@ -204,8 +216,8 @@ export async function startSandbox(
           kind: r.kind,
           label: r.label,
           id: r.id,
-          read: r.read ? (c, target) => ask({ t: "read", provider: def.provider, kind: r.kind, target, conn: handle(c) }) : undefined,
-          changes: r.changes ? (c, target, cursor) => ask({ t: "changes", provider: def.provider, kind: r.kind, target, cursor, conn: handle(c) }) : undefined,
+          read: r.read ? (c, target) => ask({ t: "read", provider: def.provider, kind: r.kind, target }, undefined, undefined, c) : undefined,
+          changes: r.changes ? (c, target, cursor) => ask({ t: "changes", provider: def.provider, kind: r.kind, target, cursor }, undefined, undefined, c) : undefined,
         })),
       }),
     );

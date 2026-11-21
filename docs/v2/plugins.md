@@ -343,6 +343,57 @@ api.hook({
 - **修订**：对象的 `read` 可以多交 `revision`（插件自己定的“有变化”标记，如头提交加评论数）和 `note`（这次变了什么）。状态没变而修订变了，宿主记 `object.<全名>.updated`；流程阶段可以写 `done: { object, status: "updated" }` 等它，规则的对象触发选“有更新”。`updated` 是保留字，插件的状态不能叫这个名字。
 - **轮询还在**：有回调的对象类型可以把 `poll.minutes` 设长（如 60）当兜底；对象进了终态、或没有未结束的事项挂着它，照旧不再读。
 
+## 订阅事项与评审事件
+
+在 `plugin.yaml` 中声明事件，在宿主配置的 `plugins.eventSpaces` 中按插件 id 授予空间。默认授权列表为空。例如插件 `sample` 声明 `permissions: { events: [item.status] }`，本人在宿主配置里写 `"eventSpaces": { "sample": ["project-a"] }`，即可订阅项目 A 的事项状态。
+
+```ts
+api.subscribe({
+  id: "status",
+  events: ["item.status"],
+  async handle(ctx, event) {
+    await receiveStatus(event.id, event.entity.id, event.data.status, ctx.signal);
+  },
+});
+```
+
+示例中的 `receiveStatus` 由插件实现。每条事件携带版本 `v: 1`、稳定的 `id`、类型、时间、实体、空间、操作者和事实字段。可选类型为 `item.created`、`item.status`、`review.finished`、`finding.decision`、`finding.resolution`。事项事件给出标题、类型、前后状态、父事项与链接。评审完成给出运行、结论和问题数。问题事件给出位置、取舍或复核结果及理由。
+
+候选事项也会发 `item.created`，此时 `data.status` 为 `candidate`。本人留下或拒绝候选时，同一事项会发 `item.status`，`data.from` 为 `candidate`。拒绝时 `data.status` 为 `cancelled`，留下时为 `open`（等待类事项为 `waiting`）。只为已采纳事项建外部工单的插件应同时订阅这两种事件，按状态过滤：候选创建时跳过，转为 `open` 或 `waiting` 时再建单。
+
+宿主在业务事务内保存事实和投递状态。提交后，同一订阅按同一实体的变更顺序调用 `handle`。回调有 15 秒时限，失败后按指数退避重试，累计 6 次失败后暂停该实体的后续投递。插件停用期间保留进度，授权空间在入队和回调前各检查一次。宿主定期清理超过 14 天的事件。宿主在插件处理成功后、记录成功前退出时，会再次投递同一个 id。插件有外部副作用时用这个 id 做幂等键。
+
+用 `omem plugin failed-events sample:status` 查看失败事件的 id 和错误。在保留期内用 `omem plugin replay sample:status <事件id>` 重新排队。隔离进程通过 IPC 收到同样的事件。
+
+## 把平台条目同步成事项
+
+插件声明 `permissions.itemProvider: true`，通过 `api.itemProvider({ id, label, statuses, pull, setStatus? })` 注册。宿主给接口加插件前缀，例如 `sample:issues`。`statuses` 把外部状态映射为 `active`、`done` 或 `cancelled`。`pull(ctx, { target, cursor })` 返回一页 `{ items, cursor, done }`。每条至少有稳定的 `key`、`url`、`title`、外部 `status` 和 `updatedAt`。可附修订号、父条目键、负责人、类型及摘要。
+
+本人通过 `GET /api/item-sync` 查看数据源和已启用的目标，通过 `PUT /api/item-sync` 指定空间、目标、建事项及回写方式。默认先建候选，状态回写前询问本人。开启同步时可选择直接建事项或直接写回。宿主保管游标。对同一提供者、同一用户和连接账号，相同外部键归首次导入它的空间。该空间的重叠订阅更新同一件事项，其他空间跳过该键。父键可指向同页或已导入的条目，父子须同空间、同提供者、同连接主体，并遵守事项树的三层限制。
+
+事项详情 `GET /api/items/:id` 的 `external` 包含提供者 id、外部链接、状态和修订。用 `GET /api/item-sync` 返回的 `providers[].label` 显示提供者名称。`syncedAt` 是最近成功同步的时间，`direction` 区分拉取（`pull`）和回写（`push`），`error` 保留最近的错误。发生冲突时，`external.write.state` 为 `conflict`，`external.write.status` 是请求写入的状态，`external.status` 是最近同步到的外部状态。获授权的插件收到事项创建或状态事件时，`data.links` 含提供者 URL，正文保存在事项详情。
+
+例如已连接 GitHub 的用户可以用以下请求订阅一个仓库的 issue。GitHub 提供者注册的是增量读取能力，只同步 issue，跳过 PR。
+
+```http
+PUT /api/item-sync
+Content-Type: application/json
+
+{"spaceId":"project-a","provider":"github:issues","target":"example/project-a","importMode":"candidate","mode":"confirm","enabled":true}
+```
+
+`importMode` 可选 `candidate` 或 `direct`，`mode` 可选 `confirm` 或 `direct`。成员使用自己的连接，在自己有读写权限的空间开启同步。后台拉取和回写也检查当前授权。
+
+支持条件写入的平台可实现 `setStatus(ctx, { key, status, expectedRevision })`，返回平台实际保存的状态和新修订。插件用 `ctx.idempotencyKey` 识别重复请求，用平台的条件写检查外部修订。发生冲突时保留外部状态，交给本人处理。
+
+## 指标按数据源取数
+
+插件声明 `permissions.metricProvider: true`，通过 `api.metricProvider({ id, label, querySchema, collect })` 注册。`querySchema` 是描述一条查询的 Zod 类型。`collect(ctx, { metrics, from, to })` 收到时间范围和一组 `{ id, query }`，返回 `{ metricId, at, value, dims?, source? }` 的数组。数值必须有限，点只可归属本批的指标。
+
+`GET /api/metrics/providers` 返回数据源 id、显示名和查询的 JSON Schema。定义指标时通过 `metric_define` 或 `PUT /api/metrics/:id` 填写 `providerId` 和 `providerQuery`。宿主校验查询，到期后按数据源、空间和连接用户合批采集，沿用指标点、维度和越线提醒。采集失败记下错误及时间，连续失败只提醒一次。普通指标继续走 Agent 采集。
+
+服务端类型从 `@omem-ai/plugin-sdk/server` 导入。两类提供者在宿主进程运行。三种接口的 `CallContext` 只含 `userId`、`spaceId`、`signal` 和 `connection(provider)`。连接须列在插件清单的 `connectors` 中，并属于当前用户。回写专用的 `WriteContext` 还含 `idempotencyKey`。
+
 ## 渠道
 
 插件可以实现一个聊天平台，把它接到 omem 的同一个收件箱：

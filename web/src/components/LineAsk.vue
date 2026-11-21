@@ -8,8 +8,8 @@ import { toast } from "../store";
 /**
  * Asking about one line or work item beside its page (views/WorkDetail.vue): the conversation is the
  * line's 关注 conversation when it has one (where its looks and next steps already report), else one
- * kept for the item in this browser. A few questions to start from; the answer reads the item, the
- * items under it and its timeline. It is an ordinary conversation, also under 问答.
+ * kept for the item in this browser. A few questions to start from; the item goes with each question,
+ * so the turn gets the line's state, stage and pending changes. An ordinary conversation, also under 问答.
  */
 type Message = { id: string; role: "user" | "assistant"; text: string; createdAt: string };
 const props = defineProps<{ itemId: string; title: string; spaceId: string; listenId?: string | null; line?: boolean }>();
@@ -29,8 +29,7 @@ let seq = 0;
 const what = computed(() => (props.line ? "工作线" : "工作项"));
 const prompts = computed(() => (props.line ? ["现在卡在哪？", "按这条线写一份周报", "下周要做什么？"] : ["现在卡在哪？", "还差什么才能做完？", "下一步该谁做？"]));
 const NOTE = "（关于";
-const note = () => `${NOTE}${what.value}「${props.title}」（${props.itemId}）：先用 read_item 读它、下面的工作项和最近的关键变化，需要时读它的材料；只回答，不改事项的状态。）`;
-/** What the owner typed, without the line the panel adds. */
+/** What the owner typed: questions asked before the item rode with the request carry a line the panel added. */
 const shown = (m: Message) => {
   if (m.role !== "user") return m.text;
   const at = m.text.lastIndexOf(`\n\n${NOTE}`);
@@ -73,7 +72,8 @@ async function send(q = text.value) {
   if (!q || sending.value) return;
   sending.value = true;
   try {
-    const r = await post<{ conversationId: string }>("/api/ask", { text: `${q}\n\n${note()}`, space: props.spaceId, conversationId: conversationId.value ?? undefined });
+    // The item rides with the question (POST /api/ask itemId): the host brings the line's state into the turn.
+    const r = await post<{ conversationId: string }>("/api/ask", { text: q, itemId: props.itemId, space: props.spaceId, conversationId: conversationId.value ?? undefined });
     if (r.conversationId !== conversationId.value) {
       conversationId.value = r.conversationId;
       if (!props.listenId) try { localStorage.setItem(KEY, JSON.stringify({ ...stored(), [props.itemId]: r.conversationId })); } catch { /* private mode */ }

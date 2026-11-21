@@ -1,3 +1,4 @@
+import { migrateItemProviders } from "../items/provider-schema.ts";
 import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { noteSync, sqlName } from "./loop-monitor.ts";
@@ -64,6 +65,12 @@ const MEMBER_CAPABILITIES_MIGRATION = `create table member_capability_overrides 
     where exists(select 1 from former_observer where scope='space') and exists(select 1 from json_each(invites.spaces) where json_extract(value,'$.role')='observer');
   update roles set id=(select id from former_observer) where id='observer';
   drop table former_observer;`;
+
+const TURN_CONTEXT_LINK_INDEXES = `create index if not exists notifications_pushed_message on notifications(json_extract(context,'$.pushed.messageId'));
+   create index if not exists notifications_lark_message on notifications(json_extract(context,'$.larkMessageId'));
+   create index if not exists listen_contexts_conversation on listen_contexts(conversation_id);`;
+
+const METRIC_SERIES_INDEX = `create index if not exists metric_points_series_at on metric_points(metric_id,dims,at);`;
 
 export const migrations: readonly string[] = [
   `
@@ -2294,11 +2301,27 @@ export const migrations: readonly string[] = [
    alter table session_cleanup add column failure_reason text;`,
   FILE_REFS_MIGRATION,
   FILE_REF_TOMBSTONES_MIGRATION,
-  // The feature branch used the asks_deferred migration number for its operation indexes.
-  `create index if not exists asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;
+  TURN_CONTEXT_LINK_INDEXES,
+  METRIC_SERIES_INDEX,
+  `create index runs_work_conversation on runs(json_extract(output,'$.agentWork.workConversationId'),created_at desc) where json_extract(output,'$.agentWork.workConversationId') is not null;`,
+  // main and turn-context used the same migration number for different indexes.
+  // Replay the link indexes for databases upgraded on main.
+  // The operation-rules branch used the asks_deferred migration number for its operation indexes.
+  `${TURN_CONTEXT_LINK_INDEXES}
+   create index if not exists asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;
    create index if not exists asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
    create index if not exists asks_operation_run on asks(json_extract(context,'$.runKey'),status);
    create index if not exists asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
+  `create table if not exists plugin_subscriptions(plugin text not null,subscriber text not null,type text not null,primary key(plugin,subscriber,type));
+   create index if not exists plugin_subscriptions_type on plugin_subscriptions(type);
+   create table if not exists plugin_events(seq integer primary key autoincrement,id text unique not null,at text not null,user_id text not null,body text not null);
+   create index if not exists plugin_events_at on plugin_events(at);
+   create table if not exists plugin_deliveries(subscriber text not null,seq integer not null references plugin_events(seq) on delete cascade,
+     entity text not null,state text not null default 'pending',attempts integer not null default 0,due integer not null default 0,error text,
+     primary key(subscriber,seq));
+   create index if not exists plugin_deliveries_seq on plugin_deliveries(seq);
+   create index if not exists plugin_deliveries_due on plugin_deliveries(subscriber,state,due,seq);
+   create index if not exists plugin_deliveries_order on plugin_deliveries(subscriber,entity,seq) where state!='done';`,
   MEMBER_CAPABILITIES_MIGRATION,
 ];
 
@@ -2307,15 +2330,20 @@ export type Db = DatabaseSync;
 export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
-  const version = (db.prepare("pragma user_version").get() as { user_version: number }).user_version;
+  let version = (db.prepare("pragma user_version").get() as { user_version: number }).user_version;
+  // Plugin and operation branches used the first file-reference slot for their own schema.
+  if (version === migrations.indexOf(FILE_REFS_MIGRATION) + 1 &&
+      !db.prepare("select 1 from sqlite_schema where type='table' and name='stored_file_refs'").get()) {
+    version--;
+  }
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");
     try {
-      // Both branches used the preceding version: main added approval indexes, while
-      // the capabilities branch added this table and migrated custom observer roles.
-      const fromCapabilitiesBranch = i === version && migrations[i] === MEMBER_CAPABILITIES_MIGRATION
+      // A capabilities database may already have migrated its observer role at the
+      // version main used for the metric series index. Supply that missing index once.
+      const fromCapabilitiesBranch = migrations[i] === MEMBER_CAPABILITIES_MIGRATION
         && db.prepare("select 1 from sqlite_schema where type='table' and name='member_capability_overrides'").get();
-      db.exec(fromCapabilitiesBranch ? migrations[i - 1] : migrations[i]);
+      db.exec(fromCapabilitiesBranch ? METRIC_SERIES_INDEX : migrations[i]);
       db.exec(`pragma user_version = ${i + 1}`);
       db.exec("commit");
     } catch (error) {
@@ -2323,7 +2351,13 @@ export function openDb(path: string): Db {
       throw error;
     }
   }
+  migrateItemProviders(db);
   return db;
+}
+
+/** Join the caller's transaction when composing synchronous store operations. */
+export function withinTx<T>(db: Db, fn: () => T): T {
+  return db.isTransaction ? fn() : tx(db, fn);
 }
 
 export function tx<T>(db: Db, fn: () => T): T {

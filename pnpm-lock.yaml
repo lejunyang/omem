@@ -163,6 +163,10 @@ importers:
         version: 7.3.1(@types/node@24.10.1)(lightningcss@1.33.0)(yaml@2.9.1)
 
   packages/plugin-sdk:
+    dependencies:
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
     devDependencies:
       typescript:
         specifier: 5.9.3

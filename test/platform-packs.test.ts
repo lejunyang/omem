@@ -8,6 +8,7 @@ import { storeConnection } from "../src/auth/vault.ts";
 import { all, one } from "../src/core/db.ts";
 import { createUser } from "../src/core/users.ts";
 import { listWatches, syncWatches } from "../src/plugins/platforms.ts";
+import { configureTarget, providerState, syncTarget } from "../src/items/providers.ts";
 import { loadPlugins } from "../src/plugins/registry.ts";
 import { adf } from "../plugins/atlassian/server.ts";
 import { mailBody } from "../plugins/google/server.ts";
@@ -101,6 +102,30 @@ describe("platform packs", async () => {
     expect(text).toContain("- 住宿\n  - 一线城市 600 元");
     expect(text).toContain("| 城市 | 上限 |\n| --- | --- |\n| 北京 | 600 |");
     expect(text).toContain("子页面：附件说明");
+  });
+
+  it("imports GitHub issues in pages under one connected account, skips PRs, and resumes incrementally", async () => {
+    connect("connect-github");
+    const issue = { number: 1, title: "修订文案", state: "open", html_url: "https://github.com/acme/docs/issues/1", updated_at: "2026-11-01T01:00:00Z" };
+    const since: (string | null)[] = [];
+    routes = [[/repos\/acme\/docs\/issues\?/, c => {
+      const q = new URL(c.url).searchParams;
+      since.push(q.get("since"));
+      if (q.get("page") === "1") return new Response(JSON.stringify([{ ...issue, pull_request: {} }]), { headers: { link: '<next>; rel="next"' } });
+      return [issue];
+    }]];
+    const config = { provider: "github:issues", target: "acme/docs", spaceId: "personal-ann" };
+    const t = configureTarget(app, "ann", config);
+    await syncTarget(app, "ann", t.id);
+    const links = all<{ item_id: string }>(app.db, "select item_id from external_item_links");
+    expect(links).toHaveLength(1);
+    expect(providerState(app, "ann", links[0].item_id)?.external.key).toBe("acme/docs#1");
+    await syncTarget(app, "ann", t.id);
+    expect(since).toEqual([null, null, expect.any(String), expect.any(String)]);
+    expect(() => configureTarget(app, "ann", { ...config, mode: "direct" })).toThrow("只支持导入");
+    storeConnection(app, { userId: "ann", provider: "connect-github", accountId: "b", accountName: "乙", scopes: [], accessToken: "other", expiresIn: 3600 });
+    await expect(syncTarget(app, "ann", t.id)).rejects.toThrow("连接账号已变化");
+    expect(since).toHaveLength(4);
   });
 
   it("keeps a watched GitHub repository in sync from where it stopped", async () => {

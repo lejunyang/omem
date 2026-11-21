@@ -32,6 +32,26 @@ updated: 2026-11-21
 - “工具审批”改成 `SetCard` 的样子，工具一行一个（名字、用途一行、审批方式在右）。
 - 卡片链接：`?card=operation-rules`、`rule-packs`、`tool-approvals`；旧的 `?card=command-rules` 落到操作规则。类型和一行文字的生成在 `web/src/lib/operation-rules.ts`。
 - 演示数据（`scripts/doc-screens.ts`）加了五条规则和两个技能带的规则包（命令名 `acme`、主机 `api.example.com`），新截图 `security-rules`。
+## 关注和流程跟进复用当轮的事项材料（11-21）
+
+从 `src/channels/listen-items.ts` 读起。关注按状态进入时间选最近的活跃或待复核阶段，另取最近三条变化。关注和流程跟进都从已识别的可读工作线取观察截止日。流程跟进在预筛返回后读取工作线，预筛期间改的截止日也会进入排队材料。
+
+## 工作线追问保留变化的处理结果（11-21）
+
+从 `src/agents/turn-focus.ts` 读起。近期变化标明已否决、已采纳、已另开事项或已记录；尚待决定的改期单独标明。
+
+## 提问带上正在讨论的工作线（11-21）
+
+从 `src/agents/turn-context.ts` 看入口、会话关联和候选的判定，从 `src/agents/turn-focus.ts` 看材料预算。会话运行的 focus 事件记录识别方式和实际发送的小块；本人对话的事项工具按同一结果默认归线。
+## 插件如何识别候选事项（11-21）
+
+[插件开发文档](../../../docs/v2/plugins.md#订阅事项与评审事件) 说明了如何根据创建和状态事件区分候选、采纳和拒绝。事件字段见 `src/items/store.ts`，采纳和拒绝对应的状态见 `src/items/auto.ts`。
+
+## 插件订阅事项与评审、同步外部条目、直接采集指标（11-21）
+
+从 `packages/plugin-sdk/server.ts` 看三个接口，从 `src/plugins/process-hooks.ts` 看注册、声明校验与用户连接范围。`src/plugins/event-store.ts` 和 `event-delivery.ts` 负责同事务入队和按实体投递。事项同步通过 `/api/item-sync` 配置，指标从 `src/data/metrics.ts` 的 `collectDue` 进入。
+
+事项按提供者、用户、连接账号和外部键去重。同页先建映射，再把子项挂到同空间的父项。导入时间线和回写确认写明外部来源，入口是 `src/items/providers.ts`。跨空间去重、三层限制及冲突回写的回归用例在 `test/item-providers.test.ts`。
 
 ## 其余页面的界面整理（11-21）
 

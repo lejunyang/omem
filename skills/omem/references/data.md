@@ -1,16 +1,18 @@
 # 数据：指标、采集和报表
 
-本人工作上的数据由 omem 记下来、按时取、看变化：需求的埋点事件量、上线后的报错和使用量、迁移时旧平台和新平台的对比、本人关心的业务指标。各系统本身由技能去读（数据目录里的技能写着哪个系统、什么命令），omem 只存指标的定义和数值。
+本人工作上的数据由 omem 记下来、按时取、看变化：需求的埋点事件量、上线后的报错和使用量、迁移时旧平台和新平台的对比、本人关心的业务指标。后台可以调用插件数据源取数，也可以让 Agent 按技能读取。
 
-- `metric_define(name, why, query, plan_ref?, source?, description?, unit?, item?, context?, schedule?, baseline?, threshold?, direction?, view?, status?)`：定义或修改一个指标（同名即更新）。
+- `metric_define(name, why, query?, providerId?, providerQuery?, plan_ref?, source?, description?, unit?, item?, context?, schedule?, baseline?, threshold?, direction?, view?, status?)`：定义或修改一个指标（同名即更新）。
   - `why` 一句话写这个数回答本人的什么问题，新建必填；从观测计划来的写 `plan_ref`（`src:<计划的原件 id>#L起-L止`）。本人在数据页凭这两样决定留不留。
-  - `query` 要写到另一个 Agent 照着能取到同样的数：技能名、命令或查询语句、参数、时间范围、取哪一列；只写只读的查法。
+  - 配置插件采集时，`providerId` 填数据源全名（如 `example:requests`），`providerQuery` 按该数据源的查询结构填写。可用数据源和查询结构见 `GET /api/metrics/providers`。到期时相同空间、用户和数据源的查询会合批执行。
+  - 使用 Agent 采集时，`query` 要写到另一个 Agent 照着能取到同样的数：技能名、命令或查询语句、参数、时间范围、取哪一列；只写只读的查法。已有指标传 `providerId: null` 和文字查法可切回 Agent。
   - `source` 用数据源目录里的叫法；挂到事项（`item`）或关注（`context`）上，事项页和关注会话会看到它的变化。
-  - `schedule`（none / hourly / daily / weekly）是后台多久取一次：到时间起一次只读的取数运行，取完用 `metric_record` 记下。
+  - `schedule`（none / hourly / daily / weekly）是后台多久取一次：到时间由相应的数据源或 Agent 取数。
   - `threshold` 是相对变化（默认 0.3），`direction` 说哪个方向是好的（报错 down-good，使用量 up-good）。
   - `view` 是网页上的画法：`{kind: line | area | bar | stack | compare | pie | table | number, compareBy?, ratio?, focus?}`。分维度的（新 / 旧、PC / H5）用 `compare`，`compareBy` 写维度名；`ratio: true` 另画一张占比，`focus` 是卡片上显示、占比里画的那一组；`pie` 画最近一次的构成；`number` 只看最新的数；不传是走势线。只有一两天的数时网页直接写数和日期，不画空的线。
 - 谁定的算数：本人这一轮亲口要的（或网页上本人改的）直接生效；其余（后台运行、观测计划、看线的运行）新建的都是**提议**，照样按时取数，变化不通知本人，等本人在数据页点“保留 / 改 / 不要”。本人不要过的指标不能再提（同名会被拒绝）；本人在对话里说留下某个提议时传 `status: "active"`，说不要时传 `"dropped"`。
 - `metric_record(metric, points: [{value, at?, dims?, note?}])`：记下取到的值。`at` 写数据所属的时间（日数据写那一天），分维度的每个维度一条（`dims: {平台: "新"}`，维度名和 `view.compareBy` 一致）。和基线（`baseline`，或前几次的中位数）比变化超过门槛时，本人留下的指标由宿主告诉本人，写进关联的关注会话和事项时间线；提议和暂停的指标只记数不通知。
+- 本人在线的对话里记数时，指标已有的事项关联优先；指标没有关联事项时，越过门槛的变化及时间线事件记到当轮工作线。
 - `metric_read(metric?, item?, context?, days?, dims?, chart?)`：不传 `metric` 列出指标、各自最近的变化，以及“本人对 AI 提议的指标最近是这么定的”；传了给出定义、最近的点和变化。`chart: true` 时按指标的 `view` 附 ` ```chart ` 代码块（图的数据，带占比的有两段），写报表时原样放进工作文件，网页上会画成图。
 
 ## 什么时候用

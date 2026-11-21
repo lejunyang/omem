@@ -1,8 +1,9 @@
 import type { App } from "../core/app.ts";
-import { all, one, run as exec } from "../core/db.ts";
+import { findingEvent } from "../plugins/event-store.ts";
+import { all, one, run as exec, withinTx } from "../core/db.ts";
 import { git } from "../core/git.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
-import { getRun } from "./runs.ts";
+import { getRun, runUser } from "./runs.ts";
 
 /**
  * Reviewing someone's branch again (docs/v2/review.md “复审”): the branch moved, the author answered,
@@ -21,7 +22,7 @@ export type External = { url: string; ref?: string; object?: string; state: "ope
 export type PriorVerdict = { id: number; status: Exclude<Resolution, "unchecked">; note?: string };
 
 type RereviewInput = { rereviewOf?: string; rereviewNote?: string; rereviewInputs?: string; previousTips?: Record<string, string> };
-type PriorRow = { id: number; title: string; file_path: string | null; line: number | null; severity: string; detail: string; decision: string | null; resolution: string | null; resolution_note: string | null; external: string | null; check_name: string; code_run_id: string };
+type PriorRow = { checked_run: string | null; id: number; title: string; file_path: string | null; line: number | null; severity: string; detail: string; decision: string | null; resolution: string | null; resolution_note: string | null; external: string | null; check_name: string; code_run_id: string };
 
 /** The branch reviews before this one, newest first (each names the one it re-reviews). */
 export function earlierReviews(app: App, runId: string): string[] {
@@ -43,7 +44,7 @@ export function openPrior(app: App, runId: string, opts: { judgedHere?: boolean 
   if (!ids.length) return [];
   // `judgedHere`: also the ones another check of this review already called fixed or moot (a later “still” wins).
   const here = opts.judgedHere ? " or f.checked_run = ?" : "";
-  return all<PriorRow>(app.db, `select f.id, f.title, f.file_path, f.line, f.severity, f.detail, f.decision, f.resolution, f.resolution_note, f.external, r.check_name, r.code_run_id
+  return all<PriorRow>(app.db, `select f.id, f.title, f.file_path, f.line, f.severity, f.detail, f.decision, f.resolution, f.resolution_note, f.checked_run, f.external, r.check_name, r.code_run_id
     from review_findings f join reviews r on r.id = f.review_id
     where r.code_run_id in (${ids.map(() => "?").join(",")}) and f.state not in ('rejected', 'merged') and coalesce(f.decision, '') <> 'wontfix'
       and (coalesce(f.resolution, '') not in ('fixed', 'moot')${here})
@@ -108,12 +109,18 @@ export function recordPrior(app: App, runId: string, prior: PriorVerdict[]) {
   const open = new Map(openPrior(app, runId, { judgedHere: true }).map((f) => [f.id, f]));
   const unknown = prior.filter((p) => !open.has(p.id)).map((p) => `#${p.id}`);
   if (unknown.length) throw new HttpError(400, `这些不是这次要复核的旧问题：${unknown.join("、")}。只对任务里“旧问题”列出的编号给结论。`);
-  for (const p of prior) {
-    const cur = one<{ resolution: string | null; checked_run: string | null }>(app.db, "select resolution, checked_run from review_findings where id = ?", p.id)!;
-    if (cur.checked_run === runId && cur.resolution === "still" && p.status !== "still") continue;
-    exec(app.db, "update review_findings set resolution = ?, resolution_note = ?, checked_run = ?, resolved_run = ? where id = ?",
-      p.status, p.note ?? null, runId, p.status === "still" ? null : runId, p.id);
-  }
+  const owner = { id: runId, spaceId: getRun(app, runId).spaceId, userId: runUser(app, runId) };
+  withinTx(app.db, () => {
+    for (const p of prior) {
+      const cur = open.get(p.id)!;
+      if (cur.checked_run === runId && cur.resolution === "still" && p.status !== "still") continue;
+      if (cur.checked_run === runId && cur.resolution === p.status && cur.resolution_note === (p.note ?? null)) continue;
+      exec(app.db, "update review_findings set resolution = ?, resolution_note = ?, checked_run = ?, resolved_run = ? where id = ?",
+        p.status, p.note ?? null, runId, p.status === "still" ? null : runId, p.id);
+      Object.assign(cur, { checked_run: runId, resolution: p.status, resolution_note: p.note ?? null });
+      findingEvent(app, "finding.resolution", owner, cur, p.status, p.note ?? "", "agent");
+    }
+  });
   return prior.length;
 }
 
@@ -121,15 +128,22 @@ export type RereviewSummary = { of: string; fixed: number[]; still: number[]; mo
 
 /** At the end of a re-review: what nobody looked at is marked so; the counts for the card and the item. */
 export function settleRereview(app: App, runId: string): RereviewSummary | null {
-  const input = getRun(app, runId).input as RereviewInput;
+  const review = getRun(app, runId);
+  const input = review.input as RereviewInput;
   if (!input.rereviewOf) return null;
+  const owner = { id: runId, spaceId: review.spaceId, userId: runUser(app, runId) };
   const ids = earlierReviews(app, runId);
   const marks = ids.map(() => "?").join(",");
   // Open before this review, untouched in it.
-  const untouched = all<{ id: number }>(app.db, `select f.id from review_findings f join reviews r on r.id = f.review_id
+  const untouched = all<Pick<PriorRow, "id" | "file_path" | "line">>(app.db, `select f.id,f.file_path,f.line from review_findings f join reviews r on r.id = f.review_id
     where r.code_run_id in (${marks}) and f.state not in ('rejected', 'merged') and coalesce(f.decision, '') <> 'wontfix'
       and coalesce(f.resolution, '') not in ('fixed', 'moot') and coalesce(f.checked_run, '') <> ?`, ...ids, runId);
-  for (const f of untouched) exec(app.db, "update review_findings set resolution = 'unchecked', checked_run = ? where id = ?", runId, f.id);
+  withinTx(app.db, () => {
+    for (const f of untouched) {
+      exec(app.db, "update review_findings set resolution = 'unchecked', checked_run = ? where id = ?", runId, f.id);
+      findingEvent(app, "finding.resolution", owner, f, "unchecked", "");
+    }
+  });
   const rows = all<{ id: number; title: string; resolution: Resolution; external: string | null; severity: string; decision: string | null }>(app.db, `select f.id, f.title, f.resolution, f.external, f.severity, f.decision from review_findings f join reviews r on r.id = f.review_id
     where r.code_run_id in (${marks}) and f.checked_run = ?`, ...ids, runId);
   const of = (s: Resolution) => rows.filter((r) => r.resolution === s).map((r) => r.id);

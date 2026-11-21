@@ -5,9 +5,10 @@ import { itemAccess, requireItem } from "../items/access.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { canWrite } from "../core/users.ts";
+import { canWrite, OWNER } from "../core/users.ts";
 import { all, one, tx } from "../core/db.ts";
 import { HttpError, json } from "../core/util.ts";
+import { metricProviders } from "../plugins/process-hooks.ts";
 import { getItem } from "../items/store.ts";
 import { descendantIds, rootOf } from "../items/tree.ts";
 import { changeOf, defineMetric, latestOf, listMetrics, metricPoints, metricTable, metricViewSchema, nextTake, readMetric, requireMetric, tileSeries } from "./metrics.ts";
@@ -15,8 +16,8 @@ import { changeOf, defineMetric, latestOf, listMetrics, metricPoints, metricTabl
 /**
  * Metrics on the web: the list (an item's and those under it, a 关注's, or all one may read), one metric
  * with its points and the charts its view draws, the work files behind them (catalog, observation plans,
- * collection notes, reports), and a person keeping, changing or dropping a metric. Reading the systems
- * stays the agents' (src/data/metrics.ts).
+ * collection notes, reports), and a person keeping, changing or dropping a metric. Background collection is in
+ * src/data/metrics.ts.
  */
 export function registerMetricRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   const readable = (req: FastifyRequest) => spacesWithCapability(app, who(req), "metrics.view");
@@ -24,6 +25,12 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
     requireItem(app, id, who(req), "read");
     return [id, ...descendantIds(app, id, readable(req) ?? undefined)];
   };
+  server.get("/api/metrics/providers", async (req) => {
+    const spaces = readable(req);
+    return [...metricProviders].filter(([, entry]) => !entry.spaces.length || !spaces || entry.spaces.some(id => spaces.includes(id)))
+      .map(([id, { def }]) => ({ id, label: def.label, querySchema: z.toJSONSchema(def.querySchema, { io: "input" }) }));
+  });
+
   server.get("/api/metrics", async (req) => {
     const q = z.object({ item: z.string().optional(), context: z.string().optional(), source: z.string().optional(), dropped: z.string().optional() }).parse(req.query ?? {});
     // An item's metrics are its own and those of the items under it (a line shows its requirements').
@@ -115,6 +122,9 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
     if (!canWrite(app, who(req), m.spaceId)) throw new HttpError(403, "不能改这个指标");
     const b = z.object({
       name: z.string().trim().min(2).max(120).optional(),
+      providerId: z.string().min(1).nullable().optional(),
+      providerQuery: z.unknown().optional(),
+      query: z.string().max(4000).optional(),
       unit: z.string().trim().max(20).optional(),
       why: z.string().trim().max(300).optional(),
       description: z.string().max(2000).optional(),
@@ -127,7 +137,9 @@ export function registerMetricRoutes(server: FastifyInstance, app: App, who: (re
       note: z.string().trim().max(300).optional(),
     }).safeParse(req.body ?? {});
     if (!b.success) throw new HttpError(400, `参数错误：${b.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("；")}`);
+    // The fallback collection agent runs as the owner.
+    if (b.data.query !== undefined && who(req) !== OWNER) throw new HttpError(403, "只有本人能修改 Agent 的采集指令");
     const { note, name, ...rest } = b.data;
-    return defineMetric(app, { id: m.id, name: name ?? m.name, ...rest, ...(note !== undefined ? { ownerNote: note } : {}) }, { by: "owner" });
+    return defineMetric(app, { id: m.id, name: name ?? m.name, ...rest, ...(note !== undefined ? { ownerNote: note } : {}) }, { by: "owner", userId: who(req) });
   });
 }

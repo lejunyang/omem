@@ -234,6 +234,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // items and requirements (the handlers check whose item it is)
   // metrics (src/data/http.ts): readable spaces only; editing needs write access to the metric's space
   "GET /api/metrics": cap("metrics.view", "list"),
+  "GET /api/metrics/providers": cap("metrics.view", "list"),
   "GET /api/metrics/files": cap("metrics.view", "list"),
   "GET /api/metrics/:id": cap("metrics.view", "metric:p.id"),
   "PUT /api/metrics/:id": "self",
@@ -283,6 +284,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "PUT /api/items/:id/parent": "owner",
   "PUT /api/item-next/:id": "owner",
   "PUT /api/item-changes/:id/noise": "owner",
+  "GET /api/item-sync": g("connector.use"),
+  "PUT /api/item-sync": g("connector.use"),
+  "POST /api/item-sync/:id/pull": g("connector.use"),
+  "POST /api/items/:id/writeback": g("connector.use"),
   "GET /api/items": cap("items.view", "own-list"),
   "POST /api/items": cap("items.edit", "item-new"),
   "GET /api/items/:id": cap("items.view", "item:p.id"),

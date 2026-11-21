@@ -1,3 +1,4 @@
+import { providerDeviceTables } from "../items/provider-schema.ts";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -93,11 +94,11 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
   // Meetings this device is following (lark-meetings.ts) stay with it; their records travel as sources.
   // Share links point at this device's web address, so they stay too; so do remote recordings,
   // whose files are in this device's data directory (src/remote), and this device's bot's document subscriptions, and platform watches (they sync with this device's tokens).
-  const deviceTables = ["api_tokens", "kv", "lark_cursors", "lark_meetings", "lark_meeting_lines", "shares", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "flow_signals", "item_follow_cursors", "git_commit_cursors"];
+  const deviceTables = ["api_tokens", "kv", "lark_cursors", "lark_meetings", "lark_meeting_lines", "shares", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "flow_signals", "item_follow_cursors", "git_commit_cursors", "plugin_events", "plugin_deliveries", "plugin_subscriptions"];
   const deviceData = new Map<string, Row[]>();
   if (existsSync(join(home, "omem.db"))) {
     const old = openDb(join(home, "omem.db"));
-    try { for (const table of deviceTables) deviceData.set(table, all<Row>(old, `select * from ${table}`)); }
+    try { for (const table of [...deviceTables, ...providerDeviceTables]) deviceData.set(table, all<Row>(old, `select * from ${table}`)); }
     finally { old.close(); }
   }
   const backup = `${home}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
@@ -123,6 +124,22 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
           run(db, `delete from ${table}`);
           const cols = columns(db, table);
           for (const row of deviceData.get(table) ?? []) db.prepare(`insert into ${table}(${cols.join(",")}) values(${cols.map(() => "?").join(",")})`).run(...cols.map((c) => row[c]));
+        }
+        // Credentials and pending external actions belong to this device. A full overwrite may
+        // remove local users, spaces or items; restore links only where the item's owner still matches.
+        for (const table of providerDeviceTables) run(db, `delete from ${table}`);
+        for (const table of [...providerDeviceTables].reverse()) {
+          for (const row of deviceData.get(table) ?? []) {
+            if (table === "item_provider_targets" && !db.prepare("select 1 from users, spaces where users.id=? and spaces.id=?").get(row.user_id, row.space_id)) continue;
+            if (table === "external_item_links" && !db.prepare(`select 1 from items i join item_provider_targets t on i.user_id=t.user_id and i.space_id=t.space_id
+                where i.id=? and t.id=?`).get(row.item_id, row.target_id)) {
+              run(db, "update item_provider_targets set cursor=null where id=?", row.target_id);
+              continue;
+            }
+            if (table === "item_provider_writes" && !db.prepare("select 1 from external_item_links where item_id=?").get(row.item_id)) continue;
+            const cols = Object.keys(row);
+            run(db, `insert into ${table}(${cols.join(",")}) values(${cols.map(() => "?").join(",")})`, ...cols.map(c => row[c]));
+          }
         }
         run(db, "update chunks set embedding = null where embedding is not null");
         run(db, "update memories set embedding = null where embedding is not null");
