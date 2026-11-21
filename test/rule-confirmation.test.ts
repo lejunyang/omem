@@ -90,7 +90,7 @@ it("saves a disabled rule, then commits its enable button before acknowledging w
   expect((await handleCardAction(app, event)).toast.content).toBe("已经处理过了");
 });
 
-it("delivers a member's disabled rule confirmation to the owner's private chat", async () => {
+it.each(["default", "create", "update"] as const)("requires the owner's private confirmation for a member's rule (%s)", async mode => {
   const { app } = fixture();
   const member = createUser(app, { id: "member-a", name: "示例成员" });
   const spaceId = "project-a";
@@ -106,9 +106,16 @@ it("delivers a member's disabled rule confirmation to the owner's private chat",
     patch: async () => ({ code: 0 }),
   } } });
 
-  const result = await callTool(ctx, "save_rule", { description: "退款时提醒", rule: { name: "退款提醒", conditions: ruleInput.conditions, actions: ruleInput.actions } });
+  const existing = mode === "update" ? saveRule(app, { ...ruleInput, spaceId }) : undefined;
+  const result = await callTool(ctx, "save_rule", {
+    id: existing?.id, enabled: mode === "default" ? undefined : true,
+    description: mode === "default" ? "退款时提醒" : "退款时提醒，现在就启用",
+    rule: { name: "退款提醒", conditions: ruleInput.conditions, actions: ruleInput.actions },
+  });
   expect(result.isError, result.text).toBe(false);
   const [rule] = listRules(app);
+  if (existing) expect(rule.id).toBe(existing.id);
+  expect(result.text).toContain("未启用");
   expect(rule.enabled).toBe(false);
   expect(rule.conversationId).toBeFalsy();
   await showSuggestions(app, task.id);
@@ -118,8 +125,26 @@ it("delivers a member's disabled rule confirmation to the owner's private chat",
   expect(interactionForMessage(app, "om_rule_owner")).toMatchObject({ allowed: ["ou_owner"], chatId: null, conversationId: null });
   expect(result.text).toContain("由系统主人确认启用");
   await expect(answerAsk(app, ask.id, { choice: 0, by: member.id })).rejects.toThrow("只有本人");
+  expect(getRule(app, rule.id).enabled).toBe(false);
   await answerAsk(app, ask.id, { choice: 0, by: "owner" });
   expect(getRule(app, rule.id).enabled).toBe(true);
+  if (mode === "update") {
+    const external = { ...ctx, runId: null };
+    const edit = { id: rule.id, description: "退款时提醒", rule: { name: "新提醒名" } };
+    expect((await callTool(external, "save_rule", edit)).text).toContain("已启用");
+    expect((await callTool(external, "save_rule", { ...edit, enabled: false })).text).toContain("未启用");
+    const pending = await callTool(external, "save_rule", { ...edit, enabled: true });
+    expect(pending.text).toContain("系统主人可在规则页核对后启用");
+    expect(getRule(app, rule.id).enabled).toBe(false);
+  }
+});
+
+it("allows the owner to enable a notification rule immediately", async () => {
+  const { app, ctx, task } = fixture();
+  const result = await callTool(ctx, "save_rule", { description: ruleInput.description, rule: ruleInput, enabled: true });
+  expect(result.isError, result.text).toBe(false);
+  expect(listRules(app)[0].enabled).toBe(true);
+  expect(listAsks(app, { runId: task.id })).toHaveLength(0);
 });
 
 it("also accepts a form button clicked before the send response, with its typed answer", async () => {

@@ -3762,13 +3762,13 @@ def({
 def({
   name: "save_rule",
   description:
-    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议、飞书文档或表格有改动、事项上挂的合并请求这类平台对象变了状态）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。本人说“这个群 / 这里 / 当前会话”时不要按群名去查：条件写 {field: chat.id, op: equals, value: current}，保存时换成本会话的飞书群（不在飞书会话里会被拒绝）；定时和文档变化规则的结果默认发回本会话（“发到”，rule.conversationId 写 current 也是本会话），Agent 动作 reply 写 auto 才会在群里说话。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：在主人会话中，回复后展示启用确认卡片；在成员会话中，启用确认单独交给系统主人；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
+    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议、飞书文档或表格有改动、事项上挂的合并请求这类平台对象变了状态）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。本人说“这个群 / 这里 / 当前会话”时不要按群名去查：条件写 {field: chat.id, op: equals, value: current}，保存时换成本会话的飞书群（不在飞书会话里会被拒绝）；定时和文档变化规则的结果默认发回本会话（“发到”，rule.conversationId 写 current 也是本会话），Agent 动作 reply 写 auto 才会在群里说话。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：在主人会话中，回复后展示启用确认卡片；在成员会话中，启用确认单独交给系统主人；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；只有系统主人明确要求立即启用时才传 enabled=true。成员新建或更新已停用规则后须由主人确认启用。",
   write: true,
   schema: z.object({
     id: z.string().optional().describe("修改已有规则时填（list_rules）"),
     description: z.string().describe("本人的原话，写全：什么情况、做什么、回复方式"),
     name: z.string().optional(),
-    enabled: z.boolean().optional(),
+    enabled: z.boolean().optional().describe("成员可停用已启用的规则，启用须由系统主人确认"),
     rule: z.record(z.string(), z.unknown()).optional().describe("可选：完整结构 {trigger, conditions, judge, actions}，格式见 docs/v2/rules.md；不填由模型生成"),
   }),
   handler: async (ctx, a) => {
@@ -3812,13 +3812,15 @@ def({
       const seen = one<{ name: string; chat_mode: string | null }>(ctx.app.db, "select name, chat_mode from lark_cursors where chat_id = ?", action.to.chatId ?? "");
       action.to = { ...action.to, name: action.to.name || seen?.name || "", kind: action.to.kind ?? (seen?.chat_mode === "p2p" ? "p2p" : "group") };
     }
-    const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent", undefined, { ownerAsked });
+    const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent", ctx.userId ?? OWNER, { ownerAsked });
     const confirmation = ctx.runId && origin ? confirmRule(ctx.app, saved, ctx.runId, ownerConversation) : null;
     const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
     const confirmationNote = ownerConversation
       ? "回复送达后，本会话会展示启用确认卡片，主人可直接点击启用。"
       : "规则由系统主人确认启用，确认卡片会单独发给主人。";
-    const result = confirmation ? `${summary}\n${confirmationNote}` : summary;
+    let result = summary;
+    if (confirmation) result += `\n${confirmationNote}`;
+    else if (!saved.enabled && !owner) result += "\n规则保持停用，系统主人可在规则页核对后启用。";
     // Rules that need Feishu permissions (meetings): what is missing, with the links to apply, for the owner.
     const { rulePermissions, permissionText } = await import("../rules/permissions.ts");
     const p = await rulePermissions(ctx.app, saved);

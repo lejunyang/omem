@@ -168,7 +168,7 @@ export function getRule(app: App, id: string): Rule {
 }
 
 /** Create or replace a rule; checks it can work (conditions for code judging, a cron for schedules). */
-/** `actor`: who saves it through the web or API; a script runs on this machine, so only the owner may write one. */
+/** `actor`: the account saving the rule, directly or through its assistant. */
 /**
  * `ownerAsked`: an agent saving the rule in a turn answering the owner's own message (save_rule), which
  * may set where it forwards to, as set_chat_watch may add the bot in such a turn.
@@ -229,6 +229,8 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
+  // Member assistants submit new or disabled rules for owner confirmation, including after an async draft.
+  if (by === "agent" && actor && actor !== OWNER && !prev?.enabled) r.enabled = false;
   run(
     app.db,
     `insert into rules(id, name, description, enabled, trigger, conditions, judge, judge_with, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id, origin) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
