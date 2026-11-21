@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createServer, request, type IncomingMessage, type OutgoingHttpHeaders } from "node:http";
 import { once } from "node:events";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createSession, SESSION_COOKIE } from "../src/auth/sessions.ts";
 import { issueProbeTicket } from "../src/auth/cloud-probe-ticket.ts";
@@ -83,11 +83,7 @@ it("requires authentication at the upstream when a loopback proxy forwards manag
   }
 });
 
-it.each([
-  { schema: "main", hasCloudUsage: false, hasChangeLedger: true },
-  { schema: "pre-merge cloud-tools", hasCloudUsage: true, hasChangeLedger: false },
-  { schema: "merged cloud-tools", hasCloudUsage: true, hasChangeLedger: true },
-])("preserves manual tokens and cleans up legacy probe tokens when upgrading from $schema", ({ hasCloudUsage, hasChangeLedger }) => {
+function legacyCloudLibrary(hasCloudUsage: boolean, hasChangeLedger: boolean) {
   const home = mkdtempSync(join(tmpdir(), "omem-cloud-upgrade-"));
   const db = new DatabaseSync(join(home, "omem.db"));
   // Before the merge the cloud usage table occupied the change ledger's version.
@@ -99,7 +95,15 @@ it.each([
   if (hasCloudUsage) db.exec(migrations[usage]);
   db.exec(`pragma user_version=${hasCloudUsage && hasChangeLedger ? usage + 1 : usage}`);
   db.exec("commit");
-  const old = new App(home, loadConfig(home), db);
+  return new App(home, loadConfig(home), db);
+}
+
+it.each([
+  { schema: "main", hasCloudUsage: false, hasChangeLedger: true },
+  { schema: "pre-merge cloud-tools", hasCloudUsage: true, hasChangeLedger: false },
+  { schema: "merged cloud-tools", hasCloudUsage: true, hasChangeLedger: true },
+])("preserves manual tokens and cleans up legacy probe tokens when upgrading from $schema", ({ hasCloudUsage, hasChangeLedger }) => {
+  const old = legacyCloudLibrary(hasCloudUsage, hasChangeLedger);
   const label = "cloud-tools probe";
   createUser(old, { id: "member-a", name: "成员" });
   const matchingToken = createApiToken(old, "owner", label);
@@ -109,13 +113,46 @@ it.each([
   expect(userForToken(old, matchingToken)).toBe("owner");
   old.db.close();
 
-  const app = App.open(home);
+  const app = App.open(old.home);
   try {
     expect(userForToken(app, matchingToken)).toBe(hasCloudUsage ? null : "owner");
     expect(userForToken(app, member)).toBe("member-a");
     expect(userForToken(app, otherClient)).toBe("owner");
     expect(userForToken(app, otherLabel)).toBe("owner");
   } finally { app.db.close(); }
+});
+
+it("preserves a manual owner token when two processes open the same pre-cloud library", () => {
+  const old = legacyCloudLibrary(false, true);
+  const token = createApiToken(old, "owner", "cloud-tools probe");
+  old.db.close();
+
+  // Let the other opener commit just before this process takes its first migration lock.
+  const exec = DatabaseSync.prototype.exec;
+  let childOwner: string | undefined;
+  const lock = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql) {
+    if (/^begin\b/i.test(sql)) {
+      lock.mockRestore();
+      const result = execFileSync(process.execPath, ["--input-type=module", "-e", `
+        import { readFileSync } from "node:fs";
+        import { App } from "./src/core/app.ts";
+        import { userForToken } from "./src/core/users.ts";
+        const app = App.open(process.argv[1]);
+        try { console.log(userForToken(app, readFileSync(0, "utf8"))); }
+        finally { app.db.close(); }
+      `, old.home], { input: token, encoding: "utf8", timeout: 10000 });
+      childOwner = result.trim();
+    }
+    return exec.call(this, sql);
+  });
+  try {
+    const app = App.open(old.home);
+    try {
+      expect(childOwner).toBe("owner");
+      expect(userForToken(app, token)).toBe("owner");
+      expect(app.db.prepare("pragma user_version").get()?.user_version).toBe(migrations.length);
+    } finally { app.db.close(); }
+  } finally { lock.mockRestore(); }
 });
 
 it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("probes and runs a fake cloud session over %s HTTP with %s credentials", async (mode, credentialIn) => {

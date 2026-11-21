@@ -2377,21 +2377,24 @@ export type Db = DatabaseSync;
 
 export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
-  db.exec("pragma journal_mode = wal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
-  let version = (db.prepare("pragma user_version").get() as { user_version: number }).user_version;
-  // Plugin and operation branches used the first file-reference slot for their own schema.
-  if (version === migrations.indexOf(FILE_REFS_MIGRATION) + 1 &&
-      !db.prepare("select 1 from sqlite_schema where type='table' and name='stored_file_refs'").get()) {
-    version--;
-  }
-  // The cloud-tools branch used the change ledger version for cloud_tool_usage.
-  if (version === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
-      !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
-    version--;
-  }
-  for (let i = version; i < migrations.length; i++) {
-    db.exec("begin");
-    try {
+  db.exec("pragma busy_timeout = 5000; pragma journal_mode = wal; pragma foreign_keys = on;");
+  const versionQuery = db.prepare("pragma user_version");
+  const schemaVersion = () => Number(versionQuery.get()!.user_version);
+  while (schemaVersion() < migrations.length) {
+    tx(db, () => {
+      // Another opener can commit a migration before we acquire the write lock.
+      let i = schemaVersion();
+      if (i >= migrations.length) return;
+      // Plugin and operation branches used the first file-reference slot for their own schema.
+      if (i === migrations.indexOf(FILE_REFS_MIGRATION) + 1 &&
+          !db.prepare("select 1 from sqlite_schema where type='table' and name='stored_file_refs'").get()) {
+        i--;
+      }
+      // The cloud-tools branch used the change ledger version for cloud_tool_usage.
+      if (i === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
+          !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
+        i--;
+      }
       // A library installing cloud tools for the first time can only have manual tokens.
       // Skip the following revocation in the same commit as table creation, even on restart.
       const firstCloudInstall = migrations[i + 1] === REVOKE_LEGACY_PROBE_TOKENS &&
@@ -2403,11 +2406,7 @@ export function openDb(path: string): Db {
       db.exec(fromCapabilitiesBranch ? METRIC_SERIES_INDEX : migrations[i]);
       if (firstCloudInstall) i++;
       db.exec(`pragma user_version = ${i + 1}`);
-      db.exec("commit");
-    } catch (error) {
-      db.exec("rollback");
-      throw error;
-    }
+    });
   }
   migrateItemProviders(db);
   return db;
