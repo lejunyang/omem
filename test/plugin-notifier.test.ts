@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { staleDays, sweepStaleAsks } from "../src/agents/ask-expiry.ts";
 import { cancelAsk, createAsk, getAsk, waitForAnswer } from "../src/agents/asks.ts";
 import { one, run } from "../src/core/db.ts";
 import { addNotificationSink, listNotifications, notify, releaseLater } from "../src/core/notify.ts";
@@ -131,6 +132,20 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
       expect(existsSync(file(gated.id))).toBe(false);
       expect(one(app.db, "select 1 from outlet_deliveries where object_id=?", gated.id)).toBeUndefined();
     }
+  });
+
+  it("无人回答的提问到期后自动关闭外部卡片", async () => {
+    const a = ask();
+    await drainOutlets(app);
+    expect(message(a.id).options).toEqual([{ label: "采用" }]);
+    try {
+      vi.setSystemTime(Date.parse(a.createdAt) + (staleDays(app) + 1) * 86400000);
+      expect(sweepStaleAsks(app).stale).toBeGreaterThan(0);
+      await drainOutlets(app);
+      expect(getAsk(app, a.id)).toMatchObject({ status: "cancelled", lapsed: expect.any(String) });
+      expect(message(a.id)).toEqual({ closed: true });
+      expect((await submit(a.id)).statusCode).toBe(400);
+    } finally { vi.useRealTimers(); }
   });
 
   it("表单沿用宿主校验，审批要有明确的授权种类和决定", async () => {
