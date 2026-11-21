@@ -71,7 +71,26 @@ export type WikiPageKind = {
   check?(ctx: CallContext, page: { slug: string; title: string; body: string }): Promise<{ line?: number; message: string }[]>;
   upkeep?: { everyDays?: number; onSourcesChanged?: boolean };
 };
+export type OutletIdentity = { provider: string; subject: string };
+export type OutletRecipient = { id: string; identities: OutletIdentity[] };
+export type OutNotification = {
+  user: OutletRecipient; title: string; body: string; link: string | null;
+  urgency: "normal" | "urgent" | "silent" | "later"; dedupKey: string;
+};
+export type OutAsk = OutNotification & {
+  kind: string; options: { label: string }[]; fields: Record<string, unknown>[];
+  allowText: boolean; expiresAt: string | null;
+};
+export type Notifier = {
+  id: string; name: string;
+  resolve?(user: OutletRecipient): Promise<{ ok: boolean; hint?: string }>;
+  deliver(n: OutNotification, signal: AbortSignal): Promise<{ ref?: string }>;
+  update?(ref: string, n: OutNotification, signal: AbortSignal): Promise<void>;
+  ask?(a: OutAsk, signal: AbortSignal): Promise<{ ref?: string }>;
+  retract?(ref: string, signal: AbortSignal): Promise<void>;
+};
 export type ProcessApi = {
+  notifier(def: Notifier): void;
   retriever(def: Retriever): void;
   reranker(def: Reranker): void;
   sourceParser(def: SourceParser): void;

@@ -26,6 +26,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(here, f)).find((f) => existsSync(f))!;
 
 type Declared = {
+  notifiers: { id: string; name: string; resolves: boolean; updates: boolean; asks: boolean; retracts: boolean }[];
   parsers: Omit<import("./types.ts").SourceParser, "parse">[];
   kinds: (Omit<import("./types.ts").WikiPageKind, "check"> & { checked: boolean })[];
   items: (Pick<import("./types.ts").ItemProvider, "id" | "label" | "statuses" | "targetHint"> & { writable: boolean })[];
@@ -68,7 +69,7 @@ export async function startSandbox(
     call.connections.set(handle, connection);
     return { handle, account: connection.account, scopes: connection.scopes, base: connection.base };
   }
-  const ask = (msg: Record<string, unknown>, ctx?: ToolContext, eventCtx?: import("./types.ts").CallContext, readerConnection?: PluginConnection) =>
+  const ask = (msg: Record<string, unknown>, ctx?: ToolContext, eventCtx?: import("./types.ts").CallContext, readerConnection?: PluginConnection, notifierSignal?: AbortSignal) =>
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
@@ -77,7 +78,7 @@ export async function startSandbox(
         pending.delete(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
-      const signal = msg.t === "retriever" || msg.t === "reranker" ? eventCtx?.signal : undefined;
+      const signal = notifierSignal ?? (msg.t === "retriever" || msg.t === "reranker" ? eventCtx?.signal : undefined);
       const cancel = () => {
         clearTimeout(timer);
         pending.delete(id);
@@ -186,6 +187,17 @@ export async function startSandbox(
   });
 
   try {
+    for (const def of declared.notifiers) {
+      const invoke = (method: string, args: unknown[], signal: AbortSignal) =>
+        ask({ t: "notifier", name: def.id, method, args }, undefined, undefined, undefined, signal);
+      opts.notifier({ id: def.id, name: def.name,
+        resolve: def.resolves ? user => invoke("resolve", [user], AbortSignal.timeout(15000)) : undefined,
+        deliver: (n, signal) => invoke("deliver", [n], signal),
+        update: def.updates ? (ref, n, signal) => invoke("update", [ref, n], signal) : undefined,
+        ask: def.asks ? (a, signal) => invoke("ask", [a], signal) : undefined,
+        retract: def.retracts ? (ref, signal) => invoke("retract", [ref], signal) : undefined,
+      });
+    }
     const proxy = (t: "review" | "item" | "parse" | "check", name: string) =>
       (ctx: import("./types.ts").CallContext, method: string, arg: unknown, note?: string) =>
         ask({ t, name, method, arg, note, userId: ctx.userId, spaceId: ctx.spaceId,

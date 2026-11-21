@@ -2,7 +2,7 @@ import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
-import type { CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
+import type { Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
 import { registerFormats } from "./formats.ts";
@@ -14,6 +14,7 @@ type Entry<T> = {
   def: T;
   context(app: App, userId: string, spaceId: string, signal: AbortSignal): CallContext;
 };
+export const notifiers = new Map<string, Entry<Notifier>>();
 export const subscriptions = new Map<string, Entry<Subscription>>();
 export const itemProviders = new Map<string, Entry<ItemProvider>>();
 export const reviewProviders = new Map<string, Entry<ReviewProvider>>();
@@ -58,6 +59,12 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
   }
   return {
     ...registerFormats(manifest, version, spaces, context, undo),
+    notifier(def) {
+      if (!manifest.permissions.notify?.deliver) throw new Error("缺少 permissions.notify.deliver");
+      if (!def.name?.trim() || typeof def.deliver !== "function") throw new Error("通知出口需要名称与 deliver");
+      const interactive = manifest.permissions.notify.ask;
+      add(notifiers, { ...def, ask: interactive ? def.ask : undefined, retract: interactive ? def.retract : undefined });
+    },
     subscribe(def) {
       if (!def.events.length || !def.events.every(t => manifest.permissions.events.includes(t))) throw new Error("订阅未在 permissions.events 声明");
       add(subscriptions, def);
