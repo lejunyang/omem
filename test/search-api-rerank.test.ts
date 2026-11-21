@@ -49,3 +49,39 @@ it("云端按两种协议重排、按外部分数过门槛，超时和坏响应�
     app.db.close();
   }
 });
+
+it("被动记忆只发前五条给云端，超时按原余弦顺序返回全部十条", async () => {
+  const app = testApp();
+  let timeout = true;
+  const requests: string[][] = [];
+  const service = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const { documents } = JSON.parse(raw) as { documents: string[] };
+    requests.push(documents);
+    if (!timeout) res.end(JSON.stringify({ results: documents.map((_, index) => ({ index, score: index })) }));
+  });
+  await new Promise<void>(resolve => service.listen(0, "127.0.0.1", resolve));
+  try {
+    for (let i = 0; i < 10; i++) remember(app, { kind: "fact", spaceId: "personal", content: `项目资料第 ${i} 份。` });
+    app.config.embeddings.provider = "local";
+    setEmbedderForTests(fakeEmbedder());
+    await embedPendingMemories(app);
+    const recall = () => passiveRecall(app, { text: "项目资料", spaces: ["personal"], userId: "owner", threshold: 0.5, limit: 10 });
+    const cosine = await recall();
+    expect(cosine).toHaveLength(10);
+    Object.assign(app.config.rerank, { enabled: true, provider: "api", top: 5,
+      api: { url: "http://127.0.0.1:" + (service.address() as AddressInfo).port, model: "rank", timeoutMs: 300, apiKeyEnv: "TEST_RANK_KEY" } });
+    expect(await recall()).toEqual(cosine);
+    timeout = false;
+    const ranked = await recall();
+    const first = cosine.slice(0, 5).map(h => h.memory);
+    expect(requests).toEqual([first.map(m => m.content), first.map(m => m.content)]);
+    expect(ranked.map(h => h.memory.id)).toEqual(first.map(m => m.id).reverse());
+  } finally {
+    setEmbedderForTests(null);
+    service.closeAllConnections();
+    await new Promise<void>(resolve => service.close(() => resolve()));
+    app.db.close();
+  }
+});
