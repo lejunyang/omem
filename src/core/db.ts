@@ -2297,6 +2297,7 @@ export const migrations: readonly string[] = [
    create index if not exists plugin_deliveries_seq on plugin_deliveries(seq);
    create index if not exists plugin_deliveries_due on plugin_deliveries(subscriber,state,due,seq);
    create index if not exists plugin_deliveries_order on plugin_deliveries(subscriber,entity,seq) where state!='done';`,
+  `alter table review_findings add column reviewed_head text;`,
 ];
 
 export type Db = DatabaseSync;

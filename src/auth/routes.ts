@@ -343,7 +343,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/local/forwards": "self",
   ...Object.fromEntries(
     [
-      "POST code-here", "GET apply-targets", "POST apply", "GET branch", "POST branch", "POST sync", "GET git", "POST git", "POST move-to-target", "POST discard",
+      "POST code-here", "GET review-sync", "POST review-sync/publish", "GET apply-targets", "POST apply", "GET branch", "POST branch", "POST sync", "GET git", "POST git", "POST move-to-target", "POST discard",
       "GET tasks", "POST tasks", "POST review-again", "POST tasks/:seq", "POST revert", "POST work", "GET file-at", "GET task-diff", "GET reviews", "GET latest-state",
       "PUT findings/:fid", "PUT findings/:fid/suggestion", "PUT findings/:fid/external", "POST rereview", "GET prior", "GET inherited-split", "PUT findings-fixed", "POST change-points", "GET same-branch", "POST fix", "POST notes",
       "PUT round-review", "GET file", "GET file/raw", "GET blob",

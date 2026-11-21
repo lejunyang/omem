@@ -51,7 +51,10 @@ export function openPrior(app: App, runId: string, opts: { judgedHere?: boolean 
     order by f.id`, ...ids, ...(opts.judgedHere ? [runId] : []));
 }
 
-const external = (raw: string | null) => (raw ? (JSON.parse(raw) as External) : null);
+const external = (raw: string | null) => {
+  const ext = raw ? JSON.parse(raw) as External : null;
+  return ext?.url ? ext : null;
+};
 
 /** The part of a re-review's task about what came before (review-chain.ts reviewContext). */
 export function rereviewText(app: App, runId: string, worktrees: { space: string; path: string; tip?: string }[]) {
@@ -166,7 +169,8 @@ export function setFindingExternal(app: App, findingId: number, ext: Omit<Extern
   const row = one<{ code_run_id: string; external: string | null }>(app.db, "select r.code_run_id, f.external from review_findings f join reviews r on r.id = f.review_id where f.id = ?", findingId);
   if (!row || !readable(row.code_run_id)) throw new HttpError(404, `没有评审问题 #${findingId}`);
   const prev = external(row.external);
-  const next: External = { ...(prev ?? {}), ...ext, syncedAt: now() };
+  const same = prev?.url === ext.url && (!ext.ref || prev?.ref === ext.ref) && (!ext.object || prev?.object === ext.object);
+  const next: External = { ...(same ? prev : {}), ...ext, syncedAt: now() };
   exec(app.db, "update review_findings set external = ? where id = ?", JSON.stringify(next), findingId);
   return next;
 }

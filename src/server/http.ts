@@ -2186,6 +2186,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { earlierReviews, judgedIn } = await import("../agents/rereview.ts");
     return { of: earlierReviews(app, id)[0] ?? null, findings: judgedIn(app, id) };
   });
+  server.get("/api/runs/:id/review-sync", async req => {
+    const { id } = req.params as { id: string };
+    ownRun(req, id);
+    return (await import("../agents/review-sync.ts")).reviewSyncView(app, id, who(req));
+  });
+  server.post("/api/runs/:id/review-sync/publish", async req => {
+    const { id } = req.params as { id: string };
+    ownRun(req, id);
+    if (who(req) !== OWNER) throw new HttpError(403, "须由本人发起发布");
+    const b = q(z.object({ object: z.string().min(1).max(500), findings: z.array(z.number().int().positive()).min(1).max(500) }), req.body);
+    return (await import("../agents/review-sync.ts")).offerReviewPublish(app, id, b);
+  });
   // The comment a finding was posted as on the platform the change is reviewed on, and its state.
   server.put("/api/runs/:id/findings/:fid/external", async (req) => {
     const { id, fid } = req.params as { id: string; fid: string };
