@@ -39,7 +39,9 @@ import { itemKindLabel, relTime, state, toast } from "../store";
  */
 type WItem = Item & { parentId: string | null; now: LineNow | null };
 type Detail = {
-  item: WItem; /** The platform entry it was brought in from (lib/item-sync.ts). */ external?: External | null; ancestors: { id: string; title: string }[]; now: LineNow | null; next: NextLite[]; children: Child[]; timeline: ChangeLite[];
+  item: WItem; /** The platform entry it was brought in from (lib/item-sync.ts). */ external?: External | null;
+  /** Items and runs named by id in the page's text, with their titles (src/items/changes.ts textTargets). */
+  refTargets?: Record<string, RefTarget>; ancestors: { id: string; title: string }[]; now: LineNow | null; next: NextLite[]; children: Child[]; timeline: ChangeLite[];
   chats: ChatActivity[]; materials: Material[]; listen: { id: string; status: "active" | "paused" } | null; flow: (FlowLite & { waitingOn: string | null }) | null;
   /** Its life (src/items/lifecycle.ts). */
   phase: "watching" | null; phaseSince: string | null; watchUntil: string | null; summary: string | null;
@@ -118,9 +120,9 @@ async function setPhase(phase: "active" | "watching" | "done" | "cancelled", day
 // The goal: the first line of the detail; the rest opens on demand (`expanded`, above).
 const goal = computed(() => (item.value?.detail ?? "").trim().split(/\n/)[0]?.replace(/^#+\s*/, "") ?? "");
 const more = computed(() => (item.value?.detail ?? "").trim().split(/\n/).length > 1 || goal.value.length > 130);
-/** The items and runs the server named on this page (in the changes and next steps), for ids in the goal. */
+/** The items and runs the server named on this page (in its text, the changes and next steps), for ids in what is shown. */
 const targets = computed(() => {
-  const all: Record<string, RefTarget> = {};
+  const all: Record<string, RefTarget> = { ...(d.value?.refTargets ?? {}) };
   for (const x of [...(d.value?.timeline ?? []), ...(d.value?.next ?? [])]) Object.assign(all, x.refTargets ?? {});
   return all;
 });
@@ -367,12 +369,13 @@ const editing = ref(false);
               </router-link>
             </nav>
             <div class="weekcard card">
-              <p v-if="headline" class="headline">{{ headline }}</p>
+              <RichText v-if="headline" tag="p" class="headline" :text="readableIds(headline, targets)" :space="item.spaceId" />
               <p v-else class="headline muted">{{ top ? "还没整理过现状。" : "还没有记下的变化。" }}<button v-if="top" type="button" class="lnk" @click="refresh">现在整理</button></p>
               <ol class="weeks">
                 <li v-for="w in columns" :key="w.label" :class="{ quiet: !w.text }">
                   <span class="wl"><Icon name="calendar" :size="13" />{{ w.label }}</span>
-                  <span class="wt">{{ w.text || "暂无进展" }}</span>
+                  <RichText v-if="w.text" class="wt" :text="readableIds(w.text, targets)" :space="item.spaceId" />
+                  <span v-else class="wt">暂无进展</span>
                 </li>
               </ol>
             </div>
@@ -385,7 +388,7 @@ const editing = ref(false);
             <span class="ring" :class="{ doing: n.status === 'doing' }" aria-hidden="true" />
             <div class="sbody">
               <button type="button" class="stext" @click="sheet = { next: n }">{{ n.text }}</button>
-              <span class="small muted swhy">{{ nextKindLabel[n.kind] }}<template v-if="n.why"> · <RichText :text="readableIds(n.why, n.refTargets)" :space="item.spaceId" /></template></span>
+              <span class="small muted swhy">{{ nextKindLabel[n.kind] }}<template v-if="n.why"> · <RichText :text="readableIds(n.why, { ...targets, ...n.refTargets })" :space="item.spaceId" /></template></span>
             </div>
             <div v-if="n.status === 'open'" class="row sacts">
               <button class="btn sm" @click="decide(n, 'doing')">就这么做</button>
@@ -506,7 +509,9 @@ const editing = ref(false);
 .goal-wrap { display: grid; justify-items: center; gap: 2px; max-width: 680px; }
 .goal { margin: 0; color: var(--ink-2); line-height: 1.7; overflow-wrap: anywhere; }
 /* Ids, hashes and paths in the goal (readableIds): small monospace, and they may break anywhere. */
-.goal :deep(code), .goal-full :deep(code) { font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
+.goal :deep(code), .goal-full :deep(code), .wt :deep(code) { font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
+.headline :deep(code) { font-size: 0.8em; font-weight: 400; overflow-wrap: anywhere; word-break: break-all; }
+.headline :deep(a), .wt :deep(a) { font-weight: inherit; }
 .goal-full { max-width: 720px; text-align: left; display: grid; gap: 4px; justify-items: start; }
 .meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 12px; margin: 0; }
 .overdue { color: var(--danger); }

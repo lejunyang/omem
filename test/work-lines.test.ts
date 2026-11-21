@@ -335,6 +335,12 @@ describe("工作线：接口", () => {
     expect(getRun(app, doing.runId).lane).toBe(`line-next:${line.id}`);
     expect((await server.inject({ method: "POST", url: `/api/work/${line.id}/refresh` })).json()).toMatchObject({ status: "queued" });
     expect((await server.inject({ method: "PUT", url: `/api/items/${req.id}/parent`, payload: { parent: req.id } })).statusCode).toBe(400);
+    // Ids of the person's own items and runs inside the page's text come back with their titles; unknown ones do not.
+    upsertItem(app, line.id, { detail: `先做 ${req.id}，再看运行 ${r.id}；i0mzzzzzzzzzzzzzzzzz 已经没有了` }, "user");
+    expect((await server.inject(`/api/work/${line.id}`)).json().refTargets).toEqual({
+      [req.id]: { kind: "item", id: req.id, title: "退款单显示运费" },
+      [r.id]: { kind: "run", id: r.id, title: "测试" },
+    });
     // Owner-only routes.
     createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "personal", "reader", "editor");
     const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
