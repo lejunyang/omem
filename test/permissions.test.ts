@@ -120,6 +120,22 @@ describe("roles and permissions", async () => {
     expect((await as("observer-test", "/api/rules")).status).toBe(200);
   });
 
+  it("withholds design changes and patches when a later contributing round is hidden", async () => {
+    const {createDesign} = await import("../src/designs/store.ts");
+    const user="design-observer";
+    createUser(app,{id:user,name:"方案读者",role:"observer"});
+    addMember(app,"team",user,"reader");
+    tokens[user]=createApiToken(app,user,"test");
+    const root=createRun(app,{kind:"code",spaceId:"team",title:"分支评审",input:{branches:["main"],spaces:["team"]}});
+    const design=createDesign(app,{spaceId:"team",title:"方案",origin:"external",workId:root.id,repos:["team"]});
+    const url="/api/designs/"+design.id+"/diff?decision=outside";
+    expect((await as(user,url)).status).toBe(200);
+    const later=createRun(app,{kind:"code",spaceId:"team",title:"再评审",input:{continueFrom:root.id,spaces:["team","other"]}});
+    expect((await as(user,"/api/runs/"+later.id)).status).toBe(404);
+    expect((await as(user,url)).status).toBe(404);
+    expect((await json(user,"/api/designs/"+design.id)).changes).toEqual([]);
+  });
+
   it("hides review summaries in item materials and linked runs", async () => {
     const user = "material-observer";
     createUser(app,{id:user,name:"材料读者",role:"observer"});

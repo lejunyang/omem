@@ -1,3 +1,4 @@
+import { runPredicate, type RunAudience } from "../auth/run-scope.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { git } from "../core/git.ts";
@@ -41,7 +42,13 @@ function workOf(app: App, design: Design): Run | null {
   return r ? getRun(app, r.id) : null;
 }
 const isBranch = (root: Run) => !!(root.input as { branches?: unknown }).branches;
-const roundsOf = (app: App, rootId: string) => all<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at", rootId, rootId).map((r) => r.id);
+function roundsOf(app: App, rootId: string, audience?: RunAudience) {
+  const filter = audience && runPredicate(audience);
+  const rows = all<{ id: string; visible: number }>(app.db,
+    `select id, ${filter?.sql ?? "1"} visible from runs where kind='code'
+      and (id=? or json_extract(input,'$.continueFrom')=?) order by created_at`, ...(filter?.params ?? []), rootId, rootId);
+  return rows.every(r => r.visible) ? rows.map(r => r.id) : [];
+}
 
 function tasksOfWork(app: App, rootId: string): TaskRow[] {
   return all<{ seq: number; title: string; state: string; origin: string; commits: string; kind: string }>(app.db, "select seq, title, state, origin, commits, kind from code_tasks where work_id = ? order by seq", rootId)
@@ -127,11 +134,10 @@ function sectionStat(text: string) {
 }
 
 /** A branch review's diff, file by file: what it changed, with the lines, keyed `<space>/<path>`. */
-async function branchFiles(app: App, root: Run): Promise<Map<string, { space: string; path: string; text: string; add: number; del: number }>> {
+async function branchFiles(app: App, root: Run, last = roundsOf(app, root.id).at(-1) ?? root.id): Promise<Map<string, { space: string; path: string; text: string; add: number; del: number }>> {
   const out = new Map<string, { space: string; path: string; text: string; add: number; del: number }>();
   try {
     const { codePatches } = await import("../agents/code.ts");
-    const last = roundsOf(app, root.id).at(-1) ?? root.id;
     for (const p of codePatches(app, last)) for (const s of patchSections(p.patch)) out.set(`${p.space}/${s.path}`, { space: p.space, path: s.path, text: s.text, ...sectionStat(s.text) });
   } catch {
     // The patch is gone (an old run): nothing to count.
@@ -140,8 +146,7 @@ async function branchFiles(app: App, root: Run): Promise<Map<string, { space: st
 }
 
 /** Findings that name each decision, over every round of the work. */
-function findingsBy(app: App, rootId: string): Map<string, { open: number; total: number }> {
-  const rounds = roundsOf(app, rootId);
+function findingsBy(app: App, rounds: string[]): Map<string, { open: number; total: number }> {
   const out = new Map<string, { open: number; total: number }>();
   if (!rounds.length) return out;
   const rows = all<{ d: string; state: string; decision: string | null }>(app.db, `select f.design_decision d, f.state, f.decision from review_findings f join reviews r on r.id = f.review_id
@@ -155,16 +160,18 @@ function findingsBy(app: App, rootId: string): Map<string, { open: number; total
   return out;
 }
 
-export async function designChanges(app: App, design: Design): Promise<{ changes: DecisionChange[]; outside: ChangedFile[] }> {
+export async function designChanges(app: App, design: Design, audience?: RunAudience): Promise<{ changes: DecisionChange[]; outside: ChangedFile[] }> {
   const plain = () => ({
     changes: design.body.decisions.map((d) => ({ decision: d.id, tasks: [], commits: 0, files: (d.files ?? []).map((f) => splitFile(design, f)), findings: { open: 0, total: 0 } })),
     outside: (design.body.outside ?? []).map((f) => splitFile(design, f)),
   });
   const root = workOf(app, design);
   if (!root) return plain();
-  const findings = findingsBy(app, root.id);
+  const rounds = roundsOf(app, root.id, audience);
+  if (!rounds.length) return { changes: [], outside: [] };
+  const findings = findingsBy(app, rounds);
   if (isBranch(root)) {
-    const diff = await branchFiles(app, root);
+    const diff = await branchFiles(app, root, rounds.at(-1)!);
     const counted = (f: string): ChangedFile => {
       const file = splitFile(design, f);
       const d = diff.get(`${file.space}/${file.path}`);
@@ -202,12 +209,14 @@ export async function designChanges(app: App, design: Design): Promise<{ changes
  * One decision's patch (`outside`: the changes under none), in the shape of `/api/runs/:id/task-diff`:
  * a delegation's by the decision's tasks, a branch review's by the files put under it.
  */
-export async function designDiff(app: App, design: Design, decision: string): Promise<{ patches: DesignPatch[] }> {
+export async function designDiff(app: App, design: Design, decision: string, audience?: RunAudience): Promise<{ patches: DesignPatch[] }> {
   if (decision !== "outside" && !design.body.decisions.some((d) => d.id === decision)) throw new HttpError(404, `方案 ${design.id} 没有决定 ${decision}`);
   const root = workOf(app, design);
   if (!root) throw new HttpError(404, "这份方案还没有关联的代码");
+  const rounds = roundsOf(app, root.id, audience);
+  if (!rounds.length) throw new HttpError(404, "没有可读的差异");
   if (isBranch(root)) {
-    const diff = await branchFiles(app, root);
+    const diff = await branchFiles(app, root, rounds.at(-1)!);
     const named = decision === "outside" ? design.body.outside ?? [] : design.body.decisions.find((d) => d.id === decision)!.files ?? [];
     const by = new Map<string, string[]>();
     for (const f of named) {

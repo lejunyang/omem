@@ -1,4 +1,4 @@
-import { canAccessRun } from "../auth/permissions.ts";
+import { canAccessRun, runAudience } from "../auth/permissions.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -52,7 +52,7 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
     const review = !d.workId || canAccessRun(app, who(req), d.workId, "code.review.view");
     const workRow = d.workId && review ? one<{ id: string; title: string; branches: string | null }>(app.db, "select id, title, json_extract(input, '$.branches') branches from runs where id = ?", d.workId) : undefined;
     const work = workRow ? { rootId: workRow.id, title: workRow.title, branchReview: !!workRow.branches } : null;
-    const { changes, outside } = review ? await designChanges(app, shown) : { changes: [], outside: [] };
+    const { changes, outside } = review ? await designChanges(app, shown, runAudience(app, who(req), "code.review.view")) : { changes: [], outside: [] };
     return {
       ...designSummary(shown),
       revision: o.revision ?? d.revision,
@@ -67,8 +67,7 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
   server.get("/api/designs/:id/diff", async (req) => {
     const o = parse(z.object({ decision: z.string().min(1) }), req.query);
     const design = visible(req, (req.params as { id: string }).id);
-    if (design.workId && !canAccessRun(app, who(req), design.workId, "code.review.view")) throw new HttpError(404, "没有可读的差异");
-    const result = await designDiff(app,design,o.decision);
+    const result = await designDiff(app, design, o.decision, runAudience(app, who(req), "code.review.view"));
     const spaces = spacesWithCapability(app,who(req),"code.review.view");
     return {patches:result.patches.filter(p => !spaces || spaces.includes(p.space))};
   });
