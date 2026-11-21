@@ -309,6 +309,22 @@ describe("accounts of members", async () => {
     expect(JSON.stringify(all)).not.toContain("tok-example");
   });
 
+  it("only the owner can save sandbox settings and explicitly confirm unrestricted backends", async () => {
+    const path = "/api/security/sandbox";
+    const read = await (await as(null, path)).json();
+    expect(read).toMatchObject({ mode: "off", fullAccess: "per-role", defaults: { hidden: [home] } });
+    const put = (patch: Record<string, unknown>, user: string | null = null) => as(user, path, { method: "PUT",
+      body: JSON.stringify({ mode: "prefer", writable: [], hidden: [], fullAccess: "all", ...patch }) });
+    expect((await as("ann", path)).status).toBe(403);
+    expect((await put({ confirmAll: true }, "ann")).status).toBe(403);
+    expect((await put({})).status).toBe(400);
+    expect((await put({ writable: [home], confirmAll: true })).status).toBe(400);
+    expect((await (await put({ confirmAll: true })).json()).warning).toContain("没进沙箱");
+    expect(loadConfig(home).agents.fullAccess).toBe("all");
+    expect(sqlOne(app.db, "select 1 from audit_events where action='sandbox.settings'")).toBeTruthy();
+    await put({ mode: "off", fullAccess: "per-role" });
+  });
+
   it("keeps the rule per backend to the owner", async () => {
     expect(ROUTE_RULES["PUT /api/agent-accounts/:backend/policy"]).toBe("owner");
     expect(ROUTE_RULES["GET /api/me/agent-accounts"]).toBe("self");

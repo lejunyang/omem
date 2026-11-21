@@ -80,6 +80,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/remote/agent-browser": "public", // Local agent run token in the handler.
   "GET /api/operation-gate/http": "public",
   "POST /api/operation-gate/http": "public",
+  "GET /api/security/sandbox": "owner",
+  "PUT /api/security/sandbox": "owner",
   "GET /api/security/egress": "owner",
   "PUT /api/security/egress": "owner",
   "GET /api/security/operation-rules": "owner",
