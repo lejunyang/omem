@@ -1359,8 +1359,9 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   } },
   // The same on the requirement's work page (在做的), next to its flow.
   { name: "work-progress", path: `/work/${flowItem.id}`, prepare: async (p) => {
-    await p.locator(".pg-sum", { hasText: "编码交办" }).first().click();
-    await p.locator(".pg").scrollIntoViewIfNeeded();
+    await p.locator(".pg-sum", { hasText: "需求交付" }).click();
+    await p.locator(".pg-sum", { hasText: "退款日志写明走了哪条分摊路径" }).filter({ hasText: "编码交办" }).click();
+    await p.locator(".pg").evaluate((el) => el.scrollIntoView({ block: "start" }));
     await p.waitForTimeout(400);
   } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },
