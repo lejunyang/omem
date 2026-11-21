@@ -84,6 +84,7 @@ export class Forest {
       this.children.set(r.parent, children);
     }
   }
+  sees(id?: string | null) { return !id || this.nodes.has(id); }
   usage(ids: Iterable<string>): Usage {
     const seen = new Set<string>(), queue = [...ids];
     while (queue.length) {

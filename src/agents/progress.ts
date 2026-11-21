@@ -89,7 +89,7 @@ const verdictWaits: Record<string, string> = {
 function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
   const checkpoints = listCheckpoints(app, node.id);
   const helpers = [...graph.nodes.values()].filter(r => r.helper && (r.helper === node.id || graph.nodes.get(r.helper)?.first === node.id));
-  const tasks = recordedTasks(app, node.id).filter(t => !t.coderRun || graph.nodes.has(t.coderRun)).map(t => {
+  const tasks = recordedTasks(app, node.id).filter(t => graph.sees(t.coderRun)).map(t => {
     const mine = helpers.filter(r => (JSON.parse(r.assigned ?? "[]") as number[]).includes(t.seq));
     const runs = checkpoints.filter(c => c.tasks.includes(t.seq) && !mine.some(r => r.parent === c.by)).map(c => c.by);
     const ids = [...runs, ...mine.map(r => r.id), t.coderRun];
@@ -154,7 +154,7 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
   const instance = [...graph.nodes.values()].filter(r => r.item === id && r.flowStart === f.startedAt);
   const tasks = f.definition.stages.flatMap(d => {
     const s = rows.find(s => s.id === d.id);
-    if (s?.control.runId && !graph.nodes.has(s.control.runId)) return [];
+    if (!graph.sees(s?.control.runId)) return [];
     const ids = instance.filter(r => r.stage === d.id && r.round === f.round).map(r => r.id);
     const wait = s?.state === "gated" ? "等本人确认" : s?.waitingOn ? waitText(s.waitingOn) : undefined;
     const status = s?.state ?? "pending";
@@ -173,7 +173,7 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
   const params = history ? [id] : [id, f.round];
   const ds = all<Direction>(app.db, "select * from study_directions where item_id=?" + roundFilter + " order by round,created_at", ...params);
   const ts = all<Trial>(app.db, "select * from study_trials where item_id=?" + roundFilter + " order by round,direction_id,seq", ...params)
-    .filter(t => !t.run_id || graph.nodes.has(t.run_id));
+    .filter(t => graph.sees(t.run_id));
   const byTrial = new Map<string, Output[]>();
   const trialIds = new Set(ts.map(t => t.id));
   for (const finding of findings(app, id)) for (const ref of JSON.parse(finding.trials) as string[]) {
@@ -210,12 +210,18 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
       stateTasks: current,
       usage: graph.usage([...instance.filter(r => r.trial).map(r => r.id), ...studyTasks.flatMap(t => t.attempts.map(a => a.runId))]),
     });
-  const counts = all<{ round: number; directions: number; trials: number }>(app.db, `select round,sum(d) directions,sum(t) trials from (
-    select round,count(*) d,0 t from study_directions where item_id=? and round<? group by round
-    union all select round,0,count(*) from study_trials where item_id=? and round<?
-    and (run_id is null or run_id in (select value from json_each(?))) group by round)
-    group by round order by round`, id, f.round, id, f.round, JSON.stringify([...graph.nodes.keys()]));
-  study.previousRounds = counts.map(c => ({ ...c, usage: graph.usage(instance.filter(r => r.trial && r.round === c.round).map(r => r.id)) }));
+  const counts = new Map(all<{ round: number; directions: number }>(app.db,
+    "select round,count(*) directions from study_directions where item_id=? and round<? group by round order by round", id, f.round)
+    .map(c => [c.round, { ...c, trials: 0 }]));
+  const pastTrials = history ? ts.filter(t => t.round < f.round) : all<Pick<Trial, "round" | "run_id">>(app.db,
+    "select round,run_id from study_trials where item_id=? and round<?", id, f.round).filter(t => graph.sees(t.run_id));
+  for (const trial of pastTrials) {
+    const count = counts.get(trial.round) ?? { round: trial.round, directions: 0, trials: 0 };
+    count.trials++;
+    counts.set(trial.round, count);
+  }
+  study.previousRounds = [...counts.values()].sort((a, b) => a.round - b.round)
+    .map(c => ({ ...c, usage: graph.usage(instance.filter(r => r.trial && r.round === c.round).map(r => r.id)) }));
   return [block, study];
 }
 
