@@ -536,7 +536,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const sent = await sendLark(target, { card });
     setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
   });
-  if (!extra) addNotificationSink(push);
+  if (!extra) addNotificationSink(n => push(n));
 
   // After quiet hours, what waited and is still unread goes out: a few one by one, more as one list.
   const sendDeferred = async () => {
