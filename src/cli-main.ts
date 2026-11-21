@@ -1016,6 +1016,23 @@ plugin
   ${p.name}：${p.description}`);
   });
 plugin
+  .command("failed-events <subscription>")
+  .description("列出订阅最近 100 条失败事件，供重放")
+  .action(async (subscriber) => {
+    const { all } = await import("./core/db.ts");
+    const rows = all(open().db, `select e.id,e.at,d.attempts,d.error from plugin_deliveries d join plugin_events e on e.seq=d.seq
+      where d.subscriber=? and d.state='failed' order by d.seq desc limit 100`, subscriber);
+    console.table(rows);
+  });
+plugin
+  .command("replay <subscription> <event>")
+  .description("重新投递保留期内已失败的插件事件")
+  .action(async (subscription, event) => {
+    const { replayPluginEvent } = await import("./plugins/event-store.ts");
+    if (!replayPluginEvent(open(), subscription, event)) throw new Error("没有这条失败投递");
+    console.log("已重新排队");
+  });
+plugin
   .command("pack")
   .description("把空间、档案、技能、规则、流程和 MCP 打成场景包；空间只带结构，不带内容。不导出 MCP 密钥值。扫描文本中的已存密钥和用户目录绝对路径，命中时拒绝写入；用户目录路径可用 --allow <file> 逐文件放行，已存密钥不能放行。带脚本或转发的规则不打包")
   .requiredOption("--id <id>", "插件 id")

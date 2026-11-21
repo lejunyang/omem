@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
+import { enqueuePluginEvent } from "../plugins/event-store.ts";
 import { lapseItemAsks } from "../agents/ask-expiry.ts";
-import { all, one, run, tx } from "../core/db.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { scopeFor } from "../core/users.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { emitOmem } from "../rules/omem-events.ts";
@@ -136,7 +137,7 @@ export function addItemEvent(app: App, itemId: string, kind: string, text: strin
   run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor,run_id) values(?,?,?,?,?,?,?)", itemId, now(), kind, text, JSON.stringify(sourceRefs), actor, runId ?? null);
 }
 
-export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt" | "parentId" | "now" | "phase" | "phaseSince" | "watchUntil">> & { note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
+export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt" | "parentId" | "now" | "phase" | "phaseSince" | "watchUntil">> & { providerUrl?: string; note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
 
 const FIELD_LABEL: Record<string, string> = {
   title: "标题",
@@ -160,8 +161,19 @@ export function onItemStatus(fn: StatusHook) {
   if (!statusHooks.includes(fn)) statusHooks.push(fn);
 }
 
-function itemTx<T>(app: App, fn: () => T): T {
-  return app.db.isTransaction ? fn() : tx(app.db, fn);
+function itemFact(app: App, item: Pick<Item, "spaceId" | "id" | "kind" | "status" | "title" | "parentId" | "userId">, from: ItemStatus | null, actor: "user" | "agent", createdUrl?: string) {
+  enqueuePluginEvent(app, from === null ? "item.created" : "item.status", item.spaceId, () => {
+    const providerUrl = createdUrl ?? one<{ url: string }>(app.db, `select json_extract(l.snapshot,'$.url') as url
+      from external_item_links l join item_provider_targets t on t.id=l.target_id
+      where l.item_id=? and l.user_id=? and t.space_id=?`, item.id, item.userId, item.spaceId)?.url;
+    const materials = all<{ link: string }>(app.db, `select o.link from item_materials m join flow_objects o on o.id=m.ref
+      where m.item_id=? and m.kind='object' order by m.id limit 100`, item.id);
+    const links = [...new Set([...(providerUrl ? [providerUrl] : []), ...materials.map(o => o.link)])];
+    return {
+      entity: { kind: "item", id: item.id }, actor: { kind: actor }, userId: item.userId,
+      data: { title: item.title, kind: item.kind, from, status: item.status, parentId: item.parentId, links },
+    };
+  });
 }
 
 /** Create or update an item; every change is recorded on its timeline with who made it. */
@@ -173,7 +185,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
     const newIdValue = newId("i");
     const kind = input.kind ?? "todo";
     const status = input.status ?? (kind === "waiting" ? "waiting" : "open");
-    itemTx(app, () => {
+    withinTx(app.db, () => {
       run(
         app.db,
         "insert into items(id,space_id,kind,title,detail,status,priority,due_at,remind_at,waiting_on,watch,source_refs,created_at,updated_at,user_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -193,6 +205,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
         at,
         input.userId ?? "owner",
       );
+      itemFact(app, { id: newIdValue, kind, status, title: input.title!, parentId: null, spaceId: input.spaceId ?? "personal", userId: input.userId ?? "owner" }, null, actor, input.providerUrl);
       addItemEvent(app, newIdValue, "created", input.note || `创建：${input.title}`, actor, input.sourceRefs ?? [], runId);
     });
     app.emit({ type: "changed", entity: "item", id: newIdValue, spaceId: input.spaceId ?? "personal" });
@@ -222,7 +235,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
   if (revived) changes.push(`状态：expired → ${next.status}（有新进展，重新打开）`);
   const closing = isClosed(next.status) && !isClosed(old.status);
   const reopening = !isClosed(next.status) && isClosed(old.status);
-  itemTx(app, () => {
+  withinTx(app.db, () => {
     run(
       app.db,
       "update items set kind=?, title=?, detail=?, status=?, priority=?, due_at=?, remind_at=?, waiting_on=?, watch=?, source_refs=?, updated_at=?, closed_at=? where id=?",
@@ -240,6 +253,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
       closing ? at : reopening ? null : old.closedAt,
       id,
     );
+    if (next.status !== old.status) itemFact(app, { ...next, userId: old.userId, spaceId: old.spaceId }, old.status, actor);
     if (input.remindAt && input.remindAt !== old.remindAt) addItemEvent(app, id, "reminder-scheduled", `提醒：${input.remindAt}`, actor, input.sourceRefs ?? [], runId);
     if (mode !== "merge") addItemEvent(app, id, "sources-corrected", JSON.stringify({ reason: input.note, mode, before: old.sourceRefs, after: nextRefs }), actor, [], runId);
     if (changes.length || input.note || JSON.stringify(nextRefs) !== JSON.stringify(old.sourceRefs)) addItemEvent(app, id, changes.length ? "updated" : "note", [input.note, changes.join("；")].filter(Boolean).join("\n"), actor, mode === "remove" ? [] : input.sourceRefs ?? [], runId);

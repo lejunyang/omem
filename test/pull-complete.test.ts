@@ -18,10 +18,10 @@ import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 import { testApp } from "./helpers.ts";
 
-async function snapshot(app: App): Promise<Fetched> {
+async function snapshot(app: App, selection?: Parameters<typeof snapshotStream>[1]): Promise<Fetched> {
   const dir = mkdtempSync(join(tmpdir(), "omem-snap-test-"));
   const archive = join(dir, "snapshot.tar");
-  await pipeline(await snapshotStream(app), createWriteStream(archive));
+  await pipeline(await snapshotStream(app, selection), createWriteStream(archive));
   execFileSync("tar", ["-xf", "snapshot.tar"], { cwd: dir });
   rmSync(archive);
   return { dbDir: dir, libraryDir: join(dir, "library"), filesDir: join(dir, "files"), fetchedFiles: readdirSync(join(dir, "files")) };
@@ -46,12 +46,15 @@ describe("complete portable pulls", () => {
     // lark_message_lines: a pulled chat keeps its first copy in lark_messages.source_id / line; source_viewers is what this device saw.
     const derived = new Set(["stored_file_refs", "stored_file_backfill", "vector_log", "chunks", "symbols", "code_refs", "pages", "page_rowids", "page_links", "page_cites", "page_aliases", "memory_rowids", "req_rowids", "lark_message_lines", "source_viewers", "source_access"]);
     const device = new Set(["kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "peer_grants", "fed_outbox", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
+      "plugin_events", "plugin_deliveries", "plugin_subscriptions",
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
       // Live goals measure this machine's delegation worktree; unlike portable task/checkpoint history, never resume them on a pulled device.
       "agent_work_tasks", "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors", "git_commit_cursors",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
+      // Subscriptions and pending external writes are tied to this device's connections.
+      "item_provider_targets", "external_item_links", "item_provider_writes",
       // Decision material and the source-to-sweep links remain private to this device.
       "decisions", "decision_sweeps",
       // Which messages link which document (sources/doc-links.ts): rebuilt from lark_messages.
@@ -59,6 +62,33 @@ describe("complete portable pulls", () => {
     const covered = new Set(["spaces", "sources", "lark_people", ...pullTables.map((t) => t.name)]);
     const tables = all<{ name: string }>(app.db, "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name not like '%_fts%' and name not like 'memory_fts%'");
     expect(tables.map((t) => t.name).filter((n) => !derived.has(n) && !device.has(n) && !covered.has(n))).toEqual([]);
+  });
+
+  it.each([{ legacy: false, strip: true }, { legacy: true, strip: false }])(
+    "removes provider links and pending writes while retaining the imported item (legacy=$legacy, strip=$strip)", async ({ legacy, strip }) => {
+    const app = testApp();
+    const item = upsertItem(app, undefined, { title: "外部条目" });
+    const at = new Date().toISOString();
+    run(app.db, `insert into item_provider_targets(id,provider,target,user_id,space_id,mode,import_mode,cursor)
+      values('target','sample:issues','project','owner','personal','direct','direct','page-2')`);
+    run(app.db, `insert into external_item_links(item_id,target_id,provider,user_id,subjects,external_key,synced_at,snapshot) values(?,'target','sample:issues','owner','{}','one',?,'{}')`, item.id, at);
+    run(app.db, `insert into item_provider_writes(id,item_id,status,revision,state) values('write',?,'done','v1','ready')`, item.id);
+    run(app.db, "insert into plugin_subscriptions(plugin,subscriber,type) values('sample','sample:work','item.status')");
+    run(app.db, "insert into plugin_events(seq,id,at,user_id,body) values(1,'event',?,'owner','{}')", at);
+    run(app.db, "insert into plugin_deliveries(subscriber,seq,entity) values('sample:work',1,?)", item.id);
+    if (legacy) app.db.exec("alter table external_item_links rename to item_provider_links");
+    const copy = await snapshot(app, { parts: ["files"], strip });
+    const restored = App.open(copy.dbDir);
+    try {
+      for (const table of ["item_provider_targets", "external_item_links", "item_provider_writes", "plugin_events", "plugin_deliveries", "plugin_subscriptions"]) {
+        expect(one(restored.db, `select count(*) n from ${table}`)).toEqual({ n: 0 });
+      }
+      expect(one(restored.db, "select title from items where id=?", item.id)).toEqual({ title: "外部条目" });
+    } finally {
+      restored.db.close();
+      cleanupFetched(copy);
+      app.db.close();
+    }
   });
 
   it("keeps Git signals and follow cursors on this device during snapshots, merges and overwrites", async () => {
@@ -69,10 +99,19 @@ describe("complete portable pulls", () => {
       run(app.db, "insert into item_follow_cursors(item_id,source_id,started_at,line,source_updated_at,updated_at) values('demo',?,'2026-11-15',12,'2026-11-15','2026-11-15')", source);
     for (const [app, commit] of [[local, "local_commit"], [remote, "remote_commit"]] as const)
       run(app.db, "insert into git_commit_cursors(space_id,branch,commit_id,updated_at,tip,tip_at) values('demo','main',?,'2026-11-15',?,'2026-11-15')", commit, commit);
+    for (const [app, id] of [[local, "local"], [remote, "remote"]] as const) {
+      const item = upsertItem(app, undefined, { title: "外部事项" });
+      run(app.db, `insert into item_provider_targets(id,provider,target,user_id,space_id,mode,import_mode,cursor)
+        values(?,'demo:issues','repo','owner','personal','confirm','direct','page2')`, id);
+      run(app.db, "insert into external_item_links(item_id,target_id,provider,user_id,subjects,external_key,synced_at,snapshot) values(?,?,'demo:issues','owner','{}','a','2026-11-21','{}')", item.id, id);
+      run(app.db, "insert into item_provider_writes(id,item_id,status,revision,state) values(?,?,'done','v1','pending')", id, item.id);
+    }
     const f = await snapshot(remote);
     let localClosed = false;
     try {
       const copied = App.open(f.dbDir);
+      expect(all(copied.db, "select * from item_provider_targets")).toEqual([]);
+      expect(all(copied.db, "select * from item_provider_writes")).toEqual([]);
       try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); expect(all(copied.db, "select * from item_follow_cursors")).toEqual([]); expect(all(copied.db, "select * from git_commit_cursors")).toEqual([]); }
       finally { copied.db.close(); }
       mergeLibrary(local, f);
@@ -82,6 +121,8 @@ describe("complete portable pulls", () => {
       local.db.close(); localClosed = true;
       overwriteLocal(local.home, f);
       const after = App.open(local.home);
+      expect(all(after.db, "select id,cursor from item_provider_targets")).toEqual([{ id: "local", cursor: null }]);
+      expect(all(after.db, "select * from item_provider_writes")).toEqual([]);
       expect(all(after.db, "select commit_id from git_commit_cursors")).toEqual([{ commit_id: "local_commit" }]);
       try { expect(all(after.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]); expect(all(after.db, "select source_id,line from item_follow_cursors")).toEqual([{ source_id: "local_source", line: 12 }]); }
       finally { after.db.close(); }

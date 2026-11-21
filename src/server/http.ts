@@ -40,6 +40,8 @@ import { attachPluginStreams, registerHookRoutes, registerPluginRoutes } from ".
 import { IDE_BASE, IdeNotReady, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remote/http.ts";
 import { attachPreviewUpgrade, registerPreviewRoutes } from "./preview-http.ts";
+import { checkProviderEdit, configureTarget, decideProviderWrite, providerState, syncTarget, targetInput, targetsOf } from "../items/providers.ts";
+import { itemProviders } from "../plugins/process-hooks.ts";
 import { registerArtifactRoutes } from "./artifact-http.ts";
 import { registerDesignRoutes } from "./design-http.ts";
 import { registerAgentAccountRoutes } from "./agent-accounts-http.ts";
@@ -1416,6 +1418,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     waitingOn: z.string().nullable().optional(),
     note: z.string().optional(),
   });
+  server.get("/api/item-sync", async (req) => {
+    const user = who(req);
+    const spaces = accessibleSpaces(app, user);
+    const providers = [...itemProviders].filter(([, entry]) => !entry.spaces.length || !spaces || entry.spaces.some(s => spaces.includes(s)))
+      .map(([id, entry]) => ({ id, label: entry.def.label, statuses: entry.def.statuses, writable: !!entry.def.setStatus }));
+    return { providers, targets: targetsOf(app, user) };
+  });
+  server.put("/api/item-sync", async (req) => configureTarget(app, who(req), q(targetInput, req.body)));
+  server.post("/api/item-sync/:id/pull", async (req) => syncTarget(app, who(req), (req.params as { id: string }).id));
+  server.post("/api/items/:id/writeback", async (req) => {
+    const b = q(z.object({ writeId: z.string(), confirm: z.boolean() }), req.body);
+    return decideProviderWrite(app, who(req), (req.params as { id: string }).id, b.writeId, b.confirm);
+  });
   server.get("/api/items", async (req) => {
     const o = q(z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional() }), req.query);
     const { itemExpiry } = await import("../items/expiry.ts");
@@ -1460,6 +1475,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     requireItem(app, id, who(req), "write");
     const { keepItem } = await import("../items/expiry.ts");
+    checkProviderEdit(app, who(req), id);
     return keepItem(app, id, "user");
   });
   // A candidate the assistant made on its own (items/auto.ts): kept (opens) or not (cancelled). The same as the daily card's buttons.
@@ -1472,6 +1488,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/items/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const item = requireItem(app, id, who(req), "read");
+    const synced = providerState(app, who(req), id);
+    const external = synced && { ...synced.external, provider: synced.target.provider, syncedAt: synced.syncedAt, direction: synced.direction, error: synced.error, write: synced.write };
     // A readable excerpt per reference, only from spaces this reader may see.
     const allowed = accessibleSpaces(app, who(req));
     const excerpts: Record<string, { title: string; text: string }> = {};
@@ -1489,7 +1507,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const mine = item.userId === who(req);
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     const a = autoInfo(app, id);
-    return { item, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
+    return { item, external, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.
@@ -1592,6 +1610,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.patch("/api/items/:id", async (req) => {
     const { parent, ...b } = q(itemBody, req.body);
     const id = (req.params as { id: string }).id;
+    checkProviderEdit(app, who(req), id);
     const { checkParent } = await import("../items/tree.ts");
     const { setParent } = await import("../items/parent.ts");
     const before = requireItem(app, id, who(req), "write");

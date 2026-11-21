@@ -1,3 +1,4 @@
+import { migrateItemProviders } from "../items/provider-schema.ts";
 import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { noteSync, sqlName } from "./loop-monitor.ts";
@@ -2286,6 +2287,16 @@ export const migrations: readonly string[] = [
    create index if not exists asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
    create index if not exists asks_operation_run on asks(json_extract(context,'$.runKey'),status);
    create index if not exists asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
+  `create table if not exists plugin_subscriptions(plugin text not null,subscriber text not null,type text not null,primary key(plugin,subscriber,type));
+   create index if not exists plugin_subscriptions_type on plugin_subscriptions(type);
+   create table if not exists plugin_events(seq integer primary key autoincrement,id text unique not null,at text not null,user_id text not null,body text not null);
+   create index if not exists plugin_events_at on plugin_events(at);
+   create table if not exists plugin_deliveries(subscriber text not null,seq integer not null references plugin_events(seq) on delete cascade,
+     entity text not null,state text not null default 'pending',attempts integer not null default 0,due integer not null default 0,error text,
+     primary key(subscriber,seq));
+   create index if not exists plugin_deliveries_seq on plugin_deliveries(seq);
+   create index if not exists plugin_deliveries_due on plugin_deliveries(subscriber,state,due,seq);
+   create index if not exists plugin_deliveries_order on plugin_deliveries(subscriber,entity,seq) where state!='done';`,
 ];
 
 export type Db = DatabaseSync;
@@ -2293,7 +2304,12 @@ export type Db = DatabaseSync;
 export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
-  const version = (db.prepare("pragma user_version").get() as { user_version: number }).user_version;
+  let version = (db.prepare("pragma user_version").get() as { user_version: number }).user_version;
+  // Plugin and operation branches used the first file-reference slot for their own schema.
+  if (version === migrations.indexOf(FILE_REFS_MIGRATION) + 1 &&
+      !db.prepare("select 1 from sqlite_schema where type='table' and name='stored_file_refs'").get()) {
+    version--;
+  }
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");
     try {
@@ -2305,7 +2321,13 @@ export function openDb(path: string): Db {
       throw error;
     }
   }
+  migrateItemProviders(db);
   return db;
+}
+
+/** Join the caller's transaction when composing synchronous store operations. */
+export function withinTx<T>(db: Db, fn: () => T): T {
+  return db.isTransaction ? fn() : tx(db, fn);
 }
 
 export function tx<T>(db: Db, fn: () => T): T {
