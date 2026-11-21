@@ -280,7 +280,7 @@ export async function lessonsForTask(app: App, input: LessonInput) {
 export type RoleRunInput = {
   /** Host-assigned trees for this invocation (helpers carry their own leases). */
   worktrees?: WorktreeRef[];
-  memberCommits?: boolean;
+  worktreeAccess?: "read" | "commit";
   /** Tools the caller needs for delivery. An empty list explicitly permits a text-only answer. */
   requiredTools?: string[];
   execution?: Execution;
@@ -938,7 +938,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         recordIsolation(app, input.runId, input.userId!, prep.profile);
         const aware = internal ? "" : awarenessNote(app, input.runId, prep.tools.size > 0);
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
-        const workspace = input.worktrees && accountOf(prep.profile) ? workspaceMounts(app, input.worktrees, input.memberCommits ? input.runId ?? undefined : undefined) : undefined;
+        const workspace = input.worktrees && accountOf(prep.profile) ? workspaceMounts(app, input.worktrees, input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined, input.worktreeAccess === "read" ? "read" : "write") : undefined;
         const req = {
           runId: input.runId,
           strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,

@@ -143,7 +143,7 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
       runId: h.runId,
       cwd,
       worktrees: h.worktrees,
-      memberCommits: true,
+      worktreeAccess: "commit",
       signal: round.signal,
       onEvent: (e) => addRunEvent(app, h.runId, e.type, e),
     });

@@ -474,7 +474,7 @@ ${input.task}
   let pre = pc.preCheckOf(app, rootRunId) ?? (retried ? pc.preCheckOf(app, retried.id) : null);
   if (pre && retried && !continueFrom) setRunOutput(app, rootRunId, { preCheck: pre });
   if (!pre && !continueFrom && !retried && !ranBefore && !skipCoder && !gitOnly && !input.peerCoder && !input.branches && !input.syncResume && pc.wantsPreCheck(app, run)) {
-    pre = await pc.runPreCheck(app, { run, task: `${input.task}${itemBrief}`, spaces, cwd, repos: repos.map((r, i) => ({ id: r.id, name: r.name, dir: workDirOf(worktrees[i]) })), signal: ctx.signal, event: ctx.event });
+    pre = await pc.runPreCheck(app, { run, task: `${input.task}${itemBrief}`, spaces, cwd, worktrees, repos: repos.map((r, i) => ({ id: r.id, name: r.name, dir: workDirOf(worktrees[i]) })), signal: ctx.signal, event: ctx.event });
   }
   if (pre && !continueFrom) coderTask = `${coderTask}\n\n${pc.preCheckText(pre, "coder")}`;
   // The design (designs/work.ts): written and confirmed before a new delegation's first round codes,
@@ -642,7 +642,7 @@ ${input.task}
       runId: run.id,
       cwd,
       worktrees,
-      memberCommits: true,
+      worktreeAccess: "commit",
       signal: ctx.signal,
       resumeSessionId,
       persistSession: true,

@@ -64,6 +64,23 @@ describe("delegation sandbox mounts", () => {
     });
   });
 
+  it("mounts the pre-check's slots and inline checkouts read-only through their assigned links", () => {
+    const trees = [lead, inline];
+    const plan = workspaceMounts(app, trees, undefined, "read");
+    expect(plan.rw).toEqual([]);
+    expect(plan.ro).toEqual([join(a.root, ".git"), join(b.root, ".git"), lead.slot, inline.path].map(p => realpathSync(p)));
+    expect(plan.links).toEqual([{ path: join(realpathSync(group), a.id), target: realpathSync(lead.slot) }]);
+  });
+
+  it.skipIf(!sandboxSupport().ok)("reads a leased checkout through the multi-repo pre-check cwd", () => {
+    const home = join(app.home, "pre-check-home");
+    mkdirSync(home);
+    const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec",
+      'git -C web rev-parse HEAD && git -C api rev-parse HEAD && test ! -w web && test ! -w api && test ! -e "$1"', "sh", helper.slot],
+      {}, group, { userId: "member", backend: "test", home, env: {}, hide: [app.home], ro: [] }, workspaceMounts(app, [lead, inline], undefined, "read"));
+    execFileSync(cmd.file, cmd.args, { env: cmd.env });
+  });
+
   it("uses the helper's lease for the same repository", () => {
     expect(workspaceMounts(app, [helper])).toEqual({ ro: [realpathSync(join(a.root, ".git"))], rw: [realpathSync(helper.slot)], links: [] });
   });

@@ -65,12 +65,12 @@ export function workDirOf(wt: { path: string }) {
 }
 
 /** Mount only host-assigned trees. The checkout being edited cannot choose its Git mount via .git. */
-export function workspaceMounts(app: App, trees: (Pick<WorktreeRef, "space" | "path" | "slot"> & Partial<Pick<WorktreeRef, "branch" | "commits">>)[], runId?: string): WorkspaceMounts {
+export function workspaceMounts(app: App, trees: (Pick<WorktreeRef, "space" | "path" | "slot"> & Partial<Pick<WorktreeRef, "branch" | "commits">>)[], runId?: string, access: "read" | "write" = "write"): WorkspaceMounts {
   const ro = new Set<string>();
   const links: NonNullable<WorkspaceMounts["links"]> = [];
   const pointers: NonNullable<WorkspaceMounts["pointers"]> = [];
   const metadata: string[] = [];
-  const rw = trees.map(tree => {
+  const workdirs = trees.map(tree => {
     const root = getSpace(app, tree.space).rootPath;
     const common = root && commonDir(root);
     if (!common) throw new Error(`找不到 ${tree.space} 的 Git 公共目录`);
@@ -78,7 +78,7 @@ export function workspaceMounts(app: App, trees: (Pick<WorktreeRef, "space" | "p
     const dir = tree.slot ?? tree.path;
     if (isLink(dir)) throw new Error(`工作树目录变成了符号链接：${dir}`);
     const target = realpathSync(dir);
-    if (runId && tree.commits) {
+    if (access === "write" && runId && tree.commits) {
       const mount = memberGitMount(app, runId, tree.space, target, common, tree.branch);
       metadata.push(mount.dir);
       pointers.push({ source: mount.pointer, path: join(target, ".git") });
@@ -87,7 +87,8 @@ export function workspaceMounts(app: App, trees: (Pick<WorktreeRef, "space" | "p
     if (trees.length > 1 && tree.slot) links.push({ path: join(realpathSync(dirname(tree.path)), basename(tree.path)), target });
     return target;
   });
-  return { ro: [...ro], rw: [...rw, ...metadata], links, ...(pointers.length ? { pointers } : {}) };
+  if (access === "read") return { ro: [...ro, ...workdirs], rw: [], links };
+  return { ro: [...ro], rw: [...workdirs, ...metadata], links, ...(pointers.length ? { pointers } : {}) };
 }
 
 export function managedSlot(app: App, repoId: string, n: number) {
