@@ -172,6 +172,22 @@ it("检测与保存可清除服务商、地址和维度，保存前预览重建"
   expect(calls.slice(-2).map(c => c.auth)).toEqual(["Bearer example-env-key", "Bearer example-env-key"]);
 });
 
+it("重排检测整体使用请求api，null清掉服务商引用，环境变量不继承已存密钥",async () => {
+  const {app,server,calls,url}=await fixture();
+  app.config.rerank=configSchema.shape.rerank.parse({provider:"api",api:{keyRef:"remote",url:"https://saved.example.org/rank",model:"saved-model",timeoutMs:1000}});
+  vi.stubEnv("TEST_RANK_ENV_KEY","example-env-key");
+  for(const api of [{model:"rank",url,apiKeyEnv:"TEST_RANK_ENV_KEY"},
+    {model:"rank",url,keyRef:null,apiKeyEnv:"TEST_RANK_ENV_KEY",timeoutMs:null}]) {
+    const response=await server.inject({method:"POST",url:"/api/search/rerank/test",payload:{api}});
+    expect(response.json()).toMatchObject({ok:true});
+    expect(calls.at(-1)).toMatchObject({path:"/rerank",auth:"Bearer example-env-key",body:{model:"rank"}});
+  }
+  expect(app.config.rerank.api).toMatchObject({keyRef:"remote",model:"saved-model",url:"https://saved.example.org/rank",timeoutMs:1000});
+  const clear=await server.inject({method:"POST",url:"/api/search/rerank/test",payload:{api:null}});
+  expect(clear.statusCode).toBe(200);expect(clear.json().ok).toBe(false);
+  expect(calls).toHaveLength(2);
+});
+
 it("有知识设置编辑权的成员仍改不了向量和重排，也调用不了检测", async () => {
   const f = await fixture();
   createUser(f.app, { id: "editor", name: "编辑", role: "admin" });

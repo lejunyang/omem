@@ -884,3 +884,5 @@ id 自动变成 `<插件>:<id>`，与内置后端进入同一个目录。还可�
 `GET /api/settings` 的 AI 或助手区域增加 `unavailableBackends: [{ id, name, pluginBackend: { plugin, name, available: false, reason } }]`。默认后端、角色、档位、档案、fallback、任务选型候选、角色模型和评审轮换引用的停用插件后端均保留来源与原因；重新启用后移出不可用清单。
 
 向量状态 `GET /api/search/providers` 的 embeddings 增加 `embedded: { chunks, memories, total }`：库内非工作区分块和 active 记忆已有的向量数量，提供者关闭或停用时仍显示留存数量。pending 保持当前提供者范围的待算数量。两种已有数量分别读取 chunks_vector_space、memories_embedded 部分索引，不读取向量内容。
+
+`POST /api/search/rerank/test`：给 api 时整份使用请求的 api，不继承已保存 api 的字段；字段为 null 时清掉，之后应用字段默认值。api 整体为 null 时清掉检测配置。省略 api 才使用已保存值；检测不写设置。改用环境变量可传 `{ api: { model: "rank", url: "https://example.org/v1", keyRef: null, apiKeyEnv: "DEMO_RANK_KEY" } }`。

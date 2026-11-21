@@ -431,3 +431,5 @@
 - 豆包 CLI 目录参数按帮助探测并缓存，原生参数前置；不支持时使用进程 cwd。入口 `src/agents/doubao-cli.ts`；假帮助和假进程测过。
 
 - 向量状态增加 embedded.chunks/memories/total，关闭提供者仍可看已有数量；复用 chunks_vector_space 与 memories_embedded 覆盖索引。入口 `src/search/embedding-index.ts`、`embeddings.ts`。
+
+- 重排检测整份使用请求 api，null 清字段，省略时沿用保存值；不继承旧 keyRef。入口 `src/server/http.ts`（/api/search/rerank/test）。

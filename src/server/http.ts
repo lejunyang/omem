@@ -3529,9 +3529,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     catch (e) { return { ok: false, dimensions: null, elapsedMs: Date.now() - at, error: (e as Error).message.slice(0, 500) }; }
   });
   server.post("/api/search/rerank/test", async req => {
-    const body = (req.body ?? {}) as { api?: object };
-    const cfg = q(configSchema.shape.rerank, { ...app.config.rerank, ...body,
-      ...(body.api && { api: { ...app.config.rerank.api, ...body.api } }) });
+    const body = q(z.object({ api: z.record(z.string(), z.unknown()).nullable().optional() }).passthrough(), req.body ?? {});
+    // An explicit API is the entire draft. Null clears a field before schema defaults apply.
+    const api = body.api === null ? undefined : body.api === undefined ? app.config.rerank.api
+      : Object.fromEntries(Object.entries(body.api).filter(([, value]) => value !== null));
+    const cfg = q(configSchema.shape.rerank, { ...app.config.rerank, ...body, api });
     const at = Date.now();
     try {
       const results = await testReranker(app, cfg);

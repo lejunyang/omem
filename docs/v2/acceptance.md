@@ -3106,3 +3106,7 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 ### 向量已有数量
 
 - 给库内分块和有效记忆各生成向量，关闭提供者后 /api/search/providers 的 embeddings.embedded 仍分别计数及合计。工作区分块不计入，pending 不变。用 EXPLAIN QUERY PLAN 核对 chunks_vector_space、memories_embedded，不扫向量大表。
+
+### 重排检测配置
+
+- 先保存带 keyRef 的重排接口，再检测一份只给 model/url/apiKeyEnv 的 api，或明确给 keyRef=null：假服务收到环境变量密钥而非旧服务商密钥，设置不变。api=null 清整份检测配置，未发请求；省略 api 时仍使用保存配置。
