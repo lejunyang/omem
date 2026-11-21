@@ -13,8 +13,16 @@ import { askLineEnd } from "../src/items/lifecycle.ts";
 import { decideNext, nextOf, submitLineState } from "../src/items/lines.ts";
 import { setParent } from "../src/items/parent.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
-import { buildToday, morningDue, proposalsDue, sendToday, TODAY_MAX, todayDue } from "../src/items/today.ts";
+import { attachBrief, buildToday, morningDue, proposalsDue, sendToday, TODAY_MAX, todayDue } from "../src/items/today.ts";
+import { createProposal, expireProposals } from "../src/agents/proposals.ts";
+import * as runner from "../src/agents/runner.ts";
+import { __testHandlers } from "../src/agents/runs.ts";
+import { weekLabel, weeklyPath } from "../src/agents/weekly-report.ts";
+import { defineMetric, getMetric } from "../src/data/metrics.ts";
+import { writeWorkFile } from "../src/sources/work.ts";
 import { testApp } from "./helpers.ts";
+
+const DAY = 86_400_000;
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -181,13 +189,147 @@ describe("今天：开着和关掉", () => {
   });
 });
 
+const proposal = (app: App, title: string, kind: "settings" | "prompt" = "settings") =>
+  createProposal(app, { target: "assistant", kind, title, reason: "最近三次都要本人补查", content: kind === "settings" ? { add_tools: ["scan"] } : { prompt: "新的提示词" }, runId: null });
+const proposedMetric = (app: App, name: string) =>
+  defineMetric(app, { name, why: "上线后退款失败的有多少", query: "按天数退款失败单", unit: "单" }, { by: "agent" });
+
+describe("今天：复盘提的改动和 AI 提议的指标", () => {
+  it("各有一段，有上限，多的写“还有 N 条”并链到各自的清单；改设置的和指标能在卡上定，改提示词的只给链接", async () => {
+    const app = fresh();
+    const settings = [0, 1, 2, 3].map((i) => proposal(app, `加上全文检索 ${i}`));
+    run(app.db, "update profile_proposals set created_at = ? where id = ?", "2026-11-19T00:00:00.000Z", settings[3]);
+    const prompt = proposal(app, "回答前先查事项", "prompt");
+    // The one about to expire comes first, with its day.
+    run(app.db, "update profile_proposals set expiry_notice_at = ? where id = ?", "2026-11-19T19:00:00.000Z", prompt);
+    const ms = [0, 1, 2, 3, 4, 5].map((i) => proposedMetric(app, `退款失败数 ${i}`));
+    const t = (await buildToday(app))!;
+    expect(t.question).toContain("**复盘提的改动（5）**");
+    expect(t.question).toMatch(/「assistant」改写提示词：回答前先查事项（12 月 4 日过期），\[看一下再定\]\([^)]*#\/agents\?tab=agents&role=assistant\)/);
+    expect(t.question).toContain(`还有 ${5 - TODAY_MAX.profiles} 条在 [Agent 页]`);
+    const a = t.fields.filter((f) => f.group === "复盘提的改动");
+    expect(a).toHaveLength(TODAY_MAX.profiles - 1);
+    expect(a[0]).toMatchObject({ options: ["采纳", "不要"], help: "最近三次都要本人补查" });
+    expect(t.question).toContain("**AI 提议的指标（6）**");
+    expect(t.question).toContain(`还有 ${6 - TODAY_MAX.metrics} 条在 [数据页]`);
+    expect(t.fields.filter((f) => f.group === "AI 提议的指标")).toHaveLength(TODAY_MAX.metrics);
+    // Not counted again under 等你处理.
+    expect(t.question).not.toContain("等你处理");
+
+    const ask = (await sendToday(app))!;
+    const ctx = JSON.parse(one<{ context: string }>(app.db, "select context from asks where id = ?", ask.id)!.context) as { metrics: string[]; profiles: string[] };
+    const [keep, drop] = ctx.metrics;
+    const [take, no] = ctx.profiles;
+    // One decided on the data page meanwhile.
+    defineMetric(app, { id: ms[5].id, name: ms[5].name, status: "dropped" }, { by: "owner" });
+    await answerAsk(app, ask.id, { value: { [`a_${take}`]: "采纳", [`a_${no}`]: "不要", [`m_${keep}`]: "留下", [`m_${drop}`]: "不要", [`m_${ms[5].id}`]: "留下" }, by: "owner" });
+    const status = (id: string) => one<{ status: string }>(app.db, "select status from profile_proposals where id = ?", id)!.status;
+    expect([status(take), status(no), status(prompt)]).toEqual(["applied", "rejected", "pending"]);
+    expect([getMetric(app, keep)!.status, getMetric(app, drop)!.status, getMetric(app, ms[5].id)!.status]).toEqual(["active", "dropped", "dropped"]);
+    expect(getAsk(app, ask.id).result).toBe("已处理：采纳改动 1，不要改动 1，留下指标 1，不要指标 1");
+  });
+
+  it("开着时复盘不另发过期通知，卡上写哪天过期；关着时照旧发通知", async () => {
+    const app = fresh();
+    const id = proposal(app, "加上全文检索");
+    run(app.db, "update profile_proposals set created_at = ? where id = ?", new Date(Date.now() - 13 * DAY).toISOString(), id);
+    expect(await expireProposals(app)).toEqual({ expired: 0, noticed: 1 });
+    expect(all(app.db, "select 1 from notifications")).toHaveLength(0);
+    expect((await buildToday(app))!.fields.find((f) => f.id === `a_${id}`)!.label).toContain("过期）");
+
+    const off = fresh();
+    off.config.notify.today = { ...off.config.notify.today, enabled: false };
+    const id2 = proposal(off, "加上全文检索");
+    run(off.db, "update profile_proposals set created_at = ? where id = ?", new Date(Date.now() - 13 * DAY).toISOString(), id2);
+    await expireProposals(off);
+    expect(all(off.db, "select 1 from notifications")).toHaveLength(1);
+  });
+});
+
+describe("今天：简报", () => {
+  const BRIEF = "今天先回小王的排期：联调卡在测试账号上，他在等你一句话。已备好：上月退款失败的 12 单查清了，都是满减分摊。";
+  it("先写好的是卡的开头一段；没写就没有", async () => {
+    const app = fresh();
+    morning(app);
+    expect((await buildToday(app))!.question).not.toContain("联调卡在测试账号");
+    expect(await attachBrief(app, BRIEF)).toBe("held");
+    const q = (await buildToday(app))!.question.split("\n\n");
+    expect(q[0]).toBe("**今天 · 11 月 20 日（周五）**");
+    expect(q[1]).toBe(BRIEF);
+    // Yesterday's brief is not today's.
+    vi.setSystemTime(new Date("2026-11-21T02:00:00Z"));
+    expect((await buildToday(app))?.question ?? "").not.toContain("联调卡在测试账号");
+  });
+
+  it("晚到的更新同一张卡；卡答过了交给调用方照旧发；那天没别的事就单发一张", async () => {
+    const app = fresh();
+    morning(app);
+    const ask = (await todayDue(app))!;
+    expect(ask.question).not.toContain(BRIEF);
+    expect(await attachBrief(app, BRIEF)).toBe("revised");
+    const after = getAsk(app, ask.id);
+    expect(after.status).toBe("pending");
+    expect(after.question.split("\n\n")[1]).toBe(BRIEF);
+    expect(after.ui!.fields!.length).toBe(ask.ui!.fields!.length);
+    expect(listAsks(app, { status: "pending" }).filter((a) => a.handler === "today")).toHaveLength(1);
+    // Twice: still one paragraph.
+    await attachBrief(app, BRIEF);
+    expect(getAsk(app, ask.id).question.split(BRIEF)).toHaveLength(2);
+    await answerAsk(app, ask.id, { value: {}, by: "owner" });
+    expect(await attachBrief(app, BRIEF)).toBe("late");
+
+    const quiet = fresh();
+    expect(await todayDue(quiet)).toBeNull();
+    expect(await attachBrief(quiet, BRIEF)).toBe("sent");
+    const only = listAsks(quiet, { status: "pending" }).find((a) => a.handler === "today")!;
+    expect(only.question.split("\n\n")).toEqual(["**今天 · 11 月 20 日（周五）**", BRIEF]);
+  });
+
+  it("简报运行：开着时不给 notify、写进卡里；关着时照旧自己发", async () => {
+    const seen: { deny?: string[]; task: string }[] = [];
+    const fake = vi.spyOn(runner, "runRole").mockImplementation(async (_app, input) => {
+      seen.push({ deny: input.denyTools, task: input.task });
+      return { text: BRIEF, profileId: "fake", ai: { profile: "fake" } } as Awaited<ReturnType<typeof runner.runRole>>;
+    });
+    try {
+      for (const on of [true, false]) {
+        const app = fresh();
+        if (!on) app.config.notify.today = { ...app.config.notify.today, enabled: false };
+        const r = createRun(app, { kind: "brief", title: "简报", spaceId: "personal" });
+        const out = await __testHandlers.get("brief")!({ app, run: r, signal: new AbortController().signal, event() {}, output() {} });
+        if (on) {
+          expect(out).toMatchObject({ today: "held" });
+          expect((await buildToday(app))!.question).toContain(BRIEF);
+        } else expect(out).not.toHaveProperty("today");
+      }
+      expect(seen.map((s) => s.deny ?? [])).toEqual([["notify"], []]);
+      expect(seen[0].task.split("\n")[0]).toContain("并进“今天”");
+      expect(seen[1].task.split("\n")[0]).toContain("单独发");
+    } finally { fake.mockRestore(); }
+  });
+});
+
+describe("今天：周五的周报", () => {
+  it("周五写好了才有那一行，别的日子没有", async () => {
+    const app = fresh();
+    morning(app);
+    expect((await buildToday(app))!.question).not.toContain("本周的周报");
+    const f = writeWorkFile(app, { spaceId: "personal", path: weeklyPath(weekLabel(app)), text: "# 这周\n\n退款单上线。" });
+    expect((await buildToday(app))!.question).toContain(`本周的周报写好了：[周报 · ${weekLabel(app)}]`);
+    expect((await buildToday(app))!.question).toContain(`#/sources/${f.id}`);
+    vi.setSystemTime(new Date("2026-11-19T02:00:00Z")); // Thursday
+    expect((await buildToday(app))!.question).not.toContain("本周的周报");
+  });
+});
+
 describe("今天：免打扰和夜里的询问", () => {
   it("到点在免打扰里就等免打扰结束；夜里问的线要不要结束并进这张，答了交给原来的处理", async () => {
     const app = fresh(new Date("2026-11-19T18:00:00Z")); // 02:00 on the 20th
     app.config.notify.today = { ...app.config.notify.today, at: "08:00" };
     const post = vi.fn(async () => ({ code: 0, data: { message_id: "om_card" } }));
     registerLarkAsks(app, () => "ou_owner");
-    setLarkClient({ im: { message: { create: post, patch: async () => ({ code: 0 }) } } });
+    const patch = vi.fn(async () => ({ code: 0 }));
+    setLarkClient({ im: { message: { create: post, patch } } });
     try {
       const line = upsertItem(app, undefined, { kind: "line", title: "项目 A" }, "user");
       upsertItem(app, undefined, { title: "还开着的事" }, "user");
@@ -206,6 +348,11 @@ describe("今天：免打扰和夜里的询问", () => {
       await releaseDeferredAsks(app);
       // Only 今天 goes out; the night's question is on it.
       expect(post).toHaveBeenCalledTimes(1);
+      // The brief done after it: the card sent is edited, nothing new is sent.
+      expect(await attachBrief(app, "今天先定项目 A 要不要结束。")).toBe("revised");
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(patch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(patch.mock.calls[0])).toContain("今天先定项目 A 要不要结束。");
       await answerAsk(app, ask.id, { value: { [`e_${end.id}`]: "再看一周" }, by: "owner" });
       expect(getAsk(app, end.id).status).toBe("answered");
       expect(getItem(app, line.id).phase).toBe("watching");

@@ -1545,6 +1545,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { decideCandidate } = await import("../items/auto.ts");
     return decideCandidate(app, id, b.keep, who(req), "web");
   });
+  // 需求 → 发现 → 方案 → 交付, read-only from the links already stored (items/chain.ts).
+  server.get("/api/items/:id/chain", async (req) => (await import("../items/chain.ts")).itemChain(app, (req.params as { id: string }).id, who(req)));
   server.get("/api/items/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const item = requireItem(app, id, who(req), "read");
@@ -1604,7 +1606,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const results = rt.testsOf(app, [d.node.id], 60).get(d.node.id) ?? [];
     const shots = new Map(artifactsByIds(app, [...new Set(results.flatMap((r) => r.artifacts))]).map((a) => [a.id, a]));
     const testResults = results.map((r) => ({ ...r, artifacts: r.artifacts.flatMap((id) => shots.get(id) ?? []) }));
-    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)), work, works, testState: rt.testState(results), testResults };
+    // The work items this node is a material of (their chain starts here: items/chain.ts), the ones this reader may read.
+    const { itemAccess } = await import("../items/access.ts");
+    const items = all<{ id: string; title: string; user_id: string | null; space_id: string }>(app.db, "select i.id, i.title, i.user_id, i.space_id from item_materials m join items i on i.id = m.item_id where m.kind = 'req' and m.ref = ? and i.status not in ('cancelled') order by i.updated_at desc limit 20", d.node.id)
+      .filter((i) => itemAccess(app, who(req), { userId: i.user_id ?? OWNER, spaceId: i.space_id }, "read")).map((i) => ({ id: i.id, title: i.title }));
+    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)), work, works, items, testState: rt.testState(results), testResults };
   });
   server.post("/api/requirements", async (req) => {
     const { reqOpSchema, saveReqs } = await import("../items/requirements.ts");

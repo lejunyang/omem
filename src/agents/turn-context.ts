@@ -8,6 +8,9 @@ import { canReadItem, findItem, getItem, isClosed, type Item } from "../items/st
 import { lineLike, rootOf } from "../items/tree.ts";
 import { addScope, scopeOf } from "./run-scope.ts";
 import type { Thread, ThreadMessage } from "./threads.ts";
+import { handlingText } from "../core/handling.ts";
+import { lineChoices } from "../items/choices.ts";
+import { truncate } from "../core/util.ts";
 
 export type TurnContext = {
   conversationId: string | null;
@@ -17,6 +20,10 @@ export type TurnContext = {
   listen?: { id: string; name: string };
   stage?: { id: string; name: string; state: string };
   candidates: { itemId: string; title: string; reason: string }[];
+  /** What other paths already made of the message this turn answers (core/handling.ts), in a line; only when there is any. */
+  handled?: string;
+  /** The owner's latest choices on this line's proposals (items/choices.ts), a few short lines; only when there are any. */
+  choices?: string[];
 };
 
 const turns = new WeakMap<RunContext, ResolvedTurn>();
@@ -45,6 +52,10 @@ export function itemFocus(app: App, item: Item, via: "explicit" | "linked", flow
     listen: listen ? { id: listen.id, name: listen.name } : undefined,
     stage: active && stage && { id: active.id, name: active.name, state: stage.state },
   };
+  // The person's latest choices on this line's proposals (items/choices.ts): what not to propose again.
+  const top = line ?? item;
+  const choices = lineChoices(app, item.userId, top.id, [...new Set([item.id, top.id])], [top.title, item.title]);
+  if (choices.length) context.choices = choices;
   return { context, item, line, listen, stage, flow, stages };
 }
 
@@ -94,6 +105,10 @@ export function resolveTurn(app: App, runId: string, thread: Thread, messages: T
     candidates: item ? linked.filter(i => i.id !== item.id).slice(0, 3).map(i => ({ itemId: i.id, title: i.title, reason: "这个会话也挂在它上面" }))
       : candidatesAt(app, here, userId).map(c => ({ itemId: c.item.id, title: c.item.title, reason: c.reasons.join("，") })),
   };
+  // The message this turn answers, when other paths saw it too: who took it, what it became (short).
+  const trigger = [...messages].reverse().find(m => typeof m.meta.externalId === "string")?.meta.externalId as string | undefined;
+  const handled = trigger ? handlingText(app, trigger, 4, ["direct"]) : "";
+  if (handled) context.handled = truncate(handled, 300);
   if (context.item) addScope(app, runId, "item", context.item.id, "", "input");
   if (context.line) addScope(app, runId, "item", context.line.id, "", "input");
   return { context, here, linked, listening, focus };

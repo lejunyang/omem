@@ -4,6 +4,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { metricProviders } from "../plugins/process-hooks.ts";
 import { canWrite, OWNER } from "../core/users.ts";
 import { HttpError, json, newId, now, truncate } from "../core/util.ts";
+import { fingerprint, mayPropose, recordChoice } from "../items/choices.ts";
 
 /**
  * Metrics: the numbers of the owner's work the assistant keeps an eye on — events tracked by a
@@ -173,6 +174,12 @@ export function defineMetric(app: App, input: MetricInput, by: MetricBy = { by: 
   if (input.status === "proposed") throw new HttpError(400, "status 只能是 active、paused 或 dropped");
   if (!prev && input.status === "dropped") throw new HttpError(400, "还没有这个指标，不用标“不要”");
   if (agent) {
+    // Said 不要 to a metric of this name before (it may have been removed since, or named a little
+    // differently): not proposed again unless its query changed (items/choices.ts, the one record of choices).
+    if (!prev) {
+      const said = mayPropose(app, by.userId ?? OWNER, "metric", fingerprint(input.name), fingerprint(input.query ?? ""));
+      if (!said.ok) throw new HttpError(409, `${said.why}，不要再提议同样的指标；查法变了才可以再提`);
+    }
     if (prev?.status === "dropped") throw new HttpError(409, `本人不要这个指标（${day(prev.droppedAt)}${prev.ownerNote ? `，本人说：${prev.ownerNote}` : ""}），不要再提议同样的；本人在对话里亲口要回来时才能改`);
     if (input.status === "dropped") throw new HttpError(403, "要不要一个指标由本人定：不再需要的写进 why 或说明，本人在数据页点“不要”");
     // A proposal stays one until the owner decides; a kept metric may be paused and resumed.
@@ -185,6 +192,9 @@ export function defineMetric(app: App, input: MetricInput, by: MetricBy = { by: 
       droppedAt = null;
     }
     if (status === "dropped" && prev?.status !== "dropped") droppedAt = at;
+    // The owner's word on an agent's proposal, in the one record of choices (items/choices.ts).
+    if (prev?.definedBy === "agent" && status !== prev.status && (status === "dropped" || (status === "active" && prev.status === "proposed")))
+      recordChoice(app, { userId: by.userId ?? OWNER, kind: "metric", target: fingerprint(prev.name), version: fingerprint(input.query ?? prev.query), choice: status === "dropped" ? "drop" : "keep", reason: input.ownerNote ?? null, via: "web" });
   }
   const m: Metric = {
     id: prev?.id ?? input.id ?? newId("m"),
@@ -312,11 +322,13 @@ export async function recordPoints(app: App, idOrName: string, points: { value: 
   const changes = series.map((d) => ({ dims: json<Record<string, string>>(d, {}), change: changeOf(m, metricPoints(app, m.id, { dims: json(d, {}), limit: 30 })) }));
   const flagged = changes.filter((c) => c.change?.flagged);
   // A proposal (or a paused metric) is taken but never told: the owner has not said they want it.
-  if (flagged.length && m.status === "active") await tellChange(app, m, flagged.map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}`), m.itemId ?? defaultItemId);
+  // The newest point recorded names this crossing in the change ledger: collecting the same points again is the same change.
+  const newest = points.map((p) => p.at ?? at).sort().at(-1) ?? at;
+  if (flagged.length && m.status === "active") await tellChange(app, m, flagged.map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}`), m.itemId ?? defaultItemId, `metric:${m.id}@${newest}`);
   return changes;
 }
 
-async function tellChange(app: App, m: Metric, lines: string[], itemId?: string) {
+async function tellChange(app: App, m: Metric, lines: string[], itemId?: string, source?: string) {
   const body = `${lines.join("\n")}${m.why ? `\n\n${truncate(m.why, 200)}` : m.description ? `\n\n${truncate(m.description, 200)}` : ""}`;
   const { notify } = await import("../core/notify.ts");
   // A change in the numbers is not a first nudge about a new item (no grace period), and a notification
@@ -336,11 +348,11 @@ async function tellChange(app: App, m: Metric, lines: string[], itemId?: string)
   }
   if (itemId) {
     try {
+      // A key result on the line's timeline (items/changes.ts), noted only; the same crossing told again is not a second one.
+      const { recordChange } = await import("../items/changes.ts");
+      const noted = recordChange(app, { itemId, type: "result", origin: "metric", source, summary: `指标变化：${truncate(lines[0] ?? m.name, 200)}${lines.length > 1 ? ` 等 ${lines.length} 处` : ""}`, detail: lines.length > 1 ? lines.join("\n") : m.why || m.description ? truncate(m.why || m.description, 300) : null });
       const { addItemEvent } = await import("../items/store.ts");
-      addItemEvent(app, itemId, "note", `指标变化：${lines.join("；")}`, "agent");
-      // A key result on the line's timeline (items/changes.ts), noted only.
-      const { addChange } = await import("../items/changes.ts");
-      addChange(app, { itemId, type: "result", origin: "metric", summary: `指标变化：${truncate(lines[0] ?? m.name, 200)}${lines.length > 1 ? ` 等 ${lines.length} 处` : ""}`, detail: lines.length > 1 ? lines.join("\n") : m.why || m.description ? truncate(m.why || m.description, 300) : null });
+      if (noted?.created) addItemEvent(app, itemId, "note", `指标变化：${lines.join("；")}`, "agent");
     } catch {
       // The item may be gone; the notification still says it.
     }

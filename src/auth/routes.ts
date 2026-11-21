@@ -298,6 +298,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/items": cap("items.view", "own-list"),
   "POST /api/items": cap("items.edit", "item-new"),
   "GET /api/items/:id": cap("items.view", "item:p.id"),
+  "GET /api/items/:id/chain": cap("items.view", "item:p.id"),
   "PATCH /api/items/:id": cap("items.edit", "item-update"),
   "POST /api/items/:id/keep": cap("items.operate", "item:p.id"),
   "POST /api/items/:id/candidate": cap("items.operate", "item:p.id"),

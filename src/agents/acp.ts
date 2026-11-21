@@ -103,6 +103,12 @@ export type AcpHandle = {
   probe?: AgentProbe;
 };
 
+/** How long a run that named a thinking level waits for the agent to list that setting before failing. */
+let effortWaitMs = 12_000;
+export function setEffortWaitForTests(ms: number) {
+  effortWaitMs = ms;
+}
+
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
   if (opts.signal?.aborted) throw new Error("CANCELLED");
   const env = { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env };
@@ -130,6 +136,9 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   let emit = emitSetup;
   let touch = () => {};
   let replaying = false;
+  /** The newest option list the agent sent on its own (`config_option_update`), until setup reads it. */
+  let announced: SessionConfigOption[] | null = null;
+  let onAnnounced: (() => void) | null = null;
   let text = "";
   let contextUsage: AgentResult["contextUsage"];
   let sessionId = "";
@@ -192,6 +201,11 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       async sessionUpdate({ sessionId: updatedSession, update }) {
         if (sessionId && updatedSession !== sessionId) return;
         touch();
+        if (update.sessionUpdate === "config_option_update") {
+          announced = update.configOptions;
+          onAnnounced?.();
+          return;
+        }
         if (replaying) return; // history replayed by session/load is not new output
         switch (update.sessionUpdate) {
           case "usage_update": {
@@ -421,17 +435,41 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       const find = () => options.find((o) => (key === "model" ? isModelOption(o) : o.category === "thought_level" || /effort|reasoning/.test(o.id)));
       let option = find();
       if (!option && key === "effort") {
-        // An adapter may list the thinking levels only in its answer to a model choice, or a moment after the
-        // session opens: when the model was already the wanted one nothing was chosen, so ask for the options
-        // again by choosing the model it has, before deciding the agent has no such setting.
-        const model = options.find(isModelOption) as { id: string; currentValue?: string } | undefined;
-        if (model?.currentValue) {
-          const again = await Promise.race([connection.setSessionConfigOption({ sessionId, configId: model.id, value: model.currentValue }), failed]).catch(() => null);
-          if (again?.configOptions) {
-            options = again.configOptions;
+        // An adapter may list the thinking levels only in its answer to a model choice, or some seconds after the
+        // session opens: one has opened sessions before its model list was loaded, and a run that named a level
+        // then failed within a second and passed when retried. So ask again by choosing the model it already has,
+        // and when the level was asked for by name keep asking for a while before deciding there is no such setting.
+        const started = Date.now();
+        const until = started + (opts.strictSelection?.effort ? effortWaitMs : 0);
+        for (let pause = 300; ; pause = Math.min(pause * 2, 2_500)) {
+          if (announced) {
+            options = announced;
+            announced = null;
+            option = find();
+            if (option) break;
+          }
+          const model = options.find(isModelOption) as { id: string; currentValue?: string } | undefined;
+          if (model?.currentValue) {
+            const again = await Promise.race([connection.setSessionConfigOption({ sessionId, configId: model.id, value: model.currentValue }), failed]).catch(() => null);
+            if (again?.configOptions) options = again.configOptions;
             option = find();
           }
+          if (option || Date.now() >= until) break;
+          if (pause === 300) emitSetup({ type: "status", text: "后端还没列出思考强度的选项，等它加载完再取" });
+          await Promise.race([
+            new Promise<void>((done) => {
+              const timer = setTimeout(done, pause);
+              onAnnounced = () => {
+                clearTimeout(timer);
+                done();
+              };
+            }),
+            failed,
+          ]);
+          onAnnounced = null;
+          touch();
         }
+        if (option && Date.now() - started > 1_000) emitSetup({ type: "status", text: `思考强度的选项过了 ${Math.round((Date.now() - started) / 1000)} 秒才出现` });
       }
       if (!option && key === "model" && session.models?.availableModels?.length) {
         const ids = session.models.availableModels.map((m) => m.modelId);

@@ -3,6 +3,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, newId, now, truncate, webLink } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 import { fieldsText, normalizeAnswers, summarizeAnswers, viewText, type AskUi, type ViewComponent } from "./ui-blocks.ts";
+import { noteChoices } from "../items/choices.ts";
 
 /** Marks a line of a tool's result that is for the agent (how to go on), not for the owner reading the approval's outcome. */
 export const AGENT_NOTE = "（给 Agent）";
@@ -483,6 +484,8 @@ async function recordAnswer(app: App, before: Ask, context: Record<string, unkno
     ).changes;
   });
   if (!changed) throw new HttpError(409, "这个提问已经回答过了");
+  // Whatever the place it was answered in, the person's choice on a proposal is kept in one record (items/choices.ts).
+  try { noteChoices(app, getAsk(app, id), context); } catch (e) { console.warn(`[omem] 提问 ${id} 的取舍没有记下：${(e as Error).message}`); }
   // Persist and acknowledge a channel click before running effects that may block on Git.
   const finish = async (): Promise<Ask> => {
     // An approval the host handles itself (a command held by the command rules) has no tool to run.

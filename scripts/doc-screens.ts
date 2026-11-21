@@ -38,13 +38,14 @@ import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import type { ChangeType } from "../src/items/changes.ts";
 import { createLine } from "../src/items/lines.ts";
-import { sendToday } from "../src/items/today.ts";
+import { attachBrief, sendToday } from "../src/items/today.ts";
 import { itemContext, saveContext } from "../src/channels/listen.ts";
 import { setParent } from "../src/items/parent.ts";
 import { parseFlow } from "../src/flows/definitions.ts";
 import { changeStage } from "../src/flows/store.ts";
 import { createDesign, getDesign, setConcernState, submitRevision } from "../src/designs/store.ts";
-import { saveReqs } from "../src/items/requirements.ts";
+import { recordReqStatus, saveReqs } from "../src/items/requirements.ts";
+import { recordTests } from "../src/items/req-tests.ts";
 import { remember } from "../src/memory/store.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { resolveCitationsNow } from "../src/channels/citations.ts";
@@ -684,6 +685,17 @@ for (const [i, d] of delivery.stages.entries()) {
   run(app.db, "update item_stages set entered_at=?,done_at=?,since=? where item_id=? and stage_id=?", finished ? flowAt(28 - i * 6) : active ? flowAt(4) : null, finished ? flowAt(24 - i * 6) : null, flowAt(active ? 4 : 24 - i * 6), flowItem.id, d.id);
   run(app.db, "update item_stage_log set at=? where item_id=? and stage_id=?", flowAt(active ? 4 : 24 - i * 6), flowItem.id, d.id);
 }
+// Its chain (items/chain.ts): the 退款申请页 node it is about, the confirmed design whose first decision names
+// it, the delegation that implemented it (its review state and a passing test on that node), and a finding
+// on the negative split that started the earlier delegation, still in review.
+{
+  await addMaterials(app, flowItem.id, [{ kind: "req", ref: requirementPages.apply }], "owner");
+  run(app.db, "update designs set body = json_set(body, '$.decisions[0].reqs', json_array(?)), work_id = ? where id = ?", requirementPages.apply, flowRun.id, flowDesign.id);
+  recordReqStatus(app, flowRun.id, 1, [{ req: requirementPages.apply, status: "done", implementation: "按已发货行计算可退金额" }]);
+  recordTests(app, { runId: flowRun.id, workId: flowRun.id, spaceId: "shop", round: 1, by: "agent", tests: [{ req: requirementPages.apply, name: "只退已发货的行", file: "test.js", status: "passed" }, { req: requirementPages.apply, name: "尾差归最后一行", file: "test.js", status: "passed" }] });
+  run(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,round,work_id,created_at,updated_at) values(?,?,'defect',?,?,'[]','confirmed',1,?,?,?)",
+    "sf_demo_negative", flowItem.id, "满减分摊到最后一行出现负数", "大额满减券、三行都已发货的订单申请退款，最后一行可退金额是负数。", r.id, flowAt(30), flowAt(30));
+}
 
 // ---- two work lines for the work page (#/, #/work/:id) -----------------------------------------
 // 示例商城 · 退款改造: the requirement above (in its flow, waiting for the owner to push) with a defect
@@ -722,6 +734,8 @@ noteChange(refundLine.id, ago(17, 3), { type: "scope", origin: "follow", summary
 noteChange(refundLine.id, ago(13, 5), { type: "decision", origin: "follow", summary: "满减按各行实付比例分摊，尾差归最后一行", detail: "阿青在群里定的口径，和需求文档第 8 行一致。", refs: [`src:${chat}#L3-L3`, `src:${prd}#L8-L9`] });
 noteChange(flowItem.id, ago(10, 2), { type: "stage", origin: "flow", summary: "「澄清需求」做完：三处退款金额的口径对齐了", refs: [`src:${prd}#L7-L10`] });
 noteChange(refundLine.id, ago(7, 6), { type: "deadline", origin: "follow", summary: "全量上线从 11 月 28 日推到 12 月 2 日", detail: "回放上月数据要多两天准备测试账号。", risk: "再往后推会撞上 12 月的大促封板", next: "回放脚本本周内跑通", refs: [`src:${chat}#L2-L2`] });
+// The same message noted first by the assistant in the owner's conversation, the date added by item-follow (items/changes.ts `added`).
+run(app.db, "update item_changes set origin = 'owner', source_key = 'lark:om_demo_deadline', added = ? where item_id = ? and type = 'deadline'", JSON.stringify([{ origin: "follow", runId: null, at: ago(7, 5), fields: ["due", "summary"] }]), refundLine.id);
 noteChange(refundLine.id, ago(4, 1), { type: "result", origin: "metric", summary: "测试环境退款错算率从 2.1% 降到 0.3%", detail: "按已发货行计算后，剩下的错算都来自满减分摊。" });
 noteChange(negDefect.id, ago(2, 4), { type: "blocker", origin: "problem", summary: "满减分摊到最后一行出现负数", detail: "大额满减券的订单，最后一行承担尾差后可退金额为负。", risk: "这类订单上线后会退出负数金额", next: "小王改成超出部分顺延到前一行，再补回归用例", refs: [`src:${chat}#L6-L6`] });
 noteChange(flowItem.id, ago(0, 4), { type: "stage", origin: "flow", summary: "编码评审通过，等你核对分支后推送", next: "核对分支，推送后进预发验收" });
@@ -1147,6 +1161,14 @@ const cand2 = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title:
 run(app.db, "update items set status = 'candidate' where id = ?", cand2.id);
 const stale = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "整理退款页的埋点清单", priority: 3 }, "user");
 upsertItem(app, stale.id, { status: "expired", note: "自动过期：14 天没有新进展（待办的默认期限），最后一次进展在 11 月 3 日。有新进展会重新打开，也可以在事项页恢复。" }, "agent");
+// Last night's profile review proposed two changes for the assistant; the metrics proposed above wait too.
+{
+  const { createProposal } = await import("../src/agents/proposals.ts");
+  createProposal(app, { target: "assistant", kind: "settings", title: "问退款单时能直接搜原件", reason: "最近三次问退款单，本人都补了一句“去对账单里查”", content: { add_tools: ["scan"] }, runId: null });
+  createProposal(app, { target: "assistant", kind: "prompt", title: "回答退款金额前先对一遍分摊口径", reason: "两次把满减按整单比例算错，本人纠正过", content: { prompt: "回答退款金额前，先读《退款改造需求》里的分摊口径，再算。" }, runId: null });
+}
+// The brief written before the card: its first paragraph.
+await attachBrief(app, `今天最要紧的是回小李：上月退款单的回放用哪个月的数据，他排在推送之后等你一句话。已备好：对账单里金额对不上的 3 单查过了，都是满减按整单比例分摊的旧路径（[差异表](#/items/${refundLine.id})）。`);
 await sendToday(app);
 
 // ---- capture ----------------------------------------------------------------------------------
@@ -1241,6 +1263,13 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
       while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
       (s ?? document.scrollingElement)?.scrollBy(0, -90);
     });
+    await p.waitForTimeout(400);
+  } },
+  // 需求到交付 on the work item, opened, with the requirement pointed at: what it is linked to lights up.
+  { name: "item-chain", path: `/work/${flowItem.id}`, prepare: async (p) => {
+    await p.locator(".chain-sum").click();
+    await p.locator(".item-chain").scrollIntoViewIfNeeded();
+    await p.locator(".chain-col").first().locator(".chain-row").first().hover();
     await p.waitForTimeout(400);
   } },
   { name: "work-line", path: `/work/${refundLine.id}`, init: { "omem.workAsk": "1", "omem.lineAsk": JSON.stringify({ [refundLine.id]: lineChat }) } },

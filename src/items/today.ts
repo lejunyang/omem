@@ -2,14 +2,17 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, truncate, webLink, zonedParts } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
-import { answerAsk, cancelAsk, createAsk, getAsk, registerAskHandler, type Ask } from "../agents/asks.ts";
+import { answerAsk, cancelAsk, createAsk, getAsk, registerAskHandler, reviseAsk, type Ask } from "../agents/asks.ts";
+import { isBuiltinRole } from "../agents/builtin-roles.ts";
+import { applyProposal, PROPOSAL_NOTICE_DAYS, proposalExpiresAt, rejectProposal } from "../agents/proposals.ts";
+import { defineMetric, getMetric } from "../data/metrics.ts";
 import type { UiField } from "../agents/ui-blocks.ts";
 import { decideCandidate, pendingCandidates } from "./auto.ts";
 import { autoInfo } from "./auto-cases.ts";
 import { digestFor, isLineEnded, keepItem, markDigestSent } from "./expiry.ts";
 import { LINE_END_CHOICES } from "./lifecycle.ts";
 import { decideNext, decideProposal, heldProposals, lineNextDue, linesCard, markNextShown, markProposalsOffered, mergeTargets, newNextSteps, NEXT_CHOICES, openLines, type Proposal } from "./lines.ts";
-import { pendingActions, type PendingAction } from "./pending.ts";
+import { pendingActions, pendingMetrics, pendingProfileProposals, type PendingAction } from "./pending.ts";
 import { getItem, isClosed } from "./store.ts";
 import { todayMinute, todayOn } from "./today-time.ts";
 import { descendantIds } from "./tree.ts";
@@ -26,18 +29,33 @@ import { descendantIds } from "./tree.ts";
  *    the assistant made (auto.ts), what closed by itself or closes tomorrow and the lines that ended
  *    (expiry.ts digestFor), the line-end questions asked at night (lifecycle.ts, held by today-time.ts),
  *    last night's replay suggestions.
- * 4. 不急的通知: how many wait for their time of day (notify.ts releaseLater still sends them then).
+ * 4. 复盘提的改动: what the profile reviews proposed (pending.ts pendingProfileProposals); a settings change
+ *    is 采纳 / 不要 on the card, a new prompt or skill is a link to the profile (it wants reading first).
+ * 5. AI 提议的指标: the metrics agents proposed (pending.ts pendingMetrics), each 留下 / 不要.
+ * 6. 不急的通知: how many wait for their time of day (notify.ts releaseLater still sends them then).
+ *
+ * The brief (jobs.ts `brief`, roles/brief.md), when it runs, is the card's first paragraph: written before
+ * the card it waits on the kv; written after, it goes into the same card (attachBrief). On Fridays the
+ * week's report, once written, is linked at the end.
  *
  * Each answered field goes to what the card it replaces did with it (decideNext, decideProposal,
- * decideCandidate, keepItem, the line-end question's own answer, resolveEffect); one decided elsewhere
- * meanwhile is skipped. With it on, the heartbeat sends no next-step card, item-digest no card for the
- * owner, work-state no proposal card (agents/jobs.ts, main.ts, agents/work-state-job.ts).
+ * decideCandidate, keepItem, the line-end question's own answer, resolveEffect, applyProposal /
+ * rejectProposal, defineMetric); one decided elsewhere meanwhile is skipped. With it on, the heartbeat
+ * sends no next-step card, item-digest no card for the owner, work-state no proposal card, the profile
+ * review no notification, the brief no notification of its own (agents/jobs.ts, main.ts,
+ * agents/work-state-job.ts, agents/profile-jobs.ts, agents/proposals.ts).
+ *
+ * Each section reads from one function (pendingActions, newNextSteps, heldProposals, pendingCandidates,
+ * digestFor, replayDigest, pendingProfileProposals, pendingMetrics): a filter on what the owner said no to
+ * goes there.
  */
 
 const DAY = 86_400_000;
 const WEEKDAYS = "日一二三四五六";
 /** At most this many of each on the card (a Feishu form holds a few dozen elements); the rest are on the work page. */
-export const TODAY_MAX = { pending: 3, lines: 6, next: 8, proposals: 4, candidates: 5, closed: 5, soon: 5, ended: 3, ends: 2, effects: 3 } as const;
+export const TODAY_MAX = { pending: 3, lines: 6, next: 8, proposals: 4, candidates: 5, closed: 5, soon: 5, ended: 3, ends: 2, effects: 3, profiles: 3, metrics: 4 } as const;
+/** The brief's paragraph on the card, at most (the role writes a few sentences). */
+const BRIEF_MAX = 1200;
 const FIELDS_MAX = 30;
 
 const kv = (app: App, key: string) => one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value ?? null;
@@ -57,7 +75,8 @@ type Built = { question: string; fields: UiField[]; context: Record<string, unkn
 
 /** What waits on the owner, but not what this card asks itself. */
 function waitingPart(app: App, pending: PendingAction[], skipAsks: Set<string>) {
-  const list = pending.filter((p) => p.label !== "今天" && p.via !== "candidate" && !(p.askId && skipAsks.has(p.askId)));
+  // Candidates, profile proposals and metrics have their own sections below.
+  const list = pending.filter((p) => p.label !== "今天" && p.via !== "candidate" && p.via !== "profile" && p.via !== "metric" && !(p.askId && skipAsks.has(p.askId)));
   if (!list.length) return "";
   const counts = new Map<string, number>();
   for (const p of list) counts.set(p.label, (counts.get(p.label) ?? 0) + (p.count ?? 1));
@@ -185,6 +204,63 @@ function laterPart(app: App, userId: string) {
   return n ? `**不急的通知**：攒着 ${n} 条，到设好的时间一起发；现在想看就${link(app, "打开通知", "#/notifications")}。` : "";
 }
 
+const PROPOSAL_KIND: Record<string, string> = { prompt: "改写提示词", skill: "写一个技能", settings: "改设置" };
+const profileHref = (target: string) => `#/agents?tab=agents&${isBuiltinRole(target) ? "role" : "name"}=${encodeURIComponent(target)}`;
+
+/**
+ * What the profile reviews proposed. A change of tools or skills reads in a line and is 采纳 / 不要 here;
+ * a rewritten prompt or a new skill is a link: it wants reading before it changes every later run.
+ */
+function profilePart(app: App, userId: string, fields: UiField[]) {
+  const list = pendingProfileProposals(app, userId);
+  if (!list.length) return { text: "", ids: [] as string[] };
+  const shown = list.slice(0, TODAY_MAX.profiles);
+  const ids: string[] = [], links: string[] = [];
+  const expires = (p: (typeof list)[number]) => p.noticedAt ? `（${md(app, new Date(Math.max(Date.parse(proposalExpiresAt(p.at)), Date.parse(p.noticedAt) + PROPOSAL_NOTICE_DAYS * DAY)).toISOString())}过期）` : "";
+  for (const p of shown) {
+    const what = `「${p.target}」${PROPOSAL_KIND[p.kind] ?? p.kind}：${oneLine(p.title, 60)}`;
+    if (p.kind === "settings" && fields.length < FIELDS_MAX) {
+      ids.push(p.id);
+      fields.push({ id: `a_${p.id}`, type: "choice", label: truncate(`${what}${expires(p)}`, 200), required: false, options: ["采纳", "不要"], group: "复盘提的改动", ...(p.reason ? { help: oneLine(p.reason, 200) } : {}) });
+    } else links.push(`- ${what}${expires(p)}，${link(app, "看一下再定", profileHref(p.target))}`);
+  }
+  const head = `**复盘提的改动（${list.length}）**：Agent 和角色从最近的运行里学到的${ids.length ? "，改设置的在下面选" : ""}`;
+  return { text: [head, ...links, list.length > shown.length ? more(list.length - shown.length, `在 ${link(app, "Agent 页", "#/agents?tab=agents")}`) : ""].filter(Boolean).join("\n"), ids };
+}
+
+/** The metrics agents proposed, each 留下 / 不要 (the data page's “等你确认” does the same). */
+function metricPart(app: App, userId: string, fields: UiField[]) {
+  const list = pendingMetrics(app, userId);
+  if (!list.length) return { text: "", ids: [] as string[] };
+  const shown = list.slice(0, Math.max(0, Math.min(TODAY_MAX.metrics, FIELDS_MAX - fields.length)));
+  const title = (id: string | null) => (id ? one<{ title: string }>(app.db, "select title from items where id = ?", id)?.title ?? "" : "");
+  for (const m of shown) {
+    const of = title(m.itemId);
+    fields.push({ id: `m_${m.id}`, type: "choice", label: truncate(`${m.name}${m.unit ? `（${m.unit}）` : ""}`, 200), required: false, options: ["留下", "不要"], group: "AI 提议的指标",
+      ...(m.why || of ? { help: oneLine([m.why, of ? `事项「${of}」` : ""].filter(Boolean).join("；"), 200) } : {}) });
+  }
+  const rest = list.length - shown.length;
+  return { text: `**AI 提议的指标（${list.length}）**：留下的变化大时告诉你，不要的不再提${shown.length ? "，在下面选" : ""}。${rest > 0 ? more(rest, `在 ${link(app, "数据页", "#/insights?tab=work")}`) : ""}`, ids: shown.map((m) => m.id) };
+}
+
+/** The brief written for this day (attachBrief), or "". */
+function briefPart(app: App, at: Date) {
+  const b = kv(app, "today_brief");
+  if (!b) return "";
+  try {
+    const v = JSON.parse(b) as { day?: string; text?: string };
+    return v.day === zonedParts(at, app.config.timezone).date ? (v.text ?? "").trim() : "";
+  } catch { return ""; }
+}
+
+/** On a Friday, the week's report once it is written (agents/weekly-report.ts). */
+async function weeklyPart(app: App, at: Date) {
+  if (zonedParts(at, app.config.timezone).weekday !== 5) return "";
+  const { weeklyReportFile } = await import("../agents/weekly-report.ts");
+  const f = weeklyReportFile(app, at);
+  return f ? `本周的周报写好了：${link(app, `周报 · ${f.label}`, `#/sources/${encodeURIComponent(f.id)}`)}` : "";
+}
+
 /**
  * The card's text and fields for a person (the owner), or null when there is nothing to say. Reads only:
  * `markToday` records what it offered.
@@ -194,18 +270,57 @@ export async function buildToday(app: App, at = new Date(), userId = OWNER): Pro
   const lines = linesPart(app, at, userId, fields);
   const night = nightPart(app, at, userId, fields);
   const replay = userId === OWNER ? await replayPart(app, fields) : { text: "", effects: [], ran: false };
+  const profiles = profilePart(app, userId, fields);
+  const metrics = metricPart(app, userId, fields);
   const skip = new Set((night.ctx.ends as string[] | undefined) ?? []);
   const waiting = waitingPart(app, await pendingActions(app, userId), skip);
   const nightText = [night.text, replay.text && (night.text ? replay.text : `**夜里整理出来的**\n${replay.text}`)].filter(Boolean).join("\n");
+  const brief = userId === OWNER ? briefPart(app, at) : "";
   const later = laterPart(app, userId);
-  const sections = [waiting, lines.text, nightText, later].filter(Boolean);
-  // Held notifications alone are no reason for a card: they go out at their own times anyway.
-  if (!waiting && !lines.text && !nightText) return null;
+  const weekly = userId === OWNER ? await weeklyPart(app, at) : "";
+  const sections = [brief, waiting, lines.text, nightText, profiles.text, metrics.text, later, weekly].filter(Boolean);
+  // Held notifications (and the week's report, notified on its own) alone are no reason for a card.
+  if (!brief && !waiting && !lines.text && !nightText && !profiles.text && !metrics.text) return null;
   return {
     question: [`**${todayTitle(app, at)}**`, ...sections, fields.length ? "下面能选的选了再提交，可以只选一部分；没选的照旧在工作页“需要你处理”和各条线上。" : ""].filter(Boolean).join("\n\n"),
     fields,
-    context: { handler: "today", day: zonedParts(at, app.config.timezone).date, next: lines.offered, ...night.ctx, ...(replay.effects.length ? { effects: replay.effects } : {}), replayRan: replay.ran },
+    context: {
+      handler: "today", day: zonedParts(at, app.config.timezone).date, next: lines.offered, ...night.ctx, ...(replay.effects.length ? { effects: replay.effects } : {}), replayRan: replay.ran,
+      ...(profiles.ids.length ? { profiles: profiles.ids } : {}), ...(metrics.ids.length ? { metrics: metrics.ids } : {}), ...(brief ? { brief: true } : {}),
+    },
   };
+}
+
+/** The brief as the card's first paragraph: after the title line. */
+function withBrief(question: string, brief: string) {
+  const at = question.indexOf("\n\n");
+  return at < 0 ? `${question}\n\n${brief}` : `${question.slice(0, at)}\n\n${brief}${question.slice(at)}`;
+}
+
+/**
+ * The brief run's text, for this morning's card (jobs.ts `brief` with 今天 on). Before the card: kept
+ * for it (`held`). After it: into the same card while it waits (`revised`), or a card of its own when
+ * there was nothing else to say today (`sent`). `late`: the card was answered already; the caller sends
+ * the brief as it did before 今天.
+ */
+export async function attachBrief(app: App, text: string, at = new Date()): Promise<"held" | "revised" | "sent" | "late"> {
+  const body = truncate(text.trim(), BRIEF_MAX);
+  if (!body) return "held";
+  const day = zonedParts(at, app.config.timezone).date;
+  setKv(app, "today_brief", JSON.stringify({ day, text: body }));
+  if (kv(app, "today_card_day") !== day) return "held";
+  const card = one<{ id: string; status: string; question: string; brief: number | null }>(app.db,
+    `select id, status, question, json_extract(context, '$.brief') brief from asks where user_id = ? and json_extract(context, '$.handler') = 'today'
+       and json_extract(context, '$.day') = ? order by created_at desc limit 1`, OWNER, day);
+  if (card?.status === "pending") {
+    if (!card.brief) {
+      run(app.db, "update asks set context = json_set(context, '$.brief', 1) where id = ?", card.id);
+      await reviseAsk(app, card.id, withBrief(card.question, body));
+    }
+    return "revised";
+  }
+  if (card) return "late";
+  return (await sendToday(app, at, OWNER)) ? "sent" : "late";
 }
 
 /** What a sent card offered counts as offered: the next card starts after it. */
@@ -306,6 +421,18 @@ async function settle(app: App, ask: Ask, ctx: Record<string, unknown>) {
       const p = pick(`x_${id}`);
       if (p) await tryOne("复盘建议", () => { if (resolveEffect(app, id, p === "采纳" ? "adopt" : "ignore").message !== "已经处理过了") count(p === "采纳" ? "采纳" : "忽略"); });
     }
+  }
+  for (const id of (ctx.profiles as string[] | undefined) ?? []) {
+    const p = pick(`a_${id}`);
+    // Taken up or put down on the profile's page meanwhile.
+    if (!p || !one(app.db, "select 1 from profile_proposals where id = ? and status = 'pending'", id)) continue;
+    await tryOne("复盘提的改动", () => { if (p === "采纳") applyProposal(app, id, by); else rejectProposal(app, id, by); count(p === "采纳" ? "采纳改动" : "不要改动"); });
+  }
+  for (const id of (ctx.metrics as string[] | undefined) ?? []) {
+    const p = pick(`m_${id}`);
+    const m = p ? getMetric(app, id) : null;
+    if (!m || m.status !== "proposed") continue;
+    await tryOne("指标", () => { defineMetric(app, { id: m.id, name: m.name, status: p === "留下" ? "active" : "dropped" }, { by: "owner" }); count(p === "留下" ? "留下指标" : "不要指标"); });
   }
   const said = Object.entries(done).map(([k, n]) => `${k} ${n}`).join("，");
   run(app.db, "update asks set result = ? where id = ?", said ? `已处理：${said}` : "没有要改的", ask.id);

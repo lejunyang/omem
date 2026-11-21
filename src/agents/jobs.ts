@@ -91,11 +91,12 @@ const CONNECTION_LOST = /EPIPE|ECONNRESET|connection closed/i;
 /** A failure this soon after starting, before any tool call, did nothing yet. */
 const RETRY_WITHIN_MS = 120_000;
 
-async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: string, spaces?: string[] | null, readSpaces?: string[]) {
+async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: string, spaces?: string[] | null, readSpaces?: string[], denyTools?: string[]) {
   let acted = false;
   const attempt = () =>
     runRole(ctx.app, {
       role,
+      ...(denyTools?.length ? { denyTools } : {}),
       requiredTools: role === "item-keeper" ? ["settle_items"] : undefined,
       spaceId,
       spaces,
@@ -363,7 +364,9 @@ async function runAgentTask(ctx: RunContext) {
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
       addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []),
         // A look at a line hands in what it found (items/lines.ts); it may also find nothing new.
-        ...((ctx.run.input as { lineState?: string }).lineState ? ["submit_line_state", "stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []), ...lent],
+        ...((ctx.run.input as { lineState?: string }).lineState ? ["submit_line_state", "stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []),
+        // A meeting's summary hands in what it decided for the items it is about (agents/meeting-outcomes.ts).
+        ...(typeof (ctx.run.input as { meetingId?: unknown }).meetingId === "string" && !(ctx.run.input as { meetingWindow?: boolean }).meetingWindow ? ["meeting_outcomes"] : []), ...lent],
       execution,
       // A rule's switch turns it on for its runs; left off, they follow the agent's own setting (prepareRun),
       // like every other run of that agent. (Off used to mean off even with the assistant on full access:
@@ -1415,7 +1418,13 @@ registerHandler("brief", async (ctx) => {
   // What the owner is working on these weeks (work-state.ts): the brief prepares the next step of each line where it can.
   const { workStateBrief } = await import("./work-state.ts");
   const lines = workStateBrief(app, 4000);
+  // With 今天 on, the brief is that card's first paragraph (items/today.ts attachBrief), not a notification of its own.
+  const { todayOn } = await import("../items/today-time.ts");
+  const merged = todayOn(app);
   const task = [
+    merged
+      ? "这次并进“今天”：写好的简报是早上“今天”那张卡的开头一段，宿主放进去。不要调用 notify；最后一条消息只写简报正文，按角色说明里“并进今天”的写法。"
+      : "这次单独发：按角色说明的结构写，最后调用 notify。",
     `时间范围：${since} 至今`,
     exploration,
     lines ? `本人近况（他这段时间在推进的线；按角色说明先替他备好今天用得上的）：\n${lines}` : "",
@@ -1434,9 +1443,15 @@ registerHandler("brief", async (ctx) => {
   ]
     .filter(Boolean)
     .join("\n\n");
-  const r = await agent(ctx, "brief", "personal", task, null);
+  const r = await agent(ctx, "brief", "personal", task, null, undefined, merged ? ["notify"] : undefined);
   run(app.db, "insert into kv(key,value) values('brief_at', ?) on conflict(key) do update set value = excluded.value", until);
-  return { summary: r.text.trim() };
+  if (!merged) return { summary: r.text.trim() };
+  const text = replyOf(r).trim();
+  const { attachBrief, todayTitle } = await import("../items/today.ts");
+  const where = await attachBrief(app, text);
+  // The morning's card was answered before the brief was done: it goes out as it did before 今天.
+  if (where === "late" && text) notify(app, { title: `简报 · ${todayTitle(app).replace(/^今天 · /, "")}`, body: truncate(text, 1500), runId: ctx.run.id });
+  return { summary: text, today: where };
 });
 
 // ------------------------------------------------------------------ curate

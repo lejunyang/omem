@@ -509,7 +509,11 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   // The item's timeline records the outcome (an item deleted since then has none).
   if (input.itemId && one(app.db, "select 1 from items where id = ?", input.itemId)) {
     const { addItemEvent } = await import("../items/store.ts");
-    addItemEvent(app, input.itemId, "note", `${branchReview ? (rere ? "分支复审" : "分支评审") : `交办第 ${round} 轮评审`}${approved ? "通过" : "要求修改"}（${run.id}）${rereLine ? `；${rereLine}` : ""}${lead.summary ? `：${truncate(lead.summary, 400)}` : ""}`);
+    const verdict = `${branchReview ? (rere ? "分支复审" : "分支评审") : `交办第 ${round} 轮评审`}${approved ? "通过" : "要求修改"}`;
+    addItemEvent(app, input.itemId, "note", `${verdict}（${run.id}）${rereLine ? `；${rereLine}` : ""}${lead.summary ? `：${truncate(lead.summary, 400)}` : ""}`);
+    // The verdict as a result on the line's timeline (items/changes.ts), once per review run.
+    const { addChange } = await import("../items/changes.ts");
+    addChange(app, { itemId: input.itemId, type: "result", origin: "review", source: `review:${run.id}`, runId: run.id, refs: [`run:${run.id}`], summary: verdict, detail: lead.summary ? truncate(lead.summary, 1000) : null });
   }
   return { verdict: approved ? "approved" : "changes-requested" };
 }
