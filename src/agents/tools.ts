@@ -3675,7 +3675,7 @@ def({
   schema: z.object({
     item_id: z.string().describe("本人的工作线或事项 id"),
     member: z.string().trim().min(1).max(100).describe("问谁：omem 用户的 id 或名字"),
-    question: z.string().trim().min(2).max(300).describe("问什么，一两句，写清要知道的那一点（不要写成催促）"),
+    question: z.string().trim().min(2).max(300).describe("问什么，一两句，直接对 ta 说（用“你”，不要写“替本人”“本人”），写清要知道的那一点，不要写成催促"),
   }),
   handler: async (ctx, a) => {
     if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的运行能替本人向成员要进展");

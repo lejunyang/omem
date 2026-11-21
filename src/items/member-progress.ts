@@ -9,6 +9,7 @@ import { itemAccess } from "./access.ts";
 import { recordChange } from "./changes.ts";
 import { changeFilter, displayName, viewerOf } from "./member-work.ts";
 import { addItemEvent, getItem, isClosed, type Item } from "./store.ts";
+import { rootOf } from "./tree.ts";
 
 /**
  * The assistant asks a member, for the owner, how one of the owner's lines or items is going
@@ -42,8 +43,16 @@ export function checkProgressAsk(app: App, itemId: string, who: string): { item:
   if (member.disabledAt || member.status !== "active" || member.kind !== "person") throw new HttpError(400, `${member.name} 现在不能用 omem`);
   if (member.role === "observer") throw new HttpError(403, `${member.name} 是只读的观察者，不能回答进展`);
   // They read it on the work page (the line, item by item), or as an item they may read.
-  const onLine = changeFilter(app, viewerOf(app, member.id))(item.id);
-  if (!onLine && !itemAccess(app, member.id, item, "read")) throw new HttpError(403, `${member.name} 读不到「${item.title}」：先让 ta 能读这件事所在的空间`);
+  const sees = changeFilter(app, viewerOf(app, member.id));
+  const onLine = sees(item.id);
+  if (!onLine && !itemAccess(app, member.id, item, "read")) {
+    // The line it hangs under may be theirs to read: ask about that instead.
+    const root = rootOf(app, item.id);
+    const line = root !== item.id && sees(root) ? getItem(app, root) : null;
+    throw new HttpError(403, line
+      ? `${member.name} 读不到「${item.title}」，但看得到它所在的线「${line.title}」（${line.id}）：改问这条线，问题里说清是哪一部分`
+      : `${member.name} 读不到「${item.title}」：先让 ta 能读这件事所在的空间`);
+  }
   return { item, member, link: webLink(app, onLine ? `#/work/${encodeURIComponent(item.id)}` : `#/items/${encodeURIComponent(item.id)}`) };
 }
 
