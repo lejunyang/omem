@@ -33,7 +33,8 @@ export async function searchPost(app: App, cfg: Connection, path: string, body: 
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      const detail = await response.text();
+      // The status determines retries even if the optional error detail cannot be read.
+      const detail = await response.text().catch(() => "");
       const safe = key ? detail.replaceAll(key, "[已隐藏]") : detail;
       throw new SearchApiError(`HTTP ${response.status} ${safe.slice(0, 240)}`.trim(), response.status === 429 || response.status >= 500);
     }

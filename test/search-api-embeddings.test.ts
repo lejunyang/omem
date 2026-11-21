@@ -89,6 +89,23 @@ it.each([
   }
 });
 
+it.each([
+  { status: 400, attempts: 1 },
+  { status: 429, attempts: 3 },
+  { status: 503, attempts: 3 },
+])("收到 HTTP $status 后读取错误正文提前超时，按状态尝试 $attempts 次", async ({ status, attempts }) => {
+  const { app, calls, failure } = await setup();
+  failure(status);
+  const read = vi.spyOn(Response.prototype, "text").mockRejectedValue(new DOMException("example-secret", "TimeoutError"));
+  try {
+    expect(await embedQuery(app, "问题")).toBeNull();
+    expect(calls).toHaveLength(attempts);
+    expect(embeddingHealth(app).lastError).toBe(`HTTP ${status}`);
+  } finally {
+    read.mockRestore();
+  }
+});
+
 it("错误维度和条数整批作废，暂停后台并保留积压", async () => {
   const s = await setup();
   for (const fault of ["dim", "count"]) {
