@@ -175,8 +175,8 @@ export function maintainBoards(app: App, restart = false) {
   if (!restart && !one(app.db, `select 1 from agent_work_tasks where status in ${active} and deadline_at<=? limit 1`, now())) return;
   const changed = tx(app.db, () => {
     // Read the current attempt under the write lock: another process may have just retried it.
-    const rows = all<TaskRow & { state: string | null; ended: string | null; answer: string | null; error: string | null }>(app.db,
-      `select t.*, r.status state,r.finished_at ended,substr(json_extract(r.output,'$.answer'),1,2000) answer,r.error
+    const rows = all<TaskRow & { board_device: string | null; state: string | null; ended: string | null; answer: string | null; error: string | null }>(app.db,
+      `select t.*, json_extract(r.input,'$.boardDevice') board_device,r.status state,r.finished_at ended,substr(json_extract(r.output,'$.answer'),1,2000) answer,r.error
        from agent_work_tasks t left join runs r on r.id=t.run_id where t.status in ${active}
        ${restart ? "and (r.id is null or (r.status!='queued' and json_extract(r.input,'$.boardDevice.mode') is not 'remote') or t.deadline_at<=?)" : "and t.deadline_at<=? limit 100"}`, now());
     const boards = new Set<string>();
@@ -185,7 +185,7 @@ export function maintainBoards(app: App, restart = false) {
       const timeout = (t.ended ?? now()) >= t.deadline_at;
       if (!ended && t.state) {
         stopBoardRun(app, t);
-        if (restart && t.state === "running" || getRun(app,t.run_id).input.boardDevice) {
+        if (restart && t.state === "running" || t.board_device) {
           run(app.db, "update runs set status='failed',error='服务重启',finished_at=? where id=?", now(), t.run_id);
         }
       }
