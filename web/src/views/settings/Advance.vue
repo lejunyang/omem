@@ -2,6 +2,7 @@
 import { toast } from "../../store";
 import { useSettings } from "./ctx";
 import FlowSettings from "../../components/FlowSettings.vue";
+import ItemSyncSettings from "../../components/ItemSyncSettings.vue";
 import SetCard from "../../components/SetCard.vue";
 import SetRow from "../../components/SetRow.vue";
 import Skeleton from "../../components/Skeleton.vue";
@@ -104,6 +105,8 @@ async function saveItemDays(kind: string, raw: string) {
         <UiCheckbox :model-value="config.items.infer" switch aria-label="你回过话的事项交给助理判断是否已办" @change="(v) => saveItems({ infer: v })" />
       </SetRow>
     </SetCard>
+
+    <ItemSyncSettings />
   </div>
 </template>
 

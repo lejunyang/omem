@@ -46,7 +46,7 @@ const VIEWS: Partial<Record<Tab, ReturnType<typeof defineAsyncComponent>>> = {
 const CARDS: Record<string, Tab> = {
   mentions: "reply", guests: "reply", commands: "reply", invite: "reply", "reply-check": "reply", "reply-outcome": "reply",
   "notify-times": "notify", progress: "notify",
-  "auto-advance": "advance", "flow-follow": "advance", "gate-ladder": "advance", "commit-claim": "advance", design: "advance", "study-envs": "advance", "item-expiry": "advance",
+  "auto-advance": "advance", "flow-follow": "advance", "gate-ladder": "advance", "commit-claim": "advance", design: "advance", "study-envs": "advance", "item-expiry": "advance", "item-sync": "advance",
   audit: "review", replay: "review",
   backends: "agents", tiers: "agents", fallback: "agents",
   "memory-quality": "search", rerank: "search", embeddings: "search", "passive-memory": "search",

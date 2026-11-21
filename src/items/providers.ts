@@ -68,8 +68,12 @@ export function configureTarget(app: App, userId: string, input: z.input<typeof 
   });
 }
 
+/** The person's subscriptions, each with how many items it brought in and when it last read the platform. */
 export function targetsOf(app: App, user: string) {
-  return all<Target>(app.db, "select * from item_provider_targets where user_id=?", user)
+  return all<Target & { items: number; synced_at: string | null }>(app.db, `select t.*,
+    (select count(*) from external_item_links l where l.target_id=t.id and l.dismissed=0) as items,
+    (select max(l.synced_at) from external_item_links l where l.target_id=t.id) as synced_at
+    from item_provider_targets t where t.user_id=? order by t.rowid`, user)
     .filter(t => can(app, user, "space.read", t.space_id));
 }
 
@@ -169,6 +173,14 @@ export function providerState(app: App, user: string, itemId: string) {
   if (!target) throw new HttpError(404, "找不到订阅");
   if (target.space_id !== item.spaceId) throw new HttpError(403, "事项空间已变化");
   return { target, syncedAt: link.synced_at, direction: link.direction, error: link.error, external: JSON.parse(link.snapshot) as ExternalItem, write: writeFor(app, itemId) ?? null };
+}
+
+/** What the item page shows of the platform entry an item came from (GET /api/items/:id, /api/work/:id). */
+export function externalView(state: NonNullable<ReturnType<typeof providerState>>) {
+  return {
+    ...state.external, provider: state.target.provider, providerLabel: itemProviders.get(state.target.provider)?.def.label ?? null,
+    syncedAt: state.syncedAt, direction: state.direction, error: state.error, write: state.write,
+  };
 }
 
 /** Local status changes on a linked item can schedule an action using the subscriber's connection. */

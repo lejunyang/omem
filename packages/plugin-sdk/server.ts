@@ -25,6 +25,8 @@ export type ExternalItem = {
 };
 export type ItemProvider = {
   id: string; label: string; statuses: Record<string, "active" | "done" | "cancelled">;
+  /** What a subscription's target is, shown beside the box the person types it in: "仓库，写成 owner/repo". */
+  targetHint?: string;
   pull(ctx: CallContext, req: { target: string; cursor?: string }): Promise<{ items: ExternalItem[]; cursor?: string; done: boolean }>;
   setStatus?(ctx: WriteContext, req: { key: string; status: string; expectedRevision?: string }): Promise<{ revision?: string; status: string }>;
 };

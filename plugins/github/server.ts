@@ -58,7 +58,7 @@ export async function mergePullRequest(c: PluginConnection, pr: string, method: 
 
 export default function register(api: PluginApi) {
   api.itemProvider({
-    id: "issues", label: "GitHub Issues", statuses: { open: "active", closed: "done" },
+    id: "issues", label: "GitHub Issues", statuses: { open: "active", closed: "done" }, targetHint: "仓库，写成 owner/repo",
     async pull(ctx, { target, cursor }) {
       const c = await ctx.connection("connect-github");
       if (!c) throw new Error("请先在账号页连接 GitHub");

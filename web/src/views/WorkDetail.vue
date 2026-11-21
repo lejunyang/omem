@@ -10,6 +10,8 @@ import ItemMetrics from "../components/ItemMetrics.vue";
 import LineAsk from "../components/LineAsk.vue";
 import Markdown from "../components/Markdown.vue";
 import RichText from "../components/RichText.vue";
+import ItemExternal from "../components/ItemExternal.vue";
+import type { ItemExternal as External } from "../lib/item-sync";
 import Skeleton from "../components/Skeleton.vue";
 import Sparkline from "../components/charts/Sparkline.vue";
 import UiSelect from "../components/UiSelect.vue";
@@ -37,7 +39,7 @@ import { itemKindLabel, relTime, state, toast } from "../store";
  */
 type WItem = Item & { parentId: string | null; now: LineNow | null };
 type Detail = {
-  item: WItem; ancestors: { id: string; title: string }[]; now: LineNow | null; next: NextLite[]; children: Child[]; timeline: ChangeLite[];
+  item: WItem; /** The platform entry it was brought in from (lib/item-sync.ts). */ external?: External | null; ancestors: { id: string; title: string }[]; now: LineNow | null; next: NextLite[]; children: Child[]; timeline: ChangeLite[];
   chats: ChatActivity[]; materials: Material[]; listen: { id: string; status: "active" | "paused" } | null; flow: (FlowLite & { waitingOn: string | null }) | null;
   /** Its life (src/items/lifecycle.ts). */
   phase: "watching" | null; phaseSince: string | null; watchUntil: string | null; summary: string | null;
@@ -323,6 +325,8 @@ const editing = ref(false);
           </div>
         </header>
 
+        <ItemExternal v-if="d.external" class="ext" :item-id="item.id" :external="d.external" :editable="editable" @changed="load" />
+
         <!-- 观察中 / 已结束: where the line is in its life, and the one thing to do about it. -->
         <section v-if="d.ended && top" class="phase ended" aria-label="这条线已结束">
           <div class="ph-head">
@@ -513,6 +517,7 @@ const editing = ref(false);
 .state.watch i { background: transparent; border: 1.5px solid var(--accent); width: 8px; height: 8px; box-sizing: border-box; }
 
 /* 观察中 / 已结束: one band under the title. */
+.ext { padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
 .phase { display: grid; gap: 10px; padding: 12px 16px; border-radius: var(--radius); border: 1px solid var(--line); min-width: 0; }
 .phase.watch { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .phase.ended { background: var(--sunken); }

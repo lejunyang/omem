@@ -12,6 +12,7 @@ import { endedLines, endReason, guardsOf, setLinePhase } from "./lifecycle.ts";
 import { decideNext, nextOf, type NextLite } from "./lines.ts";
 import { materialViews } from "./materials.ts";
 import { setParent } from "./parent.ts";
+import { externalView, providerState } from "./providers.ts";
 import { getItem, isClosed, listItems, type Item, type LineNow } from "./store.ts";
 import { ancestorIds, descendantIds, openUnder, rootOf } from "./tree.ts";
 
@@ -188,8 +189,11 @@ export async function workDetail(app: App, id: string, userId: string) {
   try { chats = contextChats(app, root, c); } catch { /* the line is gone */ }
   const f = flowLite(app, id);
   const closed = isClosed(item.status);
+  // The platform entry it was brought in from (items/providers.ts), for its subscriber only.
+  let external: ReturnType<typeof externalView> | null = null;
+  try { const synced = providerState(app, userId, id); external = synced && externalView(synced); } catch { /* the subscription is gone, or is someone else's */ }
   return {
-    item, ancestors, now: item.now, next: nextView(app, id, userId),
+    item, external, ancestors, now: item.now, next: nextView(app, id, userId),
     // Its life (items/lifecycle.ts): the phase, when it ended and why, its closing summary, how many under it are open.
     phase: item.phase, phaseSince: item.phaseSince, watchUntil: item.watchUntil,
     summary: item.now?.summary ?? null,
