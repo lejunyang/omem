@@ -5,6 +5,11 @@ import { HttpError, newId, now } from "../core/util.ts";
 import { customizeRole, isBuiltinRole, saveRoleOverride, updateRoleMeta } from "./builtin-roles.ts";
 import { DEFAULT_SPEC_TOOLS, findAgentSpec, saveAgentSpec, saveSkill } from "./specs.ts";
 import { expandTools } from "./tool-help.ts";
+import { OWNER } from "../core/users.ts";
+import { contentVersion, fingerprint, mayPropose, recordChoice } from "../items/choices.ts";
+
+/** A profile change as an object of the owner's choices: the profile, the kind and the title. */
+export const proposalTarget = (p: { target: string; kind: string; title: string }) => `${p.target}:${p.kind}:${fingerprint(p.title)}`;
 
 /**
  * Changes proposed for a profile (agent spec or built-in role) by its review: a new prompt, a
@@ -25,6 +30,9 @@ export function profileExists(app: App, name: string) {
 export function createProposal(app: App, input: { target: string; kind: ProposalKind; title: string; reason: string; content: unknown; runId: string | null }) {
   if (!profileExists(app, input.target)) throw new HttpError(404, `没有 Agent 档案或内置角色 ${input.target}`);
   const content = proposalContent[input.kind].parse(input.content);
+  // Said 不要 to this change of this profile before, and it reads the same (items/choices.ts): not proposed again.
+  const said = mayPropose(app, OWNER, "profile", proposalTarget(input), contentVersion(JSON.stringify(content)));
+  if (!said.ok) throw new HttpError(409, `${said.why}：同样的改动不再提，内容变了才可以再提`);
   // One pending proposal per target and title: a later review refines it instead of piling up.
   const same = one<{ id: string }>(app.db, "select id from profile_proposals where target = ? and kind = ? and title = ? and status = 'pending'", input.target, input.kind, input.title);
   const id = same?.id ?? newId("pp");
@@ -89,6 +97,8 @@ export function applyProposal(app: App, id: string, by = "owner") {
 export function rejectProposal(app: App, id: string, by = "owner") {
   const r = run(app.db, "update profile_proposals set status = 'rejected', resolved_at = ?, resolved_by = ? where id = ? and status = 'pending'", now(), by, id);
   if (!r.changes) throw new HttpError(404, "没有待处理的这条建议");
+  const p = one<{ target: string; kind: string; title: string; body: string }>(app.db, "select target, kind, title, body from profile_proposals where id = ?", id)!;
+  recordChoice(app, { userId: OWNER, kind: "profile", target: proposalTarget(p), version: contentVersion(p.body), choice: "drop", via: by === "owner" ? "web" : by });
   return { ok: true };
 }
 

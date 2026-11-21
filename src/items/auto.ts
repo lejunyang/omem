@@ -5,6 +5,7 @@ import { decideScene, describeScene } from "../core/decision-log.ts";
 import { HttpError, localStamp, truncate } from "../core/util.ts";
 import { AUTO_EVENT, CASE_REASONS, autoInfo, creatorLabel, itemCases, WHY_PREFIX, type ItemCase } from "./auto-cases.ts";
 import { addItemEvent, getItem, upsertItem, type Item, type ItemKind } from "./store.ts";
+import { choiceOn, fingerprint, mayPropose, recordChoice } from "./choices.ts";
 
 /**
  * Items the assistant makes on its own must earn their place (docs/v2/status.md “自动建的事项”).
@@ -144,7 +145,10 @@ export function sameAutoItem(app: App, userId: string, title: string): { id: str
     userId, ...(spaceIds ? [JSON.stringify(spaceIds)] : []), since,
   );
   const hit = rows.find((r) => norm(r.title) === t);
-  return hit ? { id: hit.id, candidate: hit.status === "candidate", title: hit.title } : null;
+  if (hit) return { id: hit.id, candidate: hit.status === "candidate", title: hit.title };
+  // Said 不要 to one of that title in any place (the item page, 今天): the one record of choices (items/choices.ts).
+  const said = mayPropose(app, userId, "item-candidate", fingerprint(title));
+  return said.ok ? null : { id: choiceOn(app, userId, "item-candidate", fingerprint(title))?.into_ref ?? "", candidate: false, title };
 }
 
 /** Mark a new item as made by the assistant on its own, with its reason (the timeline shows it). */
@@ -159,6 +163,9 @@ export function decideCandidate(app: App, id: string, keep: boolean, userId: str
   const item = requireItem(app, id, userId, "operate");
   if (item.status !== "candidate") throw new HttpError(409, `「${item.title}」已经不是候选了`);
   const where = via === "card" ? "在飞书卡片上" : "在事项页上";
+  // Kept in the one record of choices, whichever place it was answered in: the item page, the digest card, 今天
+  // (whose answer path records it too, agents/asks.ts; the latest wins, so twice is the same).
+  recordChoice(app, { userId, kind: "item-candidate", target: fingerprint(item.title), choice: keep ? "keep" : "drop", into: id, via });
   return upsertItem(app, id, keep ? { status: item.kind === "waiting" ? "waiting" : "open", note: `本人${where}留下了这件候选事项` } : { status: "cancelled", note: `本人${where}不要这件候选事项` }, "user");
 }
 

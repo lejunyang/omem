@@ -143,6 +143,53 @@ export async function playbookText(app: App, c: ListenContext, _about = "", max 
   return playbookOf(app, c, max);
 }
 
+/** How much of what a 关注 learned goes into one turn: its batches and a direct @ in its group take the same. */
+export const WATCH_EXPERIENCE = { cases: 6, playbook: 4000, lessons: 10 } as const;
+export type WatchExperience = { cases: string; playbook: string; lessons: string; picked: { context: string; cases: string[]; playbook: boolean; lessons: number } };
+
+/**
+ * What a 关注 has learned that bears on these words: the nearest cases (listen-cases.ts nearCases), the
+ * coach's lessons (playbook) and the owner's latest decisions on its replies. One choice, one budget
+ * (WATCH_EXPERIENCE), for its own batches (agents/sessions.ts watchedMaterial) and for someone @-ing the
+ * bot in one of its groups (directExperience). `picked` is what was chosen, for the run.
+ */
+export async function watchExperience(app: App, c: ListenContext, about: { text: string; askerName?: string | null; chatId?: string | null }): Promise<WatchExperience> {
+  const { nearCases, casesText } = await import("./listen-cases.ts");
+  const cases = nearCases(app, { contextId: c.id, askerName: about.askerName ?? null, chatId: about.chatId ?? null, text: about.text }, WATCH_EXPERIENCE.cases);
+  const playbook = await playbookText(app, c, about.text, WATCH_EXPERIENCE.playbook);
+  const lessons = lessonsText(app, c, WATCH_EXPERIENCE.lessons);
+  return { cases: cases.length ? casesText(cases) : "", playbook, lessons, picked: { context: c.id, cases: cases.map((x) => x.id), playbook: !!playbook, lessons: lessons ? lessons.split("\n").length - 1 : 0 } };
+}
+
+/**
+ * For a turn answering someone who @-ed the bot in a group a 关注 reads: that 关注's experience on the
+ * question, as this turn's material (not standing instructions). Not for a guest (someone who is not a
+ * user, or a colleague the owner lets ask in a group, `asker`): the lessons carry the owner's preferences
+ * and how they talk to people, which a guest's turn never gets (AGENTS.md 访客模式). A member gets it only
+ * for a 关注 in a space they can read. Null when there is none, or nothing learned yet.
+ */
+export async function directExperience(app: App, p: { chatId: string; text: string; askerName?: string | null; userId: string; guest: boolean }): Promise<{ text: string; picked: WatchExperience["picked"] & { why: string } } | null> {
+  if (p.guest || !p.chatId) return null;
+  const { contextsOfChat } = await import("./listen.ts");
+  const { accessibleSpaces } = await import("../core/users.ts");
+  const allowed = p.userId === OWNER ? null : accessibleSpaces(app, p.userId);
+  // The one that answers in the group first (as for a message's lead), then the others.
+  const ctxs = contextsOfChat(app, p.chatId).filter((c) => c.kind !== "default" && (!allowed || (c.spaceId && allowed.includes(c.spaceId))))
+    .sort((a, b) => Number(b.knobs.reply !== "none") - Number(a.knobs.reply !== "none"));
+  for (const c of ctxs) {
+    const x = await watchExperience(app, c, { text: p.text, askerName: p.askerName, chatId: p.chatId });
+    if (!x.cases && !x.playbook && !x.lessons) continue;
+    const text = [
+      `# 关注「${c.name}」在这个群里学到的（这一轮的材料）`,
+      x.playbook ? `## 经验（listen-coach 按以往的案例总结的，和本人的决定冲突时以本人为准）\n\n${x.playbook}` : "",
+      x.cases ? `## 相近的案例\n\n${x.cases}` : "",
+      x.lessons ? `${x.lessons}\n上面是本人对这里回复的反应：不发的那类不要这样答，改过的照改后的写法，本人自己回的照他的口径。` : "",
+    ].filter(Boolean).join("\n\n");
+    return { text, picked: { ...x.picked, why: `这个群在关注「${c.name}」里，有人 @ 了机器人` } };
+  }
+  return null;
+}
+
 function briefCardSpec(c: ListenContext, revised: boolean) {
   const b = c.brief!;
   return {

@@ -10,6 +10,12 @@ export type ChangeLite = {
   id: string; at: string; type: string; summary: string; detail: string | null; risk: string | null; next: string | null;
   refs: string[]; status: string; origin: string; noise: boolean; itemId: string; itemTitle: string; lineId: string; lineTitle: string;
   refTargets?: Record<string, RefTarget>;
+  /** The change ledger (src/items/changes.ts): the run that first noted it, its source key, who added to it later. */
+  runId?: string;
+  sourceKey?: string;
+  added?: { origin: string; runId: string | null; at: string; fields: string[] }[];
+  /** Paths that stepped aside on the message behind it, and why (src/core/handling.ts; the line page only). */
+  yields?: { label: string; to: string; reason: string; at: string }[];
 };
 export type NextKind = "read" | "test" | "code" | "ask" | "data";
 export type NextLite = {
@@ -37,10 +43,24 @@ export type Place = { id: string; name: string; openProblems: number };
 
 /** What changed, in a word (the filter chips and the tag on a card). */
 export const changeTypeLabel: Record<string, string> = {
-  scope: "范围", decision: "决定", deadline: "时间", blocker: "风险", info: "信息", stage: "阶段", result: "结果", owner: "负责人", resolved: "解除",
+  scope: "范围", decision: "决定", deadline: "时间", blocker: "风险", info: "信息", stage: "阶段", result: "结果", owner: "负责人", resolved: "解除", todo: "待办", question: "待定",
 };
 /** Where a change was seen. */
-export const originLabel: Record<string, string> = { follow: "群聊和文档", flow: "流程", metric: "指标", problem: "在跟的问题", owner: "你定的", line: "观察与结束" };
+export const originLabel: Record<string, string> = { follow: "群聊和文档", flow: "流程", metric: "指标", problem: "在跟的问题", owner: "你定的", line: "观察与结束", meeting: "会议", review: "评审", commit: "提交认领" };
+/** What a change's source key names, in a few words (src/items/changes.ts sourceKeys). */
+export function sourceLabel(key: string | undefined) {
+  if (!key) return "";
+  const k = key.replace(/~\d+$/, "");
+  if (k.startsWith("lark:")) return "一条飞书消息";
+  if (k.startsWith("meeting:")) return "一场会议的记录";
+  if (k.startsWith("metric:")) return "一次指标越线";
+  if (k.startsWith("problem:")) return "一个在跟的问题";
+  if (k.startsWith("stage:")) return "流程的一段";
+  if (k.startsWith("review:")) return "一次评审";
+  if (k.startsWith("commits:")) return "一批提交";
+  if (k.startsWith("src:")) return "原件里的几行";
+  return "";
+}
 export const nextKindLabel: Record<NextKind, string> = { read: "读", test: "测", code: "改", ask: "问", data: "数据" };
 export const nextStatusLabel: Record<NextLite["status"], string> = { open: "没定", doing: "在做", done: "做完", declined: "不用", expired: "已过期" };
 export const itemStatusLabel: Record<string, string> = { open: "进行中", waiting: "等待中", snoozed: "稍后", done: "完成", cancelled: "取消", expired: "过期", candidate: "候选" };
