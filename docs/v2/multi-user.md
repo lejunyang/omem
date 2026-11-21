@@ -228,6 +228,7 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 | GET schedules、replays；PUT schedules/:id | 助手 | agents.manage → view / edit | 定时任务按空间过滤，省略运行参数，成员可改周期和启停。复盘返回状态和汇总 |
 | PUT agent-role-model；GET review-settings、review-options，PUT review-settings | AI / 助手 | 已按对应区域 view / edit 授权 | 角色模型配置与评审表单沿用原字段 |
 | GET auth/providers | 成员 | users.manage → view | 登录方式和回调地址，省略应用配置和诊断信息 |
+| GET diag | 系统、设备 | settings.manage → 本人 | 整机诊断含私有失败运行、路径和对等设备地址，成员请求返回 403 |
 | GET spaces、spaces/:id | 知识 | 登录及空间读取权限延续 | 空间列表省略仓库路径和内部设置，仅列可读空间 |
 | 对等设备、外部访问、出网、操作规则、AI 账号和密钥、后端安装及插件信任 | 对应区域 | 专用管理权限或本人 → 本人 | 成员不接收凭据、启动命令或设备连接资料 |
 

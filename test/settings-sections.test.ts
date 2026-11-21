@@ -6,6 +6,7 @@ import { testApp } from "./helpers.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
+import { savePeers } from "../src/core/peers.ts";
 import { saveRole } from "../src/auth/permissions.ts";
 import { configSchema } from "../src/core/config.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
@@ -140,6 +141,30 @@ it("成员读插件列表、详情和改图标都能渲染权限，服务命令�
     expect(edited.statusCode).toBe(200);
     expect(edited.json()).toEqual({ ...card, icon: "star", iconChosen: true });
   } finally { forgetPlugin("probe"); await server.close(); app.db.close(); }
+});
+
+it("整机诊断仅本人可读，旧 settings.manage 权限不能读取私有失败运行和设备地址", async () => {
+  const app = testApp();
+  saveRole(app, { id: "settings-admin", name: "设置管理", scope: "global", permissions: ["settings.manage"] });
+  createUser(app, { id: "manager", name: "成员", role: "settings-admin" });
+  const headers = { authorization: "Bearer " + createApiToken(app, "manager") };
+  savePeers(app, [{ id: "device", url: "https://device.example.org", token: "fixture", addedAt: "2026-01-01" }]);
+  app.db.prepare("insert into runs(id,kind,status,title,error,space_id,user_id,created_at) values('past','agent','failed','私有任务','示例错误','personal','owner','2026-01-01')").run();
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    expect((await server.inject({ url: "/api/settings?section=system", headers })).statusCode).toBe(200);
+    const url = "/api/diag";
+    const member = await server.inject({ url, headers });
+    expect(member.statusCode).toBe(403);
+    expect(member.json()).not.toHaveProperty("recentFailures");
+    expect(member.json()).not.toHaveProperty("peers");
+    const owner = await server.inject({ url });
+    expect(owner.statusCode).toBe(200);
+    expect(owner.json()).toMatchObject({
+      home: app.home, recentFailures: [{ title: "私有任务", error: "示例错误" }],
+      peers: [{ id: "device", url: "https://device.example.org" }],
+    });
+  } finally { await server.close(); app.db.close(); }
 });
 
 it("checks section grants on the card APIs and omits host settings from member responses", async () => {

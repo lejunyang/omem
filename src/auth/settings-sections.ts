@@ -97,6 +97,7 @@ export const ownerControls: Record<string, string[]> = {
     "POST /api/lark/bot-check/:ref/scan",
   ],
   "node": [
+    "GET /api/diag",
     "GET /api/peer/commands",
     "POST /api/peer/exec",
     "GET /api/peer/tools",
