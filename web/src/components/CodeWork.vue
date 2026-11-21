@@ -55,7 +55,7 @@ type RunContextInfo = {
   conversation: { id: string; title: string; channel: string; topic: boolean; work: boolean; parentId: string | null; parentTitle: string | null; turns: { id: string; title: string; status: string; createdAt: string }[] } | null;
   parent: { id: string; kind: string; title: string; status: string } | null;
 };
-type Detail = { run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo };
+type Detail = { can?: { operate: boolean; edit: boolean }; run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo };
 const work = ref<CodeWorkDetail | null>(null);
 const detail = ref<Detail | null>(null);
 const improvement = ref<Improvement | null>(null);
@@ -129,7 +129,7 @@ const checks = computed(() => {
 });
 // Repositories this round has no check for: the reviewers only have the coder's word on its tests.
 const unchecked = computed(() => (out.value.repos ?? []).filter((r) => !r.check).map((r) => r.space));
-const canFix = computed(() => run.value?.status === "done" && (branchReview.value || !out.value.discardedAt));
+const canFix = computed(() => canEdit.value && run.value?.status === "done" && (branchReview.value || !out.value.discardedAt));
 
 // ---- the branch lines at the top ----------------------------------------------------------------
 type Branch = { space: string; branch: string; exists: boolean; base: string; cutFrom: string | null; newBranch: boolean; commits: unknown[]; root: string; mainBranch: string | null; checkedOut: string | null; inMain: boolean; workspace: string | null; remote: boolean; pushed: boolean; ahead: number | null; behind: number | null; pushedAt: string | null };
@@ -154,7 +154,14 @@ const ACTION: Record<WorkAction, { label: string; cls: string; title?: string }>
   clean: { label: "清理评审工作区", cls: "danger" },
   branch: { label: "去处理同步冲突", cls: "primary" },
 };
-const actions = computed(() => (work.value?.next.actions ?? []).filter((a) => a !== "stop" || busy.value || latest.value));
+/**
+ * What this person may do with the work (`can` on GET /api/runs/:id): stop or retry a round (`operate`),
+ * and everything that changes the code or the branch (`edit`: the one who delegated it, with 交办编码).
+ * An older server sends no `can`: everything shows as before.
+ */
+const canOperate = computed(() => detail.value?.can?.operate ?? true);
+const canEdit = computed(() => detail.value?.can?.edit ?? true);
+const actions = computed(() => (work.value?.next.actions ?? []).filter((a) => (a !== "stop" || busy.value || latest.value) && (a === "stop" || a === "retry" ? canOperate.value : canEdit.value)));
 const moveMode = ref<"merge" | "rebase">("merge");
 const working = ref(false);
 async function act(a: WorkAction) {
@@ -410,7 +417,7 @@ const ctx = computed(() => detail.value?.context ?? null);
       </dl>
 
       <!-- A round coding now: the owner's words for the coding Agent, and the review from now on. -->
-      <CodeSteer v-if="!branchReview && latest && busy" :run-id="run.id" :coding="typeof out.coderSummary !== 'string'" :notes="out.notes ?? []" :review="(run.input as { roundReview?: { tier?: string; split?: boolean } }).roundReview" :tasks="work.taskMode" @changed="load" />
+      <CodeSteer v-if="canEdit && !branchReview && latest && busy" :run-id="run.id" :coding="typeof out.coderSummary !== 'string'" :notes="out.notes ?? []" :review="(run.input as { roundReview?: { tier?: string; split?: boolean } }).roundReview" :tasks="work.taskMode" @changed="load" />
 
       <nav class="tabs" role="tablist" aria-label="交办详情">
         <button v-for="t in tabs" :key="t.id" role="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
@@ -418,7 +425,7 @@ const ctx = computed(() => detail.value?.context ?? null);
 
       <template v-if="tab === 'overview'">
         <!-- The item's flow waits for the owner (a step after this review, say): answered here, where the work is. -->
-        <FlowWaiting v-if="work.item" :key="`flow:${work.item.id}`" class="flow-waiting-here" :item="{ id: work.item.id, title: work.item.title, spaceId: work.spaceId ?? '' }" titled />
+        <FlowWaiting v-if="work.item" :key="`flow:${work.item.id}`" class="flow-waiting-here" :item="{ id: work.item.id, title: work.item.title, spaceId: work.spaceId ?? '' }" :editable="canEdit" titled />
         <section v-if="design && designWaits" class="design-wait row wrap" role="status">
           <Icon name="alert" :size="16" />
           <span class="grow"><strong>方案等你确认</strong><span class="muted small"> · {{ countLine(design.counts) }}。通过后按它编码。</span></span>
@@ -527,7 +534,8 @@ const ctx = computed(() => detail.value?.context ?? null);
       </template>
 
       <template v-else-if="tab === 'branch'">
-        <CodeLanding :run="run" :branch-work="branchWork" :space-name="spaceName" @changed="load" @synced="(id) => emit('open', id)" />
+        <CodeLanding v-if="canEdit" :run="run" :branch-work="branchWork" :space-name="spaceName" @changed="load" @synced="(id) => emit('open', id)" />
+        <p v-else class="muted small">检查、提交和推送由交办的人在这里做。</p>
         <p v-if="!branchWork && !out.appliedAt" class="muted small">这次交办的改动由宿主生成补丁，应用时写进目标分支（未提交），之后在这里检查、提交和推送。</p>
       </template>
     </template>

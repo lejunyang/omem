@@ -27,6 +27,7 @@ import { refAction } from "../lib/refs";
 import RichText from "../components/RichText.vue";
 import HelpText from "../components/HelpText.vue";
 import { pageParam } from "../lib/route";
+import { capIn } from "../lib/caps";
 
 const route = useRoute();
 const router = useRouter();
@@ -34,7 +35,7 @@ const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
 type WorkFile = { id: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; lines: number };
-const detail = ref<{ item: Item; external?: External | null; auto?: { why: string; by: string }; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[] } | null>(null);
+const detail = ref<{ can?: { edit: boolean; operate: boolean }; item: Item; external?: External | null; auto?: { why: string; by: string }; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[] } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const adding = ref(false);
@@ -77,6 +78,18 @@ async function loadDetail() {
 }
 const designs = ref<DesignSummary[]>([]);
 const startingDesign = ref(false);
+/**
+ * What the opened item lets this person do (`can` from GET /api/items/:id): edit its content and
+ * times, or only move it along (status, a note). An older server sends no `can`: the item's own person.
+ */
+const mine = computed(() => !!detail.value && (!state.me || detail.value.item.userId === state.me.id));
+const canEdit = computed(() => detail.value?.can ? detail.value.can.edit : mine.value);
+const canOperate = computed(() => detail.value?.can ? detail.value.can.operate : mine.value);
+/** In the list: ticking an item done is moving one's own item along in a space that allows it. */
+const mayTick = (i: Item) => (!state.me || i.userId === state.me.id) && capIn("items.operate", i.spaceId);
+const mayAdd = computed(() => capIn("items.edit", state.space));
+const statusText: Record<string, string> = { open: "进行中", waiting: "等待中", snoozed: "稍后", done: "完成", cancelled: "取消", expired: "过期", candidate: "候选" };
+const priorityText: Record<number, string> = { 1: "高", 2: "中", 3: "低" };
 onMounted(() => {
   void load();
   void loadDetail();
@@ -239,7 +252,7 @@ async function addNote() {
         <p>待办、提醒、等待回复和持续关注；工作线在 <router-link to="/">工作</router-link> 页看。</p>
       </div>
       <span class="spacer" />
-      <button class="btn primary sm" @click="adding = true"><Icon name="plus" :size="15" />新建事项</button>
+      <button v-if="mayAdd" class="btn primary sm" @click="adding = true"><Icon name="plus" :size="15" />新建事项</button>
     </div>
 
     <div class="toolbar row wrap">
@@ -283,7 +296,7 @@ async function addNote() {
         <div class="cards">
           <router-link v-for="i in c.items" :key="i.id" :to="pageOf(i)" class="card item" :class="{ on: detail?.item.id === i.id, p1: i.priority === 1 }">
             <div class="row top">
-              <button class="check" :title="'标记完成'" @click.prevent="setStatus(i, 'done')"><Icon name="check" :size="12" /></button>
+              <button v-if="mayTick(i)" class="check" :title="'标记完成'" @click.prevent="setStatus(i, 'done')"><Icon name="check" :size="12" /></button>
               <span class="ttl" :title="i.title">{{ i.title }}</span>
               <span v-if="i.flow" class="badge small flow-tag">{{ i.flow.waiting ? '等你：' : '' }}{{ i.flow.name }}</span>
             </div>
@@ -319,11 +332,35 @@ async function addNote() {
         <div v-if="detail.item.status === 'candidate'" class="cand-banner">
           <p><strong>候选：</strong>{{ detail.auto?.by ? `${detail.auto.by}自己建的` : "助手自己建的" }}，你还没说要不要。在你决定之前它不提醒、不进上面的列表。</p>
           <RichText v-if="detail.auto?.why" tag="p" class="small why" :text="detail.auto.why" />
-          <div class="row">
+          <div v-if="canEdit" class="row">
             <button class="btn sm primary" :disabled="deciding === detail.item.id" @click="decide(detail.item, true)">留下</button>
             <button class="btn sm ghost" :disabled="deciding === detail.item.id" @click="decide(detail.item, false)">不要</button>
           </div>
         </div>
+        <template v-if="!canEdit">
+          <h2 class="ro-title">{{ detail.item.title }}</h2>
+          <Markdown v-if="detail.item.detail" :source="detail.item.detail" compact />
+          <dl class="ro-fields small">
+            <dt>状态</dt>
+            <dd>
+              <UiSelect
+                v-if="canOperate"
+                :model-value="detail.item.status"
+                size="sm"
+                aria-label="状态"
+                :options="Object.entries(statusText).filter(([v]) => v !== 'candidate' || detail!.item.status === 'candidate').map(([value, label]) => ({ value, label }))"
+                @change="(v) => save({ status: v })"
+              />
+              <template v-else>{{ statusText[detail.item.status] ?? detail.item.status }}</template>
+            </dd>
+            <template v-if="detail.item.dueAt"><dt>截止</dt><dd>{{ fmtTime(detail.item.dueAt) }}</dd></template>
+            <template v-if="detail.item.remindAt"><dt>提醒</dt><dd>{{ fmtTime(detail.item.remindAt) }}</dd></template>
+            <template v-if="detail.item.waitingOn"><dt>等待</dt><dd>{{ detail.item.waitingOn }}</dd></template>
+            <dt>优先级</dt><dd>{{ priorityText[detail.item.priority] ?? detail.item.priority }}</dd>
+            <template v-if="detail.item.spaceId !== 'personal'"><dt>空间</dt><dd>{{ spaceName(detail.item.spaceId) }}</dd></template>
+          </dl>
+        </template>
+        <template v-else>
         <input class="input title" :value="detail.item.title" @change="save({ title: ($event.target as HTMLInputElement).value })" />
         <textarea class="textarea" rows="3" placeholder="详情" :value="detail.item.detail" @change="save({ detail: ($event.target as HTMLTextAreaElement).value })" />
         <div class="grid2">
@@ -353,25 +390,26 @@ async function addNote() {
             <UiSegmented :model-value="detail.item.priority" aria-label="优先级" :options="[{ value: 1, label: '高' }, { value: 2, label: '中' }, { value: 3, label: '低' }]" @change="(v) => save({ priority: v })" />
           </div>
         </div>
+        </template>
         <div v-if="detail.expiry || closedStatuses.includes(detail.item.status)" class="expiry row wrap small">
           <Icon name="clock" :size="14" />
           <span v-if="detail.expiry">{{ fmtTime(detail.expiry.at) }} 自动过期：{{ detail.expiry.text }}。有新进展或你改动它会顺延。</span>
           <span v-else-if="detail.item.status === 'expired'">很久没有进展，已自动过期。有新进展会重新打开。</span>
           <span v-else>已{{ closedLabel[detail.item.status] }}。</span>
           <span class="spacer" />
-          <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
+          <button v-if="canEdit" class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
-        <ItemExternal v-if="detail.external" :item-id="detail.item.id" :external="detail.external" :editable="!state.me || detail.item.userId === state.me.id" @changed="loadDetail" />
-        <ItemFlow :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
+        <ItemExternal v-if="detail.external" :item-id="detail.item.id" :external="detail.external" :editable="canEdit" @changed="loadDetail" />
+        <ItemFlow :item-id="detail.item.id" :editable="canEdit" />
         <ItemMetrics :item-id="detail.item.id" />
-        <ItemListen :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id)" />
-        <DemoControl class="item-demo" :item-id="detail.item.id" :name="detail.item.title" />
-        <ItemObjects :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
+        <ItemListen :item-id="detail.item.id" :editable="canEdit" />
+        <DemoControl v-if="canEdit" class="item-demo" :item-id="detail.item.id" :name="detail.item.title" />
+        <ItemObjects :item-id="detail.item.id" :editable="canEdit" />
         <PluginSlots at="item.panel" :item-id="detail.item.id" :space="detail.item.spaceId" />
         <ItemPlaces :places="detail.places ?? []" :runs="detail.runs ?? []" />
-        <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" @changed="loadDetail" />
+        <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" :readonly="!canEdit" @changed="loadDetail" />
         <div class="designs">
-          <div class="section-title row">方案<span class="spacer" /><button class="btn ghost sm" @click="startingDesign = true"><Icon name="plus" :size="13" />跟进一份技术方案</button></div>
+          <div class="section-title row">方案<span class="spacer" /><button v-if="canEdit" class="btn ghost sm" @click="startingDesign = true"><Icon name="plus" :size="13" />跟进一份技术方案</button></div>
           <DesignRow v-for="d in designs" :key="d.id" :design="d" />
           <p v-if="!designs.length" class="muted small">交办这件事时助手会按需要先写方案请你确认；别人写的技术方案可以在这里跟进，助手会核对代码、写出问题和要问作者的。</p>
         </div>
@@ -403,7 +441,7 @@ async function addNote() {
               <Markdown :source="e.text" class="small-prose" />
             </li>
           </ol>
-          <form class="row" @submit.prevent="addNote">
+          <form v-if="canOperate" class="row" @submit.prevent="addNote">
             <input v-model="note" class="input" placeholder="补充一条进展" />
             <button class="btn sm">记录</button>
           </form>
@@ -756,6 +794,28 @@ async function addNote() {
 .title {
   font-size: 17px;
   font-weight: 600;
+}
+/* Someone who may read the item but not change it: the title and the facts as text. */
+.ro-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ro-fields {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0;
+}
+.ro-fields dt {
+  color: var(--muted);
+}
+.ro-fields dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .grid2 {
   display: grid;

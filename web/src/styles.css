@@ -1124,3 +1124,52 @@ input[type="number"].input::-webkit-outer-spin-button {
     padding-right: 14px;
   }
 }
+
+/* ---------- members ---------- */
+/* Settings → 成员 → 能做什么 (components/MemberCaps.vue): the preset, then one compact row per capability. */
+.mc-who { font-size: 15px; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--danger); font-size: 13px; }
+.mc-preset { display: grid; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.mc-preset-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mc-label { font-size: 14px; font-weight: 650; }
+.mc-preset-hint { margin: 0; font-size: 13px; color: var(--muted); }
+.mc-group { display: grid; min-width: 0; }
+.mc-area {
+  position: sticky; top: -18px; z-index: 1; margin: 0; padding: 8px 0 6px;
+  background: var(--panel); font-size: 12px; font-weight: 650; letter-spacing: 0.04em; color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.mc-cap { border-bottom: 1px solid var(--line); min-width: 0; }
+.mc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 8px 0; }
+.mc-what { min-width: 0; display: grid; gap: 2px; }
+.mc-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; }
+.mc-name { font-size: 14px; color: var(--ink); }
+.mc-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.mc-state { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.mc-state i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+.mc-state.on { color: var(--ink-2); }
+.mc-state.on i { background: var(--ok); }
+.mc-state.set { color: var(--accent); }
+.mc-spaces {
+  display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; padding: 0 2px; border-radius: 4px;
+  font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.mc-spaces:hover { color: var(--ink); }
+.mc-spaces.marked { color: var(--accent); }
+.mc-spaces:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mc-chev { transition: transform 0.15s ease; }
+.mc-cap.open .mc-chev { transform: rotate(180deg); }
+.mc-space-list { display: grid; gap: 0; margin: 0 0 8px 12px; padding-left: 12px; border-left: 2px solid var(--line); }
+.mc-space { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 12px; padding: 4px 0; }
+.mc-space-name { font-size: 13px; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-change { font-size: 13px; color: var(--ink-2); min-width: 0; }
+.mc-change.none { color: var(--muted); }
+.mc-save-error { font-size: 13px; color: var(--danger); flex-basis: 100%; order: 3; }
+.mc-grow { flex: 1; }
+.mc-pick { justify-self: end; }
+@media (max-width: 560px) {
+  .mc-row { grid-template-columns: minmax(0, 1fr); }
+  .mc-pick { justify-self: start; }
+  .mc-space { grid-template-columns: minmax(0, 1fr) auto; }
+  .mc-space .mc-pick { grid-column: 1 / -1; }
+}

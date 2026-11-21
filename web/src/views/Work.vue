@@ -15,6 +15,7 @@ import WorkWaiting, { type PendingAction, type Waiting } from "../components/Wor
 import { promptDialog } from "../lib/dialog";
 import { dayKey, fmt } from "../lib/time";
 import { byMonth, dayKeyLabel, dayLabel, endedLine, ORIGIN_FILTERS, TYPE_FILTERS, type ChangeLite, type EndedLine, type ItemLite, type Line, type NextLite, type Place } from "../lib/work";
+import { sharedLine, type SharedOverview } from "../lib/shared-work";
 import { fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
 /**
@@ -30,24 +31,35 @@ type HomeBits = { runs: Run[]; study: { total: number; due: number; reviewedToda
 
 const route = useRoute(), router = useRouter();
 const view = computed<View>({
-  get: () => (["time", "stage"].includes(String(route.query.view)) ? (route.query.view as View) : "lines"),
+  // Someone else reading the owner's lines has only 按工作线.
+  get: () => (state.me && state.me.role !== "owner" ? "lines" : ["time", "stage"].includes(String(route.query.view)) ? (route.query.view as View) : "lines"),
   set: (v) => void router.replace({ path: "/", query: v === "lines" ? {} : { view: v } }),
 });
 const views = [{ value: "lines" as View, label: "按工作线" }, { value: "time" as View, label: "按时间" }, { value: "stage" as View, label: "按阶段" }];
 
 const data = ref<Overview | null>(null), error = ref("");
 const home = ref<HomeBits | null>(null);
+/**
+ * Someone other than the owner with 看工作线 (lib/caps.ts): the server sends the owner's lines and the
+ * ended ones only (lib/shared-work.ts), and the page leaves out what is the owner's to do — what waits
+ * for them, the questions they follow, asking, new lines, deciding next steps, items under no line.
+ */
+const shared = computed(() => !!state.me && state.me.role !== "owner");
 let seq = 0;
 async function load() {
   const n = ++seq;
   try {
-    const d = await get<Overview>("/api/work");
+    const d = shared.value ? fromShared(await get<SharedOverview>("/api/work")) : await get<Overview>("/api/work");
     if (n === seq) { data.value = d; error.value = ""; }
   } catch (e) {
     if (n === seq) error.value = (e as Error).message;
   }
 }
+const fromShared = (d: SharedOverview): Overview => ({
+  lines: (d.lines ?? []).map(sharedLine), loose: [], waiting: { total: 0, asks: [], gates: [], candidates: [], changes: [], drafts: 0 }, places: [], ended: d.ended ?? [], endedMore: !!d.endedMore,
+});
 async function loadHome() {
+  if (shared.value) return;
   home.value = await get<HomeBits>("/api/home").catch(() => home.value);
 }
 void load();
@@ -214,10 +226,11 @@ async function ask(text = question.value) {
     <header class="page-head top">
       <div class="title">
         <h1>本月在推进</h1>
-        <p>{{ dateLine }}<template v-if="data"> · {{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}{{ todayChanges ? ` · 今天 ${todayChanges} 条变化` : "" }}</template></p>
+        <p v-if="shared">这是主人在推进的事，你可以看<template v-if="data"> · {{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}</template></p>
+        <p v-else>{{ dateLine }}<template v-if="data"> · {{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}{{ todayChanges ? ` · 今天 ${todayChanges} 条变化` : "" }}</template></p>
       </div>
       <span class="spacer" />
-      <div class="tools row wrap">
+      <div v-if="!shared" class="tools row wrap">
         <button v-if="data?.waiting.total" type="button" class="confirm-pill" @click="toWaiting"><Icon name="inbox" :size="14" />共 {{ data.waiting.total }} 条需要你确认</button>
         <UiSegmented v-model="view" size="sm" aria-label="怎么看" :options="views" />
         <button type="button" class="btn ghost sm" @click="newLine"><Icon name="plus" :size="14" />工作线</button>
@@ -226,18 +239,22 @@ async function ask(text = question.value) {
 
     <p v-if="error && !data" class="err" role="alert">{{ error }} <button class="btn ghost sm" @click="load">重试</button></p>
 
-    <div class="grid">
+    <div class="grid" :class="{ solo: shared }">
       <main class="main">
         <!-- 按工作线 -->
         <template v-if="view === 'lines'">
           <Skeleton v-if="!data && !error" variant="cards" :rows="3" />
           <template v-else-if="data">
-            <div v-if="!data.lines.length" class="card pad empty-lines">
+            <div v-if="!data.lines.length && shared" class="card pad empty-lines">
+              <strong>还没有你能看的工作线</strong>
+              <p class="muted small">主人在你能读的空间里建了工作线后，会出现在这里。</p>
+            </div>
+            <div v-else-if="!data.lines.length" class="card pad empty-lines">
               <strong>还没有工作线</strong>
               <p class="muted small">工作线是这几周你在推进的一件事，相关的需求、缺陷、待办挂在它下面。每晚整理近况时，助手会从你做过的事里提议几条，你在卡片上点“建”；也可以自己建。走流程的事项、挂了别的事项的事项也会显示在这里。</p>
               <div><button class="btn sm primary" @click="newLine"><Icon name="plus" :size="14" />新建工作线</button></div>
             </div>
-            <WorkLine v-for="l in active" :key="l.id" :line="l" @change="openChange" @next="openNext" />
+            <WorkLine v-for="l in active" :key="l.id" :line="l" :readonly="shared" @change="openChange" @next="openNext" />
 
             <!-- 观察中: done, watched a while; nothing new and it ends by itself. -->
             <section v-if="watching.length" class="watching" aria-labelledby="watching-title">
@@ -343,7 +360,7 @@ async function ask(text = question.value) {
         </section>
       </main>
 
-      <aside class="rail">
+      <aside v-if="!shared" class="rail">
         <!-- 按时间: the days, a column each, beside the list (a column opens that day). -->
         <div v-if="view === 'time' && acts" class="days card pad wide-only">
           <BarChart title="最近 30 天的变化" caption="一根一天 · 点一根只看那天" unit="条" :labels="chart.labels" :series="chart.series" :links="chart.links" :highlight="chart.highlight" :table="false" />
@@ -370,7 +387,7 @@ async function ask(text = question.value) {
       </aside>
     </div>
 
-    <WorkSheet v-if="sheet" :change="sheet.change" :next="sheet.next" :line-title="sheet.lineTitle" @close="sheet = null" @changed="changed" />
+    <WorkSheet v-if="sheet" :change="sheet.change" :next="sheet.next" :line-title="sheet.lineTitle" :readonly="shared" @close="sheet = null" @changed="changed" />
   </div>
 </template>
 
@@ -391,6 +408,8 @@ async function ask(text = question.value) {
 /* The rail's rows (WorkWaiting) reach 8px past their text for the hover background; the rail keeps
    8px of padding on the right so they stay inside it. */
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) 328px; gap: 28px; align-items: start; }
+/* Someone else's read of the owner's lines: no rail, the lines at reading width. */
+.grid.solo { grid-template-columns: minmax(0, 1fr); max-width: 960px; }
 .main { display: grid; gap: 14px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .rail { display: grid; gap: 24px; min-width: 0; grid-template-columns: minmax(0, 1fr); padding-right: 8px; }
 .empty-lines { display: grid; gap: 8px; }

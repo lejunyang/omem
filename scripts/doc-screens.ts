@@ -31,6 +31,7 @@ import { networkPolicySchema } from "../src/core/config.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import type { ChangeType } from "../src/items/changes.ts";
@@ -1071,11 +1072,29 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   });
 }
 
+// ---- other people (src/auth/capabilities.ts) ---------------------------------------------------
+// 小周 reads the shop's work as a read-only observer; 小林 is a member with two capabilities set
+// apart from the preset and one space set on its own. Their tokens log the page in as them.
+const xiaozhou = createUser(app, { id: "xiaozhou", name: "小周", role: "observer" });
+addMember(app, "shop", xiaozhou.id, "reader");
+const xiaolin = createUser(app, { id: "xiaolin", name: "小林", role: "member" });
+addMember(app, "shop", xiaolin.id, "contributor");
+addMember(app, "refund", xiaolin.id, "reader");
+for (const [capability, kind, scope, effect] of [["work.view", "global", "", "allow"], ["items.operate", "global", "", "deny"], ["items.view", "space", "shop", "allow"]] as const)
+  run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,?,?,?,?,?,?)", xiaolin.id, capability, kind, scope, effect, new Date().toISOString(), "owner", new Date().toISOString());
+// 小吴: a member with nothing set apart, to compare the nav against the preset.
+const xiaowu = createUser(app, { id: "xiaowu", name: "小吴", role: "member" });
+addMember(app, "shop", xiaowu.id, "reader");
+const xiaozhouToken = createApiToken(app, xiaozhou.id, "演示");
+const xiaolinToken = createApiToken(app, xiaolin.id, "演示");
+const xiaowuToken = createApiToken(app, xiaowu.id, "演示");
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
   console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
+  console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}`);
   const cleanup = async () => { await server.close(); app.db.close(); rmSync(home, { recursive: true, force: true }); process.exit(); };
   process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
   await new Promise(() => {});
@@ -1283,6 +1302,22 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.waitForTimeout(300);
   } },
   // An item that came from the platform, closed on this side: the write-back waits for a yes.
+  // What a member may do (components/MemberCaps.vue): 小林's capabilities, one space opened.
+  { name: "members-capabilities", path: "/settings?tab=members", before: async (p) => {
+    // The page head names the data directory: the demo's temporary one is a path on this machine.
+    await p.route("**/api/settings", async (route) => {
+      const data = await (await route.fetch()).json();
+      data.home = "~/.omem";
+      await route.fulfill({ json: data });
+    });
+  }, prepare: async (p) => {
+    await p.getByRole("button", { name: "小林能做什么" }).click();
+    await p.locator(".mc-cap").first().waitFor();
+    await p.locator(".mc-cap", { hasText: "看事项" }).getByRole("button", { name: /空间另设/ }).click();
+    await p.waitForTimeout(300);
+  } },
+  // The owner's lines as the read-only observer 小周 sees them (lib/shared-work.ts).
+  { name: "observer-work", path: "/", init: { "omem-token": xiaozhouToken } },
   { name: "item-external", path: "/items", prepare: async (p) => {
     const id = await p.evaluate(async () => {
       const json = (path: string, method = "GET", body?: unknown) => fetch(path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());

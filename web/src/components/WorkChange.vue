@@ -10,7 +10,8 @@ import { changeTone, changeTypeLabel, clock, originLabel, refsMarkdown, type Cha
  * kind, when and on which line, its risk and next step, the sources, and 对我没用. The title opens
  * the whole change on the side.
  */
-const props = defineProps<{ change: ChangeLite; line?: boolean; lineId?: string }>();
+/** `readonly`: someone else reading the owner's line: no 对我没用. */
+const props = defineProps<{ change: ChangeLite; line?: boolean; lineId?: string; readonly?: boolean }>();
 const emit = defineEmits<{ open: [c: ChangeLite]; changed: [] }>();
 const c = computed(() => props.change);
 const cited = computed(() => refsMarkdown(c.value.refs));
@@ -36,12 +37,12 @@ const where = computed(() => [props.line ? c.value.lineTitle : "", c.value.itemI
     <header>
       <span class="dot" aria-hidden="true" />
       <button type="button" class="title" @click="emit('open', c)">{{ c.summary }}</button>
-      <button type="button" class="lnk small muted no-use" :disabled="busy" @click="noise">{{ c.noise ? "放回" : "对我没用" }}</button>
+      <button v-if="!readonly" type="button" class="lnk small muted no-use" :disabled="busy" @click="noise">{{ c.noise ? "放回" : "对我没用" }}</button>
     </header>
     <p class="meta small">
       <span class="tag">{{ changeTypeLabel[c.type] ?? c.type }}</span>
       <span>{{ clock(c.at) }}</span>
-      <span>{{ originLabel[c.origin] ?? c.origin }}</span>
+      <span v-if="c.origin">{{ originLabel[c.origin] ?? c.origin }}</span>
       <router-link v-if="where" :to="`/work/${c.itemId !== (lineId ?? c.lineId) ? c.itemId : c.lineId}`" class="where">{{ where }}</router-link>
       <span v-if="c.status === 'asked'" class="asked">等你定</span>
     </p>

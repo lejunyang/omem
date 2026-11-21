@@ -320,6 +320,8 @@ function fromMore(fn: () => unknown) {
   void fn();
 }
 const canCorrect = computed(() => state.me?.wiki === null || !!state.me?.wiki?.includes(space.value));
+/** Writing, planning, tidying and editing pages need 写 Wiki in this space (`state.me.wiki`, null = every space). */
+const canWrite = computed(() => !state.me || state.me.wiki === null || !!state.me.wiki?.includes(space.value));
 async function showVersion(hash: string) {
   if (!page.value) return;
   const v = await get<{ diff: string }>(`/api/wiki/${space.value}/page/${page.value.slug}?version=${hash}`);
@@ -336,9 +338,11 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
           <strong class="ellipsis">{{ spaceName }}</strong>
           <span class="spacer" />
           <router-link :to="`/graph/${space}`" class="btn ghost sm icon" title="页面关系图"><Icon name="graph" :size="16" /></router-link>
+          <template v-if="canWrite">
           <button class="btn ghost sm icon" title="写一页新文章" @click="newOpen = true"><Icon name="plus" :size="16" /></button>
           <button class="btn ghost sm icon" title="规划/更新目录" @click="planOpen = true"><Icon name="sparkles" :size="16" /></button>
           <button class="btn ghost sm icon" title="整理目录：把散落在顶层、挤在一起的页面放进合适的目录" aria-label="整理目录" @click="organize"><Icon name="folder" :size="16" /></button>
+          </template>
         </div>
         <input v-model="filter" class="input filter" placeholder="筛选页面" aria-label="筛选页面" />
         <button v-if="stalePageList.length" class="nav-warn" type="button" @click="toNotice"><Icon name="alert" :size="13" />{{ stalePageList.length }} 页的原件已变化</button>
@@ -369,7 +373,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         <Icon name="book" :size="36" />
         <h3>「{{ spaceName }}」还没有 Wiki</h3>
         <p>助理会先调查这个空间的全部材料（代码仓库会读入口、流程和测试），按用户问题规划一套目录，再逐页写作并引用原文。</p>
-        <button class="btn primary" @click="planOpen = true"><Icon name="sparkles" :size="16" />规划并生成 Wiki</button>
+        <button v-if="canWrite" class="btn primary" @click="planOpen = true"><Icon name="sparkles" :size="16" />规划并生成 Wiki</button>
         <div v-if="runs.length" class="muted small" style="margin-top: 12px">已有 {{ runs.length }} 个整理任务在进行中。</div>
       </div>
 
@@ -428,14 +432,14 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
             v-if="staleSources.length"
             class="badge warn stale-badge"
             type="button"
-            :disabled="!pageStale || upkeep?.running"
+            :disabled="!canWrite || !pageStale || upkeep?.running"
             :title="staleSources.map((s) => s.uri).join('\n') + (pageStale ? '\n点击让助理检查这页' : '')"
             @click="lint([page.slug])"
           >
-            <Icon name="alert" :size="12" />{{ staleSources.length }} 份原件已变化<template v-if="pageStale"> · 检查这页</template>
+            <Icon name="alert" :size="12" />{{ staleSources.length }} 份原件已变化<template v-if="pageStale && canWrite"> · 检查这页</template>
           </button>
           <span class="spacer" />
-          <div class="page-actions row">
+          <div v-if="canWrite" class="page-actions row">
             <button class="btn ghost sm" @click="startEdit"><Icon name="edit" :size="14" />编辑</button>
             <button class="btn ghost sm" @click="rewriteOpen = true"><Icon name="sparkles" :size="14" />让助理改写</button>
             <div ref="moreBox" class="more-wrap">

@@ -13,6 +13,8 @@ import UiSegmented from "./UiSegmented.vue";
 import UiSelect from "./UiSelect.vue";
 import { fmtTime, relTime, state, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
+import { hasCap } from "../lib/caps";
+import MemberCaps, { type Capability, type MemberCapsData } from "./MemberCaps.vue";
 
 /**
  * Settings → 成员 (src/auth, docs/v2/multi-user.md): whether other people can log in and with what,
@@ -78,7 +80,29 @@ async function load() {
   users.value = u;
   invites.value = i;
   roles.value = r;
+  void loadCaps(u);
   if (showLog.value) log.value = await get<Audit[]>("/api/access/audit");
+}
+
+// ---- 能做什么 (components/MemberCaps.vue, src/auth/capabilities.ts) ----------------------------------
+// An older server has no capabilities: then neither the entry nor the line on each row shows.
+const mayManage = computed(() => hasCap("settings.members"));
+const catalog = ref<Capability[] | null>(null);
+/** How many capabilities each member has set apart from the preset, for the line on the row. */
+const overrideCount = ref<Record<string, number>>({});
+const capsFor = ref<User | null>(null);
+async function loadCaps(list: User[]) {
+  if (!mayManage.value) return;
+  if (!catalog.value) catalog.value = await get<Capability[]>("/api/capabilities").catch(() => null);
+  if (!catalog.value) return;
+  const people = list.filter((x) => x.role !== "owner" && x.status !== "pending");
+  const counts = await Promise.all(people.map((x) => get<MemberCapsData>(`/api/members/${encodeURIComponent(x.id)}/capabilities`).then((d) => d.overrides.length).catch(() => null)));
+  overrideCount.value = Object.fromEntries(people.flatMap((x, n) => (counts[n] === null ? [] : [[x.id, counts[n]!]])));
+}
+async function capsSaved(u: User, d: MemberCapsData) {
+  overrideCount.value = { ...overrideCount.value, [u.id]: d.overrides.length };
+  // The preset is the global role: the row and the role list follow it.
+  if (d.preset !== u.role) users.value = await get<User[]>("/api/users").catch(() => users.value);
 }
 const fail = (e: unknown) => toast((e as Error).message, "error");
 async function saveAuth(next: Partial<Auth>) {
@@ -341,14 +365,18 @@ onMounted(() => load().catch(fail));
         <template #aside><span class="muted small">{{ others.length }} 人</span></template>
         <Skeleton v-if="!users" variant="list" :rows="4" />
         <div v-for="u in others" v-else :key="u.id" class="person" :class="{ dead: u.disabledAt, open: openUser === u.id }">
-          <button type="button" class="person-row as-btn" :aria-expanded="openUser === u.id" @click="openUser = openUser === u.id ? null : u.id">
-            <span class="avatar" aria-hidden="true"><img v-if="u.avatar" :src="u.avatar" alt="" referrerpolicy="no-referrer" /><template v-else>{{ initial(u.name) }}</template></span>
-            <span class="p-name ellipsis">{{ u.name }}</span>
-            <span class="p-role">{{ u.disabledAt ? "已停用" : roleName(u.role) }}</span>
-            <span class="p-meta">{{ u.role === "owner" ? "全部空间" : `${u.spaces.length} 个空间` }}</span>
-            <span class="p-meta p-seen" :title="u.lastSeenAt ? fmtTime(u.lastSeenAt) : ''">{{ u.lastSeenAt ? relTime(u.lastSeenAt) : "没登录过" }}</span>
-            <Icon name="down" :size="14" class="p-chev" />
-          </button>
+          <div class="person-head">
+            <button type="button" class="person-row as-btn" :aria-expanded="openUser === u.id" @click="openUser = openUser === u.id ? null : u.id">
+              <span class="avatar" aria-hidden="true"><img v-if="u.avatar" :src="u.avatar" alt="" referrerpolicy="no-referrer" /><template v-else>{{ initial(u.name) }}</template></span>
+              <span class="p-name ellipsis">{{ u.name }}</span>
+              <span class="p-role ellipsis">{{ u.disabledAt ? "已停用" : roleName(u.role) }}<span v-if="!u.disabledAt && overrideCount[u.id]" class="p-own" :title="`${overrideCount[u.id]} 项能力和预设不一样`"> · 另设 {{ overrideCount[u.id] }} 项</span></span>
+              <span class="p-meta">{{ u.role === "owner" ? "全部空间" : `${u.spaces.length} 个空间` }}</span>
+              <span class="p-meta p-seen" :title="u.lastSeenAt ? fmtTime(u.lastSeenAt) : ''">{{ u.lastSeenAt ? relTime(u.lastSeenAt) : "没登录过" }}</span>
+              <Icon name="down" :size="14" class="p-chev" />
+            </button>
+            <button v-if="catalog && u.role !== 'owner' && !u.disabledAt" type="button" class="btn ghost sm p-caps" :aria-label="`${u.name}能做什么`" @click="capsFor = u">能做什么</button>
+            <span v-else-if="catalog" class="p-caps-gap" aria-hidden="true" />
+          </div>
           <div v-if="openUser === u.id" class="p-body">
             <div class="p-line small">
               <span class="p-k">编号</span><code class="muted">{{ u.id }}</code>
@@ -358,7 +386,11 @@ onMounted(() => load().catch(fail));
               <button v-if="u.role !== 'owner'" class="link-btn" :title="`改 ${u.name} 的邮箱`" @click="editEmail(u)">{{ u.email || "没有邮箱，点这里填" }}</button>
               <span v-else>{{ u.email || "—" }}</span>
             </div>
-            <div v-if="u.role !== 'owner' && isOwner" class="p-line small">
+            <div v-if="u.role !== 'owner' && catalog && !u.disabledAt" class="p-line small">
+              <span class="p-k">全局角色</span>
+              <span>{{ roleName(u.role) }} · <button type="button" class="link-btn" @click="capsFor = u">在“能做什么”里改</button></span>
+            </div>
+            <div v-else-if="u.role !== 'owner' && isOwner" class="p-line small">
               <span class="p-k">全局角色</span>
               <UiSelect :model-value="u.role" size="sm" width="130px" :aria-label="`${u.name}的全局角色`" :options="globalRoles.map((r) => ({ value: r.id, label: r.name, hint: r.builtin ? '' : '自定义' }))" @change="(v) => act(u, { role: v }, '已改角色')" />
             </div>
@@ -397,6 +429,8 @@ onMounted(() => load().catch(fail));
           </div>
         </div>
       </SetCard>
+
+      <MemberCaps v-if="capsFor && catalog && roles" :user="capsFor" :catalog="catalog" :roles="roles.roles" :owner="isOwner" @close="capsFor = null" @saved="(d) => capsSaved(capsFor!, d)" />
 
       <slot name="after-members" />
 
@@ -550,8 +584,35 @@ onMounted(() => load().catch(fail));
   min-width: 0;
   border-top: 1px solid var(--line);
 }
-.person > .person-row {
+.person > .person-row,
+.person-head > .person-row {
   border-top: 0;
+}
+.person-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.person-head > .person-row {
+  flex: 1;
+  min-width: 0;
+}
+.person-head:hover {
+  background: var(--hover);
+}
+.person-head > .as-btn:hover {
+  background: none;
+}
+/* The owner's row keeps the same room, so the columns line up. */
+.p-caps,
+.p-caps-gap {
+  flex: none;
+  width: 80px;
+  margin-right: 14px;
+  justify-content: center;
+}
+.p-own {
+  color: var(--accent);
 }
 .as-btn {
   width: 100%;

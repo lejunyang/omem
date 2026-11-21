@@ -13,6 +13,7 @@ import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
+import { hasCap } from "../lib/caps";
 import { fmtTime, relTime, state, toast } from "../store";
 
 /**
@@ -71,9 +72,28 @@ const drafting = ref(false);
 
 const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", judgeWith: "decision", actions: [{ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" }] });
 
+/**
+ * 看规则 without 改规则 (lib/caps.ts): the server gives each rule's name, description, trigger and
+ * action kinds only (src/rules/visibility.ts `ruleSummary`); the page is a read-only list of them.
+ */
+const readOnly = computed(() => !hasCap("rules.edit"));
+type RuleSummary = { id: string; name: string; description: string; enabled: boolean; spaceId?: string | null; event?: string; actions?: { type: string }[] };
+const summaries = ref<RuleSummary[]>([]);
+const shownSummary = computed(() => summaries.value.find((r) => r.id === selectedId.value) ?? null);
+const triggerLabel = (e?: string) => TRIGGERS.find((t) => t.value === e)?.label ?? e ?? "";
+const actionLabel = (t: string) => ACTION_LABEL[t as Action["type"]] ?? t;
 let listSeq = 0;
 async function loadList() {
   const seq = ++listSeq, space = state.space;
+  if (readOnly.value) {
+    try {
+      const list = await get<RuleSummary[]>(`/api/rules?space=${encodeURIComponent(space)}`);
+      if (seq === listSeq && space === state.space) summaries.value = list;
+    } finally {
+      if (seq === listSeq) loading.value = false;
+    }
+    return;
+  }
   try {
     const result = await Promise.all([get<Rule[]>(`/api/rules?space=${encodeURIComponent(space)}`), get<Wake[]>("/api/wakes").catch(() => []), get<Watch[]>("/api/watches").catch(() => []), get<Mentions>("/api/mentions").catch(() => null)]);
     if (seq === listSeq && space === state.space) [rules.value, wakes.value, watches.value, mentions.value] = result;
@@ -135,14 +155,15 @@ async function loadCurrent(protectEdits = false) {
   }
 }
 onMounted(async () => {
+  if (readOnly.value) return void (await loadList());
   await Promise.all([loadList(), get<Options>("/api/rule-options").then((o) => (options.value = o)).catch(() => {})]);
   await loadCurrent();
 });
-watch(() => [route.query.id, route.query.new], () => void loadCurrent());
+watch(() => [route.query.id, route.query.new], () => void (readOnly.value || loadCurrent()));
 const off = onServerEvent((e) => {
   if (e.type !== "changed" || e.entity !== "rule") return;
   void loadList().catch(() => {});
-  if (e.id === selectedId.value && !saving.value && !drafting.value) void loadCurrent(true);
+  if (!readOnly.value && e.id === selectedId.value && !saving.value && !drafting.value) void loadCurrent(true);
 });
 onBeforeUnmount(() => { off(); ++listSeq; ++detailSeq; });
 onBeforeRouteLeave(async () => !dirty.value || (await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true })));
@@ -550,7 +571,49 @@ function startFrom(text: string) {
 </script>
 
 <template>
-  <div class="rules">
+  <!-- 看规则 only: the rules by name, what sets them off and what they do; nothing to change. -->
+  <div v-if="readOnly" class="rules">
+    <aside class="list-col">
+      <div class="head ro-head">
+        <strong class="ro-title">任务规则</strong>
+        <span class="muted small">你只能看这些规则</span>
+      </div>
+      <div class="items">
+        <Skeleton v-if="loading" :rows="5" />
+        <template v-else>
+          <div v-for="r in summaries" :key="r.id" class="li" :class="{ on: r.id === selectedId }">
+            <button class="grow pick" type="button" @click="router.replace({ query: { id: r.id } })">
+              <div class="row"><strong class="ellipsis">{{ r.name }}</strong></div>
+              <div class="muted small clamp">{{ r.description }}</div>
+              <div class="muted small">{{ spaceName(r.spaceId ?? undefined) }} · {{ triggerLabel(r.event) }} · {{ r.enabled ? "开着" : "关着" }}</div>
+            </button>
+          </div>
+          <p v-if="!summaries.length" class="muted small hint">你能读的空间里还没有任务规则。</p>
+        </template>
+      </div>
+    </aside>
+    <main class="detail">
+      <div v-if="!shownSummary" class="empty">
+        <Icon name="zap" :size="34" />
+        <h3>任务规则</h3>
+        <p>每条规则是“遇到什么情况就做什么”。点左边一条看它在什么时候触发、触发后做什么。</p>
+      </div>
+      <div v-else class="page">
+        <header class="dh row">
+          <strong class="grow ro-name">{{ shownSummary.name }}</strong>
+          <span class="badge" :class="{ ok: shownSummary.enabled }">{{ shownSummary.enabled ? "开着" : "关着" }}</span>
+        </header>
+        <p v-if="shownSummary.description" class="note">{{ shownSummary.description }}</p>
+        <dl class="ro-facts">
+          <dt>范围</dt><dd>{{ spaceName(shownSummary.spaceId ?? undefined) }}</dd>
+          <dt>触发</dt><dd>{{ triggerLabel(shownSummary.event) || "—" }}</dd>
+          <dt>动作</dt><dd>{{ (shownSummary.actions ?? []).map((a, i) => `${i + 1}. ${actionLabel(a.type)}`).join("　") || "—" }}</dd>
+        </dl>
+        <p class="muted small">条件和动作的细节只有能改规则的人看得到。</p>
+      </div>
+    </main>
+  </div>
+  <div v-else class="rules">
     <aside class="list-col">
       <div class="head row">
         <RuleTabs />
@@ -1225,6 +1288,33 @@ function startFrom(text: string) {
 }
 .trigger-pick {
   display: none;
+}
+/* The read-only list: a title and one line in the list head, the facts as a short definition list. */
+.ro-head {
+  display: grid;
+  gap: 2px;
+}
+.ro-title {
+  font-size: 15px;
+}
+.ro-name {
+  font-size: 16px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.ro-facts {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 14px;
+}
+.ro-facts dt {
+  color: var(--muted);
+}
+.ro-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 @media (max-width: 640px) {
   .trigger-seg {
