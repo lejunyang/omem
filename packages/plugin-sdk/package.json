@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     ".": { "types": "./dist/client.d.ts", "default": "./dist/client.js" },
+    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" },
     "./blocks": { "types": "./dist/blocks.d.ts", "default": "./dist/blocks.js" },
     "./charts": { "types": "./dist/charts.d.ts", "default": "./dist/charts.js" },
     "./service": "./service.mjs"
@@ -14,6 +15,7 @@
   "scripts": {
     "build": "vite build && tsc -p tsconfig.json"
   },
+  "dependencies": { "zod": "4.1.12" },
   "devDependencies": {
     "typescript": "5.9.3",
     "vite": "7.3.1"

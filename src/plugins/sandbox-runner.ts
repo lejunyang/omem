@@ -29,7 +29,7 @@ const unsupported = (what: string) => () => {
 };
 
 /** A connection's view: its fetch goes through omem, which adds the token. */
-function connectionOf(c: { handle: string; account: string; scopes: string[]; base: string | null }): PluginConnection {
+function connectionOf(c: { handle: string; account: string; scopes: string[]; base: string | null }, call: number): PluginConnection {
   return {
     account: c.account,
     scopes: c.scopes,
@@ -38,7 +38,7 @@ function connectionOf(c: { handle: string; account: string; scopes: string[]; ba
       const headers: Record<string, string> = {};
       new Headers(init.headers).forEach((v, k) => (headers[k] = v));
       const body = typeof init.body === "string" ? init.body : init.body == null ? undefined : String(init.body);
-      const r = await rpc<{ status: number; headers: [string, string][]; body: string }>("fetch", { handle: c.handle, path, init: { method: init.method, headers, body } });
+      const r = await rpc<{ status: number; headers: [string, string][]; body: string }>("fetch", { call, handle: c.handle, path, init: { method: init.method, headers, body } });
       return new Response(r.status === 204 || r.status === 304 ? null : Buffer.from(r.body, "base64"), { status: r.status, headers: r.headers });
     },
   };
@@ -66,7 +66,7 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
     present: unsupported("内容块"),
     connection: async (provider: string) => {
       const info = await rpc<{ handle: string; account: string; scopes: string[]; base: string | null } | null>("connection", { provider, call });
-      return info ? connectionOf(info) : null;
+      return info ? connectionOf(info, call) : null;
     },
     saveSource: (input: unknown) => rpc("saveSource", { input, call }),
     watches: {
@@ -80,16 +80,23 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
 const tools = new Map<string, PluginTool>();
 const readers = new Map<string, PlatformReader>();
 const objects = new Map<string, PluginObject>();
+const subscriptions = new Map<string, import("./types.ts").Subscription>();
 const hooks = new Map<string, PluginHook>();
 
 async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { tools: [], platforms: [], objects: [], hooks: [] };
+  const declared: { subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
+    subscribe(def) {
+      subscriptions.set(def.id, def);
+      declared.subscriptions.push({ id: def.id, events: def.events });
+    },
+    itemProvider: unsupported("事项提供者"),
+    metricProvider: unsupported("指标数据源"),
     object(def) {
       validateObject(def);
       if (objects.has(def.kind)) throw new Error(`对象类型重复注册：${def.kind}`);
@@ -141,7 +148,15 @@ process.on("message", async (m: Msg) => {
   }
   try {
     let value: unknown;
-    if (m.t === "call") {
+    if (m.t === "event") {
+      await subscriptions.get(m.name)!.handle({
+        userId: m.userId, spaceId: m.spaceId, signal: AbortSignal.timeout(15000),
+        async connection(provider) {
+          const c = await rpc("connection", { call: m.id, provider });
+          return c ? connectionOf(c, m.id!) : null;
+        },
+      }, m.event);
+    } else if (m.t === "call") {
       const t = tools.get(m.tool);
       if (!t) throw new Error(`没有工具 ${m.tool}`);
       const parsed = t.schema.safeParse(m.args ?? {});
@@ -157,7 +172,7 @@ process.on("message", async (m: Msg) => {
       value = (await def.handle(contextOf({ ...m.ctx, call: m.id }, process.env.OMEM_PLUGIN_ID!), m.req)) ?? null;
     } else if (m.t === "read" || m.t === "changes") {
       const r = readers.get(`${m.provider} ${m.kind}`);
-      const conn = connectionOf(m.conn);
+      const conn = connectionOf(m.conn, m.id!);
       if (m.t === "read" && r?.read) value = await r.read(conn, m.target);
       else if (m.t === "changes" && r?.changes) value = await r.changes(conn, m.target, m.cursor ?? null);
       else throw new Error(`没有读取器 ${m.provider} ${m.kind}`);

@@ -264,6 +264,32 @@ npx vue-tsc --noEmit -p web/tsconfig.json
 
 结果见 flows.md 文末“第三期的第二步”。没跑全量，没在浏览器里看网页，没有用真实插件或真实模型试。
 
+<a id="plugin-process-hooks"></a>
+
+## 插件订阅、事项同步与指标数据源（2026-11-21）
+
+- 给插件声明 `item.created` 和 `item.status`，只授权一个空间。回滚一笔创建事项的事务，再提交一笔，检查只收到提交成功且空间获准的事实。隔离模式也应收到。
+- 用默认候选模式导入两件待办，留下一件、拒绝一件。按事项 id 核对，每件先有一条状态为 `candidate` 的创建事件，再有一条从 `candidate` 变为 `open` 或 `cancelled` 的状态事件。
+- 让状态回调持续失败，同时修改同一事项。第六次失败后，后续事件等待。修好插件，用 `plugin replay` 重放，检查相同事件 id 和后续顺序。停用期间改状态，重新启用后应继续。
+- 对同一外部条目拉取两次，核对只生成一件事项。分别试候选和直接建、确认和直接回写。外部修订已变化时核对冲突及两边状态，检查实际使用的连接用户。
+- 同一账号在两个空间订阅同一目标，先拉父子条目，再从另一个空间拉取改过的正文。只有首个空间保有这两件事项和原详情。交换同页父子顺序、改为先前页已导入父项，子项都挂到同空间父项。核对创建和状态事件的 `links` 包含提供者 URL，消息中没有条目正文。
+- 给两个到期指标配置同一数据源、空间与连接用户，再加一个普通指标。数据源应收到一批两条查询，普通指标应进入 Agent 运行。试非法查询、非法点和连续采集失败，核对入库结果及提醒次数。
+
+2026-11-21 在 `feat/plugin-hooks` 的 `22b44a26` 复验：
+
+| 场景 | 实测结果 |
+| --- | --- |
+| 同一用户和连接账号，在两个空间拉取同一对父子条目 | 只有首次导入的空间建了两件事项。另一空间拉取的新标题和正文未覆盖原详情，在该空间新建的子项也未挂到原空间的父项。 |
+| 按 `parentKey` 归类 | 同页父先、子先以及以前页已导入父项三种顺序都挂对父项。成环和第四层均整页回滚。 |
+| 条件回写与时间线 | 外部更新标明提供者并保留本地改过的标题。拉取发现修订冲突时，方向为 `pull`，详情保留冲突原因；确认回写成功后方向为 `push`，修订号更新、错误清空。 |
+| 事项事件 | `item.created` 和 `item.status` 的 `data.links` 都有提供者 URL，两者均不含导入摘要。 |
+
+`npm run typecheck` 通过。以下限定范围共 21 个文件、180 项通过，0 失败，0 跳过。GitHub 使用模拟 HTTP，插件对象的回归文件是 `object-actions.test.ts` 和 `flow-objects.test.ts`。
+
+```sh
+npx vitest run test/item-providers.test.ts test/platform-packs.test.ts test/plugin-event-delivery.test.ts test/plugin-process-hooks.test.ts test/plugin-sandbox.test.ts test/plugins*.test.ts test/object-actions.test.ts test/flow-objects.test.ts test/items*.test.ts test/metrics.test.ts test/review*.test.ts test/esm.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts --maxWorkers=2
+```
+
 ## 插件回调、对象有更新、omem 内部事件进规则（2026-11-19）
 
 | 编号 | 操作 | 预期 | 验证 |

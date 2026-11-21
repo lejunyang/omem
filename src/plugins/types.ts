@@ -199,7 +199,8 @@ export type PluginSlot = { block: string; when?: PluginSlotWhen };
 export type PluginSlotContext = { at: PluginSlotPlace; item: string | null; stage: string | null; object: { id: string; kind: string; key: string; title: string; status: string; link: string } | null };
 export type PluginSlotView = { title?: string; components: unknown[] };
 
-export type PluginApi = {
+export type * from "../../packages/plugin-sdk/server.ts";
+export type PluginApi = import("../../packages/plugin-sdk/server.ts").ProcessApi & {
   id: string;
   /** A stateful object, named <plugin id>:<kind> by the host; its actions are the plugin's own tools. */
   object(def: PluginObject): void;

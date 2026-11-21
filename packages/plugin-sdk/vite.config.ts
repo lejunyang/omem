@@ -7,6 +7,6 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    lib: { entry: { client: at("client.ts"), blocks: at("blocks.ts"), charts: at("charts.ts") }, formats: ["es"], fileName: (_, name) => `${name}.js` },
+    lib: { entry: { server: at("server.ts"), client: at("client.ts"), blocks: at("blocks.ts"), charts: at("charts.ts") }, formats: ["es"], fileName: (_, name) => `${name}.js` },
   },
 });

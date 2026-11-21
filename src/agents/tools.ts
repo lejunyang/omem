@@ -3462,6 +3462,8 @@ def({
     description: z.string().max(2000).optional().describe("口径和注意的地方"),
     unit: z.string().max(20).optional(),
     source: z.string().max(200).optional().describe("哪个系统（按数据源目录的叫法）"),
+    providerId: z.string().min(1).nullable().optional().describe("插件数据源全名；传 null 改回 Agent 按 query 取数"),
+    providerQuery: z.unknown().optional().describe("按数据源查询结构填写的参数"),
     query: z.string().max(4000).optional().describe("怎么查：技能名、命令或查询语句、参数和时间范围，另一个 Agent 照着能取到同样的数"),
     item: z.string().optional().describe("关联的事项 id"),
     context: z.string().optional().describe("关联的关注 id"),
@@ -3474,7 +3476,7 @@ def({
     status: z.enum(["active", "paused", "dropped"]).optional().describe("本人亲口说留下 active / 暂停 paused / 不要 dropped；后台运行不用传"),
   }),
   handler: async (ctx, a) => {
-    const { defineMetric, metricLessons } = await import("../data/metrics.ts");
+    const { defineMetric, getMetric, metricLessons } = await import("../data/metrics.ts");
     if (a.item) {
       const item = requireItem(ctx.app, a.item, ctx.userId ?? OWNER, "write");
       inScope(ctx, item.spaceId, "指标关联的事项");
@@ -3485,11 +3487,14 @@ def({
     }
     // The owner's own turn (or their tools, the web) defines it; anything else proposes it.
     const by = ownTurn(ctx) ? ("owner" as const) : ("agent" as const);
+    const prev = getMetric(ctx.app, a.id ?? a.name);
+    if (prev) inScope(ctx, prev.spaceId, "指标");
     const m = defineMetric(ctx.app, {
       id: a.id, name: a.name, why: a.why, planRef: a.plan_ref, description: a.description, unit: a.unit, source: a.source, query: a.query,
-      itemId: a.item, contextId: a.context, spaceId: a.space ? writeSpace(ctx, a.space) : undefined,
+      providerId: a.providerId, providerQuery: a.providerQuery,
+      itemId: a.item, contextId: a.context, spaceId: writeSpace(ctx, a.space ?? prev?.spaceId),
       schedule: a.schedule, baseline: a.baseline, threshold: a.threshold, direction: a.direction, view: a.view, status: a.status,
-    }, { by, runId: ctx.runId });
+    }, { by, runId: ctx.runId, userId: ctx.userId ?? OWNER });
     const taking = `采集：${m.schedule}${m.schedule === "none" ? "" : "，后台到时间按查法取数"}。现在就有数的用 metric_record 记下。`;
     if (m.status !== "proposed") return `已${a.id ? "更新" : "保存"}指标「${m.name}」（${m.id}）：${m.status === "active" ? "在看" : m.status === "paused" ? "暂停" : "本人不要了，不再取数"}。${m.status === "dropped" ? "" : taking}`;
     const lessons = metricLessons(ctx.app, { spaces: ctx.spaces });
@@ -5202,10 +5207,10 @@ async function fixFindings(ctx: ToolContext, a: ContinueArgs, execution: Executi
     const review = await roundReviewOf(ctx, a);
     for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const { setFindingDecision, startFix } = await import("./review-fix.ts");
-    for (const id of a.later ?? []) setFindingDecision(ctx.app, r.id, id, "later");
-    for (const w of a.wontfix ?? []) setFindingDecision(ctx.app, r.id, w.id, "wontfix", w.reason);
+    for (const id of a.later ?? []) setFindingDecision(ctx.app, r.id, id, "later", "", ctx.actor);
+    for (const w of a.wontfix ?? []) setFindingDecision(ctx.app, r.id, w.id, "wontfix", w.reason, ctx.actor);
     if (!a.fix?.length && !a.task?.trim()) return `已记下：${(a.later ?? []).length} 个暂不改，${(a.wontfix ?? []).length} 个不改。没有要改的，没有开始修改。`;
-    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.task, review, execution, reviewExecution, applyFirst: a.apply_first }, ctx.userId ?? OWNER);
+    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.task, actor: ctx.actor, review, execution, reviewExecution, applyFirst: a.apply_first }, ctx.userId ?? OWNER);
     return `已开始修改，运行 ${next.id}（${next.title}）：改 ${(a.fix ?? []).length} 个问题${a.task?.trim() ? "和补充的要求" : ""}，暂不改 ${(a.later ?? []).length} 个，不改 ${(a.wontfix ?? []).length} 个。完成后会检查、评审并通知。`;
 }
 

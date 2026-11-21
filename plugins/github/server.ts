@@ -57,6 +57,28 @@ export async function mergePullRequest(c: PluginConnection, pr: string, method: 
 }
 
 export default function register(api: PluginApi) {
+  api.itemProvider({
+    id: "issues", label: "GitHub Issues", statuses: { open: "active", closed: "done" },
+    async pull(ctx, { target, cursor }) {
+      const c = await ctx.connection("connect-github");
+      if (!c) throw new Error("请先在账号页连接 GitHub");
+      const { owner, repo } = repoRef(target);
+      const position: { since?: string; page?: number; started?: string } = cursor ? JSON.parse(cursor) : {};
+      const started = position.started ?? new Date(Date.now() - 1000).toISOString();
+      const page = position.page ?? 1;
+      const query = new URLSearchParams({ state: "all", sort: "created", direction: "asc", per_page: "100", page: String(page) });
+      if (position.since) query.set("since", position.since);
+      const { body, next } = await call<Issue[]>(c, `/repos/${owner}/${repo}/issues?${query}`);
+      return {
+        items: body.filter(i => !i.pull_request).map(i => ({
+          key: `${owner.toLowerCase()}/${repo.toLowerCase()}#${i.number}`, url: i.html_url, title: i.title, status: i.state,
+          updatedAt: i.updated_at, revision: i.updated_at, summary: i.body ?? undefined, assignee: i.assignees?.[0]?.login,
+        })),
+        cursor: JSON.stringify(next ? { since: position.since, started, page: page + 1 } : { since: started }), done: !next,
+      };
+    },
+    // GitHub's update-issue endpoint has no conditional write. Only expose pull for issues.
+  });
   api.tool({
     name: "github_merge_pull_request",
     description: "合并 GitHub 上的一个 PR，以连接 GitHub 的这个人的身份。pr 写 owner/repo#编号或它的链接；method 默认 merge，可选 squash、rebase。只在本人要求，或流程走到合并、检查已通过时用；GitHub 拒绝时原样告诉本人，不要换方式重试。",
