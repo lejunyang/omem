@@ -43,7 +43,7 @@ import { addRunEvent, runUser } from "./runs.ts";
 import { SandboxStartError } from "./spawn.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
-import { accountOf } from "./sandbox.ts";
+import { accountOf, egressRequested, egressSupport } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -450,6 +450,10 @@ function accountProfile(app: App, input: Parameters<typeof resolveRunProfile>[1]
 
 /** Called for the selected attempt, including a conversation reusing a live process. */
 export function recordIsolation(app: App, runId: string | null, userId: string, profile: AgentProfile) {
+  // Said only when this run would have gone through the proxy here: a member's run, with egress isolation asked for.
+  const egress = app.config.security.egress.mode;
+  if (profile.peer && runId && userId !== OWNER && egress !== "off" && (egress === "all-sandboxed" || app.config.agents.accountIsolation === "require"))
+    addRunEvent(app, runId, "status", { text: "代跑的运行不经这台的出网代理" });
   const reason = unisolatedReason(app, userId, profile);
   if (!reason) return;
   if (app.config.agents.accountIsolation === "require") throw new Error(`这台机器不能隔离成员的运行：${reason}`);
@@ -527,6 +531,9 @@ export function prepareRun(
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const account = accountOf(profile);
+  const base = new URL(app.baseUrl);
+  if (egressRequested(app.config,profile) && egressSupport().ok) base.hostname = "127.0.0.1";
+  const toolBase = base.origin;
   const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
@@ -570,8 +577,8 @@ export function prepareRun(
     now: `现在：${localTime(app, input.replay?.view.asOf)}`,
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
-    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: {
-      ...agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app)),
+    mcp: { url: `${toolBase}/mcp`, baseUrl: toolBase, token, stdio: mcpBridge(), env: {
+      ...agentToolEnv(app.home, toolBase, token, commandGateDir(app)),
       ...(browserProfilesRoot ? { OMEM_BROWSER_PROFILES: browserProfilesRoot } : {}),
       ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
       ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),

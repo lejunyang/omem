@@ -66,7 +66,7 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewR
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
+import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
 import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
@@ -324,6 +324,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     disableRulePack(app, id);
     audit(app, who(req), "operation.pack.disable", id);
     return { ok: true };
+  });
+  server.get("/api/security/egress", async () => (await import("../agents/egress-run.ts")).egressStatus(app));
+  server.put("/api/security/egress", async req => {
+    const egress = q(egressSchema.strict(), req.body);
+    const next = { ...app.config, security: { ...app.config.security, egress } };
+    saveConfig(next,app.home);
+    Object.assign(app.config,next);
+    audit(app,who(req),"egress.settings","security",{ mode:egress.mode });
+    return egress;
   });
   const rulesView = () => currentRules(app).map(r => ({ ...r, enforcedBy: enforcedBy[r.match.kind] }));
   server.get("/api/security/operation-rules", async () => ({ rules: rulesView() }));

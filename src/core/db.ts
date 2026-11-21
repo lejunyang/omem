@@ -2393,6 +2393,12 @@ export const migrations: readonly string[] = [
    end;`,
   `create index progress_code_takeovers on run_events(run_id)
      where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
+  `create table if not exists egress_runs (
+     run_id text primary key, seq integer not null, updated_at text not null,
+     foreign key(run_id,seq) references run_events(run_id,seq) on delete cascade
+   );
+   create index if not exists egress_recent on egress_runs(updated_at desc);
+   create index if not exists asks_egress_pending on asks(created_at desc) where status='pending' and json_type(context,'$.egressFallback') is not null;`,
 ];
 
 export type Db = DatabaseSync;
@@ -2406,7 +2412,7 @@ export function openDb(path: string): Db {
       !db.prepare("select 1 from sqlite_schema where type='table' and name='stored_file_refs'").get()) {
     version--;
   }
-  // The progress branch used the ledger's version and the following one for its indexes.
+  // Early progress and egress databases used the ledger's slot for their own schema.
   const ledgerVersion = migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1;
   if ((version === ledgerVersion || version === ledgerVersion + 1) &&
       !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
@@ -2417,6 +2423,12 @@ export function openDb(path: string): Db {
   if (version > ledgerVersion && version <= ledgerVersion + 3 &&
       !db.prepare("select 1 from sqlite_schema where type='table' and name='outlet_deliveries'").get()) {
     version = ledgerVersion;
+  }
+  // Main used the first progress index slot for egress_runs. Replay the missing
+  // indexes for those databases; the later egress migration is idempotent.
+  if (version === ledgerVersion + 3 &&
+      !db.prepare("select 1 from sqlite_schema where type='index' and name='progress_runs_item'").get()) {
+    version--;
   }
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");
