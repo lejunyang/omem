@@ -20,6 +20,18 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 夜间通知补送避免重复提醒（2026-11-21）
+
+飞书补送和插件出口按通知共用发送顺序。飞书逐张或整批发送前重新核对回执，前一个出口发送失败时另一个可接手。从 `src/core/notify.ts` 的 `withDeferredPush` 和 `src/channels/lark-bot.ts` 的 `sendDeferredLark` 读起。
+
+## 成员的插件审批出口由本人授权（2026-11-21）
+
+成员可以调整自己的通知门槛和普通提问偏好。读取旧设置时只显示当前已授权的种类，成员可直接修改并保存。工具审批和流程关卡按成员、出口和种类授权，发送前和接受回答时都复核。设置与投递从 `src/plugins/notifier.ts` 读起。
+
+## 插件按成员投递通知和提问（2026-11-21）
+
+普通投递、更新、提问和撤回共用一个插件出口。宿主保存投递回执，验证回答人的绑定身份。实现从 `src/plugins/notifier.ts` 读起，文件示例在 `examples/plugins/localnotice/`。
+
 ## 2026-11-21 · 成员的线和“等我的”，助手替本人问成员进展
 
 - 成员看到的线：`src/items/member-work.ts`。成员和观察者的 `GET /api/work`、`/api/work/:id`、`/api/work/activities`、`/api/work/ended` 与本人同一个形状（原来的精简树 `sharedLines` 和网页的 `lib/shared-work.ts` 删了）。`viewerOf` 取“看工作线”的空间和自己事项的空间；`seesLine` 判一条线给不给（自己的，或本人在“看工作线”空间里的，不含候选 / 等待 / 稍后）；`visibleTree` 逐层判下面的事项（自己的，或本人的、在“看工作线”空间里、`itemAccess` 能读、不是候选 / 等待 / 稍后；上层看不到的下层也不给），有一件看不到就是 `partial`：不给 `now`、线自己的下一步、收尾小结、结束原因。计数、时间线、按时间（`changeFilter`）、已结束的线（`memberEnded`，partial 的不按小结搜）都只算看得到的；引用经 `scrubTargets` 只留读得到的事项和运行。每条线和详情带 `partial / mine / person / can`。

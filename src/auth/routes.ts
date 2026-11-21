@@ -188,6 +188,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/ui/pages/:id": "self",
   "POST /api/asks/:id/draft": "self",
   "GET /api/ui/:id": "self",
+  "GET /api/notify/outlets": "self",
+  "PUT /api/notify/outlets": "self",
+  "POST /api/notify/outlets/:id/test": "self",
   "GET /api/notifications": cap("notifications.view", "global"),
   "GET /api/notifications/outcomes": "owner",
   "POST /api/notifications/outcomes/ignore": "owner",
@@ -576,6 +579,20 @@ export const routeKey = (req: FastifyRequest) => `${req.method} ${req.routeOptio
  * Throws when this user may not use this route. The owner may use every one. A source a route names
  * must also be one this person may read (restricted ones, Feishu access: src/auth/visibility.ts).
  */
+export function requireAskAccess(app: App, userId: string, id: string) {
+  if (one<{role:string}>(app.db, "select role from users where id=?", userId)?.role !== "observer") return;
+  requirePerm(app, userId, "ask.send");
+  const ordinary = one(app.db, `select 1 from asks a join conversations c on c.id=a.conversation_id
+    join runs r on r.id=a.run_id and r.kind='ask' and coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))=c.id
+    where a.id=? and a.kind='question' and a.tool is null and a.args is null
+    and json_extract(a.context,'$.handler') is null
+    and json_extract(a.context,'$.askedBy') is null
+    and json_extract(a.context,'$.operationApproval') is null
+    and a.user_id=? and c.user_id=a.user_id and r.user_id=a.user_id`, id, userId);
+  if (ordinary) return;
+  throw new HttpError(403, "观察者不能回答这项提问");
+}
+
 export async function checkRoute(app: App, req: FastifyRequest, userId: string) {
   if (isOwner(app, userId)) return;
   const rule = ROUTE_RULES[routeKey(req)] ?? ROUTE_RULES[`* ${req.routeOptions.url}`];
@@ -583,15 +600,7 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   if (rule === "self" && !["GET", "HEAD", "OPTIONS"].includes(req.method) && one<{ role: string }>(app.db, "select role from users where id=?", userId)?.role === "observer") {
     const path = routeKey(req);
     if (path === "POST /api/asks/:id/answer" || path === "POST /api/asks/:id/dismiss") {
-      requirePerm(app, userId, "ask.send");
-      const ordinary = one(app.db, `select 1 from asks a join conversations c on c.id=a.conversation_id
-        join runs r on r.id=a.run_id and r.kind='ask' and coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))=c.id
-        where a.id=? and a.kind='question' and a.tool is null and a.args is null
-        and json_extract(a.context,'$.handler') is null
-        and json_extract(a.context,'$.askedBy') is null
-        and json_extract(a.context,'$.operationApproval') is null
-        and a.user_id=? and c.user_id=a.user_id and r.user_id=a.user_id`, (req.params as {id:string}).id, userId);
-      if (ordinary) return;
+      return requireAskAccess(app, userId, (req.params as {id:string}).id);
     }
     throw new HttpError(403, "观察者不能执行这项操作");
   }

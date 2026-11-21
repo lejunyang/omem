@@ -80,6 +80,7 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
 const tools = new Map<string, PluginTool>();
 const readers = new Map<string, PlatformReader>();
 const objects = new Map<string, PluginObject>();
+const notifiers = new Map<string, import('./types.ts').Notifier>();
 const items = new Map<string, import("./types.ts").ItemProvider>();
 const retrievers = new Map<string, import("./types.ts").Retriever>();
 const rerankers = new Map<string, import("./types.ts").Reranker>();
@@ -94,10 +95,16 @@ async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { parsers: unknown[]; kinds: unknown[]; items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { parsers: [], kinds: [], items: [], retrievers: [], rerankers: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
+  const declared: { notifiers: unknown[]; parsers: unknown[]; kinds: unknown[]; items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { notifiers: [], parsers: [], kinds: [], items: [], retrievers: [], rerankers: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
+    answerAsk: input => rpc("answerAsk", { input }),
+    notifier(def) {
+      if (typeof def.deliver !== "function") throw new Error("通知出口缺少 deliver");
+      notifiers.set(def.id, def);
+      declared.notifiers.push({ id: def.id, name: def.name, resolves: !!def.resolve, updates: !!def.update, asks: !!def.ask, retracts: !!def.retract });
+    },
     sourceParser(def) {
       if (typeof def.parse !== "function") throw new Error("解析器缺少 parse 方法");
       parsers.set(def.id, def);
@@ -184,9 +191,19 @@ process.on("message", async (m: Msg) => {
   }
   try {
     let value: unknown;
-    const search = m.t === "retriever" || m.t === "reranker" ? new AbortController() : null;
+    const search = ["retriever", "reranker", "notifier"].includes(m.t) ? new AbortController() : null;
     if (search) activeSearch.set(m.id!, search);
-    if (search || m.t === "event" || m.t === "review" || m.t === "item" || m.t === "parse" || m.t === "check") {
+    if (m.t === "notifier") {
+      const def = notifiers.get(m.name)!;
+      const [arg, n] = m.args;
+      switch (m.method) {
+        case "resolve": value = await def.resolve!(arg, search!.signal); break;
+        case "deliver": value = await def.deliver(arg, search!.signal); break;
+        case "ask": value = await def.ask!(arg, search!.signal); break;
+        case "update": await def.update!(arg, n, search!.signal); break;
+        case "retract": await def.retract!(arg, search!.signal); break;
+      }
+    } else if (search || m.t === "event" || m.t === "review" || m.t === "item" || m.t === "parse" || m.t === "check") {
       const ctx: import("./types.ts").CallContext = {
         userId: m.userId, spaceId: m.spaceId, signal: search?.signal ?? AbortSignal.timeout(15000),
         async connection(provider) {
