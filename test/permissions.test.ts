@@ -120,6 +120,16 @@ describe("roles and permissions", async () => {
     expect((await as("observer-test", "/api/rules")).status).toBe(200);
   });
 
+  it("lists generic and matching flow definitions only", async () => {
+    const { saveFlow } = await import("../src/flows/definitions.ts");
+    for (const [id, spaces] of [["generic", []], ["shared", ["team","other"]], ["private-flow", ["other"]]] as const) {
+      saveFlow(app, JSON.stringify({ id, name:id, for:{spaces}, stages:[{id:"step",name:"阶段",by:"owner"}] }), "owner");
+    }
+    const ids = (await json("ann","/api/flows")).flows.map((f: {id:string}) => f.id);
+    expect(ids).toEqual(expect.arrayContaining(["generic","shared"]));
+    expect(ids).not.toContain("private-flow");
+  });
+
   it("allows ordinary observer answers and mapped edits only", async () => {
     const id = "answer-reader";
     createUser(app, { id, name: "参与者", role: "observer" });

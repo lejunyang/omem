@@ -65,18 +65,24 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
   // drafts: definitions the assistant wrote up (save_flow) still waiting for the owner's 启用 / 不用.
   server.get("/api/flows", async (req) => {
     const userId = who(req);
+    const scope = spacesWithCapability(app, userId, "flows.view");
+    const allowed = scope && new Set(scope);
+    const visible = (def: ReturnType<typeof parseFlow> | null) =>
+      !allowed || !!def && (!def.for?.spaces?.length || def.for.spaces.some(space => allowed.has(space)));
+    const flows = listFlows(app).filter(f => visible(f.definition));
     const drafts = all<{ id: string; context: string; created_at: string; conversation_id: string | null }>(
       app.db, "select id, context, created_at, conversation_id from asks where status = 'pending' and user_id = ? and json_extract(context, '$.handler') = 'flow-save' order by created_at desc limit 20", userId,
     ).flatMap((a) => {
       try {
         const raw = String((JSON.parse(a.context) as { raw?: unknown }).raw ?? "");
         const f = parseFlow(raw);
-        return [{ askId: a.id, conversationId: a.conversation_id, createdAt: a.created_at, id: f.id, name: f.name, description: f.description ?? "", stages: f.stages.length, replaces: listFlows(app).some((x) => x.id === f.id) }];
+        if (!visible(f)) return [];
+        return [{ askId: a.id, conversationId: a.conversation_id, createdAt: a.created_at, id: f.id, name: f.name, description: f.description ?? "", stages: f.stages.length, replaces: flows.some((x) => x.id === f.id) }];
       } catch {
         return [];
       }
     });
-    return { flows: listFlows(app).map((f) => ({ ...f, grants: gateGrants(app, f.id, userId) })), drafts };
+    return { flows: flows.map((f) => ({ ...f, grants: gateGrants(app, f.id, userId) })), drafts };
   });
   server.get("/api/flows/board", async (req) => {
     const { only } = body(z.object({ only: z.enum(["mine", "blocked"]).optional() }), req.query);
