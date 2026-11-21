@@ -10,14 +10,14 @@ import { describe } from "./conditions.ts";
 
 const revision = (rule: Rule) => sha256(JSON.stringify(rule));
 
-export function confirmRule(app: App, rule: Rule, runId: string, conversationId: string) {
+export function confirmRule(app: App, rule: Rule, runId: string, ownerConversation: string | null) {
   for (const ask of all<{ id: string }>(app.db, "select id from asks where status = 'pending' and json_extract(context, '$.handler') = 'rule-enable' and json_extract(context, '$.ruleId') = ?", rule.id)) cancelAsk(app, ask.id);
   if (rule.enabled) return null;
   const actions = rule.actions.map(a => a.type === "agent"
     ? `交给 ${a.spec ?? "assistant"}${a.task ? `：${a.task}` : ""}（${a.reply === "auto" ? "直接回复" : a.reply === "draft" ? "回复先确认" : a.reply === "silent" ? "静默排查" : "只告诉本人"}）`
     : ({ notify: "通知本人", capture: "优先采集", watch: "持续监听", context: `交给关注「${a.type === "context" ? getContext(app, a.context)?.name ?? a.context : ""}」`, "invite-bot": "拉机器人进群", forward: `转发到「${a.type === "forward" ? a.to.name || a.to.chatId : ""}」`, "meeting-bot": "拉机器人入会", wake: "唤醒", delay: "延时", check: "模型判断", script: "执行脚本", "wait-message": `等「${a.type === "wait-message" ? a.name || a.chatId : ""}」的新消息` })[a.type]);
   return createAsk(app, {
-    runId, conversationId, userId: OWNER,
+    runId, conversationId: ownerConversation, userId: OWNER,
     question: [
       `规则「${rule.name}」已保存，是否启用？`, rule.description,
       `触发：${({ message: "新消息", "chat-new": "第一次看到的群", meeting: "本人加入会议", doc: "文档变化", object: `对象${(rule.trigger.objectChanges ?? ["status"]).map((c) => c === "updated" ? "有更新" : "状态变化").join(" / ")}${rule.trigger.objectKind ? `（${rule.trigger.objectKind}${rule.trigger.objectStatuses?.length ? ` → ${rule.trigger.objectStatuses.join(" / ")}` : ""}）` : ""}`, omem: `omem 里发生的事（${(rule.trigger.omemTypes ?? []).map((t) => OMEM_TYPE_LABEL[t]).join("、")}）`, schedule: `定时 ${rule.trigger.cron ?? ""}` })[rule.trigger.event]}`,

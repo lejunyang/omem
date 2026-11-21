@@ -3,7 +3,9 @@ import { answerAsk, createAsk, getAsk, listAsks, settleAsks, showSuggestions, LA
 import { createRun } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool } from "../src/agents/tools.ts";
-import { all, one } from "../src/core/db.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { addMember, createUser } from "../src/core/users.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { withBot } from "../src/core/bot-context.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { registerLarkAsks } from "../src/channels/lark-asks.ts";
@@ -86,6 +88,38 @@ it("saves a disabled rule, then commits its enable button before acknowledging w
   expect(all(app.db, "select id from runs")).toHaveLength(1);
   release(); await showing;
   expect((await handleCardAction(app, event)).toast.content).toBe("已经处理过了");
+});
+
+it("delivers a member's disabled rule confirmation to the owner's private chat", async () => {
+  const { app } = fixture();
+  const member = createUser(app, { id: "member-a", name: "示例成员" });
+  const spaceId = "project-a";
+  createSpace(app, { id: spaceId, name: "项目 A" });
+  addMember(app, spaceId, member.id, "editor");
+  run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,'rules.edit','global','','allow',current_timestamp,'owner',current_timestamp)", member.id);
+  const thread = createThread(app, { channel: "lark", key: "oc_member", settings: { group: false }, spaceId, userId: member.id });
+  const task = createRun(app, { kind: "ask", title: "保存普通通知规则", spaceId, userId: member.id, input: { conversationId: thread.id, userId: member.id } });
+  const ctx = { app, runId: task.id, spaceId, spaces: [spaceId], writable: [spaceId], tools: null, actor: "agent" as const, userId: member.id, role: "assistant" };
+  const recipients: string[] = [];
+  setLarkClient({ im: { message: {
+    create: async ({ data }: any) => { recipients.push(data.receive_id); return { code: 0, data: { message_id: "om_rule_owner" } }; },
+    patch: async () => ({ code: 0 }),
+  } } });
+
+  const result = await callTool(ctx, "save_rule", { description: "退款时提醒", rule: { name: "退款提醒", conditions: ruleInput.conditions, actions: ruleInput.actions } });
+  expect(result.isError, result.text).toBe(false);
+  const [rule] = listRules(app);
+  expect(rule.enabled).toBe(false);
+  expect(rule.conversationId).toBeFalsy();
+  await showSuggestions(app, task.id);
+  expect(recipients).toEqual(["ou_owner"]);
+  const [ask] = listAsks(app, { runId: task.id });
+  expect(ask).toMatchObject({ userId: "owner", conversationId: null, handler: "rule-enable" });
+  expect(interactionForMessage(app, "om_rule_owner")).toMatchObject({ allowed: ["ou_owner"], chatId: null, conversationId: null });
+  expect(result.text).toContain("由系统主人确认启用");
+  await expect(answerAsk(app, ask.id, { choice: 0, by: member.id })).rejects.toThrow("只有本人");
+  await answerAsk(app, ask.id, { choice: 0, by: "owner" });
+  expect(getRule(app, rule.id).enabled).toBe(true);
 });
 
 it("also accepts a form button clicked before the send response, with its typed answer", async () => {
