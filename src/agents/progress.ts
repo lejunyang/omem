@@ -86,6 +86,10 @@ const verdictWaits: Record<string, string> = {
   "changes-requested": "等决定要改的问题", "awaiting-peer-code": "等外部编码", "awaiting-peer": "等外部评审"
 };
 
+function codeRounds(graph: Forest, node: Node) {
+  return [node, ...[...graph.nodes.values()].filter(r => r.kind === "code" && r.first === node.id)];
+}
+
 function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
   const checkpoints = listCheckpoints(app, node.id);
   const helpers = [...graph.nodes.values()].filter(r => r.helper && (r.helper === node.id || graph.nodes.get(r.helper)?.first === node.id));
@@ -99,7 +103,7 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
     const waitingOn = taskWaits[t.state];
     return task(graph, ids, { id: `T${t.seq}`, title: t.title, accept: t.doneWhen, state: states.code[t.state], outputs, waitingOn });
   });
-  const rounds = [...graph.nodes.values()].filter(r => r.id === node.id || r.first === node.id);
+  const rounds = codeRounds(graph, node);
   const last = rounds.at(-1)!;
   const terminal = last.discarded || node.discarded ? "cancelled" : last.applied || node.applied ? "done"
     : last.status === "failed" || last.status === "cancelled" ? last.status : undefined;
@@ -115,36 +119,45 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
 }
 
 function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
-  const reviews = reviewsOf(app, [node.id]);
-  const children = [...graph.nodes.values()].filter(r => r.parent === node.id && r.kind === "review" && !r.splitOnly);
-  const checks = new Set<string>([...JSON.parse(node.plan ?? "[]"), ...reviews.map(r => r.check_name)]);
+  const rounds = codeRounds(graph, node);
+  const roundIds = rounds.map(r => r.id);
+  const reviews = reviewsOf(app, roundIds);
+  const children = [...graph.nodes.values()].filter(r => r.parent && roundIds.includes(r.parent) && r.kind === "review" && !r.splitOnly);
+  const planned = (r: Node): string[] => JSON.parse(r.plan ?? "[]");
+  const checks = new Set([...rounds.flatMap(planned), ...reviews.map(r => r.check_name)]);
+  const lastRound = rounds.at(-1)!;
   const tasks = [...checks].map(name => {
-    const result = reviews.filter(r => r.check_name === name).at(-1);
-    const attempts = children.filter(r => !r.onlyChecks || (JSON.parse(r.onlyChecks) as string[]).includes(name));
-    // Embedded checks run in the coding round; standalone re-reviews share their review run.
+    const results = reviews.filter(r => r.check_name === name);
+    const result = results.at(-1);
+    const attempts = children.filter(r => r.onlyChecks ? (JSON.parse(r.onlyChecks) as string[]).includes(name)
+      : planned(graph.nodes.get(r.parent!)!).includes(name) || results.some(review => review.code_run_id === r.parent));
     const ids = attempts.map(r => r.id);
-    if (!ids.length && result) ids.push(node.id);
-    const decisions = result?.findings.flatMap(f => {
+    for (const review of results) {
+      if (!attempts.some(r => r.parent === review.code_run_id)) ids.push(review.code_run_id);
+    }
+    const decisions = results.flatMap(r => r.findings).flatMap(f => {
       const rows: Decision[] = [];
       if (f.state !== "open") rows.push({ ref: String(f.id), by: "评审负责人", result: f.state, note: f.triage_note });
       if (f.decision) rows.push({ ref: String(f.id), result: f.decision, note: f.decision_note });
       return rows;
     });
-    const latest = attempts.at(-1);
+    const latest = attempts.filter(r => r.parent === lastRound.id).at(-1);
     const executing = latest && ["running", "queued"].includes(latest.status);
     let state: TaskStatus = result ? states.review[result.verdict as keyof typeof states.review] : "pending";
     if (latest && (executing || latest.status === "failed" || latest.status === "cancelled")) state = latest.status as TaskStatus;
-    else if (!result && node.reviewStage === "checks") state = "running";
+    else if (!result && lastRound.reviewStage === "checks") state = "running";
     return task(graph, ids, {
       id: name, title: name, state,
       who: result?.profile_id || result?.model ? { agent: result.profile_id ?? undefined, model: result.model ?? undefined, effort: result.effort ?? undefined } : undefined,
-      outputs: result ? [{ kind: "report", ref: result.id, label: `${result.verdict} · ${result.findings.length} 个问题 · ${result.summary}` },
-      ...result.findings.map(f => ({ kind: "finding" as const, ref: String(f.id), label: f.title }))] : undefined,
-      decisions, decision: decisions?.at(-1), waitingOn: node.reviewStage === "plan" ? "等本人确认评审计划" : undefined
+      outputs: results.flatMap((r): Output[] => [
+        { kind: "report", ref: r.id, label: `${r.verdict} · ${r.findings.length} 个问题 · ${r.summary}` },
+        ...r.findings.map(f => ({ kind: "finding" as const, ref: String(f.id), label: f.title })),
+      ]),
+      decisions, decision: decisions?.at(-1), waitingOn: lastRound.reviewStage === "plan" ? "等本人确认评审计划" : undefined
     });
   });
   if (tasks.length) return view(graph, { kind: "review", id: node.id, runId: node.id, itemId, title: node.title + " · 评审", tasks },
-    node.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined);
+    lastRound.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined);
 }
 
 function flowViews(app: App, graph: Forest, id: string, title: string, history: boolean) {
@@ -233,11 +246,18 @@ function workViews(app: App, graph: Forest, linkedItem?: string) {
     (json_extract(output,'$.reviewPlan.checks') is not null or exists(select 1 from reviews where code_run_id=r.id)) review
     from runs r where r.id in (select value from json_each(?)) and (board or code or review) order by created_at desc`, ids);
   const views: ProgressView[] = [];
+  const reviewed = new Set<string>();
   for (const c of candidates) {
     const node = graph.nodes.get(c.id)!;
     const item = linkedItem ?? node.item ?? undefined;
-    for (const b of [c.board && boardView(app, graph, node, item), c.code && codeView(app, graph, node, item), c.review && reviewView(app, graph, node, item)])
+    for (const b of [c.board && boardView(app, graph, node, item), c.code && codeView(app, graph, node, item)])
       if (b) views.push(b);
+    const root = node.kind === "code" && node.first ? graph.nodes.get(node.first) : node;
+    if (c.review && root && !reviewed.has(root.id)) {
+      reviewed.add(root.id);
+      const review = reviewView(app, graph, root, linkedItem ?? root.item ?? undefined);
+      if (review) views.push(review);
+    }
   }
   return views;
 }

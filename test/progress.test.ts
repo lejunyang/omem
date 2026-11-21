@@ -9,6 +9,7 @@ import { run } from "../src/core/db.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { itemProgress, runProgress, states } from "../src/agents/progress.ts";
 import { addTask, updateTask } from "../src/agents/code-tasks.ts";
+import { recordReview, findingSchema } from "../src/agents/review.ts";
 import { readBoard } from "../src/agents/work-board.ts";
 import { saveProposals, confirmDirection } from "../src/studies/store.ts";
 
@@ -60,6 +61,28 @@ describe("进度投影", () => {
     expect(code.usage.runs).toBe(1);
     expect(views.find(v => v.kind === "review")?.tasks[0]).toMatchObject({ who: { model: "model-a" }, decision: { result: "fix" }, outputs: [{ label: expect.stringContaining("1 个问题") }, { label: "格式" }] });
     expect(itemProgress(app, item.id, owner).map(v => v.kind).sort()).toEqual(["board", "code", "review"]);
+  });
+
+  it("续轮评审合入一个块，保留每轮结论、问题、取舍和用量", () => {
+    const { app, add } = fixture();
+    const plan = { reviewPlan: { checks: ["style"] }, reviewStage: "done" };
+    add("code1", "code", null, {}, plan);
+    add("code2", "code", null, { continueFrom: "code1" }, plan);
+    for (const round of [1, 2]) {
+      const codeRunId = "code" + round;
+      const runId = "review" + round;
+      add(runId, "review", codeRunId);
+      const review = recordReview(app, { codeRunId, round, check: "style", verdict: round === 1 ? "changes_requested" : "approved",
+        summary: "结论" + round, findings: [findingSchema.parse({ severity: "minor", title: "问题" + round })] });
+      run(app.db, "update review_findings set decision='fix' where review_id=?", review);
+      run(app.db, "insert into run_events values(?,1,?,'usage',?)", runId, at, JSON.stringify({ input: round, output: round }));
+    }
+    const blocks = runProgress(app, "code2", owner).filter(v => v.kind === "review");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ id: "code1", usage: { input: 3, output: 3, runs: 2, missing: 0 },
+      tasks: [{ state: "accepted", attempts: [{ runId: "review1" }, { runId: "review2" }],
+        outputs: [{ label: "changes_requested · 1 个问题 · 结论1" }, { label: "问题1" }, { label: "approved · 1 个问题 · 结论2" }, { label: "问题2" }],
+        decisions: [{ result: "fix" }, { result: "fix" }] }] });
   });
 
   it("流程保留关卡和依赖，课题默认只展开当前轮，重跑仍归原试验", () => {
