@@ -1180,6 +1180,51 @@ async function prepareNetworkDemo(page: Page) {
     await route.fulfill({ json: data });
   });
 }
+/**
+ * 远程 → 交给成员 (src/remote/grants.ts): the demo machine opens no real browser (that needs aad), so the
+ * session list, its picture and the grant requests are answered here; members and their capabilities
+ * are answered too, so the demo library's own members stay as the other shots show them.
+ */
+async function prepareRemoteDemo(page: Page) {
+  const at = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
+  const session = {
+    id: "rs_demo1", kind: "browser", title: "退款后台 · 售后单", createdAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+    browser: { name: "Chrome", url: "https://admin.example.com/refund/R1005", profile: "后台" }, window: null, recording: null, viewers: 2,
+    ownerId: "owner", ownerName: "本人", mine: true, grant: null, runId: null, spaceId: null, connections: [],
+    grants: [{ id: "rg_demo1", sessionId: "rs_demo1", userId: "xiaolin", userName: "小林", mode: "operate", expiresAt: at(1.5), connected: true }],
+  };
+  const agent = { ...session, id: "rs_demo2", title: "预发 · 退款申请页", browser: { name: "Chrome", url: "https://staging.example.com/refund/apply", profile: null }, viewers: 0, runId: "r_demo_check", spaceId: "shop", grants: [] };
+  const sessions = [session, agent];
+  const caps: Record<string, string[]> = { xiaozhou: ["remote.view"], xiaolin: ["remote.view", "remote.operate"], xiaowu: [] };
+  await page.route("**/api/remote", (r) => r.fulfill({ json: { available: true, version: "0.0.9", sessions, profiles: ["后台"], windowAvailable: true } }));
+  await page.route("**/api/remote/recordings", (r) => r.fulfill({ json: [] }));
+  await page.route("**/api/remote/browser-profiles", (r) => r.fulfill({ json: [] }));
+  await page.route("**/api/remote/sessions/*/view", (r) => {
+    const id = r.request().url().split("/sessions/")[1].split("/")[0];
+    const s = sessions.find((x) => x.id === id)!;
+    return r.fulfill({ json: { ...s, src: `/remote/${id}/` } });
+  });
+  await page.route("**/remote/rs_demo*/", (r) => r.fulfill({ contentType: "text/html", body: `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:14px/1.6 system-ui,sans-serif;background:#eef1f4;color:#1f2937}header{background:#1f2937;color:#fff;padding:10px 20px;font-weight:600}main{padding:20px}table{border-collapse:collapse;background:#fff;width:100%}td,th{border-bottom:1px solid #e5e7eb;padding:8px 12px;text-align:left}</style><header>示例商城 · 售后后台</header><main><h3>售后单 R1005</h3><table><tr><th>商品</th><th>状态</th><th>实付</th></tr><tr><td>短袖 T 恤 × 1</td><td>已发货</td><td>39.90</td></tr><tr><td>帆布包 × 1</td><td>未发货</td><td>59.00</td></tr></table><p>应退：39.90（只退已发货的行）</p></main>` }));
+  await page.route("**/api/members/*/capabilities", (r) => {
+    const id = decodeURIComponent(r.request().url().split("/api/members/")[1].split("/")[0]);
+    return r.fulfill({ json: { preset: "member", overrides: [], caps: caps[id] ?? [], spaceCaps: {}, ownSpaceCaps: {}, effective: {} } });
+  });
+  await page.route("**/api/remote/sessions/*/grants**", async (r) => {
+    const req = r.request();
+    const body = req.postDataJSON?.() ?? {};
+    const grantId = req.url().split("/grants/")[1];
+    if (req.method() === "POST") {
+      const name = { xiaozhou: "小周", xiaolin: "小林", xiaowu: "小吴" }[body.userId as string] ?? body.userId;
+      session.grants.push({ id: `rg_${body.userId}`, sessionId: session.id, userId: body.userId, userName: name, mode: body.mode, expiresAt: at(body.hours ?? 2), connected: false });
+    } else if (req.method() === "PATCH") {
+      const g = session.grants.find((x) => x.id === grantId)!;
+      if (body.mode) g.mode = body.mode;
+      if (body.hours) g.expiresAt = at(body.hours);
+    } else session.grants = session.grants.filter((x) => x.id !== grantId);
+    await r.fulfill({ json: { ok: true } });
+  });
+}
+
 const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; before?: (page: Page) => Promise<void>; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "item-flow", path: `/items/${flowItem.id}`, width: 1440, prepare: async (p) => { await p.getByRole("region", { name: "事项流程", exact: true }).scrollIntoViewIfNeeded(); } },
   // The start page (工作): the two lines, then 按时间, then one line's own page with 问这条线 open.
@@ -1388,6 +1433,18 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await card.waitFor();
     await p.locator(".toast").waitFor({ state: "detached", timeout: 8000 }).catch(() => {});
     await card.scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // 远程 → 交给成员: 小林 already operates it; 小周 is handed it to watch for two hours through the sheet.
+  { name: "remote-grants", path: "/remote", before: prepareRemoteDemo, prepare: async (p) => {
+    await p.getByRole("button", { name: /交给成员/ }).click();
+    const sheet = p.getByRole("dialog", { name: "交给成员" });
+    await sheet.getByRole("combobox", { name: "交给谁" }).click();
+    await p.getByRole("option", { name: /小周/ }).click();
+    await sheet.getByRole("radio", { name: "2 小时" }).click();
+    await sheet.getByRole("button", { name: "交给他" }).click();
+    await sheet.getByText("小周").first().waitFor();
+    await p.locator(".toast").waitFor({ state: "detached", timeout: 8000 }).catch(() => {});
     await p.waitForTimeout(300);
   } },
   // A source a plugin read as a table: one row picked, so its lines and citation show above the table.

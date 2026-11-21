@@ -19,6 +19,13 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 远程页：把会话交给成员
+
+- 会话主人在画面上方点“交给成员”，在右侧抽屉（`web/src/components/RemoteGrants.vue`）里选人、只看或可操作、多久，已交给的人一行一个，可改模式、从现在起延长、收回（`confirmDialog`）。候选人由 `/api/users` 和每人的 `/api/members/:id/capabilities` 里的 `remote.view` / `remote.operate` 算出（`web/src/lib/remote-grants.ts`）。
+- 被授权的人：侧栏“远程”在有 `remote.view` 或 `remote.operate` 时也出现（`App.vue` 的 `addRemotePage`）；`Remote.vue` 按 `desktop.control` 收起新开、关闭、录制、画面设置和助手栏，只看时去掉地址栏。页面每 15 秒和授权到期时重读 `GET /api/remote`，交给他的会话不见了就写“××收回了这次授权”或“授权到期了”；模式改了就重开画面。
+- 会话标签标出“交给 N 人”“助手”“××的”，助手开的会话画面上方链到那次运行。
+- 已知：成员直接打开 `#/remote` 会被送到问答（`App.vue` 的页面守卫在 `addRemotePage` 之前判断，这次没改守卫）。演示数据里远程会话和授权接口是桩（演示机器起不了 aad），截图 `remote-grants`。
+
 ## 2026-11-21 · 插件检索、原件格式和页面类型的网页
 
 - 设置 → 检索与记忆 加了“插件参与检索”（`web/src/components/SearchProviders.vue`）：读 `GET /api/search/providers`，逐个打开召回、限定空间，选用哪个重排，选了插件重排时可填 `rerank.pluginPassiveThreshold`。保存走设置页的 `saveConfig`（整份 `search` / `rerank`）。没有插件提供者也没配过时整张卡不出现。

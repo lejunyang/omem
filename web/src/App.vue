@@ -64,14 +64,16 @@ async function addPluginPages() {
   rest.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon, member: true })));
   nav.value = rest;
 }
-// Remote operation (views/Remote.vue) only where this machine has ai-auto-desktop installed.
+// Remote operation (views/Remote.vue) only where this machine has ai-auto-desktop installed: for those who
+// control it, and for those who may be handed a session (看 / 操作授权给他的远程会话).
 async function addRemotePage() {
-  if (!hasPerm("desktop.control")) return;
+  const handed = hasCap("remote.view") ? "remote.view" : hasCap("remote.operate") ? "remote.operate" : undefined;
+  if (!hasPerm("desktop.control") && !handed) return;
   const r = await get<{ available: boolean }>("/api/remote").catch(() => ({ available: false }));
   if (r.available && !nav.value.some((n) => n.to === "/remote")) {
     const list = [...nav.value];
     const at = list.findIndex((n) => n.to === "/runs");
-    list.splice(at < 0 ? list.length : at, 0, { to: "/remote", label: "远程", icon: "monitor", perm: "desktop.control" });
+    list.splice(at < 0 ? list.length : at, 0, { to: "/remote", label: "远程", icon: "monitor", perm: "desktop.control", ...(handed ? { cap: handed } : {}) });
     nav.value = list;
   }
 }
