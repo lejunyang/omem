@@ -29,7 +29,9 @@ type Role = { id: string; name: string; scope: "global" | "space"; description: 
 type Roles = { roles: Role[]; global: Record<string, string>; space: Record<string, string> };
 type Audit = { id: number; at: string; actor: string; action: string; target: string; detail: Record<string, unknown> };
 
+/** The login settings: the owner's (and whoever may change settings); someone who only manages members gets none. */
 const auth = ref<Auth | null>(null);
+const loaded = ref(false);
 const webUrl = ref("");
 const providers = ref<Provider[]>([]);
 const users = ref<User[] | null>(null);
@@ -73,9 +75,12 @@ const ACTIONS: Record<string, string> = {
 };
 
 async function load() {
-  const [s, p, u, i, r] = await Promise.all([get<{ config: { auth: Auth; webUrl?: string } }>("/api/settings"), get<Provider[]>("/api/auth/providers"), get<User[]>("/api/users"), get<Invite[]>("/api/invites"), get<Roles>("/api/access/roles")]);
-  auth.value = s.config.auth;
-  webUrl.value = s.config.webUrl ?? "";
+  // The configuration is asked for only by someone who may read it.
+  const settings = !state.me || state.me.role === "owner" || state.me.perms.includes("settings.manage") ? get<{ config: { auth: Auth; webUrl?: string } }>("/api/settings").catch(() => null) : Promise.resolve(null);
+  const [s, p, u, i, r] = await Promise.all([settings, get<Provider[]>("/api/auth/providers"), get<User[]>("/api/users"), get<Invite[]>("/api/invites"), get<Roles>("/api/access/roles")]);
+  auth.value = s?.config.auth ?? null;
+  webUrl.value = s?.config.webUrl ?? "";
+  loaded.value = true;
   providers.value = p;
   users.value = u;
   invites.value = i;
@@ -267,10 +272,12 @@ onMounted(() => load().catch(fail));
 <template>
   <div class="stack">
     <HelpText lead>让别人用自己的账号登录 omem。运行 omem 的这台机器和你配对过的设备一直算作你本人，不用登录。每个人有一个全局角色，在加入的每个空间里有一个空间角色。</HelpText>
-    <Skeleton v-if="!auth" variant="text" :rows="6" />
+    <Skeleton v-if="!loaded" variant="text" :rows="6" />
     <template v-else>
-      <SetCard title="登录与邀请">
-        <template #help>打开后，从别的机器打开网页会看到登录页；经同一台机器上的反向代理（带 X-Forwarded-For）进来的请求也要登录。GitHub、Google、钉钉、微信等能确认身份的平台，在采集 → 其他平台里填好应用信息后出现在这里。</template>
+      <SetCard :title="auth ? '登录与邀请' : '邀请'">
+        <template v-if="!auth" #help>用邀请链接或按邮箱把人加进来。能用哪些方式登录由主人在这里设置。</template>
+        <template v-else #help>打开后，从别的机器打开网页会看到登录页；经同一台机器上的反向代理（带 X-Forwarded-For）进来的请求也要登录。GitHub、Google、钉钉、微信等能确认身份的平台，在采集 → 其他平台里填好应用信息后出现在这里。</template>
+        <template v-if="auth">
         <SetRow label="打开多人登录">
           <template v-if="!webUrl" #hint><span class="warn-text">还没有填网页地址（设备页）：登录回调、邀请链接和机器人发的登录链接都要用它</span></template>
           <UiCheckbox :model-value="auth.enabled" switch aria-label="打开多人登录" @change="(v) => saveAuth({ enabled: v })" />
@@ -290,6 +297,7 @@ onMounted(() => load().catch(fail));
         <SetRow label="主要登录方" hint="设了以后只能用它登录，其他方式只能在账号页绑定">
           <UiSelect :model-value="auth.primary ?? ''" size="sm" width="200px" aria-label="主要登录方" :options="[{ value: '', label: '不设（打开的都能登录）' }, ...logins.map((p) => ({ value: p.id, label: p.label }))]" @change="setPrimary" />
         </SetRow>
+        </template>
         <SetRow label="邀请链接" :hint="liveInvites ? `${liveInvites} 个还有效；用它登录的人直接建好账号，链接只能用一次` : '用它登录的人直接建好账号，不用再批准；链接只能用一次'">
           <button class="btn ghost sm" :aria-expanded="showInvite" @click="showInvite = !showInvite">{{ showInvite ? "收起" : "生成或查看" }}</button>
         </SetRow>
@@ -309,7 +317,7 @@ onMounted(() => load().catch(fail));
           <div class="row wrap">
             <input v-model="form.note" class="input sm grow-in" placeholder="备注（对方能看到，如：项目 A 的同事）" maxlength="200" aria-label="邀请备注" />
             <UiSelect v-model="form.days" size="sm" width="96px" aria-label="有效期" :options="[{ value: '1', label: '1 天' }, { value: '7', label: '7 天' }, { value: '30', label: '30 天' }]" />
-            <UiCheckbox v-if="auth.primary" v-model="form.allowAny" size="sm">允许用其他方式登录</UiCheckbox>
+            <UiCheckbox v-if="auth?.primary" v-model="form.allowAny" size="sm">允许用其他方式登录</UiCheckbox>
             <button class="btn sm primary" @click="createInvite">生成邀请链接</button>
           </div>
           <div v-if="made" class="made"><MonoLine :text="made" copy /><span class="muted small">只显示这一次。</span></div>
@@ -341,7 +349,7 @@ onMounted(() => load().catch(fail));
             </span>
           </div>
           <div class="row wrap">
-            <UiCheckbox v-if="auth.primary" v-model="ahead.loginAny" size="sm">允许用{{ label(auth.primary) }}以外的方式登录网页</UiCheckbox>
+            <UiCheckbox v-if="auth?.primary" v-model="ahead.loginAny" size="sm">允许用{{ label(auth.primary) }}以外的方式登录网页</UiCheckbox>
             <span class="spacer" />
             <button class="btn sm primary" :disabled="!ahead.name.trim() || !ahead.email.trim()" @click="addAhead">添加</button>
           </div>
@@ -419,7 +427,7 @@ onMounted(() => load().catch(fail));
                 </span>
               </span>
             </div>
-            <UiCheckbox v-if="u.role !== 'owner' && auth.primary" :model-value="u.loginAny" size="sm" @change="(v) => act(u, { loginAny: v }, '已保存')">允许用{{ label(auth.primary) }}以外的方式登录（企业外的人）</UiCheckbox>
+            <UiCheckbox v-if="u.role !== 'owner' && auth?.primary" :model-value="u.loginAny" size="sm" @change="(v) => act(u, { loginAny: v }, '已保存')">允许用{{ label(auth.primary) }}以外的方式登录（企业外的人）</UiCheckbox>
             <div v-if="u.role !== 'owner'" class="row wrap">
               <span class="spacer" />
               <button v-if="!u.disabledAt" class="btn ghost sm" @click="signOutAll(u)">让所有设备退出</button>

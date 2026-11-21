@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { state } from "../store";
+import { hasPerm } from "../lib/caps";
 import { provideSettings } from "./settings/ctx";
 import Skeleton from "../components/Skeleton.vue";
 import UiSegmented from "../components/UiSegmented.vue";
@@ -22,7 +23,17 @@ const NAV: { label: string; tabs: [Tab, string][] }[] = [
   { label: "渠道与协作", tabs: [["lark", "渠道"], ["members", "成员"], ["peers", "设备"], ["shares", "分享"]] },
   { label: "系统", tabs: [["security", "安全"], ["about", "外观与说明"]] },
 ];
-const TABS = NAV.flatMap((g) => g.tabs.map(([t]) => t));
+/**
+ * The owner has every tab. Someone else gets here only with the right to manage members (the old
+ * `users.manage`: the member list and invites still ask for it): the members tab, the trail under 安全,
+ * and their own look — the rest reads and writes the owner's configuration.
+ */
+const full = computed(() => !state.me || state.me.role === "owner" || hasPerm("settings.manage"));
+const MINE: Tab[] = ["members", "security", "about"];
+const shownNav = computed(() => (full.value ? NAV : NAV.map((g) => ({ ...g, tabs: g.tabs.filter(([t]) => MINE.includes(t) && hasPerm("users.manage")) })).filter((g) => g.tabs.length)));
+const TABS = computed(() => shownNav.value.flatMap((g) => g.tabs.map(([t]) => t)));
+/** Who is using the page is known (a page opened straight at this address is set up before that). */
+const known = computed(() => !!state.me);
 const VIEWS: Partial<Record<Tab, ReturnType<typeof defineAsyncComponent>>> = {
   spaces: defineAsyncComponent(() => import("./settings/Spaces.vue")),
   connect: defineAsyncComponent(() => import("./settings/Connect.vue")),
@@ -64,11 +75,11 @@ const router = useRouter();
 function target(q: typeof route.query): { tab: Tab; card: string | null } {
   const raw = typeof q.card === "string" ? q.card : typeof q.focus === "string" ? q.focus : null;
   const card = raw && RENAMED[raw] ? RENAMED[raw] : raw;
-  const asked = typeof q.tab === "string" && TABS.includes(q.tab as Tab) ? (q.tab as Tab) : null;
-  if (card && CARDS[card]) return { tab: CARDS[card], card };
+  const asked = typeof q.tab === "string" && TABS.value.includes(q.tab as Tab) ? (q.tab as Tab) : null;
+  if (card && CARDS[card] && TABS.value.includes(CARDS[card])) return { tab: CARDS[card], card };
   // The AI sub-sections (?section=decision) are in 后端与模型.
-  if (!asked && typeof q.section === "string") return { tab: "agents", card: null };
-  return { tab: asked ?? "spaces", card };
+  if (!asked && typeof q.section === "string" && TABS.value.includes("agents")) return { tab: "agents", card: null };
+  return { tab: asked ?? TABS.value[0] ?? "about", card };
 }
 const first = target(route.query);
 const tab = ref<Tab>(first.tab);
@@ -149,8 +160,15 @@ onMounted(() => {
   tocWatch = new MutationObserver(tocSoon);
   if (content.value) tocWatch.observe(content.value, { childList: true, subtree: true });
   tocSoon();
-  void load().then(() => scrollToCard());
 });
+// Once it is known who this is: the owner's configuration for the owner, and for a member manager only
+// the tabs that load what they need themselves (asking for the configuration would be refused).
+watch(known, (ok) => {
+  if (!ok) return;
+  if (!TABS.value.includes(tab.value)) tab.value = TABS.value[0] ?? "about";
+  if (full.value) void load().then(() => scrollToCard());
+  else scrollToCard();
+}, { immediate: true });
 onBeforeUnmount(() => {
   tocWatch?.disconnect();
   tocSpy?.disconnect();
@@ -160,16 +178,17 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page settings">
-    <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small muted">数据目录：{{ home }}</p></div></div>
+    <div class="page-head"><div><h1>{{ full ? "设置" : "成员与记录" }}</h1><p v-if="home" class="mono small muted">数据目录：{{ home }}</p></div></div>
     <div class="set-layout">
       <nav class="set-nav" aria-label="设置分类">
-        <div v-for="g in NAV" :key="g.label" class="group">
+        <div v-for="g in shownNav" :key="g.label" class="group">
           <span>{{ g.label }}</span>
           <button v-for="[k, l] in g.tabs" :key="k" type="button" :class="{ on: tab === k }" :aria-current="tab === k ? 'page' : undefined" @click="show(k)">{{ l }}</button>
         </div>
       </nav>
       <div ref="content" class="set-content">
-        <section v-if="tab === 'security'" class="stack">
+        <Skeleton v-if="!known" :rows="4" />
+        <section v-else-if="tab === 'security'" class="stack">
           <template v-if="!state.me || state.me.role === 'owner'">
             <OperationRulesSettings />
             <ApprovalSettings v-if="config" :config="config" :save="saveConfig" />
