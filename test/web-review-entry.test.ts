@@ -1,7 +1,7 @@
 /// <reference path="../web/src/env.d.ts" />
-import { createSSRApp } from "vue";
+import { createSSRApp, h } from "vue";
 import { renderToString } from "vue/server-renderer";
-import { createMemoryHistory, createRouter } from "vue-router";
+import { createMemoryHistory, createRouter, RouterView } from "vue-router";
 import { afterEach, expect, it, vi } from "vitest";
 import { followMe, type Me } from "../web/src/lib/caps.ts";
 import App from "../web/src/App.vue";
@@ -12,14 +12,15 @@ vi.mock("vue", async importOriginal => {
   const vue = await importOriginal<typeof import("vue")>();
   return { ...vue, onMounted: vue.onServerPrefetch };
 });
-const { get, state } = vi.hoisted(() => ({
+const { get, put, state } = vi.hoisted(() => ({
   get: vi.fn<(url: string) => Promise<unknown>>(),
+  put: vi.fn<(url: string, body: unknown) => Promise<unknown>>(),
   state: { spaces: [{ id: "project", name: "项目 A" }], space: "project", me: null, toasts: [] },
 }));
 vi.mock("../web/src/store.ts", () => ({
   state, kindLabel: {}, loadSpaces: vi.fn(), refreshUnread: vi.fn(), toast: vi.fn(),
 }));
-vi.mock("../web/src/api.ts", () => ({ get, setLiveEvents: vi.fn() }));
+vi.mock("../web/src/api.ts", () => ({ get, put, setLiveEvents: vi.fn() }));
 vi.mock("../web/src/components/CommandPalette.vue", () => ({ default: { render: () => null } }));
 vi.mock("../web/src/components/CaptureDialog.vue", () => ({ default: { render: () => null } }));
 vi.mock("../web/src/components/DialogHost.vue", () => ({ default: { render: () => null } }));
@@ -29,6 +30,7 @@ vi.mock("../web/src/components/ImagePreview.vue", () => ({ default: { render: ()
 afterEach(() => {
   vi.unstubAllGlobals();
   get.mockReset();
+  put.mockReset();
   followMe(() => null);
 });
 
@@ -73,4 +75,44 @@ it.each([false, true])("opens review settings from the member's sidebar and tier
   get.mockClear();
   expect(await render("/agents?tab=review&tier=basic")).not.toContain('aria-label="档位名称"');
   expect(get).not.toHaveBeenCalledWith("/api/review-settings");
+});
+
+it("旧 agents.manage 成员打开已有档案，编辑用途并保存", async () => {
+  const me = { role: "profiles", perms: ["agents.manage"], spaces: [] };
+  Object.assign(state, { me });
+  followMe(() => me);
+  const summary = { name: "example", description: "原用途", status: "draft", model: "example-model" };
+  const detailUrl = "/api/agents/example";
+  const responses: Record<string, unknown> = {
+    "/api/agents": [summary], [detailUrl]: summary, "/api/roles": [], "/api/skills": [],
+    "/api/skill-groups": { groups: [] }, "/api/profile-options": {},
+  };
+  get.mockImplementation(async url => {
+    if (!(url in responses)) throw new Error("Unexpected request: " + url);
+    return responses[url];
+  });
+  put.mockImplementation(async (url, body) => {
+    expect(url).toBe(detailUrl);
+    expect(body).toEqual({ description: "新用途", status: "draft" });
+    return Object.assign(summary, body);
+  });
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/agents", component: Agents }] });
+  await router.push("/agents?name=example");
+  const app = createSSRApp({ render: () => h(RouterView) }).use(router);
+  // Drive the loaded page's form and save handler in Node, without starting a browser.
+  let editor!: { form: { description: string }; saveSpec(): Promise<void> };
+  app.mixin({ created() {
+    if (this.$.type === Agents) editor = (this.$ as unknown as { setupState: typeof editor }).setupState;
+  } });
+  const html = await renderToString(app);
+  expect(html).toContain("原用途</textarea>");
+  expect(html).toContain('aria-label="档案状态"');
+  expect(html).toContain("example-model");
+  expect(html).not.toMatch(/档案原文|>原文<|工作目录|提示词|专属记忆|MCP 服务/);
+  editor.form.description = "新用途";
+  await editor.saveSpec();
+  expect(put).toHaveBeenCalledTimes(1);
+  expect(get.mock.calls.filter(([url]) => url === detailUrl)).toHaveLength(2);
+  expect(get.mock.calls.map(([url]) => url).every(url => url in responses)).toBe(true);
+  expect(await renderToString(createSSRApp({ render: () => h(RouterView) }).use(router))).toContain("新用途</textarea>");
 });
