@@ -26,6 +26,8 @@ const definitions = {
   "ask.send": ["global", "提问", "在自己的对话里向助手提问"],
   "notifications.view": ["global", "看通知", "阅读发给自己的通知"],
   "metrics.view": ["space", "看指标", "查看空间里的指标和变化"],
+  "remote.view": ["global", "看远程会话", "看授权给他的远程会话"],
+  "remote.operate": ["global", "操作远程会话", "操作授权给他的远程会话"],
   "settings.members": ["global", "管理成员权限", "修改成员的预设和能力覆盖"],
 } as const;
 export type Capability = keyof typeof definitions;
@@ -45,6 +47,7 @@ export const legacyCapabilities: Record<string, Capability[]> = {
 const personal: Capability[] = ["ask.send", "conversations.view", "notifications.view", "runs.operate"];
 function presetGrants(role: string, permissions: string[], cap: Capability) {
   if (role === "owner") return true;
+  if (cap === "remote.view" || cap === "remote.operate") return false;
   if (role === "observer") return cap.endsWith(".view") || cap === "ask.send" || cap === "search.use";
   return personal.includes(cap) || permissions.some(p => legacyCapabilities[p.replace(/@\*$/, "")]?.includes(cap));
 }

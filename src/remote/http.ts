@@ -5,6 +5,8 @@ import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { can } from "../auth/permissions.ts";
+import { changeGrant } from "./grants.ts";
 import { ask } from "../agents/jobs.ts";
 import type { App } from "../core/app.ts";
 import { desktopControl } from "../core/tools.ts";
@@ -14,7 +16,7 @@ import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { attachRecording, getDemo, listDemos, requireDemo, startDemo, stopDemo } from "./demos.ts";
 import { importRecording, importSchema } from "./import.ts";
 import { fromExtension, getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
-import { assistOf, browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
+import { assistOf, browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, restartViewer, screens, sessionView, startRecording, stopRecording, viewerAccess, viewerPath, viewing } from "./sessions.ts";
 import { cachedProbe, probeRunning, probeVideo, readSettings, remoteSettingsSchema, saveSettings, viewerArgs } from "./settings.ts";
 
 /**
@@ -153,6 +155,7 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
     return r.data;
   };
   const view = (s: ReturnType<typeof getSession>, reply: FastifyReply, userId: string) => {
+    viewerAccess(app, s, userId);
     reply.header("set-cookie", cookieFor(userId)).header("cache-control", "no-store");
     return { ...sessionView(s), src: viewerPath(s) };
   };
@@ -160,7 +163,20 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
   // Whether the page is offered at all: aad installed on this machine.
   server.get("/api/remote", async (req) => {
     const status = desktopControl.status();
-    return { available: status.installed, version: status.version, sessions: status.installed ? listSessions(who(req)) : [], profiles: profiles(app, who(req)), windowAvailable: browserWindowAvailable() };
+    return { available: status.installed, version: status.version, sessions: listSessions(app, who(req)), profiles: can(app, who(req), "desktop.control") ? profiles(app, who(req)) : [], windowAvailable: browserWindowAvailable() };
+  });
+  const grantFields = z.object({ mode: z.enum(["view", "operate"]), hours: z.number().positive().optional() });
+  server.post("/api/remote/sessions/:id/grants", async req => {
+    const { id } = req.params as { id: string };
+    return changeGrant(app, getSession(id), who(req), q(grantFields.extend({ userId: z.string().min(1) }), req.body));
+  });
+  server.patch("/api/remote/sessions/:id/grants/:grantId", async req => {
+    const { id, grantId } = req.params as { id: string; grantId: string };
+    return changeGrant(app, getSession(id), who(req), q(grantFields.partial().strict().refine(b => b.mode || b.hours), req.body), grantId);
+  });
+  server.delete("/api/remote/sessions/:id/grants/:grantId", async req => {
+    const { id, grantId } = req.params as { id: string; grantId: string };
+    return changeGrant(app, getSession(id), who(req), null, grantId);
   });
   server.get("/api/remote/screens", async () => screens());
   // This machine's own browser profiles, whose logins a session can start from a copy of.

@@ -3,6 +3,10 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from "node
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { HttpError, newId, now } from "../core/util.ts";
+import { all, run } from "../core/db.ts";
+import { capabilityAccess } from "../auth/capabilities.ts";
+import { can } from "../auth/permissions.ts";
+import { effectiveGrant, grantsFor, type Mode } from "./grants.ts";
 import { OWNER } from "../core/users.ts";
 import { AadMcp, aadJson, finalJson, firstJsonLine, spawnAad } from "./aad.ts";
 import { createRecording, recordingDir, recordingSummary, updateRecording, type Recording } from "./recordings.ts";
@@ -50,8 +54,37 @@ export const sessionView = (s: Live) => ({
   viewers: s.viewers,
 });
 
-export function listSessions(userId: string) {
-  return [...live.values()].filter((s) => s.userId === userId).map(sessionView);
+export function viewerAccess(app: App, s: Live, user: string) {
+  if (user === OWNER || (s.userId === user && can(app, user, "desktop.control")))
+    return { mode: "operate" as Mode, grantId: null, expiresAt: null };
+  const grant = effectiveGrant(app, s, user);
+  if (!grant) throw new HttpError(403, "没有这个会话的有效授权");
+  return { mode: grant.mode, grantId: grant.id, expiresAt: grant.expiresAt };
+}
+
+export function listSessions(app: App, user: string) {
+  const desktop = can(app, user, "desktop.control");
+  const access = capabilityAccess(app, user);
+  if (!desktop && !access.source("remote.view") && !access.source("remote.operate")) throw new HttpError(403, "没有远程会话权限");
+  const grants = grantsFor(app, [...live.keys()]);
+  const bySession = new Map<string, typeof grants>();
+  for (const grant of grants) {
+    const group = bySession.get(grant.sessionId);
+    if (group) group.push(grant);
+    else bySession.set(grant.sessionId, [grant]);
+  }
+  const owners = new Map(all<{id: string; name: string}>(app.db,
+    "select id,name from users where id in (select value from json_each(?))",
+    JSON.stringify([...new Set([...live.values()].map(s => s.userId))])).map(u => [u.id, u.name]));
+  return [...live.values()].flatMap(s => {
+    const mine = s.userId === user;
+    const manager = user === OWNER || mine;
+    const assigned = bySession.get(s.id) ?? [];
+    const grant = assigned.find(g => g.userId === user && access.source(`remote.${g.mode}`));
+    if (!(manager && desktop) && !grant) return [];
+    return [{ ...sessionView(s), ownerId: s.userId, ownerName: owners.get(s.userId), mine,
+      grant: grant ?? null, ...(manager ? { grants: assigned } : {}), runId: null }];
+  });
 }
 
 export function getSession(id: string, userId?: string): Live {
@@ -232,6 +265,8 @@ export async function closeSession(app: App, id: string) {
   const s = live.get(id);
   if (!s) return;
   live.delete(id);
+  run(app.db, "update remote_grants set revoked_at=? where session_id=? and revoked_at is null", now(), id);
+  app.events.emit("remote-access", id);
   if (s.recording) await stopRecording(app, s, { quiet: true }).catch(() => {});
   s.assist.proc.kill();
   // Wait for browser_close: only then is its persistent profile available to the next session.
