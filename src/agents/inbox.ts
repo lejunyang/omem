@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { requireReadableItem } from "../items/store.ts";
 import { mayJoinTurn } from "./steer.ts";
 import { canWrite, OWNER, personalSpaceId, turnSpaceFor } from "../core/users.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
@@ -24,11 +25,13 @@ export type Inbound = Partial<ThreadAddress> & {
   text: string;
   /** Web / CLI: an explicit conversation (thread) id. */
   conversationId?: string;
+  itemId?: string;
   /** What was being discussed around the message (group lines before an @mention). */
   context?: string;
   contextLabel?: string;
   /** Channel message id, so later replies can land in the right place (topic). */
   externalMessageId?: string;
+  topicRootId?: string;
   /** The message this one replies to / quotes (Feishu 引用回复): sender, readable text and optional origin link. */
   quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
   /** Wait this long for more messages before starting (defaults to sessions.mergeMs for chats, 0 for web). */
@@ -55,10 +58,19 @@ export type Received = { thread: Thread; messageId: string | null; runId: string
 
 export async function receive(app: App, inb: Inbound): Promise<Received> {
   const userId = inb.userId ?? OWNER;
+  const item = inb.itemId ? requireReadableItem(app, inb.itemId, userId) : undefined;
   let thread: Thread;
   let started: Received["started"] = null;
   if (inb.conversationId) {
-    thread = findThread(app, inb.conversationId) ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
+    const previous = findThread(app, inb.conversationId);
+    thread = previous ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
+    if (!previous && item) {
+      thread = updateThread(app, thread.id, { settings: { ...thread.settings, itemId: item.id } });
+      if (canWrite(app, userId, item.spaceId)) {
+        const { addLocalMaterials } = await import("../items/materials.ts");
+        addLocalMaterials(app, item.id, [{ kind: "conversation", ref: thread.id }], userId, "user");
+      }
+    }
     if (thread.userId !== userId && !canWrite(app, userId, thread.spaceId)) throw new HttpError(403, "不能在别人的会话里发消息");
   } else if (inb.channel && inb.chatId) {
     const r = resolveThread(app, { ...(inb as ThreadAddress), userId, spaceId: inb.spaceId ?? (inb.isGroup ? undefined : personalSpaceId(userId)) });
@@ -134,7 +146,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     }
   }
 
-  const meta: Record<string, unknown> = { ...inb.meta, ...(userId === OWNER ? {} : { userId }) };
+  const meta: Record<string, unknown> = { ...inb.meta, ...(inb.itemId ? { itemId: inb.itemId } : {}), ...(userId === OWNER ? {} : { userId }) };
   if (inb.fromAsk) meta.fromAsk = true;
   if (inb.context) {
     meta.context = inb.context;
@@ -144,6 +156,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     if (score !== null && score >= app.config.guard.threshold) meta.contextSuspect = Math.round(score * 100) / 100;
   }
   if (inb.externalMessageId) meta.externalId = inb.externalMessageId;
+  if (inb.topicRootId) meta.topicRootId = inb.topicRootId;
   if (inb.quote) meta.quote = inb.quote;
   if (inb.speaker) meta.speaker = inb.speaker;
   if (inb.asker) meta.asker = inb.asker;

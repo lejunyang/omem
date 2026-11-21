@@ -84,7 +84,7 @@ export function startAgentWork(app: App, input: {
 }
 
 export function createAgentWork(app: App, input: { askRunId: string; rootConversationId: string; spaceId: string; title: string; startMessage: string; agent?: string }): AgentWork {
-  const workThread = createWorkThread(app, { rootId: input.rootConversationId, userId: runUser(app, input.askRunId), spaceId: input.spaceId, title: input.title });
+  const workThread = createWorkThread(app, { askRunId: input.askRunId, rootId: input.rootConversationId, userId: runUser(app, input.askRunId), spaceId: input.spaceId, title: input.title });
   const work: AgentWork = {
     askRunId: input.askRunId,
     rootConversationId: input.rootConversationId,
@@ -104,8 +104,9 @@ export function createAgentWork(app: App, input: { askRunId: string; rootConvers
   return work;
 }
 
-function createWorkThread(app: App, i: { rootId: string; userId: string; spaceId: string; title: string }) {
+function createWorkThread(app: App, i: { askRunId: string; rootId: string; userId: string; spaceId: string; title: string }) {
   const root = getThread(app, i.rootId);
+  const item = one<{ id: string | null }>(app.db, "select coalesce(json_extract(output,'$.turnContext.item.id'),json_extract(input,'$.itemId')) id from runs where id=?", i.askRunId);
   return createThread(app, {
     spaceId: i.spaceId,
     channel: root.channel,
@@ -113,7 +114,7 @@ function createWorkThread(app: App, i: { rootId: string; userId: string; spaceId
     key: root.key,
     title: i.title,
     parentId: i.rootId,
-    settings: { ...root.settings, spec: undefined, links: [i.rootId] },
+    settings: { ...root.settings, itemId: item?.id ?? root.settings.itemId, spec: undefined, links: [i.rootId] },
     userId: i.userId,
   });
 }
@@ -321,7 +322,7 @@ export async function openWorkTopic(app: App, work: AgentWork, anchorMessageId: 
 export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string; execution?: Execution; assistantScope?: AssistantScope; queuedBy?: string | null; extraTools?: string[] }): { work: AgentWork; runId: string } {
   const prev = refreshWork(app, opts.askRunId);
   if (!prev) throw new Error("找不到要继续的工作");
-  const workThread = createWorkThread(app, { rootId: opts.rootConversationId, userId: runUser(app, opts.askRunId), spaceId: opts.spaceId, title: opts.title });
+  const workThread = createWorkThread(app, { askRunId: opts.askRunId, rootId: opts.rootConversationId, userId: runUser(app, opts.askRunId), spaceId: opts.spaceId, title: opts.title });
   const work: AgentWork = {
     ...prev,
     askRunId: opts.askRunId,

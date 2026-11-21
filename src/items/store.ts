@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { lapseItemAsks } from "../agents/ask-expiry.ts";
 import { all, one, run, tx } from "../core/db.ts";
+import { scopeFor } from "../core/users.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { emitOmem } from "../rules/omem-events.ts";
 import { noteAutoOutcome } from "./auto-cases.ts";
@@ -76,7 +77,8 @@ type Row = {
   phase_since: string | null;
   watch_until: string | null;
 };
-const toItem = (r: Row): Item => ({
+export type ItemRow = Row;
+export const toItem = (r: Row): Item => ({
   id: r.id,
   spaceId: r.space_id,
   kind: r.kind as ItemKind,
@@ -100,10 +102,26 @@ const toItem = (r: Row): Item => ({
   watchUntil: r.watch_until ?? null,
 });
 
+export function findItem(app: App, id: string) {
+  const row = one<Row>(app.db, "select * from items where id = ?", id);
+  return row && toItem(row);
+}
+
 export function getItem(app: App, id: string): Item {
-  const r = one<Row>(app.db, "select * from items where id = ?", id);
-  if (!r) throw new HttpError(404, `事项不存在：${id}`);
-  return toItem(r);
+  const item = findItem(app, id);
+  if (!item) throw new HttpError(404, `事项不存在：${id}`);
+  return item;
+}
+
+export function canReadItem(app: App, item: Item, userId: string, spaces: string[] | null = null) {
+  const readable = scopeFor(app, userId, spaces);
+  return item.userId === userId && (!readable || readable.includes(item.spaceId));
+}
+
+export function requireReadableItem(app: App, id: string, userId: string, spaces: string[] | null = null) {
+  const item = getItem(app, id);
+  if (!canReadItem(app, item, userId, spaces)) throw new HttpError(403, "不能读取该事项");
+  return item;
 }
 
 export function itemEvents(app: App, id: string): ItemEvent[] {

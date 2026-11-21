@@ -68,6 +68,9 @@ export function deriveScope(app: App, r: RunRow): ScopeKey[] {
   // A rule's agent may post only into the chat that triggered it.
   const chats = (inp.lark as { chats?: string[] | null } | undefined)?.chats;
   if (Array.isArray(chats) && chats.length && chats.length <= 3) for (const c of chats) add("chat", c, triggers[0]?.topicId ?? silent?.topicId ?? "");
+  const focus = inp.turnContext as import("./turn-context.ts").TurnContext | undefined;
+  add("item", focus?.item?.id);
+  add("item", focus?.line?.id);
   for (const k of ["itemId", "item_id"]) add("item", inp[k]);
   // A conversation turn: the Feishu messages it answers (a reply to one of them is about this turn).
   const ids = (inp.messageIds as string[] | undefined) ?? [];

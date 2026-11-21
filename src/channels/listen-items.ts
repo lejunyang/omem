@@ -1,8 +1,9 @@
+import type { itemFocus } from "../agents/turn-context.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, truncate, zonedParts } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
-import { getItem, isClosed } from "../items/store.ts";
+import { getItem, isClosed, type Item } from "../items/store.ts";
 import { descendantIds, rootOf } from "../items/tree.ts";
 import { itemContext, listContexts, saveContext, type ContextInput, type ListenContext, type ListenKnobs } from "./listen.ts";
 
@@ -195,35 +196,26 @@ export function foldChildContexts(app: App) {
 
 const STAGE_STATE: Record<string, string> = { doing: "进行中", gated: "等本人确认", blocked: "卡住", stale: "待复核" };
 
-/** A few lines on where the matter stands, for its handler: the item, its flow's stage, the latest changes. */
 /**
  * The line a matter's 关注 is on has launched and is being watched (items/lifecycle.ts, phase `watching`):
  * one line for whoever reads its groups (the handler, item-follow) on what still matters. Empty otherwise.
  */
-export function watchingNote(app: App, itemId: string): string {
-  let root: string;
-  try { root = rootOf(app, itemId); } catch { return ""; }
-  const r = one<{ phase: string | null; watch_until: string | null }>(app.db, "select phase, watch_until from items where id = ?", root);
-  if (r?.phase !== "watching") return "";
-  const until = r.watch_until ? (() => { const p = zonedParts(r.watch_until!, app.config.timezone); return `，观察到 ${p.month} 月 ${p.day} 日`; })() : "";
+export function watchingNote(app: App, line: Item | undefined): string {
+  if (line?.phase !== "watching") return "";
+  const date = line.watchUntil && zonedParts(line.watchUntil, app.config.timezone);
+  const until = date ? `，观察到 ${date.month} 月 ${date.day} 日` : "";
   return `这件事已经上线，在观察期${until}：只关心报错、用户反馈和数据异常，普通讨论不用处理。`;
 }
 
-export function itemStateText(app: App, itemId: string): string {
-  let item;
-  try {
-    item = getItem(app, itemId);
-  } catch {
-    return "";
-  }
-  const flow = one<{ definition: string; ended_at: string | null }>(app.db, "select definition, ended_at from item_flows where item_id = ?", itemId);
+/** A few lines on where the matter stands, for its handler: the item, its flow's stage, the latest changes. */
+export function itemStateText(app: App, { item, flow, stages }: ReturnType<typeof itemFocus>): string {
   let stage = "";
-  if (flow && !flow.ended_at) {
-    const names = new Map(((JSON.parse(flow.definition) as { stages?: { id: string; name: string }[] }).stages ?? []).map((s) => [s.id, s.name]));
-    const at = one<{ stage_id: string; state: string }>(app.db, "select stage_id, state from item_stages where item_id = ? and state in ('doing','gated','blocked','stale') order by since desc limit 1", itemId);
-    stage = at ? `，流程走到「${names.get(at.stage_id) ?? at.stage_id}」（${STAGE_STATE[at.state]}）` : "，流程在走";
+  if (flow && !flow.endedAt) {
+    const at = stages.filter(s => s.state in STAGE_STATE).sort((a, b) => b.since.localeCompare(a.since))[0];
+    const name = at && flow.definition.stages.find(s => s.id === at.id)?.name;
+    stage = at ? `，流程走到「${name ?? at.id}」（${STAGE_STATE[at.state]}）` : "，流程在走";
   }
-  const changes = all<{ type: string; status: string; summary: string; due: string | null }>(app.db, "select type, status, summary, due from item_changes where item_id = ? order by at desc, id desc limit 3", itemId);
+  const changes = all<{ type: string; status: string; summary: string; due: string | null }>(app.db, "select type, status, summary, due from item_changes where item_id = ? order by at desc, id desc limit 3", item.id);
   return [
     "## 这件事现在的样子",
     "",

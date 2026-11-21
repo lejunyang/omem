@@ -884,14 +884,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // --------------------------------------------------------------------- chat
   const attachmentSchema = z.object({ name: z.string(), filename: z.string().max(200), kind: z.enum(["image", "file"]), label: z.string().max(20), size: z.number().int().min(0) });
   server.post("/api/ask", async (req) => {
-    const b = q(z.object({ text: z.string(), space: z.string().optional(), conversationId: z.string().optional(), attachments: z.array(attachmentSchema).optional() }), req.body);
+    const b = q(z.object({ text: z.string(), space: z.string().optional(), conversationId: z.string().optional(), itemId: z.string().min(1).optional(), attachments: z.array(attachmentSchema).optional() }), req.body);
     const userId = who(req);
     if (b.space && userId !== OWNER && !(accessibleSpaces(app, userId) ?? []).includes(b.space)) throw new HttpError(403, `不能访问空间 ${b.space}`);
     const { checkAttachments } = await import("../agents/attachments.ts");
     const attachments = checkAttachments(app, b.attachments ?? [], userId);
     const text = b.text.trim() || attachments.map((a) => `[${a.label}]`).join(" ");
     if (!text) throw new HttpError(400, "消息是空的");
-    return ask(app, { text, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
+    return ask(app, { text, itemId: b.itemId, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
   });
   // Files pasted or dropped into the chat box: kept with the stored originals, sent with the next message (agents/attachments.ts).
   server.post("/api/ask/attachments", async (req) => {

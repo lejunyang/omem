@@ -6,7 +6,7 @@ import { accessibleSpaces } from "../core/users.ts";
 import { chatName, conclusionOf, scopeOf } from "../agents/run-scope.ts";
 import { itemScope } from "./access.ts";
 import { addMaterials } from "./materials.ts";
-import { getItem, type Item } from "./store.ts";
+import { getItem, toItem, type Item, type ItemRow } from "./store.ts";
 
 /**
  * One piece of work in several places (docs/v2/awareness.md §3): an item is linked to the
@@ -23,16 +23,22 @@ export type PlaceView = Place & { title: string; spaceId: string | null; lastAt:
 const OPEN = ["open", "waiting", "snoozed"];
 
 /** The places of a run's scope: its conversations, and the chats it works in (their conversation when omem has one, else the captured chat). */
-export function placesOfRun(app: App, runId: string): Place[] {
+export function placesOfRun(app: App, runId: string, keys = scopeOf(app, runId), reader?: string): Place[] {
   const out: Place[] = [];
   const add = (p: Place) => { if (!out.some((x) => x.kind === p.kind && x.ref === p.ref)) out.push(p); };
-  const keys = scopeOf(app, runId);
+  const spaces = reader ? accessibleSpaces(app, reader) : null;
+  const filter = reader ? restrictedSourceFilter(app, reader) : { sql: "1", params: [] };
   for (const k of keys) if (k.kind === "conversation") add({ kind: "conversation", ref: k.key });
   for (const k of keys) {
     if (k.kind !== "chat") continue;
-    const conv = one<{ id: string }>(app.db, "select id from conversations where channel like 'lark%' and status = 'active' and external_id in (?, ?) order by external_id = ? desc, updated_at desc limit 1", k.topic ? `${k.key}#${k.topic}` : k.key, k.key, k.topic ? `${k.key}#${k.topic}` : k.key);
-    if (conv) { add({ kind: "conversation", ref: conv.id }); continue; }
-    const src = one<{ id: string }>(app.db, "select id from sources where uri = ? and kind = 'chat' and deleted_at is null order by updated_at desc limit 1", `lark:${k.key}`);
+    const topic = k.topic ? `${k.key}#${k.topic}` : k.key;
+    const conversations = all<{ id: string }>(app.db, `select id from conversations where channel like 'lark%' and status='active' and external_id in (?,?)
+      ${reader ? "and user_id=?" : ""} order by external_id=? desc, updated_at desc limit ?`, topic, k.key, ...(reader ? [reader] : []), topic, reader ? 2 : 1);
+    for (const c of conversations) add({ kind: "conversation", ref: c.id });
+    if (conversations.length && !reader) continue;
+    const src = one<{ id: string }>(app.db, `select id from sources where uri=? and kind='chat' and deleted_at is null and ${filter.sql}
+      ${spaces ? "and space_id in (select value from json_each(?))" : ""} order by updated_at desc limit 1`,
+      `lark:${k.key}`, ...filter.params, ...(spaces ? [JSON.stringify(spaces)] : []));
     if (src) add({ kind: "source", ref: src.id });
   }
   return out;
@@ -90,28 +96,26 @@ export function itemPlaces(app: App, itemId: string, userId: string): PlaceView[
 }
 
 /** Open items of this person linked to any of these places. */
-export function itemsAt(app: App, places: Place[], userId: string, limit = 3): Item[] {
+export function itemsAt(app: App, places: Place[], userId: string, limit = 3, includeClosed = false): Item[] {
   const convs = places.filter((p) => p.kind === "conversation").map((p) => p.ref);
   const srcs = places.filter((p) => p.kind === "source").map((p) => p.ref);
   if (!convs.length && !srcs.length) return [];
-  const { spaceIds } = itemScope(app, userId);
-  const spaceFilter = spaceIds ? "and i.space_id in (select value from json_each(?))" : "";
-  const ids = all<{ id: string }>(app.db,
-    `select distinct i.id from item_materials m join items i on i.id = m.item_id
-      where i.user_id = ? ${spaceFilter} and i.status in (${OPEN.map(() => "?").join(",")})
-        and ((m.kind = 'conversation' and m.ref in (${convs.map(() => "?").join(",") || "''"})) or (m.kind = 'source' and m.ref in (${srcs.map(() => "?").join(",") || "''"})))
-      order by i.updated_at desc limit ?`,
-    userId, ...(spaceIds ? [JSON.stringify(spaceIds)] : []), ...OPEN, ...convs, ...srcs, limit);
-  return ids.map((r) => getItem(app, r.id));
+  const { spaceIds: spaces } = itemScope(app, userId);
+  const rows = all<ItemRow>(app.db,
+    `select i.* from items i
+      where i.user_id = ? ${includeClosed ? "" : "and i.status in ('open','waiting','snoozed')"}
+        ${spaces ? "and i.space_id in (select value from json_each(?))" : ""}
+        and i.id in (select m.item_id from item_materials m where (m.kind = 'conversation' and m.ref in (${convs.map(() => "?").join(",") || "''"})) or (m.kind = 'source' and m.ref in (${srcs.map(() => "?").join(",") || "''"})))
+      order by i.updated_at desc, i.id limit ?`,
+    userId, ...(spaces ? [JSON.stringify(spaces)] : []), ...convs, ...srcs, limit);
+  return rows.map(toItem);
 }
 
 const placeLine = (v: PlaceView, tz: string) =>
   `  - ${v.kind === "conversation" ? "会话" : "群聊原件"}「${truncate(v.title, 40)}」（${v.kind === "conversation" ? v.ref : `src:${v.ref}`}${v.lastAt ? `，最近 ${new Date(v.lastAt).toLocaleString("zh-CN", { hour12: false, timeZone: tz, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}）${v.summary ? `：${v.summary}` : ""}`;
 
 /** “这件事还在这些会话里进行”: for the items linked to this run's places, the other places they go on in; "" when none. */
-export function itemPlacesNote(app: App, runId: string, userId: string, withTools = true): string {
-  const here = placesOfRun(app, runId);
-  const items = itemsAt(app, here, userId);
+export function itemPlacesNote(app: App, runId: string, userId: string, withTools = true, here = placesOfRun(app, runId), items = itemsAt(app, here, userId)): string {
   const parts: string[] = [];
   for (const item of items) {
     const others = itemPlaces(app, item.id, userId).filter((v) => !here.some((p) => p.kind === v.kind && p.ref === v.ref)).slice(0, 5);
@@ -159,6 +163,10 @@ export type Candidate = { item: Item; score: number; reasons: string[] };
 export function placeCandidates(app: App, runId: string, userId: string, limit = 3): Candidate[] {
   const here = placesOfRun(app, runId);
   if (!here.length || itemsAt(app, here, userId, 1).length) return [];
+  return candidatesAt(app, here, userId, limit);
+}
+
+export function candidatesAt(app: App, here: Place[], userId: string, limit = 3) {
   const mats = here.map((p) => placeMaterial(app, p));
   const text = mats.map((m) => m.text).join("\n");
   return materialCandidates(app, text, userId, limit, {

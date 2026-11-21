@@ -210,10 +210,14 @@ describe("界面插槽的显示与取数", () => {
     expect((await s.inject(`/api/slots/slotprobe/nope?at=item.panel&item=${i.id}`)).statusCode).toBe(404);
     expect((await s.inject(`/api/slots?at=sidebar`)).statusCode).toBe(400);
     createUser(app, { id: "member", name: "成员甲" });
+    addMember(app, "personal", "member", "editor");
+    const mine = item("member"), linked = await attachObject(app, mine.id, url("2"), "member");
     addMember(app, "personal", "member", "reader");
     const member = { authorization: `Bearer ${createApiToken(app, "member", "test")}` };
-    expect((await s.inject({ url: `/api/slots?at=item.panel&item=${i.id}`, headers: member })).statusCode).toBe(200);
-    expect((await s.inject({ url: `/api/slots/slotprobe/checks?at=item.panel&item=${i.id}&object=${a.id}`, headers: member })).statusCode).toBe(200);
+    expect((await s.inject({ url: `/api/slots?at=item.panel&item=${i.id}`, headers: member })).statusCode).toBe(404);
+    expect((await s.inject({ url: `/api/slots/slotprobe/checks?at=item.panel&item=${i.id}&object=${a.id}`, headers: member })).statusCode).toBe(404);
+    expect((await s.inject({ url: `/api/slots?at=item.panel&item=${mine.id}`, headers: member })).statusCode).toBe(200);
+    expect((await s.inject({ url: `/api/slots/slotprobe/checks?at=item.panel&item=${mine.id}&object=${linked.id}`, headers: member })).statusCode).toBe(200);
     expect(seen("member").at(-1)).toMatchObject({ user: "member", space: "personal" });
     createUser(app, { id: "outsider", name: "成员乙" });
     const outsider = { authorization: `Bearer ${createApiToken(app, "outsider", "test")}` };

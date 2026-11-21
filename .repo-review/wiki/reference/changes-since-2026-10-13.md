@@ -24,6 +24,17 @@ updated: 2026-11-21
 - “工具审批”改成 `SetCard` 的样子，工具一行一个（名字、用途一行、审批方式在右）。
 - 卡片链接：`?card=operation-rules`、`rule-packs`、`tool-approvals`；旧的 `?card=command-rules` 落到操作规则。类型和一行文字的生成在 `web/src/lib/operation-rules.ts`。
 - 演示数据（`scripts/doc-screens.ts`）加了五条规则和两个技能带的规则包（命令名 `acme`、主机 `api.example.com`），新截图 `security-rules`。
+## 关注和流程跟进复用当轮的事项材料（11-21）
+
+从 `src/channels/listen-items.ts` 读起。关注按状态进入时间选最近的活跃或待复核阶段，另取最近三条变化。关注和流程跟进都从已识别的可读工作线取观察截止日。流程跟进在预筛返回后读取工作线，预筛期间改的截止日也会进入排队材料。
+
+## 工作线追问保留变化的处理结果（11-21）
+
+从 `src/agents/turn-focus.ts` 读起。近期变化标明已否决、已采纳、已另开事项或已记录；尚待决定的改期单独标明。
+
+## 提问带上正在讨论的工作线（11-21）
+
+从 `src/agents/turn-context.ts` 看入口、会话关联和候选的判定，从 `src/agents/turn-focus.ts` 看材料预算。会话运行的 focus 事件记录识别方式和实际发送的小块；本人对话的事项工具按同一结果默认归线。
 
 ## 其余页面的界面整理（11-21）
 

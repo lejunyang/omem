@@ -43,6 +43,8 @@ import { checkBrief } from "./brief.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
+import { CHANGE_TYPES, addChange } from "../items/changes.ts";
+import { ancestorIds, MAX_DEPTH } from "../items/tree.ts";
 import { ITEM_KINDS, listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { lineStateSchema, proposeSchema } from "../items/line-schemas.ts";
 import { metricViewSchema } from "../data/metrics.ts";
@@ -2507,10 +2509,21 @@ async function notOwnersBusiness(ctx: ToolContext, refs: string[]) {
   throw new HttpError(403, "这些消息所在的群本人不在里面：别人的事不建成本人的事项（真有人找本人，“有人找你”会单独处理）。有值得留下的结论写进记忆或页面");
 }
 
+/** A candidate, a background job, or a line outside this tool token's write scope has no implicit target. */
+function turnLine(ctx: ToolContext) {
+  if (!ctx.runId) return undefined;
+  const line = one<{ id: string; title: string; space_id: string; parent_id: string | null }>(ctx.app.db,
+    `select i.id,i.title,i.space_id,i.parent_id from runs r join items i on i.id=json_extract(r.output,'$.turnContext.line.id')
+      where r.id=? and r.kind='ask' and i.user_id=? and json_extract(r.output,'$.personalTurn')=1
+      and json_extract(r.output,'$.turnContext.item.via') in ('explicit','linked')`, ctx.runId, ctx.userId ?? OWNER);
+  const spaces = ctx.writable ?? ctx.spaces;
+  return line && (!spaces || spaces.includes(line.space_id)) && canWrite(ctx.app, ctx.userId ?? OWNER, line.space_id) ? line : undefined;
+}
+
 def({
   name: "upsert_item",
   description:
-    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定 / line 工作线（本人这几周在推进的一条线，只有本人这一轮亲口要时才建）。parent 把事项挂到上层：需求、缺陷、评审挂到它所属的工作线下，缺陷也可以挂在它的需求下，最多三层；null 移出。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。会话和群聊也是这件事“在哪里进行”：你写了事项，宿主会把它关联到你这次所在的会话或群；同一件事在别的会话里也在谈，用 materials_add（kind=conversation，或群聊原件 kind=source）关联过去，不是同一件事用 materials_remove 取消。不是本人这一轮亲口要你建的（整理、巡检、简报、有人找你、规则、唤醒后的轮次）新建时必须写 why；宿主再判断一次，把握不够的先作为候选（candidate：不提醒、不进列表），由本人在每天的事项清点或事项页上决定留不留。",
+    "创建或更新事项。带标题且无 id 为新建；本人正在讨论工作线时，省略 parent 默认归线，单独传 note 给该线记进展。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定 / line 工作线（本人这几周在推进的一条线，只有本人这一轮亲口要时才建）。parent 把事项挂到上层：需求、缺陷、评审挂到它所属的工作线下，缺陷也可以挂在它的需求下，最多三层；null 移出。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。会话和群聊也是这件事“在哪里进行”：你写了事项，宿主会把它关联到你这次所在的会话或群；同一件事在别的会话里也在谈，用 materials_add（kind=conversation，或群聊原件 kind=source）关联过去，不是同一件事用 materials_remove 取消。不是本人这一轮亲口要你建的（整理、巡检、简报、有人找你、规则、唤醒后的轮次）新建时必须写 why；宿主再判断一次，把握不够的先作为候选（candidate：不提醒、不进列表），由本人在每天的事项清点或事项页上决定留不留。",
   write: true,
   schema: z.object({
     id: z.string().optional(),
@@ -2526,6 +2539,7 @@ def({
     waiting_on: z.string().nullable().optional(),
     watch_query: z.string().optional().describe("watch 事项：要关注的内容描述"),
     note: z.string().optional(),
+    change_type: z.enum(CHANGE_TYPES).optional().describe("本人对话中记录关键变化时，与 note 同传。省略 id 默认记到当轮工作线。"),
     source_refs: refs,
     source_refs_mode: z.enum(["merge", "replace", "remove"]).optional().describe("默认增量 merge；纠正必须指定 id、note、非空来源及 expected_source_refs"),
     expected_source_refs: refs,
@@ -2540,7 +2554,12 @@ def({
     materials_remove: z.array(z.string()).optional().describe("要移除的材料：材料编号，或 kind:ref"),
   }),
   handler: async (ctx, a) => {
-    const existing = a.id ? requireItem(ctx.app, a.id, ctx.userId ?? OWNER, "write") : null;
+    const onItsOwn = !ownTurn(ctx);
+    const line = !a.id && !onItsOwn && a.parent === undefined && a.kind !== "line" ? turnLine(ctx) : undefined;
+    const noteOnly = a.note?.trim() && Object.keys(a).every(k => ["note", "change_type", "source_refs", "space"].includes(k));
+    const id = a.id ?? (noteOnly ? line?.id : undefined);
+    if (a.change_type && (onItsOwn || !id || !a.note?.trim())) throw new HttpError(400, "记关键变化需要本人对话、事项和 note");
+    const existing = id ? requireItem(ctx.app, id, ctx.userId ?? OWNER, "write") : null;
     if (existing) {
       inScope(ctx, existing.spaceId, "事项");
       if (existing.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
@@ -2553,10 +2572,12 @@ def({
     if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
     if (!existing) await notOwnersBusiness(ctx, a.source_refs ?? []);
     // Not the owner's own turn: a new item has to say why the owner would want it, and may start as a candidate (items/auto.ts).
-    const onItsOwn = !ownTurn(ctx);
     // A work line is the owner's to make (or to take from the nightly proposal card): never on its own.
     if (onItsOwn && a.kind === "line" && existing?.kind !== "line") throw new HttpError(403, "工作线只由本人建：这不是本人这一轮亲口要的。觉得这几件事该成一条线，在给本人的话里提出来（每晚的近况整理也会提议）");
-    for (const p of writableParents(ctx.app, userId, existing?.parentId ?? null, a.parent)) {
+    const implicit = !existing && line &&
+      (!line.parent_id || ancestorIds(ctx.app, line.id).length + 2 <= MAX_DEPTH) ? line : undefined;
+    const parent = a.parent === undefined ? implicit?.id : a.parent;
+    for (const p of writableParents(ctx.app, userId, existing?.parentId ?? null, parent)) {
       inScope(ctx, p.spaceId, "上层事项");
       if (p.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能挂到本人自己的事项下");
     }
@@ -2578,11 +2599,11 @@ def({
     }
 
     // Only adding or removing materials leaves the item's fields (and its timeline) as they are.
-    const { materials_add: materialsAdd, materials_remove: materialsRemove, why: _why, parent, ...fields } = a;
+    const { materials_add: materialsAdd, materials_remove: materialsRemove, why: _why, parent: _parent, ...fields } = a;
     const onlyMaterials = existing && Object.entries(fields).every(([k, v]) => k === "id" || k === "space" || v === undefined);
     let item = onlyMaterials ? existing : upsertItem(
       ctx.app,
-      a.id,
+      id,
       {
         spaceId: existing ? undefined : spaceId,
         kind: a.kind,
@@ -2603,12 +2624,13 @@ def({
       actor,
       ctx.runId ?? undefined,
     );
+    if (a.change_type) addChange(ctx.app, { itemId: item.id, type: a.change_type, summary: a.note!, origin: "owner", refs: a.source_refs, runId: ctx.runId });
     if (gate && a.why) (await import("../items/auto.ts")).markAuto(ctx.app, item.id, a.why, gate, ctx.runId);
     // Hung under a line (or a requirement), or taken out: items/parent.ts checks the levels and folds its 关注.
     let parentLine = "";
     if (parent !== undefined && (parent ?? null) !== item.parentId) {
       item = (await import("../items/parent.ts")).setParent(ctx.app, item.id, parent, ctx.actor, ctx.runId ?? undefined);
-      parentLine = parent ? `\n归到 ${parent}「${getItem(ctx.app, parent).title}」下面。` : "\n已从上层移出。";
+      parentLine = implicit ? `\n已挂到《${implicit.title}》下，不属于它的话用 parent: null 移出。` : parent ? `\n归到 ${parent}「${getItem(ctx.app, parent).title}」下面。` : "\n已从上层移出。";
     }
     const { addMaterials, removeMaterials } = await import("../items/materials.ts");
     const added = materialsAdd?.length ? await addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
@@ -3487,7 +3509,7 @@ def({
     const { recordPoints, requireMetric, describeChange } = await import("../data/metrics.ts");
     const m = requireMetric(ctx.app, a.metric);
     inScope(ctx, m.spaceId, "指标");
-    const changes = await recordPoints(ctx.app, m.id, a.points, ctx.runId);
+    const changes = await recordPoints(ctx.app, m.id, a.points, ctx.runId, !m.itemId && ownTurn(ctx) ? turnLine(ctx)?.id : undefined);
     const told = m.status === "active" ? "（超过门槛，已告诉本人）" : m.status === "proposed" ? "（超过门槛；指标还待本人确认，没有通知）" : "（超过门槛；指标暂停中，没有通知）";
     const lines = changes.filter((c) => c.change).map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}${c.change!.flagged ? told : ""}`);
     return `已记 ${a.points.length} 个点。${lines.length ? `\n${lines.join("\n")}` : ""}`;
@@ -4247,7 +4269,8 @@ def({
     const rule = a.rule ?? runRule;
     if (a.rule) (await import("../rules/store.ts")).getRule(ctx.app, a.rule);
     const r = writeWorkFile(ctx.app, { spaceId, path: a.path, title: a.title, text: a.content, mode: a.mode, expires: a.expires === undefined ? undefined : a.expires, links: { item: a.item, rule }, runId: ctx.runId });
-    if (a.item && r.created) (await import("../items/store.ts")).addItemEvent(ctx.app, a.item, "note", `工作文件 ${r.uri}`, ctx.actor, [`src:${r.id}`], ctx.runId ?? undefined);
+    const eventItem = r.created ? a.item ?? (ownTurn(ctx) ? turnLine(ctx)?.id : undefined) : undefined;
+    if (eventItem) (await import("../items/store.ts")).addItemEvent(ctx.app, eventItem, "note", `工作文件 ${r.uri}`, ctx.actor, [`src:${r.id}`], ctx.runId ?? undefined);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "source", id: r.id }, at: now() } });
     return `${r.created ? "已新建" : r.status === "unchanged" ? "内容没变" : a.mode === "append" ? "已追加到" : "已更新"}工作文件 src:${r.id}（${r.uri}，${r.lines} 行${r.expiresAt ? `，${r.expiresAt.slice(0, 10)} 过期` : "，永久"}${a.item ? `，挂在事项 ${a.item}` : ""}${rule ? `，挂在规则 ${rule}` : ""}${followed}）`;
   },

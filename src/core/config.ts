@@ -365,6 +365,7 @@ export const configSchema = z.object({
   }).default(() => ({ consolidate: { min: 30, perNight: 2 } })),
   sessions: z
     .object({
+      turnContextChars: z.number().int().min(256).default(1800),
       /** Keep a thread's agent process alive this long after a reply (ACP agents). */
       liveMinutes: z.number().min(0).default(20),
       /** At most this many live agent processes; the least recently used is released first. */
@@ -396,7 +397,7 @@ export const configSchema = z.object({
       /** A message that is only material (shared group, forward, image, file) waits this long for the words that usually follow. */
       contentWaitMs: z.number().int().min(0).default(15_000),
     })
-    .default(() => ({ liveMinutes: 20, maxLive: 3, maxTurns: 40, background: { enabled: true, liveMinutes: 60, maxLive: 3, maxContextRatio: 0.6, maxContextTokens: 120_000 }, codeResumeMaxTokens: 100_000, idleHours: 12, mergeMs: 1500, contentWaitMs: 15_000 })),
+    .default(() => ({ turnContextChars: 1800, liveMinutes: 20, maxLive: 3, maxTurns: 40, background: { enabled: true, liveMinutes: 60, maxLive: 3, maxContextRatio: 0.6, maxContextTokens: 120_000 }, codeResumeMaxTokens: 100_000, idleHours: 12, mergeMs: 1500, contentWaitMs: 15_000 })),
   agents: z
     .object({
       default: z.string().optional(),
