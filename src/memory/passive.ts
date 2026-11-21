@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
-import { embedQuery } from "../search/embeddings.ts";
+import { embedQuery, embeddingSpaces } from "../search/embeddings.ts";
 import { rerankScores } from "../search/rerank.ts";
 import { similarity } from "./quality.ts";
 import { getMemory, type Memory } from "./store.ts";
@@ -30,15 +30,16 @@ type NearInput = {
 export async function nearMemories(app: App, input: NearInput): Promise<PassiveHit[]> {
   const text = input.text.trim();
   if (text.length < 4) return [];
-  if (input.spaces && !input.spaces.length) return [];
-  const q = await embedQuery(app, text, input.kind ?? "query", input.spaces);
+  const spaces = embeddingSpaces(app, input.spaces);
+  if (spaces && !spaces.length) return [];
+  const q = await embedQuery(app, text, input.kind ?? "query", spaces);
   if (!q) return [];
   const where = ["status = 'active'", "embedding is not null"];
   const params: (string | number)[] = [];
   if (input.vettedLessons) where.push("(kind not in ('preference', 'experience') or created_by = 'user' or review_verdict = 'keep')");
   if (input.spec !== undefined) where.push("(agent is null or agent = ?)") && params.push(input.spec ?? "");
   if (input.userId) where.push("(user_id is null or user_id = ?)") && params.push(input.userId);
-  if (input.spaces) where.push(`space_id in (${input.spaces.map(() => "?").join(",")})`) && params.push(...input.spaces);
+  if (spaces) where.push(`space_id in (${spaces.map(() => "?").join(",")})`) && params.push(...spaces);
   const rows = all<{ id: string; embedding: Uint8Array }>(app.db, `select id, embedding from memories where ${where.join(" and ")}`, ...params);
   const scored: { id: string; score: number }[] = [];
   for (const r of rows) {

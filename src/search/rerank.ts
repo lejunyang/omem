@@ -7,6 +7,7 @@ import { OWNER } from "../core/users.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
 import { modelSource, prepareLocalModel } from "./local-models.ts";
+import { rerankers } from "../plugins/process-hooks.ts";
 
 /**
  * Optional reranking: a cross-encoder (bge-reranker-v2-m3 by default, ONNX q8 through
@@ -102,8 +103,7 @@ export async function apiScores(app: App, cfg: Config["rerank"], query: string, 
 const lastCall = new WeakMap<App, { selected: string; lastMs: number; lastError: string | null }>();
 /** Each provider scores the entire candidate list in input order. Only plugins have a local fallback. */
 export async function rerankScores(app: App, query: string, candidates: RerankCandidate[],
-  { timeoutMs, userId = OWNER, shared }: { timeoutMs?: number; userId?: string; shared?: SharedSearchAccess } = {}) {
-  const cfg = app.config.rerank;
+  { timeoutMs, userId = OWNER, shared, config: cfg = app.config.rerank }: { timeoutMs?: number; userId?: string; shared?: SharedSearchAccess; config?: Config["rerank"] } = {}) {
   if (!cfg.enabled || !candidates.length || !query.trim()) return { scores: null, provider: null };
   const started = Date.now();
   const budget = Math.min(timeoutMs ?? Infinity, cfg.timeoutMs);
@@ -117,14 +117,14 @@ export async function rerankScores(app: App, query: string, candidates: RerankCa
       if (candidates.every(pluginHitFilter(app, candidates, userId, shared)))
         scores = await apiScores(app, cfg, query, passages, budget);
     } else {
-      const entry = selectedReranker(app);
+      const entry = selected.startsWith("plugin:") ? rerankers.get(selected.slice(7)) : undefined;
       if (entry && candidates.every(c => !entry.spaces.length || entry.spaces.includes(c.spaceId)) &&
           candidates.every(pluginHitFilter(app, candidates, userId, shared))) {
         scores = await pluginScores(app, entry, query, candidates, userId, Math.max(1, Math.floor(budget / 2)));
       }
       if (!scores) {
         provider = "local";
-        scores = await builtinScores(app, query, passages, Math.max(0, started + budget - Date.now()));
+        scores = await builtinScores(app, query, passages, Math.max(0, started + budget - Date.now()), cfg);
       }
     }
   } catch (e) { error = (e as Error).message; }
@@ -133,9 +133,9 @@ export async function rerankScores(app: App, query: string, candidates: RerankCa
   return { scores, provider: scores ? provider : null };
 }
 
-async function builtinScores(app: App, query: string, passages: string[], timeoutMs?: number) {
-  if (testScorer) return rerankLocally(app, query, passages, timeoutMs);
-  const model = app.config.rerank.model;
+async function builtinScores(app: App, query: string, passages: string[], timeoutMs?: number, cfg = app.config.rerank) {
+  if (testScorer) return rerankLocally(app, query, passages, timeoutMs, cfg);
+  const model = cfg.model;
   // osdk first (local-models.ts): while it is downloading a model nothing has fetched before, searches
   // keep their own order instead of starting a second download next to it.
   const src = modelSource(model);
@@ -146,12 +146,12 @@ async function builtinScores(app: App, query: string, passages: string[], timeou
       return null;
     }
   }
-  const budget = Math.min(app.config.rerank.timeoutMs, timeoutMs ?? Infinity);
+  const budget = Math.min(cfg.timeoutMs, timeoutMs ?? Infinity);
   stats.calls++;
   if (!everReady.has(model)) stats.state = "loading";
   const start = performance.now();
   try {
-    const scores = await searchStage("rerank", () => readProcess(app, "rerank").request<number[] | null>({ op: "rerank", query, passages, config: { rerank: app.config.rerank }, timeoutMs: budget }, budget));
+    const scores = await searchStage("rerank", () => readProcess(app, "rerank").request<number[] | null>({ op: "rerank", query, passages, config: { rerank: cfg }, timeoutMs: budget }, budget));
     stats.lastMs = Math.round(performance.now() - start);
     if (scores) {
       everReady.add(model);
@@ -173,8 +173,7 @@ async function builtinScores(app: App, query: string, passages: string[], timeou
   }
 }
 
-export async function rerankLocally(app: App, query: string, passages: string[], timeoutMs?: number): Promise<number[] | null> {
-  const cfg = app.config.rerank;
+export async function rerankLocally(app: App, query: string, passages: string[], timeoutMs?: number, cfg = app.config.rerank): Promise<number[] | null> {
   if (!cfg.enabled || !passages.length || !query.trim()) return null;
   const started = Date.now();
   const deadline = started + Math.min(cfg.timeoutMs, timeoutMs ?? Infinity);
@@ -195,14 +194,29 @@ export async function rerankLocally(app: App, query: string, passages: string[],
 
 export function rerankStatus(app: App) {
   const c = app.config.rerank;
+  const entry = selectedReranker(app);
   const call = lastCall.get(app);
   const last = call?.selected === c.provider ? call : null;
   return { ...stats, enabled: c.enabled, provider: c.enabled ? c.provider : null, lastProvider: last ? lastProvider.get(app) : null,
+    kind: c.provider.startsWith("plugin:") ? "plugin" : c.provider,
+    plugin: entry?.plugin ?? null, name: entry?.def.label ?? null,
     model: c.provider === "api" ? c.api?.model : c.provider === "local" ? c.model : null,
     lastMs: last?.lastMs ?? 0, lastError: last?.lastError ?? null,
     ...(c.provider === "api" && { state: last ? last.lastError ? "failed" : "ready" : "idle", error: last?.lastError ?? "" }),
     source: c.provider === "local" ? modelSource(c.model) : null };
 
+}
+
+export const RERANK_TEST_QUERY = "哪个句子说明今天的天气？";
+export const RERANK_TEST_DOCUMENTS = ["今天晴朗，适合散步。", "图书馆每周一开放。", "明天可能下雨。", "这是一次接口检测。"];
+export async function testReranker(app: App, cfg: Config["rerank"]) {
+  const entry = cfg.provider.startsWith("plugin:") ? rerankers.get(cfg.provider.slice(7)) : undefined;
+  if (cfg.provider.startsWith("plugin:") && !entry) throw new Error("重排提供者不可用");
+  const spaceId = entry?.spaces[0] ?? "personal";
+  const candidates = RERANK_TEST_DOCUMENTS.map((text, i) => ({ id: String(i), type: "memory" as const, spaceId, text }));
+  const { scores, provider } = await rerankScores(app, RERANK_TEST_QUERY, candidates, { config: { ...cfg, enabled: true } });
+  if (!scores || provider !== cfg.provider) throw new Error(lastCall.get(app)?.lastError ?? "重排提供者未返回分数");
+  return scores.map((score, index) => ({ index, score })).sort((a, b) => b.score - a.score);
 }
 /** Whether the model failed to load in this process (the read process tells the main one through an error). */
 export const rerankLoadError = () => (stats.state === "failed" ? stats.error || "重排模型没有加载成功" : "");

@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { embeddingStatus } from "./embeddings.ts";
+import { rerankStatus } from "./rerank.ts";
 import type { App } from "../core/app.ts";
 import { OWNER } from "../core/users.ts";
 import { readableSourceIds } from "../auth/visibility.ts";
 import { capabilityAccess } from "../auth/capabilities.ts";
 import { untilAbort } from "../core/util.ts";
-import { retrievers, rerankers, type RegisteredReranker } from "../plugins/process-hooks.ts";
+import { embedders, retrievers, rerankers, type RegisteredReranker } from "../plugins/process-hooks.ts";
 import type { CallContext, RetrievalKind, RetrievalRef } from "../plugins/types.ts";
 import type { Hit, HitType, SearchOptions } from "./search.ts";
 
@@ -97,6 +99,9 @@ export async function pluginScores(app: App, entry: RegisteredReranker, query: s
 export function searchProviderStatus(app: App) {
   const describe = ([id, entry]: [string, Entry]) => ({ id, label: entry.def.label, plugin: entry.plugin, spaces: entry.spaces,
     ...(recent.get(entry) ?? { lastMs: null, lastError: null }) });
-  return { retrievers: [...retrievers].map(describe), rerankers: [...rerankers].map(describe),
-    config: { search: app.config.search, rerank: app.config.rerank } };
+  return { embeddings: embeddingStatus(app), rerank: rerankStatus(app),
+    embedders: [...embedders].map(([id, e]) => ({ id: "plugin:" + id, name: e.def.name, model: e.def.model,
+      dimensions: e.def.dimensions, maxBatch: e.def.maxBatch, maxChars: e.def.maxChars, plugin: e.plugin, spaces: e.spaces })),
+    retrievers: [...retrievers].map(describe), rerankers: [...rerankers].map(describe),
+    config: { search: app.config.search, rerank: app.config.rerank, embeddings: app.config.embeddings } };
 }

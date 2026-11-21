@@ -1,3 +1,4 @@
+import { embeddingId } from "../search/embedding-index.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { roleNames } from "../core/config.ts";
@@ -55,23 +56,25 @@ export function skillTried(app: App, id: string, runId?: string) {
 
 /** A candidate's name and description do not change between the questions of one night: embedded once. */
 const vectors = new Map<string, Promise<number[] | null>>();
-function vectorOf(app: App, text: string) {
-  if (!vectors.has(text)) {
+function vectorOf(app: App, text: string, spaceId: string) {
+  const key = `${app.home}:${spaceId}:${embeddingId(app.config)}:${text}`;
+  if (!vectors.has(key)) {
     if (vectors.size >= 200) vectors.clear();
-    vectors.set(text, embedQuery(app, text).then((v) => (v ? [...v] : null)).catch(() => null));
+    vectors.set(key, embedQuery(app, text, "query", [spaceId]).then((v) => (v ? [...v] : null)).catch(() => null));
   }
-  return vectors.get(text)!;
+  return vectors.get(key)!;
 }
 
 /** Query vectors on both sides; if no model is available use the existing bigram measure. */
 export async function fittingSkills(app: App, q: { question: string; spec: string | null; run: { id: string } }, candidates = skillCandidates(app)) {
   const eligible = candidates.filter((s) => (!s.owners.length || s.owners.includes(q.spec ?? "assistant")) && !skillTried(app, s.id, q.run.id));
   if (!eligible.length) return [];
-  const vector = await embedQuery(app, q.question).catch(() => null);
+  const spaceId = one<{space_id: string}>(app.db, "select space_id from runs where id=?", q.run.id)?.space_id ?? "personal";
+  const vector = await embedQuery(app, q.question, "query", [spaceId]).catch(() => null);
   const out: (SkillCandidate & { score: number })[] = [];
   for (const s of eligible) {
     const text = `${s.name} ${s.description}`;
-    const other = vector ? await vectorOf(app, text) : null;
+    const other = vector ? await vectorOf(app, text, spaceId) : null;
     let score: number;
     if (vector && other) {
       let dot = 0, a = 0, b = 0;

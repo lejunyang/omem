@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { setKey } from "../src/core/ai-keys.ts";
 import { configSchema } from "../src/core/config.ts";
@@ -10,7 +10,7 @@ import { upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
 
 const close: (() => Promise<unknown> | void)[] = [];
-afterEach(async () => { for (const fn of close.splice(0).reverse()) await fn(); });
+afterEach(async () => { for (const fn of close.splice(0).reverse()) await fn(); vi.unstubAllEnvs(); });
 
 async function setup() {
   const app = testApp();
@@ -97,4 +97,24 @@ it("预览模型、维度和服务地址变更，只有确认后清空索引", a
     Object.assign(app.config.embeddings, { dimensions: 2, url: undefined });
     app.db.prepare("delete from kv where key='embedding_model'").run();
   }
+});
+
+it("旧 openai 索引升级沿用向量，地址变更仍要求确认", async () => {
+  const { app } = await setup();
+  app.config.embeddings.dimensions = undefined;
+  app.db.prepare("insert or replace into kv(key,value) values('embedding_model','openai:m')").run();
+  const { modelChange } = await import("../src/search/embedding-index.ts");
+  expect(modelChange(app, app.config)).toBeNull();
+  expect(await embedPending(app)).toBe(2);
+  expect(modelChange(app, { ...app.config, embeddings: { ...app.config.embeddings, url: "https://example.org/v1" } })).not.toBeNull();
+});
+
+it("旧环境变量密钥和显式地址仍用于 OpenAI 形状接口", async () => {
+  const { app, calls } = await setup();
+  app.config.embeddings.keyRef = undefined;
+  app.config.embeddings.url = app.config.ai.providers[0].baseUrl;
+  app.config.embeddings.apiKeyEnv = "LEGACY_EMBEDDING_TEST_KEY";
+  vi.stubEnv("LEGACY_EMBEDDING_TEST_KEY", "environment-key");
+  expect(await embedQuery(app, "问题")).not.toBeNull();
+  expect(calls[0].auth).toBe("Bearer environment-key");
 });

@@ -19,15 +19,22 @@ export class SearchApiError extends Error {
 export async function searchPost(app: App, cfg: Connection, path: string, body: object, signal: AbortSignal): Promise<unknown> {
   const key = cfg.keyRef ? keyOf(cfg.keyRef, app.home) : process.env[cfg.apiKeyEnv];
   if (cfg.keyRef && (!key || !app.config.ai.providers.some(p => p.id === cfg.keyRef))) throw new Error("AI 服务商或密钥不存在");
-  const response = await fetch(searchBase(app.config, cfg) + path, {
-    method: "POST", redirect: "error", signal,
-    headers: { "content-type": "application/json", ...(key && { authorization: "Bearer " + key }) },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    const safe = key ? detail.replaceAll(key, "[已隐藏]") : detail;
-    throw new SearchApiError(`HTTP ${response.status} ${safe.slice(0, 240)}`.trim(), response.status === 429 || response.status >= 500);
+  try {
+    const response = await fetch(searchBase(app.config, cfg) + path, {
+      method: "POST", redirect: "error", signal,
+      headers: { "content-type": "application/json", ...(key && { authorization: "Bearer " + key }) },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      const safe = key ? detail.replaceAll(key, "[已隐藏]") : detail;
+      throw new SearchApiError(`HTTP ${response.status} ${safe.slice(0, 240)}`.trim(), response.status === 429 || response.status >= 500);
+    }
+    return await response.json();
+  } catch (err) {
+    const error = err as Error;
+    const message = key ? error.message.replaceAll(key, "[已隐藏]") : error.message;
+    if (err instanceof SearchApiError) throw new SearchApiError(message, err.retryable);
+    throw new Error(message.slice(0, 500));
   }
-  return response.json();
 }

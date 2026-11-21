@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
-import { embeddingId, storedModel, recordModel } from "./embedding-index.ts";
+import { embeddingId, storedModel, recordModel, vectorCounts } from "./embedding-index.ts";
 import { apiEmbedder, encodeBatch, type EmbeddingProvider, type Kind } from "./embedding-provider.ts";
 import { vectorIndex } from "./vectors.ts";
 import { pack, toFloats } from "./vector-codec.ts";
@@ -11,6 +11,8 @@ import { searchStage } from "./trace.ts";
 import { modelSource, osdkModelDir, prepareLocalModel } from "./local-models.ts";
 import { embedders } from "../plugins/process-hooks.ts";
 import { notify } from "../core/notify.ts";
+import type { Config } from "../core/config.ts";
+import { untilAbort } from "../core/util.ts";
 
 /**
  * Optional dense retrieval. Vectors live next to chunks, packed to one signed byte a dimension
@@ -33,17 +35,17 @@ export function resetEmbedder() {
   vectorIndex().clear();
 }
 
-async function getEmbedder(app: App, inProcess = false): Promise<EmbeddingProvider | null> {
-  const cfg = app.config.embeddings;
+async function getEmbedder(app: App, inProcess = false, checkModel = true, config = app.config): Promise<EmbeddingProvider | null> {
+  const cfg = config.embeddings;
   if (testEmbedder) return embedder ?? null;
   if (cfg.provider === "none") return null;
-  if (cfg.provider === "api") return apiEmbedder(app, cfg, embeddingId(app.config)!);
+  if (cfg.provider === "api") return apiEmbedder(app, cfg, embeddingId(config)!);
   if (cfg.provider.startsWith("plugin:")) {
     const entry = embedders.get(cfg.provider.slice(7));
     if (!entry) return null;
-    const id = embeddingId(app.config)!;
+    const id = embeddingId(config)!;
     const current = storedModel(app);
-    if (current && current !== id) {
+    if (checkModel && current && current !== id) {
       const error = `插件向量模型或维度已变化：${entry.def.name}（${entry.def.model}，${entry.def.dimensions} 维）。请在检索设置确认重建向量，或改回原来的提供者。`;
       recent.set(app, { lastMs: 0, lastError: error, writeError: error });
       const notice = current + "->" + id;
@@ -70,7 +72,7 @@ async function getEmbedder(app: App, inProcess = false): Promise<EmbeddingProvid
     }
     try {
       // Validate in the child before embedPending is allowed to replace an old model's vectors.
-      await readProcess(app, "embedding").request({ op: "embed", texts: [], kind: "passage", config: { embeddings: cfg } }, 120_000);
+      await readProcess(app, "embedding").request({ op: "embed", texts: [], kind: "passage", config: { embeddings: cfg } }, checkModel ? 120_000 : cfg.timeoutMs);
       return (embedder = {
         id: `local:${cfg.model}`,
         embed: (texts, kind) => readProcess(app, kind === "query" ? "vector" : "embedding").request<Float32Array[]>({ op: "embed", texts, kind, config: { embeddings: cfg } }, kind === "query" ? 30_000 : 120_000),
@@ -254,6 +256,44 @@ async function encode(app: App, e: EmbeddingProvider, texts: string[], kind: Kin
 }
 
 export function resumeEmbedding(app: App) { recent.delete(app); }
+
+/** Scope every use of the shared vector index, including vectors left from an earlier grant. */
+export function embeddingSpaces(app: App, requested: readonly string[] | null) {
+  if (!app.config.embeddings.provider.startsWith("plugin:")) return requested;
+  const entry = embedders.get(app.config.embeddings.provider.slice(7));
+  if (!entry) return [];
+  if (!entry.spaces.length) return requested;
+  return entry.spaces.filter(s => !requested || requested.includes(s));
+}
+
+export function embeddingStatus(app: App) {
+  const cfg = app.config.embeddings;
+  const plugin = cfg.provider.startsWith("plugin:") ? embedders.get(cfg.provider.slice(7)) : undefined;
+  const scoped = cfg.provider.startsWith("plugin:") && !plugin ? [] : plugin?.spaces.length ? plugin.spaces : undefined;
+  const counts = vectorCounts(app, scoped);
+  const changed = cfg.provider.startsWith("plugin:") && !!storedModel(app) && storedModel(app) !== embeddingId(app.config);
+  const health = embeddingHealth(app);
+  const excludedSpaces = scoped ? all<{id: string}>(app.db,
+    `select id from spaces where id not like 'wt-%'${scoped.length ? ` and id not in (${scoped.map(() => "?").join(",")})` : ""} order by id limit 1000`, ...scoped).map(s => s.id) : [];
+  return { provider: cfg.provider, kind: cfg.provider.startsWith("plugin:") ? "plugin" : cfg.provider,
+    model: plugin?.def.model ?? cfg.model, dimensions: plugin?.def.dimensions ?? cfg.dimensions ??
+      (Number(one<{value: string}>(app.db, "select value from kv where key='embedding_dimensions'")?.value) || null),
+    plugin: plugin?.plugin ?? null, name: plugin?.def.name ?? null, ...health,
+    pending: counts.pending, excludedSpaces, excludedReason: excludedSpaces.length ? "插件未获授权，这些空间没有向量" : null,
+    state: cfg.provider === "none" ? "off" : changed ? "model-changed" : cfg.provider.startsWith("plugin:") && !plugin ? "unavailable" : health.writeError ? "paused" : health.lastError ? "failed" : health.lastMs ? "ready" : "idle" };
+}
+
+/** Connectivity probes send only this fixture, even for unsaved configurations. */
+export const EMBEDDING_TEST_TEXT = "这是一条向量接口检测文本。";
+export async function testEmbedding(app: App, cfg: Config["embeddings"]) {
+  const signal = AbortSignal.timeout(cfg.timeoutMs);
+  const rows = await untilAbort(signal, async () => {
+    const e = await getEmbedder(app, false, false, { ...app.config, embeddings: cfg });
+    if (!e) throw new Error("向量提供者不可用");
+    return encodeBatch(e, [EMBEDDING_TEST_TEXT], "query", cfg.timeoutMs);
+  });
+  return rows[0].length;
+}
 
 /** One vector, or null when the configured provider is unavailable. */
 export async function embedQuery(app: App, text: string, kind: Kind = "query", spaces?: readonly string[] | null): Promise<Float32Array | null> {

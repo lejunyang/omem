@@ -36,7 +36,9 @@ export function vectorCounts(app: App, spaces?: readonly string[]) {
 export function modelChange(app: App, next: Config) {
   const to = embeddingId(next);
   if (!to) return null; // Disabling preserves the index for later use.
-  const from = storedModel(app) ?? embeddingId(app.config);
+  const stored = storedModel(app);
+  const legacy = app.config.embeddings.provider === "api" && !app.config.embeddings.dimensions && stored === "openai:" + app.config.embeddings.model;
+  const from = legacy ? embeddingId(app.config) : stored ?? embeddingId(app.config);
   if (from === to) return null;
   const token = createHash("sha256").update(JSON.stringify([from, to])).digest("hex");
   const entry = next.embeddings.provider.startsWith("plugin:") ? embedders.get(next.embeddings.provider.slice(7)) : null;

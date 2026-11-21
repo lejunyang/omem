@@ -432,6 +432,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
     ].map((r) => [r, AGENTS]),
   ),
 
+  "POST /api/search/embeddings/test": "owner",
+  "POST /api/search/rerank/test": "owner",
   "PUT /api/agent-role-model": cap("settings.ai.edit"),
   "GET /api/settings": "handler",
   "GET /api/settings/sections": "handler",

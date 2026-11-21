@@ -1,5 +1,5 @@
 import { embeddingId, modelChange, replaceIndex } from "../search/embedding-index.ts";
-import { resumeEmbedding } from "../search/embeddings.ts";
+import { testEmbedding, resumeEmbedding } from "../search/embeddings.ts";
 import { itemRunSummary } from "../items/places.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
 import { changedSettings, sectionByPath, sections, settingsPatch, settingsView, ownerSettings, type Section } from "../auth/settings-sections.ts";
@@ -102,7 +102,7 @@ import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
 import { search } from "../search/search.ts";
 import { searchProviderStatus } from "../search/providers.ts";
-import { rerankStatus } from "../search/rerank.ts";
+import { testReranker, rerankStatus } from "../search/rerank.ts";
 import { modelSource } from "../search/local-models.ts";
 import { searchRun } from "../search/trace.ts";
 import { closeReadProcess } from "../search/read-process.ts";
@@ -3402,6 +3402,22 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
   });
   server.get("/api/search/providers", async () => searchProviderStatus(app));
+  server.post("/api/search/embeddings/test", async req => {
+    const cfg = q(configSchema.shape.embeddings, { ...app.config.embeddings, ...(req.body as object) });
+    const at = Date.now();
+    try { return { ok: true, dimensions: await testEmbedding(app, cfg), elapsedMs: Date.now() - at, error: null }; }
+    catch (e) { return { ok: false, dimensions: null, elapsedMs: Date.now() - at, error: (e as Error).message.slice(0, 500) }; }
+  });
+  server.post("/api/search/rerank/test", async req => {
+    const body = (req.body ?? {}) as { api?: object };
+    const cfg = q(configSchema.shape.rerank, { ...app.config.rerank, ...body,
+      api: { ...app.config.rerank.api, ...body.api } });
+    const at = Date.now();
+    try {
+      const results = await testReranker(app, cfg);
+      return { ok: true, results, elapsedMs: Date.now() - at, error: null };
+    } catch (e) { return { ok: false, results: [], elapsedMs: Date.now() - at, error: (e as Error).message.slice(0, 500) }; }
+  });
   const settingsAccess = (req: FastifyRequest) => {
     const access = capabilityAccess(app, who(req), null);
     return {

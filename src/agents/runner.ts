@@ -243,7 +243,7 @@ async function taskLessons(app: App, spaceId: string, userId: string, own: strin
   const mine = rows.filter((r) => r.agent);
   const exp = mine.filter((r) => r.kind === "experience");
   const shared = rows.filter((r) => !r.agent);
-  const q = shared.length > TASK_LESSONS || exp.length > OWN_WHOLE ? await embedQuery(app, about.slice(0, ABOUT_CHARS), "query").catch(() => null) : null;
+  const q = shared.length > TASK_LESSONS || exp.length > OWN_WHOLE ? await embedQuery(app, about.slice(0, ABOUT_CHARS), "query", [spaceId]).catch(() => null) : null;
   const closest = (list: Lesson[], n: number) => {
     if (list.length <= n || !q) return list.slice(0, n);
     const scored = list.flatMap((r) => {
