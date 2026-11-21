@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { get, onServerEvent, onServerResync, post } from "../api";
+import FlowStagePlugin from "./FlowStagePlugin.vue";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import RichText from "./RichText.vue";
@@ -88,6 +89,12 @@ async function reply(s: FlowStage) {
   } catch (e) { error.value = (e as Error).message; }
   finally { busy.value = false; }
 }
+/** A plugin's block answered (仍然通过 / 等处理) or the stage finished by hand. */
+function pluginChanged(v: FlowView | null) {
+  if (!v) return void load();
+  if (props.flow === undefined) own.value = v;
+  emit("changed", v);
+}
 /** Take the stage into a conversation: the assistant gets the item and stage to read, the owner writes the rest. */
 function discuss(s: FlowStage) {
   const i = props.item;
@@ -103,12 +110,13 @@ function discuss(s: FlowStage) {
     </p>
     <p v-if="error" class="error small" role="alert">{{ error }}</p>
     <section v-for="s in waiting" :key="`w-${s.id}`" class="turn" :aria-label="`等你：${s.name}`">
-      <div class="turn-head"><Icon :name="s.state === 'blocked' ? 'alert' : 'check'" :size="16" /><strong>{{ s.state === "blocked" ? "卡住了" : "等你" }}：{{ s.name }}</strong></div>
+      <div class="turn-head"><Icon :name="s.state === 'blocked' ? 'alert' : 'check'" :size="16" /><strong>{{ s.gateReview ? "被检查拦下" : s.state === "blocked" ? "卡住了" : "等你" }}：{{ s.name }}</strong></div>
       <div class="words">
         <RichText tag="p" class="small" :text="readableIds(nextWords(s))" :space="item.spaceId" :lines="opened[s.id] ? undefined : 2" />
         <button v-if="nextWords(s).length > 120" type="button" class="lnk small" :aria-expanded="!!opened[s.id]" @click="opened[s.id] = !opened[s.id]">{{ opened[s.id] ? "收起" : "展开" }}</button>
       </div>
-      <Markdown v-if="s.state === 'blocked' && text(s)" :source="readableIds(text(s))" :space="item.spaceId" compact />
+      <FlowStagePlugin v-if="s.gateReview" :item-id="item.id" :stage="s" :editable="may" flat @changed="pluginChanged" />
+      <Markdown v-else-if="s.state === 'blocked' && text(s)" :source="readableIds(text(s))" :space="item.spaceId" compact />
       <template v-if="may">
         <textarea v-if="boxed(s)" v-model="replies[s.id]" class="textarea" rows="2" :aria-label="`给「${s.name}」写的话`" :placeholder="placeholder(s)" />
         <div class="row wrap">

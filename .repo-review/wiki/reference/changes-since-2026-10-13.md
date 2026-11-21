@@ -21,6 +21,14 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 网页接上流程里的插件和插件后端的来源（2026-11-22）
+
+流程定义页每一段多了“改谁来做、怎么算完”（`web/src/components/FlowStageHooks.vue`）：内置和插件的信号按来源分组，“谁来做”里有插件执行；选中后写回 YAML（`web/src/lib/flow-hooks.ts` 的 `writeCarrier` / `writeDone`，用 `yaml` 的文档接口保留注释），参数的 JSON Schema 扁平时画成表单，否则是 JSON 框。`PUT /api/flows/:id` 返回 `askId` 时页面写“已提交，等你启用才生效”，就地启用。插件停用后 `/api/flows/validate` 读不了这份定义，页面按 YAML 自己列出各段并标停用。同页“完成前的检查”是 `FlowChecks.vue`，整表 `PUT /api/flows/:id/checks`。
+
+事项的流程里插件的部分集中在 `FlowStagePlugin.vue`（用在 `FlowWaiting`、`ItemFlowPage`、`ItemFlow`）：插件信号的在等 / 问不到 / 没人能判断（给手动完成），运行器的执行者和运行链接，`pluginEvidence` 按 `src:` / `#/` / http(s) 打开，`gateReview` 的原因和“仍然通过 / 等处理”（回答 `askId` 那张卡，先读 `GET /api/asks/:id` 看还在不在等）。`lib/flow.ts` 的 `stageActions` 对被检查拦下的阶段给“处理好了，重新检查”和“重开”。
+
+`AiDefaults.vue` 的后端下拉标“来自插件 ××”，已选而不可用的仍是选中项，写原因并链到插件页；只有保存的 `<插件>:<id>` 没出现在任何列表里时也这样显示。设置 → 后端与模型的后端行（`AiBackend.vue`）和未安装列表标来源；插件页在信任确认和卡片上列出后端和启动命令。进度视图的落点：`CodeTasks.vue` 读 `?task=T<n>`，`ItemFlowPage.vue` 读 `?stage=`，`ItemStudy.vue` 读 `?direction=` / `?trial=`，都用 `web/src/lib/landing.ts` 滚到并标出；`/items/:id/flow` 改道时保留查询参数（`web/src/main.ts`）。测试 `test/web-flow-hooks.test.ts`；演示数据装了 `examples/plugins/stagekit`，截图 `flow-plugin-checks`、`flow-stage-blocked`。
+
 ## 网页接上本人沙箱和补齐的接口字段（2026-11-22）
 
 设置 → 安全 多了“运行的沙箱”和“完全访问”两张卡，从 `web/src/components/SandboxSettings.vue` 读起（纯函数在 `web/src/lib/sandbox.ts`，目录清单是 `SandboxPaths.vue`）。卡片读写 `GET` / `PUT /api/security/sandbox`，每次改动整份保存，“全部开”先确认并带 `confirmAll`；目录被拒时服务端的原因写在那一行下面。主目录从返回的路径里推出来（接口不给），用来把路径写成 `~/…`。

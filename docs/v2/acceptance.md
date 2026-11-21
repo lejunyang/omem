@@ -346,7 +346,7 @@ npx vue-tsc --noEmit -p web/tsconfig.json
 - `test/plugin-backends.test.ts` 两种模式验证未信任不可选、信任后统一目录和假 ACP 回合、停用后来源与拒绝启动、改启动参数重新确认；开发目录信任也绑定声明。只启动 `test/fake-acp-agent.ts`。
 - 安装 `examples/plugins/stagekit`，按 README 保存本机检查流程，由本人确认。先用 checks API 启用 write 阶段验收词检查，再写 ready 标记、启动事项。verified 为 false 时文件写“待复核”，本人点「仍然通过」后在阶段日志和 flow.gate-override 审计核对 stagekit:word。
 - 冷启动后分别打开角色和档案的编辑页，核对后端控件显示已保存的名称，旁边写明插件来源和停用原因；展开候选时只列可选的后端。HTTP 与表单渲染回归见 `test/web-review-entry.test.ts`。
-- 网页验收留待接入：流程定义选 signals/runners、阶段 pluginEvidence 与 waitingSignal 的“问不到”、流程设置 gates/checks、AI 的 pluginBackend 来源和停用原因。接口见 flows.md 末节。
+- 网页（2026-11-22，演示数据 `node scripts/doc-screens.ts --serve`，装了 stagekit 和只声明后端的 helperkit）：流程定义页打开“本机检查”，第一段把信号参数 file 改成另一个文件名、第二段把运行器的 verified 打开，保存后出现“已提交，等你启用才生效”和启用 / 不用，启用后重新打开 YAML 里两处都在；完成前的检查关掉强制、整条关掉再打开、取消一个阶段，每次重新读 `GET /api/flows` 的 checks 都对，空格键能切强制。事项“核对检查文件”在工作页顶部显示被检查拦下的原因、证据（站内运行、`src:` 原件、纯文字）和仍然通过 / 等处理，点仍然通过后 write 完成、confirm 进入等确认。“等标记文件”的阶段显示在等文件标记和上次看的时间。停用 stagekit 和 helperkit：流程定义页仍列出三段并标插件停用、检查标插件停用；等信号的阶段写“等的信号现在没人能判断”和手动完成；设置里选了 helperkit 后端的档位显示不可用、来源和去插件页。`/items/<id>/flow?stage=confirm` 改道到工作页后保留 `stage` 并标出那一段。1440 和 390 宽没有页面横向溢出。写下 ready 标记后演示服务四分钟内没巡检，信号自己推进没在网页上看到（服务端测试覆盖）。`test/web-flow-hooks.test.ts`，`test/web-review-entry.test.ts` 改成新的不可用写法。
 
 ## 设置接口的成员权限
 

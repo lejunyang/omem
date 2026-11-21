@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, onServerResync, post, put } from "../api";
 import { promptDialog } from "../lib/dialog";
 import { refAction } from "../lib/refs";
+import { landOn } from "../lib/landing";
 import { objectStatusWords } from "../lib/flow";
 import { byConcern, byUnjudged, directionWords, findingWords, kindWords, progress, scopeWords, total, trialTone, trialWord, verifiedWords, type StudyDirection, type StudyFinding, type StudyScope, type StudyTrial, type StudyView } from "../lib/study";
 import { fmtTime } from "../store";
@@ -16,10 +17,10 @@ import UiSegmented from "./UiSegmented.vue";
 /**
  * A study's ledger on the item page (docs/v2/studies.md): what it found, what it tried, the directions
  * and how much of the feature list has been tried. `choosing`: the flow is waiting for the owner to
- * pick this round's direction, which is done here.
+ * pick this round's direction, which is done here. `focus`: a direction or trial to open on (the progress view's link).
  */
 type Tab = "findings" | "trials" | "directions" | "coverage";
-const props = withDefaults(defineProps<{ itemId: string; editable?: boolean; choosing?: boolean }>(), { editable: true });
+const props = withDefaults(defineProps<{ itemId: string; editable?: boolean; choosing?: boolean; focus?: { kind: "direction" | "trial"; id: string } | null }>(), { editable: true, focus: null });
 const data = ref<StudyView | null>(null), error = ref(""), loading = ref(true), busy = ref(false);
 const tab = ref<Tab>("findings"), everyRound = ref(false);
 let seq = 0, epoch = 0, picked = false;
@@ -59,7 +60,20 @@ function take(view: StudyView) {
   if (!typing) { pushRemote.value = view.scope?.pushRemote ?? ""; pushPrefix.value = view.scope?.pushPrefix ?? ""; }
   // Open on what matters now, once: a direction to pick, then findings, then the trials.
   if (!picked) { picked = true; tab.value = proposed.value.length ? "directions" : view.findings.length ? "findings" : view.trials.length ? "trials" : view.directions.length ? "directions" : "coverage"; }
+  focusOn();
 }
+/** Open on the direction or trial asked for, once per address; one not in the ledger is ignored. */
+let focused = "";
+function focusOn() {
+  const f = props.focus, v = data.value;
+  if (!f || !v || focused === `${props.itemId}:${f.kind}:${f.id}`) return;
+  if (f.kind === "trial" ? !v.trials.some((t) => t.id === f.id) : !v.directions.some((d) => d.id === f.id)) return;
+  focused = `${props.itemId}:${f.kind}:${f.id}`;
+  tab.value = f.kind === "trial" ? "trials" : "directions";
+  if (f.kind === "trial" && v.trials.find((t) => t.id === f.id)!.round !== round.value) everyRound.value = true;
+  void landOn(`study-${f.kind}-${f.id}`);
+}
+watch(() => props.focus, focusOn);
 async function load() {
   const request = ++seq, id = props.itemId;
   try { const view = await get<StudyView>(`/api/items/${id}/study`); if (request === seq && id === props.itemId) take(view); }
@@ -232,7 +246,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
           <span>{{ everyRound ? `各轮一共 ${data.trials.length} 个` : `第 ${round} 轮，${trials.length} 个` }}，没做好的排在前面</span>
           <button v-if="data.trials.length > trials.length || everyRound" type="button" class="link" @click="everyRound = !everyRound">{{ everyRound ? "只看这一轮" : `看各轮的（共 ${data.trials.length} 个）` }}</button>
         </div>
-        <details v-for="t in trials" :key="t.id" class="entry">
+        <details v-for="t in trials" :id="`study-trial-${t.id}`" :key="t.id" class="entry">
           <summary>
             <span class="dot" :class="`t-${trialTone(t)}`" />
             <span class="entry-name">{{ t.object }} <span class="muted">×</span> {{ t.check }}</span>
@@ -260,7 +274,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
           <p>这一轮提了 {{ proposed.length }} 个方向，选一个{{ editable ? "" : "（由事项本人选）" }}：</p>
           <div v-if="editable" class="row wrap"><button type="button" class="btn sm ghost" :disabled="busy" @click="choose(null)">这一轮不跑</button></div>
         </div>
-        <details v-for="d in directions" :key="d.id" class="entry" :open="d.state === 'proposed' && choosing || d.id === going?.id">
+        <details v-for="d in directions" :id="`study-direction-${d.id}`" :key="d.id" class="entry" :open="d.state === 'proposed' && choosing || d.id === going?.id">
           <summary>
             <span class="state" :class="d.state">{{ directionWords[d.state] }}</span>
             <span class="entry-name">{{ d.goal }}</span>

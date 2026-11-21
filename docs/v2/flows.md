@@ -762,4 +762,11 @@ npm run build
 
 运行器授权绑定流程定义版本。本人通过流程保存接口或自己的助手提交新版本，卡片列出哪个阶段由哪个插件执行、执行什么动作。本人点「启用」后生效。阶段尝试的幂等键使用运行 id。检查设置存在本机 kv 的 `flow-checks:<流程id>`，启用时的 mandatory 决定错误是否暂停。
 
-网页待接：`GET /api/flows` 的 signals/runners 提供选项、describe 与 params，gates 提供检查选项与 applies；流程行 checks 对应 `PUT /api/flows/:id/checks`。事项流程详情的 pluginEvidence 可打开链接，waitingSignal 提供 available、failures、checkedAt、nextAt、note，gateReview 提供拦下原因与结果，askId 指向本人处理卡片。运行器的 carrier.link 指向运行页。设置 → AI 用 `GET /api/settings?section=ai` 的 agents 展示来源与不可用原因（pluginBackend），档案选项从 `GET /api/profile-options` 的 backends 读可选后端。已选且不可用的插件后端由 unavailableBackends 返回来源和原因。
+网页（2026-11-22 接上）：
+- 流程定义页（`web/src/views/Flows.vue`）每一段有“改谁来做、怎么算完”（`components/FlowStageHooks.vue`）：选项来自 `GET /api/flows` 的 signals / runners，按内置和插件分组；选中后写进 YAML 文本（`web/src/lib/flow-hooks.ts` 的 `writeCarrier` / `writeDone`，保留注释），仍经 `/api/flows/validate` 核对、`PUT /api/flows/:id` 保存。参数的 JSON Schema 是扁平的字符串、数字、布尔、枚举时画成表单，否则是 JSON 框。保存返回 `askId` 时页面写“已提交，等你启用才生效”，就地给启用 / 不用。定义里用到的信号或运行器没有插件提供时照样列出并标“停用了”。
+- 同页的“完成前的检查”（`components/FlowChecks.vue`）列出 `gates` 里适用于这条流程的检查，开关、覆盖阶段（多选，全选时存为省略）、强制开关都整表 `PUT /api/flows/:id/checks`；`pendingCheckScopes` 有内容时在顶部说明；已保存但插件不在的检查照样列出，可以关掉。
+- 事项的流程（`components/FlowStagePlugin.vue`，用在 `FlowWaiting`、`ItemFlowPage`、`ItemFlow`）：插件信号写在等谁、“问不到”和次数、下次再问的时间、“现在没人能判断”时给“手动完成”；运行器的阶段写由谁执行并链到 `carrier.link`；`pluginEvidence` 按 `src:`（引用抽屉）、`#/`（路由）、http(s)（新窗口）打开；`gateReview` 列出原因，`askId` 的卡片还在等时就地给“仍然通过 / 等处理”（回答已有的提问接口）。
+- 进度视图的落点：运行页的修改项读 `?task=T<n>`（`CodeTasks.vue`），流程页读 `?stage=` / `?direction=` / `?trial=`（`ItemFlowPage.vue`、`ItemStudy.vue`），滚到并短暂标出；`/items/:id/flow` 改道到工作页时保留查询参数。
+- AI 后端：`AiDefaults.vue` 的后端下拉标“来自插件 ××”，已选而不可用的仍作为选中项显示并写原因和去插件页的链接；设置 → 后端与模型的后端行和“未安装”列表同样标来源；插件页在信任前列出后端和启动命令。
+
+从 `web/src/lib/flow-hooks.ts`（纯函数，测试在 `test/web-flow-hooks.test.ts`）读起。没接的：成员看到的流程定义页仍是本人的页面（接口只给本人），运行器的 id 只能从阶段的 `carrier.label` 文字里解析（接口没有单独字段）。
