@@ -7,6 +7,7 @@ import { once } from "node:events";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createSession, SESSION_COOKIE } from "../src/auth/sessions.ts";
+import { saveRole } from "../src/auth/permissions.ts";
 import { issueProbeTicket } from "../src/auth/cloud-probe-ticket.ts";
 import { App } from "../src/core/app.ts";
 import { loadConfig, saveConfig } from "../src/core/config.ts";
@@ -78,6 +79,33 @@ it("requires authentication at the upstream when a loopback proxy forwards manag
     }
   } finally {
     ingress.proxy.close();
+    await server.close();
+    app.db.close();
+  }
+});
+
+it.each([undefined, "local-test-token"])("keeps the global HTTP token local for a settings manager (%s)", async token => {
+  const app = testApp();
+  app.config.token = token;
+  saveRole(app, { id: "settings-editor", name: "设置管理员", scope: "global", permissions: ["settings.manage"] });
+  createUser(app, { id: "editor", name: "成员", role: "settings-editor" });
+  const headers = { authorization: "Bearer " + createApiToken(app, "editor", "test") };
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true, secure: false });
+  try {
+    const url = "/api/settings";
+    const read = await server.inject({ url, headers });
+    expect(read.statusCode).toBe(200);
+    expect(read.json().config).not.toHaveProperty("token");
+    const write = await server.inject({ method: "PUT", url, headers, payload: { language: "en", token: "ignored" } });
+    expect(write.statusCode).toBe(200);
+    expect(write.json().config.language).toBe("en");
+    expect(write.json().config).not.toHaveProperty("token");
+    expect(loadConfig(app.home).token).toBe(token);
+    expect(app.config.token).toBe(token);
+    const auth = { ...app.config.auth, enabled: !app.config.auth.enabled };
+    expect((await server.inject({ method: "PUT", url, headers, payload: { auth } })).statusCode).toBe(403);
+    expect((await server.inject({ method: "POST", url: "/api/cloud-tools/revoke", headers })).statusCode).toBe(403);
+  } finally {
     await server.close();
     app.db.close();
   }

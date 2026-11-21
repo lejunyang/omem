@@ -3383,13 +3383,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
   });
   server.get("/api/search/providers", async () => searchProviderStatus(app));
-  server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null, approvalTools: toolList().map((t) => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }));
+  // The global HTTP credential is managed in local configuration.
+  const settingsConfig = () => {
+    const { token, ...settings } = app.config;
+    return settings;
+  };
+  server.get("/api/settings", async () => ({ config: settingsConfig(), agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null, approvalTools: toolList().map((t) => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }));
   server.put("/api/settings", async (req) => {
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
-    const parsed = configSchema.safeParse({ ...app.config, ...(req.body as object) });
+    const parsed = configSchema.safeParse({ ...app.config, ...(req.body as object), token: app.config.token });
     if (!parsed.success) throw new HttpError(400, parsed.error.message);
     const next = parsed.data;
+    if (who(req) !== OWNER && JSON.stringify(next.auth) !== JSON.stringify(app.config.auth))
+      throw new HttpError(403, "只有本人可以修改登录设置");
     if (JSON.stringify(next.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools) && (who(req) !== OWNER || authOf(req)?.via === "local"))
       throw new HttpError(403, "只有本人可以修改云端工具设置");
     await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
@@ -3421,7 +3428,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       // The timers were made in the old zone.
       rezoneScheduler(app);
     }
-    return { config: app.config, restart };
+    return { config: settingsConfig(), restart };
   });
 
   // ----------------------------------------------- AI providers and model categories (core/ai-keys.ts)
