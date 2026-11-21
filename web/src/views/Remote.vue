@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { del, get, post, put } from "../api";
+import { del, get, onServerEvent, post, put } from "../api";
 import Icon from "../components/Icon.vue";
 import RemoteChat from "../components/RemoteChat.vue";
 import RemoteGrants from "../components/RemoteGrants.vue";
@@ -12,7 +12,7 @@ import UiSelect, { type SelectOption } from "../components/UiSelect.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { relTime, toast } from "../store";
 import { hasPerm } from "../lib/caps";
-import { endedMessage, expiryLabel, MODE_LABEL, type RemoteGrant } from "../lib/remote-grants";
+import { endedMessage, endedText, expiryLabel, isEnded, MODE_LABEL, type EndedGrant, type EndReason, type RemoteGrant } from "../lib/remote-grants";
 
 /**
  * Remote operation (docs/v2/remote.md): a browser page or the desktop of the machine omem runs on,
@@ -85,21 +85,23 @@ function setConversation(id: string | null) {
 
 async function load() {
   try {
-    const r = await get<{ available: boolean; version: string | null; sessions: Session[]; profiles: string[]; windowAvailable: boolean }>("/api/remote");
+    const r = await get<{ available: boolean; version: string | null; sessions: (Session | EndedGrant)[]; profiles: string[]; windowAvailable: boolean }>("/api/remote");
     available.value = r.available;
     version.value = r.version;
-    sessions.value = r.sessions;
+    sessions.value = live(r.sessions);
     profiles.value = r.profiles;
     windowAvailable.value = r.windowAvailable;
     if (!r.windowAvailable) visible.value = false;
     if (r.available && canControl.value) recordings.value = await get<Recording[]>("/api/remote/recordings");
     if (soloId.value) {
-      const s = r.sessions.find((x) => x.id === soloId.value);
+      const s = sessions.value.find((x) => x.id === soloId.value);
+      const gone = r.sessions.find((x): x is EndedGrant => isEnded(x) && x.id === soloId.value);
       if (s) await show(s);
+      else if (gone) lost.value = endedText(gone.ended, null);
       else ended.value = true;
     }
     // Back on the page with a session still open: show it again (the viewer cookie comes with it).
-    else if (!active.value && r.sessions.length) await show(r.sessions[0]);
+    else if (!active.value && sessions.value.length) await show(sessions.value[0]);
   } finally {
     loading.value = false;
   }
@@ -115,34 +117,55 @@ const lost = ref("");
 const grantsFor = ref<string | null>(null);
 const grantsSession = computed(() => sessions.value.find((s) => s.id === grantsFor.value) ?? null);
 
+/** The list without the grants that ended lately (`GET /api/remote` lists those too, with why). */
+const live = (list: (Session | EndedGrant)[]) => list.filter((s): s is Session => !isEnded(s));
 /**
- * The list again (every 15 seconds, and when a grant runs out): who is watching, grants changed by the
- * owner. A session handed to this person that left the list ends with a sentence, not an error; a
- * changed mode loads the picture again with it.
+ * The list again (when the server says a grant ended, when one runs out, and every so often): who is
+ * watching, grants changed by the owner. A session handed to this person that left the list ends with a
+ * sentence saying why, not an error; a changed mode loads the picture again with it.
  */
 async function refresh() {
-  const r = await get<{ sessions: Session[] }>("/api/remote").catch(() => null);
+  const r = await get<{ sessions: (Session | EndedGrant)[] }>("/api/remote").catch(() => null);
   if (!r) return;
-  sessions.value = r.sessions;
+  sessions.value = live(r.sessions);
   const a = active.value;
   if (!a) return;
-  const now = r.sessions.find((s) => s.id === a.id);
-  if (!now) return void (a.grant ? endHanded(a) : undefined);
+  const now = sessions.value.find((s) => s.id === a.id);
+  const gone = r.sessions.find((s): s is EndedGrant => isEnded(s) && s.id === a.id);
+  if (!now) return void (a.grant ? endHanded(a, gone?.ended) : undefined);
   const modeChanged = !!a.grant && !!now.grant && now.grant.mode !== a.grant.mode;
   active.value = { ...a, ...now, src: a.src };
   if (modeChanged) void reconnect(true);
 }
-function endHanded(s: Session) {
+/** A session handed to this person ended: why, by the server's reason when it gave one. */
+function endHanded(s: Session, reason?: EndReason) {
   if (!s.grant) return;
-  lost.value = endedMessage(s.grant, s.ownerName);
+  lost.value = reason ? endedText(reason, s.ownerName) : endedMessage(s.grant, s.ownerName);
   sessions.value = sessions.value.filter((x) => x.id !== s.id);
   if (active.value?.id === s.id) active.value = null;
   clearReconnect();
 }
+/** Refused the picture of a session handed to this person: ask the list why (it keeps recent ends). */
+async function endHandedWhy(s: Session) {
+  const r = await get<{ sessions: (Session | EndedGrant)[] }>("/api/remote").catch(() => null);
+  endHanded(s, r?.sessions.find((x): x is EndedGrant => isEnded(x) && x.id === s.id)?.ended);
+}
+// The server tells the member the moment a grant ends (taken back, ran out, the session closed).
+const offGrant = onServerEvent((e) => {
+  if (e.type !== "remote-grant-ended") return;
+  const s = sessions.value.find((x) => x.id === e.sessionId && x.grant?.id === e.grantId);
+  if (!s) return;
+  if (active.value?.id === s.id) endHanded(active.value, e.ended);
+  else {
+    sessions.value = sessions.value.filter((x) => x.id !== s.id);
+    toast(`「${s.title}」：${endedText(e.ended, s.ownerName)}`, "info");
+  }
+});
 let poll: ReturnType<typeof setInterval> | null = null;
 let expiry: ReturnType<typeof setTimeout> | null = null;
-onMounted(() => (poll = setInterval(() => { if (!document.hidden) void refresh(); }, 15_000)));
-onBeforeUnmount(() => { if (poll) clearInterval(poll); if (expiry) clearTimeout(expiry); });
+// Every so often as well: who is watching (for whoever hands sessions out), and in case an event was missed.
+onMounted(() => (poll = setInterval(() => { if (!document.hidden) void refresh(); }, canControl.value ? 15_000 : 60_000)));
+onBeforeUnmount(() => { offGrant(); if (poll) clearInterval(poll); if (expiry) clearTimeout(expiry); });
 // A grant that runs out while it is open: look again right then.
 watch(() => active.value?.grant?.expiresAt, (at) => {
   if (expiry) clearTimeout(expiry);
@@ -313,7 +336,7 @@ async function reconnect(byHand = false) {
     active.value = { ...s, ...next };
     frameKey.value++;
   } catch (e) {
-    if (s.grant && !s.mine && ((e as { status?: number }).status === 403 || /有效授权/.test((e as Error).message))) endHanded(s);
+    if (s.grant && !s.mine && ([403, 404].includes((e as { status?: number }).status ?? 0) || /有效授权|已经结束/.test((e as Error).message))) void endHandedWhy(s);
     else if ((e as { status?: number }).status === 404 || /已经结束/.test((e as Error).message)) {
       toast("远程会话已经结束", "error");
       sessions.value = sessions.value.filter((x) => x.id !== s.id);
@@ -334,7 +357,7 @@ async function show(s: Session) {
   try {
     active.value = { ...s, ...(await post<Session>(`/api/remote/sessions/${s.id}/view`)) };
   } catch (e) {
-    if (s.grant && !s.mine) return endHanded(s);
+    if (s.grant && !s.mine) return void endHandedWhy(s);
     throw e;
   }
   address.value = s.browser?.url ?? "";
@@ -561,7 +584,7 @@ const counts = (r: Recording) => {
     <Skeleton v-if="loading" :rows="6" />
     <div v-else-if="soloId && !active" class="empty">
       <h1>远程会话已经结束</h1>
-      <p class="muted">{{ ended ? "这个远程会话不在了：可能已经关掉，或者 30 分钟没人看自动关了。" : "画面已经关掉。" }}到远程页可以重新打开。</p>
+      <p class="muted">{{ lost ? `${lost}。` : ended ? "这个远程会话不在了：可能已经关掉，或者 30 分钟没人看自动关了。" : "画面已经关掉。" }}到远程页可以重新打开。</p>
       <router-link to="/remote" class="btn">去远程页</router-link>
     </div>
     <div v-else-if="!available" class="empty">

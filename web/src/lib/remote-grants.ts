@@ -27,6 +27,16 @@ export function grantCandidates(
     .map((u) => ({ id: u.id, name: u.name, view: !!caps[u.id]?.includes("remote.view"), operate: !!caps[u.id]?.includes("remote.operate") }))
     .filter((c) => c.view || c.operate);
 }
+/**
+ * The same from `GET /api/remote/grant-candidates` (members holding either capability, logged in, as the
+ * server sees it; also when the session's owner is not the owner of omem): minus those already given it.
+ */
+export function fromCandidates(rows: { id: string; name: string; caps: string[] }[], granted: string[] = []): GrantCandidate[] {
+  return rows
+    .filter((r) => !granted.includes(r.id))
+    .map((r) => ({ id: r.id, name: r.name, view: r.caps.includes("remote.view"), operate: r.caps.includes("remote.operate") }))
+    .filter((c) => c.view || c.operate);
+}
 /** The modes a member can be given: operating needs its own capability, watching needs either. */
 export const modesFor = (c: Pick<GrantCandidate, "view" | "operate"> | null | undefined): GrantMode[] =>
   !c ? ["view"] : c.operate ? (c.view ? ["view", "operate"] : ["operate"]) : ["view"];
@@ -44,7 +54,17 @@ export function expiryLabel(expiresAt: string, now = Date.now()) {
   return days === 0 ? `到今天 ${at}` : days === 1 ? `到明天 ${at}` : `到 ${end.getMonth() + 1} 月 ${end.getDate()} 日 ${at}`;
 }
 
-/** What the member is told when a session handed to them leaves their list. */
+/** Why a grant ended, as the server says it (the session list's `ended`, the `remote-grant-ended` event). */
+export type EndReason = "revoked" | "expired" | "closed";
+/** A session handed to this person that ended in the last minutes (`GET /api/remote` lists it so). */
+export type EndedGrant = { id: string; grantId: string; ended: EndReason; endedAt: string };
+export const isEnded = (s: object): s is EndedGrant => "ended" in s && typeof (s as { ended?: unknown }).ended === "string" && !("kind" in s);
+
+/** What the member is told when a session handed to them ends: by the server's reason. */
+export function endedText(reason: EndReason, owner: string | null | undefined) {
+  return reason === "expired" ? "授权到期了" : reason === "closed" ? "会话已经关了" : `${owner || "会话的主人"}收回了这次授权`;
+}
+/** The same guessed from the grant alone (an older server says no reason): past its end means it ran out. */
 export function endedMessage(grant: Pick<RemoteGrant, "expiresAt">, owner: string | null | undefined, now = Date.now()) {
-  return Date.parse(grant.expiresAt) <= now + 5_000 ? "授权到期了" : `${owner || "会话的主人"}收回了这次授权`;
+  return endedText(Date.parse(grant.expiresAt) <= now + 5_000 ? "expired" : "revoked", owner);
 }
