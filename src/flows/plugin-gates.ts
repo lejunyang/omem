@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
+import { normalizeLookupId } from "../core/id-query.ts";
 import { HttpError, untilAbort } from "../core/util.ts";
 import { createAsk, cancelAsk } from "../agents/asks.ts";
 import { getItem } from "../items/store.ts";
@@ -60,42 +61,53 @@ export function saveGateChecks(app: App, id: string, checks: Check[]) {
 }
 const verdict = z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), reason: z.string().trim().min(1).max(2000), evidence: evidenceSchema.optional() })]);
 
-/** Vue uses hash history: the route path ends before its query and line anchor. */
-function sourceRouteId(hash: string): string | undefined {
-  const path = hash.slice(1).split(/[?#]/, 1)[0];
+/** Decode the path without interpreting the route query or line anchor as part of the ID. */
+function sourceRouteId(path: string, route: "api" | "web", lookup?: string | null) {
   try {
     const decoded = decodeURIComponent(path);
-    if (/^\/sources\/kb\/?$/i.test(decoded)) return;
-    const match = /^\/sources\/(.+?)\/?$/i.exec(decoded);
-    return match?.[1];
+    if (route === "api" && lookup && /\/api\/lookup\/?$/.test(decoded)) return normalizeLookupId(lookup);
+    if (route === "api") return /(?:^|\/)api\/sources\/([^/]+)(?:\/|$)/.exec(decoded)?.[1];
+    if (!/^\/sources\/kb\/?$/i.test(decoded)) return /^\/sources\/(.+?)\/?$/i.exec(decoded)?.[1];
   } catch {
-    // A malformed escape cannot establish that this local reference is readable.
-    return "";
+    return ""; // A malformed reference cannot establish read access.
   }
 }
 
 function evidenceSourceIds(e: FlowEvidence) {
   const ids = Array.from(e.text.matchAll(/\bsrc:([\w-]+)/g), m => m[1]);
-  const routes = Array.from(e.text.matchAll(/#\/[^\s)\]）]+/g), m => m[0]);
-  if (e.link) {
-    const url = URL.parse(e.link);
+  const apiIds: string[] = [];
+  const links = Array.from(e.text.matchAll(/https?:\/\/[^\s)\]）]+|#\/[^\s)\]）]+/gi), m => m[0]);
+  if (e.link) links.push(e.link);
+  for (const link of links) {
+    const url = URL.parse(link);
     if (url?.protocol === "src:") ids.push(url.pathname);
-    else if (e.link.startsWith("#/")) routes.push(e.link);
-    else if (url?.hash.startsWith("#/")) routes.push(url.hash);
+    const hash = link.startsWith("#/") ? link : url?.hash;
+    if (hash?.startsWith("#/")) {
+      const id = sourceRouteId(hash.slice(1).split(/[?#]/,1)[0], "web");
+      if (id !== undefined) ids.push(id);
+    }
+    if (url?.protocol === "http:" || url?.protocol === "https:") {
+      const id = sourceRouteId(url.pathname, "api", url.searchParams.get("id"));
+      if (id !== undefined) apiIds.push(id);
+    }
   }
-  for (const route of routes) {
-    const id = sourceRouteId(route);
-    if (id !== undefined) ids.push(id);
-  }
-  return ids;
+  return { ids, apiIds };
 }
 
 function gateEvidence(app: App, user: string, space: string, evidence: FlowEvidence[]) {
-  const ids = evidence.map(evidenceSourceIds);
-  const referenced = [...new Set(ids.flat())];
+  const refs = evidence.map(evidenceSourceIds);
+  // A reverse proxy can expose the host under another origin or path prefix. Match actual source IDs,
+  // so unrelated HTTP endpoints (including the source catalog's static routes) remain ordinary links.
+  const candidates = [...new Set(refs.flatMap(r => r.apiIds))];
+  if (candidates.length) {
+    const local = new Set(all<{id:string}>(app.db, "select id from sources where id in (select value from json_each(?))",
+      JSON.stringify(candidates)).map(row => row.id));
+    for (const r of refs) r.ids.push(...r.apiIds.filter(id => local.has(id)));
+  }
+  const referenced = [...new Set(refs.flatMap(r => r.ids))];
   if (!referenced.length) return evidence;
   const readable = can(app,user,"sources.view",space) ? readableSourceIds(app,user,referenced,space) : new Set<string>();
-  return evidence.filter((_, i) => ids[i].every(id => readable.has(id)));
+  return evidence.filter((_, i) => refs[i].ids.every(id => readable.has(id)));
 }
 
 /** The owner already accepted this attempt continuing with the earlier input. */

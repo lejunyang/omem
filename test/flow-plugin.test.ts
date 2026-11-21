@@ -270,11 +270,28 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     const [local,other] = ["personal","proofs"].map(spaceId =>
       upsertSource(app,{spaceId,kind:"note",title:"核对材料",uri:"note:link",text:"依据"}).id);
     const encoded = (id:string) => "%73" + id.slice(1,3) + "%" + id.charCodeAt(3).toString(16) + id.slice(4);
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app,{port:0,quiet:true});
+    const sourceUrl = (id:string) => app.baseUrl + "/api/sources/" + encoded(id) + "?from=1&to=1";
+    try {
+      for (const id of [local,other]) {
+        const response = await server.inject({url:new URL(sourceUrl(id)).pathname + "?from=1&to=1"});
+        expect(response.statusCode).toBe(200);
+        expect(response.json().source.id).toBe(id);
+      }
+    } finally { await server.close(); }
     const evidence = [
       {text:"可见原件",link:"#/%73ources/" + encoded(local) + "?from=2&to=3"},
       {text:"其他原件",link:"#/sources/" + encoded(other) + "#L2"},
       {text:"其他空间",link:"https://example.org/#/Sources/" + encoded(other)},
       {text:"公开说明",link:"https://example.org/check"},
+      {text:"本空间原文行",link:sourceUrl(local)},
+      {text:"其他空间原文行",link:sourceUrl(other)},
+      {text:"其他空间原件注释",link:"https://reader.example.org/app/api/sources/" + encoded(other) + "/notes"},
+      {text:"其他空间原文附本空间锚点",link:"https://reader.example.org/api/sources/" + other + "#/sources/" + local},
+      {text:"第三方资料",link:"https://example.org/api/sources/sample"},
+      {text:"文字里的原文链接 https://reader.example.org/api/sources/" + encoded(other) + "?from=4"},
+      {text:"按原件 ID 定位",link:app.baseUrl + "/api/lookup?id=" + encodeURIComponent("src:" + other + "#L1")},
     ];
     const item = await begin([job()]);
     saveGateChecks(app,"inspect",[{id:"stagekit:refs",mandatory:true}]);
@@ -282,7 +299,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     await reportStage(app,item,"job",{state:"done",note:"交回依据",evidence:[runId],pluginEvidence:evidence},{actor:"stagekit:job",runId});
     const stage = flowView(app,item).stages[0];
     expect(stage.pluginEvidence).toEqual(evidence);
-    expect(JSON.parse(stage.gateReview!.failed[0].reason)).toEqual([evidence[0],evidence[3]]);
+    expect(JSON.parse(stage.gateReview!.failed[0].reason)).toEqual([evidence[0],evidence[3],evidence[4],evidence[8]]);
     saveGateChecks(app,"inspect",[]);
   });
   it("必须的检查超时暂停，非必须的检查超时放行并记下原因", async () => {

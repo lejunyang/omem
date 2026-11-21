@@ -20,6 +20,10 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 插件完成检查的原件读取链接（2026-11-22）
+
+从 `src/flows/plugin-gates.ts` 读检查回调的证据裁剪。同一原件的 `src:`、网页链接和 HTTP 原件读取链接均按事项空间和原件读取权限过滤。提交者留下的原始证据在事项上保留。回归见 `test/flow-plugin.test.ts`。
+
 ## 角色和档案表单中的已停用后端（2026-11-22）
 
 从 `web/src/components/AiDefaults.vue` 读保存值的显示。角色和档案表单都从 `/api/profile-options` 读取已停用后端的来源与原因，候选列表只列可用条目。冷启动回归见 `test/web-review-entry.test.ts`。
