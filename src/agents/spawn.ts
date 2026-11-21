@@ -2,8 +2,8 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "n
 import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
-import { canonical, ownMounts, ownSandboxEnv, under, type OwnSandbox } from "./own-sandbox.ts";
-import { bwrapArgs, installRoot, sandboxSupport, sandboxCommand, type SandboxAccount, type WorkspaceMounts } from "./sandbox.ts";
+import { canonical, ownSandboxEnv, type OwnSandbox } from "./own-sandbox.ts";
+import { bwrapArgs, sandboxSupport, sandboxCommand, type SandboxAccount, type WorkspaceMounts } from "./sandbox.ts";
 
 /**
  * Find an executable on PATH. On Windows npm installs `.cmd` shims, which
@@ -63,16 +63,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   if (opts.ownSandbox) {
     const box = opts.ownSandbox;
     const cwd = canonical(opts.cwd);
-    const command = canonical(resolved.file);
-    const runtime = [...box.runtime, resolved.file, command, installRoot(command), ...resolved.prefix.filter(isAbsolute)];
-    // Only restore program mounts beneath a mask. Never restore an installation's parent over the data mask.
-    const masked = (p: string) => p !== box.data && p !== "/tmp" && [box.data, "/tmp"].some(h => under(p, h));
-    const grants = [...box.state, ...box.writable, ...(opts.workspace?.rw ?? []), ...(!box.readOnly ? [cwd] : [])];
-    const protectedRuntime = runtime.filter(p => masked(p) || grants.some(dir => under(p, dir)));
-    // Bind only the host-assigned inbox. A profile environment is not a mount declaration.
-    const inbox = box.artifactDir && opts.env?.OMEM_ARTIFACTS && canonical(opts.env.OMEM_ARTIFACTS) === box.artifactDir
-      ? box.artifactDir : undefined;
-    const plan = ownMounts({ ...box, runtime: protectedRuntime }, cwd, opts.workspace, inbox);
+    const plan = box.plan;
     for (const dir of [box.runDir, ...box.state]) {
       if (!dir || !plan.rw.includes(dir)) continue;
       if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);

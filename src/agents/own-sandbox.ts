@@ -1,8 +1,8 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { posix } from "node:path";
+import { isAbsolute, posix } from "node:path";
 import type { Config } from "../core/config.ts";
-import type { SandboxSupport, WorkspaceMounts } from "./sandbox.ts";
+import { installRoot, type SandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 
 type Settings = Config["agents"]["ownSandbox"];
 export const under = (path: string, root: string) => path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
@@ -37,10 +37,12 @@ export const cachePaths = [
   ".local/share/pnpm/store", // pnpm content-addressed package store.
 ];
 
-export type OwnSandbox = {
+export type OwnMountConfig = {
   data: string; home: string; state: string[]; writable: string[]; hidden: string[];
   runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
 };
+type Program = { file: string; prefix: string[] };
+export type OwnSandbox = OwnMountConfig & { plan: ReturnType<typeof ownMounts> };
 
 export function selectOwnSandbox(mode: Settings["mode"], local: boolean, memberAccount: boolean, probe: () => SandboxSupport) {
   if (mode === "off" || memberAccount) return { active: false };
@@ -53,18 +55,21 @@ export function selectOwnSandbox(mode: Settings["mode"], local: boolean, memberA
 }
 
 /** Inputs are host-selected canonical paths. Extra hidden directories take precedence over every grant. */
-export function ownMounts(box: OwnSandbox, cwd: string, workspace?: WorkspaceMounts, artifacts?: string): WorkspaceMounts & { hide: string[] } {
+export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: WorkspaceMounts, artifacts?: string, program?: Program | null): WorkspaceMounts & { hide: string[] } {
   const hide = [box.data, ...box.hidden, "/tmp"];
-  const ro = [...box.runtime, ...(workspace?.ro ?? [])];
+  const ro = [...(workspace?.ro ?? [])];
   const rw = [...box.state, ...box.writable];
   if (box.runDir) rw.push(box.runDir);
-  if (artifacts) rw.push(artifacts);
+  if (artifacts && canonical(artifacts) === box.artifactDir) rw.push(box.artifactDir);
   if (workspace) rw.push(...workspace.rw);
   if (!workspace || box.snapshot && under(cwd, box.snapshot)) {
     const dest = box.readOnly && !(box.snapshot && under(cwd, box.snapshot)) ? ro : rw;
     if (cwd !== box.data) dest.push(cwd);
   }
   const visible = (path: string) => !box.hidden.some(h => under(path, h));
+  const executable = program && canonical(program.file);
+  const runtime = [...box.runtime, ...(program && executable ? [program.file, executable, installRoot(executable), ...program.prefix.filter(isAbsolute)] : [])];
+  ro.push(...runtime.filter(path => [box.data, "/tmp"].some(root => path !== root && under(path, root)) || rw.some(dir => under(path, dir))));
   return { hide, ro: ro.filter(visible), rw: [...new Set(rw)].filter(p => visible(p) && !ro.some(r => under(p, r))),
     links: workspace?.links?.filter(link => visible(link.path) && visible(link.target)),
     pointers: workspace?.pointers?.filter(pointer => visible(pointer.path)) };

@@ -1,8 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { sandboxCommand, sandboxSupport } from "../src/agents/sandbox.ts";
+import { sandboxCommand, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { agentProfileSchema } from "../src/core/config.ts";
+import { revokeToolToken } from "../src/agents/tools.ts";
+import { shortPath } from "../src/agents/own-sandbox.ts";
 import * as runner from "../src/agents/runner.ts";
 import { registerRound, dispatchTasks, joinHelpers } from "../src/agents/code-helpers.ts";
 import { placeOnBranch, temporaryWorkBranch } from "../src/agents/code-branch.ts";
@@ -47,6 +51,36 @@ const inline = { space: b.id, path: join(group, b.id), commits: true };
 b.git("worktree", "add", "-q", "--detach", inline.path);
 
 describe("delegation sandbox mounts", () => {
+  it("prepares all assigned worktrees and artifacts before writing the turn's sandbox instructions", () => {
+    const settings = app.config.agents.ownSandbox;
+    const baseUrl = app.baseUrl;
+    app.baseUrl = "http://127.0.0.1:1";
+    const home = mkdtempSync(join(tmpdir(), "fixture-home-"));
+    vi.stubEnv("HOME", home);
+    setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+    app.config.agents.ownSandbox = { mode: "require", writable: [], hidden: [] };
+    const inbox = join(app.home, "artifacts", "inbox", "fixture");
+    try {
+      const prep = runner.prepareRun(app, { actor: { role: "coder" }, spaceId: a.id, runId: null, cwd: group,
+        profile: agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/true" }),
+        worktrees: [lead, inline].map(tree => ({ ...tree, branch: "fixture", base: "HEAD" })), inbox });
+      try {
+        const box = prep.isolation.box!;
+        expect(prep.workspace).toBe(box.plan);
+        expect(box.plan.rw).toEqual(expect.arrayContaining([realpathSync(lead.slot), realpathSync(inline.path)]));
+        expect(box.plan.rw).not.toContain(realpathSync(group));
+        for (const path of box.plan.rw) expect(prep.system).toContain(shortPath(path, box.home));
+        expect(prep.system).toContain(prep.isolation.note);
+        expect(box.plan.links).toEqual(workspaceMounts(app, [lead, inline])!.links);
+        expect(prep.mcp.env?.OMEM_ARTIFACTS).toBe(inbox);
+      } finally { revokeToolToken(prep.token); }
+    } finally {
+      app.config.agents.ownSandbox = settings;
+      app.baseUrl = baseUrl;
+      vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   // Rewrites a checkout's .git pointer: Git for Windows hides that file, and a hidden file cannot be opened for writing there.
   it.skipIf(process.platform === "win32")("mounts the assigned slot and reads Git metadata from the registered repository", () => {
     expect(workspaceMounts(app, [lead])).toEqual({ ro: [realpathSync(join(a.root, ".git"))], rw: [realpathSync(lead.slot)], links: [] });

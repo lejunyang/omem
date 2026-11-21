@@ -1,13 +1,16 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { withAgentPath } from "../core/tools.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { expandPath } from "./accounts.ts";
 import { acpCatalog, accountOnlyCatalog, type CatalogEntry } from "./catalog.ts";
 import { sourceOf } from "./capacity.ts";
 import { backendCapabilities } from "./capabilities.ts";
-import { accountOf, omemInstallDir, sandboxSupport } from "./sandbox.ts";
+import { accountOf, omemInstallDir, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
+import { resolveCommand } from "./spawn.ts";
+import { doubaoExecutable } from "./doubao-cli.ts";
 import { cachePaths, canonical, normalizeSandbox, ownMounts, selectOwnSandbox, shortPath, under, type OwnSandbox } from "./own-sandbox.ts";
 
 export function backendState(entry?: CatalogEntry, profile?: AgentProfile) {
@@ -21,14 +24,21 @@ export function backendState(entry?: CatalogEntry, profile?: AgentProfile) {
   return { dirs: [...new Set(paths.map(path => expandPath(path, env)))], existing: optional.map(path => expandPath(path, env)).filter(existsSync) };
 }
 
-export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: boolean, runId?: string | null): { box?: OwnSandbox; note?: string } {
+type MountContext = { workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv };
+
+export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: boolean, runId?: string | null, context: MountContext = {}): { box?: OwnSandbox; note?: string } {
   const settings = app.config.agents.ownSandbox;
   const local = !profile.peer && backendCapabilities(profile).where === "local";
   const selected = selectOwnSandbox(settings.mode, local, !!accountOf(profile), sandboxSupport);
   if (!selected.active) return { note: selected.reason };
+  const box = planRun(app, profile, cwd, readOnly, runId, context, settings);
+  return { box, note: "在 omem 沙箱里。可写：" + [...box.plan.rw.map(p => shortPath(p, box.home)), "/tmp（本轮临时目录）"].join("、") + "。写别处会失败，要放开在 设置 → 安全 里加可写目录。" };
+}
+
+function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readOnly: boolean, runId: string | null | undefined, context: MountContext, settings: App["config"]["agents"]["ownSandbox"]): OwnSandbox {
   const home = canonical(homedir());
   const data = canonical(app.home);
-  const entry = [...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(profile));
+  const entry = profile && [...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(profile));
   const { dirs, existing } = backendState(entry, profile);
   const config = normalizeSandbox({ ...settings, writable: [...settings.writable, ...existing] }, home, data);
   const state = [...dirs, ...cachePaths.map(p => join(home, p))];
@@ -45,9 +55,9 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
     throw new Error("工作目录位于 omem 私有数据内，不能挂回沙箱");
   if (!readOnly && ([home, data, "/tmp"].some(p => under(p, dir)) || dir === "/"))
     throw new Error("工作目录范围太大，不能在本人沙箱中授予写权限");
-  const working = !readOnly || (box.snapshot && under(dir, box.snapshot)) ? [dir] : [];
-  const list = [...working, ...box.state, ...box.writable, "/tmp"].filter(p => !box.hidden.some(h => under(p, h))).map(p => shortPath(p, home));
-  return { box, note: "在 omem 沙箱里。可写：" + list.join("、") + "及本轮临时目录和产物。写别处会失败，要放开在 设置 → 安全 里加可写目录。" };
+  const exe = profile?.transport === "doubao-cli" ? doubaoExecutable(profile) : profile?.command;
+  const program = exe ? resolveCommand(exe, withAgentPath({ ...process.env, ...profile?.env, ...context.env })) : null;
+  return { ...box, plan: ownMounts(box, dir, context.workspace?.(readOnly), context.inbox, program) };
 }
 
 export function sandboxStatus(app: App) {
@@ -59,9 +69,8 @@ export function sandboxStatus(app: App) {
     return { id: p.id, state: [...state.dirs, ...state.existing] };
   });
   const example = backends.find(p => p.state.length) ?? backends[0];
-  const plan = ownMounts({ home, data, state: [...cachePaths.map(p => join(home, p)), ...(example?.state ?? [])].map(canonical),
-    runDir: join(data, "runs", "example", "scratch"),
-    writable: [], hidden: [], runtime: [], readOnly: false, secretEnv: [] }, sample, undefined, join(data, "artifacts", "inbox", "example"));
+  const { plan } = planRun(app, profiles.find(p => p.id === example?.id), sample, false, "example",
+    { inbox: join(data, "artifacts", "inbox", "example") }, { mode: "off", writable: [], hidden: [] });
   return { ...app.config.agents.ownSandbox, fullAccess: app.config.agents.fullAccess, support: sandboxSupport(), backends,
     defaults: { exampleBackend: example?.id, writable: [...plan.rw, "/tmp"], hidden: [data] },
     visibility: "默认只管住写。本人 HOME 中的文件可读，要隐藏的目录请加到 hidden。成员自有账号另行隔离，云端和其他设备不在这台的沙箱里。",

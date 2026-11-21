@@ -366,6 +366,7 @@ export type Actor = { role: RoleName } | { spec: AgentSpec };
 export type PreparedRun = {
   acpWritable: boolean;
   isolation: ReturnType<typeof ownRun>;
+  workspace?: import("./sandbox.ts").WorkspaceMounts;
   profile: AgentProfile;
   capabilities: BackendCapabilities;
   tools: Set<string>;
@@ -470,7 +471,7 @@ export function recordIsolation(app: App, runId: string | null, userId: string, 
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
+  input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean; worktrees?: WorktreeRef[]; worktreeAccess?: "read" | "commit"; inbox?: string },
 ): PreparedRun {
   const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -555,7 +556,12 @@ export function prepareRun(
   const legacyFull = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
   const allowWrites = !readOnly && (spec ? spec.writes : role!.writes);
   const guestTurn = !!input.guestTurn || (!spec && GUEST_ROLES.includes(roleName));
-  const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId);
+  const mounts = (readOnly: boolean) => input.worktrees?.length ? workspaceMounts(app, input.worktrees,
+    input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined,
+    input.worktreeAccess === "read" || readOnly ? "read" : "write") : undefined;
+  const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId,
+    { workspace: mounts, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
+  const workspace = isolation.box?.plan ?? (account ? mounts(false) : undefined);
   if (isolation.box && spec?.cwd && !input.cwd) {
     const target = canonical(cwd);
     if (under(target, isolation.box.data) && !under(target, canonical(space.rootPath ?? spaceDir(app, space.id))))
@@ -597,6 +603,7 @@ export function prepareRun(
   const system = [common, body, environment].join("\n\n---\n\n");
   return {
     isolation,
+    workspace,
     acpWritable,
     profile,
     capabilities,
@@ -609,6 +616,7 @@ export function prepareRun(
     token,
     mcp: { url: `${toolBase}/mcp`, baseUrl: toolBase, token, stdio: mcpBridge(), env: {
       ...agentToolEnv(app.home, toolBase, token, commandGateDir(app)),
+      ...(input.inbox ? { OMEM_ARTIFACTS: input.inbox } : {}),
       ...(browserProfilesRoot ? { OMEM_BROWSER_PROFILES: browserProfilesRoot } : {}),
       ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
       ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
@@ -852,7 +860,15 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     }
   }
   const primary = accountProfile(app, { ...input, actor });
-  const prepare = (profile: AgentProfile) => prepareRun(app, { ...input, actor, profile, lessons, lessonIds: told.ids, recallNote: told.recallNote });
+  const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
+  const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : undefined;
+  let trees = input.worktrees;
+  if (!trees && input.runId && (input.reviewCheck || input.reviewLead)) {
+    const { workRootOf } = await import("./code-tasks.ts");
+    const { worktreesOf } = await import("./code.ts");
+    trees = worktreesOf(app, workRootOf(app, input.runId));
+  }
+  const prepare = (profile: AgentProfile) => prepareRun(app, { ...input, actor, profile, worktrees: trees, inbox, lessons, lessonIds: told.ids, recallNote: told.recallNote });
   if (execution && primary.id === execution.profile) validateExecution(app, { ...execution, model: primary.model, effort: primary.effort }, input.userId);
   // A run (a role's or an Agent 档案's) may move to its other configured backends when its model is
   // full, and to the fallbacks when the backend is busy, out of quota, or breaks down (failoverProfiles).
@@ -924,8 +940,6 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // The default account's plan limit is nearly used: acquire puts it after the others.
   const nearlySpent = chain.length > 1 ? quotaAvoid(app, chain[0]) : null;
   const writes = () => (input.runId ? one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", input.runId)!.n : 0);
-  const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
-  const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : null;
   /** Who the first AI was, for the words when the run moves on. */
   const firstWho = pinned ? `原指定的 AI（${aiLabel(execution!)}）` : own ? `自动选中的 AI（${aiLabel({ profile: chain[0].id, model: chain[0].model })}）` : "默认后端";
   // Other runs on the same chat, message or item, and where its item goes on elsewhere (awareness.ts).
@@ -986,16 +1000,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         if (prep.isolation.note) emit({ type: "status", text: prep.isolation.note });
         const aware = internal ? "" : awarenessNote(app, input.runId, prep.tools.size > 0);
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
-        let trees = input.worktrees;
-        if (!trees && prep.isolation.box?.readOnly && input.runId && (input.reviewCheck || input.reviewLead)) {
-          const { workRootOf } = await import("./code-tasks.ts");
-          const { worktreesOf } = await import("./code.ts");
-          trees = worktreesOf(app, workRootOf(app, input.runId));
-        }
-        const workspace = trees?.length && (accountOf(prep.profile) || prep.isolation.box)
-          ? workspaceMounts(app, trees, input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined,
-            input.worktreeAccess === "read" || prep.isolation.box?.readOnly ? "read" : "write")
-          : undefined;
+        const workspace = prep.workspace;
         const req = {
           runId: input.runId,
           strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
@@ -1012,7 +1017,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           fullAccess: prep.fullAccess,
           acpWritable: prep.acpWritable,
           signal: input.signal,
-          mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
+          mcp: prep.mcp,
           extraMcp: prep.extraMcp,
           resumeSessionId: primaryKept && i === 0 ? input.resumeSessionId ?? (restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined,
           persistSession: input.persistSession ?? !!input.resumeSessionId,

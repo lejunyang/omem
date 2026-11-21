@@ -18,16 +18,17 @@ it("applies availability only to local machine-login runs", () => {
 });
 
 it("mounts only the assigned workspace, private snapshot, state and artifacts", () => {
-  const box = { data: "/data", home: "/home/me", state: ["/home/me/.cache"], writable: [], hidden: ["/home/me/private"], runtime: ["/data/bin"], secretEnv: [], readOnly: true, snapshot: "/data/runs/r/snap" };
+  const box = { data: "/data", home: "/home/me", state: ["/home/me/.cache"], writable: [], hidden: ["/home/me/private"], runtime: ["/data/bin"], secretEnv: [], readOnly: true, snapshot: "/data/runs/r/snap", artifactDir: "/data/inbox/r" };
   const cwd = "/data/runs/r/snap";
   const plan = ownMounts(box, cwd, { ro: ["/work"], rw: [] }, "/data/inbox/r");
   expect(plan.rw).toEqual(["/home/me/.cache", "/data/inbox/r", cwd]);
-  expect(plan.ro).toEqual(["/data/bin", "/work"]);
+  expect(plan.ro).toEqual(["/work", "/data/bin"]);
   const args = bwrapArgs({ ...plan, cwd, command: "node", args: [] });
   expect(args).toContain("/home/me/private");
   expect(args).not.toContain("--unshare-net");
   expect(ownMounts({ ...box, writable: ["/work/child"] }, "/work").rw).not.toContain("/work/child");
   expect(ownMounts({ ...box, readOnly: false }, "/work").rw).toContain("/work");
+  expect(ownMounts(box, cwd, undefined, "/data/inbox/other").rw).not.toContain("/data/inbox/other");
 });
 
 it("retains login variables and replaces service credentials with turn-scoped access", () => {

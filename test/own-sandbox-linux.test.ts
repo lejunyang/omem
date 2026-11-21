@@ -12,6 +12,8 @@ import { openAcp } from "../src/agents/acp.ts";
 import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { ownRun } from "../src/agents/own-run.ts";
 import { launch } from "../src/agents/spawn.ts";
+import { ownMounts } from "../src/agents/own-sandbox.ts";
+import { resolveCommand } from "../src/agents/spawn.ts";
 
 const support = sandboxSupport();
 it.skipIf(process.platform !== "linux").each([
@@ -69,8 +71,9 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
   box.snapshot = snapshot;
   const env = { ...prep.mcp.env, HOME: home };
   const exec = async (script: string, cwd = work, readOnly = false) => {
-    const child = launch("/bin/sh", ["-ec", script], { cwd, env, ownSandbox: { ...box, readOnly },
-      workspace: readOnly ? { ro: [work], rw: [] } : undefined });
+    const config = { ...box, readOnly };
+    const plan = ownMounts(config, cwd, readOnly ? { ro: [work], rw: [] } : undefined, undefined, resolveCommand("/bin/sh"));
+    const child = launch("/bin/sh", ["-ec", script], { cwd, env, ownSandbox: { ...config, plan } });
     let output = "";
     child.stderr.on("data", b => output += b); child.stdout.on("data", b => output += b);
     const [code] = await once(child, "close");
@@ -87,6 +90,7 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
     await exec(`! touch "${work}/forbidden" || exit 2; node -e "require('fs').writeFileSync('tested','ok')"`, snapshot, true);
     expect(existsSync(join(snapshot, "tested"))).toBe(true);
     const status: string[] = [];
+    box.plan = ownMounts(box, work, undefined, undefined, resolveCommand(profile.command));
     const handle = await openAcp(profile, { cwd: work, ownSandbox: box, fullAccess: prep.fullAccess, mcp: prep.mcp, acpWritable: prep.acpWritable }, e => {
       if (e.type === "status") status.push(e.text);
     });
@@ -97,7 +101,7 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
     } finally { handle.close(); }
     const reviewer = prepareRun(app, { actor: { role: "reviewer" }, reviewCheck: true, profile, cwd: work, spaceId: "personal", runId: null });
     const review = await openAcp({ ...profile, env: { ...profile.env, FAKE_MODE: "permission" } },
-      { cwd: work, ownSandbox: { ...box, readOnly: true }, fullAccess: reviewer.fullAccess, acpWritable: reviewer.acpWritable });
+      { cwd: work, ownSandbox: { ...box, readOnly: true, plan: ownMounts({ ...box, readOnly: true }, work) }, fullAccess: reviewer.fullAccess, acpWritable: reviewer.acpWritable });
     try {
       for (const kind of ["edit", "delete", "move"]) {
         const result = await review.prompt(JSON.stringify({ toolCall: { toolCallId: "call", kind, title: kind },
