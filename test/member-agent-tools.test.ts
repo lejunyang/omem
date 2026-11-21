@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { runRole } from "../src/agents/runner.ts";
-import { createRun } from "../src/agents/runs.ts";
+import { issueToolToken, revokeToolToken } from "../src/agents/tools.ts";
+import { createRun, runEvents } from "../src/agents/runs.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -42,4 +43,23 @@ it("applies the observer's permissions across personal HTTP, MCP and an ACP assi
   await runRole(app, { role: "assistant", runId, spaceId, spaces: [spaceId], profileId: profile.id,
     task: actions.map(a => "@call " + a.name + " " + JSON.stringify(a.args)).join("\n") });
   expect(calls()).toEqual(actions.map(a => expect.objectContaining({ name: a.name, isError: a.denied })));
+  expect(calls().at(-1).text).toContain("请勿重试");
+  expect(runEvents(app, runId)).toContainEqual(expect.objectContaining({
+    type: "tool-call", data: expect.objectContaining({ phase: "end", deniedCapability: "sources.edit", ok: false }),
+  }));
 }, 60000);
+
+it("records the missing capability when an existing run loses write access", async () => {
+  const userId = createUser(app, { id: "former-editor", name: "项目编辑" }).id;
+  addMember(app, spaceId, userId, "contributor");
+  const runId = createRun(app, { kind: "ask", title: "记笔记", spaceId, userId }).id;
+  const token = issueToolToken({ actor: "agent", runId, spaceId, userId, spaces: [spaceId], tools: new Set(["save_note"]) });
+  try {
+    app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,'sources.edit','space',?,'deny','0','owner')").run(userId, spaceId);
+    const r = await server.inject({ method: "POST", url: "/api/tools/save_note", headers: { authorization: "Bearer " + token }, payload: { text: "材料" } });
+    expect(r.json()).toMatchObject({ isError: true, deniedCapability: "sources.edit", text: expect.stringContaining("请勿重试") });
+    expect(runEvents(app, runId)).toContainEqual(expect.objectContaining({
+      type: "tool-call", data: expect.objectContaining({ deniedCapability: "sources.edit", phase: "end" }),
+    }));
+  } finally { revokeToolToken(token); }
+});

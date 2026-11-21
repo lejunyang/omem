@@ -251,13 +251,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const step = runId && shellToolRuns.has(runId) ? `omem-${started}-${Math.random().toString(36).slice(2, 8)}` : null;
     if (step) addRunEvent(app, runId!, "tool", { id: step, title: label, kind: "omem", status: "in_progress", input: JSON.stringify(args ?? {}).slice(0, 2000) });
     let ok = false;
+    let deniedCapability: string | undefined;
     try {
       const r = await searchRun.run(runId ?? "", () => callTool(ctx, name, args));
+      deniedCapability = r.deniedCapability;
       ok = !r.isError;
       return r;
     } finally {
       const ms = Date.now() - started;
-      if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "end", ms, ok });
+      if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "end", ms, ok, deniedCapability });
       if (step) addRunEvent(app, runId!, "tool", { id: step, title: label, kind: "omem", status: ok ? "completed" : "failed" });
       if (ms > 60_000) console.warn(`[omem] 工具 ${label} 用了 ${Math.round(ms / 1000)} 秒${runId ? `（运行 ${runId}）` : ""}`);
     }

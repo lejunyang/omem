@@ -211,7 +211,7 @@ export async function peerToolCall(app: App, scope: PeerAgentScope, name: string
   const refused = known && PEER_DENY.has(target);
   const result = refused ? { text: REFUSED(target), isError: true } : await callTool(ctx, name, input);
   flushRunText(app, runId);
-  addRunEvent(app, runId, "tool", { id: newId("t"), title: `omem · ${target}`, kind: "other", status: result.isError ? "failed" : "completed", input: clip(name === "omem_call" ? (input.args ?? {}) : input), ...(refused ? { refused: true } : {}), ...(result.isError ? { error: truncate(result.text, 300) } : {}) });
+  addRunEvent(app, runId, "tool", { id: newId("t"), title: `omem · ${target}`, kind: "other", status: result.isError ? "failed" : "completed", deniedCapability: result.deniedCapability, input: clip(name === "omem_call" ? (input.args ?? {}) : input), ...(refused ? { refused: true } : {}), ...(result.isError ? { error: truncate(result.text, 300) } : {}) });
   setRunOutput(app, runId, { calls: ((getRun(app, runId).output.calls as number) ?? 0) + 1, last: target, lastAt: now() });
   return { runId, ...result };
 }

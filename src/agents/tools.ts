@@ -7065,7 +7065,7 @@ async function checkToolOperation(
   return null;
 }
 
-export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
+export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean; deniedCapability?: string }> {
   if (name === "omem_help" || name === "omem_call") {
     const parsed = metaArgs[name].safeParse(args ?? {});
     if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
@@ -7076,13 +7076,17 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const tool = tools.find((t) => t.name === name);
   if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
-  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))
+  if (!tool) return { text: `工具 ${name} 不可用`, isError: true };
+  const scope = memberToolAccess(ctx.app, ctx.userId ?? OWNER, ctx)(name);
+  if ("deniedCapability" in scope) return {
+    text: `工具 ${name} 不可用：${scope.reason}（${scope.deniedCapability}）。请勿重试。`,
+    deniedCapability: scope.deniedCapability, isError: true,
+  };
+  if ((ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))
       || (tool.available && !tool.available(ctx.app, ctx.userId ?? OWNER))) {
-    return { text: `工具 ${name} 不可用`, isError: true };
+    return { text: `工具 ${name} 不可用：本次运行未开放，请勿重试。`, isError: true };
   }
   mark(`tool ${name}`);
-  const scope = memberToolAccess(ctx.app, ctx.userId ?? OWNER, ctx)(name);
-  if (!scope) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 在本次范围内没有这项权限`, isError: true };
   ctx = { ...ctx, ...scope };
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };

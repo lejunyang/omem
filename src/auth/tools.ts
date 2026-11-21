@@ -48,22 +48,24 @@ export function memberToolAccess(app: App, userId: string, scope: ToolScope = un
   const writableInRun = (ids: string[]) => ids.filter(id => (!spaces || spaces.includes(id)) && (!scope.writable || scope.writable.includes(id)));
   const global = new Map<GlobalPerm, boolean>();
   const legacy = new Map<SpacePerm, string[]>();
-  return (name: string): ToolScope | null => {
-    if (!access.active) return null;
-    if (["create_space", "connect_repository"].includes(name) && (scope.spaces !== null || access.preset !== "owner")) return null;
-    if (access.preset === "owner") return scope;
+  return (name: string): ToolScope | { deniedCapability: ToolCapability; reason: string } => {
     const cap = toolCapability(name);
-    if (cap === "owner") return null;
+    const denied = { deniedCapability: cap, reason: "在本次范围内没有这项权限" };
+    if (!access.active) return { ...denied, reason: "成员账号未启用" };
+    if (["create_space", "connect_repository"].includes(name) && scope.spaces !== null)
+      return { ...denied, reason: "这项操作需要本人在不限空间的会话中发起" };
+    if (access.preset === "owner") return scope;
+    if (cap === "owner") return { ...denied, reason: "这项操作仅限本人" };
     if (cap === "memory.write" || cap === "wiki.write") {
       if (!legacy.has(cap)) legacy.set(cap, writableInRun(spacesWith(app, userId, cap) ?? []));
       const writable = legacy.get(cap)!;
-      return writable.length ? { ...allowedScope, writable } : null;
+      return writable.length ? { ...allowedScope, writable } : denied;
     }
     if (!isCapability(cap)) {
       if (!global.has(cap)) global.set(cap, can(app, userId, cap));
-      return global.get(cap) ? allowedScope : null;
+      return global.get(cap) ? allowedScope : denied;
     }
-    if (globalCapability(cap)) return access.source(cap) ? allowedScope : null;
+    if (globalCapability(cap)) return access.source(cap) ? allowedScope : denied;
     const write = cap.endsWith(".edit") || cap.endsWith(".operate");
     const own = cap === "items.view" || cap === "runs.view";
     const capable = access.spaces.filter(s => (!scope.spaces || scope.spaces.includes(s.id)) &&
@@ -71,17 +73,17 @@ export function memberToolAccess(app: App, userId: string, scope: ToolScope = un
       (access.source(cap, s.id, own) || (name === "upsert_item" && access.source("items.operate", s.id)))).map(s => s.id);
     if (write) {
       const writable = writableInRun(capable);
-      return writable.length ? { ...allowedScope, writable } : null;
+      return writable.length ? { ...allowedScope, writable } : denied;
     }
-    return capable.length ? { ...allowedScope, spaces: capable } : null;
+    return capable.length ? { ...allowedScope, spaces: capable } : denied;
   };
 }
 
 export function toolAllowed(app: App, userId: string | undefined | null, name: string) {
-  return !!memberToolAccess(app, userId ?? OWNER)(name);
+  return !("deniedCapability" in memberToolAccess(app, userId ?? OWNER)(name));
 }
 
 export function trimTools(app: App, userId: string, tools: Set<string>, scope?: ToolScope) {
   const allowed = memberToolAccess(app, userId, scope);
-  for (const name of tools) if (!allowed(name)) tools.delete(name);
+  for (const name of tools) if ("deniedCapability" in allowed(name)) tools.delete(name);
 }
