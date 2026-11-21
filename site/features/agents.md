@@ -119,6 +119,18 @@ Agent 执行受保护的命令时，审批人收到一张飞书卡片（目标�
 
 ![记录：规则拦下和批准了什么、以你的身份发出了什么，点一行看原样内容](/screens/security-audit.png)
 
+### 本机登录的文件系统隔离
+
+Linux 上，本人可从 `GET /api/security/sandbox` 查看 bubblewrap 是否可用、默认可写目录和各后端要更新的状态目录。同一地址的 PUT 保存设置。网页入口待接入。以下设置会隐藏 SSH 目录。
+
+```json
+{"mode":"prefer","writable":[],"hidden":["~/.ssh"],"fullAccess":"sandboxed"}
+```
+
+`prefer` 能隔离就用，不能用时运行会说明原因。`require` 要求每次本地启动都能隔离。`off` 是默认值。本人 HOME 默认可读，额外保密的目录写入 `hidden`。需要项目外的写权限时，把已有目录加进 `writable`。评审的原工作区只读，本轮快照可以跑测试。
+
+`sandboxed` 只在进入本人沙箱后统一启用后端完全访问，包含只读角色和访客。成员借本机登录仍按角色选模式。`per-role` 沿用原来的单项开关。`all` 为本人的可写角色统一启用完全访问，保存时另传 `confirmAll: true`。此时未隔离的运行也能写宿主文件。
+
 ### 成员沙箱的出网权限
 
 Linux 成员运行开启严格隔离后，命令行工具通过本机代理访问网络。本人用 `GET /api/security/egress` 查看支持情况和最近运行访问的主机，用同一地址的 PUT 保存配置。默认只管严格运行，`all-sandboxed` 扩展到所有成员沙箱，`off` 关闭。设备代跑不经过这台机器。
