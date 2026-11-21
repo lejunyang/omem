@@ -355,7 +355,8 @@ export function takeDeferred(app: App): Notification[] {
   run(app.db, `update notifications set context = json_remove(context, '$.deferred') where id in (${rows.map(() => "?").join(",")})`, ...rows.map((r) => r.id));
   return rows
     .filter((r) => !r.read_at && Date.now() - Date.parse(r.at) < 24 * 3600_000)
-    .map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: null, userId: r.user_id }));
+    .map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: null, userId: r.user_id }))
+    .filter(n => !n.pushed);
 }
 
 /** Remember the Feishu card a notification went out as (see `replaces`). */

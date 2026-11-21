@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { staleDays, sweepStaleAsks } from "../src/agents/ask-expiry.ts";
 import { cancelAsk, createAsk, getAsk, waitForAnswer } from "../src/agents/asks.ts";
 import { one, run } from "../src/core/db.ts";
-import { addNotificationSink, listNotifications, notify, releaseLater } from "../src/core/notify.ts";
+import { addNotificationSink, deferNotification, markPushed, takeDeferred, listNotifications, notify, releaseLater } from "../src/core/notify.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { createApiToken, createUser, linkIdentity } from "../src/core/users.ts";
 import { answerFromOutlet, drainOutlets, startNotifierOutlets } from "../src/plugins/notifier.ts";
@@ -103,6 +103,29 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
       releaseLater(app, new Date(), { now: true });
       await drainOutlets(app);
       expect(message(later.id).title).toBe("汇总");
+    } finally { vi.useRealTimers(); app.config.notify.quietStart = app.config.notify.quietEnd = 0; }
+  });
+
+  it.each(["plugin", "lark"])("早晨由 %s 先补送时只推一次", async first => {
+    app.config.notify.quietStart = 22;
+    app.config.notify.quietEnd = 9;
+    try {
+      vi.setSystemTime(new Date("2026-11-21T23:00:00Z"));
+      const n = notify(app, { title: "夜间进展" });
+      deferNotification(app, n.id);
+      await drainOutlets(app);
+      expect(existsSync(file(n.id))).toBe(false);
+      vi.setSystemTime(new Date("2026-11-22T09:01:00Z"));
+      if (first === "plugin") {
+        await drainOutlets(app);
+        expect(message(n.id).title).toBe("夜间进展");
+        expect(takeDeferred(app)).toEqual([]);
+      } else {
+        expect(takeDeferred(app).map(row => row.id)).toEqual([n.id]);
+        markPushed(app, n.id, "lark");
+        await drainOutlets(app);
+        expect(existsSync(file(n.id))).toBe(false);
+      }
     } finally { vi.useRealTimers(); app.config.notify.quietStart = app.config.notify.quietEnd = 0; }
   });
 
