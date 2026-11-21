@@ -99,9 +99,10 @@ export function memberCapabilities(app: App, userId: string) {
   const caps = capabilityKeys.filter(c => globalCapability(c) && access.source(c));
   const scoped = capabilityKeys.filter(c => !globalCapability(c));
   const spaceCaps = Object.fromEntries(scoped.map(c => [c, access.range(c) ?? "*"]));
+  const ownSpaceCaps = Object.fromEntries((["items.view", "runs.view"] as const).map(c => [c, access.range(c, true) ?? "*"]));
   const effective = Object.fromEntries(capabilityKeys.map(c => [c, globalCapability(c) ? access.source(c) : Object.fromEntries(access.spaces.flatMap(s => {
     const from = access.source(c, s.id);
     return from ? [[s.id, from]] : [];
   }))]));
-  return { preset: access.preset, overrides: access.overrides, caps, spaceCaps, effective };
+  return { preset: access.preset, overrides: access.overrides, caps, spaceCaps, ownSpaceCaps, effective };
 }

@@ -208,8 +208,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/me", async (req) => {
     const u = getUser(app, who(req));
     // What the page may offer: global permissions, and the spaces this person writes or manages.
-    const { caps, spaceCaps } = memberCapabilities(app, u.id);
-    return { ...u, caps, spaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
+    const { caps, spaceCaps, ownSpaceCaps } = memberCapabilities(app, u.id);
+    return { ...u, caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
   });
 
   // ---------------------------------------------------------------- tools/MCP

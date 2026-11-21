@@ -83,6 +83,19 @@ describe("roles and permissions", async () => {
     }
   });
 
+  it("distinguishes own item and run ranges from sharing", async () => {
+    const me = await json("ann", "/api/me");
+    for (const cap of ["items.view", "runs.view"]) {
+      expect(me.ownSpaceCaps[cap]).toContain("team");
+      expect(me.spaceCaps[cap]).not.toContain("team");
+    }
+    const item = await (await fetch(base + "/api/items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ space: "team", title: "个人事项", kind:"todo" }) })).json();
+    sqlRun(app.db, "update items set user_id=? where id=?", "ann", item.id);
+    const r = createRun(app, { kind: "ask", title: "个人运行", spaceId: "team", userId: "ann", input: { spaces: ["team"] } });
+    expect(JSON.stringify(await json("ann", "/api/items?space=team"))).toContain(item.id);
+    expect((await json("ann", "/api/runs")).runs.map((x: {id: string}) => x.id)).toContain(r.id);
+  });
+
   it("shares work and items with observers only in readable spaces", async () => {
     createUser(app, { id: "observer-test", name: "观察者", role: "observer" });
     addMember(app, "team", "observer-test", "reader");
