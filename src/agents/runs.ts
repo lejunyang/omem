@@ -162,7 +162,13 @@ export function runsInLane(app: App, lane: string) {
 /** Who a run was started for (the owner when nobody else was recorded). */
 export function runUser(app: App, id: string | null) {
   if (!id) return "owner";
-  return one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id ?? "owner";
+  // Older children did not persist the inherited identity. Each step looks up a single primary key.
+  return one<{ user_id: string }>(app.db, `with recursive lineage(id) as (
+    values(?)
+    union
+    select case when r.kind='code' then coalesce(json_extract(r.input,'$.continueFrom'),r.parent_id) else r.parent_id end
+    from lineage l join runs r on r.id=l.id where r.user_id is null
+  ) select r.user_id from lineage l join runs r on r.id=l.id where r.user_id is not null limit 1`, id)?.user_id ?? "owner";
 }
 
 export function getRun(app: App, id: string): Run {

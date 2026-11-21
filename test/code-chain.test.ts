@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { codeChainFor, codeChainRounds, queueNextCodeRound, maxCodeRounds } from "../src/agents/code-chain.ts";
 import { createThread } from "../src/agents/threads.ts";
-import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { createRun, getRun, runUser, setRunOutput } from "../src/agents/runs.ts";
+import { createUser } from "../src/core/users.ts";
+import { requestSplit } from "../src/agents/review-chain.ts";
 import { run } from "../src/core/db.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { settleCodeChain } from "../src/channels/lark-code-progress.ts";
@@ -42,6 +44,24 @@ describe("delegated coding chains", () => {
     expect(r.input).toMatchObject({ continueFrom: code.id, resumeSessionId: "sess-1", repos: ["personal"] });
     expect(r.input.task).toContain("评审：这里要改");
     expect(codeChainRounds(app, chain.askRunId).map((x) => x.id)).toEqual([code.id, r.id]);
+  });
+
+  it("keeps the delegation initiator on historical children, manual rounds and resplits", async () => {
+    const { app, code } = fixture();
+    const member = createUser(app, { name: "成员 A", id: "member-a" }).id;
+    run(app.db, "update runs set user_id=?,status='done' where id=?", member, code.id);
+    const review = createRun(app, { kind: "review", title: "评审", parentId: code.id });
+    run(app.db, "update runs set user_id=null where id=?", review.id);
+    expect(runUser(app, review.id)).toBe(member);
+    const chain = codeChainFor(app, code)!;
+    const next = queueNextCodeRound(app, chain, "继续", { manual: true })!.run;
+    expect(runUser(app, next.id)).toBe(member);
+    // On old rounds the parent is the coordinating ask, while continueFrom identifies the delegation.
+    run(app.db, "update runs set user_id=null where id=?", next.id);
+    expect(runUser(app, next.id)).toBe(member);
+    setRunOutput(app, next.id, { reviewPlan: {} });
+    const split = await requestSplit(app, next.id, { userId: "owner" });
+    expect(runUser(app, split.id)).toBe(member);
   });
 
   it("stops queuing automatic rounds after the limit, and never while waiting for the owner", () => {

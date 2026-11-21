@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
-import { createRun, getRun, type Run } from "./runs.ts";
+import { createRun, getRun, runUser, type Run } from "./runs.ts";
 
 /**
  * Retry a run that failed or was stopped. Work with something to keep is continued rather than
@@ -13,7 +13,7 @@ export async function retryRun(app: App, id: string, userId?: string): Promise<R
   const r = getRun(app, id);
   if (r.input.boardTaskId) throw new HttpError(409, "任务板子任务请用 work_review 退回重做，以便保留验收和尝试记录");
   if (r.status === "queued" || r.status === "running") throw new HttpError(409, "这次运行还没结束");
-  const owner = userId ?? one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id ?? undefined;
+  const owner = userId ?? runUser(app, id);
   if (r.kind === "code") {
     const continued = await continueCode(app, r, owner);
     if (continued) return { ...continued, continued: true };

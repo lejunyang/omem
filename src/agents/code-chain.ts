@@ -9,7 +9,7 @@ import { refreshWork, workForChild } from "./agent-work.ts";
 import { homeOf, moveHome } from "./home.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
-import { goalText, isTaskWork, listTasks, POLISH_STAGES, waitingText, workRootOf, workState } from "./code-tasks.ts";
+import { goalText, isTaskWork, listTasks, POLISH_STAGES, workOwner, waitingText, workRootOf, workState } from "./code-tasks.ts";
 
 /**
  * A delegated coding run reports back to the conversation that requested it, and keeps going
@@ -146,6 +146,7 @@ export function queueNextCodeRound(
         round: next.round,
       },
       parentId: chain.askRunId,
+      userId: workOwner(app, chain.rounds[0]),
     });
     next.rounds.push(r.id);
     next.lastCodeRunId = r.id;

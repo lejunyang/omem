@@ -1023,7 +1023,11 @@ export function ownerQuestionText(app: App, t: CodeTask) {
 }
 
 /** Owner of the work, for asks and notifications. */
-export const workOwner = (app: App, rootId: string) => runUser(app, rootId);
+export function workOwner(app: App, rootId: string, requestedBy?: string) {
+  const owner = runUser(app, rootId);
+  if (requestedBy && requestedBy !== OWNER && requestedBy !== owner) throw new HttpError(403, "只能继续自己的交办");
+  return owner;
+}
 
 /**
  * Who the work waits on now, for the assistant's turn: the tasks it settles itself (each in full) and
