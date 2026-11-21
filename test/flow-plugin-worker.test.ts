@@ -78,7 +78,8 @@ it.each(modes)("后台槽全满时独立巡检仍会取消到期作业 %s", asyn
   const view = await startFlow(app,item.id,flow.id,{actor:"owner"});
   const id = view.stages[0].by!;
   await vi.waitFor(() => expect(getRun(app,id)).toMatchObject({status:"queued",output:{runnerResult:{ref:id,status:"running"}}}));
-  const gate = Promise.withResolvers<void>();
+  let release!: () => void;
+  const gate = { promise: new Promise<void>(r => { release = r; }), resolve: () => release() };
   registerHandler("brief", () => gate.promise);
   const blockers = Array.from({length:app.config.concurrency}, () => createRun(app,{kind:"brief",title:"占用后台槽"}));
   try {
