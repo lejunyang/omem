@@ -1,4 +1,4 @@
-import { finishStage, overrideStageGate } from "./plugin-gates.ts";
+import { continuedUpstream, finishStage, overrideStageGate } from "./plugin-gates.ts";
 import { pollFlowSignal } from "./plugin-signals.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import { requireItem } from "../items/access.ts";
@@ -126,9 +126,10 @@ function settleUpstream(app: App, itemId: string) {
   for (const s of itemStages(app, itemId)) {
     if (!s.control.upstream || s.state === "doing") continue;
     const up = stageName(f, s.control.upstream.stage);
-    if (s.state !== "done") { dropUpstream(app, s, "这一段已有新的状态"); continue; }
+    if (s.state !== "done" && !s.control.gateReview) { dropUpstream(app, s, "这一段已有新的状态"); continue; }
+    if (s.control.gateReview) withdraw(app, s);
     cancelAsk(app, s.control.upstream.askId, "这一段已经做完");
-    changeStage(app, itemId, s.id, "stale", { askId: null, waitingOn: null, control: { ...s.control, upstream: undefined } }, host, `做完时上游「${up}」还在重做、本人没答要不要停：它是按重开前的「${up}」做的，等「${up}」做完再复核`, [], "upstream-done");
+    changeStage(app, itemId, s.id, "stale", { askId: null, waitingOn: null, control: { ...s.control, upstream: undefined, gateReview: undefined } }, host, `做完时上游「${up}」还在重做、本人没答要不要停：它是按重开前的「${up}」做的，等「${up}」做完再复核`, [], "upstream-done");
     changed = true;
   }
   return changed;
@@ -989,8 +990,12 @@ registerAskHandler("flow-plugin-gate", async (app, ask, ctx) => {
   if (s.askId !== ask.id || s.state !== "blocked" || !s.control.gateReview)
     throw new HttpError(409, "这次检查已经处理");
   const d = definition(f, s.id);
-  const recorded = ctx.completion === "record" || (ctx.completion === undefined && s.control.recorded);
-  if (!recorded && !prerequisitesDone(d, itemStages(app, item))) throw new HttpError(409, "阶段前提已变化");
+  // The card captures a host-accepted result, including an owner-approved continuation
+  // or an out-of-order record. Only a later reopen can invalidate its upstream inputs.
+  // Older cards could survive an unanswered upstream question. Recover explicit decisions from their log.
+  if ((ctx.completion === "regular" || ctx.completion === undefined) && !s.control.recorded
+      && !prerequisitesDone(d,itemStages(app,item)) && !continuedUpstream(app,s))
+    throw new HttpError(409, "旧结果需要复核");
   const upstream = new Set(d.needs);
   for (const stage of [...f.definition.stages].reverse()) {
     if (upstream.has(stage.id)) for (const id of stage.needs) upstream.add(id);

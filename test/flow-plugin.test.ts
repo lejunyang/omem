@@ -9,7 +9,7 @@ import { flowView, ownerAction, startFlow, reportStage, updateStageBudget, recor
 import { checkPluginSignals } from "../src/flows/plugin-signals.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
 import { proposeFlow } from "../src/flows/engine.ts";
-import { answerAsk } from "../src/agents/asks.ts";
+import { answerAsk, getAsk } from "../src/agents/asks.ts";
 import { getRun, setRunOutput } from "../src/agents/runs.ts";
 import { runPluginStage } from "../src/flows/plugin-runner.ts";
 import { all, run } from "../src/core/db.ts";
@@ -286,6 +286,28 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     expect(flowView(app,item).stages.map(s => s.state)).toEqual(["doing","stale","pending"]);
     await ownerAction(app,item,"first","done","已更新");
     expect(flowView(app,item).stages[1]).toMatchObject({state:"doing",gateReview:undefined});
+    saveGateChecks(app,"inspect",[]);
+  });
+  it("上游尚在重做时，已选择继续做的结果可以越过，未答复的结果进入复核", async () => {
+    for (const accept of [true,false]) {
+      const item = await begin([{id:"first",name:"准备",by:"wait"},job()]);
+      saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true,stages:["job"]}]);
+      await ownerAction(app,item,"first","done","已准备");
+      const runId = flowView(app,item).stages[1].by!;
+      await ownerAction(app,item,"first","reopen","修改准备材料");
+      const upstream = flowView(app,item).stages[1].upstream!.askId;
+      if (accept) await answerAsk(app,upstream,{choice:1,by:"owner"});
+      await reportStage(app,item,"job",{state:"done",note:"提交作业",evidence:[runId]},{actor:"stagekit:job",runId});
+      if (accept) {
+        const card = flowView(app,item).stages[1].askId!;
+        expect(all(app.db,"select json_extract(context,'$.completion') as path from asks where id=?",card)).toEqual([{path:"continued"}]);
+        await answerAsk(app,card,{choice:0,by:"owner"});
+        expect(flowView(app,item).stages.map(s => s.state)).toEqual(["doing","done"]);
+      } else {
+        expect(flowView(app,item).stages[1]).toMatchObject({state:"stale",gateReview:undefined});
+        expect(getAsk(app,upstream).status).toBe("cancelled");
+      }
+    }
     saveGateChecks(app,"inspect",[]);
   });
   it("可越过乱序补录的检查，上游重开后补录卡失效", async () => {
