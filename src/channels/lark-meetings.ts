@@ -15,6 +15,7 @@ import { upsertSource } from "../sources/store.ts";
 import { larkCli, larkCliCommand } from "./lark-cli.ts";
 import { decidedBlocks, larkBotInfo } from "./lark-send.ts";
 import { ownerContextText } from "../agents/owner-now.ts";
+import { outcomesTask } from "../agents/meeting-outcomes.ts";
 import { answersText, MEETING_KINDS, meetingScope, suggestedText } from "./meeting-answers.ts";
 import { considerMeeting, groupMeetingWanted, listenMeetingHead, ownerMeetingsWanted, type ListenMeetingRun } from "./listen-meetings.ts";
 
@@ -1100,6 +1101,7 @@ function startAgent(app: App, row: Row, plan: MeetingPlan, opts: { final?: boole
     // What the owner has been working on these weeks: which of the meeting's points land on one of those lines.
     const state = ownerContextText(app, { state: true, hints: { 本人近况: "判断会上哪些事和本人手上的事有关时参照" } });
     const answered = answersText(row);
+    const outcomes = outcomesTask(app, row.meeting_id, OWNER);
     task = [
       `# 会议结束（你替本人旁听的）`,
       ...head,
@@ -1117,7 +1119,9 @@ function startAgent(app: App, row: Row, plan: MeetingPlan, opts: { final?: boole
       "- 主要是听和了解（分享、访谈、宣讲）：三五句写下对本人手上的工作有用的要点；值得长期记住的按“怎么写记忆”记下来。",
       "- 临时拉的沟通或澄清：一两句写清结论，没有后续就到此为止。",
       "没有落到本人头上的事，也没有值得留下的内容：调用 stay_quiet（一句原因），不发纪要。",
-      dm ? "要本人点头才能做的下一步，用 suggest_next 做成按钮（最多 3 个）：message 用本人的口吻、具体到你能直接照做（“回复小王：周四前给出接口文档”）。本人点了按钮你就接着做。" : "",
+      // The decisions, to-dos and open questions of the items it is about (agents/meeting-outcomes.ts).
+      outcomes ? `\n${outcomes}` : "",
+      dm ?"要本人点头才能做的下一步，用 suggest_next 做成按钮（最多 3 个）：message 用本人的口吻、具体到你能直接照做（“回复小王：周四前给出接口文档”）。本人点了按钮你就接着做。" : "",
     ].filter((x) => x !== "").join("\n");
   } else {
     task = [

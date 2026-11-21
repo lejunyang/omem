@@ -10,6 +10,7 @@ import { CODE_STARTERS } from "../agents/tool-help.ts";
 import type { RefTarget } from "./changes.ts";
 import { validateItemRefs } from "./evidence.ts";
 import { addMaterials } from "./materials.ts";
+import { fingerprint, mayPropose } from "./choices.ts";
 import { setParent } from "./parent.ts";
 import { judgePhase, saveWrapUp } from "./lifecycle.ts";
 import { addItemEvent, getItem, isClosed, upsertItem, type LineNow } from "./store.ts";
@@ -317,6 +318,9 @@ export async function proposeLines(app: App, runId: string, input: z.input<typeo
     }
     const declined = one<{ value: string }>(app.db, "select value from kv where key = ?", declinedKey(p.name))?.value;
     if (declined && Date.now() - Date.parse(declined) < DECLINE_MS) { out.push(`「${p.name}」本人 ${declined.slice(0, 10)} 说过不用建，两周内不再问`); continue; }
+    // Said 不用 in any place (the nightly card, 今天): the one record of the owner's choices (items/choices.ts).
+    const said = mayPropose(app, userId, "line", fingerprint(p.name));
+    if (!said.ok) { out.push(`「${p.name}」${said.why}，两周内不再问`); continue; }
     const at = pending.findIndex((x) => norm(x.name) === norm(p.name));
     const entry: Proposal = { key: at >= 0 ? pending[at].key : `p${pending.length + i}`, name: p.name, goal: p.goal, items, sources };
     if (at >= 0) pending[at] = entry; else pending.push(entry);
@@ -395,7 +399,7 @@ export function heldProposals(app: App, userId = OWNER) {
   const names = new Set(openLines(app, userId).map((l) => norm(l.title)));
   const proposals = json<{ lineProposals?: Proposal[] }>(r.output, {}).lineProposals?.filter((p) => {
     const declined = kv(app, declinedKey(p.name));
-    return !names.has(norm(p.name)) && !(declined && Date.now() - Date.parse(declined) < DECLINE_MS);
+    return !names.has(norm(p.name)) && !(declined && Date.now() - Date.parse(declined) < DECLINE_MS) && mayPropose(app, userId, "line", fingerprint(p.name)).ok;
   }) ?? [];
   return { runId: r.id, proposals };
 }

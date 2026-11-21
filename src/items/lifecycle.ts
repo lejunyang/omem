@@ -6,6 +6,7 @@ import { createRun, runsInLane } from "../agents/runs.ts";
 import { getContext, itemContext, saveContext } from "../channels/listen.ts";
 import { lineStateDenied } from "../channels/listen-assist.ts";
 import { addChange } from "./changes.ts";
+import { mayPropose } from "./choices.ts";
 import { LINE_ENDED } from "./expiry.ts";
 import { addItemEvent, getItem, isClosed, onItemStatus, upsertItem, type Item } from "./store.ts";
 import { holdForToday } from "./today-time.ts";
@@ -462,6 +463,9 @@ function asksToday(app: App) {
 /** Whether this line may be asked about now: not kept lately, none pending, none in 14 days, under two today. */
 export function mayAsk(app: App, id: string) {
   if (keptAt(app, id)) return false;
+  // 还没完 said in any place (this card, 今天, the work page) holds for its two weeks (items/choices.ts).
+  const user = one<{ u: string }>(app.db, "select coalesce(user_id,'owner') u from items where id = ?", id)?.u ?? "owner";
+  if (!mayPropose(app, user, "line-end", id).ok) return false;
   if (one(app.db, "select 1 from asks where status = 'pending' and json_extract(context, '$.handler') = 'line-end' and json_extract(context, '$.lineId') = ?", id)) return false;
   const last = kv(app, ASKED(id));
   if (last && Date.now() - Date.parse(last) < ASK_EVERY_DAYS * DAY) return false;
@@ -478,7 +482,7 @@ export function askLineEnd(app: App, item: Item, why: string): Ask | null {
     runId: null, conversationId: null, userId: item.userId, allowText: false,
     question: `「${item.title}」看起来差不多结束了：${truncate(why, 200)}。${hold ? `\n\n还开着的：${hold}。` : ""}\n\n要结束这条线吗？${g.openItems ? `点“结束”会把下面 ${g.openItems} 件没结的一起结束。` : ""}“再看一周”之后没有新问题会自动结束；“还没完”两周内不再问。`,
     options: CHOICES.map((label) => ({ label })),
-    context: { handler: "line-end", lineId: item.id, why },
+    context: { handler: "line-end", lineId: item.id, why, choice: { kind: "line-end", target: item.id, map: { [CHOICES[2]]: "keep" } } },
   });
   // Asked at night with 今天 on: it waits for the morning card instead of a card of its own (items/today.ts).
   holdForToday(app, ask.id);

@@ -20,6 +20,15 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 变化台账：一件事只记一次、谁接手了、本人取舍过什么
+
+- 幂等写入：`src/items/changes.ts` 的 `recordChange` 是 `item_changes` 唯一的写入口（`addChange` 是它的包装）。键是“来源 + 事项 + 类型”：聊天的行换成飞书消息 id（同一条消息在两份原件里是一个键），文档的行按那几行文本的哈希，宿主自己的事件用自己的键（`problem:`、`metric:<id>@<点的时间>`、`stage:`、`review:`、`commits:`、`meeting:<id>#L…`）。同一个键再来：说法相同不动；更具体的（补了日期、细节、风险、更完整的一句）更新原行，`added` 记谁补了什么；本人处理过的（并进 / 另开 / 不用）不改说法；同一次运行用不同说法交的、提议不同日期的各留一条（键加 `~2`）。各写入方能拿到的来源列成表写在 `changes.ts` 开头。item-follow、`upsert_item` 的 `change_type`、在跟的问题、指标、流程阶段都经它；评审结论（`review-chain.ts`）和提交认领（`commits.ts`）也记进时间线了。旧行没有键照常显示。
+- 处理归属：`src/core/handling.ts`。处理记录就是已有的 `handled_messages`，各路的行多了 `actor / decision / change_id / reason`，让开记成 `yield:<路>`；规则的 `rule_handled` / `rule_firings` 一起读。回复的顺序 `REPLY_ORDER`：当场回答 → 规则 → 关注 → 有人找你。规则遇到 @ 机器人的消息、关注遇到已经当场回答的、有人找你遇到规则或关注接手的，都记让开和原因；关注的批次里前面的路已经接手回复的消息，说明里写“只记下不回”（行为变化：以前规则命中的消息关注照样可能回复）。`read_source` 读群聊时列出这一段已经被处理过的消息；`TurnContext.handled` 带这一轮触发消息的处理记录。线的页面（`GET /api/work/:id`）每条变化带 `runId / sourceKey / added / yields`，页面多 `yielded`；时间线卡片（`WorkChange.vue`）一个小的“几处补充 · 几处让开”，悬停或点开看。
+- 关注的经验给直接 @ 机器人：`watch-trial.ts` 的 `watchExperience`（相近案例、经验文件、本人对回复的决定，预算 `WATCH_EXPERIENCE`）同时给盯群批次和 `directExperience`；后者放进这一轮的消息，选了哪些记在运行的 `watchExperience`。访客（不是用户的人、`asker`、guest 运行）不带，成员只拿自己能读的空间里的关注。
+- 会议的结果：`src/agents/meeting-outcomes.ts`。会后整理那一轮的任务列出已确认关联（关注把会交给的事项、会议所在的群挂在哪件事上、会议记录已经是哪件事的材料）和只是像的事项；新工具 `meeting_outcomes`（ROLE_TOOLS，只给会后整理）交决定 / 待办 / 没定的问题，引用会议记录的行，写成 `decision / todo / question` 三类变化。没确认关联的先问本人（“记到这件事 / 不用”，同意后把会议记录挂上）。事项本身改期会上定了才改，否则问“改成这个时间 / 不改”。
+- 本人取舍：`src/items/choices.ts`，表 `owner_choices`（随拉取同步）。回答提问的共同路径（`asks.ts recordAnswer`）记取舍：提问上下文带 `choice`，或按处理器登记的读取（每晚的工作线提议卡、“今天”）；事项页的候选、数据页的指标、档案改动的拒绝也记。提出之前先查 `mayPropose`：工作线提议、线要不要结束、候选事项、指标提议、档案改动、会议结果候选；“情况变了”的标准写在 `CHANGED` 一处。`pendingMetrics`、`pendingProfileProposals` 滤掉以后再说没到期的。`TurnContext.choices` 带这条线最近的取舍。
+- 迁移一项 `CHANGE_LEDGER_MIGRATION`（`db.ts` 末尾）。测试 `test/change-ledger.test.ts`、`handling.test.ts`、`watch-experience.test.ts`、`meeting-outcomes.test.ts`、`owner-choices.test.ts`。
+
 ## 2026-11-21 · 工作项上的“需求到交付”
 
 - `src/items/chain.ts`（`GET /api/items/:id/chain`，权限同事项详情 `items.view`）：只读已有关联拼四段。需求 = 事项的 `req` 材料（`req_status` 的实现状态、`req_tests` 的测试，含子节点）；发现 = `study_findings`（不含重复的）；方案 = `designs.item_id` 和事项的交办的 `designs.work_id`，决定的 `reqs` 写的是事项的需求点 id 才连；交付 = 事项的 `run` 材料里的编码交办、发现和方案的 `work_id`，状态用 `code-works.ts listCodeWorks`，测试 `testsOfWork`，发现发起的交办加改后重跑结果；`req_status.run_id` 落在某次交办的轮次里、或测试记在某个需求点上，就连回那个需求点。事项挂的平台对象（合并请求）列在交付里，不连。每条 `links` 只指前面几段的条目。线（有子项）按子项分组，同一条只出现一次；上限 `CHAIN_MAX`（每段 12、每条线 12 组、看 60 个子项）。别的空间的需求和方案、看不到的交办不带出来。

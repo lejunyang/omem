@@ -47,6 +47,7 @@ import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
 import { CHANGE_TYPES, addChange } from "../items/changes.ts";
+import { outcomesSchema, submitOutcomes } from "./meeting-outcomes.ts";
 import { ancestorIds, MAX_DEPTH } from "../items/tree.ts";
 import { ITEM_KINDS, listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { lineStateSchema, proposeSchema } from "../items/line-schemas.ts";
@@ -592,7 +593,10 @@ def({
     const notes = notesOn(sourceNotes(ctx.app, s.id).filter((n) => n.status !== "rejected"), r.lineStart, r.lineEnd);
     const noteText_ = notes.length ? `\n标注（以标注为准，不要引用已过时、有误或不检索的段落作为现状）：\n${notes.map((n) => `- #${n.id} ${noteText(n)}${n.by === "owner" ? "（本人）" : n.status === "confirmed" ? "（本人确认）" : ""}`).join("\n")}` : "";
     const version = s.kind === "code" || s.kind === "doc" ? codeVersion(ctx.app, s.spaceId) : null;
-    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${level}${version ? `\n代码来自：${version}` : ""}${file}${warn}${replayNote}${noteText_}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
+    // A chat: which of these messages some path already handled, and what each became (core/handling.ts). Not for a guest.
+    const handled = s.kind === "chat" && ctx.role !== "guest" && !view ? (await import("../core/handling.ts")).handlingOfLines(ctx.app, s.id, r.lineStart, r.lineEnd) : "";
+    const handledText = handled ? `\n已经有人处理过的消息（谁接手了、记成了什么、谁让开了；回复的只有一个）：\n${handled}` : "";
+    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${level}${version ? `\n代码来自：${version}` : ""}${file}${warn}${replayNote}${noteText_}${handledText}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
   },
 });
 
@@ -2442,6 +2446,15 @@ def({
     if (ctx.role !== "item-follow" || !ctx.runId) throw new HttpError(403, "只有 item-follow 能交事项变化");
     flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs);
     return JSON.stringify((await import("../flows/follow.ts")).noteItemChange(ctx.app, ctx.runId, a));
+  },
+});
+def({
+  name: "meeting_outcomes",
+  description: "会议结束后的整理交这场会对一件事项的结果：决定（谁定的、定了什么）、待办（谁、做什么、什么时候之前）、没定下来的问题，每条引用会议记录原件的行；事项本身的截止时间变了才填 deadline。宿主记成这件事项的变化（同一场会再交不重复记）；事项和这场会的关联还没确认时先问本人。只给会后整理的运行。",
+  write: true, schema: outcomesSchema,
+  handler: (ctx, a) => {
+    validateItemRefs(ctx.app, [...(a.decisions ?? []), ...(a.todos ?? []), ...(a.open_questions ?? []), ...(a.deadline ? [a.deadline] : [])].flatMap((e) => e.refs), ctx.userId ?? OWNER, ctx.spaces);
+    return submitOutcomes(ctx.app, ctx.runId, ctx.spaces, a);
   },
 });
 def({

@@ -12,6 +12,7 @@ import type { WorktreeRef } from "../agents/worktree-index.ts";
 import type { AppliedTarget } from "../agents/code.ts";
 import { addItemEvent, getItem, upsertItem } from "../items/store.ts";
 import { addLocalMaterials } from "../items/materials.ts";
+import { addChange } from "../items/changes.ts";
 import { materialCandidates } from "../items/places.ts";
 import { itemFlow, getStage } from "./store.ts";
 
@@ -237,6 +238,8 @@ registerAskHandler("commit-claim", async (app, ask, ctx) => {
     itemId = item.id;
     addLocalMaterials(app, item.id, [{ kind: "repo", ref: c.space_id, branch: c.branch }], OWNER, "user");
     addItemEvent(app, item.id, "updated", `本人确认：${c.space_id} 的 ${c.branch} 分支上 ${b.commits.length} 条提交归到这件事；${claim.reason}`, "user", [`run:${b.runId}`]);
+    // On the line's timeline too (items/changes.ts), once per batch the claim run found.
+    addChange(app, { itemId: item.id, type: "info", origin: "commit", source: `commits:${c.space_id}/${c.branch}@${b.runId}`, refs: [`run:${b.runId}`], runId: b.runId ?? null, summary: `${c.branch} 分支上 ${b.commits.length} 条提交归到这件事`, detail: claim.reason || null });
     const finished = !("item" in claim) && !claim.ongoing;
     if (finished) item = upsertItem(app, item.id, { status: "done", note: "提交已经做完这件事，记为已完成" }, "user");
     settle(app, c, b, `问了本人，${"item" in claim ? "挂到了" : finished ? "记了已完成的" : "新建了"} ${item.title}`, item.id);

@@ -9,6 +9,7 @@ import { pendingActions, pendingView } from "./pending.ts";
 import { chatName } from "../agents/owner-now.ts";
 import { itemContext, listContexts } from "../channels/listen.ts";
 import { CHANGE_COLS, CHANGE_TYPES, changeLite, lineTimeline, refTargets, textTargets, type ChangeLite } from "./changes.ts";
+import { yieldsOf } from "../core/handling.ts";
 import { endedLines, endReason, guardsOf, setLinePhase } from "./lifecycle.ts";
 import { decideNext, nextOf, type NextLite } from "./lines.ts";
 import { materialViews } from "./materials.ts";
@@ -194,7 +195,15 @@ export async function workDetail(app: App, id: string, userId: string) {
   // The platform entry it was brought in from (items/providers.ts), for its subscriber only.
   let external: ReturnType<typeof externalView> | null = null;
   try { const synced = providerState(app, userId, id); external = synced && externalView(synced); } catch { /* the subscription is gone, or is someone else's */ }
-  const next = nextView(app, id, userId), timeline = lineTimeline(app, id, { limit: 200 }), reason = closed ? endReason(app, id) : null;
+  const next = nextView(app, id, userId), reason = closed ? endReason(app, id) : null;
+  // Each change says who noted it and who added to it (items/changes.ts); the paths that stepped aside on
+  // the messages behind them, and why (core/handling.ts), on the change and counted for the line.
+  const timeline: (ChangeLite & { yields?: { label: string; to: string; reason: string; at: string }[] })[] = lineTimeline(app, id, { limit: 200 });
+  const yields = yieldsOf(app, timeline.flatMap((c) => c.sourceKey?.startsWith("lark:") ? [c.sourceKey.replace(/~\d+$/, "")] : []), 60);
+  for (const c of timeline) {
+    const mine = yields.filter((y) => `lark:${y.event}` === c.sourceKey?.replace(/~\d+$/, "")).map(({ event: _e, actor: _a, ...y }) => y);
+    if (mine.length) c.yields = mine;
+  }
   return {
     item, ...(external ? { external } : {}), ancestors, now: item.now, next,
     // Items and runs named by id inside the page's own text (the goal, the state, reasons), with their titles.
@@ -209,6 +218,7 @@ export async function workDetail(app: App, id: string, userId: string) {
     openUnder: openUnder(app, id),
     children: childrenOf(app, id),
     timeline,
+    yielded: { count: yields.length, recent: yields.slice(0, 10).map(({ event: _e, actor: _a, ...y }) => y) },
     chats: chatActivity(app, chats),
     materials: await materialViews(app, id, userId),
     listen: c ? { id: c.id, status: c.status } : null,
