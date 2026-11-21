@@ -139,6 +139,12 @@ async function importPack(state: State, file: string) {
   return tip;
 }
 
+/** Last commit accepted into the host object store, even if a later handoff was refused. */
+export function receivedMemberHead(app: App, actor: string, space: string): string | undefined {
+  const file = join(location(app, actor, space), "state");
+  return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as State).base : undefined;
+}
+
 const receiving = new Set<string>();
 
 export async function receiveMemberGit(app: App, actor: string, space: string, tree: string, message: string) {

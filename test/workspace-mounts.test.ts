@@ -1,13 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { sandboxCommand, sandboxSupport } from "../src/agents/sandbox.ts";
+import * as runner from "../src/agents/runner.ts";
+import { registerRound, dispatchTasks, joinHelpers } from "../src/agents/code-helpers.ts";
 import { finishSync } from "../src/agents/code-sync.ts";
 import { receiveMemberGit } from "../src/agents/member-git.ts";
-import { addTask, commitTask, getTask, updateTask } from "../src/agents/code-tasks.ts";
+import { addTask, commitTask, getTask, settleCodingRound, updateTask } from "../src/agents/code-tasks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { createRun, setRunOutput } from "../src/agents/runs.ts";
+import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { leaseWorkspace, workspaceMounts } from "../src/agents/workspaces.ts";
 import { createSpace, getSpace } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
@@ -199,6 +201,51 @@ describe("delegation sandbox mounts", () => {
     expect(git("show", "HEAD:remaining")).toBe("last");
     expect(git("log", "-1", "--format=%B")).toContain("Omem-Task: T" + task.seq);
     expect(getTask(app, round.id, task.seq).state).toBe(task.verifier ? "verify" : "done");
+  });
+
+  it.skipIf(!sandboxSupport().ok)("merges accepted helper work and keeps a refused repository recoverable", async () => {
+    const repos = [repository("partial-a"), repository("partial-b")];
+    const round = createRun(app, { kind: "code", spaceId: repos[0].id, title: "多仓交付", input: { taskMode: true } });
+    app.db.prepare("update runs set status = 'running' where id = ?").run(round.id);
+    const trees = repos.map(repo => ({ ...leased(round.id, repo), branch: "", base: repo.git("rev-parse", "HEAD").toString().trim() }));
+    const tasks = repos.map(repo => addTask(app, round.id, { title: repo.id, kind: "build" }, "host").seq);
+    for (const seq of tasks) updateTask(app, round.id, seq, { state: "coding", coderRun: round.id });
+    const home = join(app.home, "partial-helper-home");
+    mkdirSync(home);
+    const fake = vi.spyOn(runner, "runRole").mockImplementation(async (_, input) => {
+      const actor = input.runId!;
+      const worktrees = input.worktrees!;
+      const plan = workspaceMounts(app, worktrees, actor);
+      const run = (script: string) => {
+        const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec", script], {}, input.cwd!,
+          { userId: "member", backend: "test", home, env: {}, hide: [app.home], ro: [] }, plan);
+        execFileSync(cmd.file, cmd.args, { env: cmd.env });
+      };
+      run('cd partial-a && echo first > first && git add first && git commit -qm "Omem-Task: T1"');
+      const ctx = { app, runId: actor, spaceId: repos[0].id, spaces: null, tools: null, actor: "agent", role: "coder" } as ToolContext;
+      const result = await callTool(ctx, "finish_task", { task: tasks[0], summary: "第一项完成" });
+      expect(result.isError, result.text).toBe(false);
+      run('cd partial-a && echo part > part && git add part && git commit -qm "Omem-Task: T2"');
+      run('cd partial-b && git switch -qc private && echo other > other && git add other && git commit -qm "Omem-Task: T2" && echo draft > draft');
+      return { text: "完成" } as Awaited<ReturnType<typeof runner.runRole>>;
+    });
+    try {
+      registerRound(round.id, { worktrees: trees, repos: repos.map(repo => getSpace(app, repo.id)), spaces: repos.map(repo => repo.id),
+        signal: new AbortController().signal, event: () => {}, where: dir => dir });
+      dispatchTasks(app, round.id, [{ tasks }]);
+      const ids = await joinHelpers(app, round.id, async () => {});
+      const run = getRun(app, ids[0]);
+      expect(run.error).toContain("partial-b");
+      expect(run.output.commits).toMatchObject({ "partial-a": [expect.any(String), expect.any(String)], "partial-b": [] });
+      expect(repos[0].git("-C", trees[0].path, "show", "HEAD:first").toString()).toBe("first\n");
+      expect(repos[0].git("-C", trees[0].path, "show", "HEAD:part").toString()).toBe("part\n");
+      const failed = (run.output.worktrees as typeof trees)[1];
+      expect(readFileSync(join(failed.path, "draft"), "utf8")).toBe("draft\n");
+      const privateDir = join(app.runsDir, run.id, "member-git", failed.space, "git");
+      expect(repos[1].git("--git-dir", privateDir, "show", "HEAD:other").toString()).toBe("other\n");
+      expect(settleCodingRound(app, round.id, round.id, trees, 1, ids).finished).toEqual([tasks[0]]);
+      expect(getTask(app, round.id, tasks[1]).state).toBe("todo");
+    } finally { fake.mockRestore(); }
   });
 
   it.skipIf(!sandboxSupport().ok)("opens both repositories in bubblewrap and keeps the helper's slot hidden", async () => {
