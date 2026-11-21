@@ -166,7 +166,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
     const route = req.routeOptions.url;
-    mark(`${req.method} ${route ?? "(unknown)"}`);
+    mark(`${req.method} ${route ?? req.url.split("?")[0]}`);
     const token = bearer(req);
     if (typeof token === "string" && token.startsWith("oct_") && !(req.headers.authorization?.startsWith("Bearer oct_") &&
       ((req.method === "GET" && route === "/api/tools") || (req.method === "POST" && route === "/api/tools/:name"))))
@@ -3369,7 +3369,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
     next.security = structuredClone(app.config.security);
-    if (who(req) !== OWNER) next.agents.cloudTools = structuredClone(app.config.agents.cloudTools);
     // Network conditions likewise have their own owner-only editor.
     next.agents.networkPolicies = structuredClone(app.config.agents.networkPolicies);
     // Everything else is read on use; these are only read when the service starts.
