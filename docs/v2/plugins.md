@@ -878,3 +878,5 @@ id 自动变成 `<插件>:<id>`，与内置后端进入同一个目录。还可�
 最小文件示例见 [stagekit](../../examples/plugins/stagekit/README.md)。选择隔离模式，按示例先启用检查，再写 ready 标记。运行器参数 verified 为 false 时写“待复核”，本人可在否决卡上越过这一次；省略参数时写“已验证”。
 
 流程接口直接携带能力标识：定义的 stageSummaries 含 runner / signal 的 id、name 和 params，事项阶段的 carrier.runner 与 waitingSignal 含 id、name。停用时保留 id，name 回退到 id。
+
+检查拦下的阶段通过 gateReview.ask 提供卡片状态、override（仍然通过）或 hold（等处理）和 answeredAt；事项查看者能读，只有本人能答。越过检查后保留结果供查看，重开后清除。

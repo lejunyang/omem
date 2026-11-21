@@ -143,7 +143,7 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
   const f = itemFlow(app, itemId)!, s = getStage(app, itemId, stageId);
   if (state !== "done") {
     if (s.control.gateReview && s.askId) cancelAsk(app, s.askId, "阶段结果已变化");
-    changeStage(app, itemId, stageId, state, { ...patch, control: { ...s.control, ...patch.control, gateReview: undefined } }, by, note, refs);
+    changeStage(app, itemId, stageId, state, { ...patch, control: { ...s.control, ...patch.control, gateReview: undefined, gateReviewResult: undefined } }, by, note, refs);
     return;
   }
   const item = getItem(app, itemId), d = f.definition.stages.find(d => d.id === stageId)!;
@@ -183,7 +183,7 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
     }
   }
   if (!failed.length) {
-    changeStage(app, itemId, stageId, state, { ...patch, control: { ...s.control, ...patch.control, gateReview: undefined } }, by, note, refs);
+    changeStage(app, itemId, stageId, state, { ...patch, control: { ...s.control, ...patch.control, gateReview: undefined, gateReviewResult: undefined } }, by, note, refs);
     return;
   }
   if (s.askId) cancelAsk(app, s.askId, "完成结果重新检查");
@@ -191,14 +191,14 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
   const ask = createAsk(app, { userId: "owner", runId: by.runId ?? null, question: `「${d.name}」被检查拦下，是否仍然通过？\n\n${failed.map(v => `${v.id}：${v.reason}`).join("\n")}`,
     options: [{ label: "仍然通过" }, { label: "等处理" }], context: { handler: "flow-plugin-gate", itemId, stageId, completion: completion === "accepted" && d.needs.length && continuedUpstream(app,s) ? "continued" : completion,
       logId: one<{id:number}>(app.db, "select max(id) id from item_stage_log")!.id } });
-  changeStage(app, itemId, stageId, "blocked", { ...patch, askId: ask.id, waitingOn: "owner", control: { ...s.control, ...patch.control, gateReview: review } }, by,
+  changeStage(app, itemId, stageId, "blocked", { ...patch, askId: ask.id, waitingOn: "owner", control: { ...s.control, ...patch.control, gateReview: review, gateReviewResult: undefined } }, by,
     failed.map(v => `${v.id}：${v.reason}`).join("\n"), refs);
 }
 export async function overrideStageGate(app: App, itemId: string, stageId: string, askId: string) {
   const s = getStage(app, itemId, stageId), review = s.control.gateReview;
   if (s.state !== "blocked" || s.askId !== askId || !review) throw new HttpError(409, "这次检查已经处理");
   changeStage(app, itemId, stageId, "done", { askId: null, waitingOn: null,
-    control: { ...s.control, gateReview: undefined } }, { actor: "owner", userId: "owner" },
+    control: { ...s.control, gateReview: undefined, gateReviewResult: { review, askId } } }, { actor: "owner", userId: "owner" },
     `本人仍然通过，越过检查 ${review.failed.map(v => v.id).join("、")}\n${review.summary}`, review.refs);
   audit(app, "owner", "flow.gate-override", itemId, { stage: stageId, checks: review.failed.map(v => v.id), askId });
 }

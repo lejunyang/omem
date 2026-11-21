@@ -17,7 +17,7 @@ import { all, run } from "../src/core/db.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { mergeSources } from "../src/sources/duplicates.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { createApiToken, createUser } from "../src/core/users.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { gateSettingsForFlow, saveGateChecks } from "../src/flows/plugin-gates.ts";
@@ -28,13 +28,13 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   const owner = { actor: "owner", userId: "owner" };
   const raw = (stages: unknown[]) => JSON.stringify({ id: "inspect", name: "检查", stages });
   const signalStage = (fail: unknown) => ({ id: "mark", name: "检查标记", by: "wait", done: { signal: "stagekit:mark", with: { fail } } });
-  async function begin(stages: unknown[]) {
+  async function begin(stages: unknown[], spaceId = "personal") {
     const f = parseFlow(raw(stages));
     if (f.stages.some(s => typeof s.by === "object" && "runner" in s.by)) {
       const ask = proposeFlow(app, raw(stages), owner);
       await answerAsk(app, ask.id, { choice: 0, by: "owner" });
     } else saveFlow(app, raw(stages), "owner");
-    const item = upsertItem(app, undefined, { title: "检查事项", spaceId: "personal" }, "user");
+    const item = upsertItem(app, undefined, { title: "检查事项", spaceId }, "user");
     await startFlow(app, item.id, "inspect", owner);
     return item.id;
   }
@@ -244,6 +244,30 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     await ownerAction(app,again,"mark","done","检查完成");
     expect(flowView(app,again).stages[0].state).toBe("blocked");
     saveGateChecks(app,"inspect",[]);
+  });
+  it("事项查看者直接读取检查卡等待与两种答复，只有本人能回答", async () => {
+    createSpace(app,{id:"gate-shared",name:"共享项目"});
+    const item=await begin([{id:"mark",name:"人工检查",by:"wait"}],"gate-shared");
+    saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true}]);
+    await ownerAction(app,item,"mark","done","检查完成");
+    createUser(app,{id:"gate-reader",name:"查看成员",role:"observer"});
+    addMember(app,"gate-shared","gate-reader","reader");
+    const server=await startServer(app,{port:0,quiet:true});
+    const headers={authorization:`Bearer ${createApiToken(app,"gate-reader","test")}`};
+    const read=async () => { const r=await server.inject({url:`/api/items/${item}/flow`,headers}); expect(r.statusCode).toBe(200); return r.json().stages[0]; };
+    try {
+      const stage=await read(), card=stage.askId;
+      expect(stage.gateReview.ask).toEqual({id:card,status:"pending",choice:null,answeredAt:null});
+      expect((await server.inject({method:"POST",url:`/api/asks/${card}/answer`,payload:{choice:0},headers})).statusCode).toBe(403);
+      await answerAsk(app,card,{choice:1,by:"owner"});
+      expect((await read()).gateReview.ask).toEqual({id:card,status:"answered",choice:"hold",answeredAt:getAsk(app,card).answeredAt});
+      await ownerAction(app,item,"mark","done","检查完成");
+      const next=(await read()).askId;
+      await answerAsk(app,next,{choice:0,by:"owner"});
+      expect(await read()).toMatchObject({state:"done",gateReview:{ask:{id:next,status:"answered",choice:"override",answeredAt:getAsk(app,next).answeredAt}}});
+      await ownerAction(app,item,"mark","reopen","重新核对");
+      expect((await read()).gateReview).toBeUndefined();
+    } finally {await server.close();saveGateChecks(app,"inspect",[]);}
   });
   it("全流程启用的检查只覆盖声明的阶段，停用后仍按原范围处理", async () => {
     const first = {id:"first",name:"准备",by:"wait"};

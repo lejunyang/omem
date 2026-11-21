@@ -419,3 +419,5 @@
 - 流程列表提供 `stageSummaries`，直接读取承担者、信号及参数、开始时刻与分钟时限。入口 `src/flows/definitions.ts`（summarizeStage）、`http.ts`。
 
 - 事项阶段增加 carrier.runner 与 waitingSignal.id/name，不依赖共享流程定义查看权限。入口 `src/flows/engine.ts`、`signals.ts`。
+
+- 阶段 gateReview.ask 带处理卡状态、选择与时间，越过后保留供查看，重开清除；一次主键查询读取当前事项最多二十张卡。入口 `src/flows/engine.ts`、`plugin-gates.ts`。

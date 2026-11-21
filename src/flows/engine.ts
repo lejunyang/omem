@@ -129,7 +129,7 @@ function settleUpstream(app: App, itemId: string) {
     if (s.state !== "done" && !s.control.gateReview) { dropUpstream(app, s, "这一段已有新的状态"); continue; }
     if (s.control.gateReview) withdraw(app, s);
     cancelAsk(app, s.control.upstream.askId, "这一段已经做完");
-    changeStage(app, itemId, s.id, "stale", { askId: null, waitingOn: null, control: { ...s.control, upstream: undefined, gateReview: undefined } }, host, `做完时上游「${up}」还在重做、本人没答要不要停：它是按重开前的「${up}」做的，等「${up}」做完再复核`, [], "upstream-done");
+    changeStage(app, itemId, s.id, "stale", { askId: null, waitingOn: null, control: { ...s.control, upstream: undefined, gateReview: undefined, gateReviewResult: undefined } }, host, `做完时上游「${up}」还在重做、本人没答要不要停：它是按重开前的「${up}」做的，等「${up}」做完再复核`, [], "upstream-done");
     changed = true;
   }
   return changed;
@@ -890,7 +890,7 @@ async function reopenNow(app: App, itemId: string, stageId: string, reason: stri
   withdraw(app, s);
   run(app.db, "update item_flows set ended_at=null,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", now(), itemId);
   if (s.control.runId) await stopStageRun(app, s.itemId, s.control.runId);
-  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, recorded: undefined, gateReview: undefined, pluginEvidence: undefined, objectAfter: now(), grantedGate: undefined, gateLimit: undefined, reported: false, confirmed: undefined, question: undefined, feedback, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs, "reopen");
+  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, recorded: undefined, gateReview: undefined, gateReviewResult: undefined, pluginEvidence: undefined, objectAfter: now(), grantedGate: undefined, gateLimit: undefined, reported: false, confirmed: undefined, question: undefined, feedback, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs, "reopen");
   const affected = new Set([stageId]);
   for (const d of f.definition.stages) {
     if (!d.needs.some((n) => affected.has(n))) continue;
@@ -898,7 +898,7 @@ async function reopenNow(app: App, itemId: string, stageId: string, reason: stri
     const row = getStage(app, itemId, d.id);
     if (row.state === "done" || row.control.gateReview) {
       withdraw(app, row);
-      changeStage(app, itemId, d.id, "stale", { askId: null, waitingOn: null, control: { ...row.control, gateReview: undefined } },
+      changeStage(app, itemId, d.id, "stale", { askId: null, waitingOn: null, control: { ...row.control, gateReview: undefined, gateReviewResult: undefined } },
         by, `上游「${stageId}」重开，等复核`, refs, "stale");
     }
     // Work in progress is not stopped behind the owner's back: they are asked (only while the flow runs).
@@ -1068,6 +1068,12 @@ function stageShots(app: App, itemId: string, stageId: string, since: string, ro
 const WAITING_NOTE = /^等到 .+ 再开始$/;
 export function flowView(app: App, id: string) {
   const item = getItem(app, id), f = itemFlow(app, id), rows = itemStages(app, id);
+  const askIds = rows.flatMap(s => s.control.gateReview && s.askId ? [s.askId] : s.control.gateReviewResult ? [s.control.gateReviewResult.askId] : []);
+  // One primary-key query for at most twenty stage cards; no private question or context leaves this projection.
+  const gateAsks = new Map(askIds.length ? all<{ id: string; status: "pending" | "answered" | "cancelled"; choice: number | null; answered_at: string | null }>(app.db,
+    "select id,status,choice,answered_at from asks where id in (select value from json_each(?))", JSON.stringify(askIds)).map(a => [a.id, {
+      id: a.id, status: a.status, choice: a.choice === 0 ? "override" as const : a.choice === 1 ? "hold" as const : null, answeredAt: a.answered_at,
+    }]) : []);
   return {
     flow: f ? { id: f.id, name: f.definition.name, startedAt: f.startedAt, endedAt: f.endedAt, autoStreak: f.autoStreak, followCapped: followLimit(app, id).capped, study: isStudy(f), idleRounds: idleRounds(app, id), round: f.round, repeat: f.definition.repeat ?? null, roundStartedAt: f.roundStartedAt, roundClosedAt: f.roundClosedAt, nextRoundAt: f.nextRoundAt, canStartRound: !f.endedAt && !!f.definition.repeat && roundComplete(app, f), repeatDescription: describeFlow(f.definition) } : null,
     stages: f?.definition.stages.map((d) => {
@@ -1075,11 +1081,12 @@ export function flowView(app: App, id: string) {
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
       const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" && "object" in d.done ? findObject(app, item, d.done.object) : null;
       const signal = waitingSignal(app, id, d);
-      const review = s.control.gateReview;
+      const review = s.control.gateReview ?? s.control.gateReviewResult?.review;
+      const reviewAskId = s.control.gateReview ? s.askId : s.control.gateReviewResult?.askId;
       const pluginEvidence = review
         ? [...(s.control.pluginEvidence ?? s.evidence.map(text => ({ text }))), ...review.failed.flatMap(v => v.evidence ?? [])]
         : s.control.pluginEvidence ?? [];
-      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, pluginEvidence, gateReview: review, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, result: stageResult(app, id, s), gate: d.gate, fixed: d.fixed,
+      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, pluginEvidence, gateReview: review ? { ...review, ask: reviewAskId ? gateAsks.get(reviewAskId) ?? null : null } : undefined, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, result: stageResult(app, id, s), gate: d.gate, fixed: d.fixed,
         round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: isFixes(d) ? fixMinutes(app, s, new Date()) : usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
         carrier: { kind, ...(typeof d.by === "object" && "runner" in d.by ? { runner: runnerIdentity(d.by.runner) } : {}), label: typeof d.by === "object" && "runner" in d.by ? describeStage(d).carrier : kind === "trials" ? "助手，一个一个去试" : kind === "fixes" ? "助手，一条一条去改" : objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link, ...(object.statusLabel !== undefined ? { statusLabel: object.statusLabel, fields: object.fields ?? [], disabled: !!object.disabled } : {}) } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), upstream: s.control.upstream ? { askId: s.control.upstream.askId, stage: s.control.upstream.stage, name: stageName(f!, s.control.upstream.stage), reason: s.control.upstream.reason } : null, tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId), shots: stageShots(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
