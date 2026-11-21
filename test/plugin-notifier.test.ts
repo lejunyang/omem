@@ -8,7 +8,7 @@ import { addNotificationSink, deferNotification, markPushed, takeDeferred, listN
 import { upsertItem } from "../src/items/store.ts";
 import { createApiToken, createUser, linkIdentity } from "../src/core/users.ts";
 import { answerFromOutlet, drainOutlets, startNotifierOutlets } from "../src/plugins/notifier.ts";
-import { forgetPlugin, loadPlugins, trustPlugin, untrustPlugin } from "../src/plugins/registry.ts";
+import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin, untrustPlugin } from "../src/plugins/registry.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -205,6 +205,25 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
     const decision = waitForAnswer(app, allowed.id, 5000);
     await answerFromOutlet(app, "localnotice", { ...input, ref: allowed.id, approved: false });
     expect((await decision).approved).toBe(false);
+  });
+
+  it("停用期间在网页回答，恢复出口后撤回旧卡", async () => {
+    const a = ask();
+    await drainOutlets(app);
+    expect(message(a.id).options).toHaveLength(1);
+    await setPluginEnabled(app, "localnotice", false);
+    try {
+      const waiting = waitForAnswer(app, a.id, 5000);
+      const result = await server.inject({ method: "POST", url: "/api/asks/" + a.id + "/answer", payload: { choice: 0 } });
+      expect(result.statusCode).toBe(200);
+      expect(await waiting).toMatchObject({ answeredBy: "owner", consumed: true });
+      await drainOutlets(app);
+      expect(message(a.id).options).toHaveLength(1);
+      expect(one(app.db, "select state,attempts from outlet_deliveries where object_id=? and op='retract'", a.id)).toEqual({ state: "pending", attempts: 0 });
+    } finally { await setPluginEnabled(app, "localnotice", true); }
+    await drainOutlets(app);
+    expect(message(a.id)).toEqual({ closed: true });
+    expect(one(app.db, "select state from outlet_deliveries where object_id=? and op='retract'", a.id)).toEqual({ state: "sent" });
   });
 
   it("两种回答都交给同一个等待者，关闭插件卡片并拒绝重复提交", async () => {

@@ -95,8 +95,9 @@ async function send(app: App, row: Delivery, def: Notifier, signal: AbortSignal)
   const { outlet, op, object_id: id, user_id: userId } = row;
   signal.throwIfAborted();
   if (op === "retract") {
-    if (def.retract) await def.retract(row.ref!, signal);
-    return;
+    if (!def.retract) return;
+    await def.retract(row.ref!, signal);
+    return { ref: row.ref! };
   }
   const setting = settings(app, userId).find(s => s.id === outlet);
   if ((!setting && op !== "test") || !activeUser(findUser(app, userId))) return;
@@ -148,17 +149,23 @@ async function attempt(app: App, row: Delivery) {
   if (!run(app.db, "update outlet_deliveries set state='pending',due=? where seq=? and state in ('pending','deferred') and due<=?", lease, row.seq, Date.now()).changes) return;
   try {
     const entry = notifiers.get(row.outlet);
-    const signal = entry && deliverySignal(entry.lifetime);
-    const result = entry && signal ? await untilAbort(signal, () => send(app, row, entry.def, signal)) : undefined;
+    if (!entry) {
+      // Keep the leased retract pending if the outlet unloaded after the queue was read.
+      if (row.op !== "retract") run(app.db, "update outlet_deliveries set state='skipped' where seq=?", row.seq);
+      return;
+    }
+    const signal = deliverySignal(entry.lifetime);
+    const result = await untilAbort(signal, () => send(app, row, entry.def, signal));
     if (result?.due) {
       run(app.db, "update outlet_deliveries set state='deferred',due=? where seq=?", result.due, row.seq);
       return;
     }
     run(app.db, "update outlet_deliveries set state=?,updated=?,error=null,ref=coalesce(?,ref),identities=? where seq=?",
-      result || row.op === "retract" ? "sent" : "skipped", result || row.op === "retract" ? now() : null, result?.ref ?? null, JSON.stringify(result?.identities ?? []), row.seq);
+      result ? "sent" : "skipped", result ? now() : null, result?.ref ?? null, JSON.stringify(result?.identities ?? []), row.seq);
     if (row.op === "ask" && result?.ref && getAsk(app, row.object_id).status !== "pending")
       enqueue(app, row.outlet, row.object_id, row.user_id, "retract", row.dedup, result.ref);
   } catch (error) {
+    if (row.op === "retract" && !notifiers.has(row.outlet)) return;
     const failure = retryFailure(row.attempts, error);
     run(app.db, "update outlet_deliveries set state=?,attempts=?,due=?,updated=?,error=? where seq=?",
       failure.state, failure.attempts, failure.due, now(), failure.error, row.seq);
@@ -167,8 +174,9 @@ async function attempt(app: App, row: Delivery) {
 
 export async function drainOutlets(app: App) {
   const rows = all<Delivery>(app.db, `select d.* from outlet_deliveries d where state in ('pending','deferred') and due<=?
+    and (op!='retract' or outlet in (select value from json_each(?)))
     and not exists(select 1 from outlet_deliveries p where p.outlet=d.outlet and p.dedup=d.dedup and p.state in ('pending','deferred') and p.seq<d.seq)
-    order by due limit 32`, Date.now());
+    order by due limit 32`, Date.now(), JSON.stringify([...notifiers.keys()]));
   await Promise.all(rows.map(row => attempt(app, row)));
 }
 
