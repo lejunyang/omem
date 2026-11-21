@@ -41,6 +41,8 @@ import { categoryStatus } from "../core/ai-keys.ts";
 import { accountBlocked, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
 import { addRunEvent, runUser } from "./runs.ts";
 import { SandboxStartError } from "./spawn.ts";
+import { workspaceMounts } from "./workspaces.ts";
+import type { WorktreeRef } from "./worktree-index.ts";
 import { accountOf } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -276,6 +278,8 @@ export async function lessonsForTask(app: App, input: LessonInput) {
 }
 
 export type RoleRunInput = {
+  /** Host-assigned trees for this invocation (helpers carry their own leases). */
+  worktrees?: WorktreeRef[];
   /** Tools the caller needs for delivery. An empty list explicitly permits a text-only answer. */
   requiredTools?: string[];
   execution?: Execution;
@@ -933,6 +937,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           runId: input.runId,
           strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
           cwd: prep.cwd,
+          workspace: input.worktrees && accountOf(prep.profile) ? workspaceMounts(app, input.worktrees) : undefined,
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           capabilities: prep.capabilities,

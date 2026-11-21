@@ -606,6 +606,7 @@ ${input.task}
         task: [conflictTask(wt, files, label, String(getRun(app, rootRunId).input.task ?? input.task)), lessonsText(app, [wt.space])].filter(Boolean).join("\n\n"),
         runId: run.id,
         cwd: workDirOf(wt),
+        worktrees: [wt],
         signal: ctx.signal,
         onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
       });
@@ -639,6 +640,7 @@ ${input.task}
       task: [task, lessonsText(app, repos.map(r => r.id))].filter(Boolean).join("\n\n"),
       runId: run.id,
       cwd,
+      worktrees,
       signal: ctx.signal,
       resumeSessionId,
       persistSession: true,

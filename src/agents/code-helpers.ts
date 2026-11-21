@@ -140,6 +140,7 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
       task: [HELPER_BRIEF, note.trim() ? `## 编码负责人的交代\n\n${note.trim()}` : "", `## 这几项\n\n${tasks.map((t) => taskText(app, t)).join("\n\n")}`, where].filter(Boolean).join("\n\n"),
       runId: h.runId,
       cwd,
+      worktrees: h.worktrees,
       signal: round.signal,
       onEvent: (e) => addRunEvent(app, h.runId, e.type, e),
     });

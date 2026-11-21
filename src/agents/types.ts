@@ -40,6 +40,7 @@ export type SessionCleanup = {
 };
 
 export type AgentRequest = {
+  workspace?: import("./sandbox.ts").WorkspaceMounts;
   cwd: string;
   /** Run owning this turn, for cleanup that may outlive the process. */
   runId?: string | null;
