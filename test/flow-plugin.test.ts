@@ -41,6 +41,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
       const data = process.env.OMEM_PLUGIN_DATA;
       export default function(api) {
       api.stageGate({id:"word",name:"验收词",describe:"结果要写已验证",async review(ctx) {
+        if (ctx.result.evidence.some(e => e.text === "验收要求")) throw Error("混入上次否决证据");
         return ctx.result.summary.includes("已验证") ? {ok:true} : {ok:false,reason:"缺少已验证",evidence:[{text:"验收要求",link:"https://example.org/rule"}]};
       }});
       api.stageGate({id:"slow",name:"慢检查",describe:"等待检查",review(_ctx, signal) {
@@ -117,10 +118,15 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     const s = flowView(app,item).stages[0];
     expect(s).toMatchObject({state:"blocked",gateReview:{failed:[{id:"stagekit:word",reason:"缺少已验证"}]}});
     expect(s.pluginEvidence).toContainEqual({text:"验收要求",link:"https://example.org/rule"});
-    await expect(answerAsk(app,s.askId!,{choice:0,by:"member"})).rejects.toThrow();
-    await answerAsk(app,s.askId!,{choice:0,by:"owner"});
-    expect(flowView(app,item).stages[0].state).toBe("done");
-    expect(all<{note:string}>(app.db,"select note from item_stage_log where item_id=?",item).some(v => v.note.includes("越过检查 stagekit:word"))).toBe(true);
+    await ownerAction(app,item,"mark","done","已验证");
+    expect(flowView(app,item).stages[0]).toMatchObject({state:"done",pluginEvidence:[]});
+    const blocked = await begin([{id:"mark",name:"人工检查",by:"wait"}]);
+    await ownerAction(app,blocked,"mark","done","检查完成");
+    const card = flowView(app,blocked).stages[0].askId!;
+    await expect(answerAsk(app,card,{choice:0,by:"member"})).rejects.toThrow();
+    await answerAsk(app,card,{choice:0,by:"owner"});
+    expect(flowView(app,blocked).stages[0].state).toBe("done");
+    expect(all<{note:string}>(app.db,"select note from item_stage_log where item_id=?",blocked).some(v => v.note.includes("越过检查 stagekit:word"))).toBe(true);
     const again = await begin([{id:"mark",name:"人工检查",by:"wait"}]);
     await ownerAction(app,again,"mark","done","检查完成");
     expect(flowView(app,again).stages[0].state).toBe("blocked");

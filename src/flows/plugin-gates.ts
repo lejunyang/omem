@@ -16,7 +16,7 @@ export const gateChecksSchema = z.array(z.object({
 }).strict()).max(30).refine(v => new Set(v.map(c => c.id)).size === v.length, "检查不能重复");
 type Check = z.infer<typeof gateChecksSchema>[number];
 export type CompletionPatch = Partial<Omit<StageRow, "itemId" | "id" | "state">>;
-export type GateReview = { summary: string; by: FlowActor; refs: string[]; patch: CompletionPatch;
+export type GateReview = { summary: string; refs: string[];
   failed: { id: string; reason: string; evidence?: z.infer<typeof evidenceSchema> }[] };
 export function checksForFlow(app: App, id: string): Check[] {
   const saved = one<{ value: string }>(app.db, "select value from kv where key=?", "flow-checks:" + id);
@@ -75,18 +75,17 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
     return;
   }
   if (s.askId) cancelAsk(app, s.askId, "完成结果重新检查");
-  const review: GateReview = { summary, by, refs, patch: { ...patch, control: { ...s.control, ...patch.control, gateReview: undefined } }, failed };
+  const review: GateReview = { summary, refs, failed };
   const ask = createAsk(app, { userId: "owner", runId: by.runId ?? null, question: `「${d.name}」被检查拦下，是否仍然通过？\n\n${failed.map(v => `${v.id}：${v.reason}`).join("\n")}`,
     options: [{ label: "仍然通过" }, { label: "等处理" }], context: { handler: "flow-plugin-gate", itemId, stageId } });
-  changeStage(app, itemId, stageId, "blocked", { ...patch, askId: ask.id, waitingOn: "owner", control: { ...review.patch.control,
-    gateReview: review, pluginEvidence: [...evidence, ...failed.flatMap(v => v.evidence ?? [])] } }, by,
+  changeStage(app, itemId, stageId, "blocked", { ...patch, askId: ask.id, waitingOn: "owner", control: { ...s.control, ...patch.control, gateReview: review } }, by,
     failed.map(v => `${v.id}：${v.reason}`).join("\n"), refs);
 }
 export async function overrideStageGate(app: App, itemId: string, stageId: string, askId: string) {
   const s = getStage(app, itemId, stageId), review = s.control.gateReview;
   if (s.state !== "blocked" || s.askId !== askId || !review) throw new HttpError(409, "这次检查已经处理");
-  changeStage(app, itemId, stageId, "done", { ...review.patch, askId: null, waitingOn: null,
-    control: { ...review.patch.control, gateReview: undefined } }, { actor: "owner", userId: "owner" },
+  changeStage(app, itemId, stageId, "done", { askId: null, waitingOn: null,
+    control: { ...s.control, gateReview: undefined } }, { actor: "owner", userId: "owner" },
     `本人仍然通过，越过检查 ${review.failed.map(v => v.id).join("、")}\n${review.summary}`, review.refs);
   audit(app, "owner", "flow.gate-override", itemId, { stage: stageId, checks: review.failed.map(v => v.id), askId });
 }
