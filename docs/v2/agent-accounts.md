@@ -259,3 +259,9 @@ bubblewrap 隐藏宿主 HOME、数据目录和临时目录，再按运行的计�
 本机 CLI 启动前只用 `--help` 探测目录参数，优先识别声明的 `-C`，也支持 `--cwd` / `--directory` / `--workdir` / `--working-directory`；目录参数放在 `--resume`、`-p` 之前。帮助未声明时直接使用进程 cwd。探测按实际二进制、文件时间与大小、启动参数和账号目录缓存，不按版本号选择。帮助只读，无需登录，不发起会话。
 
 进度接口 `/api/runs/:id/progress`、`/api/items/:id/progress` 的任务 attempts 增加 `access?: "read" | "write"`，保留任务板每次尝试的访问档位；普通本地运行没有显式设备档位时省略。
+
+### 检索设置的只读后端列表
+
+有 settings.knowledge.view 的成员读取 `GET /api/settings?section=knowledge` 时也得到 agents 后端摘要与 unavailableBackends。摘要只包含 id、name、installed、transport、model、effort、pluginBackend、canProbe 和裁剪后的 probe（at、models、efforts、effortsByModel），成员 canProbe 为 false；不含命令、参数、环境变量、工作路径或密钥。列表的模型缓存以一次 kv 主键查询批量读取，优先使用当前成员自己的缓存，再用宿主缓存。
+
+`POST /api/agents/:id/probe` 对有知识或 AI 查看权的成员只读缓存，返回 `{ agent, models, efforts, at?, effortsByModel?, cached: true, readOnly: true }`；没有缓存时返回空模型和强度数组，不启动后端。refresh=true、实际探测和修改设置仍仅本人。网页应据 canProbe 隐藏“重新检测”，直接使用列表中的缓存。

@@ -3114,3 +3114,7 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 ### 进度尝试的访问档位
 
 - 同一任务先只读调查、再可写尝试，读取运行或事项进度，attempts 的 access 依次是 read/write，与任务板原记录相同；隐藏运行仍不出现在投影里。
+
+### 知识设置的只读后端能力
+
+- 给成员只授予 settings.knowledge.view：GET /api/settings?section=knowledge 返回后端摘要与 canProbe=false，包含自己的缓存或宿主缓存；命令、参数、环境变量、路径、密钥、私有错误和 modelNotes 不出现。POST /api/agents/:id/probe 的非刷新请求只读缓存；清掉缓存后返回空 models/efforts，不启动后端。refresh=true 和修改设置均为 403，检索提供者状态为 200。

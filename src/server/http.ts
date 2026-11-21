@@ -29,7 +29,7 @@ import { listMcpServers, saveMcpServer, deleteMcpServer } from "../agents/mcp-se
 import { testMcpServer } from "../agents/mcp-test.ts";
 import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, roleTools, saveRoleOverride, setRoleFullAccess, setRoleMcp, setRoleTools } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
-import { cachedProbe, userProbe } from "../agents/probe.ts";
+import { cachedProbe, cachedProbeViews } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
@@ -3123,12 +3123,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   server.post("/api/agents/:id/probe", async (req) => {
+    const userId = who(req), body = q(z.object({ refresh: z.boolean().optional() }), req.body ?? {});
+    if (userId !== OWNER && !can(app, userId, "settings.ai.view") && !can(app, userId, "settings.knowledge.view"))
+      throw new HttpError(403, "没有查看后端的权限");
+    if (userId !== OWNER && body.refresh) throw new HttpError(403, "重新检测后端只给本人");
     const { allProfiles } = await import("../core/config.ts");
     const { probeProfile, saveProbe } = await import("../agents/probe.ts");
     const id = (req.params as { id: string }).id;
     const p = allProfiles(app.config).find((x) => x.id === id);
     if (!p) throw new HttpError(404, "没有这个 Agent 配置");
-    const body = req.body as { refresh?: boolean } | undefined;
+    if (userId !== OWNER) return { agent: id, ...(cachedProbeViews(app, [id], userId).get(id) ?? { models: [], efforts: [] }), cached: true, readOnly: true };
     const cached = cachedProbe(app, id);
     if (cached && !body?.refresh) return { ...cached, cached: true };
     const probe = await probeProfile(p, app);
@@ -3558,14 +3562,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const access = settingsAccess(req);
     const visible = (s: Section) => (!section || s === section) && access.view(s);
     if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
-    const profiles = visible("ai") || visible("assistant") ? listAgentProfiles(app) : [];
+    const profiles = visible("ai") || visible("assistant") || visible("knowledge") ? listAgentProfiles(app) : [];
+    const readOnlyProbes = visible("ai") && access.owner ? null : cachedProbeViews(app, profiles.map(p => p.id), who(req));
     return {
-      ...((visible("ai") || visible("assistant")) && { unavailableBackends: profiles.filter(p => p.pluginBackend?.available === false).map(({id,name,pluginBackend}) => ({id,name,pluginBackend})) }),
+      ...((visible("ai") || visible("assistant") || visible("knowledge")) && { unavailableBackends: profiles.filter(p => p.pluginBackend?.available === false).map(({id,name,pluginBackend}) => ({id,name,pluginBackend})) }),
       config: settingsView(app.config, visible, access.owner),
-      ...(visible("ai") && access.owner ? { agents: profiles } : (visible("ai") || visible("assistant")) && {
+      ...(visible("ai") && access.owner ? { agents: profiles } : (visible("ai") || visible("assistant") || visible("knowledge")) && {
         agents: profiles.map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
-          const probe = userProbe(app, who(req), id);
-          return { id, name, installed, transport, model, effort, pluginBackend, probe: probe && {
+          const probe = readOnlyProbes?.get(id) ?? null;
+          return { id, name, installed, transport, model, effort, pluginBackend, canProbe: access.owner, probe: probe && {
             at: probe.at, models: probe.models, efforts: probe.efforts, effortsByModel: probe.effortsByModel,
           } };
         }),

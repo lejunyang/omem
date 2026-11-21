@@ -410,6 +410,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
 
   ...Object.fromEntries(Object.values(ownerControls).flat().map(route => [route, "owner" as const])),
   "GET /api/ai": cap("settings.ai.view"),
+  "POST /api/agents/:id/probe": "handler",
   "GET /api/agents/:id/adapter": cap("settings.ai.view"),
   "GET /api/agent-registry": cap("settings.ai.view"),
   "GET /api/agents/load": cap("settings.ai.view"),

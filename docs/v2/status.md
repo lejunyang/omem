@@ -435,3 +435,5 @@
 - 重排检测整份使用请求 api，null 清字段，省略时沿用保存值；不继承旧 keyRef。入口 `src/server/http.ts`（/api/search/rerank/test）。
 
 - 进度投影 attempts 补齐 access（read/write），任务板和运行树使用同一访问枚举。入口 `src/agents/progress.ts`、`progress-runs.ts`。
+
+- 知识查看成员可读裁剪后的后端列表及缓存；普通 probe 只读缓存，缺缓存返回空列表，刷新仅本人。缓存按主键批量读取。入口 `src/server/http.ts`、`src/agents/probe.ts`、`src/auth/routes.ts`。

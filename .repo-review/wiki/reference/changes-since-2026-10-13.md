@@ -23,6 +23,8 @@ updated: 2026-11-22
 
 ## 2026-11-22：第二轮网页对接的服务端字段
 
+- 知识查看者得到只读后端摘要；普通探测读缓存，缺缓存返回空列表，刷新仅本人。缓存批量按主键读取。从 `src/server/http.ts`、`src/agents/probe.ts`、`src/auth/routes.ts` 读起。
+
 - 进度投影 attempts 带 read/write 访问档位。从 `src/agents/progress.ts`、`progress-runs.ts` 读起。
 
 - 重排检测按请求 api 整份替换，null 清字段，支持试用环境变量密钥。从 `src/server/http.ts` 的 rerank/test 读起。

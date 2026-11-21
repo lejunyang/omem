@@ -3,6 +3,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { commandExists } from "./spawn.ts";
 import { runAcp } from "./acp.ts";
 import { probeDoubaoCli } from "./doubao-cli.ts";
+import { all } from "../core/db.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles } from "../core/config.ts";
 import { OWNER } from "../core/users.ts";
@@ -52,6 +53,19 @@ export function cachedProbe(app: { db: { prepare: (sql: string) => { get(...p: u
   } catch {
     return null;
   }
+}
+
+/** Read cached model choices in one key-index lookup, without starting accounts or backends. */
+export function cachedProbeViews(app: App, ids: string[], userId: string) {
+  const keys = ids.flatMap(id => userId === OWNER ? [probeKey(id)] : [probeKey(id), probeKey(id, userId)]);
+  const rows = new Map(all<{ key: string; value: string }>(app.db,
+    "select key,value from kv where key in (select value from json_each(?))", JSON.stringify(keys)).map(r => [r.key, r.value]));
+  return new Map(ids.map(id => {
+    const raw = rows.get(probeKey(id, userId)) ?? rows.get(probeKey(id));
+    let p: ProbeInfo | null = null;
+    try { p = raw ? JSON.parse(raw) as ProbeInfo : null; } catch {}
+    return [id, p ? { at: p.at, models: p.models, efforts: p.efforts, effortsByModel: p.effortsByModel } : null];
+  }));
 }
 
 export function saveProbe(app: { db: { prepare: (sql: string) => { run(...p: unknown[]): unknown } } }, profileId: string, probe: ProbeInfo, userId?: string) {

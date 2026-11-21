@@ -886,3 +886,5 @@ id 自动变成 `<插件>:<id>`，与内置后端进入同一个目录。还可�
 向量状态 `GET /api/search/providers` 的 embeddings 增加 `embedded: { chunks, memories, total }`：库内非工作区分块和 active 记忆已有的向量数量，提供者关闭或停用时仍显示留存数量。pending 保持当前提供者范围的待算数量。两种已有数量分别读取 chunks_vector_space、memories_embedded 部分索引，不读取向量内容。
 
 `POST /api/search/rerank/test`：给 api 时整份使用请求的 api，不继承已保存 api 的字段；字段为 null 时清掉，之后应用字段默认值。api 整体为 null 时清掉检测配置。省略 api 才使用已保存值；检测不写设置。改用环境变量可传 `{ api: { model: "rank", url: "https://example.org/v1", keyRef: null, apiKeyEnv: "DEMO_RANK_KEY" } }`。
+
+知识设置查看成员也能读取 settings 的后端摘要、插件来源与 unavailableBackends，命令、参数、环境变量、路径及密钥仅本人可见。后端 probe 的普通成员请求只读缓存，没有缓存返回空能力列表；refresh=true 仍只给本人。检索提供者状态 GET /api/search/providers 原本已有知识查看权限，继续返回裁剪后的列表。

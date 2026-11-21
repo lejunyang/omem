@@ -97,7 +97,7 @@ it("separates review form access and delegation tier selection", async () => {
         const agents = (await get("/api/settings?section=assistant")).json().agents;
         expect(agents.length).toBeGreaterThan(0);
         for (const backend of agents)
-          expect(Object.keys(backend).every(k => ["id", "name", "installed", "transport", "model", "effort", "probe"].includes(k))).toBe(true);
+          expect(Object.keys(backend).every(k => ["id", "name", "installed", "transport", "model", "effort", "probe", "canProbe", "pluginBackend"].includes(k))).toBe(true);
       } else {
         for (const tier of tiers.json().tiers) expect(Object.keys(tier).sort()).toEqual(["checkCount", "id", "name"]);
       }
