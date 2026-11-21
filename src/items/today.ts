@@ -66,7 +66,8 @@ function waitingPart(app: App, pending: PendingAction[], skipAsks: Set<string>) 
   return [
     `**等你处理（${total}）**：${[...counts].map(([k, n]) => `${k} ${n}`).join("、")}`,
     ...top.map((p) => `- ${p.lineTitle ? `「${oneLine(p.lineTitle, 20)}」` : ""}${oneLine(p.title, 60)}${p.deadline ? `（${md(app, p.deadline)}前）` : ""}`),
-    `${list.length > top.length ? `其余 ${list.length - top.length} 条` : "都"}${link(app, "在工作页处理", "#/work")}。`,
+    // Its own paragraph: right under the list it would read as part of the last line.
+    `\n${list.length > top.length ? "其余的" : "都"}${link(app, "在工作页处理", "#/work")}，各有各的卡片。`,
   ].join("\n");
 }
 

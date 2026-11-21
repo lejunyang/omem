@@ -320,7 +320,7 @@ export async function proposeLines(app: App, runId: string, input: z.input<typeo
     const at = pending.findIndex((x) => norm(x.name) === norm(p.name));
     const entry: Proposal = { key: at >= 0 ? pending[at].key : `p${pending.length + i}`, name: p.name, goal: p.goal, items, sources };
     if (at >= 0) pending[at] = entry; else pending.push(entry);
-    out.push(`「${p.name}」是新的：整理结束后问本人要不要建（${items.length} 件事项，${sources.length} 份材料）`);
+    out.push(`「${p.name}」是新的：之后问本人要不要建（${items.length} 件事项，${sources.length} 份材料）`);
   }
   setRunOutput(app, runId, { lineProposals: pending.slice(0, 8) });
   return out.join("\n");
