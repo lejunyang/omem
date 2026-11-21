@@ -174,9 +174,14 @@ describe("roles and permissions", async () => {
       const writes = history.events.filter((e:{type:string})=>e.type==="tool-write");
       expect(writes[0].data).toEqual({});
       expect(writes[1].data).toMatchObject({name:"save_rule", rule:{actions:[{type:"script"}]}});
+      expect(history.writes.some((w: {tool:string}) => w.tool === "remember")).toBe(false);
+      expect(JSON.stringify(history.writes)).not.toContain(memory.content);
       expect(JSON.stringify(writes)).not.toMatch(/隐藏正文|隐藏脚本|隐藏结果/);
       let stream="";
       while (stream.split("tool-write").length<3) stream+=new TextDecoder().decode((await reader.read()).value);
+      const live = stream.split("\n").filter(line => line.startsWith("data: "))
+        .map(line => JSON.parse(line.slice(6))).filter(e => e.event?.type === "tool-write");
+      expect(live.map(e => e.event.data)).toEqual(writes.map((e:{data:object}) => e.data));
       expect(stream).not.toMatch(/隐藏正文|隐藏脚本|隐藏结果/);
     } finally {ctrl.abort();}
   });
