@@ -6,6 +6,7 @@ import { createUser, createApiToken, addMember } from "../src/core/users.ts";
 import { rmSync } from "node:fs";
 import { testApp } from "./helpers.ts";
 import { run } from "../src/core/db.ts";
+import { addMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { itemProgress, runProgress, states } from "../src/agents/progress.ts";
 import { addTask, updateTask } from "../src/agents/code-tasks.ts";
@@ -119,6 +120,19 @@ describe("进度投影", () => {
     expect(itemProgress(app, item.id, owner, true).find(v => v.kind === "study")?.tasks.some(t => t.round === 1)).toBe(true);
     expect(runProgress(app, "a", owner).map(v => v.kind)).toEqual(["flow", "study"]);
   });
+  it("事项只挂续轮时归入可见根交办，隐藏续轮不能引出根运行", async () => {
+    const { app, item, add } = fixture();
+    add("code", "code", null);
+    add("later", "code", null, { continueFrom: "code" });
+    addTask(app, "code", { title: "首轮修改项", kind: "build" }, "coder");
+    await addMaterials(app, item.id, [{ kind: "run", ref: "later" }], "owner");
+    const reader = { user: "owner", spaces: ["personal"] };
+    expect(itemProgress(app, item.id, reader)).toMatchObject([{ id: "code", tasks: [{ title: "首轮修改项" }],
+      rounds: [{ runId: "code" }, { runId: "later" }] }]);
+    run(app.db, "update runs set scope=? where id='later'", JSON.stringify(["other"]));
+    expect(itemProgress(app, item.id, reader)).toEqual([]);
+  });
+
   it("从事项找关联运行时按索引查子运行、续轮和用量", () => {
     const { app, item, add } = fixture();
     add("code", "code", null, { itemId: item.id });

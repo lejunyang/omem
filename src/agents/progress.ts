@@ -296,15 +296,18 @@ export function runProgress(app: App, id: string, reader: Reader, history = fals
 }
 
 function itemForest(app: App, item: string, reader: Reader) {
-  const refs = all<{ id: string }>(app.db, `select id from runs where json_extract(input,'$.itemId')=?
+  const visible = visibleRuns(app, reader);
+  const refs = all<{ id: string; first: string | null }>(app.db, `with refs(id) as (select id from runs where json_extract(input,'$.itemId')=?
     union select id from runs indexed by progress_board_item where json_extract(output,'$.turnContext.item.id')=? and json_extract(output,'$.agentWork.askRunId')=id
     union select r.id from conversations c indexed by progress_thread_item cross join runs r indexed by runs_work_conversation on json_extract(r.output,'$.agentWork.workConversationId')=+c.id
       where json_extract(c.settings,'$.itemId')=? and json_extract(r.output,'$.agentWork.askRunId')=r.id
     union select ref from item_materials where item_id=? and kind='run'
     union select run_id from study_trials where item_id=? and run_id is not null
-    union select json_extract(control,'$.runId') from item_stages where item_id=? and json_extract(control,'$.runId') is not null limit 4097`, item, item, item, item, item, item);
+    union select json_extract(control,'$.runId') from item_stages where item_id=? and json_extract(control,'$.runId') is not null limit 4097)
+    select refs.id,case when r.kind='code' then json_extract(r.input,'$.continueFrom') end first
+    from refs left join runs r on r.id=refs.id and ${visible.sql}`, item, item, item, item, item, item, ...visible.params);
   if (refs.length > 4096) throw new HttpError(413, "事项关联运行超过单次进度查询上限");
-  return runForest(app, refs.map(r => r.id), reader);
+  return runForest(app, refs.flatMap(r => r.first ? [r.first, r.id] : [r.id]), reader);
 }
 export function itemProgress(app: App, id: string, reader: Reader, history = false, limit = 30) {
   const item = requireItem(app, id, reader.user, "read");
