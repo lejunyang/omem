@@ -382,7 +382,7 @@ export type PreparedRun = {
   /** The memories behind the preferences and experience in `system` (passive recall leaves them out). */
   lessonIds: string[];
   /** What passive recall may draw on: readable spaces (null = all) and whose own memories count. */
-  recall: { spaces: string[] | null; agent: string | null; own: string; userId: string } | null;
+  recall: { sourceSpace: string; spaces: string[] | null; agent: string | null; own: string; userId: string } | null;
 };
 
 /** Resolve defaults and one-run overrides without creating a tool token or session. */
@@ -608,7 +608,7 @@ export function prepareRun(
     lessonIds: told.ids,
     // Guests never see the owner's memories unasked. `agent` names the run in the recall accounting
     // (none for the main assistant); `own` is whose memories it sees besides the shared ones.
-    recall: guest ? null : { spaces: memorySpaces?.filter(id => !readable || readable.includes(id)) ?? readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), own: spec?.name ?? roleName, userId },
+    recall: guest ? null : { sourceSpace: input.spaceId, spaces: memorySpaces?.filter(id => !readable || readable.includes(id)) ?? readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), own: spec?.name ?? roleName, userId },
   };
 }
 
@@ -923,7 +923,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     const count = !!input.runId && !input.shadow;
     if (count) recordRecalls(app, told.ids, { ...by, via: "lesson" });
     try {
-      hits = await passiveRecall(app, { text: input.task.slice(0, ABOUT_CHARS), spaces: base.recall.spaces, userId: base.recall.userId, spec: base.recall.own, exclude: new Set(told.ids) });
+      hits = await passiveRecall(app, { text: input.task.slice(0, ABOUT_CHARS), sourceSpaces: [base.recall.sourceSpace], spaces: base.recall.spaces, userId: base.recall.userId, spec: base.recall.own, exclude: new Set(told.ids) });
       if (count) recordRecalls(app, hits.map((h) => h.memory.id), { ...by, via: "passive" });
     } catch (e) {
       console.warn("[omem] 给任务带上相关记忆失败：", (e as Error).message);

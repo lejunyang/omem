@@ -60,7 +60,7 @@ async function passiveForTurn(app: App, runId: string, threadId: string, prep: R
   const seen = (continuing && passiveSeen.get(threadId)) || new Set<string>(prep.lessonIds);
   passiveSeen.set(threadId, seen);
   try {
-    const hits = await passiveRecall(app, { text, spaces: prep.recall.spaces, userId: prep.recall.userId, spec: prep.recall.own, exclude: seen });
+    const hits = await passiveRecall(app, { text, sourceSpaces: [prep.recall.sourceSpace], spaces: prep.recall.spaces, userId: prep.recall.userId, spec: prep.recall.own, exclude: seen });
     for (const h of hits) seen.add(h.memory.id);
     recordRecalls(app, hits.map((h) => h.memory.id), { runId, profile: prep.profile.id, spec: prep.recall.agent ?? undefined, via: "passive" });
     return hits;
@@ -243,7 +243,7 @@ async function watchedMaterial(app: App, messages: ThreadMessage[], { listening:
   // The same choice and budget as a direct @ in these groups (watch-trial.ts watchExperience).
   const learned = await trial.watchExperience(app, c, { text: batchText, askerName: first ? String(first.meta.speaker) : null, chatId: typeof first?.meta.chatId === "string" ? first.meta.chatId : null });
   const { playbook, lessons } = learned;
-  const memories = await memoriesFor(app, `${c.name} ${c.note ?? ""}\n${batchText}`.slice(0, 2000), c.spaceId ?? undefined, 6);
+  const memories = await memoriesFor(app, `${c.name} ${c.note ?? ""}\n${batchText}`.slice(0, 2000), c, messages, 6);
   const led = messages.filter((m) => typeof m.meta.lead === "string");
   // A message a path before the 关注 took (someone @-ed the bot, a rule fired on it): that one replies,
   // this batch only notes it (core/handling.ts REPLY_ORDER). Recorded as this 关注 stepping aside.

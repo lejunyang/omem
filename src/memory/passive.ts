@@ -15,6 +15,8 @@ export type PassiveHit = { memory: Memory; score: number };
 type NearInput = {
   text: string;
   spaces: string[] | null;
+  /** Spaces whose material is in the query, independently of which memories can match. */
+  sourceSpaces?: readonly string[];
   threshold: number;
   limit: number;
   /** Whose memories count: personal ones of this user and shared ones (null = any user). */
@@ -32,7 +34,7 @@ export async function nearMemories(app: App, input: NearInput): Promise<PassiveH
   if (text.length < 4) return [];
   const spaces = embeddingSpaces(app, input.spaces);
   if (spaces && !spaces.length) return [];
-  const q = await embedQuery(app, text, input.kind ?? "query", spaces);
+  const q = await embedQuery(app, text, input.kind ?? "query", spaces, input.sourceSpaces);
   if (!q) return [];
   const where = ["status = 'active'", "embedding is not null"];
   const params: (string | number)[] = [];
@@ -71,7 +73,7 @@ const RERANK_WAIT_MS = 3000;
  */
 export async function passiveRecall(
   app: App,
-  input: { text: string; spaces: string[] | null; userId: string; spec?: string | null; exclude?: Set<string>; threshold?: number; limit?: number },
+  input: { text: string; spaces: string[] | null; sourceSpaces?: readonly string[]; userId: string; spec?: string | null; exclude?: Set<string>; threshold?: number; limit?: number },
 ): Promise<PassiveHit[]> {
   const cfg = app.config.memory.passive;
   if (!cfg.enabled) return [];

@@ -529,7 +529,7 @@ async function armTask(app: App, q: Question, view: RunView, axis: ReplayAxis | 
   let passive = "";
   try {
     const told = await lessonIdsForTask(app, { role: "assistant", spec: spec ?? undefined, spaceId: q.spaceId, userId: OWNER, task: q.question, replay: { view, tools: REPLAY_TOOLS } });
-    const hits = await passiveRecall(app, { text: q.question, spaces: null, userId: OWNER, spec: spec?.name ?? "assistant", exclude: new Set(told) });
+    const hits = await passiveRecall(app, { text: q.question, sourceSpaces: [q.spaceId], spaces: null, userId: OWNER, spec: spec?.name ?? "assistant", exclude: new Set(told) });
     const ok = visibleMemories(app, view, hits.map((h) => h.memory.id));
     passive = passiveBlock(hits.filter((h) => ok.has(h.memory.id)), q.kind === "agent" ? "这次任务" : "这条消息");
   } catch {}

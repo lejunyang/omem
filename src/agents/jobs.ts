@@ -691,7 +691,7 @@ async function knownNearMaterial(app: App, spaceId: string, sourceIds: string[],
   const spaces = [spaceId, ...relatedIds(app, spaceId)];
   try {
     for (const w of windows)
-      for (const h of await nearMemories(app, { text: w, spaces, threshold: 0.6, limit: 6, kind: "passage" })) {
+      for (const h of await nearMemories(app, { text: w, sourceSpaces: [spaceId], spaces, threshold: 0.6, limit: 6, kind: "passage" })) {
         const m = h.memory;
         if ((best.get(m.id)?.score ?? 0) < h.score) best.set(m.id, { score: h.score, line: `- ${m.id} [${m.spaceId}/${m.kind}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 160)}（${m.validFrom?.slice(0, 10) ?? "?"} 起）` });
       }

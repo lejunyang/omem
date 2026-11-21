@@ -1,6 +1,7 @@
 import { decideScene, describeScene } from "../core/decision-log.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
+import { captureSpace } from "../core/capture-space.ts";
 import { now } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { rulesNaming } from "../rules/store.ts";
@@ -214,7 +215,7 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
       本人在这里的指示: owner.map((m) => m.text.slice(0, 400)).join("\n") || "（无）",
       管这些群的规则: ctx.chats.map((c) => rulesNaming(app, c, null)).filter(Boolean).join("\n") || "（无）",
       ...ownerContextParts(app, { chatId: ctx.chats[0] }),
-      相关的记忆: (await memoriesFor(app, `${ctx.name} ${ctx.note ?? ""}\n${batchText}`.slice(0, 2000), ctx.spaceId ?? undefined)) || "（无）",
+      相关的记忆: (await memoriesFor(app, `${ctx.name} ${ctx.note ?? ""}\n${batchText}`.slice(0, 2000), ctx, batch)) || "（无）",
       之前的摘要: t?.summary || "（无）",
       最近的处理: said.map((m) => m.text.slice(0, 400)).join("\n---\n") || "（无）",
       在跟的问题: problems || "（无）",
@@ -239,10 +240,17 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
 }
 
 /** The owner's memories closest to the groups and the batch (instructions and lessons included), a few lines. */
-export async function memoriesFor(app: App, text: string, spaceId?: string, limit = 5) {
+export async function memoriesFor(app: App, text: string, { spaceId, chats }: Pick<ListenContext, "spaceId" | "chats">, batch: { meta: Record<string, unknown> }[], limit = 5) {
   try {
     const { nearMemories } = await import("../memory/passive.ts");
-    const hits = await nearMemories(app, { text, spaces: [...new Set(["personal", ...(spaceId ? [spaceId] : [])])], userId: "owner", threshold: app.config.memory.passive.threshold, limit });
+    // A watch can combine groups bound to different spaces and the watch's own note.
+    const sourceSpaces = spaceId ? [spaceId] : [];
+    if (app.config.embeddings.provider.startsWith("plugin:")) {
+      const chatIds = batch.flatMap(m => typeof m.meta.chatId === "string" ? [m.meta.chatId] : chats);
+      for (const chat of new Set(chatIds)) sourceSpaces.push(captureSpace(app, chat));
+      if (!sourceSpaces.length) sourceSpaces.push(captureSpace(app));
+    }
+    const hits = await nearMemories(app, { text, sourceSpaces, spaces: [...new Set(["personal", ...(spaceId ? [spaceId] : [])])], userId: "owner", threshold: app.config.memory.passive.threshold, limit });
     return hits.map(({ memory: m }) => `- ${m.subject ? `${m.subject}：` : ""}${m.content.replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
   } catch {
     return "";

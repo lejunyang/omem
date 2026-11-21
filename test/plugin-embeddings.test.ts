@@ -5,6 +5,8 @@ import { testApp } from "./helpers.ts";
 import { configSchema } from "../src/core/config.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { upsertSource } from "../src/sources/store.ts";
+import { memoriesFor } from "../src/channels/lark-watch.ts";
+import { setChatSettings } from "../src/agents/threads.ts";
 import { remember } from "../src/memory/store.ts";
 import { embedPending, embedPendingMemories, embedQuery, embeddingHealth, resetEmbedder } from "../src/search/embeddings.ts";
 import { encodeBatch } from "../src/search/embedding-provider.ts";
@@ -57,6 +59,25 @@ it("进程内向量遵守批量、字符和空间范围；模型改变先暂停�
   replaceIndex(app, change.to);
   expect(vectorCounts(app).clear).toBe(0);
   expect(await embedPending(app)).toBe(1);
+});
+
+it("关注可查个人记忆时仍按群消息来源授权，混合批次不外发", async () => {
+  const app = fixture();
+  const undo: (() => void)[] = [];
+  cleanup.push(() => undo.reverse().forEach(stop => stop()));
+  const api = registerProcessHooks(manifestSchema.parse({ id: "vector", name: "向量", spaces: [{ id: "personal", name: "个人" }], permissions: { embedder: true } }), undo);
+  const embed = vi.fn(async (texts: string[]) => texts.map(() => [1, 0]));
+  api.embedder({ id: "small", name: "示例", model: "first", dimensions: 2, embed });
+  await embedPendingMemories(app);
+  embed.mockClear();
+  setChatSettings(app, "lark", "project-group", { spaceId: "allowed" });
+  const watched = (text: string, spaceId: string | null, chats: string[]) =>
+    memoriesFor(app, text, { spaceId, chats }, chats.map(chatId => ({ meta: { chatId } })));
+  expect(await watched("项目群的原始消息", "allowed", ["project-group"])).toBe("");
+  expect(await watched("两个群的合并消息", null, ["personal-group", "project-group"])).toBe("");
+  expect(embed).not.toHaveBeenCalled();
+  expect(await watched("个人空间的一条消息", null, ["personal-group"])).toContain("personal资料");
+  expect(embed).toHaveBeenCalledTimes(1);
 });
 
 it("插件无权限不能注册，链接插件新增向量权限也要重新确认", () => {
