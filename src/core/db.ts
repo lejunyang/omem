@@ -2391,6 +2391,25 @@ export const migrations: readonly string[] = [
      last_error text, at text not null
    );
    create index cloud_tool_usage_at on cloud_tool_usage(at);`,
+  // The unified progress view (agents/progress.ts): the runs and conversations of an item, token usage, review checks, who took a change item over.
+  `create index if not exists progress_runs_item on runs(json_extract(input,'$.itemId'),created_at desc) where json_extract(input,'$.itemId') is not null;
+   create index if not exists progress_thread_item on conversations(json_extract(settings,'$.itemId')) where json_extract(settings,'$.itemId') is not null;
+   create index if not exists progress_board_item on runs(json_extract(output,'$.turnContext.item.id'),created_at desc) where json_extract(output,'$.turnContext.item.id') is not null;
+   create index if not exists progress_tokens on run_events(run_id,seq desc) where type='usage' and json_type(data,'$.input')='integer' and json_type(data,'$.output')='integer';`,
+  `create index if not exists progress_review_checks on run_events(run_id,json_extract(data,'$.check'))
+     where json_extract(data,'$.phase')='reviewer';`,
+  `create table if not exists code_task_run_history (
+     work_id text not null, seq integer not null, run_id text not null,
+     primary key(work_id, seq, run_id),
+     foreign key(work_id, seq) references code_tasks(work_id, seq) on delete cascade
+   );
+   create trigger if not exists code_task_reassigned after update of coder_run on code_tasks
+   when old.coder_run is not null and old.coder_run is not new.coder_run begin
+     insert into code_task_run_history(work_id,seq,run_id) values(old.work_id,old.seq,old.coder_run)
+       on conflict(work_id,seq,run_id) do nothing;
+   end;`,
+  `create index progress_code_takeovers on run_events(run_id)
+     where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
 ];
 
 export type Db = DatabaseSync;

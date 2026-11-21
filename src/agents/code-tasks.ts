@@ -210,7 +210,11 @@ export function renewBudget(app: App, rootId: string, round: number) {
 // ---- tasks ----------------------------------------------------------------------------------------
 
 export function listTasks(app: App, rootId: string): CodeTask[] {
-  return ownCommits(app, rootId, all<Row>(app.db, "select * from code_tasks where work_id = ? order by seq", rootId).map(toTask));
+  return ownCommits(app, rootId, recordedTasks(app, rootId));
+}
+/** Stored task history; listing progress does not inspect the live Git worktree. */
+export function recordedTasks(app: App, rootId: string): CodeTask[] {
+  return all<Row>(app.db, "select * from code_tasks where work_id = ? order by seq", rootId).map(toTask);
 }
 export function getTask(app: App, rootId: string, seq: number): CodeTask {
   const r = one<Row>(app.db, "select * from code_tasks where work_id = ? and seq = ?", rootId, seq);

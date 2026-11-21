@@ -345,6 +345,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       const profile = row.profile_id ?? `peer:${peer.caller}`;
       return { name, text: row.summary, ai: { profile, model: row.model ?? undefined, effort: row.effort ?? undefined }, profileId: profile };
     }
+    rc.event("status", { phase: "reviewer", check: name, text: `开始评审：${label(name)}` });
     const info = infos.get(name)!;
     const spec = info.builtin ? undefined : readAgentSpec(app, name);
     const actor: Actor = spec ? { spec } : { role: name as RoleName };

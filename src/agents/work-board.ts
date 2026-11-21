@@ -54,13 +54,13 @@ export function reportPage(answer: string, runId: string, offset = 0) {
 }
 
 type AttemptRow = { task: string; entry: string; ai: string | null; profile_id: string | null; used: number | null; answer: string | null };
-function snapshot(app: App, workId: string, full = false) {
+function snapshot(app: App, workId: string, full = false, visible?: ReadonlySet<string>) {
   const rows = all<TaskRow>(app.db, "select * from agent_work_tasks where work_id=? order by seq", workId);
   const attempts = all<AttemptRow>(app.db, `select t.id task,a.value entry,r.ai,r.profile_id,
     (select json_extract(data,'$.used') from run_events where run_id=r.id and type='usage' order by seq desc limit 1) used,
     ${full ? `case when r.id=t.run_id and json_extract(a.value,'$.status')='done' then substr(json_extract(r.output,'$.answer'),1,${reportPageSize + 1}) end` : "null"} answer
     from agent_work_tasks t join json_each(t.attempts) a left join runs r on r.id=json_extract(a.value,'$.runId') where t.work_id=? order by t.seq,a.key`, workId);
-  return rows.map(t => {
+  return rows.filter(t => !visible || visible.has(t.run_id) && (JSON.parse(t.attempts) as Attempt[]).every(a => visible.has(a.runId))).map(t => {
     const history = attempts.filter(a => a.task === t.id).map(a => {
       const e: Attempt = JSON.parse(a.entry);
       const end = Date.parse(e.finishedAt ?? now());
@@ -75,8 +75,8 @@ function snapshot(app: App, workId: string, full = false) {
   });
 }
 
-export function readBoard(app: App, id: string) {
-  const tasks = snapshot(app, id);
+export function readBoard(app: App, id: string, visible?: ReadonlySet<string>) {
+  const tasks = snapshot(app, id, false, visible);
   if (!tasks.length) throw new HttpError(404, "找不到任务板");
   const work = refreshWork(app, id)!;
   const required = tasks.filter(t => t.required || t.verdict?.decision === "redo");
