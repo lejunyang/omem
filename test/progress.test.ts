@@ -105,16 +105,24 @@ describe("进度投影", () => {
   it("单项重评保留内嵌首试，整轮独立评审只记实际评审运行", () => {
     const { app, add } = fixture();
     add("code", "code", null, {}, { reviewPlan: { checks: ["style", "logic"] } });
-    for (const check of ["style", "logic"]) recordReview(app, { codeRunId: "code", round: 1, check, verdict: "approved", summary: "完成", findings: [] });
+    for (const [seq, check] of ["style", "logic"].entries()) {
+      run(app.db, "insert into run_events values('code',?,?,'status',?)", seq + 1, at, JSON.stringify({ phase: "reviewer", check }));
+      recordReview(app, { codeRunId: "code", round: 1, check, verdict: check === "style" ? "failed" : "approved", summary: check, findings: [] });
+    }
     add("retry", "review", "code", { only: ["style"] });
-    for (const id of ["code", "retry"]) run(app.db, "insert into run_events values(?,1,?,'usage',?)", id, at, '{"input":5,"output":3}');
-    const review = runProgress(app, "code", owner).find(b => b.kind === "review")!;
-    expect(review.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["code", "retry"], ["code"]]);
-    expect(review.tasks[0].usage).toEqual({ runs: 2, missing: 0, input: 10, output: 6 });
-    expect(review.usage).toEqual(review.tasks[0].usage);
+    run(app.db, "insert into run_events values('retry',1,?,'status',?)", at, JSON.stringify({ phase: "reviewer", check: "style" }));
+    for (const id of ["code", "retry"]) run(app.db, "insert into run_events values(?,3,?,'usage',?)", id, at, '{"input":5,"output":3}');
+    recordReview(app, { codeRunId: "code", round: 1, check: "style", verdict: "approved", summary: "重评通过", findings: [] });
+    const view = () => runProgress(app, "code", owner).find(b => b.kind === "review")!;
+    const single = { runs: 1, missing: 0, input: 5, output: 3 };
+    const both = { runs: 2, missing: 0, input: 10, output: 6 };
+    expect(view()).toMatchObject({ usage: both, tasks: [
+      { id: "style", attempts: [{ runId: "code", usage: single }, { runId: "retry", usage: single }], usage: both },
+      { id: "logic", attempts: [{ runId: "code", usage: single }], usage: single },
+    ] });
+    // Even without an explicit selection, the host events identify the check that ran.
     run(app.db, "update runs set input='{}' where id='retry'");
-    expect(runProgress(app, "code", owner).find(b => b.kind === "review")?.tasks.map(t => t.attempts.map(a => a.runId)))
-      .toEqual([["retry"], ["retry"]]);
+    expect(view().tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["code", "retry"], ["code"]]);
   });
 
   it("流程保留关卡和依赖，课题默认只展开当前轮，重跑仍归原试验", () => {
@@ -162,17 +170,17 @@ describe("进度投影", () => {
 
   it("从事项找关联运行时按索引查子运行、续轮和用量", () => {
     const { app, item, add } = fixture();
-    add("code", "code", null, { itemId: item.id });
+    add("code", "code", null, { itemId: item.id }, { reviewPlan: { checks: ["style"] } });
     const prepare = vi.spyOn(app.db, "prepare");
-    const [code] = itemProgress(app, item.id, owner);
+    const code = itemProgress(app, item.id, owner).find(v => v.kind === "code")!;
     const queries = prepare.mock.calls.map(([sql]) => sql);
     prepare.mockRestore();
     expect(code.rounds).toMatchObject([{ runId: "code" }]);
-    const plans = queries.filter(q => q.includes("with recursive tree") || q.includes("progress_board_item") || q.includes("progress_tokens"))
+    const plans = queries.filter(q => q.includes("with recursive tree") || q.includes("progress_board_item") || q.includes("progress_tokens") || q.includes("progress_review_checks"))
       .flatMap(q => app.db.prepare("explain query plan " + q).all(...Array((q.match(/\?/g) ?? []).length).fill("[]")))
       .map(row => row.detail as string);
     expect(plans.filter(s => /^SCAN (r|runs|e|run_events)\b/.test(s))).toEqual([]);
-    for (const index of ["runs_parent", "runs_continue_from", "progress_tokens", "progress_board_item"])
+    for (const index of ["runs_parent", "runs_continue_from", "progress_tokens", "progress_review_checks", "progress_board_item"])
       expect(plans.some(s => s.startsWith("SEARCH") && s.includes(index))).toBe(true);
   });
   it("运行与事项沿用详情权限，助手同时受本轮空间限制", async () => {

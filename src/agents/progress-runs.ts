@@ -85,13 +85,13 @@ export class Forest {
     }
   }
   sees(id?: string | null) { return !id || this.nodes.has(id); }
-  usage(ids: Iterable<string>): Usage {
+  usage(ids: Iterable<string>, boundaries?: ReadonlySet<string>): Usage {
     const seen = new Set<string>(), queue = [...ids];
     while (queue.length) {
       const id = queue.pop()!;
       if (seen.has(id) || !this.nodes.has(id)) continue;
       seen.add(id);
-      queue.push(...this.children.get(id) ?? []);
+      for (const child of this.children.get(id) ?? []) if (!boundaries?.has(child)) queue.push(child);
     }
     const sum: Usage = { input: 0, output: 0, runs: seen.size, missing: 0 };
     for (const id of seen) {
@@ -103,13 +103,13 @@ export class Forest {
     }
     return sum;
   }
-  attempts(ids: (string | null | undefined)[]) {
+  attempts(ids: (string | null | undefined)[], boundaries?: ReadonlySet<string>) {
     const rows = [...new Set(ids)].flatMap(id => id && this.nodes.has(id) ? [this.nodes.get(id)!] : []);
     return rows.sort((a, b) => a.created.localeCompare(b.created)).map(r => ({
       runId: r.id, status: r.status, startedAt: r.started ?? undefined, endedAt: r.ended ?? undefined,
       queuedMs: Date.parse(r.started ?? r.ended ?? new Date().toISOString()) - Date.parse(r.created),
       runMs: r.started ? Date.parse(r.ended ?? new Date().toISOString()) - Date.parse(r.started) : undefined,
-      usage: this.usage([r.id]),
+      usage: this.usage([r.id], boundaries),
     }));
   }
 }

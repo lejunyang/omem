@@ -37,12 +37,12 @@ export type ProgressView = {
   previousRounds?: { round: number; directions: number; trials: number; usage: Usage }[];
 };
 
-function task(graph: Forest, ids: (string | null | undefined)[], data: Omit<ProgressTask, "attempts" | "usage">): ProgressTask {
-  const attempts = graph.attempts(ids);
+function task(graph: Forest, ids: (string | null | undefined)[], data: Omit<ProgressTask, "attempts" | "usage">, boundaries?: ReadonlySet<string>): ProgressTask {
+  const attempts = graph.attempts(ids, boundaries);
   const last = attempts.at(-1);
   const ai = last && graph.nodes.get(last.runId)?.ai;
   const who = ai ? JSON.parse(ai) as { profile: string; model?: string; effort?: string } : undefined;
-  return { ...(who && { who: { agent: who.profile, model: who.model, effort: who.effort } }), ...data, attempts, usage: graph.usage(attempts.map(a => a.runId)) };
+  return { ...(who && { who: { agent: who.profile, model: who.model, effort: who.effort } }), ...data, attempts, usage: graph.usage(attempts.map(a => a.runId), boundaries) };
 }
 function view(graph: Forest, data: Pick<ProgressView, "kind" | "id" | "title" | "tasks" | "itemId" | "runId">, state?: ProgressView["state"],
   options: { stateTasks?: ProgressTask[]; waitingOn?: string; usage?: Usage } = {}): ProgressView {
@@ -119,6 +119,24 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
   };
 }
 
+// Probe the event index for known host/check pairs. Text and tool events from the same
+// check can be numerous; the first match identifies its execution host.
+function reviewHosts(app: App, rounds: { hosts: string[]; checks: string[] }[]) {
+  const rows = all<{ id: string; name: string }>(app.db, `select host.value id,checkName.value name
+    from json_each(?) rounds cross join json_each(rounds.value,'$.hosts') host
+    cross join json_each(rounds.value,'$.checks') checkName where exists (
+      select 1 from run_events indexed by progress_review_checks where run_id=host.value
+        and json_extract(data,'$.phase')='reviewer' and json_extract(data,'$.check')=checkName.value)`,
+    JSON.stringify(rounds));
+  const recorded = new Map<string, Set<string>>();
+  for (const { id, name } of rows) {
+    const names = recorded.get(id) ?? new Set<string>();
+    names.add(name);
+    recorded.set(id, names);
+  }
+  return recorded;
+}
+
 function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
   const rounds = codeRounds(graph, node);
   const reviews = reviewsOf(app, rounds.map(r => r.id));
@@ -127,14 +145,27 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
     results: reviews.filter(r => r.code_run_id === round.id),
     children: (graph.children.get(round.id) ?? []).map(id => graph.nodes.get(id)!).filter(r => r.kind === "review" && !r.splitOnly),
   }));
-  const checks = new Set(history.flatMap(h => [...h.plan, ...h.results.map(r => r.check_name)]));
+  const probes = history.map(h => ({
+    hosts: [h.round.id, ...h.children.map(r => r.id)],
+    checks: [...new Set([...h.plan, ...h.results.map(r => r.check_name)])],
+  }));
+  const checks = new Set(probes.flatMap(p => p.checks));
+  const recorded = reviewHosts(app, probes);
+  // Each independent review owns its subtree. Charge it only when explicitly selected.
+  const boundaries = new Set(rounds.flatMap(r => graph.children.get(r.id) ?? []).filter(id => graph.nodes.get(id)?.kind === "review"));
   const tasks = [...checks].map(name => {
     const checksByRound = history.map(({ round, plan, results, children }) => {
       const records = results.filter(r => r.check_name === name);
       const checking = round.reviewStage === "checks" && plan.includes(name) && !records.length;
-      const runs = children.filter(r => r.onlyChecks ? (JSON.parse(r.onlyChecks) as string[]).includes(name) : plan.includes(name) || records.length);
-      // A selective retry follows a check already attempted in this coding round.
-      const embedded = runs.length ? !!runs[0].onlyChecks : checking || records.length > 0;
+      const runs = children.filter(r => {
+        const observed = recorded.get(r.id);
+        if (observed?.has(name)) return true;
+        if (observed && r.status !== "running" && r.status !== "queued") return false;
+        return r.onlyChecks ? (JSON.parse(r.onlyChecks) as string[]).includes(name) : plan.includes(name) || records.length > 0;
+      });
+      const observed = recorded.get(round.id);
+      const embedded = observed?.has(name) || (!runs.length && checking) ||
+        (!observed && (runs.length ? !!runs[0].onlyChecks : records.length > 0));
       return { records, checking, latest: runs.at(-1), ids: [...(embedded ? [round.id] : []), ...runs.map(r => r.id)] };
     });
     const current = checksByRound.at(-1)!;
@@ -160,10 +191,11 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
         ...r.findings.map(f => ({ kind: "finding" as const, ref: String(f.id), label: f.title })),
       ]),
       decisions, decision: decisions?.at(-1), waitingOn: rounds.at(-1)!.reviewStage === "plan" ? "等本人确认评审计划" : undefined
-    });
+    }, boundaries);
   });
   if (tasks.length) return view(graph, { kind: "review", id: node.id, runId: node.id, itemId, title: node.title + " · 评审", tasks },
-    rounds.at(-1)!.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined);
+    rounds.at(-1)!.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined,
+    { usage: graph.usage(tasks.flatMap(t => t.attempts.map(a => a.runId)), boundaries) });
 }
 
 function flowView(graph: Forest, f: ItemFlow, instance: Node[], rows: ReturnType<typeof itemStages>, state?: ProgressView["state"]) {
