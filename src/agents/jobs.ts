@@ -467,7 +467,9 @@ registerHandler("thread-summary", async (ctx) => {
     ? "\n\n这是助手替本人关注的群（一个或几个）的会话：写成三段，“在聊的话题”（谁在推进什么）、“没结的问题”（谁问了什么、还在等什么）、“已有结论”（定了什么、查清了什么，带人名）。只写群里的事，不写助手的处理过程。"
     : "";
   const task = `${t.summary ? `## 之前的摘要\n\n${t.summary}\n\n` : ""}## 之后的新对话\n\n${transcript}${listening}`;
-  const origins = t.channel === "listen" ? mergeOrigins(summaryOrigins(t), watchSourceSpaces(ctx.app, t.spaceId, fresh)) : undefined;
+  const origins = t.channel === "listen"
+    ? mergeOrigins(summaryOrigins(t), watchSourceSpaces(ctx.app, t.spaceId, fresh.filter(m => m.role === "user")))
+    : undefined;
   const r = await agent(ctx, "summarizer", t.spaceId, task, [t.spaceId]);
   const summary = r.text.trim();
   if (summary) updateThread(ctx.app, threadId, {

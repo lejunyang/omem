@@ -167,7 +167,7 @@ it.each(["规则转入项目消息", "补充消息来源不明", "沿用上轮�
   expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "全部来自个人空间" ? [[query], [query]] : []);
 });
 
-it.each(["项目消息", "个人消息", "旧摘要"])("关注冷启动注入的摘要含%s", async mode => {
+it.each(["项目消息", "个人消息", "来源不明的消息", "旧摘要"])("关注冷启动注入的摘要含%s", async mode => {
   const { app, embed, query, conversationId, search } = watchSearchFixture();
   const first = await receive(app, { channel: "listen", conversationId, speaker: "成员", text: "继续调查", meta: { sourceSpaces: ["personal"] } });
   const [anchor] = threadMessages(app, conversationId);
@@ -176,7 +176,10 @@ it.each(["项目消息", "个人消息", "旧摘要"])("关注冷启动注入的
   if (mode === "旧摘要") {
     updateThread(app, conversationId, { summary });
   } else {
-    addMessage(app, conversationId, "user", query, null, { sourceSpaces: [mode === "项目消息" ? "allowed" : "personal"] });
+    const meta = mode === "来源不明的消息" ? {} : { sourceSpaces: [mode === "项目消息" ? "allowed" : "personal"] };
+    const messageId = addMessage(app, conversationId, "user", query, null, meta);
+    const reply = "我会核对退款时限。";
+    addMessage(app, conversationId, "assistant", reply, null, { agent: "fake", session: "fresh", replyTo: [messageId] });
     const summarizer = vi.spyOn(await import("../src/agents/runner.ts"), "runRole").mockResolvedValue({
       text: summary, agent: "fake", stopReason: "end_turn", profileId: "fake", ai: { profile: "fake" },
     });
@@ -185,6 +188,10 @@ it.each(["项目消息", "个人消息", "旧摘要"])("关注冷启动注入的
     const run = createRun(app, { kind: "thread-summary", spaceId: "personal", title: "整理关注", input: { threadId: conversationId } });
     await __testHandlers.get("thread-summary")!({ app, run, signal: new AbortController().signal, event() {}, output() {} });
     expect(summarizer.mock.calls[0][1].task).toContain(query);
+    expect(summarizer.mock.calls[0][1].task).toContain(reply);
+    const origins = findThread(app, conversationId)!.settings.summaryOrigins!.spaces;
+    if (mode === "来源不明的消息") expect(origins).toBeNull();
+    else expect(origins).toEqual(mode === "项目消息" ? ["personal", "allowed"] : ["personal"]);
   }
   const thread = findThread(app, conversationId)!;
   const [current] = threadMessages(app, conversationId);
