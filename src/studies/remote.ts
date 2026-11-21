@@ -132,17 +132,7 @@ async function settle(app: App, item: Item, f: ItemFlow, d: FlowStage, t: Trial,
   const ai = r.ai ? { ...r.ai, profile: `peer:${peer}:${r.ai.profile}` } : { profile: `peer:${peer}` };
   const started = new Date(Date.now() - r.minutes * 60_000).toISOString();
   run(app.db, "update runs set status='done',started_at=?,finished_at=?,ai=?,profile_id=? where id=? and status='queued'", started, now(), JSON.stringify(ai), ai.profile, rec.id);
-  const notes = [...report.omitted];
-  const inbox = artifactInbox(app, rec.id), names = new Set<string>();
-  for (const file of report.files) {
-    let name = file.name.replace(/^.*[\\/]/, "").replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/^\.+/, "") || "evidence";
-    while (names.has(name)) name = `_${name}`;
-    names.add(name);
-    writeFileSync(join(inbox, name), Buffer.from(file.data, "base64"));
-    if (file.truncated) notes.push(`${file.name} 原来 ${(file.size / 1024 / 1024).toFixed(1)} MB，只带回开头`);
-  }
-  const taken = await collectInbox(app, rec.id, { source: "agent", by: `peer:${peer}` });
-  notes.push(...taken.skipped);
+  const { taken, notes } = await collectPeerEvidence(app, rec.id, peer, report);
   const summary = [report.summary, notes.length ? `证据：${notes.join("；")}` : ""].filter(Boolean).join("\n\n");
   setRunOutput(app, rec.id, { text: summary, peerTrial: { node: peer, run: t.peer_run, status: r.status } });
   run(app.db, "update study_trials set state='reported',result=?,summary=?,evidence=?,findings=?,unsure=?,run_id=?,updated_at=? where id=?",
@@ -155,4 +145,19 @@ export async function cancelPeerTrial(app: App, t: Pick<Trial, "peer" | "peer_ru
   if (!t.peer || !t.peer_run) return false;
   try { return (await call(app, t.peer, `/api/peer/trial/${encodeURIComponent(t.peer_run)}/cancel`, {}, 8000)).status < 300; }
   catch { return false; }
+}
+
+export async function collectPeerEvidence(app: App, runId: string, peer: string, report: Pick<NonNullable<PeerTrialResult["report"]>, "files" | "omitted">) {
+  const notes = [...report.omitted];
+  const inbox = artifactInbox(app, runId), names = new Set<string>();
+  for (const file of report.files) {
+    let name = file.name.replace(/^.*[\\/]/, "").replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/^\.+/, "") || "evidence";
+    while (names.has(name)) name = `_${name}`;
+    names.add(name);
+    writeFileSync(join(inbox, name), Buffer.from(file.data, "base64"));
+    if (file.truncated) notes.push(`${file.name} 原来 ${(file.size / 1024 / 1024).toFixed(1)} MB，只带回开头`);
+  }
+  const taken = await collectInbox(app, runId, { source: "agent", by: `peer:${peer}` });
+  notes.push(...taken.skipped);
+  return { taken, notes };
 }

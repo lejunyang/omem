@@ -28,7 +28,7 @@ type Output = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | 
 type Decision = { by?: string; at?: string; ref?: string; result: string; note?: string };
 export type ProgressTask = {
   id: string; href: string; title: string; state: TaskStatus; goal?: string; accept?: string; needs?: string[]; waitingOn?: string;
-  who?: { agent?: string; model?: string; effort?: string; local?: boolean; device?: string };
+  who?: { agent?: string; model?: string; effort?: string; local?: boolean; device?: string; deviceName?: string; mode?: "borrow" | "remote" };
   attempts: ReturnType<Forest["attempts"]>; usage: Usage; outputs?: Output[]; decision?: Decision; decisions?: Decision[];
   round?: number; parentId?: string;
 };
@@ -70,12 +70,15 @@ function boardView(app: App, graph: Forest, node: Node, itemId?: string) {
   const tasks = board.tasks.map((t): ProgressTask => {
     const latest = t.attempts.at(-1);
     const attempts = t.attempts.map(a => ({
-      device: a.device, local: a.local, runId: a.runId, status: a.status, startedAt: a.startedAt ?? undefined, endedAt: a.finishedAt ?? undefined,
+      runId: a.runId, status: a.status, local: a.local, device: a.deviceName, deviceName: a.deviceName, mode: a.mode,
+      remoteRunId: a.remoteRunId, remoteUrl: a.remoteUrl, deadline: a.deadline, lateAt: a.lateAt,
+      startedAt: a.startedAt ?? undefined, endedAt: a.finishedAt ?? undefined,
       queuedMs: a.queuedMs, runMs: a.executionMs, usage: graph.usage([a.runId]),
     }));
     return {
       attempts, usage: graph.usage(attempts.map(a => a.runId)),
-      who: latest && { agent: latest.ai?.profile, model: latest.ai?.model, effort: latest.ai?.effort, device: latest.device, local: latest.local },
+      who: latest && { agent: latest.ai?.profile, model: latest.ai?.model, effort: latest.ai?.effort, local: latest.local,
+        device: latest.deviceName, deviceName: latest.deviceName, mode: latest.mode },
       id: t.id, href: runHref(latest?.runId ?? node.id), title: t.title, goal: t.goal, accept: t.accept, state: states.board[t.status as keyof typeof states.board],
       outputs: latest && t.report ? [{ kind: "report", ref: latest.runId, label: t.report }] : undefined,
       decision: t.verdict && { by: t.verdict.by, at: t.verdict.at, result: t.verdict.decision, note: t.verdict.note } || undefined,

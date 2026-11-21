@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { unpackWorkCommand, workCommands, type WorkCaller } from "../agents/peer-work.ts";
 import { z } from "zod";
 import type { App } from "./app.ts";
 import { all, one } from "./db.ts";
@@ -164,9 +165,10 @@ function restartSoon(app: App) {
 const id = z.string().regex(/^[\w-]{1,80}$/);
 const LARK_READ = ["+chat-list", "+chat-messages-list", "+threads-messages-list", "+messages-mget", "+messages-search", "+chat-search", "+messages-read-status"] as const;
 
-type Command = { description: string; schema: z.ZodTypeAny; run: (app: App, args: any) => Promise<unknown> | unknown };
+type Command = { description: string; schema: z.ZodTypeAny; run: (app: App, args: any, caller?: WorkCaller) => Promise<unknown> | unknown };
 
 export const peerCommands: Record<string, Command> = {
+  ...workCommands,
   decisions: {
     description: "决策场景的门槛和结果统计（不含材料正文）",
     schema: z.object({ days: z.number().int().min(1).max(90).default(30) }).strict(),
@@ -771,10 +773,11 @@ export const peerCommands: Record<string, Command> = {
   },
 };
 
-export async function runPeerCommand(app: App, name: string, args: unknown) {
+export async function runPeerCommand(app: App, name: string, args: unknown, caller?: WorkCaller) {
   const c = peerCommands[name];
   if (!c) throw new HttpError(400, `没有命令 ${name}。可用：${Object.keys(peerCommands).join(", ")}`);
+  if (Object.hasOwn(workCommands, name)) ({args,caller} = unpackWorkCommand(app,name,args,caller));
   const parsed = c.schema.safeParse(args ?? {});
   if (!parsed.success) throw new HttpError(400, parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
-  return c.run(app, parsed.data);
+  return c.run(app, parsed.data, caller);
 }

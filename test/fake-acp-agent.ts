@@ -212,6 +212,75 @@ new AgentSideConnection(
         if (Number.isFinite(used)) await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "usage_update", used, size: 1000 } });
         if (process.env.FAKE_OTHER_USAGE) await conn.sessionUpdate({ sessionId: "unrelated-session", update: { sessionUpdate: "usage_update", used: 950, size: 1000 } });
       }
+      if (process.env.FAKE_MODE === "device-work" || process.env.FAKE_MODE === "device-platform" || process.env.FAKE_MODE === "device-lark") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "device-worker", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name,e.value])) } as Record<string,string> }));
+        try {
+          if (process.env.FAKE_MODE === "device-lark") {
+            const results = [];
+            const pages = new Map<string, string>();
+            for (const { pageFrom, ...request } of JSON.parse(process.env.FAKE_LARK_READS!)) {
+              const command: string[] | undefined = request.arguments.command;
+              if (pageFrom) {
+                const token = pages.get(pageFrom);
+                if (!token) throw new Error(`上页的工具响应缺少 ${pageFrom} 的续页令牌`);
+                command!.push("--page-token", token);
+              }
+              const result = await client.callTool(request);
+              const text = (result.content as { text: string }[])[0].text;
+              if (command?.[1] === "+chat-messages-list" && !result.isError) {
+                const page = JSON.parse(text.split("\n\n", 1)[0]);
+                if (page.has_more) pages.set(command[command.indexOf("--chat-id") + 1], page.page_token);
+              }
+              results.push({ denied: !!result.isError, text: text.slice(0, 350), truncated: text.includes("…（已截断") });
+            }
+            await say(JSON.stringify(results));
+            return { stopReason: "end_turn" };
+          }
+          if (process.env.FAKE_MODE === "device-platform") {
+            const servers = sessions.get(p.sessionId)!;
+            const docs = servers.find(s => s.name === "reports");
+            if (!docs || !("command" in docs)) throw new Error("缺少平台只读服务");
+            const reports = new Client({ name: "report-reader", version: "1" });
+            await reports.connect(new StdioClientTransport({ command: docs.command, args: docs.args, env: Object.fromEntries(docs.env.map(e => [e.name,e.value])) }));
+            try {
+              const report = await reports.callTool({name:"lookup",arguments:{}});
+              const skill = await client.callTool({name:"read_skill",arguments:{name:"report-guide"}});
+              const list = async (name: string, args: Record<string, string>) =>
+                JSON.stringify((await client.callTool({ name, arguments: args })).content);
+              const catalog = await list("list_skills", {});
+              const members = (text: string) => ({ mounted: text.includes("project-guide"), hidden: text.includes("other-guide") });
+              const group = members(await list("list_skills", { group: "guides" }));
+              const hub = members(await list("read_skill", { name: "guides" }));
+              const file = "references/check.md";
+              const projectFile = await list("read_skill", { name: "project-guide", file });
+              const hiddenBody = await client.callTool({ name: "read_skill", arguments: { name: "other-guide" } });
+              const hiddenFile = await client.callTool({ name: "read_skill", arguments: { name: "other-guide", file } });
+              const attachment = (key: string) => client.callTool({ name: "lark_read", arguments: {
+                command: ["im", "+messages-resources-download", "--message-id", "om_reports", "--file-key", key],
+              } });
+              const saved = await attachment("file_saved");
+              const pending = await attachment("file_pending");
+              const moved = await attachment("file_moved");
+              const externalWrite = await client.callTool({name:"lark_write",arguments:{command:["task","+create"],summary:"创建测试任务"}});
+              const outside = await client.callTool({name:"remember",arguments:{space:"other",kind:"fact",content:"项目 A 每周二检查。"}});
+              const offered = await client.listTools();
+              await say(JSON.stringify({report:report.content,skill:skill.content,saved:saved.content,pending:pending.content,
+                catalog:{global:catalog.includes("global-guide"),hidden:catalog.includes("other-guide"),group:catalog.includes("guides")},
+                group,hub,projectFile,hiddenBodyDenied:!!hiddenBody.isError,hiddenFileDenied:!!hiddenFile.isError,
+                moved:moved.content,movedDenied:!!moved.isError,pendingDenied:!!pending.isError,externalWriteDenied:!!externalWrite.isError,
+                outsideDenied:!!outside.isError,writer:servers.some(s => s.name === "writer"),platformRead:offered.tools.some(t => t.name === "lark_read")}));
+            } finally { await reports.close(); }
+            return { stopReason: "end_turn" };
+          }
+          const read = await client.callTool({ name: "search", arguments: { query: "设备材料" } });
+          const write = await client.callTool({ name: "remember", arguments: { kind: "fact", content: "项目 A 每周二检查。" } });
+          if (process.env.OMEM_ARTIFACTS) writeFileSync(join(process.env.OMEM_ARTIFACTS,"核对报告.txt"),"设备材料核对完成");
+          await say(JSON.stringify({ read: read.content, writeDenied: !!write.isError }));
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" };
+      }
       if (process.env.FAKE_MODE === "board") {
         const label = /^材料编号 (\w+)$/m.exec(prompt)?.[1];
         if (!label || /任务板 \w+。请对标有/.test(prompt)) {

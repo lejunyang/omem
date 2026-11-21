@@ -117,6 +117,8 @@ it("gives named servers only to owner runs, filters replay to read-only and excl
   expect(prepareRun(app, { ...input, userId: other.id, spaceId: `personal-${other.id}` }).extraMcp).toEqual({});
   expect(prepareRun(app, { ...input, actor: { role: "guest" } }).extraMcp).toEqual({});
   expect(prepareRun(app, { ...input, replay: { view: { asOf: new Date().toISOString() }, tools: ["search"] } }).extraMcp).toEqual({ docs: { ...command, env: { TOKEN: "real-token" } } });
+  const borrowed = { ...app.config.agents.profiles[0], peer: { id: "desk", agent: "fake" } };
+  expect(prepareRun(app, { ...input, boardAccess: "read", profile: borrowed }).extraMcp).toEqual({});
   expect(prepareRun(app, { ...input, reviewCheck: true }).extraMcp).toEqual({});
   expect(prepareRun(app, { ...input, reviewLead: true }).extraMcp).toEqual({});
   setRoleMcp(app, "assistant", ["docs"]);

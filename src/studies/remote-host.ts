@@ -107,7 +107,7 @@ export function peerTrialResult(app: App, caller: string, id: string): PeerTrial
   const report = r.output.trialReport as Report | undefined;
   return { node: nodeId(app), status: r.status, minutes, error: r.error, ai: r.ai, report: ended && report ? { ...report, evidence: undefined, ...evidenceFiles(app, report.evidence) } as PeerTrialResult["report"] : null };
 }
-function evidenceFiles(app: App, ids: string[]) {
+export function evidenceFiles(app: App, ids: string[]) {
   const files: { name: string; size: number; truncated: boolean; data: string }[] = [], omitted: string[] = [];
   let total = 0;
   for (const a of artifactsByIds(app, ids)) {

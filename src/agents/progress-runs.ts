@@ -7,6 +7,7 @@ import { runPredicate } from "../auth/run-scope.ts";
 import type { Run } from "./runs.ts";
 
 export type Usage = { input: number; output: number; cached?: number; runs: number; missing: number };
+export type ProgressAttempt = { runId: string; status: Run["status"]; startedAt?: string; endedAt?: string; queuedMs: number; runMs?: number; usage: Usage; local: boolean; device: string; deviceName?: string; mode?: "borrow" | "remote"; remoteRunId?: string; remoteUrl?: string; deadline?: string; lateAt?: string };
 export type Reader = { user: string; spaces?: string[] | null };
 
 export function visibleRuns(app: App, reader: Reader, alias = "r") {
@@ -112,7 +113,7 @@ export class Forest {
     }
     return sum;
   }
-  attempts(ids: (string | null | undefined)[], boundaries?: ReadonlySet<string>) {
+  attempts(ids: (string | null | undefined)[], boundaries?: ReadonlySet<string>): ProgressAttempt[] {
     const rows = [...new Set(ids)].flatMap(id => id && this.nodes.has(id) ? [this.nodes.get(id)!] : []);
     return rows.sort((a, b) => a.created.localeCompare(b.created)).map(r => ({
       ...this.device(r.peer), runId: r.id, status: r.status, startedAt: r.started ?? undefined, endedAt: r.ended ?? undefined,

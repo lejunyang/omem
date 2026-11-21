@@ -96,6 +96,10 @@ const CHANGE_LEDGER_MIGRATION = `alter table item_changes add column source_key 
    );
    create index owner_choices_recent on owner_choices(user_id,at desc);`;
 
+const FLOW_SIGNAL_INDEXES = `create index flow_signal_stage on flow_signals(item_id,stage_id,type,id desc);
+   create index flow_signal_age on flow_signals(at);
+   create index doing_flow_stages on item_stages(item_id,stage_id) where state='doing';`;
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2410,15 +2414,21 @@ export const migrations: readonly string[] = [
    end;`,
   `create index progress_code_takeovers on run_events(run_id)
      where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
-  `create index flow_signal_stage on flow_signals(item_id,stage_id,type,id desc);
-   create index flow_signal_age on flow_signals(at);
-   create index doing_flow_stages on item_stages(item_id,stage_id) where state='doing';`,
+  FLOW_SIGNAL_INDEXES,
   `update item_stages as s set control=json_set(control,'$.runnerDeadline',
       (select round((julianday(s.entered_at)-2440587.5)*86400000 + json_extract(d.value,'$.budget.minutes')*60000)
        from item_flows f,json_each(f.definition,'$.stages') d where f.item_id=s.item_id and json_extract(d.value,'$.id')=s.stage_id))
      where state='doing' and exists(select 1 from runs r where r.id=s."by" and r.kind='flow-runner');
    create index flow_runner_deadlines on item_stages(json_extract(control,'$.runnerDeadline'))
      where state='doing' and json_extract(control,'$.reported') is not 1;`,
+  `create unique index if not exists peer_work_attempt on runs(json_extract(input,'$.pair'),json_extract(input,'$.request.key'))
+     where kind='peer-work';`,
+  `create table if not exists board_peer_polls (
+     run_id text primary key, task_id text not null, device text not null, remote_run text,
+     seen_at text not null, next_at text not null, deadline text not null
+   );
+   create index if not exists board_peer_due on board_peer_polls(next_at);`,
+  `create index if not exists spaces_with_skills on spaces(id) where instr(settings, '"skills"') > 0;`,
 ];
 
 export type Db = DatabaseSync;

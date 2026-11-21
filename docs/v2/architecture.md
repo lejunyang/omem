@@ -175,6 +175,18 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 
 并行调查用 `dispatch_work` 把 2～6 个有独立验收条件的子任务挂到同一个工作会话。每块有稳定的 id，运行只是一次尝试。运行队列同时遵守会话、模型容量和每板并发限制（`agents.workBoard.concurrency` 默认 3）。主助手派出后结束回合。必选块全部交回报告、失败或取消后，宿主在原工作通道排一次验收；可选块晚到时更新任务板。主助手用 `work_review` 接受、标阻塞或退回，退回沿用原 id，可以换模型，每块最多重做两次。截止时间从每次派出算起，默认 30 分钟。运行超时或服务重启中断时记录失败原因，照常收齐验收。执行记录保存在本机的 `agent_work_tasks`，从 `src/agents/work-board.ts` 读起。
 
+跨设备任务仍挂在同一张任务板。每块可指定 `device`，默认 `mode: "borrow"` 借对方 ACP 在本机执行，只读本机工具与库；`remote` 在对方启动，用对方目录、库和账号。设备必须在线并支持派单协议，同名空间与配对映射权限必须在两边对上。远端档案按名字匹配，找不到用对方主助手；后端由对方选择，本机模型与强度是偏好。`remote` 默认只读，写模式只开放记忆、页面和事项，经对方工具令牌与空间权限裁剪。
+
+两种模式都能通过宿主读取执行空间的材料、技能和已授权的平台。远端调查还可使用接活档案中标为 `readOnly: true` 的 MCP，认证信息留在接活设备。借后端只转发宿主工具调用。
+
+接活任务的飞书读取由 `src/agents/board-lark-read.ts` 按接活设备上现存原件的空间授权。文档链接、群和消息 ID 核验通过后才读取现文；任一目标无法归属到可读空间时，整条请求被拒绝。
+
+接活走 `peerCommands` 的 `work-info`、`work-accept`、`work-status`、`work-cancel`，在既有 `POST /api/peer/exec` 内严格校验参数，不执行传来的 shell。`node.acceptWork` 是 off / read / write，默认 off；`node.acceptWorkFrom` 用配对令牌的公开标识覆盖。只接受配对令牌在对方映射为本人的设备；发起方自报身份不参与授权。
+
+远端尝试以本地运行 id 作幂等键，对方只建一条运行。尝试记录设备、模式、期限、远端运行 id 与网页地址。本地表 `board_peer_polls` 只保存待轮询的尝试，按索引每批最多 4 条、约每 10 秒查询；请求期间租约 60 秒。短时失联继续查，超过一小时或到期记失败，允许重派。任务已取消或重派后，旧结果只记 `lateAt`。取消尽力发送，离线留待恢复后处理；对方还受原期限限制。本机重启继续轮询远端尝试。
+
+远端回答与 token 用量并入本地运行。产物复用课题的证据传输：单文件 2 MB、合计 8 MB，文本超限带回开头，其他超限文件留在对方并附运行页。回答最多带回 64,000 字符。对方 `src:` 引用改成注明设备的文字；本地可读产物仍用本地引用。`readBoard` 与统一进度的 attempts 带 `deviceName`、`mode`、`remoteRunId`、`remoteUrl`、`deadline`、`lateAt`，飞书进度卡并列显示设备。跨设备编码交办和自动均衡另行设计。
+
 运行详情顶层的 `board: { workId, taskId? }` 连接到 `GET /api/agent-work/:id/board`。任务板返回标题、发起运行、原会话、工作会话及按序排列的 `tasks`。每块的 `attempts` 按尝试时间排列，`backend` 和 `model` 记录实际执行配置，`device` 标识设备，`queuedMs` 和 `executionMs` 以毫秒计，`used` 取该运行最后一条上下文用量事件。整体 `status` 依次为 `running`、`review`、`summarized`，退回时重新进入执行阶段。必选块及已退回的块都已接受、阻塞或取消时即显示已汇总。订阅 `/api/events` 的 `{type:"work", workId}` 可刷新任务板，事件和查询均按发起运行的可见范围过滤。
 
 过程消息（`agents.progress`，设置 → 通知与打扰 → 过程消息）：`messages` 默认 `milestones`。这一档下，协调回合（以及工作会话里的唤醒回合）若“只是接着推进”——这一轮里有运行以它的 id 排出下一轮（`queueAgentRound` 的 `queuedBy`，`run_agent` 新开和续轮都会带上）、这一轮没有给本人的提问或审批（`asks.run_id`）、回答的消息里没有本人自己的话、工作也不在等本人——回复只存进工作会话（`meta.progressOnly`），不发到飞书（`agent-work.ts` 的 `onlyMovedOn`，`jobs.ts` 的 `deliverCoordination`）。话题里改为一张原地更新的进度卡（`src/channels/lark-work-progress.ts`：第几轮、谁在做什么、最近一步、运行记录链接，卡片消息 id 存在发起 ask 运行的 `output.workProgress`）。做完（这一轮没排出下一轮）、问本人、交办失败或到上限、回答本人在话题里的话，照常发消息。`all` 保持每个协调回复都发。`thinking` 三档（`all` / `own` / `off`，默认 `own`）统一管两处起气泡的地方：回答消息的那一轮（`lark-progress.ts` 的 `startReplyProgress`，`bubble: false` 时只加“处理中”表情，不起气泡也不发兜底卡片）和后台运行（`lark-agent-cot.ts`）；`own` 只给回答本人自己消息的那一轮。交办时可借工具：`run_agent` 的 `extra_tools` 只能是发起这次交办的运行自己能用的工具（令牌里的工具清单，已去掉它被禁用的），以本人身份写飞书、在群里发消息、再交办和 `ROLE_TOOLS` 一律不借（`tools.ts` 的 `lendTools`）；借出的工具记在这一轮运行的 `input.extraTools`，运行时去掉这次运行被禁用的再作为 `addTools` 交给 `prepareRun`，之后照常按本人权限裁剪，空间范围不变。

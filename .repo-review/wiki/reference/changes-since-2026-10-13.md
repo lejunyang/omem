@@ -67,15 +67,50 @@ updated: 2026-11-22
 
 从 `src/agents/review-chain.ts` 的评审入口读起。评审按交办分配的仓库只读挂载，覆盖工作区池和直接检出两种方式。与编码同时进行的验证在自己的快照写测试产物。
 
+## 接活设备读取飞书群历史长页（2026-11-22）
+
+从 `src/channels/lark-cli-tools.ts` 读起。飞书返回的消息超过 60,000 字符时，分页信息单独放在截断正文前，助手可以取出令牌继续同群同查询。
+
+## 跨设备飞书读取保留文档选区、群分页和消息副本（2026-11-22）
+
+从 `src/agents/board-lark-read.ts` 读起。接活设备按文档 ID 核对按读者保存的 wiki 原件，读取时保留选区。群历史的续页令牌绑定本次运行和原查询，续页时重新核验群归属。消息按各份原件的当前空间核验，其他空间补采同一条消息后，任务仍可读取本空间已有的消息和附件。
+
+## 接活设备按任务空间核验飞书读取（2026-11-22）
+
+远端任务读取飞书现文前，先在接活设备核对文档或群消息原件的当前空间。按 ID 批量取消息时逐条核验，读取整群时也检查分月归档。未归档的目标、账号范围搜索和无法限定目标的参数均在调用飞书前拒绝。从 `src/agents/board-lark-read.ts` 读起，两档接活的用例在 `test/work-board-peer.test.ts`。
+
 ## 成员查看内置角色（2026-11-22）
 
 从 `src/server/http.ts` 的角色接口读起。有档案管理权限的成员可看内置角色的名称、用途和默认 AI。在 Agent 页打开角色进入只读摘要；只有本人的详情包含正文、专属记忆和复盘建议。自定义操作仅向本人回传原文。
+
+## 跨设备任务按当前空间读取附件和技能（2026-11-22）
+
+飞书消息留在任务空间时，单独归档的附件按原件当前空间核对，见 `src/agents/tools.ts` 的 `messageFileText`。技能目录、分组用途页、正文和附带文件共用 `src/agents/specs.ts` 的可见范围：执行档案指定的技能、可读空间挂载的技能和公共技能。
+
+## 跨设备任务只读取已入库的飞书消息附件（2026-11-22）
+
+从 `src/agents/tools.ts` 的 `messageFileText` 读起。任务板借后端和在对端运行时，读取已有附件原件沿用原件访问权限。附件尚未入库时，工具在下载或导入前返回原因，消息的附件记录保持原样。
 
 ## 成员管理 Agent 档案（2026-11-22）
 
 从 `src/server/http.ts` 的档案接口读起。成员查看档案详情或保存说明、状态时取得与列表一致的摘要。档案原文的读写权限在 `src/auth/settings-sections.ts` 中与 MCP 配置一起限定给本人，技能原文沿用原权限。
 
 `web/src/views/Agents.vue` 用摘要填写用途和状态，保存后重新读取档案。只有完整详情才加载原文和专属学习记录。
+
+## 任务板跨设备尝试的停止与重派
+
+在发起设备的运行页停止远端任务时，任务板立即取消当前尝试。接活设备离线时，取消请求保留到恢复连接。入口在 `src/agents/runs.ts` 的 `cancelRun`，任务状态和远端取消队列在 `src/agents/work-board.ts`。
+
+退回本机和改借后端时，`work-device.ts` 按本机启用的档案选择执行者。对方独有的档案由本机主助手接手。远端调查可使用接活设备的技能、平台读取工具与档案标为只读的认证 MCP，见 `src/agents/runner.ts`。
+
+直连中断后，反向请求沿用原配对的派单身份。签名只对当前命令、参数和反向凭据有效。传输入口在 `src/core/peers.ts`，接活端核验在 `src/agents/peer-work.ts`。
+
+## 2026-11-21：任务板可以派到其他设备
+
+- `dispatch_work` 每块可指定 device、mode 和 access。borrow 借 ACP 在本机只读，remote 在对方同名空间起运行。选择前核对配对、在线、协议与空间权限；在线设备只返回后端空位和仓库空间名称。读 `src/agents/work-device.ts`、`tools.ts`。
+- 接活四条命令放进 peerCommands，经既有 /api/peer/exec 按配对令牌校验；node.acceptWork 默认关闭，acceptWorkFrom 按配对标识覆盖。远端档案按名字找，找不到用主助手；只读令牌拒写，写模式只开放任务空间的记忆、页面和事项。读 `src/agents/peer-work.ts`、`runner.ts`。
+- 尝试记设备、模式、远端运行、期限与幂等键；本地轮询队列按索引限批处理，短时断网恢复继续，到期或失联一小时失败。取消先到也作废幂等键，重派后旧结果只记迟到。产物复用课题的 2 MB / 8 MB 上限，远端用量进入本地运行。读 `src/agents/work-board.ts`、`studies/remote.ts`。
+- readBoard 和统一进度返回 deviceName、mode、remoteRunId、remoteUrl、deadline、lateAt；远端用量跟随本地尝试去重汇总。飞书卡片并列标设备，从 `src/agents/progress.ts`、`progress-runs.ts`、`src/channels/lark-work-progress.ts` 读起。接活开关与进度网页细节待接入。双临时 App 和假 ACP 的验证见 `test/work-board-peer.test.ts`。
 
 ## 插件阶段的验收与恢复（2026-11-21）
 

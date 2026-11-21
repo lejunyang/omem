@@ -1,3 +1,4 @@
+import { boardLarkCommand, boardLarkDocument, requireBoardLarkMessages } from "./board-lark-read.ts";
 import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
 import { spacesWithCapability, type Capability } from "../auth/capabilities.ts";
@@ -13,7 +14,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
-import { dispatchBoard, cancelBoard, reportPage, reviewBoard } from "./work-board.ts";
+import { readBoard, dispatchBoard, cancelBoard, reportPage, reviewBoard } from "./work-board.ts";
 import { workInConversation, refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
 import { executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
@@ -74,7 +75,7 @@ import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOut
 import { takeCodeSteering } from "./code-steer.ts";
 import { afterToolCall, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
-import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
+import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillsOutsideScope, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, getThread, listThreads, threadMessages } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
@@ -102,6 +103,12 @@ export type ToolContext = {
   spaces: string[] | null;
   /** Spaces the caller may write, when narrower than `spaces` (related spaces are read-only). */
   writable?: string[];
+  /** Cross-device board writes include memories, pages and items only. */
+  boardAccess?: "read" | "write";
+  /** A task received from a peer. Its tool token owns the authorized chat continuations. */
+  incomingWork?: { chatPages: Map<string, string> };
+  /** Skills explicitly assigned to the actor of a cross-device board run. */
+  profileSkills?: string[];
   /** Item discovery only; never grants ordinary read or write tool access. */
   itemDiscoverySpaces?: string[] | null;
   tools: Set<string> | null;
@@ -1087,7 +1094,8 @@ def({
       // Candidates may prefer some hours (off-peak prices, provider queues): the time to compare with.
       now: `${new Intl.DateTimeFormat("zh-CN", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(new Date())}（${tz}）`,
       routing: ctx.app.config.agents.routing,
-      note: "limit 为 0 的模型本人不想自动使用，不要选；带 unavailable 的模型现在用不了（额度用完、到了每天的上限、刚出过故障），也不要选；today 是今天已用/本人设的每天上限。modelNotes 是后端对各模型的说明（可能写着限额）。quota 是账号的套餐额度：windows 里 used 是已用百分比，resetsIn 是多久后重置，perDayLeft 是周额度剩下的平均到距重置的每一天（%/天）；有 avoid 的账号快用完了，同样合适时选别的。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。replay28d 是夜间复盘近 28 天的单变量对比（type 题型，vs 对照的模型，w/t/l 胜/平/负，tokens 上下文峰值之比），样本小，只作参考。",
+      devices: await (await import("./work-device.ts")).workDevices(ctx.app,ctx.userId ?? OWNER),
+      note: "limit 为 0 的模型本人不想自动使用，不要选；带 unavailable 的模型现在用不了（额度用完、到了每天的上限、刚出过故障），也不要选；today 是今天已用/本人设的每天上限。modelNotes 是后端对各模型的说明（可能写着限额）。quota 是账号的套餐额度：windows 里 used 是已用百分比，resetsIn 是多久后重置，perDayLeft 是周额度剩下的平均到距重置的每一天（%/天）；有 avoid 的账号快用完了，同样合适时选别的。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。只需更多模型空位时，dispatch_work 指定 device 用 borrow；需要对方的仓库、目录或登录时用 remote。devices 只列在线设备的后端空位和仓库空间名称。候选说明里写了时段的，按 now 对照。replay28d 是夜间复盘近 28 天的单变量对比（type 题型，vs 对照的模型，w/t/l 胜/平/负，tokens 上下文峰值之比），样本小，只作参考。",
       backends: backends.filter((p) => p.installed && choosable.has(p.id) && (!a.profile || p.id === a.profile)).map((p) => {
         const probe = probeFor(ctx.app, mine(p));
         const q = quota.quotaView(ctx.app, mine(p));
@@ -1226,12 +1234,14 @@ function openDelegatedTopic(ctx: ToolContext, conversationId: string, work: Agen
   return { inChat, anchor };
 }
 
+const boardDestination = { device: z.string().min(1).optional().describe("设备 id；local 回本机"), mode: z.enum(["borrow", "remote"]).optional().describe("borrow 借后端在本机只读调查；remote 用对方环境"), access: z.enum(["read", "write"]).optional().describe("remote 默认 read；write 要对方接写任务且有空间写权限") };
 const boardExecution = z.union([executionSchema, z.enum(["strong", "standard", "cheap"])]);
-function resolveBoardExecution(ctx: ToolContext, value?: z.infer<typeof boardExecution>) {
-  if (typeof value !== "string") return validateExecution(ctx.app, value, ctx.userId);
+function resolveBoardExecution(ctx: ToolContext, value?: z.infer<typeof boardExecution>, device?: string) {
+  if (typeof value !== "string") return device && device !== "local" ? value : validateExecution(ctx.app, value, ctx.userId);
   const tier = ctx.app.config.agents.tiers[value];
   if (!tier) throw new HttpError(400, `请先配置 ${value} 档位，或指定后端与模型`);
-  return validateExecution(ctx.app, { ...tier, source: "auto", reason: `任务板选用 ${value} 档` }, ctx.userId);
+  const e = { ...tier, source: "auto" as const, reason: `任务板选用 ${value} 档` };
+  return device && device !== "local" ? e : validateExecution(ctx.app, e, ctx.userId);
 }
 
 function boardOrigin(ctx: ToolContext) {
@@ -1254,24 +1264,29 @@ function authorizedWork(ctx: ToolContext, id: string, edit: boolean) {
 
 def({
   name: "dispatch_work", write: true,
-  description: "并行派出 2～6 块互不依赖、能分别验收的调查。每块写明目标、材料和验收条件；一两步能完成或各块要互等时不用。派出后结束回合，必选块收齐会再叫你。",
+  description: "并行派出 2～6 块互不依赖、能分别验收的任务。device 指定设备，默认 borrow 借后端在本机只读调查；需要对方仓库或登录时用 remote，默认只读。每块写明目标、材料和验收条件；一两步能完成或各块要互等时不用。派出后结束回合，必选块收齐会再叫你。",
   schema: z.object({ title: z.string().trim().min(1).max(160), work_id: z.string().optional(), tasks: z.array(z.object({
     title: z.string().trim().min(1).max(160), goal: z.string().trim().min(1), accept: z.string().trim().min(1),
-    agent: z.string().optional(), execution: boardExecution.optional(), required: z.boolean().optional(), deadline_minutes: z.number().int().positive().max(525600).optional(),
+    ...boardDestination, space: z.string().optional(), agent: z.string().optional(), execution: boardExecution.optional(), required: z.boolean().optional(), deadline_minutes: z.number().int().positive().max(525600).optional(),
   })).min(2).max(6) }),
   handler: async (ctx, a) => {
     const origin = boardOrigin(ctx);
-    const plans = a.tasks.map(t => {
-      const spec = t.agent && t.agent !== "assistant" ? readAgentSpec(ctx.app, t.agent) : undefined;
+    const { selectDevice, workDevices } = await import("./work-device.ts");
+    const plans = await Promise.all(a.tasks.map(async t => {
+      const remote = !!t.device && t.device !== "local" && t.mode === "remote";
+      const spec = !remote && t.agent && t.agent !== "assistant" ? readAgentSpec(ctx.app, t.agent) : undefined;
       if (spec && spec.status !== "active") throw new HttpError(400, `档案 ${spec.name} 尚未启用`);
-      const spaceId = space(ctx, spec?.space ?? ctx.spaceId);
+      const spaceId = space(ctx, t.space ?? spec?.space ?? ctx.spaceId);
       const scope = assistantTaskScope(ctx);
       if (spec && !spec.spaces.includes("*")) scope.spaces = [spaceId, ...spec.spaces].filter(id => !scope.spaces || scope.spaces.includes(id));
       scope.denyTools.push(...LEND_DENIED, "notify", "ask_user", "suggest_next", "show", "wake",
         "flow_start", "improve_start", "switch_run_ai", "generate_wiki");
       scope.lark = { chats: [], draft: false, urgent: false, private: false };
-      return { ...t, execution: resolveBoardExecution(ctx, t.execution), scope, spaceId };
-    });
+      const execution = resolveBoardExecution(ctx, t.execution, t.device);
+      const boardDevice = await selectDevice(ctx.app,t,ctx.userId ?? OWNER,spaceId,execution);
+      if (boardDevice?.access === "write" && !canWrite(ctx.app,ctx.userId ?? OWNER,spaceId)) throw new HttpError(403,"发起人没有任务空间的写权限");
+      return { ...t, execution, boardDevice, scope, spaceId };
+    }));
     const existing = a.work_id ?? refreshWork(ctx.app, origin.id)?.askRunId ?? workInConversation(ctx.app, origin.conversation)?.askRunId;
     const current = existing ? authorizedWork(ctx, existing, true) : null;
     if (current) await autoTurnGuard(ctx, current);
@@ -1279,7 +1294,7 @@ def({
     const ids = dispatchBoard(ctx.app, work, plans, origin.id);
     if (!current) openDelegatedTopic(ctx, origin.conversation, work);
     if (origin.id !== work.askRunId) setRunOutput(ctx.app, origin.id, { boardId: work.askRunId });
-    return JSON.stringify({ work_id: work.askRunId, tasks: ids.map((id,i) => ({ id, title: plans[i].title })), message: "这一回合到此为止，告诉本人已经分头在做，不要等、不要轮询。必选块都有结果后会再叫你。" });
+    return JSON.stringify({ devices: await workDevices(ctx.app,ctx.userId ?? OWNER), work_id: work.askRunId, tasks: ids.map((id,i) => ({ id, title: plans[i].title })), message: "这一回合到此为止，告诉本人已经分头在做，不要等、不要轮询。必选块都有结果后会再叫你。" });
   },
 });
 
@@ -1299,12 +1314,24 @@ def({
 });
 
 def({
-  name: "work_review", write: true, description: "协调回合按验收条件接受、标阻塞或退回已结束的块。退回写明缺口，可以换档位，每块最多重做两次；还有重做就结束本轮。",
-  schema: z.object({ work_id: z.string(), decisions: z.array(z.object({ task: z.string(), decision: z.enum(["accept","redo","block"]), note: z.string().optional(), execution: boardExecution.optional() })).min(1).max(30) }),
+  name: "work_review", write: true, description: "协调回合按验收条件接受、标阻塞或退回已结束的块。退回写明缺口，可以换档位、device 和 mode（local 回本机），不填沿用上次设备，每块最多重做两次；还有重做就结束本轮。",
+  schema: z.object({ work_id: z.string(), decisions: z.array(z.object({ ...boardDestination, task: z.string(), decision: z.enum(["accept","redo","block"]), note: z.string().optional(), execution: boardExecution.optional() })).min(1).max(30) }),
   handler: async (ctx, a) => {
     const work = authorizedWork(ctx, a.work_id, true);
     if (a.decisions.some(d => d.decision === "redo")) await autoTurnGuard(ctx, work);
-    reviewBoard(ctx.app, a.work_id, a.decisions.map(d => ({ ...d, execution: resolveBoardExecution(ctx, d.execution) })), ctx.runId!);
+    const { selectDevice } = await import("./work-device.ts");
+    const board = readBoard(ctx.app,a.work_id);
+    const decisions = await Promise.all(a.decisions.map(async d => {
+      if (d.decision !== "redo") return { ...d, execution: undefined };
+      const t = board.tasks.find(t => t.id === d.task);
+      if (!t) throw new HttpError(400,"找不到本板的块");
+      const last = t.attempts.at(-1)!;
+      const target = { device: d.device ?? (last.mode ? last.device : undefined), mode: d.mode ?? (d.device === "local" ? "borrow" : last.mode), access: d.access ?? (d.device === "local" || d.mode === "borrow" ? "read" : last.access) };
+      const execution = resolveBoardExecution(ctx,d.execution ?? (target.device === "local" ? undefined : t.execution),target.device);
+      const boardDevice = await selectDevice(ctx.app,target,ctx.userId ?? OWNER,getRun(ctx.app,last.runId).spaceId!,execution);
+      return { ...d, execution, boardDevice };
+    }));
+    reviewBoard(ctx.app, a.work_id, decisions, ctx.runId!);
     return a.decisions.some(d => d.decision === "redo") ? "已退回重做，结束本轮；结果齐后会再叫你。" : "已记录验收决定。";
   },
 });
@@ -1459,6 +1486,10 @@ ${r.answer}${r.missed.length ? `
   },
 });
 
+function hiddenSkills(ctx: ToolContext) {
+  return ctx.boardAccess ? skillsOutsideScope(ctx.app, ctx.profileSkills, ctx.spaces) : undefined;
+}
+
 def({
   name: "list_skills",
   description: "列出技能（可复用的做法：步骤、格式、检查清单）。分组里的技能只列分组，group=分组名 列出这一组的技能、用途和是否启用。",
@@ -1466,13 +1497,14 @@ def({
   handler: async (ctx, a) => {
     const { loadSkillGroups, skillEnabled } = await import("./skill-groups.ts");
     const { listSkillGroups, readSkillGroup } = await import("./agent-skills.ts");
+    const hidden = hiddenSkills(ctx);
+    const state = loadSkillGroups(ctx.app, hidden);
     if (a.group) {
-      const g = readSkillGroup(ctx.app, a.group);
+      const g = readSkillGroup(ctx.app, a.group, state);
       return `# ${g.id}（${g.title}${g.enabled ? "" : "，整组停用"}）\n${g.description || g.autoDescription}\n\n${g.skills.map((x) => `- ${x.name}${x.enabled ? "" : "（停用）"}${x.purpose ? ` [${x.purpose}]` : ""}：${x.description.slice(0, 160)}`).join("\n")}`;
     }
-    const state = loadSkillGroups(ctx.app);
-    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts }).filter((s) => skillUsable(ctx.app, s) && !state.skills[s.name]?.group && skillEnabled(state, s.name));
-    const groups = listSkillGroups(ctx.app).map((g) => `- ${g.id}（分组「${g.title}」，启用 ${g.enabledCount}/${g.count}${g.enabled ? "" : "，整组停用"}）：${g.description || g.autoDescription}`);
+    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts, exclude: hidden }).filter((s) => skillUsable(ctx.app, s) && !state.skills[s.name]?.group && skillEnabled(state, s.name));
+    const groups = listSkillGroups(ctx.app, state).map((g) => `- ${g.id}（分组「${g.title}」，启用 ${g.enabledCount}/${g.count}${g.enabled ? "" : "，整组停用"}）：${g.description || g.autoDescription}`);
     const lines = [...list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}`), ...groups];
     return lines.length ? lines.join("\n") : "还没有技能。";
   },
@@ -1483,9 +1515,12 @@ def({
   description: "读取技能全文（以及它附带的文件列表）。做技能对应的事之前先读。",
   schema: z.object({ name: z.string().describe("技能名，或技能分组名（返回这一组按用途列出的技能）"), file: z.string().optional().describe("读技能目录里的附带文件；分组的 purposes/NN.md 是某个用途下各技能的说明") }),
   handler: async (ctx, a) => {
+    const hidden = hiddenSkills(ctx);
+    if (hidden?.has(a.name)) throw new HttpError(404, `没有名为 ${a.name} 的技能`);
     if (!findSkill(ctx.app, a.name)) {
+      const { loadSkillGroups } = await import("./skill-groups.ts");
       const { groupHub } = await import("./agent-skills.ts");
-      const hub = groupHub(ctx.app, a.name);
+      const hub = groupHub(ctx.app, a.name, loadSkillGroups(ctx.app, hidden));
       if (hub) {
         const text = hub.files[a.file ?? "SKILL.md"];
         if (text === undefined) throw new HttpError(404, `分组 ${a.name} 没有文件 ${a.file}`);
@@ -4630,11 +4665,11 @@ def({
     ownerOnly(ctx, "docs");
     const w = await import("../channels/lark-doc-write.ts");
     const input = {
-      doc: a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
+      doc: ctx.incomingWork ? boardLarkDocument(ctx, a.doc) : a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
       contextBefore: a.context_before, contextAfter: a.context_after, detail: a.detail, format: a.format,
     };
     const r = a.identity === "bot"
-      ? await botForRequester(ctx, a.doc, () => w.fetchForEdit(ctx.app, input, { asBot: true }))
+      ? await botForRequester(ctx, input.doc, () => w.fetchForEdit(ctx.app, input, { asBot: true }))
       : await w.fetchForEdit(ctx.app, input).catch((e) => ownerDenied(ctx.app, e));
     const max = 60_000;
     const body = r.content.length > max ? `${r.content.slice(0, max)}\n…（已截断，共 ${r.content.length} 字；用 scope=outline / section / range 缩小范围）` : r.content;
@@ -4849,10 +4884,15 @@ const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后
 async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
   featureGate(ctx, "messages");
   const { messageFile } = await import("../channels/lark-message-files.ts");
-  const f = await messageFile(ctx.app, messageId, key, { user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id) });
+  const f = await messageFile(ctx.app, messageId, key, {
+    user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id),
+    archivedSpace: ctx.incomingWork ? requireBoardLarkMessages(ctx, [messageId]) : undefined,
+    writable: ctx.boardAccess ? [] : ctx.writable,
+  });
   if (f.sourceId) {
     await requireReadable(ctx.app, ctx.userId ?? OWNER, f.sourceId);
     const s = getSource(ctx.app, f.sourceId);
+    if (!canRead(ctx, s.spaceId)) throw new HttpError(403, "附件原件不在本次任务能读的空间内");
     return s.kind === "image"
       ? `「${f.name}」是图片，已保存为原件 src:${f.sourceId}。read_source 给出原始文件的路径，用你的图片工具看。`
       : `「${f.name}」已保存为原件 src:${f.sourceId}，用 read_source(source="${f.sourceId}") 读正文；引用时写 src:${f.sourceId}。`;
@@ -4913,11 +4953,12 @@ def({
   schema: z.object({ command: larkCommand }),
   handler: async (ctx, a) => {
     ownerOnly(ctx, commandFeature(a.command));
+    const { command, onNextPage } = ctx.incomingWork ? boardLarkCommand(ctx, a.command, ctx.incomingWork.chatPages) : { command: a.command };
     // Saving a message's attachment is a write to lark-cli (it writes a file): omem's own copy instead.
-    const download = (await import("../channels/lark-message-files.ts")).resourceDownload(a.command);
+    const download = (await import("../channels/lark-message-files.ts")).resourceDownload(command);
     if (download) return messageFileText(ctx, download.messageId, download.key);
     const c = await import("../channels/lark-cli-tools.ts");
-    return c.larkRead(ctx.app, a.command);
+    return c.larkRead(ctx.app, command, onNextPage);
   },
 });
 

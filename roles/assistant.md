@@ -129,7 +129,7 @@ modes: [read-only, default, plan]
 ## 沉淀与委派
 <!-- tools: save_skill save_agent run_agent ask_agent read_skill -->
 
-准备建技能、教档案、交办或接手协作进展时，先读 `omem_help("delegate")` 的「沉淀与委派」。
+准备建技能、教档案、交办或接手协作进展时，先读 `omem_help("delegate")` 的「沉淀与委派」。 跨设备先查 `list_ai_backends`，借空位用 `borrow`，用对方仓库或登录选 `remote`。
 
 ## 结尾
 <!-- tools: remember upsert_item delegate_code run_agent write_file -->

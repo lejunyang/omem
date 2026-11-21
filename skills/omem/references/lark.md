@@ -31,6 +31,7 @@
 
 ## 飞书文档
 
+- 在接活设备上，`lark_doc_fetch` 和 `lark_read` 的 `docs +fetch --doc` 可读任务空间内已归档文档的现文。群记录用 `im +chat-messages-list --chat-id`，指定消息用 `im +messages-mget --message-ids`（逗号分隔，最多 50 条）。按读者保存的 wiki 文档也可用 docx 链接读取，链接可带 `#share-…` 选区。读取整群要求群的归属和各月归档都在范围内。续页时保留原查询参数，添加 `--page-token` 和上页返回的 `page_token`。消息过长时，响应首行单独给出分页信息，其后的正文按长度截断。按消息 ID 读取时，只要本空间仍有有效副本就能读。任一目标未知或越界时整条请求被拒绝。接活任务无法通过这些工具搜索整个飞书账号。
 - `lark_doc_create` / `lark_doc_update` / `lark_doc_move` / `lark_doc_copy`：以本人身份写飞书文档，只在本人要求时用。完整复制知识库文档用 `lark_doc_copy(doc, target, summary, title?)`，调用官方节点复制，保留表格、图片和排版，不把正文重建成新文档，也不递归复制子页面；成功后回读返回的新节点核对，状态不明先查远端。做法和 DocxXML / Markdown 写法在内置技能 `lark-docs`。
 - 本人希望某个目录一次审批时，`lark_doc_authorize(under, operations, summary)`：`under` 填本人指定的知识库节点链接，`operations` 从 `create`（新建）、`copy`（复制到范围内）、`edit`（局部编辑）、`move`（范围内移动）中选。卡片说明节点、操作和用途，发到本人机器人私聊；批准后包含节点自身、全部后代和以后新建的子页面，跨会话、定时规则和失败重试复用。执行时按飞书当前层级核对，不按标题或本地旧目录推断；移动须来源和目标都在范围内。整篇覆盖、范围外写入另行批准；最近的拒绝阻止沿用旧授权。申请不执行文档写入，批准后照常调用具体工具。
 - 改已有文档：先 `lark_doc_fetch` 读要改的部分（`scope=outline` 看目录、`section` 读一节、`keyword` 按关键词、`range` 读整张表），拿到 block id；再用 `lark_doc_update` 的 `str_replace`（行内文字）、`block_replace`（一块或同层连续几块，含整张表格）、`block_insert_after`、`block_delete`、`block_move_after`、`block_copy_insert_after` 局部改。`block_*` 的内容默认 DocxXML，其余默认 Markdown；每次写入后旧 block id 可能失效，再改前重读。`overwrite` 会丢掉图片、评论等，只在本人要整篇重写时用。块操作和追加、局部替换同属“局部编辑”，沿用同一份批准。
@@ -70,6 +71,7 @@ omem 每周列出本人能看到的全部飞书知识库，交给 kb-scout 角�
 - 群里更早的消息用 `lark_chat_history(topic_id?, cursor?, limit?)`：以机器人身份读本次会话所在的群（或其中一个话题），补上机器人进群前、采集没看到的上下文；读到的记进这个群的原件，返回带行号的行，引用 `src:<原件id>#L行`，`cursor` 接着往前读。有人只说“看下群里的问题”“看下这个”时先读再回答，不要直接让对方重发；读不到（群设置不让新成员看进群前的历史）才请对方转发。只有本人的运行可以用 `chat_id` 读别的群，访客回答只能读被问的那个群。
 - 消息里的附件（别人发来的 CSV、表格、图片）用 `lark_message_file(message_id, file_key?)`：采集时已经存成原件的直接给原件 id，没下载过的先下载并存进这个群的空间，再用 `read_source` 读。不要用 `lark_read` 跑 `im +messages-resources-download`（它写本地文件，被当作写入；`lark_read` 遇到它也会改走这里）。视频和音频只保存文件，omem 不转写、不抽帧，读不到内容。
 
+- 跨设备任务板通过 `lark_read` 只取执行设备上已入库的消息附件。附件原件单独归档后按它当前的空间检查权限。附件尚未存为原件时，工具会说明原因。这条限制也适用于允许写记忆、页面和事项的远端任务。
 - 附件保存与解析分别验收：`set_lark_backfill` 的 `ingest=true` 会把已保存的文档附件交给独立 `lark-resource-parse` 运行，解析失败不阻塞消息翻页；通过 `list_runs` / `read_run` 核对解析状态，原文件已保存不能说成下载失败。重试解析使用原文件，不重置消息回溯。
 - 视频本体是必需资源，封面可选；正文中的外链图片副本不计入原群附件缺失。
 - 消息覆盖、原文件保存、解析和知识整理分别报告；已经提交的批次由后台继续，不为等待分页反复交办。

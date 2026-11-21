@@ -53,9 +53,9 @@ export function nodeId(app: App) {
 export function deviceLabels(app: App) {
   const localId = nodeId(app);
   const names = new Map(listPeers(app).map(p => [p.id, p.back?.name]));
-  return (id?: string | null) => !id || id === localId || id === "本机"
+  return (id?: string | null, fallback = "对等设备") => !id || id === localId || id === "本机"
     ? { local: true, device: app.config.node.id || "本机" }
-    : { local: false, device: names.get(id) || "对等设备" };
+    : { local: false, device: names.get(id) || fallback };
 }
 
 export function listPeers(app: App): Peer[] {
@@ -272,7 +272,11 @@ async function backFetch(app: App, p: Peer, path: string, init: RequestInit & { 
   headers.authorization = `Bearer ${p.back!.token}`;
   headers["x-omem-hops"] = String(hops);
   headers.host = `${p.id}.back`;
-  const body = init.body == null ? null : typeof init.body === "string" ? init.body : Buffer.from(await new Response(init.body).arrayBuffer());
+  let body = init.body == null ? null : typeof init.body === "string" ? init.body : Buffer.from(await new Response(init.body).arrayBuffer());
+  if (p.url && path === "/api/peer/exec" && typeof body === "string") {
+    const { reverseWorkBody } = await import("../agents/peer-work.ts");
+    body = reverseWorkBody(body,p.token,p.back!.token);
+  }
   if (body !== null) headers["content-length"] = String(Buffer.byteLength(body));
   return new Promise((ok, fail) => {
     const req = request({

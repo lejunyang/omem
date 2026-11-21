@@ -275,6 +275,8 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
 }
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
+registerHandler("peer-work", async ctx => (await import("./peer-work.ts")).runIncomingWork(ctx));
+
 registerHandler("agent", async (ctx) => {
   // Someone looking for the owner, handled (mentions/mentions.ts): its time limit and the short reminder when it fails.
   if (ctx.run.input.mention) return runMentionHandling(ctx, runAgentTask);
@@ -359,10 +361,12 @@ async function runAgentTask(ctx: RunContext) {
   const spaces = spec && assistantScope && !spec.spaces.includes("*")
     ? [spaceId, ...spec.spaces].filter(id => !assistantScope.spaces || assistantScope.spaces.includes(id))
     : assistantScope?.spaces;
+  const device = ctx.run.input.boardDevice as import("./work-device.ts").BoardDevice | undefined;
   const go = (resume?: string, turnTask = fullTask) =>
     runRole(ctx.app, {
       role: "assistant",
       spec,
+      ...(device?.mode === "borrow" ? { borrow: { device: device.device, backend: device.backend! }, boardAccess: "read", requiredTools: ["read_source"] } : {}),
       // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
       choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
