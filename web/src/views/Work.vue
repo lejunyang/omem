@@ -211,11 +211,10 @@ async function ask(text = question.value) {
 
 <template>
   <div class="page work">
-    <header class="top">
+    <header class="page-head top">
       <div class="title">
-        <div class="muted small">{{ dateLine }}</div>
         <h1>本月在推进</h1>
-        <p v-if="data" class="muted small">{{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}{{ todayChanges ? ` · 今天 ${todayChanges} 条变化` : "" }}</p>
+        <p>{{ dateLine }}<template v-if="data"> · {{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}{{ todayChanges ? ` · 今天 ${todayChanges} 条变化` : "" }}</template></p>
       </div>
       <span class="spacer" />
       <div class="tools row wrap">
@@ -377,9 +376,9 @@ async function ask(text = question.value) {
 
 <style scoped>
 .work { max-width: 1320px; }
-.top { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; margin: 4px 0 22px; }
-.title h1 { font-family: var(--serif); font-size: 28px; font-weight: 650; margin: 2px 0; }
-.title p { margin: 0; }
+/* The page head is the shared `.page-head`; its right end lines up with the rail's cards. */
+.top { gap: 12px 16px; padding-right: 8px; }
+.title p { font-size: 13px; }
 .tools { gap: 10px; align-items: center; }
 .confirm-pill {
   display: inline-flex; align-items: center; gap: 6px;
@@ -389,9 +388,11 @@ async function ask(text = question.value) {
 }
 .confirm-pill:hover { background-image: linear-gradient(var(--hover), var(--hover)); }
 .err { color: var(--danger); }
-.grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 28px; align-items: start; }
+/* The rail's rows (WorkWaiting) reach 8px past their text for the hover background; the rail keeps
+   8px of padding on the right so they stay inside it. */
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 328px; gap: 28px; align-items: start; }
 .main { display: grid; gap: 14px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
-.rail { display: grid; gap: 22px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.rail { display: grid; gap: 24px; min-width: 0; grid-template-columns: minmax(0, 1fr); padding-right: 8px; }
 .empty-lines { display: grid; gap: 8px; }
 
 /* 观察中: smaller cards, two to a row where there is room. */
@@ -429,8 +430,8 @@ async function ask(text = question.value) {
 .month { display: grid; min-width: 0; }
 .mhead { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em; color: var(--muted); margin: 4px 0 2px; }
 .mhead .muted { font-weight: 400; letter-spacing: 0; }
-.erow { display: flex; gap: 10px; align-items: flex-start; padding: 8px 8px; margin: 0 -8px; border-radius: 8px; color: inherit; min-width: 0; }
-.erow:hover { background: var(--hover); text-decoration: none; }
+.erow { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-radius: 8px; color: inherit; min-width: 0; }
+.erow:hover { background: var(--hover); box-shadow: -8px 0 0 var(--hover), 8px 0 0 var(--hover); text-decoration: none; }
 .eicon { margin-top: 3px; color: var(--ok); flex: none; }
 .eicon.dropped { color: var(--muted); }
 .emain { flex: 1; min-width: 0; display: grid; gap: 1px; }
@@ -443,8 +444,10 @@ async function ask(text = question.value) {
 }
 .count { margin-left: 4px; color: var(--muted); font-weight: 400; }
 .loose { margin-top: 14px; }
-.loose .list, .recent .list { margin: 0 -12px; }
-.li { padding: 8px 12px !important; }
+/* Rows line up with the section title; the hover background reaches past the text with a shadow,
+   which (unlike a negative margin) does not widen the column. */
+.li { padding: 8px 0 !important; }
+.li:hover, .place:hover { box-shadow: -10px 0 0 var(--hover), 10px 0 0 var(--hover); }
 .li :deep(svg) { margin-top: 3px; flex: none; color: var(--muted); }
 .grow { flex: 1; min-width: 0; display: grid; gap: 1px; }
 .lt { overflow-wrap: anywhere; font-size: 14px; }
@@ -475,7 +478,7 @@ async function ask(text = question.value) {
 .askbox textarea { border: 0; outline: 0; resize: none; background: none; font: inherit; font-size: 14.5px; line-height: 1.6; color: var(--ink); padding: 0; }
 .prompts { gap: 6px; }
 .places { display: grid; gap: 2px; }
-.place { display: flex; gap: 8px; align-items: center; padding: 7px 8px; margin: 0 -8px; border-radius: 8px; color: inherit; font-size: 13.5px; }
+.place { display: flex; gap: 8px; align-items: center; padding: 7px 0; border-radius: 8px; color: inherit; font-size: 13px; }
 .place:hover { background: var(--hover); text-decoration: none; }
 .place :deep(svg) { color: var(--muted); flex: none; }
 .place .n { font-size: 12px; color: var(--warn); font-weight: 600; }

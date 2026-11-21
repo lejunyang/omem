@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { releaseBackgroundSessions } from "../src/agents/background-sessions.ts";
 import { archiveSession } from "../src/agents/session-archive.ts";
 import { runAcp } from "../src/agents/acp.ts";
@@ -25,9 +26,9 @@ async function setup(usage = "200,600,601", delay = "0") {
   const server = await startServer(app, { port: 0, quiet: true });
   cleanups.push(() => server.close());
   const invoke = async (extra: Partial<RoleRunInput> = {}) => {
-    const run = createRun(app, { kind: "ingest", spaceId: extra.spaceId ?? "personal", title: "测试材料整理" });
-    const result = await runRole(app, { role: "ingest", spaceId: "personal", task: "读取本轮材料", runId: run.id, reuseSession: true, ...extra });
-    return { ...JSON.parse(result.text), runId: run.id, contextUsage: result.contextUsage } as { session: string; turn: number; prompt: string; runId: string; contextUsage?: { used: number; size: number } };
+    const runId = extra.runId ?? createRun(app, { kind: "ingest", spaceId: extra.spaceId ?? "personal", title: "测试材料整理" }).id;
+    const result = await runRole(app, { role: "ingest", spaceId: "personal", task: "读取本轮材料", runId, reuseSession: true, ...extra });
+    return { ...JSON.parse(result.text), runId, contextUsage: result.contextUsage } as { session: string; turn: number; prompt: string; commandResult?: string; runId: string; contextUsage?: { used: number; size: number } };
   };
   const deleted = () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
   return { app, invoke, deleted, profile };
@@ -51,6 +52,43 @@ describe("background sessions", () => {
     expect(fourth.prompt).toContain("# 角色：");
     const calls = all<{ run_id: string }>(app.db, "select run_id from memory_rejections where tool = 'remember' order by rowid");
     expect(calls.map((c) => c.run_id)).toEqual([first.runId, second.runId, third.runId, fourth.runId]);
+  }, 60000);
+
+  it("hands each pooled turn's approval to its wrapper using the live session token", async () => {
+    const { app, invoke, profile } = await setup("200");
+    profile.env.FAKE_EXEC_ACME = "1";
+    const bin = join(app.home, "bin");
+    mkdirSync(bin, { recursive: true });
+    if (process.platform === "win32") writeFileSync(join(bin, "acme.cmd"), "@echo executed %1\r\n");
+    else writeFileSync(join(bin, "acme"), '#!/bin/sh\necho executed "$1"\n', { mode: 0o755 });
+    app.config.security.operationRules = [{ id: "write", enabled: true, revision: 1, action: "approve",
+      match: { kind: "command", executable: "acme" }, approval: { waitSeconds: 1 } }];
+    const pending = () => listAsks(app, { status: "pending" }).filter(a => a.handler === "command-gate");
+    const approve = async () => {
+      await expect.poll(() => pending().length, { timeout: 5000 }).toBe(1);
+      const [ask] = pending();
+      await answerAsk(app, ask.id, { approved: true, choice: 0, by: "owner" });
+      return ask.runId;
+    };
+    const first = invoke();
+    const firstRun = await approve();
+    const firstResult = await first;
+    const { session } = firstResult;
+    expect(firstResult).toMatchObject({ runId: firstRun, turn: 1, commandResult: "executed write" });
+    const second = invoke();
+    const secondRun = await approve();
+    expect(secondRun).not.toBe(firstRun);
+    expect(await second).toMatchObject({ session, runId: secondRun, turn: 2, commandResult: "executed write" });
+
+    const late = await invoke();
+    expect(late).toMatchObject({ session, turn: 3, commandResult: "refused" });
+    expect(await approve()).toBe(late.runId);
+    expect(await invoke({ runId: late.runId })).toMatchObject({ session, turn: 4, commandResult: "executed write" });
+    expect(listAsks(app).filter(a => a.handler === "command-gate")).toHaveLength(3);
+    expect(all(app.db, "select json_extract(detail,'$.runId') runId from audit_events where action='command.allow' and json_extract(detail,'$.result')='使用已有授权' order by rowid"))
+      .toEqual([firstRun, secondRun, late.runId, late.runId].map(runId => ({ runId })));
+    expect(await invoke()).toMatchObject({ session, turn: 5, commandResult: "refused" });
+    expect(pending()).toHaveLength(1);
   }, 60000);
 
   it("does not reuse missing usage or an explicitly disabled pool", async () => {

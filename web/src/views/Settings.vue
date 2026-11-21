@@ -6,7 +6,7 @@ import { provideSettings } from "./settings/ctx";
 import Skeleton from "../components/Skeleton.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import ApprovalSettings from "../components/ApprovalSettings.vue";
-import CommandRulesSettings from "../components/CommandRulesSettings.vue";
+import OperationRulesSettings from "../components/OperationRulesSettings.vue";
 
 /**
  * The settings page: the categories on the left (by what the owner is thinking about), the open one in
@@ -53,13 +53,16 @@ const CARDS: Record<string, Tab> = {
   "agent-accounts": "members", desktop: "peers", "web-url": "peers",
   "lark-docs": "connect", "lark-capture": "connect", platforms: "connect",
   timezone: "schedules",
+  "operation-rules": "security", "rule-packs": "security", "tool-approvals": "security",
 };
+/** Cards that were renamed: the old link lands on the new card. */
+const RENAMED: Record<string, string> = { "network-conditions": "backends", "command-rules": "operation-rules" };
 const route = useRoute();
 const router = useRouter();
 /** Where a link points: its tab, and the card to scroll to (from `card`, or an old link's `focus`). */
 function target(q: typeof route.query): { tab: Tab; card: string | null } {
   const raw = typeof q.card === "string" ? q.card : typeof q.focus === "string" ? q.focus : null;
-  const card = raw === "network-conditions" ? "backends" : raw;
+  const card = raw && RENAMED[raw] ? RENAMED[raw] : raw;
   const asked = typeof q.tab === "string" && TABS.includes(q.tab as Tab) ? (q.tab as Tab) : null;
   if (card && CARDS[card]) return { tab: CARDS[card], card };
   // The AI sub-sections (?section=decision) are in 后端与模型.
@@ -166,8 +169,11 @@ onBeforeUnmount(() => {
       </nav>
       <div ref="content" class="set-content">
         <section v-if="tab === 'security'" class="stack">
-          <ApprovalSettings v-if="config && (!state.me || state.me.role === 'owner')" :config="config" :save="saveConfig" />
-          <CommandRulesSettings />
+          <template v-if="!state.me || state.me.role === 'owner'">
+            <OperationRulesSettings />
+            <ApprovalSettings v-if="config" :config="config" :save="saveConfig" />
+          </template>
+          <p v-else class="card set-link muted">操作规则和工具审批只有本人能看和改。</p>
         </section>
         <section v-else-if="tab === 'about'" class="stack">
           <div class="card set-card">

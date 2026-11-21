@@ -977,6 +977,41 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   run(app.db, "update runs set status='done', started_at=?, finished_at=?, output=json_set(coalesce(output,'{}'),'$.answer',?) where id=?", ago(17), ago(16), "已经分三块在查：对账单逐笔对、部分发货订单的退款日志、满减券的分摊口径。三块都有结果后我再汇总给你。", boardAsk.id);
 }
 
+// ---- operation rules and two rule packs (设置 → 安全, shot security-rules) ------------------------
+{
+  const { saveOperationRules } = await import("../src/agents/operation-policy.ts");
+  const { enableRulePack, listRulePacks } = await import("../src/agents/rule-packs.ts");
+  const skill = (name: string, description: string, pack: object) => {
+    const dir = join(app.libraryDir, "_skills", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n${description}\n`);
+    writeFileSync(join(dir, "operation-rules.yaml"), JSON.stringify(pack, null, 2));
+  };
+  const acmeWrites = (version: string, extra: object[] = []) => ({
+    name: "acme 写操作", version, rules: [
+      { id: "mr-merge", title: "合并请求前问本人", match: { kind: "command", executable: "acme", subcommand: ["mr", "merge"] }, action: "approve" },
+      { id: "release", title: "发版前问本人", match: { kind: "command", executable: "acme", subcommand: ["release"] }, action: "approve" },
+      ...extra,
+    ],
+  });
+  saveOperationRules(app, [
+    { id: "demo-mr", revision: 1, enabled: true, title: "建合并请求前问本人", scope: { spaces: ["shop"] }, match: { kind: "command", executable: "acme", subcommand: ["mr", "create"] }, action: "approve", approval: { approver: "owner", waitSeconds: 90 } },
+    { id: "demo-prod", revision: 1, enabled: true, match: { kind: "command", executable: "acme", subcommand: ["deploy"], argsRegex: "--env[= ]prod" }, action: "deny" },
+    { id: "demo-refund", revision: 1, enabled: true, match: { kind: "http", methods: ["POST"], host: "api.example.com", pathRegex: "^/v1/refunds" }, action: "approve", approval: { approver: "owner", waitSeconds: 120 } },
+    { id: "demo-env", revision: 1, enabled: true, title: "不改 .env 文件", match: { kind: "file", operations: ["write", "delete"], pathRegex: "(^|/)\\.env$" }, action: "deny" },
+    { id: "demo-send", revision: 1, enabled: false, match: { kind: "tool", name: "lark_send" }, action: "log" },
+  ]);
+  skill("acme-cli", "用 acme 命令行建合并请求、发版", acmeWrites("1"));
+  skill("acme-billing", "用 acme 命令行查账单和退款", { name: "acme 账单", version: "3", rules: [
+    { id: "refund", title: "退款前问本人", match: { kind: "command", executable: "acme", subcommand: ["billing", "refund"] }, action: "approve" },
+    { id: "export", match: { kind: "command", executable: "acme", subcommand: ["billing", "export"] }, action: "log" },
+  ] });
+  const acme = listRulePacks(app).find((p) => p.id === "skill:acme-cli")!;
+  enableRulePack(app, acme.id, { spaces: ["shop"] }, acme.confirmation!);
+  // A newer version of the enabled pack: one rule more, to be confirmed.
+  skill("acme-cli", "用 acme 命令行建合并请求、发版", acmeWrites("2", [{ id: "branch-delete", title: "删远端分支前问本人", match: { kind: "command", executable: "acme", subcommand: ["branch", "delete"] }, action: "approve" }]));
+}
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -1123,6 +1158,18 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "agents", path: "/agents" },
   { name: "ai-network-conditions", path: "/settings?tab=agents&focus=network-conditions", before: prepareNetworkDemo, prepare: async (p) => { await p.locator(".be-head", { hasText: "Claude Code" }).click(); await p.waitForTimeout(400); await p.locator(".be.open").scrollIntoViewIfNeeded(); } },
   { name: "ai-network-conditions-mobile", path: "/settings?tab=agents&focus=network-conditions", width: 390, before: prepareNetworkDemo, prepare: async (p) => { await p.locator(".be-head", { hasText: "Claude Code" }).click(); await p.locator(".be.open").getByRole("button", { name: "编辑", exact: true }).click(); await p.locator(".net-editor").scrollIntoViewIfNeeded(); if (await p.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error("网络条件表单横向溢出"); } },
+  // 设置 → 安全: the rules in the order they apply (two from a pack), the packs below, one with a newer version.
+  { name: "security-rules", path: "/settings?tab=security", before: async (p) => {
+    // The page head shows the data directory: not the throwaway one's real path.
+    await p.route("**/api/settings", async (route) => {
+      const data = await (await route.fetch()).json();
+      data.home = "~/.omem";
+      await route.fulfill({ json: data });
+    });
+  }, prepare: async (p) => {
+    await p.locator("#set-operation-rules .op").first().waitFor();
+    await p.waitForTimeout(400);
+  } },
   { name: "ask-question", path: `/ask/${decide.id}` },
   { name: "ask-form", path: `/ask/${rollout.id}`, prepare: async (p) => { await p.waitForTimeout(800); await p.getByText("先灰度 10%").click(); await p.getByText("逐条确认退款规则").scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
   { name: "ask-view", path: `/ask/${rollout.id}`, prepare: async (p) => { await p.waitForTimeout(800); await p.locator(".ui-view").first().scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },

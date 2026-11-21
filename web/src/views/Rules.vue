@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RichText from "../components/RichText.vue";
 import { fullAccessHint, seedProbe } from "../lib/probes";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
@@ -996,7 +997,7 @@ function startFrom(text: string) {
             <div v-for="m in test.matches" :key="m.messageId" class="hit small">
               <div class="row"><strong class="ellipsis">{{ m.chat }}</strong><span class="muted">· {{ m.sender }} · {{ fmtTime(m.at) }}</span></div>
               <div class="clamp">{{ m.text }}</div>
-              <div class="muted">{{ m.by === "code" ? "条件" : "模型" }}：{{ m.reason }}</div>
+              <div class="muted">{{ m.by === "code" ? "条件" : "模型" }}：<RichText :text="m.reason" /></div>
               <div v-if="m.action">入会方式：{{ m.action }}</div>
             </div>
           </template>
@@ -1007,7 +1008,7 @@ function startFrom(text: string) {
           <div v-for="f in firings" :key="f.id" class="firing small">
             <div class="row"><span class="muted">{{ fmtTime(f.at) }}</span><span class="badge">{{ f.judgedBy === "code" ? "条件" : f.judgedBy === "limit" ? "超额" : "模型" }}</span></div>
             <div>{{ f.summary }}</div>
-            <div v-if="f.reason" class="muted">判断：{{ f.reason }}</div>
+            <div v-if="f.reason" class="muted">判断：<RichText :text="f.reason" /></div>
             <div v-for="(x, i) in f.results" :key="i" :class="x.ok ? 'ok' : 'err'">
               {{ x.ok ? "✓" : "✗" }} {{ ACTION_LABEL[x.action as Action["type"]] ?? x.action }}：{{ x.detail }}
               <router-link v-if="x.runId" :to="`/runs/${x.runId}`">运行</router-link>

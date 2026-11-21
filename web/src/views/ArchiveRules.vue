@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RichText from "../components/RichText.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { del, get, post, put, type Run } from "../api";
@@ -198,7 +199,7 @@ async function classify() {
         <p v-if="!preview.length" class="muted">这一批没有可归档材料。</p>
         <div v-for="p in preview" :key="p.id" class="preview-row">
           <UiCheckbox v-model="selected" :value="p.id" :disabled="!p.ruleId || p.conflict || p.from === p.target" :aria-label="`选择${p.title}`" />
-          <div><router-link :to="`/sources/${p.id}`">{{ p.title }}</router-link><p class="small muted">{{ p.reason }}<span v-if="p.conflict" class="err"> · 目标空间已有同一份材料，跳过</span></p></div>
+          <div><router-link :to="`/sources/${p.id}`">{{ p.title }}</router-link><p class="small muted"><RichText :text="p.reason" /><span v-if="p.conflict" class="err"> · 目标空间已有同一份材料，跳过</span></p></div>
           <span class="small">{{ name(p.from) }} → {{ name(p.target) }}</span>
         </div>
         <div class="row wrap actions"><button class="btn primary" :disabled="busy || !selected.length" @click="apply">应用选中项（{{ selected.length }}）</button><button class="btn" :disabled="busy" title="明确属于某个空间的才移动，拿不准的留在原处" @click="classify">没命中的交给 AI 判断</button><span class="spacer" /><button class="btn" :disabled="busy || offset === 0" @click="previewBatch(Math.max(0, offset - batchSize))">上一批</button><button class="btn" :disabled="busy || preview.length < batchSize" @click="previewBatch(offset + batchSize)">下一批</button></div>

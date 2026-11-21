@@ -322,7 +322,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
     <div class="page-head">
       <div>
         <h1>记忆</h1>
-        <p>助理记住的事实、约定、偏好和经验。更正时旧版本不会消失；新记忆写入前会被检查，之后由复核模型保留、改写或撤回。</p>
+        <p>助理记住的事实、约定、偏好和经验；更正时旧版本留着。</p>
       </div>
       <span class="spacer" />
       <UiSegmented v-model="tab" aria-label="视图" :options="[{ value: 'list', label: '记忆' }, { value: 'recall', label: '召回' }, { value: 'quality', label: '质量' }, { value: 'gaps', label: '不足' }]" />

@@ -253,6 +253,39 @@ export const commandRuleSchema = z
   });
 export type CommandRule = z.infer<typeof commandRuleSchema>;
 
+const pattern = z.string().max(2000).refine(s => { try { new RegExp(s); return true; } catch { return false; } }, "无效的正则表达式");
+const names = z.array(z.string().min(1).max(200)).max(200);
+const jsonPattern = z.object({ jsonPath: z.string().max(500).regex(/^\$(?:\.[\w-]+|\[\d+\])*$/), regex: pattern }).strict();
+export const operationScopeSchema = z.object({ members: names.optional(), roles: names.optional(), spaces: names.optional(), backends: names.optional() }).strict();
+export const operationRuleSchema = z.object({
+  id: z.string().min(1).max(200), revision: z.number().int().positive(), enabled: z.boolean(), title: z.string().max(1000).optional(),
+  scope: operationScopeSchema.optional(),
+  match: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("command"), executable: z.string().max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/), subcommand: names.optional(),
+      argv: z.array(z.object({ index: z.number().int().nonnegative(), regex: pattern })).max(100).optional(), argsRegex: pattern.optional() }).strict(),
+    z.object({ kind: z.literal("http"), methods: names.optional(), host: z.string().max(255).regex(/^(?:\*\.)?[a-zA-Z0-9.-]+$/), pathRegex: pattern.optional(), body: jsonPattern.optional() }).strict(),
+    z.object({ kind: z.literal("file"), operations: z.array(z.enum(["read","write","delete","rename"])).min(1), pathRegex: pattern }).strict(),
+    z.object({ kind: z.literal("tool"), server: z.string().optional(), name: z.string().min(1), args: z.array(jsonPattern).max(100).optional() }).strict(),
+  ]),
+  action: z.enum(["allow","deny","approve","log"]),
+  approval: z.object({ approver: z.string().regex(/^(owner|run|user:.+|lark:.+)$/).optional(), waitSeconds: z.number().int().min(1).max(300).optional(),
+    expiresSeconds: z.number().int().min(1).max(604800).optional(), approvers: names.optional(), reuse: z.enum(["once","window"]).optional() }).optional(),
+  pack: z.object({ name: z.string(), version: z.string(), ruleId: z.string() }).optional(),
+});
+export type OperationRule = z.infer<typeof operationRuleSchema>;
+export const operationRulesSchema = z.array(operationRuleSchema).max(200).refine(rs => new Set(rs.map(r => r.id)).size === rs.length, "规则 id 重复");
+export function migrateCommands(rules: CommandRule[]): OperationRule[] {
+  return rules.map((r, i) => ({ id: `command-${i+1}`, revision: 1, enabled: true, title: r.note,
+    match: { kind: "command", executable: r.command, argsRegex: r.args }, action: r.action,
+    approval: { approver: r.approver, approvers: r.approvers, waitSeconds: r.waitSeconds, expiresSeconds: Math.round(r.expireHours*3600), reuse: r.reuse } }));
+}
+export function legacyCommand(r: OperationRule): CommandRule | undefined {
+  const m = r.match;
+  if (m.kind !== "command" || !r.enabled || r.scope || r.pack || m.argv || m.subcommand || r.action === "log" || (r.approval?.waitSeconds ?? 90)<5 || (r.approval?.expiresSeconds ?? 86400)<360) return;
+  return { command: m.executable, args: m.argsRegex ?? "", action: r.action, note: r.title ?? "", approver: r.approval?.approver ?? "owner",
+    approvers: r.approval?.approvers ?? [], waitSeconds: r.approval?.waitSeconds ?? 90, expireHours: (r.approval?.expiresSeconds ?? 86400)/3600, reuse: r.approval?.reuse ?? "once" };
+}
+
 export const capturePolicy = z.enum(["ingest", "involved", "store", "skip"]);
 export type CapturePolicy = z.infer<typeof capturePolicy>;
 
@@ -535,7 +568,10 @@ export const configSchema = z.object({
    * Commands an agent's processes may not run unchecked (docs/v2/command-gate.md): a wrapper of the
    * same name in front of PATH asks omem first. Only the owner changes this (PUT /api/security/command-rules).
    */
-  security: z.object({ commandRules: z.array(commandRuleSchema).max(200).default([]) }).default({ commandRules: [] }),
+  security: z.object({ operationRules: operationRulesSchema.optional(), commandRules: z.array(commandRuleSchema).max(200).optional() }).default({}).transform(s => {
+    const operationRules = s.operationRules ?? migrateCommands(s.commandRules ?? []);
+    return { operationRules, commandRules: operationRules.flatMap(r => legacyCommand(r) ?? []) };
+  }),
   /** Web VS Code under /ide: the official `code serve-web` behind omem's own auth (src/server/ide-web.ts). */
   ide: z
     .object({
@@ -1406,7 +1442,8 @@ export function saveConfig(config: Config, home = omemHome()) {
     if (r.success) parsed = r.data;
     else merged = config;
   }
-  writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
+  const persisted = { ...(merged as Config), security: { operationRules: (parsed ?? config).security.operationRules } };
+  writeFileSync(path, JSON.stringify(persisted, null, 2) + "\n");
   if (parsed) {
     if (process.env.OMEM_PORT) parsed.port = Number(process.env.OMEM_PORT);
     // Only the sections the file changed are replaced: others keep their objects (some are held by reference).

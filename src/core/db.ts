@@ -42,6 +42,29 @@ export const METRIC_ORIGIN_MIGRATION = `alter table metrics add column why text 
    update metrics set defined_by = 'omem', confirmed_at = created_at where source = 'omem';
    update metrics set status = 'proposed' where source != 'omem' and status = 'active';`;
 
+const MEMBER_CAPABILITIES_MIGRATION = `create table member_capability_overrides (
+    user_id text not null references users(id), capability text not null,
+    scope_kind text not null check(scope_kind in ('global','space')), scope_id text not null,
+    effect text not null check(effect in ('allow','deny')), created_at text not null, created_by text not null,
+    updated_at text not null default '', revoked integer not null default 0,
+    primary key(user_id,capability,scope_kind,scope_id)
+  );
+  create index members_by_user on space_members(user_id,space_id);
+  create index rules_by_space on rules(space_id,created_at);
+  -- Preserve an existing custom role when reserving the built-in observer id.
+  create temp table former_observer as
+    with recursive ids(id) as (select 'observer-custom' union all select id || '-old' from ids where id in (select id from roles))
+    select id, (select scope from roles where id='observer') scope from ids
+    where id not in (select id from roles) and exists(select 1 from roles where id='observer');
+  update users set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='global');
+  update invites set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='global');
+  update space_members set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='space');
+  update invites set spaces=(select json_group_array(json(case when json_extract(value,'$.role')='observer'
+    then json_set(value,'$.role',(select id from former_observer)) else value end)) from json_each(invites.spaces))
+    where exists(select 1 from former_observer where scope='space') and exists(select 1 from json_each(invites.spaces) where json_extract(value,'$.role')='observer');
+  update roles set id=(select id from former_observer) where id='observer';
+  drop table former_observer;`;
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2271,28 +2294,12 @@ export const migrations: readonly string[] = [
    alter table session_cleanup add column failure_reason text;`,
   FILE_REFS_MIGRATION,
   FILE_REF_TOMBSTONES_MIGRATION,
-  `create table member_capability_overrides (
-    user_id text not null references users(id), capability text not null,
-    scope_kind text not null check(scope_kind in ('global','space')), scope_id text not null,
-    effect text not null check(effect in ('allow','deny')), created_at text not null, created_by text not null,
-    updated_at text not null default '', revoked integer not null default 0,
-    primary key(user_id,capability,scope_kind,scope_id)
-  );
-  create index members_by_user on space_members(user_id,space_id);
-  create index rules_by_space on rules(space_id,created_at);
-  -- Preserve an existing custom role when reserving the built-in observer id.
-  create temp table former_observer as
-    with recursive ids(id) as (select 'observer-custom' union all select id || '-old' from ids where id in (select id from roles))
-    select id, (select scope from roles where id='observer') scope from ids
-    where id not in (select id from roles) and exists(select 1 from roles where id='observer');
-  update users set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='global');
-  update invites set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='global');
-  update space_members set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='space');
-  update invites set spaces=(select json_group_array(json(case when json_extract(value,'$.role')='observer'
-    then json_set(value,'$.role',(select id from former_observer)) else value end)) from json_each(invites.spaces))
-    where exists(select 1 from former_observer where scope='space') and exists(select 1 from json_each(invites.spaces) where json_extract(value,'$.role')='observer');
-  update roles set id=(select id from former_observer) where id='observer';
-  drop table former_observer;`,
+  // The feature branch used the asks_deferred migration number for its operation indexes.
+  `create index if not exists asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;
+   create index if not exists asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
+   create index if not exists asks_operation_run on asks(json_extract(context,'$.runKey'),status);
+   create index if not exists asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
+  MEMBER_CAPABILITIES_MIGRATION,
 ];
 
 export type Db = DatabaseSync;
@@ -2304,7 +2311,11 @@ export function openDb(path: string): Db {
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");
     try {
-      db.exec(migrations[i]);
+      // Both branches used the preceding version: main added approval indexes, while
+      // the capabilities branch added this table and migrated custom observer roles.
+      const fromCapabilitiesBranch = i === version && migrations[i] === MEMBER_CAPABILITIES_MIGRATION
+        && db.prepare("select 1 from sqlite_schema where type='table' and name='member_capability_overrides'").get();
+      db.exec(fromCapabilitiesBranch ? migrations[i - 1] : migrations[i]);
       db.exec(`pragma user_version = ${i + 1}`);
       db.exec("commit");
     } catch (error) {

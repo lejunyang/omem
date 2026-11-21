@@ -1,5 +1,6 @@
 import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigOption } from "@agentclientprotocol/sdk";
 import { Readable } from "node:stream";
+import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
@@ -54,6 +55,8 @@ export function modelNotes(option: SessionConfigOption | undefined, available?: 
 }
 
 export type AcpOpenOptions = {
+  app?: App;
+  runId?: string | null;
   signal?: AbortSignal;
   cwd: string;
   cleanup?: SessionCleanup;
@@ -101,7 +104,9 @@ export type AcpHandle = {
 
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
   if (opts.signal?.aborted) throw new Error("CANCELLED");
-  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env }, sandbox: accountOf(profile) });
+  const env = { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env };
+  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env, sandbox: accountOf(profile) });
+  const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => {
@@ -174,13 +179,14 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     () => ({
       async requestPermission(request) {
         touch();
-        const kind = request.toolCall.kind ?? "other";
-        const allowed = opts.allowWrites || opts.fullAccess || !["edit", "delete", "move"].includes(kind);
-        // An omem tool is checked by omem on every call: allow it for the session so it is not asked again.
-        const mcpSession = allowed && request.toolCall.title === "MCP tool call approval" ? request.options.find((o) => o.optionId === "allow_session") : undefined;
-        const option = mcpSession ?? request.options.find((o) => o.kind === (allowed ? "allow_once" : "reject_once")) ?? request.options.find((o) => o.kind.startsWith(allowed ? "allow" : "reject"));
-        emit({ type: "status", text: `${allowed ? "允许" : "拒绝"}操作：${request.toolCall.title ?? kind}` });
-        return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
+        const { acpPermission } = await import("./acp-permission.ts");
+        const { optionId, message } = await acpPermission(request, {
+          app: opts.app, token: opts.mcp?.token, runId: opts.runId, backend: profile.id, cwd: opts.cwd,
+          guardedDir: guardedToken ? env.OMEM_COMMAND_GATE : undefined,
+          writable: !!(opts.allowWrites || opts.fullAccess),
+        });
+        emit({ type: "status", text: message });
+        return optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } };
       },
       async sessionUpdate({ sessionId: updatedSession, update }) {
         if (sessionId && updatedSession !== sessionId) return;
@@ -547,11 +553,13 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
           if (signal?.reason instanceof NetworkUnavailableError) close();
         };
         signal?.addEventListener("abort", onAbort, { once: true });
+        const endCommandTurn = guardedToken ? (await import("./tools.ts")).beginCommandTurn(guardedToken) : undefined;
         try {
           const result = await Promise.race([connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] }), failed]).catch((e) => { throw promptError(e); });
           if (signal?.aborted) throw new Error("CANCELLED");
           return { text, reply: replyFromSegments(segments), stopReason: result.stopReason, sessionId, agent: agentName, contextUsage };
         } finally {
+          endCommandTurn?.();
           idleW.close();
           (queueW as ReturnType<typeof idleWatchdog> | null)?.close();
           promptQueue = null;
@@ -645,8 +653,8 @@ export async function cleanupAcpSession(profile: AgentProfile, sessionId: string
 }
 
 /** One prompt turn against an ACP agent (Codex/TraeX/Claude Code adapters…). */
-export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
-  const handle = await openAcp(profile, { signal: req.signal, cwd: req.cwd, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
+export async function runAcp(profile: AgentProfile, req: AgentRequest & { app?: App }, emit: (e: AgentEvent) => void): Promise<AgentResult> {
+  const handle = await openAcp(profile, { app: req.app, runId: req.runId, signal: req.signal, cwd: req.cwd, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");

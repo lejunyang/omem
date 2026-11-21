@@ -4,6 +4,7 @@ import { get, post } from "../api";
 import { relTime, toast } from "../store";
 import Skeleton from "./Skeleton.vue";
 import { plainLine } from "../lib/markdown";
+import RichText from "./RichText.vue";
 
 /**
  * Nightly replays and their verdicts (src/agents/replay.ts): each past question answered again as of
@@ -37,13 +38,23 @@ async function decide(e: Effect, action: "adopt" | "ignore") {
     toast((err as Error).message, "error");
   }
 }
+/** What an effect is about, as a reference the citation drawer opens (no bare ids), then its note. */
+function effectText(e: Effect) {
+  if (!e.targetId) return e.note;
+  const what = e.targetKind === "source" ? `[原件](src:${e.targetId})` : e.targetKind === "memory" ? `[记忆](mem:${e.targetId})` : e.targetKind === "skill" ? `技能 \`${e.targetId}\`` : "";
+  return what ? `${what} ${e.note}` : e.note;
+}
+/** The latest few; the rest behind 再看. */
+const SHOWN = 6;
+const all = ref(false);
 const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v === "failed" ? "warn" : "");
 </script>
 
 <template>
   <section class="rp">
     <div class="rp-head">
-      <h3>夜间复盘 <span class="muted small">{{ status?.enabled ? "每晚运行" : "定时已关" }}</span></h3>
+      <h3>夜间复盘</h3>
+      <span class="muted small">{{ status?.enabled ? "每晚运行" : "定时已关" }}</span>
       <span class="spacer" />
       <RouterLink class="small" :to="{ path: '/settings', query: { tab: 'agents' } }">设置</RouterLink>
     </div>
@@ -52,7 +63,7 @@ const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v 
     <template v-else-if="list">
       <p v-if="status?.notice" class="warn small">{{ status.notice }} <RouterLink :to="{ path: '/agents', query: { tab: 'agents', role: 'replay-judge' } }">打开 replay-judge</RouterLink></p>
       <p v-if="!list.length" class="muted small">还没有复盘。打开设置 → 自检与复盘 → 夜间复盘的定时，或点“立即运行”。</p>
-      <div v-for="r in list" :key="r.id" class="rp-row">
+      <div v-for="r in all ? list : list.slice(0, SHOWN)" :key="r.id" class="rp-row">
         <div class="rp-line">
           <span class="badge" :class="badge(r.verdict)">{{ r.verdictLabel }}</span>
           <span class="q" :title="plainLine(r.question, 400)">{{ plainLine(r.question, 140) }}</span>
@@ -61,10 +72,10 @@ const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v 
           {{ relTime(r.at) }} · {{ SIGNAL[r.signal] ?? r.signal }} → <span class="mono">{{ r.axis }}</span> {{ r.axisLabel }}<template v-if="r.taskType"> · {{ r.taskType }}</template><template v-if="r.by === 'checks'"> · 由引用检查判定</template><template v-else-if="r.agree === false"> · 两种顺序不一致</template>
           <template v-if="r.runId"> · <RouterLink :to="`/runs/${r.runId}`">运行</RouterLink></template>
         </div>
-        <p v-if="r.reason" class="small reason">{{ r.reason }}</p>
-        <p v-for="(c, i) in [...r.checks.baseline.map((x) => `基线：${x}`), ...r.checks.variant.map((x) => `变体：${x}`)]" :key="i" class="muted small reason">{{ c }}</p>
+        <RichText v-if="r.reason" tag="p" class="small reason" :text="r.reason" :run-id="r.runId ?? undefined" :lines="2" />
+        <RichText v-for="(c, i) in [...r.checks.baseline.map((x) => `基线：${x}`), ...r.checks.variant.map((x) => `变体：${x}`)]" :key="i" tag="p" class="muted small reason" :text="c" :lines="1" />
         <div v-for="e in r.effects" :key="e.id" class="effect small">
-          <span class="grow"><span v-if="e.targetId" class="mono">{{ e.targetId }}</span> {{ e.note }}</span>
+          <span class="grow"><RichText :text="effectText(e)" :lines="2" /></span>
           <template v-if="e.status === 'pending'">
             <button class="btn sm" @click="decide(e, 'adopt')">采纳</button>
             <button class="btn ghost sm" @click="decide(e, 'ignore')">忽略</button>
@@ -72,6 +83,7 @@ const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v 
           <span v-else class="muted">{{ { adopted: "已采纳", ignored: "已忽略", applied: "已自动处理", info: "供参考" }[e.status] ?? e.status }}</span>
         </div>
       </div>
+      <button v-if="list.length > SHOWN" type="button" class="btn ghost sm more" @click="all = !all">{{ all ? "收起" : `再看 ${list.length - SHOWN} 条` }}</button>
     </template>
   </section>
 </template>
@@ -98,7 +110,8 @@ const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v 
 }
 .rp-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 650;
 }
 .warn {
   color: var(--warn);
@@ -119,6 +132,17 @@ const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v 
 .q {
   min-width: 0;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.rp-line .badge {
+  flex: none;
+}
+.more {
+  justify-self: start;
 }
 .reason {
   overflow-wrap: anywhere;

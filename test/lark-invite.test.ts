@@ -127,6 +127,22 @@ describe("lark_invite: people and bots into the owner's groups, as the owner", (
     expect((await resolveInvites(app, [{ chat_id: "oc_a", bots: ["cli_daily"] }]))[0].bots[0].name).toBe("日报助手");
   });
 
+  it("checks the submitted names against the policy and the resolved people against the invite approval", async () => {
+    const app = setup();
+    const cli = fakeCli();
+    const ctx = turn(app, { ownerAsked: true });
+    app.config.security.operationRules = [{ id: "invite", revision: 1, enabled: true, action: "approve",
+      match: { kind: "tool", name: "lark_invite", args: [{ jsonPath: "$.invites[0].people[0]", regex: "^小王$" }] } }];
+    await callTool(ctx, "lark_invite", { invites: [{ chat_id: "oc_a", people: ["小王"] }], reason: "联调" });
+    const [rule] = listAsks(app);
+    await answerAsk(app, rule.id, { approved: true, by: "owner" });
+    expect(cli.creates()).toHaveLength(0);
+    const [invite] = listAsks(app, { status: "pending" });
+    expect(invite.question).toContain("wang@example.com");
+    expect((await answerAsk(app, invite.id, { approved: true, by: "owner" })).result).toContain("已用本人身份");
+    expect(cli.creates()).toHaveLength(1);
+  });
+
   it("asks the owner once for people, runs the approved list in batches, and reports each group", async () => {
     const app = setup();
     const cli = fakeCli();

@@ -516,7 +516,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
       <div v-if="empty" class="empty">
         <Icon name="layers" :size="34" />
         <h3>{{ tab === "agents" ? "Agent 档案" : "技能" }}</h3>
-        <p v-if="tab === 'agents'">专门做某类事的 Agent：用途、提示词、后端与模型、可用工具、技能、工作目录。内置角色是 omem 自己调用的（独立评审、编码、整理…），也可以自定义。它们都会随使用积累专属记忆，复盘后提出改进建议。</p>
+        <p v-if="tab === 'agents'">专门做某类事的 Agent：用途、提示词、后端与模型、工具和技能。内置角色是 omem 自己调用的，也可以自定义。</p>
         <p v-else>可复用的做法（SKILL.md）。挂到档案上，它做对应的事之前会先读全文照做。草稿启用后才会出现在目录里。</p>
         <button class="btn" @click="go({ tab, new: '1' })"><Icon name="plus" :size="14" />{{ tab === "agents" ? "新建 Agent 档案" : "新建技能" }}</button>
         <FeedbackStats v-if="tab === 'agents'" class="feedback" />

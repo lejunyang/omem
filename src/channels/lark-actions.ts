@@ -177,9 +177,10 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
   if (inter.purpose === "command-gate") {
     // A command held by the command rules, waiting for its approver (agents/command-gate.ts).
     const { decideCommandCard } = await import("../agents/command-gate.ts");
-    const approve = (value as { action?: string } | undefined)?.action === "approve";
+    const act = String(value?.action ?? "");
+    const approve = ["approve","run","always"].includes(act);
     try {
-      const card = await decideCommandCard(app, inter.payload as { askId?: string }, approve, operatorUser() ?? opName);
+      const card = await decideCommandCard(app, inter.payload as { askId?: string }, approve, operatorUser() ?? `lark:${operator}`, approve ? ["approve","run","always"].indexOf(act) : undefined);
       closeInteraction(app, inter.id, operator);
       return { toast: { type: "success", content: approve ? "已批准" : "已拒绝" }, card: rawCard(buildCard(card as never)) };
     } catch (e) {
