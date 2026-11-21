@@ -32,6 +32,7 @@ export type ProgressTask = {
 export type ProgressView = {
   kind: "board" | "code" | "review" | "flow" | "study"; id: string; title: string; runId?: string; itemId?: string;
   state: "running" | "waiting" | "done" | "failed" | "cancelled"; waitingOn?: string; tasks: ProgressTask[]; usage: Usage;
+  rounds?: { runId: string; round?: number; status: string }[];
   previousRounds?: { round: number; directions: number; trials: number; usage: Usage }[];
 };
 
@@ -44,7 +45,7 @@ function task(graph: Forest, ids: (string | null | undefined)[], data: Omit<Prog
 }
 function view(graph: Forest, data: Pick<ProgressView, "kind" | "id" | "title" | "tasks" | "itemId" | "runId">, state?: ProgressView["state"]): ProgressView {
   const tasks = data.tasks;
-  const waitingOn = tasks.map(t => t.waitingOn).filter(Boolean).join("；") || undefined;
+  const waitingOn = [...new Set(tasks.map(t => t.waitingOn).filter(Boolean))].join("；") || undefined;
   const active = tasks.some(t => ["running", "pending", "queued", "redo"].includes(t.state));
   state ??= waitingOn ? "waiting" : active ? "running" : tasks.some(t => t.state === "failed") ? "failed"
     : tasks.some(t => t.state === "blocked" || t.state === "submitted") ? "waiting" : tasks.every(t => t.state === "cancelled") ? "cancelled" : "done";
@@ -97,11 +98,25 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
     const waitingOn = waits[t.state];
     return task(graph, ids, { id: `T${t.seq}`, title: t.title, accept: t.doneWhen, state: states.code[t.state], outputs, waitingOn });
   });
-  if (tasks.length) {
-    const last = [...graph.nodes.values()].filter(r => r.id === node.id || r.first === node.id).at(-1)!;
-    const terminal = last.status === "failed" || last.status === "cancelled" ? last.status : undefined;
-    return view(graph, { kind: "code", id: node.id, runId: node.id, itemId, title: node.title, tasks }, terminal);
+  const rounds = [...graph.nodes.values()].filter(r => r.id === node.id || r.first === node.id);
+  const last = rounds.at(-1)!;
+  const terminal = last.discarded || node.discarded ? "cancelled" : last.applied || node.applied ? "done"
+    : last.status === "failed" || last.status === "cancelled" ? last.status : undefined;
+  const block = view(graph, { kind: "code", id: node.id, runId: node.id, itemId, title: node.title, tasks }, terminal);
+  block.rounds = rounds.map(r => ({ runId: r.id, status: r.status, round: r.round ?? undefined }));
+  // Older delegations only recorded rounds. They still have a real run and usage history.
+  if (!tasks.length) {
+    block.usage = graph.usage(rounds.map(r => r.id));
+    block.state = terminal ?? (last.status === "done" ? "done" : "running");
   }
+  const waits: Record<string, string> = {
+    approved: "等本人确认交付", "awaiting-plan": "等本人确认评审计划", "awaiting-assistant": "等发起助手处理",
+    "changes-requested": "等决定要改的问题", "awaiting-peer-code": "等外部编码", "awaiting-peer": "等外部评审"
+  };
+  const waiting = node.paused ? "等本人确认继续" : waits[last.verdict ?? ""];
+  if (!terminal && waiting) { block.waitingOn = waiting; block.state = "waiting"; }
+  if (!terminal && last.status === "queued") { block.waitingOn = "排队"; block.state = "waiting"; }
+  return block;
 }
 
 function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
@@ -121,8 +136,10 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
       return rows;
     });
     const latest = attempts.at(-1);
-    const state = result ? states.review[result.verdict as keyof typeof states.review] : latest?.status === "failed" ? "failed" : latest?.status === "cancelled" ? "cancelled"
-      : node.reviewStage === "checks" ? "running" : latest?.status === "queued" ? "queued" : "pending";
+    const executing = latest && ["running", "queued"].includes(latest.status);
+    let state: TaskStatus = result ? states.review[result.verdict as keyof typeof states.review] : "pending";
+    if (latest && (executing || latest.status === "failed" || latest.status === "cancelled")) state = latest.status as TaskStatus;
+    else if (!result && node.reviewStage === "checks") state = "running";
     return task(graph, ids, {
       id: name, title: name, state,
       who: result?.profile_id || result?.model ? { agent: result.profile_id ?? undefined, model: result.model ?? undefined, effort: result.effort ?? undefined } : undefined,
@@ -132,7 +149,7 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
     });
   });
   if (tasks.length) return view(graph, { kind: "review", id: node.id, runId: node.id, itemId, title: node.title + " · 评审", tasks },
-    node.reviewStage === "done" && !tasks.some(t => t.state === "failed") ? "done" : undefined);
+    node.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined);
 }
 
 function flowViews(app: App, graph: Forest, id: string, title: string, history: boolean) {
@@ -210,7 +227,7 @@ function workViews(app: App, graph: Forest, linkedItem?: string) {
   const ids = JSON.stringify([...graph.nodes.keys()]);
   const candidates = all<{ id: string; board: number; code: number; review: number }>(app.db, `select r.id,
     exists(select 1 from agent_work_tasks where work_id=r.id) board,
-    exists(select 1 from code_tasks where work_id=r.id) code,
+    (r.kind='code' and json_extract(input,'$.continueFrom') is null and json_extract(input,'$.branches') is null or exists(select 1 from code_tasks where work_id=r.id)) code,
     (json_extract(output,'$.reviewPlan.checks') is not null or exists(select 1 from reviews where code_run_id=r.id)) review
     from runs r where r.id in (select value from json_each(?)) and (board or code or review) order by created_at desc`, ids);
   const views: ProgressView[] = [];
@@ -252,8 +269,8 @@ export function runProgress(app: App, id: string, reader: Reader, history = fals
 
 function itemForest(app: App, item: string, reader: Reader) {
   const refs = all<{ id: string }>(app.db, `select id from runs where json_extract(input,'$.itemId')=?
-    union select id from runs where json_extract(output,'$.turnContext.item.id')=? and json_extract(output,'$.agentWork.askRunId')=id
-    union select r.id from conversations c join runs r on json_extract(r.output,'$.agentWork.workConversationId')=c.id
+    union select id from runs indexed by progress_board_item where json_extract(output,'$.turnContext.item.id')=? and json_extract(output,'$.agentWork.askRunId')=id
+    union select r.id from conversations c indexed by progress_thread_item cross join runs r indexed by runs_work_conversation on json_extract(r.output,'$.agentWork.workConversationId')=+c.id
       where json_extract(c.settings,'$.itemId')=? and json_extract(r.output,'$.agentWork.askRunId')=r.id
     union select ref from item_materials where item_id=? and kind='run'
     union select run_id from study_trials where item_id=? and run_id is not null

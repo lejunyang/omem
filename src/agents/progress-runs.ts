@@ -29,6 +29,7 @@ export type Node = {
   id: string; parent: string | null; kind: string; title: string; status: Run["status"]; ai: string | null;
   created: string; started: string | null; ended: string | null; item: string | null; first: string | null;
   helper: string | null; assigned: string | null; branches: string | null; plan: string | null; reviewStage: string | null;
+  verdict: string | null; applied: string | null; discarded: string | null; paused: string | null;
   onlyChecks: string | null; splitOnly: number | null; stage: string | null; trial: string | null; flowStart: string | null; round: number | null;
 };
 const bound = 4096;
@@ -43,18 +44,23 @@ export function rootRun(app: App, id: string, reader: Reader) {
 }
 
 /** One bounded, permission-filtered forest per request. Descendants beyond an unreadable run stay private. */
+// Keep each recursive edge as an indexed lookup. Unary + removes the CTE column's TEXT
+// affinity so SQLite can seek the JSON expression index; CROSS JOIN keeps the tree outermost.
 export function runForest(app: App, seeds: string[], reader: Reader) {
   const v = visibleRuns(app, reader);
   const rows = all<Node>(app.db, `with recursive tree(id) as (
     select r.id from runs r where r.id in (select value from json_each(?)) and ${v.sql}
-    union select r.id from tree join runs r on r.parent_id=tree.id or json_extract(r.input,'$.continueFrom')=tree.id where ${v.sql} limit ${bound + 1})
+    union select r.id from tree cross join runs r indexed by runs_parent on r.parent_id=tree.id where ${v.sql}
+    union select r.id from tree cross join runs r indexed by runs_continue_from on json_extract(r.input,'$.continueFrom')=+tree.id
+      where ${v.sql} limit ${bound + 1})
     select r.id,r.parent_id parent,r.kind,r.title,r.status,r.ai,r.created_at created,r.started_at started,r.finished_at ended,
     coalesce(json_extract(input,'$.itemId'),json_extract(output,'$.turnContext.item.id')) item,
     json_extract(input,'$.continueFrom') first,json_extract(input,'$.helperOf') helper,json_extract(input,'$.tasks') assigned,
     json_extract(output,'$.worktrees') branches,json_extract(output,'$.reviewPlan.checks') plan,json_extract(output,'$.reviewStage') reviewStage,
-    json_extract(input,'$.only') onlyChecks,json_extract(input,'$.splitOnly') splitOnly,json_extract(input,'$.stageId') stage,json_extract(input,'$.trialId') trial,
+    json_extract(output,'$.verdict') verdict,json_extract(output,'$.appliedAt') applied,json_extract(output,'$.discardedAt') discarded,
+    json_extract(output,'$.work.paused') paused,json_extract(input,'$.only') onlyChecks,json_extract(input,'$.splitOnly') splitOnly,json_extract(input,'$.stageId') stage,json_extract(input,'$.trialId') trial,
     json_extract(input,'$.flowStartedAt') flowStart,json_extract(input,'$.round') round
-    from tree join runs r on r.id=tree.id order by created,r.id`, JSON.stringify(seeds), ...v.params, ...v.params);
+    from tree cross join runs r on r.id=tree.id order by created,r.id`, JSON.stringify(seeds), ...v.params, ...v.params, ...v.params);
   if (rows.length > bound) throw new HttpError(413, "关联运行超过单次进度查询上限");
   // Only explicit split token totals count. A later context-window snapshot has no billing fields.
   const totals = all<{ run_id: string; input: number; output: number; cached: number | null }>(app.db, `select e.run_id,

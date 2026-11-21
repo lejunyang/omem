@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { testApp } from "./helpers.ts";
 import { run } from "../src/core/db.ts";
@@ -76,6 +76,21 @@ describe("进度投影", () => {
     expect(study.previousRounds).toMatchObject([{ round: 1, directions: 1, trials: 0 }]);
     expect(itemProgress(app, item.id, owner, true).find(v => v.kind === "study")?.tasks.some(t => t.round === 1)).toBe(true);
     expect(runProgress(app, "a", owner).map(v => v.kind)).toEqual(["flow", "study"]);
+  });
+  it("从事项找关联运行时按索引查子运行、续轮和用量", () => {
+    const { app, item, add } = fixture();
+    add("code", "code", null, { itemId: item.id });
+    const prepare = vi.spyOn(app.db, "prepare");
+    const [code] = itemProgress(app, item.id, owner);
+    const queries = prepare.mock.calls.map(([sql]) => sql);
+    prepare.mockRestore();
+    expect(code.rounds).toMatchObject([{ runId: "code" }]);
+    const plans = queries.filter(q => q.includes("with recursive tree") || q.includes("progress_board_item") || q.includes("progress_tokens"))
+      .flatMap(q => app.db.prepare("explain query plan " + q).all(...Array((q.match(/\?/g) ?? []).length).fill("[]")))
+      .map(row => row.detail as string);
+    expect(plans.filter(s => /^SCAN (r|runs|e|run_events)\b/.test(s))).toEqual([]);
+    for (const index of ["runs_parent", "runs_continue_from", "progress_tokens", "progress_board_item"])
+      expect(plans.some(s => s.startsWith("SEARCH") && s.includes(index))).toBe(true);
   });
   it("固定来源状态映射", () => {
     expect(states).toMatchInlineSnapshot(`
