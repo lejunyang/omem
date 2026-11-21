@@ -119,6 +119,17 @@ describe("进度投影", () => {
     expect(study.previousRounds).toMatchObject([{ round: 1, directions: 1, trials: 0 }]);
     expect(itemProgress(app, item.id, owner, true).find(v => v.kind === "study")?.tasks.some(t => t.round === 1)).toBe(true);
     expect(runProgress(app, "a", owner).map(v => v.kind)).toEqual(["flow", "study"]);
+    run(app.db, "update study_trials set result='failed',state='reported' where id=?", trial);
+    run(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,created_at,updated_at) values('finding',?,'defect','缺行','核对',?,'confirmed',?,?)",
+      item.id, JSON.stringify([trial]), at, at);
+    run(app.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",state,fix_of,created_at,updated_at)
+      values('rerun',?,?,2,2,'表格','行数','queued','finding',?,?)`, item.id, d.id, at, at);
+    const rerun = () => itemProgress(app, item.id, { ...owner, spaces: ["personal"] })
+      .find(v => v.kind === "study")!.tasks.find(t => t.id === "rerun");
+    expect(rerun()?.needs).toEqual([trial]);
+    add("private", "study-trial", null, {}, {}, ["other"]);
+    run(app.db, "update study_trials set run_id='private' where id=?", trial);
+    expect(rerun()?.needs).toBeUndefined();
   });
   it("事项只挂续轮时归入可见根交办，隐藏续轮不能引出根运行", async () => {
     const { app, item, add } = fixture();

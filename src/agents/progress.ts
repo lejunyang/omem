@@ -191,12 +191,19 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
   const ts = all<Trial>(app.db, "select * from study_trials where item_id=?" + roundFilter + " order by round,direction_id,seq", ...params)
     .filter(t => graph.sees(t.run_id));
   const byTrial = new Map<string, Output[]>();
-  const trialIds = new Set(ts.map(t => t.id));
-  for (const finding of findings(app, id)) for (const ref of JSON.parse(finding.trials) as string[]) {
-    if (!trialIds.has(ref)) continue;
-    const list = byTrial.get(ref) ?? [];
-    list.push({ kind: "finding", ref: finding.id, label: finding.title });
-    byTrial.set(ref, list);
+  const visibleTrials = new Map(ts.map(t => [t.id, t]));
+  const sourceTrials = new Map<string, Trial[]>();
+  for (const finding of findings(app, id)) {
+    const sources: Trial[] = [];
+    for (const ref of JSON.parse(finding.trials) as string[]) {
+      const trial = visibleTrials.get(ref);
+      if (!trial) continue;
+      sources.push(trial);
+      const list = byTrial.get(ref) ?? [];
+      list.push({ kind: "finding", ref: finding.id, label: finding.title });
+      byTrial.set(ref, list);
+    }
+    sourceTrials.set(finding.id, sources);
   }
 
   const studyTasks: ProgressTask[] = [];
@@ -213,8 +220,11 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
     const outputs: Output[] = evidence.map(ref => ({ kind: "evidence", ref, label: ref }));
     outputs.push(...byTrial.get(t.id) ?? []);
     if (t.result) outputs.push({ kind: "report", ref: t.id, label: t.result + " · " + t.summary });
+    // A rerun copies the failed trial's direction, object and check. fix_of identifies the finding.
+    const originals = t.fix_of && sourceTrials.get(t.fix_of)?.filter(o =>
+      o.result === "failed" && o.id !== t.id && o.direction_id === t.direction_id && o.object === t.object && o.check === t.check);
     const row = task(graph, ids, {
-      id: t.id, title: t.object, accept: t.check, parentId: t.direction_id, needs: t.fix_of ? [t.fix_of] : undefined,
+      id: t.id, title: t.object, accept: t.check, parentId: t.direction_id, needs: originals && originals.length === 1 ? [originals[0].id] : undefined,
       round: t.round, state: states.trial[t.state], outputs
     });
     if (t.peer_run && t.peer) row.who = { ...row.who, device: t.peer };
