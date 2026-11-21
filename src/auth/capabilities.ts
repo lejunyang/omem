@@ -47,10 +47,13 @@ export const legacyCapabilities: Record<string, Capability[]> = {
   "space.read": ["sources.view", "search.use", "wiki.view", "memories.view", "requirements.view", "designs.view", "flows.view", "metrics.view"],
   "source.write": ["sources.edit"],
   "memory.write": ["items.edit", "items.operate", "flows.operate"],
-  "agents.manage": ["rules.view", "rules.edit"],
+  "agents.manage": ["rules.view", "rules.edit", "settings.assistant.view", "settings.assistant.edit", "settings.ai.view", "settings.ai.edit"],
+  "settings.manage": ["settings.ai.view", "settings.ai.edit", "settings.channels.view", "settings.channels.edit",
+    "settings.knowledge.view", "settings.knowledge.edit", "settings.system.view", "settings.system.edit"],
   "code.delegate": ["code.work.view", "code.review.view"],
   "runs.read": ["runs.view"],
   "runs.read.all": ["runs.view", "runs.operate"],
+  "desktop.control": ["settings.channels.view"],
   "users.manage": ["settings.members"],
 };
 const personal: Capability[] = ["ask.send", "conversations.view", "notifications.view", "runs.operate"];
@@ -59,7 +62,8 @@ function presetGrants(role: string, permissions: string[], cap: Capability) {
   if (cap === "agents.view") return role !== "observer";
   if (cap === "settings.members" && role === "admin") return true;
   if (cap === "remote.view" || cap === "remote.operate") return false;
-  if (cap.startsWith("settings.") && cap !== "settings.members") return cap === "settings.members.view" && (role === "admin" || permissions.includes("users.manage"));
+  if (cap.startsWith("settings.") && cap !== "settings.members") return (cap === "settings.members.view" && (role === "admin" || permissions.includes("users.manage")))
+    || permissions.some(p => legacyCapabilities[p]?.includes(cap));
   if (role === "observer") return cap.endsWith(".view") || cap === "ask.send" || cap === "search.use";
   return personal.includes(cap) || permissions.some(p => legacyCapabilities[p.replace(/@\*$/, "")]?.includes(cap));
 }

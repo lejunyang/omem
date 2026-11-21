@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { deviceLabels } from "../core/peers.ts";
 import { all } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { runAudience } from "../auth/permissions.ts";
@@ -6,7 +7,7 @@ import { runPredicate } from "../auth/run-scope.ts";
 import type { Run } from "./runs.ts";
 
 export type Usage = { input: number; output: number; cached?: number; runs: number; missing: number };
-export type ProgressAttempt = { runId: string; status: Run["status"]; startedAt?: string; endedAt?: string; queuedMs: number; runMs?: number; usage: Usage; device?: string; deviceName?: string; mode?: "borrow" | "remote"; remoteRunId?: string; remoteUrl?: string; deadline?: string; lateAt?: string };
+export type ProgressAttempt = { runId: string; status: Run["status"]; startedAt?: string; endedAt?: string; queuedMs: number; runMs?: number; usage: Usage; local: boolean; device: string; deviceName?: string; mode?: "borrow" | "remote"; remoteRunId?: string; remoteUrl?: string; deadline?: string; lateAt?: string };
 export type Reader = { user: string; spaces?: string[] | null };
 
 export function visibleRuns(app: App, reader: Reader, alias = "r") {
@@ -31,7 +32,7 @@ export type Node = {
   created: string; started: string | null; ended: string | null; item: string | null; first: string | null;
   helper: string | null; assigned: string | null; branches: string | null; plan: string | null; reviewStage: string | null;
   verdict: string | null; applied: string | null; discarded: string | null; paused: string | null;
-  onlyChecks: string | null; splitOnly: number | null; stage: string | null; trial: string | null; flowStart: string | null; round: number | null;
+  peer: string | null; onlyChecks: string | null; splitOnly: number | null; stage: string | null; trial: string | null; flowStart: string | null; round: number | null;
 };
 const bound = 4096;
 export function rootRun(app: App, id: string, reader: Reader) {
@@ -60,7 +61,7 @@ export function runForest(app: App, seeds: string[], reader: Reader) {
     json_extract(output,'$.worktrees') branches,json_extract(output,'$.reviewPlan.checks') plan,json_extract(output,'$.reviewStage') reviewStage,
     json_extract(output,'$.verdict') verdict,json_extract(output,'$.appliedAt') applied,json_extract(output,'$.discardedAt') discarded,
     json_extract(output,'$.work.paused') paused,json_extract(input,'$.only') onlyChecks,json_extract(input,'$.splitOnly') splitOnly,json_extract(input,'$.stageId') stage,json_extract(input,'$.trialId') trial,
-    json_extract(input,'$.flowStartedAt') flowStart,json_extract(input,'$.round') round
+    json_extract(input,'$.peer.node') peer,json_extract(input,'$.flowStartedAt') flowStart,json_extract(input,'$.round') round
     from tree cross join runs r on r.id=tree.id order by created,r.id`, JSON.stringify(seeds), ...v.params, ...v.params, ...v.params);
   if (rows.length > bound) throw new HttpError(413, "关联运行超过单次进度查询上限");
   // Only explicit split token totals count. A later context-window snapshot has no billing fields.
@@ -69,14 +70,16 @@ export function runForest(app: App, seeds: string[], reader: Reader) {
     from json_each(?) ids join run_events e on e.run_id=ids.value
     and e.seq=(select max(seq) from run_events indexed by progress_tokens where run_id=ids.value and type='usage'
       and json_type(data,'$.input')='integer' and json_type(data,'$.output')='integer')`, JSON.stringify(rows.map(r => r.id)));
-  return new Forest(rows, new Map(totals.map(r => [r.run_id, r])));
+  return new Forest(rows, new Map(totals.map(r => [r.run_id, r])), deviceLabels(app));
 }
 
 export class Forest {
+  device: ReturnType<typeof deviceLabels>;
   nodes: Map<string, Node>;
   children = new Map<string, string[]>();
   totals: Map<string, { input: number; output: number; cached: number | null }>;
-  constructor(rows: Node[], totals: Forest["totals"]) {
+  constructor(rows: Node[], totals: Forest["totals"], device: Forest["device"]) {
+    this.device = device;
     this.totals = totals;
     this.nodes = new Map(rows.map(r => [r.id, r]));
     for (const r of rows) if (r.parent) {
@@ -86,7 +89,7 @@ export class Forest {
     }
   }
   sees(id?: string | null) { return !id || this.nodes.has(id); }
-  usage(ids: Iterable<string>, boundaries?: ReadonlySet<string>): Usage {
+  contributors(ids: Iterable<string>, boundaries?: ReadonlySet<string>) {
     const seen = new Set<string>(), queue = [...ids];
     while (queue.length) {
       const id = queue.pop()!;
@@ -94,6 +97,12 @@ export class Forest {
       seen.add(id);
       for (const child of this.children.get(id) ?? []) if (!boundaries?.has(child)) queue.push(child);
     }
+    return seen;
+  }
+  usage(ids: Iterable<string>, boundaries?: ReadonlySet<string>) {
+    return this.sum(this.contributors(ids, boundaries));
+  }
+  sum(seen: Set<string>): Usage {
     const sum: Usage = { input: 0, output: 0, runs: seen.size, missing: 0 };
     for (const id of seen) {
       const record = this.totals.get(id);
@@ -107,7 +116,7 @@ export class Forest {
   attempts(ids: (string | null | undefined)[], boundaries?: ReadonlySet<string>): ProgressAttempt[] {
     const rows = [...new Set(ids)].flatMap(id => id && this.nodes.has(id) ? [this.nodes.get(id)!] : []);
     return rows.sort((a, b) => a.created.localeCompare(b.created)).map(r => ({
-      runId: r.id, status: r.status, startedAt: r.started ?? undefined, endedAt: r.ended ?? undefined,
+      ...this.device(r.peer), runId: r.id, status: r.status, startedAt: r.started ?? undefined, endedAt: r.ended ?? undefined,
       queuedMs: Date.parse(r.started ?? r.ended ?? new Date().toISOString()) - Date.parse(r.created),
       runMs: r.started ? Date.parse(r.ended ?? new Date().toISOString()) - Date.parse(r.started) : undefined,
       usage: this.usage([r.id], boundaries),

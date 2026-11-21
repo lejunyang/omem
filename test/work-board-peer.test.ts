@@ -47,6 +47,18 @@ it("remote 起在对方，用对方的库、只读工具和目录；产物、用
   const progress = runProgress(f.here,f.id,{user:"owner"});
   expect(progress[0].tasks[0].attempts[0]).toMatchObject({device:"lab",mode:"remote",remoteRunId:id});
   expect(progress[0].usage).toMatchObject({input:100,output:20,cached:10});
+  const [peer] = listPeers(f.here);
+  savePeers(f.here, [{ ...peer, back: { name: "实验设备", token: "fixture", since: now() } }]);
+  expect(readBoard(f.here,f.id).tasks[0].attempts[0]).toMatchObject({ device: "lab", deviceName: "实验设备" });
+  const [board] = runProgress(f.here,f.id,{user:"owner"});
+  expect(board.tasks[0]).toMatchObject({
+    href: "#/runs/" + t.attempts[0].runId,
+    who: { local: false, device: "实验设备", mode: "remote" },
+    attempts: [{ local: false, device: "实验设备", remoteRunId: id }],
+  });
+  const redo = await callTool(f.ctx,"work_review",{work_id:f.id,decisions:[{task:t.id,decision:"redo",note:"补证据"}]});
+  expect(redo.isError,redo.text).toBe(false);
+  expect(readBoard(f.here,f.id).tasks[0].attempts[1]).toMatchObject({ device: "lab", mode: "remote" });
 },60000);
 it("remote 要写时两边授权且对方开启，工具层允许范围内记忆写入",async () => {
   const f = await setup(); f.there.config.node.acceptWork = "write";

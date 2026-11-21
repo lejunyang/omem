@@ -126,14 +126,18 @@ export function egressStatus(app: App) {
     hosts.push(item.hosts);
     groups.set(item.runId, hosts);
   }
-  const runs = [...groups].slice(0, 32).map(([runId, hosts]) => ({ runId, hosts: mergedHosts(hosts) }));
+  const pending = all<{ askId: string; runId: string | null; target: string; at: string }>(app.db, `select id as askId, run_id as runId,
+      json_extract(context,'$.command') as target,created_at as at from asks indexed by asks_egress_pending where status='pending'
+      and json_type(context,'$.egressFallback') is not null order by created_at desc limit 64`);
+  const ids = [...groups.keys(), ...pending.map(p => p.runId)];
+  const titles = new Map(all<{ id: string; title: string }>(app.db,
+    "select id,title from runs where id in (select value from json_each(?))", JSON.stringify(ids)).map(r => [r.id, r.title]));
+  const runs = [...groups].slice(0, 32).map(([runId, hosts]) => ({ runId, title: titles.get(runId ?? "") ?? null, hosts: mergedHosts(hosts) }));
   return {
     ...app.config.security.egress, support: egressSupport(), peer: "代跑的运行不经这台的代理",
     inspectionAvailable: app.config.security.egress.inspect.length ? commandExists("openssl") : null,
     rootGenerated: existsSync(join(app.home, "secrets", "egress-ca", "root.pem")), runs,
-    denied: runs.flatMap(r => r.hosts.filter(h => h.denied).map(h => ({ runId: r.runId, host: h.host, count: h.denied, at: h.lastDeniedAt ?? 0, reason: h.error }))).sort((a, b) => b.at - a.at).slice(0, 64),
-    pending: all<{ askId: string; runId: string | null; target: string; at: string }>(app.db, `select id as askId, run_id as runId,
-      json_extract(context,'$.command') as target,created_at as at from asks indexed by asks_egress_pending where status='pending'
-      and json_type(context,'$.egressFallback') is not null order by created_at desc limit 64`)
+    denied: runs.flatMap(r => r.hosts.filter(h => h.denied).map(h => ({ runId: r.runId, title: r.title, host: h.host, count: h.denied, at: h.lastDeniedAt ?? 0, reason: h.error }))).sort((a, b) => b.at - a.at).slice(0, 64),
+    pending: pending.map(p => ({ ...p, title: titles.get(p.runId ?? "") ?? null })),
   };
 }

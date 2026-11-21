@@ -201,14 +201,48 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 
 #### 设置区域
 
-设置分为知识（`knowledge`）、助手（`assistant`）、AI（`ai`）、渠道与协作（`channels`）、成员（`members`）、安全（`security`）和系统（`system`）。每区分别授予 `settings.<区域>.view` 和 `settings.<区域>.edit`。本人预设拥有全部；管理员默认只读成员区，便于核对登录配置；协作者和观察者默认不读写设置。成员、安全和系统三区的 edit 只能由本人逐个授予。
+设置分为知识（`knowledge`）、助手（`assistant`）、AI（`ai`）、渠道与协作（`channels`）、成员（`members`）、安全（`security`）和系统（`system`）。每区分别授予 `settings.<区域>.view` 和 `settings.<区域>.edit`。本人预设拥有全部；管理员沿用成员管理和 Agent 管理所覆盖的区域；协作者和观察者默认不读写设置。成员、安全和系统三区的 edit 只能由本人逐个授予。
 
 - 打开设置时取 `GET /api/settings/sections`。返回的 `sections` 按区域列出 view 和 edit，`keys` 标出配置键及跨区子键，较具体的路径优先。例如 `agents.accounts` 属于成员区，`agents.autoAdvance` 属于助手区。按 view 显示标签，按 edit 开放编辑。对其他成员，`ownerOnly` 清单内的字段始终只读。
 - 切换区域时取 `GET /api/settings?section=knowledge` 等。省略 section 返回全部可读区域；无可读区域时返回 403。配置在 `config` 中。服务令牌不返回，成员也读不到包含账号环境变量的 Agent 档案。
+- 成员读取设置时省略 `notify.outlets` 和 `notify.outletAskGrants`。出口设置经 `/api/notify/outlets` 读写。
 - 保存时向 `PUT /api/settings` 提交配置键，支持整区回传。只要有一项实际变化越权，整份更新返回 403；成功写入后可在审计记录按 `settings.update` 查看操作者、区域和改动键名。
 - 本人身份回复（含豆包发送）、登录与对外访问、对等设备、账号隔离、启动命令及操作规则由本人管理。操作规则与网络策略仍使用各自的专用编辑接口。
 
 成员管理沿用 `settings.members`，旧权限 `users.manage` 也提供这项能力。`settings.members.edit` 只用于修改成员区设置。列表、邀请、停用和能力覆盖统一按操作者与目标检查。给普通成员授权时只能转授自己在相应范围内拥有的能力。管理者不能借此修改本人或管理员、重置登录身份，或转授上述三个区域的 edit。成员页应按目标隐藏这些操作。
+
+#### 设置标签的接口
+
+下表的路径均以 `/api` 开头。普通成员通过区域能力读取状态。原来的 `settings.manage` 提供 AI、渠道、知识、系统区域的查看与编辑，`agents.manage` 提供助手和 AI 区域的查看与编辑。显式拒绝优先。本人专属配置及对应操作见 `src/auth/settings-sections.ts` 的 `ownerControls`。
+
+| 接口 | 区域 | 原权限 → 现权限 | 成员响应 |
+| --- | --- | --- | --- |
+| GET ai、agent-registry、agents/:id/adapter | AI | settings.manage → view | 模型列表、提供方和密钥尾号。适配器省略路径、源地址和错误。公开注册表沿用原字段 |
+| GET agents/load | AI | agents.manage → view | 当前负载和近期统计，省略账号额度 |
+| GET plugins、plugins/:id；PUT plugins/:id/settings、plugins/:id/icon | AI | 读仍对登录用户开放，写由 settings.manage → edit | 列表、详情和改图标响应保留展示字段和权限摘要。服务清单和服务命令返回空数组，省略本机目录。插件偏好属于当前用户 |
+| GET lark/bot-check、desktop | 渠道 | settings.manage、desktop.control → view | 机器人的缺失权限及事件。桌面工具返回安装状态 |
+| GET lark/captured、lark/wiki-crawls | 知识 | settings.manage → view | 采集会话只列有权查看原件的最近 500 条，返回 chatId、name、spaceId、kind、lastMessageAt。爬取省略入口、错误和队列细节 |
+| GET search/providers | 知识 | settings.manage → view | 提供者标识、名称、插件和延迟 |
+| GET storage、media；POST storage/scan | 知识 | 原路由 settings.manage，处理函数限本人 → view / edit | 扫描时间、数据库与文件分类统计。省略目录、文件明细、日志。媒体返回工具状态和配置 |
+| GET agents、mentions | 助手 | agents.manage → view | 档案的名称、说明、状态与模型。提醒返回用量，私人回复统计省略 |
+| GET、PUT agents/:name | 助手 | 沿用 agents.manage | 详情与保存返回列表摘要。成员在档案页可改用途（`description`）和状态（`status`），后端、模型和强度只读。提交其他字段返回 403 |
+| GET roles、roles/:name | 助手 | 沿用 agents.manage | 列表返回名称和说明。详情另含默认 AI（`defaults.agent` 和 `defaults.byBackend` 下的模型、强度）。角色正文、专属记忆、复盘建议、技能正文、用量和历史仅本人可读 |
+| POST roles/:name/customize | 助手 | 沿用 agents.manage | 成员收到 `{ ok: true }`，本人收到自定义原文 `raw` |
+| GET、PUT library-files/agent/:name | 助手 | agents.manage → 本人 | 档案原文含 MCP 和工作目录，成员请求返回 403。技能原文沿用 agents.manage |
+| GET schedules、replays；PUT schedules/:id | 助手 | agents.manage → view / edit | 定时任务按空间过滤，省略运行参数，成员可改周期和启停。复盘返回状态和汇总 |
+| PUT agent-role-model；GET review-settings、review-options，PUT review-settings | AI / 助手 | 已按对应区域 view / edit 授权 | 角色模型配置与评审表单沿用原字段 |
+| GET auth/providers | 成员 | users.manage → view | 登录方式和回调地址，省略应用配置和诊断信息 |
+| GET diag | 系统、设备 | settings.manage → 本人 | 整机诊断含私有失败运行、路径和对等设备地址，成员请求返回 403 |
+| GET spaces、spaces/:id | 知识 | 登录及空间读取权限延续 | 空间列表省略仓库路径和内部设置，仅列可读空间 |
+| 对等设备、外部访问、出网、操作规则、AI 账号和密钥、后端安装及插件信任 | 对应区域 | 专用管理权限或本人 → 本人 | 成员不接收凭据、启动命令或设备连接资料 |
+
+实时读取本人的聊天、扫码授权、触发全局任务、复盘采纳、仓库目录操作和删除原附件会使用个人身份或改动全局资源。这些动作保留原操作权限或限本人。单独授予查看某一区域时，网页按表中的读接口渲染卡片。
+
+#### 进度视图
+
+运行和事项的 progress 接口加 `?summary=true` 后返回 `{ views, totalUsage }`。旧调用继续取得数组，页合计也在响应头 `X-Omem-Total-Usage`。独立评审运行计入评审块，共用编码宿主时，该轮用量归页面上的编码块。直接评审已有分支且没有编码块时，首轮用量归评审块。任务和尝试是明细，可以共用一次运行。页合计按实际展示的块去重，缺报运行计入 `missing`。
+
+任务的 `href` 可用于跳转。修改项使用 `task`，阶段、方向、试验分别使用 `stage`、`direction`、`trial` 查询参数，页面需按参数展开对应条目。尝试上的 `local` 表示本机，`device` 是显示名。阶段证据的 `target` 含 `kind`、`id` 和 `title`，仅返回请求者可读的引用。
 
 #### 工具和外部连接
 
@@ -251,6 +285,8 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 `GET /api/me` 的 `caps` 用于全局入口，`spaceCaps` 用于各空间的入口。事项和运行详情的 `can` 给出当前对象的 `edit` 与 `operate`。规则只读视图提供名称、说明、触发类型和动作类型。
 
 ### 成员的线
+
+事项链路的分组、计数和按事项读取的指标、指标工作文件沿用同一个可见子树。隐藏事项下面即使有同空间的子项，也不计入结果。
 
 工作页对成员和观察者和本人是同一个页面，内容按人过滤（`src/items/member-work.ts`）：
 

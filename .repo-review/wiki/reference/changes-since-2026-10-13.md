@@ -24,6 +24,10 @@ updated: 2026-11-22
 
 远端任务读取飞书现文前，先在接活设备核对文档或群消息原件的当前空间。按 ID 批量取消息时逐条核验，读取整群时也检查分月归档。未归档的目标、账号范围搜索和无法限定目标的参数均在调用飞书前拒绝。从 `src/agents/board-lark-read.ts` 读起，两档接活的用例在 `test/work-board-peer.test.ts`。
 
+## 成员查看内置角色（2026-11-22）
+
+从 `src/server/http.ts` 的角色接口读起。有档案管理权限的成员可看内置角色的名称、用途和默认 AI。在 Agent 页打开角色进入只读摘要；只有本人的详情包含正文、专属记忆和复盘建议。自定义操作仅向本人回传原文。
+
 ## 跨设备任务按当前空间读取附件和技能（2026-11-22）
 
 飞书消息留在任务空间时，单独归档的附件按原件当前空间核对，见 `src/agents/tools.ts` 的 `messageFileText`。技能目录、分组用途页、正文和附带文件共用 `src/agents/specs.ts` 的可见范围：执行档案指定的技能、可读空间挂载的技能和公共技能。
@@ -31,6 +35,12 @@ updated: 2026-11-22
 ## 跨设备任务只读取已入库的飞书消息附件（2026-11-22）
 
 从 `src/agents/tools.ts` 的 `messageFileText` 读起。任务板借后端和在对端运行时，读取已有附件原件沿用原件访问权限。附件尚未入库时，工具在下载或导入前返回原因，消息的附件记录保持原样。
+
+## 成员管理 Agent 档案（2026-11-22）
+
+从 `src/server/http.ts` 的档案接口读起。成员查看档案详情或保存说明、状态时取得与列表一致的摘要。档案原文的读写权限在 `src/auth/settings-sections.ts` 中与 MCP 配置一起限定给本人，技能原文沿用原权限。
+
+`web/src/views/Agents.vue` 用摘要填写用途和状态，保存后重新读取档案。只有完整详情才加载原文和专属学习记录。
 
 ## 任务板跨设备尝试的停止与重派
 
@@ -46,6 +56,26 @@ updated: 2026-11-22
 - 接活四条命令放进 peerCommands，经既有 /api/peer/exec 按配对令牌校验；node.acceptWork 默认关闭，acceptWorkFrom 按配对标识覆盖。远端档案按名字找，找不到用主助手；只读令牌拒写，写模式只开放任务空间的记忆、页面和事项。读 `src/agents/peer-work.ts`、`runner.ts`。
 - 尝试记设备、模式、远端运行、期限与幂等键；本地轮询队列按索引限批处理，短时断网恢复继续，到期或失联一小时失败。取消先到也作废幂等键，重派后旧结果只记迟到。产物复用课题的 2 MB / 8 MB 上限，远端用量进入本地运行。读 `src/agents/work-board.ts`、`studies/remote.ts`。
 - readBoard 和统一进度返回 deviceName、mode、remoteRunId、remoteUrl、deadline、lateAt；远端用量跟随本地尝试去重汇总。飞书卡片并列标设备，从 `src/agents/progress.ts`、`progress-runs.ts`、`src/channels/lark-work-progress.ts` 读起。接活开关与进度网页细节待接入。双临时 App 和假 ACP 的验证见 `test/work-board-peer.test.ts`。
+
+## 整机诊断仅本人可读（2026-11-21）
+
+`GET /api/diag` 随对等设备管理在 `src/auth/settings-sections.ts` 中登记为本人专属。成员仍可按区域读取设置卡片。
+
+## 直接评审分支的用量（2026-11-21）
+
+从 `src/agents/progress.ts` 的 `allocate` 读起。运行页和事项页按展示的块分配用量。直接评审已有分支时，首轮计入评审块；页面有对应编码块时，共用运行计入编码块，独立重评仍计入评审块。
+
+## 成员查看插件卡片（2026-11-21）
+
+从 `src/plugins/http.ts` 的 `pluginView` 读起。插件列表、详情和改图标共用成员视图，保留插件权限摘要；服务和服务命令返回空数组。
+
+## 设置页的成员接口（2026-11-21）
+
+从 `src/auth/settings-sections.ts`、`src/auth/routes.ts` 读区域权限及本人专属操作。设置读写隐藏其他成员的通知出口，`GET /api/notify/outlets?user=…` 返回目标的出口和已授权种类，`GET /api/me` 提供 `ownerName`。设置卡片的权限和返回字段见 `docs/v2/multi-user.md`。
+
+进度的去重用量、落点和可见证据从 `src/agents/progress.ts` 读起。出网与云端工具状态附运行标题，云端工具的可选名单和说明从 `src/agents/cloud-tools.ts` 读起。
+
+事项链路和指标按 `src/items/member-work.ts` 的可见子树统计。晚到妙记追加会议结果的条件在 `src/channels/lark-meetings.ts`。HTTP 规则可用的执行点由 `src/agents/operation-policy.ts` 给出，空规则和已有规则口径一致。
 
 ## 额外飞书机器人的群回复说明（2026-11-21）
 
