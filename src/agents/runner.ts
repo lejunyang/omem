@@ -558,7 +558,7 @@ export function prepareRun(
   const descriptions: Record<string, string> = { search: "检索材料", read_source: "按行读原件", read_page: "读 Wiki 页", read_item: "读事项" };
   const common = commonGuide(guideTools, capabilities) + (access?.mode ? "\n\n## 云端只读工具\n" +
     [...tools].map(t => t + "：" + descriptions[t]).join("、") + "。连接信息在本轮消息或安全通道。GET 工具地址查看参数。" +
-    (access.mode === "header" ? "按连接信息设置 Authorization 和 X-Omem-Run 请求头，POST 地址/工具名，正文是 JSON 参数对象。" :
+    (access.mode === "header" ? "按连接信息设置 Authorization 请求头，POST 地址/工具名，正文是 JSON 参数对象。" :
       "GET 地址/工具名?args=URL编码的JSON参数。每个地址只用一次，下次用响应里的 next。") +
     "只在此地址使用凭据。被拒、过期或次数用完就停止，查不到就照实说，不要编。" : "");
   // Who else is on the network (core/mesh.ts): for the owner's own assistant and profiles that can ask.

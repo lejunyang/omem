@@ -47,7 +47,7 @@ function remaining(g: Grant) {
   const used = one<{calls: number}>(g.ctx.app.db, "select calls from cloud_tool_usage where run_id=?", g.runId);
   return Math.max(0, g.limit - (used?.calls ?? 0));
 }
-const signedPath = (g: Grant, secret: string) => `${g.access.url}/api/tools/turn/${encodeURIComponent(g.runId)}/${secret}`;
+const signedPath = (g: Grant, secret: string) => `${g.access.url}/api/tools/turn/${secret}`;
 
 export async function cloudTurn(app: App, profile: AgentProfile, ctx: ToolContext, req: AgentRequest,
   emit: (e: AgentEvent) => void, execute: (req: AgentRequest, emit: (e: AgentEvent) => void) => Promise<AgentResult>) {
@@ -70,7 +70,7 @@ export async function cloudTurn(app: App, profile: AgentProfile, ctx: ToolContex
   try {
     audit(app, ctx.userId ?? OWNER, "cloud-tools.issue", g.runId, { backend: profile.id, tools: [...g.ctx.tools!], spaces: ctx.spaces, expires: g.expires });
     const channel = access.mode === "url" ? { url: signedPath(g, secret) } : {
-      url: access.url + "/api/tools", headers: { Authorization: "Bearer " + secret, "X-Omem-Run": g.runId },
+      url: access.url + "/api/tools", headers: { Authorization: "Bearer " + secret },
     };
     const turn = { ...req, mcp: undefined, extraMcp: undefined };
     if (cfg.credentialIn === "channel") turn.cloudChannel = channel;
@@ -99,11 +99,11 @@ function current(g: Grant) {
     throw new HttpError(403, "本轮授权已结束，请停止重试");
 }
 
-export async function cloudRequest(app: App, secret: string, runId: unknown, mode: Access["mode"], name?: string, args?: unknown) {
+export async function cloudRequest(app: App, secret: string, mode: Access["mode"], name?: string, args?: unknown) {
   const g = grants.get(hash(secret));
   if (!g || g.ctx.app !== app) throw new HttpError(401, "凭据无效、已使用或已作废，请停止重试");
   try {
-    if (g.runId !== runId || g.access.mode !== mode) throw new HttpError(403, "凭据与本轮请求不符，请停止重试");
+    if (g.access.mode !== mode) throw new HttpError(403, "凭据与本轮请求不符，请停止重试");
     current(g);
     if (!remaining(g)) throw new HttpError(429, "本次运行的调用次数已用完，请停止重试");
   } catch (e) {

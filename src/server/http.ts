@@ -289,7 +289,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/tools", async (req, reply) => {
     if (req.headers.authorization?.startsWith("Bearer oct_")) {
       reply.header("cache-control", "no-store");
-      return cloudRequest(app, bearer(req), req.headers["x-omem-run"], "header");
+      return cloudRequest(app, bearer(req), "header");
     }
     return { tools: await (await toolBackend(req)).list() };
   });
@@ -297,20 +297,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { name } = req.params as { name: string };
     if (req.headers.authorization?.startsWith("Bearer oct_")) {
       reply.header("cache-control", "no-store");
-      return cloudRequest(app, bearer(req), req.headers["x-omem-run"], "header", name, req.body);
+      return cloudRequest(app, bearer(req), "header", name, req.body);
     }
     return (await toolBackend(req)).call(name, req.body);
   });
   const signedTool = async (req: FastifyRequest, reply: FastifyReply) => {
     reply.header("cache-control", "no-store").header("referrer-policy", "no-referrer");
-    const { run, key, name } = req.params as { run: string; key: string; name?: string };
+    const { key, name } = req.params as { key: string; name?: string };
     let args: unknown;
     try { args = JSON.parse((req.query as { args?: string }).args ?? "{}"); }
     catch { throw new HttpError(400, "args 需要 JSON 参数对象"); }
-    return cloudRequest(app, key, run, "url", name, args);
+    return cloudRequest(app, key, "url", name, args);
   };
-  server.get("/api/tools/turn/:run/:key", signedTool);
-  server.get("/api/tools/turn/:run/:key/:name", signedTool);
+  server.get("/api/tools/turn/:key", signedTool);
+  server.get("/api/tools/turn/:key/:name", signedTool);
   const mcp = async (req: FastifyRequest, reply: FastifyReply) => {
     const mcpServer = createMcpServer(await toolBackend(req));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

@@ -42,36 +42,43 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
     expect(turn.mcp).toBeUndefined();
     expect(turn.cloudChannel).toBeUndefined();
     if (choice === "large") {
-      const result = await cloudRequest(app, first, id, mode, "read_source", { source: large.id });
+      const result = await cloudRequest(app, first, mode, "read_source", { source: large.id });
       expect(result).toMatchObject({ text: expect.stringContaining("已截断") });
       expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(32000);
     } else if (choice === "cancel") {
       ctrl.abort();
-      await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("作废");
+      await expect(cloudRequest(app, first, mode)).rejects.toThrow("作废");
     } else if (choice === "finished") {
       run(app.db, "update runs set status='done' where id=?", id);
-      try { await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("授权已结束"); }
+      try { await expect(cloudRequest(app, first, mode)).rejects.toThrow("授权已结束"); }
       finally { run(app.db, "update runs set status='running' where id=?", id); }
     } else if (choice === "expire") {
       const time = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31 * 60000);
-      try { await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("过期"); } finally { time.mockRestore(); }
+      try { await expect(cloudRequest(app, first, mode)).rejects.toThrow("过期"); } finally { time.mockRestore(); }
     } else if (choice === "revoke") {
       expect(revokeCloud(app)).toBe(1);
-      await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("作废");
+      await expect(cloudRequest(app, first, mode)).rejects.toThrow("作废");
     } else {
-      await expect(cloudRequest(app, first, "another", mode)).rejects.toThrow("不符");
-      const list = await cloudRequest(app, first, id, mode);
+      const other = createRun(app, { kind: "ask", title: "另一轮" }).id;
+      run(app.db, "update runs set status='running' where id=?", other);
+      await cloudTurn(app, profile, { ...ctx, runId: other, tools: new Set() }, { ...req, runId: other }, () => {}, async otherTurn => {
+        const otherSecret = otherTurn.prompt.match(/oct_[\w-]+/)![0];
+        await expect(cloudRequest(app, otherSecret, mode, "read_source", args)).rejects.toThrow("名单");
+        expect(JSON.stringify(runEvents(app, other))).toContain("read_source");
+        return { text: "", agent: "test", stopReason: "end_turn" };
+      });
+      const list = await cloudRequest(app, first, mode);
       expect(list).toMatchObject({ tools: [{ name: "read_source" }] });
       let secret = list.next?.split("/").pop() ?? first;
-      if (mode === "url") await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("已使用");
-      const result = await cloudRequest(app, secret, id, mode, "read_source", args);
+      if (mode === "url") await expect(cloudRequest(app, first, mode)).rejects.toThrow("已使用");
+      const result = await cloudRequest(app, secret, mode, "read_source", args);
       expect(result).toMatchObject(expected);
       secret = result.next?.split("/").pop() ?? first;
-      const denied = await cloudRequest(app, secret, id, mode, "read_source", { source: outside });
+      const denied = await cloudRequest(app, secret, mode, "read_source", { source: outside });
       expect(denied).toMatchObject({ isError: true });
       secret = denied.next?.split("/").pop() ?? first;
-      await expect(cloudRequest(app, secret, id, mode, "remember", {})).rejects.toThrow("名单");
-      if (mode === "header") await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("用完");
+      await expect(cloudRequest(app, secret, mode, "remember", {})).rejects.toThrow("名单");
+      if (mode === "header") await expect(cloudRequest(app, first, mode)).rejects.toThrow("用完");
     }
     emit({ type: "thought", text: first });
     return { text: first, agent: "test", stopReason: "end_turn" };
@@ -84,7 +91,7 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
     await perform("revoke");
     const result = await perform("read");
     expect(result.text).not.toContain(first);
-    await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("作废");
+    await expect(cloudRequest(app, first, mode)).rejects.toThrow("作废");
     expect(cloudUsage(app).activeCredentials).toBe(0);
     const recorded = JSON.stringify(runEvents(app, id));
     expect(recorded).toContain("cloud-http");
