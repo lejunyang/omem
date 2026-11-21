@@ -18,6 +18,11 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 成员的 AI 账号：能不能隔离和严格模式的开关（11-21）
+
+- `web/src/components/AgentAccountsAdmin.vue` 读 `GET /api/agent-accounts` 的 `isolation`：第一行写这台机器能不能把成员的运行和本人的分开（不能时写原因），第二行是“成员的运行不能隔离时”：照常运行并记一笔 / 不运行（`agents.accountIsolation`，经 `views/settings/Members.vue` 的 `saveConfig` 保存），下面一句列出分不开的后端和原因。这张卡以前只在能起沙箱的机器上出现，现在不能隔离的机器上也出现（只有这几行）。
+- “已登录的成员”只列登录过某个后端的人。
+
 ## 评审问题同步到合并请求（11-21）
 
 评审结束后，本人可以在确认卡选择事项关联的合并请求和要发布的问题。平台回复会回到运行；复审判为已修后，再由本人确认结束讨论。从 `src/agents/review-sync.ts` 读确认和回读链路，接口类型在 `packages/plugin-sdk/server.ts`，GitHub 参考实现在 `plugins/github/server.ts`。
