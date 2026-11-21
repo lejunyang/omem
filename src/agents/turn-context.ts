@@ -48,11 +48,6 @@ export function itemFocus(app: App, item: Item, via: "explicit" | "linked", flow
   return { context, item, line, listen, stage, flow, stages };
 }
 
-export function explicitItemFocus(app: App, id: string | null | undefined, userId: string) {
-  const item = id ? findItem(app, id) : undefined;
-  return item && canReadItem(app, item, userId) ? itemFocus(app, item, "explicit") : undefined;
-}
-
 function cardItem(app: App, messageId: string, userId: string) {
   const card = one<{ id: string }>(app.db, `select json_extract(payload,'$.itemId') id from card_interactions where message_id=?
     and purpose='agent' and json_extract(payload,'$.itemId') is not null order by created_at desc limit 1`, messageId);
@@ -84,9 +79,9 @@ export function resolveTurn(app: App, runId: string, thread: Thread, messages: T
         and (json_extract(r.input,'$.itemId') is not null or m.item_id is not null)
       order by r.created_at desc, r.id, m.id limit 1`, thread.id)?.id;
   }
-  const linkedItem = linked.at(0);
-  const focus = explicitItemFocus(app, explicit, userId) ?? (linkedItem && itemFocus(app, linkedItem, "linked"));
-  const item = focus?.item;
+  const explicitItem = explicit ? findItem(app, explicit) : undefined;
+  const item = explicitItem && canReadItem(app, explicitItem, userId) ? explicitItem : linked[0];
+  const focus = item && itemFocus(app, item, item === explicitItem ? "explicit" : "linked");
   const context: TurnContext = {
     ...focus?.context,
     conversationId: thread.id,
