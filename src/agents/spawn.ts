@@ -71,6 +71,14 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   return child;
 }
 
+export class SandboxStartError extends Error {}
+
+/** bubblewrap reports mount/namespace setup errors on stderr before starting the backend. */
+export function sandboxStartError(account: SandboxAccount | undefined, stderr: string): Error | undefined {
+  const reason = account && stderr.match(/^bwrap: (.+)$/m)?.[1];
+  if (reason) return new SandboxStartError(`这台机器不能隔离成员的运行：${reason}`);
+}
+
 export function stop(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const kill = (signal: NodeJS.Signals) => {

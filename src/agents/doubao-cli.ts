@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
-import { idleWatchdog, launch, resolveCommand, stop } from "./spawn.ts";
+import { sandboxStartError, idleWatchdog, launch, resolveCommand, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
 
@@ -117,7 +117,7 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
       child.once("close", (code) => {
         watchdog.close();
         req.signal?.removeEventListener("abort", onAbort);
-        if (code !== 0) reject(new Error(`豆包 CLI 退出码 ${code}：${errorText(stdout, stderr)}`));
+        if (code !== 0) reject(sandboxStartError(account, stderr) ?? new Error(`豆包 CLI 退出码 ${code}：${errorText(stdout, stderr)}`));
         else resolve();
       });
     });

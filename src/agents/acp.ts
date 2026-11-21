@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
-import { idleWatchdog, launch, stop } from "./spawn.ts";
+import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { isQuotaMessage } from "./capacity.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
@@ -578,7 +578,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     if (!(opts.signal?.reason instanceof NetworkUnavailableError)) await discard?.();
     close();
     await stopped;
-    throw explain(error, profile);
+    throw sandboxStartError(accountOf(profile), stderr) ?? explain(error, profile);
   }
 }
 

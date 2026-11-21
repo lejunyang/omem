@@ -1,5 +1,5 @@
 import type { AgentProfile } from "../core/config.ts";
-import { idleWatchdog, launch, stop } from "./spawn.ts";
+import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
@@ -153,7 +153,7 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
       line(buffer);
       if (req.signal?.aborted) reject(new Error("CANCELLED"));
       else if (failure) reject(new Error(failure));
-      else if (code !== 0 && !text) reject(new Error(`Agent 退出码 ${code}\n${stderr.slice(-800)}`));
+      else if (code !== 0 && !text) reject(sandboxStartError(accountOf(profile), stderr) ?? new Error(`Agent 退出码 ${code}\n${stderr.slice(-800)}`));
       else resolve();
     });
   });

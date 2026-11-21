@@ -38,8 +38,9 @@ import { commandGateDir } from "./command-gate.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
-import { accountBlocked, accountFor, withAccount } from "./accounts.ts";
+import { accountBlocked, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
 import { addRunEvent, runUser } from "./runs.ts";
+import { SandboxStartError } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -440,6 +441,14 @@ function workRepos(app: App, runId: string | null): string[] {
 function accountProfile(app: App, input: Parameters<typeof resolveRunProfile>[1] & { userId?: string }) {
   const resolved = resolveRunProfile(app, input);
   return withAccount(app, input.userId ?? OWNER, resolved, () => failoverProfiles(app, input.actor, resolved).slice(1));
+}
+
+/** Called for the selected attempt, including a conversation reusing a live process. */
+export function recordIsolation(app: App, runId: string | null, userId: string, profile: AgentProfile) {
+  const reason = unisolatedReason(app, userId, profile);
+  if (!reason) return;
+  if (app.config.agents.accountIsolation === "require") throw new Error(`这台机器不能隔离成员的运行：${reason}`);
+  if (runId) addRunEvent(app, runId, "status", { text: `这次运行没有隔离：${reason}`, profile: profile.id });
 }
 
 export function prepareRun(
@@ -917,6 +926,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       // A check may fall back inside the code run: its AI belongs on the review, not over the coder's.
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       try {
+        recordIsolation(app, input.runId, input.userId!, prep.profile);
         const aware = internal ? "" : awarenessNote(app, input.runId, prep.tools.size > 0);
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
         const req = {
@@ -985,7 +995,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         noteBreakdown(app, prep.profile, e, emit);
         const untouched = !acted && writes() === writesBefore;
         // The AI named for the run moves on only when it cannot take it (busy or broke down).
-        const movable = pinned && i === 0 ? busy || down : busy || untouched || down;
+        const movable = e instanceof SandboxStartError || (pinned && i === 0 ? busy || down : busy || untouched || down);
         if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !movable || i === chain.length - 1) throw e;
         if (!untouched) carry = (await import("./retry.ts")).partialAttemptNote(app, input.runId, writesBefore, e, aiLabel({ profile: prep.profile.id, model: prep.profile.model }));
         leftBecause = { busy, untouched, why: (e as Error).message.slice(0, 120), first: i === 0 };

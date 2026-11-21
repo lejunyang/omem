@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { join, resolve } from "node:path";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { accountBlocked, accountEntry, accountFor, accountHome, accountRun, ensureAccountHome, loggedIn as loggedInNow, saveToken, stopAccountLogins, withAccount } from "../src/agents/accounts.ts";
 import { accountSkillDirs } from "../src/agents/agent-skills.ts";
 import { markOutOfQuota, outOfQuotaList, outOfQuotaUntil } from "../src/agents/capacity.ts";
@@ -10,8 +10,9 @@ import { auditLog } from "../src/auth/permissions.ts";
 import { listConnections, storeConnection } from "../src/auth/vault.ts";
 import { accountCatalog } from "../src/agents/catalog.ts";
 import { noteRateLimit, quotaAvoid, quotaKey, quotaKind, quotaOf } from "../src/agents/quota.ts";
-import { prepareRun } from "../src/agents/runner.ts";
-import { stopWorker } from "../src/agents/runs.ts";
+import * as sandbox from "../src/agents/sandbox.ts";
+import { prepareRun, runRole } from "../src/agents/runner.ts";
+import { createRun, runEvents, stopWorker } from "../src/agents/runs.ts";
 import { accountOf, accountTag, bwrapArgs, detectSandbox, installRoot, PROBE_ARGS, sandboxEnv, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
@@ -172,6 +173,50 @@ describe("accounts of members", async () => {
     expect(accountBlocked(app, "ann", codex)).toBeNull();
     app.config.agents.accounts = {};
     sqlRun(app.db, "delete from kv where key like 'agent_account:%'");
+  });
+
+  it("enforces isolation across backend selection and records prefer-mode exceptions", async () => {
+    const fake = { id: "local-test", name: "本机测试", command: process.execPath, transport: "acp" as const, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "thread" }, idleTimeoutMs: 10_000 };
+    const previous = { profiles: app.config.agents.profiles, fallback: app.config.agents.fallback };
+    app.config.agents.profiles = [fake];
+    app.config.agents.fallback = [{ profile: fake.id }];
+    const launch = vi.spyOn(sandbox, "sandboxCommand");
+    const start = (userId: string, profileId: string) => {
+      const spaceId = personalSpaceId(userId);
+      const runId = createRun(app, { kind: "code", title: "验证隔离", userId, spaceId }).id;
+      return { runId, result: runRole(app, { role: "assistant", task: "回答一个词", runId, spaceId, profileId, requiredTools: [] }) };
+    };
+    try {
+      setSandboxSupportForTests({ ok: false, reason: "测试机不支持命名空间" });
+      app.config.agents.accountIsolation = "require";
+      await expect(start("bob", fake.id).result).rejects.toThrow(/不能隔离成员的运行.*命名空间/);
+      expect((await start(OWNER, fake.id).result).profileId).toBe(fake.id);
+      expect(launch).not.toHaveBeenCalled();
+      app.config.agents.accountIsolation = "prefer";
+      const preferred = start("bob", fake.id);
+      await preferred.result;
+      expect(JSON.stringify(runEvents(app, preferred.runId))).toContain("这次运行没有隔离：测试机不支持命名空间");
+      expect((await (await as(null, "/api/agent-accounts")).json()).isolation).toMatchObject({ mode: "prefer", ok: false, reason: "测试机不支持命名空间" });
+
+      setSandboxSupportForTests({ ok: true, bwrap: "test-bwrap" });
+      app.config.agents.accountIsolation = "require";
+      launch.mockImplementation((cmd, args, env, _cwd, account) => ({
+        file: cmd.file, args: [...cmd.prefix, ...args], env: { ...env, HOME: account.home } as Record<string, string>,
+      }));
+      // Bob cannot borrow the owner's Codex login in strict mode. The configured local ACP can run in his HOME.
+      expect((await start("bob", "codex").result).profileId).toBe(fake.id);
+      expect(launch.mock.calls.at(-1)?.[4]).toMatchObject({ userId: "bob", home: accountHome(app, "bob") });
+      launch.mockImplementation(() => ({
+        file: process.execPath, args: ["-e", "console.error('bwrap: mount failed'); process.exit(1)"], env: {},
+      }));
+      await expect(start("bob", fake.id).result).rejects.toThrow(/不能隔离成员的运行.*mount failed/);
+      expect(accountBlocked(app, "bob", { ...fake, transport: "doubao" })).toContain("云端");
+      expect(accountBlocked(app, "bob", { ...fake, peer: { id: "device", agent: "other" } })).toContain("设备代跑");
+    } finally {
+      launch.mockRestore();
+      Object.assign(app.config.agents, previous, { accountIsolation: "prefer" });
+      setSandboxSupportForTests(undefined);
+    }
   });
 
   it("borrows the owner's login, or fails, for a member not logged in", () => {
