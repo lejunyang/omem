@@ -1,11 +1,15 @@
-import { readFileSync } from "node:fs";
-import { createServer, request } from "node:http";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { createServer, request, type IncomingMessage, type OutgoingHttpHeaders } from "node:http";
 import { once } from "node:events";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createSession, SESSION_COOKIE } from "../src/auth/sessions.ts";
 import { issueProbeTicket } from "../src/auth/cloud-probe-ticket.ts";
-import { saveConfig } from "../src/core/config.ts";
+import { App } from "../src/core/app.ts";
+import { loadConfig, saveConfig } from "../src/core/config.ts";
 import { expect, it, vi } from "vitest";
 import * as doubao from "../src/agents/doubao.ts";
 import * as capabilities from "../src/agents/capabilities.ts";
@@ -15,26 +19,18 @@ import { prepareRun } from "../src/agents/runner.ts";
 import { addRunEvent, createRun, runEvents } from "../src/agents/runs.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { sessionPrompt } from "../src/agents/types.ts";
-import { all, run } from "../src/core/db.ts";
-import { createUser, createApiToken } from "../src/core/users.ts";
+import { all, migrations, run } from "../src/core/db.ts";
+import { createUser, createApiToken, userForToken } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
-// Exercise the documented map over sockets with a loopback upstream and rewritten Host.
-async function publicIngress(upstream: string) {
-  const doc = readFileSync(new URL("../docs/v2/external-access.md", import.meta.url), "utf8");
-  const map = doc.split('$cloud_tools_allowed {')[1].split("}")[0];
-  const allow = [...map.matchAll(/"~(.+)" 1;/g)].map(m => new RegExp(m[1]));
+async function loopbackProxy(upstream: string, headersFor: (req: IncomingMessage) => OutgoingHttpHeaders | null) {
   const proxy = createServer((req, res) => {
-    const path = new URL(req.url!, upstream).pathname;
-    const authorization = req.headers.authorization ?? "";
-    if (!allow.some(rule => rule.test(`${req.method}:${path}:${authorization}`))) {
+    const headers = headersFor(req);
+    if (!headers) {
       res.writeHead(403).end();
       return;
     }
-    const headers: Record<string, string> = {};
-    if (authorization) headers.authorization = authorization;
-    if (req.headers["content-type"]) headers["content-type"] = req.headers["content-type"];
     const forwarded = request(upstream + req.url, { method: req.method, headers }, response => {
       res.writeHead(response.statusCode!, response.headers);
       response.pipe(res);
@@ -48,6 +44,72 @@ async function publicIngress(upstream: string) {
   const base = `http://127.0.0.1:${address.port}`;
   return { proxy, base };
 }
+
+// Exercise the documented map over sockets with a loopback upstream and rewritten Host.
+function publicIngress(upstream: string) {
+  const doc = readFileSync(new URL("../docs/v2/external-access.md", import.meta.url), "utf8");
+  const map = doc.split('$cloud_tools_allowed {')[1].split("}")[0];
+  const allow = [...map.matchAll(/"~(.+)" 1;/g)].map(m => new RegExp(m[1]));
+  return loopbackProxy(upstream, req => {
+    const path = new URL(req.url!, upstream).pathname;
+    const authorization = req.headers.authorization ?? "";
+    if (!allow.some(rule => rule.test(`${req.method}:${path}:${authorization}`))) return null;
+    const headers: OutgoingHttpHeaders = {};
+    if (authorization) headers.authorization = authorization;
+    if (req.headers["content-type"]) headers["content-type"] = req.headers["content-type"];
+    return headers;
+  });
+}
+
+it("requires authentication at the upstream when a loopback proxy forwards management requests", async () => {
+  const app = testApp();
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true, secure: false });
+  const ingress = await loopbackProxy(app.baseUrl, req => ({ ...req.headers, host: new URL(app.baseUrl).host }));
+  try {
+    expect(app.config.auth.enabled).toBe(false);
+    expect(app.config.token).toBeFalsy();
+    for (const forwardSource of [true, false]) {
+      const headers: Record<string, string> = forwardSource ? { "x-forwarded-for": "192.0.2.10" } : {};
+      for (const path of ["", "/probe", "/probe/confirm", "/revoke"]) {
+        const response = await fetch(ingress.base + "/api/cloud-tools" + path, { method: path ? "POST" : "GET", headers });
+        expect(response.status).toBe(401);
+        expect(await response.json()).toMatchObject({ login: false });
+      }
+    }
+  } finally {
+    ingress.proxy.close();
+    await server.close();
+    app.db.close();
+  }
+});
+
+it("revokes leftover owner probe tokens when upgrading a cloud-tools library", () => {
+  const home = mkdtempSync(join(tmpdir(), "omem-cloud-upgrade-"));
+  const db = new DatabaseSync(join(home, "omem.db"));
+  // Before the merge the cloud usage table occupied the change ledger's version.
+  const usage = migrations.findIndex(sql => sql.includes("create table if not exists cloud_tool_usage"));
+  expect(usage).toBeGreaterThan(1);
+  for (const sql of migrations.slice(0, usage - 1)) db.exec(sql);
+  db.exec(migrations[usage]);
+  db.exec(`pragma user_version=${usage}`);
+  const old = new App(home, loadConfig(home), db);
+  const label = "cloud-tools probe";
+  createUser(old, { id: "member-a", name: "成员" });
+  const leftover = createApiToken(old, "owner", label);
+  const member = createApiToken(old, "member-a", label);
+  const otherClient = createApiToken(old, "owner", label, "another-client");
+  const otherLabel = createApiToken(old, "owner", "personal-cli");
+  expect(userForToken(old, leftover)).toBe("owner");
+  old.db.close();
+
+  const app = App.open(home);
+  try {
+    expect(userForToken(app, leftover)).toBeNull();
+    expect(userForToken(app, member)).toBe("member-a");
+    expect(userForToken(app, otherClient)).toBe("owner");
+    expect(userForToken(app, otherLabel)).toBe("owner");
+  } finally { app.db.close(); }
+});
 
 it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("probes and runs a fake cloud session over %s HTTP with %s credentials", async (mode, credentialIn) => {
   const app = testApp();
@@ -112,17 +174,14 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
     app.config.webUrl = "https://8.8.8.8";
     const cfg = { ...app.config.agents.cloudTools, enabled: true, backends: ["doubao"], credentialIn };
     const update = (headers: Record<string, string>, cloudTools: unknown) => server.inject({ method: "PUT", url: "/api/settings", headers, payload: { agents: { ...app.config.agents, cloudTools } } });
-    const loopback = { host: "localhost" };
     const session = createSession(app, "owner", { via: "test" });
     const cookie = { cookie: SESSION_COOKIE + "=" + session.token };
     expect((await server.inject({ url: "/api/cloud-tools", headers: cookie })).statusCode).toBe(200);
     for (const path of ["cloud-tools", "cloud-tools/revoke", "cloud-tools/probe", "cloud-tools/probe/confirm"]) {
       const method = path === "cloud-tools" ? "GET" : "POST";
       expect((await fetch(ingress.base + "/api/" + path, { method, headers: owner })).status).toBe(403);
-      for (const headers of [loopback, { ...loopback, "x-forwarded-for": "192.0.2.10" }, { authorization: "Bearer invalid" }]) {
-        const response = await server.inject({ method, url: "/api/" + path, headers });
-        expect([401, 403]).toContain(response.statusCode);
-      }
+      const invalid = await server.inject({ method, url: "/api/" + path, headers: { authorization: "Bearer invalid" } });
+      expect([401, 403]).toContain(invalid.statusCode);
     }
     expect((await fetch(ingress.base + "/api/tools", { headers: owner })).status).toBe(403);
     expect((await update({}, cfg)).statusCode).toBe(403);

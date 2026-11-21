@@ -2367,6 +2367,8 @@ export const migrations: readonly string[] = [
      last_error text, at text not null
    );
    create index if not exists cloud_tool_usage_at on cloud_tool_usage(at);`,
+  // Older local probe commands persisted an owner API token until the CLI exited normally.
+  `delete from api_tokens where user_id='owner' and label='cloud-tools probe' and client='';`,
 ];
 
 export type Db = DatabaseSync;
