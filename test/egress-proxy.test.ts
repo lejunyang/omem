@@ -65,11 +65,16 @@ it("按主机汇总转发、拒绝、只记录；运行结束后关闭入口", a
   proxy.close();
   await expect(request(path, url)).rejects.toThrow();
 });
-it("使用后端的上游代理转发已批准的固定地址", async () => {
+it.each([false, true])("使用后端的上游代理转发已批准的固定地址（Basic 认证 %s）", async authenticated => {
   const port = await listen(http.createServer((_req, res) => res.end("proxied")));
   const targets: string[] = [];
   const relay = http.createServer();
+  const basic = "Basic " + Buffer.from("user@example:p%:@ss").toString("base64");
   relay.on("connect", (req, client) => {
+    if (req.headers.authorization !== undefined || req.headers["proxy-authorization"] !== (authenticated ? basic : undefined)) {
+      client.end("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n");
+      return;
+    }
     targets.push(req.url!);
     const peer = connect(port, "127.0.0.1", () => {
       client.write("HTTP/1.1 200 OK\r\n\r\n");
@@ -79,8 +84,9 @@ it("使用后端的上游代理转发已批准的固定地址", async () => {
     peer.on("error", () => client.destroy());
   });
   const relayPort = await listen(relay);
+  const userinfo = authenticated ? "user%40example:p%25%3A%40ss@" : "";
   const path = socketPath();
-  const proxy = await startProxy(path, { check: async () => ({ allowed: true }), needsBody: () => false, resolve: async () => "127.0.0.1", upstreamProxy: () => new URL("http://127.0.0.1:" + relayPort) });
+  const proxy = await startProxy(path, { check: async () => ({ allowed: true }), needsBody: () => false, resolve: async () => "127.0.0.1", upstreamProxy: () => new URL("http://" + userinfo + "127.0.0.1:" + relayPort) });
   cleanup.push(() => proxy.close());
   expect(await request(path, "http://unit.example:" + port + "/")).toEqual({ code: 200, text: "proxied" });
   expect(targets).toEqual(["127.0.0.1:" + port]);

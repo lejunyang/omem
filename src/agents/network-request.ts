@@ -18,7 +18,15 @@ export class NetworkHttpError extends Error {
 /** Open a tunnel through a configured HTTP proxy. The authority may be a pinned IP. */
 export function proxyTunnel(proxy: URL, authority: string, signal?: AbortSignal) {
   return new Promise<import("node:net").Socket>((resolve, reject) => {
-    const req = (proxy.protocol === "https:" ? https : http).request(proxy, { method: "CONNECT", path: authority, signal, headers: { host: authority }, rejectUnauthorized: true });
+    const endpoint = new URL(proxy);
+    const headers: http.OutgoingHttpHeaders = { host: authority };
+    if (endpoint.username || endpoint.password) {
+      const credentials = decodeURIComponent(endpoint.username) + ":" + decodeURIComponent(endpoint.password);
+      headers["proxy-authorization"] = "Basic " + Buffer.from(credentials).toString("base64");
+      endpoint.username = "";
+      endpoint.password = "";
+    }
+    const req = (endpoint.protocol === "https:" ? https : http).request(endpoint, { method: "CONNECT", path: authority, signal, headers, rejectUnauthorized: true });
     req.once("connect", (res, socket, head) => {
       if (res.statusCode !== 200) { socket.destroy(); reject(new Error(`代理连接失败：HTTP ${res.statusCode}`)); }
       else { if (head.length) socket.unshift(head); resolve(socket); }
