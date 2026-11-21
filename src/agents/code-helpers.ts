@@ -220,7 +220,7 @@ export async function joinHelpers(app: App, roundRunId: string, resolve: (wt: Wo
         updateTask(app, rootId, seq, { state: "todo" }, { by: "host", kind: "host", text: `助手交付未完成：${reason}。工作树保留在助手运行 ${h.runId}。` });
       }
     }
-    round.event("status", { text: `编码助手 ${h.n} 已合入 ${picked} 个提交${run.error ? `；${run.error}` : ""}${keep.size ? `；拣选失败：${[...keep].join("、")}` : ""}` });
+    round.event("status", { text: `已合并编码助手 ${h.n} 的 ${picked} 个提交${run.error ? `；${run.error}` : ""}${keep.size ? `；拣选失败：${[...keep].join("、")}` : ""}` });
     for (const wt of h.worktrees) {
       if (run.status === "failed" || keep.has(wt.space)) continue;
       if (wt.slot) releaseWorkspace(h.runId, { path: wt.path, slot: wt.slot });
