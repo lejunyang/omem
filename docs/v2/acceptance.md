@@ -3088,3 +3088,5 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 - 查看正在执行的插件阶段，carrier.runner 是运行器全名与名称；等待信号阶段的 waitingSignal 带信号全名与名称。停用后仍有 id，名称回退为全名；事项查看者可直接读取。
 
 - 用只有事项流程查看权的成员读取被检查拦下的阶段，先看到 pending；本人选择“等处理”后是 answered/hold，重新交结果并选择“仍然通过”后是 done 与 answered/override，时间匹配处理卡。成员回答仍返回 403；重开后不显示旧结果。
+
+- 分别只在档位、角色、档案、fallback、任务候选、角色模型和评审轮换里选择示例插件后端。停用后 GET /api/settings 的 agents 和 unavailableBackends 仍有它，带插件来源与不可用原因；不执行旧命令。

@@ -3553,10 +3553,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const access = settingsAccess(req);
     const visible = (s: Section) => (!section || s === section) && access.view(s);
     if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
+    const profiles = visible("ai") || visible("assistant") ? listAgentProfiles(app) : [];
     return {
+      ...((visible("ai") || visible("assistant")) && { unavailableBackends: profiles.filter(p => p.pluginBackend?.available === false).map(({id,name,pluginBackend}) => ({id,name,pluginBackend})) }),
       config: settingsView(app.config, visible, access.owner),
-      ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : (visible("ai") || visible("assistant")) && {
-        agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
+      ...(visible("ai") && access.owner ? { agents: profiles } : (visible("ai") || visible("assistant")) && {
+        agents: profiles.map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
           const probe = userProbe(app, who(req), id);
           return { id, name, installed, transport, model, effort, pluginBackend, probe: probe && {
             at: probe.at, models: probe.models, efforts: probe.efforts, effortsByModel: probe.effortsByModel,

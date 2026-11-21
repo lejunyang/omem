@@ -421,3 +421,5 @@
 - 事项阶段增加 carrier.runner 与 waitingSignal.id/name，不依赖共享流程定义查看权限。入口 `src/flows/engine.ts`、`signals.ts`。
 
 - 阶段 gateReview.ask 带处理卡状态、选择与时间，越过后保留供查看，重开清除；一次主键查询读取当前事项最多二十张卡。入口 `src/flows/engine.ts`、`plugin-gates.ts`。
+
+- 已保存配置中的插件后端引用均参与目录：档位、fallback、任务候选、角色模型与评审轮换补齐；设置返回 unavailableBackends。入口 `src/core/config.ts`（allProfiles）、`src/agents/runner.ts`、`src/server/http.ts`。

@@ -23,6 +23,8 @@ updated: 2026-11-22
 
 ## 2026-11-22：第二轮网页对接的服务端字段
 
+- 设置列出所有配置引用的停用插件后端及原因。从 `src/core/config.ts` 的 allProfiles 和 `src/server/http.ts` 读起。
+
 - gateReview.ask 显示处理状态和答复时间，查看者可读、本人答复，越过后保留、重开清除。从 `src/flows/engine.ts`、`plugin-gates.ts` 读起。
 
 - 事项阶段直接带 carrier.runner、waitingSignal.id/name。从 `src/flows/engine.ts`、`signals.ts` 读起。

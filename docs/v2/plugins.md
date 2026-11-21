@@ -880,3 +880,5 @@ id 自动变成 `<插件>:<id>`，与内置后端进入同一个目录。还可�
 流程接口直接携带能力标识：定义的 stageSummaries 含 runner / signal 的 id、name 和 params，事项阶段的 carrier.runner 与 waitingSignal 含 id、name。停用时保留 id，name 回退到 id。
 
 检查拦下的阶段通过 gateReview.ask 提供卡片状态、override（仍然通过）或 hold（等处理）和 answeredAt；事项查看者能读，只有本人能答。越过检查后保留结果供查看，重开后清除。
+
+`GET /api/settings` 的 AI 或助手区域增加 `unavailableBackends: [{ id, name, pluginBackend: { plugin, name, available: false, reason } }]`。默认后端、角色、档位、档案、fallback、任务选型候选、角色模型和评审轮换引用的停用插件后端均保留来源与原因；重新启用后移出不可用清单。

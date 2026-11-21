@@ -1537,7 +1537,12 @@ export function saveConfig<T>(config: Config, home = omemHome(), validate?: (can
 
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
-  const referenced = new Set([config.agents.default, ...Object.values(config.agents.roles)].filter((v): v is string => !!v));
+  const referenced = new Set([config.agents.default, ...Object.values(config.agents.roles),
+    ...Object.values(config.agents.tiers).map(t => t.profile),
+    ...Object.values(config.agents.roleModels).flatMap(models => Object.keys(models)),
+    ...config.agents.fallback.map(p => p.profile), ...config.agents.routing.candidates.map(p => p.profile),
+    ...(config.review.rotation ?? []).map(p => p.profile),
+  ].filter((v): v is string => !!v));
   for (const p of referencedPluginProfiles(referenced)) byId.set(p.id, p);
   for (const e of acpCatalog.filter(e => e.plugin)) byId.set(e.id, catalogProfile(e));
   for (const p of keyedProfiles(config)) byId.set(p.id, p);
