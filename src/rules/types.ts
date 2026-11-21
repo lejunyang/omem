@@ -339,6 +339,8 @@ export type RuleEvent = {
   chat?: { id: string; name: string; kind: "group" | "p2p" };
   sender?: { id?: string; name: string; email?: string | null; kind: "owner" | "user" | "bot" };
   message?: { id: string; text: string; type: string; mentionsOwner: boolean; mentionsBot: boolean; topicId?: string | null; cardTitle?: string | null };
+  /** Origin of incoming chat content, independent of the rule's execution space. */
+  sourceSpaces?: string[];
   /** The meeting the owner joined. participantCount: null = unknown; omitted = count participants. invitedCount: null or omitted = unknown. */
   meeting?: { id: string; no?: string; title: string; participants: string[]; participantCount?: number | null; invitedCount?: number | null; host?: string; calendarEventId?: string; chat?: { id: string; name: string }; startedBy?: string; ownerIn?: boolean };
   /** A document that changed (lark-doc-events.ts): what changed, who changed it, who it @-mentions. */

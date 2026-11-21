@@ -27,21 +27,24 @@ export async function pollFastRules(app: App) {
     const start = Math.max(since - 2 * 60_000, end - 15 * 60_000);
     const words = [...new Set(rules.flatMap((r) => textWords(r.conditions)))];
     const queries = words.length ? words : [""];
-    const found: { m: LarkMessage; kind: "group" | "p2p" }[] = [];
-    for (const q of queries) {
-      const query = q ? ["--query", q] : [];
-      for (const m of await fetchMessages(["+messages-search", ...query, "--at-chatter-ids", owner, "--chat-type", "group"], start, end, { pages: 2 })) found.push({ m, kind: "group" });
-      for (const m of await fetchMessages(["+messages-search", ...query, "--chat-type", "p2p"], start, end, { pages: 2 })) found.push({ m, kind: "p2p" });
-    }
+    const { dispatchRuleEvent, snapshotRuleEvents } = await import("./engine.ts");
     const seen = new Set<string>();
     const events: RuleEvent[] = [];
-    for (const { m, kind } of found) {
-      if (!m.chat_id || seen.has(m.message_id) || m.msg_type === "system" || m.sender?.id === owner) continue;
-      seen.add(m.message_id);
-      if (kind === "group" && !mentionIds(m).includes(owner)) continue;
-      events.push(eventOf(app, m, kind, owner));
+    const collect = (messages: LarkMessage[], kind: "group" | "p2p") => {
+      const batch: RuleEvent[] = [];
+      for (const m of messages) {
+        if (!m.chat_id || seen.has(m.message_id) || m.msg_type === "system" || m.sender?.id === owner) continue;
+        seen.add(m.message_id);
+        if (kind === "group" && !mentionIds(m).includes(owner)) continue;
+        batch.push(eventOf(app, m, kind, owner));
+      }
+      events.push(...snapshotRuleEvents(app, batch));
+    };
+    for (const q of queries) {
+      const query = q ? ["--query", q] : [];
+      collect(await fetchMessages(["+messages-search", ...query, "--at-chatter-ids", owner, "--chat-type", "group"], start, end, { pages: 2 }), "group");
+      collect(await fetchMessages(["+messages-search", ...query, "--chat-type", "p2p"], start, end, { pages: 2 }), "p2p");
     }
-    const { dispatchRuleEvent } = await import("./engine.ts");
     const ids = new Set(rules.map((r) => r.id));
     for (const e of events.sort((a, b) => a.at.localeCompare(b.at))) await dispatchRuleEvent(app, e, (r) => ids.has(r.id));
     run(app.db, "insert into kv(key,value) values('rule_fast_since_ms', ?) on conflict(key) do update set value = excluded.value", String(end));

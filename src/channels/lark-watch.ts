@@ -1,7 +1,7 @@
 import { decideScene, describeScene } from "../core/decision-log.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { archivedMessageSpaces, watchMessageSourceSpaces } from "../core/capture-space.ts";
+import { archivedMessageSpaces, messageSourceSpaces } from "../core/capture-space.ts";
 import { now } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { rulesNaming } from "../rules/store.ts";
@@ -79,7 +79,7 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
   if (!ctxs.length) return 0;
   // Capture (lark-cli) sees people with its own ids: the owner as capture knows them.
   const who = { ownerOpenId: opts.ownerId ?? app.config.lark.ownerOpenId, botOpenId: opts.botOpenId };
-  const origins = watchMessageSourceSpaces(app, chatId, messages.map(m => m.id));
+  const origins = messageSourceSpaces(app, messages.map(m => ({ id: m.id, chatId })));
   let n = 0;
   for (const [index, m] of messages.entries()) {
     // Each message once, whichever path saw it first. Asked of the bot itself: the 关注 step aside, and say so.
@@ -249,6 +249,7 @@ function watchSourceSpaces(app: App, watchSpace: string | null, batch: { meta: R
   if (watchSpace) spaces.add(watchSpace);
   for (const { meta } of batch) {
     const stored = typeof meta.externalId === "string" ? archived.get(meta.externalId) : undefined;
+    if (meta.needsSourceArchive && !stored) return null;
     const queued = meta.sourceSpaces;
     if (Array.isArray(queued) && queued.length && queued.every(id => typeof id === "string" && id)) {
       for (const id of queued) spaces.add(id);

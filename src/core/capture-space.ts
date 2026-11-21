@@ -76,15 +76,17 @@ export function archivedMessageSpaces(app: App, messageIds: string[]) {
   return spaces;
 }
 
-/** Freeze the origin before a watch queues the text or a rule changes the chat's binding. */
-export function watchMessageSourceSpaces(app: App, chatId: string | undefined, messageIds: (string | undefined)[]) {
-  const archived = archivedMessageSpaces(app, messageIds.filter(id => id !== undefined));
-  let captureSpaceId: string | undefined;
-  return messageIds.map(id => {
-    const archivedSpaces = id === undefined ? undefined : archived.get(id);
-    if (archivedSpaces) return archivedSpaces;
-    if (chatId) captureSpaceId ??= captureSpace(app, chatId);
-    return captureSpaceId ? [captureSpaceId] : undefined;
+/** Snapshot incoming messages together, before rules or watches wait to handle them. */
+export function messageSourceSpaces(app: App, messages: { id?: string; chatId?: string }[]) {
+  const archived = archivedMessageSpaces(app, messages.flatMap(m => m.id ? [m.id] : []));
+  const bindings = new Map<string, string>();
+  return messages.map(({ id, chatId }) => {
+    const stored = id && archived.get(id);
+    if (stored) return stored;
+    if (!chatId) return undefined;
+    const space = bindings.get(chatId) ?? captureSpace(app, chatId);
+    bindings.set(chatId, space);
+    return [space];
   });
 }
 

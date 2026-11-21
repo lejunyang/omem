@@ -12,6 +12,11 @@ import { findThread, setChatSettings, threadMessages } from "../src/agents/threa
 import { watchedNote } from "../src/agents/sessions.ts";
 import { saveContext } from "../src/channels/listen.ts";
 import { runActions } from "../src/rules/actions.ts";
+import { pollFastRules } from "../src/rules/fast.ts";
+import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
+import { fireAfterWait } from "../src/rules/engine.ts";
+import { setDiscussionForTests } from "../src/rules/context.ts";
+import type { RuleAction, RuleEvent } from "../src/rules/types.ts";
 import { saveRule } from "../src/rules/store.ts";
 import { remember } from "../src/memory/store.ts";
 import { embedPending, embedPendingMemories, embedQuery, embeddingHealth, resetEmbedder } from "../src/search/embeddings.ts";
@@ -171,6 +176,68 @@ it.each(["规则转入", "普通关注"])("%s的项目消息入队后改绑个�
   expect(embed).not.toHaveBeenCalled();
   await watchedNote(app, thread, [personal]);
   expect(embed).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  { mode: "延时转入", expected: ["allowed"] },
+  { mode: "复用关注批次", expected: ["allowed", "personal"] },
+  { mode: "后来归档", expected: ["allowed", "personal"] },
+  { mode: "接收前已归档", expected: ["allowed"] },
+  { mode: "旧事件无来源", expected: [] },
+  { mode: "旧事件复用批次", expected: ["personal"] },
+])("$mode 时按规则接收消息的来源保护正文", async ({ mode, expected }) => {
+  const app = fixture();
+  const embed = personalEmbedder();
+  setDiscussionForTests(async () => []);
+  cleanup.push(() => setDiscussionForTests(null));
+  const chatId = "project-group", id = "waiting-message", text = "项目 A 的交付日期有变";
+  const reuse = mode === "复用关注批次" || mode === "旧事件复用批次";
+  const watch = saveContext(app, { kind: "place", name: "个人关注", spaceId: "personal",
+    chats: reuse ? [chatId] : ["personal-group"] });
+  setChatSettings(app, "lark", chatId, { spaceId: "allowed" });
+  const rule = saveRule(app, { name: "延时跟进", description: "稍后跟进项目群消息", enabled: true, judge: "code",
+    trigger: { event: "message", fast: true, waitMinutes: 1, once: "event", unless: [] },
+    conditions: { field: "chat.id", op: "equals", value: chatId },
+    actions: [{ type: "delay", minutes: 1 }, { type: "context", context: watch.id }] });
+  const incoming = { message_id: id, chat_id: chatId, chat_name: "项目群", create_time: String(Date.now()),
+    msg_type: "text", content: { text }, sender: { id: "member", name: "小王" }, mentions: [{ id: "owner" }] };
+  if (mode === "接收前已归档") {
+    persistChatMessages(app, { chatId, spaceId: "allowed", name: "讨论群", messages: [incoming] });
+    setChatSettings(app, "lark", chatId, { spaceId: "personal" });
+  }
+  setLarkCliForTests(async args => {
+    if (args[0] === "auth") return { data: { identities: { user: { openId: "owner" } } } };
+    if (args.includes("p2p") && mode === "后来归档") setChatSettings(app, "lark", chatId, { spaceId: "personal" });
+    return { data: { messages: args.includes("group") ? [incoming] : [], has_more: false } };
+  });
+  cleanup.push(() => setLarkCliForTests(null));
+  expect(await pollFastRules(app)).toBe(1);
+  const saved = () => {
+    const [row] = all<{ input: string }>(app.db, "select input from runs where kind='rule-fire' order by rowid desc limit 1");
+    return JSON.parse(row.input) as { event: RuleEvent; key: string; actions: RuleAction[] };
+  };
+  const trigger = saved();
+  expect(trigger.event.sourceSpaces).toEqual(["allowed"]);
+  setChatSettings(app, "lark", chatId, { spaceId: "personal" });
+  await fireAfterWait(app, rule.id, trigger.key, trigger.event);
+  const delayed = saved();
+  expect(delayed.event.sourceSpaces).toEqual(["allowed"]);
+  expect(delayed.actions).toEqual(rule.actions.slice(1));
+  if (mode === "旧事件无来源" || mode === "旧事件复用批次") delete delayed.event.sourceSpaces;
+  if (mode === "后来归档") persistChatMessages(app, { chatId, spaceId: "personal", name: "讨论群", messages: [
+    { message_id: id, create_time: String(Date.now()), msg_type: "text", content: { text } },
+  ] });
+  if (reuse) {
+    expect(await routeWatchedMessages(app, chatId, "讨论群", [{ id, time: String(Date.now()), sender: "小王", text }])).toBe(1);
+  }
+  await fireAfterWait(app, rule.id, delayed.key, delayed.event, { actions: delayed.actions });
+  const thread = findThread(app, watch.conversationId!)!;
+  const messages = threadMessages(app, thread.id);
+  expect(messages).toHaveLength(1);
+  expect(messages[0].meta.sourceSpaces).toEqual(expected);
+  expect(messages[0].meta.rule).toBe(rule.id);
+  expect(await watchedNote(app, thread, messages)).toContain(text);
+  expect(embed).not.toHaveBeenCalled();
 });
 
 it("同一群的归档消息按原件授权，实时消息按入队时的空间授权", async () => {
