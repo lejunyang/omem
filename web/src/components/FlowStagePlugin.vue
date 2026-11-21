@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { get, post } from "../api";
+import { post } from "../api";
 import { promptDialog } from "../lib/dialog";
 import { clockTime, type FlowStage, type FlowView } from "../lib/flow";
-import { evidenceTarget, pluginSignal, runnerOf, signalState, type FlowHooks, type PluginEvidence } from "../lib/flow-hooks";
+import { evidenceTarget, gateAnswer, pluginSignal, signalState, type FlowHooks, type PluginEvidence } from "../lib/flow-hooks";
 import { flowHooks } from "../lib/flow-hooks-api";
 import { refAction } from "../lib/refs";
 import { relTime } from "../store";
@@ -16,37 +16,36 @@ import Markdown from "./Markdown.vue";
  * that stopped the stage. `actions`: the owner's choices on a stopped stage (仍然通过 / 等处理) are here;
  * where the page already shows them at the top (FlowWaiting), it is said without buttons.
  */
-const props = withDefaults(defineProps<{ itemId: string; stage: FlowStage; editable?: boolean; actions?: boolean; flat?: boolean }>(), { editable: true, actions: true });
+/** `who`: whose item it is when someone else reads it (ItemFlow's `carrier`): “小王选了等处理”. */
+const props = withDefaults(defineProps<{ itemId: string; stage: FlowStage; editable?: boolean; actions?: boolean; flat?: boolean; who?: string | null }>(), { editable: true, actions: true, who: null });
 const emit = defineEmits<{ changed: [view: FlowView | null] }>();
 const router = useRouter();
 
-const hooks = ref<FlowHooks>({ signals: [], runners: [], gates: [] });
-onMounted(() => void flowHooks().then((h) => (hooks.value = h)));
-const nameOf = (list: { id: string; name: string }[], id: string) => list.find((x) => x.id === id)?.name;
-
 const waiting = computed(() => (pluginSignal(props.stage.waitingSignal) ? props.stage.waitingSignal! : null));
-const signal = computed(() => waiting.value && signalState(waiting.value, nameOf(hooks.value.signals, waiting.value.type)));
-const runner = computed(() => runnerOf(props.stage.carrier.label));
-const runnerName = computed(() => runner.value && (nameOf(hooks.value.runners, runner.value.id) ?? runner.value.id));
+const signal = computed(() => waiting.value && signalState(waiting.value, waiting.value.name));
+const runner = computed(() => props.stage.carrier.runner ?? null);
 /** The job failed (or ran out of time): the stage is stuck with the run's error as its note. */
 const failed = computed(() => !!runner.value && props.stage.state === "blocked" && !props.stage.gateReview);
 const review = computed(() => props.stage.gateReview ?? null);
 const evidence = computed<PluginEvidence[]>(() => props.stage.pluginEvidence ?? []);
+/** Whether the card on a stopped stage still waits for an answer; what was answered and when, once it has been. */
+const askOpen = computed(() => review.value?.ask?.status === "pending");
+const answered = computed(() => gateAnswer(review.value?.ask, clockTime, props.who));
 
-/** Whether the card on a stopped stage still waits for an answer (an earlier 等处理 leaves it answered). */
-const askOpen = ref<boolean | null>(null);
-watch(() => [review.value, props.stage.askId, props.editable, props.actions] as const, async ([r, askId, editable, actions]) => {
-  askOpen.value = null;
-  if (!r || !askId || !editable || !actions) return;
-  try { askOpen.value = (await get<{ status: string }>(`/api/asks/${encodeURIComponent(askId)}`)).status === "pending"; }
-  catch { askOpen.value = false; }
-}, { immediate: true });
+/**
+ * What the job is for and the checks' names: an item's flow names them by id only, so they are read
+ * from `GET /api/flows` (shared by the stages on the page), only when this stage has either.
+ */
+const hooks = ref<FlowHooks>({ signals: [], runners: [], gates: [] });
+watch(() => !!runner.value || !!review.value, (need) => { if (need) void flowHooks().then((h) => (hooks.value = h)); }, { immediate: true });
+const nameOf = (list: { id: string; name: string }[], id: string) => list.find((x) => x.id === id)?.name;
+const runnerPurpose = computed(() => (runner.value ? hooks.value.runners.find((r) => r.id === runner.value!.id)?.describe ?? "" : ""));
 
 const busy = ref(false), error = ref("");
 async function answer(choice: 0 | 1) {
   if (!props.stage.askId || busy.value) return;
   busy.value = true; error.value = "";
-  try { await post(`/api/asks/${encodeURIComponent(props.stage.askId)}/answer`, { choice }); askOpen.value = false; emit("changed", null); }
+  try { await post(`/api/asks/${encodeURIComponent(props.stage.askId)}/answer`, { choice }); emit("changed", null); }
   catch (e) { error.value = (e as Error).message; }
   finally { busy.value = false; }
 }
@@ -82,8 +81,8 @@ const host = (url: string) => { try { return new URL(url).host; } catch { return
     </div>
 
     <div v-if="runner" class="ps-line" :class="{ failing: failed }">
-      <span class="ps-head">由 {{ runnerName }} 执行{{ failed ? "，没做成" : "" }}</span>
-      <span class="ps-note">{{ runner.describe }}</span>
+      <span class="ps-head" :title="runner.id">由 {{ runner.name }} 执行{{ failed ? "，没做成" : "" }}</span>
+      <span v-if="runnerPurpose" class="ps-note">{{ runnerPurpose }}</span>
       <a v-if="stage.carrier.link" :href="stage.carrier.link" class="ps-when">看这次运行</a>
     </div>
 
@@ -96,14 +95,12 @@ const host = (url: string) => { try { return new URL(url).host; } catch { return
         <summary>它看的结果</summary>
         <Markdown :source="review.summary" compact />
       </details>
-      <div v-if="actions && editable && stage.askId" class="row wrap">
-        <template v-if="askOpen">
-          <button type="button" class="btn sm primary" :disabled="busy" @click="answer(0)">仍然通过</button>
-          <button type="button" class="btn sm ghost" :disabled="busy" @click="answer(1)">等处理</button>
-          <span class="muted small">仍然通过只算这一次，记下越过了哪条检查。</span>
-        </template>
-        <span v-else-if="askOpen === false" class="muted small">你选了等处理。处理好以后重新检查，或重开这一段。</span>
+      <div v-if="askOpen && actions && editable && stage.askId" class="row wrap">
+        <button type="button" class="btn sm primary" :disabled="busy" @click="answer(0)">仍然通过</button>
+        <button type="button" class="btn sm ghost" :disabled="busy" @click="answer(1)">等处理</button>
+        <span class="muted small">仍然通过只算这一次，记下越过了哪条检查。</span>
       </div>
+      <p v-else-if="answered" class="muted small" role="status">{{ answered }}{{ review.ask?.choice === "hold" && stage.state === "blocked" && !who ? "。处理好以后重新检查，或重开这一段。" : "。" }}</p>
     </div>
 
     <div v-if="evidence.length" class="ps-evidence">

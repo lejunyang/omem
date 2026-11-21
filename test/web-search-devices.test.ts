@@ -51,6 +51,8 @@ describe("the vector and rerank cards (web/src/lib/search-settings.ts)", () => {
     expect(embeddingStatusLine(base)).toEqual({ text: "在用 embed-small · 512 维，上一次 120 ms", bad: false });
     expect(embeddingStatusLine({ ...base, state: "failed", lastError: "HTTP 401", pending: 20 }).text).toBe("最近一次调用出错：HTTP 401，还有 20 条没算向量，后台在补");
     expect(embeddingStatusLine({ ...base, state: "off" }).text).toBe("");
+    const stored = embeddingStatusLine({ ...base, embedded: { chunks: 1200, memories: 34, total: 1234 } });
+    expect(stored).toEqual({ text: "在用 embed-small · 512 维，上一次 120 ms，已有 1,234 个向量", bad: false, title: "原件分块 1,200 个，记忆 34 个" });
     expect(spacesLine(["shop", "x"], new Map([["shop", "示例商城"]]))).toBe("只用于这些空间：示例商城、x");
     expect(spacesLine([], new Map())).toBe("");
   });
@@ -59,6 +61,10 @@ describe("the vector and rerank cards (web/src/lib/search-settings.ts)", () => {
     const d = rerankDraft({ enabled: true, provider: "local", model: "m", top: 20 });
     expect(rerankPatch(d)).toEqual({ provider: "local" });
     expect(rerankPatch({ ...d, source: "api", model: "rank-1", timeoutSec: 3 })).toEqual({ provider: "api", api: { model: "rank-1", apiKeyEnv: "OPENAI_API_KEY", timeoutMs: 3000 } });
+    // Back to the environment variable: the draft the test endpoint receives has no keyRef, so the saved one is not used.
+    const viaProvider = rerankDraft({ enabled: true, provider: "api", model: "m", top: 20, api: { model: "rank-1", keyRef: "example-cloud", url: "https://api.example.com/v1" } });
+    expect((rerankPatch({ ...viaProvider, key: "" }).api as Record<string, unknown>)).not.toHaveProperty("keyRef");
+    expect(rerankPatch({ ...viaProvider, key: "" })).toEqual({ provider: "api", api: { model: "rank-1", url: "https://api.example.com/v1", apiKeyEnv: "OPENAI_API_KEY", timeoutMs: 5000 } });
     expect(rerankProblem({ ...d, source: "api", url: "ftp://x" , model: "m" })).toBe("接口地址要以 http:// 或 https:// 开头");
     expect(rerankDraft({ enabled: true, provider: "local", model: "m", top: 20 }, [{ id: "library:rank", label: "示例", plugin: "library", lastMs: null, lastError: null }]).plugin).toBe("plugin:library:rank");
     expect(rerankScoresText([{ index: 0, score: 0.93 }, { index: 2, score: 0.1 }])).toBe("返回 2 个分数，最高 0.930（检测句里的第 1 句）、最低 0.100");

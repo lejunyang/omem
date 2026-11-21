@@ -39,6 +39,10 @@ describe("流程呈现", () => {
     expect(stageColour(s({ state: "doing", waitingOn: "owner" }))).toBe("warn");
     expect(stageActions(s({ state: "done" }))).toEqual([]);
     expect(nextWords(s({ state: "blocked", waitingOn: "小王" }))).toContain("卡住：等 小王 回复");
+    // Stopped by a plugin's check: while the card waits, its own 仍然通过 / 等处理 are the answer; after 等处理, check again.
+    const review = { summary: "", refs: [], failed: [{ id: "stagekit:word", reason: "缺少验收词" }] };
+    expect(stageActions(s({ state: "blocked", gateReview: { ...review, ask: { id: "a", status: "pending", choice: null, answeredAt: null } } })).map((a) => a.label)).toEqual(["重开"]);
+    expect(stageActions(s({ state: "blocked", gateReview: { ...review, ask: { id: "a", status: "answered", choice: "hold", answeredAt: at } } })).map((a) => a.label)).toEqual(["处理好了，重新检查", "重开"]);
   });
   it("依据使用现有引用入口及运行、方案路由", () => {
     expect(evidenceLink("src:s123#L1-L3")).toBeNull();

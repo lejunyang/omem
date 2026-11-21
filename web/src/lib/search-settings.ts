@@ -93,19 +93,25 @@ export type EmbeddingStatus = {
   provider: string; kind: string; model: string | null; dimensions: number | null; plugin: string | null; name: string | null;
   lastMs: number; lastError: string | null; writeError?: string; pausedUntil?: number;
   pending: number; excludedSpaces: string[]; excludedReason: string | null;
+  /** Vectors already stored: original chunks and active memories, and the two together. */
+  embedded?: { chunks: number; memories: number; total: number };
   state: "off" | "unavailable" | "model-changed" | "paused" | "failed" | "ready" | "idle";
 };
-export function embeddingStatusLine(s: EmbeddingStatus | null | undefined): { text: string; bad: boolean } {
+/** `title`: the stored vectors split into originals and memories, for hovering over the line. */
+export function embeddingStatusLine(s: EmbeddingStatus | null | undefined): { text: string; bad: boolean; title?: string } {
   if (!s || s.state === "off") return { text: "", bad: false };
   const what = [s.name || s.model, s.dimensions && `${s.dimensions} 维`].filter(Boolean).join(" · ");
-  const pending = s.pending ? `，还有 ${s.pending.toLocaleString("zh-CN")} 条没算向量，后台在补` : "";
+  const n = (v: number) => v.toLocaleString("zh-CN");
+  const pending = s.pending ? `，还有 ${n(s.pending)} 条没算向量，后台在补` : "";
+  const have = s.embedded ? `，已有 ${n(s.embedded.total)} 个向量` : "";
+  const title = s.embedded ? `原件分块 ${n(s.embedded.chunks)} 个，记忆 ${n(s.embedded.memories)} 个` : undefined;
   switch (s.state) {
     case "unavailable": return { text: "插件的向量提供者现在不可用（插件停了或没注册），这期间只用全文检索", bad: true };
     case "model-changed": return { text: "插件换了模型或维度：保存一次并确认重建，之前向量检索不用它", bad: true };
     case "paused": return { text: `写入向量暂停了：${s.writeError ?? s.lastError ?? ""}`, bad: true };
-    case "failed": return { text: `最近一次调用出错：${s.lastError}${pending}`, bad: true };
-    case "ready": return { text: `在用 ${what}${s.lastMs ? `，上一次 ${s.lastMs} ms` : ""}${pending}`, bad: false };
-    default: return { text: `${what ? `${what}，` : ""}还没用过${pending}`, bad: false };
+    case "failed": return { text: `最近一次调用出错：${s.lastError}${have}${pending}`, bad: true, title };
+    case "ready": return { text: `在用 ${what}${s.lastMs ? `，上一次 ${s.lastMs} ms` : ""}${have}${pending}`, bad: false, title };
+    default: return { text: `${what ? `${what}，` : ""}还没用过${have}${pending}`, bad: false, title };
   }
 }
 

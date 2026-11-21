@@ -5,14 +5,18 @@ import { state, toast } from "../../store";
 import { setSettingsSections, settingsSections } from "../../lib/caps";
 import { saveRefusal, type SettingsSections } from "../../lib/settings-access";
 import { network } from "../../lib/network-status";
-import { detectProbe, probes as shared } from "../../lib/probes";
+import { detectProbe, probes as shared, seedProbe, type Probe } from "../../lib/probes";
 
 /**
  * What the settings tabs share (views/Settings.vue provides it, each tab in views/settings/ injects it):
  * the configuration as the server returned it, the installed backends, and one way to save a part of
  * the configuration (`PUT /api/settings`, which says when a change needs a restart).
  */
-export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string } };
+export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string };
+  /** `false` for someone who may only look: `probe` is the cached result, and the backend is never asked. */
+  canProbe?: boolean; probe?: Probe | null };
+/** A plugin's backend the configuration still names after the plugin went (`unavailableBackends`). */
+export type UnavailableBackend = { id: string; name?: string; pluginBackend: { plugin?: string; name: string; reason?: string } };
 export type ModelSource = { via: "local" | "osdk" | "hub"; path?: string; syncing?: boolean; error?: string; osdk: boolean; known: boolean; cached?: boolean; size?: string };
 /** `rerank` of `GET /api/settings` (src/search/rerank.ts `rerankStatus`); for a cloud API `state` and `error` are its last call's. */
 export type RerankStatus = { enabled: boolean; model: string | null; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number; source?: ModelSource | null; provider?: string | null; kind?: string; lastError?: string | null };
@@ -20,6 +24,7 @@ export type RerankStatus = { enabled: boolean; model: string | null; state: "idl
 export type SettingsCtx = {
   config: Ref<any>;
   profiles: Ref<Profile[]>;
+  unavailableBackends: Ref<UnavailableBackend[]>;
   home: Ref<string>;
   rerank: Ref<RerankStatus | null>;
   embeddingSource: Ref<ModelSource | null>;
@@ -36,6 +41,7 @@ const KEY: InjectionKey<SettingsCtx> = Symbol("settings");
 export function provideSettings(): SettingsCtx {
   const config = ref<any>(null);
   const profiles = ref<Profile[]>([]);
+  const unavailableBackends = ref<UnavailableBackend[]>([]);
   const home = ref("");
   const rerank = ref<RerankStatus | null>(null);
   const embeddingSource = ref<ModelSource | null>(null);
@@ -46,11 +52,12 @@ export function provideSettings(): SettingsCtx {
   }
   async function load() {
     // Someone else gets only the areas they may see: the parts left out stay missing.
-    const s = await get<{ config: any; agents?: Profile[]; home?: string; rerank?: RerankStatus; embeddingSource?: ModelSource | null }>("/api/settings");
+    const s = await get<{ config: any; agents?: Profile[]; unavailableBackends?: UnavailableBackend[]; home?: string; rerank?: RerankStatus; embeddingSource?: ModelSource | null }>("/api/settings");
     embeddingSource.value = s.embeddingSource ?? null;
     config.value = s.config;
     rerank.value = s.rerank ?? null;
     profiles.value = s.agents ?? [];
+    unavailableBackends.value = s.unavailableBackends ?? [];
     home.value = s.home ?? "";
     network.policies = s.config.agents?.networkPolicies ?? [];
   }
@@ -64,7 +71,7 @@ export function provideSettings(): SettingsCtx {
       toast(saveRefusal((e as Error).message, settingsSections(), ownerName.value), "error");
     }
   }
-  const ctx = { config, profiles, home, rerank, embeddingSource, load, loadSections, ownerName, saveConfig };
+  const ctx = { config, profiles, unavailableBackends, home, rerank, embeddingSource, load, loadSections, ownerName, saveConfig };
   provide(KEY, ctx);
   return ctx;
 }
@@ -107,9 +114,13 @@ export function useBackends(profiles: Ref<Profile[]>) {
   }
   /** Backends that can report their models and effort levels. */
   const probeable = (p: Profile) => p.transport === "acp" || p.transport === "doubao-cli";
-  /** Read cached probes (or probe once) for every installed ACP agent so the dropdowns can fill. */
+  /**
+   * Read cached probes (or probe once) for every installed ACP agent so the dropdowns can fill. Someone
+   * who may only look gets the cached results with the list (`canProbe: false`): nothing is asked.
+   */
   async function loadProbes() {
-    await Promise.all(installedProfiles.value.filter((p) => probeable(p) && !probes.value[p.id]).map((p) => detectProbe(p.id, false)));
+    for (const p of installedProfiles.value) if (p.canProbe === false) seedProbe(p.id, p.probe);
+    await Promise.all(installedProfiles.value.filter((p) => p.canProbe !== false && probeable(p) && !probes.value[p.id]).map((p) => detectProbe(p.id, false)));
   }
   return { installedProfiles, profileOptions, probes, effortsOf, modelOptionsFor, loadProbes };
 }

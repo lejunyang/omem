@@ -6,25 +6,22 @@ import { relTime } from "../store";
 
 /** `pluginBackend`: a backend a plugin declares (docs/v2/plugins.md 声明式 ACP 后端), with whether it can run now. */
 export type PluginBackend = { plugin: string; name: string; available: boolean; reason?: string };
-type Backend = { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: Probe | null; networkReason?: string | null; pluginBackend?: PluginBackend };
+/** `canProbe: false`: someone who may only look (a member with view rights); `probe` is the cached result, and nothing is asked. */
+type Backend = { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: Probe | null; networkReason?: string | null; pluginBackend?: PluginBackend; canProbe?: boolean };
 export type UnavailableBackend = { id: string; name?: string; pluginBackend: { plugin?: string; name: string; reason?: string } };
 type Choice = { agent?: string; model?: string; effort?: string };
 const props = defineProps<{ modelValue: Choice; backends: Backend[]; unavailableBackends?: UnavailableBackend[]; defaultBackend: string; cachedOnly?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: Choice]; change: [] }>();
 const backend = computed(() => props.backends.find((b) => b.id === (props.modelValue.agent || props.defaultBackend)));
 /**
- * The chosen backend the lists do not offer now: one the server names (`unavailableBackends`), or — where
- * the page has no such list — a saved plugin backend (`<插件>:<id>`) nobody lists any more.
+ * The chosen backend the lists do not offer now, as the server names it (`unavailableBackends`: a plugin's
+ * backend still referenced by a tier, a role, a profile, the fallbacks or the rotation after the plugin went).
  */
-const unavailable = computed<UnavailableBackend | undefined>(() => {
-  const id = props.modelValue.agent || props.defaultBackend;
-  const named = props.unavailableBackends?.find(b => b.id === id);
-  if (named || !props.modelValue.agent || props.backends.some((b) => b.id === id)) return named;
-  const plugin = /^([a-z][a-z0-9]*):[a-z][a-z0-9-]*$/.exec(id)?.[1];
-  return plugin ? { id, pluginBackend: { plugin, name: plugin, reason: "它的插件停用了、没信任或已经卸载" } } : undefined;
-});
-const probe = computed(() => props.cachedOnly ? backend.value?.probe : probes.data[backend.value?.id ?? ""]);
-const loading = computed(() => !props.cachedOnly && !!probes.pending[backend.value?.id ?? ""]);
+const unavailable = computed<UnavailableBackend | undefined>(() => props.unavailableBackends?.find((b) => b.id === (props.modelValue.agent || props.defaultBackend)));
+/** Only the cached result, never a request: asked to, or the reader may not probe this backend. */
+const cached = computed(() => props.cachedOnly || backend.value?.canProbe === false);
+const probe = computed(() => cached.value ? backend.value?.probe : probes.data[backend.value?.id ?? ""]);
+const loading = computed(() => !cached.value && !!probes.pending[backend.value?.id ?? ""]);
 const backendOptions = computed(() => [
   { value: "", label: `跟随默认${props.defaultBackend ? `（${props.defaultBackend}）` : ""}` },
   ...[...props.backends].sort((a, b) => Number(b.installed) - Number(a.installed) || Number(b.transport === "acp") - Number(a.transport === "acp") || a.name.localeCompare(b.name)).map((b) => ({ value: b.id, label: b.name, hint: [b.pluginBackend ? `来自插件 ${b.pluginBackend.name}` : b.transport ?? "", b.pluginBackend?.available === false ? "不可用" : b.installed ? b.networkReason || "可用" : "未安装或未授权"].filter(Boolean).join(" · ") })),
@@ -53,7 +50,7 @@ function update(key: keyof Choice, value: string) {
 // Cached results come with the backend list; only a backend never detected is asked on its own.
 function detect(refresh = false) {
   const b = backend.value;
-  if (!b || props.cachedOnly) return;
+  if (!b || cached.value) return;
   seedProbe(b.id, b.probe);
   void detectProbe(b.id, refresh);
 }
@@ -74,7 +71,7 @@ watch(() => backend.value?.id, () => detect(), { immediate: true });
       </div>
     </div>
     <p v-if="gone" class="small gone">{{ gone.name || gone.id }} 现在用不了：{{ gone.pluginBackend.reason || "它的插件停用了" }}<template v-if="gone.pluginBackend.name">（来自插件 {{ gone.pluginBackend.name }}）</template>。这里仍然保存着它，没有换成别的。<RouterLink v-if="gone.pluginBackend.name" :to="{ path: '/settings', query: { tab: 'plugins', ...(gone.pluginBackend.plugin ? { plugin: gone.pluginBackend.plugin } : {}) } }">去插件页</RouterLink></p>
-    <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || `留空就跟随默认。${probe?.at ? `可选项检测于${relTime(probe.at)}。` : ''}` }}</span><button v-if="!cachedOnly" type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
+    <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || `留空就跟随默认。${probe?.at ? `可选项检测于${relTime(probe.at)}。` : ''}` }}</span><button v-if="!cached" type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
   </div>
 </template>
 

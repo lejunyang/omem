@@ -4,7 +4,7 @@ import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
 import { confirmDialog } from "../lib/dialog";
 import type { FlowFile } from "../lib/flow";
-import { carrierOf, doneOf, pluginOf, readStages, type FlowCheck, type FlowHooks, type PendingCheck, type PluginNames } from "../lib/flow-hooks";
+import { doneOf, pluginOf, readStages, stagePluginParts, summarySignal, type FlowCheck, type FlowHooks, type PendingCheck, type PluginNames, type StageSummary, type UnavailableCheck, type UnavailableReference } from "../lib/flow-hooks";
 import FlowChecks from "../components/FlowChecks.vue";
 import FlowStageHooks from "../components/FlowStageHooks.vue";
 import FlowTabs from "../components/FlowTabs.vue";
@@ -62,7 +62,7 @@ async function answerDraft(d: Draft, choice: 0 | 1) {
 }
 
 type Step = { id: string; name: string; carrier: string; gate: string; done: string; when: string; needs: string[]; ai?: string; time?: string; budget?: string };
-type Reading = { ok: boolean; id?: string; name?: string; description?: string; problem?: string; stages?: Step[]; repeatDescription?: string };
+type Reading = { ok: boolean; id?: string; name?: string; description?: string; problem?: string; stages?: Step[]; repeatDescription?: string; unavailableReferences?: UnavailableReference[]; unavailableChecks?: UnavailableCheck[] };
 const template = `# id 用小写字母、数字和连字符；保存后保持不变。
 id: my-flow
 name: 我的流程
@@ -78,7 +78,7 @@ stages:
     by: owner
     gate: confirm
 `;
-type Listed = FlowFile & { checks?: FlowCheck[]; pendingCheckScopes?: PendingCheck[] };
+type Listed = FlowFile & { checks?: FlowCheck[]; pendingCheckScopes?: PendingCheck[]; unavailableChecks?: UnavailableCheck[]; stageSummaries?: StageSummary[] };
 const files = ref<Listed[]>([]), loading = ref(true), error = ref(""), busy = ref(false);
 /** What plugins offer flows (signals, jobs, checks), and their names for grouping. */
 const hooks = ref<FlowHooks>({ signals: [], runners: [], gates: [] }), names = ref<PluginNames>({});
@@ -89,17 +89,22 @@ const rawStages = computed(() => new Map(readStages(raw.value).map((s) => [s.id,
 const tuning = ref<string | null>(null);
 /** The version with a plugin's job just submitted: it waits for 启用 on its card. */
 const submitted = ref<{ askId: string; name: string } | null>(null);
-/** A step's plugin parts, said on the step itself even when its pickers are closed. */
+/**
+ * A step's plugin parts, said on the step itself even when its pickers are closed: the signal it waits
+ * for by name (a job is already said by the carrier line), and what no plugin offers now. The saved
+ * flow's stage summaries say which signal; while the text is being changed, the text being changed does.
+ */
+const summaries = computed(() => new Map((!changed.value ? current.value?.stageSummaries ?? [] : []).map((s) => [s.id, s])));
+const unavailable = computed(() => (reading.value?.ok ? reading.value.unavailableReferences ?? [] : shown.value?.unavailableReferences ?? []));
 function pluginNote(id: string) {
-  const s = rawStages.value.get(id);
-  if (!s) return null;
-  const c = carrierOf(s), d = doneOf(s);
-  const runner = c.kind === "runner" ? hooks.value.runners.find((r) => r.id === c.id) : undefined;
-  const signal = d.kind === "signal" && pluginOf(d.id) ? hooks.value.signals.find((x) => x.id === d.id) : undefined;
-  const gone = [c.kind === "runner" && !runner ? { id: c.id, words: "轮到它时会卡住等你处理" } : null, d.kind === "signal" && pluginOf(d.id) && !signal ? { id: d.id, words: "你可以手动完成这一段" } : null].filter((g) => !!g);
-  // A job is already said by the stage's carrier line; a plugin's signal is not.
-  const parts = [signal ? `等插件的信号：${signal.name}` : ""].filter(Boolean);
-  return parts.length || gone.length ? { text: parts.join("；"), gone } : null;
+  let signal = summarySignal(summaries.value.get(id));
+  if (changed.value) {
+    const s = rawStages.value.get(id), d = s && doneOf(s);
+    signal = d?.kind === "signal" && pluginOf(d.id) ? { id: d.id, name: hooks.value.signals.find((x) => x.id === d.id)?.name ?? d.id } : null;
+  }
+  const parts = stagePluginParts(id, signal, unavailable.value);
+  if (!parts) return null;
+  return { text: parts.signal ? `等插件的信号：${parts.signal}` : "", gone: parts.gone.map((g) => ({ id: g.id, words: g.kind === "runner" ? "轮到它时会卡住等你处理" : "你可以手动完成这一段" })) };
 }
 const current = computed(() => files.value.find((f) => f.id === selected.value));
 const editing = ref(false), selected = ref<string | null>(null), raw = ref(""), original = ref("");
@@ -110,27 +115,14 @@ const changed = computed(() => raw.value !== original.value);
 const renamed = computed(() => !!selected.value && !!reading.value?.ok && reading.value.id !== selected.value);
 const valid = computed(() => !validating.value && !!reading.value?.ok && !renamed.value);
 /**
- * A saved flow whose plugin is gone does not pass the check (the server needs the plugin to read its
- * parameters): its stages are still listed from the text, with the plugin parts marked.
+ * The server's word on a capability no plugin offers now, said as what to do. Only a job or signal newly
+ * written into a stage (or given other parameters) is refused: what was saved stays as it was.
  */
-const fallback = computed<Reading | null>(() => {
-  if (shown.value || !reading.value?.problem) return null;
-  const list = readStages(raw.value);
-  if (!list.length) return null;
-  return { ok: false, stages: list.map((s, i) => {
-    const c = carrierOf(s), d = doneOf(s), r = s as { gate?: string; needs?: string[] };
-    return { id: s.id, name: s.name ?? s.id, needs: r.needs ?? (i ? [list[i - 1].id] : []), when: "",
-      carrier: c.kind === "owner" ? "你来做" : c.kind === "wait" ? "只等进展" : c.kind === "runner" ? `插件 ${c.id} 执行` : "",
-      gate: r.gate === "confirm" ? "开始前先问你" : "轮到就开始",
-      done: d.kind === "signal" ? `等 ${d.id} 的信号` : d.kind === "confirm" ? "做完要你点头" : "按谁来做的默认算完" };
-  }) };
-});
-/** The server's word on a capability no plugin offers now, said as what to do. */
 const problemWords = computed(() => {
   const p = reading.value?.problem ?? "", m = /未注册流程能力 (\S+)/.exec(p);
-  return m ? `定义里用到的 ${m[1]} 现在没有插件提供（插件停用或卸载了）。要保存改动，先重新启用那个插件，或把这一段换成别的。` : p;
+  return m ? `新用到的 ${m[1]} 现在没有插件提供（插件停用或卸载了）。要保存，先启用那个插件，或把这一段换回原来的写法。` : p;
 });
-const steps = computed(() => shown.value ?? fallback.value);
+const steps = computed(() => shown.value);
 const title = computed(() => shown.value?.name ?? files.value.find((f) => f.id === selected.value)?.definition?.name ?? selected.value ?? "新流程");
 const status = computed(() => validating.value ? "正在核对…" : submitted.value ? "已提交，等你启用" : !selected.value ? "还没保存" : changed.value ? "有没保存的修改" : "已保存");
 
@@ -340,7 +332,7 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
                     <span v-for="g in pluginNote(s.id)!.gone" :key="g.id" class="gone"><span class="badge warn">插件停用了</span> <span class="mono">{{ g.id }}</span>：{{ g.words }}</span>
                   </div>
                   <button v-if="rawStages.has(s.id)" type="button" class="link tune" :aria-expanded="tuning === s.id" :disabled="busy" @click="tuning = tuning === s.id ? null : s.id">{{ tuning === s.id ? "收起" : "改谁来做、怎么算完" }}</button>
-                  <FlowStageHooks v-if="tuning === s.id && rawStages.has(s.id)" v-model:raw="raw" :stage="rawStages.get(s.id)!" :hooks="hooks" :names="names" :disabled="busy" :owner-only="ownerOnly" :problem="reading?.problem" />
+                  <FlowStageHooks v-if="tuning === s.id && rawStages.has(s.id)" v-model:raw="raw" :stage="rawStages.get(s.id)!" :hooks="hooks" :names="names" :unavailable="unavailable.filter((u) => u.stage === s.id)" :disabled="busy" :owner-only="ownerOnly" :problem="reading?.problem" />
                 </div>
               </li>
             </ol>
@@ -382,7 +374,7 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
           </section>
         </div>
 
-        <FlowChecks v-if="current?.definition && (hooks.gates.length || current.checks?.length)" :flow-id="current.id" :stages="current.definition.stages.map((s) => ({ id: s.id, name: s.name }))" :gates="hooks.gates" :checks="current.checks ?? []" :pending="current.pendingCheckScopes ?? []" :names="names" :editable="!ownerOnly" @saved="(c) => (current!.checks = c)" />
+        <FlowChecks v-if="current?.definition && (hooks.gates.length || current.checks?.length)" :flow-id="current.id" :stages="current.definition.stages.map((s) => ({ id: s.id, name: s.name }))" :gates="hooks.gates" :checks="current.checks ?? []" :pending="current.pendingCheckScopes ?? []" :unavailable="current.unavailableChecks ?? []" :names="names" :editable="!ownerOnly" @saved="(c) => (current!.checks = c)" />
 
         <section v-if="selected" class="change">
           <label class="field">

@@ -16,7 +16,7 @@ import AiNetworkConditions from "./AiNetworkConditions.vue";
  * everything set per backend: the default model, what it suits (routing candidates), its network
  * condition, how many runs at once, and its account's plan quota.
  */
-export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string } };
+export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string }; canProbe?: boolean };
 export type AgentLoad = {
   now: { source: string; model: string; used: number; waiting: number }[];
   recent: { profile: string; model: string; done: number; failed: number; medianMinutes: number | null }[];
@@ -35,11 +35,13 @@ const ids = computed(() => props.profiles.map((p) => p.id));
 const primary = computed(() => props.profiles[0]);
 const probeable = (p: Profile) => p.transport === "acp" || p.transport === "doubao-cli";
 const prober = computed(() => props.profiles.find(probeable));
+/** Someone who may only look (`canProbe: false`) sees the cached result settings sent along: nothing is asked. */
+const mayProbe = computed(() => prober.value?.canProbe !== false);
 const probe = computed(() => (prober.value ? probes.data[prober.value.id] : undefined));
 const probing = computed(() => !!(prober.value && probes.pending[prober.value.id]));
 const models = computed(() => probe.value?.models ?? []);
 const efforts = computed(() => probe.value?.effortsByModel?.[primary.value.model ?? ""] ?? probe.value?.efforts ?? []);
-watch(open, (o) => { if (o && prober.value) void detectProbe(prober.value.id); });
+watch(open, (o) => { if (o && prober.value && mayProbe.value) void detectProbe(prober.value.id); });
 
 // ---- the npm adapter behind the ACP agent (src/agents/adapter.ts): installed and newest version, upgrade in place
 type Adapter = { id: string; package: string | null; version?: string | null; latest?: string | null; latestError?: string; upgradable?: boolean };
@@ -245,7 +247,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
         <p v-else-if="!prober" class="small muted">这个后端不报告模型列表，在下面的配置里写 model、effort。</p>
         <div class="row wrap small">
           <span v-if="profiles.length > 1" class="muted grow">ACP 和命令行用同一个默认值。</span><span v-else class="grow" />
-          <button v-if="prober" class="btn ghost sm" :disabled="probing" @click="detectProbe(prober.id, true)">{{ probing ? "检测中…" : "重新检测" }}</button>
+          <button v-if="prober && mayProbe" class="btn ghost sm" :disabled="probing" @click="detectProbe(prober.id, true)">{{ probing ? "检测中…" : "重新检测" }}</button>
         </div>
         <div v-for="p in profiles" :key="p.id" class="cmd">
           <div class="row small">

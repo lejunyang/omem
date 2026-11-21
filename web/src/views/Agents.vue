@@ -34,12 +34,14 @@ import { state, toast } from "../store";
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
 type RoleRow = Pick<RoleState, "name" | "description"> & Partial<Pick<RoleState, "customized" | "sourceChanged">>;
-type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; purpose?: string; enabled?: boolean };
+/** `canEdit` / `canDelete`: what the reader may do with it (`GET /api/agents`, `GET /api/skills`); older servers send neither. */
+type Editable = { canEdit?: boolean; canDelete?: boolean };
+type Skill = Editable & { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; purpose?: string; enabled?: boolean };
 type SkillGroup = { id: string; title: string; enabled: boolean; count: number; enabledCount: number };
 type Options = { unavailableBackends: UnavailableBackend[]; backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; pluginBackend?: PluginBackend }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
 type SpecSummary = Pick<Spec, "name" | "description" | "status" | "agent" | "model" | "effort">;
-type SpecRow = SpecSummary & { plugin?: string };
+type SpecRow = SpecSummary & Editable & { plugin?: string };
 type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; toolSet: { tools: string[]; base: string[]; handIn: string[]; changed: boolean; fixed: boolean }; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
 type RoleSummary = Pick<RoleDetail, "name" | "description" | "defaults">;
 
@@ -399,6 +401,8 @@ async function saveSkill() {
   }
 }
 const currentSkill = computed(() => skills.value.find((s) => s.name === skillName.value));
+/** The open profile's row in the list: whether the reader may change or delete it. */
+const currentSpec = computed(() => specs.value.find((s) => s.name === specName.value));
 const groupTitleOf = (id: string) => skillGroups.value.find((g) => g.id === id)?.title ?? id;
 async function moveCurrent() {
   const s = currentSkill.value;
@@ -553,9 +557,9 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <span v-if="specDetail?.status === 'draft'" class="badge">草稿</span>
           <span class="spacer" />
           <button v-if="fullSpec && !creating" class="btn ghost sm" @click="toggleRaw">{{ rawMode ? "表单" : "原文" }}</button>
-          <button v-if="fullSpec?.status === 'draft' && !creating" class="btn sm" @click="approveSpec"><Icon name="check" :size="14" />启用</button>
-          <button class="btn sm primary" :disabled="saving || (!creating && !dirty)" @click="saveSpec">{{ creating ? "创建" : "保存" }}</button>
-          <button v-if="!creating" class="btn ghost sm icon danger" title="删除" @click="removeSpec"><Icon name="trash" :size="14" /></button>
+          <button v-if="fullSpec?.status === 'draft' && !creating && currentSpec?.canEdit !== false" class="btn sm" @click="approveSpec"><Icon name="check" :size="14" />启用</button>
+          <button v-if="creating || currentSpec?.canEdit !== false" class="btn sm primary" :disabled="saving || (!creating && !dirty)" @click="saveSpec">{{ creating ? "创建" : "保存" }}</button>
+          <button v-if="!creating && currentSpec?.canDelete !== false" class="btn ghost sm icon danger" title="删除" @click="removeSpec"><Icon name="trash" :size="14" /></button>
         </header>
 
         <textarea v-if="rawMode" v-model="raw" class="editor mono raw" spellcheck="false" aria-label="档案原文" @input="dirty = true" />
@@ -720,32 +724,34 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <template v-if="currentSkill.purpose"><span class="muted">/</span><button class="link" @click="go({ tab: 'skills', group: currentSkill.group, purpose: currentSkill.purpose })">{{ currentSkill.purpose }}</button></template>
           <span class="spacer" />
           <span v-if="currentSkill.enabled === false" class="badge">已停用</span>
-          <button class="btn ghost sm" @click="moveCurrent">移动</button>
+          <button v-if="currentSkill.canEdit !== false" class="btn ghost sm" @click="moveCurrent">移动</button>
         </nav>
         <nav v-else-if="currentSkill" class="crumbs small">
           <span class="muted">未分组：单独出现在技能目录里</span>
           <span class="spacer" />
-          <button class="btn ghost sm" @click="moveCurrent">放进分组</button>
+          <button v-if="currentSkill.canEdit !== false" class="btn ghost sm" @click="moveCurrent">放进分组</button>
         </nav>
         <header class="dh row">
           <h2 class="mono">{{ skillName }}</h2>
           <span v-if="currentSkill?.status === 'draft'" class="badge">草稿</span>
           <span v-if="currentSkill?.replay" class="muted small">复盘 {{ currentSkill.replay.wins }} 胜 {{ currentSkill.replay.losses }} 负<span v-if="currentSkill.replay.adopted"> · 复盘后自动启用</span></span>
           <span class="spacer" />
-          <button v-if="currentSkill?.status === 'draft'" class="btn sm" @click="approveSkill"><Icon name="check" :size="14" />启用</button>
-          <button v-else-if="currentSkill" class="btn ghost sm" title="停用后不再出现在任何 Agent 的技能里，夜间复盘也不会再试用它" @click="pauseSkill">停用</button>
-          <button class="btn sm primary" :disabled="saving || !dirty" @click="saveSkill">保存</button>
-          <button v-if="currentSkill" class="btn ghost sm icon danger" title="删除" @click="removeSkill"><Icon name="trash" :size="14" /></button>
+          <template v-if="currentSkill?.canEdit !== false">
+            <button v-if="currentSkill?.status === 'draft'" class="btn sm" @click="approveSkill"><Icon name="check" :size="14" />启用</button>
+            <button v-else-if="currentSkill" class="btn ghost sm" title="停用后不再出现在任何 Agent 的技能里，夜间复盘也不会再试用它" @click="pauseSkill">停用</button>
+            <button class="btn sm primary" :disabled="saving || !dirty" @click="saveSkill">保存</button>
+          </template>
+          <button v-if="currentSkill && currentSkill.canDelete !== false" class="btn ghost sm icon danger" title="删除" @click="removeSkill"><Icon name="trash" :size="14" /></button>
         </header>
         <div class="skill-workspace">
           <nav class="file-tree" aria-label="技能文件目录">
-            <button class="btn ghost sm" @click="newSkillFile"><Icon name="plus" :size="14" />新建文件</button>
+            <button v-if="currentSkill?.canEdit !== false" class="btn ghost sm" @click="newSkillFile"><Icon name="plus" :size="14" />新建文件</button>
             <VirtualList :items="visibleFiles" :item-key="(f) => f.path" :estimate="34">
               <template #default="{ item: f }"><button class="file-row" :class="{ selected: f.path === skillPath }" :style="{ paddingLeft: `${8 + Math.min(f.path.split('/').length - 1, 6) * 12}px` }" :aria-expanded="f.type === 'directory' ? !collapsed.has(f.path) : undefined" :title="f.path" @click="pickSkillFile(f)"><span>{{ f.type === 'directory' ? (collapsed.has(f.path) ? '▸' : '▾') : '·' }}</span><span class="file-name">{{ f.path.split('/').at(-1) }}</span></button></template>
             </VirtualList>
           </nav>
           <div class="file-editor">
-            <div class="row wrap small"><code class="file-name">{{ skillPath }}</code><span class="spacer" /><button v-if="skillPath !== 'SKILL.md' && !fileError && !fileLoading" class="btn ghost sm danger" @click="removeSkillFile">删除文件</button></div>
+            <div class="row wrap small"><code class="file-name">{{ skillPath }}</code><span class="spacer" /><button v-if="skillPath !== 'SKILL.md' && !fileError && !fileLoading && currentSkill?.canEdit !== false" class="btn ghost sm danger" @click="removeSkillFile">删除文件</button></div>
             <Skeleton v-if="fileLoading" variant="lines" :rows="10" />
             <p v-else-if="fileError" class="muted">{{ fileError }}</p>
             <textarea v-else v-model="skillRaw" class="editor mono raw" spellcheck="false" :aria-label="`技能文件 ${skillPath}`" @input="dirty = true" />

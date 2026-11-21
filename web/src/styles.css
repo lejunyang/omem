@@ -1292,6 +1292,11 @@ a.pg-out { color: var(--accent); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 完全访问 switched on by itself: the thing's name, a link to where it is changed. */
+.sbx-aside.sbx-grant {
+  font-size: 13px;
+  color: var(--accent);
+}
 .sbx-paths {
   display: grid;
   gap: 8px;

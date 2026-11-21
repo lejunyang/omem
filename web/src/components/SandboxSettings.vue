@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { get, put } from "../api";
 import { toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
-import { FULL_ACCESS, MODES, defaultLabel, fullAccessNote, homeOf, sandboxBody, splitDefaults, tilde, type FullAccessMode, type SandboxMode, type SandboxSettings, type SandboxStatus } from "../lib/sandbox";
+import { FULL_ACCESS, MODES, defaultLabel, fullAccessNote, grantLinks, sandboxBody, splitDefaults, tilde, type FullAccessMode, type SandboxMode, type SandboxSettings, type SandboxStatus } from "../lib/sandbox";
 import { settingsContext } from "../views/settings/ctx";
 import Icon from "./Icon.vue";
 import MonoLine from "./MonoLine.vue";
@@ -69,7 +69,8 @@ async function setFullAccess(v: FullAccessMode) {
   await save({ fullAccess: v }, `完全访问：${FULL_ACCESS.find((f) => f.value === v)?.label}`);
 }
 
-const home = computed(() => (status.value ? homeOf([...status.value.defaults.writable, ...status.value.defaults.hidden, ...status.value.writable, ...status.value.hidden]) : null));
+const home = computed(() => status.value?.home || null);
+const grants = computed(() => grantLinks(status.value?.fullAccessGrants));
 const data = computed(() => status.value?.defaults.hidden[0] ?? null);
 const split = computed(() => (status.value ? splitDefaults(status.value) : { common: [], backends: [] }));
 const off = computed(() => status.value?.mode === "off");
@@ -136,11 +137,19 @@ const note = computed(() => (status.value ? fullAccessNote(status.value) : ""));
       </SetRow>
       <p v-if="note" class="set-pad small muted">{{ note }}</p>
       <p v-if="status.warning" class="set-pad small warn-text">{{ status.warning }}</p>
+      <SetRow v-if="status.fullAccess === 'per-role' && status.fullAccessGrants" label="单独开着的" block>
+        <ul v-if="grants.length" class="sbx-list" aria-label="单独开着完全访问的">
+          <li v-for="g in grants" :key="`${g.kind}:${g.id}`" class="sbx-line">
+            <span class="sbx-named">{{ g.kind }}</span>
+            <RouterLink :to="g.to" class="sbx-aside sbx-grant" :class="{ mono: g.kind === '内置角色' }" :title="g.title">{{ g.name }}</RouterLink>
+          </li>
+        </ul>
+        <span v-else class="small muted">现在没有单独开着完全访问的内置角色、Agent 档案或规则。</span>
+      </SetRow>
       <div class="set-link">
-        <span>单独开着完全访问的，在各自的地方看：</span>
-        <RouterLink to="/agents">内置角色和 Agent 档案</RouterLink>
-        <RouterLink to="/rules">规则</RouterLink>
+        <span>访客的完全访问另在</span>
         <RouterLink to="/settings?card=guests">访客</RouterLink>
+        <span>里设。</span>
       </div>
     </SetCard>
   </template>

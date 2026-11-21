@@ -6,8 +6,13 @@
  */
 export type SandboxMode = "off" | "prefer" | "require";
 export type FullAccessMode = "per-role" | "sandboxed" | "all";
+export type FullAccessGrants = { roles: { id: string; name: string }[]; profiles: { id: string; name: string }[]; rules: { id: string; name: string }[] };
 export type SandboxStatus = {
   mode: SandboxMode;
+  /** The server's home directory, already resolved: paths under it are shown as `~/…`. */
+  home?: string;
+  /** What has 完全访问 switched on by itself (a built-in role, an Agent 档案, a rule). */
+  fullAccessGrants?: FullAccessGrants;
   writable: string[];
   hidden: string[];
   fullAccess: FullAccessMode;
@@ -38,16 +43,17 @@ export function sandboxBody(s: SandboxSettings, change: Partial<SandboxSettings>
 }
 
 /**
- * The home directory the server's paths are under, read from them (the server does not say it):
- * `/home/<name>`, `/Users/<name>` or `/root`, the one most of the paths share.
+ * What has 完全访问 switched on by itself under 按角色, each linked to where it is changed: built-in
+ * roles and Agent 档案 on the Agent page, rules on the rules page.
  */
-export function homeOf(paths: string[]): string | null {
-  const counts = new Map<string, number>();
-  for (const p of paths) {
-    const m = /^(\/home\/[^/]+|\/Users\/[^/]+|\/root)(?=\/|$)/.exec(p);
-    if (m) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+export function grantLinks(g: FullAccessGrants | undefined): { kind: string; id: string; name: string; title: string; to: { path: string; query: Record<string, string> } }[] {
+  if (!g) return [];
+  return [
+    // A built-in role is known by its name (the Agent page lists it so); what the server sends as its name is what it does.
+    ...g.roles.map((r) => ({ kind: "内置角色", id: r.id, name: r.id, title: r.name, to: { path: "/agents", query: { role: r.id } } })),
+    ...g.profiles.map((p) => ({ kind: "Agent 档案", ...p, title: p.id, to: { path: "/agents", query: { name: p.id } } })),
+    ...g.rules.map((r) => ({ kind: "规则", ...r, title: r.name, to: { path: "/rules", query: { id: r.id } } })),
+  ];
 }
 /** A path under the home directory as `~/…`. */
 export function tilde(path: string, home: string | null): string {

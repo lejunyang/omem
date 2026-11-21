@@ -39,7 +39,7 @@ omem 工具授权、`denyTools` 和操作规则仍生效。命中拒绝规则的
 
 **本人设置接口**
 
-`GET /api/security/sandbox` 返回本机支持情况及原因（`support`）、两个开关、已保存的额外目录、示例运行的默认清单（`defaults`）以及各本地档案的状态路径（`backends`）。列表里的示例工作区、产物路径随实际运行替换。设置 → 安全 的网页待接入。本人可用同一地址的 PUT 完整保存设置。以下配置允许已有的构建缓存目录写入，并隐藏 SSH 目录。
+`GET /api/security/sandbox` 返回本机支持情况及原因（`support`）、两个开关、已保存的额外目录、示例运行的默认清单（`defaults`）以及各本地档案的状态路径（`backends`）。列表里的示例工作区、产物路径随实际运行替换。网页在 设置 → 安全 的“运行的沙箱”和“完全访问”两张卡：路径按 `home` 写成 `~/…`，“按角色”下面按 `fullAccessGrants` 列出单独开着完全访问的内置角色、档案和规则，各链到对应页面。本人可用同一地址的 PUT 完整保存设置。以下配置允许已有的构建缓存目录写入，并隐藏 SSH 目录。
 
 ```json
 {"mode":"prefer","writable":["~/build-cache"],"hidden":["~/.ssh"],"fullAccess":"sandboxed"}
