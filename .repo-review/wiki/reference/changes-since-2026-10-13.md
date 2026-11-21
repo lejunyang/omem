@@ -34,6 +34,25 @@ updated: 2026-11-21
 
 主编码、助手、评审和后续轮次使用交办发起人的身份。账号选择和严格模式从 `src/agents/accounts.ts` 读起，挂载计划见 `src/agents/sandbox.ts`。宿主准备依赖和检查在 `src/agents/code.ts` 留下成员与交办记录。设备代跑的命令规则在 `src/core/peer-acp.ts` 接入执行节点。配置和验收见 `docs/v2/agent-accounts.md`。
 
+## 设置 → 安全 → 记录（11-21）
+
+- `audit_events` 以前只有 `GET /api/access/audit` 原样返回最近 200 条，没有页面读它。新加 `src/auth/audit-view.ts` 的 `auditRows`：把每条记录说成“谁、做了什么、对谁、结果”，成员、群、空间和关注显示名字，规则带标题（没标题的用它匹配的东西），分四类（`ops` 规则的判定和批准、`identity` 以本人身份发出的、`access` 成员登录分享、`other`），按 id 往前翻。规则判定的行，执行人写成“某人的运行”；批准和拒绝写做决定的人。认不出的动作照原名显示。
+- 接口 `GET /api/security/audit?group=&before=&limit=`（要 `users.manage`）；`detail`（当时记下的原样内容）只给本人。
+- 网页 `web/src/components/AuditTrail.vue`，在 设置 → 安全 最下面（`?card=trail`）：一行一条（颜色点表示放行 / 等批准 / 拒绝），右上按类筛，点开看原样内容和“看这次运行”。
+- 演示数据加了十一条虚构的记录，截图 `security-audit`；测试 `test/audit-view.test.ts`。
+
+## 工作页文字里的事项和运行 id 显示成标题（11-21）
+
+- `GET /api/work/:id` 多一个页面级的 `refTargets`：`textTargets`（`src/items/changes.ts`）扫目标、现状、每周一句、收尾原因、下一步和变化的文字，认出本人的事项（`i0m…`）和运行（`r0m…`）id，配上标题；认不出的、别人的不给。
+- `WorkDetail.vue` 把它并进 `targets`，现状那一句和四周各一句改用 `RichText` 加 `readableIds` 渲染（原来是纯文字），下一步的依据也用页面级的那份：id 变成“事项：标题 / 运行：标题”的链接，提交号和路径变成小号等宽。
+
+## 事项同步的网页（11-21）
+
+- 设置 → 推进工作 多一张卡“事项同步”（`web/src/components/ItemSyncSettings.vue`，`?card=item-sync`）：一行一个订阅（目标、平台 → 空间、导入了几件、多久前读过或“上次没读到”），展开改“新条目”（先当候选 / 直接建）、“这边改了状态”（先问我 / 直接写回，只读的平台没有）、暂停和“现在读一次”；“订阅”先 `PUT /api/item-sync` 再读第一遍。没有插件提供平台、也没有订阅时不渲染。
+- 事项详情和工作页多一块“来自……”（`ItemExternal.vue`）：条目的编号、标题、那边的状态、上次读的时间；没写回的状态按它的四种情况（等确认、等下次同步、冲突、失败）给按钮，走 `POST /api/items/:id/writeback`。
+- 服务端：`GET /api/item-sync` 的目标带 `items` 和 `synced_at`，数据源带 `targetHint`（`ItemProvider.targetHint`，GitHub 插件填了）；`externalView`（`src/items/providers.ts`）给 `GET /api/items/:id` 和 `GET /api/work/:id` 同一份 `external`，多了 `providerLabel`。
+- 演示数据加了一个虚构的“示例工单平台”（只注册数据源，不订阅），截图 `item-sync`、`item-external` 排在最后，经页面订阅和改状态拍出来；类型在 `web/src/lib/item-sync.ts`。
+
 ## 设置 → 安全：操作规则和规则包（11-21）
 
 - 旧的“命令规则”卡（`CommandRulesSettings.vue`，只能写命令名加一条参数正则）换成 `web/src/components/OperationRulesSettings.vue`：按生效顺序一行一条（开关、标题或由匹配内容生成的一句、种类标签、处理方式的状态色、范围摘要、上移 / 下移、展开），点开编辑四种匹配（命令 / HTTP / 文件 / 工具）、处理方式、谁来批和等多久、范围（`OperationScope.vue`，成员 / 角色或档案 / 空间 / 后端多选）。整份 `PUT /api/security/operation-rules`；服务端的 `rules.N.字段: 原因` 错误显示在第 N 行下面。规则包里的规则只改范围和开关。HTTP 规则行尾写“还没有执行点”，其余种类悬停说明由谁执行。

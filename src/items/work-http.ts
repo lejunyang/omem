@@ -7,11 +7,12 @@ import { HttpError, json, now, zonedParts, zoneMidnight } from "../core/util.ts"
 import { pendingActions, pendingView } from "./pending.ts";
 import { chatName } from "../agents/owner-now.ts";
 import { itemContext, listContexts } from "../channels/listen.ts";
-import { CHANGE_COLS, CHANGE_TYPES, changeLite, lineTimeline, refTargets, type ChangeLite } from "./changes.ts";
+import { CHANGE_COLS, CHANGE_TYPES, changeLite, lineTimeline, refTargets, textTargets, type ChangeLite } from "./changes.ts";
 import { endedLines, endReason, guardsOf, setLinePhase } from "./lifecycle.ts";
 import { decideNext, nextOf, type NextLite } from "./lines.ts";
 import { materialViews } from "./materials.ts";
 import { setParent } from "./parent.ts";
+import { externalView, providerState } from "./providers.ts";
 import { getItem, isClosed, listItems, type Item, type LineNow } from "./store.ts";
 import { ancestorIds, descendantIds, openUnder, rootOf } from "./tree.ts";
 
@@ -188,15 +189,24 @@ export async function workDetail(app: App, id: string, userId: string) {
   try { chats = contextChats(app, root, c); } catch { /* the line is gone */ }
   const f = flowLite(app, id);
   const closed = isClosed(item.status);
+  // The platform entry it was brought in from (items/providers.ts), for its subscriber only.
+  let external: ReturnType<typeof externalView> | null = null;
+  try { const synced = providerState(app, userId, id); external = synced && externalView(synced); } catch { /* the subscription is gone, or is someone else's */ }
+  const next = nextView(app, id, userId), timeline = lineTimeline(app, id, { limit: 200 }), reason = closed ? endReason(app, id) : null;
   return {
-    item, ancestors, now: item.now, next: nextView(app, id, userId),
+    item, ...(external ? { external } : {}), ancestors, now: item.now, next,
+    // Items and runs named by id inside the page's own text (the goal, the state, reasons), with their titles.
+    refTargets: textTargets(app, [
+      item.detail, item.now?.text, item.now?.summary, reason, ...(item.now?.weeks ?? []).map((w) => w.text),
+      ...next.flatMap((n) => [n.text, n.why]), ...timeline.flatMap((c) => [c.summary, c.detail, c.risk, c.next]),
+    ], userId),
     // Its life (items/lifecycle.ts): the phase, when it ended and why, its closing summary, how many under it are open.
     phase: item.phase, phaseSince: item.phaseSince, watchUntil: item.watchUntil,
     summary: item.now?.summary ?? null,
-    ended: closed ? { at: item.closedAt, status: item.status, reason: endReason(app, id) } : null,
+    ended: closed ? { at: item.closedAt, status: item.status, reason } : null,
     openUnder: openUnder(app, id),
     children: childrenOf(app, id),
-    timeline: lineTimeline(app, id, { limit: 200 }),
+    timeline,
     chats: chatActivity(app, chats),
     materials: await materialViews(app, id, userId),
     listen: c ? { id: c.id, status: c.status } : null,

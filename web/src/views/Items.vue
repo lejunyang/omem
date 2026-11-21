@@ -13,6 +13,8 @@ import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import ItemPlaces, { type Place, type ItemRun } from "../components/ItemPlaces.vue";
 import ItemFlow from "../components/ItemFlow.vue";
 import ItemObjects from "../components/ItemObjects.vue";
+import ItemExternal from "../components/ItemExternal.vue";
+import type { ItemExternal as External } from "../lib/item-sync";
 import ItemListen from "../components/ItemListen.vue";
 import DemoControl from "../components/DemoControl.vue";
 import ItemMetrics from "../components/ItemMetrics.vue";
@@ -32,7 +34,7 @@ const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
 type WorkFile = { id: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; lines: number };
-const detail = ref<{ item: Item; auto?: { why: string; by: string }; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[] } | null>(null);
+const detail = ref<{ item: Item; external?: External | null; auto?: { why: string; by: string }; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[] } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const adding = ref(false);
@@ -359,6 +361,7 @@ async function addNote() {
           <span class="spacer" />
           <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
+        <ItemExternal v-if="detail.external" :item-id="detail.item.id" :external="detail.external" :editable="!state.me || detail.item.userId === state.me.id" @changed="loadDetail" />
         <ItemFlow :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
         <ItemMetrics :item-id="detail.item.id" />
         <ItemListen :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id)" />

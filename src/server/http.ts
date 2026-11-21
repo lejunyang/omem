@@ -40,7 +40,7 @@ import { attachPluginStreams, registerHookRoutes, registerPluginRoutes } from ".
 import { IDE_BASE, IdeNotReady, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remote/http.ts";
 import { attachPreviewUpgrade, registerPreviewRoutes } from "./preview-http.ts";
-import { checkProviderEdit, configureTarget, decideProviderWrite, providerState, syncTarget, targetInput, targetsOf } from "../items/providers.ts";
+import { checkProviderEdit, configureTarget, decideProviderWrite, externalView, providerState, syncTarget, targetInput, targetsOf } from "../items/providers.ts";
 import { itemProviders } from "../plugins/process-hooks.ts";
 import { registerArtifactRoutes } from "./artifact-http.ts";
 import { registerDesignRoutes } from "./design-http.ts";
@@ -1422,7 +1422,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const user = who(req);
     const spaces = accessibleSpaces(app, user);
     const providers = [...itemProviders].filter(([, entry]) => !entry.spaces.length || !spaces || entry.spaces.some(s => spaces.includes(s)))
-      .map(([id, entry]) => ({ id, label: entry.def.label, statuses: entry.def.statuses, writable: !!entry.def.setStatus }));
+      .map(([id, entry]) => ({ id, label: entry.def.label, statuses: entry.def.statuses, writable: !!entry.def.setStatus, targetHint: entry.def.targetHint ?? null }));
     return { providers, targets: targetsOf(app, user) };
   });
   server.put("/api/item-sync", async (req) => configureTarget(app, who(req), q(targetInput, req.body)));
@@ -1489,7 +1489,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     const item = requireItem(app, id, who(req), "read");
     const synced = providerState(app, who(req), id);
-    const external = synced && { ...synced.external, provider: synced.target.provider, syncedAt: synced.syncedAt, direction: synced.direction, error: synced.error, write: synced.write };
+    const external = synced && externalView(synced);
     // A readable excerpt per reference, only from spaces this reader may see.
     const allowed = accessibleSpaces(app, who(req));
     const excerpts: Record<string, { title: string; text: string }> = {};

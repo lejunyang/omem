@@ -141,6 +141,12 @@ it("enforces subscription ownership through the HTTP item read, local edit and w
     const [id] = ids();
     const url = `/api/items/${id}`;
     expect((await server.inject(url)).json().external).toMatchObject({ url: ext.url, status: "open" });
+    // What the pages show: the entry with its platform's name on the work page too, and each subscription's count and last read.
+    const label = (await server.inject("/api/item-sync")).json().providers.find((p: { id: string }) => p.id === config.provider).label;
+    expect((await server.inject(`/api/work/${id}`)).json().external).toMatchObject({ url: ext.url, status: "open", providerLabel: label, write: null });
+    const listed = (await server.inject("/api/item-sync")).json();
+    expect(listed.targets).toEqual([expect.objectContaining({ id: configured.json().id, items: 1, synced_at: expect.any(String) })]);
+    expect(listed.providers.find((p: { id: string }) => p.id === config.provider)).toHaveProperty("targetHint");
     expect((await server.inject({ url, headers })).statusCode).toBe(404);
     expect((await server.inject({ method: "PATCH", url, headers, payload: { status: "done" } })).statusCode).toBe(404);
     expect((await server.inject({ method: "POST", url: url + "/writeback", headers, payload: { writeId: "other", confirm: true } })).statusCode).toBe(404);

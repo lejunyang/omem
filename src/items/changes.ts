@@ -61,6 +61,17 @@ export function refTargets(app: App, refs: string[], userId: string): Record<str
   return Object.keys(out).length ? out : undefined;
 }
 
+const TEXT_ID = /(?<![0-9A-Za-z_])[ir]0m[0-9a-z]{12,}(?![0-9A-Za-z_])/g;
+/**
+ * The items and runs named by a bare id inside text an agent wrote (a goal, a line's state, a reason):
+ * the page shows the title and a link instead of the id (web/src/lib/work.ts readableIds).
+ */
+export function textTargets(app: App, texts: (string | null | undefined)[], userId: string) {
+  const ids = new Set<string>();
+  for (const t of texts) for (const m of (t ?? "").matchAll(TEXT_ID)) if (ids.size < 80) ids.add(m[0]);
+  return ids.size ? refTargets(app, [...ids], userId) : undefined;
+}
+
 const titleOf = (app: App, id: string) => one<{ title: string }>(app.db, "select title from items where id = ?", id)?.title ?? id;
 export function changeLite(app: App, r: Row, lines = new Map<string, { id: string; title: string }>()): ChangeLite {
   let line = lines.get(r.item_id);

@@ -367,11 +367,11 @@ api.subscribe({
 
 ## 把平台条目同步成事项
 
-插件声明 `permissions.itemProvider: true`，通过 `api.itemProvider({ id, label, statuses, pull, setStatus? })` 注册。宿主给接口加插件前缀，例如 `sample:issues`。`statuses` 把外部状态映射为 `active`、`done` 或 `cancelled`。`pull(ctx, { target, cursor })` 返回一页 `{ items, cursor, done }`。每条至少有稳定的 `key`、`url`、`title`、外部 `status` 和 `updatedAt`。可附修订号、父条目键、负责人、类型及摘要。
+插件声明 `permissions.itemProvider: true`，通过 `api.itemProvider({ id, label, statuses, targetHint?, pull, setStatus? })` 注册。`targetHint` 是一句话，说明订阅时“目标”填什么（如“仓库，写成 owner/repo”），显示在网页的输入框旁。宿主给接口加插件前缀，例如 `sample:issues`。`statuses` 把外部状态映射为 `active`、`done` 或 `cancelled`。`pull(ctx, { target, cursor })` 返回一页 `{ items, cursor, done }`。每条至少有稳定的 `key`、`url`、`title`、外部 `status` 和 `updatedAt`。可附修订号、父条目键、负责人、类型及摘要。
 
-本人通过 `GET /api/item-sync` 查看数据源和已启用的目标，通过 `PUT /api/item-sync` 指定空间、目标、建事项及回写方式。默认先建候选，状态回写前询问本人。开启同步时可选择直接建事项或直接写回。宿主保管游标。对同一提供者、同一用户和连接账号，相同外部键归首次导入它的空间。该空间的重叠订阅更新同一件事项，其他空间跳过该键。父键可指向同页或已导入的条目，父子须同空间、同提供者、同连接主体，并遵守事项树的三层限制。
+本人在 设置 → 推进工作 → 事项同步（`web/src/components/ItemSyncSettings.vue`）订阅、调整和暂停，接口是：`GET /api/item-sync` 查看数据源和已启用的目标（每个目标带 `items` 已导入几件、`synced_at` 上次读到的时间、`error`），`PUT /api/item-sync` 指定空间、目标、建事项及回写方式，`POST /api/item-sync/:id/pull` 现在读一次。默认先建候选，状态回写前询问本人。开启同步时可选择直接建事项或直接写回。宿主保管游标。对同一提供者、同一用户和连接账号，相同外部键归首次导入它的空间。该空间的重叠订阅更新同一件事项，其他空间跳过该键。父键可指向同页或已导入的条目，父子须同空间、同提供者、同连接主体，并遵守事项树的三层限制。
 
-事项详情 `GET /api/items/:id` 的 `external` 包含提供者 id、外部链接、状态和修订。用 `GET /api/item-sync` 返回的 `providers[].label` 显示提供者名称。`syncedAt` 是最近成功同步的时间，`direction` 区分拉取（`pull`）和回写（`push`），`error` 保留最近的错误。发生冲突时，`external.write.state` 为 `conflict`，`external.write.status` 是请求写入的状态，`external.status` 是最近同步到的外部状态。获授权的插件收到事项创建或状态事件时，`data.links` 含提供者 URL，正文保存在事项详情。
+事项详情 `GET /api/items/:id` 和工作页的 `GET /api/work/:id` 的 `external` 包含提供者 id 和名称（`providerLabel`，插件停用时为空）、外部链接、状态和修订，只给订阅人自己；网页用 `web/src/components/ItemExternal.vue` 显示它，没写回的状态在那里“写回”或“只改这边”（`POST /api/items/:id/writeback`）。`syncedAt` 是最近成功同步的时间，`direction` 区分拉取（`pull`）和回写（`push`），`error` 保留最近的错误。发生冲突时，`external.write.state` 为 `conflict`，`external.write.status` 是请求写入的状态，`external.status` 是最近同步到的外部状态。获授权的插件收到事项创建或状态事件时，`data.links` 含提供者 URL，正文保存在事项详情。
 
 例如已连接 GitHub 的用户可以用以下请求订阅一个仓库的 issue。GitHub 提供者注册的是增量读取能力，只同步 issue，跳过 PR。
 

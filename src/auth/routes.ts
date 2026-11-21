@@ -516,6 +516,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "PUT /api/access/roles/:id": USERS,
   "DELETE /api/access/roles/:id": USERS,
   "GET /api/access/audit": USERS,
+  "GET /api/security/audit": USERS,
 };
 
 /** The space a rule's `at` points to for this request. */

@@ -21,6 +21,7 @@ import { findAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createSession, pluginContext } from "../src/plugins/blocks.ts";
 import { getPlugin, loadPlugins } from "../src/plugins/registry.ts";
+import { itemProviders } from "../src/plugins/process-hooks.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { applyAttempt, type Attempt } from "../plugins/english/learner.ts";
 import { recordReview } from "../src/agents/review.ts";
@@ -1012,6 +1013,46 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   skill("acme-cli", "用 acme 命令行建合并请求、发版", acmeWrites("2", [{ id: "branch-delete", title: "删远端分支前问本人", match: { kind: "command", executable: "acme", subcommand: ["branch", "delete"] }, action: "approve" }]));
 }
 
+// 设置 → 安全 → 记录: what the rules above did in two runs, what went out in the owner's name, a few changes.
+{
+  const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const event = (minutes: number, actor: string, action: string, target: string, detail: Record<string, unknown>) =>
+    run(app.db, "insert into audit_events(at,actor,action,target,detail) values(?,?,?,?,?)", at(minutes), actor, action, target, JSON.stringify(detail));
+  event(60 * 50, "owner", "operation.pack.enable", "skill:acme-cli", { scope: { spaces: ["shop"] } });
+  event(60 * 49, "owner", "operation.rules", "security", { count: 5 });
+  event(60 * 27, "owner", "token.cli", "owner", {});
+  event(60 * 26, "agent", "lark.mention-reply", "oc_demo_refund_qa", { runId: r.id, by: "auto", text: "部分发货的订单只退已发货的行，运费按已发货行的实付比例退；周四上线后生效。" });
+  event(60 * 25, "owner", "lark.mention-reply.drop", "oc_demo_refund", { runId: r.id, reason: "对方已经撤回了问题" });
+  event(60 * 5, "owner", "file.deny", "config/.env", { kind: "file", member: "owner", runId: r.id, ruleId: "demo-env", revision: 1, action: "deny", result: "策略判定" });
+  event(95, "owner", "command.deny", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-prod", revision: 1, action: "deny", result: "策略判定", commandLine: "acme deploy" });
+  event(42, "owner", "command.approve", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-mr", revision: 1, action: "approve", result: "策略判定", commandLine: "acme mr create" });
+  event(41, "owner", "command.ask", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-mr", revision: 1, command: "acme", cwd: "~/work/shop", approver: "本人", result: "等 本人 批准（规则指定）" });
+  event(38, "owner", "command.approve", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-mr", revision: 1, command: "acme", cwd: "~/work/shop", approver: "本人", result: "本人 批准" });
+  event(38, "owner", "command.allow", "acme", { kind: "command", member: "owner", runId: r.id, ruleId: "demo-mr", revision: 1, command: "acme", cwd: "~/work/shop", approver: "本人", result: "本人 批准，放行" });
+}
+
+// 设置 → 推进工作 → 事项同步: a platform to read entries from, the way a plugin offers one. Nothing is
+// subscribed here: the `item-sync` shot subscribes through the page, so no other shot has its items.
+{
+  const at = (hours: number) => new Date(Date.now() - hours * 3600_000).toISOString();
+  const entry = (key: string, title: string, status: string, assignee: string, hours: number) => ({ key, url: `https://tracker.example.com/shop/refund/${key}`, title, status, assignee, revision: "1", updatedAt: at(hours) });
+  const entries = [
+    entry("128", "部分发货的订单申请退款，金额显示成负数", "open", "小王", 5),
+    entry("131", "满减分摊后各行实付相加差一分钱", "open", "小王", 20),
+    entry("133", "售后详情和导出的退款金额对不上", "open", "小李", 28),
+    entry("119", "退款申请页在手机上按钮被键盘挡住", "closed", "阿青", 72),
+  ];
+  itemProviders.set("tracker:issues", {
+    plugin: "tracker", spaces: [],
+    def: {
+      id: "issues", label: "示例工单平台", statuses: { open: "active", closed: "done" }, targetHint: "项目，写成 团队/项目",
+      async pull() { return { items: entries, done: true }; },
+      async setStatus(_ctx, req) { return { status: req.status, revision: String(Number(req.expectedRevision ?? 1) + 1) }; },
+    },
+    context: (_app, userId, spaceId, signal) => ({ userId, spaceId, signal, connection: async () => null }),
+  });
+}
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -1194,6 +1235,44 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "design-own", path: `/design/${ownDesign.id}` },
   { name: "design-external", path: `/design/${extDesign.id}` },
   { name: "review-change-mobile", path: `/runs/${r.id}`, width: 390, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.waitForTimeout(400); } },
+  // 设置 → 安全 → 记录: the trail with one row open.
+  { name: "security-audit", path: "/settings?card=trail", prepare: async (p) => {
+    const card = p.locator("#set-trail");
+    await card.locator("button.au-row").nth(1).click();
+    await card.scrollIntoViewIfNeeded();
+    await p.waitForTimeout(400);
+  } },
+  // 事项同步, last: subscribing through the page reads the demo platform, and the items it brings in stay out of the shots above.
+  { name: "item-sync", path: "/settings?card=item-sync", prepare: async (p) => {
+    const card = p.locator("#set-item-sync");
+    if (!(await card.locator(".sync").count())) {
+      await card.getByRole("button", { name: "订阅" }).click();
+      await card.getByRole("combobox", { name: "读什么" }).click();
+      await p.getByRole("option", { name: "示例工单平台" }).click();
+      await card.getByRole("textbox").fill("shop/refund");
+      await card.getByRole("radio", { name: "直接建" }).click();
+      await card.getByRole("button", { name: "订阅", exact: true }).click();
+    } else await card.locator(".sync-row").first().click();
+    await card.locator(".sync.open").waitFor();
+    await card.scrollIntoViewIfNeeded();
+    await p.locator(".toast").waitFor({ state: "detached", timeout: 8000 }).catch(() => {});
+    await p.waitForTimeout(300);
+  } },
+  // An item that came from the platform, closed on this side: the write-back waits for a yes.
+  { name: "item-external", path: "/items", prepare: async (p) => {
+    const id = await p.evaluate(async () => {
+      const json = (path: string, method = "GET", body?: unknown) => fetch(path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());
+      const t = await json("/api/item-sync", "PUT", { provider: "tracker:issues", target: "shop/refund", spaceId: "shop", importMode: "direct", mode: "confirm", enabled: true });
+      await json(`/api/item-sync/${t.id}/pull`, "POST", {});
+      const item = (await json("/api/items?space=shop&q=" + encodeURIComponent("金额显示成负数"))).find((i: { title: string }) => i.title.includes("金额显示成负数"));
+      await json(`/api/items/${item.id}`, "PATCH", { status: "done" });
+      return item.id as string;
+    });
+    await p.goto(`${url}/#/items/${id}`);
+    await p.locator(".ext-write").waitFor();
+    await p.locator(".item-external").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(400);
+  } },
 ];
 let failed = 0;
 for (const s of shots.filter((s) => !only || only.includes(s.name))) {
