@@ -125,8 +125,8 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
       if (helper.tasks.has(t.seq)) mine.push(helper.node);
       else otherHelpers.add(helper.node.id);
     }
-    const runs = checkpoints.filter(c => c.tasks.includes(t.seq) && !mine.some(r => r.parent === c.by)).map(c => c.by);
-    const ids = [...(history.get(t.seq) ?? []), ...runs, ...mine.map(r => r.id), t.coderRun];
+    const runs = checkpoints.filter(c => c.tasks.includes(t.seq)).map(c => c.by);
+    const ids = [...(history.get(t.seq) ?? []), ...runs, ...mine.flatMap(r => [r.helper, r.id]), t.coderRun];
     const outputs: Output[] = Object.entries(t.commits).flatMap(([repo, shas]) => shas.map(ref => ({ kind: "commit", ref, label: repo + " · " + ref })));
     for (const r of mine) for (const w of JSON.parse(r.branches ?? "[]") as { space: string; branch: string }[])
       if (w.branch) outputs.push({ kind: "branch", ref: w.branch, label: w.space + " · " + w.branch });

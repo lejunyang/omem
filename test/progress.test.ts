@@ -160,6 +160,28 @@ describe("进度投影", () => {
     expect(code.usage).toEqual({ input: 13, output: 9, runs: 3, missing: 2 });
   });
 
+  it("旧交办只留下助手分工时，两个修改项都保留分派首轮和各自助手", () => {
+    const { app, add } = fixture();
+    add("first", "code", null);
+    add("next", "code", null, { continueFrom: "first" });
+    for (const seq of [1, 2]) {
+      addTask(app, "first", { title: `修改 ${seq}`, kind: "build" }, "coder");
+      add(`helper${seq}`, "agent", "first", { helperOf: "first", tasks: [seq] });
+    }
+    takeTasks(app, "first", "next");
+    for (const [id, input, output] of [["first", 11, 2], ["next", 13, 3], ["helper1", 5, 1]] as const)
+      run(app.db, "insert into run_events values(?,1,?,'usage',?)", id, at, JSON.stringify({ input, output }));
+    const code = runProgress(app, "next", owner).find(v => v.kind === "code")!;
+    expect(code.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([
+      ["first", "helper1", "next"], ["first", "helper2", "next"],
+    ]);
+    expect(code.tasks.map(t => t.usage)).toEqual([
+      { input: 29, output: 6, runs: 3, missing: 0 },
+      { input: 24, output: 5, runs: 3, missing: 1 },
+    ]);
+    expect(code.usage).toEqual({ input: 29, output: 6, runs: 4, missing: 1 });
+  });
+
   it("转派历史随事务回滚，重复转派按任务去重，隐藏空间的旧尝试不计入用量", () => {
     const { app, add } = fixture();
     add("root", "code", null);
