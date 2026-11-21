@@ -2585,7 +2585,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/approvals/ladder", async () => [...new Set([...app.config.approvals.tools, ...(app.config.approvals.report ?? [])])].map((tool) => ({ tool, rung: toolAlwaysApproves(tool) ? "ask" : rungOf(app, tool), streak: approvalStreak(app, tool) })));
   server.get("/api/notify/outlets", async req => {
     const { listOutlets } = await import("../plugins/notifier.ts");
-    return { outlets: await listOutlets(app, who(req)) };
+    const { user } = q(z.object({ user: z.string().min(1).optional() }), req.query);
+    return { outlets: await listOutlets(app, who(req), user) };
   });
   server.put("/api/notify/outlets", async req => {
     const b = q(z.object({ userId: z.string().optional(), outlets: outletSettings }).strict(), req.body);
