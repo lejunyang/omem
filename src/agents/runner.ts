@@ -625,7 +625,7 @@ function routingGuide(app: App, profile: AgentProfile) {
   const r = app.config.agents.routing;
   if (!r.automatic) return "";
   const ai = (c: { profile: string; model?: string; effort?: string }) => [c.profile, c.model, c.effort].filter(Boolean).join(" / ");
-  const doubao = choosableProfiles(app).some((p) => p.transport === "doubao");
+  const cloud = choosableProfiles(app).some(p => backendCapabilities(p).where === "cloud");
   // What changes during a session (load, the time) is not written here: these instructions are sent
   // once per session. The time opens every turn; the load comes from list_ai_backends.
   return [
@@ -636,7 +636,7 @@ function routingGuide(app: App, profile: AgentProfile) {
     "交办前用 list_ai_backends 看各模型现在的占用（正在用/上限）和近 7 天的完成、失败：同样合适时选空闲、失败少的，满了的会排队。",
     "它的 quota 是账号的套餐额度（各窗口已用百分比、多久后重置、周额度每天还能用多少）：标了 avoid 的账号快用完了，同样合适时选别的；本人偏好里写了额度条件的，按这些数字对照。",
     ...(one(app.db, "select 1 from replays where verdict in ('win','loss','tie') and axis in ('A1','A2') limit 1") ? ["其中的 replay28d 是夜间复盘的单变量对比（同一题只换模型），样本小，只作参考。"] : []),
-    ...(doubao ? ["doubao（豆包 OpenAPI）在云端运行，用不了 omem 的工具：只适合纯调研、写作。交给它时先自己把要用的材料取出来，原文一次性写进任务。"] : []),
+    ...(cloud ? ["交给云端后端时把原文材料写进任务。本人确认并启用的后端还能经 HTTP 补查少数只读工具。需要调工具交结果的任务选本地后端。"] : []),
   ].join("\n");
 }
 
@@ -788,7 +788,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const textAnswer = (input.role === "assistant" || input.role === "guest") && !input.choose && !input.spec;
   const needsAccess = required.length > 0 || (input.requiredTools === undefined && declared.length > 0 && !textAnswer);
   const requirement = required.length ? required.join("、") : "omem 工具";
-  const supports = (profile: AgentProfile) => !needsAccess || backendCapabilities(profile).omemAccess !== "none";
+  const supports = (profile: AgentProfile) => !needsAccess || ["mcp", "shell-bridge"].includes(backendCapabilities(profile).omemAccess);
   const told = await lessonsOfTask(app, input);
   const lessons = told.text;
   // Nothing pins the AI (no execution, no caller's pick, not a session being continued, not a coding

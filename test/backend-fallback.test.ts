@@ -5,6 +5,7 @@ import { remember } from "../src/memory/store.ts";
 import { one } from "../src/core/db.ts";
 import { resolve } from "node:path";
 import { expect, it } from "vitest";
+import { confirmProbe, probeCloud, probeReceipt } from "../src/agents/cloud-probe.ts";
 import { runRole } from "../src/agents/runner.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
 import { testApp } from "./helpers.ts";
@@ -33,8 +34,16 @@ it.each([true, false])("skips text-only profiles for item upkeep (cloud primary 
   app.config.agents.profiles = [local, { ...local, id: "cloud", transport: "doubao" }];
   app.config.agents.default = cloudFirst ? "cloud" : "local";
   app.config.agents.fallback = [{ profile: cloudFirst ? "local" : "cloud" }];
+  app.config.webUrl = "https://8.8.8.8";
+  Object.assign(app.config.agents.cloudTools, { enabled: true, credentialIn: "message", backends: ["cloud"] });
+  const probe = await probeCloud(app, "cloud", async (_app, _p, req) => {
+    const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
+    return { text: probeReceipt(app, nonce, nonce), agent: "test", stopReason: "end_turn" };
+  });
+  confirmProbe(app, "cloud", probe.id);
+  const runId = createRun(app, { kind: "ask", title: "复核事项" }).id;
   const events: AgentEvent[] = [];
-  const r = await runRole(app, { role: "item-keeper", spaceId: "personal", runId: null, task: "复核事项", onEvent: e => events.push(e) });
+  const r = await runRole(app, { role: "item-keeper", spaceId: "personal", runId, task: "复核事项", onEvent: e => events.push(e) });
   expect(r.profileId).toBe("local");
   expect(events).toContainEqual(expect.objectContaining({ type: "status", text: expect.stringMatching(/跳过后端 cloud.*settle_items/) }));
   app.db.close();

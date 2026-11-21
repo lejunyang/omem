@@ -426,6 +426,8 @@ describe("complete portable pulls", () => {
     run(remote.db, "insert or replace into kv(key,value) values('capture_demo','remote cursor')");
     for (const [app, id] of [[local, "local-session"], [remote, "remote-session"]] as const)
       run(app.db, "insert into session_cleanup(backend_key,session_id,transport,owner_pid,retry_at) values('doubao:app',?,'doubao-cli',1,'')", id);
+    const cloudRun = createRun(remote, { kind: "ask", title: "远端读取" });
+    run(remote.db, "insert into cloud_tool_usage(run_id,calls,at) values(?,2,?)", cloudRun.id, cloudRun.createdAt);
     const bin = mkdtempSync(join(tmpdir(), "omem-ssh-test-"));
     writeFileSync(join(bin, "ssh"), '#!/bin/sh\nexec /bin/sh -c "$4"\n');
     chmodSync(join(bin, "ssh"), 0o755);
@@ -439,7 +441,10 @@ describe("complete portable pulls", () => {
     local.db.close();
     try {
       const copied = App.open(f.dbDir);
-      try { expect(all(copied.db, "select * from session_cleanup")).toEqual([]); }
+      try {
+        expect(all(copied.db, "select * from session_cleanup")).toEqual([]);
+        expect(all(copied.db, "select * from cloud_tool_usage")).toEqual([]);
+      }
       finally { copied.db.close(); }
       const backup = overwriteLocal(home, f);
       expect(readFileSync(join(home, "files/0123456789abcdef.pdf"), "utf8")).toBe("document");
