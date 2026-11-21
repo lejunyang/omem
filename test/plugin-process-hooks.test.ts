@@ -8,5 +8,7 @@ it("checks every process capability against its declaration", () => {
   expect(() => api.subscribe({ id: "facts", events: ["item.created"], async handle() {} })).toThrow("permissions.events");
   expect(() => api.reviewProvider({ id:"review", label:"评审", objectKind:"pr", async publish() { throw Error(); }, async readThread() { return {state:"open"}; } })).toThrow("permissions.reviewProvider");
   expect(() => api.itemProvider({ id: "items", label: "事项", statuses: {}, async pull() { return { items: [], done: true }; } })).toThrow("permissions.itemProvider");
+  expect(() => api.retriever({ id: "demo", label: "示例", async search() { return []; } })).toThrow("permissions.retriever");
+  expect(() => api.reranker({ id: "demo", label: "示例", async score() { return []; } })).toThrow("permissions.reranker");
   expect(() => api.metricProvider({ id: "count", label: "计数", querySchema: z.object({}), async collect() { return []; } })).toThrow("permissions.metricProvider");
 });

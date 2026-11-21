@@ -55,7 +55,7 @@ describe("rerank", () => {
 
   it("is off by default and reports its state", async () => {
     const app = library();
-    expect(await rerankScores(app, "报销", ["a"])).toBeNull();
+    expect(await rerankScores(app, "报销", [{ id: "a", text: "a", type: "page", spaceId: "personal" }])).toEqual({ scores: null, provider: null });
     expect(rerankStatus(app)).toMatchObject({ enabled: false });
   });
 

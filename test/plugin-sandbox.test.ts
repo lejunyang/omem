@@ -29,11 +29,13 @@ describe("isolated plugins", async () => {
   await loadPlugins(app);
   const dir = join(app.home, "plugins", "probe2");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\nconnectors: [{ provider: connect-github }]\npermissions: { reviewProvider: true, events: [item.status], write: true, platforms: [connect-probe] }\n");
+  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\nconnectors: [{ provider: connect-github }]\npermissions: { retriever: true, reranker: true, reviewProvider: true, events: [item.status], write: true, platforms: [connect-probe] }\n");
   writeFileSync(
     join(dir, "server.mjs"),
     `import { readFileSync } from "node:fs";
 export default function register(api) {
+  api.retriever({ id: "lookup", label: "召回", async search(ctx, req) { return [{ type: "memory", id: ctx.userId + req.query }]; } });
+  api.reranker({ id: "rank", label: "排序", async score(ctx, req) { return req.candidates.map(x => x.text.length); } });
   api.reviewProvider({ id: "reviews", label: "讨论", objectKind: "pr",
     async publish(ctx, req) {
       if (ctx.store || ctx.userId !== "owner" || !ctx.signal || ctx.idempotencyKey !== "test-key") throw Error("上下文不符");
@@ -90,6 +92,14 @@ export default function register(api) {
     await entry.def.handle(ctx, { v: 1, id: "e1", type: "item.status", at: new Date().toISOString(), entity: { kind: "item", id: "i1" },
       actor: { kind: "user" }, spaceId: "example", data: { title: "事项" } });
     expect(seen.at(-1)).toEqual({ url: "https://api.github.com/user", auth: "Bearer sample-owner" });
+  });
+
+  it("隔离进程代理召回与重排", async () => {
+    const { retrievers, rerankers } = await import("../src/plugins/process-hooks.ts");
+    const lookup = retrievers.get("probe2:lookup")!;
+    const ctx = lookup.context(app, "ann", "example", AbortSignal.timeout(500));
+    expect(await lookup.def.search(ctx, { query: "Q", spaces: ["example"], kinds: ["memory"], limit: 1 })).toEqual([{ type: "memory", id: "annQ" }]);
+    expect(await rerankers.get("probe2:rank")!.def.score(ctx, { query: "Q", candidates: [{ id: "a", text: "abc" }] })).toEqual([3]);
   });
 
   it("代理评审的读写上下文、平台引用和锚点错误", async () => {

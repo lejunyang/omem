@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { loadConfig } from "../src/core/config.ts";
 import { setKey } from "../src/core/ai-keys.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
 import { startServer } from "../src/server/http.ts";
@@ -28,6 +29,23 @@ describe("PUT /api/settings", () => {
       expect(app.config.ai.decision).toEqual(decision);
     } finally {
       setDecisionFetchForTests(null);
+      await server.close();
+      app.db.close();
+    }
+  });
+  it("设置可保存任意有限的插件门槛，保留本地门槛", async () => {
+    const app = testApp();
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      for (const pluginPassiveThreshold of [-2, 4, 0]) {
+        const rerank = { ...app.config.rerank, provider: "plugin:demo:rank", pluginPassiveThreshold };
+        const saved = await server.inject({ method: "PUT", url: "/api/settings", payload: { rerank } });
+        expect(saved.statusCode).toBe(200);
+        expect((await server.inject({ url: "/api/settings" })).json().config.rerank).toEqual(rerank);
+        expect((await server.inject({ url: "/api/search/providers" })).json().config.rerank).toEqual(rerank);
+        expect(loadConfig(app.home).rerank).toEqual(rerank);
+      }
+    } finally {
       await server.close();
       app.db.close();
     }

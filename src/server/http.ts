@@ -96,6 +96,7 @@ import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, 
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
 import { search } from "../search/search.ts";
+import { searchProviderStatus } from "../search/providers.ts";
 import { rerankStatus } from "../search/rerank.ts";
 import { modelSource } from "../search/local-models.ts";
 import { searchRun } from "../search/trace.ts";
@@ -858,7 +859,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       branch = await indexBranch(app, spaces[0], o.branch);
       spaces = [spaces[0], branch.space];
     }
-    const found = visibleHits(app, who(req), await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2, visible: hitFilter(app, who(req)) }));
+    const found = visibleHits(app, who(req), await search(app, o.q, { userId: who(req), spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2, visible: hitFilter(app, who(req)) }));
     return { hits: presentHits(app, found, o.q), branch };
   });
 
@@ -1304,7 +1305,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (o.space) requirePerm(app, who(req), "memories.view", o.space);
     const readable = o.space ? undefined : (spacesWithCapability(app, who(req), "memories.view") ?? undefined);
     if (o.q) {
-      const hits = await search(app, o.q, { spaces: o.space ? [o.space] : readable, types: ["memory"], limit: 100, includeHistory: o.status === "all" });
+      const hits = await search(app, o.q, { userId: who(req), spaces: o.space ? [o.space] : readable, types: ["memory"], limit: 100, includeHistory: o.status === "all" });
       return hits.map((h) => getMemory(app, h.id)).filter((m) => (!o.tag || m.tags?.includes(o.tag)) && (!o.kind || m.kind === o.kind) && inFolder(m));
     }
     return listMemories(app, { spaceId: o.space, spaceIds: readable, status: o.status ?? "active", kind: o.kind, tag: o.tag, folder, review: o.review, limit: 5000 });
@@ -3280,6 +3281,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const queued = scheduleAudit(app);
     return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
   });
+  server.get("/api/search/providers", async () => searchProviderStatus(app));
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null, approvalTools: toolList().map((t) => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }));
   server.put("/api/settings", async (req) => {
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;

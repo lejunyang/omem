@@ -362,7 +362,7 @@ const commands: Record<string, Command> = {
       const own = inb.userId && inb.userId !== OWNER ? `personal-${inb.userId}` : "personal";
       const allowed = accessibleSpaces(app, inb.userId ?? OWNER);
       const related = relatedIds(app, thread.spaceId).filter((id) => !allowed || allowed.includes(id));
-      const hits = await search(app, args.trim(), { spaces: [...new Set([thread.spaceId, ...related, own])], limit: 8 });
+      const hits = await search(app, args.trim(), { userId: inb.userId ?? OWNER, spaces: [...new Set([thread.spaceId, ...related, own])], limit: 8 });
       return hits.length
         ? hits.map((h, i) => `${i + 1}. ${h.spaceId !== thread.spaceId && h.type !== "page" ? `[${h.spaceId}] ` : ""}${h.type === "page" ? `页面 ${h.path}` : h.type === "memory" ? `记忆 ${h.id}` : `${h.uri ?? h.title}${h.lineStart ? `:${h.lineStart}` : ""}`}\n   ${truncate(h.snippet.replace(/\s+/g, " "), 120)}`).join("\n")
         : "没有命中。";

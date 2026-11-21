@@ -4,11 +4,11 @@ import { createSpace, findSpace, getSpace, updateSpace } from "./spaces.ts";
 import { HttpError, json, newId, now, slugify } from "./util.ts";
 import { createApiToken, findUser, OWNER } from "./users.ts";
 import { invite, peerJson } from "./peers.ts";
-import { search } from "../search/search.ts";
+import { search, type SearchOptions } from "../search/search.ts";
 import { deleteSource, sourceText, upsertSource } from "../sources/store.ts";
 import { deletePage, readPage, writePage } from "../wiki/store.ts";
 import { getMemory, remember, retract, type MemoryKind } from "../memory/store.ts";
-import { keptHere } from "../auth/visibility.ts";
+import { keptHere, keptHereIds } from "../auth/visibility.ts";
 
 /**
  * Sharing between omem servers (docs/v2/multi-user.md, “多服务连接”).
@@ -105,14 +105,30 @@ export type FedHit = { type: "source" | "page" | "memory"; id: string; space: st
 export async function fedSearch(app: App, userId: string, input: { query: string; spaces?: string[]; limit?: number }): Promise<FedHit[]> {
   const shares = sharesFor(app, userId).filter((s) => !input.spaces?.length || input.spaces.includes(s.space));
   if (!shares.length) return [];
-  const hits = await search(app, input.query, { spaces: shares.map((s) => s.space), types: ["chunk", "page", "memory"], limit: Math.min(input.limit ?? 10, 30) * 2 });
+  const bySpace = new Map(shares.map(s => [s.space, s.kinds]));
+  const shared: NonNullable<SearchOptions["shared"]> = {
+    spaces: [...bySpace.keys()],
+    allows(space, kind) {
+      const kinds = bySpace.get(space);
+      if (!kinds) return false;
+      if (kind === "chunk") return kinds.some(k => k !== "wiki" && k !== "memory");
+      return kinds.includes(kind === "page" ? "wiki" : "memory");
+    },
+    filter(hits) {
+      const localOnly = keptHereIds(app, Array.from(hits).flatMap(h => h.sourceId ?? []));
+      return hit => {
+        if (hit.type === "page" || hit.type === "memory") return shared.allows(hit.spaceId, hit.type);
+        const kinds = bySpace.get(hit.spaceId);
+        return !!kinds && !!hit.sourceId && !!hit.sourceKind && allowsSource(kinds, hit.sourceKind) && !localOnly.has(hit.sourceId);
+      };
+    },
+  };
+  const hits = await search(app, input.query, { userId, shared, spaces: shared.spaces, types: ["chunk", "page", "memory"], limit: Math.min(input.limit ?? 10, 30) * 2 });
   const out: FedHit[] = [];
-  for (const h of hits) {
-    const g = shares.find((s) => s.space === h.spaceId);
-    if (!g) continue;
-    if (h.type === "page" && g.kinds.includes("wiki")) out.push({ type: "page", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
-    else if (h.type === "memory" && g.kinds.includes("memory")) out.push({ type: "memory", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
-    else if (h.type === "chunk" && h.sourceKind && allowsSource(g.kinds, h.sourceKind) && !(h.sourceId && keptHere(app, h.sourceId))) {
+  for (const h of hits.filter(shared.filter(hits))) {
+    if (h.type === "page") out.push({ type: "page", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
+    else if (h.type === "memory") out.push({ type: "memory", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
+    else if (h.type === "chunk" && h.sourceKind) {
       const origin = h.sourceId ? one<{ origin_key: string | null }>(app.db, "select origin_key from sources where id = ?", h.sourceId)?.origin_key : null;
       out.push({ type: "source", id: h.sourceId!, space: h.spaceId, title: h.title, snippet: h.snippet, sourceId: h.sourceId, lineStart: h.lineStart, lineEnd: h.lineEnd, originKey: origin, kind: h.sourceKind });
     }

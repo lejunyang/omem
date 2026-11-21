@@ -78,6 +78,7 @@ describe("roles and permissions", async () => {
   it("preserves the four original roles' representative route responses", async () => {
     for (const [path, expected] of [
       ["/api/work", [200, 403, 403, 403]],
+      ["/api/search/providers", [200, 403, 403, 403]],
       ["/api/rules", [200, 200, 403, 403]],
       ["/api/wiki/team", [200, 200, 200, 200]],
     ] as const) {

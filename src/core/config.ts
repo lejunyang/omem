@@ -689,14 +689,24 @@ export const configSchema = z.object({
       memArena: z.boolean().optional(),
     })
     .default({ provider: "none", model: "Xenova/bge-small-zh-v1.5", apiKeyEnv: "OPENAI_API_KEY" }),
+  search: z.object({
+    retrievers: z.array(z.object({
+      provider: z.string().min(1),
+      spaces: z.array(z.string().min(1)).optional(),
+      kinds: z.array(z.enum(["chunk", "page", "memory"])).optional(),
+      timeoutMs: z.number().int().min(1).max(15000).default(400),
+      limit: z.number().int().min(1).max(100).default(20),
+    })).max(32).refine(rows => new Set(rows.map(row => row.provider)).size === rows.length, "召回提供者重复").default([]),
+  }).default({ retrievers: [] }),
   /**
    * Reranking (search/rerank.ts): a cross-encoder reads the question with each of the first `top`
    * fused hits and reorders them; passive recall keeps only memories it scores at least
-   * `passiveThreshold`. Local only (transformers.js, ONNX). Calibrated in docs/v2/evaluation.md.
+   * the threshold for the scoring provider. Local scores (transformers.js, ONNX) calibrated in docs/v2/evaluation.md.
    */
   rerank: z
     .object({
       enabled: z.boolean().default(false),
+      provider: z.string().regex(/^(local|plugin:[a-z0-9-]+:[a-z0-9-]+)$/).default("local"),
       /** Model id or local directory (osdk `rerank-m3`). */
       model: z.string().default("onnx-community/bge-reranker-v2-m3-ONNX"),
       top: z.number().int().min(5).max(100).default(20),
@@ -707,8 +717,9 @@ export const configSchema = z.object({
       /** Past this the hits keep the fused order (the work stops at the next batch). */
       timeoutMs: z.number().int().min(500).max(120_000).default(10_000),
       passiveThreshold: z.number().min(0).max(1).default(0.5),
+      pluginPassiveThreshold: z.number().finite().optional(),
     })
-    .default({ enabled: false, model: "onnx-community/bge-reranker-v2-m3-ONNX", top: 20, maxTokens: 512, threads: 0, timeoutMs: 10_000, passiveThreshold: 0.5 }),
+    .default({ enabled: false, provider: "local", model: "onnx-community/bge-reranker-v2-m3-ONNX", top: 20, maxTokens: 512, threads: 0, timeoutMs: 10_000, passiveThreshold: 0.5 }),
   documents: z
     .object({
       /** Command that prints Markdown for PDF/DOCX on stdout. {file} is replaced. */

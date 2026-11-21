@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
-import type { CallContext, ItemProvider, MetricProvider, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
+import type { CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
 import { pluginSpaces } from "./spaces.ts";
@@ -19,7 +19,7 @@ const comment = z.object({ id: z.string().min(1).max(500), url: z.httpUrl().max(
 const thread = z.object({ state: z.enum(["open", "replied", "resolved", "outdated"]), reply: z.object({
   author: z.string().min(1).max(500), at: z.iso.datetime({ offset: true }), summary: z.string().max(1000),
 }).optional() });
-async function untilAbort<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+export async function untilAbort<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
   signal.throwIfAborted();
   let abort!: () => void;
   const expired = new Promise<never>((_, reject) => {
@@ -29,6 +29,9 @@ async function untilAbort<T>(signal: AbortSignal, work: () => Promise<T>): Promi
   try { return await Promise.race([work(), expired]); }
   finally { signal.removeEventListener("abort", abort); }
 }
+export const retrievers = new Map<string, Entry<Retriever>>();
+export type RegisteredReranker = Entry<Reranker>;
+export const rerankers = new Map<string, RegisteredReranker>();
 export const metricProviders = new Map<string, Entry<MetricProvider>>();
 
 export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[]): ProcessApi {
@@ -81,6 +84,16 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
         readThread: async (ctx, ref) => thread.parse(await untilAbort(ctx.signal, () => def.readThread(ctx, ref))),
         resolve: def.resolve && (async (ctx, ref, note) => thread.parse(await untilAbort(ctx.signal, () => def.resolve!(ctx, ref, note)))),
       });
+    },
+    retriever(def) {
+      if (!manifest.permissions.retriever) throw new Error("缺少 permissions.retriever");
+      if (!def.label?.trim() || typeof def.search !== "function") throw new Error("retriever 声明无效");
+      add(retrievers, def);
+    },
+    reranker(def) {
+      if (!manifest.permissions.reranker) throw new Error("缺少 permissions.reranker");
+      if (!def.label?.trim() || typeof def.score !== "function") throw new Error("reranker 声明无效");
+      add(rerankers, def);
     },
     metricProvider(def) {
       if (!manifest.permissions.metricProvider) throw new Error("缺少 permissions.metricProvider");

@@ -1,5 +1,7 @@
 import type { App } from "../core/app.ts";
 import { loadLocalModel } from "./embeddings.ts";
+import { pluginScores, selectedReranker, pluginHitFilter, type RerankCandidate, type SharedSearchAccess } from "./providers.ts";
+import { OWNER } from "../core/users.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
 import { modelSource, prepareLocalModel } from "./local-models.ts";
@@ -19,6 +21,7 @@ let loaded: { key: string; scorer: Promise<Scorer | null>; failedAt?: number } |
 let testScorer: Scorer | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 const BATCH = 8;
+const lastProvider = new WeakMap<App, string | null>();
 /** What settings → 检索 shows: whether the model loaded, and how the recent calls went. */
 const stats = { state: "idle" as "idle" | "loading" | "ready" | "failed", error: "", calls: 0, timeouts: 0, lastMs: 0 };
 /** Models that have scored at least once in this run of the service. */
@@ -71,12 +74,29 @@ async function getScorer(app: App): Promise<Scorer | null> {
   return entry.scorer;
 }
 
-/**
- * Relevance of each passage to the query (0–1), or null when reranking is off, failed or ran out
- * of time. `timeoutMs` shortens `rerank.timeoutMs` for callers that hold up a reply.
- */
-export async function rerankScores(app: App, query: string, passages: string[], timeoutMs?: number): Promise<number[] | null> {
-  if (!app.config.rerank.enabled || !passages.length || !query.trim()) return null;
+/** Score the whole batch with one provider, reserving time for a local fallback. */
+export async function rerankScores(app: App, query: string, candidates: RerankCandidate[],
+  { timeoutMs, userId = OWNER, shared }: { timeoutMs?: number; userId?: string; shared?: SharedSearchAccess } = {}) {
+  if (!app.config.rerank.enabled || !candidates.length || !query.trim()) return { scores: null, provider: null };
+  const entry = selectedReranker(app);
+  let provider: string | null = app.config.rerank.provider;
+  let scores: number[] | null = null;
+  if (entry && candidates.every(c => !entry.spaces.length || entry.spaces.includes(c.spaceId)) &&
+      candidates.every(pluginHitFilter(app, candidates, userId, shared))) {
+    const budget = Math.min(timeoutMs ?? Infinity, app.config.rerank.timeoutMs);
+    const deadline = Date.now() + budget;
+    scores = await pluginScores(app, entry, query, candidates, userId, Math.max(1, Math.floor(budget / 2)));
+    timeoutMs = Math.max(0, deadline - Date.now());
+  }
+  if (!scores) {
+    scores = await builtinScores(app, query, candidates.map(c => c.text), timeoutMs);
+    provider = scores ? "local" : null;
+  }
+  lastProvider.set(app, provider);
+  return { scores, provider };
+}
+
+async function builtinScores(app: App, query: string, passages: string[], timeoutMs?: number) {
   if (testScorer) return rerankLocally(app, query, passages, timeoutMs);
   const model = app.config.rerank.model;
   // osdk first (local-models.ts): while it is downloading a model nothing has fetched before, searches
@@ -138,7 +158,7 @@ export async function rerankLocally(app: App, query: string, passages: string[],
 
 export function rerankStatus(app: App) {
   const c = app.config.rerank;
-  return { enabled: c.enabled, model: c.model, ...stats, source: modelSource(c.model) };
+  return { enabled: c.enabled, provider: c.enabled ? (selectedReranker(app) ? c.provider : "local") : null, lastProvider: lastProvider.get(app) ?? null, model: c.model, ...stats, source: modelSource(c.model) };
 }
 /** Whether the model failed to load in this process (the read process tells the main one through an error). */
 export const rerankLoadError = () => (stats.state === "failed" ? stats.error || "重排模型没有加载成功" : "");

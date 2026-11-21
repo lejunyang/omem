@@ -19,6 +19,23 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 被动记忆的插件门槛（11-21）
+
+在 `src/core/config.ts` 查看可选的 `rerank.pluginPassiveThreshold`。它接受任意有限分数，省略时沿用原门槛。
+`src/memory/passive.ts` 按本次出分来源筛选记忆，回退时使用本地门槛。
+
+## 插件回退后按本地模型精度排序（11-21）
+
+`src/search/rerank.ts` 统一检查整批候选的发送权限，并把本次实际打分的提供者返回给调用方。主搜索对本地分数保留三位小数，插件保留原分。设置中的 `lastProvider` 使用同一个评分来源。
+
+## 共享设备调用检索插件（11-21）
+
+共享设备按共享空间和材料种类使用召回与重排，受限原件和要求在本机核对权限的文档留在本机。内置路线与插件路线的命中在去重、截断前统一检查共享可见性，`src/auth/visibility.ts` 按候选原件 id 合批核对。授权入口见 `src/core/federation.ts`，插件候选检查见 `src/search/providers.ts`。
+
+## 插件接入召回和重排（11-21）
+
+从 `packages/plugin-sdk/server.ts` 看注册接口，从 `src/search/providers.ts` 看空间、调用预算和状态。`src/search/search.ts` 按 id 回读后参与 RRF 融合，`src/search/rerank.ts` 在同一入口为主搜索与被动记忆选择重排器。配置和状态字段见 [接进检索](../../../docs/v2/plugins.md#接进检索)。
+
 ## 早上一张“今天”：下一步、清点、夜里的提议合成一张（11-21）
 
 - `src/items/today.ts`：宿主拼一个 ask（处理器 `today`），不起模型。四段：等你处理（`pendingActions` 按种类计数、列三条，不带按钮）、各条线（`now.text`、三天内到期、`lines.ts newNextSteps` 的下一步）、夜里整理出来的（`heldProposals` 读 work-state 运行输出里的 `lineProposals`、`pendingCandidates`、`digestFor`、夜里问的 `line-end`、`replayDigest` 的建议）、不急的通知（只计数）。字段 id 带前缀（`n_` 下一步、`p_` 提议、`c_` 候选、`r_` 恢复、`k_` 保留、`e_` 线要不要结束、`x_` 复盘），每段有上限（`TODAY_MAX`），表单最多 30 项。
