@@ -565,7 +565,11 @@ export function prepareRun(
     now: `现在：${localTime(app, input.replay?.view.asOf)}`,
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
-    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app)),...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
+    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: {
+      ...agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app)),
+      ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
+      ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
+    } },
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),

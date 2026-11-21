@@ -152,6 +152,12 @@ new AgentSideConnection(
       // FAKE_PROMPT_LOG=file: each turn's prompt, one JSON string a line (what the host sent).
       if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, JSON.stringify(prompt) + "\n");
       const say =(text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      if (process.env.FAKE_MODE === "peer-gate") {
+        let status = 0;
+        try { runAcme(); } catch (e) { status = (e as { status: number }).status; }
+        await say(JSON.stringify({ url: process.env.OMEM_URL, path: process.env.PATH, status }));
+        return { stopReason: "end_turn" };
+      }
       if (process.env.FAKE_MODE === "permission") {
         const response = await conn.requestPermission({ ...JSON.parse(prompt), sessionId: p.sessionId });
         if (process.env.FAKE_EXEC_ACME && response.outcome.outcome === "selected" && response.outcome.optionId === "yes") {

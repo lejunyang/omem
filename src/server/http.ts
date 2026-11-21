@@ -1764,7 +1764,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         const lend = user ? (await import("../core/mesh.ts")).lendAllowed(app, user, new URL(req.url ?? "/", "http://x").searchParams.get("agent") ?? "") : { ok: false as const, reason: undefined };
         if (!lend.ok) return void socket.end(lend.reason ? `HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain; charset=utf-8\r\nconnection: close\r\n\r\n${lend.reason}` : "HTTP/1.1 401 Unauthorized\r\n\r\n");
       }
-      return void serveAcp(app, req, socket, head);
+      return void serveAcp(app, req, socket, head, user ?? OWNER);
     }
     const m = /^\/api\/peers\/([^/?]+)(\/.*)$/.exec(req.url ?? "");
     if (!m) return;
