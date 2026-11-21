@@ -59,24 +59,19 @@ function boardView(app: App, graph: Forest, node: Node, itemId?: string) {
     if (e instanceof HttpError && e.status === 404) return;
     throw e;
   }
-  const tasks = board.tasks.map(t => {
+  const tasks = board.tasks.map((t): ProgressTask => {
     const latest = t.attempts.at(-1);
-    const row = task(graph, t.attempts.map(a => a.runId), {
+    const attempts = t.attempts.map(a => ({
+      runId: a.runId, status: a.status, startedAt: a.startedAt ?? undefined, endedAt: a.finishedAt ?? undefined,
+      queuedMs: a.queuedMs, runMs: a.executionMs, usage: graph.usage([a.runId]),
+    }));
+    return {
+      attempts, usage: graph.usage(attempts.map(a => a.runId)),
+      who: latest && { agent: latest.ai?.profile, model: latest.ai?.model, effort: latest.ai?.effort, device: latest.device },
       id: t.id, title: t.title, goal: t.goal, accept: t.accept, state: states.board[t.status as keyof typeof states.board],
       outputs: latest && t.report ? [{ kind: "report", ref: latest.runId, label: t.report }] : undefined,
       decision: t.verdict && { by: t.verdict.by, at: t.verdict.at, result: t.verdict.decision, note: t.verdict.note } || undefined,
-    });
-    // The board can expire or cancel a queued run before the worker writes its final status.
-    for (const a of row.attempts) {
-      const saved = t.attempts.find(e => e.runId === a.runId)!;
-      a.status = saved.status;
-      a.startedAt = saved.startedAt ?? undefined;
-      a.endedAt = saved.finishedAt ?? undefined;
-      a.queuedMs = saved.queuedMs;
-      a.runMs = saved.executionMs;
-    }
-    if (latest?.device) row.who = { ...row.who, device: latest.device };
-    return row;
+    };
   });
   const state = { running: "running", review: "waiting", summarized: "done" } as const;
   const block = view(graph, { kind: "board", id: node.id, title: board.title, runId: node.id, itemId, tasks }, state[board.status as keyof typeof state]);
