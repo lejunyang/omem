@@ -48,7 +48,9 @@ const asMoment = (day: unknown) => (typeof day === "string" && day ? fromWallDat
 
 <template>
   <div class="ui-fields">
-    <div v-for="f in shown" :key="f.id" class="field" role="group" :aria-labelledby="fid(f)">
+    <template v-for="(f, i) in shown" :key="f.id">
+    <h4 v-if="f.group && f.group !== shown[i - 1]?.group" class="group-head">{{ f.group }}</h4>
+    <div class="field" role="group" :aria-labelledby="fid(f)">
       <span :id="fid(f)" class="label">{{ f.label }}<span v-if="f.required" class="req" aria-hidden="true">*</span></span>
       <span v-if="f.help" class="muted small">{{ f.help }}</span>
       <input v-if="f.type === 'text'" class="input" :value="values[f.id] ?? ''" :placeholder="f.placeholder" :aria-labelledby="fid(f)" @input="values[f.id] = ($event.target as HTMLInputElement).value" />
@@ -116,6 +118,7 @@ const asMoment = (day: unknown) => (typeof day === "string" && day ? fromWallDat
         </div>
       </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -133,6 +136,20 @@ const asMoment = (day: unknown) => (typeof day === "string" && day ? fromWallDat
 .label {
   font-weight: 550;
   overflow-wrap: anywhere;
+}
+/* A heading over a run of fields (host-made forms such as 今天): the section, then its choices. */
+.group-head {
+  margin: 8px 0 -4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+.group-head:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 .req {
   color: var(--danger);

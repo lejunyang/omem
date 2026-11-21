@@ -118,7 +118,8 @@ const fieldSchema = z.discriminatedUnion("type", [
     max_rows: z.number().int().min(1).max(50).default(20),
   }).describe("可编辑的表格：一行一条，按列填"),
 ]);
-export type UiField = z.infer<typeof fieldSchema>;
+/** `group`: a heading over this field and the ones after it with the same group (the host's own forms, e.g. items/today.ts; not taken from agents). */
+export type UiField = z.infer<typeof fieldSchema> & { group?: string };
 export const fieldsSchema = z.array(fieldSchema).min(1).max(30);
 
 /** What a question carries besides its text: a form, and what to look at while answering. */

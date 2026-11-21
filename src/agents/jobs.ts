@@ -948,16 +948,27 @@ registerHandler("item-settle", async (ctx) => {
  * Daily: what closed by itself and what closes tomorrow, one card per person with keep/reopen buttons;
  * and the candidates the assistant made on its own, each with 留下 / 不要 (items/auto.ts).
  */
-export async function sendItemDigests(app: App) {
+/** The 09:30 schedule: with 今天 on, the owner's digest is a part of that card (items/today.ts); members still get theirs. */
+export async function itemDigestDue(app: App) {
+  const { todayOn } = await import("../items/today-time.ts");
+  return sendItemDigests(app, todayOn(app) ? { except: [OWNER] } : {});
+}
+
+export async function sendItemDigests(app: App, opts: { except?: string[] } = {}) {
   const { digestFor, digestBody, isLineEnded, markDigestSent } = await import("../items/expiry.ts");
   const { candidatesBody, pendingCandidates } = await import("../items/auto.ts");
   const sent = [];
+  // `except`: people whose digest goes on another card (the owner's on 今天, items/today.ts), replays included.
+  const skip = new Set(opts.except ?? []);
   // Last night's replays go to the owner's card as a section of their own (agents/replay.ts); none ran → no section.
-  const { replayDigest } = await import("./replay.ts");
-  const replaySince = one<{ value: string }>(app.db, "select value from kv where key = 'replay_digest_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
-  const replays = replayDigest(app, replaySince);
-  run(app.db, "insert into kv(key, value) values('replay_digest_at', ?) on conflict(key) do update set value = excluded.value", now());
-  const users = new Set([...all<{ user_id: string }>(app.db, "select distinct user_id from items").map((r) => r.user_id), ...(replays ? [OWNER] : [])]);
+  let replays: ReturnType<typeof import("./replay.ts").replayDigest> = null;
+  if (!skip.has(OWNER)) {
+    const { replayDigest } = await import("./replay.ts");
+    const replaySince = one<{ value: string }>(app.db, "select value from kv where key = 'replay_digest_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
+    replays = replayDigest(app, replaySince);
+    run(app.db, "insert into kv(key, value) values('replay_digest_at', ?) on conflict(key) do update set value = excluded.value", now());
+  }
+  const users = new Set([...all<{ user_id: string }>(app.db, "select distinct user_id from items").map((r) => r.user_id), ...(replays ? [OWNER] : [])].filter((u) => !skip.has(u)));
   for (const user_id of users) {
     const d = digestFor(app, user_id);
     markDigestSent(app, user_id);
@@ -1183,7 +1194,8 @@ registerHandler("heartbeat", async (ctx) => {
     await data.collectDue(app);
     // Where each line stands (channels/listen-assist.ts), and once a day one card with their next steps (items/lines.ts).
     await (await import("../channels/listen-assist.ts")).assistDue(app);
-    (await import("../items/lines.ts")).lineNextDue(app);
+    // With 今天 on (items/today.ts) the next steps go on its morning card instead of a card of their own.
+    await (await import("../items/today.ts")).morningDue(app);
     // Lines that look done go into 观察 without a question; watched ones past their window end by themselves (items/lifecycle.ts).
     (await import("../items/lifecycle.ts")).lineLifecycleDue(app);
     (await import("../data/omem-usage.ts")).snapshotOmemUsage(app);

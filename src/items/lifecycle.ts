@@ -8,6 +8,7 @@ import { lineStateDenied } from "../channels/listen-assist.ts";
 import { addChange } from "./changes.ts";
 import { LINE_ENDED } from "./expiry.ts";
 import { addItemEvent, getItem, isClosed, onItemStatus, upsertItem, type Item } from "./store.ts";
+import { holdForToday } from "./today-time.ts";
 import { descendantIds, lineLike, openUnder, rootOf } from "./tree.ts";
 
 /**
@@ -473,13 +474,17 @@ export function askLineEnd(app: App, item: Item, why: string): Ask | null {
   const g = guardsOf(app, item);
   const hold = holdText(g);
   setKv(app, ASKED(item.id), now());
-  return createAsk(app, {
+  const ask = createAsk(app, {
     runId: null, conversationId: null, userId: item.userId, allowText: false,
     question: `「${item.title}」看起来差不多结束了：${truncate(why, 200)}。${hold ? `\n\n还开着的：${hold}。` : ""}\n\n要结束这条线吗？${g.openItems ? `点“结束”会把下面 ${g.openItems} 件没结的一起结束。` : ""}“再看一周”之后没有新问题会自动结束；“还没完”两周内不再问。`,
     options: CHOICES.map((label) => ({ label })),
     context: { handler: "line-end", lineId: item.id, why },
   });
+  // Asked at night with 今天 on: it waits for the morning card instead of a card of its own (items/today.ts).
+  holdForToday(app, ask.id);
+  return ask;
 }
+export const LINE_END_CHOICES = CHOICES;
 
 registerAskHandler("line-end", async (app, ask, ctx) => {
   const id = String(ctx.lineId ?? "");

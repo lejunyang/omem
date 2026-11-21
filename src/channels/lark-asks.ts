@@ -425,6 +425,8 @@ export function cardFields(fields: UiField[]): CardField[] | null {
     const label = `${f.label}${when}${f.help ? `\n${f.help}` : ""}`;
     const required = f.required && !f.show_if;
     const name = `f_${f.id}`;
+    // The field's heading (UiField `group`) goes on the first card field it becomes.
+    const first = out.length;
     switch (f.type) {
       case "text":
       case "textarea":
@@ -462,6 +464,7 @@ export function cardFields(fields: UiField[]): CardField[] | null {
         });
         break;
     }
+    if (f.group && out[first]) out[first].group = f.group;
   }
   return out.length <= 40 ? out : null;
 }
