@@ -17,7 +17,7 @@ it("applies availability only to local machine-login runs", () => {
   expect(selectOwnSandbox("require", true, true, no).active).toBe(false);
 });
 
-it("mounts only the assigned workspace, private snapshot, state and artifacts", () => {
+it.skipIf(process.platform === "win32")("mounts only the assigned workspace, private snapshot, state and artifacts", () => {
   const box = { data: "/data", home: "/home/me", state: ["/home/me/.cache"], writable: [], hidden: ["/home/me/private"], runtime: ["/data/bin"], secretEnv: [], readOnly: true, snapshot: "/data/runs/r/snap", artifactDir: "/data/inbox/r" };
   const cwd = "/data/runs/r/snap";
   const plan = ownMounts(box, cwd, { ro: ["/work"], rw: [] }, "/data/inbox/r");

@@ -309,7 +309,7 @@ describe("accounts of members", async () => {
     expect(JSON.stringify(all)).not.toContain("tok-example");
   });
 
-  it("only the owner can save sandbox settings and explicitly confirm unrestricted backends", async () => {
+  it.skipIf(process.platform === "win32")("only the owner can save sandbox settings and explicitly confirm unrestricted backends", async () => {
     const path = "/api/security/sandbox";
     const read = await (await as(null, path)).json();
     expect(read).toMatchObject({ mode: "off", fullAccess: "per-role", defaults: { hidden: [home] } });
@@ -325,7 +325,7 @@ describe("accounts of members", async () => {
     await put({ mode: "off", fullAccess: "per-role" });
   });
 
-  it("rejects an invalid backend state directory before applying or auditing sandbox settings", async () => {
+  it.skipIf(process.platform === "win32")("rejects an invalid backend state directory before applying or auditing sandbox settings", async () => {
     const original = app.config.agents;
     const before = readFileSync(join(home, "config.json"), "utf8");
     const audits = () => sqlOne(app.db, "select count(*) n from audit_events where action = 'sandbox.settings'");

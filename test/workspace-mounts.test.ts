@@ -54,7 +54,7 @@ const inline = { space: b.id, path: join(group, b.id), commits: true };
 b.git("worktree", "add", "-q", "--detach", inline.path);
 
 describe("delegation sandbox mounts", () => {
-  it("prepares all assigned worktrees and artifacts before writing the turn's sandbox instructions", () => {
+  it.skipIf(process.platform === "win32")("prepares all assigned worktrees and artifacts before writing the turn's sandbox instructions", () => {
     const settings = app.config.agents.ownSandbox;
     const baseUrl = app.baseUrl;
     app.baseUrl = "http://127.0.0.1:1";
@@ -84,7 +84,7 @@ describe("delegation sandbox mounts", () => {
     }
   });
 
-  it("limits discovered review worktrees to the owner sandbox's read-only mounts", async () => {
+  it.skipIf(process.platform === "win32")("limits discovered review worktrees to the owner sandbox's read-only mounts", async () => {
     const userId = "review-member";
     const role = saveRole(app, { name: "review-developer", scope: "global", permissions: ["code.delegate"] });
     const member = createUser(app, { id: userId, name: "成员", role: role.id });

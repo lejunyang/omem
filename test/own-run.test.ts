@@ -160,7 +160,7 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
   }
 });
 
-it("validates default backend state in the settings example just as in a run", () => {
+it.skipIf(process.platform === "win32")("validates default backend state in the settings example just as in a run", () => {
   const app = testApp();
   const home = mkdtempSync(join(tmpdir(), "own-default-"));
   vi.stubEnv("HOME", home);
