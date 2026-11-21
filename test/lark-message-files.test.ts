@@ -59,6 +59,10 @@ function setup() {
 it("gives an agent a message's file as a source it can read, downloading it once", async () => {
   const { app, ctx, downloads } = setup();
   try {
+    const readOnly = { ...ctx(["proj"]), writable: [] };
+    const denied = await callTool(readOnly, "lark_read", { command: ["im","+messages-resources-download","--message-id","om_txt","--file-key","file_txt"] });
+    expect(denied.isError).toBe(true);
+    expect(downloads).toEqual([]);
     const r = await callTool(ctx(["proj"]), "lark_message_file", { message_id: "om_txt" });
     expect(r.isError).toBe(false);
     const id = /src:(s\w+)/.exec(r.text)![1];
@@ -69,7 +73,7 @@ it("gives an agent a message's file as a source it can read, downloading it once
     const refs = JSON.parse(one<{ resources: string }>(app.db, "select resources from lark_messages where message_id = 'om_txt'")!.resources);
     expect(refs.file_txt.sourceId).toBe(id);
     // Asked again (or through lark_read's download command): the same source, nothing downloaded again.
-    const again = await callTool(ctx(["proj"]), "lark_read", { command: ["im", "+messages-resources-download", "--message-id", "om_txt", "--file-key", "file_txt", "--type", "file", "--output", "/tmp/x.txt"] });
+    const again = await callTool(readOnly, "lark_read", { command: ["im", "+messages-resources-download", "--message-id", "om_txt", "--file-key", "file_txt", "--type", "file", "--output", "/tmp/x.txt"] });
     expect(again.isError).toBe(false);
     expect(again.text).toContain(`src:${id}`);
     expect(downloads).toEqual(["om_txt"]);

@@ -212,11 +212,28 @@ new AgentSideConnection(
         if (Number.isFinite(used)) await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "usage_update", used, size: 1000 } });
         if (process.env.FAKE_OTHER_USAGE) await conn.sessionUpdate({ sessionId: "unrelated-session", update: { sessionUpdate: "usage_update", used: 950, size: 1000 } });
       }
-      if (process.env.FAKE_MODE === "device-work") {
+      if (process.env.FAKE_MODE === "device-work" || process.env.FAKE_MODE === "device-platform") {
         const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
         const client = new Client({ name: "device-worker", version: "1" });
         await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name,e.value])) } as Record<string,string> }));
         try {
+          if (process.env.FAKE_MODE === "device-platform") {
+            const servers = sessions.get(p.sessionId)!;
+            const docs = servers.find(s => s.name === "reports");
+            if (!docs || !("command" in docs)) throw new Error("缺少平台只读服务");
+            const reports = new Client({ name: "report-reader", version: "1" });
+            await reports.connect(new StdioClientTransport({ command: docs.command, args: docs.args, env: Object.fromEntries(docs.env.map(e => [e.name,e.value])) }));
+            try {
+              const report = await reports.callTool({name:"lookup",arguments:{}});
+              const skill = await client.callTool({name:"read_skill",arguments:{name:"report-guide"}});
+              const externalWrite = await client.callTool({name:"lark_write",arguments:{command:["task","+create"],summary:"创建测试任务"}});
+              const outside = await client.callTool({name:"remember",arguments:{space:"other",kind:"fact",content:"项目 A 每周二检查。"}});
+              const offered = await client.listTools();
+              await say(JSON.stringify({report:report.content,skill:skill.content,externalWriteDenied:!!externalWrite.isError,
+                outsideDenied:!!outside.isError,writer:servers.some(s => s.name === "writer"),platformRead:offered.tools.some(t => t.name === "lark_read")}));
+            } finally { await reports.close(); }
+            return { stopReason: "end_turn" };
+          }
           const read = await client.callTool({ name: "search", arguments: { query: "设备材料" } });
           const write = await client.callTool({ name: "remember", arguments: { kind: "fact", content: "项目 A 每周二检查。" } });
           if (process.env.OMEM_ARTIFACTS) writeFileSync(join(process.env.OMEM_ARTIFACTS,"核对报告.txt"),"设备材料核对完成");

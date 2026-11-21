@@ -466,6 +466,10 @@ export function recordIsolation(app: App, runId: string | null, userId: string, 
   if (runId) addRunEvent(app, runId, "status", { text: `这次运行没有隔离：${reason}`, profile: profile.id });
 }
 
+// Local host tools available for a device investigation. The run still needs the profile's tool and user permission.
+const boardReads = new Set([...DEFAULT_SPEC_TOOLS, "read_item", "lark_read", "lark_doc_fetch", "connect_list", "connect_request", "attach_artifact"]);
+const boardWrites = new Set(["remember", "write_page", "upsert_item"]);
+
 export function prepareRun(
   app: App,
   input: { boardAccess?: "read" | "write"; actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
@@ -521,9 +525,9 @@ export function prepareRun(
   // A replay arm reads and nothing else, whatever its role or profile may do elsewhere.
   if (input.replay) for (const t of [...tools]) if (!input.replay.tools.includes(t)) tools.delete(t);
   if (input.boardAccess) {
-    const allowed = new Set(["search", "scan", "find_symbol", "read_source", "read_page", "recall", "attach_artifact"]);
-    if (input.boardAccess === "write") for (const name of ["remember", "write_page", "upsert_item"]) allowed.add(name);
-    for (const name of tools) if (!allowed.has(name)) tools.delete(name);
+    for (const name of tools) {
+      if (!boardReads.has(name) && !(input.boardAccess === "write" && boardWrites.has(name))) tools.delete(name);
+    }
   }
   // Not what the person it works for may not do (src/auth/tools.ts), nor what needs something they lack.
   dropUnavailable(app, userId, tools);
@@ -541,7 +545,8 @@ export function prepareRun(
   const allowed = scopeFor(app, userId, input.readScope ?? null);
   const related = guest ? [] : relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
-  trimTools(app, userId, tools, { spaces: readable, writable: scoped ?? undefined });
+  const writable = input.boardAccess === "read" ? [] : scoped ?? undefined;
+  trimTools(app, userId, tools, { spaces: readable, writable });
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const account = accountOf(profile);
@@ -551,7 +556,7 @@ export function prepareRun(
   const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
-  const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   const memorySpaces = spacesWithCapability(app, userId, "memories.view");
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
@@ -606,7 +611,7 @@ export function prepareRun(
     } },
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
-    extraMcp: input.boardAccess || input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
+    extraMcp: (input.boardAccess && profile.peer) || input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!(input.replay || input.boardAccess)),
     allowWrites: readOnly ? false : spec ? spec.writes : role!.writes,
     fullAccess,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,

@@ -17,7 +17,8 @@ import { createThread } from "../src/agents/threads.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { __testHandlers, createRun, getRun, setRunOutput, addRunEvent, startWorker, stopWorker, waitForRun, trackAbort } from "../src/agents/runs.ts";
 import { readBoard, pollBoardPeers, maintainBoards } from "../src/agents/work-board.ts";
-import { saveAgentSpec } from "../src/agents/specs.ts";
+import { saveMcpServer } from "../src/agents/mcp-servers.ts";
+import { saveAgentSpec, saveSkill } from "../src/agents/specs.ts";
 import { artifactInbox, artifactsByIds, collectInbox } from "../src/agents/artifacts.ts";
 import { runProgress } from "../src/agents/progress.ts";
 import { workProgressView } from "../src/channels/lark-work-progress.ts";
@@ -89,6 +90,28 @@ it("remote 要写时两边授权且对方开启，工具层允许范围内记忆
   const out = await __testHandlers.get("peer-work")!({app:f.there,run:getRun(f.there,id),signal:new AbortController().signal,event:(type,data)=>addRunEvent(f.there,id,type,data),output:d=>setRunOutput(f.there,id,d)});
   expect((out as {answer:string}).answer).toContain('"writeDenied":false');
   expect(listMemories(f.there,{})).toHaveLength(1); expect(listMemories(f.here,{})).toHaveLength(0);
+},60000);
+it.each(["read","write"])("remote %s 使用接活设备的技能和认证只读 MCP，拒绝外部写和越界写",async access => {
+  const f = await setup();
+  f.there.config.node.acceptWork = "write";
+  f.there.config.agents.profiles[0].env.FAKE_MODE = "device-platform";
+  createSpace(f.there,{id:"other",name:"其他材料"});
+  saveSkill(f.there,{name:"report-guide",description:"查报告",body:"按签收日期核对报告。"},"user");
+  const command = {command:process.execPath,args:[resolve("test/fixture-mcp-server.ts")]};
+  saveMcpServer(f.there,"reports",{...command,readOnly:true,secrets:{REPORT_KEY:"fixture-reader"}});
+  saveMcpServer(f.there,"writer",command);
+  saveAgentSpec(f.there,{name:"report-reader",description:"查平台报告",prompt:"核对签收日期",skills:["report-guide"],
+    tools:["read_source","lark_read","lark_write","remember"],mcpServers:["reports","writer"]},"user");
+  await f.dispatch("remote",{agent:"report-reader",access}); await f.poll();
+  const id = f.remoteRuns()[0].id;
+  const result = await __testHandlers.get("peer-work")!({app:f.there,run:getRun(f.there,id),signal:new AbortController().signal,
+    event:(type,data)=>addRunEvent(f.there,id,type,data),output:data=>setRunOutput(f.there,id,data)});
+  await f.complete(id,(result as {answer:string}).answer); await f.poll();
+  const report = JSON.parse(readBoard(f.here,f.id).tasks[0].report);
+  expect(report).toMatchObject({externalWriteDenied:true,outsideDenied:true,writer:false,platformRead:true});
+  expect(report.report[0].text).toBe("项目 A 平台报告已签收");
+  expect(report.skill[0].text).toContain("按签收日期核对报告");
+  expect(listMemories(f.there,{})).toHaveLength(0);
 },60000);
 it.each(["local","borrow"])("远端独有档案退回 %s 时，排队前选用本机主助手并执行",async target => {
   const f = await setup();

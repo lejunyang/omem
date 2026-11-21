@@ -4869,7 +4869,7 @@ const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后
 async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
   featureGate(ctx, "messages");
   const { messageFile } = await import("../channels/lark-message-files.ts");
-  const f = await messageFile(ctx.app, messageId, key, { user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id) });
+  const f = await messageFile(ctx.app, messageId, key, { user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id), writable: ctx.writable });
   if (f.sourceId) {
     await requireReadable(ctx.app, ctx.userId ?? OWNER, f.sourceId);
     const s = getSource(ctx.app, f.sourceId);
