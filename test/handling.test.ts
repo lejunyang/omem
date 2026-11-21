@@ -30,10 +30,26 @@ describe("处理归属：谁接手了，后来的让开", () => {
     expect(yieldTo(app, "mention", "om_1")).toMatchObject({ actor: "watch" });
     expect(yieldTo(app, "watch", "om_1")).toBeNull();
     expect(yieldTo(app, "rule", "om_1")).toBeNull();
-    // A rule took it too: the rule answers, the 关注 steps aside.
+    // A rule claimed it and has not decided yet: nobody steps aside for it (it may still decline).
     run(app.db, "insert into rule_handled(rule_id,key,at) values('rule_a','lark:om_1',?)", new Date().toISOString());
-    expect(replyHolder(app, "om_1")).toMatchObject({ actor: "rule" });
-    expect(yieldTo(app, "watch", "om_1")).toMatchObject({ actor: "rule" });
+    expect(replyHolder(app, "om_1")).toMatchObject({ actor: "rule", decision: "taken" });
+    expect(yieldTo(app, "watch", "om_1")).toBeNull();
+    // It handed the message to an agent: the rule's side answers, the 关注 steps aside.
+    const fired = (rule: string, key: string, results: unknown[]) =>
+      run(app.db, "insert into rule_firings(rule_id,event_key,at,judged_by,results) values(?,?,?,'code',?)", rule, key, new Date().toISOString(), JSON.stringify(results));
+    fired("rule_a", "lark:om_1", [{ action: "notify", ok: true, detail: "已通知本人" }, { action: "agent", ok: true, detail: "交给 helper" }]);
+    expect(yieldTo(app, "watch", "om_1")).toMatchObject({ actor: "rule", decision: "handed" });
+    // A rule that only forwarded it or told the owner holds no reply: the 关注 answers as before.
+    run(app.db, "insert into handled_messages(channel,message_id,rule,at) values('lark','om_3','ctx_a',?)", new Date().toISOString());
+    run(app.db, "insert into rule_handled(rule_id,key,at) values('rule_b','lark:om_3',?)", new Date().toISOString());
+    fired("rule_b", "lark:om_3", [{ action: "forward", ok: true, detail: "已转发" }, { action: "notify", ok: true, detail: "已通知本人" }]);
+    expect(handlingOf(app, "om_3").find((h) => h.actor === "rule")).toMatchObject({ decision: "acted" });
+    expect(replyHolder(app, "om_3")).toMatchObject({ actor: "watch" });
+    expect(yieldTo(app, "watch", "om_3")).toBeNull();
+    // One whose agent action failed did not hand it on either.
+    run(app.db, "insert into rule_handled(rule_id,key,at) values('rule_c','lark:om_4',?)", new Date().toISOString());
+    fired("rule_c", "lark:om_4", [{ action: "agent", ok: false, detail: "规则里已经没有这个 Agent" }]);
+    expect(yieldTo(app, "watch", "om_4")).toBeNull();
     // Only reading it is not taking it.
     run(app.db, "insert into handled_messages(channel,message_id,rule,at) values('lark','om_2','read:ctx_a',?)", new Date().toISOString());
     expect(replyHolder(app, "om_2")).toBeNull();

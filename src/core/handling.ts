@@ -40,7 +40,7 @@ export type Handler = keyof typeof HANDLERS;
  * the 关注 reading the group (its batch only notes it); 有人找你 is for what nobody else took.
  */
 export const REPLY_ORDER: readonly Handler[] = ["direct", "rule", "watch", "mention"];
-export type HandlingDecision = "replied" | "drafted" | "noted" | "ignored" | "handed" | "taken" | "read" | "yielded";
+export type HandlingDecision = "replied" | "drafted" | "noted" | "ignored" | "handed" | "acted" | "taken" | "read" | "yielded";
 export type Handling = { actor: Handler; label: string; decision: HandlingDecision; by: string | null; runId: string | null; changeId: string | null; reason: string | null; at: string };
 
 const actorOf = (origin: string): Handler | null =>
@@ -101,26 +101,46 @@ export function handlingOf(app: App, event: string): Handling[] {
     if (r.rule_id === "@bot") { if (!out.some((h) => h.actor === "direct")) out.push({ actor: "direct", label: HANDLERS.direct, decision: "taken", by: null, runId: null, changeId: null, reason: null, at: r.at }); continue; }
     const fired = one<{ reason: string; results: string }>(app.db, "select reason, results from rule_firings where rule_id = ? and event_key in (?, ?) order by id desc limit 1", r.rule_id, `lark:${id}`, `follow:lark:${id}`);
     const skipped = fired && /"action":"skip"/.test(fired.results);
-    out.push({ actor: "rule", label: `规则「${ruleName(app, r.rule_id)}」`, decision: !fired ? "taken" : skipped ? "ignored" : "handed", by: r.rule_id, runId: null, changeId: null, reason: fired?.reason ? truncate(fired.reason, 200) : null, at: r.at });
+    out.push({ actor: "rule", label: `规则「${ruleName(app, r.rule_id)}」`, decision: !fired ? "taken" : skipped ? "ignored" : handsOnReply(fired.results) ? "handed" : "acted", by: r.rule_id, runId: null, changeId: null, reason: fired?.reason ? truncate(fired.reason, 200) : null, at: r.at });
   }
   return out.sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/** The one answering this message, by REPLY_ORDER: the earliest path that took it (not only read it). */
+/**
+ * The rule actions that put a message in the hands of something that answers it: an agent, a 关注, a
+ * woken conversation. A rule that only forwarded it, told the owner, pulled the bot in or kept it did
+ * something else with it and holds no reply.
+ */
+const REPLY_ACTIONS = new Set(["agent", "watch", "context", "wake"]);
+function handsOnReply(results: string) {
+  try {
+    return (JSON.parse(results) as { action?: string; ok?: boolean }[]).some((r) => r.ok !== false && REPLY_ACTIONS.has(r.action ?? ""));
+  } catch {
+    return false;
+  }
+}
+
+/** The one answering this message, by REPLY_ORDER: the earliest path that took it (not only read it, noted it or did something else with it). */
 export function replyHolder(app: App, event: string): Handling | null {
-  const taken = handlingOf(app, event).filter((h) => h.decision !== "yielded" && h.decision !== "read" && h.decision !== "noted" && h.decision !== "ignored" && REPLY_ORDER.includes(h.actor));
+  const taken = handlingOf(app, event).filter((h) => h.decision !== "yielded" && h.decision !== "read" && h.decision !== "noted" && h.decision !== "ignored" && h.decision !== "acted" && REPLY_ORDER.includes(h.actor));
   return taken.sort((a, b) => REPLY_ORDER.indexOf(a.actor) - REPLY_ORDER.indexOf(b.actor))[0] ?? null;
 }
 
-/** Whom `actor` steps aside for on this message: a path before it in REPLY_ORDER that took it. Null: it is this one's. */
+/**
+ * Whom `actor` steps aside for on this message: a path before it in REPLY_ORDER that took it. Null: it is
+ * this one's. A rule that claimed the message and has not decided yet (`taken`) makes nobody step aside:
+ * it may still decline, and the message would be left unanswered (有人找你 waits for it on its own,
+ * mentions.ts).
+ */
 export function yieldTo(app: App, actor: Handler, event: string): Handling | null {
   const mine = REPLY_ORDER.indexOf(actor);
   if (mine < 0) return null;
   const h = replyHolder(app, event);
-  return h && REPLY_ORDER.indexOf(h.actor) < mine ? h : null;
+  if (!h || REPLY_ORDER.indexOf(h.actor) >= mine) return null;
+  return h.actor === "rule" && h.decision !== "handed" ? null : h;
 }
 
-const DECISION: Record<HandlingDecision, string> = { replied: "回复了", drafted: "起草了回复", noted: "记成了变化", ignored: "判断不用管", handed: "交给了别处", taken: "接手了", read: "只读了", yielded: "让开了" };
+const DECISION: Record<HandlingDecision, string> = { replied: "回复了", drafted: "起草了回复", noted: "记成了变化", ignored: "判断不用管", handed: "交给了别处", acted: "做了别的动作（转发、通知这类），没有接手回复", taken: "接手了", read: "只读了", yielded: "让开了" };
 /** A few short lines for a person or an agent: “关注「项目 A」接手了；跟进记成了变化 ic…；有人找你让开了（因为…）”. */
 export function handlingText(app: App, event: string, limit = 6, except: Handler[] = []): string {
   const list = handlingOf(app, event).filter((h) => !except.includes(h.actor)).slice(-limit);
