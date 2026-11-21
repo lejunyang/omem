@@ -12,7 +12,8 @@ import { changeTone, changeTypeLabel, nextKindLabel, nextStatusLabel, originLabe
  * can do with it — 对我没用 for a change (it leaves the timeline; the follow-up learns from it),
  * 就这么做 / 不用 for a next step. Esc closes it (after an open citation), focus goes back.
  */
-const props = defineProps<{ change?: ChangeLite | null; next?: NextLite | null; lineTitle?: string }>();
+/** `readonly`: someone else reading the owner's line: what it is and where it came from, no actions. */
+const props = defineProps<{ change?: ChangeLite | null; next?: NextLite | null; lineTitle?: string; readonly?: boolean }>();
 const emit = defineEmits<{ close: []; changed: [] }>();
 const panel = ref<HTMLElement>();
 const opener = document.activeElement as HTMLElement | null;
@@ -79,11 +80,11 @@ async function decide(status: "doing" | "declined" | "done") {
       <header>
         <template v-if="c">
           <span class="tag" :class="changeTone(c.type)">{{ changeTypeLabel[c.type] ?? c.type }}</span>
-          <span class="muted small">{{ originLabel[c.origin] ?? c.origin }} · {{ fmtTime(c.at) }}</span>
+          <span class="muted small">{{ [originLabel[c.origin] ?? c.origin, fmtTime(c.at)].filter(Boolean).join(" · ") }}</span>
         </template>
         <template v-else-if="n">
-          <span class="tag next">下一步 · {{ nextKindLabel[n.kind] }}</span>
-          <span class="muted small">{{ nextStatusLabel[n.status] }} · {{ fmtTime(n.createdAt) }} 提的</span>
+          <span class="tag next">下一步{{ nextKindLabel[n.kind] ? ` · ${nextKindLabel[n.kind]}` : "" }}</span>
+          <span class="muted small">{{ nextStatusLabel[n.status] }}<template v-if="n.createdAt"> · {{ fmtTime(n.createdAt) }} 提的</template></span>
         </template>
         <span class="spacer" />
         <button class="btn ghost sm icon" aria-label="关闭" @click="emit('close')"><Icon name="x" :size="16" /></button>
@@ -96,7 +97,7 @@ async function decide(status: "doing" | "declined" | "done") {
             <router-link :to="`/work/${c.itemId}`" @click="emit('close')">{{ c.itemTitle }}</router-link>
             <template v-if="c.lineId !== c.itemId"> · 在「<router-link :to="`/work/${c.lineId}`" @click="emit('close')">{{ c.lineTitle }}</router-link>」下</template>
           </p>
-          <p v-if="c.status === 'asked'" class="asked small">这条变化在等你定：在工作页的“需要你处理”或飞书卡片上选并进、另开还是不用管。</p>
+          <p v-if="c.status === 'asked' && !readonly" class="asked small">这条变化在等你定：在工作页的“需要你处理”或飞书卡片上选并进、另开还是不用管。</p>
           <section v-if="c.detail"><h3>原因</h3><Markdown :source="c.detail" class="prose" /></section>
           <section v-if="c.risk" class="risk"><h3>风险</h3><p>{{ c.risk }}</p></section>
           <section v-if="c.next"><h3>下一步</h3><p>{{ c.next }}</p></section>
@@ -119,7 +120,7 @@ async function decide(status: "doing" | "declined" | "done") {
         </section>
       </div>
 
-      <footer v-if="c || n" class="row wrap">
+      <footer v-if="!readonly && (c || n)" class="row wrap">
         <template v-if="c">
           <button v-if="!c.noise" class="btn sm" :disabled="busy" @click="noise(true)">对我没用</button>
           <button v-else class="btn sm" :disabled="busy" @click="noise(false)">放回时间线</button>

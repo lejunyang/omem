@@ -291,6 +291,8 @@ async function apply(ops: Record<string, unknown>[], done = "已保存") {
 /** A version's grounds as reference chips (原件 1, 消息 2…), never the raw ids. */
 const groundsOf = (refs: string[]) => refs.map((r, i) => (/^(src|mem|msg):/.test(r) ? `[${refLabel(r, i)}](${r})` : readableIds(r))).join("　");
 type Form = { mode: "edit" | "add"; parent: string | null; kind: Kind; title: string; body: string; acceptance: string; refs: string; tests: string; change: "correct" | "change"; reason: string; sourceRefs: string };
+/** Changing the tree needs 写记忆 in this space (`state.me.writes`, null = every space), as the server checks. */
+const canWrite = computed(() => !state.me || state.me.writes === null || !!state.me.writes?.includes(state.space));
 const editing = ref<Form | null>(null);
 const testsText = (t: Node["tests"]) => t.map((x) => [x.file, x.name].filter(Boolean).join(" › ")).join("\n");
 const parseTests = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
@@ -370,7 +372,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
       <div class="head row">
         <strong class="ellipsis">{{ spaceName(state.space) }} · 需求</strong>
         <span class="spacer" />
-        <button class="btn ghost sm icon" title="新建顶层节点" aria-label="新建顶层节点" @click="router.push('/reqs'); startAdd(null)"><Icon name="plus" :size="15" /></button>
+        <button v-if="canWrite" class="btn ghost sm icon" title="新建顶层节点" aria-label="新建顶层节点" @click="router.push('/reqs'); startAdd(null)"><Icon name="plus" :size="15" /></button>
       </div>
       <div class="filters">
         <input v-model="query" class="input sm" type="search" placeholder="搜索标题、需求、验收或 id" aria-label="搜索需求" />
@@ -417,7 +419,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
     </aside>
 
     <main class="detail">
-      <div v-if="editing" class="page">
+      <div v-if="editing && canWrite" class="page">
         <div class="row dh"><h2 class="title">{{ editing.mode === "add" ? (editing.parent ? "新建下级" : "新建顶层节点") : "修改" }}</h2></div>
         <div class="card pad form">
           <label class="field"><span>类型</span><UiSegmented v-model="editing.kind" size="sm" :options="kindOptions" aria-label="类型" /></label>
@@ -470,7 +472,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           <span v-if="detail.node.status !== 'active'" class="badge danger">{{ detail.node.status === "removed" ? "已移除" : "已删除" }}</span>
           <span v-else-if="!detail.node.confirmed" class="badge accent">待确认</span>
         </div>
-        <div class="row wrap actions">
+        <div v-if="canWrite" class="row wrap actions">
           <template v-if="detail.node.status === 'active'">
             <button v-if="!detail.node.confirmed" class="btn sm primary" @click="confirmNode"><Icon name="check" :size="14" />确认（含下级）</button>
             <button class="btn sm" @click="startEdit"><Icon name="edit" :size="14" />修改</button>
@@ -483,7 +485,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           <button v-else class="btn sm" @click="restore">恢复</button>
         </div>
 
-        <section v-if="linking" class="block">
+        <section v-if="linking && canWrite" class="block">
           <div class="block-head"><strong>关联到另一个需求点</strong><span class="muted small">可以在别的业务空间；跨业务的需求互相引用，不复制</span></div>
           <input v-model="linkQuery" class="input sm" placeholder="搜索需求点" aria-label="搜索需求点" />
           <input v-model="linkNote" class="input sm" placeholder="关系说明（可选），如：下单时校验对方的资质状态" aria-label="关系说明" />
@@ -551,7 +553,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
             <span v-if="l.other && l.other.spaceId !== detail.node.spaceId" class="badge">{{ spaceName(l.other.spaceId) }}</span>
             <span v-if="l.note" class="muted small grow ellipsis" :title="l.note">{{ l.note }}</span>
             <span v-else class="spacer" />
-            <button v-if="l.other" class="btn ghost sm icon" title="取消关联" aria-label="取消关联" @click="unlink(l.other.id)"><Icon name="x" :size="13" /></button>
+            <button v-if="l.other && canWrite" class="btn ghost sm icon" title="取消关联" aria-label="取消关联" @click="unlink(l.other.id)"><Icon name="x" :size="13" /></button>
           </div>
         </section>
 

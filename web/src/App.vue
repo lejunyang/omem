@@ -12,6 +12,7 @@ import Icon from "./components/Icon.vue";
 import { get, setLiveEvents } from "./api";
 import { loadSpaces, refreshUnread, state } from "./store";
 import { spaceOptions } from "./lib/spaces";
+import { capAnywhere, hasCap, hasPerm } from "./lib/caps";
 import { preloadRoute } from "./preload";
 import { setTimeZone } from "./lib/time";
 
@@ -31,27 +32,29 @@ watch(() => state.space, () => {
 });
 const menu = ref(false);
 const loadError = ref("");
-// `member`: pages anyone else can use too (within the spaces they can read); `perm`: a global permission
-// that opens the page (src/auth/permissions.ts). The rest is the owner's.
-const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; member?: boolean; perm?: string }[]>([
-  // The work lines (views/Work.vue): the start page.
-  { to: "/", label: "工作", icon: "home", exact: true },
+// Who gets an entry (lib/caps.ts): `cap` a global capability, `space` a space-scoped one held in any
+// space (`own`: the person's own items and runs count), `perm` an old global permission, `member` anyone.
+// An entry with none of these is the owner's.
+type NavEntry = { to: string; label: string; icon: string; exact?: boolean; member?: boolean; cap?: string; space?: string; own?: boolean; perm?: string };
+const nav = ref<NavEntry[]>([
+  // The work lines (views/Work.vue): the start page. Others with 看工作线 read the owner's lines there.
+  { to: "/", label: "工作", icon: "home", exact: true, space: "work.view" },
   { to: "/ask", label: "问答", icon: "chat", member: true },
-  { to: "/wiki", label: "Wiki", icon: "book", member: true },
-  { to: "/items", label: "事项", icon: "checkbox", member: true },
+  { to: "/wiki", label: "Wiki", icon: "book", space: "wiki.view" },
+  { to: "/items", label: "事项", icon: "checkbox", space: "items.view", own: true },
   // Items moving through a flow, by stage: for the owner it is the work page's 按阶段 (no entry of its own);
-  // members, who have no work page, keep the board here.
-  { to: "/board", label: "流程", icon: "branch", member: true },
-  { to: "/reqs", label: "需求", icon: "target", member: true },
-  { to: "/memory", label: "记忆", icon: "brain", member: true },
-  { to: "/sources", label: "原件", icon: "file", member: true },
+  // everyone else keeps the board here.
+  { to: "/board", label: "流程", icon: "branch", space: "flows.view" },
+  { to: "/reqs", label: "需求", icon: "target", space: "requirements.view" },
+  { to: "/memory", label: "记忆", icon: "brain", space: "memories.view" },
+  { to: "/sources", label: "原件", icon: "file", space: "sources.view" },
   { to: "/learn", label: "学习", icon: "cap" },
   { to: "/agents", label: "Agent", icon: "layers", perm: "agents.manage" },
-  { to: "/rules", label: "规则", icon: "zap", perm: "agents.manage" },
+  { to: "/rules", label: "规则", icon: "zap", cap: "rules.view" },
   { to: "/quality", label: "抽检", icon: "sample" },
-  { to: "/insights", label: "数据", icon: "chart", member: true },
+  { to: "/insights", label: "数据", icon: "chart", space: "metrics.view" },
   // 运行 stays last: pages added later (远程) go before it.
-  { to: "/runs", label: "运行", icon: "activity", member: true },
+  { to: "/runs", label: "运行", icon: "activity", space: "runs.view", own: true },
 ]);
 // Plugins with a page (docs/v2/plugins.md) go right after 学习.
 async function addPluginPages() {
@@ -63,7 +66,7 @@ async function addPluginPages() {
 }
 // Remote operation (views/Remote.vue) only where this machine has ai-auto-desktop installed.
 async function addRemotePage() {
-  if (!owner.value && !state.me?.perms.includes("desktop.control")) return;
+  if (!hasPerm("desktop.control")) return;
   const r = await get<{ available: boolean }>("/api/remote").catch(() => ({ available: false }));
   if (r.available && !nav.value.some((n) => n.to === "/remote")) {
     const list = [...nav.value];
@@ -91,14 +94,17 @@ function onKey(e: KeyboardEvent) {
   }
 }
 const owner = computed(() => !state.me || state.me.role === "owner");
-const allowed = (n: { member?: boolean; perm?: string }) => owner.value || n.member || (!!n.perm && !!state.me?.perms.includes(n.perm));
-// The work page is the owner's: only members find the flow board in the nav.
+const allowed = (n: NavEntry) =>
+  owner.value || !!n.member || (!!n.cap && hasCap(n.cap)) || (!!n.space && capAnywhere(n.space, { own: n.own })) || (!!n.perm && hasPerm(n.perm));
+// The owner finds the flow board on the work page (按阶段); everyone else in the nav.
 const shownNav = computed(() => nav.value.filter(allowed).filter((n) => !(n.to === "/board" && owner.value)));
-// Pages someone other than the owner may open: the nav they see, the graph (Wiki), their account.
-const open = computed(() => [...shownNav.value.map((n) => n.to), "/graph", "/account"]);
-// Landing on a page they cannot use (the start page, an old link) goes to 问答.
-watch([() => route.path, owner], ([path]) => {
-  if (!owner.value && state.me && !bare.value && !open.value.some((p) => path === p || path.startsWith(p + "/"))) void router.replace("/ask");
+// Pages someone other than the owner may open: the nav they see, a line's page under 工作, the graph (Wiki), their account.
+const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account"]);
+// Landing on a page they cannot use (the start page, an old link) goes to 问答, without drawing it first
+// (its requests would only come back refused).
+const pathOpen = computed(() => owner.value || !state.me || bare.value || open.value.some((p) => route.path === p || route.path.startsWith(p + "/")));
+watch(pathOpen, (ok) => {
+  if (!ok) void router.replace("/ask");
 });
 // A share link is opened by people without a token, the login page before logging in: no frame, nothing else loaded.
 const BARE = ["#/share/", "#/login"];
@@ -184,7 +190,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
       </div>
       <div v-if="loadError" class="page"><div class="card pad err">无法连接 omem 服务：{{ loadError }}</div></div>
       <!-- A page whose path names the space (/wiki/<space>, /graph/<space>) follows the path: picking a space pushes the new path first. -->
-      <router-view v-else-if="state.spaces.length" :key="route.path.split('/')[1] + String(route.params.space || state.space)" />
+      <router-view v-else-if="state.spaces.length && pathOpen" :key="route.path.split('/')[1] + String(route.params.space || state.space)" />
       <div v-else class="page"><Skeleton variant="text" :rows="8" /></div>
     </main>
 

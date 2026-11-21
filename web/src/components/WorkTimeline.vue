@@ -41,7 +41,7 @@ const other = (c: ChangeLite) => props.lineId && c.itemId !== props.lineId ? c.i
     <div v-for="n in next" :key="n.id" role="listitem" class="node next" :class="{ doing: n.status === 'doing' }">
       <button type="button" class="hit" :title="n.text" @click="emit('next', n)">
         <span class="dot" aria-hidden="true" />
-        <span class="when">下一步<span class="tag">{{ n.status === "doing" ? "在做" : nextKindLabel[n.kind] }}</span></span>
+        <span class="when">下一步<span v-if="n.status === 'doing' || nextKindLabel[n.kind]" class="tag">{{ n.status === "doing" ? "在做" : nextKindLabel[n.kind] }}</span></span>
         <span class="what">{{ n.text }}</span>
       </button>
     </div>

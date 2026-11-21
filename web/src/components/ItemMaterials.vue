@@ -25,7 +25,8 @@ export type Material = {
   status: string | null;
   run?: { kind: string; status: string; verdict: string | null; summary: string | null; branchReview: boolean; createdAt: string };
 };
-const props = defineProps<{ itemId: string; materials: Material[] }>();
+/** `readonly`: someone who may read the item but not change it: the list without 添加, 拆需求点 or 移除. */
+const props = defineProps<{ itemId: string; materials: Material[]; readonly?: boolean }>();
 const emit = defineEmits<{ changed: [] }>();
 
 const GROUPS: { kinds: Material["kind"][]; title: string }[] = [
@@ -122,10 +123,11 @@ function addCurrent() {
 
 <template>
   <div class="materials">
-    <div class="section-title row">材料<span class="spacer" /><button class="btn ghost sm" :disabled="splitting" title="AI 读这些材料，拆成需求树里的需求点和测试点" @click="split"><Icon name="target" :size="13" />拆需求点</button><button class="btn ghost sm" :aria-expanded="adding" @click="adding = !adding"><Icon name="plus" :size="13" />{{ adding ? "收起" : "添加" }}</button></div>
-    <p v-if="!materials.length && !adding" class="muted small">把这件事的需求和技术文档、群聊、仓库和分支挂在这里；为它发起的评审和交办会读到这些材料，也会列在这里。也可以直接对助理说“把这几份文档和分支挂到这个事项上”。</p>
+    <div class="section-title row">材料<span class="spacer" /><template v-if="!readonly"><button class="btn ghost sm" :disabled="splitting" title="AI 读这些材料，拆成需求树里的需求点和测试点" @click="split"><Icon name="target" :size="13" />拆需求点</button><button class="btn ghost sm" :aria-expanded="adding" @click="adding = !adding"><Icon name="plus" :size="13" />{{ adding ? "收起" : "添加" }}</button></template></div>
+    <p v-if="!materials.length && readonly" class="muted small">还没有挂材料。</p>
+    <p v-else-if="!materials.length && !adding" class="muted small">把这件事的需求和技术文档、群聊、仓库和分支挂在这里；为它发起的评审和交办会读到这些材料，也会列在这里。也可以直接对助理说“把这几份文档和分支挂到这个事项上”。</p>
 
-    <div v-if="adding" class="add card pad">
+    <div v-if="adding && !readonly" class="add card pad">
       <UiSegmented v-model="kind" size="sm" :options="kindOptions" aria-label="材料类型" />
       <template v-if="kind === 'source'">
         <input v-model="query" class="input sm" placeholder="按标题搜索原件，或粘贴 src:… 引用" aria-label="搜索原件" @keydown.enter="addCurrent" />
@@ -162,7 +164,7 @@ function addCurrent() {
           <span v-if="m.missing" class="badge danger">已删除</span>
           <span v-else-if="!m.readable" class="badge">无权查看</span>
           <span v-else-if="m.changed" class="badge warn" title="加进来之后原件有更新，依据它的结论可能过期">有更新</span>
-          <button class="btn ghost sm icon rm" :aria-label="`移除 ${m.title}`" title="移除" @click="remove(m)"><Icon name="x" :size="12" /></button>
+          <button v-if="!readonly" class="btn ghost sm icon rm" :aria-label="`移除 ${m.title}`" title="移除" @click="remove(m)"><Icon name="x" :size="12" /></button>
         </div>
         <div v-if="m.run?.summary" class="muted small clamp">{{ m.run.summary }}</div>
         <div v-if="m.meta.note || m.run" class="muted small">{{ m.run ? `${m.run.branchReview ? "分支评审" : m.run.kind === "code" ? "交办编码" : m.run.kind} · ${relTime(m.run.createdAt)}` : "" }}{{ m.run && m.meta.note ? " · " : "" }}{{ m.meta.note }}</div>

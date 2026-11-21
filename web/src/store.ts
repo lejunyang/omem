@@ -1,6 +1,7 @@
 import { reactive, watch } from "vue";
 import { get, onServerEvent, onServerResync, type Space } from "./api";
 import { dayKey, fmt } from "./lib/time";
+import { followMe } from "./lib/caps";
 
 export type CitationTarget =
   | { kind: "source"; id?: string; uri?: string; space?: string; from?: number; to?: number; label?: string }
@@ -31,8 +32,13 @@ export const state = reactive({
   capture: false,
   theme: stored("omem-theme", "auto"),
   /** Who is using the page (src/auth): the owner, or a member with a smaller set of pages. */
-  me: null as null | { id: string; name: string; role: string; status: string; avatar: string | null; via: string; perms: string[]; spaces: string[] | null; writes: string[] | null; wiki: string[] | null; manages: string[] | null; timezone?: string },
+  me: null as null | {
+    id: string; name: string; role: string; status: string; avatar: string | null; via: string; perms: string[]; spaces: string[] | null; writes: string[] | null; wiki: string[] | null; manages: string[] | null; timezone?: string;
+    /** Capabilities (src/auth/capabilities.ts, lib/caps.ts): the global ones, then where each space-scoped one holds ("*" = every space). Absent from an older server. */
+    caps?: string[]; spaceCaps?: Record<string, string[] | "*">; ownSpaceCaps?: Record<string, string[] | "*">;
+  },
 });
+followMe(() => state.me);
 
 watch(
   () => state.space,

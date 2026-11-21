@@ -12,7 +12,8 @@ import { dayLabel, daysAgo, flatChildren, itemStatusLabel, shortDay, waitsForOwn
  * ending in its open next steps, and its work items with how far each one's flow has come. 更新 asks
  * the look to run now (it writes 现在 and the next steps; the page refreshes when it is done).
  */
-const props = defineProps<{ line: Line }>();
+/** `readonly`: someone else reading the owner's line (views/Work.vue `shared`): no 更新, no 现在整理. */
+const props = defineProps<{ line: Line; readonly?: boolean }>();
 const emit = defineEmits<{ change: [c: ChangeLite]; next: [n: NextLite, line: Line] }>();
 const l = computed(() => props.line);
 const kids = computed(() => flatChildren(l.value.children));
@@ -43,22 +44,22 @@ async function refresh() {
         <span v-if="l.dueAt" :class="{ overdue }">截止 {{ dayLabel(l.dueAt) }}</span>
       </span>
       <span class="spacer" />
-      <span class="tools">
+      <span v-if="!readonly" class="tools">
         <router-link v-if="l.listen" :to="`/listen/${l.listen.id}`" class="lnk small muted" title="这条线的关注：读它的群和文档">关注中</router-link>
         <button type="button" class="btn ghost sm" title="现在整理这条线的现状和下一步" @click="refresh"><Icon name="refresh" :size="14" />更新</button>
       </span>
     </header>
     <p v-if="l.now" class="now">{{ l.now.text }}<span v-if="stale" class="muted small"> · {{ dayLabel(l.now.at) }}整理</span></p>
-    <p v-else class="now muted">还没整理过这条线的现状。<button type="button" class="lnk" @click="refresh">现在整理</button></p>
+    <p v-else-if="!readonly" class="now muted">还没整理过这条线的现状。<button type="button" class="lnk" @click="refresh">现在整理</button></p>
 
     <WorkTimeline :changes="l.timeline" :next="l.next" :line-id="l.id" @change="(c) => emit('change', c)" @next="(n) => emit('next', n, l)" />
 
     <div v-if="kids.length" class="kids" aria-label="工作项">
-      <router-link v-for="k in shown" :key="k.child.id" :to="`/work/${k.child.id}`" class="kid" :class="{ deep: k.depth > 0, mine: waitsForOwner(k.child) }" :title="k.child.title">
+      <router-link v-for="k in shown" :key="k.child.id" :to="`/work/${k.child.id}`" class="kid" :class="{ deep: k.depth > 0, mine: !readonly && waitsForOwner(k.child) }" :title="k.child.title">
         <span class="kt">{{ k.child.title }}</span>
         <WorkStageTrack v-if="k.child.flow" :flow="k.child.flow" mini />
         <span v-else class="ks">{{ k.child.waitingOn ? `等 ${k.child.waitingOn}` : itemStatusLabel[k.child.status] ?? k.child.status }}</span>
-        <span v-if="waitsForOwner(k.child)" class="kw">等你</span>
+        <span v-if="!readonly && waitsForOwner(k.child)" class="kw">等你</span>
       </router-link>
       <router-link v-if="kids.length > shown.length" :to="`/work/${l.id}?tab=items`" class="kid more">还有 {{ kids.length - shown.length }} 件</router-link>
     </div>

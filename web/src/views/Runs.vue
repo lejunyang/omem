@@ -19,6 +19,7 @@ import CodeWork from "../components/CodeWork.vue";
 import CodeWorkList from "../components/CodeWorkList.vue";
 import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { promptDialog } from "../lib/dialog";
+import { hasPerm } from "../lib/caps";
 
 const route = useRoute();
 const router = useRouter();
@@ -71,11 +72,15 @@ type RunContextInfo = {
   work: { id: string; title: string; rounds: { runId: string; agent: string; kind: string; status: string; title: string }[] } | null;
 };
 type ReplyOutcome = { label: string | null; text: string; dueAt: string; first: { label: string; confidence: number | null; by: string } | null; revised: { label: string; by: string; why: string } | null; checked?: { verdict: "confirmed" | "revised"; label: string; by: string; why: string } | null; evidence: { who: string; text: string }[] };
-const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; board?: { workId: string; taskId?: string }; patches?: { space: string; patch: string }[]; context?: RunContextInfo; reply?: ReplyOutcome | null } | null>(null);
+const detail = ref<{ can?: { operate: boolean; edit: boolean }; run: Run; events: RunEvent[]; children: Run[]; board?: { workId: string; taskId?: string }; patches?: { space: string; patch: string }[]; context?: RunContextInfo; reply?: ReplyOutcome | null } | null>(null);
 /** What a reply came to, judged from what people said after it; the owner may overrule the label. */
 const REPLY_LABELS: Record<string, string> = { resolved: "解决了", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "看不出", silent: "没人接话", unjudged: "没判" };
 const REVISABLE = ["resolved", "followup", "corrected", "taken_over", "unrelated"];
 const isOwner = computed(() => !state.me || state.me.role === "owner");
+/** 交办 hands work to the coding Agent on this machine: the owner, or someone given 交办编码. */
+const mayDelegate = computed(() => hasPerm("code.delegate"));
+/** 停止 / 重试 on the opened run (`can.operate`); an older server sends no `can`: shown as before. */
+const mayOperate = computed(() => detail.value?.can?.operate ?? true);
 async function reviseReply(label: string) {
   if (!detail.value) return;
   const why = await promptDialog(`改成“${REPLY_LABELS[label]}”`, { message: "写一句依据：后面哪句话说明了什么。可以不写。", okText: "改判" });
@@ -343,7 +348,7 @@ const kindOptions = computed(() => [
       <div class="head" :class="{ code: view === 'code' }">
         <UiSegmented v-model="view" class="view-pick" size="sm" aria-label="运行页视图" :options="[{ value: 'code', label: '编码' }, { value: 'all', label: '全部运行' }]" />
         <label class="search"><Icon name="search" :size="14" /><input v-model="keyword" :placeholder="view === 'code' ? '标题、分支、任务里的字或 id' : '标题、id 或任务里的字'" :aria-label="view === 'code' ? '搜索交办' : '搜索运行记录'" /></label>
-        <button class="btn sm delegate" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
+        <button v-if="mayDelegate" class="btn sm delegate" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
         <template v-if="view === 'all'">
           <button type="button" class="btn ghost sm more-toggle" :class="{ on: moreFilters > 0 }" :aria-expanded="filtersOpen" aria-controls="run-filters" @click="filtersOpen = !filtersOpen">筛选<span v-if="moreFilters" class="n">{{ moreFilters }}</span><Icon name="down" :size="13" class="chev" :class="{ open: filtersOpen }" /></button>
           <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
@@ -402,7 +407,7 @@ const kindOptions = computed(() => [
           </div>
           <h1 :title="hintOf(detail.run)">{{ detail.run.title }}</h1>
           <p v-if="detail.run.waiting" class="muted small waiting" title="omem 自己的排队：开始运行时才选定后端和模型">排队中：{{ detail.run.waiting }}。开始运行时才选定后端和模型；后端自己的排队会在开始后的过程里显示。</p>
-          <div class="row wrap">
+          <div v-if="mayOperate" class="row wrap">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
           </div>
@@ -493,7 +498,7 @@ const kindOptions = computed(() => [
       </template>
     </main>
 
-    <div v-if="delegateOpen" class="modal-overlay" @mousedown.self="delegateOpen = false">
+    <div v-if="delegateOpen && mayDelegate" class="modal-overlay" @mousedown.self="delegateOpen = false">
       <div class="modal stack">
         <div class="row"><strong>交办编码任务</strong><span class="spacer" /><UiSegmented v-model="mode" size="sm" aria-label="交办方式" :options="modeOptions" /><button class="btn ghost sm icon" @click="delegateOpen = false"><Icon name="x" /></button></div>
         <p v-if="mode === 'code'" class="muted small">每个仓库各开一个独立的 Git worktree，由编码 Agent 一起实现，分别运行检查命令，再由评审 Agent 审查。确认后所有仓库一起应用。</p>
