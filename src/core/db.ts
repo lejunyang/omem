@@ -2340,7 +2340,6 @@ export const migrations: readonly string[] = [
   `create index progress_runs_item on runs(json_extract(input,'$.itemId'),created_at desc) where json_extract(input,'$.itemId') is not null;
    create index progress_thread_item on conversations(json_extract(settings,'$.itemId')) where json_extract(settings,'$.itemId') is not null;
    create index progress_board_item on runs(json_extract(output,'$.turnContext.item.id'),created_at desc) where json_extract(output,'$.turnContext.item.id') is not null;
-   create index progress_usage on run_events(run_id,seq desc) where type='usage';
    create index progress_tokens on run_events(run_id,seq desc) where type='usage' and json_type(data,'$.input')='integer' and json_type(data,'$.output')='integer';`,
 ];
 
