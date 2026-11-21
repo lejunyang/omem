@@ -23,8 +23,10 @@ const recipient = (app: App, id: string) => ({ id, identities: identitiesOf(app,
 const resolution = z.object({ ok: z.boolean(), hint: z.string().max(500).optional() });
 const receipt = z.object({ ref: z.string().min(1).max(500).optional() });
 
+const deliverySignal = (lifetime: AbortSignal) => AbortSignal.any([lifetime, AbortSignal.timeout(DELIVERY_TIMEOUT_MS)]);
+
 async function reach(def: Notifier, user: ReturnType<typeof recipient>, signal: AbortSignal) {
-  return def.resolve ? resolution.parse(await untilAbort(signal, () => def.resolve!(structuredClone(user)))) : { ok: true };
+  return def.resolve ? resolution.parse(await def.resolve(structuredClone(user), signal)) : { ok: true };
 }
 function expiry(app: App, a: Ask) {
   const deadline = one<{ at: string | null; grant: number | null }>(app.db, "select json_extract(context,'$.expiresAt') at, json_extract(context,'$.operationGrant.expiresAt') as 'grant' from asks where id=?", a.id);
@@ -78,12 +80,8 @@ function larkReachable(app: App, userId: string) {
   return userId === "owner" ? !!(app.config.lark.ownerOpenId || one(app.db, "select 1 from kv where key='lark_owner_chat' and value!=''")) : !!larkOpenIdOf(app, userId);
 }
 
-async function send(app: App, row: Delivery, signal: AbortSignal) {
+async function send(app: App, row: Delivery, def: Notifier, signal: AbortSignal) {
   const { outlet, op, object_id: id, user_id: userId } = row;
-  const entry = notifiers.get(outlet);
-  if (!entry) return;
-  const def = entry.def;
-  signal = entry.context(app, userId, "", signal).signal;
   signal.throwIfAborted();
   if (op === "retract") {
     if (def.retract) await def.retract(row.ref!, signal);
@@ -136,8 +134,9 @@ async function attempt(app: App, row: Delivery) {
   const lease = Date.now() + DELIVERY_LEASE_MS;
   if (!run(app.db, "update outlet_deliveries set state='pending',due=? where seq=? and state in ('pending','deferred') and due<=?", lease, row.seq, Date.now()).changes) return;
   try {
-    const signal = AbortSignal.timeout(DELIVERY_TIMEOUT_MS);
-    const result = await untilAbort(signal, () => send(app, row, signal));
+    const entry = notifiers.get(row.outlet);
+    const signal = entry && deliverySignal(entry.lifetime);
+    const result = entry && signal ? await untilAbort(signal, () => send(app, row, entry.def, signal)) : undefined;
     if (result?.due) {
       run(app.db, "update outlet_deliveries set state='deferred',due=? where seq=?", result.due, row.seq);
       return;
@@ -191,7 +190,8 @@ export async function listOutlets(app: App, userId: string) {
       where d.outlet=j.value and d.user_id=? and updated is not null order by updated desc limit 1) from json_each(?) j)`,
     userId, JSON.stringify([...notifiers.keys()])).map(r => [r.outlet, r]));
   const plugins = await Promise.all([...notifiers].map(async ([id, e]) => {
-    const reachable = await reach(e.def, user, AbortSignal.timeout(DELIVERY_TIMEOUT_MS)).catch(err => ({ ok: false, hint: String(err).slice(0,500) }));
+    const signal = deliverySignal(e.lifetime);
+    const reachable = await untilAbort(signal, () => reach(e.def, user, signal)).catch(err => ({ ok: false, hint: String(err).slice(0,500) }));
     return { id, name: e.def.name, plugin: e.plugin, builtin: false, supportsAsk: !!e.def.ask, reachable,
       setting: settings(app, userId).find(s => s.id === id) ?? null, lastDelivery: history.get(id)?.updated ?? null, lastError: history.get(id)?.error ?? null };
   }));

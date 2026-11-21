@@ -192,7 +192,7 @@ export async function startSandbox(
       const invoke = (method: string, args: unknown[], signal: AbortSignal) =>
         ask({ t: "notifier", name: def.id, method, args }, undefined, undefined, undefined, signal);
       opts.notifier({ id: def.id, name: def.name,
-        resolve: def.resolves ? user => invoke("resolve", [user], AbortSignal.timeout(15000)) : undefined,
+        resolve: def.resolves ? (user, signal) => invoke("resolve", [user], signal) : undefined,
         deliver: (n, signal) => invoke("deliver", [n], signal),
         update: def.updates ? (ref, n, signal) => invoke("update", [ref, n], signal) : undefined,
         ask: def.asks ? (a, signal) => invoke("ask", [a], signal) : undefined,

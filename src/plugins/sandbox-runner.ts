@@ -199,7 +199,7 @@ process.on("message", async (m: Msg) => {
       const def = notifiers.get(m.name)!;
       const [arg, n] = m.args;
       switch (m.method) {
-        case "resolve": value = await def.resolve!(arg); break;
+        case "resolve": value = await def.resolve!(arg, controller.signal); break;
         case "deliver": value = await def.deliver(arg, controller.signal); break;
         case "ask": value = await def.ask!(arg, controller.signal); break;
         case "update": await def.update!(arg, n, controller.signal); break;

@@ -9,6 +9,7 @@ import { registerFormats } from "./formats.ts";
 import { pluginSpaces } from "./spaces.ts";
 
 type Entry<T> = {
+  lifetime: AbortSignal;
   spaces: readonly string[];
   plugin: string;
   def: T;
@@ -54,7 +55,7 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
     if (!/^[a-z][a-z0-9-]{0,47}$/.test(def.id)) throw new Error("插件能力 id 无效");
     const key = manifest.id + ":" + def.id;
     if (map.has(key)) throw new Error("重复注册 " + key);
-    map.set(key, { plugin: manifest.id, def, spaces, context });
+    map.set(key, { plugin: manifest.id, def, spaces, context, lifetime: lifetime.signal });
     undo.push(() => { map.delete(key); });
   }
   return {

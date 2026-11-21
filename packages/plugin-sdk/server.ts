@@ -84,7 +84,7 @@ export type OutAsk = OutNotification & {
 };
 export type Notifier = {
   id: string; name: string;
-  resolve?(user: OutletRecipient): Promise<{ ok: boolean; hint?: string }>;
+  resolve?(user: OutletRecipient, signal: AbortSignal): Promise<{ ok: boolean; hint?: string }>;
   deliver(n: OutNotification, signal: AbortSignal): Promise<{ ref?: string }>;
   update?(ref: string, n: OutNotification, signal: AbortSignal): Promise<void>;
   ask?(a: OutAsk, signal: AbortSignal): Promise<{ ref?: string }>;
