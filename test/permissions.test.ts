@@ -163,12 +163,18 @@ describe("roles and permissions", async () => {
     tokens[user]=createApiToken(app,user,"test");
     await fetch(base+"/api/members/"+user+"/capabilities",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({preset:"observer",overrides:[{capability:"memories.view",scope_kind:"space",scope_id:"team",effect:"deny"}]})});
     const r=createRun(app,{kind:"ask",spaceId:"team",userId:"owner",title:"记录",input:{spaces:["team"]}});
+    const memory = remember(app,{spaceId:"team",kind:"fact",content:"隐藏正文"});
+    const {saveRule} = await import("../src/rules/store.ts");
+    const rule = saveRule(app,{name:"示例通知",description:"处理变化",spaceId:"team",conditions:{field:"chat.id",op:"equals",value:"demo"},actions:[{type:"script",runtime:"node",code:"// 隐藏脚本"}]},"user","owner");
     const ctrl=new AbortController();
     const reader=(await as(user,"/api/events?run="+r.id,{signal:ctrl.signal})).body!.getReader();
     try {
-      for (const name of ["remember","save_rule"]) addRunEvent(app,r.id,"tool-write",{name,args:{content:"隐藏正文",rule:{actions:[{type:"script",code:"隐藏脚本"}]}},result:"隐藏结果"});
+      for (const name of ["remember","save_rule"]) addRunEvent(app,r.id,"tool-write",{name,args:{content:"隐藏正文",rule:{actions:[{type:"script",code:"隐藏脚本"}]}},result:name==="remember" ? memory.id : `已更新规则 ${rule.id}「示例通知」隐藏结果`});
       const history=await json(user,"/api/runs/"+r.id);
-      expect(history.events.filter((e:{type:string})=>e.type==="tool-write").map((e:{data:object})=>e.data)).toEqual([{},{}]);
+      const writes = history.events.filter((e:{type:string})=>e.type==="tool-write");
+      expect(writes[0].data).toEqual({});
+      expect(writes[1].data).toMatchObject({name:"save_rule", rule:{actions:[{type:"script"}]}});
+      expect(JSON.stringify(writes)).not.toMatch(/隐藏正文|隐藏脚本|隐藏结果/);
       let stream="";
       while (stream.split("tool-write").length<3) stream+=new TextDecoder().decode((await reader.read()).value);
       expect(stream).not.toMatch(/隐藏正文|隐藏脚本|隐藏结果/);

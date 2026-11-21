@@ -125,6 +125,28 @@ export function visibleRunEvent<T extends { type: string; data: unknown }>(app: 
     const rule = id && readableRule(app, user, id);
     if (rule) return { ...event, data: { name: data.name, rule: can(app, user, "rules.edit") ? rule : ruleSummary(rule) } };
   }
-  // Other writes have an independently authorized link in the writes list.
+  // Keep a verified target link. The original arguments may also mention unrelated objects.
+  const name = data?.name;
+  const result = data?.result ?? "";
+  let target: WriteTarget | undefined;
+  let space: string | undefined;
+  if (name === "remember" || name === "supersede") {
+    const id = (name === "remember" ? /\b(m[0-9a-z]{12,})\b/ : /→ (m[0-9a-z]+)/).exec(result)?.[1];
+    if (id) {
+      space = one<{space_id:string}>(app.db, "select space_id from memories where id=?", id)?.space_id;
+      if (space) target = { kind: "memory", id };
+    }
+  } else if (name === "upsert_item") {
+    const id = /事项 (i[0-9a-z]+)/.exec(result)?.[1] ?? data?.args?.id;
+    if (id) target = { kind: "item", id };
+  } else if (name === "write_file") {
+    const id = /src:(\S+?)（/.exec(result)?.[1];
+    if (id) target = { kind: "source", id };
+  } else if (name === "write_page") {
+    const page = /页面 ([^/\s]+)\/(.+?)。/.exec(result);
+    if (page) { space = page[1]; target = { kind: "page", space, slug: page[2] }; }
+  }
+  if (name && target && writeVisible(app, user, { tool: name, label: "", target, space }))
+    return { ...event, data: { name, target } };
   return { ...event, data: {} };
 }
