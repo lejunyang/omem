@@ -6,6 +6,7 @@ import { createUser, createApiToken, addMember } from "../src/core/users.ts";
 import { rmSync } from "node:fs";
 import { testApp } from "./helpers.ts";
 import { run } from "../src/core/db.ts";
+import { canReadRun } from "../src/auth/permissions.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { itemProgress, runProgress, states } from "../src/agents/progress.ts";
@@ -166,6 +167,24 @@ describe("进度投影", () => {
       rounds: [{ runId: "code" }, { runId: "later" }] }]);
     run(app.db, "update runs set scope=? where id='later'", JSON.stringify(["other"]));
     expect(itemProgress(app, item.id, reader)).toEqual([]);
+  });
+
+  it("事项只挂可读第二轮时，不会带出其他空间的首轮和修改项", async () => {
+    const { app, add } = fixture();
+    createSpace(app, { id: "shared", name: "共享项目" });
+    createUser(app, { id: "reader", name: "读者", role: "observer" });
+    addMember(app, "shared", "reader", "reader");
+    const item = upsertItem(app, undefined, { title: "关联交办", spaceId: "shared" });
+    add("private-root", "code", null);
+    addTask(app, "private-root", { title: "首轮私有修改", kind: "build" }, "coder");
+    add("shared-round", "code", null, { continueFrom: "private-root" }, {}, ["shared"]);
+    run(app.db, "update runs set space_id='shared' where id='shared-round'");
+    await addMaterials(app, item.id, [{ kind: "run", ref: "shared-round" }], "owner");
+
+    expect(canReadRun(app, "reader", "shared-round")).toBe(true);
+    expect(canReadRun(app, "reader", "private-root")).toBe(false);
+    expect(itemProgress(app, item.id, owner)).toMatchObject([{ id: "private-root", tasks: [{ title: "首轮私有修改" }] }]);
+    expect(itemProgress(app, item.id, { user: "reader" })).toEqual([]);
   });
 
   it("从事项找关联运行时按索引查子运行、续轮和用量", () => {
