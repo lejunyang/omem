@@ -382,7 +382,9 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // Tool tokens are scoped to the sender, so each person gets their own agent session.
   // A member's own account (agents/accounts.ts) is part of the key: a session never continues under another account.
   const keyOf = (p: AgentProfile) => `${p.id}|${label}|${prep.cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(p) ? `|${accountTag(p)}` : ""}`;
-  const sessionKey = keyOf(prep.profile);
+  const cloudKey = (selected: typeof prep) => selected.capabilities.omemAccess === "http"
+    ? "|http:" + [selected.capabilities.cloudHttp, ...selected.tools].join(",") : "";
+  const sessionKey = keyOf(prep.profile) + cloudKey(prep);
   const watched = messages.some((m) => typeof m.meta.speaker === "string");
   const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
   const handoff = (ctx.run.input as { handoff?: { kind: string } }).handoff;
@@ -410,7 +412,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const watchedText = watched && !promptOverride ? await watchedMaterial(app, messages, resolved) : null;
   let sentFocus = false;
   const turnMessage = (selected: typeof prep, fresh: boolean, carry = "") => {
-    const withTools = selected.tools.size > 0;
+    const withTools = selected.tools.size > 0 && selected.capabilities.omemAccess !== "http";
     const currentBrief = brief && !withTools ? workStateBrief(app, undefined, false) : brief;
     const seen = t.settings.focusSeen;
     sentFocus = !!focus && (fresh || seen?.hash !== focus.hash || t.agentTurns + 1 - seen.turn >= 20);
@@ -470,7 +472,7 @@ ${WAKE_NOTE}`
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
   const save = (sessionId: string | undefined, turns: number, on: AgentProfile = prep.profile) =>
-    updateThread(app, threadId, { agentProfile: keyOf(on), agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns, ...(sentFocus && focus ? { settings: { ...getThread(app, threadId).settings, focusSeen: { hash: focus.hash, turn: turns } } } : {}) });
+    updateThread(app, threadId, { agentProfile: keyOf(on) + cloudKey(on === prep.profile ? prep : curPrep), agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns, ...(sentFocus && focus ? { settings: { ...getThread(app, threadId).settings, focusSeen: { hash: focus.hash, turn: turns } } } : {}) });
   // The session this thread had is not coming back once a new one replaced it: remove it from the
   // backend's own list (Codex, TraeX, Doubao keep every session the owner can browse).
   const retireReplaced = (sessionId: string | undefined) => {
@@ -494,6 +496,7 @@ ${WAKE_NOTE}`
           {
             cwd: prep.cwd,
             runId: ctx.run.id,
+            capabilities: prep.capabilities,
             system: prep.system,
             parts: prep.parts,
             ...turnMessage(prep, !resume),
@@ -593,6 +596,7 @@ ${WAKE_NOTE}`
           {
             cwd: curPrep.cwd,
             runId: ctx.run.id,
+            capabilities: curPrep.capabilities,
             system: curPrep.system,
             parts: curPrep.parts,
             ...turnMessage(curPrep, true, carry),

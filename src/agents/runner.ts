@@ -23,6 +23,7 @@ import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, exc
 import { aiLabel, candidateProfiles, candidateWhen, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
+import { cloudAccess } from "./cloud-probe.ts";
 import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
@@ -513,7 +514,10 @@ export function prepareRun(
   // Not what the person it works for may not do (src/auth/tools.ts), nor what needs something they lack.
   trimTools(app, userId, tools);
   dropUnavailable(app, userId, tools);
-  const capabilities = backendCapabilities(profile);
+  const baseCapabilities = backendCapabilities(profile);
+  const access = input.runId && baseCapabilities.where === "cloud" ? cloudAccess(app, profile) : null;
+  const capabilities: BackendCapabilities = access?.mode ? { ...baseCapabilities, omemAccess: "http", cloudHttp: access.mode } : baseCapabilities;
+  if (access?.mode) for (const t of tools) if (!app.config.agents.cloudTools.tools.some(name => name === t)) tools.delete(t);
   if (capabilities.omemAccess === "none") tools.clear();
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
@@ -547,10 +551,16 @@ export function prepareRun(
   const agentUse = tools.has("run_agent") ? "可用 run_agent 交给它们" : tools.has("ask_agent") ? "这次运行不能交办，需要它们的专长时用 ask_agent 请教" : "";
   const agents = roleName === "assistant" && !spec && agentUse ? agentIndex(app) : "";
   const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
+  const guideTools = access?.mode ? new Set<string>() : tools;
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
-    : `# 角色：${role!.description}\n\n${toolSections(role!.body, tools, capabilities.localTools)}`;
-  const common = commonGuide(tools, capabilities);
+    : `# 角色：${role!.description}\n\n${toolSections(role!.body, guideTools, capabilities.localTools)}`;
+  const descriptions: Record<string, string> = { search: "检索材料", read_source: "按行读原件", read_page: "读 Wiki 页", read_item: "读事项" };
+  const common = commonGuide(guideTools, capabilities) + (access?.mode ? "\n\n## 云端只读工具\n" +
+    [...tools].map(t => t + "：" + descriptions[t]).join("、") + "。连接信息在本轮消息或安全通道。GET 工具地址查看参数。" +
+    (access.mode === "header" ? "按连接信息设置 Authorization 和 X-Omem-Run 请求头，POST 地址/工具名，正文是 JSON 参数对象。" :
+      "GET 地址/工具名?args=URL编码的JSON参数。每个地址只用一次，下次用响应里的 next。") +
+    "只在此地址使用凭据。被拒、过期或次数用完就停止，查不到就照实说，不要编。" : "");
   // Who else is on the network (core/mesh.ts): for the owner's own assistant and profiles that can ask.
   const mesh = userId === OWNER && tools.has("ask_agent") ? meshNote(app) : "";
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;

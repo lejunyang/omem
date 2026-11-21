@@ -1,7 +1,8 @@
 import type { AgentProfile } from "../core/config.ts";
 
 export type BackendCapabilities = {
-  omemAccess: "mcp" | "shell-bridge" | "none";
+  omemAccess: "mcp" | "shell-bridge" | "http" | "none";
+  cloudHttp?: false | "header" | "url";
   credentialChannel?: boolean;
   localTools: boolean;
   where: "local" | "cloud";
@@ -13,7 +14,7 @@ const transports = {
   "codex-cli": local,
   "claude-cli": local,
   "doubao-cli": { ...local, omemAccess: "shell-bridge" },
-  doubao: { omemAccess: "none", localTools: false, where: "cloud" },
+  doubao: { omemAccess: "none", cloudHttp: false, localTools: false, where: "cloud" },
 } satisfies Record<AgentProfile["transport"], BackendCapabilities>;
 
 export function backendCapabilities(profile: Pick<AgentProfile, "transport">): BackendCapabilities {

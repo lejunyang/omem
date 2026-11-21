@@ -34,6 +34,9 @@ const PEERS = g("peers.manage");
 const USERS = g("users.manage");
 
 export const ROUTE_RULES: Record<string, RouteRule> = {
+  "POST /api/cloud-tools/revoke": "owner",
+  "GET /api/tools/turn/:run/:key": "public",
+  "GET /api/tools/turn/:run/:key/:name": "public",
   "GET /api/cloud-tools": "owner",
   "POST /api/cloud-tools/probe": "owner",
   "POST /api/cloud-tools/probe/confirm": "owner",

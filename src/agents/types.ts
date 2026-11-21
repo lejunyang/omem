@@ -40,6 +40,7 @@ export type SessionCleanup = {
 };
 
 export type AgentRequest = {
+  cloudChannel?: { url: string; headers?: Record<string, string> };
   workspace?: import("./sandbox.ts").WorkspaceMounts;
   cwd: string;
   /** Run owning this turn, for cleanup that may outlive the process. */

@@ -2337,6 +2337,11 @@ export const migrations: readonly string[] = [
      created_by text not null, created_at text not null, revoked_at text
    );
    create unique index remote_grants_member on remote_grants(session_id,user_id) where revoked_at is null;`,
+  `create table cloud_tool_usage (
+     run_id text primary key references runs(id) on delete cascade, calls integer not null, errors integer not null default 0,
+     last_error text, at text not null
+   );
+   create index cloud_tool_usage_at on cloud_tool_usage(at);`,
 ];
 
 export type Db = DatabaseSync;

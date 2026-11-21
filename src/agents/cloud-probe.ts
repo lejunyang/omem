@@ -1,16 +1,16 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
-import { one, run } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { backendCapabilities } from "./capabilities.ts";
 import { publicName } from "./network-diagnostics.ts";
 import type { runBackend } from "./dispatch.ts";
 
 export type CloudHttp = "header" | "url" | false;
-type Probe = { id: string; url: string; transport: string; at: string; mode: CloudHttp; reason: string; confirmed: boolean };
+type Probe = { id: string; url: string; fingerprint: string; at: string; mode: CloudHttp; reason: string; confirmed: boolean };
 
 function publicIp(ip: string) {
   if (isIP(ip) === 6) return /^[23]/i.test(ip) && !/^(2001:(db8|0):|2002:)/i.test(ip);
@@ -34,10 +34,23 @@ export async function checkCloudAddress(url: string) {
   if (!ips.length || !ips.every(publicIp)) throw new HttpError(400, "webUrl 没有解析到可用的公网地址");
 }
 
+function fingerprint(p: AgentProfile) {
+  return createHash("sha256").update(JSON.stringify([p.transport, p.command, p.args, p.env])).digest("hex");
+}
 const key = (id: string) => "cloud-tools:probe:" + id;
 export function lastProbe(app: App, id: string): Probe | null {
   const row = one<{ value: string }>(app.db, "select value from kv where key=?", key(id));
   return row ? JSON.parse(row.value) : null;
+}
+export function cloudBackendStatus(app: App) {
+  const profiles = allProfiles(app.config).filter(p => backendCapabilities(p).where === "cloud");
+  const rows = all<{ key: string; value: string }>(app.db, "select key,value from kv where key in (select value from json_each(?))",
+    JSON.stringify(profiles.map(p => key(p.id))));
+  const probes = new Map(rows.map(r => [r.key, JSON.parse(r.value) as Probe]));
+  return profiles.map(p => {
+    const probe = probes.get(key(p.id)) ?? null;
+    return { backend: p.id, probe, reason: cloudAccess(app, p, probe).reason };
+  });
 }
 function save(app: App, backend: string, result: Probe) {
   run(app.db, "insert or replace into kv(key,value) values(?,?)", key(backend), JSON.stringify(result));
@@ -78,25 +91,25 @@ export async function probeCloud(app: App, backend: string, execute?: typeof run
   } catch (error) {
     reason = "探测会话失败：" + (error as Error).message.slice(0, 240);
   } finally { challenges.delete(nonce); }
-  return save(app, backend, { id: nonce, url, transport: p.transport, at: new Date().toISOString(), mode, reason, confirmed: false });
+  return save(app, backend, { id: nonce, url, fingerprint: fingerprint(p), at: new Date().toISOString(), mode, reason, confirmed: false });
 }
 
 export function confirmProbe(app: App, backend: string, id: string) {
   const p = cloudProfile(app, backend);
   const r = lastProbe(app, p.id);
-  if (!r?.mode || r.id !== id || r.url !== cloudAddress(app) || r.transport !== p.transport) throw new HttpError(409, "请重新探测后确认");
+  if (!r?.mode || r.id !== id || r.url !== cloudAddress(app) || r.fingerprint !== fingerprint(p)) throw new HttpError(409, "请重新探测后确认");
   return save(app, backend, { ...r, confirmed: true });
 }
 
-export function cloudAccess(app: App, p: AgentProfile) {
+export function cloudAccess(app: App, p: AgentProfile, probe?: Probe | null) {
   const cfg = app.config.agents.cloudTools;
   const caps = backendCapabilities(p);
   const url = cloudAddress(app);
   if (!cfg.enabled || caps.where !== "cloud" || caps.omemAccess !== "none") return { reason: "云端工具未启用" };
   if (!cfg.backends.includes(p.id)) return { reason: "未选中这个后端" };
   if (!url) return { reason: "需要公网 HTTPS webUrl" };
-  const r = lastProbe(app, p.id);
-  if (!r?.mode || !r.confirmed || r.url !== url || r.transport !== p.transport) return { reason: "需要本人确认当前地址的成功探测" };
+  const r = probe === undefined ? lastProbe(app, p.id) : probe;
+  if (!r?.mode || !r.confirmed || r.url !== url || r.fingerprint !== fingerprint(p)) return { reason: "需要本人确认当前地址的成功探测" };
   if (cfg.credentialIn === "channel" && !caps.credentialChannel) return { reason: "后端没有安全凭据通道" };
   return { mode: r.mode, url };
 }
