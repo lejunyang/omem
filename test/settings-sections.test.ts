@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { forgetPlugin, loadPlugins } from "../src/plugins/registry.ts";
 import { expect, it } from "vitest";
 import { testApp } from "./helpers.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -98,6 +101,46 @@ it("separates review form access and delegation tier selection", async () => {
   } finally { await server.close(); app.db.close(); }
 });
 
+
+it("成员读插件列表、详情和改图标都能渲染权限，服务命令和目录仅本人可见", async () => {
+  const app = testApp();
+  const root = join(app.home, "plugins");
+  const dir = join(root, "probe");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "plugin.yaml"), JSON.stringify({
+    id: "probe", name: "探针", tools: ["read_page"],
+    services: [{ name: "echo", command: "node", args: ["private-service.mjs"] }],
+  }));
+  await loadPlugins(app, [{ dir: root, source: "data" }]);
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    createUser(app, { id: "reader", name: "读者", role: "observer" });
+    const headers = { authorization: "Bearer " + createApiToken(app, "reader") };
+    const grant = app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values('reader',?,'global','','allow','0','owner')");
+    grant.run("settings.ai.view");
+    const url = "/api/plugins/probe";
+    const owner = (await server.inject({ url })).json();
+    expect(owner).toMatchObject({ dir, services: [{ command: "node private-service.mjs" }], permissions: { services: ["node private-service.mjs"] } });
+    const list = await server.inject({ url: "/api/plugins", headers });
+    const detail = await server.inject({ url, headers });
+    expect(list.statusCode).toBe(200);
+    expect(detail.statusCode).toBe(200);
+    const card = detail.json();
+    expect(list.json().find((p: { id: string }) => p.id === "probe")).toEqual(card);
+    expect(card).toMatchObject({
+      id: "probe", iconChosen: false, services: [], streams: [], spaces: [], flows: [], rules: [], hooks: [], mcp: [],
+      agents: [], skills: [], tools: [], permissions: {
+        tools: [], writes: false, hostTools: ["read_page"], providers: [], platforms: [], uses: [], services: [], agentLogin: [], space: null,
+      },
+    });
+    expect(card).not.toHaveProperty("dir");
+    expect(detail.body).not.toContain("private-service.mjs");
+    grant.run("settings.ai.edit");
+    const edited = await server.inject({ method: "PUT", url: url + "/icon", headers, payload: { icon: "star" } });
+    expect(edited.statusCode).toBe(200);
+    expect(edited.json()).toEqual({ ...card, icon: "star", iconChosen: true });
+  } finally { forgetPlugin("probe"); await server.close(); app.db.close(); }
+});
 
 it("checks section grants on the card APIs and omits host settings from member responses", async () => {
   const app = testApp();

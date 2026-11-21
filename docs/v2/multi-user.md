@@ -219,7 +219,7 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 | --- | --- | --- | --- |
 | GET ai、agent-registry、agents/:id/adapter | AI | settings.manage → view | 模型列表、提供方和密钥尾号。适配器省略路径、源地址和错误。公开注册表沿用原字段 |
 | GET agents/load | AI | agents.manage → view | 当前负载和近期统计，省略账号额度 |
-| GET plugins、plugins/:id；PUT plugins/:id/settings、plugins/:id/icon | AI | 读仍对登录用户开放，写由 settings.manage → edit | 列表、详情和改图标响应只含展示字段。插件偏好属于当前用户 |
+| GET plugins、plugins/:id；PUT plugins/:id/settings、plugins/:id/icon | AI | 读仍对登录用户开放，写由 settings.manage → edit | 列表、详情和改图标响应保留展示字段和权限摘要。服务清单和服务命令返回空数组，省略本机目录。插件偏好属于当前用户 |
 | GET lark/bot-check、desktop | 渠道 | settings.manage、desktop.control → view | 机器人的缺失权限及事件。桌面工具返回安装状态 |
 | GET lark/captured、lark/wiki-crawls | 知识 | settings.manage → view | 采集会话只列有权查看原件的最近 500 条，返回 chatId、name、spaceId、kind、lastMessageAt。爬取省略入口、错误和队列细节 |
 | GET search/providers | 知识 | settings.manage → view | 提供者标识、名称、插件和延迟 |

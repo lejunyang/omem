@@ -50,8 +50,14 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
 
   const pluginView = (p: ReturnType<typeof describePlugin>, req: FastifyRequest) => {
     if (who(req) === OWNER) return p;
-    const { id, name, description, icon, source, slots, agents, skills, page, enabled, version, settings, tools, channels, voice } = p;
-    return { id, name, description, icon, source, slots, agents, skills, page, enabled, version, settings, tools, channels: channels.map(({ id, label, running }) => ({ id, label, running })), voice };
+    const { id, name, description, icon, iconChosen, source, slots, agents, skills, page, enabled, version, settings, tools, channels, voice } = p;
+    const { tools: permissionTools, writes, hostTools, providers, platforms, agentLogin, uses, notify } = p.permissions;
+    return {
+      id, name, description, icon, iconChosen, source, slots, agents, skills, page, enabled, version, settings, tools, voice,
+      channels: channels.map(({ id, label, running }) => ({ id, label, running })),
+      spaces: [], flows: [], rules: [], mcp: [], services: [], streams: [], hooks: [], connectors: [],
+      permissions: { tools: permissionTools, writes, hostTools, providers, platforms, agentLogin, uses, notify, services: [], space: null },
+    };
   };
   server.get("/api/plugins", async req => listPlugins().map(p => pluginView(describePlugin(p), req)));
   // Slots (slots.ts): which plugin blocks a page of omem's shows, then each block's content on its own,
