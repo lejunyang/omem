@@ -1,3 +1,6 @@
+import { runPredicate, type RunAudience } from "./run-scope.ts";
+import { sourceVisible } from "./visibility.ts";
+import { capabilityAccess, isCapability, type Capability } from "./capabilities.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, now, slugify } from "../core/util.ts";
@@ -53,6 +56,7 @@ export const BUILTIN_ROLES: Role[] = [
   },
   { id: "member", name: "成员", scope: "global", builtin: true, description: "能新建空间、连接飞书、生成分享链接；只能用被加入的空间", permissions: ["spaces.create", "connector.use", "share.external", "tools.external"] },
   { id: "viewer", name: "访客", scope: "global", builtin: true, description: "只读被加入的空间，可以提问", permissions: ["tools.external"] },
+  { id: "observer", name: "网页只读观察者", scope: "global", builtin: true, description: "阅读获准空间的工作并提问", permissions: [] },
   { id: "reader", name: "只读", scope: "space", builtin: true, description: "检索和阅读", permissions: ["space.read"] },
   { id: "contributor", name: "贡献者", scope: "space", builtin: true, description: "只读 + 导入原件、写记忆和事项", permissions: ["space.read", "source.write", "memory.write"] },
   { id: "editor", name: "编辑", scope: "space", builtin: true, description: "贡献者 + 写 Wiki、采集进来、看别人的运行", permissions: ["space.read", "source.write", "memory.write", "wiki.write", "capture.route", "runs.read"] },
@@ -121,15 +125,36 @@ export const isOwner = (app: App, userId: string) => who(app, userId)?.role === 
 const WRITES = new Set<Perm>(["source.write", "memory.write", "wiki.write", "capture.route"]);
 const mirrored = (app: App, spaceId: string) => !!one<{ m: string | null }>(app.db, "select json_extract(settings, '$.mirror') m from spaces where id = ?", spaceId)?.m;
 
-export function can(app: App, userId: string, perm: Perm, spaceId?: string | null): boolean {
+type Target = { kind: "run" | "item" | "source" | "design"; id: string } | { spaceId: string; userId: string; status?: string };
+export function can(app: App, userId: string, perm: Perm | Capability, target?: string | Target | null): boolean {
+  if (target && typeof target === "object") {
+    if (!isCapability(perm)) return false;
+    if ("spaceId" in target) {
+      const own = target.userId === userId;
+      if (!own && !isOwner(app, userId) && (perm !== "items.view" || target.status === "candidate")) return false;
+      return !!capabilityAccess(app, userId, target.spaceId).source(perm, target.spaceId, own);
+    }
+    if (target.kind === "run") return canAccessRun(app, userId, target.id, perm);
+    const table = { item: "items", source: "sources", design: "designs" }[target.kind];
+    if (target.kind === "item") {
+      const item = one<{ spaceId: string; userId: string; status: string }>(app.db, "select space_id spaceId,coalesce(user_id,'owner') userId,status from items where id=?", target.id);
+      return !!item && can(app, userId, perm, item);
+    }
+    const row = one<{ space_id: string }>(app.db, `select space_id from ${table} where id=?`, target.id);
+    if (!row || (target.kind === "source" && sourceVisible(app, userId, target.id) !== true)) return false;
+    return can(app, userId, perm, row.space_id);
+  }
+  const spaceId = target;
+  if (isCapability(perm)) return !!capabilityAccess(app, userId, spaceId ?? undefined).source(perm, spaceId ?? undefined);
   const u = who(app, userId);
   if (!u?.active) return false;
+  if (u.role === "observer" && perm !== "space.read") return false;
   if (spaceId && WRITES.has(perm) && mirrored(app, spaceId)) return false;
   if (u.role === "owner") return true;
   const g = grants(app, u.role);
   if (perm in GLOBAL_PERMS) return g.has(perm);
-  if (!spaceId) return false;
-  if (g.has(`${perm}@*`) && !othersPersonal(app, spaceId, userId)) return true;
+  if (!spaceId || othersPersonal(app, spaceId, userId)) return false;
+  if (g.has(`${perm}@*`)) return true;
   // A repository under a business space also goes by the business space's members.
   const parent = one<{ parent_id: string | null }>(app.db, "select parent_id from spaces where id = ?", spaceId)?.parent_id ?? spaceId;
   return all<{ role: string }>(app.db, "select role from space_members where space_id in (?, ?) and user_id = ?", spaceId, parent, userId).some((m) => grants(app, spaceRole(m.role)).has(perm));
@@ -142,12 +167,14 @@ export function spacesWith(app: App, userId: string, perm: SpacePerm): string[] 
   const u = who(app, userId);
   if (!u?.active) return [];
   if (u.role === "owner") return null;
+  if (u.role === "observer" && perm !== "space.read") return [];
   const out = new Set<string>();
   if (grants(app, u.role).has(`${perm}@*`))
     for (const s of all<{ id: string; kind: string; owner_id: string }>(app.db, "select id, kind, owner_id from spaces")) if (s.kind !== "personal" || s.owner_id === userId) out.add(s.id);
   for (const m of all<{ space_id: string; role: string }>(app.db, "select space_id, role from space_members where user_id = ?", userId)) if (grants(app, spaceRole(m.role)).has(perm)) out.add(m.space_id);
   // A business space's repositories go with it: they are not granted on their own.
   for (const c of all<{ id: string; parent_id: string }>(app.db, "select id, parent_id from spaces where parent_id is not null")) if (out.has(c.parent_id)) out.add(c.id);
+  for (const s of all<{ id: string }>(app.db, "select id from spaces where kind='personal' and owner_id!=?", userId)) out.delete(s.id);
   return [...out];
 }
 
@@ -161,7 +188,7 @@ export function globalPerms(app: App, userId: string): GlobalPerm[] {
   return all.filter((p) => g.has(p));
 }
 
-export function requirePerm(app: App, userId: string, perm: Perm, spaceId?: string | null) {
+export function requirePerm(app: App, userId: string, perm: Perm | Capability, spaceId?: string | null) {
   if (can(app, userId, perm, spaceId)) return;
   const label = (GLOBAL_PERMS as Record<string, string>)[perm] ?? (SPACE_PERMS as Record<string, string>)[perm] ?? perm;
   throw new HttpError(403, spaceId ? `在空间 ${spaceId} 没有权限：${label}` : `没有权限：${label}`);
@@ -172,29 +199,28 @@ export function requirePerm(app: App, userId: string, perm: Perm, spaceId?: stri
  * (its events may quote any of them), or `runs.read.all` (still not into other people's personal spaces).
  */
 export function canReadRun(app: App, userId: string, runId: string): boolean {
-  const r = one<{ user_id: string | null; space_id: string | null; scope: string | null }>(app.db, "select user_id, space_id, scope from runs where id = ?", runId);
-  if (!r) return false;
-  const u = who(app, userId);
-  if (!u?.active) return false;
-  if (u.role === "owner" || (r.user_id ?? "owner") === userId) return true;
-  // No recorded scope: a run of the owner's that could read everything, or one from before scopes were
-  // recorded. Those stay with their user (and the owner).
-  const spaces = r.scope === null ? null : json<string[] | null>(r.scope, null);
-  if (spaces === null) return false;
-  if (!spaces.length) return grants(app, u.role).has("runs.read.all");
-  if (grants(app, u.role).has("runs.read.all")) return spaces.every((s) => !othersPersonal(app, s, userId));
-  return spaces.every((s) => can(app, userId, "runs.read", s));
+  return canAccessRun(app, userId, runId, "runs.view");
 }
 
-/** The spaces in which the user may read other people's runs (the list filter of canReadRun); null: all runs. */
-export function runReadableSpaces(app: App, userId: string): string[] | null {
-  const u = who(app, userId);
-  if (!u?.active) return [];
-  if (u.role === "owner") return null;
-  if (grants(app, u.role).has("runs.read.all"))
-    return all<{ id: string; kind: string; owner_id: string }>(app.db, "select id, kind, owner_id from spaces").filter((s) => s.kind !== "personal" || s.owner_id === userId).map((s) => s.id);
-  return spacesWith(app, userId, "runs.read") ?? [];
+export function runAudience(app: App, userId: string, cap: Capability = "runs.view"): RunAudience | undefined {
+  if (isOwner(app, userId)) return undefined;
+  const access = capabilityAccess(app, userId);
+  const has = (space: string, own: boolean) => access.source("runs.view", space, own) && access.source(cap, space, own);
+  const range = (own: boolean) => access.spaces.filter(s => has(s.id, own)).map(s => s.id);
+  const unscoped = access.active && !access.overrides.some(o => o.effect === "deny" && (o.capability === cap || o.capability === "runs.view"));
+  const ownUnscoped = unscoped && (cap === "runs.view" || cap === "runs.operate" && access.preset !== "observer");
+  const empty = unscoped && can(app, userId, "runs.read.all") && (cap === "runs.view" || cap === "runs.operate");
+  return { userId, spaces: range(false), ownSpaces: range(true), empty, ownUnscoped, ownEmpty: ownUnscoped };
 }
+
+export function canAccessRun(app: App, userId: string, id: string, cap: Capability, viewer = runAudience(app, userId, cap)) {
+  if (!viewer) return true;
+  const filter = runPredicate(viewer);
+  const row = one<{ user_id: string }>(app.db, `select user_id from runs where id=? and ${filter.sql}`, id, ...filter.params);
+  return !!row && (cap !== "runs.operate" || row.user_id === userId || can(app, userId, "runs.read.all"));
+}
+
+export const runReadableSpaces = (app: App, userId: string) => runAudience(app, userId)?.spaces ?? null;
 
 // ---- audit -------------------------------------------------------------------
 

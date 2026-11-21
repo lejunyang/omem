@@ -18,6 +18,7 @@ import { saveFlow } from "../src/flows/definitions.ts";
 import { advance, ownerAction, reportStage, startFlow, startRound, studyOperation } from "../src/flows/engine.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
+import { callTool } from "../src/agents/tools.ts";
 import { createRun, getRun, startWorker, stopWorker } from "../src/agents/runs.ts";
 import { saveAgentSpec, saveSkill } from "../src/agents/specs.ts";
 import * as runner from "../src/agents/runner.ts";
@@ -35,6 +36,37 @@ afterEach(async () => {
 async function serverFor(app: App) { const s = await startServer(app, { port: 0, quiet: true }); servers.push(s); return s; }
 
 describe("流程 HTTP", () => {
+  it.each(["网页", "助手"])("%s 只允许成员开始可见且适用的流程", async entry => {
+    const app = fixture(), server = await serverFor(app);
+    const userId = "flow-member", spaceId = "project-a";
+    createUser(app, { id: userId, name: "流程成员" });
+    for (const id of [spaceId, "project-b"]) createSpace(app, { id, name: id });
+    addMember(app, spaceId, userId, "editor");
+    const item = upsertItem(app, undefined, { title: "核验", spaceId, userId });
+    const headers = { authorization: `Bearer ${createApiToken(app, userId, "test")}` };
+    const ctx = { app, userId, runId: null, spaceId, spaces: [spaceId], tools: null, actor: "agent" as const };
+    const start = async (flow: string) => {
+      if (entry === "助手") return (await callTool(ctx, "flow_start", { item: item.id, flow })).text;
+      const response = await server.inject({ method: "POST", url: `/api/items/${item.id}/flow`, headers, payload: { flow } });
+      return `${response.statusCode} ${response.body}`;
+    };
+    // Compare the same request before and after adding a definition outside the member's scope.
+    const missing = await start("private-flow");
+    expect(missing).toContain("没有流程");
+    if (entry === "网页") expect(missing).toMatch(/^404 /);
+    saveFlow(app, JSON.stringify({ id: "private-flow", name: "专用流程", for: { spaces: ["project-b"] }, stages: [{ id: "check", name: "专用核验", by: "wait" }] }), "owner");
+    expect(await start("private-flow")).toBe(missing);
+    expect(itemFlow(app, item.id)).toBeNull();
+    addMember(app, "project-b", userId, "reader");
+    if (entry === "助手") expect(await start("private-flow")).toBe(missing);
+    else expect(await start("private-flow")).toContain("不适用于该事项");
+    saveFlow(app, JSON.stringify({ id: "decision-only", name: "决定流程", for: { kinds: ["decision"] }, stages: [{ id: "check", name: "核验决定", by: "wait" }] }), "owner");
+    expect(await start("decision-only")).toContain("不适用于该事项");
+    expect(itemFlow(app, item.id)).toBeNull();
+    saveFlow(app, raw, "owner");
+    expect(await start("demo")).toContain("核验材料");
+    expect(itemFlow(app, item.id)?.id).toBe("demo");
+  });
   it("成员降为只读后回答旧关卡，提问和阶段保持原状", async () => {
     const app = fixture(), server = await serverFor(app);
     createUser(app, { id: "member", name: "成员" });
@@ -239,7 +271,11 @@ describe("流程 HTTP", () => {
     saveFlow(app, raw, "user");
     const privateItem = upsertItem(app, undefined, { title: "个人事项", spaceId: "personal" }, "user");
     await startFlow(app, privateItem.id, "demo", { actor: "owner" });
-    expect((await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(404);
+    const hidden = await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers });
+    const missing = await server.inject({ url: "/api/items/missing-item/flow", headers });
+    expect(hidden.statusCode).toBe(404);
+    expect(missing.statusCode).toBe(404);
+    expect(hidden.json()).toEqual(missing.json());
     addMember(app, "personal", "member-a", "editor");
     expect((await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(404);
     expect((await server.inject({ method: "POST", url: `/api/items/${privateItem.id}/flow/stages/check/confirm`, payload: {}, headers })).statusCode).toBe(403);

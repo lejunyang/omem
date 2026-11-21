@@ -43,9 +43,34 @@ export const METRIC_ORIGIN_MIGRATION = `alter table metrics add column why text 
    update metrics set defined_by = 'omem', confirmed_at = created_at where source = 'omem';
    update metrics set status = 'proposed' where source != 'omem' and status = 'active';`;
 
+const MEMBER_CAPABILITIES_MIGRATION = `create table member_capability_overrides (
+    user_id text not null references users(id), capability text not null,
+    scope_kind text not null check(scope_kind in ('global','space')), scope_id text not null,
+    effect text not null check(effect in ('allow','deny')), created_at text not null, created_by text not null,
+    updated_at text not null default '', revoked integer not null default 0,
+    primary key(user_id,capability,scope_kind,scope_id)
+  );
+  create index members_by_user on space_members(user_id,space_id);
+  create index rules_by_space on rules(space_id,created_at);
+  -- Preserve an existing custom role when reserving the built-in observer id.
+  create temp table former_observer as
+    with recursive ids(id) as (select 'observer-custom' union all select id || '-old' from ids where id in (select id from roles))
+    select id, (select scope from roles where id='observer') scope from ids
+    where id not in (select id from roles) and exists(select 1 from roles where id='observer');
+  update users set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='global');
+  update invites set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='global');
+  update space_members set role=(select id from former_observer) where role='observer' and exists(select 1 from former_observer where scope='space');
+  update invites set spaces=(select json_group_array(json(case when json_extract(value,'$.role')='observer'
+    then json_set(value,'$.role',(select id from former_observer)) else value end)) from json_each(invites.spaces))
+    where exists(select 1 from former_observer where scope='space') and exists(select 1 from json_each(invites.spaces) where json_extract(value,'$.role')='observer');
+  update roles set id=(select id from former_observer) where id='observer';
+  drop table former_observer;`;
+
 const TURN_CONTEXT_LINK_INDEXES = `create index if not exists notifications_pushed_message on notifications(json_extract(context,'$.pushed.messageId'));
    create index if not exists notifications_lark_message on notifications(json_extract(context,'$.larkMessageId'));
    create index if not exists listen_contexts_conversation on listen_contexts(conversation_id);`;
+
+const METRIC_SERIES_INDEX = `create index if not exists metric_points_series_at on metric_points(metric_id,dims,at);`;
 
 export const migrations: readonly string[] = [
   `
@@ -2277,7 +2302,7 @@ export const migrations: readonly string[] = [
   FILE_REFS_MIGRATION,
   FILE_REF_TOMBSTONES_MIGRATION,
   TURN_CONTEXT_LINK_INDEXES,
-  `create index metric_points_series_at on metric_points(metric_id,dims,at);`,
+  METRIC_SERIES_INDEX,
   `create index runs_work_conversation on runs(json_extract(output,'$.agentWork.workConversationId'),created_at desc) where json_extract(output,'$.agentWork.workConversationId') is not null;`,
   // main and turn-context used the same migration number for different indexes.
   // Replay the link indexes for databases upgraded on main.
@@ -2297,6 +2322,7 @@ export const migrations: readonly string[] = [
    create index if not exists plugin_deliveries_seq on plugin_deliveries(seq);
    create index if not exists plugin_deliveries_due on plugin_deliveries(subscriber,state,due,seq);
    create index if not exists plugin_deliveries_order on plugin_deliveries(subscriber,entity,seq) where state!='done';`,
+  MEMBER_CAPABILITIES_MIGRATION,
 ];
 
 export type Db = DatabaseSync;
@@ -2313,7 +2339,11 @@ export function openDb(path: string): Db {
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");
     try {
-      db.exec(migrations[i]);
+      // A capabilities database may already have migrated its observer role at the
+      // version main used for the metric series index. Supply that missing index once.
+      const fromCapabilitiesBranch = migrations[i] === MEMBER_CAPABILITIES_MIGRATION
+        && db.prepare("select 1 from sqlite_schema where type='table' and name='member_capability_overrides'").get();
+      db.exec(fromCapabilitiesBranch ? METRIC_SERIES_INDEX : migrations[i]);
       db.exec(`pragma user_version = ${i + 1}`);
       db.exec("commit");
     } catch (error) {

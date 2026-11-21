@@ -1,3 +1,4 @@
+import { capabilityAccess, type Capability } from "./capabilities.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, now } from "../core/util.ts";
@@ -44,6 +45,13 @@ export function restrictedSourceFilter(app: App, userId: string) {
   };
 }
 
+/** Hidden IDs for a space's catalog and annotation queue, without checking individual rows. */
+export function hiddenSourceIds(app: App, userId: string, spaceId: string) {
+  if (isOwner(app, userId) || can(app, userId, "space.manage", spaceId)) return undefined;
+  return new Set(all<{ id: string }>(app.db, `select id from sources where space_id=? and visibility='restricted'
+    and not exists(select 1 from source_viewers v where v.user_id=? and v.source_id=sources.id)`, spaceId, userId).map(s => s.id));
+}
+
 /** Not to be sent elsewhere (another server, a share link): restricted, or under the Feishu access check. */
 export function keptHere(app: App, sourceId: string) {
   const r = rowOf(app, sourceId);
@@ -54,7 +62,7 @@ export function keptHere(app: App, sourceId: string) {
 export function sourceVisible(app: App, userId: string, sourceId: string): boolean | "check" {
   if (isOwner(app, userId)) return true;
   const r = rowOf(app, sourceId);
-  if (!r || !can(app, userId, "space.read", r.space_id)) return false;
+  if (!r || !can(app, userId, "sources.view", r.space_id)) return false;
   if (r.visibility === "restricted" && !can(app, userId, "space.manage", r.space_id) && !one(app.db, "select 1 from source_viewers where source_id = ? and user_id = ?", sourceId, userId)) return false;
   if (larkAccessSpace(app, r.space_id) && docToken(r)) {
     const c = one<{ allowed: number; checked_at: string }>(app.db, "select allowed, checked_at from source_access where source_id = ? and user_id = ?", sourceId, userId);
@@ -111,10 +119,13 @@ export async function requireReadable(app: App, userId: string, sourceId: string
  * Search hits as this person may see them: restricted ones they may not see dropped; Feishu documents
  * whose access is not known yet keep their title, without the text (and are checked in the background).
  */
-export function visibleHits<H extends { sourceId?: string; snippet: string }>(app: App, userId: string, hits: H[]): H[] {
+export function visibleHits<H extends { sourceId?: string; snippet: string; type?: string; spaceId?: string }>(app: App, userId: string, hits: H[]): H[] {
   if (isOwner(app, userId)) return hits;
+  const access = capabilityAccess(app, userId);
+  const types: Record<string, Capability> = { page: "wiki.view", memory: "memories.view", requirement: "requirements.view" };
   const out: H[] = [];
   for (const h of hits) {
+    if (h.spaceId && !access.source(types[h.type ?? ""] ?? "sources.view", h.spaceId)) continue;
     if (!h.sourceId) {
       out.push(h);
       continue;

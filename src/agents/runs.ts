@@ -1,3 +1,4 @@
+import { runPredicate, type RunAudience } from "../auth/run-scope.ts";
 import { maintainBoards, settleBoardRun } from "./work-board.ts";
 import { releaseRun } from "./capacity.ts";
 import { withBot } from "../core/bot-context.ts";
@@ -170,7 +171,29 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: { userId: string; spaces: string[] } };
+export function reviewRounds(app: App, ids: string[], audience?: RunAudience) {
+  const filter = audience && runPredicate(audience);
+  const where = filter ? " and " + filter.sql : "";
+  const params = filter?.params ?? [];
+  const rows = all<Row>(app.db, "select * from runs where id in (select value from json_each(?))" + where, JSON.stringify(ids), ...params);
+  const byId = new Map(rows.map(r => [r.id, toRun(r)]));
+  const rounds = ids.flatMap(id => {
+    const round = byId.get(id);
+    if (!round && !audience) throw new HttpError(404, `运行记录不存在：${id}`);
+    return round ? [round] : [];
+  });
+  type Child = { id: string; status: string; title: string };
+  const children = new Map<string, Child[]>();
+  for (const { parent_id, ...child } of all<Child & { parent_id: string }>(app.db,
+    "select parent_id,id,status,title from runs where kind='review' and parent_id in (select value from json_each(?))" + where + " order by created_at",
+    JSON.stringify([...byId.keys()]), ...params)) {
+    if (!children.has(parent_id)) children.set(parent_id, []);
+    children.get(parent_id)!.push(child);
+  }
+  return { rounds, children };
+}
+
+type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: RunAudience; reviewAudience?: RunAudience };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
@@ -184,11 +207,9 @@ function runWhere(opts: RunFilter) {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (opts.visibleTo) {
-    const v = opts.visibleTo;
-    const others = v.spaces.length
-      ? ` or (scope is not null and json_array_length(scope) > 0 and not exists (select 1 from json_each(runs.scope) j where j.value not in (${v.spaces.map(() => "?").join(",")})))`
-      : "";
-    where.push(`(coalesce(user_id, 'owner') = ?${others})`), params.push(v.userId, ...v.spaces);
+    const filter = runPredicate(opts.visibleTo);
+    where.push(filter.sql);
+    params.push(...filter.params);
   }
   if (opts.id) where.push("id = ?"), params.push(opts.id);
   const kinds = (opts.kind ?? "").split(",").map((k) => k.trim()).filter(Boolean);
@@ -228,7 +249,9 @@ export function listRuns(app: App, opts: RunFilter & { limit?: number; offset?: 
   const cols = opts.brief
     ? "*, json_object('task', substr(coalesce(json_extract(input,'$.task'), json_extract(input,'$.text'), ''), 1, 600), 'wake', json_extract(input,'$.wake')) as input, '{}' as output"
     : "*";
-  return all<Row>(app.db, `select ${cols} from runs ${w.sql} order by created_at desc limit ? offset ?`, ...w.params, limit, opts.offset ?? 0).map(toRun);
+  const review = opts.reviewAudience && runPredicate(opts.reviewAudience);
+  const hidden = review ? `, (kind in ('code','review') and not ${review.sql}) hide_review` : "";
+  return all<Row & { hide_review?:number }>(app.db, `select ${cols}${hidden} from runs ${w.sql} order by created_at desc limit ? offset ?`, ...(review?.params ?? []), ...w.params, limit, opts.offset ?? 0).map(row => row.hide_review ? { ...toRun(row), input:{}, output:{}, error:null } : toRun(row));
 }
 
 export function countRuns(app: App, opts: RunFilter = {}) {

@@ -1,9 +1,10 @@
+import { capabilityAccess, spacesWithCapability, globalCapability, type Capability } from "./capabilities.ts";
 import type { FastifyRequest } from "fastify";
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { aliasTarget } from "../sources/duplicates.ts";
-import { can, canReadRun, isOwner, requirePerm, type GlobalPerm, type SpacePerm } from "./permissions.ts";
+import { can, canAccessRun, runAudience, canReadRun, isOwner, requirePerm, type GlobalPerm, type SpacePerm } from "./permissions.ts";
 import { requireReadable } from "./visibility.ts";
 
 /**
@@ -20,10 +21,11 @@ import { requireReadable } from "./visibility.ts";
  *   `note:p.id` (a note on a source).
  * - `{ run }`: the run in `:id` must be one the user may read (permissions.ts canReadRun).
  */
-export type RouteRule = "public" | "self" | "owner" | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
+export type RouteRule = "public" | "self" | "owner" | { cap: Capability; at: string } | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
 
 const g = (perm: GlobalPerm): RouteRule => ({ g: perm });
 const s = (perm: SpacePerm, at: string): RouteRule => ({ s: perm, at });
+const cap = (cap: Capability, at = "global"): RouteRule => ({ cap, at });
 const RUN: RouteRule = { run: "read" };
 const AGENTS = g("agents.manage");
 const SETTINGS = g("settings.manage");
@@ -56,6 +58,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/share/:token": "public",
   "GET /api/shares": "self",
   "DELETE /api/shares/:id": "self",
+  "GET /api/capabilities": cap("settings.members"),
+  "GET /api/members/:id/capabilities": cap("settings.members"),
+  "PUT /api/members/:id/capabilities": cap("settings.members"),
   "GET /api/me": "self",
   // Each person's own AI accounts (docs/v2/agent-accounts.md): the handlers act on the caller's own only.
   "GET /api/me/agent-accounts": "self",
@@ -98,20 +103,20 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "DELETE /api/spaces/:id/related/:other": s("space.manage", "p.id"),
   "GET /api/spaces/:id/members": s("space.manage", "p.id"),
   "PUT /api/spaces/:id/members/:user": s("space.manage", "p.id"),
-  "POST /api/spaces/:id/sync": s("source.write", "p.id"),
+  "POST /api/spaces/:id/sync": cap("sources.edit", "p.id"),
   "GET /api/spaces/:id/citation-reach": s("space.read", "p.id"),
-  "POST /api/spaces/:id/citation-reach/recheck": s("source.write", "p.id"),
+  "POST /api/spaces/:id/citation-reach/recheck": cap("sources.edit", "p.id"),
   "GET /api/spaces/:id/workspaces": CODE,
   "POST /api/spaces/:id/relink": CODE,
   "GET /api/spaces/:id/branches": s("space.read", "p.id"),
   // Switching the branch the repository's own directory has checked out.
   "PUT /api/spaces/:id/branches": CODE,
-  "POST /api/spaces/:id/branches/index": s("source.write", "p.id"),
-  "DELETE /api/spaces/:id/branches/index": s("source.write", "p.id"),
+  "POST /api/spaces/:id/branches/index": cap("sources.edit", "p.id"),
+  "DELETE /api/spaces/:id/branches/index": cap("sources.edit", "p.id"),
   // code indexes (sources/code-index-http.ts): baseline and followed branches; the notification checks its own hook token
   "GET /api/spaces/:id/code-index": s("space.read", "p.id"),
   "PUT /api/spaces/:id/code-index": s("space.manage", "p.id"),
-  "POST /api/spaces/:id/code-index/refresh": s("source.write", "p.id"),
+  "POST /api/spaces/:id/code-index/refresh": cap("sources.edit", "p.id"),
   "GET /api/code-index/hook": "owner",
   "POST /api/code-index/hook": "owner",
   "DELETE /api/code-index/hook": "owner",
@@ -120,45 +125,45 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/hooks/:plugin/:name/:secret": "public",
 
   // sources
-  "GET /api/sources": s("space.read", "q.space"),
-  "GET /api/sources/levels": "self",
-  "GET /api/sources/review": "self",
-  "GET /api/sources/tree": "self",
-  "GET /api/sources/paths": s("space.read", "q.space"),
-  "GET /api/sources/resolve": s("space.read", "q.space"),
-  "PUT /api/sources/:id/attention": s("source.write", "src:p.id"),
+  "GET /api/sources": cap("sources.view", "q.space"),
+  "GET /api/sources/levels": cap("sources.view", "list"),
+  "GET /api/sources/review": cap("sources.view", "q.space"),
+  "GET /api/sources/tree": cap("sources.view", "q.space"),
+  "GET /api/sources/paths": cap("sources.view", "q.space"),
+  "GET /api/sources/resolve": cap("sources.view", "q.space"),
+  "PUT /api/sources/:id/attention": cap("sources.edit", "src:p.id"),
   "POST /api/sources/attention": AGENTS,
-  "GET /api/sources/:id/notes": s("space.read", "src:p.id"),
-  "POST /api/sources/:id/notes": s("source.write", "src:p.id"),
-  "POST /api/source-notes/:id/review": s("source.write", "note:p.id"),
-  "DELETE /api/source-notes/:id": s("source.write", "note:p.id"),
-  "POST /api/sources/node-level/review": s("source.write", "b.space"),
+  "GET /api/sources/:id/notes": cap("sources.view", "src:p.id"),
+  "POST /api/sources/:id/notes": cap("sources.edit", "src:p.id"),
+  "POST /api/source-notes/:id/review": cap("sources.edit", "note:p.id"),
+  "DELETE /api/source-notes/:id": cap("sources.edit", "note:p.id"),
+  "POST /api/sources/node-level/review": cap("sources.edit", "b.space"),
   "POST /api/sources/level-audit/review": "owner",
-  "PUT /api/sources/node-level": s("source.write", "b.space"),
+  "PUT /api/sources/node-level": cap("sources.edit", "b.space"),
   "PUT /api/sources/wiki-space-name": SETTINGS,
-  "GET /api/sources/:id": s("space.read", "src:p.id"),
-  "GET /api/sources/:id/messages": s("space.read", "src:p.id"),
-  "GET /api/sources/:id/relations": s("space.read", "src:p.id"),
-  "GET /api/sources/:id/archive": s("space.read", "src:p.id"),
-  "DELETE /api/sources/:id": s("source.write", "src:p.id"),
+  "GET /api/sources/:id": cap("sources.view", "src:p.id"),
+  "GET /api/sources/:id/messages": cap("sources.view", "src:p.id"),
+  "GET /api/sources/:id/relations": cap("sources.view", "src:p.id"),
+  "GET /api/sources/:id/archive": cap("sources.view", "src:p.id"),
+  "DELETE /api/sources/:id": cap("sources.edit", "src:p.id"),
   "PUT /api/sources/:id/visibility": s("space.manage", "src:p.id"),
   "POST /api/sources/:id/move": AGENTS,
-  "POST /api/sources/text": s("source.write", "b.space"),
-  "POST /api/sources/url": s("source.write", "b.space"),
-  "POST /api/sources/upload": s("source.write", "q.space"),
+  "POST /api/sources/text": cap("sources.edit", "b.space"),
+  "POST /api/sources/url": cap("sources.edit", "b.space"),
+  "POST /api/sources/upload": cap("sources.edit", "q.space"),
   // The extension's clips: screenshots become originals in the space either way (sources/clips.ts).
-  "POST /api/clips": s("source.write", "b.space"),
+  "POST /api/clips": cap("sources.edit", "b.space"),
   "GET /api/lark/messages/:mid/resources/:key": SETTINGS,
-  "GET /api/messages/:id": "self",
+  "GET /api/messages/:id": cap("conversations.view", "global"),
   // Stored originals are named by their content hash: knowing the name is having the file.
   "GET /api/files/:name": "self",
-  "GET /api/lookup": "self",
-  "GET /api/search": "self",
-  "GET /api/graph": s("space.read", "q.space"),
+  "GET /api/lookup": cap("search.use", "list"),
+  "GET /api/search": cap("search.use", "list"),
+  "GET /api/graph": cap("search.use", "q.space"),
 
   // asking and conversations (one's own)
-  "POST /api/ask": "self",
-  "POST /api/ask/attachments": "self",
+  "POST /api/ask": cap("ask.send", "global"),
+  "POST /api/ask/attachments": cap("ask.send", "global"),
   // voice (core/voice.ts): one's own conversations; tools run in the spaces the user can read
   "GET /api/voice": "self",
   "POST /api/voice/realtime/secret": "self",
@@ -167,8 +172,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/voice/tool": "self",
   "GET /api/voice/sessions": "self",
   "POST /api/voice/sessions": "self",
-  "GET /api/conversations": "self",
-  "GET /api/conversations/:id": "self",
+  "GET /api/conversations": cap("conversations.view", "global"),
+  "GET /api/conversations/:id": cap("conversations.view", "global"),
   "DELETE /api/conversations/:id": "self",
   "GET /api/asks": "self",
   "GET /api/asks/:id": "self",
@@ -179,15 +184,15 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/ui/pages/:id": "self",
   "POST /api/asks/:id/draft": "self",
   "GET /api/ui/:id": "self",
-  "GET /api/notifications": "self",
+  "GET /api/notifications": cap("notifications.view", "global"),
   "GET /api/notifications/outcomes": "owner",
   "POST /api/notifications/outcomes/ignore": "owner",
   "GET /api/approvals/ladder": "owner",
   "POST /api/notifications/read": "self",
 
   // wiki
-  "GET /api/wiki/:space": s("space.read", "p.space"),
-  "GET /api/wiki/:space/page/*": s("space.read", "p.space"),
+  "GET /api/wiki/:space": cap("wiki.view", "p.space"),
+  "GET /api/wiki/:space/page/*": cap("wiki.view", "p.space"),
   "PUT /api/wiki/:space/page/*": s("wiki.write", "p.space"),
   "DELETE /api/wiki/:space/page/*": s("wiki.write", "p.space"),
   "POST /api/wiki/:space/plan": s("wiki.write", "p.space"),
@@ -208,19 +213,19 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
 
   // memories
   // Without a space: what this person can read (the handler narrows it).
-  "GET /api/memories": "self",
-  "GET /api/memories/:id": s("space.read", "mem:p.id"),
+  "GET /api/memories": cap("memories.view", "list"),
+  "GET /api/memories/:id": cap("memories.view", "mem:p.id"),
   "POST /api/memories": s("memory.write", "b.space"),
   "POST /api/memories/:id/supersede": s("memory.write", "mem:p.id"),
   "PATCH /api/memories/:id": s("memory.write", "mem:p.id"),
   "DELETE /api/memories/:id": s("memory.write", "mem:p.id"),
-  "GET /api/memory-folders": "self",
+  "GET /api/memory-folders": cap("memories.view", "list"),
   "POST /api/memory-folders": s("memory.write", "b.space"),
   "PATCH /api/memory-folders": s("memory.write", "b.space"),
   "DELETE /api/memory-folders": s("memory.write", "q.space"),
   "POST /api/memory-folders/move": s("memory.write", "b.space"),
   "POST /api/memory-folders/organize": s("memory.write", "b.space"),
-  "GET /api/memory-tags": "self",
+  "GET /api/memory-tags": cap("memories.view", "list"),
   "GET /api/memory-recall-stats": AGENTS,
   "GET /api/shortcomings": AGENTS,
   "GET /api/dream/status": AGENTS,
@@ -228,46 +233,53 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
 
   // items and requirements (the handlers check whose item it is)
   // metrics (src/data/http.ts): readable spaces only; editing needs write access to the metric's space
-  "GET /api/metrics": "self",
-  "GET /api/metrics/providers": "self",
-  "GET /api/metrics/files": "self",
-  "GET /api/metrics/:id": "self",
+  "GET /api/metrics": cap("metrics.view", "list"),
+  "GET /api/metrics/providers": cap("metrics.view", "list"),
+  "GET /api/metrics/files": cap("metrics.view", "list"),
+  "GET /api/metrics/:id": cap("metrics.view", "metric:p.id"),
   "PUT /api/metrics/:id": "self",
   "POST /api/metrics/decide": "self",
-  "GET /api/flows": "self",
-  "GET /api/flows/board": "self",
+  "GET /api/flows": cap("flows.view", "list"),
+  "GET /api/flows/board": cap("flows.view", "list"),
   "DELETE /api/flows/:id/gates/:stage": "self",
   "POST /api/flows/validate": "owner",
   "PUT /api/flows/:id": "owner",
   "DELETE /api/flows/:id": "owner",
-  "GET /api/items/:id/flow": "self",
+  "GET /api/items/:id/flow": cap("flows.view", "item:p.id"),
   "GET /api/items/:id/study": "self",
   "GET /api/items/:id/study/scope": "self",
   "PUT /api/items/:id/study/scope": "self",
   "POST /api/items/:id/study/findings/:finding/fix": CODE,
-  "POST /api/items/:id/flow/changes/:change": "self",
+  "POST /api/items/:id/flow/changes/:change": cap("flows.operate", "item:p.id"),
   "POST /api/items/:id/study/choose": "self",
   "POST /api/items/:id/study/findings/:finding": "self",
   "POST /api/items/:id/study/directions/:direction/close": "self",
-  "POST /api/items/:id/flow": "self",
-  "DELETE /api/items/:id/flow": "self",
-  "POST /api/items/:id/flow/stages/:stage/confirm": "self",
-  "POST /api/items/:id/flow/stages/:stage/hold": "self",
-  "POST /api/items/:id/flow/stages/:stage/skip": "self",
-  "POST /api/items/:id/flow/stages/:stage/done": "self",
-  "POST /api/items/:id/flow/stages/:stage/reopen": "self",
-  "POST /api/items/:id/flow/stages/:stage/record": "self",
-  "POST /api/items/:id/flow/stages/:stage/tests/:test": "self",
-  "POST /api/items/:id/flow/round": "self",
-  "POST /api/items/:id/flow/stages/:stage/budget": "self",
+  "POST /api/items/:id/flow": cap("flows.operate", "item:p.id"),
+  "DELETE /api/items/:id/flow": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/stages/:stage/confirm": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/stages/:stage/hold": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/stages/:stage/skip": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/stages/:stage/done": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/stages/:stage/reopen": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/stages/:stage/record": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/stages/:stage/tests/:test": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/round": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/stages/:stage/budget": cap("flows.operate", "item:p.id"),
+  "GET /api/rules": cap("rules.view"),
+  "GET /api/rules/:id": cap("rules.view"),
+  "POST /api/rules": cap("rules.edit"),
+  "PUT /api/rules/:id": cap("rules.edit"),
+  "DELETE /api/rules/:id": cap("rules.edit"),
+  "POST /api/rules/draft": cap("rules.edit"),
+  "POST /api/rules/test": cap("rules.edit"),
   // Work lines (items/work-http.ts, docs/v2/status.md “工作线”): the owner's own page for now.
   "GET /api/pending": "self",
-  "GET /api/work": "owner",
-  "GET /api/work/activities": "owner",
-  "GET /api/work/:id": "owner",
+  "GET /api/work": cap("work.view", "list"),
+  "GET /api/work/activities": cap("work.view", "list"),
+  "GET /api/work/:id": cap("work.view", "list"),
   "POST /api/work/:id/refresh": "owner",
   // A line's lifecycle (items/lifecycle.ts): its phase, and the lines that ended.
-  "GET /api/work/ended": "owner",
+  "GET /api/work/ended": cap("work.view", "list"),
   "PUT /api/work/:id/phase": "owner",
   "PUT /api/items/:id/parent": "owner",
   "PUT /api/item-next/:id": "owner",
@@ -276,12 +288,12 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "PUT /api/item-sync": g("connector.use"),
   "POST /api/item-sync/:id/pull": g("connector.use"),
   "POST /api/items/:id/writeback": g("connector.use"),
-  "GET /api/items": "self",
-  "POST /api/items": "self",
-  "GET /api/items/:id": "self",
-  "PATCH /api/items/:id": "self",
-  "POST /api/items/:id/keep": "self",
-  "POST /api/items/:id/candidate": "self",
+  "GET /api/items": cap("items.view", "own-list"),
+  "POST /api/items": cap("items.edit", "item-new"),
+  "GET /api/items/:id": cap("items.view", "item:p.id"),
+  "PATCH /api/items/:id": cap("items.edit", "item-update"),
+  "POST /api/items/:id/keep": cap("items.operate", "item:p.id"),
+  "POST /api/items/:id/candidate": cap("items.operate", "item:p.id"),
   "POST /api/items/:id/materials": "self",
   "GET /api/items/:id/objects": "self",
   "POST /api/items/:id/objects": "self",
@@ -292,19 +304,19 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/items-expiry": "self",
   "POST /api/items-expiry/backlog": AGENTS,
   "POST /api/items-expiry/sweep": AGENTS,
-  "GET /api/requirements": "self",
-  "GET /api/requirements/:id": "self",
+  "GET /api/requirements": cap("requirements.view", "q.space"),
+  "GET /api/requirements/:id": cap("requirements.view", "req:p.id"),
   "POST /api/requirements": s("memory.write", "b.space"),
   // designs (src/designs): the handlers keep to the spaces the person may read, and writers confirm
-  "GET /api/designs": "self",
-  "GET /api/designs/:id": "self",
-  "GET /api/designs/:id/diff": "self",
+  "GET /api/designs": cap("designs.view", "list"),
+  "GET /api/designs/:id": cap("designs.view", "design:p.id"),
+  "GET /api/designs/:id/diff": cap("designs.view", "design:p.id"),
   "POST /api/designs": "self",
   "POST /api/designs/:id/decide": "self",
   "POST /api/designs/:id/concerns/:cid": "self",
 
   // runs
-  "GET /api/runs": "self",
+  "GET /api/runs": cap("runs.view", "own-list"),
   "GET /api/runs/triggerers": "self",
   // Assistants (agents/assistants.ts): everyone sees who is here; each manages their own, the owner all.
   "GET /api/assistants": "self",
@@ -312,16 +324,16 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/assistants/scan": "self",
   "PATCH /api/assistants/:id": "self",
   "DELETE /api/assistants/:id": "self",
-  "GET /api/runs/:id": RUN,
+  "GET /api/runs/:id": cap("runs.view", "run:p.id"),
   "GET /api/agent-work/:id/board": RUN,
   "POST /api/runs/:id/share-review": RUN,
-  "POST /api/runs/:id/cancel": RUN,
-  "POST /api/runs/:id/retry": RUN,
+  "POST /api/runs/:id/cancel": cap("runs.operate", "run:p.id"),
+  "POST /api/runs/:id/retry": cap("runs.operate", "run:p.id"),
   "POST /api/runs/:id/reply-outcome": "owner",
   "GET /api/runs/:id/folders": CODE,
   "GET /api/code-runs/at": CODE,
-  "GET /api/code-works": CODE,
-  "GET /api/code-works/:id": CODE,
+  "GET /api/code-works": cap("code.work.view", "list"),
+  "GET /api/code-works/:id": cap("code.work.view", "run:p.id"),
   "POST /api/delegate": CODE,
   "POST /api/review-branch": CODE,
   "GET /api/review-settings": CODE,
@@ -332,7 +344,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // Previews of a delegation's workspace (docs/v2/preview.md): the owner's commands and servers.
   "GET /api/runs/:id/previews": "owner",
   "GET /api/runs/:id/artifacts": RUN,
-  "DELETE /api/runs/:id/artifacts/:artifact": RUN,
+  "DELETE /api/runs/:id/artifacts/:artifact": cap("runs.operate", "run:p.id"),
   // The key in the path is the capability (agents/artifacts.ts): a report's own files load without a cookie.
   "GET /api/artifacts/:token/*": "public",
   "GET /api/previews": "owner",
@@ -349,7 +361,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "PUT round-review", "GET file", "GET file/raw", "GET blob",
     ].map((r) => {
       const [m, p] = r.split(" ");
-      return [`${m} /api/runs/:id/${p}`, CODE];
+      const read = m === "GET" && (p === "tasks" ? "code.work.view" : ["reviews", "task-diff"].includes(p) ? "code.review.view" : null);
+      return [`${m} /api/runs/:id/${p}`, read ? cap(read, "run:p.id") : CODE];
     }),
   ),
 
@@ -376,7 +389,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "GET /api/profile-options", "PUT /api/profiles/:name/skills", "POST /api/profiles/:name/review", "POST /api/profile-proposals/:id/apply", "POST /api/profile-proposals/:id/reject",
       "GET /api/library-files/:kind/:name", "PUT /api/library-files/:kind/:name",
       "GET /api/skills", "GET /api/skill-groups", "GET /api/skill-groups/:id", "GET /api/skills/:name", "PUT /api/skills/:name", "PUT /api/skills/:name/status", "DELETE /api/skills/:name", "GET /api/skills/:name/files", "GET /api/skills/:name/file", "PUT /api/skills/:name/file", "DELETE /api/skills/:name/file",
-      "GET /api/rules", "GET /api/rules/:id", "GET /api/rules/:id/permissions", "POST /api/rules", "PUT /api/rules/:id", "DELETE /api/rules/:id", "POST /api/rules/draft", "POST /api/rules/test",
+      "GET /api/rules/:id/permissions",
       "GET /api/rule-options", "POST /api/rule-conversations", "GET /api/wakes", "DELETE /api/wakes/:id", "GET /api/mentions", "GET /api/watches", "DELETE /api/watches/:chatId",
       "GET /api/listen", "GET /api/listen/:id", "POST /api/listen", "PUT /api/listen/:id", "DELETE /api/listen/:id", "POST /api/listen/:id/coach", "POST /api/listen/:id/learn", "GET /api/lark/chats/:id/detail", "PUT /api/cases/:id", "POST /api/items/:id/listen", "POST /api/rules/:id/to-listen",
       "GET /api/notify-ignore-rules", "POST /api/notify-ignore-rules/delete", "GET /api/schedules", "PUT /api/schedules/:id", "POST /api/schedules/:id/run",
@@ -529,8 +542,17 @@ function locate(app: App, req: FastifyRequest, at: string): string | null {
   if (!through) return value;
   if (through === "src") return one<{ space_id: string }>(app.db, "select space_id from sources where id = ?", aliasTarget(app, value) ?? value)?.space_id ?? null;
   if (through === "mem") return one<{ space_id: string }>(app.db, "select space_id from memories where id = ?", value)?.space_id ?? null;
+  if (through === "metric") return one<{space_id:string}>(app.db,"select space_id from metrics where id=? or name=? order by created_at limit 1",value,value)?.space_id ?? null;
+  const table = { req: "req_nodes", design: "designs", item: "items" }[through as "req" | "design" | "item"];
+  if (table) return one<{ space_id: string }>(app.db, `select space_id from ${table} where id=?`, value)?.space_id ?? null;
   if (through === "note") return one<{ space_id: string }>(app.db, "select s.space_id from source_notes n join sources s on s.id = n.source_id where n.id = ?", Number(value))?.space_id ?? null;
   return null;
+}
+
+const reviewAudiences = new WeakMap<FastifyRequest, ReturnType<typeof runAudience>>();
+export function requestReviewAudience(app: App, req: FastifyRequest, userId: string) {
+  if (!reviewAudiences.has(req)) reviewAudiences.set(req, runAudience(app, userId, "code.review.view"));
+  return reviewAudiences.get(req);
 }
 
 export const routeKey = (req: FastifyRequest) => `${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`;
@@ -543,6 +565,21 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   if (isOwner(app, userId)) return;
   const rule = ROUTE_RULES[routeKey(req)] ?? ROUTE_RULES[`* ${req.routeOptions.url}`];
   if (!rule) throw new HttpError(403, "这个接口只对 omem 的主人开放");
+  if (rule === "self" && !["GET", "HEAD", "OPTIONS"].includes(req.method) && one<{ role: string }>(app.db, "select role from users where id=?", userId)?.role === "observer") {
+    const path = routeKey(req);
+    if (path === "POST /api/asks/:id/answer" || path === "POST /api/asks/:id/dismiss") {
+      requirePerm(app, userId, "ask.send");
+      const ordinary = one(app.db, `select 1 from asks a join conversations c on c.id=a.conversation_id
+        join runs r on r.id=a.run_id and r.kind='ask' and coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))=c.id
+        where a.id=? and a.kind='question' and a.tool is null and a.args is null
+        and json_extract(a.context,'$.handler') is null
+        and json_extract(a.context,'$.askedBy') is null
+        and json_extract(a.context,'$.operationApproval') is null
+        and a.user_id=? and c.user_id=a.user_id and r.user_id=a.user_id`, (req.params as {id:string}).id, userId);
+      if (ordinary) return;
+    }
+    throw new HttpError(403, "观察者不能执行这项操作");
+  }
   if (rule === "public" || rule === "self") return;
   if (rule === "owner") throw new HttpError(403, "这个接口只对 omem 的主人开放");
   if ("g" in rule) return requirePerm(app, userId, rule.g);
@@ -550,9 +587,35 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
     if (!canReadRun(app, userId, String((req.params as { id?: string }).id ?? ""))) throw new HttpError(404, "运行不存在");
     return;
   }
+  if ("cap" in rule && globalCapability(rule.cap)) return requirePerm(app, userId, rule.cap);
+  if ("cap" in rule && rule.at === "own-list") {
+    if (capabilityAccess(app,userId).range(rule.cap,true)?.length === 0) throw new HttpError(403,"没有可查看的空间");
+    return;
+  }
+  if ("cap" in rule && rule.at === "list") {
+    if (spacesWithCapability(app, userId, rule.cap)?.length === 0) throw new HttpError(403, "没有可查看的空间");
+    return;
+  }
+  if ("cap" in rule && rule.at === "run:p.id") {
+    const id = (req.params as { id: string }).id;
+    const audience = rule.cap === "code.review.view" ? requestReviewAudience(app, req, userId) : runAudience(app, userId, rule.cap);
+    if (!canAccessRun(app, userId, id, rule.cap, audience)) throw new HttpError(rule.cap === "runs.operate" ? 403 : 404, "没有这次运行的权限");
+    return;
+  }
+  if ("cap" in rule && rule.at === "item-new") return requirePerm(app, userId, "items.edit", (req.body as { space?: string })?.space ?? `personal-${userId}`);
+  // The handler checks every requested change and the item's ownership together.
+  if ("cap" in rule && rule.at === "item-update") return;
+  if ("cap" in rule && rule.at === "item:p.id" && rule.cap.startsWith("items.")) {
+    if (!can(app, userId, rule.cap, { kind: "item", id: String((req.params as { id: string }).id) })) throw new HttpError(req.method === "GET" ? 404 : 403, "事项不可访问");
+    return;
+  }
   const space = locate(app, req, rule.at);
+  if ("cap" in rule && rule.cap === "flows.view" && rule.at === "item:p.id") {
+    if (!space || !can(app, userId, rule.cap, space)) throw new HttpError(404, "事项不存在");
+    return;
+  }
   if (!space) throw new HttpError(rule.at.includes(":") ? 404 : 400, rule.at.includes(":") ? "要找的内容不存在" : "要指定空间");
-  if (!can(app, userId, rule.s, space)) requirePerm(app, userId, rule.s, space);
+  requirePerm(app, userId, "cap" in rule ? rule.cap : rule.s, space);
   if (rule.at.startsWith("src:")) {
     const id = String((req.params as { id?: string }).id ?? "");
     await requireReadable(app, userId, aliasTarget(app, id) ?? id);

@@ -1,3 +1,6 @@
+import { itemRunSummary } from "../items/places.ts";
+import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
+import { spacesWithCapability, memberCapabilities } from "../auth/capabilities.ts";
 import { storedFileReadable } from "../auth/stored-files.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { randomUUID as operationId } from "node:crypto";
@@ -59,7 +62,7 @@ import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePage
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
-import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEvents } from "../agents/runs.ts";
+import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewRounds, queueReason, runEvents, runUser } from "../agents/runs.ts";
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -75,16 +78,16 @@ import { listenSecure, type SecureListener } from "./secure.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
-import { checkRoute } from "../auth/routes.ts";
-import { sourceReadable, hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
+import { checkRoute, requestReviewAudience } from "../auth/routes.ts";
+import { hiddenSourceIds, sourceReadable, hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
 import { registerCodeIndexRoutes } from "../sources/code-index-http.ts";
-import { audit, can, canReadRun, globalPerms, isOwner, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
+import { audit, can, canAccessRun, runAudience, canReadRun, globalPerms, isOwner, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
 import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, personalSpaceId, scopeFor, userForToken, userName } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
-import { runWrites } from "../agents/run-writes.ts";
+import { runWrites, visibleRunEvent, writeVisible } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { refExcerpt } from "../items/evidence.ts";
 import { getItem, ITEM_KINDS, itemEvents, listItems, upsertItem } from "../items/store.ts";
@@ -208,7 +211,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/me", async (req) => {
     const u = getUser(app, who(req));
     // What the page may offer: global permissions, and the spaces this person writes or manages.
-    return { ...u, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
+    const { caps, spaceCaps, ownSpaceCaps } = memberCapabilities(app, u.id);
+    return { ...u, caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
   });
 
   // ---------------------------------------------------------------- tools/MCP
@@ -329,15 +333,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
    */
   const eventFilter = (userId: string) => {
     if (userId === OWNER) return () => true;
-    const runs = new Map<string, boolean>();
-    const readable = (runId: string) => {
-      if (!runs.has(runId)) runs.set(runId, canReadRun(app, userId, runId));
-      return runs.get(runId)!;
-    };
+    const readable = (id: string) => canReadRun(app, userId, id);
     return (e: AppEvent) => {
       if (e.type === "work") return readable(e.workId);
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
-      if (e.type === "notification") return one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
+      if (e.type === "notification") return can(app, userId, "notifications.view") && one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
       if (e.type === "ask") return one<{ user_id: string }>(app.db, "select user_id from asks where id = ?", e.id)?.user_id === userId;
       if (e.type === "plugin") return one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", e.conversationId)?.user_id === userId;
       if (e.type === "changed") {
@@ -359,6 +359,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (e.type === "omem") return;
       if (runFilter && !("runId" in e && e.runId === runFilter)) return;
       if (!shown(e)) return;
+      if (e.type === "run-event" && who(req) !== OWNER) {
+        const kind = one<{kind:string}>(app.db,"select kind from runs where id=?",e.runId)?.kind;
+        const showReview = kind !== "code" && kind !== "review" || canAccessRun(app, who(req), e.runId, "code.review.view");
+        const event = visibleRunEvent(app, who(req), e.event, showReview);
+        res.write(`data: ${JSON.stringify({ ...e, event })}\n\n`);
+        return;
+      }
       res.write(`data: ${JSON.stringify(e)}\n\n`);
     };
     app.events.on("event", listener);
@@ -484,7 +491,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // ------------------------------------------------------------------ sources
   server.get("/api/sources", async (req) => {
     const o = q(z.object({ space: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional(), level: z.enum(LEVELS).optional() }), req.query);
-    const rows = listSources(app, { spaceId: o.space, kind: o.kind, q: o.q, limit: o.limit, offset: o.offset, level: o.level });
+    const rows = listSources(app, { userId: who(req), spaceId: o.space, kind: o.kind, q: o.q, limit: o.limit, offset: o.offset, level: o.level });
     // Restricted ones only for those who may see them (src/auth/visibility.ts); Feishu-checked ones stay listed by title.
     if (who(req) === OWNER) return rows;
     const shown = rows.sources.filter((r) => sourceVisible(app, who(req), r.id) !== false);
@@ -504,7 +511,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   };
   server.get("/api/sources/levels", async (req) => {
     const o = q(z.object({ space: z.string().optional() }), req.query);
-    return { counts: levelCounts(app, scopeFor(app, who(req), null), o.space), labels: LEVEL_LABELS };
+    return { counts: levelCounts(app, spacesWithCapability(app, who(req), "sources.view"), o.space), labels: LEVEL_LABELS };
   });
   server.put("/api/sources/:id/attention", async (req) => {
     ownerOnly(req);
@@ -529,7 +536,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/sources/review", async (req) => {
     const o = q(z.object({ space: z.string() }), req.query);
     if (!(scopeFor(app, who(req), [o.space]) ?? [o.space]).includes(o.space)) throw new HttpError(403, `不能访问空间 ${o.space}`);
-    return reviewQueue(app, o.space);
+    const queue = reviewQueue(app, o.space);
+    const hidden = hiddenSourceIds(app, who(req), o.space);
+    if (!hidden?.size) return queue;
+    return { ...queue, notes: queue.notes.filter(n => !hidden.has(n.sourceId)), rejected: queue.rejected.filter(n => !hidden.has(n.sourceId)), levels: queue.levels.filter(n => n.type !== "source" || !hidden.has(n.key)) };
   });
   server.post("/api/source-notes/:id/review", async (req) => {
     ownerOnly(req);
@@ -652,7 +662,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ space: z.string(), node: z.string().default(""), kind: z.string().optional(), level: z.enum(LEVELS).optional(), q: z.string().optional() }), req.query);
     if (!(scopeFor(app, who(req), [o.space]) ?? [o.space]).includes(o.space)) throw new HttpError(403, `不能访问空间 ${o.space}`);
     const { treeChildren } = await import("../sources/catalog.ts");
-    return treeChildren(app, o.space, o.node, { kind: o.kind, level: o.level, q: o.q });
+    return treeChildren(app, o.space, o.node, { hiddenSources: hiddenSourceIds(app, who(req), o.space), kind: o.kind, level: o.level, q: o.q });
   });
   // A level for a whole folder of the catalog (and what arrives there later).
   server.put("/api/sources/node-level", async (req) => {
@@ -672,7 +682,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/sources/paths", async (req) => {
     const o = q(z.object({ space: z.string(), kind: z.string().optional(), q: z.string().optional() }), req.query);
-    return listSourcePaths(app, { spaceId: o.space, kind: o.kind, q: o.q });
+    return listSourcePaths(app, { userId: who(req), spaceId: o.space, kind: o.kind, q: o.q });
   });
   server.get("/api/sources/resolve", async (req) => {
     const o = q(z.object({ uri: z.string().min(1), space: z.string().optional() }), req.query);
@@ -680,7 +690,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const row =
       one<{ id: string }>(app.db, `select id from sources where uri = ? ${o.space ? "and space_id = ?" : ""} and deleted_at is null order by updated_at desc`, clean, ...(o.space ? [o.space] : [])) ??
       one<{ id: string }>(app.db, `select id from sources where uri like ? ${o.space ? "and space_id = ?" : ""} and deleted_at is null order by length(uri)`, `%/${clean}`, ...(o.space ? [o.space] : []));
-    if (!row) throw new HttpError(404, `找不到原件 ${o.uri}`);
+    if (!row || !await sourceReadable(app, who(req), row.id)) throw new HttpError(404, `找不到原件 ${o.uri}`);
     return { id: row.id };
   });
   server.get("/api/messages/:id", async (req) => {
@@ -821,7 +831,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ q: z.string().min(1), space: z.string().optional(), types: z.string().optional(), limit: z.coerce.number().optional(), branch: z.string().optional() }), req.query);
     // A business space covers its repositories, unless a branch of one repository is asked for.
     const requested = o.space && o.space !== "*" ? (o.branch ? o.space.split(",") : [...new Set(o.space.split(",").flatMap((id) => spaceFamily(app, id)))]) : null;
-    let spaces = scopeFor(app, who(req), requested) ?? undefined;
+    const permitted = spacesWithCapability(app, who(req), "search.use");
+    let spaces = (requested ? requested.filter(id => !permitted || permitted.includes(id)) : permitted) ?? undefined;
     // A repository space on one branch: its index of the branch stands in for the files it changed.
     let branch: Awaited<ReturnType<typeof indexBranch>> | undefined;
     if (o.branch) {
@@ -1272,8 +1283,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const folder = o.unfiled ? null : normalizeFolder(o.folder) || undefined;
     const inFolder = (m: { folder: string }) => (folder === undefined ? true : folder === null ? !m.folder : m.folder === folder || m.folder.startsWith(folder + "/"));
     // No space named: everything this person can read (all of it for the owner).
-    if (o.space) readableSpace(req, o.space);
-    const readable = o.space ? undefined : (accessibleSpaces(app, who(req)) ?? undefined);
+    if (o.space) requirePerm(app, who(req), "memories.view", o.space);
+    const readable = o.space ? undefined : (spacesWithCapability(app, who(req), "memories.view") ?? undefined);
     if (o.q) {
       const hits = await search(app, o.q, { spaces: o.space ? [o.space] : readable, types: ["memory"], limit: 100, includeHistory: o.status === "all" });
       return hits.map((h) => getMemory(app, h.id)).filter((m) => (!o.tag || m.tags?.includes(o.tag)) && (!o.kind || m.kind === o.kind) && inFolder(m));
@@ -1283,8 +1294,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Folders: the tree on the memory page, its upkeep by hand, and an on-demand organizing pass.
   server.get("/api/memory-folders", async (req) => {
     const space = (req.query as { space?: string }).space;
-    if (space) readableSpace(req, space);
-    const readable = accessibleSpaces(app, who(req));
+    if (space) requirePerm(app, who(req), "memories.view", space);
+    const readable = spacesWithCapability(app, who(req), "memories.view");
     const spaces = space ? [space] : listSpaces(app).map((s) => s.id).filter((s) => readable === null || readable.includes(s));
     return { folders: listFolders(app, spaces), unfiled: Object.fromEntries(spaces.map((s) => [s, unfiledCount(app, s)]).filter(([, n]) => n)) };
   });
@@ -1321,8 +1332,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/memory-tags", async (req) => {
     const space = (req.query as { space?: string }).space;
-    if (space) readableSpace(req, space);
-    return memoryTags(app, space, accessibleSpaces(app, who(req)) ?? undefined);
+    if (space) requirePerm(app, who(req), "memories.view", space);
+    return memoryTags(app, space, spacesWithCapability(app, who(req), "memories.view") ?? undefined);
   });
   // Recall/effectiveness accounting for memory governance.
   server.get("/api/memory-recall-stats", async (req) => {
@@ -1435,7 +1446,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional() }), req.query);
     const { itemExpiry } = await import("../items/expiry.ts");
     const items = listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, ...itemScope(app, who(req)) });
-    const flows = itemFlowSummaries(app, items.map((i) => i.id));
+    const flowSpaces = spacesWithCapability(app,who(req),"flows.view");
+    const flows = itemFlowSummaries(app, items.filter(i => !flowSpaces || flowSpaces.includes(i.spaceId)).map(i => i.id));
     // A candidate shows why the assistant made it and who did (items/auto.ts).
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     return items.map((item) => {
@@ -1473,7 +1485,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/items/:id/keep", async (req) => {
     const id = (req.params as { id: string }).id;
-    requireItem(app, id, who(req), "write");
+    requireItem(app, id, who(req), "operate");
     const { keepItem } = await import("../items/expiry.ts");
     checkProviderEdit(app, who(req), id);
     return keepItem(app, id, "user");
@@ -1488,10 +1500,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/items/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const item = requireItem(app, id, who(req), "read");
-    const synced = providerState(app, who(req), id);
+    const mine = item.userId === who(req);
+    const synced = mine ? providerState(app, who(req), id) : null;
     const external = synced && externalView(synced);
     // A readable excerpt per reference, only from spaces this reader may see.
-    const allowed = accessibleSpaces(app, who(req));
+    const allowed = spacesWithCapability(app, who(req), "sources.view");
     const excerpts: Record<string, { title: string; text: string }> = {};
     for (const ref of item.sourceRefs) {
       const sourceId = /^src:([\w-]+)/.exec(ref)?.[1];
@@ -1504,10 +1517,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { itemExpiry } = await import("../items/expiry.ts");
     // Where the work goes on and what runs for it now (items/places.ts): only for the item's own person.
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
-    const mine = item.userId === who(req);
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     const a = autoInfo(app, id);
-    return { item, external, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
+    return { can: { edit: itemAccess(app, who(req), item, "write"), operate: itemAccess(app, who(req), item, "operate") }, item, external, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: itemRuns(app, id, who(req), !mine) };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.
@@ -1533,11 +1545,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { reqDetail } = await import("../items/requirements.ts");
     const d = reqDetail(app, (req.params as { id: string }).id);
     readableSpace(req, d.node.spaceId);
-    const allowed = accessibleSpaces(app, who(req));
+    const allowed = spacesWithCapability(app, who(req), "requirements.view");
     // The delegations and branch reviews done for the items this node belongs to (items/work.ts).
     const work = (await import("../items/work.ts")).reqWork(app, d.node.id, who(req));
     // The same entries as the run page's “编码” view (src/agents/code-works.ts), with the item each was done for.
-    const works = (await import("../agents/code-works.ts")).listCodeWorks(app, { roots: work.map((w) => w.rootId), ended: true });
+    const works = (await import("../agents/code-works.ts")).listCodeWorks(app, { roots: work.map((w) => w.rootId), ended: true, visibleTo: runAudience(app, who(req), "code.work.view") });
     // Test results (items/req-tests.ts): the latest of each test, then earlier ones, with their kept artifacts.
     const rt = await import("../items/req-tests.ts");
     const { artifactsByIds } = await import("../agents/artifacts.ts");
@@ -1613,7 +1625,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     checkProviderEdit(app, who(req), id);
     const { checkParent } = await import("../items/tree.ts");
     const { setParent } = await import("../items/parent.ts");
-    const before = requireItem(app, id, who(req), "write");
+    const content = Object.keys(b).some(key => !["status", "note"].includes(key)) || parent !== undefined;
+    const before = requireItem(app, id, who(req), content ? "write" : "operate");
+    if (content && (b.status || b.note)) requireItem(app, id, who(req), "operate");
     writableParents(app, who(req), before.parentId, parent);
     if (parent) checkParent(app, id, parent);
     const updated = upsertItem(app, id, b, "user");
@@ -1624,9 +1638,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/runs", async (req) => {
     const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), by: z.string().max(200).optional(), via: z.string().max(40).optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     // Someone other than the owner: their own runs and the ones they may read (src/auth/permissions.ts).
-    const spaces = runReadableSpaces(app, who(req));
-    const visibleTo = spaces === null ? undefined : { userId: who(req), spaces };
-    const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, by: o.by, via: o.via, visibleTo };
+    const visibleTo = runAudience(app, who(req));
+    const opts = { reviewAudience: runAudience(app,who(req),"code.review.view"), id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, by: o.by, via: o.via, visibleTo };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
   });
@@ -1657,13 +1670,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Coding work, one entry per delegation or branch review (src/agents/code-works.ts): the run page's “编码” view.
   server.get("/api/code-works", async (req) => {
     const o = q(z.object({ space: z.string().optional(), q: z.string().optional(), ended: z.coerce.boolean().optional(), limit: z.coerce.number().optional() }), req.query);
-    const spaces = runReadableSpaces(app, who(req));
+    const visibleTo = runAudience(app, who(req), "code.work.view");
     const { listCodeWorks } = await import("../agents/code-works.ts");
-    return listCodeWorks(app, { spaces: o.space ? spaceFamily(app, o.space) : undefined, q: o.q, ended: o.ended, limit: o.limit, visibleTo: spaces === null ? undefined : { userId: who(req), spaces } });
+    return listCodeWorks(app, { spaces: o.space ? spaceFamily(app, o.space) : undefined, q: o.q, ended: o.ended, limit: o.limit, visibleTo });
   });
   server.get("/api/code-works/:id", async (req) => {
-    const spaces = runReadableSpaces(app, who(req));
-    const work = (await import("../agents/code-works.ts")).codeWork(app, (req.params as { id: string }).id, spaces === null ? undefined : { userId: who(req), spaces });
+    const visibleTo = runAudience(app, who(req), "code.work.view");
+    const work = (await import("../agents/code-works.ts")).codeWork(app, (req.params as { id: string }).id, visibleTo);
     if (!work) throw new HttpError(404, "没有这次交办");
     return work;
   });
@@ -1678,14 +1691,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = getRun(app, id);
     // A mention run's handling is not its sub-run (it runs as the owner's own work), but it is what came of it.
     const linked = r.kind === "mention" ? [r.output?.handleRun, r.output?.joined].filter((x): x is string => typeof x === "string") : [];
-    const children = [...listRuns(app, { parentId: id }), ...linked.flatMap((x) => listRuns(app, { id: x, includeQuiet: true }))]
-      .filter((c, i, a) => a.findIndex((d) => d.id === c.id) === i)
-      .filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
-    const diff = r.kind === "code" ? codeDiffView(app, id) : null;
+    const audience = { visibleTo:runAudience(app,who(req)), reviewAudience:runAudience(app,who(req),"code.review.view") };
+    const children = [...listRuns(app, { parentId: id,...audience }), ...linked.flatMap(x => listRuns(app, { id:x, includeQuiet:true,...audience }))]
+      .filter((c,i,rows) => rows.findIndex(child => child.id === c.id) === i);
+    const showReview = !["code","review"].includes(r.kind) || canAccessRun(app,who(req),id,"code.review.view");
+    const reviewerSpaces = spacesWithCapability(app,who(req),"code.review.view");
+    const diff = r.kind === "code" && showReview ? codeDiffView(app,id) : null;
+    const events = runEvents(app,id,o.after ?? 0);
+    const mine = runUser(app,id) === who(req);
     const boardId = r.input.boardTaskId ? r.parentId : r.output.boardId ?? id;
     const board = typeof boardId === "string" && one(app.db, "select 1 from agent_work_tasks where work_id=? limit 1", boardId)
       && canReadRun(app, who(req), boardId) ? { workId: boardId, taskId: r.input.boardTaskId } : undefined;
-    return { board, run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
+    return {
+      can: { operate: canAccessRun(app, who(req), id, "runs.operate"), edit: can(app, who(req), "code.delegate") && (who(req) === OWNER || mine) }, board, run: { ...r, ...(!showReview ? {input:{},output:{},error:null} : diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: events.map(e => visibleRunEvent(app, who(req), e, showReview)), children, patches: diff?.patches.filter(p => !reviewerSpaces || reviewerSpaces.includes(p.space)), context: runContext(app, r, who(req)), writes: runWrites(app, r).filter(w => writeVisible(app, who(req), w)), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id)
+    };
   });
   // The owner read the follow-up and says the label is wrong (agents/reply-outcomes.ts).
   server.post("/api/runs/:id/reply-outcome", async (req) => {
@@ -1805,10 +1824,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { runs: codeRunsAt(app, folder, who(req) === OWNER ? null : who(req)) };
   });
   // Reading a run is not running it: stopping or retrying is for its user, the owner, or whoever may read all runs.
-  const mayControlRun = (req: FastifyRequest, id: string) => {
-    const user = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id ?? OWNER;
-    if (who(req) !== OWNER && user !== who(req) && !can(app, who(req), "runs.read.all")) throw new HttpError(403, "只能停下或重试自己的运行");
-  };
   // A read-only link to a review's conclusion for someone outside omem (core/shares.ts shareReview).
   server.post("/api/runs/:id/share-review", async (req) => {
     const id = (req.params as { id: string }).id;
@@ -1821,7 +1836,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/runs/:id/cancel", async (req) => {
     const id = (req.params as { id: string }).id;
-    mayControlRun(req, id);
     // Stopping a coding round from the page is the owner's stop: no automatic round after it.
     const r = getRun(app, id);
     if (r.kind === "code" && ["queued", "running"].includes(r.status)) {
@@ -1833,7 +1847,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/runs/:id/retry", async (req) => {
     const id = (req.params as { id: string }).id;
-    mayControlRun(req, id);
     return (await import("../agents/retry.ts")).retryRun(app, id);
   });
   // A round waiting for an outside Agent to code, done by this machine's Agents instead (review-fix.ts codeHere).
@@ -1895,10 +1908,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // ---- delegations driven by tasks (docs/v2/coding-loop.md; agents/code-tasks.ts, code-loop.ts)
   server.get("/api/runs/:id/tasks", async (req) => {
     const id = (req.params as { id: string }).id;
-    ownRun(req, id);
     const t = await import("../agents/code-tasks.ts");
     if (!t.isTaskWork(app, id)) return { taskMode: false };
     const rootId = t.workRootOf(app, id);
+    if (!canAccessRun(app, who(req), rootId, "code.work.view")) throw new HttpError(404, "交办不存在");
     const last = t.lastRound(app, rootId);
     const w = t.workState(app, rootId);
     return {
@@ -2008,7 +2021,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // One task's change, a stretch between checkpoints, everything since the viewer last looked, or the branch against another.
   server.get("/api/runs/:id/task-diff", async (req) => {
     const id = (req.params as { id: string }).id;
-    ownRun(req, id);
     const o = q(z.object({ tasks: z.string().regex(/^[\dTt, ]+$/).optional(), from: z.coerce.number().int().min(0).optional(), to: z.coerce.number().int().min(0).optional(), since: z.enum(["viewed"]).optional(), base: z.string().max(200).regex(/^(?!-)[\w./-]+$/, "分支名不对").optional(), work: z.enum(["1"]).optional() }), req.query);
     const t = await import("../agents/code-tasks.ts");
     // Tasks and checkpoints only exist on a task-driven work; the whole change (`work`) and the branch
@@ -2018,10 +2030,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const taskWork = t.isTaskWork(app, id);
     if (!taskWork && byTask) throw new HttpError(400, "这次交办不是按修改项推进的：只能看全部改动（work=1）或和某个分支比较（base=）");
     const rootId = t.workRootOf(app, id);
+    if (!canAccessRun(app, who(req), rootId, "code.review.view")) throw new HttpError(404, "交办不存在");
     const tasks = o.tasks ? o.tasks.split(/[,\s]+/).filter(Boolean).map((x) => t.parseTaskRef(x)) : undefined;
     const { worktreesOf } = await import("../agents/code.ts");
     const work = !o.base && (!!o.work || (!taskWork && !byTask));
-    return { patches: await t.workPatches(app, rootId, worktreesOf(app, rootId), { tasks, from: o.from, to: o.to, since: o.since, base: o.base, work, userId: who(req) }) };
+    const allowed = spacesWithCapability(app,who(req),"code.review.view");
+    const trees = worktreesOf(app,rootId).filter(w => !allowed || allowed.includes(w.space));
+    return { patches: await t.workPatches(app,rootId,trees,{tasks,from:o.from,to:o.to,since:o.since,base:o.base,work,userId:who(req)}) };
   });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
@@ -2082,7 +2097,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (r.kind !== "code") throw new HttpError(400, "只有编码交办有评审");
     const { checkLabel, lookName, reviewChecks, reviewsOf } = await import("../agents/review.ts");
     const chain = (r.output as { codeChain?: { rounds: string[] } }).codeChain;
-    const rounds = (chain?.rounds ?? [r.id]).map((id) => getRun(app, id));
+    const { rounds, children } = reviewRounds(app, chain?.rounds ?? [r.id], requestReviewAudience(app, req, who(req)));
     const checks = reviewChecks(app);
     const infos = new Map(checks.map((c) => [c.name, c]));
     // A second look by another model is the check under its look name (code-overlap.ts).
@@ -2091,14 +2106,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // The owner's open decision on a round (plan to confirm, stopped review), answered from the run page.
     const askOf = (id: unknown) => { try { const a = typeof id === "string" ? getAsk(app, id) : null; return a ? { id: a.id, status: a.status, question: a.question, options: a.options, answer: a.answer, handler: one<{ h: string | null }>(app.db, "select json_extract(context, '$.handler') h from asks where id = ?", a.id)?.h ?? null } : null; } catch { return null; } };
     // A review that waited for the owner (a confirmed plan, a retry, a later split) ran in runs of its own.
-    const reviewRuns = (id: string) => all<{ id: string; status: string; title: string }>(app.db, "select id, status, title from runs where parent_id = ? and kind = 'review' order by created_at", id);
     return {
       estimate: rounds[0]?.output.reviewEstimate ?? null,
       rounds: rounds.map((x) => ({
         runId: x.id, round: (x.input as { round?: number }).round ?? 1, status: x.status,
         plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null, stage: x.output.reviewStage ?? null,
         lead: x.output.reviewLead ?? null, stop: x.output.reviewStop ?? null, changePoints: (x.output.changePoints as { points?: unknown[] } | undefined)?.points ?? null, ask: askOf(x.output.reviewAskId), acceptedByOwner: !!x.output.acceptedByOwner,
-        reviewRuns: reviewRuns(x.id),
+        reviewRuns: children.get(x.id) ?? [],
       })),
       reviews: reviewsOf(app, rounds.map((x) => x.id)),
       labels,
@@ -2531,12 +2545,23 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ------------------------------------------------------------------- rules
+  const ruleView = (req: FastifyRequest) => {
+    type Rule = import("../rules/types.ts").Rule;
+    const spaces = accessibleSpaces(app, who(req));
+    const allowed = spaces && new Set(spaces);
+    return {
+      spaces, edit: can(app, who(req), "rules.edit"),
+      visible: (rule: Rule) => ruleVisible(rule, allowed),
+      summary: ruleSummary,
+    };
+  };
   server.get("/api/rules", async (req) => {
     const o = q(z.object({ space: z.string().optional() }), req.query);
     const { listRules } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
     // Temporary wake-up rules are listed with the timed wakes (/api/wakes).
-    return listRules(app).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
+    const view = ruleView(req);
+    return listRules(app,{spaces:view.spaces}).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).filter(view.visible).map(r => view.edit ? { ...r, conditionText: describe(r.conditions) } : view.summary(r));
   });
   // 有人找你, listed last on the rules page: the default for messages looking for the owner that no rule took.
   server.get("/api/mentions", async (req) => {
@@ -2564,6 +2589,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getRule, listFirings } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
     const r = getRule(app, id);
+    const view = ruleView(req);
+    if (!view.visible(r)) throw new HttpError(404, "规则不存在");
+    if (!view.edit) return view.summary(r);
     return { ...r, conditionText: describe(r.conditions), firings: listFirings(app, id) };
   });
   // What a rule needs from Feishu (meetings: lark-cli and bot permissions), with links to fix the gaps.
@@ -2571,8 +2599,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getRule } = await import("../rules/store.ts");
     return (await import("../rules/permissions.ts")).rulePermissions(app, getRule(app, (req.params as { id: string }).id));
   });
-  server.post("/api/rules", async (req) => (await import("../rules/store.ts")).saveRule(app, req.body as never, "user", who(req)));
-  server.put("/api/rules/:id", async (req) => (await import("../rules/store.ts")).saveRule(app, { ...(req.body as object), id: (req.params as { id: string }).id } as never, "user", who(req)));
+  const saveWebRule = async (req: FastifyRequest<{ Body: import("../rules/store.ts").RuleSaveInput; Params: { id?: string } }>) => {
+    const { saveRuleWithConfirmation } = await import("../rules/confirmation.ts");
+    const input = req.params.id ? { ...req.body, id: req.params.id } : req.body;
+    return saveRuleWithConfirmation(app, input, who(req)).rule;
+  };
+  server.post("/api/rules", saveWebRule);
+  server.put("/api/rules/:id", saveWebRule);
   server.delete("/api/rules/:id", async (req) => {
     (await import("../rules/store.ts")).deleteRule(app, (req.params as { id: string }).id);
     return { ok: true };
@@ -3383,9 +3416,9 @@ function materialForPage(app: App, userId: string) {
     // A delegation that went several rounds reads as its latest round.
     const first = JSON.parse(r.output) as { codeChain?: { rounds: string[] } };
     const lastId = first.codeChain?.rounds.at(-1);
-    const last = lastId && lastId !== m.ref && canReadRun(app, userId, lastId) ? one<{ status: string; output: string }>(app.db, "select status, output from runs where id = ?", lastId) : null;
-    const out = (last ? JSON.parse(last.output) : first) as { verdict?: string; reviewLead?: { verdict: string; summary: string } };
-    return { ...m, run: { kind: r.kind, status: last?.status ?? r.status, verdict: out.verdict ?? null, summary: out.reviewLead?.summary ?? null, branchReview: !!(JSON.parse(r.input) as { branches?: unknown }).branches, createdAt: r.created_at } };
+    const last = lastId && lastId !== m.ref && canReadRun(app, userId, lastId) ? one<{ id: string; kind: string; status: string; output: string }>(app.db, "select id, kind, status, output from runs where id = ?", lastId) : null;
+    const { verdict, summary } = itemRunSummary(app, userId, last?.id ?? m.ref, last?.kind ?? r.kind, last ? JSON.parse(last.output) : first);
+    return { ...m, run: { kind: r.kind, status: last?.status ?? r.status, verdict, summary, branchReview: !!(JSON.parse(r.input) as { branches?: unknown }).branches, createdAt: r.created_at } };
   };
 }
 
@@ -3397,17 +3430,17 @@ const TURNS_BEFORE = 5;
  * Where a run sits: the conversation it answers in (and whether that is a Feishu topic or a work
  * session of a multi-agent task), the run that started it, and the rounds of the work it is part of.
  */
-function runContext(app: App, r: ReturnType<typeof getRun>) {
+function runContext(app: App, r: ReturnType<typeof getRun>, userId: string) {
   const input = r.input as { conversationId?: string; threadId?: string; agentWorkId?: string; sourceRunId?: string };
   const convId = input.conversationId ?? input.threadId ?? null;
   const conv = convId
-    ? one<{ id: string; title: string; channel: string; external_id: string | null; parent_id: string | null; status: string }>(app.db, "select id, title, channel, external_id, parent_id, status from conversations where id = ?", convId)
+    ? one<{ id: string; title: string; channel: string; external_id: string | null; parent_id: string | null; status: string }>(app.db, "select id, title, channel, external_id, parent_id, status from conversations where id = ? and (? = 'owner' or user_id=?)", convId, userId, userId)
     : undefined;
   const brief = (id: string | null | undefined) =>
-    id ? one<{ id: string; kind: string; title: string; status: string; created_at: string }>(app.db, "select id, kind, title, status, created_at from runs where id = ?", id) : undefined;
+    id && canReadRun(app, userId, id) ? one<{ id: string; kind: string; title: string; status: string; created_at: string }>(app.db, "select id, kind, title, status, created_at from runs where id = ?", id) : undefined;
   const parent = brief(r.parentId);
   const workId = input.agentWorkId ?? ((r.output as { agentWork?: { askRunId?: string } }).agentWork?.askRunId === r.id ? r.id : undefined);
-  const work = workId ? (getRun(app, workId).output as { agentWork?: { title: string; workConversationId: string; rootConversationId: string; rounds: { runId: string; agent: string }[] } }).agentWork : undefined;
+  const work = workId && userId === OWNER ? (getRun(app, workId).output as { agentWork?: { title: string; workConversationId: string; rootConversationId: string; rounds: { runId: string; agent: string }[] } }).agentWork : undefined;
   // Other turns in the same conversation: one line of work in Feishu is one conversation here. Only
   // for a run that is itself one of them: a run that merely reports there (someone looking for the
   // owner, a meeting's summary going to the owner's chat with the bot) has nothing to do with what
@@ -3442,7 +3475,7 @@ function runContext(app: App, r: ReturnType<typeof getRun>) {
   const itemIds = [...new Set([...(own ? [own] : []), ...itemsOfRun(app, root).map((i) => i.id), ...itemsOfRun(app, r.id).map((i) => i.id)])];
   return {
     conversation,
-    items: itemIds.flatMap((id) => one<{ id: string; title: string; status: string }>(app.db, "select id, title, status from items where id = ?", id) ?? []),
+    items: itemIds.filter(id => can(app, userId, "items.view", { kind: "item", id })).flatMap((id) => one<{ id: string; title: string; status: string }>(app.db, "select id, title, status from items where id = ?", id) ?? []),
     parent: parent ? { id: parent.id, kind: parent.kind, title: parent.title, status: parent.status } : null,
     source: input.sourceRunId ? brief(input.sourceRunId) ?? null : null,
     work: work

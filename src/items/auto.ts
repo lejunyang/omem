@@ -156,7 +156,7 @@ export function markAuto(app: App, itemId: string, why: string, verdict: GateVer
 
 /** The owner keeps a candidate (it opens, its reminder time stays) or does not (cancelled). */
 export function decideCandidate(app: App, id: string, keep: boolean, userId: string, via: "card" | "web" = "web"): Item {
-  const item = requireItem(app, id, userId, "write");
+  const item = requireItem(app, id, userId, "operate");
   if (item.status !== "candidate") throw new HttpError(409, `「${item.title}」已经不是候选了`);
   const where = via === "card" ? "在飞书卡片上" : "在事项页上";
   return upsertItem(app, id, keep ? { status: item.kind === "waiting" ? "waiting" : "open", note: `本人${where}留下了这件候选事项` } : { status: "cancelled", note: `本人${where}不要这件候选事项` }, "user");

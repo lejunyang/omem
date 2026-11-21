@@ -3,13 +3,16 @@ import { answerAsk, createAsk, getAsk, listAsks, settleAsks, showSuggestions, LA
 import { createRun } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool } from "../src/agents/tools.ts";
-import { all, one } from "../src/core/db.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { withBot } from "../src/core/bot-context.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { registerLarkAsks } from "../src/channels/lark-asks.ts";
 import { interactionForMessage, setLarkClient } from "../src/channels/lark-send.ts";
 import { confirmRule } from "../src/rules/confirmation.ts";
 import { getRule, listRules, saveRule } from "../src/rules/store.ts";
+import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 let registered = false;
@@ -86,6 +89,149 @@ it("saves a disabled rule, then commits its enable button before acknowledging w
   expect(all(app.db, "select id from runs")).toHaveLength(1);
   release(); await showing;
   expect((await handleCardAction(app, event)).toast.content).toBe("已经处理过了");
+});
+
+it.each(["default", "create", "update"] as const)("requires the owner's private confirmation for a member's rule (%s)", async mode => {
+  const { app } = fixture();
+  const member = createUser(app, { id: "member-a", name: "示例成员" });
+  const spaceId = "project-a";
+  createSpace(app, { id: spaceId, name: "项目 A" });
+  addMember(app, spaceId, member.id, "editor");
+  run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,'rules.edit','global','','allow',current_timestamp,'owner',current_timestamp)", member.id);
+  const thread = createThread(app, { channel: "lark", key: "oc_member", settings: { group: false }, spaceId, userId: member.id });
+  const task = createRun(app, { kind: "ask", title: "保存普通通知规则", spaceId, userId: member.id, input: { conversationId: thread.id, userId: member.id } });
+  const ctx = { app, runId: task.id, spaceId, spaces: [spaceId], writable: [spaceId], tools: null, actor: "agent" as const, userId: member.id, role: "assistant" };
+  const recipients: string[] = [];
+  setLarkClient({ im: { message: {
+    create: async ({ data }: any) => { recipients.push(data.receive_id); return { code: 0, data: { message_id: "om_rule_owner" } }; },
+    patch: async () => ({ code: 0 }),
+  } } });
+
+  const existing = mode === "update" ? saveRule(app, { ...ruleInput, spaceId }) : undefined;
+  const result = await callTool(ctx, "save_rule", {
+    id: existing?.id, enabled: mode === "default" ? undefined : true,
+    description: mode === "default" ? "退款时提醒" : "退款时提醒，现在就启用",
+    rule: { name: "退款提醒", conditions: ruleInput.conditions, actions: ruleInput.actions },
+  });
+  expect(result.isError, result.text).toBe(false);
+  const [rule] = listRules(app);
+  if (existing) expect(rule.id).toBe(existing.id);
+  expect(result.text).toContain("未启用");
+  expect(rule.enabled).toBe(false);
+  expect(rule.conversationId).toBeFalsy();
+  await showSuggestions(app, task.id);
+  expect(recipients).toEqual(["ou_owner"]);
+  const [ask] = listAsks(app, { runId: task.id });
+  expect(ask).toMatchObject({ userId: "owner", conversationId: null, handler: "rule-enable" });
+  expect(interactionForMessage(app, "om_rule_owner")).toMatchObject({ allowed: ["ou_owner"], chatId: null, conversationId: null });
+  expect(result.text).toContain("由系统主人确认启用");
+  await expect(answerAsk(app, ask.id, { choice: 0, by: member.id })).rejects.toThrow("只有本人");
+  expect(getRule(app, rule.id).enabled).toBe(false);
+  await answerAsk(app, ask.id, { choice: 0, by: "owner" });
+  expect(getRule(app, rule.id).enabled).toBe(true);
+  if (mode === "update") {
+    const external = { ...ctx, runId: null };
+    const edit = { id: rule.id, description: "退款时提醒", rule: { name: "新提醒名" } };
+    expect((await callTool(external, "save_rule", edit)).text).toContain("已启用");
+    expect((await callTool(external, "save_rule", { ...edit, enabled: false })).text).toContain("未启用");
+    const pending = await callTool(external, "save_rule", { ...edit, enabled: true });
+    expect(pending.text).toContain("由系统主人确认启用");
+    expect(getRule(app, rule.id).enabled).toBe(false);
+  }
+});
+
+it("成员网页新建和重新启用定时规则时，只有主人确认当前版本才启用调度", async () => {
+  const { app } = fixture();
+  const member = createUser(app, { id: "rule-editor", name: "规则编辑者" });
+  const headers = { authorization: `Bearer ${createApiToken(app, member.id, "test")}` };
+  run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,'rules.edit','global','','allow',current_timestamp,'owner',current_timestamp)", member.id);
+  const recipients: string[] = [];
+  setLarkClient({ im: { message: {
+    create: async ({ data }: any) => { recipients.push(data.receive_id); return { code: 0, data: { message_id: `om_web_${recipients.length}` } }; },
+    patch: async () => ({ code: 0 }),
+  } } });
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const payload = { ...ruleInput, enabled: true, trigger: { event: "schedule", cron: "0 9 * * *" } };
+    const created = await server.inject({ method: "POST", url: "/api/rules", headers, payload });
+    expect(created.statusCode).toBe(200);
+    const { id, enabled } = created.json();
+    expect(enabled).toBe(false);
+    const scheduleEnabled = () => one<{ enabled: number }>(app.db, "select enabled from schedules where id=?", `rule:${id}`)?.enabled;
+    expect(getRule(app, id).enabled).toBe(false);
+    expect(scheduleEnabled()).toBe(0);
+    const [first] = listAsks(app, { status: "pending" });
+    expect(first).toMatchObject({ userId: "owner", conversationId: null, runId: null, handler: "rule-enable" });
+    await expect.poll(() => recipients).toEqual(["ou_owner"]);
+
+    const updated = await server.inject({ method: "PUT", url: `/api/rules/${id}`, headers, payload: { ...payload, name: "修改后的提醒" } });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id, enabled: false, name: "修改后的提醒" });
+    expect(getAsk(app, first.id).status).toBe("cancelled");
+    const pending = listAsks(app, { status: "pending" });
+    expect(pending).toHaveLength(1);
+    const [current] = pending;
+    expect(current).toMatchObject({ userId: "owner", conversationId: null, handler: "rule-enable", question: expect.stringContaining("修改后的提醒") });
+    await expect.poll(() => recipients).toEqual(["ou_owner", "ou_owner"]);
+    await expect(answerAsk(app, current.id, { choice: 0, by: member.id })).rejects.toThrow("只有本人");
+    expect(getRule(app, id).enabled).toBe(false);
+    expect(scheduleEnabled()).toBe(0);
+    await answerAsk(app, current.id, { choice: 0, by: "owner" });
+    expect(getRule(app, id).enabled).toBe(true);
+    expect(scheduleEnabled()).toBe(1);
+  } finally {
+    await server.close();
+  }
+});
+
+it("allows the owner to enable a notification rule immediately", async () => {
+  const { app, ctx, task } = fixture();
+  const result = await callTool(ctx, "save_rule", { description: ruleInput.description, rule: ruleInput, enabled: true });
+  expect(result.isError, result.text).toBe(false);
+  expect(listRules(app)[0].enabled).toBe(true);
+  expect(listAsks(app, { runId: task.id })).toHaveLength(0);
+});
+
+const scheduledNotice = { ...ruleInput, trigger: { event: "schedule" as const, cron: "0 9 * * *" }, conditions: null };
+
+function expectScheduledNoticeEnabled(app: ReturnType<typeof testApp>, id: string) {
+  expect(getRule(app, id).enabled).toBe(true);
+  expect(one(app.db, "select enabled from schedules where id=?", `rule:${id}`)).toEqual({ enabled: 1 });
+  expect(listAsks(app, { status: "pending" })).toHaveLength(0);
+}
+
+it.each(["POST", "PUT"] as const)("其他 owner 在网页保存启用的定时通知规则（%s）", async method => {
+  const { app } = fixture();
+  const owner = createUser(app, { id: "other-owner", name: "项目负责人", role: "owner" });
+  const headers = { authorization: `Bearer ${createApiToken(app, owner.id, "test")}` };
+  const existing = method === "PUT" ? saveRule(app, scheduledNotice) : undefined;
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const response = await server.inject({
+      method, headers, url: existing ? `/api/rules/${existing.id}` : "/api/rules",
+      payload: { ...scheduledNotice, enabled: true },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().enabled).toBe(true);
+    expectScheduledNoticeEnabled(app, existing?.id ?? response.json().id);
+  } finally {
+    await server.close();
+  }
+});
+
+it.each(["新建", "重新启用"])("其他 owner 在助手会话中%s定时通知规则", async mode => {
+  const { app } = fixture();
+  const owner = createUser(app, { id: "other-owner", name: "项目负责人", role: "owner" });
+  const spaceId = "project-a";
+  createSpace(app, { id: spaceId, name: "项目 A" });
+  const thread = createThread(app, { channel: "web", key: "rule-chat", userId: owner.id, spaceId });
+  const task = createRun(app, { kind: "ask", title: "启用提醒", userId: owner.id, spaceId, input: { conversationId: thread.id } });
+  const ctx = { app, runId: task.id, userId: owner.id, spaceId, spaces: [spaceId], tools: null, actor: "agent" as const, role: "assistant" };
+  const existing = mode === "重新启用" ? saveRule(app, { ...scheduledNotice, spaceId }) : undefined;
+  const result = await callTool(ctx, "save_rule", { id: existing?.id, description: "每天九点提醒", rule: scheduledNotice, enabled: true });
+  expect(result.isError, result.text).toBe(false);
+  expect(result.text).toContain("已启用");
+  expectScheduledNoticeEnabled(app, existing?.id ?? listRules(app)[0].id);
 });
 
 it("also accepts a form button clicked before the send response, with its typed answer", async () => {

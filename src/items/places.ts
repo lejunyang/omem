@@ -1,3 +1,5 @@
+import { canAccessRun, runAudience } from "../auth/permissions.ts";
+import { runPredicate } from "../auth/run-scope.ts";
 import { restrictedSourceFilter } from "../auth/visibility.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
@@ -224,8 +226,17 @@ export function candidatesNote(app: App, runId: string, userId: string, withTool
 
 export type ItemRun = { id: string; kind: string; title: string; status: string; startedAt: string | null; conclusion: string; via: "item" | "place" };
 
+export function itemRunSummary(app: App, userId: string, id: string, kind: string, output: Record<string, unknown>) {
+  if ((kind === "code" || kind === "review") && !canAccessRun(app, userId, id, "code.review.view"))
+    return { verdict: null, summary: null, conclusion: "" };
+  const lead = output.reviewLead as { summary?: string } | undefined;
+  return { verdict: output.verdict ?? null, summary: lead?.summary ?? null, conclusion: conclusionOf(output, null) };
+}
+
 /** Runs under way on the item: those that touched it, and those working in one of its places. */
-export function itemRuns(app: App, itemId: string, userId: string): ItemRun[] {
+export function itemRuns(app: App, itemId: string, userId: string, shared = false): ItemRun[] {
+  const audience = runAudience(app,userId);
+  const visible = audience && runPredicate(audience,"r");
   const places = all<{ kind: string; ref: string }>(app.db, "select kind, ref from item_materials where item_id = ? and kind in ('conversation','source')", itemId);
   // A conversation's runs carry its chat too (run-scope.ts), so the conversation key covers them.
   const chatIds = places.flatMap((p) => {
@@ -237,9 +248,10 @@ export function itemRuns(app: App, itemId: string, userId: string): ItemRun[] {
   const rows = all<{ id: string; kind: string; title: string; status: string; started_at: string | null; output: string; via: string }>(app.db,
     `select r.id, r.kind, r.title, r.status, r.started_at, r.output, case when s.kind = 'item' then 'item' else 'place' end via
        from run_scope s join runs r on r.id = s.run_id
-      where r.status in ('queued','running') and coalesce(r.user_id, 'owner') = ?
+      where r.status in ('queued','running') and ${shared ? "s.kind='item'" : "coalesce(r.user_id, 'owner')=?"}
+        ${visible ? "and "+visible.sql : ""}
         and ((s.kind = 'item' and s.key = ?) or (s.kind = 'conversation' and s.key in (${convs.map(() => "?").join(",") || "''"})) or (s.kind = 'chat' and s.key in (${chatIds.map(() => "?").join(",") || "''"})))
       group by r.id order by r.created_at desc limit 10`,
-    userId, itemId, ...convs, ...chatIds);
-  return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, status: r.status, startedAt: r.started_at, conclusion: conclusionOf(json(r.output, {}), null), via: r.via as ItemRun["via"] }));
+    ...(shared ? [] : [userId]),...(visible?.params ?? []),itemId, ...convs, ...chatIds);
+  return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, status: r.status, startedAt: r.started_at, conclusion: itemRunSummary(app, userId, r.id, r.kind, json(r.output, {})).conclusion, via: r.via as ItemRun["via"] }));
 }

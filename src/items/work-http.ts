@@ -1,8 +1,9 @@
+import { spacesWithCapability } from "../auth/capabilities.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { accessibleSpaces } from "../core/users.ts";
+import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { HttpError, json, now, zonedParts, zoneMidnight } from "../core/util.ts";
 import { pendingActions, pendingView } from "./pending.ts";
 import { chatName } from "../agents/owner-now.ts";
@@ -136,23 +137,24 @@ export function workActivities(app: App, userId: string, q: { from?: string; to?
   const end = zoneMidnight(new Date(Date.parse(`${to}T00:00:00Z`) + 86400_000).toISOString().slice(0, 10), tz).toISOString();
   const types = q.type ? q.type.split(",").filter((t) => (CHANGE_TYPES as readonly string[]).includes(t)) : [];
   const origins = q.origin ? q.origin.split(",").filter(Boolean) : [];
-  const ids = q.line ? [q.line, ...descendantIds(app, q.line)] : null;
-  if (q.line && getItem(app, q.line).userId !== userId) throw new HttpError(403, "不能查看他人的工作线");
-  const allowed = accessibleSpaces(app, userId);
+  const allowed = spacesWithCapability(app, userId, "work.view");
+  const ids = q.line ? [q.line, ...descendantIds(app, q.line, allowed ?? undefined)] : null;
+  if (q.line && (getItem(app, q.line).userId !== OWNER || (allowed && !allowed.includes(getItem(app, q.line).spaceId)))) throw new HttpError(403, "不能查看他人的工作线");
   const rows = all<Parameters<typeof changeLite>[1] & { space_id: string }>(app.db,
     `select ${CHANGE_COLS}, i.space_id from item_changes c join items i on i.id = c.item_id
       where coalesce(i.user_id,'owner') = ? and c.at >= ? and c.at < ?
+        ${allowed ? "and i.space_id in (select value from json_each(?)) and i.status not in ('candidate','waiting','snoozed') and c.status='noted'" : ""}
         ${types.length ? `and c.type in (${types.map(() => "?").join(",")})` : ""}
         ${origins.length ? `and c.origin in (${origins.map(() => "?").join(",")})` : ""}
         ${ids ? `and c.item_id in (${ids.map(() => "?").join(",")})` : ""}
         ${q.noise ? "" : "and c.noise = 0"}
-      order by c.at desc, c.id desc limit 2000`, userId, start, end, ...types, ...origins, ...(ids ?? []))
+      order by c.at desc, c.id desc limit 2000`, OWNER, start, end, ...(allowed ? [JSON.stringify(allowed)] : []), ...types, ...origins, ...(ids ?? []))
     .filter((r) => !allowed || allowed.includes(r.space_id));
   const byDay = new Map<string, number>();
   for (const r of rows) { const d = zonedParts(r.at, tz).date; byDay.set(d, (byDay.get(d) ?? 0) + 1); }
   // Every row counts in its day; only the ones shown are looked up further (their line, what their references name).
   const lines = new Map<string, { id: string; title: string }>();
-  const items = rows.slice(0, 300).map((r) => changeLite(app, r, lines));
+  const items = rows.slice(0, 300).map(r => allowed ? { id: r.id, at: r.at, type: r.type, summary: r.summary, itemId: r.item_id, itemTitle: r.title } : changeLite(app, r, lines));
   const days: { date: string; count: number }[] = [];
   for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`) && days.length < 400; t += 86400_000) {
     const d = new Date(t).toISOString().slice(0, 10);
@@ -220,18 +222,74 @@ function body<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
   return r.data;
 }
 
+/** Read a bounded forest in the viewer's spaces. Traverse only visible children, including across spaces. */
+function sharedLines(app: App, spaces: string[], id?: string) {
+  const scope = JSON.stringify(spaces);
+  const isLine = `(i.kind='line' or i.phase='watching' or exists(select 1 from item_flows f where f.item_id=i.id and f.ended_at is null)
+     or exists(select 1 from items c where c.parent_id=i.id and c.status not in ('candidate','waiting','snoozed') and c.space_id in (select value from json_each(:spaces)))
+     or exists(select 1 from listen_contexts c where c.item_id=i.id and c.kind='item' and c.status='active'))`;
+  const root = id ? `i.id=:id and (i.parent_id is not null or ${isLine})` : `i.parent_id is null and i.status='open' and ${isLine}`;
+  type Entry = { id: string; parentId: string | null; title: string; kind: string; status: string; spaceId: string; phase: string | null; summary: string | null; root: string };
+  const rows = app.db.prepare(`with recursive roots as (
+    select i.id from items i where i.user_id='owner' and i.space_id in (select value from json_each(:spaces))
+      and i.status not in ('candidate','waiting','snoozed') and ${root} order by i.updated_at desc limit 200
+  ), tree(id,root,depth) as (
+    select id,id,0 from roots union all
+    select i.id,t.root,t.depth+1 from items i join tree t on i.parent_id=t.id where t.depth<3
+      and i.user_id='owner' and i.status not in ('candidate','waiting','snoozed') and i.space_id in (select value from json_each(:spaces))
+  ) select i.id,i.parent_id parentId,i.title,i.kind,i.status,i.space_id spaceId,i.phase,json_extract(i.now,'$.summary') summary,t.root
+    from tree t join items i on i.id=t.id limit 2000`).all(id ? { spaces: scope, id } : { spaces: scope }) as Entry[];
+  const ids = JSON.stringify(rows.map(r => r.id));
+  const byRoot = new Map(rows.map(r => [r.id, r.root]));
+  const flow = all<{ id: string; name: string; state: string }>(app.db, `select s.item_id id,json_extract(d.value,'$.name') name,s.state
+    from item_stages s join item_flows f on f.item_id=s.item_id join json_each(f.definition,'$.stages') d on json_extract(d.value,'$.id')=s.stage_id
+    where s.item_id in (select value from json_each(?)) order by cast(d.key as integer)`, ids);
+  const changes = all<{ itemId: string; id: string; at: string; type: string; summary: string }>(app.db, `select item_id itemId,id,at,type,summary from item_changes
+    where item_id in (select value from json_each(?)) and noise=0 and status in ('noted','confirmed') order by at desc limit 2000`, ids);
+  const next = all<{ itemId: string; id: string; text: string; why: string; status: string }>(app.db, `select item_id itemId,id,text,why,status from item_next
+    where item_id in (select value from json_each(?)) and status in ('open','doing') order by created_at,id limit 2000`, ids);
+  const groups = <T>(entries: T[], key: (entry: T) => string) => {
+    const grouped = new Map<string, T[]>();
+    for (const entry of entries) {
+      const id = key(entry);
+      if (!grouped.has(id)) grouped.set(id, []);
+      grouped.get(id)!.push(entry);
+    }
+    return grouped;
+  };
+  const stages = groups(flow, s => s.id);
+  const timelines = groups(changes, c => byRoot.get(c.itemId)!);
+  const steps = groups(next, n => n.itemId);
+  type Node = Omit<Entry, "root" | "summary"> & { now: { summary: string } | null; children: Node[]; stages: typeof flow; next: typeof next };
+  const nodes = new Map(rows.map(({ root, summary, ...entry }) => [entry.id, { ...entry, now: summary ? { summary } : null, children: [], stages: stages.get(entry.id) ?? [], next: steps.get(entry.id) ?? [] } as Node]));
+  for (const r of rows) if (r.id !== r.root && r.parentId) nodes.get(r.parentId)?.children.push(nodes.get(r.id)!);
+  return rows.filter(r => r.id === r.root).map(r => ({ ...nodes.get(r.id)!, timeline: timelines.get(r.id) ?? [] }));
+}
 export function registerWorkRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   server.get("/api/pending", async (req) => pendingActions(app, who(req)));
-  server.get("/api/work", async (req) => workOverview(app, who(req)));
+  server.get("/api/work", async (req) => {
+    if (who(req) === OWNER) return workOverview(app, OWNER);
+    const spaces = spacesWithCapability(app, who(req), "work.view")!;
+    const lines = sharedLines(app, spaces);
+    const ended = endedLines(app, OWNER, { spaces });
+    return { lines, ended: ended.items, endedMore: ended.more };
+  });
   server.get("/api/work/activities", async (req) => {
     const q = body(z.object({ from: z.string().optional(), to: z.string().optional(), type: z.string().optional(), origin: z.string().optional(), line: z.string().optional(), noise: z.coerce.boolean().optional() }), req.query);
     return workActivities(app, who(req), q);
   });
   server.get("/api/work/ended", async (req) => {
     const q = body(z.object({ before: z.string().max(40).optional(), q: z.string().max(100).optional(), limit: z.coerce.number().int().min(1).max(100).optional() }), req.query);
-    return endedLines(app, who(req), { ...q, spaces: accessibleSpaces(app, who(req)) });
+    return endedLines(app, OWNER, { ...q, spaces: spacesWithCapability(app, who(req), "work.view") });
   });
-  server.get("/api/work/:id", async (req) => workDetail(app, (req.params as { id: string }).id, who(req)));
+  server.get("/api/work/:id", async (req) => {
+    const id = (req.params as { id: string }).id;
+    if (who(req) === OWNER) return workDetail(app, id, OWNER);
+    const spaces = spacesWithCapability(app, who(req), "work.view")!;
+    const [line] = sharedLines(app, spaces, id);
+    if (!line) throw new HttpError(404, "工作线不存在");
+    return line;
+  });
   // 进行中 / 观察中 / 结束 / 放弃 from the line's page (items/lifecycle.ts); ending with items open under it needs closeChildren.
   server.put("/api/work/:id/phase", async (req) => {
     const id = (req.params as { id: string }).id;

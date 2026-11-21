@@ -372,6 +372,8 @@ describe("delay, check and script actions", () => {
     const script = docRule({ actions: [{ type: "script", runtime: "node", code: "console.log(1)", timeoutSec: 10, approval: { by: "none" } }] });
     expect(() => saveRule(app, script, "agent")).toThrow(/只能由本人/);
     expect(() => saveRule(app, script, "user", "admin1")).toThrow(/只能由本人/);
+    const otherOwner = createUser(app, { name: "项目负责人", id: "other-owner", role: "owner" });
+    expect(() => saveRule(app, script, "user", otherOwner.id)).toThrow(/只能由本人/);
     expect(() => saveRule(app, script, "user")).toThrow(/只能由本人/);
     expect(saveRule(app, script, "user", "owner").actions[0].type).toBe("script");
     expect(() => saveRule(app, docRule({ actions: [{ type: "notify", urgent: false }, { type: "delay", minutes: 5 }] }), "user", "owner")).toThrow(/延时后面/);

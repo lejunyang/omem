@@ -1,3 +1,4 @@
+import { can } from "../auth/permissions.ts";
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
 import { accessibleSpaces } from "../core/users.ts";
@@ -34,11 +35,11 @@ export function refExcerpt(app: App, ref: string, max = 60, userId = "owner"): {
   };
   if (m[1] === "mem") {
     const r = one<{ text: string; space_id: string }>(app.db, "select content as text, space_id from memories where id = ?", m[2]);
-    return r ? { title: "记忆", text: clip(r.text), spaceId: r.space_id } : null;
+    return r && can(app, userId, "memories.view", r.space_id) ? { title: "记忆", text: clip(r.text), spaceId: r.space_id } : null;
   }
   if (m[1] === "msg") {
     const r = one<{ text: string; role: string; space_id: string }>(app.db, "select m.text, m.role, c.space_id from messages m join conversations c on c.id = m.conversation_id where m.id = ? and (? = 'owner' or c.user_id = ?)", m[2], userId, userId);
-    return r ? { title: r.role === "user" ? "本人说" : "助理说", text: clip(r.text), spaceId: r.space_id } : null;
+    return r && can(app, userId, "conversations.view") ? { title: r.role === "user" ? "本人说" : "助理说", text: clip(r.text), spaceId: r.space_id } : null;
   }
   const s = one<{ title: string; kind: string; text: string; space_id: string }>(app.db, "select title, kind, text, space_id from sources where id = ? and deleted_at is null", m[2]);
   if (!s) return null;

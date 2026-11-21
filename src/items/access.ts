@@ -1,19 +1,25 @@
+import { can } from "../auth/permissions.ts";
+import { capabilityAccess } from "../auth/capabilities.ts";
 import type { App } from "../core/app.ts";
-import { canWrite, OWNER, scopeFor } from "../core/users.ts";
+import { OWNER, scopeFor } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { getItem, type Item } from "./store.ts";
 
 export function itemScope(app: App, userId: string, spaces: string[] | null = null) {
-  return { userId: userId === OWNER ? undefined : userId, spaceIds: scopeFor(app, userId, spaces) ?? undefined };
+  const access = capabilityAccess(app, userId);
+  const requested = scopeFor(app, userId, spaces);
+  const readable = access.range("items.view", true);
+  const spaceIds = requested ? requested.filter(id => !readable || readable.includes(id)) : readable;
+  return { userId: userId === OWNER ? undefined : userId, spaceIds: spaceIds ?? undefined, sharedSpaces: access.range("items.view") ?? undefined };
 }
 
-export function itemAccess(app: App, userId: string, item: Pick<Item, "userId" | "spaceId">, mode: "read" | "write") {
-  const scope = itemScope(app, userId);
-  if ((scope.userId && item.userId !== scope.userId) || (scope.spaceIds && !scope.spaceIds.includes(item.spaceId))) return false;
-  return mode === "read" || canWrite(app, userId, item.spaceId);
+type Mode = "read" | "write" | "operate" | "flow";
+export function itemAccess(app: App, userId: string, item: Pick<Item, "userId" | "spaceId">, mode: Mode) {
+  const cap = { read: "items.view", write: "items.edit", operate: "items.operate", flow: "flows.operate" } as const;
+  return can(app, userId, cap[mode], item);
 }
 
-export function requireItem(app: App, id: string, userId: string, mode: "read" | "write") {
+export function requireItem(app: App, id: string, userId: string, mode: Mode) {
   const item = getItem(app, id);
   if (!itemAccess(app, userId, item, mode)) {
     if (mode === "read") throw new HttpError(404, "事项不存在");

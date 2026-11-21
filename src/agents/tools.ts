@@ -1,3 +1,5 @@
+import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
+import { globalCapability, spacesWithCapability } from "../auth/capabilities.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { lessonInput, proposeLesson } from "./code-lessons.ts";
 import { claimCommits, claimSchema } from "../flows/commits.ts";
@@ -31,7 +33,7 @@ import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpace
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, activeUser, identityOwner, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
-import { toolAllowed } from "../auth/tools.ts";
+import { toolAllowed, toolCapabilities } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf, LARK_DOMAIN_FEATURES } from "../auth/features.ts";
 import { can, canReadRun, requirePerm } from "../auth/permissions.ts";
@@ -76,7 +78,7 @@ import { describeThread, findThread, listThreads, threadMessages } from "./threa
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
 import type { OperationRule } from "../core/config.ts";
-import { confirmRule } from "../rules/confirmation.ts";
+import { saveRuleWithConfirmation } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
 import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
@@ -205,17 +207,17 @@ function codeVersionHead(ctx: ToolContext, hits: { type: string; sourceKind?: st
   return lines.length ? `代码来自：\n${lines.join("\n")}\n\n` : "";
 }
 /** Reject objects that live outside the spaces this caller may write. */
-function inScope(ctx: ToolContext, spaceId: string, what: string) {
-  if (!canWrite(ctx.app, ctx.userId ?? OWNER, spaceId)) throw new HttpError(403, `无权修改空间 ${spaceId}`);
+function inScope(ctx: ToolContext, spaceId: string, what: string, permission: "items.edit" | "items.operate" | "rules.edit" | "memory.write" = "memory.write") {
+  if (!can(ctx.app, ctx.userId ?? OWNER, permission, spaceId)) throw new HttpError(403, `无权修改空间 ${spaceId}`);
   const w = ctx.writable ?? ctx.spaces;
   if (w && !w.includes(spaceId))
     throw new HttpError(403, ctx.spaces && ctx.spaces.includes(spaceId) ? `空间 ${spaceId} 这次只能读，不能修改其中的${what}；写进当前空间 ${ctx.spaceId}` : `本次任务不能修改空间 ${spaceId} 中的${what}`);
 }
 /** A space to write into: readable and writable. */
-function writeSpace(ctx: ToolContext, requested?: string | null) {
+function writeSpace(ctx: ToolContext, requested?: string | null, permission: "memory.write" | "rules.edit" = "memory.write") {
   const id = space(ctx, requested);
   if (findSpace(ctx.app, id)!.kind === "worktree") throw new HttpError(403, `空间 ${id} 是交办工作区的临时索引，只能读；写进对应的仓库或项目空间`);
-  inScope(ctx, id, "内容");
+  inScope(ctx, id, "内容", permission);
   return id;
 }
 /**
@@ -240,7 +242,7 @@ function wikiSpace(ctx: ToolContext, requested?: string | null) {
 }
 /** The current space and the related ones this caller may read. */
 function homeSpaces(ctx: ToolContext) {
-  return [ctx.spaceId, ...relatedIds(ctx.app, ctx.spaceId).filter((id) => !ctx.spaces || ctx.spaces.includes(id))];
+  return [ctx.spaceId, ...relatedIds(ctx.app, ctx.spaceId)].filter(id => !ctx.spaces || ctx.spaces.includes(id));
 }
 /** Spaces to read: '*' = all readable, a space id = that one (a business space with its repositories), nothing = current + related. */
 function spacesFor(ctx: ToolContext, requested?: string | null, all = false) {
@@ -275,7 +277,8 @@ function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
     const id = clean.replace(/^msg:/, "");
     const row = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(ctx.app.db, "select * from messages where id = ?", id);
     if (!row) throw new HttpError(404, `找不到消息 ${id}；它可能还没被采集。用 read_conversation 读它所在的会话，或检查 id 是否写对`);
-    const c = one<{ space_id: string }>(ctx.app.db, "select space_id from conversations where id = ?", row.conversation_id);
+    const c = one<{ space_id: string; user_id: string }>(ctx.app.db, "select space_id,user_id from conversations where id = ?", row.conversation_id);
+    if (ctx.userId && ctx.userId !== OWNER && (c?.user_id !== ctx.userId || !can(ctx.app, ctx.userId, "conversations.view"))) throw new HttpError(404, "消息不存在");
     if (scope && c && !scope.includes(c.space_id)) throw new HttpError(403, `本次运行不能访问该消息所在空间 ${c.space_id}`);
     return `__msg__:${id}`;
   }
@@ -283,7 +286,7 @@ function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
     const id = clean.replace(/^mem:/, "");
     const row = one<{ id: string; space_id: string; status: string }>(ctx.app.db, "select id, space_id, status from memories where id = ?", id);
     if (!row) throw new HttpError(404, `记忆不存在：${id}`);
-    if (scope && !scope.includes(row.space_id)) throw new HttpError(403, `本次运行不能访问空间 ${row.space_id} 的记忆`);
+    if ((scope && !scope.includes(row.space_id)) || !can(ctx.app, ctx.userId ?? OWNER, "memories.view", row.space_id)) throw new HttpError(403, `本次运行不能访问空间 ${row.space_id} 的记忆`);
     return `__mem__:${id}`;
   }
   const byId = one<{ id: string; space_id: string }>(ctx.app.db, "select id, space_id from sources where id = ?", canonicalSourceId(ctx.app, clean));
@@ -2401,8 +2404,10 @@ def({
   name: "list_flows", description: "列出流程定义的 id、名称、说明和阶段；item 给出事项 id 时同时列出适用的流程。",
   schema: z.object({ item: z.string().optional() }), handler: async (ctx, a) => {
     const item = a.item ? flowItem(ctx, a.item, false) : null;
-    const { listFlows, flowsFor } = await import("../flows/definitions.ts");
-    return JSON.stringify({ flows: listFlows(ctx.app).map((f) => ({ id: f.id, name: f.definition?.name, description: f.definition?.description, stages: f.definition?.stages.map((s) => s.name), problem: f.problem })), ...(item ? { suits: flowsFor(ctx.app, item).map((f) => f.id) } : {}) });
+    const { listFlows, flowsFor, flowVisibleIn } = await import("../flows/definitions.ts");
+    const allowed = ctx.spaces && new Set(ctx.spaces);
+    const flows = listFlows(ctx.app).filter(f => flowVisibleIn(f.definition, allowed));
+    return JSON.stringify({ flows: flows.map((f) => ({ id: f.id, name: f.definition?.name, description: f.definition?.description, stages: f.definition?.stages.map((s) => s.name), problem: f.problem })), ...(item ? { suits: flowsFor(ctx.app, item, flows).map((f) => f.id) } : {}) });
   },
 });
 def({
@@ -2454,7 +2459,7 @@ def({
   write: true, schema: z.object({ item: z.string(), flow: z.string().optional().describe("流程名；不传就是对事项已有的流程开下一轮") }), handler: async (ctx, a) => {
     flowItem(ctx, a.item, true);
     const engine = await import("../flows/engine.ts");
-    return JSON.stringify(a.flow ? await engine.startFlow(ctx.app, a.item, a.flow, flowActor(ctx)) : await engine.startRound(ctx.app, a.item, flowActor(ctx)));
+    return JSON.stringify(a.flow ? await engine.startFlow(ctx.app, a.item, a.flow, flowActor(ctx), ctx.spaces) : await engine.startRound(ctx.app, a.item, flowActor(ctx)));
   },
 });
 def({
@@ -2510,14 +2515,14 @@ async function notOwnersBusiness(ctx: ToolContext, refs: string[]) {
 }
 
 /** A candidate, a background job, or a line outside this tool token's write scope has no implicit target. */
-function turnLine(ctx: ToolContext) {
+function turnLine(ctx: ToolContext, permission: "items.edit" | "items.operate") {
   if (!ctx.runId) return undefined;
   const line = one<{ id: string; title: string; space_id: string; parent_id: string | null }>(ctx.app.db,
     `select i.id,i.title,i.space_id,i.parent_id from runs r join items i on i.id=json_extract(r.output,'$.turnContext.line.id')
       where r.id=? and r.kind='ask' and i.user_id=? and json_extract(r.output,'$.personalTurn')=1
       and json_extract(r.output,'$.turnContext.item.via') in ('explicit','linked')`, ctx.runId, ctx.userId ?? OWNER);
   const spaces = ctx.writable ?? ctx.spaces;
-  return line && (!spaces || spaces.includes(line.space_id)) && canWrite(ctx.app, ctx.userId ?? OWNER, line.space_id) ? line : undefined;
+  return line && (!spaces || spaces.includes(line.space_id)) && can(ctx.app, ctx.userId ?? OWNER, permission, line.space_id) ? line : undefined;
 }
 
 def({
@@ -2555,18 +2560,22 @@ def({
   }),
   handler: async (ctx, a) => {
     const onItsOwn = !ownTurn(ctx);
-    const line = !a.id && !onItsOwn && a.parent === undefined && a.kind !== "line" ? turnLine(ctx) : undefined;
     const noteOnly = a.note?.trim() && Object.keys(a).every(k => ["note", "change_type", "source_refs", "space"].includes(k));
+    const line = !a.id && !onItsOwn && a.parent === undefined && a.kind !== "line"
+      ? turnLine(ctx, noteOnly ? "items.operate" : "items.edit") : undefined;
     const id = a.id ?? (noteOnly ? line?.id : undefined);
     if (a.change_type && (onItsOwn || !id || !a.note?.trim())) throw new HttpError(400, "记关键变化需要本人对话、事项和 note");
-    const existing = id ? requireItem(ctx.app, id, ctx.userId ?? OWNER, "write") : null;
+    const operation = id && Object.keys(a).every(key => ["id", "status", "note", "change_type", "space"].includes(key));
+    const existing = id ? requireItem(ctx.app, id, ctx.userId ?? OWNER, operation ? "operate" : "write") : null;
+    if (existing && !operation && (a.status || a.note)) requireItem(ctx.app, existing.id, ctx.userId ?? OWNER, "operate");
     if (existing) {
-      inScope(ctx, existing.spaceId, "事项");
+      inScope(ctx, existing.spaceId, "事项", operation ? "items.operate" : "items.edit");
       if (existing.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
       if (a.space && a.space !== existing.spaceId) throw new HttpError(400, "事项 id 与空间不匹配");
     }
     const userId = ctx.userId ?? OWNER;
-    const spaceId = existing?.spaceId ?? writeSpace(ctx, a.space);
+    const spaceId = existing?.spaceId ?? space(ctx, a.space);
+    if (!existing) inScope(ctx, spaceId, "事项", "items.edit");
     if (!existing && !itemAccess(ctx.app, userId, { spaceId, userId }, "write")) throw new HttpError(403, "不能在这个空间创建事项");
     // Removal may revoke stale/deleted refs, but must match this item's exact old set.
     if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
@@ -2578,7 +2587,7 @@ def({
       (!line.parent_id || ancestorIds(ctx.app, line.id).length + 2 <= MAX_DEPTH) ? line : undefined;
     const parent = a.parent === undefined ? implicit?.id : a.parent;
     for (const p of writableParents(ctx.app, userId, existing?.parentId ?? null, parent)) {
-      inScope(ctx, p.spaceId, "上层事项");
+      inScope(ctx, p.spaceId, "上层事项", "items.edit");
       if (p.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能挂到本人自己的事项下");
     }
     if (existing && a.parent) (await import("../items/tree.ts")).checkParent(ctx.app, existing.id, a.parent);
@@ -2693,21 +2702,21 @@ def({
   schema: z.object({ item_id: z.string() }),
   handler: async (ctx, a) => {
     const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
-    const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
-    if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
+    const readable = itemScope(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces).spaceIds ?? null;
+    if (readable && !readable.includes(item.spaceId)) throw new HttpError(403, "不能读取该事项");
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(ctx.app, { item: item.id, spaces: readable, userId: ctx.userId ?? OWNER }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");
-    const materials = (await materialViews(ctx.app, item.id, ctx.userId ?? OWNER)).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
+    const materials = (await materialViews(ctx.app, item.id, ctx.userId ?? OWNER)).filter(m => !readable || (m.spaceId && readable.includes(m.spaceId))).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
     // Where the work goes on and what is running for it (items/places.ts).
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
-    const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
-    const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER).filter((r) => r.id !== ctx.runId);
+    const places = (item.userId === (ctx.userId ?? OWNER) ? itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER) : []).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
+    const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER, item.userId !== (ctx.userId ?? OWNER)).filter((r) => r.id !== ctx.runId);
     // Where it hangs and what hangs under it (items/tree.ts); a line's suggested next steps (items/lines.ts).
     const parent = item.parentId ? one<{ id: string; title: string; kind: string; status: string }>(ctx.app.db, "select id, title, kind, status from items where id = ? and (? is null or space_id in (select value from json_each(?)))", item.parentId, readable && JSON.stringify(readable), readable && JSON.stringify(readable)) ?? null : null;
     const children = all<{ id: string; title: string; kind: string; status: string; due_at: string | null }>(ctx.app.db, "select id, title, kind, status, due_at from items where parent_id = ? and (? is null or space_id in (select value from json_each(?))) order by created_at", item.id, readable && JSON.stringify(readable), readable && JSON.stringify(readable)).map((c) => ({ id: c.id, title: c.title, kind: c.kind, status: c.status, dueAt: c.due_at }));
     const next = all<{ id: string; text: string; why: string; kind: string; status: string; created_at: string }>(ctx.app.db, "select id, text, why, kind, status, created_at from item_next where item_id = ? and status in ('open','doing') order by created_at desc limit 10", item.id);
-    return JSON.stringify({ item, ...(parent ? { parent } : {}), ...(children.length ? { children } : {}), ...(next.length ? { next } : {}), flow: (await import("../flows/engine.ts")).flowView(ctx.app, item.id), events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
+    return JSON.stringify({ item, ...(parent ? { parent } : {}), ...(children.length ? { children } : {}), ...(next.length ? { next } : {}), flow: can(ctx.app,ctx.userId ?? OWNER,"flows.view",item.spaceId) ? (await import("../flows/engine.ts")).flowView(ctx.app, item.id) : null, events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
   },
 });
 def({
@@ -2779,7 +2788,7 @@ def({
   schema: z.object({ item_id: z.string(), note: z.string().trim().min(1), source_refs: z.array(z.string()).min(1) }),
   handler: (ctx, a) => {
     const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
-    const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
+    const readable = itemScope(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces).spaceIds ?? null;
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能发现该事项");
     writeSpace(ctx);
     validateItemRefs(ctx.app, a.source_refs, ctx.userId ?? OWNER, ctx.spaces);
@@ -3514,7 +3523,7 @@ def({
     const { recordPoints, requireMetric, describeChange } = await import("../data/metrics.ts");
     const m = requireMetric(ctx.app, a.metric);
     inScope(ctx, m.spaceId, "指标");
-    const changes = await recordPoints(ctx.app, m.id, a.points, ctx.runId, !m.itemId && ownTurn(ctx) ? turnLine(ctx)?.id : undefined);
+    const changes = await recordPoints(ctx.app, m.id, a.points, ctx.runId, !m.itemId && ownTurn(ctx) ? turnLine(ctx, "items.operate")?.id : undefined);
     const told = m.status === "active" ? "（超过门槛，已告诉本人）" : m.status === "proposed" ? "（超过门槛；指标还待本人确认，没有通知）" : "（超过门槛；指标暂停中，没有通知）";
     const lines = changes.filter((c) => c.change).map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}${c.change!.flagged ? told : ""}`);
     return `已记 ${a.points.length} 个点。${lines.length ? `\n${lines.join("\n")}` : ""}`;
@@ -3739,7 +3748,10 @@ def({
   handler: async (ctx) => {
     const { listRules } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
-    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以查看任务规则");
+    if (ctx.userId && ctx.userId !== OWNER && !can(ctx.app, ctx.userId, "rules.edit")) {
+      const spaces = new Set(scopeFor(ctx.app, ctx.userId, ctx.spaces));
+      return JSON.stringify(listRules(ctx.app).filter(r => !r.temporary && (!r.spaceId || r.spaceId === ctx.spaceId) && ruleVisible(r, spaces)).map(ruleSummary));
+    }
     const rules = listRules(ctx.app).filter(r => !r.spaceId || r.spaceId === ctx.spaceId);
     return rules.length
       ? rules.map((r) => `- ${r.id} ${r.enabled ? "" : "（未启用）"}「${r.name}」：${r.description}\n  触发 ${r.trigger.event}${r.trigger.once === "chat" ? "（每群一次）" : ""} · 条件 ${describe(r.conditions)} · 判断 ${r.judge} · 动作 ${r.actions.map((a) => a.type + ("spec" in a ? `:${a.spec}` : "")).join("、")} · 命中 ${r.hits} 次`).join("\n")
@@ -3750,22 +3762,22 @@ def({
 def({
   name: "save_rule",
   description:
-    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议、飞书文档或表格有改动、事项上挂的合并请求这类平台对象变了状态）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。本人说“这个群 / 这里 / 当前会话”时不要按群名去查：条件写 {field: chat.id, op: equals, value: current}，保存时换成本会话的飞书群（不在飞书会话里会被拒绝）；定时和文档变化规则的结果默认发回本会话（“发到”，rule.conversationId 写 current 也是本会话），Agent 动作 reply 写 auto 才会在群里说话。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：会话中自动准备启用确认卡片，回复送达后展示，点击由宿主直接启用；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
+    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议、飞书文档或表格有改动、事项上挂的合并请求这类平台对象变了状态）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。本人说“这个群 / 这里 / 当前会话”时不要按群名去查：条件写 {field: chat.id, op: equals, value: current}，保存时换成本会话的飞书群（不在飞书会话里会被拒绝）；定时和文档变化规则的结果默认发回本会话（“发到”，rule.conversationId 写 current 也是本会话），Agent 动作 reply 写 auto 才会在群里说话。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：在主人会话中，回复后展示启用确认卡片；在成员会话中，启用确认单独交给系统主人；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；只有系统主人明确要求立即启用时才传 enabled=true。成员新建或更新已停用规则后须由主人确认启用。",
   write: true,
   schema: z.object({
     id: z.string().optional().describe("修改已有规则时填（list_rules）"),
     description: z.string().describe("本人的原话，写全：什么情况、做什么、回复方式"),
     name: z.string().optional(),
-    enabled: z.boolean().optional(),
+    enabled: z.boolean().optional().describe("成员可停用已启用的规则，启用须由系统主人确认"),
     rule: z.record(z.string(), z.unknown()).optional().describe("可选：完整结构 {trigger, conditions, judge, actions}，格式见 docs/v2/rules.md；不填由模型生成"),
   }),
   handler: async (ctx, a) => {
     if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "规则只能由主助手替本人设");
-    const { saveRule, getRule } = await import("../rules/store.ts");
+    const { getRule } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
-    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以设置规则");
+    requirePerm(ctx.app, ctx.userId ?? OWNER, "rules.edit");
     const current = a.id ? getRule(ctx.app, a.id) : undefined;
-    if (current?.spaceId) writeSpace(ctx, current.spaceId);
+    if (current?.spaceId) writeSpace(ctx, current.spaceId, "rules.edit");
     let input: Record<string, unknown>;
     if (a.rule) input = { ...(current ?? {}), ...a.rule, description: a.description };
     else {
@@ -3775,16 +3787,22 @@ def({
       input = d.rule;
     }
     const origin = ctx.runId ? getRun(ctx.app, ctx.runId).input.conversationId as string | undefined : undefined;
-    input.spaceId = writeSpace(ctx, (input.spaceId as string | undefined) ?? current?.spaceId ?? ctx.spaceId);
-    // Where replies go (发到): this conversation unless the rule already had one; “current” says so explicitly.
+    input.spaceId = writeSpace(ctx, (input.spaceId as string | undefined) ?? current?.spaceId ?? ctx.spaceId, "rules.edit");
+    const owner = (ctx.userId ?? OWNER) === OWNER;
     if (input.conversationId === "current" && !runLarkChat(ctx)) throw new HttpError(400, "这个会话不是飞书会话，“发到这个群”无从指定：请本人在规则页选择发到哪个会话");
-    input.conversationId = input.conversationId === "current" ? origin : current?.conversationId ?? origin;
-    for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space);
+    const target = input.conversationId === "current" ? origin : input.conversationId;
+    if (target != null && target !== current?.conversationId) {
+      if (!owner) throw new HttpError(403, "只有主人可以指定投递会话");
+      if (target !== origin) throw new HttpError(403, "要更换为其他投递会话，请在规则页选择");
+    }
+    const ownerConversation = owner && origin && findThread(ctx.app, origin)?.userId === OWNER ? origin : null;
+    input.conversationId = target ?? current?.conversationId ?? ownerConversation ?? undefined;
+    for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space, "rules.edit");
     // Forward targets: "current" is this conversation's chat; new targets only when the owner asked in this turn.
     const here = runLarkChat(ctx);
     // “This group” in the conditions: chat.id = current is the Feishu chat this conversation is in.
     if (input.conditions) input.conditions = currentChatIn(input.conditions as never, here);
-    const ownerAsked = ownerAskedThisTurn(ctx);
+    const ownerAsked = owner && ownerAskedThisTurn(ctx);
     for (const action of (input.actions ?? []) as { type?: string; to?: { chatId?: string; name?: string; kind?: string } }[]) {
       if (action.type !== "forward" || !action.to) continue;
       if (action.to.chatId === "current") {
@@ -3794,13 +3812,20 @@ def({
       const seen = one<{ name: string; chat_mode: string | null }>(ctx.app.db, "select name, chat_mode from lark_cursors where chat_id = ?", action.to.chatId ?? "");
       action.to = { ...action.to, name: action.to.name || seen?.name || "", kind: action.to.kind ?? (seen?.chat_mode === "p2p" ? "p2p" : "group") };
     }
-    const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent", undefined, { ownerAsked });
-    const confirmation = ctx.runId && origin ? confirmRule(ctx.app, saved, ctx.runId, origin) : null;
-    const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}${confirmation ? "\n已准备启用确认卡片，回复送达后自动展示；本人点击后由宿主直接启用，无需 AI 续轮。不要再用 ask_user 或 suggest_next 重复询问启用。" : ""}`;
+    const { rule: saved, confirmation } = saveRuleWithConfirmation(ctx.app, {
+      ...input, id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false,
+    } as never, ctx.userId ?? OWNER, { ownerAsked, runId: origin ? ctx.runId : null, ownerConversation });
+    const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
+    const confirmationNote = ownerConversation
+      ? "回复送达后，本会话会展示启用确认卡片，主人可直接点击启用。"
+      : "规则由系统主人确认启用，确认卡片会单独发给主人。";
+    let result = summary;
+    if (confirmation) result += `\n${confirmationNote}`;
+    else if (!saved.enabled && !owner) result += "\n规则保持停用，系统主人可在规则页核对后启用。";
     // Rules that need Feishu permissions (meetings): what is missing, with the links to apply, for the owner.
     const { rulePermissions, permissionText } = await import("../rules/permissions.ts");
     const p = await rulePermissions(ctx.app, saved);
-    return p.issues.length || p.notes.length ? `${summary}\n\n${permissionText(p)}\n把缺的权限和申请链接原样告诉本人。` : summary;
+    return p.issues.length || p.notes.length ? `${result}\n\n${permissionText(p)}\n把缺的权限和申请链接原样告诉本人。` : result;
   },
 });
 
@@ -3847,6 +3872,12 @@ def({
   }),
   handler: async (ctx, a) => {
     if (ctx.shadow) return "（对比运行）不向本人提问，按你认为最合理的选择继续。";
+    if (ctx.userId && findUser(ctx.app, ctx.userId)?.role === "observer") {
+      const ownChat = ctx.runId && one(ctx.app.db, `select 1 from runs r join conversations c
+        on c.id=coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))
+        where r.id=? and r.kind='ask' and c.user_id=? and r.user_id=c.user_id`, ctx.runId, ctx.userId);
+      if (!ownChat || a.to) throw new HttpError(403, "只能在自己的对话中追问");
+    }
     checkBrief(a.question, "问题");
     if (a.fields?.length && a.options?.length) throw new HttpError(400, "有 fields 时不给 options：选项写成一个 choice 字段");
     if (a.fields) checkFields(a.fields);
@@ -4274,7 +4305,7 @@ def({
     const rule = a.rule ?? runRule;
     if (a.rule) (await import("../rules/store.ts")).getRule(ctx.app, a.rule);
     const r = writeWorkFile(ctx.app, { spaceId, path: a.path, title: a.title, text: a.content, mode: a.mode, expires: a.expires === undefined ? undefined : a.expires, links: { item: a.item, rule }, runId: ctx.runId });
-    const eventItem = r.created ? a.item ?? (ownTurn(ctx) ? turnLine(ctx)?.id : undefined) : undefined;
+    const eventItem = r.created ? a.item ?? (ownTurn(ctx) ? turnLine(ctx, "items.operate")?.id : undefined) : undefined;
     if (eventItem) (await import("../items/store.ts")).addItemEvent(ctx.app, eventItem, "note", `工作文件 ${r.uri}`, ctx.actor, [`src:${r.id}`], ctx.runId ?? undefined);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "source", id: r.id }, at: now() } });
     return `${r.created ? "已新建" : r.status === "unchanged" ? "内容没变" : a.mode === "append" ? "已追加到" : "已更新"}工作文件 src:${r.id}（${r.uri}，${r.lines} 行${r.expiresAt ? `，${r.expiresAt.slice(0, 10)} 过期` : "，永久"}${a.item ? `，挂在事项 ${a.item}` : ""}${rule ? `，挂在规则 ${rule}` : ""}${followed}）`;
@@ -6988,6 +7019,14 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   mark(`tool ${name}`);
   // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
   if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };
+  const cap = toolCapabilities[name];
+  if (ctx.userId && ctx.userId !== OWNER && cap && !globalCapability(cap) && cap !== "items.view") {
+    const range = spacesWithCapability(ctx.app, ctx.userId, cap);
+    if (range !== null) {
+      if (name === "upsert_item") range.push(...spacesWithCapability(ctx.app, ctx.userId, "items.operate") ?? []);
+      ctx = { ...ctx, spaces: range.filter(id => !ctx.spaces || ctx.spaces.includes(id)) };
+    }
+  }
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };

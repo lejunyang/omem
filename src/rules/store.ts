@@ -10,6 +10,7 @@ import { fieldsOf } from "./conditions.ts";
 import { checkWaitRule } from "./fast.ts";
 import { ruleInputSchema, type Rule, type RuleAction, type RuleInput, type Temporary } from "./types.ts";
 import { OWNER } from "../core/users.ts";
+import { isOwner } from "../auth/permissions.ts";
 import { moveRuleWorkFiles } from "../sources/work.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
 import { getContext } from "../channels/listen.ts";
@@ -152,23 +153,30 @@ function checkMeetingRule(app: App, r: ReturnType<typeof ruleInputSchema.parse>)
   }
 }
 
-export function listRules(app: App, opts: { enabledOnly?: boolean } = {}): Rule[] {
-  return all<Row>(app.db, `select * from rules ${opts.enabledOnly ? "where enabled = 1" : ""} order by created_at`).map(toRule);
+export function listRules(app: App, opts: { enabledOnly?: boolean; spaces?: string[] | null } = {}): Rule[] {
+  return all<Row>(app.db, `select * from rules where ${opts.enabledOnly ? "enabled=1" : "1"} ${opts.spaces ? "and (space_id is null or space_id in (select value from json_each(?)))" : ""} order by created_at`, ...(opts.spaces ? [JSON.stringify(opts.spaces)] : [])).map(toRule);
+}
+
+export function findRule(app: App, id: string) {
+  const row = one<Row>(app.db, "select * from rules where id = ?", id);
+  return row ? toRule(row) : null;
 }
 
 export function getRule(app: App, id: string): Rule {
-  const r = one<Row>(app.db, "select * from rules where id = ?", id);
+  const r = findRule(app, id);
   if (!r) throw new HttpError(404, "规则不存在");
-  return toRule(r);
+  return r;
 }
 
-/** Create or replace a rule; checks it can work (conditions for code judging, a cron for schedules). */
-/** `actor`: who saves it through the web or API; a script runs on this machine, so only the owner may write one. */
-/**
- * `ownerAsked`: an agent saving the rule in a turn answering the owner's own message (save_rule), which
- * may set where it forwards to, as set_chat_watch may add the bot in such a turn.
- */
-export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user", actor?: string, opts: { ownerAsked?: boolean; origin?: Rule["origin"] } = {}): Rule {
+export type RuleSaveInput = RuleInput & { id?: string; temporary?: Temporary };
+type SaveOptions = { ownerAsked?: boolean; origin?: Rule["origin"] };
+
+export function saveRule(app: App, input: RuleSaveInput, by: "user" | "agent" = "user", actor?: string, opts: SaveOptions = {}): Rule {
+  return persistRule(app, input, by, actor, opts).rule;
+}
+
+/** Check the stored rule before writing either its new state or its schedule. */
+export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent", actor?: string, opts: SaveOptions = {}) {
   const r = ruleInputSchema.parse(input);
   if (r.actions.some((a) => a.type === "script") && (by !== "user" || actor !== OWNER || input.temporary))
     throw new HttpError(403, "带脚本的规则只能由本人在规则页保存：脚本在这台机器上执行");
@@ -224,6 +232,8 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
+  const needsOwnerConfirmation = !prev?.enabled && actor !== undefined && !isOwner(app, actor);
+  if (needsOwnerConfirmation) r.enabled = false;
   run(
     app.db,
     `insert into rules(id, name, description, enabled, trigger, conditions, judge, judge_with, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id, origin) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -252,7 +262,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   if (r.trigger.event === "schedule") upsertSchedule(app, { id: `rule:${id}`, kind: "rule", cron: r.trigger.cron!, config: { ruleId: id }, enabled: r.enabled });
   else if (prev && JSON.parse(prev.trigger).event === "schedule") deleteSchedule(app, `rule:${id}`);
   queueMicrotask(() => app.emit({ type: "changed", entity: "rule", id, spaceId: r.spaceId }));
-  return getRule(app, id);
+  return { rule: getRule(app, id), needsOwnerConfirmation };
 }
 
 export function deleteRule(app: App, id: string) {

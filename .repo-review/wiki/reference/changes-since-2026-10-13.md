@@ -36,6 +36,50 @@ updated: 2026-11-21
 - 服务端：`GET /api/item-sync` 的目标带 `items` 和 `synced_at`，数据源带 `targetHint`（`ItemProvider.targetHint`，GitHub 插件填了）；`externalView`（`src/items/providers.ts`）给 `GET /api/items/:id` 和 `GET /api/work/:id` 同一份 `external`，多了 `providerLabel`。
 - 演示数据加了一个虚构的“示例工单平台”（只注册数据源，不订阅），截图 `item-sync`、`item-external` 排在最后，经页面订阅和改状态拍出来；类型在 `web/src/lib/item-sync.ts`。
 
+## 全局 owner 启用普通规则（11-21）
+
+所有全局 owner 账号都可在网页或助手会话中直接启用普通定时通知规则。调度随保存生效。启用确认的角色判断见 `src/rules/store.ts`。
+
+## 读取不可见事项的流程（11-21）
+
+成员读取事项流程时，空间不可见与事项不存在都返回 404。流程路由的能力检查在 `src/auth/routes.ts`，事项的对象授权在 `src/items/access.ts`。
+
+## 成员在网页启用规则（11-21）
+
+成员在网页或助手中新建规则、重新打开停用规则时，先保存为停用。主人私聊收到对应版本的确认卡，点击启用后定时调度才生效。保存与调度从 `src/rules/store.ts` 读起，网页与助手共用的确认入口在 `src/rules/confirmation.ts`。
+
+## 成员请求立即启用通知规则（11-21）
+
+`src/rules/store.ts` 的 `saveRule` 按执行账号和规则保存前的状态决定是否启用。成员助手新建规则、修改已停用的规则时，规则保持停用，由系统主人确认后启用。
+
+## 通用流程的事项推荐（11-21）
+
+`src/flows/definitions.ts` 的 `flowsFor` 与成员开始流程共用适用条件。适用空间为空列表和省略时含义相同，推荐仍按事项类型筛选。
+
+## 成员开始流程时检查定义（11-21）
+
+网页和助手都从 `src/flows/engine.ts` 的 `startFlow` 启动。成员只可为自己的事项启动可见且适用的流程。隐藏定义按不存在处理，检查通过后才复制阶段。
+
+## 其他 owner 账号在助手里查看流程（11-21）
+
+从 `src/agents/tools.ts` 的 `callTool` 读起。账号拥有全部空间能力时，工具沿用运行的空间范围。其他 owner 账号列流程和获取推荐时也使用这个范围。
+
+## 成员在助手里查看流程（11-21）
+
+网页和 `list_flows` 共用 `src/flows/definitions.ts` 的空间判断。工具按本轮空间进一步筛选，事项推荐只使用筛选后的定义。
+
+## 成员在对话里保存规则（11-21）
+
+`src/agents/tools.ts` 的 `save_rule` 用来源会话解析“这个群”。成员保存普通通知规则时投递目标留空，已有规则保留原目标。成员发起的启用确认由系统主人处理，飞书把卡片发到主人私聊。
+
+## 成员查看运行写入记录
+
+历史事件和实时事件共用成员视图。只有能读取目标对象的人才能看到写入链接；规则动作在只读视图里只显示类型。从 `src/agents/run-writes.ts` 读起。
+
+## 成员按能力读取工作和评审（11-21）
+
+`src/auth/capabilities.ts` 定义能力、作用域和旧权限映射。从 `src/auth/routes.ts` 看接口登记，从 `src/items/access.ts` 和 `src/auth/run-scope.ts` 看对象和列表的范围。观察者读取共享工作线与事项；运行记录、评审差异与事件流检查完整运行范围。成员管理接口的请求示例见 `docs/v2/multi-user.md`。
+
 ## 设置 → 安全：操作规则和规则包（11-21）
 
 - 旧的“命令规则”卡（`CommandRulesSettings.vue`，只能写命令名加一条参数正则）换成 `web/src/components/OperationRulesSettings.vue`：按生效顺序一行一条（开关、标题或由匹配内容生成的一句、种类标签、处理方式的状态色、范围摘要、上移 / 下移、展开），点开编辑四种匹配（命令 / HTTP / 文件 / 工具）、处理方式、谁来批和等多久、范围（`OperationScope.vue`，成员 / 角色或档案 / 空间 / 后端多选）。整份 `PUT /api/security/operation-rules`；服务端的 `rules.N.字段: 原因` 错误显示在第 N 行下面。规则包里的规则只改范围和开关。HTTP 规则行尾写“还没有执行点”，其余种类悬停说明由谁执行。
