@@ -4886,7 +4886,7 @@ async function messageFileText(ctx: ToolContext, messageId: string, key?: string
   const { messageFile } = await import("../channels/lark-message-files.ts");
   const f = await messageFile(ctx.app, messageId, key, {
     user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id),
-    archivedSpace: ctx.incomingWork ? requireBoardLarkMessages(ctx, [messageId])[0].space_id : undefined,
+    archivedSpace: ctx.incomingWork ? requireBoardLarkMessages(ctx, [messageId]) : undefined,
     writable: ctx.boardAccess ? [] : ctx.writable,
   });
   if (f.sourceId) {

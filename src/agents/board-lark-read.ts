@@ -27,13 +27,14 @@ export function boardLarkDocument(ctx: ToolContext, doc: string) {
 
 export function requireBoardLarkMessages(ctx: ToolContext, ids: string[]) {
   if (!ids.length || ids.length > 50 || !ids.every(id => /^om_[\w-]+$/.test(id))) throw unbounded();
-  const found = all<{ message_id: string; space_id: string }>(ctx.app.db, `select m.message_id, min(s.space_id) space_id
+  const found = one<{ space_id: string }>(ctx.app.db, `select min(s.space_id) space_id
     from lark_messages m left join lark_message_lines l on l.message_id=m.message_id
     join sources s on s.id=coalesce(l.source_id, m.source_id)
     where m.message_id in (select value from json_each(?)) and s.kind='chat' and s.deleted_at is null
-    and s.space_id in (select value from json_each(?)) group by m.message_id`, JSON.stringify(ids), JSON.stringify(spaces(ctx)));
-  if (found.length !== new Set(ids).size) throw denied();
-  return found;
+    and s.space_id in (select value from json_each(?))
+    having count(distinct m.message_id)=?`, JSON.stringify(ids), JSON.stringify(spaces(ctx)), new Set(ids).size);
+  if (!found) throw denied();
+  return found.space_id;
 }
 
 function requireBoardLarkChat(ctx: ToolContext, id: string) {
