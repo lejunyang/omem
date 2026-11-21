@@ -11,6 +11,7 @@ import OperationRulesSettings from "../components/OperationRulesSettings.vue";
 import AuditTrail from "../components/AuditTrail.vue";
 const EgressSettings = defineAsyncComponent(() => import("../components/EgressSettings.vue"));
 const CloudToolsSettings = defineAsyncComponent(() => import("../components/CloudToolsSettings.vue"));
+const SandboxSettings = defineAsyncComponent(() => import("../components/SandboxSettings.vue"));
 
 /**
  * The settings page: the categories on the left (by what the owner is thinking about), the open one in
@@ -48,7 +49,7 @@ const TAB_KEYS: Record<Tab, { keys: string[]; legacy?: boolean }> = {
   members: { keys: ["auth", "agents.accounts", "agents.accountIsolation"] },
   peers: { keys: ["node", "webUrl", "backups"], legacy: true },
   shares: { keys: ["shares"] },
-  security: { keys: ["security", "approvals", "guard", "agents.cloudTools"] },
+  security: { keys: ["security", "approvals", "guard", "agents.cloudTools", "agents.ownSandbox", "agents.fullAccess"] },
   about: { keys: [] },
 };
 const owner = computed(() => !state.me || state.me.role === "owner");
@@ -97,7 +98,7 @@ const CARDS: Record<string, Tab> = {
   "agent-accounts": "members", desktop: "peers", "web-url": "peers",
   "lark-docs": "connect", "lark-capture": "connect", platforms: "connect", "source-parsers": "connect",
   timezone: "schedules",
-  "operation-rules": "security", "rule-packs": "security", "tool-approvals": "security", egress: "security", "cloud-tools": "security", trail: "security",
+  "operation-rules": "security", "rule-packs": "security", sandbox: "security", "full-access": "security", "tool-approvals": "security", egress: "security", "cloud-tools": "security", trail: "security",
 };
 /** Cards that were renamed: the old link lands on the new card. */
 const RENAMED: Record<string, string> = { "network-conditions": "backends", "command-rules": "operation-rules" };
@@ -227,11 +228,12 @@ onBeforeUnmount(() => {
         <section v-else-if="tab === 'security'" class="stack">
           <template v-if="owner">
             <OperationRulesSettings />
+            <SandboxSettings />
             <ApprovalSettings v-if="config" :config="config" :save="saveConfig" />
             <EgressSettings />
             <CloudToolsSettings />
           </template>
-          <p v-else class="card set-link muted">操作规则、工具审批、出网和云端工具只有{{ ownerName }}能看和改。</p>
+          <p v-else class="card set-link muted">操作规则、沙箱、工具审批、出网和云端工具只有{{ ownerName }}能看和改。</p>
           <AuditTrail v-if="owner || hasPerm('users.manage')" />
         </section>
         <section v-else-if="tab === 'about'" class="stack">

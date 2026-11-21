@@ -20,6 +20,14 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 网页接上本人沙箱和补齐的接口字段（2026-11-22）
+
+设置 → 安全 多了“运行的沙箱”和“完全访问”两张卡，从 `web/src/components/SandboxSettings.vue` 读起（纯函数在 `web/src/lib/sandbox.ts`，目录清单是 `SandboxPaths.vue`）。卡片读写 `GET` / `PUT /api/security/sandbox`，每次改动整份保存，“全部开”先确认并带 `confirmAll`；目录被拒时服务端的原因写在那一行下面。主目录从返回的路径里推出来（接口不给），用来把路径写成 `~/…`。
+
+网页改用服务端补齐的字段，去掉自己拼的逻辑：本人的称呼读 `/api/me` 的 `ownerName`（`web/src/lib/owner-name.ts`）；成员页每人的“通知出口”复用 `NotifyOutlets.vue`（`user` 属性，`?user=` / `userId`），成员能不能勾审批看 `grantedAskKinds`；进度视图取 `?summary=true` 的合计、`local`、`href` 和证据的 `target`（`web/src/lib/progress.ts`）；出网和云端工具用接口给的运行标题和 `availableTools`（`web/src/lib/run-titles.ts` 只剩 `runName`）；HTTP 规则“在哪里生效”读顶层 `enforcedBy`（`web/src/lib/rule-places.ts`）。
+
+`web/src/styles.css` 进度视图的窄屏 `@media` 少一个右括号，后面的“settings 2”一段原来只在窄屏生效，已补上。
+
 ## 主助手代答与复盘显示豆包实际审批档位（2026-11-22）
 
 从 `src/agents/doubao-cli.ts` 的启动入口读起。「使用 AI」按启动参数记录风险审批或完全访问。会话回退到豆包，以及复盘的两次评判，都在各自运行记录里看到实际档位。
