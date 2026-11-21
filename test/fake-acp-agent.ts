@@ -226,10 +226,16 @@ new AgentSideConnection(
             try {
               const report = await reports.callTool({name:"lookup",arguments:{}});
               const skill = await client.callTool({name:"read_skill",arguments:{name:"report-guide"}});
+              const attachment = (key: string) => client.callTool({ name: "lark_read", arguments: {
+                command: ["im", "+messages-resources-download", "--message-id", "om_reports", "--file-key", key],
+              } });
+              const saved = await attachment("file_saved");
+              const pending = await attachment("file_pending");
               const externalWrite = await client.callTool({name:"lark_write",arguments:{command:["task","+create"],summary:"创建测试任务"}});
               const outside = await client.callTool({name:"remember",arguments:{space:"other",kind:"fact",content:"项目 A 每周二检查。"}});
               const offered = await client.listTools();
-              await say(JSON.stringify({report:report.content,skill:skill.content,externalWriteDenied:!!externalWrite.isError,
+              await say(JSON.stringify({report:report.content,skill:skill.content,saved:saved.content,pending:pending.content,
+                pendingDenied:!!pending.isError,externalWriteDenied:!!externalWrite.isError,
                 outsideDenied:!!outside.isError,writer:servers.some(s => s.name === "writer"),platformRead:offered.tools.some(t => t.name === "lark_read")}));
             } finally { await reports.close(); }
             return { stopReason: "end_turn" };

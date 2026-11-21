@@ -102,6 +102,8 @@ export type ToolContext = {
   spaces: string[] | null;
   /** Spaces the caller may write, when narrower than `spaces` (related spaces are read-only). */
   writable?: string[];
+  /** Cross-device board writes include memories, pages and items only. */
+  boardAccess?: "read" | "write";
   /** Item discovery only; never grants ordinary read or write tool access. */
   itemDiscoverySpaces?: string[] | null;
   tools: Set<string> | null;
@@ -4869,7 +4871,10 @@ const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后
 async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
   featureGate(ctx, "messages");
   const { messageFile } = await import("../channels/lark-message-files.ts");
-  const f = await messageFile(ctx.app, messageId, key, { user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id), writable: ctx.writable });
+  const f = await messageFile(ctx.app, messageId, key, {
+    user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id),
+    writable: ctx.boardAccess ? [] : ctx.writable,
+  });
   if (f.sourceId) {
     await requireReadable(ctx.app, ctx.userId ?? OWNER, f.sourceId);
     const s = getSource(ctx.app, f.sourceId);

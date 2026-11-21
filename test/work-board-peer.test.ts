@@ -18,6 +18,7 @@ import { saveAgentSpec, saveSkill } from "../src/agents/specs.ts";
 import { artifactInbox, collectInbox } from "../src/agents/artifacts.ts";
 import { runProgress } from "../src/agents/progress.ts";
 import { workProgressView } from "../src/channels/lark-work-progress.ts";
+import { persistChatMessages } from "../src/channels/lark-messages.ts";
 import { refreshWork } from "../src/agents/agent-work.ts";
 import { selectDevice, workCommand, workDevices } from "../src/agents/work-device.ts";
 import { PEER_LOST_MS } from "../src/studies/remote.ts";
@@ -60,6 +61,18 @@ it.each(["read","write"])("remote %s 使用接活设备的技能和认证只读 
   saveMcpServer(f.there,"writer",command);
   saveAgentSpec(f.there,{name:"report-reader",description:"查平台报告",prompt:"核对签收日期",skills:["report-guide"],
     tools:["read_source","lark_read","lark_write","remember"],mcpServers:["reports","writer"]},"user");
+  const saved = importText(f.there, "personal", { title: "上期清单", text: "项目 A 已签收" });
+  writeFileSync(join(f.there.filesDir, "pending.txt"), "项目 A 本期清单");
+  persistChatMessages(f.there, {
+    chatId: "oc_reports", spaceId: "personal", name: "项目 A",
+    messages: [{ message_id: "om_reports", msg_type: "post", content: "两期清单", create_time: String(Date.now()) }],
+    resources: new Map([["om_reports", {
+      file_saved: { type: "file", name: "上期.txt", sourceId: saved.id },
+      file_pending: { type: "file", name: "本期.txt", file: "pending.txt" },
+    }]]),
+  });
+  const resources = () => all(f.there.db, "select resources from lark_messages where message_id='om_reports'");
+  const before = resources();
   await f.dispatch("remote",{agent:"report-reader",access}); await f.poll();
   const id = f.remoteRuns()[0].id;
   const result = await __testHandlers.get("peer-work")!({app:f.there,run:getRun(f.there,id),signal:new AbortController().signal,
@@ -69,6 +82,11 @@ it.each(["read","write"])("remote %s 使用接活设备的技能和认证只读 
   expect(report).toMatchObject({externalWriteDenied:true,outsideDenied:true,writer:false,platformRead:true});
   expect(report.report[0].text).toBe("项目 A 平台报告已签收");
   expect(report.skill[0].text).toContain("按签收日期核对报告");
+  expect(report.saved[0].text).toContain(`src:${saved.id}`);
+  expect(report.pendingDenied).toBe(true);
+  expect(report.pending[0].text).toContain("附件尚未存为原件");
+  expect(resources()).toEqual(before);
+  expect(all(f.there.db, "select id from sources where uri like 'lark:oc_reports/om_reports/%'")).toHaveLength(0);
   expect(listMemories(f.there,{})).toHaveLength(0);
 },60000);
 it.each(["local","borrow"])("远端独有档案退回 %s 时，排队前选用本机主助手并执行",async target => {

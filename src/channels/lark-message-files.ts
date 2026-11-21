@@ -55,7 +55,7 @@ export async function messageFile(app: App, messageId: string, key: string | und
   const name = ref?.name ?? new RegExp(`key="${k}"[^>]*name="([^"]+)"`).exec(content)?.[1] ?? k;
   if (ref?.sourceId && one(app.db, "select 1 from sources where id = ? and deleted_at is null", ref.sourceId)) return { key: k, name, chatId: chatId!, sourceId: ref.sourceId };
 
-  if (may.writable && !may.writable.includes(spaceId)) throw new HttpError(403, "本次运行不能在消息所在空间保存附件");
+  if (may.writable && !may.writable.includes(spaceId)) throw new HttpError(403, "附件尚未存为原件，本次运行不能在消息所在空间保存附件");
   const file = (ref?.file && storedPath(app, ref.file) ? ref.file : null) ?? (await messageResourceFile(app, messageId, k));
   const path = file ? storedPath(app, file) : null;
   if (!file || !path) throw new HttpError(404, `下载不到这个附件（本人的 lark-cli 和机器人都读不到它）`);

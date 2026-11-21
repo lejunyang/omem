@@ -593,7 +593,7 @@ export function prepareRun(
   // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
   const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
   const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
-  const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const token = issueToolToken({ browserProfilesRoot, boardAccess: input.boardAccess, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   return {
     profile,
     capabilities,
