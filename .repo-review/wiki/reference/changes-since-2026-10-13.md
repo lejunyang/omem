@@ -27,6 +27,8 @@ updated: 2026-11-22
 
 设置 → 设备：新卡“接别的设备派来的活”（`AcceptWorkSettings.vue`，`lib/accept-work.ts`），三档 `node.acceptWork` 只提交 `{node:{acceptWork}}`；按 `GET /api/peers` 的 paired[] 一行一台单独设，提交完整的 `acceptWorkFrom`。进度视图和任务板按尝试的 `mode` 写“借 ×× 的后端 / 在 ×× 跑”，历次尝试写期限、迟到标记和对方运行页链接（`lib/progress.ts` 的 `placeLabel`、`lateText`、`remoteHref`）；运行页的 `peer-work` 种类写“别的设备派来的任务”。演示数据（`scripts/doc-screens.ts`）加了一个本地假的 `/embeddings`、`/rerank` 接口和指向它的“示例云”服务商、一个插件向量提供者、配对设备 lab-mac，任务板的两块改成借它的后端和在它上面跑（其中一次迟到）。截图 `settings-search-providers`、`settings-devices-work`，重拍了 `search-providers`、`run-board`、`progress-board`。
 
+云端向量和重排的接口地址（`embeddings.url`、`rerank.api.url`）接受任何 `http` / `https` 地址，本机和内网的模型服务可以直接填（合并前只接受域名）；`src/core/config.ts` 的 `searchApiFields`。被检查拦下的阶段卡第一句不再重复标题（`web/src/lib/flow.ts` 的 `nextWords`）。
+
 ## 关注回查沿用问题材料的来源（2026-11-22）
 
 从 `src/channels/listen-problems.ts` 的 `trackProblem` 和 `problemsDue` 读起。问题记录保存会话材料的来源，后续更新合并已有来源。定时回查和当前处理带入问题正文时，都沿用这份记录。个人关注全程只用个人材料时，回查轮和下一轮都可使用个人向量插件。网页中本人的文字按会话空间登记。会议操作备注只在显式读取时计入材料，来源不明的会议纪要仍走全文和符号检索。

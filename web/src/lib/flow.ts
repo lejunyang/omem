@@ -188,7 +188,7 @@ export function nextWords(s: FlowStage, who?: string | null) {
     if (s.state === "gated") return `要开始这一段了，等 ${who} 同意：${task}。`;
     return `等 ${who}：${task}。`;
   }
-  if (s.state === "blocked" && s.gateReview) return `被检查拦下：${task}。核对下面的原因和证据，这一次仍然通过，或者等处理好以后重新检查。`;
+  if (s.state === "blocked" && s.gateReview) return `${s.instruction ? task + "。" : ""}核对下面的原因和证据：这一次仍然通过，或者等处理好以后重新检查。`;
   if (s.state === "blocked") return `卡住：${s.waitingOn === "owner" ? "等你处理" : s.waitingOn ? `等 ${s.waitingOn} 回复` : "等待处理"}。${task}。处理好后继续，或重开这一段。`;
   if (s.question === "skip") return `等你补充跳过的原因：${task}。`;
   if (s.question === "refuse") return `等你补充哪里还不行：${task}。写明原因后重开这一段。`;
