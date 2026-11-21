@@ -13,7 +13,8 @@ import Markdown from "./Markdown.vue";
 import Skeleton from "./Skeleton.vue";
 import UiSelect from "./UiSelect.vue";
 
-const props = withDefaults(defineProps<{ itemId: string; editable?: boolean }>(), { editable: true });
+/** `carrier`: whose item it is, when not the reader's (an observer, another member): their turn reads “等 小王”, and what only they decide is not shown. */
+const props = withDefaults(defineProps<{ itemId: string; editable?: boolean; carrier?: string | null }>(), { editable: true, carrier: null });
 const data = ref<FlowView | null>(null), error = ref(""), loading = ref(true), busy = ref(false);
 const selected = ref(""), historyCount = ref(10), picking = ref(false), definitions = ref<FlowDefinition[]>([]), choice = ref("");
 const pickerLoading = ref(false);
@@ -187,7 +188,7 @@ async function stop() {
         <button v-for="s in data.stages" :key="s.id" type="button" class="segment" :class="[stageColour(s), { selected: stage?.id === s.id, skipped: s.state === 'skipped' }]" :aria-pressed="stage?.id === s.id" @click="selected = s.id">
           <span class="segment-bar" />
           <span class="segment-name">{{ s.name }}</span>
-          <span class="segment-line">{{ stageLine(s, now) || "　" }}</span>
+          <span class="segment-line">{{ stageLine(s, now, carrier) || "　" }}</span>
         </button>
       </div>
       <div v-if="data.flow.canStartRound" class="round-done">
@@ -201,16 +202,16 @@ async function stop() {
           <li v-for="n in review.notes" :key="n">{{ n }}</li>
         </ul>
       </div>
-      <div v-for="s in upstreamAsks" :key="`up-${s.id}`" class="turn">
+      <div v-for="s in carrier ? [] : upstreamAsks" :key="`up-${s.id}`" class="turn">
         <p><span class="turn-kind">上游重开了</span>「{{ s.upstream!.name }}」重开了，正在做的「{{ s.name }}」是按重开前的做的。要停下吗？</p>
         <p class="turn-note">原因：{{ s.upstream!.reason }}。停下就取消这一段正在做的（交办只停下、不丢弃），等「{{ s.upstream!.name }}」做完再重新做；不答的话它做完后也要再复核一次。</p>
         <div v-if="editable" class="row wrap"><button type="button" class="btn sm primary" :disabled="busy" @click="answerUpstream(s, 0)">停下</button><button type="button" class="btn sm ghost" :disabled="busy" @click="answerUpstream(s, 1)">继续做</button></div>
       </div>
-      <div v-for="s in waiting" :key="s.id" class="turn">
-        <p>{{ nextWords(s) }}</p>
+      <div v-for="s in waiting" :key="s.id" class="turn" :class="{ theirs: !!carrier }">
+        <p>{{ nextWords(s, carrier) }}</p>
         <div v-if="editable" class="row wrap"><button v-for="(a, i) in stageActions(s)" :key="a.label" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button></div>
       </div>
-      <div v-for="c in asked" :key="c.id" class="turn">
+      <div v-for="c in carrier ? [] : asked" :key="c.id" class="turn">
         <p><span class="turn-kind">{{ changeHeads[c.type] }}</span>{{ c.summary }}</p>
         <Markdown v-if="c.detail" :source="c.detail" class="stage-text" />
         <p class="turn-note">
@@ -373,6 +374,8 @@ async function stop() {
 
 /* What waits for the owner: said once, with the buttons that state allows. */
 .turn { display: grid; gap: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--warn-soft); }
+/* Someone else's turn: said, not asked of the reader. */
+.turn.theirs { background: var(--sunken); }
 .turn p { margin: 0; font-size: 13.5px; line-height: 1.6; }
 
 .turn-kind { margin-right: 8px; font-weight: 600; color: var(--warn); }

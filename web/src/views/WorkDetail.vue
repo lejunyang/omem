@@ -30,7 +30,7 @@ import {
   byWeek, dayLabel, daysAgo, flatChildren, itemStatusLabel, nextKindLabel, readableIds, waitsForOwner, weekColumns,
   type ChangeLite, type RefTarget, type ChatActivity, type Child, type FlowLite, type LineNow, type NextLite,
 } from "../lib/work";
-import { sharedChildren, sharedClosed, sharedFlow, sharedNext, sharedTimeline, type SharedNode } from "../lib/shared-work";
+import { capIn } from "../lib/caps";
 import { itemKindLabel, relTime, state, toast } from "../store";
 
 /**
@@ -48,6 +48,11 @@ type Detail = {
   /** Its life (src/items/lifecycle.ts). */
   phase: "watching" | null; phaseSince: string | null; watchUntil: string | null; summary: string | null;
   ended: { at: string | null; status: string; reason: string | null } | null; openUnder: number;
+  /**
+   * Whose it is and what the reader may do (src/items/member-work.ts): someone other than the owner gets
+   * only what they may read, and no state of a line with some of it hidden (`partial`).
+   */
+  can?: { edit: boolean; operate: boolean }; mine?: boolean; partial?: boolean; person?: { id: string; name: string };
 };
 type Tab = "timeline" | "items" | "flow" | "people" | "listen" | "data";
 
@@ -57,27 +62,18 @@ const d = ref<Detail | null>(null), error = ref(""), loading = ref(true);
 const metricCount = ref(0);
 const expanded = ref(false);
 /**
- * Someone other than the owner with 看工作线 (lib/caps.ts): the server sends the line, its items, flow,
- * open next steps and changes (lib/shared-work.ts) and nothing to act on, so the page has no actions.
+ * Someone reading a line or item that is not theirs (the owner's, for an observer or a member): the server
+ * sends what they may read (src/items/member-work.ts), and the page leaves out what is not theirs to do or
+ * see: the actions, the people and groups, asking about it; a turn in its flow reads “等 <whose>”.
  */
-const shared = computed(() => !!state.me && state.me.role !== "owner");
-function fromShared(n: SharedNode): Detail {
-  const closed = sharedClosed(n);
-  return {
-    item: { id: n.id, title: n.title, kind: n.kind, status: n.status, spaceId: n.spaceId, parentId: n.parentId, now: null, detail: "", userId: "owner", dueAt: null, sourceRefs: [] } as unknown as WItem,
-    ancestors: [], now: null, next: sharedNext(n), children: sharedChildren(n), timeline: sharedTimeline(n),
-    chats: [], materials: [], listen: null, flow: sharedFlow(n) ? { ...sharedFlow(n)!, waitingOn: null } : null,
-    phase: n.phase === "watching" ? "watching" : null, phaseSince: null, watchUntil: null, summary: n.now?.summary ?? null,
-    ended: closed ? { at: null, status: n.status, reason: null } : null, openUnder: 0,
-  };
-}
+const shared = computed(() => d.value?.mine === false);
+const whose = computed(() => (shared.value ? d.value?.person?.name ?? null : null));
 let seq = 0;
 async function load() {
   const n = ++seq, want = id.value;
   if (!want) return;
   try {
-    const raw = await get<Detail | SharedNode>(`/api/work/${encodeURIComponent(want)}`);
-    const r = shared.value && !("item" in raw) ? fromShared(raw as SharedNode) : (raw as Detail);
+    const r = await get<Detail>(`/api/work/${encodeURIComponent(want)}`);
     if (n === seq && want === id.value) { d.value = r; error.value = ""; }
   } catch (e) {
     if (n === seq) error.value = (e as Error).message;
@@ -100,7 +96,9 @@ onBeforeUnmount(() => { ++seq; off(); resync(); clearTimeout(timer); });
 const item = computed(() => d.value?.item ?? null);
 const top = computed(() => !!item.value && !item.value.parentId);
 const isLine = computed(() => item.value?.kind === "line" || (top.value && !!d.value?.children.length));
-const editable = computed(() => !shared.value && !!item.value && (!state.me || item.value.userId === state.me.id));
+// What the server says this person may do with it (an older server sends no `can`: the owner's page).
+const editable = computed(() => !!item.value && (d.value?.can ? d.value.can.edit : !shared.value));
+const operable = computed(() => !!item.value && (d.value?.can ? d.value.can.operate : !shared.value));
 const spaceName = (sid: string) => state.spaces.find((s) => s.id === sid)?.name ?? sid;
 const kindWord = computed(() => (!item.value ? "" : isLine.value ? "工作线" : item.value.parentId ? `工作项 · ${itemKindLabel[item.value.kind] ?? item.value.kind}` : itemKindLabel[item.value.kind] ?? item.value.kind));
 const tone = computed(() => (d.value?.phase === "watching" ? "watch" : item.value?.status === "waiting" ? "warn" : ["done", "cancelled", "expired"].includes(item.value?.status ?? "") ? "quiet" : "ok"));
@@ -153,11 +151,12 @@ const tabs = computed(() => {
   return [
     { key: "timeline" as Tab, label: `时间线${x.timeline.length ? ` ${x.timeline.length}` : ""}` },
     { key: "items" as Tab, label: `工作项${kids ? ` ${kids}` : ""}` },
-    ...(x.flow || (!isLine.value && !shared.value) ? [{ key: "flow" as Tab, label: "流程" }] : []),
+    // Someone else's flow page reads the item and its flow: only with 看事项 and 看流程 there.
+    ...((x.flow && (!shared.value || (capIn("items.view", x.item.spaceId) && capIn("flows.view", x.item.spaceId)))) || (!isLine.value && !shared.value) ? [{ key: "flow" as Tab, label: "流程" }] : []),
     // The people and groups are the owner's notes: not shared.
     ...(shared.value ? [] : [{ key: "people" as Tab, label: "人和群" }]),
     ...(x.listen ? [{ key: "listen" as Tab, label: "关注设置" }] : []),
-    { key: "data" as Tab, label: `数据${metricCount.value ? ` ${metricCount.value}` : ""}` },
+    ...(!shared.value || (!x.partial && capIn("metrics.view", x.item.spaceId)) ? [{ key: "data" as Tab, label: `数据${metricCount.value ? ` ${metricCount.value}` : ""}` }] : []),
   ];
 });
 const tab = computed<Tab>({
@@ -200,6 +199,20 @@ async function decide(n: NextLite, status: "doing" | "declined") {
   try {
     const r = await put<NextLite>(`/api/item-next/${n.id}`, { status });
     toast(status === "doing" ? "已开始做这一步" : "不做这一步，以后少提这类", "ok", status === "doing" && r.runId ? `#/runs/${r.runId}` : undefined);
+    void load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+
+/** A next step written by hand (POST /api/work/:id/next): no run, it waits on the page like the others. */
+async function addNext() {
+  const x = item.value;
+  if (!x) return;
+  const r = await promptDialog("写一条下一步", { fields: [{ id: "text", label: "做什么", value: "", required: true, maxLength: 300 }, { id: "why", label: "为什么现在做（可不填）", value: "", maxLength: 500 }], okText: "记下" });
+  if (!r?.text?.trim()) return;
+  try {
+    await post(`/api/work/${x.id}/next`, { text: r.text.trim(), ...(r.why?.trim() ? { why: r.why.trim() } : {}) });
     void load();
   } catch (e) {
     toast((e as Error).message, "error");
@@ -333,7 +346,7 @@ const editing = ref(false);
           </div>
           <div v-else-if="expanded" class="goal-full"><Markdown :source="readableIds(item.detail, targets)" :space="item.spaceId" compact /><button type="button" class="lnk small" @click="expanded = false">收起</button></div>
           <p class="meta small muted">
-            <span v-if="shared">主人在推进的事，你可以看</span>
+            <span v-if="whose">{{ whose }} 在推进</span>
             <span v-if="item.dueAt" :class="{ overdue: daysAgo(item.dueAt) > 0 }">截止 {{ dayLabel(item.dueAt) }}</span>
             <span v-if="item.spaceId !== 'personal'">{{ spaceName(item.spaceId) }}</span>
             <span>{{ d.timeline.length }} 条变化</span>
@@ -341,8 +354,9 @@ const editing = ref(false);
           </p>
           <div v-if="!shared" class="acts row wrap">
             <button v-if="editable" type="button" class="btn ghost sm" @click="editing = true"><Icon name="edit" :size="14" />编辑</button>
-            <button v-if="top && !d.ended" type="button" class="btn ghost sm" title="现在整理现状和下一步" @click="refresh"><Icon name="refresh" :size="14" />更新</button>
-            <button v-if="top && editable && !d.ended" type="button" class="btn ghost sm" title="先观察、现在结束或放弃" @click="phasing = true"><Icon name="flag" :size="14" />收尾</button>
+            <button v-if="top && operable && !d.ended" type="button" class="btn ghost sm" title="现在整理现状和下一步" @click="refresh"><Icon name="refresh" :size="14" />更新</button>
+            <button v-if="editable && !d.ended" type="button" class="btn ghost sm" title="自己写一条下一步" @click="addNext"><Icon name="plus" :size="14" />下一步</button>
+            <button v-if="top && operable && !d.ended" type="button" class="btn ghost sm" title="先观察、现在结束或放弃" @click="phasing = true"><Icon name="flag" :size="14" />收尾</button>
             <button type="button" class="btn sm" :class="{ primary: !askOpen }" :aria-pressed="askOpen" @click="setAsk(!askOpen)"><Icon name="chat" :size="14" />问这条{{ isLine ? "线" : "工作项" }}</button>
           </div>
         </header>
@@ -354,7 +368,7 @@ const editing = ref(false);
           <div class="ph-head">
             <Icon :name="item.status === 'cancelled' ? 'x' : 'check'" :size="16" class="ph-icon" :class="{ dropped: item.status === 'cancelled' }" />
             <span class="ph-text"><strong>{{ item.status === "cancelled" ? "已放弃" : "已结束" }}</strong><template v-if="d.ended.at"> · {{ dayLabel(d.ended.at) }}</template><template v-if="d.ended.reason"> · <RichText :text="readableIds(d.ended.reason, targets)" :space="item.spaceId" /></template></span>
-            <button v-if="editable" type="button" class="btn sm" :disabled="busyPhase" @click="setPhase('active')"><Icon name="refresh" :size="14" />重新打开</button>
+            <button v-if="operable" type="button" class="btn sm" :disabled="busyPhase" @click="setPhase('active')"><Icon name="refresh" :size="14" />重新打开</button>
           </div>
           <div v-if="d.summary" class="ph-summary">
             <div class="ph-label small muted">收尾小结</div>
@@ -366,7 +380,7 @@ const editing = ref(false);
           <div class="ph-head">
             <Icon name="eye" :size="16" class="ph-icon" />
             <span class="ph-text"><strong>观察中</strong><template v-if="d.watchUntil"> · 到 {{ dayLabel(d.watchUntil) }}</template> · 期间群和指标照看；没有新问题会自动结束</span>
-            <span v-if="editable" class="row ph-acts">
+            <span v-if="operable" class="row ph-acts">
               <button type="button" class="btn sm" :disabled="busyPhase" @click="setPhase('done')">现在结束</button>
               <button type="button" class="btn sm ghost" :disabled="busyPhase" @click="setPhase('active')">回到进行中</button>
             </span>
@@ -375,11 +389,12 @@ const editing = ref(false);
 
         <section v-if="d.flow" class="flow" aria-label="流程进度">
           <div class="flow-head small muted">{{ d.flow.name }}<template v-if="d.flow.current"> · 现在在「{{ d.flow.current.name }}」</template></div>
-          <WorkStageTrack :flow="d.flow" />
-          <FlowWaiting :item="{ id: item.id, title: item.title, spaceId: item.spaceId }" :editable="editable" />
+          <WorkStageTrack :flow="d.flow" :who="whose" />
+          <FlowWaiting v-if="!shared" :item="{ id: item.id, title: item.title, spaceId: item.spaceId }" :editable="operable" />
         </section>
 
-        <ItemChain :item-id="item.id" />
+        <!-- Its chain and figures add up what is under it: not shown when some of that is not theirs to see. -->
+        <ItemChain v-if="!d.partial" :item-id="item.id" />
 
         <section class="busy" aria-labelledby="busy-title">
           <h2 id="busy-title" class="h2">最近忙这些</h2>
@@ -387,12 +402,14 @@ const editing = ref(false);
             <nav v-if="kidsTop.length" class="threads" aria-label="下面的工作项">
               <router-link v-for="c in kidsTop" :key="c.id" :to="`/work/${c.id}`" class="thread" :class="{ mine: !shared && waitsForOwner(c) }">
                 <span class="tt">{{ c.title }}</span>
-                <WorkStageTrack v-if="c.flow" :flow="c.flow" mini />
+                <WorkStageTrack v-if="c.flow" :flow="c.flow" :who="whose" mini />
               </router-link>
             </nav>
             <div class="weekcard card">
-              <RichText v-if="headline" tag="p" class="headline" :text="readableIds(headline, targets)" :space="item.spaceId" />
-              <p v-else class="headline muted">{{ top && !shared ? "还没整理过现状。" : "还没有记下的变化。" }}<button v-if="top && !shared" type="button" class="lnk" @click="refresh">现在整理</button></p>
+              <!-- Some of the line is not theirs to see: no state of the whole line, one quiet sentence instead. -->
+              <p v-if="d.partial" class="part">这条线有一部分你看不到，这里只列你能看的事项和变化。</p>
+              <RichText v-else-if="headline" tag="p" class="headline" :text="readableIds(headline, targets)" :space="item.spaceId" />
+              <p v-else class="headline muted">{{ top && !shared ? "还没整理过现状。" : "还没有记下的变化。" }}<button v-if="top && operable" type="button" class="lnk" @click="refresh">现在整理</button></p>
               <ol class="weeks">
                 <li v-for="w in columns" :key="w.label" :class="{ quiet: !w.text }">
                   <span class="wl"><Icon name="calendar" :size="13" />{{ w.label }}</span>
@@ -412,7 +429,7 @@ const editing = ref(false);
               <button type="button" class="stext" @click="sheet = { next: n }">{{ n.text }}</button>
               <span class="small muted swhy">{{ nextKindLabel[n.kind] }}<template v-if="n.why"><template v-if="nextKindLabel[n.kind]"> · </template><RichText :text="readableIds(n.why, { ...targets, ...n.refTargets })" :space="item.spaceId" /></template></span>
             </div>
-            <span v-if="shared" class="small muted">{{ n.status === "doing" ? "在做" : "没定" }}</span>
+            <span v-if="!operable" class="small muted">{{ n.status === "doing" ? "在做" : "没定" }}</span>
             <div v-else-if="n.status === 'open'" class="row sacts">
               <button class="btn sm" @click="decide(n, 'doing')">就这么做</button>
               <button class="btn sm ghost" @click="decide(n, 'declined')">不用</button>
@@ -431,7 +448,7 @@ const editing = ref(false);
             <p v-if="!d.timeline.length" class="muted">还没有记下的关键变化。事项跟进读群和文档、流程的阶段做完或卡住、指标越过门槛、在跟的问题有了结论，都会记在这里。</p>
             <section v-for="g in weeks" :key="g.n" class="week">
               <h3 class="wh">{{ g.label }}<span class="muted">{{ g.items.length }} 条</span></h3>
-              <WorkChange v-for="c in g.items" :key="c.id" :change="c" :line-id="item.id" :readonly="shared" @open="(x) => (sheet = { change: x })" @changed="load" />
+              <WorkChange v-for="c in g.items" :key="c.id" :change="c" :line-id="item.id" :readonly="!operable" @open="(x) => (sheet = { change: x })" @changed="load" />
             </section>
           </template>
 
@@ -458,7 +475,7 @@ const editing = ref(false);
           <!-- 流程 -->
           <template v-else-if="tab === 'flow'">
             <ItemFlowPage v-if="d.flow" :id="item.id" embedded />
-            <ItemFlow v-else :item-id="item.id" :editable="editable" />
+            <ItemFlow v-else :item-id="item.id" :editable="operable" :carrier="whose" />
           </template>
 
           <!-- 人和群 -->
@@ -507,7 +524,7 @@ const editing = ref(false);
     </div>
 
     <LineAsk v-if="askOpen && item && !shared" class="ask" :item-id="item.id" :title="item.title" :space-id="item.spaceId" :listen-id="d?.listen?.id ?? null" :line="isLine" @close="setAsk(false)" />
-    <WorkSheet v-if="sheet" :change="sheet.change" :next="sheet.next" :line-title="item?.title" :readonly="shared" @close="sheet = null" @changed="load" />
+    <WorkSheet v-if="sheet" :change="sheet.change" :next="sheet.next" :line-title="item?.title" :readonly="!operable" @close="sheet = null" @changed="load" />
     <WorkEdit v-if="editing && item" :item="item" @close="editing = false" @saved="load" />
     <WorkPhase v-if="phasing && item" :title="item.title" :watching="d?.phase === 'watching'" @close="phasing = false" @pick="(p, days) => setPhase(p, days)" />
   </div>
@@ -571,6 +588,7 @@ const editing = ref(false);
 .weekcard { padding: 18px 20px; display: grid; gap: 16px; min-width: 0; box-shadow: var(--shadow); }
 .headline { margin: 0; font-family: var(--serif); font-size: 17px; font-weight: 650; line-height: 1.6; overflow-wrap: anywhere; }
 .headline .lnk { font-family: var(--sans); font-size: 14px; font-weight: 400; margin-left: 6px; }
+.part { margin: 0; font-size: 13px; color: var(--muted); }
 .weeks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .weeks li { display: grid; gap: 6px; align-content: start; padding-left: 12px; border-left: 1.5px dashed var(--line-strong); min-width: 0; }
 .wl { display: flex; gap: 5px; align-items: center; font-size: 12.5px; font-weight: 600; color: var(--ink); }

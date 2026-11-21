@@ -10,6 +10,8 @@ import { mayPropose } from "./choices.ts";
 import { LINE_ENDED } from "./expiry.ts";
 import { addItemEvent, getItem, isClosed, onItemStatus, upsertItem, type Item } from "./store.ts";
 import { holdForToday } from "./today-time.ts";
+import { mayRunRoutine } from "./member-routine.ts";
+import { OWNER } from "../core/users.ts";
 import { descendantIds, lineLike, openUnder, rootOf } from "./tree.ts";
 
 /**
@@ -365,11 +367,14 @@ export function flowCompleted(app: App, itemId: string) {
 export function queueWrapUp(app: App, item: Item) {
   const lane = `line-wrap:${item.id}`;
   if (runsInLane(app, lane).length) return null;
+  // A member's line: only with their routine on and their own AI account (items/member-routine.ts).
+  const member = item.userId !== OWNER;
+  if (member && !mayRunRoutine(app, item.userId)) return null;
   return createRun(app, {
     kind: "agent", spaceId: item.spaceId, lane, userId: item.userId,
     title: `收尾「${truncate(item.title, 40)}」`,
     input: {
-      spec: "assistant", task: wrapUpTask(app, item), lineState: item.id, lineWrapUp: true,
+      spec: "assistant", task: wrapUpTask(app, item), lineState: item.id, lineWrapUp: true, ...(member ? { ownAccountOnly: true } : {}),
       assistantScope: { spaces: [...new Set([item.spaceId, "personal"])], userId: item.userId, denyTools: [...lineStateDenied("suggest"), "upsert_item"], lark: { chats: [], draft: true } },
     },
   });

@@ -21,6 +21,7 @@ import { handlerOfOrigin, noteHandling } from "../core/handling.ts";
  *   linked to (agents/meeting-outcomes.ts);
  * - `review`: a review of the item's coding came to its verdict (agents/review-chain.ts);
  * - `commit`: the owner said commits on a branch belong to the item (flows/commits.ts).
+ * - `member`: a member answered what the assistant asked them for the owner (items/member-progress.ts).
  *
  * All but `follow` are written as `noted`: they never ask and never make cards. A line's timeline is its
  * own changes together with those of everything under it.
@@ -40,12 +41,13 @@ import { handlerOfOrigin, noteHandling } from "../core/handling.ts";
  * | commit claim (`commit`)        | repo, branch and the run that found them        | `commits:<repo>/<branch>@<run id>`  |
  * | meeting summary (`meeting`)    | meeting id and the cited lines of its record   | `meeting:<id>#L<first line>`        |
  * | line's life (`line`)           | nothing outside the host                       | none (every row is its own)         |
+ * | a member's answer (`member`)   | the question asked for the owner (member-progress.ts) | `ask:<ask id>`               |
  *
  * A chat line is keyed by its Feishu message (the same message kept in two copies is one key); a document's
  * lines by a hash of their text (an edit that only moves them keeps the key). The row keeps who noted it
  * first (`origin`, `run_id`, `at`) and who added to it later (`added`).
  */
-export type ChangeOrigin = "follow" | "flow" | "metric" | "problem" | "owner" | "line" | "meeting" | "review" | "commit";
+export type ChangeOrigin = "follow" | "flow" | "metric" | "problem" | "owner" | "line" | "meeting" | "review" | "commit" | "member";
 export const CHANGE_TYPES = ["scope", "decision", "deadline", "blocker", "info", "stage", "result", "owner", "resolved", "todo", "question"] as const;
 export type ChangeType = (typeof CHANGE_TYPES)[number];
 

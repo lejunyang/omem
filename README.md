@@ -172,7 +172,7 @@ npm install -g @omem-ai/cli
 
 内置技能包括 `wiki-writing`、`lark-messaging`、`desktop-control`、`meeting-assist`（旁听会议时按会议性质主动查），以及 `research`（先查库、再查外部并交叉核对，给出有依据的结论）和 `improve-loop`（按可检查的目标逐轮改进，保留有效改动，停滞时换方向或交回）。启动时补进技能库，已有内容不覆盖。 编码改进目标由宿主固定度量命令、测基线，逐轮检查并决定留下或新增提交回退；达到目标、预算用完、连续四轮无效或到点就停止并发报告。运行页能看前后数字和每轮结果，循环不合并或推送分支。
 
-成员还可以使用“网页只读观察者”预设，在获准空间查看工作线、事项、运行和评审。每个人能做什么在 设置 → 成员 → 能做什么 里按项给或不给，可以只在某个空间另设；网页只显示他能用的入口和按钮，见[成员能力](docs/v2/multi-user.md#成员能力)。
+成员还可以使用“网页只读观察者”预设，在获准空间查看工作线、事项、运行和评审。成员打开“工作”看到他能读的线（线下有他读不到的事项时不给整条线的现状）和他自己的线，右栏是等他处理的；他的线每天整理只用他自己登录的 AI 账号，默认不开。助手可以替你问成员某条线的进展（“去问小林退款接口到哪了”），回答记成那条线的一条变化，见[成员的工作页](site/features/work-lines.md#成员的工作页)。每个人能做什么在 设置 → 成员 → 能做什么 里按项给或不给，可以只在某个空间另设；网页只显示他能用的入口和按钮，见[成员能力](docs/v2/multi-user.md#成员能力)。
 
 ## 日常用途
 
@@ -649,7 +649,7 @@ src/remote    远程操作：aad 的进程（assist、mcp、record）、会话�
 src/sources   归档规则与原件迁移（archive.ts）、知识库的文档归位（kb-home.ts）、从个人空间归位（homing.ts：旁证、重判、工作文件跟着事项）、页面引用的可达性（reach.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记、代码索引的基线与定期同步（code-baseline.ts、code-index.ts）；标注强度、复核候选与本人清单（attention.ts）
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合、重排（rerank.ts）
 src/memory    记忆（目录、有效期、版本链、写入检查与复核统计、对话或任务前带上相关记忆、日常不足信号）
-src/items     事项（时间线）、工作线（上下层 tree.ts / parent.ts、现状与下一步 lines.ts、观察与结束 lifecycle.ts、关键变化 changes.ts、早上一张“今天” today.ts、需求到交付的只读链路 chain.ts、工作页接口 work-http.ts）、需求树（requirements.ts）、需求点下的编码（work.ts）、一件事在哪些会话里进行（places.ts）
+src/items     事项（时间线）、工作线（上下层 tree.ts / parent.ts、现状与下一步 lines.ts、观察与结束 lifecycle.ts、关键变化 changes.ts、早上一张“今天” today.ts、需求到交付的只读链路 chain.ts、工作页接口 work-http.ts、成员看到的线 member-work.ts、成员线的例行整理 member-routine.ts、替本人问成员进展 member-progress.ts）、需求树（requirements.ts）、需求点下的编码（work.ts）、一件事在哪些会话里进行（places.ts）
 src/flows     事项流程：YAML 定义、阶段与关卡、推进、对象注册表、插件对象的轮询与动作（plugin-objects.ts、object-actions.ts）、提醒、结束时的回顾与 coach 复盘、工具及 HTTP、事项流程条与定义编辑页
 src/studies   课题：方向 / 试验 / 发现台账、提案对账与本人选择、逐个试验、覆盖情况、工具及 HTTP；把试验派给另一台设备（remote.ts / remote-host.ts）
 src/designs   方案：决定、意见与版本（store.ts）、给 Agent 读的 Markdown（render.ts）、评估别人的方案（assess.ts）、交办里的方案阶段与确认（work.ts）、按决定汇总改动（changes.ts）

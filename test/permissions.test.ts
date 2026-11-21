@@ -117,7 +117,8 @@ describe("roles and permissions", async () => {
     const work = await json("observer-test", "/api/work");
     expect(work.lines.map((line: { id: string }) => line.id)).toContain(visible.id);
     expect(work.lines.map((line: { id: string }) => line.id)).not.toContain(hidden.id);
-    expect(work).not.toHaveProperty("waiting");
+    // Their own “等我的” only: nothing of the owner's.
+    expect(work.waiting.total).toBe(0);
     expect((await json("observer-test", "/api/items/" + visible.id)).can).toEqual({ edit: false, operate: false });
     expect((await as("observer-test", "/api/items/" + hidden.id)).status).toBe(404);
     expect((await as("observer-test", "/api/items/" + visible.id, { method: "PATCH", body: '{"title":"编辑"}' })).status).toBe(403);

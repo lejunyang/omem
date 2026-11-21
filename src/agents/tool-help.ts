@@ -57,7 +57,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "delegate", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", ...WORK_BOARD_TOOLS, "ask_agent", "list_ai_backends", "switch_run_ai", "list_runs", "read_run", "take_over_run", "revise_reply_outcome", "review_reply_outcomes"] },
   { id: "skills", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "organize_skills", "save_agent", "propose_profile_change"] },
   { id: "remote", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },
-  { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "wait_answer", "withdraw_ask", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
+  { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "ask_member_progress", "wait_answer", "withdraw_ask", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
   { id: "wake", label: "唤醒、规则与在跟的问题", doc: "owner", tools: ["wake", "cancel_wake", "track_problem", "list_rules", "save_rule", "report_rule_failure"] },
   { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["propose_repo_lesson", "delegate_code", "review_branch", "share_review", "continue_code_run", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
   { id: "improve", label: "改进循环：度量、留下或回退", doc: "code", tools: ["improve_start", "improve_round", "improve_status"] },
