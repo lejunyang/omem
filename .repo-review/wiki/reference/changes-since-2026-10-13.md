@@ -20,6 +20,16 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 成员的线和“等我的”，助手替本人问成员进展
+
+- 成员看到的线：`src/items/member-work.ts`。成员和观察者的 `GET /api/work`、`/api/work/:id`、`/api/work/activities`、`/api/work/ended` 与本人同一个形状（原来的精简树 `sharedLines` 和网页的 `lib/shared-work.ts` 删了）。`viewerOf` 取“看工作线”的空间和自己事项的空间；`seesLine` 判一条线给不给（自己的，或本人在“看工作线”空间里的，不含候选 / 等待 / 稍后）；`visibleTree` 逐层判下面的事项（自己的，或本人的、在“看工作线”空间里、`itemAccess` 能读、不是候选 / 等待 / 稍后；上层看不到的下层也不给），有一件看不到就是 `partial`：不给 `now`、线自己的下一步、收尾小结、结束原因。计数、时间线、按时间（`changeFilter`）、已结束的线（`memberEnded`，partial 的不按小结搜）都只算看得到的；引用经 `scrubTargets` 只留读得到的事项和运行。每条线和详情带 `partial / mine / person / can`。
+- 成员自己的线：`POST /api/items` 建 `kind: line` 原来就按请求者；新 `POST /api/work/:id/next`（`addNext`）手写下一步；`PUT /api/work/:id/phase`、`POST /api/work/:id/refresh`、`PUT /api/items/:id/parent`、`PUT /api/item-next/:id`、`PUT /api/item-changes/:id/noise` 从“只给本人”改成按事项本人和 `items.edit` / `items.operate`（`routes.ts` 这几行改了），别人的线 403。
+- 例行整理：`src/items/member-routine.ts`。`users.settings.lineRoutine`（默认关；`GET/PUT /api/work/routine`，本人可带 `user` 替成员改，写 `audit_events`）。`mayRunRoutine` 在 `listen-assist.ts assistDue`、`lifecycle.ts queueWrapUp`、`flows/follow.ts` 排运行前检查：开着、登录了自己的 AI 账号、`sandboxSupport` 能隔离；不够就不排，原因存 kv 给工作页。这些运行的输入带 `ownAccountOnly`，`runner.ts runRole` 只留带成员自己账号的候选后端，一个都没有就失败，不借本人的登录。成员手动“更新”“就这么做”也查 `ownAccountProblem`（409）。
+- 等我的：`pending.ts` 原来就按人取；能进工作页的人事项链到 `#/work/<id>`。`GET /api/work/today` 返回 `buildToday(app, now, 本人)` 的文字（不带选项，不发卡）。网页：成员的右栏只在有等他的时候出现，顶上一行可以展开的“今天”。流程：`web/src/lib/flow.ts` 的 `stageLine` / `nextWords` 和 `WorkStageTrack`、`ItemFlow` 多一个“是谁的”参数，不是自己的写“等 某人”。
+- 问进展：`src/items/member-progress.ts` 和工具 `ask_member_progress`（`tool-help.ts` 的 `ask` 组，`auth/tools.ts` 要 `users.manage`，处理器里再查只有本人的运行）。`checkProgressAsk`：本人的事项、对方是在用的成员（不是观察者）、对方在工作页上看得到或有“看事项”。没本人确认先 `held`（本人这一轮亲口要的除外，`ownerAskedThisTurn`）；发出建一条归对方的提问（`context.handler = member-progress`、`askedBy`、`progressItem`，没有 runId），同一件事一人一条，再问用 `reviseAsk` 改；写 `audit_events`（`member-progress.ask`）。回答由处理器经 `recordChange`（`origin: member`，`source: ask:<id>`）记成 `info` 变化并 `notify`（later）；“现在说不了”记 kv，`PROGRESS_COOLDOWN_MS`（三天）内不再问。`roles/assistant.md` 加“向成员要进展”一小节，`skills/omem/references/owner.md` 写要点。
+- 对别人显示本人的名字：`users.ts nameForOthers`（本人自己的“本人”换成本人的名字，没有就是“主人”），`asks.ts` 的通知和 `lark-asks.ts` 的卡片说明用它。
+- 账号页“线的例行整理”开关（`web/src/views/Account.vue`）；文档截图 `work-member`（演示数据里小林的线和一条问进展）。测试 `test/member-lines.test.ts`、`member-progress.test.ts`、`flow-web.test.ts`。
+
 ## 2026-11-21 · 变化台账：一件事只记一次、谁接手了、本人取舍过什么
 
 - 幂等写入：`src/items/changes.ts` 的 `recordChange` 是 `item_changes` 唯一的写入口（`addChange` 是它的包装）。键是“来源 + 事项 + 类型”：聊天的行换成飞书消息 id（同一条消息在两份原件里是一个键），文档的行按那几行文本的哈希，宿主自己的事件用自己的键（`problem:`、`metric:<id>@<点的时间>`、`stage:`、`review:`、`commits:`、`meeting:<id>#L…`）。同一个键再来：说法相同不动；更具体的（补了日期、细节、风险、更完整的一句）更新原行，`added` 记谁补了什么；本人处理过的（并进 / 另开 / 不用）不改说法；同一次运行用不同说法交的、提议不同日期的各留一条（键加 `~2`）。各写入方能拿到的来源列成表写在 `changes.ts` 开头。item-follow、`upsert_item` 的 `change_type`、在跟的问题、指标、流程阶段都经它；评审结论（`review-chain.ts`）和提交认领（`commits.ts`）也记进时间线了。旧行没有键照常显示。

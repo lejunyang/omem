@@ -20,6 +20,15 @@ describe("流程呈现", () => {
     expect(stageLine(s({ state: "stale" }))).toBe("待复核");
     expect(stageLine(s())).toBe("");
   });
+  it("别人的事项写“等 某人”，不写“等你 / 轮到你”", () => {
+    expect(stageLine(s({ state: "gated" }), Date.parse(at) + 14400000, "小王")).toBe("等 小王 · 4 小时");
+    for (const st of [s({ state: "doing", by: "owner" }), s({ state: "gated" }), s({ state: "blocked", waitingOn: "owner" }), s({ state: "doing", question: "done" })]) {
+      const words = nextWords(st, "小王");
+      expect(words).toContain("小王");
+      expect(words).not.toMatch(/轮到你|等你/);
+    }
+    expect(nextWords(s({ state: "doing", by: "owner" }))).toContain("轮到你");
+  });
   it("按钮区分进入关卡、本人执行、完成确认和卡住，要求原因的动作不会遗漏", () => {
     expect(stageActions(s({ state: "gated" })).map((a) => a.label)).toEqual(["开始", "先别做", "跳过这一段"]);
     expect(stageActions(s({ state: "doing", by: "owner" })).map((a) => a.label)).toEqual(["做完了", "跳过这一段"]);
