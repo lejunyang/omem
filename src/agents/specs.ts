@@ -1,3 +1,4 @@
+import { toolSections } from "./instruction-sections.ts";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -135,6 +136,9 @@ export function readAgentSpec(app: App, name: string): AgentSpec {
   }
   const { meta, body } = splitFrontmatter(readFileSync(file, "utf8"));
   const parsed = agentSpecSchema.parse({ ...meta, name });
+  for (const text of [body, parsed.instructions]) {
+    if (text?.includes("<!-- when:")) toolSections(text, new Set());
+  }
   return { ...parsed, prompt: body };
 }
 

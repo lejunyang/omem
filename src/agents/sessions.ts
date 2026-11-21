@@ -382,7 +382,13 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
     const p = resolveRunProfile(app, { actor, profileId: t.settings.profile ?? undefined, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
     ctx.event("status", choiceEvent({ scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: "这个会话用 /model 或会话设置指定了 AI" }));
   }
-  const prep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess });
+  const watched = messages.some((m) => typeof m.meta.speaker === "string");
+  const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
+  const handoff = (ctx.run.input as { handoff?: { kind: string } }).handoff;
+  // Only wake notes in this turn (none from the owner): the agent picks up its own work.
+  const woken = messages.every((m) => !!m.meta.wake);
+  const scene = { kind: ctx.run.kind, chat: !coordinate && !handoff && !woken && !watched, awareness: !promptOverride };
+  const prep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess });
   // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
   const limitFor = { profile: prep.profile };
   const emit = (e: AgentEvent) => {
@@ -397,11 +403,6 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const cloudKey = (selected: typeof prep) => selected.capabilities.omemAccess === "http"
     ? "|http:" + [selected.capabilities.cloudHttp, ...selected.tools].join(",") : "";
   const sessionKey = keyOf(prep.profile) + cloudKey(prep);
-  const watched = messages.some((m) => typeof m.meta.speaker === "string");
-  const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
-  const handoff = (ctx.run.input as { handoff?: { kind: string } }).handoff;
-  // Only wake notes in this turn (none from the owner): the agent picks up its own work.
-  const woken = messages.every((m) => !!m.meta.wake);
   const tooLong = t.agentTurns >= app.config.sessions.maxTurns;
   const canResume = !!t.agentSession && t.agentProfile === sessionKey && t.agentCwd === prep.cwd && !tooLong;
   const said = coordinate || handoff || watched || woken ? "" : messages.filter((m) => m.role === "user").map((m) => m.text).join("\n");
@@ -488,12 +489,14 @@ ${WAKE_NOTE}`
         ? (withTools ? watchedText!.full : watchedText!.facts)
         : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${withTools ? NEW_TURN_NOTE : "回答本人的新消息。"}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${currentBrief}` : ""}`) + (promptOverride ? "" : awarenessNote(app, ctx.run.id, withTools, resolved)) + (sentFocus ? `\n\n${focus!.text}` : "") + (asked ? `\n\n${asked.text}` : "");
     const context = fresh ? `# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString(), ownerCold(currentBrief), withTools)}\n\n---\n\n` : "";
-    return { prompt: `（${selected.now}）\n\n${context}${newPart}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
+    const changed = !fresh && t.settings.instructionScene !== selected.scene.join(" ");
+    const sceneUpdate = changed ? `\n\n# 本轮适用的场景说明（替代先前按场景选择的小节）\n\n${selected.sceneGuide || "本轮没有适用的小节。"}` : "";
+    return { prompt: `（${selected.now}）\n\n${context}${newPart}${sceneUpdate}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
   };
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
   const save = (sessionId: string | undefined, turns: number, on: AgentProfile = prep.profile) =>
-    updateThread(app, threadId, { agentProfile: keyOf(on) + cloudKey(on === prep.profile ? prep : curPrep), agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns, ...(sentFocus && focus ? { settings: { ...getThread(app, threadId).settings, focusSeen: { hash: focus.hash, turn: turns } } } : {}) });
+    updateThread(app, threadId, { agentProfile: keyOf(on) + cloudKey(on === prep.profile ? prep : curPrep), agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns, settings: { ...getThread(app, threadId).settings, instructionScene: (on === prep.profile ? prep : curPrep).scene.join(" "), ...(sentFocus && focus ? { focusSeen: { hash: focus.hash, turn: turns } } : {}) } });
   // The session this thread had is not coming back once a new one replaced it: remove it from the
   // backend's own list (Codex, TraeX, Doubao keep every session the owner can browse).
   const retireReplaced = (sessionId: string | undefined) => {
@@ -520,6 +523,7 @@ ${WAKE_NOTE}`
             capabilities: prep.capabilities,
             system: prep.system,
             parts: prep.parts,
+            scene: prep.scene,
             ...turnMessage(prep, !resume),
             allowWrites: prep.allowWrites,
             modes: prep.modes,
@@ -602,7 +606,7 @@ ${WAKE_NOTE}`
       limitFor.profile = used;
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess });
+      curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess });
       // The fallback runs with this member's own account of it when they have one (prepareRun chose it).
       used = curPrep.profile;
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
@@ -622,6 +626,7 @@ ${WAKE_NOTE}`
             capabilities: curPrep.capabilities,
             system: curPrep.system,
             parts: curPrep.parts,
+            scene: curPrep.scene,
             ...turnMessage(curPrep, true, carry),
             allowWrites: curPrep.allowWrites,
             modes: curPrep.modes,
@@ -706,7 +711,7 @@ ${WAKE_NOTE}`
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          const again = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
+          const again = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess });
           const handle = await openAcp(
             networkProfile(app, again.profile),
             { app, signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },

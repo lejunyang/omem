@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { prepareRun, runRole, toolSections } from "../src/agents/runner.ts";
+import { loadRole, prepareRun, runRole, toolSections } from "../src/agents/runner.ts";
 import { remember } from "../src/memory/store.ts";
 import type { App } from "../src/core/app.ts";
 import { createRun } from "../src/agents/runs.ts";
@@ -38,6 +38,42 @@ describe("what the instructions carry", () => {
     expect(toolSections(text, new Set(["scan"]))).toBe("intro\n## A\nfiles\n## B\nlookup");
     expect(toolSections(text, new Set(["scan"]), false)).toBe("intro\n## B\nlookup");
     expect(toolSections(text, new Set(), true)).toBe("intro");
+  });
+
+  it("requires all words on one when line, accepts alternate lines and checks hidden words", () => {
+    const body = "## 条件\n<!-- tools: search -->\n<!-- when: chat !awareness -->\n<!-- when: background code -->\n正文";
+    const render = (...scene: string[]) => toolSections(body, new Set(["search"]), true, scene);
+    expect(render("chat")).toContain("## 条件");
+    expect(render("background", "code")).toContain("## 条件");
+    expect(render("chat", "awareness")).toBe("");
+    expect(render("background", "review")).toBe("");
+    expect(toolSections(body, new Set(), true, ["chat"])).toBe("");
+    expect(() => toolSections(body.replace("code", "!typo"), new Set(), true, ["chat"])).toThrow("!typo");
+  });
+
+  it("checks the owner's role copy on load and renders both parts of an agent profile", async () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    const { customizeRole, saveRoleOverride } = await import("../src/agents/builtin-roles.ts");
+    const { readAgentSpec, saveAgentSpec } = await import("../src/agents/specs.ts");
+    const { revokeToolToken } = await import("../src/agents/tools.ts");
+    const original = customizeRole(app, "coder");
+    const extra = "\n## 仅交谈\n<!-- when: chat -->\n正文";
+    saveRoleOverride(app, "coder", original + extra);
+    saveAgentSpec(app, { name: "reader", description: "阅读", prompt: "## 常规\n正文" + extra,
+      instructions: "## 写入\n<!-- when: memory-write -->\n正文", tools: ["search"] }, "user");
+    for (const actor of [{ role: "coder" as const }, { spec: readAgentSpec(app, "reader") }]) {
+      for (const chat of [true, false]) {
+        const prepared = prepareRun(app, { actor, spaceId: "personal", runId: null, scene: { chat } });
+        revokeToolToken(prepared.token);
+        expect(prepared.system.includes("## 仅交谈")).toBe(chat);
+        expect(prepared.system).not.toContain("## 写入");
+        if ("spec" in actor) expect(prepared.system).toContain("## 常规");
+      }
+    }
+    saveRoleOverride(app, "coder", original + extra.replace("when: chat", "when: typo"));
+    expect(() => loadRole("coder", app)).toThrow("typo");
+    app.db.close();
   });
 
   it("leaves out the shared guide's sections about tools the run does not have", () => {
@@ -99,7 +135,7 @@ describe("standing instructions", () => {
     expect(next).toMatchObject({ session: first.session, resumed: true });
     expect(next.prompt).not.toContain("# 角色：");
     expect(next.prompt).toContain("按评审修改：补上测试");
-    expect(first.sent).toMatchObject({ via: "message", message: first.prompt.length, parts: { lessonCount: 0 } });
+    expect(first.sent).toMatchObject({ via: "message", scene: ["background", "code"], message: first.prompt.length, parts: { lessonCount: 0 } });
     expect(next.sent).toMatchObject({ via: "resumed", message: next.prompt.length });
     expect(next.sent).toMatchObject({ systemSent: false, omemAccess: "mcp", localTools: true });
   }, 60000);
