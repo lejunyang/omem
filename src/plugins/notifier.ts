@@ -1,3 +1,4 @@
+import { DELIVERY_LEASE_MS, DELIVERY_TIMEOUT_MS, retryFailure } from "./delivery-policy.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -59,9 +60,7 @@ export function startNotifierOutlets(app: App) {
   };
   app.events.on("outlet-ask", show);
   app.events.on("outlet-close", close);
-  const timer = setInterval(() => void drainOutlets(app).catch(e => console.warn("[omem] 通知出口队列", e)), 2000).unref();
   app.events.once("close", () => {
-    clearInterval(timer);
     remove();
     app.events.off("outlet-ask", show);
     app.events.off("outlet-close", close);
@@ -134,10 +133,10 @@ async function send(app: App, row: Delivery, signal: AbortSignal) {
   return { ref };
 }
 async function attempt(app: App, row: Delivery) {
-  const lease = Date.now() + 30000;
+  const lease = Date.now() + DELIVERY_LEASE_MS;
   if (!run(app.db, "update outlet_deliveries set state='pending',due=? where seq=? and state in ('pending','deferred') and due<=?", lease, row.seq, Date.now()).changes) return;
   try {
-    const signal = AbortSignal.timeout(15000);
+    const signal = AbortSignal.timeout(DELIVERY_TIMEOUT_MS);
     const result = await untilAbort(signal, () => send(app, row, signal));
     if (result?.due) {
       run(app.db, "update outlet_deliveries set state='deferred',due=? where seq=?", result.due, row.seq);
@@ -148,9 +147,9 @@ async function attempt(app: App, row: Delivery) {
     if (row.op === "ask" && result?.ref && getAsk(app, row.object_id).status !== "pending")
       enqueue(app, row.outlet, row.object_id, row.user_id, "retract", row.dedup, result.ref);
   } catch (error) {
-    const count = row.attempts + 1;
+    const failure = retryFailure(row.attempts, error);
     run(app.db, "update outlet_deliveries set state=?,attempts=?,due=?,updated=?,error=? where seq=?",
-      count >= 6 ? "failed" : "pending", count, Date.now() + 1000 * 2 ** count, now(), String(error).slice(0,500), row.seq);
+      failure.state, failure.attempts, failure.due, now(), failure.error, row.seq);
   }
 }
 
@@ -192,7 +191,7 @@ export async function listOutlets(app: App, userId: string) {
       where d.outlet=j.value and d.user_id=? and updated is not null order by updated desc limit 1) from json_each(?) j)`,
     userId, JSON.stringify([...notifiers.keys()])).map(r => [r.outlet, r]));
   const plugins = await Promise.all([...notifiers].map(async ([id, e]) => {
-    const reachable = await reach(e.def, user, AbortSignal.timeout(15000)).catch(err => ({ ok: false, hint: String(err).slice(0,500) }));
+    const reachable = await reach(e.def, user, AbortSignal.timeout(DELIVERY_TIMEOUT_MS)).catch(err => ({ ok: false, hint: String(err).slice(0,500) }));
     return { id, name: e.def.name, plugin: e.plugin, builtin: false, supportsAsk: !!e.def.ask, reachable,
       setting: settings(app, userId).find(s => s.id === id) ?? null, lastDelivery: history.get(id)?.updated ?? null, lastError: history.get(id)?.error ?? null };
   }));
