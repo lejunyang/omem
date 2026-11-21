@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { accountEntries, accountHome } from "../src/agents/accounts.ts";
+import { createAsk } from "../src/agents/asks.ts";
 import { getRun, listRuns, stopWorker } from "../src/agents/runs.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { saveContext } from "../src/channels/listen.ts";
@@ -190,6 +191,34 @@ describe("members' work lines", async () => {
     }
     expect((await call("obs", "/api/items", { method: "POST", json: { kind: "line", space: "proj", title: "观察者的线" } })).status).toBe(403);
     expect((await call("obs", "/api/work/routine", { method: "PUT", json: { on: true } })).status).toBe(403);
+  });
+
+  it("gives a member their own 等我的, the owner theirs, and 今天 as it reads for each", async () => {
+    const mine = item({ spaceId: "proj", kind: "todo", title: "小王的发布", userId: "xw" });
+    const ownerItem = item({ spaceId: "proj", kind: "todo", title: "本人的发布" });
+    const at = new Date().toISOString();
+    const def = JSON.stringify({ name: "发布", stages: [{ id: "ship", name: "上线" }] });
+    for (const i of [mine, ownerItem]) {
+      sqlRun(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at) values(?,?,?,?,?,?)", i.id, "flow", def, at, i.userId, at);
+      sqlRun(app.db, "insert into item_stages(item_id,stage_id,state,since,updated_at) values(?,'ship','gated',?,?)", i.id, at, at);
+    }
+    const theirs = createAsk(app, { runId: null, conversationId: null, userId: "xw", question: "小王要回答的问题？" });
+    const owners = createAsk(app, { runId: null, conversationId: null, question: "本人要回答的问题？" });
+    const p = (await get("xw", "/api/pending")) as { id: string; href: string }[];
+    const ids = p.map((x) => x.id);
+    expect(ids).toEqual(expect.arrayContaining([`ask:${theirs.id}`, `stage:${mine.id}:ship`]));
+    expect(ids).not.toContain(`ask:${owners.id}`);
+    expect(ids).not.toContain(`stage:${ownerItem.id}:ship`);
+    expect(p.find((x) => x.id === `stage:${mine.id}:ship`)!.href).toBe(`#/work/${encodeURIComponent(mine.id)}`);
+    const o = ((await get(null, "/api/pending")) as { id: string }[]).map((x) => x.id);
+    expect(o).toEqual(expect.arrayContaining([`ask:${owners.id}`, `stage:${ownerItem.id}:ship`]));
+    expect(o).not.toContain(`ask:${theirs.id}`);
+    expect(o).not.toContain(`stage:${mine.id}:ship`);
+    expect((await get("obs", "/api/pending"))).toEqual([]);
+    const today = (await get("xw", "/api/work/today")).text as string;
+    expect(today).toContain("等你处理");
+    expect(today).not.toContain("本人要回答的问题");
+    expect(today).not.toContain("下面能选的选了再提交");
   });
 
   it("does not run the routine work on a member's line unless they turned it on and have their own AI account", async () => {
