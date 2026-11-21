@@ -509,7 +509,7 @@ describe("roles and permissions", async () => {
   it("keeps the shared setup to those who manage it", async () => {
     expect((await as("cat", "/api/agents")).status).toBe(200);
     expect((await as("ann", "/api/agents")).status).toBe(403);
-    expect((await as("cat", "/api/settings")).status).toBe(403);
+    expect(Object.keys((await json("cat", "/api/settings")).config).sort()).toEqual(["agents", "auth"]);
     expect((await as("cat", "/api/delegate", { method: "POST", body: "{}" })).status).toBe(403);
     expect((await as("ann", "/api/home")).status).toBe(403);
   });

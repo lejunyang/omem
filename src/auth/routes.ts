@@ -21,7 +21,7 @@ import { requireReadable } from "./visibility.ts";
  *   `note:p.id` (a note on a source).
  * - `{ run }`: the run in `:id` must be one the user may read (permissions.ts canReadRun).
  */
-export type RouteRule = "public" | "self" | "owner" | { cap: Capability; at: string } | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
+export type RouteRule = "settings" | "public" | "self" | "owner" | { cap: Capability; at: string } | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
 
 const g = (perm: GlobalPerm): RouteRule => ({ g: perm });
 const s = (perm: SpacePerm, at: string): RouteRule => ({ s: perm, at });
@@ -407,10 +407,14 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
     ].map((r) => [r, AGENTS]),
   ),
 
+  "GET /api/settings": "settings",
+  "GET /api/settings/sections": "settings",
+  "PUT /api/settings": "settings",
+
   // channels, AI backends and this machine
   ...Object.fromEntries(
     [
-      "GET /api/settings", "GET /api/search/providers", "PUT /api/settings", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
+      "GET /api/search/providers", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
       "PUT /api/lark/chats/:id/policy", "PUT /api/lark/chats/:id/subscription", "PUT /api/lark/chats/:id/space", "POST /api/lark/poll", "GET /api/lark/user-permissions", "POST /api/lark/user-permissions",
       "GET /api/lark/bot-check", "POST /api/lark/bot-check/:ref/scan", "GET /api/lark/doubao-send", "POST /api/lark/doubao-send/test", "GET /api/lark/wiki-crawls", "POST /api/lark/wiki-crawls/:id/:op", "GET /api/lark/kb", "POST /api/lark/kb/discover",
       "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "GET /api/lark/kb-home", "POST /api/lark/kb-home", "PUT /api/lark/kb-home/dir", "POST /api/agents/:id/probe", "GET /api/agents/:id/adapter", "POST /api/agents/:id/adapter/upgrade", "PUT /api/agent-role-model", "GET /api/agent-registry", "POST /api/agent-registry/:id",
@@ -573,6 +577,7 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   if (isOwner(app, userId)) return;
   const rule = ROUTE_RULES[routeKey(req)] ?? ROUTE_RULES[`* ${req.routeOptions.url}`];
   if (!rule) throw new HttpError(403, "这个接口只对 omem 的主人开放");
+  if (rule === "settings") return; // The handler checks each returned or changed key.
   if (rule === "self" && !["GET", "HEAD", "OPTIONS"].includes(req.method) && one<{ role: string }>(app.db, "select role from users where id=?", userId)?.role === "observer") {
     const path = routeKey(req);
     if (path === "POST /api/asks/:id/answer" || path === "POST /api/asks/:id/dismiss") {

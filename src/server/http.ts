@@ -1,6 +1,7 @@
 import { itemRunSummary } from "../items/places.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
-import { spacesWithCapability, memberCapabilities } from "../auth/capabilities.ts";
+import { changedSettings, sectionByPath, sections, settingsPatch, settingsView, ownerSettings, type Section } from "../auth/settings-sections.ts";
+import { capabilityAccess, spacesWithCapability, memberCapabilities } from "../auth/capabilities.ts";
 import { storedFileReadable } from "../auth/stored-files.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { randomUUID as operationId } from "node:crypto";
@@ -3302,17 +3303,50 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
   });
   server.get("/api/search/providers", async () => searchProviderStatus(app));
-  server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null, approvalTools: toolList().map((t) => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }));
+  const settingsAccess = (req: FastifyRequest) => {
+    const access = capabilityAccess(app, who(req), null);
+    return {
+      owner: access.preset === "owner" && access.active,
+      view: (section: Section) => !!access.source(`settings.${section}.view`),
+      edit: (section: Section) => !!access.source(`settings.${section}.edit`),
+    };
+  };
+  server.get("/api/settings/sections", async req => {
+    const access = settingsAccess(req);
+    return { keys: sectionByPath, ownerOnly: ownerSettings, sections: Object.fromEntries(sections.map(s => [s, { view: access.view(s), edit: access.edit(s) }])) };
+  });
+  server.get("/api/settings", async req => {
+    const { section } = req.query as { section?: Section };
+    if (section !== undefined && !sections.includes(section)) throw new HttpError(400, "不认识的设置区域");
+    const access = settingsAccess(req);
+    const visible = (s: Section) => (!section || s === section) && access.view(s);
+    if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
+    return {
+      config: settingsView(app.config, visible, access.owner),
+      ...(visible("ai") && access.owner && { agents: listAgentProfiles(app) }),
+      ...(visible("system") && access.owner && { home: app.home }),
+      ...(visible("knowledge") && { rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null }),
+      ...(visible("security") && { approvalTools: toolList().map(t => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }),
+    };
+  });
   server.put("/api/settings", async (req) => {
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
-    const next = configSchema.parse({ ...app.config, ...(req.body as object) });
-    await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
-    next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
+    const parseNext = () => configSchema.parse(settingsPatch(app.config, req.body));
+    let next = parseNext();
+    let access = settingsAccess(req);
+    const proposed = changedSettings(app.config, next, access.edit, access.owner);
+    if (proposed.assistant?.includes("studies.envs")) {
+      await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
+      next = parseNext();
+      access = settingsAccess(req);
+      changedSettings(app.config, next, access.edit, access.owner);
+    }
+    if (proposed.security?.includes("approvals")) next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
-    next.security = structuredClone(app.config.security);
+    next.security = app.config.security;
     // Network conditions likewise have their own owner-only editor.
-    next.agents.networkPolicies = structuredClone(app.config.agents.networkPolicies);
+    next.agents.networkPolicies = app.config.agents.networkPolicies;
     // Everything else is read on use; these are only read when the service starts.
     const atStartup: [string, (c: typeof next) => unknown][] = [
       ["监听地址和端口", (c) => [c.host, c.port]],
@@ -3322,7 +3356,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       ["QQ / 微信（OneBot）", (c) => c.onebot],
     ];
     const restart = atStartup.filter(([, pick]) => JSON.stringify(pick(app.config)) !== JSON.stringify(pick(next))).map(([label]) => label);
+    const changes = changedSettings(app.config, next, access.edit, access.owner);
+    if (!Object.keys(changes).length) return { config: settingsView(app.config, access.view, access.owner), restart };
     saveConfig(next, app.home);
+    audit(app, who(req), "settings.update", "settings", { changes });
     // A provider taken out takes its key with it.
     for (const id of Object.keys(readKeys(app.home))) if (!id.startsWith("mcp:") && !next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
     const zoneChanged = next.timezone !== app.config.timezone;
@@ -3333,7 +3370,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       // The timers were made in the old zone.
       rezoneScheduler(app);
     }
-    return { config: app.config, restart };
+    return { config: settingsView(app.config, settingsAccess(req).view, access.owner), restart };
   });
 
   // ----------------------------------------------- AI providers and model categories (core/ai-keys.ts)

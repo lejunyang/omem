@@ -2,7 +2,15 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { listRoles } from "./permissions.ts";
 
+import { sectionNames, sections, type Section } from "./settings-sections.ts";
+
+type SettingsCapability = `settings.${Section}.${"view" | "edit"}`;
+const settingsDefinitions = Object.fromEntries(sections.flatMap(section =>
+  (["view", "edit"] as const).map(action => [`settings.${section}.${action}`,
+    ["global", `${action === "view" ? "查看" : "修改"}${sectionNames[section]}设置`, `${sectionNames[section]}区域的配置`]]))) as Record<SettingsCapability, ["global", string, string]>;
+
 const definitions = {
+  ...settingsDefinitions,
   "work.view": ["space", "看工作线", "看本人的工作线、变化和下一步"],
   "items.view": ["space", "看事项", "看共享空间里其他人的事项和进展"],
   "items.operate": ["space", "更新进展", "更新自己事项的状态和进展"],
@@ -48,6 +56,7 @@ const personal: Capability[] = ["ask.send", "conversations.view", "notifications
 function presetGrants(role: string, permissions: string[], cap: Capability) {
   if (role === "owner") return true;
   if (cap === "remote.view" || cap === "remote.operate") return false;
+  if (cap.startsWith("settings.") && cap !== "settings.members") return cap === "settings.members.view" && permissions.includes("users.manage");
   if (role === "observer") return cap.endsWith(".view") || cap === "ask.send" || cap === "search.use";
   return personal.includes(cap) || permissions.some(p => legacyCapabilities[p.replace(/@\*$/, "")]?.includes(cap));
 }
@@ -87,6 +96,7 @@ export function capabilityAccess(app: App, userId: string, targetSpace?: string 
     const global = effects.get(JSON.stringify([cap, "global", ""]));
     const localEffect = space && effects.get(JSON.stringify([cap, "space", space]));
     if (global === "deny" || localEffect === "deny") return null;
+    if (cap === "settings.members.view" && source("settings.members")) return "preset";
     if (global === "allow" || localEffect === "allow") return "override";
     if (presetCaps.has(cap) || (own && ["items.view", "runs.view"].includes(cap))) return "preset";
     // Personal spaces have an automatic manager membership, including for read-only observers.
