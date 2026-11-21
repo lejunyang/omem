@@ -202,12 +202,13 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
 export type Check = { command: string; code: number; output: string; ms: number; commit?: string; base?: string; at?: string };
 
 /** Attribute service-side commands before launch, including a failed or interrupted invocation. */
-function recordHostCommand(app: App, run: Run, space: string, operation: "setup" | "check") {
+export function recordHostCommand(app: App, run: Run, space: string, operation: "setup" | "check", helperRunId?: string) {
   const userId = runUser(app, run.id);
   const workId = String(run.input.continueFrom ?? run.id);
-  const detail = { executor: "host", userId, workId, runId: run.id, space, operation };
-  audit(app, "host", `code.${operation}`, run.id, detail);
-  addRunEvent(app, run.id, "status", { ...detail, text: `宿主为 ${userId} 的交办 ${workId} 在 ${space} ${operation === "setup" ? "准备依赖" : "执行仓库检查"}` });
+  const runId = helperRunId ?? run.id;
+  const detail = { executor: "host", userId, workId, runId, ...(helperRunId && { roundId: run.id }), space, operation };
+  audit(app, "host", `code.${operation}`, runId, detail);
+  addRunEvent(app, runId, "status", { ...detail, text: `宿主为 ${userId} 的交办 ${workId} 在 ${space} ${operation === "setup" ? "准备依赖" : "执行仓库检查"}` });
   return userId;
 }
 

@@ -6,7 +6,7 @@ import { git } from "../core/git.ts";
 import { run as sql } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import type { Execution } from "./execution.ts";
-import { addWorktree, shell } from "./code.ts";
+import { addWorktree, recordHostCommand, shell } from "./code.ts";
 import { unmerged, resolveConflicts } from "./code-sync.ts";
 import { identity } from "./code-branch.ts";
 import { getTask, taskLabel, taskText, updateTask, workRootOf } from "./code-tasks.ts";
@@ -122,7 +122,7 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
       const command = setupCommandFor(repo, dir);
       const key = command ? setupKey(dir, command) : null;
       if (command && key) {
-        log(`准备依赖：${command}`);
+        recordHostCommand(app, getRun(app, roundRunId), repo.id, "setup", h.runId);
         const r = await shell(command, dir, round.signal);
         if (r.code === 0) setupDone(dir, key);
         else log(`准备命令失败，退出码 ${r.code}`);

@@ -1184,6 +1184,11 @@ describe("a delegation driven by tasks", () => {
       // The helpers' runs are children of the round; their workspaces are given back.
       const helpers = app.db.prepare("select id, status, input from runs where parent_id = ? and kind = 'agent' and json_extract(input, '$.helperOf') is not null order by created_at").all(r1.id) as { id: string; status: string; input: string }[];
       expect(helpers.map((h) => [h.status, JSON.parse(h.input).tasks])).toEqual([["done", [2]], ["done", [3]]]);
+      for (const h of helpers) {
+        const detail = { userId, executor: "host", workId: r1.id, roundId: r1.id, runId: h.id, space: "shop-api", operation: "setup" };
+        expect(auditLog(app)).toContainEqual(expect.objectContaining({ target: h.id, action: "code.setup", detail }));
+        expect(runEvents(app, h.id)).toContainEqual(expect.objectContaining({ type: "status", data: expect.objectContaining(detail) }));
+      }
       const tokens = issued.mock.calls.map(([ctx]) => ctx).filter(ctx => [r1.id, ...helpers.map(h => h.id)].includes(ctx.runId!));
       for (const id of [r1.id, ...helpers.map(h => h.id)]) expect(tokens.some(ctx => ctx.runId === id && ctx.role === "coder")).toBe(true);
       expect(tokens.map(ctx => ctx.role)).toEqual(expect.arrayContaining(["review-lead", "review-business", "reviewer"]));
