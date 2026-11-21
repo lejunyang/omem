@@ -201,12 +201,12 @@ export function skillUsable(app: App, s: Pick<Skill, "requires">) {
   });
 }
 
-export function listSkills(app: App, opts: { includeDrafts?: boolean } = {}): Skill[] {
+export function listSkills(app: App, opts: { includeDrafts?: boolean; exclude?: ReadonlySet<string> } = {}): Skill[] {
   const dir = skillsDir(app);
   if (!existsSync(dir)) return [];
   const out: Skill[] = [];
   for (const name of readdirSync(dir).sort()) {
-    if (!existsSync(join(dir, name, "SKILL.md"))) continue;
+    if (opts.exclude?.has(name) || !existsSync(join(dir, name, "SKILL.md"))) continue;
     try {
       const s = readSkill(app, name);
       if (s.status === "active" || opts.includeDrafts) out.push(s);
@@ -388,10 +388,19 @@ export function spaceSkillNames(settings: Record<string, unknown> | undefined): 
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
 }
 
-/** Every skill some space has mounted (offered only where it is mounted). */
-function boundSkills(app: App): Set<string> {
-  const rows = all<{ settings: string }>(app.db, "select settings from spaces where settings like '%\"skills\"%'");
-  return new Set(rows.flatMap((r) => spaceSkillNames(json(r.settings, {}))));
+/** A mounted skill is visible in any of its spaces and to profiles that explicitly name it. */
+export function skillsOutsideScope(app: App, profileSkills: string[] | undefined, readable: string[] | null): Set<string> {
+  const outside = new Set<string>();
+  if (!readable) return outside;
+  const allowed = new Set(profileSkills);
+  const spaces = new Set(readable);
+  const rows = all<{ id: string; settings: string }>(app.db, "select id, settings from spaces where instr(settings, '\"skills\"') > 0");
+  for (const row of rows) {
+    const names = spaces.has(row.id) ? allowed : outside;
+    for (const name of spaceSkillNames(json(row.settings, {}))) names.add(name);
+  }
+  for (const name of allowed) outside.delete(name);
+  return outside;
 }
 
 const skillLine = (s: Skill) => `- ${s.name}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`;
@@ -402,10 +411,9 @@ const skillLine = (s: Skill) => `- ${s.name}：${s.description}（全文：read_
  * summary. Without `names` (the main assistant, which hands work out) every skill is described. `mounted`: the skills of the run's spaces, which go in their own
  * section (spaceSkillsText) and so are left out here; skills mounted on other spaces are left out too.
  */
-export function skillIndex(app: App, names?: string[], mounted: string[] = []) {
-  const bound = boundSkills(app);
-  const groups = loadSkillGroups(app);
-  const list = listSkills(app).filter((s) => skillUsable(app, s) && skillEnabled(groups, s.name) && !mounted.includes(s.name) && (!bound.has(s.name) || names?.includes(s.name)));
+export function skillIndex(app: App, names?: string[], mounted: string[] = [], outside = skillsOutsideScope(app, names, [])) {
+  const groups = loadSkillGroups(app, outside);
+  const list = listSkills(app, { exclude: outside }).filter((s) => skillUsable(app, s) && skillEnabled(groups, s.name) && !mounted.includes(s.name));
   // A skill in a group is offered through the group (agent-skills.ts), one line for all of them,
   // unless the run's profile names it.
   const grouped = new Map<string, string[]>();

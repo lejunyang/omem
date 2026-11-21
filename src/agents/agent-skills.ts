@@ -645,8 +645,7 @@ export function finishSkillOrganize(app: App, before: SkillGroups, batch: string
   return { moved, groups };
 }
 
-export function listSkillGroups(app: App) {
-  const state = loadSkillGroups(app);
+export function listSkillGroups(app: App, state = loadSkillGroups(app)) {
   const ids = [...new Set(Object.values(state.skills).map((s) => s.group).filter(Boolean) as string[])].sort();
   return ids.map((id) => {
     const all = Object.entries(state.skills).filter(([, s]) => s.group === id);
@@ -664,9 +663,8 @@ export function listSkillGroups(app: App) {
   });
 }
 
-export function readSkillGroup(app: App, id: string) {
-  const state = loadSkillGroups(app);
-  const group = listSkillGroups(app).find((g) => g.id === id);
+export function readSkillGroup(app: App, id: string, state = loadSkillGroups(app)) {
+  const group = listSkillGroups(app, state).find((g) => g.id === id);
   if (!group) throw new HttpError(404, `没有分组 ${id}`);
   const skills = Object.entries(state.skills)
     .filter(([, s]) => s.group === id)

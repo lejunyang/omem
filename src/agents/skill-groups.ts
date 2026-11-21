@@ -40,7 +40,7 @@ export const GROUP_ID = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const file = (app: Pick<App, "libraryDir">) => join(app.libraryDir, "skill-groups.json");
 let cache: { path: string; mtime: number; value: SkillGroups } | null = null;
 
-export function loadSkillGroups(app: Pick<App, "libraryDir">): SkillGroups {
+function readSkillGroups(app: Pick<App, "libraryDir">): SkillGroups {
   const path = file(app);
   if (!existsSync(path)) return { groups: {}, skills: {} };
   const mtime = statSync(path).mtimeMs;
@@ -54,6 +54,17 @@ export function loadSkillGroups(app: Pick<App, "libraryDir">): SkillGroups {
   }
   cache = { path, mtime, value };
   return structuredClone(value);
+}
+
+/** Build group counts, descriptions and purpose pages from the same visible members. */
+export function loadSkillGroups(app: Pick<App, "libraryDir">, outside?: ReadonlySet<string>): SkillGroups {
+  const state = readSkillGroups(app);
+  for (const name of outside ?? []) {
+    const group = state.skills[name]?.group;
+    if (group && state.groups[group]) delete state.groups[group].description;
+    delete state.skills[name];
+  }
+  return state;
 }
 
 export function saveSkillGroups(app: Pick<App, "libraryDir">, s: SkillGroups) {

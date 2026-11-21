@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentSkillDirs, groupHub, listSkillGroups, organizeSkills, restoreAgentSkills, sweepAgentSkills, writeAgentEntries } from "../src/agents/agent-skills.ts";
-import { loadSkillGroups } from "../src/agents/skill-groups.ts";
+import { loadSkillGroups, saveSkillGroups } from "../src/agents/skill-groups.ts";
+import { createSpace, updateSpace } from "../src/core/spaces.ts";
 import { deleteSkill, readSkill, saveSkill, skillIndex } from "../src/agents/specs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { testApp } from "./helpers.ts";
@@ -136,6 +137,30 @@ describe("taking over the agents' skill folders", () => {
     expect(existsSync(join(h.claude, "other"))).toBe(false);
     expect(listSkillGroups(app).find((g) => g.id === "other")!.enabled).toBe(false);
     expect(() => organizeSkills(app, { skills: [{ name: "acme-db", group: "weekly-report" }] })).toThrow(/同名/);
+  });
+
+  it("builds a board task's group purpose pages from the currently visible members", async () => {
+    const app = testApp();
+    try {
+      const state = loadSkillGroups(app);
+      state.groups.guides = { enabled: true };
+      for (let i = 0; i < 42; i++) {
+        const name = `guide-${i}`;
+        skill(join(app.libraryDir, "_skills"), name, `核对步骤 ${i}`);
+        state.skills[name] = { group: "guides", purpose: i % 2 ? "A" : "B" };
+      }
+      saveSkillGroups(app, state);
+      createSpace(app, { id: "archive", name: "已归档" });
+      const ctx: ToolContext = { app, runId: null, actor: "agent", spaceId: "personal", spaces: ["personal"], tools: null, boardAccess: "read" };
+      const read = () => callTool(ctx, "read_skill", { name: "guides", file: "purposes/01.md" });
+      expect((await read()).text).toContain("guide-41");
+      updateSpace(app, "archive", { settings: { skills: ["guide-41"] } });
+      const page = await read();
+      expect(page.isError).toBe(false);
+      expect(page.text).toContain("guide-39");
+      expect(page.text).not.toContain("guide-41");
+      expect(page.text).not.toContain("核对步骤 41");
+    } finally { app.db.close(); }
   });
 
   it("puts everything back on restore", () => {

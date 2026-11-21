@@ -2417,6 +2417,7 @@ export const migrations: readonly string[] = [
      seen_at text not null, next_at text not null, deadline text not null
    );
    create index board_peer_due on board_peer_polls(next_at);`,
+  `create index spaces_with_skills on spaces(id) where instr(settings, '"skills"') > 0;`,
 ];
 
 export type Db = DatabaseSync;

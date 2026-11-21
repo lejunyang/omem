@@ -34,7 +34,7 @@ import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { trimTools } from "../auth/tools.ts";
-import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
+import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, skillsOutsideScope, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools, ROLE_TOOLS } from "./tool-help.ts";
 import { applyOverlay, GUEST_ROLES, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
@@ -559,12 +559,15 @@ export function prepareRun(
   const repoGuides = repos.map((r) => ({ r, text: spaceGuide(app, r.id).trim() })).filter((g) => g.text).map((g) => `## 仓库 ${g.r.name}（${g.r.id}）的说明（SPACE.md）\n\n${g.text}`).join("\n\n");
   // Skills mounted on the space, the business it belongs to and the repositories it works in.
   const parent = space.parentId ? findSpace(app, space.parentId) : null;
-  const mounted = !tools.has("read_skill") ? { text: "", names: [] as string[] } : spaceSkillsText(app, [space, ...(parent ? [parent] : []), ...repos]);
+  const skillSpaces = [space, ...(parent ? [parent] : []), ...repos].filter(s => !input.boardAccess || !readable || readable.includes(s.id));
+  const mounted = !tools.has("read_skill") ? { text: "", names: [] as string[] } : spaceSkillsText(app, skillSpaces);
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
   // The main assistant's own are the ones taught to `assistant` (a nightly review writes them there).
   const told: LessonSet = guest ? { text: "", ids: [] } : input.lessons !== undefined ? { text: input.lessons, recallNote: input.recallNote, ids: input.lessonIds ?? [] } : standingLessons(app, space.id, userId, spec?.name ?? roleName, tools.has("recall"));
   const lessons = [told.text, tools.has("recall") && told.recallNote].filter(Boolean).join("\n\n");
-  const skills = !tools.has("read_skill") ? "" : skillIndex(app, spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills, mounted.names);
+  const profileSkills = input.boardAccess ? spec?.skills ?? role!.skills : undefined;
+  const namedSkills = spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills;
+  const skills = !tools.has("read_skill") ? "" : skillIndex(app, namedSkills, mounted.names, profileSkills && skillsOutsideScope(app, profileSkills, readable));
   // Only what this run can do with them: an assistant run by a rule may consult but not hand work over.
   const agentUse = tools.has("run_agent") ? "可用 run_agent 交给它们" : tools.has("ask_agent") ? "这次运行不能交办，需要它们的专长时用 ask_agent 请教" : "";
   const agents = roleName === "assistant" && !spec && agentUse ? agentIndex(app) : "";
@@ -593,7 +596,7 @@ export function prepareRun(
   // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
   const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
   const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
-  const token = issueToolToken({ browserProfilesRoot, boardAccess: input.boardAccess, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const token = issueToolToken({ browserProfilesRoot, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   return {
     profile,
     capabilities,

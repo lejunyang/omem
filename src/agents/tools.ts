@@ -74,7 +74,7 @@ import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOut
 import { takeCodeSteering } from "./code-steer.ts";
 import { afterToolCall, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
-import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
+import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillsOutsideScope, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, getThread, listThreads, threadMessages } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
@@ -104,6 +104,8 @@ export type ToolContext = {
   writable?: string[];
   /** Cross-device board writes include memories, pages and items only. */
   boardAccess?: "read" | "write";
+  /** Skills explicitly assigned to the actor of a cross-device board run. */
+  profileSkills?: string[];
   /** Item discovery only; never grants ordinary read or write tool access. */
   itemDiscoverySpaces?: string[] | null;
   tools: Set<string> | null;
@@ -1481,6 +1483,10 @@ ${r.answer}${r.missed.length ? `
   },
 });
 
+function hiddenSkills(ctx: ToolContext) {
+  return ctx.boardAccess ? skillsOutsideScope(ctx.app, ctx.profileSkills, ctx.spaces) : undefined;
+}
+
 def({
   name: "list_skills",
   description: "列出技能（可复用的做法：步骤、格式、检查清单）。分组里的技能只列分组，group=分组名 列出这一组的技能、用途和是否启用。",
@@ -1488,13 +1494,14 @@ def({
   handler: async (ctx, a) => {
     const { loadSkillGroups, skillEnabled } = await import("./skill-groups.ts");
     const { listSkillGroups, readSkillGroup } = await import("./agent-skills.ts");
+    const hidden = hiddenSkills(ctx);
+    const state = loadSkillGroups(ctx.app, hidden);
     if (a.group) {
-      const g = readSkillGroup(ctx.app, a.group);
+      const g = readSkillGroup(ctx.app, a.group, state);
       return `# ${g.id}（${g.title}${g.enabled ? "" : "，整组停用"}）\n${g.description || g.autoDescription}\n\n${g.skills.map((x) => `- ${x.name}${x.enabled ? "" : "（停用）"}${x.purpose ? ` [${x.purpose}]` : ""}：${x.description.slice(0, 160)}`).join("\n")}`;
     }
-    const state = loadSkillGroups(ctx.app);
-    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts }).filter((s) => skillUsable(ctx.app, s) && !state.skills[s.name]?.group && skillEnabled(state, s.name));
-    const groups = listSkillGroups(ctx.app).map((g) => `- ${g.id}（分组「${g.title}」，启用 ${g.enabledCount}/${g.count}${g.enabled ? "" : "，整组停用"}）：${g.description || g.autoDescription}`);
+    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts, exclude: hidden }).filter((s) => skillUsable(ctx.app, s) && !state.skills[s.name]?.group && skillEnabled(state, s.name));
+    const groups = listSkillGroups(ctx.app, state).map((g) => `- ${g.id}（分组「${g.title}」，启用 ${g.enabledCount}/${g.count}${g.enabled ? "" : "，整组停用"}）：${g.description || g.autoDescription}`);
     const lines = [...list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}`), ...groups];
     return lines.length ? lines.join("\n") : "还没有技能。";
   },
@@ -1505,9 +1512,12 @@ def({
   description: "读取技能全文（以及它附带的文件列表）。做技能对应的事之前先读。",
   schema: z.object({ name: z.string().describe("技能名，或技能分组名（返回这一组按用途列出的技能）"), file: z.string().optional().describe("读技能目录里的附带文件；分组的 purposes/NN.md 是某个用途下各技能的说明") }),
   handler: async (ctx, a) => {
+    const hidden = hiddenSkills(ctx);
+    if (hidden?.has(a.name)) throw new HttpError(404, `没有名为 ${a.name} 的技能`);
     if (!findSkill(ctx.app, a.name)) {
+      const { loadSkillGroups } = await import("./skill-groups.ts");
       const { groupHub } = await import("./agent-skills.ts");
-      const hub = groupHub(ctx.app, a.name);
+      const hub = groupHub(ctx.app, a.name, loadSkillGroups(ctx.app, hidden));
       if (hub) {
         const text = hub.files[a.file ?? "SKILL.md"];
         if (text === undefined) throw new HttpError(404, `分组 ${a.name} 没有文件 ${a.file}`);
@@ -4878,6 +4888,7 @@ async function messageFileText(ctx: ToolContext, messageId: string, key?: string
   if (f.sourceId) {
     await requireReadable(ctx.app, ctx.userId ?? OWNER, f.sourceId);
     const s = getSource(ctx.app, f.sourceId);
+    if (!canRead(ctx, s.spaceId)) throw new HttpError(403, "附件原件不在本次任务能读的空间内");
     return s.kind === "image"
       ? `「${f.name}」是图片，已保存为原件 src:${f.sourceId}。read_source 给出原始文件的路径，用你的图片工具看。`
       : `「${f.name}」已保存为原件 src:${f.sourceId}，用 read_source(source="${f.sourceId}") 读正文；引用时写 src:${f.sourceId}。`;

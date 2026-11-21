@@ -7,8 +7,11 @@ import { all, run } from "../src/core/db.ts";
 import { now } from "../src/core/util.ts";
 import { savePeers, listPeers } from "../src/core/peers.ts";
 import { createApiToken, createUser, pairedTokens } from "../src/core/users.ts";
-import { createSpace } from "../src/core/spaces.ts";
+import { createSpace, updateSpace } from "../src/core/spaces.ts";
 import { importText } from "../src/sources/import.ts";
+import { moveSource } from "../src/sources/archive.ts";
+import { getSource } from "../src/sources/store.ts";
+import { organizeSkills } from "../src/agents/agent-skills.ts";
 import { listMemories } from "../src/memory/store.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { __testHandlers, getRun, setRunOutput, addRunEvent, startWorker, stopWorker, waitForRun, trackAbort } from "../src/agents/runs.ts";
@@ -56,21 +59,32 @@ it.each(["read","write"])("remote %s 使用接活设备的技能和认证只读 
   f.there.config.agents.profiles[0].env.FAKE_MODE = "device-platform";
   createSpace(f.there,{id:"other",name:"其他材料"});
   saveSkill(f.there,{name:"report-guide",description:"查报告",body:"按签收日期核对报告。"},"user");
+  for (const name of ["project-guide", "global-guide", "other-guide"]) {
+    saveSkill(f.there, { name, description: name, body: "核对材料", files: { "references/check.md": "核对签收记录" } }, "user");
+  }
+  updateSpace(f.there, "other", { settings: { skills: ["report-guide", "other-guide"] } });
+  updateSpace(f.there, "personal", { settings: { skills: ["project-guide"] } });
+  organizeSkills(f.there, { skills: [
+    { name: "project-guide", group: "guides" }, { name: "other-guide", group: "guides" },
+  ] });
   const command = {command:process.execPath,args:[resolve("test/fixture-mcp-server.ts")]};
   saveMcpServer(f.there,"reports",{...command,readOnly:true,secrets:{REPORT_KEY:"fixture-reader"}});
   saveMcpServer(f.there,"writer",command);
   saveAgentSpec(f.there,{name:"report-reader",description:"查平台报告",prompt:"核对签收日期",skills:["report-guide"],
     tools:["read_source","lark_read","lark_write","remember"],mcpServers:["reports","writer"]},"user");
   const saved = importText(f.there, "personal", { title: "上期清单", text: "项目 A 已签收" });
+  const moved = importText(f.there, "personal", { title: "归档清单", text: "归档条目" });
   writeFileSync(join(f.there.filesDir, "pending.txt"), "项目 A 本期清单");
   persistChatMessages(f.there, {
     chatId: "oc_reports", spaceId: "personal", name: "项目 A",
     messages: [{ message_id: "om_reports", msg_type: "post", content: "两期清单", create_time: String(Date.now()) }],
     resources: new Map([["om_reports", {
+      file_moved: { type: "file", name: "归档清单.txt", sourceId: moved.id },
       file_saved: { type: "file", name: "上期.txt", sourceId: saved.id },
       file_pending: { type: "file", name: "本期.txt", file: "pending.txt" },
     }]]),
   });
+  const archived = moveSource(f.there, moved.id, "other", "只归档附件");
   const resources = () => all(f.there.db, "select resources from lark_messages where message_id='om_reports'");
   const before = resources();
   await f.dispatch("remote",{agent:"report-reader",access}); await f.poll();
@@ -82,6 +96,17 @@ it.each(["read","write"])("remote %s 使用接活设备的技能和认证只读 
   expect(report).toMatchObject({externalWriteDenied:true,outsideDenied:true,writer:false,platformRead:true});
   expect(report.report[0].text).toBe("项目 A 平台报告已签收");
   expect(report.skill[0].text).toContain("按签收日期核对报告");
+  expect(report.catalog).toEqual({ global: true, hidden: false, group: true });
+  expect(report.group).toEqual({ mounted: true, hidden: false });
+  expect(report.hub).toEqual({ mounted: true, hidden: false });
+  expect(report.hiddenBodyDenied).toBe(true);
+  expect(report.hiddenFileDenied).toBe(true);
+  expect(report.projectFile).toContain("核对签收记录");
+  expect(report.movedDenied).toBe(true);
+  expect(report.moved[0].text).toContain("不在本次任务能读的空间");
+  expect(report.moved[0].text).not.toContain(moved.id);
+  expect(report.moved[0].text).not.toContain("归档清单");
+  expect(getSource(f.there, moved.id)).toEqual(archived);
   expect(report.saved[0].text).toContain(`src:${saved.id}`);
   expect(report.pendingDenied).toBe(true);
   expect(report.pending[0].text).toContain("附件尚未存为原件");
