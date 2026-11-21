@@ -253,3 +253,7 @@ bubblewrap 隐藏宿主 HOME、数据目录和临时目录，再按运行的计�
 ### 档案与技能列表的操作权限
 
 `GET /api/agents` 与 `GET /api/skills` 按 agents.view 授予查看；每项新增 `canEdit`、`canDelete`，按当前调用人的档案管理权限计算。插件自带且未在本地覆盖的档案 canDelete 为 false；可改成自己的副本。没有 agents.manage 的成员调用删除档案或技能接口仍返回 403。成员档案列表只返回名称、说明、状态及 AI 选择，不带工作路径、工具授权或私有正文。
+
+### 豆包 CLI 的工作目录能力
+
+本机 CLI 启动前只用 `--help` 探测目录参数，优先识别声明的 `-C`，也支持 `--cwd` / `--directory` / `--workdir` / `--working-directory`；目录参数放在 `--resume`、`-p` 之前。帮助未声明时直接使用进程 cwd。探测按实际二进制、文件时间与大小、启动参数和账号目录缓存，不按版本号选择。帮助只读，无需登录，不发起会话。

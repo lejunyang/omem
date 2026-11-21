@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, statSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
@@ -55,8 +55,30 @@ export const shellToolRuns = new Set<string>();
 /** Longest prompt passed as an argument; longer ones go through a file. */
 const INLINE_MAX = 6000;
 
-export function doubaoCommand(profile: AgentProfile, req: AgentRequest, prompt: string) {
+type CwdOption = "-C" | "--cwd" | "--directory" | "--workdir" | "--working-directory";
+export function doubaoCwdOptionFromHelp(help: string): CwdOption | null {
+  const options = Array.from(help.matchAll(/^\s*(-C|--cwd|--directory|--workdir|--working-directory)(?=[\s,=])/gm), m => m[1] as CwdOption);
+  return options.find(option => option === "-C") ?? options[0] ?? null;
+}
+const cwdOptions = new Map<string, Promise<CwdOption | null>>();
+/** Only help is invoked. A replaced executable or a different launcher/account gets its own cache. */
+export function doubaoCwdOption(profile: AgentProfile) {
+  const exe = doubaoExecutable(profile), resolved = resolveCommand(exe), account = accountOf(profile);
+  const stat = resolved && statSync(resolved.file, { throwIfNoEntry: false });
+  const key = JSON.stringify([resolved?.file ?? exe, stat?.mtimeMs, stat?.size, profile.args, account?.home]);
+  let option = cwdOptions.get(key);
+  if (!option) {
+    if (cwdOptions.size >= 64) cwdOptions.clear();
+    option = check(exe, [...profile.args, "--help"], account, 5000).then(r => r.code === 0 ? doubaoCwdOptionFromHelp(r.out) : null);
+    cwdOptions.set(key, option);
+  }
+  return option;
+}
+
+export function doubaoCommand(profile: AgentProfile, req: AgentRequest, prompt: string, cwdOption: CwdOption | null = null) {
   const args = [...profile.args];
+  // Native directory options must precede the CLI frontend (including --resume and -p).
+  if (cwdOption) args.push(cwdOption, req.cwd);
   if (req.resumeSessionId) args.push("--resume", req.resumeSessionId);
   args.push("-p", prompt);
   if (profile.model) args.push("--model", profile.model);
@@ -64,7 +86,6 @@ export function doubaoCommand(profile: AgentProfile, req: AgentRequest, prompt: 
   // It has no read-only mode; outside coding it asks before risky operations (no one answers, so they fail).
   const permission = req.doubaoPermission ?? "ask_risky";
   args.push("--permission-mode", permission);
-  args.push("-C", req.cwd);
   return { args, permission };
 }
 
@@ -86,7 +107,7 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
   const box = req.ownSandbox;
   const ownSandbox = box && file && !box.hidden.some(path => under(file!, path))
     ? { ...box, plan: { ...box.plan, ro: [...box.plan.ro, file] } } : box;
-  const { args, permission } = doubaoCommand(profile, req, prompt);
+  const { args, permission } = doubaoCommand(profile, req, prompt, await doubaoCwdOption(profile));
   const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore", sandbox }));
   emit({ type: "status", text: aiUsageText(profile, permission === "always_allow" ? "完全访问" : "风险审批", req.selection) });
   emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
@@ -153,7 +174,7 @@ function errorText(stdout: string, stderr: string) {
 }
 
 /** One short invocation that fails during argument checks; returns what it printed. */
-function check(exe: string, args: string[], account?: ReturnType<typeof accountOf>): Promise<{ code: number | null; out: string }> {
+function check(exe: string, args: string[], account?: ReturnType<typeof accountOf>, timeoutMs = 60_000): Promise<{ code: number | null; out: string }> {
   const r = resolveCommand(exe);
   if (!r) return Promise.resolve({ code: null, out: `找不到命令 ${exe}` });
   return new Promise((resolve) => {
@@ -167,8 +188,8 @@ function check(exe: string, args: string[], account?: ReturnType<typeof accountO
     let out = "";
     child.stdout?.on("data", (d: Buffer) => (out += d));
     child.stderr?.on("data", (d: Buffer) => (out += d));
-    const timer = setTimeout(() => stop(child as never), 60_000);
-    child.once("error", (e) => resolve({ code: null, out: e.message }));
+    const timer = setTimeout(() => stop(child as never), timeoutMs);
+    child.once("error", (e) => { clearTimeout(timer); resolve({ code: null, out: e.message }); });
     child.once("close", (code) => {
       clearTimeout(timer);
       resolve({ code, out });

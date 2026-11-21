@@ -3098,3 +3098,7 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 ### 成员档案与技能列表
 
 - 无档案管理能力的成员读取 /api/agents 和 /api/skills，每项 canEdit/canDelete 为 false；DELETE 对两类对象均返回 403，原内容保持。本人本地档案、技能为 true；未覆盖的插件档案 canEdit=true、canDelete=false。
+
+### 豆包 CLI 工作目录
+
+- 假帮助分别声明 -C、--cwd、--directory 或无目录参数，核对参数在 --resume/-p 之前。连续运行只读帮助一次；无参数时假进程收到正确 cwd。升级二进制或改变启动配置后重新探测；检查本机只运行 --version 与 --help。

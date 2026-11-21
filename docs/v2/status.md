@@ -427,3 +427,5 @@
 - 本人沙箱状态增加 home 与 fullAccessGrants（内置角色、档案、规则）；规则授权清单用部分索引查询，成员仍返回 403。入口 `src/agents/own-run.ts`、`src/core/db.ts` 末尾迁移。
 
 - 档案和技能列表按 agents.view 返回，逐项带 canEdit/canDelete；无管理能力的删除请求拒绝。插件自带档案没有本地副本时不可删。入口 `src/server/http.ts`、`src/auth/routes.ts`。
+
+- 豆包 CLI 目录参数按帮助探测并缓存，原生参数前置；不支持时使用进程 cwd。入口 `src/agents/doubao-cli.ts`；假帮助和假进程测过。

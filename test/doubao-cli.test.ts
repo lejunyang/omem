@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { writeFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { doubaoCommand, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
+import { doubaoCommand, doubaoCwdOptionFromHelp, doubaoCwdOption, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
 import { agentProfileSchema, type AgentProfile } from "../src/core/config.ts";
 import { agentRunError, type AgentEvent } from "../src/agents/types.ts";
 import { runBackend } from "../src/agents/dispatch.ts";
@@ -30,9 +30,32 @@ import { revokeToolToken } from "../src/agents/tools.ts";
 const fake: AgentProfile = { id: "doubao-cli", transport: "doubao-cli", command: process.execPath, args: [resolve("test/fake-doubao-cli.ts")], env: {}, idleTimeoutMs: 60_000 };
 
 describe("doubao cli", () => {
+  it.each([
+    ["  -C <目录> 设置工作区\n 必须放在 -p 之前", "-C"],
+    ["  --cwd <DIRECTORY> Working directory", "--cwd"],
+    ["  --directory=<path> Working directory", "--directory"],
+    ["Usage: tool -C example\n  -p <prompt> Run", null],
+  ] as const)("从帮助认出目录参数 %s", (help, flag) => {
+    expect(doubaoCwdOptionFromHelp(help)).toBe(flag);
+    const args=doubaoCommand(fake,{cwd:"workspace",prompt:"",resumeSessionId:"existing"},"hi",flag).args;
+    expect(args).toEqual([...fake.args,...flag?[flag,"workspace"]:[],"--resume","existing","-p","hi","--permission-mode","ask_risky"]);
+  });
+  it.each(["  -C <dir> 工作目录", "  --cwd <dir> 工作目录", "  -p <prompt> Run"])("假帮助缓存且运行保持进程cwd：%s",async help => {
+    const cwd=mkdtempSync(join(tmpdir(),"doubao-cwd-")), log=join(cwd,"help.log");
+    vi.stubEnv("FAKE_CWD_HELP",help);vi.stubEnv("FAKE_HELP_LOG",log);vi.stubEnv("FAKE_DIRECTORY","1");
+    const profile={...fake,args:[...fake.args,"--fixture",help]};
+    try {
+      const selected=await doubaoCwdOption(profile);
+      expect(await doubaoCwdOption(profile)).toBe(selected);
+      const result=await runDoubaoCli(profile,{cwd,prompt:"fixture"},()=>{});
+      expect(JSON.parse(result.text)).toEqual({cwd,...selected?{directory:cwd}:{}});
+      expect(readFileSync(log,"utf8")).toBe("help\n");
+    } finally {vi.unstubAllEnvs();rmSync(cwd,{recursive:true,force:true});}
+  });
+
   it("passes model, effort, a permission mode by whether it may write, and the working directory", () => {
     const p = { ...fake, command: "doubao", args: [], model: "Auto", effort: "low" };
-    expect(doubaoCommand(p, { cwd: "/w", prompt: "" }, "hi").args).toEqual(["-p", "hi", "--model", "Auto", "--effort", "low", "--permission-mode", "ask_risky", "-C", "/w"]);
+    expect(doubaoCommand(p, { cwd: "/w", prompt: "" }, "hi", "-C").args).toEqual(["-C", "/w", "-p", "hi", "--model", "Auto", "--effort", "low", "--permission-mode", "ask_risky"]);
     expect(doubaoCommand(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow", resumeSessionId: "9" }, "hi").args.slice(0, 2)).toEqual(["--resume", "9"]);
     expect(doubaoCommand(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow" }, "hi").args).toContain("always_allow");
   });
