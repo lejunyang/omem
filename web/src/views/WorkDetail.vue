@@ -6,6 +6,7 @@ import FlowWaiting from "../components/FlowWaiting.vue";
 import Icon from "../components/Icon.vue";
 import ItemFlow from "../components/ItemFlow.vue";
 import ItemChain from "../components/ItemChain.vue";
+import ProgressBoard from "../components/ProgressBoard.vue";
 import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import ItemMetrics from "../components/ItemMetrics.vue";
 import LineAsk from "../components/LineAsk.vue";
@@ -395,6 +396,8 @@ const editing = ref(false);
 
         <!-- Its chain and figures add up what is under it: not shown when some of that is not theirs to see. -->
         <ItemChain v-if="!d.partial" :item-id="item.id" />
+        <!-- What is being done on it, block by block (the server leaves out what this person may not see). -->
+        <ProgressBoard :item="item.id" label="在做的" />
 
         <section class="busy" aria-labelledby="busy-title">
           <h2 id="busy-title" class="h2">最近忙这些</h2>

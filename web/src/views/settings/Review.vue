@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { watch } from "vue";
+import { computed, watch } from "vue";
 import { toast } from "../../store";
 import { useBackends, useSettings } from "./ctx";
 import ReplaySettings from "../../components/ReplaySettings.vue";
+import SetGate from "../../components/SetGate.vue";
+import { hasPerm } from "../../lib/caps";
+import { state } from "../../store";
 import SetCard from "../../components/SetCard.vue";
 import SetRow from "../../components/SetRow.vue";
 import Skeleton from "../../components/Skeleton.vue";
@@ -11,6 +14,7 @@ import UiSegmented from "../../components/UiSegmented.vue";
 
 /** 设置 → 助手 → 自检与复盘: the nightly check of pages the assistant wrote, and the nightly replay of recent questions. */
 const { config, profiles, saveConfig } = useSettings();
+const owner = computed(() => !state.me || state.me.role === "owner");
 const { profileOptions, modelOptionsFor, loadProbes } = useBackends(profiles);
 watch(() => profiles.value.length, (n) => { if (n) void loadProbes(); }, { immediate: true });
 
@@ -38,9 +42,9 @@ function auditNumber(event: Event, key: string, max: number, percentage = false)
 <template>
   <Skeleton v-if="!config" :rows="5" />
   <div v-else class="stack">
-    <SetCard v-if="config.quality?.audit" id="set-audit" title="每晚抽检">
+    <SetCard v-if="config.quality?.audit" id="set-audit" title="每晚抽检" :keys="['quality']">
       <template #help>助手在整理材料、修正页面时自己写的页面没有人逐页看；每晚抽几页由核对角色对照原件和代码看一遍，有事实问题的交回修改。某一类运行写的页面准确率掉到门槛以下，就改成它写的每一页都看，直到恢复。核对角色用的模型在 Agent 页给 wiki-checker 选，最好和写作的不是同一个。</template>
-      <template #aside><RouterLink class="small" to="/quality">查看抽检结果</RouterLink></template>
+      <template v-if="owner" #aside><RouterLink class="small" to="/quality">查看抽检结果</RouterLink></template>
       <SetRow label="启用每晚抽检">
         <UiCheckbox :model-value="config.quality.audit.enabled" switch aria-label="启用每晚抽检" @change="(v) => saveAudit({ enabled: v })" />
       </SetRow>
@@ -54,6 +58,6 @@ function auditNumber(event: Event, key: string, max: number, percentage = false)
         <UiSegmented :model-value="config.quality.audit.fix" size="sm" aria-label="抽检后交回修改" :options="[{ value: 'off', label: '不交回' }, { value: 'wrong', label: '有事实问题的' }, { value: 'all', label: '写法问题也交回' }]" @change="(v) => saveAudit({ fix: v })" />
       </SetRow>
     </SetCard>
-    <ReplaySettings v-if="config.replay" id="set-replay" :value="config.replay" :backends="profileOptions" :model-options="modelOptionsFor" @save="(replay, note) => saveConfig({ replay }, note)" />
+    <SetGate v-if="config.replay && hasPerm('agents.manage')" :keys="['replay']"><ReplaySettings id="set-replay" :value="config.replay" :backends="profileOptions" :model-options="modelOptionsFor" @save="(replay, note) => saveConfig({ replay }, note)" /></SetGate>
   </div>
 </template>

@@ -28,6 +28,27 @@ updated: 2026-11-21
 
 从 `src/agents/own-run.ts` 看本地运行选择，从 `own-sandbox.ts` 看挂载和后端模式。工作区及 ACP 写权限按角色保留，`GET/PUT /api/security/sandbox` 供本人检查和保存设置。配置组合及使用范围见 [本人的运行进沙箱](../../../docs/v2/agent-accounts.md#本人的运行进沙箱)。
 
+## 额外飞书机器人的群回复说明（2026-11-21）
+
+从 `src/agents/sessions.ts` 的 `threadTurn` 看群消息提示。额外机器人沿用主助手时，与主机器人一样收到结合群上下文、直接回复的说明。同事提问的那一轮还会说明哪些事由提问人决定。
+
+## 常驻说明按对话、后台和运行类型选节（2026-11-21）
+
+合并时留在常驻说明里的四段（它们是高频动作的规则，不是偶尔才走的流程；改成“先读分组说明再做”的话，弱一些的模型会跳过）：`roles/_common.md` 的“怎么写记忆”（只给这次能写记忆的运行）、“问本人、给本人选项”、“流程里的一个阶段”（只给承担流程阶段的运行），`roles/assistant.md` 的“提问时怎么查”。分组说明页里保留同样的内容。受影响的预算是主助手、ingest、dreamer、coder、distiller、coach 六个角色；主助手对话时的常驻说明约 1.9 万字符（这一轮开始前约 3.1 万）。
+
+从 `src/agents/instruction-sections.ts` 看小节的条件，从 `runner.ts` 和 `sessions.ts` 看场景来自哪里。群里被 @ 和关联事项的操作说明随本轮消息发送，原会话可以接着处理唤醒。写记忆、编码交办、流程验收等 17 个流程的正文移到工具分组。每轮的 `prompt.scene` 记录场景词，`test/prompt-budget.test.ts` 覆盖 44 个角色的对话和后台预算。
+
+## 设置页按区域显示，接上通知出口、出网代理、云端工具和成员的例行整理（2026-11-21）
+
+网页侧。设置页先读 `GET /api/settings/sections`，判断都在 `web/src/lib/settings-access.ts`（纯函数）和 `lib/caps.ts` 的 `settingsArea` / `settingsKey` / `settingsCard`；`Settings.vue` 的 `TAB_KEYS` 写每个分类读写哪些配置键，`SetCard` / `SetRow` / `SetGate` 带 `keys` 后决定显示和只读（`lib/set-readonly.ts`，只读的控件 `inert`），`settings/ctx.ts` 把保存的 403 换成指出键的一句话。新卡：`components/NotifyOutlets.vue`（`/api/notify/outlets`，账号页也用）、`EgressSettings.vue`（`/api/security/egress`）、`CloudToolsSettings.vue`（`/api/cloud-tools`）；成员详情的例行整理在 `MembersSettings.vue`（`/api/work/routine?user=`）。演示数据和截图在 `scripts/doc-screens.ts`（`settings-outlets`、`settings-egress`、`settings-cloud-tools`、`settings-member`）。
+
+## 网页：统一的进度视图，远程授权按原因结束，Wiki 用模板开始（2026-11-21）
+
+- 进度视图从 `web/src/components/ProgressBoard.vue` 和 `web/src/lib/progress.ts` 读起：读 `GET /api/runs/:id/progress` 或 `/api/items/:id/progress`，一块一行摘要，展开是任务的紧凑行，只读、每项链到自己的页面。运行页（`views/Runs.vue`）用它替换原来的任务板位置，任务板一块可展开原来的 `TaskBoard`；接口不存在时照旧显示 `TaskBoard`。`views/WorkDetail.vue` 和 `views/Items.vue` 各加一个“在做的”。刷新跟着 `run`、`work`、`changed item` 事件。
+- 远程页（`views/Remote.vue`、`components/RemoteGrants.vue`、`lib/remote-grants.ts`）：抽屉读 `GET /api/remote/grant-candidates`，旧服务端退回读成员列表；被授权的一侧订 `remote-grant-ended` 事件，按 `revoked` / `expired` / `closed` 说话；`GET /api/remote` 里最近结束的条目不再当成会话。
+- Wiki（`views/Wiki.vue`）：类型清单带 `templates=1`，编辑时正文为空才出现“用模板开始”。
+- 演示数据（`scripts/doc-screens.ts`）：退款改造的需求上补了两轮的编码交办和评审，新截图 `progress-board`、`work-progress`。
+
 ## 从旧交办的助手分工找回首轮（2026-11-21）
 
 从 `src/agents/progress.ts` 的编码投影读起。助手分工同时记有主轮和修改项号。即使拆项后还没写检查点就中断，修改项也能列出分派它的可见主轮。多项共用的主轮在交办总量里只算一次。
@@ -176,9 +197,13 @@ updated: 2026-11-21
 
 ## 指定了思考强度的运行偶尔一开始就失败（11-21）
 
-- 现象：本人指定了模型和强度的交办，开始时报“该 Agent 不支持设置 effort，无法使用指定值 high”，重试就好。运行记录里从建好会话到报错不到一秒：适配器在模型列表还没加载完时就开了会话，那一刻列出的设置项里没有强度。
-- `src/agents/acp.ts`：找不到强度的设置项时，按会话现有的模型再选一次拿回最新的设置项；本人指定了强度的运行隔一会儿再取（300 毫秒起，逐次加倍），也接适配器主动发来的 `config_option_update`，最多等 12 秒，仍然没有才报错。没有指定强度的运行只取一次，不等，照旧用后端的默认值。等过的运行在状态里留一行“思考强度的选项过了 N 秒才出现”。
-- 头一版只重新取一次（同一天早些时候），在常驻服务器上又出了一次同样的失败，所以改成等。测试在 `test/stall.test.ts`（假 Agent 的 `FAKE_LATE_EFFORT`）；真实后端上是否就是这个原因，要看之后的运行里有没有那行状态。
+- 现象：本人指定了模型和强度的交办，开始时报“该 Agent 不支持设置 effort，无法使用指定值 high”，有时重试就好，有时连着十几分钟都这样。
+- 原因（读了适配器的代码、在一台机器上复现过）：适配器只在“会话当前的模型在它拿到的模型目录里”时才列出思考强度。它拿到的目录有时是旧的（没有较新的模型）：这时当前模型照样排在模型列表最前面，但没有强度可选，再选一次同一个模型也是空操作。前两版修法（重新取一次、等 12 秒）都是按“选项晚一点才到”做的，不对。
+- 现在的做法（`src/agents/acp.ts`、`src/agents/catalog.ts`）：
+  - 目录条目可以声明 `launchConfig`（启动时从哪个环境变量读 JSON 配置、模型和强度各叫什么键）。有这个声明的后端，运行指定的模型和强度在启动时就写进去，会话一开始就在这个模型和强度上，不依赖它当时列出什么。会话自己报的当前模型和强度（`models.currentModelId`，形如 `模型[强度]`）对得上时，即使没有列出强度的设置项也算设好了，状态里记一行“思考强度 … 已在启动时指定”。上次检测时这个模型没有的强度不写进启动配置。
+  - 兜底（没有这种声明的后端）：会话列出的模型或强度比上次检测时少，就按“目录不全”处理——隔一会儿重开会话再试（指定了模型或强度的运行 15、30、60、120 秒各一次，仍然不全就失败并说明；没指定的试两次后照旧用后端的默认值）。被恢复的会话不会因此被删。指定了后端的运行不因为这个换到别的后端。
+  - 后端主动发来的 `config_option_update` 也接了。
+- 测试：`test/stall.test.ts`（假 Agent 的 `FAKE_CUT_UNTIL`、`FAKE_LAUNCHED`、`FAKE_LATE_EFFORT`）、`test/execution.test.ts`（检测结果过期、模型真的没了的情况）。
 
 ## 2026-11-21 · 多人操作同一浏览器页面
 

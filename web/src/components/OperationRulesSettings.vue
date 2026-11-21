@@ -49,6 +49,8 @@ const { profileOptions } = useBackends(profiles);
 const backendOptions = computed(() => profileOptions.value.map((o) => ({ value: o.value, label: o.label, hint: o.value })));
 
 const drafts = ref<Draft[] | null>(null);
+/** The server says HTTP rules are enforced by the egress proxy too (`enforcedBy`): the hint names both places. */
+const httpEgress = computed(() => !!drafts.value?.some((d) => d.enforcedBy?.includes("egress")));
 const loadError = ref("");
 const saved = ref("");
 const saving = ref(false);
@@ -328,7 +330,8 @@ function onPacksChanged() {
             </div>
 
             <template v-else-if="d.rule.match.kind === 'http'">
-              <p class="op-pending small">在 Agent 用 aad 操作的浏览器里生效：页面的请求发出前先问，要带请求闸门的 aad 版本。不经这个浏览器发出的请求（命令行里的 curl、别的程序）这类规则管不到。</p>
+              <p v-if="!d.enforcedBy?.includes('egress') && !httpEgress" class="op-pending small">在 Agent 用 aad 操作的浏览器里生效：页面的请求发出前先问，要带请求闸门的 aad 版本。不经这个浏览器发出的请求（命令行里的 curl、别的程序）这类规则管不到。</p>
+              <p v-else class="op-pending small">在两处生效：Agent 用 aad 操作的浏览器（页面的请求发出前先问，要带请求闸门的 aad 版本），和成员沙箱的出网代理（命令行里的 curl、别的程序经它出网，见下面的“出网代理”）。HTTPS 只看得到主机，要按路径判定的域名在出网代理里另开解密；两处都不经过的请求管不到。</p>
               <div class="op-grid">
                 <label class="field"><span>主机</span><input :id="`rule-${d.key}-first`" v-model="asHttp(d).host" class="input sm mono" placeholder="如 api.example.com 或 *.example.com" spellcheck="false" /></label>
                 <div class="field"><span>方法</span><UiSelect :model-value="asHttp(d).methods ?? []" multiple size="sm" placeholder="任何方法" aria-label="方法" :options="METHODS.map((v) => ({ value: v, label: v }))" @change="(v) => (asHttp(d).methods = v as string[])" /></div>

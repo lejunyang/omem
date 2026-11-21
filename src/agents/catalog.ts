@@ -15,6 +15,12 @@ export type CatalogEntry = {
   /** Writable state of the local login beyond its session history and skill directory. */
   statePaths?: string[];
   stateFiles?: string[];
+  /**
+   * Settings the agent takes when it starts, as a JSON object in an environment variable (`env`), and the keys
+   * its model and thinking level go by there. A run that names a model or a level writes them in, so the
+   * session starts on them whatever the agent's model catalog lists at that moment (acp.ts openAcp).
+   */
+  launchConfig?: { env: string; model?: string; effort?: string };
   egressHosts?: string[];
   id: string;
   name: string;
@@ -79,7 +85,7 @@ const DEVICE_CODE = "\\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\\b";
 
 export const acpCatalog: CatalogEntry[] = [
   {
-    id: "codex", egressHosts: ["api.openai.com","chatgpt.com","auth.openai.com"], name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server", skills: { read: ["${CODEX_HOME:-~/.codex}/skills", "~/.agents/skills"], write: "~/.agents/skills" },
+    id: "codex", launchConfig: { env: "CODEX_CONFIG", model: "model", effort: "model_reasoning_effort" }, egressHosts: ["api.openai.com","chatgpt.com","auth.openai.com"], name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server", skills: { read: ["${CODEX_HOME:-~/.codex}/skills", "~/.agents/skills"], write: "~/.agents/skills" },
     account: { cli: "codex", env: { CODEX_HOME: "{home}/.codex" }, dirs: [".codex"], owns: [".codex"], login: { args: ["login", "--device-auth"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, status: { args: ["login", "status"], user: "(?:as|account:?)\\s+([^\\s()]+@[^\\s()]+|[^\\s()]+)" }, logout: { args: ["logout"] } },
   },
   // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
@@ -183,6 +189,31 @@ export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
   const e = p.transport === "acp" ? acpCatalog.find((x) => x.command === p.command) : undefined;
   const previous = e?.previousArgs?.some((a) => a.length === p.args.length && a.every((v, i) => v === p.args[i]));
   return e ? { ...p, args: previous ? e.args ?? [] : p.args, archiveArgs: p.archiveArgs ?? e.archiveArgs, sessionHistory: p.sessionHistory ?? e.sessionHistory } : p;
+}
+
+/**
+ * The environment variable that starts this profile's agent on a model and a thinking level, when its catalog
+ * entry declares one (`launchConfig`). What the profile's own env already puts there is kept; a value there
+ * that is not a JSON object is left alone.
+ */
+export function launchConfigEnv(profile: Pick<AgentProfile, "id" | "source" | "command" | "env">, want: { model?: string | null; effort?: string | null }): Record<string, string> {
+  const spec = [...acpCatalog, ...accountOnlyCatalog].find((e) => e.id === (profile.source ?? profile.id) || e.command === profile.command)?.launchConfig;
+  if (!spec) return {};
+  let base: Record<string, unknown> = {};
+  const given = profile.env?.[spec.env];
+  if (given) {
+    try {
+      const parsed: unknown = JSON.parse(given);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      base = parsed as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  const next = { ...base };
+  if (spec.model && want.model && next[spec.model] === undefined) next[spec.model] = want.model;
+  if (spec.effort && want.effort && next[spec.effort] === undefined) next[spec.effort] = want.effort;
+  return Object.keys(next).length === Object.keys(base).length ? {} : { [spec.env]: JSON.stringify(next) };
 }
 
 export function catalogEntry(id: string) {

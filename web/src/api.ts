@@ -159,7 +159,11 @@ export type ServerEvent =
   | { type: "changed"; entity: string; id: string; spaceId?: string }
   | { type: "ask"; id: string; status: string; conversationId: string | null }
   | { type: "ui"; id: string; conversationId: string }
-  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean };
+  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean }
+  /** A work board's tasks changed (src/agents/work-board.ts). */
+  | { type: "work"; workId: string }
+  /** A remote session handed to this person stopped being theirs (src/remote/grants.ts): only they hear it. */
+  | { type: "remote-grant-ended"; sessionId: string; grantId: string; userId: string; ended: "revoked" | "expired" | "closed" };
 
 /** A question, suggested next steps or an approval from an agent (server: agents/asks.ts). */
 export type Ask = {

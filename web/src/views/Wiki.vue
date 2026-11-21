@@ -230,13 +230,13 @@ function showFolder(path: string) {
  * Page kinds this space can use (`GET /api/wiki/kinds`): the built-in ones and those plugins add,
  * each with when to use it. A page whose plugin kind is gone keeps the kind's name as it was.
  */
-type PageKind = { kind: string; label: string; describe: string; plugin: string | null; hasTemplate: boolean };
+type PageKind = { kind: string; label: string; describe: string; plugin: string | null; hasTemplate: boolean; /** With `templates=1` (an older server leaves it out). */ template?: string | null };
 const kinds = ref<PageKind[]>([]);
 let kindsSeq = 0;
 watch(space, async (s) => {
   const seq = ++kindsSeq;
   try {
-    const list = await get<PageKind[]>(`/api/wiki/kinds?space=${encodeURIComponent(s)}`);
+    const list = await get<PageKind[]>(`/api/wiki/kinds?space=${encodeURIComponent(s)}&templates=1`);
     if (seq === kindsSeq) kinds.value = list;
   } catch {
     if (seq === kindsSeq) kinds.value = [];
@@ -248,6 +248,12 @@ function kindOptions(current?: string) {
   const list = kinds.value.map((k) => ({ value: k.kind, label: k.label, hint: k.plugin ? `${k.describe}（插件 ${k.plugin}）` : k.label === k.describe ? k.kind : k.describe }));
   if (current && !kinds.value.some((k) => k.kind === current)) list.push({ value: current, label: current, hint: "插件已停用，照原样保留" });
   return list;
+}
+/** The kind's template, offered only into an empty body (it never replaces what is written). */
+const draftTemplate = computed(() => (draft.value.body.trim() ? "" : kindOf(draft.value.kind)?.template ?? ""));
+function useTemplate() {
+  if (draft.value.body.trim() || !draftTemplate.value) return;
+  draft.value.body = draftTemplate.value;
 }
 function startEdit() {
   if (!page.value) return;
@@ -437,6 +443,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
           <span class="muted small">类型</span>
           <UiSelect v-model="draft.kind" size="sm" width="180px" aria-label="页面类型" :options="kindOptions(page.meta.kind)" placeholder="没有类型" />
           <span v-if="kindOf(draft.kind)?.plugin" class="muted small kind-why">{{ kindOf(draft.kind)?.describe }}</span>
+          <button v-if="draftTemplate" type="button" class="btn ghost sm" title="把这个类型的模板填进下面空的正文" @click="useTemplate">用模板开始</button>
         </div>
         <textarea v-model="draft.body" class="textarea body-input" spellcheck="false" />
         <div class="row">

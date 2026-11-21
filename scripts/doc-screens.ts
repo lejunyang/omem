@@ -21,7 +21,7 @@ import { findAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createSession, pluginContext } from "../src/plugins/blocks.ts";
 import { getPlugin, loadPlugins } from "../src/plugins/registry.ts";
-import { itemProviders, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
+import { itemProviders, notifiers, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { registerFormats } from "../src/plugins/formats.ts";
 import type { PluginManifest } from "../src/plugins/registry.ts";
@@ -994,6 +994,46 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   course(coupons, (a) => Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(11), status: "running" }), "running");
   for (const task of [logs, coupons]) run(app.db, "update runs set status='running', started_at=?, ai=? where id=?", ago(task === logs ? 7.6 : 11), JSON.stringify({ profile: "codex", model: "gpt-6.2-sol", effort: task === logs ? "high" : "medium" }), runOf(task));
   run(app.db, "update runs set status='done', started_at=?, finished_at=?, output=json_set(coalesce(output,'{}'),'$.answer',?) where id=?", ago(17), ago(16), "已经分三块在查：对账单逐笔对、部分发货订单的退款日志、满减券的分摊口径。三块都有结果后我再汇总给你。", boardAsk.id);
+  // What the first part reported using; the two still running have not reported yet ("有 N 个没有用量数据").
+  addRunEvent(app, runOf(bills), "usage", { input: 18_400, output: 2_150 });
+}
+
+// ---- the same ask also delegated a fix, in two rounds, with a review (shots progress-board, work-progress) --
+// The ask and the delegation hang on the requirement in its flow (flowItem), so its work page shows them with
+// the flow's stage: a board still running, a delegation waiting for the owner to accept it (T2 done on the
+// second try), a review passed in its second round.
+{
+  const { addTask, takeTasks, updateTask } = await import("../src/agents/code-tasks.ts");
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const codex = (effort: string) => JSON.stringify({ profile: "codex", model: "gpt-6.2-sol", effort });
+  run(app.db, "update runs set input=json_set(input,'$.itemId',?) where id=?", flowItem.id, boardAsk.id);
+  const reviewPlan = { tier: "standard", tierName: "标准", checks: ["reviewer", "review-business"], maxRounds: 3, reasons: ["改了退款日志和导出两处"], metrics: {} };
+  const first = createRun(app, { kind: "code", spaceId: "shop", parentId: boardAsk.id, title: "退款日志写明走了哪条分摊路径", input: { task: "退款日志里写明这笔退款走的是旧的整单比例还是按行分摊，导出任务读这一项；补部分发货的回放用例。", repos: ["shop"], itemId: flowItem.id } });
+  const tasks = [
+    addTask(app, first.id, { title: "退款日志写明分摊路径", doneWhen: "每条退款日志带 split=legacy 或 split=line，单测覆盖两种。", kind: "build" }, "coder"),
+    addTask(app, first.id, { title: "部分发货订单补回放用例", doneWhen: "上月 5 笔差额订单都在用例里，按行分摊后差额为 0。", kind: "build" }, "coder"),
+    addTask(app, first.id, { title: "导出任务读日志里的分摊路径", doneWhen: "导出的退款表多一列“分摊方式”，和日志一致。", kind: "build" }, "coder"),
+  ];
+  takeTasks(app, first.id, first.id);
+  updateTask(app, first.id, tasks[0].seq, { state: "done", commits: { shop: ["3f2a91c"] } });
+  // T2 did not pass its check in the first round: sent back, done by the second round.
+  updateTask(app, first.id, tasks[1].seq, { state: "todo", attempts: 1 }, { kind: "verify", by: "reviewer", text: "回放用例只放了 3 笔，少了 A1033 和 A1041" });
+  updateTask(app, first.id, tasks[2].seq, { state: "done", commits: { shop: ["8c41d07"] } });
+  setRunOutput(app, first.id, { reviewPlan, reviewStage: "done", verdict: "changes-requested", coderAI: { profile: "codex", model: "gpt-6.2-sol", effort: "high" } });
+  run(app.db, "update runs set status='done', created_at=?, started_at=?, finished_at=?, ai=? where id=?", ago(15.5), ago(15), ago(9), codex("high"), first.id);
+  recordReview(app, { codeRunId: first.id, round: 1, check: "reviewer", tier: "standard", verdict: "changes_requested", summary: "回放用例少了两笔差额订单。", findings: [{ severity: "major", file: "test/replay.test.js", line: 12, title: "回放用例只覆盖了 3 笔差额订单", detail: "", suggestion: "把 A1033、A1041 加进去", evidence: [], confidence: "high" }] as never, ai: { profile: "codex", model: "gpt-6.2-sol", effort: "medium" } });
+  recordReview(app, { codeRunId: first.id, round: 1, check: "review-business", tier: "standard", verdict: "approved", summary: "分摊方式的取值和需求一致。", findings: [], ai: { profile: "codex", model: "gpt-6.2-sol", effort: "medium" } });
+  for (const f of all<{ id: number }>(app.db, "select f.id from review_findings f join reviews v on v.id = f.review_id where v.code_run_id = ?", first.id))
+    run(app.db, "update review_findings set state='accepted', decision='fix' where id=?", f.id);
+  const second = createRun(app, { kind: "code", spaceId: "shop", title: "退款日志写明走了哪条分摊路径 · 第 2 轮", input: { continueFrom: first.id, round: 2, task: "补上 A1033、A1041 两笔回放用例", repos: ["shop"], itemId: flowItem.id } });
+  takeTasks(app, first.id, second.id);
+  updateTask(app, first.id, tasks[1].seq, { state: "done", commits: { shop: ["d93e5b2"] } });
+  setRunOutput(app, second.id, { reviewPlan: { ...reviewPlan, checks: ["reviewer"] }, reviewStage: "done", verdict: "approved", coderAI: { profile: "codex", model: "gpt-6.2-sol", effort: "high" } });
+  run(app.db, "update runs set status='done', created_at=?, started_at=?, finished_at=?, ai=? where id=?", ago(8), ago(7.8), ago(2), codex("high"), second.id);
+  recordReview(app, { codeRunId: second.id, round: 2, check: "reviewer", tier: "standard", verdict: "approved", summary: "5 笔差额订单都在用例里，回放通过。", findings: [], ai: { profile: "codex", model: "gpt-6.2-sol", effort: "medium" } });
+  // What each round reported using (made-up figures).
+  addRunEvent(app, first.id, "usage", { input: 96_300, output: 8_420 });
+  addRunEvent(app, second.id, "usage", { input: 41_800, output: 3_960 });
 }
 
 // ---- operation rules and two rule packs (设置 → 安全, shot security-rules) ------------------------
@@ -1135,6 +1175,25 @@ writePage(app, "shop", "ops/runbook-negative-amount", { meta: { title: "退款�
   "## 怎么处理", "请用户刷新后重新提交；仍是负数的转值班。", "", "## 找谁", "后端值班：小王。",
 ].join("\n") }, { actor: "wiki-writer" });
 
+// ---- 通知出口 (src/plugins/notifier.ts): a fictional plugin with two outlets, registered in process ----
+// One can carry questions; the other cannot reach anyone (its hint shows when the row opens). The owner
+// has the first on for normal and above; the `settings-outlets` shot shows it.
+{
+  const context = (_app: App, userId: string, spaceId: string, signal: AbortSignal) => ({ userId, spaceId, signal, connection: async () => null });
+  const lifetime = new AbortController().signal;
+  notifiers.set("pager:phone", { plugin: "pager", spaces: [], context, lifetime, def: {
+    id: "phone", name: "手机推送（演示）",
+    async deliver() { return { ref: "demo" }; },
+    async ask() { return { ref: "demo-ask" }; },
+  } });
+  notifiers.set("pager:desk", { plugin: "pager", spaces: [], context, lifetime, def: {
+    id: "desk", name: "桌面提醒（演示）",
+    async resolve() { return { ok: false, hint: "这台电脑上没有装桌面提醒的客户端（演示）" }; },
+    async deliver() { throw new Error("客户端没有响应（演示）"); },
+  } });
+  app.config.notify.outlets = { owner: [{ id: "pager:phone", minUrgency: "normal", askKinds: ["question"] }] };
+}
+
 // ---- other people (src/auth/capabilities.ts) ---------------------------------------------------
 // 小周 reads the shop's work as a read-only observer; 小林 is a member with two capabilities set
 // apart from the preset and one space set on its own. Their tokens log the page in as them.
@@ -1145,12 +1204,18 @@ addMember(app, "shop", xiaolin.id, "contributor");
 addMember(app, "refund", xiaolin.id, "reader");
 for (const [capability, kind, scope, effect] of [["work.view", "global", "", "allow"], ["items.operate", "global", "", "deny"], ["items.view", "space", "shop", "allow"]] as const)
   run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,?,?,?,?,?,?)", xiaolin.id, capability, kind, scope, effect, new Date().toISOString(), "owner", new Date().toISOString());
+// Settings by area (src/auth/settings-sections.ts): 小林 sees and changes the assistant area; 小周 reads
+// the knowledge and assistant areas. The `settings-member` shot opens the page as 小林.
+for (const [user, capability] of [[xiaolin.id, "settings.assistant.view"], [xiaolin.id, "settings.assistant.edit"], [xiaozhou.id, "settings.knowledge.view"], [xiaozhou.id, "settings.assistant.view"]] as const)
+  run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,'global','','allow',?,?,?)", user, capability, new Date().toISOString(), "owner", new Date().toISOString());
 // 小吴: a member with nothing set apart, to compare the nav against the preset.
 const xiaowu = createUser(app, { id: "xiaowu", name: "小吴", role: "member" });
 addMember(app, "shop", xiaowu.id, "reader");
 const xiaozhouToken = createApiToken(app, xiaozhou.id, "演示");
 const xiaolinToken = createApiToken(app, xiaolin.id, "演示");
 const xiaowuToken = createApiToken(app, xiaowu.id, "演示");
+// The owner signed in with a token: the cloud tools card is not served to a page opened straight on the machine.
+const ownerToken = createApiToken(app, "owner", "演示");
 // 小林's own line (src/items/member-work.ts), and what waits for him: the owner's assistant asked him how
 // the refund API is going (src/items/member-progress.ts).
 {
@@ -1191,8 +1256,8 @@ await sendToday(app);
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
-  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
-  console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}`);
+  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
+  console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
   const cleanup = async () => { await server.close(); app.db.close(); rmSync(home, { recursive: true, force: true }); process.exit(); };
   process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
   await new Promise(() => {});
@@ -1243,6 +1308,8 @@ async function prepareRemoteDemo(page: Page) {
     return r.fulfill({ json: { ...s, src: `/remote/${id}/` } });
   });
   await page.route("**/remote/rs_demo*/", (r) => r.fulfill({ contentType: "text/html", body: `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:14px/1.6 system-ui,sans-serif;background:#eef1f4;color:#1f2937}header{background:#1f2937;color:#fff;padding:10px 20px;font-weight:600}main{padding:20px}table{border-collapse:collapse;background:#fff;width:100%}td,th{border-bottom:1px solid #e5e7eb;padding:8px 12px;text-align:left}</style><header>示例商城 · 售后后台</header><main><h3>售后单 R1005</h3><table><tr><th>商品</th><th>状态</th><th>实付</th></tr><tr><td>短袖 T 恤 × 1</td><td>已发货</td><td>39.90</td></tr><tr><td>帆布包 × 1</td><td>未发货</td><td>59.00</td></tr></table><p>应退：39.90（只退已发货的行）</p></main>` }));
+  const names: Record<string, string> = { xiaozhou: "小周", xiaolin: "小林", xiaowu: "小吴" };
+  await page.route("**/api/remote/grant-candidates", (r) => r.fulfill({ json: Object.entries(caps).map(([id, list]) => ({ id, name: names[id], caps: list })).filter((c) => c.caps.length) }));
   await page.route("**/api/members/*/capabilities", (r) => {
     const id = decodeURIComponent(r.request().url().split("/api/members/")[1].split("/")[0]);
     return r.fulfill({ json: { preset: "member", overrides: [], caps: caps[id] ?? [], spaceCaps: {}, ownSpaceCaps: {}, effective: {} } });
@@ -1302,7 +1369,24 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   } },
   // A piece of work split into parts done side by side: who has each, the track of when they ran, one sent back.
   { name: "run-board", path: `/runs/${boardAsk.id}`, prepare: async (p) => {
+    await p.locator(".pg-sum", { hasText: "任务板" }).click();
+    await p.getByRole("button", { name: "看时间轴和报告" }).click();
     await p.locator(".tb .rows .row").nth(1).click();
+    await p.locator(".tb").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(400);
+  } },
+  // The whole work of that ask, block by block: the board, the delegation (T2 opened on its two tries), the review.
+  { name: "progress-board", path: `/runs/${boardAsk.id}`, prepare: async (p) => {
+    for (const kind of ["任务板", "编码交办"]) await p.locator(".pg-sum", { hasText: kind }).click();
+    await p.getByRole("button", { name: "第 2 次" }).first().click();
+    await p.locator(".pg").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(400);
+  } },
+  // The same on the requirement's work page (在做的), next to its flow.
+  { name: "work-progress", path: `/work/${flowItem.id}`, prepare: async (p) => {
+    await p.locator(".pg-sum", { hasText: "需求交付" }).click();
+    await p.locator(".pg-sum", { hasText: "退款日志写明走了哪条分摊路径" }).filter({ hasText: "编码交办" }).click();
+    await p.locator(".pg").evaluate((el) => el.scrollIntoView({ block: "start" }));
     await p.waitForTimeout(400);
   } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },
@@ -1510,6 +1594,51 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.getByRole("button", { name: "小林能做什么" }).click();
     await p.locator(".mc-cap").first().waitFor();
     await p.locator(".mc-cap", { hasText: "看事项" }).getByRole("button", { name: /空间另设/ }).click();
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 通知与打扰 → 通知出口: the demo plugin's two outlets under the built-in ones, the second opened.
+  { name: "settings-outlets", path: "/settings?card=notify-outlets", prepare: async (p) => {
+    await p.locator("#set-notify-outlets .ol").first().waitFor();
+    await p.getByRole("button", { name: "手机推送（演示）的更多设置" }).click();
+    await p.locator("#set-notify-outlets").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 安全 → 出网代理. The demo machine has no sandbox, so this machine's support and the runs' hosts
+  // are answered here (fictional hosts); saving still goes to the demo server.
+  { name: "settings-egress", path: "/settings?card=egress", before: async (p) => {
+    await p.route("**/api/security/egress", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const data = await (await route.fetch()).json();
+      const host = (h: string, count: number, denied = 0) => ({ host: h, count, bytes: count * 2048, denied, backend: false, ...(denied ? { lastDeniedAt: Date.now() - 40 * 60_000, error: "没有规则放行" } : {}) });
+      await route.fulfill({ json: { ...data, support: { ok: true }, inspect: data.inspect.length ? data.inspect : ["api.example.com"], inspectionAvailable: true,
+        runs: [{ runId: r.id, hosts: [host("registry.npmjs.org", 42), host("api.example.com", 6, 2), host("github.com", 3)] }, { runId: null, hosts: [host("pypi.org", 8)] }],
+        denied: [{ runId: r.id, host: "api.example.com", count: 2, at: Date.now() - 40 * 60_000, reason: "没有规则放行" }] } });
+    });
+  }, prepare: async (p) => {
+    await p.locator("#set-egress .eg-run-row").first().click();
+    await p.locator("#set-egress").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 安全 → 云端后端调只读工具: the owner with a token. The demo has no public address or cloud
+  // backend, so the status is answered here with a fictional one.
+  { name: "settings-cloud-tools", path: "/settings?card=cloud-tools", init: { "omem-token": ownerToken }, before: async (p) => {
+    await p.route("**/api/cloud-tools", (route) => route.fulfill({ json: {
+      enabled: true, tools: ["search", "read_source"], ttlMinutes: 15, maxCalls: 32, backends: ["doubao-cloud"], credentialIn: "channel",
+      url: "https://omem.example.com", addressError: null, activeCredentials: 1,
+      recent: [{ runId: r.id, calls: 5, errors: 1, lastError: "read_source：没有这一行（演示）", at: new Date(Date.now() - 25 * 60_000).toISOString() }],
+      profiles: [
+        { backend: "doubao-cloud", probe: { id: "p1", url: "https://omem.example.com", at: new Date(Date.now() - 2 * 86400_000).toISOString(), mode: "header", reason: "", confirmed: true } },
+        { backend: "web-agent", probe: { id: "p2", url: "https://omem.example.com", at: new Date(Date.now() - 3600_000).toISOString(), mode: "url", reason: "", confirmed: false }, reason: "需要本人确认当前地址的成功探测" },
+      ],
+    } }));
+  }, prepare: async (p) => {
+    await p.locator("#set-cloud-tools .ct-backend").first().waitFor();
+    await p.locator("#set-cloud-tools").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // The settings page as 小林 sees it: only the assistant area, and in it what only the owner changes stays read-only.
+  { name: "settings-member", path: "/settings?tab=reply", init: { "omem-token": xiaolinToken }, prepare: async (p) => {
+    await p.locator("#set-guests").scrollIntoViewIfNeeded();
     await p.waitForTimeout(300);
   } },
   // The owner's lines as the read-only observer 小周 sees them (src/items/member-work.ts).

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { del, get, patch, post } from "../api";
 import { confirmDialog } from "../lib/dialog";
-import { DURATIONS, durationLabel, expiryLabel, grantCandidates, MODE_LABEL, modesFor, type GrantCandidate, type GrantMode, type RemoteGrant } from "../lib/remote-grants";
+import { DURATIONS, durationLabel, expiryLabel, fromCandidates, grantCandidates, MODE_LABEL, modesFor, type GrantCandidate, type GrantMode, type RemoteGrant } from "../lib/remote-grants";
 import { toast } from "../store";
 import Icon from "./Icon.vue";
 import SideSheet from "./SideSheet.vue";
@@ -12,7 +12,8 @@ import UiSelect from "./UiSelect.vue";
 /**
  * 交给成员 (Remote.vue): who this browser session is handed to — one line each, its mode, until when,
  * whether they are watching now, and change / extend / take back — and handing it to one more.
- * Only people holding 看 / 操作授权给他的远程会话 are offered (`/api/members/:id/capabilities`).
+ * Only people holding 看 / 操作授权给他的远程会话 are offered (`GET /api/remote/grant-candidates`; an older
+ * server without it: the member list and each one's capabilities).
  */
 const props = defineProps<{ session: { id: string; title: string; ownerId: string; grants?: RemoteGrant[] } }>();
 const emit = defineEmits<{ close: []; changed: [] }>();
@@ -23,6 +24,17 @@ const people = ref<GrantCandidate[] | null>(null);
 const capsOf = ref<Record<string, GrantCandidate>>({});
 const peopleError = ref("");
 async function loadPeople() {
+  // Who the server offers (also when the session is not the owner's, who may not read the member list).
+  try {
+    const rows = await get<{ id: string; name: string; caps: string[] }[]>("/api/remote/grant-candidates");
+    const others = rows.filter((r) => r.id !== props.session.ownerId);
+    capsOf.value = Object.fromEntries(fromCandidates(others).map((c) => [c.id, c]));
+    people.value = fromCandidates(others, grants.value.map((g) => g.userId));
+    peopleError.value = "";
+    return;
+  } catch {
+    // An older server has no such list (404, or 403 for a member): read the members as before.
+  }
   try {
     const users = await get<{ id: string; name: string; role: string; status?: string; disabledAt?: string | null }[]>("/api/users");
     const others = users.filter((u) => u.role !== "owner" && u.id !== props.session.ownerId && !u.disabledAt);

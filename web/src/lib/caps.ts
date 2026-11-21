@@ -7,6 +7,9 @@
  *
  * The store hands over who is using the page (`followMe`), so this file stays free of the page's state.
  */
+import { shallowRef } from "vue";
+import { cardAccess, keyAccess, type KeyAccess, type SettingsSection, type SettingsSections } from "./settings-access.js";
+
 type Range = string[] | "*";
 export type Me = {
   role: string; perms: string[]; spaces: string[] | null;
@@ -59,4 +62,50 @@ export function capAnywhere(cap: string, opts: { own?: boolean } = {}, me: Who =
 /** An old global permission (`agents.manage`, `code.delegate`, `desktop.control`). */
 export function hasPerm(perm: string, me: Who = current()) {
   return isOwner(me) || !!me!.perms?.includes(perm);
+}
+
+/**
+ * Settings by area (`GET /api/settings/sections`, lib/settings-access.ts): the settings page loads the
+ * answer once and hands it here; every check of what someone may see or change in the settings goes
+ * through these. Before it arrives (or from a server without it) an area is read from the same
+ * capabilities in `/api/me` (`settings.<area>.view`), and from a server without those from the old
+ * permissions: members and the trail for whoever manages members, everything for `settings.manage`.
+ */
+const sectionsRef = shallowRef<SettingsSections | null>(null);
+export function setSettingsSections(s: SettingsSections | null) {
+  sectionsRef.value = s;
+}
+export const settingsSections = () => sectionsRef.value;
+export function settingsArea(area: SettingsSection, action: "view" | "edit", me: Who = current()) {
+  if (isOwner(me)) return true;
+  const s = sectionsRef.value;
+  if (s) return !!s.sections[area]?.[action] && (action === "view" || !!s.sections[area]?.view);
+  if (me!.caps?.some((c) => c.startsWith("settings.") && c !== "settings.members")) return me!.caps.includes(`settings.${area}.${action}`);
+  if (me!.perms?.includes("settings.manage")) return true;
+  return area === "members" && (me!.perms?.includes("users.manage") || !!me!.caps?.includes("settings.members"));
+}
+/** Any area at all: whether the settings page is offered. */
+export const settingsAnywhere = (me: Who = current()) => SETTINGS_AREAS.some((a) => settingsArea(a, "view", me));
+const SETTINGS_AREAS: SettingsSection[] = ["knowledge", "assistant", "ai", "channels", "members", "security", "system"];
+/** One configuration key (`notify`, `agents.accounts`): its area, and the owner-only list. */
+export function settingsKey(path: string, me: Who = current()): KeyAccess {
+  const s = sectionsRef.value;
+  if (isOwner(me)) return { view: true, edit: true, ownerOnly: false };
+  if (!s) {
+    const area: SettingsSection | null = path === "auth" || path.startsWith("agents.account") ? "members" : null;
+    const view = !!me!.perms?.includes("settings.manage") || (!!area && settingsArea(area, "view", me));
+    return { view, edit: view && !!me!.perms?.includes("settings.manage"), ownerOnly: false };
+  }
+  return keyAccess(s, path, false);
+}
+/** A card over several keys (lib/settings-access.ts `cardAccess`). */
+export function settingsCard(keys: string[], me: Who = current()): KeyAccess {
+  if (isOwner(me)) return { view: true, edit: true, ownerOnly: false };
+  const s = sectionsRef.value;
+  if (!s) {
+    const each = keys.map((k) => settingsKey(k, me));
+    const view = each.some((a) => a.view);
+    return { view, edit: view && each.every((a) => a.edit || !a.view), ownerOnly: false };
+  }
+  return cardAccess(s, keys, false);
 }
