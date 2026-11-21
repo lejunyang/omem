@@ -190,6 +190,7 @@ export function removeFlow(app: App, id: string, by = "user") {
   const path = file(app, id);
   if (!existsSync(path)) throw new HttpError(404, `没有流程 ${id}`);
   unlinkSync(path);
+  run(app.db, "delete from kv where key=?", "flow-checks:" + id);
   run(app.db, "delete from kv where key=?", "flow-runner:" + id);
   pruneGateGrants(app, id, []);
   commitLibrary(app.libraryDir, `${by}: 删除流程 ${id}`);

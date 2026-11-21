@@ -261,6 +261,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/metrics/decide": "self",
   "GET /api/flows": cap("flows.view", "list"),
   "GET /api/flows/board": cap("flows.view", "list"),
+  "PUT /api/flows/:id/checks": "owner",
   "DELETE /api/flows/:id/gates/:stage": "self",
   "POST /api/flows/validate": "owner",
   "PUT /api/flows/:id": "owner",

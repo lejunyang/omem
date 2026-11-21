@@ -112,7 +112,14 @@ export type StageRunner = FlowProvider & {
   check?(ref: string, signal: AbortSignal): Promise<RunnerResult>;
   cancel?(ref: string, signal: AbortSignal): Promise<void>;
 };
+export type GateScope = { flows?: string[]; stages?: string[] };
+export type StageGate = {
+  id: string; name: string; describe: string; applies?: GateScope;
+  review(ctx: Pick<FlowContext, "item" | "stage"> & { result: { summary: string; evidence: FlowEvidence[] }; by: string },
+    signal: AbortSignal): Promise<{ ok: true } | { ok: false; reason: string; evidence?: FlowEvidence[] }>;
+};
 export type ProcessApi = {
+  stageGate(def: StageGate): void;
   stageRunner(def: StageRunner): void;
   flowSignal(def: FlowSignal): void;
   answerAsk(input: OutletAnswer): Promise<void>;

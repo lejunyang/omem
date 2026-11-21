@@ -26,6 +26,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(here, f)).find((f) => existsSync(f))!;
 
 type Declared = {
+  gates: Omit<import("./types.ts").StageGate, "review">[];
   runners: (Omit<import("./types.ts").StageRunner, "start" | "check" | "cancel"> & { checks: boolean; cancels: boolean })[];
   signals: Omit<import("./types.ts").FlowSignal, "check">[];
   notifiers: { id: string; name: string; resolves: boolean; updates: boolean; asks: boolean; retracts: boolean }[];
@@ -81,7 +82,7 @@ export async function startSandbox(
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
       const eventCtx = scope instanceof AbortSignal ? undefined : scope;
-      const signal = ["retriever", "reranker", "notifier", "flowSignal", "stageRunner"].includes(String(msg.t))
+      const signal = ["retriever", "reranker", "notifier", "flowSignal", "stageRunner", "stageGate"].includes(String(msg.t))
         ? (scope instanceof AbortSignal ? scope : scope?.signal) : undefined;
       const cancel = () => {
         clearTimeout(timer);
@@ -192,6 +193,8 @@ export async function startSandbox(
   });
 
   try {
+    for (const def of declared.gates) opts.stageGate({ ...def, review: (arg, signal) =>
+      ask({ t: "stageGate", name: def.id, arg }, undefined, signal) });
     for (const def of declared.runners) {
       const invoke = (method: string, arg: unknown, signal: AbortSignal) => ask({ t: "stageRunner", name: def.id, method, arg }, undefined, signal);
       opts.stageRunner({ ...def, start: (ctx, signal) => invoke("start", ctx, signal),

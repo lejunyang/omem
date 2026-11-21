@@ -4,7 +4,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { parseFlow, saveFlow } from "../src/flows/definitions.ts";
-import { flowView, ownerAction, startFlow } from "../src/flows/engine.ts";
+import { flowView, ownerAction, startFlow, reportStage } from "../src/flows/engine.ts";
+import { itemProgress } from "../src/agents/progress.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
 import { proposeFlow } from "../src/flows/engine.ts";
 import { answerAsk } from "../src/agents/asks.ts";
@@ -12,6 +13,7 @@ import { getRun, setRunOutput } from "../src/agents/runs.ts";
 import { runPluginStage } from "../src/flows/plugin-runner.ts";
 import { all, run } from "../src/core/db.ts";
 import { upsertItem } from "../src/items/store.ts";
+import { saveGateChecks } from "../src/flows/plugin-gates.ts";
 
 describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   const app = testApp();
@@ -33,16 +35,22 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   }
   beforeAll(async () => {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "plugin.yaml"), "id: stagekit\nname: 阶段示例\npermissions:\n  flow: { signal: true, run: true }\n");
+    writeFileSync(join(dir, "plugin.yaml"), "id: stagekit\nname: 阶段示例\npermissions:\n  flow: { signal: true, run: true, gate: true }\n");
     writeFileSync(join(dir, "server.mjs"), `import { existsSync, writeFileSync } from "node:fs";
       import { join } from "node:path";
       const data = process.env.OMEM_PLUGIN_DATA;
       export default function(api) {
+      api.stageGate({id:"word",name:"验收词",describe:"结果要写已验证",async review(ctx) {
+        return ctx.result.summary.includes("已验证") ? {ok:true} : {ok:false,reason:"缺少已验证",evidence:[{text:"验收要求",link:"https://example.org/rule"}]};
+      }});
+      api.stageGate({id:"slow",name:"慢检查",describe:"等待检查",review(_ctx, signal) {
+        return new Promise((_,reject) => signal.addEventListener("abort",() => reject(signal.reason),{once:true}));
+      }});
       api.stageRunner({ id:"job", name:"作业", describe:"写入标记", async start(ctx) {
         const ref = ctx.idempotencyKey, path = join(data,ref);
         if (!existsSync(path)) writeFileSync(path,ref,{flag:"wx"});
         return {ref,status:ctx.with.fail ? "failed" : "running",summary:"作业结果"};
-      }, async check(ref){ return {ref,status:"done",summary:"作业完成",evidence:[{text:"标记"}]}; },
+      }, async check(ref){ return {ref,status:"done",summary:"已验证：作业完成",evidence:[{text:"标记"}]}; },
       async cancel(ref){writeFileSync(join(data,ref+".cancel"),"cancel");} });
       api.flowSignal({ id: "mark", name: "标记", describe: "检查通过", params: {type:"object",properties:{fail:{type:"boolean"}}},
         async check(ctx) { if (ctx.with.fail) throw Error("读取失败"); return {done:true,evidence:[{text:"检查单",link:"https://example.org/check"}]}; } });
@@ -88,6 +96,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     expect(getRun(app,id).output.runnerResult).toEqual(operation);
     await tick(item);
     expect(flowView(app,item).stages[0]).toMatchObject({state:"done",evidence:[id],pluginEvidence:[{text:"标记"}]});
+    expect(itemProgress(app,item,{user:"owner"}).find(v => v.kind === "flow")?.tasks[0].attempts.some(a => a.runId === id)).toBe(true);
   });
   it("期限到后取消，插件失败也停在当前阶段", async () => {
     const item = await begin([job()]);
@@ -100,5 +109,56 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     const failed = await begin([job(true)]);
     await expect(tick(failed)).rejects.toThrow("作业结果");
     expect(flowView(app,failed).stages[0].state).toBe("blocked");
+  });
+  it("检查默认不启用，拦下结果后只有本人能单次越过", async () => {
+    const item = await begin([{id:"mark",name:"人工检查",by:"wait"}]);
+    saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true}]);
+    await ownerAction(app,item,"mark","done","检查完成");
+    const s = flowView(app,item).stages[0];
+    expect(s).toMatchObject({state:"blocked",gateReview:{failed:[{id:"stagekit:word",reason:"缺少已验证"}]}});
+    expect(s.pluginEvidence).toContainEqual({text:"验收要求",link:"https://example.org/rule"});
+    await expect(answerAsk(app,s.askId!,{choice:0,by:"member"})).rejects.toThrow();
+    await answerAsk(app,s.askId!,{choice:0,by:"owner"});
+    expect(flowView(app,item).stages[0].state).toBe("done");
+    expect(all<{note:string}>(app.db,"select note from item_stage_log where item_id=?",item).some(v => v.note.includes("越过检查 stagekit:word"))).toBe(true);
+    const again = await begin([{id:"mark",name:"人工检查",by:"wait"}]);
+    await ownerAction(app,again,"mark","done","检查完成");
+    expect(flowView(app,again).stages[0].state).toBe("blocked");
+    saveGateChecks(app,"inspect",[]);
+  });
+  it("必须的检查超时暂停，非必须的检查超时放行并记下原因", async () => {
+    const item = await begin([{id:"mark",name:"人工检查",by:"wait"}]);
+    saveGateChecks(app,"inspect",[{id:"stagekit:slow",mandatory:true}]);
+    await ownerAction(app,item,"mark","done","已验证");
+    expect(flowView(app,item).stages[0]).toMatchObject({state:"blocked",gateReview:{failed:[{id:"stagekit:slow",reason:expect.stringContaining("问不到")}]}});
+    saveGateChecks(app,"inspect",[{id:"stagekit:slow",mandatory:false}]);
+    const next = await begin([{id:"mark",name:"人工检查",by:"wait"}]);
+    await ownerAction(app,next,"mark","done","已验证");
+    expect(flowView(app,next).stages[0].state).toBe("done");
+    expect(all<{note:string}>(app.db,"select note from item_stage_log where item_id=?",next).some(v => v.note.includes("非强制检查放行"))).toBe(true);
+    saveGateChecks(app,"inspect",[]);
+  }, 15_000);
+  it("结果检查在本人的签字之后，检查通过不提前放行", async () => {
+    const item = await begin([{...job(),done:"confirm"}]);
+    saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true}]);
+    await expect(tick(item)).rejects.toThrow("下一次检查");
+    await tick(item);
+    const s = flowView(app,item).stages[0];
+    expect(s.state).toBe("doing");
+    expect(s.gateReview).toBeUndefined();
+    await answerAsk(app,s.askId!,{choice:0,by:"owner"});
+    expect(flowView(app,item).stages[0].state).toBe("done");
+    saveGateChecks(app,"inspect",[]);
+  });
+  it("交回失败后，旧的单次越过卡片失效", async () => {
+    const item = await begin([job()]);
+    saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true}]);
+    const id = flowView(app,item).stages[0].by!;
+    await reportStage(app,item,"job",{state:"done",note:"缺少验收词",evidence:[id]},{actor:"stagekit:job",runId:id});
+    const ask = flowView(app,item).stages[0].askId!;
+    await reportStage(app,item,"job",{state:"blocked",note:"作业失败",waitingOn:"owner"},{actor:"stagekit:job",runId:id});
+    await expect(answerAsk(app,ask,{choice:0,by:"owner"})).rejects.toThrow();
+    expect(flowView(app,item).stages[0]).toMatchObject({state:"blocked",gateReview:undefined});
+    saveGateChecks(app,"inspect",[]);
   });
 });

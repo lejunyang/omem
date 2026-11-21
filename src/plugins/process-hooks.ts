@@ -2,7 +2,7 @@ import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
-import type { StageRunner, FlowSignal, Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
+import type { StageGate, StageRunner, FlowSignal, Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
 import { registerFormats } from "./formats.ts";
@@ -15,6 +15,7 @@ type Entry<T> = {
   def: T;
   context(app: App, userId: string, spaceId: string, signal: AbortSignal): CallContext;
 };
+export const stageGates = new Map<string, Entry<StageGate>>();
 export const stageRunners = new Map<string, Entry<StageRunner> & { settings(app: App, user: string): Record<string, unknown> }>();
 export const flowSignals = new Map<string, Entry<FlowSignal>>();
 export const notifiers = new Map<string, Entry<Notifier> & { lifetime: AbortSignal }>();
@@ -63,6 +64,12 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
   }
   return {
     ...registerFormats(manifest, version, spaces, context, undo),
+    stageGate(def) {
+      if (!manifest.permissions.flow?.gate) throw new Error("缺少 permissions.flow.gate");
+      if (!def.name?.trim() || !def.describe?.trim() || typeof def.review !== "function") throw new Error("阶段检查声明无效");
+      const applies = z.object({ flows: z.array(z.string()).optional(), stages: z.array(z.string()).optional() }).strict().optional().parse(def.applies);
+      add(stageGates, { ...def, applies });
+    },
     stageRunner(def) {
       if (!manifest.permissions.flow?.run) throw new Error("缺少 permissions.flow.run");
       if (!def.name?.trim() || !def.describe?.trim() || typeof def.start !== "function") throw new Error("阶段运行器声明无效");

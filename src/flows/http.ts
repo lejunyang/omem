@@ -1,4 +1,5 @@
-import { flowSignals, stageRunners } from "../plugins/process-hooks.ts";
+import { checksForFlow, saveGateChecks, gateChecksSchema } from "./plugin-gates.ts";
+import { flowSignals, stageRunners, stageGates } from "../plugins/process-hooks.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -82,11 +83,15 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
       }
     });
     const available = (entries: typeof flowSignals | typeof stageRunners) => Array.from(entries as ReadonlyMap<string, { spaces: readonly string[]; def: { name: string; describe: string; params?: Record<string, unknown> } }>).filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id, { def }]) => ({ id, name: def.name, describe: def.describe, params: def.params }));
-    return { signals: available(flowSignals), runners: available(stageRunners), flows: flows.map((f) => ({ ...f, grants: gateGrants(app, f.id, userId) })), drafts };
+    return { signals: available(flowSignals), runners: available(stageRunners), gates: [...stageGates].filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id,{def}]) => ({id,name:def.name,describe:def.describe,applies:def.applies})), flows: flows.map((f) => ({ ...f, checks: checksForFlow(app, f.id), grants: gateGrants(app, f.id, userId) })), drafts };
   });
   server.get("/api/flows/board", async (req) => {
     const { only } = body(z.object({ only: z.enum(["mine", "blocked"]).optional() }), req.query);
     return flowBoard(app, who(req), only);
+  });
+  server.put("/api/flows/:id/checks", async req => {
+    const id = (req.params as { id: string }).id;
+    return saveGateChecks(app, id, body(gateChecksSchema, req.body));
   });
   server.delete("/api/flows/:id/gates/:stage", async (req) => {
     const { id, stage } = req.params as { id: string; stage: string };

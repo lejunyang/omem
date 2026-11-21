@@ -13,6 +13,7 @@ import type { StageEvent } from "./review.ts";
 export type StageState = "pending" | "gated" | "doing" | "blocked" | "done" | "skipped" | "stale";
 export type FlowActor = { actor: string; runId?: string; userId?: string };
 export type StageControl = {
+  gateReview?: import("./plugin-gates.ts").GateReview;
   pluginEvidence?: import("../../packages/plugin-sdk/server.ts").FlowEvidence[];
   objectAfter?: string;
   recorded?: boolean;
