@@ -7,7 +7,7 @@ import { findUser, listUsers, OWNER, userName, type User } from "../core/users.t
 import { HttpError, now, truncate, webLink } from "../core/util.ts";
 import { itemAccess } from "./access.ts";
 import { recordChange } from "./changes.ts";
-import { changeFilter, viewerOf } from "./member-work.ts";
+import { changeFilter, displayName, viewerOf } from "./member-work.ts";
 import { addItemEvent, getItem, isClosed, type Item } from "./store.ts";
 
 /**
@@ -54,7 +54,7 @@ export function unableSince(app: App, itemId: string, userId: string, at = Date.
 }
 
 const questionText = (app: App, item: Item, question: string, link: string, by: string) =>
-  `「${item.title}」的进展：${question.trim()}\n\n[打开这件事](${link})\n\n你的回答会原样记到这件事上，并告诉${userName(app, by)}。`;
+  `「${item.title}」的进展：${question.trim()}\n\n[打开这件事](${link})\n\n你的回答会原样记到这件事上，并告诉${displayName(app, by)}。`;
 
 /** Ask (or ask again, revising the open question). Checked first; the caller decided it may be sent now. */
 export async function askMemberProgress(app: App, input: { itemId: string; member: string; question: string; runId?: string | null; by?: string }) {

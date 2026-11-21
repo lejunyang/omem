@@ -323,3 +323,9 @@ export function userName(app: App, userId: string | null | undefined) {
   if (!userId || userId === OWNER) return "本人";
   return findUser(app, userId)?.name ?? userId;
 }
+/** A person as someone else reads the name: the owner by their own name (“本人” is the owner's word for themselves), else “主人”. */
+export function nameForOthers(app: App, userId: string | null | undefined) {
+  if (userId && userId !== OWNER) return userName(app, userId);
+  const n = findUser(app, OWNER)?.name?.trim();
+  return n && n !== "本人" ? n : "主人";
+}

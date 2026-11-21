@@ -6,7 +6,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { deliveryPlan, inQuietHours } from "../core/notify.ts";
 import { HttpError, truncate } from "../core/util.ts";
-import { larkOpenIdOf, OWNER, userName } from "../core/users.ts";
+import { larkOpenIdOf, nameForOthers, OWNER, userName } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
 import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, decidedBlocks, decidedColor, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, resultSummary, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
@@ -108,7 +108,7 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null; not
   const blocks = questionBlocks(app, ask);
   // The asking turn's answer, when it only said again what the card says (foldIntoAsk): kept, folded.
   if (opts.note) blocks.push({ fold: { title: "这一轮的说明", markdown: resolveCitationsSync(app, truncate(opts.note, 6000)) } });
-  if (ask.askedBy) blocks.unshift({ note: `${cardText(userName(app, ask.askedBy))} 的助手替 ta 问你，回答会交给 ta。` });
+  if (ask.askedBy) blocks.unshift({ note: `${cardText(nameForOthers(app, ask.askedBy))} 的助手替 ta 问你，回答会交给 ta。` });
   // What the agent showed with the question comes first, as text (docs/v2/interactive-ui.md).
   if (ask.ui?.view?.length) {
     // An interactive page is used on the web: the card only links to the question's page.

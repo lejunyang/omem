@@ -2,7 +2,7 @@ import { capabilityAccess } from "../auth/capabilities.ts";
 import { canReadRun } from "../auth/permissions.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
-import { OWNER, userName } from "../core/users.ts";
+import { nameForOthers, OWNER } from "../core/users.ts";
 import { HttpError, zonedParts, zoneMidnight } from "../core/util.ts";
 import { itemContext } from "../channels/listen.ts";
 import { itemAccess } from "./access.ts";
@@ -116,9 +116,11 @@ function prune(list: Child[], visible: Set<string>): Child[] {
 }
 
 const todayStart = (app: App) => zoneMidnight(zonedParts(new Date(), app.config.timezone).date, app.config.timezone).toISOString();
-const person = (app: App, id: string) => ({ id, name: id === OWNER ? userName(app, OWNER) : userName(app, id) });
+/** How someone other than the owner sees a person named: the owner by their own name (“本人” is the owner's word for themselves). */
+export const displayName = (app: App, id: string) => nameForOthers(app, id);
+const person = (app: App, id: string) => ({ id, name: displayName(app, id) });
 
-export type MemberLine = Line & { partial: boolean; mine: boolean; person: { id: string; name: string } };
+export type MemberLine = Line & { partial: boolean; mine: boolean; person: { id: string; name: string }; can: { edit: boolean; operate: boolean } };
 
 export function memberLineView(app: App, v: Viewer, item: Item): MemberLine {
   const tree = visibleTree(app, v, item.id);
@@ -140,6 +142,7 @@ export function memberLineView(app: App, v: Viewer, item: Item): MemberLine {
     phase: item.phase, phaseSince: item.phaseSince, watchUntil: item.watchUntil,
     ...(g ? { watch: { flaggedMetrics: g.flaggedMetrics, openProblems: g.openProblems, openItems: g.openItems } } : {}),
     partial: tree.partial, mine, person: person(app, item.userId),
+    can: { edit: itemAccess(app, v.userId, item, "write"), operate: itemAccess(app, v.userId, item, "operate") },
   };
 }
 

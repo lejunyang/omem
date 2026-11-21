@@ -138,9 +138,13 @@ export function duration(from: string | null, to = Date.now()): string {
   const minutes = Math.max(0, Math.floor((to - Date.parse(from)) / 60000));
   return minutes < 1 ? "不足 1 分钟" : minutes < 60 ? `${minutes} 分钟` : minutes < 1440 ? `${Math.floor(minutes / 60)} 小时` : `${Math.floor(minutes / 1440)} 天`;
 }
-export function stageLine(s: FlowStage, now = Date.now()) {
+/**
+ * `who`: the name of the person whose item it is, when that is not whoever reads the page (an observer,
+ * another member): their turn reads “等 小王”, not “等你”.
+ */
+export function stageLine(s: FlowStage, now = Date.now(), who?: string | null) {
   if (s.state === "done") return s.recorded ? "补录" : duration(s.enteredAt, s.doneAt ? Date.parse(s.doneAt) : now);
-  if (ownerTurn(s)) return `等你 · ${duration(s.since, now)}`;
+  if (ownerTurn(s)) return `${who ? `等 ${who}` : "等你"} · ${duration(s.since, now)}`;
   if (s.state === "doing") return `${duration(s.since, now)}前开始${s.attempt > 1 ? ` · 第 ${s.attempt} 次` : ""}`;
   if (s.state === "pending") return s.waitUntil ? `等到 ${clockTime(s.waitUntil)}` : "";
   return stageWords[s.state];
@@ -164,8 +168,15 @@ export function stageActions(s: FlowStage): FlowAction[] {
   if (s.state === "doing" && s.by === "owner") return [{ action: "done", label: "做完了" }, { action: "skip", label: "跳过这一段", reason: true }];
   return [];
 }
-export function nextWords(s: FlowStage) {
+export function nextWords(s: FlowStage, who?: string | null) {
   const task = (s.instruction || s.name).replace(/[。！？\s]+$/, "");
+  // Someone else's turn (see stageLine): what it waits for, without telling the reader to do it.
+  if (who) {
+    if (s.state === "blocked") return `卡住了，等 ${s.waitingOn === "owner" ? who : s.waitingOn || who} 处理：${task}。`;
+    if (s.question === "done") return `做完了，等 ${who} 确认：${task}。`;
+    if (s.state === "gated") return `要开始这一段了，等 ${who} 同意：${task}。`;
+    return `等 ${who}：${task}。`;
+  }
   if (s.state === "blocked") return `卡住：${s.waitingOn === "owner" ? "等你处理" : s.waitingOn ? `等 ${s.waitingOn} 回复` : "等待处理"}。${task}。处理好后继续，或重开这一段。`;
   if (s.question === "skip") return `等你补充跳过的原因：${task}。`;
   if (s.question === "refuse") return `等你补充哪里还不行：${task}。写明原因后重开这一段。`;

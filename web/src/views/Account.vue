@@ -11,6 +11,7 @@ import HelpText from "../components/HelpText.vue";
 import MonoLine from "../components/MonoLine.vue";
 import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
+import { capAnywhere } from "../lib/caps";
 
 /**
  * One's own account (src/auth): who I am, the providers I can log in with (binding another one),
@@ -215,7 +216,27 @@ async function signOut(s: Session) {
     toast((e as Error).message, "error");
   }
 }
-onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadTokens()]).catch((e) => toast((e as Error).message, "error")));
+// The routine look at one's own lines (GET/PUT /api/work/routine): for someone other than the owner who may have lines.
+type Routine = { on: boolean; ready: boolean; reason: string | null };
+const routine = ref<Routine | null>(null);
+async function loadRoutine() {
+  if (!state.me || state.me.role === "owner" || state.me.role === "observer" || !capAnywhere("items.edit")) return;
+  routine.value = await get<Routine>("/api/work/routine").catch(() => null);
+}
+const routineHint = computed(() => {
+  const r = routine.value;
+  if (!r) return "";
+  if (!r.on) return "每天看一次你自己的线：写现状、提下一步、问要不要结束。用你自己的 AI 账号跑，默认不开。";
+  return r.ready ? "开着，用你自己的 AI 账号跑。" : `开着，但现在不会跑：${r.reason ?? "没有可用的 AI 账号"}。`;
+});
+async function setRoutine(on: boolean) {
+  try {
+    routine.value = await put<Routine>("/api/work/routine", { on });
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadTokens(), loadRoutine()]).catch((e) => toast((e as Error).message, "error")));
 </script>
 
 <template>
@@ -339,6 +360,19 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
       <p v-if="conns && !shownProviders.length && state.me?.role !== 'owner'" class="muted small">omem 还没有可以连接的平台。</p>
 
       <AgentAccounts />
+
+      <!-- The routine look at one's own lines (src/items/member-routine.ts): off unless turned on, on one's own AI account. -->
+      <template v-if="routine">
+        <h2 class="section-title">线的例行整理</h2>
+        <div class="card pad row wrap feature">
+          <div class="stack tight">
+            <span>每天整理我自己的线</span>
+            <span class="muted small">{{ routineHint }}</span>
+          </div>
+          <span class="spacer" />
+          <UiCheckbox :model-value="routine.on" switch size="sm" aria-label="每天整理我自己的线" @change="setRoutine" />
+        </div>
+      </template>
 
       <h2 class="section-title">登录的设备</h2>
       <div v-if="!acc.sessions.length" class="card pad muted small">{{ acc.via === "local" ? "你在运行 omem 的这台机器上，不用登录。" : "没有登录的设备。" }}</div>

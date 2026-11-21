@@ -5,6 +5,7 @@ import { get, onServerEvent, onServerResync, post, type Run } from "../api";
 import BarChart from "../components/charts/BarChart.vue";
 import FlowBoard from "../components/FlowBoard.vue";
 import Icon from "../components/Icon.vue";
+import Markdown from "../components/Markdown.vue";
 import PluginSlots from "../components/PluginSlots.vue";
 import Skeleton from "../components/Skeleton.vue";
 import UiSegmented from "../components/UiSegmented.vue";
@@ -15,7 +16,7 @@ import WorkWaiting, { type PendingAction, type Waiting } from "../components/Wor
 import { promptDialog } from "../lib/dialog";
 import { dayKey, fmt } from "../lib/time";
 import { byMonth, dayKeyLabel, dayLabel, endedLine, ORIGIN_FILTERS, TYPE_FILTERS, type ChangeLite, type EndedLine, type ItemLite, type Line, type NextLite, type Place } from "../lib/work";
-import { sharedLine, type SharedOverview } from "../lib/shared-work";
+import { capAnywhere, capIn, hasCap } from "../lib/caps";
 import { fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
 /**
@@ -26,7 +27,9 @@ import { fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel, toas
  * owner; below, items under no line and what ran lately.
  */
 type View = "lines" | "time" | "stage";
-type Overview = { lines: Line[]; loose: ItemLite[]; pending?: PendingAction[]; waiting: Waiting; places: Place[]; ended: EndedLine[]; endedMore: boolean };
+/** `routine`: for someone other than the owner, whether their own lines get the routine look, and why not (src/items/member-routine.ts). */
+type Routine = { on: boolean; ready: boolean; reason: string | null };
+type Overview = { lines: Line[]; loose: ItemLite[]; pending?: PendingAction[]; waiting: Waiting; places: Place[]; ended: EndedLine[]; endedMore: boolean; routine?: Routine };
 type HomeBits = { runs: Run[]; study: { total: number; due: number; reviewedToday: number }; notifications: { id: string; at: string; title: string; body: string; link: string | null; unread?: boolean }[] };
 
 const route = useRoute(), router = useRouter();
@@ -40,30 +43,53 @@ const views = [{ value: "lines" as View, label: "按工作线" }, { value: "time
 const data = ref<Overview | null>(null), error = ref("");
 const home = ref<HomeBits | null>(null);
 /**
- * Someone other than the owner with 看工作线 (lib/caps.ts): the server sends the owner's lines and the
- * ended ones only (lib/shared-work.ts), and the page leaves out what is the owner's to do — what waits
- * for them, the questions they follow, asking, new lines, deciding next steps, items under no line.
+ * Someone other than the owner (src/items/member-work.ts): the same page, kept by the server to the lines
+ * they may read and their own, with their own 等我的 on the right. What is the owner's alone (按时间 and
+ * 按阶段 across everything, the questions the owner follows, the owner's notifications and runs) is left
+ * out; what they may not do is not shown (lib/caps.ts).
  */
 const shared = computed(() => !!state.me && state.me.role !== "owner");
+/** May make a line of their own somewhere. */
+const canMake = computed(() => capAnywhere("items.edit"));
 let seq = 0;
 async function load() {
   const n = ++seq;
   try {
-    const d = shared.value ? fromShared(await get<SharedOverview>("/api/work")) : await get<Overview>("/api/work");
+    const d = await get<Overview>("/api/work");
     if (n === seq) { data.value = d; error.value = ""; }
   } catch (e) {
     if (n === seq) error.value = (e as Error).message;
   }
 }
-const fromShared = (d: SharedOverview): Overview => ({
-  lines: (d.lines ?? []).map(sharedLine), loose: [], waiting: { total: 0, asks: [], gates: [], candidates: [], changes: [], drafts: 0 }, places: [], ended: d.ended ?? [], endedMore: !!d.endedMore,
-});
 async function loadHome() {
   if (shared.value) return;
   home.value = await get<HomeBits>("/api/home").catch(() => home.value);
 }
+// “今天” as it reads for them (GET /api/work/today): the owner gets it as the morning card instead.
+const today2 = ref<string | null>(null), todayOpen = ref(false);
+async function loadToday() {
+  if (!shared.value) return;
+  today2.value = (await get<{ text: string | null }>("/api/work/today").catch(() => ({ text: null }))).text;
+}
 void load();
 void loadHome();
+void loadToday();
+/** Their own lines, and whether the routine look runs on them (and why not). */
+const ownLines = computed(() => (data.value?.lines ?? []).filter((l) => l.mine).length);
+const routineNote = computed(() => {
+  const r = data.value?.routine;
+  if (!shared.value || !r || r.ready || !ownLines.value) return "";
+  return r.on ? `你的线没有每天整理：${r.reason ?? "没有可用的 AI 账号"}` : "你的线不会每天自动整理现状和下一步，在账号页打开，用你自己的 AI 账号跑";
+});
+/** 今天 split into its title line and the rest. */
+const todayText = computed(() => {
+  const t = today2.value?.trim();
+  if (!t) return null;
+  const [head, ...rest] = t.split(/\n\n/);
+  return { title: head.replace(/\*\*/g, "").trim() || "今天", body: rest.join("\n\n").trim() };
+});
+/** The right column: the owner's always; someone else's only with something waiting for them. */
+const rail = computed(() => !shared.value || !!data.value?.waiting.total);
 
 // ---- 按时间 ------------------------------------------------------------------------------------
 const types = ref<string[]>([]), origins = ref<string[]>([]);
@@ -111,9 +137,11 @@ const chart = computed(() => {
 });
 
 // ---- the side sheet ----------------------------------------------------------------------------
-const sheet = ref<{ change?: ChangeLite; next?: NextLite; lineTitle?: string } | null>(null);
-const openChange = (c: ChangeLite) => (sheet.value = { change: c });
-const openNext = (n: NextLite, l: Line) => (sheet.value = { next: n, lineTitle: l.title });
+const sheet = ref<{ change?: ChangeLite; next?: NextLite; lineTitle?: string; readonly?: boolean } | null>(null);
+/** A change or next step of a line that is not theirs opens read-only. */
+const notMine = (lineId: string) => data.value?.lines.find((l) => l.id === lineId)?.mine === false;
+const openChange = (c: ChangeLite) => (sheet.value = { change: c, readonly: notMine(c.lineId) });
+const openNext = (n: NextLite, l: Line) => (sheet.value = { next: n, lineTitle: l.title, readonly: l.mine === false });
 function changed() {
   void load();
   void loadActs();
@@ -196,7 +224,9 @@ async function newLine() {
   });
   if (!r?.title?.trim()) return;
   try {
-    const made = await post<{ id: string }>("/api/items", { kind: "line", title: r.title.trim(), detail: r.goal?.trim() ?? "", space: state.space });
+    // Someone else makes theirs where they may (their own space when the current one is not).
+    const space = !shared.value || capIn("items.edit", state.space) ? state.space : undefined;
+    const made = await post<{ id: string }>("/api/items", { kind: "line", title: r.title.trim(), detail: r.goal?.trim() ?? "", ...(space ? { space } : {}) });
     void router.push(`/work/${made.id}`);
   } catch (e) {
     toast((e as Error).message, "error");
@@ -226,35 +256,44 @@ async function ask(text = question.value) {
     <header class="page-head top">
       <div class="title">
         <h1>本月在推进</h1>
-        <p v-if="shared">这是主人在推进的事，你可以看<template v-if="data"> · {{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}</template></p>
+        <p v-if="shared">{{ dateLine }}<template v-if="data"> · {{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}</template><template v-if="!canMake"> · 只读</template></p>
         <p v-else>{{ dateLine }}<template v-if="data"> · {{ active.length }} 条工作线{{ watching.length ? ` · ${watching.length} 条观察中` : "" }}{{ todayChanges ? ` · 今天 ${todayChanges} 条变化` : "" }}</template></p>
       </div>
       <span class="spacer" />
-      <div v-if="!shared" class="tools row wrap">
+      <div v-if="!shared || canMake || data?.waiting.total" class="tools row wrap">
         <button v-if="data?.waiting.total" type="button" class="confirm-pill" @click="toWaiting"><Icon name="inbox" :size="14" />共 {{ data.waiting.total }} 条需要你确认</button>
-        <UiSegmented v-model="view" size="sm" aria-label="怎么看" :options="views" />
-        <button type="button" class="btn ghost sm" @click="newLine"><Icon name="plus" :size="14" />工作线</button>
+        <UiSegmented v-if="!shared" v-model="view" size="sm" aria-label="怎么看" :options="views" />
+        <button v-if="!shared || canMake" type="button" class="btn ghost sm" @click="newLine"><Icon name="plus" :size="14" />工作线</button>
       </div>
     </header>
 
     <p v-if="error && !data" class="err" role="alert">{{ error }} <button class="btn ghost sm" @click="load">重试</button></p>
 
-    <div class="grid" :class="{ solo: shared }">
+    <div class="grid" :class="{ solo: !rail }">
       <main class="main">
+        <!-- Someone else's 今天 (the owner's is the morning card): one line, opened on demand. -->
+        <section v-if="shared && todayText" class="today-mini" aria-label="今天">
+          <button type="button" class="etoggle" :aria-expanded="todayOpen" aria-controls="today-body" @click="todayOpen = !todayOpen">
+            <Icon name="right" :size="14" class="chev" :class="{ open: todayOpen }" />{{ todayText.title }}<span class="muted small">你的小结</span>
+          </button>
+          <div v-if="todayOpen" id="today-body" class="today-body"><Markdown :source="todayText.body" compact /></div>
+        </section>
         <!-- 按工作线 -->
         <template v-if="view === 'lines'">
           <Skeleton v-if="!data && !error" variant="cards" :rows="3" />
           <template v-else-if="data">
+            <p v-if="routineNote" class="small muted routine">{{ routineNote }} · <router-link to="/account">去设置</router-link></p>
             <div v-if="!data.lines.length && shared" class="card pad empty-lines">
               <strong>还没有你能看的工作线</strong>
-              <p class="muted small">主人在你能读的空间里建了工作线后，会出现在这里。</p>
+              <p class="muted small">{{ canMake ? "你能读的空间里有了工作线，或你把自己的事项建成线以后，会出现在这里。" : "你能读的空间里有了工作线以后，会出现在这里。" }}</p>
+              <div v-if="canMake"><button class="btn sm primary" @click="newLine"><Icon name="plus" :size="14" />新建工作线</button></div>
             </div>
             <div v-else-if="!data.lines.length" class="card pad empty-lines">
               <strong>还没有工作线</strong>
               <p class="muted small">工作线是这几周你在推进的一件事，相关的需求、缺陷、待办挂在它下面。每晚整理近况时，助手会从你做过的事里提议几条，你在卡片上点“建”；也可以自己建。走流程的事项、挂了别的事项的事项也会显示在这里。</p>
               <div><button class="btn sm primary" @click="newLine"><Icon name="plus" :size="14" />新建工作线</button></div>
             </div>
-            <WorkLine v-for="l in active" :key="l.id" :line="l" :readonly="shared" @change="openChange" @next="openNext" />
+            <WorkLine v-for="l in active" :key="l.id" :line="l" :readonly="l.mine === false" @change="openChange" @next="openNext" />
 
             <!-- 观察中: done, watched a while; nothing new and it ends by itself. -->
             <section v-if="watching.length" class="watching" aria-labelledby="watching-title">
@@ -266,7 +305,8 @@ async function ask(text = question.value) {
                     <span v-if="l.watchUntil" class="wuntil">观察到 {{ dayLabel(l.watchUntil) }}</span>
                   </span>
                   <span v-if="l.now" class="wnow">{{ l.now.text }}</span>
-                  <span class="wholds">
+                  <span v-else-if="l.partial" class="wnow muted">这条线有一部分你看不到</span>
+                  <span v-if="!l.partial" class="wholds">
                     <span v-for="h in watchHolds(l)" :key="h.text" class="hold" :class="{ warn: h.warn }">{{ h.text }}</span>
                     <span v-if="!watchHolds(l).length" class="hold ok">没有新问题</span>
                   </span>
@@ -360,12 +400,12 @@ async function ask(text = question.value) {
         </section>
       </main>
 
-      <aside v-if="!shared" class="rail">
+      <aside v-if="rail" class="rail">
         <!-- 按时间: the days, a column each, beside the list (a column opens that day). -->
         <div v-if="view === 'time' && acts" class="days card pad wide-only">
           <BarChart title="最近 30 天的变化" caption="一根一天 · 点一根只看那天" unit="条" :labels="chart.labels" :series="chart.series" :links="chart.links" :highlight="chart.highlight" :table="false" />
         </div>
-        <form class="askbox card" @submit.prevent="ask()">
+        <form v-if="!shared || hasCap('ask.send')" class="askbox card" @submit.prevent="ask()">
           <label for="work-ask" class="ask-head">问点什么</label>
           <textarea id="work-ask" v-model="question" rows="2" placeholder="问一条线的进展，或交代一件事" @keydown.enter.exact.prevent="ask()" />
           <div class="row wrap prompts">
@@ -374,7 +414,7 @@ async function ask(text = question.value) {
         </form>
         <Skeleton v-if="!data" variant="list" :rows="4" />
         <WorkWaiting v-else :waiting="data.waiting" :pending="data.pending" @changed="load" @change="openChange" />
-        <PluginSlots at="today" />
+        <PluginSlots v-if="!shared" at="today" />
         <section v-if="data?.places.length" class="places">
           <h2 class="section-title">在跟的问题</h2>
           <router-link v-for="p in data.places" :key="p.id" :to="`/listen/${p.id}`" class="place">
@@ -387,7 +427,7 @@ async function ask(text = question.value) {
       </aside>
     </div>
 
-    <WorkSheet v-if="sheet" :change="sheet.change" :next="sheet.next" :line-title="sheet.lineTitle" :readonly="shared" @close="sheet = null" @changed="changed" />
+    <WorkSheet v-if="sheet" :change="sheet.change" :next="sheet.next" :line-title="sheet.lineTitle" :readonly="!!sheet.readonly" @close="sheet = null" @changed="changed" />
   </div>
 </template>
 
@@ -413,6 +453,12 @@ async function ask(text = question.value) {
 .main { display: grid; gap: 14px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .rail { display: grid; gap: 24px; min-width: 0; grid-template-columns: minmax(0, 1fr); padding-right: 8px; }
 .empty-lines { display: grid; gap: 8px; }
+.routine { margin: 0; }
+/* Someone else's 今天: one quiet line above the page, opened on demand. */
+.today-mini { padding: 8px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); min-width: 0; }
+.today-mini .etoggle { font-size: 14px; font-weight: 600; gap: 8px; }
+.today-mini .etoggle .muted { font-weight: 400; }
+.today-body { margin-top: 8px; min-width: 0; overflow-wrap: anywhere; }
 
 /* 观察中: smaller cards, two to a row where there is room. */
 .watching { margin-top: 10px; min-width: 0; }

@@ -1151,6 +1151,22 @@ addMember(app, "shop", xiaowu.id, "reader");
 const xiaozhouToken = createApiToken(app, xiaozhou.id, "演示");
 const xiaolinToken = createApiToken(app, xiaolin.id, "演示");
 const xiaowuToken = createApiToken(app, xiaowu.id, "演示");
+// 小林's own line (src/items/member-work.ts), and what waits for him: the owner's assistant asked him how
+// the refund API is going (src/items/member-progress.ts).
+{
+  const at = new Date().toISOString();
+  const mine = upsertItem(app, undefined, { spaceId: "shop", kind: "line", title: "小林 · 订单导出改造", detail: "导出支持按发货状态筛选，月底前上线。", userId: xiaolin.id }, "user");
+  const fields = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "导出字段和财务对一遍", userId: xiaolin.id }, "user");
+  const api = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "按发货状态筛选的接口", userId: xiaolin.id }, "user");
+  setParent(app, fields.id, mine.id);
+  setParent(app, api.id, mine.id);
+  run(app.db, "update items set now = ? where id = ?", JSON.stringify({ text: "截至今天导出字段和财务对完了一半，筛选接口还没开始，离月底还有 9 天。", people: [{ name: "小李", role: "财务对接" }], weeks: [{ label: "本周 · 至今 5 天", text: "和财务对了导出字段" }], at, runId: null }), mine.id);
+  run(app.db, "insert into item_next(id,item_id,text,why,refs,kind,status,run_id,created_at,updated_at) values('nx_xiaolin1',?,?,?,'[]','ask','open',null,?,?)", mine.id, "和小李把剩下的字段对完", "财务月底要用新导出对账", at, at);
+  const { addChange } = await import("../src/items/changes.ts");
+  addChange(app, { itemId: fields.id, type: "decision", summary: "导出金额统一保留两位小数", origin: "owner" });
+  const { askMemberProgress } = await import("../src/items/member-progress.ts");
+  await askMemberProgress(app, { itemId: refundLine.id, member: xiaolin.id, question: "退款接口的联调到哪了？这周能完吗？" });
+}
 
 // ---- 今天 (items/today.ts): this morning's card, put together from all of the above ----------------
 // Last night's work-state proposed one line; the assistant made a second candidate; one item expired.
@@ -1496,8 +1512,10 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.locator(".mc-cap", { hasText: "看事项" }).getByRole("button", { name: /空间另设/ }).click();
     await p.waitForTimeout(300);
   } },
-  // The owner's lines as the read-only observer 小周 sees them (lib/shared-work.ts).
+  // The owner's lines as the read-only observer 小周 sees them (src/items/member-work.ts).
   { name: "observer-work", path: "/", init: { "omem-token": xiaozhouToken } },
+  // A member's work page: 小林's own line, the owner's he may read, and what waits for him on the right.
+  { name: "work-member", path: "/", init: { "omem-token": xiaolinToken } },
   { name: "item-external", path: "/items", prepare: async (p) => {
     const id = await p.evaluate(async () => {
       const json = (path: string, method = "GET", body?: unknown) => fetch(path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());

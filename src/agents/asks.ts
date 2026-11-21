@@ -203,8 +203,8 @@ async function show(app: App, ask: Ask) {
   // Asked of someone else: only they see it (their notifications, their Feishu private chat), never the asker's chat.
   if (ask.askedBy) {
     const { notify } = await import("../core/notify.ts");
-    const { userName } = await import("../core/users.ts");
-    notify(app, { userId: ask.userId, title: `${userName(app, ask.askedBy)} 的助手请你回答`, body: truncate(ask.question, 300), link: `#/ui/${ask.id}` });
+    const { nameForOthers } = await import("../core/users.ts");
+    notify(app, { userId: ask.userId, title: `${nameForOthers(app, ask.askedBy)} 的助手请你回答`, body: truncate(ask.question, 300), link: `#/ui/${ask.id}` });
     for (const s of sinks) {
       try {
         if (await s.show(app, ask)) return;

@@ -8,12 +8,13 @@ import { duration, stageWords, type StageState } from "../lib/flow";
  * colours). `mini` is the bars alone, for a chip; otherwise each bar has its name and a line of small
  * text under it (when it was done, how long it has waited for the owner), wrapping when narrow.
  */
-const props = defineProps<{ flow: FlowLite; mini?: boolean }>();
+/** `who`: whose item it is when not the reader's: their turn reads “等 小王”, not “等你”. */
+const props = defineProps<{ flow: FlowLite; mini?: boolean; who?: string | null }>();
 const current = computed(() => props.flow.current?.id ?? null);
 const stages = computed(() => props.flow.stages.map((s) => ({ ...s, tone: stageTone(s, current.value) })));
 function note(s: (typeof stages.value)[number]) {
   if (s.state === "done") return s.doneAt ? `${dayLabel(s.doneAt)}完成` : "完成";
-  if (s.tone === "warn") return s.state === "blocked" ? `卡住${s.enteredAt ? ` · ${duration(s.enteredAt)}` : ""}` : `等你${s.enteredAt ? ` · ${duration(s.enteredAt)}` : ""}`;
+  if (s.tone === "warn") return s.state === "blocked" ? `卡住${s.enteredAt ? ` · ${duration(s.enteredAt)}` : ""}` : `${props.who ? `等 ${props.who}` : "等你"}${s.enteredAt ? ` · ${duration(s.enteredAt)}` : ""}`;
   if (s.state === "doing") return s.enteredAt ? `${dayLabel(s.enteredAt)}开始` : "进行中";
   return stageWords[s.state as StageState] ?? s.state;
 }
