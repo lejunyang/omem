@@ -2391,6 +2391,8 @@ export const migrations: readonly string[] = [
      insert into code_task_run_history(work_id,seq,run_id) values(old.work_id,old.seq,old.coder_run)
        on conflict(work_id,seq,run_id) do nothing;
    end;`,
+  `create index progress_code_takeovers on run_events(run_id)
+     where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
 ];
 
 export type Db = DatabaseSync;

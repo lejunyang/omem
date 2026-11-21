@@ -92,27 +92,47 @@ function codeRounds(graph: Forest, node: Node) {
   return [node, ...[...graph.nodes.values()].filter(r => r.kind === "code" && r.first === node.id)];
 }
 
-function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
-  const history = new Map<number, string[]>();
-  for (const { seq, run_id } of all<{ seq: number; run_id: string }>(app.db,
-    "select seq, run_id from code_task_run_history where work_id=?", node.id)) {
-    const ids = history.get(seq);
-    if (ids) ids.push(run_id);
-    else history.set(seq, [run_id]);
+function codeHistory(app: App, rootId: string, rounds: Node[]) {
+  const history = new Map<number, Set<string>>();
+  function record(seq: number, id: string) {
+    const ids = history.get(seq) ?? new Set<string>();
+    ids.add(id);
+    history.set(seq, ids);
   }
+  for (const row of all<{ seq: number; run_id: string }>(app.db,
+    "select seq, run_id from code_task_run_history where work_id=?", rootId)) record(row.seq, row.run_id);
+
+  // Older hosts recorded the exact task labels at takeover, before the first checkpoint.
+  const events = all<{ run_id: string; text: string }>(app.db, `select distinct e.run_id, json_extract(e.data,'$.text') text
+    from json_each(?) rounds cross join run_events e indexed by progress_code_takeovers on e.run_id=rounds.value
+    where e.type='status' and json_extract(e.data,'$.text') glob '这一轮做 T*'`, JSON.stringify(rounds.map(r => r.id)));
+  for (const event of events) {
+    const labels = /^这一轮做 (T[1-9]\d*(?:、T[1-9]\d*)*)$/u.exec(event.text);
+    if (labels) for (const label of labels[1].split("、")) record(Number(label.slice(1)), event.run_id);
+  }
+  return history;
+}
+
+function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
+  const rounds = codeRounds(graph, node);
+  const history = codeHistory(app, node.id, rounds);
   const checkpoints = listCheckpoints(app, node.id);
   const helpers = [...graph.nodes.values()].filter(r => r.helper && (r.helper === node.id || graph.nodes.get(r.helper)?.first === node.id));
+  const assignments = helpers.map(node => ({ node, tasks: new Set(JSON.parse(node.assigned ?? "[]") as number[]) }));
   const tasks = recordedTasks(app, node.id).filter(t => graph.sees(t.coderRun)).map(t => {
-    const mine = helpers.filter(r => (JSON.parse(r.assigned ?? "[]") as number[]).includes(t.seq));
+    const mine: Node[] = [], otherHelpers = new Set<string>();
+    for (const helper of assignments) {
+      if (helper.tasks.has(t.seq)) mine.push(helper.node);
+      else otherHelpers.add(helper.node.id);
+    }
     const runs = checkpoints.filter(c => c.tasks.includes(t.seq) && !mine.some(r => r.parent === c.by)).map(c => c.by);
     const ids = [...(history.get(t.seq) ?? []), ...runs, ...mine.map(r => r.id), t.coderRun];
     const outputs: Output[] = Object.entries(t.commits).flatMap(([repo, shas]) => shas.map(ref => ({ kind: "commit", ref, label: repo + " · " + ref })));
     for (const r of mine) for (const w of JSON.parse(r.branches ?? "[]") as { space: string; branch: string }[])
       if (w.branch) outputs.push({ kind: "branch", ref: w.branch, label: w.space + " · " + w.branch });
     const waitingOn = taskWaits[t.state];
-    return task(graph, ids, { id: `T${t.seq}`, title: t.title, accept: t.doneWhen, state: states.code[t.state], outputs, waitingOn });
+    return task(graph, ids, { id: `T${t.seq}`, title: t.title, accept: t.doneWhen, state: states.code[t.state], outputs, waitingOn }, otherHelpers);
   });
-  const rounds = codeRounds(graph, node);
   const last = rounds.at(-1)!;
   const terminal = last.discarded || node.discarded ? "cancelled" : last.applied || node.applied ? "done"
     : last.status === "failed" || last.status === "cancelled" ? last.status : undefined;

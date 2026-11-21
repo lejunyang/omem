@@ -85,35 +85,47 @@ describe("进度投影", () => {
     expect(takeTasks(app, "first", next.id).map(t => t.seq)).toEqual([1, 2]);
     takeTasks(app, "first", next.id);
     add("helper", "agent", next.id, { helperOf: next.id, tasks: [1] });
-    run(app.db, "update runs set created_at=? where id='helper'", new Date(Date.parse(next.createdAt) + 1).toISOString());
+    add("helper2", "agent", next.id, { helperOf: next.id, tasks: [2] });
+    add("helper2-child", "agent", "helper2");
+    run(app.db, "update runs set created_at=? where id in ('helper','helper2')", new Date(Date.parse(next.createdAt) + 1).toISOString());
     updateTask(app, "first", 1, { coderRun: "helper" });
-    for (const [id, input, output] of [["first", 11, 3], [next.id, 23, 5], ["helper", 7, 2]] as const)
+    updateTask(app, "first", 2, { coderRun: "helper2" });
+    for (const [id, input, output] of [["first", 11, 3], [next.id, 23, 5], ["helper", 7, 2], ["helper2-child", 17, 4]] as const)
       run(app.db, "insert into run_events values(?,1,?,'usage',?)", id, at, JSON.stringify({ input, output }));
     const code = runProgress(app, next.id, owner).find(v => v.kind === "code")!;
     expect(code.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([
-      ["first", next.id, "helper"], ["first", next.id],
+      ["first", next.id, "helper"], ["first", next.id, "helper2"],
     ]);
     expect(code.tasks[0].attempts).toMatchObject([
       { status: "failed", usage: { input: 11, output: 3, runs: 2, missing: 1 } },
       { usage: { input: 30, output: 7, runs: 2, missing: 0 } },
       { usage: { input: 7, output: 2, runs: 1, missing: 0 } },
     ]);
-    const total = { input: 41, output: 10, runs: 4, missing: 1 };
-    expect(code.tasks.map(t => t.usage)).toEqual([total, total]);
-    expect(code.usage).toEqual(total);
+    expect(code.tasks[1].attempts).toMatchObject([
+      { status: "failed", usage: { input: 11, output: 3, runs: 2, missing: 1 } },
+      { usage: { input: 40, output: 9, runs: 3, missing: 1 } },
+      { usage: { input: 17, output: 4, runs: 2, missing: 1 } },
+    ]);
+    expect(code.tasks.map(t => t.usage)).toEqual([
+      { input: 41, output: 10, runs: 4, missing: 1 },
+      { input: 51, output: 12, runs: 5, missing: 2 },
+    ]);
+    expect(code.usage).toEqual({ input: 58, output: 14, runs: 6, missing: 2 });
   });
 
   it("旧轮只有能核对修改项的尝试才归到该项，其余计入整块", () => {
     const { app, add } = fixture();
     add("first", "code", null);
     add("next", "code", null, { continueFrom: "first" });
-    for (const title of ["有旧检查点", "无旧检查点"]) addTask(app, "first", { title, kind: "build" }, "coder");
+    for (const title of ["有旧检查点", "有接管事件", "无接管记录"]) addTask(app, "first", { title, kind: "build" }, "coder");
     takeTasks(app, "first", "next");
     run(app.db, "insert into code_checkpoints(work_id,seq,heads,tasks,by,label,created_at) values('first',1,'{}','[1]','first','完成',?)", at);
     add("unassigned", "code", null, { continueFrom: "first" });
+    run(app.db, "insert into run_events values('first',1,?,'status',?),('unassigned',2,?,'status',?)", at,
+      JSON.stringify({ text: "这一轮做 T1、T2" }), at, JSON.stringify({ text: "这一轮做 T3 的验证" }));
     run(app.db, "insert into run_events values('unassigned',1,?,'usage',?)", at, '{"input":13,"output":9}');
     const code = runProgress(app, "next", owner).find(v => v.kind === "code")!;
-    expect(code.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["first", "next"], ["next"]]);
+    expect(code.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["first", "next"], ["first", "next"], ["next"]]);
     expect(code.usage).toEqual({ input: 13, output: 9, runs: 3, missing: 2 });
   });
 
@@ -279,11 +291,12 @@ describe("进度投影", () => {
     const queries = prepare.mock.calls.map(([sql]) => sql);
     prepare.mockRestore();
     expect(code.rounds).toMatchObject([{ runId: "code" }]);
-    const plans = queries.filter(q => q.includes("with recursive tree") || q.includes("progress_board_item") || q.includes("progress_tokens") || q.includes("progress_review_checks"))
+    const indexes = ["progress_board_item", "progress_tokens", "progress_review_checks", "progress_code_takeovers"];
+    const plans = queries.filter(q => q.includes("with recursive tree") || indexes.some(index => q.includes(index)))
       .flatMap(q => app.db.prepare("explain query plan " + q).all(...Array((q.match(/\?/g) ?? []).length).fill("[]")))
       .map(row => row.detail as string);
     expect(plans.filter(s => /^SCAN (r|runs|e|run_events)\b/.test(s))).toEqual([]);
-    for (const index of ["runs_parent", "runs_continue_from", "progress_tokens", "progress_review_checks", "progress_board_item"])
+    for (const index of ["runs_parent", "runs_continue_from", ...indexes])
       expect(plans.some(s => s.startsWith("SEARCH") && s.includes(index))).toBe(true);
   });
   it("运行与事项沿用详情权限，助手同时受本轮空间限制", async () => {
