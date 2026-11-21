@@ -48,7 +48,12 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   };
   const plugin = (req: FastifyRequest) => getPlugin((req.params as { id: string }).id);
 
-  server.get("/api/plugins", async () => listPlugins().map(describePlugin));
+  const pluginView = (p: ReturnType<typeof describePlugin>, req: FastifyRequest) => {
+    if (who(req) === OWNER) return p;
+    const { id, name, description, icon, source, slots, agents, skills, page, enabled, version, settings, tools, channels, voice } = p;
+    return { id, name, description, icon, source, slots, agents, skills, page, enabled, version, settings, tools, channels: channels.map(({ id, label, running }) => ({ id, label, running })), voice };
+  };
+  server.get("/api/plugins", async req => listPlugins().map(p => pluginView(describePlugin(p), req)));
   // Slots (slots.ts): which plugin blocks a page of omem's shows, then each block's content on its own,
   // so one that fails or is slow affects only itself. The item must be readable (404 otherwise).
   const slotQuery = z.object({ at: z.string(), item: z.string().max(80).optional(), stage: z.string().max(80).optional(), object: z.string().max(200).optional() });
@@ -59,7 +64,7 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   });
   server.get("/api/plugins/pack", async () => packChoices(app));
   server.post("/api/plugins/pack", async (req) => packPlugin(app, parse(packSchema, req.body)));
-  server.get("/api/plugins/:id", async (req) => describePlugin(plugin(req)));
+  server.get("/api/plugins/:id", async (req) => pluginView(describePlugin(plugin(req)), req));
   // A callback's secret (hooks.ts): made and shown once, or revoked, by the owner on the plugin's page.
   const hookOf = (req: FastifyRequest) => {
     const p = plugin(req), name = (req.params as { name: string }).name;
@@ -149,7 +154,7 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   });
 
   // Trust: a data-directory plugin's code runs only after the owner confirms it (trust.ts).
-  server.put("/api/plugins/:id/icon", async (req) => setPluginIcon(app, plugin(req).manifest.id, String((req.body as { icon?: unknown })?.icon ?? "")));
+  server.put("/api/plugins/:id/icon", async (req) => pluginView(setPluginIcon(app, plugin(req).manifest.id, String((req.body as { icon?: unknown })?.icon ?? "")), req));
   // isolated (default): its own process, only its directory; inprocess: inside omem, with omem's rights.
   server.post("/api/plugins/:id/trust", async (req) => trustPlugin(app, plugin(req).manifest.id, (req.body as { mode?: string } | undefined)?.mode === "inprocess" ? "inprocess" : "isolated"));
   // Turned off: its code unloads, its agents, page and nav entry go away; on again loads it.

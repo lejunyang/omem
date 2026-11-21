@@ -201,7 +201,7 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 
 #### 设置区域
 
-设置分为知识（`knowledge`）、助手（`assistant`）、AI（`ai`）、渠道与协作（`channels`）、成员（`members`）、安全（`security`）和系统（`system`）。每区分别授予 `settings.<区域>.view` 和 `settings.<区域>.edit`。本人预设拥有全部；管理员默认只读成员区，便于核对登录配置；协作者和观察者默认不读写设置。成员、安全和系统三区的 edit 只能由本人逐个授予。
+设置分为知识（`knowledge`）、助手（`assistant`）、AI（`ai`）、渠道与协作（`channels`）、成员（`members`）、安全（`security`）和系统（`system`）。每区分别授予 `settings.<区域>.view` 和 `settings.<区域>.edit`。本人预设拥有全部；管理员沿用成员管理和 Agent 管理所覆盖的区域；协作者和观察者默认不读写设置。成员、安全和系统三区的 edit 只能由本人逐个授予。
 
 - 打开设置时取 `GET /api/settings/sections`。返回的 `sections` 按区域列出 view 和 edit，`keys` 标出配置键及跨区子键，较具体的路径优先。例如 `agents.accounts` 属于成员区，`agents.autoAdvance` 属于助手区。按 view 显示标签，按 edit 开放编辑。对其他成员，`ownerOnly` 清单内的字段始终只读。
 - 切换区域时取 `GET /api/settings?section=knowledge` 等。省略 section 返回全部可读区域；无可读区域时返回 403。配置在 `config` 中。服务令牌不返回，成员也读不到包含账号环境变量的 Agent 档案。
@@ -210,6 +210,26 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 - 本人身份回复（含豆包发送）、登录与对外访问、对等设备、账号隔离、启动命令及操作规则由本人管理。操作规则与网络策略仍使用各自的专用编辑接口。
 
 成员管理沿用 `settings.members`，旧权限 `users.manage` 也提供这项能力。`settings.members.edit` 只用于修改成员区设置。列表、邀请、停用和能力覆盖统一按操作者与目标检查。给普通成员授权时只能转授自己在相应范围内拥有的能力。管理者不能借此修改本人或管理员、重置登录身份，或转授上述三个区域的 edit。成员页应按目标隐藏这些操作。
+
+#### 设置标签的接口
+
+下表的路径均以 `/api` 开头。普通成员通过区域能力读取状态。原来的 `settings.manage` 提供 AI、渠道、知识、系统区域的查看与编辑，`agents.manage` 提供助手和 AI 区域的查看与编辑。显式拒绝优先。本人专属配置及对应操作见 `src/auth/settings-sections.ts` 的 `ownerControls`。
+
+| 接口 | 区域 | 原权限 → 现权限 | 成员响应 |
+| --- | --- | --- | --- |
+| GET ai、agent-registry、agents/:id/adapter | AI | settings.manage → view | 模型列表、提供方和密钥尾号。适配器省略路径、源地址和错误。公开注册表沿用原字段 |
+| GET agents/load | AI | agents.manage → view | 当前负载和近期统计，省略账号额度 |
+| GET plugins、plugins/:id；PUT plugins/:id/settings、plugins/:id/icon | AI | 读仍对登录用户开放，写由 settings.manage → edit | 列表、详情和改图标响应只含展示字段。插件偏好属于当前用户 |
+| GET lark/bot-check、desktop | 渠道 | settings.manage、desktop.control → view | 机器人的缺失权限及事件。桌面工具返回安装状态 |
+| GET lark/captured、lark/wiki-crawls | 知识 | settings.manage → view | 仅可读空间的采集记录。爬取省略入口、错误和队列细节 |
+| GET search/providers | 知识 | settings.manage → view | 提供者标识、名称、插件和延迟 |
+| GET storage、media；POST storage/scan | 知识 | 原路由 settings.manage，处理函数限本人 → view / edit | 扫描时间、数据库与文件分类统计。省略目录、文件明细、日志。媒体返回工具状态和配置 |
+| GET schedules、replays；PUT schedules/:id | 助手 | agents.manage → view / edit | 定时任务按空间过滤，省略运行参数，成员可改周期和启停。复盘返回状态和汇总 |
+| GET auth/providers | 成员 | users.manage → view | 登录方式和回调地址，省略应用配置和诊断信息 |
+| GET spaces、spaces/:id | 知识 | 登录及空间读取权限延续 | 空间列表省略仓库路径和内部设置，仅列可读空间 |
+| 对等设备、外部访问、出网、操作规则、AI 账号和密钥、后端安装及插件信任 | 对应区域 | 专用管理权限或本人 → 本人 | 成员不接收凭据、启动命令或设备连接资料 |
+
+实时读取本人的聊天、扫码授权、触发全局任务、复盘采纳、仓库目录操作和删除原附件会使用个人身份或改动全局资源。这些动作保留原操作权限或限本人。单独授予查看某一区域时，网页按表中的读接口渲染卡片。
 
 #### 工具和外部连接
 

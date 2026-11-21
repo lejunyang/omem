@@ -3,7 +3,8 @@ import { testApp } from "./helpers.ts";
 import { createApiToken, createUser } from "../src/core/users.ts";
 import { saveRole } from "../src/auth/permissions.ts";
 import { configSchema } from "../src/core/config.ts";
-import { ownerSettings, settingSections } from "../src/auth/settings-sections.ts";
+import { ROUTE_RULES } from "../src/auth/routes.ts";
+import { ownerControls, ownerSettings, settingSections } from "../src/auth/settings-sections.ts";
 import { startServer } from "../src/server/http.ts";
 
 it("maps every schema key including optional settings, and reserves identity and host controls", () => {
@@ -91,5 +92,38 @@ it("separates review form access and delegation tier selection", async () => {
         for (const tier of tiers.json().tiers) expect(Object.keys(tier).sort()).toEqual(["checkCount", "id", "name"]);
       }
     }
+  } finally { await server.close(); app.db.close(); }
+});
+
+
+it("checks section grants on the card APIs and omits host settings from member responses", async () => {
+  const app = testApp();
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    createUser(app, { id: "cards", name: "成员" });
+    const headers = { authorization: "Bearer " + createApiToken(app, "cards") };
+    const get = (url: string) => server.inject({ url, headers });
+    for (const route of Object.values(ownerControls).flat()) expect(ROUTE_RULES[route], route).toBe("owner");
+    const groups = {
+      AI: ["ai", "/api/ai", "/api/agents/load"],
+      knowledge: ["knowledge", "/api/storage", "/api/search/providers", "/api/lark/captured", "/api/lark/wiki-crawls"],
+      assistant: ["assistant", "/api/schedules", "/api/replays"],
+      channels: ["channels", "/api/desktop"],
+      members: ["members", "/api/auth/providers"],
+    };
+    for (const [area, ...urls] of Object.values(groups)) {
+      for (const url of urls) expect((await get(url)).statusCode, url).toBe(403);
+      app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values('cards',?,'global','','allow','0','owner')").run(`settings.${area}.view`);
+      for (const url of urls) expect((await get(url)).statusCode, url).toBe(200);
+    }
+    app.config.ai.providers = [{ id: "demo", name: "测试", kind: "openai", baseUrl: "https://example.com/private", backends: [] }];
+    expect((await get("/api/ai")).json().providers[0]).toEqual({ id: "demo", name: "测试", kind: "openai", hasKey: false, keyHint: "" });
+    app.config.guard.modelDir = "private-model-directory";
+    app.config.documents.doclingArtifacts = "private-model-directory";
+    app.config.rerank.model = "private-model-directory";
+    expect((await get("/api/settings")).body).not.toContain("private-model-directory");
+    expect((await get("/api/settings?section=ai")).json().agents[0]).not.toHaveProperty("command");
+    const restricted = await server.inject({ method: "PUT", url: "/api/ai/keys/demo", headers, payload: { key: null } });
+    expect(restricted.statusCode).toBe(403);
   } finally { await server.close(); app.db.close(); }
 });

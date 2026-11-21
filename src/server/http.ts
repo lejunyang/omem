@@ -471,13 +471,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ------------------------------------------------------------------- spaces
+  const spaceView = (space: ReturnType<typeof getSpace>, req: FastifyRequest) => who(req) === OWNER ? space
+    : { ...space, rootPath: undefined, settings: { larkAccess: space.settings.larkAccess } };
   server.get("/api/spaces", async (req) => {
     const counts = new Map(all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from sources where deleted_at is null group by space_id").map((r) => [r.space_id, r.n]));
     const pages = new Map(all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from pages group by space_id").map((r) => [r.space_id, r.n]));
     const allowed = accessibleSpaces(app, who(req));
     return listSpaces(app)
       .filter((s) => allowed === null || allowed.includes(s.id))
-      .map((s) => ({ ...s, sources: counts.get(s.id) ?? 0, pages: pages.get(s.id) ?? 0, related: relatedSpaces(app, s.id).filter((r) => allowed === null || allowed.includes(r.space)) }));
+      .map((s) => ({ ...spaceView(s, req), sources: counts.get(s.id) ?? 0, pages: pages.get(s.id) ?? 0, related: relatedSpaces(app, s.id).filter((r) => allowed === null || allowed.includes(r.space)) }));
   });
   // Related spaces: the owner adds or removes; removing one an agent added keeps it from coming back.
   server.post("/api/spaces/:id/related", async (req) => {
@@ -518,19 +520,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Whoever made it (other than the owner) manages it.
     if (who(req) !== OWNER) addMember(app, s.id, who(req), "manager");
     if (s.rootPath) scheduleSpaceSync(app, s.id);
-    return s;
+    return spaceView(s, req);
   });
   // A repository under a business space, or taken out of one (docs/v2/coding-work.md 第 4 节).
   server.post("/api/spaces/:id/parent", async (req) => {
     const id = (req.params as { id: string }).id;
     const b = q(z.object({ parent: z.string().nullable() }), req.body);
     if (b.parent && !can(app, who(req), "space.manage", b.parent)) throw new HttpError(403, `不能管理空间 ${b.parent}`);
-    return setSpaceParent(app, id, b.parent || null);
+    return spaceView(setSpaceParent(app, id, b.parent || null), req);
   });
   server.get("/api/spaces/:id/repo-suggestions", async (req) => (await import("../core/space-repos.ts")).repoSuggestions(app, (req.params as { id: string }).id));
   server.get("/api/spaces/:id", async (req) => {
     const id = (req.params as { id: string }).id;
-    return { ...getSpace(app, id), guide: spaceGuide(app, id), content: spaceContent(app, id) };
+    return { ...spaceView(getSpace(app, id), req), guide: spaceGuide(app, id), content: spaceContent(app, id) };
   });
   // Only a space that holds nothing (core/spaces.ts deleteSpace says what is in the way).
   server.delete("/api/spaces/:id", async (req) => deleteSpace(app, (req.params as { id: string }).id));
@@ -545,7 +547,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (b.guide !== undefined) writeSpaceGuide(app, id, b.guide);
     // What the last sync found is omem's to write: a page saving the settings it loaded earlier must not roll it back.
     if (b.settings) delete b.settings.codeIndexState;
-    return updateSpace(app, id, { name: b.name, description: b.description, settings: b.settings ? { ...getSpace(app, id).settings, ...b.settings } : undefined });
+    return spaceView(updateSpace(app, id, { name: b.name, description: b.description, settings: b.settings ? { ...getSpace(app, id).settings, ...b.settings } : undefined }), req);
   });
   server.post("/api/spaces/:id/sync", async (req) => scheduleSpaceSync(app, (req.params as { id: string }).id));
   server.get("/api/spaces/:id/lessons", async req => {
@@ -724,8 +726,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!app.config.agents.networkPolicies.some((p) => p.id === id)) throw new HttpError(404, "没有这份网络条件");
     return { states: await refreshNetworkPolicies(app, id, true) };
   });
-  server.get("/api/agents/load", async () => {
+  server.get("/api/agents/load", async (req) => {
     const c = await import("../agents/capacity.ts");
+    if (who(req) !== OWNER) return { now: c.loadReport(app), recent: c.recentStats(app) };
     const q = await import("../agents/quota.ts");
     const quota = (await q.quotaProfiles(app)).map((p) => ({ profile: p.id, name: p.name ?? p.id, ...(q.quotaView(app, p) ?? { source: c.sourceOf(p), plan: null, readAt: null, windows: [] }) }));
     // Daily caps the owner set per model, with today's count so far.
@@ -2846,13 +2849,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       recentSources: all(app.db, "select id, space_id spaceId, kind, uri, title, updated_at updatedAt from sources where deleted_at is null and kind not in ('code', 'conversation') order by updated_at desc limit 8"),
     };
   });
-  server.get("/api/schedules", async () => ({ schedules: listSchedules(app), next: nextRuns(app), labels: scheduleLabels }));
+  server.get("/api/schedules", async req => {
+    const visible = accessibleSpaces(app, who(req));
+    const schedules = listSchedules(app).filter(s => !s.spaceId || !visible || visible.includes(s.spaceId));
+    const next = nextRuns(app);
+    return { schedules: schedules.map(s => who(req) === OWNER ? s : { ...s, config: undefined }),
+      next: Object.fromEntries(schedules.map(s => [s.id, next[s.id]])), labels: scheduleLabels };
+  });
   server.put("/api/schedules/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const existing = listSchedules(app).find((s) => s.id === id);
     if (!existing) throw new HttpError(404, "定时任务不存在");
     const b = q(z.object({ cron: z.string().optional(), enabled: z.boolean().optional(), config: z.record(z.string(), z.unknown()).optional() }), req.body);
-    return upsertSchedule(app, { ...existing, ...b });
+    if (who(req) !== OWNER) {
+      if (existing.spaceId && !can(app, who(req), "space.read", existing.spaceId)) throw new HttpError(404, "定时任务不存在");
+      if (b.config) throw new HttpError(403, "只有本人能修改定时任务的运行参数");
+    }
+    const saved = upsertSchedule(app, { ...existing, ...b });
+    return who(req) === OWNER ? saved : { ...saved, config: undefined };
   });
   server.post("/api/schedules/:id/run", async (req) => ({ ok: triggerSchedule(app, (req.params as { id: string }).id) }));
 
@@ -2862,9 +2876,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { chats: (await listLarkChats(app)).map((c) => ({ ...c, policy: capturePolicyFor(app, c) })) };
   });
   // Chats capture has read, with kind, mute state and what is done with them.
-  server.get("/api/lark/captured", async () => {
+  server.get("/api/lark/captured", async req => {
     const { capturedChats } = await import("../channels/lark-personal.ts");
-    return { chats: capturedChats(app), policies: app.config.lark.capture.policies };
+    const spaces = accessibleSpaces(app, who(req));
+    return { chats: capturedChats(app).filter(c => !spaces || spaces.includes(c.spaceId)), policies: app.config.lark.capture.policies };
   });
   // History before the first read, a few pages per poll into monthly archive sources.
   server.post("/api/lark/chats/:id/backfill", async (req) => {
@@ -2921,7 +2936,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return requestUserScopes(app, scopes, "在设置页补齐授权：");
   });
   // The bot apps' permissions and event subscriptions (lark-bot-check.ts), and fixing them by scan.
-  server.get("/api/lark/bot-check", async () => ({ bots: await (await import("../channels/lark-bot-check.ts")).checkLarkBots(app) }));
+  server.get("/api/lark/bot-check", async req => {
+    const bots = await (await import("../channels/lark-bot-check.ts")).checkLarkBots(app);
+    return { bots: who(req) === OWNER ? bots : bots.map(({ ref, name, scopes, events }) => ({
+      ref, name, scopes: { missing: scopes.missing, unknown: scopes.unknown }, events: { missing: events.missing },
+    })) };
+  });
   server.post("/api/lark/bot-check/:ref/scan", async (req) => {
     const ref = q(z.object({ ref: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/) }), req.params).ref;
     return (await import("../channels/lark-bot-check.ts")).updateLarkBotByScan(app, ref);
@@ -2944,7 +2964,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/replays", async (req) => {
     const o = q(z.object({ limit: z.coerce.number().int().min(1).max(200).default(30) }), req.query ?? {});
     const m = await import("../agents/replay.ts");
-    return { status: m.replayStatus(app), replays: m.listReplays(app, { limit: o.limit }) };
+    const status = m.replayStatus(app);
+    if (who(req) !== OWNER) {
+      const { enabled, cron, lastRunAt, days28, max, pendingEffects } = status;
+      return { status: { enabled, cron, lastRunAt, days28, max, pendingEffects }, replays: [] };
+    }
+    return { status, replays: m.listReplays(app, { limit: o.limit }) };
   });
   server.post("/api/replays/run", async (req) => {
     const { REPLAY_AXES } = await import("../core/config.ts");
@@ -2956,7 +2981,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return (await import("../agents/replay.ts")).resolveEffect(app, p.id, p.action);
   });
   // Knowledge-base crawls (lark-wiki.ts): progress, continue, stop.
-  server.get("/api/lark/wiki-crawls", async () => ({ crawls: (await import("../channels/lark-wiki.ts")).listCrawls(app) }));
+  server.get("/api/lark/wiki-crawls", async req => {
+    const crawls = (await import("../channels/lark-wiki.ts")).listCrawls(app);
+    const spaces = accessibleSpaces(app, who(req));
+    return { crawls: who(req) === OWNER ? crawls : crawls.filter(c => !spaces || spaces.includes(c.spaceId))
+      .map(({ id, spaceId, status, read, failed, queued, docs }) => ({ id, spaceId, status, read, failed, queued, docs })) };
+  });
   server.post("/api/lark/wiki-crawls/:id/:op", async (req) => {
     const w = await import("../channels/lark-wiki.ts");
     const { id, op } = req.params as { id: string; op: string };
@@ -3037,7 +3067,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/agents/:id/adapter", async (req) => {
     const { adapterStatus, hasAdapter } = await import("../agents/adapter.ts");
     const id = (req.params as { id: string }).id;
-    return hasAdapter(app, id) ? adapterStatus(app, id) : { id, package: null };
+    if (!hasAdapter(app, id)) return { id, package: null };
+    const status = await adapterStatus(app, id);
+    if (who(req) === OWNER) return status;
+    const { package: pkg, version, latest, upgradable } = status;
+    return { id, package: pkg, version, latest, upgradable };
   });
   server.post("/api/agents/:id/adapter/upgrade", async (req) => {
     const { upgradeAdapter } = await import("../agents/adapter.ts");
@@ -3114,16 +3148,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ...desktopControl.status(), spec: desktopControl.spec() };
   });
   // Disk usage of the data directory (settings → 占用); the scan runs in a child process.
-  server.get("/api/storage", async (req) => {
-    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看占用");
-    return (await import("../core/storage.ts")).storageStatus(app);
-  });
-  server.post("/api/storage/scan", async (req) => {
-    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看占用");
+  const storageView = async (req: FastifyRequest, scan = false) => {
     const m = await import("../core/storage.ts");
-    void m.startStorageScan(app);
-    return m.storageStatus(app);
-  });
+    if (scan) void m.startStorageScan(app);
+    const state = m.storageStatus(app);
+    if (who(req) === OWNER) return state;
+    const r = state.report;
+    return { running: state.running, report: r && { scannedAt: r.scannedAt, ms: r.ms, db: r.db,
+      files: { total: r.files.total, groups: r.files.groups } } };
+  };
+  server.get("/api/storage", async req => storageView(req));
+  server.post("/api/storage/scan", async req => storageView(req, true));
   // Compressing stored media with ffmpeg (settings → 占用): install and detect ffmpeg, start or stop a job.
   const mediaState = async () => {
     const m = await import("../core/media.ts");
@@ -3132,7 +3167,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const mediaOwner = (req: FastifyRequest) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能压缩附件");
   };
-  server.get("/api/media", async (req) => (mediaOwner(req), mediaState()));
+  server.get("/api/media", async req => {
+    if (who(req) === OWNER) return mediaState();
+    const { ffmpegStatus } = await import("../core/media.ts");
+    const { ffmpeg, ffprobe, encoders } = ffmpegStatus();
+    return { ffmpeg: { ffmpeg, ffprobe, encoders }, settings: app.config.media };
+  });
   server.post("/api/media/ffmpeg/install", async (req) => {
     mediaOwner(req);
     const { commandExists } = await import("../agents/spawn.ts");
@@ -3400,7 +3440,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const queued = scheduleAudit(app);
     return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
   });
-  server.get("/api/search/providers", async () => searchProviderStatus(app));
+  server.get("/api/search/providers", async req => {
+    const status = searchProviderStatus(app);
+    if (who(req) === OWNER) return status;
+    const describe = ({ id, label, plugin, lastMs }: typeof status.retrievers[number]) => ({ id, label, plugin, lastMs });
+    return { retrievers: status.retrievers.map(describe), rerankers: status.rerankers.map(describe) };
+  });
   const settingsAccess = (req: FastifyRequest) => {
     const access = capabilityAccess(app, who(req), null);
     return {
@@ -3421,7 +3466,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
     return {
       config: settingsView(app.config, visible, access.owner),
-      ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : visible("assistant") && {
+      ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : (visible("ai") || visible("assistant")) && {
         agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort }) => {
           const probe = userProbe(app, who(req), id);
           return { id, name, installed, transport, model, effort, probe: probe && {
@@ -3430,7 +3475,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         }),
       }),
       ...(visible("system") && access.owner && { home: app.home }),
-      ...(visible("knowledge") && { rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null }),
+      ...(visible("knowledge") && access.owner && { rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null }),
       ...(visible("security") && { approvalTools: toolList().map(t => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }),
     };
   });
@@ -3511,7 +3556,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       inherited: inheritedKeyVars(),
     };
   };
-  server.get("/api/ai", async () => {
+  server.get("/api/ai", async (req) => {
+    if (who(req) !== OWNER) {
+      const keys = readKeys(app.home);
+      return {
+        providers: app.config.ai.providers.map(({ id, name, kind }) => ({ id, name, kind, hasKey: !!keys[id], keyHint: keyHint(keys[id] ?? "") })),
+        kinds: CATEGORY_KINDS,
+        choices: Object.fromEntries(app.config.ai.providers.map(p => [p.id, Object.fromEntries(MODEL_FIELDS.map(f => [f, modelChoices(app.home, p, f)]))])),
+      };
+    }
     await freshModels();
     return aiView();
   });
