@@ -12,6 +12,8 @@ import { saveProbe } from "../src/agents/probe.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
+const ownerScope = { spaces: ["personal"], userId: "owner", denyTools: [], lark: { chats: [] } };
+
 function fixture() {
   const app = testApp();
   for (const id of ["first", "second"]) app.config.agents.profiles.push({ id, name: id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_TRAE: "1", FAKE_QUEUE: "1" }, idleTimeoutMs: 60000, model: "m1" });
@@ -131,7 +133,7 @@ describe("temporary AI choices", () => {
     try {
       const t = createThread(app, { channel: "web", spaceId: "personal" });
       const parent = createRun(app, { kind: "ask", title: "工作", spaceId: "personal", input: { conversationId: t.id } });
-      const first = startAgentWork(app, { askRunId: parent.id, rootConversationId: t.id, spaceId: "personal", title: "工作", agent: "specialist", task: "第一轮", startMessage: "核对", execution: choice });
+      const first = startAgentWork(app, { assistantScope: ownerScope, askRunId: parent.id, rootConversationId: t.id, spaceId: "personal", title: "工作", agent: "specialist", task: "第一轮", startMessage: "核对", execution: choice });
       async function finish(id: string) {
         const out = await __testHandlers.get("agent")!({ app, run: getRun(app, id), signal: new AbortController().signal, event: (type, data) => addRunEvent(app, id, type, data), output: (data) => setRunOutput(app, id, data) }) as Record<string, unknown>;
         setRunOutput(app, id, out); app.db.prepare("update runs set status='done' where id=?").run(id);
@@ -139,9 +141,9 @@ describe("temporary AI choices", () => {
         return JSON.parse(String(out.answer)) as { resumed: boolean };
       }
       expect((await finish(first.runId)).resumed).toBe(false);
-      const second = queueAgentRound(app, refreshWork(app, parent.id)!, { agent: "specialist", task: "第二轮", execution: choice });
+      const second = queueAgentRound(app, refreshWork(app, parent.id)!, { assistantScope: ownerScope, agent: "specialist", task: "第二轮", execution: choice });
       expect((await finish(second)).resumed).toBe(true);
-      const third = queueAgentRound(app, refreshWork(app, parent.id)!, { agent: "specialist", task: "第三轮" });
+      const third = queueAgentRound(app, refreshWork(app, parent.id)!, { assistantScope: ownerScope, agent: "specialist", task: "第三轮" });
       expect((await finish(third)).resumed).toBe(false);
       expect(getRun(app, third).output.ai).toMatchObject({ profile: "first", model: "m2", effort: "high" });
     } finally { await server.close(); }

@@ -6,11 +6,11 @@ import { relTime } from "../store";
 
 type Backend = { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: Probe | null; networkReason?: string | null };
 type Choice = { agent?: string; model?: string; effort?: string };
-const props = defineProps<{ modelValue: Choice; backends: Backend[]; defaultBackend: string }>();
+const props = defineProps<{ modelValue: Choice; backends: Backend[]; defaultBackend: string; cachedOnly?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: Choice]; change: [] }>();
 const backend = computed(() => props.backends.find((b) => b.id === (props.modelValue.agent || props.defaultBackend)));
-const probe = computed(() => probes.data[backend.value?.id ?? ""]);
-const loading = computed(() => !!probes.pending[backend.value?.id ?? ""]);
+const probe = computed(() => props.cachedOnly ? backend.value?.probe : probes.data[backend.value?.id ?? ""]);
+const loading = computed(() => !props.cachedOnly && !!probes.pending[backend.value?.id ?? ""]);
 const backendOptions = computed(() => [{ value: "", label: `跟随默认${props.defaultBackend ? `（${props.defaultBackend}）` : ""}` }, ...[...props.backends].sort((a, b) => Number(b.installed) - Number(a.installed) || Number(b.transport === "acp") - Number(a.transport === "acp") || a.name.localeCompare(b.name)).map((b) => ({ value: b.id, label: b.name, hint: `${b.transport ?? ""}${b.installed ? b.networkReason ? ` · ${b.networkReason}` : " · 可用" : " · 未安装或未授权"}` }))]);
 const model = computed(() => props.modelValue.model || backend.value?.model || "");
 const efforts = computed(() => probe.value?.effortsByModel?.[model.value] ?? probe.value?.efforts ?? []);
@@ -32,7 +32,7 @@ function update(key: keyof Choice, value: string) {
 // Cached results come with the backend list; only a backend never detected is asked on its own.
 function detect(refresh = false) {
   const b = backend.value;
-  if (!b) return;
+  if (!b || props.cachedOnly) return;
   seedProbe(b.id, b.probe);
   void detectProbe(b.id, refresh);
 }
@@ -52,7 +52,7 @@ watch(() => backend.value?.id, () => detect(), { immediate: true });
         <input v-else class="input mono" :value="modelValue.effort" :placeholder="inherited('effort') || '未检测到可选项，可手填'" aria-label="思考强度" @input="update('effort', ($event.target as HTMLInputElement).value)" />
       </div>
     </div>
-    <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || `留空就跟随默认。${probe?.at ? `可选项检测于${relTime(probe.at)}。` : ''}` }}</span><button type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
+    <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || `留空就跟随默认。${probe?.at ? `可选项检测于${relTime(probe.at)}。` : ''}` }}</span><button v-if="!cachedOnly" type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
   </div>
 </template>
 

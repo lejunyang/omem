@@ -8,7 +8,7 @@ import { ask, scheduleIngest, scheduleSpaceSync, type PageBrief } from "./agents
 import { createMcpServer } from "./agents/mcp-server.ts";
 import { listAgentProfiles } from "./agents/runner.ts";
 import { createRun, getRun, waitForRun, type Run } from "./agents/runs.ts";
-import { callTool, mcpTools, toolSchemas } from "./agents/tools.ts";
+import { callTool, contextToolNames, mcpTools, toolSchemas } from "./agents/tools.ts";
 import { toolArgs } from "./agents/tool-cli.ts";
 import { ROLE_TOOLS } from "./agents/tool-help.ts";
 import { READ_ONLY_TOOLS } from "./agents/peer-agent.ts";
@@ -1186,10 +1186,11 @@ user
   .option("--email <email>", "邮箱：之后谁用这个邮箱来（飞书本企业账号、鉴权插件认出的身份），就对应到这个账号")
   .option("--login-any", "允许用主要登录方以外的方式登录网页（还没有飞书的人）")
   .action(async (name, o) => {
-    const { createUser, linkIdentity, addMember, emailHolder, updateUser } = await import("./core/users.ts");
+    const { createUser, linkIdentity, addMember, emailHolder, requireMembershipSpace, updateUser } = await import("./core/users.ts");
     const app = open();
     const holder = o.email ? emailHolder(app, o.email) : null;
     if (holder) throw new Error(`邮箱 ${o.email} 已经在账号 ${holder.name}（${holder.id}）上`);
+    for (const space of [...(o.space ?? []), ...(o.edit ?? [])]) requireMembershipSpace(app, space);
     const u = createUser(app, { name, id: o.id, email: o.email ?? null });
     if (o.loginAny) updateUser(app, u.id, { settings: { loginAny: true } });
     for (const [ch, v] of [["lark", o.lark], ["telegram", o.telegram], ["onebot", o.onebot]] as const) if (v) linkIdentity(app, u.id, ch, String(v));
@@ -1706,7 +1707,7 @@ program
       return;
     }
     const ctx = externalToolContext(o);
-    const server = createMcpServer({ list: async () => mcpTools(ctx.tools), call: (name, args) => callTool(ctx, name, args) });
+    const server = createMcpServer({ list: async () => mcpTools(contextToolNames(ctx)), call: (name, args) => callTool(ctx, name, args) });
     await server.connect(new StdioServerTransport());
   });
 

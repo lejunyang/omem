@@ -6,7 +6,7 @@ import { readSkillFile } from "../src/agents/specs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { saveContext } from "../src/channels/listen.ts";
 import { all } from "../src/core/db.ts";
-import { addMember, createApiToken, createUser } from "../src/core/users.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { boot } from "../src/main.ts";
 import { redactBody, redactUrl } from "../src/remote/redact.ts";
@@ -24,7 +24,6 @@ describe("recordings imported from the Chrome extension", async () => {
   afterAll(() => server.close());
   const owner = createApiToken(app, "owner", "chrome");
   createUser(app, { id: "wang", name: "小王" });
-  addMember(app, "personal", "wang", "contributor");
   const member = createApiToken(app, "wang", "chrome");
   const post = (body: unknown, token = owner) =>
     fetch(`${app.baseUrl}/api/remote/recordings/import`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-forwarded-for": "203.0.113.9" }, body: JSON.stringify(body) });

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { can } from "../auth/permissions.ts";
-import { changeGrant } from "./grants.ts";
+import { changeGrant, grantCandidates } from "./grants.ts";
 import { ask } from "../agents/jobs.ts";
 import type { App } from "../core/app.ts";
 import { desktopControl } from "../core/tools.ts";
@@ -12,7 +12,7 @@ import { HttpError } from "../core/util.ts";
 import { attachRecording, getDemo, listDemos, requireDemo, startDemo, stopDemo } from "./demos.ts";
 import { importRecording, importSchema } from "./import.ts";
 import { fromExtension, getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
-import { browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, restartViewer, screens, sessionView, startRecording, stopRecording, viewerAccess, viewerPath } from "./sessions.ts";
+import { browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, ownsAgentBrowser, restartViewer, screens, sessionView, startRecording, stopRecording, viewerAccess, viewerPath } from "./sessions.ts";
 import { cachedProbe, probeRunning, probeVideo, readSettings, remoteSettingsSchema, saveSettings, viewerArgs } from "./settings.ts";
 
 import { REMOTE_BASE, proxyHttp, viewerCookie } from "./proxy.ts";
@@ -67,6 +67,11 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
     return { available: status.installed, version: status.version, sessions: listSessions(app, who(req)), profiles: can(app, who(req), "desktop.control") ? profiles(app, who(req)) : [], windowAvailable: browserWindowAvailable() };
   });
   const grantFields = z.object({ mode: z.enum(["view", "operate"]), hours: z.number().positive().optional() });
+  server.get("/api/remote/grant-candidates", async req => {
+    const actor = who(req);
+    if (!can(app, actor, "desktop.control") && !ownsAgentBrowser(actor)) throw new HttpError(403, "只有能管理远程会话的人可以选成员");
+    return grantCandidates(app, actor);
+  });
   server.post("/api/remote/sessions/:id/grants", async req => {
     const { id } = req.params as { id: string };
     return changeGrant(app, getSession(id), who(req), q(grantFields.extend({ userId: z.string().min(1) }), req.body));

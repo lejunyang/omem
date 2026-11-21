@@ -24,14 +24,14 @@ import type { UpsertInput } from "./store.ts";
 export const LEVELS = ["focus", "normal", "reference", "ignore"] as const;
 export type Level = (typeof LEVELS)[number];
 export const LEVEL_LABELS: Record<Level, string> = { focus: "重点关注", normal: "一般关注", reference: "仅检索", ignore: "忽略" };
-export type SetBy = "owner" | "agent" | "rule";
+export type SetBy = "owner" | "member" | "agent" | "rule";
 
 /** Search weight by level (ignore is filtered out before ranking). */
 export const LEVEL_WEIGHT: Record<Level, number> = { focus: 1.6, normal: 1, reference: 0.55, ignore: 0 };
 /** Weight of a hit that falls on lines marked outdated or wrong, and on lines marked key. */
 export const NOTE_WEIGHT = { outdated: 0.5, wrong: 0.35, key: 1.3, note: 1, exclude: 0.2 } as const;
 
-const RANK: Record<SetBy, number> = { rule: 0, agent: 1, owner: 2 };
+const RANK: Record<SetBy, number> = { rule: 0, agent: 1, member: 2, owner: 3 };
 
 /**
  * The level that counts for a source: its own, unless a folder above it (a catalog node, see
@@ -49,7 +49,7 @@ export function effectiveLevel(r: { attention?: string | null; attention_by?: st
 
 /** SQL for the effective level of `sources <alias>` (null = normal), the same rule as `effectiveLevel`. */
 export const levelSql = (a = "s") =>
-  `(case when ${a}.node_level is not null and ((${a}.attention is null and ${a}.attention_by is null) or instr('rule,agent,owner', coalesce(${a}.node_level_by, 'agent')) > instr('rule,agent,owner', coalesce(${a}.attention_by, 'agent'))) then nullif(${a}.node_level, 'normal') else ${a}.attention end)`;
+  `(case when ${a}.node_level is not null and ((${a}.attention is null and ${a}.attention_by is null) or instr('rule,agent,member,owner', coalesce(${a}.node_level_by, 'agent')) > instr('rule,agent,member,owner', coalesce(${a}.attention_by, 'agent'))) then nullif(${a}.node_level, 'normal') else ${a}.attention end)`;
 
 /**
  * Set the level of some sources. A lower-ranked setter never overrides a higher one (an agent cannot
@@ -336,7 +336,7 @@ const toNote = (r: NoteRow): SourceNote => ({
  * Mark lines (or the whole source when no lines) as outdated / wrong / key / note / exclude, with what
  * to read instead. `quote` may stand in for the lines: the passage is found in the text.
  */
-export function addSourceNote(app: App, n: { sourceId: string; lineStart?: number | null; lineEnd?: number | null; quote?: string | null; kind: NoteKind; note: string; ref?: string | null; by: "owner" | "agent"; runId?: string | null }) {
+export function addSourceNote(app: App, n: { sourceId: string; lineStart?: number | null; lineEnd?: number | null; quote?: string | null; kind: NoteKind; note: string; ref?: string | null; by: "owner" | "member" | "agent"; runId?: string | null }) {
   const src = one<{ text: string }>(app.db, "select text from sources where id = ?", n.sourceId);
   if (!src) throw new HttpError(404, `原件不存在：${n.sourceId}`);
   let start = n.lineStart ?? null;
@@ -353,11 +353,11 @@ export function addSourceNote(app: App, n: { sourceId: string; lineStart?: numbe
   // The same range and kind is one note: a later judgement replaces the earlier one (an agent never replaces the owner's, nor adds back a rejected one).
   const same = one<{ id: number; by: string; status: string }>(app.db, "select id, by, status from source_notes where source_id = ? and kind = ? and coalesce(line_start, 0) = ? and coalesce(line_end, 0) = ?", n.sourceId, n.kind, start ?? 0, end ?? 0);
   if (same && n.by !== "owner" && same.status === "rejected") return { id: same.id, kept: true, rejected: true, lineStart: start, lineEnd: end };
-  if (same && same.by === "owner" && n.by !== "owner") return { id: same.id, kept: true, lineStart: start, lineEnd: end };
+  if (same && RANK[same.by as SetBy] > RANK[n.by]) return { id: same.id, kept: true, lineStart: start, lineEnd: end };
   if (same) run(app.db, "delete from source_notes where id = ?", same.id);
   const passage = start !== null ? passageOf(src.text, start, end ?? start) : "";
   const r = run(app.db, "insert into source_notes(source_id, line_start, line_end, kind, note, ref, by, run_id, created_at, quote, quote_hash, status) values(?,?,?,?,?,?,?,?,?,?,?,?)",
-    n.sourceId, start, end, n.kind, n.note, n.ref ?? null, n.by, n.runId ?? null, now(), start !== null ? quoteOf(passage) : null, start !== null ? hashOf(passage) : null, n.by === "owner" ? "confirmed" : "pending");
+    n.sourceId, start, end, n.kind, n.note, n.ref ?? null, n.by, n.runId ?? null, now(), start !== null ? quoteOf(passage) : null, start !== null ? hashOf(passage) : null, n.by !== "agent" ? "confirmed" : "pending");
   return { id: Number(r.lastInsertRowid), kept: false, lineStart: start, lineEnd: end };
 }
 
@@ -382,16 +382,17 @@ function lineSpan(lines: string[], start: number, q: string) {
   return 1;
 }
 
-export function removeSourceNote(app: App, id: number, by: "owner" | "agent") {
+export function removeSourceNote(app: App, id: number, by: "owner" | "member" | "agent") {
   const r = one<{ by: string }>(app.db, "select by from source_notes where id = ?", id);
   if (!r) throw new HttpError(404, "没有这条标注");
-  if (r.by === "owner" && by !== "owner") throw new HttpError(403, "本人加的标注只有本人能删");
+  if (RANK[r.by as SetBy] > RANK[by]) throw new HttpError(403, "本人加的标注只有本人能删");
   run(app.db, "delete from source_notes where id = ?", id);
 }
 
 /** The owner's call on an agent's note: confirmed notes weigh in full, rejected ones not at all. */
-export function reviewSourceNote(app: App, id: number, decision: "confirm" | "reject") {
-  const r = one<{ source_id: string }>(app.db, "select source_id from source_notes where id = ?", id);
+export function reviewSourceNote(app: App, id: number, decision: "confirm" | "reject", by: "owner" | "member" = "owner") {
+  const r = one<{ source_id: string; by: SetBy }>(app.db, "select source_id, by from source_notes where id = ?", id);
+  if (r && RANK[r.by] > RANK[by]) throw new HttpError(403, "这条标注由本人管理");
   if (!r) throw new HttpError(404, "没有这条标注");
   run(app.db, "update source_notes set status = ? where id = ?", decision === "confirm" ? "confirmed" : "rejected", id);
   app.emit({ type: "changed", entity: "source", id: r.source_id });

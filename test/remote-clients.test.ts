@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { clearBearerCache, registerAuthenticator } from "../src/auth/authenticators.ts";
 import { saveRole } from "../src/auth/permissions.ts";
-import { all, one } from "../src/core/db.ts";
+import { issueToolToken } from "../src/agents/tools.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { addMember, createApiToken, createUser, identitiesOf, setUserRole, updateUser } from "../src/core/users.ts";
 import { boot } from "../src/main.ts";
@@ -74,6 +75,42 @@ describe("remote clients", async () => {
     // Read-only: no writing tools.
     const ro = await tools(token, clientHeaders({ session: "ro", readOnly: true }));
     expect(ro.body.tools.map((t: { name: string }) => t.name)).not.toContain("remember");
+  });
+
+  it("applies scoped grants and revocations to both directories, direct calls and omem_call", async () => {
+    const user = createUser(app, { id: "tool-reader", name: "项目读者" });
+    addMember(app, "proj-a", user.id, "reader");
+    addMember(app, "proj-b", user.id, "contributor");
+    const api = createApiToken(app, user.id);
+    const runToken = issueToolToken({ runId: null, userId: user.id, actor: "agent", spaceId: "proj-a",
+      spaces: ["proj-a", "proj-b"], writable: ["proj-a"], tools: new Set(["list_sources", "save_note"]) });
+    const scoped = clientHeaders({ session: "目录检查", spaces: "proj-a", space: "proj-a" });
+    const clients = [{ token: api, headers: scoped }, { token: runToken, headers: {} }];
+    const override = (cap: string, effect: string) => run(app.db,
+      "insert or replace into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,?,'space','proj-a',?,current_timestamp,'owner')", user.id, cap, effect);
+
+    for (const effect of ["allow", "deny"]) {
+      override("sources.edit", effect);
+      override("sources.view", effect);
+      for (const { token, headers } of clients) {
+        const directory = (await tools(token, headers)).body.tools as { name: string; description: string }[];
+        const mcp = await remote("/mcp", { token, headers: { ...headers, accept: "application/json, text/event-stream" },
+          body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} } });
+        expect((await mcp.json()).result.tools.map((t: { name: string }) => t.name)).toEqual(directory.map(t => t.name));
+        const help = (await call(token, "omem_help", {}, headers)).body.text;
+        for (const name of ["save_note", "list_sources"]) {
+          // The run can still list sources in its read-only second space.
+          const listed = effect === "allow" || (token === runToken && name === "list_sources");
+          expect(directory.some(t => t.name === name || t.name === "omem_call" && t.description.includes("- " + name + "："))).toBe(listed);
+          expect(help.includes("- " + name + "：")).toBe(listed);
+        }
+        expect((await call(token, "list_sources", { space: "proj-a" }, headers)).body.isError).toBe(effect === "deny");
+        const args = { space: "proj-a", text: "项目笔记" };
+        expect((await call(token, "save_note", args, headers)).body.isError).toBe(effect === "deny");
+        expect((await call(token, "omem_call", { tool: "save_note", args }, headers)).body.isError).toBe(effect === "deny");
+        expect((await call(token, "save_note", { ...args, space: "proj-b" }, headers)).body.isError).toBe(true);
+      }
+    }
   });
 
   it("gives visitors the tools too, and refuses a role without tools.external", async () => {

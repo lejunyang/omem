@@ -53,7 +53,7 @@ describe("who may see a source", async () => {
     expect(sourceVisible(app, "mgr", secret.id)).toBe(true);
     expect(sourceVisible(app, "bob", secret.id)).toBe(false);
     expect(sourceVisible(app, "owner", secret.id)).toBe(true);
-    expect((await as("bob", `/api/sources/${secret.id}`)).status).toBe(403);
+    expect((await as("bob", `/api/sources/${secret.id}`)).status).toBe(404);
     expect((await as("ann", `/api/sources/${secret.id}`)).status).toBe(200);
     const list = await (await as("bob", "/api/sources?space=proj")).json();
     expect(list.sources.map((s: { id: string }) => s.id)).not.toContain(secret.id);
@@ -128,7 +128,7 @@ describe("who may see a source", async () => {
     const n = asked.length;
     expect(await sourceReadable(app, "ann", ok.id)).toBe(true);
     expect(asked.length).toBe(n);
-    expect((await as("ann", `/api/sources/${no.id}`)).status).toBe(403);
+    expect((await as("ann", `/api/sources/${no.id}`)).status).toBe(404);
     expect((await as("ann", `/api/sources/${ok.id}`)).status).toBe(200);
     expect(one<{ allowed: number }>(app.db, "select allowed from source_access where source_id = ? and user_id = 'ann'", ok.id)!.allowed).toBe(1);
     // Never leaves this server either; the owner is not checked.

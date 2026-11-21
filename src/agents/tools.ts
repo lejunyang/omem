@@ -1,6 +1,6 @@
 import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
-import { globalCapability, spacesWithCapability } from "../auth/capabilities.ts";
+import { spacesWithCapability, type Capability } from "../auth/capabilities.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { lessonInput, proposeLesson } from "./code-lessons.ts";
 import { claimCommits, claimSchema } from "../flows/commits.ts";
@@ -32,15 +32,15 @@ import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
-import { accessibleSpaces, activeUser, identityOwner, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
+import { accessibleSpaces, activeUser, identityOwner, findUser, requireMembershipSpace, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
-import { toolAllowed, toolCapabilities } from "../auth/tools.ts";
+import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf, LARK_DOMAIN_FEATURES } from "../auth/features.ts";
-import { can, canReadRun, requirePerm } from "../auth/permissions.ts";
+import { can, canAccessRun, canReadRun, runAudience, requirePerm } from "../auth/permissions.ts";
 import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
 import { needConnection } from "../auth/connect-wait.ts";
-import { hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
+import { hiddenSourceIds, readableSourceIds, hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate, localStamp } from "../core/util.ts";
 import { checkBrief } from "./brief.ts";
 import { createCard } from "../learn/cards.ts";
@@ -76,7 +76,7 @@ import { afterToolCall, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
-import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
+import { describeThread, findThread, getThread, listThreads, threadMessages } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
 import type { OperationRule } from "../core/config.ts";
@@ -211,14 +211,14 @@ function codeVersionHead(ctx: ToolContext, hits: { type: string; sourceKind?: st
   return lines.length ? `代码来自：\n${lines.join("\n")}\n\n` : "";
 }
 /** Reject objects that live outside the spaces this caller may write. */
-function inScope(ctx: ToolContext, spaceId: string, what: string, permission: "items.edit" | "items.operate" | "rules.edit" | "memory.write" = "memory.write") {
+function inScope(ctx: ToolContext, spaceId: string, what: string, permission: Capability | "wiki.write" | "memory.write" = "memory.write") {
   if (!can(ctx.app, ctx.userId ?? OWNER, permission, spaceId)) throw new HttpError(403, `无权修改空间 ${spaceId}`);
   const w = ctx.writable ?? ctx.spaces;
   if (w && !w.includes(spaceId))
     throw new HttpError(403, ctx.spaces && ctx.spaces.includes(spaceId) ? `空间 ${spaceId} 这次只能读，不能修改其中的${what}；写进当前空间 ${ctx.spaceId}` : `本次任务不能修改空间 ${spaceId} 中的${what}`);
 }
 /** A space to write into: readable and writable. */
-function writeSpace(ctx: ToolContext, requested?: string | null, permission: "memory.write" | "rules.edit" = "memory.write") {
+function writeSpace(ctx: ToolContext, requested?: string | null, permission: Capability | "wiki.write" | "memory.write" = "memory.write") {
   const id = space(ctx, requested);
   if (findSpace(ctx.app, id)!.kind === "worktree") throw new HttpError(403, `空间 ${id} 是交办工作区的临时索引，只能读；写进对应的仓库或项目空间`);
   inScope(ctx, id, "内容", permission);
@@ -240,9 +240,7 @@ function codeSpace(ctx: ToolContext, requested: string) {
 }
 /** A space to write Wiki pages in: writable, and its person may write the Wiki there (src/auth/permissions.ts wiki.write). */
 function wikiSpace(ctx: ToolContext, requested?: string | null) {
-  const id = writeSpace(ctx, requested);
-  if (!can(ctx.app, ctx.userId ?? OWNER, "wiki.write", id)) throw new HttpError(403, `在空间 ${id} 不能写 Wiki`);
-  return id;
+  return writeSpace(ctx, requested, "wiki.write");
 }
 /** The current space and the related ones this caller may read. */
 function homeSpaces(ctx: ToolContext) {
@@ -630,9 +628,10 @@ def({
   name: "source_outline",
   description: "查看原件结构：Markdown 章节或代码符号（函数/类/类型）及其行号，用来决定读哪一段。",
   schema: z.object({ source: z.string(), space: z.string().optional() }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const id = resolveSource(ctx, a.source, a.space);
     const s = getSource(ctx.app, id);
+    await requireReadable(ctx.app, ctx.userId ?? OWNER, id);
     const o = sourceOutline(ctx.app, id);
     const lines = [`原件 ${s.id} · ${s.uri}`];
     if (o.symbols.length) lines.push(...o.symbols.map((y) => `- ${y.kind} ${y.qname}  L${y.line_start}-${y.line_end}${y.exported ? " (export)" : ""}  ${truncate(y.signature, 120)}`));
@@ -656,29 +655,38 @@ def({
   }),
   handler: (ctx, a) => {
     const sp = spacesFor(ctx, a.space);
+    const member = ctx.userId ?? OWNER;
+    const within = (cap: Capability) => {
+      const range = spacesWithCapability(ctx.app, member, cap);
+      return range ? range.filter(id => !sp || sp.includes(id)) : sp;
+    };
+    const sourceSpaces = within("sources.view");
+    const memorySpaces = within("memories.view");
     const terms = a.terms.map((t) => t.toLowerCase());
     const where = [
       "deleted_at is null",
       // Everything readable: the repositories' baselines, not every branch or delegation index.
-      sp ? `space_id in (${sp.map(() => "?").join(",")})` : "space_id not in (select id from spaces where kind = 'worktree')",
+      sourceSpaces ? `space_id in (${sourceSpaces.map(() => "?").join(",")})` : "space_id not in (select id from spaces where kind = 'worktree')",
       a.source_kind ? "kind = ?" : "1=1",
       a.since ? "coalesce(json_extract(meta,'$.date'), captured_at) >= ?" : "1=1",
       a.until ? "coalesce(json_extract(meta,'$.date'), captured_at) <= ?" : "1=1",
       `(${terms.map(() => "instr(lower(text), ?) > 0").join(" or ")})`,
     ].join(" and ");
-    const params = [...(sp ?? []), ...(a.source_kind ? [a.source_kind] : []), ...(a.since ? [a.since] : []), ...(a.until ? [a.until] : []), ...terms];
+    const params = [...(sourceSpaces ?? []), ...(a.source_kind ? [a.source_kind] : []), ...(a.since ? [a.since] : []), ...(a.until ? [a.until] : []), ...terms];
     const view = ctx.view;
     const rows = all<{ id: string; uri: string; title: string; text: string; date: string; kind: string; captured_at: string; level: string | null; updated_at: string }>(
       ctx.app.db,
       `select id, uri, title, text, kind, captured_at, updated_at, ${levelSql("sources")} level, coalesce(json_extract(meta,'$.date'), captured_at) as date from sources where ${where} order by date`,
       ...params,
     ).filter((r) => !view || (!(view.asOf && r.captured_at > view.asOf) && (!view.sourceLevels || view.sourceLevels.includes((r.level ?? "normal") as Level))));
+    const readable = member === OWNER ? null : readableSourceIds(ctx.app, member, rows.map(r => r.id));
+    const matches = readable ? rows.filter(row => readable.has(row.id)) : rows;
     const limit = a.limit ?? 150;
     const ctxLines = a.context ?? 0;
     const out: string[] = [];
     let hits = 0;
     let shown = 0;
-    for (const r of rows) {
+    for (const r of matches) {
       const lines = r.text.split("\n");
       const vis = view?.asOf && TIME_CUT_KINDS.has(r.kind) ? visibleLines(ctx.app, view, r.id, r.text) : null;
       const matched = lines.map((l, i) => (terms.some((t) => l.toLowerCase().includes(t)) && (!vis || vis[i]) ? i : -1)).filter((i) => i >= 0);
@@ -699,12 +707,12 @@ def({
     const mw = memoryWhere(view, "m");
     const mems = all<{ id: string; kind: string; subject: string; content: string; valid_from: string | null }>(
       ctx.app.db,
-      `select m.id, m.kind, m.subject, m.content, m.valid_from from memories m where ${view ? mw.sql : "m.status = 'active'"} ${sp ? `and m.space_id in (${sp.map(() => "?").join(",")})` : ""} and (${terms.map(() => "instr(lower(m.subject || ' ' || m.content), ?) > 0").join(" or ")}) limit 60`,
+      `select m.id, m.kind, m.subject, m.content, m.valid_from from memories m where ${view ? mw.sql : "m.status = 'active'"} ${memorySpaces ? `and m.space_id in (${memorySpaces.map(() => "?").join(",")})` : ""} and (${terms.map(() => "instr(lower(m.subject || ' ' || m.content), ?) > 0").join(" or ")}) limit 60`,
       ...(view ? mw.params : []),
-      ...(sp ?? []),
+      ...(memorySpaces ?? []),
       ...terms,
     ).map((m) => ({ ...m, content: asOfContent(view, m.content) }));
-    const head = `${rows.length} 个原件共 ${hits} 行命中${shown < hits ? `，显示前 ${shown} 行（可缩小时间范围或关键词后再扫）` : ""}；有效记忆 ${mems.length} 条。`;
+    const head = `${matches.length} 个原件共 ${hits} 行命中${shown < hits ? `，显示前 ${shown} 行（可缩小时间范围或关键词后再扫）` : ""}；有效记忆 ${mems.length} 条。`;
     const memText = mems.length ? `\n\n## 记忆\n${mems.map((m) => `- ${m.id} [${m.kind}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 200)}`).join("\n")}` : "";
     return head + out.join("\n") + memText;
   },
@@ -725,8 +733,8 @@ def({
   }),
   handler: (ctx, a) => {
     const sp = space(ctx, a.space);
-    if (a.under !== undefined || !a.query) return catalogListing(ctx, sp, a.under ?? "", a.depth ?? 1, { kind: a.kind, level: a.level, q: a.query }, a.limit ?? 200);
-    const r = listSources(ctx.app, { spaceId: sp, q: a.query, kind: a.kind, level: a.level, limit: a.limit ?? 200 });
+    if (a.under !== undefined || !a.query) return catalogListing(ctx, sp, a.under ?? "", a.depth ?? 1, { hiddenSources: hiddenSourceIds(ctx.app, ctx.userId ?? OWNER, sp), kind: a.kind, level: a.level, q: a.query }, a.limit ?? 200);
+    const r = listSources(ctx.app, { userId: ctx.userId, spaceId: sp, q: a.query, kind: a.kind, level: a.level, limit: a.limit ?? 200 });
     // A replay arm does not see what was captured after the question or levels it was told to leave out.
     if (ctx.view) r.sources = r.sources.filter((s) => !sourceHidden(ctx.view, { captured_at: s.capturedAt, level: s.level?.level ?? null }));
     return `共 ${r.total} 个原件${r.total > r.sources.length ? `，显示前 ${r.sources.length} 个` : ""}\n` + r.sources.map((s) => `- ${s.id} ${s.uri} (${s.kind}, ${s.lines} 行${s.attention ? `，${LEVEL_LABELS[s.attention as Level]}` : ""})`).join("\n");
@@ -773,11 +781,16 @@ def({
     wiki_path_contains: z.string().optional().describe("飞书知识库名或目录路径包含"),
     under: z.string().optional().describe("目录节点 key：给整个目录定级（含以后进来的），和 space 一起用"),
   }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const by = ctx.actor === "user" ? "owner" : "agent";
+    if ((ctx.userId ?? OWNER) !== OWNER) {
+      if (a.ids?.length !== 1 || a.under || a.chat_id || a.title_contains || a.wiki_path_contains) throw new HttpError(403, "成员只能按原件 ID 调整一份原件的关注程度");
+      await requireReadable(ctx.app, ctx.userId!, a.ids[0]);
+      inScope(ctx, getSource(ctx.app, a.ids[0]).spaceId, "原件", "sources.edit");
+    }
     if (a.under) {
       const sp = space(ctx, a.space);
-      inScope(ctx, sp, "目录定级");
+      inScope(ctx, sp, "目录定级", "sources.edit");
       const r = setNodeLevel(ctx.app, sp, a.under, a.level, by, { reason: a.reason, runId: ctx.runId });
       const path = nodePath(catalog(ctx.app, sp), a.under);
       if (ctx.runId && r.changed) addRunEvent(ctx.app, ctx.runId, "status", { text: `目录「${path}」→ ${LEVEL_LABELS[a.level]}（${a.reason}）` });
@@ -809,12 +822,14 @@ def({
     ref: z.string().optional().describe("以哪份材料为准"),
     remove: z.number().int().optional().describe("删除这条标注（标注 id，read_source 里能看到）"),
   }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const id = resolveSource(ctx, a.source);
+    await requireReadable(ctx.app, ctx.userId ?? OWNER, id);
     const s = getSource(ctx.app, id);
-    inScope(ctx, s.spaceId, "原件标注");
+    inScope(ctx, s.spaceId, "原件标注", "sources.edit");
     const by = ctx.actor === "user" ? "owner" : "agent";
     if (a.remove) {
+      if (!sourceNotes(ctx.app, id).some(note => note.id === a.remove)) throw new HttpError(404, "原件上没有这条标注");
       removeSourceNote(ctx.app, a.remove, by);
       return `已删除标注 #${a.remove}`;
     }
@@ -1083,12 +1098,13 @@ def({
 });
 
 /** A temporary assistant task stays inside the caller's permissions and cannot hand on again. */
-function assistantTaskScope(ctx: ToolContext) {
+function assistantTaskScope(ctx: ToolContext, agent = "assistant") {
   return {
     spaces: ctx.writable ?? ctx.spaces,
-    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS])],
-    userId: ctx.userId,
-    lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private },
+    readScope: ctx.spaces ?? undefined,
+    denyTools: agent === "assistant" ? [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS])] : [],
+    userId: ctx.userId ?? OWNER,
+    lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private, ...(ctx.larkBot && { bot: ctx.larkBot }) },
   };
 }
 
@@ -1131,14 +1147,14 @@ const extraToolsSchema = z.array(z.string()).max(MAX_LENT_TOOLS).optional().desc
  */
 function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, task: string, execution: ReturnType<typeof validateExecution>, space?: string) {
   // The main assistant works with the device's own tool set (nothing outward), as for any task it is handed.
-  const assistantScope = spec.name === "assistant" ? assistantTaskScope(ctx) : undefined;
+  const assistantScope = assistantTaskScope(ctx, spec.name);
   const r = createRun(ctx.app, {
     kind: "agent",
-    spaceId: space ? writeSpace(ctx, space) : (spec.space ?? ctx.spaceId),
+    spaceId: writeSpace(ctx, space ?? spec.space, "runs.operate"),
     title: `${spec.name}（设备 ${ctx.peer!.caller} 交办）：${truncate(task, 50)}`,
-    input: { spec: spec.name, task, execution, assistantScope, fromPeer: ctx.peer!.caller },
+    input: { spec: spec.name, task, execution, assistantScope, spaces: assistantScope.readScope, fromPeer: ctx.peer!.caller },
     parentId: ctx.runId,
-    userId: ctx.userId && ctx.userId !== OWNER ? ctx.userId : null,
+    userId: assistantScope.userId,
   });
   return `已交给这台机器上的 ${spec.name}，运行 ${r.id}（用这台机器的模型）。用 read_run 看进度和结果，做完前状态是 queued / running。`;
 }
@@ -1156,6 +1172,7 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
   const rule = parent.rule as { id: string; name: string };
   const from = String(parent.spec ?? "assistant");
   if (spec.name === from) throw new HttpError(400, `这次运行就是 ${from}，不用交给自己`);
+  const assistantScope = assistantTaskScope(ctx, spec.name);
   const inherited = Object.fromEntries(RULE_DELIVERY.filter((k) => parent[k] !== undefined).map((k) => [k, parent[k]]));
   const reply = parent.silent
     ? "你在静默排查：群里看不到你的过程，最后写的文字也不会发出去；有结论才用 lark_send 发到触发消息的话题里（reply_to 触发消息、in_thread=true），没有就什么都不发。"
@@ -1164,12 +1181,12 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
       : "不要在群里发消息；最后的回答发给本人。";
   const r = createRun(ctx.app, {
     kind: "agent",
-    spaceId: spec.space ?? ctx.spaceId,
+    spaceId: writeSpace(ctx, spec.space, "runs.operate"),
     title: truncate(`${spec.name}（规则「${rule.name}」，${from} 交来）：${task.split("\n")[0]}`, 80),
     input: {
       spec: spec.name,
       ...inherited,
-      ...(spec.name === "assistant" && parent.assistantScope ? { assistantScope: parent.assistantScope } : {}),
+      assistantScope, spaces: assistantScope.readScope,
       execution: execution ?? parent.execution,
       denyTools: HANDOFF_DENIED,
       handoff: { from, runId: ctx.runId },
@@ -1191,7 +1208,7 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
       ].join("\n"),
     },
     parentId: ctx.runId,
-    userId: ctx.userId,
+    userId: assistantScope.userId,
   });
   return `已在规则「${rule.name}」的范围内交给 ${spec.name}（运行 ${r.id}）：它按规则的回复方式在原来的群或话题里处理，话题里的后续回复仍回到你这里。你这一轮不要再在群里回复同一件事，调用 stay_quiet 结束（还有别的事要做就先做完）。`;
 }
@@ -1314,7 +1331,7 @@ def({
     if (ctx.peer) return peerDispatch(ctx, spec, a.task, execution, a.space);
     const parentInput = ctx.runId ? (getRun(ctx.app, ctx.runId).input ?? {}) as Record<string, unknown> : {};
     if (parentInput.rule) return ruleHandoff(ctx, parentInput, spec, a.task, execution);
-    const assistantScope = a.name === "assistant" ? assistantTaskScope(ctx) : undefined;
+    const assistantScope = assistantTaskScope(ctx, spec.name);
     const lentNote = extraTools.length ? `；这一轮借给它 ${extraTools.join("、")}` : "";
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
@@ -1326,6 +1343,7 @@ def({
       // into this conversation so reports stop going back to the old topic.
       const existing = workInConversation(ctx.app, conversationId);
       if (existing) {
+        requireWorkOperator(ctx, existing);
         await autoTurnGuard(ctx, existing);
         const id = queueAgentRound(ctx.app, existing, { agent: spec.name, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
         return `已在这项工作的话题里安排 ${spec.name} 的下一轮 ${id}${lentNote}；它交回报告后你会在这里接着处理。`;
@@ -1333,7 +1351,7 @@ def({
       const w = startAgentWork(ctx.app, {
         askRunId: ctx.runId!,
         rootConversationId: conversationId,
-        spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId),
+        spaceId: writeSpace(ctx, a.space ?? spec.space, "runs.operate"),
         title: truncate(a.task.split("\n")[0], 60),
         agent: spec.name,
         task: a.task,
@@ -1345,11 +1363,18 @@ def({
       if (inChat && !anchor) return `已在独立工作会话把这件事交给 ${spec.name}，运行 ${w.runId}。这里没有这件事自己的飞书消息可以挂话题，它的结论和要本人决定的事会直接发在本会话（不是话题），不要说“已在话题里”。`;
       return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}${lentNote}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
-    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId, userId: ctx.userId });
+    const r = createRun(ctx.app, { kind: "agent", spaceId: writeSpace(ctx, a.space ?? spec.space, "runs.operate"), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, spaces: assistantScope.readScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId, userId: assistantScope.userId });
     return `已交给 ${spec.name}，运行 ${r.id}${lentNote}，完成后结果会发回本会话。`;
   },
 });
 
+
+function requireWorkOperator(ctx: ToolContext, work: AgentWork) {
+  const user = ctx.userId ?? OWNER;
+  if (runUser(ctx.app, work.askRunId) !== user || !canAccessRun(ctx.app, user, work.askRunId, "runs.operate"))
+    throw new HttpError(403, "只能续办自己有权操作的工作");
+  inScope(ctx, getThread(ctx.app, work.workConversationId).spaceId, "工作", "runs.operate");
+}
 
 /** run_agent with work_id (or own_topic without name): the next round of a work in its own conversation. */
 async function continueAgentWork(ctx: ToolContext, a: { execution?: z.infer<typeof executionSchema>; work_id?: string; name?: string; task: string; extra_tools?: string[] }) {
@@ -1361,19 +1386,19 @@ async function continueAgentWork(ctx: ToolContext, a: { execution?: z.infer<type
   const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
   const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
   const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
-  let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
-  if (!work && conv) work = workInConversation(ctx.app, conv, { includeRoot: true });
+  const work = a.work_id ? refreshWork(ctx.app, a.work_id) : conv && workInConversation(ctx.app, conv, { includeRoot: true });
   if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent(name, task, own_topic=true) 开始");
+  requireWorkOperator(ctx, work);
   const agent = a.name ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
   if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
-  const assistantScope = agent === "assistant" ? assistantTaskScope(ctx) : undefined;
+  const assistantScope = assistantTaskScope(ctx, agent);
   // The owner continues the work from another conversation (a new Feishu topic): fork it into
   // this conversation so the specialist's report and every later coordination reply land here.
   if (conv && work.workConversationId !== conv) {
-    const { getThread } = await import("./threads.ts");
     const here = getThread(ctx.app, conv);
     const otherTopic = !!String(here?.key ?? "").includes("#") && here?.key !== work.larkKey;
     if (otherTopic || work.rootConversationId !== conv) {
+      inScope(ctx, here.spaceId, "工作", "runs.operate");
       const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
       return `已把这项工作转到当前话题继续（运行 ${f.runId}${lentNote}）；后续 ${agent} 的报告和协调回复都在这里，不再回到旧话题。旧话题里的经过可以用 read_conversation 读工作会话 ${work.workConversationId}。`;
     }
@@ -1735,12 +1760,17 @@ def({
   },
 });
 
+function toolRunAudience(ctx: ToolContext) {
+  const user = ctx.userId ?? OWNER;
+  return { spaceIds: ctx.spaces ?? undefined, visibleTo: runAudience(ctx.app, user), reviewAudience: runAudience(ctx.app, user, "code.review.view") };
+}
+
 def({
   name: "list_runs",
   description: "查看后台运行（交办的编码、整理、评审等）的状态。",
   schema: z.object({ kind: z.string().optional(), status: z.string().optional(), limit: z.number().int().optional() }),
   handler: (ctx, a) =>
-    listRuns(ctx.app, { kind: a.kind, status: a.status, limit: a.limit ?? 20 })
+    listRuns(ctx.app, { ...toolRunAudience(ctx), kind: a.kind, status: a.status, limit: a.limit ?? 20 })
       .map((r) => `- ${r.id} [${r.kind}/${r.status}] ${r.title} · ${localStamp(r.createdAt, ctx.app.config.timezone)}${r.error ? " · 错误：" + truncate(r.error, 100) : ""}`)
       .join("\n") || "（无）",
 });
@@ -1781,20 +1811,23 @@ def({
     if (r.spaceId) space(ctx, r.spaceId);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
     if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
+    const user = ctx.userId ?? OWNER;
+    if (!canReadRun(ctx.app, user, r.id)) throw new HttpError(404, "找不到运行");
+    if (["code", "review"].includes(r.kind) && !canAccessRun(ctx.app, user, r.id, "code.review.view")) return `运行 ${r.id} [${r.kind}/${r.status}] ${r.title}`;
     if (a.offset !== undefined) {
-      if (!canReadRun(ctx.app, ctx.userId ?? OWNER, r.id)) throw new HttpError(404, "找不到运行");
       if (!r.input.boardTaskId || typeof r.output.answer !== "string") throw new HttpError(400, "该运行没有任务板报告");
       return reportPage(r.output.answer, r.id, a.offset);
     }
-    const children = listRuns(ctx.app, { parentId: r.id, limit: 200 }).filter(child => !child.spaceId || !allowed || allowed.includes(child.spaceId));
+    const children = listRuns(ctx.app, { ...toolRunAudience(ctx), parentId: r.id, limit: 200 }).filter(child => !child.spaceId || !allowed || allowed.includes(child.spaceId));
     const childText = children.length ? `\n子运行：\n${children.map(child => `- ${child.id} [${child.kind}/${child.status}] ${child.title}${child.error ? ` · ${truncate(child.error, 200)}` : ""}`).join("\n")}\n` : "";
-    const events = runEvents(ctx.app, r.id).filter((e) => e.type !== "thought");
+    const { visibleRunEvent } = await import("./run-writes.ts");
+    const events = runEvents(ctx.app, r.id).filter(e => e.type !== "thought").map(e => visibleRunEvent(ctx.app, user, e, true));
     const text = events
       .filter((e) => e.type === "text")
       .map((e) => (e.data as { text: string }).text)
       .join("");
     const delivery = (r.output.codeChain as { askRunId?: string } | undefined)?.askRunId;
-    const progress = delivery ? getRun(ctx.app, delivery).output.codeProgress : undefined;
+    const progress = delivery && canReadRun(ctx.app, user, delivery) ? getRun(ctx.app, delivery).output.codeProgress : undefined;
     const thinking = r.output.thinkingDelivery;
     const outcome = (await import("./reply-outcomes.ts")).replyOutcome(ctx.app, r.id);
     const outcomeText = outcome ? `${(await import("./reply-outcomes.ts")).replyOutcomeText(outcome)}\n` : "";
@@ -1803,7 +1836,7 @@ def({
     if (r.kind === "code") {
       const { workRuns, DECISION_LABEL } = await import("./review-fix.ts");
       const { reviewsOf, SEVERITY_LABEL } = await import("./review.ts");
-      const reviews = reviewsOf(ctx.app, workRuns(ctx.app, r.id));
+      const reviews = reviewsOf(ctx.app, workRuns(ctx.app, r.id).filter(id => canAccessRun(ctx.app, user, id, "code.review.view")));
       const round = Math.max(0, ...reviews.map((x) => x.round));
       const rows = reviews.filter((x) => x.round === round).flatMap((x) => x.findings.map((f) => `- #${f.id} [${SEVERITY_LABEL[f.severity]} · ${x.check_name}] ${f.title}${f.file_path ? ` — ${f.file_path}${f.line ? `:${f.line}` : ""}` : ""}${f.state !== "open" ? ` · 负责人：${f.state}` : ""}${f.decision ? ` · 本人：${DECISION_LABEL[f.decision]}${f.decision_note ? `（${f.decision_note}）` : ""}` : ""}`));
       if (rows.length) findingText = `第 ${round} 轮评审的问题（continue_code_run 的 fix 用这些编号）：\n${rows.join("\n")}\n`;
@@ -1872,6 +1905,7 @@ def({
     const r = getRun(ctx.app, a.run_id);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
     if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
+    if ((r.spaceId && ctx.writable && !ctx.writable.includes(r.spaceId)) || !canAccessRun(ctx.app, ctx.userId ?? OWNER, r.id, "runs.operate")) throw new HttpError(403, "不能操作这个运行");
     const { takeOverRun } = await import("./awareness.ts");
     return takeOverRun(ctx.app, { runId: ctx.runId, userId: ctx.userId }, a.run_id);
   },
@@ -2071,7 +2105,7 @@ def({
     }
     // Near neighbours first: the writer decides whether this restates, corrects or differs from
     // what is already there. Only agents are stopped; the owner writes as they like.
-    if (ctx.actor === "agent") {
+    if (ctx.actor === "agent" && can(ctx.app, ctx.userId ?? OWNER, "memories.view", spaceId)) {
       const { memoriesNearWrite } = await import("../memory/passive.ts");
       const near = (await memoriesNearWrite(ctx.app, { spaceId, content: a.content, subject: a.subject, agent: agentForMemory })).filter((x) => !a.distinct_from?.includes(x.id));
       if (near.length) {
@@ -2103,7 +2137,7 @@ def({
       userId: a.kind === "preference" ? (ctx.userId ?? "owner") : null,
     });
     if (folder) ensureFolder(ctx.app, spaceId, folder, a.folder_description ?? "", ctx.actor === "user" ? "user" : "agent");
-    const others = relatedIds(ctx.app, spaceId).filter((id) => !ctx.spaces || ctx.spaces.includes(id));
+    const others = relatedIds(ctx.app, spaceId).filter(id => canRead(ctx, id) && can(ctx.app, ctx.userId ?? OWNER, "memories.view", id));
     const alike = similarMemories(ctx.app, others, a.content, a.subject);
     const hint = alike.length
       ? `\n相关空间里有相近的记忆：${alike.map((x) => `${x.id}（${x.space_id}）「${truncate(x.content, 60)}」`).join("；")}。如果说的是同一件事且两边结论不同，以有原件依据的为准，在当前空间更正；两边都需要的约定，可以只留一处并在页面里链接。`
@@ -2155,7 +2189,7 @@ def({
         const n = one<{ by: string; status: string; space_id: string; source_id: string }>(ctx.app.db,
           "select n.by, n.status, s.space_id, n.source_id from source_notes n join sources s on s.id = n.source_id where n.id = ?", v.note_id);
         if (!n) return `${v.note_id} 不存在，跳过`;
-        inScope(ctx, n.space_id, "原件标注");
+        inScope(ctx, n.space_id, "原件标注", "sources.edit");
         if (n.by === "owner" || n.status !== "pending") return `${v.note_id} 本人标的或已不是待复核状态，跳过`;
         run(ctx.app.db, `update source_notes set status = ?, reviewed_at = ?, reviewed_by = ?, review_note = ?,
           note = case when ? then ? else note end where id = ?`,
@@ -2327,12 +2361,13 @@ def({
   },
 });
 
-function flowItem(ctx: ToolContext, id: string, write: boolean) {
-  const item = requireItem(ctx.app, id, ctx.userId ?? OWNER, write ? "write" : "read");
+function flowItem(ctx: ToolContext, id: string, mode: "read" | "write" | "flow") {
+  const write = mode !== "read";
+  const item = requireItem(ctx.app, id, ctx.userId ?? OWNER, mode);
   const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
   const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, write ? ctx.writable ?? ctx.spaces : ctx.spaces);
   if (item.userId !== (ctx.userId ?? OWNER) || readable && !readable.includes(item.spaceId) || allowed && !allowed.includes(item.spaceId)) throw new HttpError(403, "不能访问或修改该事项的流程");
-  if (write) inScope(ctx, item.spaceId, "流程");
+  if (write) inScope(ctx, item.spaceId, "事项", mode === "flow" ? "flows.operate" : "items.edit");
   return item;
 }
 function flowActor(ctx: ToolContext) { return { actor: ctx.actor === "user" ? "owner" : ctx.spec ?? ctx.role ?? "assistant", userId: ctx.userId ?? OWNER, runId: ctx.runId ?? undefined }; }
@@ -2340,14 +2375,14 @@ def({
   name: "attach_object", description: "把平台对象的链接挂到事项上（如合并请求）；只读取当前状态，后续宿主自动跟进。需要已启用且认识此链接的插件。", write: true,
   schema: z.object({ item: z.string(), url: z.string().trim().min(1).max(4000) }),
   handler: async (ctx, a) => {
-    flowItem(ctx, a.item, true);
+    flowItem(ctx, a.item, "write");
     return JSON.stringify(await (await import("../flows/plugin-objects.ts")).attachObject(ctx.app, a.item, a.url, ctx.userId ?? OWNER, ctx.actor));
   },
 });
 def({
   name: "propose_directions", description: "定方向阶段交零到三个方向，宿主对账去重后请本人选；空数组是正常结果，note 写原因。", write: true, schema: proposalSchema,
   handler: async (ctx, a) => {
-    flowItem(ctx, a.item, true);
+    flowItem(ctx, a.item, "write");
     return (await import("../studies/service.ts")).proposeDirections(ctx.app, a, flowActor(ctx));
   },
 });
@@ -2358,7 +2393,7 @@ def({
     const remote = await import("../studies/remote-host.ts");
     if (remote.isPeerTrialRun(ctx.app, ctx.runId)) return remote.reportPeerTrial(ctx.app, ctx.runId!, a, flowActor(ctx).actor);
     const store = await import("../studies/store.ts");
-    flowItem(ctx, store.trial(ctx.app, a.trial).item_id, true);
+    flowItem(ctx, store.trial(ctx.app, a.trial).item_id, "write");
     await flowRefs(ctx, (a.evidence ?? []).filter((r) => r.startsWith("src:")));
     return (await import("../studies/service.ts")).reportTrial(ctx.app, a, flowActor(ctx));
   },
@@ -2367,21 +2402,21 @@ def({
   name: "study_push", description: "将本试验工作区的 HEAD 推到课题登记的远端和固定分支前缀，必须干净，不能强推。", write: true, schema: studyPushSchema,
   handler: async (ctx, a) => {
     const store = await import("../studies/store.ts");
-    const item = flowItem(ctx, store.trial(ctx.app, a.trial).item_id, true);
+    const item = flowItem(ctx, store.trial(ctx.app, a.trial).item_id, "write");
     return (await import("../flows/engine.ts")).studyOperation(ctx.app, item.id, async () => (await import("../studies/push.ts")).studyPush(ctx.app, a, ctx.runId, ctx.userId ?? OWNER));
   },
 });
 def({
   name: "read_ledger", description: "按课题、方向、对象、结果和轮次读试验摘要、证据、候选与正式发现；定方向阶段禁止读取。", schema: ledgerSchema,
   handler: async (ctx, a) => {
-    flowItem(ctx, a.item, false);
+    flowItem(ctx, a.item, "read");
     return (await import("../studies/service.ts")).readLedger(ctx.app, a, ctx.runId);
   },
 });
 def({
   name: "record_finding", description: "把有复现依据的试验归并成发现。遇到相近标题先读：same_as 合并到已有发现，distinct_from 列明确不同的已有发现 id；至少一个本课题有结果的试验。", write: true, schema: recordFindingSchema,
   handler: async (ctx, a) => {
-    flowItem(ctx, a.item, true);
+    flowItem(ctx, a.item, "write");
     (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
     const { studyOperation } = await import("../flows/engine.ts");
     return studyOperation(ctx.app, a.item, async () => (await import("../studies/store.ts")).recordFinding(ctx.app, a));
@@ -2392,7 +2427,7 @@ def({
   handler: async (ctx, a) => {
     const store = await import("../studies/store.ts");
     const d = store.direction(ctx.app, a.direction);
-    flowItem(ctx, d.item_id, true);
+    flowItem(ctx, d.item_id, "write");
     (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
     return (await import("../flows/engine.ts")).studyOperation(ctx.app, d.item_id, async () => { await store.closeDirection(ctx.app, a.direction, a.state, a.conclusion); return "方向已结束，结论已记下。"; });
   },
@@ -2413,7 +2448,7 @@ async function flowRefs(ctx: ToolContext, list: string[]) {
 def({
   name: "list_flows", description: "列出流程定义的 id、名称、说明和阶段；item 给出事项 id 时同时列出适用的流程。",
   schema: z.object({ item: z.string().optional() }), handler: async (ctx, a) => {
-    const item = a.item ? flowItem(ctx, a.item, false) : null;
+    const item = a.item ? flowItem(ctx, a.item, "read") : null;
     const { listFlows, flowsFor, flowVisibleIn } = await import("../flows/definitions.ts");
     const allowed = ctx.spaces && new Set(ctx.spaces);
     const flows = listFlows(ctx.app).filter(f => flowVisibleIn(f.definition, allowed));
@@ -2433,7 +2468,7 @@ def({
   write: true, schema: claimSchema,
   handler: async (ctx, a) => {
     if (ctx.role !== "commit-claim" || !ctx.runId || (ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人 commit-claim 运行能交认领建议");
-    for (const claim of a.claims) if ("item" in claim) flowItem(ctx, claim.item, true);
+    for (const claim of a.claims) if ("item" in claim) flowItem(ctx, claim.item, "write");
     return JSON.stringify(claimCommits(ctx.app, ctx.runId, a));
   },
 });
@@ -2444,7 +2479,7 @@ def({
     decided: z.boolean().optional().describe("deadline：新时间是本人说的，或材料写明已经定了，填 true，截止时间直接改；scope / decision：本人自己拍板、或本人直接让助手去做的，填 true，引用里有本人那句话时直接并进、不再问本人。只是有人提议就不填，由本人定") }),
   handler: async (ctx, a) => {
     if (ctx.role !== "item-follow" || !ctx.runId) throw new HttpError(403, "只有 item-follow 能交事项变化");
-    flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs);
+    flowItem(ctx, a.item, "write"); await flowRefs(ctx, a.refs);
     return JSON.stringify((await import("../flows/follow.ts")).noteItemChange(ctx.app, ctx.runId, a));
   },
 });
@@ -2476,7 +2511,7 @@ def({
 def({
   name: "flow_start", description: "传 flow：让事项开始走这个流程，同一事项已有进行中的流程时拒绝。不传 flow：本人说再来一轮时，开始事项已有流程的下一轮，这一轮还没做完时不能开始。",
   write: true, schema: z.object({ item: z.string(), flow: z.string().optional().describe("流程名；不传就是对事项已有的流程开下一轮") }), handler: async (ctx, a) => {
-    flowItem(ctx, a.item, true);
+    flowItem(ctx, a.item, "flow");
     const engine = await import("../flows/engine.ts");
     return JSON.stringify(a.flow ? await engine.startFlow(ctx.app, a.item, a.flow, flowActor(ctx), ctx.spaces) : await engine.startRound(ctx.app, a.item, flowActor(ctx)));
   },
@@ -2485,14 +2520,14 @@ def({
   name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段不会直接完成，而是变成一个问本人的确认。blocked：做不下去，waiting_on 写等谁或等什么；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：这一段不需要，写原因；要本人确认或由本人承担的阶段不能由你跳过，把理由告诉本人。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional() }), handler: async (ctx, a) => {
     checkBrief(a.note, "note ");
-    flowItem(ctx, a.item, true); await flowRefs(ctx, a.evidence ?? []);
+    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.evidence ?? []);
     return JSON.stringify(await (await import("../flows/engine.ts")).reportStage(ctx.app, a.item, a.stage, { ...a, waitingOn: a.waiting_on }, flowActor(ctx)));
   },
 });
 def({
   name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过，正在做的照做并问本人要不要停下。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), reason: z.string().trim().min(1).max(4000), refs: z.array(z.string()).max(50).optional() }), handler: async (ctx, a) => {
-    flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs ?? []);
+    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.refs ?? []);
     return JSON.stringify(await (await import("../flows/engine.ts")).reopenStage(ctx.app, a.item, a.stage, a.reason, a.refs ?? [], flowActor(ctx)));
   },
 });
@@ -2839,8 +2874,8 @@ def({
   handler: (ctx, a) => {
     const p = one<{ id: string; item_id: string; user_id: string; from_space: string; note: string; source_refs: string; status: string }>(ctx.app.db, "select * from item_update_proposals where id=?", a.proposal_id);
     if (!p || p.user_id !== (ctx.userId ?? OWNER)) throw new HttpError(404, "提案不存在");
-    const item = getItem(ctx.app, p.item_id);
-    inScope(ctx, p.from_space, "提案"); inScope(ctx, item.spaceId, "事项");
+    const item = requireItem(ctx.app, p.item_id, p.user_id, "write");
+    inScope(ctx, p.from_space, "提案"); inScope(ctx, item.spaceId, "事项", "items.edit");
     if (p.status !== "pending") throw new HttpError(409, "提案已处理");
     if (item.userId !== p.user_id) throw new HttpError(403, "提案目标用户不匹配");
     const sourceRefs = JSON.parse(p.source_refs) as string[];
@@ -2940,14 +2975,20 @@ def({
   },
 });
 
+function learningGoal(ctx: ToolContext, id: string) {
+  const goal = getGoal(ctx.app, id);
+  if (goal.userId !== (ctx.userId ?? OWNER) || !canRead(ctx, goal.spaceId)) throw new HttpError(404, "学习目标不存在");
+  return goal;
+}
+
 def({
   name: "create_card",
   description: "创建一张复习卡片（间隔重复）。正面是问题/提示，背面是答案/解释；一卡一知识点。属于某个学习目标时带上 goal。",
   write: true,
   schema: z.object({ front: z.string(), back: z.string(), source_refs: refs, space: z.string().optional(), goal: z.string().optional().describe("学习目标 id") }),
   handler: (ctx, a) => {
-    const goal = a.goal ? getGoal(ctx.app, a.goal) : null;
-    const r = createCard(ctx.app, { spaceId: goal?.spaceId ?? writeSpace(ctx, a.space), front: a.front, back: a.back, sourceRefs: a.source_refs, userId: goal?.userId ?? ctx.userId ?? "owner", goalId: goal?.id ?? null });
+    const goal = a.goal ? learningGoal(ctx, a.goal) : null;
+    const r = createCard(ctx.app, { spaceId: writeSpace(ctx, goal?.spaceId ?? a.space), front: a.front, back: a.back, sourceRefs: a.source_refs, userId: goal?.userId ?? ctx.userId ?? "owner", goalId: goal?.id ?? null });
     return r.created ? `已创建卡片 ${r.card.id}` : `已有相同卡片 ${r.card.id}`;
   },
 });
@@ -2967,10 +3008,12 @@ def({
     status: z.enum(["active", "paused", "done"]).optional(),
   }),
   handler: (ctx, a) => {
+    const existing = a.id ? learningGoal(ctx, a.id) : null;
+    if (existing) writeSpace(ctx, existing.spaceId);
     const g = upsertGoal(ctx.app, a.id, {
       title: a.title,
       detail: a.detail,
-      spaceId: a.space ? writeSpace(ctx, a.space) : a.id ? undefined : ctx.spaceId,
+      spaceId: existing && !a.space ? undefined : writeSpace(ctx, a.space),
       dailyNew: a.daily_new,
       remindAt: a.remind_at,
       status: a.status,
@@ -3010,7 +3053,7 @@ def({
   description: "查看学习目标的进度：卡片数、已掌握、到期、近 30 天复习次数与记住率、连续天数、反复忘记的卡。",
   schema: z.object({ goal: z.string().optional() }),
   handler: (ctx, a) => {
-    const goals = a.goal ? [getGoal(ctx.app, a.goal)] : listGoals(ctx.app, { userId: ctx.userId ?? "owner", status: "all" });
+    const goals = a.goal ? [learningGoal(ctx, a.goal)] : listGoals(ctx.app, { userId: ctx.userId ?? OWNER, status: "all" }).filter(g => canRead(ctx, g.spaceId));
     if (!goals.length) return "还没有学习目标。本人想学什么时可以用 set_learning_goal 建一个。";
     return goals.map((g) => `- ${g.id} [${g.status}] ${goalSummary(ctx.app, g).text}（每天 ${g.dailyNew} 张新卡，${g.remindAt} 提醒）`).join("\n");
   },
@@ -3564,7 +3607,7 @@ def({
     const M = await import("../data/metrics.ts");
     if (a.metric) {
       const m = M.requireMetric(ctx.app, a.metric);
-      inScope(ctx, m.spaceId, "指标");
+      space(ctx, m.spaceId);
       return M.metricText(ctx.app, m.id, { days: a.days, dims: a.dims, chart: a.chart });
     }
     const list = M.listMetrics(ctx.app, { itemId: a.item, contextId: a.context, spaces: ctx.spaces });
@@ -3755,8 +3798,8 @@ def({
     const ids = getRun(ctx.app, ctx.runId).input.sourceIds as string[];
     if (!ids?.includes(a.source_id)) throw new HttpError(403, "原件不在本次归档任务中");
     const s = getSource(ctx.app, a.source_id);
-    writeSpace(ctx, s.spaceId);
-    const target = writeSpace(ctx, a.space);
+    writeSpace(ctx, s.spaceId, "sources.edit");
+    const target = writeSpace(ctx, a.space, "sources.edit");
     if (s.hash !== a.hash) throw new HttpError(409, "原件已更新，请重新读取并使用新的 hash");
     if (isPrivateChat(s) && target !== s.spaceId) throw new HttpError(400, "这是一对一私聊：不自动归到别的空间，只由本人手动移动。space 填它现在的空间，verdict 填 personal");
     if (!sourceRoute(ctx.app, s.id)?.pending) throw new HttpError(409, "归属已由设置或其他任务确定");
@@ -4283,10 +4326,11 @@ def({
   description: "为图片（或扫描件）原件补充文字：画面内容、图中文字（OCR）、要点。补充后可以被检索和引用。先用 read_source 拿到原始文件路径并用你的图片工具查看。",
   write: true,
   schema: z.object({ source: z.string(), description: z.string().describe("Markdown：先一句话概括，再写图中文字和细节") }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const id = resolveSource(ctx, a.source);
+    await requireReadable(ctx.app, ctx.userId ?? OWNER, id);
     const s = getSource(ctx.app, id);
-    inScope(ctx, s.spaceId, "原件");
+    inScope(ctx, s.spaceId, "原件", "sources.edit");
     if (s.kind !== "image") throw new HttpError(400, "只能为图片原件补充描述");
     const head = sourceText(ctx.app, id).split("\n")[0];
     upsertSource(ctx.app, { spaceId: s.spaceId, kind: s.kind, uri: s.uri, title: s.title, mime: s.mime, meta: { ...s.meta, describedAt: new Date().toISOString() }, text: `${head}\n\n${a.description.trim()}` });
@@ -4300,7 +4344,7 @@ def({
   write: true,
   schema: z.object({ title: z.string().optional(), text: z.string(), space: z.string().optional() }),
   handler: (ctx, a) => {
-    const r = importText(ctx.app, writeSpace(ctx, a.space), { title: a.title, text: a.text });
+    const r = importText(ctx.app, writeSpace(ctx, a.space, "sources.edit"), { title: a.title, text: a.text });
     return `已保存为原件 ${r.id}`;
   },
 });
@@ -4322,12 +4366,11 @@ def({
   }),
   handler: async (ctx, a) => {
     const { writeWorkFile } = await import("../sources/work.ts");
-    let spaceId = writeSpace(ctx, a.space);
-    if (a.item) {
-      const item = requireItem(ctx.app, a.item, ctx.userId ?? OWNER, "write");
-      inScope(ctx, item.spaceId, "事项");
+    const item = a.item ? requireItem(ctx.app, a.item, ctx.userId ?? OWNER, "write") : null;
+    let spaceId = writeSpace(ctx, a.space ?? item?.spaceId, "sources.edit");
+    if (item) {
+      inScope(ctx, item.spaceId, "事项", "items.edit");
       if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能给他人的事项挂文件");
-      if (!a.space) spaceId = item.spaceId;
     }
     // A run in the owner's personal space working on one business space's item, conversation, bound
     // chat or rule writes there (src/sources/homing.ts), when this run may write there.
@@ -4345,7 +4388,7 @@ def({
       const pinned = here && sourceRoute(ctx.app, here.id)?.mode === "manual";
       if (m && !pinned) {
         try {
-          const target = writeSpace(ctx, m.space);
+          const target = writeSpace(ctx, m.space, "sources.edit");
           // An earlier version of the file moves along (same id, citations stay valid).
           if (here && !one(ctx.app.db, "select 1 from sources where space_id = ? and uri = ?", target, workUri(a.path))) moveWorkFile(ctx.app, here.id, target, `跟着${m.why}`, "follow");
           spaceId = target;
@@ -4371,7 +4414,7 @@ def({
   write: true,
   schema: z.object({ url: z.string().url(), space: z.string().optional(), depth: z.number().int().min(0).max(5).optional() }),
   handler: async (ctx, a) => {
-    const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url, { depth: a.depth, user: ctx.userId ?? OWNER });
+    const r = await importUrl(ctx.app, writeSpace(ctx, a.space, "sources.edit"), a.url, { depth: a.depth, user: ctx.userId ?? OWNER });
     const linked = r.related?.length ? `；链接的文档新增或更新 ${r.related.length} 篇：${r.related.join("、")}` : "";
     const missing = r.missing?.length ? `；读不到 ${r.missing.length} 篇（已提醒本人）：${r.missing.map((m) => m.title || m.url).join("、")}` : "";
     return `已保存原件 ${r.id}（${r.status}）${linked}${missing}`;
@@ -5033,7 +5076,7 @@ def({
 /** An item the caller owns and may see, for linking a delegation or review to it. */
 function itemFor(ctx: ToolContext, id: string) {
   const item = requireItem(ctx.app, id, ctx.userId ?? OWNER, "write");
-  inScope(ctx, item.spaceId, "事项");
+  inScope(ctx, item.spaceId, "事项", "items.edit");
   if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能使用他人的事项");
   return item.id;
 }
@@ -5550,6 +5593,7 @@ def({
     const spaces = (a.spaces ?? []).map((s) => {
       const found = findSpace(ctx.app, s.space) ?? one<{ id: string }>(ctx.app.db, "select id from spaces where name = ?", s.space);
       if (!found) throw new HttpError(400, `没有空间「${s.space}」；用 list_spaces 查看`);
+      requireMembershipSpace(ctx.app, found.id);
       return { id: found.id, role: s.role };
     });
     const { addMember, createUser, emailHolder, getUser, identityOwner, linkIdentity, updateUser } = await import("../core/users.ts");
@@ -5627,8 +5671,8 @@ def({
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution, ctx.userId)!;
     const root = getRun(ctx.app, a.run_id);
-    const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
-    const visible = (r: { spaceId: string | null }) => !r.spaceId || !allowed || allowed.includes(r.spaceId);
+    const allowed = ctx.writable ?? ctx.spaces;
+    const visible = (r: { id: string; spaceId: string | null }) => (!r.spaceId || !allowed || allowed.includes(r.spaceId)) && canAccessRun(ctx.app, ctx.userId ?? OWNER, r.id, "runs.operate");
     if (!visible(root)) throw new HttpError(403, "不能访问该运行的空间");
     if (root.kind === "code" || root.kind === "review") throw new HttpError(400, "编码交办换 AI 用 continue_code_run 的 execution / review_execution");
     const targets = [root, ...(a.with_children === false ? [] : listRuns(ctx.app, { parentId: root.id, limit: 500 }).filter((r) => visible(r) && r.kind !== "code" && r.kind !== "review"))];
@@ -5957,6 +6001,7 @@ def({
     const d = reqDetail(ctx.app, a.id);
     space(ctx, d.node.spaceId);
     const n = d.node;
+    const links = d.links.filter(link => !link.other || canRead(ctx, link.other.spaceId));
     return [
       `# [${REQ_KIND_LABEL[n.kind]} ${n.id}] ${n.title}${n.status !== "active" ? `（${n.status === "removed" ? "已移除" : "已删除"}）` : ""}${n.confirmed ? "" : "（待本人确认）"}`,
       `空间 ${n.spaceId} · 路径：${d.path.map((p) => p.title).join(" / ")} · 第 ${n.version} 版`,
@@ -5965,7 +6010,7 @@ def({
       n.refs.length ? `依据：${n.refs.join(" ")}` : "",
       n.tests.length ? `对应测试：${n.tests.map((t) => [t.file, t.name].filter(Boolean).join(" › ")).join("；")}` : "",
       d.children.length ? `## 下级\n\n${d.children.map((c) => `- [${REQ_KIND_LABEL[c.kind]} ${c.id}] ${c.title}`).join("\n")}` : "",
-      d.links.length ? `## 关联\n\n${d.links.map((l) => `- ${l.direction === "out" ? "→" : "←"} ${l.other ? `${l.other.id}「${l.other.title}」（空间 ${l.other.spaceId}）` : "（已不存在）"}${l.note ? `：${l.note}` : ""}`).join("\n")}` : "",
+      links.length ? `## 关联\n\n${links.map((l) => `- ${l.direction === "out" ? "→" : "←"} ${l.other ? `${l.other.id}「${l.other.title}」（空间 ${l.other.spaceId}）` : "（已不存在）"}${l.note ? `：${l.note}` : ""}`).join("\n")}` : "",
       d.state ? `## 最近一次评审\n\n${d.state.runId} 第 ${d.state.round} 轮：${d.state.status}${d.state.locations.length ? `；位置：${d.state.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end ? `-${l.end}` : ""}` : ""}`).join("、")}` : ""}${d.state.note ? `；${d.state.note}` : ""}` : "",
       `## 时间线\n\n${d.versions.map((v) => `- ${localStamp(v.at, ctx.app.config.timezone)} 第 ${v.version} 版 ${REQ_CHANGE_LABEL[v.change]}（${v.by}）${v.reason ? `：${v.reason}` : ""}${v.sourceRefs.length ? ` ${v.sourceRefs.join(" ")}` : ""}`).join("\n")}`,
     ].filter(Boolean).join("\n\n");
@@ -6547,6 +6592,7 @@ async function readableDesign(ctx: ToolContext, id: string) {
 /** The design a run is about: one bound to it, else the one its delegation or branch review is based on. */
 async function designOfRunId(ctx: ToolContext, runId: string) {
   const s = await import("../designs/store.ts");
+  if (!canReadRun(ctx.app, ctx.userId ?? OWNER, runId)) throw new HttpError(404, "找不到运行");
   const r = getRun(ctx.app, runId);
   const bound = (r.input as { designId?: string }).designId;
   if (typeof bound === "string") return s.getDesign(ctx.app, bound);
@@ -6941,7 +6987,7 @@ def({
 export function saveSourceFor(ctx: ToolContext, input: { space?: string; kind?: "doc" | "chat" | "web" | "note"; uri: string; title: string; text: string; meta?: Record<string, unknown> }) {
   if (!/^[a-z][\w.-]*:\S+$/.test(input.uri) || input.uri.length > 500) throw new HttpError(400, "uri 要写成 平台:对象 的形式（例如 notion:page/abc），不超过 500 个字符");
   if (!input.text.trim()) throw new HttpError(400, `${input.title || input.uri} 没有正文`);
-  const spaceId = writeSpace(ctx, input.space);
+  const spaceId = writeSpace(ctx, input.space, "sources.edit");
   if (input.meta && ("original" in input.meta || "media" in input.meta)) throw new HttpError(400, "存储文件归属由宿主在保存文件时登记");
   const r = upsertSource(ctx.app, { spaceId, kind: input.kind ?? "doc", uri: input.uri, title: input.title.trim().slice(0, 300) || input.uri, text: input.text, meta: { ...(input.meta ?? {}), originKey: input.uri, capturedBy: ctx.userId ?? OWNER } });
   return { id: r.id, created: r.status === "created", changed: r.status !== "unchanged", space: spaceId };
@@ -6992,6 +7038,13 @@ export function toolList(filter?: Set<string> | null) {
 /** Leave out the tools that are not for this person now (Tool.available). */
 export function dropUnavailable(app: App, userId: string, names: Set<string>) {
   for (const t of tools) if (t.available && names.has(t.name) && !t.available(app, userId)) names.delete(t.name);
+}
+
+export function contextToolNames(ctx: ToolContext) {
+  const names = new Set(toolList(ctx.tools).map(tool => tool.name));
+  trimTools(ctx.app, ctx.userId ?? OWNER, names, ctx);
+  dropUnavailable(ctx.app, ctx.userId ?? OWNER, names);
+  return names;
 }
 
 export function toolSchemas(filter?: Set<string> | null) {
@@ -7069,32 +7122,29 @@ async function checkToolOperation(
   return null;
 }
 
-export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
+export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean; deniedCapability?: string }> {
   if (name === "omem_help" || name === "omem_call") {
     const parsed = metaArgs[name].safeParse(args ?? {});
     if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
-    if (name === "omem_help") return { text: helpText(toolSchemas(ctx.tools), (parsed.data as { topic?: string }).topic), isError: false };
+    if (name === "omem_help") return { text: helpText(toolSchemas(contextToolNames(ctx)), (parsed.data as { topic?: string }).topic), isError: false };
     const call = parsed.data as { tool: string; args?: Record<string, unknown> };
     if (call.tool === "omem_help" || call.tool === "omem_call") return { text: "omem_call 不能调用它自己或 omem_help", isError: true };
     return callTool(ctx, call.tool, call.args ?? {});
   }
   const tool = tools.find((t) => t.name === name);
   if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
-  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))
+  if (!tool) return { text: `工具 ${name} 不可用`, isError: true };
+  const scope = memberToolAccess(ctx.app, ctx.userId ?? OWNER, ctx)(name);
+  if ("deniedCapability" in scope) return {
+    text: `工具 ${name} 不可用：${scope.reason}（${scope.deniedCapability}）。请勿重试。`,
+    deniedCapability: scope.deniedCapability, isError: true,
+  };
+  if ((ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))
       || (tool.available && !tool.available(ctx.app, ctx.userId ?? OWNER))) {
-    return { text: `工具 ${name} 不可用`, isError: true };
+    return { text: `工具 ${name} 不可用：本次运行未开放，请勿重试。`, isError: true };
   }
   mark(`tool ${name}`);
-  // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
-  if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };
-  const cap = toolCapabilities[name];
-  if (ctx.userId && ctx.userId !== OWNER && cap && !globalCapability(cap) && cap !== "items.view") {
-    const range = spacesWithCapability(ctx.app, ctx.userId, cap);
-    if (range !== null) {
-      if (name === "upsert_item") range.push(...spacesWithCapability(ctx.app, ctx.userId, "items.operate") ?? []);
-      ctx = { ...ctx, spaces: range.filter(id => !ctx.spaces || ctx.spaces.includes(id)) };
-    }
-  }
+  ctx = { ...ctx, ...scope };
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };

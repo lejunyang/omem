@@ -7,6 +7,7 @@ import { disableGitFsmonitor, ensureLibraryRepo } from "./git.ts";
 import { useKeyHome } from "./ai-keys.ts";
 
 export type AppEvent =
+  | { type: "remote-grant-ended"; userId: string; sessionId: string; grantId: string; ended: "expired" | "revoked" | "closed" }
   | { type: "work"; workId: string }
   | { type: "network"; policyId: string }
   | { type: "run"; runId: string; status: string }

@@ -4,6 +4,8 @@
  * in a shell), so 100 tool schemas do not sit in every session's context. Which tools a run
  * may use is still decided by its token (tools.ts callTool), whichever way it calls them.
  */
+import type { Capability } from "../auth/capabilities.ts";
+import type { GlobalPerm } from "../auth/permissions.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,41 +46,42 @@ export const DIRECT_ALL = 30;
  * fits, never a catch-all. `doc` is the reference page at skills/omem/references/<doc>.md (several
  * groups share one; plugin groups have none), what omem_help(<group>) returns.
  */
-export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: string[] }[] = [
-  { id: "study", label: "课题：方向、试验和发现", doc: "flows", tools: ["propose_directions", "trial_report", "read_ledger", "record_finding", "close_direction", "study_push"] },
-  { id: "flow", label: "流程：一件事的阶段和关卡", doc: "flows", tools: ["list_flows", "save_flow", "flow_start", "stage_report", "stage_reopen", "note_item_change", "claim_commits", "attach_object", "read_flow_reviews"] },
-  { id: "read", label: "查找与阅读原件", doc: "sources", tools: ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_conversations", "read_conversation", "peer_search", "peer_read"] },
-  { id: "collect", label: "收进材料", doc: "sources", tools: ["import_url", "save_note", "write_file", "digest_sources", "lark_wiki_crawl"] },
-  { id: "curate", label: "空间与原件治理", doc: "sources", tools: ["create_space", "connect_repository", "relate_spaces", "add_users", "set_source_attention", "annotate_source", "review_notes", "attention_rules", "describe_source", "classify_source", "propose_archive_rule"] },
-  { id: "memory", label: "记忆", doc: "memory", tools: ["recall", "remember", "supersede", "forget", "review_memories", "list_memory_folders", "organize_memories"] },
-  { id: "track", label: "事项与需求", doc: "items", tools: ["req_tree", "req_read", "save_requirements", "split_requirements", "list_items", "read_item", "upsert_item", "settle_items", "propose_item_update", "list_item_proposals", "resolve_item_proposal", "submit_line_state", "propose_lines", "meeting_outcomes"] },
-  { id: "notifications", label: "事项通知排查", doc: "items", tools: ["repair_item_association", "inspect_item_notification", "read_item_repair", "refresh_item_notification", "ignore_notification_rule"] },
-  { id: "wiki", label: "Wiki", doc: "wiki", tools: ["list_pages", "read_page", "write_page", "correct_page", "move_page", "confirm_page", "generate_wiki", "submit_plan", "submit_page_check", "submit_level_check", "settle_wiki_question"] },
-  { id: "delegate", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", ...WORK_BOARD_TOOLS, "ask_agent", "list_ai_backends", "switch_run_ai", "list_runs", "read_run", "take_over_run", "revise_reply_outcome", "review_reply_outcomes"] },
-  { id: "skills", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "organize_skills", "save_agent", "propose_profile_change"] },
-  { id: "remote", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },
-  { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "ask_member_progress", "wait_answer", "withdraw_ask", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
-  { id: "wake", label: "唤醒、规则与在跟的问题", doc: "owner", tools: ["wake", "cancel_wake", "track_problem", "list_rules", "save_rule", "report_rule_failure"] },
-  { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["propose_repo_lesson", "delegate_code", "review_branch", "share_review", "continue_code_run", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
-  { id: "improve", label: "改进循环：度量、留下或回退", doc: "code", tools: ["improve_start", "improve_round", "improve_status"] },
-  { id: "design", label: "方案：读、评估别人的方案、确认", doc: "code", tools: ["read_design", "assess_design", "settle_design"] },
-  { id: "git", label: "代码仓库与 Git", doc: "code", tools: ["name_work_branch", "list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "code_history"] },
-  { id: "code-handin", label: "编码与评审角色交结果", doc: "code", tools: ["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "submit_brief", "submit_design"] },
-  { id: "code-results", label: "编码的验证结果：截图、报告与测试结果", doc: "code", tools: ["attach_artifact", "report_tests"] },
-  { id: "lark-msg", label: "飞书消息与卡片", doc: "lark", tools: ["lark_send", "lark_react", "meeting_suggest", "lark_card", "lark_send_file", "lark_message_file", "lark_chat_history", "reply_to_asker"] },
-  { id: "lark-docs", label: "以本人身份写飞书文档", doc: "lark", tools: ["lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"] },
-  { id: "lark-owner", label: "以本人身份读写飞书的表格、多维表格、任务，拉人进群", doc: "lark", tools: ["lark_read", "lark_write", "lark_invite"] },
-  { id: "lark-capture", label: "飞书采集设置", doc: "lark", tools: ["list_lark_chats", "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "propose_knowledge_mapping", "submit_playbook"] },
-  { id: "learning", label: "学习", doc: "learning", tools: ["create_card", "set_learning_goal", "learning_progress"] },
-  { id: "data", label: "数据：指标、采集和报表", doc: "data", tools: ["metric_define", "metric_record", "metric_read"] },
-  { id: "media", label: "图片生成", doc: "media", tools: ["generate_image"] },
-  { id: "plugins", label: "插件", doc: "plugins", tools: ["plugin_query", "plugin_put"] },
+export type ToolCapability = Capability | GlobalPerm | "memory.write" | "wiki.write" | "owner";
+export const TOOL_GROUPS: { capability: ToolCapability; id: string; label: string; doc?: string; tools: string[] }[] = [
+  { id: "study", capability: "owner", label: "课题：方向、试验和发现", doc: "flows", tools: ["propose_directions", "trial_report", "read_ledger", "record_finding", "close_direction", "study_push"] },
+  { id: "flow", capability: "owner", label: "流程：一件事的阶段和关卡", doc: "flows", tools: ["list_flows", "save_flow", "flow_start", "stage_report", "stage_reopen", "note_item_change", "claim_commits", "attach_object", "read_flow_reviews"] },
+  { id: "read", capability: "sources.view", label: "查找与阅读原件", doc: "sources", tools: ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_conversations", "read_conversation", "peer_search", "peer_read"] },
+  { id: "collect", capability: "sources.edit", label: "收进材料", doc: "sources", tools: ["import_url", "save_note", "write_file", "digest_sources", "lark_wiki_crawl"] },
+  { id: "curate", capability: "owner", label: "空间与原件治理", doc: "sources", tools: ["create_space", "connect_repository", "relate_spaces", "add_users", "set_source_attention", "annotate_source", "review_notes", "attention_rules", "describe_source", "classify_source", "propose_archive_rule"] },
+  { id: "memory", capability: "memory.write", label: "记忆", doc: "memory", tools: ["recall", "remember", "supersede", "forget", "review_memories", "list_memory_folders", "organize_memories"] },
+  { id: "track", capability: "items.edit", label: "事项与需求", doc: "items", tools: ["req_tree", "req_read", "save_requirements", "split_requirements", "list_items", "read_item", "upsert_item", "settle_items", "propose_item_update", "list_item_proposals", "resolve_item_proposal", "submit_line_state", "propose_lines", "meeting_outcomes"] },
+  { id: "notifications", capability: "agents.manage", label: "事项通知排查", doc: "items", tools: ["repair_item_association", "inspect_item_notification", "read_item_repair", "refresh_item_notification", "ignore_notification_rule"] },
+  { id: "wiki", capability: "wiki.write", label: "Wiki", doc: "wiki", tools: ["list_pages", "read_page", "write_page", "correct_page", "move_page", "confirm_page", "generate_wiki", "submit_plan", "submit_page_check", "submit_level_check", "settle_wiki_question"] },
+  { id: "delegate", capability: "owner", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", ...WORK_BOARD_TOOLS, "ask_agent", "list_ai_backends", "switch_run_ai", "list_runs", "read_run", "take_over_run", "revise_reply_outcome", "review_reply_outcomes"] },
+  { id: "skills", capability: "agents.manage", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "organize_skills", "save_agent", "propose_profile_change"] },
+  { id: "remote", capability: "owner", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },
+  { id: "ask", capability: "owner", label: "问人与通知", doc: "owner", tools: ["ask_user", "ask_member_progress", "wait_answer", "withdraw_ask", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
+  { id: "wake", capability: "owner", label: "唤醒、规则与在跟的问题", doc: "owner", tools: ["wake", "cancel_wake", "track_problem", "list_rules", "save_rule", "report_rule_failure"] },
+  { id: "coding", capability: "code.delegate", label: "编码交办与跟进", doc: "code", tools: ["propose_repo_lesson", "delegate_code", "review_branch", "share_review", "continue_code_run", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
+  { id: "improve", capability: "code.delegate", label: "改进循环：度量、留下或回退", doc: "code", tools: ["improve_start", "improve_round", "improve_status"] },
+  { id: "design", capability: "owner", label: "方案：读、评估别人的方案、确认", doc: "code", tools: ["read_design", "assess_design", "settle_design"] },
+  { id: "git", capability: "code.delegate", label: "代码仓库与 Git", doc: "code", tools: ["name_work_branch", "list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "code_history"] },
+  { id: "code-handin", capability: "code.delegate", label: "编码与评审角色交结果", doc: "code", tools: ["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "submit_brief", "submit_design"] },
+  { id: "code-results", capability: "code.delegate", label: "编码的验证结果：截图、报告与测试结果", doc: "code", tools: ["attach_artifact", "report_tests"] },
+  { id: "lark-msg", capability: "owner", label: "飞书消息与卡片", doc: "lark", tools: ["lark_send", "lark_react", "meeting_suggest", "lark_card", "lark_send_file", "lark_message_file", "lark_chat_history", "reply_to_asker"] },
+  { id: "lark-docs", capability: "owner", label: "以本人身份写飞书文档", doc: "lark", tools: ["lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"] },
+  { id: "lark-owner", capability: "owner", label: "以本人身份读写飞书的表格、多维表格、任务，拉人进群", doc: "lark", tools: ["lark_read", "lark_write", "lark_invite"] },
+  { id: "lark-capture", capability: "owner", label: "飞书采集设置", doc: "lark", tools: ["list_lark_chats", "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "propose_knowledge_mapping", "submit_playbook"] },
+  { id: "learning", capability: "owner", label: "学习", doc: "learning", tools: ["create_card", "set_learning_goal", "learning_progress"] },
+  { id: "data", capability: "memory.write", label: "数据：指标、采集和报表", doc: "data", tools: ["metric_define", "metric_record", "metric_read"] },
+  { id: "media", capability: "owner", label: "图片生成", doc: "media", tools: ["generate_image"] },
+  { id: "plugins", capability: "owner", label: "插件", doc: "plugins", tools: ["plugin_query", "plugin_put"] },
   // Filled by the plugin of the same id when it loads (connect_list, connect_read…): roles name the group
   // before the plugin is there, and its tools come with it.
-  { id: "connect", label: "已连接平台的读取与同步", doc: "connect", tools: [] },
+  { id: "connect", capability: "owner", label: "已连接平台的读取与同步", doc: "connect", tools: [] },
   // Filled by plugins whose object kinds declare actions (github_merge_pull_request…): the same tools as
   // the buttons on an item's object cards, each under its own approval rung (src/flows/object-actions.ts).
-  { id: "object-actions", label: "平台对象的动作（合并请求的合并……）", doc: "flows", tools: [] },
+  { id: "object-actions", capability: "owner", label: "平台对象的动作（合并请求的合并……）", doc: "flows", tools: [] },
 ];
 
 /**

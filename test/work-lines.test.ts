@@ -24,7 +24,7 @@ import { setParent } from "../src/items/parent.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
 import { rootOf } from "../src/items/tree.ts";
 import { startServer } from "../src/server/http.ts";
-import { addMember, createApiToken, createUser } from "../src/core/users.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
 import { appendToSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
@@ -342,7 +342,7 @@ describe("工作线：接口", () => {
       [r.id]: { kind: "run", id: r.id, title: "测试" },
     });
     // Owner-only routes.
-    createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "personal", "reader", "editor");
+    createUser(app, { id: "reader", name: "成员甲" });
     const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
     const memberPending = await server.inject({ url: "/api/pending", headers });
     expect(memberPending.statusCode).toBe(200);

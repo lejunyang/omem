@@ -161,8 +161,8 @@ export function removeFolder(app: App, spaceId: string, path: string, by: "agent
  * what belongs in each. A run is told only a few of its own memories (runner.ts); this is the map it
  * looks the rest up with.
  */
-export function ownFolderNote(app: App, agent: string, limit = 12): string {
-  const rows = all<{ space_id: string; folder: string; n: number }>(app.db, "select space_id, folder, count(*) n from memories where status = 'active' and agent = ? group by space_id, folder order by n desc", agent);
+export function ownFolderNote(app: App, agent: string, limit = 12, allowed: string[] | null = null): string {
+  const rows = all<{ space_id: string; folder: string; n: number }>(app.db, `select space_id, folder, count(*) n from memories where status = 'active' and agent = ? ${allowed ? "and space_id in (select value from json_each(?))" : ""} group by space_id, folder order by n desc`, agent, ...(allowed ? [JSON.stringify(allowed)] : []));
   const filed = rows.filter((r) => r.folder);
   if (!filed.length) return "";
   const spaces = [...new Set(rows.map((r) => r.space_id))];

@@ -36,7 +36,7 @@ async function send() {
 const tiers = ref<{ id: string; name: string }[]>([]);
 onMounted(async () => {
   try {
-    tiers.value = (await get<{ tiers: { id: string; name: string }[] }>("/api/review-settings")).tiers;
+    tiers.value = (await get<{ tiers: { id: string; name: string }[] }>("/api/review-tiers")).tiers;
   } catch {
     /* the review choice is optional */
   }

@@ -2381,6 +2381,10 @@ export const migrations: readonly string[] = [
    );
    create index if not exists egress_recent on egress_runs(updated_at desc);
    create index if not exists asks_egress_pending on asks(created_at desc) where status='pending' and json_type(context,'$.egressFallback') is not null;`,
+  `alter table remote_grants add column ended text;
+   create index remote_grants_recent on remote_grants(user_id,revoked_at) where ended is not null;
+   create index remote_grant_candidates on member_capability_overrides(capability,user_id)
+     where capability in ('remote.view','remote.operate') and revoked=0 and effect='allow';`,
 ];
 
 export type Db = DatabaseSync;

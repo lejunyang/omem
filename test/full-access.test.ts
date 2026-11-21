@@ -1,3 +1,4 @@
+import { createSpace } from "../src/core/spaces.ts";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { openAcp, pickMode } from "../src/agents/acp.ts";
@@ -66,8 +67,9 @@ describe("完全访问", () => {
       setRoleFullAccess(app, "assistant", true);
       expect(prep()).toBe(true);
       const { addMember, createUser } = await import("../src/core/users.ts");
-      createUser(app, { id: "colleague", name: "小王" }); addMember(app, "personal", "colleague");
-      expect(prep({ userId: "colleague" })).toBe(false);
+      createSpace(app, { id: "project", name: "项目 A" });
+      createUser(app, { id: "colleague", name: "小王" }); addMember(app, "project", "colleague");
+      expect(prep({ userId: "colleague", spaceId: "project" })).toBe(false);
       // A rule's switch (or the guest setting) decides for its own runs.
       expect(prep({ fullAccess: false })).toBe(false);
       expect(prep({ reviewCheck: true })).toBe(false);

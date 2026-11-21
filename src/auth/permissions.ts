@@ -56,7 +56,7 @@ export const BUILTIN_ROLES: Role[] = [
   },
   { id: "member", name: "成员", scope: "global", builtin: true, description: "能新建空间、连接飞书、生成分享链接；只能用被加入的空间", permissions: ["spaces.create", "connector.use", "share.external", "tools.external"] },
   { id: "viewer", name: "访客", scope: "global", builtin: true, description: "只读被加入的空间，可以提问", permissions: ["tools.external"] },
-  { id: "observer", name: "网页只读观察者", scope: "global", builtin: true, description: "阅读获准空间的工作并提问", permissions: [] },
+  { id: "observer", name: "网页只读观察者", scope: "global", builtin: true, description: "阅读获准空间的工作并提问", permissions: ["tools.external"] },
   { id: "reader", name: "只读", scope: "space", builtin: true, description: "检索和阅读", permissions: ["space.read"] },
   { id: "contributor", name: "贡献者", scope: "space", builtin: true, description: "只读 + 导入原件、写记忆和事项", permissions: ["space.read", "source.write", "memory.write"] },
   { id: "editor", name: "编辑", scope: "space", builtin: true, description: "贡献者 + 写 Wiki、采集进来、看别人的运行", permissions: ["space.read", "source.write", "memory.write", "wiki.write", "capture.route", "runs.read"] },
@@ -148,7 +148,7 @@ export function can(app: App, userId: string, perm: Perm | Capability, target?: 
   if (isCapability(perm)) return !!capabilityAccess(app, userId, spaceId ?? undefined).source(perm, spaceId ?? undefined);
   const u = who(app, userId);
   if (!u?.active) return false;
-  if (u.role === "observer" && perm !== "space.read") return false;
+  if (u.role === "observer" && perm !== "space.read" && perm !== "tools.external") return false;
   if (spaceId && WRITES.has(perm) && mirrored(app, spaceId)) return false;
   if (u.role === "owner") return true;
   const g = grants(app, u.role);

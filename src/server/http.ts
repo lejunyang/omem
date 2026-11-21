@@ -1,6 +1,7 @@
 import { itemRunSummary } from "../items/places.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
-import { spacesWithCapability, memberCapabilities } from "../auth/capabilities.ts";
+import { changedSettings, sectionByPath, sections, settingsPatch, settingsView, ownerSettings, type Section } from "../auth/settings-sections.ts";
+import { capabilityAccess, spacesWithCapability, memberCapabilities } from "../auth/capabilities.ts";
 import { storedFileReadable } from "../auth/stored-files.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { randomUUID as operationId } from "node:crypto";
@@ -26,7 +27,7 @@ import { listMcpServers, saveMcpServer, deleteMcpServer } from "../agents/mcp-se
 import { testMcpServer } from "../agents/mcp-test.ts";
 import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, roleTools, saveRoleOverride, setRoleFullAccess, setRoleMcp, setRoleTools } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
-import { cachedProbe } from "../agents/probe.ts";
+import { cachedProbe, userProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
@@ -63,7 +64,7 @@ import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
 import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewRounds, queueReason, runEvents, runUser } from "../agents/runs.ts";
-import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
+import { callTool, contextToolNames, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
@@ -234,7 +235,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       console.warn(`[omem] 工具调用被拒：令牌无效（${req.method} ${req.url}；常见于服务重启前开的 Agent 会话）`);
       throw new HttpError(401, "无效的工具令牌");
     }
-    return { list: async () => mcpTools(ctx.tools), call: (name: string, args: unknown) => tracedCall(ctx, name, args) };
+    return { list: async () => mcpTools(contextToolNames(ctx)), call: (name: string, args: unknown) => tracedCall(ctx, name, args) };
   };
   /**
    * Each call an agent makes from outside the process is recorded on its run when it arrives and
@@ -250,13 +251,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const step = runId && shellToolRuns.has(runId) ? `omem-${started}-${Math.random().toString(36).slice(2, 8)}` : null;
     if (step) addRunEvent(app, runId!, "tool", { id: step, title: label, kind: "omem", status: "in_progress", input: JSON.stringify(args ?? {}).slice(0, 2000) });
     let ok = false;
+    let deniedCapability: string | undefined;
     try {
       const r = await searchRun.run(runId ?? "", () => callTool(ctx, name, args));
+      deniedCapability = r.deniedCapability;
       ok = !r.isError;
       return r;
     } finally {
       const ms = Date.now() - started;
-      if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "end", ms, ok });
+      if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "end", ms, ok, deniedCapability });
       if (step) addRunEvent(app, runId!, "tool", { id: step, title: label, kind: "omem", status: ok ? "completed" : "failed" });
       if (ms > 60_000) console.warn(`[omem] 工具 ${label} 用了 ${Math.round(ms / 1000)} 秒${runId ? `（运行 ${runId}）` : ""}`);
     }
@@ -369,9 +372,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
    * notifications, asks and plugin sessions, changes in spaces they can read.
    */
   const eventFilter = (userId: string) => {
-    if (userId === OWNER) return () => true;
     const readable = (id: string) => canReadRun(app, userId, id);
     return (e: AppEvent) => {
+      if (e.type === "remote-grant-ended") return e.userId === userId;
+      if (userId === OWNER) return true;
       if (e.type === "work") return readable(e.workId);
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
       if (e.type === "notification") return can(app, userId, "notifications.view") && one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
@@ -551,9 +555,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { counts: levelCounts(app, spacesWithCapability(app, who(req), "sources.view"), o.space), labels: LEVEL_LABELS };
   });
   server.put("/api/sources/:id/attention", async (req) => {
-    ownerOnly(req);
     const b = q(z.object({ level: z.enum(LEVELS).nullable() }), req.body);
-    setAttention(app, [(req.params as { id: string }).id], b.level, "owner");
+    setAttention(app, [(req.params as { id: string }).id], b.level, who(req) === OWNER ? "owner" : "member");
     return levelOf(app, (req.params as { id: string }).id);
   });
   server.post("/api/sources/attention", async (req) => {
@@ -565,9 +568,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/sources/:id/notes", async (req) => sourceNotes(app, (req.params as { id: string }).id));
   server.post("/api/sources/:id/notes", async (req) => {
-    ownerOnly(req);
     const b = q(z.object({ kind: z.enum(NOTE_KINDS), lineStart: z.number().int().nullable().optional(), lineEnd: z.number().int().nullable().optional(), note: z.string().max(500), ref: z.string().nullable().optional() }), req.body);
-    return addSourceNote(app, { sourceId: (req.params as { id: string }).id, ...b, by: "owner" });
+    return addSourceNote(app, { sourceId: (req.params as { id: string }).id, ...b, by: who(req) === OWNER ? "owner" : "member" });
   });
   // What waits for the owner: agents' notes and folder levels, by impact (sources/attention.ts reviewQueue).
   server.get("/api/sources/review", async (req) => {
@@ -579,9 +581,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ...queue, notes: queue.notes.filter(n => !hidden.has(n.sourceId)), rejected: queue.rejected.filter(n => !hidden.has(n.sourceId)), levels: queue.levels.filter(n => n.type !== "source" || !hidden.has(n.key)) };
   });
   server.post("/api/source-notes/:id/review", async (req) => {
-    ownerOnly(req);
     const b = q(z.object({ decision: z.enum(["confirm", "reject"]) }), req.body);
-    reviewSourceNote(app, Number((req.params as { id: string }).id), b.decision);
+    reviewSourceNote(app, Number((req.params as { id: string }).id), b.decision, who(req) === OWNER ? "owner" : "member");
     return { ok: true };
   });
   server.post("/api/sources/level-audit/review", async (req) => {
@@ -597,8 +598,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ok: true };
   });
   server.delete("/api/source-notes/:id", async (req) => {
-    ownerOnly(req);
-    removeSourceNote(app, Number((req.params as { id: string }).id), "owner");
+    removeSourceNote(app, Number((req.params as { id: string }).id), who(req) === OWNER ? "owner" : "member");
     return { ok: true };
   });
   server.get("/api/attention-rules", async () => listAttentionRules(app));
@@ -1173,7 +1173,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // --------------------------------------------------------------------- wiki
-  server.get("/api/wiki/kinds", async req => kindList(formatScope(req, "wiki.view")));
+  server.get("/api/wiki/kinds", async req => kindList(formatScope(req, "wiki.view"), (req.query as { templates?: string }).templates === "1"));
   server.get("/api/wiki/:space", async (req) => {
     const space = (req.params as { space: string }).space;
     syncWiki(app, space);
@@ -2116,6 +2116,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ------------------------------------------------------------------- code review (docs/v2/review.md)
+  server.get("/api/review-tiers", async () => {
+    const { reviewTiers } = await import("../agents/review.ts");
+    return { tiers: reviewTiers(app).map(({ id, name, checks }) => ({ id, name, checkCount: checks.length })) };
+  });
   server.get("/api/review-settings", async () => {
     const { reviewChecks, reviewTiers } = await import("../agents/review.ts");
     const checks = reviewChecks(app).map((c) => {
@@ -2139,6 +2143,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.review = { ...settings, lessons: app.config.review.lessons };
     saveConfig(next, app.home);
     Object.assign(app.config, next);
+    audit(app, who(req), "settings.update", "settings", { changes: { assistant: ["review"] } });
     return { ok: true };
   });
   server.get("/api/review-options", async () => {
@@ -2996,7 +3001,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.agents.roleModels = Object.fromEntries(byRole);
     saveConfig(next, app.home);
     Object.assign(app.config, next);
-    return { roleModels: next.agents.roleModels };
+    audit(app, who(req), "settings.update", "settings", { changes: { ai: ["agents.roleModels"] } });
+    return can(app, who(req), "settings.ai.view") ? { roleModels: next.agents.roleModels } : { ok: true };
   });
 
   // Official ACP registry: agents beyond the built-in catalog, runnable via npx / uvx / a downloaded binary.
@@ -3330,20 +3336,60 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
   });
   server.get("/api/search/providers", async () => searchProviderStatus(app));
-  server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null, approvalTools: toolList().map((t) => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }));
+  const settingsAccess = (req: FastifyRequest) => {
+    const access = capabilityAccess(app, who(req), null);
+    return {
+      owner: who(req) === OWNER && access.active,
+      view: (section: Section) => !!access.source(`settings.${section}.view`),
+      edit: (section: Section) => !!access.source(`settings.${section}.edit`),
+    };
+  };
+  server.get("/api/settings/sections", async req => {
+    const access = settingsAccess(req);
+    return { keys: sectionByPath, ownerOnly: ownerSettings, sections: Object.fromEntries(sections.map(s => [s, { view: access.view(s), edit: access.edit(s) }])) };
+  });
+  server.get("/api/settings", async req => {
+    const { section } = req.query as { section?: Section };
+    if (section !== undefined && !sections.includes(section)) throw new HttpError(400, "不认识的设置区域");
+    const access = settingsAccess(req);
+    const visible = (s: Section) => (!section || s === section) && access.view(s);
+    if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
+    return {
+      config: settingsView(app.config, visible, access.owner),
+      ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : visible("assistant") && {
+        agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort }) => {
+          const probe = userProbe(app, who(req), id);
+          return { id, name, installed, transport, model, effort, probe: probe && {
+            at: probe.at, models: probe.models, efforts: probe.efforts, effortsByModel: probe.effortsByModel,
+          } };
+        }),
+      }),
+      ...(visible("system") && access.owner && { home: app.home }),
+      ...(visible("knowledge") && { rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null }),
+      ...(visible("security") && { approvalTools: toolList().map(t => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }),
+    };
+  });
   server.put("/api/settings", async (req) => {
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
-    const next = configSchema.parse({ ...app.config, ...(req.body as object) });
-    await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
-    next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
+    const parseNext = () => configSchema.parse(settingsPatch(app.config, req.body));
+    let next = parseNext();
+    let access = settingsAccess(req);
+    const proposed = changedSettings(app.config, next, access.edit, access.owner);
+    if (proposed.assistant?.includes("studies.envs")) {
+      await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
+      next = parseNext();
+      access = settingsAccess(req);
+      changedSettings(app.config, next, access.edit, access.owner);
+    }
+    if (proposed.security?.includes("approvals")) next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
     // Outlet preferences and delegated approval grants change through the per-member outlet route.
     next.notify.outlets = app.config.notify.outlets;
     next.notify.outletAskGrants = app.config.notify.outletAskGrants;
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
-    next.security = structuredClone(app.config.security);
+    next.security = app.config.security;
     // Network conditions likewise have their own owner-only editor.
-    next.agents.networkPolicies = structuredClone(app.config.agents.networkPolicies);
+    next.agents.networkPolicies = app.config.agents.networkPolicies;
     // Everything else is read on use; these are only read when the service starts.
     const atStartup: [string, (c: typeof next) => unknown][] = [
       ["监听地址和端口", (c) => [c.host, c.port]],
@@ -3353,7 +3399,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       ["QQ / 微信（OneBot）", (c) => c.onebot],
     ];
     const restart = atStartup.filter(([, pick]) => JSON.stringify(pick(app.config)) !== JSON.stringify(pick(next))).map(([label]) => label);
+    const changes = changedSettings(app.config, next, access.edit, access.owner);
+    if (!Object.keys(changes).length) return { config: settingsView(app.config, access.view, access.owner), restart };
     saveConfig(next, app.home);
+    audit(app, who(req), "settings.update", "settings", { changes });
     // A provider taken out takes its key with it.
     for (const id of Object.keys(readKeys(app.home))) if (!id.startsWith("mcp:") && !next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
     const zoneChanged = next.timezone !== app.config.timezone;
@@ -3364,7 +3413,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       // The timers were made in the old zone.
       rezoneScheduler(app);
     }
-    return { config: app.config, restart };
+    return { config: settingsView(app.config, settingsAccess(req).view, access.owner), restart };
   });
 
   // ----------------------------------------------- AI providers and model categories (core/ai-keys.ts)

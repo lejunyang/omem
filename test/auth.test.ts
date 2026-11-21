@@ -162,10 +162,13 @@ describe("logging in", async () => {
     const inv = await (await local("/api/invites", { method: "POST", body: JSON.stringify({ spaces: [{ space: "team", role: "reader" }] }) })).json();
     const token = new URL(inv.url.replace("#/", "")).searchParams.get("invite")!;
     expect((await (await remote(`/api/auth/session?invite=${token}`)).json()).login.invite.invalid).toBeUndefined();
+    // Older invites may name a personal space alongside a valid shared grant.
+    run(app.db, "update invites set spaces=? where id=?", JSON.stringify([{ space: "personal", role: "editor" }, { space: "team", role: "reader" }]), inv.id);
     const { cookie } = await loginAs("c_zhao", { invite: token });
     const zhao = await (await me(cookie)).json();
     expect(zhao.status).toBe("active");
     expect(zhao.spaces).toContain("team");
+    expect(one(app.db, "select 1 from space_members where space_id='personal' and user_id=?", zhao.id)).toBeFalsy();
     // Used once.
     expect((await (await remote(`/api/auth/session?invite=${token}`)).json()).login.invite.invalid).toBe(true);
   });

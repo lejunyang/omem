@@ -103,16 +103,17 @@ describe("流程 HTTP", () => {
   });
   it("逐条签字可撤销，限本人和当前阶段轮次；全对仍等确认，返工带不对的结果且新结果不继承签字", async () => {
     const app = fixture(), server = await serverFor(app);
+    createSpace(app, { id: "project", name: "项目 A" });
     saveFlow(app, JSON.stringify({ id: "demo", name: "示例验证", repeat: { from: "verify" }, stages: [
       { id: "verify", name: "验证", by: { run: {} }, done: "confirm" }, { id: "after", name: "后续", by: "wait" },
     ] }), "owner");
-    const item = upsertItem(app, undefined, { title: "示例商城", spaceId: "personal" }, "user");
+    const item = upsertItem(app, undefined, { title: "示例商城", spaceId: "project" }, "user");
     await startFlow(app, item.id, "demo", { actor: "owner" });
     const runId = getStage(app, item.id, "verify").control.runId!;
-    const [a, b] = recordTests(app, { runId, workId: null, spaceId: "personal", round: 1, by: "assistant", tests: [{ name: "退款金额", status: "passed" }, { name: "运费", status: "passed" }] });
+    const [a, b] = recordTests(app, { runId, workId: null, spaceId: "project", round: 1, by: "assistant", tests: [{ name: "退款金额", status: "passed" }, { name: "运费", status: "passed" }] });
     const base = `/api/items/${item.id}/flow/stages`;
     const sign = (id: string, verdict: unknown, note?: string, stage = "verify", headers = {}) => server.inject({ method: "POST", url: `${base}/${stage}/tests/${id}`, payload: { verdict, note }, headers });
-    createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "personal", "reader", "editor");
+    createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "project", "reader", "editor");
     expect((await sign(a.id, "ok", undefined, "verify", { authorization: `Bearer ${createApiToken(app, "reader", "test")}` })).statusCode).toBe(403);
     expect((await sign(a.id, "invalid")).statusCode).toBe(400);
     expect((await sign(a.id, "ok", undefined, "after")).statusCode).toBe(404);
@@ -126,7 +127,7 @@ describe("流程 HTTP", () => {
     const next = getStage(app, item.id, "verify").control.runId!;
     expect(getRun(app, next).input.task).toContain("本人标了不对的：\n- 退款金额：退款差一元");
     expect(String(getRun(app, next).input.task)).not.toContain("- 运费");
-    const [fresh] = recordTests(app, { runId: next, workId: null, spaceId: "personal", round: 1, by: "assistant", tests: [{ name: "退款金额", status: "passed" }] });
+    const [fresh] = recordTests(app, { runId: next, workId: null, spaceId: "project", round: 1, by: "assistant", tests: [{ name: "退款金额", status: "passed" }] });
     run(app.db, "update req_tests set at=? where id=?", a.at, fresh.id);
     const v = (await server.inject(`/api/items/${item.id}/flow`)).json();
     expect(v.stages[0].tests.find((t: { name: string }) => t.name === "退款金额")).toMatchObject({ id: fresh.id, verdict: null });
@@ -137,17 +138,18 @@ describe("流程 HTTP", () => {
   });
   it("补录限本人，未到和等确认可记完成，撤回问题并推进，重开清掉标记", async () => {
     const app = fixture(), server = await serverFor(app);
+    createSpace(app, { id: "project", name: "项目 A" });
     saveFlow(app, JSON.stringify({ id: "demo", name: "示例流程", stages: [
       { id: "a", name: "澄清", by: "wait", gate: "confirm" },
       { id: "b", name: "编码", by: "wait" },
       { id: "c", name: "验收", by: "wait" },
     ] }), "owner");
-    const item = upsertItem(app, undefined, { title: "示例商城", spaceId: "personal" }, "user");
+    const item = upsertItem(app, undefined, { title: "示例商城", spaceId: "project" }, "user");
     await startFlow(app, item.id, "demo", { actor: "owner" });
     const ask = getStage(app, item.id, "a").askId!;
     const url = `/api/items/${item.id}/flow/stages`;
     const record = (id: string, payload: object, headers = {}) => server.inject({ method: "POST", url: `${url}/${id}/record`, payload, headers });
-    createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "personal", "reader", "editor");
+    createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "project", "reader", "editor");
     expect((await record("b", { note: "已编码" }, { authorization: `Bearer ${createApiToken(app, "reader", "test")}` })).statusCode).toBe(403);
     expect((await record("b", {})).statusCode).toBe(400);
     expect((await record("b", { note: "已编码", refs: ["run:missing"] })).statusCode).toBe(400);
@@ -175,19 +177,20 @@ describe("流程 HTTP", () => {
   });
   it("轮次与预算接口返回附加视图，限事项本人；校验含新字段的人话", async () => {
     const app = fixture(), server = await serverFor(app);
+    createSpace(app, { id: "project", name: "项目 A" });
     const yaml = JSON.stringify({ id: "repeat", name: "示例核验", repeat: { from: "check" }, stages: [{ id: "check", name: "核验", by: { run: {} }, ai: "cheap", at: "00:00", budget: { minutes: 240, trials: 8 }, escalate: { to: "strong", max: 2 } }] });
     const checked = (await server.inject({ method: "POST", url: "/api/flows/validate", payload: { yaml } })).json();
     expect(checked.repeatDescription).toContain("你点了才开始下一轮");
     expect(checked.stages[0]).toMatchObject({ ai: "用省的模型；拿不准时最多请好的模型看 2 次", time: "这一轮 00:00 以后开始", budget: "最多跑 240 分钟" });
     saveFlow(app, yaml, "user");
-    const item = upsertItem(app, undefined, { title: "示例核验", spaceId: "personal" }, "user"), url = `/api/items/${item.id}/flow`;
+    const item = upsertItem(app, undefined, { title: "示例核验", spaceId: "project" }, "user"), url = `/api/items/${item.id}/flow`;
     await server.inject({ method: "POST", url, payload: { flow: "repeat" } });
     expect((await server.inject({ method: "POST", url: `${url}/round`, payload: {} })).statusCode).toBe(409);
     const updated = await server.inject({ method: "POST", url: `${url}/stages/check/budget`, payload: { budget: { minutes: 60, trials: 4 }, escalate: { max: 1 } } });
     expect(updated.statusCode).toBe(200); expect(updated.json().stages[0]).toMatchObject({ budget: { minutes: 60, trials: 4 }, escalate: { to: "strong", max: 1 }, round: 1 });
     expect((await server.inject({ method: "POST", url: `${url}/stages/check/budget`, payload: { budget: { minutes: -1 } } })).statusCode).toBe(400);
     expect((await server.inject({ method: "POST", url: `${url}/stages/check/budget`, payload: { escalate: { max: -1 } } })).statusCode).toBe(400);
-    createUser(app, { id: "reader-rounds", name: "成员乙" }); addMember(app, "personal", "reader-rounds", "editor");
+    createUser(app, { id: "reader-rounds", name: "成员乙" }); addMember(app, "project", "reader-rounds", "editor");
     const headers = { authorization: `Bearer ${createApiToken(app, "reader-rounds", "test")}` };
     for (const path of ["round", "stages/check/budget"]) expect((await server.inject({ method: "POST", url: `${url}/${path}`, payload: {}, headers })).statusCode).toBe(403);
     await ownerAction(app, item.id, "check", "done", "核验完成");
@@ -276,7 +279,7 @@ describe("流程 HTTP", () => {
     expect(hidden.statusCode).toBe(404);
     expect(missing.statusCode).toBe(404);
     expect(hidden.json()).toEqual(missing.json());
-    addMember(app, "personal", "member-a", "editor");
+    expect(() => addMember(app, "personal", "member-a", "editor")).toThrow(/个人空间/);
     expect((await server.inject({ url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(404);
     expect((await server.inject({ method: "POST", url: `/api/items/${privateItem.id}/flow/stages/check/confirm`, payload: {}, headers })).statusCode).toBe(403);
     expect((await server.inject({ method: "DELETE", url: `/api/items/${privateItem.id}/flow`, headers })).statusCode).toBe(403);
