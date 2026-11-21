@@ -40,7 +40,7 @@ function matches(pattern: string, input: string) {
   try { return !!regexTest.runInContext(createContext({ pattern, input }), { timeout: 25 }); }
   catch { throw new MatchBudget(); }
 }
-function field(obj: unknown, path: string): unknown {
+export function field(obj: unknown, path: string): unknown {
   for (const m of path.matchAll(/\.([\w-]+)|\[(\d+)\]/g)) {
     const k = m[1] ?? m[2]!;
     if (!obj || typeof obj !== "object" || !Object.hasOwn(obj,k)) return undefined;

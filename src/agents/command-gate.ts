@@ -300,6 +300,7 @@ type OperationGrant = {
   member: string;
   ruleId: string;
   egressFallback?: boolean;
+  fieldSummary?: string;
   revision: number;
   kind: Operation["kind"];
   argsHash?: string;
@@ -335,18 +336,22 @@ export type Decision = { decision: "allow" | "deny" | "pending"; message?: strin
 /** Gate requests waiting for an ask's answer (in this process). */
 const waiting = new Map<string, Set<(a: Ask) => void>>();
 
-function waitDecision(id: string, ms: number): Promise<Ask | null> {
+function waitDecision(id: string, ms: number, signal?: AbortSignal): Promise<Ask | null> {
   return new Promise((resolve) => {
     const set = waiting.get(id) ?? new Set();
     waiting.set(id, set);
     const done = (a: Ask | null) => {
+      signal?.removeEventListener("abort", abort);
       clearTimeout(timer);
       set.delete(done as (a: Ask) => void);
       if (!set.size) waiting.delete(id);
       resolve(a);
     };
     const timer = setTimeout(() => done(null), ms);
+    const abort = () => done(null);
     set.add(done as (a: Ask) => void);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort",abort,{once:true});
   });
 }
 
@@ -363,7 +368,7 @@ export async function commandGate(app: App, ctx: ToolContext, req: { command: st
 }
 
 /** Both ACP and PATH consult the current rule again before using an approval. */
-export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"; /** An HTTP request's page, shown to the approver. */ page?: string} = {}, session?: string, egress?: { evaluate: () => ReturnType<typeof decide>; fallback: boolean; waitSeconds: number }): Promise<Decision> {
+export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"; /** An HTTP request's page, shown to the approver. */ page?: string} = {}, session?: string, egress?: { evaluate: () => ReturnType<typeof decide>; fallback: boolean; waitSeconds: number; fieldSummary?: string; signal?: AbortSignal }): Promise<Decision> {
   const who = operationWho(ctx);
   const evaluate = egress?.evaluate ?? (() => decide(app, op, who));
   const decision = evaluate();
@@ -417,9 +422,10 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   let approverName: string;
   if (!ask) {
     const approver = await approverFor(app, rule, req.approver);
+    if (egress?.signal?.aborted) return { decision: "deny", message: "出网入口已关闭" };
     approverName = approver.name;
     ask = pending() ?? await openAsk(app, { runId, key, chain, command, args, cwd, rule, index, approver, reason: safeReason(req.reason),
-      grant: { member: who.member, kind: op.kind, ruleId: policy.id, revision: policy.revision, runKey, egressFallback: egress?.fallback, argsHash: op.kind === "command" ? digest(op.argv) : undefined,
+      grant: { member: who.member, kind: op.kind, ruleId: policy.id, revision: policy.revision, runKey, egressFallback: egress?.fallback, fieldSummary: egress?.fieldSummary, argsHash: op.kind === "command" ? digest(op.argv) : undefined,
         ownerChoices: approver.userId === OWNER && (!approver.lark || approver.lark.id === larkOwnerOpenId(app,"main")) } });
     record(app, runId, actor, "command.ask", { command, args, cwd, approver: approver.name, result: `等 ${approver.name} 批准（${approver.why}）`, rule: index, askId: ask.id });
     if (rule.approver === "run" && approver.userId !== OWNER) {
@@ -428,7 +434,7 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
     }
   } else approverName = (safeJson(one<{ context: string }>(app.db, "select context from asks where id = ?", ask.id)?.context) as GateContext).approverName;
   const current = getAsk(app, ask.id);
-  const answered = current.status === "pending" ? await waitDecision(ask.id, rule.waitSeconds * 1000) : current;
+  const answered = current.status === "pending" ? await waitDecision(ask.id, rule.waitSeconds * 1000, egress?.signal) : current;
   if (answered?.status === "answered" && answered.approved) {
     // Taken by this request (a once-only approval is used up here).
     const allowed = answered.choice === 2 ? evaluate().rule : undefined;
@@ -466,7 +472,7 @@ async function openAsk(
   app: App,
   c: { grant: OperationGrant; runId: string | null; key: string; chain: string; command: string; args: string[]; cwd: string; rule: CommandRule; index: number; approver: Approver; reason: string },
 ): Promise<Ask> {
-  const expiresAt = new Date(Date.now() + c.rule.expireHours * 3600_000).toISOString();
+  const expiresAt = new Date(Date.now() + (c.grant.egressFallback !== undefined ? c.rule.waitSeconds * 1000 : c.rule.expireHours * 3600_000)).toISOString();
   const context: GateContext = {
     ...c.grant,
     handler: "command-gate",
@@ -489,8 +495,9 @@ async function openAsk(
   const line = commandLine(c.command, c.args);
   const http = c.grant.kind === "http";
   const question = [
-    `${http ? "Agent 操作的网页要发出受保护的请求" : "Agent 要执行受保护的命令"}：\n\n\`\`\`\n${fence(truncate(line, 2000))}\n\`\`\``,
+    `${c.grant.egressFallback !== undefined ? "沙箱进程要发出受保护的请求" : http ? "Agent 操作的网页要发出受保护的请求" : "Agent 要执行受保护的命令"}：\n\n\`\`\`\n${fence(truncate(line, 2000))}\n\`\`\``,
     http ? (c.cwd ? `页面：${c.cwd}` : "") : `目录：${c.cwd || "（未知）"}`,
+    c.grant.fieldSummary ? `规则检查的字段：${c.grant.fieldSummary}` : "",
     c.grant.argsHash ? `参数摘要：${c.grant.argsHash.slice(0,16)}` : "",
     c.reason ? `原因（Agent 填写）：${c.reason}` : "",
     c.rule.note ? `规则说明：${c.rule.note}` : "",
@@ -498,7 +505,8 @@ async function openAsk(
   ].filter(Boolean).join("\n\n");
   // The web shows it to the approver (the owner for someone without an omem account); Feishu gets the card below.
   const ask = createAsk(app, { runId: c.runId, conversationId: null, userId: c.approver.userId, kind: "approval", question, options: (c.grant.ownerChoices ? ["只这一次","这次运行里的同类操作","以后按这条规则放行"] : ["只这一次"]).map(label => ({label})), tool: c.grant.kind, args: { command: c.command, args: c.args, cwd: c.cwd }, context, allowText: true });
-  await sendCard(app, ask.id, context, c.runId).catch((e: Error) => console.warn(`[omem] 命令审批卡片没发出去：${e.message}`));
+  const sending = sendCard(app, ask.id, context, c.runId).catch((e: Error) => console.warn(`[omem] 命令审批卡片没发出去：${e.message}`));
+  if (c.grant.egressFallback === undefined) await sending;
   // Past its time nobody can approve it any more.
   setTimeout(() => void expireCommandAsks(app).catch(() => {}), c.rule.expireHours * 3600_000 + 1000).unref();
   return ask;
@@ -526,6 +534,7 @@ export function commandCard(app: App, c: GateContext, runId: string | null, stat
     { markdown: `\`\`\`\n${fence(truncate(commandLine(c.command, c.args), 1500))}\n\`\`\`` },
     { fields: [{ label: c.kind === "http" ? "页面" : "目录", value: truncate(c.cwd || "（未知）", 200) }, { label: "规则", value: c.kind === "http" ? `第 ${c.rule + 1} 条` : `第 ${c.rule + 1} 条（${c.command}）` }] },
   ];
+  if (c.fieldSummary) blocks.push({ note: `规则检查的字段：${cardText(c.fieldSummary)}` });
   if (c.argsHash) blocks.push({ note: `参数摘要：${c.argsHash.slice(0,16)} · 规则 ${cardText(c.ruleId ?? "")}（版本 ${c.revision}）` });
   if (info) blocks.push({ markdown: `**发起**：${/^https?:/.test(info.link) ? `[${cardText(truncate(info.title, 80))}](${info.link})` : cardText(truncate(info.title, 80))} · ${cardText(info.who)}${info.rule ? ` · 规则「${cardText(info.rule)}」` : ""}` });
   if (c.reason) blocks.push({ markdown: `**原因（Agent 填写）**：${cardText(truncate(c.reason, 600))}` });
@@ -633,6 +642,7 @@ registerAskHandler("command-gate", async (app, ask, context) => {
     for (const w of [...set]) w(fresh);
     return;
   }
+  if (c.egressFallback !== undefined) return;
   const line = `\`${truncate(commandLine(c.command, c.args), 300)}\``;
   await tellRun(
     app,
@@ -647,7 +657,7 @@ registerAskHandler("command-gate", async (app, ask, context) => {
   if (c.expiresAt <= now()) throw new Error("审批卡片已过期");
   if ((answer.choice ?? 0) > 0) {
     if (by !== OWNER || !c.ownerChoices) throw new Error("只有本人能扩大授权范围");
-    if (!currentRules(app).some(r => r.enabled && r.id === c.ruleId && r.revision === c.revision && r.action === "approve")) throw new Error("规则已变化");
+    if (!c.egressFallback && !currentRules(app).some(r => r.enabled && r.id === c.ruleId && r.revision === c.revision && r.action === "approve")) throw new Error("规则已变化");
     if (answer.choice === 1 && !one(app.db, "select 1 from runs where id=? and status='running'", ask.runId)) throw new Error("运行已结束");
   }
 });
