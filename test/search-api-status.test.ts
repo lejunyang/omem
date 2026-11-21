@@ -68,7 +68,9 @@ it("状态显示积压和错误，HTTP 和坏 JSON 摘要、日志、配置都�
   f.app.config.embeddings = configSchema.shape.embeddings.parse({ provider: "api", keyRef: "remote", model: "embed" });
   f.failure("status");
   expect(await embedPending(f.app)).toBe(0);
+  const queries = vi.spyOn(f.app.db, "prepare");
   const state = (await f.server.inject("/api/search/providers")).json();
+  expect(queries.mock.calls.filter(([sql]) => /count\(\*\).*from (chunks|memories) indexed by/i.test(sql))).toHaveLength(2);
   expect(state.embeddings).toMatchObject({ provider: "api", kind: "api", pending: 1, state: "paused" });
   expect(state.embeddings.lastError).toContain("[已隐藏]");
   expect(JSON.stringify(state)).not.toContain("example-private-key");

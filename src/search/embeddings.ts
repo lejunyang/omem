@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
-import { embeddingId, storedModel, recordModel, vectorCounts } from "./embedding-index.ts";
+import { embeddingId, storedModel, recordModel, pendingVectorCount } from "./embedding-index.ts";
 import { apiEmbedder, encodeBatch, type EmbeddingProvider, type Kind } from "./embedding-provider.ts";
 import { vectorIndex } from "./vectors.ts";
 import { pack, toFloats } from "./vector-codec.ts";
@@ -270,7 +270,6 @@ export function embeddingStatus(app: App) {
   const cfg = app.config.embeddings;
   const plugin = cfg.provider.startsWith("plugin:") ? embedders.get(cfg.provider.slice(7)) : undefined;
   const scoped = cfg.provider.startsWith("plugin:") && !plugin ? [] : plugin?.spaces.length ? plugin.spaces : undefined;
-  const counts = vectorCounts(app, scoped);
   const changed = cfg.provider.startsWith("plugin:") && !!storedModel(app) && storedModel(app) !== embeddingId(app.config);
   const health = embeddingHealth(app);
   const excludedSpaces = scoped ? all<{id: string}>(app.db,
@@ -279,7 +278,7 @@ export function embeddingStatus(app: App) {
     model: plugin?.def.model ?? cfg.model, dimensions: plugin?.def.dimensions ?? cfg.dimensions ??
       (Number(one<{value: string}>(app.db, "select value from kv where key='embedding_dimensions'")?.value) || null),
     plugin: plugin?.plugin ?? null, name: plugin?.def.name ?? null, ...health,
-    pending: counts.pending, excludedSpaces, excludedReason: excludedSpaces.length ? "插件未获授权，这些空间没有向量" : null,
+    pending: pendingVectorCount(app, scoped), excludedSpaces, excludedReason: excludedSpaces.length ? "插件未获授权，这些空间没有向量" : null,
     state: cfg.provider === "none" ? "off" : changed ? "model-changed" : cfg.provider.startsWith("plugin:") && !plugin ? "unavailable" : health.writeError ? "paused" : health.lastError ? "failed" : health.lastMs ? "ready" : "idle" };
 }
 

@@ -20,16 +20,25 @@ export const storedModel = (app: App) => one<{value: string}>(app.db, "select va
 export const recordModel = (app: App, id: string) => run(app.db, "insert or replace into kv(key,value) values('embedding_model',?)", id);
 
 // All counts read covering indexes. Only count a worktree vector if it will actually be cleared.
+function spaceFilter(spaces?: readonly string[]) {
+  if (!spaces) return "";
+  return spaces.length ? ` and space_id in (${spaces.map(() => "?").join(",")})` : " and 0";
+}
+function count(app: App, sql: string, spaces: readonly string[] = []) {
+  return one<{ n: number }>(app.db, "select count(*) n from " + sql, ...spaces)!.n;
+}
+export function pendingVectorCount(app: App, spaces?: readonly string[]) {
+  const scope = spaceFilter(spaces);
+  return count(app, "chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%'" + scope, spaces)
+    + count(app, "memories indexed by memories_unembedded where status='active' and embedding is null" + scope, spaces);
+}
 export function vectorCounts(app: App, spaces?: readonly string[]) {
-  const scope = spaces ? spaces.length ? ` and space_id in (${spaces.map(() => "?").join(",")})` : " and 0" : "";
-  const count = (sql: string, ...args: string[]) => one<{n: number}>(app.db, "select count(*) n from " + sql, ...args)!.n;
-  const args = spaces ?? [];
-  const pending = count("chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%'" + scope, ...args)
-    + count("memories indexed by memories_unembedded where status='active' and embedding is null" + scope, ...args);
-  const clear = count("chunks indexed by chunks_vector_space where embedding is not null")
-    + count("memories indexed by memories_embedded where embedding is not null");
-  const rebuild = pending + count("chunks indexed by chunks_vector_space where embedding is not null and space_id not like 'wt-%'" + scope, ...args)
-    + count("memories indexed by memories_embedded where status='active' and embedding is not null" + scope, ...args);
+  const pending = pendingVectorCount(app, spaces);
+  const scope = spaceFilter(spaces);
+  const clear = count(app, "chunks indexed by chunks_vector_space where embedding is not null")
+    + count(app, "memories indexed by memories_embedded where embedding is not null");
+  const rebuild = pending + count(app, "chunks indexed by chunks_vector_space where embedding is not null and space_id not like 'wt-%'" + scope, spaces)
+    + count(app, "memories indexed by memories_embedded where status='active' and embedding is not null" + scope, spaces);
   return { pending, clear, rebuild };
 }
 
