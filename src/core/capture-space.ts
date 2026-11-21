@@ -57,6 +57,37 @@ export function captureSpace(app: App, chatId?: string, userId: string = OWNER):
   return findSpace(app, def) ? def : "personal";
 }
 
+/** A message can have archived copies in several spaces. Look up only the incoming message ids. */
+export function archivedMessageSpaces(app: App, messageIds: string[]) {
+  const spaces = new Map<string, string[]>();
+  if (!messageIds.length) return spaces;
+  const rows = all<{ message_id: string; space_id: string }>(app.db, `
+    with ids as (select value from json_each(?))
+    select m.message_id, s.space_id from lark_messages m join sources s on s.id = m.source_id
+      where m.message_id in (select value from ids)
+    union
+    select l.message_id, s.space_id from lark_message_lines l join sources s on s.id = l.source_id
+      where l.message_id in (select value from ids)`, JSON.stringify(messageIds));
+  for (const row of rows) {
+    const known = spaces.get(row.message_id);
+    if (known) known.push(row.space_id);
+    else spaces.set(row.message_id, [row.space_id]);
+  }
+  return spaces;
+}
+
+/** Freeze the origin before a watch queues the text or a rule changes the chat's binding. */
+export function watchMessageSourceSpaces(app: App, chatId: string | undefined, messageIds: (string | undefined)[]) {
+  const archived = archivedMessageSpaces(app, messageIds.filter(id => id !== undefined));
+  let captureSpaceId: string | undefined;
+  return messageIds.map(id => {
+    const archivedSpaces = id === undefined ? undefined : archived.get(id);
+    if (archivedSpaces) return archivedSpaces;
+    if (chatId) captureSpaceId ??= captureSpace(app, chatId);
+    return captureSpaceId ? [captureSpaceId] : undefined;
+  });
+}
+
 /**
  * Someone other than the owner capturing a thing (by origin_key) that already has a copy in a shared
  * space they read: it is not stored again for them; they are recorded as able to see it

@@ -1,7 +1,7 @@
 import { decideScene, describeScene } from "../core/decision-log.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { captureSpace } from "../core/capture-space.ts";
+import { archivedMessageSpaces, watchMessageSourceSpaces } from "../core/capture-space.ts";
 import { now } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { rulesNaming } from "../rules/store.ts";
@@ -79,8 +79,9 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
   if (!ctxs.length) return 0;
   // Capture (lark-cli) sees people with its own ids: the owner as capture knows them.
   const who = { ownerOpenId: opts.ownerId ?? app.config.lark.ownerOpenId, botOpenId: opts.botOpenId };
+  const origins = watchMessageSourceSpaces(app, chatId, messages.map(m => m.id));
   let n = 0;
-  for (const m of messages) {
+  for (const [index, m] of messages.entries()) {
     // Each message once, whichever path saw it first. Asked of the bot itself: the 关注 step aside, and say so.
     const seen = one<{ rule: string }>(app.db, "select rule from handled_messages where channel = 'lark' and message_id = ?", m.id);
     if (seen) {
@@ -113,6 +114,7 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
         externalMessageId: m.id,
         meta: {
           chatId,
+          sourceSpaces: origins[index],
           // Addressed to the owner or the bot: never screened out (prefilterBatch).
           ...(addressed ? { addressed: true } : {}),
           ...(to === "，@了本人" ? { toOwner: true } : {}),
@@ -239,17 +241,21 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
   }
 }
 
-/** A rule can forward a group outside the watch. Older messages may have no recorded origin. */
+/** Include both the queued text's origin and any archives found since it was queued. */
 function watchSourceSpaces(app: App, watchSpace: string | null, batch: { meta: Record<string, unknown> }[]) {
-  const chats = new Set<string>();
+  const messageIds = batch.flatMap(({ meta }) => typeof meta.externalId === "string" ? [meta.externalId] : []);
+  const archived = archivedMessageSpaces(app, messageIds);
+  const spaces = new Set<string>();
+  if (watchSpace) spaces.add(watchSpace);
   for (const { meta } of batch) {
-    const source = meta.sourceChatId ?? meta.chatId;
-    if (typeof source !== "string" || !source) return null;
-    chats.add(source);
+    const stored = typeof meta.externalId === "string" ? archived.get(meta.externalId) : undefined;
+    const queued = meta.sourceSpaces;
+    if (Array.isArray(queued) && queued.length && queued.every(id => typeof id === "string" && id)) {
+      for (const id of queued) spaces.add(id);
+    } else if (!stored) return null;
+    for (const id of stored ?? []) spaces.add(id);
   }
-  const spaces = Array.from(chats, id => captureSpace(app, id));
-  if (watchSpace) spaces.push(watchSpace);
-  return spaces;
+  return [...spaces];
 }
 
 /** The owner's memories closest to the groups and the batch (instructions and lessons included), a few lines. */

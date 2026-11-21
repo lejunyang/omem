@@ -4,9 +4,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { configSchema } from "../src/core/config.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { upsertSource } from "../src/sources/store.ts";
+import { getSource, upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
-import { memoriesFor } from "../src/channels/lark-watch.ts";
+import { persistChatMessages } from "../src/channels/lark-messages.ts";
+import { memoriesFor, routeWatchedMessages } from "../src/channels/lark-watch.ts";
 import { findThread, setChatSettings, threadMessages } from "../src/agents/threads.ts";
 import { watchedNote } from "../src/agents/sessions.ts";
 import { saveContext } from "../src/channels/listen.ts";
@@ -101,56 +102,102 @@ it("停用插件可调整批量和超时，未注册的提供者不能选用，�
   }
 });
 
-it("关注可查个人记忆时仍按群消息来源授权，混合批次不外发", async () => {
-  const app = fixture();
+function personalEmbedder() {
   const undo: (() => void)[] = [];
   cleanup.push(() => undo.reverse().forEach(stop => stop()));
   const api = registerProcessHooks(manifestSchema.parse({ id: "vector", name: "向量", spaces: [{ id: "personal", name: "个人" }], permissions: { embedder: true } }), undo);
   const embed = vi.fn(async (texts: string[]) => texts.map(() => [1, 0]));
   api.embedder({ id: "small", name: "示例", model: "first", dimensions: 2, embed });
+  return embed;
+}
+
+it("关注可查个人记忆时仍按群消息来源授权，混合批次不外发", async () => {
+  const app = fixture();
+  const embed = personalEmbedder();
   await embedPendingMemories(app);
   embed.mockClear();
-  setChatSettings(app, "lark", "project-group", { spaceId: "allowed" });
-  const watched = (text: string, spaceId: string | null, chats: string[]) =>
-    memoriesFor(app, text, { spaceId }, chats.map(chatId => ({ meta: { chatId } })));
-  expect(await watched("项目群的原始消息", "allowed", ["project-group"])).toBe("");
-  expect(await watched("两个群的合并消息", null, ["personal-group", "project-group"])).toBe("");
+  const watched = (text: string, spaceId: string | null, origins: string[]) =>
+    memoriesFor(app, text, { spaceId }, origins.map(id => ({ meta: { sourceSpaces: [id] } })));
+  expect(await watched("项目群的原始消息", "allowed", ["allowed"])).toBe("");
+  expect(await watched("两个群的合并消息", null, ["personal", "allowed"])).toBe("");
   expect(embed).not.toHaveBeenCalled();
-  expect(await watched("个人空间的一条消息", null, ["personal-group"])).toContain("personal资料");
+  expect(await watched("个人空间的一条消息", null, ["personal"])).toContain("personal资料");
   expect(embed).toHaveBeenCalledTimes(1);
 });
 
-it("规则转入未加入关注的项目群消息时，跟进处理不向个人空间插件发送正文", async () => {
+it.each(["规则转入", "普通关注"])("%s的项目消息入队后改绑个人空间，跟进保留正文且个人向量插件零调用", async (route) => {
   const app = fixture();
-  const undo: (() => void)[] = [];
-  cleanup.push(() => undo.reverse().forEach(stop => stop()));
-  const api = registerProcessHooks(manifestSchema.parse({ id: "vector", name: "向量", spaces: [{ id: "personal", name: "个人" }], permissions: { embedder: true } }), undo);
-  const embed = vi.fn(async (texts: string[]) => texts.map(() => [1, 0]));
-  api.embedder({ id: "small", name: "示例", model: "first", dimensions: 2, embed });
-  setChatSettings(app, "lark", "project-group", { spaceId: "allowed" });
-  const watch = saveContext(app, { kind: "place", name: "个人关注", spaceId: "personal", chats: ["personal-group"] });
-  const rule = saveRule(app, { name: "项目提醒", description: "项目消息交给个人关注", judge: "code",
-    conditions: { all: [{ field: "chat.id", op: "equals", value: "project-group" }] },
-    actions: [{ type: "context", context: watch.id }] });
-  const [result] = await runActions(app, rule, {
-    key: "lark:project-message", kind: "message", at: new Date().toISOString(), via: "capture",
-    chat: { id: "project-group", name: "项目群", kind: "group" },
-    message: { id: "project-message", text: "项目群的跟进材料", type: "text", mentionsOwner: false, mentionsBot: false },
-  }, "");
-  expect(result.ok).toBe(true);
+  const embed = personalEmbedder();
+
+  const chatId = "project-group";
+  const text = "项目群的跟进材料";
+  const id = "project-message";
+  const watch = saveContext(app, { kind: "place", name: "个人关注", spaceId: "personal", chats: route === "规则转入" ? ["personal-group"] : [chatId] });
+  setChatSettings(app, "lark", chatId, { spaceId: "allowed" });
+  const time = String(Date.now());
+  const archive = persistChatMessages(app, { chatId, spaceId: "allowed", name: "项目群", messages: [
+    { message_id: id, create_time: time, msg_type: "text", content: { text } },
+  ] });
+  if (route === "规则转入") {
+    const rule = saveRule(app, { name: "项目提醒", description: "项目消息交给个人关注", judge: "code",
+      conditions: { all: [{ field: "chat.id", op: "equals", value: chatId }] },
+      actions: [{ type: "context", context: watch.id }] });
+    const [result] = await runActions(app, rule, {
+      key: `lark:${id}`, kind: "message", at: new Date().toISOString(), via: "capture",
+      chat: { id: chatId, name: "项目群", kind: "group" },
+      message: { id, text, type: "text", mentionsOwner: false, mentionsBot: false },
+    }, "");
+    expect(result.ok).toBe(true);
+  } else {
+    expect(await routeWatchedMessages(app, chatId, "项目群", [{ id, time, sender: "小王", text }])).toBe(1);
+  }
+  setChatSettings(app, "lark", chatId, { spaceId: "personal" });
+  expect(getSource(app, archive.id!).spaceId).toBe("allowed");
   const thread = findThread(app, watch.conversationId!)!;
   const [message] = threadMessages(app, thread.id);
-  expect(message.meta.sourceChatId).toBe("project-group");
-  expect(message.meta).not.toHaveProperty("chatId");
-  expect(await watchedNote(app, thread, [message])).toContain("项目群的跟进材料");
+  expect(message.meta.sourceSpaces).toEqual(["allowed"]);
+  expect(message.meta.chatId).toBe(route === "规则转入" ? undefined : chatId);
+  expect(await watchedNote(app, thread, [message])).toContain(text);
   expect(embed).not.toHaveBeenCalled();
 
-  // A mixed batch containing an older forwarded message with no recorded origin.
-  const personal = { ...message, meta: { chatId: "personal-group", speaker: "读者" } };
-  const legacy = { ...message, meta: { rule: rule.id, speaker: "规则" } };
-  await watchedNote(app, thread, [personal, legacy]);
+  // A legacy row has no snapshot. Another may have been enqueued before capture finished.
+  for (const meta of [{ sourceChatId: chatId }, { sourceSpaces: ["personal"] }]) {
+    await watchedNote(app, thread, [{ ...message, meta: { ...meta, externalId: id } }]);
+    expect(embed).not.toHaveBeenCalled();
+  }
+  const personal = { ...message, text: "个人消息", meta: { sourceSpaces: ["personal"] } };
+  const unknown = { ...message, meta: { chatId } };
+  await watchedNote(app, thread, [personal, unknown]);
   expect(embed).not.toHaveBeenCalled();
   await watchedNote(app, thread, [personal]);
+  expect(embed).toHaveBeenCalledTimes(1);
+});
+
+it("同一群的归档消息按原件授权，实时消息按入队时的空间授权", async () => {
+  const app = fixture();
+  const embed = personalEmbedder();
+  const chatId = "project-group";
+  const watch = saveContext(app, { kind: "place", name: "个人关注", spaceId: "personal", chats: [chatId] });
+  const time = String(Date.now());
+  setChatSettings(app, "lark", chatId, { spaceId: "allowed" });
+  const archive = persistChatMessages(app, { chatId, name: "项目群", spaceId: "allowed", messages: [
+    { message_id: "archived", create_time: time, msg_type: "text", content: { text: "归档的项目材料" } },
+  ] });
+  setChatSettings(app, "lark", chatId, { spaceId: "personal" });
+  expect(await routeWatchedMessages(app, chatId, "讨论群", [
+    { id: "archived", time, sender: "小王", text: "归档的项目材料" },
+    { id: "live", time, sender: "小王", text: "刚收到的个人消息" },
+  ])).toBe(2);
+  setChatSettings(app, "lark", chatId, { spaceId: "allowed" });
+  expect(getSource(app, archive.id!).spaceId).toBe("allowed");
+  const thread = findThread(app, watch.conversationId!)!;
+  const messages = threadMessages(app, thread.id);
+  expect(messages.find(m => m.meta.externalId === "archived")?.meta.sourceSpaces).toEqual(["allowed"]);
+  expect(await watchedNote(app, thread, messages)).toContain("归档的项目材料");
+  expect(embed).not.toHaveBeenCalled();
+  const live = messages.find(m => m.meta.externalId === "live")!;
+  expect(live.meta.sourceSpaces).toEqual(["personal"]);
+  await watchedNote(app, thread, [live]);
   expect(embed).toHaveBeenCalledTimes(1);
 });
 
