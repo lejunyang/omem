@@ -354,6 +354,11 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       return true;
     }
   }
+  function started(carrier: string | null, waitingOn: string | null, askId: string | null, control: StageControl, note: string) {
+    run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + (s.control.admitted ? 0 : 1), at, item.id);
+    changeStage(app, item.id, d.id, "doing", { by: carrier, waitingOn, askId, attempt: s.attempt + 1, enteredAt: at, evidence: [], control },
+      { ...host, runId: control.runId }, note, [], control.grantedGate ? "granted-start" : undefined);
+  }
   if (typeof d.by === "object" && "runner" in d.by) {
     const runner = d.by.runner;
     if (!runnerApproved(app, f.definition)) throw new HttpError(403, "这个流程的插件运行器需本人确认");
@@ -362,9 +367,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       const r = createRun(app, { kind: "flow-runner", title: `${item.title} · ${d.name}`, spaceId: item.spaceId, userId: item.userId,
         input: { runner, itemId: item.id, stageId: d.id, flowId: f.id, flowStartedAt: f.startedAt, round: f.round, spaces: [item.spaceId] },
         trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name }, by: userBy(app, item.userId), where: d.name } });
-      run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + 1, at, item.id);
-      changeStage(app, item.id, d.id, "doing", { by: r.id, waitingOn: null, askId: null, attempt: s.attempt + 1, enteredAt: at,
-        evidence: [], control: { runId: r.id, grantedGate: s.control.grantedGate, budgetStartedAt: at } }, { ...host, runId: r.id }, describeStage(d).carrier);
+      started(r.id, null, null, { runId: r.id, grantedGate: s.control.grantedGate, budgetStartedAt: at }, describeStage(d).carrier);
     });
     return true;
   }
@@ -411,10 +414,9 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       setImmediate(() => void checkGitSignals(app).catch(() => undefined).then(() => serial(app, item.id, async () => askOwnerNow(app, item.id, d.id, startedAt, attempt))));
     } else askId = ownerTurn(app, f, d, s);
   }
-  run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + (s.control.admitted ? 0 : 1), at, item.id);
   const missing = typeof d.by === "object" && "object" in d.by && d.by.object.includes(":") && !carrier;
   const label = typeof d.by === "object" && "object" in d.by ? objectKind(d.by.object)?.label ?? d.by.object : "";
-  changeStage(app, item.id, d.id, "doing", { by: carrier, waitingOn, askId, attempt: s.attempt + 1, enteredAt: at, evidence: [], control }, { ...host, runId: control.runId }, missing ? `还没有关联${label}：把链接发给助手，或在事项页挂上` : confirmed ? "本人确认，开始这一段" : "开始这一段", [], control.grantedGate ? "granted-start" : undefined);
+  started(carrier, waitingOn, askId, control, missing ? `还没有关联${label}：把链接发给助手，或在事项页挂上` : confirmed ? "本人确认，开始这一段" : "开始这一段");
   return true;
 }
 

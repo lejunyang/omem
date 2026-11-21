@@ -80,6 +80,14 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     await setPluginEnabled(app, "stagekit", true);
   });
   const job = (fail = false) => ({ id: "job", name: "运行作业", by: { runner: "stagekit:job", with: { fail } }, budget: { minutes: 10 } });
+  it("按已有授权开始的运行器只记一次自动开始", async () => {
+    const stages = [{...job(), gate:"confirm"}];
+    saveFlow(app, raw(stages), "owner", true);
+    run(app.db, "insert into flow_gate_grants(flow_id,stage_id,user_id,granted_at,updated_at) values('inspect','job','owner',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)");
+    const item = await begin(stages);
+    expect(flowView(app,item).stages[0]).toMatchObject({state:"doing",autoStarted:true,attempt:1});
+    expect(all(app.db,"select id from item_stage_log where item_id=? and event='granted-start'",item)).toHaveLength(1);
+  });
   async function tick(item: string) {
     const id = flowView(app, item).stages[0].by!;
     return runPluginStage({ app, run: getRun(app,id), signal: new AbortController().signal,
