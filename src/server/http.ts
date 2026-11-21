@@ -1,3 +1,4 @@
+import { itemRunSummary } from "../items/places.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
 import { spacesWithCapability, memberCapabilities } from "../auth/capabilities.ts";
 import { storedFileReadable } from "../auth/stored-files.ts";
@@ -3391,9 +3392,9 @@ function materialForPage(app: App, userId: string) {
     // A delegation that went several rounds reads as its latest round.
     const first = JSON.parse(r.output) as { codeChain?: { rounds: string[] } };
     const lastId = first.codeChain?.rounds.at(-1);
-    const last = lastId && lastId !== m.ref && canReadRun(app, userId, lastId) ? one<{ status: string; output: string }>(app.db, "select status, output from runs where id = ?", lastId) : null;
-    const out = (last ? JSON.parse(last.output) : first) as { verdict?: string; reviewLead?: { verdict: string; summary: string } };
-    return { ...m, run: { kind: r.kind, status: last?.status ?? r.status, verdict: out.verdict ?? null, summary: out.reviewLead?.summary ?? null, branchReview: !!(JSON.parse(r.input) as { branches?: unknown }).branches, createdAt: r.created_at } };
+    const last = lastId && lastId !== m.ref && canReadRun(app, userId, lastId) ? one<{ id: string; kind: string; status: string; output: string }>(app.db, "select id, kind, status, output from runs where id = ?", lastId) : null;
+    const { verdict, summary } = itemRunSummary(app, userId, last?.id ?? m.ref, last?.kind ?? r.kind, last ? JSON.parse(last.output) : first);
+    return { ...m, run: { kind: r.kind, status: last?.status ?? r.status, verdict, summary, branchReview: !!(JSON.parse(r.input) as { branches?: unknown }).branches, createdAt: r.created_at } };
   };
 }
 

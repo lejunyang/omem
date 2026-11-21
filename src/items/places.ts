@@ -1,4 +1,4 @@
-import { runAudience } from "../auth/permissions.ts";
+import { canAccessRun, runAudience } from "../auth/permissions.ts";
 import { runPredicate } from "../auth/run-scope.ts";
 import { restrictedSourceFilter } from "../auth/visibility.ts";
 import type { App } from "../core/app.ts";
@@ -218,6 +218,13 @@ export function candidatesNote(app: App, runId: string, userId: string, withTool
 
 export type ItemRun = { id: string; kind: string; title: string; status: string; startedAt: string | null; conclusion: string; via: "item" | "place" };
 
+export function itemRunSummary(app: App, userId: string, id: string, kind: string, output: Record<string, unknown>) {
+  if ((kind === "code" || kind === "review") && !canAccessRun(app, userId, id, "code.review.view"))
+    return { verdict: null, summary: null, conclusion: "" };
+  const lead = output.reviewLead as { summary?: string } | undefined;
+  return { verdict: output.verdict ?? null, summary: lead?.summary ?? null, conclusion: conclusionOf(output, null) };
+}
+
 /** Runs under way on the item: those that touched it, and those working in one of its places. */
 export function itemRuns(app: App, itemId: string, userId: string, shared = false): ItemRun[] {
   const audience = runAudience(app,userId);
@@ -238,5 +245,5 @@ export function itemRuns(app: App, itemId: string, userId: string, shared = fals
         and ((s.kind = 'item' and s.key = ?) or (s.kind = 'conversation' and s.key in (${convs.map(() => "?").join(",") || "''"})) or (s.kind = 'chat' and s.key in (${chatIds.map(() => "?").join(",") || "''"})))
       group by r.id order by r.created_at desc limit 10`,
     ...(shared ? [] : [userId]),...(visible?.params ?? []),itemId, ...convs, ...chatIds);
-  return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, status: r.status, startedAt: r.started_at, conclusion: conclusionOf(json(r.output, {}), null), via: r.via as ItemRun["via"] }));
+  return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, status: r.status, startedAt: r.started_at, conclusion: itemRunSummary(app, userId, r.id, r.kind, json(r.output, {})).conclusion, via: r.via as ItemRun["via"] }));
 }

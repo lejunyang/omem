@@ -120,6 +120,25 @@ describe("roles and permissions", async () => {
     expect((await as("observer-test", "/api/rules")).status).toBe(200);
   });
 
+  it("hides review summaries in item materials and linked runs", async () => {
+    const user = "material-observer";
+    createUser(app,{id:user,name:"材料读者",role:"observer"});
+    addMember(app,"team",user,"reader");
+    tokens[user]=createApiToken(app,user,"test");
+    const {upsertItem} = await import("../src/items/store.ts");
+    const {addMaterials} = await import("../src/items/materials.ts");
+    const item=upsertItem(app,undefined,{spaceId:"team",title:"项目事项"},"user");
+    const r=createRun(app,{kind:"code",spaceId:"team",userId:"owner",title:"编码",input:{itemId:item.id,spaces:["team"]}});
+    sqlRun(app.db,"update runs set output=? where id=?",JSON.stringify({verdict:"隐藏结论",reviewLead:{summary:"隐藏摘要"},summary:"隐藏摘要"}),r.id);
+    await addMaterials(app,item.id,[{kind:"run",ref:r.id}],"owner");
+    const url="/api/items/"+item.id;
+    expect(JSON.stringify(await json(user,url))).toContain("隐藏摘要");
+    await fetch(base+"/api/members/"+user+"/capabilities",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({preset:"observer",overrides:[{capability:"code.review.view",scope_kind:"space",scope_id:"team",effect:"deny"}]})});
+    const result=await json(user,url);
+    expect(result.materials[0].run).toMatchObject({verdict:null,summary:null});
+    expect(JSON.stringify(result)).not.toMatch(/隐藏摘要|隐藏结论/);
+  });
+
   it("projects write events in history and the live stream", async () => {
     const {addRunEvent} = await import("../src/agents/runs.ts");
     const user = "event-observer";
