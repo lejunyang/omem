@@ -36,7 +36,7 @@ type Node = { id: string; spaceId: string; parentId: string | null; kind: Kind; 
 type Version = { id: string; version: number; change: string; title: string; reason: string; sourceRefs: string[]; by: string; runId: string | null; at: string };
 type Link = { id: string; direction: "in" | "out"; note: string; other: { id: string; spaceId: string; kind: Kind; title: string; status: string } | null };
 // The delegations and branch reviews done for the items this node belongs to, as the run page's “编码” lists them (src/agents/code-works.ts).
-type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; works: Work[]; testState: TestState | null; testResults: TestResult[] };
+type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; works: Work[]; testState: TestState | null; testResults: TestResult[]; items?: { id: string; title: string }[] };
 
 const KIND: Record<Kind, string> = { system: "系统", module: "模块", page: "页面", feature: "功能", test: "测试点" };
 const CHANGE: Record<string, string> = { create: "新建", correct: "更正", change: "业务变更", delete: "删除（写错了）", remove: "移除（业务不要了）", confirm: "本人确认", restore: "恢复" };
@@ -472,6 +472,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           <span v-if="detail.node.status !== 'active'" class="badge danger">{{ detail.node.status === "removed" ? "已移除" : "已删除" }}</span>
           <span v-else-if="!detail.node.confirmed" class="badge accent">待确认</span>
         </div>
+        <p v-if="detail.items?.length" class="small muted belongs">属于工作项<template v-for="(it, i) in detail.items" :key="it.id">{{ i ? "、" : "：" }}<router-link :to="`/${state.me?.role === 'owner' || !state.me ? 'work' : 'items'}/${it.id}`">{{ it.title }}</router-link></template></p>
         <div v-if="canWrite" class="row wrap actions">
           <template v-if="detail.node.status === 'active'">
             <button v-if="!detail.node.confirmed" class="btn sm primary" @click="confirmNode"><Icon name="check" :size="14" />确认（含下级）</button>
@@ -579,6 +580,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
 
 <style scoped>
 .req-empty { display: grid; justify-items: center; gap: 4px; max-width: 520px; margin: 0 auto; }
+.belongs { margin: 0; overflow-wrap: anywhere; }
 .req-empty :deep(.help-text) { text-align: left; }
 .reqs {
   display: flex;

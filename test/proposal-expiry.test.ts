@@ -8,6 +8,8 @@ const ago = (days: number) => new Date(Date.now() - days * 86400_000).toISOStrin
 describe("profile proposals expire", () => {
   it("announces once two days before, expires after 14 days only once announced, and a refined proposal starts over", async () => {
     const app = testApp();
+    // With 今天 off the notice is a notification of its own (on, the morning card lists them: today.test.ts).
+    app.config.notify.today = { ...app.config.notify.today, enabled: false };
     const make = (title: string, days: number) => {
       const id = createProposal(app, { target: "assistant", kind: "settings", title, reason: "复盘", content: { add_tools: ["scan"] }, runId: null });
       run(app.db, "update profile_proposals set created_at = ? where id = ?", ago(days), id);

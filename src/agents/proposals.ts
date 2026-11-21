@@ -136,7 +136,12 @@ export async function expireProposals(app: App, at = Date.now()) {
     `select id, target, kind, title, created_at from profile_proposals where status = 'pending' and created_at < ? and expiry_notice_at is null ${keepSkill} order by target, created_at`,
     soon, keepBelow,
   );
-  if (due.length) {
+  // With 今天 on, the morning card lists them with the day each expires (items/today.ts profilePart).
+  const { todayOn } = await import("../items/today-time.ts");
+  if (due.length && todayOn(app)) {
+    const stamp = new Date(at).toISOString();
+    for (const d of due) run(app.db, "update profile_proposals set expiry_notice_at = ? where id = ?", stamp, d.id);
+  } else if (due.length) {
     const { notify } = await import("../core/notify.ts");
     const label: Record<string, string> = { prompt: "提示词", skill: "技能", settings: "设置" };
     const targets = [...new Set(due.map((d) => d.target))];

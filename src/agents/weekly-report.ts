@@ -48,6 +48,13 @@ function reportFile(app: App, label: string): ReportFile | null {
   return r ? { id: r.id, uri: r.uri, text: r.text, updatedAt: r.updated_at } : null;
 }
 
+/** This week's report as written so far (the morning card links it on Fridays), or null. */
+export function weeklyReportFile(app: App, at = new Date()) {
+  const label = weekLabel(app, at);
+  const f = reportFile(app, label);
+  return f ? { id: f.id, label } : null;
+}
+
 /** Lines the owner took out (or rewrote) and put in, comparing the report as written with the file now. */
 export function ownerEdits(written: string, current: string, max = 15) {
   const lines = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
