@@ -5,6 +5,7 @@ import { testApp } from "./helpers.ts";
 import { configSchema } from "../src/core/config.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { upsertSource } from "../src/sources/store.ts";
+import { startServer } from "../src/server/http.ts";
 import { memoriesFor } from "../src/channels/lark-watch.ts";
 import { setChatSettings } from "../src/agents/threads.ts";
 import { remember } from "../src/memory/store.ts";
@@ -59,6 +60,41 @@ it("进程内向量遵守批量、字符和空间范围；模型改变先暂停�
   replaceIndex(app, change.to);
   expect(vectorCounts(app).clear).toBe(0);
   expect(await embedPending(app)).toBe(1);
+});
+
+it("停用插件可调整批量和超时，未注册的提供者不能选用，恢复后沿用旧索引", async () => {
+  const app = fixture();
+  const manifest = manifestSchema.parse({ id: "vector", name: "向量", permissions: { embedder: true } });
+  const undo: (() => void)[] = [];
+  const unload = () => undo.splice(0).reverse().forEach(stop => stop());
+  cleanup.push(unload);
+  const def = { id: "small", name: "示例", model: "first", dimensions: 2, async embed(texts: string[]) { return texts.map(() => [1, 0]); } };
+  registerProcessHooks(manifest, undo).embedder(def);
+  expect(await embedPending(app)).toBe(2);
+  unload();
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const state = async () => (await server.inject("/api/search/providers")).json().embeddings;
+    const save = (embeddings: object) => server.inject({ method: "PUT", url: "/api/settings", payload: { embeddings } });
+    expect(await state()).toMatchObject({ state: "unavailable", model: null });
+    expect((await save({ batch: 1, timeoutMs: 600 })).statusCode).toBe(200);
+    expect(app.config.embeddings).toMatchObject({ provider: "plugin:vector:small", batch: 1, timeoutMs: 600 });
+    const missing = await save({ provider: "plugin:vector:other" });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.body).toContain("不可用");
+    expect(vectorCounts(app).clear).toBe(2);
+    registerProcessHooks(manifest, undo).embedder(def);
+    expect(await embedPendingMemories(app)).toBe(1);
+    expect(await state()).toMatchObject({ model: "first", lastError: null });
+    expect(modelChange(app, app.config)).toBeNull();
+    expect(all(app.db, "select id from notifications where title='插件向量已暂停'")).toHaveLength(0);
+    registerProcessHooks(manifest, undo).embedder({ ...def, id: "other", model: "second" });
+    const preview = await save({ provider: "plugin:vector:other" });
+    expect(preview.statusCode).toBe(409);
+    expect(preview.json().clear).toBe(3);
+  } finally {
+    await server.close();
+  }
 });
 
 it("关注可查个人记忆时仍按群消息来源授权，混合批次不外发", async () => {

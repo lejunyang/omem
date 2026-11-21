@@ -264,18 +264,21 @@ export function embeddingSpaces(app: App, requested: readonly string[] | null) {
 
 export function embeddingStatus(app: App) {
   const cfg = app.config.embeddings;
-  const plugin = cfg.provider.startsWith("plugin:") ? embedders.get(cfg.provider.slice(7)) : undefined;
-  const scoped = cfg.provider.startsWith("plugin:") && !plugin ? [] : plugin?.spaces.length ? plugin.spaces : undefined;
-  const changed = cfg.provider.startsWith("plugin:") && !!storedModel(app) && storedModel(app) !== embeddingId(app.config);
+  const isPlugin = cfg.provider.startsWith("plugin:");
+  const plugin = isPlugin ? embedders.get(cfg.provider.slice(7)) : undefined;
+  const unavailable = isPlugin && !plugin;
+  const scoped = unavailable ? [] : plugin?.spaces.length ? plugin.spaces : undefined;
+  const indexed = plugin && storedModel(app);
+  const changed = indexed && indexed !== embeddingId(app.config);
   const health = embeddingHealth(app);
   const excludedSpaces = scoped ? all<{id: string}>(app.db,
     `select id from spaces where id not like 'wt-%'${scoped.length ? ` and id not in (${scoped.map(() => "?").join(",")})` : ""} order by id limit 1000`, ...scoped).map(s => s.id) : [];
-  return { provider: cfg.provider, kind: cfg.provider.startsWith("plugin:") ? "plugin" : cfg.provider,
-    model: plugin?.def.model ?? cfg.model, dimensions: plugin?.def.dimensions ?? cfg.dimensions ??
+  return { provider: cfg.provider, kind: isPlugin ? "plugin" : cfg.provider,
+    model: isPlugin ? plugin?.def.model ?? null : cfg.model, dimensions: isPlugin ? plugin?.def.dimensions ?? null : cfg.dimensions ??
       (Number(one<{value: string}>(app.db, "select value from kv where key='embedding_dimensions'")?.value) || null),
     plugin: plugin?.plugin ?? null, name: plugin?.def.name ?? null, ...health,
-    pending: pendingVectorCount(app, scoped), excludedSpaces, excludedReason: excludedSpaces.length ? "插件未获授权，这些空间没有向量" : null,
-    state: cfg.provider === "none" ? "off" : changed ? "model-changed" : cfg.provider.startsWith("plugin:") && !plugin ? "unavailable" : health.writeError ? "paused" : health.lastError ? "failed" : health.lastMs ? "ready" : "idle" };
+    pending: pendingVectorCount(app, scoped), excludedSpaces, excludedReason: unavailable ? "插件向量提供者不可用" : excludedSpaces.length ? "插件未获授权，这些空间没有向量" : null,
+    state: cfg.provider === "none" ? "off" : unavailable ? "unavailable" : changed ? "model-changed" : health.writeError ? "paused" : health.lastError ? "failed" : health.lastMs ? "ready" : "idle" };
 }
 
 /** Connectivity probes send only this fixture, even for unsaved configurations. */

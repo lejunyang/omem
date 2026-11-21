@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { App } from "../core/app.ts";
 import type { Config } from "../core/config.ts";
+import { HttpError } from "../core/util.ts";
 import { one, run, tx } from "../core/db.ts";
 import { searchBase } from "./api.ts";
 import { dimsOf } from "./vector-codec.ts";
@@ -13,7 +14,7 @@ export function embeddingId(config: Config) {
   if (c.provider === "local") return "local:" + c.model;
   if (c.provider.startsWith("plugin:")) {
     const def = embedders.get(c.provider.slice(7))?.def;
-    return c.provider + ":" + JSON.stringify([def?.model ?? null, def?.dimensions ?? null]);
+    return def ? c.provider + ":" + JSON.stringify([def.model, def.dimensions]) : null;
   }
   return "api:" + JSON.stringify([searchBase(config, c), c.model, c.dimensions ?? null]);
 }
@@ -46,11 +47,11 @@ export function checkIndexDimensions(app: App, id: string, dimensions: number, w
 
 // All counts read covering indexes. Only count a worktree vector if it will actually be cleared.
 function spaceFilter(spaces?: readonly string[]) {
-  if (!spaces) return "";
-  return spaces.length ? ` and space_id in (${spaces.map(() => "?").join(",")})` : " and 0";
+  return spaces?.length ? ` and space_id in (${spaces.map(() => "?").join(",")})` : "";
 }
-function count(app: App, sql: string, spaces: readonly string[] = []) {
-  return one<{ n: number }>(app.db, "select count(*) n from " + sql, ...spaces)!.n;
+function count(app: App, sql: string, spaces?: readonly string[]) {
+  if (spaces?.length === 0) return 0;
+  return one<{ n: number }>(app.db, "select count(*) n from " + sql, ...(spaces ?? []))!.n;
 }
 export function pendingVectorCount(app: App, spaces?: readonly string[]) {
   const scope = spaceFilter(spaces);
@@ -69,7 +70,11 @@ export function vectorCounts(app: App, spaces?: readonly string[]) {
 
 export function modelChange(app: App, next: Config) {
   const to = embeddingId(next);
-  if (!to) return null; // Disabling preserves the index for later use.
+  if (!to) {
+    if (next.embeddings.provider.startsWith("plugin:") && next.embeddings.provider !== app.config.embeddings.provider)
+      throw new HttpError(400, "向量插件提供者不可用，请先启用插件并确认它已注册。");
+    return null; // Disabled or temporarily unloaded: keep the index.
+  }
   const stored = storedModel(app);
   const legacy = app.config.embeddings.provider === "api" && !app.config.embeddings.dimensions && stored === "openai:" + app.config.embeddings.model;
   const from = legacy ? embeddingId(app.config) : stored ?? embeddingId(app.config);
