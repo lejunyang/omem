@@ -1,9 +1,11 @@
+import type { AcpHandle } from "./acp.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { accessibleSpaces, OWNER, userName } from "../core/users.ts";
 import { addRunEvent, cancelRun, queuedInLane, setRunOutput, stopRequested, updateQueuedRun } from "./runs.ts";
 import { renderMessages } from "./sessions.ts";
-import { threadMessages } from "./threads.ts";
+import { recordWatchMaterial, watchSourceSpaces } from "../core/message-origins.ts";
+import { findThread, threadMessages } from "./threads.ts";
 
 /**
  * Messages sent to a conversation while its turn is running reach that turn at its next tool call
@@ -19,20 +21,31 @@ export function takeSteering(app: App, runId: string): string | null {
   return claim && claim.commit() ? claim.text : null;
 }
 
+/** ACP may run tools before acknowledging steering; a changed queue cannot retract that text. */
+export async function injectSteering(app: App, runId: string, deliver: AcpHandle["steer"]) {
+  const claim = claimSteering(app, runId);
+  if (!claim) return false;
+  claim.recordDelivery();
+  if (await deliver(claim.text) !== "injected") return false;
+  claim.commit();
+  return true;
+}
+
 /**
  * The messages waiting for a running conversation turn, as it would read them, without taking them
  * yet: `commit` moves them into the turn (false when the waiting turn changed meanwhile). Used at a
  * tool call (takeSteering) and when the agent takes words mid-turn (sessions.ts steerLiveTurn).
  */
-export function claimSteering(app: App, runId: string): { text: string; commit: () => boolean } | null {
+export function claimSteering(app: App, runId: string) {
   const r = one<{ kind: string; status: string; lane: string | null; input: string }>(app.db, "select kind, status, lane, input from runs where id = ?", runId);
   if (!r || r.kind !== "ask" || r.status !== "running" || !r.lane || ending(app, runId)) return null;
-  const input = JSON.parse(r.input) as { conversationId?: string; userId?: string };
-  if (!input.conversationId) return null;
+  const input = JSON.parse(r.input) as { conversationId?: string; userId?: string; messageId?: string; messageIds?: string[] };
+  const conversationId = input.conversationId;
+  if (!conversationId) return null;
   const next = queuedInLane(app, r.lane, "ask");
   if (!next) return null;
   const ids = (next.input.messageIds as string[] | undefined) ?? [];
-  const msgs = threadMessages(app, input.conversationId, { limit: 400 }).filter((m) => ids.includes(m.id) && m.role === "user" && !m.meta.answer);
+  const msgs = threadMessages(app, conversationId, { limit: 400 }).filter((m) => ids.includes(m.id) && m.role === "user" && !m.meta.answer);
   if (!msgs.length) return null;
   const turnUser = input.userId ?? OWNER, sender = (next.input.userId as string | undefined) ?? OWNER;
   if (!mayJoinTurn(app, turnUser, sender, msgs)) return null;
@@ -65,7 +78,12 @@ export function claimSteering(app: App, runId: string): { text: string; commit: 
     addRunEvent(app, runId, "status", { text: `收到 ${taken.size} 条补充消息，交给正在进行的这一轮` });
     return true;
   };
-  return { text, commit };
+  const recordDelivery = () => {
+    const thread = findThread(app, conversationId);
+    const anchor = input.messageIds?.[0] ?? input.messageId;
+    if (thread?.channel === "listen" && anchor) recordWatchMaterial(app, anchor, watchSourceSpaces(app, thread.spaceId, msgs));
+  };
+  return { text, commit, recordDelivery };
 }
 
 /**

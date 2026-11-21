@@ -1,3 +1,4 @@
+import { recordWatchMaterial, summaryOrigins } from "../core/message-origins.ts";
 import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
 import { one } from "../core/db.ts";
 import { hostToldOwner } from "./code-chain.ts";
@@ -102,13 +103,8 @@ export async function steerLiveTurn(app: App, threadId: string) {
   if (!l?.busy || !l.handle.alive()) return false;
   const running = one<{ id: string }>(app.db, "select id from runs where lane = ? and kind = 'ask' and status = 'running' limit 1", threadId);
   if (!running) return false;
-  const { claimSteering } = await import("./steer.ts");
-  const claim = claimSteering(app, running.id);
-  if (!claim) return false;
-  if ((await l.handle.steer(claim.text)) !== "injected") return false;
-  // Given to the agent: from here it is that turn's (if the queue moved on meanwhile, the next turn has it too).
-  claim.commit();
-  return true;
+  const { injectSteering } = await import("./steer.ts");
+  return injectSteering(app, running.id, text => l.handle.steer(text));
 }
 
 function keepAlive(app: App, l: Live) {
@@ -187,7 +183,7 @@ export function renderMessages(msgs: ThreadMessage[], app?: App) {
 }
 
 /** Background for a session that does not remember this thread yet. */
-function coldContext(app: App, t: Thread, before: string, owner: string[], withTools: boolean) {
+export function coldContext(app: App, t: Thread, first: ThreadMessage | undefined, owner: string[], withTools: boolean) {
   const parts: string[] = [];
   parts.push(`这是会话 ${t.id}（${t.channel}${t.key ? ` ${t.key}` : ""}）。${withTools ? "之前的完整记录可用 read_conversation 读取；其他会话用 list_conversations 查找。" : ""}`);
   parts.push(...owner);
@@ -200,7 +196,10 @@ function coldContext(app: App, t: Thread, before: string, owner: string[], withT
     const l = findThread(app, id);
     if (l) parts.push(`## 关联会话 ${describeThread(l, app.config.timezone).split("\n")[0]}\n\n${l.summary || renderMessages(threadMessages(app, l.id, { limit: 6 }), app)}`);
   }
-  const recent = threadMessages(app, t.id, { before, limit: 12 }).filter((m) => !m.meta.command);
+  if (t.channel === "listen" && first && (t.summary || t.parentId || t.settings.links?.length)) {
+    recordWatchMaterial(app, first.id, t.parentId || t.settings.links?.length ? null : summaryOrigins(t));
+  }
+  const recent = threadMessages(app, t.id, { before: first?.createdAt ?? new Date().toISOString(), limit: 12 }).filter((m) => !m.meta.command);
   if (recent.length) parts.push(`## 最近的对话\n\n${recent.map((m) => ({ ...m, text: truncate(m.text, 1500) }))
     .map((m) => renderMessages([m], app)).join("\n\n")}`);
   return parts.join("\n\n");
@@ -493,7 +492,7 @@ ${WAKE_NOTE}`
         : watched
         ? (withTools ? watchedText!.full : watchedText!.facts)
         : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${withTools ? NEW_TURN_NOTE : "回答本人的新消息。"}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${currentBrief}` : ""}`) + (promptOverride ? "" : awarenessNote(app, ctx.run.id, withTools, resolved)) + (sentFocus ? `\n\n${focus!.text}` : "") + (asked ? `\n\n${asked.text}` : "");
-    const context = fresh ? `# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString(), ownerCold(currentBrief), withTools)}\n\n---\n\n` : "";
+    const context = fresh ? `# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0], ownerCold(currentBrief), withTools)}\n\n---\n\n` : "";
     const changed = !fresh && t.settings.instructionScene !== selected.scene.join(" ");
     const sceneUpdate = changed ? `\n\n# 本轮适用的场景说明（替代先前按场景选择的小节）\n\n${selected.sceneGuide || "本轮没有适用的小节。"}` : "";
     return { prompt: `（${selected.now}）\n\n${context}${newPart}${groupReply && !promptOverride ? `\n\n${groupReply}` : ""}${sceneUpdate}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };

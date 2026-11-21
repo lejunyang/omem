@@ -2,7 +2,7 @@ import { decideScene, describeScene } from "../core/decision-log.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { messageSourceSpaces } from "../core/capture-space.ts";
-import { watchSourceSpaces } from "../core/message-origins.ts";
+import { archivedMessageSpaces, watchSourceSpaces } from "../core/message-origins.ts";
 import { now } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { rulesNaming } from "../rules/store.ts";
@@ -277,6 +277,9 @@ export async function seedContext(app: App, c: ListenContext) {
   const backlogFrom = since - BACKLOG_MS[c.knobs.backlog];
   const from = Math.min(since - 72 * 3600_000, backlogFrom);
   const background: string[] = [];
+  const externalIds: string[] = [];
+  const sourceSpaces = new Set<string>();
+  let needsSourceArchive = false;
   let routed = 0;
   for (const chatId of c.chats) {
     const name = groupName(app, chatId);
@@ -286,14 +289,22 @@ export async function seedContext(app: App, c: ListenContext) {
       chatId, from, since,
     ).reverse();
     const recent = c.knobs.backlog === "off" ? [] : rows.filter((r) => r.create_ms >= backlogFrom && r.sender_kind !== "app");
-    if (recent.length) routed += await routeWatchedMessages(app, chatId, name, recent.map((r) => ({ id: r.message_id, time: String(r.create_ms), sender: r.sender_name || "?", senderId: r.sender_id ?? undefined, text: r.content, topicId: r.thread_id ?? undefined })));
     const recentIds = new Set(recent.map((r) => r.message_id));
     const rest = rows.filter((r) => !recentIds.has(r.message_id));
+    const ids = rest.map(r => r.message_id);
+    const archived = archivedMessageSpaces(app, ids);
+    for (const id of ids) {
+      externalIds.push(id);
+      const spaces = archived.get(id);
+      if (!spaces) needsSourceArchive = true;
+      for (const space of spaces ?? []) sourceSpaces.add(space);
+    }
     if (rest.length) background.push(`## 群「${name}」\n${rest.map((r) => `${new Date(r.create_ms).toISOString().slice(5, 16).replace("T", " ")} ${r.sender_name || "?"}：${r.content.replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}`);
+    if (recent.length) routed += await routeWatchedMessages(app, chatId, name, recent.map((r) => ({ id: r.message_id, time: String(r.create_ms), sender: r.sender_name || "?", senderId: r.sender_id ?? undefined, text: r.content, topicId: r.thread_id ?? undefined })));
   }
   if (background.length) {
     const { addMessage } = await import("../agents/threads.ts");
-    addMessage(app, c.conversationId, "user", `（关注开始前各群最近的消息，只作背景，不用逐条处理）\n\n${background.join("\n\n")}`, null, { speaker: "关注开始前的消息", backlog: true });
+    addMessage(app, c.conversationId, "user", `（关注开始前各群最近的消息，只作背景，不用逐条处理）\n\n${background.join("\n\n")}`, null, { speaker: "关注开始前的消息", backlog: true, externalIds, sourceSpaces: [...sourceSpaces], needsSourceArchive });
     const { maybeSummarize } = await import("../agents/sessions.ts");
     maybeSummarize(app, c.conversationId, 1);
   }

@@ -7,12 +7,13 @@ import { createSpace } from "../src/core/spaces.ts";
 import { getSource, upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
 import { persistChatMessages } from "../src/channels/lark-messages.ts";
-import { memoriesFor, routeWatchedMessages } from "../src/channels/lark-watch.ts";
-import { findThread, setChatSettings, threadMessages } from "../src/agents/threads.ts";
-import { watchedNote } from "../src/agents/sessions.ts";
+import { memoriesFor, routeWatchedMessages, seedContext } from "../src/channels/lark-watch.ts";
+import { addMessage, findThread, setChatSettings, threadMessages, updateThread } from "../src/agents/threads.ts";
+import { coldContext, watchedNote } from "../src/agents/sessions.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { receive } from "../src/agents/inbox.ts";
-import { takeSteering } from "../src/agents/steer.ts";
+import { __testHandlers, cancelRun, createRun, getRun } from "../src/agents/runs.ts";
+import { injectSteering, takeSteering } from "../src/agents/steer.ts";
 import { closeReadProcess } from "../src/search/read-process.ts";
 import { saveContext } from "../src/channels/listen.ts";
 import { runActions } from "../src/rules/actions.ts";
@@ -120,7 +121,7 @@ function personalEmbedder() {
   return embed;
 }
 
-it.each(["规则转入项目消息", "补充消息来源不明", "沿用上轮项目原话", "全部来自个人空间"])("关注助手主动搜索：%s", async mode => {
+function watchSearchFixture() {
   const app = fixture();
   const embed = personalEmbedder();
   cleanup.push(() => closeReadProcess(app));
@@ -130,6 +131,18 @@ it.each(["规则转入项目消息", "补充消息来源不明", "沿用上轮�
     text: "export function refundWindow() { return 7; }" });
   const watch = saveContext(app, { kind: "place", name: "个人关注", spaceId: "personal", chats: ["personal-group"], knobs: { depth: "investigate" } });
   const conversationId = watch.conversationId!;
+  async function search(runId: string, space?: string) {
+    const ctx = { app, runId, spaceId: "personal", actor: "agent" as const, spaces: ["personal"], tools: new Set(["search"]) };
+    const found = await callTool(ctx, "search", { query, space });
+    expect(found.isError).toBe(false);
+    expect(found.text).toContain("全文");
+    expect(found.text).toContain("符号");
+  }
+  return { app, embed, query, watch, conversationId, search };
+}
+
+it.each(["规则转入项目消息", "补充消息来源不明", "沿用上轮项目原话", "全部来自个人空间"])("关注助手主动搜索：%s", async mode => {
+  const { app, embed, query, watch, conversationId, search } = watchSearchFixture();
   if (mode === "沿用上轮项目原话") {
     const prior = await receive(app, { channel: "listen", conversationId, speaker: "项目成员", text: query, meta: { sourceSpaces: ["allowed"] } });
     app.db.prepare("update runs set status='done' where id=?").run(prior.runId);
@@ -150,14 +163,73 @@ it.each(["规则转入项目消息", "补充消息来源不明", "沿用上轮�
     expect(takeSteering(app, runId)).toContain(query);
   }
   expect(threadMessages(app, conversationId).some(message => message.text.includes(query))).toBe(true);
-  const ctx = { app, runId, spaceId: "personal", actor: "agent" as const, spaces: ["personal"], tools: new Set(["search"]) };
-  for (const space of [undefined, "personal"]) {
-    const found = await callTool(ctx, "search", { query, space });
-    expect(found.isError).toBe(false);
-    expect(found.text).toContain("全文");
-    expect(found.text).toContain("符号");
-  }
+  for (const space of [undefined, "personal"]) await search(runId, space);
   expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "全部来自个人空间" ? [[query], [query]] : []);
+});
+
+it.each(["项目消息", "个人消息", "旧摘要"])("关注冷启动注入的摘要含%s", async mode => {
+  const { app, embed, query, conversationId, search } = watchSearchFixture();
+  const first = await receive(app, { channel: "listen", conversationId, speaker: "成员", text: "继续调查", meta: { sourceSpaces: ["personal"] } });
+  const [anchor] = threadMessages(app, conversationId);
+  app.db.prepare("update messages set created_at=? where id=?").run("2026-01-01T00:00:00.000Z", anchor.id);
+  const summary = "需要核对 " + query;
+  if (mode === "旧摘要") {
+    updateThread(app, conversationId, { summary });
+  } else {
+    addMessage(app, conversationId, "user", query, null, { sourceSpaces: [mode === "项目消息" ? "allowed" : "personal"] });
+    const summarizer = vi.spyOn(await import("../src/agents/runner.ts"), "runRole").mockResolvedValue({
+      text: summary, agent: "fake", stopReason: "end_turn", profileId: "fake", ai: { profile: "fake" },
+    });
+    cleanup.push(() => summarizer.mockRestore());
+    await import("../src/agents/jobs.ts");
+    const run = createRun(app, { kind: "thread-summary", spaceId: "personal", title: "整理关注", input: { threadId: conversationId } });
+    await __testHandlers.get("thread-summary")!({ app, run, signal: new AbortController().signal, event() {}, output() {} });
+    expect(summarizer.mock.calls[0][1].task).toContain(query);
+  }
+  const thread = findThread(app, conversationId)!;
+  const [current] = threadMessages(app, conversationId);
+  expect(coldContext(app, thread, current, [], true)).toContain(summary);
+  updateThread(app, conversationId, { summary: "后来生成的摘要" });
+  await search(first.runId!);
+  expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "个人消息" ? [[query]] : []);
+});
+
+it("关注实时补入在等待确认和并队失败后都按已交付材料授权", async () => {
+  const { app, embed, query, conversationId, search } = watchSearchFixture();
+  const first = await receive(app, { channel: "listen", conversationId, speaker: "成员", text: "继续调查", meta: { sourceSpaces: ["personal"] } });
+  const runId = first.runId!;
+  const [anchor] = threadMessages(app, conversationId);
+  app.db.prepare("update messages set created_at=? where id=?").run("2026-01-01T00:00:00.000Z", anchor.id);
+  app.db.prepare("update runs set status='running' where id=?").run(runId);
+  const extra = await receive(app, { channel: "listen", conversationId, speaker: "成员", text: query, meta: { sourceSpaces: ["allowed"] } });
+  expect(await injectSteering(app, runId, async text => {
+    expect(text).toContain(query);
+    cancelRun(app, extra.runId!);
+    await search(runId);
+    expect(embed).not.toHaveBeenCalled();
+    return "injected";
+  })).toBe(true);
+  expect(getRun(app, runId).output?.steered).toBeUndefined();
+  await search(runId, "personal");
+  expect(embed).not.toHaveBeenCalled();
+});
+
+it.each(["personal", "allowed"])("关注的历史背景采用群消息的归档空间 %s", async spaceId => {
+  const { app, embed, query, watch, conversationId, search } = watchSearchFixture();
+  const time = String(Date.parse(watch.since) - 3600_000);
+  setChatSettings(app, "lark", "personal-group", { spaceId });
+  const archive = persistChatMessages(app, { chatId: "personal-group", spaceId, name: "示例群", messages: [
+    { message_id: "archived-message", create_time: time, msg_type: "text", content: { text: query } },
+  ] });
+  expect(getSource(app, archive.id!).spaceId).toBe(spaceId);
+  setChatSettings(app, "lark", "personal-group", { spaceId: "personal" });
+  await seedContext(app, { ...watch, knobs: { ...watch.knobs, backlog: "off" } });
+  const [background] = threadMessages(app, conversationId);
+  expect(background.text).toContain(query);
+  expect(background.meta).toMatchObject({ externalIds: ["archived-message"], sourceSpaces: [spaceId] });
+  const first = await receive(app, { channel: "listen", conversationId, speaker: "成员", text: "查一下背景中的问题", meta: { sourceSpaces: ["personal"] } });
+  await search(first.runId!);
+  expect(embed.mock.calls.map(([texts]) => texts)).toEqual(spaceId === "personal" ? [[query]] : []);
 });
 
 it("关注可查个人记忆时仍按群消息来源授权，混合批次不外发", async () => {

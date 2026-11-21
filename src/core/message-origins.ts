@@ -1,5 +1,7 @@
+import { sha256 } from "./util.ts";
+import type { Thread } from "../agents/threads.ts";
 import type { App } from "./app.ts";
-import { all, one } from "./db.ts";
+import { all, one, run, withinTx } from "./db.ts";
 
 /** A message can have archived copies in several spaces. Look up only the incoming message ids. */
 export function archivedMessageSpaces(app: Pick<App, "db">, messageIds: string[]) {
@@ -20,22 +22,53 @@ export function archivedMessageSpaces(app: Pick<App, "db">, messageIds: string[]
   return spaces;
 }
 
+type Origins = string[] | null;
+
+/** Null is a material whose origin is unknown, including when it is mixed with known materials. */
+export function mergeOrigins(a: Origins, b: Origins): Origins {
+  return a && b ? [...new Set([...a, ...b])] : null;
+}
+
+function externalIds(meta: Record<string, unknown>): string[] {
+  return Array.isArray(meta.externalIds) ? meta.externalIds : typeof meta.externalId === "string" ? [meta.externalId] : [];
+}
+
 /** Include both the queued text's origin and any archives found since it was queued. */
 export function watchSourceSpaces(app: Pick<App, "db">, watchSpace: string | null, batch: { meta: Record<string, unknown> }[]) {
-  const messageIds = batch.flatMap(({ meta }) => typeof meta.externalId === "string" ? [meta.externalId] : []);
-  const archived = archivedMessageSpaces(app, messageIds);
+  const archived = archivedMessageSpaces(app, batch.flatMap(({ meta }) => externalIds(meta)));
   const spaces = new Set<string>();
   if (watchSpace) spaces.add(watchSpace);
   for (const { meta } of batch) {
-    const stored = typeof meta.externalId === "string" ? archived.get(meta.externalId) : undefined;
-    if (meta.needsSourceArchive && !stored) return null;
+    const ids = externalIds(meta);
+    const completeArchive = ids.length > 0 && ids.every(id => archived.has(id));
+    if (meta.needsSourceArchive && !completeArchive) return null;
     const queued = meta.sourceSpaces;
     if (Array.isArray(queued) && queued.length && queued.every(id => typeof id === "string" && id)) {
       for (const id of queued) spaces.add(id);
-    } else if (!stored) return null;
-    for (const id of stored ?? []) spaces.add(id);
+    } else if (!completeArchive) return null;
+    for (const id of ids) for (const space of archived.get(id) ?? []) spaces.add(space);
+    if (meta.watchMaterialSpaces === null) return null;
+    if (Array.isArray(meta.watchMaterialSpaces)) for (const space of meta.watchMaterialSpaces) spaces.add(space);
   }
   return [...spaces];
+}
+
+/** The provenance belongs to the exact summary injected into the prompt. Older summaries have none. */
+export function summaryOrigins(t: Pick<Thread, "summary" | "settings">): Origins {
+  if (!t.summary) return [];
+  const saved = t.settings.summaryOrigins;
+  return saved && saved.hash === sha256(t.summary) ? saved.spaces : null;
+}
+
+/** Record additional prompt material on the original turn's message before handing it to the agent.
+ * It stays with the transcript across failed steering claims, retries and resumed sessions. */
+export function recordWatchMaterial(app: App, anchor: string, spaces: Origins) {
+  withinTx(app.db, () => {
+    const row = one<{ saved: string | null }>(app.db, "select meta -> '$.watchMaterialSpaces' saved from messages where id=?", anchor);
+    if (!row) throw new Error("关注运行的消息已不存在");
+    const merged = mergeOrigins(row.saved === null ? [] : JSON.parse(row.saved), spaces);
+    run(app.db, "update messages set meta=json_set(meta,'$.watchMaterialSpaces',json(?)) where id=?", JSON.stringify(merged), anchor);
+  });
 }
 
 /** A follow-up search can quote earlier batches from session history or its summary. Walk only this

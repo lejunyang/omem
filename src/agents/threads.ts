@@ -28,6 +28,8 @@ export type ThreadSettings = {
   auto?: { profile: string; model?: string; effort?: string } | null;
   /** Other threads whose summaries are included as background. */
   links?: string[];
+  /** Sources used by the summarizer for this watch conversation. */
+  summaryOrigins?: { hash: string; spaces: string[] | null };
   /** Last channel message id seen in this thread (replies go under it, e.g. inside a topic). */
   lastMessageId?: string;
   /** Delivery location is independent of whether topics share a conversation. */
