@@ -2432,6 +2432,7 @@ export const migrations: readonly string[] = [
   `create index if not exists memories_unembedded on memories(space_id) where status = 'active' and embedding is null;
    create index if not exists memories_embedded on memories(status, space_id) where embedding is not null;`,
   `alter table listen_problems add column source_spaces text;`,
+  `create index rules_full_access on rules(id,name) where instr(json(actions), '"fullAccess":true') > 0;`,
 ];
 
 export type Db = DatabaseSync;

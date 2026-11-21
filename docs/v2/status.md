@@ -423,3 +423,5 @@
 - 阶段 gateReview.ask 带处理卡状态、选择与时间，越过后保留供查看，重开清除；一次主键查询读取当前事项最多二十张卡。入口 `src/flows/engine.ts`、`plugin-gates.ts`。
 
 - 已保存配置中的插件后端引用均参与目录：档位、fallback、任务候选、角色模型与评审轮换补齐；设置返回 unavailableBackends。入口 `src/core/config.ts`（allProfiles）、`src/agents/runner.ts`、`src/server/http.ts`。
+
+- 本人沙箱状态增加 home 与 fullAccessGrants（内置角色、档案、规则）；规则授权清单用部分索引查询，成员仍返回 403。入口 `src/agents/own-run.ts`、`src/core/db.ts` 末尾迁移。
