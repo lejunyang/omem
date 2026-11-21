@@ -208,6 +208,26 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     expect(flowView(app,item).stages[1]).toMatchObject({state:"doing",gateReview:undefined});
     saveGateChecks(app,"inspect",[]);
   });
+  it("可越过乱序补录的检查，上游重开后补录卡失效", async () => {
+    const stages = [{id:"first",name:"准备",by:"wait"}, {id:"mark",name:"核对",by:"wait",needs:["first"]}];
+    for (const reopen of [false,true]) {
+      const item = await begin(stages);
+      saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true,stages:["mark"]}]);
+      await recordStage(app,item,"mark","提前补录");
+      const card = flowView(app,item).stages[1].askId!;
+      if (reopen) {
+        await ownerAction(app,item,"first","done","第一次准备完成");
+        await ownerAction(app,item,"first","reopen","材料变化");
+        await ownerAction(app,item,"first","done","第二次准备完成");
+        await expect(answerAsk(app,card,{choice:0,by:"owner"})).rejects.toThrow();
+        expect(flowView(app,item).stages[1].state).toBe("doing");
+      } else {
+        await answerAsk(app,card,{choice:0,by:"owner"});
+        expect(flowView(app,item).stages.map(s => s.state)).toEqual(["doing","done"]);
+      }
+    }
+    saveGateChecks(app,"inspect",[]);
+  });
   it("交回失败后，旧的单次越过卡片失效", async () => {
     const item = await begin([job()]);
     saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true}]);

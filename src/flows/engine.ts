@@ -778,7 +778,7 @@ export function recordStage(app: App, itemId: string, stageId: string, note: str
     if (refs.some((r) => !/^(src:|run:|design:)/.test(r) || !validEvidence(app, r))) throw new HttpError(400, "补录依据需要有效的 src:、run: 或 design: 引用");
     withdraw(app, s);
     resetStreak(app, itemId);
-    await finishStage(app, itemId, stageId, "done", { askId: null, by: "owner", waitingOn: null, evidence: refs, control: { ...s.control, question: undefined, recorded: true, reported: true } }, { actor: "owner", userId }, `补录：${note.trim()}`, refs);
+    await finishStage(app, itemId, stageId, "done", { askId: null, by: "owner", waitingOn: null, evidence: refs, control: { ...s.control, question: undefined, recorded: true, reported: true } }, { actor: "owner", userId }, `补录：${note.trim()}`, refs, "record");
     await advanceNow(app, itemId, "本人补录");
     return flowView(app, itemId);
   });
@@ -986,8 +986,18 @@ registerAskHandler("flow-plugin-gate", async (app, ask, ctx) => {
   if (by !== "owner" || ask.userId !== "owner") throw new HttpError(403, "插件检查只能由本人越过");
   const item = String(ctx.itemId), s = getStage(app, item, String(ctx.stageId));
   const f = running(app, item);
-  if (s.askId !== ask.id || s.state !== "blocked" || !s.control.gateReview || !prerequisitesDone(definition(f, s.id), itemStages(app, item)))
+  if (s.askId !== ask.id || s.state !== "blocked" || !s.control.gateReview)
     throw new HttpError(409, "这次检查已经处理");
+  const d = definition(f, s.id);
+  const recorded = ctx.completion === "record" || (ctx.completion === undefined && s.control.recorded);
+  if (!recorded && !prerequisitesDone(d, itemStages(app, item))) throw new HttpError(409, "阶段前提已变化");
+  const upstream = new Set(d.needs);
+  for (const stage of [...f.definition.stages].reverse()) {
+    if (upstream.has(stage.id)) for (const id of stage.needs) upstream.add(id);
+  }
+  if (upstream.size && one(app.db, `select 1 from item_stage_log where item_id=? and at>=? and id>?
+    and event='reopen' and stage_id in (${[...upstream].map(() => "?").join(",")}) limit 1`,
+    item, ask.createdAt, Number(ctx.logId ?? 0), ...upstream)) throw new HttpError(409, "上游已重开，结果需要复核");
 }, (app, ctx, answer) => serial(app, String(ctx.itemId), answer));
 
 export function proposeFlow(app: App, raw: string, by: FlowActor) {

@@ -56,7 +56,7 @@ function gateEvidence(app: App, user: string, space: string, evidence: FlowEvide
 
 /** The host calls this only after its own completion rules and approval have passed. */
 export async function finishStage(app: App, itemId: string, stageId: string, state: StageState, patch: CompletionPatch,
-  by: FlowActor, note: string, refs: string[] = []) {
+  by: FlowActor, note: string, refs: string[] = [], completion: "regular" | "record" = "regular") {
   const f = itemFlow(app, itemId)!, s = getStage(app, itemId, stageId);
   if (state !== "done") {
     if (s.control.gateReview && s.askId) cancelAsk(app, s.askId, "阶段结果已变化");
@@ -97,7 +97,8 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
   if (s.askId) cancelAsk(app, s.askId, "完成结果重新检查");
   const review: GateReview = { summary, refs, failed };
   const ask = createAsk(app, { userId: "owner", runId: by.runId ?? null, question: `「${d.name}」被检查拦下，是否仍然通过？\n\n${failed.map(v => `${v.id}：${v.reason}`).join("\n")}`,
-    options: [{ label: "仍然通过" }, { label: "等处理" }], context: { handler: "flow-plugin-gate", itemId, stageId } });
+    options: [{ label: "仍然通过" }, { label: "等处理" }], context: { handler: "flow-plugin-gate", itemId, stageId, completion,
+      logId: one<{id:number}>(app.db, "select max(id) id from item_stage_log")!.id } });
   changeStage(app, itemId, stageId, "blocked", { ...patch, askId: ask.id, waitingOn: "owner", control: { ...s.control, ...patch.control, gateReview: review } }, by,
     failed.map(v => `${v.id}：${v.reason}`).join("\n"), refs);
 }
