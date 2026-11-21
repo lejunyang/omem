@@ -1,10 +1,11 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { setKey } from "../src/core/ai-keys.ts";
 import { configSchema } from "../src/core/config.ts";
-import { embedPending, embedQuery, embeddingHealth, resumeEmbedding } from "../src/search/embeddings.ts";
+import { embedPending, embedQuery, embeddingHealth, resumeEmbedding, testEmbedding } from "../src/search/embeddings.ts";
 import { vectorCounts } from "../src/search/embedding-index.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
@@ -16,13 +17,14 @@ async function setup() {
   const app = testApp();
   close.push(() => app.db.close());
   const calls: { input: string[]; dimensions?: number; auth?: string }[] = [];
-  let status = 200, failOnce = false, invalid = "", hang = false;
+  let delayMs = 0, status = 200, failOnce = false, invalid = "", hang = false;
   const service = createServer(async (req, res) => {
     let data = "";
     for await (const chunk of req) data += chunk;
     const body = JSON.parse(data);
     calls.push({ ...body, auth: req.headers.authorization });
     if (hang) return;
+    if (delayMs) await delay(delayMs);
     res.statusCode = status;
     if (failOnce) { failOnce = false; status = 200; }
     const vectors = body.input.map((_: string, i: number) => ({ index: i, embedding: invalid === "dim" && !i ? [9] : [3, 4] })).reverse();
@@ -35,7 +37,7 @@ async function setup() {
   setKey(app.home, "remote", "example-secret");
   app.config.embeddings = configSchema.shape.embeddings.parse({ provider: "openai", keyRef: "remote", model: "m", dimensions: 2, batch: 2, timeoutMs: 1200 });
   for (let i = 0; i < 3; i++) upsertSource(app, { spaceId: "personal", kind: "note", uri: String(i), title: "材料", text: "材料" + i });
-  return { app, calls, failure(code: number, once = false) { status = code; failOnce = once; }, invalid(s: string) { invalid = s; }, hang() { hang = true; } };
+  return { app, calls, latency(ms: number) { delayMs = ms; }, failure(code: number, once = false) { status = code; failOnce = once; }, invalid(s: string) { invalid = s; }, hang() { hang = true; } };
 }
 
 it("按批从密钥库认证，兼容 openai，限流后重试并归一化", async () => {
@@ -47,6 +49,16 @@ it("按批从密钥库认证，兼容 openai，限流后重试并归一化", asy
   expect(calls.map(c => c.input.length)).toEqual([2, 2, 1]);
   expect(calls.every(c => c.auth === "Bearer example-secret" && c.dimensions === 2)).toBe(true);
   expect(await embedQuery(app, "问题")).toEqual(new Float32Array([0.6, 0.8]));
+});
+
+it("检测、查询和写入可用满时限，稳定慢于三分之一预算的请求一次成功", async () => {
+  const s = await setup();
+  s.app.config.embeddings.timeoutMs = 900;
+  s.latency(450);
+  expect(await testEmbedding(s.app, s.app.config.embeddings)).toBe(2);
+  expect(await embedQuery(s.app, "问题")).not.toBeNull();
+  expect(await embedPending(s.app)).toBe(2);
+  expect(s.calls).toHaveLength(3);
 });
 
 it("错误维度和条数整批作废，暂停后台并保留积压", async () => {
@@ -76,7 +88,7 @@ it("服务错误重试三次，普通 4xx 只试一次，超时查询退回无�
   s.app.config.embeddings.timeoutMs = 180;
   s.hang();
   expect(await embedQuery(s.app, "问题")).toBeNull();
-  expect(s.calls.length).toBeGreaterThan(4);
+  expect(s.calls).toHaveLength(5);
 });
 
 it("预览模型、维度和服务地址变更，只有确认后清空索引", async () => {
