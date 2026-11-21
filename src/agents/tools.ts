@@ -2459,7 +2459,7 @@ def({
   write: true, schema: z.object({ item: z.string(), flow: z.string().optional().describe("流程名；不传就是对事项已有的流程开下一轮") }), handler: async (ctx, a) => {
     flowItem(ctx, a.item, true);
     const engine = await import("../flows/engine.ts");
-    return JSON.stringify(a.flow ? await engine.startFlow(ctx.app, a.item, a.flow, flowActor(ctx)) : await engine.startRound(ctx.app, a.item, flowActor(ctx)));
+    return JSON.stringify(a.flow ? await engine.startFlow(ctx.app, a.item, a.flow, flowActor(ctx), ctx.spaces) : await engine.startRound(ctx.app, a.item, flowActor(ctx)));
   },
 });
 def({

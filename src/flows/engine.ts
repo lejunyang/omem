@@ -1,3 +1,4 @@
+import { spacesWithCapability } from "../auth/capabilities.ts";
 import { requireItem } from "../items/access.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { latestEach, testsOfRuns } from "../items/req-tests.ts";
@@ -17,7 +18,7 @@ import { getItem, type Item } from "../items/store.ts";
 import { addLocalMaterials, materialsBrief } from "../items/materials.ts";
 import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
-import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { flowAppliesTo, flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { codeWorkSettledAt, codeWorkSince, findObject, latestCodeWork, objectKind } from "./objects.ts";
 import { pollObjects } from "./plugin-objects.ts";
@@ -458,11 +459,14 @@ export function startRound(app: App, itemId: string, by: FlowActor, at = new Dat
   });
 }
 
-export async function startFlow(app: App, itemId: string, flowId: string, by: FlowActor) {
+export async function startFlow(app: App, itemId: string, flowId: string, by: FlowActor, runSpaces: string[] | null = null) {
   attachFlows(app);
   return serial(app, itemId, async () => {
-    const item = getItem(app, itemId);
-    const f = readFlow(app, flowId);
+    const item = by.userId ? requireItem(app, itemId, by.userId, "flow") : getItem(app, itemId);
+    const range = by.userId ? spacesWithCapability(app, by.userId, "flows.view") : null;
+    const visibleSpaces = range && new Set(runSpaces ? range.filter(id => runSpaces.includes(id)) : range);
+    const f = readFlow(app, flowId, visibleSpaces);
+    if (visibleSpaces && !flowAppliesTo(f, item)) throw new HttpError(400, "这个流程不适用于该事项");
     if (itemFlow(app, itemId)?.endedAt === null) throw new HttpError(409, "事项已经在走一个流程");
     atomic(app, () => {
       for (const s of itemStages(app, itemId)) { withdraw(app, s); dropUpstream(app, s, "重新开始了流程"); }

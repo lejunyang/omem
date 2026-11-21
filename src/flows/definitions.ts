@@ -132,11 +132,20 @@ export function listFlows(app: App): FlowFile[] {
     } catch (e) { return { id, raw, definition: null, problem: (e as Error).message }; }
   });
 }
-export function readFlow(app: App, id: string): FlowDefinition {
+export function readFlow(app: App, id: string, visibleSpaces: ReadonlySet<string> | null = null): FlowDefinition {
   const path = file(app, id);
-  if (!existsSync(path)) throw new HttpError(404, `没有流程 ${id}`);
-  const f = parseFlow(readFileSync(path, "utf8"));
-  if (f.id !== id) throw new HttpError(400, "定义 id 必须与文件名相同");
+  const missing = () => new HttpError(404, `没有流程 ${id}`);
+  if (!existsSync(path)) throw missing();
+  const raw = readFileSync(path, "utf8");
+  let f: FlowDefinition;
+  try {
+    f = parseFlow(raw);
+    if (f.id !== id) throw new HttpError(400, "定义 id 必须与文件名相同");
+  } catch (error) {
+    if (visibleSpaces) throw missing();
+    throw error;
+  }
+  if (!flowVisibleIn(f, visibleSpaces)) throw missing();
   return f;
 }
 export function saveFlow(app: App, raw: string, by: string) {
@@ -154,6 +163,10 @@ export function removeFlow(app: App, id: string, by = "user") {
   unlinkSync(path);
   pruneGateGrants(app, id, []);
   commitLibrary(app.libraryDir, `${by}: 删除流程 ${id}`);
+}
+export function flowAppliesTo(definition: FlowDefinition, item: Pick<Item, "kind" | "spaceId">) {
+  const kinds = definition.for?.kinds;
+  return (!kinds || kinds.some(kind => kind === item.kind)) && flowVisibleIn(definition, new Set([item.spaceId]));
 }
 export function flowsFor(app: App, item: Pick<Item, "kind" | "spaceId">, flows = listFlows(app)) {
   return flows.flatMap((f) => f.definition && (!f.definition.for?.kinds || (f.definition.for.kinds as string[]).includes(item.kind)) && (!f.definition.for?.spaces || f.definition.for.spaces.includes(item.spaceId)) ? [f.definition] : []);
