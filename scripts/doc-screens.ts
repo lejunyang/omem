@@ -21,8 +21,10 @@ import { findAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createSession, pluginContext } from "../src/plugins/blocks.ts";
 import { getPlugin, loadPlugins } from "../src/plugins/registry.ts";
-import { itemProviders } from "../src/plugins/process-hooks.ts";
+import { itemProviders, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
 import { pluginStore } from "../src/plugins/store.ts";
+import { registerFormats } from "../src/plugins/formats.ts";
+import type { PluginManifest } from "../src/plugins/registry.ts";
 import { applyAttempt, type Attempt } from "../plugins/english/learner.ts";
 import { recordReview } from "../src/agents/review.ts";
 import { addRunEvent, createRun, setRunOutput } from "../src/agents/runs.ts";
@@ -1073,6 +1075,52 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   });
 }
 
+// ---- 插件参与检索 (src/search/providers.ts): a fictional plugin with two recall routes and a reranker ----
+// Registered in process like the platform above; nothing is turned on, the `search-providers` shot does that.
+{
+  const context = (_app: App, userId: string, spaceId: string, signal: AbortSignal) => ({ userId, spaceId, signal, connection: async () => null });
+  retrievers.set("library:lookup", { plugin: "library", spaces: [], context, def: { id: "lookup", label: "示例资料库检索", async search() { return []; } } });
+  retrievers.set("library:tickets", { plugin: "library", spaces: ["shop"], context, def: { id: "tickets", label: "相似工单", async search() { throw new Error("资料库服务没有响应（演示）"); } } });
+  rerankers.set("library:rank", { plugin: "library", spaces: [], context, def: { id: "rank", label: "示例相关性模型", async score(_ctx, { candidates }) { return candidates.map((_, i) => -i); } } });
+}
+
+// ---- 读一种新格式、页面类型 (src/plugins/formats.ts): a fictional plugin's parsers and page kind ----
+// Two sources it read (a table and records) and a Wiki page of its kind. Registered in process.
+const sampleTable = upsertSource(app, { spaceId: "shop", kind: "doc", uri: "data/十月退款抽样.csv", title: "十月退款单抽样", text: [
+  "# 十月退款单抽样", "", "| 单号 | 原因 | 金额 | 状态 |", "|---|---|---|---|",
+  ...([["R1001", "尺码不合适", "129.00", "已退款"], ["R1002", "质量问题：开线", "89.50", "已退款"], ["R1003", "物流太慢", "45.00", "退款中"], ["R1004", "与描述不符", "260.00", "已退款"], ["R1005", "部分发货，只退已发货的一件", "39.90", "退款中"], ["R1006", "不想要了", "18.00", "已拒绝"], ["R1007", "质量问题：褪色", "72.00", "已退款"], ["R1008", "满减分摊后差一分钱", "0.01", "已退款"], ["R1009", "尺码不合适", "149.00", "退款中"], ["R1010", "物流太慢", "35.00", "已退款"]].map((r) => `| ${r.join(" | ")} |`)),
+].join("\n"), meta: {
+  parser: { id: "sheets:csv", version: "1" }, fields: { 来源: "售后导出" },
+  display: { kind: "table", columns: ["单号", "原因", "金额", "状态"], rowLines: Array.from({ length: 10 }, (_, i) => [5 + i, 5 + i]) },
+} }).id;
+const replyRecords = [
+  { title: "部分发货的退款怎么算", body: ["只退已发货的行，未发货的行直接取消，不进退款单。", "满减按各行实付比例分摊，尾差归最后一行。"] },
+  { title: "退款金额显示成负数", body: ["是旧版本的缺陷，已修复；请用户刷新页面后重新提交。"] },
+  { title: "退款多久到账", body: ["原路退回 1–3 个工作日；退到余额即时到账。", "超过 5 个工作日没到，转人工核对支付流水。"] },
+  { title: "发票已开的订单能退吗", body: ["能退，退款完成后发票自动红冲，不用用户操作。"] },
+];
+const recordLines: string[] = [];
+const recordItems = replyRecords.map((r) => {
+  const start = recordLines.length + 1;
+  recordLines.push(r.title, ...r.body);
+  return { title: r.title, lines: [start, recordLines.length] as [number, number] };
+});
+const sampleRecords = upsertSource(app, { spaceId: "shop", kind: "doc", uri: "data/客服话术.jsonl", title: "客服话术库", text: recordLines.join("\n"), meta: {
+  parser: { id: "sheets:jsonl", version: "1" }, display: { kind: "records", items: recordItems },
+} }).id;
+{
+  const context = (_app: App, userId: string, spaceId: string, signal: AbortSignal) => ({ userId, spaceId, signal, connection: async () => null });
+  const formats = registerFormats({ id: "sheets", permissions: { sourceParser: true, wikiPageKind: true } } as unknown as PluginManifest, "1", [], context, []);
+  formats.sourceParser({ id: "csv", label: "表格（CSV）", match: { extensions: [".csv"], mimeTypes: ["text/csv"] }, async parse() { return { text: "" }; } });
+  formats.sourceParser({ id: "jsonl", label: "逐行 JSON 记录", match: { extensions: [".jsonl"], urlPatterns: ["https://*/*.jsonl"] }, async parse() { return { text: "" }; } });
+  formats.wikiPageKind({ kind: "runbook", label: "处理手册", describe: "遇到某一类问题时，一步步怎么查、怎么处理、找谁。", template: "## 现象\n## 先查什么\n## 怎么处理\n## 找谁" });
+}
+writePage(app, "shop", "ops/runbook-negative-amount", { meta: { title: "退款金额显示成负数怎么处理", kind: "runbook", summary: "用户反馈退款金额是负数时，客服和值班各做什么" }, body: [
+  "## 现象", `部分发货的订单申请退款时，申请页的金额显示成负数（[话术](src:${sampleRecords}#L4-L4)）。`, "",
+  "## 先查什么", `看这单是不是满减订单、有没有未发货的行；[十月抽样](src:${sampleTable}#L9-L9)里有一单同样的情况。`, "",
+  "## 怎么处理", "请用户刷新后重新提交；仍是负数的转值班。", "", "## 找谁", "后端值班：小王。",
+].join("\n") }, { actor: "wiki-writer" });
+
 // ---- other people (src/auth/capabilities.ts) ---------------------------------------------------
 // 小周 reads the shop's work as a read-only observer; 小林 is a member with two capabilities set
 // apart from the preset and one space set on its own. Their tokens log the page in as them.
@@ -1132,6 +1180,51 @@ async function prepareNetworkDemo(page: Page) {
     await route.fulfill({ json: data });
   });
 }
+/**
+ * 远程 → 交给成员 (src/remote/grants.ts): the demo machine opens no real browser (that needs aad), so the
+ * session list, its picture and the grant requests are answered here; members and their capabilities
+ * are answered too, so the demo library's own members stay as the other shots show them.
+ */
+async function prepareRemoteDemo(page: Page) {
+  const at = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
+  const session = {
+    id: "rs_demo1", kind: "browser", title: "退款后台 · 售后单", createdAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+    browser: { name: "Chrome", url: "https://admin.example.com/refund/R1005", profile: "后台" }, window: null, recording: null, viewers: 2,
+    ownerId: "owner", ownerName: "本人", mine: true, grant: null, runId: null, spaceId: null, connections: [],
+    grants: [{ id: "rg_demo1", sessionId: "rs_demo1", userId: "xiaolin", userName: "小林", mode: "operate", expiresAt: at(1.5), connected: true }],
+  };
+  const agent = { ...session, id: "rs_demo2", title: "预发 · 退款申请页", browser: { name: "Chrome", url: "https://staging.example.com/refund/apply", profile: null }, viewers: 0, runId: "r_demo_check", spaceId: "shop", grants: [] };
+  const sessions = [session, agent];
+  const caps: Record<string, string[]> = { xiaozhou: ["remote.view"], xiaolin: ["remote.view", "remote.operate"], xiaowu: [] };
+  await page.route("**/api/remote", (r) => r.fulfill({ json: { available: true, version: "0.0.9", sessions, profiles: ["后台"], windowAvailable: true } }));
+  await page.route("**/api/remote/recordings", (r) => r.fulfill({ json: [] }));
+  await page.route("**/api/remote/browser-profiles", (r) => r.fulfill({ json: [] }));
+  await page.route("**/api/remote/sessions/*/view", (r) => {
+    const id = r.request().url().split("/sessions/")[1].split("/")[0];
+    const s = sessions.find((x) => x.id === id)!;
+    return r.fulfill({ json: { ...s, src: `/remote/${id}/` } });
+  });
+  await page.route("**/remote/rs_demo*/", (r) => r.fulfill({ contentType: "text/html", body: `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:14px/1.6 system-ui,sans-serif;background:#eef1f4;color:#1f2937}header{background:#1f2937;color:#fff;padding:10px 20px;font-weight:600}main{padding:20px}table{border-collapse:collapse;background:#fff;width:100%}td,th{border-bottom:1px solid #e5e7eb;padding:8px 12px;text-align:left}</style><header>示例商城 · 售后后台</header><main><h3>售后单 R1005</h3><table><tr><th>商品</th><th>状态</th><th>实付</th></tr><tr><td>短袖 T 恤 × 1</td><td>已发货</td><td>39.90</td></tr><tr><td>帆布包 × 1</td><td>未发货</td><td>59.00</td></tr></table><p>应退：39.90（只退已发货的行）</p></main>` }));
+  await page.route("**/api/members/*/capabilities", (r) => {
+    const id = decodeURIComponent(r.request().url().split("/api/members/")[1].split("/")[0]);
+    return r.fulfill({ json: { preset: "member", overrides: [], caps: caps[id] ?? [], spaceCaps: {}, ownSpaceCaps: {}, effective: {} } });
+  });
+  await page.route("**/api/remote/sessions/*/grants**", async (r) => {
+    const req = r.request();
+    const body = req.postDataJSON?.() ?? {};
+    const grantId = req.url().split("/grants/")[1];
+    if (req.method() === "POST") {
+      const name = { xiaozhou: "小周", xiaolin: "小林", xiaowu: "小吴" }[body.userId as string] ?? body.userId;
+      session.grants.push({ id: `rg_${body.userId}`, sessionId: session.id, userId: body.userId, userName: name, mode: body.mode, expiresAt: at(body.hours ?? 2), connected: false });
+    } else if (req.method() === "PATCH") {
+      const g = session.grants.find((x) => x.id === grantId)!;
+      if (body.mode) g.mode = body.mode;
+      if (body.hours) g.expiresAt = at(body.hours);
+    } else session.grants = session.grants.filter((x) => x.id !== grantId);
+    await r.fulfill({ json: { ok: true } });
+  });
+}
+
 const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; before?: (page: Page) => Promise<void>; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "item-flow", path: `/items/${flowItem.id}`, width: 1440, prepare: async (p) => { await p.getByRole("region", { name: "事项流程", exact: true }).scrollIntoViewIfNeeded(); } },
   // The start page (工作): the two lines, then 按时间, then one line's own page with 问这条线 open.
@@ -1314,6 +1407,50 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await card.scrollIntoViewIfNeeded();
     await p.locator(".toast").waitFor({ state: "detached", timeout: 8000 }).catch(() => {});
     await p.waitForTimeout(300);
+  } },
+  // 插件参与检索: two recall routes turned on through the page (one limited to a space), a search so
+  // each shows its last call (one of them fails on purpose), and the plugin's reranker picked.
+  { name: "search-providers", path: "/settings?card=search-providers", prepare: async (p) => {
+    const card = p.locator("#set-search-providers");
+    await card.waitFor();
+    for (const name of ["示例资料库检索参与召回", "相似工单参与召回"]) {
+      const sw = card.getByRole("switch", { name });
+      if ((await sw.getAttribute("aria-checked")) !== "true") { await sw.click(); await p.waitForTimeout(400); }
+    }
+    await card.getByRole("combobox", { name: "示例资料库检索对哪些空间生效" }).click();
+    await p.getByRole("option", { name: /示例商城/ }).click();
+    await p.keyboard.press("Escape");
+    await p.waitForTimeout(400);
+    await card.getByRole("combobox", { name: "用谁重排" }).click();
+    await p.getByRole("option", { name: /示例相关性模型/ }).click();
+    await p.waitForTimeout(400);
+    const rr = p.locator("#set-rerank").getByRole("switch", { name: "开启重排" });
+    if ((await rr.getAttribute("aria-checked")) !== "true") { await rr.click(); await p.waitForTimeout(400); }
+    await p.evaluate(async () => {
+      await fetch("/api/search?q=" + encodeURIComponent("部分发货 退款") + "&space=shop");
+    });
+    await p.reload();
+    await card.waitFor();
+    await p.locator(".toast").waitFor({ state: "detached", timeout: 8000 }).catch(() => {});
+    await card.scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // 远程 → 交给成员: 小林 already operates it; 小周 is handed it to watch for two hours through the sheet.
+  { name: "remote-grants", path: "/remote", before: prepareRemoteDemo, prepare: async (p) => {
+    await p.getByRole("button", { name: /交给成员/ }).click();
+    const sheet = p.getByRole("dialog", { name: "交给成员" });
+    await sheet.getByRole("combobox", { name: "交给谁" }).click();
+    await p.getByRole("option", { name: /小周/ }).click();
+    await sheet.getByRole("radio", { name: "2 小时" }).click();
+    await sheet.getByRole("button", { name: "交给他" }).click();
+    await sheet.getByText("小周").first().waitFor();
+    await p.locator(".toast").waitFor({ state: "detached", timeout: 8000 }).catch(() => {});
+    await p.waitForTimeout(300);
+  } },
+  // A source a plugin read as a table: one row picked, so its lines and citation show above the table.
+  { name: "source-table", path: `/sources/${sampleTable}`, prepare: async (p) => {
+    await p.getByRole("row", { name: /R1005/ }).click();
+    await p.waitForTimeout(500);
   } },
   // An item that came from the platform, closed on this side: the write-back waits for a yes.
   // What a member may do (components/MemberCaps.vue): 小林's capabilities, one space opened.

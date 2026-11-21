@@ -19,6 +19,8 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import SourceAttention, { type SourceNote } from "../components/SourceAttention.vue";
 import DigestJobs from "../components/DigestJobs.vue";
+import SourceStructured from "../components/SourceStructured.vue";
+import { sourceDisplay, type Lines } from "../lib/source-display";
 import { currentSpace, fmtTime, relTime, state, toast } from "../store";
 
 type Detail = {
@@ -198,6 +200,12 @@ async function loadDetail(full = wantAll.value) {
     const range = full ? "from=1&to=100000000" : h ? `from=${Math.max(1, h.from - WINDOW / 2)}&to=${h.to + WINDOW / 2}` : `window=${WINDOW}`;
     const d = await get<Detail>(`/api/sources/${id.value}?${range}`);
     if (seq !== detailSeq || d.source.id !== id.value) return;
+    // A table or records cover the whole text: their rows are line ranges of all of it.
+    if (!full && sourceDisplay(d.source.meta) && (d.lineStart > 1 || d.lineEnd < d.source.lines)) {
+      wantAll.value = true;
+      return void (await loadDetail(true));
+    }
+    if (detail.value?.source.id !== d.source.id) structured.value = "struct";
     detail.value = d;
     moveTarget.value = d.source.spaceId;
     const history = await get<typeof archive.value>(`/api/sources/${d.source.id}/archive`);
@@ -316,6 +324,43 @@ async function backfill() {
   }
 }
 const isMarkdown = computed(() => !!detail.value && readsAsDocument(detail.value.source));
+/** A plugin's parser read it as a table or records (lib/source-display.ts): shown that way first. */
+const display = computed(() => (detail.value && !detail.value.source.deletedAt ? sourceDisplay(detail.value.source.meta) : null));
+const structured = ref<"struct" | "text">("struct");
+const showStructured = computed(() => !!display.value && structured.value === "struct");
+const viewOptions = computed(() => [{ value: "struct", label: display.value?.kind === "table" ? "表格" : "条目" }, { value: "text", label: "原文" }]);
+/** The parsers this space can use (`GET /api/sources/parsers`), to name the one that read a source. */
+const parsers = ref<{ id: string; label: string; plugin: string }[] | null>(null);
+let parsersFor = "";
+async function loadParsers(space: string) {
+  if (parsersFor === space) return;
+  parsersFor = space;
+  try {
+    parsers.value = await get<{ id: string; label: string; plugin: string }[]>(`/api/sources/parsers?space=${encodeURIComponent(space)}`);
+  } catch {
+    parsers.value = null;
+    parsersFor = "";
+  }
+}
+const parserId = computed<string | null>(() => {
+  const p = detail.value?.source.meta?.parser;
+  return p && typeof p.id === "string" ? p.id : null;
+});
+watch(parserId, (p) => { if (p && detail.value) void loadParsers(detail.value.source.spaceId); }, { immediate: true });
+/** “由 ×× 读成这样”, or that the plugin that read it is no longer running. */
+const parserLine = computed(() => {
+  if (!parserId.value || !parsers.value) return "";
+  const p = parsers.value.find((x) => x.id === parserId.value);
+  return p ? `由${p.label}读成这样` : "读它的插件停用了";
+});
+function pickLines([from, to]: Lines) {
+  void router.replace({ query: { ...route.query, from: String(from), to: String(to) } });
+}
+function rawAt(lines: Lines) {
+  structured.value = "text";
+  raw.value = true;
+  pickLines(lines);
+}
 /** A cited document: the text before, the cited blocks (highlighted, scrolled to) and after. */
 const docParts = computed(() => (detail.value && hl.value ? citedDocumentParts(detail.value.text, detail.value.lineStart, hl.value.from, hl.value.to) : null));
 const citedEl = ref<HTMLElement>();
@@ -449,8 +494,10 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
             <span class="badge">{{ detail.source.kind }}</span>
             <span class="muted small">{{ detail.source.lines }} 行 · 更新于 {{ fmtTime(detail.source.updatedAt) }} · 首次保存 {{ fmtTime(detail.source.capturedAt, false) }}</span>
             <span v-if="detail.source.kind === 'work'" class="muted small">{{ detail.source.meta?.expiresAt ? `${fmtTime(String(detail.source.meta.expiresAt))} 过期` : "永久保留" }}</span>
+            <span v-if="parserLine" class="muted small" :title="parserId ?? undefined">{{ parserLine }}</span>
             <span class="spacer" />
-            <button v-if="isMarkdown || isChat" class="btn ghost sm" @click="raw = !raw">{{ raw ? (isChat ? "聊天视图" : "排版视图") : "原文行号" }}</button>
+            <UiSegmented v-if="display" v-model="structured" size="sm" aria-label="怎么看这份原件" :options="viewOptions" />
+            <button v-if="(isMarkdown || isChat) && !showStructured" class="btn ghost sm" @click="raw = !raw">{{ raw ? (isChat ? "聊天视图" : "排版视图") : "原文行号" }}</button>
             <button v-if="larkChatId" class="btn ghost sm" title="把更早的消息也读进来" @click="backfill"><Icon name="history" :size="14" />回溯历史</button>
             <button class="btn ghost sm" @click="makeCards"><Icon name="cap" :size="14" />生成卡片</button>
             <button class="btn ghost sm icon danger" title="移除" @click="remove"><Icon name="trash" :size="14" /></button>
@@ -484,7 +531,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
               显示第 {{ detail.lineStart }}–{{ detail.lineEnd }} 行，共 {{ detail.source.lines }} 行
               <button class="btn ghost sm" :disabled="detailLoading" @click="loadAll">加载全部</button>
             </div>
-            <ChatView v-if="isChat && !raw" :source-id="detail.source.id" :text="detail.text" :start="detail.lineStart" :space="detail.source.spaceId" :from="hl?.from" :to="hl?.to" />
+            <SourceStructured v-if="showStructured && display" :source-id="detail.source.id" :text="detail.text" :start="detail.lineStart" :display="display" :space="detail.source.spaceId" :from="hl?.from" :to="hl?.to" @pick="pickLines" @raw="rawAt" />
+            <ChatView v-else-if="isChat && !raw" :source-id="detail.source.id" :text="detail.text" :start="detail.lineStart" :space="detail.source.spaceId" :from="hl?.from" :to="hl?.to" />
             <CodeView v-else-if="raw || !isMarkdown" :text="detail.text" :start="detail.lineStart" :path="detail.source.uri" :from="hl?.from" :to="hl?.to" :wrap="isMarkdown || isChat" />
             <div v-else-if="docParts?.cited.trim()" class="card pad doc">
               <Markdown v-if="docParts.before.trim()" :source="docParts.before" :space="detail.source.spaceId" />

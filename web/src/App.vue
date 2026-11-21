@@ -64,14 +64,16 @@ async function addPluginPages() {
   rest.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon, member: true })));
   nav.value = rest;
 }
-// Remote operation (views/Remote.vue) only where this machine has ai-auto-desktop installed.
+// Remote operation (views/Remote.vue) only where this machine has ai-auto-desktop installed: for those who
+// control it, and for those who may be handed a session (看 / 操作授权给他的远程会话).
 async function addRemotePage() {
-  if (!hasPerm("desktop.control")) return;
+  const handed = hasCap("remote.view") ? "remote.view" : hasCap("remote.operate") ? "remote.operate" : undefined;
+  if (!hasPerm("desktop.control") && !handed) return;
   const r = await get<{ available: boolean }>("/api/remote").catch(() => ({ available: false }));
   if (r.available && !nav.value.some((n) => n.to === "/remote")) {
     const list = [...nav.value];
     const at = list.findIndex((n) => n.to === "/runs");
-    list.splice(at < 0 ? list.length : at, 0, { to: "/remote", label: "远程", icon: "monitor", perm: "desktop.control" });
+    list.splice(at < 0 ? list.length : at, 0, { to: "/remote", label: "远程", icon: "monitor", perm: "desktop.control", ...(handed ? { cap: handed } : {}) });
     nav.value = list;
   }
 }
@@ -99,7 +101,9 @@ const allowed = (n: NavEntry) =>
 // The owner finds the flow board on the work page (按阶段); everyone else in the nav.
 const shownNav = computed(() => nav.value.filter(allowed).filter((n) => !(n.to === "/board" && owner.value)));
 // Pages someone other than the owner may open: the nav they see, a line's page under 工作, the graph (Wiki), their account.
-const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account", ...(hasPerm("users.manage") ? ["/settings"] : [])]);
+const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account", ...(hasPerm("users.manage") ? ["/settings"] : []),
+  // 远程 joins the nav only after asking whether this machine has it: a link opened straight at it is judged before that.
+  ...(hasPerm("desktop.control") || hasCap("remote.view") || hasCap("remote.operate") ? ["/remote"] : [])]);
 // Landing on a page they cannot use (the start page, an old link) goes to 问答, without drawing it first
 // (its requests would only come back refused).
 // Until the router has resolved the address the page was opened at (its view loads on demand), the path

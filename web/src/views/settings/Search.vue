@@ -4,6 +4,7 @@ import { get } from "../../api";
 import { intIn, useBackends, useSettings, type ModelSource, type RerankStatus } from "./ctx";
 import HelpText from "../../components/HelpText.vue";
 import Icon from "../../components/Icon.vue";
+import SearchProviders from "../../components/SearchProviders.vue";
 import SetCard from "../../components/SetCard.vue";
 import SetRow from "../../components/SetRow.vue";
 import Skeleton from "../../components/Skeleton.vue";
@@ -112,6 +113,8 @@ function removeCompare(i: number) {
         </template>
       </template>
     </SetCard>
+
+    <SearchProviders />
 
     <SetCard v-if="config.memory?.passive" id="set-passive-memory" title="对话前带上相关记忆">
       <template #help>你发消息时，先按这条消息找相似的记忆（事实、约定、人物、决定），相似度过了门槛的最多 {{ config.memory.passive.limit }} 条附在消息后面，助理不用先想起来去查。没过门槛就什么都不加。需要开启向量检索。门槛越高带得越少、越准：0.6 时，有相关记忆的问题约八成能带上，带上的约 96% 相关；无关的问题约一成会带上一两条（bge-small-zh，见 docs/v2/evaluation.md）。</template>

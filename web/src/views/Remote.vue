@@ -4,18 +4,23 @@ import { useRoute } from "vue-router";
 import { del, get, post, put } from "../api";
 import Icon from "../components/Icon.vue";
 import RemoteChat from "../components/RemoteChat.vue";
+import RemoteGrants from "../components/RemoteGrants.vue";
 import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect, { type SelectOption } from "../components/UiSelect.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { relTime, toast } from "../store";
+import { hasPerm } from "../lib/caps";
+import { endedMessage, expiryLabel, MODE_LABEL, type RemoteGrant } from "../lib/remote-grants";
 
 /**
  * Remote operation (docs/v2/remote.md): a browser page or the desktop of the machine omem runs on,
  * shown through aad's viewer, with a recording that the assistant beside it turns into a skill.
  */
-type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; window: string | null; recording: string | null; viewers: number; src?: string };
+type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; window: string | null; recording: string | null; viewers: number; src?: string;
+  /** Whose it is; `grant`: what this person was handed; `grants`: who the owner handed it to (owner only); `runId`: opened by a run. */
+  ownerId?: string; ownerName?: string; mine?: boolean; grant?: RemoteGrant | null; grants?: RemoteGrant[]; runId?: string | null; spaceId?: string | null };
 type BrowserProfile = { browser: "chrome" | "edge" | "brave"; id: string; name: string };
 type Recording = { id: string; kind: "browser" | "desktop"; goal: string; target: string; status: "recording" | "done" | "failed"; summary: Record<string, any>; conversationId: string | null; skill: string | null; createdAt: string };
 type Settings = { format: string; quality: number; fps: number; maxWidth: number; cursor: boolean; clipboard: boolean; clipboardMaxMb: number; browser: "" | "chrome" | "edge" | "brave" };
@@ -87,7 +92,7 @@ async function load() {
     profiles.value = r.profiles;
     windowAvailable.value = r.windowAvailable;
     if (!r.windowAvailable) visible.value = false;
-    if (r.available) recordings.value = await get<Recording[]>("/api/remote/recordings");
+    if (r.available && canControl.value) recordings.value = await get<Recording[]>("/api/remote/recordings");
     if (soloId.value) {
       const s = r.sessions.find((x) => x.id === soloId.value);
       if (s) await show(s);
@@ -99,6 +104,58 @@ async function load() {
     loading.value = false;
   }
 }
+/**
+ * Opening sessions, recording and the picture settings are for those who control this machine
+ * (`desktop.control`); someone handed a session only sees the sessions handed to them.
+ */
+const canControl = computed(() => hasPerm("desktop.control"));
+/** Said in place of the picture when a session handed to this person was taken back or ran out. */
+const lost = ref("");
+/** The session whose 交给成员 sheet is open. */
+const grantsFor = ref<string | null>(null);
+const grantsSession = computed(() => sessions.value.find((s) => s.id === grantsFor.value) ?? null);
+
+/**
+ * The list again (every 15 seconds, and when a grant runs out): who is watching, grants changed by the
+ * owner. A session handed to this person that left the list ends with a sentence, not an error; a
+ * changed mode loads the picture again with it.
+ */
+async function refresh() {
+  const r = await get<{ sessions: Session[] }>("/api/remote").catch(() => null);
+  if (!r) return;
+  sessions.value = r.sessions;
+  const a = active.value;
+  if (!a) return;
+  const now = r.sessions.find((s) => s.id === a.id);
+  if (!now) return void (a.grant ? endHanded(a) : undefined);
+  const modeChanged = !!a.grant && !!now.grant && now.grant.mode !== a.grant.mode;
+  active.value = { ...a, ...now, src: a.src };
+  if (modeChanged) void reconnect(true);
+}
+function endHanded(s: Session) {
+  if (!s.grant) return;
+  lost.value = endedMessage(s.grant, s.ownerName);
+  sessions.value = sessions.value.filter((x) => x.id !== s.id);
+  if (active.value?.id === s.id) active.value = null;
+  clearReconnect();
+}
+let poll: ReturnType<typeof setInterval> | null = null;
+let expiry: ReturnType<typeof setTimeout> | null = null;
+onMounted(() => (poll = setInterval(() => { if (!document.hidden) void refresh(); }, 15_000)));
+onBeforeUnmount(() => { if (poll) clearInterval(poll); if (expiry) clearTimeout(expiry); });
+// A grant that runs out while it is open: look again right then.
+watch(() => active.value?.grant?.expiresAt, (at) => {
+  if (expiry) clearTimeout(expiry);
+  expiry = at ? setTimeout(() => void refresh(), Math.min(2_147_483_647, Math.max(0, Date.parse(at) - Date.now()) + 1500)) : null;
+});
+const handedLine = computed(() => {
+  const g = active.value?.grant;
+  if (!g || active.value?.mine) return "";
+  const owner = active.value?.ownerName ?? "会话的主人";
+  const until = expiryLabel(g.expiresAt, tick.value || Date.now());
+  return g.mode === "view" ? `只能看，不能点和输入 · ${owner}交给你的 · ${until}` : `${owner}交给你操作 · ${until}`;
+});
+const viewOnly = computed(() => !!active.value?.grant && !active.value.mine && active.value.grant.mode === "view");
 async function loadScreens(again = false) {
   if (screens.value && !again) return;
   const next = await get<Screens>("/api/remote/screens").catch((e) => (toast((e as Error).message, "error"), null));
@@ -256,7 +313,8 @@ async function reconnect(byHand = false) {
     active.value = { ...s, ...next };
     frameKey.value++;
   } catch (e) {
-    if ((e as { status?: number }).status === 404 || /已经结束/.test((e as Error).message)) {
+    if (s.grant && !s.mine && ((e as { status?: number }).status === 403 || /有效授权/.test((e as Error).message))) endHanded(s);
+    else if ((e as { status?: number }).status === 404 || /已经结束/.test((e as Error).message)) {
       toast("远程会话已经结束", "error");
       sessions.value = sessions.value.filter((x) => x.id !== s.id);
       if (active.value?.id === s.id) active.value = null;
@@ -272,7 +330,13 @@ onBeforeUnmount(() => {
 
 async function show(s: Session) {
   clearReconnect();
-  active.value = { ...s, ...(await post<Session>(`/api/remote/sessions/${s.id}/view`)) };
+  lost.value = "";
+  try {
+    active.value = { ...s, ...(await post<Session>(`/api/remote/sessions/${s.id}/view`)) };
+  } catch (e) {
+    if (s.grant && !s.mine) return endHanded(s);
+    throw e;
+  }
   address.value = s.browser?.url ?? "";
   if (s.recording) startedAt.value = startedAt.value || Date.now();
   if (s.kind === "desktop") void loadScreens(true);
@@ -524,21 +588,24 @@ const counts = (r: Recording) => {
             >
               <Icon :name="s.kind === 'browser' ? 'globe' : 'monitor'" :size="14" />
               <span class="ellipsis">{{ s.title }}</span>
+              <span v-if="s.runId" class="stab-tag" title="助手在一次运行里打开的">助手</span>
+              <span v-if="!s.mine && s.ownerName" class="stab-tag">{{ s.ownerName }}的</span>
+              <span v-if="s.grants?.length" class="stab-tag on" :title="`交给了 ${s.grants.map((g) => g.userName).join('、')}`">交给 {{ s.grants.length }} 人</span>
               <span v-if="s.recording" class="dot" title="录制中" />
-              <button class="x" :aria-label="`关闭 ${s.title}`" title="关闭会话" @click.stop="close(s)"><Icon name="x" :size="13" /></button>
+              <button v-if="canControl && s.mine !== false" class="x" :aria-label="`关闭 ${s.title}`" title="关闭会话" @click.stop="close(s)"><Icon name="x" :size="13" /></button>
             </div>
-            <button class="stab add" :class="{ on: !active }" role="tab" :aria-selected="!active" title="打开新的远程画面" @click="active = null">
+            <button v-if="canControl" class="stab add" :class="{ on: !active }" role="tab" :aria-selected="!active" title="打开新的远程画面" @click="active = null">
               <Icon name="plus" :size="14" /><span v-if="!sessions.length || !active">新会话</span>
             </button>
           </div>
           <span v-else class="spacer" />
-          <div class="tools">
+          <div v-if="canControl" class="tools">
             <span class="muted small nowrap">aad {{ version }}</span>
             <button class="btn sm" :class="showSettings ? 'primary' : 'ghost'" :aria-expanded="showSettings" @click="toggleSettings"><Icon name="settings" :size="14" />画面设置</button>
           </div>
         </div>
 
-        <div v-if="showSettings && !soloId" class="settings card pad">
+        <div v-if="showSettings && !soloId && canControl" class="settings card pad">
           <Skeleton v-if="!settings" :rows="3" />
           <template v-else>
             <div class="grid">
@@ -570,7 +637,12 @@ const counts = (r: Recording) => {
           </template>
         </div>
 
-        <div v-if="!active" class="opener card pad stack">
+        <div v-if="!active && !canControl" class="handed-empty card pad" role="status">
+          <h2>{{ lost || "现在没有交给你的远程会话" }}</h2>
+          <p class="muted small">{{ sessions.length ? "上面是别人交给你的会话，点一个打开。" : "有人把浏览器会话交给你时，会出现在这里。" }}</p>
+        </div>
+        <div v-else-if="!active" class="opener card pad stack">
+          <p v-if="lost" class="lost small" role="status">{{ lost }}</p>
           <h2>打开远程画面</h2>
           <UiSegmented v-model="kind" :options="[{ value: 'browser', label: '浏览器' }, { value: 'desktop', label: '桌面' }]" aria-label="打开什么" @change="kind === 'desktop' && loadScreens(true)" />
           <template v-if="kind === 'browser'">
@@ -600,17 +672,29 @@ const counts = (r: Recording) => {
         <div v-else ref="frameBox" class="frame" :class="{ full: fullscreen }">
           <component :is="active.kind === 'browser' ? 'form' : 'div'" class="address row" @submit.prevent="go">
             <router-link v-if="soloId && !fullscreen" to="/remote" class="btn ghost sm icon" aria-label="回到远程页" title="回到远程页（这个会话不会关）"><Icon name="left" :size="14" /></router-link>
-            <template v-if="active.kind === 'browser'">
+            <template v-if="active.kind === 'browser' && !viewOnly">
               <Icon name="globe" :size="15" />
               <input v-model="address" class="input grow" placeholder="输入网址，回车前往" aria-label="网址" />
               <button class="btn sm" :disabled="busy === 'go'">{{ busy === "go" ? "前往中…" : "前往" }}</button>
             </template>
-            <span v-else class="muted small grow ellipsis">{{ active.title }}</span>
+            <span v-else class="muted small grow ellipsis" :title="active.browser?.url ?? undefined">{{ active.browser?.url || active.title }}</span>
+            <button v-if="active.grants && active.kind === 'browser' && !fullscreen" type="button" class="btn ghost sm" :aria-label="`把 ${active.title} 交给成员`" title="把这个浏览器会话交给成员看或操作" @click="grantsFor = active.id"><Icon name="user" :size="14" />交给成员<span v-if="active.grants.length" class="badge n">{{ active.grants.length }}</span></button>
             <span v-if="active.recording && (soloId || fullscreen)" class="rec small nowrap"><span class="dot" />录制中 {{ elapsed }}</span>
             <button type="button" class="btn ghost sm icon" aria-label="刷新画面" :title="active.kind === 'browser' ? '重新连接画面（页面本身不刷新）' : '重新连接画面'" @click="reconnect(true)"><Icon name="refresh" :size="14" /></button>
             <button v-if="!soloId && !fullscreen" type="button" class="btn ghost sm icon" aria-label="单独打开" title="在新标签页里单独打开这个画面，占满整个网页" @click="openAlone"><Icon name="external" :size="14" /></button>
             <button v-if="canFullscreen" type="button" class="btn ghost sm icon" :aria-label="fullscreen ? '退出全屏' : '全屏操作'" :aria-pressed="fullscreen" :title="fullscreenTitle" @click="toggleFullscreen"><Icon :name="fullscreen ? 'minimize' : 'maximize'" :size="14" /></button>
           </component>
+          <div v-if="(handedLine || active.runId) && !fullscreen" class="handed small" :class="{ view: viewOnly }" role="status">
+            <template v-if="handedLine">
+              <Icon :name="viewOnly ? 'eye' : 'user'" :size="13" />
+              <span class="ellipsis" :title="handedLine">{{ handedLine }}</span>
+            </template>
+            <template v-if="active.runId">
+              <span v-if="handedLine" class="muted">·</span>
+              <span class="muted">助手开的</span>
+              <router-link v-if="active.mine || canControl" :to="`/runs/${active.runId}`">看这次运行</router-link>
+            </template>
+          </div>
           <div class="viewer">
             <iframe ref="frame" :key="`${active.id}:${frameKey}`" :src="active.src" :title="`远程画面：${active.title}`" allow="clipboard-read; clipboard-write" @load="frameLoaded" />
             <div v-if="reconnecting" class="reconnect small" role="status">
@@ -618,7 +702,7 @@ const counts = (r: Recording) => {
               <button class="btn ghost sm" @click="reconnect(true)"><Icon name="refresh" :size="13" />现在刷新</button>
             </div>
           </div>
-          <div v-if="!soloId && !fullscreen" class="controls row">
+          <div v-if="!soloId && !fullscreen && canControl && active.mine !== false" class="controls row">
             <template v-if="!active.recording">
               <input v-model="goal" class="input grow" placeholder="这次要教的事（一句话；也可以先在右边和助手说）" aria-label="这次要教的事" />
               <UiSelect
@@ -643,7 +727,7 @@ const counts = (r: Recording) => {
         </div>
       </section>
 
-      <aside v-if="!soloId" class="side">
+      <aside v-if="!soloId && canControl" class="side">
         <div class="side-head row"><strong>助手</strong><span class="spacer" /><button v-if="conversationId" class="btn ghost sm" @click="setConversation(null)">新对话</button></div>
         <RemoteChat ref="chat" class="chat" :conversation-id="conversationId" @update:conversation-id="setConversation" />
         <div class="recs">
@@ -661,6 +745,7 @@ const counts = (r: Recording) => {
         </div>
       </aside>
     </template>
+    <RemoteGrants v-if="grantsSession" :session="{ id: grantsSession.id, title: grantsSession.title, ownerId: grantsSession.ownerId ?? '', grants: grantsSession.grants }" @close="grantsFor = null" @changed="refresh" />
   </div>
 </template>
 
@@ -963,4 +1048,57 @@ const counts = (r: Recording) => {
     max-height: none;
   }
 }
-</style>
+/* Handing a session to members: small marks on the tab, a line above the picture for the member. */
+.stab-tag {
+  flex: none;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--muted);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.stab-tag.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.stab:has(.stab-tag) {
+  max-width: 300px;
+}
+.handed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  min-width: 0;
+}
+.handed.view {
+  background: var(--sunken);
+}
+.handed > .ellipsis {
+  min-width: 0;
+}
+.handed-empty {
+  max-width: 600px;
+  width: 100%;
+  margin: auto;
+  box-sizing: border-box;
+  display: grid;
+  gap: 8px;
+}
+.handed-empty h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+.handed-empty p,
+.opener .lost {
+  margin: 0;
+}
+.opener .lost {
+  color: var(--ink-2);
+}</style>
