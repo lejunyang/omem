@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { matchQuery, terms } from "./tokenize.ts";
 import { vectorSearch } from "./embeddings.ts";
-import { retrieve, pluginHitFilter, selectedReranker, type Retrieved } from "./providers.ts";
+import { retrieve, pluginHitFilter, selectedReranker, type SharedSearchAccess, type Retrieved } from "./providers.ts";
 import { rerankScores } from "./rerank.ts";
 import { countNoteHits, LEVEL_WEIGHT, levelSql, noteFactor, notesOf, notesOn, noteText, type Level, type SourceNote } from "../sources/attention.ts";
 import { citeBoost, citeCounts } from "../sources/cites.ts";
@@ -49,7 +49,7 @@ export type Hit = {
 export type SearchOptions = {
   userId?: string;
   /** Additional sharing rules for sending candidates to a plugin (federation). */
-  pluginVisible?: (hit: Pick<Hit, "type" | "sourceKind" | "spaceId" | "sourceId">) => boolean;
+  shared?: SharedSearchAccess;
   spaces?: string[];
   types?: HitType[];
   limit?: number;
@@ -262,11 +262,11 @@ async function hydrateRoute(app: App, query: string, opts: SearchOptions, route:
     for (const r of rows) add(memoryHit(r));
   }
   const ranked: Ranked[] = [];
-  const readable = pluginHitFilter(app, byKey.values(), opts.userId);
+  const readable = pluginHitFilter(app, byKey.values(), opts.userId, opts.shared);
   for (const ref of refs) {
     const key = ref.type === "source" ? "chunk:" + chunks.get(ref.id) : ref.type + ":" + ref.id;
     const hit = byKey.get(key);
-    if (hit && readable(hit) && (!opts.pluginVisible || opts.pluginVisible(hit))) ranked.push({ key, hit, rank: ranked.length, via: route.via });
+    if (hit && readable(hit)) ranked.push({ key, hit, rank: ranked.length, via: route.via });
     byKey.delete(key);
   }
   return ranked;
@@ -545,7 +545,7 @@ async function rerankHits(app: App, query: string, hits: Hit[], opts: SearchOpti
       : [],
   );
   const passages = head.map((h) => `${h.path || h.title}\n${(h.type === "chunk" && chunks.get(h.id)) || h.snippet}`.slice(0, 4000));
-  const info = selectedReranker(app) && head.every(pluginHitFilter(app, head, opts.userId)) && (!opts.pluginVisible || head.every(opts.pluginVisible)) ? head : undefined;
+  const info = selectedReranker(app) && head.every(pluginHitFilter(app, head, opts.userId, opts.shared)) ? head : undefined;
   const scores = await rerankScores(app, query, passages, undefined, info, opts.userId);
   if (!scores) return;
   head.forEach((h, i) => (h.rerank = info ? scores[i] : Math.round(scores[i] * 1000) / 1000));

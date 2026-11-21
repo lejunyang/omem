@@ -19,6 +19,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 共享设备调用检索插件（11-21）
+
+共享设备按共享空间和材料种类使用召回与重排，受限原件和要求在本机核对权限的文档留在本机。授权入口见 `src/core/federation.ts`，插件候选检查见 `src/search/providers.ts`。
+
 ## 插件接入召回和重排（11-21）
 
 从 `packages/plugin-sdk/server.ts` 看注册接口，从 `src/search/providers.ts` 看空间、调用预算和状态。`src/search/search.ts` 按 id 回读后参与 RRF 融合，`src/search/rerank.ts` 在同一入口为主搜索与被动记忆选择重排器。配置和状态字段见 [接进检索](../../../docs/v2/plugins.md#接进检索)。

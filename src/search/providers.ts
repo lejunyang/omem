@@ -39,30 +39,42 @@ const ref = z.strictObject({ type: z.enum(["chunk", "page", "memory", "source"])
 export type Retrieved = { via: string; refs: RetrievalRef[]; spaces: string[]; kinds: RetrievalKind[] };
 const kinds: RetrievalKind[] = ["chunk", "page", "memory"];
 const viewCap = { chunk: "sources.view", symbol: "sources.view", memory: "memories.view", page: "wiki.view", requirement: "requirements.view" } as const;
-type ReadableHit = Pick<Hit, "type" | "spaceId" | "sourceId">;
-export function pluginHitFilter(app: App, hits: Iterable<ReadableHit>, userId = OWNER) {
+export type ReadableHit = Pick<Hit, "type" | "spaceId" | "sourceId" | "sourceKind">;
+export type SharedSearchAccess = {
+  spaces: string[];
+  allows(space: string, kind: RetrievalKind): boolean;
+  visible(hit: ReadableHit): boolean;
+};
+export function pluginHitFilter(app: App, hits: Iterable<ReadableHit>, userId = OWNER, shared?: SharedSearchAccess) {
+  if (shared) return shared.visible;
   if (userId === OWNER) return () => true;
   const access = capabilityAccess(app, userId);
   const ids = [...new Set(Array.from(hits).flatMap(h => h.sourceId ?? []))];
   const readable = ids.length ? readableSourceIds(app, userId, ids) : new Set<string>();
   return (h: ReadableHit) => !!access.source(viewCap[h.type], h.spaceId) && (!h.sourceId || readable.has(h.sourceId));
 }
+function memberSearchAccess(app: App, userId: string) {
+  const access = capabilityAccess(app, userId);
+  return { spaces: access.spaces.map(s => s.id), allows: (id: string, k: RetrievalKind) => !!access.source(viewCap[k], id) };
+}
+
 export async function retrieve(app: App, query: string, opts: SearchOptions, types: Set<HitType>, excluded: Set<string>): Promise<Retrieved[]> {
   const userId = opts.userId ?? OWNER;
-  const access = capabilityAccess(app, userId);
-  const scope = access.spaces.map(s => s.id).filter(id => (!opts.spaces || opts.spaces.includes(id)) && !excluded.has(id));
+  const access = opts.shared ?? memberSearchAccess(app, userId);
+  const scope = access.spaces.filter(id => (!opts.spaces || opts.spaces.includes(id)) && !excluded.has(id));
   const routes = await Promise.all(app.config.search.retrievers.map(async cfg => {
     const entry = retrievers.get(cfg.provider);
     if (!entry) return;
     const requested = kinds.filter(k => types.has(k) && (!cfg.kinds || cfg.kinds.includes(k)));
-    const spaces = scope.filter(id => requested.some(k => access.source(viewCap[k], id)) && (!cfg.spaces || cfg.spaces.includes(id)) && (!entry.spaces.length || entry.spaces.includes(id)));
+    const spaces = scope.filter(id => requested.some(k => access.allows(id, k)) && (!cfg.spaces || cfg.spaces.includes(id)) && (!entry.spaces.length || entry.spaces.includes(id)));
     if (!spaces.length || !requested.length) return;
+    const allowedKinds = requested.filter(k => spaces.some(id => access.allows(id, k)));
     const refs = await invoke(app, entry, userId, spaces[0], cfg.timeoutMs, async ctx => {
-      const raw = await entry.def.search(ctx, { query, spaces: [...spaces], kinds: [...requested], limit: cfg.limit });
+      const raw = await entry.def.search(ctx, { query, spaces: [...spaces], kinds: [...allowedKinds], limit: cfg.limit });
       if (!Array.isArray(raw)) throw new Error("召回结果需要是数组");
       return z.array(ref).parse(raw.slice(0, cfg.limit));
     });
-    if (refs?.length) return { via: "plugin:" + cfg.provider, refs, spaces, kinds: requested };
+    if (refs?.length) return { via: "plugin:" + cfg.provider, refs, spaces, kinds: allowedKinds };
   }));
   return routes.filter((r): r is Retrieved => !!r);
 }

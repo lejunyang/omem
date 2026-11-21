@@ -8,6 +8,7 @@ import { callTool } from "../src/agents/tools.ts";
 import { addMember, createUser } from "../src/core/users.ts";
 import { createSpace, updateSpace } from "../src/core/spaces.ts";
 import { setVisibility } from "../src/auth/visibility.ts";
+import { fedSearch, serviceAccount, setShares } from "../src/core/federation.ts";
 import { remember } from "../src/memory/store.ts";
 import { passiveRecall } from "../src/memory/passive.ts";
 import { embedPending, embedPendingMemories, setEmbedderForTests } from "../src/search/embeddings.ts";
@@ -64,6 +65,35 @@ it("按调用人和空间回读 id，融合重复命中，忽略受限、越界�
   expect(lookup).toHaveBeenCalledTimes(1);
   expect(searchProviderStatus(app).retrievers[0]).toMatchObject({ id: route.provider, spaces: ["team"], lastMs: expect.any(Number), lastError: null });
 });
+it("共享设备按共享空间和种类召回，只把可外发的候选交给重排", async () => {
+  const { app, api } = setup(["team"]);
+  createSpace(app, { id: "team", name: "共享项目" });
+  const userId = serviceAccount(app, "另一个设备");
+  setShares(app, userId, [{ space: "team", kinds: ["doc"] }]);
+  const source = (uri: string, kind: "doc" | "chat" = "doc", spaceId = "team") =>
+    upsertSource(app, { uri, kind, spaceId, title: uri, text: uri }).id;
+  const first = source("第一份材料"), second = source("第二份材料");
+  const restricted = source("留在本机的材料");
+  setVisibility(app, restricted, "restricted", [userId]);
+  const refs = [first, second, restricted, source("会话材料", "chat"), source("个人材料", "doc", "personal")];
+  const lookup = vi.fn<Retriever["search"]>(async () => refs.map(id => ({ type: "source", id })));
+  api.retriever({ id: "lookup", label: "召回", search: lookup });
+  const score = vi.fn<import("../src/plugins/types.ts").Reranker["score"]>(async (_ctx, req) =>
+    req.candidates.map(c => Number(c.text.includes("第二份"))));
+  api.reranker({ id: "rank", label: "排序", score });
+  app.config.search.retrievers = [route];
+  Object.assign(app.config.rerank, { enabled: true, provider: "plugin:demo:rank" });
+
+  expect((await fedSearch(app, userId, { query: "external" })).map(h => h.id)).toEqual([second, first]);
+  expect(lookup.mock.calls[0][1]).toMatchObject({ spaces: ["team"], kinds: ["chunk"] });
+  expect(score.mock.calls[0][0].userId).toBe(userId);
+  expect(score.mock.calls[0][1].candidates).toHaveLength(2);
+  setShares(app, userId, [{ space: "team", kinds: ["wiki"] }]);
+  app.config.search.retrievers = [{ ...route, kinds: ["chunk"] }];
+  expect(await fedSearch(app, userId, { query: "external" })).toEqual([]);
+  expect(lookup).toHaveBeenCalledTimes(1);
+});
+
 it("遵守返回上限和工作区覆盖范围，停用后恢复默认路线", async () => {
   const { app } = setup();
   createSpace(app, { id: "project", name: "项目" });

@@ -105,17 +105,25 @@ export type FedHit = { type: "source" | "page" | "memory"; id: string; space: st
 export async function fedSearch(app: App, userId: string, input: { query: string; spaces?: string[]; limit?: number }): Promise<FedHit[]> {
   const shares = sharesFor(app, userId).filter((s) => !input.spaces?.length || input.spaces.includes(s.space));
   if (!shares.length) return [];
-  const shared: NonNullable<SearchOptions["pluginVisible"]> = hit => {
-    const grant = shares.find(s => s.space === hit.spaceId);
-    if (!grant) return false;
-    if (hit.type === "page") return grant.kinds.includes("wiki");
-    if (hit.type === "memory") return grant.kinds.includes("memory");
-    return !!hit.sourceId && !!hit.sourceKind && allowsSource(grant.kinds, hit.sourceKind) && !keptHere(app, hit.sourceId);
+  const bySpace = new Map(shares.map(s => [s.space, s.kinds]));
+  const shared: NonNullable<SearchOptions["shared"]> = {
+    spaces: [...bySpace.keys()],
+    allows(space, kind) {
+      const kinds = bySpace.get(space);
+      if (!kinds) return false;
+      if (kind === "chunk") return kinds.some(k => k !== "wiki" && k !== "memory");
+      return kinds.includes(kind === "page" ? "wiki" : "memory");
+    },
+    visible(hit) {
+      if (hit.type === "page" || hit.type === "memory") return shared.allows(hit.spaceId, hit.type);
+      const kinds = bySpace.get(hit.spaceId);
+      return !!kinds && !!hit.sourceId && !!hit.sourceKind && allowsSource(kinds, hit.sourceKind) && !keptHere(app, hit.sourceId);
+    },
   };
-  const hits = await search(app, input.query, { userId, pluginVisible: shared, spaces: shares.map((s) => s.space), types: ["chunk", "page", "memory"], limit: Math.min(input.limit ?? 10, 30) * 2 });
+  const hits = await search(app, input.query, { userId, shared, spaces: shared.spaces, types: ["chunk", "page", "memory"], limit: Math.min(input.limit ?? 10, 30) * 2 });
   const out: FedHit[] = [];
   for (const h of hits) {
-    if (!shared(h)) continue;
+    if (!shared.visible(h)) continue;
     if (h.type === "page") out.push({ type: "page", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
     else if (h.type === "memory") out.push({ type: "memory", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
     else if (h.type === "chunk" && h.sourceKind) {
