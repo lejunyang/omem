@@ -17,6 +17,14 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 设置 → 安全：操作规则和规则包（11-21）
+
+- 旧的“命令规则”卡（`CommandRulesSettings.vue`，只能写命令名加一条参数正则）换成 `web/src/components/OperationRulesSettings.vue`：按生效顺序一行一条（开关、标题或由匹配内容生成的一句、种类标签、处理方式的状态色、范围摘要、上移 / 下移、展开），点开编辑四种匹配（命令 / HTTP / 文件 / 工具）、处理方式、谁来批和等多久、范围（`OperationScope.vue`，成员 / 角色或档案 / 空间 / 后端多选）。整份 `PUT /api/security/operation-rules`；服务端的 `rules.N.字段: 原因` 错误显示在第 N 行下面。规则包里的规则只改范围和开关。HTTP 规则行尾写“还没有执行点”，其余种类悬停说明由谁执行。
+- 新卡“规则包”（`RulePacksSettings.vue`）：列出插件和技能带的包，启用时选范围、有更新时列新增 / 去掉 / 改了 / 顺序，“换成新版”把接口给的 `confirmation` 原样带回；停用用 `confirmDialog`。上面的规则有未保存的改动时不让动包。
+- “工具审批”改成 `SetCard` 的样子，工具一行一个（名字、用途一行、审批方式在右）。
+- 卡片链接：`?card=operation-rules`、`rule-packs`、`tool-approvals`；旧的 `?card=command-rules` 落到操作规则。类型和一行文字的生成在 `web/src/lib/operation-rules.ts`。
+- 演示数据（`scripts/doc-screens.ts`）加了五条规则和两个技能带的规则包（命令名 `acme`、主机 `api.example.com`），新截图 `security-rules`。
+
 ## 其余页面的界面整理（11-21）
 
 只改排版和文字，行为和接口不变。
