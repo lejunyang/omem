@@ -78,14 +78,12 @@ git config core.fsmonitor false
 git config user.name omem
 git config user.email omem@localhost
 git merge-base --is-ancestor "$2" HEAD || { echo '成员提交没有从预期基点快进' >&2; exit 1; }
-if test "$(git rev-parse HEAD)" = "$2"; then
-  git read-tree HEAD
-  git add -A -- .
-  if ! git diff --cached --quiet --; then
-    git -c gc.auto=0 commit -qm "$3"
-    cp /view/index /member/index.next
-    mv -fT /member/index.next /member/index
-  fi
+git read-tree HEAD
+git add -A -- .
+if ! git diff --cached --quiet --; then
+  git -c gc.auto=0 commit -qm "$3"
+  cp /view/index /member/index.next
+  mv -fT /member/index.next /member/index
 fi
 tip=$(git rev-parse --verify 'HEAD^{commit}')
 if test "$tip" != "$2"; then
@@ -159,6 +157,8 @@ export async function receiveMemberGit(app: App, actor: string, space: string, t
       const ref = git(state.common, [...args, "symbolic-ref", "-q", "HEAD"]).stdout.trim();
       const head = host("rev-parse", "HEAD");
       if (ref !== state.ref || (head !== state.base && head !== state.pending)) throw new Error("宿主工作树分支或预期基点已变化，保留成员提交");
+      const stagedAt = (commit: string) => git(state.common, [...hooksOff, ...args, "diff-index", "--cached", "--quiet", commit, "--"]).ok;
+      if (!stagedAt(state.base) && !(state.pending === head && stagedAt(head))) throw new Error("宿主暂存区已变化，保留成员提交");
       return head;
     };
     verify();
@@ -179,8 +179,6 @@ export async function receiveMemberGit(app: App, actor: string, space: string, t
     let ownsLock = true;
     try {
       const head = verify();
-      const stagedAt = (commit: string) => git(state.common, [...hooksOff, ...args, "diff-index", "--cached", "--quiet", commit, "--"]).ok;
-      if (!stagedAt(state.base) && !(state.pending === head && stagedAt(head))) throw new Error("宿主暂存区已变化，保留成员提交");
       const nextIndex = join(root, "next-index");
       const prepared = git(state.common, [...hooksOff, ...args, "read-tree", tip], undefined, { GIT_INDEX_FILE: nextIndex });
       if (!prepared.ok) throw new Error(prepared.stderr);

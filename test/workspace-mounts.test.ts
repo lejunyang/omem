@@ -4,8 +4,9 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { sandboxCommand, sandboxSupport } from "../src/agents/sandbox.ts";
 import { receiveMemberGit } from "../src/agents/member-git.ts";
-import { addTask, commitTask } from "../src/agents/code-tasks.ts";
-import { createRun } from "../src/agents/runs.ts";
+import { addTask, commitTask, getTask, updateTask } from "../src/agents/code-tasks.ts";
+import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { createRun, setRunOutput } from "../src/agents/runs.ts";
 import { leaseWorkspace, workspaceMounts } from "../src/agents/workspaces.ts";
 import { createSpace, getSpace } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
@@ -127,6 +128,32 @@ describe("delegation sandbox mounts", () => {
     git("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "--allow-empty", "-qm", "concurrent");
     await expect(accept()).rejects.toThrow("预期基点已变化");
     expect(git("log", "-1", "--format=%s")).toBe("concurrent");
+  });
+
+  it.skipIf(!sandboxSupport().ok).each(["lead", "helper"])("finish_task receives a partial commit and the %s's remaining files", async (role) => {
+    const repo = repository("partial-" + role);
+    const round = createRun(app, { kind: "code", spaceId: repo.id, title: "交付", input: { taskMode: true } });
+    app.db.prepare("update runs set status = 'running' where id = ?").run(round.id);
+    const actor = role === "lead" ? round : createRun(app, { kind: "agent", spaceId: repo.id, title: "助手", parentId: round.id, input: { helperOf: round.id } });
+    const wt = leased(actor.id, repo);
+    const base = repo.git("rev-parse", "HEAD").toString().trim();
+    setRunOutput(app, actor.id, { worktrees: [{ ...wt, base }] });
+    const task = addTask(app, round.id, { title: "交付剩余文件", kind: "build" }, "host");
+    updateTask(app, round.id, task.seq, { state: "coding", coderRun: actor.id });
+    const home = join(app.home, "home-" + role);
+    mkdirSync(home);
+    const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec",
+      'echo first > initial && git add initial && git commit -qm "partial" -m "Omem-Task: T1" && git rev-parse HEAD && echo last > remaining'],
+      {}, wt.slot, { userId: "member", backend: "test", home, env: {}, hide: [app.home], ro: [] }, workspaceMounts(app, [wt], actor.id));
+    const first = execFileSync(cmd.file, cmd.args, { env: cmd.env, encoding: "utf8" }).trim();
+    const ctx = { app, runId: actor.id, spaceId: repo.id, spaces: null, tools: null, actor: "agent", role: "coder" } as ToolContext;
+    const result = await callTool(ctx, "finish_task", { task: task.seq, summary: "代码与测试已完成" });
+    expect(result.isError, result.text).toBe(false);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: wt.path, encoding: "utf8" }).trim();
+    expect(git("rev-parse", "HEAD^")).toBe(first);
+    expect(git("show", "HEAD:remaining")).toBe("last");
+    expect(git("log", "-1", "--format=%B")).toContain("Omem-Task: T" + task.seq);
+    expect(getTask(app, round.id, task.seq).state).toBe(task.verifier ? "verify" : "done");
   });
 
   it.skipIf(!sandboxSupport().ok)("opens both repositories in bubblewrap and keeps the helper's slot hidden", async () => {
