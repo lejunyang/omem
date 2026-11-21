@@ -16,7 +16,7 @@ import { all, run } from "../src/core/db.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { upsertItem } from "../src/items/store.ts";
-import { saveGateChecks } from "../src/flows/plugin-gates.ts";
+import { gateSettingsForFlow, saveGateChecks } from "../src/flows/plugin-gates.ts";
 
 describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   const app = testApp();
@@ -214,6 +214,41 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     } finally {
       saveGateChecks(app,"inspect",[]);
       await setPluginEnabled(app,"stagekit",true);
+    }
+  });
+  it("升级前已停用且无范围快照的强制检查等待本人处理", async () => {
+    const root = join(app.home,"legacy-plugins"), dir = join(root,"legacygate");
+    mkdirSync(dir,{recursive:true});
+    writeFileSync(join(dir,"plugin.yaml"),JSON.stringify({id:"legacygate",name:"旧检查",permissions:{flow:{gate:true}},
+      spaces:[{id:"personal",name:"个人"}]}));
+    writeFileSync(join(dir,"server.mjs"), `export default api => api.stageGate({id:"first",name:"准备检查",describe:"核对准备",
+      applies:{stages:["first"]},async review(){return {ok:false,reason:"准备结果需复核"}}})`);
+    app.config.plugins.disabled.push("legacygate");
+    await loadPlugins(app,[{dir:root,source:"data"}]);
+    const check = {id:"legacygate:first",mandatory:true,stages:["first"]};
+    const stages = [{id:"first",name:"准备",by:"wait"}, {id:"more",name:"收尾",by:"wait",needs:[]}];
+    const item = await begin(stages);
+    run(app.db,"insert or replace into kv(key,value) values('flow-checks:inspect',?)",JSON.stringify([check]));
+    try {
+      expect(gateSettingsForFlow(app,"inspect").pendingCheckScopes).toEqual([{id:check.id,reason:expect.stringContaining("重新加载")}]);
+      await ownerAction(app,item,"more","done","完成收尾");
+      expect(flowView(app,item).stages[1].state).toBe("done");
+      createSpace(app,{id:"outside",name:"其他空间"});
+      const outside = upsertItem(app,undefined,{title:"范围外作业",spaceId:"outside"},"user");
+      await startFlow(app,outside.id,"inspect",owner);
+      await ownerAction(app,outside.id,"first","done","完成准备");
+      expect(flowView(app,outside.id).stages[0].state).toBe("done");
+      await ownerAction(app,item,"first","done","完成准备");
+      expect(flowView(app,item).stages[0]).toMatchObject({state:"blocked",waitingOn:"owner",
+        gateReview:{failed:[{id:check.id,reason:expect.stringContaining("适用范围待确认")}]}});
+      await trustPlugin(app,"legacygate",mode);
+      await setPluginEnabled(app,"legacygate",true);
+      expect(gateSettingsForFlow(app,"inspect").pendingCheckScopes).toEqual([]);
+      await ownerAction(app,item,"first","done","再次提交");
+      expect(flowView(app,item).stages[0].gateReview?.failed[0].reason).toContain("准备结果需复核");
+    } finally {
+      forgetPlugin("legacygate");
+      saveGateChecks(app,"inspect",[]);
     }
   });
   it("补录的跨空间引用只留在事项上，检查只收到同空间原件", async () => {

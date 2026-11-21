@@ -4,6 +4,8 @@ import { all, one, run } from "../core/db.ts";
 import { HttpError, untilAbort } from "../core/util.ts";
 import { createAsk, cancelAsk } from "../agents/asks.ts";
 import { getItem } from "../items/store.ts";
+import { findPlugin } from "../plugins/registry.ts";
+import { pluginSpaces } from "../plugins/spaces.ts";
 import { stageGates } from "../plugins/process-hooks.ts";
 import { readableSourceIds } from "../auth/visibility.ts";
 import type { FlowEvidence } from "../../packages/plugin-sdk/server.ts";
@@ -32,8 +34,14 @@ function storedChecks(app: App, id: string): StoredCheck[] {
     return check;
   });
 }
-export function checksForFlow(app: App, id: string): Check[] {
-  return storedChecks(app,id).map(({scope: _, ...check}) => check);
+const scopeIssue = "历史检查的适用范围待确认，请重新加载插件，或由本人在流程设置中调整检查后重新交结果";
+export function gateSettingsForFlow(app: App, id: string) {
+  const stored = storedChecks(app,id);
+  return {
+    checks: stored.map(({scope: _, ...check}) => check),
+    pendingCheckScopes: stored.filter(c => c.mandatory && !c.scope && !stageGates.has(c.id))
+      .map(c => ({ id: c.id, reason: scopeIssue })),
+  };
 }
 export function saveGateChecks(app: App, id: string, checks: Check[]) {
   const f = readFlow(app, id), validated = gateChecksSchema.parse(checks);
@@ -116,10 +124,18 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
     const entry = stageGates.get(check.id);
     const applies = entry ? entry.def.applies : check.scope;
     const spaces = entry?.spaces ?? check.scope?.spaces;
-    if (!entry && !check.scope || applies?.flows && !applies.flows.includes(f.id)) continue;
+    if (applies?.flows && !applies.flows.includes(f.id)) continue;
     if (applies?.stages && !applies.stages.includes(stageId) || spaces?.length && !spaces.includes(item.spaceId)) continue;
     let reason: string | undefined;
     try {
+      if (!entry && !check.scope) {
+        const plugin = findPlugin(check.id.split(":")[0]);
+        const declared = plugin && pluginSpaces(plugin.manifest);
+        if (declared?.length && !declared.some(s => s.id === item.spaceId)) continue;
+        if (check.mandatory) failed.push({ id: check.id, reason: scopeIssue });
+        else changeStage(app, itemId, stageId, s.state, {}, { actor: "host" }, `${check.id}：${scopeIssue}，按非强制检查放行`);
+        continue;
+      }
       if (!entry) throw Error("检查插件已停用");
       const signal = entry.context(app, item.userId, item.spaceId, AbortSignal.any([budget, AbortSignal.timeout(2000)])).signal;
       visibleEvidence ??= gateEvidence(app,item.userId,item.spaceId,evidence);
