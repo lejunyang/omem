@@ -19,7 +19,7 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "heartbeat", kind: "heartbeat", cron: "*/15 * * * *", enabled: true, label: "巡检：到期提醒、等待回复与关注事项" },
   { id: "activity", kind: "activity", cron: "*/30 * * * *", enabled: true, label: "记录代码仓库的活动：新提交和未提交的改动（只读本机 Git）" },
   { id: "learn", kind: "learn", cron: "*/15 * * * *", enabled: true, label: "学习：每天按学习目标出新卡，到点提醒复习（没有学习目标时什么都不做）" },
-  { id: "brief", kind: "brief", cron: "45 8 * * 1-5", enabled: false, label: "工作日早上的简报：今天要处理的、在等的、发生的变化" },
+  { id: "brief", kind: "brief", cron: "45 8 * * 1-5", enabled: false, label: "工作日早上的简报：今天最要紧的、替你备好的、清单里没有的变化；早上的“今天”开着时是那张卡的开头一段，不单独发" },
   { id: "weekly-report", kind: "weekly-report", cron: "0 17 * * 5", enabled: true, label: "周报：每周五下午把这周的关注、事项和流程、编码、会议、指标和本人近况写成个人空间里的 周报/<年>-W<周>.md，发一条不急的通知；本人在文件里改过的地方，下周照着写" },
   { id: "wiki-resolve", kind: "wiki-resolve", cron: "40 5 * * *", enabled: true, label: "Wiki 未决问题：每晚先查被读得最多的页面上的几个，长期没人读的页面上的旧问题不再追（没有未决问题时什么都不做）" },
   { id: "note-review", kind: "note-review", cron: "35 * * * *", enabled: true, label: "复核原件标注：另一个模型保留、撤回，拿不准的留给本人" },

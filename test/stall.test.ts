@@ -56,6 +56,32 @@ describe("agent stalls and provider queue", () => {
     expect(r.probe?.effortsByModel).toEqual({ m1: [], m2: ["low", "medium", "high"], m3: ["low", "xhigh"] });
   }, 20_000);
 
+  it("waits for an effort option the agent lists late when the run named the level, and gives up after the wait", async () => {
+    const { setEffortWaitForTests } = await import("../src/agents/acp.ts");
+    const strict = { cwd: process.cwd(), prompt: "hi", strictSelection: { model: true, effort: true } };
+    const late: Record<string, string>[] = [{ FAKE_LATE_EFFORT: "1800" }, { FAKE_LATE_EFFORT: "1800", FAKE_LATE_EFFORT_ANNOUNCE: "1" }];
+    for (const env of late) {
+      const events: AgentEvent[] = [];
+      const r = await runAcp({ ...fake({ FAKE_TRAE: "1", ...env }, 8000), model: "m2", effort: "high" }, strict, (e) => events.push(e));
+      expect(r.text).toContain('"turn":1');
+      const status = events.filter((e) => e.type === "status").map((e) => (e as { text: string }).text);
+      expect(status).toContain("后端还没列出思考强度的选项，等它加载完再取");
+      expect(status.some((t) => /不支持设置 effort/.test(t))).toBe(false);
+    }
+    // Not named by the owner: no waiting, the agent's default level is used.
+    const loose: AgentEvent[] = [];
+    await runAcp({ ...fake({ FAKE_TRAE: "1", FAKE_LATE_EFFORT: "60000" }, 8000), model: "m2", effort: "high" }, { cwd: process.cwd(), prompt: "hi" }, (e) => loose.push(e));
+    expect(loose.some((e) => e.type === "status" && /不支持设置 effort，使用其默认值/.test(e.text))).toBe(true);
+    // Named, and it never shows up: fails once the wait is over.
+    setEffortWaitForTests(700);
+    try {
+      const err = await runAcp({ ...fake({ FAKE_TRAE: "1", FAKE_LATE_EFFORT: "60000" }, 8000), model: "m2", effort: "high" }, strict, () => {}).catch((e) => e);
+      expect(String((err as Error).message)).toMatch(/不支持设置 effort，无法使用指定值 high/);
+    } finally {
+      setEffortWaitForTests(12_000);
+    }
+  }, 60_000);
+
   it("moves a saved profile still on an earlier default command line to the current one", async () => {
     const { upgradeProfileArgs } = await import("../src/agents/catalog.ts");
     const old = agentProfileSchema.parse({ id: "traex", transport: "acp", command: "traex", args: ["acp", "serve"] });

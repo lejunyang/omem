@@ -5,6 +5,7 @@ import { get, onServerEvent, onServerResync, post, put, type Item } from "../api
 import FlowWaiting from "../components/FlowWaiting.vue";
 import Icon from "../components/Icon.vue";
 import ItemFlow from "../components/ItemFlow.vue";
+import ItemChain from "../components/ItemChain.vue";
 import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import ItemMetrics from "../components/ItemMetrics.vue";
 import LineAsk from "../components/LineAsk.vue";
@@ -377,6 +378,8 @@ const editing = ref(false);
           <WorkStageTrack :flow="d.flow" />
           <FlowWaiting :item="{ id: item.id, title: item.title, spaceId: item.spaceId }" :editable="editable" />
         </section>
+
+        <ItemChain :item-id="item.id" />
 
         <section class="busy" aria-labelledby="busy-title">
           <h2 id="busy-title" class="h2">最近忙这些</h2>
