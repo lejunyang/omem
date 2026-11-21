@@ -10,6 +10,7 @@ import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { getSession, startAssist, viewerAccess } from "./sessions.ts";
 
 export const REMOTE_BASE = "/remote";
+const VIEWER_COOKIE = "omem_remote_session";
 type Access = ReturnType<typeof viewerAccess>;
 type Ticket = Access & { id: string; userId: string };
 const tickets = new WeakMap<App, Map<string, Ticket>>();
@@ -29,7 +30,7 @@ export function viewerCookie(app: App, id: string, userId: string, access: Acces
   }
   issued.set(key, { ...access, id, userId });
   if (issued.size > 1000) issued.delete(issued.keys().next().value!);
-  return `omem_remote=${key}; Path=/remote/${id}; HttpOnly; SameSite=Lax`;
+  return `${VIEWER_COOKIE}=${key}; Path=/remote/${id}; HttpOnly; SameSite=Lax`;
 }
 
 // Control and clipboard file IDs are local to an assist process. Each operating
@@ -70,9 +71,9 @@ function route(app: App, req: IncomingMessage) {
   if (!match || !sameOrigin(req)) return 401 as const;
   const [, id, path = "/"] = match;
   const jar = cookies(req);
-  const ticket = tickets.get(app)?.get(jar.omem_remote);
+  const ticket = tickets.get(app)?.get(jar[VIEWER_COOKIE]);
   let userId: string;
-  if ("omem_remote" in jar) {
+  if (VIEWER_COOKIE in jar || "omem_remote" in jar) {
     if (!ticket || ticket.id !== id) return 401 as const;
     userId = ticket.userId;
   } else if (req.headers.authorization) {

@@ -120,6 +120,29 @@ describe("browser session grants", () => {
     expect(all<{ action: string }>(app.db, "select action from audit_events where target=? order by id", id).map(r => r.action)).toEqual(["remote.grant","remote.grant","remote.revoke"]);
   });
 
+  it("opens HTTP and WS after upgrading with a legacy /remote cookie", async () => {
+    const id = await open();
+    const legacy = "omem_remote=before-upgrade";
+    const opened = await fetch(app.baseUrl + `/api/remote/sessions/${id}/view`, {
+      method: "POST", headers: { authorization: "Bearer test-owner" },
+    });
+    expect(opened.status).toBe(200);
+    const current = opened.headers.get("set-cookie")!.split(";")[0];
+    // Browsers send the more specific session path first, then the old /remote path.
+    const cookie = current + "; " + legacy;
+    const url = app.baseUrl + (await opened.json()).src;
+    expect((await fetch(url, { headers: { cookie: legacy } })).status).toBe(401);
+    expect((await fetch(url, { headers: { cookie } })).status).toBe(200);
+    const ws = new WebSocket(url.replace(/^http/, "ws").replace("/?token", "/ws?token"), { headers: { cookie } });
+    try {
+      const [frame] = await once(ws, "message");
+      expect(frame.toString()).toContain("ready assist");
+    } finally {
+      ws.close();
+      await api("/sessions/" + id, "DELETE");
+    }
+  });
+
   it("limits grant duration, recipients and targets", async () => {
     const id = await open(), path = "/sessions/" + id + "/grants";
     const recipient = { userId: member, mode: "view" };

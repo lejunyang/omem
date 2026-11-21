@@ -70,7 +70,7 @@ describe("remote operation", () => {
     browser = opened.body;
     expect(browser.src).toMatch(/^\/remote\/rs\w+\/\?token=\w+&lang=zh$/);
     expect(opened.body.browser).toMatchObject({ name: "chrome", url: "https://example.test/admin", profile: "后台" });
-    expect(opened.headers.get("set-cookie")).toMatch(/^omem_remote=\w+; Path=\/remote\/rs\w+; HttpOnly/);
+    expect(opened.headers.get("set-cookie")).toMatch(/^omem_remote_session=\w+; Path=\/remote\/rs\w+; HttpOnly/);
     const open = calls().find((c) => c[0] === "mcp" && c[2] === "browser_open")!;
     expect(open[3]).toMatchObject({ browser: "chrome", headless: true, url: "https://example.test/admin", profile_dir: join(app.home, "remote", "profiles", "后台") });
     // The picture as the default settings have it (no video check made yet: aad picks).
