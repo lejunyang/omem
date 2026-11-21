@@ -40,6 +40,7 @@ export type SessionCleanup = {
 };
 
 export type AgentRequest = {
+  ownSandbox?: import("./own-sandbox.ts").OwnSandbox;
   app?: import("../core/app.ts").App;
   workspace?: import("./sandbox.ts").WorkspaceMounts;
   cwd: string;

@@ -41,6 +41,7 @@ import { categoryStatus } from "../core/ai-keys.ts";
 import { accountBlocked, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
 import { addRunEvent, runUser } from "./runs.ts";
 import { SandboxStartError } from "./spawn.ts";
+import { ownRun } from "./own-run.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 import { accountOf, egressRequested, egressSupport } from "./sandbox.ts";
@@ -358,6 +359,7 @@ export type LarkAccess = { chats: string[] | null; draft?: boolean; urgent?: boo
 export type Actor = { role: RoleName } | { spec: AgentSpec };
 
 export type PreparedRun = {
+  isolation: ReturnType<typeof ownRun>;
   profile: AgentProfile;
   capabilities: BackendCapabilities;
   tools: Set<string>;
@@ -537,6 +539,13 @@ export function prepareRun(
   const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
+  const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
+  // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
+  // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
+  const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
+  const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
+  const allowWrites = !readOnly && (spec ? spec.writes : role!.writes);
+  const isolation = ownRun(app, profile, cwd, readOnly || guest || !(allowWrites || fullAccess), input.runId);
   const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
@@ -560,14 +569,10 @@ export function prepareRun(
   const common = commonGuide(tools, capabilities);
   // Who else is on the network (core/mesh.ts): for the owner's own assistant and profiles that can ask.
   const mesh = userId === OWNER && tools.has("ask_agent") ? meshNote(app) : "";
-  const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
+  const environment = `# 环境\n\n${isolation.box ? isolation.note + " 写入失败时不要反复重试，告诉本人需要放开哪个目录。\n" : ""}${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
-  const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
-  // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
-  // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
-  const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
-  const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
   return {
+    isolation,
     profile,
     capabilities,
     tools,
@@ -586,7 +591,7 @@ export function prepareRun(
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
-    allowWrites: readOnly ? false : spec ? spec.writes : role!.writes,
+    allowWrites,
     fullAccess,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,
@@ -953,14 +958,25 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       try {
         recordIsolation(app, input.runId, input.userId!, prep.profile);
+        if (prep.isolation.note) emit({ type: "status", text: prep.isolation.note });
         const aware = internal ? "" : awarenessNote(app, input.runId, prep.tools.size > 0);
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
-        const workspace = input.worktrees && accountOf(prep.profile) ? workspaceMounts(app, input.worktrees, input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined, input.worktreeAccess === "read" ? "read" : "write") : undefined;
+        let trees = input.worktrees;
+        if (!trees && prep.isolation.box?.readOnly && input.runId && (input.reviewCheck || input.reviewLead)) {
+          const { workRootOf } = await import("./code-tasks.ts");
+          const { worktreesOf } = await import("./code.ts");
+          trees = worktreesOf(app, workRootOf(app, input.runId));
+        }
+        const workspace = trees?.length && (accountOf(prep.profile) || prep.isolation.box)
+          ? workspaceMounts(app, trees, input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined,
+            input.worktreeAccess === "read" || prep.isolation.box?.readOnly ? "read" : "write")
+          : undefined;
         const req = {
           runId: input.runId,
           strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
           cwd: prep.cwd,
           workspace,
+          ownSandbox: prep.isolation.box,
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           capabilities: prep.capabilities,

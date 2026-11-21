@@ -1,3 +1,4 @@
+import { ownRun } from "./own-run.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { accountBlocked, accountFor } from "./accounts.ts";
@@ -29,7 +30,9 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
       if (ctrl.signal.aborted) break;
       try {
         const profile = accountFor(app, opts.userId, candidate);
-        const r = await runBackend(app, profile, { cwd: accountOf(profile)?.home ?? app.home, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
+        const cwd = accountOf(profile)?.home ?? app.home;
+        const isolation = ownRun(app, profile, cwd, true);
+        const r = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
         const text = replyOf(r).trim();
         if (text) return text;
       } catch {

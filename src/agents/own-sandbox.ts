@@ -60,10 +60,10 @@ export function ownMounts(box: OwnSandbox, cwd: string, workspace?: WorkspaceMou
   if (workspace) rw.push(...workspace.rw);
   if (!workspace || box.snapshot && under(cwd, box.snapshot)) {
     const dest = box.readOnly && !(box.snapshot && under(cwd, box.snapshot)) ? ro : rw;
-    dest.push(cwd);
+    if (cwd !== box.data) dest.push(cwd);
   }
   const visible = (path: string) => !box.hidden.some(h => under(path, h));
-  const protectedDirs = ro.filter(path => !rw.includes(path) || box.readOnly);
+  const protectedDirs = ro;
   return { hide, ro: protectedDirs.filter(visible), rw: [...new Set(rw)].filter(p => visible(p) && !protectedDirs.some(r => under(p, r))),
     links: workspace?.links, pointers: workspace?.pointers };
 }

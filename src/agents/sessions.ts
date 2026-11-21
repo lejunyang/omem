@@ -508,6 +508,7 @@ ${WAKE_NOTE}`
     // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
     try {
       recordIsolation(app, ctx.run.id, userId, prep.profile);
+      if (prep.isolation.note) emit({ type: "status", text: prep.isolation.note });
       const run = async (resume: boolean) =>
         runBackend(
           app,
@@ -518,7 +519,7 @@ ${WAKE_NOTE}`
             system: prep.system,
             parts: prep.parts,
             ...turnMessage(prep, !resume),
-            allowWrites: prep.allowWrites,
+            ownSandbox: prep.isolation.box, allowWrites: prep.allowWrites,
             modes: prep.modes,
             fullAccess: prep.fullAccess,
             signal: ctx.signal,
@@ -607,6 +608,7 @@ ${WAKE_NOTE}`
     let networkStopped: Promise<void> | undefined;
     try {
       recordIsolation(app, ctx.run.id, userId, used);
+      if (curPrep.isolation.note) emit({ type: "status", text: curPrep.isolation.note });
       if (used.transport !== "acp") {
         const r = await runBackend(
           app,
@@ -617,7 +619,7 @@ ${WAKE_NOTE}`
             system: curPrep.system,
             parts: curPrep.parts,
             ...turnMessage(curPrep, true, carry),
-            allowWrites: curPrep.allowWrites,
+            ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites,
             modes: curPrep.modes,
             fullAccess: curPrep.fullAccess,
             signal: ctx.signal,
@@ -635,7 +637,7 @@ ${WAKE_NOTE}`
       curPrep.profile = networkAttempt.profile;
       const stepKey = `${JSON.stringify(curPrep.profile.env)}|${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(curPrep.profile) ? `|${accountTag(curPrep.profile)}` : ""}`;
       let l = step === 0 ? live.get(threadId) : undefined;
-      if (l && (egressRequested(app.config,used) || l.key !== stepKey || !l.handle.alive() || tooLong)) {
+      if (l && (curPrep.isolation.box || egressRequested(app.config,used) || l.key !== stepKey || !l.handle.alive() || tooLong)) {
         release(threadId);
         l = undefined;
       }
@@ -657,7 +659,7 @@ ${WAKE_NOTE}`
               cleanup: await sessionCleanup(app, used, { cwd: curPrep.cwd, runId: ctx.run.id, persistSession: true }, emit),
               mcp: curPrep.mcp,
               extraMcp: curPrep.extraMcp,
-              allowWrites: curPrep.allowWrites,
+              ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites,
               modes: curPrep.modes,
               fullAccess: curPrep.fullAccess,
               system: curPrep.system,
@@ -700,10 +702,10 @@ ${WAKE_NOTE}`
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          const again = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
+          const again = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess });
           const handle = await openAcp(
             networkProfile(app, again.profile),
-            { app, signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
+            { app, signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, ownSandbox: again.isolation.box, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
             emit,
           );
           l = { threadId, key: stepKey, handle, token: again.token, lastUsed: Date.now(), busy: true };
@@ -733,7 +735,7 @@ ${WAKE_NOTE}`
         const cur = live.get(threadId);
         if (cur) {
           cur.busy = false;
-          if (egressRequested(app.config, used)) release(threadId);
+          if (curPrep.isolation.box || egressRequested(app.config, used)) release(threadId);
           else if (done) keepAlive(app, cur);
         }
       }
