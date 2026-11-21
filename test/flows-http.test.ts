@@ -36,6 +36,25 @@ afterEach(async () => {
 async function serverFor(app: App) { const s = await startServer(app, { port: 0, quiet: true }); servers.push(s); return s; }
 
 describe("流程 HTTP", () => {
+  it("列表返回各承担者、完成条件和时限的结构化摘要", async () => {
+    const app=fixture(), server=await serverFor(app);
+    saveFlow(app, JSON.stringify({id:"summary",name:"摘要",stages:[
+      {id:"owner",name:"本人核对",by:"owner",done:{signal:"git.pushed",with:{}}},
+      {id:"wait",name:"等进展",by:"wait",done:"confirm"},
+      {id:"assistant",name:"整理",by:{run:{}},budget:{minutes:15},at:"08:00",window:"08:00-12:00"},
+      {id:"profile",name:"复核",by:{run:{agent:"reviewer",skill:"inspect"}}},
+      {id:"object",name:"方案",by:{object:"design"},done:{object:"design",status:"approved"}},
+    ]}),"owner");
+    const summary=(await server.inject("/api/flows")).json().flows[0].stageSummaries;
+    expect(summary).toMatchObject([
+      {id:"owner",name:"本人核对",carrier:{kind:"owner",name:"本人"},done:{kind:"signal",id:"git.pushed",name:"推到远端",params:{}}},
+      {carrier:{kind:"wait"},done:{kind:"confirm"}},
+      {carrier:{kind:"assistant",id:"assistant"},time:{at:"08:00",window:"08:00-12:00",minutes:15}},
+      {carrier:{kind:"profile",id:"reviewer",name:"reviewer",skill:"inspect"}},
+      {carrier:{kind:"object",id:"design"},done:{kind:"object",statuses:["approved"]}},
+    ]);
+  });
+
   it.each(["网页", "助手"])("%s 只允许成员开始可见且适用的流程", async entry => {
     const app = fixture(), server = await serverFor(app);
     const userId = "flow-member", spaceId = "project-a";

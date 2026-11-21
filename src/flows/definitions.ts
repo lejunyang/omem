@@ -104,6 +104,23 @@ export function describeStage(s: FlowStage) {
   };
 }
 
+export const runnerIdentity = (id: string) => ({ id, name: stageRunners.get(id)?.def.name ?? id });
+export const signalIdentity = (id: string) => ({ id, name: flowSignals.get(id)?.def.name ?? ({ "git.pushed": "推到远端", "git.merged": "合进目标分支" } as Record<string, string>)[id] ?? id });
+
+/** Typed summary for clients that do not interpret YAML or localized descriptions. */
+export function summarizeStage(s: FlowStage) {
+  const by = s.by;
+  const carrier = by === "owner" ? { kind: "owner", name: "本人" } : by === "wait" ? { kind: "wait", name: "等待" }
+    : "runner" in by ? { kind: "runner", ...runnerIdentity(by.runner), params: by.with ?? {} }
+    : "run" in by ? { kind: !by.run.agent || by.run.agent === "assistant" ? "assistant" : "profile", id: by.run.agent ?? "assistant", name: !by.run.agent || by.run.agent === "assistant" ? "助手" : by.run.agent, skill: by.run.skill ?? null }
+    : { kind: "object", id: by.object, name: objectWords(by.object) };
+  const done = typeof s.done === "object" ? "signal" in s.done
+    ? { kind: "signal", ...signalIdentity(s.done.signal), params: s.done.with ?? {} }
+    : { kind: "object", id: s.done.object, name: objectWords(s.done.object), statuses: [s.done.status].flat() }
+    : { kind: s.done === "confirm" ? "confirm" : s.done ? "instruction" : "default", name: describeStage(s).done, instruction: s.done ?? null };
+  return { id: s.id, name: s.name, carrier, done, time: { at: s.at ?? null, window: s.window ?? null, minutes: s.budget?.minutes ?? null } };
+}
+
 export function parseFlow(raw: string, installed = true, previous?: FlowDefinition): FlowDefinition {
   let value: unknown;
   try { value = YAML.parse(raw); } catch (e) { throw new HttpError(400, `流程 YAML 格式不对：${(e as Error).message}`); }

@@ -23,6 +23,8 @@ updated: 2026-11-22
 
 ## 2026-11-22：第二轮网页对接的服务端字段
 
+- 流程列表新增 stageSummaries，含承担者、完成信号与参数、时限。从 `src/flows/definitions.ts` 的 summarizeStage 读起。
+
 - 流程保存保留同阶段未变的停用引用；校验和列表单独提示不可执行能力。从 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts` 读起。
 
 ## 网页接上向量和重排的来源、设备的接活开关和进度里的设备（2026-11-22）

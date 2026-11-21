@@ -774,3 +774,7 @@ npm run build
 ### 保留停用的流程能力
 
 `POST /api/flows/validate` 与保存按已保存流程的同阶段引用比较：运行器、信号全名及有效 `with` 参数不变时原样保留；新增、移到新阶段或修改参数时校验注册和 JSON Schema。校验成功返回 `unavailableReferences: [{ kind: "runner" | "signal", stage, id, reason }]`，只作提示。运行器的新定义版本仍由本人确认。检查保存接口也保留 id、stages、mandatory 均不变的项；流程列表的 `unavailableChecks: [{ id, reason }]` 提示停用检查，强制检查的执行规则照旧。
+
+### 流程定义的结构化摘要
+
+`GET /api/flows` 的流程行增加 `stageSummaries`。每段有 `{ id, name, carrier, done, time }`：carrier.kind 为 owner / wait / assistant / profile / runner / object，插件运行器带 `{ id, name, params }`，档案带 id、name、skill；done.kind 为 signal / object / confirm / instruction / default，信号带全名 id、显示名 name 和 params，对象带 id 和 statuses；time 为 `{ at, window, minutes }`，未设置值为 null。停用能力的名称回退到全名 id。原 definition、raw 和文字描述保持可用，列表按流程查看空间裁剪。

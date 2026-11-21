@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
 import { itemScope, requireItem } from "../items/access.ts";
-import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, parseFlowForSave, unavailableFlowReferences, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, parseFlowForSave, unavailableFlowReferences, summarizeStage, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { proposeFlow, flowView, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { settleChange } from "./follow.ts";
@@ -83,7 +83,7 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
       }
     });
     const available = (entries: typeof flowSignals | typeof stageRunners) => Array.from(entries as ReadonlyMap<string, { spaces: readonly string[]; def: { name: string; describe: string; params?: Record<string, unknown> } }>).filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id, { def }]) => ({ id, name: def.name, describe: def.describe, params: def.params }));
-    return { signals: available(flowSignals), runners: available(stageRunners), gates: [...stageGates].filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id,{def}]) => ({id,name:def.name,describe:def.describe,applies:def.applies})), flows: flows.map((f) => ({ ...f, ...gateSettingsForFlow(app, f.id), grants: gateGrants(app, f.id, userId) })), drafts };
+    return { signals: available(flowSignals), runners: available(stageRunners), gates: [...stageGates].filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id,{def}]) => ({id,name:def.name,describe:def.describe,applies:def.applies})), flows: flows.map((f) => ({ ...f, stageSummaries: f.definition?.stages.map(summarizeStage) ?? [], ...gateSettingsForFlow(app, f.id), grants: gateGrants(app, f.id, userId) })), drafts };
   });
   server.get("/api/flows/board", async (req) => {
     const { only } = body(z.object({ only: z.enum(["mine", "blocked"]).optional() }), req.query);
