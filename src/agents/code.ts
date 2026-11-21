@@ -334,7 +334,7 @@ export async function runCodeTask(ctx: RunContext) {
       const plan = was ?? await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id], base: input.startCommits?.[repo.id] });
       const temporary = temporaryWorkBranch(plan, rootRunId, explicitNames?.[repo.id]);
       if (temporary && canNameBranch) nameable.add(repo.id);
-      const naming = temporary && input.peerCoder ? "git" : nameable.has(repo.id) ? "tool" : "keep";
+      const naming = temporary && input.peerCoder ? "git" : nameable.has(repo.id) ? "tool" : undefined;
       const { wt, note } = branchWorktree(app, repo, rootRunId, path, plan, log, naming);
       worktrees.push(wt);
       branchNotes[repo.id] = note;

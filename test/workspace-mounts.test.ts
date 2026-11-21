@@ -239,7 +239,7 @@ describe("delegation sandbox mounts", () => {
     const continued = { ...wt, branch: "omem/example" };
     expect(temporaryWorkBranch(continued, round.id)).toBe(false);
     expect(temporaryWorkBranch(wt, round.id, old)).toBe(false);
-    expect(placeOnBranch(repo.root, continued, { naming: "keep" })).toBe("你在分支 omem/example 上。");
+    expect(placeOnBranch(repo.root, continued)).toBe("你在分支 omem/example 上。");
     const task = addTask(app, round.id, { title: "第一项", kind: "build" }, "host");
     updateTask(app, round.id, task.seq, { state: "coding", coderRun: round.id });
     const finish = (seq: number) => callTool(ctx, "finish_task", { task: seq, summary: "交付" });
