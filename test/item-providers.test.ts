@@ -11,7 +11,9 @@ import { writeParent } from "../src/items/tree.ts";
 import { decideCandidate } from "../src/items/auto.ts";
 import { manifestSchema } from "../src/plugins/registry.ts";
 import { registerProcessHooks } from "../src/plugins/process-hooks.ts";
-import type { ExternalItem, ItemProvider } from "../src/plugins/types.ts";
+import { deliverPluginEvents } from "../src/plugins/event-delivery.ts";
+import { replaceSubscriptions } from "../src/plugins/event-store.ts";
+import type { ExternalItem, ItemProvider, PluginEventV1, Subscription } from "../src/plugins/types.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -208,6 +210,30 @@ it("resolves child-first pages and rolls back cycles and deep trees", async () =
   items = [{ ...ext, key: "grandchild", parentKey: "child" }, { ...ext, key: "leaf", parentKey: "grandchild" }];
   await expect(syncTarget(app, "owner", t.id)).rejects.toThrow("最多三层");
   expect(ids()).toHaveLength(2);
+});
+
+it.each([[true, "open"], [false, "cancelled"]] as const)("候选导入后选择留下=%s，订阅收到创建和转为 %s 的事件", async (keep, status) => {
+  const events: Subscription["events"] = ["item.created", "item.status"];
+  const seen: PluginEventV1[] = [];
+  const manifest = manifestSchema.parse({ id: "listener", name: "订阅示例", permissions: { events } });
+  const subscription: Subscription = {
+    id: "candidates", events,
+    async handle(_ctx, event) { seen.push(event); },
+  };
+  registerProcessHooks(manifest, undo).subscribe(subscription);
+  replaceSubscriptions(app, "listener", [subscription]);
+  app.config.plugins.eventSpaces.listener = ["personal"];
+
+  const target = configureTarget(app, "owner", config);
+  await syncTarget(app, "owner", target.id);
+  const [id] = ids();
+  await deliverPluginEvents(app);
+  decideCandidate(app, id, keep, "owner");
+  await deliverPluginEvents(app);
+  expect(seen).toMatchObject([
+    { entity: { id }, type: "item.created", data: { from: null, status: "candidate" } },
+    { entity: { id }, type: "item.status", data: { from: "candidate", status } },
+  ]);
 });
 
 it("includes the provider URL in created and status events without the imported body", async () => {

@@ -359,6 +359,8 @@ api.subscribe({
 
 示例中的 `receiveStatus` 由插件实现。每条事件携带版本 `v: 1`、稳定的 `id`、类型、时间、实体、空间、操作者和事实字段。可选类型为 `item.created`、`item.status`、`review.finished`、`finding.decision`、`finding.resolution`。事项事件给出标题、类型、前后状态、父事项与链接。评审完成给出运行、结论和问题数。问题事件给出位置、取舍或复核结果及理由。
 
+候选事项也会发 `item.created`，此时 `data.status` 为 `candidate`。本人留下或拒绝候选时，同一事项会发 `item.status`，`data.from` 为 `candidate`。拒绝时 `data.status` 为 `cancelled`，留下时为 `open`（等待类事项为 `waiting`）。只为已采纳事项建外部工单的插件应同时订阅这两种事件，按状态过滤：候选创建时跳过，转为 `open` 或 `waiting` 时再建单。
+
 宿主在业务事务内保存事实和投递状态。提交后，同一订阅按同一实体的变更顺序调用 `handle`。回调有 15 秒时限，失败后按指数退避重试，累计 6 次失败后暂停该实体的后续投递。插件停用期间保留进度，授权空间在入队和回调前各检查一次。宿主定期清理超过 14 天的事件。宿主在插件处理成功后、记录成功前退出时，会再次投递同一个 id。插件有外部副作用时用这个 id 做幂等键。
 
 用 `omem plugin failed-events sample:status` 查看失败事件的 id 和错误。在保留期内用 `omem plugin replay sample:status <事件id>` 重新排队。隔离进程通过 IPC 收到同样的事件。

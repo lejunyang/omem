@@ -17,6 +17,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 插件如何识别候选事项（11-21）
+
+[插件开发文档](../../../docs/v2/plugins.md#订阅事项与评审事件) 说明了如何根据创建和状态事件区分候选、采纳和拒绝。事件字段见 `src/items/store.ts`，采纳和拒绝对应的状态见 `src/items/auto.ts`。
+
 ## 插件订阅事项与评审、同步外部条目、直接采集指标（11-21）
 
 从 `packages/plugin-sdk/server.ts` 看三个接口，从 `src/plugins/process-hooks.ts` 看注册、声明校验与用户连接范围。`src/plugins/event-store.ts` 和 `event-delivery.ts` 负责同事务入队和按实体投递。事项同步通过 `/api/item-sync` 配置，指标从 `src/data/metrics.ts` 的 `collectDue` 进入。
