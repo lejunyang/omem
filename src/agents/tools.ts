@@ -3786,15 +3786,21 @@ def({
     }
     const origin = ctx.runId ? getRun(ctx.app, ctx.runId).input.conversationId as string | undefined : undefined;
     input.spaceId = writeSpace(ctx, (input.spaceId as string | undefined) ?? current?.spaceId ?? ctx.spaceId, "rules.edit");
-    // Where replies go (发到): this conversation unless the rule already had one; “current” says so explicitly.
+    const owner = (ctx.userId ?? OWNER) === OWNER;
     if (input.conversationId === "current" && !runLarkChat(ctx)) throw new HttpError(400, "这个会话不是飞书会话，“发到这个群”无从指定：请本人在规则页选择发到哪个会话");
-    input.conversationId = input.conversationId === "current" ? origin : current?.conversationId ?? origin;
+    const target = input.conversationId === "current" ? origin : input.conversationId;
+    if (target != null && target !== current?.conversationId) {
+      if (!owner) throw new HttpError(403, "只有主人可以指定投递会话");
+      if (target !== origin) throw new HttpError(403, "要更换为其他投递会话，请在规则页选择");
+    }
+    input.conversationId = target ?? current?.conversationId ??
+      (owner && origin && findThread(ctx.app, origin)?.userId === OWNER ? origin : undefined);
     for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space, "rules.edit");
     // Forward targets: "current" is this conversation's chat; new targets only when the owner asked in this turn.
     const here = runLarkChat(ctx);
     // “This group” in the conditions: chat.id = current is the Feishu chat this conversation is in.
     if (input.conditions) input.conditions = currentChatIn(input.conditions as never, here);
-    const ownerAsked = ownerAskedThisTurn(ctx);
+    const ownerAsked = owner && ownerAskedThisTurn(ctx);
     for (const action of (input.actions ?? []) as { type?: string; to?: { chatId?: string; name?: string; kind?: string } }[]) {
       if (action.type !== "forward" || !action.to) continue;
       if (action.to.chatId === "current") {

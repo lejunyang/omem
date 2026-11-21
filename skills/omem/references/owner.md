@@ -46,7 +46,7 @@
 - 会议的人数有两个字段：`meeting.participantCount`（在会人数，入会那一刻在会里的人，不算机器人）和 `meeting.invitedCount`（会邀人数，日程邀请的人，群按成员算；临时会议为未知）。本人说“人多的会、大会”一般用会邀人数。本人在会议里邀请机器人不需要规则：机器人的应用订阅“机器人被邀请入会”事件即可。
 - 会议动作 `meeting-bot.confirm` 可写 true（始终询问）、false（直接加入）或会议条件。比如“30 人及以上先问，否则直接拉”：整条规则 `conditions=null`，动作 `confirm={"field":"meeting.participantCount","op":"gte","value":"30"}`；若还限定会议标题，标题才放整条规则的 `conditions`。确认条件支持 all / any / not，只能用会议字段；数据未知时先问本人，按本次触发的数据判断。一次 `save_rule` 就能保存这条规则。
 - 定时任务 `reply=auto` 发回结果会话，`none` 通知本人，`draft` 的群消息先给本人确认。文档变化规则同样：`reply` 为 auto / draft 时发到规则的结果会话（“发到”），不开话题、不静默排查。
-- 本人在飞书群里说“这个群 / 这里 / 当前会话”：条件写 `{"field":"chat.id","op":"equals","value":"current"}`，保存时换成本会话的群，不要按群名去查；结果会话（“发到”）默认就是本会话，`rule.conversationId` 写 `current` 也一样。不在飞书会话里用 `current` 会被拒绝。
+- 本人在飞书群里说“这个群 / 这里 / 当前会话”：条件写 `{"field":"chat.id","op":"equals","value":"current"}`，保存时换成本会话的群，不要按群名去查；主人会话中，结果会话（“发到”）默认就是本会话，`rule.conversationId` 写 `current` 也一样。不在飞书会话里用 `current` 会被拒绝。成员获授改规则权限后可以在自己的会话保存普通通知规则，投递目标默认留空。
 - 文档变化的字段：电子表格每个新增或改动的行单独触发（`change.sheet`、`change.row`、`change.action` added / edited，`change.text` / `change.added` 是这一行的“列名：值”）；多维表格每条记录单独触发（`change.recordId`、`change.tableId`、`change.action` added / edited / deleted）。“不是我改的”写 `change.byOwner is false`。`change.editorId` 是修改人在机器人这边的 id。
 - 文档变化规则的 Agent 要回到群里对应的消息下 @ 修改人：用 `read_source` / `search` 读那个群的聊天原件（或 `lark_read` 的 `im +chat-messages-list`）找到消息 id，`lark_send` 写 `reply_to`（`in_thread: true` 发在话题里），`mentions` 填事件里的修改人 id。只能发到规则的“发到”那个群。规则运行里用 `lark_write` 回写被盯的表格，引起的改动不会再触发这条规则（几分钟内、只有本人改动的那些）。
 
