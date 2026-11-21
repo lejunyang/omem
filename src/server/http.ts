@@ -75,7 +75,7 @@ import { listenSecure, type SecureListener } from "./secure.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
-import { checkRoute } from "../auth/routes.ts";
+import { checkRoute, requestReviewAudience } from "../auth/routes.ts";
 import { hiddenSourceIds, sourceReadable, hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
 import { registerCodeIndexRoutes } from "../sources/code-index-http.ts";
@@ -2085,7 +2085,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (r.kind !== "code") throw new HttpError(400, "只有编码交办有评审");
     const { checkLabel, lookName, reviewChecks, reviewsOf } = await import("../agents/review.ts");
     const chain = (r.output as { codeChain?: { rounds: string[] } }).codeChain;
-    const { rounds, children } = reviewRounds(app, chain?.rounds ?? [r.id], runAudience(app, who(req), "code.review.view"));
+    const { rounds, children } = reviewRounds(app, chain?.rounds ?? [r.id], requestReviewAudience(app, req, who(req)));
     const checks = reviewChecks(app);
     const infos = new Map(checks.map((c) => [c.name, c]));
     // A second look by another model is the check under its look name (code-overlap.ts).

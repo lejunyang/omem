@@ -213,8 +213,7 @@ export function runAudience(app: App, userId: string, cap: Capability = "runs.vi
   return { userId, spaces: range(false), ownSpaces: range(true), empty, ownUnscoped, ownEmpty: ownUnscoped };
 }
 
-export function canAccessRun(app: App, userId: string, id: string, cap: Capability) {
-  const viewer = runAudience(app, userId, cap);
+export function canAccessRun(app: App, userId: string, id: string, cap: Capability, viewer = runAudience(app, userId, cap)) {
   if (!viewer) return true;
   const filter = runPredicate(viewer);
   const row = one<{ user_id: string }>(app.db, `select user_id from runs where id=? and ${filter.sql}`, id, ...filter.params);

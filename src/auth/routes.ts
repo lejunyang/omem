@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { aliasTarget } from "../sources/duplicates.ts";
-import { can, canReadRun, isOwner, requirePerm, type GlobalPerm, type SpacePerm } from "./permissions.ts";
+import { can, canAccessRun, runAudience, canReadRun, isOwner, requirePerm, type GlobalPerm, type SpacePerm } from "./permissions.ts";
 import { requireReadable } from "./visibility.ts";
 
 /**
@@ -543,6 +543,12 @@ function locate(app: App, req: FastifyRequest, at: string): string | null {
   return null;
 }
 
+const reviewAudiences = new WeakMap<FastifyRequest, ReturnType<typeof runAudience>>();
+export function requestReviewAudience(app: App, req: FastifyRequest, userId: string) {
+  if (!reviewAudiences.has(req)) reviewAudiences.set(req, runAudience(app, userId, "code.review.view"));
+  return reviewAudiences.get(req);
+}
+
 export const routeKey = (req: FastifyRequest) => `${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`;
 
 /**
@@ -582,7 +588,9 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
     return;
   }
   if ("cap" in rule && rule.at === "run:p.id") {
-    if (!can(app, userId, rule.cap, { kind: "run", id: String((req.params as { id: string }).id) })) throw new HttpError(rule.cap === "runs.operate" ? 403 : 404, "没有这次运行的权限");
+    const id = (req.params as { id: string }).id;
+    const audience = rule.cap === "code.review.view" ? requestReviewAudience(app, req, userId) : runAudience(app, userId, rule.cap);
+    if (!canAccessRun(app, userId, id, rule.cap, audience)) throw new HttpError(rule.cap === "runs.operate" ? 403 : 404, "没有这次运行的权限");
     return;
   }
   if ("cap" in rule && rule.at === "item-new") return requirePerm(app, userId, "items.edit", (req.body as { space?: string })?.space ?? `personal-${userId}`);
