@@ -882,3 +882,5 @@ id 自动变成 `<插件>:<id>`，与内置后端进入同一个目录。还可�
 检查拦下的阶段通过 gateReview.ask 提供卡片状态、override（仍然通过）或 hold（等处理）和 answeredAt；事项查看者能读，只有本人能答。越过检查后保留结果供查看，重开后清除。
 
 `GET /api/settings` 的 AI 或助手区域增加 `unavailableBackends: [{ id, name, pluginBackend: { plugin, name, available: false, reason } }]`。默认后端、角色、档位、档案、fallback、任务选型候选、角色模型和评审轮换引用的停用插件后端均保留来源与原因；重新启用后移出不可用清单。
+
+向量状态 `GET /api/search/providers` 的 embeddings 增加 `embedded: { chunks, memories, total }`：库内非工作区分块和 active 记忆已有的向量数量，提供者关闭或停用时仍显示留存数量。pending 保持当前提供者范围的待算数量。两种已有数量分别读取 chunks_vector_space、memories_embedded 部分索引，不读取向量内容。

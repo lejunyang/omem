@@ -23,6 +23,8 @@ updated: 2026-11-22
 
 ## 2026-11-22：第二轮网页对接的服务端字段
 
+- embeddings.embedded 提供分块、有效记忆已有数量及合计，复用部分索引。从 `src/search/embedding-index.ts`、`embeddings.ts` 读起。
+
 - 豆包 CLI 从帮助探测目录参数，放到业务参数之前，无支持时用进程 cwd。从 `src/agents/doubao-cli.ts` 读起。
 
 - 档案技能列表带当前人的 canEdit/canDelete，无管理能力的删除仍拒绝。从 `src/server/http.ts`、`src/auth/routes.ts` 读起。

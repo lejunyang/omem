@@ -429,3 +429,5 @@
 - 档案和技能列表按 agents.view 返回，逐项带 canEdit/canDelete；无管理能力的删除请求拒绝。插件自带档案没有本地副本时不可删。入口 `src/server/http.ts`、`src/auth/routes.ts`。
 
 - 豆包 CLI 目录参数按帮助探测并缓存，原生参数前置；不支持时使用进程 cwd。入口 `src/agents/doubao-cli.ts`；假帮助和假进程测过。
+
+- 向量状态增加 embedded.chunks/memories/total，关闭提供者仍可看已有数量；复用 chunks_vector_space 与 memories_embedded 覆盖索引。入口 `src/search/embedding-index.ts`、`embeddings.ts`。

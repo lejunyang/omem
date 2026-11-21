@@ -3102,3 +3102,7 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 ### 豆包 CLI 工作目录
 
 - 假帮助分别声明 -C、--cwd、--directory 或无目录参数，核对参数在 --resume/-p 之前。连续运行只读帮助一次；无参数时假进程收到正确 cwd。升级二进制或改变启动配置后重新探测；检查本机只运行 --version 与 --help。
+
+### 向量已有数量
+
+- 给库内分块和有效记忆各生成向量，关闭提供者后 /api/search/providers 的 embeddings.embedded 仍分别计数及合计。工作区分块不计入，pending 不变。用 EXPLAIN QUERY PLAN 核对 chunks_vector_space、memories_embedded，不扫向量大表。
