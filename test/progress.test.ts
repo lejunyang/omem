@@ -226,6 +226,33 @@ describe("进度投影", () => {
         decisions: [{ result: "fix" }, { result: "fix" }] }] });
   });
 
+  it("运行和事项进度把分支首轮用量归给评审，出现编码块后只将独立重评归给评审", async () => {
+    const { app, item, add } = fixture();
+    add("branch", "code", null, { branches: { personal: { branch: "feature" } }, itemId: item.id },
+      { reviewPlan: { checks: ["style"] }, reviewStage: "done" });
+    recordReview(app, { codeRunId: "branch", round: 1, check: "style", verdict: "approved", summary: "通过", findings: [] });
+    run(app.db, "insert into run_events values('branch',1,?,'usage',?)", at, '{"input":11,"output":3}');
+    const first = { input: 11, output: 3, runs: 1, missing: 0 };
+    const retry = { input: 5, output: 2, runs: 1, missing: 0 };
+    const total = { input: 16, output: 5, runs: 2, missing: 0 };
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const check = async (views: { kind: string; usage: typeof first }[], totalUsage: typeof first) => {
+        for (const url of ["/api/runs/branch/progress", `/api/items/${item.id}/progress`]) {
+          const response = await server.inject({ url: url + "?summary=true" });
+          expect(response.statusCode).toBe(200);
+          expect(response.json()).toMatchObject({ views, totalUsage });
+        }
+      };
+      await check([{ kind: "review", usage: first }], first);
+      add("retry", "review", "branch", { only: ["style"] });
+      run(app.db, "insert into run_events values('retry',1,?,'usage',?)", at, '{"input":5,"output":2}');
+      await check([{ kind: "review", usage: total }], total);
+      addTask(app, "branch", { title: "按评审修改", kind: "fix" }, "coder");
+      await check([{ kind: "code", usage: first }, { kind: "review", usage: retry }], total);
+    } finally { await server.close(); }
+  });
+
   it("内嵌续轮评审进行中保留旧报告，提交新报告后才转为通过", () => {
     const { app, add } = fixture();
     const reviewPlan = { checks: ["style"] };

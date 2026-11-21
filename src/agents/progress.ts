@@ -39,7 +39,7 @@ export type ProgressView = {
   previousRounds?: { round: number; directions: number; trials: number; usage: Usage }[];
 };
 
-type Block = Omit<ProgressView, "usage"> & { graph: Forest; contributors: Set<string> };
+type Block = Omit<ProgressView, "usage"> & { graph: Forest; hosts: string[]; boundaries?: ReadonlySet<string> };
 const runHref = (id: string) => "#/runs/" + encodeURIComponent(id);
 const flowHref = (id: string) => "#/items/" + encodeURIComponent(id) + "/flow";
 
@@ -51,13 +51,13 @@ function task(graph: Forest, ids: (string | null | undefined)[], data: Omit<Prog
   return { ...(who && { who: { agent: who.profile, model: who.model, effort: who.effort, local: last?.local, device: last?.device } }), ...data, attempts, usage: graph.usage(attempts.map(a => a.runId), boundaries) };
 }
 function view(graph: Forest, data: Pick<ProgressView, "kind" | "id" | "title" | "tasks" | "itemId" | "runId">, state?: ProgressView["state"],
-  options: { stateTasks?: ProgressTask[]; waitingOn?: string; contributors?: Set<string> } = {}): Block {
+  options: { stateTasks?: ProgressTask[]; waitingOn?: string; hosts?: string[]; boundaries?: ReadonlySet<string> } = {}): Block {
   const tasks = options.stateTasks ?? data.tasks;
   const waitingOn = options.waitingOn ?? ([...new Set(tasks.map(t => t.waitingOn).filter(Boolean))].join("；") || undefined);
   const active = tasks.some(t => ["running", "pending", "queued", "redo"].includes(t.state));
   state ??= waitingOn ? "waiting" : active ? "running" : tasks.some(t => t.state === "failed") ? "failed"
     : tasks.some(t => t.state === "blocked" || t.state === "submitted") ? "waiting" : tasks.every(t => t.state === "cancelled") ? "cancelled" : "done";
-  return { ...data, state, waitingOn, graph, contributors: options.contributors ?? graph.contributors(tasks.flatMap(t => t.attempts.map(a => a.runId))) };
+  return { ...data, state, waitingOn, graph, hosts: options.hosts ?? tasks.flatMap(t => t.attempts.map(a => a.runId)), boundaries: options.boundaries };
 }
 
 function boardView(app: App, graph: Forest, node: Node, itemId?: string) {
@@ -146,7 +146,7 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
   const state = terminal ?? (waitingOn ? "waiting" : tasks.length ? undefined : last.status === "done" ? "done" : "running");
   return {
     ...view(graph, { kind: "code", id: node.id, runId: node.id, itemId, title: node.title, tasks }, state, {
-      waitingOn, contributors: graph.contributors([...rounds.map(r => r.id), ...tasks.flatMap(t => t.attempts.map(a => a.runId))]),
+      waitingOn, hosts: [...rounds.map(r => r.id), ...tasks.flatMap(t => t.attempts.map(a => a.runId))],
     }),
     rounds: rounds.map(r => ({ runId: r.id, status: r.status, round: r.round ?? undefined })),
   };
@@ -231,7 +231,7 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
   });
   if (tasks.length) return view(graph, { kind: "review", id: node.id, runId: node.id, itemId, title: node.title + " · 评审", tasks },
     rounds.at(-1)!.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined,
-    { contributors: graph.contributors(tasks.flatMap(t => t.attempts.map(a => a.runId)).filter(id => graph.nodes.get(id)?.kind === "review"), boundaries) });
+    { boundaries });
 }
 
 function flowView(app: App, reader: Reader, graph: Forest, f: ItemFlow, instance: Node[], rows: ReturnType<typeof itemStages>, state?: ProgressView["state"]) {
@@ -311,7 +311,7 @@ function studyView(app: App, graph: Forest, f: ItemFlow, instance: Node[], title
   const study = view(graph, { kind: "study", id, itemId: id, title, tasks: studyTasks },
     state ?? (current.length ? undefined : "running"), {
       stateTasks: current,
-      contributors: graph.contributors([...instance.filter(r => r.trial).map(r => r.id), ...studyTasks.flatMap(t => t.attempts.map(a => a.runId))]),
+      hosts: [...instance.filter(r => r.trial).map(r => r.id), ...studyTasks.flatMap(t => t.attempts.map(a => a.runId))],
     });
   const counts = new Map(all<{ round: number; directions: number }>(app.db,
     "select round,count(*) directions from study_directions where item_id=? and round<? group by round order by round", id, f.round)
@@ -375,15 +375,20 @@ function workViews(app: App, graph: Forest, reader: Reader, linkedItem?: string)
 // Charge a visible run once per page, to its most specific block. Work done inside a
 // coding host stays in that host's usage; dedicated review runs take precedence.
 function allocate(blocks: Block[]): ProgressView[] {
+  const codingHosts = new Set(blocks.flatMap(b => b.rounds?.map(r => r.runId) ?? []));
+  const views = blocks.map(({ graph, hosts, boundaries, ...block }) => {
+    const ids = block.kind === "review" ? hosts.filter(id => !codingHosts.has(id)) : hosts;
+    return { ...block, graph, contributors: graph.contributors(ids, boundaries) };
+  });
   const priority = { review: 0, code: 1, board: 2, study: 3, flow: 4 };
   const claimed = new Set<string>();
-  for (const block of [...blocks].sort((a, b) => priority[a.kind] - priority[b.kind])) {
+  for (const block of [...views].sort((a, b) => priority[a.kind] - priority[b.kind])) {
     for (const id of block.contributors) {
       if (claimed.has(id)) block.contributors.delete(id);
       else claimed.add(id);
     }
   }
-  return blocks.map(({ graph, contributors, ...block }) => ({ ...block, usage: graph.sum(contributors) }));
+  return views.map(({ graph, contributors, ...block }) => ({ ...block, usage: graph.sum(contributors) }));
 }
 
 export function progressPage(views: ProgressView[]) {
