@@ -63,7 +63,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     await setPluginEnabled(app,"stagekit",false);
     try {
       const response = await server.inject({method:"POST",url:"/api/flows/validate",payload:{yaml:JSON.stringify(changed)}});
-      expect(response.json()).toMatchObject({ok:true,unavailableReferences:[
+      expect(response.json()).toMatchObject({ok:true,unavailableChecks:[{id:"stagekit:word",reason:"检查已停用"}],unavailableReferences:[
         {kind:"signal",stage:"mark",id:"stagekit:mark"}, {kind:"runner",stage:"job",id:"stagekit:job"}
       ]});
       expect(parseFlowForSave(app,JSON.stringify(changed)).stages[0].name).toBe("改过名称");

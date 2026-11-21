@@ -414,7 +414,9 @@
 
 交给 `archivist` 的每份原件带宿主查到的旁证（`src/sources/homing.ts` 的 `archiveEvidence`）；留在个人空间的记下判断时的旁证指纹（`archive_evidence`）和结论（`source_routes.verdict`：personal / unsure / proposed），指纹变了或空间、归档规则变了时进入 `archive_recheck`，由每晚的 `archive-sweep` 按预算重判。`source_moves.mode` / `detail` 记每次移动的方式和当时的旁证，“从个人空间归位”据此列出、移回（移回即本人指定，不再自动移动）。工作文件按运行范围（`run_scope`）里唯一的业务空间落位。页面引用的可达性在 `src/sources/reach.ts`。检查在后台按集合算、分段让出事件循环、同一时间一个、5 分钟上限；“贴过它的群”查 `lark_doc_links`（采集时写入，旧消息由检查分批补）。详见 docs/v2/archive-routing.md。
 
-- 流程服务端：保存与校验保留同阶段未变的停用信号、运行器及未变检查；校验返回 unavailableReferences，列表返回 unavailableChecks。入口 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts`。
+## 第二轮网页对接的服务端字段（2026-11-22）
+
+- 流程服务端：保存与校验保留同阶段未变的停用信号、运行器及未变检查；校验返回 unavailableReferences 与 unavailableChecks，列表也返回 unavailableChecks。入口 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts`。
 
 - 流程列表提供 `stageSummaries`，直接读取承担者、信号及参数、开始时刻与分钟时限。入口 `src/flows/definitions.ts`（summarizeStage）、`http.ts`。
 

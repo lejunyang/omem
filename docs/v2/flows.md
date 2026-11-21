@@ -773,7 +773,7 @@ npm run build
 
 ### 保留停用的流程能力
 
-`POST /api/flows/validate` 与保存按已保存流程的同阶段引用比较：运行器、信号全名及有效 `with` 参数不变时原样保留；新增、移到新阶段或修改参数时校验注册和 JSON Schema。校验成功返回 `unavailableReferences: [{ kind: "runner" | "signal", stage, id, reason }]`，只作提示。运行器的新定义版本仍由本人确认。检查保存接口也保留 id、stages、mandatory 均不变的项；流程列表的 `unavailableChecks: [{ id, reason }]` 提示停用检查，强制检查的执行规则照旧。
+`POST /api/flows/validate` 与保存按已保存流程的同阶段引用比较：运行器、信号全名及有效 `with` 参数不变时原样保留；新增、移到新阶段或修改参数时校验注册和 JSON Schema。校验成功返回 `unavailableReferences: [{ kind: "runner" | "signal", stage, id, reason }]`，只作提示。运行器的新定义版本仍由本人确认。检查保存接口也保留 id、stages、mandatory 均不变的项；校验结果与流程列表的 `unavailableChecks: [{ id, reason }]` 提示停用检查，强制检查的执行规则照旧。
 
 ### 流程定义的结构化摘要
 

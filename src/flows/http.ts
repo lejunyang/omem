@@ -102,7 +102,7 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     const raw = body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
     try {
       const f = parseFlowForSave(app, raw);
-      return { ok: true, unavailableReferences: unavailableFlowReferences(f), id: f.id, name: f.name, description: f.description, repeat: f.repeat ?? null, repeatDescription: describeFlow(f), stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
+      return { ok: true, unavailableReferences: unavailableFlowReferences(f), unavailableChecks: gateSettingsForFlow(app, f.id).unavailableChecks, id: f.id, name: f.name, description: f.description, repeat: f.repeat ?? null, repeatDescription: describeFlow(f), stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
     } catch (e) { return { ok: false, problem: (e as Error).message }; }
   });
   server.put("/api/flows/:id", async (req) => {
