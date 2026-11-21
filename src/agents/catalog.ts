@@ -12,6 +12,10 @@ import { commandExists } from "./spawn.ts";
  * ACP registry (`omem agents registry`) or by hand in config.agents.profiles.
  */
 export type CatalogEntry = {
+  plugin?: string;
+  pluginName?: string;
+  /** Names to inherit from the host environment; values are never stored in the manifest. */
+  envNames?: string[];
   /**
    * Settings the agent takes when it starts, as a JSON object in an environment variable (`env`), and the keys
    * its model and thinking level go by there. A run that names a model or a level writes them in, so the
@@ -147,6 +151,36 @@ export const accountOnlyCatalog: CatalogEntry[] = [
   },
 ];
 
+const pluginDeclarations = new Map<string, CatalogEntry>();
+const pluginOrigins = new Map<string, CatalogEntry>();
+export function declarePluginBackends(plugin: string, name: string, entries: CatalogEntry[]) {
+  for (const [id, e] of pluginDeclarations) if (e.plugin === plugin) pluginDeclarations.delete(id);
+  for (const e of entries) {
+    const entry = { ...e, id: `${plugin}:${e.id}`, plugin, pluginName: name };
+    pluginDeclarations.set(entry.id, entry);
+    pluginOrigins.set(entry.id, entry);
+  }
+}
+export function registerPluginBackends(plugin: string) {
+  const entries = [...pluginDeclarations.values()].filter(e => e.plugin === plugin);
+  acpCatalog.push(...entries);
+  return () => {
+    for (const e of entries) {
+      const i = acpCatalog.indexOf(e);
+      if (i >= 0) acpCatalog.splice(i, 1);
+    }
+  };
+}
+export function pluginBackendStatus(profile: Pick<AgentProfile, "id" | "source" | "plugin">) {
+  const id = profile.source ?? profile.id, e = pluginOrigins.get(id);
+  if (!e && !profile.plugin) return undefined;
+  const available = !!e && acpCatalog.some(c => c.id === id && c.plugin === e.plugin);
+  return { plugin: e?.plugin ?? profile.plugin!, name: e?.pluginName ?? profile.plugin!, available, ...(!available && { reason: "这个后端来自已停用或未信任的插件" }) };
+}
+export function referencedPluginProfiles(ids: Set<string>) {
+  return [...pluginOrigins.values()].filter(e => ids.has(e.id)).map(catalogProfile);
+}
+
 /**
  * Every backend that can run with a user's own account: the catalog's, then the owner's own profiles
  * (`agents.profiles`) that carry an `account` — keyed by their source, so one replaces a catalog entry
@@ -177,13 +211,14 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
     model: e.model,
     effort: e.effort,
     env: e.env ?? {},
+    ...(e.plugin && { source: e.id, plugin: e.plugin }),
     idleTimeoutMs: 600_000,
   };
 }
 
 /** A saved profile with the catalog's current default args when it still has an earlier default. */
 export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
-  const e = p.transport === "acp" ? acpCatalog.find((x) => x.command === p.command) : undefined;
+  const e = p.transport === "acp" ? catalogEntry(p.source ?? p.id) ?? acpCatalog.find((x) => x.command === p.command && !x.plugin) : undefined;
   const previous = e?.previousArgs?.some((a) => a.length === p.args.length && a.every((v, i) => v === p.args[i]));
   return e ? { ...p, args: previous ? e.args ?? [] : p.args, archiveArgs: p.archiveArgs ?? e.archiveArgs, sessionHistory: p.sessionHistory ?? e.sessionHistory } : p;
 }
@@ -194,7 +229,8 @@ export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
  * that is not a JSON object is left alone.
  */
 export function launchConfigEnv(profile: Pick<AgentProfile, "id" | "source" | "command" | "env">, want: { model?: string | null; effort?: string | null }): Record<string, string> {
-  const spec = [...acpCatalog, ...accountOnlyCatalog].find((e) => e.id === (profile.source ?? profile.id) || e.command === profile.command)?.launchConfig;
+  const entries = [...acpCatalog, ...accountOnlyCatalog];
+  const spec = (entries.find(e => e.id === (profile.source ?? profile.id)) ?? entries.find(e => e.command === profile.command && !e.plugin))?.launchConfig;
   if (!spec) return {};
   let base: Record<string, unknown> = {};
   const given = profile.env?.[spec.env];

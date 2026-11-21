@@ -23,7 +23,7 @@ import { NetworkUnavailableError, networkReason, refreshForRun } from "./network
 import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
 import { aiLabel, candidateProfiles, candidateWhen, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
-import { catalogEntry, installHint } from "./catalog.ts";
+import { catalogEntry, installHint, pluginBackendStatus, referencedPluginProfiles } from "./catalog.ts";
 import { cloudAccess } from "./cloud-probe.ts";
 import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE } from "./doubao-cli.ts";
@@ -31,7 +31,7 @@ import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { trimTools } from "../auth/tools.ts";
-import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
+import { agentIndex, listAgentSpecs, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools, ROLE_TOOLS } from "./tool-help.ts";
 import { applyOverlay, GUEST_ROLES, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
@@ -127,8 +127,11 @@ export function toolSections(text: string, tools: Set<string>, localTools = true
 }
 
 export function listAgentProfiles(app: App) {
-  return allProfiles(app.config).map((p) => {
-    const network = { networkReason: networkReason(app, p) };
+  const profiles = allProfiles(app.config);
+  const references = new Set(listAgentSpecs(app, { includeDrafts: true }).flatMap(s => s.agent ?? []));
+  for (const p of referencedPluginProfiles(references)) if (!profiles.some(e => e.id === p.id)) profiles.push(p);
+  return profiles.map((p) => {
+    const network = { networkReason: networkReason(app, p), pluginBackend: pluginBackendStatus(p) };
     if (p.transport === "doubao") return { ...p, ...network, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
     if (p.transport === "doubao-cli") return { ...p, ...network, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : DOUBAO_CLI_INSTALL };
     const e = catalogEntry(p.id);
@@ -397,7 +400,7 @@ export function resolveRunProfile(app: App, input: { actor: Actor; profileId?: s
   const baseProfile = input.profileId
     ? allProfiles(app.config).find((p) => p.id === input.profileId)
     : spec?.agent
-      ? allProfiles(app.config).find((p) => p.id === spec.agent)
+      ? allProfiles(app.config).find((p) => p.id === spec.agent) ?? referencedPluginProfiles(new Set([spec.agent]))[0]
       : profileFor(app, roleName);
   if (!baseProfile) throw new HttpError(400, `Agent ${input.profileId ?? spec?.agent} 不存在`);
   // Role -> per-profile model/effort overrides apply first; a per-thread override (the

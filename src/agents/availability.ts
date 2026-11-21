@@ -4,6 +4,7 @@ import { commandExists } from "./spawn.ts";
 import { backOnly, pairedIn } from "../core/peers.ts";
 import { backOnline } from "../core/peer-back.ts";
 import { keyOf } from "../core/ai-keys.ts";
+import { pluginBackendStatus } from "./catalog.ts";
 
 const available = new Map<string, boolean>();
 export function backendAvailable(profile: AgentProfile, home: string) {
@@ -14,6 +15,7 @@ export function backendAvailable(profile: AgentProfile, home: string) {
     const p = pairedIn(home).find((x) => x.id === profile.peer!.id);
     return !!p && (!backOnly(p) || backOnline(home, p.id));
   }
+  if (pluginBackendStatus(profile)?.available === false) return false;
   if (profile.keyRef && !keyOf(profile.keyRef, home)) return false;
   if (!available.has(profile.command)) available.set(profile.command, commandExists(profile.command));
   return available.get(profile.command)!;

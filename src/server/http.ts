@@ -1053,7 +1053,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
   server.get("/api/profile-options", async () => ({
     // The cached probe rides along so the form need not ask again (probe once, or "重新检测").
-    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(app, p.id) })),
+    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, pluginBackend: p.pluginBackend, probe: cachedProbe(app, p.id) })),
     globalDefaultBackend: app.config.agents.default || listAgentProfiles(app).find((p) => p.installed)?.id || "",
     defaultBackend: (() => { try { return profileFor(app, "assistant").id; } catch { return ""; } })(),
     tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write, roleOnly: ROLE_TOOLS.includes(t.name) })),
@@ -2811,7 +2811,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         ...listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description, agent: defaultBackendOf(() => resolveRunProfile(app, { actor: { spec: s } }).id) })),
       ],
       // The AI a rule's agent action may be pinned to (AiDefaults on the rules page).
-      backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(app, p.id) })),
+      backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, pluginBackend: p.pluginBackend, probe: cachedProbe(app, p.id) })),
       chats: all<{ chat_id: string; name: string; chat_mode: string | null }>(app.db, "select chat_id, name, chat_mode from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
       conversations: all(app.db, "select id,title,channel,space_id,external_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
@@ -3421,9 +3421,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return {
       config: settingsView(app.config, visible, access.owner),
       ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : visible("assistant") && {
-        agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort }) => {
+        agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
           const probe = userProbe(app, who(req), id);
-          return { id, name, installed, transport, model, effort, probe: probe && {
+          return { id, name, installed, transport, model, effort, pluginBackend, probe: probe && {
             at: probe.at, models: probe.models, efforts: probe.efforts, effortsByModel: probe.effortsByModel,
           } };
         }),
