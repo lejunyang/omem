@@ -1,3 +1,4 @@
+import { receiveMemberGit } from "./member-git.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -141,6 +142,7 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
       runId: h.runId,
       cwd,
       worktrees: h.worktrees,
+      memberCommits: true,
       signal: round.signal,
       onEvent: (e) => addRunEvent(app, h.runId, e.type, e),
     });
@@ -149,9 +151,11 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
     const open = h.tasks.filter((s) => getTask(app, rootId, s).state === "coding");
     for (const wt of h.worktrees) {
       const dir = wt.slot ?? wt.path;
+      const message = `编码助手 ${h.n} 没提交的改动${open.length === 1 ? `\n\nOmem-Task: ${taskLabel(open[0])}` : ""}`;
+      if (await receiveMemberGit(app, h.runId, wt.space, dir, message)) continue;
       if (!git(dir, ["status", "--porcelain"]).stdout.trim()) continue;
       git(dir, ["add", "-A"]);
-      git(dir, [...identity(dir), "commit", "-q", "--no-verify", "-m", `编码助手 ${h.n} 没提交的改动${open.length === 1 ? `\n\nOmem-Task: ${taskLabel(open[0])}` : ""}`]);
+      git(dir, [...identity(dir), "commit", "-q", "--no-verify", "-m", message]);
     }
     const commits = Object.fromEntries(h.worktrees.map((w) => [w.space, git(w.slot ?? w.path, ["rev-list", "--reverse", `${heads[w.space]}..HEAD`]).stdout.split("\n").filter(Boolean)]));
     setRunOutput(app, h.runId, { commits, answer: replyOf(res).trim(), ai: res.ai });

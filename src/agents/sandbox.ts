@@ -102,12 +102,13 @@ export type SandboxPlan = {
   rw: string[];
   /** Host-assigned pool links to recreate inside the private run directory. */
   links?: { path: string; target: string }[];
+  pointers?: { source: string; path: string }[];
   cwd: string;
   command: string;
   args: string[];
 };
 
-export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links">;
+export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointers">;
 
 /**
  * bubblewrap's arguments for a plan. Pure. Mounts go from the shallowest path to the deepest, so a
@@ -130,7 +131,8 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
   const sorted = [...ops.values()].sort((a, b) => depth(a.path) - depth(b.path) || rank[a.kind] - rank[b.kind] || a.path.localeCompare(b.path));
   const mounts = sorted.flatMap((o) => (o.kind === "tmpfs" ? ["--tmpfs", o.path] : o.kind === "ro" ? ["--ro-bind-try", o.path, o.path] : ["--bind", o.path, o.path]));
   const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
-  return ["--die-with-parent", "--unshare-pid", "--unshare-user", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", ...mounts, ...links, "--chdir", plan.cwd, "--", plan.command, ...plan.args];
+  const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
+  return ["--die-with-parent", "--unshare-pid", "--unshare-user", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, "--chdir", plan.cwd, "--", plan.command, ...plan.args];
 }
 
 /** Variables of the service that do not go into a user's sandbox: credentials, and paths into what is hidden. */
@@ -207,7 +209,7 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ hide, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
+    args: bwrapArgs({ hide, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
     env: sandboxEnv(process.env, runEnv, acct, hide, nodeBin),
   };
 }

@@ -6273,7 +6273,7 @@ def({
     // What it did not commit is this task's: one commit per task, also where the agent cannot commit.
     const { worktreesOf } = await import("./code.ts");
     const { identity } = await import("./code-branch.ts");
-    const committed = t.commitTask(ctx.app, rootId, seq, worktrees ?? worktreesOf(ctx.app, rootId), identity);
+    const committed = await t.commitTask(ctx.app, actor, rootId, seq, worktrees ?? worktreesOf(ctx.app, rootId), identity);
     // The round's own commits are on the work branch already (a helper's are picked there at the round's end).
     if (!helper) t.attributeCommits(ctx.app, rootId, worktreesOf(ctx.app, rootId), seq);
     // Screenshots and reports it left in OMEM_ARTIFACTS while doing it are this task's.

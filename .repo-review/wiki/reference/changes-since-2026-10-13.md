@@ -18,6 +18,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 成员在沙箱内提交（11-21）
+
+主编码和助手各自在本轮仓库的私有 Git 目录提交。`finish_task` 校验提交对象、分支和预期基点，再把提交接到宿主工作树。挂载从 `src/agents/workspaces.ts` 读起，接收在 `src/agents/member-git.ts`。
+
 ## 成员交办的身份、沙箱和宿主命令（11-21）
 
 主编码、助手、评审和后续轮次使用交办发起人的身份。账号选择和严格模式从 `src/agents/accounts.ts` 读起，挂载计划见 `src/agents/sandbox.ts`。宿主准备依赖和检查在 `src/agents/code.ts` 留下成员与交办记录。设备代跑的命令规则在 `src/core/peer-acp.ts` 接入执行节点。配置和验收见 `docs/v2/agent-accounts.md`。

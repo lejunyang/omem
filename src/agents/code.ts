@@ -1,3 +1,4 @@
+import { receiveMemberGit } from "./member-git.ts";
 import { checkLessons, lessonsText } from "./code-lessons.ts";
 import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
@@ -641,6 +642,7 @@ ${input.task}
       runId: run.id,
       cwd,
       worktrees,
+      memberCommits: true,
       signal: ctx.signal,
       resumeSessionId,
       persistSession: true,
@@ -726,6 +728,7 @@ ${input.task}
         moved = now !== mark;
         mark = now;
       }
+      for (const wt of worktrees) await receiveMemberGit(app, run.id, wt.space, wt.path, run.title);
     } finally {
       // The helpers finish, and what they committed is picked onto the work branch (conflicts to the coder).
       if (helpers) helperRuns = await helpers.joinHelpers(app, run.id, (wt, files, label) => resolverFor(wt)(files, label));

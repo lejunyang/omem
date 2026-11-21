@@ -1,3 +1,4 @@
+import { receiveMemberGit } from "./member-git.ts";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
@@ -611,14 +612,16 @@ export function settleCodingRound(app: App, rootId: string, runId: string, workt
  * repository's Git metadata): what is uncommitted in each worktree becomes this task's commit.
  * Returns the repositories committed in.
  */
-export function commitTask(app: App, rootId: string, seq: number, worktrees: WorktreeRef[], identity: (dir: string) => string[]): string[] {
+export async function commitTask(app: App, actor: string, rootId: string, seq: number, worktrees: WorktreeRef[], identity: (dir: string) => string[]): Promise<string[]> {
   const t = getTask(app, rootId, seq);
   const made: string[] = [];
   for (const wt of worktrees) {
+    const message = `${truncate(t.title, 72)}\n\nOmem-Task: ${taskLabel(seq)}`;
+    if (await receiveMemberGit(app, actor, wt.space, wt.path, message)) continue;
     if (!existsSync(wt.path)) continue;
     if (!git(wt.path, ["status", "--porcelain"]).stdout.trim()) continue;
     git(wt.path, ["add", "-A"]);
-    const c = git(wt.path, [...identity(wt.path), "commit", "-q", "--no-verify", "-m", `${truncate(t.title, 72)}\n\nOmem-Task: ${taskLabel(seq)}`]);
+    const c = git(wt.path, [...identity(wt.path), "commit", "-q", "--no-verify", "-m", message]);
     if (c.ok) made.push(wt.space);
   }
   return made;
