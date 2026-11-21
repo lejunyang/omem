@@ -198,6 +198,22 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 
 `GET /api/capabilities` 返回各能力的中文名称、说明、区域、动作、作用域和预设。角色的旧权限仍用于目录以外的操作。网页只读观察者（`observer`）默认可在可读空间阅读工作线、事项、原件、规则、运行、编码、评审和指标，也能提问并查看自己的对话和通知。观察者的个人空间默认只读，项目的显式空间角色只叠加目录内映射的能力（成员接口返回 `spaceRoleGrants: catalogOnly`）。记忆和 Wiki 写入仍受旧权限限制。观察者可回答或关闭自己对话里的普通追问，带批准或其他动作的卡片继续受限。
 
+写操作按目标检查。下表里的路径都以 `/api/` 开头。
+
+| 区域与动作 | 路由 | 原先 | 现在 |
+| --- | --- | --- | --- |
+| 原件 · 标注、调整单份关注程度 | `POST sources/:id/notes`、`PUT sources/:id/attention`、`POST source-notes/:id/review`、`DELETE source-notes/:id` | 路由标了 `sources.edit`，处理函数只让本人操作 | 来源空间的 `sources.edit` 和这份原件的阅读权限。成员标注记为 member，本人标注仍受保护 |
+| 原件 · 整批调整、目录定级和复核 | `POST sources/attention`、`PUT sources/node-level`、`POST sources/node-level/review` | 处理函数只认本人 | 路由也标明本人专用。一次操作可能涉及目录内受限原件 |
+| 事项 · 编辑内容及关系 | `PUT items/:id/parent`、`POST/DELETE items/:id/materials…`、`POST/DELETE items/:id/objects…`、`POST items/:id/split-requirements` | 调整上级仅本人可用，其他入口按登录身份先拦观察者 | 检查本人事项的 `items.edit`；调整关系还检查新旧上级。外部对象动作、拆需求保留各自的目标权限 |
+| 助手 · 编辑评审设置 | `PUT review-settings` | 交办编码权限 | `settings.assistant.edit` |
+| AI · 修改角色模型 | `PUT agent-role-model` | 全局设置权限 | `settings.ai.edit`，读取模型配置另需 view |
+| 远程 · 查看、导航 | `POST remote/sessions/:id/view`、`POST remote/sessions/:id/navigate` | 观察者先被通用写请求检查拦下 | 按会话所有权或有效授权决定；受托者需匹配的能力，导航需操作授权 |
+| 流程 · 推进实例 | `POST/DELETE items/:id/flow…` | `flows.operate` 和事项归属 | 同前。修改共用流程定义仍限本人 |
+| 运行 · 取消、重试、删除产物 | `POST runs/:id/cancel`、`POST runs/:id/retry`、`DELETE runs/:id/artifacts/:artifact` | `runs.operate` 和运行范围 | 同前。代码交办、Git 与发布操作另需原权限 |
+| 规则 · 编辑 | `POST/PUT/DELETE rules…` | `rules.edit` | 同前。以本人身份发消息及启用规则的确认仍单独检查 |
+
+跨空间移动原件会改变读者范围，批量归档还会改动多个空间；这些操作保留专用管理入口。工作线收尾可能同时关闭多个子事项，仍由本人处理。
+
 升级前已有自定义角色使用 `observer` 时，系统为原角色换一个空闲标识，保留其权限、成员和邀请，再将 `observer` 用于内置预设。
 
 具有 `settings.members` 的人可用 `GET /api/members/:id/capabilities` 查看预设、覆盖和有效权限来源。PUT 替换整份配置，省略的旧覆盖会撤销。例如：

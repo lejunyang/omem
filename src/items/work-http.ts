@@ -12,6 +12,7 @@ import { CHANGE_COLS, CHANGE_TYPES, changeLite, lineTimeline, refTargets, textTa
 import { endedLines, endReason, guardsOf, setLinePhase } from "./lifecycle.ts";
 import { decideNext, nextOf, type NextLite } from "./lines.ts";
 import { materialViews } from "./materials.ts";
+import { writableParents } from "./access.ts";
 import { setParent } from "./parent.ts";
 import { externalView, providerState } from "./providers.ts";
 import { getItem, isClosed, listItems, type Item, type LineNow } from "./store.ts";
@@ -308,7 +309,9 @@ export function registerWorkRoutes(server: FastifyInstance, app: App, who: (req:
   server.put("/api/items/:id/parent", async (req) => {
     const id = (req.params as { id: string }).id;
     const b = body(z.object({ parent: z.string().nullable() }), req.body);
-    if (getItem(app, id).userId !== who(req)) throw new HttpError(403, "不能修改他人的事项");
+    const item = getItem(app, id);
+    writableParents(app, who(req), item.parentId, b.parent);
+    if (item.userId !== who(req)) throw new HttpError(403, "不能修改他人的事项");
     return setParent(app, id, b.parent, "user");
   });
   server.put("/api/item-next/:id", async (req) => {

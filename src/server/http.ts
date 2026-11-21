@@ -543,9 +543,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { counts: levelCounts(app, spacesWithCapability(app, who(req), "sources.view"), o.space), labels: LEVEL_LABELS };
   });
   server.put("/api/sources/:id/attention", async (req) => {
-    ownerOnly(req);
     const b = q(z.object({ level: z.enum(LEVELS).nullable() }), req.body);
-    setAttention(app, [(req.params as { id: string }).id], b.level, "owner");
+    setAttention(app, [(req.params as { id: string }).id], b.level, who(req) === OWNER ? "owner" : "member");
     return levelOf(app, (req.params as { id: string }).id);
   });
   server.post("/api/sources/attention", async (req) => {
@@ -557,9 +556,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/sources/:id/notes", async (req) => sourceNotes(app, (req.params as { id: string }).id));
   server.post("/api/sources/:id/notes", async (req) => {
-    ownerOnly(req);
     const b = q(z.object({ kind: z.enum(NOTE_KINDS), lineStart: z.number().int().nullable().optional(), lineEnd: z.number().int().nullable().optional(), note: z.string().max(500), ref: z.string().nullable().optional() }), req.body);
-    return addSourceNote(app, { sourceId: (req.params as { id: string }).id, ...b, by: "owner" });
+    return addSourceNote(app, { sourceId: (req.params as { id: string }).id, ...b, by: who(req) === OWNER ? "owner" : "member" });
   });
   // What waits for the owner: agents' notes and folder levels, by impact (sources/attention.ts reviewQueue).
   server.get("/api/sources/review", async (req) => {
@@ -571,9 +569,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ...queue, notes: queue.notes.filter(n => !hidden.has(n.sourceId)), rejected: queue.rejected.filter(n => !hidden.has(n.sourceId)), levels: queue.levels.filter(n => n.type !== "source" || !hidden.has(n.key)) };
   });
   server.post("/api/source-notes/:id/review", async (req) => {
-    ownerOnly(req);
     const b = q(z.object({ decision: z.enum(["confirm", "reject"]) }), req.body);
-    reviewSourceNote(app, Number((req.params as { id: string }).id), b.decision);
+    reviewSourceNote(app, Number((req.params as { id: string }).id), b.decision, who(req) === OWNER ? "owner" : "member");
     return { ok: true };
   });
   server.post("/api/sources/level-audit/review", async (req) => {
@@ -589,8 +586,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ok: true };
   });
   server.delete("/api/source-notes/:id", async (req) => {
-    ownerOnly(req);
-    removeSourceNote(app, Number((req.params as { id: string }).id), "owner");
+    removeSourceNote(app, Number((req.params as { id: string }).id), who(req) === OWNER ? "owner" : "member");
     return { ok: true };
   });
   server.get("/api/attention-rules", async () => listAttentionRules(app));
@@ -2125,6 +2121,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.review = { ...settings, lessons: app.config.review.lessons };
     saveConfig(next, app.home);
     Object.assign(app.config, next);
+    audit(app, who(req), "settings.update", "settings", { changes: { assistant: ["review"] } });
     return { ok: true };
   });
   server.get("/api/review-options", async () => {
@@ -2969,7 +2966,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.agents.roleModels = Object.fromEntries(byRole);
     saveConfig(next, app.home);
     Object.assign(app.config, next);
-    return { roleModels: next.agents.roleModels };
+    audit(app, who(req), "settings.update", "settings", { changes: { ai: ["agents.roleModels"] } });
+    return can(app, who(req), "settings.ai.view") ? { roleModels: next.agents.roleModels } : { ok: true };
   });
 
   // Official ACP registry: agents beyond the built-in catalog, runnable via npx / uvx / a downloaded binary.
@@ -3306,7 +3304,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const settingsAccess = (req: FastifyRequest) => {
     const access = capabilityAccess(app, who(req), null);
     return {
-      owner: access.preset === "owner" && access.active,
+      owner: who(req) === OWNER && access.active,
       view: (section: Section) => !!access.source(`settings.${section}.view`),
       edit: (section: Section) => !!access.source(`settings.${section}.edit`),
     };

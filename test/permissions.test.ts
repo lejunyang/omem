@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createRun, stopWorker } from "../src/agents/runs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
+import { capabilityKeys } from "../src/auth/capabilities.ts";
 import { can, canReadRun, spacesWith } from "../src/auth/permissions.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
 import { toolAllowed, trimTools } from "../src/auth/tools.ts";
@@ -338,7 +339,7 @@ describe("roles and permissions", async () => {
     const put = (preset: string, overrides: object[]) => fetch(base + path, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ preset, overrides }) });
     expect((await as(id, path)).status).toBe(403);
     const catalog = await (await fetch(base + "/api/capabilities")).json();
-    expect(catalog).toHaveLength(26);
+    expect(catalog.map((entry: { key: string }) => entry.key).sort()).toEqual([...capabilityKeys].sort());
     for (const key of ["remote.view", "remote.operate"])
       expect(catalog).toContainEqual(expect.objectContaining({ key, scope: "global", presets: ["owner"] }));
     expect((await as(id, "/api/rules")).status).toBe(403);
@@ -504,6 +505,20 @@ describe("roles and permissions", async () => {
     expect((await as("bob", "/api/wiki/team/coverage")).status).toBe(200);
     expect((await as("bob", "/api/wiki/team/coverage/run", { method: "POST", body: "{}" })).status).toBe(200);
     expect((await as("bob", "/api/wiki/other/coverage")).status).toBe(403);
+  });
+
+  it("checks both edit capability and original visibility for member annotations", async () => {
+    const src = upsertSource(app, { spaceId: "team", kind: "note", uri: "test:annotation", title: "说明", text: "示例内容" });
+    const path = `/api/sources/${src.id}/notes`;
+    const post = { method: "POST", body: JSON.stringify({ kind: "note", note: "补充" }) };
+    expect((await as("ann", path, post)).status).toBe(403);
+    const made = await as("bob", path, post);
+    expect(made.status).toBe(200);
+    const { id } = await made.json();
+    expect((await json("bob", path))[0].by).toBe("member");
+    setVisibility(app, src.id, "restricted");
+    expect((await as("bob", path, post)).status).toBe(403);
+    expect((await as("bob", `/api/source-notes/${id}`, { method: "DELETE" })).status).toBe(403);
   });
 
   it("keeps the shared setup to those who manage it", async () => {

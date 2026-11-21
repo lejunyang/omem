@@ -14,9 +14,9 @@ const definitions = {
   "work.view": ["space", "看工作线", "看本人的工作线、变化和下一步"],
   "items.view": ["space", "看事项", "看共享空间里其他人的事项和进展"],
   "items.operate": ["space", "更新进展", "更新自己事项的状态和进展"],
-  "items.edit": ["space", "改事项", "新建事项或编辑自己的事项内容"],
+  "items.edit": ["space", "改事项", "新建事项，编辑自己的事项内容、材料、业务对象和上级事项"],
   "sources.view": ["space", "看原件", "阅读有权访问的文档和其他原件"],
-  "sources.edit": ["space", "改原件", "导入、标注和编辑原件"],
+  "sources.edit": ["space", "改原件", "导入、标注、调整单份原件的关注程度及编辑可读原件"],
   "search.use": ["space", "检索", "在可读空间里搜索"],
   "wiki.view": ["space", "看知识页", "阅读空间的知识页"],
   "memories.view": ["space", "看记忆", "查看空间的记忆"],
@@ -27,7 +27,7 @@ const definitions = {
   "flows.view": ["space", "看流程", "查看流程定义、实例和看板"],
   "flows.operate": ["space", "推进流程", "推进自己的流程实例"],
   "runs.view": ["space", "看运行", "阅读可见范围内的运行记录"],
-  "runs.operate": ["space", "操作运行", "停止或重试获准操作的运行"],
+  "runs.operate": ["space", "操作运行", "停止或重试获准操作的运行，删除相应运行的产物"],
   "code.work.view": ["space", "看编码", "查看编码交办、各轮和修改项"],
   "code.review.view": ["space", "看评审", "查看评审问题和代码差异"],
   "conversations.view": ["global", "看自己的对话", "查看自己的对话记录"],
@@ -56,7 +56,7 @@ const personal: Capability[] = ["ask.send", "conversations.view", "notifications
 function presetGrants(role: string, permissions: string[], cap: Capability) {
   if (role === "owner") return true;
   if (cap === "remote.view" || cap === "remote.operate") return false;
-  if (cap.startsWith("settings.") && cap !== "settings.members") return cap === "settings.members.view" && permissions.includes("users.manage");
+  if (cap.startsWith("settings.") && cap !== "settings.members") return cap === "settings.members.view" && (role === "admin" || permissions.includes("users.manage"));
   if (role === "observer") return cap.endsWith(".view") || cap === "ask.send" || cap === "search.use";
   return personal.includes(cap) || permissions.some(p => legacyCapabilities[p.replace(/@\*$/, "")]?.includes(cap));
 }
@@ -96,8 +96,15 @@ export function capabilityAccess(app: App, userId: string, targetSpace?: string 
     const global = effects.get(JSON.stringify([cap, "global", ""]));
     const localEffect = space && effects.get(JSON.stringify([cap, "space", space]));
     if (global === "deny" || localEffect === "deny") return null;
-    if (cap === "settings.members.view" && source("settings.members")) return "preset";
     if (global === "allow" || localEffect === "allow") return "override";
+    if (cap === "settings.members") {
+      const edit = source("settings.members.edit");
+      if (edit) return edit;
+    }
+    if (cap === "settings.members.view") {
+      const manage = source("settings.members");
+      if (manage) return manage;
+    }
     if (presetCaps.has(cap) || (own && ["items.view", "runs.view"].includes(cap))) return "preset";
     // Personal spaces have an automatic manager membership, including for read-only observers.
     if (!(preset === "observer" && byId.get(space ?? "")?.kind === "personal") && local.some(p => legacyCapabilities[p]?.includes(cap))) return "spaceRole";
