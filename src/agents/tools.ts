@@ -2404,8 +2404,10 @@ def({
   name: "list_flows", description: "列出流程定义的 id、名称、说明和阶段；item 给出事项 id 时同时列出适用的流程。",
   schema: z.object({ item: z.string().optional() }), handler: async (ctx, a) => {
     const item = a.item ? flowItem(ctx, a.item, false) : null;
-    const { listFlows, flowsFor } = await import("../flows/definitions.ts");
-    return JSON.stringify({ flows: listFlows(ctx.app).map((f) => ({ id: f.id, name: f.definition?.name, description: f.definition?.description, stages: f.definition?.stages.map((s) => s.name), problem: f.problem })), ...(item ? { suits: flowsFor(ctx.app, item).map((f) => f.id) } : {}) });
+    const { listFlows, flowsFor, flowVisibleIn } = await import("../flows/definitions.ts");
+    const allowed = ctx.spaces && new Set(ctx.spaces);
+    const flows = listFlows(ctx.app).filter(f => flowVisibleIn(f.definition, allowed));
+    return JSON.stringify({ flows: flows.map((f) => ({ id: f.id, name: f.definition?.name, description: f.definition?.description, stages: f.definition?.stages.map((s) => s.name), problem: f.problem })), ...(item ? { suits: flowsFor(ctx.app, item, flows).map((f) => f.id) } : {}) });
   },
 });
 def({

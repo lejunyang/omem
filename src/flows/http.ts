@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
 import { itemScope, requireItem } from "../items/access.ts";
-import { listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { flowVisibleIn, listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { flowView, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { settleChange } from "./follow.ts";
@@ -67,16 +67,14 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     const userId = who(req);
     const scope = spacesWithCapability(app, userId, "flows.view");
     const allowed = scope && new Set(scope);
-    const visible = (def: ReturnType<typeof parseFlow> | null) =>
-      !allowed || !!def && (!def.for?.spaces?.length || def.for.spaces.some(space => allowed.has(space)));
-    const flows = listFlows(app).filter(f => visible(f.definition));
+    const flows = listFlows(app).filter(f => flowVisibleIn(f.definition, allowed));
     const drafts = all<{ id: string; context: string; created_at: string; conversation_id: string | null }>(
       app.db, "select id, context, created_at, conversation_id from asks where status = 'pending' and user_id = ? and json_extract(context, '$.handler') = 'flow-save' order by created_at desc limit 20", userId,
     ).flatMap((a) => {
       try {
         const raw = String((JSON.parse(a.context) as { raw?: unknown }).raw ?? "");
         const f = parseFlow(raw);
-        if (!visible(f)) return [];
+        if (!flowVisibleIn(f, allowed)) return [];
         return [{ askId: a.id, conversationId: a.conversation_id, createdAt: a.created_at, id: f.id, name: f.name, description: f.description ?? "", stages: f.stages.length, replaces: flows.some((x) => x.id === f.id) }];
       } catch {
         return [];

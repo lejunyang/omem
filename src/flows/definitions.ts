@@ -111,6 +111,13 @@ function file(app: App, id: string) {
   return path;
 }
 export type FlowFile = { id: string; raw: string; definition: FlowDefinition | null; problem: string | null };
+/** A definition without a space restriction is shared across all authorized spaces. */
+export function flowVisibleIn(definition: FlowDefinition | null, spaces: ReadonlySet<string> | null) {
+  if (!spaces) return true;
+  if (!definition || !spaces.size) return false;
+  const applicable = definition.for?.spaces;
+  return !applicable?.length || applicable.some(space => spaces.has(space));
+}
 export function listFlows(app: App): FlowFile[] {
   const dir = join(app.libraryDir, "_flows");
   if (!existsSync(dir)) return [];
@@ -148,8 +155,8 @@ export function removeFlow(app: App, id: string, by = "user") {
   pruneGateGrants(app, id, []);
   commitLibrary(app.libraryDir, `${by}: 删除流程 ${id}`);
 }
-export function flowsFor(app: App, item: Pick<Item, "kind" | "spaceId">) {
-  return listFlows(app).flatMap((f) => f.definition && (!f.definition.for?.kinds || (f.definition.for.kinds as string[]).includes(item.kind)) && (!f.definition.for?.spaces || f.definition.for.spaces.includes(item.spaceId)) ? [f.definition] : []);
+export function flowsFor(app: App, item: Pick<Item, "kind" | "spaceId">, flows = listFlows(app)) {
+  return flows.flatMap((f) => f.definition && (!f.definition.for?.kinds || (f.definition.for.kinds as string[]).includes(item.kind)) && (!f.definition.for?.spaces || f.definition.for.spaces.includes(item.spaceId)) ? [f.definition] : []);
 }
 /**
  * A flow a plugin (a scene pack) brings, copied into the library only when there is none of that id:

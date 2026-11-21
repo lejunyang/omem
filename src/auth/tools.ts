@@ -38,7 +38,7 @@ export function toolPermission(name: string): GlobalPerm | null {
 
 export const toolCapabilities: Record<string, Capability> = {
   ask_user: "ask.send", wait_answer: "ask.send", list_rules: "rules.view", save_rule: "rules.edit", list_items: "items.view", read_item: "items.view",
-  upsert_item: "items.edit", search: "search.use", read_source: "sources.view",
+  list_flows: "flows.view", upsert_item: "items.edit", search: "search.use", read_source: "sources.view",
   list_pages: "wiki.view", read_page: "wiki.view", recall: "memories.view", req_read: "requirements.view", req_tree: "requirements.view",
 };
 function allowed(app: App, userId: string, name: string, access: ReturnType<typeof capabilityAccess>) {

@@ -196,6 +196,24 @@ describe("roles and permissions", async () => {
     const ids = (await json("ann","/api/flows")).flows.map((f: {id:string}) => f.id);
     expect(ids).toEqual(expect.arrayContaining(["generic","shared"]));
     expect(ids).not.toContain("private-flow");
+    const { upsertItem } = await import("../src/items/store.ts");
+    const item = upsertItem(app, undefined, { userId: "ann", spaceId: "team", title: "流程测试" });
+    const list = (userId: string, spaces: string[] | null, item?: string) => {
+      const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "team", spaces, tools: new Set(["list_flows"]), actor: "agent", userId }))!;
+      return callTool(ctx, "list_flows", item ? { item } : {});
+    };
+    for (const itemId of [undefined, item.id]) {
+      const result = await list("ann", null, itemId);
+      expect(result.isError, result.text).toBe(false);
+      const payload = JSON.parse(result.text);
+      expect(payload.flows.map((f: { id: string }) => f.id)).toEqual(ids);
+      if (itemId) expect(payload.suits).toContain("shared");
+      expect(result.text).not.toContain("private-flow");
+    }
+    // An account that can read both projects still uses the narrower run scope.
+    expect((await list("cat", null)).text).toContain("private-flow");
+    expect((await list("cat", ["team"])).text).not.toContain("private-flow");
+    expect(JSON.parse((await list("ann", ["other"])).text).flows).toEqual([]);
   });
 
   it("allows ordinary observer answers and mapped edits only", async () => {
