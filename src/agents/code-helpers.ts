@@ -1,4 +1,4 @@
-import { receiveMemberGit } from "./member-git.ts";
+import { commitWorktree } from "./member-git.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -149,14 +149,8 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
     flushRunText(app, h.runId);
     // Left uncommitted: one task still open takes it, else it is merged without a task.
     const open = h.tasks.filter((s) => getTask(app, rootId, s).state === "coding");
-    for (const wt of h.worktrees) {
-      const dir = wt.slot ?? wt.path;
-      const message = `编码助手 ${h.n} 没提交的改动${open.length === 1 ? `\n\nOmem-Task: ${taskLabel(open[0])}` : ""}`;
-      if (await receiveMemberGit(app, h.runId, wt.space, dir, message)) continue;
-      if (!git(dir, ["status", "--porcelain"]).stdout.trim()) continue;
-      git(dir, ["add", "-A"]);
-      git(dir, [...identity(dir), "commit", "-q", "--no-verify", "-m", message]);
-    }
+    const message = `编码助手 ${h.n} 没提交的改动${open.length === 1 ? `\n\nOmem-Task: ${taskLabel(open[0])}` : ""}`;
+    for (const wt of h.worktrees) await commitWorktree(app, h.runId, wt.space, wt.slot ?? wt.path, message, identity);
     const commits = Object.fromEntries(h.worktrees.map((w) => [w.space, git(w.slot ?? w.path, ["rev-list", "--reverse", `${heads[w.space]}..HEAD`]).stdout.split("\n").filter(Boolean)]));
     setRunOutput(app, h.runId, { commits, answer: replyOf(res).trim(), ai: res.ai });
     sql(app.db, "update runs set status = 'done', profile_id = ?, finished_at = ? where id = ?", res.profileId, now(), h.runId);

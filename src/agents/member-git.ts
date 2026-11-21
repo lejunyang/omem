@@ -197,3 +197,10 @@ export async function receiveMemberGit(app: App, actor: string, space: string, t
     return true;
   } finally { receiving.delete(root); rmSync(pack, { force: true }); }
 }
+
+/** Returns true when the host created a local fallback commit. */
+export async function commitWorktree(app: App, actor: string, space: string, dir: string, message: string, identity: (dir: string) => string[]): Promise<boolean> {
+  if (await receiveMemberGit(app, actor, space, dir, message)) return false;
+  if (!existsSync(dir) || !git(dir, ["status", "--porcelain"]).stdout.trim()) return false;
+  return git(dir, ["add", "-A"]).ok && git(dir, [...identity(dir), "commit", "-q", "--no-verify", "-m", message]).ok;
+}
