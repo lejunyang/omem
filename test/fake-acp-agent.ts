@@ -212,11 +212,20 @@ new AgentSideConnection(
         if (Number.isFinite(used)) await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "usage_update", used, size: 1000 } });
         if (process.env.FAKE_OTHER_USAGE) await conn.sessionUpdate({ sessionId: "unrelated-session", update: { sessionUpdate: "usage_update", used: 950, size: 1000 } });
       }
-      if (process.env.FAKE_MODE === "device-work" || process.env.FAKE_MODE === "device-platform") {
+      if (process.env.FAKE_MODE === "device-work" || process.env.FAKE_MODE === "device-platform" || process.env.FAKE_MODE === "device-lark") {
         const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
         const client = new Client({ name: "device-worker", version: "1" });
         await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name,e.value])) } as Record<string,string> }));
         try {
+          if (process.env.FAKE_MODE === "device-lark") {
+            const results = [];
+            for (const request of JSON.parse(process.env.FAKE_LARK_READS!)) {
+              const result = await client.callTool(request);
+              results.push({ denied: !!result.isError, content: result.content });
+            }
+            await say(JSON.stringify(results));
+            return { stopReason: "end_turn" };
+          }
           if (process.env.FAKE_MODE === "device-platform") {
             const servers = sessions.get(p.sessionId)!;
             const docs = servers.find(s => s.name === "reports");

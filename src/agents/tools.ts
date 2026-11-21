@@ -1,3 +1,4 @@
+import { boardLarkCommand, boardLarkDocument, requireBoardLarkMessages } from "./board-lark-read.ts";
 import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
 import { spacesWithCapability, type Capability } from "../auth/capabilities.ts";
@@ -104,6 +105,8 @@ export type ToolContext = {
   writable?: string[];
   /** Cross-device board writes include memories, pages and items only. */
   boardAccess?: "read" | "write";
+  /** This device is executing a task received from a paired device. */
+  incomingWork?: boolean;
   /** Skills explicitly assigned to the actor of a cross-device board run. */
   profileSkills?: string[];
   /** Item discovery only; never grants ordinary read or write tool access. */
@@ -4662,11 +4665,11 @@ def({
     ownerOnly(ctx, "docs");
     const w = await import("../channels/lark-doc-write.ts");
     const input = {
-      doc: a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
+      doc: ctx.incomingWork ? boardLarkDocument(ctx, a.doc) : a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
       contextBefore: a.context_before, contextAfter: a.context_after, detail: a.detail, format: a.format,
     };
     const r = a.identity === "bot"
-      ? await botForRequester(ctx, a.doc, () => w.fetchForEdit(ctx.app, input, { asBot: true }))
+      ? await botForRequester(ctx, input.doc, () => w.fetchForEdit(ctx.app, input, { asBot: true }))
       : await w.fetchForEdit(ctx.app, input).catch((e) => ownerDenied(ctx.app, e));
     const max = 60_000;
     const body = r.content.length > max ? `${r.content.slice(0, max)}\n…（已截断，共 ${r.content.length} 字；用 scope=outline / section / range 缩小范围）` : r.content;
@@ -4880,6 +4883,7 @@ const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后
 /** A message's attachment as omem keeps it (channels/lark-message-files.ts), in words the agent acts on. */
 async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
   featureGate(ctx, "messages");
+  if (ctx.incomingWork) requireBoardLarkMessages(ctx, [messageId]);
   const { messageFile } = await import("../channels/lark-message-files.ts");
   const f = await messageFile(ctx.app, messageId, key, {
     user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id),
@@ -4949,11 +4953,12 @@ def({
   schema: z.object({ command: larkCommand }),
   handler: async (ctx, a) => {
     ownerOnly(ctx, commandFeature(a.command));
+    const command = ctx.incomingWork ? boardLarkCommand(ctx, a.command) : a.command;
     // Saving a message's attachment is a write to lark-cli (it writes a file): omem's own copy instead.
-    const download = (await import("../channels/lark-message-files.ts")).resourceDownload(a.command);
+    const download = (await import("../channels/lark-message-files.ts")).resourceDownload(command);
     if (download) return messageFileText(ctx, download.messageId, download.key);
     const c = await import("../channels/lark-cli-tools.ts");
-    return c.larkRead(ctx.app, a.command);
+    return c.larkRead(ctx.app, command);
   },
 });
 

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { setupBoardPeers as setup } from "./work-board-peer-fixture.ts";
 import type { App } from "../src/core/app.ts";
 import { all, run } from "../src/core/db.ts";
@@ -10,7 +10,7 @@ import { createApiToken, createUser, pairedTokens } from "../src/core/users.ts";
 import { createSpace, updateSpace } from "../src/core/spaces.ts";
 import { importText } from "../src/sources/import.ts";
 import { moveSource } from "../src/sources/archive.ts";
-import { getSource } from "../src/sources/store.ts";
+import { getSource, upsertSource } from "../src/sources/store.ts";
 import { organizeSkills } from "../src/agents/agent-skills.ts";
 import { listMemories } from "../src/memory/store.ts";
 import { callTool } from "../src/agents/tools.ts";
@@ -21,6 +21,8 @@ import { saveAgentSpec, saveSkill } from "../src/agents/specs.ts";
 import { artifactInbox, collectInbox } from "../src/agents/artifacts.ts";
 import { runProgress } from "../src/agents/progress.ts";
 import { workProgressView } from "../src/channels/lark-work-progress.ts";
+import { clearRiskCache } from "../src/channels/lark-cli-tools.ts";
+import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { persistChatMessages } from "../src/channels/lark-messages.ts";
 import { refreshWork } from "../src/agents/agent-work.ts";
 import { selectDevice, workCommand, workDevices } from "../src/agents/work-device.ts";
@@ -114,6 +116,72 @@ it.each(["read","write"])("remote %s 使用接活设备的技能和认证只读 
   expect(all(f.there.db, "select id from sources where uri like 'lark:oc_reports/om_reports/%'")).toHaveLength(0);
   expect(listMemories(f.there,{})).toHaveLength(0);
 },60000);
+it.each(["read", "write"])("remote %s 按已归档目标的当前空间读取飞书文档和群消息", async access => {
+  const f = await setup();
+  f.there.config.node.acceptWork = "write";
+  createSpace(f.there, { id: "other", name: "其他材料" });
+  const origin = "https://tenant.larkoffice.com";
+  const doc = (id: string) => origin + "/docx/" + id;
+  for (const id of ["Current", "Archived"]) {
+    const source = upsertSource(f.there, { spaceId: "personal", kind: "doc", uri: id === "Current" ? origin + "/wiki/CurrentNode" : doc(id), title: id, text: "文档快照", meta: { documentId: id } });
+    if (id === "Archived") moveSource(f.there, source.id, "other", "归档文档");
+  }
+  for (const id of ["current", "archived"]) {
+    const chatId = "oc_" + id;
+    persistChatMessages(f.there, { chatId, spaceId: "personal", name: id, messages: [
+      { message_id: "om_" + id, msg_type: "text", content: "归档消息", create_time: String(Date.now()) },
+      { message_id: "om_second_" + id, msg_type: "text", content: "另一条消息", create_time: String(Date.now() + 1) },
+    ] });
+    if (id === "archived") {
+      const [source] = all<{ id: string }>(f.there.db, "select id from sources where uri=?", "lark:" + chatId);
+      moveSource(f.there, source.id, "other", "归档群消息");
+    }
+  }
+  for (const [spaceId, suffix] of [["personal", ""], ["other", "@2025-01"]]) {
+    upsertSource(f.there, { spaceId, kind: "chat", uri: "lark:oc_split" + suffix, title: "分月归档", text: "归档内容" });
+  }
+  upsertSource(f.there, { spaceId: "personal", kind: "chat", uri: "lark:oc_month@2025-01", title: "单月材料", text: "归档内容" });
+  const fetchDoc = (id: string) => ({ name: "lark_doc_fetch", arguments: { doc: doc(id) } });
+  const cli = (...command: string[]) => ({ name: "lark_read", arguments: { command } });
+  const chat = (id: string) => cli("im", "+chat-messages-list", "--chat-id", id);
+  const messages = (ids: string) => cli("im", "+messages-mget", "--message-ids", ids);
+  const allowed = [fetchDoc("Current"), cli("docs", "+fetch", "--doc", doc("Current") + "?from=share"),
+    chat("oc_current"), messages("om_current,om_second_current")];
+  const refused = [fetchDoc("Archived"), fetchDoc("Unknown"), cli("docs", "+fetch", "--doc", doc("Archived")),
+    chat("oc_archived"), chat("oc_unknown"), chat("oc_split"), chat("oc_month"), messages("om_archived"), messages("om_current,om_archived"),
+    messages("om_current,om_unknown"), cli("im", "+messages-search", "--query", "项目"),
+    cli("im", "+chat-messages-list", "--chat-id=oc_current", "--chat-id=oc_archived"),
+    cli("im", "+messages-resources-download", "--message-id", "om_unknown", "--file-key", "file_pending")];
+  saveAgentSpec(f.there, { name: "reader", description: "核对材料", prompt: "读取飞书材料", tools: ["lark_read", "lark_doc_fetch", "read_source"] }, "user");
+  Object.assign(f.there.config.agents.profiles[0].env, { FAKE_MODE: "device-lark", FAKE_LARK_READS: JSON.stringify([...allowed, ...refused]) });
+  const liveReads: string[][] = [];
+  clearRiskCache();
+  setLarkCliForTests(async args => {
+    if (args.includes("--help")) return "Risk: read";
+    liveReads.push(args);
+    return args[0] === "docs" ? { data: { document: { content: "飞书文档现文" } } } : { data: { content: "飞书群消息现文" } };
+  });
+  onTestFinished(() => { setLarkCliForTests(null); clearRiskCache(); });
+  await f.dispatch("remote", { agent: "reader", access });
+  await f.poll();
+  const id = f.remoteRuns()[0].id;
+  const out = await __testHandlers.get("peer-work")!({ app: f.there, run: getRun(f.there, id), signal: new AbortController().signal,
+    event: (type, data) => addRunEvent(f.there, id, type, data), output: data => setRunOutput(f.there, id, data) });
+  await f.complete(id, (out as { answer: string }).answer);
+  await f.poll();
+  const results = JSON.parse(readBoard(f.here, f.id).tasks[0].report) as { denied: boolean; content: { text: string }[] }[];
+  expect(results.map(r => r.denied)).toEqual([...allowed.map(() => false), ...refused.map(() => true)]);
+  for (const [i, r] of results.slice(0, allowed.length).entries()) expect(r.content[0].text).toContain(i < 2 ? "飞书文档现文" : "飞书群消息现文");
+  for (const r of results.slice(allowed.length)) expect(r.content[0].text).toMatch(/任务能读的空间|无法确定本次飞书读取的范围/);
+  const targets = liveReads.map(args => {
+    const flag = args.findIndex(a => ["--doc", "--chat-id", "--message-ids"].includes(a));
+    return [args[1], args[flag + 1]];
+  });
+  expect(targets).toEqual([["+fetch", doc("Current")], ["+fetch", doc("Current")],
+    ["+chat-messages-list", "oc_current"], ["+messages-mget", "om_current,om_second_current"]]);
+  for (const args of liveReads) expect(args).toEqual(expect.arrayContaining(["--as", "user"]));
+}, 60000);
+
 it.each(["local","borrow"])("远端独有档案退回 %s 时，排队前选用本机主助手并执行",async target => {
   const f = await setup();
   saveAgentSpec(f.there,{name:"peer-reader",description:"核对材料",prompt:"核对设备材料",tools:["search","read_source"]},"user");
