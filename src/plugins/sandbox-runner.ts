@@ -99,6 +99,7 @@ async function main() {
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
+    answerAsk: input => rpc("answerAsk", { input }),
     notifier(def) {
       if (typeof def.deliver !== "function") throw new Error("通知出口缺少 deliver");
       notifiers.set(def.id, def);

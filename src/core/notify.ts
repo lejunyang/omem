@@ -38,7 +38,7 @@ export function inQuietHours(app: App, at = new Date()) {
 }
 
 /** Batch timing belongs to notify; quiet hours apply at the Feishu outlet. */
-export function deliveryPlan(app: App, input: { urgency?: NotifyUrgency; scheduled?: boolean; replaces?: string; outlet: "notify" | "lark" }, at = new Date()):
+export function deliveryPlan(app: App, input: { urgency?: NotifyUrgency; scheduled?: boolean; replaces?: string; outlet: "notify" | "lark" | "plugin" }, at = new Date()):
   { when: "now" } | { when: "later"; at?: string } {
   if (input.outlet === "notify") {
     return input.urgency === "later" && !input.replaces && app.config.notify.laterTimes.length ? { when: "later" } : { when: "now" };
@@ -53,6 +53,8 @@ export function deliveryPlan(app: App, input: { urgency?: NotifyUrgency; schedul
 }
 
 export type Notification = {
+  dedupKey?: string;
+  askId?: string;
   id: string;
   at: string;
   title: string;
@@ -103,15 +105,19 @@ export type Notification = {
   images?: string[];
 };
 
-type Sink = (n: Notification) => Promise<void> | void;
-const sinks: Sink[] = [];
+type Sink = (n: Notification, app: App) => Promise<void> | void;
+const sinks = new Map<Sink, string | undefined>();
+export const hasNotificationSink = (id: string) => [...sinks.values()].includes(id);
 /** External channels (Feishu bot, Telegram, a plugin's channel…) register here to receive notifications; the returned function takes the sink out again. */
-export function addNotificationSink(sink: Sink) {
-  sinks.push(sink);
-  return () => {
-    const i = sinks.indexOf(sink);
-    if (i >= 0) sinks.splice(i, 1);
-  };
+export function addNotificationSink(sink: Sink, id?: string) {
+  sinks.set(sink, id);
+  return () => { sinks.delete(sink); };
+}
+
+export async function testNotificationSink(app: App, id: string, n: Notification) {
+  const sink = [...sinks].find(([, channel]) => channel === id)?.[0];
+  if (!sink) throw new HttpError(409, "出口未连接");
+  await sink(n, app);
 }
 
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
@@ -119,6 +125,7 @@ export function notify(
   app: App,
   input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; plain?: boolean; digest?: { closed: string[]; soon: string[]; candidates?: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
     /** The host already gave the owner their time before this run started (mentions/mentions.ts): no first-nudge grace. */
+    askId?: string;
     graceDone?: boolean;
     reportTool?: string;
     replyDraft?: string;
@@ -126,9 +133,10 @@ export function notify(
     view?: "flow";
     /** The `later` notifications this one stands for (releaseLater). */
     bundle?: string[] },
+  target?: string,
 ) {
   const userId = input.userId ?? "owner";
-  const replaced = input.replaces ? one<{ id: string; user_id: string }>(app.db, "select id, user_id from notifications where id = ?", input.replaces) : undefined;
+  const replaced = input.replaces ? one<{ id: string; user_id: string; dedup: string | null }>(app.db, "select id, user_id, json_extract(context,'$.dedupKey') dedup from notifications where id = ?", input.replaces) : undefined;
   if (input.replaces && (!replaced || replaced.user_id !== userId)) throw new HttpError(404, `没有可以更新的通知 ${input.replaces}`);
   let sourceRefs = input.sourceRefs ?? [];
   if (input.entityId) {
@@ -170,6 +178,8 @@ export function notify(
   }
   const n: Notification = {
     id: newId("n"),
+    dedupKey: replaced?.dedup ?? replaced?.id,
+    askId: input.askId,
     sourceRefs: [...new Set(sourceRefs)],
     eventId: input.eventId,
     runId: input.runId,
@@ -197,16 +207,20 @@ export function notify(
   // straight to the channels, which edit that card without a ping.)
   const held = deliveryPlan(app, { ...n, outlet: "notify" }).when === "later";
   if (held) n.held = true;
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, plain: n.plain, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ dedupKey: n.dedupKey, askId: n.askId, entity: n.entity, entityId: n.entityId, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, plain: n.plain, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
   // The earlier one is now history: read, and no longer waiting for the morning.
   if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });
-  if (!held) deliver(n);
+  if (!held) deliver(app, n, target);
   return n;
 }
 
-const deliver = (n: Notification) => {
-  for (const sink of sinks) Promise.resolve(sink(n)).catch((e) => console.warn("[omem] 通知发送失败", e));
+const deliver = (app: App, n: Notification, target?: string) => {
+  for (const [sink, id] of sinks) {
+    if (target && id !== target) continue;
+    try { Promise.resolve(sink(n, app)).catch(e => console.warn("[omem] 通知发送失败", e)); }
+    catch (error) { console.warn("[omem] 通知发送失败", error); }
+  }
 };
 
 /** More than this many held at once go out as one list instead of one by one. */
@@ -256,7 +270,7 @@ export function releaseLater(app: App, at = new Date(), opts: { now?: boolean } 
   for (const [userId, list] of byUser) {
     released += list.length;
     if (list.length <= LATER_SINGLY) {
-      for (const n of list) deliver({ ...n, urgency: "normal" });
+      for (const n of list) deliver(app, { ...n, urgency: "normal" });
       continue;
     }
     // A long day does not become a wall of lines: the newest ones are named, the rest counted.
@@ -351,10 +365,17 @@ export function takeDeferred(app: App): Notification[] {
     .map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: null, userId: r.user_id }));
 }
 
+export function recordLarkDelivery(app: App, userId: string, error: string | null) {
+  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value=excluded.value",
+    "notify.lark:" + userId, JSON.stringify({ at: now(), error }));
+}
+
 /** Remember the Feishu card a notification went out as (see `replaces`). */
 export function setNotificationCard(app: App, id: string, messageId: string, bot?: string | null) {
   run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.larkMessageId', ?, '$.larkBot', ?) where id = ?", messageId, bot ?? null, id);
   markPushed(app, id, "lark", messageId);
+  const row = one<{user_id:string}>(app.db, "select user_id from notifications where id=?", id);
+  if (row) recordLarkDelivery(app, row.user_id, null);
 }
 /** The Feishu card sent for a notification, if any. */
 export function notificationCardOf(app: App, id: string) {

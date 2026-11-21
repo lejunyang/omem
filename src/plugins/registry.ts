@@ -254,6 +254,7 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
   if (p.source === "data" && trustMode(app, manifest.id) === "isolated") return loadIsolated(app, p);
   const api: PluginApi = {
     ...processApi(p),
+    answerAsk: outletAnswerFor(app, p),
     id: manifest.id,
     object(def) { p.connectors.push(registerObject(manifest.id, def)); },
     hook(def) { p.connectors.push(registerHook(manifest.id, def)); },
@@ -341,6 +342,15 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
  * the same tool as the button (under the tool's approval rung), whichever plugin brings it.
  */
 const ACTIONS_GROUP = "object-actions";
+function outletAnswerFor(app: App, p: LoadedPlugin): PluginApi["answerAsk"] {
+  const lifetime = new AbortController();
+  p.connectors.push(() => lifetime.abort());
+  return async input => {
+    const { answerFromOutlet } = await import("./notifier.ts");
+    lifetime.signal.throwIfAborted();
+    await answerFromOutlet(app, p.manifest.id, input);
+  };
+}
 function processApi(p: LoadedPlugin) {
   const version = p.manifest.permissions.sourceParser
     ? installInfo(p.dir)?.version || p.manifest.version || codeHash(p.dir)
@@ -370,6 +380,7 @@ async function loadIsolated(app: App, p: LoadedPlugin) {
   if (!server || !existsSync(server)) return;
   const sb = await startSandbox(app, { id: manifest.id, dir: p.dir, server, services: manifest.services }, {
     ...processApi(p),
+    answerAsk: outletAnswerFor(app, p),
     prefix: `${manifest.id}_`,
     packageRoot: packageRoot(),
     connected: connectedTo(manifest.id),

@@ -66,7 +66,7 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewR
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, networkPolicySchema, saveConfig } from "../core/config.ts";
+import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
 import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
@@ -2499,6 +2499,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   server.get("/api/approvals/ladder", async () => [...new Set([...app.config.approvals.tools, ...(app.config.approvals.report ?? [])])].map((tool) => ({ tool, rung: toolAlwaysApproves(tool) ? "ask" : rungOf(app, tool), streak: approvalStreak(app, tool) })));
+  server.get("/api/notify/outlets", async req => {
+    const { listOutlets } = await import("../plugins/notifier.ts");
+    return { outlets: await listOutlets(app, who(req)) };
+  });
+  server.put("/api/notify/outlets", async req => {
+    const b = q(z.object({ userId: z.string().optional(), outlets: outletSettings }).strict(), req.body);
+    const userId = b.userId ?? who(req);
+    if (userId !== who(req)) {
+      if (!isOwner(app, who(req))) throw new HttpError(403, "只能设置自己的通知出口");
+      requirePerm(app, who(req), "settings.members");
+    }
+    getUser(app, userId);
+    const outlets = { ...app.config.notify.outlets, [userId]: b.outlets };
+    const next = { ...app.config, notify: { ...app.config.notify, outlets } };
+    saveConfig(next, app.home);
+    app.config.notify = next.notify;
+    return { outlets: b.outlets };
+  });
+  server.post("/api/notify/outlets/:id/test", async req => {
+    const { testOutlet } = await import("../plugins/notifier.ts");
+    return testOutlet(app, (req.params as {id:string}).id, who(req));
+  });
   server.get("/api/notifications/outcomes", async (req) => {
     const { days } = q(z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }), req.query);
     return outcomeBreakdown(app, days);

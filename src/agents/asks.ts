@@ -198,12 +198,13 @@ export function createAsk(
 }
 
 async function show(app: App, ask: Ask) {
+  app.events.emit("outlet-ask", ask);
   run(app.db, "update asks set shown_at = coalesce(shown_at, ?) where id = ?", now(), ask.id);
   // Asked of someone else: only they see it (their notifications, their Feishu private chat), never the asker's chat.
   if (ask.askedBy) {
     const { notify } = await import("../core/notify.ts");
     const { userName } = await import("../core/users.ts");
-    notify(app, { userId: ask.userId, title: `${userName(app, ask.askedBy)} 的助手请你回答`, body: truncate(ask.question, 300), link: `#/ui/${ask.id}` });
+    notify(app, { askId: ask.id, userId: ask.userId, title: `${userName(app, ask.askedBy)} 的助手请你回答`, body: truncate(ask.question, 300), link: `#/ui/${ask.id}` });
     for (const s of sinks) {
       try {
         if (await s.show(app, ask)) return;
@@ -228,7 +229,7 @@ async function show(app: App, ask: Ask) {
     await deliverToThread(app, ask.conversationId!, askText(ask, app), { ask: ask.id });
   } else if (!ask.conversationId && ask.kind !== "suggestion") {
     const { notify } = await import("../core/notify.ts");
-    notify(app, { userId: ask.userId, title: ask.kind === "approval" ? "有操作等你批准" : "有问题等你回答", body: askText(ask), link: ask.ui ? `#/ui/${ask.id}` : "#/" });
+    notify(app, { askId: ask.id, userId: ask.userId, title: ask.kind === "approval" ? "有操作等你批准" : "有问题等你回答", body: askText(ask), link: ask.ui ? `#/ui/${ask.id}` : "#/" });
   }
 }
 
@@ -362,6 +363,7 @@ export async function reviseAsk(app: App, id: string, question: string): Promise
 }
 
 function closed(app: App, ask: Ask) {
+  app.events.emit("outlet-close", ask);
   app.emit({ type: "ask", id: ask.id, status: ask.status, conversationId: ask.conversationId });
   nudgePlugin(app, ask.conversationId);
   for (const s of sinks) s.closed?.(app, ask).catch(() => {});

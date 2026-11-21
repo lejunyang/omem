@@ -48,7 +48,7 @@ const CALL_MS = 5 * 60_000;
 export async function startSandbox(
   app: App,
   plugin: { id: string; dir: string; server: string; services: { name: string }[] },
-  opts: Omit<import("./types.ts").ProcessApi, "metricProvider"> & { prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
+  opts: Omit<import("./types.ts").ProcessApi, "metricProvider"> & Pick<import("./types.ts").PluginApi, "answerAsk"> & { prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
 ): Promise<Sandbox> {
   const data = join(app.home, "plugin-data", plugin.id);
   mkdirSync(data, { recursive: true });
@@ -108,6 +108,7 @@ export async function startSandbox(
       return ctx;
     };
     switch (op) {
+      case "answerAsk": return opts.answerAsk(a.input);
       case "emit":
         need();
         return emitPluginSignal(app, plugin.id, a.signal);

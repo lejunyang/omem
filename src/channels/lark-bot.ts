@@ -15,7 +15,7 @@ import { registerThreadSender, retryChannelReply } from "../agents/inbox.ts";
 import { getRun, setRunOutput } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
-import { addNotificationSink, deferNotification, markPushed, markQuiet, markReadIds, notificationCardOf, setNotificationCard, takeDeferred } from "../core/notify.ts";
+import { addNotificationSink, deferNotification, markPushed, markQuiet, markReadIds, notificationCardOf, recordLarkDelivery, setNotificationCard, takeDeferred } from "../core/notify.ts";
 import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
@@ -536,7 +536,13 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const sent = await sendLark(target, { card });
     setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
   });
-  if (!extra) addNotificationSink((n) => push(n));
+  if (!extra) addNotificationSink(async n => {
+    try { await push(n); }
+    catch (error) {
+      recordLarkDelivery(app, n.userId, String(error).slice(0, 500));
+      throw error;
+    }
+  }, "lark");
 
   // After quiet hours, what waited and is still unread goes out: a few one by one, more as one list.
   const sendDeferred = async () => {

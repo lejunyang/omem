@@ -79,7 +79,7 @@ export type OutNotification = {
 };
 export type OutAsk = OutNotification & {
   kind: string; options: { label: string }[]; fields: Record<string, unknown>[];
-  allowText: boolean; expiresAt: string | null;
+  requiresApproval: boolean; allowText: boolean; expiresAt: string | null;
 };
 export type Notifier = {
   id: string; name: string;
@@ -88,6 +88,10 @@ export type Notifier = {
   update?(ref: string, n: OutNotification, signal: AbortSignal): Promise<void>;
   ask?(a: OutAsk, signal: AbortSignal): Promise<{ ref?: string }>;
   retract?(ref: string, signal: AbortSignal): Promise<void>;
+};
+export type OutletAnswer = {
+  notifier: string; ref: string; user: OutletIdentity;
+  choice?: number; values?: Record<string, unknown>; text?: string; approved?: boolean;
 };
 export type ProcessApi = {
   notifier(def: Notifier): void;

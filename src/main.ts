@@ -174,6 +174,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     const n = backfillPushed(app);
     if (n) console.log(`[omem] ${n} 条以前推到飞书的通知记为已推送，网页不再算未读`);
   }
+  (await import("./plugins/notifier.ts")).startNotifierOutlets(app);
   startWorker(app);
   startSessionCleanup(app, (runId, e) => {
     if (runId) addRunEvent(app, runId, e.type, e);
