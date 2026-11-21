@@ -710,7 +710,7 @@ export const configSchema = z.object({
     .default({ maxChars: 400, longChars: 180, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [], passive: { enabled: true, threshold: 0.6, limit: 5 } }),
   embeddings: z
     .object({
-      provider: z.enum(["none", "local", "openai", "api"]).transform(p => p === "openai" ? "api" : p).default("none"),
+      provider: z.string().regex(/^(none|local|openai|api|plugin:[a-z0-9-]+:[a-z0-9-]+)$/).transform(p => p === "openai" ? "api" : p).default("none"),
       /** local: model id or directory for transformers.js. openai: model name. */
       model: z.string().default("Xenova/bge-small-zh-v1.5"),
       /** bge-zh (query prefix + CLS), bge-m3 / bge (CLS), other (mean pooling). Inferred from the model name when absent. */

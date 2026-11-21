@@ -31,7 +31,7 @@ export async function nearMemories(app: App, input: NearInput): Promise<PassiveH
   const text = input.text.trim();
   if (text.length < 4) return [];
   if (input.spaces && !input.spaces.length) return [];
-  const q = await embedQuery(app, text, input.kind ?? "query");
+  const q = await embedQuery(app, text, input.kind ?? "query", input.spaces);
   if (!q) return [];
   const where = ["status = 'active'", "embedding is not null"];
   const params: (string | number)[] = [];

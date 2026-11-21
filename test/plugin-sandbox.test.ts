@@ -9,6 +9,7 @@ import { createUser } from "../src/core/users.ts";
 import { syncWatches } from "../src/plugins/platforms.ts";
 import { describePlugin, getPlugin, loadPlugins, trustPlugin, untrustPlugin } from "../src/plugins/registry.ts";
 import { testApp } from "./helpers.ts";
+import { TOOL_GROUPS } from "../src/agents/tool-help.ts";
 
 /**
  * A plugin's code in its own process (docs/v2/plugins.md, “隔离运行”): its tools and platform readers
@@ -82,6 +83,8 @@ export default function register(api) {
     expect(d.runMode).toBe("isolated");
     expect(toolList().find((t) => t.name === "probe2_me")).toBeTruthy();
     expect(describePlugin(getPlugin("probe2")).permissions.platforms).toEqual(["connect-probe"]);
+    // This fixture explicitly grants member access to exercise the sandbox's per-user boundary.
+    TOOL_GROUPS.find(g => g.id === "probe2")!.capability = "sources.edit";
   });
 
   it("delivers facts to an isolated subscription with a narrow context", async () => {

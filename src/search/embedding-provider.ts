@@ -29,6 +29,19 @@ export function apiEmbedder(app: App, cfg: Config["embeddings"], id: string): Em
 }
 
 export async function encodeBatch(e: EmbeddingProvider, texts: string[], kind: Kind, timeoutMs: number, expected?: number) {
+  if (!e.maxBatch) return encodeOne(e, texts, kind, timeoutMs, expected);
+  const deadline = Date.now() + timeoutMs;
+  const out: Float32Array[] = [];
+  for (let at = 0; at < texts.length; at += e.maxBatch) {
+    if (Date.now() >= deadline) throw new Error("向量调用超时");
+    const input = texts.slice(at, at + e.maxBatch).map(t => e.maxChars ? t.slice(0, e.maxChars) : t);
+    const rows = await encodeOne(e, input, kind, deadline - Date.now(), expected ?? out[0]?.length);
+    out.push(...rows);
+  }
+  return out;
+}
+
+async function encodeOne(e: EmbeddingProvider, texts: string[], kind: Kind, timeoutMs: number, expected?: number) {
   const request = (signal: AbortSignal) => untilAbort(signal, () => e.embed(texts, kind, signal));
   // Local inference already implements its own queue and deadline in the read process.
   if (!e.maxBatch) return await request(AbortSignal.timeout(120_000)) as Float32Array[];
@@ -41,7 +54,8 @@ export async function encodeBatch(e: EmbeddingProvider, texts: string[], kind: K
       rows = await request(signal);
       break;
     } catch (err) {
-      const retry = signal.aborted || (err instanceof SearchApiError && err.retryable);
+      const status = Number((err as { status?: number }).status);
+      const retry = signal.aborted || (err instanceof SearchApiError && err.retryable) || status === 429 || status >= 500;
       if (!retry || attempt === 2 || Date.now() >= deadline) throw err;
       await delay(Math.min(50 * 2 ** attempt, Math.floor((deadline - Date.now()) / 4)));
     }

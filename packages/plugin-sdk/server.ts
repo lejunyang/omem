@@ -56,6 +56,13 @@ export type Reranker = {
   id: string; label: string;
   score(ctx: CallContext, req: { query: string; candidates: { id: string; text: string }[] }): Promise<number[]>;
 };
+/** The host supplies texts in the plugin's authorized spaces. Content may leave this machine. */
+export type EmbedderProvider = {
+  id: string; name: string;
+  model: string; dimensions: number;
+  maxBatch?: number; maxChars?: number;
+  embed(texts: string[], kind: "query" | "passage", signal: AbortSignal): Promise<number[][] | Float32Array[]>;
+};
 export type SourceDisplay =
   | { kind: "table"; columns: string[]; rowLines: [number, number][] }
   | { kind: "records"; items: { title: string; lines: [number, number] }[] };
@@ -99,6 +106,7 @@ export type ProcessApi = {
   notifier(def: Notifier): void;
   retriever(def: Retriever): void;
   reranker(def: Reranker): void;
+  embedder(def: EmbedderProvider): void;
   sourceParser(def: SourceParser): void;
   wikiPageKind(def: WikiPageKind): void;
   subscribe(def: Subscription): void;

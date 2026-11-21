@@ -4,11 +4,16 @@ import type { Config } from "../core/config.ts";
 import { one, run, tx } from "../core/db.ts";
 import { searchBase } from "./api.ts";
 import { vectorIndex } from "./vectors.ts";
+import { embedders } from "../plugins/process-hooks.ts";
 
 export function embeddingId(config: Config) {
   const c = config.embeddings;
   if (c.provider === "none") return null;
   if (c.provider === "local") return "local:" + c.model;
+  if (c.provider.startsWith("plugin:")) {
+    const def = embedders.get(c.provider.slice(7))?.def;
+    return c.provider + ":" + JSON.stringify([def?.model ?? null, def?.dimensions ?? null]);
+  }
   return "api:" + JSON.stringify([searchBase(config, c), c.model, c.dimensions ?? null]);
 }
 export const storedModel = (app: App) => one<{value: string}>(app.db, "select value from kv where key='embedding_model'")?.value;
@@ -16,7 +21,7 @@ export const recordModel = (app: App, id: string) => run(app.db, "insert or repl
 
 // All counts read covering indexes. Only count a worktree vector if it will actually be cleared.
 export function vectorCounts(app: App, spaces?: readonly string[]) {
-  const scope = spaces?.length ? ` and space_id in (${spaces.map(() => "?").join(",")})` : "";
+  const scope = spaces ? spaces.length ? ` and space_id in (${spaces.map(() => "?").join(",")})` : " and 0" : "";
   const count = (sql: string, ...args: string[]) => one<{n: number}>(app.db, "select count(*) n from " + sql, ...args)!.n;
   const args = spaces ?? [];
   const pending = count("chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%'" + scope, ...args)
@@ -34,7 +39,8 @@ export function modelChange(app: App, next: Config) {
   const from = storedModel(app) ?? embeddingId(app.config);
   if (from === to) return null;
   const token = createHash("sha256").update(JSON.stringify([from, to])).digest("hex");
-  return { ...vectorCounts(app), token, to };
+  const entry = next.embeddings.provider.startsWith("plugin:") ? embedders.get(next.embeddings.provider.slice(7)) : null;
+  return { ...vectorCounts(app, entry?.spaces.length ? entry.spaces : undefined), token, to };
 }
 
 export function replaceIndex(app: App, id: string) {

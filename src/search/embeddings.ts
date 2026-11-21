@@ -9,6 +9,8 @@ import { all, one, run, tx } from "../core/db.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
 import { modelSource, osdkModelDir, prepareLocalModel } from "./local-models.ts";
+import { embedders } from "../plugins/process-hooks.ts";
+import { notify } from "../core/notify.ts";
 
 /**
  * Optional dense retrieval. Vectors live next to chunks, packed to one signed byte a dimension
@@ -36,6 +38,25 @@ async function getEmbedder(app: App, inProcess = false): Promise<EmbeddingProvid
   if (testEmbedder) return embedder ?? null;
   if (cfg.provider === "none") return null;
   if (cfg.provider === "api") return apiEmbedder(app, cfg, embeddingId(app.config)!);
+  if (cfg.provider.startsWith("plugin:")) {
+    const entry = embedders.get(cfg.provider.slice(7));
+    if (!entry) return null;
+    const id = embeddingId(app.config)!;
+    const current = storedModel(app);
+    if (current && current !== id) {
+      const error = `插件向量模型或维度已变化：${entry.def.name}（${entry.def.model}，${entry.def.dimensions} 维）。请在检索设置确认重建向量，或改回原来的提供者。`;
+      recent.set(app, { lastMs: 0, lastError: error, writeError: error });
+      const notice = current + "->" + id;
+      if (one<{value: string}>(app.db, "select value from kv where key='embedding_model_notice'")?.value !== notice) {
+        notify(app, { title: "插件向量已暂停", body: error, urgency: "later", plain: true });
+        run(app.db, "insert or replace into kv(key,value) values('embedding_model_notice',?)", notice);
+      }
+      return null;
+    }
+    return { id, dimensions: entry.def.dimensions, maxBatch: Math.min(cfg.batch, entry.def.maxBatch ?? 256),
+      maxChars: entry.def.maxChars, spaces: entry.spaces.length ? entry.spaces : undefined,
+      embed: (texts, kind, signal) => entry.def.embed(texts, kind, signal) };
+  }
   const key = JSON.stringify(cfg);
   if (localKey !== key) { embedder = undefined; localKey = key; }
   if (embedder !== undefined) return embedder;
@@ -145,12 +166,13 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   const e = await writer(app);
   if (!e) return 0;
   batch = Math.min(batch, e.maxBatch ?? batch);
+  const scope = e.spaces ? ` and space_id in (${e.spaces.map(() => "?").join(",")})` : "";
   const rows = all<{ id: number; space_id: string; title: string; path: string; text: string }>(
     app.db,
     // Through the index of chunks without a vector (`chunks_unembedded`): usually there are none, and
     // finding that out by reading the table took half a second on a large library, every half minute.
-    "select id, space_id, title, path, text from chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%' limit ?",
-    batch,
+    "select id, space_id, title, path, text from chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%'" + scope + " limit ?",
+    ...(e.spaces ?? []), batch,
   );
   if (!rows.length) return 0;
   // Text already embedded elsewhere (another copy of the same chat or document, docs/v2/multi-user.md):
@@ -184,7 +206,8 @@ export async function embedPendingMemories(app: App, batch = 32): Promise<number
   const e = await writer(app);
   if (!e) return 0;
   batch = Math.min(batch, e.maxBatch ?? batch);
-  const rows = all<{ id: string; subject: string; content: string }>(app.db, "select id, subject, content from memories where status = 'active' and embedding is null limit ?", batch);
+  const scope = e.spaces ? ` and space_id in (${e.spaces.map(() => "?").join(",")})` : "";
+  const rows = all<{ id: string; subject: string; content: string }>(app.db, "select id, subject, content from memories indexed by memories_unembedded where status = 'active' and embedding is null" + scope + " limit ?", ...(e.spaces ?? []), batch);
   if (!rows.length) return 0;
   const vecs = await encode(app, e, rows.map((r) => (r.subject ? `${r.subject}：${r.content}` : r.content).slice(0, 2000)), "passage", true);
   if (!vecs || !stillSelected(app, e)) return 0;
@@ -233,10 +256,11 @@ async function encode(app: App, e: EmbeddingProvider, texts: string[], kind: Kin
 export function resumeEmbedding(app: App) { recent.delete(app); }
 
 /** One vector, or null when the configured provider is unavailable. */
-export async function embedQuery(app: App, text: string, kind: Kind = "query"): Promise<Float32Array | null> {
+export async function embedQuery(app: App, text: string, kind: Kind = "query", spaces?: readonly string[] | null): Promise<Float32Array | null> {
   if (app.config.embeddings.provider === "none") return null;
   const e = await getEmbedder(app);
   if (!e || !stillSelected(app, e)) return null;
+  if (e.spaces && spaces && !spaces.some(s => e.spaces!.includes(s))) return null;
   return (await encode(app, e, [text.slice(0, 2000)], kind))?.[0] ?? null;
 }
 
@@ -249,8 +273,12 @@ export async function embedLocally(app: App, texts: string[], kind: "query" | "p
 
 export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {
   if (app.config.embeddings.provider === "none") return [];
-  if (app.config.embeddings.provider === "api") {
-    const vector = await embedQuery(app, query);
+  if (app.config.embeddings.provider !== "local" && !testEmbedder) {
+    const e = await getEmbedder(app);
+    if (!e) return [];
+    spaces = e.spaces ? e.spaces.filter(s => !spaces || spaces.includes(s)) : spaces;
+    if (spaces && !spaces.length) return [];
+    const vector = await embedQuery(app, query, "query", spaces);
     if (!vector) return [];
     return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, vector, config: { embeddings: app.config.embeddings } }, 30_000));
   }

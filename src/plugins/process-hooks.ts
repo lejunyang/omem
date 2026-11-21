@@ -2,7 +2,7 @@ import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
-import type { Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
+import type { Notifier, CallContext, ItemProvider, MetricProvider, EmbedderProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
 import { registerFormats } from "./formats.ts";
@@ -23,6 +23,7 @@ const thread = z.object({ state: z.enum(["open", "replied", "resolved", "outdate
   author: z.string().min(1).max(500), at: z.iso.datetime({ offset: true }), summary: z.string().max(1000),
 }).optional() });
 export const retrievers = new Map<string, Entry<Retriever>>();
+export const embedders = new Map<string, Entry<EmbedderProvider>>();
 export type RegisteredReranker = Entry<Reranker>;
 export const rerankers = new Map<string, RegisteredReranker>();
 export const metricProviders = new Map<string, Entry<MetricProvider>>();
@@ -90,6 +91,15 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
       if (!manifest.permissions.retriever) throw new Error("缺少 permissions.retriever");
       if (!def.label?.trim() || typeof def.search !== "function") throw new Error("retriever 声明无效");
       add(retrievers, def);
+    },
+    embedder(def) {
+      if (!manifest.permissions.embedder) throw new Error("缺少 permissions.embedder");
+      if (!def.name?.trim() || !def.model?.trim() || typeof def.embed !== "function" ||
+          !Number.isInteger(def.dimensions) || def.dimensions < 1 || def.dimensions > 65536 ||
+          (def.maxBatch !== undefined && (!Number.isInteger(def.maxBatch) || def.maxBatch < 1 || def.maxBatch > 256)) ||
+          (def.maxChars !== undefined && (!Number.isInteger(def.maxChars) || def.maxChars < 1)))
+        throw new Error("embedder 声明无效");
+      add(embedders, def);
     },
     reranker(def) {
       if (!manifest.permissions.reranker) throw new Error("缺少 permissions.reranker");

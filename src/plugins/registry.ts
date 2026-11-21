@@ -103,6 +103,7 @@ export const manifestSchema = z.object({
       itemProvider: z.boolean().default(false),
       retriever: z.boolean().default(false),
       reranker: z.boolean().default(false),
+      embedder: z.boolean().default(false),
       metricProvider: z.boolean().default(false),
       write: z.boolean().default(false),
       connectors: z.array(z.string()).default([]),
@@ -111,7 +112,7 @@ export const manifestSchema = z.object({
       /** Backends it brings a login method for (`api.agentLogin`, docs/v2/agent-accounts.md §6): it writes credentials into members' account folders. */
       agentLogin: z.array(z.string()).default([]),
     })
-    .default({ events: [], sourceParser: false, wikiPageKind: false, reviewProvider: false, itemProvider: false, metricProvider: false, retriever: false, reranker: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
+    .default({ events: [], sourceParser: false, wikiPageKind: false, reviewProvider: false, itemProvider: false, metricProvider: false, retriever: false, reranker: false, embedder: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
 }).refine((m) => Object.keys(m.mcp).every((n) => /^[a-z][a-z0-9-]{0,39}$/.test(`${m.id}-${n}`)), "MCP 服务加插件前缀后最多 40 个字符")
   .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符")
   .superRefine((m, ctx) => {
@@ -209,7 +210,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     manifest,
     dir,
     source,
-    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked, manifest.permissions.notify) : "none",
+    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked, manifest.permissions.notify, manifest.permissions.embedder) : "none",
     linked,
     enabled: !app.config.plugins.disabled.includes(manifest.id),
     specs: [],
@@ -409,7 +410,7 @@ export async function trustPlugin(app: App, id: string, mode: RunMode = "isolate
   const p = getPlugin(id);
   if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
   const before = trustMode(app, id);
-  setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify);
+  setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify, p.manifest.permissions.embedder);
   if (p.trust !== "trusted" || before !== mode) {
     unloadCode(p);
     p.trust = "trusted";
@@ -735,6 +736,8 @@ export function describePlugin(p: LoadedPlugin) {
       tools: p.tools.filter((t) => !t.name.startsWith("plugin_")).map((t) => ({ name: t.name, write: t.write, approval: t.approval })),
       writes: p.tools.some((t) => t.write) || (!codeRuns(p) && p.manifest.permissions.write),
       notify: p.manifest.permissions.notify,
+      embedder: p.manifest.permissions.embedder,
+      embeddingNotice: p.manifest.permissions.embedder ? "要算向量的正文（原件分块、记忆、查询）会交给这个插件，插件可能把它发到外部服务。" : null,
       hostTools: p.manifest.tools,
       providers: codeRuns(p) ? p.providers : p.manifest.permissions.connectors,
       platforms: codeRuns(p) ? p.platforms : p.manifest.permissions.platforms,

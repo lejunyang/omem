@@ -32,6 +32,7 @@ type Declared = {
   items: (Pick<import("./types.ts").ItemProvider, "id" | "label" | "statuses" | "targetHint"> & { writable: boolean })[];
   retrievers: { id: string; label: string }[];
   rerankers: { id: string; label: string }[];
+  embedders: Omit<import("./types.ts").EmbedderProvider, "embed">[];
   reviews: { id: string; label: string; objectKind: string; resolves: boolean }[];
   subscriptions: Pick<import("./types.ts").Subscription, "id" | "events">[];
   objects: Omit<PluginObject, "match" | "read">[];
@@ -79,7 +80,7 @@ export async function startSandbox(
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
       const eventCtx = scope instanceof AbortSignal ? undefined : scope;
-      const signal = ["retriever", "reranker", "notifier"].includes(String(msg.t))
+      const signal = ["retriever", "reranker", "notifier", "embedder"].includes(String(msg.t))
         ? (scope instanceof AbortSignal ? scope : scope?.signal) : undefined;
       const cancel = () => {
         clearTimeout(timer);
@@ -207,6 +208,8 @@ export async function startSandbox(
           key: "idempotencyKey" in ctx ? ctx.idempotencyKey : undefined }, undefined, ctx);
     for (const def of declared.retrievers) opts.retriever({ ...def, search: (ctx, arg) =>
       ask({ t: "retriever", name: def.id, arg, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx) });
+    for (const def of declared.embedders) opts.embedder({ ...def, embed: (texts, kind, signal) =>
+      ask({ t: "embedder", name: def.id, texts, kind }, undefined, signal) });
     for (const def of declared.rerankers) opts.reranker({ ...def, score: (ctx, arg) =>
       ask({ t: "reranker", name: def.id, arg, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx) });
     for (const def of declared.parsers) {
