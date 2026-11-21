@@ -82,6 +82,7 @@
 - 助手在 A 完成 T1 和 T2 后，在 B 留下一笔带 T2 标签的私有提交和足以让状态输出超限的未跟踪文件。让 B 的最终接收失败。检查点应只有 T1，T2 退回待做并写明 B 的拒收原因。B 的文件状态标为待核对，提交和草稿仍可从助手工作树恢复。
 - 另验先提交再切分支的情况。A 已交付 T1 和 T2，B 在登记分支补交带 T2 标签的提交，再从上次接收点另建分支并留下草稿。收尾后，只有 T1 进检查点，T2 带 B 的切分支拒收原因退回待做。核对 B 的原分支仍能读到该提交，草稿仍在助手工作树。
 - 在支持无特权网络命名空间的 Linux 运行 `npx vitest run test/egress-sandbox.test.ts`。curl 直连假上游失败，经代理读到回应，规则拒绝返回 403。运行令牌能访问 HTTP MCP、stdio MCP、工具和命令闸门，缺令牌回调返回 403。后台进程仍存活时撤销令牌，后续请求失败。
+- 在同一台 Linux 运行 `pnpm run check`，构建成功后运行 `npx vitest run --config vitest.egress-build.config.ts`。这次用 `dist/src` 中的服务、出网中继和 MCP 桥重复上一项，确认用例实际通过；跳过表示该环境没有验收到构建产物。
 - 运行 `npx vitest run test/egress-proxy.test.ts test/operation-rules-api.test.ts`。检查审批合并、答复及超时、私网边界和入口回收。装有 openssl 时另验名单内路径审批、上游证书校验和名单外原证书。
 - 在没有 bubblewrap 的机器上，`agents.accountIsolation` 取默认值 `prefer` 的成员运行应留下未隔离原因。改为 `require` 后应在启动前报错，本人的对话照常。在支持隔离的机器上给成员配置可隔离的备用，验证主选不能隔离时改走备用。比较账号接口的 `isolation` 与诊断的 `agentAccounts`。
 - 使用设备 ACP 时，在执行节点配置成员范围的命令规则，核对命令垫片请求执行节点的闸门及其成员审计。严格模式在发起节点跳过设备后端。
