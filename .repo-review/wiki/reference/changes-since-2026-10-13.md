@@ -19,6 +19,11 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 插件定义原件格式和 Wiki 页面类型（11-21）
+
+- 上传、目录导入和 URL 导入按插件匹配规则选择解析器。原件保存 Markdown、解析器版本和结构化行范围。读 `src/plugins/formats.ts`、`src/sources/import.ts` 和 `src/sources/import-process.ts`。
+- 插件可定义 Wiki 模板、校验和维护间隔。规划在 `src/agents/jobs.ts`，写作在 `src/wiki/verify.ts`，按类型核对在 `src/wiki/upkeep.ts`。两个完整示例在 `examples/plugins/formats`。
+
 ## 管成员的人进得了成员页；成员直接打开深链接不再被送回问答（11-21）
 
 - `web/src/App.vue`：判断“这一页他能不能开”要等路由把打开时的地址解析完（`router.isReady()`）。页面按需加载，解析完之前路径还读作 `/`：成员从通知或卡片里的链接直接打开某一页时，会被当成开了没有权限的首页，送回问答。

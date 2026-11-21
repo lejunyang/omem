@@ -672,3 +672,39 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 4. **语音**（2026-11-11）：清单 `voice: true`，SDK 的 `omem.voice()` / `voiceStatus()`，外壳拿麦克风和连接、只给页面转写；英语练习的“口语对话”（`speaking` 块、陪练按 `english-speaking` 评价、口语进画像），代替原来网页上单独的“口语”页和 `speaking-coach` 角色。`omem peer open` 下插件页面的文件和流（本机代理放行沙箱的跨域请求并补上跨域头）。
 5. **插槽和开发**（2026-11-16）：`api.slot` 把展示块放到事项页侧栏、流程阶段下面和今日页；`omem plugin link` / `unlink`（不复制、按目录信任、改了自动重新加载、不随设备同步）；从源码安装时先列出命令、本人确认后在隔离的子进程里装依赖并构建；清单 `server` 指定服务端文件。
    还没做：内置的 GitHub 插件没有放插槽；链接的插件在 omem 里运行时，服务端入口引用的其他文件改了要重启。
+
+## 读一种新格式
+
+在清单声明 `permissions.sourceParser: true`，在服务端用 `api.sourceParser({ id, label, match, parse })` 注册。上传按扩展名或随请求传来的 MIME 类型匹配，磁盘文件按扩展名匹配。URL 用 `match.urlPatterns` 匹配完整地址，`*` 可跨路径。每个插件只在其声明的空间内生效；没有指定空间时可用于各空间。
+
+多个插件匹配时先看 `documents.parserOrder`，例如 `["formats:jsonl"]`，其余按注册先后。接管已知文档、图片、代码和配置文件，或 HTML 网页和飞书文档，要把解析器的全名列入这个配置。未知扩展名的文本仍有内置纯文本兜底。
+
+`parse(ctx, { name, url?, mimeType?, bytes })` 返回 Markdown 正文 `text`，可附 `title` 和最多 32 个展示字段 `meta`（键最多 64 字符、值最多 512 字符）。每次输入最多 200 MiB，正文最多 800 万个 UTF-16 码元，调用时限 15 秒。单文件上传、CLI 文件和目录导入、`import_url` 共用这套规则。目录子进程按清单选择解析器，经同一 IPC 通道送出命中的文件。隔离插件在已启动的插件进程里解析整批文件。
+
+`GET /api/sources/parsers` 返回当前用户可见的解析器，加 `?space=personal` 只看指定空间。示例条目如下。
+
+```json
+{"id":"formats:jsonl","label":"逐行 JSON 记录","plugin":"formats","version":"1","match":{"extensions":[".jsonl"],"mimeTypes":["application/x-ndjson"],"urlPatterns":["https://*/*.jsonl"]},"lastError":null}
+```
+
+打开 `GET /api/sources/:id`，从 `source.meta` 取解析器版本、展示字段和行号。版本优先用安装版本，再用清单版本；两者都没有时记插件代码哈希。例如，两条记录各占两行时，返回的元数据包含以下字段。
+
+```json
+{"parser":{"id":"formats:jsonl","version":"1"},"display":{"kind":"records","items":[{"title":"订单","lines":[1,2]},{"title":"退款","lines":[3,4]}]}}
+```
+
+表格使用 `{"kind":"table","columns":["名称"],"rowLines":[[1,2],[3,4]]}`。行号从 1 起，包含两端，最多 2 万条。记录的展示顺序可以和正文顺序不同。检索、引用、注入检测都读同一份正文。重新建索引时按保存的行范围切分。停用插件后，已有原件仍可读；再次导入原文件时按当时启用的解析器和内置规则重新解析。返回越界行号或抛错会保留上一版原件。
+
+## 加一种 Wiki 页面类型
+
+清单声明 `permissions.wikiPageKind: true`。在服务端注册 `api.wikiPageKind({ kind, label, describe, template, check?, upkeep? })`。类型名全局唯一。规划角色会看到各类型及其用途，写作角色还能看到选中类型的 Markdown 模板。模板用来指导写作，宿主按通常的方式校验引用并保存草稿。
+
+`check(ctx, { slug, title, body })` 返回 `[{ line?, message }]`。返回的问题随宿主检查一起交回写作者修改。检查抛错或超过 15 秒时记录错误，写作继续。`upkeep.everyDays` 指定距离最近更新或核对多久安排检查，`onSourcesChanged: false` 关闭按引用变化触发的维护，未指定时沿用原有规则。类型注销后，已有页面仍可按原类型编辑。
+
+`GET /api/wiki/kinds` 同时返回内置类型与用户可见的插件类型，加 `?space=personal` 可限定空间，示例条目如下。
+
+```json
+{"kind":"api-reference","label":"接口说明","describe":"说明调用一个接口需要哪些参数，以及调用后会收到什么。","plugin":"formats","hasTemplate":true,"upkeep":{"everyDays":30,"onSourcesChanged":true}}
+```
+
+仓库示例可用 `omem plugin install examples/plugins/formats` 安装。信任后上传包含 `{"title":"订单","body":"已创建"}` 的 JSONL 文件，或让写作角色按“接口说明”写一页。示例代码见 [formats/server.mjs](../../examples/plugins/formats/server.mjs)。

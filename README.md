@@ -271,6 +271,7 @@ npm install -g @omem-ai/cli
 | 边写插件边试 | `omem plugin link <目录>`：不复制，改了文件运行中的 omem 自动重新加载；带代码的信任一次（按目录记），之后改代码不用再确认；设置页标“开发中”，只在这台设备上。`omem plugin unlink <id>` 去掉 |
 | 插件的内容放到事项页、流程阶段和工作页 | 插件代码里 `api.slot("item.panel", { block, when: { object } })`：比如合并请求的检查结果显示在挂着它的事项侧栏，不用打开插件页；按看的人和事项空间取数，插件停用就消失。写法见 [docs/v2/plugins.md](docs/v2/plugins.md) |
 | 做一个自己的小插件（复盘、问卷、打卡） | 在数据目录建 `plugins/<id>/plugin.yaml`、`agents/<名>.md`（可带 `skills/`、`settings`），重启后侧栏出现它的页面：和它的 Agent 对话，Agent 能发表单让你填、画图给你看。不加载数据目录里的代码。格式见 [docs/v2/plugins.md](docs/v2/plugins.md) |
+| 插件读一种文件格式，或为 Wiki 增加写作模板 | 注册 `api.sourceParser` 或 `api.wikiPageKind`。上传、目录导入和网址导入可按格式解析；Wiki 可以按类型检查正文、定期核对。示例在 `examples/plugins/formats`，参见 [插件开发](docs/v2/plugins.md)。 |
 | 插件要一个常驻进程（采集、看屏幕、连设备），页面实时显示 | 清单里写 `services` 和 `streams`，服务用 `packages/plugin-sdk/service.mjs`，页面 `omem.stream(名)`；数据目录插件带代码时在设置 → 插件里点“信任并运行”，代码改了要重新确认；服务的状态和输出也在那里看。点击、输入这类工具标 `approval: true`，每次等你批准 |
 | 把别的平台上的 issue、需求同步成事项 | 设置 → 推进工作 → 事项同步：选启用的插件提供的平台，订阅一个项目到某个空间；新条目先当候选或直接建，这边改了状态先问你要不要写回。事项详情里看得到它在那边的编号和状态 |
 | 插件跟随事项或评审的变化、接入外部事项和指标 | 用 `api.subscribe` 订阅获准空间的事件，`api.itemProvider` 增量同步外部条目，`api.reviewProvider` 将选定的评审问题发到事项关联的合并请求并读回讨论，发布与结束须本人确认，`api.metricProvider` 直接采集指标。失败的订阅用 `omem plugin failed-events` 查看、`omem plugin replay` 重放。见 [插件接口](docs/v2/plugins.md)。 |
