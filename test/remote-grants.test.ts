@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { prepareRun } from "../src/agents/runner.ts";
@@ -23,13 +23,14 @@ describe("browser session grants", () => {
   const member = "visitor";
   let token: string;
   beforeAll(async () => {
+    process.env.FAKE_AAD_TARGET_DIR = app.home;
     createUser(app, { id: member, name: "成员" });
     createSession(app, member, { via: "link" });
     token = createApiToken(app, member);
     setToolResolverForTests(name => name === "aad" ? [process.execPath, join(import.meta.dirname, "fake-aad.ts")] : null);
     server = await startServer(app, { port: 0, quiet: true });
   });
-  afterAll(async () => { await server.close(); setToolResolverForTests(null); app.db.close(); });
+  afterAll(async () => { await server.close(); delete process.env.FAKE_AAD_TARGET_DIR; setToolResolverForTests(null); app.db.close(); });
 
   const api = (path: string, method = "GET", body?: object, as = "test-owner") =>
     fetch(app.baseUrl + "/api/remote" + path, { method, headers: { authorization: "Bearer " + as,
@@ -97,8 +98,18 @@ describe("browser session grants", () => {
     const reader = stream.body!.getReader();
     await reader.read();
     const streamEnded = expect(reader.read()).rejects.toThrow();
-    operator.ws.send('{"type":"key"}');
-    await expect.poll(() => operator.frames.at(-1)).toBe('{"type":"key"}');
+    const target = join(app.home, "9333-PAGE1");
+    writeFileSync(target, "");
+    for (const [ws, text, expected] of [
+      [ownerView.ws, "A", "A"], [operator.ws, "B", "AB"], [ownerView.ws, "C", "ABC"],
+    ] as const) {
+      ws.send(JSON.stringify({ type: "text", text }));
+      await expect.poll(() => readFileSync(target, "utf8")).toBe(expected);
+    }
+    operator.ws.send('{"type":"clipboard"}');
+    await expect.poll(() => operator.frames.at(-1)).toContain('"fileId"');
+    const { fileId } = JSON.parse(operator.frames.at(-1)!);
+    expect((await fetch(operator.url.replace("/?token", "/clipboard/" + fileId + "?token"), { headers: { cookie: operator.cookie } })).status).toBe(200);
     const ended = once(operator.ws, "close");
     await api(path + "/grants/" + grant.id, "DELETE");
     await ended;

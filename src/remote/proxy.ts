@@ -7,7 +7,7 @@ import { cookies, SESSION_COOKIE } from "../auth/sessions.ts";
 import type { App } from "../core/app.ts";
 import { OWNER, userForToken } from "../core/users.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
-import { getSession, viewerAccess } from "./sessions.ts";
+import { getSession, startAssist, viewerAccess } from "./sessions.ts";
 
 export const REMOTE_BASE = "/remote";
 type Access = ReturnType<typeof viewerAccess>;
@@ -30,6 +30,39 @@ export function viewerCookie(app: App, id: string, userId: string, access: Acces
   issued.set(key, { ...access, id, userId });
   if (issued.size > 1000) issued.delete(issued.keys().next().value!);
   return `omem_remote=${key}; Path=/remote/${id}; HttpOnly; SameSite=Lax`;
+}
+
+// Control and clipboard file IDs are local to an assist process. Each operating
+// member connects to the same browser target with a separate controller.
+type Assist = Awaited<ReturnType<typeof startAssist>>;
+type Operator = { ready: Promise<Assist>; assist?: Assist; sockets: number };
+const operators = new WeakMap<Assist, Map<string, Operator>>();
+
+function operatingViewer(primary: Assist, grant: string) {
+  let group = operators.get(primary);
+  if (!group) {
+    group = new Map();
+    operators.set(primary, group);
+  }
+  let entry = group.get(grant);
+  if (!entry) {
+    const ready = startAssist(primary.args);
+    const created: Operator = { ready, sockets: 0 };
+    group.set(grant, created);
+    entry = created;
+    void ready.then(assist => {
+      created.assist = assist;
+      if (!created.sockets) assist.proc.kill();
+    }, () => {});
+  }
+  const operator = entry;
+  operator.sockets++;
+  return { ready: operator.ready, release() {
+    if (--operator.sockets === 0) {
+      group.delete(grant);
+      operator.assist?.proc.kill();
+    }
+  } };
 }
 
 function route(app: App, req: IncomingMessage) {
@@ -60,16 +93,22 @@ function route(app: App, req: IncomingMessage) {
   if (!access) return 404 as const;
   const session = getSession(id);
   let upstreamPath = path;
+  let assist = session.assist;
   if (access.grantId) {
     // The assist secret stays on loopback. Construct the upstream URL from known fields only.
     const url = new URL("http://local/" + path.replace(/^\//, ""));
     if (req.method !== "GET" || !["/", "/ws"].includes(url.pathname) &&
         !(access.mode === "operate" && /^\/clipboard\/[\w-]+$/.test(url.pathname))) return 401 as const;
     if (url.searchParams.get("token") !== "viewer") return 401 as const;
-    const query = new URLSearchParams({ token: session.assist.token, lang: "zh" });
+    if (url.pathname.startsWith("/clipboard/")) {
+      const operator = operators.get(assist)?.get(access.grantId)?.assist;
+      if (!operator) return 404 as const;
+      assist = operator;
+    }
+    const query = new URLSearchParams({ token: assist.token, lang: "zh" });
     upstreamPath = url.pathname + "?" + query;
   }
-  return { id, userId, path, upstreamPath, session, access, current };
+  return { id, userId, path, upstreamPath, assist, session, access, current };
 }
 
 type Route = Exclude<ReturnType<typeof route>, number>;
@@ -100,7 +139,7 @@ export function proxyHttp(app: App, req: IncomingMessage, res: ServerResponse) {
     res.end();
     return;
   }
-  const port = r.session.assist.port;
+  const port = r.assist.port;
   const up = request({ hostname: "127.0.0.1", port, path: r.upstreamPath, method: req.method,
     headers: { accept: req.headers.accept ?? "*/*" } }, response => {
     if (!r.current()) { response.destroy(); res.destroy(); return; }
@@ -133,34 +172,49 @@ export function attachRemoteUpgrade(app: App, server: Server) {
     if (!req.url?.startsWith("/remote/")) return;
     const r = route(app, req);
     if (typeof r === "number" || r.upstreamPath.split("?")[0] !== "/ws") return void socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n");
-    wss.handleUpgrade(req, socket, head, client => {
+    wss.handleUpgrade(req, socket, head, async client => {
       client.pause();
-      const up = new WebSocket(`ws://127.0.0.1:${r.session.assist.port}${r.upstreamPath}`, { perMessageDeflate: false });
+      const primary = r.assist;
+      const operator = r.access.grantId && r.access.mode === "operate"
+        ? operatingViewer(primary, r.access.grantId) : null;
+      let up: WebSocket | undefined;
       const connection = { userId: r.userId, mode: r.access.mode };
-      const close = () => { client.terminate(); up.terminate(); };
+      const close = () => { client.terminate(); up?.terminate(); };
       const unwatch = watch(app, r, close);
+      primary.proc.once("exit", close);
       client.on("error", close).once("close", () => {
+        primary.proc.off("exit", close);
         unwatch();
         r.session.connections.delete(connection);
         r.session.idleSince = Date.now();
-        up.terminate();
+        up?.terminate();
+        operator?.release();
       });
-      up.on("error", close).once("close", () => client.terminate());
-      up.once("open", () => {
+      let endpoint = primary;
+      if (operator) {
+        try { endpoint = await operator.ready; } catch { return close(); }
+        if (client.readyState !== WebSocket.OPEN || !r.current()) return close();
+      }
+      const path = operator ? `/ws?token=${encodeURIComponent(endpoint.token)}` : r.upstreamPath;
+      const upstream = new WebSocket(`ws://127.0.0.1:${endpoint.port}${path}`, { perMessageDeflate: false });
+      up = upstream;
+      upstream.on("error", close).once("close", () => client.terminate());
+      upstream.once("open", () => {
         if (!r.current()) return close();
+        if (r.session.kind === "browser" && connection.mode === "operate") upstream.send('{"type":"take"}');
         r.session.connections.add(connection);
         client.resume();
       });
       client.on("message", (data, binary) => {
         if (!r.current()) return close();
         const allowed = connection.mode === "operate" ? data : !binary && pictureRequest(data);
-        if (allowed && up.readyState === WebSocket.OPEN) up.send(allowed, { binary });
+        if (allowed && upstream.readyState === WebSocket.OPEN) upstream.send(allowed, { binary });
       });
-      up.on("message", (data, binary) => {
+      upstream.on("message", (data, binary) => {
         if (!r.current()) return close();
         if (client.readyState !== WebSocket.OPEN) return;
-        up.pause();
-        client.send(data, { binary }, error => { if (error) close(); else up.resume(); });
+        upstream.pause();
+        client.send(data, { binary }, error => { if (error) close(); else upstream.resume(); });
       });
     });
   });

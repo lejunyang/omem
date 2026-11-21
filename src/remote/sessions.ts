@@ -26,7 +26,7 @@ type Live = {
   userId: string;
   createdAt: string;
   /** `aad assist`: where it listens on loopback, and the token every request to it carries. */
-  assist: { proc: ChildProcess; port: number; token: string };
+  assist: Awaited<ReturnType<typeof startAssist>>;
   /** What assist shows (its arguments without the picture settings), to start it again with others. */
   source: string[];
   /** Browser sessions: the `aad mcp` that opened the browser, and records and replays on it. */
@@ -106,7 +106,7 @@ export function getSession(id: string, userId?: string): Live {
 /** The address the page should load: the viewer with its token. */
 export const viewerPath = (s: Live) => `/remote/${s.id}/?token=${s.assist.token}&lang=zh`;
 
-async function startAssist(args: string[]) {
+export async function startAssist(args: string[]) {
   const proc = spawnAad(["assist", ...args]);
   const announced = await firstJsonLine(proc, 30_000).catch((e) => {
     proc.kill();
@@ -117,7 +117,7 @@ async function startAssist(args: string[]) {
     proc.kill();
     throw new HttpError(502, "aad assist 没有说明在哪里监听");
   }
-  return { proc, port, token: String(announced.token) };
+  return { proc, port, token: String(announced.token), args };
 }
 
 /** The screen going away (the browser closed, the desktop locked) ends the session; a replaced viewer does not. */

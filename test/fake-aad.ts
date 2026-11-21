@@ -2,7 +2,7 @@
 // runs, answering the way the real ones do. Each call is appended to FAKE_AAD_LOG as a JSON line.
 import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,9 +23,12 @@ function workflow(name: string) {
 /** The viewer and its WebSocket, on loopback with a token, announced as one JSON line. */
 function assist() {
   const token = randomBytes(8).toString("hex");
+  const fileId = randomBytes(8).toString("hex");
+  let holder: WebSocket | undefined;
   const server = createServer((req, res) => {
     const u = new URL(req.url ?? "/", "http://x");
     if (u.searchParams.get("token") !== token) return void (res.writeHead(403), res.end());
+    if (u.pathname.startsWith("/clipboard/") && u.pathname !== "/clipboard/" + fileId) return void (res.writeHead(404), res.end());
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     if (req.headers.accept === "application/x-test-stream") { res.write("first frame"); return; }
     res.end(`<title>viewer</title>path=${u.pathname}`);
@@ -37,7 +40,17 @@ function assist() {
     wss.handleUpgrade(req, socket, head, ws => {
       ws.send(`ready ${args.join(" ")}`);
       ws.send(Buffer.from([1, 2, 3]));
-      ws.on("message", (data, binary) => ws.send(data, { binary }));
+      holder ??= ws;
+      ws.on("close", () => { if (holder === ws) holder = [...wss.clients][0]; });
+      ws.on("message", (data, binary) => {
+        const msg = binary ? {} : JSON.parse(data.toString());
+        if (msg.type === "take") { holder = ws; return; }
+        if (msg.type !== "hello" && msg.type !== "keyframe" && ws !== holder) return;
+        if (msg.type === "text" && process.env.FAKE_AAD_TARGET_DIR)
+          appendFileSync(join(process.env.FAKE_AAD_TARGET_DIR, after("--browser-port") + "-" + after("--page")), msg.text);
+        if (msg.type === "clipboard") ws.send(JSON.stringify({ type: "clipboard", fileId }));
+        else ws.send(data, { binary });
+      });
     });
   });
   server.listen(0, "127.0.0.1", () => {
