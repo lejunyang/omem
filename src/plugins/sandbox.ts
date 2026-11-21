@@ -168,7 +168,8 @@ export async function startSandbox(
         pending.delete(m.id);
         clearTimeout(p.timer);
         if (m.ok) p.ok(m.value);
-        else p.fail(Object.assign(new Error(m.error), { code: m.code }));
+        else p.fail(Object.assign(new Error(m.error), { code: m.code,
+          status: Number.isInteger(m.status) && m.status >= 400 && m.status <= 599 ? m.status : undefined }));
       } else if (m.t === "rpc")
         answer(m.op, m.args ?? {}).then(
           (value) => child.connected && child.send({ t: "rpc-result", id: m.id, ok: true, value }),

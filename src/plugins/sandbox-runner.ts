@@ -264,7 +264,8 @@ process.on("message", async (m: Msg) => {
     } else return;
     send({ t: "result", id: m.id, ok: true, value });
   } catch (e) {
-    send({ t: "result", id: m.id, ok: false, code: (e as {code?: string})?.code, error: (e as Error).message ?? String(e) });
+    const status = (e as { status?: unknown })?.status;
+    send({ t: "result", id: m.id, ok: false, status: typeof status === "number" ? status : undefined, code: (e as {code?: string})?.code, error: (e as Error).message ?? String(e) });
   } finally { activeSearch.delete(m.id!); }
 });
 

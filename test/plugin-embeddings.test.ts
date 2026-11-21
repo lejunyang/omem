@@ -81,18 +81,22 @@ it("统一调用层分批、限流重试、维度变化整次作废", async () =
   await expect(encodeBatch(e, ["a", "b", "c"], "passage", 500)).rejects.toThrow("维度");
 });
 
-it("沙箱向量经过 IPC 保留数值，权限声明和使用状态可查", async () => {
+it.each([429, 503])("沙箱向量首次返回 %i 时退避重试并写入，权限声明和使用状态可查", async (status) => {
   const app = fixture();
-  const dir = join(app.home, "plugins", "vector");
+  const plugin = "vector" + status;
+  app.config.embeddings.provider = `plugin:${plugin}:small`;
+  const dir = join(app.home, "plugins", plugin);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "plugin.yaml"), "id: vector\nname: 向量\nspaces: [{ id: allowed, name: 项目 A }]\npermissions: { embedder: true }\n");
-  writeFileSync(join(dir, "server.mjs"), 'export default api => api.embedder({ id: "small", name: "示例", model: "sandbox", dimensions: 2, maxBatch: 1, async embed(texts, kind, signal) { if (!signal || !["query", "passage"].includes(kind)) throw Error("参数"); return texts.map(() => new Float32Array([3, 4])); } });');
+  writeFileSync(join(dir, "plugin.yaml"), `id: ${plugin}\nname: 向量\nspaces: [{ id: allowed, name: 项目 A }]\npermissions: { embedder: true }\n`);
+  writeFileSync(join(dir, "server.mjs"), `let attempts = 0; export default api => api.embedder({ id: "small", name: "示例", model: "sandbox", dimensions: 2, maxBatch: 1, async embed(texts, kind, signal) { if (++attempts === 1) throw Object.assign(new Error("稍后重试"), { status: ${status} }); if (!signal || !["query", "passage"].includes(kind)) throw Error("参数"); return texts.map(() => new Float32Array([3, 4])); } });`);
   await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
-  cleanup.push(() => untrustPlugin(app, "vector"));
-  expect((await trustPlugin(app, "vector")).runMode).toBe("isolated");
-  expect(embedders.get("vector:small")!.def.model).toBe("sandbox");
+  cleanup.push(() => untrustPlugin(app, plugin));
+  expect((await trustPlugin(app, plugin)).runMode).toBe("isolated");
+  const embed = vi.spyOn(embedders.get(plugin + ":small")!.def, "embed");
   expect(await embedPending(app)).toBe(1);
+  expect(embed).toHaveBeenCalledTimes(2);
+  expect(all(app.db, "select id from chunks where space_id='allowed' and embedding is not null")).toHaveLength(1);
   expect(await embedPendingMemories(app)).toBe(1);
   expect(await embedQuery(app, "问题")).toEqual(new Float32Array([0.6, 0.8]));
-  expect(describePlugin(getPlugin("vector")).permissions.embeddingNotice).toContain("外部服务");
+  expect(describePlugin(getPlugin(plugin)).permissions.embeddingNotice).toContain("外部服务");
 });
