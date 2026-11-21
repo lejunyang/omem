@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
@@ -103,17 +104,74 @@ export function describeStage(s: FlowStage) {
   };
 }
 
-export function parseFlow(raw: string, installed = true): FlowDefinition {
+export const runnerIdentity = (id: string) => ({ id, name: stageRunners.get(id)?.def.name ?? id });
+export const signalIdentity = (id: string) => ({ id, name: flowSignals.get(id)?.def.name ?? ({ "git.pushed": "推到远端", "git.merged": "合进目标分支" } as Record<string, string>)[id] ?? id });
+
+/** Fix verification inherits each unspecified field from the first trials stage. */
+export function studyStageCarrier(by: Extract<FlowStage["by"], { object: "trials" | "fixes" }>, stages: readonly FlowStage[]) {
+  if (by.object === "trials") return by;
+  const t = stages.find(s => typeof s.by === "object" && "object" in s.by && s.by.object === "trials");
+  const fallback = typeof t?.by === "object" && "object" in t.by && t.by.object === "trials" ? t.by : undefined;
+  return { ...by, agent: by.agent ?? fallback?.agent, skill: by.skill ?? fallback?.skill };
+}
+
+const summarizeAgent = (by: { agent?: string; skill?: string }) => ({
+  kind: !by.agent || by.agent === "assistant" ? "assistant" : "profile", id: by.agent ?? "assistant",
+  name: !by.agent || by.agent === "assistant" ? "助手" : by.agent, skill: by.skill ?? null,
+});
+
+/** Typed summary for clients that do not interpret YAML or localized descriptions. */
+export function summarizeStage(s: FlowStage, stages: readonly FlowStage[] = []) {
+  const by = s.by;
+  const carrier = by === "owner" ? { kind: "owner", name: "本人" } : by === "wait" ? { kind: "wait", name: "等待" }
+    : "runner" in by ? { kind: "runner", ...runnerIdentity(by.runner), params: by.with ?? {} }
+    : "run" in by ? summarizeAgent(by.run)
+    : { kind: "object", id: by.object, name: objectWords(by.object), ...(by.object === "trials" || by.object === "fixes" ? { run: summarizeAgent(studyStageCarrier(by, stages)) } : {}) };
+  const done = typeof s.done === "object" ? "signal" in s.done
+    ? { kind: "signal", ...signalIdentity(s.done.signal), params: s.done.with ?? {} }
+    : { kind: "object", id: s.done.object, name: objectWords(s.done.object), statuses: [s.done.status].flat() }
+    : { kind: s.done === "confirm" ? "confirm" : s.done ? "instruction" : "default", name: describeStage(s).done, instruction: s.done ?? null };
+  return { id: s.id, name: s.name, carrier, done, time: { at: s.at ?? null, window: s.window ?? null, minutes: s.budget?.minutes ?? null } };
+}
+
+export function parseFlow(raw: string, installed = true, previous?: FlowDefinition): FlowDefinition {
   let value: unknown;
   try { value = YAML.parse(raw); } catch (e) { throw new HttpError(400, `流程 YAML 格式不对：${(e as Error).message}`); }
   const parsed = flowSchema.safeParse(value, { error: () => "字段类型不对，或包含第一期不支持的字段" });
   if (!parsed.success) throw new HttpError(400, `流程定义不对：${parsed.error.issues.map((i) => `${i.path.join(".")}：${i.message}`).join("；")}`);
   if (installed) for (const s of parsed.data.stages) {
-    if (typeof s.by === "object" && "runner" in s.by) validateProvider(s.by.runner, stageRunners.get(s.by.runner)?.def, s.by.with);
-    if (typeof s.done === "object" && "signal" in s.done && s.done.signal.includes(":"))
+    const old = previous?.stages.find(stage => stage.id === s.id);
+    if (!sameHook(s.by, old?.by) && typeof s.by === "object" && "runner" in s.by) validateProvider(s.by.runner, stageRunners.get(s.by.runner)?.def, s.by.with);
+    if (!sameHook(s.done, old?.done) && typeof s.done === "object" && "signal" in s.done && s.done.signal.includes(":"))
       validateProvider(s.done.signal, flowSignals.get(s.done.signal)?.def, s.done.with);
   }
   return parsed.data;
+}
+
+/** Compare the capability and its effective parameters, independently of YAML key order. */
+function sameHook(next: FlowStage["by"] | FlowStage["done"], old: FlowStage["by"] | FlowStage["done"]) {
+  const hook = (value: typeof next) => typeof value === "object" && ("runner" in value || "signal" in value)
+    ? { id: "runner" in value ? value.runner : value.signal, params: value.with ?? {} } : value;
+  return isDeepStrictEqual(hook(next), hook(old));
+}
+
+/** Save boundaries retain only references from the currently saved template. */
+export function parseFlowForSave(app: App, raw: string) {
+  const next = parseFlow(raw, false);
+  const path = file(app, next.id);
+  const previous = existsSync(path) ? parseFlow(readFileSync(path, "utf8"), false) : undefined;
+  return parseFlow(raw, true, previous);
+}
+
+export function unavailableFlowReferences(f: FlowDefinition) {
+  return f.stages.flatMap(s => {
+    const refs: { kind: "runner" | "signal"; stage: string; id: string; reason: string }[] = [];
+    if (typeof s.by === "object" && "runner" in s.by && !stageRunners.has(s.by.runner))
+      refs.push({ kind: "runner", stage: s.id, id: s.by.runner, reason: "运行器已停用" });
+    if (typeof s.done === "object" && "signal" in s.done && s.done.signal.includes(":") && !flowSignals.has(s.done.signal))
+      refs.push({ kind: "signal", stage: s.id, id: s.done.signal, reason: "信号现在没人能判断" });
+    return refs;
+  });
 }
 
 function validateProvider(id: string, def: { params?: Record<string, unknown> } | undefined, params: unknown) {
@@ -188,7 +246,7 @@ function replaceRunnerGrant(app: App, id: string, next?: FlowDefinition) {
   else run(app.db, "delete from kv where key=?", key);
 }
 export function saveFlow(app: App, raw: string, by: string, confirmedRunner = false) {
-  const f = parseFlow(raw);
+  const f = parseFlowForSave(app, raw);
   if (hasRunner(f) && !(confirmedRunner && by === "owner") && !runnerApproved(app, f)) throw new HttpError(403, "含插件运行器的流程需要本人确认");
   const path = file(app, f.id);
   mkdirSync(join(app.libraryDir, "_flows"), { recursive: true });

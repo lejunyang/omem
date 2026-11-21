@@ -9,7 +9,9 @@ import { upsertSource } from "../src/sources/store.ts";
 import { embedPending, resetEmbedder, EMBEDDING_TEST_TEXT } from "../src/search/embeddings.ts";
 import { RERANK_TEST_QUERY, RERANK_TEST_DOCUMENTS, setRerankerForTests } from "../src/search/rerank.ts";
 import { configSchema, loadConfig, saveConfig } from "../src/core/config.ts";
-import { all } from "../src/core/db.ts";
+import { remember } from "../src/memory/store.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { all, run } from "../src/core/db.ts";
 
 import { registerProcessHooks } from "../src/plugins/process-hooks.ts";
 import { manifestSchema } from "../src/plugins/registry.ts";
@@ -70,7 +72,7 @@ it("状态显示积压和错误，HTTP 和坏 JSON 摘要、日志、配置都�
   expect(await embedPending(f.app)).toBe(0);
   const queries = vi.spyOn(f.app.db, "prepare");
   const state = (await f.server.inject("/api/search/providers")).json();
-  expect(queries.mock.calls.filter(([sql]) => /count\(\*\).*from (chunks|memories) indexed by/i.test(sql))).toHaveLength(2);
+  expect(queries.mock.calls.filter(([sql]) => /count\(\*\).*from (chunks|memories) indexed by/i.test(sql))).toHaveLength(4);
   expect(state.embeddings).toMatchObject({ provider: "api", kind: "api", pending: 1, state: "paused" });
   expect(state.embeddings.lastError).toContain("[已隐藏]");
   expect(JSON.stringify(state)).not.toContain("example-private-key");
@@ -82,6 +84,25 @@ it("状态显示积压和错误，HTTP 和坏 JSON 摘要、日志、配置都�
   }
   expect((await f.server.inject("/api/settings")).body).not.toContain("example-private-key");
   expect(JSON.stringify(warn.mock.calls)).not.toContain("example-private-key");
+});
+
+it("向量状态统计已有分块和有效记忆，停用仍显示，计数走部分索引",async () => {
+  const {app,server}=await fixture();
+  const memory=remember(app,{spaceId:"personal",kind:"fact",content:"项目 A 的验收规则",createdBy:"user"});
+  createSpace(app,{id:"wt-demo",name:"工作区"});
+  upsertSource(app,{spaceId:"wt-demo",kind:"note",uri:"worktree",title:"工作区",text:"工作区材料"});
+  const vector=Buffer.from(new Float32Array([1,2]).buffer);
+  run(app.db,"update chunks set embedding=?",vector);run(app.db,"update memories set embedding=? where id=?",vector,memory.id);
+  const plans: string[]=[];
+  const prepare=app.db.prepare.bind(app.db);
+  vi.spyOn(app.db,"prepare").mockImplementation(sql => {
+    if(/count\(\*\).*from (chunks|memories)/i.test(sql)) plans.push(...prepare("explain query plan " + sql).all().map(r=>String(r.detail)));
+    return prepare(sql);
+  });
+  const state=(await server.inject("/api/search/providers")).json().embeddings;
+  expect(state).toMatchObject({state:"off",embedded:{chunks:1,memories:1,total:2},pending:0});
+  expect(plans.filter(p=>/^SCAN (chunks|memories)\b/.test(p) && !p.includes("INDEX"))).toEqual([]);
+  for(const index of ["chunks_vector_space","memories_embedded"]) expect(plans.some(p=>p.includes(index))).toBe(true);
 });
 
 it("本地和插件重排可直接检测，无需填写云端模型", async () => {
@@ -149,6 +170,22 @@ it("检测与保存可清除服务商、地址和维度，保存前预览重建"
   expect((await probe({})).json().ok).toBe(true);
   expect(outbound).toHaveBeenCalledTimes(2);
   expect(calls.slice(-2).map(c => c.auth)).toEqual(["Bearer example-env-key", "Bearer example-env-key"]);
+});
+
+it("重排检测整体使用请求api，null清掉服务商引用，环境变量不继承已存密钥",async () => {
+  const {app,server,calls,url}=await fixture();
+  app.config.rerank=configSchema.shape.rerank.parse({provider:"api",api:{keyRef:"remote",url:"https://saved.example.org/rank",model:"saved-model",timeoutMs:1000}});
+  vi.stubEnv("TEST_RANK_ENV_KEY","example-env-key");
+  for(const api of [{model:"rank",url,apiKeyEnv:"TEST_RANK_ENV_KEY"},
+    {model:"rank",url,keyRef:null,apiKeyEnv:"TEST_RANK_ENV_KEY",timeoutMs:null}]) {
+    const response=await server.inject({method:"POST",url:"/api/search/rerank/test",payload:{api}});
+    expect(response.json()).toMatchObject({ok:true});
+    expect(calls.at(-1)).toMatchObject({path:"/rerank",auth:"Bearer example-env-key",body:{model:"rank"}});
+  }
+  expect(app.config.rerank.api).toMatchObject({keyRef:"remote",model:"saved-model",url:"https://saved.example.org/rank",timeoutMs:1000});
+  const clear=await server.inject({method:"POST",url:"/api/search/rerank/test",payload:{api:null}});
+  expect(clear.statusCode).toBe(200);expect(clear.json().ok).toBe(false);
+  expect(calls).toHaveLength(2);
 });
 
 it("有知识设置编辑权的成员仍改不了向量和重排，也调用不了检测", async () => {

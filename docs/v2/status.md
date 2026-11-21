@@ -413,3 +413,29 @@
 `source_routes` 保存归属依据、已判断版本与待整理状态；`source_locations` 保存原采集入口；`source_moves` 记迁移历史。迁移只改原件及索引的空间字段，不改正文、行号和已有派生知识。目标已有同 URI 原件时拒绝迁移，不覆盖或合并。历史应用校验预览时的 hash，规则变化或材料被手动指定后旧预览失效。
 
 交给 `archivist` 的每份原件带宿主查到的旁证（`src/sources/homing.ts` 的 `archiveEvidence`）；留在个人空间的记下判断时的旁证指纹（`archive_evidence`）和结论（`source_routes.verdict`：personal / unsure / proposed），指纹变了或空间、归档规则变了时进入 `archive_recheck`，由每晚的 `archive-sweep` 按预算重判。`source_moves.mode` / `detail` 记每次移动的方式和当时的旁证，“从个人空间归位”据此列出、移回（移回即本人指定，不再自动移动）。工作文件按运行范围（`run_scope`）里唯一的业务空间落位。页面引用的可达性在 `src/sources/reach.ts`。检查在后台按集合算、分段让出事件循环、同一时间一个、5 分钟上限；“贴过它的群”查 `lark_doc_links`（采集时写入，旧消息由检查分批补）。详见 docs/v2/archive-routing.md。
+
+## 第二轮网页对接的服务端字段（2026-11-22）
+
+- 流程服务端：保存与校验保留同阶段未变的停用信号、运行器及未变检查；校验返回 unavailableReferences 与 unavailableChecks，列表也返回 unavailableChecks。草稿读取按结构解析并保留空间裁剪，停用运行器后改名的确认卡持续展示，启用时仍走保存校验；HTTP 回归覆盖 PUT → GET 草稿 → 本人回答 → 新定义。入口 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts`；`test/flow-plugin.test.ts`。
+
+- 流程列表提供 `stageSummaries`，直接读取承担者、信号及参数、开始时刻与分钟时限。trials、fixes 保留 object 类型，并在 carrier.run 返回执行类型、档案 id/name 和 skill；fixes 逐字段继承首个 trials 的缺省配置，与执行端共用继承规则，最终缺省为 assistant。入口 `src/flows/definitions.ts`（summarizeStage、studyStageCarrier）、`http.ts`、`src/studies/fixes.ts`；`test/flows-http.test.ts`、`test/study-fix.test.ts`。
+
+- 事项阶段增加 carrier.runner 与 waitingSignal.id/name，不依赖共享流程定义查看权限。入口 `src/flows/engine.ts`、`signals.ts`。
+
+- 阶段 gateReview.ask 带处理卡状态、选择与时间，越过后保留供查看，重开清除；一次主键查询读取当前事项最多二十张卡。入口 `src/flows/engine.ts`、`plugin-gates.ts`。
+
+- 已保存配置中的插件后端引用均参与目录：档位、fallback、任务候选、角色模型与评审轮换补齐；设置返回 unavailableBackends。入口 `src/core/config.ts`（allProfiles）、`src/agents/runner.ts`、`src/server/http.ts`。
+
+- 本人沙箱状态增加 home 与 fullAccessGrants（内置角色、档案、规则）；规则授权清单用部分索引查询，成员仍返回 403。入口 `src/agents/own-run.ts`、`src/core/db.ts` 末尾迁移。
+
+- 档案和技能列表按 agents.view 返回，逐项带 canEdit/canDelete；无管理能力的删除请求拒绝。插件自带档案没有本地副本时不可删。入口 `src/server/http.ts`、`src/auth/routes.ts`。
+
+- 豆包 CLI 目录参数按帮助探测并缓存，原生参数前置；不支持时使用进程 cwd。入口 `src/agents/doubao-cli.ts`；假帮助和假进程测过。
+
+- 向量状态增加 embedded.chunks/memories/total，关闭提供者仍可看已有数量；复用 chunks_vector_space 与 memories_embedded 覆盖索引。入口 `src/search/embedding-index.ts`、`embeddings.ts`。
+
+- 重排检测整份使用请求 api，null 清字段，省略时沿用保存值；不继承旧 keyRef。入口 `src/server/http.ts`（/api/search/rerank/test）。
+
+- 进度投影 attempts 补齐 access（read/write），任务板和运行树使用同一访问枚举。入口 `src/agents/progress.ts`、`progress-runs.ts`。
+
+- 知识查看成员可读裁剪后的后端列表及缓存；普通 probe 只读缓存，缺缓存返回空列表，刷新仅本人。缓存按主键批量读取。入口 `src/server/http.ts`、`src/agents/probe.ts`、`src/auth/routes.ts`。

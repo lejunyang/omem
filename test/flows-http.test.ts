@@ -36,6 +36,60 @@ afterEach(async () => {
 async function serverFor(app: App) { const s = await startServer(app, { port: 0, quiet: true }); servers.push(s); return s; }
 
 describe("流程 HTTP", () => {
+  it("列表返回各承担者、完成条件和时限的结构化摘要", async () => {
+    const app=fixture(), server=await serverFor(app);
+    saveFlow(app, JSON.stringify({id:"summary",name:"摘要",stages:[
+      {id:"owner",name:"本人核对",by:"owner",done:{signal:"git.pushed",with:{}}},
+      {id:"wait",name:"等进展",by:"wait",done:"confirm"},
+      {id:"assistant",name:"整理",by:{run:{}},budget:{minutes:15},at:"08:00",window:"08:00-12:00"},
+      {id:"profile",name:"复核",by:{run:{agent:"reviewer",skill:"inspect"}}},
+      {id:"object",name:"方案",by:{object:"design"},done:{object:"design",status:"approved"}},
+    ]}),"owner");
+    const summary=(await server.inject("/api/flows")).json().flows[0].stageSummaries;
+    expect(summary).toMatchObject([
+      {id:"owner",name:"本人核对",carrier:{kind:"owner",name:"本人"},done:{kind:"signal",id:"git.pushed",name:"推到远端",params:{}}},
+      {carrier:{kind:"wait"},done:{kind:"confirm"}},
+      {carrier:{kind:"assistant",id:"assistant"},time:{at:"08:00",window:"08:00-12:00",minutes:15}},
+      {carrier:{kind:"profile",id:"reviewer",name:"reviewer",skill:"inspect"}},
+      {carrier:{kind:"object",id:"design"},done:{kind:"object",statuses:["approved"]}},
+    ]);
+  });
+
+  it.each(["trials", "fixes"] as const)("%s 对象阶段的列表摘要带执行档案和技能，缺省用助手", async object => {
+    const app = fixture(), server = await serverFor(app);
+    saveFlow(app, JSON.stringify({ id: "object-summary", name: "对象摘要", stages: [
+      { id: "profile", name: "指定档案", by: { object, agent: "inspector", skill: "inspect" } },
+      { id: "default", name: "默认档案", by: { object } },
+      { id: "assistant", name: "指定助手", by: { object, agent: "assistant", skill: "check" } },
+    ] }), "owner");
+    const summary = (await server.inject("/api/flows")).json().flows[0].stageSummaries;
+    expect(summary).toMatchObject([
+      { id: "profile", carrier: { kind: "object", id: object, run: { kind: "profile", id: "inspector", name: "inspector", skill: "inspect" } } },
+      { id: "default", carrier: { kind: "object", id: object, run: { kind: "assistant", id: "assistant", name: "助手", skill: null } } },
+      { id: "assistant", carrier: { kind: "object", id: object, run: { kind: "assistant", id: "assistant", name: "助手", skill: "check" } } },
+    ]);
+  });
+
+  it("fixes 的摘要逐字段继承首个 trials 的档案和技能，自身设置优先", async () => {
+    const app = fixture(), server = await serverFor(app);
+    saveFlow(app, JSON.stringify({ id: "inherit-summary", name: "继承摘要", stages: [
+      { id: "trials", name: "逐个试验", by: { object: "trials", agent: "inspector", skill: "inspect" } },
+      { id: "other-trials", name: "其他试验", by: { object: "trials", agent: "other", skill: "other" } },
+      { id: "inherited", name: "继承", by: { object: "fixes" } },
+      { id: "agent", name: "覆盖档案", by: { object: "fixes", agent: "assistant" } },
+      { id: "skill", name: "覆盖技能", by: { object: "fixes", skill: "verify" } },
+      { id: "both", name: "覆盖两项", by: { object: "fixes", agent: "verifier", skill: "verify" } },
+    ] }), "owner");
+    const flow = (await server.inject("/api/flows")).json().flows[0];
+    expect(flow.stageSummaries.slice(2).map((s: { carrier: unknown }) => s.carrier)).toMatchObject([
+      { kind: "object", id: "fixes", run: { kind: "profile", id: "inspector", name: "inspector", skill: "inspect" } },
+      { kind: "object", id: "fixes", run: { kind: "assistant", id: "assistant", name: "助手", skill: "inspect" } },
+      { kind: "object", id: "fixes", run: { kind: "profile", id: "inspector", name: "inspector", skill: "verify" } },
+      { kind: "object", id: "fixes", run: { kind: "profile", id: "verifier", name: "verifier", skill: "verify" } },
+    ]);
+    expect(flow.definition.stages[2].by).toEqual({ object: "fixes" });
+  });
+
   it.each(["网页", "助手"])("%s 只允许成员开始可见且适用的流程", async entry => {
     const app = fixture(), server = await serverFor(app);
     const userId = "flow-member", spaceId = "project-a";

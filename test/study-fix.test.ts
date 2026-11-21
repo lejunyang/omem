@@ -32,6 +32,20 @@ describe("课题逐条改缺陷", () => {
     expect(() => parseFlow(raw(21))).toThrow(); expect(() => parseFlow(raw(-1))).toThrow();
     expect(parseFlow(raw(20)).stages[0].by).toMatchObject({ object: "fixes" });
   });
+  it.each([
+    { name: "全部继承", own: {}, agent: "inspector", skill: "inspect" },
+    { name: "覆盖档案", own: { agent: "assistant" }, agent: "assistant", skill: "inspect" },
+    { name: "覆盖技能", own: { skill: "verify" }, agent: "inspector", skill: "verify" },
+    { name: "覆盖两项", own: { agent: "verifier", skill: "verify" }, agent: "verifier", skill: "verify" },
+  ])("改后重跑的实际运行配置：$name", async ({ own, agent, skill }) => {
+    const f = await setup();
+    const flow = itemFlow(f.app, f.item.id)!;
+    flow.definition.stages.find(s => s.id === "try")!.by = { object: "trials", agent: "inspector", skill: "inspect" };
+    flow.definition.stages.find(s => s.id === "fix")!.by = { object: "fixes", ...own };
+    run(f.app.db, "update item_flows set definition=? where item_id=?", JSON.stringify(flow.definition), f.item.id);
+    await f.finishTrial(); f.finding(); await f.beginFix(); await f.approve();
+    expect(getRun(f.app, f.stage().control.runId!).input).toMatchObject({ agent, skill });
+  });
   it("按类型、状态、流程起点、轮次、许可、交办和上限挑选，按建立顺序", async () => {
     const f = await setup(); await f.finishTrial(); const id = f.finding();
     const flow = itemFlow(f.app, f.item.id)!, d = flow.definition.stages.at(-1)!;

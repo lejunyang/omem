@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
 import { itemScope, requireItem } from "../items/access.ts";
-import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, parseFlowForSave, unavailableFlowReferences, summarizeStage, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { proposeFlow, flowView, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { settleChange } from "./follow.ts";
@@ -75,7 +75,7 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     ).flatMap((a) => {
       try {
         const raw = String((JSON.parse(a.context) as { raw?: unknown }).raw ?? "");
-        const f = parseFlow(raw);
+        const f = parseFlow(raw, false);
         if (!flowVisibleIn(f, allowed)) return [];
         return [{ askId: a.id, conversationId: a.conversation_id, createdAt: a.created_at, id: f.id, name: f.name, description: f.description ?? "", stages: f.stages.length, replaces: flows.some((x) => x.id === f.id) }];
       } catch {
@@ -83,7 +83,7 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
       }
     });
     const available = (entries: typeof flowSignals | typeof stageRunners) => Array.from(entries as ReadonlyMap<string, { spaces: readonly string[]; def: { name: string; describe: string; params?: Record<string, unknown> } }>).filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id, { def }]) => ({ id, name: def.name, describe: def.describe, params: def.params }));
-    return { signals: available(flowSignals), runners: available(stageRunners), gates: [...stageGates].filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id,{def}]) => ({id,name:def.name,describe:def.describe,applies:def.applies})), flows: flows.map((f) => ({ ...f, ...gateSettingsForFlow(app, f.id), grants: gateGrants(app, f.id, userId) })), drafts };
+    return { signals: available(flowSignals), runners: available(stageRunners), gates: [...stageGates].filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id,{def}]) => ({id,name:def.name,describe:def.describe,applies:def.applies})), flows: flows.map((f) => ({ ...f, stageSummaries: f.definition?.stages.map(s => summarizeStage(s, f.definition!.stages)) ?? [], ...gateSettingsForFlow(app, f.id), grants: gateGrants(app, f.id, userId) })), drafts };
   });
   server.get("/api/flows/board", async (req) => {
     const { only } = body(z.object({ only: z.enum(["mine", "blocked"]).optional() }), req.query);
@@ -101,13 +101,13 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
   server.post("/api/flows/validate", async (req) => {
     const raw = body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
     try {
-      const f = parseFlow(raw);
-      return { ok: true, id: f.id, name: f.name, description: f.description, repeat: f.repeat ?? null, repeatDescription: describeFlow(f), stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
+      const f = parseFlowForSave(app, raw);
+      return { ok: true, unavailableReferences: unavailableFlowReferences(f), unavailableChecks: gateSettingsForFlow(app, f.id).unavailableChecks, id: f.id, name: f.name, description: f.description, repeat: f.repeat ?? null, repeatDescription: describeFlow(f), stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
     } catch (e) { return { ok: false, problem: (e as Error).message }; }
   });
   server.put("/api/flows/:id", async (req) => {
     const raw = typeof req.body === "string" ? req.body : body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
-    const f = parseFlow(raw);
+    const f = parseFlowForSave(app, raw);
     if (f.id !== (req.params as { id: string }).id) throw new HttpError(400, "路径 id 必须与流程定义 id 相同");
     if (hasRunner(f) && !runnerApproved(app, f)) return { askId: proposeFlow(app, raw, { actor: "owner", userId: who(req) }).id };
     return saveFlow(app, raw, "owner");

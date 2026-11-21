@@ -1,10 +1,21 @@
-import { fstatSync, readFileSync } from "node:fs";
+import { appendFileSync, fstatSync, readFileSync } from "node:fs";
 
 // Behaves like `doubao` in the ways omem relies on: argument errors for the probe, the reply on
 // stdout, the session on stderr. Replies "echo:<prompt>" (the file's content when told to read one).
 const args = process.argv.slice(2);
 const opt = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 const models: Record<string, string[]> = { Auto: ["low", "medium", "high"], "Pro 1": ["low", "medium", "high", "xhigh", "max"] };
+
+if (args.includes("--help")) {
+  if (process.env.FAKE_HELP_LOG) appendFileSync(process.env.FAKE_HELP_LOG, "help\n");
+  console.log(process.env.FAKE_CWD_HELP ?? "  -C <dir>  工作目录，必须放在业务参数之前");
+  process.exit(0);
+}
+if (process.env.FAKE_DIRECTORY) {
+  const directory = opt("-C") ?? opt("--cwd") ?? opt("--directory");
+  if (directory && args.indexOf(directory) > args.indexOf("-p")) process.exit(2);
+  console.log(JSON.stringify({cwd:process.cwd(),directory})); process.exit(0);
+}
 
 const model = opt("--model");
 if (model && !models[model]) {

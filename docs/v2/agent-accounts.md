@@ -245,3 +245,23 @@ bubblewrap 隐藏宿主 HOME、数据目录和临时目录，再按运行的计�
 - 同一后端两个账号目录同时运行互不干扰；同一个账号在两个目录里同时运行会怎样（有的后端限制单个共享服务）。
 - 设备码登录的输出格式（链接和验证码能不能稳定地用正则认出来）。
 - 沙箱里没有系统钥匙串（keyring）时，各后端的登录态能不能落在文件里、跨进程保留。有的命令行在没有钥匙串的环境里只把令牌放在内存里，换个进程就要重登。
+
+### 本人沙箱的状态字段
+
+`GET /api/security/sandbox`（仅本人）增加 `home`：规范化后的当前主目录，客户端可据此将子路径写作 `~/…`。`fullAccessGrants: { roles, profiles, rules }` 分别列出单独打开完全访问的内置角色、档案和规则，每项 `{ id, name }`；规则按已保存的授权列出，停用规则仍保留设置。全局 fullAccess 档位仍单独返回，不扩展成员权限。规则清单通过 rules_full_access 部分索引读取，迁移只在数组末尾追加。
+
+### 档案与技能列表的操作权限
+
+`GET /api/agents` 与 `GET /api/skills` 按 agents.view 授予查看；每项新增 `canEdit`、`canDelete`，按当前调用人的档案管理权限计算。插件自带且未在本地覆盖的档案 canDelete 为 false；可改成自己的副本。没有 agents.manage 的成员调用删除档案或技能接口仍返回 403。成员档案列表只返回名称、说明、状态及 AI 选择，不带工作路径、工具授权或私有正文。
+
+### 豆包 CLI 的工作目录能力
+
+本机 CLI 启动前只用 `--help` 探测目录参数，优先识别声明的 `-C`，也支持 `--cwd` / `--directory` / `--workdir` / `--working-directory`；目录参数放在 `--resume`、`-p` 之前。帮助未声明时直接使用进程 cwd。探测按实际二进制、文件时间与大小、启动参数和账号目录缓存，不按版本号选择。帮助只读，无需登录，不发起会话。
+
+进度接口 `/api/runs/:id/progress`、`/api/items/:id/progress` 的任务 attempts 增加 `access?: "read" | "write"`，保留任务板每次尝试的访问档位；普通本地运行没有显式设备档位时省略。
+
+### 检索设置的只读后端列表
+
+有 settings.knowledge.view 的成员读取 `GET /api/settings?section=knowledge` 时也得到 agents 后端摘要与 unavailableBackends。摘要只包含 id、name、installed、transport、model、effort、pluginBackend、canProbe 和裁剪后的 probe（at、models、efforts、effortsByModel），成员 canProbe 为 false；不含命令、参数、环境变量、工作路径或密钥。列表的模型缓存以一次 kv 主键查询批量读取，优先使用当前成员自己的缓存，再用宿主缓存。
+
+`POST /api/agents/:id/probe` 对有知识或 AI 查看权的成员只读缓存，返回 `{ agent, models, efforts, at?, effortsByModel?, cached: true, readOnly: true }`；没有缓存时返回空模型和强度数组，不启动后端。refresh=true、实际探测和修改设置仍仅本人。网页应据 canProbe 隐藏“重新检测”，直接使用列表中的缓存。

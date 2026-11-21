@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { agentProfileSchema } from "../src/core/config.ts";
@@ -9,12 +9,43 @@ import { shortPath } from "../src/agents/own-sandbox.ts";
 import { bwrapArgs, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { prepareRun } from "../src/agents/runner.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
-import { agentSpecSchema } from "../src/agents/specs.ts";
+import { run } from "../src/core/db.ts";
+import { createUser, createApiToken } from "../src/core/users.ts";
+import { setRoleFullAccess } from "../src/agents/builtin-roles.ts";
+import { agentSpecSchema, saveAgentSpec } from "../src/agents/specs.ts";
 import { launch } from "../src/agents/spawn.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 afterEach(() => { vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); });
+
+it("沙箱状态只给本人主目录与完全访问授权清单，规则查询走索引", async () => {
+  const app=testApp();
+  const home=mkdtempSync(join(tmpdir(),"sandbox-status-"));
+  vi.stubEnv("HOME",home);
+  setRoleFullAccess(app,"assistant",true);
+  saveAgentSpec(app,{name:"inspect",description:"核对",prompt:"核对",fullAccess:true},"user");
+  run(app.db, `insert into rules(id,name,description,trigger,actions,created_by,created_at,updated_at)
+    values('grant','完全访问规则','','{}',?,'user','0','0'),('plain','普通规则','','{}','[]','user','0','0')`,
+    JSON.stringify([{type:"agent",spec:"assistant",fullAccess:true}],null,2));
+  const plans: string[]=[];
+  const prepare=app.db.prepare.bind(app.db);
+  vi.spyOn(app.db,"prepare").mockImplementation(sql => {
+    if(sql.includes("rules_full_access")) plans.push(...prepare("explain query plan " + sql).all().map(r=>String(r.detail)));
+    return prepare(sql);
+  });
+  const server=await startServer(app,{port:0,quiet:true});
+  try {
+    const status=(await server.inject("/api/security/sandbox")).json();
+    expect(status.home).toBe(realpathSync(homedir()));
+    expect(status.fullAccessGrants.roles).toContainEqual({id:"assistant",name:expect.any(String)});
+    expect(status.fullAccessGrants.profiles).toEqual([{id:"inspect",name:"inspect"}]);
+    expect(status.fullAccessGrants.rules).toEqual([{id:"grant",name:"完全访问规则"}]);
+    expect(plans.some(p=>p.includes("rules_full_access"))).toBe(true);
+    createUser(app,{id:"viewer",name:"查看成员",role:"admin"});
+    expect((await server.inject({url:"/api/security/sandbox",headers:{authorization:`Bearer ${createApiToken(app,"viewer")}`}})).statusCode).toBe(403);
+  } finally {await server.close();app.db.close();rmSync(app.home,{recursive:true,force:true});rmSync(home,{recursive:true,force:true});}
+});
 
 // A successful sandbox settings example requires POSIX mount paths.
 it.skipIf(process.platform === "win32")("validates and returns the externally edited backend on a sandbox PUT", async () => {

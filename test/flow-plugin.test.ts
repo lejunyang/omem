@@ -1,10 +1,11 @@
+import { startServer } from "../src/server/http.ts";
 import { stagePlugin } from "./flow-plugin-fixture.ts";
 import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { forgetPlugin, loadPlugins, reloadPlugin, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
-import { parseFlow, runnerApproved, saveFlow } from "../src/flows/definitions.ts";
+import { parseFlow, parseFlowForSave, summarizeStage, runnerApproved, saveFlow } from "../src/flows/definitions.ts";
 import { flowView, ownerAction, startFlow, reportStage, updateStageBudget, recordStage } from "../src/flows/engine.ts";
 import { checkPluginSignals } from "../src/flows/plugin-signals.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
@@ -16,7 +17,7 @@ import { all, run } from "../src/core/db.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { mergeSources } from "../src/sources/duplicates.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { createApiToken, createUser } from "../src/core/users.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { gateSettingsForFlow, saveGateChecks } from "../src/flows/plugin-gates.ts";
@@ -27,13 +28,13 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   const owner = { actor: "owner", userId: "owner" };
   const raw = (stages: unknown[]) => JSON.stringify({ id: "inspect", name: "检查", stages });
   const signalStage = (fail: unknown) => ({ id: "mark", name: "检查标记", by: "wait", done: { signal: "stagekit:mark", with: { fail } } });
-  async function begin(stages: unknown[]) {
+  async function begin(stages: unknown[], spaceId = "personal") {
     const f = parseFlow(raw(stages));
     if (f.stages.some(s => typeof s.by === "object" && "runner" in s.by)) {
       const ask = proposeFlow(app, raw(stages), owner);
       await answerAsk(app, ask.id, { choice: 0, by: "owner" });
     } else saveFlow(app, raw(stages), "owner");
-    const item = upsertItem(app, undefined, { title: "检查事项", spaceId: "personal" }, "user");
+    const item = upsertItem(app, undefined, { title: "检查事项", spaceId }, "user");
     await startFlow(app, item.id, "inspect", owner);
     return item.id;
   }
@@ -48,6 +49,79 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     await trustPlugin(app, "stagekit", mode);
   });
   afterAll(() => { forgetPlugin("stagekit"); app.events.emit("close"); app.db.close(); vi.unstubAllEnvs(); });
+  it("停用运行器后通过 HTTP 改阶段名，草稿保留到本人启用新定义", async () => {
+    const server = await startServer(app, { port: 0, quiet: true });
+    const yaml = raw([{ id: "job", name: "原阶段名", by: { runner: "stagekit:job", with: { fail: false } } }]);
+    const put = (yaml: string) => server.inject({ method: "PUT", url: "/api/flows/inspect", payload: { yaml } });
+    const answer = (id: string) => server.inject({ method: "POST", url: `/api/asks/${id}/answer`, payload: { choice: 0 } });
+    try {
+      const initial = await put(yaml);
+      expect(initial.statusCode).toBe(200);
+      expect(initial.json().askId).toEqual(expect.any(String));
+      expect((await answer(initial.json().askId)).statusCode).toBe(200);
+      await setPluginEnabled(app, "stagekit", false);
+
+      const changed = JSON.parse(yaml);
+      changed.stages[0].name = "新阶段名";
+      const saved = await put(JSON.stringify(changed));
+      expect(saved.statusCode).toBe(200);
+      const askId = saved.json().askId;
+      expect(askId).toEqual(expect.any(String));
+      const listed = (await server.inject("/api/flows")).json();
+      expect(listed.drafts).toContainEqual(expect.objectContaining({ askId, id: "inspect", replaces: true }));
+      expect(listed.flows.find((f: { id: string }) => f.id === "inspect").definition.stages[0].name).toBe("原阶段名");
+
+      const enabled = await answer(askId);
+      expect(enabled.statusCode).toBe(200);
+      expect(enabled.json()).toMatchObject({ status: "answered", choice: 0 });
+      const updated = (await server.inject("/api/flows")).json();
+      expect(updated.drafts.some((d: { askId: string }) => d.askId === askId)).toBe(false);
+      expect(updated.flows.find((f: { id: string }) => f.id === "inspect").definition.stages[0]).toMatchObject({
+        name: "新阶段名", by: { runner: "stagekit:job", with: { fail: false } },
+      });
+      changed.stages[0].by.with.fail = true;
+      const rejected = await put(JSON.stringify(changed));
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.json().error).toContain("未注册流程能力");
+    } finally { await server.close(); await setPluginEnabled(app, "stagekit", true); }
+  });
+  it("停用后保留同阶段信号、运行器和检查，变更引用仍需注册", async () => {
+    const initial = raw([signalStage(true), {id:"job",name:"作业",by:{runner:"stagekit:job",with:{fail:false}}}]);
+    expect(parseFlow(initial).stages.map(s => summarizeStage(s))).toMatchObject([
+      {done:{kind:"signal",id:"stagekit:mark",name:"标记",params:{fail:true}}},
+      {carrier:{kind:"runner",id:"stagekit:job",name:"作业",params:{fail:false}}}
+    ]);
+    saveFlow(app, initial, "owner", true);
+    saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true}]);
+    const changed = JSON.parse(initial);
+    changed.stages[0].name = "改过名称";
+    const server = await startServer(app, {port:0,quiet:true});
+    await setPluginEnabled(app,"stagekit",false);
+    try {
+      const response = await server.inject({method:"POST",url:"/api/flows/validate",payload:{yaml:JSON.stringify(changed)}});
+      expect(response.json()).toMatchObject({ok:true,unavailableChecks:[{id:"stagekit:word",reason:"检查已停用"}],unavailableReferences:[
+        {kind:"signal",stage:"mark",id:"stagekit:mark"}, {kind:"runner",stage:"job",id:"stagekit:job"}
+      ]});
+      expect(parseFlowForSave(app,JSON.stringify(changed)).stages[0].name).toBe("改过名称");
+      saveFlow(app,JSON.stringify(changed),"owner",true);
+      expect(saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true}])).toHaveLength(1);
+      expect(gateSettingsForFlow(app,"inspect").unavailableChecks).toEqual([{id:"stagekit:word",reason:"检查已停用"}]);
+      expect(() => saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:false}])).toThrow("检查不可用");
+      for (const change of [
+        (f: typeof changed) => {f.stages[0].done.with.fail=false;},
+        (f: typeof changed) => {f.stages[1].by.with.fail=true;},
+        (f: typeof changed) => {f.stages[0].id="new-stage";},
+        (f: typeof changed) => {f.stages.push({id:"new",name:"新阶段",by:"wait",done:{signal:"stagekit:mark"}});},
+      ]) {
+        const next=structuredClone(changed); change(next);
+        const rejected = (await server.inject({method:"POST",url:"/api/flows/validate",payload:{yaml:JSON.stringify(next)}})).json();
+        expect(rejected).toMatchObject({ok:false,problem:expect.stringContaining("未注册流程能力")});
+        expect(() => saveFlow(app,JSON.stringify(next),"owner",true)).toThrow("未注册流程能力");
+      }
+    } finally { await server.close(); await setPluginEnabled(app,"stagekit",true); saveGateChecks(app,"inspect",[]); }
+    const invalid = JSON.parse(initial); invalid.stages[0].done.with.fail="错";
+    expect(() => parseFlowForSave(app,JSON.stringify(invalid))).toThrow("with");
+  });
   it("校验参数，将信号和可打开的证据落到当前阶段", async () => {
     expect(() => parseFlow(raw([signalStage("错")]))).toThrow("with");
     const id = await begin([signalStage(false)]);
@@ -55,11 +129,12 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   });
   it("失败后退避，停用后可以手动完成", async () => {
     const id = await begin([signalStage(true)]);
-    await vi.waitFor(() => expect(flowView(app, id).stages[0].waitingSignal).toMatchObject({failures:1,note:expect.stringContaining("问不到")}));
+    await vi.waitFor(() => expect(flowView(app, id).stages[0].waitingSignal).toMatchObject({id:"stagekit:mark",name:"标记",failures:1,note:expect.stringContaining("问不到")}));
     await checkGitSignals(app);
     expect(all(app.db, "select id from flow_signals where item_id=?", id)).toHaveLength(1);
     await setPluginEnabled(app, "stagekit", false);
     expect(flowView(app, id).stages[0].waitingSignal?.note).toContain("没人能判断");
+    expect(flowView(app,id).stages[0].waitingSignal).toMatchObject({id:"stagekit:mark",name:"stagekit:mark"});
     await ownerAction(app, id, "mark", "done", "已人工核对");
     expect(flowView(app, id).stages[0].state).toBe("done");
     await setPluginEnabled(app, "stagekit", true);
@@ -152,7 +227,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     saveFlow(app, raw(stages), "owner", true);
     run(app.db, "insert into flow_gate_grants(flow_id,stage_id,user_id,granted_at,updated_at) values('inspect','job','owner',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)");
     const item = await begin(stages);
-    expect(flowView(app,item).stages[0]).toMatchObject({state:"doing",autoStarted:true,attempt:1});
+    expect(flowView(app,item).stages[0]).toMatchObject({state:"doing",autoStarted:true,attempt:1,carrier:{runner:{id:"stagekit:job",name:"作业"}}});
     expect(all(app.db,"select id from item_stage_log where item_id=? and event='granted-start'",item)).toHaveLength(1);
   });
   async function tick(item: string) {
@@ -205,6 +280,30 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     await ownerAction(app,again,"mark","done","检查完成");
     expect(flowView(app,again).stages[0].state).toBe("blocked");
     saveGateChecks(app,"inspect",[]);
+  });
+  it("事项查看者直接读取检查卡等待与两种答复，只有本人能回答", async () => {
+    createSpace(app,{id:"gate-shared",name:"共享项目"});
+    const item=await begin([{id:"mark",name:"人工检查",by:"wait"}],"gate-shared");
+    saveGateChecks(app,"inspect",[{id:"stagekit:word",mandatory:true}]);
+    await ownerAction(app,item,"mark","done","检查完成");
+    createUser(app,{id:"gate-reader",name:"查看成员",role:"observer"});
+    addMember(app,"gate-shared","gate-reader","reader");
+    const server=await startServer(app,{port:0,quiet:true});
+    const headers={authorization:`Bearer ${createApiToken(app,"gate-reader","test")}`};
+    const read=async () => { const r=await server.inject({url:`/api/items/${item}/flow`,headers}); expect(r.statusCode).toBe(200); return r.json().stages[0]; };
+    try {
+      const stage=await read(), card=stage.askId;
+      expect(stage.gateReview.ask).toEqual({id:card,status:"pending",choice:null,answeredAt:null});
+      expect((await server.inject({method:"POST",url:`/api/asks/${card}/answer`,payload:{choice:0},headers})).statusCode).toBe(403);
+      await answerAsk(app,card,{choice:1,by:"owner"});
+      expect((await read()).gateReview.ask).toEqual({id:card,status:"answered",choice:"hold",answeredAt:getAsk(app,card).answeredAt});
+      await ownerAction(app,item,"mark","done","检查完成");
+      const next=(await read()).askId;
+      await answerAsk(app,next,{choice:0,by:"owner"});
+      expect(await read()).toMatchObject({state:"done",gateReview:{ask:{id:next,status:"answered",choice:"override",answeredAt:getAsk(app,next).answeredAt}}});
+      await ownerAction(app,item,"mark","reopen","重新核对");
+      expect((await read()).gateReview).toBeUndefined();
+    } finally {await server.close();saveGateChecks(app,"inspect",[]);}
   });
   it("全流程启用的检查只覆盖声明的阶段，停用后仍按原范围处理", async () => {
     const first = {id:"first",name:"准备",by:"wait"};

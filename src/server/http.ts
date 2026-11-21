@@ -29,7 +29,7 @@ import { listMcpServers, saveMcpServer, deleteMcpServer } from "../agents/mcp-se
 import { testMcpServer } from "../agents/mcp-test.ts";
 import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, roleTools, saveRoleOverride, setRoleFullAccess, setRoleMcp, setRoleTools } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
-import { cachedProbe, userProbe } from "../agents/probe.ts";
+import { cachedProbe, cachedProbeViews } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
@@ -1057,7 +1057,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ({ name, description, status, agent, model, effort });
   server.get("/api/agents", async req => {
     const specs = listAgentSpecs(app, { includeDrafts: true });
-    return who(req) === OWNER ? specs : specs.map(memberSpec);
+    const manage = can(app, who(req), "agents.manage");
+    return specs.map(spec => ({ ...(who(req) === OWNER ? spec : memberSpec(spec)), canEdit: manage,
+      canDelete: manage && existsSync(join(app.libraryDir, "_agents", `${spec.name}.md`)) }));
   });
   // A spec with what it has learned (attached skills, its own memories, proposals, usage).
   server.get("/api/agents/:name", async (req) => {
@@ -1198,11 +1200,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     deleteSkillFile(app, (req.params as { name: string }).name, q(z.object({ path: z.string() }), req.query).path);
     return { ok: true };
   });
-  server.get("/api/skills", async () => {
+  server.get("/api/skills", async req => {
     // Bodies stay out of the list: with the agents' skills taken over there are hundreds.
     const { loadSkillGroups, skillEnabled } = await import("../agents/skill-groups.ts");
     const groups = loadSkillGroups(app);
-    return listSkills(app, { includeDrafts: true }).map(({ body: _b, files: _f, ...s }) => ({ ...s, group: groups.skills[s.name]?.group ?? null, purpose: groups.skills[s.name]?.purpose ?? "", enabled: skillEnabled(groups, s.name), replay: skillDisplayTally(app, s.name) }));
+    const manage = can(app, who(req), "agents.manage");
+    return listSkills(app, { includeDrafts: true }).map(({ body: _b, files: _f, ...s }) => ({ ...s, canEdit: manage, canDelete: manage, group: groups.skills[s.name]?.group ?? null, purpose: groups.skills[s.name]?.purpose ?? "", enabled: skillEnabled(groups, s.name), replay: skillDisplayTally(app, s.name) }));
   });
   // The agents' own skill folders and the groups (agents/agent-skills.ts, docs/v2/agent-skills.md).
   const ownerSkills = (req: { headers: Record<string, unknown> }) => {
@@ -3120,12 +3123,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   server.post("/api/agents/:id/probe", async (req) => {
+    const userId = who(req), body = q(z.object({ refresh: z.boolean().optional() }), req.body ?? {});
+    if (userId !== OWNER && !can(app, userId, "settings.ai.view") && !can(app, userId, "settings.knowledge.view"))
+      throw new HttpError(403, "没有查看后端的权限");
+    if (userId !== OWNER && body.refresh) throw new HttpError(403, "重新检测后端只给本人");
     const { allProfiles } = await import("../core/config.ts");
     const { probeProfile, saveProbe } = await import("../agents/probe.ts");
     const id = (req.params as { id: string }).id;
     const p = allProfiles(app.config).find((x) => x.id === id);
     if (!p) throw new HttpError(404, "没有这个 Agent 配置");
-    const body = req.body as { refresh?: boolean } | undefined;
+    if (userId !== OWNER) return { agent: id, ...(cachedProbeViews(app, [id], userId).get(id) ?? { models: [], efforts: [] }), cached: true, readOnly: true };
     const cached = cachedProbe(app, id);
     if (cached && !body?.refresh) return { ...cached, cached: true };
     const probe = await probeProfile(p, app);
@@ -3526,9 +3533,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     catch (e) { return { ok: false, dimensions: null, elapsedMs: Date.now() - at, error: (e as Error).message.slice(0, 500) }; }
   });
   server.post("/api/search/rerank/test", async req => {
-    const body = (req.body ?? {}) as { api?: object };
-    const cfg = q(configSchema.shape.rerank, { ...app.config.rerank, ...body,
-      ...(body.api && { api: { ...app.config.rerank.api, ...body.api } }) });
+    const body = q(z.object({ api: z.record(z.string(), z.unknown()).nullable().optional() }).passthrough(), req.body ?? {});
+    // An explicit API is the entire draft. Null clears a field before schema defaults apply.
+    const api = body.api === null ? undefined : body.api === undefined ? app.config.rerank.api
+      : Object.fromEntries(Object.entries(body.api).filter(([, value]) => value !== null));
+    const cfg = q(configSchema.shape.rerank, { ...app.config.rerank, ...body, api });
     const at = Date.now();
     try {
       const results = await testReranker(app, cfg);
@@ -3553,12 +3562,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const access = settingsAccess(req);
     const visible = (s: Section) => (!section || s === section) && access.view(s);
     if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
+    const profiles = visible("ai") || visible("assistant") || visible("knowledge") ? listAgentProfiles(app) : [];
+    const readOnlyProbes = visible("ai") && access.owner ? null : cachedProbeViews(app, profiles.map(p => p.id), who(req));
     return {
+      ...((visible("ai") || visible("assistant") || visible("knowledge")) && { unavailableBackends: profiles.filter(p => p.pluginBackend?.available === false).map(({id,name,pluginBackend}) => ({id,name,pluginBackend})) }),
       config: settingsView(app.config, visible, access.owner),
-      ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : (visible("ai") || visible("assistant")) && {
-        agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
-          const probe = userProbe(app, who(req), id);
-          return { id, name, installed, transport, model, effort, pluginBackend, probe: probe && {
+      ...(visible("ai") && access.owner ? { agents: profiles } : (visible("ai") || visible("assistant") || visible("knowledge")) && {
+        agents: profiles.map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
+          const probe = readOnlyProbes?.get(id) ?? null;
+          return { id, name, installed, transport, model, effort, pluginBackend, canProbe: access.owner, probe: probe && {
             at: probe.at, models: probe.models, efforts: probe.efforts, effortsByModel: probe.effortsByModel,
           } };
         }),

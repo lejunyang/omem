@@ -3078,3 +3078,49 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 | MP9 | 打开还没取过数的指标 | 写清从哪个系统、多久取一次、第一次大概什么时候；按需取的说明要按时看就改成每天 | 待真机 |
 | MP10 | 让助手写一份带两张图的分析 | 写在 `数据/报表/` 下；文件栏“报表”里点开，构成和排行直接画出来；挂在线上的也出现在线的“数据”一栏 | 截图 `insights-report`，测试覆盖列表 |
 | MP11 | 一条线结束再重新打开 | 线上的提议和在看的指标一起停；重新打开后提议仍是提议 | 测试覆盖 |
+
+## 第二轮网页对接的服务端接口（2026-11-22）
+
+### 流程服务端字段与停用引用
+
+- 启用示例插件，保存带信号、运行器和检查的流程；停用后只改阶段名称，校验成功并列出 unavailableReferences，保存成功。检查原样保存成功，校验结果与列表列出 unavailableChecks。新增能力、更换阶段 id、改参数或检查范围时拒绝；重新启用后错误参数仍被 JSON Schema 拒绝。
+
+- 用 HTTP PUT 提交含运行器的流程并回答启用；停用插件后只改运行器阶段名称再次 PUT，返回 askId。GET /api/flows 的 drafts 持续包含这张卡，已保存定义仍是旧名称；本人通过 POST /api/asks/:id/answer 选择启用后，重读列表得到新阶段名和原运行器参数，草稿消失。停用期间改参数的 PUT 仍返回 400。假插件在隔离和进程内两种模式验证，不启动真实 Agent。
+
+- 读取包含本人、助手、档案、等待、插件运行器的流程列表，核对 stageSummaries 中的类型、全名、显示名、参数及 time；停用能力仍有全名。
+
+- 分别读取 trials、fixes 对象阶段的列表摘要：carrier.kind 仍为 object，id 保留对象名，carrier.run 带 assistant/profile 类型、档案 id/name 和技能，未指定档案时为 assistant、未指定技能时为 null。流程包含多个 trials 时，fixes 只继承首个 trials 的 agent、skill；分别验证全部继承、只覆盖档案（含显式 assistant）、只覆盖技能、全部覆盖，结果与改后重跑一致。GET 不改写原始 definition。
+
+- 查看正在执行的插件阶段，carrier.runner 是运行器全名与名称；等待信号阶段的 waitingSignal 带信号全名与名称。停用后仍有 id，名称回退为全名；事项查看者可直接读取。
+
+- 用只有事项流程查看权的成员读取被检查拦下的阶段，先看到 pending；本人选择“等处理”后是 answered/hold，重新交结果并选择“仍然通过”后是 done 与 answered/override，时间匹配处理卡。成员回答仍返回 403；重开后不显示旧结果。
+
+- 分别只在档位、角色、档案、fallback、任务候选、角色模型和评审轮换里选择示例插件后端。停用后 GET /api/settings 的 agents 和 unavailableBackends 仍有它，带插件来源与不可用原因；不执行旧命令。
+
+### 本人沙箱状态
+
+- 单独给一个内置角色、档案和规则打开完全访问，读取 /api/security/sandbox：home 为规范化主目录，fullAccessGrants 分组列出相应 id/name，普通规则不出现。规则 JSON 带空格也能识别，查询计划使用 rules_full_access。成员即使有安全设置查看权也返回 403。
+
+### 成员档案与技能列表
+
+- 无档案管理能力的成员读取 /api/agents 和 /api/skills，每项 canEdit/canDelete 为 false；DELETE 对两类对象均返回 403，原内容保持。本人本地档案、技能为 true；未覆盖的插件档案 canEdit=true、canDelete=false。
+
+### 豆包 CLI 工作目录
+
+- 假帮助分别声明 -C、--cwd、--directory 或无目录参数，核对参数在 --resume/-p 之前。连续运行只读帮助一次；无参数时假进程收到正确 cwd。升级二进制或改变启动配置后重新探测；检查本机只运行 --version 与 --help。
+
+### 向量已有数量
+
+- 给库内分块和有效记忆各生成向量，关闭提供者后 /api/search/providers 的 embeddings.embedded 仍分别计数及合计。工作区分块不计入，pending 不变。用 EXPLAIN QUERY PLAN 核对 chunks_vector_space、memories_embedded，不扫向量大表。
+
+### 重排检测配置
+
+- 先保存带 keyRef 的重排接口，再检测一份只给 model/url/apiKeyEnv 的 api，或明确给 keyRef=null：假服务收到环境变量密钥而非旧服务商密钥，设置不变。api=null 清整份检测配置，未发请求；省略 api 时仍使用保存配置。
+
+### 进度尝试的访问档位
+
+- 同一任务先只读调查、再可写尝试，读取运行或事项进度，attempts 的 access 依次是 read/write，与任务板原记录相同；隐藏运行仍不出现在投影里。
+
+### 知识设置的只读后端能力
+
+- 给成员只授予 settings.knowledge.view：GET /api/settings?section=knowledge 返回后端摘要与 canProbe=false，包含自己的缓存或宿主缓存；命令、参数、环境变量、路径、密钥、私有错误和 modelNotes 不出现。POST /api/agents/:id/probe 的非刷新请求只读缓存；清掉缓存后返回空 models/efforts，不启动后端。refresh=true 和修改设置均为 403，检索提供者状态为 200。

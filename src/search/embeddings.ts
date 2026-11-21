@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
-import { embeddingId, storedModel, recordModel, adoptLegacyIndex, checkIndexDimensions, pendingVectorCount } from "./embedding-index.ts";
+import { embeddingId, storedModel, recordModel, adoptLegacyIndex, checkIndexDimensions, pendingVectorCount, embeddedVectorCounts } from "./embedding-index.ts";
 import { apiEmbedder, encodeBatch, type EmbeddingProvider, type Kind } from "./embedding-provider.ts";
 import { vectorIndex } from "./vectors.ts";
 import { pack, toFloats } from "./vector-codec.ts";
@@ -277,7 +277,7 @@ export function embeddingStatus(app: App) {
     model: isPlugin ? plugin?.def.model ?? null : cfg.model, dimensions: isPlugin ? plugin?.def.dimensions ?? null : cfg.dimensions ??
       (Number(one<{value: string}>(app.db, "select value from kv where key='embedding_dimensions'")?.value) || null),
     plugin: plugin?.plugin ?? null, name: plugin?.def.name ?? null, ...health,
-    pending: pendingVectorCount(app, scoped), excludedSpaces, excludedReason: unavailable ? "插件向量提供者不可用" : excludedSpaces.length ? "插件未获授权，这些空间没有向量" : null,
+    pending: pendingVectorCount(app, scoped), embedded: embeddedVectorCounts(app), excludedSpaces, excludedReason: unavailable ? "插件向量提供者不可用" : excludedSpaces.length ? "插件未获授权，这些空间没有向量" : null,
     state: cfg.provider === "none" ? "off" : unavailable ? "unavailable" : changed ? "model-changed" : health.writeError ? "paused" : health.lastError ? "failed" : health.lastMs ? "ready" : "idle" };
 }
 

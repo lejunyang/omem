@@ -825,7 +825,9 @@ await api.answerAsk({
 
 ## 流程的完成信号
 
-清单声明 `permissions.flow.signal: true`，注册 `api.flowSignal({ id, name, describe, params?, check })`。流程写 `by: wait` 或 `by: owner`，完成条件写 `done: { signal: "stagekit:mark", with: { file: ready.txt } }`。保存时校验已注册能力及 with 的 JSON Schema；已有定义保留停用的能力，事项本人可手动完成。
+清单声明 `permissions.flow.signal: true`，注册 `api.flowSignal({ id, name, describe, params?, check })`。流程写 `by: wait` 或 `by: owner`，完成条件写 `done: { signal: "stagekit:mark", with: { file: ready.txt } }`。保存和校验只检查新增或改过参数的能力；与已保存版本同阶段引用及有效 with 参数一致的能力原样保留。校验结果的 unavailableReferences 单独提示停用的运行器和信号，不算错误。事项本人可手动完成。
+
+待启用的流程草稿按结构读取，插件停用后仍在 `GET /api/flows` 的 `drafts` 中展示。含运行器的定义改名后仍须本人确认；启用时重新按已保存定义校验引用，新增或改参的停用能力会被拒绝。
 
 `check(ctx, signal)` 收到事项的 id、标题、空间，阶段 id、名称和开始时间，with 参数，以及事项本人可读、属于同一空间的材料引用。返回 `{ done, evidence?, waitingOn?, recheckAfterSec? }`。证据是 `{ text, link? }[]`，链接支持 HTTP、HTTPS、网页内路径和原件引用。宿主落库、写日志与审计，经过原有完成和关卡路径推进。
 
@@ -847,7 +849,7 @@ await api.answerAsk({
 [{"id":"stagekit:word","stages":["write"],"mandatory":true}]
 ```
 
-stages 省略时，检查覆盖插件声明范围内的全部阶段。每次成功加载插件后，宿主保存该检查最近声明的流程、阶段和空间。停用期间沿用这份范围。旧配置先沿用已保存的范围；若从未记录范围且插件已停用，宿主先排除本人未选的阶段及清单范围外的空间。其余阶段遇到历史强制项时等待本人处理，流程设置的 `pendingCheckScopes` 和阶段卡片都说明原因。本人可重新加载插件以恢复范围，或调整启用配置后重新交结果。mandatory 是本人启用时选的强制性，默认 false；空数组关闭检查。宿主校验流程、阶段、注册能力及适用范围，最多三十条且不重复。
+stages 省略时，检查覆盖插件声明范围内的全部阶段。每次成功加载插件后，宿主保存该检查最近声明的流程、阶段和空间。停用期间沿用这份范围。旧配置先沿用已保存的范围；若从未记录范围且插件已停用，宿主先排除本人未选的阶段及清单范围外的空间。其余阶段遇到历史强制项时等待本人处理，流程设置的 `pendingCheckScopes` 和阶段卡片都说明原因。本人可重新加载插件以恢复范围，或调整启用配置后重新交结果。mandatory 是本人启用时选的强制性，默认 false；空数组关闭检查。新增或改过 stages、mandatory 的检查校验流程、阶段、注册能力及适用范围；原样检查保留，校验结果与流程列表的 unavailableChecks 列出停用项。最多三十条且不重复。
 
 宿主完成规则和签字先通过，再按能力全名排序检查。review(ctx, signal) 收到事项、阶段、结果的 summary 和 evidence、承担者 by。返回 `{ ok: true }` 或 `{ ok: false, reason, evidence? }`。每条最多两秒，整条链最多八秒。否决使阶段卡住，原因和证据给本人及承担者看；强制检查出错、超时或插件停用时暂停，非强制错误记日志后放行。插件不能放宽宿主拒绝、验收或签字。
 
@@ -876,3 +878,15 @@ id 自动变成 `<插件>:<id>`，与内置后端进入同一个目录。还可�
 `GET /api/settings?section=ai` 的 agents 与 `GET /api/profile-options` 的 backends 条目含 `pluginBackend: { plugin, name, available, reason? }`。`GET /api/plugins` 列出后端和启动命令供信任页核对。`GET /api/flows` 返回 signals、runners、gates，流程行含 checks；阶段详情含 pluginEvidence、gateReview、waitingSignal 与运行链接。网页待接描述与参数选择、证据、错误、检查设置和后端来源。
 
 最小文件示例见 [stagekit](../../examples/plugins/stagekit/README.md)。选择隔离模式，按示例先启用检查，再写 ready 标记。运行器参数 verified 为 false 时写“待复核”，本人可在否决卡上越过这一次；省略参数时写“已验证”。
+
+流程接口直接携带能力标识：定义的 stageSummaries 含 runner / signal 的 id、name 和 params，事项阶段的 carrier.runner 与 waitingSignal 含 id、name。停用时保留 id，name 回退到 id。
+
+检查拦下的阶段通过 gateReview.ask 提供卡片状态、override（仍然通过）或 hold（等处理）和 answeredAt；事项查看者能读，只有本人能答。越过检查后保留结果供查看，重开后清除。
+
+`GET /api/settings` 的 AI 或助手区域增加 `unavailableBackends: [{ id, name, pluginBackend: { plugin, name, available: false, reason } }]`。默认后端、角色、档位、档案、fallback、任务选型候选、角色模型和评审轮换引用的停用插件后端均保留来源与原因；重新启用后移出不可用清单。
+
+向量状态 `GET /api/search/providers` 的 embeddings 增加 `embedded: { chunks, memories, total }`：库内非工作区分块和 active 记忆已有的向量数量，提供者关闭或停用时仍显示留存数量。pending 保持当前提供者范围的待算数量。两种已有数量分别读取 chunks_vector_space、memories_embedded 部分索引，不读取向量内容。
+
+`POST /api/search/rerank/test`：给 api 时整份使用请求的 api，不继承已保存 api 的字段；字段为 null 时清掉，之后应用字段默认值。api 整体为 null 时清掉检测配置。省略 api 才使用已保存值；检测不写设置。改用环境变量可传 `{ api: { model: "rank", url: "https://example.org/v1", keyRef: null, apiKeyEnv: "DEMO_RANK_KEY" } }`。
+
+知识设置查看成员也能读取 settings 的后端摘要、插件来源与 unavailableBackends，命令、参数、环境变量、路径及密钥仅本人可见。后端 probe 的普通成员请求只读缓存，没有缓存返回空能力列表；refresh=true 仍只给本人。检索提供者状态 GET /api/search/providers 原本已有知识查看权限，继续返回裁剪后的列表。

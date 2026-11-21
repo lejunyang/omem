@@ -58,6 +58,12 @@ export function pendingVectorCount(app: App, spaces?: readonly string[]) {
   return count(app, "chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%'" + scope, spaces)
     + count(app, "memories indexed by memories_unembedded where status='active' and embedding is null" + scope, spaces);
 }
+/** Stored vectors in the knowledge library, independent of whether the provider is enabled. */
+export function embeddedVectorCounts(app: App) {
+  const chunks = count(app, "chunks indexed by chunks_vector_space where embedding is not null and space_id not like 'wt-%'");
+  const memories = count(app, "memories indexed by memories_embedded where status='active' and embedding is not null");
+  return { chunks, memories, total: chunks + memories };
+}
 export function vectorCounts(app: App, spaces?: readonly string[]) {
   const pending = pendingVectorCount(app, spaces);
   const scope = spaceFilter(spaces);

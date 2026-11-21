@@ -769,4 +769,20 @@ npm run build
 - 进度视图的落点：运行页的修改项读 `?task=T<n>`（`CodeTasks.vue`），流程页读 `?stage=` / `?direction=` / `?trial=`（`ItemFlowPage.vue`、`ItemStudy.vue`），滚到并短暂标出；`/items/:id/flow` 改道到工作页时保留查询参数。
 - AI 后端：`AiDefaults.vue` 的后端下拉标“来自插件 ××”，已选而不可用的仍作为选中项显示并写原因和去插件页的链接；设置 → 后端与模型的后端行和“未安装”列表同样标来源；插件页在信任前列出后端和启动命令。
 
-从 `web/src/lib/flow-hooks.ts`（纯函数，测试在 `test/web-flow-hooks.test.ts`）读起。没接的：成员看到的流程定义页仍是本人的页面（接口只给本人），运行器的 id 只能从阶段的 `carrier.label` 文字里解析（接口没有单独字段）。
+从 `web/src/lib/flow-hooks.ts`（纯函数，测试在 `test/web-flow-hooks.test.ts`）读起。没接的：成员看到的流程定义页仍是本人的页面（接口只给本人），运行器与信号已有结构化标识，网页可改读 carrier.runner 与 waitingSignal 的 id/name。
+
+### 保留停用的流程能力
+
+`POST /api/flows/validate` 与保存按已保存流程的同阶段引用比较：运行器、信号全名及有效 `with` 参数不变时原样保留；新增、移到新阶段或修改参数时校验注册和 JSON Schema。校验成功返回 `unavailableReferences: [{ kind: "runner" | "signal", stage, id, reason }]`，只作提示。运行器的新定义版本仍由本人确认。检查保存接口也保留 id、stages、mandatory 均不变的项；校验结果与流程列表的 `unavailableChecks: [{ id, reason }]` 提示停用检查，强制检查的执行规则照旧。
+
+`GET /api/flows` 的 `drafts` 按结构解析，保留含停用信号或运行器的待启用定义，并沿用流程查看的空间裁剪。只改阶段名也会产生新的运行器定义版本：`PUT` 返回 `askId`，草稿在本人回答启用前持续展示，旧定义继续生效。保存和确认卡启用均按当时已保存的定义校验新增或改参引用。
+
+### 流程定义的结构化摘要
+
+`GET /api/flows` 的流程行增加 `stageSummaries`。每段有 `{ id, name, carrier, done, time }`：carrier.kind 为 owner / wait / assistant / profile / runner / object，插件运行器带 `{ id, name, params }`，档案带 id、name、skill；done.kind 为 signal / object / confirm / instruction / default，信号带全名 id、显示名 name 和 params，对象带 id 和 statuses；time 为 `{ at, window, minutes }`，未设置值为 null。停用能力的名称回退到全名 id。原 definition、raw 和文字描述保持可用，列表按流程查看空间裁剪。
+
+`trials`、`fixes` 保留对象的 `carrier: { kind: "object", id, name }`，并增加 `carrier.run: { kind: "assistant" | "profile", id, name, skill }` 表示执行者。未指定档案时为 `{ kind: "assistant", id: "assistant", name: "助手" }`；指定档案时 id 和 name 为档案名，未指定技能时 skill 为 null。fixes 自身的 agent、skill 各自优先，缺少的字段从流程中首个 trials 阶段继承；继承后仍缺档案才使用 assistant。显式写 agent: assistant 也会覆盖继承的档案。其他对象不增加 run，原始 definition 保留写入的字段。
+
+事项流程 `GET /api/items/:id/flow` 的插件阶段新增 `carrier.runner: { id, name }`；doing 的 `waitingSignal` 新增全名 `id` 和显示名 `name`，内置 Git 信号也有这两项。能力停用时 name 回退到 id，读事项即可取得这些字段，沿用事项与流程查看权限。
+
+事项阶段的 `gateReview.ask` 为 `{ id, status: "pending" | "answered" | "cancelled", choice: "override" | "hold" | null, answeredAt }`。override 是“仍然通过”，hold 是“等处理”。通过后仍保留这次处理结果；重开、复核或重新交结果清掉旧结果。可查看事项流程的人可读取，答复仍只有本人。只投影处理状态，不返回卡片的私有上下文。

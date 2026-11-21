@@ -21,6 +21,42 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-22：试验和修改阶段的执行者摘要
+
+- 流程列表的 trials、fixes 阶段保留 object 类型，在 `carrier.run` 返回执行类型、档案 id/name 和技能，最终缺省档案为 assistant。fixes 自身配置优先，未指定的字段分别继承首个 trials 阶段，与执行端共用同一规则。从 `src/flows/definitions.ts` 的 `studyStageCarrier`、`summarizeStage` 和 `src/studies/fixes.ts` 的 `fixModelStage` 读起。
+- HTTP 列表用例覆盖两个对象阶段的指定档案、默认助手、显式助手和各字段继承、覆盖；改后重跑用例核对排队运行收到的档案与技能。字段文档在 `docs/v2/flows.md` 的“流程定义的结构化摘要”，用例在 `test/flows-http.test.ts`、`test/study-fix.test.ts`。
+
+## 2026-11-22：停用运行器后的流程草稿保留
+
+- 草稿列表按结构解析，不因信号或运行器停用而丢弃待启用定义，继续按流程查看空间裁剪。保存和确认卡启用仍校验新增、改参引用。从 `src/flows/http.ts` 的草稿读取、`src/flows/definitions.ts` 的保存边界读起。
+- 假插件 HTTP 回归覆盖初次启用、停用后 PUT 改名、GET 草稿、本人回答及重读新定义；也核对改参仍被拒绝。用例在 `test/flow-plugin.test.ts`。
+
+## 2026-11-22：第二轮网页对接的服务端字段
+
+- 知识查看者得到只读后端摘要；普通探测读缓存，缺缓存返回空列表，刷新仅本人。缓存批量按主键读取。从 `src/server/http.ts`、`src/agents/probe.ts`、`src/auth/routes.ts` 读起。
+
+- 进度投影 attempts 带 read/write 访问档位。从 `src/agents/progress.ts`、`progress-runs.ts` 读起。
+
+- 重排检测按请求 api 整份替换，null 清字段，支持试用环境变量密钥。从 `src/server/http.ts` 的 rerank/test 读起。
+
+- embeddings.embedded 提供分块、有效记忆已有数量及合计，复用部分索引。从 `src/search/embedding-index.ts`、`embeddings.ts` 读起。
+
+- 豆包 CLI 从帮助探测目录参数，放到业务参数之前，无支持时用进程 cwd。从 `src/agents/doubao-cli.ts` 读起。
+
+- 档案技能列表带当前人的 canEdit/canDelete，无管理能力的删除仍拒绝。从 `src/server/http.ts`、`src/auth/routes.ts` 读起。
+
+- 本人沙箱状态增加 home 和各处完全访问授权清单，规则使用部分索引。从 `src/agents/own-run.ts`、`src/core/db.ts` 的末尾迁移读起。
+
+- 设置列出所有配置引用的停用插件后端及原因。从 `src/core/config.ts` 的 allProfiles 和 `src/server/http.ts` 读起。
+
+- gateReview.ask 显示处理状态和答复时间，查看者可读、本人答复，越过后保留、重开清除。从 `src/flows/engine.ts`、`plugin-gates.ts` 读起。
+
+- 事项阶段直接带 carrier.runner、waitingSignal.id/name。从 `src/flows/engine.ts`、`signals.ts` 读起。
+
+- 流程列表新增 stageSummaries，含承担者、完成信号与参数、时限。从 `src/flows/definitions.ts` 的 summarizeStage 读起。
+
+- 流程保存保留同阶段未变的停用引用；校验和列表单独提示不可执行能力，校验结果也带停用检查 unavailableChecks。从 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts` 读起。
+
 ## 网页接上向量和重排的来源、设备的接活开关和进度里的设备（2026-11-22）
 
 设置 → 检索与记忆：“向量检索”卡（`web/src/components/EmbeddingSettings.vue`）选来源（不用 / 本机模型 / 云端接口 / 插件的向量提供者，按插件分组），云端填地址、模型名、密钥（设置 → AI 的服务商或环境变量名）、维度、每批条数和超时；来源和参数是一份草稿，“试一下”调 `POST /api/search/embeddings/test`，“保存”遇到 409 `confirmation: "embedding-model"` 时用 `confirmDialog` 写出清掉和重算的条数，确认后带 `?confirmEmbedding=<token>` 再存，取消就恢复。为此 `web/src/api.ts` 的 `ApiError` 多了 `data`（响应体）。“重排”卡（`RerankSettings.vue`）同样选本机 / 云端 / 插件，`rerank.api` 整份替换，“试一下”调 `POST /api/search/rerank/test`；本机模型的条数、长度和线程照旧即改即存。原来“插件参与检索”卡里选重排和插件门槛的两行挪走：选重排在“重排”卡，非本机重排的门槛在“对话前带上相关记忆”卡；那张卡改名“插件参与召回”，只管召回。草稿和形状的纯函数在 `web/src/lib/search-settings.ts`。

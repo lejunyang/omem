@@ -14,6 +14,7 @@ export type StageState = "pending" | "gated" | "doing" | "blocked" | "done" | "s
 export type FlowActor = { actor: string; runId?: string; userId?: string };
 export type StageControl = {
   gateReview?: import("./plugin-gates.ts").GateReview;
+  gateReviewResult?: { review: import("./plugin-gates.ts").GateReview; askId: string };
   pluginEvidence?: import("../../packages/plugin-sdk/server.ts").FlowEvidence[];
   objectAfter?: string;
   recorded?: boolean;
