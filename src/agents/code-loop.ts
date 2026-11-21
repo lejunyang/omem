@@ -589,7 +589,7 @@ export function ruleDispute(app: App, rootId: string, seq: number, a: { decision
  * verification remembers the exchange). Both sides are noted on the task. The general `ask_agent`
  * consultation underneath (consult.ts); only the target and the session are this work's.
  */
-export async function askReviewer(app: App, codeRunId: string, seq: number, question: string, userId?: string): Promise<string> {
+export async function askReviewer(app: App, codeRunId: string, actorRunId: string, seq: number, question: string, userId?: string): Promise<string> {
   const run = getRun(app, codeRunId);
   const rootId = workRootOf(app, run.id);
   const t = getTask(app, rootId, seq);
@@ -607,7 +607,7 @@ export async function askReviewer(app: App, codeRunId: string, seq: number, ques
     label: `${ctx.label(verifier)}评审`,
     question: `编码 Agent 在改 ${taskLabel(seq)}（来自你提的问题）时有疑问。回答它的问题：问题在哪、为什么、改到什么程度算解决；只回答，不提交评审结论。\n\n${taskText(app, t)}\n\n## 它的问题\n\n${question.trim()}`,
     askedBy: "编码 Agent",
-    parentRunId: run.id,
+    parentRunId: actorRunId,
     spaceId: run.spaceId!,
     userId: userId ?? runUser(app, run.id),
     extra: {

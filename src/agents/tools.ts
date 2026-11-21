@@ -6818,10 +6818,10 @@ def({
     question: z.string().min(1).max(4000).describe("问题本身：你看到了什么、哪里不明白、你打算怎么改"),
   }),
   handler: async (ctx, a) => {
-    const { run: r } = await taskRound(ctx, "ask_reviewer");
+    const { run: r, actor } = await taskRound(ctx, "ask_reviewer");
     const t = await import("./code-tasks.ts");
     const { askReviewer } = await import("./code-loop.ts");
-    return askReviewer(ctx.app, r.id, t.parseTaskRef(a.task), a.question, ctx.userId ?? undefined);
+    return askReviewer(ctx.app, r.id, actor, t.parseTaskRef(a.task), a.question, ctx.userId ?? undefined);
   },
 });
 

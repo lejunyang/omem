@@ -113,6 +113,37 @@ describe("进度投影", () => {
     expect(code.usage).toEqual({ input: 58, output: 14, runs: 6, missing: 2 });
   });
 
+  it("助手通过 ask_reviewer 请教时，咨询只计入该助手负责的项和交办总量", async () => {
+    const { app, add } = fixture();
+    add("lead", "code", null, { taskMode: true }, { work: { sessions: { reviewer: { id: "review-session" } } } });
+    run(app.db, "update runs set status='running' where id='lead'");
+    for (const seq of [1, 2]) {
+      addTask(app, "lead", { title: `问题 ${seq}`, kind: "fix", verifier: "reviewer" }, "coder");
+      add(`helper${seq}`, "agent", "lead", { helperOf: "lead", tasks: [seq] });
+    }
+    takeTasks(app, "lead", "lead");
+    for (const seq of [1, 2]) updateTask(app, "lead", seq, { coderRun: `helper${seq}` });
+    const review = vi.spyOn(await import("../src/agents/runner.ts"), "runRole").mockResolvedValue({
+      text: "核对输入范围。", agent: "fake", stopReason: "end_turn", profileId: "fake", ai: { profile: "fake" },
+    });
+    try {
+      const reply = await callTool({ app, runId: "helper1", spaceId: "personal", userId: "owner", actor: "agent", spaces: ["personal"], tools: null },
+        "ask_reviewer", { task: "T1", question: "需要核对哪些输入？" });
+      expect(reply.isError).toBeFalsy();
+      const consult = review.mock.calls[0][1];
+      expect(consult.resumeSessionId).toBe("review-session");
+      expect(getRun(app, consult.runId!)).toMatchObject({ parentId: "helper1" });
+      for (const [id, input, output] of [["lead", 11, 3], ["helper1", 7, 2], [consult.runId!, 5, 1]] as const)
+        run(app.db, "insert into run_events values(?,1,?,'usage',?)", id, at, JSON.stringify({ input, output }));
+      const code = runProgress(app, "lead", owner).find(v => v.kind === "code")!;
+      expect(code.tasks.map(t => t.usage)).toEqual([
+        { input: 23, output: 6, runs: 3, missing: 0 },
+        { input: 11, output: 3, runs: 2, missing: 1 },
+      ]);
+      expect(code.usage).toEqual({ input: 23, output: 6, runs: 4, missing: 1 });
+    } finally { review.mockRestore(); }
+  });
+
   it("旧轮只有能核对修改项的尝试才归到该项，其余计入整块", () => {
     const { app, add } = fixture();
     add("first", "code", null);
