@@ -30,7 +30,7 @@ import { profileDetail } from "../agents/profiles.ts";
 import { cachedProbe, userProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { hostname, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join, resolve, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyMultipart from "@fastify/multipart";
@@ -67,7 +67,7 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewR
 import { callTool, contextToolNames, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
+import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
 import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
@@ -380,6 +380,34 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     disableRulePack(app, id);
     audit(app, who(req), "operation.pack.disable", id);
     return { ok: true };
+  });
+  server.get("/api/security/sandbox", async () => (await import("../agents/own-run.ts")).sandboxStatus(app));
+  server.put("/api/security/sandbox", async req => {
+    const { fullAccess, confirmAll, ...settings } = q(ownSandboxSchema.extend({
+      fullAccess: fullAccessMode, confirmAll: z.boolean().optional(),
+    }), req.body);
+    const { normalizeSandbox } = await import("../agents/own-sandbox.ts");
+    const { sandboxStatus } = await import("../agents/own-run.ts");
+    let ownSandbox;
+    try {
+      ownSandbox = normalizeSandbox(settings, homedir(), app.home);
+    } catch (e) { throw new HttpError(400, (e as Error).message); }
+    const next = { ...app.config, agents: { ...app.config.agents, ownSandbox, fullAccess } };
+    const status = saveConfig(next, app.home, candidate => {
+      if ((fullAccess === "all" || candidate.agents.fullAccess === "all") && confirmAll !== true)
+        throw new HttpError(400, "完全访问选 all 需要明确确认 confirmAll");
+      try {
+        const dirs = normalizeSandbox(candidate.agents.ownSandbox, homedir(), app.home);
+        for (const path of dirs.writable) if (!statSync(path, { throwIfNoEntry: false })?.isDirectory())
+          throw new Error("可写目录需要先在本机建好：" + path);
+        for (const path of dirs.hidden) if (existsSync(path) && !statSync(path).isDirectory())
+          throw new Error("隐藏项必须是目录：" + path);
+        return sandboxStatus(app, candidate);
+      } catch (e) { throw new HttpError(400, (e as Error).message); }
+    });
+    Object.assign(app.config, next);
+    audit(app, who(req), "sandbox.settings", "security", { ...next.agents.ownSandbox, fullAccess: next.agents.fullAccess });
+    return status;
   });
   server.get("/api/security/egress", async () => (await import("../agents/egress-run.ts")).egressStatus(app));
   server.put("/api/security/egress", async req => {
@@ -3543,7 +3571,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.notify.outletAskGrants = app.config.notify.outletAskGrants;
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
     next.security = app.config.security;
-    // Network conditions likewise have their own owner-only editor.
+    // Sandbox, backend access and network policies have their own owner-only editors.
+    next.agents.ownSandbox = app.config.agents.ownSandbox;
+    next.agents.fullAccess = app.config.agents.fullAccess;
     next.agents.networkPolicies = app.config.agents.networkPolicies;
     // Everything else is read on use; these are only read when the service starts.
     const atStartup: [string, (c: typeof next) => unknown][] = [

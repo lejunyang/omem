@@ -553,6 +553,8 @@ omem space share project-a wang [--edit]           # 再开放一个空间
 
 成员在编码沙箱里可以直接提交。交办没有指定分支名时，主编码可以给临时分支命名。完成修改项时，宿主校验提交并快进工作分支。每个仓库的原始 Git 公共目录保持只读。
 
+本机使用本人登录的 Agent 也可启用 Linux 只读沙箱，并在隔离成功后统一关闭后端自己的审批。两个开关默认沿用原行为。见[本人的运行进沙箱](docs/v2/agent-accounts.md#本人的运行进沙箱)。
+
 Linux 严格成员沙箱通过本机代理出网。本人可按主机审批、拒绝或查看运行连接汇总，也可为指定域名开启路径检查。配置见[出网代理](docs/v2/command-gate.md#出网代理)。
 
 除了飞书，内置的“连接平台”插件还能接 Notion、GitHub、Google、Slack、Jira、钉钉、微信等约 500 个平台：你在设置 → 采集 → 其他平台里搜到平台，按提示在平台开发者后台建应用、填回 Client ID 和 Secret（用 key 连接的平台不用这步），再开放给成员；能确认身份的平台（GitHub、Google、钉钉、微信……）还能用来登录和绑定账号，其余只用来读取。成员连接后，直接让助手以他的身份读这些平台（连了平台才有这些工具），把需要的内容存成原件（只读，不会改平台上的东西）。Figma、Notion、GitHub、Google 云盘 / Gmail / 日历、Slack、Jira、Confluence、Linear 有平台包：设计稿、页面、issue、频道消息直接整理成 Markdown，让助手“盯着”某个项目、仓库或频道后，改动会定时同步进来，账号页能看到和停掉。说明见 [docs/v2/connectors.md](docs/v2/connectors.md)。

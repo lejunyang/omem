@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import "../src/agents/jobs.ts";
-import { auditLog } from "../src/auth/permissions.ts";
+import { auditLog, saveRole } from "../src/auth/permissions.ts";
 import { answerAsk, createAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
@@ -1156,7 +1156,8 @@ describe("a delegation driven by tasks", () => {
     createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
     updateSpace(app, "shop-api", { settings: { setupCommand: "echo setup", checkCommand: "echo check" } });
     if (userId !== OWNER) {
-      createUser(app, { id: userId, name: "成员 A" });
+      const role = saveRole(app, { name: "交办开发者", scope: "global", permissions: ["code.delegate"] });
+      createUser(app, { id: userId, name: "成员 A", role: role.id });
       addMember(app, "shop-api", userId, "manager");
     }
     const issued = vi.spyOn(agentTools, "issueToolToken");

@@ -19,7 +19,7 @@ import { queueStandaloneFix } from "./review-fix.ts";
 import { checkLabel, namedReviewAI, planReview, reviewChecks, roundFindings, independenceWarnings, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
-import { workDirOf } from "./workspaces.ts";
+import { reviewWorkspace, workDirOf } from "./workspaces.ts";
 import { designDigest } from "../designs/work.ts";
 
 /**
@@ -248,7 +248,7 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
       spaces: [...new Set([run.spaceId!, ...worktrees.map((w) => w.space)])],
       task,
       runId: rc.runId,
-      cwd: worktrees.length > 1 ? undefined : workDirOf(worktrees[0]),
+      ...reviewWorkspace(app, rootId, worktrees),
       signal: rc.signal,
       onEvent: (e) => rc.event(e.type, { ...e, phase: "lead" }),
       profileId: app.config.agents.roles["review-lead"],
@@ -552,7 +552,7 @@ async function arbitrate(app: App, run: Run, tasks: CodeTask[], rc: RoundContext
       alsoRead: ctx.indexed,
       task: `${ARBITRATE_BRIEF}\n\n${parts.join("\n\n")}`,
       runId: rc.runId,
-      cwd: ctx.cwd,
+      ...ctx.workspace,
       signal: rc.signal,
       onEvent: (e) => rc.event(e.type, { ...e, phase: "lead", arbitrate: true }),
       profileId: app.config.agents.roles["review-lead"],
@@ -616,7 +616,7 @@ export async function askReviewer(app: App, codeRunId: string, actorRunId: strin
       resumeSessionId: sessionOf(app, rootId, verifier),
       spaces: ctx.spaces,
       alsoRead: ctx.indexed,
-      cwd: ctx.cwd,
+      ...ctx.workspace,
     },
     onDone: (res) => {
       keepSession(app, rootId, verifier, res.sessionId, res.contextUsage?.used);

@@ -1,3 +1,4 @@
+import { runAccess } from "../src/agents/own-sandbox.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -66,10 +67,12 @@ describe("完全访问", () => {
       expect(prep()).toBe(false);
       setRoleFullAccess(app, "assistant", true);
       expect(prep()).toBe(true);
-      const { addMember, createUser } = await import("../src/core/users.ts");
+      const { addMember, createUser, personalSpaceId } = await import("../src/core/users.ts");
       createSpace(app, { id: "project", name: "项目 A" });
-      createUser(app, { id: "colleague", name: "小王" }); addMember(app, "project", "colleague");
+      createUser(app, { id: "colleague", name: "小王" });
+      addMember(app, "project", "colleague");
       expect(prep({ userId: "colleague", spaceId: "project" })).toBe(false);
+      expect(prep({ userId: "colleague", spaceId: personalSpaceId("colleague") })).toBe(false);
       // A rule's switch (or the guest setting) decides for its own runs.
       expect(prep({ fullAccess: false })).toBe(false);
       expect(prep({ reviewCheck: true })).toBe(false);
@@ -83,4 +86,41 @@ describe("完全访问", () => {
       expect(prep()).toBe(false);
     } finally { app.db.close(); }
   });
+});
+
+it("covers backend mode and ACP writes for every role, sandbox and global selection", () => {
+  // Per-role, sandboxed, all. Each column covers outside then inside.
+  for (const [role, owner, guest, writes, expected] of [
+    ["coder", true, false, true, [false, false, false, true, true, true]],
+    ["review", true, false, false, [false, false, false, true, false, false]],
+    ["guest", false, true, false, [false, false, false, true, false, false]],
+    ["member", false, false, true, [false, false, false, false, false, false]],
+  ] as const) {
+    let i = 0;
+    for (const mode of ["per-role", "sandboxed", "all"] as const) for (const boxed of [false, true]) {
+      const force = expected[i++];
+      const run = { owner, guest, box: boxed ? { readOnly: !writes } : undefined, allowWrites: writes };
+      const doubaoPermission = writes || force ? "always_allow" : "ask_risky";
+      expect(runAccess(mode, run), role).toEqual({ doubaoPermission, fullAccess: force, acpWritable: writes });
+      expect(runAccess(mode, { ...run, legacyFull: true })).toEqual({ doubaoPermission, fullAccess: true, acpWritable: !boxed || writes });
+    }
+  }
+});
+
+it("uses the prepared global mode on an unboxed fake ACP", async () => {
+  const app = testApp();
+  app.baseUrl = "http://127.0.0.1:1";
+  const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: process.execPath,
+    args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "thread", FAKE_LEGACY: "1" } });
+  try {
+    for (const mode of ["per-role", "sandboxed", "all"] as const) {
+      app.config.agents.fullAccess = mode;
+      const prep = prepareRun(app, { actor: { role: "coder" }, profile, spaceId: "personal", runId: null });
+      const handle = await openAcp(profile, { cwd: process.cwd(), modes: prep.modes, fullAccess: prep.fullAccess, acpWritable: prep.acpWritable });
+      try {
+        const res = await handle.prompt("check", () => {});
+        expect(JSON.parse(res.text).mode).toBe(mode === "all" ? "yolo" : "autoEdit");
+      } finally { handle.close(); }
+    }
+  } finally { app.db.close(); }
 });

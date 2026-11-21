@@ -12,6 +12,9 @@ import { commandExists } from "./spawn.ts";
  * ACP registry (`omem agents registry`) or by hand in config.agents.profiles.
  */
 export type CatalogEntry = {
+  /** Writable state of the local login beyond its session history and skill directory. */
+  statePaths?: string[];
+  stateFiles?: string[];
   /**
    * Settings the agent takes when it starts, as a JSON object in an environment variable (`env`), and the keys
    * its model and thinking level go by there. A run that names a model or a level writes them in, so the
@@ -87,20 +90,20 @@ export const acpCatalog: CatalogEntry[] = [
   },
   // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
   {
-    id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI", skills: { read: ["${TRAE_HOME:-~/.trae}/skills", "~/.agents/skills"], write: "~/.agents/skills" },
+    id: "traex", statePaths: ["${TRAE_HOME:-~/.trae}"], name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI", skills: { read: ["${TRAE_HOME:-~/.trae}/skills", "~/.agents/skills"], write: "~/.agents/skills" },
     // Its socket folder and temp folder must be private (0700) and not links.
     account: { env: { TRAE_HOME: "{home}/.trae", XDG_RUNTIME_DIR: "{home}/.run", TMPDIR: "{home}/.tmp" }, dirs: [".trae", ".run", ".tmp"], owns: [".trae"], login: { args: ["login", "--sso-device"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, status: { args: ["login", "status"], user: "(?:as|user:?|account:?)\\s+([^\\s()]+)" }, logout: { args: ["logout"] } },
   },
   {
-    id: "claude", egressHosts: ["api.anthropic.com","platform.claude.com"], name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" },
+    id: "claude", statePaths: ["${CLAUDE_CONFIG_DIR:-~/.claude}"], stateFiles: ["~/.claude.json"], egressHosts: ["api.anthropic.com","platform.claude.com"], name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" },
     // `claude setup-token` prints a long-lived token on the person's own machine; pasted here, it goes in the vault.
     account: { cli: "claude", env: { CLAUDE_CONFIG_DIR: "{home}/.claude" }, dirs: [".claude"], owns: [".claude", ".claude.json"], tokenEnv: "CLAUDE_CODE_OAUTH_TOKEN", status: { args: ["auth", "status"], user: "([^\\s\"]+@[^\\s\"]+)" } },
   },
-  { id: "gemini", egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
-  { id: "copilot", name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
-  { id: "qwen", name: "Qwen Code", command: "qwen", args: ["--acp"], npm: "@qwen-code/qwen-code" },
+  { id: "gemini", statePaths: ["~/.gemini"], egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
+  { id: "copilot", statePaths: ["~/.copilot"], name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
+  { id: "qwen", statePaths: ["~/.qwen"], name: "Qwen Code", command: "qwen", args: ["--acp"], npm: "@qwen-code/qwen-code" },
   { id: "cursor", name: "Cursor Agent", command: "cursor-agent", args: ["acp"], install: "curl https://cursor.com/install -fsS | bash（Windows 见 cursor.com/cli）" },
-  { id: "opencode", name: "OpenCode", command: "opencode", args: ["acp"], npm: "opencode-ai" },
+  { id: "opencode", statePaths: ["~/.local/share/opencode", "~/.local/state/opencode"], name: "OpenCode", command: "opencode", args: ["acp"], npm: "opencode-ai" },
   { id: "goose", name: "goose", command: "goose", args: ["acp"], install: "见 block.github.io/goose 安装说明" },
   { id: "kimi", name: "Kimi CLI", command: "kimi", args: ["acp"], install: "uv tool install kimi-cli" },
   { id: "kilo", name: "Kilo", command: "kilo", args: ["acp"], npm: "@kilocode/cli" },
@@ -134,7 +137,7 @@ export const acpCatalog: CatalogEntry[] = [
  */
 export const accountOnlyCatalog: CatalogEntry[] = [
   {
-    id: "doubao-cli", name: "豆包 (CLI)", command: "doubao", install: "npm i -g @bytedance/doubao-cli",
+    id: "doubao-cli", statePaths: ["${XDG_DATA_HOME:-~/.local/share}/doubao_cli"], name: "豆包 (CLI)", command: "doubao", install: "npm i -g @bytedance/doubao-cli",
     account: {
       cli: "${XDG_DATA_HOME:-~/.local/share}/doubao_cli/app/current/doubao",
       env: { XDG_DATA_HOME: "{home}/.local/share" },
@@ -169,6 +172,7 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
   return {
     id: e.id,
     name: `${e.name} (ACP)`,
+    stateLayout: e.id,
     transport: "acp",
     command: e.command,
     args: e.args ?? [],
