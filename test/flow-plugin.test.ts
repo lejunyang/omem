@@ -14,6 +14,7 @@ import { getRun, setRunOutput } from "../src/agents/runs.ts";
 import { runPluginStage } from "../src/flows/plugin-runner.ts";
 import { all, run } from "../src/core/db.ts";
 import { upsertSource } from "../src/sources/store.ts";
+import { mergeSources } from "../src/sources/duplicates.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { gateSettingsForFlow, saveGateChecks } from "../src/flows/plugin-gates.ts";
@@ -301,6 +302,43 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     expect(stage.pluginEvidence).toEqual(evidence);
     expect(JSON.parse(stage.gateReview!.failed[0].reason)).toEqual([evidence[0],evidence[3],evidence[4],evidence[8]]);
     saveGateChecks(app,"inspect",[]);
+  });
+  it("合并别名和 URI 链接按读取目标裁剪，事项保留原始证据", async () => {
+    createSpace(app, { id: "archive", name: "归档空间" });
+    const source = (spaceId: string, uri: string) =>
+      upsertSource(app, { spaceId, uri, kind: "note", title: "作业记录", text: "核对完成" }).id;
+    const local = source("personal", "reports/proof.md"), other = source("archive", "reports/proof.md");
+    const localAlias = source("personal", "note:local-copy"), otherAlias = source("personal", "note:moved-copy");
+    mergeSources(app, localAlias, local, "合并副本");
+    mergeSources(app, otherAlias, other, "移入归档空间");
+    const server = await (await import("../src/server/http.ts")).startServer(app, { port: 0, quiet: true });
+    try {
+      const refs = [
+        { path: "/api/sources/" + localAlias, target: local },
+        { path: "/api/sources/" + otherAlias, target: other },
+        { path: "/api/sources/resolve?space=personal&uri=.%2Freports%2Fproof.md", target: local },
+        { path: "/api/sources/resolve?uri=proof.md&space=archive", target: other },
+      ];
+      for (const { path, target } of refs) {
+        const response = await server.inject(path);
+        expect(response.statusCode).toBe(200);
+        expect(response.json().source?.id ?? response.json().id).toBe(target);
+      }
+      const evidence = refs.map(({ path }) => ({ text: "原件", link: app.baseUrl + path }));
+      evidence.push({ text: "合并前的引用", link: "src:" + localAlias + "#L1" },
+        { text: "归档前的引用", link: "#/sources/" + otherAlias });
+      const item = await begin([job()]);
+      saveGateChecks(app, "inspect", [{ id: "stagekit:refs", mandatory: true }]);
+      const runId = flowView(app, item).stages[0].by!;
+      await reportStage(app, item, "job", { state: "done", note: "交回记录", evidence: [runId], pluginEvidence: evidence },
+        { actor: "stagekit:job", runId });
+      const stage = flowView(app, item).stages[0];
+      expect(stage.pluginEvidence).toEqual(evidence);
+      expect(JSON.parse(stage.gateReview!.failed[0].reason)).toEqual([evidence[0], evidence[2], evidence[4]]);
+    } finally {
+      saveGateChecks(app, "inspect", []);
+      await server.close();
+    }
   });
   it("必须的检查超时暂停，非必须的检查超时放行并记下原因", async () => {
     const item = await begin([{id:"mark",name:"人工检查",by:"wait"}]);

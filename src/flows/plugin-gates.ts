@@ -9,6 +9,8 @@ import { findPlugin } from "../plugins/registry.ts";
 import { pluginSpaces } from "../plugins/spaces.ts";
 import { stageGates } from "../plugins/process-hooks.ts";
 import { readableSourceIds } from "../auth/visibility.ts";
+import { aliasTargets } from "../sources/duplicates.ts";
+import { resolveSourceUris, type SourceUriLookup } from "../sources/store.ts";
 import type { FlowEvidence } from "../../packages/plugin-sdk/server.ts";
 import { audit, can } from "../auth/permissions.ts";
 import { readFlow } from "./definitions.ts";
@@ -62,11 +64,14 @@ export function saveGateChecks(app: App, id: string, checks: Check[]) {
 const verdict = z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), reason: z.string().trim().min(1).max(2000), evidence: evidenceSchema.optional() })]);
 
 /** Decode the path without interpreting the route query or line anchor as part of the ID. */
-function sourceRouteId(path: string, route: "api" | "web", lookup?: string | null) {
+function sourceRoute(path: string, query?: URLSearchParams): string | SourceUriLookup | undefined {
   try {
     const decoded = decodeURIComponent(path);
-    if (route === "api" && lookup && /\/api\/lookup\/?$/.test(decoded)) return normalizeLookupId(lookup);
-    if (route === "api") return /(?:^|\/)api\/sources\/([^/]+)(?:\/|$)/.exec(decoded)?.[1];
+    if (query) {
+      if (/\/api\/sources\/resolve\/?$/.test(decoded)) return { uri: query.get("uri") ?? "", space: query.get("space") ?? undefined };
+      if (/\/api\/lookup\/?$/.test(decoded)) return normalizeLookupId(query.get("id") ?? "");
+      return /(?:^|\/)api\/sources\/([^/]+)(?:\/|$)/.exec(decoded)?.[1];
+    }
     if (!/^\/sources\/kb\/?$/i.test(decoded)) return /^\/sources\/(.+?)\/?$/i.exec(decoded)?.[1];
   } catch {
     return ""; // A malformed reference cannot establish read access.
@@ -76,6 +81,7 @@ function sourceRouteId(path: string, route: "api" | "web", lookup?: string | nul
 function evidenceSourceIds(e: FlowEvidence) {
   const ids = Array.from(e.text.matchAll(/\bsrc:([\w-]+)/g), m => m[1]);
   const apiIds: string[] = [];
+  const uris: SourceUriLookup[] = [];
   const links = Array.from(e.text.matchAll(/https?:\/\/[^\s)\]）]+|#\/[^\s)\]）]+/gi), m => m[0]);
   if (e.link) links.push(e.link);
   for (const link of links) {
@@ -83,31 +89,40 @@ function evidenceSourceIds(e: FlowEvidence) {
     if (url?.protocol === "src:") ids.push(url.pathname);
     const hash = link.startsWith("#/") ? link : url?.hash;
     if (hash?.startsWith("#/")) {
-      const id = sourceRouteId(hash.slice(1).split(/[?#]/,1)[0], "web");
-      if (id !== undefined) ids.push(id);
+      const id = sourceRoute(hash.slice(1).split(/[?#]/,1)[0]);
+      if (typeof id === "string") ids.push(id);
     }
     if (url?.protocol === "http:" || url?.protocol === "https:") {
-      const id = sourceRouteId(url.pathname, "api", url.searchParams.get("id"));
-      if (id !== undefined) apiIds.push(id);
+      const ref = sourceRoute(url.pathname, url.searchParams);
+      if (typeof ref === "string") apiIds.push(ref);
+      else if (ref) uris.push(ref);
     }
   }
-  return { ids, apiIds };
+  return { ids, apiIds, uris };
 }
 
-function gateEvidence(app: App, user: string, space: string, evidence: FlowEvidence[]) {
+async function gateEvidence(app: App, user: string, space: string, evidence: FlowEvidence[]) {
   const refs = evidence.map(evidenceSourceIds);
+  const lookups = refs.flatMap(ref => ref.uris.map(uri => ({ ref, uri })));
+  if (lookups.length) {
+    const targets = await resolveSourceUris(app, lookups.map(q => q.uri));
+    lookups.forEach(({ ref }, i) => ref.ids.push(targets[i] ?? ""));
+  }
   // A reverse proxy can expose the host under another origin or path prefix. Match actual source IDs,
   // so unrelated HTTP endpoints (including the source catalog's static routes) remain ordinary links.
   const candidates = [...new Set(refs.flatMap(r => r.apiIds))];
+  const ids = [...new Set([...candidates, ...refs.flatMap(r => r.ids)])];
+  if (!ids.length) return evidence;
+  const aliases = aliasTargets(app, ids);
   if (candidates.length) {
     const local = new Set(all<{id:string}>(app.db, "select id from sources where id in (select value from json_each(?))",
       JSON.stringify(candidates)).map(row => row.id));
-    for (const r of refs) r.ids.push(...r.apiIds.filter(id => local.has(id)));
+    for (const r of refs) r.ids.push(...r.apiIds.filter(id => local.has(id) || aliases.has(id)));
   }
-  const referenced = [...new Set(refs.flatMap(r => r.ids))];
-  if (!referenced.length) return evidence;
+  const canonical = refs.map(r => r.ids.map(id => aliases.get(id) ?? id));
+  const referenced = [...new Set(canonical.flat())];
   const readable = can(app,user,"sources.view",space) ? readableSourceIds(app,user,referenced,space) : new Set<string>();
-  return evidence.filter((_, i) => refs[i].ids.every(id => readable.has(id)));
+  return evidence.filter((_, i) => canonical[i].every(id => readable.has(id)));
 }
 
 /** The owner already accepted this attempt continuing with the earlier input. */
@@ -131,7 +146,7 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
   const summary = s.control.question === "done" ? s.note : note;
   const failed: GateReview["failed"] = [], budget = AbortSignal.timeout(8000);
   const evidence = patch.control?.pluginEvidence ?? s.control.pluginEvidence ?? (patch.evidence ?? s.evidence).map(text => ({ text }));
-  let visibleEvidence: FlowEvidence[] | undefined;
+  let visibleEvidence: Promise<FlowEvidence[]> | undefined;
   for (const check of storedChecks(app, f.id).filter(c => !c.stages || c.stages.includes(stageId)).sort((a,b) => a.id.localeCompare(b.id))) {
     const entry = stageGates.get(check.id);
     const applies = entry ? entry.def.applies : check.scope;
@@ -151,9 +166,10 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
       if (!entry) throw Error("检查插件已停用");
       const signal = entry.context(app, item.userId, item.spaceId, AbortSignal.any([budget, AbortSignal.timeout(2000)])).signal;
       visibleEvidence ??= gateEvidence(app,item.userId,item.spaceId,evidence);
+      const allowed = await untilAbort(signal, () => visibleEvidence!);
       const result = verdict.parse(await untilAbort(signal, () => entry.def.review({
         item: { id: item.id, title: item.title, spaceId: item.spaceId },
-        stage: { id: d.id, name: d.name, since: s.enteredAt ?? s.since }, result: { summary, evidence: visibleEvidence! }, by: by.actor,
+        stage: { id: d.id, name: d.name, since: s.enteredAt ?? s.since }, result: { summary, evidence: allowed }, by: by.actor,
       }, signal)));
       if (!result.ok) failed.push({ id: check.id, reason: result.reason, evidence: result.evidence });
     } catch (e) {

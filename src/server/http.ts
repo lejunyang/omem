@@ -106,7 +106,7 @@ import { searchRun } from "../search/trace.ts";
 import { closeReadProcess } from "../search/read-process.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { readRunFile, type RunFile } from "../agents/run-file.ts";
-import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
+import { deleteSource, getSource, listSourcePaths, listSources, readSource, resolveSourceUris, sourceOutline } from "../sources/store.ts";
 import { MAX_INPUT, parserList, kindList, checkKind } from "../plugins/formats.ts";
 import { APPEND_ONLY, pageExists, deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
@@ -782,12 +782,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/sources/resolve", async (req) => {
     const o = q(z.object({ uri: z.string().min(1), space: z.string().optional() }), req.query);
-    const clean = o.uri.replace(/^\.\//, "");
-    const row =
-      one<{ id: string }>(app.db, `select id from sources where uri = ? ${o.space ? "and space_id = ?" : ""} and deleted_at is null order by updated_at desc`, clean, ...(o.space ? [o.space] : [])) ??
-      one<{ id: string }>(app.db, `select id from sources where uri like ? ${o.space ? "and space_id = ?" : ""} and deleted_at is null order by length(uri)`, `%/${clean}`, ...(o.space ? [o.space] : []));
-    if (!row || !await sourceReadable(app, who(req), row.id)) throw new HttpError(404, `找不到原件 ${o.uri}`);
-    return { id: row.id };
+    const [id] = await resolveSourceUris(app, [o]);
+    if (!id || !await sourceReadable(app, who(req), id)) throw new HttpError(404, `找不到原件 ${o.uri}`);
+    return { id };
   });
   server.get("/api/messages/:id", async (req) => {
     const m = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(app.db, "select * from messages where id = ?", (req.params as { id: string }).id.replace(/^msg:/, ""));
