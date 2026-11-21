@@ -205,17 +205,17 @@ function codeVersionHead(ctx: ToolContext, hits: { type: string; sourceKind?: st
   return lines.length ? `代码来自：\n${lines.join("\n")}\n\n` : "";
 }
 /** Reject objects that live outside the spaces this caller may write. */
-function inScope(ctx: ToolContext, spaceId: string, what: string, permission: "items.edit" | "items.operate" | "memory.write" = "memory.write") {
+function inScope(ctx: ToolContext, spaceId: string, what: string, permission: "items.edit" | "items.operate" | "rules.edit" | "memory.write" = "memory.write") {
   if (!can(ctx.app, ctx.userId ?? OWNER, permission, spaceId)) throw new HttpError(403, `无权修改空间 ${spaceId}`);
   const w = ctx.writable ?? ctx.spaces;
   if (w && !w.includes(spaceId))
     throw new HttpError(403, ctx.spaces && ctx.spaces.includes(spaceId) ? `空间 ${spaceId} 这次只能读，不能修改其中的${what}；写进当前空间 ${ctx.spaceId}` : `本次任务不能修改空间 ${spaceId} 中的${what}`);
 }
 /** A space to write into: readable and writable. */
-function writeSpace(ctx: ToolContext, requested?: string | null) {
+function writeSpace(ctx: ToolContext, requested?: string | null, permission: "memory.write" | "rules.edit" = "memory.write") {
   const id = space(ctx, requested);
   if (findSpace(ctx.app, id)!.kind === "worktree") throw new HttpError(403, `空间 ${id} 是交办工作区的临时索引，只能读；写进对应的仓库或项目空间`);
-  inScope(ctx, id, "内容");
+  inScope(ctx, id, "内容", permission);
   return id;
 }
 /**
@@ -3745,9 +3745,9 @@ def({
     if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "规则只能由主助手替本人设");
     const { saveRule, getRule } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
-    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以设置规则");
+    requirePerm(ctx.app, ctx.userId ?? OWNER, "rules.edit");
     const current = a.id ? getRule(ctx.app, a.id) : undefined;
-    if (current?.spaceId) writeSpace(ctx, current.spaceId);
+    if (current?.spaceId) writeSpace(ctx, current.spaceId, "rules.edit");
     let input: Record<string, unknown>;
     if (a.rule) input = { ...(current ?? {}), ...a.rule, description: a.description };
     else {
@@ -3757,11 +3757,11 @@ def({
       input = d.rule;
     }
     const origin = ctx.runId ? getRun(ctx.app, ctx.runId).input.conversationId as string | undefined : undefined;
-    input.spaceId = writeSpace(ctx, (input.spaceId as string | undefined) ?? current?.spaceId ?? ctx.spaceId);
+    input.spaceId = writeSpace(ctx, (input.spaceId as string | undefined) ?? current?.spaceId ?? ctx.spaceId, "rules.edit");
     // Where replies go (发到): this conversation unless the rule already had one; “current” says so explicitly.
     if (input.conversationId === "current" && !runLarkChat(ctx)) throw new HttpError(400, "这个会话不是飞书会话，“发到这个群”无从指定：请本人在规则页选择发到哪个会话");
     input.conversationId = input.conversationId === "current" ? origin : current?.conversationId ?? origin;
-    for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space);
+    for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space, "rules.edit");
     // Forward targets: "current" is this conversation's chat; new targets only when the owner asked in this turn.
     const here = runLarkChat(ctx);
     // “This group” in the conditions: chat.id = current is the Feishu chat this conversation is in.

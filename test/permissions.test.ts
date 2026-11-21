@@ -161,6 +161,10 @@ describe("roles and permissions", async () => {
     expect(member.effective["rules.view"]).toBe("override");
     expect(member.effective["wiki.view"].team).toBe("spaceRole");
     expect((await as(id, "/api/rules")).status).toBe(200);
+    await put("member", [{ capability: "rules.edit", scope_kind: "global", effect: "allow" }]);
+    const ruleCtx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "team", spaces: ["team"], tools: new Set(["save_rule"]), actor: "agent", userId: id }))!;
+    const result = await callTool(ruleCtx, "save_rule", { description: "示例规则", name: "记录变化", rule: { conditions: { field: "chat.id", op: "equals", value: "team" }, actions: [{ type: "notify", text: "变化" }] } });
+    expect(result.isError, JSON.stringify(result)).toBe(false);
     await put("observer", [{ capability: "wiki.view", scope_kind: "space", scope_id: "team", effect: "deny" }, { capability: "wiki.view", scope_kind: "global", effect: "allow" }]);
     const me = await json(id, "/api/me");
     expect(me.caps).toContain("ask.send");
