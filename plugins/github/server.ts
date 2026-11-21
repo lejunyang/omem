@@ -1,4 +1,4 @@
-import type { PlatformDoc, PluginApi, PluginConnection } from "../../src/plugins/types.ts";
+import type { CallContext, PlatformDoc, PluginApi, PluginConnection, ReviewProvider, ThreadState } from "../../src/plugins/types.ts";
 
 /**
  * GitHub (docs/v2/connectors.md): an issue or pull request with its discussion, a file at a branch,
@@ -56,7 +56,100 @@ export async function mergePullRequest(c: PluginConnection, pr: string, method: 
   return `已合并 ${owner}/${repo}#${n}${body.sha ? `，合并提交 ${body.sha.slice(0, 7)}` : ""}`;
 }
 
+async function githubConnection(ctx: CallContext) {
+  const connection = await ctx.connection("connect-github");
+  if (!connection) throw new Error("请先连接 GitHub");
+  return connection;
+}
+
+async function graphql<T>(connection: PluginConnection, query: string, variables: Record<string, unknown>): Promise<T> {
+  const response = await connection.fetch("/graphql", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query, variables }) });
+  if (!response.ok) throw new Error("GitHub HTTP " + response.status);
+  const result = await response.json() as { data: T; errors?: { message: string }[] };
+  if (result.errors?.length) throw new Error(result.errors[0].message);
+  return result.data;
+}
+
+type RootComment = { body: string; url: string; viewerDidAuthor: boolean };
+type Pull = { id: string; headRefOid: string; reviewThreads: {
+  pageInfo: { hasNextPage: boolean; endCursor: string }; nodes: { id: string; comments: { nodes: RootComment[] } }[];
+} };
+async function findPublished(c: PluginConnection, key: string, marker: string) {
+  const { owner, repo, n } = issueRef(key);
+  let after: string | null = null;
+  for (let page = 0; page < 50; page++) {
+    const result: { repository: { pullRequest: Pull } } = await graphql(c, `query ReviewTarget($owner:String!, $repo:String!, $n:Int!, $after:String) {
+      repository(owner:$owner,name:$repo) { pullRequest(number:$n) { id headRefOid reviewThreads(first:100,after:$after) {
+        pageInfo { hasNextPage endCursor } nodes { id comments(first:1) { nodes { body url viewerDidAuthor } } }
+      } } } }`, { owner, repo, n, after });
+    const pr = result.repository.pullRequest;
+    for (const thread of pr.reviewThreads.nodes) {
+      const comment = thread.comments.nodes[0];
+      if (comment?.viewerDidAuthor && comment.body.endsWith(marker)) return { pr, ref: { id: thread.id, url: comment.url } };
+    }
+    if (!pr.reviewThreads.pageInfo.hasNextPage) return { pr, ref: null };
+    after = pr.reviewThreads.pageInfo.endCursor;
+  }
+  throw new Error("讨论过多，未完成重复检查");
+}
+const outdated = (message: string) => Object.assign(new Error(message), { code: "REVIEW_ANCHOR_OUTDATED" });
+
+export const githubReview: ReviewProvider = {
+  id: "reviews", label: "GitHub 行内讨论", objectKind: "pull-request",
+  async publish(ctx, { objectKey, anchor, body }) {
+    const c = await githubConnection(ctx);
+    const marker = "<!-- omem-review:" + ctx.idempotencyKey + " -->";
+    const { pr, ref } = await findPublished(c, objectKey, marker);
+    if (ref) return ref;
+    if (anchor.head !== pr.headRefOid) throw outdated("合并请求的头提交已变化");
+    const { owner, repo, n } = issueRef(objectKey);
+    const response = await c.fetch(`/repos/${owner}/${repo}/pulls/${n}/comments`, { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ commit_id: anchor.head, path: anchor.path,
+        line: anchor.line, side: anchor.side, body: body + "\n\n" + marker,
+        ...(anchor.startLine && anchor.startLine !== anchor.line ? { start_line: anchor.startLine, start_side: anchor.side } : {}) }) });
+    if (!response.ok) {
+      const error = await response.text();
+      if (response.status === 422 && /diff hunk|pull_request_review_thread\.(?:line|path|start_line|diff_hunk)|"field"\s*:\s*"(?:line|path|position|commit_id)"|line must be part of the diff/i.test(error))
+        throw outdated("该行已不在合并请求的差异中");
+      throw new Error("GitHub 创建行内评论失败，HTTP " + response.status);
+    }
+    // REST returns a comment ID. Resolving on GitHub needs the thread's GraphQL node ID.
+    const published = await findPublished(c, objectKey, marker);
+    if (!published.ref) throw new Error("评论已提交，平台尚未返回讨论编号");
+    return published.ref;
+  },
+  async readThread(ctx, ref) {
+    const c = await githubConnection(ctx);
+    let before: string | null = null;
+    type Page = { node: { isResolved: boolean; isOutdated: boolean; comments: { nodes: {
+      author: { login: string } | null; createdAt: string; bodyText: string; url: string; viewerDidAuthor: boolean;
+    }[]; pageInfo: { hasPreviousPage: boolean; startCursor: string } } } };
+    for (let page = 0; page < 50; page++) {
+      const result: Page = await graphql(c, `query ReviewReplies($id:ID!, $before:String) { node(id:$id) { ... on PullRequestReviewThread {
+        isResolved isOutdated comments(last:50,before:$before) { pageInfo { hasPreviousPage startCursor }
+          nodes { url viewerDidAuthor author { login } bodyText createdAt } }
+      } } }`, { id: ref.id, before });
+      const t = result.node;
+      if (!t) throw new Error("GitHub 找不到讨论");
+      const latest = t.comments.nodes.reverse().find(m => !m.viewerDidAuthor && m.url !== ref.url);
+      if (latest || !t.comments.pageInfo.hasPreviousPage) {
+        const state: ThreadState["state"] = t.isResolved ? "resolved" : t.isOutdated ? "outdated" : latest ? "replied" : "open";
+        return { state, ...(latest ? { reply: { author: latest.author?.login ?? "已注销", at: latest.createdAt, summary: latest.bodyText.slice(0,1000) } } : {}) };
+      }
+      before = t.comments.pageInfo.startCursor;
+    }
+    throw new Error("讨论回复过多，未读完");
+  },
+  async resolve(ctx, ref) {
+    const c = await githubConnection(ctx);
+    const result = await graphql<{ resolveReviewThread: { thread: { isResolved: boolean } } }>(c,
+      "mutation CloseReview($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }", { id: ref.id });
+    return { state: result.resolveReviewThread.thread.isResolved ? "resolved" : "open" };
+  },
+};
 export default function register(api: PluginApi) {
+  api.reviewProvider(githubReview);
   api.itemProvider({
     id: "issues", label: "GitHub Issues", statuses: { open: "active", closed: "done" }, targetHint: "仓库，写成 owner/repo",
     async pull(ctx, { target, cursor }) {

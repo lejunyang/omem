@@ -293,7 +293,7 @@ describe("场景包带流程", () => {
   async function github() {
     const dir = join(app.home, "plugins", "github");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "plugin.yaml"), "id: github\nname: GitHub 平台包\npermissions: { itemProvider: true, write: true, platforms: [connect-github] }\n");
+    writeFileSync(join(dir, "plugin.yaml"), "id: github\nname: GitHub 平台包\npermissions: { reviewProvider: true, itemProvider: true, write: true, platforms: [connect-github] }\n");
     writeFileSync(join(dir, "server.mjs"), `export { default } from ${JSON.stringify(pathToFileURL(resolve("plugins/github/server.ts")).href)};\n`);
     await reloadPlugin(app, "github");
     await trustPlugin(app, "github", "inprocess");
