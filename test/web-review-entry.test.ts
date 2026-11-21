@@ -77,14 +77,17 @@ it.each([false, true])("opens review settings from the member's sidebar and tier
   expect(get).not.toHaveBeenCalledWith("/api/review-settings");
 });
 
-it("旧 agents.manage 成员打开已有档案，编辑用途并保存", async () => {
+it("旧 agents.manage 成员可保存档案用途，打开内置角色只见摘要", async () => {
   const me = { role: "profiles", perms: ["agents.manage"], spaces: [] };
   Object.assign(state, { me });
   followMe(() => me);
   const summary = { name: "example", description: "原用途", status: "draft", model: "example-model" };
   const detailUrl = "/api/agents/example";
+  const role = { name: "reviewer", description: "检查改动" };
+  const roleUrl = "/api/roles/reviewer";
   const responses: Record<string, unknown> = {
-    "/api/agents": [summary], [detailUrl]: summary, "/api/roles": [], "/api/skills": [],
+    "/api/agents": [summary], [detailUrl]: summary, "/api/roles": [role], "/api/skills": [],
+    [roleUrl]: { ...role, defaults: { agent: "example-backend", byBackend: { "example-backend": { model: "review-model", effort: "high" } } } },
     "/api/skill-groups": { groups: [] }, "/api/profile-options": {},
   };
   get.mockImplementation(async url => {
@@ -115,4 +118,10 @@ it("旧 agents.manage 成员打开已有档案，编辑用途并保存", async (
   expect(get.mock.calls.filter(([url]) => url === detailUrl)).toHaveLength(2);
   expect(get.mock.calls.map(([url]) => url).every(url => url in responses)).toBe(true);
   expect(await renderToString(createSSRApp({ render: () => h(RouterView) }).use(router))).toContain("新用途</textarea>");
+  await router.push("/agents?tab=agents&role=reviewer");
+  const rolePage = await renderToString(createSSRApp({ render: () => h(RouterView) }).use(router));
+  expect(get).toHaveBeenCalledWith(roleUrl);
+  expect(rolePage).toContain("检查改动</p>");
+  expect(rolePage).toContain("默认 AI · example-backend · review-model · high");
+  expect(rolePage).not.toMatch(/专属记忆|角色原文|保存默认 AI|自定义|<textarea/);
 });

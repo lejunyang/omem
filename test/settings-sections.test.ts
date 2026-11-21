@@ -8,6 +8,8 @@ import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { savePeers } from "../src/core/peers.ts";
 import { remember } from "../src/memory/store.ts";
+import { roleSourceText, saveRoleOverride } from "../src/agents/builtin-roles.ts";
+import { createProposal } from "../src/agents/proposals.ts";
 import { saveRole } from "../src/auth/permissions.ts";
 import { configSchema } from "../src/core/config.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
@@ -179,6 +181,25 @@ it("旧 agents.manage 成员可改档案摘要，凭据、目录、私有记忆�
     const skillRaw = "---\ndescription: 示例技能\n---\n技能正文\n";
     expect((await server.inject({ method: "PUT", url: skillUrl, headers, payload: { raw: skillRaw } })).statusCode).toBe(200);
     expect((await server.inject({ url: skillUrl, headers })).json()).toEqual({ raw: skillRaw });
+
+    const roleUrl = "/api/roles/reviewer";
+    const roleText = roleSourceText("reviewer") + "\n本人给评审的私有指令\n";
+    const role = saveRoleOverride(app, "reviewer", roleText);
+    const roleMemory = remember(app, { spaceId: "personal", kind: "fact", content: "评审的专属记忆", createdBy: "user", agent: "reviewer" });
+    const proposal = createProposal(app, { target: "reviewer", kind: "prompt", title: "调整评审重点", reason: "复盘建议", content: { prompt: "私有建议正文" }, runId: null });
+    app.config.agents.roles.reviewer = "example";
+    app.config.agents.roleModels.reviewer = { example: { model: "example-model", effort: "high" } };
+    const roleRow = { name: role.name, description: role.description };
+    const roleSummary = { ...roleRow, defaults: { agent: "example", byBackend: app.config.agents.roleModels.reviewer } };
+    expect((await server.inject({ url: "/api/roles", headers })).json()).toContainEqual(roleRow);
+    const memberRole = await server.inject({ url: roleUrl, headers });
+    expect(memberRole.statusCode).toBe(200);
+    expect(memberRole.json()).toEqual(roleSummary);
+    expect((await server.inject({ method: "POST", url: roleUrl + "/customize", headers })).json()).toEqual({ ok: true });
+    const ownRole = (await server.inject({ url: roleUrl })).json();
+    expect(ownRole).toMatchObject({ ...roleSummary, role: { own: roleText }, body: expect.stringContaining("本人给评审的私有指令"),
+      memories: [{ id: roleMemory.id }], proposals: [{ id: proposal, status: "pending" }] });
+    expect((await server.inject({ method: "POST", url: roleUrl + "/customize" })).json()).toEqual({ raw: roleText });
   } finally { await server.close(); app.db.close(); }
 });
 

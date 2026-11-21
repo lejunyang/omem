@@ -1061,7 +1061,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // The owner's pick of tools for a built-in role, in the profile syntax (group:<id>, -<name>, names); kept as an overlay.
   server.put("/api/roles/:name/tools", async (req) => setRoleTools(app, (req.params as { name: string }).name,
     q(z.object({ tools: z.array(z.string().max(120)).max(400) }), req.body).tools));
-  server.get("/api/roles", async () => listRoleStates(app));
+  server.get("/api/roles", async req => {
+    const roles = listRoleStates(app);
+    return who(req) === OWNER ? roles : roles.map(({ name, description }) => ({ name, description }));
+  });
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
   server.get("/api/profile-options", async () => ({
     // The cached probe rides along so the form need not ask again (probe once, or "重新检测").
@@ -1075,10 +1078,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   }));
   server.get("/api/roles/:name", async (req) => {
     const name = (req.params as { name: string }).name;
+    if (!isBuiltinRole(name)) throw new HttpError(404, `没有内置角色 ${name}`);
     const r = loadRole(name, app);
+    const summary = { name, description: r.description, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} } };
+    if (who(req) !== OWNER) return summary;
     // A role a feature waits on until the owner picks its AI (replay-judge: nightly replay does not run without it).
     const notice = name === "replay-judge" ? (await import("../agents/replay.ts")).replayStatus(app).notice : null;
-    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} }, notice, toolSet: roleTools(app, name), ...profileDetail(app, name) };
+    return { ...summary, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, notice, toolSet: roleTools(app, name), ...profileDetail(app, name) };
   });
   server.put("/api/roles/:name/defaults", async (req) => {
     const name = (req.params as { name: string }).name;
@@ -1097,7 +1103,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return setRoleFullAccess(app, (req.params as { name: string }).name, q(z.object({ on: z.boolean() }), req.body).on);
   });
   server.put("/api/roles/:name", async (req) => saveRoleOverride(app, (req.params as { name: string }).name, q(z.object({ raw: z.string().min(1) }), req.body).raw, "user"));
-  server.post("/api/roles/:name/customize", async (req) => ({ raw: customizeRole(app, (req.params as { name: string }).name, "user") }));
+  server.post("/api/roles/:name/customize", async req => {
+    const raw = customizeRole(app, (req.params as { name: string }).name, "user");
+    return who(req) === OWNER ? { raw } : { ok: true };
+  });
   server.post("/api/roles/:name/reset", async (req) => resetRole(app, (req.params as { name: string }).name, "user"));
   server.post("/api/roles/:name/follow-source", async (req) => followRoleSource(app, (req.params as { name: string }).name, "user"));
   server.post("/api/roles/:name/merge", async (req) => {

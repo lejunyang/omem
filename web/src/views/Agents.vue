@@ -33,6 +33,7 @@ import { state, toast } from "../store";
  */
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
+type RoleRow = Pick<RoleState, "name" | "description"> & Partial<Pick<RoleState, "customized" | "sourceChanged">>;
 type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; purpose?: string; enabled?: boolean };
 type SkillGroup = { id: string; title: string; enabled: boolean; count: number; enabledCount: number };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
@@ -40,6 +41,7 @@ type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
 type SpecSummary = Pick<Spec, "name" | "description" | "status" | "agent" | "model" | "effort">;
 type SpecRow = SpecSummary & { plugin?: string };
 type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; toolSet: { tools: string[]; base: string[]; handIn: string[]; changed: boolean; fixed: boolean }; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
+type RoleSummary = Pick<RoleDetail, "name" | "description" | "defaults">;
 
 const route = useRoute();
 const router = useRouter();
@@ -53,7 +55,7 @@ const purposeQ = computed(() => (groupId.value && typeof route.query.purpose ===
 const creating = computed(() => route.query.new === "1" && (tab.value !== "agents" || owner.value));
 
 const specs = ref<SpecRow[]>([]);
-const roles = ref<RoleState[]>([]);
+const roles = ref<RoleRow[]>([]);
 const skills = ref<Skill[]>([]);
 const skillGroups = ref<SkillGroup[]>([]);
 /** Skills in a group are listed on the group's page, not one by one here. */
@@ -71,7 +73,7 @@ async function loadLists() {
     const mcp = owner.value
       ? get<{ servers: McpServer[] }>("/api/mcp").then(r => ({ servers: r.servers, error: "" })).catch(e => ({ servers: [], error: (e as Error).message }))
       : { servers: [], error: "" };
-    const result = await Promise.all([get<SpecRow[]>("/api/agents"), get<RoleState[]>("/api/roles"), get<Skill[]>("/api/skills"), mcp, get<{ groups: SkillGroup[] }>("/api/skill-groups").then((r) => r.groups).catch(() => [] as SkillGroup[])]);
+    const result = await Promise.all([get<SpecRow[]>("/api/agents"), get<RoleRow[]>("/api/roles"), get<Skill[]>("/api/skills"), mcp, get<{ groups: SkillGroup[] }>("/api/skill-groups").then((r) => r.groups).catch(() => [] as SkillGroup[])]);
     if (seq === listSeq) {
       [specs.value, roles.value, skills.value] = result;
       skillGroups.value = result[4];
@@ -222,7 +224,8 @@ async function setRoleMcp(servers: string[]) {
 const mcpNames = computed(() => Object.keys(form.value.mcp ?? {}));
 
 // ---- built-in role ----------------------------------------------------------------
-const roleDetail = ref<RoleDetail | null>(null);
+const selectedRole = ref<RoleDetail | RoleSummary | null>(null);
+const roleDetail = computed(() => owner.value && selectedRole.value && "role" in selectedRole.value ? selectedRole.value : null);
 const missingRoleMcp = computed(() => (roleDetail.value?.role.overlay?.mcp ?? []).filter((n) => !mcpServers.value.some((s) => s.name === n)));
 const roleText = ref("");
 const roleAi = ref({ agent: "", model: "", effort: "" });
@@ -260,19 +263,21 @@ const showSource = ref(false);
 async function loadRole(quiet = false) {
   const seq = ++roleSeq, name = roleName.value;
   const current = () => seq === roleSeq && name === roleName.value && !creating.value;
-  if (!quiet) roleDetail.value = null;
+  if (!quiet) selectedRole.value = null;
   if (!roleName.value) return;
   detailLoading.value = !quiet;
   try {
-    const result = await get<RoleDetail>(`/api/roles/${encodeURIComponent(roleName.value)}`);
+    const result = await get<RoleSummary | RoleDetail>(`/api/roles/${encodeURIComponent(roleName.value)}`);
     if (!current()) return;
-    roleDetail.value = result;
-    roleToolList.value = [...result.toolSet.tools];
-    const ai = roleDetail.value.defaults;
+    selectedRole.value = result;
+    const ai = result.defaults;
     const saved = ai.byBackend[ai.agent || options.value.globalDefaultBackend];
     roleAi.value = { agent: ai.agent, model: saved?.model ?? "", effort: saved?.effort ?? "" };
     roleAiDirty.value = false;
-    roleText.value = roleDetail.value.role.own ?? roleDetail.value.role.source;
+    if (roleDetail.value) {
+      roleToolList.value = [...roleDetail.value.toolSet.tools];
+      roleText.value = roleDetail.value.role.own ?? roleDetail.value.role.source;
+    }
     dirty.value = false;
     showSource.value = false;
   } catch (e) {
@@ -686,6 +691,11 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         </div>
         <textarea v-else v-model="roleText" class="editor mono raw" spellcheck="false" aria-label="角色原文" @input="dirty = true" />
         <ProfileLearning :name="roleName!" :detail="roleDetail" :current-prompt="roleDetail.body" @changed="loadRole(true)" />
+      </div>
+      <div v-else-if="tab === 'agents' && selectedRole" class="page">
+        <header class="dh row"><h2 class="mono">{{ selectedRole.name }}</h2><span class="badge">内置</span></header>
+        <p>{{ selectedRole.description }}</p>
+        <p class="muted small">默认 AI · {{ [roleAi.agent || "跟随全局", roleAi.model, roleAi.effort].filter(Boolean).join(" · ") }}</p>
       </div>
 
       <!-- skill group -->

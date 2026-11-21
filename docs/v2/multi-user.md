@@ -226,6 +226,8 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 | GET storage、media；POST storage/scan | 知识 | 原路由 settings.manage，处理函数限本人 → view / edit | 扫描时间、数据库与文件分类统计。省略目录、文件明细、日志。媒体返回工具状态和配置 |
 | GET agents、mentions | 助手 | agents.manage → view | 档案的名称、说明、状态与模型。提醒返回用量，私人回复统计省略 |
 | GET、PUT agents/:name | 助手 | 沿用 agents.manage | 详情与保存返回列表摘要。成员在档案页可改用途（`description`）和状态（`status`），后端、模型和强度只读。提交其他字段返回 403 |
+| GET roles、roles/:name | 助手 | 沿用 agents.manage | 列表返回名称和说明。详情另含默认 AI（`defaults.agent` 和 `defaults.byBackend` 下的模型、强度）。角色正文、专属记忆、复盘建议、技能正文、用量和历史仅本人可读 |
+| POST roles/:name/customize | 助手 | 沿用 agents.manage | 成员收到 `{ ok: true }`，本人收到自定义原文 `raw` |
 | GET、PUT library-files/agent/:name | 助手 | agents.manage → 本人 | 档案原文含 MCP 和工作目录，成员请求返回 403。技能原文沿用 agents.manage |
 | GET schedules、replays；PUT schedules/:id | 助手 | agents.manage → view / edit | 定时任务按空间过滤，省略运行参数，成员可改周期和启停。复盘返回状态和汇总 |
 | PUT agent-role-model；GET review-settings、review-options，PUT review-settings | AI / 助手 | 已按对应区域 view / edit 授权 | 角色模型配置与评审表单沿用原字段 |
