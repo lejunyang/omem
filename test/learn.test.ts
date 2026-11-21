@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { callTool, contextToolNames } from "../src/agents/tools.ts";
+import { peerToolContext } from "../src/agents/peer-agent.ts";
+import { createUser } from "../src/core/users.ts";
 import { learningTick } from "../src/agents/jobs.ts";
 import { receive } from "../src/agents/inbox.ts";
 import { listRuns } from "../src/agents/runs.ts";
@@ -9,6 +12,28 @@ import { getGoal, listGoals, upsertGoal } from "../src/learn/goals.ts";
 import { testApp } from "./helpers.ts";
 
 describe("learning goals", () => {
+  it("restricts learning tools to the owner and to goals inside the run scope", async () => {
+    const app = testApp();
+    try {
+      const userId = createUser(app, { id: "learner", name: "学员" }).id;
+      const member = peerToolContext(app, { userId, session: "学习" }, null);
+      const owner = peerToolContext(app, { session: "学习" }, null);
+      const goal = upsertGoal(app, undefined, { title: "基础练习", spaceId: "personal" });
+      const actions = {
+        create_card: { goal: goal.id, front: "问题", back: "答案", source_refs: [] },
+        set_learning_goal: { id: goal.id, status: "paused" },
+        learning_progress: { goal: goal.id },
+      };
+      for (const [tool, args] of Object.entries(actions)) {
+        expect(contextToolNames(member)).not.toContain(tool);
+        expect((await callTool(member, tool, args)).isError).toBe(true);
+        expect((await callTool({ ...owner, spaces: ["personal-learner"] }, tool, args)).isError).toBe(true);
+      }
+      expect(getGoal(app, goal.id).status).toBe("active");
+      expect(app.db.prepare("select count(*) n from cards").get()?.n).toBe(0);
+    } finally { app.db.close(); }
+  });
+
   it("feeds once a day, reminds at the goal's time, and tracks progress", () => {
     const app = testApp();
     app.config.timezone = "UTC";

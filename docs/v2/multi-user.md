@@ -131,6 +131,7 @@ omem 现在按对象 id 存：结构化消息 `lark_messages` 的主键是 `mess
 - 角色是一组权限，也分两层：全局角色（每个用户一个）和空间角色（每个空间成员一个）。
 - 某人在空间 S 上有权限 P，当且仅当他的全局角色带 `P@*`（所有空间），或者他在 S 的空间角色带 P。
 - 本人（owner）有全部权限，不能改角色、不能删、不能停用，系统里至少有一个 owner。
+- 个人空间只属于空间主人。给其他人分配这个空间的角色会被拒绝，邀请也不能指定个人空间。要让成员共同读写，请把内容放在共享空间后授予读者、贡献者或编辑者角色。
 - `@*` 不包括别人的个人空间。只有 owner 能看所有人的个人空间（现在就是这样），这一点在每个人的“设置 → 账号”里写明。
 - 只做授予，不做“禁止”型权限，判断规则保持简单。
 - Wiki 不做页级权限，要分开看的内容就分到不同空间。
@@ -197,6 +198,40 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 事项和运行入口使用 `ownSpaceCaps`（含自己的对象），共享范围使用 `spaceCaps`。两份范围都随成员能力接口和 `/api/me` 返回。
 
 `GET /api/capabilities` 返回各能力的中文名称、说明、区域、动作、作用域和预设。角色的旧权限仍用于目录以外的操作。网页只读观察者（`observer`）默认可在可读空间阅读工作线、事项、原件、规则、运行、编码、评审和指标，也能提问并查看自己的对话和通知。观察者的个人空间默认只读，项目的显式空间角色只叠加目录内映射的能力（成员接口返回 `spaceRoleGrants: catalogOnly`）。记忆和 Wiki 写入仍受旧权限限制。观察者可回答或关闭自己对话里的普通追问，带批准或其他动作的卡片继续受限。
+
+#### 设置区域
+
+设置分为知识（`knowledge`）、助手（`assistant`）、AI（`ai`）、渠道与协作（`channels`）、成员（`members`）、安全（`security`）和系统（`system`）。每区分别授予 `settings.<区域>.view` 和 `settings.<区域>.edit`。本人预设拥有全部；管理员默认只读成员区，便于核对登录配置；协作者和观察者默认不读写设置。成员、安全和系统三区的 edit 只能由本人逐个授予。
+
+- 打开设置时取 `GET /api/settings/sections`。返回的 `sections` 按区域列出 view 和 edit，`keys` 标出配置键及跨区子键，较具体的路径优先。例如 `agents.accounts` 属于成员区，`agents.autoAdvance` 属于助手区。按 view 显示标签，按 edit 开放编辑。对其他成员，`ownerOnly` 清单内的字段始终只读。
+- 切换区域时取 `GET /api/settings?section=knowledge` 等。省略 section 返回全部可读区域；无可读区域时返回 403。配置在 `config` 中。服务令牌不返回，成员也读不到包含账号环境变量的 Agent 档案。
+- 保存时向 `PUT /api/settings` 提交配置键，支持整区回传。只要有一项实际变化越权，整份更新返回 403；成功写入后可在审计记录按 `settings.update` 查看操作者、区域和改动键名。
+- 本人身份回复（含豆包发送）、登录与对外访问、对等设备、账号隔离、启动命令及操作规则由本人管理。操作规则与网络策略仍使用各自的专用编辑接口。
+
+成员管理沿用 `settings.members`，旧权限 `users.manage` 也提供这项能力。`settings.members.edit` 只用于修改成员区设置。列表、邀请、停用和能力覆盖统一按操作者与目标检查。给普通成员授权时只能转授自己在相应范围内拥有的能力。管理者不能借此修改本人或管理员、重置登录身份，或转授上述三个区域的 edit。成员页应按目标隐藏这些操作。
+
+#### 工具和外部连接
+
+成员从助手运行、`omem tool`、`omem mcp` 或远程 MCP 连接调用工具时，目录和执行都受发起成员的能力限制，还须满足运行的角色清单和空间范围。某个空间的显式拒绝优先于预设和允许项。已有连接上遇到权限拒绝应停止这次操作。主助手只能续办当前成员有操作权的自己的工作。专用档案和临时助手的下一轮沿用发起成员和本轮空间限制。
+
+成员用 `agents.view` 读取技能、查看 Agent 档案和 AI 后端选项。普通成员默认有这项全局只读能力，观察者可单独授权。修改技能和档案仍需 `agents.manage`。
+
+写操作按目标检查。下表里的路径都以 `/api/` 开头。
+
+| 区域与动作 | 路由 | 原先 | 现在 |
+| --- | --- | --- | --- |
+| 原件 · 标注、调整单份关注程度 | `POST sources/:id/notes`、`PUT sources/:id/attention`、`POST source-notes/:id/review`、`DELETE source-notes/:id` | 路由标了 `sources.edit`，处理函数只让本人操作 | 来源空间的 `sources.edit` 和这份原件的阅读权限。成员标注记为 member，本人标注仍受保护 |
+| 原件 · 整批调整、目录定级和复核 | `POST sources/attention`、`PUT sources/node-level`、`POST sources/node-level/review` | 处理函数只认本人 | 路由也标明本人专用。一次操作可能涉及目录内受限原件 |
+| 事项 · 编辑内容及关系 | `PUT items/:id/parent`、`POST/DELETE items/:id/materials…`、`POST/DELETE items/:id/objects…`、`POST items/:id/split-requirements` | 调整上级仅本人可用，其他入口按登录身份先拦观察者 | 检查本人事项的 `items.edit`；调整关系还检查新旧上级。外部对象动作、拆需求保留各自的目标权限 |
+| 助手 · 查看评审设置 | `GET review-settings`、`GET review-options` | 交办编码权限 | 只需 `settings.assistant.view` 即可从侧栏或 `#/agents?tab=review` 打开表单。持有 Agent 管理权的人从 Agent 页的“评审”进入。`GET settings?section=assistant` 提供表单用的模型选项。交办人从 `GET review-tiers` 取档位 id、名称和检查数 |
+| 助手 · 编辑评审设置 | `PUT review-settings` | 交办编码权限 | `settings.assistant.edit` |
+| AI · 修改角色模型 | `PUT agent-role-model` | 全局设置权限 | `settings.ai.edit`，读取模型配置另需 view |
+| 远程 · 查看、导航 | `POST remote/sessions/:id/view`、`POST remote/sessions/:id/navigate` | 观察者先被通用写请求检查拦下 | 按会话所有权或有效授权决定；受托者需匹配的能力，导航需操作授权 |
+| 流程 · 推进实例 | `POST/DELETE items/:id/flow…` | `flows.operate` 和事项归属 | 同前。修改共用流程定义仍限本人 |
+| 运行 · 取消、重试、删除产物 | `POST runs/:id/cancel`、`POST runs/:id/retry`、`DELETE runs/:id/artifacts/:artifact` | `runs.operate` 和运行范围 | 同前。代码交办、Git 与发布操作另需原权限 |
+| 规则 · 编辑 | `POST/PUT/DELETE rules…` | `rules.edit` | 同前。以本人身份发消息及启用规则的确认仍单独检查 |
+
+跨空间移动原件会改变读者范围，批量归档还会改动多个空间；这些操作保留专用管理入口。工作线收尾可能同时关闭多个子事项，仍由本人处理。
 
 升级前已有自定义角色使用 `observer` 时，系统为原角色换一个空闲标识，保留其权限、成员和邀请，再将 `observer` 用于内置预设。
 

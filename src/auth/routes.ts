@@ -1,3 +1,4 @@
+import { requireMemberAction, type MemberAction } from "./member-management.ts";
 import { capabilityAccess, spacesWithCapability, globalCapability, type Capability } from "./capabilities.ts";
 import type { FastifyRequest } from "fastify";
 import type { App } from "../core/app.ts";
@@ -5,7 +6,7 @@ import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { aliasTarget } from "../sources/duplicates.ts";
 import { can, canAccessRun, runAudience, canReadRun, isOwner, requirePerm, type GlobalPerm, type SpacePerm } from "./permissions.ts";
-import { requireReadable } from "./visibility.ts";
+import { requireReadable, sourceReadable } from "./visibility.ts";
 
 /**
  * What each API route needs (docs/v2/multi-user.md, “在哪里检查”), checked in one place after the
@@ -16,12 +17,13 @@ import { requireReadable } from "./visibility.ts";
  * - `self`: anyone logged in and approved; the handler keeps to their own data and readable spaces.
  * - `owner`: the owner only (the owner's own learning, the start page).
  * - `{ g }`: a global permission.
+ * - `{ member }`: a member-management action, optionally against the account or invite in :id.
  * - `{ s, at }`: a permission in the space found at `at`: `p.id` / `q.space` / `b.space` (route
  *   param, query, body) or through what the id names: `src:p.id` (a source), `mem:p.id` (a memory),
  *   `note:p.id` (a note on a source).
  * - `{ run }`: the run in `:id` must be one the user may read (permissions.ts canReadRun).
  */
-export type RouteRule = "public" | "self" | "owner" | { cap: Capability; at: string } | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
+export type RouteRule = "handler" | "public" | "self" | "owner" | { cap: Capability; at: string } | { member: MemberAction; target?: boolean } | { g: GlobalPerm } | { s: SpacePerm; at: string } | { run: "read" };
 
 const g = (perm: GlobalPerm): RouteRule => ({ g: perm });
 const s = (perm: SpacePerm, at: string): RouteRule => ({ s: perm, at });
@@ -34,6 +36,14 @@ const PEERS = g("peers.manage");
 const USERS = g("users.manage");
 
 export const ROUTE_RULES: Record<string, RouteRule> = {
+  "POST /api/cloud-tools/revoke": "owner",
+  "GET /api/tools/turn/:key": "public",
+  "GET /api/tools/turn/:key/:name": "public",
+  "GET /api/cloud-tools": "owner",
+  "POST /api/cloud-tools/probe": "owner",
+  "POST /api/cloud-tools/probe/confirm": "owner",
+  "POST /api/cloud-tools/challenge/:nonce": "public",
+  "GET /api/cloud-tools/challenge/:nonce": "public",
   "GET /api/agents/session-cleanup/failures": "owner",
   "POST /api/agents/session-cleanup/retry": "owner",
   "GET /api/agents/network-policies": "owner",
@@ -58,9 +68,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/share/:token": "public",
   "GET /api/shares": "self",
   "DELETE /api/shares/:id": "self",
-  "GET /api/capabilities": cap("settings.members"),
-  "GET /api/members/:id/capabilities": cap("settings.members"),
-  "PUT /api/members/:id/capabilities": cap("settings.members"),
+  "GET /api/capabilities": { member: "read" },
+  "GET /api/members/:id/capabilities": { member: "read", target: true },
+  "PUT /api/members/:id/capabilities": { member: "manage", target: true },
   "GET /api/me": "self",
   // Each person's own AI accounts (docs/v2/agent-accounts.md): the handlers act on the caller's own only.
   "GET /api/me/agent-accounts": "self",
@@ -140,14 +150,14 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/sources/paths": cap("sources.view", "q.space"),
   "GET /api/sources/resolve": cap("sources.view", "q.space"),
   "PUT /api/sources/:id/attention": cap("sources.edit", "src:p.id"),
-  "POST /api/sources/attention": AGENTS,
+  "POST /api/sources/attention": "owner",
   "GET /api/sources/:id/notes": cap("sources.view", "src:p.id"),
   "POST /api/sources/:id/notes": cap("sources.edit", "src:p.id"),
   "POST /api/source-notes/:id/review": cap("sources.edit", "note:p.id"),
   "DELETE /api/source-notes/:id": cap("sources.edit", "note:p.id"),
-  "POST /api/sources/node-level/review": cap("sources.edit", "b.space"),
+  "POST /api/sources/node-level/review": "owner",
   "POST /api/sources/level-audit/review": "owner",
-  "PUT /api/sources/node-level": cap("sources.edit", "b.space"),
+  "PUT /api/sources/node-level": "owner",
   "PUT /api/sources/wiki-space-name": SETTINGS,
   "GET /api/sources/:id": cap("sources.view", "src:p.id"),
   "GET /api/sources/:id/messages": cap("sources.view", "src:p.id"),
@@ -313,13 +323,13 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "PATCH /api/items/:id": cap("items.edit", "item-update"),
   "POST /api/items/:id/keep": cap("items.operate", "item:p.id"),
   "POST /api/items/:id/candidate": cap("items.operate", "item:p.id"),
-  "POST /api/items/:id/materials": "self",
+  "POST /api/items/:id/materials": cap("items.edit", "item:p.id"),
   "GET /api/items/:id/objects": "self",
-  "POST /api/items/:id/objects": "self",
-  "DELETE /api/items/:id/objects/:object": "self",
-  "POST /api/items/:id/objects/:object/actions/:action": "self",
-  "DELETE /api/items/:id/materials/:mid": "self",
-  "POST /api/items/:id/split-requirements": "self",
+  "POST /api/items/:id/objects": cap("items.edit", "item:p.id"),
+  "DELETE /api/items/:id/objects/:object": cap("items.edit", "item:p.id"),
+  "POST /api/items/:id/objects/:object/actions/:action": cap("items.edit", "item:p.id"),
+  "DELETE /api/items/:id/materials/:mid": cap("items.edit", "item:p.id"),
+  "POST /api/items/:id/split-requirements": cap("items.edit", "item:p.id"),
   "GET /api/items-expiry": "self",
   "POST /api/items-expiry/backlog": AGENTS,
   "POST /api/items-expiry/sweep": AGENTS,
@@ -343,6 +353,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/assistants/scan": "self",
   "PATCH /api/assistants/:id": "self",
   "DELETE /api/assistants/:id": "self",
+  "GET /api/runs/:id/progress": cap("runs.view", "run:p.id"),
+  "GET /api/items/:id/progress": cap("items.view", "item:p.id"),
   "GET /api/runs/:id": cap("runs.view", "run:p.id"),
   "GET /api/agent-work/:id/board": RUN,
   "POST /api/runs/:id/share-review": RUN,
@@ -355,9 +367,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/code-works/:id": cap("code.work.view", "run:p.id"),
   "POST /api/delegate": CODE,
   "POST /api/review-branch": CODE,
-  "GET /api/review-settings": CODE,
-  "PUT /api/review-settings": CODE,
-  "GET /api/review-options": CODE,
+  "GET /api/review-tiers": CODE,
+  "GET /api/review-settings": cap("settings.assistant.view"),
+  "PUT /api/review-settings": cap("settings.assistant.edit"),
+  "GET /api/review-options": cap("settings.assistant.view"),
   "GET /api/ide/cli": CODE,
   "GET /api/ide/open": CODE,
   // Previews of a delegation's workspace (docs/v2/preview.md): the owner's commands and servers.
@@ -421,13 +434,18 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
     ].map((r) => [r, AGENTS]),
   ),
 
+  "PUT /api/agent-role-model": cap("settings.ai.edit"),
+  "GET /api/settings": "handler",
+  "GET /api/settings/sections": "handler",
+  "PUT /api/settings": "handler",
+
   // channels, AI backends and this machine
   ...Object.fromEntries(
     [
-      "GET /api/settings", "GET /api/search/providers", "PUT /api/settings", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
+      "GET /api/search/providers", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
       "PUT /api/lark/chats/:id/policy", "PUT /api/lark/chats/:id/subscription", "PUT /api/lark/chats/:id/space", "POST /api/lark/poll", "GET /api/lark/user-permissions", "POST /api/lark/user-permissions",
       "GET /api/lark/bot-check", "POST /api/lark/bot-check/:ref/scan", "GET /api/lark/doubao-send", "POST /api/lark/doubao-send/test", "GET /api/lark/wiki-crawls", "POST /api/lark/wiki-crawls/:id/:op", "GET /api/lark/kb", "POST /api/lark/kb/discover",
-      "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "GET /api/lark/kb-home", "POST /api/lark/kb-home", "PUT /api/lark/kb-home/dir", "POST /api/agents/:id/probe", "GET /api/agents/:id/adapter", "POST /api/agents/:id/adapter/upgrade", "PUT /api/agent-role-model", "GET /api/agent-registry", "POST /api/agent-registry/:id",
+      "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "GET /api/lark/kb-home", "POST /api/lark/kb-home", "PUT /api/lark/kb-home/dir", "POST /api/agents/:id/probe", "GET /api/agents/:id/adapter", "POST /api/agents/:id/adapter/upgrade", "GET /api/agent-registry", "POST /api/agent-registry/:id",
       "GET /api/diag", "GET /api/storage", "POST /api/storage/scan", "GET /api/media", "POST /api/media/ffmpeg/install", "POST /api/media/compress", "POST /api/media/stop", "POST /api/media/resume",
       "POST /api/media/delete-originals", "PUT /api/plugins/:id/settings", "PUT /api/plugins/:id/icon", "POST /api/plugins/:id/trust", "DELETE /api/plugins/:id/trust", "GET /api/plugins/:id/services",
       "POST /api/plugins/:id/services/:name/start", "POST /api/plugins/:id/services/:name/stop", "PUT /api/plugins/:id/enabled", "POST /api/plugins/install",
@@ -439,10 +457,11 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/desktop/install": g("desktop.control"),
   // remote operation (docs/v2/remote.md): each person's own sessions and recordings
   "GET /api/remote": "self",
+  "GET /api/remote/grant-candidates": "self",
   "GET /api/remote/screens": g("desktop.control"),
   "GET /api/remote/browser-profiles": g("desktop.control"),
   "POST /api/remote/sessions": g("desktop.control"),
-  "POST /api/remote/sessions/:id/view": "self",
+  "POST /api/remote/sessions/:id/view": "handler",
   "POST /api/remote/sessions/:id/grants": "self",
   "PATCH /api/remote/sessions/:id/grants/:grantId": "self",
   "DELETE /api/remote/sessions/:id/grants/:grantId": "self",
@@ -450,7 +469,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/remote/settings": g("desktop.control"),
   "PUT /api/remote/settings": g("desktop.control"),
   "POST /api/remote/settings/probe": g("desktop.control"),
-  "POST /api/remote/sessions/:id/navigate": "self",
+  "POST /api/remote/sessions/:id/navigate": "handler",
   "DELETE /api/remote/sessions/:id": g("desktop.control"),
   "POST /api/remote/sessions/:id/recording": g("desktop.control"),
   "DELETE /api/remote/sessions/:id/recording": g("desktop.control"),
@@ -537,15 +556,15 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "DELETE /api/auth/identities": "self",
   "GET /api/auth/providers": USERS,
   "PUT /api/auth/providers/:id/app": USERS,
-  "GET /api/users": USERS,
-  "POST /api/users": USERS,
-  "PATCH /api/users/:id": USERS,
-  "DELETE /api/users/:id/sessions": USERS,
-  "DELETE /api/users/:id/identities": USERS,
-  "PUT /api/users/:id/spaces": USERS,
-  "GET /api/invites": USERS,
-  "POST /api/invites": USERS,
-  "DELETE /api/invites/:id": USERS,
+  "GET /api/users": { member: "read" },
+  "POST /api/users": { member: "manage" },
+  "PATCH /api/users/:id": { member: "manage", target: true },
+  "DELETE /api/users/:id/sessions": { member: "identity", target: true },
+  "DELETE /api/users/:id/identities": { member: "identity", target: true },
+  "PUT /api/users/:id/spaces": { member: "manage", target: true },
+  "GET /api/invites": { member: "read" },
+  "POST /api/invites": { member: "manage" },
+  "DELETE /api/invites/:id": { member: "revokeInvite", target: true },
   "GET /api/access/roles": "self",
   "POST /api/access/roles": USERS,
   "PUT /api/access/roles/:id": USERS,
@@ -601,6 +620,7 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   if (isOwner(app, userId)) return;
   const rule = ROUTE_RULES[routeKey(req)] ?? ROUTE_RULES[`* ${req.routeOptions.url}`];
   if (!rule) throw new HttpError(403, "这个接口只对 omem 的主人开放");
+  if (rule === "handler") return; // The handler checks individual settings keys or the live session grant.
   if (rule === "self" && !["GET", "HEAD", "OPTIONS"].includes(req.method) && one<{ role: string }>(app.db, "select role from users where id=?", userId)?.role === "observer") {
     const path = routeKey(req);
     if (path === "POST /api/asks/:id/answer" || path === "POST /api/asks/:id/dismiss") {
@@ -610,6 +630,7 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   }
   if (rule === "public" || rule === "self") return;
   if (rule === "owner") throw new HttpError(403, "这个接口只对 omem 的主人开放");
+  if ("member" in rule) return requireMemberAction(app, userId, rule.member, rule.target ? (req.params as { id: string }).id : undefined);
   if ("g" in rule) return requirePerm(app, userId, rule.g);
   if ("run" in rule) {
     if (!canReadRun(app, userId, String((req.params as { id?: string }).id ?? ""))) throw new HttpError(404, "运行不存在");
@@ -642,8 +663,22 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
     if (!space || !can(app, userId, rule.cap, space)) throw new HttpError(404, "事项不存在");
     return;
   }
+  // A detail lookup must give the same response for an unknown ID and a hidden one.
+  if (req.method === "GET" && "cap" in rule && rule.at.includes(":")) {
+    if (!space || !can(app, userId, rule.cap, space)) throw new HttpError(404, "要找的内容不存在");
+    if (rule.at.startsWith("src:")) {
+      const id = (req.params as { id: string }).id;
+      if (!await sourceReadable(app, userId, aliasTarget(app, id) ?? id)) throw new HttpError(404, "要找的内容不存在");
+    }
+    return;
+  }
   if (!space) throw new HttpError(rule.at.includes(":") ? 404 : 400, rule.at.includes(":") ? "要找的内容不存在" : "要指定空间");
   requirePerm(app, userId, "cap" in rule ? rule.cap : rule.s, space);
+  if (rule.at === "note:p.id") {
+    const note = one<{ source_id: string }>(app.db, "select source_id from source_notes where id=?", (req.params as { id: string }).id);
+    if (!note) throw new HttpError(404, "标注不存在");
+    await requireReadable(app, userId, note.source_id);
+  }
   if (rule.at.startsWith("src:")) {
     const id = String((req.params as { id?: string }).id ?? "");
     await requireReadable(app, userId, aliasTarget(app, id) ?? id);

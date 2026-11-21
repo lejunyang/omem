@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createRun, stopWorker } from "../src/agents/runs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
-import { can, canReadRun, spacesWith } from "../src/auth/permissions.ts";
+import { capabilityKeys } from "../src/auth/capabilities.ts";
+import { can, canReadRun, saveRole, spacesWith } from "../src/auth/permissions.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
 import { toolAllowed, trimTools } from "../src/auth/tools.ts";
 import { notify } from "../src/core/notify.ts";
@@ -216,7 +217,7 @@ describe("roles and permissions", async () => {
     // An account that can read both projects still uses the narrower run scope.
     expect((await list("cat", null)).text).toContain("private-flow");
     expect((await list("cat", ["team"])).text).not.toContain("private-flow");
-    expect(JSON.parse((await list("ann", ["other"])).text).flows).toEqual([]);
+    expect((await list("ann", ["other"])).isError).toBe(true);
 
     const limited = "limited-flow-reader";
     createUser(app, { id: limited, name: "流程读者" });
@@ -339,7 +340,7 @@ describe("roles and permissions", async () => {
     const put = (preset: string, overrides: object[]) => fetch(base + path, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ preset, overrides }) });
     expect((await as(id, path)).status).toBe(403);
     const catalog = await (await fetch(base + "/api/capabilities")).json();
-    expect(catalog).toHaveLength(26);
+    expect(catalog.map((entry: { key: string }) => entry.key).sort()).toEqual([...capabilityKeys].sort());
     for (const key of ["remote.view", "remote.operate"])
       expect(catalog).toContainEqual(expect.objectContaining({ key, scope: "global", presets: ["owner"] }));
     expect((await as(id, "/api/rules")).status).toBe(403);
@@ -392,7 +393,7 @@ describe("roles and permissions", async () => {
     createUser(app, { id, name: "只读用户", role: "observer" });
     addMember(app, "team", id, "reader");
     tokens[id] = createApiToken(app, id, "test");
-    expect((await as(id, "/api/sources/" + source.id)).status).toBe(403);
+    expect((await as(id, "/api/sources/" + source.id)).status).toBe(404);
     expect(await (await as(id, "/api/sources/paths?space=team")).text()).not.toContain(source.id);
     expect((await json(id, "/api/lookup?id=" + source.id)).hits).toEqual([]);
   });
@@ -491,7 +492,7 @@ describe("roles and permissions", async () => {
     expect((await as("ann", "/api/sources?space=team")).status).toBe(200);
     expect((await as("ann", "/api/sources?space=other")).status).toBe(403);
     const m = remember(app, { spaceId: "other", kind: "fact", content: "别处的事" });
-    expect((await as("ann", `/api/memories/${m.id}`)).status).toBe(403);
+    expect((await as("ann", `/api/memories/${m.id}`)).status).toBe(404);
     // The memory page lists every space at once: only the readable ones.
     const listed = (await json("ann", "/api/memories")) as { spaceId: string }[];
     expect(listed.length).toBeGreaterThan(0);
@@ -507,10 +508,24 @@ describe("roles and permissions", async () => {
     expect((await as("bob", "/api/wiki/other/coverage")).status).toBe(403);
   });
 
+  it("checks both edit capability and original visibility for member annotations", async () => {
+    const src = upsertSource(app, { spaceId: "team", kind: "note", uri: "test:annotation", title: "说明", text: "示例内容" });
+    const path = `/api/sources/${src.id}/notes`;
+    const post = { method: "POST", body: JSON.stringify({ kind: "note", note: "补充" }) };
+    expect((await as("ann", path, post)).status).toBe(403);
+    const made = await as("bob", path, post);
+    expect(made.status).toBe(200);
+    const { id } = await made.json();
+    expect((await json("bob", path))[0].by).toBe("member");
+    setVisibility(app, src.id, "restricted");
+    expect((await as("bob", path, post)).status).toBe(403);
+    expect((await as("bob", `/api/source-notes/${id}`, { method: "DELETE" })).status).toBe(403);
+  });
+
   it("keeps the shared setup to those who manage it", async () => {
     expect((await as("cat", "/api/agents")).status).toBe(200);
     expect((await as("ann", "/api/agents")).status).toBe(403);
-    expect((await as("cat", "/api/settings")).status).toBe(403);
+    expect(Object.keys((await json("cat", "/api/settings")).config).sort()).toEqual(["agents", "auth"]);
     expect((await as("cat", "/api/delegate", { method: "POST", body: "{}" })).status).toBe(403);
     expect((await as("ann", "/api/home")).status).toBe(403);
   });
@@ -578,6 +593,14 @@ describe("roles and permissions", async () => {
   });
 
   it("leaves out tools the run's person may not use", async () => {
+    const otherOwner = createUser(app, { id: "co-owner", name: "协管人", role: "owner" });
+    for (const tool of ["set_learning_goal", "lark_invite", "unknown_write"]) expect(toolAllowed(app, otherOwner.id, tool)).toBe(false);
+    saveRole(app, { id: "review-delegate", name: "编码评审", scope: "global", permissions: ["code.delegate"] });
+    const coder = createUser(app, { id: "coder", name: "编码成员", role: "review-delegate" });
+    for (const tool of ["review_task", "report_tests", "finish_task"]) {
+      expect(toolAllowed(app, coder.id, tool)).toBe(true);
+      expect(toolAllowed(app, "ann", tool)).toBe(false);
+    }
     expect(toolAllowed(app, "ann", "search")).toBe(true);
     expect(toolAllowed(app, "ann", "delegate_code")).toBe(false);
     expect(toolAllowed(app, "ann", "save_rule")).toBe(false);
@@ -586,6 +609,6 @@ describe("roles and permissions", async () => {
     const token = issueToolToken({ runId: null, spaceId: "team", spaces: ["team"], tools: null, actor: "agent", userId: "ann" });
     const ctx = toolContextForToken(app, token)!;
     expect((await callTool(ctx, "save_rule", {})).text).toMatch(/没有这项权限/);
-    expect((await callTool(ctx, "write_page", { page: "x", title: "x", summary: "x", body: "x", space: "team" })).text).toMatch(/不能写 Wiki|无权/);
+    expect((await callTool(ctx, "write_page", { page: "x", title: "x", summary: "x", body: "x", space: "team" })).text).toMatch(/不能写 Wiki|无权|没有这项权限/);
   });
 });

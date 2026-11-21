@@ -26,7 +26,7 @@ const unique = (list: string[]) => [...new Set(list)];
 const canonicalIp = (ip: string) => isIP(ip) === 6 ? new URL(`http://[${ip}]/`).hostname : ip;
 
 /** Avoid external lookups for single-label and common local suffixes. Other names may be split DNS. */
-function publicName(host: string) {
+export function publicName(host: string) {
   return !isIP(host) && host.includes(".") && !/(^|\.)(localhost|local|localdomain|lan|internal|intranet|corp|private|home|test|invalid|example|onion)\.?$/i.test(host) && !/\.home\.arpa\.?$/i.test(host);
 }
 function publicV6(ip: string) { return isIP(ip) === 6 && /^[23]/i.test(ip); }

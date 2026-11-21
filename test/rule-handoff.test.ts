@@ -27,7 +27,7 @@ it("run_agent in a rule's run hands the trigger over within the rule's limits", 
     expect(input).toMatchObject({ spec: "investigator-x", rule: { id: "rule_x" }, lark, hideThinking: true, fullAccess: true, silent: { chatId: "oc_alerts" }, handoff: { from: "assistant", runId: parent.id } });
     expect(input.denyTools).toEqual(expect.arrayContaining(["run_agent", "ask_agent"]));
     expect(String(input.task)).toMatch(/查这条报警的原因[\s\S]*静默排查[\s\S]*原始任务/);
-    expect(input.assistantScope).toBeUndefined();
+    expect(input.assistantScope).toMatchObject({ userId: "owner", spaces: ["personal"] });
     // Not to itself.
     expect((await callTool(ctx, "run_agent", { name: "assistant", task: "再看看" })).isError).toBe(true);
   } finally { app.db.close(); }

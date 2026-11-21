@@ -1,3 +1,4 @@
+import { fakeCloudReceipt } from "./fake-cloud-probe.ts";
 import { expect, it } from "vitest";
 import { createSpace } from "../src/core/spaces.ts";
 import { agentProfileSchema, type RoleName } from "../src/core/config.ts";
@@ -43,6 +44,37 @@ it("bounds standing instructions for a fixed space, skill library and four lesso
 
       expect.soft(prep.system.length, JSON.stringify({ transport, role, target, temporaryLimit, largest })).toBeLessThanOrEqual(temporaryLimit ?? target);
     }
+  }
+  app.db.close();
+});
+
+it("bounds the HTTP instructions for each cloud role including every allowed tool", async () => {
+  const { confirmProbe, probeCloud } = await import("../src/agents/cloud-probe.ts");
+  const app = testApp();
+  app.baseUrl = "http://127.0.0.1:1";
+  app.config.webUrl = "https://8.8.8.8";
+  const cfg = app.config.agents.cloudTools;
+  cfg.backends = ["doubao"];
+  cfg.tools = ["search", "read_source", "read_page", "read_item"];
+  cfg.credentialIn = "message";
+  const probe = await probeCloud(app, "doubao", async (_app, _p, req) => {
+    const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
+    return { text: fakeCloudReceipt(app, nonce, "header"), agent: "test", stopReason: "end_turn" };
+  });
+  confirmProbe(app, "doubao", probe.id);
+  for (const role of ["assistant", "gatekeeper", "summarizer", "replay-judge", "mention-triage"] as const) {
+    const prepare = () => prepareRun(app, { actor: { role }, profileId: "doubao", spaceId: "personal", runId: "budget" });
+    cfg.enabled = false;
+    const off = prepare();
+    expect(off.capabilities.omemAccess).toBe("none");
+    cfg.enabled = true;
+    const on = prepare();
+    expect(on.capabilities.omemAccess).toBe("http");
+    expect(on.system).toContain("云端只读工具");
+    expect(on.parts.common - off.parts.common).toBeLessThan(400);
+    expect(on.system.length).toBeLessThan(3400);
+    revokeToolToken(off.token);
+    revokeToolToken(on.token);
   }
   app.db.close();
 });

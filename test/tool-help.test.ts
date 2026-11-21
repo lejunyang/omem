@@ -5,6 +5,7 @@ import { testApp } from "./helpers.ts";
 import { callTool, mcpTools, toolList, type ToolContext } from "../src/agents/tools.ts";
 import { CORE_TOOLS, DIRECT_ALL, describeParams, expandTools, MERGED_TOOLS, omemSkillDir, ROLE_TOOLS, TOOL_GROUPS } from "../src/agents/tool-help.ts";
 import { agentToolEnv, toolArgs } from "../src/agents/tool-cli.ts";
+import { toolCapability } from "../src/auth/tools.ts";
 import { remember } from "../src/memory/store.ts";
 
 const ctxFor = (tools: string[] | null): ToolContext => ({ app: testApp(), runId: null, spaceId: "personal", spaces: null, tools: tools && new Set(tools), actor: "agent", userId: "owner" });
@@ -21,6 +22,8 @@ describe("omem tools offered to agents", () => {
     expect(ROLE_TOOLS).toContain("submit_level_check");
     expect(expandTools(["group:wiki"])).not.toContain("submit_level_check");
     const names = toolList().map((t) => t.name);
+    for (const name of names) expect(toolCapability(name), name).toBeTruthy();
+    expect(toolCapability("unknown_write")).toBe("owner");
     const grouped = TOOL_GROUPS.flatMap((g) => g.tools);
     expect(grouped.length).toBe(new Set(grouped).size);
     expect(names.filter((n) => !grouped.includes(n))).toEqual([]);

@@ -366,7 +366,7 @@ function groupTools(p: LoadedPlugin) {
   const own = names.filter((n) => !shared || !actions.has(n));
   const group = TOOL_GROUPS.find((g) => g.id === p.manifest.id);
   if (group) group.tools = own;
-  else if (own.length) TOOL_GROUPS.push({ id: p.manifest.id, label: p.manifest.name, tools: own });
+  else if (own.length) TOOL_GROUPS.push({ capability: "owner", id: p.manifest.id, label: p.manifest.name, tools: own });
 }
 
 /**

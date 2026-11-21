@@ -7,7 +7,7 @@ import { createThread } from "../src/agents/threads.ts";
 import { demoLessonsDir, playbookOf } from "../src/channels/listen-cases.ts";
 import { saveContext } from "../src/channels/listen.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { addMember, createApiToken, createUser } from "../src/core/users.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { boot } from "../src/main.ts";
 import { currentDemo } from "../src/remote/demos.ts";
@@ -26,7 +26,6 @@ describe("demonstrations", async () => {
   afterAll(() => server.close());
   const owner = createApiToken(app, "owner", "chrome");
   createUser(app, { id: "wang", name: "小王" });
-  addMember(app, "personal", "wang", "contributor");
   const member = createApiToken(app, "wang", "chrome");
   const call = (method: string, path: string, body?: unknown, token = owner) =>
     fetch(`${app.baseUrl}${path}`, {

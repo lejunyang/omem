@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { get } from "../api";
+import { hasCap } from "../lib/caps";
 import AiDefaults from "./AiDefaults.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
@@ -13,7 +14,7 @@ import type { FixDraft } from "../lib/quotes";
  * choices open on demand. Left alone, the rounds keep what they had. Same as telling the assistant.
  */
 const props = defineProps<{ draft: FixDraft }>();
-type Tier = { id: string; name: string; checks: string[] };
+type Tier = { id: string; name: string; checkCount: number };
 type Backend = { id: string; name?: string; installed: boolean; transport: string; model?: string; effort?: string };
 
 const open = ref(false);
@@ -21,17 +22,17 @@ const tiers = ref<Tier[]>([]);
 const backends = ref<Backend[]>([]);
 // Loaded the first time the choices open: most fixes keep the review as it was.
 watch(open, async (o) => {
-  if (!o || tiers.value.length) return;
+  if (!o) return;
   try {
-    const [r, s] = await Promise.all([get<{ tiers: Tier[] }>("/api/review-settings"), get<{ agents: Backend[] }>("/api/settings")]);
-    tiers.value = r.tiers;
-    backends.value = s.agents;
+    if (!tiers.value.length) tiers.value = (await get<{ tiers: Tier[] }>("/api/review-tiers")).tiers;
+    if (hasCap("settings.assistant.view") && !backends.value.length)
+      backends.value = (await get<{ agents: Backend[] }>("/api/settings?section=assistant")).agents;
   } catch {
     /* the fix still starts with the rounds' own review */
   }
 });
 const ROTATE = [{ value: "" as const, label: "按档位设置" }, { value: "on" as const, label: "每轮换模型" }, { value: "off" as const, label: "不换模型" }];
-const tierOptions = computed(() => [{ value: "", label: "沿用之前的" }, ...tiers.value.map((t) => ({ value: t.id, label: `「${t.name}」档`, hint: `${t.checks.length} 项评审` }))]);
+const tierOptions = computed(() => [{ value: "", label: "沿用之前的" }, ...tiers.value.map((t) => ({ value: t.id, label: `「${t.name}」档`, hint: `${t.checkCount} 项评审` }))]);
 const summary = computed(() => {
   const d = props.draft;
   const parts = [

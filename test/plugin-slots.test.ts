@@ -1,3 +1,4 @@
+import { createSpace } from "../src/core/spaces.ts";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -199,7 +200,8 @@ describe("界面插槽的显示与取数", () => {
   it("HTTP：看得到事项的人能列出并取数，看不到的 404，用的是看的人自己", async () => {
     const s = await startServer(app, { port: 0, quiet: true });
     servers.push(s);
-    const i = item(), a = await attachObject(app, i.id, url("1"), "owner");
+    createSpace(app, { id: "project", name: "项目 A" });
+    const i = item("owner", "project"), a = await attachObject(app, i.id, url("1"), "owner");
     const list = await s.inject(`/api/slots?at=item.panel&item=${i.id}`);
     expect(list.statusCode).toBe(200);
     expect(list.json().map((x: { block: string }) => x.block)).toContain("checks");
@@ -210,15 +212,15 @@ describe("界面插槽的显示与取数", () => {
     expect((await s.inject(`/api/slots/slotprobe/nope?at=item.panel&item=${i.id}`)).statusCode).toBe(404);
     expect((await s.inject(`/api/slots?at=sidebar`)).statusCode).toBe(400);
     createUser(app, { id: "member", name: "成员甲" });
-    addMember(app, "personal", "member", "editor");
-    const mine = item("member"), linked = await attachObject(app, mine.id, url("2"), "member");
-    addMember(app, "personal", "member", "reader");
+    addMember(app, "project", "member", "editor");
+    const mine = item("member", "project"), linked = await attachObject(app, mine.id, url("2"), "member");
+    addMember(app, "project", "member", "reader");
     const member = { authorization: `Bearer ${createApiToken(app, "member", "test")}` };
     expect((await s.inject({ url: `/api/slots?at=item.panel&item=${i.id}`, headers: member })).statusCode).toBe(404);
     expect((await s.inject({ url: `/api/slots/slotprobe/checks?at=item.panel&item=${i.id}&object=${a.id}`, headers: member })).statusCode).toBe(404);
     expect((await s.inject({ url: `/api/slots?at=item.panel&item=${mine.id}`, headers: member })).statusCode).toBe(200);
     expect((await s.inject({ url: `/api/slots/slotprobe/checks?at=item.panel&item=${mine.id}&object=${linked.id}`, headers: member })).statusCode).toBe(200);
-    expect(seen("member").at(-1)).toMatchObject({ user: "member", space: "personal" });
+    expect(seen("member", "project").at(-1)).toMatchObject({ user: "member", space: "project" });
     createUser(app, { id: "outsider", name: "成员乙" });
     const outsider = { authorization: `Bearer ${createApiToken(app, "outsider", "test")}` };
     expect((await s.inject({ url: `/api/slots?at=item.panel&item=${i.id}`, headers: outsider })).statusCode).toBe(404);

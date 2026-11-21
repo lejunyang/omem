@@ -112,7 +112,8 @@ describe("browser session grants", () => {
     expect((await fetch(operator.url.replace("/?token", "/clipboard/" + fileId + "?token"), { headers: { cookie: operator.cookie } })).status).toBe(200);
     const ended = once(operator.ws, "close");
     await api(path + "/grants/" + grant.id, "DELETE");
-    await ended;
+    const [code, reason] = await ended;
+    expect([code, reason.toString()]).toEqual([1008, "revoked"]);
     await streamEnded;
     expect(ownerView.ws.readyState).toBe(WebSocket.OPEN);
     ownerView.ws.close();
@@ -148,8 +149,17 @@ describe("browser session grants", () => {
     const recipient = { userId: member, mode: "view" };
     expect((await api(path, "POST", { ...recipient, hours: 25 })).status).toBe(400);
     createUser(app, { id: "offline", name: "未登录成员" });
+    run(app.db, `insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by)
+      values('offline','remote.view','global','','allow','','owner')`);
+    cap("view");
+    expect((await api("/grant-candidates", "GET", undefined, token)).status).toBe(403);
+    const candidates = await (await api("/grant-candidates")).json();
+    expect(candidates.map((c: {id:string}) => c.id)).toEqual([member]);
+    expect(Object.keys(candidates[0]).sort()).toEqual(["caps", "id", "name"]);
+    expect(candidates[0].caps).toContain("remote.view");
     expect((await api(path, "POST", { ...recipient, userId: "offline" })).status).toBe(400);
     updateUser(app, member, { disabled: true });
+    expect(await (await api("/grant-candidates")).json()).toEqual([]);
     expect((await api(path, "POST", recipient)).status).toBe(400);
     updateUser(app, member, { disabled: false });
     const start = Date.now();
@@ -196,6 +206,7 @@ describe("browser session grants", () => {
       const calls = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
       expect(calls.filter(args => args[0] === "assist")).toHaveLength(1);
       const list = await (await api("", "GET", undefined, actorToken)).json();
+      expect(await (await api("/grant-candidates", "GET", undefined, actorToken)).json()).toContainEqual(expect.objectContaining({ id: member }));
       expect(list.sessions).toContainEqual(expect.objectContaining({ id: sessionId, ownerId: actor, runId: job.id, mine: true }));
       expect(runEvents(app, job.id).filter(e => "link" in e.data && e.data.link === "#/remote/" + sessionId)).toHaveLength(1);
       cap("view");
@@ -224,13 +235,53 @@ describe("browser session grants", () => {
     if (reason === "expiry") await api(path + "/grants/" + grant.id, "PATCH", { hours: 0.00005 });
     if (reason === "disable") updateUser(app, member, { disabled: true });
     if (reason === "close") await api(path, "DELETE");
-    await ended;
+    const [code, closeReason] = await ended;
+    if (reason !== "disable") {
+      const expected = reason === "close" ? "closed" : "expired";
+      expect([code, closeReason.toString()]).toEqual([1008, expected]);
+      const sessions = (await (await api("", "GET", undefined, token)).json()).sessions;
+      expect(sessions).toContainEqual(expect.objectContaining({ id, grantId: grant.id, ended: expected }));
+    }
     expect((await fetch(view.url, { headers: { cookie: view.cookie } })).ok).toBe(false);
     if (reason === "disable") updateUser(app, member, { disabled: false });
     if (reason === "close") {
       const rows = all<{detail: string}>(app.db, "select detail from audit_events where target=? and action='remote.revoke'", id);
       expect(rows).toHaveLength(1);
       expect(JSON.parse(rows[0].detail)).toMatchObject({ sessionId: id, userId: member, mode: "view", reason: "session-ended" });
+    }
+  });
+
+  it("delivers expiry on SSE only to the grantee even without a viewer and retains the reason for ten minutes", async () => {
+    createUser(app, { id: "unrelated", name: "其他成员" });
+    const unrelated = createApiToken(app, "unrelated");
+    const controller = new AbortController();
+    const streams = await Promise.all([token, unrelated, "test-owner"].map(async as => {
+      const res = await fetch(app.baseUrl + "/api/events", { headers: { authorization: "Bearer " + as }, signal: controller.signal });
+      return res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    }));
+    try {
+      const id = await open();
+      cap("view");
+      const path = "/sessions/" + id + "/grants";
+      const grant = await (await api(path, "POST", { userId: member, mode: "view", hours: 0.00005 })).json();
+      const events: string[] = [];
+      while (!events.join("").includes(grant.id)) events.push((await streams[0].read()).value!);
+      expect(events.join("")).toContain('"ended":"expired"');
+      // A public change marks the end of the segment on every other connection.
+      app.emit({ type: "changed", entity: "rule", id: "after-expiry" });
+      for (const stream of streams.slice(1)) {
+        let body = "";
+        while (!body.includes("after-expiry")) body += (await stream.read()).value;
+        expect(body).not.toContain(grant.id);
+      }
+      const memberSessions = async () => (await (await api("", "GET", undefined, token)).json()).sessions;
+      const setAge = (ms: number) => run(app.db, "update remote_grants set revoked_at=? where id=?", new Date(Date.now()-ms).toISOString(), grant.id);
+      setAge(599_000);
+      expect(await memberSessions()).toContainEqual(expect.objectContaining({ id, ended: "expired" }));
+      setAge(600_000);
+      expect(await memberSessions()).not.toContainEqual(expect.objectContaining({ id }));
+    } finally {
+      controller.abort();
     }
   });
 });

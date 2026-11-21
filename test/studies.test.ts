@@ -373,7 +373,7 @@ describe("台账、发现、证据和权限", () => {
     const server = await startServer(f.app, { port: 0, quiet: true }); servers.push(server); const url = `/api/items/${f.item.id}/study`;
     createUser(f.app, { id: "reader-study", name: "成员甲" }); const headers = { authorization: `Bearer ${createApiToken(f.app, "reader-study")}` };
     expect((await server.inject({ url, headers })).statusCode).toBe(404);
-    addMember(f.app, "personal", "reader-study", "editor");
+    expect(() => addMember(f.app, "personal", "reader-study", "editor")).toThrow(/个人空间/);
     expect((await server.inject({ url, headers })).statusCode).toBe(404);
     expect((await server.inject({ url })).statusCode).toBe(200);
     expect((await server.inject({ method: "POST", url: `${url}/findings/${finding}`, headers, payload: { state: "rejected" } })).statusCode).toBe(403);

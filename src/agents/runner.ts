@@ -1,3 +1,4 @@
+import { spacesWithCapability } from "../auth/capabilities.ts";
 import { lentByOthers, localOnly, meshNote } from "../core/mesh.ts";
 import { REVIEW_TOOLS } from "./review.ts";
 import { existsSync, readFileSync } from "node:fs";
@@ -23,6 +24,7 @@ import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, exc
 import { aiLabel, candidateProfiles, candidateWhen, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
+import { cloudAccess } from "./cloud-probe.ts";
 import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
@@ -174,14 +176,16 @@ function lessonRows(app: App, spaceId: string, userId: string, spec: string | nu
   const vetted = app.config.memory.review.enabled ? "and (created_by = 'user' or review_verdict = 'keep')" : "";
   // A replay arm: the lessons as they stood at the question's time, minus what its variant leaves out.
   const w = memoryWhere(view, "memories");
+  const allowed = spacesWithCapability(app, userId, "memories.view");
   return all<Lesson>(
     app.db,
     // A profile's own experience goes with it whatever space it runs in (an investigator learns from
     // the on-call groups of one project space and is called from the personal space).
-    `select id, kind, subject, content, agent, ${vectors ? "embedding" : "null as embedding"} from memories where ${view ? w.sql : "status = 'active'"} ${vetted} and (agent is null or agent = ?) and (
+    `select id, kind, subject, content, agent, ${vectors ? "embedding" : "null as embedding"} from memories where ${view ? w.sql : "status = 'active'"} ${vetted} ${allowed ? "and space_id in (select value from json_each(?))" : ""} and (agent is null or agent = ?) and (
        (kind = 'preference' and space_id in (?, ?) and coalesce(user_id, 'owner') = ?) or (kind = 'experience' and (space_id = ? or agent = ?))
      ) order by kind = 'preference' desc, agent is not null desc, updated_at desc limit 2000`,
     ...(view ? w.params : []),
+    ...(allowed ? [JSON.stringify(allowed)] : []),
     spec ?? "",
     personalSpaceId(userId),
     spaceId,
@@ -211,8 +215,8 @@ const TASK_LESSONS = 8;
 /** A task can be a whole diff; what it is about is at its start. */
 const ABOUT_CHARS = 2000;
 
-function lessonSet(app: App, rows: Lesson[], own: string, left: number, canRecall: boolean): LessonSet {
-  const where = left > 0 && canRecall ? ownFolderNote(app, own) : "";
+function lessonSet(app: App, rows: Lesson[], own: string, left: number, canRecall: boolean, userId: string): LessonSet {
+  const where = left > 0 && canRecall ? ownFolderNote(app, own, 12, spacesWithCapability(app, userId, "memories.view")) : "";
   const note = where ? `你自己的经验还有 ${left} 条没列在这里，按目录放着；做到相关的事时用 recall(folder="目录", query="关键词") 查：\n${where}` : "";
   return { text: lessonLines(rows), recallNote: note, ids: rows.map((r) => r.id) };
 }
@@ -227,7 +231,7 @@ function standingLessons(app: App, spaceId: string, userId: string, own: string,
   const prefs = rows.filter((r) => r.kind === "preference").slice(0, STANDING_PREFS);
   const exp = rows.filter((r) => r.kind === "experience" && r.agent);
   const shown = exp.length <= OWN_WHOLE ? exp : exp.slice(0, OWN_RECENT);
-  return lessonSet(app, [...prefs, ...shown], own, exp.length - shown.length, canRecall);
+  return lessonSet(app, [...prefs, ...shown], own, exp.length - shown.length, canRecall, userId);
 }
 
 /**
@@ -256,7 +260,7 @@ async function taskLessons(app: App, spaceId: string, userId: string, own: strin
     return scored.length ? scored.sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.r) : list.slice(0, n);
   };
   const told = closest(exp, OWN_WHOLE);
-  return lessonSet(app, [...mine.filter((r) => r.kind === "preference").slice(0, OWN_PREFS), ...told, ...closest(shared, TASK_LESSONS)], own, exp.length - told.length, canRecall);
+  return lessonSet(app, [...mine.filter((r) => r.kind === "preference").slice(0, OWN_PREFS), ...told, ...closest(shared, TASK_LESSONS)], own, exp.length - told.length, canRecall, userId);
 }
 
 type LessonInput = { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string; replay?: ReplayArm };
@@ -519,9 +523,11 @@ export function prepareRun(
   // A replay arm reads and nothing else, whatever its role or profile may do elsewhere.
   if (input.replay) for (const t of [...tools]) if (!input.replay.tools.includes(t)) tools.delete(t);
   // Not what the person it works for may not do (src/auth/tools.ts), nor what needs something they lack.
-  trimTools(app, userId, tools);
   dropUnavailable(app, userId, tools);
-  const capabilities = backendCapabilities(profile);
+  const baseCapabilities = backendCapabilities(profile);
+  const access = input.runId && baseCapabilities.where === "cloud" ? cloudAccess(app, profile) : null;
+  const capabilities: BackendCapabilities = access?.mode ? { ...baseCapabilities, omemAccess: "http", cloudHttp: access.mode } : baseCapabilities;
+  if (access?.mode) for (const t of tools) if (!app.config.agents.cloudTools.tools.some(name => name === t)) tools.delete(t);
   if (capabilities.omemAccess === "none") tools.clear();
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
@@ -532,6 +538,7 @@ export function prepareRun(
   const allowed = scopeFor(app, userId, input.readScope ?? null);
   const related = guest ? [] : relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
+  trimTools(app, userId, tools, { spaces: readable, writable: scoped ?? undefined });
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const account = accountOf(profile);
@@ -557,6 +564,7 @@ export function prepareRun(
   const { fullAccess, acpWritable } = runAccess(app.config.agents.fullAccess, userId === OWNER && !input.shadow, guestTurn,
     !!isolation.box, allowWrites && !isolation.box?.readOnly, legacyFull);
   const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const memorySpaces = spacesWithCapability(app, userId, "memories.view");
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
   const repos = guest ? [] : workRepos(app, input.runId).filter((id) => id !== space.id).flatMap((id) => findSpace(app, id) ?? []);
@@ -573,10 +581,16 @@ export function prepareRun(
   const agentUse = tools.has("run_agent") ? "可用 run_agent 交给它们" : tools.has("ask_agent") ? "这次运行不能交办，需要它们的专长时用 ask_agent 请教" : "";
   const agents = roleName === "assistant" && !spec && agentUse ? agentIndex(app) : "";
   const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
+  const guideTools = access?.mode ? new Set<string>() : tools;
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
-    : `# 角色：${role!.description}\n\n${toolSections(role!.body, tools, capabilities.localTools)}`;
-  const common = commonGuide(tools, capabilities);
+    : `# 角色：${role!.description}\n\n${toolSections(role!.body, guideTools, capabilities.localTools)}`;
+  const descriptions: Record<string, string> = { search: "检索材料", read_source: "按行读原件", read_page: "读 Wiki 页", read_item: "读事项" };
+  const common = commonGuide(guideTools, capabilities) + (access?.mode ? "\n\n## 云端只读工具\n" +
+    [...tools].map(t => t + "：" + descriptions[t]).join("、") + "。连接信息在本轮消息或安全通道。GET 工具地址查看参数。" +
+    (access.mode === "header" ? "按连接信息设置 Authorization 请求头，POST 地址/工具名，正文是 JSON 参数对象。" :
+      "GET 地址/工具名?args=URL编码的JSON参数。每个地址只用一次，下次用响应里的 next。") +
+    "只在此地址使用凭据。被拒、过期或次数用完就停止，查不到就照实说，不要编。" : "");
   // Who else is on the network (core/mesh.ts): for the owner's own assistant and profiles that can ask.
   const mesh = userId === OWNER && tools.has("ask_agent") ? meshNote(app) : "";
   const environment = `# 环境\n\n${isolation.box ? isolation.note + " 写入失败时不要反复重试，告诉本人需要放开哪个目录。\n" : ""}${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
@@ -609,7 +623,7 @@ export function prepareRun(
     lessonIds: told.ids,
     // Guests never see the owner's memories unasked. `agent` names the run in the recall accounting
     // (none for the main assistant); `own` is whose memories it sees besides the shared ones.
-    recall: guest ? null : { spaces: readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), own: spec?.name ?? roleName, userId },
+    recall: guest ? null : { spaces: memorySpaces?.filter(id => !readable || readable.includes(id)) ?? readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), own: spec?.name ?? roleName, userId },
   };
 }
 
@@ -638,7 +652,7 @@ function routingGuide(app: App, profile: AgentProfile) {
   const r = app.config.agents.routing;
   if (!r.automatic) return "";
   const ai = (c: { profile: string; model?: string; effort?: string }) => [c.profile, c.model, c.effort].filter(Boolean).join(" / ");
-  const doubao = choosableProfiles(app).some((p) => p.transport === "doubao");
+  const cloud = choosableProfiles(app).some(p => backendCapabilities(p).where === "cloud");
   // What changes during a session (load, the time) is not written here: these instructions are sent
   // once per session. The time opens every turn; the load comes from list_ai_backends.
   return [
@@ -649,7 +663,7 @@ function routingGuide(app: App, profile: AgentProfile) {
     "交办前用 list_ai_backends 看各模型现在的占用（正在用/上限）和近 7 天的完成、失败：同样合适时选空闲、失败少的，满了的会排队。",
     "它的 quota 是账号的套餐额度（各窗口已用百分比、多久后重置、周额度每天还能用多少）：标了 avoid 的账号快用完了，同样合适时选别的；本人偏好里写了额度条件的，按这些数字对照。",
     ...(one(app.db, "select 1 from replays where verdict in ('win','loss','tie') and axis in ('A1','A2') limit 1") ? ["其中的 replay28d 是夜间复盘的单变量对比（同一题只换模型），样本小，只作参考。"] : []),
-    ...(doubao ? ["doubao（豆包 OpenAPI）在云端运行，用不了 omem 的工具：只适合纯调研、写作。交给它时先自己把要用的材料取出来，原文一次性写进任务。"] : []),
+    ...(cloud ? ["交给云端后端时把原文材料写进任务。本人确认并启用的后端还能经 HTTP 补查少数只读工具。需要调工具交结果的任务选本地后端。"] : []),
   ].join("\n");
 }
 
@@ -801,7 +815,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const textAnswer = (input.role === "assistant" || input.role === "guest") && !input.choose && !input.spec;
   const needsAccess = required.length > 0 || (input.requiredTools === undefined && declared.length > 0 && !textAnswer);
   const requirement = required.length ? required.join("、") : "omem 工具";
-  const supports = (profile: AgentProfile) => !needsAccess || backendCapabilities(profile).omemAccess !== "none";
+  const supports = (profile: AgentProfile) => !needsAccess || ["mcp", "shell-bridge"].includes(backendCapabilities(profile).omemAccess);
   const told = await lessonsOfTask(app, input);
   const lessons = told.text;
   // Nothing pins the AI (no execution, no caller's pick, not a session being continued, not a coding

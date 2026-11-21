@@ -355,6 +355,10 @@ async function runAgentTask(ctx: RunContext) {
   // Retried: what the failed attempt already did comes first, so nothing is posted twice.
   const retryOf = (ctx.run.input as { retryOf?: string }).retryOf;
   if (retryOf) fullTask = `${(await import("./retry.ts")).attemptNote(ctx.app, retryOf)}\n\n---\n\n${fullTask}`;
+  const spaceId = ctx.run.spaceId ?? spec?.space ?? "personal";
+  const spaces = spec && assistantScope && !spec.spaces.includes("*")
+    ? [spaceId, ...spec.spaces].filter(id => !assistantScope.spaces || assistantScope.spaces.includes(id))
+    : assistantScope?.spaces;
   const go = (resume?: string, turnTask = fullTask) =>
     runRole(ctx.app, {
       role: "assistant",
@@ -372,11 +376,12 @@ async function runAgentTask(ctx: RunContext) {
       // like every other run of that agent. (Off used to mean off even with the assistant on full access:
       // network commands then failed in the sandbox first and the model waited on approvals omem had given.)
       fullAccess: rule && (ctx.run.input as { fullAccess?: boolean }).fullAccess ? true : undefined,
-      spaces: assistantScope?.spaces,
+      spaces,
+      readScope: assistantScope?.readScope,
       // A run may also be denied tools of its own (a meeting's windows: nothing reaches the owner until it ends).
       denyTools: [...(assistantScope?.denyTools ?? []), ...(((ctx.run.input as { denyTools?: string[] }).denyTools) ?? [])],
       userId: assistantScope?.userId,
-      spaceId: ctx.run.spaceId ?? spec?.space ?? "personal",
+      spaceId,
       task: turnTask,
       runId: ctx.run.id,
       signal: ctx.signal,

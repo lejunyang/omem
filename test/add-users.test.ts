@@ -20,6 +20,9 @@ it("registers the people the owner @-s as users, with their Feishu identity, ema
   const said = addMessage(app, thread.id, "user", "把 @小王 @小李 加成用户，项目 A 可写", null, {});
   const r = createRun(app, { kind: "ask", spaceId: "personal", title: "加用户", input: { conversationId: thread.id, messageIds: [said] } });
   const ctx = toolContextForToken(app, issueToolToken({ runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
+  const denied = await callTool(ctx, "add_users", { people: ["小王"], spaces: [{ space: "项目 A", role: "editor" }, { space: "personal" }] });
+  expect(denied.text).toContain("个人空间不能添加其他成员");
+  expect(one(app.db, "select id from users where name = '小王'")).toBeFalsy();
   const out = await callTool(ctx, "add_users", { people: ["小王", "小李"], spaces: [{ space: "项目 A", role: "editor" }] });
   expect(out.isError, out.text).toBe(false);
   const wang = one<{ id: string; email: string | null }>(app.db, "select id, email from users where name = '小王'")!;

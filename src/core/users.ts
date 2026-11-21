@@ -105,10 +105,17 @@ export function createUser(app: App, input: { name: string; id?: string; role?: 
   return getUser(app, id);
 }
 
+/** Validate space grants before creating accounts or consuming an invitation. */
+export function requireMembershipSpace(app: App, spaceId: string, userId?: string) {
+  const space = one<{ kind: string; owner_id: string }>(app.db, "select kind,owner_id from spaces where id=?", spaceId);
+  if (!space) throw new HttpError(404, `空间不存在：${spaceId}`);
+  if (space.kind === "personal" && space.owner_id !== userId) throw new HttpError(400, "个人空间不能添加其他成员，请使用共享空间");
+}
+
 /** A space role (src/auth/permissions.ts): reader | contributor | editor | manager, or a custom one. */
 export function addMember(app: App, spaceId: string, userId: string, role = "reader") {
   getUser(app, userId);
-  if (!findSpace(app, spaceId)) throw new HttpError(404, `空间不存在：${spaceId}`);
+  requireMembershipSpace(app, spaceId, userId);
   const r = findRole(app, role === "owner" ? "manager" : role);
   if (!r || r.scope !== "space") throw new HttpError(400, `不是空间角色：${role}`);
   run(app.db, "insert into space_members(space_id,user_id,role) values(?,?,?) on conflict(space_id,user_id) do update set role = excluded.role", spaceId, userId, r.id);

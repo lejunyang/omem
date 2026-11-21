@@ -120,6 +120,8 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
     const db = openDb(join(home, "omem.db"));
     try {
       tx(db, () => {
+        // Older snapshot producers may include quota counters for runs on the other machine.
+        run(db, "delete from cloud_tool_usage");
         for (const table of deviceTables) {
           run(db, `delete from ${table}`);
           const cols = columns(db, table);

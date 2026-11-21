@@ -1,4 +1,6 @@
-import { capabilityCatalog, globalCapability, isCapability, memberCapabilities } from "./capabilities.ts";
+import { ownerOnlyMemberGrants, requireDelegableChanges, requireMemberSpaceGrant } from "./member-management.ts";
+import { capabilityAccess, capabilityCatalog, globalCapability, isCapability, memberCapabilities, type Override } from "./capabilities.ts";
+import { consumeProbeTicket } from "./cloud-probe-ticket.ts";
 import { grantScopes, guestUserId, readGrant } from "./grants.ts";
 import type { TLSSocket } from "node:tls";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -45,7 +47,8 @@ export function bearerToken(req: FastifyRequest) {
 export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
   const token = bearerToken(req);
   if (token) {
-    const userId = userForToken(app, token);
+    const localProbe = req.method === "POST" && req.routeOptions.url === "/api/cloud-tools/probe" && consumeProbeTicket(app, token);
+    const userId = localProbe ? OWNER : userForToken(app, token);
     if (userId) return { userId, via: "token", restricted: false, sessionHash: null };
     // One an authenticator plugin checked before this request was resolved (authenticators.ts checkBearer).
     const b = knownBearer(token);
@@ -58,6 +61,8 @@ export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
     if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req.raw)) return null;
     return { userId: s.userId, via: "session", restricted: s.restricted, sessionHash: s.idHash };
   }
+  // A public reverse proxy may look identical to a local client, even down to Host.
+  if (req.routeOptions.url?.startsWith("/api/cloud-tools")) return null;
   if (!app.config.token && trustedLocal(req.raw, req.ip ?? "", { refuseProxied: app.config.auth.enabled })) return { userId: OWNER, via: "local", restricted: false, sessionHash: null };
   return null;
 }
@@ -120,20 +125,25 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     }).safeParse(req.body);
     if (!body.success) throw new HttpError(400, "成员能力格式有误");
     const { preset, overrides } = body.data;
-    // Assigning a custom global role can also grant host permissions outside the capability catalog.
-    if (actor !== OWNER && preset !== getUser(app, id).role && !["member", "viewer", "observer"].includes(preset)) ownerOnly(req, "分配管理角色");
-    const seen = new Set<string>();
+    const keyOf = (o: { capability: string; scope_kind: string; scope_id: string }) => JSON.stringify([o.capability, o.scope_kind, o.scope_id]);
+    const next = new Map<string, Override>();
     for (const o of overrides) {
+      if (!isCapability(o.capability) && actor !== OWNER && o.effect === "allow" && ownerOnlyMemberGrants.has(o.capability)) throw new HttpError(403, `只有主人能授予 ${o.capability}`);
       if (!isCapability(o.capability) || (o.scope_kind === "space" ? globalCapability(o.capability) || !findSpace(app, o.scope_id) : !!o.scope_id)) throw new HttpError(400, "能力或作用域有误");
-      const key = JSON.stringify([o.capability, o.scope_kind, o.scope_id]);
-      if (seen.has(key)) throw new HttpError(400, "同一能力和作用域只能设置一次");
-      seen.add(key);
+      const key = keyOf(o);
+      if (next.has(key)) throw new HttpError(400, "同一能力和作用域只能设置一次");
+      next.set(key, { ...o, capability: o.capability });
     }
     tx(app.db, () => {
+      const current = capabilityAccess(app, id, null);
+      const before = new Map(current.overrides.map(o => [keyOf(o), o.effect]));
+      const added = [...next.values()].filter(o => before.get(keyOf(o)) !== o.effect);
+      const removed = current.overrides.filter(o => !next.has(keyOf(o)));
+      requireDelegableChanges(app, actor, current.preset, preset, added, removed);
       setUserRole(app, id, preset);
       const at = now();
-      run(app.db, "update member_capability_overrides set revoked=1,updated_at=? where user_id=? and revoked=0", at, id);
-      for (const o of overrides) run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,?,?,?,?,?,?) on conflict(user_id,capability,scope_kind,scope_id) do update set effect=excluded.effect,created_at=excluded.created_at,created_by=excluded.created_by,updated_at=excluded.updated_at,revoked=0", id, o.capability, o.scope_kind, o.scope_id, o.effect, at, actor, at);
+      for (const o of removed) run(app.db, "update member_capability_overrides set revoked=1,updated_at=? where user_id=? and capability=? and scope_kind=? and scope_id=?", at, id, o.capability, o.scope_kind, o.scope_id);
+      for (const o of added) run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,?,?,?,?,?,?) on conflict(user_id,capability,scope_kind,scope_id) do update set effect=excluded.effect,created_at=excluded.created_at,created_by=excluded.created_by,updated_at=excluded.updated_at,revoked=0", id, o.capability, o.scope_kind, o.scope_id, o.effect, at, actor, at);
       audit(app, actor, "member.capabilities", id, { preset, overrides });
     });
     app.events.emit("member-access", id);
@@ -413,8 +423,7 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   const notOwner = (id: string) => {
     if (id === OWNER) throw new HttpError(400, "本人的账号不用这样设置");
   };
-  server.get("/api/users", async (req) => {
-    manager(req);
+  server.get("/api/users", async () => {
     const members = all<{ space_id: string; user_id: string; role: string }>(app.db, "select space_id, user_id, role from space_members");
     return listUsers(app)
       .filter((u) => u.kind === "person")
@@ -432,7 +441,6 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   // An account made ahead of time by email (docs/v2/remote-clients.md §7.1): whoever later comes with
   // that email (Feishu, an authenticator plugin) gets it, with the spaces and role set here.
   server.post("/api/users", async (req) => {
-    manager(req);
     const b = parse(
       z.object({
         name: z.string().trim().min(1).max(60),
@@ -443,11 +451,12 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       }),
       req.body,
     );
+    if (b.loginAny) ownerOnly(req, "修改登录方式");
     if (b.role !== "member") ownerOnly(req, "分配成员以外的全局角色");
     const holder = emailHolder(app, b.email);
     if (holder) throw new HttpError(409, `邮箱 ${b.email.toLowerCase()} 已经在账号 ${holder.name}（${holder.id}${holder.status === "pending" ? "，等待批准" : holder.disabledAt ? "，已停用" : ""}）上`);
     for (const s of b.spaces) {
-      if (!findSpace(app, s.space)) throw new HttpError(404, `空间不存在：${s.space}`);
+      requireMemberSpaceGrant(app, who(req), s.space, s.role);
       if (findRole(app, s.role)?.scope !== "space") throw new HttpError(400, `不是空间角色：${s.role}`);
     }
     const u = createUser(app, { name: b.name, email: b.email, status: "active" });
@@ -458,18 +467,18 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     return userView(app, u.id);
   });
   server.patch("/api/users/:id", async (req) => {
-    manager(req);
     const { id } = req.params as { id: string };
     const b = parse(z.object({ approve: z.boolean().optional(), role: z.string().optional(), disabled: z.boolean().optional(), loginAny: z.boolean().optional(), name: z.string().min(1).max(60).optional(), email: z.string().trim().email().max(200).nullable().optional().or(z.literal("")) }), req.body);
+    if (b.email !== undefined || b.loginAny !== undefined) ownerOnly(req, "修改登录身份");
+    if (b.role) ownerOnly(req, "分配全局角色");
+    if (b.disabled !== undefined || b.loginAny !== undefined || b.role) notOwner(id);
     if (b.email !== undefined) {
       const holder = b.email ? emailHolder(app, b.email, id) : null;
       if (holder) throw new HttpError(409, `邮箱 ${b.email!.toLowerCase()} 已经在账号 ${holder.name}（${holder.id}）上`);
       updateUser(app, id, { email: b.email || null });
       audit(app, who(req), "user.email", id, { email: b.email || null });
     }
-    if (b.disabled !== undefined || b.loginAny !== undefined || b.role) notOwner(id);
     if (b.role) {
-      ownerOnly(req, "分配全局角色");
       setUserRole(app, id, b.role);
       audit(app, who(req), "user.role", id, { role: b.role });
     }
@@ -486,13 +495,11 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     return userView(app, u.id);
   });
   server.delete("/api/users/:id/sessions", async (req) => {
-    manager(req);
     const { id } = req.params as { id: string };
     audit(app, who(req), "user.sign-out", id);
     return { revoked: revokeUserSessions(app, id) };
   });
   server.delete("/api/users/:id/identities", async (req) => {
-    manager(req);
     const { id } = req.params as { id: string };
     const b = parse(z.object({ channel: z.string(), externalId: z.string() }), req.body);
     if (!identitiesOf(app, id).some((i) => i.channel === b.channel && i.external_id === b.externalId)) throw new HttpError(404, "没有这个绑定");
@@ -512,9 +519,9 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     audit(app, who(req), role ? "space.member" : "space.remove", space, { user: userId, role });
   };
   server.put("/api/users/:id/spaces", async (req) => {
-    manager(req);
     const { id } = req.params as { id: string };
     const b = parse(z.object({ space: z.string(), role: z.string().nullable() }), req.body);
+    requireMemberSpaceGrant(app, who(req), b.space, b.role);
     setMembership(req, b.space, id, b.role);
     return { ok: true };
   });
@@ -569,23 +576,22 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     return auditRows(app, who(req), o);
   });
 
-  server.get("/api/invites", async (req) => {
-    manager(req);
+  server.get("/api/invites", async () => {
     return listInvites(app);
   });
   server.post("/api/invites", async (req) => {
-    manager(req);
     const b = parse(
       z.object({ role: z.string().default("member"), spaces: z.array(z.object({ space: z.string(), role: z.string() })).max(50).default([]), allowAny: z.boolean().default(false), note: z.string().max(200).default(""), days: z.number().int().min(1).max(90).default(7) }),
       req.body,
     );
     if (b.role !== "member") ownerOnly(req, "邀请成员以外的角色");
+    if (b.allowAny) ownerOnly(req, "修改登录方式");
+    for (const s of b.spaces) requireMemberSpaceGrant(app, who(req), s.space, s.role);
     const r = createInvite(app, who(req), b);
     audit(app, who(req), "invite.create", r.id, { role: b.role, spaces: b.spaces });
     return { id: r.id, url: `${baseUrl(app, req)}/#/login?invite=${r.token}` };
   });
   server.delete("/api/invites/:id", async (req) => {
-    manager(req);
     const { id } = req.params as { id: string };
     revokeInvite(app, id);
     audit(app, who(req), "invite.revoke", id);

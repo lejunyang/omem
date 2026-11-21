@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { findSpace, relatedIds } from "../core/spaces.ts";
-import { canWrite, OWNER, scopeFor } from "../core/users.ts";
+import { can } from "../auth/permissions.ts";
+import { OWNER, scopeFor } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { all } from "../core/db.ts";
 import { createRun } from "../agents/runs.ts";
@@ -35,7 +36,7 @@ export function generateWiki(app: App, input: {
     return id;
   };
   const spaceId = checkRead(input.spaceId);
-  if (!canWrite(app, userId, spaceId) || (input.writable && !input.writable.includes(spaceId)) || findSpace(app, spaceId)!.kind === "worktree")
+  if (!can(app, userId, "wiki.write", spaceId) || (input.writable && !input.writable.includes(spaceId)) || findSpace(app, spaceId)!.kind === "worktree")
     throw new HttpError(403, `本次任务不能写入空间 ${spaceId} 的 Wiki`);
   const sources = input.sourceSpaces ?? relatedIds(app, spaceId).filter(id => !allowed || allowed.includes(id));
   const readSpaces = [...new Set([spaceId, ...sources.map(checkRead)])];

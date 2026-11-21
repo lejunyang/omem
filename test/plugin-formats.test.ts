@@ -81,6 +81,7 @@ it("limits hooks to declared permissions and spaces, and honors parser order", a
   expect(() => register({}).sourceParser(def)).toThrow("permissions.sourceParser");
   expect(() => register({}).wikiPageKind({ kind: "demo", label: "测试", describe: "描述", template: "模板" })).toThrow("permissions.wikiPageKind");
   register({ sourceParser: true }).sourceParser(def);
+  register({ wikiPageKind: true }).wikiPageKind({ kind: "demo-kind", label: "示例", describe: "示例说明", template: "## 专用段落" });
   expect(parserList("personal").map(p => p.id)).not.toContain("scoped:lines");
   createUser(app, { id: "reader", name: "读者" });
   const headers = { authorization: "Bearer " + createApiToken(app, "reader") };
@@ -88,6 +89,9 @@ it("limits hooks to declared permissions and spaces, and honors parser order", a
   expect(response.statusCode).toBe(200);
   expect(response.json().map((p: { id: string }) => p.id)).not.toContain("scoped:lines");
   expect((await server.inject({ url: "/api/wiki/kinds?space=personal", headers })).statusCode).toBe(403);
+  expect((await server.inject({ url: "/api/wiki/kinds?templates=1", headers })).body).not.toContain("专用段落");
+  expect((await server.inject("/api/wiki/kinds?space=demo")).body).not.toContain("专用段落");
+  expect((await server.inject("/api/wiki/kinds?space=demo&templates=1")).json()).toContainEqual(expect.objectContaining({ kind: "demo-kind", template: "## 专用段落" }));
   expect(pickParser(parserList("demo"), [], "demo.jsonl", false)?.id).toBe("formats:jsonl");
   expect(pickParser(parserList("demo"), ["scoped:lines"], "demo.jsonl", false)?.id).toBe("scoped:lines");
 });

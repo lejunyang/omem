@@ -72,7 +72,7 @@ export function startAgentWork(app: App, input: {
   agent: string;
   task: string;
   startMessage: string;
-  assistantScope?: AssistantScope;
+  assistantScope: AssistantScope;
   execution?: Execution;
   /** Open a new Feishu topic from this message (the ask), instead of another plain reply. */
   anchorLarkMessageId?: string;
@@ -123,10 +123,10 @@ export function addWorkMessage(app: App, work: AgentWork, m: { role: "user" | "a
   return addMessage(app, work.workConversationId, m.role, m.text, m.runId ?? null, m.meta ?? {});
 }
 
-export type AssistantScope = { spaces: string[] | null; denyTools: string[]; userId?: string; lark: { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean } };
+export type AssistantScope = { spaces: string[] | null; readScope?: string[]; denyTools: string[]; userId: string; lark: { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean } };
 
 export type AgentRoundInput = {
-  assistantScope?: AssistantScope;
+  assistantScope: AssistantScope;
   execution?: Execution;
   agent: string;
   taskId?: string;
@@ -145,8 +145,8 @@ export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): 
     kind: "agent",
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
-    userId: a.assistantScope?.userId,
-    input: { ...(a.taskId ? { boardTaskId: a.taskId, spaces: a.assistantScope?.spaces } : {}), spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
+    userId: a.assistantScope.userId,
+    input: { ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
     parentId: work.askRunId,
   });
   const id = r.id;
@@ -319,10 +319,10 @@ export async function openWorkTopic(app: App, work: AgentWork, anchorMessageId: 
  * makes every later report and coordination reply land in the new conversation. The old work is
  * left in place (its history stays readable) and marked so it is not picked up twice.
  */
-export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string; execution?: Execution; assistantScope?: AssistantScope; queuedBy?: string | null; extraTools?: string[] }): { work: AgentWork; runId: string } {
+export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string; execution?: Execution; assistantScope: AssistantScope; queuedBy?: string | null; extraTools?: string[] }): { work: AgentWork; runId: string } {
   const prev = refreshWork(app, opts.askRunId);
   if (!prev) throw new Error("找不到要继续的工作");
-  const workThread = createWorkThread(app, { askRunId: opts.askRunId, rootId: opts.rootConversationId, userId: runUser(app, opts.askRunId), spaceId: opts.spaceId, title: opts.title });
+  const workThread = createWorkThread(app, { askRunId: opts.askRunId, rootId: opts.rootConversationId, userId: opts.assistantScope.userId, spaceId: opts.spaceId, title: opts.title });
   const work: AgentWork = {
     ...prev,
     askRunId: opts.askRunId,

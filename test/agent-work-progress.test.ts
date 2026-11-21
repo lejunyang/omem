@@ -13,6 +13,8 @@ import { setLarkClient } from "../src/channels/lark-send.ts";
 import { run } from "../src/core/db.ts";
 import { testApp } from "./helpers.ts";
 
+const ownerScope = { spaces: ["personal"], userId: "owner", denyTools: [], lark: { chats: [] } };
+
 const owner = (app: ReturnType<typeof testApp>, runId: string | null, tools: string[] | null = null): ToolContext =>
   ({ app, runId, spaceId: "personal", spaces: null, tools: tools ? new Set(tools) : null, actor: "agent", userId: "owner" });
 
@@ -21,7 +23,7 @@ function work(app: ReturnType<typeof testApp>, channel = "web", key?: string) {
   saveAgentSpec(app, { name: "sheet-x", description: "整理表格", prompt: "只整理", status: "active" }, "user");
   const root = createThread(app, { spaceId: "personal", channel, key, userId: "owner" });
   const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "长任务", input: { conversationId: root.id } });
-  const w = startAgentWork(app, { askRunId: ask.id, rootConversationId: root.id, spaceId: "personal", title: "整理表格", agent: "sheet-x", task: "第一轮", startMessage: "第一轮" });
+  const w = startAgentWork(app, { assistantScope: ownerScope, askRunId: ask.id, rootConversationId: root.id, spaceId: "personal", title: "整理表格", agent: "sheet-x", task: "第一轮", startMessage: "第一轮" });
   return { root, ask, work: w.work, roundId: w.runId };
 }
 
@@ -32,7 +34,7 @@ describe("which coordination turns only move the work on", () => {
     const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "协调", input: { conversationId: w0.workConversationId, coordinate: { workId: ask.id } }, lane: w0.workConversationId });
     // Nothing handed out: the result, posted.
     expect(onlyMovedOn(app, turn.id, ask.id)).toBe(false);
-    queueAgentRound(app, refreshWork(app, ask.id)!, { agent: "sheet-x", task: "第二轮", queuedBy: turn.id });
+    queueAgentRound(app, refreshWork(app, ask.id)!, { assistantScope: ownerScope, agent: "sheet-x", task: "第二轮", queuedBy: turn.id });
     expect(onlyMovedOn(app, turn.id, ask.id)).toBe(true);
     // A report answered in the turn is not the owner speaking.
     const report = addMessage(app, w0.workConversationId, "assistant", "报告", null, { agentReport: { agent: "sheet-x", round: 1 } });
@@ -54,7 +56,7 @@ describe("which coordination turns only move the work on", () => {
     const app = testApp();
     const { work: w0, ask } = work(app);
     const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "协调", input: { conversationId: w0.workConversationId, coordinate: { workId: ask.id } }, lane: w0.workConversationId });
-    queueAgentRound(app, refreshWork(app, ask.id)!, { agent: "sheet-x", task: "第二轮", queuedBy: turn.id });
+    queueAgentRound(app, refreshWork(app, ask.id)!, { assistantScope: ownerScope, agent: "sheet-x", task: "第二轮", queuedBy: turn.id });
     const w = refreshWork(app, ask.id)!;
     run(app.db, "update runs set output = json_set(output, '$.agentWork.awaitingUser', json('true')) where id = ?", w.askRunId);
     expect(onlyMovedOn(app, turn.id, ask.id)).toBe(false);

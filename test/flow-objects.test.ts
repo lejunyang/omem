@@ -1,3 +1,4 @@
+import { createSpace } from "../src/core/spaces.ts";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -101,15 +102,17 @@ describe("插件对象注册与挂接", () => {
     expect((await callTool(ctx(), "attach_object", { item: i.id, url: "https://unknown.test/1" })).text).toContain("没有哪种对象认识");
   });
   it("工具拒绝别人的事项、只读空间和运行可写范围之外的事项", async () => {
-    createUser(app, { id: "member", name: "成员甲" }); addMember(app, "personal", "member", "reader");
-    const own = item(), other = item("member");
+    createSpace(app, { id: "shared", name: "项目 A" });
+    createUser(app, { id: "member", name: "成员甲" }); addMember(app, "shared", "member", "reader");
+    const own = item(), other = item("member", "shared");
     expect((await callTool(ctx(), "attach_object", { item: other.id, url: url() })).isError).toBe(true);
     expect((await callTool(ctx("member"), "attach_object", { item: other.id, url: url() })).isError).toBe(true);
     expect((await callTool(ctx("owner", ["personal"], []), "attach_object", { item: own.id, url: url() })).isError).toBe(true);
     expect(reads()).toBe(0);
   });
   it("本人的 HTTP 接口支持挂接、读取、去重和解除，并核对事项与空间权限", async () => {
-    const i = item(), s = await startServer(app, { port: 0, quiet: true }); servers.push(s);
+    createSpace(app, { id: "shared", name: "项目 A" });
+    const i = item("owner", "shared"), s = await startServer(app, { port: 0, quiet: true }); servers.push(s);
     const base = `/api/items/${i.id}/objects`;
     const post = await s.inject({ method: "POST", url: base, payload: { url: url() } });
     expect(post.statusCode).toBe(200);
@@ -117,12 +120,12 @@ describe("插件对象注册与挂接", () => {
     expect((await s.inject(base)).json()).toEqual([obj]);
     expect((await s.inject({ method: "POST", url: base, payload: { url: url() } })).json().id).toBe(obj.id);
     expect((await s.inject({ method: "POST", url: base, payload: { url: "https://unknown.test/1" } })).statusCode).toBe(400);
-    createUser(app, { id: "member", name: "成员甲" }); addMember(app, "personal", "member", "reader");
+    createUser(app, { id: "member", name: "成员甲" }); addMember(app, "shared", "member", "reader");
     const headers = { authorization: `Bearer ${createApiToken(app, "member", "test")}` };
     expect((await s.inject({ url: base, headers })).statusCode).toBe(404);
     expect((await s.inject({ method: "POST", url: base, headers, payload: { url: url() } })).statusCode).toBe(403);
     expect((await s.inject({ method: "DELETE", url: `${base}/${obj.id}`, headers })).statusCode).toBe(403);
-    const readonly = item("member");
+    const readonly = item("member", "shared");
     expect((await s.inject({ method: "POST", url: `/api/items/${readonly.id}/objects`, headers, payload: { url: url() } })).statusCode).toBe(403);
     const privateItem = item("owner", "personal-member");
     const reader = createUser(app, { id: "outsider", name: "成员乙" });

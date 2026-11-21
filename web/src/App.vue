@@ -36,6 +36,8 @@ const loadError = ref("");
 // space (`own`: the person's own items and runs count), `perm` an old global permission, `member` anyone.
 // An entry with none of these is the owner's.
 type NavEntry = { to: string; label: string; icon: string; exact?: boolean; member?: boolean; cap?: string; space?: string; own?: boolean; perm?: string };
+const reviewEntry: NavEntry = { to: "/agents?tab=review", label: "评审设置", icon: "layers", cap: "settings.assistant.view" };
+const reviewTab = computed(() => route.path === "/agents" && route.query.tab === "review");
 const nav = ref<NavEntry[]>([
   // The work lines (views/Work.vue): the start page. Others with 看工作线 read the owner's lines there.
   { to: "/", label: "工作", icon: "home", exact: true, space: "work.view" },
@@ -81,7 +83,8 @@ async function addRemotePage() {
 watch(() => state.pluginsChanged, addPluginPages);
 // The owner's flows live on the work page (按阶段, and 流程定义 from there): 工作 stays lit for them.
 const isActive = (to: string, exact?: boolean) =>
-  to === "/" ? route.path === "/" || route.path.startsWith("/work/") || (owner.value && route.path === "/flows")
+  to === reviewEntry.to ? reviewTab.value
+  : to === "/" ? route.path === "/" || route.path.startsWith("/work/") || (owner.value && route.path === "/flows")
   : to === "/board" ? route.path === "/board" || route.path === "/flows"
   : exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/wiki" && route.path.startsWith("/graph"));
 
@@ -99,7 +102,9 @@ const owner = computed(() => !state.me || state.me.role === "owner");
 const allowed = (n: NavEntry) =>
   owner.value || !!n.member || (!!n.cap && hasCap(n.cap)) || (!!n.space && capAnywhere(n.space, { own: n.own })) || (!!n.perm && hasPerm(n.perm));
 // The owner finds the flow board on the work page (按阶段); everyone else in the nav.
-const shownNav = computed(() => nav.value.filter(allowed).filter((n) => !(n.to === "/board" && owner.value)));
+const shownNav = computed(() => nav.value
+  .map(n => n.to === "/agents" && !hasPerm("agents.manage") ? reviewEntry : n)
+  .filter(allowed).filter(n => !(n.to === "/board" && owner.value)));
 // Pages someone other than the owner may open: the nav they see, a line's page under 工作, the graph (Wiki), their account.
 const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account", ...(hasPerm("users.manage") ? ["/settings"] : []),
   // 远程 joins the nav only after asking whether this machine has it: a link opened straight at it is judged before that.
@@ -110,7 +115,8 @@ const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.va
 // still reads "/": judging then would send a member's deep link to 问答.
 const routed = ref(false);
 void router.isReady().then(() => (routed.value = true));
-const pathOpen = computed(() => owner.value || !state.me || !routed.value || bare.value || open.value.some((p) => route.path === p || route.path.startsWith(p + "/")));
+const pathOpen = computed(() => owner.value || !state.me || !routed.value || bare.value || (reviewTab.value
+  ? allowed(reviewEntry) : open.value.some((p) => route.path === p || route.path.startsWith(p + "/"))));
 watch(pathOpen, (ok) => {
   if (!ok) void router.replace("/ask");
 });
@@ -174,7 +180,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
       <button class="search-btn" @click="state.palette = true"><Icon name="search" :size="16" /><span>搜索或提问</span><kbd>Ctrl K</kbd></button>
 
       <nav>
-        <router-link v-for="n in shownNav" :key="n.to" :to="n.to" class="nav" :class="{ on: isActive(n.to, n.exact) }" @mouseenter="preloadRoute(n.to)" @focus="preloadRoute(n.to)"><Icon :name="n.icon" :size="17" />{{ n.label }}</router-link>
+        <router-link v-for="n in shownNav" :key="n.to" :to="n.to" class="nav" :class="{ on: isActive(n.to, n.exact) }" @mouseenter="preloadRoute(router.resolve(n.to).path)" @focus="preloadRoute(router.resolve(n.to).path)"><Icon :name="n.icon" :size="17" />{{ n.label }}</router-link>
       </nav>
 
       <div class="spacer" />

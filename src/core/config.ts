@@ -8,6 +8,15 @@ import { systemZone, validZone } from "./util.ts";
 import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
 import { isIP } from "node:net";
 
+export const cloudToolNames = ["search", "read_source", "read_page", "read_item"] as const;
+export const cloudToolsSchema = z.object({
+  enabled: z.boolean().default(false),
+  tools: z.array(z.enum(cloudToolNames)).max(cloudToolNames.length).default(["search", "read_source"]),
+  ttlMinutes: z.number().int().min(1).max(30).default(15),
+  maxCalls: z.number().int().min(1).max(100).default(32),
+  backends: z.array(z.string().min(1)).max(100).default([]),
+  credentialIn: z.enum(["channel", "message"]).default("channel"),
+});
 const networkUrl = z.string().url().refine((s) => {
   try { const u = new URL(s); return ["http:", "https:"].includes(u.protocol) && !u.username && !u.password; } catch { return false; }
 }, "地址须为 HTTP(S)，不能带账号和密码");
@@ -424,6 +433,7 @@ export const configSchema = z.object({
   agents: z
     .object({
       default: z.string().optional(),
+      cloudTools: cloudToolsSchema.default(() => cloudToolsSchema.parse({})),
       tiers: z.object({
         strong: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
         standard: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
@@ -532,7 +542,7 @@ export const configSchema = z.object({
        */
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
