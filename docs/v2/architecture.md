@@ -78,10 +78,52 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 一条路线，三个召回源，RRF 融合：
 
 1. SQLite FTS5 全文（unicode61；入库和查询时由 `src/search/tokenize.ts` 生成中文双字词和拆开的标识符，如 `upsertSource` → `upsert source`）。
-2. 向量（可选）：本地 bge 中文模型（bge-small-zh / bge-base-zh / bge-m3，transformers.js，经 osdk 下载）或 OpenAI 兼容接口；SQLite 存原始向量，内存里按空间存 int8 量化矩阵做暴力余弦（17 万片段常驻约 0.4GB，见 evaluation.md）。
+2. 向量（可选）：本地 bge 中文模型（bge-small-zh / bge-base-zh / bge-m3，transformers.js，经 osdk 下载）或内置云端接口、插件向量提供者；SQLite 存原始向量，内存里按空间存 int8 量化矩阵做暴力余弦（17 万片段常驻约 0.4GB，见 evaluation.md）。
 3. 符号名精确匹配（代码）。
 
 融合后可选重排（`src/search/rerank.ts`，默认关）：本地交叉编码器 bge-reranker-v2-m3（ONNX q8，transformers.js，经 osdk 别名 `rerank-m3` 下载）把问题和前 `rerank.top`（默认 20）条逐条打分重新排序，片段读整块（标题路径 + 正文，截到 `maxTokens`）。调用一个接一个排队，超过 `timeoutMs`（含排队）就在下一批前停下、保持融合顺序；模型按需加载，改模型、线程或长度后下一次调用重新加载，不用重启。T2Retrieval 子集 nDCG@10 86.61 → 91.58（evaluation.md）。开着重排时，对话前带上记忆改为：余弦 ≥ 0.4 的最近 20 条交给重排，打分过 `rerank.passiveThreshold`（默认 0.5）的才带上；这一轮最多等重排 3 秒，没结果就按余弦门槛。
+
+### 向量和重排用云端接口
+
+不安装本地模型也能使用向量检索和重排。两者可独立选择本地模型、内置云端接口或插件，向量还可以关闭。只有本人能修改这组设置和调用检测接口。
+
+先在 AI 服务商中保存密钥，检索配置只写它的 id。密钥存在数据目录的 `secrets/ai-keys.json`，不进配置、快照、接口返回和日志。也可以使用 `apiKeyEnv` 指定的环境变量；选了 `keyRef` 时使用该服务商的密钥，不再读环境变量。地址优先取显式 `url`，其次取服务商的 `baseUrl`，最后取 `https://api.openai.com/v1`。地址填接口前缀，不带 `/embeddings` 或 `/rerank`。
+
+```json
+{
+  "embeddings": {
+    "provider": "api", "keyRef": "remote", "model": "embedding-model",
+    "dimensions": 1024, "batch": 32, "timeoutMs": 5000
+  },
+  "rerank": {
+    "enabled": true, "provider": "api", "top": 20, "maxTokens": 512,
+    "api": { "keyRef": "remote", "model": "rerank-model", "timeoutMs": 5000 },
+    "pluginPassiveThreshold": 0.3
+  }
+}
+```
+
+示例中的维度和门槛需按所选模型调整。`dimensions` 可省略，支持变长向量的模型才填写。向量一次请求的 `batch` 为 1–256，默认 32；`timeoutMs` 默认 5000 ms（1–120000 ms）。旧 `provider: "openai"` 读取时归一成 `api`，原有 `url` 和 `apiKeyEnv` 继续有效。
+
+云端向量会收到原件分块、记忆正文和查询；云端重排会收到查询和候选正文。确认外发内容可接受后再启用。向量请求为 `POST <url>/embeddings`，包含 `model`、`input: string[]` 和可选 `dimensions`。宿主按批核对条数、索引、维度和有限数值，整批成功后归一化、落库；不保存半批结果。429、5xx 和超时最多试三次，退避也包含在总时限内。其他 4xx 直接记错误。查询失败退回没有向量的检索；写入失败保留积压，暂停 30 秒后再试，不切换模型。
+
+本地、云端和插件向量共享同一组索引。改变模型、维度或服务地址会清空旧的分块和记忆向量，并重新排队。关闭向量保留索引。通过 `PUT /api/settings` 保存时先返回 HTTP 409 和 `{ confirmation: "embedding-model", clear, rebuild, pending, token, to }`，配置仍未生效；确认后用相同内容和 `?confirmEmbedding=<token>` 再保存。这个确认也用于本地模型。命令行换本地模型使用 `--confirm-rebuild <token>`，setup 向导会列出数量再询问。
+
+重排请求为 `POST <url>/rerank`，内容是 `{ model, query, documents: string[], top_n }`。接受 `results` 或 `data` 数组，每项的分数接受 `relevance_score` 或 `score`，`index` 对应输入顺序。缺项、重复索引和无效分数使整次作废。候选最多为 `rerank.top`，每条按 `maxTokens × 2` 个 UTF-16 代码单元截断（约按两个字符一个 token 估算）。失败或超时保持融合后的顺序。
+
+被动记忆的 `passiveThreshold` 只用于本地重排。兼容键 `pluginPassiveThreshold` 现在表示所有非本地重排的门槛，可填任意有限分数；空着按原来的余弦门槛筛选，再按外部分数排序。插件回退到本地时使用本地门槛。更换云端或插件重排模型后，要按其分数重新校准门槛。
+
+检测只发固定示例，不读库里的内容，也不保存配置或向量：
+
+| 接口 | 请求体 | 返回 |
+| --- | --- | --- |
+| `POST /api/search/embeddings/test` | 未保存的 `embeddings` 字段；省略的字段沿用当前配置 | `{ ok, dimensions, elapsedMs, error }` |
+| `POST /api/search/rerank/test` | 未保存的 `rerank` 字段，云端字段放在 `api` 下 | `{ ok, results: [{ index, score }], elapsedMs, error }`；成功时按分数降序 |
+| `GET /api/search/providers` | 无 | `embeddings`、`rerank` 当前状态，以及 `embedders`、`retrievers`、`rerankers` 可选列表和 `config` |
+
+检测失败返回 `ok: false` 和最多 500 字符的脱敏错误。向量状态包含来源、模型、维度、最近耗时和错误、`pending` 积压、`excludedSpaces`、`excludedReason`；`state` 为 `off / idle / ready / failed / paused / unavailable / model-changed`。重排状态包含当前来源、插件名称、`lastProvider` 实际评分来源、`lastMs` 和 `lastError`。插件自己算向量的注册方法和升级处理见 [plugins.md](plugins.md#自己算向量)。
+
+网页待接入：设置 → 检索与记忆 的向量卡需要“关 / 本地 / 云端接口 / 插件”、密钥来源（AI 服务商或环境变量）、地址、模型、维度、批量、超时和“检测”；保存换模型时显示清空与重算数量，确认后重发保存请求；状态显示积压、错误和无向量的空间。重排卡需要“本地 / 云端接口 / 插件”、密钥来源、地址、模型、超时和“检测”，保留条数、长度及门槛设置，提醒更换非本地模型后重新定门槛。
 
 结果携带父结构（章节标题路径/所在函数），并可按 `read_source(id, lines)` 补读。
 

@@ -445,7 +445,7 @@ Content-Type: application/json
 
 ## 接进检索
 
-在 `plugin.yaml` 中声明 `permissions.retriever: true` 或 `permissions.reranker: true`。两种提供者都支持进程内和隔离运行。注册方法及请求类型见 `@omem-ai/plugin-sdk/server`。下面以插件 `demo` 为例。
+在 `plugin.yaml` 中声明 `permissions.retriever: true` 或 `permissions.reranker: true`。召回、重排和向量提供者都支持进程内和隔离运行。注册方法及请求类型见 `@omem-ai/plugin-sdk/server`。下面以插件 `demo` 为例。
 
 ```ts
 api.retriever({
@@ -492,11 +492,37 @@ api.reranker({
 
 宿主按 id 回读内容，核对空间、阅读权限、原件范围与有效状态，再把该路的名次加入倒数排名融合（RRF），命中的 `via` 带 `plugin:demo:lookup`。工作区覆盖、原件可见性和副本合并沿用主检索的约束。显式 `recall(query)` 使用其中的记忆路线，再按目录和档案裁剪。被动记忆仍由宿主向量检索召回。
 
-**重排。** 默认关闭，开启后默认使用 `provider: "local"`。选择插件后，插件收到主搜索前 `top` 条可读候选，或被动记忆原有的候选池。问题最多 1000 字符，每条正文最多 4000 字符。整批均在插件许可范围时才发送。返回值为与候选一一对应的有限数值数组，分数越大越靠前。被动记忆按实际出分的模型选门槛。本地模型（含回退）用 `passiveThreshold`，范围 0–1，默认 0.5。切换插件后按其分数校准 `pluginPassiveThreshold`，可填任意有限数，包括 0。省略时插件沿用 `passiveThreshold`。例如插件门槛为 -2 时，-1 分保留，-5 分过滤。
+**重排。** 默认关闭，开启后默认使用 `provider: "local"`。选择插件后，插件收到主搜索前 `top` 条可读候选，或被动记忆原有的候选池。问题最多 1000 字符，每条正文最多 4000 字符。整批均在插件许可范围时才发送。返回值为与候选一一对应的有限数值数组，分数越大越靠前。被动记忆按实际出分的模型选门槛。本地模型（含回退）用 `passiveThreshold`，范围 0–1，默认 0.5。切换插件后按其分数校准 `pluginPassiveThreshold`，可填任意有限数，包括 0。省略时按余弦门槛筛选，插件分数只决定顺序。例如插件门槛为 -2 时，-1 分保留，-5 分过滤。
 
 插件最多使用本次重排预算的一半，余下时间留给本地模型。超时、错误、分数个数不符、插件停用或候选超出授权时使用本地重排。本地模型也不可用时，主检索保留融合顺序，被动记忆用余弦门槛。召回提供者失败时其余路线继续。两类提供者的超时均会中止 `ctx.signal`，连续失败只提醒一次。
 
-**状态。** `GET /api/search/providers` 与读取设置使用相同权限。返回 `{ retrievers, rerankers, config: { search, rerank } }`。两组提供者的元素均为 `{ id, label, plugin, spaces, lastMs, lastError }`。这里的 `spaces` 是插件清单范围，空数组表示清单未限制空间。首次调用前两个状态字段均为 `null`，成功后清空错误，停用后移出列表。`GET /api/settings` 的顶层 `rerank.provider` 表示当前可选用的重排器（关闭为 `null`），`rerank.lastProvider` 表示最近一次实际给出分数的重排器，最近一次未得到分数时为 `null`。
+**状态。** `GET /api/search/providers` 与读取设置使用相同权限。返回 `{ embeddings, rerank, embedders, retrievers, rerankers, config: { search, rerank, embeddings } }`。两组提供者的元素均为 `{ id, label, plugin, spaces, lastMs, lastError }`。这里的 `spaces` 是插件清单范围，空数组表示清单未限制空间。首次调用前两个状态字段均为 `null`，成功后清空错误，停用后移出列表。`GET /api/settings` 的顶层 `rerank.provider` 表示当前可选用的重排器（关闭为 `null`），`rerank.lastProvider` 表示最近一次实际给出分数的重排器，最近一次未得到分数时为 `null`。
+
+### 自己算向量
+
+清单中声明 `permissions.embedder: true`（沿用 `permissions.retriever / reranker` 的命名方式）。确认权限时会说明：“要算向量的正文（原件分块、记忆、查询）会交给这个插件，插件可能把它发到外部服务。” 新增这项权限需重新确认，链接开发目录也一样。默认不参与，只有本人能设置 `embeddings.provider: "plugin:demo:small"` 选用。
+
+```ts
+api.embedder({
+  id: "small", name: "示例向量",
+  model: "example-embedding-v1", dimensions: 1024,
+  maxBatch: 32, maxChars: 2000,
+  async embed(texts, kind, signal) {
+    // kind 是 query 或 passage；返回值与输入按顺序一一对应。
+    return encodeTexts(texts, kind, signal);
+  },
+});
+```
+
+类型为 `EmbedderProvider`，从 `@omem-ai/plugin-sdk/server` 导入。返回 `number[][]` 或 `Float32Array[]`；`model` 和 `dimensions` 必填，维度为 1–65536，`maxBatch`（1–256）和 `maxChars`（正整数）可省略。插件应传递并响应 `AbortSignal`。暂时失败可抛带 `status: 429` 或 5xx 的 Error，让宿主在时限内退避重试。
+
+宿主统一分批、截断、重试、归一化和校验。条数、维度或数值错误使整批作废，写入积压和查询降级同内置云端接口。隔离进程只接收这些参数，Float32Array 经 IPC 按数值传回，插件拿不到库或宿主的密钥。
+
+清单声明了 `space / spaces` 时，只把这些空间的分块和记忆交给插件；未声明空间表示清单不限制。主检索、被动记忆和任务查询仍受各自原有权限限制，范围之外的空间不使用向量，状态列出原因。没有按空间切换模型的路径。
+
+插件升级改变 `model` 或 `dimensions` 时，宿主暂停使用并发一次通知，保留旧索引。本人可以确认重建、改回原版本或改选提供者。确认保存与换本地、云端模型走同一接口，先列出清空和重算数量；宿主不会在升级后直接清库。
+
+`GET /api/search/providers` 的 `embedders` 列出 `{ id, name, model, dimensions, maxBatch?, maxChars?, plugin, spaces }`，其中 `id` 已带 `plugin:` 前缀。内置接口的字段、检测和状态见 [architecture.md](architecture.md#向量和重排用云端接口)。
 
 ## 渠道
 
