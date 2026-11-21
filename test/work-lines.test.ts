@@ -315,7 +315,7 @@ describe("工作线：接口", () => {
     expect(w.loose.map((i: { id: string }) => i.id)).toEqual([loose.id]);
     expect(Object.keys(w.waiting).sort()).toEqual(["asks", "candidates", "changes", "drafts", "gates", "total"]);
     const d = (await server.inject(`/api/work/${req.id}`)).json();
-    expect(Object.keys(d).sort()).toEqual(["ancestors", "chats", "children", "ended", "flow", "item", "listen", "materials", "next", "now", "openUnder", "phase", "phaseSince", "summary", "timeline", "watchUntil", "yielded"]);
+    expect(Object.keys(d).sort()).toEqual(["ancestors", "can", "chats", "children", "ended", "flow", "item", "listen", "materials", "next", "now", "openUnder", "phase", "phaseSince", "summary", "timeline", "watchUntil", "yielded"]);
     expect(d.ancestors).toEqual([{ id: line.id, title: line.title }]);
     expect(d.flow.current.id).toBe("test");
     const top = (await server.inject(`/api/work/${line.id}`)).json();
