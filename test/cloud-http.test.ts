@@ -115,13 +115,11 @@ function legacyCloudLibrary(hasCloudUsage: boolean, hasChangeLedger: boolean) {
   const home = mkdtempSync(join(tmpdir(), "omem-cloud-upgrade-"));
   const db = new DatabaseSync(join(home, "omem.db"));
   // Before the merge the cloud usage table occupied the change ledger's version.
-  const usage = migrations.findIndex(sql => sql.includes("create table if not exists cloud_tool_usage"));
-  expect(usage).toBeGreaterThan(1);
   db.exec("begin");
-  for (const sql of migrations.slice(0, usage - 1)) db.exec(sql);
-  if (hasChangeLedger) db.exec(migrations[usage - 1]);
-  if (hasCloudUsage) db.exec(migrations[usage]);
-  db.exec(`pragma user_version=${hasCloudUsage && hasChangeLedger ? usage + 1 : usage}`);
+  for (const sql of migrations.slice(0, 159)) db.exec(sql);
+  if (hasChangeLedger) db.exec(migrations[159]);
+  if (hasCloudUsage) db.exec(readFileSync(new URL("./fixtures/cloud-tools/cloud-161.sql", import.meta.url), "utf8"));
+  db.exec(`pragma user_version=${159 + Number(hasChangeLedger) + Number(hasCloudUsage)}`);
   db.exec("commit");
   return new App(home, loadConfig(home), db);
 }
@@ -150,10 +148,53 @@ it.each([
   } finally { app.db.close(); }
 });
 
-it("preserves a manual owner token when two processes open the same pre-cloud library", () => {
-  const old = legacyCloudLibrary(false, true);
+// Frozen branch DDL after the common v160 ledger, independent of the current migration order.
+function libraryAt162(branch: "main" | "cloud") {
+  const old = legacyCloudLibrary(branch === "cloud", true);
+  const retired = createApiToken(old, "owner", "cloud-tools probe");
+  if (branch === "main") {
+    old.db.exec(readFileSync(new URL("./fixtures/cloud-tools/main-161-162.sql", import.meta.url), "utf8"));
+    old.db.exec("insert into outlet_deliveries(outlet,object_id,user_id,op,dedup,urgency,due) values('local','notice','owner','send','notice','normal',0)");
+  } else {
+    old.db.exec("delete from api_tokens where user_id='owner' and label='cloud-tools probe' and client=''");
+    const r = createRun(old, { kind: "ask", title: "读资料" });
+    run(old.db, "insert into cloud_tool_usage(run_id,calls,at) values(?,3,?)", r.id, r.createdAt);
+  }
+  old.db.exec("pragma user_version=162");
   const token = createApiToken(old, "owner", "cloud-tools probe");
   old.db.close();
+  return { home: old.home, retired, token };
+}
+
+it.each(["main", "cloud"] as const)("preserves records and serves cloud usage after upgrading the %s v162 schema", async branch => {
+  const { home, retired, token } = libraryAt162(branch);
+  const app = App.open(home);
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true, secure: false });
+  try {
+    expect(userForToken(app, retired)).toBe(branch === "cloud" ? null : "owner");
+    const indexes = app.db.prepare("select name from sqlite_schema where type='index'").all().map(row => row.name);
+    expect(indexes).toEqual(expect.arrayContaining(["notifications_pushed_at", "outlet_due", "outlet_history", "outlet_dedup", "outlet_ask_ref",
+      "outlet_object", "egress_recent", "asks_egress_pending", "cloud_tool_usage_at"]));
+    expect(all(app.db, "select object_id from outlet_deliveries")).toEqual(branch === "main" ? [{ object_id: "notice" }] : []);
+    const usage = await server.inject({ url: "/api/cloud-tools", headers: { authorization: "Bearer " + token } });
+    expect(usage.statusCode).toBe(200);
+    expect(usage.json().recent).toEqual(branch === "cloud" ? [expect.objectContaining({ calls: 3 })] : []);
+  } finally {
+    await server.close();
+    app.db.close();
+  }
+});
+
+it.each(["pre-cloud", "main", "cloud"] as const)("preserves a manual owner token when two processes upgrade the %s schema", branch => {
+  let fixture;
+  if (branch === "pre-cloud") {
+    const old = legacyCloudLibrary(false, true);
+    fixture = { home: old.home, token: createApiToken(old, "owner", "cloud-tools probe") };
+    old.db.close();
+  } else {
+    fixture = libraryAt162(branch);
+  }
+  const { home, token } = fixture;
 
   // Let the other opener commit just before this process takes its first migration lock.
   const exec = DatabaseSync.prototype.exec;
@@ -168,13 +209,13 @@ it("preserves a manual owner token when two processes open the same pre-cloud li
         const app = App.open(process.argv[1]);
         try { console.log(userForToken(app, readFileSync(0, "utf8"))); }
         finally { app.db.close(); }
-      `, old.home], { input: token, encoding: "utf8", timeout: 10000 });
+      `, home], { input: token, encoding: "utf8", timeout: 10000 });
       childOwner = result.trim();
     }
     return exec.call(this, sql);
   });
   try {
-    const app = App.open(old.home);
+    const app = App.open(home);
     try {
       expect(childOwner).toBe("owner");
       expect(userForToken(app, token)).toBe("owner");

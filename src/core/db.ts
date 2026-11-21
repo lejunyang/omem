@@ -99,6 +99,37 @@ const CHANGE_LEDGER_MIGRATION = `alter table item_changes add column source_key 
 // Older local probe commands persisted an owner API token until the CLI exited normally.
 const REVOKE_LEGACY_PROBE_TOKENS = `delete from api_tokens where user_id='owner' and label='cloud-tools probe' and client='';`;
 
+const OUTLET_DELIVERIES_MIGRATION = `create table if not exists outlet_deliveries (
+    seq integer primary key, outlet text not null, object_id text not null, user_id text not null,
+    op text not null, dedup text not null, urgency text not null, state text not null default 'pending', due integer not null,
+    attempts integer not null default 0, updated text, error text, ref text, identities text,
+    unique(outlet, object_id, op)
+  );
+  create index if not exists outlet_due on outlet_deliveries(state,due);
+  create index if not exists outlet_history on outlet_deliveries(user_id,outlet,updated desc);
+  create index if not exists outlet_dedup on outlet_deliveries(outlet,dedup,seq);
+  create unique index if not exists outlet_ask_ref on outlet_deliveries(outlet,ref,user_id) where op='ask';
+  create index if not exists outlet_object on outlet_deliveries(object_id,op);`;
+
+const NOTIFICATIONS_PUSHED_INDEX = `create index if not exists notifications_pushed_at on notifications(user_id,json_extract(context,'$.pushed.channel'),json_extract(context,'$.pushed.at') desc)
+    where json_extract(context,'$.pushed.channel') is not null;`;
+
+const EGRESS_RUNS_MIGRATION = `create table if not exists egress_runs (
+     run_id text primary key, seq integer not null, updated_at text not null,
+     foreign key(run_id,seq) references run_events(run_id,seq) on delete cascade
+   );
+   create index if not exists egress_recent on egress_runs(updated_at desc);
+   create index if not exists asks_egress_pending on asks(created_at desc) where status='pending' and json_type(context,'$.egressFallback') is not null;`;
+
+const CLOUD_USAGE_MIGRATION = `create table if not exists cloud_tool_usage (
+     run_id text primary key references runs(id) on delete cascade, calls integer not null, errors integer not null default 0,
+     last_error text, at text not null
+   );
+   create index if not exists cloud_tool_usage_at on cloud_tool_usage(at);`;
+
+// Versions 160–165 were published with different schemas on the two branches.
+const RECONCILE_CLOUD_SCHEMA = [OUTLET_DELIVERIES_MIGRATION, NOTIFICATIONS_PUSHED_INDEX, EGRESS_RUNS_MIGRATION, CLOUD_USAGE_MIGRATION].join("\n");
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2365,31 +2396,13 @@ export const migrations: readonly string[] = [
    );
    create unique index remote_grants_member on remote_grants(session_id,user_id) where revoked_at is null;`,
   CHANGE_LEDGER_MIGRATION,
-  `create table if not exists cloud_tool_usage (
-     run_id text primary key references runs(id) on delete cascade, calls integer not null, errors integer not null default 0,
-     last_error text, at text not null
-   );
-   create index if not exists cloud_tool_usage_at on cloud_tool_usage(at);`,
-  REVOKE_LEGACY_PROBE_TOKENS,
-  `create table if not exists outlet_deliveries (
-    seq integer primary key, outlet text not null, object_id text not null, user_id text not null,
-    op text not null, dedup text not null, urgency text not null, state text not null default 'pending', due integer not null,
-    attempts integer not null default 0, updated text, error text, ref text, identities text,
-    unique(outlet, object_id, op)
-  );
-  create index if not exists outlet_due on outlet_deliveries(state,due);
-  create index if not exists outlet_history on outlet_deliveries(user_id,outlet,updated desc);
-  create index if not exists outlet_dedup on outlet_deliveries(outlet,dedup,seq);
-  create unique index if not exists outlet_ask_ref on outlet_deliveries(outlet,ref,user_id) where op='ask';
-  create index if not exists outlet_object on outlet_deliveries(object_id,op);`,
-  `create index if not exists notifications_pushed_at on notifications(user_id,json_extract(context,'$.pushed.channel'),json_extract(context,'$.pushed.at') desc)
-    where json_extract(context,'$.pushed.channel') is not null;`,
-  `create table if not exists egress_runs (
-     run_id text primary key, seq integer not null, updated_at text not null,
-     foreign key(run_id,seq) references run_events(run_id,seq) on delete cascade
-   );
-   create index if not exists egress_recent on egress_runs(updated_at desc);
-   create index if not exists asks_egress_pending on asks(created_at desc) where status='pending' and json_type(context,'$.egressFallback') is not null;`,
+  OUTLET_DELIVERIES_MIGRATION,
+  NOTIFICATIONS_PUSHED_INDEX,
+  EGRESS_RUNS_MIGRATION,
+  // Keep the two slots already published by the earlier merge.
+  NOTIFICATIONS_PUSHED_INDEX,
+  EGRESS_RUNS_MIGRATION,
+  RECONCILE_CLOUD_SCHEMA,
 ];
 
 export type Db = DatabaseSync;
@@ -2410,24 +2423,26 @@ export function openDb(path: string): Db {
         i--;
       }
       // Early cloud-tools and egress databases used the change ledger version for their own tables.
-      if (i === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
+      const ledgerVersion = migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1;
+      if (i === ledgerVersion &&
           !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
         i--;
       }
-      // Main assigned the next three slots to outlet deliveries, notifications and egress.
-      // Install cloud tools first, then replay main's idempotent migrations.
-      const cloudIndex = migrations.indexOf(REVOKE_LEGACY_PROBE_TOKENS) - 1;
-      // A library installing cloud tools for the first time can only have manual tokens.
-      // Skip the following revocation in the same commit as table creation, even on restart.
-      const firstCloudInstall = i >= cloudIndex && i <= cloudIndex + 3 &&
-        !db.prepare("select 1 from sqlite_schema where type='table' and name='cloud_tool_usage'").get();
-      if (firstCloudInstall) i = cloudIndex;
+      // Both branches have the ledger by v160. Reconcile the overlapping versions in
+      // one transaction, before advancing the version, including interrupted upgrades.
+      const reconcileIndex = migrations.indexOf(RECONCILE_CLOUD_SCHEMA);
+      if (i >= ledgerVersion && i <= reconcileIndex) {
+        // Old cloud v162 already removed probe tokens. A matching token created
+        // afterwards is manual, as are all tokens on a first cloud installation.
+        if (i < ledgerVersion + 2 && db.prepare("select 1 from sqlite_schema where type='table' and name='cloud_tool_usage'").get())
+          db.exec(REVOKE_LEGACY_PROBE_TOKENS);
+        i = reconcileIndex;
+      }
       // A capabilities database may already have migrated its observer role at the
       // version main used for the metric series index. Supply that missing index once.
       const fromCapabilitiesBranch = migrations[i] === MEMBER_CAPABILITIES_MIGRATION
         && db.prepare("select 1 from sqlite_schema where type='table' and name='member_capability_overrides'").get();
       db.exec(fromCapabilitiesBranch ? METRIC_SERIES_INDEX : migrations[i]);
-      if (firstCloudInstall) i++;
       db.exec(`pragma user_version = ${i + 1}`);
     });
   }
