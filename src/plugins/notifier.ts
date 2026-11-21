@@ -28,10 +28,13 @@ const deliverySignal = (lifetime: AbortSignal) => AbortSignal.any([lifetime, Abo
 async function reach(def: Notifier, user: ReturnType<typeof recipient>, signal: AbortSignal) {
   return def.resolve ? resolution.parse(await def.resolve(structuredClone(user), signal)) : { ok: true };
 }
+/** Handler-free questions age out after the same staleDays window used by sweepStaleAsks. */
 function expiry(app: App, a: Ask) {
   const deadline = one<{ at: string | null; grant: number | null }>(app.db, "select json_extract(context,'$.expiresAt') at, json_extract(context,'$.operationGrant.expiresAt') as 'grant' from asks where id=?", a.id);
   return deadline?.at ?? (deadline?.grant ? new Date(deadline.grant).toISOString() : null) ?? (!a.handler && staleDays(app) ? new Date(Date.parse(a.createdAt) + staleDays(app) * 86400000).toISOString() : null);
 }
+const live = (ask: Ask, deadline: string | null) => ask.status === "pending" && (!deadline || deadline > now());
+
 function enqueue(app: App, outlet: string, id: string, user: string, op: Op, dedup: string, ref: string | null = null, urgency: OutNotification["urgency"] = "normal") {
   if (op === "notification" && dedup !== id) {
     run(app.db, "update outlet_deliveries set state='skipped' where outlet=? and dedup=? and state='deferred'", outlet, dedup);
@@ -93,8 +96,8 @@ async function send(app: App, row: Delivery, def: Notifier, signal: AbortSignal)
   const n = ask ? undefined : readNotification(app, id);
   const urgency = op === "test" ? "urgent" : row.urgency;
   if (setting && rank[urgency] < rank[setting.minUrgency]) return;
-  const expiresAt = ask && expiry(app, ask);
-  if (ask && (!def.ask || !setting?.askKinds.includes(kindOf(ask)) || ask.status !== "pending" || (expiresAt && expiresAt <= now()))) return;
+  const expiresAt = ask ? expiry(app, ask) : null;
+  if (ask && (!def.ask || !setting?.askKinds.includes(kindOf(ask)) || !live(ask, expiresAt))) return;
   if (!ask && (!n || n.read_at || n.quiet)) return;
   if (row.state === "deferred" && n && (n.pushed || Date.now() - Date.parse(n.at) >= 86400000)) return;
   const plan = deliveryPlan(app, { outlet: "plugin", urgency, scheduled: n?.scheduled });
@@ -114,7 +117,7 @@ async function send(app: App, row: Delivery, def: Notifier, signal: AbortSignal)
     content.about = { title: n.item_title, link: webLink(app, "#/items/" + encodeURIComponent(n.entityId)) };
   }
   if (ask) {
-    if (getAsk(app, id).status !== "pending" || (expiresAt && expiresAt <= now())) return;
+    if (!live(getAsk(app, id), expiresAt)) return;
     const result = receipt.parse(await def.ask!({ ...content, kind: kindOf(ask), options: ask.options.map(({label}) => ({label})),
       requiresApproval: ask.kind === "approval", allowText: ask.allowText, fields: ask.ui?.fields ?? [], expiresAt: expiresAt ?? null }, signal));
     return { ref: result.ref, identities: user.identities };
@@ -174,8 +177,7 @@ export async function answerFromOutlet(app: App, plugin: string, input: unknown)
   if (!row || !json<OutletIdentity[]>(row.identities, []).some(i => i.provider === a.user.provider && i.subject === a.user.subject))
     throw new HttpError(403, "没有向这个身份投递该提问");
   const ask = getAsk(app, row.object_id);
-  const deadline = expiry(app, ask);
-  if (ask.status !== "pending" || (deadline && deadline <= now())) throw new HttpError(409, "提问已结束或过期");
+  if (!live(ask, expiry(app, ask))) throw new HttpError(409, "提问已结束或过期");
   if (ask.userId !== userId || !settings(app, userId).find(s => s.id === outlet)?.askKinds.includes(kindOf(ask))) throw new HttpError(403, "这个出口未获准回答此类提问");
   requireAskAccess(app, userId, ask.id);
   if (ask.kind === "approval" && a.approved === undefined) throw new HttpError(400, "审批需要明确批准或拒绝");
