@@ -525,7 +525,10 @@ describe("roles and permissions", async () => {
   it("keeps the shared setup to those who manage it", async () => {
     expect((await as("cat", "/api/agents")).status).toBe(200);
     expect((await as("ann", "/api/agents")).status).toBe(403);
-    expect(Object.keys((await json("cat", "/api/settings")).config).sort()).toEqual(["agents", "auth"]);
+    const config = (await json("cat", "/api/settings")).config;
+    expect(Object.keys(config)).toEqual(expect.arrayContaining(["agents", "auth", "ai", "notify"]));
+    for (const path of ["security", "agents.profiles", "notify.outlets", "notify.outletAskGrants"])
+      expect(config).not.toHaveProperty(path);
     expect((await as("cat", "/api/delegate", { method: "POST", body: "{}" })).status).toBe(403);
     expect((await as("ann", "/api/home")).status).toBe(403);
   });

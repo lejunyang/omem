@@ -30,15 +30,163 @@ export const sectionByPath: Record<string, Section> = {
 };
 
 // Identity, credentials, command execution and network destinations stay under the owner's control.
-export const ownerSettings = [
-  "mentions.reply", "lark.commands", "lark.invite", "lark.guests", "lark.bots", "lark.ownerOpenId",
-  "lark.appSecretEnv", "lark.appId", "lark.capture", "lark.defaultSpace", "telegram", "onebot", "security", "approvals",
-  "agents.accounts", "agents.accountIsolation", "agents.networkPolicies", "agents.profiles", "agents.cloudTools", "ai.providers",
-  "host", "port", "token", "https", "webUrl", "shares.expiryDays", "auth", "node", "backups", "studies.envs", "ide",
-  "documents.converter", "embeddings", "rerank", "mcp", "agentSkills", "plugins",
-];
-const privatePaths = new Set(["agents.profiles", "agents.networkPolicies", "mcp", "ai.providers"]);
-const splitRoots = new Set([...Object.keys(sectionByPath), ...ownerSettings, "embeddings.provider"].filter(p => p.includes(".")).map(p => p.split(".")[0]));
+export const ownerControls: Record<string, string[]> = {
+  "mentions.reply": [
+    "GET /api/lark/doubao-send",
+    "POST /api/lark/doubao-send/test",
+  ],
+  "lark.commands": [],
+  "lark.invite": [],
+  "lark.guests": [],
+  "lark.bots": [],
+  "lark.ownerOpenId": [],
+  "lark.appSecretEnv": [],
+  "lark.appId": [],
+  "lark.capture": [],
+  "lark.defaultSpace": [],
+  "telegram": [],
+  "onebot": [],
+  "security": [
+    "GET /api/security/egress",
+    "PUT /api/security/egress",
+    "GET /api/security/operation-rules",
+    "GET /api/security/rule-packs",
+    "POST /api/security/rule-packs/:id/enable",
+    "POST /api/security/rule-packs/:id/disable",
+    "PUT /api/security/operation-rules",
+    "GET /api/security/command-rules",
+    "PUT /api/security/command-rules",
+  ],
+  "approvals": [],
+  "agents.accounts": [
+    "GET /api/agent-accounts",
+    "PUT /api/agent-accounts/:backend/policy",
+    "DELETE /api/agent-accounts/:user/:backend",
+  ],
+  "agents.accountIsolation": [],
+  "agents.networkPolicies": [
+    "GET /api/agents/network-policies",
+    "PUT /api/agents/network-policies",
+    "POST /api/agents/network-policies/:id/check",
+  ],
+  "agents.profiles": [
+    "POST /api/agent-registry/:id",
+    "POST /api/agents/:id/adapter/upgrade",
+    "POST /api/agents/:id/probe",
+  ],
+  "agents.cloudTools": [
+    "POST /api/cloud-tools/revoke",
+    "GET /api/cloud-tools",
+    "POST /api/cloud-tools/probe",
+    "POST /api/cloud-tools/probe/confirm",
+  ],
+  "ai.providers": [
+    "PUT /api/ai/keys/:id",
+    "POST /api/ai/providers/:id/test",
+  ],
+  "host": [],
+  "port": [],
+  "token": [],
+  "https": [],
+  "webUrl": [],
+  "remoteGrants": [],
+  "shares.expiryDays": [],
+  "auth": [
+    "PUT /api/auth/providers/:id/app",
+    "POST /api/lark/user-permissions",
+    "POST /api/lark/bot-check/:ref/scan",
+  ],
+  "node": [
+    "GET /api/diag",
+    "GET /api/peer/commands",
+    "POST /api/peer/exec",
+    "GET /api/peer/tools",
+    "POST /api/peer/tool",
+    "GET /api/peer/snapshot",
+    "GET /api/peer/files",
+    "POST /api/peer/files",
+    "POST /api/peer/agents",
+    "POST /api/peer/unpair",
+    "DELETE /api/peer/paired/:id",
+    "GET /api/peer/outbox",
+    "POST /api/peer/outbox/flush",
+    "DELETE /api/peer/outbox/:id",
+    "POST /api/peer/shares",
+    "PUT /api/peer/shares/:user",
+    "DELETE /api/peer/shares/:user",
+    "POST /api/peer/subscriptions",
+    "DELETE /api/peer/subscriptions/:id",
+    "POST /api/peer/subscriptions/:id/sync",
+    "POST /api/peer/trial",
+    "GET /api/peer/trial/:id",
+    "POST /api/peer/trial/:id/cancel",
+    "GET /api/peers",
+    "POST /api/peer/invite",
+    "POST /api/peer/add",
+    "PATCH /api/peers/:id",
+    "POST /api/peers/:id/back",
+    "DELETE /api/peers/:id",
+    "GET /api/peers/:id/status",
+    "GET /api/peers/:id/api/ide/open",
+    "* /api/peers/:id/*",
+    "* /api/peers/:id/ide",
+    "* /api/peers/:id/ide/*",
+    "* /api/peers/:id/remote/*",
+    "GET /api/peer/shares",
+    "PUT /api/peer/grants/:user",
+    "GET /api/peer/cards",
+    "GET /api/peer/subscriptions",
+    "GET /api/peer/offers/:peer",
+  ],
+  "backups": [
+    "GET /api/peer/backups",
+    "PUT /api/peer/backups",
+    "DELETE /api/peer/backups/:peer",
+    "POST /api/peer/backups/:peer/run",
+  ],
+  "studies.envs": [],
+  "ide": [],
+  "notify.outlets": [],
+  "notify.outletAskGrants": [],
+  "documents.converter": [],
+  "embeddings": ["POST /api/search/embeddings/test"],
+  "rerank": ["POST /api/search/rerank/test"],
+  "rerank.api": [],
+  "embeddings.keyRef": [],
+  "embeddings.url": [],
+  "embeddings.apiKeyEnv": [],
+  "mcp": [
+    "GET /api/library-files/agent/:name",
+    "PUT /api/library-files/agent/:name",
+    "GET /api/mcp",
+    "PUT /api/mcp/:name",
+    "DELETE /api/mcp/:name",
+    "POST /api/mcp/:name/test",
+    "PUT /api/roles/:name/mcp",
+  ],
+  "agentSkills": [],
+  "plugins": [
+    "POST /api/plugins/install",
+    "POST /api/plugins/:id/update",
+    "DELETE /api/plugins/:id",
+    "POST /api/plugins/:id/trust",
+    "DELETE /api/plugins/:id/trust",
+    "PUT /api/plugins/:id/enabled",
+    "POST /api/plugins/:id/hooks/:name/secret",
+    "DELETE /api/plugins/:id/hooks/:name/secret",
+    "POST /api/plugins/:id/services/:name/start",
+    "POST /api/plugins/:id/services/:name/stop",
+  ],
+  "guard.modelDir": [],
+  "guard.url": [],
+  "documents.doclingArtifacts": [],
+  "embeddings.model": [],
+  "rerank.model": [],
+  "lark.knowledge": [],
+};
+export const ownerSettings = Object.keys(ownerControls);
+const publicOwnerFields = new Set(["shares.expiryDays", "lark.defaultSpace", "port", "agents.accountIsolation", "auth", "mentions.reply", "lark.guests", "lark.commands", "lark.invite"]);
+const splitRoots = new Set([...Object.keys(sectionByPath), ...ownerSettings].filter(p => p.includes(".")).map(p => p.split(".")[0]));
 type Values = Record<string, unknown>;
 const object = (v: unknown): v is Values => !!v && typeof v === "object" && !Array.isArray(v);
 const sectionOf = (path: string) => sectionByPath[path] ?? sectionByPath[path.split(".")[0]];
@@ -54,7 +202,7 @@ function assign(values: Values, path: string, value: unknown) {
 export function settingsView(config: Config, visible: (s: Section) => boolean, owner: boolean) {
   const result: Values = {};
   for (const [path, value] of entries(config)) {
-    if (visible(sectionOf(path)) && path !== "token" && (owner || !privatePaths.has(path))) assign(result, path, value);
+    if (visible(sectionOf(path)) && path !== "token" && (owner || !ownerSettings.includes(path) || publicOwnerFields.has(path))) assign(result, path, value);
   }
   return result;
 }

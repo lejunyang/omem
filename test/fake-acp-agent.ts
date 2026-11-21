@@ -863,6 +863,7 @@ ${JSON.stringify({ check, tools })}`);
       }
       if (stall === "before") {
         await say("Skill descriptions were shortened to fit the 2% skills context budget. TRAE can still see every skill.");
+        await say("Warning: Model metadata for `m9` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.");
         await new Promise(() => {});
       }
       if (stall === "after") {

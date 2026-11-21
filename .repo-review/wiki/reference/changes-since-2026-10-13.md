@@ -40,6 +40,36 @@ updated: 2026-11-22
 
 保存和检测向量设置时，`keyRef`、`url` 和 `dimensions` 可以传 `null` 清除。两处共用 `src/auth/settings-sections.ts` 的字段合并，保存时会预览实际模型或地址变化影响的索引。
 
+## 成员查看内置角色（2026-11-22）
+
+从 `src/server/http.ts` 的角色接口读起。有档案管理权限的成员可看内置角色的名称、用途和默认 AI。在 Agent 页打开角色进入只读摘要；只有本人的详情包含正文、专属记忆和复盘建议。自定义操作仅向本人回传原文。
+
+## 成员管理 Agent 档案（2026-11-22）
+
+从 `src/server/http.ts` 的档案接口读起。成员查看档案详情或保存说明、状态时取得与列表一致的摘要。档案原文的读写权限在 `src/auth/settings-sections.ts` 中与 MCP 配置一起限定给本人，技能原文沿用原权限。
+
+`web/src/views/Agents.vue` 用摘要填写用途和状态，保存后重新读取档案。只有完整详情才加载原文和专属学习记录。
+
+## 整机诊断仅本人可读（2026-11-21）
+
+`GET /api/diag` 随对等设备管理在 `src/auth/settings-sections.ts` 中登记为本人专属。成员仍可按区域读取设置卡片。
+
+## 直接评审分支的用量（2026-11-21）
+
+从 `src/agents/progress.ts` 的 `allocate` 读起。运行页和事项页按展示的块分配用量。直接评审已有分支时，首轮计入评审块；页面有对应编码块时，共用运行计入编码块，独立重评仍计入评审块。
+
+## 成员查看插件卡片（2026-11-21）
+
+从 `src/plugins/http.ts` 的 `pluginView` 读起。插件列表、详情和改图标共用成员视图，保留插件权限摘要；服务和服务命令返回空数组。
+
+## 设置页的成员接口（2026-11-21）
+
+从 `src/auth/settings-sections.ts`、`src/auth/routes.ts` 读区域权限及本人专属操作。设置读写隐藏其他成员的通知出口，`GET /api/notify/outlets?user=…` 返回目标的出口和已授权种类，`GET /api/me` 提供 `ownerName`。设置卡片的权限和返回字段见 `docs/v2/multi-user.md`。
+
+进度的去重用量、落点和可见证据从 `src/agents/progress.ts` 读起。出网与云端工具状态附运行标题，云端工具的可选名单和说明从 `src/agents/cloud-tools.ts` 读起。
+
+事项链路和指标按 `src/items/member-work.ts` 的可见子树统计。晚到妙记追加会议结果的条件在 `src/channels/lark-meetings.ts`。HTTP 规则可用的执行点由 `src/agents/operation-policy.ts` 给出，空规则和已有规则口径一致。
+
 ## 额外飞书机器人的群回复说明（2026-11-21）
 
 从 `src/agents/sessions.ts` 的 `threadTurn` 看群消息提示。额外机器人沿用主助手时，与主机器人一样收到结合群上下文、直接回复的说明。同事提问的那一轮还会说明哪些事由提问人决定。

@@ -1,3 +1,4 @@
+import { ownerControls } from "./settings-sections.ts";
 import { requireMemberAction, type MemberAction } from "./member-management.ts";
 import { capabilityAccess, spacesWithCapability, globalCapability, type Capability } from "./capabilities.ts";
 import type { FastifyRequest } from "fastify";
@@ -32,23 +33,15 @@ const RUN: RouteRule = { run: "read" };
 const AGENTS = g("agents.manage");
 const SETTINGS = g("settings.manage");
 const CODE = g("code.delegate");
-const PEERS = g("peers.manage");
 const USERS = g("users.manage");
 
 export const ROUTE_RULES: Record<string, RouteRule> = {
-  "POST /api/cloud-tools/revoke": "owner",
   "GET /api/tools/turn/:key": "public",
   "GET /api/tools/turn/:key/:name": "public",
-  "GET /api/cloud-tools": "owner",
-  "POST /api/cloud-tools/probe": "owner",
-  "POST /api/cloud-tools/probe/confirm": "owner",
   "POST /api/cloud-tools/challenge/:nonce": "public",
   "GET /api/cloud-tools/challenge/:nonce": "public",
   "GET /api/agents/session-cleanup/failures": "owner",
   "POST /api/agents/session-cleanup/retry": "owner",
-  "GET /api/agents/network-policies": "owner",
-  "PUT /api/agents/network-policies": "owner",
-  "POST /api/agents/network-policies/:id/check": "owner",
   "GET /api/ai/decision/report": "owner",
   "GET /api/code/:id/improve": RUN,
   "GET /api/quality": "owner",
@@ -59,11 +52,6 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/quality/audit": "owner",
   "GET /api/plugins/pack": "owner",
   "POST /api/plugins/pack": "owner",
-  "GET /api/mcp": "owner",
-  "PUT /api/mcp/:name": "owner",
-  "DELETE /api/mcp/:name": "owner",
-  "POST /api/mcp/:name/test": "owner",
-  "PUT /api/roles/:name/mcp": "owner",
   "PUT /api/roles/:name/tools": "owner",
   "GET /api/share/:token": "public",
   "GET /api/shares": "self",
@@ -80,9 +68,6 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/me/agent-accounts/:backend/quota": "self",
   "DELETE /api/me/agent-accounts/:backend": "self",
   // Everyone's logins (no tokens), the per-backend rule, removing a member's login: the owner's.
-  "GET /api/agent-accounts": "owner",
-  "PUT /api/agent-accounts/:backend/policy": "owner",
-  "DELETE /api/agent-accounts/:user/:backend": "owner",
   "GET /api/tools": "public",
   "POST /api/tools/:name": "public",
   // Checks a run's token and that the request comes from this machine itself (agents/command-gate.ts).
@@ -90,15 +75,6 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/remote/agent-browser": "public", // Local agent run token in the handler.
   "GET /api/operation-gate/http": "public",
   "POST /api/operation-gate/http": "public",
-  "GET /api/security/egress": "owner",
-  "PUT /api/security/egress": "owner",
-  "GET /api/security/operation-rules": "owner",
-  "GET /api/security/rule-packs": "owner",
-  "POST /api/security/rule-packs/:id/enable": "owner",
-  "POST /api/security/rule-packs/:id/disable": "owner",
-  "PUT /api/security/operation-rules": "owner",
-  "GET /api/security/command-rules": "owner",
-  "PUT /api/security/command-rules": "owner",
   "GET /api/events": "self",
 
   // spaces
@@ -156,7 +132,6 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/sources/node-level/review": "owner",
   "POST /api/sources/level-audit/review": "owner",
   "PUT /api/sources/node-level": "owner",
-  "PUT /api/sources/wiki-space-name": SETTINGS,
   "GET /api/sources/:id": cap("sources.view", "src:p.id"),
   "GET /api/sources/:id/messages": cap("sources.view", "src:p.id"),
   "GET /api/sources/:id/relations": cap("sources.view", "src:p.id"),
@@ -414,26 +389,44 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // agents, skills, rules and schedules: shared by everyone, managed by a few
   ...Object.fromEntries(
     [
-      "GET /api/agents", "GET /api/agents/:name", "PUT /api/agents/:name", "DELETE /api/agents/:name", "GET /api/agents/load", "DELETE /api/agents/quota/:source", "POST /api/agents/quota/refresh",
+      "GET /api/agents/:name", "PUT /api/agents/:name", "DELETE /api/agents/:name", "DELETE /api/agents/quota/:source", "POST /api/agents/quota/refresh",
       "GET /api/roles", "GET /api/roles/:name", "PUT /api/roles/:name", "PUT /api/roles/:name/defaults", "PUT /api/roles/:name/full-access", "POST /api/roles/:name/customize", "POST /api/roles/:name/follow-source", "POST /api/roles/:name/reset", "POST /api/roles/:name/merge",
       "GET /api/profile-options", "PUT /api/profiles/:name/skills", "POST /api/profiles/:name/review", "POST /api/profile-proposals/:id/apply", "POST /api/profile-proposals/:id/reject",
-      "GET /api/library-files/:kind/:name", "PUT /api/library-files/:kind/:name",
+      "GET /api/library-files/skill/:name", "PUT /api/library-files/skill/:name",
       "GET /api/skills", "GET /api/skill-groups", "GET /api/skill-groups/:id", "GET /api/skills/:name", "PUT /api/skills/:name", "PUT /api/skills/:name/status", "DELETE /api/skills/:name", "GET /api/skills/:name/files", "GET /api/skills/:name/file", "PUT /api/skills/:name/file", "DELETE /api/skills/:name/file",
       "GET /api/rules/:id/permissions",
-      "GET /api/rule-options", "POST /api/rule-conversations", "GET /api/wakes", "DELETE /api/wakes/:id", "GET /api/mentions", "GET /api/watches", "DELETE /api/watches/:chatId",
+      "GET /api/rule-options", "POST /api/rule-conversations", "GET /api/wakes", "DELETE /api/wakes/:id", "GET /api/watches", "DELETE /api/watches/:chatId",
       "GET /api/listen", "GET /api/listen/:id", "POST /api/listen", "PUT /api/listen/:id", "DELETE /api/listen/:id", "POST /api/listen/:id/coach", "POST /api/listen/:id/learn", "GET /api/lark/chats/:id/detail", "PUT /api/cases/:id", "POST /api/items/:id/listen", "POST /api/rules/:id/to-listen",
-      "GET /api/notify-ignore-rules", "POST /api/notify-ignore-rules/delete", "GET /api/schedules", "PUT /api/schedules/:id", "POST /api/schedules/:id/run",
+      "GET /api/notify-ignore-rules", "POST /api/notify-ignore-rules/delete", "POST /api/schedules/:id/run",
       "GET /api/archive-rules", "GET /api/archive-options", "POST /api/archive-rules", "PUT /api/archive-rules/order", "PUT /api/archive-rules/:id", "DELETE /api/archive-rules/:id", "POST /api/archive-rules/draft",
       "GET /api/archive/folders", "POST /api/archive/folders", "POST /api/archive/preview", "POST /api/archive/apply", "POST /api/archive/classify",
       "GET /api/archive/homing", "POST /api/archive/homing/return", "POST /api/archive/homing/assign", "POST /api/archive/homing/sweep",
       "GET /api/attention-rules", "PUT /api/attention-rules/:id", "DELETE /api/attention-rules/:id", "POST /api/attention-rules/apply",
       "GET /api/digest-jobs", "POST /api/digest-jobs", "POST /api/digest-jobs/:id/:action", "PUT /api/digest-jobs/:id",
-      "GET /api/feedback/stats", "GET /api/replays", "POST /api/replays/run", "POST /api/replay-effects/:id/:action",
+      "GET /api/feedback/stats", "POST /api/replays/run", "POST /api/replay-effects/:id/:action",
     ].map((r) => [r, AGENTS]),
   ),
 
-  "POST /api/search/embeddings/test": "owner",
-  "POST /api/search/rerank/test": "owner",
+  ...Object.fromEntries(Object.values(ownerControls).flat().map(route => [route, "owner" as const])),
+  "GET /api/ai": cap("settings.ai.view"),
+  "GET /api/agents/:id/adapter": cap("settings.ai.view"),
+  "GET /api/agent-registry": cap("settings.ai.view"),
+  "GET /api/agents/load": cap("settings.ai.view"),
+  "PUT /api/plugins/:id/settings": cap("settings.ai.edit"),
+  "PUT /api/plugins/:id/icon": cap("settings.ai.edit"),
+  "GET /api/agents": cap("settings.assistant.view"),
+  "GET /api/mentions": cap("settings.assistant.view"),
+  "GET /api/schedules": cap("settings.assistant.view"),
+  "GET /api/replays": cap("settings.assistant.view"),
+  "PUT /api/schedules/:id": cap("settings.assistant.edit"),
+  "GET /api/lark/bot-check": cap("settings.channels.view"),
+  "GET /api/lark/captured": cap("settings.knowledge.view"),
+  "GET /api/lark/wiki-crawls": cap("settings.knowledge.view"),
+  "GET /api/search/providers": cap("settings.knowledge.view"),
+  "GET /api/storage": cap("settings.knowledge.view"),
+  "GET /api/media": cap("settings.knowledge.view"),
+  "POST /api/storage/scan": cap("settings.knowledge.edit"),
+  "PUT /api/sources/wiki-space-name": "owner",
   "PUT /api/agent-role-model": cap("settings.ai.edit"),
   "GET /api/settings": "handler",
   "GET /api/settings/sections": "handler",
@@ -442,18 +435,16 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // channels, AI backends and this machine
   ...Object.fromEntries(
     [
-      "GET /api/search/providers", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
-      "PUT /api/lark/chats/:id/policy", "PUT /api/lark/chats/:id/subscription", "PUT /api/lark/chats/:id/space", "POST /api/lark/poll", "GET /api/lark/user-permissions", "POST /api/lark/user-permissions",
-      "GET /api/lark/bot-check", "POST /api/lark/bot-check/:ref/scan", "GET /api/lark/doubao-send", "POST /api/lark/doubao-send/test", "GET /api/lark/wiki-crawls", "POST /api/lark/wiki-crawls/:id/:op", "GET /api/lark/kb", "POST /api/lark/kb/discover",
-      "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "GET /api/lark/kb-home", "POST /api/lark/kb-home", "PUT /api/lark/kb-home/dir", "POST /api/agents/:id/probe", "GET /api/agents/:id/adapter", "POST /api/agents/:id/adapter/upgrade", "GET /api/agent-registry", "POST /api/agent-registry/:id",
-      "GET /api/diag", "GET /api/storage", "POST /api/storage/scan", "GET /api/media", "POST /api/media/ffmpeg/install", "POST /api/media/compress", "POST /api/media/stop", "POST /api/media/resume",
-      "POST /api/media/delete-originals", "PUT /api/plugins/:id/settings", "PUT /api/plugins/:id/icon", "POST /api/plugins/:id/trust", "DELETE /api/plugins/:id/trust", "GET /api/plugins/:id/services",
-      "POST /api/plugins/:id/services/:name/start", "POST /api/plugins/:id/services/:name/stop", "PUT /api/plugins/:id/enabled", "POST /api/plugins/install",
-      "POST /api/plugins/:id/hooks/:name/secret", "DELETE /api/plugins/:id/hooks/:name/secret",
-      "POST /api/plugins/:id/update", "DELETE /api/plugins/:id",
+      "POST /api/ai/decision/test", "GET /api/lark/chats", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
+      "PUT /api/lark/chats/:id/policy", "PUT /api/lark/chats/:id/subscription", "PUT /api/lark/chats/:id/space", "POST /api/lark/poll", "GET /api/lark/user-permissions",
+      "POST /api/lark/wiki-crawls/:id/:op", "GET /api/lark/kb", "POST /api/lark/kb/discover",
+      "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "GET /api/lark/kb-home", "POST /api/lark/kb-home", "PUT /api/lark/kb-home/dir",
+      "POST /api/media/ffmpeg/install", "POST /api/media/compress", "POST /api/media/stop", "POST /api/media/resume",
+      "POST /api/media/delete-originals", "GET /api/plugins/:id/services",
+
     ].map((r) => [r, SETTINGS]),
   ),
-  "GET /api/desktop": g("desktop.control"),
+  "GET /api/desktop": cap("settings.channels.view"),
   "POST /api/desktop/install": g("desktop.control"),
   // remote operation (docs/v2/remote.md): each person's own sessions and recordings
   "GET /api/remote": "self",
@@ -504,19 +495,6 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/plugins/:id/voice/live/sdp": "self",
 
   // devices
-  ...Object.fromEntries(
-    [
-      "GET /api/peer/commands", "POST /api/peer/exec", "GET /api/peer/tools", "POST /api/peer/tool", "GET /api/peer/snapshot", "GET /api/peer/files", "POST /api/peer/files", "GET /api/peers", "POST /api/peer/invite", "POST /api/peer/add",
-      "PATCH /api/peers/:id", "POST /api/peers/:id/back", "DELETE /api/peers/:id", "GET /api/peers/:id/status", "POST /api/peer/agents", "POST /api/peer/unpair", "DELETE /api/peer/paired/:id", "GET /api/peers/:id/api/ide/open",
-      // Forwarded to a device as they are, any method.
-      "* /api/peers/:id/*", "* /api/peers/:id/ide", "* /api/peers/:id/ide/*", "* /api/peers/:id/remote/*",
-      // Sharing with other servers (src/core/federation.ts): what this one shares, what it follows.
-      "GET /api/peer/shares", "PUT /api/peer/grants/:user", "GET /api/peer/cards", "GET /api/peer/backups", "PUT /api/peer/backups", "DELETE /api/peer/backups/:peer", "POST /api/peer/backups/:peer/run", "GET /api/peer/outbox", "POST /api/peer/outbox/flush", "DELETE /api/peer/outbox/:id", "POST /api/peer/shares", "PUT /api/peer/shares/:user", "DELETE /api/peer/shares/:user",
-      "GET /api/peer/subscriptions", "GET /api/peer/offers/:peer", "POST /api/peer/subscriptions", "DELETE /api/peer/subscriptions/:id", "POST /api/peer/subscriptions/:id/sync",
-      // A study's trial handed here by another of the owner's devices (studies/remote-host.ts; the handlers also require the owner's token).
-      "POST /api/peer/trial", "GET /api/peer/trial/:id", "POST /api/peer/trial/:id/cancel",
-    ].map((r) => [r, PEERS]),
-  ),
   // Another server reading what is shared with it: the handlers keep to the caller's grants.
   "GET /api/fed/info": "self",
   "GET /api/fed/card": "self",
@@ -554,8 +532,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/auth/watches/:id/sync": "self",
   "DELETE /api/auth/sessions/:id": "self",
   "DELETE /api/auth/identities": "self",
-  "GET /api/auth/providers": USERS,
-  "PUT /api/auth/providers/:id/app": USERS,
+  "GET /api/auth/providers": cap("settings.members.view"),
   "GET /api/users": { member: "read" },
   "POST /api/users": { member: "manage" },
   "PATCH /api/users/:id": { member: "manage", target: true },

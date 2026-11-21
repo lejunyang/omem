@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { App } from "../core/app.ts";
 import { captureSpace } from "../core/capture-space.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, tx } from "../core/db.ts";
 import { notify, releaseLater } from "../core/notify.ts";
 import { findSpace } from "../core/spaces.ts";
 import { OWNER } from "../core/users.ts";
@@ -880,6 +880,22 @@ function lineText(l: LineRow) {
   return `${when} ${l.speaker} ${l.text}`;
 }
 
+/** Compare distinct lines of minutes with what was already heard, ignoring headings and whitespace. */
+function substantialMinutes(lines: LineRow[], minutes: string) {
+  const normalize = (line: string) => line.replace(/^\s*[-*]\s+/, "").replace(/\s+/g, "");
+  const seen = new Set(lines.flatMap(l => [l.text, `${l.speaker}：${l.text}`, lineText(l)]).map(normalize));
+  let added = 0;
+  for (const line of minutes.split("\n")) {
+    if (line.trimStart().startsWith("#")) continue;
+    const key = normalize(line);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    added += key.length;
+    if (added >= 200) return true;
+  }
+  return false;
+}
+
 /** The meeting as one source: who, when, and every line in order (minutes appended once they exist). */
 function writeSource(app: App, row: Row, minutes?: string) {
   const plan = row.plan ? json<MeetingPlan>(row.plan, null as never) : null;
@@ -895,7 +911,7 @@ function writeSource(app: App, row: Row, minutes?: string) {
   ].filter(Boolean).join("\n\n");
   const r = upsertSource(app, { archive: true, spaceId: row.space_id ?? captureSpace(app), kind: "meeting", uri: `lark:meeting:${row.meeting_id}`, title: `会议：${row.topic || "无标题"}（${day}）`, text, meta: { via: "lark-meeting", meetingId: row.meeting_id, meetingNo: row.meeting_no, rule: plan.ruleId } });
   if (r.id !== row.source_id) update(app, row.meeting_id, { source_id: r.id });
-  return r;
+  return { ...r, substantial: !!minutes && substantialMinutes(lines, minutes) };
 }
 
 /**
@@ -1271,16 +1287,32 @@ async function mergeMinutes(app: App, row: Row) {
   const token = findKey(v, "minute_token");
   if (!token) return;
   const { minutesSeen, minutesText } = await import("./lark-personal.ts");
-  // The hourly capture got there first: it is a source of its own already.
-  if (minutesSeen(app, token)) return void update(app, row.meeting_id, { minutes_token: token });
-  const m = await minutesText(token, row.topic);
-  minutesSeen(app, token, true);
-  update(app, row.meeting_id, { minutes_token: token });
-  const src = writeSource(app, getRow(app, row.meeting_id)!, m.text.replace(/^# .*\n+/, ""));
-  if (src && src.status !== "unchanged") {
-    const { scheduleIngest } = await import("../agents/jobs.ts");
-    scheduleIngest(app, row.space_id ?? captureSpace(app), [src.id], "会议妙记");
-  }
+  const space = row.space_id ?? captureSpace(app);
+  // Reuse the owner's archived minutes when hourly capture won the race.
+  const archived = minutesSeen(app, token) && one<{ text: string }>(app.db,
+    "select text from sources where space_id=? and uri=? and deleted_at is null", captureSpace(app), `lark:minutes:${token}`);
+  const m = archived || await minutesText(token, row.topic);
+  const minutes = m.text.replace(/^# [^\n]*(?:\n+|$)/, "").trim();
+  if (!minutes) return;
+  const { scheduleIngest } = await import("../agents/jobs.ts");
+  const fresh = getRow(app, row.meeting_id)!;
+  if (fresh.minutes_token) return;
+  const src = writeSource(app, fresh, minutes);
+  if (src && src.status !== "unchanged") scheduleIngest(app, space, [src.id], "会议妙记");
+  tx(app.db, () => {
+    if (getRow(app, row.meeting_id)!.minutes_token) return;
+    const plan = json<MeetingPlan | null>(fresh.plan, null);
+    if (src?.substantial && plan?.spec) {
+      const lark = { chats: [], draft: false };
+      createRun(app, { kind: "agent", userId: OWNER, lane: `meeting:${row.meeting_id}`, spaceId: space,
+        title: `补充会议「${row.topic || "无标题"}」的结果`,
+        input: { spec: plan.spec, ...assistantScope(plan.spec, space, lark), lark, meetingId: row.meeting_id, silent: true,
+          task: `会后补到了妙记。读原件 ${src.id} 的“妙记”一节，结合会中记录，只整理补到的决定、待办和待定问题。\n\n${outcomesTask(app, row.meeting_id, OWNER)}` },
+      });
+    }
+    update(app, row.meeting_id, { minutes_token: token });
+    if (src) minutesSeen(app, token, true);
+  });
 }
 
 function findKey(v: unknown, key: string, depth = 0): string | undefined {

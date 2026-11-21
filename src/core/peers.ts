@@ -50,6 +50,14 @@ export function nodeId(app: App) {
   return (app.config.node?.id || hostname().split(".")[0] || "omem").toLowerCase().replace(/[^a-z0-9-]+/g, "-");
 }
 
+export function deviceLabels(app: App) {
+  const localId = nodeId(app);
+  const names = new Map(listPeers(app).map(p => [p.id, p.back?.name]));
+  return (id?: string | null) => !id || id === localId || id === "本机"
+    ? { local: true, device: app.config.node.id || "本机" }
+    : { local: false, device: names.get(id) || "对等设备" };
+}
+
 export function listPeers(app: App): Peer[] {
   return pairedIn(app.home);
 }

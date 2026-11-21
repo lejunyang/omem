@@ -6,8 +6,8 @@ import { activeUser, findUser, OWNER, scopeFor } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { searchRun } from "../search/trace.ts";
 import { addRunEvent } from "./runs.ts";
-import { callTool, toolSchemas, type ToolContext } from "./tools.ts";
-import type { AgentProfile } from "../core/config.ts";
+import { callTool, toolList, toolSchemas, type ToolContext } from "./tools.ts";
+import { cloudToolNames, type AgentProfile } from "../core/config.ts";
 import { checkCloudAddress, cloudAccess } from "./cloud-probe.ts";
 import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
 
@@ -41,7 +41,9 @@ export function cloudUsage(app: App) {
     join runs r on r.id=json_extract(j.value,'$.id') and r.status='running'
     left join cloud_tool_usage u on u.run_id=r.id where coalesce(u.calls,0)<json_extract(j.value,'$.limit')`, JSON.stringify(live));
   return { activeCredentials: active!.n,
-    recent: all(app.db, "select run_id as runId,calls,errors,last_error as lastError,at from cloud_tool_usage order by at desc limit 50") };
+    availableTools: toolList(new Set(cloudToolNames)).map(({ name, description }) => ({ name, description: description.split("。")[0] + "。" })),
+    recent: all(app.db, `select u.run_id as runId,r.title,u.calls,u.errors,u.last_error as lastError,u.at
+      from cloud_tool_usage u join runs r on r.id=u.run_id order by u.at desc limit 50`) };
 }
 function remaining(g: Grant) {
   const used = one<{calls: number}>(g.ctx.app.db, "select calls from cloud_tool_usage where run_id=?", g.runId);
