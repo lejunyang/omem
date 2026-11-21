@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { loadLocalModel } from "./embeddings.ts";
-import { pluginScores, selectedReranker, type CandidateInfo } from "./providers.ts";
+import { pluginScores, selectedReranker, pluginHitFilter, type RerankCandidate, type SharedSearchAccess } from "./providers.ts";
 import { OWNER } from "../core/users.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
@@ -74,23 +74,26 @@ async function getScorer(app: App): Promise<Scorer | null> {
   return entry.scorer;
 }
 
-/**
- * Relevance of each passage to the query (0–1), or null when reranking is off, failed or ran out
- * of time. `timeoutMs` shortens `rerank.timeoutMs` for callers that hold up a reply.
- */
-export async function rerankScores(app: App, query: string, passages: string[], timeoutMs?: number, info?: CandidateInfo[], userId = OWNER): Promise<number[] | null> {
-  if (!app.config.rerank.enabled || !passages.length || !query.trim()) return null;
-  if (info && selectedReranker(app)) {
+/** Score the whole batch with one provider, reserving time for a local fallback. */
+export async function rerankScores(app: App, query: string, candidates: RerankCandidate[],
+  { timeoutMs, userId = OWNER, shared }: { timeoutMs?: number; userId?: string; shared?: SharedSearchAccess } = {}) {
+  if (!app.config.rerank.enabled || !candidates.length || !query.trim()) return { scores: null, provider: null };
+  const entry = selectedReranker(app);
+  let provider: string | null = app.config.rerank.provider;
+  let scores: number[] | null = null;
+  if (entry && candidates.every(c => !entry.spaces.length || entry.spaces.includes(c.spaceId)) &&
+      candidates.every(pluginHitFilter(app, candidates, userId, shared))) {
     const budget = Math.min(timeoutMs ?? Infinity, app.config.rerank.timeoutMs);
     const deadline = Date.now() + budget;
-    // Reserve time for the local scorer even when the plugin does not respond.
-    const scores = await pluginScores(app, query, passages, info, userId, Math.max(1, Math.floor(budget / 2)));
-    if (scores) { lastProvider.set(app, app.config.rerank.provider); return scores; }
+    scores = await pluginScores(app, entry, query, candidates, userId, Math.max(1, Math.floor(budget / 2)));
     timeoutMs = Math.max(0, deadline - Date.now());
   }
-  const scores = await builtinScores(app, query, passages, timeoutMs);
-  lastProvider.set(app, scores ? "local" : null);
-  return scores;
+  if (!scores) {
+    scores = await builtinScores(app, query, candidates.map(c => c.text), timeoutMs);
+    provider = scores ? "local" : null;
+  }
+  lastProvider.set(app, provider);
+  return { scores, provider };
 }
 
 async function builtinScores(app: App, query: string, passages: string[], timeoutMs?: number) {

@@ -3,7 +3,7 @@ import type { App } from "../core/app.ts";
 import { OWNER } from "../core/users.ts";
 import { readableSourceIds } from "../auth/visibility.ts";
 import { capabilityAccess } from "../auth/capabilities.ts";
-import { retrievers, rerankers, untilAbort } from "../plugins/process-hooks.ts";
+import { retrievers, rerankers, untilAbort, type RegisteredReranker } from "../plugins/process-hooks.ts";
 import type { CallContext, RetrievalKind, RetrievalRef } from "../plugins/types.ts";
 import type { Hit, HitType, SearchOptions } from "./search.ts";
 
@@ -79,18 +79,16 @@ export async function retrieve(app: App, query: string, opts: SearchOptions, typ
   return routes.filter((r): r is Retrieved => !!r);
 }
 
-export type CandidateInfo = { id: string; spaceId: string };
+export type RerankCandidate = ReadableHit & { id: string; text: string };
 export function selectedReranker(app: App) {
   const selected = app.config.rerank.provider;
   return selected.startsWith("plugin:") ? rerankers.get(selected.slice(7)) : undefined;
 }
-export async function pluginScores(app: App, query: string, passages: string[], info: CandidateInfo[], userId: string, timeout: number) {
-  const entry = selectedReranker(app);
-  if (!entry || !info.length || info.some(c => entry.spaces.length && !entry.spaces.includes(c.spaceId))) return null;
-  return invoke(app, entry, userId, info[0].spaceId, timeout, async ctx => {
-    const candidates = info.map(({ id }, i) => ({ id, text: passages[i].slice(0, 4000) }));
+export async function pluginScores(app: App, entry: RegisteredReranker, query: string, batch: RerankCandidate[], userId: string, timeout: number) {
+  return invoke(app, entry, userId, batch[0].spaceId, timeout, async ctx => {
+    const candidates = batch.map(({ id, text }) => ({ id, text: text.slice(0, 4000) }));
     const scores = await entry.def.score(ctx, { query: query.slice(0, 1000), candidates });
-    if (!Array.isArray(scores) || scores.length !== info.length) throw new Error("重排分数个数与候选数不符");
+    if (!Array.isArray(scores) || scores.length !== batch.length) throw new Error("重排分数个数与候选数不符");
     return z.array(z.number().finite()).parse(scores);
   });
 }

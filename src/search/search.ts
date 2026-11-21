@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { matchQuery, terms } from "./tokenize.ts";
 import { vectorSearch } from "./embeddings.ts";
-import { retrieve, pluginHitFilter, selectedReranker, type SharedSearchAccess, type Retrieved } from "./providers.ts";
+import { retrieve, pluginHitFilter, type SharedSearchAccess, type Retrieved } from "./providers.ts";
 import { rerankScores } from "./rerank.ts";
 import { countNoteHits, LEVEL_WEIGHT, levelSql, noteFactor, notesOf, notesOn, noteText, type Level, type SourceNote } from "../sources/attention.ts";
 import { citeBoost, citeCounts } from "../sources/cites.ts";
@@ -42,7 +42,7 @@ export type Hit = {
   hash?: string;
   /** Replay (agents/replay-view.ts): the document or page changed after the question's time. */
   later?: boolean;
-  /** The reranker's relevance (0–1) when it reordered this hit (search/rerank.ts). */
+  /** The reranker's relevance when it reordered this hit (search/rerank.ts). */
   rerank?: number;
 };
 
@@ -544,11 +544,13 @@ async function rerankHits(app: App, query: string, hits: Hit[], opts: SearchOpti
       ? all<{ id: number; text: string }>(app.db, `select id, text from chunks where id in (${chunkIds.map(() => "?").join(",")})`, ...chunkIds).map((r) => [String(r.id), r.text])
       : [],
   );
-  const passages = head.map((h) => `${h.path || h.title}\n${(h.type === "chunk" && chunks.get(h.id)) || h.snippet}`.slice(0, 4000));
-  const info = selectedReranker(app) && head.every(pluginHitFilter(app, head, opts.userId, opts.shared)) ? head : undefined;
-  const scores = await rerankScores(app, query, passages, undefined, info, opts.userId);
+  const candidates = head.map(h => ({
+    type: h.type, id: h.id, spaceId: h.spaceId, sourceId: h.sourceId, sourceKind: h.sourceKind,
+    text: `${h.path || h.title}\n${(h.type === "chunk" && chunks.get(h.id)) || h.snippet}`.slice(0, 4000),
+  }));
+  const { scores, provider } = await rerankScores(app, query, candidates, opts);
   if (!scores) return;
-  head.forEach((h, i) => (h.rerank = info ? scores[i] : Math.round(scores[i] * 1000) / 1000));
+  head.forEach((h, i) => (h.rerank = provider === "local" ? Math.round(scores[i] * 1000) / 1000 : scores[i]));
   head.sort((a, b) => b.rerank! - a.rerank!);
   hits.splice(0, head.length, ...head);
 }

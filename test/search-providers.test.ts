@@ -176,3 +176,24 @@ it("搜索和被动记忆使用选中的重排，数量、非有限分数或超�
   for (let i = 0; i < 3; i++) expect((await search(app, "项目资料", opts)).map(h => h.id)).toEqual([a, b]);
   expect(score.mock.calls.at(-1)![0].signal.aborted).toBe(true);
 });
+
+it("本地回退保持三位小数的同分顺序，插件成功时使用原分", async () => {
+  const { app, api } = setup();
+  for (const content of ["项目资料每周更新。", "项目资料包括计划。"])
+    remember(app, { kind: "fact", spaceId: "personal", content });
+  const opts = { types: ["memory" as const] };
+  const score = vi.fn(async () => [0.8001, 0.8004]);
+  api.reranker({ id: "rank", label: "排序", score });
+  app.config.rerank.enabled = true;
+  setRerankerForTests(() => [0.8001, 0.8004]);
+  const local = await search(app, "项目资料", opts);
+  expect(local.map(h => h.rerank)).toEqual([0.8, 0.8]);
+  app.config.rerank.provider = "plugin:demo:rank";
+  const plugin = await search(app, "项目资料", opts);
+  expect(plugin.map(h => h.id)).toEqual([local[1].id, local[0].id]);
+  expect(plugin.map(h => h.rerank)).toEqual([0.8004, 0.8001]);
+  expect(rerankStatus(app).lastProvider).toBe("plugin:demo:rank");
+  score.mockResolvedValueOnce([]);
+  expect(await search(app, "项目资料", opts)).toEqual(local);
+  expect(rerankStatus(app).lastProvider).toBe("local");
+});

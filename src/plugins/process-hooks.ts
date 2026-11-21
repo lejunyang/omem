@@ -30,7 +30,8 @@ export async function untilAbort<T>(signal: AbortSignal, work: () => Promise<T>)
   finally { signal.removeEventListener("abort", abort); }
 }
 export const retrievers = new Map<string, Entry<Retriever>>();
-export const rerankers = new Map<string, Entry<Reranker>>();
+export type RegisteredReranker = Entry<Reranker>;
+export const rerankers = new Map<string, RegisteredReranker>();
 export const metricProviders = new Map<string, Entry<MetricProvider>>();
 
 export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[]): ProcessApi {
