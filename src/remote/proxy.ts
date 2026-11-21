@@ -8,6 +8,7 @@ import type { App } from "../core/app.ts";
 import { OWNER, userForToken } from "../core/users.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { getSession, startAssist, viewerAccess } from "./sessions.ts";
+import { grantEndReason } from "./grants.ts";
 
 export const REMOTE_BASE = "/remote";
 const VIEWER_COOKIE = "omem_remote_session";
@@ -180,7 +181,15 @@ export function attachRemoteUpgrade(app: App, server: Server) {
         ? operatingViewer(primary, r.access.grantId) : null;
       let up: WebSocket | undefined;
       const connection = { userId: r.userId, mode: r.access.mode };
-      const close = () => { client.terminate(); up?.terminate(); };
+      const close = () => {
+        if (client.readyState !== WebSocket.OPEN) return;
+        const reason = r.access.grantId && grantEndReason(app, r.access.grantId);
+        if (reason) {
+          client.resume();
+          client.close(1008, reason);
+        } else client.terminate();
+        up?.terminate();
+      };
       const unwatch = watch(app, r, close);
       primary.proc.once("exit", close);
       client.on("error", close).once("close", () => {
@@ -199,7 +208,7 @@ export function attachRemoteUpgrade(app: App, server: Server) {
       const path = operator ? `/ws?token=${encodeURIComponent(endpoint.token)}` : r.upstreamPath;
       const upstream = new WebSocket(`ws://127.0.0.1:${endpoint.port}${path}`, { perMessageDeflate: false });
       up = upstream;
-      upstream.on("error", close).once("close", () => client.terminate());
+      upstream.on("error", close).once("close", close);
       upstream.once("open", () => {
         if (!r.current()) return close();
         if (r.session.kind === "browser" && connection.mode === "operate") upstream.send('{"type":"take"}');

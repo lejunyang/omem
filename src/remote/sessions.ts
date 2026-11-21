@@ -6,7 +6,7 @@ import { HttpError, newId, now } from "../core/util.ts";
 import { all } from "../core/db.ts";
 import { capabilityAccess } from "../auth/capabilities.ts";
 import { can } from "../auth/permissions.ts";
-import { effectiveGrant, endSessionGrants, grantsFor, type Mode } from "./grants.ts";
+import { effectiveGrant, endSessionGrants, grantsFor, recentlyEnded, type Mode } from "./grants.ts";
 import { OWNER, activeUser, findUser } from "../core/users.ts";
 import { AadMcp, aadJson, finalJson, firstJsonLine, spawnAad } from "./aad.ts";
 import { createRecording, recordingDir, recordingSummary, updateRecording, type Recording } from "./recordings.ts";
@@ -64,12 +64,16 @@ export function viewerAccess(app: App, s: Live, user: string) {
   return { mode: grant.mode, grantId: grant.id, expiresAt: grant.expiresAt };
 }
 
+export function ownsAgentBrowser(user: string) {
+  return [...live.values()].some(s => s.origin && s.userId === user);
+}
+
 export function listSessions(app: App, user: string) {
   const desktop = can(app, user, "desktop.control");
   const access = capabilityAccess(app, user, null);
   const sessions = [...live.values()];
   const manages = (s: Live) => s.userId === user || (user === OWNER && s.kind === "browser");
-  const ownsAgentPage = access.active && sessions.some(s => s.origin && s.userId === user);
+  const ownsAgentPage = access.active && ownsAgentBrowser(user);
   if (!ownsAgentPage && !desktop && !access.source("remote.view") && !access.source("remote.operate")) throw new HttpError(403, "没有远程会话权限");
   const grants = grantsFor(app, [...live.keys()], sessions.filter(manages).map(s => s.id), user);
   const bySession = new Map<string, typeof grants>();
@@ -81,7 +85,7 @@ export function listSessions(app: App, user: string) {
   const owners = new Map(all<{id: string; name: string}>(app.db,
     "select id,name from users where id in (select value from json_each(?))",
     JSON.stringify([...new Set(sessions.map(s => s.userId))])).map(u => [u.id, u.name]));
-  return sessions.flatMap(s => {
+  const active = sessions.flatMap(s => {
     const mine = s.userId === user;
     const manager = manages(s);
     const assigned = bySession.get(s.id) ?? [];
@@ -95,6 +99,13 @@ export function listSessions(app: App, user: string) {
       ...(manager ? { connections, grants: assigned.map(g => ({ ...g, connected: connected.has(g.userId) })) } : {}),
     }];
   });
+  const shown = new Set(active.map(s => s.id));
+  const ended = recentlyEnded(app, user).filter(g => {
+    if (shown.has(g.id)) return false;
+    shown.add(g.id);
+    return true;
+  });
+  return [...active, ...ended];
 }
 
 export function getSession(id: string, userId?: string): Live {

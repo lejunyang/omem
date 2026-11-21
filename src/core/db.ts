@@ -2337,6 +2337,10 @@ export const migrations: readonly string[] = [
      created_by text not null, created_at text not null, revoked_at text
    );
    create unique index remote_grants_member on remote_grants(session_id,user_id) where revoked_at is null;`,
+  `alter table remote_grants add column ended text;
+   create index remote_grants_recent on remote_grants(user_id,revoked_at) where ended is not null;
+   create index remote_grant_candidates on member_capability_overrides(capability,user_id)
+     where capability in ('remote.view','remote.operate') and revoked=0 and effect='allow';`,
 ];
 
 export type Db = DatabaseSync;

@@ -361,9 +361,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
    * notifications, asks and plugin sessions, changes in spaces they can read.
    */
   const eventFilter = (userId: string) => {
-    if (userId === OWNER) return () => true;
     const readable = (id: string) => canReadRun(app, userId, id);
     return (e: AppEvent) => {
+      if (e.type === "remote-grant-ended") return e.userId === userId;
+      if (userId === OWNER) return true;
       if (e.type === "work") return readable(e.workId);
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
       if (e.type === "notification") return can(app, userId, "notifications.view") && one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
