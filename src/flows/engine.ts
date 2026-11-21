@@ -508,6 +508,9 @@ export async function startFlow(app: App, itemId: string, flowId: string, by: Fl
 export function advance(app: App, itemId: string, cause = "状态变化") {
   return serial(app, itemId, () => advanceNow(app, itemId, cause));
 }
+function prerequisitesDone(d: FlowStage, rows: StageRow[]) {
+  return d.needs.every(id => rows.some(s => s.id === id && ["done", "skipped"].includes(s.state) && !s.control.upstream));
+}
 async function advanceNow(app: App, itemId: string, _cause: string, at = new Date()) {
   if (!itemFlow(app, itemId) || itemFlow(app, itemId)!.endedAt) return;
   const item = getItem(app, itemId);
@@ -533,7 +536,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       if (["pending", "stale"].includes(s.state)) {
         const rows = itemStages(app, itemId);
         // A stage still asked about after an upstream reopen is not settled yet, even once it got done.
-        if (!d.needs.every((n) => rows.some((r) => r.id === n && ["done", "skipped"].includes(r.state) && !r.control.upstream))) continue;
+        if (!prerequisitesDone(d, rows)) continue;
         const previous = d.tools?.includes("propose_directions") ? continuing(app, itemId) : null;
         if (previous) {
           changeStage(app, itemId, d.id, "skipped", {}, host, `继续「${previous.direction.goal}」：还剩 ${previous.remaining} 个试验`);
@@ -892,7 +895,11 @@ async function reopenNow(app: App, itemId: string, stageId: string, reason: stri
     if (!d.needs.some((n) => affected.has(n))) continue;
     affected.add(d.id);
     const row = getStage(app, itemId, d.id);
-    if (row.state === "done") changeStage(app, itemId, d.id, "stale", { askId: null, waitingOn: null }, by, `上游「${stageId}」重开，等复核`, refs, "stale");
+    if (row.state === "done" || row.control.gateReview) {
+      withdraw(app, row);
+      changeStage(app, itemId, d.id, "stale", { askId: null, waitingOn: null, control: { ...row.control, gateReview: undefined } },
+        by, `上游「${stageId}」重开，等复核`, refs, "stale");
+    }
     // Work in progress is not stopped behind the owner's back: they are asked (only while the flow runs).
     else if (row.state === "doing" && !f.endedAt) askUpstream(app, f, d, row, stageId, reason, refs, by);
   }
@@ -978,7 +985,8 @@ registerAskHandler("flow-plugin-gate", async (app, ask, ctx) => {
 }, (app, ask, ctx, by) => {
   if (by !== "owner" || ask.userId !== "owner") throw new HttpError(403, "插件检查只能由本人越过");
   const item = String(ctx.itemId), s = getStage(app, item, String(ctx.stageId));
-  if (s.askId !== ask.id || s.state !== "blocked" || !s.control.gateReview || itemFlow(app, item)?.endedAt)
+  const f = running(app, item);
+  if (s.askId !== ask.id || s.state !== "blocked" || !s.control.gateReview || !prerequisitesDone(definition(f, s.id), itemStages(app, item)))
     throw new HttpError(409, "这次检查已经处理");
 }, (app, ctx, answer) => serial(app, String(ctx.itemId), answer));
 
