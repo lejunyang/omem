@@ -10,7 +10,7 @@
  * Uses the installed Edge or Chrome (CHROMIUM=path to override). With `--serve` it only serves the
  * demo data and prints the address, to look around by hand; `--only=name,name` captures just those.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type Page } from "playwright";
@@ -20,7 +20,7 @@ import { savePage } from "../src/agents/ui-pages.ts";
 import { findAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createSession, pluginContext } from "../src/plugins/blocks.ts";
-import { getPlugin, loadPlugins } from "../src/plugins/registry.ts";
+import { forgetPlugin, getPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
 import { itemProviders, notifiers, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { registerFormats } from "../src/plugins/formats.ts";
@@ -42,6 +42,9 @@ import { attachBrief, sendToday } from "../src/items/today.ts";
 import { itemContext, saveContext } from "../src/channels/listen.ts";
 import { setParent } from "../src/items/parent.ts";
 import { parseFlow } from "../src/flows/definitions.ts";
+import { proposeFlow, startFlow } from "../src/flows/engine.ts";
+import { saveGateChecks } from "../src/flows/plugin-gates.ts";
+import { answerAsk } from "../src/agents/asks.ts";
 import { changeStage } from "../src/flows/store.ts";
 import { createDesign, getDesign, setConcernState, submitRevision } from "../src/designs/store.ts";
 import { recordReqStatus, saveReqs } from "../src/items/requirements.ts";
@@ -421,7 +424,14 @@ writeFileSync(join(journalDir, "plugin.yaml"), [
   "settings:", "  - { key: tone, label: 语气, type: select, options: [温和, 直接], default: 温和 }",
 ].join("\n"));
 writeFileSync(join(journalDir, "agents", "coach.md"), "---\ndescription: 陪本人做每日复盘\n---\n\n每天收工前问本人今天做了什么、卡在哪里、明天先做什么，用表单收集，用图表看一周的节奏。\n");
+// The example that takes part in flows (examples/plugins/stagekit: a signal, a job and a check, all on
+// files in its data directory), and a plugin that only declares an AI backend (its command is fictional).
+cpSync(new URL("../examples/plugins/stagekit", import.meta.url), join(home, "plugins", "stagekit"), { recursive: true });
+mkdirSync(join(home, "plugins", "helperkit"), { recursive: true });
+writeFileSync(join(home, "plugins", "helperkit", "plugin.yaml"), ["id: helperkit", "name: 本机助手示例", "description: 声明一个本机的 ACP 后端（演示，命令不存在）。", "backends:", "  - { id: helper, name: 本机助手, command: demo-acp, args: [serve], install: 安装 demo-acp 命令行 }"].join("\n"));
 await loadPlugins(app);
+await trustPlugin(app, "stagekit", "isolated");
+await trustPlugin(app, "helperkit", "isolated");
 const pluginTurn = async (plugin: string, agent: string, spaceId: string, title: string, runId = `r_${plugin}_demo`) => {
   const { id: conversationId } = await createSession(app, { plugin, agent, spaceId, userId: "owner", title });
   run(app.db, "insert into runs(id,kind,space_id,status,title,input,created_at,lane) values(?,?,?,?,?,?,?,?)", runId, "ask", spaceId, "running", title, JSON.stringify({ conversationId }), new Date().toISOString(), conversationId);
@@ -696,6 +706,40 @@ for (const [i, d] of delivery.stages.entries()) {
   run(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,round,work_id,created_at,updated_at) values(?,?,'defect',?,?,'[]','confirmed',1,?,?,?)",
     "sf_demo_negative", flowItem.id, "满减分摊到最后一行出现负数", "大额满减券、三行都已发货的订单申请退款，最后一行可退金额是负数。", r.id, flowAt(30), flowAt(30));
 }
+
+// ---- 流程里的插件 (examples/plugins/stagekit): a signal, a job and a check on one flow ---------------
+// `local-check` waits for a marker file, then the plugin writes a check file, then the owner confirms.
+// The job's version was enabled on its card; the check looks at the job's result and is mandatory.
+// One item stops at the check (the `flow-stage-blocked` shot); another waits for the marker (live:
+// write `ready` into plugin-data/stagekit/ready.txt under --serve and it moves on).
+const hookFlowRaw = [
+  "id: local-check", "name: 本机检查", "description: 等标记文件就绪，插件写检查文件，结果由我确认。", "stages:",
+  "  - id: mark", "    name: 等待标记", "    by: wait", "    done: { signal: \"stagekit:mark\", with: { file: ready.txt } }",
+  "  - id: write", "    name: 写检查文件", "    by: { runner: \"stagekit:write\", with: { verified: false } }", "    budget: { minutes: 1 }",
+  "  - id: confirm", "    name: 确认结果", "    by: owner", "    gate: confirm",
+].join("\n") + "\n";
+await answerAsk(app, proposeFlow(app, hookFlowRaw, { actor: "owner", userId: "owner" }).id, { choice: 0, by: "owner" });
+saveGateChecks(app, "local-check", [{ id: "stagekit:word", stages: ["write"], mandatory: true }]);
+const hookFlow = parseFlow(hookFlowRaw);
+const blockedItem = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "退款对账脚本：核对检查文件", detail: "对账脚本跑完后由插件写一份检查文件，我确认后再发给财务。", priority: 2 }, "user");
+run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,updated_at,started_by) values(?,?,?,?,?,?)", blockedItem.id, hookFlow.id, JSON.stringify(hookFlow), flowAt(3), flowAt(1), "owner");
+const hookRun = createRun(app, { kind: "flow-runner", spaceId: "shop", title: `${blockedItem.title} · 写检查文件`, input: { runner: "stagekit:write", itemId: blockedItem.id, stageId: "write", flowId: hookFlow.id, flowStartedAt: flowAt(3), round: 1, spaces: ["shop"] } });
+setRunOutput(app, hookRun.id, { runnerResult: { ref: `proof-demo.txt`, status: "done", summary: "待复核：检查文件已创建", evidence: [{ text: `检查文件 proof-demo.txt` }] } });
+run(app.db, "update runs set status='done',started_at=?,finished_at=? where id=?", flowAt(1.2), flowAt(1.1), hookRun.id);
+const hookAsk = createAsk(app, { userId: "owner", runId: hookRun.id, question: "「写检查文件」被检查拦下，是否仍然通过？\n\nstagekit:word：结果缺少“已验证”", options: [{ label: "仍然通过" }, { label: "等处理" }], context: { handler: "flow-plugin-gate", itemId: blockedItem.id, stageId: "write", completion: "accepted", logId: 0 } });
+const proofEvidence = [{ text: `检查文件 proof-demo.txt` }, { text: "对账脚本这次的运行", link: `#/runs/${hookRun.id}` }, { text: "需求里的对账口径", link: `src:${prd}#L7-L10` }];
+for (const d of hookFlow.stages) {
+  const done = d.id === "mark", blocked = d.id === "write";
+  changeStage(app, blockedItem.id, d.id, done ? "done" : blocked ? "blocked" : "pending", {
+    attempt: done || blocked ? 1 : 0, enteredAt: done ? flowAt(3) : blocked ? flowAt(1.2) : null, doneAt: done ? flowAt(1.3) : null,
+    by: blocked ? hookRun.id : null, waitingOn: blocked ? "owner" : null, askId: blocked ? hookAsk.id : null, evidence: blocked ? [hookRun.id] : [],
+    control: done ? { pluginEvidence: [{ text: "文件 ready.txt 的标记是 ready" }] } : blocked ? { runId: hookRun.id, reported: true, pluginEvidence: proofEvidence, gateReview: { summary: "待复核：检查文件已创建", refs: [hookRun.id], failed: [{ id: "stagekit:word", reason: "结果缺少“已验证”" }] } } : {},
+  }, { actor: done ? "host" : "stagekit:write", runId: blocked ? hookRun.id : undefined }, done ? "文件里的标记是 ready 就算完成" : blocked ? "stagekit:word：结果缺少“已验证”" : "", []);
+  // changeStage stamps the current clock; this fixture is an hour old.
+  run(app.db, "update item_stages set entered_at=?,done_at=?,since=? where item_id=? and stage_id=?", done ? flowAt(3) : blocked ? flowAt(1.2) : null, done ? flowAt(1.3) : null, done ? flowAt(1.3) : blocked ? flowAt(1.1) : flowAt(3), blockedItem.id, d.id);
+}
+const waitingItem = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "退款对账脚本：等标记文件", detail: "标记文件写好以后流程自己往下走。", priority: 3 }, "user");
+await startFlow(app, waitingItem.id, "local-check", { actor: "owner", userId: "owner" });
 
 // ---- two work lines for the work page (#/, #/work/:id) -----------------------------------------
 // 示例商城 · 退款改造: the requirement above (in its flow, waiting for the owner to push) with a defect
@@ -1256,9 +1300,9 @@ await sendToday(app);
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
-  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
+  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
-  const cleanup = async () => { await server.close(); app.db.close(); rmSync(home, { recursive: true, force: true }); process.exit(); };
+  const cleanup = async () => { await server.close(); for (const id of ["stagekit", "helperkit"]) forgetPlugin(id); app.events.emit("close"); app.db.close(); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); process.exit(); };
   process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
   await new Promise(() => {});
 }
@@ -1332,6 +1376,9 @@ async function prepareRemoteDemo(page: Page) {
 
 const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; before?: (page: Page) => Promise<void>; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "item-flow", path: `/items/${flowItem.id}`, width: 1440, prepare: async (p) => { await p.getByRole("region", { name: "事项流程", exact: true }).scrollIntoViewIfNeeded(); } },
+  // 流程里的插件: the checks of `local-check` on the flows page, and the item the check stopped (its card on top).
+  { name: "flow-plugin-checks", path: "/flows", prepare: async (p) => { await p.getByRole("button", { name: /本机检查/ }).first().click(); await p.waitForTimeout(800); await p.locator("#flow-checks-title").evaluate((el) => el.closest("section")?.scrollIntoView({ block: "end" })); await p.waitForTimeout(400); } },
+  { name: "flow-stage-blocked", path: `/work/${blockedItem.id}?tab=flow`, prepare: async (p) => { await p.getByText("被检查拦下").first().waitFor(); await p.waitForTimeout(600); } },
   // The start page (工作): the two lines, then 按时间, then one line's own page with 问这条线 open.
   { name: "work-overview", path: "/" },
   { name: "work-timeline", path: "/?view=time" },
@@ -1711,6 +1758,9 @@ for (const s of shots.filter((s) => !only || only.includes(s.name))) {
 }
 await browser.close();
 await server.close();
+// The isolated plugins (stagekit) run in their own processes inside it: stop them before the directory goes.
+for (const id of ["stagekit", "helperkit"]) forgetPlugin(id);
+app.events.emit("close");
 app.db.close();
-rmSync(home, { recursive: true, force: true });
+rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 if (failed) process.exitCode = 1;

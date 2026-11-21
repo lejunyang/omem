@@ -16,7 +16,7 @@ import AiNetworkConditions from "./AiNetworkConditions.vue";
  * everything set per backend: the default model, what it suits (routing candidates), its network
  * condition, how many runs at once, and its account's plan quota.
  */
-export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string };
+export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string } };
 export type AgentLoad = {
   now: { source: string; model: string; used: number; waiting: number }[];
   recent: { profile: string; model: string; done: number; failed: number; medianMinutes: number | null }[];
@@ -223,10 +223,12 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
         <span v-if="quotaShort" class="badge" :class="{ warn: quota?.avoid }">{{ quotaShort }}</span>
         <span v-if="spent.length" class="badge danger">额度用完</span>
         <span v-if="blocked" class="badge warn" :title="blocked">网络不符</span>
+        <span v-if="primary.pluginBackend" class="badge" :class="{ warn: !primary.pluginBackend.available }" :title="primary.pluginBackend.reason">{{ primary.pluginBackend.available ? `来自插件 ${primary.pluginBackend.name}` : "插件停用了" }}</span>
       </span>
     </button>
     <div v-if="open" class="be-body">
       <p v-if="blocked" class="small warn-text">{{ blocked }}</p>
+      <p v-if="primary.pluginBackend" class="small" :class="primary.pluginBackend.available ? 'muted' : 'warn-text'">{{ primary.pluginBackend.available ? `这个后端来自插件 ${primary.pluginBackend.name}，启动命令写在它的清单里。` : `现在用不了：${primary.pluginBackend.reason ?? "它的插件停用了"}（来自插件 ${primary.pluginBackend.name}）。` }}<RouterLink :to="{ path: '/settings', query: { tab: 'plugins', plugin: primary.pluginBackend.plugin } }">去插件页</RouterLink></p>
 
       <section class="part">
         <h4>默认模型</h4>

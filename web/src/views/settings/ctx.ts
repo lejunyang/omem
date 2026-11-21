@@ -12,7 +12,7 @@ import { detectProbe, probes as shared } from "../../lib/probes";
  * the configuration as the server returned it, the installed backends, and one way to save a part of
  * the configuration (`PUT /api/settings`, which says when a change needs a restart).
  */
-export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string };
+export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string } };
 export type ModelSource = { via: "local" | "osdk" | "hub"; path?: string; syncing?: boolean; error?: string; osdk: boolean; known: boolean; cached?: boolean; size?: string };
 export type RerankStatus = { enabled: boolean; model: string; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number; source?: ModelSource };
 

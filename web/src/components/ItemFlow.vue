@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, onServerEvent, onServerResync, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, evidenceWord, minutesWords, nextWords, objectStatusWords, ownerTurn, reviewHow, reviewNotes, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, verdictWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
+import FlowStagePlugin from "./FlowStagePlugin.vue";
 import ItemStudy from "./ItemStudy.vue";
 import PluginSlots from "./PluginSlots.vue";
 import RankBars from "./charts/RankBars.vue";
@@ -209,6 +210,7 @@ async function stop() {
       </div>
       <div v-for="s in waiting" :key="s.id" class="turn" :class="{ theirs: !!carrier }">
         <p>{{ nextWords(s, carrier) }}</p>
+        <FlowStagePlugin v-if="s.gateReview" :item-id="itemId" :stage="s" :editable="editable && !carrier" flat @changed="(v) => (v ? (data = v) : load())" />
         <div v-if="editable" class="row wrap"><button v-for="(a, i) in stageActions(s)" :key="a.label" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button></div>
       </div>
       <div v-for="c in carrier ? [] : asked" :key="c.id" class="turn">
@@ -251,7 +253,7 @@ async function stop() {
               <button v-if="editable && !data.flow.endedAt" type="button" class="link small budget-edit" :disabled="busy" @click="editBudget(stage)">改</button>
             </dd>
           </template>
-          <template v-if="stage.waitingSignal">
+          <template v-if="stage.waitingSignal && !stage.waitingSignal.type.includes(':')">
             <dt>在等</dt>
             <dd>{{ stage.waitingSignal.note }}<span v-if="stage.waitingSignal.checkedAt" class="muted">（{{ relTime(stage.waitingSignal.checkedAt) }}看的）</span></dd>
           </template>
@@ -260,6 +262,7 @@ async function stop() {
             <dd><Markdown :source="stage.note" class="stage-text" /></dd>
           </template>
         </dl>
+        <FlowStagePlugin v-if="!(stage.gateReview && waiting.some((s) => s.id === stage!.id))" :item-id="itemId" :stage="stage" :editable="editable && !carrier" @changed="(v) => (v ? (data = v) : load())" />
         <div v-if="stage.shots?.length" class="stage-shots">
           <div class="tests-head"><span>截图</span><span class="muted">{{ stage.shots.length }} 张</span></div>
           <RunArtifacts :items="stage.shots" />

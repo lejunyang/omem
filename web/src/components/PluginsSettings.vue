@@ -9,6 +9,7 @@ import { PLUGIN_ICONS } from "../lib/icons";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { state, toast } from "../store";
 import Icon from "./Icon.vue";
+import MonoLine from "./MonoLine.vue";
 import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 
@@ -49,7 +50,9 @@ type Plugin = {
   runMode: "isolated" | "inprocess" | null;
   version: string | null;
   installed: { source: string; version: string; installedAt: string } | null;
-  permissions: { tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; agentLogin?: string[]; uses: string[]; services: string[]; space: string | null };
+  /** AI backends it declares (docs/v2/plugins.md 声明式 ACP 后端): the command is code, read before trusting. */
+  backends?: { id: string; name: string; command: string; args: string[] }[];
+  permissions: { flow?: { signal?: boolean; run?: boolean; gate?: boolean }; tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; agentLogin?: string[]; uses: string[]; services: string[]; space: string | null };
 };
 
 const route = useRoute();
@@ -76,6 +79,7 @@ function permissionLines(p: Plugin) {
     m.uses.length ? `以你的身份调用：${m.uses.join("、")}` : "",
     m.services.length ? `在这台机器上运行：${m.services.join("；")}` : "",
     m.space ? `用自己的空间 ${m.space}` : "",
+    m.flow && (m.flow.signal || m.flow.run || m.flow.gate) ? `参与流程：${[m.flow.signal ? "判断阶段是否做完" : "", m.flow.run ? "执行你交给它的阶段（每次要你在确认卡上启用）" : "", m.flow.gate ? "阶段交结果前再检查一遍" : ""].filter(Boolean).join("、")}` : "",
   ].filter(Boolean);
 }
 const sourceLabel = (p: Plugin) => (p.source === "builtin" ? "内置" : p.linked ? (p.dir ?? "") : p.installed ? p.installed.source : "数据目录里的");
@@ -170,7 +174,8 @@ async function load() {
  * everything else; inprocess: inside omem with omem's rights, needed for content blocks and new connectors.
  */
 async function trust(p: Plugin, mode: "isolated" | "inprocess" = "isolated") {
-  const what = [...permissionLines(p), p.installed ? `来源：${p.installed.source}` : "", `目录：${p.dir}`].filter(Boolean).join("\n");
+  const backends = p.backends?.length ? `带来 AI 后端，信任后才能选，启动时运行：\n${p.backends.map((b) => `${b.name}：${[b.command, ...b.args].join(" ")}`).join("\n")}` : "";
+  const what = [...permissionLines(p), backends, p.installed ? `来源：${p.installed.source}` : "", `目录：${p.dir}`].filter(Boolean).join("\n");
   const how =
     mode === "isolated"
       ? "它的代码在单独的进程里运行：只能读它自己的目录、写它自己的数据目录，读不到 omem 的密钥和你的其他文件，也不能启动别的程序（信任后单独加入的命令 MCP 除外）；读平台、存原件都经过 omem，按调用它的人的权限。"
@@ -325,6 +330,10 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
         <span v-if="p.tools.length">工具：<span class="mono">{{ p.tools.join("、") }}</span></span>
         <span v-if="p.slots?.length">放在页面上：{{ p.slots.map((s) => `${SLOT_WORDS[s.at] ?? s.at}（${s.block}）`).join("、") }}</span>
       </div>
+      <div v-for="b in p.backends ?? []" :key="`be:${b.id}`" class="small backend-line">
+        <span>AI 后端：<RouterLink class="lnk" :to="{ path: '/settings', query: { tab: 'agents' } }">{{ b.name }}</RouterLink></span>
+        <MonoLine :text="[b.command, ...b.args].join(' ')" copy />
+      </div>
       <div v-for="s in p.spaces" :key="s.id" class="small path">空间：{{ s.name }}（{{ s.id }}） · {{ s.status }}</div>
       <div v-for="f in p.flows ?? []" :key="`flow:${f.id}`" class="small">
         流程：<RouterLink v-if="f.exists" class="lnk" to="/flows">{{ f.id }}</RouterLink><span v-else>{{ f.id }}</span>
@@ -436,4 +445,5 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
   background: var(--accent-soft);
   color: var(--accent);
 }
+.backend-line { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
 </style>

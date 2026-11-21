@@ -112,8 +112,10 @@ it("冷启动后打开角色和档案表单，已选插件后端显示来源和�
       await router.push("/agents?" + query);
       const html = await renderToString(createSSRApp(Agents).use(router));
       const field = html.match(/aria-label="后端"[^>]*>[\s\S]*?<\/button>/)?.[0];
-      expect(field).toContain(">" + options.unavailableBackends.find((b:{id:string}) => b.id === id).name + "</span>");
-      expect(html).toContain("这个后端来自已停用或未信任的插件（removed）");
+      // The saved choice stays the selected option, marked as unavailable, with where it came from and why.
+      expect(field).toContain(">" + options.unavailableBackends.find((b:{id:string}) => b.id === id).name + "（不可用）</span>");
+      expect(html).toContain("现在用不了：这个后端来自已停用或未信任的插件");
+      expect(html).toContain("（来自插件 removed）");
     }
   } finally { await server.close(); host.db.close(); }
 });

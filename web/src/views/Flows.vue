@@ -4,6 +4,9 @@ import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
 import { confirmDialog } from "../lib/dialog";
 import type { FlowFile } from "../lib/flow";
+import { carrierOf, doneOf, pluginOf, readStages, type FlowCheck, type FlowHooks, type PendingCheck, type PluginNames } from "../lib/flow-hooks";
+import FlowChecks from "../components/FlowChecks.vue";
+import FlowStageHooks from "../components/FlowStageHooks.vue";
 import FlowTabs from "../components/FlowTabs.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -75,7 +78,30 @@ stages:
     by: owner
     gate: confirm
 `;
-const files = ref<FlowFile[]>([]), loading = ref(true), error = ref(""), busy = ref(false);
+type Listed = FlowFile & { checks?: FlowCheck[]; pendingCheckScopes?: PendingCheck[] };
+const files = ref<Listed[]>([]), loading = ref(true), error = ref(""), busy = ref(false);
+/** What plugins offer flows (signals, jobs, checks), and their names for grouping. */
+const hooks = ref<FlowHooks>({ signals: [], runners: [], gates: [] }), names = ref<PluginNames>({});
+/** Only the owner submits definitions with a plugin's job (they run code without anyone watching). */
+const ownerOnly = computed(() => !!state.me && state.me.role !== "owner");
+/** The stages as written, for the pickers; the step whose pickers are open. */
+const rawStages = computed(() => new Map(readStages(raw.value).map((s) => [s.id, s])));
+const tuning = ref<string | null>(null);
+/** The version with a plugin's job just submitted: it waits for 启用 on its card. */
+const submitted = ref<{ askId: string; name: string } | null>(null);
+/** A step's plugin parts, said on the step itself even when its pickers are closed. */
+function pluginNote(id: string) {
+  const s = rawStages.value.get(id);
+  if (!s) return null;
+  const c = carrierOf(s), d = doneOf(s);
+  const runner = c.kind === "runner" ? hooks.value.runners.find((r) => r.id === c.id) : undefined;
+  const signal = d.kind === "signal" && pluginOf(d.id) ? hooks.value.signals.find((x) => x.id === d.id) : undefined;
+  const gone = [c.kind === "runner" && !runner ? { id: c.id, words: "轮到它时会卡住等你处理" } : null, d.kind === "signal" && pluginOf(d.id) && !signal ? { id: d.id, words: "你可以手动完成这一段" } : null].filter((g) => !!g);
+  // A job is already said by the stage's carrier line; a plugin's signal is not.
+  const parts = [signal ? `等插件的信号：${signal.name}` : ""].filter(Boolean);
+  return parts.length || gone.length ? { text: parts.join("；"), gone } : null;
+}
+const current = computed(() => files.value.find((f) => f.id === selected.value));
 const editing = ref(false), selected = ref<string | null>(null), raw = ref(""), original = ref("");
 /** `reading` is the answer for the text as it is now; `shown` is the last one that parsed, kept on screen while the owner types. */
 const reading = ref<Reading | null>(null), shown = ref<Reading | null>(null), validating = ref(false);
@@ -83,13 +109,45 @@ let validationSeq = 0, listSeq = 0, timer: ReturnType<typeof setTimeout> | undef
 const changed = computed(() => raw.value !== original.value);
 const renamed = computed(() => !!selected.value && !!reading.value?.ok && reading.value.id !== selected.value);
 const valid = computed(() => !validating.value && !!reading.value?.ok && !renamed.value);
+/**
+ * A saved flow whose plugin is gone does not pass the check (the server needs the plugin to read its
+ * parameters): its stages are still listed from the text, with the plugin parts marked.
+ */
+const fallback = computed<Reading | null>(() => {
+  if (shown.value || !reading.value?.problem) return null;
+  const list = readStages(raw.value);
+  if (!list.length) return null;
+  return { ok: false, stages: list.map((s, i) => {
+    const c = carrierOf(s), d = doneOf(s), r = s as { gate?: string; needs?: string[] };
+    return { id: s.id, name: s.name ?? s.id, needs: r.needs ?? (i ? [list[i - 1].id] : []), when: "",
+      carrier: c.kind === "owner" ? "你来做" : c.kind === "wait" ? "只等进展" : c.kind === "runner" ? `插件 ${c.id} 执行` : "",
+      gate: r.gate === "confirm" ? "开始前先问你" : "轮到就开始",
+      done: d.kind === "signal" ? `等 ${d.id} 的信号` : d.kind === "confirm" ? "做完要你点头" : "按谁来做的默认算完" };
+  }) };
+});
+/** The server's word on a capability no plugin offers now, said as what to do. */
+const problemWords = computed(() => {
+  const p = reading.value?.problem ?? "", m = /未注册流程能力 (\S+)/.exec(p);
+  return m ? `定义里用到的 ${m[1]} 现在没有插件提供（插件停用或卸载了）。要保存改动，先重新启用那个插件，或把这一段换成别的。` : p;
+});
+const steps = computed(() => shown.value ?? fallback.value);
 const title = computed(() => shown.value?.name ?? files.value.find((f) => f.id === selected.value)?.definition?.name ?? selected.value ?? "新流程");
-const status = computed(() => validating.value ? "正在核对…" : !selected.value ? "还没保存" : changed.value ? "有没保存的修改" : "已保存");
+const status = computed(() => validating.value ? "正在核对…" : submitted.value ? "已提交，等你启用" : !selected.value ? "还没保存" : changed.value ? "有没保存的修改" : "已保存");
 
 async function load() {
   const request = ++listSeq;
   loading.value = true;
-  try { const result = await get<{ flows: FlowFile[]; drafts?: Draft[] }>("/api/flows"); if (request === listSeq) { files.value = result.flows; drafts.value = result.drafts ?? []; error.value = ""; } }
+  try {
+    const result = await get<{ flows: Listed[]; drafts?: Draft[] } & Partial<FlowHooks>>("/api/flows");
+    if (request === listSeq) {
+      files.value = result.flows; drafts.value = result.drafts ?? []; error.value = "";
+      hooks.value = { signals: result.signals ?? [], runners: result.runners ?? [], gates: result.gates ?? [] };
+      // Enabled on its card (here, in 等我的, or in a chat): what is open is now what is saved.
+      const same = editing.value && result.flows.find((f) => f.raw.trimEnd() === raw.value.trimEnd() && (f.id === selected.value || !selected.value && f.id === reading.value?.id));
+      if (same && changed.value) { selected.value = same.id; original.value = raw.value; }
+      if (submitted.value && !drafts.value.some((d) => d.askId === submitted.value!.askId)) submitted.value = null;
+    }
+  }
   catch (e) { if (request === listSeq) error.value = (e as Error).message; }
   finally { if (request === listSeq) loading.value = false; }
 }
@@ -120,7 +178,7 @@ function summary(f: FlowFile) {
 }
 /** The stages a step waits for, said only when it is not simply "the one before". */
 function waits(s: Step, i: number) {
-  const all = shown.value?.stages ?? [];
+  const all = steps.value?.stages ?? [];
   if (!i || s.needs.length === 1 && s.needs[0] === all[i - 1]?.id) return "";
   return s.needs.length ? `等「${s.needs.map((id) => all.find((n) => n.id === id)?.name ?? id).join("」「")}」做完` : "不用等前面的阶段，可以同时进行";
 }
@@ -146,10 +204,20 @@ async function save() {
   const id = reading.value!.id!, yaml = raw.value;
   if (!selected.value && files.value.some((f) => f.id === id)) { error.value = "这个 id 已经有一份流程在用：换一个 id，或在左边打开那一份来改。"; return; }
   busy.value = true;
-  try { await put(`/api/flows/${encodeURIComponent(id)}`, { yaml }); selected.value = id; original.value = yaml; error.value = ""; await load(); }
+  try {
+    const r = await put<{ askId?: string }>(`/api/flows/${encodeURIComponent(id)}`, { yaml });
+    error.value = "";
+    if (r.askId) {
+      // Not saved yet: a version with a plugin's job waits for 启用 on its card. The text stays as typed.
+      submitted.value = { askId: r.askId, name: reading.value?.name ?? id };
+    } else { selected.value = id; original.value = yaml; submitted.value = null; }
+    await load();
+  }
   catch (e) { error.value = (e as Error).message; }
   finally { busy.value = false; }
 }
+/** Names of the plugins, for “插件 · 本机阶段示例”; only the owner may list them, the ids stand in otherwise. */
+onMounted(() => void get<{ id: string; name: string }[]>("/api/plugins").then((list) => { names.value = Object.fromEntries(list.map((p) => [p.id, p.name])); }).catch(() => {}));
 async function remove() {
   const id = selected.value;
   if (!id || busy.value || !await confirmDialog(`删除「${title.value}」`, { message: "已经按它在走的事项不受影响，各自带着开始时的那一份。删除后不能再用它开始新的。", danger: true, okText: "删除" })) return;
@@ -239,15 +307,26 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
         </header>
         <p v-if="shown?.description" class="muted desc">{{ shown.description }}</p>
         <p v-if="error" class="err small" role="alert">{{ error }}</p>
+        <div v-if="submitted" class="submitted" role="status">
+          <p><strong>已提交，等你启用才生效</strong></p>
+          <p class="small">这一版有交给插件执行的阶段，要在确认卡上点“启用”才保存；在那之前，现在这份照常用。确认卡也在左边的草稿和工作页的“需要你处理”里。</p>
+          <div class="row wrap">
+            <template v-if="drafts.find((d) => d.askId === submitted!.askId)">
+              <button class="btn primary sm" type="button" :disabled="ownerOnly" @click="answerDraft(drafts.find((d) => d.askId === submitted!.askId)!, 0)">启用</button>
+              <button class="btn ghost sm" type="button" :disabled="ownerOnly" @click="answerDraft(drafts.find((d) => d.askId === submitted!.askId)!, 1)">不用</button>
+            </template>
+            <router-link to="/" class="btn ghost sm">去“需要你处理”</router-link>
+          </div>
+        </div>
 
         <div class="panes" :class="{ single: !showSource }">
           <section class="reading" aria-live="polite">
             <h3>它会怎么走</h3>
-            <p v-if="reading?.problem" class="err small">{{ reading.problem }}</p>
+            <p v-if="reading?.problem" class="err small">{{ problemWords }}</p>
             <p v-else-if="renamed" class="err small">改已有的流程时 id 要保持 {{ selected }}。要另存一份，点左上的 ＋ 新建。</p>
-            <Skeleton v-if="!shown && validating" variant="text" :rows="5" />
-            <ol v-else-if="shown?.stages" class="steps" :class="{ stale: !!reading?.problem || validating }">
-              <li v-for="(s, i) in shown.stages" :key="s.id">
+            <Skeleton v-if="!steps && validating" variant="text" :rows="5" />
+            <ol v-else-if="steps?.stages" class="steps" :class="{ stale: !!shown && (!!reading?.problem || validating) }">
+              <li v-for="(s, i) in steps.stages" :key="s.id">
                 <span class="step-no">{{ i + 1 }}</span>
                 <div class="step">
                   <div class="step-head"><strong>{{ s.name }}</strong><span class="muted">{{ s.carrier }}</span></div>
@@ -256,6 +335,12 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
                   <div v-if="s.ai || s.time || s.budget" class="muted">{{ [s.ai, s.time, s.budget].filter(Boolean).join("；") }}</div>
                   <div v-if="waits(s, i)" class="muted">{{ waits(s, i) }}</div>
                   <div v-if="grants.has(s.id)" class="granted">你连着同意过，现在轮到它就直接开始。<button type="button" class="link" :disabled="busy" @click="askAgain(s)">改回每次问我</button></div>
+                  <div v-if="pluginNote(s.id)" class="plugin-note">
+                    <span v-if="pluginNote(s.id)!.text">{{ pluginNote(s.id)!.text }}</span>
+                    <span v-for="g in pluginNote(s.id)!.gone" :key="g.id" class="gone"><span class="badge warn">插件停用了</span> <span class="mono">{{ g.id }}</span>：{{ g.words }}</span>
+                  </div>
+                  <button v-if="rawStages.has(s.id)" type="button" class="link tune" :aria-expanded="tuning === s.id" :disabled="busy" @click="tuning = tuning === s.id ? null : s.id">{{ tuning === s.id ? "收起" : "改谁来做、怎么算完" }}</button>
+                  <FlowStageHooks v-if="tuning === s.id && rawStages.has(s.id)" v-model:raw="raw" :stage="rawStages.get(s.id)!" :hooks="hooks" :names="names" :disabled="busy" :owner-only="ownerOnly" :problem="reading?.problem" />
                 </div>
               </li>
             </ol>
@@ -271,11 +356,11 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
               <summary>每一段可以写什么</summary>
               <dl>
                 <dt><code>by</code></dt>
-                <dd>谁来做：<code>owner</code> 你来做；<code>wait</code> 只等进展；<code>{ run: {} }</code> 交给助手的一次运行（可写 <code>agent</code>、<code>skill</code>）；<code>{ object: code-work }</code> 或 <code>design</code> 跟着编码交办或方案走；装了插件以后还能跟着它的对象走，写 <code>{ object: "插件:类型" }</code>（比如 <code>"github:pull-request"</code>），在事项页的“外部状态”里挂上链接。</dd>
+                <dd>谁来做：<code>owner</code> 你来做；<code>wait</code> 只等进展；<code>{ run: {} }</code> 交给助手的一次运行（可写 <code>agent</code>、<code>skill</code>）；<code>{ object: code-work }</code> 或 <code>design</code> 跟着编码交办或方案走；装了插件以后还能跟着它的对象走，写 <code>{ object: "插件:类型" }</code>（比如 <code>"github:pull-request"</code>），在事项页的“外部状态”里挂上链接；插件能执行的阶段写 <code>{ runner: "插件:id", with: {…} }</code>，配 <code>budget: { minutes }</code> 作时限，要你点“启用”才生效。</dd>
                 <dt><code>gate</code></dt>
                 <dd><code>confirm</code> 开始前先问你；不写就轮到自己开始。</dd>
                 <dt><code>done</code></dt>
-                <dd>做到什么算完：<code>confirm</code> 要你点头；<code>{ signal: git.pushed }</code> 改动推到远端就算（<code>git.merged</code> 是合进目标分支，只用在你来做或只等的阶段）；<code>{ object: "插件:类型", status: merged }</code> 是这件事挂着的那个外部对象到了这个状态就算；也可以写一句话；不写就按“谁来做”默认。</dd>
+                <dd>做到什么算完：<code>confirm</code> 要你点头；<code>{ signal: git.pushed }</code> 改动推到远端就算（<code>git.merged</code> 是合进目标分支，只用在你来做或只等的阶段）；插件的信号写 <code>{ signal: "插件:id", with: {…} }</code>，同样只用在这两种阶段；<code>{ object: "插件:类型", status: merged }</code> 是这件事挂着的那个外部对象到了这个状态就算；也可以写一句话；不写就按“谁来做”默认。</dd>
                 <dt><code>needs</code></dt>
                 <dd>要等哪些阶段做完，写它们的 id；不写就等上一段，<code>[]</code> 是不用等。</dd>
                 <dt><code>when</code></dt>
@@ -296,6 +381,8 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
             </details>
           </section>
         </div>
+
+        <FlowChecks v-if="current?.definition && (hooks.gates.length || current.checks?.length)" :flow-id="current.id" :stages="current.definition.stages.map((s) => ({ id: s.id, name: s.name }))" :gates="hooks.gates" :checks="current.checks ?? []" :pending="current.pendingCheckScopes ?? []" :names="names" :editable="!ownerOnly" @saved="(c) => (current!.checks = c)" />
 
         <section v-if="selected" class="change">
           <label class="field">
@@ -358,7 +445,14 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
 
 /* The stages as a numbered list down a hairline: name and who does it, then how it starts and what ends it. */
 .steps { margin: 0; padding: 0; list-style: none; display: grid; font-size: 13px; line-height: 1.6; }
-.steps.stale { opacity: 0.55; }
+.steps.stale .step-no, .steps.stale .step > :not(.hooks):not(.tune) { opacity: 0.55; }
+.plugin-note { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 12.5px; color: var(--ink-2); }
+.plugin-note .gone { color: var(--warn); }
+.plugin-note .mono { font-family: var(--mono); font-size: 12px; }
+.tune { justify-self: start; font-size: 12.5px; color: var(--muted); }
+.tune:hover { color: var(--ink); text-decoration: underline; }
+.submitted { display: grid; gap: 8px; max-width: 680px; padding: 12px 16px; border-radius: var(--radius); background: var(--warn-soft); }
+.submitted p { margin: 0; line-height: 1.6; }
 .steps li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; position: relative; padding-bottom: 14px; }
 .steps li:not(:last-child)::before { content: ""; position: absolute; left: 10.5px; top: 24px; bottom: 2px; width: 1px; background: var(--line); }
 .steps li:last-child { padding-bottom: 0; }

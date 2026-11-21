@@ -5,7 +5,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
 import McpServices, { type McpServer } from "../components/McpServices.vue";
-import AiDefaults, { type UnavailableBackend } from "../components/AiDefaults.vue";
+import AiDefaults, { type PluginBackend, type UnavailableBackend } from "../components/AiDefaults.vue";
 import VirtualList from "../components/VirtualList.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import Icon from "../components/Icon.vue";
@@ -36,7 +36,7 @@ type RoleState = { name: string; description: string; customized: boolean; sourc
 type RoleRow = Pick<RoleState, "name" | "description"> & Partial<Pick<RoleState, "customized" | "sourceChanged">>;
 type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; purpose?: string; enabled?: boolean };
 type SkillGroup = { id: string; title: string; enabled: boolean; count: number; enabledCount: number };
-type Options = { unavailableBackends: UnavailableBackend[]; backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
+type Options = { unavailableBackends: UnavailableBackend[]; backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; pluginBackend?: PluginBackend }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
 type SpecSummary = Pick<Spec, "name" | "description" | "status" | "agent" | "model" | "effort">;
 type SpecRow = SpecSummary & { plugin?: string };

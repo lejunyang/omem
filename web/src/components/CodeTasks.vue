@@ -5,6 +5,9 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 import { parsePatches } from "../lib/reviews";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { relTime, toast } from "../store";
+import { useRoute } from "vue-router";
+import { landing } from "../lib/flow-hooks";
+import { landOn } from "../lib/landing";
 import DiffFile from "./DiffFile.vue";
 import Markdown from "./Markdown.vue";
 import DiffName from "./DiffName.vue";
@@ -88,6 +91,17 @@ const source = (t: Task) => t.origin.findings?.length ? `评审问题 ${t.origin
 
 const open = ref(new Set<number>());
 const toggle = (seq: number) => { const n = new Set(open.value); n.has(seq) ? n.delete(seq) : n.add(seq); open.value = n; };
+/** Opened from the progress view (`?task=T3`): that task, unfolded and marked once; an unknown one is ignored. */
+const route = useRoute();
+let landed = "";
+watch(() => [data.value, route.query.task] as const, ([d]) => {
+  const t = landing(route.query);
+  const key = `${props.runId}:${String(route.query.task)}`;
+  if (t?.kind !== "task" || landed === key || !d?.tasks?.some((x) => x.seq === t.seq)) return;
+  landed = key;
+  open.value = new Set([...open.value, t.seq]);
+  void landOn(`code-task-${t.seq}`);
+});
 
 const working = ref(false);
 async function act(path: string, body: unknown, done: string) {
@@ -212,7 +226,7 @@ async function pickFile(key: string) {
 
     <div v-if="owner.length" class="ask block">
       <div class="section-title">等你决定</div>
-      <div v-for="t in owner" :key="t.seq" class="q">
+      <div v-for="t in owner" :id="`code-task-${t.seq}`" :key="t.seq" class="q">
         <p class="small"><strong>T{{ t.seq }} {{ t.title }}</strong></p>
         <Markdown class="small question" :source="t.question ?? t.doneWhen ?? ''" :breaks="true" />
         <div class="row wrap">
@@ -245,7 +259,7 @@ async function pickFile(key: string) {
 
     <div v-for="g in groups" :key="g.id" class="group">
       <div class="section-title">{{ g.label }} · {{ g.list.length }}</div>
-      <div v-for="t in g.list" :key="t.seq" class="task" :class="{ on: open.has(t.seq) }">
+      <div v-for="t in g.list" :id="`code-task-${t.seq}`" :key="t.seq" class="task" :class="{ on: open.has(t.seq) }">
         <button class="trow" :aria-expanded="open.has(t.seq)" @click="toggle(t.seq)">
           <span class="seq mono">T{{ t.seq }}</span>
           <span class="title">{{ t.title }}</span>

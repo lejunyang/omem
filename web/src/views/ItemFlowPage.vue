@@ -9,9 +9,12 @@ import RunArtifacts from "../components/RunArtifacts.vue";
 import ShotGrid from "../components/ShotGrid.vue";
 import Skeleton from "../components/Skeleton.vue";
 import FlowWaiting from "../components/FlowWaiting.vue";
+import FlowStagePlugin from "../components/FlowStagePlugin.vue";
 import type { Material } from "../components/ItemMaterials.vue";
 import { evidenceLink, evidenceWord, ownerTurn, stageWords, testWords, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
 import { refAction } from "../lib/refs";
+import { landing } from "../lib/flow-hooks";
+import { landOn } from "../lib/landing";
 import { fmtTime, openCitation, relTime, state } from "../store";
 
 /**
@@ -31,16 +34,31 @@ const id = computed(() => props.id ?? String(route.params.id ?? ""));
 const detail = ref<Detail | null>(null), flow = ref<FlowView | null>(null);
 const loading = ref(true), error = ref("");
 let seq = 0;
+/** The landing (below) already done for this address. */
+let landed = "";
 
 async function load() {
   const n = ++seq, item = id.value;
   try {
     const [d, f] = await Promise.all([get<Detail>(`/api/items/${item}`), get<FlowView>(`/api/items/${item}/flow`)]);
-    if (n === seq) { detail.value = d; flow.value = f; error.value = ""; }
+    if (n === seq) { detail.value = d; flow.value = f; error.value = ""; land(); }
   } catch (e) { if (n === seq) error.value = (e as Error).message; }
   finally { if (n === seq) loading.value = false; }
 }
-watch(id, () => { detail.value = null; flow.value = null; loading.value = true; void load(); }, { immediate: true });
+watch(id, () => { detail.value = null; flow.value = null; loading.value = true; landed = ""; void load(); }, { immediate: true });
+/**
+ * Opened from the progress view: the stage (`?stage=`), a study's direction or trial it points at.
+ * Once per address; an id that is not on the page is left alone.
+ */
+const target = computed(() => landing(route.query));
+const studyFocus = computed(() => { const t = target.value; return t && (t.kind === "direction" || t.kind === "trial") ? { kind: t.kind, id: t.id } : null; });
+function land() {
+  const t = target.value, key = `${id.value}:${JSON.stringify(t)}`;
+  if (!t || t.kind === "task" || landed === key) return;
+  landed = key;
+  if (t.kind === "stage") void landOn(`stage-${t.id}`);
+}
+watch(() => route.query, () => { if (flow.value) land(); });
 const off = onServerEvent((e) => { if (e.type === "changed" && e.entity === "item" && e.id === id.value) void load(); });
 const resync = onServerResync(() => void load());
 onBeforeUnmount(() => { ++seq; off(); resync(); });
@@ -118,7 +136,7 @@ function openRef(r: string) {
       <FlowWaiting v-if="!embedded" :item="{ id: item.id, title: item.title, spaceId: item.spaceId }" :flow="flow" :editable="editable" @changed="(v) => (v ? (flow = v) : load())" />
 
       <!-- A study's directions, trials and findings: where its directions are chosen ("在下面的……里选一个"). -->
-      <ItemStudy v-if="flow?.flow?.study" class="study" :item-id="item.id" :editable="editable" :choosing="!ended && stages.some((s) => s.asking === 'direction')" />
+      <ItemStudy v-if="flow?.flow?.study" class="study" :item-id="item.id" :editable="editable" :focus="studyFocus" :choosing="!ended && stages.some((s) => s.asking === 'direction')" />
 
       <article class="article">
         <section v-if="item.detail" class="chapter">
@@ -130,6 +148,7 @@ function openRef(r: string) {
           <h2><span class="dot" :class="dot(s)" />{{ s.name }}<span class="when muted small">{{ stageWords[s.state] }}{{ when(s) ? ` · ${when(s)}` : "" }}{{ s.attempt > 1 ? ` · 第 ${s.attempt} 次` : "" }}</span></h2>
           <Markdown v-if="text(s)" :source="text(s)" class="prose" />
           <p v-else class="muted">{{ s.state === "doing" ? "正在做，还没写结果。" : "没有写结果。" }}</p>
+          <FlowStagePlugin :item-id="item.id" :stage="s" :editable="editable" :actions="false" @changed="(v) => (v ? (flow = v) : load())" />
           <ShotGrid v-if="images(s.shots).length" :items="images(s.shots)" />
           <details v-if="earlier(s.shots).length" class="earlier small">
             <summary class="muted">之前几次的截图（{{ earlier(s.shots).length }}）</summary>
@@ -153,7 +172,7 @@ function openRef(r: string) {
         <section v-if="upcoming.length" class="chapter">
           <h2>接下来</h2>
           <ol class="next">
-            <li v-for="s in upcoming" :key="s.id"><strong>{{ s.name }}</strong><span class="muted">（{{ s.carrier.label }}{{ s.gate === "confirm" || s.state === "gated" ? "，开始前问你" : "" }}）</span><span v-if="s.instruction">：{{ s.instruction }}</span></li>
+            <li v-for="s in upcoming" :id="`stage-${s.id}`" :key="s.id"><strong>{{ s.name }}</strong><span class="muted">（{{ s.carrier.label }}{{ s.gate === "confirm" || s.state === "gated" ? "，开始前问你" : "" }}）</span><span v-if="s.instruction">：{{ s.instruction }}</span></li>
           </ol>
         </section>
 

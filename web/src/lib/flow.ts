@@ -1,5 +1,6 @@
 /** Presentation only: the server remains the authority for stage transitions. */
 import { dayKey, toWallDate } from "./time.js";
+import type { GateReview, PluginEvidence, WaitingSignal } from "./flow-hooks.js";
 export type StageState = "pending" | "gated" | "doing" | "blocked" | "done" | "skipped" | "stale";
 export type FlowStage = {
   id: string; name: string; instruction: string; state: StageState; attempt: number;
@@ -13,8 +14,15 @@ export type FlowStage = {
   budget?: { minutes?: number; trials?: number } | null; escalate?: { to: string; max: number } | null;
   actualAI?: { profile: string; model?: string; effort?: string } | null;
   descriptions?: { ai: string; time: string; budget: string };
-  /** The stage completes by itself when this is seen (a push, a merge); what the last look found. */
-  waitingSignal?: { type: string; checkedAt: string | null; note: string };
+  /**
+   * The stage completes by itself when this is seen (a push, a merge, a plugin's signal); what the last look found.
+   * A plugin's (`type` with a colon) also says whether anyone can answer now, how often asking failed and when it asks again.
+   */
+  waitingSignal?: WaitingSignal;
+  /** What a plugin handed in as evidence (a signal, a job, or a check that stopped the stage). */
+  pluginEvidence?: PluginEvidence[];
+  /** A plugin's check stopped the stage before it could finish: why, and what was handed in. `askId` is the owner's card. */
+  gateReview?: GateReview | null;
   /** The stage asked the owner something that is answered elsewhere on the page: a study's direction for this round. */
   asking?: "direction";
   /** The owner recorded this stage as already done before the flow began. */
@@ -160,6 +168,8 @@ export function clockTime(at: string) {
 export const aiName = (ai: { profile: string; model?: string; effort?: string }) => [ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ");
 export type FlowAction = { action: "confirm" | "hold" | "skip" | "done" | "reopen"; label: string; reason?: boolean };
 export function stageActions(s: FlowStage): FlowAction[] {
+  // Stopped by a plugin's check: 仍然通过 is the card's (FlowGateReview); finishing again checks again.
+  if (s.state === "blocked" && s.gateReview) return [{ action: "done", label: "处理好了，重新检查", reason: true }, { action: "reopen", label: "重开", reason: true }];
   if (s.state === "blocked") return [{ action: "done", label: "我来处理了，继续", reason: true }, { action: "reopen", label: "重开", reason: true }];
   if (s.question === "skip" && ownerTurn(s)) return [{ action: "skip", label: "跳过这一段", reason: true }];
   if (s.question === "refuse" && ownerTurn(s)) return [{ action: "reopen", label: "还不行", reason: true }];
@@ -172,17 +182,20 @@ export function nextWords(s: FlowStage, who?: string | null) {
   const task = (s.instruction || s.name).replace(/[。！？\s]+$/, "");
   // Someone else's turn (see stageLine): what it waits for, without telling the reader to do it.
   if (who) {
+    if (s.state === "blocked" && s.gateReview) return `被检查拦下，等 ${who} 处理：${task}。`;
     if (s.state === "blocked") return `卡住了，等 ${s.waitingOn === "owner" ? who : s.waitingOn || who} 处理：${task}。`;
     if (s.question === "done") return `做完了，等 ${who} 确认：${task}。`;
     if (s.state === "gated") return `要开始这一段了，等 ${who} 同意：${task}。`;
     return `等 ${who}：${task}。`;
   }
+  if (s.state === "blocked" && s.gateReview) return `被检查拦下：${task}。核对下面的原因和证据，这一次仍然通过，或者等处理好以后重新检查。`;
   if (s.state === "blocked") return `卡住：${s.waitingOn === "owner" ? "等你处理" : s.waitingOn ? `等 ${s.waitingOn} 回复` : "等待处理"}。${task}。处理好后继续，或重开这一段。`;
   if (s.question === "skip") return `等你补充跳过的原因：${task}。`;
   if (s.question === "refuse") return `等你补充哪里还不行：${task}。写明原因后重开这一段。`;
   if (s.question === "done") return `做完了，确认吗？${task}。确认后继续推进后面的阶段。`;
   if (s.asking === "direction") return "这一轮的方向提出来了：在下面的台账里选一个，或者这一轮不跑。";
   if (s.state === "gated") return `要开始这一段了：${task}。你同意才开始。`;
+  if (s.waitingSignal?.type.includes(":")) return `轮到你：${task}。${s.waitingSignal.available === false ? "等的信号现在没人能判断，做完以后点一下。" : "插件看到信号后这一段会自己完成；也可以直接点做完。"}`;
   if (s.waitingSignal) return `轮到你：${task}。${s.waitingSignal.type === "git.merged" ? "合进目标分支" : "推到远端"}以后这一段会自己完成，后面的阶段接着走；也可以直接点做完。`;
   return `轮到你：${task}。做完点一下，后面的阶段会接着走。`;
 }

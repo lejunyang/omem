@@ -198,6 +198,7 @@ async function saveEdit() {
                 <MonoLine :text="`${p.command} ${p.args.join(' ')}`.trim()" />
                 <button class="btn ghost sm" @click="editProfile(p)">{{ editingProfile === p.id ? "收起" : "编辑" }}</button>
               </div>
+              <p v-if="p.pluginBackend" class="small miss-plugin" :class="{ warn: !p.pluginBackend.available }">{{ p.pluginBackend.available ? `来自插件 ${p.pluginBackend.name}` : `来自插件 ${p.pluginBackend.name}，现在用不了：${p.pluginBackend.reason ?? "它的插件停用了"}` }}。<RouterLink :to="{ path: '/settings', query: { tab: 'plugins', plugin: p.pluginBackend.plugin } }">去插件页</RouterLink></p>
               <div v-if="p.install" class="miss-install small muted"><span>安装</span><MonoLine :text="p.install" copy /></div>
               <div v-if="editingProfile === p.id" class="stack edit-box">
                 <textarea v-model="editJson" class="textarea mono" rows="9" />
@@ -312,6 +313,13 @@ async function saveEdit() {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
+}
+.miss-plugin {
+  margin: 0;
+  color: var(--muted);
+}
+.miss-plugin.warn {
+  color: var(--warn);
 }
 .edit-box {
   padding: 8px 0;

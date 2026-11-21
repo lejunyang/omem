@@ -24,7 +24,8 @@ const routes: RouteRecordRaw[] = [
   // An item's flow is a tab of its page under 工作 (the owner's); members keep the flow page itself.
   {
     ...view("/items/:id/flow", () => import("./views/ItemFlowPage.vue"), "/items"),
-    beforeEnter: (to) => (!state.me || state.me.role === "owner" ? { path: `/work/${String(to.params.id)}`, query: { tab: "flow" } } : true),
+    // Where in the flow to land (`?stage=`, `?trial=`… from the progress view) goes along.
+    beforeEnter: (to) => (!state.me || state.me.role === "owner" ? { path: `/work/${String(to.params.id)}`, query: { ...to.query, tab: "flow" }, hash: to.hash } : true),
   } as RouteRecordRaw,
   view("/items/:id?", () => import("./views/Items.vue"), "/items"),
   view("/reqs/:id?", () => import("./views/Requirements.vue"), "/reqs"),
