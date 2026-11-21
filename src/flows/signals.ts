@@ -1,3 +1,4 @@
+import { checkPluginSignals, pluginSignalWaiting } from "./plugin-signals.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +22,7 @@ type Observation = { at: string; outcome: string; keys: string };
 type TargetKey = { space: string; branch: string | null; commits: string[] };
 const signalOf = (d: FlowStage) => typeof d.done === "object" && "signal" in d.done ? d.done.signal : null;
 
-function lastCheck(app: App, itemId: string, stageId: string, type: GitSignal, since: string) {
+function lastCheck(app: App, itemId: string, stageId: string, type: string, since: string) {
   return one<Observation>(app.db, "select at,outcome,keys from flow_signals where item_id=? and stage_id=? and type=? and at>=? order by id desc limit 1", itemId, stageId, type, since);
 }
 export function waitingSignal(app: App, itemId: string, d: FlowStage) {
@@ -29,6 +30,7 @@ export function waitingSignal(app: App, itemId: string, d: FlowStage) {
   if (!type) return undefined;
   const s = getStage(app, itemId, d.id);
   if (s.state !== "doing" || itemFlow(app, itemId)?.endedAt) return undefined;
+  if (type.includes(":")) return pluginSignalWaiting(app, s, type);
   const last = lastCheck(app, itemId, d.id, type, s.enteredAt ?? s.since);
   return { type, checkedAt: last?.at ?? null, note: last?.outcome ?? describeStage(d).done };
 }
@@ -145,8 +147,13 @@ export function checkGitSignals(app: App): Promise<void> {
 async function checkNow(app: App) {
   // Piggyback on patrol/repository checks; no timer or projection is needed.
   run(app.db, "delete from flow_signals where at<?", new Date(Date.now() - 30 * 86400_000).toISOString());
-  const rows = all<{ item_id: string; stage_id: string }>(app.db, `select s.item_id,s.stage_id from item_stages s join item_flows f on f.item_id=s.item_id where s.state='doing' and f.ended_at is null`);
+  const rows = all<{ item_id: string; stage_id: string; signal: string }>(app.db, `select s.item_id,s.stage_id,
+    json_extract(d.value,'$.done.signal') as signal from item_stages s join item_flows f on f.item_id=s.item_id,
+    json_each(f.definition,'$.stages') d where s.state='doing' and f.ended_at is null and json_extract(d.value,'$.id')=s.stage_id
+    and signal is not null order by s.item_id,s.stage_id`);
+  checkPluginSignals(app, rows.filter(row => row.signal.includes(":")));
   for (const row of rows) {
+    if (row.signal.includes(":")) continue;
     const { item_id: itemId, stage_id: stageId } = row;
     const f = itemFlow(app, itemId);
     if (!f || f.endedAt) continue;
@@ -156,6 +163,7 @@ async function checkNow(app: App) {
     if (!type) continue;
     const s = getStage(app, itemId, stageId), since = s.enteredAt ?? s.since;
     if (s.state !== "doing") continue;
+    if (type !== "git.pushed" && type !== "git.merged") continue;
     const object = findObject(app, getItem(app, itemId), "code-work");
     const keys: TargetKey[] = [], missing: string[] = [], evidence: string[] = [];
     let note = "", ready = false;

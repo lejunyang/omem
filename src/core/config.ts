@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalog.ts";
+import { acpCatalog, catalogProfile, referencedPluginProfiles, upgradeProfileArgs } from "../agents/catalog.ts";
 import { omemHome } from "./home.ts";
 import { systemZone, validZone } from "./util.ts";
 import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
@@ -121,6 +121,9 @@ export const agentProfileSchema = z.object({
    * one quota, so they share capacity and are never offered as two separate choices.
    */
   source: z.string().optional(),
+  /** Catalog entry describing local state, independent of billing. */
+  stateLayout: z.string().optional(),
+  plugin: z.string().optional(),
   /** An ACP agent of another device (core/peer-acp.ts): runs there, tools stay here. command/args are filled in. */
   peer: z.object({ id: z.string().min(1), agent: z.string().min(1) }).optional(),
   /** Runs with the API key of this AI provider (`ai.providers`, key in secrets/ai-keys.json; core/ai-keys.ts). */
@@ -319,6 +322,15 @@ export const searchApiFields = {
   apiKeyEnv: z.string().default("OPENAI_API_KEY"),
   timeoutMs: z.number().int().min(1).max(120_000).default(5000),
 };
+
+export const sandboxPaths = z.array(z.string().trim().min(1).max(1024)).max(32);
+export const ownSandboxSchema = z.object({
+  mode: z.enum(["off", "prefer", "require"]).default("off"),
+  writable: sandboxPaths.default([]),
+  hidden: sandboxPaths.default([]),
+}).strict();
+export const fullAccessMode = z.enum(["per-role", "sandboxed", "all"]);
+
 export const configSchema = z.object({
   /**
    * Listen address. All interfaces by default, so other devices can pair with this one;
@@ -529,6 +541,8 @@ export const configSchema = z.object({
       progress: z.object({ messages: z.enum(["milestones", "all"]).default("milestones"), thinking: z.enum(["all", "own", "off"]).default("own") }).default({ messages: "milestones", thinking: "own" }),
       profiles: z.array(agentProfileSchema).default([]),
       networkPolicies: networkPoliciesSchema,
+      ownSandbox: ownSandboxSchema.default({ mode: "off", writable: [], hidden: [] }),
+      fullAccess: fullAccessMode.default("per-role"),
       accountIsolation: z.enum(["prefer", "require"]).default("prefer"),
       /**
        * Members' runs on a backend that can use their own account (docs/v2/agent-accounts.md), when
@@ -539,7 +553,7 @@ export const configSchema = z.object({
        */
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), accountIsolation: "prefer" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
@@ -1401,9 +1415,9 @@ export type Config = z.infer<typeof configSchema>;
 
 /** Built-in profiles; users override or extend them in config.json. */
 const cliProfiles: AgentProfile[] = [
-  { id: "traex-cli", name: "TraeX (CLI)", transport: "codex-cli", command: "traex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "traex" },
-  { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000, source: "claude" },
-  { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "codex" },
+  { id: "traex-cli", name: "TraeX (CLI)", transport: "codex-cli", command: "traex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "traex", stateLayout: "traex" },
+  { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000, source: "claude", stateLayout: "claude" },
+  { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "codex", stateLayout: "codex" },
 ];
 /** Doubao through its OpenAPI: no local command (`command` is only a label); available once authorized. */
 const doubaoProfile: AgentProfile = { id: "doubao", name: "豆包 (OpenAPI)", transport: "doubao", command: "doubao-openapi", args: [], env: {}, idleTimeoutMs: 600_000 };
@@ -1477,9 +1491,12 @@ export function mergeConfig(base: unknown, ours: unknown, theirs: unknown): unkn
  * Save a config. The service, `omem setup` and CLI commands each hold the config they loaded; a
  * plain write of the whole object would undo what another of them (or a hand edit) changed since.
  * So only the fields this process changed are written over the file as it is now, and `config`
- * becomes the merged result (callers then copy it into `app.config`).
+ * becomes the merged result (callers then copy it into `app.config`). A synchronous validation
+ * callback can return a response based on that result. If it throws, the save is not applied.
  */
-export function saveConfig(config: Config, home = omemHome()) {
+export function saveConfig(config: Config, home?: string): void;
+export function saveConfig<T>(config: Config, home: string, validate: (candidate: Config) => T): T;
+export function saveConfig<T>(config: Config, home = omemHome(), validate?: (candidate: Config) => T) {
   mkdirSync(home, { recursive: true });
   const path = configPath(home);
   const base = loadedAs.get(resolve(home));
@@ -1499,19 +1516,25 @@ export function saveConfig(config: Config, home = omemHome()) {
     if (r.success) parsed = r.data;
     else merged = config;
   }
-  const security = (parsed ?? config).security;
+  if (parsed && process.env.OMEM_PORT) parsed.port = Number(process.env.OMEM_PORT);
+  const candidate = parsed ?? config;
+  const result = validate?.(candidate);
+  const security = candidate.security;
   const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules } };
   writeFileSync(path, JSON.stringify(persisted, null, 2) + "\n");
   if (parsed) {
-    if (process.env.OMEM_PORT) parsed.port = Number(process.env.OMEM_PORT);
     // Only the sections the file changed are replaced: others keep their objects (some are held by reference).
     for (const k of Object.keys(parsed) as (keyof Config)[]) if (!same(config[k], parsed[k])) (config as Record<string, unknown>)[k] = parsed[k];
   }
   loadedAs.set(resolve(home), structuredClone(config));
+  return result;
 }
 
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
+  const referenced = new Set([config.agents.default, ...Object.values(config.agents.roles)].filter((v): v is string => !!v));
+  for (const p of referencedPluginProfiles(referenced)) byId.set(p.id, p);
+  for (const e of acpCatalog.filter(e => e.plugin)) byId.set(e.id, catalogProfile(e));
   for (const p of keyedProfiles(config)) byId.set(p.id, p);
   for (const p of config.agents.profiles) byId.set(p.id, p.peer ? peerProfile(p) : upgradeProfileArgs(p));
   return [...byId.values()];

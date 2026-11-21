@@ -9,7 +9,6 @@ import { createUser } from "../src/core/users.ts";
 import { syncWatches } from "../src/plugins/platforms.ts";
 import { describePlugin, getPlugin, loadPlugins, trustPlugin, untrustPlugin } from "../src/plugins/registry.ts";
 import { testApp } from "./helpers.ts";
-import { TOOL_GROUPS } from "../src/agents/tool-help.ts";
 
 /**
  * A plugin's code in its own process (docs/v2/plugins.md, “隔离运行”): its tools and platform readers
@@ -76,15 +75,17 @@ export default function register(api) {
   await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
   createUser(app, { name: "小安", id: "ann" });
   const ctx = (user: string) => toolContextForToken(app, issueToolToken({ runId: null, spaceId: `personal-${user}`, spaces: null, tools: null, actor: "agent", userId: user }))!;
-  const call = async (user: string, name: string, args: Record<string, unknown>) => (await callTool(ctx(user), name, args)).text;
+  // Exercise the IPC broker directly; external plugin tools are owner-only at the entry point.
+  const call = async (user: string, name: string, args: Record<string, unknown>) => {
+    try { return await toolList().find(t => t.name === name)!.handler(ctx(user), args); }
+    catch (e) { return String(e); }
+  };
 
   it("runs trusted code in its own process by default", async () => {
     const d = await trustPlugin(app, "probe2");
     expect(d.runMode).toBe("isolated");
     expect(toolList().find((t) => t.name === "probe2_me")).toBeTruthy();
     expect(describePlugin(getPlugin("probe2")).permissions.platforms).toEqual(["connect-probe"]);
-    // This fixture explicitly grants member access to exercise the sandbox's per-user boundary.
-    TOOL_GROUPS.find(g => g.id === "probe2")!.capability = "sources.edit";
   });
 
   it("delivers facts to an isolated subscription with a narrow context", async () => {
@@ -125,6 +126,10 @@ export default function register(api) {
     expect(await call("ann", "probe2_exec", {})).toBe("拒绝：ERR_ACCESS_DENIED");
     // Its arguments are checked by its own schema.
     expect(await call("ann", "probe2_me", { n: "x" })).toMatch(/n:/);
+  });
+
+  it("外部成员调用插件工具仍然由入口拒绝", async () => {
+    expect((await callTool(ctx("ann"),"probe2_me",{n:1})).text).toContain("仅限本人");
   });
 
   it("asks omem for the person's records, connection and sources, as the person of the call", async () => {

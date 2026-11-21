@@ -21,7 +21,7 @@ import { readAgentSpec } from "./specs.ts";
 import { replyOf, type AgentEvent } from "./types.ts";
 import { retireRecordedSession } from "./session-cleanup.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
-import { workDirOf } from "./workspaces.ts";
+import { reviewWorkspace, workDirOf } from "./workspaces.ts";
 
 /**
  * Review overlapping the coding of a task-driven delegation (docs/v2/coding-loop.md §13 第四阶段):
@@ -102,15 +102,16 @@ type CheckTurn = { run: Run; task: string; cwd?: string; spaces: string[]; index
 /** One turn of a check for this work (checkArgs), its session kept for the next. */
 export function runCheck(app: App, rootId: string, check: string, t: CheckTurn) {
   return withCheck(rootId, check, async () => {
+    const worktrees = worktreesOf(app, rootId);
     const res = await runRole(app, {
       ...checkArgs(app, rootId, check, t.run),
       ...(t.addTools ? { addTools: t.addTools } : {}),
       spaceId: t.run.spaceId!,
       spaces: t.spaces,
       alsoRead: t.indexed,
-      task: [t.task, lessonsText(app, worktreesOf(app, rootId).map(w => w.space))].filter(Boolean).join("\n\n"),
+      task: [t.task, lessonsText(app, worktrees.map(w => w.space))].filter(Boolean).join("\n\n"),
       runId: t.runId,
-      cwd: t.cwd,
+      ...reviewWorkspace(app, rootId, worktrees, t.cwd),
       signal: t.signal,
       onEvent: t.onEvent,
     });
@@ -129,7 +130,7 @@ export async function checkScope(app: App, run: Run) {
   const indexed = (run.output.indexedSpaces ?? getRun(app, rootId).output.indexedSpaces ?? []) as string[];
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
   const multi = worktrees.length > 1;
-  return { rootId, worktrees, multi, cwd: multi ? join(app.runsDir, rootId, "work") : worktrees[0] && workDirOf(worktrees[0]), spaces, indexed, infos, label: (n: string) => checkLabel(infos, n) };
+  return { rootId, worktrees, workspace: reviewWorkspace(app, rootId, worktrees), multi, spaces, indexed, infos, label: (n: string) => checkLabel(infos, n) };
 }
 
 // ---- snapshots ------------------------------------------------------------------------------------
@@ -243,7 +244,7 @@ export async function verifyGroup(app: App, o: { run: Run; check: string; tasks:
     await runCheck(app, rootId, o.check, {
       run: o.run,
       task: `${VERIFY_BRIEF}${o.snapshot ? `\n${SNAPSHOT_NOTE}` : ""}\n\n${parts.join("\n\n")}\n\n${verifyChecks(app, rootId, o.run, scope.worktrees, o.tasks)}`,
-      cwd: o.cwd ?? scope.cwd,
+      cwd: o.cwd ?? scope.workspace.cwd,
       spaces: scope.spaces,
       indexed: scope.indexed,
       runId: o.runId,
@@ -553,12 +554,14 @@ async function lookRuling(app: App, rootId: string, reviewed: Run, round: number
   }).join("\n");
   setRunOutput(app, reviewed.id, { reviewLeadDraft: null });
   try {
+    const scope = await checkScope(app, reviewed);
     await runRole(app, {
       role: "review-lead",
       reviewLead: true,
       addTools: ["propose_repo_lesson"],
       spaceId: reviewed.spaceId!,
-      spaces: (await checkScope(app, reviewed)).spaces,
+      spaces: scope.spaces,
+      ...scope.workspace,
       task: [LOOK_RULING, `## 复看所用模型\n\n${models}`, independenceWarnings(app, reviewed.id, round), `## 已有的修改项\n\n${taskList(app, rootId) || "（没有）"}`, thirdFixText(app, rootId), `## 复看提的问题\n\n${fresh.map(fmt).join("\n")}`, TASK_RULING, ...worktreesOf(app, rootId).map(w => previousLessonMaterial(app, w.space, rootId, fresh)), reviewTask].filter(Boolean).join("\n\n"),
       runId,
       signal,

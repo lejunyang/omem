@@ -1,11 +1,13 @@
 import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
+import { run } from "../core/db.ts";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
-import type { Notifier, CallContext, ItemProvider, MetricProvider, EmbedderProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
+import type { StageGate, StageRunner, FlowSignal, Notifier, CallContext, ItemProvider, MetricProvider, EmbedderProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
 import { registerFormats } from "./formats.ts";
+import { pluginSettings } from "./settings.ts";
 import { pluginSpaces } from "./spaces.ts";
 
 type Entry<T> = {
@@ -14,6 +16,16 @@ type Entry<T> = {
   def: T;
   context(app: App, userId: string, spaceId: string, signal: AbortSignal): CallContext;
 };
+export const stageGates = new Map<string, Entry<StageGate>>();
+/** Remember only declarations from a successfully loaded plugin, including for older owner settings. */
+export function rememberGateScopes(app: App, plugin: string) {
+  for (const [id, entry] of stageGates) {
+    if (entry.plugin === plugin) run(app.db, "insert or replace into kv(key,value) values(?,?)",
+      "flow-gate-scope:" + id, JSON.stringify({ ...entry.def.applies, spaces: entry.spaces }));
+  }
+}
+export const stageRunners = new Map<string, Entry<StageRunner> & { settings(app: App, user: string): Record<string, unknown> }>();
+export const flowSignals = new Map<string, Entry<FlowSignal>>();
 export const notifiers = new Map<string, Entry<Notifier> & { lifetime: AbortSignal }>();
 export const subscriptions = new Map<string, Entry<Subscription>>();
 export const itemProviders = new Map<string, Entry<ItemProvider>>();
@@ -55,12 +67,28 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
     if (!/^[a-z][a-z0-9-]{0,47}$/.test(def.id)) throw new Error("插件能力 id 无效");
     const key = manifest.id + ":" + def.id;
     if (map.has(key)) throw new Error("重复注册 " + key);
-    const entry = { plugin: manifest.id, def, spaces, context, lifetime: lifetime.signal };
+    const entry = { plugin: manifest.id, def, spaces, context, settings: (app: App, user: string) => pluginSettings(app, manifest.id, manifest.settings, user), lifetime: lifetime.signal };
     map.set(key, entry);
     undo.push(() => { map.delete(key); });
   }
   return {
     ...registerFormats(manifest, version, spaces, context, undo),
+    stageGate(def) {
+      if (!manifest.permissions.flow?.gate) throw new Error("缺少 permissions.flow.gate");
+      if (!def.name?.trim() || !def.describe?.trim() || typeof def.review !== "function") throw new Error("阶段检查声明无效");
+      const applies = z.object({ flows: z.array(z.string()).optional(), stages: z.array(z.string()).optional() }).strict().optional().parse(def.applies);
+      add(stageGates, { ...def, applies });
+    },
+    stageRunner(def) {
+      if (!manifest.permissions.flow?.run) throw new Error("缺少 permissions.flow.run");
+      if (!def.name?.trim() || !def.describe?.trim() || typeof def.start !== "function") throw new Error("阶段运行器声明无效");
+      add(stageRunners, def);
+    },
+    flowSignal(def) {
+      if (!manifest.permissions.flow?.signal) throw new Error("缺少 permissions.flow.signal");
+      if (!def.name?.trim() || !def.describe?.trim() || typeof def.check !== "function") throw new Error("流程信号声明无效");
+      add(flowSignals, def);
+    },
     notifier(def) {
       if (!manifest.permissions.notify?.deliver) throw new Error("缺少 permissions.notify.deliver");
       if (!def.name?.trim() || typeof def.deliver !== "function") throw new Error("通知出口需要名称与 deliver");

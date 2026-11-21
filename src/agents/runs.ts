@@ -371,6 +371,11 @@ export type RunContext = {
   event(type: string, data: unknown): void;
   output(data: Record<string, unknown>): void;
 };
+/** Ask the worker to resume this same durable run at the next poll, without occupying a slot. */
+export class ResumeRunAt extends Error {
+  at: string;
+  constructor(at: number) { super("等待下一次检查"); this.at = new Date(at).toISOString(); }
+}
 type Handler = (ctx: RunContext) => Promise<Record<string, unknown> | void>;
 const handlers = new Map<string, Handler>();
 const controllers = new Map<string, AbortController>();
@@ -599,6 +604,7 @@ function kick(app: App) {
             });
           }
         } catch {}
+        if (controller.signal.aborted && controller.signal.reason instanceof RunFailure) throw controller.signal.reason;
         const status = controller.signal.aborted ? "cancelled" : "done";
         // A quiet background inspection (nothing new, stay_quiet) stays out of the run list; so does a
         // conversation turn that a wake-up or a watched group's batch started and that had nothing to say.
@@ -613,7 +619,13 @@ function kick(app: App) {
       .catch((error: Error) => {
         flushText(app, r.id);
         if (stopping && !controller.signal.aborted) return;
-        const cancelled = controller.signal.aborted || error.message === "CANCELLED";
+        if (error instanceof ResumeRunAt && !controller.signal.aborted) {
+          run(app.db, "update runs set status='queued',not_before=? where id=?", error.at, r.id);
+          return;
+        }
+        const failure = controller.signal.reason;
+        if (controller.signal.aborted && failure instanceof RunFailure) error = failure;
+        const cancelled = controller.signal.aborted ? !(failure instanceof RunFailure) : error.message === "CANCELLED";
         run(app.db, "update runs set status=?, error=?, finished_at=? where id=?", cancelled ? "cancelled" : "failed", cancelled ? null : error.message, now(), r.id);
         if (r.kind === "code") trySettleCodeChain(app, r.id);
         if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
@@ -657,18 +669,30 @@ function settleWikiWrite(app: App, r: Run) {
     .catch((e) => console.warn(`[omem] Wiki 生成收尾失败：${(e as Error).message}`));
 }
 
+class RunFailure extends Error {}
+
 export function cancelRun(app: App, id: string) {
+  void stopRun(app, id);
+  return getRun(app, id);
+}
+
+/** The queue transition is synchronous. Flow actions also await cancellation of the external job. */
+export function stopRun(app: App, id: string, failure?: string) {
   const r = getRun(app, id);
   if (r.status === "queued") {
-    run(app.db, "update runs set status='cancelled', finished_at=? where id=?", now(), id);
+    const status = failure ? "failed" : "cancelled";
+    run(app.db, "update runs set status=?,error=?,finished_at=? where id=?", status, failure ?? null, now(), id);
+    if (failure) addRunEvent(app,id,"error",{message:failure});
     if (r.kind === "code") trySettleCodeChain(app, id);
     // A confirmed review plan ran on its own: the coding run it reviewed now has its result.
     if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
     if (r.input.boardTaskId) queueMicrotask(() => settleWorkRound(app, r));
     settleWikiWrite(app, r);
-    app.emit({ type: "run", runId: id, status: "cancelled" });
-  } else controllers.get(id)?.abort();
-  return getRun(app, id);
+    app.emit({ type: "run", runId: id, status });
+  } else controllers.get(id)?.abort(failure ? new RunFailure(failure) : undefined);
+  if (r.kind === "flow-runner" && ["queued", "running"].includes(r.status))
+    return import("../flows/plugin-runner.ts").then(m => m.cancelRunnerJob(app,r))
+      .catch(e => { addRunEvent(app,id,"error",{message:"取消外部作业失败：" + String(e)}); });
 }
 
 /** A running run asked to stop (cancelRun) that has not ended yet. */

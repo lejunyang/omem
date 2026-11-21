@@ -96,6 +96,10 @@ const CHANGE_LEDGER_MIGRATION = `alter table item_changes add column source_key 
    );
    create index owner_choices_recent on owner_choices(user_id,at desc);`;
 
+const FLOW_SIGNAL_INDEXES = `create index flow_signal_stage on flow_signals(item_id,stage_id,type,id desc);
+   create index flow_signal_age on flow_signals(at);
+   create index doing_flow_stages on item_stages(item_id,stage_id) where state='doing';`;
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2410,8 +2414,15 @@ export const migrations: readonly string[] = [
    end;`,
   `create index progress_code_takeovers on run_events(run_id)
      where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
-  `create index memories_unembedded on memories(space_id) where status = 'active' and embedding is null;
-   create index memories_embedded on memories(status, space_id) where embedding is not null;`,
+  FLOW_SIGNAL_INDEXES,
+  `update item_stages as s set control=json_set(control,'$.runnerDeadline',
+      (select round((julianday(s.entered_at)-2440587.5)*86400000 + json_extract(d.value,'$.budget.minutes')*60000)
+       from item_flows f,json_each(f.definition,'$.stages') d where f.item_id=s.item_id and json_extract(d.value,'$.id')=s.stage_id))
+     where state='doing' and exists(select 1 from runs r where r.id=s."by" and r.kind='flow-runner');
+   create index flow_runner_deadlines on item_stages(json_extract(control,'$.runnerDeadline'))
+     where state='doing' and json_extract(control,'$.reported') is not 1;`,
+  `create index if not exists memories_unembedded on memories(space_id) where status = 'active' and embedding is null;
+   create index if not exists memories_embedded on memories(status, space_id) where embedding is not null;`,
 ];
 
 export type Db = DatabaseSync;
@@ -2429,6 +2440,11 @@ export function openDb(path: string): Db {
   // for those databases before applying the idempotent egress migration.
   if (version === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
       !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
+    version--;
+  }
+  // The embeddings branch used the first flow index version for its memory indexes.
+  if (version === migrations.indexOf(FLOW_SIGNAL_INDEXES) + 1 &&
+      !db.prepare("select 1 from sqlite_schema where type='index' and name='flow_signal_stage'").get()) {
     version--;
   }
   for (let i = version; i < migrations.length; i++) {

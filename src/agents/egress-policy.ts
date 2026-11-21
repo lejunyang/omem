@@ -1,5 +1,5 @@
 import type { AgentProfile, OperationRule } from "../core/config.ts";
-import { accountOnlyCatalog, acpCatalog } from "./catalog.ts";
+import { entryForProfile } from "./catalog.ts";
 import { gateOperation, type Decision } from "./command-gate.ts";
 import { parsedBody } from "./http-gate.ts";
 import { currentRules, decide, digest, field, fingerprint, hostMatches, operationWho, ruleApplies, type Operation } from "./operation-policy.ts";
@@ -7,7 +7,7 @@ import type { Destination } from "./egress-proxy.ts";
 import type { ToolContext } from "./tools.ts";
 
 export function backendHosts(profile: AgentProfile) {
-  const entry = [...acpCatalog, ...accountOnlyCatalog].find(e => e.id === (profile.source ?? profile.id) || e.command === profile.command || e.account?.cli === profile.command);
+  const entry = entryForProfile(profile);
   const hosts = new Set(entry?.egressHosts ?? []);
   for (const key of ["OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "GOOGLE_GEMINI_BASE_URL"]) {
     const value = profile.env[key];

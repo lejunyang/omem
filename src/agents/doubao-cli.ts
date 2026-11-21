@@ -6,7 +6,8 @@ import { isAbsolute, join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
 import { sandboxStartError, idleWatchdog, launch, resolveCommand, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
-import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
+import { under } from "./own-sandbox.ts";
+import { aiUsageText, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 /**
  * The Doubao CLI (`npm i -g @bytedance/doubao-cli`, command `doubao`, signed in with `doubao login`).
@@ -54,16 +55,17 @@ export const shellToolRuns = new Set<string>();
 /** Longest prompt passed as an argument; longer ones go through a file. */
 const INLINE_MAX = 6000;
 
-export function doubaoArgs(profile: AgentProfile, req: AgentRequest, prompt: string) {
+export function doubaoCommand(profile: AgentProfile, req: AgentRequest, prompt: string) {
   const args = [...profile.args];
   if (req.resumeSessionId) args.push("--resume", req.resumeSessionId);
   args.push("-p", prompt);
   if (profile.model) args.push("--model", profile.model);
   if (profile.effort) args.push("--effort", profile.effort);
   // It has no read-only mode; outside coding it asks before risky operations (no one answers, so they fail).
-  args.push("--permission-mode", req.allowWrites ? "always_allow" : "ask_risky");
+  const permission = req.doubaoPermission ?? "ask_risky";
+  args.push("--permission-mode", permission);
   args.push("-C", req.cwd);
-  return args;
+  return { args, permission };
 }
 
 export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
@@ -81,7 +83,12 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
     prompt = `先完整读取文件 ${file}（UTF-8），那是这一轮的完整内容，按它执行并回答；回答里不要提这个文件。`;
   }
   // -p 从参数读提示；新版 CLI 无法把 Node 子进程默认的 socket 接为 stdin。
-  const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => launch(exe, doubaoArgs(profile, req, prompt), { cwd: req.cwd, workspace: req.workspace, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore", sandbox }));
+  const box = req.ownSandbox;
+  const ownSandbox = box && file && !box.hidden.some(path => under(file!, path))
+    ? { ...box, plan: { ...box.plan, ro: [...box.plan.ro, file] } } : box;
+  const { args, permission } = doubaoCommand(profile, req, prompt);
+  const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore", sandbox }));
+  emit({ type: "status", text: aiUsageText(profile, permission === "always_allow" ? "完全访问" : "风险审批", req.selection) });
   emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
   if (req.runId) shellToolRuns.add(req.runId);
   let stdout = "";

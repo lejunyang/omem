@@ -26,15 +26,15 @@ import { NetworkUnavailableError, networkReason, refreshForRun } from "./network
 import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
 import { aiLabel, candidateProfiles, candidateWhen, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
-import { catalogEntry, installHint } from "./catalog.ts";
+import { catalogEntry, installHint, PluginBackendUnavailable, pluginBackendStatus, referencedPluginProfiles } from "./catalog.ts";
 import { cloudAccess } from "./cloud-probe.ts";
 import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
-import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
+import { aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { trimTools } from "../auth/tools.ts";
-import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
+import { agentIndex, listAgentSpecs, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools, ROLE_TOOLS } from "./tool-help.ts";
 import { applyOverlay, GUEST_ROLES, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
@@ -46,6 +46,8 @@ import { categoryStatus } from "../core/ai-keys.ts";
 import { accountBlocked, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
 import { addRunEvent, runUser } from "./runs.ts";
 import { SandboxStartError } from "./spawn.ts";
+import { canonical, runAccess, under } from "./own-sandbox.ts";
+import { ownRun } from "./own-run.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 import { accountOf, egressRequested, egressSupport } from "./sandbox.ts";
@@ -120,8 +122,11 @@ export function commonGuide(tools: Set<string>, capabilities = backendCapabiliti
 }
 
 export function listAgentProfiles(app: App) {
-  return allProfiles(app.config).map((p) => {
-    const network = { networkReason: networkReason(app, p) };
+  const profiles = allProfiles(app.config);
+  const references = new Set(listAgentSpecs(app, { includeDrafts: true }).flatMap(s => s.agent ?? []));
+  for (const p of referencedPluginProfiles(references)) if (!profiles.some(e => e.id === p.id)) profiles.push(p);
+  return profiles.map((p) => {
+    const network = { networkReason: networkReason(app, p), pluginBackend: pluginBackendStatus(p) };
     if (p.transport === "doubao") return { ...p, ...network, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
     if (p.transport === "doubao-cli") return { ...p, ...network, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : DOUBAO_CLI_INSTALL };
     const e = catalogEntry(p.id);
@@ -355,6 +360,9 @@ export type LarkAccess = { chats: string[] | null; draft?: boolean; urgent?: boo
 export type Actor = { role: RoleName } | { spec: AgentSpec };
 
 export type PreparedRun = {
+  acpWritable: boolean;
+  isolation: ReturnType<typeof ownRun>;
+  workspace?: import("./sandbox.ts").WorkspaceMounts;
   profile: AgentProfile;
   capabilities: BackendCapabilities;
   tools: Set<string>;
@@ -375,6 +383,7 @@ export type PreparedRun = {
   mcp: McpAccess;
   extraMcp: Record<string, McpServerSpec>;
   allowWrites: boolean;
+  doubaoPermission: ReturnType<typeof runAccess>["doubaoPermission"];
   modes: string[];
   /** Commands outside the backend's sandbox, no approvals (see prepareRun). */
   fullAccess: boolean;
@@ -393,7 +402,7 @@ export function resolveRunProfile(app: App, input: { actor: Actor; profileId?: s
   const baseProfile = input.profileId
     ? allProfiles(app.config).find((p) => p.id === input.profileId)
     : spec?.agent
-      ? allProfiles(app.config).find((p) => p.id === spec.agent)
+      ? allProfiles(app.config).find((p) => p.id === spec.agent) ?? referencedPluginProfiles(new Set([spec.agent]))[0]
       : profileFor(app, roleName);
   if (!baseProfile) throw new HttpError(400, `Agent ${input.profileId ?? spec?.agent} 不存在`);
   // Role -> per-profile model/effort overrides apply first; a per-thread override (the
@@ -457,12 +466,18 @@ export function recordIsolation(app: App, runId: string | null, userId: string, 
   const reason = unisolatedReason(app, userId, profile);
   if (!reason) return;
   if (app.config.agents.accountIsolation === "require") throw new Error(`这台机器不能隔离成员的运行：${reason}`);
-  if (runId) addRunEvent(app, runId, "status", { text: `这次运行没有隔离：${reason}`, profile: profile.id });
+  if (runId) addRunEvent(app, runId, "status", { text: app.config.agents.ownSandbox.mode === "off" ? `这次运行没有隔离：${reason}` : `这次运行没有成员账号隔离：${reason}`, profile: profile.id });
+}
+
+/** Sent with every task, including a resumed session that already has its role instructions. */
+export function turnHeader(prep: PreparedRun) {
+  const clock = `（${prep.now}）`;
+  return prep.isolation.box ? clock + "\n\n" + prep.isolation.note + " 写入失败时不要反复重试，告诉本人需要放开哪个目录。" : clock;
 }
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
+  input: { actor: Actor; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean; worktrees?: WorktreeRef[]; reviewTrees?: WorktreeRef[]; worktreeAccess?: "read" | "commit"; inbox?: string },
 ): PreparedRun {
   const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -540,6 +555,35 @@ export function prepareRun(
   const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
+  const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
+  // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
+  // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
+  const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
+  const legacyFull = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
+  const allowWrites = !readOnly && (spec ? spec.writes : role!.writes);
+  const guestTurn = !!input.guestTurn || (!spec && GUEST_ROLES.includes(roleName));
+  const mounts = (readOnly: boolean) => {
+    const trees = input.worktrees ?? (readOnly ? input.reviewTrees : undefined);
+    return trees && (trees.length || input.worktreeAccess === "read") ? workspaceMounts(app, trees,
+      input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined,
+      input.worktreeAccess === "read" || readOnly ? "read" : "write") : undefined;
+  };
+  const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId,
+    { workspace: mounts, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
+  const workspace = isolation.box?.plan ?? (account ? mounts(false) : undefined);
+  // An overlapping check can write its host-created detached snapshot, alongside the read-only originals.
+  if (account && workspace && input.worktreeAccess === "read" && input.runId) {
+    const dir = canonical(cwd);
+    if (under(dir, join(canonical(app.runsDir), input.runId, "snap"))) workspace.rw.push(dir);
+  }
+  if (isolation.box && spec?.cwd && !input.cwd) {
+    const target = canonical(cwd);
+    if (under(target, isolation.box.data) && !under(target, canonical(space.rootPath ?? spaceDir(app, space.id))))
+      throw new Error("档案的工作目录不属于本空间，不能从 omem 数据目录挂回沙箱");
+  }
+  const accessMode = runAccess(app.config.agents.fullAccess, {
+    owner: userId === OWNER && !input.shadow, guest: guestTurn, box: isolation.box, allowWrites, legacyFull,
+  });
   const memorySpaces = spacesWithCapability(app, userId, "memories.view");
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
@@ -576,13 +620,11 @@ export function prepareRun(
   const mesh = userId === OWNER && tools.has("ask_agent") ? meshNote(app) : "";
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
-  const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
-  // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
-  // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
-  const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
-  const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
   const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   return {
+    isolation,
+    workspace,
+    ...accessMode,
     profile,
     capabilities,
     tools,
@@ -594,6 +636,7 @@ export function prepareRun(
     token,
     mcp: { url: `${toolBase}/mcp`, baseUrl: toolBase, token, stdio: mcpBridge(), env: {
       ...agentToolEnv(app.home, toolBase, token, commandGateDir(app)),
+      ...(input.inbox ? { OMEM_ARTIFACTS: input.inbox } : {}),
       ...(browserProfilesRoot ? { OMEM_BROWSER_PROFILES: browserProfilesRoot } : {}),
       ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
       ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
@@ -601,8 +644,7 @@ export function prepareRun(
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
-    allowWrites: readOnly ? false : spec ? spec.writes : role!.writes,
-    fullAccess,
+    allowWrites,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,
     lessonIds: told.ids,
@@ -670,7 +712,7 @@ export function distinctProfiles(list: AgentProfile[]) {
  * aside for a while (capacity.ts markDown).
  */
 export function isBackendDown(e: unknown): boolean {
-  return e instanceof NetworkUnavailableError || breakdownKind(e) !== null;
+  return e instanceof NetworkUnavailableError || e instanceof PluginBackendUnavailable || breakdownKind(e) !== null;
 }
 
 /**
@@ -755,7 +797,7 @@ export function fallbackProfiles(
   const specs = allProfiles(app.config);
   const roleName = "spec" in actor ? null : (actor as { role: RoleName }).role;
   const make = (id: string, modelOverride?: string, effortOverride?: string): AgentProfile | null => {
-    const p = specs.find((x) => x.id === id);
+    const p = specs.find((x) => x.id === id) ?? referencedPluginProfiles(new Set([id]))[0];
     if (!p) return null;
     // Role defaults first; explicit step overrides win over them.
     let out = roleName ? resolveRoleProfile(app, p, roleName) : p;
@@ -833,9 +875,17 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     }
   }
   const primary = accountProfile(app, { ...input, actor });
+  const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
+  const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : undefined;
+  let reviewTrees: WorktreeRef[] | undefined;
+  if (!input.worktrees && input.runId && (input.reviewCheck || input.reviewLead)) {
+    const { workRootOf } = await import("./code-tasks.ts");
+    const { worktreesOf } = await import("./code.ts");
+    reviewTrees = worktreesOf(app, workRootOf(app, input.runId));
+  }
   const { awarenessNote } = await import("./awareness.ts");
   const prepare = (profile: AgentProfile) => prepareRun(app, {
-    ...input, actor, profile, lessons, lessonIds: told.ids, recallNote: told.recallNote,
+    ...input, actor, profile, reviewTrees, inbox, lessons, lessonIds: told.ids, recallNote: told.recallNote,
     scene: { kind: runKind, chat: !internal && (runKind === "ask" || runKind === "guest" || runKind === "lark-command"), awareness: !internal && !!runInput.turnContext },
     awarenessNote: internal ? undefined : withTools => awarenessNote(app, input.runId, withTools),
   });
@@ -910,8 +960,6 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // The default account's plan limit is nearly used: acquire puts it after the others.
   const nearlySpent = chain.length > 1 ? quotaAvoid(app, chain[0]) : null;
   const writes = () => (input.runId ? one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", input.runId)!.n : 0);
-  const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
-  const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : null;
   /** Who the first AI was, for the words when the run moves on. */
   const firstWho = pinned ? `原指定的 AI（${aiLabel(execution!)}）` : own ? `自动选中的 AI（${aiLabel({ profile: chain[0].id, model: chain[0].model })}）` : "默认后端";
   // Memories close to the task that its instructions did not carry (memory/passive.ts), for the runs
@@ -967,26 +1015,30 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       try {
         recordIsolation(app, input.runId, input.userId!, prep.profile);
+        if (prep.isolation.note) emit({ type: "status", text: prep.isolation.note });
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
-        const workspace = input.worktrees && accountOf(prep.profile) ? workspaceMounts(app, input.worktrees, input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined, input.worktreeAccess === "read" ? "read" : "write") : undefined;
+        const workspace = prep.workspace;
         const resumeSessionId = primaryKept && i === 0 ? input.resumeSessionId ?? (restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined;
         const sceneUpdate = resumeSessionId && prep.sceneGuide ? `\n\n## 本轮适用的场景说明\n\n${prep.sceneGuide}` : "";
         const req = {
           runId: input.runId,
+          selection: pinned && i === 0 ? execution : undefined,
           strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
           cwd: prep.cwd,
           workspace,
+          ownSandbox: prep.isolation.box,
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           capabilities: prep.capabilities,
           parts: prep.parts,
           scene: prep.scene,
-          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${prep.awareness}${sceneUpdate}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
-          allowWrites: prep.allowWrites,
+          prompt: `${turnHeader(prep)}\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${prep.awareness}${sceneUpdate}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
+          allowWrites: prep.allowWrites, doubaoPermission: prep.doubaoPermission,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
+          acpWritable: prep.acpWritable,
           signal: input.signal,
-          mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
+          mcp: prep.mcp,
           extraMcp: prep.extraMcp,
           resumeSessionId,
           persistSession: input.persistSession ?? !!input.resumeSessionId,
@@ -1003,7 +1055,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
           emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
         }
-        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution && pinned && i === 0 ? `（${execution.source === "flow" ? "流程指定" : execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        if (profile.transport !== "doubao-cli")
+          emit({ type: "status", text: aiUsageText(profile, prep.fullAccess ? "完全访问" : undefined, req.selection) });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
         writesBefore = writes();

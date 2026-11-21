@@ -1,3 +1,4 @@
+import { finishStage } from "../flows/plugin-gates.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { now } from "../core/util.ts";
@@ -99,8 +100,8 @@ export async function tickTrials(app: App, item: Item, f: ItemFlow, d: FlowStage
   }
   const current = continuing(app, item.id);
   const queued = current ? trials(app, item.id).filter((t) => !t.fix_of && t.direction_id === current.direction.id && t.state === "queued") : [];
-  const finish = (note: string) => {
-    changeStage(app, item.id, d.id, "done", { waitingOn: null, by: null, control: { ...c, reported: true, runId: undefined, trialId: undefined } }, host, note);
+  const finish = async (note: string) => {
+    await finishStage(app, item.id, d.id, "done", { waitingOn: null, by: null, control: { ...c, reported: true, runId: undefined, trialId: undefined } }, host, note);
     return true;
   };
   const exhausted = d.budget?.trials !== undefined && (c.completedTrials ?? 0) >= d.budget.trials || d.budget?.minutes !== undefined && (c.usedMinutes ?? 0) >= d.budget.minutes;

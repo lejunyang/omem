@@ -309,6 +309,40 @@ describe("accounts of members", async () => {
     expect(JSON.stringify(all)).not.toContain("tok-example");
   });
 
+  it.skipIf(process.platform === "win32")("only the owner can save sandbox settings and explicitly confirm unrestricted backends", async () => {
+    const path = "/api/security/sandbox";
+    const read = await (await as(null, path)).json();
+    expect(read).toMatchObject({ mode: "off", fullAccess: "per-role", defaults: { hidden: [home] } });
+    const put = (patch: Record<string, unknown>, user: string | null = null) => as(user, path, { method: "PUT",
+      body: JSON.stringify({ mode: "prefer", writable: [], hidden: [], fullAccess: "all", ...patch }) });
+    expect((await as("ann", path)).status).toBe(403);
+    expect((await put({ confirmAll: true }, "ann")).status).toBe(403);
+    expect((await put({})).status).toBe(400);
+    expect((await put({ writable: [home], confirmAll: true })).status).toBe(400);
+    expect((await (await put({ confirmAll: true })).json()).warning).toContain("没进沙箱");
+    expect(loadConfig(home).agents.fullAccess).toBe("all");
+    expect(sqlOne(app.db, "select 1 from audit_events where action='sandbox.settings'")).toBeTruthy();
+    await put({ mode: "off", fullAccess: "per-role" });
+  });
+
+  it.skipIf(process.platform === "win32")("rejects an invalid backend state directory before applying or auditing sandbox settings", async () => {
+    const original = app.config.agents;
+    const before = readFileSync(join(home, "config.json"), "utf8");
+    const audits = () => sqlOne(app.db, "select count(*) n from audit_events where action = 'sandbox.settings'");
+    const count = audits();
+    vi.stubEnv("CODEX_HOME", join(home, "secrets"));
+    try {
+      const response = await as(null, "/api/security/sandbox", { method: "PUT", body: JSON.stringify({
+        mode: "require", writable: [], hidden: [], fullAccess: "sandboxed",
+      }) });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("不能配置这个沙箱目录");
+      expect(app.config.agents).toBe(original);
+      expect(readFileSync(join(home, "config.json"), "utf8")).toBe(before);
+      expect(audits()).toEqual(count);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("keeps the rule per backend to the owner", async () => {
     expect(ROUTE_RULES["PUT /api/agent-accounts/:backend/policy"]).toBe("owner");
     expect(ROUTE_RULES["GET /api/me/agent-accounts"]).toBe("self");

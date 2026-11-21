@@ -8,5 +8,14 @@ const lines = [
   { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } },
   { type: "result", subtype: "success", is_error: false, result: "ok", session_id: "c-1" },
 ];
-process.stdin.resume();
-process.stdin.on("end", () => { for (const l of lines) console.log(JSON.stringify(l)); });
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { if (process.env.FAKE_MODE === "echo") prompt += chunk; });
+process.stdin.on("end", () => {
+  if (process.env.FAKE_MODE === "echo") {
+    const resume = process.argv.indexOf("--resume");
+    const session = resume >= 0 ? process.argv[resume + 1] : "c-1";
+    const text = JSON.stringify({ prompt, session, resumed: resume >= 0 });
+    console.log(JSON.stringify({ type: "assistant", session_id: session, message: { content: [{ type: "text", text }] } }));
+  } else for (const line of lines) console.log(JSON.stringify(line));
+});

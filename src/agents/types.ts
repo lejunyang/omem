@@ -1,3 +1,5 @@
+import type { AgentProfile } from "../core/config.ts";
+import type { Execution } from "./execution.ts";
 import type { BackendCapabilities } from "./capabilities.ts";
 
 export type AgentEvent =
@@ -40,6 +42,7 @@ export type SessionCleanup = {
 };
 
 export type AgentRequest = {
+  ownSandbox?: import("./own-sandbox.ts").OwnSandbox;
   cloudChannel?: { url: string; headers?: Record<string, string> };
   app?: import("../core/app.ts").App;
   workspace?: import("./sandbox.ts").WorkspaceMounts;
@@ -63,6 +66,8 @@ export type AgentRequest = {
   mcp?: McpAccess;
   /** Allow edit/delete/move tool kinds (coding in a worktree). */
   allowWrites?: boolean;
+  /** Selected during preparation, separate from omem's write permission. */
+  doubaoPermission?: "always_allow" | "ask_risky";
   /** Preferred session modes in order, e.g. ["read-only"] or ["acceptEdits", "auto"]. */
   modes?: string[];
   /**
@@ -71,10 +76,14 @@ export type AgentRequest = {
    * omem's own tools are still checked on every call.
    */
   fullAccess?: boolean;
+  /** Host decision on ACP mutation requests, independent of the selected backend mode. */
+  acpWritable?: boolean;
   env?: Record<string, string>;
   signal?: AbortSignal;
   /** Only connect and report the agent's models/modes, no prompt. */
   probe?: boolean;
+  /** Selection to display with the backend that actually starts. */
+  selection?: Execution;
   strictSelection?: { model?: boolean; effort?: boolean };
   /** Extra MCP servers from an agent spec (stdio command or HTTP url). */
   extraMcp?: Record<string, { command: string; args: string[]; env: Record<string, string> } | { url: string; headers: Record<string, string> }>;
@@ -86,6 +95,12 @@ export type AgentRequest = {
   /** Provider queue budget (ms); 0/undefined = unlimited while queued. */
   queueTimeoutMs?: number;
 };
+
+export function aiUsageText(profile: AgentProfile, access?: string, selection?: Execution) {
+  const label = [profile.id, profile.model ?? "默认模型", profile.effort ?? "默认强度", access].filter(Boolean).join(" · ");
+  const by = selection && { flow: "流程指定", user: "本人指定", auto: "任务选型" }[selection.source];
+  return `使用 AI：${label}${selection ? `（${by}：${selection.reason}）` : ""}`;
+}
 
 export type AgentProbe = {
   agent: string;

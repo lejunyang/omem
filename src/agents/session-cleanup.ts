@@ -4,6 +4,7 @@ import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
 import { json, now } from "../core/util.ts";
+import { PluginBackendUnavailable, requirePluginBackend, referencedPluginProfiles } from "./catalog.ts";
 import { cleanupAcpSession } from "./acp.ts";
 import { disposableChildren } from "./session-children.ts";
 import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoSessionStatus, doubaoTokenExists } from "./doubao.ts";
@@ -163,6 +164,10 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
       where backend_key = ? and session_id = ? and failed_at is null and attempts = ?`,
       new Date(Date.now() + retryDelay(p.attempts)).toISOString(), p.backend_key, p.session_id, p.attempts);
     if (!claim.changes) return;
+    if (p.transport === "acp" && p.profile_id) {
+      const configured = profile ?? allProfiles(app.config).find(a => a.id === p.profile_id);
+      requirePluginBackend(configured ?? referencedPluginProfiles(new Set([p.profile_id]))[0] ?? {id:p.profile_id});
+    }
     if (accountGone(app, p)) {
       run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);
       return;
@@ -174,7 +179,7 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
     run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);
     emit({ type: "status", text: `已清理后端会话 ${p.session_id}（${p.profile_id ?? p.transport}${p.app_id ? `，应用 ${p.app_id}` : ""}${recovering ? "，恢复待清理会话" : ""}）` });
   } catch (e) {
-    if (e instanceof NetworkUnavailableError) return; // Defer without spending the cleanup retry budget.
+    if (e instanceof NetworkUnavailableError || e instanceof PluginBackendUnavailable) return; // Defer without spending the cleanup retry budget.
     const attempts = p.attempts + 1;
     const why = (e as Error).message.slice(0, 160);
     if (attempts >= GIVE_UP_AFTER) {

@@ -1,8 +1,9 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
-import { sandboxCommand, type SandboxAccount, type WorkspaceMounts } from "./sandbox.ts";
+import { canonical, ownSandboxEnv, type OwnSandbox } from "./own-sandbox.ts";
+import { bwrapArgs, sandboxSupport, sandboxCommand, type SandboxAccount, type WorkspaceMounts } from "./sandbox.ts";
 
 /**
  * Find an executable on PATH. On Windows npm installs `.cmd` shims, which
@@ -50,7 +51,7 @@ export function commandExists(command: string) {
 }
 
 /** `sandbox`: run for one user's own account, inside bubblewrap (agents/sandbox.ts); the profile carries it (`accountOf`). */
-type LaunchOptions = { cwd: string; env?: NodeJS.ProcessEnv; sandbox?: SandboxAccount; workspace?: WorkspaceMounts };
+type LaunchOptions = { cwd: string; env?: NodeJS.ProcessEnv; ownSandbox?: OwnSandbox; sandbox?: SandboxAccount; workspace?: WorkspaceMounts };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin: "ignore" }): Omit<ChildProcessWithoutNullStreams, "stdin"> & { stdin: null };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" }): ChildProcessWithoutNullStreams;
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" | "ignore" }) {
@@ -58,7 +59,19 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   const env = withAgentPath({ ...process.env, ...opts.env });
   const resolved = resolveCommand(command, env);
   if (!resolved) throw new Error(`找不到命令 ${command}。请安装对应 Agent CLI 或在设置中修改命令。`);
-  const boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...opts.env, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace) : null;
+  let boxed;
+  if (opts.ownSandbox) {
+    const box = opts.ownSandbox;
+    const cwd = canonical(opts.cwd);
+    const plan = box.plan;
+    for (const dir of [box.runDir, ...box.state]) {
+      if (!dir || !plan.rw.includes(dir)) continue;
+      if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+    }
+    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(process.env, { ...opts.env, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
+      args: bwrapArgs({ ...plan, cwd, command: resolved.file, args: [...resolved.prefix, ...args] }) };
+  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...opts.env, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace) : null;
   const child = spawn(boxed?.file ?? resolved.file, boxed?.args ?? [...resolved.prefix, ...args], {
     cwd: opts.cwd,
     env: boxed?.env ?? env,

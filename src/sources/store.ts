@@ -7,6 +7,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now, sha256, sliceLines } from "../core/util.ts";
 import { indexText } from "../search/tokenize.ts";
+import { readProcess } from "../search/read-process.ts";
 import { vectorIndex } from "../search/vectors.ts";
 import { sourceDisplaySchema } from "../plugins/formats.ts";
 import { chunkSource } from "./chunk.ts";
@@ -251,6 +252,23 @@ export function getSource(app: App, id: string): Source {
 export function findSourceByUri(app: App, spaceId: string, uri: string): Source | null {
   const r = one<Row>(app.db, `select ${COLS} from sources where space_id = ? and uri = ?`, spaceId, uri);
   return r ? toSource(r) : null;
+}
+
+export type SourceUriLookup = { uri: string; space?: string };
+
+/** Exact URI first, then shortest matching suffix. Suffixes may scan the library, so resolve
+ * the batch in the shared read-only process. The returned IDs correspond to the input order. */
+export async function resolveSourceUris(app: App, lookups: SourceUriLookup[]) {
+  const keys = lookups.map(q => ({ uri: q.uri.replace(/^\.\//, ""), space: q.space || null }));
+  const rows = await readProcess(app).request<{ id: string | null }[]>({ op: "sql", params: [JSON.stringify(keys)],
+    sql: `with requested as (select key, json_extract(value,'$.uri') uri, json_extract(value,'$.space') space from json_each(?))
+      select coalesce(
+        (select s.id from sources s where s.uri=q.uri and (q.space is null or s.space_id=q.space)
+          and s.deleted_at is null order by s.updated_at desc limit 1),
+        (select s.id from sources s where s.uri like '%/' || q.uri and (q.space is null or s.space_id=q.space)
+          and s.deleted_at is null order by length(s.uri) limit 1)
+      ) id from requested q order by q.key` });
+  return rows.map(row => row.id);
 }
 
 export function sourceText(app: App, id: string): string {

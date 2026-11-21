@@ -25,15 +25,19 @@ export type DuplicatePair = { spaceId: string; docx: { id: string; title: string
 
 const TOKEN = /\/(docx|wiki|docs)\/([A-Za-z0-9_-]+)/;
 
-/** Where an old source id now lives (merged duplicates), following chains; null when it is not an alias. */
+/** Resolve merged references together, following the last of up to five indexed merge steps. */
+export function aliasTargets(app: App, ids: string[]) {
+  const rows = all<{ original: string; target: string }>(app.db, `with recursive chain(original,target,depth) as (
+    select alias_id,source_id,1 from source_aliases where alias_id in (select value from json_each(?))
+    union all select c.original,a.source_id,c.depth+1 from chain c
+      join source_aliases a on a.alias_id=c.target where c.depth<5
+  ) select original,target from chain order by depth`, JSON.stringify(ids));
+  return new Map(rows.map(row => [row.original, row.target]));
+}
+
+/** Where an old source id now lives, or null when it is not an alias. */
 export function aliasTarget(app: App, id: string): string | null {
-  let target: string | null = null;
-  for (let i = 0, at = id; i < 5; i++) {
-    const r = one<{ source_id: string }>(app.db, "select source_id from source_aliases where alias_id = ?", at);
-    if (!r) break;
-    target = at = r.source_id;
-  }
-  return target;
+  return aliasTargets(app, [id]).get(id) ?? null;
 }
 
 /** The id to use for a source reference: its merge target when it was merged, else itself. */

@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { sandboxSupport } from "../src/agents/sandbox.ts";
 import { stopWorker } from "../src/agents/runs.ts";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -11,7 +12,7 @@ import { createProposal, expireProposals } from "../src/agents/proposals.ts";
 import { profileDetail } from "../src/agents/profiles.ts";
 import { setEmbedderForTests } from "../src/search/embeddings.ts";
 import { visibleLines, visibleMemories, type RunView } from "../src/agents/replay-view.ts";
-import { createRun, getRun, listRuns, waitForRun } from "../src/agents/runs.ts";
+import { createRun, getRun, listRuns, runEvents, waitForRun } from "../src/agents/runs.ts";
 import { addMessage, ensureConversation } from "../src/agents/threads.ts";
 import { callTool } from "../src/agents/tools.ts";
 import type { App } from "../src/core/app.ts";
@@ -360,6 +361,30 @@ describe("replay end to end over ACP: both arms read only, the judge in both ord
   const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
   cleanupApps.push(app);
   afterAll(async () => { await server.close(); });
+
+  it.skipIf(!sandboxSupport().ok)("runs the sandboxed Doubao replay judge with backend approvals off", async () => {
+    const fixture = { ...FAKE, id: "fixture-judge", transport: "doubao-cli" as const,
+      args: [resolve("test/fake-doubao-cli.ts")], env: { FAKE_PERMISSION: "1" } };
+    const original = app.config.agents;
+    const login = mkdtempSync(join(tmpdir(), "judge-home-"));
+    vi.stubEnv("HOME", login);
+    app.config.agents = { ...original, roles: { ...original.roles, "replay-judge": fixture.id },
+      profiles: [...original.profiles, fixture], ownSandbox: { mode: "require", writable: [], hidden: [] }, fullAccess: "sandboxed" };
+    try {
+      const q = pastAsk(app, "材料约定了什么", "请查看原文", { ai: { profile: "fake" } });
+      const scheduled = await scheduleReplays(app, { runId: q.runId, axis: "R1" });
+      const done = await waitForRun(app, scheduled.runs[0]);
+      const judges = listRuns(app, { parentId: done.id }).filter(r => r.kind === "replay-judge");
+      expect(judges).toHaveLength(2);
+      for (const judge of judges) {
+        expect(getRun(app, judge.id).output.verdict).toMatchObject({ reason: "always_allow" });
+        const status = runEvents(app, judge.id).filter(e => e.type === "status").map(e => (e.data as { text: string }).text);
+        expect(status.filter(s => s.startsWith("使用 AI："))).toEqual([expect.stringMatching(/ · 完全访问$/)]);
+      }
+    } finally {
+      app.config.agents = original; vi.unstubAllEnvs(); rmSync(login, { recursive: true, force: true });
+    }
+  }, 60000);
 
   it("replays an answered question: a baseline and an R1 variant, checked and judged, nothing written", async () => {
     importText(app, "personal", { title: "约定", text: "每周四下午三点和小王同步项目A进度。" });
