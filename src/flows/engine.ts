@@ -19,7 +19,7 @@ import { getItem, type Item } from "../items/store.ts";
 import { addLocalMaterials, materialsBrief } from "../items/materials.ts";
 import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
-import { flowAppliesTo, flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { hasRunner, runnerApproved, flowAppliesTo, flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { codeWorkSettledAt, codeWorkSince, findObject, latestCodeWork, objectKind } from "./objects.ts";
 import { pollObjects } from "./plugin-objects.ts";
@@ -353,6 +353,20 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       return true;
     }
   }
+  if (typeof d.by === "object" && "runner" in d.by) {
+    const runner = d.by.runner;
+    if (!runnerApproved(app, f.definition)) throw new HttpError(403, "这个流程的插件运行器需本人确认");
+    withdraw(app, s);
+    atomic(app, () => {
+      const r = createRun(app, { kind: "flow-runner", title: `${item.title} · ${d.name}`, spaceId: item.spaceId, userId: item.userId,
+        input: { runner, itemId: item.id, stageId: d.id, flowId: f.id, flowStartedAt: f.startedAt, round: f.round, spaces: [item.spaceId] },
+        trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name }, by: userBy(app, item.userId), where: d.name } });
+      run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + 1, at, item.id);
+      changeStage(app, item.id, d.id, "doing", { by: r.id, waitingOn: null, askId: null, attempt: s.attempt + 1, enteredAt: at,
+        evidence: [], control: { runId: r.id, grantedGate: s.control.grantedGate, budgetStartedAt: at } }, { ...host, runId: r.id }, describeStage(d).carrier);
+    });
+    return true;
+  }
   const ai = await stageAI(app, f, d, s, current);
   s = ai.s;
   if (ai.waitUntil) {
@@ -467,6 +481,7 @@ export async function startFlow(app: App, itemId: string, flowId: string, by: Fl
     const range = by.userId ? spacesWithCapability(app, by.userId, "flows.view") : null;
     const visibleSpaces = range && new Set(runSpaces ? range.filter(id => runSpaces.includes(id)) : range);
     const f = readFlow(app, flowId, visibleSpaces);
+    if (hasRunner(f) && !runnerApproved(app, f)) throw new HttpError(403, "含插件运行器的流程需要本人确认");
     if (visibleSpaces && !flowAppliesTo(f, item)) throw new HttpError(400, "这个流程不适用于该事项");
     if (itemFlow(app, itemId)?.endedAt === null) throw new HttpError(409, "事项已经在走一个流程");
     atomic(app, () => {
@@ -496,7 +511,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
     for (const d of itemFlow(app, itemId)!.definition.stages) {
       const f = itemFlow(app, itemId)!;
       let s = getStage(app, itemId, d.id);
-      if (!isTrials(d) && !isFixes(d) && s.state === "doing" && s.control.runId && d.budget?.minutes !== undefined && !s.control.reported && usedMinutes(app, s, at) >= d.budget.minutes) {
+      if (!(typeof d.by === "object" && "runner" in d.by) && !isTrials(d) && !isFixes(d) && s.state === "doing" && s.control.runId && d.budget?.minutes !== undefined && !s.control.reported && usedMinutes(app, s, at) >= d.budget.minutes) {
         const control = finishUsage(app, s, at);
         stopStageRun(app, s.itemId, s.control.runId);
         changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: { ...control, reported: true, budgetExceeded: true } }, host, `到了这一段的时间预算（${d.budget.minutes} 分钟）`);
@@ -681,7 +696,7 @@ function escalateStage(app: App, f: ItemFlow, d: FlowStage, s: StageRow, feedbac
   return true;
 }
 
-export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; note: string; waitingOn?: string; unsure?: boolean };
+export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; pluginEvidence?: StageControl["pluginEvidence"]; note: string; waitingOn?: string; unsure?: boolean };
 export function reportStage(app: App, itemId: string, stageId: string, report: StageReport, by: FlowActor) {
   return serial(app, itemId, async () => {
     const f = running(app, itemId), d = definition(f, stageId);
@@ -709,6 +724,7 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     if (by.actor === "owner") resetStreak(app, itemId);
     s = { ...s, control: finishUsage(app, s, new Date()) };
     withdraw(app, s);
+    if (report.pluginEvidence) s.control.pluginEvidence = report.pluginEvidence;
     if (asksOwner) {
       const askId = question(app, f, d, { ...s, askId: null }, "done", d.by === "owner" ? { ask: "这一段是你来做的，助手说已经做完了。是这样吗？", result: report.note, evidence, after: true } : { ask: "助手说这一段做完了，确认吗？不对就点“还不行”写意见。", result: report.note, evidence, after: true }, ["确认", "还不行"]);
       changeStage(app, itemId, stageId, "doing", { askId, evidence, waitingOn: "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
@@ -940,12 +956,12 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
 
 export function proposeFlow(app: App, raw: string, by: FlowActor) {
   const f = parseFlow(raw);
-  return createAsk(app, { runId: by.runId ?? null, userId: by.userId ?? "owner", question: `启用流程「${f.name}」吗？\n${describeFlow(f)}\n${f.stages.map((s) => { const w = describeStage(s); return `- ${s.name}：${w.carrier}；${w.gate}，${w.done}${w.when ? `；${w.when}` : ""}${[w.ai, w.time, w.budget].filter(Boolean).map((v) => `；${v}`).join("")}`; }).join("\n")}`,
+  return createAsk(app, { runId: by.runId ?? null, userId: hasRunner(f) ? "owner" : by.userId ?? "owner", question: `启用流程「${f.name}」吗？\n${describeFlow(f)}\n${f.stages.map((s) => { const w = describeStage(s); return `- ${s.name}：${w.carrier}；${w.gate}，${w.done}${w.when ? `；${w.when}` : ""}${[w.ai, w.time, w.budget].filter(Boolean).map((v) => `；${v}`).join("")}`; }).join("\n")}`,
     options: [{ label: "启用" }, { label: "不用" }], allowText: false, context: { handler: "flow-save", raw } });
 }
 registerAskHandler("flow-save", async (app, ask, ctx) => {
   if (ask.userId !== "owner" || ask.answeredBy !== "owner" || ask.choice !== 0) return;
-  saveFlow(app, String(ctx.raw), "owner");
+  saveFlow(app, String(ctx.raw), "owner", true);
 }, (_app, ask, _ctx, by) => {
   if (ask.userId !== "owner" || by !== "owner") throw new HttpError(403, "流程定义只能由主人确认启用");
 });
@@ -1010,7 +1026,7 @@ export function flowView(app: App, id: string) {
       const signal = waitingSignal(app, id, d);
       return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, pluginEvidence: s.control.pluginEvidence ?? [], note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, result: stageResult(app, id, s), gate: d.gate, fixed: d.fixed,
         round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: isFixes(d) ? fixMinutes(app, s, new Date()) : usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
-        carrier: { kind, label: kind === "trials" ? "助手，一个一个去试" : kind === "fixes" ? "助手，一条一条去改" : objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
+        carrier: { kind, label: typeof d.by === "object" && "runner" in d.by ? describeStage(d).carrier : kind === "trials" ? "助手，一个一个去试" : kind === "fixes" ? "助手，一条一条去改" : objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link, ...(object.statusLabel !== undefined ? { statusLabel: object.statusLabel, fields: object.fields ?? [], disabled: !!object.disabled } : {}) } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), upstream: s.control.upstream ? { askId: s.control.upstream.askId, stage: s.control.upstream.stage, name: stageName(f!, s.control.upstream.stage), reason: s.control.upstream.reason } : null, tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId), shots: stageShots(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item), rounds: f ? roundHistory(app, f) : [],
     changes: shownChanges(app, id), follow: followView(app, id),
@@ -1054,7 +1070,7 @@ export function attachFlows(app: App) {
     const runIds = new Set<string>();
     if (e.type === "run") {
       const r = getRun(app, e.runId);
-      if (typeof r.input.itemId === "string" && ["flow-stage", "study-trial"].includes(r.kind)) ids.add(r.input.itemId);
+      if (typeof r.input.itemId === "string" && ["flow-stage", "flow-runner", "study-trial"].includes(r.kind)) ids.add(r.input.itemId);
       runIds.add(r.id);
       if (typeof r.input.continueFrom === "string") runIds.add(r.input.continueFrom);
       if (r.parentId) runIds.add(r.parentId);
@@ -1160,6 +1176,7 @@ async function runStageAgent(ctx: Parameters<Parameters<typeof registerHandler>[
 }
 registerHandler("flow-stage", runFlowStage);
 registerHandler("study-trial", runFlowStage);
+registerHandler("flow-runner", async ctx => (await import("./plugin-runner.ts")).runPluginStage(ctx));
 
 /** Git checks enter the same item queue as owner actions and revalidate the checked attempt. */
 export function completeBySignal(app: App, itemId: string, stageId: string, note: string, evidence: string[], expected: { startedAt: string; attempt: number; enteredAt: string | null; type: string; work?: string; pluginEvidence?: StageControl["pluginEvidence"]; current?: () => boolean }) {

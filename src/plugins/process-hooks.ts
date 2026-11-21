@@ -2,10 +2,11 @@ import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
-import type { FlowSignal, Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
+import type { StageRunner, FlowSignal, Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
 import { registerFormats } from "./formats.ts";
+import { pluginSettings } from "./settings.ts";
 import { pluginSpaces } from "./spaces.ts";
 
 type Entry<T> = {
@@ -14,6 +15,7 @@ type Entry<T> = {
   def: T;
   context(app: App, userId: string, spaceId: string, signal: AbortSignal): CallContext;
 };
+export const stageRunners = new Map<string, Entry<StageRunner> & { settings(app: App, user: string): Record<string, unknown> }>();
 export const flowSignals = new Map<string, Entry<FlowSignal>>();
 export const notifiers = new Map<string, Entry<Notifier> & { lifetime: AbortSignal }>();
 export const subscriptions = new Map<string, Entry<Subscription>>();
@@ -55,12 +57,17 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
     if (!/^[a-z][a-z0-9-]{0,47}$/.test(def.id)) throw new Error("插件能力 id 无效");
     const key = manifest.id + ":" + def.id;
     if (map.has(key)) throw new Error("重复注册 " + key);
-    const entry = { plugin: manifest.id, def, spaces, context, lifetime: lifetime.signal };
+    const entry = { plugin: manifest.id, def, spaces, context, settings: (app: App, user: string) => pluginSettings(app, manifest.id, manifest.settings, user), lifetime: lifetime.signal };
     map.set(key, entry);
     undo.push(() => { map.delete(key); });
   }
   return {
     ...registerFormats(manifest, version, spaces, context, undo),
+    stageRunner(def) {
+      if (!manifest.permissions.flow?.run) throw new Error("缺少 permissions.flow.run");
+      if (!def.name?.trim() || !def.describe?.trim() || typeof def.start !== "function") throw new Error("阶段运行器声明无效");
+      add(stageRunners, def);
+    },
     flowSignal(def) {
       if (!manifest.permissions.flow?.signal) throw new Error("缺少 permissions.flow.signal");
       if (!def.name?.trim() || !def.describe?.trim() || typeof def.check !== "function") throw new Error("流程信号声明无效");

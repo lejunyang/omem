@@ -13,7 +13,7 @@ import { triggerFor, withFollowUp, type RunTrigger } from "../core/run-trigger.t
 import { offerReviewPublish } from "./review-sync.ts";
 import { emitOmem, runOutputFacts } from "../rules/omem-events.ts";
 
-export type RunKind = "commit-claim" | "item-follow" | "flow-review" | "study-trial" | "peer-trial" | "flow-stage" | "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "note-review" | "memory-review" | "memory-organize" | "skill-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state" | "quality-audit" | "wiki-sweep" | "listen-coach" | "outcome-review" | "problem-follow";
+export type RunKind = "commit-claim" | "item-follow" | "flow-review" | "study-trial" | "peer-trial" | "flow-stage" | "flow-runner" | "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "note-review" | "memory-review" | "memory-organize" | "skill-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state" | "quality-audit" | "wiki-sweep" | "listen-coach" | "outcome-review" | "problem-follow";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
   /** Background run that found nothing to do; hidden from the default run list. */
@@ -370,6 +370,11 @@ export type RunContext = {
   event(type: string, data: unknown): void;
   output(data: Record<string, unknown>): void;
 };
+/** Ask the worker to resume this same durable run at the next poll, without occupying a slot. */
+export class ResumeRunAt extends Error {
+  at: string;
+  constructor(at: number) { super("等待下一次检查"); this.at = new Date(at).toISOString(); }
+}
 type Handler = (ctx: RunContext) => Promise<Record<string, unknown> | void>;
 const handlers = new Map<string, Handler>();
 const controllers = new Map<string, AbortController>();
@@ -612,6 +617,10 @@ function kick(app: App) {
       .catch((error: Error) => {
         flushText(app, r.id);
         if (stopping && !controller.signal.aborted) return;
+        if (error instanceof ResumeRunAt && !controller.signal.aborted) {
+          run(app.db, "update runs set status='queued',not_before=? where id=?", error.at, r.id);
+          return;
+        }
         const cancelled = controller.signal.aborted || error.message === "CANCELLED";
         run(app.db, "update runs set status=?, error=?, finished_at=? where id=?", cancelled ? "cancelled" : "failed", cancelled ? null : error.message, now(), r.id);
         if (r.kind === "code") trySettleCodeChain(app, r.id);

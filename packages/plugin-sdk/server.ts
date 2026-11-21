@@ -105,7 +105,15 @@ export type FlowProvider = { id: string; name: string; describe: string; params?
 export type FlowSignal = FlowProvider & {
   check(ctx: FlowContext, signal: AbortSignal): Promise<{ done: boolean; evidence?: FlowEvidence[]; waitingOn?: string; recheckAfterSec?: number }>;
 };
+export type RunnerResult = { ref: string; status: "running" | "done" | "failed"; summary?: string; evidence?: FlowEvidence[] };
+export type StageRunner = FlowProvider & {
+  /** Repeat calls with the same key, including after a host restart, must return the same operation. */
+  start(ctx: FlowContext & { attempt: number; idempotencyKey: string; settings: Record<string, unknown> }, signal: AbortSignal): Promise<RunnerResult>;
+  check?(ref: string, signal: AbortSignal): Promise<RunnerResult>;
+  cancel?(ref: string, signal: AbortSignal): Promise<void>;
+};
 export type ProcessApi = {
+  stageRunner(def: StageRunner): void;
   flowSignal(def: FlowSignal): void;
   answerAsk(input: OutletAnswer): Promise<void>;
   notifier(def: Notifier): void;

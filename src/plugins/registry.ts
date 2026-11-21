@@ -96,7 +96,7 @@ export const manifestSchema = z.object({
   permissions: z
     .object({
       events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution", "finding.thread"])).default([]),
-      flow: z.object({ signal: z.boolean().optional() }).strict().optional(),
+      flow: z.object({ run: z.boolean().optional(), signal: z.boolean().optional() }).strict().optional(),
       notify: z.object({ deliver: z.boolean().default(false), ask: z.boolean().default(false) }).optional(),
       sourceParser: z.boolean().default(false),
       wikiPageKind: z.boolean().default(false),

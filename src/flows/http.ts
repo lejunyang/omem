@@ -1,12 +1,12 @@
-import { flowSignals } from "../plugins/process-hooks.ts";
+import { flowSignals, stageRunners } from "../plugins/process-hooks.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
 import { itemScope, requireItem } from "../items/access.ts";
-import { flowVisibleIn, listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
-import { flowView, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
+import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { proposeFlow, flowView, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { settleChange } from "./follow.ts";
 import { all } from "../core/db.ts";
@@ -81,7 +81,8 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
         return [];
       }
     });
-    return { signals: [...flowSignals].filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id, { def }]) => ({ id, name: def.name, describe: def.describe, params: def.params })), flows: flows.map((f) => ({ ...f, grants: gateGrants(app, f.id, userId) })), drafts };
+    const available = (entries: typeof flowSignals | typeof stageRunners) => Array.from(entries as ReadonlyMap<string, { spaces: readonly string[]; def: { name: string; describe: string; params?: Record<string, unknown> } }>).filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id, { def }]) => ({ id, name: def.name, describe: def.describe, params: def.params }));
+    return { signals: available(flowSignals), runners: available(stageRunners), flows: flows.map((f) => ({ ...f, grants: gateGrants(app, f.id, userId) })), drafts };
   });
   server.get("/api/flows/board", async (req) => {
     const { only } = body(z.object({ only: z.enum(["mine", "blocked"]).optional() }), req.query);
@@ -101,7 +102,9 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
   });
   server.put("/api/flows/:id", async (req) => {
     const raw = typeof req.body === "string" ? req.body : body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
-    if (parseFlow(raw).id !== (req.params as { id: string }).id) throw new HttpError(400, "路径 id 必须与流程定义 id 相同");
+    const f = parseFlow(raw);
+    if (f.id !== (req.params as { id: string }).id) throw new HttpError(400, "路径 id 必须与流程定义 id 相同");
+    if (hasRunner(f) && !runnerApproved(app, f)) return { askId: proposeFlow(app, raw, { actor: "owner", userId: who(req) }).id };
     return saveFlow(app, raw, "owner");
   });
   server.delete("/api/flows/:id", async (req) => { removeFlow(app, (req.params as { id: string }).id, "owner"); return { ok: true }; });

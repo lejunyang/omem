@@ -10,7 +10,9 @@ import { TOOL_GROUPS } from "../agents/tool-help.ts";
 import { pruneGateGrants } from "./gates.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
 
-import { flowSignals } from "../plugins/process-hooks.ts";
+import { createHash } from "node:crypto";
+import { one, run } from "../core/db.ts";
+import { flowSignals, stageRunners } from "../plugins/process-hooks.ts";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 const providerId = z.string().regex(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]{0,47}$/);
@@ -24,6 +26,7 @@ const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "时刻必须写�
 const weekdays = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 const objectName = z.union([z.enum(["code-work", "design"]), z.custom<`${string}:${string}`>((kind) => typeof kind === "string" && kind.includes(":"), "这种内置对象在后续阶段实现")]);
 const carrier = z.union([
+  z.object({ runner: providerId, with: providerParams }).strict(),
   z.object({ run: z.object({ agent: slug.optional(), skill: slug.optional() }).strict() }).strict(),
   z.object({ object: z.enum(["trials", "fixes"]), agent: slug.optional(), skill: slug.optional() }).strict(),
   z.object({ object: objectName }).strict(),
@@ -58,11 +61,11 @@ export const flowSchema = z.object({
     if (seen.has(s.id)) ctx.addIssue({ code: "custom", path: ["stages", i, "id"], message: "阶段 id 不能重复" });
     for (const n of s.needs ?? []) if (!seen.has(n)) ctx.addIssue({ code: "custom", path: ["stages", i, "needs"], message: `前提 ${n} 必须是列表中更早的阶段` });
     seen.add(s.id);
-    const isRun = typeof s.by === "object" && ("run" in s.by || ["trials", "fixes"].includes(s.by.object));
+    const isRun = typeof s.by === "object" && ("run" in s.by || "object" in s.by && ["trials", "fixes"].includes(s.by.object));
     if (s.tools?.includes("study_push")) ctx.addIssue({ code: "custom", path: ["stages", i, "tools"], message: "study_push 只能由宿主按范围临时授予" });
     if (s.tools?.length && !isRun) ctx.addIssue({ code: "custom", path: ["stages", i, "tools"], message: "附加工具只适用于运行或 trials 阶段" });
     if (s.ai && !isRun) ctx.addIssue({ code: "custom", path: ["stages", i, "ai"], message: "指定 AI 只适用于由运行承担的阶段" });
-    if (s.budget?.minutes !== undefined && !isRun) ctx.addIssue({ code: "custom", path: ["stages", i, "budget"], message: "时间预算只适用于由运行承担的阶段" });
+    if (s.budget?.minutes !== undefined && !isRun && !(typeof s.by === "object" && "runner" in s.by)) ctx.addIssue({ code: "custom", path: ["stages", i, "budget"], message: "时间预算只适用于由运行承担的阶段" });
     if (s.escalate && (!isRun || !s.ai)) ctx.addIssue({ code: "custom", path: ["stages", i, "escalate"], message: "升档只适用于写了 ai 的运行阶段" });
   });
   if (f.repeat && !seen.has(f.repeat.from)) ctx.addIssue({ code: "custom", path: ["repeat", "from"], message: "下一轮的起点必须是清单里的阶段 id" });
@@ -90,7 +93,7 @@ export function describeStage(s: FlowStage) {
   const object = typeof s.by === "object" && "object" in s.by ? objectWords(s.by.object) : null;
   const run = typeof s.by === "object" && "run" in s.by ? s.by.run : null;
   return {
-    carrier: fixes ? "逐条改缺陷，评审通过后重跑" : typeof s.by === "object" && "object" in s.by && s.by.object === "trials" ? "按确认的方向逐个去试" : s.by === "owner" ? "你来做" : s.by === "wait" ? "只等进展" : object ? `跟着${object}走` : `${!run?.agent || run.agent === "assistant" ? "助手来做" : `交给 ${run.agent}`}${run?.skill ? `，用技能 ${run.skill}` : ""}`,
+    carrier: typeof s.by === "object" && "runner" in s.by ? `这个阶段会由插件 ${s.by.runner} 执行：${stageRunners.get(s.by.runner)?.def.describe ?? "运行器已停用"}` : fixes ? "逐条改缺陷，评审通过后重跑" : typeof s.by === "object" && "object" in s.by && s.by.object === "trials" ? "按确认的方向逐个去试" : s.by === "owner" ? "你来做" : s.by === "wait" ? "只等进展" : object ? `跟着${object}走` : `${!run?.agent || run.agent === "assistant" ? "助手来做" : `交给 ${run.agent}`}${run?.skill ? `，用技能 ${run.skill}` : ""}`,
     gate: s.gate === "confirm" ? "开始前先问你" : s.by === "owner" ? "轮到就来找你" : s.by === "wait" ? "轮到就开始等" : "轮到就自己开始",
     done: typeof s.done === "object" ? "signal" in s.done ? s.done.signal === "git.pushed" ? "改动推到远端就算做完（你也可以自己点做完）" : s.done.signal === "git.merged" ? "改动合进目标分支就算做完" : (flowSignals.get(s.done.signal)?.def.describe ?? "等的信号现在没人能判断") + "（你也可以自己点做完）" : `${objectWords(s.done.object)}到了 ${[s.done.status].flat().map((status) => statusWords(typeof s.done === "object" && "object" in s.done ? s.done.object : "", status)).join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : fixes ? "改完并重跑或预算用满就算做完" : trials ? "队列做完或本轮预算用满就算做完" : object ? `${object}完成就算做完` : s.by === "owner" ? "你说做完就算做完" : "交了结果就算做完",
     when: s.when ? `只在需要时做：${bare(s.when)}` : "",
@@ -106,6 +109,7 @@ export function parseFlow(raw: string, installed = true): FlowDefinition {
   const parsed = flowSchema.safeParse(value, { error: () => "字段类型不对，或包含第一期不支持的字段" });
   if (!parsed.success) throw new HttpError(400, `流程定义不对：${parsed.error.issues.map((i) => `${i.path.join(".")}：${i.message}`).join("；")}`);
   if (installed) for (const s of parsed.data.stages) {
+    if (typeof s.by === "object" && "runner" in s.by) validateProvider(s.by.runner, stageRunners.get(s.by.runner)?.def, s.by.with);
     if (typeof s.done === "object" && "signal" in s.done && s.done.signal.includes(":"))
       validateProvider(s.done.signal, flowSignals.get(s.done.signal)?.def, s.done.with);
   }
@@ -165,11 +169,19 @@ export function readFlow(app: App, id: string, visibleSpaces: ReadonlySet<string
   if (!flowVisibleIn(f, visibleSpaces)) throw missing();
   return f;
 }
-export function saveFlow(app: App, raw: string, by: string) {
+export const hasRunner = (f: FlowDefinition) => f.stages.some(s => typeof s.by === "object" && "runner" in s.by);
+const runnerGrant = (f: FlowDefinition) => createHash("sha256").update(JSON.stringify(f)).digest("hex");
+export function runnerApproved(app: App, f: FlowDefinition) {
+  return one<{ value: string }>(app.db, "select value from kv where key=?", "flow-runner:" + f.id)?.value === runnerGrant(f);
+}
+export function saveFlow(app: App, raw: string, by: string, confirmedRunner = false) {
   const f = parseFlow(raw);
+  if (hasRunner(f) && !(confirmedRunner && by === "owner") && !runnerApproved(app, f)) throw new HttpError(403, "含插件运行器的流程需要本人确认");
   const path = file(app, f.id);
   mkdirSync(join(app.libraryDir, "_flows"), { recursive: true });
   writeFileSync(path, raw.endsWith("\n") ? raw : `${raw}\n`);
+  if (hasRunner(f)) run(app.db, "insert or replace into kv(key,value) values(?,?)", "flow-runner:" + f.id, runnerGrant(f));
+  else run(app.db, "delete from kv where key=?", "flow-runner:" + f.id);
   pruneGateGrants(app, f.id, f.stages);
   commitLibrary(app.libraryDir, `${by}: 保存流程 ${f.id}`);
   return f;
@@ -178,6 +190,7 @@ export function removeFlow(app: App, id: string, by = "user") {
   const path = file(app, id);
   if (!existsSync(path)) throw new HttpError(404, `没有流程 ${id}`);
   unlinkSync(path);
+  run(app.db, "delete from kv where key=?", "flow-runner:" + id);
   pruneGateGrants(app, id, []);
   commitLibrary(app.libraryDir, `${by}: 删除流程 ${id}`);
 }

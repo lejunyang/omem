@@ -80,6 +80,7 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
 const tools = new Map<string, PluginTool>();
 const readers = new Map<string, PlatformReader>();
 const objects = new Map<string, PluginObject>();
+const runners = new Map<string, import("./types.ts").StageRunner>();
 const signals = new Map<string, import("./types.ts").FlowSignal>();
 const notifiers = new Map<string, import('./types.ts').Notifier>();
 const items = new Map<string, import("./types.ts").ItemProvider>();
@@ -96,11 +97,16 @@ async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { signals: unknown[]; notifiers: unknown[]; parsers: unknown[]; kinds: unknown[]; items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { signals: [], notifiers: [], parsers: [], kinds: [], items: [], retrievers: [], rerankers: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
+  const declared: { runners: unknown[]; signals: unknown[]; notifiers: unknown[]; parsers: unknown[]; kinds: unknown[]; items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { runners: [], signals: [], notifiers: [], parsers: [], kinds: [], items: [], retrievers: [], rerankers: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
     answerAsk: input => rpc("answerAsk", { input }),
+    stageRunner(def) {
+      if (typeof def.start !== "function") throw new Error("阶段运行器缺少 start");
+      runners.set(def.id, def);
+      declared.runners.push({ id: def.id, name: def.name, describe: def.describe, params: def.params, checks: !!def.check, cancels: !!def.cancel });
+    },
     flowSignal(def) {
       if (typeof def.check !== "function") throw new Error("流程信号缺少 check");
       signals.set(def.id, def);
@@ -197,9 +203,14 @@ process.on("message", async (m: Msg) => {
   }
   try {
     let value: unknown;
-    const search = ["retriever", "reranker", "notifier", "flowSignal"].includes(m.t) ? new AbortController() : null;
+    const search = ["retriever", "reranker", "notifier", "flowSignal", "stageRunner"].includes(m.t) ? new AbortController() : null;
     if (search) activeSearch.set(m.id!, search);
-    if (m.t === "flowSignal") value = await signals.get(m.name)!.check(m.arg, search!.signal);
+    if (m.t === "stageRunner") {
+      const def = runners.get(m.name)!;
+      if (m.method === "start") value = await def.start(m.arg, search!.signal);
+      else if (m.method === "check") value = await def.check!(m.arg, search!.signal);
+      else await def.cancel!(m.arg, search!.signal);
+    } else if (m.t === "flowSignal") value = await signals.get(m.name)!.check(m.arg, search!.signal);
     else if (m.t === "notifier") {
       const def = notifiers.get(m.name)!;
       const [arg, n] = m.args;
