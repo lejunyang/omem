@@ -57,7 +57,8 @@ import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFo
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
 import { defaultBaseRef, fetchBranchAsync, git, listBranches, resolveRef } from "../core/git.ts";
 import { embeddingSpaces } from "../search/embeddings.ts";
-import { readProcess } from "../search/read-process.ts";
+import { recordWatchMaterial, watchSourceSpaces } from "../core/message-origins.ts";
+import { readWatchOrigins } from "../search/read-process.ts";
 import { search, shadowedFiles, withOverlays, type HitType } from "../search/search.ts";
 import { codeVersion, codeVersions } from "../sources/code-index.ts";
 import { branchIndexes, indexBranch, overlayRepo, runOverlaySpaces } from "./worktree-index.ts";
@@ -256,9 +257,21 @@ function spacesFor(ctx: ToolContext, requested?: string | null, all = false) {
   return spaceFamily(ctx.app, one).filter((id) => id === one || !ctx.spaces || ctx.spaces.includes(id));
 }
 
+/** The host normally keeps these notes out of the prompt. If explicitly read, its text is now prompt material. */
+function recordReadTranscriptNotes(ctx: ToolContext, messages: { meta: Record<string, unknown> }[]) {
+  if (!ctx.runId) return;
+  const notes = messages.filter(m => m.meta.transcriptOnly);
+  if (!notes.length) return;
+  const turn = one<{ anchor: string | null }>(ctx.app.db, `select coalesce(r.input ->> '$.messageIds[0]', r.input ->> '$.messageId') anchor
+    from runs r join conversations c on c.id=(r.input ->> '$.conversationId')
+    where r.id=? and r.kind='ask' and c.channel='listen'`, ctx.runId);
+  if (turn?.anchor) recordWatchMaterial(ctx.app, turn.anchor, watchSourceSpaces(ctx.app, null, notes));
+}
+
 function renderMessageSource(ctx: ToolContext, id: string): string {
-  const m = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(ctx.app.db, "select id, conversation_id, role, text, created_at from messages where id = ?", id);
+  const m = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string; meta: string }>(ctx.app.db, "select id, conversation_id, role, text, created_at, meta from messages where id = ?", id);
   if (!m) throw new HttpError(404, `找不到消息 ${id}`);
+  recordReadTranscriptNotes(ctx, [{ meta: JSON.parse(m.meta) }]);
   return `消息 ${m.id} · ${m.role === "user" ? "本人" : "助理"} · ${m.created_at} · 会话 ${m.conversation_id}\n引用格式：[文字](msg:${m.id})\n\n${m.text}`;
 }
 
@@ -327,9 +340,7 @@ async function querySourceSpaces(ctx: ToolContext) {
   if (!ctx.runId) return undefined;
   const granted = embeddingSpaces(ctx.app, null);
   if (!granted) return null;
-  return readProcess(ctx.app).request<string[] | null | undefined>(
-    { op: "watch-origins", runId: ctx.runId, granted }, ctx.app.config.embeddings.timeoutMs,
-  ).catch(() => null);
+  return readWatchOrigins(ctx.app, ctx.runId, granted, ctx.app.config.embeddings.timeoutMs);
 }
 
 /**
@@ -1005,6 +1016,7 @@ def({
     if (ctx.spaces && !ctx.spaces.includes(t.spaceId)) throw new HttpError(403, `本次任务不能访问空间 ${t.spaceId} 的会话`);
     if (t.userId !== (ctx.userId ?? "owner") && (ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "不能读别人的会话");
     const msgs = threadMessages(ctx.app, t.id, { limit: a.limit ?? 30, before: a.before });
+    recordReadTranscriptNotes(ctx, msgs);
     const head = describeThread(t, ctx.app.config.timezone);
     return `${head}\n\n${msgs.map((m) => `[${localStamp(m.createdAt, ctx.app.config.timezone)}] ${m.role === "user" ? "本人" : "助理"}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
   },

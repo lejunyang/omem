@@ -3,13 +3,14 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { SQLInputValue } from "node:sqlite";
 import type { App } from "../core/app.ts";
+import type { Origins } from "../core/message-origins.ts";
 import type { Config } from "../core/config.ts";
 import { vectorChanges, type VectorChange } from "./vectors.ts";
 import { searchPhases, searchStage } from "./trace.ts";
 
 export type ReadJob =
   | { op: "sql"; sql: string; params: SQLInputValue[]; stage?: string }
-  | { op: "watch-origins"; runId: string; granted: readonly string[] }
+  | { op: "watch-origins"; runId: string; granted?: readonly string[] }
   | { op: "prepare"; spaces?: string[] }
   | { op: "vector"; query: string; spaces?: string[]; limit: number; config: Pick<Config, "embeddings">; vector?: Float32Array }
   | { op: "embed"; texts: string[]; kind: "query" | "passage"; config: Pick<Config, "embeddings"> }
@@ -133,6 +134,11 @@ export function readProcess(app: App, lane: Lane = "sql") {
 }
 export function closeReadProcess(app: App) { for (const reader of readers.get(app)?.values() ?? []) reader.stop(); readers.delete(app); }
 export function readProcessStats(app: App) { return Object.fromEntries([...(readers.get(app) ?? [])].map(([lane, reader]) => [lane, reader.stats])); }
+
+/** Without a grant filter the caller gets all known input spaces, to persist with derived material. */
+export function readWatchOrigins(app: App, runId: string, granted?: readonly string[], timeoutMs?: number) {
+  return readProcess(app).request<Origins | undefined>({ op: "watch-origins", runId, granted }, timeoutMs).catch(() => null);
+}
 
 export async function searchRows<T>(app: App, stage: string, sql: string, ...params: SQLInputValue[]): Promise<T[]> {
   try { return await searchStage(stage, () => readProcess(app).request<T[]>({ op: "sql", sql, params, stage })); }

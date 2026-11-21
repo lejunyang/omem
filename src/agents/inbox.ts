@@ -23,6 +23,8 @@ import { addMessage, createThread, findThread, resolveThread, updateThread, type
  */
 export type Inbound = Partial<ThreadAddress> & {
   text: string;
+  /** Plain text authored by the authenticated owner at the web chat entry point. */
+  ownerText?: boolean;
   /** Web / CLI: an explicit conversation (thread) id. */
   conversationId?: string;
   itemId?: string;
@@ -82,13 +84,16 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   }
   if (inb.externalMessageId) thread = updateThread(app, thread.id, { settings: { ...thread.settings, lastMessageId: inb.externalMessageId, ...(inb.chatId ? { lastTopicId: inb.topicId ?? null } : {}), ...(inb.chatId && inb.isGroup !== undefined ? { group: inb.isGroup } : {}) } });
 
+  const ownerOrigin = inb.ownerText && thread.channel === "listen"
+    ? { sourceSpaces: item && item.spaceId !== thread.spaceId ? [thread.spaceId, item.spaceId] : [thread.spaceId] }
+    : {};
   let text = inb.text.trim();
   let freshTask = false;
   // An in-chat review takes plain replies until it ends.
   if (!text.startsWith("/") && thread.settings.review) {
     const reply = reviewReply(app, thread, text, userId);
     if (reply !== null) {
-      addMessage(app, thread.id, "user", text, null, { command: true });
+      addMessage(app, thread.id, "user", text, null, { ...ownerOrigin, command: true });
       addMessage(app, thread.id, "assistant", reply, null, { command: true });
       return { thread: findThread(app, thread.id)!, messageId: null, runId: null, merged: false, reply, started };
     }
@@ -96,7 +101,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   if (text.startsWith("/")) {
     let reply = await runCommand(app, thread, text, inb);
     if (reply !== null && typeof reply !== "string") {
-      addMessage(app, thread.id, "user", text, null, { command: true });
+      addMessage(app, thread.id, "user", text, null, { ...ownerOrigin, command: true });
       thread = reply.thread;
       started = "new";
       text = reply.task;
@@ -114,7 +119,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
       reply = null;
     }
     if (reply !== null) {
-      addMessage(app, thread.id, "user", text, null, { command: true });
+      addMessage(app, thread.id, "user", text, null, { ...ownerOrigin, command: true });
       let card: Record<string, unknown> | undefined;
       let plain = reply;
       if (reply.startsWith("{")) {
@@ -141,12 +146,12 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   if (!freshTask && !inb.fromAsk && !inb.speaker && !inb.asker && !inb.meta) {
     const { answerFromMessage } = await import("./asks.ts");
     if (await answerFromMessage(app, thread.id, text, userId)) {
-      const messageId = addMessage(app, thread.id, "user", text, null, { answer: true, ...(inb.externalMessageId ? { externalId: inb.externalMessageId } : {}) });
+      const messageId = addMessage(app, thread.id, "user", text, null, { ...ownerOrigin, answer: true, ...(inb.externalMessageId ? { externalId: inb.externalMessageId } : {}) });
       return { thread: findThread(app, thread.id)!, messageId, runId: null, merged: false, reply: null, started };
     }
   }
 
-  const meta: Record<string, unknown> = { ...inb.meta, ...(inb.itemId ? { itemId: inb.itemId } : {}), ...(userId === OWNER ? {} : { userId }) };
+  const meta: Record<string, unknown> = { ...ownerOrigin, ...inb.meta, ...(inb.itemId ? { itemId: inb.itemId } : {}), ...(userId === OWNER ? {} : { userId }) };
   if (inb.fromAsk) meta.fromAsk = true;
   if (inb.context) {
     meta.context = inb.context;

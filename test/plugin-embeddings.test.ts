@@ -8,14 +8,16 @@ import { getSource, upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
 import { persistChatMessages } from "../src/channels/lark-messages.ts";
 import { memoriesFor, routeWatchedMessages, seedContext } from "../src/channels/lark-watch.ts";
-import { addMessage, findThread, setChatSettings, threadMessages, updateThread } from "../src/agents/threads.ts";
+import { addMessage, createThread, findThread, setChatSettings, threadMessages, updateThread } from "../src/agents/threads.ts";
 import { coldContext, watchedNote } from "../src/agents/sessions.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { receive } from "../src/agents/inbox.ts";
 import { __testHandlers, cancelRun, createRun, getRun } from "../src/agents/runs.ts";
 import { injectSteering, takeSteering } from "../src/agents/steer.ts";
 import { closeReadProcess } from "../src/search/read-process.ts";
-import { saveContext } from "../src/channels/listen.ts";
+import { noteMeetingRun } from "../src/channels/listen-meetings.ts";
+import { problemsDue, problemsOf, trackProblem } from "../src/channels/listen-problems.ts";
+import { noteInContext, saveContext } from "../src/channels/listen.ts";
 import { runActions } from "../src/rules/actions.ts";
 import { pollFastRules } from "../src/rules/fast.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
@@ -165,6 +167,97 @@ it.each(["规则转入项目消息", "补充消息来源不明", "沿用上轮�
   expect(threadMessages(app, conversationId).some(message => message.text.includes(query))).toBe(true);
   for (const space of [undefined, "personal"]) await search(runId, space);
   expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "全部来自个人空间" ? [[query], [query]] : []);
+});
+
+it.each(["个人材料", "项目材料", "混合更新", "旧问题", "未知消息"])("定时回查和后续搜索按问题材料授权：%s", async mode => {
+  const { app, embed, query, watch, search } = watchSearchFixture();
+  let conversationId = watch.conversationId!;
+  const message = (text: string, meta: Record<string, unknown>) =>
+    receive(app, { channel: "listen", conversationId, speaker: "成员", text, meta });
+  const done = (id: string) => app.db.prepare("update runs set status='done' where id=?").run(id);
+  const personal = { sourceSpaces: ["personal"] };
+  const firstMeta = mode === "未知消息" ? {} : mode === "混合更新" || mode === "项目材料" ? { sourceSpaces: ["allowed"] } : personal;
+  const first = await message(query, firstMeta);
+  await search(first.runId!);
+  expect(embed.mock.calls).toHaveLength(firstMeta === personal ? 1 : 0);
+  embed.mockClear();
+
+  const title = "核对退款时限", known = "已找到 " + query;
+  await trackProblem(app, first.runId!, { title, state: "open", known, done_when: "核对完时限", recheck_after: "10m" });
+  done(first.runId!);
+  if (mode === "混合更新" || mode === "旧问题") {
+    if (mode === "旧问题") app.db.prepare("update listen_problems set source_spaces=null where context_id=?").run(watch.id);
+    // Same problem, clean conversation: the latest run alone only accounts for the owner's update.
+    conversationId = createThread(app, { channel: "web", spaceId: "personal" }).id;
+    saveContext(app, { kind: watch.kind, id: watch.id, conversationId });
+    const update = await message("继续查", personal);
+    await trackProblem(app, update.runId!, { title, state: "open", recheck_after: "10m" });
+    done(update.runId!);
+  }
+  const [problem] = problemsOf(app, watch.id);
+  expect(problem.known).toBe(known);
+  const expected = mode === "旧问题" || mode === "未知消息" ? null : mode === "个人材料" ? ["personal"] : ["allowed", "personal"];
+  expect(problem.sourceSpaces?.slice().sort() ?? null).toEqual(expected);
+  expect(await problemsDue(app, problem.recheckAt!)).toBe(1);
+  const check = threadMessages(app, conversationId).at(-1)!;
+  expect(check.meta).toMatchObject({ recheck: problem.id, sourceSpaces: problem.sourceSpaces });
+  expect(check.text).toContain(known);
+  const [{ run_id: checkRun }] = all<{ run_id: string }>(app.db, "select run_id from messages where id=?", check.id);
+  await search(checkRun);
+  expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "个人材料" ? [[query]] : []);
+  done(checkRun);
+  embed.mockClear();
+  const next = await message("继续核对", personal);
+  await search(next.runId!);
+  expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "个人材料" ? [[query]] : []);
+});
+
+it("新会话带入旧问题正文后，主动搜索沿用问题来源", async () => {
+  const { app, watch, embed, query, search, conversationId } = watchSearchFixture();
+  const first = await receive(app, { channel: "listen", conversationId, text: query, speaker: "成员", meta: { sourceSpaces: ["allowed"] } });
+  await trackProblem(app, first.runId!, { title: "核对时限", state: "open", known: query, done_when: "核对完成" });
+  const fresh = createThread(app, { channel: "web", spaceId: "personal" });
+  saveContext(app, { kind: watch.kind, id: watch.id, conversationId: fresh.id });
+  const next = await receive(app, { channel: "listen", conversationId: fresh.id, text: "看看进展", speaker: "成员", meta: { sourceSpaces: ["personal"] } });
+  expect(await watchedNote(app, next.thread, threadMessages(app, fresh.id))).toContain("已查清：" + query);
+  embed.mockClear();
+  await search(next.runId!);
+  expect(embed).not.toHaveBeenCalled();
+});
+
+it("本人从网页写给个人关注的话保留来源，后续个人搜索可以使用插件", async () => {
+  const { app, embed, query, conversationId, search } = watchSearchFixture();
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const response = await server.inject({ method: "POST", url: "/api/ask", payload: { conversationId, text: query, space: "allowed" } });
+    expect(response.statusCode).toBe(200);
+    expect(threadMessages(app, conversationId)[0].meta.sourceSpaces).toEqual(["personal"]);
+    app.db.prepare("update runs set status='done' where id=?").run(response.json().runId);
+    const next = await receive(app, { channel: "listen", conversationId, text: "继续查", speaker: "成员", meta: { sourceSpaces: ["personal"] } });
+    await search(next.runId!);
+    expect(embed.mock.calls.map(([texts]) => texts)).toEqual([[query]]);
+  } finally {
+    await server.close();
+  }
+});
+
+it.each(["仅操作记录", "读取会话", "读取消息", "会议纪要"])("旁听会议后的个人搜索：%s", async mode => {
+  const { app, embed, query, conversationId, watch, search } = watchSearchFixture();
+  const log = "（本人让我进会旁听会议「例会」）";
+  noteInContext(app, watch, log);
+  if (mode === "会议纪要") noteMeetingRun(app, { meetingId: "example", contextId: watch.id, topic: "例会", final: true }, "meeting-run", query);
+  const next = await receive(app, { channel: "listen", conversationId, text: "继续查", speaker: "成员", meta: { sourceSpaces: ["personal"] } });
+  const messages = threadMessages(app, conversationId);
+  const anchor = messages.find(m => m.id === next.messageId)!;
+  expect(coldContext(app, next.thread, anchor, [], true)).not.toContain(log);
+  if (mode === "读取会话" || mode === "读取消息") {
+    const ctx = { app, runId: next.runId!, spaceId: "personal", actor: "agent" as const, spaces: ["personal"], tools: new Set(["read_conversation", "read_source"]) };
+    const result = mode === "读取会话" ? await callTool(ctx, "read_conversation", { conversation: conversationId })
+      : await callTool(ctx, "read_source", { source: "msg:" + messages.find(m => m.text === log)!.id });
+    expect(result.text).toContain(log);
+  }
+  await search(next.runId!);
+  expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "仅操作记录" ? [[query]] : []);
 });
 
 it.each(["项目消息", "个人消息", "来源不明的消息", "旧摘要"])("关注冷启动注入的摘要含%s", async mode => {

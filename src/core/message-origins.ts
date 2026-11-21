@@ -22,7 +22,7 @@ export function archivedMessageSpaces(app: Pick<App, "db">, messageIds: string[]
   return spaces;
 }
 
-type Origins = string[] | null;
+export type Origins = string[] | null;
 
 /** Null is a material whose origin is unknown, including when it is mixed with known materials. */
 export function mergeOrigins(a: Origins, b: Origins): Origins {
@@ -73,7 +73,7 @@ export function recordWatchMaterial(app: App, anchor: string, spaces: Origins) {
 
 /** A follow-up search can quote earlier batches from session history or its summary. Walk only this
  * conversation's metadata in the read worker, stopping at the first unknown or unauthorized origin. */
-export function watchSearchSourceSpaces(app: Pick<App, "db">, runId: string, granted: readonly string[]) {
+export function watchRunSourceSpaces(app: Pick<App, "db">, runId: string, granted?: readonly string[]) {
   const turn = one<{ conversation: string; space: string; watchSpace: string | null; linked: number;
     ids: string; steered: string }>(app.db,
     `select c.id conversation, c.space_id space, w.space_id watchSpace,
@@ -85,24 +85,29 @@ export function watchSearchSourceSpaces(app: Pick<App, "db">, runId: string, gra
       where r.id = ? and r.kind = 'ask' and c.channel = ?`, runId, "listen");
   if (!turn) return undefined;
   // Linked summaries have no message-level provenance.
-  if (turn.linked || !granted.includes(turn.space) || (turn.watchSpace && !granted.includes(turn.watchSpace))) return null;
+  if (turn.linked) return null;
+  const origins = new Set([turn.space]);
+  if (turn.watchSpace) origins.add(turn.watchSpace);
+  if (granted && [...origins].some(space => !granted.includes(space))) return null;
   const ids = [...new Set<string>([...JSON.parse(turn.ids), ...JSON.parse(turn.steered)])];
   const last = one<{ n: number; at: string | null }>(app.db,
     `select count(*) n, max(m.created_at) at from json_each(?) i cross join messages m on m.id=i.value
       where m.conversation_id=? and m.role='user'`,
     JSON.stringify(ids), turn.conversation);
   if (!last?.at || last.n !== ids.length) return null;
-  const origins = new Set([turn.space]);
-  if (turn.watchSpace) origins.add(turn.watchSpace);
   const batch: { meta: Record<string, unknown> }[] = [];
   function includeBatch() {
     const spaces = watchSourceSpaces(app, null, batch);
     batch.length = 0;
-    if (!spaces || spaces.some(s => !granted.includes(s))) return false;
+    if (!spaces || (granted && spaces.some(s => !granted.includes(s)))) return false;
     for (const space of spaces) origins.add(space);
     return true;
   }
-  for (const row of app.db.prepare("select meta from messages where conversation_id=? and created_at<=? and role='user' order by created_at desc").iterate(turn.conversation, last.at)) {
+  // Meeting actions are transcript entries only. Summaries and cold starts omit commands.
+  // An explicit read of such an entry records the material on the turn that received it.
+  for (const row of app.db.prepare(`select meta from messages where conversation_id=? and created_at<=? and role='user'
+      and not (run_id is null and meta ->> '$.command' is 1 and meta ->> '$.transcriptOnly' is 1)
+      order by created_at desc`).iterate(turn.conversation, last.at)) {
     batch.push({ meta: JSON.parse(String(row.meta)) });
     if (batch.length === 200 && !includeBatch()) return null;
   }

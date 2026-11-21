@@ -35,8 +35,8 @@ process.on("message", (message: { id: number; job: ReadJob; op?: string; change?
       let result: unknown;
       if (job.op === "sql") result = await measure(`${job.stage ?? "read"}.sql`, async () => db.prepare(job.sql).all(...job.params));
       else if (job.op === "watch-origins") {
-        const { watchSearchSourceSpaces } = await import("../core/message-origins.ts");
-        result = watchSearchSourceSpaces({ db }, job.runId, job.granted);
+        const { watchRunSourceSpaces } = await import("../core/message-origins.ts");
+        result = watchRunSourceSpaces({ db }, job.runId, job.granted);
       } else if (job.op === "prepare") result = await measure("vector.load", () => vectorIndex().prepare({ db } as App, job.spaces));
       else if (job.op === "rerank") {
         const { rerankLocally, rerankLoadError } = await import("./rerank.ts");

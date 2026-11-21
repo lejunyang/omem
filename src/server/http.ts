@@ -1034,7 +1034,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const attachments = checkAttachments(app, b.attachments ?? [], userId);
     const text = b.text.trim() || attachments.map((a) => `[${a.label}]`).join(" ");
     if (!text) throw new HttpError(400, "消息是空的");
-    return ask(app, { text, itemId: b.itemId, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
+    return ask(app, { text, ownerText: userId === OWNER && !attachments.length, itemId: b.itemId, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
   });
   // Files pasted or dropped into the chat box: kept with the stored originals, sent with the next message (agents/attachments.ts).
   server.post("/api/ask/attachments", async (req) => {

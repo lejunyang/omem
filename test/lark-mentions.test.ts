@@ -572,7 +572,7 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     app.config.agents.default = "handle";
     const side = { id: "oc_side", name: "示例群", kind: "group" as const };
     const first = handling({ chatId: "oc_side", chatName: "示例群" });
-    trackProblem(app, first, { title: "小王的退款单对不上", state: "waiting", awaiting: "财务同学核对", done_when: "财务核对完，金额一致" });
+    await trackProblem(app, first, { title: "小王的退款单对不上", state: "waiting", awaiting: "财务同学核对", done_when: "财务核对完，金额一致" });
     const mine = msg("@勒 补充一下，是 3 号那单", { chat_id: "oc_side" });
     store([mine], "oc_side");
     const joined = await waitForRun(app, queueMention(app, side, [mine], "ou_owner")!.id);

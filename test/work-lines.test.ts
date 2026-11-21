@@ -150,8 +150,8 @@ describe("工作线：时间线", () => {
     await recordPoints(app, m.id, [{ value: 30 }]);
     const c = saveContext(app, { kind: "item", itemId: line.id, chats: ["oc_line"] });
     const r = running(app, "agent", { conversationId: c.conversationId });
-    trackProblem(app, r.id, { chat_id: "oc_line", title: "运费口径", state: "waiting", awaiting: "小王确认", done_when: "小王回复" });
-    trackProblem(app, r.id, { chat_id: "oc_line", title: "运费口径", state: "closed", conclusion: "按实付运费退" });
+    await trackProblem(app, r.id, { chat_id: "oc_line", title: "运费口径", state: "waiting", awaiting: "小王确认", done_when: "小王回复" });
+    await trackProblem(app, r.id, { chat_id: "oc_line", title: "运费口径", state: "closed", conclusion: "按实付运费退" });
     const t = lineTimeline(app, line.id);
     const summaries = t.map((x) => x.summary);
     expect(summaries).toContain("「编码」做完");

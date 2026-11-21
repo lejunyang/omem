@@ -273,7 +273,7 @@ async function watchedMaterial(app: App, messages: ThreadMessage[], { listening:
   const watching = c.kind === "item" ? watchingNote(app, focus?.line) : "";
   // The problems it is helping with in these groups (listen-problems.ts): new messages are read against them.
   const batchChats = [...new Set(messages.map((m) => m.meta.chatId).filter((x): x is string => typeof x === "string"))];
-  const problems = (await import("../channels/listen-problems.ts")).problemsText(app, c.id, batchChats.length ? batchChats : c.chats);
+  const problems = (await import("../channels/listen-problems.ts")).problemsText(app, c.id, batchChats.length ? batchChats : c.chats, messages[0]?.id);
   const recheck = messages.some((m) => typeof m.meta.recheck === "string");
   const facts = [
     head,
