@@ -3425,7 +3425,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.put("/api/settings", async (req) => {
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
-    const parseNext = () => configSchema.parse(settingsPatch(app.config, req.body));
+    const parseNext = () => {
+      // The global HTTP credential is managed in local configuration: one sent here is left out, not refused.
+      const parsed = configSchema.safeParse({ ...settingsPatch(app.config, req.body), token: app.config.token });
+      if (!parsed.success) throw new HttpError(400, parsed.error.message);
+      return parsed.data;
+    };
     let next = parseNext();
     let access = settingsAccess(req);
     const proposed = changedSettings(app.config, next, access.edit, access.owner);
@@ -3436,8 +3441,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       changedSettings(app.config, next, access.edit, access.owner);
     }
     if (proposed.security?.includes("approvals")) next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
-    // The global HTTP credential is managed in local configuration, never through this route.
-    next.token = app.config.token;
     // Which cloud backends may call tools over HTTP is the owner's, signed in as themselves (not a request trusted only for coming from this machine).
     if (JSON.stringify(next.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools) && (who(req) !== OWNER || authOf(req)?.via === "local"))
       throw new HttpError(403, "只有本人可以修改云端工具设置");

@@ -87,8 +87,10 @@ it("requires authentication at the upstream when a loopback proxy forwards manag
 it.each([undefined, "local-test-token"])("keeps the global HTTP token local for a settings manager (%s)", async token => {
   const app = testApp();
   app.config.token = token;
-  saveRole(app, { id: "settings-editor", name: "设置管理员", scope: "global", permissions: ["settings.manage"] });
-  createUser(app, { id: "editor", name: "成员", role: "settings-editor" });
+  // Settings are read and written by section (auth/settings-sections.ts): this member was given the system section.
+  createUser(app, { id: "editor", name: "成员" });
+  for (const capability of ["settings.system.view", "settings.system.edit"])
+    app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values('editor',?,'global','','allow','0','owner','0')").run(capability);
   const headers = { authorization: "Bearer " + createApiToken(app, "editor", "test") };
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true, secure: false });
   try {
