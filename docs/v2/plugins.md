@@ -876,3 +876,5 @@ id 自动变成 `<插件>:<id>`，与内置后端进入同一个目录。还可�
 `GET /api/settings?section=ai` 的 agents 与 `GET /api/profile-options` 的 backends 条目含 `pluginBackend: { plugin, name, available, reason? }`。`GET /api/plugins` 列出后端和启动命令供信任页核对。`GET /api/flows` 返回 signals、runners、gates，流程行含 checks；阶段详情含 pluginEvidence、gateReview、waitingSignal 与运行链接。网页待接描述与参数选择、证据、错误、检查设置和后端来源。
 
 最小文件示例见 [stagekit](../../examples/plugins/stagekit/README.md)。选择隔离模式，按示例先启用检查，再写 ready 标记。运行器参数 verified 为 false 时写“待复核”，本人可在否决卡上越过这一次；省略参数时写“已验证”。
+
+流程接口直接携带能力标识：定义的 stageSummaries 含 runner / signal 的 id、name 和 params，事项阶段的 carrier.runner 与 waitingSignal 含 id、name。停用时保留 id，name 回退到 id。

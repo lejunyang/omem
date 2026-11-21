@@ -93,11 +93,12 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   });
   it("失败后退避，停用后可以手动完成", async () => {
     const id = await begin([signalStage(true)]);
-    await vi.waitFor(() => expect(flowView(app, id).stages[0].waitingSignal).toMatchObject({failures:1,note:expect.stringContaining("问不到")}));
+    await vi.waitFor(() => expect(flowView(app, id).stages[0].waitingSignal).toMatchObject({id:"stagekit:mark",name:"标记",failures:1,note:expect.stringContaining("问不到")}));
     await checkGitSignals(app);
     expect(all(app.db, "select id from flow_signals where item_id=?", id)).toHaveLength(1);
     await setPluginEnabled(app, "stagekit", false);
     expect(flowView(app, id).stages[0].waitingSignal?.note).toContain("没人能判断");
+    expect(flowView(app,id).stages[0].waitingSignal).toMatchObject({id:"stagekit:mark",name:"stagekit:mark"});
     await ownerAction(app, id, "mark", "done", "已人工核对");
     expect(flowView(app, id).stages[0].state).toBe("done");
     await setPluginEnabled(app, "stagekit", true);
@@ -190,7 +191,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     saveFlow(app, raw(stages), "owner", true);
     run(app.db, "insert into flow_gate_grants(flow_id,stage_id,user_id,granted_at,updated_at) values('inspect','job','owner',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)");
     const item = await begin(stages);
-    expect(flowView(app,item).stages[0]).toMatchObject({state:"doing",autoStarted:true,attempt:1});
+    expect(flowView(app,item).stages[0]).toMatchObject({state:"doing",autoStarted:true,attempt:1,carrier:{runner:{id:"stagekit:job",name:"作业"}}});
     expect(all(app.db,"select id from item_stage_log where item_id=? and event='granted-start'",item)).toHaveLength(1);
   });
   async function tick(item: string) {

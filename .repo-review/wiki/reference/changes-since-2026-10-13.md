@@ -23,6 +23,8 @@ updated: 2026-11-22
 
 ## 2026-11-22：第二轮网页对接的服务端字段
 
+- 事项阶段直接带 carrier.runner、waitingSignal.id/name。从 `src/flows/engine.ts`、`signals.ts` 读起。
+
 - 流程列表新增 stageSummaries，含承担者、完成信号与参数、时限。从 `src/flows/definitions.ts` 的 summarizeStage 读起。
 
 - 流程保存保留同阶段未变的停用引用；校验和列表单独提示不可执行能力。从 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts` 读起。

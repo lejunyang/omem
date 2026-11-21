@@ -11,7 +11,7 @@ import { getRun } from "../agents/runs.ts";
 import { codePatches, type AppliedTarget } from "../agents/code.ts";
 import type { WorktreeRef } from "../agents/worktree-index.ts";
 import { getItem } from "../items/store.ts";
-import { describeStage, type FlowStage } from "./definitions.ts";
+import { signalIdentity, describeStage, type FlowStage } from "./definitions.ts";
 import { completeBySignal } from "./engine.ts";
 import { findObject } from "./objects.ts";
 import { getStage, itemFlow } from "./store.ts";
@@ -30,9 +30,9 @@ export function waitingSignal(app: App, itemId: string, d: FlowStage) {
   if (!type) return undefined;
   const s = getStage(app, itemId, d.id);
   if (s.state !== "doing" || itemFlow(app, itemId)?.endedAt) return undefined;
-  if (type.includes(":")) return pluginSignalWaiting(app, s, type);
+  if (type.includes(":")) return { ...pluginSignalWaiting(app, s, type), ...signalIdentity(type) };
   const last = lastCheck(app, itemId, d.id, type, s.enteredAt ?? s.since);
-  return { type, checkedAt: last?.at ?? null, note: last?.outcome ?? describeStage(d).done };
+  return { type, ...signalIdentity(type), checkedAt: last?.at ?? null, note: last?.outcome ?? describeStage(d).done };
 }
 
 /** How many commits after the application are looked at for the one the patch went into. */

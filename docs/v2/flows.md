@@ -769,7 +769,7 @@ npm run build
 - 进度视图的落点：运行页的修改项读 `?task=T<n>`（`CodeTasks.vue`），流程页读 `?stage=` / `?direction=` / `?trial=`（`ItemFlowPage.vue`、`ItemStudy.vue`），滚到并短暂标出；`/items/:id/flow` 改道到工作页时保留查询参数。
 - AI 后端：`AiDefaults.vue` 的后端下拉标“来自插件 ××”，已选而不可用的仍作为选中项显示并写原因和去插件页的链接；设置 → 后端与模型的后端行和“未安装”列表同样标来源；插件页在信任前列出后端和启动命令。
 
-从 `web/src/lib/flow-hooks.ts`（纯函数，测试在 `test/web-flow-hooks.test.ts`）读起。没接的：成员看到的流程定义页仍是本人的页面（接口只给本人），运行器的 id 只能从阶段的 `carrier.label` 文字里解析（接口没有单独字段）。
+从 `web/src/lib/flow-hooks.ts`（纯函数，测试在 `test/web-flow-hooks.test.ts`）读起。没接的：成员看到的流程定义页仍是本人的页面（接口只给本人），运行器与信号已有结构化标识，网页可改读 carrier.runner 与 waitingSignal 的 id/name。
 
 ### 保留停用的流程能力
 
@@ -778,3 +778,5 @@ npm run build
 ### 流程定义的结构化摘要
 
 `GET /api/flows` 的流程行增加 `stageSummaries`。每段有 `{ id, name, carrier, done, time }`：carrier.kind 为 owner / wait / assistant / profile / runner / object，插件运行器带 `{ id, name, params }`，档案带 id、name、skill；done.kind 为 signal / object / confirm / instruction / default，信号带全名 id、显示名 name 和 params，对象带 id 和 statuses；time 为 `{ at, window, minutes }`，未设置值为 null。停用能力的名称回退到全名 id。原 definition、raw 和文字描述保持可用，列表按流程查看空间裁剪。
+
+事项流程 `GET /api/items/:id/flow` 的插件阶段新增 `carrier.runner: { id, name }`；doing 的 `waitingSignal` 新增全名 `id` 和显示名 `name`，内置 Git 信号也有这两项。能力停用时 name 回退到 id，读事项即可取得这些字段，沿用事项与流程查看权限。

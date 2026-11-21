@@ -417,3 +417,5 @@
 - 流程服务端：保存与校验保留同阶段未变的停用信号、运行器及未变检查；校验返回 unavailableReferences，列表返回 unavailableChecks。入口 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts`。
 
 - 流程列表提供 `stageSummaries`，直接读取承担者、信号及参数、开始时刻与分钟时限。入口 `src/flows/definitions.ts`（summarizeStage）、`http.ts`。
+
+- 事项阶段增加 carrier.runner 与 waitingSignal.id/name，不依赖共享流程定义查看权限。入口 `src/flows/engine.ts`、`signals.ts`。
