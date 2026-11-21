@@ -1,3 +1,4 @@
+import { flowSignals } from "../plugins/process-hooks.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -80,7 +81,7 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
         return [];
       }
     });
-    return { flows: flows.map((f) => ({ ...f, grants: gateGrants(app, f.id, userId) })), drafts };
+    return { signals: [...flowSignals].filter(([, e]) => !scope || !e.spaces.length || e.spaces.some(s => scope.includes(s))).map(([id, { def }]) => ({ id, name: def.name, describe: def.describe, params: def.params })), flows: flows.map((f) => ({ ...f, grants: gateGrants(app, f.id, userId) })), drafts };
   });
   server.get("/api/flows/board", async (req) => {
     const { only } = body(z.object({ only: z.enum(["mine", "blocked"]).optional() }), req.query);

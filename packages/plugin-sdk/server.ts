@@ -94,7 +94,19 @@ export type OutletAnswer = {
   notifier: string; ref: string; user: OutletIdentity;
   choice?: number; values?: Record<string, unknown>; text?: string; approved?: boolean;
 };
+export type FlowEvidence = { text: string; link?: string };
+export type FlowContext = {
+  item: { id: string; title: string; spaceId: string };
+  stage: { id: string; name: string; since: string };
+  with: unknown;
+  materials: { kind: string; ref: string }[];
+};
+export type FlowProvider = { id: string; name: string; describe: string; params?: Record<string, unknown> };
+export type FlowSignal = FlowProvider & {
+  check(ctx: FlowContext, signal: AbortSignal): Promise<{ done: boolean; evidence?: FlowEvidence[]; waitingOn?: string; recheckAfterSec?: number }>;
+};
 export type ProcessApi = {
+  flowSignal(def: FlowSignal): void;
   answerAsk(input: OutletAnswer): Promise<void>;
   notifier(def: Notifier): void;
   retriever(def: Retriever): void;

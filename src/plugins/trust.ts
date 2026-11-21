@@ -45,7 +45,8 @@ export function codeHash(dir: string) {
 export type RunMode = "isolated" | "inprocess";
 /** `dir`: a linked plugin (links.ts) is trusted by its directory, so editing it needs no new confirmation. */
 type NotifyGrants = { ask: boolean; deliver: boolean };
-type Record = { notify?: NotifyGrants; hash: string; at: string; mode?: RunMode; dir?: string };
+type FlowGrants = { [name: string]: boolean | undefined };
+type Record = { flow?: FlowGrants; notify?: NotifyGrants; hash: string; at: string; mode?: RunMode; dir?: string };
 const file = (app: App) => join(app.home, "secrets", "plugin-trust.json");
 
 function read(app: App): { [id: string]: Record } {
@@ -64,11 +65,12 @@ function write(app: App, all: { [id: string]: Record }) {
 }
 
 /** trusted: confirmed and unchanged; changed: confirmed, but the code is not what was confirmed; required: never confirmed. */
-export function trustState(app: App, id: string, dir: string, linked = false, notify?: NotifyGrants): "trusted" | "changed" | "required" {
+export function trustState(app: App, id: string, dir: string, linked = false, notify?: NotifyGrants, flow?: FlowGrants): "trusted" | "changed" | "required" {
   const r = read(app)[id];
   if (!r) return "required";
   // A trust by directory holds only for that linked directory; a copy (or another directory) is checked by its code.
   if (linked && ((notify?.ask && !r.notify?.ask) || (notify?.deliver && !r.notify?.deliver))) return "changed";
+  if (linked && Object.entries(flow ?? {}).some(([key, granted]) => granted && !r.flow?.[key])) return "changed";
   if (linked || r.dir) return linked && r.dir === dir ? "trusted" : "changed";
   return r.hash === codeHash(dir) ? "trusted" : "changed";
 }
@@ -79,9 +81,9 @@ export const trustMode = (app: App, id: string): RunMode => {
   return r ? (r.mode ?? "inprocess") : "isolated";
 };
 
-export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated", linked = false, notify?: NotifyGrants) {
+export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated", linked = false, notify?: NotifyGrants, flow?: FlowGrants) {
   const all = read(app);
-  if (dir && linked) all[id] = { hash: "", at: now(), mode, dir, notify };
+  if (dir && linked) all[id] = { hash: "", at: now(), mode, dir, notify, flow };
   else if (dir) all[id] = { hash: codeHash(dir), at: now(), mode };
   else delete all[id];
   write(app, all);

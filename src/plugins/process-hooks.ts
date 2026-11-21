@@ -2,7 +2,7 @@ import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
-import type { Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
+import type { FlowSignal, Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
 import { registerFormats } from "./formats.ts";
@@ -14,6 +14,7 @@ type Entry<T> = {
   def: T;
   context(app: App, userId: string, spaceId: string, signal: AbortSignal): CallContext;
 };
+export const flowSignals = new Map<string, Entry<FlowSignal>>();
 export const notifiers = new Map<string, Entry<Notifier> & { lifetime: AbortSignal }>();
 export const subscriptions = new Map<string, Entry<Subscription>>();
 export const itemProviders = new Map<string, Entry<ItemProvider>>();
@@ -60,6 +61,11 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
   }
   return {
     ...registerFormats(manifest, version, spaces, context, undo),
+    flowSignal(def) {
+      if (!manifest.permissions.flow?.signal) throw new Error("缺少 permissions.flow.signal");
+      if (!def.name?.trim() || !def.describe?.trim() || typeof def.check !== "function") throw new Error("流程信号声明无效");
+      add(flowSignals, def);
+    },
     notifier(def) {
       if (!manifest.permissions.notify?.deliver) throw new Error("缺少 permissions.notify.deliver");
       if (!def.name?.trim() || typeof def.deliver !== "function") throw new Error("通知出口需要名称与 deliver");

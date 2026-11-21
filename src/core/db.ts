@@ -2410,6 +2410,9 @@ export const migrations: readonly string[] = [
    end;`,
   `create index progress_code_takeovers on run_events(run_id)
      where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
+  `create index flow_signal_stage on flow_signals(item_id,stage_id,type,id desc);
+   create index flow_signal_age on flow_signals(at);
+   create index doing_flow_stages on item_stages(item_id,stage_id) where state='doing';`,
 ];
 
 export type Db = DatabaseSync;

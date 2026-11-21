@@ -96,6 +96,7 @@ export const manifestSchema = z.object({
   permissions: z
     .object({
       events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution", "finding.thread"])).default([]),
+      flow: z.object({ signal: z.boolean().optional() }).strict().optional(),
       notify: z.object({ deliver: z.boolean().default(false), ask: z.boolean().default(false) }).optional(),
       sourceParser: z.boolean().default(false),
       wikiPageKind: z.boolean().default(false),
@@ -209,7 +210,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     manifest,
     dir,
     source,
-    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked, manifest.permissions.notify) : "none",
+    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked, manifest.permissions.notify, manifest.permissions.flow) : "none",
     linked,
     enabled: !app.config.plugins.disabled.includes(manifest.id),
     specs: [],
@@ -409,7 +410,7 @@ export async function trustPlugin(app: App, id: string, mode: RunMode = "isolate
   const p = getPlugin(id);
   if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
   const before = trustMode(app, id);
-  setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify);
+  setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify, p.manifest.permissions.flow);
   if (p.trust !== "trusted" || before !== mode) {
     unloadCode(p);
     p.trust = "trusted";
@@ -734,6 +735,7 @@ export function describePlugin(p: LoadedPlugin) {
     permissions: {
       tools: p.tools.filter((t) => !t.name.startsWith("plugin_")).map((t) => ({ name: t.name, write: t.write, approval: t.approval })),
       writes: p.tools.some((t) => t.write) || (!codeRuns(p) && p.manifest.permissions.write),
+      flow: p.manifest.permissions.flow,
       notify: p.manifest.permissions.notify,
       hostTools: p.manifest.tools,
       providers: codeRuns(p) ? p.providers : p.manifest.permissions.connectors,

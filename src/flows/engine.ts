@@ -1,3 +1,4 @@
+import { pollFlowSignal } from "./plugin-signals.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import { requireItem } from "../items/access.ts";
 import type { App, AppEvent } from "../core/app.ts";
@@ -22,7 +23,7 @@ import { flowAppliesTo, flowsFor, parseFlow, readFlow, saveFlow, type FlowStage,
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { codeWorkSettledAt, codeWorkSince, findObject, latestCodeWork, objectKind } from "./objects.ts";
 import { pollObjects } from "./plugin-objects.ts";
-import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
+import { checkGitSignals, waitingSignal } from "./signals.ts";
 import { agreedGate, gateGranted, resetGateStreak, revokeGate } from "./gates.ts";
 import { continuing, idleRounds, isStudy } from "../studies/store.ts";
 import { cancelTrials, isTrials, tickTrials } from "../studies/trials.ts";
@@ -560,6 +561,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
         catch (e) { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `无法开始试验：${(e as Error).message}`); }
         continue;
       }
+      if (typeof d.done === "object" && "signal" in d.done && d.done.signal.includes(":")) void pollFlowSignal(app, f, d, s).catch(err => console.warn("流程信号检查失败", err));
       const carrierKind = typeof d.by === "object" && "object" in d.by ? d.by.object : null;
       const awaitingRevision = carrierKind && !carrierKind.includes(":") && s.control.feedback && !s.control.reported;
       const followed = carrierKind && !awaitingRevision ? findObject(app, item, carrierKind) : null;
@@ -1006,7 +1008,7 @@ export function flowView(app: App, id: string) {
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
       const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" && "object" in d.done ? findObject(app, item, d.done.object) : null;
       const signal = waitingSignal(app, id, d);
-      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, result: stageResult(app, id, s), gate: d.gate, fixed: d.fixed,
+      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, pluginEvidence: s.control.pluginEvidence ?? [], note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, result: stageResult(app, id, s), gate: d.gate, fixed: d.fixed,
         round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: isFixes(d) ? fixMinutes(app, s, new Date()) : usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
         carrier: { kind, label: kind === "trials" ? "助手，一个一个去试" : kind === "fixes" ? "助手，一条一条去改" : objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link, ...(object.statusLabel !== undefined ? { statusLabel: object.statusLabel, fields: object.fields ?? [], disabled: !!object.disabled } : {}) } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), upstream: s.control.upstream ? { askId: s.control.upstream.askId, stage: s.control.upstream.stage, name: stageName(f!, s.control.upstream.stage), reason: s.control.upstream.reason } : null, tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId), shots: stageShots(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
@@ -1160,17 +1162,17 @@ registerHandler("flow-stage", runFlowStage);
 registerHandler("study-trial", runFlowStage);
 
 /** Git checks enter the same item queue as owner actions and revalidate the checked attempt. */
-export function completeBySignal(app: App, itemId: string, stageId: string, note: string, evidence: string[], expected: { startedAt: string; attempt: number; enteredAt: string | null; type: GitSignal; work: string }) {
+export function completeBySignal(app: App, itemId: string, stageId: string, note: string, evidence: string[], expected: { startedAt: string; attempt: number; enteredAt: string | null; type: string; work?: string; pluginEvidence?: StageControl["pluginEvidence"]; current?: () => boolean }) {
   return serial(app, itemId, async () => {
     const f = itemFlow(app, itemId);
     if (!f || f.endedAt || f.startedAt !== expected.startedAt) return false;
     const d = definition(f, stageId), s = getStage(app, itemId, stageId);
     if (s.state !== "doing" || s.attempt !== expected.attempt || s.enteredAt !== expected.enteredAt ||
       !(typeof d.done === "object" && "signal" in d.done && d.done.signal === expected.type) ||
-      (d.by !== "owner" && d.by !== "wait") || findObject(app, getItem(app, itemId), "code-work")?.ref !== expected.work) return false;
+      (d.by !== "owner" && d.by !== "wait") || expected.current?.() === false || expected.work !== undefined && findObject(app, getItem(app, itemId), "code-work")?.ref !== expected.work) return false;
     withdraw(app, s);
-    changeStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, evidence: [...new Set([...s.evidence, ...evidence])], control: { ...s.control, question: undefined, reported: true } }, host, note, evidence);
-    await advanceNow(app, itemId, "Git 信号");
+    changeStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, evidence: [...new Set([...s.evidence, ...evidence])], control: { ...s.control, pluginEvidence: expected.pluginEvidence, question: undefined, reported: true } }, host, note, evidence);
+    await advanceNow(app, itemId, "完成信号");
     return true;
   });
 }
