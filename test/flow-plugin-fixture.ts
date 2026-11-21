@@ -6,6 +6,9 @@ export const stagePlugin = `import { existsSync, writeFileSync } from "node:fs";
         if (ctx.result.evidence.some(e => e.text === "验收要求")) throw Error("混入上次否决证据");
         return ctx.result.summary.includes("已验证") ? {ok:true} : {ok:false,reason:"缺少已验证",evidence:[{text:"验收要求",link:"https://example.org/rule"}]};
       }});
+      api.stageGate({id:"refs",name:"核对引用",describe:"列出交来的引用",async review(ctx) {
+        return {ok:false,reason:JSON.stringify(ctx.result.evidence)};
+      }});
       api.stageGate({id:"first",name:"准备检查",describe:"只拦准备阶段",applies:{flows:["inspect"],stages:["first"]},
         async review(){ return {ok:false,reason:"准备结果需复核"}; }});
       api.stageGate({id:"slow",name:"慢检查",describe:"等待检查",review(_ctx, signal) {

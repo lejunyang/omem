@@ -5,13 +5,15 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { parseFlow, saveFlow } from "../src/flows/definitions.ts";
-import { flowView, ownerAction, startFlow, reportStage, updateStageBudget } from "../src/flows/engine.ts";
+import { flowView, ownerAction, startFlow, reportStage, updateStageBudget, recordStage } from "../src/flows/engine.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
 import { proposeFlow } from "../src/flows/engine.ts";
 import { answerAsk } from "../src/agents/asks.ts";
 import { getRun, setRunOutput } from "../src/agents/runs.ts";
 import { runPluginStage } from "../src/flows/plugin-runner.ts";
 import { all, run } from "../src/core/db.ts";
+import { upsertSource } from "../src/sources/store.ts";
+import { createSpace } from "../src/core/spaces.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { saveGateChecks } from "../src/flows/plugin-gates.ts";
 
@@ -135,6 +137,20 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
         {id:"stagekit:first",reason:expect.stringContaining(enabled ? "准备结果" : "问不到")}] }});
     }
     await setPluginEnabled(app,"stagekit",true);
+    saveGateChecks(app,"inspect",[]);
+  });
+  it("补录的跨空间引用只留在事项上，检查只收到同空间原件", async () => {
+    createSpace(app,{id:"other",name:"项目 B"});
+    const refs = ["personal","other"].map(spaceId => {
+      const source = upsertSource(app,{spaceId,kind:"note",title:"检查材料",uri:"note:proof",text:"原始依据"});
+      return "src:" + source.id + "#L1-L1";
+    });
+    const item = await begin([{id:"mark",name:"核对",by:"wait",gate:"confirm"}]);
+    saveGateChecks(app,"inspect",[{id:"stagekit:refs",mandatory:true}]);
+    await recordStage(app,item,"mark","本人补录",refs);
+    const stage = flowView(app,item).stages[0];
+    expect(stage.evidence).toEqual(refs);
+    expect(JSON.parse(stage.gateReview!.failed[0].reason)).toEqual([{text:refs[0]}]);
     saveGateChecks(app,"inspect",[]);
   });
   it("必须的检查超时暂停，非必须的检查超时放行并记下原因", async () => {

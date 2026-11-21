@@ -5,7 +5,9 @@ import { HttpError, untilAbort } from "../core/util.ts";
 import { createAsk, cancelAsk } from "../agents/asks.ts";
 import { getItem } from "../items/store.ts";
 import { stageGates } from "../plugins/process-hooks.ts";
-import { audit } from "../auth/permissions.ts";
+import { readableSourceIds } from "../auth/visibility.ts";
+import type { FlowEvidence } from "../../packages/plugin-sdk/server.ts";
+import { audit, can } from "../auth/permissions.ts";
 import { readFlow } from "./definitions.ts";
 import { evidenceSchema } from "./plugin-signals.ts";
 import { changeStage, getStage, itemFlow, type FlowActor, type StageRow, type StageState } from "./store.ts";
@@ -44,6 +46,14 @@ export function saveGateChecks(app: App, id: string, checks: Check[]) {
 }
 const verdict = z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), reason: z.string().trim().min(1).max(2000), evidence: evidenceSchema.optional() })]);
 
+function gateEvidence(app: App, user: string, space: string, evidence: FlowEvidence[]) {
+  const ids = evidence.map(e => Array.from((e.text + "\n" + (e.link ?? "")).matchAll(/(?:\bsrc:|#\/sources\/)([\w-]+)/g), m => m[1]));
+  const referenced = [...new Set(ids.flat())];
+  if (!referenced.length) return evidence;
+  const readable = can(app,user,"sources.view",space) ? readableSourceIds(app,user,referenced,space) : new Set<string>();
+  return evidence.filter((_, i) => ids[i].every(id => readable.has(id)));
+}
+
 /** The host calls this only after its own completion rules and approval have passed. */
 export async function finishStage(app: App, itemId: string, stageId: string, state: StageState, patch: CompletionPatch,
   by: FlowActor, note: string, refs: string[] = []) {
@@ -57,6 +67,7 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
   const summary = s.control.question === "done" ? s.note : note;
   const failed: GateReview["failed"] = [], budget = AbortSignal.timeout(8000);
   const evidence = patch.control?.pluginEvidence ?? s.control.pluginEvidence ?? (patch.evidence ?? s.evidence).map(text => ({ text }));
+  let visibleEvidence: FlowEvidence[] | undefined;
   for (const check of storedChecks(app, f.id).filter(c => !c.stages || c.stages.includes(stageId)).sort((a,b) => a.id.localeCompare(b.id))) {
     const entry = stageGates.get(check.id);
     const applies = entry ? entry.def.applies : check.scope;
@@ -67,9 +78,10 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
     try {
       if (!entry) throw Error("检查插件已停用");
       const signal = entry.context(app, item.userId, item.spaceId, AbortSignal.any([budget, AbortSignal.timeout(2000)])).signal;
+      visibleEvidence ??= gateEvidence(app,item.userId,item.spaceId,evidence);
       const result = verdict.parse(await untilAbort(signal, () => entry.def.review({
         item: { id: item.id, title: item.title, spaceId: item.spaceId },
-        stage: { id: d.id, name: d.name, since: s.enteredAt ?? s.since }, result: { summary, evidence }, by: by.actor,
+        stage: { id: d.id, name: d.name, since: s.enteredAt ?? s.since }, result: { summary, evidence: visibleEvidence! }, by: by.actor,
       }, signal)));
       if (!result.ok) failed.push({ id: check.id, reason: result.reason, evidence: result.evidence });
     } catch (e) {
