@@ -65,7 +65,7 @@ function readFlags(command: string[], allowed: Record<string, RegExp>) {
   return args;
 }
 
-export function boardLarkCommand(ctx: ToolContext, command: string[], chatPages: Set<string>) {
+export function boardLarkCommand(ctx: ToolContext, command: string[], chatPages: Map<string, string>) {
   let args: Map<string, string>;
   let onNextPage: ((token: string) => void) | undefined;
   switch (command.slice(0, 2).join(" ")) {
@@ -77,11 +77,12 @@ export function boardLarkCommand(ctx: ToolContext, command: string[], chatPages:
       args = readFlags(command, { "--chat-id": /^oc_[\w-]+$/, "--page-size": /^\d{1,3}$/, "--order": /^(asc|desc)$/,
         "--start": /^[0-9T:.+Z-]+$/, "--end": /^[0-9T:.+Z-]+$/, "--page-token": /^(?!-)[^\s]+$/ });
       requireBoardLarkChat(ctx, args.get("--chat-id") ?? "");
-      const query = [...args].filter(([flag]) => flag !== "--page-token").sort(([a], [b]) => a.localeCompare(b));
-      const page = (token: string) => JSON.stringify([ctx.runId, query, token]);
+      const query = Object.fromEntries(args);
+      delete query["--page-token"];
+      const queryKey = JSON.stringify(query, Object.keys(query).sort());
       const token = args.get("--page-token");
-      if (token && !chatPages.has(page(token))) throw unbounded();
-      onNextPage = next => { chatPages.add(page(next)); };
+      if (token && chatPages.get(token) !== queryKey) throw unbounded();
+      onNextPage = next => chatPages.set(next, queryKey);
       break;
     }
     case "im +messages-mget":

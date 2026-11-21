@@ -106,7 +106,7 @@ export type ToolContext = {
   /** Cross-device board writes include memories, pages and items only. */
   boardAccess?: "read" | "write";
   /** A task received from a peer. Its tool token owns the authorized chat continuations. */
-  incomingWork?: { chatPages: Set<string> };
+  incomingWork?: { chatPages: Map<string, string> };
   /** Skills explicitly assigned to the actor of a cross-device board run. */
   profileSkills?: string[];
   /** Item discovery only; never grants ordinary read or write tool access. */
