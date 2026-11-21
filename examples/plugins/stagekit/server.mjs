@@ -16,12 +16,14 @@ export default function register(api) {
   });
   api.stageRunner({
     id: "write", name: "写检查文件", describe: "在插件数据目录写一个检查文件并返回它作为证据",
+    params: { type: "object", properties: { verified: { type: "boolean" } }, additionalProperties: false },
     async start(ctx, signal) {
+      const outcome = ctx.with.verified === false ? "待复核" : "已验证";
       const ref = `proof-${ctx.idempotencyKey}.txt`, path = join(data, ref);
       // Repeated starts of this attempt return the existing file, including after a host restart.
-      try { await writeFile(path, "已验证\n", { flag: "wx", signal }); }
+      try { await writeFile(path, outcome + "\n", { flag: "wx", signal }); }
       catch (e) { if (e.code !== "EEXIST") throw e; }
-      return { ref, status: "done", summary: "已验证：检查文件已创建", evidence: [{ text: `检查文件 ${ref}` }] };
+      return { ref, status: "done", summary: outcome + "：检查文件已创建", evidence: [{ text: `检查文件 ${ref}` }] };
     },
   });
   api.stageGate({

@@ -14,10 +14,11 @@ stages:
     done: { signal: "stagekit:mark", with: { file: ready.txt } }
   - id: write
     name: 写检查文件
-    by: { runner: "stagekit:write" }
+    by: { runner: "stagekit:write", with: { verified: false } }
     budget: { minutes: 1 }
 ```
 
-在 `plugin-data/stagekit/ready.txt` 写入 `ready`，巡检后第一段完成，第二段创建 `proof-<运行id>.txt`。相同尝试重启后用相同幂等键，文件只创建一次。阶段证据列出标记文件和检查文件。
-
-默认没有结果检查。本人调用 `PUT /api/flows/local-check/checks`，传 `[{"id":"stagekit:word","stages":["write"],"mandatory":true}]`，第二段才会要求结果包含“已验证”。缺少时阶段卡住，本人可以在卡片上对这一次仍然通过，记录里写明越过的检查。传空数组关闭检查。
+1. 保存流程并由本人确认。用 `PUT /api/flows/local-check/checks` 传入 `[{"id":"stagekit:word","stages":["write"],"mandatory":true}]`，为写文件阶段启用检查。
+2. 在插件数据目录的 `ready.txt` 写入一行 `ready`，为一件事项启动 `local-check`。第一段读取标记，第二段创建 `proof-<运行id>.txt`。同一次尝试重启后复用已有文件。
+3. 流程里的 `verified: false` 让文件和结果写“待复核”。写文件阶段会卡住，处理卡显示“结果缺少‘已验证’”。核对文件证据后，点「仍然通过」。阶段随即完成，日志里能看到越过的检查 `stagekit:word`。
+4. 要试正常通过，删掉 `with: { verified: false }` 并去掉前面的逗号，重新保存、确认流程，再开一件事项。默认结果是“已验证”，检查直接通过。用同一检查设置接口传空数组可以关闭检查。
