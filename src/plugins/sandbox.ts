@@ -69,7 +69,7 @@ export async function startSandbox(
     call.connections.set(handle, connection);
     return { handle, account: connection.account, scopes: connection.scopes, base: connection.base };
   }
-  const ask = (msg: Record<string, unknown>, ctx?: ToolContext, eventCtx?: import("./types.ts").CallContext, readerConnection?: PluginConnection, notifierSignal?: AbortSignal) =>
+  const ask = (msg: Record<string, unknown>, ctx?: ToolContext, scope?: import("./types.ts").CallContext | AbortSignal, readerConnection?: PluginConnection) =>
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
@@ -78,7 +78,9 @@ export async function startSandbox(
         pending.delete(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
-      const signal = notifierSignal ?? (msg.t === "retriever" || msg.t === "reranker" ? eventCtx?.signal : undefined);
+      const eventCtx = scope instanceof AbortSignal ? undefined : scope;
+      const signal = ["retriever", "reranker", "notifier"].includes(String(msg.t))
+        ? (scope instanceof AbortSignal ? scope : scope?.signal) : undefined;
       const cancel = () => {
         clearTimeout(timer);
         pending.delete(id);
@@ -190,7 +192,7 @@ export async function startSandbox(
   try {
     for (const def of declared.notifiers) {
       const invoke = (method: string, args: unknown[], signal: AbortSignal) =>
-        ask({ t: "notifier", name: def.id, method, args }, undefined, undefined, undefined, signal);
+        ask({ t: "notifier", name: def.id, method, args }, undefined, signal);
       opts.notifier({ id: def.id, name: def.name,
         resolve: def.resolves ? (user, signal) => invoke("resolve", [user], signal) : undefined,
         deliver: (n, signal) => invoke("deliver", [n], signal),

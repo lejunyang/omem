@@ -191,19 +191,17 @@ process.on("message", async (m: Msg) => {
   }
   try {
     let value: unknown;
-    const search = m.t === "retriever" || m.t === "reranker" ? new AbortController() : null;
+    const search = ["retriever", "reranker", "notifier"].includes(m.t) ? new AbortController() : null;
     if (search) activeSearch.set(m.id!, search);
     if (m.t === "notifier") {
-      const controller = new AbortController();
-      activeSearch.set(m.id!, controller);
       const def = notifiers.get(m.name)!;
       const [arg, n] = m.args;
       switch (m.method) {
-        case "resolve": value = await def.resolve!(arg, controller.signal); break;
-        case "deliver": value = await def.deliver(arg, controller.signal); break;
-        case "ask": value = await def.ask!(arg, controller.signal); break;
-        case "update": await def.update!(arg, n, controller.signal); break;
-        case "retract": await def.retract!(arg, controller.signal); break;
+        case "resolve": value = await def.resolve!(arg, search!.signal); break;
+        case "deliver": value = await def.deliver(arg, search!.signal); break;
+        case "ask": value = await def.ask!(arg, search!.signal); break;
+        case "update": await def.update!(arg, n, search!.signal); break;
+        case "retract": await def.retract!(arg, search!.signal); break;
       }
     } else if (search || m.t === "event" || m.t === "review" || m.t === "item" || m.t === "parse" || m.t === "check") {
       const ctx: import("./types.ts").CallContext = {
