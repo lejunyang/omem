@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { startServer } from "../src/server/http.ts";
+import { callTool } from "../src/agents/tools.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { createUser, createApiToken, addMember } from "../src/core/users.ts";
 import { rmSync } from "node:fs";
 import { testApp } from "./helpers.ts";
 import { run } from "../src/core/db.ts";
@@ -91,6 +95,50 @@ describe("进度投影", () => {
     expect(plans.filter(s => /^SCAN (r|runs|e|run_events)\b/.test(s))).toEqual([]);
     for (const index of ["runs_parent", "runs_continue_from", "progress_tokens", "progress_board_item"])
       expect(plans.some(s => s.startsWith("SEARCH") && s.includes(index))).toBe(true);
+  });
+  it("运行与事项沿用详情权限，助手同时受本轮空间限制", async () => {
+    const { app, item, add } = fixture();
+    add("code", "code", null, { itemId: item.id });
+    addTask(app, "code", { title: "核对说明", kind: "build" }, "coder");
+    createUser(app, { id: "reader", name: "读者" });
+    const headers = { authorization: "Bearer " + createApiToken(app, "reader", "test") };
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      for (const url of ["/api/items/" + item.id, "/api/runs/code"]) {
+        const detail = await server.inject({ url, headers });
+        const denied = await server.inject({ url: url + "/progress", headers });
+        expect(denied.statusCode).toBe(detail.statusCode);
+        expect([403, 404]).toContain(denied.statusCode);
+        const response = await server.inject({ url: url + "/progress" });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject([{ kind: "code", tasks: [{ title: "核对说明" }] }]);
+      }
+      createSpace(app, { id: "shared", name: "共享项目" });
+      addMember(app, "shared", "reader", "editor");
+      add("board", "ask", null, {}, { agentWork: { askRunId: "board", title: "核验" } }, ["shared"]);
+      add("visible", "agent", "board", {}, {}, ["shared"]);
+      add("private-child", "agent", "board");
+      run(app.db, "update runs set space_id='shared' where id in ('board','visible')");
+      for (const [i, id] of ["visible", "private-child"].entries()) {
+        const attempts = [{ runId: id, status: "done", queuedAt: at, startedAt: at, finishedAt: at }];
+        run(app.db, `insert into agent_work_tasks(id,work_id,seq,title,goal,accept,scope,status,attempts,run_id,deadline_minutes,deadline_at,created_at,updated_at)
+          values(?,'board',?,?,'核对','提交','{}','accepted',?,?,1,?,?,?)`, id, i + 1, id, JSON.stringify(attempts), id, at, at, at);
+      }
+      for (const url of ["/api/runs/board/progress", "/api/agent-work/board/board"]) {
+        const visible = await server.inject({ url, headers });
+        expect(visible.statusCode).toBe(200);
+        expect(visible.body).toContain("visible");
+        expect(visible.body).not.toContain("private-child");
+      }
+      expect((await server.inject({ url: "/api/items/" + item.id + "/progress?limit=101" })).statusCode).toBe(400);
+      const ctx = { app, runId: null, spaceId: "personal", userId: "owner", actor: "agent", spaces: ["personal"], tools: null } as const;
+      for (const args of [{ item_id: item.id }, { run_id: "code" }]) {
+        const reply = await callTool({ ...ctx, spaces: ["personal"] }, "work_status", args);
+        expect(reply.isError, reply.text).toBe(false);
+        expect(reply.text).toContain("核对说明");
+        expect((await callTool({ ...ctx, spaces: [] }, "work_status", args)).isError).toBe(true);
+      }
+    } finally { await server.close(); }
   });
   it("固定来源状态映射", () => {
     expect(states).toMatchInlineSnapshot(`

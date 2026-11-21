@@ -13,7 +13,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
-import { dispatchBoard, cancelBoard, readBoard, reportPage, reviewBoard } from "./work-board.ts";
+import { dispatchBoard, cancelBoard, reportPage, reviewBoard } from "./work-board.ts";
 import { workInConversation, refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
 import { executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
@@ -1263,9 +1263,18 @@ def({
 });
 
 def({
-  name: "work_status", description: "本人问进度或需要核对历史验收时读任务板。派出后不要轮询。",
-  schema: z.object({ work_id: z.string() }),
-  handler: (ctx, a) => { authorizedWork(ctx, a.work_id, false); return JSON.stringify(readBoard(ctx.app, a.work_id)); },
+  name: "work_status", description: "按运行或事项读分头工作的进度、等待原因和用量；work_id 读取原任务板。派出后不要轮询。",
+  schema: z.object({ work_id: z.string().min(1).optional(), run_id: z.string().min(1).optional(), item_id: z.string().min(1).optional() })
+    .refine(a => [a.work_id,a.run_id,a.item_id].filter(Boolean).length === 1, "指定一个 work_id、run_id 或 item_id"),
+  handler: async (ctx, a) => {
+    const { boardForReader, itemProgress, runProgress, progressText } = await import("./progress.ts");
+    const reader = { user: ctx.userId ?? OWNER, spaces: ctx.spaces };
+    if (a.work_id) {
+      authorizedWork(ctx, a.work_id, false);
+      return JSON.stringify(boardForReader(ctx.app, a.work_id, reader));
+    }
+    return progressText(a.item_id ? itemProgress(ctx.app, a.item_id, reader) : runProgress(ctx.app, a.run_id!, reader));
+  },
 });
 
 def({

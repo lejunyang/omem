@@ -19,6 +19,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 按运行或事项查分头进度
+
+从 `src/agents/progress.ts` 读五种来源的状态、等待原因、尝试与产物；`progress-runs.ts` 负责运行范围和用量去重。两个详情接口下的 `/progress` 返回同一种数组，`work_status` 也接受运行或事项标识。历史任务板地址和原有字段继续可用。
+
 ## 2026-11-21 · 远程页：把会话交给成员
 
 - 会话主人在画面上方点“交给成员”，在右侧抽屉（`web/src/components/RemoteGrants.vue`）里选人、只看或可操作、多久，已交给的人一行一个，可改模式、从现在起延长、收回（`confirmDialog`）。候选人由 `/api/users` 和每人的 `/api/members/:id/capabilities` 里的 `remote.view` / `remote.operate` 算出（`web/src/lib/remote-grants.ts`）。

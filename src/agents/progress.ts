@@ -9,7 +9,7 @@ import { findings, isStudy, type Direction, type Trial } from "../studies/store.
 import { listCheckpoints, recordedTasks, type TaskState } from "./code-tasks.ts";
 import { reviewsOf } from "./review.ts";
 import { readBoard } from "./work-board.ts";
-import { Forest, rootRun, runForest, type Node, type Reader, type Usage } from "./progress-runs.ts";
+import { Forest, rootRun, runForest, visibleRuns, type Node, type Reader, type Usage } from "./progress-runs.ts";
 
 type TaskStatus = "pending" | "queued" | "running" | "submitted" | "accepted" | "redo" | "blocked" | "failed" | "cancelled";
 export const states = {
@@ -285,4 +285,30 @@ export function itemProgress(app: App, id: string, reader: Reader, history = fal
   const views = [...flowViews(app, graph, id, item.title, history), ...workViews(app, graph, id)];
   const active = (v: ProgressView) => Number(v.state === "waiting" || v.state === "running");
   return views.sort((a, b) => active(b) - active(a)).slice(0, Math.min(100, limit));
+}
+
+/** Keep the original board response for existing clients, applying the same attempt visibility. */
+export function boardForReader(app: App, id: string, reader: Reader) {
+  const visible = visibleRuns(app, reader);
+  if (visible.sql === "1") return readBoard(app, id);
+  const ids = all<{ id: string }>(app.db, `select r.id from agent_work_tasks t join json_each(t.attempts) a
+    join runs r on r.id=json_extract(a.value,'$.runId') where t.work_id=? and ${visible.sql}`, id, ...visible.params);
+  return readBoard(app, id, new Set(ids.map(r => r.id)));
+}
+
+export function progressText(views: ProgressView[]) {
+  const usage = (u: Usage) => `输入 ${u.input} / 输出 ${u.output} token，${u.runs} 次运行，${u.missing} 次缺报`;
+  const labels: Record<TaskStatus | ProgressView["state"], string> = {
+    pending: "待开始", queued: "排队", running: "进行中", submitted: "待验收", accepted: "已接受", redo: "待重做",
+    blocked: "阻塞", failed: "失败", cancelled: "已取消", waiting: "等待", done: "已完成",
+  };
+  return views.map(b => {
+    const lines = b.tasks.slice(0, 50).map(t => {
+      const latest = t.attempts.at(-1);
+      const attempt = latest && `${t.attempts.length} 次尝试，最近 ${latest.runId}${latest.runMs === undefined ? "" : `（执行 ${Math.round(latest.runMs / 1000)} 秒）`}`;
+      return [`- ${t.id} ${t.title}（${labels[t.state]}）`, t.waitingOn, t.who?.model, attempt, t.decision?.result, usage(t.usage)].filter(Boolean).join(" · ");
+    });
+    if (b.tasks.length > lines.length) lines.push(`另有 ${b.tasks.length - lines.length} 项`);
+    return [`${b.title}（${b.kind} · ${labels[b.state]}）`, b.waitingOn, usage(b.usage), ...lines].filter(Boolean).join("\n");
+  }).join("\n\n") || "没有可见的进度";
 }

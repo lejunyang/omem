@@ -1720,8 +1720,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return work;
   });
   server.get("/api/agent-work/:id/board", async (req) => {
-    const { readBoard } = await import("../agents/work-board.ts");
-    return readBoard(app, (req.params as { id: string }).id);
+    const { boardForReader } = await import("../agents/progress.ts");
+    return boardForReader(app, (req.params as { id: string }).id, { user: who(req) });
+  });
+  const progressQuery = z.object({ history: z.enum(["true", "false"]).optional() });
+  server.get("/api/runs/:id/progress", async (req) => {
+    const { runProgress } = await import("../agents/progress.ts");
+    const { history } = q(progressQuery, req.query);
+    return runProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true");
+  });
+  server.get("/api/items/:id/progress", async (req) => {
+    const { itemProgress } = await import("../agents/progress.ts");
+    const { history, limit } = q(progressQuery.extend({ limit: z.coerce.number().int().min(1).max(100).optional() }), req.query);
+    return itemProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true", limit);
   });
   // Who may read it is checked by the route (src/auth/routes.ts); its sub-runs only as far as they are readable too.
   server.get("/api/runs/:id", async (req) => {
