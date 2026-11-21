@@ -39,9 +39,9 @@ describe("进度投影", () => {
   it("任务板、修改项和评审共存；重做、子运行和共用运行按 ID 汇总", () => {
     const { app, item, add } = fixture();
     add("root", "ask", null, { itemId: item.id }, { agentWork: { askRunId: "root", title: "任务板", workConversationId: "work", rootConversationId: "origin" } });
-    add("first", "agent", "root"); add("retry", "agent", "root"); add("child", "agent", "retry");
+    add("first", "agent", "root", {boardDevice:{access:"read"}}); add("retry", "agent", "root", {boardDevice:{access:"write"}}); add("child", "agent", "retry");
     add("hidden", "agent", "root", {}, {}, ["other"]);
-    const history = ["first", "retry"].map(runId => ({ runId, queuedAt: at, startedAt: at, finishedAt: at, status: "done", device: "本机" }));
+    const history = ["first", "retry"].map(runId => ({ runId, queuedAt: at, startedAt: at, finishedAt: at, status: "done", device: "本机", access: runId === "first" ? "read" : "write" }));
     for (const [seq, id, attempts] of [[1, "retry", history], [2, "hidden", [{ ...history[0], runId: "hidden" }]]] as const)
       run(app.db, `insert into agent_work_tasks(id,work_id,seq,title,goal,accept,status,scope,attempts,run_id,deadline_minutes,deadline_at,created_at,updated_at)
         values(?,'root',?,?,'核对','交付','accepted','{}',?,?,10,?,?,?)`, id, seq, id, JSON.stringify(attempts), id, at, at, at);
@@ -59,6 +59,7 @@ describe("进度投影", () => {
     const board = views.find(v => v.kind === "board")!;
     expect(board.tasks.map(t => t.id)).toEqual(["retry"]);
     expect(board.tasks[0].attempts.map(a => a.runId)).toEqual(["first", "retry"]);
+    expect(board.tasks[0].attempts.map(a => a.access)).toEqual(["read", "write"]);
     expect(board.usage).toEqual({ input: 10, output: 4, cached: 3, runs: 3, missing: 2 });
     expect(readBoard(app, "root")).toMatchObject({ workId: "root", askRunId: "root", status: "summarized", tasks: [{ status: "accepted", attempts: [{}, { used: 500 }] }, {}] });
     const code = views.find(v => v.kind === "code")!;

@@ -70,7 +70,7 @@ function boardView(app: App, graph: Forest, node: Node, itemId?: string) {
   const tasks = board.tasks.map((t): ProgressTask => {
     const latest = t.attempts.at(-1);
     const attempts = t.attempts.map(a => ({
-      runId: a.runId, status: a.status, local: a.local, device: a.deviceName, deviceName: a.deviceName, mode: a.mode,
+      runId: a.runId, status: a.status, local: a.local, device: a.deviceName, deviceName: a.deviceName, mode: a.mode, access: a.access,
       remoteRunId: a.remoteRunId, remoteUrl: a.remoteUrl, deadline: a.deadline, lateAt: a.lateAt,
       startedAt: a.startedAt ?? undefined, endedAt: a.finishedAt ?? undefined,
       queuedMs: a.queuedMs, runMs: a.executionMs, usage: graph.usage([a.runId]),

@@ -433,3 +433,5 @@
 - 向量状态增加 embedded.chunks/memories/total，关闭提供者仍可看已有数量；复用 chunks_vector_space 与 memories_embedded 覆盖索引。入口 `src/search/embedding-index.ts`、`embeddings.ts`。
 
 - 重排检测整份使用请求 api，null 清字段，省略时沿用保存值；不继承旧 keyRef。入口 `src/server/http.ts`（/api/search/rerank/test）。
+
+- 进度投影 attempts 补齐 access（read/write），任务板和运行树使用同一访问枚举。入口 `src/agents/progress.ts`、`progress-runs.ts`。

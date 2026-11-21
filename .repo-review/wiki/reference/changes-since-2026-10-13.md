@@ -23,6 +23,8 @@ updated: 2026-11-22
 
 ## 2026-11-22：第二轮网页对接的服务端字段
 
+- 进度投影 attempts 带 read/write 访问档位。从 `src/agents/progress.ts`、`progress-runs.ts` 读起。
+
 - 重排检测按请求 api 整份替换，null 清字段，支持试用环境变量密钥。从 `src/server/http.ts` 的 rerank/test 读起。
 
 - embeddings.embedded 提供分块、有效记忆已有数量及合计，复用部分索引。从 `src/search/embedding-index.ts`、`embeddings.ts` 读起。

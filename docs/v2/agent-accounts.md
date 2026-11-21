@@ -257,3 +257,5 @@ bubblewrap 隐藏宿主 HOME、数据目录和临时目录，再按运行的计�
 ### 豆包 CLI 的工作目录能力
 
 本机 CLI 启动前只用 `--help` 探测目录参数，优先识别声明的 `-C`，也支持 `--cwd` / `--directory` / `--workdir` / `--working-directory`；目录参数放在 `--resume`、`-p` 之前。帮助未声明时直接使用进程 cwd。探测按实际二进制、文件时间与大小、启动参数和账号目录缓存，不按版本号选择。帮助只读，无需登录，不发起会话。
+
+进度接口 `/api/runs/:id/progress`、`/api/items/:id/progress` 的任务 attempts 增加 `access?: "read" | "write"`，保留任务板每次尝试的访问档位；普通本地运行没有显式设备档位时省略。
