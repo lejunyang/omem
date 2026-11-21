@@ -299,6 +299,7 @@ async function approverFor(app: App, rule: CommandRule, nominated: string | unde
 type OperationGrant = {
   member: string;
   ruleId: string;
+  egressFallback?: boolean;
   revision: number;
   kind: Operation["kind"];
   argsHash?: string;
@@ -362,9 +363,10 @@ export async function commandGate(app: App, ctx: ToolContext, req: { command: st
 }
 
 /** Both ACP and PATH consult the current rule again before using an approval. */
-export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"; /** An HTTP request's page, shown to the approver. */ page?: string} = {}, session?: string): Promise<Decision> {
+export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"; /** An HTTP request's page, shown to the approver. */ page?: string} = {}, session?: string, egress?: { evaluate: () => ReturnType<typeof decide>; fallback: boolean; waitSeconds: number }): Promise<Decision> {
   const who = operationWho(ctx);
-  const decision = decide(app, op, who);
+  const evaluate = egress?.evaluate ?? (() => decide(app, op, who));
+  const decision = evaluate();
   const policy = decision.rule;
   auditOperation(app, op, who, policy, decision.action, "策略判定");
   if (decision.action === "deny") return { decision: "deny", message: `omem 的${op.kind === "command" ? "命令规则" : "操作规则"}「${policy?.title || policy?.id}」不允许 Agent 执行这项操作。` };
@@ -382,12 +384,14 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   const rule: CommandRule = { command, args: "", note: policy.title ?? "", action: "approve",
     approver: policy.approval?.approver ?? "owner", approvers: policy.approval?.approvers ?? [],
     expireHours: (policy.approval?.expiresSeconds ?? 86400)/3600, waitSeconds: policy.approval?.waitSeconds ?? 90, reuse: policy.approval?.reuse ?? "once" };
+  if (egress) rule.waitSeconds = Math.min(rule.waitSeconds, egress.waitSeconds);
   const chain = runId ? chainOf(app, runId) : session ?? randomUUID();
   const key = digest([who.member, policy.id, policy.revision, fingerprint(op,policy), who.role, who.profile, who.space, who.backend]);
   const runKey = digest([who.member, runId, policy.id, policy.revision]);
   const takeGrant = () => {
-    const latest = decide(app, op, who);
+    const latest = evaluate();
     if (latest.rule?.id !== policy.id || latest.rule.revision !== policy.revision || latest.action !== "approve") return false;
+    if (egress?.fallback && one(app.db, "select 1 from asks where json_extract(context,'$.key')=? and status='answered' and approved=1 and json_extract(context,'$.scope')='always' limit 1", key)) return true;
     const reusable = runId && one(app.db, `select 1 from asks where json_extract(context,'$.runKey') = ? and
       json_extract(context,'$.scope') = 'run' and status='answered' and approved=1 and json_extract(context,'$.grantUntil') > ?
       and exists(select 1 from runs where id=? and status='running') limit 1`, runKey, now(), runId);
@@ -415,7 +419,7 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
     const approver = await approverFor(app, rule, req.approver);
     approverName = approver.name;
     ask = pending() ?? await openAsk(app, { runId, key, chain, command, args, cwd, rule, index, approver, reason: safeReason(req.reason),
-      grant: { member: who.member, kind: op.kind, ruleId: policy.id, revision: policy.revision, runKey, argsHash: op.kind === "command" ? digest(op.argv) : undefined,
+      grant: { member: who.member, kind: op.kind, ruleId: policy.id, revision: policy.revision, runKey, egressFallback: egress?.fallback, argsHash: op.kind === "command" ? digest(op.argv) : undefined,
         ownerChoices: approver.userId === OWNER && (!approver.lark || approver.lark.id === larkOwnerOpenId(app,"main")) } });
     record(app, runId, actor, "command.ask", { command, args, cwd, approver: approver.name, result: `等 ${approver.name} 批准（${approver.why}）`, rule: index, askId: ask.id });
     if (rule.approver === "run" && approver.userId !== OWNER) {
@@ -427,12 +431,16 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   const answered = current.status === "pending" ? await waitDecision(ask.id, rule.waitSeconds * 1000) : current;
   if (answered?.status === "answered" && answered.approved) {
     // Taken by this request (a once-only approval is used up here).
-    const allowed = answered.choice === 2 ? decide(app, op, who).rule : undefined;
+    const allowed = answered.choice === 2 ? evaluate().rule : undefined;
     if (takeGrant() || (allowed?.id === policy.id && allowed.revision === policy.revision + 1 && allowed.action === "allow")) {
       record(app, runId, actor, "command.allow", { command, args, cwd, approver: approverName, result: `${approverName} 批准，放行`, rule: index, askId: ask.id });
       return { decision: "allow" };
     }
     return { decision: "deny", message: "授权已失效或已被消费" };
+  }
+  if (egress && !answered) {
+    cancelAsk(app, ask.id, "出网审批超时");
+    return { decision: "deny", message: "出网审批超时，请求已拒绝" };
   }
   if (answered?.status === "answered" && !answered.approved) {
     return { decision: "deny", message: `${approverName} 拒绝了这${op.kind === "http" ? "个请求" : "条命令"}${answered.answer ? `，理由：${answered.answer}` : ""}。不要改用其他路径或方式绕过；按理由调整做法，或告诉本人。` };
@@ -608,7 +616,7 @@ registerAskHandler("command-gate", async (app, ask, context) => {
   const by = settled(app, ask).by ?? ask.answeredBy ?? "";
   if (ask.approved && c.ruleId) {
     const scope = ask.choice === 2 ? "always" : ask.choice === 1 ? "run" : "once";
-    if (scope === "always") {
+    if (scope === "always" && !c.egressFallback) {
       const rules = currentRules(app);
       if (rules.some(r => r.id === c.ruleId && r.revision === c.revision))
         saveOperationRules(app, rules.map(r => r.id === c.ruleId ? { ...r, action: "allow" } : r));
