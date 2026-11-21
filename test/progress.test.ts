@@ -9,7 +9,7 @@ import { run } from "../src/core/db.ts";
 import { canReadRun } from "../src/auth/permissions.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
-import { itemProgress, runProgress, states } from "../src/agents/progress.ts";
+import { itemProgress, runProgress, progressPage, states } from "../src/agents/progress.ts";
 import { codeChainFor, queueNextCodeRound } from "../src/agents/code-chain.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { getRun } from "../src/agents/runs.ts";
@@ -215,12 +215,42 @@ describe("进度投影", () => {
       run(app.db, "update review_findings set decision='fix' where review_id=?", review);
       run(app.db, "insert into run_events values(?,1,?,'usage',?)", runId, at, JSON.stringify({ input: round, output: round }));
     }
-    const blocks = runProgress(app, "code2", owner).filter(v => v.kind === "review");
+    const page = progressPage(runProgress(app, "code2", owner));
+    expect(page.totalUsage).toEqual({ input: 3, output: 3, runs: 4, missing: 2 });
+    expect(page.views.find(b => b.kind === "code")?.usage.input).toBe(0);
+    const blocks = page.views.filter(v => v.kind === "review");
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({ id: "code1", usage: { input: 3, output: 3, runs: 2, missing: 0 },
       tasks: [{ state: "accepted", attempts: [{ runId: "review1" }, { runId: "review2" }],
         outputs: [{ label: "changes_requested · 1 个问题 · 结论1" }, { label: "问题1" }, { label: "approved · 1 个问题 · 结论2" }, { label: "问题2" }],
         decisions: [{ result: "fix" }, { result: "fix" }] }] });
+  });
+
+  it("运行和事项进度把分支首轮用量归给评审，出现编码块后只将独立重评归给评审", async () => {
+    const { app, item, add } = fixture();
+    add("branch", "code", null, { branches: { personal: { branch: "feature" } }, itemId: item.id },
+      { reviewPlan: { checks: ["style"] }, reviewStage: "done" });
+    recordReview(app, { codeRunId: "branch", round: 1, check: "style", verdict: "approved", summary: "通过", findings: [] });
+    run(app.db, "insert into run_events values('branch',1,?,'usage',?)", at, '{"input":11,"output":3}');
+    const first = { input: 11, output: 3, runs: 1, missing: 0 };
+    const retry = { input: 5, output: 2, runs: 1, missing: 0 };
+    const total = { input: 16, output: 5, runs: 2, missing: 0 };
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const check = async (views: { kind: string; usage: typeof first }[], totalUsage: typeof first) => {
+        for (const url of ["/api/runs/branch/progress", `/api/items/${item.id}/progress`]) {
+          const response = await server.inject({ url: url + "?summary=true" });
+          expect(response.statusCode).toBe(200);
+          expect(response.json()).toMatchObject({ views, totalUsage });
+        }
+      };
+      await check([{ kind: "review", usage: first }], first);
+      add("retry", "review", "branch", { only: ["style"] });
+      run(app.db, "insert into run_events values('retry',1,?,'usage',?)", at, '{"input":5,"output":2}');
+      await check([{ kind: "review", usage: total }], total);
+      addTask(app, "branch", { title: "按评审修改", kind: "fix" }, "coder");
+      await check([{ kind: "code", usage: first }, { kind: "review", usage: retry }], total);
+    } finally { await server.close(); }
   });
 
   it("内嵌续轮评审进行中保留旧报告，提交新报告后才转为通过", () => {
@@ -253,7 +283,7 @@ describe("进度投影", () => {
     const view = () => runProgress(app, "code", owner).find(b => b.kind === "review")!;
     const single = { runs: 1, missing: 0, input: 5, output: 3 };
     const both = { runs: 2, missing: 0, input: 10, output: 6 };
-    const expected = { usage: both, tasks: [
+    const expected = { usage: first === "code" ? single : both, tasks: [
       { id: "style", attempts: [{ runId: first, usage: single }, { runId: "retry", usage: single }], usage: both },
       { id: "logic", attempts: [{ runId: first, usage: single }], usage: single },
     ] };
@@ -286,8 +316,12 @@ describe("进度投影", () => {
     confirmDirection(app, d.id, "开始");
     const trial = app.db.prepare("select id from study_trials where direction_id=?").get(d.id)!.id as string;
     for (const id of ["a", "b"]) add(id, "study-trial", null, { itemId: item.id, stageId: "try", flowStartedAt: at, round: 2, trialId: trial });
+    run(app.db, "update item_stages set evidence=? where item_id=? and stage_id='plan'", JSON.stringify(["run:a", "run:missing"]), item.id);
     const [flow, study] = itemProgress(app, item.id, owner);
     expect(flow).toMatchObject({ kind: "flow", state: "waiting", waitingOn: "等本人确认", tasks: [{ state: "blocked" }, { needs: ["plan"] }] });
+    expect(flow.tasks[0].outputs).toEqual([{ kind: "evidence", ref: "run:a", label: "a", target: { kind: "run", id: "a", title: "a" } }]);
+    expect(study.tasks[1].attempts[0]).toMatchObject({ local: true, device: "本机" });
+    expect(study.tasks[1].href).toContain("?trial=" + trial);
     expect(study.tasks.map(t => t.round)).toEqual([2, 2]);
     expect(study.tasks[1]).toMatchObject({ parentId: d.id, attempts: [{ runId: "a" }, { runId: "b" }], usage: { runs: 2, missing: 2 } });
     expect(study.previousRounds).toMatchObject([{ round: 1, directions: 1, trials: 0 }]);
@@ -365,9 +399,9 @@ describe("进度投影", () => {
         const denied = await server.inject({ url: url + "/progress", headers });
         expect(denied.statusCode).toBe(detail.statusCode);
         expect([403, 404]).toContain(denied.statusCode);
-        const response = await server.inject({ url: url + "/progress" });
+        const response = await server.inject({ url: url + "/progress?summary=true" });
         expect(response.statusCode).toBe(200);
-        expect(response.json()).toMatchObject([{ kind: "code", tasks: [{ title: "核对说明" }] }]);
+        expect(response.json()).toMatchObject({ totalUsage: { runs: 1 }, views: [{ kind: "code", tasks: [{ title: "核对说明", href: "#/runs/code?task=T1" }] }] });
       }
       createSpace(app, { id: "shared", name: "共享项目" });
       addMember(app, "shared", "reader", "editor");

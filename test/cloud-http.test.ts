@@ -10,7 +10,7 @@ import { createSession, SESSION_COOKIE } from "../src/auth/sessions.ts";
 import { saveRole } from "../src/auth/permissions.ts";
 import { issueProbeTicket } from "../src/auth/cloud-probe-ticket.ts";
 import { App } from "../src/core/app.ts";
-import { loadConfig, saveConfig } from "../src/core/config.ts";
+import { cloudToolNames, loadConfig, saveConfig } from "../src/core/config.ts";
 import { expect, it, vi } from "vitest";
 import * as doubao from "../src/agents/doubao.ts";
 import * as capabilities from "../src/agents/capabilities.ts";
@@ -212,7 +212,10 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
     const history = runEvents(app, id);
     expect(JSON.stringify(history)).toContain('"omemAccess":"http"');
     expect(JSON.stringify([history, all(app.db, "select * from audit_events"), events.mock.calls])).not.toContain(bearer);
-    expect((await server.inject({ url: "/api/cloud-tools", headers: owner })).json()).toMatchObject({ activeCredentials: 0, recent: [{ calls: 2, errors: 0 }] });
+    const status = (await server.inject({ url: "/api/cloud-tools", headers: owner })).json();
+    expect(status).toMatchObject({ activeCredentials: 0, recent: [{ runId: id, title: "读资料", calls: 2, errors: 0 }] });
+    expect(status.availableTools.map((t: { name: string }) => t.name).sort()).toEqual([...cloudToolNames].sort());
+    expect(status.availableTools.every((t: { description: string }) => t.description.length > 1)).toBe(true);
     for (const path of ["cloud-tools", "cloud-tools/revoke", "cloud-tools/probe", "cloud-tools/probe/confirm"]) {
       expect((await server.inject({ method: path === "cloud-tools" ? "GET" : "POST", url: "/api/" + path, headers: admin })).statusCode).toBe(403);
     }

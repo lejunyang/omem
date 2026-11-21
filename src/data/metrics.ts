@@ -123,7 +123,10 @@ export function listMetrics(app: App, opts: { itemId?: string; itemIds?: string[
   const where: string[] = [];
   const params: string[] = [];
   if (opts.itemId) (where.push("item_id = ?"), params.push(opts.itemId));
-  if (opts.itemIds) (where.push(`item_id in (${opts.itemIds.map(() => "?").join(",") || "''"})`), params.push(...opts.itemIds));
+  if (opts.itemIds) {
+    where.push("item_id in (select value from json_each(?))");
+    params.push(JSON.stringify(opts.itemIds));
+  }
   if (opts.contextId) (where.push("context_id = ?"), params.push(opts.contextId));
   if (opts.activeOnly) where.push("status = 'active'");
   else if (opts.collected) where.push("status in ('active','proposed')");

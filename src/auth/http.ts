@@ -599,20 +599,19 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   });
   // What to register in the provider's console (the redirect URL) and whether it can be used now.
   server.get("/api/auth/providers", async (req) => {
-    manager(req);
     const base = baseUrl(app, req);
     const offered = new Set(app.config.auth.connectors);
     return loginProviders().map((p) => ({
       id: p.id,
       label: p.label,
-      unavailable: p.unavailable(app),
+      unavailable: who(req) === OWNER ? p.unavailable(app) : undefined,
       callback: p.authorizeUrl ? callbackUrl(base, p.id) : null,
       identity: canLogIn(p),
       group: p.group ?? "",
       docs: p.docs ?? "",
       credentials: !!p.credentials,
       offered: p.id === "lark" || offered.has(p.id),
-      app: appView(app, p),
+      app: who(req) === OWNER ? appView(app, p) : undefined,
     }));
   });
   // What the owner fills in for a platform's app (client id and secret…): kept in secrets/, never sent back whole.

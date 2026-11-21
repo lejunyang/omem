@@ -33,24 +33,29 @@ import { state, toast } from "../store";
  */
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
+type RoleRow = Pick<RoleState, "name" | "description"> & Partial<Pick<RoleState, "customized" | "sourceChanged">>;
 type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; purpose?: string; enabled?: boolean };
 type SkillGroup = { id: string; title: string; enabled: boolean; count: number; enabledCount: number };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
+type SpecSummary = Pick<Spec, "name" | "description" | "status" | "agent" | "model" | "effort">;
+type SpecRow = SpecSummary & { plugin?: string };
 type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; toolSet: { tools: string[]; base: string[]; handIn: string[]; changed: boolean; fixed: boolean }; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
+type RoleSummary = Pick<RoleDetail, "name" | "description" | "defaults">;
 
 const route = useRoute();
 const router = useRouter();
-const tab = computed(() => (route.query.tab === "mcp" ? "mcp" : route.query.tab === "skills" ? "skills" : route.query.tab === "review" ? "review" : "agents"));
+const owner = computed(() => state.me?.role === "owner");
+const tab = computed(() => (route.query.tab === "mcp" && owner.value ? "mcp" : route.query.tab === "skills" ? "skills" : route.query.tab === "review" ? "review" : "agents"));
 const specName = computed(() => (tab.value === "agents" && typeof route.query.name === "string" ? route.query.name : null));
 const roleName = computed(() => (tab.value === "agents" && typeof route.query.role === "string" ? route.query.role : null));
 const skillName = computed(() => (tab.value === "skills" && typeof route.query.name === "string" ? route.query.name : null));
 const groupId = computed(() => (tab.value === "skills" && typeof route.query.group === "string" ? route.query.group : null));
 const purposeQ = computed(() => (groupId.value && typeof route.query.purpose === "string" ? route.query.purpose : null));
-const creating = computed(() => route.query.new === "1");
+const creating = computed(() => route.query.new === "1" && (tab.value !== "agents" || owner.value));
 
-const specs = ref<Spec[]>([]);
-const roles = ref<RoleState[]>([]);
+const specs = ref<SpecRow[]>([]);
+const roles = ref<RoleRow[]>([]);
 const skills = ref<Skill[]>([]);
 const skillGroups = ref<SkillGroup[]>([]);
 /** Skills in a group are listed on the group's page, not one by one here. */
@@ -65,7 +70,10 @@ let listSeq = 0;
 async function loadLists() {
   const seq = ++listSeq;
   try {
-    const result = await Promise.all([get<Spec[]>("/api/agents"), get<RoleState[]>("/api/roles"), get<Skill[]>("/api/skills"), get<{ servers: McpServer[] }>("/api/mcp").then((r) => ({ servers: r.servers, error: "" })).catch((e) => ({ servers: [] as McpServer[], error: (e as Error).message })), get<{ groups: SkillGroup[] }>("/api/skill-groups").then((r) => r.groups).catch(() => [] as SkillGroup[])]);
+    const mcp = owner.value
+      ? get<{ servers: McpServer[] }>("/api/mcp").then(r => ({ servers: r.servers, error: "" })).catch(e => ({ servers: [], error: (e as Error).message }))
+      : { servers: [], error: "" };
+    const result = await Promise.all([get<SpecRow[]>("/api/agents"), get<RoleRow[]>("/api/roles"), get<Skill[]>("/api/skills"), mcp, get<{ groups: SkillGroup[] }>("/api/skill-groups").then((r) => r.groups).catch(() => [] as SkillGroup[])]);
     if (seq === listSeq) {
       [specs.value, roles.value, skills.value] = result;
       skillGroups.value = result[4];
@@ -80,7 +88,8 @@ async function loadLists() {
 // ---- spec form ------------------------------------------------------------------
 const blank = (): Spec => ({ name: "", description: "", status: "active", tools: [], writes: false, skills: [], mcpServers: [], mcp: {}, spaces: [], prompt: "" });
 const form = ref<Spec>(blank());
-const specDetail = ref<SpecDetail | null>(null);
+const specDetail = ref<SpecDetail | SpecSummary | null>(null);
+const fullSpec = computed(() => specDetail.value && "tools" in specDetail.value ? specDetail.value : null);
 const raw = ref("");
 const rawMode = ref(false);
 const dirty = ref(false);
@@ -96,13 +105,17 @@ async function loadSpec(quiet = false) {
   if (!specName.value) return;
   detailLoading.value = !quiet;
   try {
-    const d = await get<SpecDetail>(`/api/agents/${encodeURIComponent(specName.value)}`);
+    const d = await get<SpecDetail | SpecSummary>(`/api/agents/${encodeURIComponent(specName.value)}`);
     if (!current()) return;
     specDetail.value = d;
-    form.value = { ...blank(), ...d, tools: [...d.tools], spaces: [...(d.spaces ?? [])], skills: d.skills.map((s) => s.name) } as Spec;
-    const file = await get<{ raw: string }>(`/api/library-files/agent/${encodeURIComponent(name!)}`);
-    if (!current()) return;
-    raw.value = file.raw;
+    if ("tools" in d) {
+      form.value = { ...d, tools: [...d.tools], spaces: [...(d.spaces ?? [])], skills: d.skills.map(s => s.name) };
+      const file = await get<{ raw: string }>(`/api/library-files/agent/${encodeURIComponent(name!)}`);
+      if (!current()) return;
+      raw.value = file.raw;
+    } else {
+      form.value = { ...blank(), ...d };
+    }
     dirty.value = false;
   } catch (e) {
     if (current()) toast((e as Error).message, "error");
@@ -124,7 +137,9 @@ async function saveSpec() {
   if (!form.value.description.trim()) return toast("写一句用途：做什么、什么时候交给它", "error");
   saving.value = true;
   try {
-    if (rawMode.value && !creating.value) await put(`/api/library-files/agent/${encodeURIComponent(name)}`, { raw: raw.value });
+    if (!creating.value && !fullSpec.value) {
+      await put(`/api/agents/${encodeURIComponent(name)}`, { description: form.value.description.trim(), status: form.value.status });
+    } else if (rawMode.value && !creating.value) await put(`/api/library-files/agent/${encodeURIComponent(name)}`, { raw: raw.value });
     else {
       const f = form.value;
       await put(`/api/agents/${encodeURIComponent(name)}`, {
@@ -209,7 +224,8 @@ async function setRoleMcp(servers: string[]) {
 const mcpNames = computed(() => Object.keys(form.value.mcp ?? {}));
 
 // ---- built-in role ----------------------------------------------------------------
-const roleDetail = ref<RoleDetail | null>(null);
+const selectedRole = ref<RoleDetail | RoleSummary | null>(null);
+const roleDetail = computed(() => owner.value && selectedRole.value && "role" in selectedRole.value ? selectedRole.value : null);
 const missingRoleMcp = computed(() => (roleDetail.value?.role.overlay?.mcp ?? []).filter((n) => !mcpServers.value.some((s) => s.name === n)));
 const roleText = ref("");
 const roleAi = ref({ agent: "", model: "", effort: "" });
@@ -247,19 +263,21 @@ const showSource = ref(false);
 async function loadRole(quiet = false) {
   const seq = ++roleSeq, name = roleName.value;
   const current = () => seq === roleSeq && name === roleName.value && !creating.value;
-  if (!quiet) roleDetail.value = null;
+  if (!quiet) selectedRole.value = null;
   if (!roleName.value) return;
   detailLoading.value = !quiet;
   try {
-    const result = await get<RoleDetail>(`/api/roles/${encodeURIComponent(roleName.value)}`);
+    const result = await get<RoleSummary | RoleDetail>(`/api/roles/${encodeURIComponent(roleName.value)}`);
     if (!current()) return;
-    roleDetail.value = result;
-    roleToolList.value = [...result.toolSet.tools];
-    const ai = roleDetail.value.defaults;
+    selectedRole.value = result;
+    const ai = result.defaults;
     const saved = ai.byBackend[ai.agent || options.value.globalDefaultBackend];
     roleAi.value = { agent: ai.agent, model: saved?.model ?? "", effort: saved?.effort ?? "" };
     roleAiDirty.value = false;
-    roleText.value = roleDetail.value.role.own ?? roleDetail.value.role.source;
+    if (roleDetail.value) {
+      roleToolList.value = [...roleDetail.value.toolSet.tools];
+      roleText.value = roleDetail.value.role.own ?? roleDetail.value.role.source;
+    }
     dirty.value = false;
     showSource.value = false;
   } catch (e) {
@@ -451,7 +469,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
       <div v-if="hasPerm('agents.manage')" class="head row wrap">
         <button class="tab" @click="go({ tab: 'agents' })">Agent 档案</button>
         <button class="tab" @click="go({ tab: 'skills' })">技能</button>
-        <button class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
+        <button v-if="owner" class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
         <button class="tab on">评审</button>
       </div>
     </template>
@@ -470,20 +488,20 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
       <div class="head row wrap">
         <button class="tab" :class="{ on: tab === 'agents' }" @click="go({ tab: 'agents' })">Agent 档案</button>
         <button class="tab" :class="{ on: tab === 'skills' }" @click="go({ tab: 'skills' })">技能</button>
-        <button class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
+        <button v-if="owner" class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
         <button v-if="hasCap('settings.assistant.view')" class="tab" @click="go({ tab: 'review' })">评审</button>
       </div>
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else-if="tab === 'agents'">
-          <div class="group row"><span>我的档案</span><span class="spacer" /><button class="add" @click="go({ tab: 'agents', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
+          <div class="group row"><span>我的档案</span><span class="spacer" /><button v-if="owner" class="add" @click="go({ tab: 'agents', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
           <button v-for="x in specs" :key="x.name" class="li" :class="{ on: x.name === specName }" @click="go({ tab: 'agents', name: x.name })">
             <div class="grow">
               <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.plugin" class="badge" :title="`来自插件 ${x.plugin}`">插件</span></div>
               <div class="muted small clamp">{{ x.description }}</div>
             </div>
           </button>
-          <p v-if="!specs.length" class="muted small hint">还没有。点“新建”，或对助理说“建一个负责代码评审的 Agent，用 codex，只读”。</p>
+          <p v-if="!specs.length" class="muted small hint">还没有档案。<template v-if="owner">点“新建”，或对助理说“建一个负责代码评审的 Agent，用 codex，只读”。</template></p>
           <div class="group">内置角色</div>
           <button v-for="r in roles" :key="r.name" class="li" :class="{ on: r.name === roleName }" @click="go({ tab: 'agents', role: r.name })">
             <div class="grow">
@@ -520,7 +538,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <h3>{{ tab === "agents" ? "Agent 档案" : "技能" }}</h3>
         <p v-if="tab === 'agents'">专门做某类事的 Agent：用途、提示词、后端与模型、工具和技能。内置角色是 omem 自己调用的，也可以自定义。</p>
         <p v-else>可复用的做法（SKILL.md）。挂到档案上，它做对应的事之前会先读全文照做。草稿启用后才会出现在目录里。</p>
-        <button class="btn" @click="go({ tab, new: '1' })"><Icon name="plus" :size="14" />{{ tab === "agents" ? "新建 Agent 档案" : "新建技能" }}</button>
+        <button v-if="tab === 'skills' || owner" class="btn" @click="go({ tab, new: '1' })"><Icon name="plus" :size="14" />{{ tab === "agents" ? "新建 Agent 档案" : "新建技能" }}</button>
         <FeedbackStats v-if="tab === 'agents'" class="feedback" />
         <ReplayList v-if="tab === 'agents'" class="feedback" />
         <AgentSkillsPanel v-if="tab === 'skills'" @changed="loadLists" />
@@ -534,8 +552,8 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <h2 v-else class="mono">{{ specName }}</h2>
           <span v-if="specDetail?.status === 'draft'" class="badge">草稿</span>
           <span class="spacer" />
-          <button v-if="!creating" class="btn ghost sm" @click="toggleRaw">{{ rawMode ? "表单" : "原文" }}</button>
-          <button v-if="specDetail?.status === 'draft'" class="btn sm" @click="approveSpec"><Icon name="check" :size="14" />启用</button>
+          <button v-if="fullSpec && !creating" class="btn ghost sm" @click="toggleRaw">{{ rawMode ? "表单" : "原文" }}</button>
+          <button v-if="fullSpec?.status === 'draft' && !creating" class="btn sm" @click="approveSpec"><Icon name="check" :size="14" />启用</button>
           <button class="btn sm primary" :disabled="saving || (!creating && !dirty)" @click="saveSpec">{{ creating ? "创建" : "保存" }}</button>
           <button v-if="!creating" class="btn ghost sm icon danger" title="删除" @click="removeSpec"><Icon name="trash" :size="14" /></button>
         </header>
@@ -552,57 +570,66 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <span>用途</span>
             <textarea v-model="form.description" class="input" rows="2" placeholder="做什么、什么时候交给它（助理按这句挑人）" @input="dirty = true" />
           </label>
-          <AiDefaults :model-value="form" :backends="options.backends" :default-backend="options.defaultBackend" @update:model-value="(v) => Object.assign(form, v)" @change="dirty = true" />
-          <div class="grid">
+          <template v-if="specDetail && !creating && !fullSpec">
             <div class="field">
-              <span>空间</span>
-              <UiSelect :model-value="form.space ?? ''" :options="spaceOptions" aria-label="空间" @change="(v) => ((form.space = v || undefined), (dirty = true))" />
+              <span>状态</span>
+              <UiSelect v-model="form.status" :options="[{ value: 'active', label: '已启用' }, { value: 'draft', label: '草稿' }]" aria-label="档案状态" @change="dirty = true" />
             </div>
-          </div>
-          <label class="field">
-            <span>工作目录</span>
-            <input v-model="form.cwd" class="input mono" placeholder="不填：空间关联的目录（代码仓库空间就是仓库）" @input="dirty = true" />
-          </label>
-          <div class="field">
-            <span>omem 工具</span>
-            <ToolPicker v-model="formTools" :tools="options.tools" :groups="options.toolGroups" />
-            <small class="muted">不选时用默认的只读工具（{{ options.defaultTools.length }} 个：检索、读原件、读记忆和会话等）</small>
-          </div>
-          <div class="field">
-            <span>还能读的空间</span>
-            <ChipPicker v-model="formSpaces" :options="readableOptions" add-label="＋ 空间" />
-          </div>
-          <div v-if="creating" class="field">
-            <span>技能</span>
-            <ChipPicker v-model="formSkills" :options="skillOptions" add-label="＋ 技能" />
-          </div>
-          <div class="field switch">
-            <UiCheckbox v-model="form.writes" switch @change="dirty = true">可以改工作目录里的文件</UiCheckbox>
-          </div>
-          <div class="field">
-            <UiCheckbox :model-value="!!form.fullAccess" switch @change="(v: boolean) => { form.fullAccess = v; dirty = true; }">完全访问：命令不进沙箱、不经审批</UiCheckbox>
-            <small class="muted">{{ accessHint(form.agent) }}</small>
-          </div>
-          <div class="field">
-            <span>MCP 服务</span>
-            <p v-if="mcpError" class="error">{{ mcpError }}</p>
-            <p v-else-if="!mcpServers.length" class="muted small">还没有配置 MCP 服务。<button class="btn ghost sm" @click="go({ tab: 'mcp' })">添加</button></p>
-            <UiCheckbox v-for="server in mcpServers" :key="server.name" v-model="form.mcpServers" :value="server.name" :aria-label="`${server.name} · ${server.description}`" @change="dirty = true">{{ server.name }}<span class="muted small"> · {{ server.description }}</span></UiCheckbox>
-            <UiCheckbox v-for="name in missingMcp" :key="name" v-model="form.mcpServers" :value="name" :aria-label="name" @change="dirty = true">{{ name }}（服务已删除，取消勾选可移除）</UiCheckbox>
-            <p v-if="mcpNames.length" class="muted small">{{ mcpNames.join("、") }} · 写在档案文件里</p>
-          </div>
-          <label class="field">
-            <span>提示词</span>
-            <textarea v-model="form.prompt" class="editor mono" spellcheck="false" @input="dirty = true" />
-            <small class="muted">只写稳定的职责和工作原则；可复用的步骤做成技能，偏好和经验让它记成专属记忆。</small>
-          </label>
-          <details class="field" :open="!!form.instructions">
-            <summary class="small">工作约定（AGENTS.md 式，可选）</summary>
-            <textarea v-model="form.instructions" class="input mono" rows="5" @input="dirty = true" />
-          </details>
+            <p v-if="form.agent || form.model || form.effort" class="muted small">默认 AI · {{ [form.agent, form.model, form.effort].filter(Boolean).join(" · ") }}</p>
+          </template>
+          <template v-else>
+            <AiDefaults :model-value="form" :backends="options.backends" :default-backend="options.defaultBackend" @update:model-value="(v) => Object.assign(form, v)" @change="dirty = true" />
+            <div class="grid">
+              <div class="field">
+                <span>空间</span>
+                <UiSelect :model-value="form.space ?? ''" :options="spaceOptions" aria-label="空间" @change="(v) => ((form.space = v || undefined), (dirty = true))" />
+              </div>
+            </div>
+            <label class="field">
+              <span>工作目录</span>
+              <input v-model="form.cwd" class="input mono" placeholder="不填：空间关联的目录（代码仓库空间就是仓库）" @input="dirty = true" />
+            </label>
+            <div class="field">
+              <span>omem 工具</span>
+              <ToolPicker v-model="formTools" :tools="options.tools" :groups="options.toolGroups" />
+              <small class="muted">不选时用默认的只读工具（{{ options.defaultTools.length }} 个：检索、读原件、读记忆和会话等）</small>
+            </div>
+            <div class="field">
+              <span>还能读的空间</span>
+              <ChipPicker v-model="formSpaces" :options="readableOptions" add-label="＋ 空间" />
+            </div>
+            <div v-if="creating" class="field">
+              <span>技能</span>
+              <ChipPicker v-model="formSkills" :options="skillOptions" add-label="＋ 技能" />
+            </div>
+            <div class="field switch">
+              <UiCheckbox v-model="form.writes" switch @change="dirty = true">可以改工作目录里的文件</UiCheckbox>
+            </div>
+            <div class="field">
+              <UiCheckbox :model-value="!!form.fullAccess" switch @change="(v: boolean) => { form.fullAccess = v; dirty = true; }">完全访问：命令不进沙箱、不经审批</UiCheckbox>
+              <small class="muted">{{ accessHint(form.agent) }}</small>
+            </div>
+            <div class="field">
+              <span>MCP 服务</span>
+              <p v-if="mcpError" class="error">{{ mcpError }}</p>
+              <p v-else-if="!mcpServers.length" class="muted small">还没有配置 MCP 服务。<button class="btn ghost sm" @click="go({ tab: 'mcp' })">添加</button></p>
+              <UiCheckbox v-for="server in mcpServers" :key="server.name" v-model="form.mcpServers" :value="server.name" :aria-label="`${server.name} · ${server.description}`" @change="dirty = true">{{ server.name }}<span class="muted small"> · {{ server.description }}</span></UiCheckbox>
+              <UiCheckbox v-for="name in missingMcp" :key="name" v-model="form.mcpServers" :value="name" :aria-label="name" @change="dirty = true">{{ name }}（服务已删除，取消勾选可移除）</UiCheckbox>
+              <p v-if="mcpNames.length" class="muted small">{{ mcpNames.join("、") }} · 写在档案文件里</p>
+            </div>
+            <label class="field">
+              <span>提示词</span>
+              <textarea v-model="form.prompt" class="editor mono" spellcheck="false" @input="dirty = true" />
+              <small class="muted">只写稳定的职责和工作原则；可复用的步骤做成技能，偏好和经验让它记成专属记忆。</small>
+            </label>
+            <details class="field" :open="!!form.instructions">
+              <summary class="small">工作约定（AGENTS.md 式，可选）</summary>
+              <textarea v-model="form.instructions" class="input mono" rows="5" @input="dirty = true" />
+            </details>
+          </template>
         </div>
 
-        <ProfileLearning v-if="specDetail && !creating" :name="specName!" :detail="specDetail" :current-prompt="specDetail.prompt" @changed="loadSpec(true)" />
+        <ProfileLearning v-if="fullSpec && !creating" :name="specName!" :detail="fullSpec" :current-prompt="fullSpec.prompt" @changed="loadSpec(true)" />
       </div>
 
       <!-- built-in role -->
@@ -647,7 +674,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <small class="muted">{{ roleDetail.toolSet.changed ? "你改过这个角色的工具。" : "现在是角色自带的工具。" }}加减的工具单独记着，不复制角色正文：omem 更新这个角色时它照常跟着更新，你的加减继续生效。现在一共 {{ roleDetail.tools.length }} 个。</small>
           </template>
         </div>
-        <div v-if="!['guest', 'gatekeeper'].includes(roleName!)" class="card pad stack">
+        <div v-if="owner && !['guest', 'gatekeeper'].includes(roleName!)" class="card pad stack">
           <strong>MCP 服务</strong>
           <p v-if="mcpError" class="error">{{ mcpError }}</p>
             <p v-else-if="!mcpServers.length" class="muted small">还没有配置 MCP 服务。<button class="btn ghost sm" @click="go({ tab: 'mcp' })">添加</button></p>
@@ -664,6 +691,11 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         </div>
         <textarea v-else v-model="roleText" class="editor mono raw" spellcheck="false" aria-label="角色原文" @input="dirty = true" />
         <ProfileLearning :name="roleName!" :detail="roleDetail" :current-prompt="roleDetail.body" @changed="loadRole(true)" />
+      </div>
+      <div v-else-if="tab === 'agents' && selectedRole" class="page">
+        <header class="dh row"><h2 class="mono">{{ selectedRole.name }}</h2><span class="badge">内置</span></header>
+        <p>{{ selectedRole.description }}</p>
+        <p class="muted small">默认 AI · {{ [roleAi.agent || "跟随全局", roleAi.model, roleAi.effort].filter(Boolean).join(" · ") }}</p>
       </div>
 
       <!-- skill group -->

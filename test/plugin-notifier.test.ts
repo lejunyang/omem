@@ -326,7 +326,7 @@ it.each(["isolated", "inprocess"] as const)("%s 受托成员的审批出口由�
   const first = { ...setting, id: "delegate:first", askKinds: ["approval"] };
   const second = { ...setting, id: "delegate:second" };
   const put = (byOwner: boolean, outlets: typeof app.config.notify.outlets[string]) => server.inject({
-    method: "PUT", url: "/api/notify/outlets", headers: byOwner ? undefined : headers, payload: { userId: "member", outlets },
+    method: "PUT", url: "/api/notify/outlets", headers: byOwner ? undefined : headers, payload: byOwner ? { userId: "member", outlets } : { outlets },
   });
   try {
     app.config.notify.outlets.member = [{ ...first, askKinds: ["question", "approval", "handler:command-gate"] }];
@@ -339,6 +339,21 @@ it.each(["isolated", "inprocess"] as const)("%s 受托成员的审批出口由�
     expect((await put(false, [first])).statusCode).toBe(403);
     expect((await put(true, [first, second])).statusCode).toBe(200);
     expect((await put(false, [first, { ...second, askKinds: ["approval"] }])).statusCode).toBe(403);
+    createUser(app, { id: "manager", name: "管理员", role: "admin" });
+    const manager = { authorization: "Bearer " + createApiToken(app, "manager") };
+    const target = "/api/notify/outlets?user=member";
+    expect((await server.inject({ url: target, headers })).statusCode).toBe(403);
+    for (const by of [undefined, manager, headers]) {
+      const response = await server.inject({ url: by === headers ? "/api/notify/outlets" : target, headers: by });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().outlets).toContainEqual(expect.objectContaining({ id: first.id, grantedAskKinds: ["approval"] }));
+    }
+    const manage = (userId: string, outlets: typeof app.config.notify.outlets[string]) => server.inject({
+      method: "PUT", url: "/api/notify/outlets", headers: manager, payload: { userId, outlets },
+    });
+    expect((await manage("owner", [])).statusCode).toBe(403);
+    expect((await manage("member", [first, { ...second, askKinds: ["approval"] }])).statusCode).toBe(403);
+    expect((await manage("member", [first, second])).statusCode).toBe(200);
     // Simulate an older member preference saved before separate grants existed.
     app.config.notify.outlets.member[1].askKinds = ["approval"];
     const a = createAsk(app, { runId: null, userId: "member", kind: "approval", question: "批准试验？" });

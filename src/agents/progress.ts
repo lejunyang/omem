@@ -3,6 +3,7 @@ import { all, one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { runPredicate } from "../auth/run-scope.ts";
 import { can, canReadRun, runAudience } from "../auth/permissions.ts";
+import { stageEvidence, type EvidenceTarget } from "./progress-evidence.ts";
 import type { Item } from "../items/store.ts";
 import { requireItem } from "../items/access.ts";
 import { describeStage } from "../flows/definitions.ts";
@@ -23,11 +24,11 @@ export const states = {
   trial: { queued: "queued", running: "running", reported: "submitted", skipped: "cancelled" },
 } as const satisfies Record<string, Record<string, TaskStatus>>;
 
-type Output = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page"; ref: string; label: string };
+type Output = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page"; ref: string; label: string; target?: EvidenceTarget };
 type Decision = { by?: string; at?: string; ref?: string; result: string; note?: string };
 export type ProgressTask = {
-  id: string; title: string; state: TaskStatus; goal?: string; accept?: string; needs?: string[]; waitingOn?: string;
-  who?: { agent?: string; model?: string; effort?: string; device?: string };
+  id: string; href: string; title: string; state: TaskStatus; goal?: string; accept?: string; needs?: string[]; waitingOn?: string;
+  who?: { agent?: string; model?: string; effort?: string; local?: boolean; device?: string };
   attempts: ReturnType<Forest["attempts"]>; usage: Usage; outputs?: Output[]; decision?: Decision; decisions?: Decision[];
   round?: number; parentId?: string;
 };
@@ -38,21 +39,25 @@ export type ProgressView = {
   previousRounds?: { round: number; directions: number; trials: number; usage: Usage }[];
 };
 
+type Block = Omit<ProgressView, "usage"> & { graph: Forest; hosts: string[]; boundaries?: ReadonlySet<string> };
+const runHref = (id: string) => "#/runs/" + encodeURIComponent(id);
+const flowHref = (id: string) => "#/items/" + encodeURIComponent(id) + "/flow";
+
 function task(graph: Forest, ids: (string | null | undefined)[], data: Omit<ProgressTask, "attempts" | "usage">, boundaries?: ReadonlySet<string>): ProgressTask {
   const attempts = graph.attempts(ids, boundaries);
   const last = attempts.at(-1);
   const ai = last && graph.nodes.get(last.runId)?.ai;
   const who = ai ? JSON.parse(ai) as { profile: string; model?: string; effort?: string } : undefined;
-  return { ...(who && { who: { agent: who.profile, model: who.model, effort: who.effort } }), ...data, attempts, usage: graph.usage(attempts.map(a => a.runId), boundaries) };
+  return { ...(who && { who: { agent: who.profile, model: who.model, effort: who.effort, local: last?.local, device: last?.device } }), ...data, attempts, usage: graph.usage(attempts.map(a => a.runId), boundaries) };
 }
 function view(graph: Forest, data: Pick<ProgressView, "kind" | "id" | "title" | "tasks" | "itemId" | "runId">, state?: ProgressView["state"],
-  options: { stateTasks?: ProgressTask[]; waitingOn?: string; usage?: Usage } = {}): ProgressView {
+  options: { stateTasks?: ProgressTask[]; waitingOn?: string; hosts?: string[]; boundaries?: ReadonlySet<string> } = {}): Block {
   const tasks = options.stateTasks ?? data.tasks;
   const waitingOn = options.waitingOn ?? ([...new Set(tasks.map(t => t.waitingOn).filter(Boolean))].join("；") || undefined);
   const active = tasks.some(t => ["running", "pending", "queued", "redo"].includes(t.state));
   state ??= waitingOn ? "waiting" : active ? "running" : tasks.some(t => t.state === "failed") ? "failed"
     : tasks.some(t => t.state === "blocked" || t.state === "submitted") ? "waiting" : tasks.every(t => t.state === "cancelled") ? "cancelled" : "done";
-  return { ...data, state, waitingOn, usage: options.usage ?? graph.usage(tasks.flatMap(t => t.attempts.map(a => a.runId))) };
+  return { ...data, state, waitingOn, graph, hosts: options.hosts ?? tasks.flatMap(t => t.attempts.map(a => a.runId)), boundaries: options.boundaries };
 }
 
 function boardView(app: App, graph: Forest, node: Node, itemId?: string) {
@@ -65,13 +70,13 @@ function boardView(app: App, graph: Forest, node: Node, itemId?: string) {
   const tasks = board.tasks.map((t): ProgressTask => {
     const latest = t.attempts.at(-1);
     const attempts = t.attempts.map(a => ({
-      runId: a.runId, status: a.status, startedAt: a.startedAt ?? undefined, endedAt: a.finishedAt ?? undefined,
+      device: a.device, local: a.local, runId: a.runId, status: a.status, startedAt: a.startedAt ?? undefined, endedAt: a.finishedAt ?? undefined,
       queuedMs: a.queuedMs, runMs: a.executionMs, usage: graph.usage([a.runId]),
     }));
     return {
       attempts, usage: graph.usage(attempts.map(a => a.runId)),
-      who: latest && { agent: latest.ai?.profile, model: latest.ai?.model, effort: latest.ai?.effort, device: latest.device },
-      id: t.id, title: t.title, goal: t.goal, accept: t.accept, state: states.board[t.status as keyof typeof states.board],
+      who: latest && { agent: latest.ai?.profile, model: latest.ai?.model, effort: latest.ai?.effort, device: latest.device, local: latest.local },
+      id: t.id, href: runHref(latest?.runId ?? node.id), title: t.title, goal: t.goal, accept: t.accept, state: states.board[t.status as keyof typeof states.board],
       outputs: latest && t.report ? [{ kind: "report", ref: latest.runId, label: t.report }] : undefined,
       decision: t.verdict && { by: t.verdict.by, at: t.verdict.at, result: t.verdict.decision, note: t.verdict.note } || undefined,
     };
@@ -131,7 +136,7 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
     for (const r of mine) for (const w of JSON.parse(r.branches ?? "[]") as { space: string; branch: string }[])
       if (w.branch) outputs.push({ kind: "branch", ref: w.branch, label: w.space + " · " + w.branch });
     const waitingOn = taskWaits[t.state];
-    return task(graph, ids, { id: `T${t.seq}`, title: t.title, accept: t.doneWhen, state: states.code[t.state], outputs, waitingOn }, otherHelpers);
+    return task(graph, ids, { href: runHref(node.id) + "?task=T" + t.seq, id: `T${t.seq}`, title: t.title, accept: t.doneWhen, state: states.code[t.state], outputs, waitingOn }, otherHelpers);
   });
   const last = rounds.at(-1)!;
   const terminal = last.discarded || node.discarded ? "cancelled" : last.applied || node.applied ? "done"
@@ -141,7 +146,7 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
   const state = terminal ?? (waitingOn ? "waiting" : tasks.length ? undefined : last.status === "done" ? "done" : "running");
   return {
     ...view(graph, { kind: "code", id: node.id, runId: node.id, itemId, title: node.title, tasks }, state, {
-      waitingOn, usage: graph.usage([...rounds.map(r => r.id), ...tasks.flatMap(t => t.attempts.map(a => a.runId))]),
+      waitingOn, hosts: [...rounds.map(r => r.id), ...tasks.flatMap(t => t.attempts.map(a => a.runId))],
     }),
     rounds: rounds.map(r => ({ runId: r.id, status: r.status, round: r.round ?? undefined })),
   };
@@ -215,7 +220,7 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
     if (latest && (executing || latest.status === "failed" || latest.status === "cancelled")) state = latest.status as TaskStatus;
     else if (current.checking) state = "running";
     return task(graph, ids, {
-      id: name, title: name, state,
+      id: name, href: runHref(current.latest?.id ?? node.id), title: name, state,
       who: !current.checking && (result?.profile_id || result?.model) ? { agent: result.profile_id ?? undefined, model: result.model ?? undefined, effort: result.effort ?? undefined } : undefined,
       outputs: results.flatMap((r): Output[] => [
         { kind: "report", ref: r.id, label: `${r.verdict} · ${r.findings.length} 个问题 · ${r.summary}` },
@@ -226,11 +231,12 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
   });
   if (tasks.length) return view(graph, { kind: "review", id: node.id, runId: node.id, itemId, title: node.title + " · 评审", tasks },
     rounds.at(-1)!.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined,
-    { usage: graph.usage(tasks.flatMap(t => t.attempts.map(a => a.runId)), boundaries) });
+    { boundaries });
 }
 
-function flowView(graph: Forest, f: ItemFlow, instance: Node[], rows: ReturnType<typeof itemStages>, state?: ProgressView["state"]) {
+function flowView(app: App, reader: Reader, graph: Forest, f: ItemFlow, instance: Node[], rows: ReturnType<typeof itemStages>, state?: ProgressView["state"]) {
   const id = f.itemId;
+  const evidence = stageEvidence(app, reader, id, rows.flatMap(s => s.evidence));
   const tasks = f.definition.stages.flatMap(d => {
     const s = rows.find(s => s.id === d.id);
     if (!graph.sees(s?.control.runId)) return [];
@@ -238,8 +244,11 @@ function flowView(graph: Forest, f: ItemFlow, instance: Node[], rows: ReturnType
     const wait = s?.state === "gated" ? "等本人确认" : s?.waitingOn ? waitText(s.waitingOn) : undefined;
     const status = s?.state ?? "pending";
     return [task(graph, [...ids, s?.control.runId], {
-      id: d.id, title: d.name, goal: d.note, accept: describeStage(d).done, needs: d.needs,
-      state: states.flow[status], waitingOn: wait, outputs: s?.evidence.map(ref => ({ kind: "evidence", ref, label: ref }))
+      id: d.id, href: flowHref(id) + "?stage=" + encodeURIComponent(d.id), title: d.name, goal: d.note, accept: describeStage(d).done, needs: d.needs,
+      state: states.flow[status], waitingOn: wait, outputs: s?.evidence.flatMap(ref => {
+        const target = evidence.get(ref);
+        return target ? [{ kind: "evidence" as const, ref, label: target.title, target }] : [];
+      })
     })];
   });
   const visibleStages = new Set(tasks.map(t => t.id));
@@ -275,7 +284,7 @@ function studyView(app: App, graph: Forest, f: ItemFlow, instance: Node[], title
   const studyTasks: ProgressTask[] = [];
   for (const d of ds) {
     studyTasks.push(task(graph, [], {
-      id: d.id, title: d.goal, goal: d.approach, accept: d.acceptance, round: d.round, state: states.direction[d.state],
+      id: d.id, href: flowHref(id) + "?direction=" + encodeURIComponent(d.id), title: d.goal, goal: d.approach, accept: d.acceptance, round: d.round, state: states.direction[d.state],
       waitingOn: d.state === "proposed" ? "等本人选择方向" : undefined, outputs: d.conclusion ? [{ kind: "report", ref: d.id, label: d.conclusion }] : undefined
     }));
   }
@@ -292,17 +301,17 @@ function studyView(app: App, graph: Forest, f: ItemFlow, instance: Node[], title
     const originals = fix?.trials.filter(o =>
       o.result === "failed" && o.id !== t.id && o.direction_id === t.direction_id && o.object === t.object && o.check === t.check);
     const row = task(graph, ids, {
-      id: t.id, title: t.object, accept: t.check, parentId: t.direction_id, needs: originals && originals.length === 1 ? [originals[0].id] : undefined,
+      id: t.id, href: flowHref(id) + "?trial=" + encodeURIComponent(t.id), title: t.object, accept: t.check, parentId: t.direction_id, needs: originals && originals.length === 1 ? [originals[0].id] : undefined,
       round: t.round, state: states.trial[t.state], outputs
     });
-    if (t.peer_run && t.peer) row.who = { ...row.who, device: t.peer };
+    if (t.peer_run && t.peer) row.who = { ...row.who, ...graph.device(t.peer) };
     studyTasks.push(row);
   }
   const current = studyTasks.filter(t => t.round === f.round);
   const study = view(graph, { kind: "study", id, itemId: id, title, tasks: studyTasks },
     state ?? (current.length ? undefined : "running"), {
       stateTasks: current,
-      usage: graph.usage([...instance.filter(r => r.trial).map(r => r.id), ...studyTasks.flatMap(t => t.attempts.map(a => a.runId))]),
+      hosts: [...instance.filter(r => r.trial).map(r => r.id), ...studyTasks.flatMap(t => t.attempts.map(a => a.runId))],
     });
   const counts = new Map(all<{ round: number; directions: number }>(app.db,
     "select round,count(*) directions from study_directions where item_id=? and round<? group by round order by round", id, f.round)
@@ -331,8 +340,8 @@ function itemFlowViews(app: App, f: ItemFlow, item: Item, reader: Reader, histor
     return !graph.sees(stage?.control.runId) || stage?.state === "done" || stage?.state === "skipped";
   });
   const state = f.endedAt ? ended ? "done" : "cancelled" : f.roundClosedAt ? "waiting" : undefined;
-  const blocks: ProgressView[] = [];
-  if (showFlow) blocks.push(flowView(graph, f, instance, rows, state));
+  const blocks: Block[] = [];
+  if (showFlow) blocks.push(flowView(app, reader, graph, f, instance, rows, state));
   if (study) blocks.push(studyView(app, graph, f, instance, item.title, history, state));
   return blocks;
 }
@@ -346,7 +355,7 @@ function workViews(app: App, graph: Forest, reader: Reader, linkedItem?: string)
     (${work.sql} and (r.kind='code' and json_extract(input,'$.continueFrom') is null and json_extract(input,'$.branches') is null or exists(select 1 from code_tasks where work_id=r.id))) code,
     (json_extract(output,'$.reviewPlan.checks') is not null or exists(select 1 from reviews where code_run_id=r.id)) review
     from runs r where r.id in (select value from json_each(?)) and (board or code or review) order by created_at desc`, ...work.params, ids);
-  const views: ProgressView[] = [];
+  const views: Block[] = [];
   const reviewed = new Set<string>();
   for (const c of candidates) {
     const node = graph.nodes.get(c.id)!;
@@ -361,6 +370,34 @@ function workViews(app: App, graph: Forest, reader: Reader, linkedItem?: string)
     }
   }
   return views;
+}
+
+// Charge a visible run once per page, to its most specific block. Work done inside a
+// coding host stays in that host's usage; dedicated review runs take precedence.
+function allocate(blocks: Block[]): ProgressView[] {
+  const codingHosts = new Set(blocks.flatMap(b => b.rounds?.map(r => r.runId) ?? []));
+  const views = blocks.map(({ graph, hosts, boundaries, ...block }) => {
+    const ids = block.kind === "review" ? hosts.filter(id => !codingHosts.has(id)) : hosts;
+    return { ...block, graph, contributors: graph.contributors(ids, boundaries) };
+  });
+  const priority = { review: 0, code: 1, board: 2, study: 3, flow: 4 };
+  const claimed = new Set<string>();
+  for (const block of [...views].sort((a, b) => priority[a.kind] - priority[b.kind])) {
+    for (const id of block.contributors) {
+      if (claimed.has(id)) block.contributors.delete(id);
+      else claimed.add(id);
+    }
+  }
+  return views.map(({ graph, contributors, ...block }) => ({ ...block, usage: graph.sum(contributors) }));
+}
+
+export function progressPage(views: ProgressView[]) {
+  const totalUsage: Usage = { input: 0, output: 0, runs: 0, missing: 0 };
+  for (const { usage } of views) {
+    for (const key of ["input", "output", "runs", "missing"] as const) totalUsage[key] += usage[key];
+    if (usage.cached !== undefined) totalUsage.cached = (totalUsage.cached ?? 0) + usage.cached;
+  }
+  return { views, totalUsage };
 }
 
 export function runProgress(app: App, id: string, reader: Reader, history = false) {
@@ -386,7 +423,7 @@ export function runProgress(app: App, id: string, reader: Reader, history = fals
       views.push(...itemFlowViews(app, f, row, reader, history));
     }
   }
-  return views;
+  return allocate(views);
 }
 
 function itemForest(app: App, item: string, reader: Reader) {
@@ -410,8 +447,8 @@ export function itemProgress(app: App, id: string, reader: Reader, history = fal
   const f = itemFlow(app, id);
   const flows = f ? itemFlowViews(app, f, item, reader, history, graph) : [];
   const views = [...flows, ...workViews(app, graph, reader, id)];
-  const active = (v: ProgressView) => Number(v.state === "waiting" || v.state === "running");
-  return views.sort((a, b) => active(b) - active(a)).slice(0, Math.min(100, limit));
+  const active = (v: Block) => Number(v.state === "waiting" || v.state === "running");
+  return allocate(views.sort((a, b) => active(b) - active(a)).slice(0, Math.min(100, limit)));
 }
 
 /** Keep the original board response for existing clients, applying the same attempt visibility. */
