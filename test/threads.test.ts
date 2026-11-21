@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { deliverToThread, receive, registerThreadSender } from "../src/agents/inbox.ts";
-import { getRun, waitForRun } from "../src/agents/runs.ts";
+import { getRun, runEvents, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll, releaseThreadSession } from "../src/agents/sessions.ts";
 import { saveAgentSpec, saveSkill, skillIndex } from "../src/agents/specs.ts";
 import { getThread, resolveThread, setChatSettings, threadMessages, updateThread } from "../src/agents/threads.ts";
@@ -161,6 +161,8 @@ describe("threads: continuity, merging, lanes, commands", async () => {
     const woke = await answer(fired.runId!);
     expect(woke).toMatchObject({ session: first.session, woken: true, msgs: [] });
     expect(sent.at(-1)).toContain(first.session);
+    expect(runEvents(app, a.runId!).find(e => e.type === "prompt")?.data).toMatchObject({ scene: ["chat", "ask", "memory-write", "awareness"] });
+    expect(runEvents(app, fired.runId!).find(e => e.type === "prompt")?.data).toMatchObject({ via: "resumed", scene: ["background", "ask", "memory-write", "awareness"] });
   }, 60000);
 
   it("handles commands without a model", async () => {
