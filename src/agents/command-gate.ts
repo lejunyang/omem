@@ -329,7 +329,7 @@ type GateContext = Partial<OperationGrant> & {
   used?: number;
 };
 
-type Decision = { decision: "allow" | "deny" | "pending"; message?: string };
+export type Decision = { decision: "allow" | "deny" | "pending"; message?: string; /** The approval being waited for, when pending. */ askId?: string };
 
 /** Gate requests waiting for an ask's answer (in this process). */
 const waiting = new Map<string, Set<(a: Ask) => void>>();
@@ -362,7 +362,7 @@ export async function commandGate(app: App, ctx: ToolContext, req: { command: st
 }
 
 /** Both ACP and PATH consult the current rule again before using an approval. */
-export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"} = {}, session?: string): Promise<Decision> {
+export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"; /** An HTTP request's page, shown to the approver. */ page?: string} = {}, session?: string): Promise<Decision> {
   const who = operationWho(ctx);
   const decision = decide(app, op, who);
   const policy = decision.rule;
@@ -371,10 +371,11 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   if (!policy || decision.action !== "approve") return { decision: "allow" };
   if (op.kind === "command" && (!op.argv || !op.cwd)) return { decision: "deny", message: "缺少命令参数或工作目录，无法绑定授权" };
   await expireCommandAsks(app);
-  const command = op.kind === "command" ? op.executable : op.kind === "file" ? op.operation : op.kind;
+  // A request is named by its method, host and path: the query and the body stay out of cards and the audit trail.
+  const command = op.kind === "command" ? op.executable : op.kind === "file" ? op.operation : op.kind === "http" ? requestLine(op) : op.kind;
   const args = op.kind === "command" ? (policy.approval?.reuse ? legacyArgs(op.argv!) : policy.match.kind === "command" ? policy.match.subcommand ?? [] : [])
     : op.kind === "file" ? [op.path.slice(0,300)] : [];
-  const cwd = op.kind === "command" ? op.cwd! : "";
+  const cwd = op.kind === "command" ? op.cwd! : op.kind === "http" ? truncate(req.page ?? "", 300) : "";
   const runId = ctx.runId;
   const actor = who.member;
   const index = currentRules(app).findIndex(r => r.id === policy.id);
@@ -434,10 +435,11 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
     return { decision: "deny", message: "授权已失效或已被消费" };
   }
   if (answered?.status === "answered" && !answered.approved) {
-    return { decision: "deny", message: `${approverName} 拒绝了这条命令${answered.answer ? `，理由：${answered.answer}` : ""}。不要改用其他路径或方式绕过；按理由调整做法，或告诉本人。` };
+    return { decision: "deny", message: `${approverName} 拒绝了这${op.kind === "http" ? "个请求" : "条命令"}${answered.answer ? `，理由：${answered.answer}` : ""}。不要改用其他路径或方式绕过；按理由调整做法，或告诉本人。` };
   }
   record(app, runId, actor, "command.pending", { command, args, cwd, approver: approverName, result: `${rule.waitSeconds} 秒内没有批准，先返回`, rule: index, askId: ask.id });
-  return { decision: "pending", message: `这条命令需要 ${approverName} 批准，审批卡片已发出；批准后会唤醒你，届时原样重新执行这条命令。不要改用其他路径或方式绕过。` };
+  if (op.kind === "http") return { decision: "pending", askId: ask.id, message: `这个请求（${command}）需要 ${approverName} 批准，审批卡片已发出；这次没有发出去。批准后原样重做这一步，不要换别的页面、接口或方式绕过。` };
+  return { decision: "pending", askId: ask.id, message: `这条命令需要 ${approverName} 批准，审批卡片已发出；批准后会唤醒你，届时原样重新执行这条命令。不要改用其他路径或方式绕过。` };
 }
 
 /** Reserve a one-shot for this prompt or consume it at the final check. */
@@ -477,9 +479,10 @@ async function openAsk(
     expiresAt,
   };
   const line = commandLine(c.command, c.args);
+  const http = c.grant.kind === "http";
   const question = [
-    `Agent 要执行受保护的命令：\n\n\`\`\`\n${fence(truncate(line, 2000))}\n\`\`\``,
-    `目录：${c.cwd || "（未知）"}`,
+    `${http ? "Agent 操作的网页要发出受保护的请求" : "Agent 要执行受保护的命令"}：\n\n\`\`\`\n${fence(truncate(line, 2000))}\n\`\`\``,
+    http ? (c.cwd ? `页面：${c.cwd}` : "") : `目录：${c.cwd || "（未知）"}`,
     c.grant.argsHash ? `参数摘要：${c.grant.argsHash.slice(0,16)}` : "",
     c.reason ? `原因（Agent 填写）：${c.reason}` : "",
     c.rule.note ? `规则说明：${c.rule.note}` : "",
@@ -494,6 +497,11 @@ async function openAsk(
 }
 
 const fence = (s: string) => s.replace(/```/g, "ʼʼʼ");
+/** `POST api.example.com/v1/orders`: what a request is called on cards and in the audit trail. */
+function requestLine(op: Extract<Operation, { kind: "http" }>) {
+  const u = new URL(op.url);
+  return truncate(`${op.method.toUpperCase()} ${u.host}${u.pathname}`, 300);
+}
 
 function runInfo(app: App, runId: string | null) {
   if (!runId) return null;
@@ -508,7 +516,7 @@ export function commandCard(app: App, c: GateContext, runId: string | null, stat
   const info = runInfo(app, runId);
   const blocks: Record<string, unknown>[] = [
     { markdown: `\`\`\`\n${fence(truncate(commandLine(c.command, c.args), 1500))}\n\`\`\`` },
-    { fields: [{ label: "目录", value: truncate(c.cwd || "（未知）", 200) }, { label: "规则", value: `第 ${c.rule + 1} 条（${c.command}）` }] },
+    { fields: [{ label: c.kind === "http" ? "页面" : "目录", value: truncate(c.cwd || "（未知）", 200) }, { label: "规则", value: c.kind === "http" ? `第 ${c.rule + 1} 条` : `第 ${c.rule + 1} 条（${c.command}）` }] },
   ];
   if (c.argsHash) blocks.push({ note: `参数摘要：${c.argsHash.slice(0,16)} · 规则 ${cardText(c.ruleId ?? "")}（版本 ${c.revision}）` });
   if (info) blocks.push({ markdown: `**发起**：${/^https?:/.test(info.link) ? `[${cardText(truncate(info.title, 80))}](${info.link})` : cardText(truncate(info.title, 80))} · ${cardText(info.who)}${info.rule ? ` · 规则「${cardText(info.rule)}」` : ""}` });

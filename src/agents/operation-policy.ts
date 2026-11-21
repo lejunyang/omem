@@ -16,7 +16,8 @@ export type OperationWho = { member: string; role?: string; profile?: string; sp
 export function operationWho(ctx: ToolContext): OperationWho {
   return { member: ctx.userId ?? OWNER, role: ctx.role, profile: ctx.spec, space: ctx.spaceId, backend: ctx.agentProfile, runId: ctx.runId };
 }
-export const enforcedBy = { command: ["command-gate","acp"], file: ["acp"], tool: ["omem"], http: [] };
+/** Where each kind of rule is acted on. `browser`: a browser session driven by aad asks before a page's request goes out (agents/http-gate.ts). */
+export const enforcedBy = { command: ["command-gate","acp"], file: ["acp"], tool: ["omem"], http: ["browser"] };
 export function currentRules(app: App) {
   const { operationRules, commandRules } = app.config.security;
   return operationRules.length || !commandRules.length ? operationRules : migrateCommands(commandRules);
@@ -72,12 +73,16 @@ function target(m: OperationRule["match"], op: Operation): boolean | undefined {
   if (m.kind === "tool" && op.kind === "tool") return (m.server ?? "omem") === (op.server ?? "omem") && m.name === op.name && (!m.args || m.args.every(p => jsonMatches(op.args,p)));
   return false;
 }
+/** Whether a rule is on and its scope covers this caller. */
+export function ruleApplies(rule: OperationRule, who: OperationWho) {
+  const s = rule.scope;
+  return rule.enabled && !((s?.members && !s.members.includes(who.member)) ||
+    (s?.roles && !s.roles.some(r => r === who.role || r === who.profile)) ||
+    (s?.spaces && !s.spaces.includes(who.space ?? "")) || (s?.backends && !s.backends.includes(who.backend ?? "")));
+}
 export function decide(app: App, op: Operation, who: OperationWho): { rule?: OperationRule; action: OperationRule["action"]|"unavailable" } {
   for (const rule of currentRules(app)) {
-    const s = rule.scope;
-    if (!rule.enabled || (s?.members && !s.members.includes(who.member)) ||
-      (s?.roles && !s.roles.some(r => r === who.role || r === who.profile)) ||
-      (s?.spaces && !s.spaces.includes(who.space ?? "")) || (s?.backends && !s.backends.includes(who.backend ?? ""))) continue;
+    if (!ruleApplies(rule, who)) continue;
     try {
       const match = target(rule.match, op);
       if (match === undefined) return { rule, action: "unavailable" };

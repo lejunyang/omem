@@ -154,7 +154,8 @@ const asFile = (d: Draft) => d.rule.match as Extract<Match, { kind: "file" }>;
 const asTool = (d: Draft) => d.rule.match as Extract<Match, { kind: "tool" }>;
 const matchLine = (d: Draft) => matchText(clean(d).match);
 const titleOf = (d: Draft) => d.rule.title?.trim() || matchLine(d);
-const notEnforced = (d: Draft) => d.rule.match.kind === "http" || (d.loadedKind === d.rule.match.kind && d.enforcedBy?.length === 0);
+/** A rule kind this server has no place to act on (an older server, for HTTP rules). */
+const notEnforced = (d: Draft) => d.loadedKind === d.rule.match.kind && d.enforcedBy?.length === 0;
 const scopeOf = (d: Draft) => scopeText(d.rule.scope, backendOptions.value);
 const label = (d: Draft) => `「${titleOf(d)}」`;
 
@@ -283,7 +284,7 @@ function onPacksChanged() {
             <span class="op-meta" :title="scopeOf(d).full">{{ scopeOf(d).short }}</span>
           </button>
           <span class="op-end">
-            <span v-if="notEnforced(d)" class="op-note" :title="ENFORCED.http">还没有执行点</span>
+            <span v-if="notEnforced(d)" class="op-note" title="这个版本的服务端还没有执行这类规则的地方：先存着，不会拦任何东西">还没有执行点</span>
             <span class="op-act" :class="`act-${d.rule.action}`">{{ actionLabel(d.rule.action) }}</span>
           </span>
           <span class="op-tools">
@@ -327,7 +328,7 @@ function onPacksChanged() {
             </div>
 
             <template v-else-if="d.rule.match.kind === 'http'">
-              <p class="op-pending small">这类规则先存着，还没有地方执行：出网代理和浏览器请求拦截做好之前，它不会拦任何请求。</p>
+              <p class="op-pending small">在 Agent 用 aad 操作的浏览器里生效：页面的请求发出前先问，要带请求闸门的 aad 版本。不经这个浏览器发出的请求（命令行里的 curl、别的程序）这类规则管不到。</p>
               <div class="op-grid">
                 <label class="field"><span>主机</span><input :id="`rule-${d.key}-first`" v-model="asHttp(d).host" class="input sm mono" placeholder="如 api.example.com 或 *.example.com" spellcheck="false" /></label>
                 <div class="field"><span>方法</span><UiSelect :model-value="asHttp(d).methods ?? []" multiple size="sm" placeholder="任何方法" aria-label="方法" :options="METHODS.map((v) => ({ value: v, label: v }))" @change="(v) => (asHttp(d).methods = v as string[])" /></div>

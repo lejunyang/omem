@@ -164,7 +164,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     mark(`${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`);
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).
-    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|code-index\/notify|hooks)(\/|\?|$)/.test(req.url)) return;
+    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|operation-gate|code-index\/notify|hooks)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
     await checkBearer(app, bearerToken(req));
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
@@ -282,6 +282,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     const b = q(z.object({ command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
     return commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+  });
+  // A request a page is about to send in a browser an agent drives (agents/http-gate.ts): the same
+  // callers as the command gate — this machine, a run's token. GET says which requests to ask about.
+  const gateCaller = (req: FastifyRequest) => {
+    const s = req.raw.socket;
+    if (viaProxy(req.raw) || !(loopbackIp(req.ip ?? "") || (!!s.remoteAddress && s.remoteAddress === s.localAddress))) throw new HttpError(403, "请求拦截只接受本机的请求");
+    const ctx = toolContextForToken(app, bearer(req));
+    if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
+    return ctx;
+  };
+  server.get("/api/operation-gate/http", async (req) => (await import("../agents/http-gate.ts")).httpWatch(app, gateCaller(req)));
+  server.post("/api/operation-gate/http", async (req) => {
+    const ctx = gateCaller(req);
+    const b = q(z.object({
+      method: z.string().min(1).max(20), url: z.string().min(1).max(8192), body: z.string().max(70_000).optional(), bodyTruncated: z.boolean().optional(),
+      contentType: z.string().max(200).optional(), page: z.object({ url: z.string().max(8192).optional(), title: z.string().max(500).optional() }).optional(), session: z.string().max(200).optional(),
+    }), req.body);
+    return (await import("../agents/http-gate.ts")).httpGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
   });
   server.get("/api/security/rule-packs", async () => ({ packs: listRulePacks(app) }));
   server.post("/api/security/rule-packs/:id/enable", async (req) => {

@@ -37,7 +37,7 @@ it("protects owner routes, versions edits and preserves scoped rules through the
     const put = await server.inject({ url, method: "PUT", payload: { rules: [http, command] } });
     expect(put.statusCode).toBe(200);
     const rules = put.json().rules;
-    expect(rules.map((r: { enforcedBy: string[] }) => r.enforcedBy)).toEqual([[], ["command-gate", "acp"]]);
+    expect(rules.map((r: { enforcedBy: string[] }) => r.enforcedBy)).toEqual([["browser"], ["command-gate", "acp"]]);
     expect((await server.inject({ url, method: "PUT", payload: { rules } })).json().rules).toEqual(rules);
     const edited = await server.inject({ url, method: "PUT", payload: { rules: [{ ...rules[0], action: "deny" }, rules[1]] } });
     expect(edited.json().rules[0].revision).toBe(rules[0].revision + 1);

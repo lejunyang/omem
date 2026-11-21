@@ -19,6 +19,13 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## HTTP 规则的判定入口：浏览器里的请求发出前来问（11-21）
+
+- `src/agents/http-gate.ts`：`httpWatch` 给出这个调用方现在要问哪些请求（生效的、动作不是放行的 HTTP 规则的主机和方法，带 `revision`），`httpGate` 判一个请求（JSON 请求体才参与 `body.jsonPath`），走命令同一个 `gateOperation`。接口 `GET / POST /api/operation-gate/http`，和命令垫片同样只认本机带运行令牌的请求。
+- `gateOperation`（`command-gate.ts`）对 HTTP：卡片和审计里请求写成“方法 主机 路径”，卡片写“Agent 操作的网页要发出受保护的请求”和所在页面；`pending` 的回答带 `askId`。`operation-policy.ts` 的 `enforcedBy.http` 改成 `["browser"]`，`ruleApplies` 从 `decide` 里提出来共用。
+- 网页：HTTP 规则不再标“还没有执行点”（连旧服务端时仍标），编辑里说明它在 aad 操作的浏览器里生效、管不到别的途径。
+- 执行点在 aad 那边（请求闸门，另一个仓库），两边还没连起来跑过。测试 `test/http-gate.test.ts`，设计在 `docs/v2/command-gate.md` 的“网页请求”。
+
 ## 网页按成员能力显示（11-21）
 
 - 设置 → 成员：每行行尾“能做什么”，打开 `web/src/components/MemberCaps.vue`（右侧抽屉）：预设（全局角色）加一句说明，能力按区域分组，每项写有没有和从哪来（预设带的 / 空间角色带的 / 单独给的 / 单独不给 / 部分空间有），用 `UiSegmented` 选跟预设 / 允许 / 不给；按空间的能力展开他能读的空间逐个另设。整份 `PUT /api/members/:id/capabilities`，底部一句话写改了什么，关闭时有未保存改动用 `confirmDialog` 问。成员行显示“另设 N 项”（每人读一次 `GET /api/members/:id/capabilities`）。
