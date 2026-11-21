@@ -151,7 +151,7 @@ export async function importFile(app: App, spaceId: string, file: string, uri?: 
   return upsertSource(app, { archive, spaceId, kind, uri: id, title: basename(path), text: buf.toString("utf8") });
 }
 
-export function keepOriginal(app: App, path: string, buf = readFileSync(path)) {
+export function keepOriginal(app: App, path: string, buf: Buffer = readFileSync(path)) {
   const name = `${sha256(buf).slice(0, 16)}${extname(path).toLowerCase()}`;
   mkdirSync(app.filesDir, { recursive: true });
   // A compressed copy (core/media.ts) stands in for the original: do not bring the large file back.
