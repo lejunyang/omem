@@ -32,6 +32,12 @@ it("protects owner routes, versions edits and preserves scoped rules through the
       const res = await server.inject({ url, method, headers: { authorization: `Bearer ${token}` } });
       expect(res.statusCode).toBe(403);
     }
+    for (const method of ["GET","PUT"] as const) {
+      expect((await server.inject({url:"/api/security/egress",method,headers:{authorization:`Bearer ${token}`}})).statusCode).toBe(403);
+    }
+    const egress = {mode:"all-sandboxed",default:"approve",tunnelWhenUnsure:"deny",inspect:["*.example.org"],waitSeconds:20};
+    expect((await server.inject({url:"/api/security/egress",method:"PUT",payload:egress})).json()).toEqual(egress);
+    expect((await server.inject({url:"/api/security/egress"})).json()).toMatchObject({...egress,rootGenerated:false,runs:[],pending:[]});
     const http = { id: "web", revision: 1, enabled: true, action: "log", match: { kind: "http", host: "example.org" } };
     const command = { ...http, id: "cmd", action: "deny", scope: { spaces: ["sample"] }, match: { kind: "command", executable: "acme" } };
     const put = await server.inject({ url, method: "PUT", payload: { rules: [http, command] } });

@@ -19,6 +19,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 严格成员运行的出网代理
+
+从 `src/agents/egress-run.ts` 读运行入口与回收，`egress-proxy.ts` 处理 HTTP、CONNECT 和按名单解密。本人由安全接口查看主机汇总和待批请求，策略与限制见 `docs/v2/command-gate.md` 的“出网代理”。
+
 ## 2026-11-21 · 远程页：把会话交给成员
 
 - 会话主人在画面上方点“交给成员”，在右侧抽屉（`web/src/components/RemoteGrants.vue`）里选人、只看或可操作、多久，已交给的人一行一个，可改模式、从现在起延长、收回（`confirmDialog`）。候选人由 `/api/users` 和每人的 `/api/members/:id/capabilities` 里的 `remote.view` / `remote.operate` 算出（`web/src/lib/remote-grants.ts`）。
