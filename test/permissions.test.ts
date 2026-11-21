@@ -203,13 +203,24 @@ describe("roles and permissions", async () => {
     tokens[id] = createApiToken(app,id,"test");
     sqlRun(app.db,"insert into conversations(id,space_id,user_id,created_at,updated_at) values('demo-question','team',?,'','')",id);
     const r = createRun(app,{kind:"ask",title:"询问",spaceId:"team",userId:id,input:{conversationId:"demo-question"}});
-    const {createAsk} = await import("../src/agents/asks.ts");
+    const {createAsk, markAskSent} = await import("../src/agents/asks.ts");
     const ask = (props: Partial<Parameters<typeof createAsk>[1]> = {}) => createAsk(app,{runId:r.id,userId:id,question:"选哪一天？",...props}).id;
     const post = (path: string, body: object = {}) => as(id,path,{method:"POST",body:JSON.stringify(body)});
     expect((await post("/api/asks/"+ask()+"/answer",{text:"周一"})).status).toBe(200);
     expect((await post("/api/asks/"+ask()+"/dismiss")).status).toBe(200);
-    for (const card of [ask({kind:"approval"}),ask({context:{handler:"flow-save"}}),ask({userId:"ann"})])
+    for (const action of ["answer", "dismiss"]) {
+      const sent = ask();
+      markAskSent(app, sent);
+      expect((await post(`/api/asks/${sent}/${action}`, { text: "周一" })).status).toBe(200);
+      const deferred = ask({ context: { deferredUntil: "2030-01-01T09:00:00Z" } });
+      expect((await post(`/api/asks/${deferred}/${action}`, { text: "周一" })).status).toBe(200);
+    }
+    for (const card of [ask({kind:"approval"}), ask({context:{handler:"flow-save"}}), ask({userId:"ann"}),
+      ask({context:{askedBy:"ann"}}), ask({context:{operationApproval:true}})]) {
+      markAskSent(app, card);
       expect((await post("/api/asks/"+card+"/answer",{text:"好"})).status).toBe(403);
+      expect((await post("/api/asks/"+card+"/dismiss")).status).toBe(403);
+    }
     const item = {space:"team",kind:"todo",title:"测试事项"};
     expect((await post("/api/items",item)).status).toBe(403);
     addMember(app,"team",id,"editor");

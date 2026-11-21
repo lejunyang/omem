@@ -565,7 +565,10 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
       requirePerm(app, userId, "ask.send");
       const ordinary = one(app.db, `select 1 from asks a join conversations c on c.id=a.conversation_id
         join runs r on r.id=a.run_id and r.kind='ask' and coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))=c.id
-        where a.id=? and a.kind='question' and a.tool is null and a.args is null and a.context is null
+        where a.id=? and a.kind='question' and a.tool is null and a.args is null
+        and json_extract(a.context,'$.handler') is null
+        and json_extract(a.context,'$.askedBy') is null
+        and json_extract(a.context,'$.operationApproval') is null
         and a.user_id=? and c.user_id=a.user_id and r.user_id=a.user_id`, (req.params as {id:string}).id, userId);
       if (ordinary) return;
     }
