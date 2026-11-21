@@ -1,3 +1,6 @@
+import { sceneWords, toolSections, UnknownScene, type InstructionScene } from "./instruction-sections.ts";
+import type { RunKind } from "./run-kinds.ts";
+export { toolSections } from "./instruction-sections.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import { lentByOthers, localOnly, meshNote } from "../core/mesh.ts";
 import { REVIEW_TOOLS } from "./review.ts";
@@ -64,6 +67,8 @@ function parseRole(name: string, raw: string, customized: boolean, overlay?: Rol
   const text = raw.replace(/\r\n/g, "\n");
   const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
   const meta = (m ? YAML.parse(m[1]) : {}) as Partial<Role>;
+  const body = m ? text.slice(m[0].length) : text;
+  if (body.includes("<!-- when:")) toolSections(body, new Set());
   return {
     name,
     description: meta.description ?? "",
@@ -71,7 +76,7 @@ function parseRole(name: string, raw: string, customized: boolean, overlay?: Rol
     writes: !!meta.writes,
     modes: meta.modes ?? [],
     skills: overlay ? applyOverlay(meta.skills ?? [], overlay.skills) : (meta.skills ?? []),
-    body: m ? text.slice(m[0].length) : text,
+    body,
     customized,
   };
 }
@@ -87,6 +92,7 @@ export function loadRole(name: string, app?: App): Role {
     try {
       return parseRole(name, own, true, overlay);
     } catch (e) {
+      if (e instanceof UnknownScene) throw e;
       console.warn(`[omem] 自定义角色 ${name} 无法解析，改用源码版本：${(e as Error).message}`);
     }
   }
@@ -105,25 +111,12 @@ export function loadRole(name: string, app?: App): Role {
  * is followed by `<!-- tools: a b -->` stays when the run has any of them (a coder reads nothing
  * about items, wake-ups or how to write memories).
  */
-export function commonGuide(tools: Set<string>, capabilities = backendCapabilities({ transport: "acp" })) {
+export function commonGuide(tools: Set<string>, capabilities = backendCapabilities({ transport: "acp" }), scene: string[] = [], matched?: string[]) {
   const guide = readFileSync(join(rolesDir(), "_common.md"), "utf8");
   // The preamble before the first section describes the MCP interface.
   const sections = capabilities.omemAccess === "mcp" ? guide : guide.slice(guide.search(/^## /m));
-  const body = toolSections(sections, tools, capabilities.localTools);
+  const body = toolSections(sections, tools, capabilities.localTools, scene, matched);
   return capabilities.omemAccess === "shell-bridge" ? DOUBAO_TOOL_NOTE + "\n\n" + body : body;
-}
-
-/** Adjacent markers below a heading all apply. A tools marker matches any listed name. */
-export function toolSections(text: string, tools: Set<string>, localTools = true) {
-  return text.replace(/\r\n/g, "\n").split(/(?=^## )/m).flatMap(part => {
-    const header = /^(## [^\n]*\n)((?:<!-- (?:tools|needs): [^>\n]+ -->\n?)+)/.exec(part);
-    if (!header) return [part];
-    for (const [, kind, value] of header[2].matchAll(/<!-- (tools|needs): (.*?) -->/g)) {
-      if (kind === "needs" ? !(value === "local" ? localTools : value === "tools" && tools.size > 0)
-        : !value.split(/\s+/).some(t => tools.has(t))) return [];
-    }
-    return [header[1] + part.slice(header[0].length)];
-  }).join("").trim();
 }
 
 export function listAgentProfiles(app: App) {
@@ -375,6 +368,9 @@ export type PreparedRun = {
   now: string;
   /** What `system` is made of, reported with each turn for the run page. */
   parts: InstructionParts;
+  scene: string[];
+  awareness: string;
+  sceneGuide: string;
   token: string;
   mcp: McpAccess;
   extraMcp: Record<string, McpServerSpec>;
@@ -466,7 +462,7 @@ export function recordIsolation(app: App, runId: string | null, userId: string, 
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
+  input: { actor: Actor; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
   const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -544,7 +540,6 @@ export function prepareRun(
   const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
-  const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   const memorySpaces = spacesWithCapability(app, userId, "memories.view");
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
@@ -563,11 +558,16 @@ export function prepareRun(
   const agents = roleName === "assistant" && !spec && agentUse ? agentIndex(app) : "";
   const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
   const guideTools = access?.mode ? new Set<string>() : tools;
+  const awareness = input.awarenessNote?.(tools.size > 0) ?? "";
+  const scene = sceneWords({ chat: false, ...input.scene, awareness: !!(input.scene?.awareness || awareness) }, tools);
+  const matched: string[] = [];
+  const render = (text: string) => toolSections(text, guideTools, capabilities.localTools, scene, matched);
+  const instructions = spec?.instructions && render(spec.instructions);
   const body = spec
-    ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
-    : `# 角色：${role!.description}\n\n${toolSections(role!.body, guideTools, capabilities.localTools)}`;
+    ? `# 角色：${spec.description}\n\n${render(spec.prompt)}${instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${instructions}` : ""}`
+    : `# 角色：${role!.description}\n\n${render(role!.body)}`;
   const descriptions: Record<string, string> = { search: "检索材料", read_source: "按行读原件", read_page: "读 Wiki 页", read_item: "读事项" };
-  const common = commonGuide(guideTools, capabilities) + (access?.mode ? "\n\n## 云端只读工具\n" +
+  const common = commonGuide(guideTools, capabilities, scene, matched) + (access?.mode ? "\n\n## 云端只读工具\n" +
     [...tools].map(t => t + "：" + descriptions[t]).join("、") + "。连接信息在本轮消息或安全通道。GET 工具地址查看参数。" +
     (access.mode === "header" ? "按连接信息设置 Authorization 请求头，POST 地址/工具名，正文是 JSON 参数对象。" :
       "GET 地址/工具名?args=URL编码的JSON参数。每个地址只用一次，下次用响应里的 next。") +
@@ -581,12 +581,13 @@ export function prepareRun(
   // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
   const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
   const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
+  const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   return {
     profile,
     capabilities,
     tools,
     cwd,
-    system,
+    system, scene, awareness, sceneGuide: matched.join("\n\n"),
     // A replay arm answers as of the question's time.
     now: `现在：${localTime(app, input.replay?.view.asOf)}`,
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
@@ -779,17 +780,14 @@ export function fallbackProfiles(
  * A model swapped in for one run (generate_wiki's execution, switch_run_ai), kept as the run's
  * input.ai. Coding and review runs choose per role (coder / reviewer) instead.
  */
-function runAI(app: App, runId: string | null): Execution | undefined {
-  if (!runId) return undefined;
-  const r = one<{ kind: string; input: string }>(app.db, "select kind, input from runs where id = ?", runId);
-  if (!r || r.kind === "code" || r.kind === "review") return undefined;
-  return (JSON.parse(r.input || "{}") as { ai?: Execution }).ai;
-}
-
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
   input = { ...input, userId: input.userId ?? runUser(app, input.runId) };
   await refreshForRun(app);
-  const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)), input.userId);
+  const row = input.runId ? one<{ kind: RunKind; input: string }>(app.db, "select kind, input from runs where id = ?", input.runId) : undefined;
+  const runKind = row?.kind;
+  const runInput = json<{ ai?: Execution; turnContext?: unknown }>(row?.input ?? "{}", {});
+  const ownAI = input.ownAI || runKind === "code" || runKind === "review";
+  const execution = validateExecution(app, input.execution ?? (ownAI ? undefined : runInput.ai), input.userId);
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const declared = input.spec ? (input.spec.tools.length ? expandTools(input.spec.tools) : DEFAULT_SPEC_TOOLS) : loadRole(input.role, app).tools;
@@ -807,7 +805,6 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // the chosen one as a failover.
   let own: AgentProfile | undefined;
   let chosen: ChooseResult | null = null;
-  const runKind = input.runId ? one<{ kind: string }>(app.db, "select kind from runs where id = ?", input.runId)?.kind : undefined;
   // Checks, replays and comparisons run on what their caller set and are not choices of their own.
   const internal = !!(input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName || input.ownAI);
   const scene = input.choose ?? "tasks";
@@ -836,7 +833,12 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     }
   }
   const primary = accountProfile(app, { ...input, actor });
-  const prepare = (profile: AgentProfile) => prepareRun(app, { ...input, actor, profile, lessons, lessonIds: told.ids, recallNote: told.recallNote });
+  const { awarenessNote } = await import("./awareness.ts");
+  const prepare = (profile: AgentProfile) => prepareRun(app, {
+    ...input, actor, profile, lessons, lessonIds: told.ids, recallNote: told.recallNote,
+    scene: { kind: runKind, chat: !internal && (runKind === "ask" || runKind === "guest" || runKind === "lark-command"), awareness: !internal && !!runInput.turnContext },
+    awarenessNote: internal ? undefined : withTools => awarenessNote(app, input.runId, withTools),
+  });
   if (execution && primary.id === execution.profile) validateExecution(app, { ...execution, model: primary.model, effort: primary.effort }, input.userId);
   // A run (a role's or an Agent 档案's) may move to its other configured backends when its model is
   // full, and to the fallbacks when the backend is busy, out of quota, or breaks down (failoverProfiles).
@@ -912,8 +914,6 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : null;
   /** Who the first AI was, for the words when the run moves on. */
   const firstWho = pinned ? `原指定的 AI（${aiLabel(execution!)}）` : own ? `自动选中的 AI（${aiLabel({ profile: chain[0].id, model: chain[0].model })}）` : "默认后端";
-  // Other runs on the same chat, message or item, and where its item goes on elsewhere (awareness.ts).
-  const { awarenessNote } = await import("./awareness.ts");
   // Memories close to the task that its instructions did not carry (memory/passive.ts), for the runs
   // that answer or act. The roles that keep the knowledge in order look memories up themselves, and
   // a replay arm is given its own (replay.ts). A comparison run sees the same and is not counted.
@@ -967,9 +967,10 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       try {
         recordIsolation(app, input.runId, input.userId!, prep.profile);
-        const aware = internal ? "" : awarenessNote(app, input.runId, prep.tools.size > 0);
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
         const workspace = input.worktrees && accountOf(prep.profile) ? workspaceMounts(app, input.worktrees, input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined, input.worktreeAccess === "read" ? "read" : "write") : undefined;
+        const resumeSessionId = primaryKept && i === 0 ? input.resumeSessionId ?? (restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined;
+        const sceneUpdate = resumeSessionId && prep.sceneGuide ? `\n\n## 本轮适用的场景说明\n\n${prep.sceneGuide}` : "";
         const req = {
           runId: input.runId,
           strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
@@ -979,14 +980,15 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           system: prep.system,
           capabilities: prep.capabilities,
           parts: prep.parts,
-          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
+          scene: prep.scene,
+          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${prep.awareness}${sceneUpdate}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
           signal: input.signal,
           mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
           extraMcp: prep.extraMcp,
-          resumeSessionId: primaryKept && i === 0 ? input.resumeSessionId ?? (restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined,
+          resumeSessionId,
           persistSession: input.persistSession ?? !!input.resumeSessionId,
           queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
         };
@@ -1014,7 +1016,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         let result: AgentResult;
         try {
           result = input.reuseSession && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp"
-            ? await backgroundTurn(app, prep, req, `${task}${aware}`, input.runId, watch)
+            ? await backgroundTurn(app, prep, req, `${task}${prep.awareness}`, input.runId, watch)
             : await runBackend(app, prep.profile, req, watch);
         } catch (e) {
           if (!quietAfterAll(app, input.runId, quietBefore, e)) throw e;
