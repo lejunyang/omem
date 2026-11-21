@@ -4,7 +4,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError, json, newId, now, sha256 } from "../core/util.ts";
-import { addMember, createUser, emailHolder, getUser, identitiesOf, identityOwner, linkIdentity, normalEmail, OWNER, setUserRole, updateUser, userName, type User } from "../core/users.ts";
+import { addMember, requireMembershipSpace, createUser, emailHolder, getUser, identitiesOf, identityOwner, linkIdentity, normalEmail, OWNER, setUserRole, updateUser, userName, type User } from "../core/users.ts";
 import { findRole, requirePerm } from "./permissions.ts";
 import { saveConnection } from "./connections.ts";
 import { findConnection } from "./vault.ts";
@@ -267,7 +267,7 @@ const toInvite = (r: InviteRow): Invite => ({ id: r.id, role: r.role, spaces: js
 /** An invite link: whoever logs in with it gets an account at once (no approval), with this global role and these spaces. */
 export function createInvite(app: App, by: string, input: { role?: string; spaces?: InviteSpace[]; allowAny?: boolean; note?: string; days?: number }) {
   for (const s of input.spaces ?? []) {
-    if (!findSpace(app, s.space)) throw new HttpError(404, `空间不存在：${s.space}`);
+    requireMembershipSpace(app, s.space);
     if (findRole(app, s.role)?.scope !== "space") throw new HttpError(400, `不是空间角色：${s.role}`);
   }
   const role = input.role ?? "member";
@@ -295,7 +295,11 @@ export function validInvite(app: App, token: string): Invite | null {
 function useInvite(app: App, invite: Invite, user: User) {
   run(app.db, "update invites set used_by = ?, used_at = ? where id = ? and used_at is null", user.id, now(), invite.id);
   if (invite.role !== "member" && findRole(app, invite.role)) setUserRole(app, user.id, invite.role);
-  for (const s of invite.spaces) if (findSpace(app, s.space) && findRole(app, s.role)) addMember(app, s.space, user.id, s.role);
+  for (const s of invite.spaces) {
+    const space = findSpace(app, s.space);
+    // Older invites could include a personal space. Redeem their shared spaces.
+    if (space && space.kind !== "personal" && findRole(app, s.role)) addMember(app, s.space, user.id, s.role);
+  }
   if (invite.allowAny) updateUser(app, user.id, { settings: { loginAny: true } });
 }
 

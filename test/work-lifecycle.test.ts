@@ -20,7 +20,7 @@ import { ASKS_PER_DAY, askLineEnd, endLine, lineEndCases, lineLifecycleDue, wrap
 import { nextOf, submitLineState } from "../src/items/lines.ts";
 import { setParent } from "../src/items/parent.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
-import { addMember, createApiToken, createUser } from "../src/core/users.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
 import type { Notification } from "../src/core/notify.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
@@ -369,7 +369,7 @@ describe("工作线：接口", () => {
     // 重新打开.
     expect((await put(line.id, { phase: "active" })).json()).toMatchObject({ status: "open", phase: null });
     expect((await put(req.id, { phase: "watching" })).statusCode).toBe(400);
-    createUser(app, { id: "reader", name: "成员甲" }); addMember(app, "personal", "reader", "editor");
+    createUser(app, { id: "reader", name: "成员甲" });
     const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
     expect((await server.inject({ url: "/api/work/ended", headers })).statusCode).toBe(403);
     expect((await server.inject({ method: "PUT", url: `/api/work/${line.id}/phase`, headers, payload: { phase: "done" } })).statusCode).toBe(403);

@@ -32,7 +32,7 @@ import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
-import { accessibleSpaces, activeUser, identityOwner, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
+import { accessibleSpaces, activeUser, identityOwner, findUser, requireMembershipSpace, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
 import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
@@ -5547,6 +5547,7 @@ def({
     const spaces = (a.spaces ?? []).map((s) => {
       const found = findSpace(ctx.app, s.space) ?? one<{ id: string }>(ctx.app.db, "select id from spaces where name = ?", s.space);
       if (!found) throw new HttpError(400, `没有空间「${s.space}」；用 list_spaces 查看`);
+      requireMembershipSpace(ctx.app, found.id);
       return { id: found.id, role: s.role };
     });
     const { addMember, createUser, emailHolder, getUser, identityOwner, linkIdentity, updateUser } = await import("../core/users.ts");

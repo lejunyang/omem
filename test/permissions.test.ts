@@ -392,7 +392,7 @@ describe("roles and permissions", async () => {
     createUser(app, { id, name: "只读用户", role: "observer" });
     addMember(app, "team", id, "reader");
     tokens[id] = createApiToken(app, id, "test");
-    expect((await as(id, "/api/sources/" + source.id)).status).toBe(403);
+    expect((await as(id, "/api/sources/" + source.id)).status).toBe(404);
     expect(await (await as(id, "/api/sources/paths?space=team")).text()).not.toContain(source.id);
     expect((await json(id, "/api/lookup?id=" + source.id)).hits).toEqual([]);
   });
@@ -491,7 +491,7 @@ describe("roles and permissions", async () => {
     expect((await as("ann", "/api/sources?space=team")).status).toBe(200);
     expect((await as("ann", "/api/sources?space=other")).status).toBe(403);
     const m = remember(app, { spaceId: "other", kind: "fact", content: "别处的事" });
-    expect((await as("ann", `/api/memories/${m.id}`)).status).toBe(403);
+    expect((await as("ann", `/api/memories/${m.id}`)).status).toBe(404);
     // The memory page lists every space at once: only the readable ones.
     const listed = (await json("ann", "/api/memories")) as { spaceId: string }[];
     expect(listed.length).toBeGreaterThan(0);

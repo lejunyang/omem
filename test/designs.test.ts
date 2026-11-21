@@ -271,7 +271,11 @@ describe("design HTTP", async () => {
     expect((await call(`/api/designs?work=${work.id}`)).body.designs.map((x: { id: string }) => x.id)).toEqual([d.id]);
     // Someone else sees only the spaces they may read.
     expect((await call("/api/designs", { token })).body.designs.some((x: { id: string }) => x.id === secret.id)).toBe(false);
-    expect((await call(`/api/designs/${secret.id}`, { token })).status).toBe(404);
+    for (const suffix of ["", "/diff?decision=D1"]) {
+      const inaccessible = await call(`/api/designs/${secret.id}${suffix}`, { token });
+      expect(inaccessible.status).toBe(404);
+      expect(inaccessible).toEqual(await call(`/api/designs/missing${suffix}`, { token }));
+    }
 
     const detail = (await call(`/api/designs/${d.id}`)).body;
     expect(Object.keys(detail).sort()).toEqual(["author", "body", "changes", "counts", "id", "item", "itemId", "origin", "outside", "reqs", "repos", "revision", "revisions", "runId", "sources", "spaceId", "status", "title", "updatedAt", "work", "workId"].sort());

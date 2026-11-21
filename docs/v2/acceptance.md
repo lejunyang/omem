@@ -1840,6 +1840,7 @@ TraeX 与其他 ACP 的清理补验：
 - 换用另一个全局 owner 账号，在网页和助手会话里分别新建启用的定时通知规则、重新启用已有的停用规则。每次保存后，规则与调度都已启用，待确认列表为空。该账号保存带脚本的规则仍被拒绝。
 - 用只读观察者打开有写入的运行，同时连接事件流。规则动作只显示类型；拒绝项目的记忆读取后，两处都隐藏写入的记忆正文。
 - 分别以本人、管理员、观察者请求 `GET /api/settings/sections`。管理员默认只读成员区。给观察者助手区 view、edit 后读取 `?section=assistant`，应只见该区配置；回传分区内容可保存。混入端口或代本人回复的改动应返回 403，并保留原值。检查成功请求的审计只含区域和键名。
+- 在共享空间给成员 reader 再改为 editor，验证角色对应的读取和编辑；给其他人分配个人空间应直接报错。按 id 读取不可见的方案、差异、需求、指标、记忆或原件，响应与缺失 id 相同。每轮权限回归在定向命令里加入 `test/designs.test.ts test/full-access.test.ts test/plugin-slots.test.ts test/quality-audit-run.test.ts`，使用 `--maxWorkers=2`。
 - 给普通成员只授予 `settings.assistant.view`，关闭 Agent 管理和编码交办。从侧栏“评审设置”进入，再直接打开 `#/agents?tab=review&tier=<档位 id>`，均能查看配置。只读时没有保存按钮；加授 `settings.assistant.edit` 后可保存并重新读取。
 - 只授予 `settings.members`，用成员管理接口列成员、邀请和停用普通成员。尝试改管理员、重置登录身份或转授安全区 edit 均应被拒。用同一观察者账号在工具 HTTP 接口、MCP 和助手运行读一份可见原件，再尝试写入；写工具应从目录中移除，直接点名调用也被拒。
 - 以能开远程会话的成员取 `GET /api/remote/grant-candidates`，核对可选对象与能力。分别收回授权、等待到期、关闭会话，检查受托者的事件及列表里的 `ended`。用仅能读项目 A 的账号取 `GET /api/wiki/kinds?templates=1`，只能得到适用类型的静态模板。

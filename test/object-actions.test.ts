@@ -113,9 +113,10 @@ describe("对象动作的声明", () => {
     return trustPlugin(app, "actprobe", "inprocess").then(() => expect(rungOf(app, "actprobe_merge")).toBe("free"));
   });
   it("视图按当前状态给按钮，只给事项本人；材料摘要写出可做的动作和依据引用", async () => {
-    const i = item(), o = await attachObject(app, i.id, url(), "owner");
+    createSpace(app, { id: "shared", name: "项目 A" });
+    const i = item("owner", "shared"), o = await attachObject(app, i.id, url(), "owner");
     expect(o.actions).toEqual([{ id: "merge", label: "合并", confirm: "检查没过时平台会拒绝。" }]);
-    createUser(app, { id: "member", name: "成员甲" }); addMember(app, "personal", "member", "reader");
+    createUser(app, { id: "member", name: "成员甲" }); addMember(app, "shared", "member", "reader");
     expect(() => itemObjects(app, i.id, "member")).toThrow("事项不存在");
     expect(await materialsBrief(app, i.id, "owner")).toContain("可做：合并（工具 actprobe_merge，key=1）");
     expect(await materialsBrief(app, i.id, "owner")).toContain(`object:${o.id}`);
@@ -127,7 +128,7 @@ describe("对象动作的声明", () => {
 
 describe("事项页上点按钮", () => {
   it("本人点了直接执行（不走审批），写审计，马上重读状态并推进流程", async () => {
-    expect(ROUTE_RULES["POST /api/items/:id/objects/:object/actions/:action"]).toBe("self");
+    expect(ROUTE_RULES["POST /api/items/:id/objects/:object/actions/:action"]).toEqual({ cap: "items.edit", at: "item:p.id" });
     const i = item(); flow(); await startFlow(app, i.id, "actions", owner);
     const o = await attachObject(app, i.id, url(), "owner"), s = await server();
     const r = await press(s, i.id, o.id);
@@ -157,11 +158,12 @@ describe("事项页上点按钮", () => {
     expect(itemObjects(app, i.id, "owner")[0]).toMatchObject({ disabled: true, actions: [] });
   });
   it("只有事项本人、在可写空间能点", async () => {
-    createUser(app, { id: "member", name: "成员甲" }); addMember(app, "personal", "member", "reader");
+    createSpace(app, { id: "shared", name: "项目 A" });
+    createUser(app, { id: "member", name: "成员甲" }); addMember(app, "shared", "member", "reader");
     const headers = { authorization: `Bearer ${createApiToken(app, "member", "test")}` };
-    const i = item(), o = await attachObject(app, i.id, url(), "owner"), s = await server();
+    const i = item("owner", "shared"), o = await attachObject(app, i.id, url(), "owner"), s = await server();
     expect((await press(s, i.id, o.id, "merge", headers)).statusCode).toBe(403);
-    const readonly = item("member");
+    const readonly = item("member", "shared");
     run(app.db, "insert into item_materials(item_id,kind,ref,label,meta,added_by,created_at) values(?,'object',?,'x','{}','user','2026-11-16')", readonly.id, o.id);
     expect((await press(s, readonly.id, o.id, "merge", headers)).statusCode).toBe(403);
     expect(calls()).toBeNull();

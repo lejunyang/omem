@@ -6,7 +6,7 @@ import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { aliasTarget } from "../sources/duplicates.ts";
 import { can, canAccessRun, runAudience, canReadRun, isOwner, requirePerm, type GlobalPerm, type SpacePerm } from "./permissions.ts";
-import { requireReadable } from "./visibility.ts";
+import { requireReadable, sourceReadable } from "./visibility.ts";
 
 /**
  * What each API route needs (docs/v2/multi-user.md, “在哪里检查”), checked in one place after the
@@ -632,6 +632,15 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   const space = locate(app, req, rule.at);
   if ("cap" in rule && rule.cap === "flows.view" && rule.at === "item:p.id") {
     if (!space || !can(app, userId, rule.cap, space)) throw new HttpError(404, "事项不存在");
+    return;
+  }
+  // A detail lookup must give the same response for an unknown ID and a hidden one.
+  if (req.method === "GET" && "cap" in rule && rule.at.includes(":")) {
+    if (!space || !can(app, userId, rule.cap, space)) throw new HttpError(404, "要找的内容不存在");
+    if (rule.at.startsWith("src:")) {
+      const id = (req.params as { id: string }).id;
+      if (!await sourceReadable(app, userId, aliasTarget(app, id) ?? id)) throw new HttpError(404, "要找的内容不存在");
+    }
     return;
   }
   if (!space) throw new HttpError(rule.at.includes(":") ? 404 : 400, rule.at.includes(":") ? "要找的内容不存在" : "要指定空间");
