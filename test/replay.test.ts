@@ -12,7 +12,7 @@ import { createProposal, expireProposals } from "../src/agents/proposals.ts";
 import { profileDetail } from "../src/agents/profiles.ts";
 import { setEmbedderForTests } from "../src/search/embeddings.ts";
 import { visibleLines, visibleMemories, type RunView } from "../src/agents/replay-view.ts";
-import { createRun, getRun, listRuns, waitForRun } from "../src/agents/runs.ts";
+import { createRun, getRun, listRuns, runEvents, waitForRun } from "../src/agents/runs.ts";
 import { addMessage, ensureConversation } from "../src/agents/threads.ts";
 import { callTool } from "../src/agents/tools.ts";
 import type { App } from "../src/core/app.ts";
@@ -376,7 +376,11 @@ describe("replay end to end over ACP: both arms read only, the judge in both ord
       const done = await waitForRun(app, scheduled.runs[0]);
       const judges = listRuns(app, { parentId: done.id }).filter(r => r.kind === "replay-judge");
       expect(judges).toHaveLength(2);
-      for (const judge of judges) expect(getRun(app, judge.id).output.verdict).toMatchObject({ reason: "always_allow" });
+      for (const judge of judges) {
+        expect(getRun(app, judge.id).output.verdict).toMatchObject({ reason: "always_allow" });
+        const status = runEvents(app, judge.id).filter(e => e.type === "status").map(e => (e.data as { text: string }).text);
+        expect(status.filter(s => s.startsWith("使用 AI："))).toEqual([expect.stringMatching(/ · 完全访问$/)]);
+      }
     } finally {
       app.config.agents = original; vi.unstubAllEnvs(); rmSync(login, { recursive: true, force: true });
     }

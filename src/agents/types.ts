@@ -1,3 +1,5 @@
+import type { AgentProfile } from "../core/config.ts";
+import type { Execution } from "./execution.ts";
 import type { BackendCapabilities } from "./capabilities.ts";
 
 export type AgentEvent =
@@ -80,6 +82,8 @@ export type AgentRequest = {
   signal?: AbortSignal;
   /** Only connect and report the agent's models/modes, no prompt. */
   probe?: boolean;
+  /** Selection to display with the backend that actually starts. */
+  selection?: Execution;
   strictSelection?: { model?: boolean; effort?: boolean };
   /** Extra MCP servers from an agent spec (stdio command or HTTP url). */
   extraMcp?: Record<string, { command: string; args: string[]; env: Record<string, string> } | { url: string; headers: Record<string, string> }>;
@@ -91,6 +95,12 @@ export type AgentRequest = {
   /** Provider queue budget (ms); 0/undefined = unlimited while queued. */
   queueTimeoutMs?: number;
 };
+
+export function aiUsageText(profile: AgentProfile, access?: string, selection?: Execution) {
+  const label = [profile.id, profile.model ?? "默认模型", profile.effort ?? "默认强度", access].filter(Boolean).join(" · ");
+  const by = selection && { flow: "流程指定", user: "本人指定", auto: "任务选型" }[selection.source];
+  return `使用 AI：${label}${selection ? `（${by}：${selection.reason}）` : ""}`;
+}
 
 export type AgentProbe = {
   agent: string;

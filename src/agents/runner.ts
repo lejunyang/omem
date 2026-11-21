@@ -31,7 +31,7 @@ import { cloudAccess } from "./cloud-probe.ts";
 import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
-import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
+import { aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { trimTools } from "../auth/tools.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
@@ -1019,6 +1019,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         const sceneUpdate = resumeSessionId && prep.sceneGuide ? `\n\n## 本轮适用的场景说明\n\n${prep.sceneGuide}` : "";
         const req = {
           runId: input.runId,
+          selection: pinned && i === 0 ? execution : undefined,
           strictSelection: execution && pinned && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
           cwd: prep.cwd,
           workspace,
@@ -1051,10 +1052,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
           emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
         }
-        const accessLabel = profile.transport === "doubao-cli"
-          ? (prep.doubaoPermission === "always_allow" ? " · 完全访问" : " · 风险审批")
-          : (prep.fullAccess ? " · 完全访问" : "");
-        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${accessLabel}${execution && pinned && i === 0 ? `（${execution.source === "flow" ? "流程指定" : execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        if (profile.transport !== "doubao-cli")
+          emit({ type: "status", text: aiUsageText(profile, prep.fullAccess ? "完全访问" : undefined, req.selection) });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
         writesBefore = writes();

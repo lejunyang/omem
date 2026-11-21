@@ -96,7 +96,7 @@
 
 12. 只读档案以 `/tmp` 为工作目录，确认可在里面创建本轮私有文件，宿主临时文件不可见，批准挂载的子目录可写。
 
-13. 用豆包回答访客，核对「使用 AI」状态与替身收到的 `--permission-mode`。`ask_risky` 显示「风险审批」，`always_allow` 显示「完全访问」。
+13. 分别通过普通角色、主助手群内代答、会话回退到豆包和双序复盘启动豆包 CLI。每次启动应在对应运行写入一条「使用 AI」状态，档位与替身收到的 `--permission-mode` 一致。`ask_risky` 显示「风险审批」，`always_allow` 显示「完全访问」。
 
 自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 

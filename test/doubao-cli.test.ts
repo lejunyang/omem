@@ -3,9 +3,9 @@ import { writeFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { doubaoArgs, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
+import { doubaoCommand, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
 import { agentProfileSchema, type AgentProfile } from "../src/core/config.ts";
-import type { AgentEvent } from "../src/agents/types.ts";
+import { agentRunError, type AgentEvent } from "../src/agents/types.ts";
 import { runBackend } from "../src/agents/dispatch.ts";
 import { saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
 import { saveLarkSecret } from "../src/channels/lark-setup.ts";
@@ -13,8 +13,11 @@ import { testApp } from "./helpers.ts";
 import { all } from "../src/core/db.ts";
 import { saveProbe } from "../src/agents/probe.ts";
 import { askModel } from "../src/agents/oneshot.ts";
+import * as acp from "../src/agents/acp.ts";
+import { threadTurn } from "../src/agents/sessions.ts";
+import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
 import { runCodeTask } from "../src/agents/code.ts";
-import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { addRunEvent, createRun, getRun, runEvents, setRunOutput } from "../src/agents/runs.ts";
 import { createUser, addMember } from "../src/core/users.ts";
 import { saveRole } from "../src/auth/permissions.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -29,9 +32,9 @@ const fake: AgentProfile = { id: "doubao-cli", transport: "doubao-cli", command:
 describe("doubao cli", () => {
   it("passes model, effort, a permission mode by whether it may write, and the working directory", () => {
     const p = { ...fake, command: "doubao", args: [], model: "Auto", effort: "low" };
-    expect(doubaoArgs(p, { cwd: "/w", prompt: "" }, "hi")).toEqual(["-p", "hi", "--model", "Auto", "--effort", "low", "--permission-mode", "ask_risky", "-C", "/w"]);
-    expect(doubaoArgs(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow", resumeSessionId: "9" }, "hi").slice(0, 2)).toEqual(["--resume", "9"]);
-    expect(doubaoArgs(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow" }, "hi")).toContain("always_allow");
+    expect(doubaoCommand(p, { cwd: "/w", prompt: "" }, "hi").args).toEqual(["-p", "hi", "--model", "Auto", "--effort", "low", "--permission-mode", "ask_risky", "-C", "/w"]);
+    expect(doubaoCommand(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow", resumeSessionId: "9" }, "hi").args.slice(0, 2)).toEqual(["--resume", "9"]);
+    expect(doubaoCommand(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow" }, "hi").args).toContain("always_allow");
   });
 
   it("keeps risky approval for unboxed guest turns in every global mode", () => {
@@ -48,7 +51,7 @@ describe("doubao cli", () => {
           try {
             expect(prep.isolation.box).toBeUndefined();
             expect(prep.fullAccess).toBe(true);
-            expect(doubaoArgs(fake, { app, cwd: prep.cwd, prompt: "", doubaoPermission: prep.doubaoPermission, fullAccess: prep.fullAccess }, "hi")).toContain("ask_risky");
+            expect(doubaoCommand(fake, { app, cwd: prep.cwd, prompt: "", doubaoPermission: prep.doubaoPermission, fullAccess: prep.fullAccess }, "hi").args).toContain("ask_risky");
           } finally { revokeToolToken(prep.token); }
         }
       }
@@ -74,7 +77,7 @@ describe("doubao cli", () => {
             expect(prep.fullAccess).toBe(true);
             expect(prep.acpWritable).toBe(false);
             expect(prep.allowWrites).toBe(false);
-            if (transport === "doubao-cli") expect(doubaoArgs(profile, { cwd: prep.cwd, prompt: "", doubaoPermission: prep.doubaoPermission }, "hi"))
+            if (transport === "doubao-cli") expect(doubaoCommand(profile, { cwd: prep.cwd, prompt: "", doubaoPermission: prep.doubaoPermission }, "hi").args)
               .toContain(mode === "sandboxed" ? "always_allow" : "ask_risky");
           } finally { revokeToolToken(prep.token); }
         }
@@ -161,6 +164,33 @@ describe("doubao cli", () => {
         rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
       }
     });
+
+  it.each(["direct", "fallback"])("records the launched approval once for a guest answered by the assistant (%s)", async route => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.lark.guests.fullAccess = true;
+    app.config.agents.fullAccess = "sandboxed";
+    const cli = { ...fake, env: { FAKE_PERMISSION: "1" } };
+    const primary = { ...fake, id: "busy", transport: "acp" as const };
+    app.config.agents.profiles = [primary, cli];
+    app.config.agents.default = route === "fallback" ? primary.id : cli.id;
+    app.config.agents.fallback = [{ profile: cli.id }];
+    const busy = vi.spyOn(acp, "openAcp").mockRejectedValue(agentRunError("排队超时", "queue", true));
+    try {
+      const thread = createThread(app, { channel: "lark", spaceId: "personal", settings: { profile: app.config.agents.default } });
+      addMessage(app, thread.id, "user", "查看材料", null, { asker: "访客" });
+      const run = createRun(app, { kind: "ask", title: "群内代答", input: { conversationId: thread.id } });
+      const result = await threadTurn({ app, run, signal: new AbortController().signal, output() {},
+        event: (type, data) => addRunEvent(app, run.id, type, data) }, thread.id, threadMessages(app, thread.id));
+      expect(busy).toHaveBeenCalledTimes(route === "fallback" ? 1 : 0);
+      expect(result.profileId).toBe(cli.id);
+      expect(JSON.parse(result.text).reason).toBe("ask_risky");
+      const status = runEvents(app, run.id).filter(e => e.type === "status").map(e => (e.data as { text: string }).text);
+      expect(status.filter(s => s.startsWith("使用 AI："))).toEqual([`使用 AI：${cli.id} · 默认模型 · 默认强度 · 风险审批`]);
+    } finally {
+      busy.mockRestore(); app.db.close(); rmSync(app.home, { recursive: true, force: true });
+    }
+  });
 
   it("runs a turn: the prompt reaches it, the session comes from stderr, the run's env reaches it", async () => {
     // A live service may also have prompt files in the system temp directory.
