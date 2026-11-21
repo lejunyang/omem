@@ -807,7 +807,7 @@ await api.answerAsk({
 
 ## 插件承担一个阶段
 
-清单声明 `permissions.flow.run: true`，注册 `api.stageRunner({ id, name, describe, params?, start, check?, cancel? })`。流程写 `by: { runner: "stagekit:write", with: {} }`，budget.minutes 是从阶段开始计算的时限。每个带运行器的流程版本由本人确认，卡片列出哪个插件执行、会做什么。成员可以起草，由本人启用。
+清单声明 `permissions.flow.run: true`，注册 `api.stageRunner({ id, name, describe, params?, start, check?, cancel? })`。流程写 `by: { runner: "stagekit:write", with: {} }`，budget.minutes 是从阶段开始计算的时限。只有本人可通过 `PUT /api/flows/:id` 提交共享流程定义，也可以让自己的助手用 `save_flow` 提交。每个带运行器的新版本都先生成确认卡，逐段列出阶段名、运行器全名和插件声明的用途。本人点「启用」后才保存该版本并授权运行。
 
 `start(ctx, signal)` 除信号上下文外收到 attempt、idempotencyKey 和插件自己的 settings，返回 `{ ref, status, summary?, evidence? }`，status 为 running、done 或 failed。同一键重复调用必须返回同一作业，包括外部写成功、宿主还没拿到回执就重启的情况。插件负责动作幂等；宿主保存同一条 flow-runner 运行和回执，恢复时用原键，有回执后优先调用 check(ref, signal)。
 

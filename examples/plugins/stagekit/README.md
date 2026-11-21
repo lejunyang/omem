@@ -2,7 +2,7 @@
 
 用 `omem plugin install examples/plugins/stagekit` 安装，再信任插件的三项流程权限。文件都在数据目录的 `plugin-data/stagekit/` 下。
 
-保存下面的流程会先给本人确认卡片。本人确认后才保存和使用运行器；成员不能自行启用。
+用本人账号提交下面的流程。确认卡会列出「写检查文件」阶段、运行器 `stagekit:write` 和它的用途。本人点「启用」后，流程才会保存并获得运行器授权。
 
 ```yaml
 id: local-check

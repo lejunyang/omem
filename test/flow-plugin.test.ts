@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { forgetPlugin, loadPlugins, reloadPlugin, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
-import { parseFlow, saveFlow } from "../src/flows/definitions.ts";
+import { parseFlow, runnerApproved, saveFlow } from "../src/flows/definitions.ts";
 import { flowView, ownerAction, startFlow, reportStage, updateStageBudget, recordStage } from "../src/flows/engine.ts";
 import { checkPluginSignals } from "../src/flows/plugin-signals.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
@@ -16,6 +16,8 @@ import { all, run } from "../src/core/db.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { mergeSources } from "../src/sources/duplicates.ts";
 import { createSpace } from "../src/core/spaces.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
+import { callTool } from "../src/agents/tools.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { gateSettingsForFlow, saveGateChecks } from "../src/flows/plugin-gates.ts";
 
@@ -28,9 +30,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   async function begin(stages: unknown[]) {
     const f = parseFlow(raw(stages));
     if (f.stages.some(s => typeof s.by === "object" && "runner" in s.by)) {
-      const ask = proposeFlow(app, raw(stages), { actor: "assistant", userId: "member" });
-      expect(ask.question).toContain("这个阶段会由插件");
-      await expect(answerAsk(app, ask.id, { choice: 0, by: "member" })).rejects.toThrow();
+      const ask = proposeFlow(app, raw(stages), owner);
       await answerAsk(app, ask.id, { choice: 0, by: "owner" });
     } else saveFlow(app, raw(stages), "owner");
     const item = upsertItem(app, undefined, { title: "检查事项", spaceId: "personal" }, "user");
@@ -112,6 +112,41 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     });
   });
   const job = (fail = false) => ({ id: "job", name: "运行作业", by: { runner: "stagekit:job", with: { fail } }, budget: { minutes: 10 } });
+  it.each(["http", "save_flow"] as const)("%s 只接受本人提交流程，确认卡答复后才启用运行器", async entry => {
+    const id = entry === "http" ? "runner-http" : "runner-tool";
+    const yaml = JSON.stringify({ id, name: "流程授权", stages: [job()] });
+    const definition = parseFlow(yaml);
+    const member = createUser(app, { id: id + "-member", name: "普通成员" }).id;
+    const headers = (user: string) => ({ authorization: "Bearer " + createApiToken(app, user, "流程验证") });
+    const memberHeaders = headers(member), ownerHeaders = headers("owner");
+    const server = await (await import("../src/server/http.ts")).startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
+    const catalog = async () => (await server.inject({ url: "/api/flows", headers: ownerHeaders })).json();
+    const put = (headers: typeof ownerHeaders) => server.inject({ method: "PUT", url: "/api/flows/" + id, headers, payload: { yaml } });
+    const tool = (userId: string) => callTool({ app, userId, actor: "agent", tools: new Set(["save_flow"]),
+      spaceId: userId === "owner" ? "personal" : "personal-" + userId, spaces: null, runId: null }, "save_flow", { yaml });
+    try {
+      if (entry === "http") expect((await put(memberHeaders)).statusCode).toBe(403);
+      else expect(await tool(member)).toMatchObject({ isError: true, deniedCapability: "owner" });
+      expect((await catalog()).drafts).not.toContainEqual(expect.objectContaining({ id }));
+      if (entry === "http") {
+        const response = await put(ownerHeaders);
+        expect(response.statusCode).toBe(200);
+        expect(response.json().askId).toEqual(expect.any(String));
+      } else expect(await tool("owner")).toMatchObject({ isError: false, text: expect.stringContaining("等本人确认") });
+      const { drafts, flows } = await catalog();
+      expect(flows).not.toContainEqual(expect.objectContaining({ id }));
+      const draft = drafts.find((d: { id: string }) => d.id === id);
+      const card = "/api/asks/" + draft.askId;
+      expect((await server.inject({ url: card, headers: ownerHeaders })).json().question)
+        .toContain("运行作业：这个阶段会由插件 stagekit:job 执行：写入标记");
+      const answer = (headers: typeof ownerHeaders) => server.inject({ method: "POST", url: card + "/answer", headers, payload: { choice: 0 } });
+      expect((await answer(memberHeaders)).statusCode).toBe(404);
+      expect(runnerApproved(app, definition)).toBe(false);
+      expect((await answer(ownerHeaders)).statusCode).toBe(200);
+      expect((await catalog()).flows).toContainEqual(expect.objectContaining({ id, definition }));
+      expect(runnerApproved(app, definition)).toBe(true);
+    } finally { await server.close(); }
+  });
   it("按已有授权开始的运行器只记一次自动开始", async () => {
     const stages = [{...job(), gate:"confirm"}];
     saveFlow(app, raw(stages), "owner", true);

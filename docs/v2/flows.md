@@ -760,6 +760,6 @@ npm run build
 
 契约见 [插件开发](plugins.md#流程的完成信号)。从 `src/flows/plugin-signals.ts`、`plugin-runner.ts`、`plugin-gates.ts` 读起。信号与 Git 共用 checkGitSignals，运行器使用持久的 flow-runner 运行，检查接在阶段完成入口，保留既有对象状态、验收、签字与关卡升降。
 
-运行器确认绑定流程定义版本，阶段尝试的幂等键使用运行 id。检查设置存在本机 kv 的 `flow-checks:<流程id>`，启用时的 mandatory 决定错误是否暂停。
+运行器授权绑定流程定义版本。本人通过流程保存接口或自己的助手提交新版本，卡片列出哪个阶段由哪个插件执行、执行什么动作。本人点「启用」后生效。阶段尝试的幂等键使用运行 id。检查设置存在本机 kv 的 `flow-checks:<流程id>`，启用时的 mandatory 决定错误是否暂停。
 
 网页待接：`GET /api/flows` 的 signals/runners 提供选项、describe 与 params，gates 提供检查选项与 applies；流程行 checks 对应 `PUT /api/flows/:id/checks`。事项流程详情的 pluginEvidence 可打开链接，waitingSignal 提供 available、failures、checkedAt、nextAt、note，gateReview 提供拦下原因与结果，askId 指向本人处理卡片。运行器的 carrier.link 指向运行页。设置 → AI 用 `GET /api/settings?section=ai` 的 agents 展示来源与不可用原因（pluginBackend），档案选项从 `GET /api/profile-options` 的 backends 读可选后端。已选且不可用的插件后端由 unavailableBackends 返回来源和原因。
