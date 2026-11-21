@@ -9,6 +9,7 @@ import { addMaterials, removeMaterials } from "../src/items/materials.ts";
 import { createRun, getRun, listRuns } from "../src/agents/runs.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { createThread, findThread, threadMessages } from "../src/agents/threads.ts";
+import { itemFocus } from "../src/agents/turn-context.ts";
 import { watchedNote } from "../src/agents/sessions.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
@@ -16,7 +17,7 @@ import { startFlow, stopFlow } from "../src/flows/engine.ts";
 import { finishFollow, followAnchor, followContexts, noteItemChange } from "../src/flows/follow.ts";
 import { routeWatchedMessages } from "../src/channels/lark-watch.ts";
 import { chatListened, getContext, itemContext, saveContext } from "../src/channels/listen.ts";
-import { migrateItemContexts, setItemListening } from "../src/channels/listen-items.ts";
+import { itemStateText, migrateItemContexts, setItemListening } from "../src/channels/listen-items.ts";
 import { runActions } from "../src/rules/actions.ts";
 import { confirmRule } from "../src/rules/confirmation.ts";
 import { getRule, saveRule } from "../src/rules/store.ts";
@@ -191,6 +192,21 @@ describe("事情型关注", () => {
     const watched = await watchedNote(app, t, threadMessages(app, t.id));
     expect(watched).toContain("这件事已经上线，在观察期，观察到 12 月 5 日：只关心报错、用户反馈和数据异常，普通讨论不用处理。");
     expect(getContext(app, c.id)!.knobs).toEqual(c.knobs);
+  });
+
+  it("关注取最近进入的待复核阶段，普通问答按流程定义取进行中的阶段", async () => {
+    const { app, item } = await setup();
+    flow(app);
+    await startFlow(app, item.id, "demo", owner);
+    run(app.db, "update item_stages set state='doing', since='2026-11-01' where item_id=? and stage_id='code'", item.id);
+    run(app.db, "update item_stages set state='stale', since='2026-11-02' where item_id=? and stage_id='end'", item.id);
+    const focus = itemFocus(app, item, "explicit");
+    expect(focus.context.stage).toMatchObject({ name: "编码", state: "doing" });
+    const thread = findThread(app, itemContext(app, item.id)!.conversationId!)!;
+    expect(await watchedNote(app, thread, [])).toContain("流程走到「结束」（待复核）");
+    run(app.db, "update item_stages set state='done' where item_id=? and stage_id='end'", item.id);
+    expect(itemStateText(app, focus)).toContain("流程走到「结束」（待复核）");
+    expect(await watchedNote(app, thread, [])).toContain("流程走到「编码」（进行中）");
   });
 
   it("the owner picks the matter's groups on the line page or by asking: kept through every sync with its items", async () => {
