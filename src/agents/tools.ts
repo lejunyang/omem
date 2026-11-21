@@ -2952,14 +2952,20 @@ def({
   },
 });
 
+function learningGoal(ctx: ToolContext, id: string) {
+  const goal = getGoal(ctx.app, id);
+  if (goal.userId !== (ctx.userId ?? OWNER) || !canRead(ctx, goal.spaceId)) throw new HttpError(404, "学习目标不存在");
+  return goal;
+}
+
 def({
   name: "create_card",
   description: "创建一张复习卡片（间隔重复）。正面是问题/提示，背面是答案/解释；一卡一知识点。属于某个学习目标时带上 goal。",
   write: true,
   schema: z.object({ front: z.string(), back: z.string(), source_refs: refs, space: z.string().optional(), goal: z.string().optional().describe("学习目标 id") }),
   handler: (ctx, a) => {
-    const goal = a.goal ? getGoal(ctx.app, a.goal) : null;
-    const r = createCard(ctx.app, { spaceId: goal?.spaceId ?? writeSpace(ctx, a.space), front: a.front, back: a.back, sourceRefs: a.source_refs, userId: goal?.userId ?? ctx.userId ?? "owner", goalId: goal?.id ?? null });
+    const goal = a.goal ? learningGoal(ctx, a.goal) : null;
+    const r = createCard(ctx.app, { spaceId: writeSpace(ctx, goal?.spaceId ?? a.space), front: a.front, back: a.back, sourceRefs: a.source_refs, userId: goal?.userId ?? ctx.userId ?? "owner", goalId: goal?.id ?? null });
     return r.created ? `已创建卡片 ${r.card.id}` : `已有相同卡片 ${r.card.id}`;
   },
 });
@@ -2979,10 +2985,12 @@ def({
     status: z.enum(["active", "paused", "done"]).optional(),
   }),
   handler: (ctx, a) => {
+    const existing = a.id ? learningGoal(ctx, a.id) : null;
+    if (existing) writeSpace(ctx, existing.spaceId);
     const g = upsertGoal(ctx.app, a.id, {
       title: a.title,
       detail: a.detail,
-      spaceId: a.space ? writeSpace(ctx, a.space) : a.id ? undefined : ctx.spaceId,
+      spaceId: existing && !a.space ? undefined : writeSpace(ctx, a.space),
       dailyNew: a.daily_new,
       remindAt: a.remind_at,
       status: a.status,
@@ -3022,7 +3030,7 @@ def({
   description: "查看学习目标的进度：卡片数、已掌握、到期、近 30 天复习次数与记住率、连续天数、反复忘记的卡。",
   schema: z.object({ goal: z.string().optional() }),
   handler: (ctx, a) => {
-    const goals = a.goal ? [getGoal(ctx.app, a.goal)] : listGoals(ctx.app, { userId: ctx.userId ?? "owner", status: "all" });
+    const goals = a.goal ? [learningGoal(ctx, a.goal)] : listGoals(ctx.app, { userId: ctx.userId ?? OWNER, status: "all" }).filter(g => canRead(ctx, g.spaceId));
     if (!goals.length) return "还没有学习目标。本人想学什么时可以用 set_learning_goal 建一个。";
     return goals.map((g) => `- ${g.id} [${g.status}] ${goalSummary(ctx.app, g).text}（每天 ${g.dailyNew} 张新卡，${g.remindAt} 提醒）`).join("\n");
   },
