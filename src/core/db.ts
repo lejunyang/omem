@@ -2331,6 +2331,12 @@ export const migrations: readonly string[] = [
      where json_extract(external,'$.delivery')='published' and json_extract(external,'$.state') in ('open','replied');`,
   `alter table review_findings add column start_line integer;
    alter table review_findings add column diff_side text;`,
+  `create table remote_grants (
+     id text primary key, session_id text not null, user_id text not null references users(id),
+     mode text not null check(mode in ('view','operate')), expires_at text not null,
+     created_by text not null, created_at text not null, revoked_at text
+   );
+   create unique index remote_grants_member on remote_grants(session_id,user_id) where revoked_at is null;`,
 ];
 
 export type Db = DatabaseSync;

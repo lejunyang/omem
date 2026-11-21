@@ -235,6 +235,7 @@ export function updateUser(app: App, id: string, patch: { name?: string; status?
     patch.disabled === undefined ? u.disabledAt : patch.disabled ? (u.disabledAt ?? now()) : null,
     id,
   );
+  if (patch.disabled !== undefined || patch.status) app.events.emit("member-access", id);
   return getUser(app, id);
 }
 

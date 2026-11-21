@@ -46,6 +46,8 @@ aad do focus  <id> --role Edit
 
 浏览器页面通过调试端口接入，命令和桌面窗口相同（`apps` 里 `kind` 是 `browser`，`provider` 是 `browser.cdp`）：
 
+本机受管运行使用宿主给出的资料目录 `OMEM_BROWSER_PROFILES`。下面的 `open` 成功后返回 `sessionId`，本人可以在远程页找到这个标签页。若使用独立的 `aad mcp`，用 `browser_open` 按无窗口方式打开 `profile_dir=$OMEM_BROWSER_PROFILES/<资料名>`，随即执行 `node browser.mjs register <资料名> --page-id <browser_open 返回的 page_id>`。运行结束沿用浏览器原有的保留或关闭方式。
+
 用本技能的 `scripts/browser.mjs`（在数据目录 `library/_skills/desktop-control/` 下，数据目录默认 `~/.omem`）开浏览器，不要自己拼 Chrome 命令、也不要每次建临时目录：
 
 ```

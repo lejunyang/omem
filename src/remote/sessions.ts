@@ -3,7 +3,11 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from "node
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { HttpError, newId, now } from "../core/util.ts";
-import { OWNER } from "../core/users.ts";
+import { all } from "../core/db.ts";
+import { capabilityAccess } from "../auth/capabilities.ts";
+import { can } from "../auth/permissions.ts";
+import { effectiveGrant, endSessionGrants, grantsFor, type Mode } from "./grants.ts";
+import { OWNER, activeUser, findUser } from "../core/users.ts";
 import { AadMcp, aadJson, finalJson, firstJsonLine, spawnAad } from "./aad.ts";
 import { createRecording, recordingDir, recordingSummary, updateRecording, type Recording } from "./recordings.ts";
 
@@ -22,7 +26,7 @@ type Live = {
   userId: string;
   createdAt: string;
   /** `aad assist`: where it listens on loopback, and the token every request to it carries. */
-  assist: { proc: ChildProcess; port: number; token: string };
+  assist: Awaited<ReturnType<typeof startAssist>>;
   /** What assist shows (its arguments without the picture settings), to start it again with others. */
   source: string[];
   /** Browser sessions: the `aad mcp` that opened the browser, and records and replays on it. */
@@ -30,8 +34,9 @@ type Live = {
   browser?: { name: string; port: number; pageId: string; url: string | null; profile: string | null };
   /** Desktop sessions: the one window shared, when not the whole screen; a recording watches it. */
   window?: string;
+  origin?: { runId: string; spaceId: string; detach: () => void };
   recording?: { id: string; done?: Promise<any>; proc?: ChildProcess };
-  viewers: number;
+  connections: Set<{ userId: string; mode: Mode }>;
   idleSince: number;
 };
 
@@ -47,11 +52,49 @@ export const sessionView = (s: Live) => ({
   browser: s.browser ? { name: s.browser.name, url: s.browser.url, profile: s.browser.profile } : null,
   window: s.window ?? null,
   recording: s.recording?.id ?? null,
-  viewers: s.viewers,
+  viewers: s.connections.size,
 });
 
-export function listSessions(userId: string) {
-  return [...live.values()].filter((s) => s.userId === userId).map(sessionView);
+export function viewerAccess(app: App, s: Live, user: string) {
+  const managesBrowser = user === OWNER && s.kind === "browser";
+  if (managesBrowser || (s.userId === user && (s.origin ? activeUser(findUser(app, user)) : can(app, user, "desktop.control"))))
+    return { mode: "operate" as Mode, grantId: null, expiresAt: null };
+  const grant = effectiveGrant(app, s, user);
+  if (!grant) throw new HttpError(403, "没有这个会话的有效授权");
+  return { mode: grant.mode, grantId: grant.id, expiresAt: grant.expiresAt };
+}
+
+export function listSessions(app: App, user: string) {
+  const desktop = can(app, user, "desktop.control");
+  const access = capabilityAccess(app, user, null);
+  const sessions = [...live.values()];
+  const manages = (s: Live) => s.userId === user || (user === OWNER && s.kind === "browser");
+  const ownsAgentPage = access.active && sessions.some(s => s.origin && s.userId === user);
+  if (!ownsAgentPage && !desktop && !access.source("remote.view") && !access.source("remote.operate")) throw new HttpError(403, "没有远程会话权限");
+  const grants = grantsFor(app, [...live.keys()], sessions.filter(manages).map(s => s.id), user);
+  const bySession = new Map<string, typeof grants>();
+  for (const grant of grants) {
+    const group = bySession.get(grant.sessionId);
+    if (group) group.push(grant);
+    else bySession.set(grant.sessionId, [grant]);
+  }
+  const owners = new Map(all<{id: string; name: string}>(app.db,
+    "select id,name from users where id in (select value from json_each(?))",
+    JSON.stringify([...new Set(sessions.map(s => s.userId))])).map(u => [u.id, u.name]));
+  return sessions.flatMap(s => {
+    const mine = s.userId === user;
+    const manager = manages(s);
+    const assigned = bySession.get(s.id) ?? [];
+    const grant = assigned.find(g => g.userId === user && access.source(`remote.${g.mode}`));
+    if (!(manager && desktop) && !(mine && s.origin && access.active) && !grant) return [];
+    const connections = [...s.connections];
+    const connected = new Set(connections.map(c => c.userId));
+    return [{
+      ...sessionView(s), ownerId: s.userId, ownerName: owners.get(s.userId), mine, grant: grant ?? null,
+      runId: s.origin?.runId ?? null, spaceId: s.origin?.spaceId ?? null,
+      ...(manager ? { connections, grants: assigned.map(g => ({ ...g, connected: connected.has(g.userId) })) } : {}),
+    }];
+  });
 }
 
 export function getSession(id: string, userId?: string): Live {
@@ -60,24 +103,10 @@ export function getSession(id: string, userId?: string): Live {
   return s;
 }
 
-/** What `aad assist` serves for this session, for the proxy. */
-export function assistOf(id: string) {
-  const s = live.get(id);
-  return s ? { port: s.assist.port, token: s.assist.token } : null;
-}
-
-/** A viewer connected (+1) or left (-1): sessions nobody looks at end after a while. */
-export function viewing(id: string, delta: number) {
-  const s = live.get(id);
-  if (!s) return;
-  s.viewers = Math.max(0, s.viewers + delta);
-  s.idleSince = Date.now();
-}
-
 /** The address the page should load: the viewer with its token. */
 export const viewerPath = (s: Live) => `/remote/${s.id}/?token=${s.assist.token}&lang=zh`;
 
-async function startAssist(args: string[]) {
+export async function startAssist(args: string[]) {
   const proc = spawnAad(["assist", ...args]);
   const announced = await firstJsonLine(proc, 30_000).catch((e) => {
     proc.kill();
@@ -88,7 +117,7 @@ async function startAssist(args: string[]) {
     proc.kill();
     throw new HttpError(502, "aad assist 没有说明在哪里监听");
   }
-  return { proc, port, token: String(announced.token) };
+  return { proc, port, token: String(announced.token), args };
 }
 
 /** The screen going away (the browser closed, the desktop locked) ends the session; a replaced viewer does not. */
@@ -99,12 +128,12 @@ function watchAssist(app: App, s: Live) {
   });
 }
 
-function add(app: App, s: Omit<Live, "viewers" | "idleSince" | "createdAt" | "id">) {
-  const session: Live = { ...s, id: newId("rs"), createdAt: now(), viewers: 0, idleSince: Date.now() };
+function add(app: App, s: Omit<Live, "connections" | "idleSince" | "createdAt" | "id">) {
+  const session: Live = { ...s, id: newId("rs"), createdAt: now(), connections: new Set(), idleSince: Date.now() };
   live.set(session.id, session);
   watchAssist(app, session);
   sweeper ??= setInterval(() => {
-    for (const x of live.values()) if (!x.viewers && Date.now() - x.idleSince > IDLE_MS) void closeSession(app, x.id);
+    for (const x of live.values()) if (!x.origin && !x.connections.size && Date.now() - x.idleSince > IDLE_MS) void closeSession(app, x.id);
   }, 60_000);
   sweeper.unref();
   return session;
@@ -202,6 +231,31 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
   }
 }
 
+/** Attach only the viewer. The process that opened the browser retains its lifetime. */
+export async function attachAgentPage(app: App, opts: {
+  userId: string; runId: string; spaceId: string; profile: string; pageId: string; port: number; detach: () => void;
+}) {
+  const existing = () => [...live.values()].find(s => s.origin?.runId === opts.runId && s.userId === opts.userId &&
+    s.browser?.port === opts.port && s.browser.pageId === opts.pageId);
+  const reuse = (session: Live) => {
+    opts.detach();
+    return { session, added: false };
+  };
+  const registered = existing();
+  if (registered) return reuse(registered);
+  const source = ["--browser-port", String(opts.port), "--page", opts.pageId];
+  const assist = await startAssist(source);
+  const concurrent = existing();
+  if (concurrent) {
+    assist.proc.kill();
+    return reuse(concurrent);
+  }
+  const session = add(app, { userId: opts.userId, kind: "browser", source, assist, title: opts.profile,
+    origin: { runId: opts.runId, spaceId: opts.spaceId, detach: opts.detach },
+    browser: { name: "chrome", profile: opts.profile, port: opts.port, pageId: opts.pageId, url: null } });
+  return { session, added: true };
+}
+
 export async function openDesktop(app: App, opts: { monitor?: number; window?: string; title?: string; viewer?: string[]; userId: string }) {
   const source = ["--desktop", ...(opts.monitor !== undefined ? ["--monitor", String(opts.monitor)] : []), ...(opts.window ? ["--window", opts.window] : [])];
   const assist = await startAssist([...source, ...(opts.viewer ?? [])]);
@@ -232,6 +286,9 @@ export async function closeSession(app: App, id: string) {
   const s = live.get(id);
   if (!s) return;
   live.delete(id);
+  s.origin?.detach();
+  endSessionGrants(app, id);
+  app.events.emit("remote-access", id);
   if (s.recording) await stopRecording(app, s, { quiet: true }).catch(() => {});
   s.assist.proc.kill();
   // Wait for browser_close: only then is its persistent profile available to the next session.
@@ -290,6 +347,7 @@ export async function startRecording(app: App, sessionId: string, opts: { goal: 
   mkdirSync(dir, { recursive: true });
   let target = "";
   if (s.kind === "browser") {
+    if (!s.mcp) throw new HttpError(409, "这个浏览器由运行管理，请在运行中录制");
     // Requests are kept with cookies, tokens and passwords replaced: the recording is read by an agent.
     await s.mcp!.call("browser_record_start", { page_id: s.browser!.pageId, record: { redact_network: true, screenshots: true } });
     target = s.browser!.url ?? "";
@@ -346,8 +404,9 @@ function keepReplay(dir: string, answer: any) {
 }
 
 /** The address bar the viewer does not have: take a browser session's page somewhere. */
-export async function navigate(sessionId: string, url: string, userId: string) {
-  const s = getSession(sessionId, userId);
+export async function navigate(app: App, sessionId: string, url: string, userId: string) {
+  const s = getSession(sessionId);
+  if (viewerAccess(app, s, userId).mode !== "operate") throw new HttpError(403, "需要这个会话的操作授权");
   if (s.kind !== "browser") throw new HttpError(400, "只有浏览器会话有地址");
   if (!/^https?:\/\//.test(url)) throw new HttpError(400, "网址要以 http:// 或 https:// 开头");
   await goTo(s, url);
@@ -362,7 +421,8 @@ export async function navigate(sessionId: string, url: string, userId: string) {
  * truncated the page goes there through the browser's own DevTools port (the one aad opened it on).
  */
 async function goTo(s: Live, url: string) {
-  const mcp = s.mcp!;
+  const mcp = s.mcp;
+  if (!mcp) return devtoolsNavigate(s.browser!.port, s.browser!.pageId, url);
   const targets = await mcp.call("control_targets", {});
   const page = (targets.resources ?? []).find((r: any) => r.metadata?.page_id === s.browser!.pageId && r.metadata?.main_frame === true);
   if (!page) throw new HttpError(409, "找不到会话里的页面");

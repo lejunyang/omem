@@ -12,6 +12,32 @@
 4. 停止后页面把这次录制交给助手：录制编号、做了几步、记下多少请求。助手用 `read_recording` 看步骤、截图和关键请求，在对话里说它理解的流程和要本人确认的地方（哪些值每次不同、成功的标志是什么），本人回答后它用 `save_skill`（`from_recording`）保存技能，录到的可回放步骤和请求摘要随技能保存。
 6. “画面设置”（右上角）：格式、画质、帧率、最大宽度、远程鼠标指针、剪贴板、新开浏览器用哪个。保存后之后打开的画面按这个来；有打开的会话时“保存并应用到当前画面”换一个查看页，页面和进行中的录制不受影响。
 
+## 把会话交给成员
+
+会话主人或本人可以把本机浏览器的当前页面交给已登录的成员。授权不会开放整台桌面、长期资料、录制、画面设置或关闭会话的入口。接手的成员需要对应的全局能力和这一个会话的有效授权。`view` 对应 `remote.view`，`operate` 对应 `remote.operate`。普通预设都不包含这两项。
+
+| 请求（相对于 `/api/remote/sessions/:id`） | 参数与结果 |
+| --- | --- |
+| `POST /grants` | `{"userId":"member-a","mode":"view","hours":2}`。返回 `id、sessionId、userId、mode、expiresAt`。成员需有未过期的完整登录会话。已有授权返回 409。 |
+| `PATCH /grants/:grantId` | 传 `mode` 或 `hours`，也可同时传。小时从修改时刻起算。改模式后重新打开画面。 |
+| `DELETE /grants/:grantId` | 撤销指定授权。已开的画面随即断开。 |
+| `POST /navigate` | 操作模式或主人可提交 `{"url":"https://example.test/"}` 给当前页面换地址。 |
+| `POST /view` | 返回 `src` 并设置 HttpOnly Cookie。浏览器在同源 iframe 打开该地址。 |
+
+`GET /api/remote` 的 `sessions` 同时列出自己的会话和获准查看的会话。以下是成员看到的列表项节选：
+
+```json
+{"id":"rsDemo","ownerId":"owner","ownerName":"本人","mine":false,
+ "grant":{"id":"rgDemo","sessionId":"rsDemo","userId":"member-a","userName":"成员 A","mode":"view","expiresAt":"2026-11-21T12:00:00.000Z"},
+ "runId":"runDemo","spaceId":"project-a","viewers":2}
+```
+
+主人另见 `grants[]` 的 `connected`，以及 `connections[]` 中每条查看连接的 `userId、mode`。网页可按 `mine` 和本人身份显示授权管理，按 `grant.mode` 显示操作入口。`remoteGrants.defaultHours` 默认 2 小时，`remoteGrants.maxHours` 默认 24 小时。授权记录仅存本机；授权、修改及撤销在审计里分别记作 `remote.grant`、`remote.grant`、`remote.revoke`。
+
+只看连接可协商自己的画面编码（`hello`）和请求关键帧（`keyframe`）。代理丢弃其它客户端消息，包括接管、改变视口、键鼠、粘贴、文件块和未知消息。主人和获得操作授权的成员可以同时打开同一页并交替输入。每份操作授权使用独立的 aad 画面进程连接同一标签页，沿用会话的画面设置，最后一条操作连接断开时释放进程。每次转发都重查授权，空闲连接也会在到期、撤销、成员停用或页面结束时断开。
+
+本机运行用 `desktop-control/scripts/browser.mjs open` 打开的页面自动登记。宿主依据运行令牌取成员、空间和资料目录，从 Chrome 的 `DevToolsActivePort` 读取端口，并核对目标页面所在浏览器的启动参数。运行事件带 `sessionId` 和 `link`（`#/remote/<会话>`）。页面关闭即结束授权。运行结束、停止查看或 omem 退出时，浏览器仍按原启动方式管理。使用独立 aad MCP 的流程按技能中的 `register` 步骤登记；录制仍由启动浏览器的一方管理。
+
 ## 画面设置
 
 每个人一份，存在这台机器的 kv（`remote_settings:<用户>`，不随 `omem pull` 走）。接口 `GET/PUT /api/remote/settings`，打开会话时换成 `aad assist` 的参数：
@@ -38,7 +64,7 @@
 | 桌面 | `aad assist --desktop [--monitor N \| --window W]` | 录制时另起 `aad record <窗口> --until-stdin-closes`，停止时关它的标准输入。共享一个窗口时，录制对象按窗口句柄（不行就按进程和标题）在 `aad apps` 里找到这个窗口；共享整个屏幕时由本人在 `aad apps` 列出的程序里选。 |
 
 - `assist` 只监听本机回环地址，带一次性 token。omem 在 `/remote/<会话>/` 下转发它的查看页（HTTP）和 `/remote/<会话>/ws`（WebSocket）。查看页按自己的地址连 WebSocket（ai-auto-desktop#12 之后的版本），经 https 和路径前缀都能用。开发时 Vite 也代理 `/remote`。
-- 只有本人能打开：`POST /api/remote/sessions/:id/open` 发一个只对 `/remote` 有效的会话 cookie（同 `/ide`），升级请求再查 Origin；带本人令牌的转发（`omem peer open <设备>`）也放行。`/remote` 加进 `tunneled`，所以经别的设备转发打开时画面也能过去。
+- `POST /api/remote/sessions/:id/view` 给有权查看的人签发仅用于 `/remote/<会话>` 的 Cookie，升级请求检查 Origin；带本人令牌的转发（`omem peer open <设备>`）也放行。`/remote` 加进 `tunneled`，所以经别的设备转发打开时画面也能过去。
 - 会话不入库，进程随 omem 退出、本人关闭或 30 分钟没人看（没有查看连接）结束；关闭时先等待 `browser_close` 返回，让 aad 关闭浏览器并释放资料，再结束 `aad mcp`；不会在浏览器清理过程中按旧的 3 秒超时强制结束。录制入库；omem 启动时把还标着录制中的改成中断（会话已经随进程没了）。
 - 开发 aad 时可以用 `OMEM_TOOL_AAD=<本地构建的 aad>` 指定程序（一般形式 `OMEM_TOOL_<名>`），omem 和它启动的 Agent 都用这个；后台服务启动 / 重启也显式传入 `OMEM_TOOL_*`，避免被早已启动的 PM2 丢掉。
 

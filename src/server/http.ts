@@ -166,6 +166,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     mark(`${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`);
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).
+    if (req.routeOptions.url === "/api/remote/agent-browser") return; // Authenticated by gateCaller.
     if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|operation-gate|code-index\/notify|hooks)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
     await checkBearer(app, bearerToken(req));
@@ -294,6 +295,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     return ctx;
   };
+  server.post("/api/remote/agent-browser", async req => {
+    const ctx = gateCaller(req);
+    if (!ctx.browserProfilesRoot || !ctx.runId) throw new HttpError(403, "只有本机受管运行可以登记浏览器");
+    const b = q(z.object({ profile: z.string().regex(/^[\p{L}\p{N}_-]{1,40}$/u), pageId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/) }).strict(), req.body);
+    const { registerAgentBrowser } = await import("../remote/agent-browser.ts");
+    return registerAgentBrowser(app, { ...b, root: ctx.browserProfilesRoot, userId: ctx.userId ?? "owner", runId: ctx.runId, spaceId: ctx.spaceId });
+  });
   server.get("/api/operation-gate/http", async (req) => (await import("../agents/http-gate.ts")).httpWatch(app, gateCaller(req)));
   server.post("/api/operation-gate/http", async (req) => {
     const ctx = gateCaller(req);

@@ -26,6 +26,8 @@ const definitions = {
   "ask.send": ["global", "提问", "在自己的对话里向助手提问"],
   "notifications.view": ["global", "看通知", "阅读发给自己的通知"],
   "metrics.view": ["space", "看指标", "查看空间里的指标和变化"],
+  "remote.view": ["global", "看远程会话", "看授权给他的远程会话"],
+  "remote.operate": ["global", "操作远程会话", "操作授权给他的远程会话"],
   "settings.members": ["global", "管理成员权限", "修改成员的预设和能力覆盖"],
 } as const;
 export type Capability = keyof typeof definitions;
@@ -45,6 +47,7 @@ export const legacyCapabilities: Record<string, Capability[]> = {
 const personal: Capability[] = ["ask.send", "conversations.view", "notifications.view", "runs.operate"];
 function presetGrants(role: string, permissions: string[], cap: Capability) {
   if (role === "owner") return true;
+  if (cap === "remote.view" || cap === "remote.operate") return false;
   if (role === "observer") return cap.endsWith(".view") || cap === "ask.send" || cap === "search.use";
   return personal.includes(cap) || permissions.some(p => legacyCapabilities[p.replace(/@\*$/, "")]?.includes(cap));
 }
@@ -57,16 +60,16 @@ export function capabilityCatalog(app: App) {
   });
 }
 export type Override = { capability: Capability; scope_kind: "global" | "space"; scope_id: string; effect: "allow" | "deny" };
-/** Request-local snapshot. Resolve all spaces and inherited memberships in bulk. */
-export function capabilityAccess(app: App, userId: string, targetSpace?: string) {
+/** Request-local snapshot. A null target requests only global capabilities. */
+export function capabilityAccess(app: App, userId: string, targetSpace?: string | null) {
   const user = one<{ role: string; active: number }>(app.db, "select role, status='active' and disabled_at is null active from users where id=?", userId);
   const roles = new Map(listRoles(app).map(r => [r.id, r.permissions]));
   const preset = user?.role ?? "";
   const grants = roles.get(preset) ?? [];
   const overrides = all<Override>(app.db, "select capability,scope_kind,scope_id,effect from member_capability_overrides where user_id=? and revoked=0", userId);
-  const spaces = all<{ id: string; kind: string; owner_id: string; mirror: number; parent_id: string }>(app.db,
+  const spaces = targetSpace === null ? [] : all<{ id: string; kind: string; owner_id: string; mirror: number; parent_id: string }>(app.db,
     "select id,kind,owner_id,parent_id,json_extract(settings,'$.mirror') is not null mirror from spaces" + (targetSpace ? " where id=?" : ""), ...(targetSpace ? [targetSpace] : []));
-  const memberships = new Map(all<{ space_id: string; role: string }>(app.db, "select space_id,role from space_members where user_id=?", userId).map(r => [r.space_id, roles.get(r.role === "owner" ? "manager" : r.role) ?? []]));
+  const memberships = new Map(targetSpace === null ? [] : all<{ space_id: string; role: string }>(app.db, "select space_id,role from space_members where user_id=?", userId).map(r => [r.space_id, roles.get(r.role === "owner" ? "manager" : r.role) ?? []]));
   const byId = new Map(spaces.map(s => [s.id, s]));
   const effects = new Map(overrides.map(o => [JSON.stringify([o.capability, o.scope_kind, o.scope_id]), o.effect]));
   const presetCaps = new Set(capabilityKeys.filter(c => presetGrants(preset, grants, c)));

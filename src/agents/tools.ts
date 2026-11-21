@@ -91,6 +91,8 @@ import type { SearchOptions } from "../search/search.ts";
 export type ToolContext = {
   /** Host-only identity of the ACP prompt currently using this token and the command wrappers. */
   commandTurn?: string;
+  /** Host-selected directory for browsers opened locally by this run. */
+  browserProfilesRoot?: string;
   app: App;
   runId: string | null;
   /** Default space for tools that take an optional `space`. */
