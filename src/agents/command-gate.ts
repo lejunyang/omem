@@ -8,7 +8,8 @@
  * PATH or deletes the wrappers, or calling the service behind the command directly. It keeps
  * agents off the default path to a dangerous command; it is not a sandbox against a hostile agent.
  */
-import { createHash } from "node:crypto";
+import { auditOperation, currentRules, decide, digest, fingerprint, operationWho, saveOperationRules, type Operation } from "./operation-policy.ts";
+import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -38,7 +39,7 @@ const norm = (name: string) => (win ? name.toLowerCase() : name);
  * The wrappers for the current rules under <home>/bin/guarded (stale ones removed); returns that
  * directory, or null when there are no rules (nothing written, PATH left alone).
  */
-export function syncCommandGate(home: string, rules: CommandRule[]): string | null {
+export function syncCommandGate(home: string, rules: { command: string }[]): string | null {
   const { guarded, script } = gatePaths(home);
   const names = [...new Set(rules.map((r) => norm(r.command.trim())).filter(Boolean))];
   if (!names.length) {
@@ -173,7 +174,7 @@ child.on("exit", (code, signal) => {
 
 /** The guarded directory for an agent process of this app (written now), or null. */
 export function commandGateDir(app: App) {
-  return syncCommandGate(app.home, app.config.security?.commandRules ?? []);
+  return syncCommandGate(app.home, currentRules(app).flatMap(r => r.enabled && r.match.kind === "command" ? [{ command: r.match.executable }] : []));
 }
 
 /** `env` with the guarded directory first in PATH (whatever the key is spelled). */
@@ -204,7 +205,18 @@ export function matchCommandRule(rules: CommandRule[], command: string, args: st
 }
 
 export const commandLine = (command: string, args: string[]) => [command, ...args.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`))].join(" ");
-const keyOf = (command: string, args: string[]) => createHash("sha256").update([norm(command), ...args].join("\0")).digest("hex").slice(0, 32);
+function legacyArgs(args: string[]) {
+  let sensitive = false;
+  return args.slice(0, 16).map(arg => {
+    const hideValue = sensitive;
+    sensitive = /^--?(?:.*[-_])?(?:token|password|secret|authorization|cookie|key)$/i.test(arg);
+    return hideValue || (!sensitive && !/^(?:--?)?[a-zA-Z][\w-]{0,15}$/.test(arg)) ? "…" : arg;
+  });
+}
+
+function safeReason(reason?: string) {
+  return truncate((reason ?? "").replace(/(?:bearer\s+|(?:token|password|secret|key)\s*[=:]\s*)[^\s,;]+/gi, "…"), 300);
+}
 
 /** Grants are per conversation, else per chain of runs (a wake continues its parent's chain). */
 function chainOf(app: App, runId: string | null): string {
@@ -284,7 +296,17 @@ async function approverFor(app: App, rule: CommandRule, nominated: string | unde
 }
 
 /** What an ask of this kind keeps in its context. */
-type GateContext = {
+type OperationGrant = {
+  member: string;
+  ruleId: string;
+  revision: number;
+  kind: Operation["kind"];
+  argsHash?: string;
+  scope?: "once" | "run" | "always";
+  runKey: string;
+  ownerChoices: boolean;
+};
+type GateContext = Partial<OperationGrant> & {
   handler: "command-gate";
   key: string;
   chain: string;
@@ -328,64 +350,88 @@ function waitDecision(id: string, ms: number): Promise<Ask | null> {
 }
 
 function record(app: App, runId: string | null, actor: string, action: string, c: { command: string; args: string[]; cwd: string; approver?: string; result: string; rule?: number; askId?: string }) {
-  audit(app, actor, action, c.command, { command: c.command, argsHash: keyOf(c.command, c.args).slice(0, 16), cwd: c.cwd, runId, approver: c.approver ?? null, result: c.result, rule: c.rule ?? null, askId: c.askId ?? null });
+  const grant = c.askId ? safeJson(one<{context:string}>(app.db,"select context from asks where id=?",c.askId)?.context) as GateContext : undefined;
+  audit(app, actor, action.replace(/^command\./,(grant?.kind ?? "command")+"."), c.command, { kind: grant?.kind ?? "command", member: grant?.member ?? actor, ruleId: grant?.ruleId, revision: grant?.revision, command: c.command, argsHash: grant?.argsHash ?? digest(c.args), cwd: c.cwd, runId, approver: c.approver ?? null, result: c.result, rule: c.rule ?? null, askId: c.askId ?? null });
   if (runId && one(app.db, "select 1 from runs where id = ?", runId))
     addRunEvent(app, runId, "status", { text: `命令拦截：${truncate(commandLine(c.command, c.args), 200)} → ${c.result}`, commandGate: { command: c.command, action, approver: c.approver ?? null, askId: c.askId ?? null } });
 }
 
 /** A protected command an agent's process is about to run (POST /api/command-gate). */
-export async function commandGate(app: App, ctx: ToolContext, req: { command: string; args: string[]; cwd: string; approver?: string; reason?: string }): Promise<Decision> {
+export async function commandGate(app: App, ctx: ToolContext, req: { command: string; args: string[]; cwd: string; approver?: string; reason?: string }, session?: string): Promise<Decision> {
+  return gateOperation(app, ctx, { kind: "command", executable: req.command, argv: req.args, cwd: req.cwd }, { ...req, stage: "wrapper" }, session);
+}
+
+/** Both ACP and PATH consult the current rule again before using an approval. */
+export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"} = {}, session?: string): Promise<Decision> {
+  const who = operationWho(ctx);
+  const decision = decide(app, op, who);
+  const policy = decision.rule;
+  auditOperation(app, op, who, policy, decision.action, "策略判定");
+  if (decision.action === "deny") return { decision: "deny", message: `omem 的${op.kind === "command" ? "命令规则" : "操作规则"}「${policy?.title || policy?.id}」不允许 Agent 执行这项操作。` };
+  if (!policy || decision.action !== "approve") return { decision: "allow" };
+  if (op.kind === "command" && (!op.argv || !op.cwd)) return { decision: "deny", message: "缺少命令参数或工作目录，无法绑定授权" };
   await expireCommandAsks(app);
-  const { command, args, cwd } = req;
+  const command = op.kind === "command" ? op.executable : op.kind === "file" ? op.operation : op.kind;
+  const args = op.kind === "command" ? (policy.approval?.reuse ? legacyArgs(op.argv!) : policy.match.kind === "command" ? policy.match.subcommand ?? [] : [])
+    : op.kind === "file" ? [op.path.slice(0,300)] : [];
+  const cwd = op.kind === "command" ? op.cwd! : "";
   const runId = ctx.runId;
-  const actor = runId ? `run:${runId}` : "agent";
-  const m = matchCommandRule(app.config.security?.commandRules ?? [], command, args);
-  if (!m || m.rule.action === "allow") {
-    record(app, runId, actor, "command.allow", { command, args, cwd, result: m ? `按第 ${m.index + 1} 条规则放行` : "没有命中规则，放行", rule: m?.index });
-    return { decision: "allow" };
-  }
-  const { rule, index } = m;
-  if (rule.action === "deny") {
-    record(app, runId, actor, "command.deny", { command, args, cwd, result: `第 ${index + 1} 条规则一律拒绝`, rule: index });
-    return { decision: "deny", message: `omem 的命令规则（第 ${index + 1} 条）不允许 Agent 执行这条命令${rule.note ? `：${rule.note}` : ""}。不要改用其他路径或方式绕过；需要的话告诉本人。` };
-  }
-  const key = keyOf(command, args);
-  const chain = chainOf(app, runId);
-  // Approved before (within its time, unused or reusable): through.
-  const grant = one<{ id: string; context: string; answered_by: string | null }>(
-    app.db,
-    "select id, context, answered_by from asks where status = 'answered' and approved = 1 and json_extract(context, '$.handler') = 'command-gate' and json_extract(context, '$.key') = ? and json_extract(context, '$.chain') = ? and json_extract(context, '$.grantUntil') > ? and coalesce(json_extract(context, '$.used'), 0) = 0 order by answered_at desc limit 1",
-    key,
-    chain,
-    now(),
-  );
-  if (grant && useGrant(app, grant.id)) {
-    const g = safeJson(grant.context) as GateContext;
-    record(app, runId, actor, "command.allow", { command, args, cwd, approver: g.approverName, result: `已由 ${g.approverName} 批准，放行`, rule: index, askId: grant.id });
+  const actor = who.member;
+  const index = currentRules(app).findIndex(r => r.id === policy.id);
+  const rule: CommandRule = { command, args: "", note: policy.title ?? "", action: "approve",
+    approver: policy.approval?.approver ?? "owner", approvers: policy.approval?.approvers ?? [],
+    expireHours: (policy.approval?.expiresSeconds ?? 86400)/3600, waitSeconds: policy.approval?.waitSeconds ?? 90, reuse: policy.approval?.reuse ?? "once" };
+  const chain = runId ? chainOf(app, runId) : session ?? randomUUID();
+  const key = digest([who.member, policy.id, policy.revision, fingerprint(op,policy), who.role, who.profile, who.space, who.backend]);
+  const runKey = digest([who.member, runId, policy.id, policy.revision]);
+  const takeGrant = () => {
+    const latest = decide(app, op, who);
+    if (latest.rule?.id !== policy.id || latest.rule.revision !== policy.revision || latest.action !== "approve") return false;
+    const reusable = runId && one(app.db, `select 1 from asks where json_extract(context,'$.runKey') = ? and
+      json_extract(context,'$.scope') = 'run' and status='answered' and approved=1 and json_extract(context,'$.grantUntil') > ?
+      and exists(select 1 from runs where id=? and status='running') limit 1`, runKey, now(), runId);
+    if (reusable) return true;
+    // A reserved grant can only finish at the wrapper during the prompt that reserved it.
+    const wrapperTurn = req.stage === "wrapper" ? ctx.commandTurn ?? null : null;
+    const grant = one<{id:string}>(app.db, `select id from asks where json_extract(context,'$.key')=? and json_extract(context,'$.chain')=?
+      and status='answered' and approved=1 and coalesce(json_extract(context,'$.scope'),'once')='once'
+      and (run_id is ? or json_extract(context,'$.retryRunId')=? or json_extract(context,'$.reuse')='window')
+      and json_extract(context,'$.grantUntil') > ? and coalesce(json_extract(context,'$.used'),0)=0
+      and (json_extract(context,'$.wrapperTurn') is null or json_extract(context,'$.wrapperTurn') = ?)
+      order by json_extract(context,'$.wrapperTurn') is not null desc, answered_at desc limit 1`, key,chain,runId,runId,now(),wrapperTurn);
+    return !!grant && useGrant(app, grant.id, wrapperTurn, req.stage === "before-wrapper" ? ctx.commandTurn : undefined);
+  };
+  if (takeGrant()) {
+    auditOperation(app, op, who, policy, "allow", "使用已有授权");
     return { decision: "allow" };
   }
   // The same command already waiting in this chain: wait on that card instead of sending another.
-  let ask = all<{ id: string }>(app.db, "select id from asks where status = 'pending' and json_extract(context, '$.handler') = 'command-gate' and json_extract(context, '$.key') = ? and json_extract(context, '$.chain') = ? order by created_at desc limit 1", key, chain)
+  const pending = () => all<{ id: string }>(app.db, "select id from asks where status = 'pending' and json_extract(context, '$.handler') = 'command-gate' and json_extract(context, '$.key') = ? and json_extract(context, '$.chain') = ? and run_id is ? order by created_at desc limit 1", key, chain, runId)
     .map((r) => getAsk(app, r.id))[0];
+  let ask = pending();
   let approverName: string;
   if (!ask) {
     const approver = await approverFor(app, rule, req.approver);
     approverName = approver.name;
-    ask = await openAsk(app, { runId, key, chain, command, args, cwd, rule, index, approver, reason: req.reason?.trim() ?? "" });
+    ask = pending() ?? await openAsk(app, { runId, key, chain, command, args, cwd, rule, index, approver, reason: safeReason(req.reason),
+      grant: { member: who.member, kind: op.kind, ruleId: policy.id, revision: policy.revision, runKey, argsHash: op.kind === "command" ? digest(op.argv) : undefined,
+        ownerChoices: approver.userId === OWNER && (!approver.lark || approver.lark.id === larkOwnerOpenId(app,"main")) } });
     record(app, runId, actor, "command.ask", { command, args, cwd, approver: approver.name, result: `等 ${approver.name} 批准（${approver.why}）`, rule: index, askId: ask.id });
     if (rule.approver === "run" && approver.userId !== OWNER) {
       const { notify } = await import("../core/notify.ts");
       notify(app, { title: `运行提名 ${approver.name} 审批命令`, body: truncate(commandLine(command, args), 300), link: runId ? `#/runs/${runId}` : "#/", urgency: "silent" });
     }
   } else approverName = (safeJson(one<{ context: string }>(app.db, "select context from asks where id = ?", ask.id)?.context) as GateContext).approverName;
-  const answered = await waitDecision(ask.id, rule.waitSeconds * 1000);
+  const current = getAsk(app, ask.id);
+  const answered = current.status === "pending" ? await waitDecision(ask.id, rule.waitSeconds * 1000) : current;
   if (answered?.status === "answered" && answered.approved) {
     // Taken by this request (a once-only approval is used up here).
-    const g = safeJson(one<{ context: string }>(app.db, "select context from asks where id = ?", ask.id)?.context) as GateContext;
-    if (g.reuse === "window" || useGrant(app, ask.id)) {
+    const allowed = answered.choice === 2 ? decide(app, op, who).rule : undefined;
+    if (takeGrant() || (allowed?.id === policy.id && allowed.revision === policy.revision + 1 && allowed.action === "allow")) {
       record(app, runId, actor, "command.allow", { command, args, cwd, approver: approverName, result: `${approverName} 批准，放行`, rule: index, askId: ask.id });
       return { decision: "allow" };
     }
+    return { decision: "deny", message: "授权已失效或已被消费" };
   }
   if (answered?.status === "answered" && !answered.approved) {
     return { decision: "deny", message: `${approverName} 拒绝了这条命令${answered.answer ? `，理由：${answered.answer}` : ""}。不要改用其他路径或方式绕过；按理由调整做法，或告诉本人。` };
@@ -394,19 +440,25 @@ export async function commandGate(app: App, ctx: ToolContext, req: { command: st
   return { decision: "pending", message: `这条命令需要 ${approverName} 批准，审批卡片已发出；批准后会唤醒你，届时原样重新执行这条命令。不要改用其他路径或方式绕过。` };
 }
 
-/** Marks a once-only approval used; false when another request took it first. */
-function useGrant(app: App, id: string) {
+/** Reserve a one-shot for this prompt or consume it at the final check. */
+function useGrant(app: App, id: string, wrapperTurn: string | null, reserveForTurn?: string) {
   const g = safeJson(one<{ context: string }>(app.db, "select context from asks where id = ?", id)?.context) as GateContext;
   if (g.reuse === "window") return true;
-  return run(app.db, "update asks set context = json_set(context, '$.used', 1) where id = ? and coalesce(json_extract(context, '$.used'), 0) = 0", id).changes > 0;
+  if (reserveForTurn)
+    return run(app.db, `update asks set context=json_set(context,'$.wrapperTurn',?) where id=?
+      and json_extract(context,'$.wrapperTurn') is null and coalesce(json_extract(context,'$.used'),0)=0`, reserveForTurn, id).changes > 0;
+  return run(app.db, `update asks set context=json_set(context,'$.used',1) where id=?
+    and (json_extract(context,'$.wrapperTurn') is null or json_extract(context,'$.wrapperTurn')=?)
+    and coalesce(json_extract(context,'$.used'),0)=0`, id, wrapperTurn).changes > 0;
 }
 
 async function openAsk(
   app: App,
-  c: { runId: string | null; key: string; chain: string; command: string; args: string[]; cwd: string; rule: CommandRule; index: number; approver: Approver; reason: string },
+  c: { grant: OperationGrant; runId: string | null; key: string; chain: string; command: string; args: string[]; cwd: string; rule: CommandRule; index: number; approver: Approver; reason: string },
 ): Promise<Ask> {
   const expiresAt = new Date(Date.now() + c.rule.expireHours * 3600_000).toISOString();
   const context: GateContext = {
+    ...c.grant,
     handler: "command-gate",
     key: c.key,
     chain: c.chain,
@@ -428,12 +480,13 @@ async function openAsk(
   const question = [
     `Agent 要执行受保护的命令：\n\n\`\`\`\n${fence(truncate(line, 2000))}\n\`\`\``,
     `目录：${c.cwd || "（未知）"}`,
+    c.grant.argsHash ? `参数摘要：${c.grant.argsHash.slice(0,16)}` : "",
     c.reason ? `原因（Agent 填写）：${c.reason}` : "",
     c.rule.note ? `规则说明：${c.rule.note}` : "",
     `审批人：${c.approver.name}（${c.approver.why}）`,
   ].filter(Boolean).join("\n\n");
   // The web shows it to the approver (the owner for someone without an omem account); Feishu gets the card below.
-  const ask = createAsk(app, { runId: c.runId, conversationId: null, userId: c.approver.userId, kind: "approval", question, tool: "command", args: { command: c.command, args: c.args, cwd: c.cwd }, context, allowText: true });
+  const ask = createAsk(app, { runId: c.runId, conversationId: null, userId: c.approver.userId, kind: "approval", question, options: (c.grant.ownerChoices ? ["只这一次","这次运行里的同类操作","以后按这条规则放行"] : ["只这一次"]).map(label => ({label})), tool: c.grant.kind, args: { command: c.command, args: c.args, cwd: c.cwd }, context, allowText: true });
   await sendCard(app, ask.id, context, c.runId).catch((e: Error) => console.warn(`[omem] 命令审批卡片没发出去：${e.message}`));
   // Past its time nobody can approve it any more.
   setTimeout(() => void expireCommandAsks(app).catch(() => {}), c.rule.expireHours * 3600_000 + 1000).unref();
@@ -457,13 +510,14 @@ export function commandCard(app: App, c: GateContext, runId: string | null, stat
     { markdown: `\`\`\`\n${fence(truncate(commandLine(c.command, c.args), 1500))}\n\`\`\`` },
     { fields: [{ label: "目录", value: truncate(c.cwd || "（未知）", 200) }, { label: "规则", value: `第 ${c.rule + 1} 条（${c.command}）` }] },
   ];
+  if (c.argsHash) blocks.push({ note: `参数摘要：${c.argsHash.slice(0,16)} · 规则 ${cardText(c.ruleId ?? "")}（版本 ${c.revision}）` });
   if (info) blocks.push({ markdown: `**发起**：${/^https?:/.test(info.link) ? `[${cardText(truncate(info.title, 80))}](${info.link})` : cardText(truncate(info.title, 80))} · ${cardText(info.who)}${info.rule ? ` · 规则「${cardText(info.rule)}」` : ""}` });
   if (c.reason) blocks.push({ markdown: `**原因（Agent 填写）**：${cardText(truncate(c.reason, 600))}` });
   if (c.note) blocks.push({ markdown: `**这条命令会改什么**：${cardText(truncate(c.note, 600))}` });
   blocks.push({ note: `审批人：${cardText(c.approverName)}（${cardText(c.approverWhy)}）` });
   if (!state) {
-    blocks.push({ note: `${new Date(c.expiresAt).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone })} 前有效；批准后${c.reuse === "window" ? ` ${c.expireHours} 小时内同样的命令都放行` : "放行一次"}` });
-    blocks.push({ buttons: [{ text: "批准", value: "approve", style: "primary" }, { text: "拒绝", value: "decline", style: "danger" }] });
+    blocks.push({ note: `${new Date(c.expiresAt).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone })} 前有效` });
+    blocks.push({ buttons: [{ text: "只这一次", value: "approve", style: "primary" }, ...(c.ownerChoices ? [...(runId ? [{ text: "这次运行里的同类操作", value: "run" }] : []), { text: "以后按这条规则放行", value: "always" }] : []), { text: "拒绝", value: "decline", style: "danger" }] });
   } else {
     const by = state.by ? `${cardText(state.by)} ` : "";
     blocks.push({ note: state.kind === "approved" ? `${by}已批准${state.text ? `：${cardText(state.text)}` : ""}` : state.kind === "declined" ? `${by}已拒绝${state.text ? `：${cardText(state.text)}` : ""}` : "已过期，没有批准" });
@@ -493,13 +547,13 @@ function settled(app: App, ask: Ask) {
 }
 
 /** A button on the Feishu card (lark-actions.ts). Returns the card to show. */
-export async function decideCommandCard(app: App, payload: { askId?: string }, approve: boolean, by: string) {
+export async function decideCommandCard(app: App, payload: { askId?: string }, approve: boolean, by: string, choice?: number) {
   const id = String(payload.askId ?? "");
   await expireCommandAsks(app);
   let ask = getAsk(app, id);
   if (ask.status === "pending") {
     const { answerAsk } = await import("./asks.ts");
-    ask = await answerAsk(app, id, { approved: approve, by });
+    ask = await answerAsk(app, id, { approved: approve, by, choice: ask.options.length ? choice : undefined });
   }
   const c = safeJson(one<{ context: string }>(app.db, "select context from asks where id = ?", id)?.context) as GateContext;
   return commandCard(app, c, ask.runId, settled(app, ask));
@@ -533,6 +587,7 @@ async function tellRun(app: App, ask: Ask, c: GateContext, note: string) {
   try {
     const { fireWake } = await import("./wakes.ts");
     const w = fireWake(app, { note, target, setBy: { runId, agent: "命令审批" }, setAt: ask.createdAt });
+    if (w.runId && ask.approved) run(app.db, "update asks set context=json_set(context,'$.retryRunId',?) where id=?", w.runId, ask.id);
     if (w.skipped) fallback();
   } catch (e) {
     console.warn(`[omem] 命令审批后唤醒运行 ${runId} 失败：${(e as Error).message}`);
@@ -543,7 +598,17 @@ async function tellRun(app: App, ask: Ask, c: GateContext, note: string) {
 registerAskHandler("command-gate", async (app, ask, context) => {
   const c = context as unknown as GateContext;
   const by = settled(app, ask).by ?? ask.answeredBy ?? "";
-  if (ask.approved) run(app.db, "update asks set context = json_set(context, '$.grantUntil', ?) where id = ?", new Date(Date.now() + c.expireHours * 3600_000).toISOString(), ask.id);
+  if (ask.approved && c.ruleId) {
+    const scope = ask.choice === 2 ? "always" : ask.choice === 1 ? "run" : "once";
+    if (scope === "always") {
+      const rules = currentRules(app);
+      if (rules.some(r => r.id === c.ruleId && r.revision === c.revision))
+        saveOperationRules(app, rules.map(r => r.id === c.ruleId ? { ...r, action: "allow" } : r));
+    }
+    const reuse = ask.answeredBy === OWNER && ask.choice === null ? c.reuse : "once";
+    run(app.db, "update asks set context=json_set(context,'$.scope',?,'$.grantUntil',?,'$.reuse',?) where id=?", scope,new Date(Date.now() + c.expireHours * 3600_000).toISOString(),reuse,ask.id);
+    audit(app, ask.answeredBy!, "operation.approve", c.command, {kind:c.kind, ruleId:c.ruleId, revision:c.revision, member:c.member, runId:ask.runId, approver:ask.answeredBy, scope, result:"批准",argsHash:c.argsHash});
+  }
   record(app, ask.runId, ask.answeredBy ?? "", ask.approved ? "command.approve" : "command.reject", { command: c.command, args: c.args, cwd: c.cwd, approver: by, result: ask.approved ? `${by} 批准` : `${by} 拒绝${ask.answer ? `：${truncate(ask.answer, 200)}` : ""}`, rule: c.rule, askId: ask.id });
   const fresh = getAsk(app, ask.id);
   await closeCard(app, fresh, c).catch(() => {});
@@ -558,9 +623,17 @@ registerAskHandler("command-gate", async (app, ask, context) => {
     fresh,
     c,
     ask.approved
-      ? `${by} 已批准命令 ${line}（目录 ${c.cwd || "未知"}）。请在同一目录原样重新执行这条命令${c.reuse === "window" ? `；${c.expireHours} 小时内同样的命令不用再批` : ""}。`
+      ? `${by} 已批准命令 ${line}（目录 ${c.cwd || "未知"}）。请在同一目录原样重新执行这条命令${ask.choice == null && ask.answeredBy === OWNER && c.reuse === "window" ? `；${c.expireHours} 小时内同样的命令不用再批` : ""}。`
       : `${by} 拒绝了命令 ${line}${ask.answer ? `，理由：${ask.answer}` : ""}。没有执行；不要换方式绕过，按理由调整做法或告诉本人。`,
   );
+}, (app, ask, context, by, answer) => {
+  const c = context as GateContext;
+  if (c.expiresAt <= now()) throw new Error("审批卡片已过期");
+  if ((answer.choice ?? 0) > 0) {
+    if (by !== OWNER || !c.ownerChoices) throw new Error("只有本人能扩大授权范围");
+    if (!currentRules(app).some(r => r.enabled && r.id === c.ruleId && r.revision === c.revision && r.action === "approve")) throw new Error("规则已变化");
+    if (answer.choice === 1 && !one(app.db, "select 1 from runs where id=? and status='running'", ask.runId)) throw new Error("运行已结束");
+  }
 });
 
 /** Who can be picked as an approver on the settings page. */

@@ -74,12 +74,12 @@ export const backlogApplied = (app: App) => kv(app, "item_expiry_backlog") !== n
 export type DueItem = { item: Item; expiry: Expiry; lastActivity: string; backlog: boolean };
 
 /** Open items whose deadline has passed (`within` days ahead to include those about to). */
-export function dueItems(app: App, opts: { at?: Date; withinDays?: number; userId?: string } = {}): DueItem[] {
+export function dueItems(app: App, opts: { at?: Date; withinDays?: number; spaceIds?: string[]; userId?: string } = {}): DueItem[] {
   const at = (opts.at ?? new Date()).getTime() + (opts.withinDays ?? 0) * DAY;
   const since = expirySince(app);
   const backlog = backlogApplied(app);
   const out: DueItem[] = [];
-  for (const item of listItems(app, { status: "active", userId: opts.userId, limit: 100_000 })) {
+  for (const item of listItems(app, { status: "active", userId: opts.userId, spaceIds: opts.spaceIds, limit: 100_000 })) {
     const expiry = itemExpiry(app, item);
     if (!expiry || Date.parse(expiry.at) > at) continue;
     out.push({ item, expiry, lastActivity: lastActivity(app, item), backlog: !backlog && expiry.at < since });

@@ -65,7 +65,7 @@ export async function pendingView(app: App, userId: string) {
     actions.push({ id: `${via}:${key}`, via, group, label, title: titleOf(title), createdAt,
       href: extra.itemId ? `#/${userId === OWNER ? "work" : "items"}/${encodeURIComponent(extra.itemId)}` : "#/work", ...extra });
   }
-  const asks = askRows.map(toAsk);
+  const asks = askRows.map(row => toAsk(row, userId));
   const askIds = new Set(asks.map(a => a.id));
   for (const [n, ask] of asks.entries()) {
     const { itemId, deadline } = askRows[n];

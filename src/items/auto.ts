@@ -1,3 +1,4 @@
+import { itemScope, requireItem } from "./access.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { decideScene, describeScene } from "../core/decision-log.ts";
@@ -134,12 +135,13 @@ export async function gateItem(app: App, p: GateInput, signal?: AbortSignal): Pr
 export function sameAutoItem(app: App, userId: string, title: string): { id: string; candidate: boolean; title: string } | null {
   const t = norm(title);
   if (!t) return null;
+  const { spaceIds } = itemScope(app, userId);
   const since = new Date(Date.now() - 14 * DAY).toISOString();
   const rows = all<{ id: string; title: string; status: string }>(
     app.db,
-    `select id, title, status from items where user_id = ? and (status = 'candidate' or (status = 'cancelled' and closed_at > ? and id in (select final from reply_samples where source = 'item' and decision = 'dropped' and reason in ('candidate-dropped', 'ignored'))))
+    `select id, title, status from items where user_id = ? ${spaceIds ? "and space_id in (select value from json_each(?))" : ""} and (status = 'candidate' or (status = 'cancelled' and closed_at > ? and id in (select final from reply_samples where source = 'item' and decision = 'dropped' and reason in ('candidate-dropped', 'ignored'))))
      order by created_at desc limit 200`,
-    userId, since,
+    userId, ...(spaceIds ? [JSON.stringify(spaceIds)] : []), since,
   );
   const hit = rows.find((r) => norm(r.title) === t);
   return hit ? { id: hit.id, candidate: hit.status === "candidate", title: hit.title } : null;
@@ -154,8 +156,7 @@ export function markAuto(app: App, itemId: string, why: string, verdict: GateVer
 
 /** The owner keeps a candidate (it opens, its reminder time stays) or does not (cancelled). */
 export function decideCandidate(app: App, id: string, keep: boolean, userId: string, via: "card" | "web" = "web"): Item {
-  const item = getItem(app, id);
-  if (item.userId !== userId) throw new HttpError(403, "不能修改他人的事项");
+  const item = requireItem(app, id, userId, "write");
   if (item.status !== "candidate") throw new HttpError(409, `「${item.title}」已经不是候选了`);
   const where = via === "card" ? "在飞书卡片上" : "在事项页上";
   return upsertItem(app, id, keep ? { status: item.kind === "waiting" ? "waiting" : "open", note: `本人${where}留下了这件候选事项` } : { status: "cancelled", note: `本人${where}不要这件候选事项` }, "user");
@@ -163,7 +164,8 @@ export function decideCandidate(app: App, id: string, keep: boolean, userId: str
 
 /** Candidates waiting for the owner, newest first. */
 export function pendingCandidates(app: App, userId: string, limit = 20): Item[] {
-  return all<{ id: string }>(app.db, "select id from items where user_id = ? and status = 'candidate' order by created_at desc limit ?", userId, limit).map((r) => getItem(app, r.id));
+  const { spaceIds } = itemScope(app, userId);
+  return all<{ id: string }>(app.db, `select id from items where user_id = ? and status = 'candidate' ${spaceIds ? "and space_id in (select value from json_each(?))" : ""} order by created_at desc limit ?`, userId, ...(spaceIds ? [JSON.stringify(spaceIds)] : []), limit).map((r) => getItem(app, r.id));
 }
 
 /** Hourly: candidates nobody answered for three days are put down quietly (not in the digest). */

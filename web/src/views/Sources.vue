@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RichText from "../components/RichText.vue";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { pageParam } from "../lib/route";
@@ -465,7 +466,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           </div>
           <div v-if="!detail.source.deletedAt && !['code','conversation','activity'].includes(detail.source.kind)" class="archive-info small">
             <div class="row wrap">
-              <span class="muted">空间：{{ spaceName(detail.source.spaceId) }}<template v-if="archive?.route?.reason"> · {{ archive.route.reason }}</template></span>
+              <span class="muted">空间：{{ spaceName(detail.source.spaceId) }}<template v-if="archive?.route?.reason"> · <RichText :text="archive.route.reason" /></template></span>
               <button class="btn ghost sm" type="button" :aria-expanded="showMove" @click="showMove = !showMove">{{ showMove ? "收起" : "换空间" }}</button>
             </div>
             <div v-if="showMove" class="row wrap move">
@@ -473,7 +474,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
               <input v-model="moveReason" class="input sm grow" placeholder="为什么放这里（记入归档记录）" aria-label="归属依据" />
               <button class="btn sm primary" :disabled="moving || !moveReason.trim() || moveTarget === detail.source.spaceId" @click="moveOriginal">移过去</button>
             </div>
-            <p v-for="(h, i) in archive?.history" :key="i" class="muted">{{ fmtTime(h.at) }} · {{ spaceName(h.from_space) }} → {{ spaceName(h.to_space) }} · {{ h.reason }}</p>
+            <p v-for="(h, i) in archive?.history" :key="i" class="muted">{{ fmtTime(h.at) }} · {{ spaceName(h.from_space) }} → {{ spaceName(h.to_space) }} · <RichText :text="h.reason" /></p>
           </div>
         </header>
         <div v-if="detail.source.deletedAt" class="card pad muted">这份原件已于 {{ fmtTime(detail.source.deletedAt) }} 移除，只保留了身份记录。</div>

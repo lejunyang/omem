@@ -17,33 +17,33 @@ const prd = upsertSource(app, { spaceId: "docs", kind: "doc", uri: "prd.md", tit
 const hidden = upsertSource(app, { spaceId: "secret", kind: "doc", uri: "x.md", title: "看不到", text: "x\n" });
 
 describe("item materials", () => {
-  it("adds documents and spaces once, notes when an original changed, and gives reviews the spaces to read", () => {
+  it("adds documents and spaces once, notes when an original changed, and gives reviews the spaces to read", async () => {
     const item = upsertItem(app, undefined, { spaceId: "personal", title: "退款改造需求" }, "user");
-    addMaterials(app, item.id, [{ kind: "source", ref: `src:${prd.id}#L1-L1` }, { kind: "space", ref: "docs", note: "迁移的源实现" }], "owner", "user");
+    await addMaterials(app, item.id, [{ kind: "source", ref: `src:${prd.id}#L1-L1` }, { kind: "space", ref: "docs", note: "迁移的源实现" }], "owner", "user");
     // The same original again only updates it.
-    addMaterials(app, item.id, [{ kind: "source", ref: prd.id, note: "以这份为准" }], "owner");
+    await addMaterials(app, item.id, [{ kind: "source", ref: prd.id, note: "以这份为准" }], "owner");
     const list = itemMaterials(app, item.id);
     expect(list).toHaveLength(2);
     expect(list.find((m) => m.kind === "source")!.meta.note).toBe("以这份为准");
-    expect(materialSpaces(app, item.id, "owner")).toEqual(["docs"]);
-    expect(materialsBrief(app, item.id, "owner")).toContain(`src:${prd.id}`);
+    expect(await materialSpaces(app, item.id, "owner")).toEqual(["docs"]);
+    expect(await materialsBrief(app, item.id, "owner")).toContain(`src:${prd.id}`);
 
     upsertSource(app, { spaceId: "docs", kind: "doc", uri: "prd.md", title: "退款需求文档", text: "第二版\n" });
-    expect(materialViews(app, item.id, "owner").find((m) => m.kind === "source")!.changed).toBe(true);
-    expect(materialsBrief(app, item.id, "owner")).toContain("加入后有更新");
+    expect((await materialViews(app, item.id, "owner")).find((m) => m.kind === "source")!.changed).toBe(true);
+    expect(await materialsBrief(app, item.id, "owner")).toContain("加入后有更新");
 
     expect(removeMaterials(app, item.id, [`space:docs`], "owner", "user")).toBe(1);
     expect(itemMaterials(app, item.id).map((m) => m.kind)).toEqual(["source"]);
     expect(itemEvents(app, item.id).map((e) => e.text).join("\n")).toMatch(/加入材料[\s\S]*移除材料/);
   });
 
-  it("only takes what the user may see", () => {
+  it("only takes what the user may see", async () => {
     createUser(app, { id: "u2", name: "小王" });
-    addMember(app, "docs", "u2");
+    addMember(app, "docs", "u2", "editor");
     const item = upsertItem(app, undefined, { spaceId: "docs", title: "小王的事", userId: "u2" }, "user");
-    expect(() => addMaterials(app, item.id, [{ kind: "source", ref: hidden.id }], "u2")).toThrow(/不能访问/);
-    expect(() => addMaterials(app, item.id, [{ kind: "source", ref: prd.id }], "owner")).toThrow(/他人/);
-    expect(addMaterials(app, item.id, [{ kind: "source", ref: prd.id }], "u2")).toHaveLength(1);
+    await expect(addMaterials(app, item.id, [{ kind: "source", ref: hidden.id }], "u2")).rejects.toThrow(/不能访问/);
+    expect(await addMaterials(app, item.id, [{ kind: "source", ref: prd.id }], "owner")).toHaveLength(1);
+    expect(await addMaterials(app, item.id, [{ kind: "source", ref: prd.id }], "u2")).toHaveLength(1);
   });
 
   it("upsert_item adds materials without touching the item, and read_item lists them", async () => {

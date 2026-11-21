@@ -87,7 +87,7 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
     const repos = [...new Set(b.repos.map(readable))];
     const { resolveDesignSources, startAssessment } = await import("../designs/assess.ts");
     const sources = await resolveDesignSources(app, b.sources, { userId: user, spaces: allowed });
-    const { design, run } = startAssessment(app, { title: b.title, sources, repos, spaceId: target, userId: user, itemId: item?.id ?? again?.itemId, author: b.author, note: b.note, designId: again?.id, readable: allowed });
+    const { design, run } = await startAssessment(app, { title: b.title, sources, repos, spaceId: target, userId: user, itemId: item?.id ?? again?.itemId, author: b.author, note: b.note, designId: again?.id, readable: allowed });
     return { id: design.id, runId: run.id };
   });
 

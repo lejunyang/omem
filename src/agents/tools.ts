@@ -1,3 +1,4 @@
+import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { lessonInput, proposeLesson } from "./code-lessons.ts";
 import { claimCommits, claimSchema } from "../flows/commits.ts";
 import { queueCodeWork } from "./code-delegate.ts";
@@ -28,7 +29,7 @@ import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
-import { accessibleSpaces, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
+import { accessibleSpaces, activeUser, identityOwner, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
@@ -71,6 +72,8 @@ import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, sk
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
+import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
+import type { OperationRule } from "../core/config.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
@@ -81,6 +84,8 @@ import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows,
 import type { SearchOptions } from "../search/search.ts";
 
 export type ToolContext = {
+  /** Host-only identity of the ACP prompt currently using this token and the command wrappers. */
+  commandTurn?: string;
   app: App;
   runId: string | null;
   /** Default space for tools that take an optional `space`. */
@@ -109,6 +114,8 @@ export type ToolContext = {
   larkPowers?: { urgent: boolean; private: boolean };
   /** This call was approved by the owner (a held call running after the OK): do not hold it again. */
   approved?: boolean;
+  /** Single-invocation rule approval. A tool can still require its own confirmation. */
+  operationGrant?: { key: string; expiresAt: number; approver: string; resolved?: { from: unknown; target: string } };
   /** A person pressed an object's action button on this item's page (src/flows/object-actions.ts): the call is about that item and object. */
   objectAction?: { item: string; object: string };
   /** Built-in role of the run (ingest, dreamer…); background roles must cite sources for memories. */
@@ -1699,12 +1706,12 @@ def({
     with_timeline: z.boolean().optional(),
   }),
   handler: (ctx, a) => {
-    const discovery = scopeFor(ctx.app, ctx.userId ?? OWNER, (a.space === "*" && ctx.itemDiscoverySpaces !== undefined ? ctx.itemDiscoverySpaces : spacesFor(ctx, a.space)) ?? null);
+    const discovery = itemScope(ctx.app, ctx.userId ?? OWNER, (a.space === "*" && ctx.itemDiscoverySpaces !== undefined ? ctx.itemDiscoverySpaces : spacesFor(ctx, a.space)) ?? null);
     // A replay arm: items that did not exist yet are left out, and so is their later progress.
     const asOf = ctx.view?.asOf;
-    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceIds: discovery ?? undefined, userId: ctx.userId ?? "owner", limit: 100, parentId: a.parent }).filter((i) => !asOf || i.createdAt <= asOf);
+    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, ...discovery, userId: ctx.userId ?? OWNER, limit: 100, parentId: a.parent }).filter((i) => !asOf || i.createdAt <= asOf);
     if (!items.length) return "没有符合条件的事项。";
-    const under = new Map(all<{ parent_id: string; n: number }>(ctx.app.db, `select parent_id, count(*) n from items where parent_id in (${items.map(() => "?").join(",")}) and status not in ('done','cancelled','expired','candidate') group by parent_id`, ...items.map((i) => i.id)).map((r) => [r.parent_id, r.n]));
+    const under = new Map(all<{ parent_id: string; n: number }>(ctx.app.db, `select parent_id, count(*) n from items where parent_id in (${items.map(() => "?").join(",")}) and (? is null or space_id in (select value from json_each(?))) and status not in ('done','cancelled','expired','candidate') group by parent_id`, ...items.map((i) => i.id), JSON.stringify(discovery.spaceIds) ?? null, JSON.stringify(discovery.spaceIds) ?? null).map((r) => [r.parent_id, r.n]));
     const tree = (i: { parentId: string | null; id: string }) => `${i.parentId ? ` 上层 ${i.parentId}` : ""}${under.get(i.id) ? ` 下面 ${under.get(i.id)} 件在办` : ""}`;
     return items
       .map((i) => {
@@ -2306,7 +2313,7 @@ def({
 });
 
 function flowItem(ctx: ToolContext, id: string, write: boolean) {
-  const item = getItem(ctx.app, id);
+  const item = requireItem(ctx.app, id, ctx.userId ?? OWNER, write ? "write" : "read");
   const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
   const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, write ? ctx.writable ?? ctx.spaces : ctx.spaces);
   if (item.userId !== (ctx.userId ?? OWNER) || readable && !readable.includes(item.spaceId) || allowed && !allowed.includes(item.spaceId)) throw new HttpError(403, "不能访问或修改该事项的流程");
@@ -2533,12 +2540,15 @@ def({
     materials_remove: z.array(z.string()).optional().describe("要移除的材料：材料编号，或 kind:ref"),
   }),
   handler: async (ctx, a) => {
-    const existing = a.id ? getItem(ctx.app, a.id) : null;
+    const existing = a.id ? requireItem(ctx.app, a.id, ctx.userId ?? OWNER, "write") : null;
     if (existing) {
       inScope(ctx, existing.spaceId, "事项");
       if (existing.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
       if (a.space && a.space !== existing.spaceId) throw new HttpError(400, "事项 id 与空间不匹配");
     }
+    const userId = ctx.userId ?? OWNER;
+    const spaceId = existing?.spaceId ?? writeSpace(ctx, a.space);
+    if (!existing && !itemAccess(ctx.app, userId, { spaceId, userId }, "write")) throw new HttpError(403, "不能在这个空间创建事项");
     // Removal may revoke stale/deleted refs, but must match this item's exact old set.
     if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
     if (!existing) await notOwnersBusiness(ctx, a.source_refs ?? []);
@@ -2546,12 +2556,11 @@ def({
     const onItsOwn = !ownTurn(ctx);
     // A work line is the owner's to make (or to take from the nightly proposal card): never on its own.
     if (onItsOwn && a.kind === "line" && existing?.kind !== "line") throw new HttpError(403, "工作线只由本人建：这不是本人这一轮亲口要的。觉得这几件事该成一条线，在给本人的话里提出来（每晚的近况整理也会提议）");
-    if (a.parent) {
-      const p = getItem(ctx.app, a.parent);
+    for (const p of writableParents(ctx.app, userId, existing?.parentId ?? null, a.parent)) {
       inScope(ctx, p.spaceId, "上层事项");
       if (p.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能挂到本人自己的事项下");
-      if (existing) (await import("../items/tree.ts")).checkParent(ctx.app, existing.id, a.parent);
     }
+    if (existing && a.parent) (await import("../items/tree.ts")).checkParent(ctx.app, existing.id, a.parent);
     if (existing?.status === "candidate" && onItsOwn && a.status)
       throw new HttpError(403, `「${existing.title}」是候选事项，留不留由本人定（每天的事项清点或事项页）。可以记进展，不能改它的状态`);
     // The owner's own turn keeping or dropping an item the assistant made on its own is the owner's choice (items/auto-cases.ts).
@@ -2575,7 +2584,7 @@ def({
       ctx.app,
       a.id,
       {
-        spaceId: existing ? undefined : writeSpace(ctx, a.space),
+        spaceId: existing ? undefined : spaceId,
         kind: a.kind,
         title: a.title,
         detail: a.detail,
@@ -2602,7 +2611,7 @@ def({
       parentLine = parent ? `\n归到 ${parent}「${getItem(ctx.app, parent).title}」下面。` : "\n已从上层移出。";
     }
     const { addMaterials, removeMaterials } = await import("../items/materials.ts");
-    const added = materialsAdd?.length ? addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
+    const added = materialsAdd?.length ? await addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
     const removed = materialsRemove?.length ? removeMaterials(ctx.app, item.id, materialsRemove, ctx.userId ?? OWNER, ctx.actor) : 0;
     const materialsLine = added.length || removed ? `\n材料：${added.length ? `加入 ${added.map((m) => `#${m.id} ${m.label}`).join("、")}` : ""}${added.length && removed ? "；" : ""}${removed ? `移除 ${removed} 项` : ""}` : "";
     // A problem worked through over several steps is worth keeping as a case (see roles/_common.md).
@@ -2633,7 +2642,7 @@ def({
     const out: string[] = [];
     for (const v of a.verdicts) {
       try {
-        const item = getItem(ctx.app, v.item_id);
+        const item = requireItem(ctx.app, v.item_id, ctx.userId ?? OWNER, "write");
         inScope(ctx, item.spaceId, "事项");
         if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
         if (v.verdict === "keep") {
@@ -2661,20 +2670,20 @@ def({
   description: "读取一件事项的全貌：完整字段、当前来源、全部时间线、材料、工作文件，以及它在哪些会话和群里进行（places：每处最近的一句话或摘要）、正在为它跑的运行（runs）、它的上层（parent）和挂在下面的事项（children）；工作线另有“现在”（now）和还没定的下一步（next）。纠正前先读。跨空间发现仍只读。",
   schema: z.object({ item_id: z.string() }),
   handler: async (ctx, a) => {
-    const item = getItem(ctx.app, a.item_id);
+    const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
     const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
     const { listWorkFiles } = await import("../sources/work.ts");
-    const files = listWorkFiles(ctx.app, { item: item.id }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
+    const files = listWorkFiles(ctx.app, { item: item.id, spaces: readable, userId: ctx.userId ?? OWNER }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");
-    const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
+    const materials = (await materialViews(ctx.app, item.id, ctx.userId ?? OWNER)).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
     // Where the work goes on and what is running for it (items/places.ts).
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
     const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER).filter((r) => r.id !== ctx.runId);
     // Where it hangs and what hangs under it (items/tree.ts); a line's suggested next steps (items/lines.ts).
-    const parent = item.parentId ? one<{ id: string; title: string; kind: string; status: string }>(ctx.app.db, "select id, title, kind, status from items where id = ?", item.parentId) ?? null : null;
-    const children = all<{ id: string; title: string; kind: string; status: string; due_at: string | null }>(ctx.app.db, "select id, title, kind, status, due_at from items where parent_id = ? order by created_at", item.id).map((c) => ({ id: c.id, title: c.title, kind: c.kind, status: c.status, dueAt: c.due_at }));
+    const parent = item.parentId ? one<{ id: string; title: string; kind: string; status: string }>(ctx.app.db, "select id, title, kind, status from items where id = ? and (? is null or space_id in (select value from json_each(?)))", item.parentId, readable && JSON.stringify(readable), readable && JSON.stringify(readable)) ?? null : null;
+    const children = all<{ id: string; title: string; kind: string; status: string; due_at: string | null }>(ctx.app.db, "select id, title, kind, status, due_at from items where parent_id = ? and (? is null or space_id in (select value from json_each(?))) order by created_at", item.id, readable && JSON.stringify(readable), readable && JSON.stringify(readable)).map((c) => ({ id: c.id, title: c.title, kind: c.kind, status: c.status, dueAt: c.due_at }));
     const next = all<{ id: string; text: string; why: string; kind: string; status: string; created_at: string }>(ctx.app.db, "select id, text, why, kind, status, created_at from item_next where item_id = ? and status in ('open','doing') order by created_at desc limit 10", item.id);
     return JSON.stringify({ item, ...(parent ? { parent } : {}), ...(children.length ? { children } : {}), ...(next.length ? { next } : {}), flow: (await import("../flows/engine.ts")).flowView(ctx.app, item.id), events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
   },
@@ -2721,7 +2730,7 @@ def({
     if (!n || n.user_id !== (ctx.userId ?? OWNER)) throw new HttpError(403, "通知不属于本人");
     const context = JSON.parse(n.context);
     if (!context.entityId || context.entityId !== inter.payload.itemId) throw new HttpError(409, "通知与交互关联不一致，先修复关联");
-    const item = getItem(ctx.app, context.entityId);
+    const item = requireItem(ctx.app, context.entityId, ctx.userId ?? OWNER, "write");
     inScope(ctx, item.spaceId, "事项卡片");
     if (item.userId !== n.user_id) throw new HttpError(403, "事项用户不匹配");
     validateItemRefs(ctx.app, context.sourceRefs ?? [], n.user_id, ctx.spaces);
@@ -2747,7 +2756,7 @@ def({
   write: true,
   schema: z.object({ item_id: z.string(), note: z.string().trim().min(1), source_refs: z.array(z.string()).min(1) }),
   handler: (ctx, a) => {
-    const item = getItem(ctx.app, a.item_id);
+    const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
     const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能发现该事项");
     writeSpace(ctx);
@@ -3447,7 +3456,7 @@ def({
   handler: async (ctx, a) => {
     const { defineMetric, getMetric, metricLessons } = await import("../data/metrics.ts");
     if (a.item) {
-      const item = getItem(ctx.app, a.item);
+      const item = requireItem(ctx.app, a.item, ctx.userId ?? OWNER, "write");
       inScope(ctx, item.spaceId, "指标关联的事项");
     }
     if (a.context) {
@@ -3594,7 +3603,10 @@ def({
       const question = inv.inviteQuestion(resolved, a.reason);
       // The card shows the whole list: well within a Feishu card's size (about 30 KB) and a Markdown block's 20k characters.
       if (Buffer.byteLength(question) > 20_000) throw new HttpError(400, "这次的名单太长，审批卡片放不下：分几次调用");
-      const r = await held(ctx, "lark_invite", normalized, question);
+      // Keep the policy decision for the submitted names and bind the native card to the resolved IDs.
+      const grant = ctx.operationGrant;
+      const snapshot = grant ? { ...ctx, operationGrant: { ...grant, resolved: { from: a, target: digest(normalized) } } } : ctx;
+      const r = await held(snapshot, "lark_invite", normalized, question);
       if (r.isError) throw new HttpError(403, r.text);
       return r.text;
     }
@@ -3862,8 +3874,8 @@ def({
   handler: async (ctx, a) => {
     const { getAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
     const ask = getAsk(ctx.app, a.ask_id);
-    if (ask.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不是这次运行提的问题");
-    const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? ASK_WAIT_MAX) * 1000);
+    if (ask.userId !== (ctx.userId ?? OWNER) && ask.askedBy !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不是这次运行提的问题");
+    const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? ASK_WAIT_MAX) * 1000, ctx.userId ?? OWNER);
     return got.status === "pending" ? `本人还没回答（${ask.id}）。` : describeAnswer(got);
   },
 });
@@ -4133,7 +4145,7 @@ def({
   }),
   handler: (ctx, a) => {
     if (a.entity_id) {
-      const item = getItem(ctx.app, a.entity_id);
+      const item = requireItem(ctx.app, a.entity_id, ctx.userId ?? OWNER, "write");
       inScope(ctx, item.spaceId, "事项通知");
       if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能通知他人的事项");
       const event = a.event_id === undefined ? itemEvents(ctx.app, item.id).at(-1) : itemEvents(ctx.app, item.id).find((e) => e.id === a.event_id);
@@ -4207,7 +4219,7 @@ def({
     const { writeWorkFile } = await import("../sources/work.ts");
     let spaceId = writeSpace(ctx, a.space);
     if (a.item) {
-      const item = getItem(ctx.app, a.item);
+      const item = requireItem(ctx.app, a.item, ctx.userId ?? OWNER, "write");
       inScope(ctx, item.spaceId, "事项");
       if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能给他人的事项挂文件");
       if (!a.space) spaceId = item.spaceId;
@@ -4914,7 +4926,7 @@ def({
 
 /** An item the caller owns and may see, for linking a delegation or review to it. */
 function itemFor(ctx: ToolContext, id: string) {
-  const item = getItem(ctx.app, id);
+  const item = requireItem(ctx.app, id, ctx.userId ?? OWNER, "write");
   inScope(ctx, item.spaceId, "事项");
   if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能使用他人的事项");
   return item.id;
@@ -6471,7 +6483,7 @@ def({
     if (a.design_id) d = await readableDesign(ctx, a.design_id);
     else if (a.run_id) d = await readableDesign(ctx, (await designOfRunId(ctx, a.run_id)).id);
     else if (a.item_id) {
-      const item = getItem(ctx.app, a.item_id);
+      const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
       if (!canRead(ctx, item.spaceId) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读这个事项");
       const list = s.designsOfItem(ctx.app, item.id).filter((x) => canRead(ctx, x.spaceId));
       if (!list.length) throw new HttpError(404, `事项 ${item.id} 上没有方案`);
@@ -6505,7 +6517,7 @@ def({
     const as = await import("../designs/assess.ts");
     const sources = await as.resolveDesignSources(ctx.app, a.sources, { userId: ctx.userId ?? OWNER, spaces: ctx.spaces });
     if (a.design_id) await readableDesign(ctx, a.design_id);
-    const { design, run: r } = as.startAssessment(ctx.app, {
+    const { design, run: r } = await as.startAssessment(ctx.app, {
       title: a.title, sources, repos, spaceId: target, userId: ctx.userId ?? OWNER, itemId: item?.id, author: a.author, note: a.note, designId: a.design_id, parentId: ctx.runId, ai: execution, readable: ctx.spaces,
     });
     return `已开始评估，运行 ${r.id}，方案 ${design.id}${design.revision ? `（第 ${design.revision + 1} 版）` : ""}；完成后会通知本人，结果也会回到这里。`;
@@ -6808,6 +6820,7 @@ export function saveSourceFor(ctx: ToolContext, input: { space?: string; kind?: 
   if (!/^[a-z][\w.-]*:\S+$/.test(input.uri) || input.uri.length > 500) throw new HttpError(400, "uri 要写成 平台:对象 的形式（例如 notion:page/abc），不超过 500 个字符");
   if (!input.text.trim()) throw new HttpError(400, `${input.title || input.uri} 没有正文`);
   const spaceId = writeSpace(ctx, input.space);
+  if (input.meta && ("original" in input.meta || "media" in input.meta)) throw new HttpError(400, "存储文件归属由宿主在保存文件时登记");
   const r = upsertSource(ctx.app, { spaceId, kind: input.kind ?? "doc", uri: input.uri, title: input.title.trim().slice(0, 300) || input.uri, text: input.text, meta: { ...(input.meta ?? {}), originKey: input.uri, capturedBy: ctx.userId ?? OWNER } });
   return { id: r.id, created: r.status === "created", changed: r.status !== "unchanged", space: spaceId };
 }
@@ -6874,6 +6887,66 @@ const metaArgs = { omem_help: z.object({ topic: z.string().optional() }), omem_c
 /** Tools whose write into a mirror space goes to the space's home (core/mesh-write.ts FORWARDED). */
 const MIRROR_FORWARDED = new Set(["remember", "supersede", "forget", "save_note", "write_page"]);
 
+async function toolRuleApprover(app: App, entry = "owner") {
+  // Tools have no trusted nomination channel. Like commands, "run" defaults to the owner.
+  if (entry === "owner" || entry === "run") return OWNER;
+  let id: string | null = entry.slice(5);
+  if (entry.startsWith("lark:")) {
+    const { resolveMention } = await import("../channels/lark-people.ts");
+    const person = await resolveMention(app, id);
+    id = "all" in person ? null : identityOwner(app, "lark", person.userId);
+  }
+  if (!id || !activeUser(findUser(app, id))) throw new Error("规则指定的审批人没有可用的 omem 账号");
+  return id;
+}
+
+function approvalKey(who: OperationWho, op: Operation, rule: OperationRule) {
+  return digest([who, rule.id, rule.revision, fingerprint(op, rule)]);
+}
+
+async function checkToolOperation(
+  ctx: ToolContext, op: { kind: "tool"; name: string; args: Record<string, unknown> },
+  who: OperationWho, { rule, action }: ReturnType<typeof decide>,
+) {
+  const { name, args } = op;
+  if (rule && action === "deny") {
+    auditOperation(ctx.app, op, who, rule, action, "denied");
+    return { text: `操作规则「${rule.title || rule.id}」拒绝调用 ${name}`, isError: true };
+  }
+  const key = rule && action === "approve" ? approvalKey(who, op, rule) : undefined;
+  const grant = ctx.operationGrant;
+  // Some native approvals resolve human names to stable IDs. Check both the original rule
+  // and the IDs on the native card, including any deny rule specific to those IDs.
+  let approvedKey = key;
+  let approvedRule = rule;
+  if (grant?.resolved) {
+    const original = { ...op, args: grant.resolved.from };
+    const decision = decide(ctx.app, original, who);
+    approvedRule = decision.rule;
+    approvedKey = approvedRule && decision.action === "approve" && digest(args) === grant.resolved.target
+      ? approvalKey(who, original, approvedRule) : undefined;
+  }
+  if (grant && (grant.key !== approvedKey || Date.now() >= grant.expiresAt)) {
+    auditOperation(ctx.app, op, who, rule, "approve", "stale", grant.approver);
+    return { text: "工具审批已失效，成员、规则或参数已变更，或已超过有效期。", isError: true };
+  }
+  if (rule && key && (!grant || approvedRule?.id !== rule.id)) {
+    let approver: string;
+    try { approver = await toolRuleApprover(ctx.app, rule.approval?.approver); }
+    catch (e) {
+      auditOperation(ctx.app, op, who, rule, action, "approver unavailable");
+      return { text: (e as Error).message, isError: true };
+    }
+    const expiresAt = Date.now() + (rule.approval?.expiresSeconds ?? 86400) * 1000;
+    auditOperation(ctx.app, op, who, rule, action, "pending", approver);
+    return held({ ...ctx, operationGrant: { key, expiresAt, approver } }, name, args,
+      `${userName(ctx.app, who.member)} 的助理要调用 ${name}。规则「${rule.title || rule.id}」要求批准本次调用。\n空间 ${ctx.spaceId}，参数指纹 ${fingerprint(op, rule).slice(0, 12)}，有效期至 ${new Date(expiresAt).toISOString()}。`,
+      { operationApproval: rule, askedBy: who.member, toName: userName(ctx.app, approver) }, rule);
+  }
+  if (rule) auditOperation(ctx.app, op, who, rule, action, grant ? "approved" : "allowed", grant?.approver);
+  return null;
+}
+
 export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
   if (name === "omem_help" || name === "omem_call") {
     const parsed = metaArgs[name].safeParse(args ?? {});
@@ -6885,14 +6958,26 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const tool = tools.find((t) => t.name === name);
   if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
-  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))) return { text: `工具 ${name} 不可用`, isError: true };
+  if (!tool || (ctx.tools && (!ctx.tools.has(name) || (WORK_BOARD_TOOLS.includes(name) && !ctx.tools.has("run_agent"))))
+      || (tool.available && !tool.available(ctx.app, ctx.userId ?? OWNER))) {
+    return { text: `工具 ${name} 不可用`, isError: true };
+  }
   mark(`tool ${name}`);
   // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
   if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
-  if (ctx.actor === "agent" && !ctx.approved && (ctx.app.config.approvals.tools.includes(name) || alwaysApprove.has(name))) return held(ctx, name, parsed.data as Record<string, unknown>);
+  const op = { kind: "tool" as const, name, args: parsed.data };
+  const who = operationWho(ctx);
+  const decision = ctx.actor === "agent" ? decide(ctx.app, op, who) : undefined;
+  if (decision && (decision.rule || ctx.operationGrant)) {
+    const stopped = await checkToolOperation(ctx, op, who, decision);
+    if (stopped) return stopped;
+  }
+  const legacy = ctx.actor === "agent" && !ctx.approved && (!decision?.rule || decision.action === "log");
+  if ((legacy && ctx.app.config.approvals.tools.includes(name)) || (ctx.actor === "agent" && !ctx.approved && alwaysApprove.has(name)))
+    return held(ctx, name, parsed.data);
   // A memory, note or page written into a mirror of another node's space is written on its home (core/mesh-write.ts).
   if (tool.write && MIRROR_FORWARDED.has(name)) {
     const { forwardToHome } = await import("../core/mesh-write.ts");
@@ -6901,7 +6986,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const out = await runTool(ctx, tool, name, parsed.data);
   // On the middle rung (approval-ladder.ts): done without asking, and the owner is told what was done.
-  if (ctx.actor === "agent" && !ctx.approved && (ctx.app.config.approvals.report ?? []).includes(name))
+  if (legacy && (ctx.app.config.approvals.report ?? []).includes(name))
     (await import("./approval-ladder.ts")).reportDone(ctx.app, { who: ctx.spec ?? ctx.role ?? "助理", userId: ctx.userId, runId: ctx.runId }, name, parsed.data as Record<string, unknown>, out);
   return out;
 }
@@ -6961,7 +7046,7 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
     const text = await asLarkUser(ctx.app, ctx.userId ?? OWNER, () => withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data)), ctx.runId);
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
     const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : tool.write ? followWork(ctx, parsed.data as Record<string, unknown>) : "";
-    const linked = afterToolCall(ctx.app, ctx.runId, ctx.userId, name, parsed.data as Record<string, unknown>, String(text));
+    const linked = await afterToolCall(ctx.app, ctx.runId, ctx.userId, name, parsed.data as Record<string, unknown>, String(text));
     return { text: text + moved + linked + (await steering(ctx)), isError: false };
   } catch (error) {
     return { text: (error as Error).message + (await steering(ctx)), isError: true };
@@ -6984,29 +7069,38 @@ async function steering(ctx: ToolContext) {
  * A tool listed in `approvals.tools`: the call waits for the owner's OK. Approved, it runs with
  * the context it was made in (also after this run has ended); refused, the reason goes back.
  */
-async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string, extraContext?: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
+async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string, extraContext?: Record<string, unknown>, rule?: OperationRule): Promise<{ text: string; isError: boolean }> {
   const { createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
   const { app, tools: allowed, ...rest } = ctx;
   const ask = createAsk(app, {
     runId: ctx.runId,
-    userId: ctx.userId ?? OWNER,
+    userId: rule ? ctx.operationGrant!.approver : ctx.userId ?? OWNER,
     kind: "approval",
     question: question ?? `${ctx.spec ?? ctx.role ?? "助理"} 要调用 ${name}：\n${truncate(JSON.stringify(args, null, 1), 1500)}`,
     tool: name,
     args,
     context: { ...rest, tools: allowed ? [...allowed] : null, ...extraContext },
   });
-  const got = await waitForAnswer(app, ask.id, app.config.approvals.waitSeconds * 1000);
+  const got = await waitForAnswer(app, ask.id, (rule?.approval?.waitSeconds ?? app.config.approvals.waitSeconds) * 1000, ctx.userId ?? OWNER);
   if (got.status === "pending")
-    return { text: `${name} 需要本人批准（${ask.id}），还在等。可以先做别的，再 wait_answer(ask_id="${ask.id}") 看结果；批准后宿主会执行并把结果告诉你，不要自己重复调用。`, isError: false };
-  return { text: describeAnswer(got), isError: !got.approved };
+    return { text: `${name} 需要${ask.toName ?? "本人"}批准（${ask.id}），还在等。可以先做别的，再 wait_answer(ask_id="${ask.id}") 看结果；批准后宿主会执行并把结果告诉你，不要自己重复调用。`, isError: false };
+  return { text: describeAnswer(got), isError: !got.approved || !!got.result?.startsWith("失败：") };
 }
 
 setApprovalExecutor(async (app, ask, snapshot) => {
-  const tool = tools.find((t) => t.name === ask.tool);
-  if (!tool) return { text: `工具 ${ask.tool} 已不存在`, isError: true };
-  const s = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null };
-  const out = await runTool({ ...s, app, tools: s.tools ? new Set(s.tools) : null, approved: true }, tool, ask.tool!, ask.args ?? {});
+  const { operationApproval, askedBy: _asker, toName: _recipient, ...s } = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null; operationApproval?: OperationRule; askedBy?: string; toName?: string };
+  const member = s.userId ?? OWNER;
+  const approver = operationApproval ? s.operationGrant?.approver : member;
+  if (!ask.tool || !approver || ask.userId !== approver || ask.answeredBy !== approver ||
+      !activeUser(findUser(app, approver)) || !activeUser(findUser(app, member)) || ask.runId !== s.runId || (ask.runId && runUser(app, ask.runId) !== member))
+    return { text: "审批人或运行成员已变化，工具审批已失效。", isError: true };
+  const ctx: ToolContext = { ...s, app, spaces: scopeFor(app, member, s.spaces), tools: s.tools ? new Set(s.tools) : null, approved: !operationApproval || s.approved };
+  if (!ask.approved) {
+    auditOperation(app, { kind: "tool", name: ask.tool, args: ask.args }, operationWho(ctx), operationApproval, "approve", "refused", approver);
+    return { text: "已拒绝", isError: false };
+  }
+  const out = await callTool(ctx, ask.tool, ask.args ?? {});
+  if (operationApproval || out.isError) return out;
   // The owner keeps approving this tool: ask once whether it may run and be reported instead (approval-ladder.ts).
   void import("./approval-ladder.ts").then((m) => m.suggestPromotion(app, ask, (t) => !alwaysApprove.has(t))).catch((e) => console.warn(`[omem] 审批阶梯：${(e as Error).message}`));
   return out;
@@ -7063,6 +7157,13 @@ export function issueToolToken(ctx: Omit<ToolContext, "app">) {
 export function retargetToolToken(token: string, runId: string | null) {
   const ctx = tokens.get(token);
   if (ctx) ctx.runId = runId;
+}
+export function beginCommandTurn(token: string) {
+  const ctx = tokens.get(token);
+  if (!ctx) return;
+  const turn = randomBytes(18).toString("base64url");
+  ctx.commandTurn = turn;
+  return () => { if (ctx.commandTurn === turn) delete ctx.commandTurn; };
 }
 export function revokeToolToken(token: string) {
   tokens.delete(token);

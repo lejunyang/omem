@@ -184,7 +184,7 @@ describe("reviewing an existing branch", () => {
       const { upsertSource } = await import("../src/sources/store.ts");
       const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "prd-refund.md", title: "退款需求", text: "# 退款\n\n只退未发货的行。\n" });
       const item = upsertItem(app, undefined, { spaceId: "personal", title: "退款需求", kind: "todo" }, "user");
-      addMaterials(app, item.id, [{ kind: "source", ref: `src:${doc.id}#L1-L3`, note: "需求原文" }], "owner", "user");
+      await addMaterials(app, item.id, [{ kind: "source", ref: `src:${doc.id}#L1-L3`, note: "需求原文" }], "owner", "user");
       const r = createBranchReview(app, { repos: ["shop-api"], branch: "feature/refund", task: "评审退款分支", fetch: false, itemId: item.id });
       expect(itemMaterials(app, item.id).map((m) => `${m.kind}:${m.ref}`).sort()).toEqual([`repo:shop-api#feature/refund`, `run:${r.id}`, `source:${doc.id}`].sort());
       await exec(r);
@@ -228,7 +228,7 @@ describe("reviewing an existing branch", () => {
       setFindingDecision(app, r.id, nit.id, "wontfix", "命名沿用源仓库，运营已确认");
       // The reason is a business decision on the item, which later work reads.
       expect(itemEvents(app, item.id).some((e) => e.kind === "decision" && e.text.includes("运营已确认"))).toBe(true);
-      expect(materialsBrief(app, item.id, "owner")).toContain("命名沿用源仓库");
+      expect(await materialsBrief(app, item.id, "owner")).toContain("命名沿用源仓库");
 
       const ctx: ToolContext = { app, runId: null, spaceId: "shop-api", spaces: null, tools: null, actor: "agent" };
       const res = await callTool(ctx, "continue_code_run", { run_id: r.id, fix: [major.id], later: [minor.id], task: "另外：部分退款要记操作日志" });

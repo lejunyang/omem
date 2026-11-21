@@ -23,6 +23,7 @@ import type { DesignSummary } from "../lib/designs";
 import { fmtTime, itemKindLabel, openCitation, relTime, state, toast } from "../store";
 import { refAction } from "../lib/refs";
 import RichText from "../components/RichText.vue";
+import HelpText from "../components/HelpText.vue";
 import { pageParam } from "../lib/route";
 
 const route = useRoute();
@@ -233,7 +234,7 @@ async function addNote() {
     <div class="page-head">
       <div>
         <h1>全部事项</h1>
-        <p>工作线、待办、提醒、等待回复和持续关注。助理会在材料更新时推进它们，只在需要你时通知；工作线和它下面的事在 <router-link to="/">工作</router-link> 页看。</p>
+        <p>待办、提醒、等待回复和持续关注；工作线在 <router-link to="/">工作</router-link> 页看。</p>
       </div>
       <span class="spacer" />
       <button class="btn primary sm" @click="adding = true"><Icon name="plus" :size="15" />新建事项</button>
@@ -253,19 +254,18 @@ async function addNote() {
 
     <div v-if="expiry && !expiry.backlogApplied && expiry.backlog.length" class="card pad backlog row wrap">
       <Icon name="clock" :size="16" />
-      <p>有 {{ expiry.backlog.length }} 件事项很久没有新进展，按自动收尾的期限早就该过期了。先看一眼，要留下的勾上，其余一次收掉。</p>
+      <p>有 {{ expiry.backlog.length }} 件事项很久没有新进展，早该自动过期了。</p>
       <span class="spacer" />
       <button class="btn sm primary" @click="backlogOpen = true">查看并收尾</button>
     </div>
     <section v-if="shownCandidates.length" class="candidates" aria-labelledby="candidates-title">
       <h2 id="candidates-title" class="section-title row"><Icon name="inbox" :size="14" />可能要跟的 <span class="count">{{ shownCandidates.length }}</span></h2>
-      <p class="muted small">助手自己从材料里看出来、你没要求过的事。留下就变成正式事项，提醒时间照旧；不要就放下。3 天没答的会自动放下，你的选择会教它以后少建这类。</p>
+      <HelpText>助手自己从材料里看出来、你没要求过的事。留下就变成正式事项，提醒时间照旧；不要就放下。3 天没答的会自动放下，你的选择会教它以后少建这类。</HelpText>
       <div class="cand-list">
         <div v-for="c in shownCandidates" :key="c.id" class="cand row">
           <div class="cand-main">
-            <router-link :to="`/items/${c.id}`" class="ttl">{{ c.title }}</router-link>
-            <div class="small muted">{{ candidateWhen(c) }}</div>
-            <RichText v-if="c.auto?.why" tag="div" class="small why" :text="c.auto.why" :lines="3" />
+            <div class="cand-head"><router-link :to="`/items/${c.id}`" class="ttl">{{ c.title }}</router-link><span class="small muted when">{{ candidateWhen(c) }}</span></div>
+            <RichText v-if="c.auto?.why" tag="div" class="small why" :text="c.auto.why" :lines="1" />
           </div>
           <div class="cand-actions row">
             <button class="btn sm primary" :disabled="deciding === c.id" @click="decide(c, true)">留下</button>
@@ -454,6 +454,7 @@ async function addNote() {
 .under { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .backlog {
   gap: 10px;
+  padding: 10px 14px;
   margin-bottom: 18px;
   color: var(--ink-2);
 }
@@ -534,8 +535,8 @@ async function addNote() {
 }
 .cand {
   gap: 12px;
-  align-items: flex-start;
-  padding: 10px 0;
+  align-items: center;
+  padding: 8px 0;
   border-bottom: 1px solid var(--line);
 }
 .cand-main {
@@ -544,9 +545,19 @@ async function addNote() {
   min-width: 0;
   flex: 1;
 }
+.cand-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
 .cand-main .ttl {
   color: var(--ink);
   font-size: 14px;
+}
+.cand-head .when {
+  white-space: nowrap;
 }
 .why {
   color: var(--ink-2);
@@ -627,6 +638,7 @@ async function addNote() {
 }
 .item {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   min-width: 0;
   padding: 10px 12px;

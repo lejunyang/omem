@@ -1,3 +1,8 @@
+import { storedFileReadable } from "../auth/stored-files.ts";
+import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
+import { randomUUID as operationId } from "node:crypto";
+import { currentRules, digest, enforcedBy, saveOperationRules } from "../agents/operation-policy.ts";
+import { disableRulePack, enableRulePack, listRulePacks } from "../agents/rule-packs.ts";
 import { networkInterfacesView, networkPoliciesView, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies } from "../agents/network-policy.ts";
 import { lessonInput, listLessons, saveLesson, removeLesson } from "../agents/code-lessons.ts";
 import { ROLE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
@@ -58,8 +63,8 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueRe
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, commandRuleSchema, configSchema, networkPolicySchema, saveConfig } from "../core/config.ts";
-import { approverChoices, commandGate, syncCommandGate } from "../agents/command-gate.ts";
+import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, networkPolicySchema, saveConfig } from "../core/config.ts";
+import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, rezoneScheduler, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
@@ -71,13 +76,13 @@ import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute } from "../auth/routes.ts";
-import { hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
+import { sourceReadable, hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
 import { registerCodeIndexRoutes } from "../sources/code-index-http.ts";
 import { audit, can, canReadRun, globalPerms, isOwner, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
-import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, scopeFor, userForToken, userName } from "../core/users.ts";
+import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, personalSpaceId, scopeFor, userForToken, userName } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
@@ -272,7 +277,30 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     const b = q(z.object({ command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
-    return commandGate(app, ctx, b);
+    return commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+  });
+  server.get("/api/security/rule-packs", async () => ({ packs: listRulePacks(app) }));
+  server.post("/api/security/rule-packs/:id/enable", async (req) => {
+    const { id } = req.params as { id: string };
+    const { scope, confirmation } = q(z.object({ scope: operationScopeSchema, confirmation: z.string().length(64) }).strict(), req.body);
+    enableRulePack(app, id, scope, confirmation);
+    audit(app, who(req), "operation.pack.enable", id, { scope, confirmation });
+    return { ok: true };
+  });
+  server.post("/api/security/rule-packs/:id/disable", async (req) => {
+    const { id } = req.params as { id: string };
+    disableRulePack(app, id);
+    audit(app, who(req), "operation.pack.disable", id);
+    return { ok: true };
+  });
+  const rulesView = () => currentRules(app).map(r => ({ ...r, enforcedBy: enforcedBy[r.match.kind] }));
+  server.get("/api/security/operation-rules", async () => ({ rules: rulesView() }));
+  server.put("/api/security/operation-rules", async (req) => {
+    const b = q(z.object({ rules: operationRulesSchema }), req.body);
+    saveOperationRules(app, b.rules);
+    commandGateDir(app);
+    audit(app, who(req), "operation.rules", "security", { count: b.rules.length });
+    return { rules: rulesView() };
   });
   // The command rules: the owner's own, never an agent's (no tool writes them).
   server.get("/api/security/command-rules", async (req) => {
@@ -282,11 +310,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.put("/api/security/command-rules", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "命令规则只有本人能看和改");
     const b = q(z.object({ rules: z.array(commandRuleSchema).max(200) }), req.body);
-    const next = structuredClone(app.config);
-    next.security = { ...next.security, commandRules: b.rules };
-    saveConfig(next, app.home);
-    Object.assign(app.config, next);
-    syncCommandGate(app.home, b.rules);
+    const incoming = migrateCommands(b.rules);
+    const next = currentRules(app).flatMap(r => {
+      if (!legacyCommand(r)) return [r];
+      const replacement = incoming.shift();
+      return replacement ? [{ ...replacement, id: r.id }] : [];
+    });
+    saveOperationRules(app, [...next, ...incoming.map(r => ({ ...r, id: operationId() }))]);
+    commandGateDir(app);
     audit(app, who(req), "command.rules", "security", { count: b.rules.length });
     return { rules: app.config.security.commandRules };
   });
@@ -739,6 +770,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   /** A stored original (images, PDFs, videos with Range support). */
   async function sendStoredFile(req: FastifyRequest, reply: FastifyReply, name: string) {
     if (!/^[a-f0-9]{16}\.[a-z0-9]+$/.test(name)) throw new HttpError(400, "bad name");
+    if (!(await storedFileReadable(app, who(req), name))) throw new HttpError(404, "not found");
     // A compressed copy (core/media.ts) answers for the original name; its type is the copy's.
     const { storedName } = await import("../core/stored-files.ts");
     const actual = storedName(app, name);
@@ -858,7 +890,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const userId = who(req);
     if (b.space && userId !== OWNER && !(accessibleSpaces(app, userId) ?? []).includes(b.space)) throw new HttpError(403, `不能访问空间 ${b.space}`);
     const { checkAttachments } = await import("../agents/attachments.ts");
-    const attachments = checkAttachments(app, b.attachments ?? []);
+    const attachments = checkAttachments(app, b.attachments ?? [], userId);
     const text = b.text.trim() || attachments.map((a) => `[${a.label}]`).join(" ");
     if (!text) throw new HttpError(400, "消息是空的");
     return ask(app, { text, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
@@ -867,7 +899,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/ask/attachments", async (req) => {
     const { saveAttachment } = await import("../agents/attachments.ts");
     const saved = [];
-    for await (const part of req.files()) saved.push(saveAttachment(app, await part.toBuffer(), part.filename, part.mimetype));
+    for await (const part of req.files()) saved.push(saveAttachment(app, await part.toBuffer(), part.filename, part.mimetype, who(req)));
     if (!saved.length) throw new HttpError(400, "没有收到文件");
     return { files: saved };
   });
@@ -1402,7 +1434,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/items", async (req) => {
     const o = q(z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional() }), req.query);
     const { itemExpiry } = await import("../items/expiry.ts");
-    const items = listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, userId: who(req) === OWNER ? undefined : who(req) });
+    const items = listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, ...itemScope(app, who(req)) });
     const flows = itemFlowSummaries(app, items.map((i) => i.id));
     // A candidate shows why the assistant made it and who did (items/auto.ts).
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
@@ -1416,9 +1448,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Items close themselves (src/items/expiry.ts): the rules, the backlog waiting for review, and "keep".
   server.get("/api/items-expiry", async (req) => {
     const { backlogApplied, dueItems, expirySince } = await import("../items/expiry.ts");
-    const userId = who(req) === OWNER ? undefined : who(req);
+    const scope = itemScope(app, who(req));
     const row = (d: Awaited<ReturnType<typeof dueItems>>[number]) => ({ id: d.item.id, title: d.item.title, kind: d.item.kind, spaceId: d.item.spaceId, lastActivity: d.lastActivity, expiresAt: d.expiry.at, expiryText: d.expiry.text });
-    const due = dueItems(app, { userId, withinDays: 3 });
+    const due = dueItems(app, { ...scope, withinDays: 3 });
     return {
       settings: app.config.items,
       since: expirySince(app),
@@ -1441,8 +1473,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/items/:id/keep", async (req) => {
     const id = (req.params as { id: string }).id;
-    const item = getItem(app, id);
-    if (item.userId !== who(req) && who(req) !== OWNER) throw new HttpError(403, "不能修改他人的事项");
+    requireItem(app, id, who(req), "write");
     const { keepItem } = await import("../items/expiry.ts");
     checkProviderEdit(app, who(req), id);
     return keepItem(app, id, "user");
@@ -1451,32 +1482,32 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/items/:id/candidate", async (req) => {
     const id = (req.params as { id: string }).id;
     const b = q(z.object({ keep: z.boolean() }), req.body);
-    const item = getItem(app, id);
-    if (!canWrite(app, who(req), item.spaceId)) throw new HttpError(403, "无权修改该事项");
     const { decideCandidate } = await import("../items/auto.ts");
     return decideCandidate(app, id, b.keep, who(req), "web");
   });
   server.get("/api/items/:id", async (req) => {
     const id = (req.params as { id: string }).id;
-    const item = getItem(app, id);
+    const item = requireItem(app, id, who(req), "read");
     const synced = providerState(app, who(req), id);
     const external = synced && { ...synced.external, provider: synced.target.provider, syncedAt: synced.syncedAt, direction: synced.direction, error: synced.error, write: synced.write };
     // A readable excerpt per reference, only from spaces this reader may see.
     const allowed = accessibleSpaces(app, who(req));
     const excerpts: Record<string, { title: string; text: string }> = {};
     for (const ref of item.sourceRefs) {
-      const ex = refExcerpt(app, ref, 120);
+      const sourceId = /^src:([\w-]+)/.exec(ref)?.[1];
+      if (sourceId && !(await sourceReadable(app, who(req), sourceId))) continue;
+      const ex = refExcerpt(app, ref, 120, who(req));
       if (ex && (!allowed || allowed.includes(ex.spaceId))) excerpts[ref] = { title: ex.title, text: ex.text };
     }
     const { listWorkFiles } = await import("../sources/work.ts");
-    const files = listWorkFiles(app, { item: id, spaces: allowed });
+    const files = listWorkFiles(app, { item: id, spaces: allowed, userId: who(req) });
     const { itemExpiry } = await import("../items/expiry.ts");
     // Where the work goes on and what runs for it now (items/places.ts): only for the item's own person.
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const mine = item.userId === who(req);
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     const a = autoInfo(app, id);
-    return { item, external, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app)), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
+    return { item, external, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.
@@ -1531,7 +1562,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/items/:id/split-requirements", async (req) => {
     const id = (req.params as { id: string }).id;
     const b = q(z.object({ space: z.string().optional(), note: z.string().max(4000).optional() }), req.body ?? {});
-    const item = getItem(app, id);
+    const item = requireItem(app, id, who(req), "write");
     const target = b.space ? getSpace(app, b.space).id : item.spaceId;
     readableSpace(req, target);
     if (!canWrite(app, who(req), target)) throw new HttpError(403, `无权修改空间 ${target}`);
@@ -1570,16 +1601,23 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/items", async (req) => {
     const { parent, ...b } = q(itemBody, req.body);
     // Hung under a line from the start: items/tree.ts checks it is the same person's and the levels.
-    if (parent) getItem(app, parent);
-    const made = upsertItem(app, undefined, { ...b, spaceId: b.space ?? "personal" }, "user");
+    const userId = who(req), spaceId = b.space ?? personalSpaceId(userId);
+    if (!itemAccess(app, userId, { userId, spaceId }, "write")) throw new HttpError(403, "不能在这个空间创建事项");
+    writableParents(app, userId, null, parent);
+    const made = upsertItem(app, undefined, { ...b, spaceId, userId }, "user");
     return parent ? (await import("../items/parent.ts")).setParent(app, made.id, parent, "user") : made;
   });
   server.patch("/api/items/:id", async (req) => {
     const { parent, ...b } = q(itemBody, req.body);
     const id = (req.params as { id: string }).id;
     checkProviderEdit(app, who(req), id);
+    const { checkParent } = await import("../items/tree.ts");
+    const { setParent } = await import("../items/parent.ts");
+    const before = requireItem(app, id, who(req), "write");
+    writableParents(app, who(req), before.parentId, parent);
+    if (parent) checkParent(app, id, parent);
     const updated = upsertItem(app, id, b, "user");
-    return parent !== undefined ? (await import("../items/parent.ts")).setParent(app, id, parent, "user") : updated;
+    return parent !== undefined ? setParent(app, id, parent, "user") : updated;
   });
 
   // --------------------------------------------------------------------- runs
@@ -3337,7 +3375,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 }
 
 /** A material as the item page lists it; runs carry their kind, status and review verdict. */
-function materialForPage(app: App) {
+function materialForPage(app: App, userId: string) {
   return (m: MaterialView) => {
     if (m.kind !== "run" || !m.readable || m.missing) return m;
     const r = one<{ kind: string; status: string; output: string; input: string; created_at: string }>(app.db, "select kind, status, output, input, created_at from runs where id = ?", m.ref);
@@ -3345,7 +3383,7 @@ function materialForPage(app: App) {
     // A delegation that went several rounds reads as its latest round.
     const first = JSON.parse(r.output) as { codeChain?: { rounds: string[] } };
     const lastId = first.codeChain?.rounds.at(-1);
-    const last = lastId && lastId !== m.ref ? one<{ status: string; output: string }>(app.db, "select status, output from runs where id = ?", lastId) : null;
+    const last = lastId && lastId !== m.ref && canReadRun(app, userId, lastId) ? one<{ status: string; output: string }>(app.db, "select status, output from runs where id = ?", lastId) : null;
     const out = (last ? JSON.parse(last.output) : first) as { verdict?: string; reviewLead?: { verdict: string; summary: string } };
     return { ...m, run: { kind: r.kind, status: last?.status ?? r.status, verdict: out.verdict ?? null, summary: out.reviewLead?.summary ?? null, branchReview: !!(JSON.parse(r.input) as { branches?: unknown }).branches, createdAt: r.created_at } };
   };

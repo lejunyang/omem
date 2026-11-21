@@ -174,6 +174,17 @@ onMounted(() => {
   void loadDetail();
 });
 const scope = ref<"space" | "all">("space");
+/** The filters behind 筛选 (the status stays out): how many differ from the default, and whether they are shown. */
+/** A round of the work: who did it, then its title — once, when the title already starts with the agent's name. */
+function roundLabel(w: { kind: string; agent: string; title: string }) {
+  const who = w.kind === "agent-followup" ? "消化结论" : w.agent;
+  const title = w.title.replace(new RegExp(`^(${w.agent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[·:：]\\s*)+`), "");
+  return who ? `${who} · ${title}` : title;
+}
+/** A list row names only the backend; the model and effort are in its tooltip. */
+const aiShort = (r: Run) => r.ai?.profile ?? r.profileId ?? "";
+const moreFilters = computed(() => kindFilter.value.length + (byFilter.value ? 1 : 0) + (viaFilter.value ? 1 : 0) + (showQuiet.value ? 1 : 0) + (scope.value === "all" ? 1 : 0));
+const filtersOpen = ref(false);
 watch(scope, load);
 watch(kindFilter, load);
 watch(showQuiet, load);
@@ -334,12 +345,16 @@ const kindOptions = computed(() => [
         <label class="search"><Icon name="search" :size="14" /><input v-model="keyword" :placeholder="view === 'code' ? '标题、分支、任务里的字或 id' : '标题、id 或任务里的字'" :aria-label="view === 'code' ? '搜索交办' : '搜索运行记录'" /></label>
         <button class="btn sm delegate" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
         <template v-if="view === 'all'">
-          <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
+          <button type="button" class="btn ghost sm more-toggle" :class="{ on: moreFilters > 0 }" :aria-expanded="filtersOpen" aria-controls="run-filters" @click="filtersOpen = !filtersOpen">筛选<span v-if="moreFilters" class="n">{{ moreFilters }}</span><Icon name="down" :size="13" class="chev" :class="{ open: filtersOpen }" /></button>
           <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
-          <div class="by-filter"><UiSelect v-model="byFilter" size="sm" width="132px" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" /><UiSelect v-model="viaFilter" size="sm" width="112px" aria-label="触发方式" :options="viaOptions" title="按触发方式筛选：找助手（@ 或私聊机器人）、有人找你……" /></div>
-          <UiCheckbox v-model="showQuiet" size="sm" class="small muted quiet" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
+          <div v-if="filtersOpen" id="run-filters" class="more-filters">
+            <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
+            <ChipPicker v-model="kindFilter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
+            <div class="by-filter"><UiSelect v-model="byFilter" size="sm" width="132px" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" /><UiSelect v-model="viaFilter" size="sm" width="112px" aria-label="触发方式" :options="viaOptions" title="按触发方式筛选：找助手（@ 或私聊机器人）、有人找你……" /></div>
+            <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
+          </div>
         </template>
-        <UiSegmented v-model="scope" class="scope-filter" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
+        <UiSegmented v-else v-model="scope" class="scope-filter" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
       </div>
       <div v-if="view === 'code'" class="items">
         <CodeWorkList :space="scope === 'space' ? state.space : null" :q="keyword" :active="codeRoot" @pick="(w) => router.push(`/runs/${w.latestId}`)" />
@@ -352,7 +367,7 @@ const kindOptions = computed(() => [
               <span class="st" :class="r.status" />
               <div class="grow">
                 <div class="ellipsis">{{ r.title }}</div>
-                <div class="muted small ellipsis">{{ runKindLabel[r.kind] ?? r.kind }} · {{ statusLabel[r.status] }} · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template><template v-if="aiLabel(r)"> · <span class="mono">{{ aiLabel(r) }}</span></template></div>
+                <div class="muted small ellipsis">{{ runKindLabel[r.kind] ?? r.kind }}<template v-if="r.status !== 'done'"> · {{ statusLabel[r.status] }}</template> · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template><template v-if="aiShort(r)"> · <span :title="aiLabel(r)">{{ aiShort(r) }}</span></template></div>
                 <div v-if="r.trigger && (r.trigger.via !== 'chat' || r.trigger.by?.key !== 'user:owner')" class="muted small ellipsis by" :title="triggerLabel(r.trigger, true)"><Icon :name="r.trigger.by ? 'user' : r.trigger.via === 'schedule' ? 'clock' : 'zap'" :size="11" />{{ triggerLabel(r.trigger) }}</div>
                 <div v-if="r.waiting" class="muted small ellipsis" :title="r.waiting">{{ r.waiting }}</div>
               </div>
@@ -380,7 +395,7 @@ const kindOptions = computed(() => [
             <span class="badge accent">{{ runKindLabel[detail.run.kind] ?? detail.run.kind }}</span>
             <span class="badge" :class="{ ok: detail.run.status === 'done', danger: detail.run.status === 'failed', warn: detail.run.status === 'running' }">{{ statusLabel[detail.run.status] }}</span>
             <span class="muted">{{ fmtTime(detail.run.createdAt) }}<template v-if="detail.run.finishedAt"> → {{ fmtTime(detail.run.finishedAt) }}</template></span>
-            <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· <span class="mono">{{ aiLabel(detail.run) }}</span></span>
+            <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· {{ aiLabel(detail.run) }}</span>
             <span v-if="detail.run.spaceId" class="muted">· {{ spaceName(detail.run.spaceId) }}</span>
             <span v-if="detail.run.trigger" class="muted">· 触发：<button v-if="detail.run.trigger.by" class="linkish" type="button" title="看这个人触发的全部运行" @click="filterBy(personKey(detail.run.trigger.by))">{{ detail.run.trigger.by.name }}</button><template v-if="detail.run.trigger.by"> · </template><router-link v-if="detail.run.trigger.via === 'flow' && detail.run.input.itemId" :to="`/items/${detail.run.input.itemId}`">{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</router-link><template v-else>{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</template></span>
             <router-link v-for="it in ctxInfo?.items ?? []" :key="it.id" :to="`/items/${it.id}`" class="item-link" :title="it.title">事项：{{ it.title }}</router-link>
@@ -415,7 +430,7 @@ const kindOptions = computed(() => [
             <div class="muted small">这项工作的各轮（{{ ctxInfo.work.rounds.length }}）</div>
             <router-link v-for="(w, i) in ctxInfo.work.rounds" :key="w.runId" :to="`/runs/${w.runId}`" class="li" :class="{ on: w.runId === detail.run.id }" :title="w.title">
               <span class="st" :class="w.status" /><span class="muted small">{{ i + 1 }}</span>
-              <span class="grow ellipsis">{{ w.kind === "agent-followup" ? "消化结论" : w.agent }} · {{ w.title }}</span>
+              <span class="grow ellipsis">{{ roundLabel(w) }}</span>
               <span class="muted small">{{ statusLabel[w.status] }}</span>
             </router-link>
           </div>
@@ -564,16 +579,20 @@ const kindOptions = computed(() => [
   border-bottom: 1px solid var(--line);
   display: grid;
   grid-template-columns: auto 1fr auto;
+  /* A search and the most used status on top; the rest behind 筛选. */
   grid-template-areas:
     "view . delegate"
     "search search search"
-    "status status status"
-    "scope scope quiet"
-    "kind kind kind"
-    "by by by";
+    "status . more"
+    "filters filters filters";
   row-gap: 8px;
   align-items: center;
 }
+.head .more-toggle { grid-area: more; justify-self: end; gap: 4px; color: var(--ink-2); }
+.head .more-toggle .n { min-width: 16px; padding: 0 4px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; text-align: center; }
+.head .more-toggle .chev { color: var(--muted); transition: transform 0.15s ease; }
+.head .more-toggle .chev.open { transform: rotate(180deg); }
+.head .more-filters { grid-area: filters; display: grid; gap: 8px; justify-items: start; padding-top: 8px; border-top: 1px dashed var(--line); }
 .head.code {
   grid-template-areas:
     "view . delegate"
@@ -585,15 +604,12 @@ const kindOptions = computed(() => [
 .head .search:focus-within { border-color: var(--accent); }
 .head .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13px; color: var(--ink); }
 .head .delegate { grid-area: delegate; }
-.head .kind-filter { grid-area: kind; justify-self: start; }
 .head .status-filter { grid-area: status; justify-self: start; }
-/* Its own full row: two selects in the right-hand column widened it and squeezed the view and scope pickers. */
-.head .by-filter { grid-area: by; justify-self: start; display: flex; gap: 6px; flex-wrap: wrap; }
+.head .by-filter { display: flex; gap: 6px; flex-wrap: wrap; }
 .run .by { display: flex; align-items: center; gap: 4px; }
 .linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .linkish:hover { text-decoration: underline; }
 .head .scope-filter { grid-area: scope; justify-self: start; }
-.head .quiet { grid-area: quiet; justify-self: end; white-space: nowrap; }
 .sm-select {
   width: auto;
   height: 28px;

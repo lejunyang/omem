@@ -12,7 +12,7 @@ import { answerAsk, getAsk, listAsks } from "../src/agents/asks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import * as runner from "../src/agents/runner.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
-import { addMaterials, itemMaterials } from "../src/items/materials.ts";
+import { addLocalMaterials, itemMaterials } from "../src/items/materials.ts";
 import { materialCandidates } from "../src/items/places.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
 import { startFlow } from "../src/flows/engine.ts";
@@ -105,7 +105,7 @@ describe("没人认领的提交", () => {
     setRunOutput(t.app, work.id, { worktrees: undefined, worktree: join(t.app.home, "old-worktree"), branch: "main", base: head });
     t.commit(); await t.scan(90); expect(t.runs()).toHaveLength(0);
     setRunOutput(t.app, work.id, { worktree: undefined });
-    addMaterials(t.app, t.item().id, [{ kind: "repo", ref: "demo", branch: "main" }], "owner");
+    addLocalMaterials(t.app, t.item().id, [{ kind: "repo", ref: "demo", branch: "main" }], "owner");
     await t.scan(120); expect(t.runs()).toHaveLength(0);
   });
   it("仓库邮箱缺失就跳过，缺少本机目录的空间不看", async () => {

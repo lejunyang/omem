@@ -9,6 +9,7 @@ import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import ItemMetrics from "../components/ItemMetrics.vue";
 import LineAsk from "../components/LineAsk.vue";
 import Markdown from "../components/Markdown.vue";
+import RichText from "../components/RichText.vue";
 import Skeleton from "../components/Skeleton.vue";
 import Sparkline from "../components/charts/Sparkline.vue";
 import UiSelect from "../components/UiSelect.vue";
@@ -23,8 +24,8 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 import { groupOptions, oneLine } from "../lib/listen";
 import { pageParam } from "../lib/route";
 import {
-  byWeek, dayLabel, daysAgo, flatChildren, itemStatusLabel, nextKindLabel, waitsForOwner, weekColumns,
-  type ChangeLite, type ChatActivity, type Child, type FlowLite, type LineNow, type NextLite,
+  byWeek, dayLabel, daysAgo, flatChildren, itemStatusLabel, nextKindLabel, readableIds, waitsForOwner, weekColumns,
+  type ChangeLite, type RefTarget, type ChatActivity, type Child, type FlowLite, type LineNow, type NextLite,
 } from "../lib/work";
 import { itemKindLabel, relTime, state, toast } from "../store";
 
@@ -114,7 +115,13 @@ async function setPhase(phase: "active" | "watching" | "done" | "cancelled", day
 
 // The goal: the first line of the detail; the rest opens on demand (`expanded`, above).
 const goal = computed(() => (item.value?.detail ?? "").trim().split(/\n/)[0]?.replace(/^#+\s*/, "") ?? "");
-const more = computed(() => (item.value?.detail ?? "").trim().split(/\n/).length > 1 || goal.value.length > 90);
+const more = computed(() => (item.value?.detail ?? "").trim().split(/\n/).length > 1 || goal.value.length > 130);
+/** The items and runs the server named on this page (in the changes and next steps), for ids in the goal. */
+const targets = computed(() => {
+  const all: Record<string, RefTarget> = {};
+  for (const x of [...(d.value?.timeline ?? []), ...(d.value?.next ?? [])]) Object.assign(all, x.refTargets ?? {});
+  return all;
+});
 
 // ---- tabs ----------------------------------------------------------------------------------------
 const tabs = computed(() => {
@@ -297,8 +304,11 @@ const editing = ref(false);
         <header class="hero">
           <div class="kind small"><span class="state" :class="tone"><i />{{ stateWord }}</span><span class="muted">{{ kindWord }}</span></div>
           <h1>{{ item.title }}</h1>
-          <p v-if="goal && !expanded" class="goal">{{ goal }}<button v-if="more" type="button" class="lnk small" @click="expanded = true">展开</button></p>
-          <div v-else-if="expanded" class="goal-full"><Markdown :source="item.detail" class="prose" /><button type="button" class="lnk small" @click="expanded = false">收起</button></div>
+          <div v-if="goal && !expanded" class="goal-wrap">
+            <RichText tag="p" class="goal" :text="readableIds(goal, targets)" :space="item.spaceId" :lines="3" />
+            <button v-if="more" type="button" class="lnk small" @click="expanded = true">展开</button>
+          </div>
+          <div v-else-if="expanded" class="goal-full"><Markdown :source="readableIds(item.detail, targets)" :space="item.spaceId" compact /><button type="button" class="lnk small" @click="expanded = false">收起</button></div>
           <p class="meta small muted">
             <span v-if="item.dueAt" :class="{ overdue: daysAgo(item.dueAt) > 0 }">截止 {{ dayLabel(item.dueAt) }}</span>
             <span v-if="item.spaceId !== 'personal'">{{ spaceName(item.spaceId) }}</span>
@@ -317,7 +327,7 @@ const editing = ref(false);
         <section v-if="d.ended && top" class="phase ended" aria-label="这条线已结束">
           <div class="ph-head">
             <Icon :name="item.status === 'cancelled' ? 'x' : 'check'" :size="16" class="ph-icon" :class="{ dropped: item.status === 'cancelled' }" />
-            <span class="ph-text"><strong>{{ item.status === "cancelled" ? "已放弃" : "已结束" }}</strong><template v-if="d.ended.at"> · {{ dayLabel(d.ended.at) }}</template><template v-if="d.ended.reason"> · {{ d.ended.reason }}</template></span>
+            <span class="ph-text"><strong>{{ item.status === "cancelled" ? "已放弃" : "已结束" }}</strong><template v-if="d.ended.at"> · {{ dayLabel(d.ended.at) }}</template><template v-if="d.ended.reason"> · <RichText :text="readableIds(d.ended.reason, targets)" :space="item.spaceId" /></template></span>
             <button v-if="editable" type="button" class="btn sm" :disabled="busyPhase" @click="setPhase('active')"><Icon name="refresh" :size="14" />重新打开</button>
           </div>
           <div v-if="d.summary" class="ph-summary">
@@ -371,7 +381,7 @@ const editing = ref(false);
             <span class="ring" :class="{ doing: n.status === 'doing' }" aria-hidden="true" />
             <div class="sbody">
               <button type="button" class="stext" @click="sheet = { next: n }">{{ n.text }}</button>
-              <span class="small muted">{{ nextKindLabel[n.kind] }}<template v-if="n.why"> · {{ n.why }}</template></span>
+              <span class="small muted swhy">{{ nextKindLabel[n.kind] }}<template v-if="n.why"> · <RichText :text="readableIds(n.why, n.refTargets)" :space="item.spaceId" /></template></span>
             </div>
             <div v-if="n.status === 'open'" class="row sacts">
               <button class="btn sm" @click="decide(n, 'doing')">就这么做</button>
@@ -488,8 +498,11 @@ const editing = ref(false);
 .state.ok i { background: var(--ok); }
 .state.warn i { background: var(--warn); }
 .hero h1 { font-family: var(--serif); font-size: 30px; line-height: 1.3; margin: 0; max-width: 760px; overflow-wrap: anywhere; }
-.goal { margin: 0; max-width: 680px; color: var(--ink-2); line-height: 1.7; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.goal .lnk { margin-left: 6px; }
+.swhy :deep(code) { font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
+.goal-wrap { display: grid; justify-items: center; gap: 2px; max-width: 680px; }
+.goal { margin: 0; color: var(--ink-2); line-height: 1.7; overflow-wrap: anywhere; }
+/* Ids, hashes and paths in the goal (readableIds): small monospace, and they may break anywhere. */
+.goal :deep(code), .goal-full :deep(code) { font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
 .goal-full { max-width: 720px; text-align: left; display: grid; gap: 4px; justify-items: start; }
 .meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 12px; margin: 0; }
 .overdue { color: var(--danger); }

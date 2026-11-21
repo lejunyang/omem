@@ -1,4 +1,5 @@
 import { migrateItemProviders } from "../items/provider-schema.ts";
+import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { noteSync, sqlName } from "./loop-monitor.ts";
 
@@ -2269,9 +2270,14 @@ export const migrations: readonly string[] = [
   create index work_task_run on agent_work_tasks(run_id);`,
   `alter table session_cleanup add column failed_at text;
    alter table session_cleanup add column failure_reason text;`,
-  // The feature branch used the asks_deferred migration number for the plugin tables.
+  FILE_REFS_MIGRATION,
+  FILE_REF_TOMBSTONES_MIGRATION,
+  // The feature branch used the asks_deferred migration number for its operation indexes.
   `create index if not exists asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;
-   create table if not exists plugin_subscriptions(plugin text not null,subscriber text not null,type text not null,primary key(plugin,subscriber,type));
+   create index if not exists asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
+   create index if not exists asks_operation_run on asks(json_extract(context,'$.runKey'),status);
+   create index if not exists asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
+  `create table if not exists plugin_subscriptions(plugin text not null,subscriber text not null,type text not null,primary key(plugin,subscriber,type));
    create index if not exists plugin_subscriptions_type on plugin_subscriptions(type);
    create table if not exists plugin_events(seq integer primary key autoincrement,id text unique not null,at text not null,user_id text not null,body text not null);
    create index if not exists plugin_events_at on plugin_events(at);
@@ -2288,7 +2294,12 @@ export type Db = DatabaseSync;
 export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
-  const version = (db.prepare("pragma user_version").get() as { user_version: number }).user_version;
+  let version = (db.prepare("pragma user_version").get() as { user_version: number }).user_version;
+  // Plugin and operation branches used the first file-reference slot for their own schema.
+  if (version === migrations.indexOf(FILE_REFS_MIGRATION) + 1 &&
+      !db.prepare("select 1 from sqlite_schema where type='table' and name='stored_file_refs'").get()) {
+    version--;
+  }
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");
     try {

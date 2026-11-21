@@ -277,7 +277,7 @@ async function readClaude(app: App, p: AgentProfile, signal?: AbortSignal): Prom
   const timer = setTimeout(() => ctrl.abort(), 60_000);
   try {
     // /usage is a local command: Claude Code answers it without the model.
-    const r = await withNetworkPolicy(app, acp, { signal: signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal }, (profile, guarded) => runAcp({ ...profile, model: undefined, effort: undefined }, { cwd, cleanup, prompt: "/usage", modes: ["read-only"], signal: guarded }, () => {}));
+    const r = await withNetworkPolicy(app, acp, { signal: signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal }, (profile, guarded) => runAcp({ ...profile, model: undefined, effort: undefined }, { app, cwd, cleanup, prompt: "/usage", modes: ["read-only"], signal: guarded }, () => {}));
     const parsed = parseClaudeUsage(r.text);
     if (!parsed.windows.length)
       throw new Error(/^## Usage/m.test(r.text) && !/### Limits/.test(r.text) ? "Claude Code 没有报套餐额度（没登录订阅账号，或用的是 API Key）" : `没有从 /usage 的回答里读到额度：${r.text.slice(0, 160)}`);

@@ -4,6 +4,9 @@ import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, post } from "../api";
 import Icon from "../components/Icon.vue";
 import Markdown from "../components/Markdown.vue";
+import RichText from "../components/RichText.vue";
+import HelpText from "../components/HelpText.vue";
+import { readableIds, refLabel } from "../lib/work";
 import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
@@ -285,6 +288,8 @@ async function apply(ops: Record<string, unknown>[], done = "已保存") {
 
 // ---- edit / add ---------------------------------------------------------------------------------
 
+/** A version's grounds as reference chips (原件 1, 消息 2…), never the raw ids. */
+const groundsOf = (refs: string[]) => refs.map((r, i) => (/^(src|mem|msg):/.test(r) ? `[${refLabel(r, i)}](${r})` : readableIds(r))).join("　");
 type Form = { mode: "edit" | "add"; parent: string | null; kind: Kind; title: string; body: string; acceptance: string; refs: string; tests: string; change: "correct" | "change"; reason: string; sourceRefs: string };
 const editing = ref<Form | null>(null);
 const testsText = (t: Node["tests"]) => t.map((x) => [x.file, x.name].filter(Boolean).join(" › ")).join("\n");
@@ -554,21 +559,25 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           <div class="block-head"><strong>时间线</strong><span class="muted small">第 {{ detail.node.version }} 版</span></div>
           <div v-for="v in [...detail.versions].reverse()" :key="v.id" class="ver" :class="{ biz: v.change === 'change' || v.change === 'remove' }">
             <div class="row wrap"><span class="badge" :class="{ warn: v.change === 'change' || v.change === 'remove' }">{{ CHANGE[v.change] ?? v.change }}</span><span class="muted small">{{ fmtTime(v.at) }} · {{ v.by }}</span><router-link v-if="v.runId" :to="`/runs/${v.runId}`" class="small">运行</router-link></div>
-            <div v-if="v.reason" class="small">{{ v.reason }}</div>
-            <Markdown v-if="v.sourceRefs.length" class="small" :source="v.sourceRefs.map((r) => `[${r}](${r})`).join(' ')" :space="detail.node.spaceId" />
+            <RichText v-if="v.reason" tag="div" class="small" :text="v.reason" :space="detail.node.spaceId" />
+            <RichText v-if="v.sourceRefs.length" tag="div" class="small" :text="groundsOf(v.sourceRefs)" :space="detail.node.spaceId" />
           </div>
         </section>
       </div>
 
-      <div v-else class="page muted">
+      <div v-else class="empty req-empty">
+        <Icon name="target" :size="32" />
+        <h3>需求</h3>
         <p>选左边的节点看需求、验收、测试点和每次变更。</p>
-        <p class="small">更正：写错了、拆错了，没有业务含义。业务变更：规则本身变了，记下原因和依据，留着以后决策时回溯。跨业务的需求用“关联”互相引用。</p>
+        <HelpText>改一个节点时分两种：更正是写错了、拆错了，没有业务含义；业务变更是规则本身变了，记下原因和依据，留着以后决策时回溯。跨业务的需求用“关联”互相引用。</HelpText>
       </div>
     </main>
   </div>
 </template>
 
 <style scoped>
+.req-empty { display: grid; justify-items: center; gap: 4px; max-width: 520px; margin: 0 auto; }
+.req-empty :deep(.help-text) { text-align: left; }
 .reqs {
   display: flex;
   height: 100%;

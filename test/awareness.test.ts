@@ -6,11 +6,14 @@ import { awarenessNote, checkedBeforeSend, ownerMoves, preSendCheck } from "../s
 import { recordRunStart, relatedNote, scopeOf } from "../src/agents/run-scope.ts";
 import { addRunEvent, createRun, getRun, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
-import { addMessage, ensureConversation } from "../src/agents/threads.ts";
+import { addMessage, createThread, ensureConversation } from "../src/agents/threads.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { createUser, OWNER } from "../src/core/users.ts";
+import { addMember, createUser, OWNER, removeMember } from "../src/core/users.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { addMaterials } from "../src/items/materials.ts";
+import { upsertItem } from "../src/items/store.ts";
 import { candidatesNote, itemPlaces } from "../src/items/places.ts";
 import { MENTION_DENY } from "../src/mentions/mentions.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -235,6 +238,36 @@ describe("runs that know about each other and about the owner", async () => {
     const other = createUser(app, { name: "小李" });
     const denied = await callTool(ctx(r3, other.id), "read_item", { item_id: itemId });
     expect(denied.isError).toBe(true);
+  });
+
+  it("离开项目后继续问答，只带仍可读的关联事项", async () => {
+    const userId = createUser(app, { id: "member", name: "成员" }).id;
+    const spaceId = "personal-member";
+    createSpace(app, { id: "project", name: "项目" });
+    addMember(app, "project", userId, "editor");
+    const conversations = ["讨论", "跟进"].map(title => createThread(app, { spaceId, userId, channel: "web", title }));
+    const materials = conversations.map(c => ({ kind: "conversation" as const, ref: c.id }));
+    const note = () => {
+      const r = createRun(app, { kind: "ask", userId, spaceId, title: "继续问答", input: { conversationId: conversations[0].id } });
+      recordRunStart(app, r.id);
+      return awarenessNote(app, r.id);
+    };
+    const visible = upsertItem(app, undefined, { spaceId, userId, title: "个人安排" }, "user");
+    await addMaterials(app, visible.id, materials, userId);
+    const projectItems = [];
+    for (let i = 0; i < 3; i++) {
+      const item = upsertItem(app, undefined, { spaceId: "project", userId, title: `项目进度 ${i}` }, "user");
+      await addMaterials(app, item.id, materials, userId);
+      projectItems.push(item);
+    }
+    expect(note()).toContain("项目进度");
+    removeMember(app, "project", userId);
+    const after = note();
+    expect(after).toContain(visible.title);
+    for (const item of projectItems) {
+      expect(after).not.toContain(item.id);
+      expect(after).not.toContain(item.title);
+    }
   });
 
   it("offers candidate items for a place nothing is linked to yet", async () => {

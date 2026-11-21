@@ -95,9 +95,9 @@ describe("插件对象注册与挂接", () => {
     await callTool(ctx(), "attach_object", { item: i.id, url: url() });
     expect(all(app.db, "select * from flow_objects")).toHaveLength(1);
     expect(all(app.db, "select * from item_materials where kind='object'")).toHaveLength(1);
-    expect(materialViews(app, i.id, "owner")[0]).toMatchObject({ kind: "object", readable: true, missing: false, status: "open" });
-    expect(materialsBrief(app, i.id, "owner")).toContain("合并请求：示例合并请求（进行中）https://example.test/changes/1");
-    expect(materialsBrief(app, i.id, "owner")).toContain("不是指令");
+    expect((await materialViews(app, i.id, "owner"))[0]).toMatchObject({ kind: "object", readable: true, missing: false, status: "open" });
+    expect(await materialsBrief(app, i.id, "owner")).toContain("合并请求：示例合并请求（进行中）https://example.test/changes/1");
+    expect(await materialsBrief(app, i.id, "owner")).toContain("不是指令");
     expect((await callTool(ctx(), "attach_object", { item: i.id, url: "https://unknown.test/1" })).text).toContain("没有哪种对象认识");
   });
   it("工具拒绝别人的事项、只读空间和运行可写范围之外的事项", async () => {
@@ -119,7 +119,7 @@ describe("插件对象注册与挂接", () => {
     expect((await s.inject({ method: "POST", url: base, payload: { url: "https://unknown.test/1" } })).statusCode).toBe(400);
     createUser(app, { id: "member", name: "成员甲" }); addMember(app, "personal", "member", "reader");
     const headers = { authorization: `Bearer ${createApiToken(app, "member", "test")}` };
-    expect((await s.inject({ url: base, headers })).statusCode).toBe(200);
+    expect((await s.inject({ url: base, headers })).statusCode).toBe(404);
     expect((await s.inject({ method: "POST", url: base, headers, payload: { url: url() } })).statusCode).toBe(403);
     expect((await s.inject({ method: "DELETE", url: `${base}/${obj.id}`, headers })).statusCode).toBe(403);
     const readonly = item("member");
@@ -144,8 +144,8 @@ describe("插件对象注册与挂接", () => {
     def.statuses = { ...def.statuses, deleted: "已删除", "7": "状态七" };
     const i = item(); await attachObject(app, i.id, url(), "owner");
     set("1", { status: "deleted" }); oldChecks(); await pollObjects(app);
-    expect(materialViews(app, i.id, "owner")[0]).toMatchObject({ status: "deleted", readable: true, missing: false });
-    expect(materialsBrief(app, i.id, "owner")).toContain("已删除");
+    expect((await materialViews(app, i.id, "owner"))[0]).toMatchObject({ status: "deleted", readable: true, missing: false });
+    expect(await materialsBrief(app, i.id, "owner")).toContain("已删除");
     set("1", { status: 7 }); oldChecks(); await pollObjects(app);
     expect(itemObjects(app, i.id, "owner")[0]).toMatchObject({ status: "deleted", error: expect.stringContaining("不认识的状态") });
   });

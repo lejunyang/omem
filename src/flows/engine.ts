@@ -1,3 +1,4 @@
+import { requireItem } from "../items/access.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { latestEach, testsOfRuns } from "../items/req-tests.ts";
 import { artifactsByIds, runImages } from "../agents/artifacts.ts";
@@ -13,7 +14,7 @@ import { roleNames, type RoleName } from "../core/config.ts";
 import { userBy } from "../core/run-trigger.ts";
 import { findAgentSpec, readSkill, skillUsable } from "../agents/specs.ts";
 import { getItem, type Item } from "../items/store.ts";
-import { addMaterials, materialsBrief } from "../items/materials.ts";
+import { addLocalMaterials, materialsBrief } from "../items/materials.ts";
 import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
 import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
@@ -231,7 +232,7 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
   // A stage following a review of someone's branch: redoing it means reviewing again, never coding.
   const latest = typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" ? latestCodeWork(app, item) : null;
   const review = latest?.branchReview ? latest : null;
-  return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : materialsBrief(app, item.id, item.userId, { compact: true }), `截止时间：${item.dueAt ?? "未定"}`,
+  return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : await materialsBrief(app, item.id, item.userId, { compact: true }), `截止时间：${item.dueAt ?? "未定"}`,
     changesBrief(app, item.id),
     ownerSaidBrief(app, f),
     placesBrief(app, item),
@@ -380,7 +381,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
         trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name }, by: userBy(app, item.userId), where: d.name } });
       carrier = r.id;
       control.runId = r.id;
-      addMaterials(app, item.id, [{ kind: "run", ref: r.id, label: r.title }], item.userId);
+      addLocalMaterials(app, item.id, [{ kind: "run", ref: r.id, label: r.title }], item.userId);
     }
   } else if (d.by === "owner") {
     carrier = "owner";
@@ -893,44 +894,43 @@ export function stopFlow(app: App, id: string, userId = "owner") {
 const answerText = (ask: Ask) => (ask.answer ?? "").replace(new RegExp(`^${ask.options[ask.choice ?? -1]?.label ?? "(?!)"}[：:，,\\s]*`), "").trim();
 registerAskHandler("flow-stage", async (app, ask, ctx) => {
   const itemId = String(ctx.itemId), stageId = String(ctx.stageId);
-  const item = getItem(app, itemId), f = itemFlow(app, itemId);
-  // Both the intended recipient and the actual author must be this item's owner.
-  if (!f || f.endedAt || f.startedAt !== ctx.startedAt || ask.userId !== item.userId || ask.answeredBy !== item.userId) return;
-  await serial(app, itemId, async () => {
-    const s = getStage(app, itemId, stageId), d = definition(f, stageId);
-    if (ctx.kind === "upstream") { if (s.control.upstream?.askId === ask.id && s.state === "doing") await answerUpstream(app, f, d, s, ask.choice === 0); return; }
-    if (s.askId !== ask.id || s.control.question !== ctx.kind) return;
-    let text = answerText(ask);
-    // Words without a button: on "start?" they start the stage with them, on "done?" they send it back
-    // with them; the owner's own stage takes only its buttons.
-    const free = ask.choice == null && !!text;
-    const skip = ctx.kind === "gate" && ask.choice === 2 || ["owner", "when"].includes(String(ctx.kind)) && ask.choice === 1 || ctx.kind === "skip";
-    const refusal = ctx.kind === "done" && (ask.choice === 1 || free) || ctx.kind === "refuse";
-    if (skip || refusal) {
-      if (skip) resetGateStreak(app, f.id, stageId, item.userId);
-      if (!text) {
-        const kind = skip ? "skip" : "refuse";
-        const askId = question(app, f, d, { ...s, askId: null }, kind, { ask: skip ? "为什么跳过？请写原因。" : "哪里还不行？请写意见，会带给重做的那一次。" }, []);
-        changeStage(app, itemId, stageId, s.state, { askId, control: { ...s.control, question: kind } }, { actor: "owner" }, "等本人补充原因"); resetStreak(app, itemId); return;
-      }
-      if (skip) await actionNow(app, itemId, stageId, "skip", text, { actor: "owner" });
+  const f = running(app, itemId), d = definition(f, stageId), s = getStage(app, itemId, stageId);
+  if (ctx.kind === "upstream") return answerUpstream(app, f, d, s, ask.choice === 0);
+  let text = answerText(ask);
+  // Words without a button: on "start?" they start the stage with them, on "done?" they send it back
+  // with them; the owner's own stage takes only its buttons.
+  const free = ask.choice == null && !!text;
+  const skip = ctx.kind === "gate" && ask.choice === 2 || ["owner", "when"].includes(String(ctx.kind)) && ask.choice === 1 || ctx.kind === "skip";
+  const refusal = ctx.kind === "done" && (ask.choice === 1 || free) || ctx.kind === "refuse";
+  if (skip || refusal) {
+    if (skip) resetGateStreak(app, f.id, stageId, ask.userId);
+    if (!text) {
+      const kind = skip ? "skip" : "refuse";
+      const askId = question(app, f, d, { ...s, askId: null }, kind, { ask: skip ? "为什么跳过？请写原因。" : "哪里还不行？请写意见，会带给重做的那一次。" }, []);
+      changeStage(app, itemId, stageId, s.state, { askId, control: { ...s.control, question: kind } }, { actor: "owner" }, "等本人补充原因"); resetStreak(app, itemId); return;
+    }
+    if (skip) await actionNow(app, itemId, stageId, "skip", text, { actor: "owner" });
+    else {
+      text = ownerFeedback(app, f, s, text);
+      if (s.control.grantedGate) revokeGate(app, f.id, stageId, ask.userId, itemId);
+      resetStreak(app, itemId);
+      if (s.attempt >= 3) changeStage(app, itemId, stageId, "blocked", { askId: null, waitingOn: "owner", control: { ...s.control, question: undefined, reported: true } }, { actor: "owner" }, `三次仍未确认：${text}`, [], "refuse");
       else {
-        text = ownerFeedback(app, f, s, text);
-        if (s.control.grantedGate) revokeGate(app, f.id, stageId, item.userId, itemId);
-        resetStreak(app, itemId);
-        if (s.attempt >= 3) changeStage(app, itemId, stageId, "blocked", { askId: null, waitingOn: "owner", control: { ...s.control, question: undefined, reported: true } }, { actor: "owner" }, `三次仍未确认：${text}`, [], "refuse");
-        else {
-          changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, confirmed: !s.control.grantedGate, grantedGate: undefined, feedback: text, objectAfter: now(), reported: false, escalated: undefined } }, { actor: "owner" }, `本人要求重做：${text}`, [], "refuse");
-          await advanceNow(app, itemId, "本人要求重做");
-        }
+        changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, confirmed: !s.control.grantedGate, grantedGate: undefined, feedback: text, objectAfter: now(), reported: false, escalated: undefined } }, { actor: "owner" }, `本人要求重做：${text}`, [], "refuse");
+        await advanceNow(app, itemId, "本人要求重做");
       }
-    } else if (ask.choice === 0 || free && ["gate", "when"].includes(String(ctx.kind))) await actionNow(app, itemId, stageId, ctx.kind === "owner" ? "done" : "confirm", ctx.kind === "gate" ? text : text || "本人确认", { actor: "owner" });
-    else if (ctx.kind === "gate" && ask.choice === 1) await actionNow(app, itemId, stageId, "hold", text, { actor: "owner" });
-  });
+    }
+  } else if (ask.choice === 0 || free && ["gate", "when"].includes(String(ctx.kind))) await actionNow(app, itemId, stageId, ctx.kind === "owner" ? "done" : "confirm", ctx.kind === "gate" ? text : text || "本人确认", { actor: "owner" });
+  else if (ctx.kind === "gate" && ask.choice === 1) await actionNow(app, itemId, stageId, "hold", text, { actor: "owner" });
 }, (app, ask, ctx, by) => {
-  const userId = getItem(app, String(ctx.itemId)).userId;
-  if (ask.userId !== userId || by !== userId) throw new HttpError(403, "流程关卡只能由事项本人回答");
-});
+  if (ask.userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");
+  const itemId = String(ctx.itemId);
+  if (requireItem(app, itemId, by, "write").userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");
+  const f = running(app, itemId);
+  const s = getStage(app, itemId, String(ctx.stageId));
+  const current = ctx.kind === "upstream" ? s.control.upstream?.askId === ask.id && s.state === "doing" : s.askId === ask.id && s.control.question === ctx.kind;
+  if (f.startedAt !== ctx.startedAt || !current) throw new HttpError(409, "流程关卡已变化");
+}, (app, ctx, answer) => serial(app, String(ctx.itemId), answer));
 
 export function proposeFlow(app: App, raw: string, by: FlowActor) {
   const f = parseFlow(raw);
