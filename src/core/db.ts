@@ -42,6 +42,10 @@ export const METRIC_ORIGIN_MIGRATION = `alter table metrics add column why text 
    update metrics set defined_by = 'omem', confirmed_at = created_at where source = 'omem';
    update metrics set status = 'proposed' where source != 'omem' and status = 'active';`;
 
+const TURN_CONTEXT_LINK_INDEXES = `create index if not exists notifications_pushed_message on notifications(json_extract(context,'$.pushed.messageId'));
+   create index if not exists notifications_lark_message on notifications(json_extract(context,'$.larkMessageId'));
+   create index if not exists listen_contexts_conversation on listen_contexts(conversation_id);`;
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2271,11 +2275,17 @@ export const migrations: readonly string[] = [
    alter table session_cleanup add column failure_reason text;`,
   FILE_REFS_MIGRATION,
   FILE_REF_TOMBSTONES_MIGRATION,
-  `create index notifications_pushed_message on notifications(json_extract(context,'$.pushed.messageId'));
-   create index notifications_lark_message on notifications(json_extract(context,'$.larkMessageId'));
-   create index listen_contexts_conversation on listen_contexts(conversation_id);`,
+  TURN_CONTEXT_LINK_INDEXES,
   `create index metric_points_series_at on metric_points(metric_id,dims,at);`,
   `create index runs_work_conversation on runs(json_extract(output,'$.agentWork.workConversationId'),created_at desc) where json_extract(output,'$.agentWork.workConversationId') is not null;`,
+  // main and turn-context used the same migration number for different indexes.
+  // Replay the link indexes for databases upgraded on main.
+  // The operation-rules branch used the asks_deferred migration number for its operation indexes.
+  `${TURN_CONTEXT_LINK_INDEXES}
+   create index if not exists asks_deferred on asks(json_extract(context,'$.deferredUntil')) where status='pending' and json_extract(context,'$.deferredUntil') is not null;
+   create index if not exists asks_operation_target on asks(json_extract(context,'$.key'),json_extract(context,'$.chain'),status,answered_at desc);
+   create index if not exists asks_operation_run on asks(json_extract(context,'$.runKey'),status);
+   create index if not exists asks_operation_expiry on asks(json_extract(context,'$.expiresAt')) where status='pending' and json_extract(context,'$.handler')='command-gate';`,
 ];
 
 export type Db = DatabaseSync;

@@ -12,6 +12,12 @@ import { AgentSideConnection, ndJsonStream, RequestError, type McpServer } from 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+function runAcme() {
+  return (process.platform === "win32"
+    ? execFileSync("cmd.exe", ["/d", "/c", "acme write"], { encoding: "utf8" })
+    : execFileSync("acme", ["write"], { encoding: "utf8" })).trim();
+}
+
 const sessions = new Map<string, McpServer[]>();
 const cwds = new Map<string, string>();
 // FAKE_SYSTEM=1: take the client's systemPrompt (ACP, append mode) on new and resumed sessions.
@@ -146,6 +152,14 @@ new AgentSideConnection(
       // FAKE_PROMPT_LOG=file: each turn's prompt, one JSON string a line (what the host sent).
       if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, JSON.stringify(prompt) + "\n");
       const say =(text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      if (process.env.FAKE_MODE === "permission") {
+        const response = await conn.requestPermission({ ...JSON.parse(prompt), sessionId: p.sessionId });
+        if (process.env.FAKE_EXEC_ACME && response.outcome.outcome === "selected" && response.outcome.optionId === "yes") {
+          const output = runAcme();
+          await say(JSON.stringify({ ...response.outcome, output }));
+        } else await say(JSON.stringify(response.outcome));
+        return { stopReason: "end_turn" };
+      }
       // Replay tests: prefer the arm that read the candidate, consistently in both blind orders.
       if (process.env.FAKE_MODE === "replay-judge") {
         const first = prompt.split("# 甲的回答\n\n")[1]?.split("# 乙的回答")[0] ?? "";
@@ -782,6 +796,16 @@ ${JSON.stringify({ check, tools })}`);
       if (process.env.FAKE_MODE === "background") {
         const n = (turns.get(p.sessionId) ?? 0) + 1;
         turns.set(p.sessionId, n);
+        if (process.env.FAKE_EXEC_ACME) {
+          const { outcome } = await conn.requestPermission({
+            sessionId: p.sessionId,
+            toolCall: { toolCallId: "acme-" + n, kind: "execute", rawInput: { command: ["acme", "write"] } },
+            options: [{ kind: "allow_once", optionId: "yes", name: "allow" }, { kind: "reject_once", optionId: "no", name: "reject" }],
+          });
+          const commandResult = outcome.outcome === "selected" && outcome.optionId === "yes" ? runAcme() : "refused";
+          await say(JSON.stringify({ session: p.sessionId, turn: n, commandResult }));
+          return { stopReason: "end_turn" };
+        }
         if (delay) await new Promise((r) => setTimeout(r, delay));
         const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
         const client = new Client({ name: "fake", version: "1" });

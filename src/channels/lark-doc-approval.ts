@@ -65,7 +65,7 @@ export function docPreview(value: string, max = 240) {
 export async function docEditDecision(app: App, userId: string, scope: DocEditScope, tool = "lark_doc_update"): Promise<Ask | null> {
   const rows = all<{ id: string; context: string; status: string; doc: string | null; command: string | null }>(app.db, `select id, context, status,
     json_extract(args, '$.doc') doc, json_extract(args, '$.command') command from asks where user_id = ?
-    and kind = 'approval' and tool = ? and status != 'cancelled' order by created_at desc, rowid desc`, userId, tool);
+    and kind = 'approval' and tool = ? and status != 'cancelled' and json_extract(context, '$.operationApproval') is null order by created_at desc, rowid desc`, userId, tool);
   const decisions = new Map<string, Ask>();
   let pending: Ask | null = null;
   for (const row of rows) {

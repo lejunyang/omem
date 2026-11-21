@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setTimeZone } from "../web/src/lib/time.ts";
-import { byMonth, byWeek, changeTone, dayKeyLabel, dayLabel, endedLine, flatChildren, otherRefs, refsMarkdown, shortDay, stageTone, waitsForOwner, weekColumns, weekLabel, type ChangeLite, type Child } from "../web/src/lib/work.ts";
+import { byMonth, byWeek, changeTone, dayKeyLabel, dayLabel, endedLine, flatChildren, otherRefs, readableIds, refsMarkdown, shortDay, stageTone, waitsForOwner, weekColumns, weekLabel, type ChangeLite, type Child } from "../web/src/lib/work.ts";
 import { evidenceLink, evidenceWord } from "../web/src/lib/flow.ts";
 
 // 2026-11-20 is a Friday; 15:00 in Shanghai.
@@ -71,6 +71,22 @@ describe("工作页的呈现（web/src/lib/work）", () => {
     expect([runId, `run:${runId}`, `code-work:${runId}`, "design:d1", item, `item:${item}`, "github:pr:12", "编码阶段"].map(evidenceLink))
       .toEqual([`#/runs/${runId}`, `#/runs/${runId}`, `#/runs/${runId}`, "#/design/d1", `#/work/${item}`, `#/work/${item}`, null, null]);
     expect([runId, item, "design:d1"].map(evidenceWord)).toEqual(["运行", "事项", "方案"]);
+  });
+
+  it("现状里的长串：认得出的 id 换成名字的链接，其余写成行内代码，已有的引用和链接不动", () => {
+    const run = "r0mwaaaaaaaa11112222";
+    const text = `原交办第7轮${run}已done，提交ab12cd34推到origin/feat/x-y；接口/api/a/b-c报错，见ask0mwbbbbbbbb3333444和src:s0mwcccccccc55556666，[文档](https://tenant.larkoffice.com/a/b/c)，PC/H5 不动，20261113 不动`;
+    const out = readableIds(text, { [run]: { kind: "run", id: run, title: "编码交办" } });
+    expect(out).toContain(`[运行：编码交办](#/runs/${run})`);
+    expect(out).toContain("`ab12cd34`");
+    expect(out).toContain("`origin/feat/x-y`");
+    expect(out).toContain("`/api/a/b-c`");
+    expect(out).toContain("`ask0mwbbbbbbbb3333444`");
+    expect(out).toContain("src:s0mwcccccccc55556666");
+    expect(out).not.toContain("[原件](src:");
+    expect(out).toContain("[文档](https://tenant.larkoffice.com/a/b/c)");
+    expect(out).toContain("PC/H5 不动，20261113 不动");
+    expect(readableIds("编号 s0mwdddddddd77778888 的原件")).toBe("编号 [原件](src:s0mwdddddddd77778888) 的原件");
   });
 
   it("已结束的线按本人时区的月份分组，一行写小结的第一句，没有就写原因", () => {

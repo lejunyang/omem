@@ -216,6 +216,44 @@ export function otherRefs(refs: string[], targets: Record<string, RefTarget> = {
     return { r, label: clip(r, 24), title: r, link: null };
   });
 }
+/**
+ * Text an agent wrote, with the long technical strings in it made readable (for `RichText` / `Markdown`):
+ * an id the server named in `targets` (an item, a run) becomes a link with its title, a source id a
+ * citation; any other id, a commit hash or a path with several slashes becomes inline code (shown
+ * small and monospace, and allowed to wrap). Code spans, links and URLs already there stay as they are.
+ */
+export function readableIds(text: string, targets: Record<string, RefTarget> = {}) {
+  const KEEP = /`[^`\n]*`|\[[^\]\n]*\]\([^)\n]*\)|https?:\/\/[^\s)）]+|(?:src|mem|msg):[^\s)）]+/y;
+  const ID = /(?:ask|[a-z]{1,3})0m[0-9a-z]{12,}/y;
+  const HASH = /[0-9a-f]{7,40}/y;
+  const PATH = /(?:origin\/[\w.-]+(?:\/[\w.-]+)*|\/?[\w.-]+(?:\/[\w.-]+){2,}\/?)/y;
+  const word = /[0-9A-Za-z_]/;
+  let out = "";
+  for (let i = 0; i < text.length; ) {
+    const atWordStart = i === 0 || !word.test(text[i - 1]);
+    let m: RegExpExecArray | null = null;
+    KEEP.lastIndex = i;
+    if ((m = KEEP.exec(text))) { out += m[0]; i += m[0].length; continue; }
+    if (atWordStart) {
+      for (const re of [ID, HASH, PATH]) {
+        re.lastIndex = i;
+        const hit = re.exec(text);
+        if (!hit || word.test(text[i + hit[0].length] ?? "")) continue;
+        const s = hit[0];
+        if (re === HASH && !(/\d/.test(s) && /[a-f]/.test(s))) continue;
+        const t = targets[s];
+        if (re === ID && t) out += `[${t.kind === "run" ? "运行" : "事项"}：${clip(t.title, 30)}](#/${t.kind === "run" ? "runs" : "work"}/${encodeURIComponent(t.id)})`;
+        else if (re === ID && s.startsWith("s0m")) out += `[原件](src:${s})`;
+        else out += `\`${s}\``;
+        m = hit;
+        break;
+      }
+      if (m) { i += m[0].length; continue; }
+    }
+    out += text[i++];
+  }
+  return out;
+}
 /** The references as one line of Markdown links, so src: / mem: / msg: open in the citation drawer. */
 export function refsMarkdown(refs: string[]) {
   return refs.filter((r) => /^(src|mem|msg):/.test(r)).map((r, i) => `[${refLabel(r, i)}](${r})`).join("　");

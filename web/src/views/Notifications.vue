@@ -4,6 +4,7 @@ import { get, post } from "../api";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import Markdown from "../components/Markdown.vue";
+import HelpText from "../components/HelpText.vue";
 import { fmtTime, state, toast } from "../store";
 
 /** `unread`: reached the person nowhere else (pushed to Feishu, kept quiet or in-app only are not); `pushed`: went out to Feishu. */
@@ -43,24 +44,35 @@ async function readAll() {
   state.unread = 0;
   void load();
 }
+/** A long body shows its first few lines; the rest on demand. */
+const opened = ref<Record<string, boolean>>({});
+const long = (n: N) => n.body.length > 220 || n.body.split("\n").length > 4;
+/** A page of this site written out as text (`#/wiki/…`) becomes a link named by its last part. */
+function bodyOf(n: N) {
+  return n.body.replace(/(^|[\s：])(#\/[^\s)）]+)/g, (_, pre: string, href: string) => {
+    let name = href.split(/[/?]/).filter(Boolean).pop() ?? href;
+    try { name = decodeURIComponent(name); } catch { /* keep it encoded */ }
+    return `${pre}[${name}](${href})`;
+  });
+}
 onMounted(async () => {
   await Promise.all([load(), state.me?.id === "owner" ? loadRules() : Promise.resolve()]);
 });
 </script>
 
 <template>
-  <div class="page" style="max-width: 760px">
+  <div class="page notifications">
     <div class="page-head">
       <div>
         <h1>通知</h1>
-        <p>提醒、需要你决定的变化和后台任务结果。发到飞书的以飞书为准，这里只把没能发到飞书的标为未读。</p>
+        <p>提醒、要你决定的事和后台任务的结果；发到飞书的以飞书为准。</p>
       </div>
       <span class="spacer" />
       <button class="btn sm" @click="readAll">全部标为已读</button>
     </div>
-    <section v-if="state.me?.id === 'owner'" id="ignore-rules" class="card pad stack rules">
-      <strong>忽略规则</strong>
-      <p class="hint">助手从你的“忽略”和负面表情记下的规则。不合适的删掉，以后这类提醒就可以再发。</p>
+    <details v-if="state.me?.id === 'owner'" id="ignore-rules" class="rules">
+      <summary class="small">忽略规则<span class="muted"> · {{ rulesLoading ? "…" : rules.length ? `${rules.length} 条` : "还没有" }}</span></summary>
+      <HelpText>助手从你的“忽略”和负面表情记下的规则。不合适的删掉，以后这类提醒就可以再发。</HelpText>
       <p v-if="rulesError" role="alert">{{ rulesError }} <button class="btn sm" @click="loadRules">重试</button></p>
       <Skeleton v-else-if="rulesLoading" :rows="2" />
       <template v-else>
@@ -69,12 +81,13 @@ onMounted(async () => {
         </div>
         <p v-if="!rules.length" class="muted small">还没有忽略规则。</p>
       </template>
-    </section>
+    </details>
     <Skeleton v-if="loading" variant="cards" :rows="4" />
     <div v-else-if="!list.length" class="empty"><Icon name="bell" :size="32" /><h3>没有通知</h3></div>
     <div v-for="n in list" :key="n.id" class="n" :class="{ unread: n.unread }">
       <div class="row head">
-        <strong>{{ n.title }}</strong>
+        <a v-if="n.link" :href="n.link" class="ttl">{{ n.title }}</a>
+        <strong v-else class="ttl">{{ n.title }}</strong>
         <span class="spacer" />
         <span v-if="n.held" class="tag small">稍后一起发</span>
         <span v-else-if="n.pushed?.channel === 'bundle'" class="tag small">已并入汇总</span>
@@ -83,15 +96,20 @@ onMounted(async () => {
         <span class="muted small">{{ fmtTime(n.at) }}</span>
       </div>
       <ul v-if="n.bundleItems?.length"><li v-for="item in n.bundleItems" :key="item.id"><a v-if="item.link" :href="item.link">{{ item.title }}</a><span v-else>{{ item.title }}</span></li></ul>
-      <Markdown v-else-if="n.body" :source="n.body" class="body" />
+      <template v-else-if="n.body">
+        <div class="body" :class="{ clip: long(n) && !opened[n.id] }"><Markdown :source="bodyOf(n)" compact /></div>
+        <button v-if="long(n)" type="button" class="lnk small" :aria-expanded="!!opened[n.id]" @click="opened[n.id] = !opened[n.id]">{{ opened[n.id] ? "收起" : "展开全文" }}</button>
+      </template>
       <p v-if="n.ignoreRule" class="hint lesson">从这条提醒记下的忽略规则：{{ n.ignoreRule.rule }}</p>
-      <a v-if="n.link" :href="n.link" class="small">查看详情 →</a>
     </div>
   </div>
 </template>
 
 <style scoped>
-.rules { margin-bottom: 20px; }
+.rules { margin-bottom: 16px; display: grid; gap: 8px; }
+.rules summary { cursor: pointer; width: fit-content; color: var(--ink-2); }
+.rules[open] { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.notifications { max-width: 760px; }
 .rule { align-items: flex-start; }
 .rule span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .rule button { flex: none; }
@@ -102,7 +120,7 @@ onMounted(async () => {
   display: grid;
   gap: 6px;
 }
-.n.unread strong::before {
+.n.unread .ttl::before {
   content: "";
   display: inline-block;
   width: 7px;
@@ -113,14 +131,21 @@ onMounted(async () => {
   vertical-align: middle;
 }
 .n li { overflow-wrap: anywhere; }
-.body {
-  font-size: 14px;
+.body { min-width: 0; overflow-wrap: anywhere; }
+.body.clip {
+  max-height: 7.2em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 60%, transparent);
+  mask-image: linear-gradient(#000 60%, transparent);
 }
+.lnk { justify-self: start; border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.lnk:hover { text-decoration: underline; }
+.ttl { font-weight: 600; color: var(--ink); }
 .head {
   gap: 8px;
   flex-wrap: wrap;
 }
-.head strong {
+.head .ttl {
   min-width: 0;
   overflow-wrap: anywhere;
 }

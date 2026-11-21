@@ -53,7 +53,7 @@ export function approvalStreak(app: App, tool: string, userId = OWNER): number {
   const since = reset && reset > window ? reset : window;
   const rows = all<{ approved: number | null }>(
     app.db,
-    "select approved from asks where kind = 'approval' and tool = ? and user_id = ? and status = 'answered' and answered_at > ? order by answered_at desc limit 200",
+    "select approved from asks where kind = 'approval' and tool = ? and user_id = ? and status = 'answered' and json_extract(context, '$.operationApproval') is null and answered_at > ? order by answered_at desc limit 200",
     tool, userId, since,
   );
   let n = 0;

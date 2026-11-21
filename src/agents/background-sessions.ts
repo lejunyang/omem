@@ -55,7 +55,7 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
 async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: string, runId: string | null, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   req = { ...req, cleanup: await sessionCleanup(app, prep.profile, req, emit) };
   const config = app.config.sessions.background;
-  if (!config.enabled || config.maxLive === 0 || config.liveMinutes === 0) return runAcp(prep.profile, req, emit);
+  if (!config.enabled || config.maxLive === 0 || config.liveMinutes === 0) return runAcp(prep.profile, { ...req, app }, emit);
   const ctx = toolContextForToken(app, prep.token);
   if (!ctx) throw new Error("后台会话的工具权限已失效");
   const { app: _app, runId: _run, ...scope } = ctx;
@@ -77,7 +77,8 @@ async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: 
   } else {
     const token = issueToolToken({ ...scope, runId });
     try {
-      const handle = await openAcp(prep.profile, { ...req, mcp: { ...prep.mcp, token } }, emit);
+      const mcp = { ...prep.mcp, token, env: { ...prep.mcp.env, OMEM_TOKEN: token } };
+      const handle = await openAcp(prep.profile, { ...req, app, mcp }, emit);
       if (req.signal?.aborted) { await handle.discard(); throw new Error("CANCELLED"); }
       entry = { key, token, handle, busy: true, usedAt: Date.now() };
       // Another completed entry may have removed the empty pool while this one connected.

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RichText from "./RichText.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { get, post, put } from "../api";
 import Skeleton from "./Skeleton.vue";
@@ -141,7 +142,7 @@ async function rejudge() {
         <div class="grow">
           <router-link :to="`/sources/${m.sourceId}`">{{ m.title }}</router-link>
           <p class="small muted">{{ name(m.from) }} → {{ name(m.to) }} · {{ MODE[m.mode ?? ''] ?? m.mode }} · {{ when(m.at) }}</p>
-          <p class="small">{{ m.reason }}</p>
+          <RichText tag="p" class="small" :text="m.reason" />
         </div>
         <button v-if="m.returnable" class="btn sm" :disabled="busy" @click="moveBack(m)">移回</button>
         <span v-else class="muted small">已在 {{ name(m.now) }}</span>
@@ -155,7 +156,7 @@ async function rejudge() {
           <div class="grow">
             <router-link :to="`/sources/${u.id}`">{{ u.title }}</router-link>
             <p class="small muted">{{ u.verdict === 'proposed' ? 'AI 建议' : '可能是' }}：{{ u.suggested.map(name).join('、') || '没有候选' }}</p>
-            <p class="small">{{ u.reason }}</p>
+            <RichText tag="p" class="small" :text="u.reason" />
           </div>
         </div>
         <div class="row wrap actions">
