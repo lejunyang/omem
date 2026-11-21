@@ -286,6 +286,27 @@ describe("进度投影", () => {
     } finally { await server.close(); }
   });
 
+  it("普通事项的流程不可见时，大量历史运行不影响当前可读交办", () => {
+    const { app, add } = fixture();
+    createSpace(app, { id: "shared", name: "共享项目" });
+    createUser(app, { id: "reader", name: "读者", role: "observer" });
+    addMember(app, "shared", "reader", "reader");
+    const item = upsertItem(app, undefined, { title: "项目进度", spaceId: "shared" });
+    const definition = { id: "plain", name: "核对", stages: [{ id: "confirm", name: "确认", by: "owner" }] };
+    run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at) values(?,'plain',?,?,'owner',?)",
+      item.id, JSON.stringify(definition), at, at);
+    add("code", "code", null, { itemId: item.id, flowStartedAt: at }, { reviewPlan: { checks: ["style"] } }, ["shared"]);
+    run(app.db, "update runs set space_id='shared' where id='code'");
+    run(app.db, `with recursive n(i) as (values(1) union all select i+1 from n where i<4096)
+      insert into runs(id,kind,space_id,status,title,input,scope,created_at)
+      select 'past-'||i,'agent','shared','done','旧运行',?,?,? from n`, JSON.stringify({ itemId: item.id }), '["shared"]', at);
+    const reader = { user: "reader" };
+    expect(() => runProgress(app, "code", reader)).toThrow("事项关联运行超过");
+    run(app.db, `insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by)
+      values('reader','flows.view','space','shared','deny',?,'owner')`, at);
+    expect(runProgress(app, "code", reader).map(v => v.kind).sort()).toEqual(["code", "review"]);
+  });
+
   it("固定来源状态映射", () => {
     expect(states).toMatchInlineSnapshot(`
       {

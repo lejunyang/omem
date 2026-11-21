@@ -3,6 +3,7 @@ import { all, one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { runPredicate } from "../auth/run-scope.ts";
 import { can, canReadRun, runAudience } from "../auth/permissions.ts";
+import type { Item } from "../items/store.ts";
 import { requireItem } from "../items/access.ts";
 import { describeStage } from "../flows/definitions.ts";
 import { itemFlow, itemStages, waitText, type ItemFlow } from "../flows/store.ts";
@@ -288,9 +289,11 @@ function studyView(app: App, graph: Forest, f: ItemFlow, instance: Node[], title
   return study;
 }
 
-function itemFlowViews(app: App, graph: Forest, f: ItemFlow, title: string, history: boolean, showFlow: boolean) {
+function itemFlowViews(app: App, f: ItemFlow, item: Item, reader: Reader, history: boolean, loaded?: Forest) {
+  const showFlow = can(app, reader.user, "flows.view", item.spaceId);
   const study = isStudy(f);
   if (!showFlow && !study) return [];
+  const graph = loaded ?? itemForest(app, item.id, reader);
   const instance = [...graph.nodes.values()].filter(r => r.item === f.itemId && r.flowStart === f.startedAt);
   const rows = showFlow || f.endedAt ? itemStages(app, f.itemId) : [];
   const ended = f.endedAt && f.definition.stages.every(d => {
@@ -300,7 +303,7 @@ function itemFlowViews(app: App, graph: Forest, f: ItemFlow, title: string, hist
   const state = f.endedAt ? ended ? "done" : "cancelled" : f.roundClosedAt ? "waiting" : undefined;
   const blocks: ProgressView[] = [];
   if (showFlow) blocks.push(flowView(graph, f, instance, rows, state));
-  if (study) blocks.push(studyView(app, graph, f, instance, title, history, state));
+  if (study) blocks.push(studyView(app, graph, f, instance, item.title, history, state));
   return blocks;
 }
 
@@ -350,8 +353,7 @@ export function runProgress(app: App, id: string, reader: Reader, history = fals
     if (reader.spaces && !reader.spaces.includes(row.spaceId)) continue;
     const f = itemFlow(app, item);
     if (f && [...graph.nodes.values()].some(r => r.item === item && r.flowStart === f.startedAt)) {
-      const related = itemForest(app, item, reader);
-      views.push(...itemFlowViews(app, related, f, row.title, history, can(app, reader.user, "flows.view", row.spaceId)));
+      views.push(...itemFlowViews(app, f, row, reader, history));
     }
   }
   return views;
@@ -376,7 +378,7 @@ export function itemProgress(app: App, id: string, reader: Reader, history = fal
   if (reader.spaces && !reader.spaces.includes(item.spaceId)) throw new HttpError(404, "事项不存在");
   const graph = itemForest(app, id, reader);
   const f = itemFlow(app, id);
-  const flows = f ? itemFlowViews(app, graph, f, item.title, history, can(app, reader.user, "flows.view", item.spaceId)) : [];
+  const flows = f ? itemFlowViews(app, f, item, reader, history, graph) : [];
   const views = [...flows, ...workViews(app, graph, reader, id)];
   const active = (v: ProgressView) => Number(v.state === "waiting" || v.state === "running");
   return views.sort((a, b) => active(b) - active(a)).slice(0, Math.min(100, limit));
