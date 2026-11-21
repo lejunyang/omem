@@ -20,7 +20,7 @@ import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { addRunEvent, createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { leasedTo, leaseWorkspace, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "./workspaces.ts";
-import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, siblingsText, withDiffBase } from "./code-branch.ts";
+import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, temporaryWorkBranch, siblingsText, withDiffBase } from "./code-branch.ts";
 import { replyOf } from "./types.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
@@ -319,7 +319,8 @@ export async function runCodeTask(ctx: RunContext) {
   const workDir = join(dir, "work");
   const owner = runUser(app, run.id);
   const canNameBranch = toolAllowed(app, owner, "name_work_branch");
-  const branch = `omem/${rootRunId}`;
+  const explicitNames = (continueFrom ? getRun(app, rootRunId).input : input).branchNames as Record<string, string> | undefined;
+  const nameable = new Set<string>();
   mkdirSync(join(dir, "patches"), { recursive: true });
   const known = worktreesOf(app, rootRunId);
   const worktrees: WorktreeRef[] = [];
@@ -330,7 +331,11 @@ export async function runCodeTask(ctx: RunContext) {
     const was = known.find((w) => w.space === repo.id);
     // A work branch: every round places a workspace (kept, or lent again) on the branch's latest commit.
     if (was?.commits || (!was && !input.branches)) {
-      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? (await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id], base: input.startCommits?.[repo.id] })), log, input.peerCoder ? "git" : canNameBranch ? "tool" : "keep");
+      const plan = was ?? await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id], base: input.startCommits?.[repo.id] });
+      const temporary = temporaryWorkBranch(plan, rootRunId, explicitNames?.[repo.id]);
+      if (temporary && canNameBranch) nameable.add(repo.id);
+      const naming = temporary && input.peerCoder ? "git" : nameable.has(repo.id) ? "tool" : "keep";
+      const { wt, note } = branchWorktree(app, repo, rootRunId, path, plan, log, naming);
       worktrees.push(wt);
       branchNotes[repo.id] = note;
       if (!was) log(`${repo.id} 的工作分支 ${wt.branch}（${wt.newBranch ? `从${wt.cutFrom ? ` ${wt.cutFrom} 的` : ""} ${wt.base.slice(0, 8)} 切出` : `已有分支，从 ${wt.base.slice(0, 8)} 接着做`}），工作区 ${workDirOf(wt)}`);
@@ -637,7 +642,7 @@ ${input.task}
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
       role: "coder",
-      addTools: [...(canNameBranch && worktrees.some(w => w.newBranch && w.branch === branch) ? ["name_work_branch"] : []), ...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests", ...(describes ? ["submit_design"] : [])],
+      addTools: [...(nameable.size ? ["name_work_branch"] : []), ...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests", ...(describes ? ["submit_design"] : [])],
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,
