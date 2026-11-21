@@ -86,6 +86,22 @@ describe("进度投影", () => {
         decisions: [{ result: "fix" }, { result: "fix" }] }] });
   });
 
+  it("内嵌续轮评审进行中保留旧报告，提交新报告后才转为通过", () => {
+    const { app, add } = fixture();
+    const reviewPlan = { checks: ["style"] };
+    add("code1", "code", null, {}, { reviewPlan, reviewStage: "done" });
+    recordReview(app, { codeRunId: "code1", round: 1, check: "style", verdict: "changes_requested", summary: "请修改", findings: [] });
+    add("code2", "code", null, { continueFrom: "code1" }, { reviewPlan, reviewStage: "checks" });
+    run(app.db, "update runs set status='running' where id='code2'");
+    run(app.db, "insert into run_events values('code2',1,?,'usage',?)", at, '{"input":3,"output":1}');
+    const review = () => runProgress(app, "code1", owner).find(v => v.kind === "review");
+    expect(review()).toMatchObject({ state: "running", tasks: [{ state: "running", attempts: [{ runId: "code1" }, { runId: "code2" }],
+      outputs: [{ label: expect.stringContaining("请修改") }], usage: { runs: 2, input: 3, output: 1 } }] });
+    recordReview(app, { codeRunId: "code2", round: 2, check: "style", verdict: "approved", summary: "通过", findings: [] });
+    run(app.db, "update runs set status='done',output=json_set(output,'$.reviewStage','done') where id='code2'");
+    expect(review()).toMatchObject({ state: "done", tasks: [{ state: "accepted", outputs: [{}, { label: expect.stringContaining("通过") }] }] });
+  });
+
   it("单项重评保留内嵌首试，整轮独立评审只记实际评审运行", () => {
     const { app, add } = fixture();
     add("code", "code", null, {}, { reviewPlan: { checks: ["style", "logic"] } });

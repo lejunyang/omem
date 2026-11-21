@@ -121,46 +121,49 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
 
 function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
   const rounds = codeRounds(graph, node);
-  const roundIds = rounds.map(r => r.id);
-  const reviews = reviewsOf(app, roundIds);
-  const children = [...graph.nodes.values()].filter(r => r.parent && roundIds.includes(r.parent) && r.kind === "review" && !r.splitOnly);
-  const planned = (r: Node): string[] => JSON.parse(r.plan ?? "[]");
-  const checks = new Set([...rounds.flatMap(planned), ...reviews.map(r => r.check_name)]);
-  const lastRound = rounds.at(-1)!;
+  const reviews = reviewsOf(app, rounds.map(r => r.id));
+  const history = rounds.map(round => ({
+    round, plan: JSON.parse(round.plan ?? "[]") as string[],
+    results: reviews.filter(r => r.code_run_id === round.id),
+    children: (graph.children.get(round.id) ?? []).map(id => graph.nodes.get(id)!).filter(r => r.kind === "review" && !r.splitOnly),
+  }));
+  const checks = new Set(history.flatMap(h => [...h.plan, ...h.results.map(r => r.check_name)]));
   const tasks = [...checks].map(name => {
-    const results = reviews.filter(r => r.check_name === name);
-    const result = results.at(-1);
-    const attempts = children.filter(r => r.onlyChecks ? (JSON.parse(r.onlyChecks) as string[]).includes(name)
-      : planned(graph.nodes.get(r.parent!)!).includes(name) || results.some(review => review.code_run_id === r.parent));
-    const ids = rounds.flatMap(round => {
-      const runs = attempts.filter(r => r.parent === round.id);
+    const checksByRound = history.map(({ round, plan, results, children }) => {
+      const records = results.filter(r => r.check_name === name);
+      const checking = round.reviewStage === "checks" && plan.includes(name) && !records.length;
+      const runs = children.filter(r => r.onlyChecks ? (JSON.parse(r.onlyChecks) as string[]).includes(name) : plan.includes(name) || records.length);
       // A selective retry follows a check already attempted in this coding round.
-      const embedded = runs.length ? !!runs[0].onlyChecks : results.some(r => r.code_run_id === round.id);
-      return [...(embedded ? [round.id] : []), ...runs.map(r => r.id)];
+      const embedded = runs.length ? !!runs[0].onlyChecks : checking || records.length > 0;
+      return { records, checking, latest: runs.at(-1), ids: [...(embedded ? [round.id] : []), ...runs.map(r => r.id)] };
     });
+    const current = checksByRound.at(-1)!;
+    const ids = checksByRound.flatMap(r => r.ids);
+    const results = checksByRound.flatMap(r => r.records);
+    const result = results.at(-1);
     const decisions = results.flatMap(r => r.findings).flatMap(f => {
       const rows: Decision[] = [];
       if (f.state !== "open") rows.push({ ref: String(f.id), by: "评审负责人", result: f.state, note: f.triage_note });
       if (f.decision) rows.push({ ref: String(f.id), result: f.decision, note: f.decision_note });
       return rows;
     });
-    const latest = attempts.filter(r => r.parent === lastRound.id).at(-1);
+    const latest = current.latest;
     const executing = latest && ["running", "queued"].includes(latest.status);
     let state: TaskStatus = result ? states.review[result.verdict as keyof typeof states.review] : "pending";
     if (latest && (executing || latest.status === "failed" || latest.status === "cancelled")) state = latest.status as TaskStatus;
-    else if (!result && lastRound.reviewStage === "checks") state = "running";
+    else if (current.checking) state = "running";
     return task(graph, ids, {
       id: name, title: name, state,
-      who: result?.profile_id || result?.model ? { agent: result.profile_id ?? undefined, model: result.model ?? undefined, effort: result.effort ?? undefined } : undefined,
+      who: !current.checking && (result?.profile_id || result?.model) ? { agent: result.profile_id ?? undefined, model: result.model ?? undefined, effort: result.effort ?? undefined } : undefined,
       outputs: results.flatMap((r): Output[] => [
         { kind: "report", ref: r.id, label: `${r.verdict} · ${r.findings.length} 个问题 · ${r.summary}` },
         ...r.findings.map(f => ({ kind: "finding" as const, ref: String(f.id), label: f.title })),
       ]),
-      decisions, decision: decisions?.at(-1), waitingOn: lastRound.reviewStage === "plan" ? "等本人确认评审计划" : undefined
+      decisions, decision: decisions?.at(-1), waitingOn: rounds.at(-1)!.reviewStage === "plan" ? "等本人确认评审计划" : undefined
     });
   });
   if (tasks.length) return view(graph, { kind: "review", id: node.id, runId: node.id, itemId, title: node.title + " · 评审", tasks },
-    lastRound.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined);
+    rounds.at(-1)!.reviewStage === "done" && tasks.every(t => ["accepted", "submitted"].includes(t.state)) ? "done" : undefined);
 }
 
 function flowViews(app: App, graph: Forest, id: string, title: string, history: boolean) {
