@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { sandboxCommand, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import * as dispatch from "../src/agents/dispatch.ts";
+import { accountOf, sandboxCommand, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { shortPath } from "../src/agents/own-sandbox.ts";
@@ -78,6 +79,53 @@ describe("delegation sandbox mounts", () => {
       app.config.agents.ownSandbox = settings;
       app.baseUrl = baseUrl;
       vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("limits discovered review worktrees to the owner sandbox's read-only mounts", async () => {
+    const userId = "review-member";
+    const role = saveRole(app, { name: "review-developer", scope: "global", permissions: ["code.delegate"] });
+    const member = createUser(app, { id: userId, name: "成员", role: role.id });
+    for (const space of [a, b]) addMember(app, space.id, member.id, "manager");
+    const code = createRun(app, { kind: "code", userId, spaceId: a.id, title: "多仓交办", input: {} });
+    const trees = [leased(code.id, a), leased(code.id, b)];
+    setRunOutput(app, code.id, { worktrees: trees });
+    const profile = agentProfileSchema.parse({ id: "review-fixture", source: "claude", transport: "acp", command: process.execPath });
+    const home = join(app.home, "accounts", userId, "home");
+    mkdirSync(home, { recursive: true });
+    app.db.prepare("insert into kv(key,value) values(?,?)").run("agent_account:" + userId + ":claude", JSON.stringify({ state: "logged-in" }));
+    const baseUrl = app.baseUrl;
+    const settings = app.config.agents.ownSandbox;
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.profiles.push(profile);
+    setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+    const backend = vi.spyOn(dispatch, "runBackend").mockResolvedValue({ text: "完成", agent: "fixture", stopReason: "end_turn" });
+    try {
+      for (const actor of [userId, "owner"]) {
+        const review = createRun(app, { kind: "review", userId: actor, spaceId: a.id, title: "评审", input: { codeRunId: code.id } });
+        const cwd = actor === userId ? dirname(trees[0].path) : join(app.runsDir, review.id, "snap");
+        mkdirSync(cwd, { recursive: true });
+        app.config.agents.ownSandbox = { mode: actor === userId ? "off" : "require", writable: [], hidden: [] };
+        await runner.runRole(app, { role: "reviewer", reviewCheck: true, runId: review.id, spaceId: a.id, profileId: profile.id, cwd, task: "评审这两个仓库" });
+        const [, selected, req] = backend.mock.calls.at(-1)!;
+        if (actor === userId) {
+          const account = accountOf(selected)!;
+          expect(account.home).toBe(home);
+          const args = sandboxCommand({ file: process.execPath, prefix: [] }, [], {}, cwd, account, req.workspace).args;
+          expect(req.ownSandbox).toBeUndefined();
+          expect(args).toContain(cwd);
+          for (const tree of trees) expect(args).not.toContain(tree.slot);
+        } else {
+          expect(req.ownSandbox!.plan.rw).toContain(cwd);
+          for (const tree of trees) {
+            expect(req.ownSandbox!.plan.ro).toContain(tree.slot);
+            expect(req.ownSandbox!.plan.rw).not.toContain(tree.slot);
+          }
+        }
+      }
+    } finally {
+      backend.mockRestore(); setSandboxSupportForTests(undefined);
+      app.config.agents.profiles.pop(); app.config.agents.ownSandbox = settings; app.baseUrl = baseUrl;
     }
   });
 

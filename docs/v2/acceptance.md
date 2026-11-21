@@ -86,6 +86,8 @@
 
 7. 在新 HOME 下，为 Claude、Codex 分别生成 ACP 和 CLI 两种 API 档案。核对计费来源为 `key:<编号>`，沙箱按 0700 创建状态目录，替身进程能在里面写入会话文件。
 
+8. 关闭本人沙箱，通过成员独立账号评审多仓交办，核对启动参数没有绑定原工作树。用本人沙箱评审同一交办，原树只读，快照可写。
+
 自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 成员用自己的 AI 账号：额度、模型、技能、换后端、停用、插件登录（2026-11-20 晚，docs/v2/agent-accounts.md）

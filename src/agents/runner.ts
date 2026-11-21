@@ -467,7 +467,7 @@ export function recordIsolation(app: App, runId: string | null, userId: string, 
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean; worktrees?: WorktreeRef[]; worktreeAccess?: "read" | "commit"; inbox?: string },
+  input: { actor: Actor; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean; worktrees?: WorktreeRef[]; reviewTrees?: WorktreeRef[]; worktreeAccess?: "read" | "commit"; inbox?: string },
 ): PreparedRun {
   const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -552,9 +552,12 @@ export function prepareRun(
   const legacyFull = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
   const allowWrites = !readOnly && (spec ? spec.writes : role!.writes);
   const guestTurn = !!input.guestTurn || (!spec && GUEST_ROLES.includes(roleName));
-  const mounts = (readOnly: boolean) => input.worktrees?.length ? workspaceMounts(app, input.worktrees,
-    input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined,
-    input.worktreeAccess === "read" || readOnly ? "read" : "write") : undefined;
+  const mounts = (readOnly: boolean) => {
+    const trees = input.worktrees ?? (readOnly ? input.reviewTrees : undefined);
+    return trees?.length ? workspaceMounts(app, trees,
+      input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined,
+      input.worktreeAccess === "read" || readOnly ? "read" : "write") : undefined;
+  };
   const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId,
     { workspace: mounts, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
   const workspace = isolation.box?.plan ?? (account ? mounts(false) : undefined);
@@ -860,15 +863,15 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const primary = accountProfile(app, { ...input, actor });
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : undefined;
-  let trees = input.worktrees;
-  if (!trees && input.runId && (input.reviewCheck || input.reviewLead)) {
+  let reviewTrees: WorktreeRef[] | undefined;
+  if (!input.worktrees && input.runId && (input.reviewCheck || input.reviewLead)) {
     const { workRootOf } = await import("./code-tasks.ts");
     const { worktreesOf } = await import("./code.ts");
-    trees = worktreesOf(app, workRootOf(app, input.runId));
+    reviewTrees = worktreesOf(app, workRootOf(app, input.runId));
   }
   const { awarenessNote } = await import("./awareness.ts");
   const prepare = (profile: AgentProfile) => prepareRun(app, {
-    ...input, actor, profile, worktrees: trees, inbox, lessons, lessonIds: told.ids, recallNote: told.recallNote,
+    ...input, actor, profile, reviewTrees, inbox, lessons, lessonIds: told.ids, recallNote: told.recallNote,
     scene: { kind: runKind, chat: !internal && (runKind === "ask" || runKind === "guest" || runKind === "lark-command"), awareness: !internal && !!runInput.turnContext },
     awarenessNote: internal ? undefined : withTools => awarenessNote(app, input.runId, withTools),
   });
