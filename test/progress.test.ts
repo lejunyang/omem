@@ -163,6 +163,30 @@ describe("进度投影", () => {
       }
     } finally { await server.close(); }
   });
+  it("共享事项按流程和编码的分区权限裁剪进度", async () => {
+    const { app, add } = fixture();
+    createSpace(app, { id: "shared", name: "项目 A" });
+    createUser(app, { id: "reader", name: "读者", role: "observer" });
+    addMember(app, "shared", "reader", "editor");
+    const item = upsertItem(app, undefined, { title: "共享事项", spaceId: "shared" });
+    const definition = { id: "study", name: "课题", stages: [{ id: "plan", name: "方向", by: "owner", tools: ["propose_directions"] }] };
+    run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at) values(?,'study',?,?,'owner',?)", item.id, JSON.stringify(definition), at, at);
+    add("code", "code", null, { itemId: item.id, flowStartedAt: at }, { reviewPlan: { checks: ["style"] } }, ["shared"]);
+    run(app.db, "update runs set space_id='shared' where id='code'");
+    addTask(app, "code", { title: "修改项", kind: "build" }, "coder");
+    const reader = { user: "reader" };
+    const kinds = () => [itemProgress(app, item.id, reader), runProgress(app, "code", reader)].map(v => v.map(b => b.kind).sort());
+    expect(kinds()).toEqual(Array(2).fill(["code", "flow", "review", "study"]));
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const result = await server.inject({ url: "/api/members/reader/capabilities", method: "PUT", payload: {
+        preset: "observer", overrides: ["flows.view", "code.work.view"].map(capability => ({ capability, scope_kind: "space", scope_id: "shared", effect: "deny" })),
+      } });
+      expect(result.statusCode).toBe(200);
+      expect(kinds()).toEqual([["review"], ["review"]]);
+    } finally { await server.close(); }
+  });
+
   it("固定来源状态映射", () => {
     expect(states).toMatchInlineSnapshot(`
       {

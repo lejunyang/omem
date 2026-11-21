@@ -1,7 +1,8 @@
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
-import { canReadRun } from "../auth/permissions.ts";
+import { runPredicate } from "../auth/run-scope.ts";
+import { can, canReadRun, runAudience } from "../auth/permissions.ts";
 import { requireItem } from "../items/access.ts";
 import { describeStage } from "../flows/definitions.ts";
 import { itemFlow, itemStages, waitText } from "../flows/store.ts";
@@ -238,13 +239,15 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
   return [block, study];
 }
 
-function workViews(app: App, graph: Forest, linkedItem?: string) {
+function workViews(app: App, graph: Forest, reader: Reader, linkedItem?: string) {
   const ids = JSON.stringify([...graph.nodes.keys()]);
+  const audience = runAudience(app, reader.user, "code.work.view");
+  const work = audience ? runPredicate(audience, "r") : { sql: "1", params: [] };
   const candidates = all<{ id: string; board: number; code: number; review: number }>(app.db, `select r.id,
     exists(select 1 from agent_work_tasks where work_id=r.id) board,
-    (r.kind='code' and json_extract(input,'$.continueFrom') is null and json_extract(input,'$.branches') is null or exists(select 1 from code_tasks where work_id=r.id)) code,
+    (${work.sql} and (r.kind='code' and json_extract(input,'$.continueFrom') is null and json_extract(input,'$.branches') is null or exists(select 1 from code_tasks where work_id=r.id))) code,
     (json_extract(output,'$.reviewPlan.checks') is not null or exists(select 1 from reviews where code_run_id=r.id)) review
-    from runs r where r.id in (select value from json_each(?)) and (board or code or review) order by created_at desc`, ids);
+    from runs r where r.id in (select value from json_each(?)) and (board or code or review) order by created_at desc`, ...work.params, ids);
   const views: ProgressView[] = [];
   const reviewed = new Set<string>();
   for (const c of candidates) {
@@ -271,7 +274,7 @@ export function runProgress(app: App, id: string, reader: Reader, history = fals
     throw new HttpError(404, "运行不存在");
   }
   const graph = runForest(app, [root], reader);
-  const views = workViews(app, graph);
+  const views = workViews(app, graph, reader);
   const items = new Set([...graph.nodes.values()].filter(r => r.flowStart && r.item).map(r => r.item!));
   for (const item of items) {
     let row;
@@ -280,6 +283,7 @@ export function runProgress(app: App, id: string, reader: Reader, history = fals
       throw e;
     }
     if (reader.spaces && !reader.spaces.includes(row.spaceId)) continue;
+    if (!can(app, reader.user, "flows.view", row.spaceId)) continue;
     const f = itemFlow(app, item);
     if (f && [...graph.nodes.values()].some(r => r.item === item && r.flowStart === f.startedAt)) {
       const related = itemForest(app, item, reader);
@@ -304,7 +308,8 @@ export function itemProgress(app: App, id: string, reader: Reader, history = fal
   const item = requireItem(app, id, reader.user, "read");
   if (reader.spaces && !reader.spaces.includes(item.spaceId)) throw new HttpError(404, "事项不存在");
   const graph = itemForest(app, id, reader);
-  const views = [...flowViews(app, graph, id, item.title, history), ...workViews(app, graph, id)];
+  const flows = can(app, reader.user, "flows.view", item.spaceId) ? flowViews(app, graph, id, item.title, history) : [];
+  const views = [...flows, ...workViews(app, graph, reader, id)];
   const active = (v: ProgressView) => Number(v.state === "waiting" || v.state === "running");
   return views.sort((a, b) => active(b) - active(a)).slice(0, Math.min(100, limit));
 }
