@@ -357,13 +357,62 @@ api.subscribe({
 });
 ```
 
-示例中的 `receiveStatus` 由插件实现。每条事件携带版本 `v: 1`、稳定的 `id`、类型、时间、实体、空间、操作者和事实字段。可选类型为 `item.created`、`item.status`、`review.finished`、`finding.decision`、`finding.resolution`。事项事件给出标题、类型、前后状态、父事项与链接。评审完成给出运行、结论和问题数。问题事件给出位置、取舍或复核结果及理由。
+示例中的 `receiveStatus` 由插件实现。每条事件携带版本 `v: 1`、稳定的 `id`、类型、时间、实体、空间、操作者和事实字段。可选类型为 `item.created`、`item.status`、`review.finished`、`finding.decision`、`finding.resolution`、`finding.thread`。事项事件给出标题、类型、前后状态、父事项与链接。评审完成给出运行、结论和问题数。问题事件给出位置、取舍或复核结果及理由。
 
 候选事项也会发 `item.created`，此时 `data.status` 为 `candidate`。本人留下或拒绝候选时，同一事项会发 `item.status`，`data.from` 为 `candidate`。拒绝时 `data.status` 为 `cancelled`，留下时为 `open`（等待类事项为 `waiting`）。只为已采纳事项建外部工单的插件应同时订阅这两种事件，按状态过滤：候选创建时跳过，转为 `open` 或 `waiting` 时再建单。
 
 宿主在业务事务内保存事实和投递状态。提交后，同一订阅按同一实体的变更顺序调用 `handle`。回调有 15 秒时限，失败后按指数退避重试，累计 6 次失败后暂停该实体的后续投递。插件停用期间保留进度，授权空间在入队和回调前各检查一次。宿主定期清理超过 14 天的事件。宿主在插件处理成功后、记录成功前退出时，会再次投递同一个 id。插件有外部副作用时用这个 id 做幂等键。
 
 用 `omem plugin failed-events sample:status` 查看失败事件的 id 和错误。在保留期内用 `omem plugin replay sample:status <事件id>` 重新排队。隔离进程通过 IPC 收到同样的事件。
+
+## 把评审问题同步到平台
+
+事项挂上合并请求后，评审完成会有一张发布确认卡。一个目标时可以全发、选发或跳过，有多个目标时先选一个。只有本人能确认，平台请求使用本人的连接。没有关联事项的评审暂不支持发布。手工登记过链接、负责人剔除或本人否掉的问题会跳过。
+
+插件在清单中声明 `permissions.reviewProvider: true`，用 `api.reviewProvider({ id, label, objectKind, publish, readThread, resolve? })` 注册。`objectKind` 填本插件的对象种类，例如 `pull-request`。宿主给提供者加插件前缀。类型从 `@omem-ai/plugin-sdk/server` 引入，两种运行模式共用同一套接口。
+
+| 调用 | 请求和返回 |
+| --- | --- |
+| `publish(ctx, { objectKey, findingId, anchor, body })` | `anchor` 含仓库内 `path`、末行 `line`、可选起始行 `startLine`、`side`（LEFT 或 RIGHT）及受评提交 `head`。返回 `{ id, url, revision? }`。 |
+| `readThread(ctx, ref)` | 返回 `{ state, reply? }`。状态为 open、replied、resolved 或 outdated。最近一条他人回复为 `{ author, at, summary }`，时间用 ISO 8601，摘要最多 1000 字符。 |
+| `resolve(ctx, ref, note?)` | 可选。复审判为已修后，宿主请本人确认。执行前重新读取讨论，只结束仍在进行的讨论，返回实际状态。 |
+
+上下文含 `userId`、`spaceId`、`signal` 和限本插件已声明连接器的 `connection(provider)`。写入另有稳定的 `idempotencyKey`。插件须按键识别已产生的评论，包括上一次发出后未收到响应的情况。头提交或差异位置失效时抛出带 `code: "REVIEW_ANCHOR_OUTDATED"` 的错误。宿主将这条问题标成要重新定位。普通失败可以逐条重新请求确认。GitHub 参考实现通过行内评论中的标记识别重试，再按讨论编号读回复和结束讨论。
+
+对象修订或状态变化、平台回调触发重读时，宿主同步仍在进行的讨论。另有五分钟一次的轮询，每批最多 20 条。读回回复或外部结束状态后，运行记录与获准订阅该空间的插件都会收到 `finding.thread`，问题的本地取舍由本人决定。发布与结束操作的审计动作分别为 `review.publish`、`review.resolve`。
+
+### 评审页接口
+
+以下路径以 `/api/runs/:id/review-sync` 为根。GET 和刷新按运行归属鉴权。发布和结束请求只给本人，返回的 `askId` 对应已有问答卡。网页可打开 `#/ui/<askId>`，本人答卡后重新 GET 状态。
+
+| 请求 | 返回示例 |
+| --- | --- |
+| GET | `{"objects":[{"id":"obj-a","label":"GitHub 行内讨论","provider":"github:reviews","title":"项目 A","link":"https://example.org/pr/7"}],"findings":[{"id":12,"eligible":true,"delivery":"unpublished","external":null}],"pending":[{"id":"ask-a","action":"publish"}]}` |
+| POST `/publish`，传 `{"object":"obj-a","findings":[12]}` | `{"askId":"ask-a","state":"pending"}` |
+| POST `/resolve`，传 `{"findings":[12]}` | `{"askId":"ask-b","state":"pending"}` |
+| POST `/refresh` | `{"refreshed":1,"failed":0}` |
+
+每条问题的 `delivery` 统一取 unpublished、published、failed 或 relocate。已登记的手工链接也显示 published。底层 `review_findings.external` 未投递时为 null，已有记录的字段如下。
+
+```ts
+{
+  syncedAt: string
+  url?: string
+  ref?: string                      // 平台评论或讨论编号
+  object?: string                   // 提供者发布时为 flow_objects.id
+  state?: "open" | "replied" | "resolved" | "outdated"
+  provider?: string                 // 例如 github:reviews
+  revision?: string
+  anchor?: DiffAnchor
+  delivery?: "published" | "failed" | "relocate"
+  error?: string                    // 发布失败或需要重新定位的原因
+  checkedAt?: string                // 最近读回尝试
+  threadError?: string              // 最近一次讨论同步或结束的错误
+  reply?: { author: string; at: string; summary: string }
+}
+```
+
+旧的 `PUT /api/runs/:id/findings/:fid/external` 和 `revise_finding(comment)` 继续登记手工评论。历史评审缺少受评提交时，发布结果提示重新定位。
 
 ## 把平台条目同步成事项
 

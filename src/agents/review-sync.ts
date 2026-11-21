@@ -150,8 +150,8 @@ async function publish(app: App, id: string, user: string, object: string, ids: 
 
 const openThread = "json_extract(f.external,'$.delivery')='published' and json_extract(f.external,'$.state') in ('open','replied')";
 const lastCheck = "coalesce(json_extract(f.external,'$.checkedAt'),'')";
-type ThreadRow = FindingRow & { origin: string; space: string; kind: string | null; itemSpace: string; itemUser: string };
-const threadRows = `select f.*,r.code_run_id origin,u.space_id space,o.kind,i.space_id itemSpace,i.user_id itemUser
+type ThreadRow = FindingRow & { origin: string; runUser: string; space: string; kind: string | null; itemSpace: string; itemUser: string };
+const threadRows = `select f.*,r.code_run_id origin,coalesce(u.user_id,'owner') runUser,u.space_id space,o.kind,i.space_id itemSpace,i.user_id itemUser
   from review_findings f join reviews r on r.id=f.review_id join runs u on u.id=r.code_run_id
   left join items i on i.id=json_extract(u.input,'$.itemId')
   left join item_materials m on m.item_id=i.id and m.kind='object' and m.ref=json_extract(f.external,'$.object')
@@ -169,7 +169,7 @@ function saveThread(app: App, row: ThreadRow, ext: ReviewExternal, update: Parti
     if (event && (next.state === "resolved" && ext.state !== "resolved" || next.reply && JSON.stringify(next.reply) !== JSON.stringify(ext.reply) ||
       next.state === "replied" && ext.state !== "replied")) {
       const data = { runId: row.origin, finding: row.id, object: ext.object, url: ext.url, state: next.state, reply: next.reply };
-      enqueuePluginEvent(app, "finding.thread", row.space, () => ({ userId: OWNER, entity: { kind: "finding", id: String(row.id) }, actor: { kind: "host" }, data }));
+      enqueuePluginEvent(app, "finding.thread", row.space, () => ({ userId: row.runUser, entity: { kind: "finding", id: String(row.id) }, actor: { kind: "host" }, data }));
       addRunEvent(app, row.origin, "finding.thread", data);
     }
     if (next.state === "resolved" || next.state === "outdated") retireResolveAsks(app, row);

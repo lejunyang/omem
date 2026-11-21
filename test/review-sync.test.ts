@@ -113,3 +113,31 @@ it("平台先结束讨论时撤回尚未确认的结束卡",async () => {
   expect(reviewSyncView(app,next.id,"owner").pending).toEqual([]);
   expect(resolve).not.toHaveBeenCalled();
 });
+
+it("网页可读状态、请求发布、结束及立即刷新，成员和 Agent 工具均不能确认外部写入",async () => {
+  provider();
+  done();
+  const { startServer } = await import("../src/server/http.ts");
+  const { createUser, createApiToken } = await import("../src/core/users.ts");
+  const { toolList } = await import("../src/agents/tools.ts");
+  const server = await startServer(app,{ port:0, quiet:true });
+  try {
+    const base = "/api/runs/" + id + "/review-sync";
+    const status = (await server.inject(base)).json();
+    expect(status.objects[0]).toMatchObject({id:"obj",provider:"demo:review"});
+    const fid = status.findings[0].id;
+    const payload = { object:"obj", findings:[fid] };
+    createUser(app,{id:"member",name:"成员"});
+    const headers = { authorization:"Bearer " + createApiToken(app,"member","test") };
+    expect((await server.inject({method:"POST",url:base + "/publish",headers,payload})).statusCode).toBeGreaterThanOrEqual(400);
+    const ask = (await server.inject({method:"POST",url:base + "/publish",payload})).json();
+    expect(ask.state).toBe("pending");
+    expect(publish).not.toHaveBeenCalled();
+    await yes(ask.askId);
+    expect((await server.inject({method:"POST",url:base + "/refresh"})).json()).toEqual({refreshed:1,failed:0});
+    run(app.db,"update review_findings set resolution='fixed' where id=?",fid);
+    expect((await server.inject({method:"POST",url:base + "/resolve",payload:{findings:[fid]}})).json().state).toBe("pending");
+    expect(resolve).not.toHaveBeenCalled();
+    expect(toolList().map(t => t.name)).not.toEqual(expect.arrayContaining(["review_publish"]));
+  } finally { await server.close(); }
+});
