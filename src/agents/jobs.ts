@@ -363,7 +363,9 @@ async function runAgentTask(ctx: RunContext) {
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
       addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []),
         // A look at a line hands in what it found (items/lines.ts); it may also find nothing new.
-        ...((ctx.run.input as { lineState?: string }).lineState ? ["submit_line_state", "stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []), ...lent],
+        ...((ctx.run.input as { lineState?: string }).lineState ? ["submit_line_state", "stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []),
+        // A meeting's summary hands in what it decided for the items it is about (agents/meeting-outcomes.ts).
+        ...(typeof (ctx.run.input as { meetingId?: unknown }).meetingId === "string" && !(ctx.run.input as { meetingWindow?: boolean }).meetingWindow ? ["meeting_outcomes"] : []), ...lent],
       execution,
       // A rule's switch turns it on for its runs; left off, they follow the agent's own setting (prepareRun),
       // like every other run of that agent. (Off used to mean off even with the assistant on full access:

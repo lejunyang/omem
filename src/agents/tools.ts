@@ -47,6 +47,7 @@ import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
 import { CHANGE_TYPES, addChange } from "../items/changes.ts";
+import { outcomesSchema, submitOutcomes } from "./meeting-outcomes.ts";
 import { ancestorIds, MAX_DEPTH } from "../items/tree.ts";
 import { ITEM_KINDS, listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { lineStateSchema, proposeSchema } from "../items/line-schemas.ts";
@@ -2445,6 +2446,15 @@ def({
     if (ctx.role !== "item-follow" || !ctx.runId) throw new HttpError(403, "只有 item-follow 能交事项变化");
     flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs);
     return JSON.stringify((await import("../flows/follow.ts")).noteItemChange(ctx.app, ctx.runId, a));
+  },
+});
+def({
+  name: "meeting_outcomes",
+  description: "会议结束后的整理交这场会对一件事项的结果：决定（谁定的、定了什么）、待办（谁、做什么、什么时候之前）、没定下来的问题，每条引用会议记录原件的行；事项本身的截止时间变了才填 deadline。宿主记成这件事项的变化（同一场会再交不重复记）；事项和这场会的关联还没确认时先问本人。只给会后整理的运行。",
+  write: true, schema: outcomesSchema,
+  handler: (ctx, a) => {
+    validateItemRefs(ctx.app, [...(a.decisions ?? []), ...(a.todos ?? []), ...(a.open_questions ?? []), ...(a.deadline ? [a.deadline] : [])].flatMap((e) => e.refs), ctx.userId ?? OWNER, ctx.spaces);
+    return submitOutcomes(ctx.app, ctx.runId, ctx.spaces, a);
   },
 });
 def({
