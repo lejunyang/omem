@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { registerProcessHooks } from "../src/plugins/process-hooks.ts";
 import { manifestSchema } from "../src/plugins/registry.ts";
 import { searchProviderStatus } from "../src/search/providers.ts";
+import { startServer } from "../src/server/http.ts";
 import { search } from "../src/search/search.ts";
 import { readProcess } from "../src/search/read-process.ts";
 import { callTool } from "../src/agents/tools.ts";
@@ -189,13 +190,19 @@ it("本地回退保持三位小数的同分顺序，插件成功时使用原分"
   const local = await search(app, "项目资料", opts);
   expect(local.map(h => h.rerank)).toEqual([0.8, 0.8]);
   app.config.rerank.provider = "plugin:demo:rank";
-  const plugin = await search(app, "项目资料", opts);
-  expect(plugin.map(h => h.id)).toEqual([local[1].id, local[0].id]);
-  expect(plugin.map(h => h.rerank)).toEqual([0.8004, 0.8001]);
-  expect(rerankStatus(app).lastProvider).toBe("plugin:demo:rank");
-  score.mockResolvedValueOnce([]);
-  expect(await search(app, "项目资料", opts)).toEqual(local);
-  expect(rerankStatus(app).lastProvider).toBe("local");
+  const server = await startServer(app, { port: 0, quiet: true });
+  const settingsStatus = async () => (await server.inject({ url: "/api/settings" })).json().rerank;
+  try {
+    const plugin = await search(app, "项目资料", opts);
+    expect(plugin.map(h => h.id)).toEqual([local[1].id, local[0].id]);
+    expect(plugin.map(h => h.rerank)).toEqual([0.8004, 0.8001]);
+    expect(await settingsStatus()).toMatchObject({ provider: "plugin:demo:rank", lastProvider: "plugin:demo:rank" });
+    score.mockResolvedValueOnce([]);
+    expect(await search(app, "项目资料", opts)).toEqual(local);
+    expect(await settingsStatus()).toMatchObject({ provider: "plugin:demo:rank", lastProvider: "local" });
+  } finally {
+    await server.close();
+  }
 });
 
 it("被动记忆按实际评分来源使用门槛，插件可使用负数、大于一和零", async () => {
