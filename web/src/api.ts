@@ -2,9 +2,12 @@ export class ApiError extends Error {
   status: number;
   /** The browser is on its way to the login page (not a failure to show). */
   login = false;
-  constructor(status: number, message: string) {
+  /** The response body as it came (a 409 that asks for a confirmation carries its numbers here). */
+  data: unknown;
+  constructor(status: number, message: string, data?: unknown) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -142,7 +145,7 @@ async function request<T>(path: string, init: RequestInit & { json?: unknown }):
     throw err;
   }
   if (res.status === 401 && !(init as { retried?: boolean }).retried && (await askToken())) return api<T>(path, { ...init, retried: true } as typeof init);
-  if (!res.ok) throw new ApiError(res.status, (data && (data as { error?: string }).error) || res.statusText);
+  if (!res.ok) throw new ApiError(res.status, (data && (data as { error?: string }).error) || res.statusText, data);
   return data as T;
 }
 

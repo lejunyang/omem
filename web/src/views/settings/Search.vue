@@ -1,20 +1,20 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { get } from "../../api";
-import { intIn, useBackends, useSettings, type ModelSource, type RerankStatus } from "./ctx";
+import { ref, watch } from "vue";
+import { intIn, useBackends, useSettings, type ModelSource } from "./ctx";
+import EmbeddingSettings from "../../components/EmbeddingSettings.vue";
 import HelpText from "../../components/HelpText.vue";
 import Icon from "../../components/Icon.vue";
+import RerankSettings from "../../components/RerankSettings.vue";
 import SearchProviders from "../../components/SearchProviders.vue";
 import SetCard from "../../components/SetCard.vue";
 import SetGate from "../../components/SetGate.vue";
 import SetRow from "../../components/SetRow.vue";
 import Skeleton from "../../components/Skeleton.vue";
 import UiCheckbox from "../../components/UiCheckbox.vue";
-import UiSegmented from "../../components/UiSegmented.vue";
 import UiSelect from "../../components/UiSelect.vue";
 
 /** 设置 → 知识 → 检索与记忆: vectors, reranking, memories brought into a conversation, and checking what gets written as memory. */
-const { config, profiles, rerank, embeddingSource, saveConfig } = useSettings();
+const { config, profiles, saveConfig } = useSettings();
 const { profileOptions, probes, effortsOf, modelOptionsFor, loadProbes } = useBackends(profiles);
 watch(() => profiles.value.length, (n) => { if (n) void loadProbes(); }, { immediate: true });
 
@@ -30,23 +30,16 @@ function sourceLine(s: ModelSource | null | undefined) {
   if (!s.known) return `这个模型不在 omem 交给 osdk 管理的清单里：第一次使用时自己从 Hugging Face 下载${s.cached ? "，已经下好" : ""}。`;
   return `有 osdk：下一次用到时由 osdk 下载并锁定版本${size}${s.cached ? "；这之前先用以前自己下载的那份" : ""}。`;
 }
-async function saveRerank(patch: Record<string, unknown>) {
-  await saveConfig({ rerank: { ...config.value.rerank, ...patch } }, "已保存重排设置");
-  rerank.value = (await get<{ rerank: RerankStatus }>("/api/settings")).rerank;
+function saveRerank(patch: Record<string, unknown>, note = "已保存重排设置") {
+  void saveConfig({ rerank: { ...config.value.rerank, ...patch } }, note);
 }
-const rerankLine = computed(() => {
-  const r = rerank.value;
-  if (!r?.enabled) return "";
-  const tail = r.timeouts ? `，${r.timeouts} 次超时没用上` : "";
-  if (r.state === "ready") return `已加载 · 用过 ${r.calls} 次${r.lastMs ? `，上一次 ${(r.lastMs / 1000).toFixed(1)} 秒` : ""}${tail}`;
-  if (r.state === "loading") return r.source?.syncing ? "模型还在下载" : "正在下载或加载模型（第一次要下载，可能要几分钟），这期间检索保持原来的顺序";
-  if (r.state === "failed") return `加载失败：${r.error}`;
-  return "还没用过（第一次检索时加载）";
-});
-const showRerankTuning = ref(false);
-function numberIn(e: Event, min: number, max: number, fallback: number) {
-  const n = Number((e.target as HTMLInputElement).value);
-  return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
+/** Scores from a cloud API or a plugin are on their own scale: their gate is set apart (memory/passive.ts). */
+function setOtherThreshold(e: Event) {
+  const raw = (e.target as HTMLInputElement).value.trim();
+  const n = Number(raw);
+  const { pluginPassiveThreshold: _old, ...rest } = config.value.rerank;
+  if (!raw) return void saveConfig({ rerank: rest }, "改回按相似度门槛");
+  if (Number.isFinite(n)) void saveConfig({ rerank: { ...rest, pluginPassiveThreshold: n } }, "已保存重排门槛");
 }
 function savePassive(patch: Record<string, unknown>) {
   const memory = config.value.memory;
@@ -74,46 +67,10 @@ function removeCompare(i: number) {
 <template>
   <Skeleton v-if="!config" :rows="6" />
   <div v-else class="stack">
-    <HelpText lead>全文检索始终可用（中文按双字切分，代码按标识符切分）。开启向量检索可改善换说法的提问，向量在后台逐步生成。</HelpText>
+    <HelpText lead>全文检索始终可用（中文按双字切分，代码按标识符切分）。向量和重排可以用本机模型、云端接口或插件。</HelpText>
 
-    <SetCard v-if="config.embeddings" id="set-embeddings" title="向量检索" :keys="['embeddings']">
-      <SetRow label="用哪种向量">
-        <UiSegmented :model-value="config.embeddings.provider" size="sm" aria-label="向量检索" :options="[{ value: 'none', label: '关闭' }, { value: 'local', label: '本地模型' }, { value: 'openai', label: 'OpenAI 兼容接口' }]" @change="(v) => saveConfig({ embeddings: { ...config.embeddings, provider: v } })" />
-      </SetRow>
-      <SetRow label="模型" block>
-        <template #hint>
-          <span v-if="config.embeddings.provider === 'local' && sourceLine(embeddingSource)" :class="{ 'warn-text': embeddingSource?.error }">{{ sourceLine(embeddingSource) }}</span>
-          <template v-else>本地默认 Xenova/bge-small-zh-v1.5（也可以填本地目录）</template>
-        </template>
-        <input class="input mono" :value="config.embeddings.model" aria-label="向量模型" @change="saveConfig({ embeddings: { ...config.embeddings, model: ($event.target as HTMLInputElement).value } })" />
-      </SetRow>
-      <SetRow v-if="config.embeddings.provider === 'openai'" label="接口地址" block>
-        <input class="input mono" :value="config.embeddings.url ?? ''" placeholder="https://api.openai.com/v1" aria-label="接口地址" @change="saveConfig({ embeddings: { ...config.embeddings, url: ($event.target as HTMLInputElement).value } })" />
-      </SetRow>
-    </SetCard>
-
-    <SetCard v-if="config.rerank" id="set-rerank" title="重排" :keys="['rerank']">
-      <template #help>检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。改这里的设置不用重启服务。</template>
-      <SetRow label="开启重排">
-        <template v-if="rerankLine" #hint><span :class="{ 'warn-text': rerank?.state === 'failed' }">{{ rerankLine }}</span></template>
-        <UiCheckbox :model-value="config.rerank.enabled" switch aria-label="开启重排" @change="(v) => saveRerank({ enabled: v })" />
-      </SetRow>
-      <template v-if="config.rerank.enabled">
-        <SetRow label="模型" block>
-          <template #hint><span :class="{ 'warn-text': rerank?.source?.error }">{{ sourceLine(rerank?.source) || "osdk 下载的本地目录，或 Hugging Face 上的 ONNX 模型 id（首次使用时下载，不锁定版本）" }}</span></template>
-          <input class="input mono" :value="config.rerank.model" aria-label="重排模型" @change="saveRerank({ model: ($event.target as HTMLInputElement).value.trim() || config.rerank.model })" />
-        </SetRow>
-        <SetRow label="条数、长度和线程" hint="前 20 条、每条 512 token 时效果和前 50 条差不多；减半大约快一倍">
-          <button class="btn ghost sm" :aria-expanded="showRerankTuning" @click="showRerankTuning = !showRerankTuning">{{ showRerankTuning ? "收起" : `${config.rerank.top} 条 · ${config.rerank.maxTokens} token` }}</button>
-        </SetRow>
-        <template v-if="showRerankTuning">
-          <SetRow label="重排条数" hint="5–100"><input class="input set-num" type="number" inputmode="numeric" min="5" max="100" aria-label="重排条数" :value="config.rerank.top" @change="saveRerank({ top: numberIn($event, 5, 100, config.rerank.top) })" /></SetRow>
-          <SetRow label="每条 token" hint="128–1024"><input class="input set-num" type="number" inputmode="numeric" min="128" max="1024" step="64" aria-label="每条 token" :value="config.rerank.maxTokens" @change="saveRerank({ maxTokens: numberIn($event, 128, 1024, config.rerank.maxTokens) })" /></SetRow>
-          <SetRow label="线程数" hint="0 用全部核；和别的任务抢 CPU 时调小"><input class="input set-num" type="number" inputmode="numeric" min="0" max="256" aria-label="线程数" :value="config.rerank.threads" @change="saveRerank({ threads: numberIn($event, 0, 256, config.rerank.threads) })" /></SetRow>
-          <SetRow label="超时（秒）" hint="超时就保持原来的顺序"><input class="input set-num" type="number" inputmode="numeric" min="1" max="120" aria-label="超时秒数" :value="config.rerank.timeoutMs / 1000" @change="saveRerank({ timeoutMs: numberIn($event, 1, 120, config.rerank.timeoutMs / 1000) * 1000 })" /></SetRow>
-        </template>
-      </template>
-    </SetCard>
+    <EmbeddingSettings v-if="config.embeddings" :source-line="sourceLine" />
+    <RerankSettings v-if="config.rerank" :source-line="sourceLine" />
 
     <SetGate :keys="['search']" owner><SearchProviders /></SetGate>
 
@@ -125,8 +82,12 @@ function removeCompare(i: number) {
       <SetRow label="相似度门槛" :hint="config.rerank?.enabled ? '0.4–0.9；开着重排时只在重排超时的时候用' : '0.4–0.9；越高带得越少、越准'" :off="!config.memory.passive.enabled">
         <input class="input set-num" type="number" inputmode="decimal" min="0.4" max="0.9" step="0.025" aria-label="相似度门槛" :value="config.memory.passive.threshold" @change="savePassive({ threshold: Math.max(0.4, Math.min(0.9, Number(($event.target as HTMLInputElement).value) || 0.6)) })" />
       </SetRow>
-      <SetRow v-if="config.rerank?.enabled" label="重排门槛" hint="先按相似度 0.4 以上取候选，再只带重排打分过这个门槛的" :off="!config.memory.passive.enabled">
+      <SetRow v-if="config.rerank?.enabled && config.rerank.provider === 'local'" label="重排门槛" hint="先按相似度 0.4 以上取候选，再只带重排打分过这个门槛的" :off="!config.memory.passive.enabled">
         <input class="input set-num" type="number" inputmode="decimal" min="0.05" max="0.95" step="0.05" aria-label="重排门槛" :value="config.rerank.passiveThreshold" @change="saveRerank({ passiveThreshold: Math.max(0.05, Math.min(0.95, Number(($event.target as HTMLInputElement).value) || 0.5)) })" />
+      </SetRow>
+      <SetRow v-else-if="config.rerank?.enabled" label="重排门槛" :off="!config.memory.passive.enabled">
+        <template #hint>云端接口和插件的分数不是本机模型的尺度，要按它们的分数另定；空着就只按上面的相似度门槛</template>
+        <input class="input set-num" type="number" inputmode="decimal" step="any" aria-label="重排门槛" placeholder="不用" :value="config.rerank.pluginPassiveThreshold ?? ''" @change="setOtherThreshold" />
       </SetRow>
     </SetCard>
 

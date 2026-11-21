@@ -14,7 +14,8 @@ import { detectProbe, probes as shared } from "../../lib/probes";
  */
 export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string } };
 export type ModelSource = { via: "local" | "osdk" | "hub"; path?: string; syncing?: boolean; error?: string; osdk: boolean; known: boolean; cached?: boolean; size?: string };
-export type RerankStatus = { enabled: boolean; model: string; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number; source?: ModelSource };
+/** `rerank` of `GET /api/settings` (src/search/rerank.ts `rerankStatus`); for a cloud API `state` and `error` are its last call's. */
+export type RerankStatus = { enabled: boolean; model: string | null; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number; source?: ModelSource | null; provider?: string | null; kind?: string; lastError?: string | null };
 
 export type SettingsCtx = {
   config: Ref<any>;

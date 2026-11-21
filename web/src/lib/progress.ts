@@ -6,7 +6,13 @@
 import { plainLine } from "./plain.js";
 
 export type ProgressUsage = { input: number; output: number; cached?: number; runs: number; missing: number };
-export type ProgressAttempt = { runId: string; status: string; startedAt?: string; endedAt?: string; queuedMs?: number; runMs?: number; usage: ProgressUsage; local?: boolean; device?: string };
+/**
+ * Where an attempt ran (src/agents/work-board.ts): `mode` only when a board task was sent to another device —
+ * `borrow` used that device's backend here, `remote` ran there (its run page at `remoteUrl` when reachable);
+ * `lateAt`: its result came back after the deadline and was not used.
+ */
+export type AttemptPlace = { local?: boolean; device?: string; deviceName?: string; mode?: "borrow" | "remote"; access?: "read" | "write"; deadline?: string; remoteUrl?: string; remoteRunId?: string; lateAt?: string };
+export type ProgressAttempt = { runId: string; status: string; startedAt?: string; endedAt?: string; queuedMs?: number; runMs?: number; usage: ProgressUsage } & AttemptPlace;
 /** What a stage's evidence points at, as the server read it (only what the reader may open). */
 export type EvidenceTarget = { kind: "source" | "design" | "run" | "object"; id: string; title: string };
 export type ProgressOutput = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page"; ref: string; label: string; target?: EvidenceTarget };
@@ -17,7 +23,7 @@ export type ProgressTask = {
   href?: string;
   id: string; title: string; state: TaskState; goal?: string; accept?: string; needs?: string[]; waitingOn?: string;
   /** `local`: the latest attempt ran on this machine; `device`: the machine's name otherwise. */
-  who?: { agent?: string; model?: string; effort?: string; local?: boolean; device?: string };
+  who?: { agent?: string; model?: string; effort?: string; local?: boolean; device?: string; deviceName?: string; mode?: "borrow" | "remote" };
   attempts: ProgressAttempt[]; usage: ProgressUsage; outputs?: ProgressOutput[]; decision?: ProgressDecision; decisions?: ProgressDecision[];
   round?: number; parentId?: string;
 };
@@ -146,8 +152,23 @@ export function whoLabel(t: Pick<ProgressTask, "who">) {
   const w = t.who;
   if (!w) return "";
   const model = w.model ? w.model.split("/").pop()! : w.agent && w.agent !== "assistant" ? w.agent : "";
-  const device = w.device && !w.local ? w.device : "";
-  return [model, device && `在 ${device}`].filter(Boolean).join(" · ");
+  const place = placeLabel(w) || (w.device && !w.local ? `在 ${w.device}` : "");
+  return [model, place].filter(Boolean).join(" · ");
+}
+
+/** “在 lab-mac 跑” / “借 lab-mac 的后端” for a board task sent to another device; “” on this machine. */
+export function placeLabel(a: Pick<AttemptPlace, "local" | "device" | "deviceName" | "mode">): string {
+  if (!a.mode || a.local) return "";
+  const name = a.deviceName || a.device || "另一台设备";
+  return a.mode === "remote" ? `在 ${name} 跑` : `借 ${name} 的后端`;
+}
+/** The words for an attempt whose result came back too late (“” when it did not). */
+export const lateText = (a: Pick<AttemptPlace, "lateAt">) => (a.lateAt ? "过了期限才回来，没采用" : "");
+/** “只读” / “可写” for an attempt sent to another device. */
+export const accessText = (a: Pick<AttemptPlace, "mode" | "access">) => (a.mode && a.access ? (a.access === "write" ? "可写" : "只读") : "");
+/** The other device's run page, only when it is a web address (none through a relay). */
+export function remoteHref(a: Pick<AttemptPlace, "remoteUrl">): string | null {
+  return a.remoteUrl && /^https?:\/\//i.test(a.remoteUrl) ? a.remoteUrl : null;
 }
 
 const VERDICT: Record<string, string> = { approved: "通过", changes_requested: "要修改", failed: "没做成", passed: "通过", inconclusive: "说不清" };

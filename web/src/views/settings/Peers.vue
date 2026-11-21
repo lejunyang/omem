@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { get, post } from "../../api";
 import { toast } from "../../store";
 import { useSettings } from "./ctx";
+import AcceptWorkSettings from "../../components/AcceptWorkSettings.vue";
 import FederationSettings from "../../components/FederationSettings.vue";
 import MonoLine from "../../components/MonoLine.vue";
 import PeerSettings from "../../components/PeerSettings.vue";
@@ -39,6 +40,7 @@ async function installDesktop() {
       </SetRow>
     </SetCard>
     <PeerSettings />
+    <AcceptWorkSettings />
     <FederationSettings />
     <SetCard v-if="desktop" id="set-desktop" title="桌面与浏览器控制">
       <template #aside>

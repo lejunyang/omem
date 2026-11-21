@@ -171,7 +171,7 @@ AI：愿意借出的后端——名字、模型、此刻是否排队、今天还
 
 直连转到反向通道时，发送端用原配对凭据签名该条命令、参数和反向凭据的摘要。接活设备核验两份仍然有效的本人配对凭据，按原配对执行接活策略、幂等查重、查询与取消。即使首次接活的响应丢失，沿反向连接重发也会找到同一运行。只有反向通道的设备沿用它唯一的配对凭据。
 
-设备页需要呈现接活三档与按配对来源的覆盖。`GET /api/settings?section=channels` 返回 `config.node`，`PUT /api/settings` 可单独提交 `{node: {acceptWork}}`，设备 ID 和来源覆盖会保留。提交 `acceptWorkFrom` 时用完整映射替换旧映射；移除某个来源即可让它继承全局设置，提交空对象可清除全部覆盖。`GET /api/peers` 的 paired[].id 与 label 用于显示覆盖对应的来源。进度页需要显示每次尝试的设备名、模式、期限、迟到标记和远端运行入口。本期交付服务端及飞书卡片，网页控件另行接入。
+网页已接上（2026-11-22）。设置 → 设备 →“接别的设备派来的活”（`web/src/components/AcceptWorkSettings.vue`，纯函数在 `web/src/lib/accept-work.ts`）：上面三档 `node.acceptWork`，只提交 `{node: {acceptWork}}`，设备 ID 和来源覆盖由服务端保留；下面按 `GET /api/peers` 的 paired[] 一行一台，每台四选一（跟随 / 不接 / 只读 / 可写），提交完整的 `acceptWorkFrom` 映射，“跟随”就是从映射里去掉。进度视图（`components/ProgressBoard.vue`）和任务板（`components/TaskBoard.vue`）按尝试的 `mode` 写“借 ×× 的后端”或“在 ×× 跑”（`lib/progress.ts` 的 `placeLabel`），历次尝试里写期限、迟到标记（`lateAt`）和 `remoteUrl` 的链接；只读或可写只有任务板里有（进度投影没带 `access`）。运行页上派来的运行（`peer-work`）种类写“别的设备派来的任务”。
 
 ## 5. 数据放在哪：按空间定
 

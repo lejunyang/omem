@@ -21,7 +21,11 @@ import { findAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createSession, pluginContext } from "../src/plugins/blocks.ts";
 import { forgetPlugin, getPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
-import { itemProviders, notifiers, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
+import { embedders, itemProviders, notifiers, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
+import { createServer as createHttpServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { invite, savePeers } from "../src/core/peers.ts";
+import { setKey } from "../src/core/ai-keys.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { registerFormats } from "../src/plugins/formats.ts";
 import type { PluginManifest } from "../src/plugins/registry.ts";
@@ -1025,7 +1029,7 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   finish(logs, "5 个订单都走了旧的整单比例。", 15.8, 11);
   reviewBoard(app, boardAsk.id, [
     { task: bills, decision: "accept", note: "差异表和对账单逐行对得上" },
-    { task: logs, decision: "redo", note: "没有给日志行：每个订单贴出判断走旧路径的那一行", execution: { profile: "codex", model: "gpt-6.2-sol", effort: "high", source: "auto", reason: "退回重做，升一档" } },
+    { task: logs, decision: "redo", note: "过了期限才交回，也没给日志行：再在那台查一次，每个订单贴出判断走旧路径的那一行", execution: { profile: "codex", model: "gpt-6.2-sol", effort: "high", source: "auto", reason: "退回重做，升一档" } },
   ], "owner");
   // The course of each part: when it waited and ran (the two still going started a while ago).
   const course = (task: string, patch: (attempts: Record<string, unknown>[]) => void, status?: string) => {
@@ -1033,8 +1037,14 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
     patch(attempts);
     run(app.db, `update agent_work_tasks set attempts = ?${status ? ", status = ?" : ""} where id = ?`, ...[JSON.stringify(attempts), ...(status ? [status] : []), task]);
   };
-  course(bills, (a) => Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(16), finishedAt: ago(9) }));
-  course(logs, (a) => { Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(15.8), finishedAt: ago(11) }); Object.assign(a[1], { queuedAt: ago(8), startedAt: ago(7.6), status: "running" }); }, "running");
+  // The first part borrowed the backend of the paired device lab-mac; the logs are on lab-mac, so that part ran
+  // there: its first try came back after the deadline (not used), the second is running there now.
+  const remote = (deadline: number, extra: Record<string, unknown> = {}) => ({ device: "lab-mac", mode: "remote", access: "read", deadline: ago(deadline), ...extra });
+  course(bills, (a) => Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(16), finishedAt: ago(9), device: "lab-mac", mode: "borrow", access: "read", deadline: ago(-14) }));
+  course(logs, (a) => {
+    Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(15.8), finishedAt: ago(11), ...remote(12, { status: "failed", result: "过了期限", lateAt: ago(11) }) });
+    Object.assign(a[1], { queuedAt: ago(8), startedAt: ago(7.6), status: "running", ...remote(-22, { remoteUrl: "http://192.0.2.20:4317/#/runs/r_demo_remote" }) });
+  }, "running");
   course(coupons, (a) => Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(11), status: "running" }), "running");
   for (const task of [logs, coupons]) run(app.db, "update runs set status='running', started_at=?, ai=? where id=?", ago(task === logs ? 7.6 : 11), JSON.stringify({ profile: "codex", model: "gpt-6.2-sol", effort: task === logs ? "high" : "medium" }), runOf(task));
   run(app.db, "update runs set status='done', started_at=?, finished_at=?, output=json_set(coalesce(output,'{}'),'$.answer',?) where id=?", ago(17), ago(16), "已经分三块在查：对账单逐笔对、部分发货订单的退款日志、满减券的分摊口径。三块都有结果后我再汇总给你。", boardAsk.id);
@@ -1182,6 +1192,48 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   rerankers.set("library:rank", { plugin: "library", spaces: [], context, def: { id: "rank", label: "示例相关性模型", async score(_ctx, { candidates }) { return candidates.map((_, i) => -i); } } });
 }
 
+// ---- 向量和重排的来源 (设置 → 检索与记忆): the same plugin's vector provider, granted the shop's space only, and a
+// local stand-in for a cloud API (OpenAI-shaped /embeddings, the usual /rerank). The model "missing-model" answers
+// 404, to see a failure. Nothing is switched on: the `settings-search-providers` shot does that through the page.
+const toyVector = (text: string, dims = 64) => {
+  const v = new Array<number>(dims).fill(0);
+  for (let i = 0; i < text.length; i++) v[(text.charCodeAt(i) * 31 + i) % dims] += 1;
+  return v;
+};
+const fakeApi = createHttpServer((req, res) => {
+  let raw = "";
+  req.on("data", (c) => (raw += c));
+  req.on("end", () => {
+    const body = (() => { try { return JSON.parse(raw || "{}"); } catch { return {}; } })() as { model?: string; input?: string[]; query?: string; documents?: string[]; dimensions?: number };
+    const send = (status: number, json: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(json)); };
+    if (body.model === "missing-model") return send(404, { error: { message: `The model '${body.model}' does not exist` } });
+    if (req.url?.endsWith("/embeddings")) return send(200, { data: (body.input ?? []).map((t, index) => ({ index, embedding: toyVector(t, body.dimensions ?? 64) })) });
+    if (req.url?.endsWith("/rerank")) {
+      const q = new Set(body.query ?? "");
+      return send(200, { results: (body.documents ?? []).map((d, index) => ({ index, relevance_score: [...d].filter((ch) => q.has(ch)).length / Math.max(1, d.length) })) });
+    }
+    send(404, { error: { message: "not found" } });
+  });
+});
+await new Promise<void>((ok) => fakeApi.listen(0, "127.0.0.1", ok));
+fakeApi.unref();
+const fakeApiUrl = `http://127.0.0.1:${(fakeApi.address() as AddressInfo).port}/v1`;
+// The address field takes a domain name only, so the stand-in is reached as an AI provider's address (设置 → AI),
+// with a made-up key: the cards pick “示例云” as the key and leave the address empty.
+app.config.ai.providers.push({ id: "demo-cloud", name: "示例云", kind: "openai-compatible", baseUrl: fakeApiUrl, backends: [] });
+setKey(app.home, "demo-cloud", "demo-key-not-a-secret");
+{
+  const context = (_app: App, userId: string, spaceId: string, signal: AbortSignal) => ({ userId, spaceId, signal, connection: async () => null });
+  embedders.set("library:vectors", { plugin: "library", spaces: ["shop"], context, def: { id: "vectors", name: "示例资料库向量", model: "demo-vec-64", dimensions: 64, maxBatch: 16, async embed(texts) { return texts.map((t) => toyVector(t)); } } });
+}
+
+// ---- 设备 (src/core/peers.ts): one paired device, which also holds a pairing token of this one -------------
+// Its address is a documentation range: the status check finds it offline. The board above sends two of its
+// parts there (the `settings-devices-work` and progress shots).
+savePeers(app, [{ id: "lab-mac", url: "http://192.0.2.20:4317", token: "demo-peer-token", addedAt: new Date(Date.now() - 6 * 86400_000).toISOString() }]);
+invite(app, { label: "lab-mac" });
+invite(app, { label: "家里的台式机" });
+
 // ---- 读一种新格式、页面类型 (src/plugins/formats.ts): a fictional plugin's parsers and page kind ----
 // Two sources it read (a table and records) and a Wiki page of its kind. Registered in process.
 const sampleTable = upsertSource(app, { spaceId: "shop", kind: "doc", uri: "data/十月退款抽样.csv", title: "十月退款单抽样", text: [
@@ -1301,6 +1353,7 @@ const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0)
 const url = app.baseUrl;
 if (serveOnly) {
   console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
+  console.log(`向量和重排的假云端接口：${fakeApiUrl}（模型名写 missing-model 会失败）`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
   const cleanup = async () => { await server.close(); for (const id of ["stagekit", "helperkit"]) forgetPlugin(id); app.events.emit("close"); app.db.close(); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); process.exit(); };
   process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
@@ -1597,11 +1650,14 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.getByRole("option", { name: /示例商城/ }).click();
     await p.keyboard.press("Escape");
     await p.waitForTimeout(400);
-    await card.getByRole("combobox", { name: "用谁重排" }).click();
-    await p.getByRole("option", { name: /示例相关性模型/ }).click();
-    await p.waitForTimeout(400);
-    const rr = p.locator("#set-rerank").getByRole("switch", { name: "开启重排" });
+    const rerankCard = p.locator("#set-rerank");
+    const rr = rerankCard.getByRole("switch", { name: "开启重排" });
     if ((await rr.getAttribute("aria-checked")) !== "true") { await rr.click(); await p.waitForTimeout(400); }
+    if ((await rerankCard.getByRole("radio", { name: "插件" }).getAttribute("aria-checked")) !== "true") {
+      await rerankCard.getByRole("radio", { name: "插件" }).click();
+      await rerankCard.getByRole("button", { name: "保存" }).click();
+      await p.waitForTimeout(400);
+    }
     await p.evaluate(async () => {
       await fetch("/api/search?q=" + encodeURIComponent("部分发货 退款") + "&space=shop");
     });
@@ -1609,6 +1665,61 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await card.waitFor();
     await p.locator(".toast").waitFor({ state: "detached", timeout: 8000 }).catch(() => {});
     await card.scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 检索与记忆: vectors from the cloud API (the local stand-in above), tried before saving; reranking
+  // turned on with the same service, tried too. Nothing is saved: changing the vector model asks first.
+  { name: "settings-search-providers", path: "/settings?card=embeddings", before: async (p) => {
+    // The page head names the data directory: the demo's temporary one is a path on this machine.
+    await p.route("**/api/settings", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const data = await (await route.fetch()).json();
+      data.home = "~/.omem";
+      await route.fulfill({ json: data });
+    });
+  }, prepare: async (p) => {
+    const vec = p.locator("#set-embeddings");
+    await vec.getByRole("radio", { name: "云端接口" }).click();
+    await vec.getByRole("combobox", { name: "向量接口的密钥" }).click();
+    await p.getByRole("option", { name: /示例云/ }).click();
+    await vec.getByRole("textbox", { name: "向量模型名" }).fill("demo-embed");
+    await vec.getByRole("button", { name: "试一下" }).click();
+    await vec.getByText(/能用：/).waitFor();
+    const rr = p.locator("#set-rerank");
+    const on = rr.getByRole("switch", { name: "开启重排" });
+    if ((await on.getAttribute("aria-checked")) !== "true") { await on.click(); await p.waitForTimeout(400); }
+    await rr.getByRole("radio", { name: "云端接口" }).click();
+    await rr.getByRole("combobox", { name: "重排接口的密钥" }).click();
+    await p.getByRole("option", { name: /示例云/ }).click();
+    await rr.getByRole("textbox", { name: "重排模型名" }).fill("demo-rerank");
+    await rr.getByRole("button", { name: "试一下" }).click();
+    await rr.getByText(/能用：/).waitFor();
+    await p.locator(".toast").waitFor({ state: "detached", timeout: 8000 }).catch(() => {});
+    await vec.evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 设备 → 接别的设备派来的活: this machine takes read-only work; lab-mac is set apart to take none.
+  // This machine's own name and addresses are answered with made-up ones (the page head of the 设备 tab shows them).
+  { name: "settings-devices-work", path: "/settings?card=accept-work", before: async (p) => {
+    await p.route("**/api/peers", async (route) => {
+      const data = await (await route.fetch()).json();
+      await route.fulfill({ json: { ...data, node: "studio", urls: ["http://192.0.2.10:4317"] } });
+    });
+    await p.route("**/api/settings", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const data = await (await route.fetch()).json();
+      data.home = "~/.omem";
+      await route.fulfill({ json: data });
+    });
+  }, prepare: async (p) => {
+    const card = p.locator("#set-accept-work");
+    await card.locator(".aw-row").first().waitFor();
+    await card.getByRole("radiogroup", { name: "接不接别的设备派来的活" }).getByRole("radio", { name: "只接只读" }).click();
+    await p.waitForTimeout(400);
+    await card.getByRole("radiogroup", { name: "lab-mac 派来的活" }).getByRole("radio", { name: "不接" }).click();
+    await p.waitForTimeout(400);
+    await p.locator(".toast").evaluateAll((els) => els.forEach((el) => el.remove()));
+    await card.evaluate((el) => el.scrollIntoView({ block: "center" }));
     await p.waitForTimeout(300);
   } },
   // 远程 → 交给成员: 小林 already operates it; 小周 is handed it to watch for two hours through the sheet.
