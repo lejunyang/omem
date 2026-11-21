@@ -1532,7 +1532,7 @@ export function keyedProfiles(config: Config): AgentProfile[] {
 }
 
 /** A device's agent: this omem's own `peer acp` bridge is the command (core/peer-acp.ts). */
-function peerProfile(p: AgentProfile): AgentProfile {
+export function peerProfile(p: AgentProfile): AgentProfile {
   const here = dirname(fileURLToPath(import.meta.url));
   const js = resolve(here, "../cli.js");
   const cli = existsSync(js) ? js : resolve(here, "../cli.ts");

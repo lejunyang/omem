@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import type { App } from "../core/app.ts";
-import { allProfiles, type AgentProfile, type RoleName } from "../core/config.ts";
+import { peerProfile, allProfiles, type AgentProfile, type RoleName } from "../core/config.ts";
 import { ownFolderNote } from "../memory/folders.ts";
 import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recallPurpose, recordRecalls } from "../memory/recall-stats.ts";
@@ -282,6 +282,7 @@ export async function lessonsForTask(app: App, input: LessonInput) {
 }
 
 export type RoleRunInput = {
+  borrow?: { device: string; backend: string };
   boardAccess?: "read" | "write";
   /** Host-assigned trees for this invocation (helpers carry their own leases). */
   worktrees?: WorktreeRef[];
@@ -795,7 +796,7 @@ function runAI(app: App, runId: string | null): Execution | undefined {
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
   input = { ...input, userId: input.userId ?? runUser(app, input.runId) };
   await refreshForRun(app);
-  const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)), input.userId);
+  const execution = input.borrow ? undefined : validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)), input.userId);
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const declared = input.spec ? (input.spec.tools.length ? expandTools(input.spec.tools) : DEFAULT_SPEC_TOOLS) : loadRole(input.role, app).tools;
@@ -815,7 +816,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let chosen: ChooseResult | null = null;
   const runKind = input.runId ? one<{ kind: string }>(app.db, "select kind from runs where id = ?", input.runId)?.kind : undefined;
   // Checks, replays and comparisons run on what their caller set and are not choices of their own.
-  const internal = !!(input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName || input.ownAI);
+  const internal = !!(input.borrow || input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName || input.ownAI);
   const scene = input.choose ?? "tasks";
   const say = (text: string) => {
     const event = { type: "status" as const, text };
@@ -841,7 +842,12 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       input = { ...input, profileId: pick.profile, model: pick.model, effort: pick.effort };
     }
   }
-  const primary = accountProfile(app, { ...input, actor });
+  const borrowed = input.borrow;
+  const primary = borrowed ? peerProfile({
+    id: `peer:${borrowed.device}:${borrowed.backend}`, peer: { id: borrowed.device, agent: borrowed.backend },
+    transport: "acp", command: "omem", args: [], env: { OMEM_HOME: app.home }, idleTimeoutMs: 600000,
+    model: input.execution?.model, effort: input.execution?.effort,
+  }) : accountProfile(app, { ...input, actor });
   const prepare = (profile: AgentProfile) => prepareRun(app, { ...input, actor, profile, lessons, lessonIds: told.ids, recallNote: told.recallNote });
   if (execution && primary.id === execution.profile) validateExecution(app, { ...execution, model: primary.model, effort: primary.effort }, input.userId);
   // A run (a role's or an Agent 档案's) may move to its other configured backends when its model is

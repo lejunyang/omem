@@ -212,6 +212,18 @@ new AgentSideConnection(
         if (Number.isFinite(used)) await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "usage_update", used, size: 1000 } });
         if (process.env.FAKE_OTHER_USAGE) await conn.sessionUpdate({ sessionId: "unrelated-session", update: { sessionUpdate: "usage_update", used: 950, size: 1000 } });
       }
+      if (process.env.FAKE_MODE === "device-work") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "device-worker", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name,e.value])) } as Record<string,string> }));
+        try {
+          const read = await client.callTool({ name: "search", arguments: { query: "设备材料" } });
+          const write = await client.callTool({ name: "remember", arguments: { kind: "fact", content: "项目 A 每周二检查。" } });
+          if (process.env.OMEM_ARTIFACTS) writeFileSync(join(process.env.OMEM_ARTIFACTS,"核对报告.txt"),"设备材料核对完成");
+          await say(JSON.stringify({ read: read.content, writeDenied: !!write.isError }));
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" };
+      }
       if (process.env.FAKE_MODE === "board") {
         const label = /^材料编号 (\w+)$/m.exec(prompt)?.[1];
         if (!label || /任务板 \w+。请对标有/.test(prompt)) {

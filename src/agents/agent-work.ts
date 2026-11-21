@@ -130,6 +130,7 @@ export type AgentRoundInput = {
   execution?: Execution;
   agent: string;
   taskId?: string;
+  boardDevice?: import("./work-device.ts").BoardDevice;
   task: string;
   spaceId?: string;
   /** The run that handed this round out (a coordination turn, the owner's turn in the topic). */
@@ -146,7 +147,7 @@ export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): 
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
     userId: a.assistantScope.userId,
-    input: { ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
+    input: { ...(a.boardDevice ? { boardDevice: a.boardDevice } : {}), ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
     parentId: work.askRunId,
   });
   const id = r.id;

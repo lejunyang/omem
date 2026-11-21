@@ -104,8 +104,12 @@ async function status(app: App, args: z.infer<typeof lookup>, caller?: WorkCalle
   const evidence = ids.length ? (await import("../studies/remote-host.ts")).evidenceFiles(app, ids.map(a => a.id)) : { files: [], omitted: [] };
   const usage = one<{ input: number; output: number; cached: number | null }>(app.db, `select json_extract(data,'$.input') input,json_extract(data,'$.output') output,json_extract(data,'$.cached') cached
     from run_events where run_id=? and type='usage' and json_type(data,'$.input')='integer' and json_type(data,'$.output')='integer' order by seq desc limit 1`,r.id);
-  const answer = String(r.output.answer ?? "").replace(/\[([^\]]*)\]\((src:[^)]+)\)/g, `$1（在 ${nodeId(app)} 上，$2）`);
-  return { runId: r.id, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, answer, ai: r.ai, error: r.error, usage, ...evidence };
+  const used = one<{ n: number | null }>(app.db,"select json_extract(data,'$.used') n from run_events where run_id=? and type='usage' order by seq desc limit 1",r.id)?.n ?? null;
+  const raw = String(r.output.answer ?? "");
+  const answer = truncate(raw,64000).replace(/\[([^\]]*)\]\((src:[^)]+)\)/g, `$1（在 ${nodeId(app)} 上，$2）`);
+  if (raw.length > 64000) evidence.omitted.push("回答超过带回上限，完整回答在对方运行页");
+  if (evidence.omitted.length) evidence.omitted.push(`在 ${nodeId(app)} 上看：${app.baseUrl}/#/runs/${r.id}`);
+  return { runId: r.id, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, answer, ai: r.ai, error: r.error, usage, used, ...evidence };
 }
 export type WorkResult = Awaited<ReturnType<typeof status>>;
 export type WorkInventory = Awaited<ReturnType<typeof inventory>>;
@@ -115,7 +119,10 @@ export const workCommands = {
   "work-accept": { description: "按配对授权接一块任务", schema: request, run: accept },
   "work-status": { description: "查询这台设备派来的尝试", schema: lookup, run: status },
   "work-cancel": { description: "取消这台设备派来的尝试", schema: lookup, run: (app: App, args: z.infer<typeof lookup>, caller?: WorkCaller) => {
-    const r = ownedRun(app,args.key,caller);
-    return { status: cancelRun(app,r.id).status };
+    const pair = pairing(app,caller);
+    // A cancel may overtake a request whose response was lost. Keep its key invalidated.
+    const id = incoming(app,pair,args.key) ?? createRun(app, { kind: "peer-work", userId: OWNER,
+      title: "已作废的设备尝试", input: { pair, request: { key: args.key } } }).id;
+    return { status: cancelRun(app,id).status };
   } },
 };

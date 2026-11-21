@@ -420,7 +420,7 @@ export const RESTART_RESUME_MS = 12 * 3600_000;
  * its earlier state saved) until the run continues in it or ends (session-cleanup.ts).
  */
 export function markRestarted(app: App) {
-  const cut = all<{ id: string; started_at: string | null }>(app.db, "select id, started_at from runs where status = 'running'");
+  const cut = all<{ id: string; started_at: string | null }>(app.db, "select id, started_at from runs where status = 'running' and json_extract(input,'$.boardDevice.mode') is not 'remote'");
   const recent = new Date(Date.now() - RESTART_RESUME_MS).toISOString();
   for (const r of cut) {
     const writes = one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", r.id)!.n;
@@ -447,7 +447,7 @@ export function startWorker(app: App) {
   // Each is told it was cut off, and its agent session is kept so it continues there (runner.ts).
   maintainBoards(app, true);
   markRestarted(app);
-  run(app.db, "update runs set status = 'queued', started_at = null where status = 'running'");
+  run(app.db, "update runs set status = 'queued', started_at = null where status = 'running' and json_extract(input,'$.boardDevice.mode') is not 'remote'");
   setInterval(() => { if (!stopping) maintainBoards(app); kick(app); }, 2000).unref();
   setInterval(() => {
     if (!stopping) void import("./inbox.ts").then(m => m.flushRecoveredReplies(app)).catch(e => console.warn(`[omem] 恢复会话回复失败：${(e as Error).message}`));
@@ -507,7 +507,7 @@ function nextRunnable(app: App): Row | undefined {
   if (!open.length) return;
   const candidates = all<Row>(
     app.db,
-    `select * from runs q where q.status = 'queued' and (q.not_before is null or q.not_before <= ?)
+    `select * from runs q where q.status = 'queued' and json_extract(q.input,'$.boardDevice.mode') is not 'remote' and (q.not_before is null or q.not_before <= ?)
        and ${boardSlot}
        and (${open.map((c) => classSql(c, "q.kind")).join(" or ")})
        and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'running'))

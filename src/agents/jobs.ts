@@ -361,10 +361,12 @@ async function runAgentTask(ctx: RunContext) {
   const spaces = spec && assistantScope && !spec.spaces.includes("*")
     ? [spaceId, ...spec.spaces].filter(id => !assistantScope.spaces || assistantScope.spaces.includes(id))
     : assistantScope?.spaces;
+  const device = ctx.run.input.boardDevice as import("./work-device.ts").BoardDevice | undefined;
   const go = (resume?: string, turnTask = fullTask) =>
     runRole(ctx.app, {
       role: "assistant",
       spec,
+      ...(device?.mode === "borrow" ? { borrow: { device: device.device, backend: device.backend! }, boardAccess: "read", requiredTools: ["read_source"] } : {}),
       // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
       choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.

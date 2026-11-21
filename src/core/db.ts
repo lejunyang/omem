@@ -2412,6 +2412,11 @@ export const migrations: readonly string[] = [
      where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
   `create unique index peer_work_attempt on runs(json_extract(input,'$.pair'),json_extract(input,'$.request.key'))
      where kind='peer-work';`,
+  `create table board_peer_polls (
+     run_id text primary key, task_id text not null, device text not null, remote_run text,
+     seen_at text not null, next_at text not null, deadline text not null
+   );
+   create index board_peer_due on board_peer_polls(next_at);`,
 ];
 
 export type Db = DatabaseSync;
