@@ -226,18 +226,19 @@ function studyView(app: App, graph: Forest, f: ItemFlow, instance: Node[], title
     .filter(t => graph.sees(t.run_id));
   const byTrial = new Map<string, Output[]>();
   const visibleTrials = new Map(ts.map(t => [t.id, t]));
-  const sourceTrials = new Map<string, Trial[]>();
+  const sourcesByFinding = new Map<string, { output: Output; trials: Trial[] }>();
   for (const finding of findings(app, id)) {
+    const output: Output = { kind: "finding", ref: finding.id, label: finding.title };
     const sources: Trial[] = [];
     for (const ref of JSON.parse(finding.trials) as string[]) {
       const trial = visibleTrials.get(ref);
       if (!trial) continue;
       sources.push(trial);
       const list = byTrial.get(ref) ?? [];
-      list.push({ kind: "finding", ref: finding.id, label: finding.title });
+      list.push(output);
       byTrial.set(ref, list);
     }
-    sourceTrials.set(finding.id, sources);
+    sourcesByFinding.set(finding.id, { output, trials: sources });
   }
 
   const studyTasks: ProgressTask[] = [];
@@ -255,7 +256,9 @@ function studyView(app: App, graph: Forest, f: ItemFlow, instance: Node[], title
     outputs.push(...byTrial.get(t.id) ?? []);
     if (t.result) outputs.push({ kind: "report", ref: t.id, label: t.result + " · " + t.summary });
     // A rerun copies the failed trial's direction, object and check. fix_of identifies the finding.
-    const originals = t.fix_of && sourceTrials.get(t.fix_of)?.filter(o =>
+    const fix = t.fix_of ? sourcesByFinding.get(t.fix_of) : undefined;
+    if (fix && !outputs.includes(fix.output)) outputs.push(fix.output);
+    const originals = fix?.trials.filter(o =>
       o.result === "failed" && o.id !== t.id && o.direction_id === t.direction_id && o.object === t.object && o.check === t.check);
     const row = task(graph, ids, {
       id: t.id, title: t.object, accept: t.check, parentId: t.direction_id, needs: originals && originals.length === 1 ? [originals[0].id] : undefined,

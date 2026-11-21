@@ -8,6 +8,7 @@ import { itemFlow } from "../src/flows/store.ts";
 import { describeStage, parseFlow } from "../src/flows/definitions.ts";
 import { createRun, getRun, __testHandlers } from "../src/agents/runs.ts";
 import * as runner from "../src/agents/runner.ts";
+import { itemProgress } from "../src/agents/progress.ts";
 import { eligibleFixes, fixModelStage } from "../src/studies/fixes.ts";
 import { findings, trials, recordFinding } from "../src/studies/store.ts";
 import { studyView, readLedger, reportTrial } from "../src/studies/service.ts";
@@ -72,6 +73,26 @@ describe("课题逐条改缺陷", () => {
     expect(readLedger(f.app, { item: f.item.id }, null)).toContain(`重跑：${result}`);
     await reopenStage(f.app, f.item.id, "fix", "重新看结果", [], { actor: "owner", userId: "owner" });
     expect(all(f.app.db, "select id from runs where kind='code'")).toHaveLength(1); expect(trials(f.app, f.item.id).filter((t) => t.fix_of)).toHaveLength(1);
+  });
+  it("跨轮重跑在折叠历史时保留发现，展开后指向原试验", async () => {
+    const f = await setup();
+    await f.finishTrial();
+    const original = trials(f.app, f.item.id)[0];
+    const finding = f.finding();
+    await f.beginFix();
+    // The fix is approved in the following round; the fixes stage creates the rerun.
+    run(f.app.db, "update item_flows set round=2 where item_id=?", f.item.id);
+    run(f.app.db, "update item_stages set round=2 where item_id=?", f.item.id);
+    await f.approve();
+    const rerun = trials(f.app, f.item.id).find(t => t.fix_of === finding)!;
+    expect([original.round, rerun.round]).toEqual([1, 2]);
+    for (const history of [false, true]) {
+      const study = itemProgress(f.app, f.item.id, { user: "owner" }, history).find(v => v.kind === "study")!;
+      expect(study.tasks.some(t => t.id === original.id)).toBe(history);
+      const row = study.tasks.find(t => t.id === rerun.id)!;
+      expect(row.outputs).toContainEqual({ kind: "finding", ref: finding, label: "退出码错误 0" });
+      expect(row.needs).toEqual(history ? [original.id] : undefined);
+    }
   });
   it.each(["failed", "cancelled", "changes-requested"])("交办 %s 时不重跑、不反复改", async (status) => {
     const f = await setup(); await f.finishTrial(); f.finding(); await f.beginFix(); const work = f.stage().control.fixWorkId!;
