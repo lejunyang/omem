@@ -1,43 +1,19 @@
-import { capabilityAccess, globalCapability, type Capability } from "./capabilities.ts";
+import { capabilityAccess, globalCapability, isCapability } from "./capabilities.ts";
 import { OWNER, scopeFor } from "../core/users.ts";
 import type { App } from "../core/app.ts";
-import { TOOL_GROUPS } from "../agents/tool-help.ts";
+import { TOOL_GROUPS, type ToolCapability } from "../agents/tool-help.ts";
 import { can, spacesWith, type GlobalPerm, type SpacePerm } from "./permissions.ts";
 
-/**
- * Agent tools that need a global permission of whoever the run works for (docs/v2/multi-user.md,
- * “在哪里检查”). Space permissions are the tools' own business (scopeFor / canWrite / wiki.write);
- * these are the ones that act on the whole machine or the shared setup. A run's tool list leaves out
- * what its user may not do (so the agent does not keep trying), and a call is refused anyway.
- */
-const BY_GROUP: Record<string, GlobalPerm> = {
-  coding: "code.delegate",
-  improve: "code.delegate",
-  git: "code.delegate",
-  "lark-capture": "settings.manage",
-  notifications: "agents.manage",
-};
-const BY_TOOL: Record<string, GlobalPerm> = {
-  save_flow: "agents.manage",
-  save_skill: "agents.manage",
-  save_agent: "agents.manage",
-  propose_profile_change: "agents.manage",
-  attention_rules: "agents.manage",
-  propose_archive_rule: "agents.manage",
-  digest_sources: "agents.manage",
-  lark_wiki_crawl: "settings.manage",
-  connect_repository: "code.delegate",
-  create_space: "spaces.create",
-};
-
-/** The global permission a tool needs, if any. */
-export function toolPermission(name: string): GlobalPerm | null {
-  if (BY_TOOL[name]) return BY_TOOL[name];
-  const group = TOOL_GROUPS.find((g) => g.tools.includes(name));
-  return (group && BY_GROUP[group.id]) || null;
-}
-
-const toolCapabilities: Record<string, Capability | "memory.write" | "wiki.write"> = {
+/** Exceptions to the capability declared on each tool group. */
+const toolCapabilities: Record<string, ToolCapability> = {
+  add_users: "owner", attention_rules: "owner", save_flow: "owner", lark_invite: "owner",
+  track_problem: "owner", revise_reply_outcome: "owner", classify_source: "owner",
+  create_space: "owner", connect_repository: "owner", propose_archive_rule: "agents.manage",
+  digest_sources: "agents.manage", lark_wiki_crawl: "settings.manage",
+  run_agent: "runs.operate", ask_agent: "runs.operate", dispatch_work: "runs.operate", work_cancel: "runs.operate",
+  work_review: "runs.operate", work_status: "runs.view", list_item_proposals: "items.view",
+  propose_item_update: "memory.write", resolve_item_proposal: "items.edit",
+  peer_search: "owner", peer_read: "owner", suggest_next: "ask.send", show: "ask.send", withdraw_ask: "ask.send",
   scan: "search.use", find_symbol: "search.use", source_outline: "sources.view", list_sources: "sources.view",
   write_file: "sources.edit", save_note: "sources.edit", import_url: "sources.edit", annotate_source: "sources.edit", set_source_attention: "sources.edit",
   describe_source: "sources.edit", review_notes: "sources.edit",
@@ -58,8 +34,11 @@ const toolCapabilities: Record<string, Capability | "memory.write" | "wiki.write
 };
 
 type ToolScope = { spaces: string[] | null; writable?: string[] };
-const ownerOnlyTools = new Set(["add_users", "attention_rules", "save_flow", "lark_invite", "track_problem", "revise_reply_outcome", "classify_source"]);
 const unrestricted: ToolScope = { spaces: null };
+
+export function toolCapability(name: string): ToolCapability {
+  return toolCapabilities[name] ?? TOOL_GROUPS.find(g => g.tools.includes(name))?.capability ?? "owner";
+}
 
 /** One permission snapshot per call or directory listing. */
 export function memberToolAccess(app: App, userId: string, scope: ToolScope = unrestricted) {
@@ -67,22 +46,22 @@ export function memberToolAccess(app: App, userId: string, scope: ToolScope = un
   const spaces = scopeFor(app, userId, scope.spaces);
   const allowedScope = { spaces, writable: scope.writable?.filter(id => !spaces || spaces.includes(id)) };
   const writableInRun = (ids: string[]) => ids.filter(id => (!spaces || spaces.includes(id)) && (!scope.writable || scope.writable.includes(id)));
+  const global = new Map<GlobalPerm, boolean>();
   const legacy = new Map<SpacePerm, string[]>();
   return (name: string): ToolScope | null => {
     if (!access.active) return null;
-    if (ownerOnlyTools.has(name) && userId !== OWNER) return null;
     if (["create_space", "connect_repository"].includes(name) && (scope.spaces !== null || access.preset !== "owner")) return null;
     if (access.preset === "owner") return scope;
-    const cap = toolCapabilities[name];
-    if (!cap) {
-      if (access.preset === "observer") return name === "list_spaces" ? allowedScope : null;
-      const perm = toolPermission(name);
-      return !perm || can(app, userId, perm) ? allowedScope : null;
-    }
+    const cap = toolCapability(name);
+    if (cap === "owner") return null;
     if (cap === "memory.write" || cap === "wiki.write") {
       if (!legacy.has(cap)) legacy.set(cap, writableInRun(spacesWith(app, userId, cap) ?? []));
       const writable = legacy.get(cap)!;
       return writable.length ? { ...allowedScope, writable } : null;
+    }
+    if (!isCapability(cap)) {
+      if (!global.has(cap)) global.set(cap, can(app, userId, cap));
+      return global.get(cap) ? allowedScope : null;
     }
     if (globalCapability(cap)) return access.source(cap) ? allowedScope : null;
     const write = cap.endsWith(".edit") || cap.endsWith(".operate");

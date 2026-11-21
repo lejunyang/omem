@@ -2851,8 +2851,8 @@ def({
   handler: (ctx, a) => {
     const p = one<{ id: string; item_id: string; user_id: string; from_space: string; note: string; source_refs: string; status: string }>(ctx.app.db, "select * from item_update_proposals where id=?", a.proposal_id);
     if (!p || p.user_id !== (ctx.userId ?? OWNER)) throw new HttpError(404, "提案不存在");
-    const item = getItem(ctx.app, p.item_id);
-    inScope(ctx, p.from_space, "提案"); inScope(ctx, item.spaceId, "事项");
+    const item = requireItem(ctx.app, p.item_id, p.user_id, "write");
+    inScope(ctx, p.from_space, "提案"); inScope(ctx, item.spaceId, "事项", "items.edit");
     if (p.status !== "pending") throw new HttpError(409, "提案已处理");
     if (item.userId !== p.user_id) throw new HttpError(403, "提案目标用户不匹配");
     const sourceRefs = JSON.parse(p.source_refs) as string[];

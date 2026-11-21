@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { callTool, type ToolContext, toolContextForToken, revokeToolToken } from "../src/agents/tools.ts";
+import { contextToolNames } from "../src/agents/tools.ts";
 import { prepareRun } from "../src/agents/runner.ts";
 import { createRun, getRun } from "../src/agents/runs.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -196,6 +197,28 @@ describe("item evidence and notification scope", () => {
     expect((await pending).toast.type).toBe("warning");
     expect(getItem(app, item.id).status).toBe("open");
     expect(getInteraction(app, interaction)?.status).toBe("expired");
+  });
+
+  it("keeps proposals pending when item editing is revoked in the target space", async () => {
+    const { app, ctx } = fixture();
+    const userId = createUser(app, { id: "editor", name: "编辑者" }).id;
+    const spaceId = "project-a";
+    addMember(app, spaceId, userId, "contributor");
+    const member = { ...ctx, userId, spaceId, spaces: [spaceId] };
+    const item = upsertItem(app, undefined, { userId, spaceId, title: "目标事项" });
+    const doc = upsertSource(app, { spaceId, kind: "note", uri: "note:report", title: "报告", text: "进展" });
+    const proposal = await callTool(member, "propose_item_update", { item_id: item.id, note: "进展", source_refs: [`src:${doc.id}#L1-L1`] });
+    expect(proposal.isError, proposal.text).toBe(false);
+    const id = /提案 (ip\w+)/.exec(proposal.text)![1];
+    expect(contextToolNames(member)).toContain("resolve_item_proposal");
+    for (const cap of ["items.edit", "items.operate"])
+      app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,?,'space',?,'deny','0','owner')").run(userId, cap, spaceId);
+    expect(contextToolNames(member)).not.toContain("resolve_item_proposal");
+    const args = { proposal_id: id, action: "apply", reason: "复核" };
+    for (const spaces of [[spaceId], [spaceId, "personal-editor"]])
+      expect((await callTool({ ...member, spaces }, "resolve_item_proposal", args)).isError).toBe(true);
+    expect(one(app.db, "select status from item_update_proposals where id=?", id)).toMatchObject({ status: "pending" });
+    expect(getItem(app, item.id).sourceRefs).toEqual([]);
   });
 
   it("can reject a proposal after its source is deleted, with a durable resolution", async () => {
