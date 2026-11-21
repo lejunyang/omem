@@ -81,6 +81,9 @@ const tools = new Map<string, PluginTool>();
 const readers = new Map<string, PlatformReader>();
 const objects = new Map<string, PluginObject>();
 const items = new Map<string, import("./types.ts").ItemProvider>();
+const retrievers = new Map<string, import("./types.ts").Retriever>();
+const rerankers = new Map<string, import("./types.ts").Reranker>();
+const activeSearch = new Map<number, AbortController>();
 const reviews = new Map<string, import("./types.ts").ReviewProvider>();
 const subscriptions = new Map<string, import("./types.ts").Subscription>();
 const hooks = new Map<string, PluginHook>();
@@ -89,13 +92,23 @@ async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { items: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { items: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
+  const declared: { items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { items: [], retrievers: [], rerankers: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
     subscribe(def) {
       subscriptions.set(def.id, def);
       declared.subscriptions.push({ id: def.id, events: def.events });
+    },
+    retriever(def) {
+      if (typeof def.search !== "function") throw new Error("retriever 缺少 search");
+      retrievers.set(def.id, def);
+      declared.retrievers.push({ id: def.id, label: def.label });
+    },
+    reranker(def) {
+      if (typeof def.score !== "function") throw new Error("reranker 缺少 score");
+      rerankers.set(def.id, def);
+      declared.rerankers.push({ id: def.id, label: def.label });
     },
     reviewProvider(def) {
       if (typeof def.publish !== "function" || typeof def.readThread !== "function") throw new Error("评审提供者缺少方法");
@@ -149,6 +162,7 @@ async function main() {
 }
 
 process.on("message", async (m: Msg) => {
+  if (m.t === "cancel") { activeSearch.get(m.id!)?.abort(); return; }
   if (m.t === "rpc-result") {
     const w = waiting.get(m.id!);
     waiting.delete(m.id!);
@@ -158,15 +172,19 @@ process.on("message", async (m: Msg) => {
   }
   try {
     let value: unknown;
-    if (m.t === "event" || m.t === "review" || m.t === "item") {
+    const search = m.t === "retriever" || m.t === "reranker" ? new AbortController() : null;
+    if (search) activeSearch.set(m.id!, search);
+    if (search || m.t === "event" || m.t === "review" || m.t === "item") {
       const ctx: import("./types.ts").CallContext = {
-        userId: m.userId, spaceId: m.spaceId, signal: AbortSignal.timeout(15000),
+        userId: m.userId, spaceId: m.spaceId, signal: search?.signal ?? AbortSignal.timeout(15000),
         async connection(provider) {
           const c = await rpc("connection", { call: m.id, provider });
           return c ? connectionOf(c, m.id!) : null;
         },
       };
-      if (m.t === "event") await subscriptions.get(m.name)!.handle(ctx, m.event);
+      if (m.t === "retriever") value = await retrievers.get(m.name)!.search(ctx, m.arg);
+      else if (m.t === "reranker") value = await rerankers.get(m.name)!.score(ctx, m.arg);
+      else if (m.t === "event") await subscriptions.get(m.name)!.handle(ctx, m.event);
       else if (m.t === "item") {
         const def = items.get(m.name)!;
         value = m.method === "pull" ? await def.pull(ctx, m.arg) : await def.setStatus!({ ...ctx, idempotencyKey: m.key }, m.arg);
@@ -202,7 +220,7 @@ process.on("message", async (m: Msg) => {
     send({ t: "result", id: m.id, ok: true, value });
   } catch (e) {
     send({ t: "result", id: m.id, ok: false, code: (e as {code?: string})?.code, error: (e as Error).message ?? String(e) });
-  }
+  } finally { activeSearch.delete(m.id!); }
 });
 
 main().catch((e) => {

@@ -27,6 +27,8 @@ const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(
 
 type Declared = {
   items: (Pick<import("./types.ts").ItemProvider, "id" | "label" | "statuses" | "targetHint"> & { writable: boolean })[];
+  retrievers: { id: string; label: string }[];
+  rerankers: { id: string; label: string }[];
   reviews: { id: string; label: string; objectKind: string; resolves: boolean }[];
   subscriptions: Pick<import("./types.ts").Subscription, "id" | "events">[];
   objects: Omit<PluginObject, "match" | "read">[];
@@ -43,7 +45,7 @@ const CALL_MS = 5 * 60_000;
 export async function startSandbox(
   app: App,
   plugin: { id: string; dir: string; server: string; services: { name: string }[] },
-  opts: { itemProvider: import("./types.ts").ProcessApi["itemProvider"]; reviewProvider: import("./types.ts").ProcessApi["reviewProvider"]; subscribe: import("./types.ts").ProcessApi["subscribe"]; prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
+  opts: Omit<import("./types.ts").ProcessApi, "metricProvider"> & { prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
 ): Promise<Sandbox> {
   const data = join(app.home, "plugin-data", plugin.id);
   mkdirSync(data, { recursive: true });
@@ -73,7 +75,19 @@ export async function startSandbox(
         pending.delete(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
-      const call: Pending = { ok, fail, ctx, eventCtx, timer, connections: new Map() };
+      const signal = msg.t === "retriever" || msg.t === "reranker" ? eventCtx?.signal : undefined;
+      const cancel = () => {
+        clearTimeout(timer);
+        pending.delete(id);
+        if (child.connected) child.send({ t: "cancel", id });
+        fail(signal!.reason);
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      const call: Pending = {
+        ok: value => { signal?.removeEventListener("abort", cancel); ok(value); },
+        fail: error => { signal?.removeEventListener("abort", cancel); fail(error); },
+        ctx, eventCtx, timer, connections: new Map(),
+      };
       pending.set(id, call);
       child.send({ ...msg, id, ...(readerConnection ? { conn: connectionHandle(call, readerConnection) } : {}) });
     });
@@ -174,6 +188,10 @@ export async function startSandbox(
       (ctx: import("./types.ts").CallContext, method: string, arg: unknown, note?: string) =>
         ask({ t, name, method, arg, note, userId: ctx.userId, spaceId: ctx.spaceId,
           key: "idempotencyKey" in ctx ? ctx.idempotencyKey : undefined }, undefined, ctx);
+    for (const def of declared.retrievers) opts.retriever({ ...def, search: (ctx, arg) =>
+      ask({ t: "retriever", name: def.id, arg, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx) });
+    for (const def of declared.rerankers) opts.reranker({ ...def, score: (ctx, arg) =>
+      ask({ t: "reranker", name: def.id, arg, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx) });
     for (const def of declared.items ?? []) {
       const invoke = proxy("item", def.id);
       opts.itemProvider({ ...def, pull: (ctx, req) => invoke(ctx, "pull", req),

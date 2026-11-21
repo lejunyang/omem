@@ -98,6 +98,8 @@ export const manifestSchema = z.object({
       events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution", "finding.thread"])).default([]),
       reviewProvider: z.boolean().default(false),
       itemProvider: z.boolean().default(false),
+      retriever: z.boolean().default(false),
+      reranker: z.boolean().default(false),
       metricProvider: z.boolean().default(false),
       write: z.boolean().default(false),
       connectors: z.array(z.string()).default([]),
@@ -106,7 +108,7 @@ export const manifestSchema = z.object({
       /** Backends it brings a login method for (`api.agentLogin`, docs/v2/agent-accounts.md §6): it writes credentials into members' account folders. */
       agentLogin: z.array(z.string()).default([]),
     })
-    .default({ events: [], reviewProvider: false, itemProvider: false, metricProvider: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
+    .default({ events: [], reviewProvider: false, itemProvider: false, metricProvider: false, retriever: false, reranker: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
 }).refine((m) => Object.keys(m.mcp).every((n) => /^[a-z][a-z0-9-]{0,39}$/.test(`${m.id}-${n}`)), "MCP 服务加插件前缀后最多 40 个字符")
   .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符")
   .superRefine((m, ctx) => {

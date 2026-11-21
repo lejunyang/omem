@@ -46,7 +46,19 @@ export type ReviewProvider = {
   readThread(ctx: CallContext, ref: CommentRef): Promise<ThreadState>;
   resolve?(ctx: WriteContext, ref: CommentRef, note?: string): Promise<ThreadState>;
 };
+export type RetrievalKind = "chunk" | "page" | "memory";
+export type RetrievalRef = { type: RetrievalKind | "source"; id: string; score?: number };
+export type Retriever = {
+  id: string; label: string;
+  search(ctx: CallContext, req: { query: string; spaces: string[]; kinds: RetrievalKind[]; limit: number }): Promise<RetrievalRef[]>;
+};
+export type Reranker = {
+  id: string; label: string;
+  score(ctx: CallContext, req: { query: string; candidates: { id: string; text: string }[] }): Promise<number[]>;
+};
 export type ProcessApi = {
+  retriever(def: Retriever): void;
+  reranker(def: Reranker): void;
   subscribe(def: Subscription): void;
   reviewProvider(def: ReviewProvider): void;
   itemProvider(def: ItemProvider): void;
