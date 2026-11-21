@@ -10,9 +10,22 @@ type Grant = { id: string; sessionId: string; userId: string; userName: string; 
 const columns = "g.id,g.session_id sessionId,g.user_id userId,u.name userName,g.mode,g.expires_at expiresAt";
 const joined = "from remote_grants g join users u on u.id=g.user_id";
 
-export function grantsFor(app: App, sessions: string[]) {
+export function grantsFor(app: App, sessions: string[], managed: string[], userId: string) {
   return all<Grant>(app.db, `select ${columns} ${joined} where g.session_id in (select value from json_each(?))
-    and g.revoked_at is null and g.expires_at>?`, JSON.stringify(sessions), now());
+    and (g.user_id=? or g.session_id in (select value from json_each(?)))
+    and g.revoked_at is null and g.expires_at>?`, JSON.stringify(sessions), userId, JSON.stringify(managed), now());
+}
+
+/** A closed browser ends all its remaining grants together, with one audit entry per member. */
+export function endSessionGrants(app: App, sessionId: string) {
+  const at = now();
+  withinTx(app.db, () => {
+    run(app.db, `insert into audit_events(at,actor,action,target,detail)
+      select ?, 'system', 'remote.revoke', session_id, json_object('sessionId',session_id,'userId',user_id,
+        'mode',mode,'expiresAt',expires_at,'reason','session-ended') from remote_grants
+      where session_id=? and revoked_at is null and expires_at>?`, at, sessionId, at);
+    run(app.db, "update remote_grants set revoked_at=? where session_id=? and revoked_at is null", at, sessionId);
+  });
 }
 
 /** The two global remote capabilities have no member preset. Use their indexed override on the frame path. */

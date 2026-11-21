@@ -109,6 +109,26 @@ describe("browser session grants", () => {
     expect(all<{ action: string }>(app.db, "select action from audit_events where target=? order by id", id).map(r => r.action)).toEqual(["remote.grant","remote.grant","remote.revoke"]);
   });
 
+  it("limits grant duration, recipients and targets", async () => {
+    const id = await open(), path = "/sessions/" + id + "/grants";
+    const recipient = { userId: member, mode: "view" };
+    expect((await api(path, "POST", { ...recipient, hours: 25 })).status).toBe(400);
+    createUser(app, { id: "offline", name: "未登录成员" });
+    expect((await api(path, "POST", { ...recipient, userId: "offline" })).status).toBe(400);
+    updateUser(app, member, { disabled: true });
+    expect((await api(path, "POST", recipient)).status).toBe(400);
+    updateUser(app, member, { disabled: false });
+    const start = Date.now();
+    const grant = await (await api(path, "POST", recipient)).json();
+    expect(Date.parse(grant.expiresAt)).toBeGreaterThanOrEqual(start + 2 * 3600_000);
+    expect(Date.parse(grant.expiresAt)).toBeLessThanOrEqual(Date.now() + 2 * 3600_000);
+    expect((await api(path, "POST", recipient)).status).toBe(409);
+    const desk = await (await api("/sessions", "POST", { kind: "desktop" })).json();
+    expect((await api("/sessions/" + desk.id + "/grants", "POST", recipient)).status).toBe(400);
+    expect((await api("/sessions/" + desk.id + "/view", "POST", undefined, token)).ok).toBe(false);
+    expect((await api("/sessions/" + desk.id + "/grants/" + grant.id, "PATCH", { hours: 1 })).ok).toBe(false);
+  });
+
   it("registers the skill's opened tab with the run identity and detaches when the page closes", async () => {
     const actor = "agent-user";
     createUser(app, { id: actor, name: "运行主人" });
@@ -168,5 +188,10 @@ describe("browser session grants", () => {
     await ended;
     expect((await fetch(view.url, { headers: { cookie: view.cookie } })).ok).toBe(false);
     if (reason === "disable") updateUser(app, member, { disabled: false });
+    if (reason === "close") {
+      const rows = all<{detail: string}>(app.db, "select detail from audit_events where target=? and action='remote.revoke'", id);
+      expect(rows).toHaveLength(1);
+      expect(JSON.parse(rows[0].detail)).toMatchObject({ sessionId: id, userId: member, mode: "view", reason: "session-ended" });
+    }
   });
 });

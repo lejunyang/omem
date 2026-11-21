@@ -60,16 +60,16 @@ export function capabilityCatalog(app: App) {
   });
 }
 export type Override = { capability: Capability; scope_kind: "global" | "space"; scope_id: string; effect: "allow" | "deny" };
-/** Request-local snapshot. Resolve all spaces and inherited memberships in bulk. */
-export function capabilityAccess(app: App, userId: string, targetSpace?: string) {
+/** Request-local snapshot. A null target requests only global capabilities. */
+export function capabilityAccess(app: App, userId: string, targetSpace?: string | null) {
   const user = one<{ role: string; active: number }>(app.db, "select role, status='active' and disabled_at is null active from users where id=?", userId);
   const roles = new Map(listRoles(app).map(r => [r.id, r.permissions]));
   const preset = user?.role ?? "";
   const grants = roles.get(preset) ?? [];
   const overrides = all<Override>(app.db, "select capability,scope_kind,scope_id,effect from member_capability_overrides where user_id=? and revoked=0", userId);
-  const spaces = all<{ id: string; kind: string; owner_id: string; mirror: number; parent_id: string }>(app.db,
+  const spaces = targetSpace === null ? [] : all<{ id: string; kind: string; owner_id: string; mirror: number; parent_id: string }>(app.db,
     "select id,kind,owner_id,parent_id,json_extract(settings,'$.mirror') is not null mirror from spaces" + (targetSpace ? " where id=?" : ""), ...(targetSpace ? [targetSpace] : []));
-  const memberships = new Map(all<{ space_id: string; role: string }>(app.db, "select space_id,role from space_members where user_id=?", userId).map(r => [r.space_id, roles.get(r.role === "owner" ? "manager" : r.role) ?? []]));
+  const memberships = new Map(targetSpace === null ? [] : all<{ space_id: string; role: string }>(app.db, "select space_id,role from space_members where user_id=?", userId).map(r => [r.space_id, roles.get(r.role === "owner" ? "manager" : r.role) ?? []]));
   const byId = new Map(spaces.map(s => [s.id, s]));
   const effects = new Map(overrides.map(o => [JSON.stringify([o.capability, o.scope_kind, o.scope_id]), o.effect]));
   const presetCaps = new Set(capabilityKeys.filter(c => presetGrants(preset, grants, c)));

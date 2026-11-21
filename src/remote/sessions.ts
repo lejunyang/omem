@@ -3,10 +3,10 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from "node
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { HttpError, newId, now } from "../core/util.ts";
-import { all, run } from "../core/db.ts";
+import { all } from "../core/db.ts";
 import { capabilityAccess } from "../auth/capabilities.ts";
 import { can } from "../auth/permissions.ts";
-import { effectiveGrant, grantsFor, type Mode } from "./grants.ts";
+import { effectiveGrant, endSessionGrants, grantsFor, type Mode } from "./grants.ts";
 import { OWNER, activeUser, findUser } from "../core/users.ts";
 import { AadMcp, aadJson, finalJson, firstJsonLine, spawnAad } from "./aad.ts";
 import { createRecording, recordingDir, recordingSummary, updateRecording, type Recording } from "./recordings.ts";
@@ -66,10 +66,12 @@ export function viewerAccess(app: App, s: Live, user: string) {
 
 export function listSessions(app: App, user: string) {
   const desktop = can(app, user, "desktop.control");
-  const access = capabilityAccess(app, user);
-  const ownsAgentPage = access.active && [...live.values()].some(s => s.origin && s.userId === user);
+  const access = capabilityAccess(app, user, null);
+  const sessions = [...live.values()];
+  const manages = (s: Live) => s.userId === user || (user === OWNER && s.kind === "browser");
+  const ownsAgentPage = access.active && sessions.some(s => s.origin && s.userId === user);
   if (!ownsAgentPage && !desktop && !access.source("remote.view") && !access.source("remote.operate")) throw new HttpError(403, "没有远程会话权限");
-  const grants = grantsFor(app, [...live.keys()]);
+  const grants = grantsFor(app, [...live.keys()], sessions.filter(manages).map(s => s.id), user);
   const bySession = new Map<string, typeof grants>();
   for (const grant of grants) {
     const group = bySession.get(grant.sessionId);
@@ -78,15 +80,20 @@ export function listSessions(app: App, user: string) {
   }
   const owners = new Map(all<{id: string; name: string}>(app.db,
     "select id,name from users where id in (select value from json_each(?))",
-    JSON.stringify([...new Set([...live.values()].map(s => s.userId))])).map(u => [u.id, u.name]));
-  return [...live.values()].flatMap(s => {
+    JSON.stringify([...new Set(sessions.map(s => s.userId))])).map(u => [u.id, u.name]));
+  return sessions.flatMap(s => {
     const mine = s.userId === user;
-    const manager = (user === OWNER && s.kind === "browser") || mine;
+    const manager = manages(s);
     const assigned = bySession.get(s.id) ?? [];
     const grant = assigned.find(g => g.userId === user && access.source(`remote.${g.mode}`));
     if (!(manager && desktop) && !(mine && s.origin && access.active) && !grant) return [];
-    return [{ ...sessionView(s), ownerId: s.userId, ownerName: owners.get(s.userId), mine,
-      grant: grant ?? null, ...(manager ? { connections: [...s.connections], grants: assigned.map(g => ({ ...g, connected: [...s.connections].some(c => c.userId === g.userId) })) } : {}), runId: s.origin?.runId ?? null, spaceId: s.origin?.spaceId ?? null }];
+    const connections = [...s.connections];
+    const connected = new Set(connections.map(c => c.userId));
+    return [{
+      ...sessionView(s), ownerId: s.userId, ownerName: owners.get(s.userId), mine, grant: grant ?? null,
+      runId: s.origin?.runId ?? null, spaceId: s.origin?.spaceId ?? null,
+      ...(manager ? { connections, grants: assigned.map(g => ({ ...g, connected: connected.has(g.userId) })) } : {}),
+    }];
   });
 }
 
@@ -274,7 +281,7 @@ export async function closeSession(app: App, id: string) {
   if (!s) return;
   live.delete(id);
   s.origin?.detach();
-  run(app.db, "update remote_grants set revoked_at=? where session_id=? and revoked_at is null", now(), id);
+  endSessionGrants(app, id);
   app.events.emit("remote-access", id);
   if (s.recording) await stopRecording(app, s, { quiet: true }).catch(() => {});
   s.assist.proc.kill();
