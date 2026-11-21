@@ -5,7 +5,9 @@ import type { App } from "../core/app.ts";
 import { all, run } from "../core/db.ts";
 import { defaultBaseRef, git, resolveRef, submodules } from "../core/git.ts";
 import { findSpace, getSpace, updateSpace, type Space } from "../core/spaces.ts";
-import { HttpError, now } from "../core/util.ts";
+import { fileParser, parseFileBytes } from "./import.ts";
+import { fileParsers, MAX_INPUT, type FileParsers } from "../plugins/formats.ts";
+import { HttpError, now, sha256 } from "../core/util.ts";
 import { resolveCodeRefs } from "./callgraph.ts";
 import { deleteSource, upsertSource, type SourceKind } from "./store.ts";
 import { ensureGrammars } from "./treesitter.ts";
@@ -42,6 +44,7 @@ export type CodeIndexState = {
   dirty?: boolean;
   /** baseline: which submodules were checked out when it was read. */
   subKey?: string;
+  parserKey?: string;
   /** directory: HEAD and `git status` at the last read, to tell whether anything changed since. */
   workKey?: string;
   /** When the index was last brought to `commit`. */
@@ -60,10 +63,10 @@ const LOCKFILES = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.loc
 const BINARY = /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|docx?|xlsx?|pptx?|zip|gz|tgz|7z|rar|jar|war|class|so|dll|dylib|exe|bin|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|webm|wav|flac|db|sqlite|lock|onnx|safetensors|gguf|pt|npy|parquet)$/i;
 
 /** The same files a directory sync takes (import.ts repoFiles), by path. */
-export function indexable(rel: string) {
+export function indexable(rel: string, parsed = false) {
   const parts = rel.split("/");
   if (parts.some((p) => SKIP_DIRS.has(p) || (p.startsWith(".") && p !== ".github"))) return false;
-  if (LOCKFILES.test(rel) || BINARY.test(rel)) return false;
+  if (LOCKFILES.test(rel) || (!parsed && BINARY.test(rel))) return false;
   return !/\.min\.(js|css)$/.test(rel) && !/\.map$/.test(rel);
 }
 
@@ -157,11 +160,15 @@ function globToRegex(pattern: string) {
 
 export type BaselineReport = { created: number; updated: number; unchanged: number; removed: number; skipped: string[]; sourceIds: string[] };
 
+export function baselineParserKey(app: App, list: FileParsers["list"]) {
+  return list.length ? sha256(JSON.stringify([app.config.documents.parserOrder, list.map(({ id, version, match }) => [id, version, match])])) : "";
+}
+
 /**
  * Bring the space's index to its baseline commit. Runs in the import process (import-worker.ts),
  * like the directory sync it stands in for.
  */
-export async function syncBaselineLocally(app: App, spaceId: string, onProgress?: (done: number, total: number) => Promise<void>, opts: { force?: boolean } = {}): Promise<BaselineReport> {
+export async function syncBaselineLocally(app: App, spaceId: string, onProgress?: (done: number, total: number) => Promise<void>, opts: { force?: boolean; parsers?: FileParsers } = {}): Promise<BaselineReport> {
   const space = getSpace(app, spaceId);
   const root = space.rootPath;
   if (!root || !existsSync(root) || !git(root, ["rev-parse", "--git-dir"]).ok) throw new HttpError(400, `空间 ${spaceId} 没有关联 Git 仓库`);
@@ -181,45 +188,70 @@ export async function syncBaselineLocally(app: App, spaceId: string, onProgress?
   const info = commitInfo(root, tip.commit);
   // Which submodules are checked out: one checked out since is read even when the commit stayed.
   const subKey = existsSync(join(git(root, ["rev-parse", "--show-toplevel"]).stdout.trim() || root, ".gitmodules")) ? submodules(root).map((m) => `${m.path}:${m.state === "missing" ? 0 : 1}`).join(",") : "";
-  // The same commit as last time: nothing to read.
-  if (!opts.force && prev?.mode === "baseline" && prev.ref === ref && prev.commit === tip.commit && (prev.subKey ?? "") === subKey) {
+  const parsers = opts.parsers ?? fileParsers(app, spaceId, "owner");
+  const parserKey = baselineParserKey(app, parsers.list);
+  if (!opts.force && prev?.mode === "baseline" && prev.ref === ref && prev.commit === tip.commit && (prev.subKey ?? "") === subKey && (prev.parserKey ?? "") === parserKey) {
     patchState(app, spaceId, { indexedAt: prev.indexedAt ?? now(), error: null, errorAt: null });
     return report;
   }
   const exclude = ((space.settings.exclude as string[] | undefined) ?? []).map(globToRegex);
-  const entries = listTree(root, tip.commit).filter((e) => indexable(e.rel) && !exclude.some((re) => re.test(e.rel)));
+  const entries = listTree(root, tip.commit);
   // What each managed source was read from last time (its blob): unchanged blobs are not read again.
-  const known = new Map(all<{ id: string; uri: string; blob: string | null; deleted_at: string | null }>(app.db,
-    "select id, uri, json_extract(meta, '$.blob') blob, deleted_at from sources where space_id = ? and kind in ('code','doc')", spaceId).map((r) => [r.uri, r]));
+  const known = new Map(all<{ id: string; uri: string; blob: string | null; parser: string | null; version: string | null; deleted_at: string | null }>(app.db,
+    "select id, uri, json_extract(meta, '$.blob') blob, json_extract(meta, '$.parser.id') parser, json_extract(meta, '$.parser.version') version, deleted_at from sources where space_id = ? and kind in ('code','doc')", spaceId).map((r) => [r.uri, r]));
   const seen = new Set<string>();
-  const toRead: Entry[] = [];
+  type Selected = Entry & { parser?: FileParsers["list"][number] };
+  const toRead: Selected[] = [];
   for (const e of entries) {
-    if (e.size > MAX_BYTES) { report.skipped.push(e.rel); continue; }
-    seen.add(e.rel);
+    if (exclude.some(re => re.test(e.rel))) continue;
+    const parser = fileParser(app, parsers, e.rel);
     const k = known.get(e.rel);
-    if (k && k.blob === e.blob && !k.deleted_at) report.unchanged++;
-    else toRead.push(e);
+    if (!indexable(e.rel, !!parser)) {
+      if (k?.parser && indexable(e.rel, true)) {
+        seen.add(e.rel);
+        report.skipped.push(e.rel + "：没有能读这种格式的解析器");
+      }
+      continue;
+    }
+    if (k?.parser) seen.add(e.rel);
+    if (e.size > (parser ? MAX_INPUT : MAX_BYTES)) { report.skipped.push(e.rel); continue; }
+    seen.add(e.rel);
+    if (k && k.parser === (parser?.id ?? null) && k.version === (parser?.version ?? null) && k.blob === e.blob && !k.deleted_at) report.unchanged++;
+    else toRead.push({ ...e, parser });
   }
   await ensureGrammars(toRead.map((e) => e.rel));
-  const byRepo = new Map<string, Entry[]>();
-  for (const e of toRead) byRepo.set(e.repo, [...(byRepo.get(e.repo) ?? []), e]);
+  const byRepo = new Map<string, Selected[]>();
+  for (const e of toRead) {
+    if (!byRepo.has(e.repo)) byRepo.set(e.repo, []);
+    byRepo.get(e.repo)!.push(e);
+  }
+  let parseFailed = false;
   let done = 0;
   for (const [repo, list] of byRepo) {
-    for (let i = 0; i < list.length; i += 400) {
-      const part = list.slice(i, i + 400);
+    for (let i = 0; i < list.length;) {
+      const start = i++;
+      let bytes = list[start].size;
+      while (i < list.length && i - start < 400 && bytes + list[i].size <= MAX_INPUT) bytes += list[i++].size;
+      const part = list.slice(start, i);
       const blobs = readBlobs(repo, part.map((e) => e.object));
       for (const e of part) {
         const buf = blobs.get(e.object);
-        if (!buf || buf.subarray(0, 8000).includes(0)) { report.skipped.push(e.rel); seen.delete(e.rel); continue; }
+        if (!buf || (!e.parser && buf.subarray(0, 8000).includes(0))) {
+          if (known.get(e.rel)?.parser) report.skipped.push(e.rel + "：没有能读这种格式的解析器");
+          else { report.skipped.push(e.rel); seen.delete(e.rel); }
+          continue;
+        }
         try {
-          const r = upsertSource(app, { spaceId, kind: docKind(e.rel), uri: e.rel, title: e.rel, text: buf.toString("utf8"), meta: { directoryRoot: root, blob: e.blob } });
+          const source = e.parser ? await parseFileBytes(app, parsers, e.parser.id, e.rel, buf)
+            : { kind: docKind(e.rel), title: e.rel, text: buf.toString("utf8"), meta: {} };
+          const r = upsertSource(app, { ...source, spaceId, uri: e.rel, meta: { ...source.meta, directoryRoot: root, blob: e.blob } });
           // Same text under a new blob (line endings): remember the blob so it is not read again.
           if (r.status === "unchanged") run(app.db, "update sources set meta = json_set(json_set(meta, '$.blob', ?), '$.directoryRoot', ?) where id = ?", e.blob, root, r.id);
           report[r.status]++;
           if (r.status !== "unchanged") report.sourceIds.push(r.id);
-        } catch {
-          report.skipped.push(e.rel);
-          seen.delete(e.rel);
+        } catch (error) {
+          parseFailed = true;
+          report.skipped.push(e.rel + "：" + (error as Error).message);
         }
         if (onProgress && ++done % 50 === 0) await onProgress(done, toRead.length);
       }
@@ -236,7 +268,7 @@ export async function syncBaselineLocally(app: App, spaceId: string, onProgress?
   }
   if (report.created || report.updated || report.removed || prev?.mode !== "baseline") resolveCodeRefs(app, spaceId);
   const at = now();
-  patchState(app, spaceId, { mode: "baseline", ref, commit: tip.commit, ...info, subKey, indexedAt: at, dirty: false, error: null, errorAt: null },{ lastSync: new Date().toISOString(), commit: tip.commit });
+  patchState(app, spaceId, { mode: "baseline", ref, commit: tip.commit, ...info, subKey, parserKey: parseFailed ? "incomplete" : parserKey, indexedAt: at, dirty: false, error: null, errorAt: null },{ lastSync: new Date().toISOString(), commit: tip.commit });
   return report;
 }
 

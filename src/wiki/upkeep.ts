@@ -16,6 +16,7 @@ import { all, one, run } from "../core/db.ts";
 import { createRun } from "../agents/runs.ts";
 import { json } from "../core/util.ts";
 import { getSpace } from "../core/spaces.ts";
+import { kindList } from "../plugins/formats.ts";
 import { APPEND_ONLY, listPages, organizeNeeds, staleDetail } from "./store.ts";
 
 /** A changed original is looked at once it has been quiet this long (a document still being edited is not). */
@@ -46,16 +47,30 @@ function writeChecked(app: App, spaceId: string, checked: Checked, live: Set<str
  */
 export function pagesToCheck(app: App, spaceId: string, at = Date.now(), opts: { settled?: boolean } = {}) {
   const checked = readChecked(app, spaceId);
-  const out: { slug: string; since: number }[] = [];
+  const candidates = new Map<string, { slug: string; since: number; note?: string }>();
+  const kinds = kindList(spaceId).filter(k => k.upkeep);
+  const policies = new Map(kinds.map(k => [k.kind, k.upkeep!]));
+  const custom = kinds.length ? all<{ slug: string; kind: string; updated_at: string }>(app.db,
+    `select slug, kind, updated_at from pages where space_id = ? and kind in (${kinds.map(() => "?").join(",")})`, spaceId, ...policies.keys()) : [];
+  const skipChanged = new Set<string>();
+  for (const page of custom) {
+    const policy = policies.get(page.kind)!;
+    if (policy.onSourcesChanged === false) skipChanged.add(page.slug);
+    const last = Math.max(Date.parse(page.updated_at), Date.parse(checked[page.slug]) || 0);
+    if (policy.everyDays && at - last >= policy.everyDays * PAGE_COOLDOWN_MS) {
+      candidates.set(page.slug, { slug: page.slug, since: last, note: `已到页面类型规定的 ${policy.everyDays} 天复查周期` });
+    }
+  }
   for (const p of staleDetail(app, spaceId)) {
+    if (skipChanged.has(p.slug) || candidates.has(p.slug)) continue;
     const relevant = p.sources.filter((s) => s.deleted || !APPEND_ONLY.has(s.kind));
     if (!relevant.length) continue;
     if (opts.settled !== false && relevant.some((s) => !s.deleted && at - Date.parse(s.updatedAt) < SETTLE_MS)) continue;
     const last = checked[p.slug] ? Date.parse(checked[p.slug]) : 0;
     if (at - last < PAGE_COOLDOWN_MS) continue;
-    out.push({ slug: p.slug, since: Math.min(...relevant.map((s) => Date.parse(s.updatedAt))) });
+    candidates.set(p.slug, { slug: p.slug, since: Math.min(...relevant.map((s) => Date.parse(s.updatedAt))) });
   }
-  return out.sort((a, b) => a.since - b.since).map((x) => x.slug);
+  return [...candidates.values()].sort((a, b) => a.since - b.since);
 }
 
 const busy = (app: App, kind: string, spaceId: string) => !!one(app.db, "select 1 from runs where kind = ? and space_id = ? and status in ('queued','running')", kind, spaceId);
@@ -77,13 +92,19 @@ export function runWikiUpkeep(app: App, at = Date.now()) {
     if (space.settings.autoLint !== false && !busy(app, "wiki-lint", spaceId)) {
       const last = lastRun(app, "wiki-lint", spaceId);
       if (!last || at - Date.parse(last.at) >= SPACE_GAP_MS) {
-        const slugs = pagesToCheck(app, spaceId, at).slice(0, BATCH);
-        if (slugs.length) {
+        const batch = pagesToCheck(app, spaceId, at).slice(0, BATCH);
+        if (batch.length) {
           const checked = readChecked(app, spaceId);
-          for (const s of slugs) checked[s] = new Date(at).toISOString();
+          const pages: string[] = [];
+          const recheck: { page: string; note: string }[] = [];
+          for (const { slug, note } of batch) {
+            checked[slug] = new Date(at).toISOString();
+            if (note) recheck.push({ page: slug, note });
+            else pages.push(slug);
+          }
           writeChecked(app, spaceId, checked, new Set(listPages(app, spaceId).map((p) => p.slug)));
-          const r = createRun(app, { kind: "wiki-lint", spaceId, title: `检查受影响页面（${slugs.length} 页，原件变了）`, input: { pages: slugs, auto: true } });
-          made.push({ kind: "wiki-lint", spaceId, runId: r.id, pages: slugs.length });
+          const r = createRun(app, { kind: "wiki-lint", spaceId, title: `检查受影响页面（${batch.length} 页）`, input: { pages, recheck, auto: true } });
+          made.push({ kind: "wiki-lint", spaceId, runId: r.id, pages: batch.length });
         }
       }
     }

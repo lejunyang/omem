@@ -1,0 +1,6 @@
+id: formats
+name: 记录与接口说明
+version: '1'
+permissions:
+  sourceParser: true
+  wikiPageKind: true

@@ -19,6 +19,19 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## Wiki 按类型到期复查（2026-11-21）
+
+从 `src/wiki/upkeep.ts` 读起。调度保留页面到期原因，通过 `wiki-lint` 的指定页面复查入口交给核对角色，即使引用的原件没有更新也会核对。
+
+## 仓库基线采用原件解析器（2026-11-21）
+
+从 `src/sources/code-baseline.ts` 读起。仓库同步把 Git blob 交给文件导入使用的解析器；已索引的文件在解析器版本或选择变化时重新读取，保留原件 ID。
+
+## 插件定义原件格式和 Wiki 页面类型（11-21）
+
+- 上传、目录导入和 URL 导入按插件匹配规则选择解析器。原件保存 Markdown、解析器版本和结构化行范围。读 `src/plugins/formats.ts`、`src/sources/import.ts` 和 `src/sources/import-process.ts`。
+- 插件可定义 Wiki 模板、校验和维护间隔。规划在 `src/agents/jobs.ts`，写作在 `src/wiki/verify.ts`，按类型核对在 `src/wiki/upkeep.ts`。两个完整示例在 `examples/plugins/formats`。
+
 ## 被动记忆的插件门槛（11-21）
 
 在 `src/core/config.ts` 查看可选的 `rerank.pluginPassiveThreshold`。它接受任意有限分数，省略时沿用原门槛。

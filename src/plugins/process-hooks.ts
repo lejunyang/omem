@@ -1,9 +1,11 @@
+import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
 import type { CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
+import { registerFormats } from "./formats.ts";
 import { pluginSpaces } from "./spaces.ts";
 
 type Entry<T> = {
@@ -19,22 +21,12 @@ const comment = z.object({ id: z.string().min(1).max(500), url: z.httpUrl().max(
 const thread = z.object({ state: z.enum(["open", "replied", "resolved", "outdated"]), reply: z.object({
   author: z.string().min(1).max(500), at: z.iso.datetime({ offset: true }), summary: z.string().max(1000),
 }).optional() });
-export async function untilAbort<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
-  signal.throwIfAborted();
-  let abort!: () => void;
-  const expired = new Promise<never>((_, reject) => {
-    abort = () => reject(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-  });
-  try { return await Promise.race([work(), expired]); }
-  finally { signal.removeEventListener("abort", abort); }
-}
 export const retrievers = new Map<string, Entry<Retriever>>();
 export type RegisteredReranker = Entry<Reranker>;
 export const rerankers = new Map<string, RegisteredReranker>();
 export const metricProviders = new Map<string, Entry<MetricProvider>>();
 
-export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[]): ProcessApi {
+export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[], version = manifest.version): ProcessApi {
   const spaces = pluginSpaces(manifest).map(s => s.id);
   const lifetime = new AbortController();
   undo.push(() => lifetime.abort());
@@ -65,6 +57,7 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
     undo.push(() => { map.delete(key); });
   }
   return {
+    ...registerFormats(manifest, version, spaces, context, undo),
     subscribe(def) {
       if (!def.events.length || !def.events.every(t => manifest.permissions.events.includes(t))) throw new Error("订阅未在 permissions.events 声明");
       add(subscriptions, def);

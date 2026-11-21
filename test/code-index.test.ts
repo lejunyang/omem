@@ -11,8 +11,10 @@ import { createSpace, findSpace, getSpace, updateSpace } from "../src/core/space
 import { search } from "../src/search/search.ts";
 import { syncBaselineLocally } from "../src/sources/code-baseline.ts";
 import { adoptRepoSyncDefault, codeVersion, expireOverlays, OVERLAY_DAYS, refreshRepoSpaces } from "../src/sources/code-index.ts";
-import { syncDirectoryLocally } from "../src/sources/import.ts";
-import { upsertSource } from "../src/sources/store.ts";
+import { registerProcessHooks } from "../src/plugins/process-hooks.ts";
+import { manifestSchema } from "../src/plugins/registry.ts";
+import { syncDirectoryLocally, syncDirectorySpace } from "../src/sources/import.ts";
+import { findSourceByUri, readSource, upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -59,6 +61,48 @@ describe("a repository indexed from its baseline", () => {
     "README.md": "# 商城\n",
   });
   createSpace(app, { id: "shop", name: "商城", kind: "repo", rootPath: local });
+
+  it("reparses baseline blobs when the selected parser or its version changes", async () => {
+    const { local } = remoteRepo({ "records.jsonl": '{"title":"baseline"}', "guide.md": "guide" });
+    createSpace(app, { id: "formats", name: "格式", kind: "repo", rootPath: local });
+    writeFileSync(join(local, "records.jsonl"), "uncommitted");
+    const sync = () => syncDirectorySpace(app, "formats");
+    const read = (uri: string) => readSource(app, findSourceByUri(app, "formats", uri)!.id);
+    const undo: (() => void)[] = [];
+    const install = (version: string) => registerProcessHooks(manifestSchema.parse({
+      id: "records", name: "记录", permissions: { sourceParser: true },
+    }), undo, version).sourceParser({
+      id: "reader", label: "记录", match: { extensions: ["jsonl", "md"] },
+      async parse(_ctx, { bytes, name }) {
+        const raw = new TextDecoder().decode(bytes);
+        const title = name.endsWith(".md") ? raw : JSON.parse(raw).title;
+        return { text: "# " + title, display: { kind: "records", items: [{ title, lines: [1, 1] }] } };
+      },
+    });
+    const order = app.config.documents.parserOrder;
+    try {
+      expect(await sync()).toMatchObject({ created: 2, skipped: [] });
+      install("1");
+      expect(await sync()).toMatchObject({ updated: 1, unchanged: 1 });
+      const first = read("records.jsonl");
+      expect(first).toMatchObject({ text: "# baseline", source: { meta: { parser: { id: "records:reader", version: "1" },
+        display: { kind: "records", items: [{ title: "baseline", lines: [1, 1] }] } } } });
+      expect(read("guide.md").text).toBe("guide");
+      undo.pop()!();
+      install("2");
+      app.config.documents.parserOrder = ["records:reader"];
+      expect(await sync()).toMatchObject({ updated: 2 });
+      expect(read("records.jsonl").source.meta.parser).toMatchObject({ version: "2" });
+      expect(read("guide.md").text).toBe("# guide");
+      undo.pop()!();
+      expect(await sync()).toMatchObject({ updated: 2 });
+      expect(read("records.jsonl")).toMatchObject({ text: '{"title":"baseline"}', source: { id: first.source.id } });
+      expect(read("records.jsonl").source.meta.parser).toBeUndefined();
+    } finally {
+      app.config.documents.parserOrder = order;
+      undo.forEach(stop => stop());
+    }
+  });
 
   it("starts on the baseline for a new space with origin, and the working tree does not leak into it", async () => {
     const first = await syncDirectoryLocally(app, "shop");

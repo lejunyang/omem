@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { resolveCodeRefs } from "./callgraph.ts";
 import { directoryImport } from "./import-process.ts";
 import { ensureGrammars } from "./treesitter.ts";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { App } from "../core/app.ts";
@@ -13,6 +13,8 @@ import { getSpace, updateSpace } from "../core/spaces.ts";
 import { toolCommand } from "../core/tools.ts";
 import { HttpError, newId, sha256 } from "../core/util.ts";
 import { hasStoredFile, markStoredFileAdded } from "../core/stored-files.ts";
+import { OWNER } from "../core/users.ts";
+import { MAX_INPUT, fileParsers, pickParser, type FileParsers } from "../plugins/formats.ts";
 import { classify } from "./chunk.ts";
 import { deleteSource, upsertSource, type SourceKind, type UpsertResult } from "./store.ts";
 
@@ -97,12 +99,35 @@ export async function convertDocument(app: App, file: string, signal?: AbortSign
   throw new HttpError(422, `无法解析 ${basename(file)}。运行 omem setup 选择文档解析方式（Docling / pdftotext / pandoc），或配置转换命令。\n${errors.join("\n")}`);
 }
 
+function builtinFile(file: string) {
+  const ext = extname(file).toLowerCase();
+  return DOC_EXT.has(ext) || IMAGE_EXT.has(ext) || classify(file) !== "doc" || /\.(md|mdx|markdown|txt|rst|adoc)$/i.test(file);
+}
+
+export function fileParser(app: App, parsers: FileParsers, file: string, mime?: string) {
+  if (parsers.list.length) return pickParser(parsers.list, app.config.documents.parserOrder ?? [], file, builtinFile(file), mime);
+}
+
+/** A baseline import supplies Git bytes here, even if the working-tree file differs. */
+export async function parseFileBytes(app: App, parsers: FileParsers, key: string, file: string, bytes: Buffer, mimeType?: string) {
+  const parsed = await parsers.parse(key, { name: basename(file), mimeType, bytes });
+  return { kind: "doc" as const, title: parsed.title ?? basename(file), text: parsed.text, mime: mimeType,
+    meta: { parser: parsed.parser, fields: parsed.meta, display: parsed.display, original: keepOriginal(app, file, bytes) } };
+}
+
 /** Import one file into a space. Binary documents are converted; originals are kept in files/. */
-export async function importFile(app: App, spaceId: string, file: string, uri?: string, signal?: AbortSignal, archive = false): Promise<UpsertResult | null> {
+export async function importFile(app: App, spaceId: string, file: string, uri?: string, signal?: AbortSignal, archive = false, options: { user?: string; mime?: string; parsers?: FileParsers; directoryRoot?: string } = {}): Promise<UpsertResult | null> {
   const path = resolve(file);
   await ensureGrammars([path]);
   const ext = extname(path).toLowerCase();
   const id = uri ?? basename(path);
+  const parsers = options.parsers ?? fileParsers(app, spaceId, options.user ?? OWNER, signal);
+  const parser = fileParser(app, parsers, path, options.mime);
+  if (parser) {
+    if (statSync(path).size > MAX_INPUT) throw new HttpError(413, "解析输入超过 200 MiB");
+    const source = await parseFileBytes(app, parsers, parser.id, path, readFileSync(path), options.mime);
+    return upsertSource(app, { ...source, archive, spaceId, uri: id, meta: { ...source.meta, directoryRoot: options.directoryRoot } });
+  }
   if (DOC_EXT.has(ext)) {
     const stored = keepOriginal(app, path);
     const text = await convertDocument(app, path, signal);
@@ -126,13 +151,12 @@ export async function importFile(app: App, spaceId: string, file: string, uri?: 
   return upsertSource(app, { archive, spaceId, kind, uri: id, title: basename(path), text: buf.toString("utf8") });
 }
 
-export function keepOriginal(app: App, path: string) {
-  const buf = readFileSync(path);
+export function keepOriginal(app: App, path: string, buf: Buffer = readFileSync(path)) {
   const name = `${sha256(buf).slice(0, 16)}${extname(path).toLowerCase()}`;
   mkdirSync(app.filesDir, { recursive: true });
   // A compressed copy (core/media.ts) stands in for the original: do not bring the large file back.
   if (!hasStoredFile(app, name)) {
-    copyFileSync(path, join(app.filesDir, name));
+    writeFileSync(join(app.filesDir, name), buf);
     markStoredFileAdded();
   }
   return name;
@@ -153,14 +177,14 @@ function walk(root: string): string[] {
   return out;
 }
 
-export function repoFiles(root: string): string[] {
+export function repoFiles(root: string, readBinary?: (file: string) => boolean): string[] {
   const listed = listRepoFiles(root) ?? walk(root);
   return listed.filter((p) => {
     const parts = p.split("/");
     if (parts.some((s) => SKIP_DIRS.has(s))) return false;
     if (LOCKFILES.test(p)) return false;
     const ext = extname(p).toLowerCase();
-    if (BINARY_EXT.has(ext)) return false;
+    if (BINARY_EXT.has(ext) && !readBinary?.(p)) return false;
     if (/\.min\.(js|css)$/.test(p) || /\.map$/.test(p)) return false;
     return true;
   });
@@ -176,43 +200,50 @@ function globToRegex(pattern: string) {
  * Bring a repo/directory space up to date with its working tree. Only changed
  * files are re-chunked; files that disappeared become tombstones.
  */
-export async function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done: number, total: number) => void): Promise<ImportReport> {
+export async function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done: number, total: number) => void, user = OWNER): Promise<ImportReport> {
   getSpace(app, spaceId);
-  return directoryImport(app, { kind: "sync", spaceId }, onProgress);
+  return directoryImport(app, { kind: "sync", spaceId, user }, onProgress);
 }
 
 /** Runs only in the import process: parsing, indexing and reference resolution may be expensive. */
-export async function syncDirectoryLocally(app: App, spaceId: string, onProgress?: (done: number, total: number) => Promise<void>): Promise<ImportReport> {
+export async function syncDirectoryLocally(app: App, spaceId: string, onProgress?: (done: number, total: number) => Promise<void>, parsers = fileParsers(app, spaceId, OWNER)): Promise<ImportReport> {
   let space = getSpace(app, spaceId);
   if (!space.rootPath) throw new HttpError(400, "这个空间没有关联目录");
   // A repository indexed from its baseline commit, not the working tree (code-baseline.ts, docs/v2/code-index.md).
   const baseline = await import("./code-baseline.ts");
   if (baseline.usesBaseline(space)) {
     if (!baseline.codeIndexConfig(space).mode) space = updateSpace(app, spaceId, { settings: { ...space.settings, codeIndex: { ...baseline.codeIndexConfig(space), mode: "baseline" } } });
-    return baseline.syncBaselineLocally(app, spaceId, onProgress);
+    return baseline.syncBaselineLocally(app, spaceId, onProgress, { parsers });
   }
   const report = emptyReport();
   // Space settings may exclude paths (archives, vendored docs): prefixes or simple globs.
   const exclude = ((space.settings.exclude as string[] | undefined) ?? []).map(globToRegex);
-  const files = repoFiles(space.rootPath).filter((f) => !exclude.some((re) => re.test(f)));
+  const files = repoFiles(space.rootPath, file => !!fileParser(app, parsers, file)).filter((f) => !exclude.some((re) => re.test(f)));
   await ensureGrammars(files);
+  const present = new Set(files);
   const seen = new Set<string>();
   for (const [i, rel] of files.entries()) {
     const full = join(space.rootPath!, rel);
     try {
-      const st = statSync(full);
-      if (st.size > MAX_TEXT_BYTES) { report.skipped.push(rel); continue; }
-      const buf = readFileSync(full);
-      if (looksBinary(buf)) { report.skipped.push(rel); continue; }
-      seen.add(rel);
-      const kind: SourceKind = /\.(md|markdown|mdx|txt|rst|adoc)$/i.test(rel) ? "doc" : "code";
-      const result = upsertSource(app, { spaceId, kind, uri: rel, title: rel, text: buf.toString("utf8"), meta: { directoryRoot: space.rootPath } });
-      // Unchanged files imported before directory ownership was recorded: adopt them (once, not on every sync).
-      if (result.status === "unchanged")
-        run(app.db, "update sources set meta=json_set(meta, '$.directoryRoot', ?) where id=? and json_extract(meta, '$.directoryRoot') is not ?", space.rootPath, result.id, space.rootPath);
-      tally(report, result);
-    } catch {
-      report.skipped.push(rel);
+      if (fileParser(app, parsers, rel)) {
+        seen.add(rel);
+        const result = await importFile(app, spaceId, full, rel, undefined, false, { parsers, directoryRoot: space.rootPath! });
+        if (result) tally(report, result);
+      } else {
+        const st = statSync(full);
+        if (st.size > MAX_TEXT_BYTES) { report.skipped.push(rel); continue; }
+        const buf = readFileSync(full);
+        if (looksBinary(buf)) { report.skipped.push(rel); continue; }
+        seen.add(rel);
+        const kind: SourceKind = /\.(md|markdown|mdx|txt|rst|adoc)$/i.test(rel) ? "doc" : "code";
+        const result = upsertSource(app, { spaceId, kind, uri: rel, title: rel, text: buf.toString("utf8"), meta: { directoryRoot: space.rootPath } });
+        // Unchanged files imported before directory ownership was recorded: adopt them (once, not on every sync).
+        if (result.status === "unchanged")
+          run(app.db, "update sources set meta=json_set(meta, '$.directoryRoot', ?) where id=? and json_extract(meta, '$.directoryRoot') is not ?", space.rootPath, result.id, space.rootPath);
+        tally(report, result);
+      }
+    } catch (e) {
+      report.skipped.push(rel + "：" + (e as Error).message);
     }
     if (onProgress && i % 50 === 0) await onProgress(i, files.length);
   }
@@ -224,6 +255,11 @@ export async function syncDirectoryLocally(app: App, spaceId: string, onProgress
     const legacy = meta.directoryRoot === undefined && space.kind === "repo" && row.kind === "code" && !/^[a-z][a-z\d+.-]*:/i.test(row.uri) && !isAbsolute(row.uri);
     const managed = meta.directoryRoot === space.rootPath || legacy;
     if (managed && !seen.has(row.uri)) {
+      // A parser may have been disabled while its binary original is still in this directory.
+      if ("parser" in meta && !exclude.some(re => re.test(row.uri)) && existsSync(join(space.rootPath, row.uri))) {
+        if (!present.has(row.uri)) report.skipped.push(row.uri + "：没有能读这种格式的解析器");
+        continue;
+      }
       deleteSource(app, row.id);
       report.removed++;
     }
@@ -235,23 +271,23 @@ export async function syncDirectoryLocally(app: App, spaceId: string, onProgress
 }
 
 /** Import an arbitrary directory into a non-repo space (uri = path relative to that directory). */
-export async function importDirectory(app: App, spaceId: string, dir: string): Promise<ImportReport> {
+export async function importDirectory(app: App, spaceId: string, dir: string, user = OWNER): Promise<ImportReport> {
   getSpace(app, spaceId);
-  return directoryImport(app, { kind: "directory", spaceId, dir: resolve(dir) });
+  return directoryImport(app, { kind: "directory", spaceId, user, dir: resolve(dir) });
 }
 
-export async function importDirectoryLocally(app: App, spaceId: string, dir: string, onProgress?: (done: number, total: number) => Promise<void>): Promise<ImportReport> {
+export async function importDirectoryLocally(app: App, spaceId: string, dir: string, onProgress?: (done: number, total: number) => Promise<void>, parsers = fileParsers(app, spaceId, OWNER)): Promise<ImportReport> {
   const root = resolve(dir);
   const report = emptyReport();
-  const files = repoFiles(root);
+  const files = repoFiles(root, file => !!fileParser(app, parsers, file));
   await ensureGrammars(files);
   for (const [i, rel] of files.entries()) {
     try {
-      const r = await importFile(app, spaceId, join(root, rel), `${basename(root)}/${rel}`);
+      const r = await importFile(app, spaceId, join(root, rel), `${basename(root)}/${rel}`, undefined, false, { parsers });
       if (r) tally(report, r);
       else report.skipped.push(rel);
-    } catch {
-      report.skipped.push(rel);
+    } catch (e) {
+      report.skipped.push(rel + "：" + (e as Error).message);
     }
     if (onProgress && i % 50 === 0) await onProgress(i, files.length);
   }
@@ -286,14 +322,31 @@ function htmlToText(html: string) {
  * A web page or a Feishu doc as an original. For Feishu docs, `related` lists linked docs that were
  * imported or changed along with it (they need understanding too) and `missing` those that could not be read.
  */
-export async function importUrl(app: App, spaceId: string, url: string, opts: { depth?: number; archive?: boolean } = {}): Promise<UpsertResult & { related?: string[]; missing?: { url: string; title: string; error: string }[] }> {
-  if (/feishu\.cn|larksuite\.com|larkoffice\.com/.test(url)) {
+export async function importUrl(app: App, spaceId: string, url: string, opts: { depth?: number; archive?: boolean; user?: string } = {}): Promise<UpsertResult & { related?: string[]; missing?: { url: string; title: string; error: string }[] }> {
+  const special = /feishu\.cn|larksuite\.com|larkoffice\.com/.test(url);
+  const parsers = fileParsers(app, spaceId, opts.user ?? OWNER);
+  const order = app.config.documents.parserOrder ?? [];
+  const name = basename(new URL(url).pathname);
+  const parser = pickParser(parsers.list, order, name, special || builtinFile(name), undefined, url);
+  if (special && !parser) {
     const { importLarkDocument } = await import("../channels/lark-docs.ts");
     return importLarkDocument(app, spaceId, url, { depth: opts.depth, archive: opts.archive });
   }
   const res = await fetch(url, { headers: { "user-agent": "omem/0.2 (+personal knowledge capture)" }, signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new HttpError(502, `抓取失败：HTTP ${res.status}`);
   const type = res.headers.get("content-type") ?? "";
+  if (parser && (!type.includes("html") || order.includes(parser.id))) {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    if (res.body) for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      size += chunk.length;
+      if (size > MAX_INPUT) throw new HttpError(413, "解析输入超过 200 MiB");
+      chunks.push(chunk);
+    }
+    const parsed = await parsers.parse(parser.id, { name: name || url, url, mimeType: type, bytes: Buffer.concat(chunks) });
+    return upsertSource(app, { archive: opts.archive, spaceId, kind: "web", uri: url, title: parsed.title ?? url, text: parsed.text,
+      meta: { url, parser: parsed.parser, fields: parsed.meta, display: parsed.display } });
+  }
   const raw = await res.text();
   const { title, body } = type.includes("html") ? htmlToText(raw) : { title: url, body: raw };
   return upsertSource(app, { archive: opts.archive, spaceId, kind: "web", uri: url, title: title || url, text: body, meta: { url } });

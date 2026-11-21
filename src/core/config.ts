@@ -722,6 +722,7 @@ export const configSchema = z.object({
     .default({ enabled: false, provider: "local", model: "onnx-community/bge-reranker-v2-m3-ONNX", top: 20, maxTokens: 512, threads: 0, timeoutMs: 10_000, passiveThreshold: 0.5 }),
   documents: z
     .object({
+      parserOrder: z.array(z.string()).optional(),
       /** Command that prints Markdown for PDF/DOCX on stdout. {file} is replaced. */
       converter: z.string().optional(),
       /** Which built-in converters to try, in order. */

@@ -11,6 +11,7 @@
  *
  * The host's own checks on every write are in checks.ts. docs/v2/wiki-verify.md.
  */
+import { kindBrief } from "../plugins/formats.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
@@ -225,7 +226,7 @@ export async function writeAndVerify(ctx: RunContext) {
   const userId = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? OWNER;
   const verify = verifyOn(app, spaceId, input);
   // The code the page will cite, as it is now (an index left behind gives plain-text code and stale lines).
-  const indexes = await refreshCodeIndexes(app, codeSpaces(app, spaceId, scopeFor(app, userId, readSpaces)), (text) => ctx.event("status", { text }));
+  const indexes = await refreshCodeIndexes(app, codeSpaces(app, spaceId, scopeFor(app, userId, readSpaces)), (text) => ctx.event("status", { text }), undefined, userId);
   if (indexes.synced.length) ctx.event("status", { text: `已同步代码索引：${indexes.synced.join("、")}` });
   const exists = pageExists(app, spaceId, brief.slug);
   const pagesNow = listPages(app, spaceId);
@@ -233,6 +234,7 @@ export async function writeAndVerify(ctx: RunContext) {
   const pageQuestions = listQuestions(app, { spaceId, page: brief.slug, status: ["open", "needs-owner", "answered"], limit: RESOLVE_LIMIT });
   const task = [
     `页面：${brief.slug}「${brief.title}」（类型：${brief.kind}）`,
+    kindBrief(spaceId, brief.kind),
     `用户问题：${brief.question}`,
     `讲解路线：${brief.outline}`,
     `调查入口：${(brief.entry_points ?? []).join("、") || "自行调查"}`,

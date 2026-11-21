@@ -128,6 +128,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
 
   // sources
   "GET /api/sources": cap("sources.view", "q.space"),
+  "GET /api/sources/parsers": cap("sources.view", "list"),
   "GET /api/sources/levels": cap("sources.view", "list"),
   "GET /api/sources/review": cap("sources.view", "q.space"),
   "GET /api/sources/tree": cap("sources.view", "q.space"),
@@ -193,6 +194,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/notifications/read": "self",
 
   // wiki
+  "GET /api/wiki/kinds": cap("wiki.view", "list"),
   "GET /api/wiki/:space": cap("wiki.view", "p.space"),
   "GET /api/wiki/:space/page/*": cap("wiki.view", "p.space"),
   "PUT /api/wiki/:space/page/*": s("wiki.write", "p.space"),

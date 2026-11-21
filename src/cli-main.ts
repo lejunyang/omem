@@ -43,6 +43,17 @@ const open = () => {
   return app;
 };
 
+// Standalone imports need the same trusted format registrations as the server.
+let closeImportFormats: (() => void) | undefined;
+program.hook("postAction", () => closeImportFormats?.());
+async function loadImportFormats(app: App) {
+  const { loadPlugins, forgetPlugin } = await import("./plugins/registry.ts");
+  const plugins = await loadPlugins(app, undefined, manifest => manifest.permissions.sourceParser);
+  closeImportFormats = () => {
+    for (const plugin of plugins) if (plugin.source === "data") forgetPlugin(plugin.manifest.id);
+  };
+}
+
 decisionCommands(program, open);
 
 /** Is an omem service already running on this library? Then let it run the job. */
@@ -916,6 +927,7 @@ space
     if (o.exclude?.length) updateSpace(app, s.id, { settings: { ...s.settings, exclude: o.exclude } });
     console.log(`已创建空间 ${s.id}`);
     if (s.rootPath) {
+      await loadImportFormats(app);
       const r = await syncDirectorySpace(app, s.id);
       console.log(`已导入 ${r.created} 个文件（跳过 ${r.skipped.length}）`);
     }
@@ -926,6 +938,7 @@ space
   .option("--exclude <patterns...>", "设置不导入的路径（替换原有设置；已导入的会被移除）")
   .action(async (id, o) => {
     const app = open();
+    await loadImportFormats(app);
     if (o.exclude) updateSpace(app, id, { settings: { ...getSpace(app, id).settings, exclude: o.exclude } });
     const { syncSubmodules } = await import("./agents/jobs.ts");
     const sub = await syncSubmodules(app, id, (t) => console.log(t));
@@ -941,6 +954,7 @@ program
   .option("--no-ingest", "只保存，不让助理整理")
   .action(async (input, o) => {
     const app = open();
+    if (input !== "-" && (existsSync(input) || /^https?:/.test(input))) await loadImportFormats(app);
     let ids: string[] = [];
     if (input === "-") {
       const text = readFileSync(0, "utf8");
@@ -959,7 +973,7 @@ program
       console.log(`新增 ${r.created}，更新 ${r.updated}，未变 ${r.unchanged}，跳过 ${r.skipped.length}`);
     } else if (existsSync(input)) {
       const r = await importFile(app, o.space, input);
-      if (!r) return console.error("不支持的文件类型");
+      if (!r) return console.error("没有能读这种格式的解析器");
       ids = r.status === "unchanged" ? [] : [r.id];
       console.log(`${r.status} ${r.id}`);
     } else {
@@ -1732,6 +1746,7 @@ program
   .description("同步所有关联目录的空间")
   .action(async () => {
     const app = open();
+    await loadImportFormats(app);
     for (const s of listSpaces(app))
       if (s.rootPath) {
         const { syncSubmodules } = await import("./agents/jobs.ts");

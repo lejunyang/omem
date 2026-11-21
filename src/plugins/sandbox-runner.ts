@@ -84,6 +84,8 @@ const items = new Map<string, import("./types.ts").ItemProvider>();
 const retrievers = new Map<string, import("./types.ts").Retriever>();
 const rerankers = new Map<string, import("./types.ts").Reranker>();
 const activeSearch = new Map<number, AbortController>();
+const parsers = new Map<string, import("./types.ts").SourceParser>();
+const kinds = new Map<string, import("./types.ts").WikiPageKind>();
 const reviews = new Map<string, import("./types.ts").ReviewProvider>();
 const subscriptions = new Map<string, import("./types.ts").Subscription>();
 const hooks = new Map<string, PluginHook>();
@@ -92,10 +94,20 @@ async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { items: [], retrievers: [], rerankers: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
+  const declared: { parsers: unknown[]; kinds: unknown[]; items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { parsers: [], kinds: [], items: [], retrievers: [], rerankers: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
+    sourceParser(def) {
+      if (typeof def.parse !== "function") throw new Error("解析器缺少 parse 方法");
+      parsers.set(def.id, def);
+      declared.parsers.push({ id: def.id, label: def.label, match: def.match });
+    },
+    wikiPageKind(def) {
+      const { check, ...meta } = def;
+      kinds.set(def.kind, def);
+      declared.kinds.push({ ...meta, checked: !!check });
+    },
     subscribe(def) {
       subscriptions.set(def.id, def);
       declared.subscriptions.push({ id: def.id, events: def.events });
@@ -174,7 +186,7 @@ process.on("message", async (m: Msg) => {
     let value: unknown;
     const search = m.t === "retriever" || m.t === "reranker" ? new AbortController() : null;
     if (search) activeSearch.set(m.id!, search);
-    if (search || m.t === "event" || m.t === "review" || m.t === "item") {
+    if (search || m.t === "event" || m.t === "review" || m.t === "item" || m.t === "parse" || m.t === "check") {
       const ctx: import("./types.ts").CallContext = {
         userId: m.userId, spaceId: m.spaceId, signal: search?.signal ?? AbortSignal.timeout(15000),
         async connection(provider) {
@@ -188,6 +200,8 @@ process.on("message", async (m: Msg) => {
         value = refs.slice(0, m.arg.limit);
       }
       else if (m.t === "reranker") value = await rerankers.get(m.name)!.score(ctx, m.arg);
+      else if (m.t === "parse") value = await parsers.get(m.name)!.parse(ctx, { ...m.arg, bytes: Buffer.from(m.arg.bytes, "base64") });
+      else if (m.t === "check") value = await kinds.get(m.name)!.check!(ctx, m.arg);
       else if (m.t === "event") await subscriptions.get(m.name)!.handle(ctx, m.event);
       else if (m.t === "item") {
         const def = items.get(m.name)!;

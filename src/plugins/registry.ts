@@ -27,7 +27,7 @@ import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
-import { setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
+import { codeHash, setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
 import { startSandbox } from "./sandbox.ts";
 import { installInfo } from "./install.ts";
 import { broughtBy, seedContributions, pluginMcpSchema } from "./contributions.ts";
@@ -96,6 +96,8 @@ export const manifestSchema = z.object({
   permissions: z
     .object({
       events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution", "finding.thread"])).default([]),
+      sourceParser: z.boolean().default(false),
+      wikiPageKind: z.boolean().default(false),
       reviewProvider: z.boolean().default(false),
       itemProvider: z.boolean().default(false),
       retriever: z.boolean().default(false),
@@ -108,7 +110,7 @@ export const manifestSchema = z.object({
       /** Backends it brings a login method for (`api.agentLogin`, docs/v2/agent-accounts.md §6): it writes credentials into members' account folders. */
       agentLogin: z.array(z.string()).default([]),
     })
-    .default({ events: [], reviewProvider: false, itemProvider: false, metricProvider: false, retriever: false, reranker: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
+    .default({ events: [], sourceParser: false, wikiPageKind: false, reviewProvider: false, itemProvider: false, metricProvider: false, retriever: false, reranker: false, write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
 }).refine((m) => Object.keys(m.mcp).every((n) => /^[a-z][a-z0-9-]{0,39}$/.test(`${m.id}-${n}`)), "MCP 服务加插件前缀后最多 40 个字符")
   .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符")
   .superRefine((m, ctx) => {
@@ -250,7 +252,7 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
   const prefix = `${manifest.id}_`;
   if (p.source === "data" && trustMode(app, manifest.id) === "isolated") return loadIsolated(app, p);
   const api: PluginApi = {
-    ...registerProcessHooks(manifest, p.connectors),
+    ...processApi(p),
     id: manifest.id,
     object(def) { p.connectors.push(registerObject(manifest.id, def)); },
     hook(def) { p.connectors.push(registerHook(manifest.id, def)); },
@@ -338,6 +340,13 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
  * the same tool as the button (under the tool's approval rung), whichever plugin brings it.
  */
 const ACTIONS_GROUP = "object-actions";
+function processApi(p: LoadedPlugin) {
+  const version = p.manifest.permissions.sourceParser
+    ? installInfo(p.dir)?.version || p.manifest.version || codeHash(p.dir)
+    : p.manifest.version;
+  return registerProcessHooks(p.manifest, p.connectors, version);
+}
+
 function groupTools(p: LoadedPlugin) {
   const names = p.tools.map((t) => t.name);
   const actions = new Set(pluginObjectKinds().filter((d) => d.plugin === p.manifest.id).flatMap((d) => (d.actions ?? []).map((a) => a.tool)).filter((t) => names.includes(t)));
@@ -359,7 +368,7 @@ async function loadIsolated(app: App, p: LoadedPlugin) {
   const server = serverFile(p.dir, manifest);
   if (!server || !existsSync(server)) return;
   const sb = await startSandbox(app, { id: manifest.id, dir: p.dir, server, services: manifest.services }, {
-    ...registerProcessHooks(manifest, p.connectors),
+    ...processApi(p),
     prefix: `${manifest.id}_`,
     packageRoot: packageRoot(),
     connected: connectedTo(manifest.id),
@@ -577,7 +586,7 @@ export function setPluginIcon(app: App, id: string, icon: string) {
 }
 
 /** Without roots: the built-in plugins, the data directory's, then the ones linked on this device (links.ts). */
-export async function loadPlugins(app: App, roots?: { dir: string; source: LoadedPlugin["source"] }[]) {
+export async function loadPlugins(app: App, roots?: { dir: string; source: LoadedPlugin["source"] }[], include?: (m: PluginManifest) => boolean) {
   host = app;
   const loaded: { p: LoadedPlugin; name: string }[] = [];
   for (const root of roots ?? [{ dir: builtinPluginsDir(), source: "builtin" }, { dir: dataPluginsDir(app), source: "data" }]) {
@@ -585,12 +594,12 @@ export async function loadPlugins(app: App, roots?: { dir: string; source: Loade
     for (const entry of readdirSync(root.dir, { withFileTypes: true })) {
       const dir = join(root.dir, entry.name);
       if (!entry.isDirectory() || !existsSync(join(dir, "plugin.yaml"))) continue;
-      const p = await loadDir(app, dir, root.source, entry.name);
+      const p = await loadDir(app, dir, root.source, entry.name, false, include);
       if (p) loaded.push({ p, name: entry.name });
     }
   }
   if (!roots) for (const [id, link] of Object.entries(readLinks(app))) {
-    const p = await loadDir(app, link.dir, "data", id, true);
+    const p = await loadDir(app, link.dir, "data", id, true, include);
     if (p) loaded.push({ p, name: id });
   }
   // What they bring goes in once every plugin's code has run: a pack's flow may name another plugin's object kind.
@@ -599,10 +608,11 @@ export async function loadPlugins(app: App, roots?: { dir: string; source: Loade
 }
 
 /** One plugin directory: `name` is the id it must have (its directory's name, or what it was linked as). Its code runs; what it brings is seedLoaded's. */
-async function loadDir(app: App, dir: string, source: LoadedPlugin["source"], name: string, linked = false): Promise<LoadedPlugin | null> {
+async function loadDir(app: App, dir: string, source: LoadedPlugin["source"], name: string, linked = false, include?: (m: PluginManifest) => boolean): Promise<LoadedPlugin | null> {
   try {
     if (linked && !existsSync(join(dir, "plugin.yaml"))) throw new Error(`链接的目录 ${dir} 不在了或没有 plugin.yaml`);
     const manifest = manifestSchema.parse(YAML.parse(readFileSync(join(dir, "plugin.yaml"), "utf8")));
+    if (include && !include(manifest)) return null;
     if (manifest.id !== name) throw new Error(linked ? `链接时它是 ${name}，现在 plugin.yaml 写的是 ${manifest.id}：重新 omem plugin link` : `目录名 ${name} 与插件 id ${manifest.id} 不一致`);
     let p = plugins.get(manifest.id);
     if (p && p.dir !== dir) throw new Error(`已有同名插件（${p.source === "builtin" ? "内置" : p.dir}）`);

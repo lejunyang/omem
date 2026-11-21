@@ -16,7 +16,7 @@ import { extractCites, extractLinks, folderOf, listPages, resolveSlug, resolveSo
 export const HARD_LENGTH = 12000;
 export const SOFT_LENGTH = 6000;
 
-export type Issue = { kind: "lost-entries" | "cite-missing" | "cite-deleted" | "cite-range" | "cite-unreachable" | "plain-code" | "too-long" | "mermaid"; text: string };
+export type Issue = { kind: "lost-entries" | "cite-missing" | "cite-deleted" | "cite-range" | "cite-unreachable" | "plain-code" | "too-long" | "mermaid" | "plugin-kind"; text: string };
 
 /** What a reader reads: link targets (`](src:…)`, `](https://…)`) and front matter do not count. */
 export function textLength(body: string) {
@@ -300,7 +300,7 @@ export function staleCodeIndexes(app: App, spaces: string[]): IndexState[] {
 }
 
 /** Bring stale code indexes up to date before a page is planned or written; what could not be is returned to report. */
-export async function refreshCodeIndexes(app: App, spaces: string[], onStatus?: (text: string) => void, timeoutMs = 10 * 60_000) {
+export async function refreshCodeIndexes(app: App, spaces: string[], onStatus?: (text: string) => void, timeoutMs = 10 * 60_000, user = "owner") {
   const notes: string[] = [];
   const synced: string[] = [];
   for (const st of staleCodeIndexes(app, spaces)) {
@@ -312,7 +312,7 @@ export async function refreshCodeIndexes(app: App, spaces: string[], onStatus?: 
     try {
       const { syncDirectorySpace } = await import("../sources/import.ts");
       let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([syncDirectorySpace(app, st.space), new Promise((_, reject) => (timer = setTimeout(() => reject(new Error("超过 10 分钟没有完成")), timeoutMs)))]).finally(() => clearTimeout(timer));
+      await Promise.race([syncDirectorySpace(app, st.space, undefined, user), new Promise((_, reject) => (timer = setTimeout(() => reject(new Error("超过 10 分钟没有完成")), timeoutMs)))]).finally(() => clearTimeout(timer));
       synced.push(st.name);
     } catch (e) {
       notes.push(`代码空间 ${st.name} ${st.reason}，同步失败（${(e as Error).message}）：页面里引用它的代码可能对不上`);

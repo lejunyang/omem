@@ -1,3 +1,4 @@
+import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
 import { globalCapability, spacesWithCapability } from "../auth/capabilities.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
@@ -341,7 +342,7 @@ async function relinkSpace(ctx: ToolContext, id: string, root: string) {
   const { relinkRepoSpace } = await import("./repo-relink.ts");
   const r = relinkRepoSpace(ctx.app, id, root);
   if (!r.done) throw new HttpError(409, `空间 ${id} 还有没应用的交办（${r.pending.map((p) => p.run).join("、")}），它们的工作区在原来的仓库里；先应用，或本人同意后用 clean_code_runs 丢弃再改`);
-  const report = await syncDirectorySpace(ctx.app, id);
+  const report = await syncDirectorySpace(ctx.app, id, undefined, ctx.userId ?? OWNER);
   return `空间 ${id}（${s.name}）改为关联 ${r.root}（原来是 ${r.old}）。重新导入：新增 ${report.created}，更新 ${report.updated}。${r.pool ? `omem 自建的 ${r.pool} 个工作区属于原来的仓库，已删掉，下次交办在新目录的仓库上重建。` : ""}交办在 repo_spaces 里写 "${id}"。`;
 }
 
@@ -420,7 +421,7 @@ def({
     try {
       const { syncSubmodules } = await import("./jobs.ts");
       const sub = await syncSubmodules(ctx.app, s.id);
-      const report = await syncDirectorySpace(ctx.app, s.id);
+      const report = await syncDirectorySpace(ctx.app, s.id, undefined, ctx.userId ?? OWNER);
       const subText = !sub
         ? ""
         : `\n子模块：共 ${sub.total} 个，已检出并索引 ${sub.ready} 个${sub.failed.length ? `；拉取失败 ${sub.failed.length} 个（${sub.failed.map((f) => `${f.path}：${f.error}`).join("；").slice(0, 600)}）` : ""}${!sub.managed && sub.ready < sub.total ? "；本地仓库由本人管理，未检出的子模块需要本人在仓库里 git submodule update --init --recursive 后再同步" : ""}`;
@@ -1895,7 +1896,7 @@ def({
     page: z.string().describe("页面路径，如 overview、retrieval/how-search-works；index 是空间目录页"),
     title: z.string(),
     summary: z.string().describe("一两句话：用户读完能得到什么"),
-    kind: z.enum(["index", "guide", "concept", "howto", "reference", "topic", "person", "project", "log", "case"]).optional().describe("case：一个解决过的问题（现象、判断、原因、解法、适用条件），放在 cases/ 下"),
+    kind: z.string().min(1).optional().describe("可用 index、guide、concept、howto、reference、topic、person、project、log、case 或本空间已注册的插件类型。case：一个解决过的问题（现象、判断、原因、解法、适用条件），放在 cases/ 下"),
     body: z.string().describe("正文 Markdown，不要再写一级标题"),
     space: z.string().optional(),
     reason: z.string().optional().describe("这次修改的原因，写入版本历史"),
@@ -1929,27 +1930,30 @@ def({
     const wv = await import("../wiki/verify.ts");
     const slug = checkSlug(a.page);
     const draft = wv.draftTarget(ctx.app, ctx.runId, id, slug);
-    const before = existed ? readPage(ctx.app, id, slug).body : null;
-    const checked = wc.checkPageWrite(ctx.app, { spaceId: id, slug, kind: a.kind, title: a.title, body: a.body.replace(/^#\s+.+\n+/, ""), before, readable: ctx.spaces, restoreLost: wv.refusals(ctx.app, ctx.runId, "lost-entries") > 0 || !ctx.runId });
+    const previous = existed ? readPage(ctx.app, id, slug) : null;
+    const before = previous?.body ?? null;
+    const kind = a.kind ?? previous?.meta.kind ?? "page";
+    if (!knownKind(id, kind) && previous?.meta.kind !== kind) throw new HttpError(400, "未注册的页面类型：" + kind);
+    const checked = wc.checkPageWrite(ctx.app, { spaceId: id, slug, kind, title: a.title, body: a.body.replace(/^#\s+.+\n+/, ""), before, readable: ctx.spaces, restoreLost: wv.refusals(ctx.app, ctx.runId, "lost-entries") > 0 || !ctx.runId });
     // Diagrams that will not draw (mermaid's own parser, the one the web page uses).
     checked.errors.push(...(await wc.mermaidIssues(checked.body)));
+    // Check the text that will be saved, including the owner's own section.
+    const body = before !== null && ctx.actor === "agent" ? keepOwnerSection(before, checked.body) : checked.body;
+    const ownerKept = body !== checked.body;
+    checked.errors.push(...await checkKind(ctx.app, id, ctx.userId ?? OWNER, kind, { slug, title: a.title, body }));
     if (checked.errors.length) {
       wv.noteWriteCheck(ctx.app, ctx.runId, { rejected: [...new Set(checked.errors.map((e) => e.kind))] });
       throw new HttpError(400, `页面没有保存，先改这些地方再提交：\n${checked.errors.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}`);
     }
     if (checked.fixes.length) wv.noteWriteCheck(ctx.app, ctx.runId, { restored: 1 });
-    // The section headed 本人补充 is the owner's (agents/work-state.ts): an agent's rewrite keeps it word for word.
-    const kept = before !== null && ctx.actor === "agent" ? keepOwnerSection(before, checked.body) : checked.body;
-    const ownerKept = kept !== checked.body;
-    const body = kept;
     const questions = (a.questions ?? []).map((q) => (typeof q === "string" ? { question: q } : q)).filter((q) => q.question.trim());
     const notes = checked.notes.length ? `\n${checked.notes.map((n) => `- ${n}`).join("\n")}` : "";
     if (draft) {
-      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind: a.kind ?? "page", body, reason: a.reason, questions });
+      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind, body, reason: a.reason, questions });
       setRunOutput(ctx.app, ctx.runId!, { writeNotes: checked.notes });
       return `已保存页面 ${id}/${slug} 的草稿（${wc.textLength(body)} 字）：写作结束后由核对角色对照原件和代码核对，有问题会交回给你改，通过后发布。${notes}`;
     }
-    const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, runId: ctx.runId, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
+    const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind }, body }, { actor: ctx.actor, runId: ctx.runId, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
     appendLog(ctx.app, id, `${existed ? "更新" : "新建"} [[${p.slug}]]${a.reason ? "：" + a.reason : ""}`);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: new Date().toISOString() } });
     // What the writer was not sure of: kept as the page's open questions (wiki/questions.ts), not in the page.
@@ -4319,7 +4323,7 @@ def({
   write: true,
   schema: z.object({ url: z.string().url(), space: z.string().optional(), depth: z.number().int().min(0).max(5).optional() }),
   handler: async (ctx, a) => {
-    const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url, { depth: a.depth });
+    const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url, { depth: a.depth, user: ctx.userId ?? OWNER });
     const linked = r.related?.length ? `；链接的文档新增或更新 ${r.related.length} 篇：${r.related.join("、")}` : "";
     const missing = r.missing?.length ? `；读不到 ${r.missing.length} 篇（已提醒本人）：${r.missing.map((m) => m.title || m.url).join("、")}` : "";
     return `已保存原件 ${r.id}（${r.status}）${linked}${missing}`;
@@ -4745,7 +4749,7 @@ const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后
 async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
   featureGate(ctx, "messages");
   const { messageFile } = await import("../channels/lark-message-files.ts");
-  const f = await messageFile(ctx.app, messageId, key, { space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id) });
+  const f = await messageFile(ctx.app, messageId, key, { user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id) });
   if (f.sourceId) {
     await requireReadable(ctx.app, ctx.userId ?? OWNER, f.sourceId);
     const s = getSource(ctx.app, f.sourceId);
@@ -5622,7 +5626,7 @@ def({
         z.object({
           slug: z.string(),
           title: z.string(),
-          kind: z.enum(["index", "guide", "concept", "howto", "reference", "topic", "person", "project", "log", "case"]).describe("和 write_page 的 kind 相同；目录说明页用 index，解决过的问题用 case"),
+          kind: z.string().min(1).describe("和 write_page 的 kind 相同；目录说明页用 index，解决过的问题用 case"),
           question: z.string().describe("这页要回答的用户问题"),
           outline: z.string().describe("计划的讲解路线：用哪个真实例子、按什么顺序讲"),
           entry_points: z.array(z.string()).describe("调查入口：文件路径、符号或文档"),
@@ -5648,6 +5652,7 @@ def({
     // The same topic already written in a related space: the plan says whether to link there or why to write here (wiki/checks.ts).
     const { sameTopicElsewhere } = await import("../wiki/checks.ts");
     const target = getRun(ctx.app, ctx.runId).spaceId ?? ctx.spaceId;
+    for (const page of a.pages) if (!knownKind(target, page.kind)) throw new HttpError(400, "未注册的页面类型：" + page.kind);
     const unexplained = a.pages
       .filter((p) => !p.overlap && p.kind !== "index")
       .map((p) => ({ p, same: sameTopicElsewhere(ctx.app, target, p.title, ctx.spaces) }))

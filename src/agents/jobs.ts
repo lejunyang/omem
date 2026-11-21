@@ -1,3 +1,4 @@
+import { kindBrief } from "../plugins/formats.ts";
 import { labelDecisions } from "../core/decision-log.ts";
 import { studyBrief } from "./study-brief.ts";
 import { labelReplies, replyLine } from "./reply-outcomes.ts";
@@ -1024,7 +1025,7 @@ registerHandler("wiki-plan", async (ctx) => {
   const existing = listPages(ctx.app, spaceId);
   // The code the plan reads, indexed as it is now; and what related spaces already cover (wiki/checks.ts, verify.ts).
   const { codeSpaces, refreshCodeIndexes } = await import("../wiki/checks.ts");
-  const indexes = await refreshCodeIndexes(ctx.app, codeSpaces(ctx.app, spaceId, scopeFor(ctx.app, userId, sources)), (text) => ctx.event("status", { text }));
+  const indexes = await refreshCodeIndexes(ctx.app, codeSpaces(ctx.app, spaceId, scopeFor(ctx.app, userId, sources)), (text) => ctx.event("status", { text }), undefined, userId);
   const relatedPages = relatedIds(ctx.app, spaceId)
     .filter((id) => !allowed || allowed.includes(id))
     .map((id) => {
@@ -1037,6 +1038,7 @@ registerHandler("wiki-plan", async (ctx) => {
     "wiki-planner",
     spaceId,
     [
+      kindBrief(spaceId),
       focus ? `本人的要求：${focus}` : "为这个空间规划完整的 Wiki。",
       indexes.synced.length ? `规划前已同步这些代码空间的索引：${indexes.synced.join("、")}。` : "",
       indexes.notes.join("\n"),
@@ -1084,17 +1086,18 @@ registerHandler("wiki-lint", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
   syncWiki(ctx.app, spaceId);
   // An automatic check names the pages it chose (a batch); a manual one looks at all of them.
-  const only = (ctx.run.input as { pages?: string[] }).pages;
-  // Pages nightly replay found misleading (agents/replay.ts): checked whether or not their originals changed.
-  const recheck = ((ctx.run.input as { recheck?: { page: string; note: string }[] }).recheck ?? []).filter((p) => pageExists(ctx.app, spaceId, p.page));
-  const stale = stalePages(ctx.app, spaceId).filter((s) => (!only?.length && !recheck.length) || only?.includes(s.page_id.slice(spaceId.length + 1)) || recheck.some((p) => p.page === s.page_id.slice(spaceId.length + 1)));
+  const { pages, recheck: requested } = ctx.run.input as { pages?: string[]; recheck?: { page: string; note: string }[] };
+  // Periodic upkeep and nightly replay can request a check independently of source changes.
+  const recheck = (requested ?? []).filter((p) => pageExists(ctx.app, spaceId, p.page));
+  const selected = pages || requested ? new Set([...(pages ?? []), ...recheck.map(p => p.page)]) : null;
+  const stale = stalePages(ctx.app, spaceId).filter(s => !selected || selected.has(s.page_id.slice(spaceId.length + 1)));
   if (!stale.length && !recheck.length) return { quiet: true, summary: "没有受影响的页面" };
   const task = [
     stale.length ? `受影响的页面与变化的原件：\n${stale.map((s) => `- ${s.page_id.split("/").slice(1).join("/")}：${s.uris}`).join("\n")}` : "",
-    recheck.length ? `夜间复盘发现这些页面可能过时（不看它们时回答更好）：对照它引用的原件和最近的材料逐段核对，过时的改掉或标出：\n${recheck.map((p) => `- ${p.page}：${p.note}`).join("\n")}` : "",
+    recheck.length ? `需复查的页面：对照它引用的原件和最近的材料逐段核对，过时的改掉或标出：\n${recheck.map((p) => `- ${p.page}：${p.note}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
   const r = await agent(ctx, "wiki-linter", spaceId, task);
-  return { ...quietOf(ctx, r.text), pages: stale.length + recheck.length };
+  return { ...quietOf(ctx, r.text), pages: new Set([...stale.map(s => s.page_id.slice(spaceId.length + 1)), ...recheck.map(p => p.page)]).size };
 });
 
 /** Pages one folder pass looks at (the rest of a crowded folder goes to the next pass). */
@@ -1141,7 +1144,7 @@ registerHandler("wiki-organize", async (ctx) => {
 registerHandler("sync", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
   const sub = await syncSubmodules(ctx.app, spaceId, (text) => ctx.event("status", { text }));
-  const report = await syncDirectorySpace(ctx.app, spaceId, (done, total) => ctx.event("status", { text: `同步 ${done}/${total}` }));
+  const report = await syncDirectorySpace(ctx.app, spaceId, (done, total) => ctx.event("status", { text: `同步 ${done}/${total}` }), runUser(ctx.app, ctx.run.id));
   ctx.event("status", { text: `新增 ${report.created}，更新 ${report.updated}，移除 ${report.removed}，未变 ${report.unchanged}` });
   const space = getSpace(ctx.app, spaceId);
   if ((report.updated || report.removed) && listPages(ctx.app, spaceId).length && space.settings.autoLint !== false && stalePages(ctx.app, spaceId).length)

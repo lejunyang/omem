@@ -3,7 +3,8 @@ import type { App } from "../core/app.ts";
 import { OWNER } from "../core/users.ts";
 import { readableSourceIds } from "../auth/visibility.ts";
 import { capabilityAccess } from "../auth/capabilities.ts";
-import { retrievers, rerankers, untilAbort, type RegisteredReranker } from "../plugins/process-hooks.ts";
+import { untilAbort } from "../core/util.ts";
+import { retrievers, rerankers, type RegisteredReranker } from "../plugins/process-hooks.ts";
 import type { CallContext, RetrievalKind, RetrievalRef } from "../plugins/types.ts";
 import type { Hit, HitType, SearchOptions } from "./search.ts";
 

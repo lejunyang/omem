@@ -56,9 +56,26 @@ export type Reranker = {
   id: string; label: string;
   score(ctx: CallContext, req: { query: string; candidates: { id: string; text: string }[] }): Promise<number[]>;
 };
+export type SourceDisplay =
+  | { kind: "table"; columns: string[]; rowLines: [number, number][] }
+  | { kind: "records"; items: { title: string; lines: [number, number] }[] };
+export type ParserInput = { name: string; url?: string; mimeType?: string; bytes: Uint8Array };
+export type ParsedSource = { title?: string; text: string; meta?: Record<string, string>; display?: SourceDisplay };
+export type SourceParser = {
+  id: string; label: string;
+  match: { extensions?: string[]; mimeTypes?: string[]; urlPatterns?: string[] };
+  parse(ctx: CallContext, input: ParserInput): Promise<ParsedSource>;
+};
+export type WikiPageKind = {
+  kind: string; label: string; describe: string; template: string;
+  check?(ctx: CallContext, page: { slug: string; title: string; body: string }): Promise<{ line?: number; message: string }[]>;
+  upkeep?: { everyDays?: number; onSourcesChanged?: boolean };
+};
 export type ProcessApi = {
   retriever(def: Retriever): void;
   reranker(def: Reranker): void;
+  sourceParser(def: SourceParser): void;
+  wikiPageKind(def: WikiPageKind): void;
   subscribe(def: Subscription): void;
   reviewProvider(def: ReviewProvider): void;
   itemProvider(def: ItemProvider): void;
