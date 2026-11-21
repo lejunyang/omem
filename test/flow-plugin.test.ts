@@ -1,5 +1,5 @@
 import { stagePlugin } from "./flow-plugin-fixture.ts";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
@@ -61,6 +61,23 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     await ownerAction(app, id, "mark", "done", "已人工核对");
     expect(flowView(app, id).stages[0].state).toBe("done");
     await setPluginEnabled(app, "stagekit", true);
+  });
+  it("多个慢插件信号并发有界，Git 巡检仍可独立结束", async () => {
+    const stages = Array.from({length:7},(_,i) => ({id:"slow"+i,name:"慢检查",by:"wait",needs:[],done:{signal:"stagekit:delayed"}}));
+    const previousLimit = app.config.flows.autoAdvance;
+    app.config.flows.autoAdvance = 20;
+    const id = await begin([...stages,{id:"push",name:"等待推送",by:"wait",needs:[],done:{signal:"git.pushed"}}]);
+    const data = join(app.home,"plugin-data","stagekit");
+    try {
+      await vi.waitFor(() => expect(readdirSync(data).filter(n => n.endsWith(".asked"))).toHaveLength(3));
+      const git = checkGitSignals(app);
+      await vi.waitFor(async () => {
+        expect(flowView(app,id).stages.at(-1)?.waitingSignal?.checkedAt).toEqual(expect.any(String));
+      });
+      await git;
+      expect(readdirSync(data).filter(n => n.endsWith(".asked"))).toHaveLength(3);
+    } finally { app.config.flows.autoAdvance = previousLimit; writeFileSync(join(data,"release"),"ready"); }
+    await vi.waitFor(() => expect(all(app.db,"select id from flow_signals where item_id=? and type='stagekit:delayed'",id).length).toBeGreaterThanOrEqual(3));
   });
   const job = (fail = false) => ({ id: "job", name: "运行作业", by: { runner: "stagekit:job", with: { fail } }, budget: { minutes: 10 } });
   it("按已有授权开始的运行器只记一次自动开始", async () => {

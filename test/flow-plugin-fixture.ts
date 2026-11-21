@@ -20,6 +20,14 @@ export const stagePlugin = `import { existsSync, writeFileSync } from "node:fs";
         return {ref,status:ctx.with.fail ? "failed" : "running",summary:"作业结果"};
       }, async check(ref){ return {ref,status:"done",summary:"已验证：作业完成",evidence:[{text:"标记"}]}; },
       async cancel(ref){writeFileSync(join(data,ref+".cancel"),"cancel");} });
+      api.flowSignal({id:"delayed",name:"等待",describe:"等待文件",async check(ctx,signal){
+        writeFileSync(join(data,ctx.stage.id+".asked"),"asked");
+        while (!existsSync(join(data,"release"))) {
+          signal.throwIfAborted();
+          await new Promise(resolve => setTimeout(resolve,20));
+        }
+        return {done:false,waitingOn:"待确认"};
+      }});
       api.flowSignal({ id: "mark", name: "标记", describe: "检查通过", params: {type:"object",properties:{fail:{type:"boolean"}}},
         async check(ctx) { if (ctx.with.fail) throw Error("读取失败"); return {done:true,evidence:[{text:"检查单",link:"https://example.org/check"}]}; } });
     }`;

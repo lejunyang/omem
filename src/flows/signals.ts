@@ -1,4 +1,4 @@
-import { pollFlowSignal, pluginSignalWaiting } from "./plugin-signals.ts";
+import { checkPluginSignals, pluginSignalWaiting } from "./plugin-signals.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -147,8 +147,13 @@ export function checkGitSignals(app: App): Promise<void> {
 async function checkNow(app: App) {
   // Piggyback on patrol/repository checks; no timer or projection is needed.
   run(app.db, "delete from flow_signals where at<?", new Date(Date.now() - 30 * 86400_000).toISOString());
-  const rows = all<{ item_id: string; stage_id: string }>(app.db, `select s.item_id,s.stage_id from item_stages s join item_flows f on f.item_id=s.item_id where s.state='doing' and f.ended_at is null`);
+  const rows = all<{ item_id: string; stage_id: string; signal: string }>(app.db, `select s.item_id,s.stage_id,
+    json_extract(d.value,'$.done.signal') as signal from item_stages s join item_flows f on f.item_id=s.item_id,
+    json_each(f.definition,'$.stages') d where s.state='doing' and f.ended_at is null and json_extract(d.value,'$.id')=s.stage_id
+    and signal is not null order by s.item_id,s.stage_id`);
+  checkPluginSignals(app, rows.filter(row => row.signal.includes(":")));
   for (const row of rows) {
+    if (row.signal.includes(":")) continue;
     const { item_id: itemId, stage_id: stageId } = row;
     const f = itemFlow(app, itemId);
     if (!f || f.endedAt) continue;
@@ -158,10 +163,7 @@ async function checkNow(app: App) {
     if (!type) continue;
     const s = getStage(app, itemId, stageId), since = s.enteredAt ?? s.since;
     if (s.state !== "doing") continue;
-    if (type !== "git.pushed" && type !== "git.merged") {
-      await pollFlowSignal(app, f, d, s);
-      continue;
-    }
+    if (type !== "git.pushed" && type !== "git.merged") continue;
     const object = findObject(app, getItem(app, itemId), "code-work");
     const keys: TargetKey[] = [], missing: string[] = [], evidence: string[] = [];
     let note = "", ready = false;

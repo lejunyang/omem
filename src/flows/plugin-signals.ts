@@ -35,15 +35,46 @@ export function pluginSignalWaiting(app: App, s: StageRow, type: string) {
     note: available ? last?.note ?? entry.def.describe : unavailable };
 }
 
+const CONCURRENCY = 3;
+const batches = new WeakSet<App>();
+const cursors = new WeakMap<App, number>();
+type SignalStage = { item_id: string; stage_id: string };
+
+/** Share the patrol trigger with Git. A bounded batch has its own lifetime and rotates through waiting stages. */
+export function checkPluginSignals(app: App, rows: SignalStage[]) {
+  if (!rows.length || batches.has(app)) return;
+  batches.add(app);
+  const budget = AbortSignal.timeout(5000);
+  let cursor = (cursors.get(app) ?? 0) % rows.length;
+  let remaining = Math.min(rows.length, 32);
+  async function worker() {
+    while (remaining > 0 && !budget.aborted) {
+      remaining--;
+      const row = rows[cursor];
+      cursor = (cursor + 1) % rows.length;
+      const f = itemFlow(app,row.item_id);
+      const d = f?.definition.stages.find(stage => stage.id === row.stage_id);
+      if (!f || f.endedAt || !d) continue;
+      const stage = getStage(app,row.item_id,row.stage_id);
+      if (stage.state === "doing") await pollFlowSignal(app,f,d,stage,budget);
+    }
+  }
+  void Promise.allSettled(Array.from({length:CONCURRENCY},worker)).then(results => {
+    for (const result of results) if (result.status === "rejected") console.warn("流程信号检查失败",result.reason);
+    cursors.set(app,cursor);
+    batches.delete(app);
+  });
+}
+
 const active = new WeakMap<App, Set<string>>();
-export async function pollFlowSignal(app: App, f: ItemFlow, d: FlowStage, s: StageRow) {
+export async function pollFlowSignal(app: App, f: ItemFlow, d: FlowStage, s: StageRow, budget?: AbortSignal) {
   if (typeof d.done !== "object" || !("signal" in d.done)) return;
   const type = d.done.signal, entry = flowSignals.get(type);
   if (!entry) return;
   const item = getItem(app, f.itemId);
   if (entry.spaces.length && !entry.spaces.includes(item.spaceId)) return;
   const calls = active.get(app) ?? new Set<string>(), key = JSON.stringify([item.id, s.id]);
-  if (calls.has(key)) return;
+  if (calls.size >= CONCURRENCY || calls.has(key)) return;
   const last = observation(app, s, type);
   if (last && Date.parse(last.nextAt) > Date.now()) return;
   active.set(app, calls);
@@ -51,10 +82,14 @@ export async function pollFlowSignal(app: App, f: ItemFlow, d: FlowStage, s: Sta
   try {
     let failures = 0, delay = 60, note = entry.def.describe;
     let ready: z.infer<typeof result> | undefined;
-    const signal = entry.context(app, item.userId, item.spaceId, AbortSignal.timeout(5000)).signal;
+    const signal = entry.context(app, item.userId, item.spaceId, budget ?? AbortSignal.timeout(5000)).signal;
     try {
-      const ctx = await flowContext(app, item, d, s, d.done.with);
-      ready = result.parse(await untilAbort(signal, () => entry.def.check(ctx, signal)));
+      const params = d.done.with;
+      ready = result.parse(await untilAbort(signal, async () => {
+        const ctx = await flowContext(app, item, d, s, params);
+        signal.throwIfAborted();
+        return entry.def.check(ctx, signal);
+      }));
       delay = Math.max(10, Math.min(3600, ready.recheckAfterSec ?? delay));
       note = ready.done ? entry.def.describe : ready.waitingOn || note;
     } catch (e) {
