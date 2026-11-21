@@ -197,3 +197,31 @@ it("本地回退保持三位小数的同分顺序，插件成功时使用原分"
   expect(await search(app, "项目资料", opts)).toEqual(local);
   expect(rerankStatus(app).lastProvider).toBe("local");
 });
+
+it("被动记忆按实际评分来源使用门槛，插件可使用负数、大于一和零", async () => {
+  const { app, api } = setup();
+  app.config.embeddings.provider = "local";
+  setEmbedderForTests(fakeEmbedder());
+  const a = remember(app, { kind: "fact", spaceId: "personal", content: "项目资料每周更新。" }).id;
+  remember(app, { kind: "fact", spaceId: "personal", content: "项目资料包括计划。" });
+  await embedPending(app);
+  while (await embedPendingMemories(app)) {}
+  let relevant = 0.8, unrelated = 0.74;
+  const score = vi.fn<import("../src/plugins/types.ts").Reranker["score"]>(async (_ctx, req) =>
+    req.candidates.map(c => c.id === a ? relevant : unrelated));
+  api.reranker({ id: "rank", label: "排序", score });
+  Object.assign(app.config.rerank, { enabled: true, provider: "plugin:demo:rank", passiveThreshold: 0.75 });
+  const ask = { text: "项目资料", spaces: ["personal"], userId: "owner", threshold: 0 };
+  const ids = async () => (await passiveRecall(app, ask)).map(h => h.memory.id);
+  expect(await ids()).toEqual([a]);
+  for (const [gate, high, low] of [[-2, -1, -5], [4, 5, 3], [0, 0, -0.1]]) {
+    app.config.rerank.pluginPassiveThreshold = gate;
+    relevant = high;
+    unrelated = low;
+    expect(await ids()).toEqual([a]);
+  }
+  score.mockResolvedValueOnce([]);
+  setRerankerForTests((_q, passages) => passages.map(p => p.includes("每周") ? 0.75 : 0.7499));
+  expect(await ids()).toEqual([a]);
+  expect(rerankStatus(app).lastProvider).toBe("local");
+});

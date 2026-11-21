@@ -481,7 +481,7 @@ api.reranker({
     "enabled": true, "provider": "plugin:demo:rank",
     "model": "onnx-community/bge-reranker-v2-m3-ONNX",
     "top": 20, "maxTokens": 512, "threads": 0,
-    "timeoutMs": 10000, "passiveThreshold": 0.5
+    "timeoutMs": 10000, "passiveThreshold": 0.5, "pluginPassiveThreshold": -2
   }
 }
 ```
@@ -492,7 +492,7 @@ api.reranker({
 
 宿主按 id 回读内容，核对空间、阅读权限、原件范围与有效状态，再把该路的名次加入倒数排名融合（RRF），命中的 `via` 带 `plugin:demo:lookup`。工作区覆盖、原件可见性和副本合并沿用主检索的约束。显式 `recall(query)` 使用其中的记忆路线，再按目录和档案裁剪。被动记忆仍由宿主向量检索召回。
 
-**重排。** 默认关闭，开启后默认使用 `provider: "local"`。选择插件后，插件收到主搜索前 `top` 条可读候选，或被动记忆原有的候选池。问题最多 1000 字符，每条正文最多 4000 字符。整批均在插件许可范围时才发送。返回值为与候选一一对应的有限数值数组，分数越大越靠前。换模型后应按新分数重新校准被动记忆的 `passiveThreshold`。
+**重排。** 默认关闭，开启后默认使用 `provider: "local"`。选择插件后，插件收到主搜索前 `top` 条可读候选，或被动记忆原有的候选池。问题最多 1000 字符，每条正文最多 4000 字符。整批均在插件许可范围时才发送。返回值为与候选一一对应的有限数值数组，分数越大越靠前。被动记忆按实际出分的模型选门槛。本地模型（含回退）用 `passiveThreshold`，范围 0–1，默认 0.5。切换插件后按其分数校准 `pluginPassiveThreshold`，可填任意有限数，包括 0。省略时插件沿用 `passiveThreshold`。例如插件门槛为 -2 时，-1 分保留，-5 分过滤。
 
 插件最多使用本次重排预算的一半，余下时间留给本地模型。超时、错误、分数个数不符、插件停用或候选超出授权时使用本地重排。本地模型也不可用时，主检索保留融合顺序，被动记忆用余弦门槛。召回提供者失败时其余路线继续。两类提供者的超时均会中止 `ctx.signal`，连续失败只提醒一次。
 
