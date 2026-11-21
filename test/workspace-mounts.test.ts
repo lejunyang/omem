@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import * as dispatch from "../src/agents/dispatch.ts";
@@ -70,8 +70,8 @@ describe("delegation sandbox mounts", () => {
         expect(prep.workspace).toBe(box.plan);
         expect(box.plan.rw).toEqual(expect.arrayContaining([realpathSync(lead.slot), realpathSync(inline.path)]));
         expect(box.plan.rw).not.toContain(realpathSync(group));
-        for (const path of box.plan.rw) expect(prep.system).toContain(shortPath(path, box.home));
-        expect(prep.system).toContain(prep.isolation.note);
+        for (const path of box.plan.rw) expect(runner.turnHeader(prep)).toContain(shortPath(path, box.home));
+        expect(prep.system).not.toContain(prep.isolation.note);
         expect(box.plan.links).toEqual(workspaceMounts(app, [lead, inline])!.links);
         expect(prep.mcp.env?.OMEM_ARTIFACTS).toBe(inbox);
       } finally { revokeToolToken(prep.token); }
@@ -128,6 +128,42 @@ describe("delegation sandbox mounts", () => {
       app.config.agents.profiles.pop(); app.config.agents.ownSandbox = settings; app.baseUrl = baseUrl;
     }
   });
+
+  it.skipIf(!sandboxSupport().ok).each(["acp", "claude-cli"] as const)("sends the current mounts on resumed %s turns", async transport => {
+    const profile = agentProfileSchema.parse({ id: "resume-fixture", transport, command: process.execPath,
+      args: [resolve(transport === "acp" ? "test/fake-acp-agent.ts" : "test/fake-claude-cli.ts")], env: { FAKE_MODE: "echo" } });
+    const baseUrl = app.baseUrl, settings = app.config.agents.ownSandbox;
+    const home = mkdtempSync(join(tmpdir(), "turn-home-"));
+    vi.stubEnv("HOME", home);
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.profiles.push(profile);
+    const turn = async (trees: (typeof lead)[], resumeSessionId?: string) => {
+      const r = createRun(app, { kind: "code", title: "多仓续聊", spaceId: a.id });
+      const result = await runner.runRole(app, { role: "coder", profileId: profile.id, spaceId: a.id,
+        cwd: trees.length === 1 ? trees[0].slot : dirname(trees[0].path), runId: r.id, task: "核对当前目录", artifacts: true, persistSession: true, resumeSessionId,
+        worktrees: trees.map(t => ({ ...t, branch: "fixture", base: "HEAD" })) });
+      return { sessionId: result.sessionId, inbox: join(app.home, "artifacts", "inbox", r.id), echo: JSON.parse(result.text) };
+    };
+    try {
+      app.config.agents.ownSandbox = { mode: "require", writable: [], hidden: [] };
+      const first = await turn([lead]);
+      expect(first.echo.prompt.match(/在 omem 沙箱里。可写：/g)).toHaveLength(1);
+      expect(first.echo.prompt).toContain(first.inbox);
+      expect(first.sessionId).toBeTruthy();
+      const second = await turn([helper, helperApi], first.sessionId);
+      expect(second.echo).toMatchObject({ session: first.sessionId, resumed: true });
+      expect(second.echo.prompt).not.toContain("# 角色：");
+      expect(second.echo.prompt).not.toContain(first.inbox);
+      expect(second.echo.prompt).not.toContain(lead.slot);
+      for (const path of [helper.slot, helperApi.slot, second.inbox]) expect(second.echo.prompt).toContain(path);
+      app.config.agents.ownSandbox.mode = "off";
+      const third = await turn([helper, helperApi], second.sessionId);
+      expect(third.echo.prompt).not.toContain("在 omem 沙箱里。可写：");
+    } finally {
+      app.config.agents.profiles.pop(); app.config.agents.ownSandbox = settings; app.baseUrl = baseUrl;
+      vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true });
+    }
+  }, 30000);
 
   // Rewrites a checkout's .git pointer: Git for Windows hides that file, and a hidden file cannot be opened for writing there.
   it.skipIf(process.platform === "win32")("mounts the assigned slot and reads Git metadata from the registered repository", () => {

@@ -8,7 +8,7 @@ import { truncate, localStamp } from "../core/util.ts";
 import { turnSpaceFor, userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
-import { distinctProfiles, failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, quietAfterAll, quietSet, recordIsolation, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
+import { distinctProfiles, failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, turnHeader, quietAfterAll, quietSet, recordIsolation, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { focusBlock } from "./turn-focus.ts";
 import { contextForTurn, explicitItemFocus, type ResolvedTurn } from "./turn-context.ts";
@@ -497,7 +497,7 @@ ${WAKE_NOTE}`
     const context = fresh ? `# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString(), ownerCold(currentBrief), withTools)}\n\n---\n\n` : "";
     const changed = !fresh && t.settings.instructionScene !== selected.scene.join(" ");
     const sceneUpdate = changed ? `\n\n# 本轮适用的场景说明（替代先前按场景选择的小节）\n\n${selected.sceneGuide || "本轮没有适用的小节。"}` : "";
-    return { prompt: `（${selected.now}）\n\n${context}${newPart}${groupReply && !promptOverride ? `\n\n${groupReply}` : ""}${sceneUpdate}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
+    return { prompt: `${turnHeader(selected)}\n\n${context}${newPart}${groupReply && !promptOverride ? `\n\n${groupReply}` : ""}${sceneUpdate}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
   };
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
