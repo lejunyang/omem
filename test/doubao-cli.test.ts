@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { writeFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +13,13 @@ import { testApp } from "./helpers.ts";
 import { all } from "../src/core/db.ts";
 import { saveProbe } from "../src/agents/probe.ts";
 import { askModel } from "../src/agents/oneshot.ts";
+import { runCodeTask } from "../src/agents/code.ts";
+import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { createUser, addMember } from "../src/core/users.ts";
+import { saveRole } from "../src/auth/permissions.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import * as reviews from "../src/agents/review-chain.ts";
+import * as runner from "../src/agents/runner.ts";
 import { prepareRun, runRole } from "../src/agents/runner.ts";
 import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
@@ -110,6 +118,49 @@ describe("doubao cli", () => {
       rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
     }
   }, 30000);
+
+  it.skipIf(!sandboxSupport().ok).each([["member", "ask_risky"], ["owner", "always_allow"]])(
+    "uses the %s initiator for both delegation tier judgements", async (userId, permission) => {
+      const app = testApp();
+      const home = mkdtempSync(join(tmpdir(), "tier-home-"));
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("XDG_DATA_HOME", join(home, ".local/share"));
+      const backend = { ...fake, env: { FAKE_PERMISSION: "1", FAKE_TIER: "heavy" } };
+      app.config.agents.profiles = [backend, { ...backend, id: "codex" }];
+      app.config.agents.default = backend.id;
+      app.config.agents.ownSandbox.mode = "require";
+      app.config.agents.fullAccess = "sandboxed";
+      app.config.review.tiers = [
+        { id: "heavy", name: "完整", guide: "跨仓", checks: ["reviewer"], lead: true, confirmPlan: false,
+          maxRounds: 2, when: { field: "change.repos", op: "gte", value: 2 } },
+        { id: "light", name: "轻量", guide: "", checks: ["reviewer"], lead: false, confirmPlan: false, maxRounds: 1, when: null },
+      ];
+      const repo = mkdtempSync(join(app.home, "repo-"));
+      execFileSync("git", ["init", "-q"], { cwd: repo });
+      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "init", "--allow-empty"], { cwd: repo });
+      const space = createSpace(app, { id: "sample", name: "示例", kind: "repo", rootPath: repo });
+      if (userId !== "owner") {
+        const role = saveRole(app, { name: "交办开发者", scope: "global", permissions: ["code.delegate"] });
+        createUser(app, { id: userId, name: "成员", role: role.id });
+        addMember(app, space.id, userId, "manager");
+      }
+      const run = createRun(app, { kind: "code", spaceId: space.id, userId, title: "示例", input: { task: "更新示例" } });
+      const review = vi.spyOn(reviews, "reviewRound").mockResolvedValue({ verdict: "approved" });
+      const coder = vi.spyOn(runner, "runRole").mockImplementation(async (_app, input) => {
+        expect(input.role).toBe("coder");
+        writeFileSync(join(input.cwd!, "example.txt"), "change");
+        return { text: "完成", stopReason: "end_turn", agent: "fixture", profileId: "fixture", ai: { profile: "fixture" } };
+      });
+      try {
+        await runCodeTask({ app, run, signal: new AbortController().signal, event() {}, output: data => setRunOutput(app, run.id, data) });
+        const out = getRun(app, run.id).output;
+        expect(out.reviewEstimate).toMatchObject({ tier: "heavy", reason: permission });
+        expect(out.reviewPlan).toMatchObject({ tier: "heavy", reasons: expect.arrayContaining([expect.stringContaining("完整」档：" + permission)]) });
+      } finally {
+        review.mockRestore(); coder.mockRestore(); vi.unstubAllEnvs(); app.db.close();
+        rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+      }
+    });
 
   it("runs a turn: the prompt reaches it, the session comes from stderr, the run's env reaches it", async () => {
     // A live service may also have prompt files in the system temp directory.
