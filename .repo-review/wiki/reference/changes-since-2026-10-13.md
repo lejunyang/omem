@@ -21,6 +21,10 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-22：第二轮网页对接的服务端字段
+
+- 流程保存保留同阶段未变的停用引用；校验和列表单独提示不可执行能力。从 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts` 读起。
+
 ## 网页接上向量和重排的来源、设备的接活开关和进度里的设备（2026-11-22）
 
 设置 → 检索与记忆：“向量检索”卡（`web/src/components/EmbeddingSettings.vue`）选来源（不用 / 本机模型 / 云端接口 / 插件的向量提供者，按插件分组），云端填地址、模型名、密钥（设置 → AI 的服务商或环境变量名）、维度、每批条数和超时；来源和参数是一份草稿，“试一下”调 `POST /api/search/embeddings/test`，“保存”遇到 409 `confirmation: "embedding-model"` 时用 `confirmDialog` 写出清掉和重算的条数，确认后带 `?confirmEmbedding=<token>` 再存，取消就恢复。为此 `web/src/api.ts` 的 `ApiError` 多了 `data`（响应体）。“重排”卡（`RerankSettings.vue`）同样选本机 / 云端 / 插件，`rerank.api` 整份替换，“试一下”调 `POST /api/search/rerank/test`；本机模型的条数、长度和线程照旧即改即存。原来“插件参与检索”卡里选重排和插件门槛的两行挪走：选重排在“重排”卡，非本机重排的门槛在“对话前带上相关记忆”卡；那张卡改名“插件参与召回”，只管召回。草稿和形状的纯函数在 `web/src/lib/search-settings.ts`。

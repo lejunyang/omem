@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
 import { itemScope, requireItem } from "../items/access.ts";
-import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, parseFlowForSave, unavailableFlowReferences, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { proposeFlow, flowView, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { settleChange } from "./follow.ts";
@@ -101,13 +101,13 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
   server.post("/api/flows/validate", async (req) => {
     const raw = body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
     try {
-      const f = parseFlow(raw);
-      return { ok: true, id: f.id, name: f.name, description: f.description, repeat: f.repeat ?? null, repeatDescription: describeFlow(f), stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
+      const f = parseFlowForSave(app, raw);
+      return { ok: true, unavailableReferences: unavailableFlowReferences(f), id: f.id, name: f.name, description: f.description, repeat: f.repeat ?? null, repeatDescription: describeFlow(f), stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
     } catch (e) { return { ok: false, problem: (e as Error).message }; }
   });
   server.put("/api/flows/:id", async (req) => {
     const raw = typeof req.body === "string" ? req.body : body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
-    const f = parseFlow(raw);
+    const f = parseFlowForSave(app, raw);
     if (f.id !== (req.params as { id: string }).id) throw new HttpError(400, "路径 id 必须与流程定义 id 相同");
     if (hasRunner(f) && !runnerApproved(app, f)) return { askId: proposeFlow(app, raw, { actor: "owner", userId: who(req) }).id };
     return saveFlow(app, raw, "owner");

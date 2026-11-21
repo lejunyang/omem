@@ -825,7 +825,7 @@ await api.answerAsk({
 
 ## 流程的完成信号
 
-清单声明 `permissions.flow.signal: true`，注册 `api.flowSignal({ id, name, describe, params?, check })`。流程写 `by: wait` 或 `by: owner`，完成条件写 `done: { signal: "stagekit:mark", with: { file: ready.txt } }`。保存时校验已注册能力及 with 的 JSON Schema；已有定义保留停用的能力，事项本人可手动完成。
+清单声明 `permissions.flow.signal: true`，注册 `api.flowSignal({ id, name, describe, params?, check })`。流程写 `by: wait` 或 `by: owner`，完成条件写 `done: { signal: "stagekit:mark", with: { file: ready.txt } }`。保存和校验只检查新增或改过参数的能力；与已保存版本同阶段引用及有效 with 参数一致的能力原样保留。校验结果的 unavailableReferences 单独提示停用的运行器和信号，不算错误。事项本人可手动完成。
 
 `check(ctx, signal)` 收到事项的 id、标题、空间，阶段 id、名称和开始时间，with 参数，以及事项本人可读、属于同一空间的材料引用。返回 `{ done, evidence?, waitingOn?, recheckAfterSec? }`。证据是 `{ text, link? }[]`，链接支持 HTTP、HTTPS、网页内路径和原件引用。宿主落库、写日志与审计，经过原有完成和关卡路径推进。
 
@@ -847,7 +847,7 @@ await api.answerAsk({
 [{"id":"stagekit:word","stages":["write"],"mandatory":true}]
 ```
 
-stages 省略时，检查覆盖插件声明范围内的全部阶段。每次成功加载插件后，宿主保存该检查最近声明的流程、阶段和空间。停用期间沿用这份范围。旧配置先沿用已保存的范围；若从未记录范围且插件已停用，宿主先排除本人未选的阶段及清单范围外的空间。其余阶段遇到历史强制项时等待本人处理，流程设置的 `pendingCheckScopes` 和阶段卡片都说明原因。本人可重新加载插件以恢复范围，或调整启用配置后重新交结果。mandatory 是本人启用时选的强制性，默认 false；空数组关闭检查。宿主校验流程、阶段、注册能力及适用范围，最多三十条且不重复。
+stages 省略时，检查覆盖插件声明范围内的全部阶段。每次成功加载插件后，宿主保存该检查最近声明的流程、阶段和空间。停用期间沿用这份范围。旧配置先沿用已保存的范围；若从未记录范围且插件已停用，宿主先排除本人未选的阶段及清单范围外的空间。其余阶段遇到历史强制项时等待本人处理，流程设置的 `pendingCheckScopes` 和阶段卡片都说明原因。本人可重新加载插件以恢复范围，或调整启用配置后重新交结果。mandatory 是本人启用时选的强制性，默认 false；空数组关闭检查。新增或改过 stages、mandatory 的检查校验流程、阶段、注册能力及适用范围；原样检查保留，流程列表的 unavailableChecks 列出停用项。最多三十条且不重复。
 
 宿主完成规则和签字先通过，再按能力全名排序检查。review(ctx, signal) 收到事项、阶段、结果的 summary 和 evidence、承担者 by。返回 `{ ok: true }` 或 `{ ok: false, reason, evidence? }`。每条最多两秒，整条链最多八秒。否决使阶段卡住，原因和证据给本人及承担者看；强制检查出错、超时或插件停用时暂停，非强制错误记日志后放行。插件不能放宽宿主拒绝、验收或签字。
 

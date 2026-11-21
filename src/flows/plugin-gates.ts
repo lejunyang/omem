@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -41,6 +42,7 @@ const scopeIssue = "历史检查的适用范围待确认，请重新加载插件
 export function gateSettingsForFlow(app: App, id: string) {
   const stored = storedChecks(app,id);
   return {
+    unavailableChecks: stored.filter(c => !stageGates.has(c.id)).map(c => ({ id: c.id, reason: "检查已停用" })),
     checks: stored.map(({scope: _, ...check}) => check),
     pendingCheckScopes: stored.filter(c => c.mandatory && !c.scope && !stageGates.has(c.id))
       .map(c => ({ id: c.id, reason: scopeIssue })),
@@ -48,7 +50,9 @@ export function gateSettingsForFlow(app: App, id: string) {
 }
 export function saveGateChecks(app: App, id: string, checks: Check[]) {
   const f = readFlow(app, id), validated = gateChecksSchema.parse(checks);
+  const previous = storedChecks(app, id).map(({scope: _, ...check}) => check);
   for (const c of validated) {
+    if (previous.some(old => isDeepStrictEqual(old, c))) continue;
     const entry = stageGates.get(c.id);
     if (!entry) throw new HttpError(400, "检查不可用：" + c.id);
     if (entry.def.applies?.flows && !entry.def.applies.flows.includes(id)) throw new HttpError(400, "检查不适用于这个流程");

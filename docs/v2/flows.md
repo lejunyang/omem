@@ -770,3 +770,7 @@ npm run build
 - AI 后端：`AiDefaults.vue` 的后端下拉标“来自插件 ××”，已选而不可用的仍作为选中项显示并写原因和去插件页的链接；设置 → 后端与模型的后端行和“未安装”列表同样标来源；插件页在信任前列出后端和启动命令。
 
 从 `web/src/lib/flow-hooks.ts`（纯函数，测试在 `test/web-flow-hooks.test.ts`）读起。没接的：成员看到的流程定义页仍是本人的页面（接口只给本人），运行器的 id 只能从阶段的 `carrier.label` 文字里解析（接口没有单独字段）。
+
+### 保留停用的流程能力
+
+`POST /api/flows/validate` 与保存按已保存流程的同阶段引用比较：运行器、信号全名及有效 `with` 参数不变时原样保留；新增、移到新阶段或修改参数时校验注册和 JSON Schema。校验成功返回 `unavailableReferences: [{ kind: "runner" | "signal", stage, id, reason }]`，只作提示。运行器的新定义版本仍由本人确认。检查保存接口也保留 id、stages、mandatory 均不变的项；流程列表的 `unavailableChecks: [{ id, reason }]` 提示停用检查，强制检查的执行规则照旧。
