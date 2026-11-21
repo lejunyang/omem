@@ -2,11 +2,12 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, onServerResync } from "../api";
 import {
-  BLOCK_LABEL, blockHref, blockTone, decisionText, doneCount, KIND_LABEL, missingText, orderTasks, outputHref, outputLabel, readProgress,
-  pendingNeeds, runIdsOf, shortId, TASK_LABEL, taskHref, taskTone, took, usageText, waitLabel, whoLabel, ownerWait,
+  accessText, BLOCK_LABEL, blockHref, blockTone, decisionText, doneCount, KIND_LABEL, lateText, missingText, orderTasks, outputHref, outputLabel, readProgress,
+  pendingNeeds, placeLabel, remoteHref, runIdsOf, shortId, TASK_LABEL, taskHref, taskTone, took, usageText, waitLabel, whoLabel, ownerWait,
   type ProgressTask, type ProgressUsage, type ProgressView,
 } from "../lib/progress";
 import { plainLine } from "../lib/plain";
+import { fmtTime } from "../store";
 import Icon from "./Icon.vue";
 import TaskBoard from "./TaskBoard.vue";
 
@@ -135,6 +136,8 @@ const blockLink: Record<ProgressView["kind"], string> = { board: "看任务板",
                 <span v-if="whoLabel(t)">{{ whoLabel(t) }}</span>
                 <span v-if="took(t.attempts.at(-1)?.runMs)">{{ took(t.attempts.at(-1)?.runMs) }}</span>
                 <button v-if="t.attempts.length > 1" type="button" class="pg-try" :aria-expanded="tries === triesKey(b, t)" @click="tries = tries === triesKey(b, t) ? null : triesKey(b, t)">第 {{ t.attempts.length }} 次</button>
+                <a v-if="t.attempts.length === 1 && remoteHref(t.attempts[0])" :href="remoteHref(t.attempts[0])!" target="_blank" rel="noopener">对方的运行</a>
+                <span v-if="t.attempts.length && lateText(t.attempts.at(-1)!)" class="pg-late">{{ lateText(t.attempts.at(-1)!) }}</span>
                 <span v-if="pendingNeeds(t, b.tasks).length" class="pg-need">等 {{ pendingNeeds(t, b.tasks).map((n) => shortId(n, b.tasks)).join("、") }}</span>
                 <span v-if="t.waitingOn && !['accepted', 'cancelled'].includes(t.state)" class="pg-tw" :class="{ owner: ownerWait(t.waitingOn) }">{{ t.waitingOn }}</span>
               </span>
@@ -150,7 +153,9 @@ const blockLink: Record<ProgressView["kind"], string> = { board: "看任务板",
             <ol v-if="tries === triesKey(b, t)" class="pg-tries" :aria-label="`${plainLine(t.title, 40)}的历次尝试`">
               <li v-for="(a, i) in t.attempts" :key="a.runId">
                 <router-link :to="`/runs/${a.runId}`">第 {{ i + 1 }} 次</router-link>
-                <span>{{ [ATTEMPT[a.status] ?? a.status, took(a.queuedMs) && `排队 ${took(a.queuedMs)}`, took(a.runMs) && `执行 ${took(a.runMs)}`, usageText(a.usage), missingText(a.usage)].filter(Boolean).join(" · ") }}</span>
+                <span>{{ [placeLabel(a), accessText(a), ATTEMPT[a.status] ?? a.status, took(a.queuedMs) && `排队 ${took(a.queuedMs)}`, took(a.runMs) && `执行 ${took(a.runMs)}`, a.mode && a.deadline && `期限 ${fmtTime(a.deadline)}`, usageText(a.usage), missingText(a.usage)].filter(Boolean).join(" · ") }}</span>
+                <span v-if="lateText(a)" class="pg-late">{{ lateText(a) }}</span>
+                <a v-if="remoteHref(a)" :href="remoteHref(a)!" target="_blank" rel="noopener">对方的运行</a>
               </li>
             </ol>
           </li>

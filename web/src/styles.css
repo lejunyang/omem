@@ -1355,3 +1355,105 @@ a.pg-out { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .landing { transition: none; }
 }
+
+/* ---------- search providers / devices ---------- */
+/* 设置 → 检索与记忆 的向量和重排两张卡（EmbeddingSettings、RerankSettings）。 */
+.sr-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.sr-bad {
+  color: var(--danger);
+}
+.sr-ok {
+  color: var(--ok);
+}
+.sr-field {
+  width: 240px;
+  max-width: 100%;
+}
+.sr-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.sr-env {
+  width: 180px;
+  max-width: 100%;
+}
+/* “试一下”的结果，有改动时接着“改动还没保存 · 放弃 · 保存”，粘在卡片底部。 */
+.sr-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.sr-result {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.sr-unsaved {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+/* 设置 → 设备 → 接别的设备派来的活：按来源单独设的一行一台。 */
+.aw-list {
+  gap: 0;
+}
+.aw-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding-bottom: 8px;
+  font-size: 14px;
+}
+.aw-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.aw-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.aw-name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 200px;
+}
+.aw-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+/* 进度视图：派到别的设备的尝试，结果过了期限才回来。 */
+.pg-late {
+  color: var(--warn);
+}
+@media (max-width: 760px) {
+  .sr-foot {
+    padding: 10px 14px;
+  }
+}

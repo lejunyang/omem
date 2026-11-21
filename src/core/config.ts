@@ -317,7 +317,8 @@ export const egressSchema = z.object({
 
 // Search API providers receive query text and the passages being indexed or ranked.
 export const searchApiFields = {
-  url: z.httpUrl().optional(),
+  // Any http(s) address: a model server on localhost or the LAN is as usual as a hosted one.
+  url: z.url({ protocol: /^https?$/ }).optional(),
   keyRef: z.string().min(1).optional(),
   apiKeyEnv: z.string().default("OPENAI_API_KEY"),
   timeoutMs: z.number().int().min(1).max(120_000).default(5000),

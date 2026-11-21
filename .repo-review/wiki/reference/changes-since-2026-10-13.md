@@ -21,6 +21,12 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 网页接上向量和重排的来源、设备的接活开关和进度里的设备（2026-11-22）
+
+设置 → 检索与记忆：“向量检索”卡（`web/src/components/EmbeddingSettings.vue`）选来源（不用 / 本机模型 / 云端接口 / 插件的向量提供者，按插件分组），云端填地址、模型名、密钥（设置 → AI 的服务商或环境变量名）、维度、每批条数和超时；来源和参数是一份草稿，“试一下”调 `POST /api/search/embeddings/test`，“保存”遇到 409 `confirmation: "embedding-model"` 时用 `confirmDialog` 写出清掉和重算的条数，确认后带 `?confirmEmbedding=<token>` 再存，取消就恢复。为此 `web/src/api.ts` 的 `ApiError` 多了 `data`（响应体）。“重排”卡（`RerankSettings.vue`）同样选本机 / 云端 / 插件，`rerank.api` 整份替换，“试一下”调 `POST /api/search/rerank/test`；本机模型的条数、长度和线程照旧即改即存。原来“插件参与检索”卡里选重排和插件门槛的两行挪走：选重排在“重排”卡，非本机重排的门槛在“对话前带上相关记忆”卡；那张卡改名“插件参与召回”，只管召回。草稿和形状的纯函数在 `web/src/lib/search-settings.ts`。
+
+设置 → 设备：新卡“接别的设备派来的活”（`AcceptWorkSettings.vue`，`lib/accept-work.ts`），三档 `node.acceptWork` 只提交 `{node:{acceptWork}}`；按 `GET /api/peers` 的 paired[] 一行一台单独设，提交完整的 `acceptWorkFrom`。进度视图和任务板按尝试的 `mode` 写“借 ×× 的后端 / 在 ×× 跑”，历次尝试写期限、迟到标记和对方运行页链接（`lib/progress.ts` 的 `placeLabel`、`lateText`、`remoteHref`）；运行页的 `peer-work` 种类写“别的设备派来的任务”。演示数据（`scripts/doc-screens.ts`）加了一个本地假的 `/embeddings`、`/rerank` 接口和指向它的“示例云”服务商、一个插件向量提供者、配对设备 lab-mac，任务板的两块改成借它的后端和在它上面跑（其中一次迟到）。截图 `settings-search-providers`、`settings-devices-work`，重拍了 `search-providers`、`run-board`、`progress-board`。
+
 ## 关注回查沿用问题材料的来源（2026-11-22）
 
 从 `src/channels/listen-problems.ts` 的 `trackProblem` 和 `problemsDue` 读起。问题记录保存会话材料的来源，后续更新合并已有来源。定时回查和当前处理带入问题正文时，都沿用这份记录。个人关注全程只用个人材料时，回查轮和下一轮都可使用个人向量插件。网页中本人的文字按会话空间登记。会议操作备注只在显式读取时计入材料，来源不明的会议纪要仍走全文和符号检索。

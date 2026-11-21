@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { loadConfig, mergeConfig, saveConfig } from "../src/core/config.ts";
+import { configSchema, loadConfig, mergeConfig, saveConfig } from "../src/core/config.ts";
 
 it("merges only what changed since loading", () => {
   const base = { a: 1, b: { c: 2, d: [1] }, e: { f: 1 } };
@@ -54,4 +54,10 @@ it("a save from a process that loaded earlier keeps what another hand wrote sinc
   // The saved object is the merged config, so the caller's copy picks up the other change too.
   expect(next.lark.appId).toBe("cli_demo");
   expect(loadConfig(home).notify.quietStart).toBe(22);
+});
+
+it("accepts a search API on localhost or the LAN and only http(s)", () => {
+  const url = (value: string) => configSchema.safeParse({ embeddings: { provider: "api", url: value }, rerank: { provider: "api", api: { model: "m", url: value } } }).success;
+  for (const ok of ["http://localhost:11434/v1", "http://127.0.0.1:8080/v1", "http://192.168.1.5/v1", "https://api.example.com/v1"]) expect(url(ok), ok).toBe(true);
+  for (const bad of ["ftp://example.com/v1", "javascript:alert(1)", "api.example.com/v1"]) expect(url(bad), bad).toBe(false);
 });

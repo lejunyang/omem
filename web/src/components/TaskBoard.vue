@@ -5,6 +5,7 @@ import Markdown from "./Markdown.vue";
 import RichText from "./RichText.vue";
 import Skeleton from "./Skeleton.vue";
 import { fmtTime } from "../store";
+import { accessText, lateText, placeLabel, remoteHref, type AttemptPlace } from "../lib/progress";
 
 /**
  * A piece of work split into parts done side by side (src/agents/work-board.ts): who has each part,
@@ -12,7 +13,7 @@ import { fmtTime } from "../store";
  * accepted it. One row a part; a track shows the parts running at the same time. A row opens to its
  * goal, what counts as done, the report and every attempt.
  */
-type Attempt = { runId: string; status: string; queuedAt: string; startedAt: string | null; finishedAt: string | null; result: string | null; device?: string; backend?: string | null; model?: string | null; used?: number | null; queuedMs: number; executionMs: number };
+type Attempt = { runId: string; status: string; queuedAt: string; startedAt: string | null; finishedAt: string | null; result: string | null; backend?: string | null; model?: string | null; used?: number | null; queuedMs: number; executionMs: number } & AttemptPlace;
 type Verdict = { by: string; at: string; decision: "accept" | "redo" | "block"; note: string };
 type Task = { id: string; seq: number; title: string; goal: string; accept: string; agent: string | null; required: boolean; status: string; attempts: Attempt[]; report: string; verdict: Verdict | null; deadlineAt: string };
 type Board = { workId: string; title: string; status: "running" | "review" | "summarized"; workConversationId?: string | null; rootConversationId?: string | null; tasks: Task[] };
@@ -52,7 +53,7 @@ const BOARD = { running: "分头在做", review: "交齐了，等验收", summar
 const took = (ms: number) => (ms < 1000 ? "" : ms < 90_000 ? `${Math.round(ms / 1000)} 秒` : ms < 5_400_000 ? `${Math.round(ms / 60_000)} 分钟` : `${(ms / 3_600_000).toFixed(1)} 小时`);
 const who = (t: Task) => {
   const a = t.attempts.at(-1);
-  return [t.agent && t.agent !== "assistant" ? t.agent : "临时助手", a?.model ?? a?.backend ?? ""].filter(Boolean).join(" · ");
+  return [t.agent && t.agent !== "assistant" ? t.agent : "临时助手", a?.model ?? a?.backend ?? "", a ? placeLabel(a) : ""].filter(Boolean).join(" · ");
 };
 
 /** The span every track is drawn on: from the first part queued to the last one finished (or now). */
@@ -121,7 +122,9 @@ const DECISION = { accept: "接受", redo: "退回重做", block: "标为阻塞"
           <ol class="tries">
             <li v-for="(a, i) in t.attempts" :key="a.runId">
               <router-link :to="`/runs/${a.runId}`">第 {{ i + 1 }} 次</router-link>
-              <span class="muted small">{{ [a.model ?? a.backend, took(a.queuedMs) && `排队 ${took(a.queuedMs)}`, took(a.executionMs) && `执行 ${took(a.executionMs)}`, a.used ? `上下文 ${Math.round(a.used / 1000)}k` : "", ATTEMPT[a.status] ?? a.status].filter(Boolean).join(" · ") }}</span>
+              <span class="muted small">{{ [a.model ?? a.backend, placeLabel(a), accessText(a), took(a.queuedMs) && `排队 ${took(a.queuedMs)}`, took(a.executionMs) && `执行 ${took(a.executionMs)}`, a.used ? `上下文 ${Math.round(a.used / 1000)}k` : "", a.mode && a.deadline && `期限 ${fmtTime(a.deadline)}`, ATTEMPT[a.status] ?? a.status].filter(Boolean).join(" · ") }}</span>
+              <span v-if="lateText(a)" class="late small">{{ lateText(a) }}</span>
+              <a v-if="remoteHref(a)" :href="remoteHref(a)!" target="_blank" rel="noopener" class="small">对方的运行</a>
             </li>
           </ol>
         </div>
@@ -166,6 +169,7 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .report { border-left: 2px solid var(--line-strong); padding-left: 12px; max-height: 360px; overflow-y: auto; min-width: 0; }
 .tries { margin: 0; padding-left: 1.4em; font-size: 13px; display: grid; gap: 2px; }
 .tries li > * + * { margin-left: 8px; }
+.late { color: var(--warn); }
 .legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0; padding: 8px 16px 12px; border-top: 1px solid var(--line); }
 .key { position: static; display: inline-block; width: 18px; height: 6px; margin-left: 8px; }
 .key:first-child { margin-left: 0; }
