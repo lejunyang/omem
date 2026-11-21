@@ -4,7 +4,7 @@ import { createRun } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { addMember, createUser } from "../src/core/users.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { withBot } from "../src/core/bot-context.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
@@ -12,6 +12,7 @@ import { registerLarkAsks } from "../src/channels/lark-asks.ts";
 import { interactionForMessage, setLarkClient } from "../src/channels/lark-send.ts";
 import { confirmRule } from "../src/rules/confirmation.ts";
 import { getRule, listRules, saveRule } from "../src/rules/store.ts";
+import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 let registered = false;
@@ -134,8 +135,52 @@ it.each(["default", "create", "update"] as const)("requires the owner's private 
     expect((await callTool(external, "save_rule", edit)).text).toContain("已启用");
     expect((await callTool(external, "save_rule", { ...edit, enabled: false })).text).toContain("未启用");
     const pending = await callTool(external, "save_rule", { ...edit, enabled: true });
-    expect(pending.text).toContain("系统主人可在规则页核对后启用");
+    expect(pending.text).toContain("由系统主人确认启用");
     expect(getRule(app, rule.id).enabled).toBe(false);
+  }
+});
+
+it("成员网页新建和重新启用定时规则时，只有主人确认当前版本才启用调度", async () => {
+  const { app } = fixture();
+  const member = createUser(app, { id: "rule-editor", name: "规则编辑者" });
+  const headers = { authorization: `Bearer ${createApiToken(app, member.id, "test")}` };
+  run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,'rules.edit','global','','allow',current_timestamp,'owner',current_timestamp)", member.id);
+  const recipients: string[] = [];
+  setLarkClient({ im: { message: {
+    create: async ({ data }: any) => { recipients.push(data.receive_id); return { code: 0, data: { message_id: `om_web_${recipients.length}` } }; },
+    patch: async () => ({ code: 0 }),
+  } } });
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const payload = { ...ruleInput, enabled: true, trigger: { event: "schedule", cron: "0 9 * * *" } };
+    const created = await server.inject({ method: "POST", url: "/api/rules", headers, payload });
+    expect(created.statusCode).toBe(200);
+    const { id, enabled } = created.json();
+    expect(enabled).toBe(false);
+    const scheduleEnabled = () => one<{ enabled: number }>(app.db, "select enabled from schedules where id=?", `rule:${id}`)?.enabled;
+    expect(getRule(app, id).enabled).toBe(false);
+    expect(scheduleEnabled()).toBe(0);
+    const [first] = listAsks(app, { status: "pending" });
+    expect(first).toMatchObject({ userId: "owner", conversationId: null, runId: null, handler: "rule-enable" });
+    await expect.poll(() => recipients).toEqual(["ou_owner"]);
+
+    const updated = await server.inject({ method: "PUT", url: `/api/rules/${id}`, headers, payload: { ...payload, name: "修改后的提醒" } });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id, enabled: false, name: "修改后的提醒" });
+    expect(getAsk(app, first.id).status).toBe("cancelled");
+    const pending = listAsks(app, { status: "pending" });
+    expect(pending).toHaveLength(1);
+    const [current] = pending;
+    expect(current).toMatchObject({ userId: "owner", conversationId: null, handler: "rule-enable", question: expect.stringContaining("修改后的提醒") });
+    await expect.poll(() => recipients).toEqual(["ou_owner", "ou_owner"]);
+    await expect(answerAsk(app, current.id, { choice: 0, by: member.id })).rejects.toThrow("只有本人");
+    expect(getRule(app, id).enabled).toBe(false);
+    expect(scheduleEnabled()).toBe(0);
+    await answerAsk(app, current.id, { choice: 0, by: "owner" });
+    expect(getRule(app, id).enabled).toBe(true);
+    expect(scheduleEnabled()).toBe(1);
+  } finally {
+    await server.close();
   }
 });
 

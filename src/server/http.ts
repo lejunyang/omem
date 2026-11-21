@@ -2599,8 +2599,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getRule } = await import("../rules/store.ts");
     return (await import("../rules/permissions.ts")).rulePermissions(app, getRule(app, (req.params as { id: string }).id));
   });
-  server.post("/api/rules", async (req) => (await import("../rules/store.ts")).saveRule(app, req.body as never, "user", who(req)));
-  server.put("/api/rules/:id", async (req) => (await import("../rules/store.ts")).saveRule(app, { ...(req.body as object), id: (req.params as { id: string }).id } as never, "user", who(req)));
+  const saveWebRule = async (req: FastifyRequest<{ Body: import("../rules/store.ts").RuleSaveInput; Params: { id?: string } }>) => {
+    const { saveRuleWithConfirmation } = await import("../rules/confirmation.ts");
+    const input = req.params.id ? { ...req.body, id: req.params.id } : req.body;
+    return saveRuleWithConfirmation(app, input, who(req)).rule;
+  };
+  server.post("/api/rules", saveWebRule);
+  server.put("/api/rules/:id", saveWebRule);
   server.delete("/api/rules/:id", async (req) => {
     (await import("../rules/store.ts")).deleteRule(app, (req.params as { id: string }).id);
     return { ok: true };

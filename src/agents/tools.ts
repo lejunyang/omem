@@ -78,7 +78,7 @@ import { describeThread, findThread, listThreads, threadMessages } from "./threa
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
 import type { OperationRule } from "../core/config.ts";
-import { confirmRule } from "../rules/confirmation.ts";
+import { saveRuleWithConfirmation } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
 import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
@@ -3773,7 +3773,7 @@ def({
   }),
   handler: async (ctx, a) => {
     if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "规则只能由主助手替本人设");
-    const { saveRule, getRule } = await import("../rules/store.ts");
+    const { getRule } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
     requirePerm(ctx.app, ctx.userId ?? OWNER, "rules.edit");
     const current = a.id ? getRule(ctx.app, a.id) : undefined;
@@ -3812,8 +3812,9 @@ def({
       const seen = one<{ name: string; chat_mode: string | null }>(ctx.app.db, "select name, chat_mode from lark_cursors where chat_id = ?", action.to.chatId ?? "");
       action.to = { ...action.to, name: action.to.name || seen?.name || "", kind: action.to.kind ?? (seen?.chat_mode === "p2p" ? "p2p" : "group") };
     }
-    const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent", ctx.userId ?? OWNER, { ownerAsked });
-    const confirmation = ctx.runId && origin ? confirmRule(ctx.app, saved, ctx.runId, ownerConversation) : null;
+    const { rule: saved, confirmation } = saveRuleWithConfirmation(ctx.app, {
+      ...input, id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false,
+    } as never, ctx.userId ?? OWNER, { ownerAsked, runId: origin ? ctx.runId : null, ownerConversation });
     const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
     const confirmationNote = ownerConversation
       ? "回复送达后，本会话会展示启用确认卡片，主人可直接点击启用。"

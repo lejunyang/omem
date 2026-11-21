@@ -4,13 +4,24 @@ import { OWNER, canWrite } from "../core/users.ts";
 import { HttpError, sha256 } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskAction } from "../agents/asks.ts";
 import { getContext } from "../channels/listen.ts";
-import { getRule, saveRule } from "./store.ts";
+import { getRule, persistRule, saveRule, type RuleSaveInput } from "./store.ts";
 import { OMEM_TYPE_LABEL, type Rule } from "./types.ts";
 import { describe } from "./conditions.ts";
 
 const revision = (rule: Rule) => sha256(JSON.stringify(rule));
 
-export function confirmRule(app: App, rule: Rule, runId: string, ownerConversation: string | null) {
+/** Save from the rules page or save_rule, then request approval for the persisted revision. */
+export function saveRuleWithConfirmation(app: App, input: RuleSaveInput, actor: string, agent?: {
+  ownerAsked: boolean; runId: string | null; ownerConversation: string | null;
+}) {
+  const { rule, needsOwnerConfirmation } = persistRule(app, input, agent ? "agent" : "user", actor, agent);
+  const confirmation = needsOwnerConfirmation || agent?.runId
+    ? confirmRule(app, rule, agent?.runId ?? null, actor === OWNER ? agent?.ownerConversation ?? null : null)
+    : null;
+  return { rule, confirmation };
+}
+
+export function confirmRule(app: App, rule: Rule, runId: string | null, ownerConversation: string | null) {
   for (const ask of all<{ id: string }>(app.db, "select id from asks where status = 'pending' and json_extract(context, '$.handler') = 'rule-enable' and json_extract(context, '$.ruleId') = ?", rule.id)) cancelAsk(app, ask.id);
   if (rule.enabled) return null;
   const actions = rule.actions.map(a => a.type === "agent"
@@ -26,7 +37,7 @@ export function confirmRule(app: App, rule: Rule, runId: string, ownerConversati
       `动作：${actions.join("；")}`,
     ].join("\n\n"),
     options: [{ label: "启用规则" }, { label: "先不启用" }], allowText: false,
-    context: { handler: "rule-enable", ruleId: rule.id, revision: revision(rule), afterReply: true },
+    context: { handler: "rule-enable", ruleId: rule.id, revision: revision(rule), afterReply: !!runId },
   });
 }
 

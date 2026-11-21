@@ -167,13 +167,15 @@ export function getRule(app: App, id: string): Rule {
   return r;
 }
 
-/** Create or replace a rule; checks it can work (conditions for code judging, a cron for schedules). */
-/** `actor`: the account saving the rule, directly or through its assistant. */
-/**
- * `ownerAsked`: an agent saving the rule in a turn answering the owner's own message (save_rule), which
- * may set where it forwards to, as set_chat_watch may add the bot in such a turn.
- */
-export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user", actor?: string, opts: { ownerAsked?: boolean; origin?: Rule["origin"] } = {}): Rule {
+export type RuleSaveInput = RuleInput & { id?: string; temporary?: Temporary };
+type SaveOptions = { ownerAsked?: boolean; origin?: Rule["origin"] };
+
+export function saveRule(app: App, input: RuleSaveInput, by: "user" | "agent" = "user", actor?: string, opts: SaveOptions = {}): Rule {
+  return persistRule(app, input, by, actor, opts).rule;
+}
+
+/** Check the stored rule before writing either its new state or its schedule. */
+export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent", actor?: string, opts: SaveOptions = {}) {
   const r = ruleInputSchema.parse(input);
   if (r.actions.some((a) => a.type === "script") && (by !== "user" || actor !== OWNER || input.temporary))
     throw new HttpError(403, "带脚本的规则只能由本人在规则页保存：脚本在这台机器上执行");
@@ -229,8 +231,8 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
-  // Member assistants submit new or disabled rules for owner confirmation, including after an async draft.
-  if (by === "agent" && actor && actor !== OWNER && !prev?.enabled) r.enabled = false;
+  const needsOwnerConfirmation = actor !== undefined && actor !== OWNER && !prev?.enabled;
+  if (needsOwnerConfirmation) r.enabled = false;
   run(
     app.db,
     `insert into rules(id, name, description, enabled, trigger, conditions, judge, judge_with, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id, origin) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -259,7 +261,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   if (r.trigger.event === "schedule") upsertSchedule(app, { id: `rule:${id}`, kind: "rule", cron: r.trigger.cron!, config: { ruleId: id }, enabled: r.enabled });
   else if (prev && JSON.parse(prev.trigger).event === "schedule") deleteSchedule(app, `rule:${id}`);
   queueMicrotask(() => app.emit({ type: "changed", entity: "rule", id, spaceId: r.spaceId }));
-  return getRule(app, id);
+  return { rule: getRule(app, id), needsOwnerConfirmation };
 }
 
 export function deleteRule(app: App, id: string) {
