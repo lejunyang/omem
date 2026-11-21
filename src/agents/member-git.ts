@@ -11,6 +11,13 @@ type State = { tree: string; admin: string; common: string; ref: string; base: s
 
 const location = (app: App, actor: string, space: string) => join(app.runsDir, actor, "member-git", space);
 const hooksOff = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "--no-replace-objects"];
+function readState(app: App, actor: string, space: string): { root: string; file: string; state: State } | null {
+  const root = location(app, actor, space);
+  const file = join(root, "state");
+  if (!existsSync(file)) return null;
+  return { root, file, state: JSON.parse(readFileSync(file, "utf8")) as State };
+}
+
 function checked(dir: string, args: string[]) {
   const r = git(dir, [...hooksOff, ...args]);
   if (!r.ok) throw new Error(r.stderr.trim() || "Git 操作失败");
@@ -124,11 +131,10 @@ async function exportPack(state: State, root: string, message: string, file: str
 
 /** A receipt records the requested name before either namespace moves, so the same request can resume. */
 export function renameMemberGit(app: App, actor: string, space: string, old: string, next: string) {
-  const root = location(app, actor, space);
-  const file = join(root, "state");
-  if (!existsSync(file)) return false;
+  const receipt = readState(app, actor, space);
+  if (!receipt) return false;
+  const { root, file, state } = receipt;
   if (receiving.has(root)) throw new Error("正在接收此工作树的提交");
-  const state: State = JSON.parse(readFileSync(file, "utf8"));
   const ref = "refs/heads/" + next;
   const previous = "refs/heads/" + old;
   const host = (...args: string[]) => checked(state.common, ["--git-dir", state.admin, ...args]);
@@ -186,17 +192,15 @@ async function importPack(state: State, file: string) {
 
 /** Last commit accepted into the host object store, even if a later handoff was refused. */
 export function receivedMemberHead(app: App, actor: string, space: string): string | undefined {
-  const file = join(location(app, actor, space), "state");
-  return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as State).base : undefined;
+  return readState(app, actor, space)?.state.base;
 }
 
 /** Inspect an interrupted handoff in a read-only namespace. Only an accepted tip can be picked. */
 export async function inspectUnreceivedMemberGit(app: App, actor: string, space: string) {
-  const root = location(app, actor, space);
-  const file = join(root, "state");
-  if (!existsSync(file)) return null;
   try {
-    const state: State = JSON.parse(readFileSync(file, "utf8"));
+    const receipt = readState(app, actor, space);
+    if (!receipt) return null;
+    const { state, root } = receipt;
     const ns = gitNamespace(state, root, true);
     const read = (...args: string[]) => promisify(execFile)(ns.file, [...ns.args, "git", ...hooksOff,
       "--no-optional-locks", "--git-dir=/member", "--work-tree=/work", ...args],
@@ -217,14 +221,13 @@ export async function inspectUnreceivedMemberGit(app: App, actor: string, space:
 const receiving = new Set<string>();
 
 export async function receiveMemberGit(app: App, actor: string, space: string, tree: string, message: string) {
-  const root = location(app, actor, space);
-  const file = join(root, "state");
-  if (!existsSync(file)) return false;
+  const receipt = readState(app, actor, space);
+  if (!receipt) return false;
+  const { root, file, state } = receipt;
   if (receiving.has(root)) throw new Error("正在接收此工作树的提交");
   receiving.add(root);
   const pack = join(root, "incoming.pack");
   try {
-    const state: State = JSON.parse(readFileSync(file, "utf8"));
     if (state.renameTo) throw new Error("工作分支正在改名，请先完成改名");
     if (realpathSync(tree) !== state.tree) throw new Error("交办工作树已变化");
     const args = ["--git-dir", state.admin, "--work-tree", state.tree];
