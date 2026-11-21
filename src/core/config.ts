@@ -289,7 +289,7 @@ export function legacyCommand(r: OperationRule): CommandRule | undefined {
 export const capturePolicy = z.enum(["ingest", "involved", "store", "skip"]);
 export type CapturePolicy = z.infer<typeof capturePolicy>;
 
-export const outletSetting = z.object({
+const outletSetting = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/),
   minUrgency: z.enum(["later", "normal", "urgent"]).default("later"),
   askKinds: z.array(z.string().min(1).max(100)).max(64).default(["question"]),

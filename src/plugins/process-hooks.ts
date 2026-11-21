@@ -27,7 +27,7 @@ export type RegisteredReranker = Entry<Reranker>;
 export const rerankers = new Map<string, RegisteredReranker>();
 export const metricProviders = new Map<string, Entry<MetricProvider>>();
 
-export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[], version = manifest.version): ProcessApi {
+export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[], version = manifest.version): Omit<ProcessApi, "answerAsk"> {
   const spaces = pluginSpaces(manifest).map(s => s.id);
   const lifetime = new AbortController();
   undo.push(() => lifetime.abort());

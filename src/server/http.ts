@@ -2511,6 +2511,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       requirePerm(app, who(req), "settings.members");
     }
     getUser(app, userId);
+    const { notifiers } = await import("../plugins/process-hooks.ts");
+    const saved = app.config.notify.outlets[userId] ?? [];
+    if (b.outlets.some(s => !notifiers.has(s.id) && !saved.some(old => old.id === s.id))) throw new HttpError(400, "没有这个通知出口");
     const outlets = { ...app.config.notify.outlets, [userId]: b.outlets };
     const next = { ...app.config, notify: { ...app.config.notify, outlets } };
     saveConfig(next, app.home);

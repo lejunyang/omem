@@ -74,6 +74,7 @@ export type WikiPageKind = {
 export type OutletIdentity = { provider: string; subject: string };
 export type OutletRecipient = { id: string; identities: OutletIdentity[] };
 export type OutNotification = {
+  about?: { title: string; link: string };
   user: OutletRecipient; title: string; body: string; link: string | null;
   urgency: "normal" | "urgent" | "silent" | "later"; dedupKey: string;
 };
@@ -94,6 +95,7 @@ export type OutletAnswer = {
   choice?: number; values?: Record<string, unknown>; text?: string; approved?: boolean;
 };
 export type ProcessApi = {
+  answerAsk(input: OutletAnswer): Promise<void>;
   notifier(def: Notifier): void;
   retriever(def: Retriever): void;
   reranker(def: Reranker): void;

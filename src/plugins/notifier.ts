@@ -1,10 +1,11 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { activeUser, findUser, identitiesOf, identityOwner, larkOpenIdOf } from "../core/users.ts";
+import { activeUser, canWrite, findUser, identitiesOf, identityOwner, larkOpenIdOf } from "../core/users.ts";
 import { HttpError, json, now, untilAbort, webLink } from "../core/util.ts";
 import { addNotificationSink, deliveryPlan, hasNotificationSink, markPushed, notify, testNotificationSink, type Notification } from "../core/notify.ts";
 import { answerAsk, getAsk, type Ask } from "../agents/asks.ts";
+import { askUrgency } from "../agents/ask-urgency.ts";
 import { staleDays } from "../agents/ask-expiry.ts";
 import { audit } from "../auth/permissions.ts";
 import { requireAskAccess } from "../auth/routes.ts";
@@ -12,7 +13,7 @@ import { notifiers } from "./process-hooks.ts";
 import type { OutletIdentity, OutNotification, Notifier } from "./types.ts";
 
 type Op = "notification" | "ask" | "retract" | "test";
-type Delivery = { seq: number; outlet: string; object_id: string; user_id: string; op: Op; dedup: string; urgency: OutNotification["urgency"]; ref: string | null; attempts: number };
+type Delivery = { seq: number; outlet: string; object_id: string; user_id: string; op: Op; state: string; dedup: string; urgency: OutNotification["urgency"]; ref: string | null; attempts: number };
 const rank = { silent: -1, later: 0, normal: 1, urgent: 2 };
 const settings = (app: App, user: string) => app.config.notify.outlets[user] ?? [];
 const kindOf = (a: Ask) => a.handler ? "handler:" + a.handler : a.kind;
@@ -24,10 +25,13 @@ async function reach(def: Notifier, user: ReturnType<typeof recipient>, signal: 
   return def.resolve ? resolution.parse(await untilAbort(signal, () => def.resolve!(structuredClone(user)))) : { ok: true };
 }
 function expiry(app: App, a: Ask) {
-  const deadline = one<{ at: string | null }>(app.db, "select json_extract(context,'$.expiresAt') at from asks where id=?", a.id)?.at;
-  return deadline ?? (!a.handler && staleDays(app) ? new Date(Date.parse(a.createdAt) + staleDays(app) * 86400000).toISOString() : null);
+  const deadline = one<{ at: string | null; grant: number | null }>(app.db, "select json_extract(context,'$.expiresAt') at, json_extract(context,'$.operationGrant.expiresAt') as 'grant' from asks where id=?", a.id);
+  return deadline?.at ?? (deadline?.grant ? new Date(deadline.grant).toISOString() : null) ?? (!a.handler && staleDays(app) ? new Date(Date.parse(a.createdAt) + staleDays(app) * 86400000).toISOString() : null);
 }
 function enqueue(app: App, outlet: string, id: string, user: string, op: Op, dedup: string, ref: string | null = null, urgency: OutNotification["urgency"] = "normal") {
+  if (op === "notification" && dedup !== id) {
+    run(app.db, "update outlet_deliveries set state='skipped' where outlet=? and dedup=? and state='deferred'", outlet, dedup);
+  }
   run(app.db, "insert into outlet_deliveries(outlet,object_id,user_id,op,dedup,due,ref,urgency) values(?,?,?,?,?,?,?,?) on conflict(outlet,object_id,op) do nothing",
     outlet, id, user, op, dedup, Date.now(), ref, urgency);
 }
@@ -41,9 +45,12 @@ export function startNotifierOutlets(app: App) {
     }
   });
   const show = (a: Ask) => {
-    for (const s of settings(app, a.userId))
-      if (notifiers.get(s.id)?.def.ask && s.askKinds.includes(kindOf(a)) && s.minUrgency !== "urgent")
-        enqueue(app, s.id, a.id, a.userId, "ask", a.id);
+    const enabled = settings(app, a.userId).filter(s => notifiers.get(s.id)?.def.ask && s.askKinds.includes(kindOf(a)));
+    if (!enabled.length) return;
+    const urgency = askUrgency(app, a);
+    for (const s of enabled) {
+      if (rank[urgency] >= rank[s.minUrgency]) enqueue(app, s.id, a.id, a.userId, "ask", a.id, null, urgency);
+    }
   };
   const close = (a: Ask) => {
     for (const row of all<Delivery>(app.db, "select * from outlet_deliveries where object_id=? and op='ask' and ref is not null", a.id))
@@ -61,15 +68,23 @@ export function startNotifierOutlets(app: App) {
 }
 
 function readNotification(app: App, id: string) {
-  const r = one<{ title: string; body: string; link: string | null; read_at: string | null; context: string }>(app.db,
-    "select title,body,link,read_at,context from notifications where id=?", id);
+  const r = one<{ item_title: string | null; item_space: string | null; at: string; title: string; body: string; link: string | null; read_at: string | null; context: string }>(app.db,
+     `select n.at,n.title,n.body,n.link,n.read_at,n.context,i.title item_title,i.space_id item_space from notifications n
+      left join items i on i.id=json_extract(n.context,'$.entityId') and i.user_id=n.user_id where n.id=?`, id);
   return r && { ...json<Partial<Notification>>(r.context, {}), ...r };
 }
+function larkReachable(app: App, userId: string) {
+  if (!hasNotificationSink("lark")) return false;
+  return userId === "owner" ? !!(app.config.lark.ownerOpenId || one(app.db, "select 1 from kv where key='lark_owner_chat' and value!=''")) : !!larkOpenIdOf(app, userId);
+}
+
 async function send(app: App, row: Delivery, signal: AbortSignal) {
   const { outlet, op, object_id: id, user_id: userId } = row;
   const entry = notifiers.get(outlet);
   if (!entry) return;
   const def = entry.def;
+  signal = entry.context(app, userId, "", signal).signal;
+  signal.throwIfAborted();
   if (op === "retract") {
     if (def.retract) await def.retract(row.ref!, signal);
     return;
@@ -83,17 +98,25 @@ async function send(app: App, row: Delivery, signal: AbortSignal) {
   const expiresAt = ask && expiry(app, ask);
   if (ask && (!def.ask || !setting?.askKinds.includes(kindOf(ask)) || ask.status !== "pending" || (expiresAt && expiresAt <= now()))) return;
   if (!ask && (!n || n.read_at || n.quiet)) return;
+  if (row.state === "deferred" && n && (n.pushed || Date.now() - Date.parse(n.at) >= 86400000)) return;
   const plan = deliveryPlan(app, { outlet: "plugin", urgency, scheduled: n?.scheduled });
   if (plan.when === "later") return { due: Date.parse(plan.at!) };
   const user = recipient(app, userId);
   const resolved = await reach(def, user, signal);
   if (!resolved.ok) throw new Error(resolved.hint ?? "出口无法送达此人");
   signal.throwIfAborted();
-  if (entry !== notifiers.get(outlet) || (op !== "test" && setting !== settings(app, userId).find(s => s.id === outlet))) return;
+  const current = settings(app, userId).find(s => s.id === outlet);
+  if (op !== "test" && (!current || rank[urgency] < rank[current.minUrgency] || (ask && !current.askKinds.includes(kindOf(ask))))) return;
+  if (!activeUser(findUser(app, userId))) return;
+  const currentIdentities = recipient(app, userId).identities;
+  if (user.identities.some(i => !currentIdentities.some(bound => bound.provider === i.provider && bound.subject === i.subject))) throw new Error("接收人的绑定身份已变化");
   const content: OutNotification = { user: structuredClone(user), title: ask ? "有问题等你回答" : n!.title, body: ask?.question ?? n!.body,
     link: ask ? webLink(app, "#/ui/" + id) : n?.link ? webLink(app, n.link) : null, urgency, dedupKey: row.dedup };
+  if (n?.entityId && n.item_title && n.item_space && canWrite(app, userId, n.item_space)) {
+    content.about = { title: n.item_title, link: webLink(app, "#/items/" + encodeURIComponent(n.entityId)) };
+  }
   if (ask) {
-    if (getAsk(app, id).status !== "pending") return;
+    if (getAsk(app, id).status !== "pending" || (expiresAt && expiresAt <= now())) return;
     const result = receipt.parse(await def.ask!({ ...content, kind: kindOf(ask), options: ask.options.map(({label}) => ({label})),
       requiresApproval: ask.kind === "approval", allowText: ask.allowText, fields: ask.ui?.fields ?? [], expiresAt: expiresAt ?? null }, signal));
     return { ref: result.ref, identities: user.identities };
@@ -102,7 +125,8 @@ async function send(app: App, row: Delivery, signal: AbortSignal) {
     "select ref from outlet_deliveries where outlet=? and dedup=? and state='sent' and seq<? order by seq desc limit 1", outlet, row.dedup, row.seq);
   let ref = previous?.ref;
   if (previous) {
-    if (ref && def.update) await def.update(ref, content, signal);
+    if (!ref || !def.update) return;
+    await def.update(ref, content, signal);
   } else ref = receipt.parse(await def.deliver(content, signal)).ref;
   signal.throwIfAborted();
   markPushed(app, id, outlet, ref);
@@ -110,16 +134,16 @@ async function send(app: App, row: Delivery, signal: AbortSignal) {
 }
 async function attempt(app: App, row: Delivery) {
   const lease = Date.now() + 30000;
-  if (!run(app.db, "update outlet_deliveries set due=? where seq=? and state='pending' and due<=?", lease, row.seq, Date.now()).changes) return;
+  if (!run(app.db, "update outlet_deliveries set state='pending',due=? where seq=? and state in ('pending','deferred') and due<=?", lease, row.seq, Date.now()).changes) return;
   try {
     const signal = AbortSignal.timeout(15000);
     const result = await untilAbort(signal, () => send(app, row, signal));
     if (result?.due) {
-      run(app.db, "update outlet_deliveries set due=? where seq=?", result.due, row.seq);
+      run(app.db, "update outlet_deliveries set state='deferred',due=? where seq=?", result.due, row.seq);
       return;
     }
     run(app.db, "update outlet_deliveries set state=?,updated=?,error=null,ref=coalesce(?,ref),identities=? where seq=?",
-      result || row.op === "retract" ? "sent" : "skipped", now(), result?.ref ?? null, JSON.stringify(result?.identities ?? []), row.seq);
+      result || row.op === "retract" ? "sent" : "skipped", result || row.op === "retract" ? now() : null, result?.ref ?? null, JSON.stringify(result?.identities ?? []), row.seq);
     if (row.op === "ask" && result?.ref && getAsk(app, row.object_id).status !== "pending")
       enqueue(app, row.outlet, row.object_id, row.user_id, "retract", row.dedup, result.ref);
   } catch (error) {
@@ -130,8 +154,8 @@ async function attempt(app: App, row: Delivery) {
 }
 
 export async function drainOutlets(app: App) {
-  const rows = all<Delivery>(app.db, `select d.* from outlet_deliveries d where state='pending' and due<=?
-    and not exists(select 1 from outlet_deliveries p where p.outlet=d.outlet and p.dedup=d.dedup and p.state='pending' and p.seq<d.seq)
+  const rows = all<Delivery>(app.db, `select d.* from outlet_deliveries d where state in ('pending','deferred') and due<=?
+    and not exists(select 1 from outlet_deliveries p where p.outlet=d.outlet and p.dedup=d.dedup and p.state in ('pending','deferred') and p.seq<d.seq)
     order by due limit 32`, Date.now());
   await Promise.all(rows.map(row => attempt(app, row)));
 }
@@ -171,7 +195,7 @@ export async function listOutlets(app: App, userId: string) {
     return { id, name: e.def.name, plugin: e.plugin, builtin: false, supportsAsk: !!e.def.ask, reachable,
       setting: settings(app, userId).find(s => s.id === id) ?? null, lastDelivery: history.get(id)?.updated ?? null, lastError: history.get(id)?.error ?? null };
   }));
-  const lark = hasNotificationSink("lark") && !!(userId === "owner" ? app.config.lark.ownerOpenId || one(app.db, "select 1 from kv where key='lark_owner_chat' and value!=''") : larkOpenIdOf(app, userId));
+  const lark = larkReachable(app, userId);
   const webAt = one<{at:string}>(app.db, "select at from notifications where user_id=? order by at desc limit 1", userId)?.at;
   const larkStatus = one<{value:string}>(app.db, "select value from kv where key=?", "notify.lark:" + userId);
   const last = json<{at:string; error:string|null} | null>(larkStatus?.value, null);
@@ -182,7 +206,7 @@ export async function listOutlets(app: App, userId: string) {
 export async function testOutlet(app: App, outlet: string, userId: string) {
   const builtin = outlet === "web" || outlet === "lark";
   if (!builtin && !notifiers.has(outlet)) throw new HttpError(404, "没有这个出口");
-  if (outlet === "lark" && !(await listOutlets(app, userId)).find(o => o.id === outlet)?.reachable.ok) throw new HttpError(409, "飞书不可达");
+  if (outlet === "lark" && !larkReachable(app, userId)) throw new HttpError(409, "飞书不可达");
   const n = notify(app, { userId, title: "测试通知", body: "这条通知用来测试你的出口。", urgency: "urgent" }, "web");
   if (outlet === "lark") await testNotificationSink(app, outlet, n);
   if (!builtin) {
