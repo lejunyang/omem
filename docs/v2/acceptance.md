@@ -314,7 +314,7 @@ npx vue-tsc --noEmit -p web/tsconfig.json
 
 ## 插件第四期：信号、运行器、完成检查与 ACP 后端（2026-11-21）
 
-- `test/flow-plugin.test.ts` 在进程内与隔离模式验证信号完成带证据、参数拒绝、失败退避、停用后人工完成；本人确认运行器、成员不能自启；失败保留当前阶段。`test/flow-plugin-worker.test.ts` 从真实队列验证丢回执后同键恢复、等待续查时到期或手动停止的取消操作。
+- `test/flow-plugin.test.ts` 在进程内与隔离模式验证信号完成带证据、参数拒绝、失败退避、停用后人工完成。让同批前三个检查等待再正常返回，核对下一条留到下批，等待期间失败次数为零；本人确认运行器、成员不能自启；失败保留当前阶段。`test/flow-plugin-worker.test.ts` 从真实队列验证丢回执后同键恢复、等待续查时到期或手动停止的取消操作。
 - 同一文件验证检查否决与证据、只有本人能单次越过、下一次重新检查、必须的超时暂停、非必须的超时放行与日志；签字后检查原结果，交回失败后旧越过卡片失效，进度视图可读运行器尝试。既有行为回归用 `test/flow-*.test.ts`、`test/flows*.test.ts`。
 - `test/plugin-backends.test.ts` 两种模式验证未信任不可选、信任后统一目录和假 ACP 回合、停用后来源与拒绝启动、改启动参数重新确认；开发目录信任也绑定声明。只启动 `test/fake-acp-agent.ts`。
 - 安装 `examples/plugins/stagekit`，按 README 保存本机检查流程，由本人确认。先用 checks API 启用 write 阶段验收词检查，再写 ready 标记、启动事项。verified 为 false 时文件写“待复核”，本人点「仍然通过」后在阶段日志和 flow.gate-override 审计核对 stagekit:word。

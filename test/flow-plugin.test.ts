@@ -1,11 +1,12 @@
 import { stagePlugin } from "./flow-plugin-fixture.ts";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { forgetPlugin, loadPlugins, reloadPlugin, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { parseFlow, saveFlow } from "../src/flows/definitions.ts";
 import { flowView, ownerAction, startFlow, reportStage, updateStageBudget, recordStage } from "../src/flows/engine.ts";
+import { checkPluginSignals } from "../src/flows/plugin-signals.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
 import { proposeFlow } from "../src/flows/engine.ts";
 import { answerAsk } from "../src/agents/asks.ts";
@@ -78,6 +79,36 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
       expect(readdirSync(data).filter(n => n.endsWith(".asked"))).toHaveLength(3);
     } finally { app.config.flows.autoAdvance = previousLimit; writeFileSync(join(data,"release"),"ready"); }
     await vi.waitFor(() => expect(all(app.db,"select id from flow_signals where item_id=? and type='stagekit:delayed'",id).length).toBeGreaterThanOrEqual(3));
+  });
+  it("批次尾部的正常信号留待下一批检查，保留完整超时且不记失败", async () => {
+    const data = join(app.home,"plugin-data","stagekit"), release = join(data,"release");
+    writeFileSync(release,"ready");
+    const rows: {item_id:string;stage_id:string}[] = [];
+    for (let i = 0; i < 4; i++) {
+      const stage = "batch"+i;
+      const item = await begin([{id:stage,name:"等待标记",by:"wait",done:{signal:"stagekit:delayed"}}]);
+      await vi.waitFor(() => expect(flowView(app,item).stages[0].waitingSignal?.checkedAt).toBeTruthy());
+      rows.push({item_id:item,stage_id:stage});
+      unlinkSync(join(data,stage+".asked"));
+    }
+    // Make the four initial observations due together for the patrol.
+    for (const row of rows) run(app.db,"delete from flow_signals where item_id=?",row.item_id);
+    unlinkSync(release);
+    const batch = checkPluginSignals(app,rows);
+    const asked = () => rows.filter(r => existsSync(join(data,r.stage_id+".asked")));
+    try {
+      await vi.waitFor(() => expect(asked()).toHaveLength(3));
+      await new Promise(resolve => setTimeout(resolve,3500));
+    } finally { writeFileSync(release,"ready"); }
+    await batch;
+    expect(asked()).toHaveLength(3);
+    const next = rows.find(r => !existsSync(join(data,r.stage_id+".asked")))!;
+    expect(flowView(app,next.item_id).stages[0].waitingSignal).toMatchObject({checkedAt:null,failures:0});
+    await checkPluginSignals(app,rows);
+    expect(asked()).toHaveLength(4);
+    for (const row of rows) expect(flowView(app,row.item_id).stages[0].waitingSignal).toMatchObject({
+      checkedAt:expect.any(String),failures:0,note:"待确认",
+    });
   });
   const job = (fail = false) => ({ id: "job", name: "运行作业", by: { runner: "stagekit:job", with: { fail } }, budget: { minutes: 10 } });
   it("按已有授权开始的运行器只记一次自动开始", async () => {

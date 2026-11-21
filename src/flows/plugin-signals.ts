@@ -36,6 +36,8 @@ export function pluginSignalWaiting(app: App, s: StageRow, type: string) {
 }
 
 const CONCURRENCY = 3;
+const CHECK_TIMEOUT_MS = 5000;
+const BATCH_BUDGET_MS = 7500;
 const batches = new WeakSet<App>();
 const cursors = new WeakMap<App, number>();
 type SignalStage = { item_id: string; stage_id: string };
@@ -44,11 +46,12 @@ type SignalStage = { item_id: string; stage_id: string };
 export function checkPluginSignals(app: App, rows: SignalStage[]) {
   if (!rows.length || batches.has(app)) return;
   batches.add(app);
-  const budget = AbortSignal.timeout(5000);
+  // Leave the cursor on the next stage when the batch cannot give it a full callback timeout.
+  const admitUntil = performance.now() + BATCH_BUDGET_MS - CHECK_TIMEOUT_MS;
   let cursor = (cursors.get(app) ?? 0) % rows.length;
   let remaining = Math.min(rows.length, 32);
   async function worker() {
-    while (remaining > 0 && !budget.aborted) {
+    while (remaining > 0 && performance.now() <= admitUntil) {
       remaining--;
       const row = rows[cursor];
       cursor = (cursor + 1) % rows.length;
@@ -56,10 +59,10 @@ export function checkPluginSignals(app: App, rows: SignalStage[]) {
       const d = f?.definition.stages.find(stage => stage.id === row.stage_id);
       if (!f || f.endedAt || !d) continue;
       const stage = getStage(app,row.item_id,row.stage_id);
-      if (stage.state === "doing") await pollFlowSignal(app,f,d,stage,budget);
+      if (stage.state === "doing") await pollFlowSignal(app,f,d,stage);
     }
   }
-  void Promise.allSettled(Array.from({length:CONCURRENCY},worker)).then(results => {
+  return Promise.allSettled(Array.from({length:CONCURRENCY},worker)).then(results => {
     for (const result of results) if (result.status === "rejected") console.warn("流程信号检查失败",result.reason);
     cursors.set(app,cursor);
     batches.delete(app);
@@ -67,7 +70,7 @@ export function checkPluginSignals(app: App, rows: SignalStage[]) {
 }
 
 const active = new WeakMap<App, Set<string>>();
-export async function pollFlowSignal(app: App, f: ItemFlow, d: FlowStage, s: StageRow, budget?: AbortSignal) {
+export async function pollFlowSignal(app: App, f: ItemFlow, d: FlowStage, s: StageRow) {
   if (typeof d.done !== "object" || !("signal" in d.done)) return;
   const type = d.done.signal, entry = flowSignals.get(type);
   if (!entry) return;
@@ -82,7 +85,7 @@ export async function pollFlowSignal(app: App, f: ItemFlow, d: FlowStage, s: Sta
   try {
     let failures = 0, delay = 60, note = entry.def.describe;
     let ready: z.infer<typeof result> | undefined;
-    const signal = entry.context(app, item.userId, item.spaceId, budget ?? AbortSignal.timeout(5000)).signal;
+    const signal = entry.context(app, item.userId, item.spaceId, AbortSignal.timeout(CHECK_TIMEOUT_MS)).signal;
     try {
       const params = d.done.with;
       ready = result.parse(await untilAbort(signal, async () => {
