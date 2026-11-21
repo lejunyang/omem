@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
+import { embeddingId, storedModel, recordModel } from "./embedding-index.ts";
+import { apiEmbedder, encodeBatch, type EmbeddingProvider, type Kind } from "./embedding-provider.ts";
 import { vectorIndex } from "./vectors.ts";
 import { pack, toFloats } from "./vector-codec.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, tx } from "../core/db.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
 import { modelSource, osdkModelDir, prepareLocalModel } from "./local-models.ts";
@@ -18,34 +20,25 @@ type Embedder = { id: string; embed(texts: string[], kind: "query" | "passage"):
 
 let embedder: Embedder | null | undefined;
 let testEmbedder = false;
+let localKey = "";
+const recent = new WeakMap<App, { lastMs: number; lastError: string | null; writeError?: string; pausedUntil?: number }>();
+export const embeddingHealth = (app: App) => recent.get(app) ?? { lastMs: 0, lastError: null };
+
 
 export function resetEmbedder() {
   embedder = undefined;
+  testEmbedder = false;
   vectorIndex().clear();
 }
 
-async function getEmbedder(app: App, inProcess = false): Promise<Embedder | null> {
-  if (embedder !== undefined) return embedder;
+async function getEmbedder(app: App, inProcess = false): Promise<EmbeddingProvider | null> {
   const cfg = app.config.embeddings;
-  if (cfg.provider === "none") return (embedder = null);
-  if (cfg.provider === "openai") {
-    const url = (cfg.url ?? "https://api.openai.com/v1").replace(/\/$/, "") + "/embeddings";
-    const key = process.env[cfg.apiKeyEnv];
-    embedder = {
-      id: `openai:${cfg.model}`,
-      async embed(texts) {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
-          body: JSON.stringify({ model: cfg.model, input: texts }),
-        });
-        if (!res.ok) throw new Error(`embedding HTTP ${res.status}`);
-        const body = (await res.json()) as { data: { embedding: number[] }[] };
-        return body.data.map((d) => normalize(Float32Array.from(d.embedding)));
-      },
-    };
-    return embedder;
-  }
+  if (testEmbedder) return embedder ?? null;
+  if (cfg.provider === "none") return null;
+  if (cfg.provider === "api") return apiEmbedder(app, cfg, embeddingId(app.config)!);
+  const key = JSON.stringify(cfg);
+  if (localKey !== key) { embedder = undefined; localKey = key; }
+  if (embedder !== undefined) return embedder;
   if (!inProcess && !testEmbedder) {
     // osdk first: while it is still downloading a model nothing has fetched before, there are no vectors
     // yet (asked again on the next use) rather than a second download racing it.
@@ -131,14 +124,6 @@ export function paddedGroups(texts: string[]): number[][] {
   return groups;
 }
 
-function normalize(v: Float32Array) {
-  let n = 0;
-  for (const x of v) n += x * x;
-  n = Math.sqrt(n) || 1;
-  for (let i = 0; i < v.length; i++) v[i] /= n;
-  return v;
-}
-
 /** Benchmarks and tests: use a stand-in embedder. */
 export function setEmbedderForTests(e: Embedder | null) {
   testEmbedder = true;
@@ -157,18 +142,9 @@ export function invalidateVectors() {
  * of chunks, and embedding them took the CPU the reviewers' own tool calls needed.
  */
 export async function embedPending(app: App, batch = 32): Promise<number> {
-  const e = await getEmbedder(app);
+  const e = await writer(app);
   if (!e) return 0;
-  const current = one<{ value: string }>(app.db, "select value from kv where key = 'embedding_model'")?.value;
-  if (current !== e.id) {
-    run(app.db, "update chunks set embedding = null");
-    run(app.db, "update memories set embedding = null");
-    run(app.db, "insert into kv(key,value) values('embedding_model', ?) on conflict(key) do update set value = excluded.value", e.id);
-    // Every vector is gone: readers start over on the model change, the log's entries for it are noise.
-    run(app.db, "insert into kv(key,value) values('vector_log_floor', (select coalesce(max(seq), 0) from vector_log)) on conflict(key) do update set value = excluded.value");
-    run(app.db, "delete from vector_log");
-    vectorIndex().clear();
-  }
+  batch = Math.min(batch, e.maxBatch ?? batch);
   const rows = all<{ id: number; space_id: string; title: string; path: string; text: string }>(
     app.db,
     // Through the index of chunks without a vector (`chunks_unembedded`): usually there are none, and
@@ -191,54 +167,99 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   // Within the batch too: identical inputs are embedded once.
   const input = (r: (typeof rows)[number]) => `${r.path || r.title}\n${r.text}`.slice(0, 2000);
   const fresh = [...new Set(rows.filter((r) => !known.has(r.id)).map(input))];
-  const made = fresh.length ? await e.embed(fresh, "passage") : [];
+  const made = fresh.length ? await encode(app, e, fresh, "passage", true) : [];
+  if (!made || !stillSelected(app, e)) return 0;
   const byInput = new Map(fresh.map((t, i) => [t, made[i]]));
   for (const r of rows) if (!known.has(r.id)) known.set(r.id, byInput.get(input(r))!);
   const upd = app.db.prepare("update chunks set embedding = ? where id = ?");
-  for (const r of rows) {
-    const v = known.get(r.id)!;
-    // Stored packed: one signed byte a dimension, what the index searches with (vector-codec.ts).
-    upd.run(pack(v), r.id);
-  }
+  tx(app.db, () => {
+    for (const r of rows) upd.run(pack(known.get(r.id)!), r.id);
+  });
   vectorIndex().add(app, rows.map((r) => ({ id: r.id, spaceId: r.space_id, vec: known.get(r.id)! })));
   return rows.length;
 }
 
 /** Embed active memories that have no vector yet (passive recall). Run after embedPending, which resets them on a model change. */
 export async function embedPendingMemories(app: App, batch = 32): Promise<number> {
-  const e = await getEmbedder(app);
+  const e = await writer(app);
   if (!e) return 0;
-  if (one<{ value: string }>(app.db, "select value from kv where key = 'embedding_model'")?.value !== e.id) return 0;
+  batch = Math.min(batch, e.maxBatch ?? batch);
   const rows = all<{ id: string; subject: string; content: string }>(app.db, "select id, subject, content from memories where status = 'active' and embedding is null limit ?", batch);
   if (!rows.length) return 0;
-  const vecs = await e.embed(rows.map((r) => (r.subject ? `${r.subject}：${r.content}` : r.content).slice(0, 2000)), "passage");
+  const vecs = await encode(app, e, rows.map((r) => (r.subject ? `${r.subject}：${r.content}` : r.content).slice(0, 2000)), "passage", true);
+  if (!vecs || !stillSelected(app, e)) return 0;
   const upd = app.db.prepare("update memories set embedding = ? where id = ?");
-  rows.forEach((r, i) => upd.run(new Uint8Array(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength), r.id));
+  tx(app.db, () => rows.forEach((r, i) => upd.run(new Uint8Array(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength), r.id)));
   return rows.length;
 }
 
-/** One vector (a question by default; "passage" to compare memory with memory), or null when vectors are off or the model is unavailable. */
-export async function embedQuery(app: App, text: string, kind: "query" | "passage" = "query"): Promise<Float32Array | null> {
-  if (app.config.embeddings.provider === "none") return null;
+function stillSelected(app: App, e: EmbeddingProvider) {
+  const current = storedModel(app);
+  return (testEmbedder || embeddingId(app.config) === e.id) && (!current || current === e.id);
+}
+
+async function writer(app: App) {
+  if ((recent.get(app)?.pausedUntil ?? 0) > Date.now()) return null;
   const e = await getEmbedder(app);
   if (!e) return null;
-  const [q] = await e.embed([text.slice(0, 2000)], kind);
-  return q;
+  const current = storedModel(app);
+  // Old openai configurations stored only the model name. Adopt the existing index on upgrade.
+  if (!current || (app.config.embeddings.provider === "api" && current === "openai:" + app.config.embeddings.model && !app.config.embeddings.dimensions))
+    recordModel(app, e.id);
+  return stillSelected(app, e) ? e : null;
+}
+
+async function encode(app: App, e: EmbeddingProvider, texts: string[], kind: Kind, write = false) {
+  const at = Date.now();
+  try {
+    const dim = e.maxBatch && one<{value: string}>(app.db, "select value from kv where key='embedding_dimensions'")?.value;
+    const rows = await encodeBatch(e, texts, kind, app.config.embeddings.timeoutMs, Number(dim) || undefined);
+    if (!stillSelected(app, e)) return null;
+    if (write && e.maxBatch) {
+      run(app.db, "insert or ignore into kv(key,value) values('embedding_dimensions',?)", String(rows[0].length));
+      if (Number(one<{value:string}>(app.db, "select value from kv where key='embedding_dimensions'")!.value) !== rows[0].length)
+        throw new Error("向量维度与已存索引不符");
+    }
+    recent.set(app, { ...(write ? {} : recent.get(app)), lastMs: Date.now() - at, lastError: null });
+    return rows;
+  } catch (err) {
+    const error = (err as Error).message;
+    recent.set(app, { ...recent.get(app), lastMs: Date.now() - at, lastError: error,
+      ...(write && { writeError: error, pausedUntil: Date.now() + 30_000 }) });
+    return null;
+  }
+}
+
+export function resumeEmbedding(app: App) { recent.delete(app); }
+
+/** One vector, or null when the configured provider is unavailable. */
+export async function embedQuery(app: App, text: string, kind: Kind = "query"): Promise<Float32Array | null> {
+  if (app.config.embeddings.provider === "none") return null;
+  const e = await getEmbedder(app);
+  if (!e || !stillSelected(app, e)) return null;
+  return (await encode(app, e, [text.slice(0, 2000)], kind))?.[0] ?? null;
 }
 
 /** Only the isolated process loads the local runtime. The parent keeps batching and writes. */
 export async function embedLocally(app: App, texts: string[], kind: "query" | "passage") {
   const e = await getEmbedder(app, true);
   if (!e) throw new Error("向量模型不可用");
-  return e.embed(texts, kind);
+  return encodeBatch(e, texts, kind, 120_000);
 }
 
 export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {
   if (app.config.embeddings.provider === "none") return [];
+  if (app.config.embeddings.provider === "api") {
+    const vector = await embedQuery(app, query);
+    if (!vector) return [];
+    return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, vector, config: { embeddings: app.config.embeddings } }, 30_000));
+  }
+  if (!testEmbedder && storedModel(app) && storedModel(app) !== embeddingId(app.config)) return [];
   if (!testEmbedder) return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, config: { embeddings: app.config.embeddings } }, 30_000));
   const e = await getEmbedder(app);
   if (!e) return [];
-  const [q] = await e.embed([query], "query");
+  const q = await embedQuery(app, query);
+  if (!q) return [];
   await vectorIndex().prepare(app, spaces);
   return vectorIndex().search(app, q, spaces, limit);
 }

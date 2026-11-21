@@ -2410,6 +2410,8 @@ export const migrations: readonly string[] = [
    end;`,
   `create index progress_code_takeovers on run_events(run_id)
      where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
+  `create index memories_unembedded on memories(space_id) where status = 'active' and embedding is null;
+   create index memories_embedded on memories(status, space_id) where embedding is not null;`,
 ];
 
 export type Db = DatabaseSync;

@@ -312,6 +312,13 @@ export const egressSchema = z.object({
   waitSeconds: z.number().int().min(1).max(300).default(90),
 });
 
+// Search API providers receive query text and the passages being indexed or ranked.
+export const searchApiFields = {
+  url: z.httpUrl().optional(),
+  keyRef: z.string().min(1).optional(),
+  apiKeyEnv: z.string().default("OPENAI_API_KEY"),
+  timeoutMs: z.number().int().min(1).max(120_000).default(5000),
+};
 export const configSchema = z.object({
   /**
    * Listen address. All interfaces by default, so other devices can pair with this one;
@@ -703,17 +710,18 @@ export const configSchema = z.object({
     .default({ maxChars: 400, longChars: 180, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [], passive: { enabled: true, threshold: 0.6, limit: 5 } }),
   embeddings: z
     .object({
-      provider: z.enum(["none", "local", "openai"]).default("none"),
+      provider: z.enum(["none", "local", "openai", "api"]).transform(p => p === "openai" ? "api" : p).default("none"),
       /** local: model id or directory for transformers.js. openai: model name. */
       model: z.string().default("Xenova/bge-small-zh-v1.5"),
       /** bge-zh (query prefix + CLS), bge-m3 / bge (CLS), other (mean pooling). Inferred from the model name when absent. */
       family: z.enum(["bge-zh", "bge-m3", "bge", "other"]).optional(),
-      url: z.string().optional(),
-      apiKeyEnv: z.string().default("OPENAI_API_KEY"),
+      ...searchApiFields,
+      dimensions: z.number().int().positive().max(65536).optional(),
+      batch: z.number().int().min(1).max(256).default(32),
       /** local: keep onnxruntime's CPU memory arena (faster; holds the peak of the largest batch). false gives it back after each batch. */
       memArena: z.boolean().optional(),
     })
-    .default({ provider: "none", model: "Xenova/bge-small-zh-v1.5", apiKeyEnv: "OPENAI_API_KEY" }),
+    .default({ provider: "none", model: "Xenova/bge-small-zh-v1.5", batch: 32, timeoutMs: 5000, apiKeyEnv: "OPENAI_API_KEY" }),
   search: z.object({
     retrievers: z.array(z.object({
       provider: z.string().min(1),

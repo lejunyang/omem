@@ -35,10 +35,10 @@ export const ownerSettings = [
   "lark.appSecretEnv", "lark.appId", "lark.capture", "lark.defaultSpace", "telegram", "onebot", "security", "approvals",
   "agents.accounts", "agents.accountIsolation", "agents.networkPolicies", "agents.profiles", "agents.cloudTools", "ai.providers",
   "host", "port", "token", "https", "webUrl", "shares.expiryDays", "auth", "node", "backups", "studies.envs", "ide",
-  "documents.converter", "embeddings.url", "embeddings.apiKeyEnv", "mcp", "agentSkills", "plugins",
+  "documents.converter", "embeddings", "mcp", "agentSkills", "plugins",
 ];
 const privatePaths = new Set(["agents.profiles", "agents.networkPolicies", "mcp", "ai.providers"]);
-const splitRoots = new Set([...Object.keys(sectionByPath), ...ownerSettings].filter(p => p.includes(".")).map(p => p.split(".")[0]));
+const splitRoots = new Set([...Object.keys(sectionByPath), ...ownerSettings, "embeddings.provider"].filter(p => p.includes(".")).map(p => p.split(".")[0]));
 type Values = Record<string, unknown>;
 const object = (v: unknown): v is Values => !!v && typeof v === "object" && !Array.isArray(v);
 const sectionOf = (path: string) => sectionByPath[path] ?? sectionByPath[path.split(".")[0]];
@@ -74,7 +74,7 @@ export function changedSettings(before: Config, after: Config, editable: (s: Sec
   for (const path of new Set([...old.keys(), ...next.keys()])) {
     if (isDeepStrictEqual(old.get(path), next.get(path))) continue;
     const section = sectionOf(path);
-    if (!owner && (!editable(section) || ownerSettings.includes(path))) throw new HttpError(403, `没有修改设置 ${path} 的权限`);
+    if (!owner && (!editable(section) || (ownerSettings.includes(path) || ownerSettings.includes(path.split(".")[0])))) throw new HttpError(403, `没有修改设置 ${path} 的权限`);
     (changes[section] ??= []).push(path);
   }
   return changes;
