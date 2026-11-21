@@ -170,6 +170,28 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
+export function reviewRounds(app: App, ids: string[], audience?: RunAudience) {
+  const filter = audience && runPredicate(audience);
+  const where = filter ? " and " + filter.sql : "";
+  const params = filter?.params ?? [];
+  const rows = all<Row>(app.db, "select * from runs where id in (select value from json_each(?))" + where, JSON.stringify(ids), ...params);
+  const byId = new Map(rows.map(r => [r.id, toRun(r)]));
+  const rounds = ids.flatMap(id => {
+    const round = byId.get(id);
+    if (!round && !audience) throw new HttpError(404, `运行记录不存在：${id}`);
+    return round ? [round] : [];
+  });
+  type Child = { id: string; status: string; title: string };
+  const children = new Map<string, Child[]>();
+  for (const { parent_id, ...child } of all<Child & { parent_id: string }>(app.db,
+    "select parent_id,id,status,title from runs where kind='review' and parent_id in (select value from json_each(?))" + where + " order by created_at",
+    JSON.stringify([...byId.keys()]), ...params)) {
+    if (!children.has(parent_id)) children.set(parent_id, []);
+    children.get(parent_id)!.push(child);
+  }
+  return { rounds, children };
+}
+
 type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: RunAudience; reviewAudience?: RunAudience };
 
 /**

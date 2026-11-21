@@ -59,7 +59,7 @@ import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePage
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
-import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEvents, runUser } from "../agents/runs.ts";
+import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewRounds, queueReason, runEvents, runUser } from "../agents/runs.ts";
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -2085,7 +2085,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (r.kind !== "code") throw new HttpError(400, "只有编码交办有评审");
     const { checkLabel, lookName, reviewChecks, reviewsOf } = await import("../agents/review.ts");
     const chain = (r.output as { codeChain?: { rounds: string[] } }).codeChain;
-    const rounds = (chain?.rounds ?? [r.id]).filter(id => canAccessRun(app, who(req), id, "code.review.view")).map((id) => getRun(app, id));
+    const { rounds, children } = reviewRounds(app, chain?.rounds ?? [r.id], runAudience(app, who(req), "code.review.view"));
     const checks = reviewChecks(app);
     const infos = new Map(checks.map((c) => [c.name, c]));
     // A second look by another model is the check under its look name (code-overlap.ts).
@@ -2094,14 +2094,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // The owner's open decision on a round (plan to confirm, stopped review), answered from the run page.
     const askOf = (id: unknown) => { try { const a = typeof id === "string" ? getAsk(app, id) : null; return a ? { id: a.id, status: a.status, question: a.question, options: a.options, answer: a.answer, handler: one<{ h: string | null }>(app.db, "select json_extract(context, '$.handler') h from asks where id = ?", a.id)?.h ?? null } : null; } catch { return null; } };
     // A review that waited for the owner (a confirmed plan, a retry, a later split) ran in runs of its own.
-    const reviewRuns = (id: string) => all<{ id: string; status: string; title: string }>(app.db, "select id, status, title from runs where parent_id = ? and kind = 'review' order by created_at", id);
     return {
       estimate: rounds[0]?.output.reviewEstimate ?? null,
       rounds: rounds.map((x) => ({
         runId: x.id, round: (x.input as { round?: number }).round ?? 1, status: x.status,
         plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null, stage: x.output.reviewStage ?? null,
         lead: x.output.reviewLead ?? null, stop: x.output.reviewStop ?? null, changePoints: (x.output.changePoints as { points?: unknown[] } | undefined)?.points ?? null, ask: askOf(x.output.reviewAskId), acceptedByOwner: !!x.output.acceptedByOwner,
-        reviewRuns: reviewRuns(x.id).filter(child => canAccessRun(app, who(req), child.id, "code.review.view")),
+        reviewRuns: children.get(x.id) ?? [],
       })),
       reviews: reviewsOf(app, rounds.map((x) => x.id)),
       labels,
