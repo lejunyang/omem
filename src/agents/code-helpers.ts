@@ -109,9 +109,9 @@ const HELPER_BRIEF = [
 
 async function inspectHandoff(app: App, actor: string, space: string, reason: string, refused: boolean): Promise<Refusal | null> {
   const view = await inspectUnreceivedMemberGit(app, actor, space);
-  if (!refused && (!view || (view.worktree === "clean" && view.messages?.length === 0))) return null;
-  const byCommit = view?.messages?.map(commitTaskNumbers) ?? [];
-  const unknown = view?.worktree !== "clean" || !byCommit.length || view.truncated || byCommit.some(tasks => !tasks.length);
+  if (!refused && (!view || (view.worktree === "clean" && !view.incomplete && !view.messages.length))) return null;
+  const byCommit = view?.messages.map(commitTaskNumbers) ?? [];
+  const unknown = view?.worktree !== "clean" || !byCommit.length || view.incomplete || byCommit.some(tasks => !tasks.length);
   return { space, reason, tasks: [...new Set(byCommit.flat())], unknown };
 }
 

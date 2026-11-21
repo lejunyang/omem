@@ -7,7 +7,7 @@ import * as runner from "../src/agents/runner.ts";
 import { registerRound, dispatchTasks, joinHelpers } from "../src/agents/code-helpers.ts";
 import { placeOnBranch, temporaryWorkBranch } from "../src/agents/code-branch.ts";
 import { finishSync } from "../src/agents/code-sync.ts";
-import { receiveMemberGit } from "../src/agents/member-git.ts";
+import { inspectUnreceivedMemberGit, receiveMemberGit } from "../src/agents/member-git.ts";
 import { addTask, commitTask, getTask, settleCodingRound, updateTask } from "../src/agents/code-tasks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
@@ -100,6 +100,26 @@ describe("delegation sandbox mounts", () => {
       expect(plan.rw).not.toContain(dirname(dir));
     }
     expect(plan.rw).not.toContain(realpathSync(join(a.root, ".git")));
+  });
+
+  it.skipIf(!sandboxSupport().ok)("keeps shared commits once and preserves attribution when either ref is unreadable", async () => {
+    const repo = repository("inspect-refs");
+    const actor = "inspect-round";
+    const wt = leased(actor, repo);
+    repo.git("-C", wt.slot, "switch", "-qc", "topic");
+    const plan = workspaceMounts(app, [{ ...wt, branch: "topic" }], actor);
+    const dir = readFileSync(plan.pointers![0].source, "utf8").trim().slice(8);
+    const git = (...args: string[]) => repo.git("--git-dir", dir, "--work-tree", wt.slot, ...args);
+    git("commit", "--allow-empty", "-qm", "Omem-Task: T2");
+    const inspect = () => inspectUnreceivedMemberGit(app, actor, repo.id);
+    const expected = { messages: ["Omem-Task: T2\n"], worktree: "clean" };
+    await expect(inspect()).resolves.toEqual({ ...expected, incomplete: false });
+    git("branch", "other");
+    git("symbolic-ref", "HEAD", "refs/heads/missing");
+    await expect(inspect()).resolves.toEqual({ ...expected, incomplete: true });
+    git("symbolic-ref", "HEAD", "refs/heads/other");
+    git("branch", "-D", "topic");
+    await expect(inspect()).resolves.toEqual({ ...expected, incomplete: true });
   });
 
   it.skipIf(!sandboxSupport().ok)("accepts only the assigned branch's fast-forward from the member sandbox", async () => {
@@ -254,8 +274,9 @@ describe("delegation sandbox mounts", () => {
     expect(getTask(app, round.id, another.seq).state).toBe("coding");
   });
 
-  it.skipIf(!sandboxSupport().ok).each(["refused", "crashed", "oversized-status"])("merges accepted helper work and preserves a %s handoff", async failure => {
-    const oversized = failure === "oversized-status";
+  it.skipIf(!sandboxSupport().ok).each(["refused", "crashed", "oversized-status", "commit-before-switch"])("merges accepted helper work and preserves a %s handoff", async failure => {
+    const commitBeforeSwitch = failure === "commit-before-switch";
+    const acceptedInB = failure === "refused" || failure === "crashed";
     const repos = [repository(failure + "-a"), repository(failure + "-b")];
     const round = createRun(app, { kind: "code", spaceId: repos[0].id, title: "多仓交付", input: { taskMode: true } });
     app.db.prepare("update runs set status = 'running' where id = ?").run(round.id);
@@ -278,12 +299,15 @@ describe("delegation sandbox mounts", () => {
       const result = await callTool(ctx, "finish_task", { task: tasks[0], summary: "第一项完成" });
       expect(result.isError, result.text).toBe(false);
       run(`cd ${repos[0].id} && echo part > part && git add part && git commit -qm "Omem-Task: T2"`);
-      if (!oversized) run(`cd ${repos[1].id} && echo received > accepted && git add accepted && git commit -qm "Omem-Task: T2"`);
+      if (acceptedInB) run(`cd ${repos[1].id} && echo received > accepted && git add accepted && git commit -qm "Omem-Task: T2"`);
       const second = await callTool(ctx, "finish_task", { task: tasks[1], summary: "两仓的改动均已完成" });
       expect(second.isError, second.text).toBe(false);
       expect(getTask(app, round.id, tasks[1]).state).toBe("done");
-      run(`cd ${repos[1].id} && git switch -qc private && echo other > other && git add other && git commit -qm "Omem-Task: T2" && echo draft > draft`);
-      if (oversized) {
+      const patch = 'echo other > other && git add other && git commit -qm "Omem-Task: T2"';
+      if (commitBeforeSwitch) run(`cd ${repos[1].id} && ${patch} && git switch -qc private HEAD^`);
+      else run(`cd ${repos[1].id} && git switch -qc private && ${patch}`);
+      run(`cd ${repos[1].id} && echo draft > draft`);
+      if (failure === "oversized-status") {
         // More than 128 KiB of porcelain output at the worktree root.
         run(`cd ${repos[1].id}; i=0; while [ "$i" -lt 800 ]; do : > "${"f".repeat(180)}$i"; i=$((i+1)); done`);
       }
@@ -305,16 +329,18 @@ describe("delegation sandbox mounts", () => {
       });
       const run = getRun(app, ids[0]);
       expect(run.error).toContain(failure === "crashed" ? "助手异常退出" : repos[1].id);
-      expect(run.output.commits).toMatchObject({ [repos[0].id]: [expect.any(String), expect.any(String)], [repos[1].id]: oversized ? [] : [expect.any(String)] });
+      expect(run.output.commits).toMatchObject({ [repos[0].id]: [expect.any(String), expect.any(String)], [repos[1].id]: acceptedInB ? [expect.any(String)] : [] });
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:first").toString()).toBe("first\n=======\n");
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:part").toString()).toBe("part\n");
-      if (!oversized) expect(repos[1].git("-C", trees[1].path, "show", "HEAD:accepted").toString()).toBe("received\n");
+      if (acceptedInB) expect(repos[1].git("-C", trees[1].path, "show", "HEAD:accepted").toString()).toBe("received\n");
       expect(run.output.refusals).toMatchObject([{ space: repos[1].id, tasks: [tasks[1]], unknown: true }]);
       const failed = (run.output.worktrees as typeof trees)[1];
       expect(readFileSync(join(failed.path, "draft"), "utf8")).toBe("draft\n");
       const privateDir = join(app.runsDir, run.id, "member-git", failed.space, "git");
-      expect(repos[1].git("--git-dir", privateDir, "show", "HEAD:other").toString()).toBe("other\n");
+      const patchRef = commitBeforeSwitch ? "refs/heads/work" : "HEAD";
+      expect(repos[1].git("--git-dir", privateDir, "show", patchRef + ":other").toString()).toBe("other\n");
       expect(settleCodingRound(app, round.id, round.id, trees, 1, ids).finished).toEqual([tasks[0]]);
+      expect(getTask(app, round.id, tasks[0]).state).toBe("done");
       const partial = getTask(app, round.id, tasks[1]);
       expect(partial.state).toBe("todo");
       expect(partial.notes.at(-1)?.text).toContain(repos[1].id + "：" + (failure === "crashed" ? "助手异常退出" : "成员工作区已切换分支"));

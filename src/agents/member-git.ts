@@ -206,15 +206,23 @@ export async function inspectUnreceivedMemberGit(app: App, actor: string, space:
       "--no-optional-locks", "--git-dir=/member", "--work-tree=/work", ...args],
       { encoding: "utf8", timeout: 5000, maxBuffer: 65536 });
     const commitLimit = 100;
-    const [log, status] = await Promise.allSettled([
-      read("log", `--max-count=${commitLimit + 1}`, "--format=%x00%B", state.base + "..HEAD", "--"),
+    const log = (ref: string) => read("log", `--max-count=${commitLimit + 1}`, "-z", "--format=%H%x00%B", state.base + ".." + ref, "--");
+    const [status, ...logs] = await Promise.allSettled([
       read("status", "--porcelain", "--untracked-files=normal"),
+      log("HEAD"),
+      log(state.ref || "refs/heads/work"),
     ]);
-    const messages = log.status === "fulfilled" ? log.value.stdout.split("\0").slice(1) : null;
+    const commits = new Map<string, string>();
+    for (const result of logs) {
+      if (result.status !== "fulfilled") continue;
+      const fields = result.value.stdout.split("\0");
+      for (let i = 0; i + 1 < fields.length; i += 2) commits.set(fields[i], fields[i + 1]);
+    }
     const worktree = status.status === "rejected" ? "unknown" : status.value.stdout ? "dirty" : "clean";
-    return { messages, worktree, truncated: (messages?.length ?? 0) > commitLimit } as const;
+    const incomplete = commits.size > commitLimit || logs.some(result => result.status === "rejected");
+    return { messages: [...commits.values()], worktree, incomplete } as const;
   } catch {
-    return { messages: null, worktree: "unknown", truncated: false } as const;
+    return { messages: [], worktree: "unknown", incomplete: true } as const;
   }
 }
 
