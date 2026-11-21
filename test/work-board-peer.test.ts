@@ -171,13 +171,14 @@ it.each(["read", "write"])("remote %s 按已归档目标的当前空间读取飞
   const fetchDoc = (id: string) => ({ name: "lark_doc_fetch", arguments: { doc: doc(id) } });
   const cli = (...command: string[]) => ({ name: "lark_read", arguments: { command } });
   const chat = (id: string, ...flags: string[]) => cli("im", "+chat-messages-list", "--chat-id", id, ...flags);
+  const nextPage = (pageFrom: string, chatId: string, ...flags: string[]) => ({ ...chat(chatId, ...flags), pageFrom });
   const messages = (ids: string) => cli("im", "+messages-mget", "--message-ids", ids);
   const selection = "#share-blockA";
   const allowedDocs = [fetchDoc("Current"), cli("docs", "+fetch", "--doc", doc("Current") + "?from=share"),
     fetchDoc("Reader" + selection), cli("docs", "+fetch", "--doc", doc("Reader") + "?from=share" + selection)];
   const token = "next+page/2=";
   const allowed = [...allowedDocs, chat("oc_current", "--order", "desc", "--page-size", "10"),
-    chat("oc_current", "--page-token", token, "--page-size=10", "--order=desc"), messages("om_current,om_second_current"),
+    nextPage("oc_current", "oc_current", "--page-size=10", "--order=desc"), messages("om_current,om_second_current"),
     messages("om_copied,om_second_current"), chat("oc_relocated")];
   const refused = [fetchDoc("Archived"), fetchDoc("Unknown"), cli("docs", "+fetch", "--doc", doc("Archived")),
     chat("oc_archived"), chat("oc_unknown"), chat("oc_split"), chat("oc_month"), messages("om_archived"), messages("om_current,om_archived"),
@@ -185,9 +186,9 @@ it.each(["read", "write"])("remote %s 按已归档目标的当前空间读取飞
     cli("im", "+chat-messages-list", "--chat-id=oc_current", "--chat-id=oc_archived"),
     cli("im", "+messages-resources-download", "--message-id", "om_unknown", "--file-key", "file_pending"),
     fetchDoc("ReaderOther" + selection), cli("docs", "+fetch", "--doc", doc("ReaderOther")),
-    messages("om_copied,om_archived"), chat("oc_current", "--order", "asc", "--page-size", "10", "--page-token", token),
+    messages("om_copied,om_archived"), nextPage("oc_current", "oc_current", "--order", "asc", "--page-size", "10"),
     chat("oc_current", "--order", "desc", "--page-size", "10", "--page-token", "unissued"),
-    chat("oc_current", "--page-token", "relocated-page"), chat("oc_relocated", "--page-token", "relocated-page")];
+    nextPage("oc_relocated", "oc_current"), nextPage("oc_relocated", "oc_relocated")];
   saveAgentSpec(f.there, { name: "reader", description: "核对材料", prompt: "读取飞书材料", tools: ["lark_read", "lark_doc_fetch", "read_source"] }, "user");
   Object.assign(f.there.config.agents.profiles[0].env, { FAKE_MODE: "device-lark", FAKE_LARK_READS: JSON.stringify([...allowed, ...refused]) });
   const liveReads: string[][] = [];
@@ -202,7 +203,8 @@ it.each(["read", "write"])("remote %s 按已归档目标的当前空间读取飞
       moveSource(f.there, relocated.id, "other", "群历史续页前迁出");
       return { data: { content, has_more: true, page_token: "relocated-page" } };
     }
-    return { data: { content, has_more: true, page_token: token } };
+    const messages = Array.from({ length: 10 }, () => ({ content: content.padEnd(7000, "文") }));
+    return { data: { messages, has_more: true, page_token: token } };
   });
   onTestFinished(() => { setLarkCliForTests(null); clearRiskCache(); });
   await f.dispatch("remote", { agent: "reader", access });
@@ -214,10 +216,11 @@ it.each(["read", "write"])("remote %s 按已归档目标的当前空间读取飞
   await f.poll();
   const task = readBoard(f.here, f.id).tasks[0];
   expect(task.status).toBe("done");
-  const results = JSON.parse(String(getRun(f.here, task.attempts[0].runId).output.answer)) as { denied: boolean; content: { text: string }[] }[];
+  const results = JSON.parse(String(getRun(f.here, task.attempts[0].runId).output.answer)) as { denied: boolean; text: string; truncated: boolean }[];
   expect(results.map(r => r.denied)).toEqual([...allowed.map(() => false), ...refused.map(() => true)]);
-  for (const [i, r] of results.slice(0, allowed.length).entries()) expect(r.content[0].text).toContain(i < allowedDocs.length ? "飞书文档现文" : "飞书群消息现文");
-  for (const r of results.slice(allowed.length)) expect(r.content[0].text).toMatch(/任务能读的空间|无法确定本次飞书读取的范围/);
+  expect(results[allowedDocs.length].truncated).toBe(true);
+  for (const [i, r] of results.slice(0, allowed.length).entries()) expect(r.text).toContain(i < allowedDocs.length ? "飞书文档现文" : "飞书群消息现文");
+  for (const r of results.slice(allowed.length)) expect(r.text).toMatch(/任务能读的空间|无法确定本次飞书读取的范围/);
   const targets = liveReads.map(args => {
     const flag = args.findIndex(a => ["--doc", "--chat-id", "--message-ids"].includes(a));
     return [args[1], args[flag + 1]];

@@ -219,9 +219,21 @@ new AgentSideConnection(
         try {
           if (process.env.FAKE_MODE === "device-lark") {
             const results = [];
-            for (const request of JSON.parse(process.env.FAKE_LARK_READS!)) {
+            const pages = new Map<string, string>();
+            for (const { pageFrom, ...request } of JSON.parse(process.env.FAKE_LARK_READS!)) {
+              const command: string[] | undefined = request.arguments.command;
+              if (pageFrom) {
+                const token = pages.get(pageFrom);
+                if (!token) throw new Error(`上页的工具响应缺少 ${pageFrom} 的续页令牌`);
+                command!.push("--page-token", token);
+              }
               const result = await client.callTool(request);
-              results.push({ denied: !!result.isError, content: result.content });
+              const text = (result.content as { text: string }[])[0].text;
+              if (command?.[1] === "+chat-messages-list" && !result.isError) {
+                const page = JSON.parse(text.split("\n\n", 1)[0]);
+                if (page.has_more) pages.set(command[command.indexOf("--chat-id") + 1], page.page_token);
+              }
+              results.push({ denied: !!result.isError, text: text.slice(0, 350), truncated: text.includes("…（已截断") });
             }
             await say(JSON.stringify(results));
             return { stopReason: "end_turn" };
