@@ -20,7 +20,7 @@ import { getItem, type Item } from "../items/store.ts";
 import { addLocalMaterials, materialsBrief } from "../items/materials.ts";
 import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
-import { hasRunner, runnerApproved, flowAppliesTo, flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { hasRunner, runnerApproved, retainItemRunnerGrant, flowAppliesTo, flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { codeWorkSettledAt, codeWorkSince, findObject, latestCodeWork, objectKind } from "./objects.ts";
 import { pollObjects } from "./plugin-objects.ts";
@@ -361,7 +361,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
   }
   if (typeof d.by === "object" && "runner" in d.by) {
     const runner = d.by.runner;
-    if (!runnerApproved(app, f.definition)) throw new HttpError(403, "这个流程的插件运行器需本人确认");
+    if (!runnerApproved(app, f.definition, item.id)) throw new HttpError(403, "这个流程的插件运行器需本人确认");
     withdraw(app, s);
     atomic(app, () => {
       const r = createRun(app, { kind: "flow-runner", title: `${item.title} · ${d.name}`, spaceId: item.spaceId, userId: item.userId,
@@ -804,6 +804,7 @@ export function updateStageBudget(app: App, itemId: string, stageId: string, pat
     if (patch.escalate) target.escalate!.max = patch.escalate.max;
     const validated = parseFlow(JSON.stringify(copy));
     atomic(app, () => {
+      if (hasRunner(f.definition) && runnerApproved(app, f.definition, itemId)) retainItemRunnerGrant(app, itemId, validated);
       run(app.db, "update item_flows set definition=?,updated_at=? where item_id=?", JSON.stringify(validated), now(), itemId);
       const s = getStage(app, itemId, stageId);
       changeStage(app, itemId, stageId, s.state, {}, { actor: "owner", userId }, "本人修改了这一段的预算和升档上限");

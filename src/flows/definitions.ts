@@ -171,8 +171,21 @@ export function readFlow(app: App, id: string, visibleSpaces: ReadonlySet<string
 }
 export const hasRunner = (f: FlowDefinition) => f.stages.some(s => typeof s.by === "object" && "runner" in s.by);
 const runnerGrant = (f: FlowDefinition) => createHash("sha256").update(JSON.stringify(f)).digest("hex");
-export function runnerApproved(app: App, f: FlowDefinition) {
-  return one<{ value: string }>(app.db, "select value from kv where key=?", "flow-runner:" + f.id)?.value === runnerGrant(f);
+export function runnerApproved(app: App, f: FlowDefinition, itemId?: string) {
+  const hash = runnerGrant(f);
+  if (one(app.db, "select 1 from kv where key=? and value=?", "flow-runner:" + f.id, hash)) return true;
+  return !!itemId && !!one(app.db, "select 1 from kv where key=? or (key=? and value=?)",
+    "flow-runner-version:" + hash, "item-runner:" + itemId, hash);
+}
+export function retainItemRunnerGrant(app: App, itemId: string, f: FlowDefinition) {
+  run(app.db, "insert or replace into kv(key,value) values(?,?)", "item-runner:" + itemId, runnerGrant(f));
+}
+// Preserve the previous template's approval for snapshots, including approvals saved by older hosts.
+function replaceRunnerGrant(app: App, id: string, next?: FlowDefinition) {
+  const key = "flow-runner:" + id;
+  run(app.db, "insert or ignore into kv(key,value) select 'flow-runner-version:' || value, ? from kv where key=?", id, key);
+  if (next) run(app.db, "insert or replace into kv(key,value) values(?,?)", key, runnerGrant(next));
+  else run(app.db, "delete from kv where key=?", key);
 }
 export function saveFlow(app: App, raw: string, by: string, confirmedRunner = false) {
   const f = parseFlow(raw);
@@ -180,8 +193,7 @@ export function saveFlow(app: App, raw: string, by: string, confirmedRunner = fa
   const path = file(app, f.id);
   mkdirSync(join(app.libraryDir, "_flows"), { recursive: true });
   writeFileSync(path, raw.endsWith("\n") ? raw : `${raw}\n`);
-  if (hasRunner(f)) run(app.db, "insert or replace into kv(key,value) values(?,?)", "flow-runner:" + f.id, runnerGrant(f));
-  else run(app.db, "delete from kv where key=?", "flow-runner:" + f.id);
+  replaceRunnerGrant(app, f.id, hasRunner(f) ? f : undefined);
   pruneGateGrants(app, f.id, f.stages);
   commitLibrary(app.libraryDir, `${by}: 保存流程 ${f.id}`);
   return f;
@@ -191,7 +203,7 @@ export function removeFlow(app: App, id: string, by = "user") {
   if (!existsSync(path)) throw new HttpError(404, `没有流程 ${id}`);
   unlinkSync(path);
   run(app.db, "delete from kv where key=?", "flow-checks:" + id);
-  run(app.db, "delete from kv where key=?", "flow-runner:" + id);
+  replaceRunnerGrant(app, id);
   pruneGateGrants(app, id, []);
   commitLibrary(app.libraryDir, `${by}: 删除流程 ${id}`);
 }

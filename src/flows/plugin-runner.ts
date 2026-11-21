@@ -23,7 +23,7 @@ export async function runPluginStage(ctx: RunContext) {
   let result = r.output.runnerResult ? resultSchema.parse(r.output.runnerResult) : undefined;
   try {
     if (!entry || entry.spaces.length && !entry.spaces.includes(item.spaceId)) throw Error("当前空间的运行器不可用");
-    if (!runnerApproved(app, f.definition)) throw Error("插件运行器需要本人确认");
+    if (!runnerApproved(app, f.definition, itemId)) throw Error("插件运行器需要本人确认");
     if (!result || result.status === "running") {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw Error("已到阶段时限");

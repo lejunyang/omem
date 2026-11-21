@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { parseFlow, saveFlow } from "../src/flows/definitions.ts";
-import { flowView, ownerAction, startFlow, reportStage } from "../src/flows/engine.ts";
+import { flowView, ownerAction, startFlow, reportStage, updateStageBudget } from "../src/flows/engine.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
 import { proposeFlow } from "../src/flows/engine.ts";
 import { answerAsk } from "../src/agents/asks.ts";
@@ -74,6 +74,19 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     return runPluginStage({ app, run: getRun(app,id), signal: new AbortController().signal,
       output: value => setRunOutput(app,id,value), event: () => {} });
   }
+  it("批准新版和调整事项预算后，旧事项仍可进入运行器并续查", async () => {
+    const stages = [{id:"first",name:"准备",by:"wait"}, {...job(),needs:["first"]}];
+    const item = await begin(stages);
+    saveFlow(app, raw([job(true)]), "owner", true);
+    await ownerAction(app,item,"first","done","准备好了");
+    const id = flowView(app,item).stages[1].by!;
+    const ctx = { app, run:getRun(app,id), signal:new AbortController().signal,
+      output:(data:Record<string, unknown>) => setRunOutput(app,id,data), event:() => {} };
+    await expect(runPluginStage(ctx)).rejects.toThrow("下一次检查");
+    await updateStageBudget(app,item,"job",{budget:{minutes:20}},"owner");
+    await runPluginStage(ctx);
+    expect(flowView(app,item).stages[1]).toMatchObject({state:"done",by:id});
+  });
   it("期限到后取消，插件失败也停在当前阶段", async () => {
     const item = await begin([job()]);
     await expect(tick(item)).rejects.toThrow("下一次检查");
