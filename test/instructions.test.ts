@@ -1,10 +1,12 @@
+import { readFileSync } from "node:fs";
+import { helpText, TOOL_GROUPS } from "../src/agents/tool-help.ts";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { prepareRun, runRole, toolSections } from "../src/agents/runner.ts";
+import { loadRole, prepareRun, runRole, toolSections } from "../src/agents/runner.ts";
 import { remember } from "../src/memory/store.ts";
 import type { App } from "../src/core/app.ts";
 import { createRun } from "../src/agents/runs.ts";
-import { agentProfileSchema } from "../src/core/config.ts";
+import { agentProfileSchema, roleNames } from "../src/core/config.ts";
 import { startServer } from "../src/server/http.ts";
 import { embedPending, embedPendingMemories, setEmbedderForTests } from "../src/search/embeddings.ts";
 import { fakeEmbedder, testApp } from "./helpers.ts";
@@ -40,6 +42,42 @@ describe("what the instructions carry", () => {
     expect(toolSections(text, new Set(), true)).toBe("intro");
   });
 
+  it("requires all words on one when line, accepts alternate lines and checks hidden words", () => {
+    const body = "## 条件\n<!-- tools: search -->\n<!-- when: chat !awareness -->\n<!-- when: background code -->\n正文";
+    const render = (...scene: string[]) => toolSections(body, new Set(["search"]), true, scene);
+    expect(render("chat")).toContain("## 条件");
+    expect(render("background", "code")).toContain("## 条件");
+    expect(render("chat", "awareness")).toBe("");
+    expect(render("background", "review")).toBe("");
+    expect(toolSections(body, new Set(), true, ["chat"])).toBe("");
+    expect(() => toolSections(body.replace("code", "!typo"), new Set(), true, ["chat"])).toThrow("!typo");
+  });
+
+  it("checks the owner's role copy on load and renders both parts of an agent profile", async () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    const { customizeRole, saveRoleOverride } = await import("../src/agents/builtin-roles.ts");
+    const { readAgentSpec, saveAgentSpec } = await import("../src/agents/specs.ts");
+    const { revokeToolToken } = await import("../src/agents/tools.ts");
+    const original = customizeRole(app, "coder");
+    const extra = "\n## 仅交谈\n<!-- when: chat -->\n正文";
+    saveRoleOverride(app, "coder", original + extra);
+    saveAgentSpec(app, { name: "reader", description: "阅读", prompt: "## 常规\n正文" + extra,
+      instructions: "## 写入\n<!-- when: memory-write -->\n正文", tools: ["search"] }, "user");
+    for (const actor of [{ role: "coder" as const }, { spec: readAgentSpec(app, "reader") }]) {
+      for (const chat of [true, false]) {
+        const prepared = prepareRun(app, { actor, spaceId: "personal", runId: null, scene: { chat } });
+        revokeToolToken(prepared.token);
+        expect(prepared.system.includes("## 仅交谈")).toBe(chat);
+        expect(prepared.system).not.toContain("## 写入");
+        if ("spec" in actor) expect(prepared.system).toContain("## 常规");
+      }
+    }
+    saveRoleOverride(app, "coder", original + extra.replace("when: chat", "when: typo"));
+    expect(() => loadRole("coder", app)).toThrow("typo");
+    app.db.close();
+  });
+
   it("leaves out the shared guide's sections about tools the run does not have", () => {
     const app = testApp();
     app.baseUrl = "http://127.0.0.1:1";
@@ -51,6 +89,39 @@ describe("what the instructions carry", () => {
     for (const h of ["## 怎么写记忆", "## 事项与本人的回复", "## 等一会再接着做", "## 按任务选择 AI"]) expect(assistant).toContain(h);
     expect(assistant).not.toContain("<!-- tools:");
     app.db.close();
+  });
+
+  it("selects the sections for the people and the task in this turn", () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    const render = (role: "assistant" | "coach", kind: "ask" | "flow-stage" | "profile-review" | "flow-review", chat = false, denyTools: string[] = []) =>
+      prepareRun(app, { actor: { role }, spaceId: "personal", runId: null, scene: { chat, kind, awareness: chat }, denyTools, addTools: ["stage_report", "stay_quiet"] }).system;
+    const chat = render("assistant", "ask", true);
+    expect(chat).toContain("## 会话与上下文");
+    expect(chat).toContain("## 在聊天里处理或忽略事项");
+    expect(chat).not.toContain("## 后台工作期间本人的补充");
+    expect(chat).not.toContain("## 流程里的一个阶段");
+    const stage = render("assistant", "flow-stage");
+    expect(stage).toContain("## 后台工作期间本人的补充");
+    expect(stage).toContain("## 流程里的一个阶段");
+    expect(stage).not.toContain("## 会话与上下文");
+    expect(stage).not.toContain("## 在聊天里处理或忽略事项");
+    expect(render("assistant", "ask", true, ["remember", "supersede"])).not.toContain("## 怎么写记忆");
+    expect(render("coach", "flow-review")).toContain("## 读流程回顾");
+    expect(render("coach", "flow-review")).not.toContain("## 复盘步骤");
+    expect(render("coach", "profile-review")).toContain("## 复盘步骤");
+    app.db.close();
+  });
+
+  it("can open every procedure named by a role in the advertised help group", () => {
+    const roles = ["_common", ...roleNames].map(name => readFileSync(resolve("roles", name + ".md"), "utf8"));
+    const pointers = roles.flatMap(text => [...text.matchAll(/omem_help\("([^"]+)"\)` 的「([^」]+)」/g)]);
+    expect(pointers.length).toBe(roles.reduce((n, text) => n + (text.match(/omem_help\("/g)?.length ?? 0), 0));
+    expect(pointers.length).toBeGreaterThan(0);
+    for (const [, group, heading] of pointers) {
+      expect(TOOL_GROUPS.some(g => g.id === group), group).toBe(true);
+      expect(helpText([], group).split("\n"), group).toContain("## " + heading);
+    }
   });
 
   it("tells a task run its own lessons and only the closest shared ones", async () => {
@@ -99,7 +170,7 @@ describe("standing instructions", () => {
     expect(next).toMatchObject({ session: first.session, resumed: true });
     expect(next.prompt).not.toContain("# 角色：");
     expect(next.prompt).toContain("按评审修改：补上测试");
-    expect(first.sent).toMatchObject({ via: "message", message: first.prompt.length, parts: { lessonCount: 0 } });
+    expect(first.sent).toMatchObject({ via: "message", scene: ["background", "code"], message: first.prompt.length, parts: { lessonCount: 0 } });
     expect(next.sent).toMatchObject({ via: "resumed", message: next.prompt.length });
     expect(next.sent).toMatchObject({ systemSent: false, omemAccess: "mcp", localTools: true });
   }, 60000);

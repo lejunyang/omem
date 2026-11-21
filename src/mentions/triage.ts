@@ -7,7 +7,7 @@ import { listIgnoreRules } from "../core/notify-lessons.ts";
 import { findSpace, relatedIds } from "../core/spaces.ts";
 import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { truncate } from "../core/util.ts";
-import { loadRole } from "../agents/runner.ts";
+import { loadRole, toolSections } from "../agents/runner.ts";
 import { listAgentSpecs } from "../agents/specs.ts";
 import { ownerContextParts } from "../agents/owner-now.ts";
 import { rulesNaming } from "../rules/store.ts";
@@ -168,7 +168,7 @@ export async function triageMaterial(app: App, channel: MentionChannel, input: T
 
 /** The criteria: the role's text (the owner may have changed it on the Agent page). */
 function criteria(app: App) {
-  return loadRole("mention-triage", app).body.trim();
+  return toolSections(loadRole("mention-triage", app).body, new Set(), false, ["background", "mention"]);
 }
 
 /**
