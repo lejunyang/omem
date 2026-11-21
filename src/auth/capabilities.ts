@@ -31,6 +31,7 @@ const definitions = {
   "code.work.view": ["space", "看编码", "查看编码交办、各轮和修改项"],
   "code.review.view": ["space", "看评审", "查看评审问题和代码差异"],
   "conversations.view": ["global", "看自己的对话", "查看自己的对话记录"],
+  "agents.view": ["global", "查看技能与助手档案", "列出和读取技能，查看 Agent 档案和 AI 后端选项"],
   "ask.send": ["global", "提问", "在自己的对话里向助手提问"],
   "notifications.view": ["global", "看通知", "阅读发给自己的通知"],
   "metrics.view": ["space", "看指标", "查看空间里的指标和变化"],
@@ -55,6 +56,7 @@ export const legacyCapabilities: Record<string, Capability[]> = {
 const personal: Capability[] = ["ask.send", "conversations.view", "notifications.view", "runs.operate"];
 function presetGrants(role: string, permissions: string[], cap: Capability) {
   if (role === "owner") return true;
+  if (cap === "agents.view") return role !== "observer";
   if (cap === "settings.members" && role === "admin") return true;
   if (cap === "remote.view" || cap === "remote.operate") return false;
   if (cap.startsWith("settings.") && cap !== "settings.members") return cap === "settings.members.view" && (role === "admin" || permissions.includes("users.manage"));

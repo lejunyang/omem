@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, expect, it } from "vitest";
-import { runRole } from "../src/agents/runner.ts";
-import { issueToolToken, revokeToolToken } from "../src/agents/tools.ts";
+import { prepareRun, runRole } from "../src/agents/runner.ts";
+import { callTool, issueToolToken, revokeToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { startAgentWork, refreshWork } from "../src/agents/agent-work.ts";
 import { createThread } from "../src/agents/threads.ts";
-import { saveAgentSpec } from "../src/agents/specs.ts";
+import { saveAgentSpec, saveSkill } from "../src/agents/specs.ts";
 import { createRun, getRun, runEvents, runUser } from "../src/agents/runs.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
@@ -24,6 +24,23 @@ const spaceId = createSpace(app, { id: "team", name: "项目" }).id;
 const server = await startServer(app, { port: 0, quiet: true });
 const calls = () => readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
 afterAll(async () => { await server.close(); app.db.close(); });
+
+it("offers skill and agent discovery to a contributor without management rights", async () => {
+  const userId = createUser(app, { id: "contributor", name: "贡献者" }).id;
+  addMember(app, spaceId, userId, "contributor");
+  const skill = "review-notes";
+  saveSkill(app, { name: skill, description: "核对笔记", body: "逐条核对材料。", status: "active" }, "user");
+  const prepared = prepareRun(app, { actor: { role: "assistant" }, userId, spaceId, spaces: [spaceId], runId: null, profile });
+  try {
+    for (const name of ["list_skills", "read_skill", "list_agents", "list_ai_backends"]) expect(prepared.tools).toContain(name);
+    for (const name of ["save_skill", "save_agent"]) expect(prepared.tools).not.toContain(name);
+    expect(prepared.system).toContain(skill);
+    const ctx = toolContextForToken(app, prepared.token)!;
+    expect(await callTool(ctx, "read_skill", { name: skill })).toMatchObject({ isError: false, text: expect.stringContaining("逐条核对材料") });
+    app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,'agents.view','global','','deny','0','owner')").run(userId);
+    expect(await callTool(ctx, "read_skill", { name: skill })).toMatchObject({ isError: true, deniedCapability: "agents.view" });
+  } finally { revokeToolToken(prepared.token); }
+});
 
 it("applies the observer's permissions across personal HTTP, MCP and an ACP assistant", async () => {
   const userId = createUser(app, { id: "reader", name: "观察者", role: "observer" }).id;

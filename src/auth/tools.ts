@@ -10,6 +10,7 @@ const toolCapabilities: Record<string, ToolCapability> = {
   track_problem: "owner", revise_reply_outcome: "owner", classify_source: "owner",
   create_space: "owner", connect_repository: "owner", propose_archive_rule: "agents.manage",
   digest_sources: "agents.manage", lark_wiki_crawl: "settings.manage",
+  list_skills: "agents.view", read_skill: "agents.view", list_agents: "agents.view", list_ai_backends: "agents.view",
   run_agent: "runs.operate", ask_agent: "runs.operate", dispatch_work: "runs.operate", work_cancel: "runs.operate",
   work_review: "runs.operate", work_status: "runs.view", list_item_proposals: "items.view",
   propose_item_update: "memory.write", resolve_item_proposal: "items.edit",
