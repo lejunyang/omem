@@ -94,6 +94,8 @@
 
 11. 用豆包 CLI 替身做一次短问答和一次双序复盘。已隔离的 `sandboxed` 轮次均传 `always_allow`，短问答回退或选 `all` 时传 `ask_risky`。
 
+12. 只读档案以 `/tmp` 为工作目录，确认可在里面创建本轮私有文件，宿主临时文件不可见，批准挂载的子目录可写。
+
 自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 成员用自己的 AI 账号：额度、模型、技能、换后端、停用、插件登录（2026-11-20 晚，docs/v2/agent-accounts.md）

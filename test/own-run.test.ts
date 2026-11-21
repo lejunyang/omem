@@ -1,12 +1,15 @@
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { ownRun, sandboxStatus } from "../src/agents/own-run.ts";
 import { shortPath } from "../src/agents/own-sandbox.ts";
-import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { bwrapArgs, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { prepareRun } from "../src/agents/runner.ts";
+import { revokeToolToken } from "../src/agents/tools.ts";
+import { agentSpecSchema } from "../src/agents/specs.ts";
 import { launch } from "../src/agents/spawn.ts";
 import { testApp } from "./helpers.ts";
 
@@ -47,6 +50,37 @@ it.skipIf(process.platform !== "linux")("reports exactly the writable plan used 
     expect(check.plan.rw).toContain(snapshot);
   } finally {
     app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private while mounting an allowed child", async () => {
+  const app = testApp();
+  const home = mkdtempSync(join(tmpdir(), "tmp-cwd-"));
+  const allowed = join(home, "allowed");
+  mkdirSync(allowed);
+  writeFileSync(join(home, "host-file"), "host");
+  vi.stubEnv("HOME", home);
+  app.baseUrl = "http://127.0.0.1:1";
+  app.config.agents.ownSandbox = { mode: "require", writable: [allowed], hidden: [] };
+  const spec = { ...agentSpecSchema.parse({ name: "reader", description: "阅读", cwd: "/tmp", writes: false }), prompt: "读资料" };
+  const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+  const prep = prepareRun(app, { actor: { spec }, spaceId: "personal", runId: null, profile });
+  try {
+    const box = prep.isolation.box!;
+    expect(box.readOnly).toBe(true);
+    const args = bwrapArgs({ ...box.plan, cwd: prep.cwd, command: profile.command, args: [] });
+    expect(args.slice(args.indexOf("--tmpfs"), args.indexOf("--tmpfs") + 2)).toEqual(["--tmpfs", "/tmp"]);
+    expect([...box.plan.ro, ...box.plan.rw]).not.toContain("/tmp");
+    expect(box.plan.rw).toContain(allowed);
+    const name = "private-" + app.home.split("/").at(-1);
+    const child = launch(profile.command, ["-ec", 'test ! -e "$1/host-file"; echo private > "$2"; echo visible > "$1/allowed/result"', "sh", home, name],
+      { cwd: prep.cwd, ownSandbox: box });
+    expect((await once(child, "close"))[0]).toBe(0);
+    expect(existsSync(join("/tmp", name))).toBe(false);
+    expect(existsSync(join(allowed, "result"))).toBe(true);
+  } finally {
+    revokeToolToken(prep.token); app.db.close();
+    rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
   }
 });
 

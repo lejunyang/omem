@@ -31,6 +31,14 @@ it("mounts only the assigned workspace, private snapshot, state and artifacts", 
   expect(ownMounts(box, cwd, undefined, "/data/inbox/other").rw).not.toContain("/data/inbox/other");
 });
 
+it("reserves the temporary root and keeps its explicit child mounts", () => {
+  const box = { data: "/data", home: "/home/me", state: [], writable: ["/tmp/cache"], hidden: [], runtime: [], secretEnv: [], readOnly: true };
+  const plan = ownMounts(box, "/tmp", { ro: ["/tmp", "/tmp/input"], rw: ["/tmp"] });
+  expect(plan.hide).toContain("/tmp");
+  expect(plan.ro).toEqual(["/tmp/input"]);
+  expect(plan.rw).toEqual(["/tmp/cache"]);
+});
+
 it("retains login variables and replaces service credentials with turn-scoped access", () => {
   const env = ownSandboxEnv({ OPENAI_API_KEY: "login", OMEM_SERVICE_TOKEN: "service", CHAT_SECRET: "service", OMEM_TOKEN: "stale" }, { OMEM_TOKEN: "turn" }, ["CHAT_SECRET"]);
   expect(env).toEqual({ OPENAI_API_KEY: "login", TMPDIR: "/tmp", OMEM_TOKEN: "turn" });

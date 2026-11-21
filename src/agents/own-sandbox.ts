@@ -70,7 +70,10 @@ export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: Workspac
   const executable = program && canonical(program.file);
   const runtime = [...box.runtime, ...(program && executable ? [program.file, executable, installRoot(executable), ...program.prefix.filter(isAbsolute)] : [])];
   ro.push(...runtime.filter(path => [box.data, "/tmp"].some(root => path !== root && under(path, root)) || rw.some(dir => under(path, dir))));
-  return { hide, ro: ro.filter(visible), rw: [...new Set(rw)].filter(p => visible(p) && !ro.some(r => under(p, r))),
+  // /tmp itself is private tmpfs, including when it is the working directory.
+  const bindable = (path: string) => path !== "/tmp" && visible(path);
+  const readOnly = ro.filter(bindable);
+  return { hide, ro: readOnly, rw: [...new Set(rw)].filter(p => bindable(p) && !readOnly.some(r => under(p, r))),
     links: workspace?.links?.filter(link => visible(link.path) && visible(link.target)),
     pointers: workspace?.pointers?.filter(pointer => visible(pointer.path)) };
 }
