@@ -82,13 +82,13 @@ import { cloudBackendStatus, cloudAddress, checkCloudAddress, confirmProbe, prob
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute, requestReviewAudience } from "../auth/routes.ts";
-import { hiddenSourceIds, sourceReadable, hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
+import { restrictedSourceFilter, hiddenSourceIds, sourceReadable, hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
 import { registerCodeIndexRoutes } from "../sources/code-index-http.ts";
 import { audit, can, canAccessRun, runAudience, canReadRun, globalPerms, isOwner, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
-import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, personalSpaceId, scopeFor, userForToken, userName } from "../core/users.ts";
+import { accessibleSpaces, addMember, canWrite, findUser, getUser, nameForOthers, OWNER, personalSpaceId, scopeFor, userForToken, userName } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites, visibleRunEvent, writeVisible } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
@@ -224,7 +224,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const u = getUser(app, who(req));
     // What the page may offer: global permissions, and the spaces this person writes or manages.
     const { caps, spaceCaps, ownSpaceCaps } = memberCapabilities(app, u.id);
-    return { ...u, caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
+    return { ...u, ownerName: nameForOthers(app, OWNER), caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
   });
 
   server.route({ method: ["GET", "POST"], url: "/api/cloud-tools/challenge/:nonce", handler: async (req, reply) => {
@@ -418,14 +418,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     audit(app,who(req),"egress.settings","security",{ mode:egress.mode });
     return egress;
   });
-  const rulesView = () => currentRules(app).map(r => ({ ...r, enforcedBy: enforcedBy[r.match.kind] }));
-  server.get("/api/security/operation-rules", async () => ({ rules: rulesView() }));
+  const rulesView = () => {
+    const points = enforcedBy();
+    return { enforcedBy: points, rules: currentRules(app).map(r => ({ ...r, enforcedBy: points[r.match.kind] })) };
+  };
+  server.get("/api/security/operation-rules", async () => rulesView());
   server.put("/api/security/operation-rules", async (req) => {
     const b = q(z.object({ rules: operationRulesSchema }), req.body);
     saveOperationRules(app, b.rules);
     commandGateDir(app);
     audit(app, who(req), "operation.rules", "security", { count: b.rules.length });
-    return { rules: rulesView() };
+    return rulesView();
   });
   // The command rules: the owner's own, never an agent's (no tool writes them).
   server.get("/api/security/command-rules", async (req) => {
@@ -499,13 +502,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ------------------------------------------------------------------- spaces
+  const spaceView = (space: ReturnType<typeof getSpace>, req: FastifyRequest) => who(req) === OWNER ? space
+    : { ...space, rootPath: undefined, settings: { larkAccess: space.settings.larkAccess } };
   server.get("/api/spaces", async (req) => {
     const counts = new Map(all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from sources where deleted_at is null group by space_id").map((r) => [r.space_id, r.n]));
     const pages = new Map(all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from pages group by space_id").map((r) => [r.space_id, r.n]));
     const allowed = accessibleSpaces(app, who(req));
     return listSpaces(app)
       .filter((s) => allowed === null || allowed.includes(s.id))
-      .map((s) => ({ ...s, sources: counts.get(s.id) ?? 0, pages: pages.get(s.id) ?? 0, related: relatedSpaces(app, s.id).filter((r) => allowed === null || allowed.includes(r.space)) }));
+      .map((s) => ({ ...spaceView(s, req), sources: counts.get(s.id) ?? 0, pages: pages.get(s.id) ?? 0, related: relatedSpaces(app, s.id).filter((r) => allowed === null || allowed.includes(r.space)) }));
   });
   // Related spaces: the owner adds or removes; removing one an agent added keeps it from coming back.
   server.post("/api/spaces/:id/related", async (req) => {
@@ -546,19 +551,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Whoever made it (other than the owner) manages it.
     if (who(req) !== OWNER) addMember(app, s.id, who(req), "manager");
     if (s.rootPath) scheduleSpaceSync(app, s.id);
-    return s;
+    return spaceView(s, req);
   });
   // A repository under a business space, or taken out of one (docs/v2/coding-work.md 第 4 节).
   server.post("/api/spaces/:id/parent", async (req) => {
     const id = (req.params as { id: string }).id;
     const b = q(z.object({ parent: z.string().nullable() }), req.body);
     if (b.parent && !can(app, who(req), "space.manage", b.parent)) throw new HttpError(403, `不能管理空间 ${b.parent}`);
-    return setSpaceParent(app, id, b.parent || null);
+    return spaceView(setSpaceParent(app, id, b.parent || null), req);
   });
   server.get("/api/spaces/:id/repo-suggestions", async (req) => (await import("../core/space-repos.ts")).repoSuggestions(app, (req.params as { id: string }).id));
   server.get("/api/spaces/:id", async (req) => {
     const id = (req.params as { id: string }).id;
-    return { ...getSpace(app, id), guide: spaceGuide(app, id), content: spaceContent(app, id) };
+    return { ...spaceView(getSpace(app, id), req), guide: spaceGuide(app, id), content: spaceContent(app, id) };
   });
   // Only a space that holds nothing (core/spaces.ts deleteSpace says what is in the way).
   server.delete("/api/spaces/:id", async (req) => deleteSpace(app, (req.params as { id: string }).id));
@@ -573,7 +578,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (b.guide !== undefined) writeSpaceGuide(app, id, b.guide);
     // What the last sync found is omem's to write: a page saving the settings it loaded earlier must not roll it back.
     if (b.settings) delete b.settings.codeIndexState;
-    return updateSpace(app, id, { name: b.name, description: b.description, settings: b.settings ? { ...getSpace(app, id).settings, ...b.settings } : undefined });
+    return spaceView(updateSpace(app, id, { name: b.name, description: b.description, settings: b.settings ? { ...getSpace(app, id).settings, ...b.settings } : undefined }), req);
   });
   server.post("/api/spaces/:id/sync", async (req) => scheduleSpaceSync(app, (req.params as { id: string }).id));
   server.get("/api/spaces/:id/lessons", async req => {
@@ -752,8 +757,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!app.config.agents.networkPolicies.some((p) => p.id === id)) throw new HttpError(404, "没有这份网络条件");
     return { states: await refreshNetworkPolicies(app, id, true) };
   });
-  server.get("/api/agents/load", async () => {
+  server.get("/api/agents/load", async (req) => {
     const c = await import("../agents/capacity.ts");
+    if (who(req) !== OWNER) return { now: c.loadReport(app), recent: c.recentStats(app) };
     const q = await import("../agents/quota.ts");
     const quota = (await q.quotaProfiles(app)).map((p) => ({ profile: p.id, name: p.name ?? p.id, ...(q.quotaView(app, p) ?? { source: c.sourceOf(p), plan: null, readAt: null, windows: [] }) }));
     // Daily caps the owner set per model, with today's count so far.
@@ -1046,11 +1052,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ----------------------------------------------------------- agents & skills
-  server.get("/api/agents", async () => listAgentSpecs(app, { includeDrafts: true }));
+  const memberSpec = ({ name, description, status, agent, model, effort }: ReturnType<typeof readAgentSpec>) =>
+    ({ name, description, status, agent, model, effort });
+  server.get("/api/agents", async req => {
+    const specs = listAgentSpecs(app, { includeDrafts: true });
+    return who(req) === OWNER ? specs : specs.map(memberSpec);
+  });
   // A spec with what it has learned (attached skills, its own memories, proposals, usage).
   server.get("/api/agents/:name", async (req) => {
     const name = (req.params as { name: string }).name;
-    return { ...readAgentSpec(app, name), ...profileDetail(app, name) };
+    const spec = readAgentSpec(app, name);
+    return who(req) === OWNER ? { ...spec, ...profileDetail(app, name) } : memberSpec(spec);
   });
   // Built-in roles as profiles: the source version, the owner's copy, and the same learned view.
   const checkMcpNames = (names: string[]) => {
@@ -1077,7 +1089,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // The owner's pick of tools for a built-in role, in the profile syntax (group:<id>, -<name>, names); kept as an overlay.
   server.put("/api/roles/:name/tools", async (req) => setRoleTools(app, (req.params as { name: string }).name,
     q(z.object({ tools: z.array(z.string().max(120)).max(400) }), req.body).tools));
-  server.get("/api/roles", async () => listRoleStates(app));
+  server.get("/api/roles", async req => {
+    const roles = listRoleStates(app);
+    return who(req) === OWNER ? roles : roles.map(({ name, description }) => ({ name, description }));
+  });
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
   server.get("/api/profile-options", async () => ({
     // The cached probe rides along so the form need not ask again (probe once, or "重新检测").
@@ -1091,10 +1106,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   }));
   server.get("/api/roles/:name", async (req) => {
     const name = (req.params as { name: string }).name;
+    if (!isBuiltinRole(name)) throw new HttpError(404, `没有内置角色 ${name}`);
     const r = loadRole(name, app);
+    const summary = { name, description: r.description, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} } };
+    if (who(req) !== OWNER) return summary;
     // A role a feature waits on until the owner picks its AI (replay-judge: nightly replay does not run without it).
     const notice = name === "replay-judge" ? (await import("../agents/replay.ts")).replayStatus(app).notice : null;
-    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} }, notice, toolSet: roleTools(app, name), ...profileDetail(app, name) };
+    return { ...summary, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, notice, toolSet: roleTools(app, name), ...profileDetail(app, name) };
   });
   server.put("/api/roles/:name/defaults", async (req) => {
     const name = (req.params as { name: string }).name;
@@ -1113,7 +1131,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return setRoleFullAccess(app, (req.params as { name: string }).name, q(z.object({ on: z.boolean() }), req.body).on);
   });
   server.put("/api/roles/:name", async (req) => saveRoleOverride(app, (req.params as { name: string }).name, q(z.object({ raw: z.string().min(1) }), req.body).raw, "user"));
-  server.post("/api/roles/:name/customize", async (req) => ({ raw: customizeRole(app, (req.params as { name: string }).name, "user") }));
+  server.post("/api/roles/:name/customize", async req => {
+    const raw = customizeRole(app, (req.params as { name: string }).name, "user");
+    return who(req) === OWNER ? { raw } : { ok: true };
+  });
   server.post("/api/roles/:name/reset", async (req) => resetRole(app, (req.params as { name: string }).name, "user"));
   server.post("/api/roles/:name/follow-source", async (req) => followRoleSource(app, (req.params as { name: string }).name, "user"));
   server.post("/api/roles/:name/merge", async (req) => {
@@ -1137,25 +1158,30 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/profile-proposals/:id/apply", async (req) => applyProposal(app, (req.params as { id: string }).id));
   server.post("/api/profile-proposals/:id/reject", async (req) => rejectProposal(app, (req.params as { id: string }).id));
   server.put("/api/agents/:name", async (req) => {
-    // 完全访问 is the owner's alone; another user's edit keeps what the profile had.
-    const { fullAccess, ...body } = req.body as { fullAccess?: boolean; mcpServers?: unknown };
+    const name = (req.params as { name: string }).name;
+    const body = q(z.record(z.string(), z.unknown()), req.body);
+    if (who(req) !== OWNER) {
+      if (Object.keys(body).some(key => key !== "description" && key !== "status"))
+        throw new HttpError(403, "成员只能修改档案说明和状态");
+      return memberSpec(saveAgentSpec(app, { ...body, name }, "user"));
+    }
     if (body.mcpServers !== undefined) checkMcpNames(q(z.array(z.string()), body.mcpServers));
-    return saveAgentSpec(app, { ...body, ...(who(req) === OWNER && fullAccess !== undefined ? { fullAccess } : {}), name: (req.params as { name: string }).name } as never, "user");
+    return saveAgentSpec(app, { ...body, name }, "user");
   });
   server.delete("/api/agents/:name", async (req) => {
     deleteAgentSpec(app, (req.params as { name: string }).name, "user");
     return { ok: true };
   });
-  server.get("/api/library-files/:kind/:name", async (req) => {
-    const { kind, name } = req.params as { kind: "agent" | "skill"; name: string };
-    return { raw: readRaw(app, kind === "agent" ? "agent" : "skill", name) };
-  });
-  server.put("/api/library-files/:kind/:name", async (req) => {
-    const { kind, name } = req.params as { kind: "agent" | "skill"; name: string };
-    const b = q(z.object({ raw: z.string().min(1) }), req.body);
-    if (kind === "agent") checkMcpNames(agentSpecSchema.parse({ ...splitFrontmatter(b.raw).meta, name }).mcpServers);
-    return saveRaw(app, kind === "agent" ? "agent" : "skill", name, b.raw);
-  });
+  for (const kind of ["agent", "skill"] as const) {
+    const path = `/api/library-files/${kind}/:name`;
+    server.get(path, async req => ({ raw: readRaw(app, kind, (req.params as { name: string }).name) }));
+    server.put(path, async req => {
+      const { name } = req.params as { name: string };
+      const { raw } = q(z.object({ raw: z.string().min(1) }), req.body);
+      if (kind === "agent") checkMcpNames(agentSpecSchema.parse({ ...splitFrontmatter(raw).meta, name }).mcpServers);
+      return saveRaw(app, kind, name, raw);
+    });
+  }
   server.get("/api/skills/:name/files", async (req) => listSkillFiles(app, (req.params as { name: string }).name));
   server.get("/api/skills/:name/file", async (req) => ({ raw: readSkillFile(app, (req.params as { name: string }).name, q(z.object({ path: z.string() }), req.query).path) }));
   server.put("/api/skills/:name/file", async (req) => {
@@ -1819,16 +1845,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { boardForReader } = await import("../agents/progress.ts");
     return boardForReader(app, (req.params as { id: string }).id, { user: who(req) });
   });
-  const progressQuery = z.object({ history: z.enum(["true", "false"]).optional() });
-  server.get("/api/runs/:id/progress", async (req) => {
-    const { runProgress } = await import("../agents/progress.ts");
-    const { history } = q(progressQuery, req.query);
-    return runProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true");
+  const progressQuery = z.object({ summary: z.enum(["true", "false"]).optional(), history: z.enum(["true", "false"]).optional() });
+  server.get("/api/runs/:id/progress", async (req, reply) => {
+    const { runProgress, progressPage } = await import("../agents/progress.ts");
+    const { history, summary } = q(progressQuery, req.query);
+    const page = progressPage(runProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true"));
+    reply.header("X-Omem-Total-Usage", JSON.stringify(page.totalUsage));
+    return summary === "true" ? page : page.views;
   });
-  server.get("/api/items/:id/progress", async (req) => {
-    const { itemProgress } = await import("../agents/progress.ts");
-    const { history, limit } = q(progressQuery.extend({ limit: z.coerce.number().int().min(1).max(100).optional() }), req.query);
-    return itemProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true", limit);
+  server.get("/api/items/:id/progress", async (req, reply) => {
+    const { itemProgress, progressPage } = await import("../agents/progress.ts");
+    const { history, limit, summary } = q(progressQuery.extend({ limit: z.coerce.number().int().min(1).max(100).optional() }), req.query);
+    const page = progressPage(itemProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true", limit));
+    reply.header("X-Omem-Total-Usage", JSON.stringify(page.totalUsage));
+    return summary === "true" ? page : page.views;
   });
   // Who may read it is checked by the route (src/auth/routes.ts); its sub-runs only as far as they are readable too.
   server.get("/api/runs/:id", async (req) => {
@@ -2613,7 +2643,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/approvals/ladder", async () => [...new Set([...app.config.approvals.tools, ...(app.config.approvals.report ?? [])])].map((tool) => ({ tool, rung: toolAlwaysApproves(tool) ? "ask" : rungOf(app, tool), streak: approvalStreak(app, tool) })));
   server.get("/api/notify/outlets", async req => {
     const { listOutlets } = await import("../plugins/notifier.ts");
-    return { outlets: await listOutlets(app, who(req)) };
+    const { user } = q(z.object({ user: z.string().min(1).optional() }), req.query);
+    return { outlets: await listOutlets(app, who(req), user) };
   });
   server.put("/api/notify/outlets", async req => {
     const b = q(z.object({ userId: z.string().optional(), outlets: outletSettings }).strict(), req.body);
@@ -2873,13 +2904,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       recentSources: all(app.db, "select id, space_id spaceId, kind, uri, title, updated_at updatedAt from sources where deleted_at is null and kind not in ('code', 'conversation') order by updated_at desc limit 8"),
     };
   });
-  server.get("/api/schedules", async () => ({ schedules: listSchedules(app), next: nextRuns(app), labels: scheduleLabels }));
+  server.get("/api/schedules", async req => {
+    const visible = accessibleSpaces(app, who(req));
+    const schedules = listSchedules(app).filter(s => !s.spaceId || !visible || visible.includes(s.spaceId));
+    const next = nextRuns(app);
+    return { schedules: schedules.map(s => who(req) === OWNER ? s : { ...s, config: undefined }),
+      next: Object.fromEntries(schedules.map(s => [s.id, next[s.id]])), labels: scheduleLabels };
+  });
   server.put("/api/schedules/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const existing = listSchedules(app).find((s) => s.id === id);
     if (!existing) throw new HttpError(404, "定时任务不存在");
     const b = q(z.object({ cron: z.string().optional(), enabled: z.boolean().optional(), config: z.record(z.string(), z.unknown()).optional() }), req.body);
-    return upsertSchedule(app, { ...existing, ...b });
+    if (who(req) !== OWNER) {
+      if (existing.spaceId && !can(app, who(req), "space.read", existing.spaceId)) throw new HttpError(404, "定时任务不存在");
+      if (b.config) throw new HttpError(403, "只有本人能修改定时任务的运行参数");
+    }
+    const saved = upsertSchedule(app, { ...existing, ...b });
+    return who(req) === OWNER ? saved : { ...saved, config: undefined };
   });
   server.post("/api/schedules/:id/run", async (req) => ({ ok: triggerSchedule(app, (req.params as { id: string }).id) }));
 
@@ -2889,9 +2931,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { chats: (await listLarkChats(app)).map((c) => ({ ...c, policy: capturePolicyFor(app, c) })) };
   });
   // Chats capture has read, with kind, mute state and what is done with them.
-  server.get("/api/lark/captured", async () => {
+  server.get("/api/lark/captured", async req => {
     const { capturedChats } = await import("../channels/lark-personal.ts");
-    return { chats: capturedChats(app), policies: app.config.lark.capture.policies };
+    const user = who(req);
+    const policies = app.config.lark.capture.policies;
+    if (user === OWNER) return { chats: capturedChats(app), policies };
+    const scope = spacesWithCapability(app, user, "sources.view");
+    const filter = restrictedSourceFilter(app, user);
+    const chats = all(app.db, `select c.chat_id chatId, sources.title name, sources.space_id spaceId, c.kind,
+        case when c.last_time>0 then strftime('%Y-%m-%dT%H:%M:%fZ',c.last_time/1000.0,'unixepoch') end lastMessageAt
+      from sources join lark_cursors c on c.chat_id=substr(sources.uri,6)
+      where sources.space_id in (select value from json_each(?)) and sources.kind='chat'
+        and sources.deleted_at is null and sources.uri like 'lark:%' and ${filter.sql}
+      order by c.last_time desc,c.chat_id limit 500`, JSON.stringify(scope), ...filter.params);
+    return { chats, policies };
   });
   // History before the first read, a few pages per poll into monthly archive sources.
   server.post("/api/lark/chats/:id/backfill", async (req) => {
@@ -2948,7 +3001,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return requestUserScopes(app, scopes, "在设置页补齐授权：");
   });
   // The bot apps' permissions and event subscriptions (lark-bot-check.ts), and fixing them by scan.
-  server.get("/api/lark/bot-check", async () => ({ bots: await (await import("../channels/lark-bot-check.ts")).checkLarkBots(app) }));
+  server.get("/api/lark/bot-check", async req => {
+    const bots = await (await import("../channels/lark-bot-check.ts")).checkLarkBots(app);
+    return { bots: who(req) === OWNER ? bots : bots.map(({ ref, name, scopes, events }) => ({
+      ref, name, scopes: { missing: scopes.missing, unknown: scopes.unknown }, events: { missing: events.missing },
+    })) };
+  });
   server.post("/api/lark/bot-check/:ref/scan", async (req) => {
     const ref = q(z.object({ ref: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/) }), req.params).ref;
     return (await import("../channels/lark-bot-check.ts")).updateLarkBotByScan(app, ref);
@@ -2971,7 +3029,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/replays", async (req) => {
     const o = q(z.object({ limit: z.coerce.number().int().min(1).max(200).default(30) }), req.query ?? {});
     const m = await import("../agents/replay.ts");
-    return { status: m.replayStatus(app), replays: m.listReplays(app, { limit: o.limit }) };
+    const status = m.replayStatus(app);
+    if (who(req) !== OWNER) {
+      const { enabled, cron, lastRunAt, days28, max, pendingEffects } = status;
+      return { status: { enabled, cron, lastRunAt, days28, max, pendingEffects }, replays: [] };
+    }
+    return { status, replays: m.listReplays(app, { limit: o.limit }) };
   });
   server.post("/api/replays/run", async (req) => {
     const { REPLAY_AXES } = await import("../core/config.ts");
@@ -2983,7 +3046,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return (await import("../agents/replay.ts")).resolveEffect(app, p.id, p.action);
   });
   // Knowledge-base crawls (lark-wiki.ts): progress, continue, stop.
-  server.get("/api/lark/wiki-crawls", async () => ({ crawls: (await import("../channels/lark-wiki.ts")).listCrawls(app) }));
+  server.get("/api/lark/wiki-crawls", async req => {
+    const crawls = (await import("../channels/lark-wiki.ts")).listCrawls(app);
+    const spaces = accessibleSpaces(app, who(req));
+    return { crawls: who(req) === OWNER ? crawls : crawls.filter(c => !spaces || spaces.includes(c.spaceId))
+      .map(({ id, spaceId, status, read, failed, queued, docs }) => ({ id, spaceId, status, read, failed, queued, docs })) };
+  });
   server.post("/api/lark/wiki-crawls/:id/:op", async (req) => {
     const w = await import("../channels/lark-wiki.ts");
     const { id, op } = req.params as { id: string; op: string };
@@ -3064,7 +3132,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/agents/:id/adapter", async (req) => {
     const { adapterStatus, hasAdapter } = await import("../agents/adapter.ts");
     const id = (req.params as { id: string }).id;
-    return hasAdapter(app, id) ? adapterStatus(app, id) : { id, package: null };
+    if (!hasAdapter(app, id)) return { id, package: null };
+    const status = await adapterStatus(app, id);
+    if (who(req) === OWNER) return status;
+    const { package: pkg, version, latest, upgradable } = status;
+    return { id, package: pkg, version, latest, upgradable };
   });
   server.post("/api/agents/:id/adapter/upgrade", async (req) => {
     const { upgradeAdapter } = await import("../agents/adapter.ts");
@@ -3141,16 +3213,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ...desktopControl.status(), spec: desktopControl.spec() };
   });
   // Disk usage of the data directory (settings → 占用); the scan runs in a child process.
-  server.get("/api/storage", async (req) => {
-    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看占用");
-    return (await import("../core/storage.ts")).storageStatus(app);
-  });
-  server.post("/api/storage/scan", async (req) => {
-    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看占用");
+  const storageView = async (req: FastifyRequest, scan = false) => {
     const m = await import("../core/storage.ts");
-    void m.startStorageScan(app);
-    return m.storageStatus(app);
-  });
+    if (scan) void m.startStorageScan(app);
+    const state = m.storageStatus(app);
+    if (who(req) === OWNER) return state;
+    const r = state.report;
+    return { running: state.running, report: r && { scannedAt: r.scannedAt, ms: r.ms, db: r.db,
+      files: { total: r.files.total, groups: r.files.groups } } };
+  };
+  server.get("/api/storage", async req => storageView(req));
+  server.post("/api/storage/scan", async req => storageView(req, true));
   // Compressing stored media with ffmpeg (settings → 占用): install and detect ffmpeg, start or stop a job.
   const mediaState = async () => {
     const m = await import("../core/media.ts");
@@ -3159,7 +3232,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const mediaOwner = (req: FastifyRequest) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能压缩附件");
   };
-  server.get("/api/media", async (req) => (mediaOwner(req), mediaState()));
+  server.get("/api/media", async req => {
+    if (who(req) === OWNER) return mediaState();
+    const { ffmpegStatus } = await import("../core/media.ts");
+    const { ffmpeg, ffprobe, encoders } = ffmpegStatus();
+    return { ffmpeg: { ffmpeg, ffprobe, encoders }, settings: app.config.media };
+  });
   server.post("/api/media/ffmpeg/install", async (req) => {
     mediaOwner(req);
     const { commandExists } = await import("../agents/spawn.ts");
@@ -3427,7 +3505,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const queued = scheduleAudit(app);
     return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
   });
-  server.get("/api/search/providers", async () => searchProviderStatus(app));
+  server.get("/api/search/providers", async req => {
+    const status = searchProviderStatus(app);
+    if (who(req) === OWNER) return status;
+    const describe = ({ id, label, plugin, lastMs }: typeof status.retrievers[number]) => ({ id, label, plugin, lastMs });
+    return { retrievers: status.retrievers.map(describe), rerankers: status.rerankers.map(describe) };
+  });
   const settingsAccess = (req: FastifyRequest) => {
     const access = capabilityAccess(app, who(req), null);
     return {
@@ -3448,7 +3531,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
     return {
       config: settingsView(app.config, visible, access.owner),
-      ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : visible("assistant") && {
+      ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : (visible("ai") || visible("assistant")) && {
         agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort }) => {
           const probe = userProbe(app, who(req), id);
           return { id, name, installed, transport, model, effort, probe: probe && {
@@ -3457,7 +3540,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         }),
       }),
       ...(visible("system") && access.owner && { home: app.home }),
-      ...(visible("knowledge") && { rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null }),
+      ...(visible("knowledge") && access.owner && { rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null }),
       ...(visible("security") && { approvalTools: toolList().map(t => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }),
     };
   });
@@ -3540,7 +3623,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       inherited: inheritedKeyVars(),
     };
   };
-  server.get("/api/ai", async () => {
+  server.get("/api/ai", async (req) => {
+    if (who(req) !== OWNER) {
+      const keys = readKeys(app.home);
+      return {
+        providers: app.config.ai.providers.map(({ id, name, kind }) => ({ id, name, kind, hasKey: !!keys[id], keyHint: keyHint(keys[id] ?? "") })),
+        kinds: CATEGORY_KINDS,
+        choices: Object.fromEntries(app.config.ai.providers.map(p => [p.id, Object.fromEntries(MODEL_FIELDS.map(f => [f, modelChoices(app.home, p, f)]))])),
+      };
+    }
     await freshModels();
     return aiView();
   });

@@ -13,7 +13,7 @@ import { materialViews } from "./materials.ts";
 import { nextOf, type NextLite } from "./lines.ts";
 import { pendingView } from "./pending.ts";
 import { getItem, isClosed, listItems, type Item } from "./store.ts";
-import { ancestorIds, MAX_DEPTH, rootOf } from "./tree.ts";
+import { ancestorIds, descendantIds, lineLike, MAX_DEPTH, rootOf } from "./tree.ts";
 import { childrenOf, flowLite, type Child, type ItemLite, type Line } from "./work-http.ts";
 
 /**
@@ -32,21 +32,21 @@ import { childrenOf, flowLite, type Child, type ItemLite, type Line } from "./wo
  * none of them (`partial`), only the items they may read with their own stages. References in changes
  * and next steps that name an item or a run they may not read are left as plain text.
  */
-export type Viewer = { userId: string; work: Set<string>; own: Set<string> };
+export type Viewer = { userId: string; work: Set<string>; own: Set<string>; shared: Set<string> };
 type Row = { id: string; parentId: string | null; userId: string; spaceId: string; status: string };
 /** The owner's items a reader of the line does not get to see even with 看事项. */
 const PRIVATE_STATUSES = ["candidate", "waiting", "snoozed"];
 
 export function viewerOf(app: App, userId: string): Viewer {
   const access = capabilityAccess(app, userId);
-  return { userId, work: new Set(access.range("work.view") ?? []), own: new Set(access.range("items.view", true) ?? []) };
+  return { userId, shared: new Set(access.range("items.view") ?? []), work: new Set(access.range("work.view") ?? []), own: new Set(access.range("items.view", true) ?? []) };
 }
 
 /** Whether this person sees this item under a line they see. */
-export function seesItem(app: App, v: Viewer, r: Pick<Row, "userId" | "spaceId" | "status">) {
+export function seesItem(v: Viewer, r: Pick<Row, "userId" | "spaceId" | "status">) {
   if (r.userId === v.userId) return v.own.has(r.spaceId);
   if (r.userId !== OWNER || !v.work.has(r.spaceId) || PRIVATE_STATUSES.includes(r.status)) return false;
-  return itemAccess(app, v.userId, r, "read");
+  return v.shared.has(r.spaceId);
 }
 
 /** Whether this person sees this top-level item as a line at all (its items are checked one by one). */
@@ -68,11 +68,27 @@ export function visibleTree(app: App, v: Viewer, rootId: string) {
     for (const r of next) {
       seen.add(r.id);
       rows.push(r);
-      if (visible.has(r.parentId ?? "") && seesItem(app, v, r)) visible.add(r.id);
+      if (visible.has(r.parentId ?? "") && seesItem(v, r)) visible.add(r.id);
     }
     level = next.map((r) => r.id);
   }
   return { rows, visible, partial: rows.some((r) => !visible.has(r.id)) };
+}
+
+/** The chain and its metrics follow the same visible ancestry as the work page. Caller checks the item itself. */
+export function visibleBranchIds(app: App, item: Item, userId: string) {
+  if (userId === OWNER) return [item.id, ...descendantIds(app, item.id)];
+  const root = item.parentId ? getItem(app, rootOf(app, item.id)) : item;
+  if (!item.parentId && !lineLike(app, root)) return [item.id];
+  const viewer = viewerOf(app, userId);
+  if (!seesLine(viewer, root)) throw new HttpError(404, "事项不存在");
+  const tree = visibleTree(app, viewer, root.id);
+  if (!tree.visible.has(item.id)) throw new HttpError(404, "事项不存在");
+  const branch = new Set([item.id]);
+  for (const row of tree.rows) {
+    if (row.parentId && branch.has(row.parentId) && tree.visible.has(row.id)) branch.add(row.id);
+  }
+  return [...branch];
 }
 
 /** The references this person may follow: their items and the ones they see, the runs they may read. */
@@ -82,7 +98,7 @@ export function scrubTargets(app: App, v: Viewer, targets: Record<string, RefTar
   for (const [ref, t] of Object.entries(targets)) {
     if (t.kind === "item") {
       const r = one<Row>(app.db, "select id, parent_id parentId, coalesce(user_id,'owner') userId, space_id spaceId, status from items where id = ?", t.id);
-      if (r && seesItem(app, v, r)) out[ref] = t;
+      if (r && seesItem(v, r)) out[ref] = t;
     } else if (canReadRun(app, v.userId, t.id)) out[ref] = t;
   }
   return Object.keys(out).length ? out : undefined;

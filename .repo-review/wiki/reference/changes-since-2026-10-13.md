@@ -20,6 +20,16 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 成员查看内置角色（2026-11-22）
+
+从 `src/server/http.ts` 的角色接口读起。有档案管理权限的成员可看内置角色的名称、用途和默认 AI。在 Agent 页打开角色进入只读摘要；只有本人的详情包含正文、专属记忆和复盘建议。自定义操作仅向本人回传原文。
+
+## 成员管理 Agent 档案（2026-11-22）
+
+从 `src/server/http.ts` 的档案接口读起。成员查看档案详情或保存说明、状态时取得与列表一致的摘要。档案原文的读写权限在 `src/auth/settings-sections.ts` 中与 MCP 配置一起限定给本人，技能原文沿用原权限。
+
+`web/src/views/Agents.vue` 用摘要填写用途和状态，保存后重新读取档案。只有完整详情才加载原文和专属学习记录。
+
 ## 2026-11-22 · 本人沙箱的目录与审批
 
 `src/agents/runner.ts` 按本轮传给豆包 CLI 的参数显示「完全访问」或「风险审批」。访客单项开着时，运行页也能区分实际采用的审批方式。
@@ -43,6 +53,26 @@ updated: 2026-11-22
 多仓库运行在准备阶段收集分配的工作树、快照、核对过的产物目录及后端状态目录，再应用隐藏与只读规则。启动参数、运行状态和 Agent 当轮说明共用这份挂载计划；设置接口的默认示例也经过相同的状态目录校验。Git links/pointers、只读工作树与可写快照沿用原规则。回归覆盖 `test/own-run.test.ts`、`test/workspace-mounts.test.ts` 和 `test/own-sandbox-linux.test.ts`。
 
 从 `src/agents/own-run.ts` 看本地运行选择，从 `own-sandbox.ts` 看挂载和后端模式。工作区及 ACP 写权限按角色保留，`GET/PUT /api/security/sandbox` 供本人检查和保存设置。配置组合及使用范围见 [本人的运行进沙箱](../../../docs/v2/agent-accounts.md#本人的运行进沙箱)。
+
+## 整机诊断仅本人可读（2026-11-21）
+
+`GET /api/diag` 随对等设备管理在 `src/auth/settings-sections.ts` 中登记为本人专属。成员仍可按区域读取设置卡片。
+
+## 直接评审分支的用量（2026-11-21）
+
+从 `src/agents/progress.ts` 的 `allocate` 读起。运行页和事项页按展示的块分配用量。直接评审已有分支时，首轮计入评审块；页面有对应编码块时，共用运行计入编码块，独立重评仍计入评审块。
+
+## 成员查看插件卡片（2026-11-21）
+
+从 `src/plugins/http.ts` 的 `pluginView` 读起。插件列表、详情和改图标共用成员视图，保留插件权限摘要；服务和服务命令返回空数组。
+
+## 设置页的成员接口（2026-11-21）
+
+从 `src/auth/settings-sections.ts`、`src/auth/routes.ts` 读区域权限及本人专属操作。设置读写隐藏其他成员的通知出口，`GET /api/notify/outlets?user=…` 返回目标的出口和已授权种类，`GET /api/me` 提供 `ownerName`。设置卡片的权限和返回字段见 `docs/v2/multi-user.md`。
+
+进度的去重用量、落点和可见证据从 `src/agents/progress.ts` 读起。出网与云端工具状态附运行标题，云端工具的可选名单和说明从 `src/agents/cloud-tools.ts` 读起。
+
+事项链路和指标按 `src/items/member-work.ts` 的可见子树统计。晚到妙记追加会议结果的条件在 `src/channels/lark-meetings.ts`。HTTP 规则可用的执行点由 `src/agents/operation-policy.ts` 给出，空规则和已有规则口径一致。
 
 ## 额外飞书机器人的群回复说明（2026-11-21）
 

@@ -10,6 +10,9 @@ import { createRun } from "../src/agents/runs.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { meetingLinks, outcomesTask } from "../src/agents/meeting-outcomes.ts";
+import { resetMeetingsForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
+import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
+import { minutesSeen } from "../src/channels/lark-personal.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: App[] = [];
@@ -39,6 +42,40 @@ async function setup() {
 const changes = (app: App, itemId: string) => all<{ type: string; summary: string; due: string | null; origin: string; refs: string }>(app.db, "select type, summary, due, origin, refs from item_changes where item_id = ? order by type", itemId);
 
 describe("会议结束后，把决定结构化地写到关联的事项", () => {
+  it.each([
+    { extra: "短补充", archived: false, count: 0 },
+    { extra: "新增的验收决定".repeat(36), archived: false, count: 1 },
+    { extra: "新增的验收决定".repeat(36), archived: true, count: 1 },
+  ])("妙记补入同一原件，只在新增正文够长时排一次结果整理 ($archived, $count)", async ({ extra, archived, count }) => {
+    const { app } = await setup();
+    const heard = "会中已经听到的讨论".repeat(35);
+    const at = new Date().toISOString();
+    const plan = { record: true, spec: "assistant", ruleName: "评审会", ruleId: "rule" };
+    run(app.db, "update lark_meetings set plan=?, ended_at=? where meeting_id='m_demo'", JSON.stringify(plan), at);
+    run(app.db, "insert into lark_meeting_lines(meeting_id,key,seq,at_ms,kind,speaker,text) values('m_demo','a',1,?,'transcript','小王',?)", Date.now(), heard);
+    if (archived) {
+      upsertSource(app, { spaceId: "personal", kind: "meeting", uri: "lark:minutes:demo", title: "妙记", text: `# 会议\n\n${heard}\n${extra}` });
+      minutesSeen(app, "demo", true);
+    }
+    let fetched = 0;
+    setLarkCliForTests(async args => {
+      if (args[0] === "vc") return { data: { minute_token: "demo" } };
+      fetched++;
+      return { data: { minutes: [{ artifacts: { summary: `${heard}\n${extra}` } }] } };
+    });
+    try {
+      for (let i = 0; i < 2; i++) { resetMeetingsForTests(); await tickMeetings(app); }
+      expect(fetched).toBe(archived ? 0 : 1);
+      expect(one<{ text: string }>(app.db, "select text from sources where uri='lark:meeting:m_demo'")?.text).toContain(extra);
+      const queued = all<{ input: string }>(app.db, "select input from runs where lane='meeting:m_demo' and kind='agent'");
+      expect(queued).toHaveLength(count);
+      if (count) expect(JSON.parse(queued[0].input)).toMatchObject({ silent: true, meetingId: "m_demo", task: expect.stringContaining("meeting_outcomes") });
+    } finally {
+      setLarkCliForTests(null);
+      resetMeetingsForTests();
+    }
+  });
+
   it("有确认关联的会议写出决定、待办、待定问题，能回到原件；同一场会再交不重复", async () => {
     const t = await setup();
     expect(meetingLinks(t.app, "m_demo", "owner").confirmed.map((c) => [c.item.id, c.why])).toEqual([[t.line.id, "会议所在的群挂在这件事上"]]);

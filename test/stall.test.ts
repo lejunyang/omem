@@ -18,6 +18,9 @@ describe("agent stalls and provider queue", () => {
     // The traex skills notice becomes a status line, not answer text.
     expect(events.some((e) => e.type === "text" && /Skill descriptions/.test(e.text))).toBe(false);
     expect(events.some((e) => e.type === "status" && /Skill descriptions/.test(e.text))).toBe(true);
+    // So is the agent's own warning about a model its catalog has no metadata for.
+    expect(events.some((e) => e.type === "text" && /Model metadata/.test(e.text))).toBe(false);
+    expect(events.some((e) => e.type === "status" && /Model metadata for/.test(e.text))).toBe(true);
   }, 20_000);
 
   it("does not retry a turn that stalled after real output", async () => {
