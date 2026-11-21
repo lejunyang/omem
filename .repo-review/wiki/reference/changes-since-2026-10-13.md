@@ -22,6 +22,8 @@ updated: 2026-11-22
 
 ## 2026-11-22 · 本人沙箱的目录与审批
 
+`PUT /api/security/sandbox` 先用候选配置生成完整响应。示例路径校验失败返回 400，配置和审计保留原状，见 `src/server/http.ts`。
+
 沙箱目录随每轮任务正文发送。`src/agents/runner.ts` 和 `sessions.ts` 共用当轮说明，CLI 与 ACP 恢复会话时会收到新挂载和新产物路径。
 
 多仓库评审自动找到的原工作树只进入本人沙箱的只读计划。成员账号按评审入口提供的工作目录和显式授权挂载，见 `src/agents/runner.ts`。

@@ -61,10 +61,10 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   return { ...box, plan: ownMounts(box, dir, context.workspace?.(readOnly), context.inbox, program) };
 }
 
-export function sandboxStatus(app: App) {
+export function sandboxStatus(app: App, config = app.config) {
   const home = canonical(homedir()), data = canonical(app.home);
   const sample = join(data, "workspaces", "example", "1");
-  const profiles = allProfiles(app.config).filter(p => !p.peer && backendCapabilities(p).where === "local");
+  const profiles = allProfiles(config).filter(p => !p.peer && backendCapabilities(p).where === "local");
   const backends = profiles.map(p => {
     const state = backendState(p);
     return { id: p.id, state: [...state.dirs, ...state.existing] };
@@ -72,8 +72,8 @@ export function sandboxStatus(app: App) {
   const example = backends.find(p => p.state.length) ?? backends[0];
   const { plan } = planRun(app, profiles.find(p => p.id === example?.id), sample, false, "example",
     { inbox: join(data, "artifacts", "inbox", "example") }, { mode: "off", writable: [], hidden: [] });
-  return { ...app.config.agents.ownSandbox, fullAccess: app.config.agents.fullAccess, support: sandboxSupport(), backends,
+  return { ...config.agents.ownSandbox, fullAccess: config.agents.fullAccess, support: sandboxSupport(), backends,
     defaults: { exampleBackend: example?.id, writable: [...plan.rw, "/tmp"], hidden: [data] },
     visibility: "默认只管住写。本人 HOME 中的文件可读，要隐藏的目录请加到 hidden。成员自有账号另行隔离，云端和其他设备不在这台的沙箱里。",
-    warning: app.config.agents.fullAccess === "all" ? "没进沙箱的运行不受任何限制（指后端的沙箱和审批）。omem 工具授权与命令垫片照常检查。" : undefined };
+    warning: config.agents.fullAccess === "all" ? "没进沙箱的运行不受任何限制（指后端的沙箱和审批）。omem 工具授权与命令垫片照常检查。" : undefined };
 }

@@ -325,6 +325,24 @@ describe("accounts of members", async () => {
     await put({ mode: "off", fullAccess: "per-role" });
   });
 
+  it("rejects an invalid backend state directory before applying or auditing sandbox settings", async () => {
+    const original = app.config.agents;
+    const before = readFileSync(join(home, "config.json"), "utf8");
+    const audits = () => sqlOne(app.db, "select count(*) n from audit_events where action = 'sandbox.settings'");
+    const count = audits();
+    vi.stubEnv("CODEX_HOME", join(home, "secrets"));
+    try {
+      const response = await as(null, "/api/security/sandbox", { method: "PUT", body: JSON.stringify({
+        mode: "require", writable: [], hidden: [], fullAccess: "sandboxed",
+      }) });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("不能配置这个沙箱目录");
+      expect(app.config.agents).toBe(original);
+      expect(readFileSync(join(home, "config.json"), "utf8")).toBe(before);
+      expect(audits()).toEqual(count);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("keeps the rule per backend to the owner", async () => {
     expect(ROUTE_RULES["PUT /api/agent-accounts/:backend/policy"]).toBe("owner");
     expect(ROUTE_RULES["GET /api/me/agent-accounts"]).toBe("self");

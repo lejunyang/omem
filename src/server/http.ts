@@ -389,19 +389,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (fullAccess === "all" && confirmAll !== true) throw new HttpError(400, "完全访问选 all 需要明确确认 confirmAll");
     const { normalizeSandbox } = await import("../agents/own-sandbox.ts");
     const { sandboxStatus } = await import("../agents/own-run.ts");
-    let ownSandbox;
+    let next, status;
     try {
-      ownSandbox = normalizeSandbox(settings, homedir(), app.home);
+      const ownSandbox = normalizeSandbox(settings, homedir(), app.home);
       for (const path of ownSandbox.writable) if (!statSync(path, { throwIfNoEntry: false })?.isDirectory())
         throw new Error("可写目录需要先在本机建好：" + path);
       for (const path of ownSandbox.hidden) if (existsSync(path) && !statSync(path).isDirectory())
         throw new Error("隐藏项必须是目录：" + path);
+      next = { ...app.config, agents: { ...app.config.agents, ownSandbox, fullAccess } };
+      status = sandboxStatus(app, next);
     } catch (e) { throw new HttpError(400, (e as Error).message); }
-    const next = { ...app.config, agents: { ...app.config.agents, ownSandbox, fullAccess } };
     saveConfig(next, app.home);
     Object.assign(app.config, next);
-    audit(app, who(req), "sandbox.settings", "security", { ...ownSandbox, fullAccess });
-    return sandboxStatus(app);
+    audit(app, who(req), "sandbox.settings", "security", { ...next.agents.ownSandbox, fullAccess });
+    return status;
   });
   server.get("/api/security/egress", async () => (await import("../agents/egress-run.ts")).egressStatus(app));
   server.put("/api/security/egress", async req => {
