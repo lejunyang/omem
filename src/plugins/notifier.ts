@@ -45,11 +45,11 @@ function enqueue(app: App, outlet: string, id: string, user: string, op: Op, ded
 }
 
 export function startNotifierOutlets(app: App) {
-  const remove = addNotificationSink((n, source) => {
+  const remove = addNotificationSink((n, source, originalUrgency) => {
     if (source !== app || n.askId) return;
     for (const s of settings(app, n.userId)) {
-      if (notifiers.has(s.id) && rank[n.urgency ?? "normal"] >= rank[s.minUrgency])
-        enqueue(app, s.id, n.id, n.userId, "notification", n.dedupKey ?? n.id, null, n.urgency);
+      if (notifiers.has(s.id) && rank[originalUrgency] >= rank[s.minUrgency])
+        enqueue(app, s.id, n.id, n.userId, "notification", n.dedupKey ?? n.id, null, originalUrgency);
     }
   });
   const show = (a: Ask) => {

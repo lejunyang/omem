@@ -105,7 +105,7 @@ export type Notification = {
   images?: string[];
 };
 
-type Sink = (n: Notification, app: App) => Promise<void> | void;
+type Sink = (n: Notification, app: App, originalUrgency: NotifyUrgency) => Promise<void> | void;
 const sinks = new Set<Sink>();
 /** External channels (Feishu bot, Telegram, a plugin's channel…) register here to receive notifications; the returned function takes the sink out again. */
 export function addNotificationSink(sink: Sink) {
@@ -208,9 +208,9 @@ export function notify(
   return n;
 }
 
-const deliver = (app: App, n: Notification) => {
+const deliver = (app: App, n: Notification, originalUrgency = n.urgency ?? "normal") => {
   for (const sink of sinks) {
-    try { Promise.resolve(sink(n, app)).catch(e => console.warn("[omem] 通知发送失败", e)); }
+    try { Promise.resolve(sink(n, app, originalUrgency)).catch(e => console.warn("[omem] 通知发送失败", e)); }
     catch (error) { console.warn("[omem] 通知发送失败", error); }
   }
 };
@@ -262,13 +262,14 @@ export function releaseLater(app: App, at = new Date(), opts: { now?: boolean } 
   for (const [userId, list] of byUser) {
     released += list.length;
     if (list.length <= LATER_SINGLY) {
-      for (const n of list) deliver(app, { ...n, urgency: "normal" });
+      for (const n of list) deliver(app, { ...n, urgency: "normal" }, n.urgency);
       continue;
     }
     // A long day does not become a wall of lines: the newest ones are named, the rest counted.
     const listed = list.slice(-LATER_LISTED);
     const more = list.length - listed.length;
-    notify(app, { title: `这段时间的 ${list.length} 条进展`, body: `${listed.map((n) => `- ${n.title}`).join("\n")}\n\n${more ? `更早的 ${more} 条和详情` : "详情"}在网页的通知里。`, link: "#/notifications", userId, bundle: list.map((n) => n.id) });
+    const bundle = notify(app, { title: `这段时间的 ${list.length} 条进展`, body: `${listed.map((n) => `- ${n.title}`).join("\n")}\n\n${more ? `更早的 ${more} 条和详情` : "详情"}在网页的通知里。`, link: "#/notifications", userId, bundle: list.map((n) => n.id) }, { push: false });
+    deliver(app, bundle, "later");
     for (const n of list) markPushed(app, n.id, "bundle");
   }
   return released;

@@ -96,6 +96,7 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
       await drainOutlets(app);
       expect(message(n.id).title).toBe("第二步");
       expect(existsSync(file(next.id))).toBe(false);
+      app.config.notify.outlets.owner[0].minUrgency = "later";
       const later = notify(app, { title: "汇总", urgency: "later" });
       await drainOutlets(app);
       expect(existsSync(file(later.id))).toBe(false);
@@ -103,6 +104,16 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
       await drainOutlets(app);
       expect(message(later.id).title).toBe("汇总");
     } finally { vi.useRealTimers(); app.config.notify.quietStart = app.config.notify.quietEnd = 0; }
+  });
+
+  it.each([1, 3])("普通门槛保留 %i 条低优先级进展在网页", async count => {
+    const entries = Array.from({ length: count }, () => notify(app, { title: "低优先级进展", urgency: "later" }));
+    expect(releaseLater(app, new Date(), { now: true })).toBe(count);
+    await drainOutlets(app);
+    const visible = listNotifications(app);
+    for (const n of entries) expect(visible.some(row => row.id === n.id)).toBe(true);
+    const released = count === 1 ? entries[0] : visible.find(row => row.bundle?.includes(entries[0].id))!;
+    expect(existsSync(file(released.id))).toBe(false);
   });
 
   it("校验投递回执、投递时和回答时的身份、白名单与到期日", async () => {
