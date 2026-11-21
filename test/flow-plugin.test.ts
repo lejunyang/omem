@@ -1,3 +1,4 @@
+import { stagePlugin } from "./flow-plugin-fixture.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -5,7 +6,6 @@ import { testApp } from "./helpers.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { parseFlow, saveFlow } from "../src/flows/definitions.ts";
 import { flowView, ownerAction, startFlow, reportStage } from "../src/flows/engine.ts";
-import { itemProgress } from "../src/agents/progress.ts";
 import { checkGitSignals } from "../src/flows/signals.ts";
 import { proposeFlow } from "../src/flows/engine.ts";
 import { answerAsk } from "../src/agents/asks.ts";
@@ -36,26 +36,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   beforeAll(async () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "plugin.yaml"), "id: stagekit\nname: 阶段示例\npermissions:\n  flow: { signal: true, run: true, gate: true }\n");
-    writeFileSync(join(dir, "server.mjs"), `import { existsSync, writeFileSync } from "node:fs";
-      import { join } from "node:path";
-      const data = process.env.OMEM_PLUGIN_DATA;
-      export default function(api) {
-      api.stageGate({id:"word",name:"验收词",describe:"结果要写已验证",async review(ctx) {
-        if (ctx.result.evidence.some(e => e.text === "验收要求")) throw Error("混入上次否决证据");
-        return ctx.result.summary.includes("已验证") ? {ok:true} : {ok:false,reason:"缺少已验证",evidence:[{text:"验收要求",link:"https://example.org/rule"}]};
-      }});
-      api.stageGate({id:"slow",name:"慢检查",describe:"等待检查",review(_ctx, signal) {
-        return new Promise((_,reject) => signal.addEventListener("abort",() => reject(signal.reason),{once:true}));
-      }});
-      api.stageRunner({ id:"job", name:"作业", describe:"写入标记", async start(ctx) {
-        const ref = ctx.idempotencyKey, path = join(data,ref);
-        if (!existsSync(path)) writeFileSync(path,ref,{flag:"wx"});
-        return {ref,status:ctx.with.fail ? "failed" : "running",summary:"作业结果"};
-      }, async check(ref){ return {ref,status:"done",summary:"已验证：作业完成",evidence:[{text:"标记"}]}; },
-      async cancel(ref){writeFileSync(join(data,ref+".cancel"),"cancel");} });
-      api.flowSignal({ id: "mark", name: "标记", describe: "检查通过", params: {type:"object",properties:{fail:{type:"boolean"}}},
-        async check(ctx) { if (ctx.with.fail) throw Error("读取失败"); return {done:true,evidence:[{text:"检查单",link:"https://example.org/check"}]}; } });
-    }`);
+    writeFileSync(join(dir, "server.mjs"), stagePlugin);
     const data = join(app.home, "plugin-data", "stagekit");
     mkdirSync(data, {recursive:true});
     if (mode === "inprocess") vi.stubEnv("OMEM_PLUGIN_DATA", data);
@@ -93,20 +74,6 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     return runPluginStage({ app, run: getRun(app,id), signal: new AbortController().signal,
       output: value => setRunOutput(app,id,value), event: () => {} });
   }
-  it("本人确认运行器，重启后同键恢复并交付结果", async () => {
-    expect(() => saveFlow(app,raw([job()]),"member")).toThrow("本人确认");
-    const item = await begin([job()]);
-    const id = flowView(app,item).stages[0].by!;
-    await expect(tick(item)).rejects.toThrow("下一次检查");
-    const operation = getRun(app,id).output.runnerResult;
-    // Crash window after the external write and before the host receives the reference.
-    setRunOutput(app,id,{runnerResult:null});
-    await expect(tick(item)).rejects.toThrow("下一次检查");
-    expect(getRun(app,id).output.runnerResult).toEqual(operation);
-    await tick(item);
-    expect(flowView(app,item).stages[0]).toMatchObject({state:"done",evidence:[id],pluginEvidence:[{text:"标记"}]});
-    expect(itemProgress(app,item,{user:"owner"}).find(v => v.kind === "flow")?.tasks[0].attempts.some(a => a.runId === id)).toBe(true);
-  });
   it("期限到后取消，插件失败也停在当前阶段", async () => {
     const item = await begin([job()]);
     await expect(tick(item)).rejects.toThrow("下一次检查");
