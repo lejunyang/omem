@@ -15,6 +15,7 @@ import { replayCoachText } from "./replay.ts";
 import { casesText, playbookOf, type CaseLite } from "../channels/listen-cases.ts";
 import { contextOfConversation, DEFAULT_CONTEXT_ID, getContext } from "../channels/listen.ts";
 import { briefText } from "../channels/watch-trial.ts";
+import { todayOn } from "../items/today-time.ts";
 
 /**
  * Which runs show a built-in role at work (an agent spec's are its `agent` runs). The assistant's are
@@ -210,7 +211,8 @@ registerHandler("profile-review", async (ctx) => {
   const reason = quietReason(ctx.app, ctx.run.id);
   const summary = r.text.trim() || reason || "";
   const after = one<{ n: number }>(ctx.app.db, "select count(*) n from profile_proposals where target = ? and status = 'pending'", target)!.n;
-  if (after > before) notify(ctx.app, { title: `${target} 有 ${after - before} 条改进建议待确认`, body: truncate(summary, 600), link: `#/agents?tab=agents&name=${target}` });
+  // With 今天 on, the proposals wait for the morning card (items/today.ts profilePart).
+  if (after > before && !todayOn(ctx.app)) notify(ctx.app, { title: `${target} 有 ${after - before} 条改进建议待确认`, body: truncate(summary, 600), link: `#/agents?tab=agents&name=${target}` });
   return { quiet: !!reason, summary };
 });
 

@@ -19,6 +19,13 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · “今天”并进简报、复盘提的改动、AI 提议的指标，周五带周报
+
+- `src/items/today.ts` 多了几段，各从一个取数函数来：**简报**是卡的开头一段（kv `today_brief`，按日期）；**复盘提的改动**读 `pending.ts pendingProfileProposals`（快过期的排前面并写哪天过期；改设置的 `a_<id>` 采纳 / 不要，走 `proposals.ts applyProposal` / `rejectProposal`；改提示词、写技能的只给 Agent 页的链接）；**AI 提议的指标**读 `pending.ts pendingMetrics`（`m_<id>` 留下 / 不要，走 `defineMetric` 的 active / dropped）；周五这周的周报写好了就在末尾链过去（`weekly-report.ts weeklyReportFile`）。上限 `TODAY_MAX.profiles` 3、`metrics` 4，多的写“还有 N 条在 Agent 页 / 数据页”。“等你处理”那段不再数档案和指标。
+- `pending.ts`：档案提议和指标的查询拆成 `pendingProfileProposals` / `pendingMetrics`，`pendingView` 和“今天”共用（工作页右栏照旧是计数的一行）。
+- 简报（`jobs.ts` 的 `brief`）：“今天”开着时任务第一行写“并进今天”，运行不给 `notify`，最后一条消息交给 `today.ts attachBrief`：卡还没发就等着；卡已发、还没答就改同一张（`reviseAsk`，飞书上更新原卡）；那天没别的事就单发一张只有简报的“今天”；卡已经答过了才照以前发一条“简报 · 日期”的通知。`roles/brief.md` 分“并进今天”和“单独发”两种写法：并进时只写清单表达不了的（最要紧的两三件和为什么、已备好的、清单里没有的变化），不再列到期事项和待答的问题。
+- “今天”开着时 `profile-review` 不发“有 N 条改进建议待确认”，`expireProposals` 记下提醒时间但不发“两天内过期”的通知；关着时都和以前一样（`test/proposal-expiry.test.ts` 按关着测）。测试在 `test/today.test.ts`。
+
 ## 2026-11-21 · 远程页：把会话交给成员
 
 - 会话主人在画面上方点“交给成员”，在右侧抽屉（`web/src/components/RemoteGrants.vue`）里选人、只看或可操作、多久，已交给的人一行一个，可改模式、从现在起延长、收回（`confirmDialog`）。候选人由 `/api/users` 和每人的 `/api/members/:id/capabilities` 里的 `remote.view` / `remote.operate` 算出（`web/src/lib/remote-grants.ts`）。

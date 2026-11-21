@@ -38,7 +38,7 @@ import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import type { ChangeType } from "../src/items/changes.ts";
 import { createLine } from "../src/items/lines.ts";
-import { sendToday } from "../src/items/today.ts";
+import { attachBrief, sendToday } from "../src/items/today.ts";
 import { itemContext, saveContext } from "../src/channels/listen.ts";
 import { setParent } from "../src/items/parent.ts";
 import { parseFlow } from "../src/flows/definitions.ts";
@@ -1147,6 +1147,14 @@ const cand2 = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title:
 run(app.db, "update items set status = 'candidate' where id = ?", cand2.id);
 const stale = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "整理退款页的埋点清单", priority: 3 }, "user");
 upsertItem(app, stale.id, { status: "expired", note: "自动过期：14 天没有新进展（待办的默认期限），最后一次进展在 11 月 3 日。有新进展会重新打开，也可以在事项页恢复。" }, "agent");
+// Last night's profile review proposed two changes for the assistant; the metrics proposed above wait too.
+{
+  const { createProposal } = await import("../src/agents/proposals.ts");
+  createProposal(app, { target: "assistant", kind: "settings", title: "问退款单时能直接搜原件", reason: "最近三次问退款单，本人都补了一句“去对账单里查”", content: { add_tools: ["scan"] }, runId: null });
+  createProposal(app, { target: "assistant", kind: "prompt", title: "回答退款金额前先对一遍分摊口径", reason: "两次把满减按整单比例算错，本人纠正过", content: { prompt: "回答退款金额前，先读《退款改造需求》里的分摊口径，再算。" }, runId: null });
+}
+// The brief written before the card: its first paragraph.
+await attachBrief(app, `今天最要紧的是回小李：上月退款单的回放用哪个月的数据，他排在推送之后等你一句话。已备好：对账单里金额对不上的 3 单查过了，都是满减按整单比例分摊的旧路径（[差异表](#/items/${refundLine.id})）。`);
 await sendToday(app);
 
 // ---- capture ----------------------------------------------------------------------------------
