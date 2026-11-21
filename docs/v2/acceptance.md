@@ -272,7 +272,18 @@ npx vue-tsc --noEmit -p web/tsconfig.json
 
 <a id="plugin-process-hooks"></a>
 
-## 插件订阅、事项同步与指标数据源（2026-11-21）
+## 插件订阅、事项同步、指标数据源与检索提供者（2026-11-21）
+
+- 运行 `test/search-providers.test.ts`。启用前后核对默认命中。启用后核对全文和插件共同命中的 `via`、分块与页面的本库正文、受限和跨空间原件、分支覆盖及条数上限。关闭插件后再搜同一词。
+- 调用 `recall(query, folder, agent)`，只留下当前目录、档案可读的记忆。延迟插件响应，核对全文查询已经启动。让插件连续超时、抛错和返回非法 id，核对原顺序和单次提醒。
+- 指定重排插件，核对搜索顺序和被动记忆的门槛。用错误数量、非有限分数和超时各触发一次本地回退。用 `test/plugin-sandbox.test.ts` 检查两类接口的隔离调用，用 `test/permissions.test.ts` 检查状态接口权限。
+- 默认路径的本机对照使用同一 SQLite 库中的 300 份虚构原件和 10 个查询。预热 20 次后，交替调用前后实现 200 对，每对逐字段比较完整命中。基线 `7bbfa8f8` 对照本次实现，中位数 1.935 / 1.972 ms，P95 为 2.581 / 2.464 ms，220 对结果全部一致。该对照检验默认路径和耗时。自选插件的相关性由其索引和模型决定。默认路线及排名未变，未重跑公开集 nDCG。
+
+```sh
+git show 7bbfa8f8:src/search/search.ts > src/search/bench-baseline.ts
+node scripts/bench-search-providers.ts src/search/bench-baseline.ts
+rm src/search/bench-baseline.ts
+```
 
 - 网页：评审的事项上挂着合并请求时，评审页“待处理问题”上面有一行同步状态（`node scripts/doc-screens.ts --serve` 的演示数据里有已发、作者回复、没发出去、要重新定位各一条）。点“发布 N 条…”从右侧出确认，逐条选发布或跳过；确认后那一行的数字和每条问题的标签跟着变。事项上没有这类对象、或没有启用评审提供者时这一行不出现。
 - 用 `test/review-sync.test.ts` 的假提供者分别验证单对象、多对象和无对象。评审结束时只出确认卡。用成员身份代答应被拒绝，本人选发后逐条核对对象、锚点、评论链接、幂等键和审计。让其中一条失败，只重试该条。失效锚点和已有手工链接均跳过重发。

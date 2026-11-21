@@ -273,6 +273,7 @@ npm install -g @omem-ai/cli
 | 做一个自己的小插件（复盘、问卷、打卡） | 在数据目录建 `plugins/<id>/plugin.yaml`、`agents/<名>.md`（可带 `skills/`、`settings`），重启后侧栏出现它的页面：和它的 Agent 对话，Agent 能发表单让你填、画图给你看。不加载数据目录里的代码。格式见 [docs/v2/plugins.md](docs/v2/plugins.md) |
 | 插件要一个常驻进程（采集、看屏幕、连设备），页面实时显示 | 清单里写 `services` 和 `streams`，服务用 `packages/plugin-sdk/service.mjs`，页面 `omem.stream(名)`；数据目录插件带代码时在设置 → 插件里点“信任并运行”，代码改了要重新确认；服务的状态和输出也在那里看。点击、输入这类工具标 `approval: true`，每次等你批准 |
 | 把别的平台上的 issue、需求同步成事项 | 设置 → 推进工作 → 事项同步：选启用的插件提供的平台，订阅一个项目到某个空间；新条目先当候选或直接建，这边改了状态先问你要不要写回。事项详情里看得到它在那边的编号和状态 |
+| 用自己的搜索服务召回资料或替换重排模型 | 在配置中按空间启用 `search.retrievers`，或在 `rerank.provider` 选一个模型。插件返回库内 id，由宿主回读并检查权限。见[接进检索](docs/v2/plugins.md#接进检索)。 |
 | 插件跟随事项或评审的变化、接入外部事项和指标 | 用 `api.subscribe` 订阅获准空间的事件，`api.itemProvider` 增量同步外部条目，`api.reviewProvider` 将选定的评审问题发到事项关联的合并请求并读回讨论，发布与结束须本人确认，`api.metricProvider` 直接采集指标。失败的订阅用 `omem plugin failed-events` 查看、`omem plugin replay` 重放。见 [插件接口](docs/v2/plugins.md)。 |
 | 插件要以用的人的身份调另一个平台（笔记、工单……） | 插件代码里 `api.connector` 注册这个平台（授权地址、换令牌、我是谁、功能和权限），工具里用 `ctx.connection(平台)` 调它；每个人在账号页“已连接的应用”连接自己的账号，令牌由 omem 保管、只发往插件声明的接口地址。公司内部系统的连接器放数据目录的插件里。格式见 [docs/v2/plugins.md](docs/v2/plugins.md) |
 | 在飞书里点开 omem 的页面 | 设置 → 设备 → 网页地址，填其他设备能访问的地址；通知卡片的“打开链接”、插件 Agent 在飞书里给的练习链接都能直接打开 |

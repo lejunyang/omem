@@ -19,6 +19,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 插件接入召回和重排（11-21）
+
+从 `packages/plugin-sdk/server.ts` 看注册接口，从 `src/search/providers.ts` 看空间、调用预算和状态。`src/search/search.ts` 按 id 回读后参与 RRF 融合，`src/search/rerank.ts` 在同一入口为主搜索与被动记忆选择重排器。配置和状态字段见 [接进检索](../../../docs/v2/plugins.md#接进检索)。
+
 ## HTTP 规则的判定入口：浏览器里的请求发出前来问（11-21）
 
 - `src/agents/http-gate.ts`：`httpWatch` 给出这个调用方现在要问哪些请求（生效的、动作不是放行的 HTTP 规则的主机和方法，带 `revision`），`httpGate` 判一个请求（JSON 请求体才参与 `body.jsonPath`），走命令同一个 `gateOperation`。接口 `GET / POST /api/operation-gate/http`，和命令垫片同样只认本机带运行令牌的请求。

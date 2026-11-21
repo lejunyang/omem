@@ -443,6 +443,61 @@ Content-Type: application/json
 
 服务端类型从 `@omem-ai/plugin-sdk/server` 导入。两类提供者在宿主进程运行。三种接口的 `CallContext` 只含 `userId`、`spaceId`、`signal` 和 `connection(provider)`。连接须列在插件清单的 `connectors` 中，并属于当前用户。回写专用的 `WriteContext` 还含 `idempotencyKey`。
 
+## 接进检索
+
+在 `plugin.yaml` 中声明 `permissions.retriever: true` 或 `permissions.reranker: true`。两种提供者都支持进程内和隔离运行。注册方法及请求类型见 `@omem-ai/plugin-sdk/server`。下面以插件 `demo` 为例。
+
+```ts
+api.retriever({
+  id: "lookup", label: "资料检索",
+  async search(ctx, { query, spaces, kinds, limit }) {
+    // 在自己的索引里查找，按相关性从高到低返回 omem 库内的 id。
+    return lookupIds({ query, spaces, kinds, limit, signal: ctx.signal });
+  },
+});
+api.reranker({
+  id: "rank", label: "相关性模型",
+  async score(ctx, { query, candidates }) {
+    // candidates 为 { id, text }[]，分数按候选的原顺序返回。
+    return scorePassages(query, candidates, ctx.signal);
+  },
+});
+```
+
+通过 `PUT /api/settings` 保存以下配置。该接口按顶层字段更新，修改重排时带上要保留的 `rerank` 各字段。
+
+```json
+{
+  "search": {
+    "retrievers": [{
+      "provider": "demo:lookup",
+      "spaces": ["project-a"],
+      "kinds": ["chunk", "page", "memory"],
+      "timeoutMs": 400,
+      "limit": 20
+    }]
+  },
+  "rerank": {
+    "enabled": true, "provider": "plugin:demo:rank",
+    "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+    "top": 20, "maxTokens": 512, "threads": 0,
+    "timeoutMs": 10000, "passiveThreshold": 0.5
+  }
+}
+```
+
+**召回。** 默认 `search.retrievers` 为空。每项填注册 id（插件名加冒号和能力 id）。`spaces` 和 `kinds` 可省略，表示使用许可范围内的全部空间和上述三种类型。显式空数组表示关闭该范围。插件清单声明了空间时，调用范围还要与清单空间取交集。每次只发这次查询可读的交集，交集为空就跳过。连接使用当前调用人的身份，`ctx.spaceId` 是请求中的第一个空间，多空间检索以 `req.spaces` 为准。
+
+每条路线的默认预算是 400 ms 和 20 条，可分别设为 1–15000 ms 和 1–100 条。各插件与内置路线并行启动。返回值为 `{ type, id, score? }[]`，按数组顺序参与融合，`score` 可附有限数值。分块 id 为十进制字符串，页面 id 为 `空间/slug`，记忆和原件使用本机库内 id。原件使用 `type: "source"`，属于请求的 `chunk` 类型。宿主为每份原件选一个已召回的高排名分块，未命中时按原件内顺序取第一块。
+
+宿主按 id 回读内容，核对空间、阅读权限、原件范围与有效状态，再把该路的名次加入倒数排名融合（RRF），命中的 `via` 带 `plugin:demo:lookup`。工作区覆盖、原件可见性和副本合并沿用主检索的约束。显式 `recall(query)` 使用其中的记忆路线，再按目录和档案裁剪。被动记忆仍由宿主向量检索召回。
+
+**重排。** 默认关闭，开启后默认使用 `provider: "local"`。选择插件后，插件收到主搜索前 `top` 条可读候选，或被动记忆原有的候选池。问题最多 1000 字符，每条正文最多 4000 字符。整批均在插件许可范围时才发送。返回值为与候选一一对应的有限数值数组，分数越大越靠前。换模型后应按新分数重新校准被动记忆的 `passiveThreshold`。
+
+插件最多使用本次重排预算的一半，余下时间留给本地模型。超时、错误、分数个数不符、插件停用或候选超出授权时使用本地重排。本地模型也不可用时，主检索保留融合顺序，被动记忆用余弦门槛。召回提供者失败时其余路线继续。两类提供者的超时均会中止 `ctx.signal`，连续失败只提醒一次。
+
+**状态。** `GET /api/search/providers` 与读取设置使用相同权限。返回 `{ retrievers, rerankers, config: { search, rerank } }`。两组提供者的元素均为 `{ id, label, plugin, spaces, lastMs, lastError }`。这里的 `spaces` 是插件清单范围，空数组表示清单未限制空间。首次调用前两个状态字段均为 `null`，成功后清空错误，停用后移出列表。`GET /api/settings` 的顶层 `rerank.provider` 表示当前可选用的重排器（关闭为 `null`），`rerank.lastProvider` 表示最近一次实际给出分数的重排器，最近一次未得到分数时为 `null`。
+
 ## 渠道
 
 插件可以实现一个聊天平台，把它接到 omem 的同一个收件箱：
