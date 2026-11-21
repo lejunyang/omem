@@ -318,6 +318,7 @@ npx vue-tsc --noEmit -p web/tsconfig.json
 - 同一文件验证检查否决与证据、只有本人能单次越过、下一次重新检查、必须的超时暂停、非必须的超时放行与日志；签字后检查原结果，交回失败后旧越过卡片失效，进度视图可读运行器尝试。既有行为回归用 `test/flow-*.test.ts`、`test/flows*.test.ts`。
 - `test/plugin-backends.test.ts` 两种模式验证未信任不可选、信任后统一目录和假 ACP 回合、停用后来源与拒绝启动、改启动参数重新确认；开发目录信任也绑定声明。只启动 `test/fake-acp-agent.ts`。
 - 安装 `examples/plugins/stagekit`，按 README 保存本机检查流程，由本人确认。先用 checks API 启用 write 阶段验收词检查，再写 ready 标记、启动事项。verified 为 false 时文件写“待复核”，本人点「仍然通过」后在阶段日志和 flow.gate-override 审计核对 stagekit:word。
+- 冷启动后分别打开角色和档案的编辑页，核对后端控件显示已保存的名称，旁边写明插件来源和停用原因；展开候选时只列可选的后端。HTTP 与表单渲染回归见 `test/web-review-entry.test.ts`。
 - 网页验收留待接入：流程定义选 signals/runners、阶段 pluginEvidence 与 waitingSignal 的“问不到”、流程设置 gates/checks、AI 的 pluginBackend 来源和停用原因。接口见 flows.md 末节。
 
 ## 插件通知出口（2026-11-21）
