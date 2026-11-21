@@ -309,7 +309,7 @@ describe("delegation sandbox mounts", () => {
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:first").toString()).toBe("first\n=======\n");
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:part").toString()).toBe("part\n");
       if (!oversized) expect(repos[1].git("-C", trees[1].path, "show", "HEAD:accepted").toString()).toBe("received\n");
-      expect(run.output.refusals).toMatchObject([{ space: repos[1].id, tasks: [tasks[1]], unknown: true, worktree: oversized ? "unknown" : "dirty" }]);
+      expect(run.output.refusals).toMatchObject([{ space: repos[1].id, tasks: [tasks[1]], unknown: true }]);
       const failed = (run.output.worktrees as typeof trees)[1];
       expect(readFileSync(join(failed.path, "draft"), "utf8")).toBe("draft\n");
       const privateDir = join(app.runsDir, run.id, "member-git", failed.space, "git");

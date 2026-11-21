@@ -37,7 +37,7 @@ export type RoundContext = {
   spaces: string[];
   where: (dir: string, wt: WorktreeRef) => string;
 };
-type Refusal = { space: string; reason: string; tasks: number[]; unknown: boolean; worktree: "clean" | "dirty" | "unknown" };
+type Refusal = { space: string; reason: string; tasks: number[]; unknown: boolean };
 type Helper = { runId: string; n: number; tasks: number[]; worktrees: WorktreeRef[]; done: Promise<void> };
 const rounds = new Map<string, RoundContext & { helpers: Helper[] }>();
 
@@ -111,9 +111,8 @@ async function inspectHandoff(app: App, actor: string, space: string, reason: st
   const view = await inspectUnreceivedMemberGit(app, actor, space);
   if (!refused && (!view || (view.worktree === "clean" && view.messages?.length === 0))) return null;
   const byCommit = view?.messages?.map(commitTaskNumbers) ?? [];
-  const worktree = view?.worktree ?? "unknown";
-  const unknown = worktree !== "clean" || !byCommit.length || byCommit.length > 100 || byCommit.some(tasks => !tasks.length);
-  return { space, reason, tasks: [...new Set(byCommit.flat())], unknown, worktree };
+  const unknown = view?.worktree !== "clean" || !byCommit.length || view.truncated || byCommit.some(tasks => !tasks.length);
+  return { space, reason, tasks: [...new Set(byCommit.flat())], unknown };
 }
 
 /** One helper: its own workspaces, the coder there, then what it committed (or left) recorded on its run. */

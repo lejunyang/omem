@@ -201,15 +201,16 @@ export async function inspectUnreceivedMemberGit(app: App, actor: string, space:
     const read = (...args: string[]) => promisify(execFile)(ns.file, [...ns.args, "git", ...hooksOff,
       "--no-optional-locks", "--git-dir=/member", "--work-tree=/work", ...args],
       { encoding: "utf8", timeout: 5000, maxBuffer: 65536 });
+    const commitLimit = 100;
     const [log, status] = await Promise.allSettled([
-      read("log", "--max-count=101", "--format=%x00%B", state.base + "..HEAD", "--"),
+      read("log", `--max-count=${commitLimit + 1}`, "--format=%x00%B", state.base + "..HEAD", "--"),
       read("status", "--porcelain", "--untracked-files=normal"),
     ]);
     const messages = log.status === "fulfilled" ? log.value.stdout.split("\0").slice(1) : null;
     const worktree = status.status === "rejected" ? "unknown" : status.value.stdout ? "dirty" : "clean";
-    return { messages, worktree } as const;
+    return { messages, worktree, truncated: (messages?.length ?? 0) > commitLimit } as const;
   } catch {
-    return { messages: null, worktree: "unknown" } as const;
+    return { messages: null, worktree: "unknown", truncated: false } as const;
   }
 }
 
