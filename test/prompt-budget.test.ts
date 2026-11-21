@@ -46,3 +46,34 @@ it("bounds standing instructions for a fixed space, skill library and four lesso
   }
   app.db.close();
 });
+
+it("bounds the HTTP instructions for each cloud role including every allowed tool", async () => {
+  const { confirmProbe, probeCloud, probeReceipt } = await import("../src/agents/cloud-probe.ts");
+  const app = testApp();
+  app.baseUrl = "http://127.0.0.1:1";
+  app.config.webUrl = "https://8.8.8.8";
+  const cfg = app.config.agents.cloudTools;
+  cfg.backends = ["doubao"];
+  cfg.tools = ["search", "read_source", "read_page", "read_item"];
+  cfg.credentialIn = "message";
+  const probe = await probeCloud(app, "doubao", async (_app, _p, req) => {
+    const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
+    return { text: probeReceipt(app, nonce, nonce), agent: "test", stopReason: "end_turn" };
+  });
+  confirmProbe(app, "doubao", probe.id);
+  for (const role of ["assistant", "gatekeeper", "summarizer", "replay-judge", "mention-triage"] as const) {
+    const prepare = () => prepareRun(app, { actor: { role }, profileId: "doubao", spaceId: "personal", runId: "budget" });
+    cfg.enabled = false;
+    const off = prepare();
+    expect(off.capabilities.omemAccess).toBe("none");
+    cfg.enabled = true;
+    const on = prepare();
+    expect(on.capabilities.omemAccess).toBe("http");
+    expect(on.system).toContain("云端只读工具");
+    expect(on.parts.common - off.parts.common).toBeLessThan(400);
+    expect(on.system.length).toBeLessThan(3400);
+    revokeToolToken(off.token);
+    revokeToolToken(on.token);
+  }
+  app.db.close();
+});

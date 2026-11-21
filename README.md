@@ -125,6 +125,8 @@ flowchart LR
 
 豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。
 
+云端会话可以按运行授权检索、读原文。默认关闭。本人探测并确认后端后，可指定它能使用的只读工具。每次调用沿用成员和运行的空间权限。[配置云端只读工具](docs/v2/external-access.md#云端后端调只读工具)。
+
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → 后端与模型 → 添加 Agent”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → 后端与模型 → API key 添加 OpenAI 或 Anthropic 的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → 后端与模型 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。
 
 设置 → 后端与模型 → 决策 可配置多个模型，按顺序或每次随机先问一个；不可用、拒答或出错会换下一个，刚出错的 5 分钟内排到最后，判断记录显示由谁回答及换用情况。 巡检、盯群、有人找你和直接答复分别设最低把握，按后续结果记录漏看、多看；同页可看报告，也可用命令离线比较其他决策模型。
@@ -396,6 +398,7 @@ omem replay [list] / omem replay run [--run <运行id>] [--axis M1]  # 夜间复
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）
 omem agents registry                        # 官方 ACP 注册表里的 Agent
 omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / uvx / 下载程序）
+omem cloud-tools probe <后端档案>             # 探测云端 HTTPS 只读能力，成功后由本人确认和启用
 omem doubao status                           # 哪个飞书应用有豆包权限、本机是否已授权
 omem doubao login [--app <appId>]            # 设备码授权豆包（在飞书里打开链接确认）
 omem doubao send-test                        # 经豆包以本人身份给自己发一条测试私聊并核对（“经豆包发送”前先试）

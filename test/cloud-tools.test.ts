@@ -15,7 +15,7 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
   const profile = agentProfileSchema.parse({ id: "cloud-a", command: "unused", transport: "doubao" });
   app.config.agents.profiles = [profile];
   app.config.webUrl = "https://8.8.8.8";
-  Object.assign(app.config.agents.cloudTools, { enabled: true, backends: [profile.id], credentialIn: "message", maxCalls: 4 });
+  Object.assign(app.config.agents.cloudTools, { enabled: true, backends: [profile.id], credentialIn: "message", maxCalls: 5 });
   const probe = await probeCloud(app, profile.id, async (_app, _p, req) => {
     const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
     return { text: probeReceipt(app, nonce, mode === "header" ? nonce : ""), agent: "test", stopReason: "end_turn" };
@@ -29,18 +29,30 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
   const data = (spaceId: string) => upsertSource(app, { spaceId, kind: "doc", title: "材料", uri: "doc", text: "项目说明" }).id;
   const inside = data("team"), outside = data("personal");
   const ctx: ToolContext = { app, actor: "agent", userId: "reader", runId: id, spaceId: "team", spaces: ["team"], tools: new Set(["read_source"]) };
+  const large = upsertSource(app, { spaceId: "team", kind: "doc", uri: "large", title: "大原件", text: "资料".repeat(10000) });
   const args = { source: inside };
   const expected = await callTool(ctx, "read_source", args);
   expect(expected.isError).toBe(false);
   const events: unknown[] = [];
   let first = "";
   const req = { cwd: app.home, prompt: "任务", system: "常驻说明", runId: id };
-  const perform = async (choice: "read" | "revoke" | "expire") => cloudTurn(app, profile, ctx, req, e => events.push(e), async (turn, emit) => {
+  const perform = async (choice: "read" | "revoke" | "expire" | "cancel" | "finished" | "large", ctrl = new AbortController()) => cloudTurn(app, profile, ctx, { ...req, signal: ctrl.signal }, e => events.push(e), async (turn, emit) => {
     first = turn.prompt.match(/oct_[\w-]+/)![0];
     expect(turn.system).toBe(req.system);
     expect(turn.mcp).toBeUndefined();
     expect(turn.cloudChannel).toBeUndefined();
-    if (choice === "expire") {
+    if (choice === "large") {
+      const result = await cloudRequest(app, first, id, mode, "read_source", { source: large.id });
+      expect(result).toMatchObject({ text: expect.stringContaining("已截断") });
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(32000);
+    } else if (choice === "cancel") {
+      ctrl.abort();
+      await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("作废");
+    } else if (choice === "finished") {
+      run(app.db, "update runs set status='done' where id=?", id);
+      try { await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("授权已结束"); }
+      finally { run(app.db, "update runs set status='running' where id=?", id); }
+    } else if (choice === "expire") {
       const time = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31 * 60000);
       try { await expect(cloudRequest(app, first, id, mode)).rejects.toThrow("过期"); } finally { time.mockRestore(); }
     } else if (choice === "revoke") {
@@ -65,6 +77,9 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
     return { text: first, agent: "test", stopReason: "end_turn" };
   });
   try {
+    await perform("large");
+    await perform("cancel");
+    await perform("finished");
     await perform("expire");
     await perform("revoke");
     const result = await perform("read");

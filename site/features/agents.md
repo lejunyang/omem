@@ -46,6 +46,13 @@ TUN 里换节点不一定改变网卡，最晚到出口结果过期才发现出�
 
 豆包的会话保存在账号里。先用 `omem doubao login` 授权 OpenAPI，omem 就能在 CLI 或 OpenAPI 的单次任务结束、失败后删除这次建的会话；聊天会话保留供追问，换成新会话后清理旧的。没有授权或清理失败时，运行里会提示。授权过期且无法刷新时需要重新登录，既有历史不会批量删除。
 
+### 让云端会话核对原文
+
+默认关闭。先配置公网 HTTPS 的 `webUrl`，运行 `omem cloud-tools probe <后端档案 ID>`，由本人确认它读回的探测结果。启用 `agents.cloudTools.enabled` 后，还要在 `backends` 点名档案。默认只给检索和按行读原件，也可选读 Wiki 或事项。每轮仍受成员和空间权限约束。
+
+默认要求安全通道。本人改选 `credentialIn: "message"` 后，这串只读凭据会留在云端会话历史里，直到会话被删除。默认有效 15 分钟，每次运行最多请求 32 次，本轮结束立即作废。运行页能看到它查了什么。本人可用 `GET /api/cloud-tools` 查状态，用 `POST /api/cloud-tools/revoke` 撤销当前全部凭据。
+
+
 后端会话清理连续失败 12 次后停止自动重试，并在本机保留失败时间和原因。本人可用 `GET /api/agents/session-cleanup/failures` 查看记录。恢复后端配置或授权后，向 `POST /api/agents/session-cleanup/retry` 提交该条记录的 `backendKey` 和 `sessionId`，宿主从下一次清理扫描起重新尝试。
 
 ## 内置角色
