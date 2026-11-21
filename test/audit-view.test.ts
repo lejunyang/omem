@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { saveOperationRules } from "../src/agents/operation-policy.ts";
+import { createRun } from "../src/agents/runs.ts";
 import { auditRows } from "../src/auth/audit-view.ts";
 import { audit } from "../src/auth/permissions.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -30,6 +31,13 @@ function seed() {
   audit(app, "owner", "something.new", "whatever", { result: "照原样" });
   return app;
 }
+
+it("目标是一次运行时显示它的标题并能点过去", () => {
+  const app = testApp();
+  const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款按已发货行分摊" });
+  audit(app, "owner", "share.review", r.id, { share: "sh1" });
+  expect(auditRows(app, "owner").rows[0]).toMatchObject({ text: "分享评审", target: "退款按已发货行分摊", runId: r.id });
+});
 
 it("每一行用人话说：谁、做了什么、对谁、结果怎样；按类分组，新的在前", () => {
   const app = seed();

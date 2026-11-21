@@ -93,6 +93,7 @@ function ruleName(m: { kind: string; executable?: string; subcommand?: string[];
   return (m.kind === "file" ? m.pathRegex : m.name) ?? m.kind;
 }
 
+const RUN_ID = /^r0m[0-9a-z]{12,}$/;
 type Raw = { id: number; at: string; actor: string; action: string; target: string; detail: string };
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
@@ -117,13 +118,15 @@ function names(app: App, viewer: string) {
     if (!raw) return "";
     if (/^o[cu]_\w+$/.test(raw)) return chat(raw);
     if (one(app.db, "select 1 from users where id = ?", raw)) return user(raw);
+    // A run by its title: the row links to it (describe sets runId).
+    if (RUN_ID.test(raw)) return truncate(one<{ title: string }>(app.db, "select title from runs where id = ?", raw)?.title || raw, 60);
     return space(raw) ?? raw;
   };
   return { user, target };
 }
 
 function describe(app: App, r: Raw, d: Record<string, unknown>, n: ReturnType<typeof names>, rules: Map<string, string>): Pick<AuditRow, "text" | "target" | "result" | "tone" | "rule" | "runId"> {
-  const runId = str(d.runId) ?? str(d.run);
+  const runId = str(d.runId) ?? str(d.run) ?? (RUN_ID.test(r.target) ? r.target : null);
   const op = /^(command|http|file|tool)\.([a-z]+)$/.exec(r.action);
   if (op) {
     const verb = OP_VERB[op[2]] ?? { text: op[2], tone: null };
