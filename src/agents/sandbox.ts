@@ -11,8 +11,7 @@ import { fileURLToPath } from "node:url";
  * command it runs) sees neither the owner's logins nor another user's account folder. Read-only again
  * inside them: the agent's install, the Node runtime, omem's code (the stdio MCP bridge) and its
  * `bin` (the `omem` shim and the command gate). Writable: the account folder, the run's working folder
- * and the run's artifacts folder. The network is shared: omem's tools are reached over
- * http://127.0.0.1.
+ * and the run's artifacts folder. Network-isolated runs reach the proxy through a Unix socket.
  *
  * Linux only, and only with a bubblewrap that can start (unprivileged user namespaces allowed):
  * `sandboxSupport` checks once. Everywhere else members keep borrowing the owner's backends.
@@ -22,6 +21,7 @@ export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; re
 
 /** What a run for one user's own account carries on its profile (accounts.ts sets it in prepareRun). */
 export type SandboxAccount = {
+  network?: SandboxNetwork;
   userId: string;
   /** The account backend (catalog id): codex, claude, traex, doubao-cli. */
   backend: string;
@@ -56,6 +56,7 @@ export function sandboxSupport(): SandboxSupport {
 /** Tests: pretend the check came out this way (undefined: check again). */
 export function setSandboxSupportForTests(v: SandboxSupport | undefined) {
   cached = v;
+  networkSupport = undefined;
 }
 
 function onPath(name: string, env: NodeJS.ProcessEnv) {
@@ -96,6 +97,7 @@ const depth = (p: string) => p.split("/").filter(Boolean).length;
 const inside = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
 
 export type SandboxPlan = {
+  network?: SandboxNetwork;
   /** Replaced by empty folders (tmpfs). */
   hide: string[];
   ro: string[];
@@ -132,7 +134,29 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
   const mounts = sorted.flatMap((o) => (o.kind === "tmpfs" ? ["--tmpfs", o.path] : o.kind === "ro" ? ["--ro-bind-try", o.path, o.path] : ["--bind", o.path, o.path]));
   const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
   const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
-  return ["--die-with-parent", "--unshare-pid", "--unshare-user", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, "--chdir", plan.cwd, "--", plan.command, ...plan.args];
+  const n = plan.network;
+  const relay = n ? [process.execPath, fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)), String(n.callbackPort ?? 0)] : [];
+  // A read-only host root still exposes live filesystem sockets. Networked runs start with
+  // the runtime directories and explicit run mounts, leaving host service sockets outside.
+  const root = n ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
+  return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links,
+    ...(n ? ["--unshare-net", "--tmpfs", "/run", ...(n.secrets && existsSync(n.secrets) ? ["--tmpfs", n.secrets] : []), "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
+    "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
+}
+
+export function egressRequested(config: import("../core/config.ts").Config, profile: object) {
+  const mode = config.security.egress.mode;
+  return !!accountOf(profile) && mode !== "off" && (mode === "all-sandboxed" || config.agents.accountIsolation === "require");
+}
+
+export type SandboxNetwork = { socket: string; secrets?: string; callbackPort?: number; bundle?: string };
+let networkSupport: SandboxSupport | undefined;
+export function egressSupport(): SandboxSupport {
+  const s = sandboxSupport();
+  if (!s.ok || !s.bwrap) return s;
+  if (networkSupport) return networkSupport;
+  const probe = exec(s.bwrap, ["--unshare-net", ...PROBE_ARGS]);
+  return networkSupport = probe.status === 0 ? s : { ok: false, reason: "出网隔离不可用：" + (probe.error?.message ?? probe.stderr.trim()).slice(0, 200) };
 }
 
 /** Variables of the service that do not go into a user's sandbox: credentials, and paths into what is hidden. */
@@ -203,13 +227,16 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   ro.add(dirname(nodeBin));
   ro.add(installRoot(real(process.execPath)));
   ro.add(omemInstallDir());
-  // Only what a hidden folder would otherwise take away needs mounting again.
-  const roList = [...ro].filter((p) => isAbsolute(p)).map(real).filter((p) => hide.some((h) => inside(p, h)));
-  const rw = [real(acct.home), ...(workspace?.rw ?? [real(cwd)])];
+  const dependencies = join(omemInstallDir(), "node_modules");
+  if (acct.network && existsSync(dependencies)) ro.add(real(dependencies));
+  const absolute = [...ro].filter(p => isAbsolute(p));
+  const roList = acct.network ? [...new Set([...absolute, ...absolute.map(real)])] :
+    absolute.map(real).filter(p => hide.some(h => inside(p, h)));
+  const rw = [real(acct.home), ...(acct.network && real(acct.home) !== acct.home ? [acct.home] : []), ...(workspace?.rw ?? [real(cwd)])];
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ hide, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
+    args: bwrapArgs({ network: acct.network, hide, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
     env: sandboxEnv(process.env, runEnv, acct, hide, nodeBin),
   };
 }

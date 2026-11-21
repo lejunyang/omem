@@ -2375,6 +2375,12 @@ export const migrations: readonly string[] = [
   create index outlet_object on outlet_deliveries(object_id,op);`,
   `create index notifications_pushed_at on notifications(user_id,json_extract(context,'$.pushed.channel'),json_extract(context,'$.pushed.at') desc)
     where json_extract(context,'$.pushed.channel') is not null;`,
+  `create table if not exists egress_runs (
+     run_id text primary key, seq integer not null, updated_at text not null,
+     foreign key(run_id,seq) references run_events(run_id,seq) on delete cascade
+   );
+   create index if not exists egress_recent on egress_runs(updated_at desc);
+   create index if not exists asks_egress_pending on asks(created_at desc) where status='pending' and json_type(context,'$.egressFallback') is not null;`,
 ];
 
 export type Db = DatabaseSync;
@@ -2386,6 +2392,12 @@ export function openDb(path: string): Db {
   // Plugin and operation branches used the first file-reference slot for their own schema.
   if (version === migrations.indexOf(FILE_REFS_MIGRATION) + 1 &&
       !db.prepare("select 1 from sqlite_schema where type='table' and name='stored_file_refs'").get()) {
+    version--;
+  }
+  // The egress branch used the ledger's version for egress_runs. Replay the ledger
+  // for those databases before applying the idempotent egress migration.
+  if (version === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
+      !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
     version--;
   }
   for (let i = version; i < migrations.length; i++) {

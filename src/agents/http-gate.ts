@@ -34,7 +34,7 @@ export function httpWatch(app: App, ctx: ToolContext): { revision: string; watch
 export type HttpGateRequest = { method: string; url: string; body?: string; contentType?: string; page?: { url?: string; title?: string }; session?: string };
 
 /** A JSON body as the rules' `body.jsonPath` reads it; anything else matches no body rule. */
-function parsedBody(req: HttpGateRequest): unknown {
+export function parsedBody(req: Pick<HttpGateRequest,"body"|"contentType">): unknown {
   if (!req.body) return undefined;
   const looksJson = /json/i.test(req.contentType ?? "") || /^\s*[[{]/.test(req.body);
   if (!looksJson) return undefined;

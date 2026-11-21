@@ -295,6 +295,14 @@ const outletSetting = z.object({
   askKinds: z.array(z.string().min(1).max(100)).max(64).default(["question"]),
 }).strict();
 export const outletSettings = z.array(outletSetting).max(64).refine(xs => new Set(xs.map(x => x.id)).size === xs.length, "出口重复");
+export const egressSchema = z.object({
+  mode: z.enum(["strict-only", "all-sandboxed", "off"]).default("strict-only"),
+  default: z.enum(["allow","approve","deny"]).default("allow"),
+  tunnelWhenUnsure: z.enum(["allow","approve","deny"]).default("allow"),
+  inspect: z.array(z.string().max(253).regex(/^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i)).max(32).default([]),
+  waitSeconds: z.number().int().min(1).max(300).default(90),
+});
+
 export const configSchema = z.object({
   /**
    * Listen address. All interfaces by default, so other devices can pair with this one;
@@ -577,9 +585,9 @@ export const configSchema = z.object({
    * Commands an agent's processes may not run unchecked (docs/v2/command-gate.md): a wrapper of the
    * same name in front of PATH asks omem first. Only the owner changes this (PUT /api/security/command-rules).
    */
-  security: z.object({ operationRules: operationRulesSchema.optional(), commandRules: z.array(commandRuleSchema).max(200).optional() }).default({}).transform(s => {
+  security: z.object({ egress: egressSchema.optional(), operationRules: operationRulesSchema.optional(), commandRules: z.array(commandRuleSchema).max(200).optional() }).default({}).transform(s => {
     const operationRules = s.operationRules ?? migrateCommands(s.commandRules ?? []);
-    return { operationRules, commandRules: operationRules.flatMap(r => legacyCommand(r) ?? []) };
+    return { egress: s.egress ?? egressSchema.parse({}), operationRules, commandRules: operationRules.flatMap(r => legacyCommand(r) ?? []) };
   }),
   /** Web VS Code under /ide: the official `code serve-web` behind omem's own auth (src/server/ide-web.ts). */
   ide: z
@@ -1471,7 +1479,8 @@ export function saveConfig(config: Config, home = omemHome()) {
     if (r.success) parsed = r.data;
     else merged = config;
   }
-  const persisted = { ...(merged as Config), security: { operationRules: (parsed ?? config).security.operationRules } };
+  const security = (parsed ?? config).security;
+  const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules } };
   writeFileSync(path, JSON.stringify(persisted, null, 2) + "\n");
   if (parsed) {
     if (process.env.OMEM_PORT) parsed.port = Number(process.env.OMEM_PORT);

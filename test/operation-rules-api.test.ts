@@ -17,7 +17,7 @@ it("migrates the config file without changing ordered legacy approval settings",
   expect(config.security.operationRules.map(r => r.action)).toEqual(["allow", "approve"]);
   expect(config.security.operationRules[1]?.approval).toMatchObject({ reuse: "window", approver: "run", approvers: ["owner"] });
   saveConfig(config, home);
-  expect(JSON.parse(readFileSync(file, "utf8")).security).toEqual({ operationRules: config.security.operationRules });
+  expect(JSON.parse(readFileSync(file, "utf8")).security).toEqual({ egress: config.security.egress, operationRules: config.security.operationRules });
   expect(loadConfig(home).security).toEqual(config.security);
 });
 
@@ -32,12 +32,18 @@ it("protects owner routes, versions edits and preserves scoped rules through the
       const res = await server.inject({ url, method, headers: { authorization: `Bearer ${token}` } });
       expect(res.statusCode).toBe(403);
     }
+    for (const method of ["GET","PUT"] as const) {
+      expect((await server.inject({url:"/api/security/egress",method,headers:{authorization:`Bearer ${token}`}})).statusCode).toBe(403);
+    }
+    const egress = {mode:"all-sandboxed",default:"approve",tunnelWhenUnsure:"deny",inspect:["*.example.org"],waitSeconds:20};
+    expect((await server.inject({url:"/api/security/egress",method:"PUT",payload:egress})).json()).toEqual(egress);
+    expect((await server.inject({url:"/api/security/egress"})).json()).toMatchObject({...egress,rootGenerated:false,runs:[],pending:[]});
     const http = { id: "web", revision: 1, enabled: true, action: "log", match: { kind: "http", host: "example.org" } };
     const command = { ...http, id: "cmd", action: "deny", scope: { spaces: ["sample"] }, match: { kind: "command", executable: "acme" } };
     const put = await server.inject({ url, method: "PUT", payload: { rules: [http, command] } });
     expect(put.statusCode).toBe(200);
     const rules = put.json().rules;
-    expect(rules.map((r: { enforcedBy: string[] }) => r.enforcedBy)).toEqual([["browser"], ["command-gate", "acp"]]);
+    expect(rules.map((r: { enforcedBy: string[] }) => r.enforcedBy)).toEqual([["browser","egress"], ["command-gate", "acp"]]);
     expect((await server.inject({ url, method: "PUT", payload: { rules } })).json().rules).toEqual(rules);
     const edited = await server.inject({ url, method: "PUT", payload: { rules: [{ ...rules[0], action: "deny" }, rules[1]] } });
     expect(edited.json().rules[0].revision).toBe(rules[0].revision + 1);

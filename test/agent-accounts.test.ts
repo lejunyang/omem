@@ -198,6 +198,8 @@ describe("accounts of members", async () => {
       expect(JSON.stringify(runEvents(app, preferred.runId))).toContain("这次运行没有隔离：测试机不支持命名空间");
       expect((await (await as(null, "/api/agent-accounts")).json()).isolation).toMatchObject({ mode: "prefer", ok: false, reason: "测试机不支持命名空间" });
 
+      // This test replaces the filesystem launcher; the network namespace has its own integration test.
+      app.config.security.egress.mode = "off";
       setSandboxSupportForTests({ ok: true, bwrap: "test-bwrap" });
       app.config.agents.accountIsolation = "require";
       launch.mockImplementation((cmd, args, env, _cwd, account) => ({
@@ -213,6 +215,7 @@ describe("accounts of members", async () => {
       expect(accountBlocked(app, "bob", { ...fake, transport: "doubao" })).toContain("云端");
       expect(accountBlocked(app, "bob", { ...fake, peer: { id: "device", agent: "other" } })).toContain("设备代跑");
     } finally {
+      app.config.security.egress.mode = "strict-only";
       launch.mockRestore();
       Object.assign(app.config.agents, previous, { accountIsolation: "prefer" });
       setSandboxSupportForTests(undefined);

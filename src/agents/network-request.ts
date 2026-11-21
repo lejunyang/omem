@@ -15,6 +15,27 @@ export class NetworkHttpError extends Error {
   }
 }
 
+/** Open a tunnel through a configured HTTP proxy. The authority may be a pinned IP. */
+export function proxyTunnel(proxy: URL, authority: string, signal?: AbortSignal) {
+  return new Promise<import("node:net").Socket>((resolve, reject) => {
+    const endpoint = new URL(proxy);
+    const headers: http.OutgoingHttpHeaders = { host: authority };
+    if (endpoint.username || endpoint.password) {
+      const credentials = decodeURIComponent(endpoint.username) + ":" + decodeURIComponent(endpoint.password);
+      headers["proxy-authorization"] = "Basic " + Buffer.from(credentials).toString("base64");
+      endpoint.username = "";
+      endpoint.password = "";
+    }
+    const req = (endpoint.protocol === "https:" ? https : http).request(endpoint, { method: "CONNECT", path: authority, signal, headers, rejectUnauthorized: true });
+    req.once("connect", (res, socket, head) => {
+      if (res.statusCode !== 200) { socket.destroy(); reject(new Error(`代理连接失败：HTTP ${res.statusCode}`)); }
+      else { if (head.length) socket.unshift(head); resolve(socket); }
+    });
+    req.once("error", reject);
+    req.end();
+  });
+}
+
 /** Native HTTP(S) on every platform. An address override keeps the original Host and TLS identity. */
 export async function networkRequest(connection: NetworkPolicy["connection"], href: string, signal: AbortSignal, options: { address?: string; accept?: string } = {}): Promise<string> {
   const url = new URL(href);
@@ -26,15 +47,7 @@ export async function networkRequest(connection: NetworkPolicy["connection"], hr
   try {
     if (connection.type === "proxy" && url.protocol === "https:") {
       const proxy = new URL(connection.url);
-      tunnel = await new Promise<import("node:net").Socket>((resolve, reject) => {
-        const req = (proxy.protocol === "https:" ? https : http).request(proxy, { method: "CONNECT", path: authority, signal, headers: { host: authority } });
-        req.once("connect", (res, socket, head) => {
-          if (res.statusCode !== 200) { socket.destroy(); reject(new Error(`代理连接失败：HTTP ${res.statusCode}`)); }
-          else { if (head.length) socket.unshift(head); resolve(socket); }
-        });
-        req.once("error", reject);
-        req.end();
-      });
+      tunnel = await proxyTunnel(proxy, authority, signal);
       agent = new https.Agent({ keepAlive: false });
       const socket = tunnel;
       agent.createConnection = () => tls.connect({ socket, host, servername: isIP(host) ? undefined : host });

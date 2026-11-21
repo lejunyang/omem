@@ -9,7 +9,7 @@ import type { ToolContext } from "./tools.ts";
 
 export type Operation =
   | { kind: "command"; executable: string; argv?: string[]; cwd?: string }
-  | { kind: "http"; method: string; url: string; body?: unknown }
+  | { kind: "http"; method: string; url: string; body?: unknown; tunnel?: boolean }
   | { kind: "file"; operation: "read"|"write"|"delete"|"rename"; path: string }
   | { kind: "tool"; server?: string; name: string; args: unknown };
 export type OperationWho = { member: string; role?: string; profile?: string; space?: string; backend?: string; runId?: string|null };
@@ -17,7 +17,7 @@ export function operationWho(ctx: ToolContext): OperationWho {
   return { member: ctx.userId ?? OWNER, role: ctx.role, profile: ctx.spec, space: ctx.spaceId, backend: ctx.agentProfile, runId: ctx.runId };
 }
 /** Where each kind of rule is acted on. `browser`: a browser session driven by aad asks before a page's request goes out (agents/http-gate.ts). */
-export const enforcedBy = { command: ["command-gate","acp"], file: ["acp"], tool: ["omem"], http: ["browser"] };
+export const enforcedBy = { command: ["command-gate","acp"], file: ["acp"], tool: ["omem"], http: ["browser","egress"] };
 export function currentRules(app: App) {
   const { operationRules, commandRules } = app.config.security;
   return operationRules.length || !commandRules.length ? operationRules : migrateCommands(commandRules);
@@ -28,7 +28,7 @@ export function saveOperationRules(app: App, input: OperationRule[]) {
     const old = prior.get(r.id);
     return { ...r, revision: old ? old.revision + Number(!isDeepStrictEqual(old, { ...r, revision: old.revision })) : Math.max(1, Date.now()) };
   });
-  const next = { ...app.config, security: { operationRules: rules, commandRules: rules.flatMap(r => legacyCommand(r) ?? []) } };
+  const next = { ...app.config, security: { ...app.config.security, operationRules: rules, commandRules: rules.flatMap(r => legacyCommand(r) ?? []) } };
   saveConfig(next, app.home);
   Object.assign(app.config, next);
   return rules;
@@ -40,7 +40,7 @@ function matches(pattern: string, input: string) {
   try { return !!regexTest.runInContext(createContext({ pattern, input }), { timeout: 25 }); }
   catch { throw new MatchBudget(); }
 }
-function field(obj: unknown, path: string): unknown {
+export function field(obj: unknown, path: string): unknown {
   for (const m of path.matchAll(/\.([\w-]+)|\[(\d+)\]/g)) {
     const k = m[1] ?? m[2]!;
     if (!obj || typeof obj !== "object" || !Object.hasOwn(obj,k)) return undefined;
@@ -53,6 +53,10 @@ function jsonMatches(obj: unknown, p: { jsonPath: string; regex: string }) {
   return v !== undefined && matches(p.regex, typeof v === "string" ? v : JSON.stringify(v));
 }
 export const executableName = (s: string) => process.platform === "win32" ? s.toLowerCase() : s;
+export function hostMatches(pattern: string, hostname: string) {
+  const host = pattern.toLowerCase();
+  return host.startsWith("*.") ? hostname.endsWith(host.slice(1)) : hostname === host;
+}
 function target(m: OperationRule["match"], op: Operation): boolean | undefined {
   if (m.kind === "command" && op.kind === "command") {
     if (executableName(m.executable) !== executableName(op.executable)) return false;
@@ -64,9 +68,10 @@ function target(m: OperationRule["match"], op: Operation): boolean | undefined {
       (!m.argsRegex || matches(m.argsRegex,args.join(" ")));
   }
   if (m.kind === "http" && op.kind === "http") {
-    const u = new URL(op.url), host = m.host.toLowerCase();
-    return (host.startsWith("*.") ? u.hostname.endsWith(host.slice(1)) : u.hostname === host) &&
-      (!m.methods || m.methods.some(v => v.toUpperCase() === op.method.toUpperCase())) &&
+    const u = new URL(op.url);
+    if (!hostMatches(m.host,u.hostname)) return false;
+    if (op.tunnel && (m.methods || m.pathRegex || m.body)) return undefined;
+    return (!m.methods || m.methods.some(v => v.toUpperCase() === op.method.toUpperCase())) &&
       (!m.pathRegex || matches(m.pathRegex,u.pathname)) && (!m.body || jsonMatches(op.body,m.body));
   }
   if (m.kind === "file" && op.kind === "file") return m.operations.includes(op.operation) && matches(m.pathRegex,op.path);

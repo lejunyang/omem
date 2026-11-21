@@ -20,6 +20,14 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 上游代理的 Basic 认证
+
+严格成员运行使用带凭据的上游代理时，`src/agents/network-request.ts` 仅在 CONNECT 的代理认证头中发送解码后的账号密码。
+
+## 2026-11-21 · 严格成员运行的出网代理
+
+从 `src/agents/egress-run.ts` 读运行入口与回收，`egress-proxy.ts` 处理 HTTP、CONNECT 和按名单解密。本人由安全接口查看主机汇总和待批请求，策略与限制见 `docs/v2/command-gate.md` 的“出网代理”。
+
 ## 夜间通知补送避免重复提醒（2026-11-21）
 
 飞书补送和插件出口按通知共用发送顺序。飞书逐张或整批发送前重新核对回执，前一个出口发送失败时另一个可接手。从 `src/core/notify.ts` 的 `withDeferredPush` 和 `src/channels/lark-bot.ts` 的 `sendDeferredLark` 读起。
