@@ -45,6 +45,17 @@ export function restrictedSourceFilter(app: App, userId: string) {
   };
 }
 
+/** Source text a plugin may receive. The caller checks space capabilities; unknown document access stays private. */
+export function readableSourceIds(app: App, userId: string, ids: string[]) {
+  const restricted = restrictedSourceFilter(app, userId);
+  return new Set(all<{ id: string }>(app.db, `select sources.id from sources join spaces on spaces.id=sources.space_id
+    where sources.id in (select value from json_each(?)) and ${restricted.sql}
+    and (coalesce(json_extract(spaces.settings,'$.larkAccess'),0)=0 or sources.kind!='doc'
+      or coalesce(json_extract(sources.meta,'$.documentId'),'')=''
+      or exists(select 1 from source_access a where a.source_id=sources.id and a.user_id=? and a.allowed=1 and a.checked_at>?))`,
+    JSON.stringify(ids), ...restricted.params, userId, new Date(Date.now()-DAY_MS).toISOString()).map(r => r.id));
+}
+
 /** Hidden IDs for a space's catalog and annotation queue, without checking individual rows. */
 export function hiddenSourceIds(app: App, userId: string, spaceId: string) {
   if (isOwner(app, userId) || can(app, userId, "space.manage", spaceId)) return undefined;

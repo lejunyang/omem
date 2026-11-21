@@ -326,9 +326,9 @@ async function viewSearch(ctx: ToolContext, query: string, opts: SearchOptions) 
   const view = ctx.view;
   // Sources the person this run works for may not see (restricted, Feishu access) are left out (src/auth/visibility.ts).
   const visible = hitFilter(ctx.app, ctx.userId ?? OWNER);
-  if (!view) return visibleHits(ctx.app, ctx.userId ?? OWNER, await search(ctx.app, query, { ...opts, visible }));
+  if (!view) return visibleHits(ctx.app, ctx.userId ?? OWNER, await search(ctx.app, query, { ...opts, userId: ctx.userId ?? OWNER, visible }));
   const limit = opts.limit ?? 20;
-  const wide: SearchOptions = { ...opts, visible, includeIgnored: true, includeHistory: !!view.asOf || opts.includeHistory, limit: Math.min(120, limit * 3 + 10) };
+  const wide: SearchOptions = { ...opts, userId: ctx.userId ?? OWNER, visible, includeIgnored: true, includeHistory: !!view.asOf || opts.includeHistory, limit: Math.min(120, limit * 3 + 10) };
   const hits = await cached(view, ["search", query, wide, view.asOf ?? null], () => search(ctx.app, query, wide));
   return visibleHits(ctx.app, ctx.userId ?? OWNER, filterHits(ctx.app, view, hits)).slice(0, limit);
 }

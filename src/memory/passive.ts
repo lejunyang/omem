@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { embedQuery } from "../search/embeddings.ts";
+import { pluginHitFilter, selectedReranker } from "../search/providers.ts";
 import { rerankScores } from "../search/rerank.ts";
 import { similarity } from "./quality.ts";
 import { getMemory, type Memory } from "./store.ts";
@@ -81,7 +82,9 @@ export async function passiveRecall(
   if (rr.enabled) {
     const pool = await nearMemories(app, { ...near, threshold: Math.min(RERANK_PREFILTER, threshold), limit: Math.max(limit, rr.top) });
     if (!pool.length) return [];
-    const scores = await rerankScores(app, input.text, pool.map(({ memory: m }) => (m.subject ? `${m.subject}：${m.content}` : m.content)), RERANK_WAIT_MS);
+    const info = selectedReranker(app) ? pool.map(({ memory }) => ({ id: memory.id, spaceId: memory.spaceId, type: "memory" as const })) : undefined;
+    const readable = info && info.every(pluginHitFilter(app, info, input.userId));
+    const scores = await rerankScores(app, input.text, pool.map(({ memory: m }) => (m.subject ? `${m.subject}：${m.content}` : m.content)), RERANK_WAIT_MS, readable ? info : undefined, input.userId);
     if (scores)
       return pool
         .map((h, i) => ({ ...h, score: scores[i] }))

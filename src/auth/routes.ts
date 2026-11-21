@@ -407,7 +407,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // channels, AI backends and this machine
   ...Object.fromEntries(
     [
-      "GET /api/settings", "PUT /api/settings", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
+      "GET /api/settings", "GET /api/search/providers", "PUT /api/settings", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
       "PUT /api/lark/chats/:id/policy", "PUT /api/lark/chats/:id/subscription", "PUT /api/lark/chats/:id/space", "POST /api/lark/poll", "GET /api/lark/user-permissions", "POST /api/lark/user-permissions",
       "GET /api/lark/bot-check", "POST /api/lark/bot-check/:ref/scan", "GET /api/lark/doubao-send", "POST /api/lark/doubao-send/test", "GET /api/lark/wiki-crawls", "POST /api/lark/wiki-crawls/:id/:op", "GET /api/lark/kb", "POST /api/lark/kb/discover",
       "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "GET /api/lark/kb-home", "POST /api/lark/kb-home", "PUT /api/lark/kb-home/dir", "POST /api/agents/:id/probe", "GET /api/agents/:id/adapter", "POST /api/agents/:id/adapter/upgrade", "PUT /api/agent-role-model", "GET /api/agent-registry", "POST /api/agent-registry/:id",

@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { matchQuery, terms } from "./tokenize.ts";
 import { vectorSearch } from "./embeddings.ts";
+import { retrieve, pluginHitFilter, selectedReranker, type Retrieved } from "./providers.ts";
 import { rerankScores } from "./rerank.ts";
 import { countNoteHits, LEVEL_WEIGHT, levelSql, noteFactor, notesOf, notesOn, noteText, type Level, type SourceNote } from "../sources/attention.ts";
 import { citeBoost, citeCounts } from "../sources/cites.ts";
@@ -46,6 +47,9 @@ export type Hit = {
 };
 
 export type SearchOptions = {
+  userId?: string;
+  /** Additional sharing rules for sending candidates to a plugin (federation). */
+  pluginVisible?: (hit: Pick<Hit, "type" | "sourceKind" | "spaceId" | "sourceId">) => boolean;
   spaces?: string[];
   types?: HitType[];
   limit?: number;
@@ -195,17 +199,91 @@ function correction(app: App, n: SourceNote, spaces?: string[]) {
 
 type Ranked = { key: string; hit: Omit<Hit, "score" | "via">; rank: number; via: string; weight?: number };
 
+type ChunkRow = { id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null; hash: string };
+function chunkHit(r: ChunkRow, query: string): Ranked["hit"] {
+  return {
+    type: "chunk",
+    id: String(r.id),
+    spaceId: r.space_id,
+    title: r.stitle,
+    path: r.path || r.title,
+    sourceId: r.source_id,
+    uri: r.uri,
+    sourceKind: r.kind,
+    lineStart: r.line_start,
+    lineEnd: r.line_end,
+    snippet: snippet(r.text, query),
+    ...(r.attention ? { attention: r.attention } : {}),
+    hash: r.hash,
+  };
+}
+type PageRow = { id: string; space_id: string; slug: string; title: string; summary: string; body: string };
+function pageHit(r: PageRow, query: string): Ranked["hit"] {
+  return { type: "page", id: r.id, spaceId: r.space_id, title: r.title, path: r.slug, snippet: r.summary || snippet(r.body, query) };
+}
+type MemoryRow = { id: string; space_id: string; kind: string; subject: string; content: string; status: string };
+function memoryHit(r: MemoryRow): Ranked["hit"] {
+  return { type: "memory", id: r.id, spaceId: r.space_id, title: r.subject || r.kind, path: r.kind, snippet: r.content, status: r.status };
+}
+
+/** Bounded primary-key reads. Source ids reuse a ranked chunk when possible, then the source/ord index. */
+async function hydrateRoute(app: App, query: string, opts: SearchOptions, route: Retrieved, best: Map<string, string>, under: Set<string> | null) {
+  const refs = route.refs.filter(r => route.kinds.includes(r.type === "source" ? "chunk" : r.type));
+  const ids = (type: string) => refs.filter(r => r.type === type).map(r => r.id);
+  const chunks = new Map(ids("source").flatMap(id => best.has(id) ? [[id, best.get(id)!] as const] : []));
+  const missing = ids("source").filter(id => !chunks.has(id));
+  if (missing.length) {
+    const first = await searchRows<{ source: string; id: number | null }>(app, "plugin.sources",
+      `select j.value source, (select c.id from chunks c where c.source_id=j.value order by ord limit 1) id from json_each(?) j`, JSON.stringify(missing));
+    for (const r of first) if (r.id !== null) chunks.set(r.source, String(r.id));
+  }
+  const byKey = new Map<string, Ranked["hit"]>();
+  const add = (hit: Ranked["hit"]) => {
+    if (route.spaces.includes(hit.spaceId)) byKey.set(hit.type + ":" + hit.id, hit);
+  };
+  const chunkIds = [...ids("chunk"), ...ids("source").flatMap(id => chunks.get(id) ?? [])];
+  if (chunkIds.length) {
+    const rows = await searchRows<ChunkRow>(app, "plugin.chunks",
+      `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, ${levelSql()} attention, s.hash
+       from chunks c join sources s on s.id=c.source_id where c.id in (select value from json_each(?)) and s.deleted_at is null`, JSON.stringify(chunkIds));
+    for (const r of rows) if ((!under || under.has(r.source_id)) && (!opts.sourceKinds || opts.sourceKinds.includes(r.kind)) &&
+      (opts.includeIgnored || r.attention !== "ignore")) add(chunkHit(r, query));
+  }
+  const pages = ids("page");
+  if (pages.length) {
+    const rows = await searchRows<PageRow>(app, "plugin.pages",
+      "select id,space_id,slug,title,summary,body from pages where id in (select value from json_each(?))", JSON.stringify(pages));
+    for (const r of rows) add(pageHit(r, query));
+  }
+  const memories = ids("memory");
+  if (memories.length) {
+    const rows = await searchRows<MemoryRow>(app, "plugin.memories",
+      `select id,space_id,kind,subject,content,status from memories where id in (select value from json_each(?)) ${opts.includeHistory ? "" : "and status='active'"}`, JSON.stringify(memories));
+    for (const r of rows) add(memoryHit(r));
+  }
+  const ranked: Ranked[] = [];
+  const readable = pluginHitFilter(app, byKey.values(), opts.userId);
+  for (const ref of refs) {
+    const key = ref.type === "source" ? "chunk:" + chunks.get(ref.id) : ref.type + ":" + ref.id;
+    const hit = byKey.get(key);
+    if (hit && readable(hit) && (!opts.pluginVisible || opts.pluginVisible(hit))) ranked.push({ key, hit, rank: ranked.length, via: route.via });
+    byKey.delete(key);
+  }
+  return ranked;
+}
+
 export async function search(app: App, query: string, opts: SearchOptions = {}): Promise<Hit[]> {
   return traceSearch(app, query, opts.spaces, () => searchInner(app, query, opts));
 }
 
 async function searchInner(app: App, query: string, input: SearchOptions): Promise<Hit[]> {
+  if (input.spaces?.length === 0) return [];
   const ov = withOverlays(app, input.spaces, input.overlays);
   const opts: SearchOptions = { ...input, spaces: ov.spaces };
   const excluded = new Set(ov.exclude);
   const limit = opts.limit ?? 20;
   const pool = Math.max(60, limit * 4);
-  const types = new Set(opts.types ?? ["chunk", "page", "memory", "symbol", "requirement"]);
+  const types = new Set<HitType>(opts.types ?? ["chunk", "page", "memory", "symbol", "requirement"]);
   const lists: Ranked[][] = [];
   const match = matchQuery(query);
 
@@ -213,13 +291,14 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
   // A folder of the catalog: its sources only.
   const underIds = opts.under ? sourcesUnder(catalog(app, opts.under.space), opts.under.node) : null;
   if (underIds) for (const t of ["page", "memory", "requirement"] as const) types.delete(t);
+  const plugins = app.config.search.retrievers.length ? retrieve(app, query, opts, types, excluded) : null;
   const inUnder = underIds ? new Set(underIds) : null;
   const underSql = underIds ? " and c.source_id in (select value from json_each(?))" : "";
   const underParams = underIds ? [JSON.stringify(underIds)] : [];
   if (match && types.has("chunk") && route.fts) {
     const sf = spaceFilter("c.space_id", opts.spaces, ov.exclude);
     const kinds = opts.sourceKinds?.length ? ` and s.kind in (${opts.sourceKinds.map(() => "?").join(",")})` : "";
-    const rows = await searchRows<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null; hash: string }>(
+    const rows = await searchRows<ChunkRow>(
       app, "fts",
       `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, ${levelSql()} attention, s.hash
        from chunks_fts f join chunks c on c.id = f.rowid join sources s on s.id = c.source_id
@@ -236,21 +315,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
         key: `chunk:${r.id}`,
         rank: i,
         via: "全文",
-        hit: {
-          type: "chunk",
-          id: String(r.id),
-          spaceId: r.space_id,
-          title: r.stitle,
-          path: r.path || r.title,
-          sourceId: r.source_id,
-          uri: r.uri,
-          sourceKind: r.kind,
-          lineStart: r.line_start,
-          lineEnd: r.line_end,
-          snippet: snippet(r.text, query),
-          ...(r.attention ? { attention: r.attention } : {}),
-          hash: r.hash,
-        },
+        hit: chunkHit(r, query),
       })),
     );
   }
@@ -294,7 +359,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
 
   if (match && types.has("page")) {
     const sf = spaceFilter("p.space_id", opts.spaces);
-    const rows = await searchRows<{ id: string; space_id: string; slug: string; title: string; summary: string; body: string }>(
+    const rows = await searchRows<PageRow>(
       app, "pages",
       `select p.id, p.space_id, p.slug, p.title, p.summary, p.body from pages_fts f join page_rowids r on r.rowid = f.rowid join pages p on p.id = r.page_id
        where pages_fts match ? ${sf.sql} order by bm25(pages_fts, 4.0, 1.0) limit ?`,
@@ -307,7 +372,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
         key: `page:${r.id}`,
         rank: i,
         via: "知识页",
-        hit: { type: "page", id: r.id, spaceId: r.space_id, title: r.title, path: r.slug, snippet: r.summary || snippet(r.body, query) },
+        hit: pageHit(r, query),
       })),
     );
   }
@@ -336,7 +401,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
   if (match && types.has("memory")) {
     const sf = spaceFilter("m.space_id", opts.spaces);
     const status = opts.includeHistory ? "" : " and m.status = 'active'";
-    const rows = await searchRows<{ id: string; space_id: string; kind: string; subject: string; content: string; status: string }>(
+    const rows = await searchRows<MemoryRow>(
       app, "memories",
       `select m.id, m.space_id, m.kind, m.subject, m.content, m.status from memories_fts f join memory_rowids r on r.rowid = f.rowid join memories m on m.id = r.memory_id
        where memories_fts match ? ${sf.sql} ${status} order by bm25(memories_fts, 2.0, 1.0) limit ?`,
@@ -349,7 +414,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
         key: `memory:${r.id}`,
         rank: i,
         via: "记忆",
-        hit: { type: "memory", id: r.id, spaceId: r.space_id, title: r.subject || r.kind, path: r.kind, snippet: r.content, status: r.status },
+        hit: memoryHit(r),
       })),
     );
   }
@@ -358,7 +423,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
     const vec = await vectorSearch(app, query, opts.spaces, underIds ? pool * 5 : pool).catch(() => []);
     if (vec.length) {
       const ids = vec.map((v) => v.chunkId);
-      const rows = await searchRows<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; stitle: string; line_start: number; line_end: number; text: string; deleted_at: string | null; attention: string | null; hash: string }>(
+      const rows = await searchRows<ChunkRow & { deleted_at: string | null }>(
         app, "vector.hydrate",
         `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.deleted_at, ${levelSql()} attention, s.hash
          from chunks c join sources s on s.id = c.source_id where c.id in (${ids.map(() => "?").join(",")})`,
@@ -374,24 +439,17 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
             key: `chunk:${r.id}`,
             rank: i,
             via: "语义",
-            hit: {
-              type: "chunk" as const,
-              id: String(r.id),
-              spaceId: r.space_id,
-              title: r.stitle,
-              path: r.path || r.title,
-              sourceId: r.source_id,
-              uri: r.uri,
-              sourceKind: r.kind,
-              lineStart: r.line_start,
-              lineEnd: r.line_end,
-              snippet: snippet(r.text, query),
-              ...(r.attention ? { attention: r.attention } : {}),
-              hash: r.hash,
-            },
+            hit: chunkHit(r, query),
           })),
       );
     }
+  }
+
+  if (plugins) {
+    const existing = lists.flat().filter(r => r.hit.type === "chunk").sort((a, b) => a.rank - b.rank);
+    const best = new Map<string, string>();
+    for (const { hit } of existing) if (!best.has(hit.sourceId!)) best.set(hit.sourceId!, hit.id);
+    for (const route of await plugins) lists.push(await hydrateRoute(app, query, opts, route, best, inUnder));
   }
 
   // Reciprocal rank fusion: robust, parameter-light, explains itself ("via").
@@ -461,7 +519,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
     if (origin && !sameThing.has(origin)) sameThing.set(origin, h);
     if (out.length >= want) break;
   }
-  if (reranking) await rerankHits(app, query, out);
+  if (reranking) await rerankHits(app, query, out, opts);
   out.splice(limit);
   // Which notes shaped what was returned (the review list is ordered by this).
   countNoteHits(app, out.flatMap((h) => h.noteIds ?? []));
@@ -477,7 +535,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
  * whole, as the agent would read it; other hits by title and snippet. Without scores (off,
  * timed out, failed) the fused order stays.
  */
-async function rerankHits(app: App, query: string, hits: Hit[]) {
+async function rerankHits(app: App, query: string, hits: Hit[], opts: SearchOptions) {
   const head = hits.slice(0, app.config.rerank.top);
   if (head.length < 2) return;
   const chunkIds = head.filter((h) => h.type === "chunk").map((h) => Number(h.id));
@@ -487,9 +545,10 @@ async function rerankHits(app: App, query: string, hits: Hit[]) {
       : [],
   );
   const passages = head.map((h) => `${h.path || h.title}\n${(h.type === "chunk" && chunks.get(h.id)) || h.snippet}`.slice(0, 4000));
-  const scores = await rerankScores(app, query, passages);
+  const info = selectedReranker(app) && head.every(pluginHitFilter(app, head, opts.userId)) && (!opts.pluginVisible || head.every(opts.pluginVisible)) ? head : undefined;
+  const scores = await rerankScores(app, query, passages, undefined, info, opts.userId);
   if (!scores) return;
-  head.forEach((h, i) => (h.rerank = Math.round(scores[i] * 1000) / 1000));
+  head.forEach((h, i) => (h.rerank = info ? scores[i] : Math.round(scores[i] * 1000) / 1000));
   head.sort((a, b) => b.rerank! - a.rerank!);
   hits.splice(0, head.length, ...head);
 }

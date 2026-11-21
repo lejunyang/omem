@@ -1,5 +1,7 @@
 import type { App } from "../core/app.ts";
 import { loadLocalModel } from "./embeddings.ts";
+import { pluginScores, selectedReranker, type CandidateInfo } from "./providers.ts";
+import { OWNER } from "../core/users.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
 import { modelSource, prepareLocalModel } from "./local-models.ts";
@@ -19,6 +21,7 @@ let loaded: { key: string; scorer: Promise<Scorer | null>; failedAt?: number } |
 let testScorer: Scorer | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 const BATCH = 8;
+const lastProvider = new WeakMap<App, string | null>();
 /** What settings → 检索 shows: whether the model loaded, and how the recent calls went. */
 const stats = { state: "idle" as "idle" | "loading" | "ready" | "failed", error: "", calls: 0, timeouts: 0, lastMs: 0 };
 /** Models that have scored at least once in this run of the service. */
@@ -75,8 +78,22 @@ async function getScorer(app: App): Promise<Scorer | null> {
  * Relevance of each passage to the query (0–1), or null when reranking is off, failed or ran out
  * of time. `timeoutMs` shortens `rerank.timeoutMs` for callers that hold up a reply.
  */
-export async function rerankScores(app: App, query: string, passages: string[], timeoutMs?: number): Promise<number[] | null> {
+export async function rerankScores(app: App, query: string, passages: string[], timeoutMs?: number, info?: CandidateInfo[], userId = OWNER): Promise<number[] | null> {
   if (!app.config.rerank.enabled || !passages.length || !query.trim()) return null;
+  if (info && selectedReranker(app)) {
+    const budget = Math.min(timeoutMs ?? Infinity, app.config.rerank.timeoutMs);
+    const deadline = Date.now() + budget;
+    // Reserve time for the local scorer even when the plugin does not respond.
+    const scores = await pluginScores(app, query, passages, info, userId, Math.max(1, Math.floor(budget / 2)));
+    if (scores) { lastProvider.set(app, app.config.rerank.provider); return scores; }
+    timeoutMs = Math.max(0, deadline - Date.now());
+  }
+  const scores = await builtinScores(app, query, passages, timeoutMs);
+  lastProvider.set(app, scores ? "local" : null);
+  return scores;
+}
+
+async function builtinScores(app: App, query: string, passages: string[], timeoutMs?: number) {
   if (testScorer) return rerankLocally(app, query, passages, timeoutMs);
   const model = app.config.rerank.model;
   // osdk first (local-models.ts): while it is downloading a model nothing has fetched before, searches
@@ -138,7 +155,7 @@ export async function rerankLocally(app: App, query: string, passages: string[],
 
 export function rerankStatus(app: App) {
   const c = app.config.rerank;
-  return { enabled: c.enabled, model: c.model, ...stats, source: modelSource(c.model) };
+  return { enabled: c.enabled, provider: c.enabled ? (selectedReranker(app) ? c.provider : "local") : null, lastProvider: lastProvider.get(app) ?? null, model: c.model, ...stats, source: modelSource(c.model) };
 }
 /** Whether the model failed to load in this process (the read process tells the main one through an error). */
 export const rerankLoadError = () => (stats.state === "failed" ? stats.error || "重排模型没有加载成功" : "");

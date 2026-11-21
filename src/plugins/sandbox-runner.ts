@@ -162,7 +162,7 @@ async function main() {
 }
 
 process.on("message", async (m: Msg) => {
-  if (m.t === "cancel") { activeSearch.get(m.id!)?.abort(); return; }
+  if (m.t === "cancel") { activeSearch.get(m.id!)?.abort(); activeSearch.delete(m.id!); return; }
   if (m.t === "rpc-result") {
     const w = waiting.get(m.id!);
     waiting.delete(m.id!);
@@ -182,7 +182,11 @@ process.on("message", async (m: Msg) => {
           return c ? connectionOf(c, m.id!) : null;
         },
       };
-      if (m.t === "retriever") value = await retrievers.get(m.name)!.search(ctx, m.arg);
+      if (m.t === "retriever") {
+        const refs = await retrievers.get(m.name)!.search(ctx, m.arg);
+        if (!Array.isArray(refs)) throw new Error("召回结果需要是数组");
+        value = refs.slice(0, m.arg.limit);
+      }
       else if (m.t === "reranker") value = await rerankers.get(m.name)!.score(ctx, m.arg);
       else if (m.t === "event") await subscriptions.get(m.name)!.handle(ctx, m.event);
       else if (m.t === "item") {
