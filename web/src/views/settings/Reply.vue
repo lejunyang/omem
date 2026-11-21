@@ -48,7 +48,7 @@ const showMore = ref(false);
 const savingGuestSpaces = ref(false);
 const guestSpaceOptions = computed(() => [
   ...state.spaces.map((s) => ({ value: s.id, label: s.name, hint: s.id })),
-  ...(config.value?.lark.guests?.spaces ?? []).filter((id: string) => !state.spaces.some((s) => s.id === id)).map((id: string) => ({ value: id, label: `空间不存在：${id}`, hint: "取消选择可移除" })),
+  ...(config.value?.lark?.guests?.spaces ?? []).filter((id: string) => !state.spaces.some((s) => s.id === id)).map((id: string) => ({ value: id, label: `空间不存在：${id}`, hint: "取消选择可移除" })),
 ].map((o) => ({ ...o, disabled: savingGuestSpaces.value })));
 async function saveGuestSpaces(spaces: string[]) {
   if (savingGuestSpaces.value) return;
@@ -63,13 +63,13 @@ function saveGuests(patch: Record<string, unknown>, note = "已保存访客设�
   const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false };
   return saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
 }
-const guestsOff = computed(() => !config.value?.lark.guests?.enabled);
+const guestsOff = computed(() => !config.value?.lark?.guests?.enabled);
 
 function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
   const cur = config.value.lark.commands ?? { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30, signedVia: "lark-cli" };
   void saveConfig({ lark: { ...config.value.lark, commands: { ...cur, ...patch } } }, note);
 }
-const commandsOff = computed(() => !config.value?.lark.commands?.enabled);
+const commandsOff = computed(() => !config.value?.lark?.commands?.enabled);
 
 async function saveReplyHours(raw: string) {
   const n = Number(raw);
@@ -93,7 +93,7 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
 <template>
   <Skeleton v-if="!config" :rows="6" />
   <div v-else class="stack">
-    <SetCard id="set-mentions" title="有人找你">
+    <SetCard id="set-mentions" title="有人找你" :keys="['mentions']">
       <template #help>有人在群里 @ 你或私聊你，过几分钟你还没处理时，先由一次很小的判断看是什么事：不用管、简短提醒你，还是值得先查；值得查的交给主助手以你的身份读上下文、查资料，再提醒你结论和建议的回复。你回复那条提醒就接着聊。它排在所有规则之后：规则在这条消息上触发过或正等着处理，这里就不管。分诊的标准是“有人找你·分诊”角色，在 Agent 页可以改。</template>
       <SetRow label="有人找你时先分诊再提醒">
         <UiCheckbox :model-value="!off" switch aria-label="有人找你时先分诊再提醒" @change="(v) => saveMentions({ enabled: v }, v ? '有人找你时先分诊再提醒' : '已关闭：有人找你时不再分诊')" />
@@ -116,23 +116,23 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
           <HelpText>草稿：提醒旁边多一张卡片，你改了再点发送。自动：分诊也认为不用你拍板时直接回，回了什么写在提醒里，每次都记进审计；拿不准时仍是草稿。飞书群里由机器人在对方那条消息的话题里回（机器人不在群里时用你的身份把它拉进来）。草稿连续照发到设定次数后会问你一次要不要改成自动，你点了才改；自动回复被你回了不满意的表情，这一类立刻改回草稿。</HelpText>
         </template>
       </SetRow>
-      <SetRow label="飞书群里" :off="off">
+      <SetRow :keys="['mentions.reply']" label="飞书群里" :off="off">
         <UiSegmented size="sm" aria-label="群里回复对方" :model-value="config.mentions?.reply?.lark?.group ?? 'off'" :options="REPLY_MODES" @change="(v: string) => saveMentionReply({ group: v })" />
       </SetRow>
-      <SetRow label="飞书私聊" :off="off">
+      <SetRow :keys="['mentions.reply']" label="飞书私聊" :off="off">
         <UiSegmented size="sm" aria-label="私聊回复对方" :model-value="config.mentions?.reply?.lark?.p2p ?? 'off'" :options="REPLY_MODES" @change="(v: string) => saveMentionReply({ p2p: v })" />
       </SetRow>
-      <SetRow v-if="p2pReply" label="私聊怎么回" :off="off">
+      <SetRow v-if="p2pReply" :keys="['mentions.reply']" label="私聊怎么回" :off="off">
         <UiSegmented size="sm" aria-label="私聊怎么回" :model-value="config.mentions?.reply?.lark?.p2pVia ?? 'group'" :options="[{ value: 'group', label: '拉你、对方和机器人的群' }, { value: 'signed', label: '以你的身份，带署名' }]" @change="(v: string) => saveMentionReply({ p2pVia: v })" />
       </SetRow>
       <template v-if="p2pReply && config.mentions?.reply?.lark?.p2pVia === 'signed'">
-        <SetRow label="以你的身份怎么发" :off="off">
+        <SetRow :keys="['mentions.reply']" label="以你的身份怎么发" :off="off">
           <template v-if="config.mentions?.reply?.lark?.signedVia === 'doubao'" #hint><HelpText>企业不让 lark-cli 以你的身份发私聊时用这个：每条回复建一个新的豆包会话，只交给它定稿的回复和对方是谁（姓名、邮箱、id），让它原样发出，用完删除会话；发完用 lark-cli 读那个私聊核对。没核对上或没发出都会单独告诉你，不算回复成功。</HelpText></template>
           <UiSegmented size="sm" aria-label="以你的身份怎么发" :model-value="config.mentions?.reply?.lark?.signedVia ?? 'lark-cli'" :options="[{ value: 'lark-cli', label: '用 lark-cli 发' }, { value: 'doubao', label: '经豆包发送' }]" @change="(v: string) => saveMentionReply({ signedVia: v })" />
         </SetRow>
         <div v-if="config.mentions?.reply?.lark?.signedVia === 'doubao'" class="set-pad"><DoubaoSendStatus /></div>
       </template>
-      <SetRow v-if="replyOn" label="连续照发几次草稿后问我要不要改成自动" hint="0 = 不问；群里和私聊分开数" :off="off">
+      <SetRow v-if="replyOn" :keys="['mentions.reply']" label="连续照发几次草稿后问我要不要改成自动" hint="0 = 不问；群里和私聊分开数" :off="off">
         <input class="input set-num" type="number" inputmode="numeric" min="0" max="100" aria-label="连续照发多少次草稿后问要不要改成自动" :value="config.mentions?.reply?.promoteAfter ?? 10" @change="saveMentions({ reply: { ...(config.mentions?.reply ?? {}), promoteAfter: Math.max(0, Math.min(100, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
       </SetRow>
       <div v-if="replyStats?.samples" class="set-pad small muted">
@@ -170,7 +170,7 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
       </template>
     </SetCard>
 
-    <SetCard id="set-guests" title="访客提问">
+    <SetCard id="set-guests" title="访客提问" :keys="['lark.guests']">
       <template #help>没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的模型在 Agent 页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</template>
       <SetRow label="回答未登记的人和别的机器人">
         <UiCheckbox :model-value="!guestsOff" switch aria-label="回答未登记的人和别的机器人" @change="(v) => saveGuests({ enabled: v }, v ? '已开启访客提问' : '已关闭访客提问')" />
@@ -216,7 +216,7 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
       </SetRow>
     </SetCard>
 
-    <SetCard id="set-commands" title="私聊指令">
+    <SetCard id="set-commands" title="私聊指令" :keys="['lark.commands']">
       <template #help>在你和别人的私聊里输入指令（每分钟用 lark-cli 读一次你发的私聊消息）。只有你亲手发出指令时，omem 才会以你的身份在那个私聊里发一条消息，结尾带上署名。</template>
       <SetRow label="开启私聊指令">
         <UiCheckbox :model-value="!commandsOff" switch aria-label="开启私聊指令" @change="(v) => saveCommands({ enabled: v }, v ? '已开启私聊指令' : '已关闭私聊指令')" />
@@ -240,21 +240,21 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
       </SetRow>
     </SetCard>
 
-    <SetCard id="set-invite" title="拉人进群">
+    <SetCard id="set-invite" title="拉人进群" :keys="['lark.invite']">
       <template #help>助手可以用你的身份把人或机器人拉进你所在的群。拉人每次都要你批准，卡片上列出每个群和每个人；拉机器人（omem 自己的，或在你的群里见过、认得出名字的）默认直接拉，事后在回复里告诉你。</template>
       <SetRow label="拉机器人进群也要我批准">
         <UiCheckbox :model-value="!!config.lark.invite?.botApproval" switch aria-label="拉机器人进群也要我批准" @change="(v) => saveConfig({ lark: { ...config.lark, invite: { ...(config.lark.invite ?? {}), botApproval: v } } }, v ? '拉机器人进群也要你批准' : '拉机器人进群不用批准')" />
       </SetRow>
     </SetCard>
 
-    <SetCard id="set-reply-check" title="回复发出前的检查">
+    <SetCard id="set-reply-check" title="回复发出前的检查" :keys="['replies']">
       <template #help>回复里只有“我核对一下”“收到，我看看”，或只有“可能”“建议进一步确认”这类退路、没有结论和依据时，先不发，退回给 Agent 重写一次：要么给出结果和依据，要么说清缺哪一个信息。只拦这几种明显不是回答的样子，不判断回答对不对；它已经安排了之后回来（定了唤醒、交办了任务）时不拦。每次退回都记在那次运行里。</template>
       <SetRow label="空话和只有退路的回复退回重写一次">
         <UiCheckbox :model-value="config.replies?.check !== false" switch aria-label="空话和只有退路的回复退回重写一次" @change="(v) => saveConfig({ replies: { ...(config.replies ?? {}), check: v } }, v ? '已打开回复检查' : '已关闭回复检查')" />
       </SetRow>
     </SetCard>
 
-    <SetCard id="set-reply-outcome" title="回复发出后看有没有用">
+    <SetCard id="set-reply-outcome" title="回复发出后看有没有用" :keys="['replies']">
       <template #help>助手的回答发出几小时后，取同一个会话或群里之后大家说的话，请决策模型标一个结果：解决了、被追问、被纠正、别人接手了、看不出；没人接话的不问模型。结果记在那次运行上（运行页能看到依据，标错了你可以改），数据页的“做得怎么样”按它统计。没配决策模型时只记“没人接话”。</template>
       <SetRow label="按之后大家说的话判断回复有没有用">
         <UiCheckbox :model-value="!outcomeOff" switch aria-label="按回复之后大家说的话判断它有没有用" @change="(v: boolean) => saveConfig({ replies: { ...config.replies, outcome: { ...(config.replies?.outcome ?? {}), enabled: v } } }, v ? '回复发出后会看后续' : '不再看回复的后续')" />

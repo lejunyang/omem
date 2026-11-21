@@ -2,13 +2,15 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { state } from "../store";
-import { hasPerm } from "../lib/caps";
+import { hasPerm, settingsAnywhere, settingsArea, settingsKey } from "../lib/caps";
 import { provideSettings } from "./settings/ctx";
 import Skeleton from "../components/Skeleton.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import ApprovalSettings from "../components/ApprovalSettings.vue";
 import OperationRulesSettings from "../components/OperationRulesSettings.vue";
 import AuditTrail from "../components/AuditTrail.vue";
+const EgressSettings = defineAsyncComponent(() => import("../components/EgressSettings.vue"));
+const CloudToolsSettings = defineAsyncComponent(() => import("../components/CloudToolsSettings.vue"));
 
 /**
  * The settings page: the categories on the left (by what the owner is thinking about), the open one in
@@ -24,13 +26,43 @@ const NAV: { label: string; tabs: [Tab, string][] }[] = [
   { label: "系统", tabs: [["security", "安全"], ["about", "外观与说明"]] },
 ];
 /**
- * The owner has every tab. Someone else gets here only with the right to manage members (the old
- * `users.manage`: the member list and invites still ask for it): the members tab, the trail under 安全,
- * and their own look — the rest reads and writes the owner's configuration.
+ * The configuration keys each tab's cards read and write (src/auth/settings-sections.ts says which area
+ * each is in). The owner has every tab. Someone else gets a tab when they may see any of its keys
+ * (lib/caps.ts `settingsKey`); `legacy`: the tab's contents come from interfaces that still answer only
+ * the owner or the old `settings.manage`, so it also needs that. 外观与说明 is everyone's own; 安全 also
+ * holds the trail, which whoever manages members reads.
  */
-const full = computed(() => !state.me || state.me.role === "owner" || hasPerm("settings.manage"));
-const MINE: Tab[] = ["members", "security", "about"];
-const shownNav = computed(() => (full.value ? NAV : NAV.map((g) => ({ ...g, tabs: g.tabs.filter(([t]) => MINE.includes(t) && hasPerm("users.manage")) })).filter((g) => g.tabs.length)));
+const TAB_KEYS: Record<Tab, { keys: string[]; legacy?: boolean }> = {
+  spaces: { keys: ["wiki", "archive"], legacy: true },
+  connect: { keys: ["lark.capture", "lark.knowledge", "documents"], legacy: true },
+  search: { keys: ["embeddings", "rerank", "memory", "notes", "search"] },
+  storage: { keys: ["media"], legacy: true },
+  notify: { keys: ["notify", "agents.progress"] },
+  reply: { keys: ["mentions", "lark.guests", "lark.commands", "lark.invite", "replies"] },
+  advance: { keys: ["agents.autoAdvance", "flows", "agents.design", "items", "studies"] },
+  review: { keys: ["quality", "replay"] },
+  schedules: { keys: ["timezone", "heartbeat", "workState"] },
+  agents: { keys: ["agents", "ai", "concurrency", "interactiveConcurrency"], legacy: true },
+  plugins: { keys: ["plugins"], legacy: true },
+  lark: { keys: ["lark", "telegram", "onebot"], legacy: true },
+  members: { keys: ["auth", "agents.accounts", "agents.accountIsolation"] },
+  peers: { keys: ["node", "webUrl", "backups"], legacy: true },
+  shares: { keys: ["shares"] },
+  security: { keys: ["security", "approvals", "guard", "agents.cloudTools"] },
+  about: { keys: [] },
+};
+const owner = computed(() => !state.me || state.me.role === "owner");
+function offered(t: Tab) {
+  if (owner.value || t === "about") return true;
+  const { keys, legacy } = TAB_KEYS[t];
+  if (legacy && !hasPerm("settings.manage")) return false;
+  return keys.some((k) => settingsKey(k).view) || (t === "security" && hasPerm("users.manage")) || (t === "members" && settingsArea("members", "view"));
+}
+const shownNav = computed(() => NAV.map((g) => ({ ...g, tabs: g.tabs.filter(([t]) => offered(t)) })).filter((g) => g.tabs.length));
+/** Only the members, the trail and one's own look (whoever manages members): the page says so. */
+const full = computed(() => owner.value || shownNav.value.some((g) => g.tabs.some(([t]) => !["members", "security", "about"].includes(t))));
+/** Some area of the configuration may be seen: it is loaded once for the tabs (settings/ctx.ts). */
+const readable = computed(() => owner.value || settingsAnywhere());
 const TABS = computed(() => shownNav.value.flatMap((g) => g.tabs.map(([t]) => t)));
 /** Who is using the page is known (a page opened straight at this address is set up before that). */
 const known = computed(() => !!state.me);
@@ -57,7 +89,7 @@ const VIEWS: Partial<Record<Tab, ReturnType<typeof defineAsyncComponent>>> = {
  */
 const CARDS: Record<string, Tab> = {
   mentions: "reply", guests: "reply", commands: "reply", invite: "reply", "reply-check": "reply", "reply-outcome": "reply",
-  "notify-times": "notify", progress: "notify",
+  "notify-times": "notify", "notify-outlets": "notify", progress: "notify",
   "auto-advance": "advance", "flow-follow": "advance", "gate-ladder": "advance", "commit-claim": "advance", design: "advance", "study-envs": "advance", "item-expiry": "advance", "item-sync": "advance",
   audit: "review", replay: "review",
   backends: "agents", tiers: "agents", fallback: "agents",
@@ -65,7 +97,7 @@ const CARDS: Record<string, Tab> = {
   "agent-accounts": "members", desktop: "peers", "web-url": "peers",
   "lark-docs": "connect", "lark-capture": "connect", platforms: "connect", "source-parsers": "connect",
   timezone: "schedules",
-  "operation-rules": "security", "rule-packs": "security", "tool-approvals": "security", trail: "security",
+  "operation-rules": "security", "rule-packs": "security", "tool-approvals": "security", egress: "security", "cloud-tools": "security", trail: "security",
 };
 /** Cards that were renamed: the old link lands on the new card. */
 const RENAMED: Record<string, string> = { "network-conditions": "backends", "command-rules": "operation-rules" };
@@ -111,7 +143,7 @@ function scrollToCard(tries = 0) {
   } else if (tries < 40) window.setTimeout(() => scrollToCard(tries + 1), 100);
 }
 
-const { config, home, load, saveConfig } = provideSettings();
+const { config, home, load, loadSections, ownerName, saveConfig } = provideSettings();
 
 // The page's own contents (the right column): the cards of the open tab, by their titles. Read from
 // what is rendered, so cards of the sub-components (members, devices, plugins…) are listed too.
@@ -161,12 +193,16 @@ onMounted(() => {
   if (content.value) tocWatch.observe(content.value, { childList: true, subtree: true });
   tocSoon();
 });
-// Once it is known who this is: the owner's configuration for the owner, and for a member manager only
-// the tabs that load what they need themselves (asking for the configuration would be refused).
-watch(known, (ok) => {
+// Once it is known who this is: what they may see by area, then the part of the configuration they may
+// see (someone who may see none of it gets only the tabs that load what they need themselves).
+const ready = ref(false);
+watch(known, async (ok) => {
   if (!ok) return;
-  if (!TABS.value.includes(tab.value)) tab.value = TABS.value[0] ?? "about";
-  if (full.value) void load().then(() => scrollToCard());
+  await loadSections();
+  ready.value = true;
+  const t = target(route.query);
+  tab.value = TABS.value.includes(t.tab) ? t.tab : TABS.value[0] ?? "about";
+  if (readable.value) void load().then(() => scrollToCard()).catch(() => scrollToCard());
   else scrollToCard();
 }, { immediate: true });
 onBeforeUnmount(() => {
@@ -187,14 +223,16 @@ onBeforeUnmount(() => {
         </div>
       </nav>
       <div ref="content" class="set-content">
-        <Skeleton v-if="!known" :rows="4" />
+        <Skeleton v-if="!known || !ready" :rows="4" />
         <section v-else-if="tab === 'security'" class="stack">
-          <template v-if="!state.me || state.me.role === 'owner'">
+          <template v-if="owner">
             <OperationRulesSettings />
             <ApprovalSettings v-if="config" :config="config" :save="saveConfig" />
+            <EgressSettings />
+            <CloudToolsSettings />
           </template>
-          <p v-else class="card set-link muted">操作规则和工具审批只有本人能看和改。</p>
-          <AuditTrail v-if="!state.me || state.me.role === 'owner' || state.me.perms.includes('users.manage')" />
+          <p v-else class="card set-link muted">操作规则、工具审批、出网和云端工具只有{{ ownerName }}能看和改。</p>
+          <AuditTrail v-if="owner || hasPerm('users.manage')" />
         </section>
         <section v-else-if="tab === 'about'" class="stack">
           <div class="card set-card">

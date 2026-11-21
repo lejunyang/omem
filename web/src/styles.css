@@ -1173,3 +1173,25 @@ input[type="number"].input::-webkit-outer-spin-button {
   .mc-space { grid-template-columns: minmax(0, 1fr) auto; }
   .mc-space .mc-pick { grid-column: 1 / -1; }
 }
+
+/* ---------- settings 2 ---------- */
+/* A settings card someone may read but not change (SetCard `keys`): the same card, its controls out of
+   reach (`inert`), a small grey tag beside the title. Not greyed out as a whole. */
+.set-ro-badge {
+  font-weight: 400;
+  color: var(--muted);
+}
+.set-row-ctl.ro,
+.set-row-ctl.ro * {
+  cursor: default;
+}
+/* 设置 → 成员: the routine switch in a member's opened row. */
+.p-routine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.p-routine > span {
+  min-width: 0;
+}
