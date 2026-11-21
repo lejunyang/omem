@@ -19,6 +19,15 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 早上一张“今天”：下一步、清点、夜里的提议合成一张（11-21）
+
+- `src/items/today.ts`：宿主拼一个 ask（处理器 `today`），不起模型。四段：等你处理（`pendingActions` 按种类计数、列三条，不带按钮）、各条线（`now.text`、三天内到期、`lines.ts newNextSteps` 的下一步）、夜里整理出来的（`heldProposals` 读 work-state 运行输出里的 `lineProposals`、`pendingCandidates`、`digestFor`、夜里问的 `line-end`、`replayDigest` 的建议）、不急的通知（只计数）。字段 id 带前缀（`n_` 下一步、`p_` 提议、`c_` 候选、`r_` 恢复、`k_` 保留、`e_` 线要不要结束、`x_` 复盘），每段有上限（`TODAY_MAX`），表单最多 30 项。
+- 提交时逐项交给原来的处理：`decideNext`、`decideProposal`（从 `line-propose` 处理器里抽出来，两处共用）、`decideCandidate`、`keepItem`、`answerAsk` 回答那条 `line-end` 自己的 ask、`resolveEffect`；状态已经变了的跳过；结果写进 ask 的 `result`。新的一张发出时，前一天没答的“今天”取消。
+- 开关 `notify.today`（`{ enabled, at }`，默认开、09:30，`config.ts`）。入口：巡检调 `today.ts morningDue`（开着走 `todayDue`，按日期记 kv `today_card_day`；关着走原来的 `lineNextDue`）；`item-digest` 定时任务走 `jobs.ts itemDigestDue`（开着时 `sendItemDigests(app, { except: [OWNER] })`，本人的复盘段也不在这里消费）；work-state 结束调 `proposalsDue`（开着不发 `linesCard`，提议留在运行输出里，kv `line_propose_run` 记已经问过的那次运行）。
+- `src/items/today-time.ts holdForToday`：免打扰里问的 `line-end`，飞书出口本来会延到免打扰结束（`deferredUntil`），开着“今天”时改延到“今天”的时间并标 `forToday`；“今天”带上它后去掉 `deferredUntil`、记 `inToday`，没答的只留在网页的待处理里。白天问的照旧。
+- 表单分组：`UiField` 多一个只给宿主用的 `group`（`ui-blocks.ts` 的类型，不进给 Agent 的 schema；`packages/plugin-sdk/blocks.ts` 同步）。`lark-asks.ts cardFields` 把它带到 `CardField.group`，`lark-send.ts formFields` 在组变化处插一行标题、分组时不编号；`web/src/components/UiFields.vue` 同样插标题。
+- 网页：`WorkWaiting.vue` 与 `pending.ts` 的种类加“今天”；设置 → 通知与打扰（`NotificationSettings.vue`）加一行开关和时间。演示库（`scripts/doc-screens.ts`）发一张“今天”，新截图 `today-card`；`work-overview`、`work-timeline`、`work-ended`、`item-external` 因右栏和候选变了重拍。测试 `test/today.test.ts`。
+
 ## 管成员的人进得了成员页；成员直接打开深链接不再被送回问答（11-21）
 
 - `web/src/App.vue`：判断“这一页他能不能开”要等路由把打开时的地址解析完（`router.isReady()`）。页面按需加载，解析完之前路径还读作 `/`：成员从通知或卡片里的链接直接打开某一页时，会被当成开了没有权限的首页，送回问答。

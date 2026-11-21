@@ -1,7 +1,7 @@
 import "./agents/jobs.ts";
 // Registers the run handler, so a review queued before a restart still runs.
 import "./agents/outcome-review.ts";
-import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, scheduleNoteReview, sendItemDigests, sweepItems } from "./agents/jobs.ts";
+import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, scheduleNoteReview, itemDigestDue, sweepItems } from "./agents/jobs.ts";
 import { addRunEvent, createRun, listRuns, startWorker } from "./agents/runs.ts";
 import { startSessionCleanup } from "./agents/session-cleanup.ts";
 import { sweepWorktreeSpaces } from "./agents/worktree-index.ts";
@@ -40,7 +40,7 @@ registerScheduleKind("item-sweep", (app) => {
   // Coding work the owner finished outside its page (pushed by hand, or carried on by a newer delegation).
   void import("./agents/code-branch.ts").then((m) => m.settleCodeWorks(app)).catch((e) => console.warn("[omem] 编码收尾失败：", e.message));
 });
-registerScheduleKind("item-digest", (app) => void sendItemDigests(app).catch((e) => console.warn("[omem] 事项清点失败：", e.message)));
+registerScheduleKind("item-digest", (app) => void itemDigestDue(app).catch((e) => console.warn("[omem] 事项清点失败：", e.message)));
 registerScheduleKind("profile-review", (app) => {
   void import("./agents/profile-jobs.ts").then((m) => m.nightlyProfileReviews(app));
   // Proposals nobody answered for 14 days expire; a notice goes out two days before.

@@ -36,6 +36,7 @@ import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import type { ChangeType } from "../src/items/changes.ts";
 import { createLine } from "../src/items/lines.ts";
+import { sendToday } from "../src/items/today.ts";
 import { itemContext, saveContext } from "../src/channels/listen.ts";
 import { setParent } from "../src/items/parent.ts";
 import { parseFlow } from "../src/flows/definitions.ts";
@@ -1089,6 +1090,17 @@ const xiaozhouToken = createApiToken(app, xiaozhou.id, "演示");
 const xiaolinToken = createApiToken(app, xiaolin.id, "演示");
 const xiaowuToken = createApiToken(app, xiaowu.id, "演示");
 
+// ---- 今天 (items/today.ts): this morning's card, put together from all of the above ----------------
+// Last night's work-state proposed one line; the assistant made a second candidate; one item expired.
+const nightRun = createRun(app, { kind: "work-state", title: "整理近况" });
+setRunOutput(app, nightRun.id, { lineProposals: [{ key: "p0", name: "示例商城 · 售后时效看板", goal: "把退款从申请到到账的每一段时长做成看板，找出最慢的一段", items: [], sources: [] }] });
+run(app.db, "update runs set status = 'done' where id = ?", nightRun.id);
+const cand2 = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "回复小李：回放用哪个月的数据", priority: 3 }, "agent");
+run(app.db, "update items set status = 'candidate' where id = ?", cand2.id);
+const stale = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "整理退款页的埋点清单", priority: 3 }, "user");
+upsertItem(app, stale.id, { status: "expired", note: "自动过期：14 天没有新进展（待办的默认期限），最后一次进展在 11 月 3 日。有新进展会重新打开，也可以在事项页恢复。" }, "agent");
+await sendToday(app);
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -1125,6 +1137,8 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   // The start page (工作): the two lines, then 按时间, then one line's own page with 问这条线 open.
   { name: "work-overview", path: "/" },
   { name: "work-timeline", path: "/?view=time" },
+  // 今天: this morning's card opened from 需要你处理, by sections, each choice to pick.
+  { name: "today-card", path: "/", prepare: async (p) => { await p.locator("#work-waiting .li", { hasText: "今天 ·" }).first().click(); await p.waitForTimeout(800); } },
   // Below the lines: the one being watched, then the lines that ended, by month.
   { name: "work-ended", path: "/", init: { "omem.workEnded": "1" }, prepare: async (p) => {
     await p.locator(".watching").evaluate((el) => {

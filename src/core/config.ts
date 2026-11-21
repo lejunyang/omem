@@ -1120,8 +1120,14 @@ export const configSchema = z.object({
       quietEnd: z.number().int().min(0).max(23).default(9),
       /** When what was sent as `later` (nothing to do now: finished background work, reports) goes out together, HH:mm on the server's clock; empty = at once, like normal ones. */
       laterTimes: z.array(z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/)).max(12).default(["09:30", "13:30", "18:30"]),
+      /**
+       * One card in the morning (items/today.ts): the lines' next steps, what waits on the owner, what the
+       * night's work proposed. Off: the next-step card, the item digest and the nightly line proposals go out
+       * on their own, at their own times. `at` is HH:mm in `timezone`.
+       */
+      today: z.object({ enabled: z.boolean().default(true), at: z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/).default("09:30") }).default({ enabled: true, at: "09:30" }),
     })
-    .default({ onlyUnread: true, learnFromReactions: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9, laterTimes: ["09:30", "13:30", "18:30"] }),
+    .default({ onlyUnread: true, learnFromReactions: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9, laterTimes: ["09:30", "13:30", "18:30"], today: { enabled: true, at: "09:30" } }),
   /**
    * MCP servers the owner set up for agents (Agent 页 → MCP, agents/mcp-servers.ts): a command to
    * start (stdio) or a URL (HTTP). An Agent 档案 names the ones it uses (`mcpServers`), a built-in

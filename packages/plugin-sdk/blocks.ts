@@ -34,7 +34,8 @@ export type ViewComponent =
   /** An interactive page (`ui_page`): drawn by omem's own pages only; elsewhere a line that says where to open it. */
   | { type: "page"; id: string; version?: number; height?: number; title?: string };
 type ShowIf = { field: string; equals?: string | number | boolean; in?: string[] };
-export type UiField = { id: string; label: string; help?: string; required?: boolean; show_if?: ShowIf } & (
+/** `group`: a heading over this field and the following ones with the same group (host-made forms). */
+export type UiField = { id: string; label: string; help?: string; required?: boolean; show_if?: ShowIf; group?: string } & (
   | { type: "text" | "textarea"; placeholder?: string; default?: string }
   | { type: "number"; min?: number; max?: number; default?: number }
   | { type: "choice"; options: string[]; default?: string }

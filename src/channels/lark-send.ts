@@ -74,12 +74,14 @@ const check = (r: { code?: number; msg?: string; data?: any } | undefined, what:
 // ---- cards ----------------------------------------------------------------------
 
 export type CardOption = { text: string; value: string };
-export type CardField =
+/** `group`: a heading over this field and the following ones of the same group. */
+export type CardField = (
   | { type: "input"; name: string; label?: string; placeholder?: string; required?: boolean; multiline?: boolean; default?: string }
   | { type: "select" | "multi_select"; name: string; label?: string; placeholder?: string; options: CardOption[]; required?: boolean; default?: string }
   | { type: "person" | "multi_person"; name: string; label?: string; placeholder?: string; required?: boolean }
   | { type: "date" | "datetime"; name: string; label?: string; placeholder?: string; required?: boolean }
-  | { type: "checkbox"; name: string; label: string; checked?: boolean };
+  | { type: "checkbox"; name: string; label: string; checked?: boolean }
+) & { group?: string };
 export type CardButton = { text: string; value?: string; style?: "primary" | "danger" | "default"; url?: string; confirm?: string };
 export type CardBlock =
   | { markdown: string }
@@ -210,10 +212,15 @@ function field(f: CardField): Record<string, unknown> {
  */
 function formFields(fields: CardField[]): Record<string, unknown>[] {
   const asked = fields.filter((f) => f.type !== "checkbox" && f.label);
-  const number = asked.length > 1 && !asked.some((f) => /^\s*(\d+|[一二三四五六七八九十]+)\s*[.、．)）]/.test(f.label!));
+  // Grouped questions read under their headings, not as one long numbered list.
+  const grouped = fields.some((f) => f.group);
+  const number = !grouped && asked.length > 1 && !asked.some((f) => /^\s*(\d+|[一二三四五六七八九十]+)\s*[.、．)）]/.test(f.label!));
   const out: Record<string, unknown>[] = [];
   let n = 0;
+  let group: string | undefined;
   for (const f of fields) {
+    if (f.group && f.group !== group) out.push({ tag: "markdown", content: `**${cardText(f.group)}**`, text_size: "heading", ...(out.length ? { margin: "20px 0px 0px 0px" } : {}) });
+    group = f.group;
     const label = f.type !== "checkbox" && f.label ? f.label : null;
     if (label) {
       const required = "required" in f && f.required ? " <font color='red'>*</font>" : "";

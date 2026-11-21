@@ -43,6 +43,7 @@ const HANDLERS: Record<string, { label: string; group: Group }> = {
   "code-sync": { label: "编码", group: "work" },
   "work-deliver": { label: "交付", group: "work" },
   "commit-claim": { label: "提交", group: "work" },
+  today: { label: "今天", group: "propose" },
   "line-propose": { label: "工作线", group: "propose" },
   "line-next": { label: "下一步", group: "propose" },
   "line-end": { label: "收尾", group: "propose" },

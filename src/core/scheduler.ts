@@ -25,7 +25,7 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "note-review", kind: "note-review", cron: "35 * * * *", enabled: true, label: "复核原件标注：另一个模型保留、撤回，拿不准的留给本人" },
   { id: "memory-review", kind: "memory-review", cron: "20 * * * *", enabled: true, label: "复核新写入的记忆：保留、改写或撤回（可配置成与写入不同的模型；没有新记忆时什么都不做）" },
   { id: "item-sweep", kind: "item-sweep", cron: "7 * * * *", enabled: true, label: "事项收尾：没有新进展的按期限自动过期；本人在来源会话里回过、回了表情的，交给助理判断是否已办并关掉（都能在事项页恢复）" },
-  { id: "item-digest", kind: "item-digest", cron: "30 9 * * *", enabled: true, label: "事项清点：每天一张卡片，列出自动收尾的和明天过期的，可逐条保留或恢复（没有变化时不发）" },
+  { id: "item-digest", kind: "item-digest", cron: "30 9 * * *", enabled: true, label: "事项清点：每天一张卡片，列出自动收尾的和明天过期的，可逐条保留或恢复（没有变化时不发；开着“今天”时你的这部分进那张卡，不单独发）" },
   { id: "memory-organize", kind: "memory-organize", cron: "50 */2 * * *", enabled: true, label: "整理记忆目录：把还没归档的记忆放进目录，每周看一遍目录结构（拆、并、改名、补说明；没有新记忆时什么都不做）" },
   { id: "work-state", kind: "work-state", cron: "50 2 * * *", enabled: true, label: "每晚整理工作近况和人物卡：按最近几周本人说过话的会话、打开的文档、编码、事项、会议和找助手做的事，更新个人空间的 state/work 页面，给有新消息、常打交道的人更新人物卡（people/；没有新材料时什么都不做）" },
   { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: true, label: "每晚整理记忆与页面：合并重复和存量整理写下的经验记忆、处理冲突与过期、按不足信号补漏（第一次只看最近 7 天）" },

@@ -28,6 +28,10 @@ import { checkParent, descendantIds, rootOf } from "./tree.ts";
  * The nightly work-state proposes lines from what the owner did (`propose_lines`): a proposal matching
  * a line already there adds its materials and hangs its loose items under it; new ones go on one card a
  * night (`line-propose`), 建 / 不用 / 并进 an existing line.
+ *
+ * With 今天 on (items/today.ts) neither card goes out: the morning card reads the same next steps
+ * (newNextSteps) and the proposals left on the run (heldProposals), and hands each answer to
+ * decideNext / decideProposal, as these cards do.
  */
 export { lineStateSchema, NEXT_KINDS, proposeSchema };
 export type NextKind = (typeof NEXT_KINDS)[number];
@@ -118,6 +122,17 @@ function cardMinute(app: App) {
   return minutes.length ? Math.min(...minutes) : 10 * 60;
 }
 
+/** The open next steps of a person's lines made since the last card offered them (this card or 今天), by line. */
+export function newNextSteps(app: App, userId = OWNER) {
+  return all<NextRow & { title: string }>(app.db,
+    `select n.*, i.title from item_next n join items i on i.id = n.item_id
+      where n.status = 'open' and n.created_at > ? and coalesce(i.user_id,'owner') = ? and i.status not in ('done','cancelled','expired','candidate')
+      order by i.title, n.created_at limit 30`, kv(app, CARD_AT) ?? "", userId);
+}
+/** The next steps made until now were offered: the next card starts after them. */
+export const markNextShown = (app: App, at = new Date()) => setKv(app, CARD_AT, at.toISOString());
+export const NEXT_CHOICES = CHOICES;
+
 /**
  * Heartbeat: once a day, at its time, one card with the open next steps of every line made since the
  * last card, grouped by line, each 就这么做 / 不用 (one ask the host handles, `line-next`). Null when
@@ -127,13 +142,9 @@ export function lineNextDue(app: App, at = new Date(), userId = OWNER) {
   const local = zonedParts(at, app.config.timezone);
   if (local.hour * 60 + local.minute < cardMinute(app) || kv(app, CARD_DAY) === local.date) return null;
   setKv(app, CARD_DAY, local.date);
-  const since = kv(app, CARD_AT) ?? "";
-  const rows = all<NextRow & { title: string }>(app.db,
-    `select n.*, i.title from item_next n join items i on i.id = n.item_id
-      where n.status = 'open' and n.created_at > ? and coalesce(i.user_id,'owner') = ? and i.status not in ('done','cancelled','expired','candidate')
-      order by i.title, n.created_at limit 30`, since, userId);
+  const rows = newNextSteps(app, userId);
   if (!rows.length) return null;
-  setKv(app, CARD_AT, at.toISOString());
+  markNextShown(app, at);
   const byLine = new Map<string, (NextRow & { title: string })[]>();
   for (const r of rows) byLine.set(r.item_id, [...byLine.get(r.item_id) ?? [], r]);
   const body = [...byLine.values()].map((list) => [`**${list[0].title}**`, ...list.map((n) => `- ${n.text}${n.why ? `：${truncate(n.why, 160)}` : ""}`)].join("\n")).join("\n\n");
@@ -309,7 +320,7 @@ export async function proposeLines(app: App, runId: string, input: z.input<typeo
     const at = pending.findIndex((x) => norm(x.name) === norm(p.name));
     const entry: Proposal = { key: at >= 0 ? pending[at].key : `p${pending.length + i}`, name: p.name, goal: p.goal, items, sources };
     if (at >= 0) pending[at] = entry; else pending.push(entry);
-    out.push(`「${p.name}」是新的：整理结束后问本人要不要建（${items.length} 件事项，${sources.length} 份材料）`);
+    out.push(`「${p.name}」是新的：之后问本人要不要建（${items.length} 件事项，${sources.length} 份材料）`);
   }
   setRunOutput(app, runId, { lineProposals: pending.slice(0, 8) });
   return out.join("\n");
@@ -324,6 +335,7 @@ export function linesCard(app: App, runId: string) {
   const day = localStamp(new Date(), app.config.timezone).slice(0, 10);
   if (one<{ value: string }>(app.db, "select value from kv where key = 'line_propose_day'")?.value === day) return null;
   setKv(app, "line_propose_day", day);
+  markProposalsOffered(app, runId);
   const lines = openLines(app, userId).slice(0, 8);
   const merge = (title: string) => truncate(`并进「${title}」`, 60);
   const title = (id: string) => one<{ title: string }>(app.db, "select title from items where id = ?", id)?.title ?? id;
@@ -347,20 +359,53 @@ export async function createLine(app: App, p: { name: string; goal?: string; ite
   return getItem(app, line.id);
 }
 
+/**
+ * The owner's answer on one proposed line (the nightly card, or 今天): 建 makes it, 不用 is remembered for
+ * 14 days, 并进「…」 adds it to that open line. A line of that name made meanwhile (on the web, from another
+ * card) is not made twice. Returns what was done, or "" when nothing was.
+ */
+export async function decideProposal(app: App, p: Proposal, picked: string, lines: { id: string; label: string }[], userId: string) {
+  if (picked === "建") {
+    if (openLines(app, userId).some((l) => norm(l.title) === norm(p.name))) return "";
+    await createLine(app, p, userId, "user");
+    return "built";
+  }
+  if (picked === "不用") { setKv(app, declinedKey(p.name), now()); return "declined"; }
+  const line = lines.find((l) => l.label === picked);
+  const open = line && one<{ status: string }>(app.db, "select status from items where id = ?", line.id);
+  if (line && open && !isClosed(open.status)) { await intoLine(app, line.id, p, "user", userId); return "merged"; }
+  return "";
+}
+
+/** The lines a proposal may be merged into, labelled as on the card. */
+export function mergeTargets(app: App, userId: string) {
+  return openLines(app, userId).slice(0, 8).map((l) => ({ id: l.id, label: truncate(`并进「${l.title}」`, 60) }));
+}
+
+/**
+ * The newest night's proposals not offered yet (with 今天 on, work-state leaves them on its run instead
+ * of sending its card): names said 不用 to lately and lines made meanwhile left out. `mark` remembers them as offered.
+ */
+export function heldProposals(app: App, userId = OWNER) {
+  const offered = kv(app, "line_propose_run");
+  const r = one<{ id: string; output: string }>(app.db,
+    `select id, output from runs where kind = 'work-state' and status not in ('queued','running') and coalesce(user_id,'owner') = ? and json_array_length(json_extract(output, '$.lineProposals')) > 0
+      order by created_at desc limit 1`, userId);
+  if (!r || r.id === offered) return { runId: null, proposals: [] as Proposal[] };
+  const names = new Set(openLines(app, userId).map((l) => norm(l.title)));
+  const proposals = json<{ lineProposals?: Proposal[] }>(r.output, {}).lineProposals?.filter((p) => {
+    const declined = kv(app, declinedKey(p.name));
+    return !names.has(norm(p.name)) && !(declined && Date.now() - Date.parse(declined) < DECLINE_MS);
+  }) ?? [];
+  return { runId: r.id, proposals };
+}
+export const markProposalsOffered = (app: App, runId: string) => setKv(app, "line_propose_run", runId);
+export type { Proposal };
+
 registerAskHandler("line-propose", async (app, ask, ctx) => {
   const proposals = (ctx.proposals as Proposal[] | undefined) ?? [];
   const lines = (ctx.lines as { id: string; label: string }[] | undefined) ?? [];
-  const userId = ask.userId;
-  for (const p of proposals) {
-    const picked = String(ask.value?.[p.key] ?? "");
-    if (picked === "建") await createLine(app, p, userId, "user");
-    else if (picked === "不用") setKv(app, declinedKey(p.name), now());
-    else {
-      const line = lines.find((l) => l.label === picked);
-      const open = line && one<{ status: string }>(app.db, "select status from items where id = ?", line.id);
-      if (line && open && !isClosed(open.status)) await intoLine(app, line.id, p, "user", userId);
-    }
-  }
+  for (const p of proposals) await decideProposal(app, p, String(ask.value?.[p.key] ?? ""), lines, ask.userId);
 }, (_app, ask, _ctx, by) => {
   if (by !== ask.userId) throw new HttpError(403, "只有本人能定要不要建工作线");
 });

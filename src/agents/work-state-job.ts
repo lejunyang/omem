@@ -256,8 +256,9 @@ registerHandler("work-state", async (ctx) => {
   run(app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", lastKey, at);
   markPeopleSeen(app, people);
-  // The new lines it proposed (propose_lines) go to the owner on one card (items/lines.ts).
+  // The new lines it proposed (propose_lines) go to the owner on one card (items/lines.ts); with 今天 on
+  // they stay on this run's output for the morning card (items/today.ts heldProposals).
   let card: string | null = null;
-  try { card = (await import("../items/lines.ts")).linesCard(app, ctx.run.id)?.id ?? null; } catch (e) { ctx.event("status", { text: `提议工作线的卡片没发出：${(e as Error).message}` }); }
+  try { card = (await import("../items/today.ts")).proposalsDue(app, ctx.run.id)?.id ?? null; } catch (e) { ctx.event("status", { text: `提议工作线的卡片没发出：${(e as Error).message}` }); }
   return { summary: r.text.trim(), people: people.length, ...(card ? { linesAsk: card } : {}) };
 });
