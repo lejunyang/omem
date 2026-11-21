@@ -152,12 +152,14 @@ describe("delegation sandbox mounts", () => {
 
   it.skipIf(!sandboxSupport().ok)("stages only the conflicted file edited in the member sandbox", async () => {
     const repo = repository("resolve-text");
-    const file = "决策 [1].txt";
+    const file = "决策 [1].md";
     const commit = (cwd: string, value: string) => {
       writeFileSync(join(cwd, file), value);
       execFileSync("git", ["--literal-pathspecs", "add", "--", file], { cwd });
       execFileSync("git", ["-c", "user.name=T", "-c", "user.email=test@example.org", "commit", "-qm", value], { cwd });
     };
+    writeFileSync(join(repo.root, ".gitattributes"), "*.md conflict-marker-size=5\n");
+    repo.git("add", ".gitattributes");
     commit(repo.root, "base");
     const wt = leased("resolve-round", repo);
     commit(wt.slot, "ours");
@@ -168,12 +170,12 @@ describe("delegation sandbox mounts", () => {
     mkdirSync(home);
     const left = await finishSync(wt.path, "合并", async files => {
       expect(files).toEqual([file]);
-      const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec", 'echo combined > "$1"; echo draft > draft', "sh", file],
+      const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec", 'printf "combined\\n=======\\n" > "$1"; echo draft > draft', "sh", file],
         {}, wt.slot, { userId: "member", backend: "test", home, env: {}, hide: [app.home], ro: [] }, workspaceMounts(app, [wt]));
       execFileSync(cmd.file, cmd.args, { env: cmd.env });
     });
     expect(left).toBeNull();
-    expect(repo.git("-C", wt.slot, "show", "HEAD:" + file).toString()).toBe("combined\n");
+    expect(repo.git("-C", wt.slot, "show", "HEAD:" + file).toString()).toBe("combined\n=======\n");
     expect(repo.git("-C", wt.slot, "status", "--porcelain").toString().trim()).toBe("?? draft");
   });
 
@@ -233,11 +235,19 @@ describe("delegation sandbox mounts", () => {
       registerRound(round.id, { worktrees: trees, repos: repos.map(repo => getSpace(app, repo.id)), spaces: repos.map(repo => repo.id),
         signal: new AbortController().signal, event: () => {}, where: dir => dir });
       dispatchTasks(app, round.id, [{ tasks }]);
-      const ids = await joinHelpers(app, round.id, async () => {});
+      writeFileSync(join(trees[0].path, "first"), "lead");
+      repos[0].git("-C", trees[0].path, "add", "first");
+      repos[0].git("-C", trees[0].path, "-c", "user.name=T", "-c", "user.email=t@example.org", "commit", "-qm", "lead");
+      const ids = await joinHelpers(app, round.id, async (wt, files) => {
+        expect(files).toEqual(["first"]);
+        const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec", 'printf "first\\n=======\\n" > first'],
+          {}, wt.path, { userId: "member", backend: "test", home, env: {}, hide: [app.home], ro: [] }, workspaceMounts(app, [wt]));
+        execFileSync(cmd.file, cmd.args, { env: cmd.env });
+      });
       const run = getRun(app, ids[0]);
       expect(run.error).toContain("partial-b");
       expect(run.output.commits).toMatchObject({ "partial-a": [expect.any(String), expect.any(String)], "partial-b": [] });
-      expect(repos[0].git("-C", trees[0].path, "show", "HEAD:first").toString()).toBe("first\n");
+      expect(repos[0].git("-C", trees[0].path, "show", "HEAD:first").toString()).toBe("first\n=======\n");
       expect(repos[0].git("-C", trees[0].path, "show", "HEAD:part").toString()).toBe("part\n");
       const failed = (run.output.worktrees as typeof trees)[1];
       expect(readFileSync(join(failed.path, "draft"), "utf8")).toBe("draft\n");

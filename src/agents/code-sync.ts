@@ -81,17 +81,23 @@ export function syncInProgress(path: string): SyncOperation | null {
 }
 
 /** Only a regular file inside the checkout can be host-staged as a resolved text conflict. */
-function hasMarkers(root: string, file: string): boolean | undefined {
+function hasMarkers(root: string, file: string, size: number): boolean | undefined {
   const path = join(root, file);
   if (!lstatSync(path, { throwIfNoEntry: false })?.isFile() || realpathSync(path) !== path) return;
-  return /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:[ \t]|\r?$)/m.test(readFileSync(path, "utf8"));
+  return Array.from(readFileSync(path, "utf8").matchAll(/^(<+|>+|\|+) /gm)).some(m => m[1].length === size);
 }
 
 export async function resolveConflicts(path: string, files: string[], label: string, resolver: Resolver) {
   const root = realpathSync(path);
-  const marked = files.filter(f => hasMarkers(root, f));
+  const attrs = git(path, ["check-attr", "-z", "--stdin", "conflict-marker-size"], files.join("\0") + "\0");
+  if (!attrs.ok) throw new Error(attrs.stderr);
+  const fields = attrs.stdout.split("\0");
+  const sizes = new Map<string, number>();
+  for (let i = 0; i + 2 < fields.length; i += 3) sizes.set(fields[i], Number(fields[i + 2]) || 7);
+  const markers = (f: string) => hasMarkers(root, f, sizes.get(f)!);
+  const marked = files.filter(markers);
   await resolver(files, label);
-  const after = new Map(files.map(f => [f, hasMarkers(root, f)]));
+  const after = new Map(files.map(f => [f, markers(f)]));
   const remainingMarkers = files.filter(f => after.get(f));
   const ready = marked.filter(f => after.get(f) === false);
   if (ready.length) {
