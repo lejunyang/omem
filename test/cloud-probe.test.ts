@@ -50,6 +50,19 @@ it.each(["GET only", "stripped Authorization", "missing JSON", "missing receipt"
     app.db.close();
   });
 
+it.each(["Bearer probe-wrong", ""])("rejects an incorrect Authorization value on the initial GET (%j)", async authorization => {
+  const app = testApp();
+  app.config.webUrl = "https://8.8.8.8";
+  try {
+    const probe = await probeCloud(app, "doubao", async (_app, _profile, req) => {
+      const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
+      expect(() => probeReceipt(app, nonce, "GET", authorization)).toThrow("Authorization 测试值不匹配");
+      return { text: "", agent: "test", stopReason: "end_turn" };
+    });
+    expect(probe).toMatchObject({ mode: false, reason: "首个 GET 的 Authorization 测试值不匹配" });
+  } finally { app.db.close(); }
+});
+
 it("limits credentials to selected read tools and public HTTPS", () => {
   expect(cloudToolsSchema.parse({})).toMatchObject({ enabled: false, credentialIn: "channel", backends: [] });
   for (const bad of [{ tools: ["write_page"] }, { tools: ["peer_read"] }, { ttlMinutes: 31 }, { maxCalls: 0 }])

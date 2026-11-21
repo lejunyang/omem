@@ -35,7 +35,7 @@ export async function checkCloudAddress(url: string) {
 }
 
 function fingerprint(p: AgentProfile) {
-  return createHash("sha256").update(JSON.stringify(["http-probe-v2", p.transport, p.command, p.args, p.env])).digest("hex");
+  return createHash("sha256").update(JSON.stringify(["http-probe-v3", p.transport, p.command, p.args, p.env])).digest("hex");
 }
 const key = (id: string) => "cloud-tools:probe:" + id;
 export function lastProbe(app: App, id: string): Probe | null {
@@ -73,6 +73,10 @@ export function probeReceipt(app: App, key: string, method: string, authorizatio
   if (!entry || entry.app !== app) throw new HttpError(404, "探测已结束");
   const header = authorization === "Bearer probe-" + entry.nonce;
   if (key === entry.nonce && method === "GET") {
+    if (authorization !== undefined && !header) {
+      entry.failure = "首个 GET 的 Authorization 测试值不匹配";
+      throw new HttpError(400, entry.failure);
+    }
     entry.failure = "未完成带 Authorization 的 POST JSON 或无头 GET 参数调用";
     return { next: entry.url + "/api/cloud-tools/challenge/" + entry.next[header ? "header" : "url"] };
   }
