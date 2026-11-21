@@ -80,6 +80,8 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
 const tools = new Map<string, PluginTool>();
 const readers = new Map<string, PlatformReader>();
 const objects = new Map<string, PluginObject>();
+const items = new Map<string, import("./types.ts").ItemProvider>();
+const reviews = new Map<string, import("./types.ts").ReviewProvider>();
 const subscriptions = new Map<string, import("./types.ts").Subscription>();
 const hooks = new Map<string, PluginHook>();
 
@@ -87,7 +89,7 @@ async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
+  const declared: { items: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { items: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
@@ -95,7 +97,15 @@ async function main() {
       subscriptions.set(def.id, def);
       declared.subscriptions.push({ id: def.id, events: def.events });
     },
-    itemProvider: unsupported("事项提供者"),
+    reviewProvider(def) {
+      if (typeof def.publish !== "function" || typeof def.readThread !== "function") throw new Error("评审提供者缺少方法");
+      reviews.set(def.id, def);
+      declared.reviews.push({ id: def.id, label: def.label, objectKind: def.objectKind, resolves: !!def.resolve });
+    },
+    itemProvider(def) {
+      items.set(def.id, def);
+      declared.items.push({ id: def.id, label: def.label, statuses: def.statuses, targetHint: def.targetHint, writable: !!def.setStatus });
+    },
     metricProvider: unsupported("指标数据源"),
     object(def) {
       validateObject(def);
@@ -148,14 +158,26 @@ process.on("message", async (m: Msg) => {
   }
   try {
     let value: unknown;
-    if (m.t === "event") {
-      await subscriptions.get(m.name)!.handle({
+    if (m.t === "event" || m.t === "review" || m.t === "item") {
+      const ctx: import("./types.ts").CallContext = {
         userId: m.userId, spaceId: m.spaceId, signal: AbortSignal.timeout(15000),
         async connection(provider) {
           const c = await rpc("connection", { call: m.id, provider });
           return c ? connectionOf(c, m.id!) : null;
         },
-      }, m.event);
+      };
+      if (m.t === "event") await subscriptions.get(m.name)!.handle(ctx, m.event);
+      else if (m.t === "item") {
+        const def = items.get(m.name)!;
+        value = m.method === "pull" ? await def.pull(ctx, m.arg) : await def.setStatus!({ ...ctx, idempotencyKey: m.key }, m.arg);
+      } else {
+        const def = reviews.get(m.name)!;
+        if (m.method === "readThread") value = await def.readThread(ctx, m.arg);
+        else {
+          const write = { ...ctx, idempotencyKey: m.key };
+          value = m.method === "publish" ? await def.publish(write, m.arg) : await def.resolve!(write, m.arg, m.note);
+        }
+      }
     } else if (m.t === "call") {
       const t = tools.get(m.tool);
       if (!t) throw new Error(`没有工具 ${m.tool}`);
@@ -179,7 +201,7 @@ process.on("message", async (m: Msg) => {
     } else return;
     send({ t: "result", id: m.id, ok: true, value });
   } catch (e) {
-    send({ t: "result", id: m.id, ok: false, error: (e as Error).message ?? String(e) });
+    send({ t: "result", id: m.id, ok: false, code: (e as {code?: string})?.code, error: (e as Error).message ?? String(e) });
   }
 });
 

@@ -26,6 +26,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(here, f)).find((f) => existsSync(f))!;
 
 type Declared = {
+  items: (Pick<import("./types.ts").ItemProvider, "id" | "label" | "statuses" | "targetHint"> & { writable: boolean })[];
+  reviews: { id: string; label: string; objectKind: string; resolves: boolean }[];
   subscriptions: Pick<import("./types.ts").Subscription, "id" | "events">[];
   objects: Omit<PluginObject, "match" | "read">[];
   hooks?: { name: string; label?: string }[];
@@ -41,7 +43,7 @@ const CALL_MS = 5 * 60_000;
 export async function startSandbox(
   app: App,
   plugin: { id: string; dir: string; server: string; services: { name: string }[] },
-  opts: { subscribe: import("./types.ts").ProcessApi["subscribe"]; prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
+  opts: { itemProvider: import("./types.ts").ProcessApi["itemProvider"]; reviewProvider: import("./types.ts").ProcessApi["reviewProvider"]; subscribe: import("./types.ts").ProcessApi["subscribe"]; prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
 ): Promise<Sandbox> {
   const data = join(app.home, "plugin-data", plugin.id);
   mkdirSync(data, { recursive: true });
@@ -66,7 +68,7 @@ export async function startSandbox(
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
-      const callMs = String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event") ? 15000 : CALL_MS;
+      const callMs = String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event" || msg.t === "review" || msg.t === "item") ? 15000 : CALL_MS;
       const timer = setTimeout(() => {
         pending.delete(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
@@ -145,7 +147,7 @@ export async function startSandbox(
         pending.delete(m.id);
         clearTimeout(p.timer);
         if (m.ok) p.ok(m.value);
-        else p.fail(new Error(m.error));
+        else p.fail(Object.assign(new Error(m.error), { code: m.code }));
       } else if (m.t === "rpc")
         answer(m.op, m.args ?? {}).then(
           (value) => child.connected && child.send({ t: "rpc-result", id: m.id, ok: true, value }),
@@ -168,6 +170,21 @@ export async function startSandbox(
   });
 
   try {
+    const proxy = (t: "review" | "item", name: string) =>
+      (ctx: import("./types.ts").CallContext, method: string, arg: unknown, note?: string) =>
+        ask({ t, name, method, arg, note, userId: ctx.userId, spaceId: ctx.spaceId,
+          key: "idempotencyKey" in ctx ? ctx.idempotencyKey : undefined }, undefined, ctx);
+    for (const def of declared.items ?? []) {
+      const invoke = proxy("item", def.id);
+      opts.itemProvider({ ...def, pull: (ctx, req) => invoke(ctx, "pull", req),
+        setStatus: def.writable ? (ctx, req) => invoke(ctx, "setStatus", req) : undefined });
+    }
+    for (const def of declared.reviews ?? []) {
+      const invoke = proxy("review", def.id);
+      opts.reviewProvider({ ...def, publish: (ctx, req) => invoke(ctx, "publish", req),
+        readThread: (ctx, ref) => invoke(ctx, "readThread", ref),
+        resolve: def.resolves ? (ctx, ref, note) => invoke(ctx, "resolve", ref, note) : undefined });
+    }
     for (const sub of declared.subscriptions ?? []) opts.subscribe({
       ...sub,
       handle: (ctx, event) => ask({ t: "event", name: sub.id, event, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx),

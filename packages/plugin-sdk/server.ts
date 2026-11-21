@@ -36,8 +36,19 @@ export type MetricProvider = {
     metricId: string; at: string; value: number; dims?: Record<string, string>; source?: string;
   }[]>;
 };
+export type DiffAnchor = { path: string; line: number; startLine?: number; side: "LEFT" | "RIGHT"; head: string };
+export type CommentRef = { id: string; url: string; revision?: string };
+export type ThreadState = { state: "open" | "replied" | "resolved" | "outdated"; reply?: { author: string; at: string; summary: string } };
+/** An invalid diff position is reported by throwing an Error with code REVIEW_ANCHOR_OUTDATED. */
+export type ReviewProvider = {
+  id: string; label: string; objectKind: string;
+  publish(ctx: WriteContext, req: { objectKey: string; findingId: number; anchor: DiffAnchor; body: string }): Promise<CommentRef>;
+  readThread(ctx: CallContext, ref: CommentRef): Promise<ThreadState>;
+  resolve?(ctx: WriteContext, ref: CommentRef, note?: string): Promise<ThreadState>;
+};
 export type ProcessApi = {
   subscribe(def: Subscription): void;
+  reviewProvider(def: ReviewProvider): void;
   itemProvider(def: ItemProvider): void;
   metricProvider(def: MetricProvider): void;
 };
