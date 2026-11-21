@@ -5,7 +5,7 @@ import { json, newId, now } from "../core/util.ts";
 import { codeWork } from "../agents/code-works.ts";
 import { cancelRun, getRun } from "../agents/runs.ts";
 import type { Item } from "../items/store.ts";
-import type { FlowStage } from "../flows/definitions.ts";
+import { studyStageCarrier, type FlowStage } from "../flows/definitions.ts";
 import { changeStage, type ItemFlow, type StageRow } from "../flows/store.ts";
 import { direction, findings, trial, trials } from "./store.ts";
 import { findingFix, queueFindingFix } from "./fix.ts";
@@ -17,8 +17,7 @@ export const isFixes = (d: FlowStage) => typeof d.by === "object" && "object" in
 export function fixModelStage(f: ItemFlow, d: FlowStage): FlowStage {
   const t = f.definition.stages.find((s) => typeof s.by === "object" && "object" in s.by && s.by.object === "trials");
   const own = typeof d.by === "object" && "object" in d.by && d.by.object === "fixes" ? d.by : undefined;
-  const fallback = typeof t?.by === "object" && "object" in t.by && t.by.object === "trials" ? t.by : undefined;
-  return { ...d, ai: t ? t.ai : d.ai, escalate: undefined, by: { object: "fixes", agent: own?.agent ?? fallback?.agent, skill: own?.skill ?? fallback?.skill } };
+  return { ...d, ai: t ? t.ai : d.ai, escalate: undefined, by: studyStageCarrier(own ?? { object: "fixes" }, f.definition.stages) };
 }
 export function eligibleFixes(app: App, f: ItemFlow, d: FlowStage) {
   if (!studyScope(app, f.itemId).allowCode) return [];

@@ -418,7 +418,7 @@
 
 - 流程服务端：保存与校验保留同阶段未变的停用信号、运行器及未变检查；校验返回 unavailableReferences 与 unavailableChecks，列表也返回 unavailableChecks。草稿读取按结构解析并保留空间裁剪，停用运行器后改名的确认卡持续展示，启用时仍走保存校验；HTTP 回归覆盖 PUT → GET 草稿 → 本人回答 → 新定义。入口 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts`；`test/flow-plugin.test.ts`。
 
-- 流程列表提供 `stageSummaries`，直接读取承担者、信号及参数、开始时刻与分钟时限。入口 `src/flows/definitions.ts`（summarizeStage）、`http.ts`。
+- 流程列表提供 `stageSummaries`，直接读取承担者、信号及参数、开始时刻与分钟时限。trials、fixes 保留 object 类型，并在 carrier.run 返回执行类型、档案 id/name 和 skill；fixes 逐字段继承首个 trials 的缺省配置，与执行端共用继承规则，最终缺省为 assistant。入口 `src/flows/definitions.ts`（summarizeStage、studyStageCarrier）、`http.ts`、`src/studies/fixes.ts`；`test/flows-http.test.ts`、`test/study-fix.test.ts`。
 
 - 事项阶段增加 carrier.runner 与 waitingSignal.id/name，不依赖共享流程定义查看权限。入口 `src/flows/engine.ts`、`signals.ts`。
 

@@ -107,13 +107,26 @@ export function describeStage(s: FlowStage) {
 export const runnerIdentity = (id: string) => ({ id, name: stageRunners.get(id)?.def.name ?? id });
 export const signalIdentity = (id: string) => ({ id, name: flowSignals.get(id)?.def.name ?? ({ "git.pushed": "推到远端", "git.merged": "合进目标分支" } as Record<string, string>)[id] ?? id });
 
+/** Fix verification inherits each unspecified field from the first trials stage. */
+export function studyStageCarrier(by: Extract<FlowStage["by"], { object: "trials" | "fixes" }>, stages: readonly FlowStage[]) {
+  if (by.object === "trials") return by;
+  const t = stages.find(s => typeof s.by === "object" && "object" in s.by && s.by.object === "trials");
+  const fallback = typeof t?.by === "object" && "object" in t.by && t.by.object === "trials" ? t.by : undefined;
+  return { ...by, agent: by.agent ?? fallback?.agent, skill: by.skill ?? fallback?.skill };
+}
+
+const summarizeAgent = (by: { agent?: string; skill?: string }) => ({
+  kind: !by.agent || by.agent === "assistant" ? "assistant" : "profile", id: by.agent ?? "assistant",
+  name: !by.agent || by.agent === "assistant" ? "助手" : by.agent, skill: by.skill ?? null,
+});
+
 /** Typed summary for clients that do not interpret YAML or localized descriptions. */
-export function summarizeStage(s: FlowStage) {
+export function summarizeStage(s: FlowStage, stages: readonly FlowStage[] = []) {
   const by = s.by;
   const carrier = by === "owner" ? { kind: "owner", name: "本人" } : by === "wait" ? { kind: "wait", name: "等待" }
     : "runner" in by ? { kind: "runner", ...runnerIdentity(by.runner), params: by.with ?? {} }
-    : "run" in by ? { kind: !by.run.agent || by.run.agent === "assistant" ? "assistant" : "profile", id: by.run.agent ?? "assistant", name: !by.run.agent || by.run.agent === "assistant" ? "助手" : by.run.agent, skill: by.run.skill ?? null }
-    : { kind: "object", id: by.object, name: objectWords(by.object) };
+    : "run" in by ? summarizeAgent(by.run)
+    : { kind: "object", id: by.object, name: objectWords(by.object), ...(by.object === "trials" || by.object === "fixes" ? { run: summarizeAgent(studyStageCarrier(by, stages)) } : {}) };
   const done = typeof s.done === "object" ? "signal" in s.done
     ? { kind: "signal", ...signalIdentity(s.done.signal), params: s.done.with ?? {} }
     : { kind: "object", id: s.done.object, name: objectWords(s.done.object), statuses: [s.done.status].flat() }

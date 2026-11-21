@@ -21,6 +21,11 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-22：试验和修改阶段的执行者摘要
+
+- 流程列表的 trials、fixes 阶段保留 object 类型，在 `carrier.run` 返回执行类型、档案 id/name 和技能，最终缺省档案为 assistant。fixes 自身配置优先，未指定的字段分别继承首个 trials 阶段，与执行端共用同一规则。从 `src/flows/definitions.ts` 的 `studyStageCarrier`、`summarizeStage` 和 `src/studies/fixes.ts` 的 `fixModelStage` 读起。
+- HTTP 列表用例覆盖两个对象阶段的指定档案、默认助手、显式助手和各字段继承、覆盖；改后重跑用例核对排队运行收到的档案与技能。字段文档在 `docs/v2/flows.md` 的“流程定义的结构化摘要”，用例在 `test/flows-http.test.ts`、`test/study-fix.test.ts`。
+
 ## 2026-11-22：停用运行器后的流程草稿保留
 
 - 草稿列表按结构解析，不因信号或运行器停用而丢弃待启用定义，继续按流程查看空间裁剪。保存和确认卡启用仍校验新增、改参引用。从 `src/flows/http.ts` 的草稿读取、`src/flows/definitions.ts` 的保存边界读起。

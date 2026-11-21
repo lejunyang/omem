@@ -87,7 +87,7 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
   });
   it("停用后保留同阶段信号、运行器和检查，变更引用仍需注册", async () => {
     const initial = raw([signalStage(true), {id:"job",name:"作业",by:{runner:"stagekit:job",with:{fail:false}}}]);
-    expect(parseFlow(initial).stages.map(summarizeStage)).toMatchObject([
+    expect(parseFlow(initial).stages.map(s => summarizeStage(s))).toMatchObject([
       {done:{kind:"signal",id:"stagekit:mark",name:"标记",params:{fail:true}}},
       {carrier:{kind:"runner",id:"stagekit:job",name:"作业",params:{fail:false}}}
     ]);

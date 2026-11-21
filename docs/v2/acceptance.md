@@ -3089,6 +3089,8 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 
 - 读取包含本人、助手、档案、等待、插件运行器的流程列表，核对 stageSummaries 中的类型、全名、显示名、参数及 time；停用能力仍有全名。
 
+- 分别读取 trials、fixes 对象阶段的列表摘要：carrier.kind 仍为 object，id 保留对象名，carrier.run 带 assistant/profile 类型、档案 id/name 和技能，未指定档案时为 assistant、未指定技能时为 null。流程包含多个 trials 时，fixes 只继承首个 trials 的 agent、skill；分别验证全部继承、只覆盖档案（含显式 assistant）、只覆盖技能、全部覆盖，结果与改后重跑一致。GET 不改写原始 definition。
+
 - 查看正在执行的插件阶段，carrier.runner 是运行器全名与名称；等待信号阶段的 waitingSignal 带信号全名与名称。停用后仍有 id，名称回退为全名；事项查看者可直接读取。
 
 - 用只有事项流程查看权的成员读取被检查拦下的阶段，先看到 pending；本人选择“等处理”后是 answered/hold，重新交结果并选择“仍然通过”后是 done 与 answered/override，时间匹配处理卡。成员回答仍返回 403；重开后不显示旧结果。

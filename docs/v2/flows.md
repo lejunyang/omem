@@ -781,6 +781,8 @@ npm run build
 
 `GET /api/flows` 的流程行增加 `stageSummaries`。每段有 `{ id, name, carrier, done, time }`：carrier.kind 为 owner / wait / assistant / profile / runner / object，插件运行器带 `{ id, name, params }`，档案带 id、name、skill；done.kind 为 signal / object / confirm / instruction / default，信号带全名 id、显示名 name 和 params，对象带 id 和 statuses；time 为 `{ at, window, minutes }`，未设置值为 null。停用能力的名称回退到全名 id。原 definition、raw 和文字描述保持可用，列表按流程查看空间裁剪。
 
+`trials`、`fixes` 保留对象的 `carrier: { kind: "object", id, name }`，并增加 `carrier.run: { kind: "assistant" | "profile", id, name, skill }` 表示执行者。未指定档案时为 `{ kind: "assistant", id: "assistant", name: "助手" }`；指定档案时 id 和 name 为档案名，未指定技能时 skill 为 null。fixes 自身的 agent、skill 各自优先，缺少的字段从流程中首个 trials 阶段继承；继承后仍缺档案才使用 assistant。显式写 agent: assistant 也会覆盖继承的档案。其他对象不增加 run，原始 definition 保留写入的字段。
+
 事项流程 `GET /api/items/:id/flow` 的插件阶段新增 `carrier.runner: { id, name }`；doing 的 `waitingSignal` 新增全名 `id` 和显示名 `name`，内置 Git 信号也有这两项。能力停用时 name 回退到 id，读事项即可取得这些字段，沿用事项与流程查看权限。
 
 事项阶段的 `gateReview.ask` 为 `{ id, status: "pending" | "answered" | "cancelled", choice: "override" | "hold" | null, answeredAt }`。override 是“仍然通过”，hold 是“等处理”。通过后仍保留这次处理结果；重开、复核或重新交结果清掉旧结果。可查看事项流程的人可读取，答复仍只有本人。只投影处理状态，不返回卡片的私有上下文。
