@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { offerReviewResolve } from "./review-sync.ts";
+import { offerReviewResolve, reviewResolutionChanged } from "./review-sync.ts";
 import { findingEvent } from "../plugins/event-store.ts";
 import { all, one, run as exec, withinTx } from "../core/db.ts";
 import { git } from "../core/git.ts";
@@ -124,6 +124,7 @@ export function recordPrior(app: App, runId: string, prior: PriorVerdict[]) {
       Object.assign(cur, { checked_run: runId, resolution: p.status, resolution_note: p.note ?? null });
       findingEvent(app, "finding.resolution", owner, cur, p.status, p.note ?? "", "agent");
       if (p.status === "fixed") offerReviewResolve(app, runId, [p.id], true);
+      else reviewResolutionChanged(app, runId, p.id);
     }
   });
   return prior.length;

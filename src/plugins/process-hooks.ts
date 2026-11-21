@@ -19,6 +19,16 @@ const comment = z.object({ id: z.string().min(1).max(500), url: z.httpUrl().max(
 const thread = z.object({ state: z.enum(["open", "replied", "resolved", "outdated"]), reply: z.object({
   author: z.string().min(1).max(500), at: z.iso.datetime({ offset: true }), summary: z.string().max(1000),
 }).optional() });
+async function untilAbort<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted();
+  let abort!: () => void;
+  const expired = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try { return await Promise.race([work(), expired]); }
+  finally { signal.removeEventListener("abort", abort); }
+}
 export const metricProviders = new Map<string, Entry<MetricProvider>>();
 
 export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[]): ProcessApi {
@@ -67,9 +77,9 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
       if ([...reviewProviders.values()].some(e => e.plugin === manifest.id && e.def.objectKind === def.objectKind))
         throw new Error("对象种类已有评审提供者");
       add<ReviewProvider>(reviewProviders, { ...def,
-        publish: async (ctx, req) => comment.parse(await def.publish(ctx, req)),
-        readThread: async (ctx, ref) => thread.parse(await def.readThread(ctx, ref)),
-        resolve: def.resolve && (async (ctx, ref, note) => thread.parse(await def.resolve!(ctx, ref, note))),
+        publish: async (ctx, req) => comment.parse(await untilAbort(ctx.signal, () => def.publish(ctx, req))),
+        readThread: async (ctx, ref) => thread.parse(await untilAbort(ctx.signal, () => def.readThread(ctx, ref))),
+        resolve: def.resolve && (async (ctx, ref, note) => thread.parse(await untilAbort(ctx.signal, () => def.resolve!(ctx, ref, note)))),
       });
     },
     metricProvider(def) {

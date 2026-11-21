@@ -90,3 +90,26 @@ it.each(["item","object"])("缺少关联 %s 时不生成发布卡",what => {
   done();
   expect(view().pending).toEqual([]);
 });
+
+it("多个对象时只发本人在卡片里选中的对象与问题",async () => {
+  provider();
+  run(app.db,"insert into flow_objects(id,kind,key,title,status,link,changed_at,updated_at) values('two','demo:pr','pr-2','项目 B','open','https://example.org/pr2','a','a')");
+  run(app.db,"insert into item_materials(item_id,kind,ref,created_at) values(?,'object','two','a')",item);
+  done();
+  const fid = view().findings[1].id;
+  await answerAsk(app,view().pending[0].id,{by:"owner",value:{object:"2. 项目 B",findings:{[fid]:{choice:"发布"}}}});
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect(publish.mock.calls[0][1]).toMatchObject({findingId:fid,objectKey:"pr-2"});
+});
+
+it("平台先结束讨论时撤回尚未确认的结束卡",async () => {
+  provider();
+  done();
+  await yes(view().pending[0].id);
+  const next = createRun(app,{kind:"code",spaceId:"personal",title:"复审",input:{itemId:item,rereviewOf:id}});
+  recordPrior(app,next.id,[{id:view().findings[0].id,status:"fixed"}]);
+  readThread.mockResolvedValue({state:"resolved"});
+  await refreshThreads(app,{object:"obj"});
+  expect(reviewSyncView(app,next.id,"owner").pending).toEqual([]);
+  expect(resolve).not.toHaveBeenCalled();
+});

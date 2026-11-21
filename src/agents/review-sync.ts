@@ -7,16 +7,19 @@ import { reviewProviders } from "../plugins/process-hooks.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
 import type { DiffAnchor, ThreadState } from "../plugins/types.ts";
 import { itemAccess } from "../items/access.ts";
-import { createAsk, cancelHostAsks, registerAskHandler } from "./asks.ts";
+import { createAsk, cancelAsk, cancelHostAsks, registerAskHandler } from "./asks.ts";
 import { enqueuePluginEvent } from "../plugins/event-store.ts";
 import { addRunEvent, getRun } from "./runs.ts";
 import type { FindingRow } from "./review.ts";
 
-type External = Partial<ThreadState> & { url?: string; ref?: string; revision?: string; object?: string; provider?: string;
+export type ReviewExternal = Partial<ThreadState> & { url?: string; ref?: string; revision?: string; object?: string; provider?: string;
   anchor?: DiffAnchor; delivery?: "published" | "failed" | "relocate"; error?: string; checkedAt?: string; threadError?: string; syncedAt: string };
-const externalOf = (row: FindingRow): External | null => row.external ? JSON.parse(row.external) : null;
-const eligible = (f: FindingRow) => ["open", "accepted"].includes(f.state) && !f.merged_into && f.decision !== "wontfix" &&
-  f.resolution !== "fixed" && f.resolution !== "moot" && (!f.external || externalOf(f)?.delivery === "failed" && !externalOf(f)?.url);
+const externalOf = (row: FindingRow): ReviewExternal | null => row.external ? JSON.parse(row.external) : null;
+function eligible(f: FindingRow) {
+  const ext = externalOf(f);
+  return ["open", "accepted"].includes(f.state) && !f.merged_into && f.decision !== "wontfix" &&
+    f.resolution !== "fixed" && f.resolution !== "moot" && (!ext || ext.delivery === "failed" && !ext.url);
+}
 function findings(app: App, id: string) {
   return all<FindingRow>(app.db, "select f.* from reviews r join review_findings f on f.review_id=r.id where r.code_run_id=? order by f.id", id);
 }
@@ -40,7 +43,10 @@ function pending(app: App, id: string) {
 }
 export function reviewSyncView(app: App, id: string, user: string) {
   return { objects: targets(app, id, user).map(({ key, kind, ...o }) => o),
-    findings: [...findings(app, id), ...checkedFindings(app, id)].map(f => ({ id: f.id, eligible: !f.resolved_run && eligible(f), external: externalOf(f) })), pending: pending(app, id) };
+    findings: [...findings(app, id), ...checkedFindings(app, id)].map(f => {
+      const external = externalOf(f);
+      return { id: f.id, eligible: eligible(f), delivery: external?.delivery ?? (external?.url ? "published" : "unpublished"), external };
+    }), pending: pending(app, id) };
 }
 
 function anchorFor(file: string | null, line: number | null, head: string | null | undefined, repos: string[]): DiffAnchor | undefined {
@@ -79,13 +85,14 @@ export function offerReviewPublish(app: App, id: string, selection?: { object: s
   return { askId: ask.id, state: "pending" };
 }
 
-const active = new WeakMap<App, Set<number>>();
+const active = new WeakMap<App, Map<number, Promise<void>>>();
 async function exclusive(app: App, fid: number, fn: () => Promise<void>) {
   let busy = active.get(app);
-  if (!busy) active.set(app, busy = new Set());
-  if (busy.has(fid)) return;
-  busy.add(fid);
-  try { await fn(); } finally { busy.delete(fid); }
+  if (!busy) active.set(app, busy = new Map());
+  const previous = busy.get(fid);
+  const next = previous ? previous.catch(() => {}).then(fn) : fn();
+  busy.set(fid, next);
+  try { await next; } finally { if (busy.get(fid) === next) busy.delete(fid); }
 }
 function requireOwner(by: string) {
   if (by !== OWNER) throw new HttpError(403, "外部评审操作须由本人确认");
@@ -109,14 +116,20 @@ async function publish(app: App, id: string, user: string, object: string, ids: 
   requireOwner(user);
   const review = getRun(app, id);
   if (review.output.reviewStage !== "done") throw new HttpError(409, "评审已变化");
-  for (const fid of ids) await exclusive(app, fid, async () => {
-    const target = targets(app, id, user).find(o => o.id === object);
-    if (!target) throw new HttpError(409, "目标对象已变化");
-    const entry = reviewProviders.get(target.provider)!;
-    const f = one<FindingRow>(app.db, "select f.* from review_findings f join reviews r on r.id=f.review_id where f.id=? and r.code_run_id=?", fid,id);
-    if (!f || !eligible(f)) return;
+  const target = targets(app, id, user).find(o => o.id === object);
+  if (!target) throw new HttpError(409, "目标对象已变化");
+  const entry = reviewProviders.get(target.provider)!;
+  const selected = all<FindingRow>(app.db, `select f.* from review_findings f join reviews r on r.id=f.review_id
+    where r.code_run_id=? and f.id in (select value from json_each(?)) order by f.id`, id, JSON.stringify(ids)).filter(eligible);
+  // Recheck this row and its attachment at the write boundary: a previous network call yielded control.
+  const current = app.db.prepare(`select 1 from review_findings f, item_materials m where f.id=? and f.external is ?
+    and f.state in ('open','accepted') and coalesce(f.decision,'')!='wontfix' and coalesce(f.resolution,'') not in ('fixed','moot')
+    and m.item_id=? and m.kind='object' and m.ref=?`);
+  for (const f of selected) await exclusive(app, f.id, async () => {
+    const fid = f.id;
+    if (!current.get(fid, f.external ?? null, String(review.input.itemId), object) || reviewProviders.get(target.provider) !== entry) return;
     const anchor = anchorFor(f.file_path, f.line, f.reviewed_head, review.input.repos as string[] ?? [review.spaceId!]);
-    const ext: External = { object, provider: target.provider, anchor, syncedAt: now() };
+    const ext: ReviewExternal = { object, provider: target.provider, anchor, syncedAt: now() };
     try {
       if (!anchor) throw Object.assign(new Error("缺少评审时的提交、文件或行号"), { code: "REVIEW_ANCHOR_OUTDATED" });
       const ctx = entry.context(app, user, review.spaceId!, AbortSignal.timeout(15000));
@@ -142,13 +155,13 @@ const threadRows = `select f.*,r.code_run_id origin,u.space_id space,o.kind,i.sp
   left join items i on i.id=json_extract(u.input,'$.itemId')
   left join item_materials m on m.item_id=i.id and m.kind='object' and m.ref=json_extract(f.external,'$.object')
   left join flow_objects o on o.id=m.ref where ${openThread}`;
-function threadProvider(row: ThreadRow, ext: External) {
+function threadProvider(row: ThreadRow, ext: ReviewExternal) {
   const entry = reviewProviders.get(ext.provider!);
   if (entry && row.kind === entry.plugin + ":" + entry.def.objectKind && pluginObjectKind(row.kind) &&
       (!entry.spaces.length || [row.space,row.itemSpace].every(s => entry.spaces.includes(s)))) return entry;
 }
 
-function saveThread(app: App, row: ThreadRow, ext: External, update: Partial<External>, event: boolean) {
+function saveThread(app: App, row: ThreadRow, ext: ReviewExternal, update: Partial<ReviewExternal>, event: boolean) {
   const next = { ...ext, ...update, checkedAt: now() };
   return withinTx(app.db, () => {
     if (!run(app.db, "update review_findings set external=? where id=? and external=?", JSON.stringify(next), row.id, row.external!).changes) return false;
@@ -158,6 +171,7 @@ function saveThread(app: App, row: ThreadRow, ext: External, update: Partial<Ext
       enqueuePluginEvent(app, "finding.thread", row.space, () => ({ userId: OWNER, entity: { kind: "finding", id: String(row.id) }, actor: { kind: "host" }, data }));
       addRunEvent(app, row.origin, "finding.thread", data);
     }
+    if (next.state === "resolved" || next.state === "outdated") retireResolveAsks(app, row);
     return true;
   });
 }
@@ -190,14 +204,41 @@ function resolvable(app: App, id: string, ids: number[]) {
   return all<ThreadRow>(app.db, threadRows + " and f.resolution='fixed' and (f.checked_run=? or r.code_run_id=?) and f.id in (select value from json_each(?))",
     id,id,JSON.stringify(ids)).filter(r => threadProvider(r, externalOf(r)!)?.def.resolve);
 }
+function threadIdentity(f: FindingRow) {
+  const ext = externalOf(f);
+  return JSON.stringify([ext?.provider,ext?.object,ext?.ref,ext?.url]);
+}
+// Keep a grouped card while any of its originally selected discussions can still be closed.
+function retireResolveAsks(app: App, row: ThreadRow) {
+  for (const id of new Set([row.origin, row.checked_run].filter((x): x is string => !!x))) {
+    for (const ask of resolveAsks(app, id)) {
+      if (!ask.ids.includes(row.id)) continue;
+      if (!resolvable(app,id,ask.ids).some(f => ask.refs[f.id] === threadIdentity(f))) cancelAsk(app,ask.id,"讨论或复审结论已变化");
+    }
+  }
+}
+function resolveAsks(app: App, id: string) {
+  return all<{ id: string; context: string }>(app.db, `select id,context from asks where run_id=? and status='pending'
+    and json_extract(context,'$.handler')='review-resolve'`, id).map(row => {
+      const ctx = JSON.parse(row.context);
+      return { id: row.id, ids: ctx.findings as number[], refs: ctx.refs as Record<string,string> };
+    });
+}
+export function reviewResolutionChanged(app: App, id: string, fid: number) {
+  const row = one<ThreadRow>(app.db, threadRows + " and f.id=? and f.checked_run=?", fid,id);
+  if (row) retireResolveAsks(app,row);
+}
 export function offerReviewResolve(app: App, id: string, ids: number[], automatic = false) {
   const rows = resolvable(app, id, ids);
   if (!automatic && rows.length !== new Set(ids).size) throw new HttpError(409, "所选问题的讨论或复审结论已变化");
   if (!rows.length) return null;
+  const refs = Object.fromEntries(rows.map(f => [f.id, threadIdentity(f)]));
+  const existing = resolveAsks(app,id).find(a => a.ids.length === rows.length && rows.every(f => a.refs[f.id] === refs[f.id]));
+  if (existing) return { askId: existing.id, state: "pending" };
   const ask = createAsk(app, { runId: id, userId: OWNER, conversationId: null, allowText: false,
     question: "复审确认已修，结束平台上的讨论吗？\n" + rows.map(f => "#" + f.id + " " + f.title + " " + externalOf(f)!.url).join("\n"),
     options: [{ label: "结束讨论" }, { label: "保持原状" }],
-    context: { handler: "review-resolve", action: "resolve", findings: rows.map(f => f.id) } });
+    context: { handler: "review-resolve", action: "resolve", refs, findings: rows.map(f => f.id) } });
   return { askId: ask.id, state: "pending" };
 }
 
@@ -206,7 +247,7 @@ registerAskHandler("review-resolve", async (app, ask, args) => {
   requireOwner(ask.answeredBy!);
   for (const fid of args.findings as number[]) await exclusive(app, fid, async () => {
     const [row] = resolvable(app, ask.runId!, [fid]);
-    if (!row) return;
+    if (!row || (args.refs as Record<string,string>)[fid] !== threadIdentity(row)) return;
     const ext = externalOf(row)!;
     const entry = threadProvider(row, ext)!;
     const ctx = entry.context(app, OWNER, row.space, AbortSignal.timeout(15000));
