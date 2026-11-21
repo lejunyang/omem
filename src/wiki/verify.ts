@@ -225,7 +225,7 @@ export async function writeAndVerify(ctx: RunContext) {
   const userId = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? OWNER;
   const verify = verifyOn(app, spaceId, input);
   // The code the page will cite, as it is now (an index left behind gives plain-text code and stale lines).
-  const indexes = await refreshCodeIndexes(app, codeSpaces(app, spaceId, scopeFor(app, userId, readSpaces)), (text) => ctx.event("status", { text }));
+  const indexes = await refreshCodeIndexes(app, codeSpaces(app, spaceId, scopeFor(app, userId, readSpaces)), (text) => ctx.event("status", { text }), undefined, userId);
   if (indexes.synced.length) ctx.event("status", { text: `已同步代码索引：${indexes.synced.join("、")}` });
   const exists = pageExists(app, spaceId, brief.slug);
   const pagesNow = listPages(app, spaceId);

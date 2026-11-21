@@ -8,6 +8,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now, sha256, sliceLines } from "../core/util.ts";
 import { indexText } from "../search/tokenize.ts";
 import { vectorIndex } from "../search/vectors.ts";
+import { sourceDisplaySchema } from "../plugins/formats.ts";
 import { chunkSource } from "./chunk.ts";
 
 export type SourceKind = "doc" | "code" | "chat" | "note" | "web" | "image" | "conversation" | "event" | "meeting" | "activity" | "work";
@@ -123,13 +124,15 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
   }
   const text = input.text.replace(/\r\n?/g, "\n");
   const hash = sha256(text);
-  const existing = one<{ id: string; hash: string; deleted_at: string | null }>(
+  const existing = one<{ id: string; hash: string; meta: string; title: string; mime: string | null; deleted_at: string | null }>(
     app.db,
-    "select id, hash, deleted_at from sources where space_id = ? and uri = ?",
+    "select id, hash, meta, title, mime, deleted_at from sources where space_id = ? and uri = ?",
     input.spaceId,
     input.uri,
   );
-  if (existing && existing.hash === hash && !existing.deleted_at) {
+  const parsed = input.meta?.parser || (existing && JSON.parse(existing.meta || "{}").parser);
+  const sameFormat = !parsed || (existing?.meta === JSON.stringify(input.meta ?? {}) && existing.title === input.title && existing.mime === (input.mime ?? null));
+  if (existing && existing.hash === hash && !existing.deleted_at && sameFormat) {
     if (prepared) finishArchive(app, existing.id, prepared);
     return { id: existing.id, status: "unchanged" };
   }
@@ -173,7 +176,7 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
         originKeyOf(input),
       );
     }
-    writeIndex(app, id, input.spaceId, input.kind, input.uri, input.title, text);
+    writeIndex(app, id, input.spaceId, input.kind, input.uri, input.title, text, input.meta);
     if (before !== null) relocateNotes(app, id, before, text);
   });
   if (!["code", "conversation", "activity", "work"].includes(input.kind)) applyAttentionRules(app, id, { ...input, text });
@@ -186,8 +189,9 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
 }
 
 /** Chunks, full-text rows, symbols and references for one source (caller holds the transaction). */
-function writeIndex(app: App, id: string, spaceId: string, kind: SourceKind, uri: string, title: string, text: string) {
-  const { chunks, outline } = chunkSource(kind, uri, title, text);
+function writeIndex(app: App, id: string, spaceId: string, kind: SourceKind, uri: string, title: string, text: string, meta?: Record<string, unknown>) {
+  const display = meta?.parser && meta.display ? sourceDisplaySchema.safeParse(meta.display).data : undefined;
+  const { chunks, outline } = chunkSource(kind, uri, title, text, display);
   const insChunk = app.db.prepare("insert into chunks(source_id,space_id,ord,kind,title,path,line_start,line_end,text) values(?,?,?,?,?,?,?,?,?)");
   const insFts = app.db.prepare("insert into chunks_fts(rowid,title,body) values(?,?,?)");
   chunks.forEach((c, i) => {
@@ -204,9 +208,9 @@ function writeIndex(app: App, id: string, spaceId: string, kind: SourceKind, uri
 
 /** Rebuild one stored source's index from its text, inside the caller's transaction (merging libraries). */
 export function reindexSource(app: App, id: string) {
-  const s = one<{ space_id: string; kind: string; uri: string; title: string; text: string; deleted_at: string | null }>(app.db, "select space_id, kind, uri, title, text, deleted_at from sources where id = ?", id);
+  const s = one<{ space_id: string; kind: string; uri: string; title: string; text: string; meta: string; deleted_at: string | null }>(app.db, "select space_id, kind, uri, title, text, meta, deleted_at from sources where id = ?", id);
   clearIndex(app, id);
-  if (s && !s.deleted_at) writeIndex(app, id, s.space_id, s.kind as SourceKind, s.uri, s.title, s.text);
+  if (s && !s.deleted_at) writeIndex(app, id, s.space_id, s.kind as SourceKind, s.uri, s.title, s.text, json(s.meta, {}));
 }
 
 function clearIndex(app: App, id: string) {

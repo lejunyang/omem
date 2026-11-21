@@ -1013,7 +1013,7 @@ registerHandler("wiki-plan", async (ctx) => {
   const existing = listPages(ctx.app, spaceId);
   // The code the plan reads, indexed as it is now; and what related spaces already cover (wiki/checks.ts, verify.ts).
   const { codeSpaces, refreshCodeIndexes } = await import("../wiki/checks.ts");
-  const indexes = await refreshCodeIndexes(ctx.app, codeSpaces(ctx.app, spaceId, scopeFor(ctx.app, userId, sources)), (text) => ctx.event("status", { text }));
+  const indexes = await refreshCodeIndexes(ctx.app, codeSpaces(ctx.app, spaceId, scopeFor(ctx.app, userId, sources)), (text) => ctx.event("status", { text }), undefined, userId);
   const relatedPages = relatedIds(ctx.app, spaceId)
     .filter((id) => !allowed || allowed.includes(id))
     .map((id) => {
@@ -1130,7 +1130,7 @@ registerHandler("wiki-organize", async (ctx) => {
 registerHandler("sync", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
   const sub = await syncSubmodules(ctx.app, spaceId, (text) => ctx.event("status", { text }));
-  const report = await syncDirectorySpace(ctx.app, spaceId, (done, total) => ctx.event("status", { text: `同步 ${done}/${total}` }));
+  const report = await syncDirectorySpace(ctx.app, spaceId, (done, total) => ctx.event("status", { text: `同步 ${done}/${total}` }), runUser(ctx.app, ctx.run.id));
   ctx.event("status", { text: `新增 ${report.created}，更新 ${report.updated}，移除 ${report.removed}，未变 ${report.unchanged}` });
   const space = getSpace(ctx.app, spaceId);
   if ((report.updated || report.removed) && listPages(ctx.app, spaceId).length && space.settings.autoLint !== false && stalePages(ctx.app, spaceId).length)

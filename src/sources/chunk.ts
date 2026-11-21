@@ -1,3 +1,4 @@
+import type { SourceDisplay } from "../plugins/types.ts";
 import { extname } from "node:path";
 import { parseCode, type CodeOutline } from "./code.ts";
 
@@ -14,12 +15,15 @@ const MAX_CHUNK = 2400;
 const TARGET = 1400;
 
 /** Split a line range (0-based, inclusive) into windows near TARGET chars, preferring blank-line breaks. */
-function windows(lines: string[], start: number, end: number, base: Omit<Chunk, "lineStart" | "lineEnd" | "text">): Chunk[] {
+function windows(lines: string[], start: number, end: number, base: Omit<Chunk, "lineStart" | "lineEnd" | "text">, ranges: [number, number][] = []): Chunk[] {
   const out: Chunk[] = [];
   let from = start;
   let size = 0;
+  let record = 0;
   for (let i = start; i <= end; i++) {
     size += lines[i].length + 1;
+    while (record < ranges.length && i + 1 >= ranges[record][1]) record++;
+    if (record < ranges.length && i + 1 >= ranges[record][0]) continue;
     const atBreak = !lines[i].trim();
     if ((size >= TARGET && atBreak) || size >= MAX_CHUNK || i === end) {
       const text = lines.slice(from, i + 1).join("\n");
@@ -130,7 +134,13 @@ export function isSourceFile(path: string) {
   return classify(path) === "code" && !/\.min\.[cm]?js$/i.test(path);
 }
 
-export function chunkSource(kind: string, uri: string, title: string, text: string): { chunks: Chunk[]; outline?: CodeOutline } {
+export function chunkSource(kind: string, uri: string, title: string, text: string, display?: SourceDisplay): { chunks: Chunk[]; outline?: CodeOutline } {
+  if (display) {
+    const lines = text.split("\n");
+    const ranges = display.kind === "records" ? display.items.map(item => item.lines) : [...display.rowLines];
+    ranges.sort(([a], [b]) => a - b);
+    return { chunks: windows(lines, 0, lines.length - 1, { kind: "section", title, path: "" }, ranges) };
+  }
   if (kind === "code") {
     const kindOf = classify(uri);
     if (kindOf === "code") return chunkCode(uri, text);

@@ -694,7 +694,7 @@ export async function captureRecentDocs(app: App, touched: Map<string, Set<strin
       const seenKey = forKey(`lark_recent_doc:${url}`, who);
       if (one(app.db, "select 1 from kv where key = ?", seenKey) || one(app.db, "select 1 from sources where uri = ? and space_id = ?", url, spaceId) || (!who && one(app.db, "select 1 from sources where uri = ?", url))) continue;
       try {
-        const s = await importUrl(app, spaceId, url, { archive: true });
+        const s = await importUrl(app, spaceId, url, { archive: true, user: who?.userId });
         touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), s.id, ...(s.related ?? [])]));
       } catch (e) {
         console.warn(`[omem] 读取最近打开的飞书文档失败 ${url}：${(e as Error).message}`);

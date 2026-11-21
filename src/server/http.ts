@@ -103,7 +103,8 @@ import { closeReadProcess } from "../search/read-process.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { readRunFile, type RunFile } from "../agents/run-file.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
-import { APPEND_ONLY, deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
+import { MAX_INPUT, parserList, kindList, checkKind } from "../plugins/formats.ts";
+import { APPEND_ONLY, pageExists, deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
 import { mark } from "../core/loop-monitor.ts";
 import { CATEGORY_KINDS, categoryStatus, decisionStatus, decisionStatuses, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider } from "../core/ai-keys.ts";
@@ -148,7 +149,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { stopSessionCleanup } = await import("../agents/session-cleanup.ts");
     await stopSessionCleanup(app);
   });
-  await server.register(fastifyMultipart, { limits: { fileSize: 200 * 1024 * 1024 } });
+  await server.register(fastifyMultipart, { limits: { fileSize: MAX_INPUT } });
 
   server.setErrorHandler((error: Error & { statusCode?: number; status?: number }, _req, reply) => {
     const status = error instanceof HttpError ? error.status : (error.statusCode ?? 500);
@@ -717,6 +718,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!m || (who(req) !== OWNER && one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", m.conversation_id)?.user_id !== who(req))) throw new HttpError(404, "消息不存在");
     return { id: m.id, conversationId: m.conversation_id, role: m.role, text: m.text, createdAt: m.created_at };
   });
+  function formatScope(req: FastifyRequest, capability: "sources.view" | "wiki.view") {
+    const { space } = q(z.object({ space: z.string().min(1).optional() }), req.query);
+    if (!space) return spacesWithCapability(app, who(req), capability);
+    requirePerm(app, who(req), capability, space);
+    return space;
+  }
+  server.get("/api/sources/parsers", async req => parserList(formatScope(req, "sources.view"), who(req)));
   server.get("/api/sources/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     // `window`: that many lines to start with, a chat's latest and anything else's first.
@@ -761,7 +769,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/sources/url", async (req) => {
     const b = q(z.object({ space: z.string().default("personal"), url: z.string().url(), ingest: z.boolean().default(true) }), req.body);
-    const r = await importUrl(app, b.space, b.url);
+    const r = await importUrl(app, b.space, b.url, { user: who(req) });
     const ids = [...(r.status !== "unchanged" ? [r.id] : []), ...(r.related ?? [])];
     const ingest = b.ingest && ids.length ? scheduleIngest(app, b.space, ids) : null;
     return { ...r, ingestRun: ingest?.id ?? null };
@@ -781,8 +789,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         const file = join(dir, part.filename.replace(/[\\/]/g, "_"));
         await writeFile(file, await part.toBuffer());
         try {
-          const r = await importFile(app, space, file, part.filename);
-          results.push(r ? { name: part.filename, id: r.id, status: r.status } : { name: part.filename, error: "不支持的文件类型" });
+          const r = await importFile(app, space, file, part.filename, undefined, false, { mime: part.mimetype, user: who(req) });
+          results.push(r ? { name: part.filename, id: r.id, status: r.status } : { name: part.filename, error: "没有能读这种格式的解析器" });
         } catch (e) {
           results.push({ name: part.filename, error: (e as Error).message });
         }

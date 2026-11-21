@@ -341,7 +341,7 @@ async function relinkSpace(ctx: ToolContext, id: string, root: string) {
   const { relinkRepoSpace } = await import("./repo-relink.ts");
   const r = relinkRepoSpace(ctx.app, id, root);
   if (!r.done) throw new HttpError(409, `空间 ${id} 还有没应用的交办（${r.pending.map((p) => p.run).join("、")}），它们的工作区在原来的仓库里；先应用，或本人同意后用 clean_code_runs 丢弃再改`);
-  const report = await syncDirectorySpace(ctx.app, id);
+  const report = await syncDirectorySpace(ctx.app, id, undefined, ctx.userId ?? OWNER);
   return `空间 ${id}（${s.name}）改为关联 ${r.root}（原来是 ${r.old}）。重新导入：新增 ${report.created}，更新 ${report.updated}。${r.pool ? `omem 自建的 ${r.pool} 个工作区属于原来的仓库，已删掉，下次交办在新目录的仓库上重建。` : ""}交办在 repo_spaces 里写 "${id}"。`;
 }
 
@@ -420,7 +420,7 @@ def({
     try {
       const { syncSubmodules } = await import("./jobs.ts");
       const sub = await syncSubmodules(ctx.app, s.id);
-      const report = await syncDirectorySpace(ctx.app, s.id);
+      const report = await syncDirectorySpace(ctx.app, s.id, undefined, ctx.userId ?? OWNER);
       const subText = !sub
         ? ""
         : `\n子模块：共 ${sub.total} 个，已检出并索引 ${sub.ready} 个${sub.failed.length ? `；拉取失败 ${sub.failed.length} 个（${sub.failed.map((f) => `${f.path}：${f.error}`).join("；").slice(0, 600)}）` : ""}${!sub.managed && sub.ready < sub.total ? "；本地仓库由本人管理，未检出的子模块需要本人在仓库里 git submodule update --init --recursive 后再同步" : ""}`;
@@ -4319,7 +4319,7 @@ def({
   write: true,
   schema: z.object({ url: z.string().url(), space: z.string().optional(), depth: z.number().int().min(0).max(5).optional() }),
   handler: async (ctx, a) => {
-    const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url, { depth: a.depth });
+    const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url, { depth: a.depth, user: ctx.userId ?? OWNER });
     const linked = r.related?.length ? `；链接的文档新增或更新 ${r.related.length} 篇：${r.related.join("、")}` : "";
     const missing = r.missing?.length ? `；读不到 ${r.missing.length} 篇（已提醒本人）：${r.missing.map((m) => m.title || m.url).join("、")}` : "";
     return `已保存原件 ${r.id}（${r.status}）${linked}${missing}`;
@@ -4745,7 +4745,7 @@ const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后
 async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
   featureGate(ctx, "messages");
   const { messageFile } = await import("../channels/lark-message-files.ts");
-  const f = await messageFile(ctx.app, messageId, key, { space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id) });
+  const f = await messageFile(ctx.app, messageId, key, { user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id) });
   if (f.sourceId) {
     await requireReadable(ctx.app, ctx.userId ?? OWNER, f.sourceId);
     const s = getSource(ctx.app, f.sourceId);

@@ -128,6 +128,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
 
   // sources
   "GET /api/sources": cap("sources.view", "q.space"),
+  "GET /api/sources/parsers": cap("sources.view", "list"),
   "GET /api/sources/levels": cap("sources.view", "list"),
   "GET /api/sources/review": cap("sources.view", "q.space"),
   "GET /api/sources/tree": cap("sources.view", "q.space"),
