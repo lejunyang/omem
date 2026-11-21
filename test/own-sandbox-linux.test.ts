@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
@@ -27,6 +27,8 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
   const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "peer-gate", FAKE_LEGACY: "1" } });
   const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: "personal", runId: null, profile, cwd: work });
   const box = prep.isolation.box!;
+  box.state = [join(root, "cache")];
+  box.runDir = join(app.runsDir, "sample", "scratch");
   box.runtime.push(home); // Restore the fixture HOME read-only under the private /tmp.
   box.snapshot = snapshot;
   const env = { ...prep.mcp.env, HOME: home };
@@ -40,9 +42,10 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
     return output;
   };
   try {
-    await exec(`touch created "${extra}/allowed"; test -d "$HOME"; ! touch "$HOME/elsewhere" || exit 1
+    await exec(`touch created "${extra}/allowed"; touch "$OMEM_RUN_DIR/created"; test -d "$HOME"; ! touch "$HOME/elsewhere" || exit 1
       test ! -e "${app.home}/secrets/sample"; test ! -e "${app.home}/omem.db"
       omem tool help search
+      curl -fsS -H "authorization: Bearer $OMEM_TOKEN" -H "content-type: application/json" -H "accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$OMEM_URL/mcp" | grep -q '"tools"'
       acme && exit 1; test "$?" = 126`);
     expect(existsSync(join(work, "created"))).toBe(true);
     await exec(`! touch "${work}/forbidden" || exit 2; node -e "require('fs').writeFileSync('tested','ok')"`, snapshot, true);
@@ -56,6 +59,16 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
       expect(status.join(" ")).toContain("完全访问：yolo（后端自己的沙箱和审批关了");
       expect(JSON.parse(response.text).status).toBe(126);
     } finally { handle.close(); }
+    const reviewer = prepareRun(app, { actor: { role: "reviewer" }, reviewCheck: true, profile, cwd: work, spaceId: "personal", runId: null });
+    const review = await openAcp({ ...profile, env: { ...profile.env, FAKE_MODE: "permission" } },
+      { cwd: work, ownSandbox: { ...box, readOnly: true }, fullAccess: reviewer.fullAccess, acpWritable: reviewer.acpWritable });
+    try {
+      for (const kind of ["edit", "delete", "move"]) {
+        const result = await review.prompt(JSON.stringify({ toolCall: { toolCallId: "call", kind, title: kind },
+          options: [{ kind: "allow_once", name: "yes", optionId: "yes" }, { kind: "reject_once", name: "no", optionId: "no" }] }), () => {});
+        expect(JSON.parse(result.text).optionId).toBe("no");
+      }
+    } finally { review.close(); revokeToolToken(reviewer.token); }
     const bridge = mcpBridge();
     const child = launch(bridge.command, bridge.args, { cwd: work, env, ownSandbox: box });
     const result = once(child.stdout, "data");
@@ -63,5 +76,5 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + "\n");
     try { expect(String(await Promise.race([result, closed]))).toContain('"tools"'); }
     finally { child.stdin.end(); await closed; }
-  } finally { revokeToolToken(prep.token); await server.close(); app.db.close(); }
+  } finally { revokeToolToken(prep.token); await server.close(); app.db.close(); rmSync(root, { recursive: true, force: true }); rmSync(app.home, { recursive: true, force: true }); }
 }, 30000);

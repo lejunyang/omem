@@ -13,7 +13,8 @@ import { cachePaths, canonical, normalizeSandbox, ownMounts, selectOwnSandbox, s
 export function backendState(entry?: CatalogEntry, profile?: AgentProfile) {
   const env = { ...process.env, ...profile?.env };
   const history = profile?.sessionHistory ?? entry?.sessionHistory;
-  const paths = [...(entry?.statePaths ?? []), ...(entry?.skills ? [entry.skills.write] : [])];
+  const accountDirs = (profile?.account?.owns ?? entry?.account?.owns ?? []).map(p => join("~", p));
+  const paths = [...(entry?.statePaths ?? (history ? [] : accountDirs)), ...(entry?.skills ? [entry.skills.write] : [])];
   if (history) paths.push((history.env && env[history.env]) || history.root);
   return [...new Set(paths.map(path => expandPath(path, env)))];
 }
@@ -27,13 +28,15 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
   const data = canonical(app.home);
   const config = normalizeSandbox(settings, home, data);
   const entry = [...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(profile));
-  const state = [...backendState(entry, profile), ...cachePaths.map(p => join(home, p))].filter(existsSync);
+  const state = [...backendState(entry, profile).filter(existsSync), ...cachePaths.map(p => join(home, p))];
   const checked = normalizeSandbox({ ...config, writable: state }, home, data);
   const runtime = [join(data, "bin"), join(data, "library", "_skills"), omemInstallDir(), dirname(dirname(process.execPath)),
     ...(entry?.account?.mounts ?? []).map(p => expandPath(p))].map(canonical);
   const box = { home, data, state: checked.writable, writable: config.writable, hidden: config.hidden, runtime,
+    artifactDir: runId ? join(data, "artifacts", "inbox", runId) : undefined,
+    runDir: runId ? join(canonical(app.runsDir), runId, "scratch") : undefined,
     readOnly, snapshot: runId ? join(canonical(app.runsDir), runId, "snap") : undefined,
-    secretEnv: [app.config.lark.appSecretEnv, app.config.telegram.tokenEnv, app.config.onebot.tokenEnv, "LARKSUITE_CLI_APP_SECRET"].filter((s): s is string => !!s) };
+    secretEnv: [app.config.lark.appSecretEnv, app.config.telegram.tokenEnv, app.config.onebot.tokenEnv, app.config.embeddings.provider === "openai" ? app.config.embeddings.apiKeyEnv : undefined, "LARKSUITE_CLI_APP_SECRET"].filter((s): s is string => !!s) };
   const dir = canonical(cwd);
   if (dir !== data && under(dir, data) && !["library", "workspaces", "runs", "repos"].some(d => dir.startsWith(join(data, d) + "/")))
     throw new Error("工作目录位于 omem 私有数据内，不能挂回沙箱");
@@ -41,7 +44,7 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
     throw new Error("工作目录范围太大，不能在本人沙箱中授予写权限");
   const working = !readOnly || (box.snapshot && under(dir, box.snapshot)) ? [dir] : [];
   const list = [...working, ...box.state, ...box.writable, "/tmp"].filter(p => !box.hidden.some(h => under(p, h))).map(p => shortPath(p, home));
-  return { box, note: "在 omem 沙箱里。可写：" + list.join("、") + "及本轮产物。写别处会失败，要放开在 设置 → 安全 里加可写目录。" };
+  return { box, note: "在 omem 沙箱里。可写：" + list.join("、") + "及本轮临时目录和产物。写别处会失败，要放开在 设置 → 安全 里加可写目录。" };
 }
 
 export function sandboxStatus(app: App) {
@@ -52,7 +55,8 @@ export function sandboxStatus(app: App) {
     id: p.id, state: backendState([...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(p)), p),
   }));
   const example = backends.find(p => p.state.length) ?? backends[0];
-  const plan = ownMounts({ home, data, state: [...cachePaths.map(p => join(home, p)), ...(example?.state ?? [])].filter(existsSync).map(canonical),
+  const plan = ownMounts({ home, data, state: [...cachePaths.map(p => join(home, p)), ...(example?.state ?? []).filter(existsSync)].map(canonical),
+    runDir: join(data, "runs", "example", "scratch"),
     writable: [], hidden: [], runtime: [], readOnly: false, secretEnv: [] }, sample, undefined, join(data, "artifacts", "inbox", "example"));
   return { ...app.config.agents.ownSandbox, fullAccess: app.config.agents.fullAccess, support: sandboxSupport(), backends,
     defaults: { exampleBackend: example?.id, writable: [...plan.rw, "/tmp"], hidden: [data] },

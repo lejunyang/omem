@@ -41,7 +41,7 @@ import { categoryStatus } from "../core/ai-keys.ts";
 import { accountBlocked, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
 import { addRunEvent, runUser } from "./runs.ts";
 import { SandboxStartError } from "./spawn.ts";
-import { runAccess } from "./own-sandbox.ts";
+import { canonical, runAccess, under } from "./own-sandbox.ts";
 import { ownRun } from "./own-run.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
@@ -461,7 +461,7 @@ export function recordIsolation(app: App, runId: string | null, userId: string, 
   const reason = unisolatedReason(app, userId, profile);
   if (!reason) return;
   if (app.config.agents.accountIsolation === "require") throw new Error(`这台机器不能隔离成员的运行：${reason}`);
-  if (runId) addRunEvent(app, runId, "status", { text: `这次运行没有隔离：${reason}`, profile: profile.id });
+  if (runId) addRunEvent(app, runId, "status", { text: app.config.agents.ownSandbox.mode === "off" ? `这次运行没有隔离：${reason}` : `这次运行没有成员账号隔离：${reason}`, profile: profile.id });
 }
 
 export function prepareRun(
@@ -549,8 +549,13 @@ export function prepareRun(
   const allowWrites = !readOnly && (spec ? spec.writes : role!.writes);
   const guestTurn = !!input.guestTurn || (!spec && GUEST_ROLES.includes(roleName));
   const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId);
+  if (isolation.box && spec?.cwd && !input.cwd) {
+    const target = canonical(cwd);
+    if (under(target, isolation.box.data) && !under(target, canonical(space.rootPath ?? spaceDir(app, space.id))))
+      throw new Error("档案的工作目录不属于本空间，不能从 omem 数据目录挂回沙箱");
+  }
   const { fullAccess, acpWritable } = runAccess(app.config.agents.fullAccess, userId === OWNER && !input.shadow, guestTurn,
-    !!isolation.box, allowWrites, legacyFull);
+    !!isolation.box, allowWrites && !isolation.box?.readOnly, legacyFull);
   const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.

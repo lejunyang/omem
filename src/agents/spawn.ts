@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
 import { canonical, ownMounts, ownSandboxEnv, under, type OwnSandbox } from "./own-sandbox.ts";
@@ -64,11 +64,21 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
     const box = opts.ownSandbox;
     const cwd = canonical(opts.cwd);
     const command = canonical(resolved.file);
-    const runtime = [...box.runtime, command, installRoot(command), ...resolved.prefix.filter(isAbsolute)];
+    const runtime = [...box.runtime, resolved.file, command, installRoot(command), ...resolved.prefix.filter(isAbsolute)];
     // Only restore program mounts beneath a mask. Never restore an installation's parent over the data mask.
     const masked = (p: string) => p !== box.data && p !== "/tmp" && [box.data, "/tmp"].some(h => under(p, h));
-    const plan = ownMounts({ ...box, runtime: runtime.filter(masked) }, cwd, opts.workspace, opts.env?.OMEM_ARTIFACTS);
-    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(process.env, { ...opts.env, PATH: env.PATH }, box.secretEnv),
+    const grants = [...box.state, ...box.writable, ...(opts.workspace?.rw ?? []), ...(!box.readOnly ? [cwd] : [])];
+    const protectedRuntime = runtime.filter(p => masked(p) || grants.some(dir => under(p, dir)));
+    // Bind only the host-assigned inbox. A profile environment is not a mount declaration.
+    const inbox = box.artifactDir && opts.env?.OMEM_ARTIFACTS && canonical(opts.env.OMEM_ARTIFACTS) === box.artifactDir
+      ? box.artifactDir : undefined;
+    const plan = ownMounts({ ...box, runtime: protectedRuntime }, cwd, opts.workspace, inbox);
+    for (const dir of [box.runDir, ...box.state]) {
+      if (!dir || !plan.rw.includes(dir)) continue;
+      if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    }
+    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(process.env, { ...opts.env, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
       args: bwrapArgs({ ...plan, cwd, command: resolved.file, args: [...resolved.prefix, ...args] }) };
   } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...opts.env, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace) : null;
   const child = spawn(boxed?.file ?? resolved.file, boxed?.args ?? [...resolved.prefix, ...args], {

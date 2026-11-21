@@ -20,6 +20,7 @@ export function normalizeSandbox(settings: Settings, home: string, data: string,
       const raw = value === "~" || value.startsWith("~/") ? posix.join(home, value.slice(1)) : value;
       if (!posix.isAbsolute(raw) || /[\x00-\x1f]/.test(raw)) throw new Error("目录需要绝对路径或 ~/ 开头的路径");
       const path = real(posix.resolve(raw));
+      if (path.length > 1024) throw new Error("规范化后的目录过长");
       if ([real(home), real(data), "/tmp"].some(dir => under(dir, path)) ||
           ["/proc", "/sys", "/dev"].some(dir => under(path, dir)) ||
           (writable && (under(path, real(data)) || ["/usr", "/etc", "/var", "/run", "/opt", "/bin", "/lib", "/sbin", "/boot"].includes(path))))
@@ -38,7 +39,7 @@ export const cachePaths = [
 
 export type OwnSandbox = {
   data: string; home: string; state: string[]; writable: string[]; hidden: string[];
-  runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string;
+  runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
 };
 
 export function selectOwnSandbox(mode: Settings["mode"], local: boolean, memberAccount: boolean, probe: () => SandboxSupport) {
@@ -56,6 +57,7 @@ export function ownMounts(box: OwnSandbox, cwd: string, workspace?: WorkspaceMou
   const hide = [box.data, ...box.hidden, "/tmp"];
   const ro = [...box.runtime, ...(workspace?.ro ?? [])];
   const rw = [...box.state, ...box.writable];
+  if (box.runDir) rw.push(box.runDir);
   if (artifacts) rw.push(artifacts);
   if (workspace) rw.push(...workspace.rw);
   if (!workspace || box.snapshot && under(cwd, box.snapshot)) {
@@ -63,16 +65,16 @@ export function ownMounts(box: OwnSandbox, cwd: string, workspace?: WorkspaceMou
     if (cwd !== box.data) dest.push(cwd);
   }
   const visible = (path: string) => !box.hidden.some(h => under(path, h));
-  const protectedDirs = ro;
-  return { hide, ro: protectedDirs.filter(visible), rw: [...new Set(rw)].filter(p => visible(p) && !protectedDirs.some(r => under(p, r))),
-    links: workspace?.links, pointers: workspace?.pointers };
+  return { hide, ro: ro.filter(visible), rw: [...new Set(rw)].filter(p => visible(p) && !ro.some(r => under(p, r))),
+    links: workspace?.links?.filter(link => visible(link.path) && visible(link.target)),
+    pointers: workspace?.pointers?.filter(pointer => visible(pointer.path)) };
 }
 
 export function ownSandboxEnv(base: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv, secretEnv: string[]) {
   const out = { ...base };
   for (const key of Object.keys(out)) if (/^OMEM_/i.test(key)) delete out[key];
   Object.assign(out, run);
-  const runKeys = ["OMEM_TOKEN", "OMEM_URL", "OMEM_ARTIFACTS", "OMEM_COMMAND_GATE", "OMEM_DESKTOP_TOOLS", "OMEM_BROWSER_PROFILES"];
+  const runKeys = ["OMEM_TOKEN", "OMEM_URL", "OMEM_ARTIFACTS", "OMEM_RUN_DIR", "OMEM_COMMAND_GATE", "OMEM_DESKTOP_TOOLS", "OMEM_BROWSER_PROFILES"];
   for (const key of Object.keys(out)) if (secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
   out.TMPDIR = "/tmp";
   return out;
