@@ -14,6 +14,7 @@ import { commandExists } from "./spawn.ts";
 export type CatalogEntry = {
   /** Writable state of the local login beyond its session history and skill directory. */
   statePaths?: string[];
+  stateFiles?: string[];
   egressHosts?: string[];
   id: string;
   name: string;
@@ -88,7 +89,7 @@ export const acpCatalog: CatalogEntry[] = [
     account: { env: { TRAE_HOME: "{home}/.trae", XDG_RUNTIME_DIR: "{home}/.run", TMPDIR: "{home}/.tmp" }, dirs: [".trae", ".run", ".tmp"], owns: [".trae"], login: { args: ["login", "--sso-device"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, status: { args: ["login", "status"], user: "(?:as|user:?|account:?)\\s+([^\\s()]+)" }, logout: { args: ["logout"] } },
   },
   {
-    id: "claude", statePaths: ["${CLAUDE_CONFIG_DIR:-~/.claude}", "~/.claude.json"], egressHosts: ["api.anthropic.com","platform.claude.com"], name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" },
+    id: "claude", statePaths: ["${CLAUDE_CONFIG_DIR:-~/.claude}"], stateFiles: ["~/.claude.json"], egressHosts: ["api.anthropic.com","platform.claude.com"], name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" },
     // `claude setup-token` prints a long-lived token on the person's own machine; pasted here, it goes in the vault.
     account: { cli: "claude", env: { CLAUDE_CONFIG_DIR: "{home}/.claude" }, dirs: [".claude"], owns: [".claude", ".claude.json"], tokenEnv: "CLAUDE_CODE_OAUTH_TOKEN", status: { args: ["auth", "status"], user: "([^\\s\"]+@[^\\s\"]+)" } },
   },

@@ -2,17 +2,53 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { startServer } from "../src/server/http.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { prepareRun, mcpBridge } from "../src/agents/runner.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { openAcp } from "../src/agents/acp.ts";
-import { sandboxSupport } from "../src/agents/sandbox.ts";
+import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { ownRun } from "../src/agents/own-run.ts";
 import { launch } from "../src/agents/spawn.ts";
 
 const support = sandboxSupport();
+it.skipIf(process.platform !== "linux").each([
+  ["codex", "CODEX_HOME", "OPENAI_API_KEY"], ["claude", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"],
+])("首次用 API 凭据启动 %s 时创建并挂载状态目录", async (id, variable, credential) => {
+  const app = testApp();
+  const home = mkdtempSync(join(tmpdir(), "own-login-"));
+  const state = join(home, "." + id), file = join(home, ".claude.json");
+  vi.stubEnv("HOME", home);
+  setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+  try {
+    app.config.agents.ownSandbox.mode = "require";
+    const profile = agentProfileSchema.parse({ id, transport: "acp", command: "/bin/true", env: { [variable]: state, [credential]: "fixture" } });
+    const cwd = join(app.home, "workspaces", "fixture");
+    mkdirSync(cwd, { recursive: true });
+    const start = async () => {
+      const box = ownRun(app, profile, cwd, false).box!;
+      const child = launch(profile.command, [], { cwd, env: profile.env, ownSandbox: box });
+      let args = "";
+      child.stdout.on("data", chunk => args += chunk);
+      expect((await once(child, "close"))[0]).toBe(0);
+      return args;
+    };
+    expect(existsSync(state)).toBe(false);
+    expect(await start()).toContain(`--bind ${state} ${state}`);
+    writeFileSync(join(state, "session"), "ok");
+    expect(existsSync(file)).toBe(false);
+    if (id === "claude") {
+      writeFileSync(file, "{}");
+      expect(await start()).toContain(`--bind ${file} ${file}`);
+    }
+  } finally {
+    vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); app.db.close();
+    rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+  }
+});
+
 it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 MCP " + (support.reason ?? ""), async () => {
   const app = testApp();
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });

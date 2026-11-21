@@ -13,10 +13,12 @@ import { cachePaths, canonical, normalizeSandbox, ownMounts, selectOwnSandbox, s
 export function backendState(entry?: CatalogEntry, profile?: AgentProfile) {
   const env = { ...process.env, ...profile?.env };
   const history = profile?.sessionHistory ?? entry?.sessionHistory;
-  const accountDirs = (profile?.account?.owns ?? entry?.account?.owns ?? []).map(p => join("~", p));
-  const paths = [...(entry?.statePaths ?? (history ? [] : accountDirs)), ...(entry?.skills ? [entry.skills.write] : [])];
+  const account = profile?.account ?? entry?.account;
+  const owned = entry?.statePaths || history ? [] : account?.owns ?? [];
+  const paths = [...(entry?.statePaths ?? owned.filter(p => account?.dirs?.includes(p)).map(p => join("~", p))), ...(entry?.skills ? [entry.skills.write] : [])];
   if (history) paths.push((history.env && env[history.env]) || history.root);
-  return [...new Set(paths.map(path => expandPath(path, env)))];
+  const optional = [...(entry?.stateFiles ?? []), ...owned.filter(p => !account?.dirs?.includes(p)).map(p => join("~", p))];
+  return { dirs: [...new Set(paths.map(path => expandPath(path, env)))], existing: optional.map(path => expandPath(path, env)).filter(existsSync) };
 }
 
 export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: boolean, runId?: string | null): { box?: OwnSandbox; note?: string } {
@@ -26,9 +28,10 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
   if (!selected.active) return { note: selected.reason };
   const home = canonical(homedir());
   const data = canonical(app.home);
-  const config = normalizeSandbox(settings, home, data);
   const entry = [...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(profile));
-  const state = [...backendState(entry, profile).filter(existsSync), ...cachePaths.map(p => join(home, p))];
+  const { dirs, existing } = backendState(entry, profile);
+  const config = normalizeSandbox({ ...settings, writable: [...settings.writable, ...existing] }, home, data);
+  const state = [...dirs, ...cachePaths.map(p => join(home, p))];
   const checked = normalizeSandbox({ ...config, writable: state }, home, data);
   const runtime = [join(data, "bin"), join(data, "library", "_skills"), omemInstallDir(), dirname(dirname(process.execPath)),
     ...(entry?.account?.mounts ?? []).map(p => expandPath(p))].map(canonical);
@@ -51,11 +54,12 @@ export function sandboxStatus(app: App) {
   const home = canonical(homedir()), data = canonical(app.home);
   const sample = join(data, "workspaces", "example", "1");
   const profiles = allProfiles(app.config).filter(p => !p.peer && backendCapabilities(p).where === "local");
-  const backends = profiles.map(p => ({
-    id: p.id, state: backendState([...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(p)), p),
-  }));
+  const backends = profiles.map(p => {
+    const state = backendState([...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(p)), p);
+    return { id: p.id, state: [...state.dirs, ...state.existing] };
+  });
   const example = backends.find(p => p.state.length) ?? backends[0];
-  const plan = ownMounts({ home, data, state: [...cachePaths.map(p => join(home, p)), ...(example?.state ?? []).filter(existsSync)].map(canonical),
+  const plan = ownMounts({ home, data, state: [...cachePaths.map(p => join(home, p)), ...(example?.state ?? [])].map(canonical),
     runDir: join(data, "runs", "example", "scratch"),
     writable: [], hidden: [], runtime: [], readOnly: false, secretEnv: [] }, sample, undefined, join(data, "artifacts", "inbox", "example"));
   return { ...app.config.agents.ownSandbox, fullAccess: app.config.agents.fullAccess, support: sandboxSupport(), backends,
