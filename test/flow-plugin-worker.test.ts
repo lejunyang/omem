@@ -1,14 +1,14 @@
-import { mkdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { stagePlugin } from "./flow-plugin-fixture.ts";
 import { forgetPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
-import { getRun, startWorker, stopWorker, updateQueuedRun } from "../src/agents/runs.ts";
+import { createRun, registerHandler, getRun, startWorker, stopWorker, updateQueuedRun } from "../src/agents/runs.ts";
 import { itemProgress } from "../src/agents/progress.ts";
 import { one, run } from "../src/core/db.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
-import { flowView, startFlow, stopFlow, updateStageBudget } from "../src/flows/engine.ts";
+import { flowView, startFlow, stopFlow } from "../src/flows/engine.ts";
 import { upsertItem } from "../src/items/store.ts";
 
 const app = testApp();
@@ -61,20 +61,47 @@ it("宿主恢复两种插件中断的运行，使用原键排队续查并只写�
     expect(itemProgress(app,item,{user:"owner"}).find(v => v.kind === "flow")?.tasks[0].attempts.some(a => a.runId === id)).toBe(true);
   }
 });
-it.each(modes)("等待续查时停止或到期会取消已保存的外部作业 %s", async mode => {
-  for (const action of ["stop","expire"]) {
-    const item = upsertItem(app,undefined,{title:"等待续查的作业",spaceId:"personal"},"user");
-    const view = await startFlow(app,item.id,mode,{actor:"owner"});
-    const id = view.stages[0].by!;
-    await vi.waitFor(() => expect(getRun(app,id)).toMatchObject({status:"queued",output:{runnerResult:{ref:id,status:"running"}}}));
-    if (action === "stop") {
-      await stopFlow(app,item.id);
-      expect(getRun(app,id).status).toBe("cancelled");
-    } else {
-      await updateStageBudget(app,item.id,"job",{budget:{minutes:0.025}},"owner");
-      await vi.waitFor(() => expect(getRun(app,id)).toMatchObject({status:"failed",error:"已到阶段时限"}),{timeout:5000});
-      expect(flowView(app,item.id).stages[0]).toMatchObject({state:"blocked",waitingOn:"owner"});
-    }
-    expect(statSync(join(app.home,"plugin-data",mode,id+".cancel")).isFile()).toBe(true);
-  }
+it.each(modes)("等待续查时停止会取消已保存的外部作业 %s", async mode => {
+  const item = upsertItem(app,undefined,{title:"等待续查的作业",spaceId:"personal"},"user");
+  const view = await startFlow(app,item.id,mode,{actor:"owner"});
+  const id = view.stages[0].by!;
+  await vi.waitFor(() => expect(getRun(app,id)).toMatchObject({status:"queued",output:{runnerResult:{ref:id,status:"running"}}}));
+  await stopFlow(app,item.id);
+  expect(getRun(app,id).status).toBe("cancelled");
+  expect(readFileSync(join(app.home,"plugin-data",mode,id+".cancel"),"utf8")).toBe("cancel");
 });
+
+it.each(modes)("后台槽全满时独立巡检仍会取消到期作业 %s", async mode => {
+  const flow = {id:"limited",name:"限时作业",stages:[{id:"job",name:"作业",by:{runner:mode+":job"},budget:{minutes:0.05}}]};
+  saveFlow(app,JSON.stringify(flow),"owner",true);
+  const item = upsertItem(app,undefined,{title:"等待到期",spaceId:"personal"},"user");
+  const view = await startFlow(app,item.id,flow.id,{actor:"owner"});
+  const id = view.stages[0].by!;
+  await vi.waitFor(() => expect(getRun(app,id)).toMatchObject({status:"queued",output:{runnerResult:{ref:id,status:"running"}}}));
+  const gate = Promise.withResolvers<void>();
+  registerHandler("brief", () => gate.promise);
+  const blockers = Array.from({length:app.config.concurrency}, () => createRun(app,{kind:"brief",title:"占用后台槽"}));
+  try {
+    const expectBusy = () => expect(blockers.every(b => getRun(app,b.id).status === "running")).toBe(true);
+    await vi.waitFor(expectBusy);
+    await vi.waitFor(() => expect(flowView(app,item.id).stages[0]).toMatchObject({state:"blocked",waitingOn:"owner"}),{timeout:6000});
+    expectBusy();
+    expect(getRun(app,id)).toMatchObject({status:"failed",error:"已到阶段时限"});
+    expect(readFileSync(join(app.home,"plugin-data",mode,id+".cancel"),"utf8")).toBe("cancel");
+  } finally { gate.resolve(); }
+}, 10000);
+
+it("处理器到期与同时运行的巡检共用一次外部取消", async () => {
+  const flow = {id:"concurrent",name:"取消慢作业",stages:[{id:"job",name:"作业",by:{runner:"inprocess:job"},budget:{minutes:0.04}}]};
+  saveFlow(app,JSON.stringify(flow),"owner",true);
+  const item = upsertItem(app,undefined,{title:"取消慢作业",spaceId:"personal"},"user");
+  const view = await startFlow(app,item.id,flow.id,{actor:"owner"});
+  const id = view.stages[0].by!, path = join(app.home,"plugin-data","inprocess",id);
+  await vi.waitFor(() => expect(getRun(app,id)).toMatchObject({status:"queued",output:{runnerResult:{ref:id,status:"running"}}}));
+  writeFileSync(path+".slow","");
+  expect(updateQueuedRun(app,id,{notBefore:new Date().toISOString()})).toBe(true);
+  await vi.waitFor(() => expect(getRun(app,id).status).toBe("running"));
+  await vi.waitFor(() => expect(flowView(app,item.id).stages[0].state).toBe("blocked"),{timeout:6500});
+  expect(getRun(app,id).status).toBe("failed");
+  expect(readFileSync(path+".cancel","utf8")).toBe("cancel");
+}, 10000);

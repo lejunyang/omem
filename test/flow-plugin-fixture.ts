@@ -1,4 +1,4 @@
-export const stagePlugin = `import { existsSync, writeFileSync } from "node:fs";
+export const stagePlugin = `import { appendFileSync, existsSync, writeFileSync } from "node:fs";
       import { join } from "node:path";
       const data = process.env.OMEM_PLUGIN_DATA;
       export default function(api) {
@@ -18,8 +18,8 @@ export const stagePlugin = `import { existsSync, writeFileSync } from "node:fs";
         const ref = ctx.idempotencyKey, path = join(data,ref);
         if (!existsSync(path)) writeFileSync(path,ref,{flag:"wx"});
         return {ref,status:ctx.with.fail ? "failed" : "running",summary:"作业结果"};
-      }, async check(ref){ return {ref,status:"done",summary:"已验证：作业完成",evidence:[{text:"标记"}]}; },
-      async cancel(ref){writeFileSync(join(data,ref+".cancel"),"cancel");} });
+      }, async check(ref,signal){ if (existsSync(join(data,ref+".slow"))) await new Promise((_,reject) => signal.addEventListener("abort",()=>reject(signal.reason),{once:true})); return {ref,status:"done",summary:"已验证：作业完成",evidence:[{text:"标记"}]}; },
+      async cancel(ref){appendFileSync(join(data,ref+".cancel"),"cancel"); if (existsSync(join(data,ref+".slow"))) await new Promise(resolve => setTimeout(resolve,1500));} });
       api.flowSignal({id:"delayed",name:"等待",describe:"等待文件",async check(ctx,signal){
         writeFileSync(join(data,ctx.stage.id+".asked"),"asked");
         while (!existsSync(join(data,"release"))) {
