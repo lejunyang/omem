@@ -469,7 +469,9 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
       } else fused.set(item.key, { ...item.hit, score: add, via: [item.via] });
     }
   const shadow = shadowedFiles(app, opts.spaces, ov.overlays);
-  const hits = weigh(app, [...fused.values()].filter((h) => !(h.uri && shadow.get(h.spaceId)?.has(h.uri))), opts.spaces).sort((a, b) => b.score - a.score);
+  const poolHits = [...fused.values()];
+  const visibleHits = opts.shared ? poolHits.filter(opts.shared.filter(poolHits)) : poolHits;
+  const hits = weigh(app, visibleHits.filter((h) => !(h.uri && shadow.get(h.spaceId)?.has(h.uri))), opts.spaces).sort((a, b) => b.score - a.score);
   // A symbol hit and a chunk covering the same lines are the same evidence.
   const out: Hit[] = [];
   const perSource = new Map<string, number>();

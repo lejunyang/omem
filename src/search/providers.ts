@@ -43,10 +43,10 @@ export type ReadableHit = Pick<Hit, "type" | "spaceId" | "sourceId" | "sourceKin
 export type SharedSearchAccess = {
   spaces: string[];
   allows(space: string, kind: RetrievalKind): boolean;
-  visible(hit: ReadableHit): boolean;
+  filter(hits: Iterable<ReadableHit>): (hit: ReadableHit) => boolean;
 };
 export function pluginHitFilter(app: App, hits: Iterable<ReadableHit>, userId = OWNER, shared?: SharedSearchAccess) {
-  if (shared) return shared.visible;
+  if (shared) return shared.filter(hits);
   if (userId === OWNER) return () => true;
   const access = capabilityAccess(app, userId);
   const ids = [...new Set(Array.from(hits).flatMap(h => h.sourceId ?? []))];

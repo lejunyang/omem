@@ -30,7 +30,7 @@ updated: 2026-11-21
 
 ## 共享设备调用检索插件（11-21）
 
-共享设备按共享空间和材料种类使用召回与重排，受限原件和要求在本机核对权限的文档留在本机。授权入口见 `src/core/federation.ts`，插件候选检查见 `src/search/providers.ts`。
+共享设备按共享空间和材料种类使用召回与重排，受限原件和要求在本机核对权限的文档留在本机。内置路线与插件路线的命中在去重、截断前统一检查共享可见性，`src/auth/visibility.ts` 按候选原件 id 合批核对。授权入口见 `src/core/federation.ts`，插件候选检查见 `src/search/providers.ts`。
 
 ## 插件接入召回和重排（11-21）
 

@@ -64,9 +64,14 @@ export function hiddenSourceIds(app: App, userId: string, spaceId: string) {
 }
 
 /** Not to be sent elsewhere (another server, a share link): restricted, or under the Feishu access check. */
+export function keptHereIds(app: App, ids: string[]) {
+  const rows = all<Row & { larkAccess: unknown }>(app.db, `select s.id, s.space_id, s.visibility, s.kind, s.meta,
+    json_extract(p.settings, '$.larkAccess') larkAccess from sources s join spaces p on p.id = s.space_id
+    where s.id in (select value from json_each(?))`, JSON.stringify(ids));
+  return new Set(rows.filter(r => r.visibility === "restricted" || (r.larkAccess && docToken(r))).map(r => r.id));
+}
 export function keptHere(app: App, sourceId: string) {
-  const r = rowOf(app, sourceId);
-  return !!r && (r.visibility === "restricted" || (larkAccessSpace(app, r.space_id) && !!docToken(r)));
+  return keptHereIds(app, [sourceId]).has(sourceId);
 }
 
 /** What is known now: true / false, or "check" when Feishu has to be asked (sourceReadable does). */

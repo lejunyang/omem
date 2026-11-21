@@ -8,7 +8,7 @@ import { search, type SearchOptions } from "../search/search.ts";
 import { deleteSource, sourceText, upsertSource } from "../sources/store.ts";
 import { deletePage, readPage, writePage } from "../wiki/store.ts";
 import { getMemory, remember, retract, type MemoryKind } from "../memory/store.ts";
-import { keptHere } from "../auth/visibility.ts";
+import { keptHere, keptHereIds } from "../auth/visibility.ts";
 
 /**
  * Sharing between omem servers (docs/v2/multi-user.md, “多服务连接”).
@@ -114,16 +114,18 @@ export async function fedSearch(app: App, userId: string, input: { query: string
       if (kind === "chunk") return kinds.some(k => k !== "wiki" && k !== "memory");
       return kinds.includes(kind === "page" ? "wiki" : "memory");
     },
-    visible(hit) {
-      if (hit.type === "page" || hit.type === "memory") return shared.allows(hit.spaceId, hit.type);
-      const kinds = bySpace.get(hit.spaceId);
-      return !!kinds && !!hit.sourceId && !!hit.sourceKind && allowsSource(kinds, hit.sourceKind) && !keptHere(app, hit.sourceId);
+    filter(hits) {
+      const localOnly = keptHereIds(app, Array.from(hits).flatMap(h => h.sourceId ?? []));
+      return hit => {
+        if (hit.type === "page" || hit.type === "memory") return shared.allows(hit.spaceId, hit.type);
+        const kinds = bySpace.get(hit.spaceId);
+        return !!kinds && !!hit.sourceId && !!hit.sourceKind && allowsSource(kinds, hit.sourceKind) && !localOnly.has(hit.sourceId);
+      };
     },
   };
   const hits = await search(app, input.query, { userId, shared, spaces: shared.spaces, types: ["chunk", "page", "memory"], limit: Math.min(input.limit ?? 10, 30) * 2 });
   const out: FedHit[] = [];
-  for (const h of hits) {
-    if (!shared.visible(h)) continue;
+  for (const h of hits.filter(shared.filter(hits))) {
     if (h.type === "page") out.push({ type: "page", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
     else if (h.type === "memory") out.push({ type: "memory", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
     else if (h.type === "chunk" && h.sourceKind) {

@@ -89,6 +89,12 @@ it("共享设备按共享空间和种类召回，只把可外发的候选交给�
   expect(lookup.mock.calls[0][1]).toMatchObject({ spaces: ["team"], kinds: ["chunk"] });
   expect(score.mock.calls[0][0].userId).toBe(userId);
   expect(score.mock.calls[0][1].candidates).toHaveLength(2);
+  // This query reaches both shared documents and local-only results through full text alone.
+  app.config.search.retrievers = [];
+  expect((await fedSearch(app, userId, { query: "材料" })).map(h => h.id)).toEqual([second, first]);
+  expect(score).toHaveBeenCalledTimes(2);
+  const texts = score.mock.calls[1][1].candidates.map(c => c.text);
+  expect(texts.sort()).toEqual([expect.stringContaining("第一份材料"), expect.stringContaining("第二份材料")]);
   setShares(app, userId, [{ space: "team", kinds: ["wiki"] }]);
   app.config.search.retrievers = [{ ...route, kinds: ["chunk"] }];
   expect(await fedSearch(app, userId, { query: "external" })).toEqual([]);
