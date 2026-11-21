@@ -28,7 +28,7 @@ export function apiEmbedder(app: App, cfg: Config["embeddings"], id: string): Em
   } };
 }
 
-export async function encodeBatch(e: EmbeddingProvider, texts: string[], kind: Kind, timeoutMs: number, expected?: number) {
+export async function encodeBatch(e: EmbeddingProvider, texts: string[], kind: Kind, timeoutMs: number) {
   // Local inference manages its queue and deadline in the read process.
   if (!e.maxBatch) {
     const signal = AbortSignal.timeout(120_000);
@@ -39,7 +39,7 @@ export async function encodeBatch(e: EmbeddingProvider, texts: string[], kind: K
   for (let at = 0; at < texts.length; at += e.maxBatch) {
     if (Date.now() >= deadline) throw new Error("向量调用超时");
     const input = texts.slice(at, at + e.maxBatch).map(t => e.maxChars ? t.slice(0, e.maxChars) : t);
-    const rows = await encodeOne(e, input, kind, deadline, expected ?? out[0]?.length);
+    const rows = await encodeOne(e, input, kind, deadline, out[0]?.length);
     out.push(...rows);
   }
   return out;

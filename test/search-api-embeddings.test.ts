@@ -7,6 +7,8 @@ import { setKey } from "../src/core/ai-keys.ts";
 import { configSchema } from "../src/core/config.ts";
 import { embedPending, embedQuery, embeddingHealth, resumeEmbedding, testEmbedding } from "../src/search/embeddings.ts";
 import { vectorCounts } from "../src/search/embedding-index.ts";
+import { pack } from "../src/search/vector-codec.ts";
+import { remember } from "../src/memory/store.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { startServer } from "../src/server/http.ts";
 
@@ -115,10 +117,42 @@ it("旧 openai 索引升级沿用向量，地址变更仍要求确认", async ()
   const { app } = await setup();
   app.config.embeddings.dimensions = undefined;
   app.db.prepare("insert or replace into kv(key,value) values('embedding_model','openai:m')").run();
+  const old = pack(new Float32Array([0.6, 0.8]));
+  const first = app.db.prepare("select min(id) as id from chunks").get()!.id;
+  app.db.prepare("update chunks set embedding=? where id=?").run(old, first);
   const { modelChange } = await import("../src/search/embedding-index.ts");
   expect(modelChange(app, app.config)).toBeNull();
   expect(await embedPending(app)).toBe(2);
+  expect(app.db.prepare("select embedding from chunks where id=?").get(first)!.embedding).toEqual(old);
   expect(modelChange(app, { ...app.config, embeddings: { ...app.config.embeddings, url: "https://example.org/v1" } })).not.toBeNull();
+});
+
+it.each(["packed", "float", "memory"])("旧 %s 向量保留实际维度，同名服务改变长度后确认才重建", async format => {
+  const { app } = await setup();
+  delete app.config.embeddings.dimensions;
+  app.db.prepare("insert into kv(key,value) values('embedding_model','openai:m')").run();
+  const old = new Float32Array([1, 0, 0]);
+  if (format === "memory") {
+    const memory = remember(app, { kind: "fact", spaceId: "personal", content: "这条记忆已经有旧向量。" });
+    app.db.prepare("update memories set embedding=? where id=?").run(new Uint8Array(old.buffer), memory.id);
+  } else {
+    app.db.prepare("update chunks set embedding=? where id=(select min(id) from chunks)").run(format === "packed" ? pack(old) : new Uint8Array(old.buffer));
+  }
+  const before = vectorCounts(app);
+  expect(await embedPending(app)).toBe(0);
+  expect(await embedQuery(app, "检测索引维度")).toBeNull();
+  expect(vectorCounts(app)).toEqual(before);
+  expect(embeddingHealth(app).writeError).toContain("索引为 3 维，服务返回 2 维");
+  const server = await startServer(app, { port: 0, quiet: true });
+  close.push(() => server.close());
+  const save = (token = "") => server.inject({ method: "PUT", url: "/api/settings?confirmEmbedding=" + token, payload: { embeddings: {} } });
+  const preview = await save();
+  expect(preview.statusCode).toBe(409);
+  expect(preview.json()).toMatchObject(before);
+  expect(vectorCounts(app).clear).toBe(1);
+  expect((await save(preview.json().token)).statusCode).toBe(200);
+  expect(vectorCounts(app).clear).toBe(0);
+  expect(await embedPending(app)).toBe(2);
 });
 
 it("旧环境变量密钥和显式地址仍用于 OpenAI 形状接口", async () => {

@@ -109,7 +109,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 
 云端向量会收到原件分块、记忆正文和查询；云端重排会收到查询和候选正文。确认外发内容可接受后再启用。向量请求为 `POST <url>/embeddings`，包含 `model`、`input: string[]` 和可选 `dimensions`。宿主按批核对条数、索引、维度和有限数值，整批成功后归一化、落库；不保存半批结果。429、5xx 和超时最多试三次，退避也包含在总时限内。其他 4xx 直接记错误。查询失败退回没有向量的检索；写入失败保留积压，暂停 30 秒后再试，不切换模型。
 
-本地、云端和插件向量共享同一组索引。改变模型、维度或服务地址会清空旧的分块和记忆向量，并重新排队。关闭向量保留索引。通过 `PUT /api/settings` 保存时先返回 HTTP 409 和 `{ confirmation: "embedding-model", clear, rebuild, pending, token, to }`，配置仍未生效；确认后用相同内容和 `?confirmEmbedding=<token>` 再保存。这个确认也用于本地模型。命令行换本地模型使用 `--confirm-rebuild <token>`，setup 向导会列出数量再询问。
+本地、云端和插件向量共享同一组索引。改变模型、维度或服务地址会清空旧的分块和记忆向量，并重新排队。关闭向量保留索引。通过 `PUT /api/settings` 保存时先返回 HTTP 409 和 `{ confirmation: "embedding-model", clear, rebuild, pending, token, to }`，配置仍未生效；确认后用相同内容和 `?confirmEmbedding=<token>` 再保存。旧 OpenAI 索引从已有分块或记忆读取维度。同名服务返回不同长度时，查询降级、写入暂停，旧向量保留。核对服务后可重新保存当前向量配置，确认数量后按新维度重建。这个确认也用于本地模型。命令行换本地模型使用 `--confirm-rebuild <token>`，setup 向导会列出数量再询问。
 
 重排请求为 `POST <url>/rerank`，内容是 `{ model, query, documents: string[], top_n }`。接受 `results` 或 `data` 数组，每项的分数接受 `relevance_score` 或 `score`，`index` 对应输入顺序。缺项、重复索引和无效分数使整次作废。候选最多为 `rerank.top`，每条按 `maxTokens × 2` 个 UTF-16 代码单元截断（约按两个字符一个 token 估算）。失败或超时保持融合后的顺序。
 

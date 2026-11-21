@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
-import { embeddingId, storedModel, recordModel, pendingVectorCount } from "./embedding-index.ts";
+import { embeddingId, storedModel, recordModel, adoptLegacyIndex, checkIndexDimensions, pendingVectorCount } from "./embedding-index.ts";
 import { apiEmbedder, encodeBatch, type EmbeddingProvider, type Kind } from "./embedding-provider.ts";
 import { vectorIndex } from "./vectors.ts";
 import { pack, toFloats } from "./vector-codec.ts";
@@ -229,22 +229,18 @@ async function writer(app: App) {
   if (!e) return null;
   const current = storedModel(app);
   // Old openai configurations stored only the model name. Adopt the existing index on upgrade.
-  if (!current || (app.config.embeddings.provider === "api" && current === "openai:" + app.config.embeddings.model && !app.config.embeddings.dimensions))
-    recordModel(app, e.id);
+  if (!current) recordModel(app, e.id);
+  else if (app.config.embeddings.provider === "api" && current === "openai:" + app.config.embeddings.model && !app.config.embeddings.dimensions)
+    adoptLegacyIndex(app, e.id);
   return stillSelected(app, e) ? e : null;
 }
 
 async function encode(app: App, e: EmbeddingProvider, texts: string[], kind: Kind, write = false) {
   const at = Date.now();
   try {
-    const dim = e.maxBatch && one<{value: string}>(app.db, "select value from kv where key='embedding_dimensions'")?.value;
-    const rows = await encodeBatch(e, texts, kind, app.config.embeddings.timeoutMs, Number(dim) || undefined);
+    const rows = await encodeBatch(e, texts, kind, app.config.embeddings.timeoutMs);
     if (!stillSelected(app, e)) return null;
-    if (write && e.maxBatch) {
-      run(app.db, "insert or ignore into kv(key,value) values('embedding_dimensions',?)", String(rows[0].length));
-      if (Number(one<{value:string}>(app.db, "select value from kv where key='embedding_dimensions'")!.value) !== rows[0].length)
-        throw new Error("向量维度与已存索引不符");
-    }
+    if (e.maxBatch) checkIndexDimensions(app, e.id, rows[0].length, write);
     recent.set(app, { ...(write ? {} : recent.get(app)), lastMs: Date.now() - at, lastError: null });
     return rows;
   } catch (err) {
