@@ -43,13 +43,14 @@ function task(graph: Forest, ids: (string | null | undefined)[], data: Omit<Prog
   const who = ai ? JSON.parse(ai) as { profile: string; model?: string; effort?: string } : undefined;
   return { ...(who && { who: { agent: who.profile, model: who.model, effort: who.effort } }), ...data, attempts, usage: graph.usage(attempts.map(a => a.runId)) };
 }
-function view(graph: Forest, data: Pick<ProgressView, "kind" | "id" | "title" | "tasks" | "itemId" | "runId">, state?: ProgressView["state"]): ProgressView {
-  const tasks = data.tasks;
-  const waitingOn = [...new Set(tasks.map(t => t.waitingOn).filter(Boolean))].join("；") || undefined;
+function view(graph: Forest, data: Pick<ProgressView, "kind" | "id" | "title" | "tasks" | "itemId" | "runId">, state?: ProgressView["state"],
+  options: { stateTasks?: ProgressTask[]; waitingOn?: string; usage?: Usage } = {}): ProgressView {
+  const tasks = options.stateTasks ?? data.tasks;
+  const waitingOn = options.waitingOn ?? ([...new Set(tasks.map(t => t.waitingOn).filter(Boolean))].join("；") || undefined);
   const active = tasks.some(t => ["running", "pending", "queued", "redo"].includes(t.state));
   state ??= waitingOn ? "waiting" : active ? "running" : tasks.some(t => t.state === "failed") ? "failed"
     : tasks.some(t => t.state === "blocked" || t.state === "submitted") ? "waiting" : tasks.every(t => t.state === "cancelled") ? "cancelled" : "done";
-  return { ...data, state, waitingOn, usage: graph.usage(tasks.flatMap(t => t.attempts.map(a => a.runId))) };
+  return { ...data, state, waitingOn, usage: options.usage ?? graph.usage(tasks.flatMap(t => t.attempts.map(a => a.runId))) };
 }
 
 function boardView(app: App, graph: Forest, node: Node, itemId?: string) {
@@ -79,6 +80,12 @@ function boardView(app: App, graph: Forest, node: Node, itemId?: string) {
   return block;
 }
 
+const taskWaits: Partial<Record<TaskState, string>> = { owner: "等本人决定", assistant: "等发起助手处理", disputed: "等评审负责人裁决" };
+const verdictWaits: Record<string, string> = {
+  approved: "等本人确认交付", "awaiting-plan": "等本人确认评审计划", "awaiting-assistant": "等发起助手处理",
+  "changes-requested": "等决定要改的问题", "awaiting-peer-code": "等外部编码", "awaiting-peer": "等外部评审"
+};
+
 function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
   const checkpoints = listCheckpoints(app, node.id);
   const helpers = [...graph.nodes.values()].filter(r => r.helper && (r.helper === node.id || graph.nodes.get(r.helper)?.first === node.id));
@@ -89,29 +96,22 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
     const outputs: Output[] = Object.entries(t.commits).flatMap(([repo, shas]) => shas.map(ref => ({ kind: "commit", ref, label: repo + " · " + ref })));
     for (const r of mine) for (const w of JSON.parse(r.branches ?? "[]") as { space: string; branch: string }[])
       if (w.branch) outputs.push({ kind: "branch", ref: w.branch, label: w.space + " · " + w.branch });
-    const waits: Partial<Record<TaskState, string>> = { owner: "等本人决定", assistant: "等发起助手处理", disputed: "等评审负责人裁决" };
-    const waitingOn = waits[t.state];
+    const waitingOn = taskWaits[t.state];
     return task(graph, ids, { id: `T${t.seq}`, title: t.title, accept: t.doneWhen, state: states.code[t.state], outputs, waitingOn });
   });
   const rounds = [...graph.nodes.values()].filter(r => r.id === node.id || r.first === node.id);
   const last = rounds.at(-1)!;
   const terminal = last.discarded || node.discarded ? "cancelled" : last.applied || node.applied ? "done"
     : last.status === "failed" || last.status === "cancelled" ? last.status : undefined;
-  const block = view(graph, { kind: "code", id: node.id, runId: node.id, itemId, title: node.title, tasks }, terminal);
-  block.rounds = rounds.map(r => ({ runId: r.id, status: r.status, round: r.round ?? undefined }));
-  // Older delegations only recorded rounds. They still have a real run and usage history.
-  if (!tasks.length) {
-    block.usage = graph.usage(rounds.map(r => r.id));
-    block.state = terminal ?? (last.status === "done" ? "done" : "running");
-  }
-  const waits: Record<string, string> = {
-    approved: "等本人确认交付", "awaiting-plan": "等本人确认评审计划", "awaiting-assistant": "等发起助手处理",
-    "changes-requested": "等决定要改的问题", "awaiting-peer-code": "等外部编码", "awaiting-peer": "等外部评审"
+  const waitingOn = terminal ? undefined : node.paused ? "等本人确认继续"
+    : verdictWaits[last.verdict ?? ""] ?? (last.status === "queued" ? "排队" : undefined);
+  const state = terminal ?? (waitingOn ? "waiting" : tasks.length ? undefined : last.status === "done" ? "done" : "running");
+  return {
+    ...view(graph, { kind: "code", id: node.id, runId: node.id, itemId, title: node.title, tasks }, state, {
+      waitingOn, usage: tasks.length ? undefined : graph.usage(rounds.map(r => r.id)),
+    }),
+    rounds: rounds.map(r => ({ runId: r.id, status: r.status, round: r.round ?? undefined })),
   };
-  const waiting = node.paused ? "等本人确认继续" : waits[last.verdict ?? ""];
-  if (!terminal && waiting) { block.waitingOn = waiting; block.state = "waiting"; }
-  if (!terminal && last.status === "queued") { block.waitingOn = "排队"; block.state = "waiting"; }
-  return block;
 }
 
 function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
@@ -205,16 +205,17 @@ function flowViews(app: App, graph: Forest, id: string, title: string, history: 
     studyTasks.push(row);
   }
   const current = studyTasks.filter(t => t.round === f.round);
-  const study = view(graph, { kind: "study", id, itemId: id, title, tasks: current },
-    f.endedAt || f.roundClosedAt ? block.state : current.length ? undefined : "running");
-  study.tasks = studyTasks;
+  const study = view(graph, { kind: "study", id, itemId: id, title, tasks: studyTasks },
+    f.endedAt || f.roundClosedAt ? block.state : current.length ? undefined : "running", {
+      stateTasks: current,
+      usage: graph.usage([...instance.filter(r => r.trial).map(r => r.id), ...studyTasks.flatMap(t => t.attempts.map(a => a.runId))]),
+    });
   const counts = all<{ round: number; directions: number; trials: number }>(app.db, `select round,sum(d) directions,sum(t) trials from (
     select round,count(*) d,0 t from study_directions where item_id=? and round<? group by round
     union all select round,0,count(*) from study_trials where item_id=? and round<?
     and (run_id is null or run_id in (select value from json_each(?))) group by round)
     group by round order by round`, id, f.round, id, f.round, JSON.stringify([...graph.nodes.keys()]));
   study.previousRounds = counts.map(c => ({ ...c, usage: graph.usage(instance.filter(r => r.trial && r.round === c.round).map(r => r.id)) }));
-  study.usage = graph.usage([...instance.filter(r => r.trial).map(r => r.id), ...studyTasks.flatMap(t => t.attempts.map(a => a.runId))]);
   return [block, study];
 }
 
