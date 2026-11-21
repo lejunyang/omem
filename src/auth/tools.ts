@@ -27,6 +27,8 @@ const BY_TOOL: Record<string, GlobalPerm> = {
   lark_wiki_crawl: "settings.manage",
   connect_repository: "code.delegate",
   create_space: "spaces.create",
+  // Asking a member for the owner (items/member-progress.ts): only the owner's runs, the handler checks again.
+  ask_member_progress: "users.manage",
 };
 
 /** The global permission a tool needs, if any. */

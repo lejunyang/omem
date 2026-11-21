@@ -9,6 +9,8 @@ import { requireItem, writableParents } from "./access.ts";
 import { changeFilter, memberDetail, memberEnded, memberOverview, viewerOf } from "./member-work.ts";
 import { lineRoutine, ownAccountProblem, setLineRoutine } from "./member-routine.ts";
 import { buildToday } from "./today.ts";
+// Its answer handler (member-progress) must be in place before any answer comes in.
+import "./member-progress.ts";
 import { pendingActions, pendingView } from "./pending.ts";
 import { chatName } from "../agents/owner-now.ts";
 import { itemContext, listContexts } from "../channels/listen.ts";
