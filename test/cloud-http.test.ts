@@ -1,6 +1,10 @@
-import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createServer, request } from "node:http";
+import { once } from "node:events";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createSession, SESSION_COOKIE } from "../src/auth/sessions.ts";
+import { issueProbeTicket } from "../src/auth/cloud-probe-ticket.ts";
 import { saveConfig } from "../src/core/config.ts";
 import { expect, it, vi } from "vitest";
 import * as doubao from "../src/agents/doubao.ts";
@@ -16,9 +20,39 @@ import { createUser, createApiToken } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
+// Exercise the documented map over sockets with a loopback upstream and rewritten Host.
+async function publicIngress(upstream: string) {
+  const doc = readFileSync(new URL("../docs/v2/external-access.md", import.meta.url), "utf8");
+  const map = doc.split('$cloud_tools_allowed {')[1].split("}")[0];
+  const allow = [...map.matchAll(/"~(.+)" 1;/g)].map(m => new RegExp(m[1]));
+  const proxy = createServer((req, res) => {
+    const path = new URL(req.url!, upstream).pathname;
+    const authorization = req.headers.authorization ?? "";
+    if (!allow.some(rule => rule.test(`${req.method}:${path}:${authorization}`))) {
+      res.writeHead(403).end();
+      return;
+    }
+    const headers: Record<string, string> = {};
+    if (authorization) headers.authorization = authorization;
+    if (req.headers["content-type"]) headers["content-type"] = req.headers["content-type"];
+    const forwarded = request(upstream + req.url, { method: req.method, headers }, response => {
+      res.writeHead(response.statusCode!, response.headers);
+      response.pipe(res);
+    });
+    forwarded.on("error", () => res.writeHead(502).end());
+    req.pipe(forwarded);
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  const address = proxy.address() as import("node:net").AddressInfo;
+  const base = `http://127.0.0.1:${address.port}`;
+  return { proxy, base };
+}
+
 it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("probes and runs a fake cloud session over %s HTTP with %s credentials", async (mode, credentialIn) => {
   const app = testApp();
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true, secure: false });
+  const ingress = await publicIngress(app.baseUrl);
   const owner = { authorization: "Bearer " + createApiToken(app, "owner", "test") };
   createUser(app, { id: "admin-a", name: "管理员", role: "admin" });
   const admin = { authorization: "Bearer " + createApiToken(app, "admin-a", "test") };
@@ -43,32 +77,33 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
     let text: string;
     if (challenge) {
       expect(req.mcp).toBeUndefined();
-      const headers = mode === "header" ? { authorization: "Bearer probe-" + challenge[1] } : {};
-      const list = await server.inject({ url: challenge[0], headers });
-      const url = new URL(list.json().next).pathname;
+      const headers: Record<string, string> = mode === "header" ? { authorization: "Bearer probe-" + challenge[1] } : {};
+      const list = await fetch(ingress.base + challenge[0], { headers });
+      const url = ingress.base + new URL((await list.json()).next).pathname;
       const args = { probe: challenge[1] };
-      const receipt = mode === "header" ? await server.inject({ url, method: "POST", headers, payload: args })
-        : await server.inject({ url, query: { args: JSON.stringify(args) } });
-      text = receipt.json().receipt;
+      const receipt = mode === "header" ? await fetch(url, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(args) })
+        : await fetch(url + "?" + new URLSearchParams({ args: JSON.stringify(args) }));
+      text = (await receipt.json()).receipt;
     } else {
       expect(req.system).toContain("云端只读工具");
       expect(req.system).not.toContain("oct_");
       const conn = req.cloudChannel ?? JSON.parse(req.prompt.split("\n").at(-1)!);
       bearer = JSON.stringify(conn).match(/oct_[\w-]+/)![0];
       expect(req.prompt.includes(bearer)).toBe(credentialIn === "message");
-      const list = await server.inject({ url: new URL(conn.url).pathname, headers: conn.headers });
-      expect(list.statusCode).toBe(200);
-      expect(list.json().tools.map((t: {name: string}) => t.name)).toContain("read_source");
+      const listed = await fetch(ingress.base + new URL(conn.url).pathname, { headers: conn.headers });
+      expect(listed.status).toBe(200);
+      const list = await listed.json();
+      expect(list.tools.map((t: {name: string}) => t.name)).toContain("read_source");
       const rejected = await server.inject({ method: "GET", url: "/api/settings", headers: { authorization: "Bearer " + bearer } });
       expect(rejected.statusCode).toBe(403);
       const mcp = await server.inject({ method: "POST", url: "/mcp", headers: { authorization: "Bearer " + bearer } });
       expect(mcp.statusCode).toBe(403);
       const args = { source: source.id };
-      const read = mode === "header" ? await server.inject({ method: "POST", url: "/api/tools/read_source", headers: conn.headers, payload: args })
-        : await server.inject({ url: new URL(list.json().next).pathname + "/read_source", query: { args: JSON.stringify(args) } });
+      const read = mode === "header" ? await fetch(ingress.base + "/api/tools/read_source", { method: "POST", headers: { ...conn.headers, "content-type": "application/json" }, body: JSON.stringify(args) })
+        : await fetch(ingress.base + new URL(list.next).pathname + "/read_source?" + new URLSearchParams({ args: JSON.stringify(args) }));
       const local = await server.inject({ method: "POST", url: "/api/tools/read_source", headers: { authorization: "Bearer " + mcpToken }, payload: args });
       expect(local.json().isError).toBe(false);
-      expect(read.json()).toMatchObject(local.json());
+      expect(await read.json()).toMatchObject(local.json());
       text = "已读回原文";
     }
     return { sessionId, text, agent: "fake", stopReason: "end_turn" };
@@ -83,11 +118,13 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
     expect((await server.inject({ url: "/api/cloud-tools", headers: cookie })).statusCode).toBe(200);
     for (const path of ["cloud-tools", "cloud-tools/revoke", "cloud-tools/probe", "cloud-tools/probe/confirm"]) {
       const method = path === "cloud-tools" ? "GET" : "POST";
+      expect((await fetch(ingress.base + "/api/" + path, { method, headers: owner })).status).toBe(403);
       for (const headers of [loopback, { ...loopback, "x-forwarded-for": "192.0.2.10" }, { authorization: "Bearer invalid" }]) {
         const response = await server.inject({ method, url: "/api/" + path, headers });
         expect([401, 403]).toContain(response.statusCode);
       }
     }
+    expect((await fetch(ingress.base + "/api/tools", { headers: owner })).status).toBe(403);
     expect((await update({}, cfg)).statusCode).toBe(403);
     expect((await update(admin, cfg)).statusCode).toBe(403);
     expect((await update(owner, { ...cfg, tools: ["write_page"] })).statusCode).toBe(400);
@@ -97,7 +134,7 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
       saveConfig(app.config, app.home);
       const cli = await promisify(execFile)(process.execPath, ["src/cli.ts", "--home", app.home, "cloud-tools", "probe", "doubao"]);
       expect(JSON.parse(cli.stdout)).toMatchObject({ mode, confirmed: false });
-      expect(all(app.db, "select 1 from api_tokens where label='cloud-tools probe'")).toHaveLength(0);
+      expect(all(app.db, "select 1 from kv where key glob 'cli-probe:*'")).toHaveLength(0);
     }
     const probe = await server.inject({ method: "POST", url: "/api/cloud-tools/probe", headers: owner, payload: { backend: "doubao" } });
     expect(probe.json()).toMatchObject({ mode, confirmed: false });
@@ -119,7 +156,50 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
       expect((await server.inject({ method: path === "cloud-tools" ? "GET" : "POST", url: "/api/" + path, headers: admin })).statusCode).toBe(403);
     }
   } finally {
+    ingress.proxy.close();
     vi.restoreAllMocks();
+    await server.close();
+    app.db.close();
+  }
+});
+
+it("expires an unused probe ticket even when the CLI is killed before delivery", async () => {
+  const app = testApp();
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true, secure: false });
+  // Hold the CLI request before it reaches the application. SIGKILL skips all CLI cleanup.
+  const waiting = Promise.withResolvers<string>();
+  const relay = createServer((req, res) => {
+    if (req.url === "/api/settings") res.end(JSON.stringify({ home: app.home }));
+    else waiting.resolve(req.headers.authorization!);
+  });
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  app.config.port = (relay.address() as import("node:net").AddressInfo).port;
+  saveConfig(app.config, app.home);
+  const cli = spawn(process.execPath, ["src/cli.ts", "--home", app.home, "cloud-tools", "probe", "doubao"]);
+  const stopped = once(cli, "exit");
+  try {
+    const authorization = await Promise.race([waiting.promise, stopped.then(() => { throw new Error("CLI 在发出请求前已退出"); })]);
+    cli.kill("SIGKILL");
+    await stopped;
+    const headers = { authorization };
+    expect(all(app.db, "select 1 from api_tokens")).toHaveLength(0);
+    for (const url of ["/api/settings", "/api/cloud-tools", "/api/cloud-tools/revoke", "/api/cloud-tools/probe/confirm"]) {
+      const method = url.endsWith("revoke") || url.endsWith("confirm") ? "POST" : "GET";
+      expect((await server.inject({ method, url, headers })).statusCode).toBe(401);
+    }
+    const probe = { method: "POST" as const, url: "/api/cloud-tools/probe", payload: { backend: "doubao" } };
+    const fresh = { authorization: "Bearer " + issueProbeTicket(app) };
+    // The first request reaches the handler (webUrl is unset), and spends the ticket.
+    expect((await server.inject({ ...probe, headers: fresh })).statusCode).toBe(400);
+    expect((await server.inject({ ...probe, headers: fresh })).statusCode).toBe(401);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    expect((await server.inject({ ...probe, headers })).statusCode).toBe(401);
+  } finally {
+    vi.restoreAllMocks();
+    cli.kill();
+    relay.closeAllConnections();
+    relay.close();
     await server.close();
     app.db.close();
   }

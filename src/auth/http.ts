@@ -1,4 +1,5 @@
 import { capabilityCatalog, globalCapability, isCapability, memberCapabilities } from "./capabilities.ts";
+import { consumeProbeTicket } from "./cloud-probe-ticket.ts";
 import { grantScopes, guestUserId, readGrant } from "./grants.ts";
 import type { TLSSocket } from "node:tls";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -45,7 +46,8 @@ export function bearerToken(req: FastifyRequest) {
 export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
   const token = bearerToken(req);
   if (token) {
-    const userId = userForToken(app, token);
+    const localProbe = req.method === "POST" && req.routeOptions.url === "/api/cloud-tools/probe" && consumeProbeTicket(app, token);
+    const userId = localProbe ? OWNER : userForToken(app, token);
     if (userId) return { userId, via: "token", restricted: false, sessionHash: null };
     // One an authenticator plugin checked before this request was resolved (authenticators.ts checkBearer).
     const b = knownBearer(token);
