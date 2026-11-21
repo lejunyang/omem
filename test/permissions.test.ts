@@ -214,6 +214,17 @@ describe("roles and permissions", async () => {
     expect((await list("cat", null)).text).toContain("private-flow");
     expect((await list("cat", ["team"])).text).not.toContain("private-flow");
     expect(JSON.parse((await list("ann", ["other"])).text).flows).toEqual([]);
+
+    const secondOwner = "flow-owner";
+    createUser(app, { id: secondOwner, name: "流程负责人", role: "owner" });
+    const ownItem = upsertItem(app, undefined, { userId: secondOwner, spaceId: "team", title: "流程测试" });
+    const all = await list(secondOwner, null);
+    expect(all.isError, all.text).toBe(false);
+    expect(JSON.parse(all.text).flows).toEqual(JSON.parse((await list("owner", null)).text).flows);
+    const scoped = await list(secondOwner, ["team"], ownItem.id);
+    expect(scoped.isError, scoped.text).toBe(false);
+    expect(JSON.parse(scoped.text).flows.map((f: { id: string }) => f.id)).toEqual(ids);
+    expect(JSON.parse(scoped.text).suits).toContain("shared");
   });
 
   it("allows ordinary observer answers and mapped edits only", async () => {

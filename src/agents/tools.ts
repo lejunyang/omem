@@ -7018,9 +7018,11 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };
   const cap = toolCapabilities[name];
   if (ctx.userId && ctx.userId !== OWNER && cap && !globalCapability(cap) && cap !== "items.view") {
-    const range = spacesWithCapability(ctx.app, ctx.userId, cap) ?? [];
-    if (name === "upsert_item") range.push(...spacesWithCapability(ctx.app, ctx.userId, "items.operate") ?? []);
-    ctx = { ...ctx, spaces: range.filter(id => !ctx.spaces || ctx.spaces.includes(id)) };
+    const range = spacesWithCapability(ctx.app, ctx.userId, cap);
+    if (range !== null) {
+      if (name === "upsert_item") range.push(...spacesWithCapability(ctx.app, ctx.userId, "items.operate") ?? []);
+      ctx = { ...ctx, spaces: range.filter(id => !ctx.spaces || ctx.spaces.includes(id)) };
+    }
   }
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
