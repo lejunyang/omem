@@ -1,5 +1,5 @@
 import { runPredicate, type RunAudience } from "../auth/run-scope.ts";
-import { maintainBoards, settleBoardRun } from "./work-board.ts";
+import { cancelBoard, maintainBoards, settleBoardRun } from "./work-board.ts";
 import { releaseRun } from "./capacity.ts";
 import { withBot } from "../core/bot-context.ts";
 import { trySettleCodeChain } from "./code-chain.ts";
@@ -658,7 +658,9 @@ function settleWikiWrite(app: App, r: Run) {
 
 export function cancelRun(app: App, id: string) {
   const r = getRun(app, id);
-  if (r.status === "queued") {
+  if ((r.status === "running" || r.status === "queued") && (r.input.boardDevice as import("./work-device.ts").BoardDevice | undefined)?.mode === "remote") {
+    cancelBoard(app, String(r.input.agentWorkId), String(r.input.boardTaskId), id);
+  } else if (r.status === "queued") {
     run(app.db, "update runs set status='cancelled', finished_at=? where id=?", now(), id);
     if (r.kind === "code") trySettleCodeChain(app, id);
     // A confirmed review plan ran on its own: the coding run it reviewed now has its result.

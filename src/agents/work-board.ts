@@ -155,11 +155,11 @@ export function reviewBoard(app: App, workId: string, decisions: Decision[], by:
   app.emit({ type: "work", workId });
 }
 
-export function cancelBoard(app: App, workId: string, task?: string) {
+export function cancelBoard(app: App, workId: string, task?: string, attemptId?: string) {
   tx(app.db, () => {
     const rows = all<TaskRow>(app.db, `select * from agent_work_tasks where work_id=? ${task ? "and id=?" : ""}`, workId, ...(task ? [task] : []));
     if (!rows.length) throw new HttpError(404, "找不到任务板或子任务");
-    for (const t of rows.filter(t => ["pending","running","rejected"].includes(t.status))) {
+    for (const t of rows.filter(t => (!attemptId || t.run_id === attemptId) && ["pending","running","rejected"].includes(t.status))) {
       stopBoardRun(app, t);
       finishAttempt(app, t, "cancelled", "已取消");
     }
@@ -200,8 +200,10 @@ export function maintainBoards(app: App, restart = false) {
 
 type Poll = { run_id: string; task_id: string; device: string; remote_run: string | null; seen_at: string; deadline: string };
 function stopBoardRun(app: App, task: TaskRow) {
-  if (run(app.db, "update board_peer_polls set next_at=? where run_id=?", now(),task.run_id).changes) {
+  if ((JSON.parse(task.attempts) as Attempt[]).at(-1)?.mode === "remote") {
+    run(app.db, "update board_peer_polls set next_at=? where run_id=?", now(),task.run_id);
     run(app.db, "update runs set status='cancelled',finished_at=? where id=?", now(),task.run_id);
+    app.emit({ type: "run", runId: task.run_id, status: "cancelled" });
   } else cancelRun(app, task.run_id);
 }
 

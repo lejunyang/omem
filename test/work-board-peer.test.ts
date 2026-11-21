@@ -15,7 +15,7 @@ import { importText } from "../src/sources/import.ts";
 import { listMemories } from "../src/memory/store.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { __testHandlers, createRun, getRun, setRunOutput, addRunEvent } from "../src/agents/runs.ts";
+import { __testHandlers, createRun, getRun, setRunOutput, addRunEvent, trackAbort } from "../src/agents/runs.ts";
 import { readBoard, pollBoardPeers, maintainBoards } from "../src/agents/work-board.ts";
 import { runRole } from "../src/agents/runner.ts";
 import { artifactInbox, artifactsByIds, collectInbox } from "../src/agents/artifacts.ts";
@@ -141,6 +141,29 @@ it("期限到了失败，可换设备重派；旧结果只记迟到，整组取�
   expect(f.remoteRuns()).toHaveLength(2);
   await callTool(f.ctx,"work_cancel",{work_id:f.id}); await f.poll();
   expect(getRun(f.there,f.remoteRuns()[1].id).status).toBe("cancelled");
+});
+it("运行页停止当前远端尝试，断线重连后发出取消，迟到结果只记在旧尝试",async () => {
+  const f = await setup();
+  const t = await f.dispatch(); await f.poll();
+  const localId = t.attempts[0].runId, remoteId = f.remoteRuns()[0].id;
+  run(f.there.db,"update runs set status='running',started_at=? where id=?",now(),remoteId);
+  await f.poll();
+  expect(readBoard(f.here,f.id).tasks[0].status).toBe("running");
+  const controller = new AbortController(), release = trackAbort(remoteId,controller);
+  try {
+    const response = await fetch(f.here.baseUrl + "/api/runs/" + localId + "/cancel",{ method:"POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({status:"cancelled"});
+    expect(readBoard(f.here,f.id).tasks[0]).toMatchObject({status:"cancelled",report:"已取消"});
+    const offline = vi.spyOn(globalThis,"fetch").mockRejectedValue(new Error("offline"));
+    await f.poll(); offline.mockRestore();
+    await f.poll(); expect(controller.signal.aborted).toBe(true);
+    await f.complete(remoteId,"停止后到达的报告"); await f.poll();
+    const stopped = readBoard(f.here,f.id).tasks[0];
+    expect(stopped).toMatchObject({status:"cancelled",report:"已取消"});
+    expect(stopped.attempts[0].lateAt).toBeTruthy();
+    expect(getRun(f.here,localId).output.answer).toBeUndefined();
+  } finally { release(); }
 });
 it("短时失联保留尝试，恢复继续；失联超过一小时失败且不覆盖重派",async () => {
   const f = await setup(); const t = await f.dispatch(); await f.poll(); const id = f.remoteRuns()[0].id;
