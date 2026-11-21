@@ -3,8 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { put } from "../api";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
-import { fmtTime, toast } from "../store";
-import { changeTone, changeTypeLabel, nextKindLabel, nextStatusLabel, originLabel, otherRefs, refsMarkdown, type ChangeLite, type NextLite } from "../lib/work";
+import { fmtTime, state, toast } from "../store";
+import { ownerCalled } from "../lib/owner-name";
+import { changeTone, changeTypeLabel, nextKindLabel, nextStatusLabel, originText, otherRefs, refsMarkdown, type ChangeLite, type NextLite } from "../lib/work";
 
 /**
  * One key change or one next step, opened from a timeline on the side: what it is, why, what it
@@ -80,7 +81,7 @@ async function decide(status: "doing" | "declined" | "done") {
       <header>
         <template v-if="c">
           <span class="tag" :class="changeTone(c.type)">{{ changeTypeLabel[c.type] ?? c.type }}</span>
-          <span class="muted small">{{ [originLabel[c.origin] ?? c.origin, fmtTime(c.at)].filter(Boolean).join(" · ") }}</span>
+          <span class="muted small">{{ [originText(c.origin, readonly ? ownerCalled(state.me) : undefined), fmtTime(c.at)].filter(Boolean).join(" · ") }}</span>
         </template>
         <template v-else-if="n">
           <span class="tag next">下一步{{ nextKindLabel[n.kind] ? ` · ${nextKindLabel[n.kind]}` : "" }}</span>

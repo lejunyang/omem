@@ -390,6 +390,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { sandboxStatus } = await import("../agents/own-run.ts");
     let ownSandbox;
     try {
+      // The mode can still be saved on a machine without the sandbox (it travels with the config); its directories cannot be checked there.
+      if (sep !== "/" && (settings.writable.length || settings.hidden.length)) throw new Error("沙箱只在 Linux 上有，这台机器上配不了目录");
       ownSandbox = normalizeSandbox(settings, homedir(), app.home);
     } catch (e) { throw new HttpError(400, (e as Error).message); }
     const next = { ...app.config, agents: { ...app.config.agents, ownSandbox, fullAccess } };

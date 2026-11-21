@@ -34,6 +34,8 @@ export const state = reactive({
   /** Who is using the page (src/auth): the owner, or a member with a smaller set of pages. */
   me: null as null | {
     id: string; name: string; role: string; status: string; avatar: string | null; via: string; perms: string[]; spaces: string[] | null; writes: string[] | null; wiki: string[] | null; manages: string[] | null; timezone?: string;
+    /** How others name the owner (src/core/users.ts `nameForOthers`): the owner's own name, or “主人”. Absent from an older server. */
+    ownerName?: string;
     /** Capabilities (src/auth/capabilities.ts, lib/caps.ts): the global ones, then where each space-scoped one holds ("*" = every space). Absent from an older server. */
     caps?: string[]; spaceCaps?: Record<string, string[] | "*">; ownSpaceCaps?: Record<string, string[] | "*">;
   },

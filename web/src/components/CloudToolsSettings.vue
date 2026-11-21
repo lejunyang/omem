@@ -3,8 +3,8 @@ import { computed, onMounted, ref } from "vue";
 import { get, post } from "../api";
 import { relTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
-import { CLOUD_TOOLS, cloudConfig, probeState, type CloudProbe, type CloudStatus, type CloudToolsConfig } from "../lib/cloud-tools";
-import { useRunTitles } from "../lib/run-titles";
+import { cloudConfig, probeState, toolOptions, type CloudProbe, type CloudStatus, type CloudToolsConfig } from "../lib/cloud-tools";
+import { runName } from "../lib/run-titles";
 import { useSettings } from "../views/settings/ctx";
 import MonoLine from "./MonoLine.vue";
 import SetCard from "./SetCard.vue";
@@ -26,12 +26,10 @@ const status = ref<CloudStatus | null>(null);
 const missing = ref(false);
 const error = ref("");
 const local = computed(() => state.me?.via === "local");
-const { title, want } = useRunTitles();
 async function load() {
   error.value = "";
   try {
     status.value = await get<CloudStatus>("/api/cloud-tools");
-    want(status.value.recent.slice(0, 6).map((r) => r.runId));
   } catch (e) {
     if ((e as { status?: number }).status === 404) missing.value = true;
     else error.value = (e as Error).message;
@@ -130,7 +128,7 @@ const off = computed(() => !status.value?.enabled);
         </div>
       </div>
       <SetRow label="允许的工具" hint="只能从这几个只读工具里选" block :off="off">
-        <UiSelect :model-value="status.tools" multiple size="sm" width="100%" aria-label="允许云端后端调的工具" :options="CLOUD_TOOLS" @change="(v) => (v as string[]).length ? save({ tools: v as string[] }, '已保存允许的工具') : toast('至少留一个工具；不想给就关掉总开关', 'error')" />
+        <UiSelect :model-value="status.tools" multiple size="sm" width="100%" aria-label="允许云端后端调的工具" :options="toolOptions(status)" @change="(v) => (v as string[]).length ? save({ tools: v as string[] }, '已保存允许的工具') : toast('至少留一个工具；不想给就关掉总开关', 'error')" />
       </SetRow>
       <SetRow label="凭据多久有效" hint="分钟，1–30" :off="off">
         <input class="input set-num" type="number" inputmode="numeric" min="1" max="30" aria-label="凭据有效分钟数" :value="status.ttlMinutes" @change="number($event, 'ttlMinutes', 30, 15)" />
@@ -147,7 +145,7 @@ const off = computed(() => !status.value?.enabled);
       <div v-if="status.recent.length" class="set-pad">
         <span class="ct-k">最近的调用</span>
         <div v-for="r in status.recent.slice(0, 6)" :key="r.runId" class="ct-call small">
-          <RouterLink class="ct-run" :to="`/runs/${r.runId}`">{{ title(r.runId) }}</RouterLink>
+          <RouterLink class="ct-run" :to="`/runs/${r.runId}`">{{ runName(r) }}</RouterLink>
           <span class="muted">{{ r.calls }} 次{{ r.errors ? ` · 出错 ${r.errors}` : "" }} · {{ relTime(r.at) }}</span>
           <span v-if="r.lastError" class="ct-err" :title="r.lastError">{{ r.lastError }}</span>
         </div>

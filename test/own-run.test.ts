@@ -64,6 +64,30 @@ it.skipIf(process.platform === "win32")("validates and returns the externally ed
   }
 });
 
+// The other half: where paths are not POSIX the sandbox cannot exist, and the settings must still read and save.
+it.runIf(process.platform === "win32")("reads and saves the mode on a machine that cannot have the sandbox", async () => {
+  const app = testApp();
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
+  const url = app.baseUrl + "/api/security/sandbox";
+  const put = (patch: Record<string, unknown>) => fetch(url, { method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode: "prefer", writable: [], hidden: [], fullAccess: "sandboxed", ...patch }) });
+  try {
+    const read = await fetch(url);
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ mode: "off", support: { ok: false }, defaults: { writable: [] } });
+    const saved = await put({});
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ mode: "prefer", fullAccess: "sandboxed" });
+    const refused = await put({ writable: ["C:/work/tools"] });
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain("只在 Linux 上有");
+    expect(app.config.agents.ownSandbox.writable).toEqual([]);
+  } finally {
+    await server.close(); app.db.close();
+    rmSync(app.home, { recursive: true, force: true });
+  }
+});
+
 it.skipIf(process.platform === "win32")("checks required state directories and only mounts existing optional state files", () => {
   const app = testApp();
   const home = realpathSync(mkdtempSync(join(tmpdir(), "state-types-")));

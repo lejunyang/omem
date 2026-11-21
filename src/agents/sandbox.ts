@@ -80,7 +80,7 @@ const exec: Exec = (file, args) => {
 export const PROBE_ARGS = ["--unshare-user", "--unshare-pid", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--", "/bin/true"];
 
 export function detectSandbox(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env, run: Exec = exec): SandboxSupport {
-  if (platform !== "linux") return { ok: false, reason: `多账号只支持 Linux（这台是 ${platform === "darwin" ? "macOS" : platform === "win32" ? "Windows" : platform}）` };
+  if (platform !== "linux") return { ok: false, reason: `沙箱只支持 Linux（这台是${platform === "darwin" ? "macOS" : platform === "win32" ? "Windows" : platform}）` };
   const bwrap = env.OMEM_BWRAP || onPath("bwrap", env);
   if (!bwrap) return { ok: false, reason: "没有安装 bubblewrap（bwrap）：用系统的包管理器安装，或 osdk pkg apply" };
   const v = run(bwrap, ["--version"]);

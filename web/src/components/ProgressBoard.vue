@@ -2,9 +2,9 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, onServerResync } from "../api";
 import {
-  BLOCK_LABEL, blockHref, blockTone, decisionText, doneCount, homeDevice, KIND_LABEL, missingText, orderTasks, outputHref, outputLabel,
+  BLOCK_LABEL, blockHref, blockTone, decisionText, doneCount, KIND_LABEL, missingText, orderTasks, outputHref, outputLabel, readProgress,
   pendingNeeds, runIdsOf, shortId, TASK_LABEL, taskHref, taskTone, took, usageText, waitLabel, whoLabel, ownerWait,
-  type ProgressTask, type ProgressView,
+  type ProgressTask, type ProgressUsage, type ProgressView,
 } from "../lib/progress";
 import { plainLine } from "../lib/plain";
 import Icon from "./Icon.vue";
@@ -23,6 +23,8 @@ const props = defineProps<{ run?: string; item?: string; focus?: string; label?:
 const emit = defineEmits<{ state: [state: "ready" | "empty" | "error"] }>();
 
 const blocks = ref<ProgressView[] | null>(null);
+/** The page's total, each run counted once across the blocks (the server's; an older one sends none). */
+const total = ref<ProgressUsage | null>(null);
 /** The blocks opened (by id), kept across reloads. */
 const opened = ref<Set<string>>(new Set());
 /** The task whose attempts are listed: `${block}/${task}`. */
@@ -36,9 +38,10 @@ async function load() {
   const n = ++seq, want = path.value;
   if (!want) return;
   try {
-    const list = await get<ProgressView[]>(want);
+    const page = readProgress(await get<unknown>(`${want}?summary=true`));
     if (n !== seq || want !== path.value) return;
-    blocks.value = Array.isArray(list) ? list : [];
+    blocks.value = page.views;
+    total.value = page.total;
     if (first) {
       first = false;
       const focusBlock = props.focus ? blocks.value.find((b) => b.kind === "board" && b.tasks.some((t) => t.id === props.focus)) : undefined;
@@ -51,7 +54,7 @@ async function load() {
     if (n === seq) { blocks.value = []; emit("state", "error"); }
   }
 }
-watch(path, () => { ++seq; first = true; blocks.value = null; opened.value = new Set(); tries.value = null; boardOpen.value = null; void load(); }, { immediate: true });
+watch(path, () => { ++seq; first = true; blocks.value = null; total.value = null; opened.value = new Set(); tries.value = null; boardOpen.value = null; void load(); }, { immediate: true });
 
 // Refresh on what the page already hears: a run in these blocks, a board's work, the item itself.
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -66,7 +69,7 @@ const off = onServerEvent((e) => {
 const resync = onServerResync(() => void load());
 onBeforeUnmount(() => { ++seq; off(); resync(); clearTimeout(timer); });
 
-const home = computed(() => homeDevice(blocks.value ?? []));
+
 /** A block's own key: a delegation and its review share the run's id. */
 function keyOf(b: Pick<ProgressView, "kind" | "id">) { return `${b.kind}:${b.id}`; }
 function toggle(b: ProgressView) {
@@ -89,6 +92,11 @@ function summaryOf(b: ProgressView) {
     rounds: (b.rounds?.length ?? 0) > 1 ? `${b.rounds!.length} 轮` : "",
   };
 }
+/** The total of the page, when there is more than one block to add up. */
+const totalText = computed(() => {
+  if (!total.value || (blocks.value?.length ?? 0) < 2) return "";
+  return [usageText(total.value) && `合计 ${usageText(total.value)}`, missingText(total.value)].filter(Boolean).join(" · ");
+});
 const summaries = computed(() => new Map((blocks.value ?? []).map((b) => [keyOf(b), summaryOf(b)])));
 const resultText = (t: ProgressTask) => decisionText(t) || TASK_LABEL[t.state] || t.state;
 const ATTEMPT: Record<string, string> = { queued: "排队", running: "在做", done: "做完", failed: "没做成", cancelled: "已取消" };
@@ -97,7 +105,10 @@ const blockLink: Record<ProgressView["kind"], string> = { board: "看任务板",
 
 <template>
   <section v-if="blocks && blocks.length" class="pg" :aria-label="label ?? '进度'">
-    <h2 v-if="label" class="pg-label">{{ label }}</h2>
+    <div v-if="label || totalText" class="pg-head">
+      <h2 v-if="label" class="pg-label">{{ label }}</h2>
+      <span v-if="totalText" class="pg-total" title="这一页所有运行报上来的 token，同一个运行只算一次">{{ totalText }}</span>
+    </div>
     <div v-for="b in blocks" :key="keyOf(b)" class="pg-block" :class="[toneClass(summaries.get(keyOf(b))!.tone), { open: opened.has(keyOf(b)) }]">
       <button type="button" class="pg-sum" :aria-expanded="opened.has(keyOf(b))" :aria-controls="bodyId(b)" @click="toggle(b)">
         <Icon :name="opened.has(keyOf(b)) ? 'down' : 'right'" :size="14" class="pg-chev" />
@@ -121,7 +132,7 @@ const blockLink: Record<ProgressView["kind"], string> = { board: "看任务板",
               <router-link v-if="taskHref(b, t)" :to="taskHref(b, t)!" class="pg-tt" :title="plainLine(t.title, 400)">{{ plainLine(t.title, 100) }}</router-link>
               <span v-else class="pg-tt" :title="plainLine(t.title, 400)">{{ plainLine(t.title, 100) }}</span>
               <span class="pg-meta">
-                <span v-if="whoLabel(t, home)">{{ whoLabel(t, home) }}</span>
+                <span v-if="whoLabel(t)">{{ whoLabel(t) }}</span>
                 <span v-if="took(t.attempts.at(-1)?.runMs)">{{ took(t.attempts.at(-1)?.runMs) }}</span>
                 <button v-if="t.attempts.length > 1" type="button" class="pg-try" :aria-expanded="tries === triesKey(b, t)" @click="tries = tries === triesKey(b, t) ? null : triesKey(b, t)">第 {{ t.attempts.length }} 次</button>
                 <span v-if="pendingNeeds(t, b.tasks).length" class="pg-need">等 {{ pendingNeeds(t, b.tasks).map((n) => shortId(n, b.tasks)).join("、") }}</span>

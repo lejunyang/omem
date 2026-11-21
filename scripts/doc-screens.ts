@@ -1611,12 +1611,29 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
       const data = await (await route.fetch()).json();
       const host = (h: string, count: number, denied = 0) => ({ host: h, count, bytes: count * 2048, denied, backend: false, ...(denied ? { lastDeniedAt: Date.now() - 40 * 60_000, error: "没有规则放行" } : {}) });
       await route.fulfill({ json: { ...data, support: { ok: true }, inspect: data.inspect.length ? data.inspect : ["api.example.com"], inspectionAvailable: true,
-        runs: [{ runId: r.id, hosts: [host("registry.npmjs.org", 42), host("api.example.com", 6, 2), host("github.com", 3)] }, { runId: null, hosts: [host("pypi.org", 8)] }],
-        denied: [{ runId: r.id, host: "api.example.com", count: 2, at: Date.now() - 40 * 60_000, reason: "没有规则放行" }] } });
+        runs: [{ runId: r.id, title: "核对退款金额的分摊口径", hosts: [host("registry.npmjs.org", 42), host("api.example.com", 6, 2), host("github.com", 3)] }, { runId: null, title: null, hosts: [host("pypi.org", 8)] }],
+        denied: [{ runId: r.id, title: "核对退款金额的分摊口径", host: "api.example.com", count: 2, at: Date.now() - 40 * 60_000, reason: "没有规则放行" }] } });
     });
   }, prepare: async (p) => {
     await p.locator("#set-egress .eg-run-row").first().click();
     await p.locator("#set-egress").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(300);
+  } },
+  // 设置 → 安全 → 运行的沙箱 and 完全访问. The demo machine is not Linux (no sandbox there), so the status is
+  // answered here as a Linux machine with bubblewrap would answer it (fictional home directory, the folders
+  // a run gets and two backends' state); saving still goes to the demo server.
+  { name: "settings-sandbox", path: "/settings?card=sandbox", before: async (p) => {
+    const home = "/home/demo", data = `${home}/.omem`;
+    await p.route("**/api/security/sandbox", (route) => route.request().method() !== "GET" ? route.fallback() : route.fulfill({ json: {
+      mode: "prefer", writable: [`${home}/work/tools`, `${home}/.config/acme`], hidden: [`${home}/.ssh`], fullAccess: "sandboxed",
+      support: { ok: true, bwrap: "/usr/bin/bwrap", version: "0.9.0" },
+      backends: [{ id: "codex", state: [`${home}/.codex`] }, { id: "claude", state: [`${home}/.claude`, `${home}/.claude.json`] }],
+      defaults: { exampleBackend: "codex", writable: [`${home}/.codex`, `${home}/.cache`, `${home}/.npm`, `${home}/.local/share/pnpm/store`, `${data}/runs/example/scratch`, `${data}/artifacts/inbox/example`, `${data}/workspaces/example/1`, "/tmp"], hidden: [data] },
+    } }));
+  }, prepare: async (p) => {
+    await p.locator("#set-sandbox .sbx-line").first().waitFor();
+    await p.getByRole("button", { name: /各后端的状态目录/ }).click();
+    await p.locator("#set-sandbox").scrollIntoViewIfNeeded();
     await p.waitForTimeout(300);
   } },
   // 设置 → 安全 → 云端后端调只读工具: the owner with a token. The demo has no public address or cloud
@@ -1625,7 +1642,13 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.route("**/api/cloud-tools", (route) => route.fulfill({ json: {
       enabled: true, tools: ["search", "read_source"], ttlMinutes: 15, maxCalls: 32, backends: ["doubao-cloud"], credentialIn: "channel",
       url: "https://omem.example.com", addressError: null, activeCredentials: 1,
-      recent: [{ runId: r.id, calls: 5, errors: 1, lastError: "read_source：没有这一行（演示）", at: new Date(Date.now() - 25 * 60_000).toISOString() }],
+      recent: [{ runId: r.id, title: "核对退款金额的分摊口径", calls: 5, errors: 1, lastError: "read_source：没有这一行（演示）", at: new Date(Date.now() - 25 * 60_000).toISOString() }],
+      availableTools: [
+        { name: "search", description: "在知识库中检索：原件片段、Wiki 页面、记忆、需求点。" },
+        { name: "read_source", description: "读取一个来源的内容：原件按行读。" },
+        { name: "read_page", description: "读取 Wiki 页面全文，以及反向链接。" },
+        { name: "read_item", description: "读取一件事项的全貌。" },
+      ],
       profiles: [
         { backend: "doubao-cloud", probe: { id: "p1", url: "https://omem.example.com", at: new Date(Date.now() - 2 * 86400_000).toISOString(), mode: "header", reason: "", confirmed: true } },
         { backend: "web-agent", probe: { id: "p2", url: "https://omem.example.com", at: new Date(Date.now() - 3600_000).toISOString(), mode: "url", reason: "", confirmed: false }, reason: "需要本人确认当前地址的成功探测" },

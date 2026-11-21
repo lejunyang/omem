@@ -7,17 +7,21 @@ export type CloudToolsConfig = { enabled: boolean; tools: string[]; ttlMinutes: 
 export type CloudProbe = { id: string; url: string; at: string; mode: false | "header" | "url"; reason: string; confirmed: boolean };
 export type CloudStatus = CloudToolsConfig & {
   url: string | null; addressError: string | null; activeCredentials: number;
-  recent: { runId: string; calls: number; errors: number; lastError: string | null; at: string }[];
+  /** `title`: the run's own title (null when the run is gone; absent from an older server). */
+  recent: { runId: string; title?: string | null; calls: number; errors: number; lastError: string | null; at: string }[];
   profiles: { backend: string; probe: CloudProbe | null; reason?: string }[];
+  /** The read-only tools a cloud backend may be given (`cloudToolNames`), with the first sentence of each one's description. */
+  availableTools?: { name: string; description: string }[];
 };
 
-/** The read-only tools the server lets a cloud backend call (`cloudToolNames` in src/core/config.ts). */
-export const CLOUD_TOOLS: { value: string; label: string }[] = [
-  { value: "search", label: "检索" },
-  { value: "read_source", label: "按行读原件" },
-  { value: "read_page", label: "读 Wiki 页" },
-  { value: "read_item", label: "读事项" },
-];
+/**
+ * The tools to pick from, named by what they do (the description up to its first pause), the tool's
+ * name as the hint. An older server does not list them: then only the ones already chosen, by name.
+ */
+export function toolOptions(s: Pick<CloudStatus, "availableTools" | "tools">): { value: string; label: string; hint?: string }[] {
+  if (!s.availableTools) return s.tools.map((t) => ({ value: t, label: t }));
+  return s.availableTools.map((t) => ({ value: t.name, label: t.description.split(/[：:，,。；;（(]/)[0].trim() || t.name, hint: t.name }));
+}
 
 export const cloudConfig = (s: CloudToolsConfig): CloudToolsConfig => ({ enabled: s.enabled, tools: [...s.tools], ttlMinutes: s.ttlMinutes, maxCalls: s.maxCalls, backends: [...s.backends], credentialIn: s.credentialIn });
 

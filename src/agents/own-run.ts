@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
@@ -82,10 +82,11 @@ export function sandboxStatus(app: App, config = app.config) {
     return { id: p.id, state: [...state.dirs, ...state.existing] };
   });
   const example = backends.find(p => p.state.length) ?? backends[0];
-  const { plan } = planRun(app, profiles.find(p => p.id === example?.id), sample, false, "example",
-    { inbox: join(data, "artifacts", "inbox", "example") }, { mode: "off", writable: [], hidden: [] });
+  // The sandbox's path rules are POSIX. Where paths are not (Windows), no run can enter it and there is no example to work out.
+  const writable = sep === "/" ? [...planRun(app, profiles.find(p => p.id === example?.id), sample, false, "example",
+    { inbox: join(data, "artifacts", "inbox", "example") }, { mode: "off", writable: [], hidden: [] }).plan.rw, "/tmp"] : [];
   return { ...config.agents.ownSandbox, fullAccess: config.agents.fullAccess, support: sandboxSupport(), backends,
-    defaults: { exampleBackend: example?.id, writable: [...plan.rw, "/tmp"], hidden: [data] },
+    defaults: { exampleBackend: example?.id, writable, hidden: [data] },
     visibility: "默认只管住写。本人 HOME 中的文件可读，要隐藏的目录请加到 hidden。成员自有账号另行隔离，云端和其他设备不在这台的沙箱里。",
     warning: config.agents.fullAccess === "all" ? "没进沙箱的运行不受任何限制（指后端的沙箱和审批）。omem 工具授权与命令垫片照常检查。" : undefined };
 }

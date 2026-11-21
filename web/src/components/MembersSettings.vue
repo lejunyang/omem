@@ -16,6 +16,7 @@ import { fmtTime, relTime, state, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { hasCap, settingsKey } from "../lib/caps";
 import MemberCaps, { type Capability, type MemberCapsData } from "./MemberCaps.vue";
+import NotifyOutlets from "./NotifyOutlets.vue";
 
 /**
  * Settings → 成员 (src/auth, docs/v2/multi-user.md): whether other people can log in and with what,
@@ -262,6 +263,8 @@ const inviteStatus = (i: Invite) => (i.revokedAt ? "已撤销" : i.usedAt ? `${u
 const isOwner = computed(() => state.me?.role === "owner");
 // What is folded: one person at a time, the invite and add-by-email forms, the roles table.
 const openUser = ref<string | null>(null);
+/** The member whose notification outlets are open under their row (components/NotifyOutlets with `user`). */
+const outletsFor = ref<string | null>(null);
 const showInvite = ref(false);
 const showAhead = ref(false);
 const showRoles = ref(false);
@@ -456,6 +459,11 @@ onMounted(() => load().catch(fail));
                 <span :class="routines[u.id]!.on && !routines[u.id]!.ready ? 'warn-text' : 'muted'">{{ routineText(routines[u.id]!, u.name) }}</span>
               </span>
             </div>
+            <div v-if="u.role !== 'owner' && mayManage && !u.disabledAt" class="p-line small">
+              <span class="p-k">通知出口</span>
+              <span><button type="button" class="link-btn" :aria-expanded="outletsFor === u.id" @click="outletsFor = outletsFor === u.id ? null : u.id">{{ outletsFor === u.id ? "收起" : "查看和设置" }}</button></span>
+            </div>
+            <NotifyOutlets v-if="outletsFor === u.id" :user="u.id" :user-name="u.name" class="p-outlets" />
             <UiCheckbox v-if="u.role !== 'owner' && auth?.primary" :model-value="u.loginAny" size="sm" @change="(v) => act(u, { loginAny: v }, '已保存')">允许用{{ label(auth.primary) }}以外的方式登录（企业外的人）</UiCheckbox>
             <div v-if="u.role !== 'owner'" class="row wrap">
               <span class="spacer" />
@@ -710,6 +718,13 @@ onMounted(() => load().catch(fail));
   display: grid;
   gap: 10px;
   padding: 4px 18px 16px 58px;
+  min-width: 0;
+}
+/* A member's notification outlets, opened under their 通知出口 line. */
+.p-outlets {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
   min-width: 0;
 }
 .p-line {

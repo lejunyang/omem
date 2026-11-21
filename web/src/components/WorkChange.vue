@@ -2,8 +2,9 @@
 import { computed, ref } from "vue";
 import { put } from "../api";
 import Markdown from "./Markdown.vue";
-import { toast } from "../store";
-import { changeTone, changeTypeLabel, clock, originLabel, refsMarkdown, sourceLabel, type ChangeLite } from "../lib/work";
+import { state, toast } from "../store";
+import { ownerCalled } from "../lib/owner-name";
+import { changeTone, changeTypeLabel, clock, originText, refsMarkdown, sourceLabel, type ChangeLite } from "../lib/work";
 
 /**
  * One key change as a card in a list (按时间, a line's timeline): the change in a sentence with its
@@ -14,6 +15,8 @@ import { changeTone, changeTypeLabel, clock, originLabel, refsMarkdown, sourceLa
 const props = defineProps<{ change: ChangeLite; line?: boolean; lineId?: string; readonly?: boolean }>();
 const emit = defineEmits<{ open: [c: ChangeLite]; changed: [] }>();
 const c = computed(() => props.change);
+/** Reading the owner's line, “你定的” is the owner's: named. */
+const by = computed(() => (props.readonly ? ownerCalled(state.me) : undefined));
 const cited = computed(() => refsMarkdown(c.value.refs));
 const busy = ref(false);
 async function noise() {
@@ -41,8 +44,8 @@ const added = computed(() => c.value.added ?? []);
 const yields = computed(() => c.value.yields ?? []);
 const mark = computed(() => [added.value.length ? `${added.value.length} 处补充` : "", yields.value.length ? `${yields.value.length} 处让开` : ""].filter(Boolean).join(" · "));
 const whoLines = computed(() => [
-  `最先记下：${originLabel[c.value.origin] ?? c.value.origin}${sourceLabel(c.value.sourceKey) ? `，来自${sourceLabel(c.value.sourceKey)}` : ""}`,
-  ...added.value.map((a) => `${clock(a.at)} ${originLabel[a.origin] ?? a.origin}补了${a.fields.map((f) => FIELD[f] ?? f).join("、")}`),
+  `最先记下：${originText(c.value.origin, by.value)}${sourceLabel(c.value.sourceKey) ? `，来自${sourceLabel(c.value.sourceKey)}` : ""}`,
+  ...added.value.map((a) => `${clock(a.at)} ${originText(a.origin, by.value)}补了${a.fields.map((f) => FIELD[f] ?? f).join("、")}`),
   ...yields.value.map((y) => `${y.label}让开了：${y.reason || `${y.to}已经在处理`}`),
 ]);
 const hover = ref(false);
@@ -66,7 +69,7 @@ function closeWho() {
     <p class="meta small">
       <span class="tag">{{ changeTypeLabel[c.type] ?? c.type }}</span>
       <span>{{ clock(c.at) }}</span>
-      <span v-if="c.origin">{{ originLabel[c.origin] ?? c.origin }}</span>
+      <span v-if="c.origin">{{ originText(c.origin, by) }}</span>
       <span v-if="mark" class="who" @keydown.esc.stop="closeWho">
         <button ref="trigger" type="button" class="who-btn" :aria-expanded="hover || pinned" aria-label="谁记的、谁补的、谁让开了" @mouseenter="hover = true" @mouseleave="hover = false" @focus="hover = true" @blur="hover = false" @click.stop="pinned = !pinned">{{ mark }}</button>
         <span v-if="hover || pinned" class="who-pop" role="tooltip" @mouseenter="hover = true" @mouseleave="hover = false">

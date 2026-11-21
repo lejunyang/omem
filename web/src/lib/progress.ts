@@ -6,13 +6,18 @@
 import { plainLine } from "./plain.js";
 
 export type ProgressUsage = { input: number; output: number; cached?: number; runs: number; missing: number };
-export type ProgressAttempt = { runId: string; status: string; startedAt?: string; endedAt?: string; queuedMs?: number; runMs?: number; usage: ProgressUsage };
-export type ProgressOutput = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page"; ref: string; label: string };
+export type ProgressAttempt = { runId: string; status: string; startedAt?: string; endedAt?: string; queuedMs?: number; runMs?: number; usage: ProgressUsage; local?: boolean; device?: string };
+/** What a stage's evidence points at, as the server read it (only what the reader may open). */
+export type EvidenceTarget = { kind: "source" | "design" | "run" | "object"; id: string; title: string };
+export type ProgressOutput = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page"; ref: string; label: string; target?: EvidenceTarget };
 export type ProgressDecision = { by?: string; at?: string; ref?: string; result: string; note?: string };
 export type TaskState = "pending" | "queued" | "running" | "submitted" | "accepted" | "redo" | "blocked" | "failed" | "cancelled";
 export type ProgressTask = {
+  /** Where the task is seen in full (`#/runs/…?task=T2`, `#/items/…/flow?stage=…`); absent from an older server. */
+  href?: string;
   id: string; title: string; state: TaskState; goal?: string; accept?: string; needs?: string[]; waitingOn?: string;
-  who?: { agent?: string; model?: string; effort?: string; device?: string };
+  /** `local`: the latest attempt ran on this machine; `device`: the machine's name otherwise. */
+  who?: { agent?: string; model?: string; effort?: string; local?: boolean; device?: string };
   attempts: ProgressAttempt[]; usage: ProgressUsage; outputs?: ProgressOutput[]; decision?: ProgressDecision; decisions?: ProgressDecision[];
   round?: number; parentId?: string;
 };
@@ -24,6 +29,16 @@ export type ProgressView = {
   rounds?: { runId: string; round?: number; status: string }[];
   previousRounds?: { round: number; directions: number; trials: number; usage: ProgressUsage }[];
 };
+
+/**
+ * One page of blocks (`?summary=true`): the blocks and their total, each run counted once across them
+ * (src/agents/progress.ts `allocate`). An older server answers with the blocks alone: no total then.
+ */
+export function readProgress(data: unknown): { views: ProgressView[]; total: ProgressUsage | null } {
+  if (Array.isArray(data)) return { views: data as ProgressView[], total: null };
+  const page = data as { views?: ProgressView[]; totalUsage?: ProgressUsage } | null;
+  return { views: Array.isArray(page?.views) ? page!.views : [], total: page?.totalUsage ?? null };
+}
 
 export const KIND_LABEL: Record<ProgressKind, string> = { board: "任务板", code: "编码交办", review: "评审", flow: "流程", study: "课题" };
 export const TASK_LABEL: Record<TaskState, string> = {
@@ -126,30 +141,20 @@ export function orderTasks(tasks: ProgressTask[]): { task: ProgressTask; depth: 
   return out;
 }
 
-/** The model the latest attempt used (its last segment), or the agent's name. */
-export function whoLabel(t: Pick<ProgressTask, "who">, home?: string | null) {
+/** The model the latest attempt used (its last segment), or the agent's name; the device when it was not this machine. */
+export function whoLabel(t: Pick<ProgressTask, "who">) {
   const w = t.who;
   if (!w) return "";
   const model = w.model ? w.model.split("/").pop()! : w.agent && w.agent !== "assistant" ? w.agent : "";
-  const device = w.device && w.device !== home ? w.device : "";
+  const device = w.device && !w.local ? w.device : "";
   return [model, device && `在 ${device}`].filter(Boolean).join(" · ");
-}
-/** The device most of the board's attempts ran on: this machine, whose name is not worth repeating. */
-export function homeDevice(blocks: ProgressView[]): string | null {
-  const counts = new Map<string, number>();
-  for (const b of blocks) if (b.kind === "board") for (const t of b.tasks) if (t.who?.device) counts.set(t.who.device, (counts.get(t.who.device) ?? 0) + 1);
-  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 }
 
 const VERDICT: Record<string, string> = { approved: "通过", changes_requested: "要修改", failed: "没做成", passed: "通过", inconclusive: "说不清" };
-/** An output's words: review and trial verdict codes in front read as words; no Markdown marks. */
+export const EVIDENCE_KIND: Record<EvidenceTarget["kind"], string> = { source: "原件", design: "方案", run: "运行", object: "外部对象" };
+/** An output's words: evidence by its title, review and trial verdict codes in front as words; no Markdown marks. */
 export function outputLabel(o: ProgressOutput): string {
-  // Evidence is named by its reference alone: say what it is, not its id.
-  if (o.kind === "evidence" && o.label === o.ref) {
-    if (/^src:/.test(o.ref)) return "原件";
-    if (/^design:/.test(o.ref)) return "方案";
-    if (/^r[0-9a-z]{8,}$/.test(o.ref)) return "运行";
-  }
+  if (o.kind === "evidence" && o.target) return plainLine(o.target.title || EVIDENCE_KIND[o.target.kind], 80);
   const text = o.label.replace(/^([a-z_]+)(?= · )/, (m) => VERDICT[m] ?? m);
   return plainLine(text, 80);
 }
@@ -165,12 +170,10 @@ export function decisionText(t: Pick<ProgressTask, "decision" | "decisions">): s
   return d ? DECISION[d.result] ?? d.result : "";
 }
 
-/** Where a task is seen in full: its latest run, the flow tab of its item, or the work's own page. */
-export function taskHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">, t: Pick<ProgressTask, "attempts">): string | null {
-  if (b.kind === "flow" || b.kind === "study") return b.itemId ? `/items/${encodeURIComponent(b.itemId)}/flow` : null;
-  const last = t.attempts.at(-1)?.runId;
-  if (last) return `/runs/${encodeURIComponent(last)}`;
-  return b.runId ? `/runs/${encodeURIComponent(b.runId)}` : null;
+/** Where a task is seen in full: the place the server names (a router path), else the block's own page. */
+export function taskHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">, t: Pick<ProgressTask, "href">): string | null {
+  if (t.href) return t.href.replace(/^#/, "");
+  return blockHref(b);
 }
 /** Where the block's own page is (its actions live there). */
 export function blockHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">): string | null {
@@ -181,9 +184,10 @@ export function blockHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">): s
 export function outputHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">, o: ProgressOutput): string | null {
   if (o.kind === "commit" || o.kind === "branch") return null;
   if (o.kind === "evidence") {
-    if (/^src:/.test(o.ref)) return `/sources/${encodeURIComponent(o.ref.slice(4).split("#")[0])}`;
-    if (/^design:/.test(o.ref)) return `/design/${encodeURIComponent(o.ref.slice(7))}`;
-    if (/^r[0-9a-z]{8,}$/.test(o.ref)) return `/runs/${o.ref}`;
+    const t = o.target;
+    if (t?.kind === "source") return `/sources/${encodeURIComponent(t.id)}`;
+    if (t?.kind === "design") return `/design/${encodeURIComponent(t.id)}`;
+    if (t?.kind === "run") return `/runs/${encodeURIComponent(t.id)}`;
     return null;
   }
   if (o.kind === "page") return /^[\w-]+\/.+/.test(o.ref) ? `/wiki/${o.ref}` : null;

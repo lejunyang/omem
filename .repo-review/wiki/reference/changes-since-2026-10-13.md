@@ -20,6 +20,16 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 网页接上本人沙箱和补齐的接口字段（2026-11-22）
+
+设置 → 安全 多了“运行的沙箱”和“完全访问”两张卡，从 `web/src/components/SandboxSettings.vue` 读起（纯函数在 `web/src/lib/sandbox.ts`，目录清单是 `SandboxPaths.vue`）。卡片读写 `GET` / `PUT /api/security/sandbox`，每次改动整份保存，“全部开”先确认并带 `confirmAll`；目录被拒时服务端的原因写在那一行下面。主目录从返回的路径里推出来（接口不给），用来把路径写成 `~/…`。
+
+网页改用服务端补齐的字段，去掉自己拼的逻辑：本人的称呼读 `/api/me` 的 `ownerName`（`web/src/lib/owner-name.ts`）；成员页每人的“通知出口”复用 `NotifyOutlets.vue`（`user` 属性，`?user=` / `userId`），成员能不能勾审批看 `grantedAskKinds`；进度视图取 `?summary=true` 的合计、`local`、`href` 和证据的 `target`（`web/src/lib/progress.ts`）；出网和云端工具用接口给的运行标题和 `availableTools`（`web/src/lib/run-titles.ts` 只剩 `runName`）；HTTP 规则“在哪里生效”读顶层 `enforcedBy`（`web/src/lib/rule-places.ts`）。
+
+`web/src/styles.css` 进度视图的窄屏 `@media` 少一个右括号，后面的“settings 2”一段原来只在窄屏生效，已补上。
+
+沙箱的路径规则按 POSIX 写。Windows 上原来读、存这张卡都报错：现在 `sandboxStatus`（`src/agents/own-run.ts`）在路径不是 POSIX 的机器上不算示例运行的可写清单（返回空），模式和完全访问照常保存，带目录的保存返回 400 并说明这台配不了目录。不可用的原因改成“沙箱只支持 Linux”（原来写的是“多账号”）。
+
 ## 带运行器的流程由本人提交和确认（2026-11-22）
 
 从 `docs/v2/plugins.md` 的「插件承担一个阶段」读提交和启用方式。本人通过流程保存接口或自己的助手提交新版本，确认卡列出阶段、插件和用途。两个入口的成员权限及本人确认前后的状态由 `test/flow-plugin.test.ts` 覆盖。

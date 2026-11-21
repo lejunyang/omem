@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { get, put } from "../api";
 import { relTime, toast } from "../store";
 import { egressSettings, inspectDomain, runSummary, type EgressAction, type EgressSettings, type EgressStatus } from "../lib/egress";
-import { useRunTitles } from "../lib/run-titles";
+import { runName } from "../lib/run-titles";
 import Icon from "./Icon.vue";
 import MonoLine from "./MonoLine.vue";
 import SetCard from "./SetCard.vue";
@@ -20,12 +20,10 @@ import UiSegmented from "./UiSegmented.vue";
 const status = ref<EgressStatus | null>(null);
 const missing = ref(false);
 const error = ref("");
-const { title, want } = useRunTitles();
 async function load() {
   error.value = "";
   try {
     status.value = await get<EgressStatus>("/api/security/egress");
-    want([...status.value.runs.slice(0, 8).map((r) => r.runId), ...status.value.denied.slice(0, 6).map((d) => d.runId)]);
   } catch (e) {
     if ((e as { status?: number }).status === 404) missing.value = true;
     else error.value = (e as Error).message;
@@ -123,7 +121,7 @@ const runs = computed(() => (status.value?.runs ?? []).slice(0, allRuns.value ? 
         <p v-if="!status.runs.length" class="small muted">还没有经代理出网的运行。</p>
         <div v-for="(r, i) in runs" :key="r.runId ?? i" class="eg-run" :class="{ open: openRun === i }">
           <button type="button" class="eg-run-row" :aria-expanded="openRun === i" @click="openRun = openRun === i ? null : i">
-            <span class="eg-run-title">{{ title(r.runId) }}</span>
+            <span class="eg-run-title">{{ runName(r) }}</span>
             <span class="eg-run-meta" :class="{ 'has-denied': runSummary(r.hosts).denied }">{{ runSummary(r.hosts).text }}</span>
             <Icon name="down" :size="14" class="eg-chev" />
           </button>
@@ -143,7 +141,7 @@ const runs = computed(() => (status.value?.runs ?? []).slice(0, allRuns.value ? 
         <div v-for="(d, i) in status.denied.slice(0, 6)" :key="i" class="eg-host small">
           <MonoLine :text="d.host" />
           <span class="muted">{{ d.count }} 次 · {{ d.at ? relTime(new Date(d.at).toISOString()) : "" }}</span>
-          <RouterLink v-if="d.runId" class="eg-deny-run" :to="`/runs/${d.runId}`" :title="d.reason ?? ''">{{ title(d.runId) }}</RouterLink>
+          <RouterLink v-if="d.runId" class="eg-deny-run" :to="`/runs/${d.runId}`" :title="d.reason ?? ''">{{ runName(d) }}</RouterLink>
         </div>
       </div>
     </template>
