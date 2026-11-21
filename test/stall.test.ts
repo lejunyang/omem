@@ -59,7 +59,8 @@ describe("agent stalls and provider queue", () => {
   it("waits for an effort option the agent lists late when the run named the level, and gives up after the wait", async () => {
     const { setEffortWaitForTests } = await import("../src/agents/acp.ts");
     const strict = { cwd: process.cwd(), prompt: "hi", strictSelection: { model: true, effort: true } };
-    for (const env of [{ FAKE_LATE_EFFORT: "1800" }, { FAKE_LATE_EFFORT: "1800", FAKE_LATE_EFFORT_ANNOUNCE: "1" }]) {
+    const late: Record<string, string>[] = [{ FAKE_LATE_EFFORT: "1800" }, { FAKE_LATE_EFFORT: "1800", FAKE_LATE_EFFORT_ANNOUNCE: "1" }];
+    for (const env of late) {
       const events: AgentEvent[] = [];
       const r = await runAcp({ ...fake({ FAKE_TRAE: "1", ...env }, 8000), model: "m2", effort: "high" }, strict, (e) => events.push(e));
       expect(r.text).toContain('"turn":1');
