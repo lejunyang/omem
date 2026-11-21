@@ -152,8 +152,6 @@ export const ownerControls: Record<string, string[]> = {
   "embeddings.url": [],
   "embeddings.apiKeyEnv": [],
   "mcp": [
-    "GET /api/library-files/agent/:name",
-    "PUT /api/library-files/agent/:name",
     "GET /api/mcp",
     "PUT /api/mcp/:name",
     "DELETE /api/mcp/:name",

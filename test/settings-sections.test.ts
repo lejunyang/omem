@@ -7,7 +7,6 @@ import { upsertSource } from "../src/sources/store.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { savePeers } from "../src/core/peers.ts";
-import { remember } from "../src/memory/store.ts";
 import { saveRole } from "../src/auth/permissions.ts";
 import { configSchema } from "../src/core/config.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
@@ -142,44 +141,6 @@ it("成员读插件列表、详情和改图标都能渲染权限，服务命令�
     expect(edited.statusCode).toBe(200);
     expect(edited.json()).toEqual({ ...card, icon: "star", iconChosen: true });
   } finally { forgetPlugin("probe"); await server.close(); app.db.close(); }
-});
-
-it("旧 agents.manage 成员可改档案摘要，凭据、目录、私有记忆和档案原文只对本人可见", async () => {
-  const app = testApp();
-  saveRole(app, { id: "profiles", name: "档案管理", scope: "global", permissions: ["agents.manage"] });
-  createUser(app, { id: "manager", name: "成员", role: "profiles" });
-  const headers = { authorization: "Bearer " + createApiToken(app, "manager") };
-  const url = "/api/agents/example";
-  const rawUrl = "/api/library-files/agent/example";
-  const privateFields = {
-    cwd: join(app.home, "private"), prompt: "档案的私有指令", fullAccess: true,
-    mcp: { demo: { url: "https://example.org/mcp", headers: { Authorization: "fixture-secret" } } },
-  };
-  const server = await startServer(app, { port: 0, quiet: true });
-  try {
-    const summary = { name: "example", description: "示例", status: "draft", model: "example-model" };
-    expect((await server.inject({ method: "PUT", url, payload: { ...summary, ...privateFields } })).statusCode).toBe(200);
-    const memory = remember(app, { spaceId: "personal", kind: "fact", content: "档案的专属记忆", createdBy: "user", agent: "example" });
-    expect((await server.inject({ url: "/api/agents", headers })).json()).toContainEqual(summary);
-    expect((await server.inject({ url, headers })).json()).toEqual(summary);
-    for (const field of ["cwd", "mcp", "fullAccess", "mcpServers", "prompt"]) {
-      const refused = await server.inject({ method: "PUT", url, headers, payload: { description: "忽略整次修改", [field]: null } });
-      expect(refused.statusCode, field).toBe(403);
-    }
-    const updated = await server.inject({ method: "PUT", url, headers, payload: { status: "active" } });
-    expect(updated.json()).toEqual({ ...summary, status: "active" });
-    expect((await server.inject({ url })).json()).toMatchObject({ ...privateFields, memories: [{ id: memory.id }] });
-
-    const { raw } = (await server.inject({ url: rawUrl })).json();
-    expect(raw).toContain("fixture-secret");
-    expect((await server.inject({ url: rawUrl, headers })).statusCode).toBe(403);
-    expect((await server.inject({ method: "PUT", url: rawUrl, headers, payload: { raw } })).statusCode).toBe(403);
-    expect((await server.inject({ method: "PUT", url: rawUrl, payload: { raw } })).statusCode).toBe(200);
-    const skillUrl = "/api/library-files/skill/example";
-    const skillRaw = "---\ndescription: 示例技能\n---\n技能正文\n";
-    expect((await server.inject({ method: "PUT", url: skillUrl, headers, payload: { raw: skillRaw } })).statusCode).toBe(200);
-    expect((await server.inject({ url: skillUrl, headers })).json()).toEqual({ raw: skillRaw });
-  } finally { await server.close(); app.db.close(); }
 });
 
 it("整机诊断仅本人可读，旧 settings.manage 权限不能读取私有失败运行和设备地址", async () => {

@@ -1024,17 +1024,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ----------------------------------------------------------- agents & skills
-  const memberSpec = ({ name, description, status, agent, model, effort }: ReturnType<typeof readAgentSpec>) =>
-    ({ name, description, status, agent, model, effort });
   server.get("/api/agents", async req => {
     const specs = listAgentSpecs(app, { includeDrafts: true });
-    return who(req) === OWNER ? specs : specs.map(memberSpec);
+    return who(req) === OWNER ? specs : specs.map(({ name, description, status, agent, model, effort }) => ({ name, description, status, agent, model, effort }));
   });
   // A spec with what it has learned (attached skills, its own memories, proposals, usage).
   server.get("/api/agents/:name", async (req) => {
     const name = (req.params as { name: string }).name;
-    const spec = readAgentSpec(app, name);
-    return who(req) === OWNER ? { ...spec, ...profileDetail(app, name) } : memberSpec(spec);
+    return { ...readAgentSpec(app, name), ...profileDetail(app, name) };
   });
   // Built-in roles as profiles: the source version, the owner's copy, and the same learned view.
   const checkMcpNames = (names: string[]) => {
@@ -1121,30 +1118,25 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/profile-proposals/:id/apply", async (req) => applyProposal(app, (req.params as { id: string }).id));
   server.post("/api/profile-proposals/:id/reject", async (req) => rejectProposal(app, (req.params as { id: string }).id));
   server.put("/api/agents/:name", async (req) => {
-    const name = (req.params as { name: string }).name;
-    const body = q(z.record(z.string(), z.unknown()), req.body);
-    if (who(req) !== OWNER) {
-      if (Object.keys(body).some(key => key !== "description" && key !== "status"))
-        throw new HttpError(403, "成员只能修改档案说明和状态");
-      return memberSpec(saveAgentSpec(app, { ...body, name }, "user"));
-    }
+    // 完全访问 is the owner's alone; another user's edit keeps what the profile had.
+    const { fullAccess, ...body } = req.body as { fullAccess?: boolean; mcpServers?: unknown };
     if (body.mcpServers !== undefined) checkMcpNames(q(z.array(z.string()), body.mcpServers));
-    return saveAgentSpec(app, { ...body, name }, "user");
+    return saveAgentSpec(app, { ...body, ...(who(req) === OWNER && fullAccess !== undefined ? { fullAccess } : {}), name: (req.params as { name: string }).name } as never, "user");
   });
   server.delete("/api/agents/:name", async (req) => {
     deleteAgentSpec(app, (req.params as { name: string }).name, "user");
     return { ok: true };
   });
-  for (const kind of ["agent", "skill"] as const) {
-    const path = `/api/library-files/${kind}/:name`;
-    server.get(path, async req => ({ raw: readRaw(app, kind, (req.params as { name: string }).name) }));
-    server.put(path, async req => {
-      const { name } = req.params as { name: string };
-      const { raw } = q(z.object({ raw: z.string().min(1) }), req.body);
-      if (kind === "agent") checkMcpNames(agentSpecSchema.parse({ ...splitFrontmatter(raw).meta, name }).mcpServers);
-      return saveRaw(app, kind, name, raw);
-    });
-  }
+  server.get("/api/library-files/:kind/:name", async (req) => {
+    const { kind, name } = req.params as { kind: "agent" | "skill"; name: string };
+    return { raw: readRaw(app, kind === "agent" ? "agent" : "skill", name) };
+  });
+  server.put("/api/library-files/:kind/:name", async (req) => {
+    const { kind, name } = req.params as { kind: "agent" | "skill"; name: string };
+    const b = q(z.object({ raw: z.string().min(1) }), req.body);
+    if (kind === "agent") checkMcpNames(agentSpecSchema.parse({ ...splitFrontmatter(b.raw).meta, name }).mcpServers);
+    return saveRaw(app, kind === "agent" ? "agent" : "skill", name, b.raw);
+  });
   server.get("/api/skills/:name/files", async (req) => listSkillFiles(app, (req.params as { name: string }).name));
   server.get("/api/skills/:name/file", async (req) => ({ raw: readSkillFile(app, (req.params as { name: string }).name, q(z.object({ path: z.string() }), req.query).path) }));
   server.put("/api/skills/:name/file", async (req) => {

@@ -392,7 +392,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "GET /api/agents/:name", "PUT /api/agents/:name", "DELETE /api/agents/:name", "DELETE /api/agents/quota/:source", "POST /api/agents/quota/refresh",
       "GET /api/roles", "GET /api/roles/:name", "PUT /api/roles/:name", "PUT /api/roles/:name/defaults", "PUT /api/roles/:name/full-access", "POST /api/roles/:name/customize", "POST /api/roles/:name/follow-source", "POST /api/roles/:name/reset", "POST /api/roles/:name/merge",
       "GET /api/profile-options", "PUT /api/profiles/:name/skills", "POST /api/profiles/:name/review", "POST /api/profile-proposals/:id/apply", "POST /api/profile-proposals/:id/reject",
-      "GET /api/library-files/skill/:name", "PUT /api/library-files/skill/:name",
+      "GET /api/library-files/:kind/:name", "PUT /api/library-files/:kind/:name",
       "GET /api/skills", "GET /api/skill-groups", "GET /api/skill-groups/:id", "GET /api/skills/:name", "PUT /api/skills/:name", "PUT /api/skills/:name/status", "DELETE /api/skills/:name", "GET /api/skills/:name/files", "GET /api/skills/:name/file", "PUT /api/skills/:name/file", "DELETE /api/skills/:name/file",
       "GET /api/rules/:id/permissions",
       "GET /api/rule-options", "POST /api/rule-conversations", "GET /api/wakes", "DELETE /api/wakes/:id", "GET /api/watches", "DELETE /api/watches/:chatId",
