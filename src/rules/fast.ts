@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { messageSourceSpaces } from "../core/capture-space.ts";
 import { one, run } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { notify } from "../core/notify.ts";
@@ -27,23 +28,28 @@ export async function pollFastRules(app: App) {
     const start = Math.max(since - 2 * 60_000, end - 15 * 60_000);
     const words = [...new Set(rules.flatMap((r) => textWords(r.conditions)))];
     const queries = words.length ? words : [""];
-    const { dispatchRuleEvent, snapshotRuleEvents } = await import("./engine.ts");
+    const { dispatchRuleEvent } = await import("./engine.ts");
     const seen = new Set<string>();
     const events: RuleEvent[] = [];
-    const collect = (messages: LarkMessage[], kind: "group" | "p2p") => {
-      const batch: RuleEvent[] = [];
+    const origins = new Map<string, string[] | undefined>();
+    const collect = async (args: string[], kind: "group" | "p2p") => {
+      const candidate = (m: LarkMessage) => m.chat_id && !seen.has(m.message_id) && m.msg_type !== "system" && m.sender?.id !== owner;
+      const addressed = (m: LarkMessage) => kind === "p2p" || mentionIds(m).includes(owner);
+      const messages = await fetchMessages(args, start, end, { pages: 2, onPage(page) {
+        const fresh = page.filter(m => candidate(m) && addressed(m) && !origins.has(m.message_id));
+        const spaces = messageSourceSpaces(app, fresh.map(m => ({ id: m.message_id, chatId: m.chat_id })));
+        fresh.forEach((m, i) => origins.set(m.message_id, spaces[i]));
+      } });
       for (const m of messages) {
-        if (!m.chat_id || seen.has(m.message_id) || m.msg_type === "system" || m.sender?.id === owner) continue;
+        if (!candidate(m)) continue;
         seen.add(m.message_id);
-        if (kind === "group" && !mentionIds(m).includes(owner)) continue;
-        batch.push(eventOf(app, m, kind, owner));
+        if (addressed(m)) events.push({ ...eventOf(app, m, kind, owner), sourceSpaces: origins.get(m.message_id) });
       }
-      events.push(...snapshotRuleEvents(app, batch));
     };
     for (const q of queries) {
       const query = q ? ["--query", q] : [];
-      collect(await fetchMessages(["+messages-search", ...query, "--at-chatter-ids", owner, "--chat-type", "group"], start, end, { pages: 2 }), "group");
-      collect(await fetchMessages(["+messages-search", ...query, "--chat-type", "p2p"], start, end, { pages: 2 }), "p2p");
+      await collect(["+messages-search", ...query, "--at-chatter-ids", owner, "--chat-type", "group"], "group");
+      await collect(["+messages-search", ...query, "--chat-type", "p2p"], "p2p");
     }
     const ids = new Set(rules.map((r) => r.id));
     for (const e of events.sort((a, b) => a.at.localeCompare(b.at))) await dispatchRuleEvent(app, e, (r) => ids.has(r.id));

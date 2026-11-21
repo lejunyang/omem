@@ -180,6 +180,7 @@ it.each(["规则转入", "普通关注"])("%s的项目消息入队后改绑个�
 
 it.each([
   { mode: "延时转入", expected: ["allowed"] },
+  { mode: "分页期间改绑", expected: ["allowed"] },
   { mode: "复用关注批次", expected: ["allowed", "personal"] },
   { mode: "后来归档", expected: ["allowed", "personal"] },
   { mode: "接收前已归档", expected: ["allowed"] },
@@ -205,13 +206,21 @@ it.each([
     persistChatMessages(app, { chatId, spaceId: "allowed", name: "讨论群", messages: [incoming] });
     setChatSettings(app, "lark", chatId, { spaceId: "personal" });
   }
+  let groupPages = 0;
   setLarkCliForTests(async args => {
     if (args[0] === "auth") return { data: { identities: { user: { openId: "owner" } } } };
+    if (args.includes("group") && mode === "分页期间改绑") {
+      groupPages++;
+      if (!args.includes("--page-token")) return { data: { messages: [incoming], has_more: true, page_token: "next" } };
+      setChatSettings(app, "lark", chatId, { spaceId: "personal" });
+      return { data: { messages: [incoming], has_more: false } };
+    }
     if (args.includes("p2p") && mode === "后来归档") setChatSettings(app, "lark", chatId, { spaceId: "personal" });
     return { data: { messages: args.includes("group") ? [incoming] : [], has_more: false } };
   });
   cleanup.push(() => setLarkCliForTests(null));
   expect(await pollFastRules(app)).toBe(1);
+  if (mode === "分页期间改绑") expect(groupPages).toBe(2);
   const saved = () => {
     const [row] = all<{ input: string }>(app.db, "select input from runs where kind='rule-fire' order by rowid desc limit 1");
     return JSON.parse(row.input) as { event: RuleEvent; key: string; actions: RuleAction[] };
