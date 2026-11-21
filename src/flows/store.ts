@@ -25,6 +25,7 @@ export type StageControl = {
   reminderAt?: string; reminders?: number;
   waitUntil?: string; tierFallback?: string[]; execution?: Execution; escalations?: number; escalated?: boolean;
   budgetStartedAt?: string; usedMinutes?: number;
+  runnerDeadline?: number;
   budgetExceeded?: boolean;
   admitted?: boolean;
   trialId?: string; trialEscalated?: boolean; trialFailures?: number; completedTrials?: number;

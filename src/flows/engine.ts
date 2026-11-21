@@ -10,7 +10,7 @@ import { decide, decisionReady, describeDecision } from "../core/decision.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
 import { cancelAsk, createAsk, getAsk, registerAskHandler, type Ask } from "../agents/asks.ts";
-import { cancelRun, createRun, getRun, registerHandler } from "../agents/runs.ts";
+import { stopRun, createRun, getRun, registerHandler } from "../agents/runs.ts";
 import { validateExecution, executionArgs, type Execution } from "../agents/execution.ts";
 import { dailyCapReached, outOfQuotaUntil } from "../agents/capacity.ts";
 import { roleNames, type RoleName } from "../core/config.ts";
@@ -104,7 +104,7 @@ async function answerUpstream(app: App, f: ItemFlow, d: FlowStage, s: StageRow, 
   resetStreak(app, f.itemId);
   if (isTrials(d)) await cancelTrials(app, f.itemId);
   if (isFixes(d)) await cancelFixReruns(app, f.itemId);
-  if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
+  if (s.control.runId) await stopStageRun(app, s.itemId, s.control.runId);
   // A delegation is stopped where it stands, never discarded: its workspace and branch stay for the redo.
   let kept = "";
   if (s.by?.startsWith("code-work:")) {
@@ -303,7 +303,7 @@ function joinBatch(app: App, f: ItemFlow, d: FlowStage, userId: string, key: str
 }
 
 /** Stops this item's stage run; a run shared with other items only lets this one go. */
-function stopStageRun(app: App, itemId: string, runId: string) {
+function stopStageRun(app: App, itemId: string, runId: string, failure?: string) {
   const r = getRun(app, runId);
   const items = Array.isArray(r.input.items) ? r.input.items as StageItem[] : [];
   const rest = items.filter((x) => x.itemId !== itemId);
@@ -311,7 +311,7 @@ function stopStageRun(app: App, itemId: string, runId: string) {
     run(app.db, "update runs set input=json_set(input,'$.items',json(?)) where id=?", JSON.stringify(rest), runId);
     return;
   }
-  cancelRun(app, runId);
+  return stopRun(app, runId, failure);
 }
 
 /** The task of a run for several items: what they share, then each item's own task. */
@@ -325,6 +325,9 @@ function batchTask(d: FlowStage, key: string, items: StageItem[]) {
   ].join("\n\n");
 }
 
+function deadlineAt(entered: string, stage: FlowStage) {
+  return stage.budget?.minutes === undefined ? undefined : Date.parse(entered) + stage.budget.minutes * 60_000;
+}
 async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, confirmed = false, current = new Date()) {
   const at = current.toISOString();
   s = { ...s, control: { ...s.control, grantedGate: !confirmed && gateGranted(app, f.id, d, item.userId) } };
@@ -367,7 +370,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       const r = createRun(app, { kind: "flow-runner", title: `${item.title} · ${d.name}`, spaceId: item.spaceId, userId: item.userId,
         input: { runner, itemId: item.id, stageId: d.id, flowId: f.id, flowStartedAt: f.startedAt, round: f.round, spaces: [item.spaceId] },
         trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name }, by: userBy(app, item.userId), where: d.name } });
-      started(r.id, null, null, { runId: r.id, grantedGate: s.control.grantedGate, budgetStartedAt: at }, describeStage(d).carrier);
+      started(r.id, null, null, { runId: r.id, grantedGate: s.control.grantedGate, budgetStartedAt: at, runnerDeadline: deadlineAt(at, d) }, describeStage(d).carrier);
     });
     return true;
   }
@@ -514,6 +517,13 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
     for (const d of itemFlow(app, itemId)!.definition.stages) {
       const f = itemFlow(app, itemId)!;
       let s = getStage(app, itemId, d.id);
+      if (s.state === "doing" && !s.control.reported && s.control.runId && typeof d.by === "object" && "runner" in d.by
+        && (deadlineAt(s.enteredAt!, d) ?? Infinity) <= at.getTime()) {
+        const note = "已到阶段时限";
+        await stopStageRun(app, itemId, s.control.runId, note);
+        changeStage(app,itemId,d.id,"blocked",{waitingOn:"owner",control:{...finishUsage(app,s,at),reported:true,budgetExceeded:true}},host,note,[s.control.runId]);
+        changed = true; continue;
+      }
       if (!(typeof d.by === "object" && "runner" in d.by) && !isTrials(d) && !isFixes(d) && s.state === "doing" && s.control.runId && d.budget?.minutes !== undefined && !s.control.reported && usedMinutes(app, s, at) >= d.budget.minutes) {
         const control = finishUsage(app, s, at);
         stopStageRun(app, s.itemId, s.control.runId);
@@ -695,7 +705,7 @@ function finishUsage(app: App, s: StageRow, at: Date): StageControl {
 function escalateStage(app: App, f: ItemFlow, d: FlowStage, s: StageRow, feedback: string, at = new Date(), refs = s.evidence) {
   if (!d.ai || !d.escalate || (s.control.escalations ?? 0) >= d.escalate.max) return false;
   withdraw(app, s);
-  if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
+  if (s.control.runId) void stopStageRun(app, s.itemId, s.control.runId);
   changeStage(app, f.itemId, d.id, "pending", { by: null, askId: null, waitingOn: null, control: { ...finishUsage(app, s, at), escalated: true, escalations: (s.control.escalations ?? 0) + 1, runId: undefined, reported: false, question: undefined, feedback } }, { ...host, runId: s.control.runId }, `换上一档的模型重做：${feedback}`, refs, "escalate");
   return true;
 }
@@ -807,7 +817,9 @@ export function updateStageBudget(app: App, itemId: string, stageId: string, pat
       if (hasRunner(f.definition) && runnerApproved(app, f.definition, itemId)) retainItemRunnerGrant(app, itemId, validated);
       run(app.db, "update item_flows set definition=?,updated_at=? where item_id=?", JSON.stringify(validated), now(), itemId);
       const s = getStage(app, itemId, stageId);
-      changeStage(app, itemId, stageId, s.state, {}, { actor: "owner", userId }, "本人修改了这一段的预算和升档上限");
+      const control = { ...s.control };
+      if (s.enteredAt && typeof d.by === "object" && "runner" in d.by) control.runnerDeadline = deadlineAt(s.enteredAt,target);
+      changeStage(app, itemId, stageId, s.state, {control}, { actor: "owner", userId }, "本人修改了这一段的预算和升档上限");
     });
     await advanceNow(app, itemId, "本人修改预算");
     return flowView(app, itemId);
@@ -834,7 +846,7 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
   }
   if (action === "hold" && s.control.grantedGate) {
     revokeGate(app, f.id, stageId, userId, itemId);
-    if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
+    if (s.control.runId) await stopStageRun(app, s.itemId, s.control.runId);
     s = { ...s, control: { ...finishUsage(app, s, new Date()), grantedGate: undefined, runId: undefined, question: "gate", confirmed: undefined, reported: false } };
   }
   resetStreak(app, itemId);
@@ -844,7 +856,7 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
   if (isStudy(f) && (isFixes(d) || d.tools?.includes("record_finding")) && (["done", "skip"].includes(action) || action === "confirm" && s.control.question === "done")) note = [note || "本人确认完成", pushSummary(app, f)].filter(Boolean).join("\n");
   if (action === "done" || action === "skip" || action === "confirm" && s.control.question === "done") {
     s = { ...s, control: finishUsage(app, s, new Date()) };
-    if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
+    if (s.control.runId) await stopStageRun(app, s.itemId, s.control.runId);
   }
   if (action === "reopen") { const feedback = ownerFeedback(app, f, s, note); await reopenNow(app, itemId, stageId, feedback, [], by, feedback); }
   else if (action === "hold") changeStage(app, itemId, stageId, "gated", { askId: null, control: { ...s.control, reminderAt: now(), reminders: 0 } }, by, note || "本人先别做，暂缓", [], "gate-hold");
@@ -873,7 +885,7 @@ async function reopenNow(app: App, itemId: string, stageId: string, reason: stri
   if (by.actor === "owner" && s.control.grantedGate) revokeGate(app, f.id, stageId, getItem(app, itemId).userId, itemId);
   withdraw(app, s);
   run(app.db, "update item_flows set ended_at=null,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", now(), itemId);
-  if (s.control.runId) stopStageRun(app, s.itemId, s.control.runId);
+  if (s.control.runId) await stopStageRun(app, s.itemId, s.control.runId);
   changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, recorded: undefined, gateReview: undefined, pluginEvidence: undefined, objectAfter: now(), grantedGate: undefined, gateLimit: undefined, reported: false, confirmed: undefined, question: undefined, feedback, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs, "reopen");
   const affected = new Set([stageId]);
   for (const d of f.definition.stages) {
@@ -889,7 +901,7 @@ async function end(app: App, id: string, note: string, how: FlowEnd) {
   if (!itemFlow(app, id) || itemFlow(app, id)!.endedAt) return;
   await cancelFixReruns(app, id);
   await cancelTrials(app, id);
-  for (const s of itemStages(app, id)) { withdraw(app, s); dropUpstream(app, s, "流程结束了"); if (s.state === "doing" && s.control.runId) stopStageRun(app, s.itemId, s.control.runId); }
+  for (const s of itemStages(app, id)) { withdraw(app, s); dropUpstream(app, s, "流程结束了"); if (s.state === "doing" && s.control.runId) await stopStageRun(app, s.itemId, s.control.runId); }
   run(app.db, "update item_flows set ended_at=?,next_round_at=null,updated_at=? where item_id=?", now(), now(), id);
   // Keep ending on the same audit/timeline path (no extra completion ping).
   const last = itemStages(app, id).at(-1);
@@ -1103,6 +1115,20 @@ export function attachFlows(app: App) {
     for (const r of runIds) for (const m of all<{ item_id: string }>(app.db, "select m.item_id from item_materials m join item_flows f on f.item_id=m.item_id where m.kind='run' and m.ref=? and f.ended_at is null", r)) ids.add(m.item_id);
     for (const id of ids) if (itemFlow(app, id)?.endedAt === null) void advance(app, id, e.type === "run" ? `运行 ${e.status}` : e.entity).catch((err) => console.warn(`[omem] 流程推进失败：${(err as Error).message}`));
   };
+  // Due jobs are taken directly from the deadline index even when every background slot is busy.
+  let sweeping = false;
+  const deadlines = setInterval(async () => {
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      const due = all<{item_id:string}>(app.db, `select s.item_id from item_stages s join item_flows f on f.item_id=s.item_id where state='doing' and f.ended_at is null
+        and json_extract(control,'$.runnerDeadline') <= ? and json_extract(control,'$.reported') is not 1
+        order by json_extract(control,'$.runnerDeadline') limit 32`, Date.now());
+      await Promise.all([...new Set(due.map(r => r.item_id))].map(id => advance(app,id,"运行器到期")));
+    } catch (e) { console.warn("[omem] 检查运行器期限失败", e); }
+    finally { sweeping = false; }
+  }, 1000).unref();
+  app.events.once("close", () => clearInterval(deadlines));
   app.events.on("event", listener);
   app.events.once("close", () => { app.events.off("event", listener); attached.delete(app); });
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { getRun, ResumeRunAt, type RunContext } from "../agents/runs.ts";
+import type { App } from "../core/app.ts";
+import { addRunEvent, getRun, ResumeRunAt, type Run, type RunContext } from "../agents/runs.ts";
 import { untilAbort } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { stageRunners } from "../plugins/process-hooks.ts";
@@ -10,6 +11,20 @@ import { getStage, itemFlow } from "./store.ts";
 
 const resultSchema = z.object({ ref: z.string().min(1).max(1024), status: z.enum(["running", "done", "failed"]),
   summary: z.string().max(4000).optional(), evidence: evidenceSchema.optional() });
+
+/** Cancel the external job identified by the last durable receipt, including between polls. */
+export async function cancelRunnerJob(app: App, r: Run) {
+  const result = resultSchema.optional().parse(r.output.runnerResult ?? undefined);
+  if (result?.status !== "running") return;
+  const entry = stageRunners.get(String(r.input.runner));
+  if (!entry || !r.spaceId || entry.spaces.length && !entry.spaces.includes(r.spaceId) || !entry.def.cancel) {
+    addRunEvent(app, r.id, "status", {text:"外部作业未确认取消：当前空间的运行器未提供取消操作"});
+    return;
+  }
+  const signal = entry.context(app, getItem(app,String(r.input.itemId)).userId, r.spaceId, AbortSignal.timeout(5000)).signal;
+  try { await untilAbort(signal, () => entry.def.cancel!(result.ref, signal)); }
+  catch (err) { addRunEvent(app, r.id, "error", {message:"取消外部作业失败：" + String(err)}); }
+}
 
 export async function runPluginStage(ctx: RunContext) {
   const { app } = ctx, r = getRun(app, ctx.run.id);
@@ -43,12 +58,8 @@ export async function runPluginStage(ctx: RunContext) {
     if (result.status === "failed") throw Error(result.summary || "插件执行失败");
   } catch (e) {
     if (e instanceof ResumeRunAt) throw e;
-    let note = Date.now() >= deadline ? "已到阶段时限" : String(e);
-    if ((Date.now() >= deadline || ctx.signal.aborted) && result?.ref && entry?.def.cancel) {
-      const signal = AbortSignal.timeout(5000), ref = result.ref;
-      try { await untilAbort(signal, () => entry.def.cancel!(ref, signal)); }
-      catch (err) { note += "，取消失败：" + String(err); }
-    }
+    const note = Date.now() >= deadline ? "已到阶段时限" : String(e);
+    if (!ctx.signal.aborted && Date.now() >= deadline) await cancelRunnerJob(app, getRun(app, r.id));
     if (!ctx.signal.aborted) await reportStage(app, itemId, stageId, { state: "blocked", waitingOn: "owner", note,
       evidence: [r.id], pluginEvidence: result?.evidence }, by);
     throw Error(note);
