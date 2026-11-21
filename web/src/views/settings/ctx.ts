@@ -1,4 +1,5 @@
 import { computed, inject, provide, ref, type InjectionKey, type Ref } from "vue";
+import { ownerCalled } from "../../lib/owner-name";
 import { get, put } from "../../api";
 import { state, toast } from "../../store";
 import { setSettingsSections, settingsSections } from "../../lib/caps";
@@ -24,8 +25,8 @@ export type SettingsCtx = {
   load: () => Promise<void>;
   /** Who may see and change what here (`GET /api/settings/sections`), handed on to lib/caps.ts. */
   loadSections: () => Promise<void>;
-  /** The owner's display name, for “只有 ×× 能改” (`/api/me` for the owner, the member list for others). */
-  ownerName: Ref<string>;
+  /** The owner's display name, for “只有 ×× 能改” (`ownerName` in `/api/me`, lib/owner-name.ts). */
+  ownerName: Readonly<Ref<string>>;
   saveConfig: (partial: Record<string, unknown>, note?: string) => Promise<void>;
 };
 
@@ -37,15 +38,10 @@ export function provideSettings(): SettingsCtx {
   const home = ref("");
   const rerank = ref<RerankStatus | null>(null);
   const embeddingSource = ref<ModelSource | null>(null);
-  const ownerName = ref(state.me?.role === "owner" ? state.me.name : "主人");
+  const ownerName = computed(() => ownerCalled(state.me));
   async function loadSections() {
     // An older server has no areas: the page falls back to the old permissions (lib/caps.ts).
     setSettingsSections(await get<SettingsSections>("/api/settings/sections").catch(() => null));
-    if (state.me && state.me.role !== "owner") {
-      const users = await get<{ role: string; name: string }[]>("/api/users").catch(() => null);
-      const owner = Array.isArray(users) ? users.find((u) => u.role === "owner") : undefined;
-      if (owner?.name) ownerName.value = owner.name;
-    } else if (state.me?.name) ownerName.value = state.me.name;
   }
   async function load() {
     // Someone else gets only the areas they may see: the parts left out stay missing.

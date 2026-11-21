@@ -11,6 +11,8 @@ export type Outlet = {
   id: string; name: string; plugin: string | null; builtin: boolean; supportsAsk: boolean;
   reachable: { ok: boolean; hint?: string }; setting: OutletSetting | null;
   lastDelivery: string | null; lastError?: string | null;
+  /** The kinds of question the owner opened this outlet for, for the person it belongs to (absent from an older server). */
+  grantedAskKinds?: string[];
 };
 
 export const URGENCY_OPTIONS: { value: Urgency; label: string }[] = [
@@ -41,9 +43,14 @@ export function withOutlet(outlets: Outlet[], id: string, change: { on?: boolean
   });
 }
 
-/** Whether this kind may be ticked here: ordinary ones always; approvals for the owner, or once opened for this outlet. */
+/**
+ * Whether this kind may be ticked here: ordinary ones always; approvals when the owner is the one
+ * changing it, or once the owner opened them for this outlet (`grantedAskKinds`; an older server does
+ * not say, then an approval already ticked counts as opened).
+ */
 export function kindAllowed(o: Outlet, kind: string, owner: boolean) {
-  return owner || ordinaryKind(kind) || !!o.setting?.askKinds.includes(kind);
+  if (owner || ordinaryKind(kind)) return true;
+  return o.grantedAskKinds ? o.grantedAskKinds.includes(kind) : !!o.setting?.askKinds.includes(kind);
 }
 
 /** The line under an outlet's name: where it comes from and when it last delivered. */

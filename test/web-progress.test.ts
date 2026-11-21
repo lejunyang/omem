@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  blockTone, compact, decisionText, doneCount, homeDevice, missingText, orderTasks, outputHref, outputLabel, runIdsOf, taskHref,
+  blockTone, compact, decisionText, doneCount, missingText, readProgress, orderTasks, outputHref, outputLabel, runIdsOf, taskHref,
   taskTone, usageText, waitLabel, whoLabel, type ProgressTask, type ProgressView,
 } from "../web/src/lib/progress.ts";
 
@@ -46,25 +46,32 @@ describe("the progress overview (web/src/lib/progress.ts)", () => {
     expect(rows.map((r) => `${r.task.id}:${r.depth}`)).toEqual(["d1:0", "t1:1", "d2:0", "t2:1"]);
   });
 
-  it("names the model, and the device only when it is not this machine", () => {
-    const blocks = [view("board", [task("a", "running", { who: { model: "openai/gpt-6.2-sol", device: "home" } }), task("b", "running", { who: { model: "m", device: "home" } })])];
-    const home = homeDevice(blocks);
-    expect(home).toBe("home");
-    expect(whoLabel(blocks[0].tasks[0], home)).toBe("gpt-6.2-sol");
-    expect(whoLabel(task("t", "running", { who: { model: "m", device: "lab-2" } }), home)).toBe("m · 在 lab-2");
+  it("names the model, and the device only when the server says it was not this machine", () => {
+    expect(whoLabel(task("a", "running", { who: { model: "openai/gpt-6.2-sol", local: true, device: "home" } }))).toBe("gpt-6.2-sol");
+    expect(whoLabel(task("t", "running", { who: { model: "m", local: false, device: "lab-2" } }))).toBe("m · 在 lab-2");
+  });
+
+  it("reads the page with its total, and an older server's bare list without one", () => {
+    const total = usage(30, 4, 3, 1);
+    expect(readProgress({ views: [view("board", [])], totalUsage: total })).toMatchObject({ total, views: [{ kind: "board" }] });
+    expect(readProgress([view("code", [])])).toMatchObject({ total: null, views: [{ kind: "code" }] });
+    expect(readProgress(null)).toEqual({ views: [], total: null });
   });
 
   it("reads verdicts and decisions as words, and links each task and output to its page", () => {
     expect(outputLabel({ kind: "report", ref: "rv1", label: "changes_requested · 1 个问题 · 少了两笔" })).toBe("要修改 · 1 个问题 · 少了两笔");
-    expect(outputLabel({ kind: "evidence", ref: "design:dsg1", label: "design:dsg1" })).toBe("方案");
+    expect(outputLabel({ kind: "evidence", ref: "design:dsg1", label: "退款方案", target: { kind: "design", id: "dsg1", title: "退款方案" } })).toBe("退款方案");
+    expect(outputLabel({ kind: "evidence", ref: "object:o1", label: "", target: { kind: "object", id: "o1", title: "" } })).toBe("外部对象");
     expect(decisionText(task("a", "redo", { decision: { result: "redo" } }))).toBe("退回重做");
     expect(decisionText(task("a", "accepted", { decisions: [{ result: "fix" }, { result: "later" }] }))).toBe("2 条取舍");
     const b = view("board", [], { id: "w1", runId: "w1" });
-    expect(taskHref(b, task("a", "running", { attempts: [{ runId: "r9", status: "running", usage: usage() }] }))).toBe("/runs/r9");
+    expect(taskHref(b, task("a", "running", { href: "#/runs/r9" }))).toBe("/runs/r9");
+    expect(taskHref(view("code", [], { runId: "c1" }), task("T2", "running", { href: "#/runs/c1?task=T2" }))).toBe("/runs/c1?task=T2");
     expect(taskHref(view("flow", [], { itemId: "i1" }), task("push", "running"))).toBe("/items/i1/flow");
     expect(outputHref(b, { kind: "report", ref: "r9", label: "交了" })).toBe("/runs/r9");
     expect(outputHref(b, { kind: "commit", ref: "3f2a91c", label: "shop · 3f2a91c" })).toBeNull();
-    expect(outputHref(b, { kind: "evidence", ref: "src:s1#L2-L3", label: "src:s1#L2-L3" })).toBe("/sources/s1");
+    expect(outputHref(b, { kind: "evidence", ref: "src:s1#L2-L3", label: "退款需求", target: { kind: "source", id: "s1", title: "退款需求" } })).toBe("/sources/s1");
+    expect(outputHref(b, { kind: "evidence", ref: "object:o1", label: "合并请求", target: { kind: "object", id: "o1", title: "合并请求" } })).toBeNull();
   });
 
   it("knows every run the blocks name, for the events that refresh them", () => {

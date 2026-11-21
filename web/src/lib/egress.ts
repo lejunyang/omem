@@ -11,9 +11,10 @@ export type EgressStatus = EgressSettings & {
   peer?: string;
   inspectionAvailable: boolean | null;
   rootGenerated: boolean;
-  runs: { runId: string | null; hosts: HostUsage[] }[];
-  denied: { runId: string | null; host: string; count: number; at: number; reason?: string }[];
-  pending: { askId: string; runId: string | null; target: string; at: string }[];
+  /** `title`: the run's own title (null when there is no such run; absent from an older server). */
+  runs: { runId: string | null; title?: string | null; hosts: HostUsage[] }[];
+  denied: { runId: string | null; title?: string | null; host: string; count: number; at: number; reason?: string }[];
+  pending: { askId: string; runId: string | null; title?: string | null; target: string; at: string }[];
 };
 
 /** Only the fields `PUT /api/security/egress` takes (it refuses anything else). */

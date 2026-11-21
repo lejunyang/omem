@@ -8,6 +8,7 @@ import {
   ACTIONS, ENFORCED, FILE_OPS, KINDS, METHODS, actionLabel, cleanScope, fieldOf, jsonPathOf, kindLabel, loadScopeChoices, matchText, rowErrors, scopeChoices, scopeText,
   type Action, type JsonPattern, type Kind, type Match, type OperationRule,
 } from "../lib/operation-rules";
+import { httpPlaces } from "../lib/rule-places";
 import Icon from "./Icon.vue";
 import MonoLine from "./MonoLine.vue";
 import OperationScope from "./OperationScope.vue";
@@ -49,8 +50,9 @@ const { profileOptions } = useBackends(profiles);
 const backendOptions = computed(() => profileOptions.value.map((o) => ({ value: o.value, label: o.label, hint: o.value })));
 
 const drafts = ref<Draft[] | null>(null);
-/** The server says HTTP rules are enforced by the egress proxy too (`enforcedBy`): the hint names both places. */
-const httpEgress = computed(() => !!drafts.value?.some((d) => d.enforcedBy?.includes("egress")));
+/** Where each kind of rule is acted on on this machine (the server's `enforcedBy`; an older one sends it per rule only). */
+const points = ref<Partial<Record<Kind, string[]>> | null>(null);
+const httpWhere = computed(() => httpPlaces(points.value?.http));
 const loadError = ref("");
 const saved = ref("");
 const saving = ref(false);
@@ -137,7 +139,8 @@ const dirty = computed(() => drafts.value !== null && snapshot() !== saved.value
 async function load() {
   loadError.value = "";
   try {
-    const r = await get<{ rules: OperationRule[] }>("/api/security/operation-rules");
+    const r = await get<{ rules: OperationRule[]; enforcedBy?: Partial<Record<Kind, string[]>> }>("/api/security/operation-rules");
+    points.value = r.enforcedBy ?? null;
     drafts.value = r.rules.map(toDraft);
     saved.value = snapshot();
   } catch (e) {
@@ -157,7 +160,7 @@ const asTool = (d: Draft) => d.rule.match as Extract<Match, { kind: "tool" }>;
 const matchLine = (d: Draft) => matchText(clean(d).match);
 const titleOf = (d: Draft) => d.rule.title?.trim() || matchLine(d);
 /** A rule kind this server has no place to act on (an older server, for HTTP rules). */
-const notEnforced = (d: Draft) => d.loadedKind === d.rule.match.kind && d.enforcedBy?.length === 0;
+const notEnforced = (d: Draft) => (points.value ? points.value[d.rule.match.kind]?.length === 0 : d.loadedKind === d.rule.match.kind && d.enforcedBy?.length === 0);
 const scopeOf = (d: Draft) => scopeText(d.rule.scope, backendOptions.value);
 const label = (d: Draft) => `「${titleOf(d)}」`;
 
@@ -240,7 +243,8 @@ async function save() {
   }
   saving.value = true;
   try {
-    const r = await put<{ rules: OperationRule[] }>("/api/security/operation-rules", { rules: list.map(clean) });
+    const r = await put<{ rules: OperationRule[]; enforcedBy?: Partial<Record<Kind, string[]>> }>("/api/security/operation-rules", { rules: list.map(clean) });
+    points.value = r.enforcedBy ?? points.value;
     const keys = new Map(list.map((d) => [d.rule.id, d.key]));
     drafts.value = r.rules.map((x) => ({ ...toDraft(x), key: keys.get(x.id) ?? ++seq }));
     saved.value = snapshot();
@@ -280,13 +284,13 @@ function onPacksChanged() {
           <button type="button" class="op-main" :aria-expanded="open === d.key" :title="d.rule.title ? matchLine(d) : undefined" @click="toggle(d)">
             <span class="op-title">
               <span class="ellipsis" :class="{ mono: !d.rule.title?.trim() }">{{ titleOf(d) }}</span>
-              <span class="badge" :title="ENFORCED[d.rule.match.kind]">{{ kindLabel(d.rule.match.kind) }}</span>
+              <span class="badge" :title="d.rule.match.kind === 'http' ? httpWhere : ENFORCED[d.rule.match.kind]">{{ kindLabel(d.rule.match.kind) }}</span>
               <span v-if="d.rule.pack" class="badge pack" :title="`来自规则包「${d.rule.pack.name}」${d.rule.pack.version}`"><Icon name="box" :size="11" />{{ d.rule.pack.name }}</span>
             </span>
             <span class="op-meta" :title="scopeOf(d).full">{{ scopeOf(d).short }}</span>
           </button>
           <span class="op-end">
-            <span v-if="notEnforced(d)" class="op-note" title="这个版本的服务端还没有执行这类规则的地方：先存着，不会拦任何东西">还没有执行点</span>
+            <span v-if="notEnforced(d)" class="op-note" title="这台现在没有执行这类规则的地方：先存着，不会拦任何东西">还没有执行点</span>
             <span class="op-act" :class="`act-${d.rule.action}`">{{ actionLabel(d.rule.action) }}</span>
           </span>
           <span class="op-tools">
@@ -330,8 +334,7 @@ function onPacksChanged() {
             </div>
 
             <template v-else-if="d.rule.match.kind === 'http'">
-              <p v-if="!d.enforcedBy?.includes('egress') && !httpEgress" class="op-pending small">在 Agent 用 aad 操作的浏览器里生效：页面的请求发出前先问，要带请求闸门的 aad 版本。不经这个浏览器发出的请求（命令行里的 curl、别的程序）这类规则管不到。</p>
-              <p v-else class="op-pending small">在两处生效：Agent 用 aad 操作的浏览器（页面的请求发出前先问，要带请求闸门的 aad 版本），和成员沙箱的出网代理（命令行里的 curl、别的程序经它出网，见下面的“出网代理”）。HTTPS 只看得到主机，要按路径判定的域名在出网代理里另开解密；两处都不经过的请求管不到。</p>
+              <p class="op-pending small">{{ httpWhere }}</p>
               <div class="op-grid">
                 <label class="field"><span>主机</span><input :id="`rule-${d.key}-first`" v-model="asHttp(d).host" class="input sm mono" placeholder="如 api.example.com 或 *.example.com" spellcheck="false" /></label>
                 <div class="field"><span>方法</span><UiSelect :model-value="asHttp(d).methods ?? []" multiple size="sm" placeholder="任何方法" aria-label="方法" :options="METHODS.map((v) => ({ value: v, label: v }))" @change="(v) => (asHttp(d).methods = v as string[])" /></div>

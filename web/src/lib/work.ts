@@ -52,6 +52,14 @@ export const changeTypeLabel: Record<string, string> = {
 };
 /** Where a change was seen. */
 export const originLabel: Record<string, string> = { follow: "群聊和文档", flow: "流程", metric: "指标", problem: "在跟的问题", owner: "你定的", line: "观察与结束", meeting: "会议", review: "评审", commit: "提交认领", member: "成员回答" };
+/**
+ * Where a change was seen, for the person reading it: “你定的” is the reader's own word; someone reading
+ * a line that is not theirs (`by`: the owner's name, lib/owner-name.ts) reads whose it was.
+ */
+export function originText(origin: string, by?: string) {
+  if (origin === "owner" && by) return by + "定的";
+  return originLabel[origin] ?? origin;
+}
 /** What a change's source key names, in a few words (src/items/changes.ts sourceKeys). */
 export function sourceLabel(key: string | undefined) {
   if (!key) return "";

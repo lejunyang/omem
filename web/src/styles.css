@@ -1179,6 +1179,8 @@ input[type="number"].input::-webkit-outer-spin-button {
    owner (--warn), what failed or is stuck (--danger) and what is running (--accent) stands out. */
 .pg { display: grid; gap: 8px; min-width: 0; }
 .pg-label { margin: 0; font-size: 15px; font-weight: 650; }
+.pg-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
+.pg-total { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pg-block { min-width: 0; border-top: 1px solid var(--line); }
 .pg-block:last-child { border-bottom: 1px solid var(--line); }
 .pg-sum { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; width: 100%; min-width: 0; padding: 8px 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
@@ -1233,6 +1235,7 @@ a.pg-out { color: var(--accent); }
   .pg-task { grid-template-columns: 8px minmax(0, 1fr) auto; }
   .pg-outs { grid-column: 2 / -1; grid-row: 2; }
   .pg-task.deep { padding-left: 16px; }
+}
 /* ---------- settings 2 ---------- */
 /* A settings card someone may read but not change (SetCard `keys`): the same card, its controls out of
    reach (`inert`), a small grey tag beside the title. Not greyed out as a whole. */

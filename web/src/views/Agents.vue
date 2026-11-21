@@ -494,7 +494,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else-if="tab === 'agents'">
-          <div class="group row"><span>我的档案</span><span class="spacer" /><button v-if="owner" class="add" @click="go({ tab: 'agents', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
+          <div class="group row"><span>{{ owner ? "我的档案" : "Agent 档案" }}</span><span class="spacer" /><button v-if="owner" class="add" @click="go({ tab: 'agents', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
           <button v-for="x in specs" :key="x.name" class="li" :class="{ on: x.name === specName }" @click="go({ tab: 'agents', name: x.name })">
             <div class="grow">
               <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.plugin" class="badge" :title="`来自插件 ${x.plugin}`">插件</span></div>
