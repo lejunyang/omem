@@ -425,3 +425,5 @@
 - 已保存配置中的插件后端引用均参与目录：档位、fallback、任务候选、角色模型与评审轮换补齐；设置返回 unavailableBackends。入口 `src/core/config.ts`（allProfiles）、`src/agents/runner.ts`、`src/server/http.ts`。
 
 - 本人沙箱状态增加 home 与 fullAccessGrants（内置角色、档案、规则）；规则授权清单用部分索引查询，成员仍返回 403。入口 `src/agents/own-run.ts`、`src/core/db.ts` 末尾迁移。
+
+- 档案和技能列表按 agents.view 返回，逐项带 canEdit/canDelete；无管理能力的删除请求拒绝。插件自带档案没有本地副本时不可删。入口 `src/server/http.ts`、`src/auth/routes.ts`。

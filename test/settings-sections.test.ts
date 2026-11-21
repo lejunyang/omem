@@ -162,7 +162,7 @@ it("旧 agents.manage 成员可改档案摘要，凭据、目录、私有记忆�
     const summary = { name: "example", description: "示例", status: "draft", model: "example-model" };
     expect((await server.inject({ method: "PUT", url, payload: { ...summary, ...privateFields } })).statusCode).toBe(200);
     const memory = remember(app, { spaceId: "personal", kind: "fact", content: "档案的专属记忆", createdBy: "user", agent: "example" });
-    expect((await server.inject({ url: "/api/agents", headers })).json()).toContainEqual(summary);
+    expect((await server.inject({ url: "/api/agents", headers })).json()).toContainEqual({ ...summary, canEdit: true, canDelete: true });
     expect((await server.inject({ url, headers })).json()).toEqual(summary);
     for (const field of ["cwd", "mcp", "fullAccess", "mcpServers", "prompt"]) {
       const refused = await server.inject({ method: "PUT", url, headers, payload: { description: "忽略整次修改", [field]: null } });
@@ -238,7 +238,7 @@ it("checks section grants on the card APIs and omits host settings from member r
     const groups = {
       AI: ["ai", "/api/ai", "/api/agents/load"],
       knowledge: ["knowledge", "/api/storage", "/api/search/providers", "/api/lark/captured", "/api/lark/wiki-crawls"],
-      assistant: ["assistant", "/api/schedules", "/api/replays", "/api/agents", "/api/mentions"],
+      assistant: ["assistant", "/api/schedules", "/api/replays", "/api/mentions"],
       channels: ["channels", "/api/desktop"],
       members: ["members", "/api/auth/providers"],
     };

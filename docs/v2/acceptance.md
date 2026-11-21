@@ -3094,3 +3094,7 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 ### 本人沙箱状态
 
 - 单独给一个内置角色、档案和规则打开完全访问，读取 /api/security/sandbox：home 为规范化主目录，fullAccessGrants 分组列出相应 id/name，普通规则不出现。规则 JSON 带空格也能识别，查询计划使用 rules_full_access。成员即使有安全设置查看权也返回 403。
+
+### 成员档案与技能列表
+
+- 无档案管理能力的成员读取 /api/agents 和 /api/skills，每项 canEdit/canDelete 为 false；DELETE 对两类对象均返回 403，原内容保持。本人本地档案、技能为 true；未覆盖的插件档案 canEdit=true、canDelete=false。

@@ -23,6 +23,8 @@ updated: 2026-11-22
 
 ## 2026-11-22：第二轮网页对接的服务端字段
 
+- 档案技能列表带当前人的 canEdit/canDelete，无管理能力的删除仍拒绝。从 `src/server/http.ts`、`src/auth/routes.ts` 读起。
+
 - 本人沙箱状态增加 home 和各处完全访问授权清单，规则使用部分索引。从 `src/agents/own-run.ts`、`src/core/db.ts` 的末尾迁移读起。
 
 - 设置列出所有配置引用的停用插件后端及原因。从 `src/core/config.ts` 的 allProfiles 和 `src/server/http.ts` 读起。

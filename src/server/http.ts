@@ -1057,7 +1057,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ({ name, description, status, agent, model, effort });
   server.get("/api/agents", async req => {
     const specs = listAgentSpecs(app, { includeDrafts: true });
-    return who(req) === OWNER ? specs : specs.map(memberSpec);
+    const manage = can(app, who(req), "agents.manage");
+    return specs.map(spec => ({ ...(who(req) === OWNER ? spec : memberSpec(spec)), canEdit: manage,
+      canDelete: manage && existsSync(join(app.libraryDir, "_agents", `${spec.name}.md`)) }));
   });
   // A spec with what it has learned (attached skills, its own memories, proposals, usage).
   server.get("/api/agents/:name", async (req) => {
@@ -1198,11 +1200,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     deleteSkillFile(app, (req.params as { name: string }).name, q(z.object({ path: z.string() }), req.query).path);
     return { ok: true };
   });
-  server.get("/api/skills", async () => {
+  server.get("/api/skills", async req => {
     // Bodies stay out of the list: with the agents' skills taken over there are hundreds.
     const { loadSkillGroups, skillEnabled } = await import("../agents/skill-groups.ts");
     const groups = loadSkillGroups(app);
-    return listSkills(app, { includeDrafts: true }).map(({ body: _b, files: _f, ...s }) => ({ ...s, group: groups.skills[s.name]?.group ?? null, purpose: groups.skills[s.name]?.purpose ?? "", enabled: skillEnabled(groups, s.name), replay: skillDisplayTally(app, s.name) }));
+    const manage = can(app, who(req), "agents.manage");
+    return listSkills(app, { includeDrafts: true }).map(({ body: _b, files: _f, ...s }) => ({ ...s, canEdit: manage, canDelete: manage, group: groups.skills[s.name]?.group ?? null, purpose: groups.skills[s.name]?.purpose ?? "", enabled: skillEnabled(groups, s.name), replay: skillDisplayTally(app, s.name) }));
   });
   // The agents' own skill folders and the groups (agents/agent-skills.ts, docs/v2/agent-skills.md).
   const ownerSkills = (req: { headers: Record<string, unknown> }) => {

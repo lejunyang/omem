@@ -249,3 +249,7 @@ bubblewrap 隐藏宿主 HOME、数据目录和临时目录，再按运行的计�
 ### 本人沙箱的状态字段
 
 `GET /api/security/sandbox`（仅本人）增加 `home`：规范化后的当前主目录，客户端可据此将子路径写作 `~/…`。`fullAccessGrants: { roles, profiles, rules }` 分别列出单独打开完全访问的内置角色、档案和规则，每项 `{ id, name }`；规则按已保存的授权列出，停用规则仍保留设置。全局 fullAccess 档位仍单独返回，不扩展成员权限。规则清单通过 rules_full_access 部分索引读取，迁移只在数组末尾追加。
+
+### 档案与技能列表的操作权限
+
+`GET /api/agents` 与 `GET /api/skills` 按 agents.view 授予查看；每项新增 `canEdit`、`canDelete`，按当前调用人的档案管理权限计算。插件自带且未在本地覆盖的档案 canDelete 为 false；可改成自己的副本。没有 agents.manage 的成员调用删除档案或技能接口仍返回 403。成员档案列表只返回名称、说明、状态及 AI 选择，不带工作路径、工具授权或私有正文。
