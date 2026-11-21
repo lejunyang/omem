@@ -2,6 +2,7 @@ import type { AgentProfile } from "../core/config.ts";
 
 export type BackendCapabilities = {
   omemAccess: "mcp" | "shell-bridge" | "none";
+  credentialChannel?: boolean;
   localTools: boolean;
   where: "local" | "cloud";
 };

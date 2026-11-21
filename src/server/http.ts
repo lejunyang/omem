@@ -76,6 +76,8 @@ import { HttpError, slugify, useProcessZone, validZone } from "../core/util.ts";
 import { loopbackIp, trustedLocal, viaProxy } from "./origin.ts";
 import { listenSecure, type SecureListener } from "./secure.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
+import { backendCapabilities } from "../agents/capabilities.ts";
+import { cloudAccess, cloudAddress, checkCloudAddress, confirmProbe, lastProbe, probeCloud, probeReceipt } from "../agents/cloud-probe.ts";
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute, requestReviewAudience } from "../auth/routes.ts";
@@ -164,6 +166,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
     mark(`${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`);
+    if (req.routeOptions.url === "/api/cloud-tools/challenge/:nonce") return;
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).
     if (req.routeOptions.url === "/api/remote/agent-browser") return; // Authenticated by gateCaller.
@@ -218,6 +221,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ...u, caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
   });
 
+  server.get("/api/cloud-tools/challenge/:nonce", async (req, reply) => {
+    reply.header("cache-control", "no-store");
+    return probeReceipt(app, (req.params as { nonce: string }).nonce, req.headers["x-omem-probe"]);
+  });
+  server.get("/api/cloud-tools", async () => {
+    const url = cloudAddress(app);
+    let addressError = url ? null : "请配置公网 HTTPS webUrl";
+    if (url) await checkCloudAddress(url).catch(e => { addressError = e.message; });
+    return { ...app.config.agents.cloudTools, url, addressError,
+      profiles: allProfiles(app.config).filter(p => backendCapabilities(p).where === "cloud").map(p => ({
+        backend: p.id, probe: lastProbe(app, p.id), reason: addressError ?? cloudAccess(app, p).reason,
+      })) };
+  });
+  server.post("/api/cloud-tools/probe", async req => probeCloud(app, (req.body as { backend: string }).backend));
+  server.post("/api/cloud-tools/probe/confirm", async req => {
+    const { backend, id } = req.body as { backend: string; id: string };
+    return confirmProbe(app, backend, id);
+  });
   // ---------------------------------------------------------------- tools/MCP
   // A run's token, or a stand-in for another device's tools (its agent runs here, core/peer-acp.ts).
   const toolBackend = async (req: FastifyRequest) => {
@@ -3307,6 +3328,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });
+    if (who(req) !== OWNER && JSON.stringify(next.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools))
+      throw new HttpError(403, "只有本人可以修改云端工具设置");
     await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
     next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
     // Command rules change only through their own owner-only route (agents/command-gate.ts).

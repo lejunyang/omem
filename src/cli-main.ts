@@ -588,6 +588,18 @@ program
     console.log(JSON.stringify(await peerJson(app, peerId, "/api/diag"), null, 2));
   });
 
+program.command("cloud-tools").command("probe <backend>").description("探测云端后端能否读取公网 HTTPS 回执")
+  .action(async (backend: string) => {
+    const app = open();
+    const base = await runningServer(app);
+    if (!base) throw new Error("请先启动本机 omem 服务");
+    const res = await fetch(base + "/api/cloud-tools/probe", { method: "POST", headers: {
+      "content-type": "application/json", ...(app.config.token ? { authorization: "Bearer " + app.config.token } : {}),
+    }, body: JSON.stringify({ backend }) });
+    if (!res.ok) throw new Error(await res.text());
+    console.log(JSON.stringify(await res.json(), null, 2));
+  });
+
 const doubao = program.command("doubao").description("豆包 OpenAPI 作为模型后端：检查哪个飞书应用有权限、以本人身份授权");
 doubao
   .command("status")
