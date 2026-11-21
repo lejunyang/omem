@@ -784,7 +784,7 @@ await api.answerAsk({
 
 选项从 0 开始，表单用 `values`，文字用 `text`。审批必须明确传 `approved`。宿主按插件、出口、回执及成员找到投递记录，核对投递当时与现在的身份绑定、白名单和提问状态，然后走网页的回答路径。收件人身份来自平台认证的事件。收到的 HTTP 请求自行填写的 subject 不能当作这个身份。提问被回答、过期或撤回后，宿主用 `retract(ref, signal)` 关闭外部消息。
 
-每个出口的 `askKinds` 默认只有 `question`，包含普通选择、确认和表单。建议使用 `suggestion`，工具审批使用 `approval`，宿主处理的决定按处理器单独列出，如 `handler:command-gate` 和 `handler:flow-stage`。成员可以传空数组只收通知。高权限提问需要对相应出口逐类显式开启。
+每个出口的 `askKinds` 默认只有 `question`，包含普通选择、确认和表单。建议使用 `suggestion`，工具审批使用 `approval`，宿主处理的决定按处理器单独列出，如 `handler:command-gate` 和 `handler:flow-stage`。成员可以传空数组只收通知。工具审批和带处理器的提问由本人逐成员、逐出口授权。本人通过设置接口指定成员和种类，成员可以在获准范围内调整偏好。宿主在投递和回答时都会复核授权。
 
 ### 用文件试发和试答
 

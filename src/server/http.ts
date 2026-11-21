@@ -3328,6 +3328,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });
     await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
     next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
+    // Outlet preferences and delegated approval grants change through the per-member outlet route.
+    next.notify.outlets = app.config.notify.outlets;
+    next.notify.outletAskGrants = app.config.notify.outletAskGrants;
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
     next.security = structuredClone(app.config.security);
     // Network conditions likewise have their own owner-only editor.

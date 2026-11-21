@@ -20,6 +20,13 @@ type Delivery = { seq: number; outlet: string; object_id: string; user_id: strin
 const rank = { silent: -1, later: 0, normal: 1, urgent: 2 };
 const settings = (app: App, user: string) => app.config.notify.outlets[user] ?? [];
 const kindOf = (a: Ask) => a.handler ? "handler:" + a.handler : a.kind;
+const ordinary = (kind: string) => kind === "question" || kind === "suggestion";
+type OutletSetting = z.infer<typeof outletSettings>[number];
+function allowsAsk(app: App, ask: Ask, setting?: OutletSetting) {
+  const kind = kindOf(ask);
+  return !!setting?.askKinds.includes(kind) && (ordinary(kind) || isOwner(app, ask.userId)
+    || !!app.config.notify.outletAskGrants[ask.userId]?.[setting.id]?.includes(kind));
+}
 const recipient = (app: App, id: string) => ({ id, identities: identitiesOf(app, id).map(i => ({ provider: i.channel, subject: i.external_id })) });
 const resolution = z.object({ ok: z.boolean(), hint: z.string().max(500).optional() });
 const receipt = z.object({ ref: z.string().min(1).max(500).optional() });
@@ -53,7 +60,7 @@ export function startNotifierOutlets(app: App) {
     }
   });
   const show = (a: Ask) => {
-    const enabled = settings(app, a.userId).filter(s => notifiers.get(s.id)?.def.ask && s.askKinds.includes(kindOf(a)));
+    const enabled = settings(app, a.userId).filter(s => notifiers.get(s.id)?.def.ask && allowsAsk(app, a, s));
     if (!enabled.length) return;
     const urgency = askUrgency(app, a);
     for (const s of enabled) {
@@ -98,7 +105,7 @@ async function send(app: App, row: Delivery, def: Notifier, signal: AbortSignal)
   const urgency = op === "test" ? "urgent" : row.urgency;
   if (setting && rank[urgency] < rank[setting.minUrgency]) return;
   const expiresAt = ask ? expiry(app, ask) : null;
-  if (ask && (!def.ask || !setting?.askKinds.includes(kindOf(ask)) || !live(ask, expiresAt))) return;
+  if (ask && (!def.ask || !allowsAsk(app, ask, setting) || !live(ask, expiresAt))) return;
   if (!ask && (!n || n.read_at || n.quiet)) return;
   const previous = n?.replaces ? one<{ref: string | null}>(app.db,
     "select ref from outlet_deliveries where outlet=? and dedup=? and state='sent' and seq<? order by seq desc limit 1", outlet, row.dedup, row.seq) : undefined;
@@ -112,7 +119,7 @@ async function send(app: App, row: Delivery, def: Notifier, signal: AbortSignal)
   if (!resolved.ok) throw new Error(resolved.hint ?? "出口无法送达此人");
   signal.throwIfAborted();
   const current = settings(app, userId).find(s => s.id === outlet);
-  if (op !== "test" && (!current || rank[urgency] < rank[current.minUrgency] || (ask && !current.askKinds.includes(kindOf(ask))))) return;
+  if (op !== "test" && (!current || rank[urgency] < rank[current.minUrgency] || (ask && !allowsAsk(app, ask, current)))) return;
   if (!activeUser(findUser(app, userId))) return;
   const currentIdentities = recipient(app, userId).identities;
   if (user.identities.some(i => !currentIdentities.some(bound => bound.provider === i.provider && bound.subject === i.subject))) throw new Error("接收人的绑定身份已变化");
@@ -181,7 +188,7 @@ export async function answerFromOutlet(app: App, plugin: string, input: unknown)
     throw new HttpError(403, "没有向这个身份投递该提问");
   const ask = getAsk(app, row.object_id);
   if (!live(ask, expiry(app, ask))) throw new HttpError(409, "提问已结束或过期");
-  if (ask.userId !== userId || !settings(app, userId).find(s => s.id === outlet)?.askKinds.includes(kindOf(ask))) throw new HttpError(403, "这个出口未获准回答此类提问");
+  if (ask.userId !== userId || !allowsAsk(app, ask, settings(app, userId).find(s => s.id === outlet))) throw new HttpError(403, "这个出口未获准回答此类提问");
   requireAskAccess(app, userId, ask.id);
   if (ask.kind === "approval" && a.approved === undefined) throw new HttpError(400, "审批需要明确批准或拒绝");
   await answerAsk(app, ask.id, { by: userId, choice: a.choice, value: a.values, text: a.text, approved: a.approved });
@@ -211,7 +218,14 @@ export function setOutlets(app: App, requester: string, body: { userId?: string;
   const saved = settings(app, userId);
   if (body.outlets.some(s => !notifiers.has(s.id) && !saved.some(old => old.id === s.id))) throw new HttpError(400, "没有这个通知出口");
   const outlets = { ...app.config.notify.outlets, [userId]: body.outlets };
-  const next = { ...app.config, notify: { ...app.config.notify, outlets } };
+  let outletAskGrants = app.config.notify.outletAskGrants;
+  if (isOwner(app, requester)) {
+    const grants = Object.fromEntries(body.outlets.map(s => [s.id, s.askKinds.filter(kind => !ordinary(kind))]));
+    outletAskGrants = { ...outletAskGrants, [userId]: grants };
+  } else if (body.outlets.some(s => s.askKinds.some(kind => !ordinary(kind) && !outletAskGrants[userId]?.[s.id]?.includes(kind)))) {
+    throw new HttpError(403, "此类提问需要本人为这个出口授权");
+  }
+  const next = { ...app.config, notify: { ...app.config.notify, outlets, outletAskGrants } };
   saveConfig(next, app.home);
   app.config.notify = next.notify;
   return { outlets: body.outlets };

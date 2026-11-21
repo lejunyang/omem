@@ -222,6 +222,53 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
   });
 });
 
+it.each(["isolated", "inprocess"] as const)("%s 受托成员的审批出口由本人逐个授权", async mode => {
+  const app = testApp();
+  const dir = join(app.home, "plugins", "delegate");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "plugin.yaml"), JSON.stringify({ id: "delegate", name: "成员出口", permissions: { notify: { deliver: true, ask: true } } }));
+  writeFileSync(join(dir, "server.mjs"), `export default api => {
+    for (const id of ["first", "second"]) api.notifier({
+      id, name: id, deliver: async () => ({}), ask: async a => ({ ref: a.dedupKey })
+    });
+  }`);
+  await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
+  await trustPlugin(app, "delegate", mode);
+  createUser(app, { id: "member", name: "成员" });
+  linkIdentity(app, "member", user.provider, user.subject);
+  const headers = { authorization: "Bearer " + createApiToken(app, "member") };
+  startNotifierOutlets(app);
+  const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
+  const first = { ...setting, id: "delegate:first", askKinds: ["approval"] };
+  const second = { ...setting, id: "delegate:second" };
+  const put = (byOwner: boolean, outlets: typeof first[]) => server.inject({
+    method: "PUT", url: "/api/notify/outlets", headers: byOwner ? undefined : headers, payload: { userId: "member", outlets },
+  });
+  try {
+    expect((await put(false, [first])).statusCode).toBe(403);
+    expect((await put(true, [first, second])).statusCode).toBe(200);
+    expect((await put(false, [first, { ...second, askKinds: ["approval"] }])).statusCode).toBe(403);
+    // Simulate an older member preference saved before separate grants existed.
+    app.config.notify.outlets.member[1].askKinds = ["approval"];
+    const a = createAsk(app, { runId: null, userId: "member", kind: "approval", question: "批准试验？" });
+    await drainOutlets(app);
+    expect(one(app.db, "select outlet,ref from outlet_deliveries where object_id=?", a.id)).toEqual({ outlet: first.id, ref: a.id });
+    expect(one(app.db, "select count(*) n from outlet_deliveries where object_id=?", a.id)).toEqual({ n: 1 });
+    const input = { notifier: "first", ref: a.id, user, approved: false };
+    expect((await put(true, [{ ...first, askKinds: ["question"] }, second])).statusCode).toBe(200);
+    app.config.notify.outlets.member[0].askKinds = ["approval"];
+    await expect(answerFromOutlet(app, "delegate", input)).rejects.toThrow("未获准");
+    expect((await put(true, [first, second])).statusCode).toBe(200);
+    const waiting = waitForAnswer(app, a.id, 5000);
+    await answerFromOutlet(app, "delegate", input);
+    expect(await waiting).toMatchObject({ answeredBy: "member", approved: false });
+  } finally {
+    await server.close();
+    forgetPlugin("delegate");
+    app.db.close();
+  }
+});
+
 it.each(["isolated", "inprocess"] as const)("%s 只授予普通投递时隔离提问；出口超时照常记录并重试，其他出口继续", async mode => {
   const app = testApp();
   const undo: (() => void)[] = [];
