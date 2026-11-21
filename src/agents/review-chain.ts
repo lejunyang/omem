@@ -1,6 +1,5 @@
 import { lessonsText, previousLessonMaterial } from "./code-lessons.ts";
 import type { ViewComponent } from "./ui-blocks.ts";
-import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { allProfiles, type RoleName } from "../core/config.ts";
 import { notify } from "../core/notify.ts";
@@ -25,7 +24,7 @@ import { thirdFixText, workOwner, workRootOf } from "./code-tasks.ts";
 import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
 import { replyOf } from "./types.ts";
-import { workDirOf } from "./workspaces.ts";
+import { reviewWorkspace, workDirOf } from "./workspaces.ts";
 import { git } from "../core/git.ts";
 import { designDigest, designReviewText } from "../designs/work.ts";
 
@@ -91,7 +90,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const worktrees = worktreesOf(app, root);
   const results = out.repos ?? [];
   const multi = results.length > 1;
-  const cwd = opts.cwd ?? (multi ? join(app.runsDir, root, "work") : worktrees[0] && workDirOf(worktrees[0]));
+  const workspace = reviewWorkspace(app, root, worktrees, opts.cwd);
   const { materialSpaces, materialsBrief } = await import("../items/materials.ts");
   const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ? await materialSpaces(app, input.itemId, owner) : [])])];
@@ -146,6 +145,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     input.itemId ? await materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
     decisionsBrief(app, [...workRuns(app, run.id), ...(input.fromReview ? workRuns(app, input.fromReview) : [])]),
     note ? `## 本人确认评审计划时补充\n\n${note}` : "",
+    worktrees.length ? "评审时只读编码工作树。需要写文件的测试请在本轮快照里跑；没有现成快照时，把所需源码复制到临时目录再测。" : "",
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${opts.dirs?.[w.space] ?? w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
     rereview,
@@ -161,7 +161,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const diffText = diffs.join("\n\n");
   const reviewTask = `${brief}\n\n## ${since ? "上次评审以后的 diff（之前的改动已经评审过，需要时在工作区里读）" : "完整 diff"}\n\n${truncate(diffText, 80000)}`;
 
-  return { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask, brief, diffText };
+  return { run, input, out, plan, round, branchReview, root, worktrees, results, multi, workspace, spaces, indexed, infos, label, reviewTask, brief, diffText };
 }
 
 const SPLIT_BRIEF = [
@@ -182,12 +182,12 @@ const SPLIT_BRIEF = [
  * The business reviewer's role does it, reading what the checks read.
  */
 export async function splitChangePoints(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; revise?: boolean; execution?: Execution } = {}) {
-  const { run, input, cwd, spaces, indexed, reviewTask, branchReview, root } = await reviewContext(app, codeRunId);
+  const { run, input, workspace, spaces, indexed, reviewTask, branchReview, root } = await reviewContext(app, codeRunId);
   // A branch review held against a design (designs/): its split puts the files under the decisions.
   // With no design it stays the requirement's change points, as does a delegation's (its tasks name
   // their decisions themselves).
   const design = branchReview ? (await import("../designs/store.ts")).designForWork(app, root) : null;
-  if (design && design.origin !== "derived" && design.revision) return splitOntoDesign(app, run, rc, { cwd, spaces, indexed, reviewTask, execution: opts.execution ?? namedReviewAI(run.input as CodeInput, "split") }, opts.note);
+  if (design && design.origin !== "derived" && design.revision) return splitOntoDesign(app, run, rc, { workspace, spaces, indexed, reviewTask, execution: opts.execution ?? namedReviewAI(run.input as CodeInput, "split") }, opts.note);
   // Reworking an earlier split: the points as they stand and what the owner wants changed.
   const before = opts.revise ? currentPoints(app, run) : [];
   const revise = [
@@ -203,7 +203,7 @@ export async function splitChangePoints(app: App, codeRunId: string, rc: RoundCo
     alsoRead: indexed,
     task: [reviewTask, SPLIT_BRIEF, revise].filter(Boolean).join("\n\n"),
     runId: rc.runId,
-    cwd,
+    ...workspace,
     signal: rc.signal,
     onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check: "split" }),
     profileId: app.config.agents.roles["review-business"],
@@ -214,7 +214,7 @@ export async function splitChangePoints(app: App, codeRunId: string, rc: RoundCo
   if (saved?.round !== roundOf(run)) throw new Error("没有提交变更点");
 }
 
-type SplitContext = { cwd: string | undefined; spaces: string[]; indexed: string[]; reviewTask: string; execution?: import("./execution.ts").Execution };
+type SplitContext = { workspace: ReturnType<typeof reviewWorkspace>; spaces: string[]; indexed: string[]; reviewTask: string; execution?: import("./execution.ts").Execution };
 
 const DESIGN_SPLIT = [
   "## 你这次只做拆分：把改动归到方案的决定上",
@@ -236,7 +236,7 @@ async function splitOntoDesign(app: App, run: Run, rc: RoundContext, c: SplitCon
     alsoRead: c.indexed,
     task: [c.reviewTask, DESIGN_SPLIT, note?.trim() ? `## 本人这次的要求\n\n${note.trim()}` : ""].filter(Boolean).join("\n\n"),
     runId: rc.runId,
-    cwd: c.cwd,
+    ...c.workspace,
     signal: rc.signal,
     onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check: "split" }),
     profileId: app.config.agents.roles["review-business"],
@@ -307,7 +307,7 @@ export function crossFamilyExecution(app: App, codeRunId: string, actor: Actor):
 
 /** `only`: run just these checks again (the owner's retry of the ones that failed); the others keep this round's results. */
 export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; task?: TaskReviewOptions; only?: string[] } = {}): Promise<{ verdict: string; continuedRunId?: string; lead?: LeadResult }> {
-  const { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask } = await reviewContext(app, codeRunId, opts.note, { since: opts.task?.since });
+  const { run, input, out, plan, round, branchReview, root, worktrees, results, multi, workspace, spaces, indexed, infos, label, reviewTask } = await reviewContext(app, codeRunId, opts.note, { since: opts.task?.since });
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
   // An outside Agent on a paired device already submitted every check (and the split, if it made one).
   const peer = input.peerReviewer;
@@ -366,7 +366,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       alsoRead: indexed,
       task: `${reviewTask}\n\n${checkBrief(info, plan)}${plan.focus?.[name] ? `\n\n## 这次请重点看\n\n${plan.focus[name]}` : ""}${opts.task ? `\n\n${taskCheckBrief(opts.task.tasks())}` : ""}`,
       runId: rc.runId,
-      cwd,
+      ...workspace,
       signal: rc.signal,
       // Screenshots of what it checked; not the artifacts folder, which is the coder's (the checks share its run).
       addTools: ["attach_artifact", "report_tests"],
@@ -431,7 +431,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
         alsoRead: indexed,
         task: leadTask(app, run, plan, reviewTask, failed.map((f) => f.name), opts.task?.tasks()),
         runId: rc.runId,
-        cwd,
+        ...workspace,
         signal: rc.signal,
         onEvent: (e) => rc.event(e.type, { ...e, phase: "lead" }),
         profileId: app.config.agents.roles["review-lead"],

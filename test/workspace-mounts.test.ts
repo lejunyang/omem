@@ -8,6 +8,8 @@ import { accountOf, sandboxCommand, sandboxSupport, setSandboxSupportForTests } 
 import { agentProfileSchema } from "../src/core/config.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { shortPath } from "../src/agents/own-sandbox.ts";
+import { reviewRound } from "../src/agents/review-chain.ts";
+import { runCheck, snapshot } from "../src/agents/code-overlap.ts";
 import * as runner from "../src/agents/runner.ts";
 import { registerRound, dispatchTasks, joinHelpers } from "../src/agents/code-helpers.ts";
 import { placeOnBranch, temporaryWorkBranch } from "../src/agents/code-branch.ts";
@@ -126,6 +128,51 @@ describe("delegation sandbox mounts", () => {
     } finally {
       backend.mockRestore(); setSandboxSupportForTests(undefined);
       app.config.agents.profiles.pop(); app.config.agents.ownSandbox = settings; app.baseUrl = baseUrl;
+    }
+  });
+
+  it.skipIf(!sandboxSupport().ok)("reviews mixed member checkouts read-only and runs tests in the private snapshot", async () => {
+    const member = createUser(app, { id: "mixed-review", name: "成员", role: saveRole(app, {
+      name: "mixed-reviewer", scope: "global", permissions: ["code.delegate"],
+    }).id });
+    for (const repo of [a, b]) addMember(app, repo.id, member.id, "manager");
+    const profile = agentProfileSchema.parse({ id: "mixed-fixture", source: "claude", transport: "acp", command: process.execPath });
+    app.config.agents.profiles.push(profile);
+    mkdirSync(join(app.home, "accounts", member.id, "home"), { recursive: true });
+    app.db.prepare("insert into kv(key,value) values(?,?)").run("agent_account:" + member.id + ":claude", JSON.stringify({ state: "logged-in" }));
+    const code = createRun(app, { kind: "code", spaceId: a.id, userId: member.id, title: "评审", input: {
+      task: "核对两个仓库", reviewExecution: { profile: profile.id, source: "user", reason: "指定替身" }, roundReview: { split: false },
+    } });
+    const pool = leased(code.id);
+    const parent = dirname(pool.path);
+    const direct = { space: b.id, path: join(parent, b.id) };
+    b.git("worktree", "add", "-q", "--detach", direct.path);
+    const trees = [pool, direct].map(t => ({ ...t, branch: "", base: "HEAD" }));
+    setRunOutput(app, code.id, { worktrees: trees, repos: trees.map(t => ({ space: t.space, diffStat: "", diffBytes: 0, check: null })),
+      reviewPlan: { tier: "light", tierName: "轻量", checks: ["reviewer"], reasons: [], maxRounds: 1 } });
+    const review = createRun(app, { kind: "review", parentId: code.id, userId: member.id, spaceId: a.id, title: "评审", input: { codeRunId: code.id } });
+    const rc = { runId: review.id, signal: new AbortController().signal, event() {} };
+    const backend = vi.spyOn(dispatch, "runBackend").mockResolvedValue({ text: "结论：通过", agent: "fixture", stopReason: "end_turn" });
+    const baseUrl = app.baseUrl;
+    app.baseUrl = "http://127.0.0.1:1";
+    const snap = snapshot(trees, join(app.runsDir, review.id, "snap"));
+    const probe = (cwd: string, script: string) => {
+      const [, selected, req] = backend.mock.calls.at(-1)!;
+      expect(req.cwd).toBe(cwd);
+      expect(accountOf(selected)?.userId).toBe(member.id);
+      const cmd = sandboxCommand({ file: "/bin/sh", prefix: [] }, ["-ec", script, "sh", pool.path, direct.path],
+        {}, cwd, accountOf(selected)!, req.workspace);
+      execFileSync(cmd.file, cmd.args, { env: cmd.env });
+    };
+    try {
+      await reviewRound(app, code.id, rc, { task: { split: false, tasks: () => "", session: () => undefined, onSession() {} } });
+      probe(parent, 'for tree in "$1" "$2"; do git -C "$tree" rev-parse HEAD; if touch "$tree/probe"; then exit 1; fi; done');
+      expect(backend.mock.calls.at(-1)![2].workspace!.rw).not.toContain(parent);
+      await runCheck(app, code.id, "reviewer", { ...rc, run: code, task: "在快照里测试", cwd: snap.cwd,
+        spaces: [a.id, b.id], indexed: [], onEvent() {} });
+      probe(snap.cwd, 'touch web/probe api/probe && test ! -e "$1/probe" && test ! -e "$2/probe"');
+    } finally {
+      snap.release(); backend.mockRestore(); app.config.agents.profiles.pop(); app.baseUrl = baseUrl;
     }
   });
 

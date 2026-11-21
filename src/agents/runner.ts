@@ -561,13 +561,18 @@ export function prepareRun(
   const guestTurn = !!input.guestTurn || (!spec && GUEST_ROLES.includes(roleName));
   const mounts = (readOnly: boolean) => {
     const trees = input.worktrees ?? (readOnly ? input.reviewTrees : undefined);
-    return trees?.length ? workspaceMounts(app, trees,
+    return trees && (trees.length || input.worktreeAccess === "read") ? workspaceMounts(app, trees,
       input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined,
       input.worktreeAccess === "read" || readOnly ? "read" : "write") : undefined;
   };
   const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId,
     { workspace: mounts, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
   const workspace = isolation.box?.plan ?? (account ? mounts(false) : undefined);
+  // An overlapping check can write its host-created detached snapshot, alongside the read-only originals.
+  if (account && workspace && input.worktreeAccess === "read" && input.runId) {
+    const dir = canonical(cwd);
+    if (under(dir, join(canonical(app.runsDir), input.runId, "snap"))) workspace.rw.push(dir);
+  }
   if (isolation.box && spec?.cwd && !input.cwd) {
     const target = canonical(cwd);
     if (under(target, isolation.box.data) && !under(target, canonical(space.rootPath ?? spaceDir(app, space.id))))
