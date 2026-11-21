@@ -19,6 +19,12 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-21 · 工作项上的“需求到交付”
+
+- `src/items/chain.ts`（`GET /api/items/:id/chain`，权限同事项详情 `items.view`）：只读已有关联拼四段。需求 = 事项的 `req` 材料（`req_status` 的实现状态、`req_tests` 的测试，含子节点）；发现 = `study_findings`（不含重复的）；方案 = `designs.item_id` 和事项的交办的 `designs.work_id`，决定的 `reqs` 写的是事项的需求点 id 才连；交付 = 事项的 `run` 材料里的编码交办、发现和方案的 `work_id`，状态用 `code-works.ts listCodeWorks`，测试 `testsOfWork`，发现发起的交办加改后重跑结果；`req_status.run_id` 落在某次交办的轮次里、或测试记在某个需求点上，就连回那个需求点。事项挂的平台对象（合并请求）列在交付里，不连。每条 `links` 只指前面几段的条目。线（有子项）按子项分组，同一条只出现一次；上限 `CHAIN_MAX`（每段 12、每条线 12 组、看 60 个子项）。别的空间的需求和方案、看不到的交办不带出来。
+- 网页 `web/src/components/ItemChain.vue`（纯函数在 `web/src/lib/chain.ts`），挂在 `WorkDetail.vue` 流程那块下面和 `Items.vue` 的“外部状态”下面；默认收起成一行数，四段都空时不出现。需求节点详情（`/api/requirements/:id` 多了 `items`）在标题下写“属于工作项：……”。
+- 串不起来的：发现没有记需求点；平台对象没有记属于哪次交办；流程阶段的验收结果没有读进来。测试 `test/item-chain.test.ts`、`test/web-chain.test.ts`，截图 `item-chain`。
+
 ## 2026-11-21 · “今天”并进简报、复盘提的改动、AI 提议的指标，周五带周报
 
 - `src/items/today.ts` 多了几段，各从一个取数函数来：**简报**是卡的开头一段（kv `today_brief`，按日期）；**复盘提的改动**读 `pending.ts pendingProfileProposals`（快过期的排前面并写哪天过期；改设置的 `a_<id>` 采纳 / 不要，走 `proposals.ts applyProposal` / `rejectProposal`；改提示词、写技能的只给 Agent 页的链接）；**AI 提议的指标**读 `pending.ts pendingMetrics`（`m_<id>` 留下 / 不要，走 `defineMetric` 的 active / dropped）；周五这周的周报写好了就在末尾链过去（`weekly-report.ts weeklyReportFile`）。上限 `TODAY_MAX.profiles` 3、`metrics` 4，多的写“还有 N 条在 Agent 页 / 数据页”。“等你处理”那段不再数档案和指标。
