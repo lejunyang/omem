@@ -120,6 +120,26 @@ describe("roles and permissions", async () => {
     expect((await as("observer-test", "/api/rules")).status).toBe(200);
   });
 
+  it("projects write events in history and the live stream", async () => {
+    const {addRunEvent} = await import("../src/agents/runs.ts");
+    const user = "event-observer";
+    createUser(app,{id:user,name:"读者",role:"observer"});
+    addMember(app,"team",user,"reader");
+    tokens[user]=createApiToken(app,user,"test");
+    await fetch(base+"/api/members/"+user+"/capabilities",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({preset:"observer",overrides:[{capability:"memories.view",scope_kind:"space",scope_id:"team",effect:"deny"}]})});
+    const r=createRun(app,{kind:"ask",spaceId:"team",userId:"owner",title:"记录",input:{spaces:["team"]}});
+    const ctrl=new AbortController();
+    const reader=(await as(user,"/api/events?run="+r.id,{signal:ctrl.signal})).body!.getReader();
+    try {
+      for (const name of ["remember","save_rule"]) addRunEvent(app,r.id,"tool-write",{name,args:{content:"隐藏正文",rule:{actions:[{type:"script",code:"隐藏脚本"}]}},result:"隐藏结果"});
+      const history=await json(user,"/api/runs/"+r.id);
+      expect(history.events.filter((e:{type:string})=>e.type==="tool-write").map((e:{data:object})=>e.data)).toEqual([{},{}]);
+      let stream="";
+      while (stream.split("tool-write").length<3) stream+=new TextDecoder().decode((await reader.read()).value);
+      expect(stream).not.toMatch(/隐藏正文|隐藏脚本|隐藏结果/);
+    } finally {ctrl.abort();}
+  });
+
   it("lists generic and matching flow definitions only", async () => {
     const { saveFlow } = await import("../src/flows/definitions.ts");
     for (const [id, spaces] of [["generic", []], ["shared", ["team","other"]], ["private-flow", ["other"]]] as const) {

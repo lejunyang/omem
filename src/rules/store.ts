@@ -156,10 +156,15 @@ export function listRules(app: App, opts: { enabledOnly?: boolean; spaces?: stri
   return all<Row>(app.db, `select * from rules where ${opts.enabledOnly ? "enabled=1" : "1"} ${opts.spaces ? "and (space_id is null or space_id in (select value from json_each(?)))" : ""} order by created_at`, ...(opts.spaces ? [JSON.stringify(opts.spaces)] : [])).map(toRule);
 }
 
+export function findRule(app: App, id: string) {
+  const row = one<Row>(app.db, "select * from rules where id = ?", id);
+  return row ? toRule(row) : null;
+}
+
 export function getRule(app: App, id: string): Rule {
-  const r = one<Row>(app.db, "select * from rules where id = ?", id);
+  const r = findRule(app, id);
   if (!r) throw new HttpError(404, "规则不存在");
-  return toRule(r);
+  return r;
 }
 
 /** Create or replace a rule; checks it can work (conditions for code judging, a cron for schedules). */

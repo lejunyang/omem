@@ -1,6 +1,10 @@
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { json } from "../core/util.ts";
+import { can } from "../auth/permissions.ts";
+import { accessibleSpaces, OWNER } from "../core/users.ts";
+import { findRule } from "../rules/store.ts";
+import { ruleSummary, ruleVisible } from "../rules/visibility.ts";
 import type { Run } from "./runs.ts";
 
 /** Where a write can be opened: an original, a memory, a Wiki page, an item, a rule. */
@@ -90,4 +94,37 @@ export function runWrites(app: App, run: Run): RunWrite[] {
     }
   }
   return out;
+}
+
+function readableRule(app: App, user: string, id: string) {
+  if (!can(app, user, "rules.view")) return null;
+  const rule = findRule(app, id);
+  const spaces = accessibleSpaces(app, user);
+  return rule && ruleVisible(rule, spaces && new Set(spaces)) ? rule : null;
+}
+
+export function writeVisible(app: App, user: string, w: RunWrite) {
+  if (user === OWNER) return true;
+  const target = w.target;
+  if (!target) return false;
+  if (target.kind === "rule") return !!readableRule(app, user, target.id);
+  if (target.kind === "item") return can(app, user, "items.view", target);
+  if (target.kind === "source") return can(app, user, "sources.view", target);
+  return can(app, user, target.kind === "page" ? "wiki.view" : "memories.view", w.space);
+}
+
+/** Tool arguments and free-form results may describe several objects. Project from the identified target. */
+export function visibleRunEvent<T extends { type: string; data: unknown }>(app: App, user: string, event: T, showReview: boolean) {
+  if (user === OWNER) return event;
+  if (!showReview) return { ...event, data: {} };
+  const data = event.data as { name?: string; id?: string; status?: string; args?: { id?: string }; result?: string } | null;
+  if (event.type === "tool") return { ...event, data: { id: data?.id, status: data?.status } };
+  if (event.type !== "tool-write") return event;
+  if (data?.name === "save_rule") {
+    const id = /规则 (\S+?)「/.exec(data.result ?? "")?.[1] ?? data.args?.id;
+    const rule = id && readableRule(app, user, id);
+    if (rule) return { ...event, data: { name: data.name, rule: can(app, user, "rules.edit") ? rule : ruleSummary(rule) } };
+  }
+  // Other writes have an independently authorized link in the writes list.
+  return { ...event, data: {} };
 }

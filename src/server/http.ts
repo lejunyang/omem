@@ -84,7 +84,7 @@ import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
 import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, personalSpaceId, scopeFor, userForToken, userName } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
-import { runWrites } from "../agents/run-writes.ts";
+import { runWrites, visibleRunEvent, writeVisible } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { refExcerpt } from "../items/evidence.ts";
 import { getItem, ITEM_KINDS, itemEvents, listItems, upsertItem } from "../items/store.ts";
@@ -358,10 +358,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (!shown(e)) return;
       if (e.type === "run-event" && who(req) !== OWNER) {
         const kind = one<{kind:string}>(app.db,"select kind from runs where id=?",e.runId)?.kind;
-        if ((kind === "code" || kind === "review") && !canAccessRun(app,who(req),e.runId,"code.review.view")) {
-          res.write(`data: ${JSON.stringify({...e,event:{...e.event,data:{}}})}\n\n`);
-          return;
-        }
+        const showReview = kind !== "code" && kind !== "review" || canAccessRun(app, who(req), e.runId, "code.review.view");
+        const event = visibleRunEvent(app, who(req), e.event, showReview);
+        res.write(`data: ${JSON.stringify({ ...e, event })}\n\n`);
+        return;
       }
       res.write(`data: ${JSON.stringify(e)}\n\n`);
     };
@@ -1683,15 +1683,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const board = typeof boardId === "string" && one(app.db, "select 1 from agent_work_tasks where work_id=? limit 1", boardId)
       && canReadRun(app, who(req), boardId) ? { workId: boardId, taskId: r.input.boardTaskId } : undefined;
     return {
-      can: { operate: canAccessRun(app, who(req), id, "runs.operate"), edit: can(app, who(req), "code.delegate") && (who(req) === OWNER || mine) }, board, run: { ...r, ...(!showReview ? {input:{},output:{},error:null} : diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: showReview ? events : events.map(e => ({...e,data:{}})), children, patches: diff?.patches.filter(p => !reviewerSpaces || reviewerSpaces.includes(p.space)), context: runContext(app, r, who(req)), writes: runWrites(app, r).filter(w => {
-        if (who(req) === OWNER) return true;
-        const t = w.target;
-        if (!t) return mine;
-        if (t.kind === "source") return can(app, who(req), "sources.view", t);
-        if (t.kind === "item") return can(app, who(req), "items.view", t);
-        if (t.kind === "rule") return can(app, who(req), "rules.view") && (!w.space || can(app, who(req), "space.read", w.space));
-        return can(app, who(req), t.kind === "page" ? "wiki.view" : "memories.view", w.space);
-      }), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id)
+      can: { operate: canAccessRun(app, who(req), id, "runs.operate"), edit: can(app, who(req), "code.delegate") && (who(req) === OWNER || mine) }, board, run: { ...r, ...(!showReview ? {input:{},output:{},error:null} : diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: events.map(e => visibleRunEvent(app, who(req), e, showReview)), children, patches: diff?.patches.filter(p => !reviewerSpaces || reviewerSpaces.includes(p.space)), context: runContext(app, r, who(req)), writes: runWrites(app, r).filter(w => writeVisible(app, who(req), w)), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id)
     };
   });
   // The owner read the follow-up and says the label is wrong (agents/reply-outcomes.ts).
