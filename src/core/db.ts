@@ -2368,6 +2368,16 @@ export const migrations: readonly string[] = [
    create index if not exists progress_tokens on run_events(run_id,seq desc) where type='usage' and json_type(data,'$.input')='integer' and json_type(data,'$.output')='integer';`,
   `create index if not exists progress_review_checks on run_events(run_id,json_extract(data,'$.check'))
      where json_extract(data,'$.phase')='reviewer';`,
+  `create table code_task_run_history (
+     work_id text not null, seq integer not null, run_id text not null,
+     primary key(work_id, seq, run_id),
+     foreign key(work_id, seq) references code_tasks(work_id, seq) on delete cascade
+   );
+   create trigger code_task_reassigned after update of coder_run on code_tasks
+   when old.coder_run is not null and old.coder_run is not new.coder_run begin
+     insert into code_task_run_history(work_id,seq,run_id) values(old.work_id,old.seq,old.coder_run)
+       on conflict(work_id,seq,run_id) do nothing;
+   end;`,
 ];
 
 export type Db = DatabaseSync;

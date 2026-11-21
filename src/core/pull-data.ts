@@ -124,6 +124,7 @@ export const pullTables: Table[] = [
     // After review_findings: a task names its findings, a finding its task (both remapped below).
     ["code_tasks", ["work_id", "seq"]],
   ].map(([name, natural]) => ({ name: name as string, key: ["id"], newer: "sync_updated_at", integer: true, natural: natural as string[] })),
+  { name: "code_task_run_history", key: ["work_id", "seq", "run_id"] },
 ];
 
 export function columns(db: DatabaseSync, table: string, schema = "main") {

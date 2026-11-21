@@ -93,12 +93,19 @@ function codeRounds(graph: Forest, node: Node) {
 }
 
 function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
+  const history = new Map<number, string[]>();
+  for (const { seq, run_id } of all<{ seq: number; run_id: string }>(app.db,
+    "select seq, run_id from code_task_run_history where work_id=?", node.id)) {
+    const ids = history.get(seq);
+    if (ids) ids.push(run_id);
+    else history.set(seq, [run_id]);
+  }
   const checkpoints = listCheckpoints(app, node.id);
   const helpers = [...graph.nodes.values()].filter(r => r.helper && (r.helper === node.id || graph.nodes.get(r.helper)?.first === node.id));
   const tasks = recordedTasks(app, node.id).filter(t => graph.sees(t.coderRun)).map(t => {
     const mine = helpers.filter(r => (JSON.parse(r.assigned ?? "[]") as number[]).includes(t.seq));
     const runs = checkpoints.filter(c => c.tasks.includes(t.seq) && !mine.some(r => r.parent === c.by)).map(c => c.by);
-    const ids = [...runs, ...mine.map(r => r.id), t.coderRun];
+    const ids = [...(history.get(t.seq) ?? []), ...runs, ...mine.map(r => r.id), t.coderRun];
     const outputs: Output[] = Object.entries(t.commits).flatMap(([repo, shas]) => shas.map(ref => ({ kind: "commit", ref, label: repo + " · " + ref })));
     for (const r of mine) for (const w of JSON.parse(r.branches ?? "[]") as { space: string; branch: string }[])
       if (w.branch) outputs.push({ kind: "branch", ref: w.branch, label: w.space + " · " + w.branch });
@@ -114,7 +121,7 @@ function codeView(app: App, graph: Forest, node: Node, itemId?: string) {
   const state = terminal ?? (waitingOn ? "waiting" : tasks.length ? undefined : last.status === "done" ? "done" : "running");
   return {
     ...view(graph, { kind: "code", id: node.id, runId: node.id, itemId, title: node.title, tasks }, state, {
-      waitingOn, usage: tasks.length ? undefined : graph.usage(rounds.map(r => r.id)),
+      waitingOn, usage: graph.usage([...rounds.map(r => r.id), ...tasks.flatMap(t => t.attempts.map(a => a.runId))]),
     }),
     rounds: rounds.map(r => ({ runId: r.id, status: r.status, round: r.round ?? undefined })),
   };

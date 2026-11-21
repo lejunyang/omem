@@ -10,7 +10,10 @@ import { canReadRun } from "../src/auth/permissions.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { itemProgress, runProgress, states } from "../src/agents/progress.ts";
-import { addTask, updateTask } from "../src/agents/code-tasks.ts";
+import { codeChainFor, queueNextCodeRound } from "../src/agents/code-chain.ts";
+import { createThread } from "../src/agents/threads.ts";
+import { getRun } from "../src/agents/runs.ts";
+import { addTask, takeTasks, updateTask } from "../src/agents/code-tasks.ts";
 import { recordReview, findingSchema } from "../src/agents/review.ts";
 import { readBoard } from "../src/agents/work-board.ts";
 import { saveProposals, confirmDirection } from "../src/studies/store.ts";
@@ -60,9 +63,77 @@ describe("进度投影", () => {
     expect(readBoard(app, "root")).toMatchObject({ workId: "root", askRunId: "root", status: "summarized", tasks: [{ status: "accepted", attempts: [{}, { used: 500 }] }, {}] });
     const code = views.find(v => v.kind === "code")!;
     expect(code.tasks.map(t => t.state)).toEqual(["submitted", "submitted"]);
-    expect(code.usage.runs).toBe(1);
+    expect(code.usage.runs).toBe(2);
     expect(views.find(v => v.kind === "review")?.tasks[0]).toMatchObject({ who: { model: "model-a" }, decision: { result: "fix" }, outputs: [{ label: expect.stringContaining("1 个问题") }, { label: "格式" }] });
     expect(itemProgress(app, item.id, owner).map(v => v.kind).sort()).toEqual(["board", "code", "review"]);
+  });
+
+  it("检查点前失败后换模型接管，转派和重复接管保留每项的运行及用量", () => {
+    const { app, add } = fixture();
+    const thread = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+    add("ask", "ask", null, { conversationId: thread.id });
+    add("first", "code", "ask", { taskMode: true, execution: { model: "model-a" } });
+    for (const title of ["核对输入", "核对输出"]) addTask(app, "first", { title, kind: "build" }, "coder");
+    takeTasks(app, "first", "first");
+    run(app.db, "update runs set status='failed' where id='first'");
+    add("first-child", "agent", "first"); // No usage report from this child.
+    const chain = codeChainFor(app, getRun(app, "first"))!;
+    const { run: next } = queueNextCodeRound(app, chain, "继续修改", {
+      manual: true, execution: { profile: "worker", model: "model-b", source: "user", reason: "换模型" },
+    })!;
+    expect(next.input.execution).toMatchObject({ model: "model-b" });
+    expect(takeTasks(app, "first", next.id).map(t => t.seq)).toEqual([1, 2]);
+    takeTasks(app, "first", next.id);
+    add("helper", "agent", next.id, { helperOf: next.id, tasks: [1] });
+    run(app.db, "update runs set created_at=? where id='helper'", new Date(Date.parse(next.createdAt) + 1).toISOString());
+    updateTask(app, "first", 1, { coderRun: "helper" });
+    for (const [id, input, output] of [["first", 11, 3], [next.id, 23, 5], ["helper", 7, 2]] as const)
+      run(app.db, "insert into run_events values(?,1,?,'usage',?)", id, at, JSON.stringify({ input, output }));
+    const code = runProgress(app, next.id, owner).find(v => v.kind === "code")!;
+    expect(code.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([
+      ["first", next.id, "helper"], ["first", next.id],
+    ]);
+    expect(code.tasks[0].attempts).toMatchObject([
+      { status: "failed", usage: { input: 11, output: 3, runs: 2, missing: 1 } },
+      { usage: { input: 30, output: 7, runs: 2, missing: 0 } },
+      { usage: { input: 7, output: 2, runs: 1, missing: 0 } },
+    ]);
+    const total = { input: 41, output: 10, runs: 4, missing: 1 };
+    expect(code.tasks.map(t => t.usage)).toEqual([total, total]);
+    expect(code.usage).toEqual(total);
+  });
+
+  it("旧轮只有能核对修改项的尝试才归到该项，其余计入整块", () => {
+    const { app, add } = fixture();
+    add("first", "code", null);
+    add("next", "code", null, { continueFrom: "first" });
+    for (const title of ["有旧检查点", "无旧检查点"]) addTask(app, "first", { title, kind: "build" }, "coder");
+    takeTasks(app, "first", "next");
+    run(app.db, "insert into code_checkpoints(work_id,seq,heads,tasks,by,label,created_at) values('first',1,'{}','[1]','first','完成',?)", at);
+    add("unassigned", "code", null, { continueFrom: "first" });
+    run(app.db, "insert into run_events values('unassigned',1,?,'usage',?)", at, '{"input":13,"output":9}');
+    const code = runProgress(app, "next", owner).find(v => v.kind === "code")!;
+    expect(code.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["first", "next"], ["next"]]);
+    expect(code.usage).toEqual({ input: 13, output: 9, runs: 3, missing: 2 });
+  });
+
+  it("转派历史随事务回滚，重复转派按任务去重，隐藏空间的旧尝试不计入用量", () => {
+    const { app, add } = fixture();
+    add("root", "code", null);
+    add("hidden", "code", null, { continueFrom: "root" }, {}, ["other"]);
+    add("visible", "code", null, { continueFrom: "root" });
+    addTask(app, "root", { title: "核对改动", kind: "build" }, "coder");
+    takeTasks(app, "root", "hidden");
+    app.db.exec("begin");
+    takeTasks(app, "root", "root");
+    app.db.exec("rollback");
+    for (const id of ["visible", "hidden", "visible"]) takeTasks(app, "root", id);
+    run(app.db, "insert into run_events values('hidden',1,?,'usage',?)", at, '{"input":11,"output":3}');
+    const view = (spaces?: string[]) => runProgress(app, "root", { ...owner, spaces }).find(v => v.kind === "code")!;
+    expect(view().tasks[0].attempts.map(a => a.runId)).toEqual(["hidden", "visible"]);
+    const scoped = view(["personal"]);
+    expect(scoped.tasks[0].attempts.map(a => a.runId)).toEqual(["visible"]);
+    expect(scoped.usage).toEqual({ input: 0, output: 0, runs: 2, missing: 2 });
   });
 
   it("续轮评审合入一个块，保留每轮结论、问题、取舍和用量", () => {
