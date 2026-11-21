@@ -75,7 +75,7 @@ import { afterToolCall, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
-import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
+import { describeThread, findThread, getThread, listThreads, threadMessages } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
 import type { OperationRule } from "../core/config.ts";
@@ -1094,12 +1094,13 @@ def({
 });
 
 /** A temporary assistant task stays inside the caller's permissions and cannot hand on again. */
-function assistantTaskScope(ctx: ToolContext) {
+function assistantTaskScope(ctx: ToolContext, agent = "assistant") {
   return {
     spaces: ctx.writable ?? ctx.spaces,
-    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS])],
-    userId: ctx.userId,
-    lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private },
+    readScope: ctx.spaces ?? undefined,
+    denyTools: agent === "assistant" ? [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS])] : [],
+    userId: ctx.userId ?? OWNER,
+    lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private, ...(ctx.larkBot && { bot: ctx.larkBot }) },
   };
 }
 
@@ -1142,14 +1143,14 @@ const extraToolsSchema = z.array(z.string()).max(MAX_LENT_TOOLS).optional().desc
  */
 function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, task: string, execution: ReturnType<typeof validateExecution>, space?: string) {
   // The main assistant works with the device's own tool set (nothing outward), as for any task it is handed.
-  const assistantScope = spec.name === "assistant" ? assistantTaskScope(ctx) : undefined;
+  const assistantScope = assistantTaskScope(ctx, spec.name);
   const r = createRun(ctx.app, {
     kind: "agent",
-    spaceId: space ? writeSpace(ctx, space) : (spec.space ?? ctx.spaceId),
+    spaceId: writeSpace(ctx, space ?? spec.space, "runs.operate"),
     title: `${spec.name}（设备 ${ctx.peer!.caller} 交办）：${truncate(task, 50)}`,
-    input: { spec: spec.name, task, execution, assistantScope, fromPeer: ctx.peer!.caller },
+    input: { spec: spec.name, task, execution, assistantScope, spaces: assistantScope.readScope, fromPeer: ctx.peer!.caller },
     parentId: ctx.runId,
-    userId: ctx.userId && ctx.userId !== OWNER ? ctx.userId : null,
+    userId: assistantScope.userId,
   });
   return `已交给这台机器上的 ${spec.name}，运行 ${r.id}（用这台机器的模型）。用 read_run 看进度和结果，做完前状态是 queued / running。`;
 }
@@ -1167,6 +1168,7 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
   const rule = parent.rule as { id: string; name: string };
   const from = String(parent.spec ?? "assistant");
   if (spec.name === from) throw new HttpError(400, `这次运行就是 ${from}，不用交给自己`);
+  const assistantScope = assistantTaskScope(ctx, spec.name);
   const inherited = Object.fromEntries(RULE_DELIVERY.filter((k) => parent[k] !== undefined).map((k) => [k, parent[k]]));
   const reply = parent.silent
     ? "你在静默排查：群里看不到你的过程，最后写的文字也不会发出去；有结论才用 lark_send 发到触发消息的话题里（reply_to 触发消息、in_thread=true），没有就什么都不发。"
@@ -1175,12 +1177,12 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
       : "不要在群里发消息；最后的回答发给本人。";
   const r = createRun(ctx.app, {
     kind: "agent",
-    spaceId: spec.space ?? ctx.spaceId,
+    spaceId: writeSpace(ctx, spec.space, "runs.operate"),
     title: truncate(`${spec.name}（规则「${rule.name}」，${from} 交来）：${task.split("\n")[0]}`, 80),
     input: {
       spec: spec.name,
       ...inherited,
-      ...(spec.name === "assistant" && parent.assistantScope ? { assistantScope: parent.assistantScope } : {}),
+      assistantScope, spaces: assistantScope.readScope,
       execution: execution ?? parent.execution,
       denyTools: HANDOFF_DENIED,
       handoff: { from, runId: ctx.runId },
@@ -1202,7 +1204,7 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
       ].join("\n"),
     },
     parentId: ctx.runId,
-    userId: ctx.userId,
+    userId: assistantScope.userId,
   });
   return `已在规则「${rule.name}」的范围内交给 ${spec.name}（运行 ${r.id}）：它按规则的回复方式在原来的群或话题里处理，话题里的后续回复仍回到你这里。你这一轮不要再在群里回复同一件事，调用 stay_quiet 结束（还有别的事要做就先做完）。`;
 }
@@ -1325,7 +1327,7 @@ def({
     if (ctx.peer) return peerDispatch(ctx, spec, a.task, execution, a.space);
     const parentInput = ctx.runId ? (getRun(ctx.app, ctx.runId).input ?? {}) as Record<string, unknown> : {};
     if (parentInput.rule) return ruleHandoff(ctx, parentInput, spec, a.task, execution);
-    const assistantScope = a.name === "assistant" ? assistantTaskScope(ctx) : undefined;
+    const assistantScope = assistantTaskScope(ctx, spec.name);
     const lentNote = extraTools.length ? `；这一轮借给它 ${extraTools.join("、")}` : "";
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
@@ -1337,6 +1339,7 @@ def({
       // into this conversation so reports stop going back to the old topic.
       const existing = workInConversation(ctx.app, conversationId);
       if (existing) {
+        requireWorkOperator(ctx, existing);
         await autoTurnGuard(ctx, existing);
         const id = queueAgentRound(ctx.app, existing, { agent: spec.name, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
         return `已在这项工作的话题里安排 ${spec.name} 的下一轮 ${id}${lentNote}；它交回报告后你会在这里接着处理。`;
@@ -1344,7 +1347,7 @@ def({
       const w = startAgentWork(ctx.app, {
         askRunId: ctx.runId!,
         rootConversationId: conversationId,
-        spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId),
+        spaceId: writeSpace(ctx, a.space ?? spec.space, "runs.operate"),
         title: truncate(a.task.split("\n")[0], 60),
         agent: spec.name,
         task: a.task,
@@ -1356,11 +1359,18 @@ def({
       if (inChat && !anchor) return `已在独立工作会话把这件事交给 ${spec.name}，运行 ${w.runId}。这里没有这件事自己的飞书消息可以挂话题，它的结论和要本人决定的事会直接发在本会话（不是话题），不要说“已在话题里”。`;
       return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}${lentNote}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
-    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId, userId: ctx.userId });
+    const r = createRun(ctx.app, { kind: "agent", spaceId: writeSpace(ctx, a.space ?? spec.space, "runs.operate"), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, spaces: assistantScope.readScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId, userId: assistantScope.userId });
     return `已交给 ${spec.name}，运行 ${r.id}${lentNote}，完成后结果会发回本会话。`;
   },
 });
 
+
+function requireWorkOperator(ctx: ToolContext, work: AgentWork) {
+  const user = ctx.userId ?? OWNER;
+  if (runUser(ctx.app, work.askRunId) !== user || !canAccessRun(ctx.app, user, work.askRunId, "runs.operate"))
+    throw new HttpError(403, "只能续办自己有权操作的工作");
+  inScope(ctx, getThread(ctx.app, work.workConversationId).spaceId, "工作", "runs.operate");
+}
 
 /** run_agent with work_id (or own_topic without name): the next round of a work in its own conversation. */
 async function continueAgentWork(ctx: ToolContext, a: { execution?: z.infer<typeof executionSchema>; work_id?: string; name?: string; task: string; extra_tools?: string[] }) {
@@ -1372,19 +1382,19 @@ async function continueAgentWork(ctx: ToolContext, a: { execution?: z.infer<type
   const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
   const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
   const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
-  let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
-  if (!work && conv) work = workInConversation(ctx.app, conv, { includeRoot: true });
+  const work = a.work_id ? refreshWork(ctx.app, a.work_id) : conv && workInConversation(ctx.app, conv, { includeRoot: true });
   if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent(name, task, own_topic=true) 开始");
+  requireWorkOperator(ctx, work);
   const agent = a.name ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
   if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
-  const assistantScope = agent === "assistant" ? assistantTaskScope(ctx) : undefined;
+  const assistantScope = assistantTaskScope(ctx, agent);
   // The owner continues the work from another conversation (a new Feishu topic): fork it into
   // this conversation so the specialist's report and every later coordination reply land here.
   if (conv && work.workConversationId !== conv) {
-    const { getThread } = await import("./threads.ts");
     const here = getThread(ctx.app, conv);
     const otherTopic = !!String(here?.key ?? "").includes("#") && here?.key !== work.larkKey;
     if (otherTopic || work.rootConversationId !== conv) {
+      inScope(ctx, here.spaceId, "工作", "runs.operate");
       const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
       return `已把这项工作转到当前话题继续（运行 ${f.runId}${lentNote}）；后续 ${agent} 的报告和协调回复都在这里，不再回到旧话题。旧话题里的经过可以用 read_conversation 读工作会话 ${work.workConversationId}。`;
     }

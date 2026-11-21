@@ -3,7 +3,10 @@ import { join, resolve } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { runRole } from "../src/agents/runner.ts";
 import { issueToolToken, revokeToolToken } from "../src/agents/tools.ts";
-import { createRun, runEvents } from "../src/agents/runs.ts";
+import { startAgentWork, refreshWork } from "../src/agents/agent-work.ts";
+import { createThread } from "../src/agents/threads.ts";
+import { saveAgentSpec } from "../src/agents/specs.ts";
+import { createRun, getRun, runEvents, runUser } from "../src/agents/runs.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -63,3 +66,33 @@ it("records the missing capability when an existing run loses write access", asy
     }));
   } finally { revokeToolToken(token); }
 });
+
+it("checks the work owner before moving a topic and queues specialists with the current caller scope", async () => {
+  const userId = createUser(app, { id: "worker", name: "成员" }).id;
+  addMember(app, spaceId, userId, "contributor");
+  const agent = "specialist";
+  saveAgentSpec(app, { name: agent, status: "active", description: "整理材料", prompt: "整理材料" }, "user");
+  const start = (userId: string) => {
+    const root = createThread(app, { spaceId, channel: "web", userId });
+    const ask = createRun(app, { kind: "ask", spaceId, userId, title: "原任务", input: { conversationId: root.id } });
+    return startAgentWork(app, { askRunId: ask.id, rootConversationId: root.id, spaceId, title: "原任务", agent,
+      task: "第一轮", startMessage: "开始", assistantScope: { spaces: null, userId, denyTools: [], lark: { chats: [] } } });
+  };
+  const original = start("owner");
+  const mine = start(userId);
+  const queued = createRun(app, { kind: "ask", spaceId, title: "待协调", lane: original.work.workConversationId });
+  const root = createThread(app, { spaceId, channel: "web", userId });
+  const runId = createRun(app, { kind: "ask", title: "续办", userId, spaceId, input: { conversationId: root.id } }).id;
+  const before = refreshWork(app, original.work.askRunId);
+  await runRole(app, { role: "assistant", runId, spaceId, spaces: [spaceId], profileId: profile.id,
+    task: [original, mine].map(({ work }) => "@call run_agent " + JSON.stringify({ work_id: work.askRunId, name: agent, task: "继续整理" })).join("\n") });
+  expect(calls().slice(-2)).toMatchObject([{ name: "run_agent", isError: true, text: expect.stringContaining("只能续办") },
+    { name: "run_agent", isError: false }]);
+  expect(refreshWork(app, original.work.askRunId)).toEqual(before);
+  expect(getRun(app, original.runId).status).toBe("queued");
+  expect(getRun(app, queued.id).status).toBe("queued");
+  const next = refreshWork(app, mine.work.askRunId)!.rounds.at(-1)!.runId;
+  expect(next).not.toBe(mine.runId);
+  expect(runUser(app, next)).toBe(userId);
+  expect(getRun(app, next).input.assistantScope).toMatchObject({ spaces: [spaceId], readScope: [spaceId], userId });
+}, 60000);

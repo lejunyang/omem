@@ -961,7 +961,7 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   const { createAgentWork } = await import("../src/agents/agent-work.ts");
   const { dispatchBoard, reviewBoard, settleBoardRun } = await import("../src/agents/work-board.ts");
   const { getRun } = await import("../src/agents/runs.ts");
-  const scope = { spaces: ["shop"], denyTools: [], lark: { chats: null } };
+  const scope = { userId: "owner", spaces: ["shop"], denyTools: [], lark: { chats: null } };
   const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
   const work = createAgentWork(app, { askRunId: boardAsk.id, rootConversationId: boardThread.id, spaceId: "shop", title: "核对上月退款单的三处差异", startMessage: "核对上月退款单的三处差异" });
   const [bills, logs, coupons] = dispatchBoard(app, work, [
