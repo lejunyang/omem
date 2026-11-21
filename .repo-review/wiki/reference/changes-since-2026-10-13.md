@@ -23,6 +23,12 @@ updated: 2026-11-21
 
 从 `packages/plugin-sdk/server.ts` 看注册接口，从 `src/search/providers.ts` 看空间、调用预算和状态。`src/search/search.ts` 按 id 回读后参与 RRF 融合，`src/search/rerank.ts` 在同一入口为主搜索与被动记忆选择重排器。配置和状态字段见 [接进检索](../../../docs/v2/plugins.md#接进检索)。
 
+## 管成员的人进得了成员页；成员直接打开深链接不再被送回问答（11-21）
+
+- `web/src/App.vue`：判断“这一页他能不能开”要等路由把打开时的地址解析完（`router.isReady()`）。页面按需加载，解析完之前路径还读作 `/`：成员从通知或卡片里的链接直接打开某一页时，会被当成开了没有权限的首页，送回问答。
+- 设置入口对有 `users.manage` 的人也出现（标题“成员与记录”）：只有 成员、安全（只有“记录”）、外观与说明 三个标签，不读本人的配置；`views/Settings.vue` 的可见标签改成按当前用户算，并等 `/api/me` 回来再决定。成员页（`MembersSettings.vue`）读不到登录设置时只显示邀请、成员和角色。
+- 只被单独给了 `settings.members` 能力、没有 `users.manage` 的成员仍进不了：列成员、邀请这些接口还认旧权限（服务端后续要统一）。
+
 ## HTTP 规则的判定入口：浏览器里的请求发出前来问（11-21）
 
 - `src/agents/http-gate.ts`：`httpWatch` 给出这个调用方现在要问哪些请求（生效的、动作不是放行的 HTTP 规则的主机和方法，带 `revision`），`httpGate` 判一个请求（JSON 请求体才参与 `body.jsonPath`），走命令同一个 `gateOperation`。接口 `GET / POST /api/operation-gate/http`，和命令垫片同样只认本机带运行令牌的请求。
