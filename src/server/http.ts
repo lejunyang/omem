@@ -1794,16 +1794,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { boardForReader } = await import("../agents/progress.ts");
     return boardForReader(app, (req.params as { id: string }).id, { user: who(req) });
   });
-  const progressQuery = z.object({ history: z.enum(["true", "false"]).optional() });
-  server.get("/api/runs/:id/progress", async (req) => {
-    const { runProgress } = await import("../agents/progress.ts");
-    const { history } = q(progressQuery, req.query);
-    return runProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true");
+  const progressQuery = z.object({ summary: z.enum(["true", "false"]).optional(), history: z.enum(["true", "false"]).optional() });
+  server.get("/api/runs/:id/progress", async (req, reply) => {
+    const { runProgress, progressPage } = await import("../agents/progress.ts");
+    const { history, summary } = q(progressQuery, req.query);
+    const page = progressPage(runProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true"));
+    reply.header("X-Omem-Total-Usage", JSON.stringify(page.totalUsage));
+    return summary === "true" ? page : page.views;
   });
-  server.get("/api/items/:id/progress", async (req) => {
-    const { itemProgress } = await import("../agents/progress.ts");
-    const { history, limit } = q(progressQuery.extend({ limit: z.coerce.number().int().min(1).max(100).optional() }), req.query);
-    return itemProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true", limit);
+  server.get("/api/items/:id/progress", async (req, reply) => {
+    const { itemProgress, progressPage } = await import("../agents/progress.ts");
+    const { history, limit, summary } = q(progressQuery.extend({ limit: z.coerce.number().int().min(1).max(100).optional() }), req.query);
+    const page = progressPage(itemProgress(app, (req.params as { id: string }).id, { user: who(req) }, history === "true", limit));
+    reply.header("X-Omem-Total-Usage", JSON.stringify(page.totalUsage));
+    return summary === "true" ? page : page.views;
   });
   // Who may read it is checked by the route (src/auth/routes.ts); its sub-runs only as far as they are readable too.
   server.get("/api/runs/:id", async (req) => {

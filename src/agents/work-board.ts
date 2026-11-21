@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
-import { nodeId } from "../core/peers.ts";
+import { deviceLabels, nodeId } from "../core/peers.ts";
 import { addWorkMessage, enqueueCoordination, queueAgentRound, refreshWork, markRound, type AgentWork, type AssistantScope } from "./agent-work.ts";
 import { cancelRun, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
@@ -60,12 +60,13 @@ function snapshot(app: App, workId: string, full = false, visible?: ReadonlySet<
     (select json_extract(data,'$.used') from run_events where run_id=r.id and type='usage' order by seq desc limit 1) used,
     ${full ? `case when r.id=t.run_id and json_extract(a.value,'$.status')='done' then substr(json_extract(r.output,'$.answer'),1,${reportPageSize + 1}) end` : "null"} answer
     from agent_work_tasks t join json_each(t.attempts) a left join runs r on r.id=json_extract(a.value,'$.runId') where t.work_id=? order by t.seq,a.key`, workId);
+  const device = deviceLabels(app);
   return rows.filter(t => !visible || visible.has(t.run_id) && (JSON.parse(t.attempts) as Attempt[]).every(a => visible.has(a.runId))).map(t => {
     const history = attempts.filter(a => a.task === t.id).map(a => {
       const e: Attempt = JSON.parse(a.entry);
       const end = Date.parse(e.finishedAt ?? now());
       const ai = a.ai ? JSON.parse(a.ai) as Run["ai"] : null;
-      return { ...e, ai, backend: ai?.profile ?? a.profile_id, model: ai?.model ?? null, used: a.used,
+      return { ...e, ...device(e.device), ai, backend: ai?.profile ?? a.profile_id, model: ai?.model ?? null, used: a.used,
         queuedMs: (e.startedAt ? Date.parse(e.startedAt) : end) - Date.parse(e.queuedAt), executionMs: e.startedAt ? end - Date.parse(e.startedAt) : 0 };
     });
     return { id: t.id, workId, seq: t.seq, title: t.title, goal: t.goal, accept: t.accept, agent: t.agent, required: !!t.required,
