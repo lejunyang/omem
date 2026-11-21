@@ -67,6 +67,7 @@ export type AcpOpenOptions = {
   allowWrites?: boolean;
   modes?: string[];
   fullAccess?: boolean;
+  acpWritable?: boolean;
   env?: Record<string, string>;
   /** Continue an earlier agent session (resume, or load when only that is offered). */
   resumeSessionId?: string;
@@ -194,7 +195,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         const { optionId, message } = await acpPermission(request, {
           app: opts.app, token: opts.mcp?.token, runId: opts.runId, backend: profile.id, cwd: opts.cwd,
           guardedDir: guardedToken ? env.OMEM_COMMAND_GATE : undefined,
-          writable: !!(opts.allowWrites || opts.fullAccess),
+          writable: opts.acpWritable ?? !!opts.allowWrites,
         });
         emit({ type: "status", text: message });
         return optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } };
@@ -403,7 +404,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     // Permission mode: prefer the role's choice when the agent offers it.
     const modes = session.modes?.availableModes ?? [];
     const full = opts.fullAccess && !opts.probe ? pickMode(["full-access"], modes.map((m) => m.id)) : undefined;
-    if (opts.fullAccess && !opts.probe) emit({ type: "status", text: full ? `完全访问：${full}（命令不进沙箱、不审批）` : "这个后端没有完全访问模式，仍按沙箱和审批运行" });
+    if (opts.fullAccess && !opts.probe) emit({ type: "status", text: full ? `完全访问：${full}（${opts.ownSandbox || accountOf(profile) ? "后端自己的沙箱和审批关了，边界是 omem 的沙箱" : "命令不进沙箱、不审批"}）` : "这个后端没有完全访问模式，仍按沙箱和审批运行" });
     const wanted = full ?? pickMode(opts.modes ?? [], modes.map((m) => m.id));
     if (wanted && session.modes?.currentModeId !== wanted) await Promise.race([connection.setSessionMode({ sessionId, modeId: wanted }), failed]);
     let options = session.configOptions ?? [];
@@ -708,7 +709,7 @@ export async function cleanupAcpSession(profile: AgentProfile, sessionId: string
 
 /** One prompt turn against an ACP agent (Codex/TraeX/Claude Code adapters…). */
 export async function runAcp(profile: AgentProfile, req: AgentRequest & { app?: App }, emit: (e: AgentEvent) => void): Promise<AgentResult> {
-  const handle = await openAcp(profile, { app: req.app, runId: req.runId, signal: req.signal, cwd: req.cwd, workspace: req.workspace, ownSandbox: req.ownSandbox, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const handle = await openAcp(profile, { app: req.app, runId: req.runId, signal: req.signal, cwd: req.cwd, workspace: req.workspace, ownSandbox: req.ownSandbox, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, acpWritable: req.acpWritable, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");

@@ -620,7 +620,7 @@ async function judgeOnce(app: App, parent: RunContext, q: Question, profile: Age
   try {
     const isolation = ownRun(app, profile, cwd, true, id);
     if (isolation.note) addRunEvent(app, id, "status", { text: isolation.note });
-    const res = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, system: loadRole("replay-judge", app).body, prompt, allowWrites: false, modes: ["read-only"], signal: parent.signal }, (e) => addRunEvent(app, id, e.type, e));
+    const res = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, fullAccess: !!isolation.box && app.config.agents.fullAccess === "sandboxed", system: loadRole("replay-judge", app).body, prompt, allowWrites: false, modes: ["read-only"], signal: parent.signal }, (e) => addRunEvent(app, id, e.type, e));
     const text = replyOf(res).trim();
     const v = jsonIn<{ better?: string; reason?: string; taskType?: string; original?: string }>(text);
     const better = v?.better === "甲" || v?.better === "乙" || v?.better === "平" ? (v.better as Verdict["better"]) : null;

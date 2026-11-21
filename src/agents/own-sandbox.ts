@@ -81,3 +81,19 @@ export function ownSandboxEnv(base: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv, s
 export function shortPath(path: string, home = homedir()) {
   return under(path, home) ? "~" + path.slice(home.length) : path;
 }
+
+/**
+ * Backend mode by role (P = existing per-role selection, F = full). Pairs are outside / inside
+ * the machine-login sandbox. The member-account sandbox does not participate.
+ *                         per-role    sandboxed    all
+ * Owner, writable           P/P         P/F        F/F
+ * Owner, read-only; guest   P/P         P/F        P/P
+ * Member / borrowed login   P/P         P/P        P/P
+ * ACP mutation permission stays at its legacy value except a read-only mount always vetoes it.
+ */
+export function runAccess(mode: Config["agents"]["fullAccess"], owner: boolean, guest: boolean,
+  sandboxed: boolean, writes: boolean, legacyFull: boolean) {
+  const force = (mode === "sandboxed" && sandboxed && (owner || guest)) ||
+    (mode === "all" && owner && writes && !guest);
+  return { fullAccess: legacyFull || force, acpWritable: sandboxed && (guest || !writes) ? false : writes || legacyFull };
+}

@@ -70,6 +70,8 @@ export type AgentRequest = {
    * omem's own tools are still checked on every call.
    */
   fullAccess?: boolean;
+  /** Host decision on ACP mutation requests, independent of the selected backend mode. */
+  acpWritable?: boolean;
   env?: Record<string, string>;
   signal?: AbortSignal;
   /** Only connect and report the agent's models/modes, no prompt. */

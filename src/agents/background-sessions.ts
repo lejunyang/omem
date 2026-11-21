@@ -63,7 +63,7 @@ async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: 
   const key = createHash("sha256").update(JSON.stringify(stable({
     account: accountOf(prep.profile)?.userId ?? "owner",
     scope, system: prep.system, profile: prep.profile, cwd: prep.cwd,
-    extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, modes: prep.modes, fullAccess: !!req.fullAccess,
+    extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, acpWritable: prep.acpWritable, modes: prep.modes, fullAccess: !!req.fullAccess,
   }))).digest("hex");
   let pool = pools.get(app);
   if (!pool) { pool = new Set(); pools.set(app, pool); }

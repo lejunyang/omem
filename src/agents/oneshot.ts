@@ -32,7 +32,7 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
         const profile = accountFor(app, opts.userId, candidate);
         const cwd = accountOf(profile)?.home ?? app.home;
         const isolation = ownRun(app, profile, cwd, true);
-        const r = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
+        const r = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, fullAccess: !!isolation.box && app.config.agents.fullAccess === "sandboxed" && (!opts.userId || opts.userId === "owner"), prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
         const text = replyOf(r).trim();
         if (text) return text;
       } catch {

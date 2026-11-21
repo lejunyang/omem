@@ -41,6 +41,7 @@ import { categoryStatus } from "../core/ai-keys.ts";
 import { accountBlocked, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
 import { addRunEvent, runUser } from "./runs.ts";
 import { SandboxStartError } from "./spawn.ts";
+import { runAccess } from "./own-sandbox.ts";
 import { ownRun } from "./own-run.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
@@ -359,6 +360,7 @@ export type LarkAccess = { chats: string[] | null; draft?: boolean; urgent?: boo
 export type Actor = { role: RoleName } | { spec: AgentSpec };
 
 export type PreparedRun = {
+  acpWritable: boolean;
   isolation: ReturnType<typeof ownRun>;
   profile: AgentProfile;
   capabilities: BackendCapabilities;
@@ -464,7 +466,7 @@ export function recordIsolation(app: App, runId: string | null, userId: string, 
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
+  input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
   const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -543,9 +545,12 @@ export function prepareRun(
   // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
   // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
   const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
-  const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
+  const legacyFull = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
   const allowWrites = !readOnly && (spec ? spec.writes : role!.writes);
-  const isolation = ownRun(app, profile, cwd, readOnly || guest || !(allowWrites || fullAccess), input.runId);
+  const guestTurn = !!input.guestTurn || (!spec && GUEST_ROLES.includes(roleName));
+  const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId);
+  const { fullAccess, acpWritable } = runAccess(app.config.agents.fullAccess, userId === OWNER && !input.shadow, guestTurn,
+    !!isolation.box, allowWrites, legacyFull);
   const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   const guide = spaceGuide(app, space.id).trim();
   // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
@@ -573,6 +578,7 @@ export function prepareRun(
   const system = [common, body, environment].join("\n\n---\n\n");
   return {
     isolation,
+    acpWritable,
     profile,
     capabilities,
     tools,
@@ -985,6 +991,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
+          acpWritable: prep.acpWritable,
           signal: input.signal,
           mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
           extraMcp: prep.extraMcp,

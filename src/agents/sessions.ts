@@ -364,7 +364,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // that answers someone (quiet.ts), and only the turns allowed to stay quiet mention it.
   const addTools = ["stay_quiet", ...(t.channel === "listen" ? ["track_problem"] : [])];
   // A turn answering a colleague in a group (ownerPresent gated / free) runs with the guest setting.
-  const fullAccess = messages.some((m) => typeof m.meta?.asker === "string") ? app.config.lark.guests.fullAccess : undefined;
+  const guestTurn = messages.some((m) => typeof m.meta?.asker === "string");
+  const fullAccess = guestTurn ? app.config.lark.guests.fullAccess : undefined;
   // The AI of this thread: the owner's pick (/model, the thread's backend) if any; otherwise the one
   // chosen when its agent session started (choose-ai.ts), kept for as long as that session goes on.
   const pinned = !!(t.settings.profile || t.settings.model || t.settings.effort);
@@ -382,7 +383,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
     const p = resolveRunProfile(app, { actor, profileId: t.settings.profile ?? undefined, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
     ctx.event("status", choiceEvent({ scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: "这个会话用 /model 或会话设置指定了 AI" }));
   }
-  const prep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess });
+  const prep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
   // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
   const limitFor = { profile: prep.profile };
   const emit = (e: AgentEvent) => {
@@ -521,7 +522,7 @@ ${WAKE_NOTE}`
             ...turnMessage(prep, !resume),
             ownSandbox: prep.isolation.box, allowWrites: prep.allowWrites,
             modes: prep.modes,
-            fullAccess: prep.fullAccess,
+            fullAccess: prep.fullAccess, acpWritable: prep.acpWritable,
             signal: ctx.signal,
             mcp: prep.mcp,
             extraMcp: prep.extraMcp,
@@ -598,7 +599,7 @@ ${WAKE_NOTE}`
       limitFor.profile = used;
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess });
+      curPrep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
       // The fallback runs with this member's own account of it when they have one (prepareRun chose it).
       used = curPrep.profile;
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
@@ -621,7 +622,7 @@ ${WAKE_NOTE}`
             ...turnMessage(curPrep, true, carry),
             ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites,
             modes: curPrep.modes,
-            fullAccess: curPrep.fullAccess,
+            fullAccess: curPrep.fullAccess, acpWritable: curPrep.acpWritable,
             signal: ctx.signal,
             mcp: curPrep.mcp,
             extraMcp: curPrep.extraMcp,
@@ -635,7 +636,7 @@ ${WAKE_NOTE}`
       }
       networkAttempt = await beginNetworkAttempt(app, used, { signal: ctx.signal, runId: ctx.run.id, stop: () => { networkStopped = live.get(threadId)?.handle.stopped; release(threadId); } });
       curPrep.profile = networkAttempt.profile;
-      const stepKey = `${JSON.stringify(curPrep.profile.env)}|${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(curPrep.profile) ? `|${accountTag(curPrep.profile)}` : ""}`;
+      const stepKey = `${JSON.stringify(curPrep.profile.env)}|${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${curPrep.acpWritable ? "|write" : ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(curPrep.profile) ? `|${accountTag(curPrep.profile)}` : ""}`;
       let l = step === 0 ? live.get(threadId) : undefined;
       if (l && (curPrep.isolation.box || egressRequested(app.config,used) || l.key !== stepKey || !l.handle.alive() || tooLong)) {
         release(threadId);
@@ -661,7 +662,7 @@ ${WAKE_NOTE}`
               extraMcp: curPrep.extraMcp,
               ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites,
               modes: curPrep.modes,
-              fullAccess: curPrep.fullAccess,
+              fullAccess: curPrep.fullAccess, acpWritable: curPrep.acpWritable,
               system: curPrep.system,
               resumeSessionId: step === 0 && canResume ? t.agentSession! : undefined,
               queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
@@ -702,10 +703,10 @@ ${WAKE_NOTE}`
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          const again = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess });
+          const again = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
           const handle = await openAcp(
             networkProfile(app, again.profile),
-            { app, signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, ownSandbox: again.isolation.box, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
+            { app, signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, ownSandbox: again.isolation.box, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, acpWritable: again.acpWritable, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
             emit,
           );
           l = { threadId, key: stepKey, handle, token: again.token, lastUsed: Date.now(), busy: true };
