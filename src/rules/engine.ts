@@ -1,4 +1,4 @@
-import { captureSpace } from "../core/capture-space.ts";
+import { captureSpace, messageSourceSpaces } from "../core/capture-space.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { json, now } from "../core/util.ts";
@@ -27,6 +27,7 @@ export async function dispatchRuleEvent(app: App, e: RuleEvent, only?: (r: Rule)
     return;
   }
   if (!rules.length) return;
+  if ((e.chat || e.message) && !e.sourceSpaces) e = snapshotRuleEvents(app, [e])[0];
   startJudging(e.key);
   try {
     for (const rule of rules) {
@@ -73,6 +74,12 @@ function inScope(app: App, r: Rule, e: RuleEvent) {
   return true;
 }
 
+/** Freeze the whole incoming batch before another lookup or an earlier rule can yield. */
+export function snapshotRuleEvents(app: App, events: RuleEvent[]): RuleEvent[] {
+  const origins = messageSourceSpaces(app, events.map(e => ({ id: e.message?.id, chatId: e.chat?.id })));
+  return events.map((e, i) => ({ ...e, sourceSpaces: origins[i] }));
+}
+
 /** Several events (a capture batch) in order. */
 export async function dispatchRuleEvents(app: App, events: RuleEvent[]) {
   if (!events.length || !listRules(app, { enabledOnly: true }).length) return;
@@ -80,7 +87,7 @@ export async function dispatchRuleEvents(app: App, events: RuleEvent[]) {
   const keys = events.map((e) => e.key);
   keys.forEach(startJudging);
   try {
-    for (const e of events) await dispatchRuleEvent(app, e);
+    for (const e of snapshotRuleEvents(app, events)) await dispatchRuleEvent(app, e);
   } finally {
     keys.forEach(endJudging);
   }

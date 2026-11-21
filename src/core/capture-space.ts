@@ -6,6 +6,9 @@ import { findSpace } from "./spaces.ts";
 import { json } from "./util.ts";
 import { chatSettings } from "../agents/threads.ts";
 
+import { archivedMessageSpaces } from "./message-origins.ts";
+export { archivedMessageSpaces };
+
 type Settings = ReturnType<typeof chatSettings>;
 const subscriptionsOf = (app: App) => json<{ chatId: string; spaceId: string }[]>(one<{ value: string }>(app.db, "select value from kv where key='lark_subscriptions'")?.value, []);
 const mappedGroups = (app: App) => (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
@@ -55,6 +58,20 @@ export function captureSpace(app: App, chatId?: string, userId: string = OWNER):
   if (userId !== OWNER) return personalSpaceId(userId);
   const def = app.config.lark.capture.space;
   return findSpace(app, def) ? def : "personal";
+}
+
+/** Snapshot incoming messages together, before rules or watches wait to handle them. */
+export function messageSourceSpaces(app: App, messages: { id?: string; chatId?: string }[]) {
+  const archived = archivedMessageSpaces(app, messages.flatMap(m => m.id ? [m.id] : []));
+  const bindings = new Map<string, string>();
+  return messages.map(({ id, chatId }) => {
+    const stored = id && archived.get(id);
+    if (stored) return stored;
+    if (!chatId) return undefined;
+    const space = bindings.get(chatId) ?? captureSpace(app, chatId);
+    bindings.set(chatId, space);
+    return [space];
+  });
 }
 
 /**

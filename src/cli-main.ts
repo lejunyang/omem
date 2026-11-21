@@ -1791,6 +1791,7 @@ program
   .command("setup [component]")
   .description("设置向导：Agent、向量模型、重排模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | rerank | documents | desktop | ffmpeg")
   .option("--model <id-or-dir>", "embeddings：模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（经 osdk 下载）；rerank：模型 id 或本地目录（默认经 osdk 下载 bge-reranker-v2-m3）")
+  .option("--confirm-rebuild <token>", "embeddings：确认上一次预览的索引重建")
   .option("--no-osdk", "不经 osdk，直接从 Hugging Face 下载")
   .option("--threads <n>", "rerank：onnxruntime 线程数，0 = 全部核")
   .option("--off", "rerank：关闭重排")
@@ -1814,7 +1815,13 @@ program
       const named = setup.EMBEDDINGS.find((e) => e.id === (o.model ?? "bge-small-zh"));
       let model = o.model ?? named!.repo;
       if (named) model = o.osdk !== false && setup.osdkAvailable() ? setup.osdkEmbedding(named) : named.repo;
-      app.config.embeddings = { ...app.config.embeddings, provider: "local", model, family: named?.id === "bge-m3" ? "bge-m3" : named ? "bge-zh" : undefined };
+      const embeddings = { ...app.config.embeddings, provider: "local" as const, model, family: named?.id === "bge-m3" ? "bge-m3" as const : named ? "bge-zh" as const : undefined };
+      const { modelChange, replaceIndex } = await import("./search/embedding-index.ts");
+      const change = modelChange(app, { ...app.config, embeddings });
+      if (change && o.confirmRebuild !== change.token)
+        return console.log(`将清除 ${change.clear} 个向量、重算 ${change.rebuild} 条。确认后用相同参数加 --confirm-rebuild ${change.token} 再运行。`);
+      if (change) replaceIndex(app, change.to);
+      app.config.embeddings = embeddings;
       let n = 0;
       for (let k = await embedPending(app, 64); k; k = await embedPending(app, 64)) {
         n += k;

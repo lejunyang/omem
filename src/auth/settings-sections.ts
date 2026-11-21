@@ -154,6 +154,10 @@ export const ownerControls: Record<string, string[]> = {
   "notify.outlets": [],
   "notify.outletAskGrants": [],
   "documents.converter": [],
+  "embeddings": ["POST /api/search/embeddings/test"],
+  "rerank": ["POST /api/search/rerank/test"],
+  "rerank.api": [],
+  "embeddings.keyRef": [],
   "embeddings.url": [],
   "embeddings.apiKeyEnv": [],
   "mcp": [
@@ -212,7 +216,13 @@ export function settingsPatch(config: Config, body: unknown): Values {
   const result = { ...config };
   for (const [key, val] of Object.entries(body)) {
     if (!Object.hasOwn(settingSections, key)) throw new HttpError(400, `不认识的设置：${key}`);
-    if ((splitRoots.has(key) || key === "node") && object(val)) Object.assign(result, { [key]: { ...(config[key as keyof Config] as Values), ...val } });
+    if ((splitRoots.has(key) || key === "node") && object(val)) {
+      const merged = { ...(config[key as keyof Config] as Values), ...val };
+      if (key === "embeddings") {
+        for (const field of ["keyRef", "url", "dimensions"]) if (merged[field] === null) delete merged[field];
+      }
+      Object.assign(result, { [key]: merged });
+    }
     else Object.assign(result, { [key]: val });
   }
   return result;
@@ -223,7 +233,7 @@ export function changedSettings(before: Config, after: Config, editable: (s: Sec
   for (const path of new Set([...old.keys(), ...next.keys()])) {
     if (isDeepStrictEqual(old.get(path), next.get(path))) continue;
     const section = sectionOf(path);
-    if (!owner && (!editable(section) || ownerSettings.includes(path))) throw new HttpError(403, `没有修改设置 ${path} 的权限`);
+    if (!owner && (!editable(section) || (ownerSettings.includes(path) || ownerSettings.includes(path.split(".")[0])))) throw new HttpError(403, `没有修改设置 ${path} 的权限`);
     (changes[section] ??= []).push(path);
   }
   return changes;

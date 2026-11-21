@@ -86,6 +86,7 @@ const signals = new Map<string, import("./types.ts").FlowSignal>();
 const notifiers = new Map<string, import('./types.ts').Notifier>();
 const items = new Map<string, import("./types.ts").ItemProvider>();
 const retrievers = new Map<string, import("./types.ts").Retriever>();
+const embedders = new Map<string, import("./types.ts").EmbedderProvider>();
 const rerankers = new Map<string, import("./types.ts").Reranker>();
 const activeSearch = new Map<number, AbortController>();
 const parsers = new Map<string, import("./types.ts").SourceParser>();
@@ -98,7 +99,7 @@ async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { gates: unknown[]; runners: unknown[]; signals: unknown[]; notifiers: unknown[]; parsers: unknown[]; kinds: unknown[]; items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { gates: [], runners: [], signals: [], notifiers: [], parsers: [], kinds: [], items: [], retrievers: [], rerankers: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
+  const declared: { gates: unknown[]; runners: unknown[]; signals: unknown[]; notifiers: unknown[]; parsers: unknown[]; kinds: unknown[]; items: unknown[]; retrievers: unknown[]; rerankers: unknown[]; embedders: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { gates: [], runners: [], signals: [], notifiers: [], parsers: [], kinds: [], items: [], retrievers: [], rerankers: [], embedders: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
@@ -141,6 +142,12 @@ async function main() {
       if (typeof def.search !== "function") throw new Error("retriever 缺少 search");
       retrievers.set(def.id, def);
       declared.retrievers.push({ id: def.id, label: def.label });
+    },
+    embedder(def) {
+      if (typeof def.embed !== "function") throw new Error("embedder 缺少 embed");
+      embedders.set(def.id, def);
+      const { embed, ...meta } = def;
+      declared.embedders.push(meta);
     },
     reranker(def) {
       if (typeof def.score !== "function") throw new Error("reranker 缺少 score");
@@ -209,7 +216,7 @@ process.on("message", async (m: Msg) => {
   }
   try {
     let value: unknown;
-    const search = ["retriever", "reranker", "notifier", "flowSignal", "stageRunner", "stageGate"].includes(m.t) ? new AbortController() : null;
+    const search = ["retriever", "reranker", "notifier", "embedder", "flowSignal", "stageRunner", "stageGate"].includes(m.t) ? new AbortController() : null;
     if (search) activeSearch.set(m.id!, search);
     if (m.t === "stageGate") value = await gates.get(m.name)!.review(m.arg, search!.signal);
     else if (m.t === "stageRunner") {
@@ -218,7 +225,10 @@ process.on("message", async (m: Msg) => {
       else if (m.method === "check") value = await def.check!(m.arg, search!.signal);
       else await def.cancel!(m.arg, search!.signal);
     } else if (m.t === "flowSignal") value = await signals.get(m.name)!.check(m.arg, search!.signal);
-    else if (m.t === "notifier") {
+    else if (m.t === "embedder") {
+      const rows = await embedders.get(m.name)!.embed(m.texts, m.kind, search!.signal);
+      value = rows.map(row => Array.from(row));
+    } else if (m.t === "notifier") {
       const def = notifiers.get(m.name)!;
       const [arg, n] = m.args;
       switch (m.method) {
@@ -279,7 +289,8 @@ process.on("message", async (m: Msg) => {
     } else return;
     send({ t: "result", id: m.id, ok: true, value });
   } catch (e) {
-    send({ t: "result", id: m.id, ok: false, code: (e as {code?: string})?.code, error: (e as Error).message ?? String(e) });
+    const status = (e as { status?: unknown })?.status;
+    send({ t: "result", id: m.id, ok: false, status: typeof status === "number" ? status : undefined, code: (e as {code?: string})?.code, error: (e as Error).message ?? String(e) });
   } finally { activeSearch.delete(m.id!); }
 });
 

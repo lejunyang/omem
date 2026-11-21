@@ -2429,6 +2429,9 @@ export const migrations: readonly string[] = [
    );
    create index if not exists board_peer_due on board_peer_polls(next_at);`,
   `create index if not exists spaces_with_skills on spaces(id) where instr(settings, '"skills"') > 0;`,
+  `create index if not exists memories_unembedded on memories(space_id) where status = 'active' and embedding is null;
+   create index if not exists memories_embedded on memories(status, space_id) where embedding is not null;`,
+  `alter table listen_problems add column source_spaces text;`,
 ];
 
 export type Db = DatabaseSync;

@@ -125,9 +125,9 @@ async function setupEmbeddingsSection(config: Config) {
   }
   if (choice === "openai") {
     const url = await input({ message: "接口地址（…/v1）", default: cur.url ?? "https://api.openai.com/v1" });
-    const model = await input({ message: "模型名", default: cur.provider === "openai" ? cur.model : "text-embedding-3-small" });
+    const model = await input({ message: "模型名", default: cur.provider === "api" ? cur.model : "text-embedding-3-small" });
     const apiKeyEnv = await input({ message: "API key 所在的环境变量", default: cur.apiKeyEnv });
-    config.embeddings = { provider: "openai", url, model, apiKeyEnv, family: "other" };
+    config.embeddings = { ...cur, provider: "api", url, model, keyRef: undefined, apiKeyEnv, family: "other" };
     return true;
   }
   const e = EMBEDDINGS.find((x) => x.id === choice)!;
@@ -858,7 +858,16 @@ export async function setupInteractive(app: App) {
   for (const s of sections) {
     try {
       if (s === "agents") await setupAgentsSection(config, app.home);
-      if (s === "embeddings") await setupEmbeddingsSection(config);
+      if (s === "embeddings") {
+        const draft = { ...config };
+        if (await setupEmbeddingsSection(draft)) {
+          const { modelChange, replaceIndex } = await import("./search/embedding-index.ts");
+          const change = modelChange(app, draft);
+          if (change && !await confirm({ message: `将清除 ${change.clear} 个向量、重算 ${change.rebuild} 条，继续？`, default: false })) continue;
+          if (change) replaceIndex(app, change.to);
+          config.embeddings = draft.embeddings;
+        }
+      }
       if (s === "rerank") await setupRerankSection(config);
       if (s === "documents") await setupDocumentsSection(config, app.home);
       if (s === "channels") await setupChannelsSection(app);

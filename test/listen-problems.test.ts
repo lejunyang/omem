@@ -31,36 +31,36 @@ const turnOf = (app: App, conversationId: string) => createRun(app, { kind: "ask
 const waiting = { title: "小王的员工号解绑不了", state: "waiting" as const, awaiting: "值班同学清理残留关系", done_when: "清理完，再查员工列表里没有这条关系" };
 
 describe("在跟的问题", () => {
-  it("track_problem: a 关注's turn or a 有人找你 handling, in its own groups; what open, waiting and closed need", () => {
+  it("track_problem: a 关注's turn or a 有人找你 handling, in its own groups; what open, waiting and closed need", async () => {
     const app = testApp(); apps.push(app);
     const c = saveContext(app, { kind: "place", name: "值班", chats: ["oc_a", "oc_b"] });
     const turn = turnOf(app, c.conversationId!);
-    expect(() => trackProblem(app, turn, waiting)).toThrow("chat_id");
-    expect(() => trackProblem(app, turn, { ...waiting, chat_id: "oc_other" })).toThrow("不是这次处理的群");
-    expect(() => trackProblem(app, turn, { ...waiting, chat_id: "oc_a", awaiting: undefined })).toThrow("awaiting");
-    expect(() => trackProblem(app, turn, { ...waiting, chat_id: "oc_a", done_when: undefined })).toThrow("done_when");
-    expect(() => trackProblem(app, turn, { title: "x", state: "closed", chat_id: "oc_a" })).toThrow("conclusion");
-    expect(() => trackProblem(app, turn, { ...waiting, chat_id: "oc_a", recheck_after: "1m" })).toThrow("至少十分钟");
-    expect(trackProblem(app, turn, { ...waiting, chat_id: "oc_a", recheck_after: "2h" })).toContain("记为在等");
+    await expect(trackProblem(app, turn, waiting)).rejects.toThrow("chat_id");
+    await expect(trackProblem(app, turn, { ...waiting, chat_id: "oc_other" })).rejects.toThrow("不是这次处理的群");
+    await expect(trackProblem(app, turn, { ...waiting, chat_id: "oc_a", awaiting: undefined })).rejects.toThrow("awaiting");
+    await expect(trackProblem(app, turn, { ...waiting, chat_id: "oc_a", done_when: undefined })).rejects.toThrow("done_when");
+    await expect(trackProblem(app, turn, { title: "x", state: "closed", chat_id: "oc_a" })).rejects.toThrow("conclusion");
+    await expect(trackProblem(app, turn, { ...waiting, chat_id: "oc_a", recheck_after: "1m" })).rejects.toThrow("至少十分钟");
+    expect(await trackProblem(app, turn, { ...waiting, chat_id: "oc_a", recheck_after: "2h" })).toContain("记为在等");
     const [p] = problemsOf(app, c.id);
     expect(p).toMatchObject({ chatId: "oc_a", topicId: "", state: "waiting", rounds: 1, runId: turn });
     expect(Date.parse(p.recheckAt!)).toBeGreaterThan(Date.now() + 3600_000);
 
     // The next turn updates the same problem (another round); done_when carries over.
     const next = turnOf(app, c.conversationId!);
-    trackProblem(app, next, { title: waiting.title, state: "closed", chat_id: "oc_a", conclusion: "清理完了，小王确认能解绑" });
+    await trackProblem(app, next, { title: waiting.title, state: "closed", chat_id: "oc_a", conclusion: "清理完了，小王确认能解绑" });
     expect(problemsOf(app, c.id)).toMatchObject([{ state: "closed", rounds: 2, doneWhen: waiting.done_when, recheckAt: null, awaiting: "" }]);
     // A different problem there later: a row of its own, the closed one kept (listen-coach learns from it).
-    trackProblem(app, turnOf(app, c.conversationId!), { title: "小李看不到线索", state: "open", chat_id: "oc_a", done_when: "小李能看到线索" });
+    await trackProblem(app, turnOf(app, c.conversationId!), { title: "小李看不到线索", state: "open", chat_id: "oc_a", done_when: "小李能看到线索" });
     expect(problemsOf(app, c.id).map((x) => [x.title, x.state])).toEqual([["小李看不到线索", "open"], [waiting.title, "closed"]]);
     expect(problemsText(app, c.id, ["oc_a"])).toContain("【还在查】小李看不到线索");
 
     // Not a 关注's turn nor a handling: refused.
     const other = createRun(app, { kind: "agent", title: "别的", input: { spec: "assistant", task: "x" } }).id;
-    expect(() => trackProblem(app, other, { ...waiting, chat_id: "oc_a" })).toThrow("只有关注的处理");
+    await expect(trackProblem(app, other, { ...waiting, chat_id: "oc_a" })).rejects.toThrow("只有关注的处理");
     // A handling of 有人找你: its chat and topic, on the built-in context.
     const handling = createRun(app, { kind: "agent", title: "有人找你", input: { spec: "assistant", task: "x", mention: { chatId: "oc_team", topicId: "omt_1" } } }).id;
-    trackProblem(app, handling, waiting);
+    await trackProblem(app, handling, waiting);
     expect(problemsOf(app, "listen_default")).toMatchObject([{ chatId: "oc_team", topicId: "omt_1", state: "waiting" }]);
   });
 
@@ -77,7 +77,7 @@ describe("在跟的问题", () => {
   it("a 关注 reads new messages against its problems; a recheck comes into its conversation", async () => {
     const app = testApp(); apps.push(app);
     const c = saveContext(app, { kind: "place", name: "值班", chats: ["oc_a"], knobs: { reply: "none" } });
-    trackProblem(app, turnOf(app, c.conversationId!), { ...waiting, recheck_after: "30m" });
+    await trackProblem(app, turnOf(app, c.conversationId!), { ...waiting, recheck_after: "30m" });
     await routeWatchedMessages(app, "oc_a", "值班群", [{ id: "om_1", time: String(Date.now()), sender: "小李", text: "清理好了" }]);
     const t = findThread(app, c.conversationId!)!;
     const note = await watchedNote(app, t, threadMessages(app, t.id));
@@ -100,7 +100,7 @@ describe("在跟的问题", () => {
     const app = testApp(); apps.push(app);
     app.config.lark.appId = "cli_bot";
     const handling = createRun(app, { kind: "agent", title: "有人找你", input: { spec: "assistant", task: "x", mention: { chatId: "oc_team", topicId: "omt_1" } } }).id;
-    trackProblem(app, handling, waiting);
+    await trackProblem(app, handling, waiting);
     const at = String(Date.now() + 1000);
     expect(followProblemMessages(app, "oc_team", [{ id: "om_bot", time: at, senderId: "cli_bot", topicId: "omt_1" }], {})).toBe(0);
     expect(followProblemMessages(app, "oc_team", [{ id: "om_x", time: at, senderId: "ou_li", topicId: "omt_other" }], {})).toBe(0);
@@ -139,10 +139,10 @@ describe("在跟的问题", () => {
     await runActions(app, rule, msgEvent("om_t3", "oc_t1", "工单 123 还在吗"), "");
     expect(getContext(app, c.id)!.chats).toEqual(["oc_ops", "oc_t1"]);
 
-    trackProblem(app, turnOf(app, c.conversationId!), { ...waiting, chat_id: "oc_t1" });
+    await trackProblem(app, turnOf(app, c.conversationId!), { ...waiting, chat_id: "oc_t1" });
     const later = Date.now() + 4 * 86400_000;
     expect(releaseAdopted(app, later)).toEqual([]);
-    trackProblem(app, turnOf(app, c.conversationId!), { title: waiting.title, state: "closed", chat_id: "oc_t1", conclusion: "清理完了" });
+    await trackProblem(app, turnOf(app, c.conversationId!), { title: waiting.title, state: "closed", chat_id: "oc_t1", conclusion: "清理完了" });
     expect(releaseAdopted(app, Date.now() + 86400_000)).toEqual([]);
     expect(releaseAdopted(app, later)).toEqual([{ context: c.id, chat: "oc_t1" }]);
     expect(getContext(app, c.id)).toMatchObject({ chats: ["oc_ops"] });
@@ -150,11 +150,11 @@ describe("在跟的问题", () => {
     expect(chatListened(app, "oc_t1")).toBe(false);
   });
 
-  it("listen-coach learns how far to follow from the problems it followed", () => {
+  it("listen-coach learns how far to follow from the problems it followed", async () => {
     const app = testApp(); apps.push(app);
     const c = saveContext(app, { kind: "place", name: "值班", chats: ["oc_a"] });
-    trackProblem(app, turnOf(app, c.conversationId!), { ...waiting });
-    trackProblem(app, turnOf(app, c.conversationId!), { title: waiting.title, state: "closed", conclusion: "清理完了，小王确认能解绑" });
+    await trackProblem(app, turnOf(app, c.conversationId!), { ...waiting });
+    await trackProblem(app, turnOf(app, c.conversationId!), { title: waiting.title, state: "closed", conclusion: "清理完了，小王确认能解绑" });
     const task = coachTask(app, getContext(app, c.id)!);
     expect(task).toContain("## 跟过的问题");
     expect(task).toContain("已结，跟了 2 轮");

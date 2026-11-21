@@ -21,6 +21,42 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 关注回查沿用问题材料的来源（2026-11-22）
+
+从 `src/channels/listen-problems.ts` 的 `trackProblem` 和 `problemsDue` 读起。问题记录保存会话材料的来源，后续更新合并已有来源。定时回查和当前处理带入问题正文时，都沿用这份记录。个人关注全程只用个人材料时，回查轮和下一轮都可使用个人向量插件。网页中本人的文字按会话空间登记。会议操作备注只在显式读取时计入材料，来源不明的会议纪要仍走全文和符号检索。
+
+## 个人关注的摘要带有助手回复时可用向量检索（2026-11-22）
+
+关注摘要保留用户消息和助手回复。计算摘要来源时，合并前次摘要的来源和本次用户消息的来源。个人空间的消息即使已有助手回复，冷启动搜索也能调用个人空间插件；摘要含项目消息或来源不明时，仍可用全文和符号搜索。从 `src/agents/jobs.ts` 的 `thread-summary` 和 `test/plugin-embeddings.test.ts` 的冷启动用例读起。
+
+## 关注助手按实际收到的摘要、补充和群历史校验向量权限（2026-11-22）
+
+关注会话生成摘要时保存原摘要与新材料的来源。冷启动按实际带入的摘要登记来源；旧摘要来源不明时仍可用全文和符号搜索。实时补充在正文交给助手前登记，即使等待批次被取消，已交付的内容也受保护。新建关注合成群历史时保留归档消息 ID 和空间，仅含个人空间材料时可正常调用个人向量插件。从 `src/core/message-origins.ts`、`src/agents/sessions.ts` 和 `src/channels/lark-watch.ts` 读起。
+
+## 关注助手主动搜索时核对查询材料的来源（2026-11-22）
+
+从 `src/core/message-origins.ts` 的 `watchSearchSourceSpaces` 读起。助手用群里的原话调用 `search` 时，宿主核对会话历史、本轮消息和中途补入的消息。历史消息的来源按批在检索子进程中读取。项目群消息只交给已获项目空间授权的向量插件。来源不明时跳过受限向量插件，仍返回目标空间的全文和符号命中。
+
+## 快速检查在每页飞书消息到达时记录来源（2026-11-22）
+
+从 `src/rules/fast.ts` 的 `pollFastRules` 读起。分页期间群改绑时，已读到的消息沿用首次记录的来源空间。后续页重复返回同一消息，也只按原有顺序转交一次。
+
+## 规则等待期间保留飞书消息来源（2026-11-22）
+
+规则收到飞书消息时记录已归档的原件空间，尚未归档就记当时的采集空间。触发等待、动作延时和恢复执行都沿用事件里的来源。交给关注时再合并后来归档的空间和已有关注消息的来源。旧事件缺少来源且找不到原件时，受限向量插件收不到正文。入口见 `src/rules/engine.ts`、`src/rules/fast.ts`，转交见 `src/rules/actions.ts`。
+
+## 云端向量按已收到的 HTTP 状态决定重试（2026-11-22）
+
+云端接口返回错误响应头后，即使读取正文提前超时，最近错误仍显示 HTTP 状态码。向量请求遇到普通 4xx 只发一次，429 和 5xx 继续在剩余时限内退避重试。实现从 `src/search/api.ts` 读起。
+
+## 飞书关注按消息来源校验向量插件权限（2026-11-22）
+
+普通关注和规则转入都会记录正文入队时的来源空间。已有归档的消息取原件空间，未归档的消息取当时的采集空间。跟进时一并检查后来归档的原件。群改绑后，个人空间插件仍收不到已入队的项目正文。实现从 `src/core/capture-space.ts` 和 `src/channels/lark-watch.ts` 读起。
+
+## 向量设置可切回默认值（2026-11-22）
+
+保存和检测向量设置时，`keyRef`、`url` 和 `dimensions` 可以传 `null` 清除。两处共用 `src/auth/settings-sections.ts` 的字段合并，保存时会预览实际模型或地址变化影响的索引。
+
 ## 网页接上流程里的插件和插件后端的来源（2026-11-22）
 
 流程定义页每一段多了“改谁来做、怎么算完”（`web/src/components/FlowStageHooks.vue`）：内置和插件的信号按来源分组，“谁来做”里有插件执行；选中后写回 YAML（`web/src/lib/flow-hooks.ts` 的 `writeCarrier` / `writeDone`，用 `yaml` 的文档接口保留注释），参数的 JSON Schema 扁平时画成表单，否则是 JSON 框。`PUT /api/flows/:id` 返回 `askId` 时页面写“已提交，等你启用才生效”，就地启用。插件停用后 `/api/flows/validate` 读不了这份定义，页面按 YAML 自己列出各段并标停用。同页“完成前的检查”是 `FlowChecks.vue`，整表 `PUT /api/flows/:id/checks`。
@@ -179,6 +215,14 @@ updated: 2026-11-22
 ## 额外飞书机器人的群回复说明（2026-11-21）
 
 从 `src/agents/sessions.ts` 的 `threadTurn` 看群消息提示。额外机器人沿用主助手时，与主机器人一样收到结合群上下文、直接回复的说明。同事提问的那一轮还会说明哪些事由提问人决定。
+
+## 2026-11-21：云端向量、重排和插件向量
+
+- 向量的 openai 配置归一为 api，可引用 AI 服务商密钥；共同提供者层负责批量、重试、维度校验、归一化、积压和降级。模型、维度或服务变化先预览并确认重建，本地模型也一样。
+- 新增通行云端重排接口，兼容两种响应字段；非本地被动记忆门槛共用 pluginPassiveThreshold，空着使用余弦门槛。重排失败保持融合顺序。
+- SDK api.embedder 与 permissions.embedder 支持进程内和沙箱向量。宿主限制空间，插件升级模型变化先暂停通知，重新确认后才重建；新增向量权限需重新信任。
+- 新增本人专用的固定文本检测接口，GET /api/search/providers 合并向量 / 重排状态、积压、错误和未授权空间。云端网页字段另行接入。
+- 从 `src/search/embedding-provider.ts`、`embedding-index.ts`、`embeddings.ts`、`rerank.ts`、`providers.ts`、`src/plugins/process-hooks.ts`、`sandbox-runner.ts` 和 `packages/plugin-sdk/server.ts` 读起。配置和验收见 `docs/v2/architecture.md`、`plugins.md`、`acceptance.md`；假服务与沙箱回归在 `test/search-api-*.test.ts` 和 `plugin-embeddings.test.ts`。
 
 ## 常驻说明按对话、后台和运行类型选节（2026-11-21）
 

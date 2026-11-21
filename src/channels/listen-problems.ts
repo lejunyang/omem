@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, localStamp, newId, now, truncate } from "../core/util.ts";
+import { mergeOrigins, recordWatchMaterial, type Origins } from "../core/message-origins.ts";
+import { readWatchOrigins } from "../search/read-process.ts";
+import { HttpError, json, localStamp, newId, now, truncate } from "../core/util.ts";
 import { createRun, getRun, registerHandler } from "../agents/runs.ts";
 import { addChange } from "../items/changes.ts";
 import { contextOfConversation, defaultContext, DEFAULT_CONTEXT_ID, getContext, LISTEN_CHANNEL, type ListenContext } from "./listen.ts";
@@ -27,15 +29,18 @@ export type Problem = {
   runId: string | null; rounds: number; createdAt: string; updatedAt: string; closedAt: string | null;
   /** Messages up to here were looked at (a screening found nothing in them, or the handler saw them). */
   seenMs: number;
+  sourceSpaces: Origins;
 };
 type Row = {
   id: string; context_id: string; chat_id: string; topic_id: string; title: string; state: ProblemState; known: string; awaiting: string;
   done_when: string; conclusion: string; recheck_at: string | null; run_id: string | null; rounds: number; created_at: string; updated_at: string; closed_at: string | null;
   seen_ms: number;
+  source_spaces: string | null;
 };
 const toProblem = (r: Row): Problem => ({
   id: r.id, contextId: r.context_id, chatId: r.chat_id, topicId: r.topic_id, title: r.title, state: r.state, known: r.known, awaiting: r.awaiting,
   doneWhen: r.done_when, conclusion: r.conclusion, recheckAt: r.recheck_at, runId: r.run_id, rounds: r.rounds, createdAt: r.created_at, updatedAt: r.updated_at, closedAt: r.closed_at, seenMs: r.seen_ms,
+  sourceSpaces: json<Origins>(r.source_spaces, null),
 });
 /** Where new messages for a problem begin. */
 const sinceMs = (p: Problem) => Math.max(Date.parse(p.updatedAt), p.seenMs);
@@ -85,9 +90,10 @@ export function problemLine(app: App, p: Problem, withChat = false) {
 }
 
 /** A 关注's problems in these groups: the open ones, and the ones closed in the last two days (so a question already answered is not looked into again). */
-export function problemsText(app: App, contextId: string, chats: string[]) {
+export function problemsText(app: App, contextId: string, chats: string[], anchor?: string) {
   const recent = Date.now() - 2 * 86400_000;
   const list = problemsOf(app, contextId, { chats, limit: 12 }).filter((p) => p.state !== "closed" || Date.parse(p.updatedAt) > recent);
+  if (anchor && list.length) recordWatchMaterial(app, anchor, list.reduce<Origins>((spaces, p) => mergeOrigins(spaces, p.sourceSpaces), []));
   return list.length ? list.map((p) => problemLine(app, p, true)).join("\n") : "";
 }
 
@@ -111,7 +117,7 @@ function recheckTime(after: string, from = Date.now()) {
 }
 
 /** The tool `track_problem`: say where a problem stands after looking at it. */
-export function trackProblem(app: App, runId: string | null | undefined, input: z.input<typeof problemSchema>) {
+export async function trackProblem(app: App, runId: string | null | undefined, input: z.input<typeof problemSchema>) {
   if (!runId) throw new HttpError(403, "只有关注的处理和“有人找你”的处理能记在跟的问题");
   const a = problemSchema.parse(input);
   const s = scopeOf(app, runId);
@@ -119,6 +125,8 @@ export function trackProblem(app: App, runId: string | null | undefined, input: 
   if (!chatId) throw new HttpError(400, "这个关注有几个群：chat_id 写问题在哪个群");
   if (!s.chats.includes(chatId)) throw new HttpError(400, `chat_id 不是这次处理的群：${chatId}`);
   const topicId = a.topic_id ?? (chatId === s.chatId ? s.topicId ?? "" : "");
+  // Collect the actual input spaces even when embeddings are off or a different plugin is selected.
+  const origins = s.context.kind === "default" ? null : (await readWatchOrigins(app, runId)) ?? null;
   const prev = one<Row>(app.db, "select * from listen_problems where context_id = ? and chat_id = ? and topic_id = ? order by state = 'closed', updated_at desc limit 1", s.context.id, chatId, topicId);
   if (a.state === "waiting" && !a.awaiting) throw new HttpError(400, "waiting 要写 awaiting：在等谁、等什么");
   if (a.state === "closed" && !a.conclusion) throw new HttpError(400, "closed 要写 conclusion：结论是什么、依据在哪（问题不用管了也写一句为什么）");
@@ -129,15 +137,16 @@ export function trackProblem(app: App, runId: string | null | undefined, input: 
   const recheckAt = a.state === "closed" || !a.recheck_after ? null : recheckTime(a.recheck_after);
   const at = now();
   const problemId = fresh ? newId("lp") : prev!.id;
-  const fields = [a.title, a.state, a.known ?? (fresh ? "" : prev!.known), a.state === "closed" ? "" : a.awaiting ?? "", doneWhen, a.conclusion ?? (fresh ? "" : prev!.conclusion), recheckAt, runId] as const;
+  const spaces = fresh ? origins : mergeOrigins(json<Origins>(prev!.source_spaces, null), origins);
+  const fields = [a.title, a.state, a.known ?? (fresh ? "" : prev!.known), a.state === "closed" ? "" : a.awaiting ?? "", doneWhen, a.conclusion ?? (fresh ? "" : prev!.conclusion), recheckAt, runId, spaces && JSON.stringify(spaces)] as const;
   if (fresh) {
     run(app.db,
-      `insert into listen_problems(id,context_id,chat_id,topic_id,title,state,known,awaiting,done_when,conclusion,recheck_at,run_id,rounds,created_at,updated_at,closed_at)
-         values(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`,
+      `insert into listen_problems(id,context_id,chat_id,topic_id,title,state,known,awaiting,done_when,conclusion,recheck_at,run_id,source_spaces,rounds,created_at,updated_at,closed_at)
+         values(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`,
       problemId, s.context.id, chatId, topicId, ...fields, at, at, a.state === "closed" ? at : null);
   } else {
     run(app.db,
-      `update listen_problems set title=?, state=?, known=?, awaiting=?, done_when=?, conclusion=?, recheck_at=?, run_id=?, rounds=?, updated_at=?, closed_at=? where id = ?`,
+      `update listen_problems set title=?, state=?, known=?, awaiting=?, done_when=?, conclusion=?, recheck_at=?, run_id=?, source_spaces=?, rounds=?, updated_at=?, closed_at=? where id = ?`,
       ...fields, prev!.rounds + (prev!.run_id === runId ? 0 : 1), at, a.state === "closed" ? at : null, prev!.id);
   }
   // A matter's 关注 reached a conclusion: it goes on the item's timeline (items/changes.ts), noted only.
@@ -262,7 +271,7 @@ export async function problemsDue(app: App, at = now()) {
       channel: LISTEN_CHANNEL,
       speaker: "回查",
       text: `到了定的回查时间，这个问题这段时间没有新进展：\n${problemLine(app, p, true)}\n看看现在怎样了（能只读核对的去核对），按结果用 track_problem 更新；还是没动静、也不用做什么就 stay_quiet。`,
-      meta: { addressed: true, chatId: p.chatId, recheck: p.id },
+      meta: { addressed: true, chatId: p.chatId, recheck: p.id, sourceSpaces: p.sourceSpaces },
     });
   }
   return due.length;

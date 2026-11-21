@@ -1,3 +1,5 @@
+import { embeddingId, modelChange, replaceIndex } from "../search/embedding-index.ts";
+import { testEmbedding, resumeEmbedding } from "../search/embeddings.ts";
 import { itemRunSummary } from "../items/places.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
 import { changedSettings, sectionByPath, sections, settingsPatch, settingsView, ownerSettings, type Section } from "../auth/settings-sections.ts";
@@ -100,7 +102,7 @@ import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
 import { search } from "../search/search.ts";
 import { searchProviderStatus } from "../search/providers.ts";
-import { rerankStatus } from "../search/rerank.ts";
+import { testReranker, rerankStatus } from "../search/rerank.ts";
 import { modelSource } from "../search/local-models.ts";
 import { searchRun } from "../search/trace.ts";
 import { closeReadProcess } from "../search/read-process.ts";
@@ -1034,7 +1036,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const attachments = checkAttachments(app, b.attachments ?? [], userId);
     const text = b.text.trim() || attachments.map((a) => `[${a.label}]`).join(" ");
     if (!text) throw new HttpError(400, "消息是空的");
-    return ask(app, { text, itemId: b.itemId, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
+    return ask(app, { text, ownerText: userId === OWNER && !attachments.length, itemId: b.itemId, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
   });
   // Files pasted or dropped into the chat box: kept with the stored originals, sent with the next message (agents/attachments.ts).
   server.post("/api/ask/attachments", async (req) => {
@@ -3512,7 +3514,26 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const status = searchProviderStatus(app);
     if (who(req) === OWNER) return status;
     const describe = ({ id, label, plugin, lastMs }: typeof status.retrievers[number]) => ({ id, label, plugin, lastMs });
-    return { retrievers: status.retrievers.map(describe), rerankers: status.rerankers.map(describe) };
+    return {
+      embedders: status.embedders.map(({ id, name, plugin }) => ({ id, name, plugin })),
+      retrievers: status.retrievers.map(describe), rerankers: status.rerankers.map(describe),
+    };
+  });
+  server.post("/api/search/embeddings/test", async req => {
+    const cfg = q(configSchema.shape.embeddings, settingsPatch(app.config, { embeddings: req.body ?? {} }).embeddings);
+    const at = Date.now();
+    try { return { ok: true, dimensions: await testEmbedding(app, cfg), elapsedMs: Date.now() - at, error: null }; }
+    catch (e) { return { ok: false, dimensions: null, elapsedMs: Date.now() - at, error: (e as Error).message.slice(0, 500) }; }
+  });
+  server.post("/api/search/rerank/test", async req => {
+    const body = (req.body ?? {}) as { api?: object };
+    const cfg = q(configSchema.shape.rerank, { ...app.config.rerank, ...body,
+      ...(body.api && { api: { ...app.config.rerank.api, ...body.api } }) });
+    const at = Date.now();
+    try {
+      const results = await testReranker(app, cfg);
+      return { ok: true, results, elapsedMs: Date.now() - at, error: null };
+    } catch (e) { return { ok: false, results: [], elapsedMs: Date.now() - at, error: (e as Error).message.slice(0, 500) }; }
   });
   const settingsAccess = (req: FastifyRequest) => {
     const access = capabilityAccess(app, who(req), null);
@@ -3547,7 +3568,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       ...(visible("security") && { approvalTools: toolList().map(t => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }),
     };
   });
-  server.put("/api/settings", async (req) => {
+  server.put("/api/settings", async (req, reply) => {
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
     const parseNext = () => {
@@ -3581,13 +3602,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Everything else is read on use; these are only read when the service starts.
     const atStartup: [string, (c: typeof next) => unknown][] = [
       ["监听地址和端口", (c) => [c.host, c.port]],
-      ["向量检索", (c) => c.embeddings],
       ["飞书机器人的开关和应用", (c) => [c.lark.enabled, c.lark.appId, c.lark.appSecretEnv, c.lark.bots.map((b) => [b.id, b.appId, b.enabled])]],
       ["Telegram", (c) => c.telegram],
       ["QQ / 微信（OneBot）", (c) => c.onebot],
     ];
     const restart = atStartup.filter(([, pick]) => JSON.stringify(pick(app.config)) !== JSON.stringify(pick(next))).map(([label]) => label);
     const changes = changedSettings(app.config, next, access.edit, access.owner);
+    const checkModel = access.owner && (Object.hasOwn(req.body as object, "embeddings") || embeddingId(app.config) !== embeddingId(next));
+    const change = checkModel ? modelChange(app, next) : null;
+    if (change && (req.query as { confirmEmbedding?: string }).confirmEmbedding !== change.token)
+      return reply.code(409).send({ confirmation: "embedding-model", ...change });
+    if (change) replaceIndex(app, change.to);
+    if (checkModel) resumeEmbedding(app);
     if (!Object.keys(changes).length) return { config: settingsView(app.config, access.view, access.owner), restart };
     saveConfig(next, app.home);
     audit(app, who(req), "settings.update", "settings", { changes });

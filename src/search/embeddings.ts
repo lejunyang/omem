@@ -1,12 +1,18 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
+import { embeddingId, storedModel, recordModel, adoptLegacyIndex, checkIndexDimensions, pendingVectorCount } from "./embedding-index.ts";
+import { apiEmbedder, encodeBatch, type EmbeddingProvider, type Kind } from "./embedding-provider.ts";
 import { vectorIndex } from "./vectors.ts";
 import { pack, toFloats } from "./vector-codec.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, tx } from "../core/db.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
 import { modelSource, osdkModelDir, prepareLocalModel } from "./local-models.ts";
+import { embedders } from "../plugins/process-hooks.ts";
+import { notify } from "../core/notify.ts";
+import type { Config } from "../core/config.ts";
+import { untilAbort } from "../core/util.ts";
 
 /**
  * Optional dense retrieval. Vectors live next to chunks, packed to one signed byte a dimension
@@ -18,34 +24,44 @@ type Embedder = { id: string; embed(texts: string[], kind: "query" | "passage"):
 
 let embedder: Embedder | null | undefined;
 let testEmbedder = false;
+let localKey = "";
+const recent = new WeakMap<App, { lastMs: number; lastError: string | null; writeError?: string; pausedUntil?: number }>();
+export const embeddingHealth = (app: App) => recent.get(app) ?? { lastMs: 0, lastError: null };
+
 
 export function resetEmbedder() {
   embedder = undefined;
+  testEmbedder = false;
   vectorIndex().clear();
 }
 
-async function getEmbedder(app: App, inProcess = false): Promise<Embedder | null> {
-  if (embedder !== undefined) return embedder;
-  const cfg = app.config.embeddings;
-  if (cfg.provider === "none") return (embedder = null);
-  if (cfg.provider === "openai") {
-    const url = (cfg.url ?? "https://api.openai.com/v1").replace(/\/$/, "") + "/embeddings";
-    const key = process.env[cfg.apiKeyEnv];
-    embedder = {
-      id: `openai:${cfg.model}`,
-      async embed(texts) {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
-          body: JSON.stringify({ model: cfg.model, input: texts }),
-        });
-        if (!res.ok) throw new Error(`embedding HTTP ${res.status}`);
-        const body = (await res.json()) as { data: { embedding: number[] }[] };
-        return body.data.map((d) => normalize(Float32Array.from(d.embedding)));
-      },
-    };
-    return embedder;
+async function getEmbedder(app: App, inProcess = false, checkModel = true, config = app.config): Promise<EmbeddingProvider | null> {
+  const cfg = config.embeddings;
+  if (testEmbedder) return embedder ?? null;
+  if (cfg.provider === "none") return null;
+  if (cfg.provider === "api") return apiEmbedder(app, cfg, embeddingId(config)!);
+  if (cfg.provider.startsWith("plugin:")) {
+    const entry = embedders.get(cfg.provider.slice(7));
+    if (!entry) return null;
+    const id = embeddingId(config)!;
+    const current = storedModel(app);
+    if (checkModel && current && current !== id) {
+      const error = `插件向量模型或维度已变化：${entry.def.name}（${entry.def.model}，${entry.def.dimensions} 维）。请在检索设置确认重建向量，或改回原来的提供者。`;
+      recent.set(app, { lastMs: 0, lastError: error, writeError: error });
+      const notice = current + "->" + id;
+      if (one<{value: string}>(app.db, "select value from kv where key='embedding_model_notice'")?.value !== notice) {
+        notify(app, { title: "插件向量已暂停", body: error, urgency: "later", plain: true });
+        run(app.db, "insert or replace into kv(key,value) values('embedding_model_notice',?)", notice);
+      }
+      return null;
+    }
+    return { id, dimensions: entry.def.dimensions, maxBatch: Math.min(cfg.batch, entry.def.maxBatch ?? 256),
+      maxChars: entry.def.maxChars, spaces: entry.spaces.length ? entry.spaces : undefined,
+      embed: (texts, kind, signal) => entry.def.embed(texts, kind, signal) };
   }
+  const key = JSON.stringify(cfg);
+  if (localKey !== key) { embedder = undefined; localKey = key; }
+  if (embedder !== undefined) return embedder;
   if (!inProcess && !testEmbedder) {
     // osdk first: while it is still downloading a model nothing has fetched before, there are no vectors
     // yet (asked again on the next use) rather than a second download racing it.
@@ -56,7 +72,7 @@ async function getEmbedder(app: App, inProcess = false): Promise<Embedder | null
     }
     try {
       // Validate in the child before embedPending is allowed to replace an old model's vectors.
-      await readProcess(app, "embedding").request({ op: "embed", texts: [], kind: "passage", config: { embeddings: cfg } }, 120_000);
+      await readProcess(app, "embedding").request({ op: "embed", texts: [], kind: "passage", config: { embeddings: cfg } }, checkModel ? 120_000 : cfg.timeoutMs);
       return (embedder = {
         id: `local:${cfg.model}`,
         embed: (texts, kind) => readProcess(app, kind === "query" ? "vector" : "embedding").request<Float32Array[]>({ op: "embed", texts, kind, config: { embeddings: cfg } }, kind === "query" ? 30_000 : 120_000),
@@ -131,14 +147,6 @@ export function paddedGroups(texts: string[]): number[][] {
   return groups;
 }
 
-function normalize(v: Float32Array) {
-  let n = 0;
-  for (const x of v) n += x * x;
-  n = Math.sqrt(n) || 1;
-  for (let i = 0; i < v.length; i++) v[i] /= n;
-  return v;
-}
-
 /** Benchmarks and tests: use a stand-in embedder. */
 export function setEmbedderForTests(e: Embedder | null) {
   testEmbedder = true;
@@ -157,24 +165,16 @@ export function invalidateVectors() {
  * of chunks, and embedding them took the CPU the reviewers' own tool calls needed.
  */
 export async function embedPending(app: App, batch = 32): Promise<number> {
-  const e = await getEmbedder(app);
+  const e = await writer(app);
   if (!e) return 0;
-  const current = one<{ value: string }>(app.db, "select value from kv where key = 'embedding_model'")?.value;
-  if (current !== e.id) {
-    run(app.db, "update chunks set embedding = null");
-    run(app.db, "update memories set embedding = null");
-    run(app.db, "insert into kv(key,value) values('embedding_model', ?) on conflict(key) do update set value = excluded.value", e.id);
-    // Every vector is gone: readers start over on the model change, the log's entries for it are noise.
-    run(app.db, "insert into kv(key,value) values('vector_log_floor', (select coalesce(max(seq), 0) from vector_log)) on conflict(key) do update set value = excluded.value");
-    run(app.db, "delete from vector_log");
-    vectorIndex().clear();
-  }
+  batch = Math.min(batch, e.maxBatch ?? batch);
+  const scope = e.spaces ? ` and space_id in (${e.spaces.map(() => "?").join(",")})` : "";
   const rows = all<{ id: number; space_id: string; title: string; path: string; text: string }>(
     app.db,
     // Through the index of chunks without a vector (`chunks_unembedded`): usually there are none, and
     // finding that out by reading the table took half a second on a large library, every half minute.
-    "select id, space_id, title, path, text from chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%' limit ?",
-    batch,
+    "select id, space_id, title, path, text from chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%'" + scope + " limit ?",
+    ...(e.spaces ?? []), batch,
   );
   if (!rows.length) return 0;
   // Text already embedded elsewhere (another copy of the same chat or document, docs/v2/multi-user.md):
@@ -191,54 +191,142 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   // Within the batch too: identical inputs are embedded once.
   const input = (r: (typeof rows)[number]) => `${r.path || r.title}\n${r.text}`.slice(0, 2000);
   const fresh = [...new Set(rows.filter((r) => !known.has(r.id)).map(input))];
-  const made = fresh.length ? await e.embed(fresh, "passage") : [];
+  const made = fresh.length ? await encode(app, e, fresh, "passage", true) : [];
+  if (!made || !stillSelected(app, e)) return 0;
   const byInput = new Map(fresh.map((t, i) => [t, made[i]]));
   for (const r of rows) if (!known.has(r.id)) known.set(r.id, byInput.get(input(r))!);
   const upd = app.db.prepare("update chunks set embedding = ? where id = ?");
-  for (const r of rows) {
-    const v = known.get(r.id)!;
-    // Stored packed: one signed byte a dimension, what the index searches with (vector-codec.ts).
-    upd.run(pack(v), r.id);
-  }
+  tx(app.db, () => {
+    for (const r of rows) upd.run(pack(known.get(r.id)!), r.id);
+  });
   vectorIndex().add(app, rows.map((r) => ({ id: r.id, spaceId: r.space_id, vec: known.get(r.id)! })));
   return rows.length;
 }
 
 /** Embed active memories that have no vector yet (passive recall). Run after embedPending, which resets them on a model change. */
 export async function embedPendingMemories(app: App, batch = 32): Promise<number> {
-  const e = await getEmbedder(app);
+  const e = await writer(app);
   if (!e) return 0;
-  if (one<{ value: string }>(app.db, "select value from kv where key = 'embedding_model'")?.value !== e.id) return 0;
-  const rows = all<{ id: string; subject: string; content: string }>(app.db, "select id, subject, content from memories where status = 'active' and embedding is null limit ?", batch);
+  batch = Math.min(batch, e.maxBatch ?? batch);
+  const scope = e.spaces ? ` and space_id in (${e.spaces.map(() => "?").join(",")})` : "";
+  const rows = all<{ id: string; subject: string; content: string }>(app.db, "select id, subject, content from memories indexed by memories_unembedded where status = 'active' and embedding is null" + scope + " limit ?", ...(e.spaces ?? []), batch);
   if (!rows.length) return 0;
-  const vecs = await e.embed(rows.map((r) => (r.subject ? `${r.subject}：${r.content}` : r.content).slice(0, 2000)), "passage");
+  const vecs = await encode(app, e, rows.map((r) => (r.subject ? `${r.subject}：${r.content}` : r.content).slice(0, 2000)), "passage", true);
+  if (!vecs || !stillSelected(app, e)) return 0;
   const upd = app.db.prepare("update memories set embedding = ? where id = ?");
-  rows.forEach((r, i) => upd.run(new Uint8Array(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength), r.id));
+  tx(app.db, () => rows.forEach((r, i) => upd.run(new Uint8Array(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength), r.id)));
   return rows.length;
 }
 
-/** One vector (a question by default; "passage" to compare memory with memory), or null when vectors are off or the model is unavailable. */
-export async function embedQuery(app: App, text: string, kind: "query" | "passage" = "query"): Promise<Float32Array | null> {
-  if (app.config.embeddings.provider === "none") return null;
+function stillSelected(app: App, e: EmbeddingProvider) {
+  const current = storedModel(app);
+  return (testEmbedder || embeddingId(app.config) === e.id) && (!current || current === e.id);
+}
+
+async function writer(app: App) {
+  if ((recent.get(app)?.pausedUntil ?? 0) > Date.now()) return null;
   const e = await getEmbedder(app);
   if (!e) return null;
-  const [q] = await e.embed([text.slice(0, 2000)], kind);
-  return q;
+  const current = storedModel(app);
+  // Old openai configurations stored only the model name. Adopt the existing index on upgrade.
+  if (!current) recordModel(app, e.id);
+  else if (app.config.embeddings.provider === "api" && current === "openai:" + app.config.embeddings.model && !app.config.embeddings.dimensions)
+    adoptLegacyIndex(app, e.id);
+  return stillSelected(app, e) ? e : null;
+}
+
+async function encode(app: App, e: EmbeddingProvider, texts: string[], kind: Kind, write = false) {
+  const at = Date.now();
+  try {
+    const rows = await encodeBatch(e, texts, kind, app.config.embeddings.timeoutMs);
+    if (!stillSelected(app, e)) return null;
+    if (e.maxBatch) checkIndexDimensions(app, e.id, rows[0].length, write);
+    recent.set(app, { ...(write ? {} : recent.get(app)), lastMs: Date.now() - at, lastError: null });
+    return rows;
+  } catch (err) {
+    const error = (err as Error).message;
+    recent.set(app, { ...recent.get(app), lastMs: Date.now() - at, lastError: error,
+      ...(write && { writeError: error, pausedUntil: Date.now() + 30_000 }) });
+    return null;
+  }
+}
+
+export function resumeEmbedding(app: App) { recent.delete(app); }
+
+/** Scope every use of the shared vector index, including vectors left from an earlier grant. */
+export function embeddingSpaces(app: App, requested: readonly string[] | null) {
+  if (!app.config.embeddings.provider.startsWith("plugin:")) return requested;
+  const entry = embedders.get(app.config.embeddings.provider.slice(7));
+  if (!entry) return [];
+  if (!entry.spaces.length) return requested;
+  return entry.spaces.filter(s => !requested || requested.includes(s));
+}
+
+export function embeddingStatus(app: App) {
+  const cfg = app.config.embeddings;
+  const isPlugin = cfg.provider.startsWith("plugin:");
+  const plugin = isPlugin ? embedders.get(cfg.provider.slice(7)) : undefined;
+  const unavailable = isPlugin && !plugin;
+  const scoped = unavailable ? [] : plugin?.spaces.length ? plugin.spaces : undefined;
+  const indexed = plugin && storedModel(app);
+  const changed = indexed && indexed !== embeddingId(app.config);
+  const health = embeddingHealth(app);
+  const excludedSpaces = scoped ? all<{id: string}>(app.db,
+    `select id from spaces where id not like 'wt-%'${scoped.length ? ` and id not in (${scoped.map(() => "?").join(",")})` : ""} order by id limit 1000`, ...scoped).map(s => s.id) : [];
+  return { provider: cfg.provider, kind: isPlugin ? "plugin" : cfg.provider,
+    model: isPlugin ? plugin?.def.model ?? null : cfg.model, dimensions: isPlugin ? plugin?.def.dimensions ?? null : cfg.dimensions ??
+      (Number(one<{value: string}>(app.db, "select value from kv where key='embedding_dimensions'")?.value) || null),
+    plugin: plugin?.plugin ?? null, name: plugin?.def.name ?? null, ...health,
+    pending: pendingVectorCount(app, scoped), excludedSpaces, excludedReason: unavailable ? "插件向量提供者不可用" : excludedSpaces.length ? "插件未获授权，这些空间没有向量" : null,
+    state: cfg.provider === "none" ? "off" : unavailable ? "unavailable" : changed ? "model-changed" : health.writeError ? "paused" : health.lastError ? "failed" : health.lastMs ? "ready" : "idle" };
+}
+
+/** Connectivity probes send only this fixture, even for unsaved configurations. */
+export const EMBEDDING_TEST_TEXT = "这是一条向量接口检测文本。";
+export async function testEmbedding(app: App, cfg: Config["embeddings"]) {
+  const signal = AbortSignal.timeout(cfg.timeoutMs);
+  const rows = await untilAbort(signal, async () => {
+    const e = await getEmbedder(app, false, false, { ...app.config, embeddings: cfg });
+    if (!e) throw new Error("向量提供者不可用");
+    return encodeBatch(e, [EMBEDDING_TEST_TEXT], "query", cfg.timeoutMs);
+  });
+  return rows[0].length;
+}
+
+/** One vector, or null when the configured provider is unavailable. */
+export async function embedQuery(app: App, text: string, kind: Kind = "query", spaces?: readonly string[] | null, sourceSpaces?: readonly string[] | null): Promise<Float32Array | null> {
+  if (app.config.embeddings.provider === "none") return null;
+  const e = await getEmbedder(app);
+  if (!e || !stillSelected(app, e)) return null;
+  if (e.spaces && (sourceSpaces === null || sourceSpaces?.some(id => !e.spaces!.includes(id)))) return null;
+  if (e.spaces && spaces && !spaces.some(s => e.spaces!.includes(s))) return null;
+  return (await encode(app, e, [text.slice(0, 2000)], kind))?.[0] ?? null;
 }
 
 /** Only the isolated process loads the local runtime. The parent keeps batching and writes. */
 export async function embedLocally(app: App, texts: string[], kind: "query" | "passage") {
   const e = await getEmbedder(app, true);
   if (!e) throw new Error("向量模型不可用");
-  return e.embed(texts, kind);
+  return encodeBatch(e, texts, kind, 120_000);
 }
 
-export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {
+export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number, sourceSpaces?: readonly string[] | null) {
   if (app.config.embeddings.provider === "none") return [];
+  if (app.config.embeddings.provider !== "local" && !testEmbedder) {
+    const e = await getEmbedder(app);
+    if (!e) return [];
+    spaces = e.spaces ? e.spaces.filter(s => !spaces || spaces.includes(s)) : spaces;
+    if (spaces && !spaces.length) return [];
+    const vector = await embedQuery(app, query, "query", spaces, sourceSpaces);
+    if (!vector) return [];
+    return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, vector, config: { embeddings: app.config.embeddings } }, 30_000));
+  }
+  if (!testEmbedder && storedModel(app) && storedModel(app) !== embeddingId(app.config)) return [];
   if (!testEmbedder) return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, config: { embeddings: app.config.embeddings } }, 30_000));
   const e = await getEmbedder(app);
   if (!e) return [];
-  const [q] = await e.embed([query], "query");
+  const q = await embedQuery(app, query, "query", spaces, sourceSpaces);
+  if (!q) return [];
   await vectorIndex().prepare(app, spaces);
   return vectorIndex().search(app, q, spaces, limit);
 }

@@ -447,5 +447,5 @@ export function migrateWatches(app: App) {
 
 /** Note in a 关注's conversation that the host did something there (no turn of its own). */
 export function noteInContext(app: App, ctx: ListenContext, text: string) {
-  if (ctx.conversationId && findThread(app, ctx.conversationId)) addMessage(app, ctx.conversationId, "user", text, null, { command: true });
+  if (ctx.conversationId && findThread(app, ctx.conversationId)) addMessage(app, ctx.conversationId, "user", text, null, { command: true, transcriptOnly: true });
 }

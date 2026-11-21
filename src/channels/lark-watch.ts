@@ -1,6 +1,8 @@
 import { decideScene, describeScene } from "../core/decision-log.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
+import { messageSourceSpaces } from "../core/capture-space.ts";
+import { archivedMessageSpaces, watchSourceSpaces } from "../core/message-origins.ts";
 import { now } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { rulesNaming } from "../rules/store.ts";
@@ -78,8 +80,9 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
   if (!ctxs.length) return 0;
   // Capture (lark-cli) sees people with its own ids: the owner as capture knows them.
   const who = { ownerOpenId: opts.ownerId ?? app.config.lark.ownerOpenId, botOpenId: opts.botOpenId };
+  const origins = messageSourceSpaces(app, messages.map(m => ({ id: m.id, chatId })));
   let n = 0;
-  for (const m of messages) {
+  for (const [index, m] of messages.entries()) {
     // Each message once, whichever path saw it first. Asked of the bot itself: the 关注 step aside, and say so.
     const seen = one<{ rule: string }>(app.db, "select rule from handled_messages where channel = 'lark' and message_id = ?", m.id);
     if (seen) {
@@ -112,6 +115,7 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
         externalMessageId: m.id,
         meta: {
           chatId,
+          sourceSpaces: origins[index],
           // Addressed to the owner or the bot: never screened out (prefilterBatch).
           ...(addressed ? { addressed: true } : {}),
           ...(to === "，@了本人" ? { toOwner: true } : {}),
@@ -214,7 +218,7 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
       本人在这里的指示: owner.map((m) => m.text.slice(0, 400)).join("\n") || "（无）",
       管这些群的规则: ctx.chats.map((c) => rulesNaming(app, c, null)).filter(Boolean).join("\n") || "（无）",
       ...ownerContextParts(app, { chatId: ctx.chats[0] }),
-      相关的记忆: (await memoriesFor(app, `${ctx.name} ${ctx.note ?? ""}\n${batchText}`.slice(0, 2000), ctx.spaceId ?? undefined)) || "（无）",
+      相关的记忆: (await memoriesFor(app, `${ctx.name} ${ctx.note ?? ""}\n${batchText}`.slice(0, 2000), ctx, batch)) || "（无）",
       之前的摘要: t?.summary || "（无）",
       最近的处理: said.map((m) => m.text.slice(0, 400)).join("\n---\n") || "（无）",
       在跟的问题: problems || "（无）",
@@ -239,10 +243,11 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
 }
 
 /** The owner's memories closest to the groups and the batch (instructions and lessons included), a few lines. */
-export async function memoriesFor(app: App, text: string, spaceId?: string, limit = 5) {
+export async function memoriesFor(app: App, text: string, { spaceId }: Pick<ListenContext, "spaceId">, batch: { meta: Record<string, unknown> }[], limit = 5) {
   try {
     const { nearMemories } = await import("../memory/passive.ts");
-    const hits = await nearMemories(app, { text, spaces: [...new Set(["personal", ...(spaceId ? [spaceId] : [])])], userId: "owner", threshold: app.config.memory.passive.threshold, limit });
+    const sourceSpaces = app.config.embeddings.provider.startsWith("plugin:") ? watchSourceSpaces(app, spaceId, batch) : undefined;
+    const hits = await nearMemories(app, { text, sourceSpaces, spaces: [...new Set(["personal", ...(spaceId ? [spaceId] : [])])], userId: "owner", threshold: app.config.memory.passive.threshold, limit });
     return hits.map(({ memory: m }) => `- ${m.subject ? `${m.subject}：` : ""}${m.content.replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
   } catch {
     return "";
@@ -272,6 +277,9 @@ export async function seedContext(app: App, c: ListenContext) {
   const backlogFrom = since - BACKLOG_MS[c.knobs.backlog];
   const from = Math.min(since - 72 * 3600_000, backlogFrom);
   const background: string[] = [];
+  const externalIds: string[] = [];
+  const sourceSpaces = new Set<string>();
+  let needsSourceArchive = false;
   let routed = 0;
   for (const chatId of c.chats) {
     const name = groupName(app, chatId);
@@ -281,14 +289,22 @@ export async function seedContext(app: App, c: ListenContext) {
       chatId, from, since,
     ).reverse();
     const recent = c.knobs.backlog === "off" ? [] : rows.filter((r) => r.create_ms >= backlogFrom && r.sender_kind !== "app");
-    if (recent.length) routed += await routeWatchedMessages(app, chatId, name, recent.map((r) => ({ id: r.message_id, time: String(r.create_ms), sender: r.sender_name || "?", senderId: r.sender_id ?? undefined, text: r.content, topicId: r.thread_id ?? undefined })));
     const recentIds = new Set(recent.map((r) => r.message_id));
     const rest = rows.filter((r) => !recentIds.has(r.message_id));
+    const ids = rest.map(r => r.message_id);
+    const archived = archivedMessageSpaces(app, ids);
+    for (const id of ids) {
+      externalIds.push(id);
+      const spaces = archived.get(id);
+      if (!spaces) needsSourceArchive = true;
+      for (const space of spaces ?? []) sourceSpaces.add(space);
+    }
     if (rest.length) background.push(`## 群「${name}」\n${rest.map((r) => `${new Date(r.create_ms).toISOString().slice(5, 16).replace("T", " ")} ${r.sender_name || "?"}：${r.content.replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}`);
+    if (recent.length) routed += await routeWatchedMessages(app, chatId, name, recent.map((r) => ({ id: r.message_id, time: String(r.create_ms), sender: r.sender_name || "?", senderId: r.sender_id ?? undefined, text: r.content, topicId: r.thread_id ?? undefined })));
   }
   if (background.length) {
     const { addMessage } = await import("../agents/threads.ts");
-    addMessage(app, c.conversationId, "user", `（关注开始前各群最近的消息，只作背景，不用逐条处理）\n\n${background.join("\n\n")}`, null, { speaker: "关注开始前的消息", backlog: true });
+    addMessage(app, c.conversationId, "user", `（关注开始前各群最近的消息，只作背景，不用逐条处理）\n\n${background.join("\n\n")}`, null, { speaker: "关注开始前的消息", backlog: true, externalIds, sourceSpaces: [...sourceSpaces], needsSourceArchive });
     const { maybeSummarize } = await import("../agents/sessions.ts");
     maybeSummarize(app, c.conversationId, 1);
   }

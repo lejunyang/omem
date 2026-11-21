@@ -269,7 +269,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       };
       setTimeout(step, 20_000).unref();
     });
-    if (app.config.embeddings.provider !== "none") {
+    {
       const loop = async () => {
         try {
           while ((await embedPending(app, 32)) > 0) await new Promise((r) => setTimeout(r, 10));
@@ -281,7 +281,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       };
       setTimeout(loop, 3000).unref();
       // Load the vector matrices before the first question needs them.
-      setTimeout(() => {
+      if (app.config.embeddings.provider !== "none") setTimeout(() => {
         // A first load with no snapshot reads every vector (20+ s for a million); it is not cut short.
         readProcess(app, "vector").request({ op: "prepare" }, 10 * 60_000).catch(() => {});
       }, 1000).unref();

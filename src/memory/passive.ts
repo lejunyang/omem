@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
-import { embedQuery } from "../search/embeddings.ts";
+import { embedQuery, embeddingSpaces } from "../search/embeddings.ts";
 import { rerankScores } from "../search/rerank.ts";
 import { similarity } from "./quality.ts";
 import { getMemory, type Memory } from "./store.ts";
@@ -15,6 +15,8 @@ export type PassiveHit = { memory: Memory; score: number };
 type NearInput = {
   text: string;
   spaces: string[] | null;
+  /** Spaces whose material is in the query. Null means some material has no known origin. */
+  sourceSpaces?: readonly string[] | null;
   threshold: number;
   limit: number;
   /** Whose memories count: personal ones of this user and shared ones (null = any user). */
@@ -30,15 +32,16 @@ type NearInput = {
 export async function nearMemories(app: App, input: NearInput): Promise<PassiveHit[]> {
   const text = input.text.trim();
   if (text.length < 4) return [];
-  if (input.spaces && !input.spaces.length) return [];
-  const q = await embedQuery(app, text, input.kind ?? "query");
+  const spaces = embeddingSpaces(app, input.spaces);
+  if (spaces && !spaces.length) return [];
+  const q = await embedQuery(app, text, input.kind ?? "query", spaces, input.sourceSpaces);
   if (!q) return [];
   const where = ["status = 'active'", "embedding is not null"];
   const params: (string | number)[] = [];
   if (input.vettedLessons) where.push("(kind not in ('preference', 'experience') or created_by = 'user' or review_verdict = 'keep')");
   if (input.spec !== undefined) where.push("(agent is null or agent = ?)") && params.push(input.spec ?? "");
   if (input.userId) where.push("(user_id is null or user_id = ?)") && params.push(input.userId);
-  if (input.spaces) where.push(`space_id in (${input.spaces.map(() => "?").join(",")})`) && params.push(...input.spaces);
+  if (spaces) where.push(`space_id in (${spaces.map(() => "?").join(",")})`) && params.push(...spaces);
   const rows = all<{ id: string; embedding: Uint8Array }>(app.db, `select id, embedding from memories where ${where.join(" and ")}`, ...params);
   const scored: { id: string; score: number }[] = [];
   for (const r of rows) {
@@ -70,7 +73,7 @@ const RERANK_WAIT_MS = 3000;
  */
 export async function passiveRecall(
   app: App,
-  input: { text: string; spaces: string[] | null; userId: string; spec?: string | null; exclude?: Set<string>; threshold?: number; limit?: number },
+  input: { text: string; spaces: string[] | null; sourceSpaces?: readonly string[]; userId: string; spec?: string | null; exclude?: Set<string>; threshold?: number; limit?: number },
 ): Promise<PassiveHit[]> {
   const cfg = app.config.memory.passive;
   if (!cfg.enabled) return [];
@@ -81,15 +84,15 @@ export async function passiveRecall(
   if (rr.enabled) {
     const pool = await nearMemories(app, { ...near, threshold: Math.min(RERANK_PREFILTER, threshold), limit: Math.max(limit, rr.top) });
     if (!pool.length) return [];
-    const candidates = pool.map(({ memory: m }) => ({
+    const toScore = rr.provider === "api" ? pool.slice(0, rr.top) : pool;
+    const candidates = toScore.map(({ memory: m }) => ({
       type: "memory" as const, id: m.id, spaceId: m.spaceId, text: m.subject ? `${m.subject}：${m.content}` : m.content,
     }));
     const { scores, provider } = await rerankScores(app, input.text, candidates, { timeoutMs: RERANK_WAIT_MS, userId: input.userId });
     if (scores) {
-      const gate = provider === "local" ? rr.passiveThreshold : rr.pluginPassiveThreshold ?? rr.passiveThreshold;
-      return pool
-        .map((h, i) => ({ ...h, score: scores[i] }))
-        .filter((h) => h.score >= gate)
+      const gate = provider === "local" ? rr.passiveThreshold : rr.pluginPassiveThreshold;
+      return toScore
+        .flatMap((h, i) => (gate === undefined ? h.score >= threshold : scores[i] >= gate) ? [{ ...h, score: scores[i] }] : [])
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
     }

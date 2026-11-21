@@ -54,8 +54,15 @@ describe("passive recall", () => {
     const { app, ids } = await setup();
     updateMemoryText(app, ids.other, { content: "小王的生日改成四月一日。" });
     expect(one<{ e: Uint8Array | null }>(app.db, "select embedding e from memories where id = ?", ids.other)?.e).toBeNull();
-    setEmbedderForTests(fakeEmbedder("test:other"));
+    app.config.embeddings.model = "new-model";
+    setEmbedderForTests(fakeEmbedder("local:new-model"));
+    const before = one<{ n: number }>(app.db, "select count(*) n from memories where embedding is not null")!.n;
     await embedPending(app);
+    expect(one<{ n: number }>(app.db, "select count(*) n from memories where embedding is not null")?.n).toBe(before);
+    const { modelChange, replaceIndex } = await import("../src/search/embedding-index.ts");
+    const preview = modelChange(app, app.config)!;
+    expect(preview.clear).toBe(before);
+    replaceIndex(app, preview.to);
     expect(one<{ n: number }>(app.db, "select count(*) n from memories where embedding is not null")?.n).toBe(0);
     while (await embedPendingMemories(app)) {}
     expect(one<{ n: number }>(app.db, "select count(*) n from memories where embedding is null")?.n).toBe(0);

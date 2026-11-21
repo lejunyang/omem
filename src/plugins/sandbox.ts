@@ -35,6 +35,7 @@ type Declared = {
   items: (Pick<import("./types.ts").ItemProvider, "id" | "label" | "statuses" | "targetHint"> & { writable: boolean })[];
   retrievers: { id: string; label: string }[];
   rerankers: { id: string; label: string }[];
+  embedders: Omit<import("./types.ts").EmbedderProvider, "embed">[];
   reviews: { id: string; label: string; objectKind: string; resolves: boolean }[];
   subscriptions: Pick<import("./types.ts").Subscription, "id" | "events">[];
   objects: Omit<PluginObject, "match" | "read">[];
@@ -82,7 +83,7 @@ export async function startSandbox(
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
       }, callMs);
       const eventCtx = scope instanceof AbortSignal ? undefined : scope;
-      const signal = ["retriever", "reranker", "notifier", "flowSignal", "stageRunner", "stageGate"].includes(String(msg.t))
+      const signal = ["retriever", "reranker", "notifier", "embedder", "flowSignal", "stageRunner", "stageGate"].includes(String(msg.t))
         ? (scope instanceof AbortSignal ? scope : scope?.signal) : undefined;
       const cancel = () => {
         clearTimeout(timer);
@@ -170,7 +171,8 @@ export async function startSandbox(
         pending.delete(m.id);
         clearTimeout(p.timer);
         if (m.ok) p.ok(m.value);
-        else p.fail(Object.assign(new Error(m.error), { code: m.code }));
+        else p.fail(Object.assign(new Error(m.error), { code: m.code,
+          status: Number.isInteger(m.status) && m.status >= 400 && m.status <= 599 ? m.status : undefined }));
       } else if (m.t === "rpc")
         answer(m.op, m.args ?? {}).then(
           (value) => child.connected && child.send({ t: "rpc-result", id: m.id, ok: true, value }),
@@ -220,6 +222,8 @@ export async function startSandbox(
           key: "idempotencyKey" in ctx ? ctx.idempotencyKey : undefined }, undefined, ctx);
     for (const def of declared.retrievers) opts.retriever({ ...def, search: (ctx, arg) =>
       ask({ t: "retriever", name: def.id, arg, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx) });
+    for (const def of declared.embedders) opts.embedder({ ...def, embed: (texts, kind, signal) =>
+      ask({ t: "embedder", name: def.id, texts, kind }, undefined, signal) });
     for (const def of declared.rerankers) opts.reranker({ ...def, score: (ctx, arg) =>
       ask({ t: "reranker", name: def.id, arg, userId: ctx.userId, spaceId: ctx.spaceId }, undefined, ctx) });
     for (const def of declared.parsers) {

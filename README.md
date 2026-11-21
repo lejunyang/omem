@@ -66,6 +66,7 @@
 - **飞书里用**：机器人回答带进度卡片和思考过程，规则一句话写成“遇到什么就做什么”，提问和评审结果都是带按钮的卡片。
 - **给 Agent 接 MCP 服务**：Agent 页 → MCP 服务 配置命令或网址，再到档案或内置角色里勾选；环境变量和请求头的值按密钥保存，保存后只显示是否已设置。可检测连接并查看工具，删除前列出使用它的档案和角色。仅你自己的运行带这些服务，其他成员、访客和评审不带；夜间复盘只用标为只读的服务。
 - **按网络条件使用后端**：给后端设 TUN 网卡或代理和出口要求（地区 / IP）；用之前查一次出口，一小时内有效，网卡断了或出口不对时停下，按兜底顺序换后端。也可以查 IPv6 出口和 DNS 设置。设置 → 后端与模型 → 通用，点开后端 → 网络条件。[使用方法](site/features/agents.md#限定后端的网络环境)。
+- **向量和重排可走云端**：不装本地模型也能用向量检索和重排；密钥复用 AI 服务商的密钥库，或从环境变量读取。原件分块、记忆和查询会发给选中的提供者。更换向量模型、维度或服务地址要先确认清空与重算数量。插件也能算向量。[配置与检测接口](docs/v2/architecture.md#向量和重排用云端接口)。
 - **不自带模型**：理解和写作交给你已安装的 Agent（Codex、Claude Code、Gemini CLI 等），omem 管存储、索引、调度和权限。
 
 > v2 是一次精简重写（2026-10）。v1 的代码与文档在 Git 历史和 `docs/archive/v1/` 中；设计取舍见 [docs/v2/architecture.md](docs/v2/architecture.md)，评测见 [evaluation.md](docs/v2/evaluation.md)，验收步骤见 [acceptance.md](docs/v2/acceptance.md)。
@@ -149,6 +150,8 @@ npm install -g @omem-ai/cli
 ```
 
 `@omem-ai/cli`（`packages/cli`）只有连远程 omem 的命令：`omem login`、`omem tool`、`omem mcp`、`omem open`、`omem remote`，不含服务端、本机的库和 `--peer`。两个包装一个就行，完整版也有这些命令。
+
+向量模型可选：使用云端接口或插件提供者时不用下载本地向量模型，重排也可以独立走云端。密钥和外发内容的设置见 [检索配置](docs/v2/architecture.md#向量和重排用云端接口)。
 
 第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型与重排模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、桌面与浏览器控制（可选）、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
 

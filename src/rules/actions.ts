@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { CODE_STARTERS } from "../agents/tool-help.ts";
 import { notify } from "../core/notify.ts";
-import { captureSpace as chatSpace } from "../core/capture-space.ts";
+import { captureSpace as chatSpace, archivedMessageSpaces } from "../core/capture-space.ts";
 import { OWNER } from "../core/users.ts";
 import { one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
@@ -231,14 +231,22 @@ async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type
   if (c.status !== "active" || (c.expiresAt && c.expiresAt <= now())) throw new HttpError(409, `关注「${c.name}」已经停下，没有交过去；要接着交，先在 连接 → 飞书会话 里重新打开它`);
   if (!c.conversationId) throw new HttpError(409, `关注「${c.name}」还没有会话`);
   const conversationId = c.conversationId;
+  const m = e.message;
+  const archived = m && archivedMessageSpaces(app, [m.id]).get(m.id);
+  const sourceSpaces = new Set([...(e.sourceSpaces ?? []), ...(archived ?? [])]);
   // The group joins the 关注 (a new on-call group per ticket): what comes next there goes to it too.
   const adopted = !!a.adopt && e.chat?.kind === "group" && adoptChat(app, c, e.chat.id);
   if (adopted) c = getContext(app, a.context)!;
-  const m = e.message;
   if (m) {
-    const there = one<{ id: string; status: string | null }>(app.db, "select x.id, r.status from messages x left join runs r on r.id = x.run_id where x.conversation_id = ? and json_extract(x.meta, '$.externalId') = ? order by x.created_at desc limit 1", conversationId, m.id);
+    const there = one<{ id: string; status: string | null; meta: string }>(app.db, "select x.id, r.status, x.meta from messages x left join runs r on r.id = x.run_id where x.conversation_id = ? and json_extract(x.meta, '$.externalId') = ? order by x.created_at desc limit 1", conversationId, m.id);
     if (there?.status === "queued") {
-      run(app.db, "update messages set meta = json_set(meta, '$.rule', ?, '$.addressed', json('true')) where id = ?", rule.id, there.id);
+      const meta = JSON.parse(there.meta);
+      // A newer watch snapshot cannot resolve a legacy rule's missing origin.
+      if (!sourceSpaces.size) meta.needsSourceArchive = true;
+      for (const space of meta.sourceSpaces ?? []) sourceSpaces.add(space);
+      run(app.db, "update messages set meta = ? where id = ?", JSON.stringify({
+        ...meta, rule: rule.id, addressed: true, sourceSpaces: [...sourceSpaces],
+      }), there.id);
       return { action: "context", ok: true, detail: `这条消息已经在关注「${c.name}」等着看的一批里，标为规则要处理的` };
     }
     run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values(?,?,?,?)", `listen:${c.id}`, m.id, rule.id, now());
@@ -253,7 +261,8 @@ async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type
     speaker: e.sender?.name || `规则「${rule.name}」`,
     text,
     ...(m ? { externalMessageId: m.id } : {}),
-    meta: { rule: rule.id, addressed: true, ...(e.chat && c.chats.includes(e.chat.id) ? { chatId: e.chat.id } : {}) },
+    meta: { rule: rule.id, addressed: true, sourceSpaces: [...sourceSpaces],
+      ...(e.chat && c.chats.includes(e.chat.id) ? { chatId: e.chat.id } : {}) },
     // Looked at soon, like a message for the owner or the bot, without pushing the 关注's batch back.
     mergeMs: Math.min(c.knobs.batchMinutes * 60_000, 30_000),
     fixedWindow: true,

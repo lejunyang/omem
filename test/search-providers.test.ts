@@ -173,7 +173,7 @@ it("搜索和被动记忆使用选中的重排，数量、非有限分数或超�
   while (await embedPendingMemories(app)) {}
   const score = vi.fn<import("../src/plugins/types.ts").Reranker["score"]>(async (_ctx, req) => req.candidates.map(c => Number(c.id === b)));
   api.reranker({ id: "rank", label: "示例排序", score });
-  Object.assign(app.config.rerank, { enabled: true, provider: "plugin:demo:rank", timeoutMs: 50 });
+  Object.assign(app.config.rerank, { enabled: true, provider: "plugin:demo:rank", pluginPassiveThreshold: 0.5, timeoutMs: 50 });
   const opts = { types: ["memory" as const] };
   expect((await search(app, "项目资料", opts)).map(h => h.id)).toEqual([b, a]);
   expect(rerankStatus(app).provider).toBe("plugin:demo:rank");
@@ -226,7 +226,7 @@ it("被动记忆按实际评分来源使用门槛，插件可使用负数、大�
   Object.assign(app.config.rerank, { enabled: true, provider: "plugin:demo:rank", passiveThreshold: 0.75 });
   const ask = { text: "项目资料", spaces: ["personal"], userId: "owner", threshold: 0 };
   const ids = async () => (await passiveRecall(app, ask)).map(h => h.memory.id);
-  expect(await ids()).toEqual([a]);
+  expect(await ids()).toHaveLength(2); // Uncalibrated provider: cosine gates, external scores order.
   for (const [gate, high, low] of [[-2, -1, -5], [4, 5, 3], [0, 0, -0.1]]) {
     app.config.rerank.pluginPassiveThreshold = gate;
     relevant = high;

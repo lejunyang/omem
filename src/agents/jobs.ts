@@ -1,3 +1,4 @@
+import { mergeOrigins, summaryOrigins, watchSourceSpaces } from "../core/message-origins.ts";
 import { kindBrief } from "../plugins/formats.ts";
 import { labelDecisions } from "../core/decision-log.ts";
 import { studyBrief } from "./study-brief.ts";
@@ -15,7 +16,7 @@ import type { RoleName } from "../core/config.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace, getSpace, listSpaces, relatedIds, relatedSpaces, updateSpace } from "../core/spaces.ts";
-import { json, newId, now, truncate, localStamp } from "../core/util.ts";
+import { json, sha256, newId, now, truncate, localStamp } from "../core/util.ts";
 import { itemLessons } from "../items/auto.ts";
 import { deliverDueReminders } from "../items/reminders.ts";
 import { listItems, upsertItem, UTC } from "../items/store.ts";
@@ -133,10 +134,11 @@ export { addMessage, conversationMessages, ensureConversation } from "./threads.
  * Ask the assistant (web, CLI, tests). Goes through the same inbox as chat
  * channels: commands, thread resolution, burst merging, per-thread lanes.
  */
-export async function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; itemId?: string; channel?: string; externalId?: string; userId?: string; meta?: Record<string, unknown> }) {
+export async function ask(app: App, input: { text: string; ownerText?: boolean; spaceId?: string; conversationId?: string; itemId?: string; channel?: string; externalId?: string; userId?: string; meta?: Record<string, unknown> }) {
   const r = await receive(app, {
     userId: input.userId,
     text: input.text,
+    ownerText: input.ownerText,
     itemId: input.itemId,
     ...(input.meta ? { meta: input.meta } : {}),
     spaceId: input.spaceId,
@@ -470,9 +472,15 @@ registerHandler("thread-summary", async (ctx) => {
     ? "\n\n这是助手替本人关注的群（一个或几个）的会话：写成三段，“在聊的话题”（谁在推进什么）、“没结的问题”（谁问了什么、还在等什么）、“已有结论”（定了什么、查清了什么，带人名）。只写群里的事，不写助手的处理过程。"
     : "";
   const task = `${t.summary ? `## 之前的摘要\n\n${t.summary}\n\n` : ""}## 之后的新对话\n\n${transcript}${listening}`;
+  const origins = t.channel === "listen"
+    ? mergeOrigins(summaryOrigins(t), watchSourceSpaces(ctx.app, t.spaceId, fresh.filter(m => m.role === "user")))
+    : undefined;
   const r = await agent(ctx, "summarizer", t.spaceId, task, [t.spaceId]);
   const summary = r.text.trim();
-  if (summary) updateThread(ctx.app, threadId, { summary, summaryAt: fresh[fresh.length - 1].createdAt });
+  if (summary) updateThread(ctx.app, threadId, {
+    summary, summaryAt: fresh[fresh.length - 1].createdAt,
+    ...(origins !== undefined && { settings: { summaryOrigins: { hash: sha256(summary), spaces: origins } } }),
+  });
   return { summary };
 });
 
@@ -695,7 +703,7 @@ async function knownNearMaterial(app: App, spaceId: string, sourceIds: string[],
   const spaces = [spaceId, ...relatedIds(app, spaceId)];
   try {
     for (const w of windows)
-      for (const h of await nearMemories(app, { text: w, spaces, threshold: 0.6, limit: 6, kind: "passage" })) {
+      for (const h of await nearMemories(app, { text: w, sourceSpaces: [spaceId], spaces, threshold: 0.6, limit: 6, kind: "passage" })) {
         const m = h.memory;
         if ((best.get(m.id)?.score ?? 0) < h.score) best.set(m.id, { score: h.score, line: `- ${m.id} [${m.spaceId}/${m.kind}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 160)}（${m.validFrom?.slice(0, 10) ?? "?"} 起）` });
       }
