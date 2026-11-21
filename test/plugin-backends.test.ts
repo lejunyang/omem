@@ -7,13 +7,14 @@ import { catalogEntry, launchConfigEnv, pluginBackendStatus } from "../src/agent
 import { allProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
 import { listAgentProfiles } from "../src/agents/runner.ts";
+import { backendHosts } from "../src/agents/egress-policy.ts";
 import { openAcp } from "../src/agents/acp.ts";
 import { setTrust, trustState } from "../src/plugins/trust.ts";
 
 describe.each(["isolated", "inprocess"] as const)("声明式 ACP %s", mode => {
   const app = testApp(), dir = join(app.home,"plugins","backendkit");
   const declaration = {id:"backendkit",name:"后端示例",backends:[{id:"fake",name:"假 ACP",command:process.execPath,
-    args:[resolve("test/fake-acp-agent.ts")], env:["FAKE_MODE"], launchConfig:{env:"DEMO_CONFIG",model:"model"}}]};
+    egressHosts:["first.example.org"], args:[resolve("test/fake-acp-agent.ts")], env:["FAKE_MODE"], launchConfig:{env:"DEMO_CONFIG",model:"model"}}, {id:"second", name:"另一后端", command:process.execPath, args:["--version"], egressHosts:["second.example.org"]}]};
   afterEach(() => { forgetPlugin("backendkit"); vi.unstubAllEnvs(); });
   async function install() {
     mkdirSync(dir,{recursive:true});
@@ -28,6 +29,8 @@ describe.each(["isolated", "inprocess"] as const)("声明式 ACP %s", mode => {
     const entry = catalogEntry("backendkit:fake")!;
     expect(entry).toMatchObject({plugin:"backendkit",pluginName:"后端示例",envNames:["FAKE_MODE"]});
     const profile = allProfiles(app.config).find(p => p.id === entry.id)!;
+    const second = allProfiles(app.config).find(p => p.id === "backendkit:second")!;
+    expect([...backendHosts(second)]).toEqual(["second.example.org"]);
     expect(profile.env).toEqual({});
     expect(launchConfigEnv(profile,{model:"m2"})).toEqual({DEMO_CONFIG:'{"model":"m2"}'});
     vi.stubEnv("FAKE_MODE","thread");

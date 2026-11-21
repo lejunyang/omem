@@ -216,9 +216,14 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
   };
 }
 
+export function entryForProfile(profile: Pick<AgentProfile, "source" | "id" | "command">, entries = [...acpCatalog, ...accountOnlyCatalog]) {
+  return entries.find(e => e.id === (profile.source ?? profile.id))
+    ?? entries.find(e => !e.plugin && (e.command === profile.command || e.account?.cli === profile.command));
+}
+
 /** A saved profile with the catalog's current default args when it still has an earlier default. */
 export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
-  const e = p.transport === "acp" ? catalogEntry(p.source ?? p.id) ?? acpCatalog.find((x) => x.command === p.command && !x.plugin) : undefined;
+  const e = p.transport === "acp" ? entryForProfile(p, acpCatalog) : undefined;
   const previous = e?.previousArgs?.some((a) => a.length === p.args.length && a.every((v, i) => v === p.args[i]));
   return e ? { ...p, args: previous ? e.args ?? [] : p.args, archiveArgs: p.archiveArgs ?? e.archiveArgs, sessionHistory: p.sessionHistory ?? e.sessionHistory } : p;
 }
@@ -229,8 +234,7 @@ export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
  * that is not a JSON object is left alone.
  */
 export function launchConfigEnv(profile: Pick<AgentProfile, "id" | "source" | "command" | "env">, want: { model?: string | null; effort?: string | null }): Record<string, string> {
-  const entries = [...acpCatalog, ...accountOnlyCatalog];
-  const spec = (entries.find(e => e.id === (profile.source ?? profile.id)) ?? entries.find(e => e.command === profile.command && !e.plugin))?.launchConfig;
+  const spec = entryForProfile(profile)?.launchConfig;
   if (!spec) return {};
   let base: Record<string, unknown> = {};
   const given = profile.env?.[spec.env];
