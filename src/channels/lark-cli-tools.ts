@@ -91,8 +91,12 @@ export async function larkRead(app: App, args: string[], onNextPage?: (token: st
   if (risk === null) throw new HttpError(400, `lark-cli 没有命令 ${path.join(" ")}（或它没有标风险）；用 ["${args[0]}", "--help"] 看可用命令`);
   if (risk !== "read") throw new HttpError(400, `${path.join(" ")} 是${risk === "write" ? "写操作" : "高风险写操作"}，lark_read 只做读；${path.join(" ") === "wiki +node-copy" ? "完整复制用 lark_doc_copy，可请本人批准" : args[0] === "docs" ? "改文档用 lark_doc_update" : WRITE_DOMAINS.has(args[0]) ? "写入用 lark_write" : "这一类不能以本人身份写"}`);
   const r = await run(app, args, `读取飞书（${path.join(" ")}）`);
-  const nextPage = onNextPage && r.value?.has_more && typeof r.value.page_token === "string" ? r.value.page_token : undefined;
-  if (nextPage) onNextPage?.(nextPage);
+  let nextPage: string | undefined;
+  const token = r.value?.page_token;
+  if (onNextPage && r.value?.has_more && typeof token === "string" && token) {
+    onNextPage(token);
+    nextPage = token;
+  }
   return `${show(r.value, nextPage)}${r.files.length ? `\n\n下载的文件只在这次调用里，已删除：${r.files.join("、")}` : ""}`;
 }
 

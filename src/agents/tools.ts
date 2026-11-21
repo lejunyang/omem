@@ -4953,7 +4953,7 @@ def({
   schema: z.object({ command: larkCommand }),
   handler: async (ctx, a) => {
     ownerOnly(ctx, commandFeature(a.command));
-    const { command, onNextPage } = ctx.incomingWork ? boardLarkCommand(ctx, a.command, ctx.incomingWork.chatPages) : { command: a.command, onNextPage: undefined };
+    const { command, onNextPage } = ctx.incomingWork ? boardLarkCommand(ctx, a.command, ctx.incomingWork.chatPages) : { command: a.command };
     // Saving a message's attachment is a write to lark-cli (it writes a file): omem's own copy instead.
     const download = (await import("../channels/lark-message-files.ts")).resourceDownload(command);
     if (download) return messageFileText(ctx, download.messageId, download.key);
