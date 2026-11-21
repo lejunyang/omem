@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import "../src/agents/jobs.ts";
+import { auditLog } from "../src/auth/permissions.ts";
 import { answerAsk, createAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
@@ -15,10 +16,10 @@ import { recordReview, roundFindings } from "../src/agents/review.ts";
 import { identity } from "../src/agents/code-branch.ts";
 import { snapshot } from "../src/channels/lark-code-progress.ts";
 import type { CodeChain } from "../src/agents/code-chain.ts";
-import { __testHandlers, addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { __testHandlers, addRunEvent, createRun, getRun, runEvents, setRunOutput } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { all, run } from "../src/core/db.ts";
-import { createSpace } from "../src/core/spaces.ts";
+import { createSpace, updateSpace } from "../src/core/spaces.ts";
 import { createUser, addMember, OWNER } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
@@ -1153,6 +1154,7 @@ describe("a delegation driven by tasks", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "init");
     createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    updateSpace(app, "shop-api", { settings: { setupCommand: "echo setup", checkCommand: "echo check" } });
     if (userId !== OWNER) {
       createUser(app, { id: userId, name: "成员 A" });
       addMember(app, "shop-api", userId, "manager");
@@ -1165,6 +1167,11 @@ describe("a delegation driven by tasks", () => {
       const r1 = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款", input: { task: "退款三件事", repos: ["shop-api"], taskMode: true }, parentId: ask.id });
       codeChainFor(app, r1);
       await work(app, r1.id);
+      for (const operation of ["setup", "check"]) {
+        const detail = { userId, executor: "host", workId: r1.id, runId: r1.id, space: "shop-api", operation };
+        expect(auditLog(app)).toContainEqual(expect.objectContaining({ actor: "host", action: `code.${operation}`, target: r1.id, detail }));
+        expect(runEvents(app, r1.id)).toContainEqual(expect.objectContaining({ type: "status", data: expect.objectContaining(detail) }));
+      }
       // Three tasks, each done once, by the lead (T1) or a helper (T2, T3), each with its own commit on the work branch.
       const tasks = listTasks(app, r1.id).slice(0, 3);
       expect(tasks.map((x) => x.title)).toEqual(["退款只算未发货的行", "运费按比例退", "补退款说明"]);

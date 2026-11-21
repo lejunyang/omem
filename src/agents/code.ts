@@ -5,6 +5,7 @@ import { killPid } from "../core/procs.ts";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
+import { audit } from "../auth/permissions.ts";
 import { all, one } from "../core/db.ts";
 import { defaultBaseRef, fetchBranchAsync, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
@@ -199,14 +200,25 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
  */
 export type Check = { command: string; code: number; output: string; ms: number; commit?: string; base?: string; at?: string };
 
+/** Attribute service-side commands before launch, including a failed or interrupted invocation. */
+function recordHostCommand(app: App, run: Run, space: string, operation: "setup" | "check") {
+  const userId = runUser(app, run.id);
+  const workId = String(run.input.continueFrom ?? run.id);
+  const detail = { executor: "host", userId, workId, runId: run.id, space, operation };
+  audit(app, "host", `code.${operation}`, run.id, detail);
+  addRunEvent(app, run.id, "status", { ...detail, text: `宿主为 ${userId} 的交办 ${workId} 在 ${space} ${operation === "setup" ? "准备依赖" : "执行仓库检查"}` });
+  return userId;
+}
+
 /** One execution path for repository checks and improvement measurements, including command rules. */
 export async function repositoryCommand(app: App, run: Run, wt: WorktreeRef, command: string, signal: AbortSignal, timeoutMs?: number): Promise<Check> {
   const base = wt.commits ? changeBase(wt.path, wt) : git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const { commandGateDir, withGatePath } = await import("./command-gate.ts");
   const { issueToolToken, revokeToolToken } = await import("./tools.ts");
+  const userId = recordHostCommand(app, run, wt.space, "check");
   const gate = commandGateDir(app);
-  const token = gate ? issueToolToken({ runId: run.id, spaceId: wt.space, spaces: [wt.space], tools: new Set(), actor: "agent", userId: runUser(app, run.id) }) : null;
+  const token = gate ? issueToolToken({ runId: run.id, spaceId: wt.space, spaces: [wt.space], tools: new Set(), actor: "agent", userId }) : null;
   const env = withGatePath({ ...process.env, ...(base ? { OMEM_BASE: base } : {}), OMEM_ARTIFACTS: artifactInbox(app, run.id), ...(token ? { OMEM_URL: app.baseUrl, OMEM_TOKEN: token } : {}) }, gate);
   try {
     const result = await shell(command, workDirOf(wt), signal, timeoutMs, Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined)));
@@ -402,6 +414,7 @@ ${input.task}
     const key = command ? setupKey(dir, command) : null;
     if (!command || !key) continue;
     ctx.event("status", { text: `准备依赖${multi ? `（${repo.id}）` : ""}：${command}` });
+    recordHostCommand(app, run, repo.id, "setup");
     const r = await shell(command, dir, ctx.signal);
     if (ctx.signal.aborted) throw new Error("已取消");
     if (r.code === 0) {
