@@ -67,7 +67,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
     for (const dir of [box.runDir, ...box.state]) {
       if (!dir || !plan.rw.includes(dir)) continue;
       if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(process.env, { ...opts.env, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
       args: bwrapArgs({ ...plan, cwd, command: resolved.file, args: [...resolved.prefix, ...args] }) };

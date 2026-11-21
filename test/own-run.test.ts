@@ -34,14 +34,18 @@ it.skipIf(process.platform === "win32")("validates and returns the externally ed
   };
   const valid = realpathSync(mkdtempSync(join(tmpdir(), "external-state-")));
   try {
-    const privateDir = join(app.home, "secrets");
-    const edited = editBackend(privateDir);
-    const rejected = await put();
-    expect(rejected.status).toBe(400);
-    expect(await rejected.text()).toContain(privateDir);
-    expect(readFileSync(path, "utf8")).toBe(edited);
-    expect(app.config.agents).toEqual(before);
-    expect(audits.all()).toHaveLength(0);
+    const file = join(valid, "ordinary-file");
+    writeFileSync(file, "keep");
+    for (const invalid of [join(app.home, "secrets"), file]) {
+      const edited = editBackend(invalid);
+      const rejected = await put();
+      expect(rejected.status).toBe(400);
+      expect(await rejected.text()).toContain(invalid);
+      expect(readFileSync(path, "utf8")).toBe(edited);
+      expect(app.config.agents).toEqual(before);
+      expect(audits.all()).toHaveLength(0);
+    }
+    expect(readFileSync(file, "utf8")).toBe("keep");
 
     editBackend(valid);
     const saved = await put();
@@ -57,6 +61,33 @@ it.skipIf(process.platform === "win32")("validates and returns the externally ed
   } finally {
     await server.close(); app.db.close();
     rmSync(app.home, { recursive: true, force: true }); rmSync(valid, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(process.platform === "win32")("checks required state directories and only mounts existing optional state files", () => {
+  const app = testApp();
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "state-types-")));
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("CLAUDE_CONFIG_DIR", join(home, ".claude"));
+  app.config.agents.ownSandbox.mode = "require";
+  setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+  const profile = agentProfileSchema.parse({ id: "claude", transport: "acp", command: "/bin/true" });
+  const state = join(home, ".claude");
+  const optional = join(home, ".claude.json");
+  const plan = () => ownRun(app, profile, join(app.home, "workspaces", "fixture"), true).box!.plan;
+  try {
+    expect(plan().rw).toContain(state);
+    expect(plan().rw).not.toContain(optional);
+    writeFileSync(optional, "{}");
+    expect(plan().rw).toContain(optional);
+    writeFileSync(state, "{}");
+    expect(plan).toThrow(state);
+    rmSync(state);
+    rmSync(optional);
+    mkdirSync(optional);
+    expect(plan).toThrow(optional);
+  } finally {
+    app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
   }
 });
 

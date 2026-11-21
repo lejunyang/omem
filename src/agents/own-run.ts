@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
@@ -26,6 +26,14 @@ function backendState(profile?: AgentProfile) {
   return { mounts: entry?.account?.mounts ?? [], dirs: [...new Set(paths.map(path => expandPath(path, env)))], existing: optional.map(path => expandPath(path, env)).filter(existsSync) };
 }
 
+/** Missing directories are created at launch. Their closest existing parent must allow a directory there. */
+function checkStateDirectory(path: string) {
+  let dir = path;
+  while (!lstatSync(dir, { throwIfNoEntry: false })) dir = dirname(dir);
+  if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory())
+    throw new Error("沙箱状态路径需要目录：" + dir);
+}
+
 type MountContext = { workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv };
 
 export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: boolean, runId?: string | null, context: MountContext = {}): { box?: OwnSandbox; note?: string } {
@@ -44,6 +52,10 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   const config = normalizeSandbox({ ...settings, writable: [...settings.writable, ...existing] }, home, data);
   const state = [...dirs, ...cachePaths.map(p => join(home, p))];
   const checked = normalizeSandbox({ ...config, writable: state }, home, data);
+  for (const dir of checked.writable) checkStateDirectory(dir);
+  for (const file of existing) {
+    if (!statSync(file).isFile()) throw new Error("沙箱状态文件需要普通文件：" + file);
+  }
   const runtime = [join(data, "bin"), join(data, "library", "_skills"), omemInstallDir(), dirname(dirname(process.execPath)),
     ...mounts.map(p => expandPath(p))].map(canonical);
   const box = { home, data, state: checked.writable, writable: config.writable, hidden: config.hidden, runtime,
