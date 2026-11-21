@@ -390,14 +390,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     audit(app,who(req),"egress.settings","security",{ mode:egress.mode });
     return egress;
   });
-  const rulesView = () => currentRules(app).map(r => ({ ...r, enforcedBy: enforcedBy[r.match.kind] }));
-  server.get("/api/security/operation-rules", async () => ({ rules: rulesView() }));
+  const rulesView = () => {
+    const points = enforcedBy();
+    return { enforcedBy: points, rules: currentRules(app).map(r => ({ ...r, enforcedBy: points[r.match.kind] })) };
+  };
+  server.get("/api/security/operation-rules", async () => rulesView());
   server.put("/api/security/operation-rules", async (req) => {
     const b = q(z.object({ rules: operationRulesSchema }), req.body);
     saveOperationRules(app, b.rules);
     commandGateDir(app);
     audit(app, who(req), "operation.rules", "security", { count: b.rules.length });
-    return { rules: rulesView() };
+    return rulesView();
   });
   // The command rules: the owner's own, never an agent's (no tool writes them).
   server.get("/api/security/command-rules", async (req) => {
