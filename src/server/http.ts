@@ -3411,7 +3411,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/search/rerank/test", async req => {
     const body = (req.body ?? {}) as { api?: object };
     const cfg = q(configSchema.shape.rerank, { ...app.config.rerank, ...body,
-      api: { ...app.config.rerank.api, ...body.api } });
+      ...(body.api && { api: { ...app.config.rerank.api, ...body.api } }) });
     const at = Date.now();
     try {
       const results = await testReranker(app, cfg);

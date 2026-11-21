@@ -7,9 +7,12 @@ import { createApiToken, createUser } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { embedPending, resetEmbedder, EMBEDDING_TEST_TEXT } from "../src/search/embeddings.ts";
-import { RERANK_TEST_QUERY, RERANK_TEST_DOCUMENTS } from "../src/search/rerank.ts";
+import { RERANK_TEST_QUERY, RERANK_TEST_DOCUMENTS, setRerankerForTests } from "../src/search/rerank.ts";
 import { configSchema } from "../src/core/config.ts";
 import { all } from "../src/core/db.ts";
+
+import { registerProcessHooks } from "../src/plugins/process-hooks.ts";
+import { manifestSchema } from "../src/plugins/registry.ts";
 
 const close: (() => Promise<unknown> | void)[] = [];
 afterEach(async () => { for (const fn of close.splice(0).reverse()) await fn(); resetEmbedder(); vi.restoreAllMocks(); });
@@ -77,6 +80,26 @@ it("状态显示积压和错误，HTTP 和坏 JSON 摘要、日志、配置都�
   }
   expect((await f.server.inject("/api/settings")).body).not.toContain("example-private-key");
   expect(JSON.stringify(warn.mock.calls)).not.toContain("example-private-key");
+});
+
+it("本地和插件重排可直接检测，无需填写云端模型", async () => {
+  const { app, server } = await fixture();
+  expect(app.config.rerank.api).toBeUndefined();
+  const local = vi.fn(() => [1, 2, 3, 4]);
+  setRerankerForTests(local);
+  close.push(() => setRerankerForTests(null));
+  const undo: (() => void)[] = [];
+  close.push(() => undo.reverse().forEach(stop => stop()));
+  const api = registerProcessHooks(manifestSchema.parse({ id: "demo", name: "示例", permissions: { reranker: true } }), undo);
+  const plugin = vi.fn(async () => [4, 3, 2, 1]);
+  api.reranker({ id: "rank", label: "示例", score: plugin });
+  for (const [provider, first] of [["local", 3], ["plugin:demo:rank", 0]] as const) {
+    const result = await server.inject({ method: "POST", url: "/api/search/rerank/test", payload: { provider } });
+    expect(result.json()).toMatchObject({ ok: true });
+    expect(result.json().results[0].index).toBe(first);
+  }
+  expect(local).toHaveBeenCalledTimes(1);
+  expect(plugin).toHaveBeenCalledTimes(1);
 });
 
 it("未传检测配置时使用已保存配置，仍只发固定样例", async () => {
