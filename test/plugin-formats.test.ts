@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { cpSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import "../src/agents/jobs.ts";
+import { __testHandlers, getRun } from "../src/agents/runs.ts";
+import { agentProfileSchema } from "../src/core/config.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { createApiToken, createUser } from "../src/core/users.ts";
 import { registerProcessHooks } from "../src/plugins/process-hooks.ts";
@@ -12,7 +15,7 @@ import { search } from "../src/search/search.ts";
 import { startServer } from "../src/server/http.ts";
 import { importDirectory, importFile, importText } from "../src/sources/import.ts";
 import { findSourceByUri, readSource, reindexSource, sourceOutline } from "../src/sources/store.ts";
-import { pagesToCheck } from "../src/wiki/upkeep.ts";
+import { pagesToCheck, runWikiUpkeep } from "../src/wiki/upkeep.ts";
 import { readPage } from "../src/wiki/store.ts";
 import { testApp } from "./helpers.ts";
 
@@ -115,11 +118,23 @@ it("only takes over a built-in format explicitly, rejects invalid output before 
 });
 
 it("uses the registered template, returns check findings to the writer, and schedules periodic upkeep", async () => {
-  const args = { page: "api/example", title: "示例接口", kind: "api-reference", summary: "示例", body: "## 请求\n示例" };
+  const source = importText(app, "personal", { uri: "api-spec", text: "请求参数为编号" });
+  const args = { page: "api/example", title: "示例接口", kind: "api-reference", summary: "示例", body: `## 请求\n[参数](src:${source.id}#L1-L1)` };
   expect(kindBrief("personal", args.kind)).toContain("## 用途");
   expect((await callTool(ctx, "write_page", args)).text).toContain("缺少小节：返回");
   expect((await callTool(ctx, "write_page", { ...args, body: args.body + "\n## 返回\n结果" })).isError).toBe(false);
-  expect(pagesToCheck(app, "personal", Date.now() + 31 * 86400000)).toContain(args.page);
+  const later = Date.now() + 31 * 86400000;
+  const lint = runWikiUpkeep(app, later).find(job => job.kind === "wiki-lint")!;
+  const log = join(app.home, "lint-prompt");
+  const run = getRun(app, lint.runId);
+  expect(run.input).toMatchObject({ pages: [], recheck: [{ page: args.page, note: expect.stringContaining("30 天") }] });
+  app.config.agents.default = "fake";
+  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath,
+    args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "echo", FAKE_PROMPT_LOG: log } })];
+  await __testHandlers.get("wiki-lint")!({ app, run, signal: new AbortController().signal, event() {}, output() {} });
+  const prompt = readFileSync(log, "utf8");
+  expect(prompt).toContain("需复查的页面");
+  expect(prompt).toContain(args.page + "：已到页面类型规定的 30 天复查周期");
   expect((await server.inject("/api/wiki/kinds?space=personal")).json()).toContainEqual(expect.objectContaining({
     kind: args.kind, hasTemplate: true, upkeep: { everyDays: 30, onSourcesChanged: true },
   }));
@@ -134,8 +149,8 @@ it("can turn off source-change upkeep for one kind", async () => {
   }
   importText(app, "personal", { uri: "doc", kind: "doc", text: "新版" });
   const due = pagesToCheck(app, "personal", Date.now() + 86400000);
-  expect(due).toContain("guide");
-  expect(due).not.toContain("manual");
+  expect(due.map(p => p.slug)).toContain("guide");
+  expect(due.map(p => p.slug)).not.toContain("manual");
 });
 
 it("saves on check timeout and keeps existing pages and records readable after unloading", async () => {

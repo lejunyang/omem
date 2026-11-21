@@ -58,7 +58,7 @@ describe("automatic wiki upkeep", () => {
     expect(pageContext(app, "personal", "from-chat").sources[0]).toMatchObject({ stale: false, grew: true });
     expect(upkeepStatus(app, "personal").appendOnly).toBe(1);
     app.db.prepare("update sources set deleted_at = ? where id = ?").run(new Date().toISOString(), chat.id);
-    expect(pagesToCheck(app, "personal", later(SETTLE_MS * 4))).toEqual(["from-chat"]);
+    expect(pagesToCheck(app, "personal", later(SETTLE_MS * 4))).toMatchObject([{ slug: "from-chat" }]);
 
     const d = doc(app, "x.md", "a\n");
     page(app, "from-doc", `[x](src:${d.id}#L1-L1)`);

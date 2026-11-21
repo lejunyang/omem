@@ -1075,17 +1075,18 @@ registerHandler("wiki-lint", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
   syncWiki(ctx.app, spaceId);
   // An automatic check names the pages it chose (a batch); a manual one looks at all of them.
-  const only = (ctx.run.input as { pages?: string[] }).pages;
-  // Pages nightly replay found misleading (agents/replay.ts): checked whether or not their originals changed.
-  const recheck = ((ctx.run.input as { recheck?: { page: string; note: string }[] }).recheck ?? []).filter((p) => pageExists(ctx.app, spaceId, p.page));
-  const stale = stalePages(ctx.app, spaceId).filter((s) => (!only?.length && !recheck.length) || only?.includes(s.page_id.slice(spaceId.length + 1)) || recheck.some((p) => p.page === s.page_id.slice(spaceId.length + 1)));
+  const { pages, recheck: requested } = ctx.run.input as { pages?: string[]; recheck?: { page: string; note: string }[] };
+  // Periodic upkeep and nightly replay can request a check independently of source changes.
+  const recheck = (requested ?? []).filter((p) => pageExists(ctx.app, spaceId, p.page));
+  const selected = pages || requested ? new Set([...(pages ?? []), ...recheck.map(p => p.page)]) : null;
+  const stale = stalePages(ctx.app, spaceId).filter(s => !selected || selected.has(s.page_id.slice(spaceId.length + 1)));
   if (!stale.length && !recheck.length) return { quiet: true, summary: "没有受影响的页面" };
   const task = [
     stale.length ? `受影响的页面与变化的原件：\n${stale.map((s) => `- ${s.page_id.split("/").slice(1).join("/")}：${s.uris}`).join("\n")}` : "",
-    recheck.length ? `夜间复盘发现这些页面可能过时（不看它们时回答更好）：对照它引用的原件和最近的材料逐段核对，过时的改掉或标出：\n${recheck.map((p) => `- ${p.page}：${p.note}`).join("\n")}` : "",
+    recheck.length ? `需复查的页面：对照它引用的原件和最近的材料逐段核对，过时的改掉或标出：\n${recheck.map((p) => `- ${p.page}：${p.note}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
   const r = await agent(ctx, "wiki-linter", spaceId, task);
-  return { ...quietOf(ctx, r.text), pages: stale.length + recheck.length };
+  return { ...quietOf(ctx, r.text), pages: new Set([...stale.map(s => s.page_id.slice(spaceId.length + 1)), ...recheck.map(p => p.page)]).size };
 });
 
 /** Pages one folder pass looks at (the rest of a crowded folder goes to the next pass). */
