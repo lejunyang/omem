@@ -1,3 +1,5 @@
+import { toolSections } from "./instruction-sections.ts";
+import { backendCapabilities } from "./capabilities.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { JUDGED_LABELS, OWNER_BY, REPLY_LABELS, replyOutcome, replyOutcomeText, reviseReply, type JudgedLabel } from "./reply-outcomes.ts";
 import { tmpdir } from "node:os";
@@ -617,7 +619,9 @@ async function judgeOnce(app: App, parent: RunContext, q: Question, profile: Age
   const cwd = mkdtempSync(join(tmpdir(), "omem-judge-"));
   const started = Date.now();
   try {
-    const res = await runBackend(app, profile, { cwd, system: loadRole("replay-judge", app).body, prompt, allowWrites: false, modes: ["read-only"], signal: parent.signal }, (e) => addRunEvent(app, id, e.type, e));
+    const scene = ["background", "replay-judge"];
+    const system = toolSections(loadRole("replay-judge", app).body, new Set(), backendCapabilities(profile).localTools, scene);
+    const res = await runBackend(app, profile, { cwd, scene, system, prompt, allowWrites: false, modes: ["read-only"], signal: parent.signal }, (e) => addRunEvent(app, id, e.type, e));
     const text = replyOf(res).trim();
     const v = jsonIn<{ better?: string; reason?: string; taskType?: string; original?: string }>(text);
     const better = v?.better === "甲" || v?.better === "乙" || v?.better === "平" ? (v.better as Verdict["better"]) : null;

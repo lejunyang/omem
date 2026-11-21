@@ -13,7 +13,8 @@ import { triggerFor, withFollowUp, type RunTrigger } from "../core/run-trigger.t
 import { offerReviewPublish } from "./review-sync.ts";
 import { emitOmem, runOutputFacts } from "../rules/omem-events.ts";
 
-export type RunKind = "commit-claim" | "item-follow" | "flow-review" | "study-trial" | "peer-work" | "peer-trial" | "flow-stage" | "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "note-review" | "memory-review" | "memory-organize" | "skill-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state" | "quality-audit" | "wiki-sweep" | "listen-coach" | "outcome-review" | "problem-follow";
+import type { RunKind } from "./run-kinds.ts";
+export type { RunKind } from "./run-kinds.ts";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
   /** Background run that found nothing to do; hidden from the default run list. */
