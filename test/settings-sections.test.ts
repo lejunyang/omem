@@ -23,6 +23,9 @@ it("projects sections, rejects mixed writes atomically and audits changed keys w
     const headers = { authorization: "Bearer " + createApiToken(app, "reader") };
     const get = (url: string) => server.inject({ url, headers });
     const put = (payload: object) => server.inject({ method: "PUT", url: "/api/settings", headers, payload });
+    expect((await get("/api/me")).json().ownerName).toBe("主人");
+    app.db.prepare("update users set name=? where id='owner'").run("项目负责人");
+    expect((await get("/api/me")).json().ownerName).toBe("项目负责人");
     expect((await get("/api/settings")).statusCode).toBe(403);
     for (const capability of ["settings.assistant.view", "settings.assistant.edit", "settings.security.view", "settings.channels.edit"]) {
       app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values('reader',?,'global','','allow','0','owner','0')").run(capability);

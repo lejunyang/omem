@@ -88,7 +88,7 @@ import { registerCodeIndexRoutes } from "../sources/code-index-http.ts";
 import { audit, can, canAccessRun, runAudience, canReadRun, globalPerms, isOwner, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
-import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, personalSpaceId, scopeFor, userForToken, userName } from "../core/users.ts";
+import { accessibleSpaces, addMember, canWrite, findUser, getUser, nameForOthers, OWNER, personalSpaceId, scopeFor, userForToken, userName } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites, visibleRunEvent, writeVisible } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
@@ -224,7 +224,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const u = getUser(app, who(req));
     // What the page may offer: global permissions, and the spaces this person writes or manages.
     const { caps, spaceCaps, ownSpaceCaps } = memberCapabilities(app, u.id);
-    return { ...u, caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
+    return { ...u, ownerName: nameForOthers(app, OWNER), caps, spaceCaps, ownSpaceCaps, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
   });
 
   server.route({ method: ["GET", "POST"], url: "/api/cloud-tools/challenge/:nonce", handler: async (req, reply) => {
