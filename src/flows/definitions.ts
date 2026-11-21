@@ -169,7 +169,7 @@ export function flowAppliesTo(definition: FlowDefinition, item: Pick<Item, "kind
   return (!kinds || kinds.some(kind => kind === item.kind)) && flowVisibleIn(definition, new Set([item.spaceId]));
 }
 export function flowsFor(app: App, item: Pick<Item, "kind" | "spaceId">, flows = listFlows(app)) {
-  return flows.flatMap((f) => f.definition && (!f.definition.for?.kinds || (f.definition.for.kinds as string[]).includes(item.kind)) && (!f.definition.for?.spaces || f.definition.for.spaces.includes(item.spaceId)) ? [f.definition] : []);
+  return flows.flatMap((f) => f.definition && flowAppliesTo(f.definition, item) ? [f.definition] : []);
 }
 /**
  * A flow a plugin (a scene pack) brings, copied into the library only when there is none of that id:

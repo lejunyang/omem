@@ -191,7 +191,7 @@ describe("roles and permissions", async () => {
   it("lists generic and matching flow definitions only", async () => {
     const { saveFlow } = await import("../src/flows/definitions.ts");
     for (const [id, spaces] of [["generic", []], ["shared", ["team","other"]], ["private-flow", ["other"]]] as const) {
-      saveFlow(app, JSON.stringify({ id, name:id, for:{spaces}, stages:[{id:"step",name:"阶段",by:"owner"}] }), "owner");
+      saveFlow(app, JSON.stringify({ id, name: id + " 的名称", description: id + " 的说明", for: { spaces }, stages: [{ id: "step", name: id + " 的阶段", by: "owner" }] }), "owner");
     }
     const ids = (await json("ann","/api/flows")).flows.map((f: {id:string}) => f.id);
     expect(ids).toEqual(expect.arrayContaining(["generic","shared"]));
@@ -207,13 +207,35 @@ describe("roles and permissions", async () => {
       expect(result.isError, result.text).toBe(false);
       const payload = JSON.parse(result.text);
       expect(payload.flows.map((f: { id: string }) => f.id)).toEqual(ids);
-      if (itemId) expect(payload.suits).toContain("shared");
+      if (itemId) expect(payload.suits).toEqual(expect.arrayContaining(["generic", "shared"]));
       expect(result.text).not.toContain("private-flow");
     }
     // An account that can read both projects still uses the narrower run scope.
     expect((await list("cat", null)).text).toContain("private-flow");
     expect((await list("cat", ["team"])).text).not.toContain("private-flow");
     expect(JSON.parse((await list("ann", ["other"])).text).flows).toEqual([]);
+
+    const limited = "limited-flow-reader";
+    createUser(app, { id: limited, name: "流程读者" });
+    for (const project of ["team", "other"]) addMember(app, project, limited, "reader");
+    tokens[limited] = createApiToken(app, limited, "test");
+    const flowLists = async () => {
+      const web = await as(limited, "/api/flows");
+      expect(web.status).toBe(200);
+      const agent = await list(limited, null);
+      expect(agent.isError, agent.text).toBe(false);
+      return [await web.text(), agent.text];
+    };
+    for (const result of await flowLists()) expect(result).toContain("private-flow 的阶段");
+    const changed = await fetch(base + "/api/members/" + limited + "/capabilities", {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ preset: "member", overrides: [{ capability: "flows.view", scope_kind: "space", scope_id: "other", effect: "deny" }] }),
+    });
+    expect(changed.status).toBe(200);
+    for (const result of await flowLists()) {
+      expect(result).toContain("shared 的阶段");
+      expect(result).not.toContain("private-flow");
+    }
 
     const secondOwner = "flow-owner";
     createUser(app, { id: secondOwner, name: "流程负责人", role: "owner" });
