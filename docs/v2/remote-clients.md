@@ -124,7 +124,7 @@
 - **空间**：`scopeFor(用户, 请求的空间)`；默认空间是他的个人空间（本人是 `personal`）。`x-omem-spaces` 可以再收窄，不能放宽。
 - **写入**：照常走工具层的检查（`canWrite`、`wiki.write`），记忆的来源档案记成 `peer:<主机名>`（和配对设备一样），之后照常交给记忆复核。
 - **运行**：沿用 `kind = 'peer-agent'`（运行页叫“设备的外部 Agent”），`user_id` 是这个人（本人为空），标题“<名字> 在 <主机名> 上的外部 Agent（<会话>）”，会话按（人、主机名、会话名）区分，`input` 里记 `caller`、`session`、`agent`、`model`、`effort`、`via`（`token` / 认证插件 id）。15 分钟没有调用就结束，下一次调用再开（沿用现有逻辑）。
-- **权限**：新增全局权限 `tools.external`（“在自己的电脑上用 omem 工具（CLI、MCP）”），内置的 admin、member、viewer 都有（viewer 的工具按空间权限只剩读取类）。没有这个权限时返回 403 并说明。
+- **权限**：新增全局权限 `tools.external`（“在自己的电脑上用 omem 工具（CLI、MCP）”），内置的 admin、member、viewer、observer 都有（viewer 的工具按空间权限只剩读取类）。没有这个权限时返回 403 并说明。
 
 ### 5.3 凭据不进日志
 
