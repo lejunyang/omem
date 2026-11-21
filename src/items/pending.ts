@@ -37,11 +37,43 @@ function askCategory(ask: ReturnType<typeof toAsk>): [PendingAction["group"], st
   return ask.kind === "suggestion" ? ["propose", "提议"] : ["ask", "提问"];
 }
 
-/** Both endpoints use these same visible source rows, including the per-change card association. */
-export async function pendingView(app: App, userId: string) {
+/** The person's spaces as a `scope` CTE: `visible(col)` keeps rows outside them out. */
+function scoped(app: App, userId: string) {
   const spaces = accessibleSpaces(app, userId);
   const visible = (column: string) => spaces ? `(${column} is null or ${column} in (select value from scope))` : "1";
-  const rows = <T>(sql: string, ...params: string[]) => all<T>(app.db, `with recursive scope as (select value from json_each(?)) ${sql}`, JSON.stringify(spaces), ...params);
+  const rows = <T>(sql: string, ...params: (string | number)[]) => all<T>(app.db, `with recursive scope as (select value from json_each(?)) ${sql}`, JSON.stringify(spaces), ...params);
+  return { spaces, visible, rows };
+}
+
+export type PendingMetric = { id: string; name: string; why: string; unit: string; itemId: string | null; at: string };
+
+/** The metrics agents proposed that wait for the person (the data page's “等你确认”), newest first. */
+export function pendingMetrics(app: App, userId: string, limit = 100): PendingMetric[] {
+  const { visible, rows } = scoped(app, userId);
+  return rows<PendingMetric>(
+    `select m.id,m.name,coalesce(m.why,'') why,coalesce(m.unit,'') unit,i.id itemId,m.created_at at from metrics m left join listen_contexts l on l.id=m.context_id
+     left join items i on i.id=coalesce(m.item_id,l.item_id) left join runs r on r.id=m.defined_run
+     left join spaces home on home.id=m.space_id and home.kind='personal'
+     where m.status='proposed' and coalesce(i.user_id,r.user_id,home.owner_id,'owner')=? and ${visible("m.space_id")}
+       and ${visible("l.space_id")} and ${visible("i.space_id")} and ${visible("r.space_id")}
+     order by m.created_at desc limit ?`, userId, limit);
+}
+
+export type PendingProfileProposal = { id: string; target: string; kind: "prompt" | "skill" | "settings"; title: string; reason: string; at: string; noticedAt: string | null };
+
+/** What profile reviews proposed for the owner's agents and roles (agents/proposals.ts), oldest notice first, then newest. Only the owner's. */
+export function pendingProfileProposals(app: App, userId: string, limit = 100): PendingProfileProposal[] {
+  if (userId !== OWNER) return [];
+  const { visible, rows } = scoped(app, userId);
+  return rows<PendingProfileProposal>(`select p.id,p.target,p.kind,p.title,coalesce(p.reason,'') reason,p.created_at at,p.expiry_notice_at noticedAt
+    from profile_proposals p left join runs r on r.id=p.run_id
+    where p.status='pending' and coalesce(r.user_id,'owner')=? and ${visible("r.space_id")}
+    order by p.expiry_notice_at is null, p.created_at desc limit ?`, userId, limit);
+}
+
+/** Both endpoints use these same visible source rows, including the per-change card association. */
+export async function pendingView(app: App, userId: string) {
+  const { spaces, visible, rows } = scoped(app, userId);
   const itemOwner = "coalesce(i.user_id,'owner') = ?";
   const askRows = rows<Parameters<typeof toAsk>[0] & { itemId: string | null; deadline: string | null }>(
     `select a.*, i.id itemId, coalesce(json_extract(a.context,'$.deadline'),json_extract(a.context,'$.expiresAt')) deadline
@@ -99,13 +131,7 @@ export async function pendingView(app: App, userId: string) {
      order by p.created_at desc limit 100`, userId, userId);
   for (const p of updates) add("item-update", p.id, "propose", "更新", p.note, p.at, { itemId: p.itemId });
 
-  const metrics = rows<{ id: string; itemId: string | null; at: string }>(
-    `select m.id,i.id itemId,m.created_at at from metrics m left join listen_contexts l on l.id=m.context_id
-     left join items i on i.id=coalesce(m.item_id,l.item_id) left join runs r on r.id=m.defined_run
-     left join spaces home on home.id=m.space_id and home.kind='personal'
-     where m.status='proposed' and coalesce(i.user_id,r.user_id,home.owner_id,'owner')=? and ${visible("m.space_id")}
-       and ${visible("l.space_id")} and ${visible("i.space_id")} and ${visible("r.space_id")}
-     order by m.created_at desc limit 100`, userId);
+  const metrics = pendingMetrics(app, userId);
 
   const itemIds = [...new Set([...actions, ...metrics].map(a => a.itemId).filter(Boolean))];
   const roots = new Map(rows<{ seed: string; id: string; title: string }>(`, ancestors(seed,id,title,parent,depth) as (
@@ -143,9 +169,8 @@ export async function pendingView(app: App, userId: string) {
       drafts += c.count;
       add("draft", c.purpose, "reply", "草稿", `${c.count} 条回复草稿在飞书里等你点发送`, c.at, { count: c.count, href: app.config.lark.appId ? `https://applink.feishu.cn/client/bot/open?appId=${encodeURIComponent(app.config.lark.appId)}` : "#/work" });
     }
-    const profiles = rows<{ at: string }>(`select p.created_at at from profile_proposals p left join runs r on r.id=p.run_id
-      where p.status='pending' and coalesce(r.user_id,'owner')=? and ${visible("r.space_id")} order by p.created_at desc limit 100`, userId);
-    if (profiles.length) add("profile", "pending", "propose", "档案", `${profiles.length} 个档案或角色修改等确认`, profiles[0].at, { count: profiles.length, href: "#/agents?tab=agents" });
+    const profiles = pendingProfileProposals(app, userId);
+    if (profiles.length) add("profile", "pending", "propose", "档案", `${profiles.length} 个档案或角色修改等确认`, profiles.reduce((a, p) => (p.at > a ? p.at : a), ""), { count: profiles.length, href: "#/agents?tab=agents" });
     const skills = await draftSkillSummary(app);
     if (skills) add("skill", "drafts", "propose", "技能", `${skills.count} 个技能草稿等确认`, skills.at, { count: skills.count, href: "#/agents?tab=skills" });
   }
