@@ -21,6 +21,7 @@
 | `POST /grants` | `{"userId":"member-a","mode":"view","hours":2}`。返回 `id、sessionId、userId、mode、expiresAt`。成员需有未过期的完整登录会话。已有授权返回 409。 |
 | `PATCH /grants/:grantId` | 传 `mode` 或 `hours`，也可同时传。小时从修改时刻起算。改模式后重新打开画面。 |
 | `DELETE /grants/:grantId` | 撤销指定授权。已开的画面随即断开。 |
+| `POST /navigate` | 操作模式或主人可提交 `{"url":"https://example.test/"}` 给当前页面换地址。 |
 | `POST /view` | 返回 `src` 并设置 HttpOnly Cookie。浏览器在同源 iframe 打开该地址。 |
 
 `GET /api/remote` 的 `sessions` 同时列出自己的会话和获准查看的会话。以下是成员看到的列表项节选：

@@ -31,7 +31,7 @@ export function changeGrant(app: App, s: Session, actor: string, edit: Edit | nu
   if (s.kind !== "browser") throw new HttpError(400, "只能授权浏览器会话");
   const result = withinTx(app.db, () => {
     const previous = id ? one<Grant>(app.db, `select ${columns} ${joined} where g.session_id=? and g.id=? and g.revoked_at is null`, s.id, id) : null;
-    if (id && !previous) throw new HttpError(404, "授权不存在");
+    if (id && (!previous || previous.expiresAt <= now())) throw new HttpError(404, "授权不存在或已经到期");
     const userId = previous?.userId ?? edit!.userId!;
     const mode = edit?.mode ?? previous!.mode;
     const { defaultHours, maxHours } = app.config.remoteGrants;
@@ -57,6 +57,6 @@ export function changeGrant(app: App, s: Session, actor: string, edit: Edit | nu
     audit(app, actor, edit ? "remote.grant" : "remote.revoke", s.id, detail);
     return { id, ...detail };
   });
-  app.events.emit("remote-access", s.id);
+  app.events.emit("remote-access", s.id, result.id, edit ? result.mode : null);
   return result;
 }

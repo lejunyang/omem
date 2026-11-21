@@ -434,7 +434,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/remote/settings": g("desktop.control"),
   "PUT /api/remote/settings": g("desktop.control"),
   "POST /api/remote/settings/probe": g("desktop.control"),
-  "POST /api/remote/sessions/:id/navigate": g("desktop.control"),
+  "POST /api/remote/sessions/:id/navigate": "self",
   "DELETE /api/remote/sessions/:id": g("desktop.control"),
   "POST /api/remote/sessions/:id/recording": g("desktop.control"),
   "DELETE /api/remote/sessions/:id/recording": g("desktop.control"),

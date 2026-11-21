@@ -27,6 +27,7 @@ function assist() {
     const u = new URL(req.url ?? "/", "http://x");
     if (u.searchParams.get("token") !== token) return void (res.writeHead(403), res.end());
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    if (req.headers.accept === "application/x-test-stream") { res.write("first frame"); return; }
     res.end(`<title>viewer</title>path=${u.pathname}`);
   });
   const wss = new WebSocketServer({ noServer: true });

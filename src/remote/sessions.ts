@@ -56,7 +56,8 @@ export const sessionView = (s: Live) => ({
 });
 
 export function viewerAccess(app: App, s: Live, user: string) {
-  if (user === OWNER || (s.userId === user && (s.origin ? activeUser(findUser(app, user)) : can(app, user, "desktop.control"))))
+  const managesBrowser = user === OWNER && s.kind === "browser";
+  if (managesBrowser || (s.userId === user && (s.origin ? activeUser(findUser(app, user)) : can(app, user, "desktop.control"))))
     return { mode: "operate" as Mode, grantId: null, expiresAt: null };
   const grant = effectiveGrant(app, s, user);
   if (!grant) throw new HttpError(403, "没有这个会话的有效授权");
@@ -80,7 +81,7 @@ export function listSessions(app: App, user: string) {
     JSON.stringify([...new Set([...live.values()].map(s => s.userId))])).map(u => [u.id, u.name]));
   return [...live.values()].flatMap(s => {
     const mine = s.userId === user;
-    const manager = user === OWNER || mine;
+    const manager = (user === OWNER && s.kind === "browser") || mine;
     const assigned = bySession.get(s.id) ?? [];
     const grant = assigned.find(g => g.userId === user && access.source(`remote.${g.mode}`));
     if (!(manager && desktop) && !(mine && s.origin && access.active) && !grant) return [];
@@ -93,12 +94,6 @@ export function getSession(id: string, userId?: string): Live {
   const s = live.get(id);
   if (!s || (userId && s.userId !== userId)) throw new HttpError(404, "远程会话已经结束");
   return s;
-}
-
-/** What `aad assist` serves for this session, for the proxy. */
-export function assistOf(id: string) {
-  const s = live.get(id);
-  return s ? { port: s.assist.port, token: s.assist.token } : null;
 }
 
 /** The address the page should load: the viewer with its token. */
@@ -396,8 +391,9 @@ function keepReplay(dir: string, answer: any) {
 }
 
 /** The address bar the viewer does not have: take a browser session's page somewhere. */
-export async function navigate(sessionId: string, url: string, userId: string) {
-  const s = getSession(sessionId, userId);
+export async function navigate(app: App, sessionId: string, url: string, userId: string) {
+  const s = getSession(sessionId);
+  if (viewerAccess(app, s, userId).mode !== "operate") throw new HttpError(403, "需要这个会话的操作授权");
   if (s.kind !== "browser") throw new HttpError(400, "只有浏览器会话有地址");
   if (!/^https?:\/\//.test(url)) throw new HttpError(400, "网址要以 http:// 或 https:// 开头");
   await goTo(s, url);

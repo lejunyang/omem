@@ -115,7 +115,7 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
     const s = getSession((req.params as { id: string }).id, userId);
     return view(await restartViewer(app, s.id, userId, viewerArgs(readSettings(app, userId), s.kind, cachedProbe(app))), reply, userId);
   });
-  server.post("/api/remote/sessions/:id/navigate", async (req) => navigate((req.params as { id: string }).id, q(z.object({ url: z.string().min(1).max(2048) }), req.body).url, who(req)));
+  server.post("/api/remote/sessions/:id/navigate", async (req) => navigate(app, (req.params as { id: string }).id, q(z.object({ url: z.string().min(1).max(2048) }), req.body).url, who(req)));
   server.delete("/api/remote/sessions/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     getSession(id, who(req));

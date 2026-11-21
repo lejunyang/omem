@@ -42,8 +42,8 @@ describe("browser session grants", () => {
   function cap(mode: string) {
     run(app.db, "insert or replace into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,?,'global','','allow','','owner')", member, "remote." + mode);
   }
-  async function connect(id: string) {
-    const r = await api(`/sessions/${id}/view`, "POST", undefined, token);
+  async function connect(id: string, as = token) {
+    const r = await api(`/sessions/${id}/view`, "POST", undefined, as);
     expect(r.status).toBe(200);
     const cookie = r.headers.get("set-cookie")!.split(";")[0];
     const { src } = await r.json();
@@ -61,6 +61,7 @@ describe("browser session grants", () => {
     const path = `/sessions/${id}`;
     expect((await api(path + "/view", "POST", undefined, token)).ok).toBe(false);
     cap("view");
+    expect((await fetch(app.baseUrl + "/remote/" + id + "/?token=viewer", { headers: { authorization: "Bearer " + token } })).ok).toBe(false);
     expect((await (await api("", "GET", undefined, token)).json()).sessions).toEqual([]);
     expect((await api(path + "/view", "POST", undefined, token)).ok).toBe(false);
     const grant = await (await api(path + "/grants", "POST", { userId: member, mode: "view" })).json();
@@ -76,6 +77,7 @@ describe("browser session grants", () => {
     for (const [suffix, method, body] of [
       ["/sessions", "POST", { kind: "desktop" }], ["/screens", "GET"], [path, "DELETE"],
       [path + "/recording", "POST", {}], ["/settings", "PUT", {}], [path + "/viewer", "POST"],
+      [path + "/navigate", "POST", { url: "https://example.test/" }],
       [path + "/grants", "POST", { userId: member, mode: "view" }], [path + "/grants/" + grant.id, "DELETE"],
     ] as const) expect((await api(suffix, method, body, token)).ok).toBe(false);
     const closed = once(view.ws, "close");
@@ -85,11 +87,24 @@ describe("browser session grants", () => {
     cap("operate");
     const operator = await connect(id);
     expect((await fetch(view.url, { headers: { cookie: view.cookie } })).ok).toBe(false);
+    expect((await api(path + "/navigate", "POST", { url: "https://example.test/" }, token)).status).toBe(200);
+    const ownerView = await connect(id, "test-owner");
+    const ownersList = await (await api("")).json();
+    expect(ownersList.sessions.find((s: {id:string}) => s.id === id).connections).toEqual(expect.arrayContaining([
+      { userId: member, mode: "operate" }, { userId: "owner", mode: "operate" }
+    ]));
+    const stream = await fetch(operator.url, { headers: { cookie: operator.cookie, accept: "application/x-test-stream" } });
+    const reader = stream.body!.getReader();
+    await reader.read();
+    const streamEnded = expect(reader.read()).rejects.toThrow();
     operator.ws.send('{"type":"key"}');
     await expect.poll(() => operator.frames.at(-1)).toBe('{"type":"key"}');
     const ended = once(operator.ws, "close");
     await api(path + "/grants/" + grant.id, "DELETE");
     await ended;
+    await streamEnded;
+    expect(ownerView.ws.readyState).toBe(WebSocket.OPEN);
+    ownerView.ws.close();
     expect((await fetch(operator.url, { headers: { cookie: operator.cookie } })).ok).toBe(false);
     expect(all<{ action: string }>(app.db, "select action from audit_events where target=? order by id", id).map(r => r.action)).toEqual(["remote.grant","remote.grant","remote.revoke"]);
   });

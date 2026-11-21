@@ -17,7 +17,16 @@ const tickets = new WeakMap<App, Map<string, Ticket>>();
 export function viewerCookie(app: App, id: string, userId: string, access: Access) {
   const key = randomBytes(24).toString("hex");
   let issued = tickets.get(app);
-  if (!issued) tickets.set(app, issued = new Map());
+  if (!issued) {
+    const entries = new Map<string, Ticket>();
+    tickets.set(app, entries);
+    issued = entries;
+    app.events.on("remote-access", (session: string, grant?: string, mode?: Access["mode"]) => {
+      for (const [key, t] of entries) {
+        if (t.id === session && (!grant || (t.grantId === grant && t.mode !== mode))) entries.delete(key);
+      }
+    });
+  }
   issued.set(key, { ...access, id, userId });
   if (issued.size > 1000) issued.delete(issued.keys().next().value!);
   return `omem_remote=${key}; Path=/remote/${id}; HttpOnly; SameSite=Lax`;
