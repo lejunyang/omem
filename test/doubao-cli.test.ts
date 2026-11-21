@@ -1,25 +1,195 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { writeFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { doubaoArgs, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
-import type { AgentProfile } from "../src/core/config.ts";
-import type { AgentEvent } from "../src/agents/types.ts";
+import { doubaoCommand, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
+import { agentProfileSchema, type AgentProfile } from "../src/core/config.ts";
+import { agentRunError, type AgentEvent } from "../src/agents/types.ts";
 import { runBackend } from "../src/agents/dispatch.ts";
 import { saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
 import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 import { testApp } from "./helpers.ts";
 import { all } from "../src/core/db.ts";
 import { saveProbe } from "../src/agents/probe.ts";
+import { askModel } from "../src/agents/oneshot.ts";
+import * as acp from "../src/agents/acp.ts";
+import { threadTurn } from "../src/agents/sessions.ts";
+import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
+import { runCodeTask } from "../src/agents/code.ts";
+import { addRunEvent, createRun, getRun, runEvents, setRunOutput } from "../src/agents/runs.ts";
+import { createUser, addMember } from "../src/core/users.ts";
+import { saveRole } from "../src/auth/permissions.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import * as reviews from "../src/agents/review-chain.ts";
+import * as runner from "../src/agents/runner.ts";
+import { prepareRun, runRole } from "../src/agents/runner.ts";
+import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { revokeToolToken } from "../src/agents/tools.ts";
 
 const fake: AgentProfile = { id: "doubao-cli", transport: "doubao-cli", command: process.execPath, args: [resolve("test/fake-doubao-cli.ts")], env: {}, idleTimeoutMs: 60_000 };
 
 describe("doubao cli", () => {
   it("passes model, effort, a permission mode by whether it may write, and the working directory", () => {
     const p = { ...fake, command: "doubao", args: [], model: "Auto", effort: "low" };
-    expect(doubaoArgs(p, { cwd: "/w", prompt: "" }, "hi")).toEqual(["-p", "hi", "--model", "Auto", "--effort", "low", "--permission-mode", "ask_risky", "-C", "/w"]);
-    expect(doubaoArgs(p, { cwd: "/w", prompt: "", allowWrites: true, resumeSessionId: "9" }, "hi").slice(0, 2)).toEqual(["--resume", "9"]);
-    expect(doubaoArgs(p, { cwd: "/w", prompt: "", allowWrites: true }, "hi")).toContain("always_allow");
+    expect(doubaoCommand(p, { cwd: "/w", prompt: "" }, "hi").args).toEqual(["-p", "hi", "--model", "Auto", "--effort", "low", "--permission-mode", "ask_risky", "-C", "/w"]);
+    expect(doubaoCommand(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow", resumeSessionId: "9" }, "hi").args.slice(0, 2)).toEqual(["--resume", "9"]);
+    expect(doubaoCommand(p, { cwd: "/w", prompt: "", doubaoPermission: "always_allow" }, "hi").args).toContain("always_allow");
+  });
+
+  it("keeps risky approval for unboxed guest turns in every global mode", () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    setSandboxSupportForTests({ ok: false, reason: "fixture unavailable" });
+    try {
+      for (const sandbox of ["off", "prefer"] as const) for (const mode of ["per-role", "sandboxed", "all"] as const) {
+        app.config.agents.ownSandbox.mode = sandbox;
+        app.config.agents.fullAccess = mode;
+        for (const role of ["guest", "assistant"] as const) {
+          const prep = prepareRun(app, { actor: { role }, guestTurn: true, fullAccess: true,
+            spaceId: "personal", runId: null, profile: fake });
+          try {
+            expect(prep.isolation.box).toBeUndefined();
+            expect(prep.fullAccess).toBe(true);
+            expect(doubaoCommand(fake, { app, cwd: prep.cwd, prompt: "", doubaoPermission: prep.doubaoPermission, fullAccess: prep.fullAccess }, "hi").args).toContain("ask_risky");
+          } finally { revokeToolToken(prep.token); }
+        }
+      }
+    } finally { setSandboxSupportForTests(undefined); app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(process.platform !== "linux")("forces Doubao mode only in the prepared sandbox and preserves other backends' write permission", () => {
+    const app = testApp();
+    const home = mkdtempSync(join(tmpdir(), "doubao-mode-"));
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("XDG_DATA_HOME", join(home, ".local/share"));
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.ownSandbox.mode = "require";
+    setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+    try {
+      for (const mode of ["per-role", "sandboxed", "all"] as const) {
+        app.config.agents.fullAccess = mode;
+        for (const transport of ["doubao-cli", "acp", "codex-cli", "claude-cli"] as const) {
+          const profile = agentProfileSchema.parse({ id: "fixture", transport, command: process.execPath });
+          const prep = prepareRun(app, { actor: { role: "guest" }, spaceId: "personal", runId: null, fullAccess: true, profile });
+          try {
+            expect(prep.isolation.box).toBeDefined();
+            expect(prep.fullAccess).toBe(true);
+            expect(prep.acpWritable).toBe(false);
+            expect(prep.allowWrites).toBe(false);
+            if (transport === "doubao-cli") expect(doubaoCommand(profile, { cwd: prep.cwd, prompt: "", doubaoPermission: prep.doubaoPermission }, "hi").args)
+              .toContain(mode === "sandboxed" ? "always_allow" : "ask_risky");
+          } finally { revokeToolToken(prep.token); }
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); app.db.close();
+      rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!sandboxSupport().ok)("applies prepared approval to guest replies and tool-free one-shot judgements", async () => {
+    const app = testApp();
+    const home = mkdtempSync(join(tmpdir(), "approval-home-"));
+    vi.stubEnv("HOME", home);
+    app.baseUrl = "http://127.0.0.1:1";
+    const profile = { ...fake, env: { FAKE_PERMISSION: "1" } };
+    // askModel can try a second backend. Both candidates run the fixture.
+    app.config.agents.profiles = [profile, { ...profile, id: "codex" }];
+    app.config.agents.default = profile.id;
+    try {
+      app.config.agents.ownSandbox.mode = "prefer";
+      for (const [support, mode, expected] of [
+        [true, "sandboxed", "always_allow"], [false, "sandboxed", "ask_risky"],
+        [true, "all", "ask_risky"], [true, "per-role", "ask_risky"],
+      ] as const) {
+        setSandboxSupportForTests(support ? undefined : { ok: false, reason: "fixture" });
+        app.config.agents.fullAccess = mode;
+        const answer = await askModel(app, "判断");
+        expect(JSON.parse(answer!)).toMatchObject({ reason: expected });
+        const events: string[] = [];
+        const r = await runRole(app, { role: "guest", fullAccess: true, spaceId: "personal",
+          task: "回答访客", runId: null, profileId: profile.id, onEvent: e => { if (e.type === "status") events.push(e.text); } });
+        const permission = JSON.parse(r.text).reason;
+        expect(permission).toBe(expected);
+        expect(events.filter(text => text.startsWith("使用 AI："))).toEqual([
+          expect.stringMatching(permission === "always_allow" ? / · 完全访问$/ : / · 风险审批$/),
+        ]);
+      }
+    } finally {
+      setSandboxSupportForTests(undefined); vi.unstubAllEnvs(); app.db.close();
+      rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it.skipIf(!sandboxSupport().ok).each([["member", "ask_risky"], ["owner", "always_allow"]])(
+    "uses the %s initiator for both delegation tier judgements", async (userId, permission) => {
+      const app = testApp();
+      const home = mkdtempSync(join(tmpdir(), "tier-home-"));
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("XDG_DATA_HOME", join(home, ".local/share"));
+      const backend = { ...fake, env: { FAKE_PERMISSION: "1", FAKE_TIER: "heavy" } };
+      app.config.agents.profiles = [backend, { ...backend, id: "codex" }];
+      app.config.agents.default = backend.id;
+      app.config.agents.ownSandbox.mode = "require";
+      app.config.agents.fullAccess = "sandboxed";
+      app.config.review.tiers = [
+        { id: "heavy", name: "完整", guide: "跨仓", checks: ["reviewer"], lead: true, confirmPlan: false,
+          maxRounds: 2, when: { field: "change.repos", op: "gte", value: 2 } },
+        { id: "light", name: "轻量", guide: "", checks: ["reviewer"], lead: false, confirmPlan: false, maxRounds: 1, when: null },
+      ];
+      const repo = mkdtempSync(join(app.home, "repo-"));
+      execFileSync("git", ["init", "-q"], { cwd: repo });
+      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "init", "--allow-empty"], { cwd: repo });
+      const space = createSpace(app, { id: "sample", name: "示例", kind: "repo", rootPath: repo });
+      if (userId !== "owner") {
+        const role = saveRole(app, { name: "交办开发者", scope: "global", permissions: ["code.delegate"] });
+        createUser(app, { id: userId, name: "成员", role: role.id });
+        addMember(app, space.id, userId, "manager");
+      }
+      const run = createRun(app, { kind: "code", spaceId: space.id, userId, title: "示例", input: { task: "更新示例" } });
+      const review = vi.spyOn(reviews, "reviewRound").mockResolvedValue({ verdict: "approved" });
+      const coder = vi.spyOn(runner, "runRole").mockImplementation(async (_app, input) => {
+        expect(input.role).toBe("coder");
+        writeFileSync(join(input.cwd!, "example.txt"), "change");
+        return { text: "完成", stopReason: "end_turn", agent: "fixture", profileId: "fixture", ai: { profile: "fixture" } };
+      });
+      try {
+        await runCodeTask({ app, run, signal: new AbortController().signal, event() {}, output: data => setRunOutput(app, run.id, data) });
+        const out = getRun(app, run.id).output;
+        expect(out.reviewEstimate).toMatchObject({ tier: "heavy", reason: permission });
+        expect(out.reviewPlan).toMatchObject({ tier: "heavy", reasons: expect.arrayContaining([expect.stringContaining("完整」档：" + permission)]) });
+      } finally {
+        review.mockRestore(); coder.mockRestore(); vi.unstubAllEnvs(); app.db.close();
+        rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+  it.each(["direct", "fallback"])("records the launched approval once for a guest answered by the assistant (%s)", async route => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.lark.guests.fullAccess = true;
+    app.config.agents.fullAccess = "sandboxed";
+    const cli = { ...fake, env: { FAKE_PERMISSION: "1" } };
+    const primary = { ...fake, id: "busy", transport: "acp" as const };
+    app.config.agents.profiles = [primary, cli];
+    app.config.agents.default = route === "fallback" ? primary.id : cli.id;
+    app.config.agents.fallback = [{ profile: cli.id }];
+    const busy = vi.spyOn(acp, "openAcp").mockRejectedValue(agentRunError("排队超时", "queue", true));
+    try {
+      const thread = createThread(app, { channel: "lark", spaceId: "personal", settings: { profile: app.config.agents.default } });
+      addMessage(app, thread.id, "user", "查看材料", null, { asker: "访客" });
+      const run = createRun(app, { kind: "ask", title: "群内代答", input: { conversationId: thread.id } });
+      const result = await threadTurn({ app, run, signal: new AbortController().signal, output() {},
+        event: (type, data) => addRunEvent(app, run.id, type, data) }, thread.id, threadMessages(app, thread.id));
+      expect(busy).toHaveBeenCalledTimes(route === "fallback" ? 1 : 0);
+      expect(result.profileId).toBe(cli.id);
+      expect(JSON.parse(result.text).reason).toBe("ask_risky");
+      const status = runEvents(app, run.id).filter(e => e.type === "status").map(e => (e.data as { text: string }).text);
+      expect(status.filter(s => s.startsWith("使用 AI："))).toEqual([`使用 AI：${cli.id} · 默认模型 · 默认强度 · 风险审批`]);
+    } finally {
+      busy.mockRestore(); app.db.close(); rmSync(app.home, { recursive: true, force: true });
+    }
   });
 
   it("runs a turn: the prompt reaches it, the session comes from stderr, the run's env reaches it", async () => {

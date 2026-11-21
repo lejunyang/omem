@@ -55,7 +55,7 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
 async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: string, runId: string | null, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   req = { ...req, cleanup: await sessionCleanup(app, prep.profile, req, emit) };
   const config = app.config.sessions.background;
-  if (egressRequested(app.config,prep.profile) || !config.enabled || config.maxLive === 0 || config.liveMinutes === 0) return runAcp(prep.profile, { ...req, app }, emit);
+  if (req.ownSandbox || egressRequested(app.config,prep.profile) || !config.enabled || config.maxLive === 0 || config.liveMinutes === 0) return runAcp(prep.profile, { ...req, app }, emit);
   const ctx = toolContextForToken(app, prep.token);
   if (!ctx) throw new Error("后台会话的工具权限已失效");
   const { app: _app, runId: _run, ...scope } = ctx;
@@ -63,7 +63,7 @@ async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: 
   const key = createHash("sha256").update(JSON.stringify(stable({
     account: accountOf(prep.profile)?.userId ?? "owner",
     scope, system: prep.system, profile: prep.profile, cwd: prep.cwd,
-    extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, modes: prep.modes, fullAccess: !!req.fullAccess,
+    extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, acpWritable: prep.acpWritable, modes: prep.modes, fullAccess: !!req.fullAccess,
   }))).digest("hex");
   let pool = pools.get(app);
   if (!pool) { pool = new Set(); pools.set(app, pool); }

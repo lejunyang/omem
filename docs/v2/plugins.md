@@ -796,3 +796,57 @@ await api.answerAsk({
 | `PUT /api/notify/outlets` | 传 `{"outlets":[{"id":"localnotice:file","minUrgency":"normal","askKinds":["question"]}]}` 替换自己的插件出口列表。最低紧急程度可选 later、normal、urgent。移除一行即关闭。本人可另传成员的 userId。 |
 | `POST /api/notify/outlets/localnotice:file/test` | 用当前账号试发。查看数据目录 `plugin-data/localnotice/<回执>.json`，同一条通知的更新写回同一个文件。 |
 | `POST /api/plugins/localnotice/call/localnotice_answer` | 本人手动传 `{"ref":"提问回执","choice":0}` 模拟点击。回答后文件变为 `{"closed":true}`。示例只模拟选项。 |
+
+## 流程的完成信号
+
+清单声明 `permissions.flow.signal: true`，注册 `api.flowSignal({ id, name, describe, params?, check })`。流程写 `by: wait` 或 `by: owner`，完成条件写 `done: { signal: "stagekit:mark", with: { file: ready.txt } }`。保存时校验已注册能力及 with 的 JSON Schema；已有定义保留停用的能力，事项本人可手动完成。
+
+`check(ctx, signal)` 收到事项的 id、标题、空间，阶段 id、名称和开始时间，with 参数，以及事项本人可读、属于同一空间的材料引用。返回 `{ done, evidence?, waitingOn?, recheckAfterSec? }`。证据是 `{ text, link? }[]`，链接支持 HTTP、HTTPS、网页内路径和原件引用。宿主落库、写日志与审计，经过原有完成和关卡路径推进。
+
+信号和 Git 共用巡检入口，阶段进入时也检查。Git 核对独立返回。插件信号同时最多问三段，每批轮转最多 32 段，共用五秒询问预算。同一阶段不并发问，每次最多五秒；默认一分钟再问，插件建议间隔限定在 10–3600 秒。失败从三十秒起指数退避，最多一小时，显示“问不到”。停用后显示“等的信号现在没人能判断”。Git 的两个信号保持原有提交核对方式。
+
+## 插件承担一个阶段
+
+清单声明 `permissions.flow.run: true`，注册 `api.stageRunner({ id, name, describe, params?, start, check?, cancel? })`。流程写 `by: { runner: "stagekit:write", with: {} }`，budget.minutes 是从阶段开始计算的时限。只有本人可通过 `PUT /api/flows/:id` 提交共享流程定义，也可以让自己的助手用 `save_flow` 提交。每个带运行器的新版本都先生成确认卡，逐段列出阶段名、运行器全名和插件声明的用途。本人点「启用」后才保存该版本并授权运行。
+
+`start(ctx, signal)` 除信号上下文外收到 attempt、idempotencyKey 和插件自己的 settings，返回 `{ ref, status, summary?, evidence? }`，status 为 running、done 或 failed。同一键重复调用必须返回同一作业，包括外部写成功、宿主还没拿到回执就重启的情况。插件负责动作幂等；宿主保存同一条 flow-runner 运行和回执，恢复时用原键，有回执后优先调用 check(ref, signal)。
+
+长作业每三十秒检查，等待期间释放运行槽。每个回调最多五秒；期限到了用 cancel(ref, signal) 取消已知作业，取消最多五秒。失败写运行错误，阶段卡住；完成经 reportStage 交付，保留运行链接与证据，照常经过本人确认和结果检查。运行器没有模型和 omem 工具令牌，凭据放插件自己的设置。
+
+## 阶段完成前的检查
+
+清单声明 `permissions.flow.gate: true`，注册 `api.stageGate({ id, name, describe, applies?, review })`。applies.flows 和 applies.stages 限定适用范围。默认没有检查，本人用 `PUT /api/flows/:id/checks` 保存启用列表：
+
+```json
+[{"id":"stagekit:word","stages":["write"],"mandatory":true}]
+```
+
+stages 省略时，检查覆盖插件声明范围内的全部阶段。每次成功加载插件后，宿主保存该检查最近声明的流程、阶段和空间。停用期间沿用这份范围。旧配置先沿用已保存的范围；若从未记录范围且插件已停用，宿主先排除本人未选的阶段及清单范围外的空间。其余阶段遇到历史强制项时等待本人处理，流程设置的 `pendingCheckScopes` 和阶段卡片都说明原因。本人可重新加载插件以恢复范围，或调整启用配置后重新交结果。mandatory 是本人启用时选的强制性，默认 false；空数组关闭检查。宿主校验流程、阶段、注册能力及适用范围，最多三十条且不重复。
+
+宿主完成规则和签字先通过，再按能力全名排序检查。review(ctx, signal) 收到事项、阶段、结果的 summary 和 evidence、承担者 by。返回 `{ ok: true }` 或 `{ ok: false, reason, evidence? }`。每条最多两秒，整条链最多八秒。否决使阶段卡住，原因和证据给本人及承担者看；强制检查出错、超时或插件停用时暂停，非强制错误记日志后放行。插件不能放宽宿主拒绝、验收或签字。
+
+拦下后给本人“仍然通过 / 等处理”卡片。仍然通过只处理这一次保存的完成结果，记录被越过的检查与审计；下一件事或重开的尝试重新检查。阶段结果变了，旧卡片失效。
+
+## 声明式 ACP 后端
+
+在 plugin.yaml 的 backends 中声明后端。即使没有 server 文件，启动命令也是代码，信任后才能选择。
+
+```yaml
+backends:
+  - id: helper
+    name: 本机助手
+    command: demo-acp
+    args: [serve]
+    env: [DEMO_API_KEY]
+    install: 安装 demo-acp 命令行
+    launchConfig: { env: DEMO_CONFIG, model: model, effort: effort }
+    egressHosts: [api.example.org]
+```
+
+id 自动变成 `<插件>:<id>`，与内置后端进入同一个目录。还可声明 archiveArgs、sessionHistory、npm、model、effort、skills 和 account。sessionHistory 沿用 codex-rollout 格式；account 沿用账号目录、登录、状态、退出及 tokenEnv 契约。env 只写变量名，值使用运行环境和账号设置，不写清单。
+
+完整声明进入信任指纹，按目录信任的开发插件修改后端声明也要重新确认。卸载、停用或撤销信任立即移出目录，已保存配置保留来源，走后端不可用路径；旧命令不能继续启动。差异由目录字段和 ACP 能力表达。
+
+`GET /api/settings?section=ai` 的 agents 与 `GET /api/profile-options` 的 backends 条目含 `pluginBackend: { plugin, name, available, reason? }`。`GET /api/plugins` 列出后端和启动命令供信任页核对。`GET /api/flows` 返回 signals、runners、gates，流程行含 checks；阶段详情含 pluginEvidence、gateReview、waitingSignal 与运行链接。网页待接描述与参数选择、证据、错误、检查设置和后端来源。
+
+最小文件示例见 [stagekit](../../examples/plugins/stagekit/README.md)。选择隔离模式，按示例先启用检查，再写 ready 标记。运行器参数 verified 为 false 时写“待复核”，本人可在否决卡上越过这一次；省略参数时写“已验证”。

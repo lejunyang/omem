@@ -64,6 +64,12 @@ export function workDirOf(wt: { path: string }) {
   return isLink(wt.path) ? real(wt.path) : wt.path;
 }
 
+/** The review entry point grants read access to its original trees, including inline checkouts. */
+export function reviewWorkspace(app: App, root: string, worktrees: WorktreeRef[], cwd?: string) {
+  return { cwd: cwd ?? (worktrees.length > 1 ? join(app.runsDir, root, "work") : worktrees[0] && workDirOf(worktrees[0])),
+    worktrees, worktreeAccess: "read" as const };
+}
+
 /** Mount only host-assigned trees. The checkout being edited cannot choose its Git mount via .git. */
 export function workspaceMounts(app: App, trees: (Pick<WorktreeRef, "space" | "path" | "slot"> & Partial<Pick<WorktreeRef, "branch" | "commits">>)[], runId?: string, access: "read" | "write" = "write"): WorkspaceMounts {
   const ro = new Set<string>();

@@ -364,12 +364,16 @@ export async function runCodeTask(ctx: RunContext) {
   }
   ctx.output({ worktrees });
 
+  const askForReview = async (prompt: string, timeoutMs: number) => {
+    const { askModel } = await import("./oneshot.ts");
+    return askModel(app, prompt, { userId: owner, signal: ctx.signal, timeoutMs });
+  };
+
   // Triage before coding: review-lead guesses the tier from the task (shown with the progress, and
   // a heavier option the post-coding triage weighs). Only when a tier has a lead to do it.
   if (!continueFrom && !input.taskMode && !input.reviewTier && !input.peerReviewer && !input.peerCoder && app.config.review.tiers.some((t) => t.lead)) {
     const { estimateReview } = await import("./review.ts");
-    const { askModel } = await import("./oneshot.ts");
-    const estimate = await estimateReview(app, input.task, (p) => askModel(app, p, { timeoutMs: 60_000, signal: ctx.signal }));
+    const estimate = await estimateReview(app, input.task, (p) => askForReview(p, 60_000));
     if (estimate) {
       ctx.output({ reviewEstimate: estimate });
       ctx.event("status", { text: `评审负责人预估需要「${estimate.tierName}」档：${estimate.reason}` });
@@ -838,7 +842,6 @@ ${input.task}
     return taskReview(app, run.id, { runId: run.id, signal: ctx.signal, event: ctx.event });
   }
   const { planReview, refineReviewPlan } = await import("./review.ts");
-  const { askModel } = await import("./oneshot.ts");
   const previousPlan = chain?.rounds.filter((id) => id !== run.id).map((id) => getRun(app, id).output.reviewPlan as ReviewPlan | undefined).filter(Boolean).at(-1);
   // The owner's choice for this round on (read now: it may have been set while the round coded).
   const owned = (getRun(app, run.id).input as { roundReview?: RoundReview }).roundReview;
@@ -855,7 +858,7 @@ ${input.task}
     // Triage after coding: the owner's words on tiers and checks, review-lead's estimate, and with a
     // lead one step lighter when the change turned out small. Weighed once, on the first round.
     const estimate = getRun(app, run.id).output.reviewEstimate as ReviewEstimate | undefined;
-    plan = await refineReviewPlan(app, plan, { task: input.task, diff: diffs.join("\n\n"), tierNamed: !!input.reviewTier, estimate }, (p) => askModel(app, p, { timeoutMs: 90_000, signal: ctx.signal }));
+    plan = await refineReviewPlan(app, plan, { task: input.task, diff: diffs.join("\n\n"), tierNamed: !!input.reviewTier, estimate }, (p) => askForReview(p, 90_000));
   } else if (input.reviewOnly?.length) {
     // Named by review-lead, or the checks whose findings the owner chose to fix (review-fix.ts).
     const only = plan.checks.filter((c) => input.reviewOnly!.includes(c));

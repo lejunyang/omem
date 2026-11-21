@@ -26,7 +26,7 @@ export const sectionByPath: Record<string, Section> = {
   "agents.progress": "assistant", "agents.design": "assistant", "agents.autoAdvance": "assistant",
   "agents.workBoard": "assistant", "lark.capture": "knowledge", "lark.knowledge": "knowledge",
   "lark.commands": "assistant", "lark.guests": "assistant", "lark.invite": "assistant",
-  "agents.cloudTools": "security",
+  "agents.cloudTools": "security", "agents.ownSandbox": "security", "agents.fullAccess": "security",
 };
 
 // Identity, credentials, command execution and network destinations stay under the owner's control.
@@ -80,6 +80,11 @@ export const ownerControls: Record<string, string[]> = {
     "POST /api/cloud-tools/probe",
     "POST /api/cloud-tools/probe/confirm",
   ],
+  "agents.ownSandbox": [
+    "GET /api/security/sandbox",
+    "PUT /api/security/sandbox",
+  ],
+  "agents.fullAccess": [],
   "ai.providers": [
     "PUT /api/ai/keys/:id",
     "POST /api/ai/providers/:id/test",

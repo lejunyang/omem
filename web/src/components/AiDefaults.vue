@@ -5,10 +5,12 @@ import UiSelect from "./UiSelect.vue";
 import { relTime } from "../store";
 
 type Backend = { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: Probe | null; networkReason?: string | null };
+export type UnavailableBackend = { id: string; name?: string; pluginBackend: { name: string; reason: string } };
 type Choice = { agent?: string; model?: string; effort?: string };
-const props = defineProps<{ modelValue: Choice; backends: Backend[]; defaultBackend: string; cachedOnly?: boolean }>();
+const props = defineProps<{ modelValue: Choice; backends: Backend[]; unavailableBackends?: UnavailableBackend[]; defaultBackend: string; cachedOnly?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: Choice]; change: [] }>();
 const backend = computed(() => props.backends.find((b) => b.id === (props.modelValue.agent || props.defaultBackend)));
+const unavailable = computed(() => props.unavailableBackends?.find(b => b.id === (props.modelValue.agent || props.defaultBackend)));
 const probe = computed(() => props.cachedOnly ? backend.value?.probe : probes.data[backend.value?.id ?? ""]);
 const loading = computed(() => !props.cachedOnly && !!probes.pending[backend.value?.id ?? ""]);
 const backendOptions = computed(() => [{ value: "", label: `跟随默认${props.defaultBackend ? `（${props.defaultBackend}）` : ""}` }, ...[...props.backends].sort((a, b) => Number(b.installed) - Number(a.installed) || Number(b.transport === "acp") - Number(a.transport === "acp") || a.name.localeCompare(b.name)).map((b) => ({ value: b.id, label: b.name, hint: `${b.transport ?? ""}${b.installed ? b.networkReason ? ` · ${b.networkReason}` : " · 可用" : " · 未安装或未授权"}` }))]);
@@ -42,7 +44,7 @@ watch(() => backend.value?.id, () => detect(), { immediate: true });
 <template>
   <div class="ai-defaults">
     <div class="fields">
-      <div class="field"><span>后端</span><UiSelect :model-value="modelValue.agent ?? ''" :options="backendOptions" aria-label="后端" @change="(v) => update('agent', v)" /></div>
+      <div class="field"><span>后端</span><UiSelect :model-value="modelValue.agent ?? ''" :options="backendOptions" :placeholder="unavailable?.name || unavailable?.id" aria-label="后端" @change="(v) => update('agent', v)" /></div>
       <div class="field"><span>模型</span>
         <UiSelect v-if="loading || probe?.models.length" :model-value="modelValue.model ?? ''" :disabled="loading" :options="choices('model', probe?.models ?? [])" aria-label="模型" @change="(v) => update('model', v)" />
         <input v-else class="input mono" :value="modelValue.model" :placeholder="backend?.model || '未检测到可选项，可手填'" aria-label="模型" @input="update('model', ($event.target as HTMLInputElement).value)" />
@@ -52,6 +54,7 @@ watch(() => backend.value?.id, () => detect(), { immediate: true });
         <input v-else class="input mono" :value="modelValue.effort" :placeholder="inherited('effort') || '未检测到可选项，可手填'" aria-label="思考强度" @input="update('effort', ($event.target as HTMLInputElement).value)" />
       </div>
     </div>
+    <p v-if="unavailable" class="small muted">{{ unavailable.pluginBackend.reason }}（{{ unavailable.pluginBackend.name }}）。</p>
     <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || `留空就跟随默认。${probe?.at ? `可选项检测于${relTime(probe.at)}。` : ''}` }}</span><button v-if="!cachedOnly" type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
   </div>
 </template>

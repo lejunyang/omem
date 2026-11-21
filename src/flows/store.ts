@@ -13,6 +13,8 @@ import type { StageEvent } from "./review.ts";
 export type StageState = "pending" | "gated" | "doing" | "blocked" | "done" | "skipped" | "stale";
 export type FlowActor = { actor: string; runId?: string; userId?: string };
 export type StageControl = {
+  gateReview?: import("./plugin-gates.ts").GateReview;
+  pluginEvidence?: import("../../packages/plugin-sdk/server.ts").FlowEvidence[];
   objectAfter?: string;
   recorded?: boolean;
   gateLimit?: boolean; grantedGate?: boolean;
@@ -23,6 +25,7 @@ export type StageControl = {
   reminderAt?: string; reminders?: number;
   waitUntil?: string; tierFallback?: string[]; execution?: Execution; escalations?: number; escalated?: boolean;
   budgetStartedAt?: string; usedMinutes?: number;
+  runnerDeadline?: number;
   budgetExceeded?: boolean;
   admitted?: boolean;
   trialId?: string; trialEscalated?: boolean; trialFailures?: number; completedTrials?: number;
@@ -42,7 +45,16 @@ export function itemFlow(app: App, itemId: string): ItemFlow | null {
   const f = one<FlowDb>(app.db, "select * from item_flows where item_id = ?", itemId);
   return f ? { itemId, id: f.flow_id, definition: json(f.definition, {} as FlowDefinition), startedAt: f.started_at, endedAt: f.ended_at, autoStreak: f.auto_streak, card: f.card, startedBy: f.started_by, round: f.round, roundStartedAt: f.round_started_at ?? f.started_at, roundClosedAt: f.round_closed_at, nextRoundAt: f.next_round_at } : null;
 }
-const stage = (s: StageDb): StageRow => ({ itemId: s.item_id, id: s.stage_id, state: s.state, attempt: s.attempt, enteredAt: s.entered_at, doneAt: s.done_at, by: s.by, waitingOn: s.waiting_on, evidence: json(s.evidence, []), note: s.note, askId: s.ask_id, since: s.since, control: json(s.control, {}), round: s.round });
+function readControl(raw: string): StageControl {
+  const control = json<StageControl>(raw, {});
+  const review = control.gateReview as (StageControl["gateReview"] & { patch?: { control?: StageControl } }) | undefined;
+  if (review?.patch) {
+    control.pluginEvidence = review.patch.control?.pluginEvidence;
+    control.gateReview = { summary: review.summary, refs: review.refs, failed: review.failed };
+  }
+  return control;
+}
+const stage = (s: StageDb): StageRow => ({ itemId: s.item_id, id: s.stage_id, state: s.state, attempt: s.attempt, enteredAt: s.entered_at, doneAt: s.done_at, by: s.by, waitingOn: s.waiting_on, evidence: json(s.evidence, []), note: s.note, askId: s.ask_id, since: s.since, control: readControl(s.control), round: s.round });
 export const itemStages = (app: App, id: string) => all<StageDb>(app.db, "select * from item_stages where item_id = ?", id).map(stage);
 export function getStage(app: App, itemId: string, id: string) {
   const s = one<StageDb>(app.db, "select * from item_stages where item_id = ? and stage_id = ?", itemId, id);

@@ -5,7 +5,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
 import McpServices, { type McpServer } from "../components/McpServices.vue";
-import AiDefaults from "../components/AiDefaults.vue";
+import AiDefaults, { type UnavailableBackend } from "../components/AiDefaults.vue";
 import VirtualList from "../components/VirtualList.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import Icon from "../components/Icon.vue";
@@ -36,7 +36,7 @@ type RoleState = { name: string; description: string; customized: boolean; sourc
 type RoleRow = Pick<RoleState, "name" | "description"> & Partial<Pick<RoleState, "customized" | "sourceChanged">>;
 type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; purpose?: string; enabled?: boolean };
 type SkillGroup = { id: string; title: string; enabled: boolean; count: number; enabledCount: number };
-type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
+type Options = { unavailableBackends: UnavailableBackend[]; backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
 type SpecSummary = Pick<Spec, "name" | "description" | "status" | "agent" | "model" | "effort">;
 type SpecRow = SpecSummary & { plugin?: string };
@@ -62,7 +62,7 @@ const skillGroups = ref<SkillGroup[]>([]);
 const looseSkills = computed(() => skills.value.filter((s) => !s.group));
 const mcpServers = ref<McpServer[]>([]);
 const mcpError = ref("");
-const options = ref<Options>({ backends: [], defaultBackend: "", globalDefaultBackend: "", tools: [], toolGroups: [], defaultTools: [] });
+const options = ref<Options>({ unavailableBackends: [], backends: [], defaultBackend: "", globalDefaultBackend: "", tools: [], toolGroups: [], defaultTools: [] });
 /** Whether the profile's backend can run 完全访问 (by its last detection). */
 const accessHint = (agent?: string) => fullAccessHint(options.value.backends.find((b) => b.id === (agent || options.value.defaultBackend)));
 const loading = ref(true);
@@ -578,7 +578,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <p v-if="form.agent || form.model || form.effort" class="muted small">默认 AI · {{ [form.agent, form.model, form.effort].filter(Boolean).join(" · ") }}</p>
           </template>
           <template v-else>
-            <AiDefaults :model-value="form" :backends="options.backends" :default-backend="options.defaultBackend" @update:model-value="(v) => Object.assign(form, v)" @change="dirty = true" />
+            <AiDefaults :model-value="form" :backends="options.backends" :unavailable-backends="options.unavailableBackends" :default-backend="options.defaultBackend" @update:model-value="(v) => Object.assign(form, v)" @change="dirty = true" />
             <div class="grid">
               <div class="field">
                 <span>空间</span>
@@ -655,7 +655,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <div class="row wrap"><strong>默认 AI</strong><span class="spacer" /><button class="btn sm primary" :disabled="saving || !roleAiDirty" @click="saveRoleAi">保存默认 AI</button></div>
           <p class="muted small">这个角色平时用的 AI。助手为某个任务临时换用时不改这里。</p>
           <p v-if="roleDetail.notice" class="small role-notice">{{ roleDetail.notice }}</p>
-          <AiDefaults :model-value="roleAi" :backends="options.backends" :default-backend="options.globalDefaultBackend" @update:model-value="updateRoleAi" />
+          <AiDefaults :model-value="roleAi" :backends="options.backends" :unavailable-backends="options.unavailableBackends" :default-backend="options.globalDefaultBackend" @update:model-value="updateRoleAi" />
           <div v-if="!['guest', 'gatekeeper'].includes(roleName!)" class="field">
             <UiCheckbox :model-value="!!roleDetail.role.overlay?.fullAccess" switch @change="setRoleFullAccess">完全访问：命令不进沙箱、不经审批</UiCheckbox>
             <small class="muted">只对你自己的运行生效（你的对话、后台任务）；别的用户和访客不受影响，规则里的运行看规则上的开关。{{ accessHint(roleAi.agent || options.globalDefaultBackend) }}</small>

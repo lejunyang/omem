@@ -38,4 +38,8 @@ if (prompt.endsWith("fail-after-session")) {
   console.log("Error: 任务中断");
   process.exit(1);
 }
+if (process.env.FAKE_PERMISSION) {
+  console.log(JSON.stringify({ better: "平", tier: process.env.FAKE_TIER, reason: opt("--permission-mode") }));
+  process.exit(0);
+}
 console.log(`echo:${prompt} model=${model ?? ""} effort=${effort ?? ""} env=${process.env.OMEM_TOKEN ?? ""}`);
