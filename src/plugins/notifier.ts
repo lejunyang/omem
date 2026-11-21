@@ -2,14 +2,15 @@ import { DELIVERY_LEASE_MS, DELIVERY_TIMEOUT_MS, retryFailure } from "./delivery
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { activeUser, canWrite, findUser, identitiesOf, identityOwner, larkOpenIdOf } from "../core/users.ts";
+import { activeUser, canWrite, findUser, getUser, identitiesOf, identityOwner, larkOpenIdOf } from "../core/users.ts";
 import { HttpError, json, now, untilAbort, webLink } from "../core/util.ts";
 import { addNotificationSink, deliveryPlan, markPushed, notify, type Notification } from "../core/notify.ts";
 import { answerAsk, getAsk, type Ask } from "../agents/asks.ts";
 import { larkBotInfo } from "../channels/lark-send.ts";
 import { askUrgency } from "../agents/ask-urgency.ts";
 import { staleDays } from "../agents/ask-expiry.ts";
-import { audit } from "../auth/permissions.ts";
+import { saveConfig, type outletSettings } from "../core/config.ts";
+import { audit, isOwner } from "../auth/permissions.ts";
 import { requireAskAccess } from "../auth/routes.ts";
 import { notifiers } from "./process-hooks.ts";
 import type { OutletIdentity, OutNotification, Notifier } from "./types.ts";
@@ -187,20 +188,31 @@ export async function answerFromOutlet(app: App, plugin: string, input: unknown)
 
 export async function listOutlets(app: App, userId: string) {
   const user = recipient(app, userId);
-  const history = new Map(all<{outlet:string; updated:string; error:string|null}>(app.db,
-    `select outlet,updated,error from outlet_deliveries where seq in (select (select seq from outlet_deliveries d
-      where d.outlet=j.value and d.user_id=? and updated is not null order by updated desc limit 1) from json_each(?) j)`,
-    userId, JSON.stringify([...notifiers.keys()])).map(r => [r.outlet, r]));
   const plugins = await Promise.all([...notifiers].map(async ([id, e]) => {
     const signal = deliverySignal(e.lifetime);
     const reachable = await untilAbort(signal, () => reach(e.def, user, signal)).catch(err => ({ ok: false, hint: String(err).slice(0,500) }));
+    const history = one<{updated: string; error: string | null}>(app.db,
+      "select updated,error from outlet_deliveries where user_id=? and outlet=? and updated is not null order by updated desc limit 1", userId, id);
     return { id, name: e.def.name, plugin: e.plugin, builtin: false, supportsAsk: !!e.def.ask, reachable,
-      setting: settings(app, userId).find(s => s.id === id) ?? null, lastDelivery: history.get(id)?.updated ?? null, lastError: history.get(id)?.error ?? null };
+      setting: settings(app, userId).find(s => s.id === id) ?? null, lastDelivery: history?.updated ?? null, lastError: history?.error ?? null };
   }));
   const lark = larkReachable(app, userId);
   return [...["web","lark"].map(id => ({ id, name: id === "web" ? "网页" : "飞书", plugin: null, builtin: true, supportsAsk: true,
     reachable: { ok: id === "web" || lark }, setting: null, lastDelivery: one<{at:string}>(app.db,
       "select json_extract(context,'$.pushed.at') at from notifications where user_id=? and json_extract(context,'$.pushed.channel')=? order by json_extract(context,'$.pushed.at') desc limit 1", userId, id)?.at ?? null })), ...plugins];
+}
+
+export function setOutlets(app: App, requester: string, body: { userId?: string; outlets: z.infer<typeof outletSettings> }) {
+  const userId = body.userId ?? requester;
+  if (userId !== requester && !isOwner(app, requester)) throw new HttpError(403, "只能设置自己的通知出口");
+  getUser(app, userId);
+  const saved = settings(app, userId);
+  if (body.outlets.some(s => !notifiers.has(s.id) && !saved.some(old => old.id === s.id))) throw new HttpError(400, "没有这个通知出口");
+  const outlets = { ...app.config.notify.outlets, [userId]: body.outlets };
+  const next = { ...app.config, notify: { ...app.config.notify, outlets } };
+  saveConfig(next, app.home);
+  app.config.notify = next.notify;
+  return { outlets: body.outlets };
 }
 
 export async function testOutlet(app: App, outlet: string, userId: string) {

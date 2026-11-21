@@ -2511,20 +2511,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.put("/api/notify/outlets", async req => {
     const b = q(z.object({ userId: z.string().optional(), outlets: outletSettings }).strict(), req.body);
-    const userId = b.userId ?? who(req);
-    if (userId !== who(req)) {
-      if (!isOwner(app, who(req))) throw new HttpError(403, "只能设置自己的通知出口");
-      requirePerm(app, who(req), "settings.members");
-    }
-    getUser(app, userId);
-    const { notifiers } = await import("../plugins/process-hooks.ts");
-    const saved = app.config.notify.outlets[userId] ?? [];
-    if (b.outlets.some(s => !notifiers.has(s.id) && !saved.some(old => old.id === s.id))) throw new HttpError(400, "没有这个通知出口");
-    const outlets = { ...app.config.notify.outlets, [userId]: b.outlets };
-    const next = { ...app.config, notify: { ...app.config.notify, outlets } };
-    saveConfig(next, app.home);
-    app.config.notify = next.notify;
-    return { outlets: b.outlets };
+    const { setOutlets } = await import("../plugins/notifier.ts");
+    return setOutlets(app, who(req), b);
   });
   server.post("/api/notify/outlets/:id/test", async req => {
     const { testOutlet } = await import("../plugins/notifier.ts");
