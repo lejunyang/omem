@@ -1,3 +1,4 @@
+import { finishStage } from "../flows/plugin-gates.ts";
 import type { App } from "../core/app.ts";
 import { all, run } from "../core/db.ts";
 import { json, newId, now } from "../core/util.ts";
@@ -72,7 +73,7 @@ export async function tickFixes(app: App, item: Item, f: ItemFlow, d: FlowStage,
       const fix = findingFix(app, v), w = codeWork(app, v.work_id);
       return [`${v.title}：${fix?.verified === "passed" ? "改后通过" : fix?.verified === "failed" ? "改后仍然失败" : w?.stage.group === "active" ? "还在改" : fix?.reruns.length ? "改后没验证清楚，等你看" : "评审没过，等你看"}`];
     });
-    changeStage(app, item.id, d.id, empty ? "skipped" : "done", { by: null, waitingOn: null, control: { ...c, reported: true, runId: undefined, trialId: undefined } }, { actor: "host" }, [empty ? "这一轮没有要改的" : `改了 ${results.length} 条\n${results.map((v) => `- ${v}`).join("\n")}`, pushSummary(app, f)].filter(Boolean).join("\n"));
+    await finishStage(app, item.id, d.id, empty ? "skipped" : "done", { by: null, waitingOn: null, control: { ...c, reported: true, runId: undefined, trialId: undefined } }, { actor: "host" }, [empty ? "这一轮没有要改的" : `改了 ${results.length} 条\n${results.map((v) => `- ${v}`).join("\n")}`, pushSummary(app, f)].filter(Boolean).join("\n"));
     return true;
   };
   if (!c.fixIds.length) return finish(true);

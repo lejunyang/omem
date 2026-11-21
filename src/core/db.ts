@@ -2410,6 +2410,15 @@ export const migrations: readonly string[] = [
    end;`,
   `create index progress_code_takeovers on run_events(run_id)
      where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
+  `create index flow_signal_stage on flow_signals(item_id,stage_id,type,id desc);
+   create index flow_signal_age on flow_signals(at);
+   create index doing_flow_stages on item_stages(item_id,stage_id) where state='doing';`,
+  `update item_stages as s set control=json_set(control,'$.runnerDeadline',
+      (select round((julianday(s.entered_at)-2440587.5)*86400000 + json_extract(d.value,'$.budget.minutes')*60000)
+       from item_flows f,json_each(f.definition,'$.stages') d where f.item_id=s.item_id and json_extract(d.value,'$.id')=s.stage_id))
+     where state='doing' and exists(select 1 from runs r where r.id=s."by" and r.kind='flow-runner');
+   create index flow_runner_deadlines on item_stages(json_extract(control,'$.runnerDeadline'))
+     where state='doing' and json_extract(control,'$.reported') is not 1;`,
 ];
 
 export type Db = DatabaseSync;

@@ -106,7 +106,7 @@ import { searchRun } from "../search/trace.ts";
 import { closeReadProcess } from "../search/read-process.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { readRunFile, type RunFile } from "../agents/run-file.ts";
-import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
+import { deleteSource, getSource, listSourcePaths, listSources, readSource, resolveSourceUris, sourceOutline } from "../sources/store.ts";
 import { MAX_INPUT, parserList, kindList, checkKind } from "../plugins/formats.ts";
 import { APPEND_ONLY, pageExists, deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
@@ -810,12 +810,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/sources/resolve", async (req) => {
     const o = q(z.object({ uri: z.string().min(1), space: z.string().optional() }), req.query);
-    const clean = o.uri.replace(/^\.\//, "");
-    const row =
-      one<{ id: string }>(app.db, `select id from sources where uri = ? ${o.space ? "and space_id = ?" : ""} and deleted_at is null order by updated_at desc`, clean, ...(o.space ? [o.space] : [])) ??
-      one<{ id: string }>(app.db, `select id from sources where uri like ? ${o.space ? "and space_id = ?" : ""} and deleted_at is null order by length(uri)`, `%/${clean}`, ...(o.space ? [o.space] : []));
-    if (!row || !await sourceReadable(app, who(req), row.id)) throw new HttpError(404, `找不到原件 ${o.uri}`);
-    return { id: row.id };
+    const [id] = await resolveSourceUris(app, [o]);
+    if (!id || !await sourceReadable(app, who(req), id)) throw new HttpError(404, `找不到原件 ${o.uri}`);
+    return { id };
   });
   server.get("/api/messages/:id", async (req) => {
     const m = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(app.db, "select * from messages where id = ?", (req.params as { id: string }).id.replace(/^msg:/, ""));
@@ -1094,16 +1091,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return who(req) === OWNER ? roles : roles.map(({ name, description }) => ({ name, description }));
   });
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
-  server.get("/api/profile-options", async () => ({
-    // The cached probe rides along so the form need not ask again (probe once, or "重新检测").
-    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(app, p.id) })),
-    globalDefaultBackend: app.config.agents.default || listAgentProfiles(app).find((p) => p.installed)?.id || "",
-    defaultBackend: (() => { try { return profileFor(app, "assistant").id; } catch { return ""; } })(),
-    tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write, roleOnly: ROLE_TOOLS.includes(t.name) })),
-    // The groups a profile's `tools` may name (`group:<id>`); a whole group never brings the roleOnly ones (tool-help.ts expandTools).
-    toolGroups: TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, tools: g.tools })),
-    defaultTools: DEFAULT_SPEC_TOOLS,
-  }));
+  server.get("/api/profile-options", async () => {
+    const profiles = listAgentProfiles(app);
+    return {
+      // The cached probe rides along so the form need not ask again (probe once, or "重新检测").
+      backends: profiles.filter(p => p.pluginBackend?.available !== false).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, pluginBackend: p.pluginBackend, probe: cachedProbe(app, p.id) })),
+      unavailableBackends: profiles.filter(p => p.pluginBackend?.available === false).map(({id,name,pluginBackend}) => ({id,name,pluginBackend})),
+      globalDefaultBackend: app.config.agents.default || profiles.find((p) => p.installed)?.id || "",
+      defaultBackend: (() => { try { return profileFor(app, "assistant").id; } catch { return ""; } })(),
+      tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write, roleOnly: ROLE_TOOLS.includes(t.name) })),
+      // The groups a profile's `tools` may name (`group:<id>`); a whole group never brings the roleOnly ones (tool-help.ts expandTools).
+      toolGroups: TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, tools: g.tools })),
+      defaultTools: DEFAULT_SPEC_TOOLS,
+    };
+  });
   server.get("/api/roles/:name", async (req) => {
     const name = (req.params as { name: string }).name;
     if (!isBuiltinRole(name)) throw new HttpError(404, `没有内置角色 ${name}`);
@@ -2870,7 +2871,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         ...listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description, agent: defaultBackendOf(() => resolveRunProfile(app, { actor: { spec: s } }).id) })),
       ],
       // The AI a rule's agent action may be pinned to (AiDefaults on the rules page).
-      backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(app, p.id) })),
+      backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, pluginBackend: p.pluginBackend, probe: cachedProbe(app, p.id) })),
       chats: all<{ chat_id: string; name: string; chat_mode: string | null }>(app.db, "select chat_id, name, chat_mode from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
       conversations: all(app.db, "select id,title,channel,space_id,external_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
@@ -3532,9 +3533,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return {
       config: settingsView(app.config, visible, access.owner),
       ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : (visible("ai") || visible("assistant")) && {
-        agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort }) => {
+        agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
           const probe = userProbe(app, who(req), id);
-          return { id, name, installed, transport, model, effort, probe: probe && {
+          return { id, name, installed, transport, model, effort, pluginBackend, probe: probe && {
             at: probe.at, models: probe.models, efforts: probe.efforts, effortsByModel: probe.effortsByModel,
           } };
         }),

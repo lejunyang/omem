@@ -15,6 +15,10 @@ export type CatalogEntry = {
   /** Writable state of the local login beyond its session history and skill directory. */
   statePaths?: string[];
   stateFiles?: string[];
+  plugin?: string;
+  pluginName?: string;
+  /** Names to inherit from the host environment; values are never stored in the manifest. */
+  envNames?: string[];
   /**
    * Settings the agent takes when it starts, as a JSON object in an environment variable (`env`), and the keys
    * its model and thinking level go by there. A run that names a model or a level writes them in, so the
@@ -150,6 +154,45 @@ export const accountOnlyCatalog: CatalogEntry[] = [
   },
 ];
 
+const pluginDeclarations = new Map<string, CatalogEntry>();
+export function declarePluginBackends(plugin: string, name: string, entries: CatalogEntry[]) {
+  for (const [id, e] of pluginDeclarations) if (e.plugin === plugin) pluginDeclarations.delete(id);
+  for (const e of entries) {
+    const entry = { ...e, id: `${plugin}:${e.id}`, plugin, pluginName: name };
+    pluginDeclarations.set(entry.id, entry);
+  }
+}
+export function registerPluginBackends(plugin: string) {
+  const entries = [...pluginDeclarations.values()].filter(e => e.plugin === plugin);
+  acpCatalog.push(...entries);
+  return () => {
+    for (const e of entries) {
+      const i = acpCatalog.indexOf(e);
+      if (i >= 0) acpCatalog.splice(i, 1);
+    }
+  };
+}
+export function pluginBackendStatus(profile: Pick<AgentProfile, "id" | "source" | "plugin">) {
+  const id = profile.source ?? profile.id, e = pluginDeclarations.get(id);
+  if (!e && !profile.plugin) return undefined;
+  const available = !!e && acpCatalog.some(c => c.id === id && c.plugin === e.plugin);
+  return { plugin: e?.plugin ?? profile.plugin!, name: e?.pluginName ?? profile.plugin!, available, ...(!available && { reason: "这个后端来自已停用或未信任的插件" }) };
+}
+export class PluginBackendUnavailable extends Error {}
+export function requirePluginBackend(profile: Pick<AgentProfile, "id" | "source" | "plugin" | "peer">) {
+  const status = !profile.peer && pluginBackendStatus(profile);
+  if (status && !status.available) throw new PluginBackendUnavailable(status.reason);
+}
+export function referencedPluginProfiles(ids: Set<string>) {
+  return [...ids].flatMap(id => {
+    const known = pluginDeclarations.get(id);
+    if (known) return [catalogProfile(known)];
+    // A saved qualified ID retains its origin after the manifest has been uninstalled.
+    const plugin = /^([a-z][a-z0-9]{1,23}):[a-z][a-z0-9-]{0,47}$/.exec(id)?.[1];
+    return plugin ? [catalogProfile({id, name:id, plugin, command:""})] : [];
+  });
+}
+
 /**
  * Every backend that can run with a user's own account: the catalog's, then the owner's own profiles
  * (`agents.profiles`) that carry an `account` — keyed by their source, so one replaces a catalog entry
@@ -181,13 +224,19 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
     model: e.model,
     effort: e.effort,
     env: e.env ?? {},
+    ...(e.plugin && { source: e.id, plugin: e.plugin }),
     idleTimeoutMs: 600_000,
   };
 }
 
+export function entryForProfile(profile: Pick<AgentProfile, "source" | "id" | "command">, entries = [...acpCatalog, ...accountOnlyCatalog]) {
+  return entries.find(e => e.id === (profile.source ?? profile.id))
+    ?? entries.find(e => !e.plugin && (e.command === profile.command || e.account?.cli === profile.command));
+}
+
 /** A saved profile with the catalog's current default args when it still has an earlier default. */
 export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
-  const e = p.transport === "acp" ? acpCatalog.find((x) => x.command === p.command) : undefined;
+  const e = p.transport === "acp" ? entryForProfile(p, acpCatalog) : undefined;
   const previous = e?.previousArgs?.some((a) => a.length === p.args.length && a.every((v, i) => v === p.args[i]));
   return e ? { ...p, args: previous ? e.args ?? [] : p.args, archiveArgs: p.archiveArgs ?? e.archiveArgs, sessionHistory: p.sessionHistory ?? e.sessionHistory } : p;
 }
@@ -198,7 +247,7 @@ export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
  * that is not a JSON object is left alone.
  */
 export function launchConfigEnv(profile: Pick<AgentProfile, "id" | "source" | "command" | "env">, want: { model?: string | null; effort?: string | null }): Record<string, string> {
-  const spec = [...acpCatalog, ...accountOnlyCatalog].find((e) => e.id === (profile.source ?? profile.id) || e.command === profile.command)?.launchConfig;
+  const spec = entryForProfile(profile)?.launchConfig;
   if (!spec) return {};
   let base: Record<string, unknown> = {};
   const given = profile.env?.[spec.env];

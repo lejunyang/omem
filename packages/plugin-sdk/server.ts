@@ -94,7 +94,34 @@ export type OutletAnswer = {
   notifier: string; ref: string; user: OutletIdentity;
   choice?: number; values?: Record<string, unknown>; text?: string; approved?: boolean;
 };
+export type FlowEvidence = { text: string; link?: string };
+export type FlowContext = {
+  item: { id: string; title: string; spaceId: string };
+  stage: { id: string; name: string; since: string };
+  with: unknown;
+  materials: { kind: string; ref: string }[];
+};
+export type FlowProvider = { id: string; name: string; describe: string; params?: Record<string, unknown> };
+export type FlowSignal = FlowProvider & {
+  check(ctx: FlowContext, signal: AbortSignal): Promise<{ done: boolean; evidence?: FlowEvidence[]; waitingOn?: string; recheckAfterSec?: number }>;
+};
+export type RunnerResult = { ref: string; status: "running" | "done" | "failed"; summary?: string; evidence?: FlowEvidence[] };
+export type StageRunner = FlowProvider & {
+  /** Repeat calls with the same key, including after a host restart, must return the same operation. */
+  start(ctx: FlowContext & { attempt: number; idempotencyKey: string; settings: Record<string, unknown> }, signal: AbortSignal): Promise<RunnerResult>;
+  check?(ref: string, signal: AbortSignal): Promise<RunnerResult>;
+  cancel?(ref: string, signal: AbortSignal): Promise<void>;
+};
+export type GateScope = { flows?: string[]; stages?: string[] };
+export type StageGate = {
+  id: string; name: string; describe: string; applies?: GateScope;
+  review(ctx: Pick<FlowContext, "item" | "stage"> & { result: { summary: string; evidence: FlowEvidence[] }; by: string },
+    signal: AbortSignal): Promise<{ ok: true } | { ok: false; reason: string; evidence?: FlowEvidence[] }>;
+};
 export type ProcessApi = {
+  stageGate(def: StageGate): void;
+  stageRunner(def: StageRunner): void;
+  flowSignal(def: FlowSignal): void;
   answerAsk(input: OutletAnswer): Promise<void>;
   notifier(def: Notifier): void;
   retriever(def: Retriever): void;

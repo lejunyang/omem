@@ -1,4 +1,5 @@
 import type { AgentProfile } from "../core/config.ts";
+import { requirePluginBackend } from "./catalog.ts";
 import { launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { keyEnv } from "../core/ai-keys.ts";
@@ -8,6 +9,7 @@ export async function archiveSession(profile: AgentProfile, sessionId: string, c
   if (signal?.aborted) throw new Error("CANCELLED");
   if (!profile.archiveArgs?.length) throw new Error("未配置会话归档命令");
   if (!sessionId || sessionId.startsWith("-") || sessionId.includes("\0")) throw new Error("无法归档：无效的会话标识");
+  requirePluginBackend(profile);
   const child = launch(profile.command, [...profile.archiveArgs, sessionId], { cwd, env: { ...profile.env, ...keyEnv(profile), ...env }, sandbox: accountOf(profile) });
   const onAbort = () => stop(child);
   signal?.addEventListener("abort", onAbort, { once: true });

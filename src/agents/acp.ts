@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
-import { launchConfigEnv } from "./catalog.ts";
+import { launchConfigEnv, requirePluginBackend } from "./catalog.ts";
 import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { isQuotaMessage } from "./capacity.ts";
@@ -163,7 +163,10 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
   const levelKnown = !profile.effort || !probes || !known || !!known.error || probes.effortsFor(known, profile.model).includes(profile.effort);
   const atLaunch = opts.probe ? {} : launchConfigEnv(profile, { model: profile.model, effort: levelKnown ? profile.effort : null });
   const env = { ...profile.env, ...keyEnv(profile), ...atLaunch, ...opts.mcp?.env, ...opts.env };
-  const child = await (await import("./egress-run.ts")).launchRun(profile, opts, sandbox => launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, ownSandbox: opts.ownSandbox, sandbox }));
+  const child = await (await import("./egress-run.ts")).launchRun(profile, opts, sandbox => {
+    requirePluginBackend(profile);
+    return launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, ownSandbox: opts.ownSandbox, sandbox });
+  });
   const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
   let stderr = "";
@@ -739,6 +742,7 @@ function explain(error: unknown, profile: AgentProfile) {
 /** Delete a session through a connection of its own: start the agent, `session/delete`, stop it. */
 export async function deleteAcpSession(profile: AgentProfile, sessionId: string, cwd: string, env?: Record<string, string>, signal?: AbortSignal) {
   if (signal?.aborted) throw new Error("CANCELLED");
+  requirePluginBackend(profile);
   const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...keyEnv(profile), ...env }, sandbox: accountOf(profile) });
   const onAbort = () => stop(child);
   signal?.addEventListener("abort", onAbort, { once: true });

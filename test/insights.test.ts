@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "vitest";
-import { readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
+import { runKinds } from "../src/agents/run-kinds.ts";
 import { all, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { addMember, createUser, removeMember } from "../src/core/users.ts";
@@ -134,9 +135,7 @@ it("课题按事项可读空间隔离，权限撤销后不复用缓存，没有�
   expect(report(a).sections.some(s => s.id === "study")).toBe(false);
 });
 it("场景表精确覆盖 RunKind，新类型必须有场景", () => {
-  const source = readFileSync(new URL("../src/agents/runs.ts", import.meta.url), "utf8");
-  const kinds = [...source.match(/export type RunKind = ([^;]+);/)![1].matchAll(/"([^"]+)"/g)].map(m => m[1]);
-  expect(Object.keys(sceneTable).sort()).toEqual(kinds.sort());
+  expect(Object.keys(sceneTable).sort()).toEqual([...runKinds].sort());
   expect(sceneOf({ kind: "agent", spec: "wiki-writer" })).toBe("文档与知识");
   expect(sceneOf({ kind: "agent", spec: "custom" })).toBe("排查");
   expect(sceneOf({ kind: "agent", via: "mention" })).toBe("提醒与跟进");

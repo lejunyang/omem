@@ -1,3 +1,4 @@
+import { finishStage } from "../flows/plugin-gates.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { HttpError, json, now } from "../core/util.ts";
@@ -72,7 +73,7 @@ registerAskHandler("study-plan", async (app, ask, ctx) => {
       confirmDirection(app, id, note, baseline, allowCode);
     }
     for (const other of ids.filter((x) => x !== id)) run(app.db, "update study_directions set state='dropped',conclusion='本轮未选',updated_at=? where id=? and state='proposed'", now(), other);
-    changeStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, control: { ...s.control, reported: true } }, { actor: "owner", userId: item.userId }, id ? `本人确认方向：${direction(app, id).goal}${note ? `；${note}` : ""}` : "本人确认这一轮不跑");
+    await finishStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, control: { ...s.control, reported: true } }, { actor: "owner", userId: item.userId }, id ? `本人确认方向：${direction(app, id).goal}${note ? `；${note}` : ""}` : "本人确认这一轮不跑");
     if (!id) {
       const start = f.definition.stages.findIndex((d) => d.id === stageId);
       for (const d of f.definition.stages.slice(start + 1)) changeStage(app, itemId, d.id, "skipped", { control: { reported: true } }, { actor: "owner" }, ids.length ? "本人选择这一轮不跑" : "这一轮没有提出方向，本人已知晓");

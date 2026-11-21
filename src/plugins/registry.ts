@@ -2,9 +2,10 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } f
 import { authFetch, loginProvider, registerLoginProvider } from "../auth/providers.ts";
 import { registerAuthenticator } from "../auth/authenticators.ts";
 import { registerAgentLogin } from "../agents/agent-logins.ts";
-import { accountCatalog } from "../agents/catalog.ts";
+import { accountCatalog, declarePluginBackends, registerPluginBackends } from "../agents/catalog.ts";
+import { pluginBackendSchema } from "./backends.ts";
 import { replaceSubscriptions } from "./event-store.ts";
-import { registerProcessHooks, subscriptions } from "./process-hooks.ts";
+import { registerProcessHooks, rememberGateScopes, subscriptions } from "./process-hooks.ts";
 import { registerFeatures } from "../auth/features.ts";
 import { appConfig } from "../auth/apps.ts";
 import { listConnections } from "../auth/vault.ts";
@@ -73,6 +74,7 @@ export const manifestSchema = z.object({
   /** Flow definitions (`flows/<id>.yaml`), added to the owner's flows when they have none of that id (contributions.ts). */
   flows: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/, "流程 id 只能用小写字母、数字和连字符，最长 48 字符")).default([]),
   mcp: z.record(z.string().regex(SPEC), pluginMcpSchema).default({}),
+  backends: z.array(pluginBackendSchema).max(20).default([]).refine(v => new Set(v.map(e => e.id)).size === v.length, "后端 id 不能重复"),
   /** Host tools the plugin's agents may use, besides its own and the plugin tools (plugin_query, ask_user, show…). */
   tools: z.array(z.string()).default([]),
   page: z.object({ title: z.string() }).optional(),
@@ -96,6 +98,7 @@ export const manifestSchema = z.object({
   permissions: z
     .object({
       events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution", "finding.thread"])).default([]),
+      flow: z.object({ gate: z.boolean().optional(), run: z.boolean().optional(), signal: z.boolean().optional() }).strict().optional(),
       notify: z.object({ deliver: z.boolean().default(false), ask: z.boolean().default(false) }).optional(),
       sourceParser: z.boolean().default(false),
       wikiPageKind: z.boolean().default(false),
@@ -198,10 +201,11 @@ const SERVER_FILES = ["server.ts", "server.js", "server.mjs"];
 /** A data plugin's server file: the one its manifest names, else server.ts / .js / .mjs at the top. */
 export const serverFile = (dir: string, m: PluginManifest) => (m.server ? join(dir, m.server) : SERVER_FILES.map((f) => join(dir, f)).find((f) => existsSync(f)));
 /** A data plugin brings code when it has a server file or services. */
-export const hasCode = (dir: string, m: PluginManifest) => m.services.length > 0 || Object.values(m.mcp).some((s) => !!s.command) || !!m.server || SERVER_FILES.some((f) => existsSync(join(dir, f)));
+export const hasCode = (dir: string, m: PluginManifest) => m.backends.length > 0 || m.services.length > 0 || Object.values(m.mcp).some((s) => !!s.command) || !!m.server || SERVER_FILES.some((f) => existsSync(join(dir, f)));
 
 /** Tools and blocks are process-wide (like the host's own tools); register a plugin once. */
 async function register(app: App, dir: string, manifest: PluginManifest, source: LoadedPlugin["source"], linked = false): Promise<LoadedPlugin> {
+  declarePluginBackends(manifest.id, manifest.name, manifest.backends.map(({env, ...e}) => ({...e, envNames: env})));
   const own: LoadedPlugin["tools"] = [];
   const blocks = new Map<string, PluginBlock>();
   for (const st of manifest.streams) if (!manifest.services.some((x) => x.name === st.service)) throw new Error(`流 ${st.name} 用的服务 ${st.service} 没有在 services 里声明`);
@@ -209,7 +213,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     manifest,
     dir,
     source,
-    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked, manifest.permissions.notify) : "none",
+    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked, manifest.permissions.notify, manifest.permissions.flow, manifest.backends) : "none",
     linked,
     enabled: !app.config.plugins.disabled.includes(manifest.id),
     specs: [],
@@ -245,8 +249,10 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
 
 /** Run the plugin's server code: its tools and blocks register. Data plugins only once trusted. */
 async function loadCode(app: App, p: LoadedPlugin) {
+  p.connectors.push(registerPluginBackends(p.manifest.id));
   await loadPluginCode(app, p);
   replaceSubscriptions(app, p.manifest.id, [...subscriptions.values()].filter(s => s.plugin === p.manifest.id).map(s => s.def));
+  rememberGateScopes(app, p.manifest.id);
 }
 async function loadPluginCode(app: App, p: LoadedPlugin) {
   const { manifest } = p;
@@ -409,7 +415,7 @@ export async function trustPlugin(app: App, id: string, mode: RunMode = "isolate
   const p = getPlugin(id);
   if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
   const before = trustMode(app, id);
-  setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify);
+  setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify, p.manifest.permissions.flow, p.manifest.backends);
   if (p.trust !== "trusted" || before !== mode) {
     unloadCode(p);
     p.trust = "trusted";
@@ -503,6 +509,7 @@ export function forgetPlugin(id: string) {
   if (!p) return;
   if (p.source === "builtin") throw new HttpError(400, `插件 ${id} 是内置的`);
   unloadCode(p);
+  declarePluginBackends(id, p.manifest.name, []);
   plugins.delete(id);
 }
 
@@ -703,6 +710,7 @@ export function describePlugin(p: LoadedPlugin) {
     icon: pluginIcon(p),
     iconChosen: !!host?.config.plugins.icons[p.manifest.id],
     source: p.source,
+    backends: p.manifest.backends.map(e => ({ id: `${p.manifest.id}:${e.id}`, name: e.name, command: e.command, args: e.args ?? [] })),
     // Linked for development (omem plugin link): the page marks it 开发中.
     linked: p.linked,
     slots: p.slots.map((s) => ({ at: s.at, block: s.block })),
@@ -734,6 +742,7 @@ export function describePlugin(p: LoadedPlugin) {
     permissions: {
       tools: p.tools.filter((t) => !t.name.startsWith("plugin_")).map((t) => ({ name: t.name, write: t.write, approval: t.approval })),
       writes: p.tools.some((t) => t.write) || (!codeRuns(p) && p.manifest.permissions.write),
+      flow: p.manifest.permissions.flow,
       notify: p.manifest.permissions.notify,
       hostTools: p.manifest.tools,
       providers: codeRuns(p) ? p.providers : p.manifest.permissions.connectors,

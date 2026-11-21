@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalog.ts";
+import { acpCatalog, catalogProfile, referencedPluginProfiles, upgradeProfileArgs } from "../agents/catalog.ts";
 import { omemHome } from "./home.ts";
 import { systemZone, validZone } from "./util.ts";
 import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
@@ -123,6 +123,7 @@ export const agentProfileSchema = z.object({
   source: z.string().optional(),
   /** Catalog entry describing local state, independent of billing. */
   stateLayout: z.string().optional(),
+  plugin: z.string().optional(),
   /** An ACP agent of another device (core/peer-acp.ts): runs there, tools stay here. command/args are filled in. */
   peer: z.object({ id: z.string().min(1), agent: z.string().min(1) }).optional(),
   /** Runs with the API key of this AI provider (`ai.providers`, key in secrets/ai-keys.json; core/ai-keys.ts). */
@@ -1520,6 +1521,9 @@ export function saveConfig<T>(config: Config, home = omemHome(), validate?: (can
 
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
+  const referenced = new Set([config.agents.default, ...Object.values(config.agents.roles)].filter((v): v is string => !!v));
+  for (const p of referencedPluginProfiles(referenced)) byId.set(p.id, p);
+  for (const e of acpCatalog.filter(e => e.plugin)) byId.set(e.id, catalogProfile(e));
   for (const p of keyedProfiles(config)) byId.set(p.id, p);
   for (const p of config.agents.profiles) byId.set(p.id, p.peer ? peerProfile(p) : upgradeProfileArgs(p));
   return [...byId.values()];
