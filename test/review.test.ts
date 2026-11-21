@@ -162,6 +162,10 @@ describe("review tiers and checks", () => {
         output: (data) => setRunOutput(app, r.id, data),
       });
       expect(statuses.some((t) => t.includes("不稳定没有完成") && t.includes("自动重试一次"))).toBe(true);
+      const starts = all<{ data: string }>(app.db, `select data from run_events where run_id=? and type='status'
+        and json_extract(data,'$.check')='flaky-review' and json_extract(data,'$.text')='开始评审：不稳定'`, r.id);
+      expect(starts).toHaveLength(2);
+      expect(starts.map(s => JSON.parse(s.data).phase)).toEqual(["reviewer", "reviewer"]);
       // The other check still reported; the failed one is recorded and the owner is asked.
       expect(reviewsOf(app, [r.id]).map((x) => [x.check_name, x.verdict]).sort()).toEqual([["flaky-review", "failed"], ["reviewer", "approved"]]);
       const asked = listAsks(app, { status: "pending", userId: "owner", limit: 10 }).find((a) => a.runId === r.id)!;

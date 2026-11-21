@@ -103,27 +103,40 @@ describe("进度投影", () => {
     expect(review()).toMatchObject({ state: "done", tasks: [{ state: "accepted", outputs: [{}, { label: expect.stringContaining("通过") }] }] });
   });
 
-  it("单项重评保留内嵌首试，整轮独立评审只记实际评审运行", () => {
+  it.each(["code", "first-review"])("单项重评保留首试及其用量，包括旧宿主 %s 启动失败时缺少的事件", first => {
     const { app, add } = fixture();
     add("code", "code", null, {}, { reviewPlan: { checks: ["style", "logic"] } });
+    if (first !== "code") add(first, "review", "code");
     for (const [seq, check] of ["style", "logic"].entries()) {
-      run(app.db, "insert into run_events values('code',?,?,'status',?)", seq + 1, at, JSON.stringify({ phase: "reviewer", check }));
+      run(app.db, "insert into run_events values(?,?,?,'status',?)", first, seq + 1, at, JSON.stringify({ phase: "reviewer", check }));
       recordReview(app, { codeRunId: "code", round: 1, check, verdict: check === "style" ? "failed" : "approved", summary: check, findings: [] });
     }
     add("retry", "review", "code", { only: ["style"] });
     run(app.db, "insert into run_events values('retry',1,?,'status',?)", at, JSON.stringify({ phase: "reviewer", check: "style" }));
-    for (const id of ["code", "retry"]) run(app.db, "insert into run_events values(?,3,?,'usage',?)", id, at, '{"input":5,"output":3}');
-    recordReview(app, { codeRunId: "code", round: 1, check: "style", verdict: "approved", summary: "重评通过", findings: [] });
+    for (const id of [first, "retry"]) run(app.db, "insert into run_events values(?,3,?,'usage',?)", id, at, '{"input":5,"output":3}');
     const view = () => runProgress(app, "code", owner).find(b => b.kind === "review")!;
     const single = { runs: 1, missing: 0, input: 5, output: 3 };
     const both = { runs: 2, missing: 0, input: 10, output: 6 };
-    expect(view()).toMatchObject({ usage: both, tasks: [
-      { id: "style", attempts: [{ runId: "code", usage: single }, { runId: "retry", usage: single }], usage: both },
-      { id: "logic", attempts: [{ runId: "code", usage: single }], usage: single },
-    ] });
-    // Even without an explicit selection, the host events identify the check that ran.
-    run(app.db, "update runs set input='{}' where id='retry'");
-    expect(view().tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["code", "retry"], ["code"]]);
+    const expected = { usage: both, tasks: [
+      { id: "style", attempts: [{ runId: first, usage: single }, { runId: "retry", usage: single }], usage: both },
+      { id: "logic", attempts: [{ runId: first, usage: single }], usage: single },
+    ] };
+    expect(view()).toMatchObject(expected);
+    run(app.db, "delete from run_events where run_id=? and json_extract(data,'$.check')='style'", first);
+    expect(view()).toMatchObject(expected);
+    recordReview(app, { codeRunId: "code", round: 1, check: "style", verdict: "approved", summary: "重评通过", findings: [] });
+    expect(view()).toMatchObject(expected);
+  });
+
+  it("按实际事件识别整轮评审中执行的项", () => {
+    const { app, add } = fixture();
+    add("code", "code", null, {}, { reviewPlan: { checks: ["style", "logic"] } });
+    add("retry", "review", "code");
+    for (const [id, seq, check] of [["code", 1, "style"], ["code", 2, "logic"], ["retry", 1, "style"]] as const) {
+      run(app.db, "insert into run_events values(?,?,?,'status',?)", id, seq, at, JSON.stringify({ phase: "reviewer", check }));
+    }
+    const review = runProgress(app, "code", owner).find(b => b.kind === "review")!;
+    expect(review.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["code", "retry"], ["code"]]);
   });
 
   it("流程保留关卡和依赖，课题默认只展开当前轮，重跑仍归原试验", () => {

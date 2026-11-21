@@ -158,15 +158,18 @@ function reviewView(app: App, graph: Forest, node: Node, itemId?: string) {
     const checksByRound = history.map(({ round, plan, results, children }) => {
       const records = results.filter(r => r.check_name === name);
       const checking = round.reviewStage === "checks" && plan.includes(name) && !records.length;
-      const runs = children.filter(r => {
+      const expected = plan.includes(name) || records.length > 0;
+      const embeddedEvent = recorded.get(round.id)?.has(name);
+      const runs = children.filter((r, index) => {
         const observed = recorded.get(r.id);
         if (observed?.has(name)) return true;
-        if (observed && r.status !== "running" && r.status !== "queued") return false;
-        return r.onlyChecks ? (JSON.parse(r.onlyChecks) as string[]).includes(name) : plan.includes(name) || records.length > 0;
+        if (r.onlyChecks) return (JSON.parse(r.onlyChecks) as string[]).includes(name);
+        // Older hosts may have events for other checks even when this one failed at startup.
+        const firstFullReview = index === 0 && !embeddedEvent && records.length > 0;
+        return expected && (firstFullReview || !observed || r.status === "running" || r.status === "queued");
       });
-      const observed = recorded.get(round.id);
-      const embedded = observed?.has(name) || (!runs.length && checking) ||
-        (!observed && (runs.length ? !!runs[0].onlyChecks : records.length > 0));
+      // A selective first child retries checks initially hosted by the coding round.
+      const embedded = embeddedEvent || (runs.length ? !!runs[0].onlyChecks : checking || records.length > 0);
       return { records, checking, latest: runs.at(-1), ids: [...(embedded ? [round.id] : []), ...runs.map(r => r.id)] };
     });
     const current = checksByRound.at(-1)!;
