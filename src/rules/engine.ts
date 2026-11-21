@@ -11,6 +11,7 @@ import { createRun } from "../agents/runs.ts";
 import { discussion, discussionText, engagement, followedTopic, unfollowTopic, type Followed } from "./context.ts";
 import { addressed, claimEvent, deleteRule, endJudging, listRules, recordFiring, startJudging } from "./store.ts";
 import { ownWriteOf } from "./own-writes.ts";
+import { HANDLERS, noteYield } from "../core/handling.ts";
 import { OMEM_TYPE_LABEL, ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
 
 /**
@@ -99,8 +100,12 @@ function keyFor(rule: Rule, e: RuleEvent) {
 
 async function consider(app: App, rule: Rule, e: RuleEvent) {
   if (rule.temporary && rule.temporary.expiresAt < e.at) return;
-  // Someone asked the bot directly: it answers, the rules stay out of it.
-  if (e.kind === "message" && addressed(app, e.key)) return;
+  // Someone asked the bot directly: it answers, the rules stay out of it (core/handling.ts REPLY_ORDER).
+  // (`direct` is the only path before rules there; addressed is its one indexed look-up, run for every rule.)
+  if (e.kind === "message" && addressed(app, e.key)) {
+    noteYield(app, { event: e.key.replace(/^lark:/, ""), actor: "rule", to: HANDLERS.direct, reason: "有人 @ 了机器人，由当场回答的那一轮处理，规则不再看" });
+    return;
+  }
   // A topic this rule's silent agent spoke in: new messages there go back to it.
   const followed = e.kind === "message" && e.chat ? followedTopic(app, e.chat.id, e.message?.topicId) : null;
   if (followed?.ruleId === rule.id) return continueFollowed(app, rule, followed, e);

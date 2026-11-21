@@ -78,6 +78,8 @@ export function focusBlock(app: App, focus: Focus, userId: string) {
     }), asked ? 260 : 400);
   }
   block("指标", flaggedOnLine(app, ids, spaces).map(s => `越过门槛 · ${compact(s, 70)}`), 235);
+  // What the person already said yes or no to on this line (items/choices.ts): not proposed again.
+  block("取舍", (context.choices ?? []).map(c => `本人取舍 · ${compact(c, 80)}`), 260);
   if (listen && (!spaces || (spaces.includes(listen.spaceId ?? item.spaceId)))) {
     const path = playbookPath(listen);
     const file = one<{ id: string }>(app.db, "select id from sources where uri=? and space_id=? and deleted_at is null limit 1", `work/${path}`, listen.spaceId ?? item.spaceId);
