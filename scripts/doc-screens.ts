@@ -1013,6 +1013,24 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   skill("acme-cli", "用 acme 命令行建合并请求、发版", acmeWrites("2", [{ id: "branch-delete", title: "删远端分支前问本人", match: { kind: "command", executable: "acme", subcommand: ["branch", "delete"] }, action: "approve" }]));
 }
 
+// 评审页的“同步到平台”: the reviewed change's item has a merge request attached (the GitHub plugin's kind), and
+// the findings stand in every state a provider leaves them in: posted, answered there, failed, to be placed again, not sent.
+{
+  const now = new Date().toISOString();
+  run(app.db, "update runs set input = json_set(input, '$.itemId', ?) where id = ?", item.id, r.id);
+  run(app.db, "insert into flow_objects(id,kind,key,title,status,link,changed_at,updated_at) values('demo-pr','github:pull-request','example/shop#128','退款按已发货行分摊订单优惠 #128','open','https://github.com/example/shop/pull/128',?,?)", now, now);
+  run(app.db, "insert into item_materials(item_id,kind,ref,created_at) values(?,'object','demo-pr',?)", item.id, now);
+  const ids = all<{ id: number }>(app.db, "select f.id from review_findings f join reviews v on v.id = f.review_id where v.code_run_id = ? and f.state != 'rejected' order by f.id", r.id).map((f) => f.id);
+  const comment = (n: number) => `https://github.com/example/shop/pull/128#discussion_r${1000 + n}`;
+  const states: Record<string, unknown>[] = [
+    { url: comment(1), object: "demo-pr", provider: "github:reviews", delivery: "published", state: "replied", reply: { author: "小王", at: new Date(Date.now() - 2 * 3600_000).toISOString(), summary: "尾差我改成记在金额最大的那一行了，麻烦再看一下 refund.js 第 18 行。" }, syncedAt: now, checkedAt: now },
+    { url: comment(2), object: "demo-pr", provider: "github:reviews", delivery: "published", state: "open", syncedAt: now, checkedAt: now },
+    { object: "demo-pr", provider: "github:reviews", delivery: "failed", error: "平台返回 502，稍后再发", syncedAt: now },
+    { object: "demo-pr", provider: "github:reviews", delivery: "relocate", syncedAt: now },
+  ];
+  ids.slice(0, states.length).forEach((id, i) => run(app.db, "update review_findings set external = ? where id = ?", JSON.stringify(states[i]), id));
+}
+
 // 设置 → 安全 → 记录: what the rules above did in two runs, what went out in the owner's name, a few changes.
 {
   const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -1235,6 +1253,12 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "design-own", path: `/design/${ownDesign.id}` },
   { name: "design-external", path: `/design/${extDesign.id}` },
   { name: "review-change-mobile", path: `/runs/${r.id}`, width: 390, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.waitForTimeout(400); } },
+  // 评审页：问题发到合并请求以后的状态，和发布、读讨论的入口。
+  { name: "review-sync", path: `/runs/${r.id}`, prepare: async (p) => {
+    await p.locator(".rsync").waitFor();
+    await p.locator(".rsync").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(400);
+  } },
   // 设置 → 安全 → 记录: the trail with one row open.
   { name: "security-audit", path: "/settings?card=trail", prepare: async (p) => {
     const card = p.locator("#set-trail");

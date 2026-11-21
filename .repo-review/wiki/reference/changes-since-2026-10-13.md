@@ -18,6 +18,12 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 评审页：问题同步到平台的状态和入口（11-21）
+
+- `web/src/components/ReviewSync.vue`，挂在 `ReviewSummary.vue` 的“待处理问题”标题下：读 `GET /api/runs/:id/review-sync`，写发到哪个对象、已发 / 没发 / 作者回复 / 没发出去 / 要重新定位各几条；“发布 N 条…”“结束已修的 N 条…”调对应接口，用返回的 `askId` 从右侧打开确认（`AskCard`），“读讨论”调 `refresh`。有几个对象时先选发到哪个。没有对象也没有发过的评论时不渲染。
+- `web/src/lib/reviews.ts`：`External` 补 `delivery`、`error`、`reply`，`externalBadge` 把一条问题在平台上的状态说成一个标签（没发出去、要重新定位、评论开着、作者回复了……）；作者的回复显示在问题下面。
+- 演示数据：评审的事项挂一个 GitHub 合并请求，四条问题各在一种状态；截图 `review-sync`。
+
 ## 成员的 AI 账号：能不能隔离和严格模式的开关（11-21）
 
 - `web/src/components/AgentAccountsAdmin.vue` 读 `GET /api/agent-accounts` 的 `isolation`：第一行写这台机器能不能把成员的运行和本人的分开（不能时写原因），第二行是“成员的运行不能隔离时”：照常运行并记一笔 / 不运行（`agents.accountIsolation`，经 `views/settings/Members.vue` 的 `saveConfig` 保存），下面一句列出分不开的后端和原因。这张卡以前只在能起沙箱的机器上出现，现在不能隔离的机器上也出现（只有这几行）。

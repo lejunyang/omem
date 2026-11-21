@@ -9,8 +9,22 @@ export type Finding = { id: number; severity: Severity; file_path: string | null
   resolution?: Resolution | null; resolution_note?: string | null; resolved_run?: string | null; checked_run?: string | null; external?: string | null };
 export type Resolution = "fixed" | "still" | "moot" | "unchecked";
 export const RESOLUTION: Record<Resolution, { text: string; cls: string }> = { fixed: { text: "复审：已修", cls: "ok" }, still: { text: "复审：仍在", cls: "warn" }, moot: { text: "复审：不再适用", cls: "" }, unchecked: { text: "复审：没复核", cls: "" } };
-export type External = { url: string; ref?: string; object?: string; state: "open" | "resolved" | "replied" | "outdated"; syncedAt: string };
-export const EXTERNAL_STATE: Record<External["state"], string> = { open: "评论开着", resolved: "评论已解决", replied: "作者回复了", outdated: "评论已过期" };
+/**
+ * The comment a finding was posted as, by an agent's hand or by a review provider (src/agents/review-sync.ts):
+ * `delivery` says whether posting worked, `reply` is the latest answer by someone else on the platform.
+ */
+export type External = {
+  url?: string; ref?: string; object?: string; state?: "open" | "resolved" | "replied" | "outdated"; syncedAt: string;
+  delivery?: "published" | "failed" | "relocate"; error?: string; reply?: { author: string; at: string; summary: string };
+};
+export const EXTERNAL_STATE: Record<NonNullable<External["state"]>, string> = { open: "评论开着", resolved: "评论已解决", replied: "作者回复了", outdated: "评论已过期" };
+/** How a finding stands on the platform, as one badge: where it failed, or the state of its discussion. */
+export function externalBadge(e: External): { text: string; cls: string; title: string; href: string | null } {
+  if (e.delivery === "failed" && !e.url) return { text: "没发出去", cls: "danger", title: e.error ?? "发布到平台时失败了，可以再发一次", href: null };
+  if (e.delivery === "relocate") return { text: "要重新定位", cls: "warn", title: "评审之后这段代码变了，原来的行已经不在改动里：复审后再发", href: null };
+  const state = e.state ?? "open";
+  return { text: EXTERNAL_STATE[state], cls: state === "resolved" ? "ok" : state === "replied" ? "accent" : "", title: e.reply ? `${e.reply.author}：${e.reply.summary}` : e.url ?? "", href: e.url ?? null };
+}
 /** The comment a finding was posted as (stored as JSON on the finding, or already parsed by /prior). */
 export const externalOf = (f: { external?: string | External | null }): External | null => (!f.external ? null : typeof f.external === "string" ? (JSON.parse(f.external) as External) : f.external);
 /** The suggestion the next round acts on: the owner's rewrite when there is one. */

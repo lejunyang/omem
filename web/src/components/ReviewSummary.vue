@@ -6,12 +6,13 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 import Markdown from "./Markdown.vue";
 import UiSegmented from "./UiSegmented.vue";
 import UiCheckbox from "./UiCheckbox.vue";
+import ReviewSync from "./ReviewSync.vue";
 import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { findingMarkdown } from "../lib/findingText";
 import { clearFixDraft, clearQuotes, draftReview, fixDraft, quotesOf, quotesText } from "../lib/quotes";
 import NextRoundReview from "./NextRoundReview.vue";
-import { decisionOf, EXTERNAL_STATE, externalOf, findingWhere, fixLabel, pointCount, RESOLUTION, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type External, type Finding, type FixInfo, type LatestState, type Resolution, type Review, type Reviews } from "../lib/reviews";
+import { decisionOf, externalBadge, externalOf, findingWhere, fixLabel, pointCount, RESOLUTION, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type External, type Finding, type FixInfo, type LatestState, type Resolution, type Review, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “概览” for a coding delegation or branch review: the verdict and review-lead's
@@ -365,7 +366,7 @@ async function answer(choice: number | null) {
           <span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span>
           <span class="title static">{{ f.title }}</span>
           <span class="spacer" />
-          <a v-if="f.external" :href="f.external.url" target="_blank" rel="noopener" class="badge" :class="{ ok: f.external.state === 'resolved' }" :title="f.external.url">{{ EXTERNAL_STATE[f.external.state] }}</a>
+          <component :is="externalBadge(f.external).href ? 'a' : 'span'" v-if="f.external" :href="externalBadge(f.external).href ?? undefined" target="_blank" rel="noopener" class="badge" :class="externalBadge(f.external).cls" :title="externalBadge(f.external).title">{{ externalBadge(f.external).text }}</component>
           <span class="muted small nowrap">{{ rv.label(f.check_name) }} · #{{ f.id }}</span>
         </div>
         <div v-if="priorWhere(f) || f.resolution_note" class="line2 small">
@@ -383,6 +384,7 @@ async function answer(choice: number | null) {
     </div>
     <div v-if="allFindings.length || (deciding && others.length)" class="card pad findings">
       <div class="row wrap"><div class="section-title flat">待处理问题</div><span class="spacer" /><UiSegmented v-model="filter" size="sm" :options="filterOptions" aria-label="显示哪些问题" /></div>
+      <ReviewSync :run-id="runId" :fixed="allFindings.filter((f) => f.resolution === 'fixed').map((f) => f.id)" @changed="rv.load(true)" />
       <div v-if="deciding && others.length" class="row wrap others small">
         <UiCheckbox v-model="withOthers" size="sm">一起看同一分支的其他评审（{{ others.length }} 份）</UiCheckbox>
         <span class="muted ellipsis" :title="others.map((o) => o.title).join('\n')">{{ others.map((o) => o.title).join("、") }}</span>
@@ -400,13 +402,14 @@ async function answer(choice: number | null) {
           <span v-if="f.owner_suggestion" class="badge accent" title="建议按你改写的执行">建议已改</span>
           <a v-if="fixOf(f)" href="#" class="badge ok" :title="`交给了「${fixOf(f)!.title}」`" @click.prevent="openWork(fixOf(f)!.rootId)">{{ fixLabel(fixOf(f)!) }}</a>
           <a v-if="f.resolution && f.checked_run" href="#" class="badge" :class="RESOLUTION[f.resolution].cls" :title="f.resolution_note ?? '打开那次复审'" @click.prevent="emit('open', f.checked_run!)">{{ RESOLUTION[f.resolution].text }}</a>
-          <a v-if="externalOf(f)" :href="externalOf(f)!.url" target="_blank" rel="noopener" class="badge" :class="{ ok: externalOf(f)!.state === 'resolved' }" :title="externalOf(f)!.url">{{ EXTERNAL_STATE[externalOf(f)!.state] }}</a>
+          <component :is="externalBadge(externalOf(f)!).href ? 'a' : 'span'" v-if="externalOf(f)" :href="externalBadge(externalOf(f)!).href ?? undefined" target="_blank" rel="noopener" class="badge" :class="externalBadge(externalOf(f)!).cls" :title="externalBadge(externalOf(f)!).title">{{ externalBadge(externalOf(f)!).text }}</component>
           <span class="spacer" />
           <span v-if="f.source" class="badge" :title="f.source.title">另一份评审</span>
           <span class="muted small nowrap">{{ f.fromRound ? `第 ${f.fromRound} 轮 · ` : "" }}{{ checkLabel(f) }} · #{{ f.id }}</span>
           <UiSegmented v-if="deciding && !fixOf(f)" :model-value="decisionOf(f)" class="decide-f" size="sm" :options="DECISIONS" :aria-label="`#${f.id} 怎么处理`" @change="(d) => decide(f, d)" />
         </div>
         <div v-if="f.decision === 'wontfix' && f.decision_note" class="small wontfix">不改：{{ f.decision_note }}</div>
+        <div v-if="externalOf(f)?.reply" class="small ext-reply"><span class="muted">{{ externalOf(f)!.reply!.author }} 在平台上回复（{{ relTime(externalOf(f)!.reply!.at) }}）：</span>{{ externalOf(f)!.reply!.summary }}</div>
         <div v-if="findingWhere(f) || f.triage_note || f.merged_into || intoTask(f)" class="line2 small">
           <a v-if="findingWhere(f)" href="#" class="loc mono" title="打开这段代码" @click.prevent="refAction(findingWhere(f), runOf(f))?.()">{{ findingWhere(f) }}</a>
           <span v-if="f.triage_note || f.merged_into || intoTask(f)" class="muted">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : intoTask(f) ? `并到 T${f.task_seq}` : "" }}{{ (f.merged_into || intoTask(f)) && f.triage_note ? "；" : "" }}{{ f.triage_note }}</span>
@@ -458,6 +461,7 @@ async function answer(choice: number | null) {
 </template>
 
 <style scoped>
+.ext-reply { padding: 2px 0 0 2px; color: var(--ink-2); overflow-wrap: anywhere; }
 /* One shrinkable column: a long unbroken line (a check summary, a path) must not widen the page. */
 .review { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .flat { margin: 0; }
