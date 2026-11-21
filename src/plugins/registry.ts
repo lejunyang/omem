@@ -508,6 +508,7 @@ export function forgetPlugin(id: string) {
   if (!p) return;
   if (p.source === "builtin") throw new HttpError(400, `插件 ${id} 是内置的`);
   unloadCode(p);
+  declarePluginBackends(id, p.manifest.name, []);
   plugins.delete(id);
 }
 

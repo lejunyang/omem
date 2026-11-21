@@ -1051,16 +1051,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     q(z.object({ tools: z.array(z.string().max(120)).max(400) }), req.body).tools));
   server.get("/api/roles", async () => listRoleStates(app));
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
-  server.get("/api/profile-options", async () => ({
-    // The cached probe rides along so the form need not ask again (probe once, or "重新检测").
-    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, pluginBackend: p.pluginBackend, probe: cachedProbe(app, p.id) })),
-    globalDefaultBackend: app.config.agents.default || listAgentProfiles(app).find((p) => p.installed)?.id || "",
-    defaultBackend: (() => { try { return profileFor(app, "assistant").id; } catch { return ""; } })(),
-    tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write, roleOnly: ROLE_TOOLS.includes(t.name) })),
-    // The groups a profile's `tools` may name (`group:<id>`); a whole group never brings the roleOnly ones (tool-help.ts expandTools).
-    toolGroups: TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, tools: g.tools })),
-    defaultTools: DEFAULT_SPEC_TOOLS,
-  }));
+  server.get("/api/profile-options", async () => {
+    const profiles = listAgentProfiles(app);
+    return {
+      // The cached probe rides along so the form need not ask again (probe once, or "重新检测").
+      backends: profiles.filter(p => p.pluginBackend?.available !== false).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, pluginBackend: p.pluginBackend, probe: cachedProbe(app, p.id) })),
+      unavailableBackends: profiles.filter(p => p.pluginBackend?.available === false).map(({id,name,pluginBackend}) => ({id,name,pluginBackend})),
+      globalDefaultBackend: app.config.agents.default || profiles.find((p) => p.installed)?.id || "",
+      defaultBackend: (() => { try { return profileFor(app, "assistant").id; } catch { return ""; } })(),
+      tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write, roleOnly: ROLE_TOOLS.includes(t.name) })),
+      // The groups a profile's `tools` may name (`group:<id>`); a whole group never brings the roleOnly ones (tool-help.ts expandTools).
+      toolGroups: TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, tools: g.tools })),
+      defaultTools: DEFAULT_SPEC_TOOLS,
+    };
+  });
   server.get("/api/roles/:name", async (req) => {
     const name = (req.params as { name: string }).name;
     const r = loadRole(name, app);

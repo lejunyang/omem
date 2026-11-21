@@ -152,13 +152,11 @@ export const accountOnlyCatalog: CatalogEntry[] = [
 ];
 
 const pluginDeclarations = new Map<string, CatalogEntry>();
-const pluginOrigins = new Map<string, CatalogEntry>();
 export function declarePluginBackends(plugin: string, name: string, entries: CatalogEntry[]) {
   for (const [id, e] of pluginDeclarations) if (e.plugin === plugin) pluginDeclarations.delete(id);
   for (const e of entries) {
     const entry = { ...e, id: `${plugin}:${e.id}`, plugin, pluginName: name };
     pluginDeclarations.set(entry.id, entry);
-    pluginOrigins.set(entry.id, entry);
   }
 }
 export function registerPluginBackends(plugin: string) {
@@ -172,7 +170,7 @@ export function registerPluginBackends(plugin: string) {
   };
 }
 export function pluginBackendStatus(profile: Pick<AgentProfile, "id" | "source" | "plugin">) {
-  const id = profile.source ?? profile.id, e = pluginOrigins.get(id);
+  const id = profile.source ?? profile.id, e = pluginDeclarations.get(id);
   if (!e && !profile.plugin) return undefined;
   const available = !!e && acpCatalog.some(c => c.id === id && c.plugin === e.plugin);
   return { plugin: e?.plugin ?? profile.plugin!, name: e?.pluginName ?? profile.plugin!, available, ...(!available && { reason: "这个后端来自已停用或未信任的插件" }) };
@@ -183,7 +181,13 @@ export function requirePluginBackend(profile: Pick<AgentProfile, "id" | "source"
   if (status && !status.available) throw new PluginBackendUnavailable(status.reason);
 }
 export function referencedPluginProfiles(ids: Set<string>) {
-  return [...pluginOrigins.values()].filter(e => ids.has(e.id)).map(catalogProfile);
+  return [...ids].flatMap(id => {
+    const known = pluginDeclarations.get(id);
+    if (known) return [catalogProfile(known)];
+    // A saved qualified ID retains its origin after the manifest has been uninstalled.
+    const plugin = /^([a-z][a-z0-9]{1,23}):[a-z][a-z0-9-]{0,47}$/.exec(id)?.[1];
+    return plugin ? [catalogProfile({id, name:id, plugin, command:""})] : [];
+  });
 }
 
 /**

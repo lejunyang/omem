@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
 import { json, now } from "../core/util.ts";
-import { PluginBackendUnavailable, requirePluginBackend } from "./catalog.ts";
+import { PluginBackendUnavailable, requirePluginBackend, referencedPluginProfiles } from "./catalog.ts";
 import { cleanupAcpSession } from "./acp.ts";
 import { disposableChildren } from "./session-children.ts";
 import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoSessionStatus, doubaoTokenExists } from "./doubao.ts";
@@ -166,7 +166,7 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
     if (!claim.changes) return;
     if (p.transport === "acp" && p.profile_id) {
       const configured = profile ?? allProfiles(app.config).find(a => a.id === p.profile_id);
-      requirePluginBackend(configured ?? {id:p.profile_id});
+      requirePluginBackend(configured ?? referencedPluginProfiles(new Set([p.profile_id]))[0] ?? {id:p.profile_id});
     }
     if (accountGone(app, p)) {
       run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);

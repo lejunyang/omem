@@ -6,7 +6,8 @@ import { forgetPlugin, loadPlugins, manifestSchema, reloadPlugin, setPluginEnabl
 import { catalogEntry, launchConfigEnv, pluginBackendStatus } from "../src/agents/catalog.ts";
 import { allProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
-import { listAgentProfiles } from "../src/agents/runner.ts";
+import { saveAgentSpec, readAgentSpec } from "../src/agents/specs.ts";
+import { runRole, failoverProfiles, resolveRunProfile, listAgentProfiles } from "../src/agents/runner.ts";
 import { backendHosts } from "../src/agents/egress-policy.ts";
 import * as spawn from "../src/agents/spawn.ts";
 import { sessionCleanup } from "../src/agents/session-cleanup.ts";
@@ -72,6 +73,28 @@ describe.each(["isolated", "inprocess"] as const)("声明式 ACP %s", mode => {
     setTrust(app,"backendkit",dir,mode,true,undefined,undefined,manifest.backends);
     expect(trustState(app,"backendkit",dir,true,undefined,undefined,manifest.backends)).toBe("trusted");
     expect(trustState(app,"backendkit",dir,true,undefined,undefined,manifestSchema.parse(declaration).backends)).toBe("changed");
+  });
+  it("冷启动后已保存的插件 ID 保留来源，角色和档案能选择后备", async () => {
+    const cold = testApp(), id = "removed:worker";
+    cold.baseUrl = "http://127.0.0.1:1";
+    const base = {id:"working",transport:"acp" as const,command:process.execPath,args:[resolve("test/fake-acp-agent.ts")],
+      env:{FAKE_MODE:"thread"},idleTimeoutMs:20000};
+    cold.config.agents.profiles.push(base);
+    cold.config.agents.fallback = [{profile:base.id}];
+    saveAgentSpec(cold,{name:"demo",description:"核对示例",agent:id,prompt:"核对示例"},"user");
+    const spec = readAgentSpec(cold,"demo");
+    const actors = [{spec}, {role:"assistant" as const}];
+    for (const actor of actors) {
+      if ("role" in actor) cold.config.agents.roles.assistant = id;
+      const selected = resolveRunProfile(cold,{actor});
+      expect(selected).toMatchObject({id,command:"",plugin:"removed"});
+      expect(listAgentProfiles(cold).find(p => p.id === id)?.pluginBackend).toMatchObject({available:false,plugin:"removed"});
+      expect(failoverProfiles(cold,actor,selected).map(p => p.id)).toContain(base.id);
+      const result = await runRole(cold,{role:"assistant",spec:actor.spec,spaceId:"personal",runId:null,task:"核对示例"});
+      expect(result.profileId).toBe(base.id);
+    }
+    expect(catalogEntry(id)).toBeUndefined();
+    cold.db.close();
   });
   it("环境只能声明变量名，重复后端拒绝", () => {
     expect(() => manifestSchema.parse({...declaration,backends:[{...declaration.backends[0],env:{SECRET:"value"}}]})).toThrow();

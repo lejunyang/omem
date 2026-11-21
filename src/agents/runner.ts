@@ -23,7 +23,7 @@ import { NetworkUnavailableError, networkReason, refreshForRun } from "./network
 import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
 import { aiLabel, candidateProfiles, candidateWhen, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
-import { catalogEntry, installHint, pluginBackendStatus, referencedPluginProfiles } from "./catalog.ts";
+import { catalogEntry, installHint, PluginBackendUnavailable, pluginBackendStatus, referencedPluginProfiles } from "./catalog.ts";
 import { cloudAccess } from "./cloud-probe.ts";
 import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE } from "./doubao-cli.ts";
@@ -672,7 +672,7 @@ export function distinctProfiles(list: AgentProfile[]) {
  * aside for a while (capacity.ts markDown).
  */
 export function isBackendDown(e: unknown): boolean {
-  return e instanceof NetworkUnavailableError || breakdownKind(e) !== null;
+  return e instanceof NetworkUnavailableError || e instanceof PluginBackendUnavailable || breakdownKind(e) !== null;
 }
 
 /**
@@ -757,7 +757,7 @@ export function fallbackProfiles(
   const specs = allProfiles(app.config);
   const roleName = "spec" in actor ? null : (actor as { role: RoleName }).role;
   const make = (id: string, modelOverride?: string, effortOverride?: string): AgentProfile | null => {
-    const p = specs.find((x) => x.id === id);
+    const p = specs.find((x) => x.id === id) ?? referencedPluginProfiles(new Set([id]))[0];
     if (!p) return null;
     // Role defaults first; explicit step overrides win over them.
     let out = roleName ? resolveRoleProfile(app, p, roleName) : p;
