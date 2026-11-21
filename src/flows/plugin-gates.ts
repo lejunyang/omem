@@ -15,25 +15,30 @@ export const gateChecksSchema = z.array(z.object({
   stages: z.array(z.string()).max(20).optional(), mandatory: z.boolean().default(false),
 }).strict()).max(30).refine(v => new Set(v.map(c => c.id)).size === v.length, "检查不能重复");
 type Check = z.infer<typeof gateChecksSchema>[number];
+type StoredCheck = Check & { scope?: { stages?: string[]; spaces: readonly string[] } };
 export type CompletionPatch = Partial<Omit<StageRow, "itemId" | "id" | "state">>;
 export type GateReview = { summary: string; refs: string[];
   failed: { id: string; reason: string; evidence?: z.infer<typeof evidenceSchema> }[] };
-export function checksForFlow(app: App, id: string): Check[] {
+function storedChecks(app: App, id: string): StoredCheck[] {
   const saved = one<{ value: string }>(app.db, "select value from kv where key=?", "flow-checks:" + id);
   return saved ? JSON.parse(saved.value) : [];
 }
+export function checksForFlow(app: App, id: string): Check[] {
+  return storedChecks(app,id).map(({scope: _, ...check}) => check);
+}
 export function saveGateChecks(app: App, id: string, checks: Check[]) {
   const f = readFlow(app, id), validated = gateChecksSchema.parse(checks);
-  for (const c of validated) {
+  const stored = validated.map(c => {
     const entry = stageGates.get(c.id);
     if (!entry) throw new HttpError(400, "检查不可用：" + c.id);
     if (entry.def.applies?.flows && !entry.def.applies.flows.includes(id)) throw new HttpError(400, "检查不适用于这个流程");
-    for (const stage of c.stages ?? f.stages.map(s => s.id)) {
+    for (const stage of c.stages ?? []) {
       if (!f.stages.some(s => s.id === stage) || entry.def.applies?.stages && !entry.def.applies.stages.includes(stage))
         throw new HttpError(400, "检查不适用于这个阶段：" + stage);
     }
-  }
-  run(app.db, "insert or replace into kv(key,value) values(?,?)", "flow-checks:" + id, JSON.stringify(validated));
+    return { ...c, scope: {stages:entry.def.applies?.stages, spaces:entry.spaces} };
+  });
+  run(app.db, "insert or replace into kv(key,value) values(?,?)", "flow-checks:" + id, JSON.stringify(stored));
   audit(app, "owner", "flow.checks", id, { checks: validated });
   return validated;
 }
@@ -52,9 +57,12 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
   const summary = s.control.question === "done" ? s.note : note;
   const failed: GateReview["failed"] = [], budget = AbortSignal.timeout(8000);
   const evidence = patch.control?.pluginEvidence ?? s.control.pluginEvidence ?? (patch.evidence ?? s.evidence).map(text => ({ text }));
-  for (const check of checksForFlow(app, f.id).filter(c => !c.stages || c.stages.includes(stageId)).sort((a,b) => a.id.localeCompare(b.id))) {
+  for (const check of storedChecks(app, f.id).filter(c => !c.stages || c.stages.includes(stageId)).sort((a,b) => a.id.localeCompare(b.id))) {
     const entry = stageGates.get(check.id);
-    if (entry?.spaces.length && !entry.spaces.includes(item.spaceId)) continue;
+    const applies = entry ? entry.def.applies : check.scope;
+    const spaces = entry?.spaces ?? check.scope?.spaces;
+    if (entry?.def.applies?.flows && !entry.def.applies.flows.includes(f.id)) continue;
+    if (applies?.stages && !applies.stages.includes(stageId) || spaces?.length && !spaces.includes(item.spaceId)) continue;
     let reason: string | undefined;
     try {
       if (!entry) throw Error("检查插件已停用");

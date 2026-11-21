@@ -120,6 +120,23 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     expect(flowView(app,again).stages[0].state).toBe("blocked");
     saveGateChecks(app,"inspect",[]);
   });
+  it("全流程启用的检查只覆盖声明的阶段，停用后仍按原范围处理", async () => {
+    const first = {id:"first",name:"准备",by:"wait"};
+    saveFlow(app, raw([first]), "owner");
+    saveGateChecks(app,"inspect",[{id:"stagekit:first",mandatory:true}]);
+    const stages = [first,{id:"more",name:"新增",by:"wait",needs:[]}];
+    for (const enabled of [true,false]) {
+      await setPluginEnabled(app,"stagekit",enabled);
+      const id = await begin(stages);
+      await ownerAction(app,id,"more","done","新增阶段直接完成");
+      expect(flowView(app,id).stages[1].state).toBe("done");
+      await ownerAction(app,id,"first","done","准备完毕");
+      expect(flowView(app,id).stages[0]).toMatchObject({state:"blocked",gateReview:{failed:[
+        {id:"stagekit:first",reason:expect.stringContaining(enabled ? "准备结果" : "问不到")}] }});
+    }
+    await setPluginEnabled(app,"stagekit",true);
+    saveGateChecks(app,"inspect",[]);
+  });
   it("必须的检查超时暂停，非必须的检查超时放行并记下原因", async () => {
     const item = await begin([{id:"mark",name:"人工检查",by:"wait"}]);
     saveGateChecks(app,"inspect",[{id:"stagekit:slow",mandatory:true}]);
