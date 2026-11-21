@@ -63,6 +63,32 @@ it("检测、查询和写入可用满时限，稳定慢于三分之一预算的�
   expect(s.calls).toHaveLength(3);
 });
 
+it.each([
+  { code: "TimeoutError", error: new DOMException("example-secret", "TimeoutError") },
+  { code: "ETIMEDOUT", error: Object.assign(new Error("example-secret"), { code: "ETIMEDOUT" }) },
+  ...["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"].map(code => ({
+    code, error: new TypeError("fetch failed: example-secret", { cause: Object.assign(new Error("example-secret"), { code }) }),
+  })),
+])("传输提前报 $code 时用剩余时限重试，耗尽次数后返回脱敏错误", async ({ error }) => {
+  const { app, calls } = await setup();
+  const send = vi.spyOn(globalThis, "fetch");
+  try {
+    send.mockRejectedValueOnce(error);
+    expect(await embedPending(app)).toBe(2);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(calls).toHaveLength(1);
+    expect(vectorCounts(app).clear).toBe(2);
+
+    send.mockClear().mockRejectedValue(error);
+    expect(await embedQuery(app, "测试提前超时")).toBeNull();
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(embeddingHealth(app).lastError).toContain("[已隐藏]");
+    expect(embeddingHealth(app).lastError).not.toContain("example-secret");
+  } finally {
+    send.mockRestore();
+  }
+});
+
 it("错误维度和条数整批作废，暂停后台并保留积压", async () => {
   const s = await setup();
   for (const fault of ["dim", "count"]) {

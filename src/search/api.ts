@@ -16,6 +16,13 @@ export class SearchApiError extends Error {
   }
 }
 
+// Node fetch can report a transport timeout directly or as the cause of a TypeError.
+function isTransportTimeout(error: unknown) {
+  const e = error as NodeJS.ErrnoException | undefined;
+  return e?.name === "TimeoutError" || e?.code === "ETIMEDOUT" || e?.code === "UND_ERR_CONNECT_TIMEOUT"
+    || e?.code === "UND_ERR_HEADERS_TIMEOUT" || e?.code === "UND_ERR_BODY_TIMEOUT";
+}
+
 export async function searchPost(app: App, cfg: Connection, path: string, body: object, signal: AbortSignal): Promise<unknown> {
   const key = cfg.keyRef ? keyOf(cfg.keyRef, app.home) : process.env[cfg.apiKeyEnv];
   if (cfg.keyRef && (!key || !app.config.ai.providers.some(p => p.id === cfg.keyRef))) throw new Error("AI 服务商或密钥不存在");
@@ -34,7 +41,7 @@ export async function searchPost(app: App, cfg: Connection, path: string, body: 
   } catch (err) {
     const error = err as Error;
     const message = key ? error.message.replaceAll(key, "[已隐藏]") : error.message;
-    if (err instanceof SearchApiError) throw new SearchApiError(message, err.retryable);
-    throw new Error(message.slice(0, 500));
+    const retryable = err instanceof SearchApiError ? err.retryable : isTransportTimeout(error) || isTransportTimeout(error.cause);
+    throw new SearchApiError(message.slice(0, 500), retryable);
   }
 }
