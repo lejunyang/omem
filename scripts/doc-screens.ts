@@ -1062,7 +1062,7 @@ addMember(app, "shop", xiaozhou.id, "reader");
 const xiaolin = createUser(app, { id: "xiaolin", name: "小林", role: "member" });
 addMember(app, "shop", xiaolin.id, "contributor");
 addMember(app, "refund", xiaolin.id, "reader");
-for (const [capability, kind, scope, effect] of [["work.view", "global", "", "allow"], ["memories.view", "global", "", "deny"], ["runs.view", "space", "shop", "allow"]] as const)
+for (const [capability, kind, scope, effect] of [["work.view", "global", "", "allow"], ["items.operate", "global", "", "deny"], ["items.view", "space", "shop", "allow"]] as const)
   run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values(?,?,?,?,?,?,?,?)", xiaolin.id, capability, kind, scope, effect, new Date().toISOString(), "owner", new Date().toISOString());
 // 小吴: a member with nothing set apart, to compare the nav against the preset.
 const xiaowu = createUser(app, { id: "xiaowu", name: "小吴", role: "member" });
@@ -1279,11 +1279,17 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   } },
   // An item that came from the platform, closed on this side: the write-back waits for a yes.
   // What a member may do (components/MemberCaps.vue): 小林's capabilities, one space opened.
-  { name: "members-capabilities", path: "/settings?tab=members", prepare: async (p) => {
+  { name: "members-capabilities", path: "/settings?tab=members", before: async (p) => {
+    // The page head names the data directory: the demo's temporary one is a path on this machine.
+    await p.route("**/api/settings", async (route) => {
+      const data = await (await route.fetch()).json();
+      data.home = "~/.omem";
+      await route.fulfill({ json: data });
+    });
+  }, prepare: async (p) => {
     await p.getByRole("button", { name: "小林能做什么" }).click();
     await p.locator(".mc-cap").first().waitFor();
-    await p.locator(".mc-cap", { hasText: "看运行" }).getByRole("button", { name: /空间另设/ }).click();
-    await p.locator(".mc-cap", { hasText: "看运行" }).scrollIntoViewIfNeeded();
+    await p.locator(".mc-cap", { hasText: "看事项" }).getByRole("button", { name: /空间另设/ }).click();
     await p.waitForTimeout(300);
   } },
   // The owner's lines as the read-only observer 小周 sees them (lib/shared-work.ts).

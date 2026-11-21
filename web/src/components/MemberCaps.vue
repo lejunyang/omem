@@ -108,11 +108,16 @@ function inherited(c: Capability, space?: string): { on: boolean; from: string }
   return viaRole ? { on: true, from: "空间角色带的" } : { on: false, from: "" };
 }
 /** What the row says: 有 or 没有, and why. */
-function stateOf(c: Capability, space?: string): { on: boolean; text: string } {
+function stateOf(c: Capability, space?: string): { on: boolean; text: string; label?: string } {
   const own = choice(c.key, space ?? "");
   const top = space ? choice(c.key) : own;
   if (top === "deny" || own === "deny") return { on: false, text: space && own !== "deny" ? "上面不给" : "单独不给" };
   if (own === "allow" || top === "allow") return { on: true, text: space && own !== "allow" ? "上面允许" : "单独给的" };
+  // Following the preset overall, but some spaces set apart: say it holds in some of them.
+  if (!space && c.scope === "space" && spaces.value.length) {
+    const on = spaces.value.filter((s) => stateOf(c, s.id).on).length;
+    if (on && on < spaces.value.length) return { on: true, label: "部分有", text: `${on} / ${spaces.value.length} 个空间` };
+  }
   const i = inherited(c, space);
   return { on: i.on, text: i.from };
 }
@@ -205,7 +210,7 @@ watch(() => props.user.id, () => { data.value = null; openCaps.value = new Set()
             <div class="mc-what">
               <div class="mc-line">
                 <span class="mc-name">{{ c.name }}</span>
-                <span class="mc-state" :class="{ on: stateOf(c).on, set: choice(c.key) !== 'inherit' }"><i aria-hidden="true" />{{ stateOf(c).on ? "有" : "没有" }}<template v-if="stateOf(c).text"> · {{ stateOf(c).text }}</template></span>
+                <span class="mc-state" :class="{ on: stateOf(c).on, set: choice(c.key) !== 'inherit' }"><i aria-hidden="true" />{{ stateOf(c).label ?? (stateOf(c).on ? "有" : "没有") }}<template v-if="stateOf(c).text"> · {{ stateOf(c).text }}</template></span>
                 <button
                   v-if="c.scope === 'space' && spaces.length"
                   type="button"

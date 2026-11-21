@@ -17,6 +17,16 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 网页按成员能力显示（11-21）
+
+- 设置 → 成员：每行行尾“能做什么”，打开 `web/src/components/MemberCaps.vue`（右侧抽屉）：预设（全局角色）加一句说明，能力按区域分组，每项写有没有和从哪来（预设带的 / 空间角色带的 / 单独给的 / 单独不给 / 部分空间有），用 `UiSegmented` 选跟预设 / 允许 / 不给；按空间的能力展开他能读的空间逐个另设。整份 `PUT /api/members/:id/capabilities`，底部一句话写改了什么，关闭时有未保存改动用 `confirmDialog` 问。成员行显示“另设 N 项”（每人读一次 `GET /api/members/:id/capabilities`）。
+- `web/src/lib/caps.ts`：`hasCap`、`capIn`、`capAnywhere`（`own` 用 `ownSpaceCaps`）、`hasPerm`；本人和 `state.me` 还没读到时为真，`/api/me` 没有 `caps` 时退回旧权限（`member: true` 的页面照开、规则看 `agents.manage`）。store 用 `followMe` 把 `state.me` 交给它。测试 `test/web-caps.test.ts`。
+- `App.vue` 的侧栏每项写要的能力；打开没有能力的页面不再先渲染（以前会先发请求、弹“没有权限”再跳回问答）。
+- 别人看工作页（`views/Work.vue`、`WorkDetail.vue`）：服务端给的是 `sharedLines` 的精简结构，`web/src/lib/shared-work.ts` 转成页面用的 `Line` / 详情；收起本人才有的部分，`WorkLine`、`WorkChange`、`WorkSheet` 加 `readonly`。
+- `views/Rules.vue`：没有 `rules.edit` 时是只读清单，只用 `ruleSummary` 的字段。
+- 事项详情按 `can.edit` / `can.operate`（没有 `can` 的旧服务端按“是不是自己的”）；`ItemMaterials` 加 `readonly`；运行页交办按 `code.delegate`，停止重试按 `can.operate`；`CodeWork` 的下一步动作、追加要求、修改点、分支落地按 `can`；Wiki 写页、需求树编辑按 `state.me.wiki` / `writes`。
+- 演示数据加小周（只读观察者）、小林（成员，另设三项）、小吴（成员），`--serve` 打印他们的演示令牌；截图 `members-capabilities`、`observer-work`。
+
 ## 设置 → 安全 → 记录（11-21）
 
 - `audit_events` 以前只有 `GET /api/access/audit` 原样返回最近 200 条，没有页面读它。新加 `src/auth/audit-view.ts` 的 `auditRows`：把每条记录说成“谁、做了什么、对谁、结果”，成员、群、空间和关注显示名字，规则带标题（没标题的用它匹配的东西），分四类（`ops` 规则的判定和批准、`identity` 以本人身份发出的、`access` 成员登录分享、`other`），按 id 往前翻。规则判定的行，执行人写成“某人的运行”；批准和拒绝写做决定的人。认不出的动作照原名显示。

@@ -172,7 +172,7 @@ npm install -g @omem-ai/cli
 
 内置技能包括 `wiki-writing`、`lark-messaging`、`desktop-control`、`meeting-assist`（旁听会议时按会议性质主动查），以及 `research`（先查库、再查外部并交叉核对，给出有依据的结论）和 `improve-loop`（按可检查的目标逐轮改进，保留有效改动，停滞时换方向或交回）。启动时补进技能库，已有内容不覆盖。 编码改进目标由宿主固定度量命令、测基线，逐轮检查并决定留下或新增提交回退；达到目标、预算用完、连续四轮无效或到点就停止并发报告。运行页能看前后数字和每轮结果，循环不合并或推送分支。
 
-成员还可以使用“网页只读观察者”预设，在获准空间查看工作线、事项、运行和评审。成员能力目前通过管理接口配置，见[成员能力](docs/v2/multi-user.md#成员能力)。
+成员还可以使用“网页只读观察者”预设，在获准空间查看工作线、事项、运行和评审。每个人能做什么在 设置 → 成员 → 能做什么 里按项给或不给，可以只在某个空间另设；网页只显示他能用的入口和按钮，见[成员能力](docs/v2/multi-user.md#成员能力)。
 
 ## 日常用途
 
@@ -538,7 +538,7 @@ omem user token wang                                # 给他发一个 API 令牌
 omem space share project-a wang [--edit]           # 再开放一个空间
 ```
 
-成员私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。每个人有一个全局角色（管理员、成员、访客，或你建的角色），在加入的每个空间里有一个空间角色（只读、贡献者、编辑、管理，或自定义的）：能不能写记忆、写 Wiki、看别人的运行、管空间成员都按角色来；管理员能改 Agent 和规则，系统设置、设备、交办编码只给你。自己建的空间自己管理，在账号页加人。成员的 Agent 运行只拿到他能用的工具。
+成员私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。每个人有一个全局角色（管理员、成员、访客，或你建的角色），在加入的每个空间里有一个空间角色（只读、贡献者、编辑、管理，或自定义的）：能不能写记忆、写 Wiki、看别人的运行、管空间成员都按角色来；管理员能改 Agent 和规则，系统设置、设备、交办编码只给你。角色之外，成员页每人一个“能做什么”：二十多项能力（看工作线、改事项、看规则、操作运行……）各自跟预设、允许或不给，按空间的能力能逐个空间另设。自己建的空间自己管理，在账号页加人。成员的 Agent 运行只拿到他能用的工具。
 
 成员的 Agent 运行默认借用你在这台机器上的 AI 登录。Linux 上装了 bubblewrap（用系统的包管理器装 `bubblewrap`，或 `osdk pkg apply`；系统要允许非特权用户命名空间）以后，成员可以在账号页“我的 AI 账号”里登录 Codex、TraeX、豆包命令行（设备码或二维码），或给 Claude Code 粘贴在自己电脑上用 `claude setup-token` 生成的令牌；之后他发起的运行用他自己的账号，额度和使用记录算在他名下：他的套餐额度在他的沙箱里读，显示在他的页面上，选后端时按他自己的额度避让；可选的模型也按他的账号检测。点“登录”后，链接和验证码同时由机器人发到他的飞书私聊。插件可以给某个后端加登录方式（比如用公司的统一身份登录，`api.agentLogin`，见 [docs/v2/plugins.md](docs/v2/plugins.md)），成员在页面上选用哪种，插件登录到期前自动续签，续不了时提醒他重新登录。所有人的 Agent 都以同一个系统用户运行，靠沙箱把各人的账号目录隔开：成员的运行在沙箱里，HOME 是他自己的账号目录，看不到你的登录、omem 的数据目录和别人的账号目录。你开着“接管 Agent 自带的技能”时，omem 的说明和技能分组入口也会写进他的账号目录。你在设置 → 成员 → 成员的 AI 账号 里按后端定没登录的成员借用你的、换一个他登录过或允许借用的后端，还是只能用自己的（运行失败并提示他去登录），也能看到谁用什么方式登了哪些后端、让他退出；停用一个成员时，他的登录和账号目录一并删除。你在配置里自己加的后端也可以写 `account` 一段，让成员按人登录。macOS、Windows 和没有 bubblewrap 的 Linux 上没有这一项，成员照旧借用你的。`omem diag` 的 `agentAccounts` 显示这台机器能不能用。设计见 [docs/v2/agent-accounts.md](docs/v2/agent-accounts.md)。
 
@@ -667,7 +667,7 @@ scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站�
 vscode/       VS Code 插件（workspace 里的包 omem-vscode；omem 的网页版 VS Code 启动前从源码编译装进去，连本机 omem 不用设置）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办、修改项与看改动、方案视图（按决定看改动）；在真实 VS Code 里跑的测试在 vscode/test
 chrome/       Chrome 扩展（workspace 里的包 omem-chrome）：DevTools 网络面板（筛选、Mock、资源搜索）、用户状态、设备模拟与居中模拟器、「拾取」（截图、元素样式与间距、侧栏拾取篮）、「录制」（侧栏，把操作、请求和截图交给 omem 整理成技能）、「演示」（侧栏顶部，拾取和录制记进一次演示）；默认不连 CDP，注入页面的脚本在 chrome/src/inject，扩展自己的约定在 chrome/AGENTS.md，真实 Chromium 的 e2e 在 chrome/e2e
 site/         文档站（VitePress，workspace 里的包 omem-docs）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）
-web/          Vue 3 网页（首页是工作页 views/Work.vue，线和工作项的页 views/WorkDetail.vue，呈现用的函数在 lib/work.ts）
+web/          Vue 3 网页（首页是工作页 views/Work.vue，线和工作项的页 views/WorkDetail.vue，呈现用的函数在 lib/work.ts；谁能看到哪些入口和按钮在 lib/caps.ts）
 ```
 
 `lark-personal.ts` 做本人身份的轮询，`lark-bot.ts` 接收机器人事件，`lark-sender.ts` 分开解析人与机器人的发送者名称，`lark-resource-parse.ts` 独立处理已保存附件的解析，`lark-messages.ts` 统一两路消息、资源与原件行。`lark-docs.ts` 读飞书文档（素材本地化、链接与知识库子页面），`lark-wiki.ts` 是知识库节点与分批爬取，`lark-knowledge.ts` 发现能看到的知识库、记下 kb-scout 的归属建议和本人的决定、每晚按份额继续各知识库的爬取，`lark-doc-write.ts` 以本人身份写文档（判断位置是不是本人自己的），`lark-doc-approval.ts` 按文档或知识库节点复用本人已批准的操作范围、清理内容预览，`lark-auth.ts` 检查 lark-cli 本人登录的权限，缺了就发起授权。
