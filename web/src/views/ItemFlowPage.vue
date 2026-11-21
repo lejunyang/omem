@@ -27,7 +27,8 @@ type Shot = StageTest["artifacts"][number];
 type Stage = FlowStage;
 
 /** `embedded`: the 流程 tab of a work item's page (views/WorkDetail.vue), which has the title, the stage track and what waits for the owner above it. */
-const props = defineProps<{ id?: string; embedded?: boolean }>();
+/** `who`: whose item it is when someone else reads it (WorkDetail's person), for “小王选了等处理”. */
+const props = defineProps<{ id?: string; embedded?: boolean; who?: string | null }>();
 const route = useRoute(), router = useRouter();
 const spaceName = (sid: string) => state.spaces.find((s) => s.id === sid)?.name ?? sid;
 const id = computed(() => props.id ?? String(route.params.id ?? ""));
@@ -148,7 +149,7 @@ function openRef(r: string) {
           <h2><span class="dot" :class="dot(s)" />{{ s.name }}<span class="when muted small">{{ stageWords[s.state] }}{{ when(s) ? ` · ${when(s)}` : "" }}{{ s.attempt > 1 ? ` · 第 ${s.attempt} 次` : "" }}</span></h2>
           <Markdown v-if="text(s)" :source="text(s)" class="prose" />
           <p v-else class="muted">{{ s.state === "doing" ? "正在做，还没写结果。" : "没有写结果。" }}</p>
-          <FlowStagePlugin :item-id="item.id" :stage="s" :editable="editable" :actions="false" @changed="(v) => (v ? (flow = v) : load())" />
+          <FlowStagePlugin :item-id="item.id" :stage="s" :editable="editable" :actions="false" :who="editable ? null : who || '负责人'" @changed="(v) => (v ? (flow = v) : load())" />
           <ShotGrid v-if="images(s.shots).length" :items="images(s.shots)" />
           <details v-if="earlier(s.shots).length" class="earlier small">
             <summary class="muted">之前几次的截图（{{ earlier(s.shots).length }}）</summary>

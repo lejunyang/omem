@@ -12,6 +12,31 @@ export type FlowCheck = { id: string; stages?: string[]; mandatory?: boolean };
 export type PendingCheck = { id: string; reason: string };
 /** What the page needs of `GET /api/flows` besides the flows. Older servers send none of these. */
 export type FlowHooks = { signals: HookOption[]; runners: HookOption[]; gates: GateOption[] };
+/** A job or signal of a definition that no plugin offers now (`POST /api/flows/validate`): kept as saved, said, not an error. */
+export type UnavailableReference = { kind: "runner" | "signal"; stage: string; id: string; reason: string };
+/** A saved check whose plugin is gone (`GET /api/flows` rows and the validation). */
+export type UnavailableCheck = { id: string; reason: string };
+/**
+ * One stage of a listed flow, read by the server (src/flows/definitions.ts summarizeStage): who does
+ * it and what ends it, with a plugin's job or signal by full name and display name.
+ */
+export type StageSummary = {
+  id: string; name: string;
+  carrier: { kind: "owner" | "wait" | "assistant" | "profile" | "runner" | "object"; id?: string; name: string; params?: Record<string, unknown>; skill?: string | null };
+  done: { kind: "signal" | "object" | "confirm" | "instruction" | "default"; id?: string; name: string; params?: Record<string, unknown>; statuses?: string[]; instruction?: string | null };
+  time: { at: string | null; window: string | null; minutes: number | null };
+};
+/** The plugin's signal a summarized stage waits for, by full name and display name; null for Git's or none. */
+export const summarySignal = (s: StageSummary | undefined) => (s?.done.kind === "signal" && s.done.id && pluginOf(s.done.id) ? { id: s.done.id, name: s.done.name } : null);
+/**
+ * A stage's plugin parts on the definitions page: the plugin's signal it waits for (a job is already said
+ * by its carrier line), and which of its job and signal no plugin offers now, as the server read them.
+ */
+export function stagePluginParts(stage: string, signal: { id: string; name: string } | null, unavailable: UnavailableReference[]) {
+  const gone = unavailable.filter((u) => u.stage === stage);
+  const named = signal && !gone.some((g) => g.kind === "signal" && g.id === signal.id) ? signal.name : "";
+  return named || gone.length ? { signal: named, gone } : null;
+}
 
 /** `stagekit:mark` → `stagekit`; built-in names have no plugin. */
 export const pluginOf = (id: string) => (id.includes(":") ? id.slice(0, id.indexOf(":")) : null);
@@ -198,8 +223,25 @@ export function putCheck(checks: FlowCheck[], id: string, next: Omit<FlowCheck, 
 // ---- the item's flow ------------------------------------------------------------------------------
 
 export type PluginEvidence = { text: string; link?: string };
-export type GateReview = { summary: string; refs: string[]; failed: { id: string; reason: string; evidence?: PluginEvidence[] }[] };
-export type WaitingSignal = { type: string; checkedAt: string | null; note: string; available?: boolean; failures?: number; nextAt?: string };
+/**
+ * The owner's card on a stopped stage (src/flows/engine.ts flowView): still waiting, or answered with
+ * 仍然通过 (`override`) or 等处理 (`hold`) and when. Kept after 仍然通过, gone once the stage is reopened.
+ */
+export type GateAsk = { id: string; status: "pending" | "answered" | "cancelled"; choice: "override" | "hold" | null; answeredAt: string | null };
+export type GateReview = { summary: string; refs: string[]; failed: { id: string; reason: string; evidence?: PluginEvidence[] }[]; ask?: GateAsk | null };
+/** `id` / `name`: the signal's full name and what it is called (the id again when its plugin is gone). */
+export type WaitingSignal = { type: string; id?: string; name?: string; checkedAt: string | null; note: string; available?: boolean; failures?: number; nextAt?: string };
+/**
+ * What the owner answered on a stopped stage's card, in a sentence; null while it waits for an answer.
+ * `who`: the owner's name when someone else reads it (an observer), else “你”.
+ */
+export function gateAnswer(ask: GateAsk | null | undefined, at: (iso: string) => string, who?: string | null): string | null {
+  if (!ask || ask.status === "pending") return null;
+  const when = ask.answeredAt ? `（${at(ask.answeredAt)}）` : "", subject = who || "你";
+  if (ask.choice === "override") return `${subject}选了仍然通过${when}`;
+  if (ask.choice === "hold") return `${subject}选了等处理${when}`;
+  return ask.status === "cancelled" ? "这张确认卡已撤回" : null;
+}
 /** Where a piece of evidence opens: an original in the citation drawer, a page here, or a site in a new tab. */
 export function evidenceTarget(link: string | undefined): { kind: "cite"; ref: string } | { kind: "route"; path: string } | { kind: "external"; url: string } | null {
   if (!link) return null;
@@ -219,14 +261,6 @@ export function signalState(w: WaitingSignal, name?: string): { tone: "waiting" 
   return { tone: "waiting", head: `在等 ${who}`, note: w.note };
 }
 export const pluginSignal = (w: WaitingSignal | undefined) => !!w && w.type.includes(":");
-/**
- * The plugin's job a stage is given to. The item's flow says it only in its carrier's words
- * (src/flows/definitions.ts describeStage: "这个阶段会由插件 <id> 执行：<用途>").
- */
-export function runnerOf(label: string | undefined): { id: string; describe: string } | null {
-  const m = /^这个阶段会由插件 ([a-z][a-z0-9-]*:[a-z][a-z0-9-]*) 执行：([\s\S]*)$/.exec(label ?? "");
-  return m ? { id: m[1], describe: m[2] } : null;
-}
 
 // ---- where the progress view lands ---------------------------------------------------------------
 

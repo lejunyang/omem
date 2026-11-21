@@ -6,7 +6,8 @@ export type FlowStage = {
   id: string; name: string; instruction: string; state: StageState; attempt: number;
   since: string; enteredAt: string | null; doneAt: string | null; by: string | null;
   waitingOn: string | null; evidence: string[]; note: string; gate: string; fixed: boolean;
-  question: string | null; carrier: { kind: string; label: string; link?: string };
+  /** `runner`: the plugin's job the stage is given to, by full name and display name (the id again when its plugin is gone). */
+  question: string | null; carrier: { kind: string; label: string; link?: string; runner?: { id: string; name: string } };
   /** What the stage follows. A plugin's object says its state in words and may carry a few fields. */
   object?: { title: string; status: string; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; disabled?: boolean };
   /** Rounds, model tier, timing and budget (docs/v2/studies.md): what the definition says, in words, and what has been used. */
@@ -168,8 +169,9 @@ export function clockTime(at: string) {
 export const aiName = (ai: { profile: string; model?: string; effort?: string }) => [ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ");
 export type FlowAction = { action: "confirm" | "hold" | "skip" | "done" | "reopen"; label: string; reason?: boolean };
 export function stageActions(s: FlowStage): FlowAction[] {
-  // Stopped by a plugin's check: 仍然通过 is the card's (FlowGateReview); finishing again checks again.
-  if (s.state === "blocked" && s.gateReview) return [{ action: "done", label: "处理好了，重新检查", reason: true }, { action: "reopen", label: "重开", reason: true }];
+  // Stopped by a plugin's check: 仍然通过 / 等处理 are the card's (FlowStagePlugin) while it waits for an answer;
+  // after 等处理, finishing again checks again.
+  if (s.state === "blocked" && s.gateReview) return [...(s.gateReview.ask?.status === "pending" ? [] : [{ action: "done" as const, label: "处理好了，重新检查", reason: true }]), { action: "reopen", label: "重开", reason: true }];
   if (s.state === "blocked") return [{ action: "done", label: "我来处理了，继续", reason: true }, { action: "reopen", label: "重开", reason: true }];
   if (s.question === "skip" && ownerTurn(s)) return [{ action: "skip", label: "跳过这一段", reason: true }];
   if (s.question === "refuse" && ownerTurn(s)) return [{ action: "reopen", label: "还不行", reason: true }];

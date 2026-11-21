@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import {
   carrierOf, carrierOptions, carrierValue, doneOf, doneOptions, doneValue, parseParams, pluginOf, setParam, signalAllowed, simpleFields, writeCarrier, writeDone,
-  type CarrierChoice, type DoneChoice, type FlowHooks, type HookOption, type ParamField, type PluginNames, type RawStage,
+  type CarrierChoice, type DoneChoice, type FlowHooks, type HookOption, type ParamField, type PluginNames, type RawStage, type UnavailableReference,
 } from "../lib/flow-hooks";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
@@ -13,7 +13,9 @@ import UiSelect from "./UiSelect.vue";
  * declares. Every change is written into the YAML text, which is what is checked and saved. What the
  * YAML says in ways these pickers do not cover stays as it is (`保持定义里写的`).
  */
-const props = defineProps<{ raw: string; stage: RawStage; hooks: FlowHooks; names: PluginNames; disabled?: boolean; problem?: string; ownerOnly?: boolean }>();
+/** `unavailable`: this stage's job or signal the server found no plugin offering now (`POST /api/flows/validate`). */
+const props = defineProps<{ raw: string; stage: RawStage; hooks: FlowHooks; names: PluginNames; unavailable?: UnavailableReference[]; disabled?: boolean; problem?: string; ownerOnly?: boolean }>();
+const gone = (kind: "runner" | "signal", id: string) => !!props.unavailable?.some((u) => u.kind === kind && u.id === id);
 const emit = defineEmits<{ "update:raw": [raw: string] }>();
 
 const carrier = computed(() => carrierOf(props.stage));
@@ -75,7 +77,7 @@ const mine = (id: string) => (props.problem && props.problem.includes(id) ? prop
 
     <div v-if="carrier.kind === 'runner'" class="provider">
       <p v-if="runner" class="hint">{{ runner.describe }}</p>
-      <p v-else class="hint warn-line">这个插件停用了：{{ carrier.id }} 做不了这一段，轮到它时会卡住等你处理。</p>
+      <p v-else-if="gone('runner', carrier.id)" class="hint warn-line">这个插件停用了：{{ carrier.id }} 做不了这一段，轮到它时会卡住等你处理。</p>
       <label class="hook-field narrow"><span>最多跑多少分钟</span><input class="input" type="number" min="1" max="525600" inputmode="numeric" :value="minutes ?? ''" :disabled="disabled" aria-label="最多跑多少分钟" @change="setMinutes(($event.target as HTMLInputElement).value)" /></label>
       <template v-if="runner">
         <template v-if="fieldsOf(runner)">
@@ -97,7 +99,7 @@ const mine = (id: string) => (props.problem && props.problem.includes(id) ? prop
 
     <div v-if="done.kind === 'signal' && !gitSignal" class="provider">
       <p v-if="signal" class="hint">{{ signal.describe }}（你也可以自己点做完）</p>
-      <p v-else class="hint warn-line">这个插件停用了，你可以手动完成这一段：{{ done.id }} 现在没人能判断。</p>
+      <p v-else-if="gone('signal', done.id)" class="hint warn-line">这个插件停用了，你可以手动完成这一段：{{ done.id }} 现在没人能判断。</p>
       <template v-if="signal">
         <template v-if="fieldsOf(signal)">
           <div v-for="f in fieldsOf(signal)!" :key="f.key" class="param">

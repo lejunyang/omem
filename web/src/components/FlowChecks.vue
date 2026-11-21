@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { put } from "../api";
-import { gateStages, gatesFor, orphanChecks, putCheck, type FlowCheck, type GateOption, type PendingCheck, type PluginNames, pluginOf } from "../lib/flow-hooks";
+import { gateStages, gatesFor, orphanChecks, putCheck, type FlowCheck, type GateOption, type PendingCheck, type PluginNames, type UnavailableCheck, pluginOf } from "../lib/flow-hooks";
 import HelpText from "./HelpText.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
@@ -12,7 +12,9 @@ import UiSelect from "./UiSelect.vue";
  * The list is saved as a whole on every change. A check whose plugin is gone stays listed until it is
  * turned off; mandatory ones of those may be holding stages (`pendingCheckScopes`).
  */
-const props = defineProps<{ flowId: string; stages: { id: string; name: string }[]; gates: GateOption[]; checks: FlowCheck[]; pending: PendingCheck[]; names: PluginNames; editable: boolean }>();
+/** `unavailable`: saved checks whose plugin is gone, as the server says (`GET /api/flows`). */
+const props = defineProps<{ flowId: string; stages: { id: string; name: string }[]; gates: GateOption[]; checks: FlowCheck[]; pending: PendingCheck[]; unavailable?: UnavailableCheck[]; names: PluginNames; editable: boolean }>();
+const gone = (id: string) => !!props.unavailable?.some((u) => u.id === id);
 const emit = defineEmits<{ saved: [checks: FlowCheck[]] }>();
 
 const list = ref<FlowCheck[]>([]);
@@ -82,7 +84,7 @@ const picked = (g: GateOption) => { const c = on(g.id); return c?.stages?.length
         <div class="check-row">
           <UiCheckbox :model-value="true" switch size="sm" :disabled="busy || !editable" :aria-label="`关掉检查 ${c.id}`" @change="(v: boolean) => !v && save(putCheck(list, c.id, null), `已关掉 ${c.id}`)" />
           <div class="check-text">
-            <div class="check-name"><strong class="mono">{{ c.id }}</strong><span class="badge warn">插件停用了</span></div>
+            <div class="check-name"><strong class="mono">{{ c.id }}</strong><span v-if="gone(c.id)" class="badge warn">插件停用了</span></div>
             <div class="muted small">{{ c.mandatory ? "要求停下：适用的阶段会等你处理" : "不要求停下：照常放行，只记一笔" }}<template v-if="c.stages?.length"> · {{ c.stages.map(stageName).join("、") }}</template></div>
           </div>
         </div>

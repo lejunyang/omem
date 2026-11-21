@@ -1672,10 +1672,15 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "settings-search-providers", path: "/settings?card=embeddings", before: async (p) => {
     // The page head names the data directory: the demo's temporary one is a path on this machine.
     await p.route("**/api/settings", async (route) => {
-      if (route.request().method() !== "GET") return route.fallback();
-      const data = await (await route.fetch()).json();
-      data.home = "~/.omem";
-      await route.fulfill({ json: data });
+      const response = await route.fetch();
+      if (!response.ok()) return route.fulfill({ response });
+      const data = await response.json();
+      if (route.request().method() === "GET") data.home = "~/.omem";
+      // The address shown for 示例云 (the placeholder and the key's hint) is the local stand-in's, with a random
+      // port: shown as a fixed one, in what reading and saving (turning reranking on) return. Only the page sees
+      // it; the server still calls the stand-in.
+      for (const provider of data.config?.ai?.providers ?? []) if (provider.id === "demo-cloud") provider.baseUrl = "https://api.example.com/v1";
+      await route.fulfill({ response, json: data });
     });
   }, prepare: async (p) => {
     const vec = p.locator("#set-embeddings");

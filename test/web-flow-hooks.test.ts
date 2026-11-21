@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
-  carrierOf, carrierOptions, doneOf, doneOptions, evidenceTarget, gateStages, gatesFor, landing, orphanChecks, parseParams, putCheck,
-  readStages, runnerOf, setParam, signalState, simpleFields, writeCarrier, writeDone,
+  carrierOf, carrierOptions, doneOf, doneOptions, evidenceTarget, gateAnswer, gateStages, gatesFor, landing, orphanChecks, parseParams, putCheck,
+  readStages, setParam, signalState, simpleFields, stagePluginParts, summarySignal, writeCarrier, writeDone,
 } from "../web/src/lib/flow-hooks.ts";
 
 const raw = `# 本机检查
@@ -83,8 +83,22 @@ describe("plugin hooks in a flow definition (web/src/lib/flow-hooks.ts)", () => 
     expect(evidenceTarget("#/runs/r1")).toEqual({ kind: "route", path: "/runs/r1" });
     expect(evidenceTarget("https://example.org/a")).toMatchObject({ kind: "external" });
     expect(evidenceTarget("javascript:alert(1)")).toBeNull();
-    expect(runnerOf("这个阶段会由插件 stagekit:write 执行：写检查文件")).toEqual({ id: "stagekit:write", describe: "写检查文件" });
-    expect(runnerOf("助手来做")).toBeNull();
+  });
+  it("says what the owner answered on a stopped stage's card, and nothing while it waits", () => {
+    const at = (iso: string) => iso.slice(11, 16);
+    expect(gateAnswer({ id: "a", status: "pending", choice: null, answeredAt: null }, at)).toBeNull();
+    expect(gateAnswer(null, at)).toBeNull();
+    expect(gateAnswer({ id: "a", status: "answered", choice: "hold", answeredAt: "2026-11-22T09:30:00Z" }, at)).toBe("你选了等处理（09:30）");
+    expect(gateAnswer({ id: "a", status: "answered", choice: "override", answeredAt: null }, at, "小王")).toBe("小王选了仍然通过");
+  });
+  it("marks a stage's job or signal as gone only where the server says so", () => {
+    const summary = { id: "mark", name: "等待标记", carrier: { kind: "wait" as const, name: "等待" }, done: { kind: "signal" as const, id: "stagekit:mark", name: "文件标记", params: {} }, time: { at: null, window: null, minutes: null } };
+    expect(summarySignal(summary)).toEqual({ id: "stagekit:mark", name: "文件标记" });
+    expect(summarySignal({ ...summary, done: { kind: "signal", id: "git.pushed", name: "推到远端" } })).toBeNull();
+    expect(stagePluginParts("mark", summarySignal(summary), [])).toEqual({ signal: "文件标记", gone: [] });
+    const gone = [{ kind: "signal" as const, stage: "mark", id: "stagekit:mark", reason: "信号现在没人能判断" }];
+    expect(stagePluginParts("mark", summarySignal(summary), gone)).toEqual({ signal: "", gone });
+    expect(stagePluginParts("write", null, gone)).toBeNull();
   });
   it("reads where the progress view lands and ignores the rest", () => {
     expect(landing({ task: "T3" })).toEqual({ kind: "task", seq: 3 });

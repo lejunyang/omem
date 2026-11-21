@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { checkPath, defaultLabel, fullAccessNote, homeOf, sandboxBody, splitDefaults, tilde } from "../web/src/lib/sandbox.ts";
+import { checkPath, defaultLabel, fullAccessNote, grantLinks, sandboxBody, splitDefaults, tilde } from "../web/src/lib/sandbox.ts";
 
 const home = "/home/xiaowang";
 const data = `${home}/.omem`;
 
 describe("the owner's sandbox (web/src/lib/sandbox.ts)", () => {
-  it("reads the home directory off the paths and writes paths under it with ~", () => {
-    expect(homeOf([`${home}/.cache`, `${home}/.npm`, "/tmp", "/home/other/x"])).toBe(home);
-    expect(homeOf(["/tmp"])).toBeNull();
+  it("writes paths under the server's home directory with ~", () => {
     expect(tilde(`${home}/work/tools`, home)).toBe("~/work/tools");
     expect(tilde(home, home)).toBe("~");
     expect(tilde("/home/xiaowangzi/x", home)).toBe("/home/xiaowangzi/x");
@@ -35,6 +33,14 @@ describe("the owner's sandbox (web/src/lib/sandbox.ts)", () => {
     expect(sandboxBody(s, { writable: ["/a", "/b"] })).toEqual({ mode: "prefer", writable: ["/a", "/b"], hidden: [], fullAccess: "per-role" });
     expect(sandboxBody(s, { fullAccess: "all" })).toMatchObject({ fullAccess: "all", confirmAll: true });
     expect(sandboxBody({ ...s, fullAccess: "all" }, { mode: "off" })).toMatchObject({ mode: "off", confirmAll: true });
+  });
+  it("links what has 完全访问 on by itself to where it is changed", () => {
+    expect(grantLinks(undefined)).toEqual([]);
+    expect(grantLinks({ roles: [{ id: "assistant", name: "主助手" }], profiles: [{ id: "inspect", name: "inspect" }], rules: [{ id: "r1", name: "夜里整理" }] })).toEqual([
+      { kind: "内置角色", id: "assistant", name: "assistant", title: "主助手", to: { path: "/agents", query: { role: "assistant" } } },
+      { kind: "Agent 档案", id: "inspect", name: "inspect", title: "inspect", to: { path: "/agents", query: { name: "inspect" } } },
+      { kind: "规则", id: "r1", name: "夜里整理", title: "夜里整理", to: { path: "/rules", query: { id: "r1" } } },
+    ]);
   });
   it("says when 进了沙箱的都开 changes nothing", () => {
     expect(fullAccessNote({ mode: "off", fullAccess: "sandboxed", support: { ok: true } })).toContain("等于按角色");

@@ -122,7 +122,7 @@ async function save() {
   <SetCard id="set-embeddings" title="向量检索" :keys="['embeddings']">
     <template #help>换个说法问也能找到相关段落。向量在后台逐步生成，换模型要全部重算；全文检索始终可用。</template>
     <SetRow label="来源">
-      <template v-if="line.text" #hint><span :class="{ 'sr-bad': line.bad }">{{ line.text }}</span></template>
+      <template v-if="line.text" #hint><span :class="{ 'sr-bad': line.bad }" :title="line.title">{{ line.text }}</span></template>
       <UiSegmented v-model="draft.source" size="sm" aria-label="向量从哪来" :options="sourceOptions" />
     </SetRow>
     <p v-if="excluded" class="set-pad sr-note">{{ excluded }}</p>

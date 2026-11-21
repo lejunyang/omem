@@ -21,6 +21,16 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-22：网页用上第二轮补齐的服务端字段
+
+- 流程定义页（`web/src/views/Flows.vue`、`lib/flow-hooks.ts`）：去掉校验失败时自己解析 YAML 列阶段的兜底，停用标记只看校验的 `unavailableReferences` 和列表的 `unavailableChecks`（`FlowStageHooks.vue`、`FlowChecks.vue` 收 `unavailable`），插件信号名取列表的 `stageSummaries`；停用插件后改阶段名照常保存。“新用到的能力没有插件提供”的提示改成只对新增或改参的引用说。
+- 事项的流程（`FlowStagePlugin.vue`）：运行器用 `carrier.runner`，删掉从 `carrier.label` 解析的 `runnerOf`；信号名用 `waitingSignal.name`；被拦下的卡片状态用 `gateReview.ask`，删掉点按钮前读 `GET /api/asks/:id`。还在等时 `stageActions` 只给“重开”，选了等处理以后写“你选了等处理（时间）”并给“处理好了，重新检查”；别人看时写负责人的名字（`ItemFlow` / `ItemFlowPage` 传 `who`）。`GET /api/flows` 只在阶段有运行器或检查时才读（取运行器用途和检查名）。`WorkStageTrack.vue` 拿到的精简阶段没有 `gateReview`，没改。
+- 设置 → 安全（`SandboxSettings.vue`、`lib/sandbox.ts`）：主目录用接口的 `home`，删掉 `homeOf`；“按角色”下面按 `fullAccessGrants` 列出单独开着完全访问的内置角色、档案、规则（`grantLinks`），各链到 Agent 页或规则页。
+- 后端：`AiDefaults.vue` 删掉按 `<插件>:<id>` 猜停用的分支，只认 `unavailableBackends`（设置 → AI 的档位也传了，`settings/ctx.ts` 存它）；`canProbe: false` 的后端用列表带的缓存、不发探测、不显示“重新检测”（`ctx.ts` 的 `loadProbes`、`AiBackend.vue`）。
+- Agent 页按档案和技能的 `canEdit` / `canDelete` 显示保存、启用、停用、移动、文件和删除按钮；插件带来的档案不再出删除按钮。
+- 向量状态行加“已有 N 个向量”，悬停看原件分块和记忆各多少（`embeddingStatusLine`）。重排“试一下”在改用环境变量时发出的草稿不带 `keyRef`，补了测试。进度视图的“只读 / 可写”此前已按 `access` 写好，服务端现在给了值。
+- 文档截图：`settings-search-providers` 里示例云的地址显示成固定的 `https://api.example.com/v1`（`scripts/doc-screens.ts` 改写设置响应），重拍了它和 `work-progress`。
+
 ## 2026-11-22：试验和修改阶段的执行者摘要
 
 - 流程列表的 trials、fixes 阶段保留 object 类型，在 `carrier.run` 返回执行类型、档案 id/name 和技能，最终缺省档案为 assistant。fixes 自身配置优先，未指定的字段分别继承首个 trials 阶段，与执行端共用同一规则。从 `src/flows/definitions.ts` 的 `studyStageCarrier`、`summarizeStage` 和 `src/studies/fixes.ts` 的 `fixModelStage` 读起。

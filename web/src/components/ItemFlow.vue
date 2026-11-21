@@ -210,7 +210,7 @@ async function stop() {
       </div>
       <div v-for="s in waiting" :key="s.id" class="turn" :class="{ theirs: !!carrier }">
         <p>{{ nextWords(s, carrier) }}</p>
-        <FlowStagePlugin v-if="s.gateReview" :item-id="itemId" :stage="s" :editable="editable && !carrier" flat @changed="(v) => (v ? (data = v) : load())" />
+        <FlowStagePlugin v-if="s.gateReview" :item-id="itemId" :stage="s" :editable="editable && !carrier" :who="carrier" flat @changed="(v) => (v ? (data = v) : load())" />
         <div v-if="editable" class="row wrap"><button v-for="(a, i) in stageActions(s)" :key="a.label" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button></div>
       </div>
       <div v-for="c in carrier ? [] : asked" :key="c.id" class="turn">
@@ -262,7 +262,7 @@ async function stop() {
             <dd><Markdown :source="stage.note" class="stage-text" /></dd>
           </template>
         </dl>
-        <FlowStagePlugin v-if="!(stage.gateReview && waiting.some((s) => s.id === stage!.id))" :item-id="itemId" :stage="stage" :editable="editable && !carrier" @changed="(v) => (v ? (data = v) : load())" />
+        <FlowStagePlugin v-if="!(stage.gateReview && waiting.some((s) => s.id === stage!.id))" :item-id="itemId" :stage="stage" :editable="editable && !carrier" :who="carrier" @changed="(v) => (v ? (data = v) : load())" />
         <div v-if="stage.shots?.length" class="stage-shots">
           <div class="tests-head"><span>截图</span><span class="muted">{{ stage.shots.length }} 张</span></div>
           <RunArtifacts :items="stage.shots" />

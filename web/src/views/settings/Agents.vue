@@ -21,7 +21,7 @@ import UiSegmented from "../../components/UiSegmented.vue";
 import UiSelect from "../../components/UiSelect.vue";
 
 /** 设置 → 后端与模型: the backends, the default AI and tiers, task routing, capacity, fallbacks, adding a backend. */
-const { config, profiles, load, saveConfig } = useSettings();
+const { config, profiles, unavailableBackends, load, saveConfig } = useSettings();
 const { installedProfiles, profileOptions, modelOptionsFor, loadProbes } = useBackends(profiles);
 
 // Split by category: the agents (general), the models omem calls itself, and the API keys.
@@ -218,7 +218,7 @@ async function saveEdit() {
           <HelpText>流程的阶段可以写用哪一档（<code>ai: strong</code> / <code>standard</code> / <code>cheap</code>），这里定每一档是哪个后端、模型和强度。要判断的事用好的，没人看着时反复去试的用省的。没配的档位用那个角色自己的 AI；流程指定了档位时不会换到别的后端，额度用完就等。</HelpText>
           <div v-for="t in TIERS" :key="t.id" class="tier">
             <div class="tier-name"><span>{{ t.label }}</span><code class="muted">{{ t.id }}</code></div>
-            <AiDefaults :model-value="{ agent: config.agents.tiers?.[t.id]?.profile, model: config.agents.tiers?.[t.id]?.model, effort: config.agents.tiers?.[t.id]?.effort }" :backends="profiles.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => saveTier(t.id, v)" />
+            <AiDefaults :model-value="{ agent: config.agents.tiers?.[t.id]?.profile, model: config.agents.tiers?.[t.id]?.model, effort: config.agents.tiers?.[t.id]?.effort }" :backends="profiles.map((b) => ({ ...b, name: b.name || b.id }))" :unavailable-backends="unavailableBackends" default-backend="" @update:model-value="(v) => saveTier(t.id, v)" />
             <button v-if="config.agents.tiers?.[t.id]" class="btn ghost sm" @click="saveTier(t.id, null)">不配</button>
           </div>
         </div>

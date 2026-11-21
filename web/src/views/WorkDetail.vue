@@ -477,7 +477,7 @@ const editing = ref(false);
 
           <!-- 流程 -->
           <template v-else-if="tab === 'flow'">
-            <ItemFlowPage v-if="d.flow" :id="item.id" embedded />
+            <ItemFlowPage v-if="d.flow" :id="item.id" :who="whose" embedded />
             <ItemFlow v-else :item-id="item.id" :editable="operable" :carrier="whose" />
           </template>
 
