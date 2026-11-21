@@ -192,6 +192,48 @@ it("allows the owner to enable a notification rule immediately", async () => {
   expect(listAsks(app, { runId: task.id })).toHaveLength(0);
 });
 
+const scheduledNotice = { ...ruleInput, trigger: { event: "schedule" as const, cron: "0 9 * * *" }, conditions: null };
+
+function expectScheduledNoticeEnabled(app: ReturnType<typeof testApp>, id: string) {
+  expect(getRule(app, id).enabled).toBe(true);
+  expect(one(app.db, "select enabled from schedules where id=?", `rule:${id}`)).toEqual({ enabled: 1 });
+  expect(listAsks(app, { status: "pending" })).toHaveLength(0);
+}
+
+it.each(["POST", "PUT"] as const)("其他 owner 在网页保存启用的定时通知规则（%s）", async method => {
+  const { app } = fixture();
+  const owner = createUser(app, { id: "other-owner", name: "项目负责人", role: "owner" });
+  const headers = { authorization: `Bearer ${createApiToken(app, owner.id, "test")}` };
+  const existing = method === "PUT" ? saveRule(app, scheduledNotice) : undefined;
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const response = await server.inject({
+      method, headers, url: existing ? `/api/rules/${existing.id}` : "/api/rules",
+      payload: { ...scheduledNotice, enabled: true },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().enabled).toBe(true);
+    expectScheduledNoticeEnabled(app, existing?.id ?? response.json().id);
+  } finally {
+    await server.close();
+  }
+});
+
+it.each(["新建", "重新启用"])("其他 owner 在助手会话中%s定时通知规则", async mode => {
+  const { app } = fixture();
+  const owner = createUser(app, { id: "other-owner", name: "项目负责人", role: "owner" });
+  const spaceId = "project-a";
+  createSpace(app, { id: spaceId, name: "项目 A" });
+  const thread = createThread(app, { channel: "web", key: "rule-chat", userId: owner.id, spaceId });
+  const task = createRun(app, { kind: "ask", title: "启用提醒", userId: owner.id, spaceId, input: { conversationId: thread.id } });
+  const ctx = { app, runId: task.id, userId: owner.id, spaceId, spaces: [spaceId], tools: null, actor: "agent" as const, role: "assistant" };
+  const existing = mode === "重新启用" ? saveRule(app, { ...scheduledNotice, spaceId }) : undefined;
+  const result = await callTool(ctx, "save_rule", { id: existing?.id, description: "每天九点提醒", rule: scheduledNotice, enabled: true });
+  expect(result.isError, result.text).toBe(false);
+  expect(result.text).toContain("已启用");
+  expectScheduledNoticeEnabled(app, existing?.id ?? listRules(app)[0].id);
+});
+
 it("also accepts a form button clicked before the send response, with its typed answer", async () => {
   const { app, thread, task } = fixture();
   let posted: any;

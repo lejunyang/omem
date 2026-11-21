@@ -10,6 +10,7 @@ import { fieldsOf } from "./conditions.ts";
 import { checkWaitRule } from "./fast.ts";
 import { ruleInputSchema, type Rule, type RuleAction, type RuleInput, type Temporary } from "./types.ts";
 import { OWNER } from "../core/users.ts";
+import { isOwner } from "../auth/permissions.ts";
 import { moveRuleWorkFiles } from "../sources/work.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
 import { getContext } from "../channels/listen.ts";
@@ -231,7 +232,7 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
-  const needsOwnerConfirmation = actor !== undefined && actor !== OWNER && !prev?.enabled;
+  const needsOwnerConfirmation = !prev?.enabled && actor !== undefined && !isOwner(app, actor);
   if (needsOwnerConfirmation) r.enabled = false;
   run(
     app.db,
