@@ -182,7 +182,7 @@ const idle = (app: App) => (id: string) => {
  * The round's worktree of a work branch at `path`: a lent slot when one can be had (taken back
  * from an idle delegation if need be), else a worktree of its own there. Then placed on the branch.
  */
-export function branchWorktree(app: App, repo: Space, runId: string, path: string, wt: WorktreeRef | BranchPlan, log: (text: string) => void, nameTool = false): { wt: WorktreeRef; note: string } {
+export function branchWorktree(app: App, repo: Space, runId: string, path: string, wt: WorktreeRef | BranchPlan, log: (text: string) => void, naming: "tool" | "git" | "keep" = "git"): { wt: WorktreeRef; note: string } {
   const root = repo.rootPath!;
   const ref: WorktreeRef = "space" in wt
     ? { ...wt }
@@ -198,7 +198,7 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
       if (!made.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${made.stderr}`);
     }
   }
-  return { wt: ref, note: placeOnBranch(root, ref, { fresh, nameTool: nameTool && ref.branch === `omem/${runId}` }) };
+  return { wt: ref, note: placeOnBranch(root, ref, { fresh, naming: ref.branch === `omem/${runId}` ? naming : "keep" }) };
 }
 
 /**
@@ -207,7 +207,7 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
  * previous round could not put back on the branch stay where they are. Returns what the coding
  * Agent should know about it.
  */
-export function placeOnBranch(root: string, wt: WorktreeRef, opts: { fresh?: boolean; nameTool?: boolean } = {}): string {
+export function placeOnBranch(root: string, wt: WorktreeRef, opts: { fresh?: boolean; naming?: "tool" | "git" | "keep" } = {}): string {
   const dir = workDirOf(wt);
   // Keep interrupted operations (including picks/reverts) in place for the conflict resolver.
   if (syncInProgress(dir) || hasSyncStash(dir)) return `工作区里有一次没做完的同步（${wt.branch}），宿主会先把它做完。`;
@@ -241,8 +241,9 @@ export function placeOnBranch(root: string, wt: WorktreeRef, opts: { fresh?: boo
   if (!moved.ok) throw new Error(`没能把工作区切到分支 ${wt.branch}：${moved.stderr.trim().slice(0, 300)}`);
   if (elsewhere) return `分支 ${wt.branch} 正在 ${elsewhere} 检出（本人在那里运行和验证），所以工作区停在它最新提交的游离 HEAD 上。照常提交，宿主在这一轮结束后把提交快进到那里；不要切换分支，也不要改分支名。`;
   const note = `你在分支 ${wt.branch} 上。`;
+  if (opts.naming === "keep") return note + "保留当前分支名。";
   if (!wt.newBranch || !wt.branch.startsWith("omem/")) return note;
-  const how = opts.nameTool ? `调用 name_work_branch，space 填 ${wt.space}，name 填新名字。` : `用 git branch -m ${wt.branch} <新名字> 改。`;
+  const how = opts.naming === "tool" ? `调用 name_work_branch，space 填 ${wt.space}，name 填新名字。` : `用 git branch -m ${wt.branch} <新名字> 改。`;
   return `${note}这是临时名字，请按仓库惯例和改动用途命名。${how}`;
 }
 
