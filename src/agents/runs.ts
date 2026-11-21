@@ -95,8 +95,9 @@ export function createRun(
   const id = newId("r");
   // The spaces it can read at most (src/auth/permissions.ts canReadRun: who else may read the run). Null: everything, the owner's.
   const asked = Array.isArray(input.input?.spaces) ? (input.input!.spaces as string[]) : null;
-  const scope = scopeFor(app, input.userId ?? "owner", asked);
-  const trigger = triggerFor(app, input);
+  const userId = input.userId ?? (input.parentId ? runUser(app, input.parentId) : null);
+  const scope = scopeFor(app, userId ?? "owner", asked);
+  const trigger = triggerFor(app, { ...input, userId });
   run(
     app.db,
     "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before,user_id,scope,trigger,trigger_by) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -110,7 +111,7 @@ export function createRun(
     now(),
     input.lane ?? null,
     input.notBefore ?? null,
-    input.userId ?? null,
+    userId,
     scope === null ? null : JSON.stringify(scope),
     trigger ? JSON.stringify(trigger) : null,
     trigger?.by?.key ?? null,
@@ -159,7 +160,8 @@ export function runsInLane(app: App, lane: string) {
 }
 
 /** Who a run was started for (the owner when nobody else was recorded). */
-export function runUser(app: App, id: string) {
+export function runUser(app: App, id: string | null) {
+  if (!id) return "owner";
   return one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id ?? "owner";
 }
 

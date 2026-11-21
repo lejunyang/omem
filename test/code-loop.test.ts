@@ -2,13 +2,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import "../src/agents/jobs.ts";
 import { answerAsk, createAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
 import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQuestionText, recordCheckpoint, recordOutsideChanges, retryTask, scheduleWorkRevert, setWorkState, settleCodingRound, updateTask, waitingText, workPatches, workState } from "../src/agents/code-tasks.ts";
 import { advanceWork, reconcileWaiting, reviewAgain, settleTask, taskReview } from "../src/agents/code-loop.ts";
+import * as agentTools from "../src/agents/tools.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
 import { identity } from "../src/agents/code-branch.ts";
@@ -18,7 +19,7 @@ import { __testHandlers, addRunEvent, createRun, getRun, setRunOutput } from "..
 import { createThread } from "../src/agents/threads.ts";
 import { all, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { OWNER } from "../src/core/users.ts";
+import { createUser, addMember, OWNER } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -1141,7 +1142,7 @@ describe("a delegation driven by tasks", () => {
     }
   });
 
-  it("lets the coder hand groups of tasks to helpers coding beside it, and merges what they commit", async () => {
+  it.each([OWNER, "member-a"])("as %s lets the coder hand groups of tasks to helpers coding beside it, and merges what they commit", async (userId) => {
     const app = testApp();
     app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "tasks", FAKE_PARALLEL: "1" }, idleTimeoutMs: 60000 });
     app.config.agents.default = "fake";
@@ -1152,10 +1153,15 @@ describe("a delegation driven by tasks", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "init");
     createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    if (userId !== OWNER) {
+      createUser(app, { id: userId, name: "成员 A" });
+      addMember(app, "shop-api", userId, "manager");
+    }
+    const issued = vi.spyOn(agentTools, "issueToolToken");
     const server = await startServer(app, { port: 0, quiet: true });
     try {
-      const t = createThread(app, { channel: "web", spaceId: "shop-api", userId: OWNER });
-      const ask = createRun(app, { kind: "ask", spaceId: "shop-api", title: "交办", input: { conversationId: t.id } });
+      const t = createThread(app, { channel: "web", spaceId: "shop-api", userId });
+      const ask = createRun(app, { kind: "ask", spaceId: "shop-api", title: "交办", userId, input: { conversationId: t.id } });
       const r1 = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款", input: { task: "退款三件事", repos: ["shop-api"], taskMode: true }, parentId: ask.id });
       codeChainFor(app, r1);
       await work(app, r1.id);
@@ -1171,6 +1177,10 @@ describe("a delegation driven by tasks", () => {
       // The helpers' runs are children of the round; their workspaces are given back.
       const helpers = app.db.prepare("select id, status, input from runs where parent_id = ? and kind = 'agent' and json_extract(input, '$.helperOf') is not null order by created_at").all(r1.id) as { id: string; status: string; input: string }[];
       expect(helpers.map((h) => [h.status, JSON.parse(h.input).tasks])).toEqual([["done", [2]], ["done", [3]]]);
+      const tokens = issued.mock.calls.map(([ctx]) => ctx).filter(ctx => [r1.id, ...helpers.map(h => h.id)].includes(ctx.runId!));
+      for (const id of [r1.id, ...helpers.map(h => h.id)]) expect(tokens.some(ctx => ctx.runId === id && ctx.role === "coder")).toBe(true);
+      expect(tokens.map(ctx => ctx.role)).toEqual(expect.arrayContaining(["review-lead", "review-business", "reviewer"]));
+      expect(tokens.every(ctx => ctx.userId === userId)).toBe(true);
       expect(tasks[1].coderRun).toBe(helpers[0].id);
       for (const h of helpers) expect(existsSync(join(app.runsDir, h.id, "work", "shop-api"))).toBe(false);
       // All three edits of the same spot are there, the conflicts resolved by the lead.
@@ -1181,6 +1191,7 @@ describe("a delegation driven by tasks", () => {
       expect(events.some((e) => e.startsWith("已合并编码助手 1"))).toBe(true);
       expect(events.some((e) => e.startsWith("已合并编码助手 2"))).toBe(true);
     } finally {
+      issued.mockRestore();
       await server.close();
       app.db.close();
     }

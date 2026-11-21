@@ -39,7 +39,7 @@ import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
 import { accountBlocked, accountFor, withAccount } from "./accounts.ts";
-import { addRunEvent } from "./runs.ts";
+import { addRunEvent, runUser } from "./runs.ts";
 import { accountOf } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -446,13 +446,13 @@ export function prepareRun(
   app: App,
   input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
-  const userId = input.userId ?? OWNER;
+  const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
   const role = spec ? null : loadRole((input.actor as { role: RoleName }).role, app);
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
   // A member's run uses their own account of the backend when they logged in to it (agents/accounts.ts);
   // not logged in to one that must be their own, it may move on in the run's fallback order (`own-or-other`).
-  const profile = input.profile ?? accountProfile(app, input);
+  const profile = input.profile ?? accountProfile(app, { ...input, userId });
   if (!input.shadow) recordRunAI(app, input.runId, profile, false);
   if (role && input.runId && !input.shadow) run(app.db, "update runs set roles = coalesce(roles, '|') || ? || '|' where id = ? and instr(coalesce(roles, ''), ?) = 0", roleName, input.runId, `|${roleName}|`);
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
@@ -743,6 +743,7 @@ function runAI(app: App, runId: string | null): Execution | undefined {
 }
 
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
+  input = { ...input, userId: input.userId ?? runUser(app, input.runId) };
   await refreshForRun(app);
   const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)), input.userId);
   input = { ...input, ...executionArgs(execution) };

@@ -1181,7 +1181,7 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
       ].join("\n"),
     },
     parentId: ctx.runId,
-    userId: OWNER,
+    userId: ctx.userId,
   });
   return `已在规则「${rule.name}」的范围内交给 ${spec.name}（运行 ${r.id}）：它按规则的回复方式在原来的群或话题里处理，话题里的后续回复仍回到你这里。你这一轮不要再在群里回复同一件事，调用 stay_quiet 结束（还有别的事要做就先做完）。`;
 }
@@ -1335,7 +1335,7 @@ def({
       if (inChat && !anchor) return `已在独立工作会话把这件事交给 ${spec.name}，运行 ${w.runId}。这里没有这件事自己的飞书消息可以挂话题，它的结论和要本人决定的事会直接发在本会话（不是话题），不要说“已在话题里”。`;
       return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}${lentNote}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
-    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId });
+    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId, userId: ctx.userId });
     return `已交给 ${spec.name}，运行 ${r.id}${lentNote}，完成后结果会发回本会话。`;
   },
 });
@@ -5564,7 +5564,7 @@ def({
         run(ctx.app.db, "update runs set input = ? where id = ? and status = 'queued'", JSON.stringify(input), r.id);
         done.push(`${r.id} 改为新 AI 排队`);
       } else if (r.status === "running" || r.status === "failed") {
-        const next = createRun(ctx.app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane });
+        const next = createRun(ctx.app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane, userId: runUser(ctx.app, r.id) });
         // Whoever waits on the old run (a chat channel answering the owner) follows the new one (channels/common.ts).
         setRunOutput(ctx.app, r.id, { replacedBy: next.id });
         if (r.status === "running") cancelRun(ctx.app, r.id);
