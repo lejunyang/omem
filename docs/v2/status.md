@@ -416,7 +416,7 @@
 
 ## 第二轮网页对接的服务端字段（2026-11-22）
 
-- 流程服务端：保存与校验保留同阶段未变的停用信号、运行器及未变检查；校验返回 unavailableReferences 与 unavailableChecks，列表也返回 unavailableChecks。入口 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts`。
+- 流程服务端：保存与校验保留同阶段未变的停用信号、运行器及未变检查；校验返回 unavailableReferences 与 unavailableChecks，列表也返回 unavailableChecks。草稿读取按结构解析并保留空间裁剪，停用运行器后改名的确认卡持续展示，启用时仍走保存校验；HTTP 回归覆盖 PUT → GET 草稿 → 本人回答 → 新定义。入口 `src/flows/definitions.ts`、`http.ts`、`plugin-gates.ts`；`test/flow-plugin.test.ts`。
 
 - 流程列表提供 `stageSummaries`，直接读取承担者、信号及参数、开始时刻与分钟时限。入口 `src/flows/definitions.ts`（summarizeStage）、`http.ts`。
 

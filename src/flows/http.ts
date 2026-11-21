@@ -75,7 +75,7 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     ).flatMap((a) => {
       try {
         const raw = String((JSON.parse(a.context) as { raw?: unknown }).raw ?? "");
-        const f = parseFlow(raw);
+        const f = parseFlow(raw, false);
         if (!flowVisibleIn(f, allowed)) return [];
         return [{ askId: a.id, conversationId: a.conversation_id, createdAt: a.created_at, id: f.id, name: f.name, description: f.description ?? "", stages: f.stages.length, replaces: flows.some((x) => x.id === f.id) }];
       } catch {

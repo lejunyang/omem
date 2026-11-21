@@ -827,6 +827,8 @@ await api.answerAsk({
 
 清单声明 `permissions.flow.signal: true`，注册 `api.flowSignal({ id, name, describe, params?, check })`。流程写 `by: wait` 或 `by: owner`，完成条件写 `done: { signal: "stagekit:mark", with: { file: ready.txt } }`。保存和校验只检查新增或改过参数的能力；与已保存版本同阶段引用及有效 with 参数一致的能力原样保留。校验结果的 unavailableReferences 单独提示停用的运行器和信号，不算错误。事项本人可手动完成。
 
+待启用的流程草稿按结构读取，插件停用后仍在 `GET /api/flows` 的 `drafts` 中展示。含运行器的定义改名后仍须本人确认；启用时重新按已保存定义校验引用，新增或改参的停用能力会被拒绝。
+
 `check(ctx, signal)` 收到事项的 id、标题、空间，阶段 id、名称和开始时间，with 参数，以及事项本人可读、属于同一空间的材料引用。返回 `{ done, evidence?, waitingOn?, recheckAfterSec? }`。证据是 `{ text, link? }[]`，链接支持 HTTP、HTTPS、网页内路径和原件引用。宿主落库、写日志与审计，经过原有完成和关卡路径推进。
 
 信号和 Git 共用巡检入口，阶段进入时也检查。Git 核对独立返回。插件信号同时最多问三段，每批轮转最多 32 段，共用五秒询问预算。同一阶段不并发问，每次最多五秒；默认一分钟再问，插件建议间隔限定在 10–3600 秒。失败从三十秒起指数退避，最多一小时，显示“问不到”。停用后显示“等的信号现在没人能判断”。Git 的两个信号保持原有提交核对方式。

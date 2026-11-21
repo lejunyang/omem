@@ -49,6 +49,42 @@ describe.each(["isolated", "inprocess"] as const)("流程插件 %s", mode => {
     await trustPlugin(app, "stagekit", mode);
   });
   afterAll(() => { forgetPlugin("stagekit"); app.events.emit("close"); app.db.close(); vi.unstubAllEnvs(); });
+  it("停用运行器后通过 HTTP 改阶段名，草稿保留到本人启用新定义", async () => {
+    const server = await startServer(app, { port: 0, quiet: true });
+    const yaml = raw([{ id: "job", name: "原阶段名", by: { runner: "stagekit:job", with: { fail: false } } }]);
+    const put = (yaml: string) => server.inject({ method: "PUT", url: "/api/flows/inspect", payload: { yaml } });
+    const answer = (id: string) => server.inject({ method: "POST", url: `/api/asks/${id}/answer`, payload: { choice: 0 } });
+    try {
+      const initial = await put(yaml);
+      expect(initial.statusCode).toBe(200);
+      expect(initial.json().askId).toEqual(expect.any(String));
+      expect((await answer(initial.json().askId)).statusCode).toBe(200);
+      await setPluginEnabled(app, "stagekit", false);
+
+      const changed = JSON.parse(yaml);
+      changed.stages[0].name = "新阶段名";
+      const saved = await put(JSON.stringify(changed));
+      expect(saved.statusCode).toBe(200);
+      const askId = saved.json().askId;
+      expect(askId).toEqual(expect.any(String));
+      const listed = (await server.inject("/api/flows")).json();
+      expect(listed.drafts).toContainEqual(expect.objectContaining({ askId, id: "inspect", replaces: true }));
+      expect(listed.flows.find((f: { id: string }) => f.id === "inspect").definition.stages[0].name).toBe("原阶段名");
+
+      const enabled = await answer(askId);
+      expect(enabled.statusCode).toBe(200);
+      expect(enabled.json()).toMatchObject({ status: "answered", choice: 0 });
+      const updated = (await server.inject("/api/flows")).json();
+      expect(updated.drafts.some((d: { askId: string }) => d.askId === askId)).toBe(false);
+      expect(updated.flows.find((f: { id: string }) => f.id === "inspect").definition.stages[0]).toMatchObject({
+        name: "新阶段名", by: { runner: "stagekit:job", with: { fail: false } },
+      });
+      changed.stages[0].by.with.fail = true;
+      const rejected = await put(JSON.stringify(changed));
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.json().error).toContain("未注册流程能力");
+    } finally { await server.close(); await setPluginEnabled(app, "stagekit", true); }
+  });
   it("停用后保留同阶段信号、运行器和检查，变更引用仍需注册", async () => {
     const initial = raw([signalStage(true), {id:"job",name:"作业",by:{runner:"stagekit:job",with:{fail:false}}}]);
     expect(parseFlow(initial).stages.map(summarizeStage)).toMatchObject([
