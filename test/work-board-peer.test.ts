@@ -15,10 +15,9 @@ import { importText } from "../src/sources/import.ts";
 import { listMemories } from "../src/memory/store.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { __testHandlers, createRun, getRun, setRunOutput, addRunEvent, trackAbort } from "../src/agents/runs.ts";
+import { __testHandlers, createRun, getRun, setRunOutput, addRunEvent, startWorker, stopWorker, waitForRun, trackAbort } from "../src/agents/runs.ts";
 import { readBoard, pollBoardPeers, maintainBoards } from "../src/agents/work-board.ts";
 import { saveAgentSpec } from "../src/agents/specs.ts";
-import { runRole } from "../src/agents/runner.ts";
 import { artifactInbox, artifactsByIds, collectInbox } from "../src/agents/artifacts.ts";
 import { runProgress } from "../src/agents/progress.ts";
 import { workProgressView } from "../src/channels/lark-work-progress.ts";
@@ -90,17 +89,6 @@ it("remote 要写时两边授权且对方开启，工具层允许范围内记忆
   const out = await __testHandlers.get("peer-work")!({app:f.there,run:getRun(f.there,id),signal:new AbortController().signal,event:(type,data)=>addRunEvent(f.there,id,type,data),output:d=>setRunOutput(f.there,id,d)});
   expect((out as {answer:string}).answer).toContain('"writeDenied":false');
   expect(listMemories(f.there,{})).toHaveLength(1); expect(listMemories(f.here,{})).toHaveLength(0);
-},60000);
-it("borrow 借对方假 ACP 后端，在本机读库并记录设备，写入被拒",async () => {
-  const f = await setup(); importText(f.here,"personal",{title:"设备材料",text:"设备材料只存在本机。"});
-  const t = await f.dispatch("borrow"); const id = t.attempts[0].runId;
-  const result = await runRole(f.here,{role:"assistant",borrow:{device:"lab",backend:"fake"},boardAccess:"read",spaceId:"personal",spaces:["personal"],runId:id,task:"读设备材料",requiredTools:["read_source"]});
-  expect(result.text).toContain("只存在本机"); expect(result.text).toContain('"writeDenied":true');
-  run(f.here.db,"update runs set status='done',started_at=?,finished_at=?,ai=? where id=?",now(),now(),JSON.stringify(result.ai),id);
-  setRunOutput(f.here,id,{answer:result.text});
-  const { settleBoardRun } = await import("../src/agents/work-board.ts"); settleBoardRun(f.here,getRun(f.here,id));
-  expect(readBoard(f.here,f.id).tasks[0].status).toBe("done");
-  expect(f.remoteRuns()).toHaveLength(0); expect(readBoard(f.here,f.id).tasks[0].attempts[0]).toMatchObject({device:"lab",mode:"borrow"});
 },60000);
 it.each(["local","borrow"])("远端独有档案退回 %s 时，排队前选用本机主助手并执行",async target => {
   const f = await setup();
@@ -217,3 +205,28 @@ it("大文本证据限量返回，二进制超限留在对方并给出运行地�
   expect(readBoard(f.here,f.id).tasks[0].report).toContain("在 lab 上看");
   expect(all(f.here.db,"select id from run_artifacts where run_id=?",t.attempts[0].runId)).toHaveLength(1);
 });
+
+it("borrow 派单由 worker 认领，在本机只读并交报告，只排一次协调",async () => {
+  const f = await setup();
+  // Only the borrowed ACP reads the tool bridge. The local fake handles the other block and coordination.
+  f.here.config.agents.profiles[0].env.FAKE_MODE = "board";
+  importText(f.here,"personal",{title:"设备材料",text:"设备材料只存在本机。"});
+  const t = await f.dispatch("borrow");
+  startWorker(f.here);
+  try {
+    const attempt = await waitForRun(f.here,t.attempts[0].runId);
+    expect(attempt.status,attempt.error ?? "").toBe("done");
+    const board = readBoard(f.here,f.id);
+    await waitForRun(f.here,board.tasks[1].attempts[0].runId);
+    const coordinators = () => all<{id:string}>(f.here.db,"select id from runs where parent_id=? and kind='ask'",f.id);
+    expect(coordinators()).toHaveLength(1);
+    const review = await waitForRun(f.here,coordinators()[0].id);
+    expect(review.status,review.error ?? "").toBe("done");
+    expect(coordinators()).toHaveLength(1);
+    expect(board.tasks[0]).toMatchObject({status:"done",attempts:[{device:"lab",mode:"borrow",backend:"peer:lab:fake",status:"done"}]});
+    expect(board.tasks[0].report).toContain("只存在本机");
+    expect(board.tasks[0].report).toContain('"writeDenied":true');
+    expect(listMemories(f.here,{})).toHaveLength(0);
+    expect(f.remoteRuns()).toHaveLength(0);
+  } finally { stopWorker(); }
+},60000);
