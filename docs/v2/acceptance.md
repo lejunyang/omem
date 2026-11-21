@@ -84,6 +84,8 @@
 5. 多仓库交办中，核对运行开头和 Agent 当轮说明列出了所有获准写入的工作树、状态目录和本轮产物目录，与启动挂载计划一致。隐藏项及只读工作树不出现在可写清单中，评审快照仍可写。设置接口的默认示例使用同一规划；后端状态指向 HOME、私有数据或系统根目录时，示例与实际运行都应拒绝。
 6. 豆包 CLI 回答访客，访客单项完全访问开启，沙箱为 `off` 或 `prefer` 且不可用时：全局从 `per-role` 切到 `sandboxed` 或 `all`，启动参数仍为 `ask_risky`。实际进入本人沙箱后，`sandboxed` 传 `always_allow`；ACP、Codex 和 Claude 保留合并后的完全访问模式，ACP 编辑权限仍按角色和挂载独立决定。
 
+7. 在新 HOME 下，为 Claude、Codex 分别生成 ACP 和 CLI 两种 API 档案。核对计费来源为 `key:<编号>`，沙箱按 0700 创建状态目录，替身进程能在里面写入会话文件。
+
 自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 成员用自己的 AI 账号：额度、模型、技能、换后端、停用、插件登录（2026-11-20 晚，docs/v2/agent-accounts.md）

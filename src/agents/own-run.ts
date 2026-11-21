@@ -5,7 +5,7 @@ import { withAgentPath } from "../core/tools.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { expandPath } from "./accounts.ts";
-import { acpCatalog, accountOnlyCatalog, type CatalogEntry } from "./catalog.ts";
+import { acpCatalog, accountOnlyCatalog } from "./catalog.ts";
 import { sourceOf } from "./capacity.ts";
 import { backendCapabilities } from "./capabilities.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
@@ -13,7 +13,9 @@ import { resolveCommand } from "./spawn.ts";
 import { doubaoExecutable } from "./doubao-cli.ts";
 import { cachePaths, canonical, normalizeSandbox, ownMounts, selectOwnSandbox, shortPath, under, type OwnSandbox } from "./own-sandbox.ts";
 
-export function backendState(entry?: CatalogEntry, profile?: AgentProfile) {
+function backendState(profile?: AgentProfile) {
+  const layout = profile && (profile.stateLayout ?? sourceOf(profile));
+  const entry = [...acpCatalog, ...accountOnlyCatalog].find(e => e.id === layout);
   const env = { ...process.env, ...profile?.env };
   const history = profile?.sessionHistory ?? entry?.sessionHistory;
   const account = profile?.account ?? entry?.account;
@@ -21,7 +23,7 @@ export function backendState(entry?: CatalogEntry, profile?: AgentProfile) {
   const paths = [...(entry?.statePaths ?? owned.filter(p => account?.dirs?.includes(p)).map(p => join("~", p))), ...(entry?.skills ? [entry.skills.write] : [])];
   if (history) paths.push((history.env && env[history.env]) || history.root);
   const optional = [...(entry?.stateFiles ?? []), ...owned.filter(p => !account?.dirs?.includes(p)).map(p => join("~", p))];
-  return { dirs: [...new Set(paths.map(path => expandPath(path, env)))], existing: optional.map(path => expandPath(path, env)).filter(existsSync) };
+  return { mounts: entry?.account?.mounts ?? [], dirs: [...new Set(paths.map(path => expandPath(path, env)))], existing: optional.map(path => expandPath(path, env)).filter(existsSync) };
 }
 
 type MountContext = { workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv };
@@ -38,13 +40,12 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
 function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readOnly: boolean, runId: string | null | undefined, context: MountContext, settings: App["config"]["agents"]["ownSandbox"]): OwnSandbox {
   const home = canonical(homedir());
   const data = canonical(app.home);
-  const entry = profile && [...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(profile));
-  const { dirs, existing } = backendState(entry, profile);
+  const { dirs, existing, mounts } = backendState(profile);
   const config = normalizeSandbox({ ...settings, writable: [...settings.writable, ...existing] }, home, data);
   const state = [...dirs, ...cachePaths.map(p => join(home, p))];
   const checked = normalizeSandbox({ ...config, writable: state }, home, data);
   const runtime = [join(data, "bin"), join(data, "library", "_skills"), omemInstallDir(), dirname(dirname(process.execPath)),
-    ...(entry?.account?.mounts ?? []).map(p => expandPath(p))].map(canonical);
+    ...mounts.map(p => expandPath(p))].map(canonical);
   const box = { home, data, state: checked.writable, writable: config.writable, hidden: config.hidden, runtime,
     artifactDir: runId ? join(data, "artifacts", "inbox", runId) : undefined,
     runDir: runId ? join(canonical(app.runsDir), runId, "scratch") : undefined,
@@ -65,7 +66,7 @@ export function sandboxStatus(app: App) {
   const sample = join(data, "workspaces", "example", "1");
   const profiles = allProfiles(app.config).filter(p => !p.peer && backendCapabilities(p).where === "local");
   const backends = profiles.map(p => {
-    const state = backendState([...acpCatalog, ...accountOnlyCatalog].find(e => e.id === sourceOf(p)), p);
+    const state = backendState(p);
     return { id: p.id, state: [...state.dirs, ...state.existing] };
   });
   const example = backends.find(p => p.state.length) ?? backends[0];

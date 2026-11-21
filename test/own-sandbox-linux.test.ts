@@ -1,55 +1,67 @@
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { startServer } from "../src/server/http.ts";
-import { agentProfileSchema } from "../src/core/config.ts";
+import { agentProfileSchema, keyedProfiles } from "../src/core/config.ts";
 import { prepareRun, mcpBridge } from "../src/agents/runner.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { openAcp } from "../src/agents/acp.ts";
 import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
-import { ownRun } from "../src/agents/own-run.ts";
+import { ownRun, sandboxStatus } from "../src/agents/own-run.ts";
 import { launch } from "../src/agents/spawn.ts";
 import { ownMounts } from "../src/agents/own-sandbox.ts";
 import { resolveCommand } from "../src/agents/spawn.ts";
 
 const support = sandboxSupport();
-it.skipIf(process.platform !== "linux").each([
-  ["codex", "CODEX_HOME", "OPENAI_API_KEY"], ["claude", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"],
-])("首次用 API 凭据启动 %s 时创建并挂载状态目录", async (id, variable, credential) => {
-  const app = testApp();
-  const home = mkdtempSync(join(tmpdir(), "own-login-"));
-  const state = join(home, "." + id), file = join(home, ".claude.json");
-  vi.stubEnv("HOME", home);
-  setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
-  try {
-    app.config.agents.ownSandbox.mode = "require";
-    const profile = agentProfileSchema.parse({ id, transport: "acp", command: "/bin/true", env: { [variable]: state, [credential]: "fixture" } });
-    const cwd = join(app.home, "workspaces", "fixture");
-    mkdirSync(cwd, { recursive: true });
-    const start = async () => {
-      const box = ownRun(app, profile, cwd, false).box!;
-      const child = launch(profile.command, [], { cwd, env: profile.env, ownSandbox: box });
-      let args = "";
-      child.stdout.on("data", chunk => args += chunk);
-      expect((await once(child, "close"))[0]).toBe(0);
-      return args;
-    };
-    expect(existsSync(state)).toBe(false);
-    expect(await start()).toContain(`--bind ${state} ${state}`);
-    writeFileSync(join(state, "session"), "ok");
-    expect(existsSync(file)).toBe(false);
-    if (id === "claude") {
-      writeFileSync(file, "{}");
-      expect(await start()).toContain(`--bind ${file} ${file}`);
-    }
-  } finally {
-    vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); app.db.close();
-    rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
-  }
-});
+for (const real of [false, true]) {
+  it.skipIf(process.platform !== "linux" || real && !support.ok).each(["claude", "claude-cli", "codex", "codex-cli"])(
+    `API 档案 %s 首启 · ${real ? "bubblewrap 写入 " + (support.reason ?? "") : "挂载参数"}`, async backend => {
+      const app = testApp();
+      const home = mkdtempSync(join(tmpdir(), "own-login-"));
+      const claude = backend.startsWith("claude");
+      const variable = claude ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
+      const state = join(home, "profile-state");
+      vi.stubEnv("HOME", home);
+      vi.stubEnv(variable, state);
+      if (!real) setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+      try {
+        app.config.agents.ownSandbox.mode = "require";
+        app.config.ai.providers = [
+          { id: "fixture", name: "", kind: claude ? "anthropic" : "openai", backends: claude ? ["claude", "claude-cli"] : ["codex", "codex-cli"] },
+        ];
+        const profile = keyedProfiles(app.config).find(p => p.id === backend + "@fixture")!;
+        expect(profile).toMatchObject({ source: "key:fixture", keyRef: "fixture" });
+        profile.command = "/bin/sh";
+        const cwd = join(app.home, "workspaces", "fixture");
+        mkdirSync(cwd, { recursive: true });
+        const status = sandboxStatus(app);
+        const base = status.backends.find(p => p.id === backend)!;
+        expect(status.backends.find(p => p.id === profile.id)?.state).toEqual(base.state);
+        const box = ownRun(app, profile, cwd, false).box!;
+        expect(box.plan.rw).toContain(state);
+        expect(existsSync(state)).toBe(false);
+        const child = launch(profile.command, ["-ec", 'echo written > "$1/session"', "sh", state], { cwd, ownSandbox: box });
+        let output = "";
+        for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => output += chunk);
+        expect((await once(child, "close"))[0], output).toBe(0);
+        expect(statSync(state).mode & 0o777).toBe(0o700);
+        if (real) expect(readFileSync(join(state, "session"), "utf8")).toBe("written\n");
+        else expect(output).toContain(`--bind ${state} ${state}`);
+        if (claude) {
+          const file = join(home, ".claude.json");
+          expect(existsSync(file)).toBe(false);
+          writeFileSync(file, "{}");
+          expect(ownRun(app, profile, cwd, false).box!.plan.rw).toContain(file);
+        }
+      } finally {
+        vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); app.db.close();
+        rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+      }
+    });
+}
 
 it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 MCP " + (support.reason ?? ""), async () => {
   const app = testApp();

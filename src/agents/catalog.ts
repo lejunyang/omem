@@ -172,6 +172,7 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
   return {
     id: e.id,
     name: `${e.name} (ACP)`,
+    stateLayout: e.id,
     transport: "acp",
     command: e.command,
     args: e.args ?? [],

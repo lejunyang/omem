@@ -121,6 +121,8 @@ export const agentProfileSchema = z.object({
    * one quota, so they share capacity and are never offered as two separate choices.
    */
   source: z.string().optional(),
+  /** Catalog entry describing local state, independent of billing. */
+  stateLayout: z.string().optional(),
   /** An ACP agent of another device (core/peer-acp.ts): runs there, tools stay here. command/args are filled in. */
   peer: z.object({ id: z.string().min(1), agent: z.string().min(1) }).optional(),
   /** Runs with the API key of this AI provider (`ai.providers`, key in secrets/ai-keys.json; core/ai-keys.ts). */
@@ -1401,9 +1403,9 @@ export type Config = z.infer<typeof configSchema>;
 
 /** Built-in profiles; users override or extend them in config.json. */
 const cliProfiles: AgentProfile[] = [
-  { id: "traex-cli", name: "TraeX (CLI)", transport: "codex-cli", command: "traex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "traex" },
-  { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000, source: "claude" },
-  { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "codex" },
+  { id: "traex-cli", name: "TraeX (CLI)", transport: "codex-cli", command: "traex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "traex", stateLayout: "traex" },
+  { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000, source: "claude", stateLayout: "claude" },
+  { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "codex", stateLayout: "codex" },
 ];
 /** Doubao through its OpenAPI: no local command (`command` is only a label); available once authorized. */
 const doubaoProfile: AgentProfile = { id: "doubao", name: "豆包 (OpenAPI)", transport: "doubao", command: "doubao-openapi", args: [], env: {}, idleTimeoutMs: 600_000 };
