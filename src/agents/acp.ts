@@ -418,7 +418,21 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       ["effort", profile.effort],
     ] as const) {
       if (!value) continue;
-      const option = options.find((o) => (key === "model" ? isModelOption(o) : o.category === "thought_level" || /effort|reasoning/.test(o.id)));
+      const find = () => options.find((o) => (key === "model" ? isModelOption(o) : o.category === "thought_level" || /effort|reasoning/.test(o.id)));
+      let option = find();
+      if (!option && key === "effort") {
+        // An adapter may list the thinking levels only in its answer to a model choice, or a moment after the
+        // session opens: when the model was already the wanted one nothing was chosen, so ask for the options
+        // again by choosing the model it has, before deciding the agent has no such setting.
+        const model = options.find(isModelOption) as { id: string; currentValue?: string } | undefined;
+        if (model?.currentValue) {
+          const again = await Promise.race([connection.setSessionConfigOption({ sessionId, configId: model.id, value: model.currentValue }), failed]).catch(() => null);
+          if (again?.configOptions) {
+            options = again.configOptions;
+            option = find();
+          }
+        }
+      }
       if (!option && key === "model" && session.models?.availableModels?.length) {
         const ids = session.models.availableModels.map((m) => m.modelId);
         const chosen = resolveModelOption(value, ids);
