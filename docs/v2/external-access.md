@@ -107,6 +107,30 @@ create table shares (
 
 无 MCP 的云端会话默认只收到宿主选好的材料。想让它自己核对原文，先把 `webUrl` 配成云端能访问的公网 HTTPS 地址。反向代理使用路径前缀时，把前缀也写进去。
 
+公网入口只转发探测和云端工具请求。下面的 Nginx 配置适用于独立域名、路径从根开始的部署。把 `map` 放进 `http` 块，把 `location` 放进该域名已有证书的 HTTPS `server` 块。带头工具请求必须携带云端运行凭据，宿主再检查有效期、次数和本轮权限。
+
+```nginx
+map "$request_method:$uri:$http_authorization" $cloud_tools_allowed {
+    default 0;
+    "~^(GET|POST):/api/cloud-tools/challenge/[a-f0-9-]+:(Bearer probe-[a-f0-9-]+)?$" 1;
+    "~^GET:/api/tools:Bearer oct_[A-Za-z0-9_-]+$" 1;
+    "~^POST:/api/tools/[a-z_]+:Bearer oct_[A-Za-z0-9_-]+$" 1;
+    "~^GET:/api/tools/turn/oct_[A-Za-z0-9_-]+(/[a-z_]+)?:$" 1;
+}
+
+location / {
+    access_log off;
+    error_log /dev/null;
+    if ($cloud_tools_allowed = 0) { return 403; }
+    proxy_pass_request_headers off;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header Content-Type $content_type;
+    proxy_pass http://127.0.0.1:4317/;
+}
+```
+
+状态、探测、确认、撤销和云端选项的修改需要本人的 API 令牌或已登录的本人会话。只在本机调用 CLI 时，CLI 可用数据目录创建临时本人令牌，请求结束即撤销。
+
 1. 运行 `omem cloud-tools probe <后端档案 ID>`。宿主开一个临时会话，验证后端能带 Authorization 测试头发 GET、POST JSON 并读回回执（`header`）。做不到时，后端可另试无头 GET，沿响应里的 next 地址提交 JSON 查询参数并读回回执（`url`）。两种都失败时返回原因。测试值没有库权限，会话用完即清理。
 2. 本人核对结果，向 `POST /api/cloud-tools/probe/confirm` 提交 `{"backend":"档案 ID","id":"这次探测的 id"}`。换公网地址或重新探测后需要重新确认。
 3. 在配置的 `agents.cloudTools` 里设置下列选项。通过 API 修改时，在已有设置上更新，使用 `PUT /api/settings` 保存。下一轮生效。

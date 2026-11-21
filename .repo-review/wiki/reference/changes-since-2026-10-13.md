@@ -1,5 +1,10 @@
 ---
 
+## 云端工具管理需验证本人身份
+
+从 `src/auth/http.ts` 看管理请求的身份校验。本机 CLI 可自动认证，公网反代的放行配置见 `docs/v2/external-access.md`。
+
+
 ## 云端工具探测验证完整请求
 
 从 `src/agents/cloud-probe.ts` 看两种探测。带头模式验证 GET 和 POST JSON，URL 模式验证沿 next 地址提交查询参数。两者都要求读回最终回执，旧探测需要重新确认。

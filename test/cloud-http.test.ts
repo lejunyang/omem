@@ -1,3 +1,7 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { createSession, SESSION_COOKIE } from "../src/auth/sessions.ts";
+import { saveConfig } from "../src/core/config.ts";
 import { expect, it, vi } from "vitest";
 import * as doubao from "../src/agents/doubao.ts";
 import * as capabilities from "../src/agents/capabilities.ts";
@@ -72,10 +76,29 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
   try {
     app.config.webUrl = "https://8.8.8.8";
     const cfg = { ...app.config.agents.cloudTools, enabled: true, backends: ["doubao"], credentialIn };
-    const update = (headers: typeof owner, cloudTools: unknown) => server.inject({ method: "PUT", url: "/api/settings", headers, payload: { agents: { ...app.config.agents, cloudTools } } });
+    const update = (headers: Record<string, string>, cloudTools: unknown) => server.inject({ method: "PUT", url: "/api/settings", headers, payload: { agents: { ...app.config.agents, cloudTools } } });
+    const loopback = { host: "localhost" };
+    const session = createSession(app, "owner", { via: "test" });
+    const cookie = { cookie: SESSION_COOKIE + "=" + session.token };
+    expect((await server.inject({ url: "/api/cloud-tools", headers: cookie })).statusCode).toBe(200);
+    for (const path of ["cloud-tools", "cloud-tools/revoke", "cloud-tools/probe", "cloud-tools/probe/confirm"]) {
+      const method = path === "cloud-tools" ? "GET" : "POST";
+      for (const headers of [loopback, { ...loopback, "x-forwarded-for": "192.0.2.10" }, { authorization: "Bearer invalid" }]) {
+        const response = await server.inject({ method, url: "/api/" + path, headers });
+        expect([401, 403]).toContain(response.statusCode);
+      }
+    }
+    expect((await update({}, cfg)).statusCode).toBe(403);
     expect((await update(admin, cfg)).statusCode).toBe(403);
     expect((await update(owner, { ...cfg, tools: ["write_page"] })).statusCode).toBe(400);
     expect((await update(owner, cfg)).statusCode).toBe(200);
+    if (credentialIn === "channel") {
+      app.config.port = Number(new URL(app.baseUrl).port);
+      saveConfig(app.config, app.home);
+      const cli = await promisify(execFile)(process.execPath, ["src/cli.ts", "--home", app.home, "cloud-tools", "probe", "doubao"]);
+      expect(JSON.parse(cli.stdout)).toMatchObject({ mode, confirmed: false });
+      expect(all(app.db, "select 1 from api_tokens where label='cloud-tools probe'")).toHaveLength(0);
+    }
     const probe = await server.inject({ method: "POST", url: "/api/cloud-tools/probe", headers: owner, payload: { backend: "doubao" } });
     expect(probe.json()).toMatchObject({ mode, confirmed: false });
     expect(deleted).toHaveBeenCalledWith(app.home, expect.anything(), "probe-session");
@@ -86,7 +109,7 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
       mcpToken = prep.token;
       await runBackend(app, prep.profile, { ...prep, runId: id, prompt: "核对材料" }, e => addRunEvent(app, id, e.type, e));
     } finally { revokeToolToken(prep.token); }
-    expect(fake).toHaveBeenCalledTimes(2);
+    expect(fake).toHaveBeenCalledTimes(credentialIn === "channel" ? 3 : 2);
     expect(deleted).toHaveBeenCalledWith(app.home, expect.anything(), "task-session");
     const history = runEvents(app, id);
     expect(JSON.stringify(history)).toContain('"omemAccess":"http"');

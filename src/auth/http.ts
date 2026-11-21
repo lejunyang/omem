@@ -58,6 +58,8 @@ export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
     if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req.raw)) return null;
     return { userId: s.userId, via: "session", restricted: s.restricted, sessionHash: s.idHash };
   }
+  // A public reverse proxy may look identical to a local client, even down to Host.
+  if (req.routeOptions.url?.startsWith("/api/cloud-tools")) return null;
   if (!app.config.token && trustedLocal(req.raw, req.ip ?? "", { refuseProxied: app.config.auth.enabled })) return { userId: OWNER, via: "local", restricted: false, sessionHash: null };
   return null;
 }

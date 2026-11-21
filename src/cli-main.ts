@@ -593,11 +593,17 @@ program.command("cloud-tools").command("probe <backend>").description("探测云
     const app = open();
     const base = await runningServer(app);
     if (!base) throw new Error("请先启动本机 omem 服务");
-    const res = await fetch(base + "/api/cloud-tools/probe", { method: "POST", headers: {
-      "content-type": "application/json", ...(app.config.token ? { authorization: "Bearer " + app.config.token } : {}),
-    }, body: JSON.stringify({ backend }) });
-    if (!res.ok) throw new Error(await res.text());
-    console.log(JSON.stringify(await res.json(), null, 2));
+    const { createApiToken, OWNER, revokeTokenValue } = await import("./core/users.ts");
+    const temporary = app.config.token ? null : createApiToken(app, OWNER, "cloud-tools probe");
+    try {
+      const res = await fetch(base + "/api/cloud-tools/probe", { method: "POST", redirect: "error", headers: {
+        "content-type": "application/json", authorization: "Bearer " + (temporary ?? app.config.token),
+      }, body: JSON.stringify({ backend }) });
+      if (!res.ok) throw new Error(await res.text());
+      console.log(JSON.stringify(await res.json(), null, 2));
+    } finally {
+      if (temporary) revokeTokenValue(app, temporary);
+    }
   });
 
 const doubao = program.command("doubao").description("豆包 OpenAPI 作为模型后端：检查哪个飞书应用有权限、以本人身份授权");

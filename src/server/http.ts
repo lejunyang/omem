@@ -3368,7 +3368,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const parsed = configSchema.safeParse({ ...app.config, ...(req.body as object) });
     if (!parsed.success) throw new HttpError(400, parsed.error.message);
     const next = parsed.data;
-    if (who(req) !== OWNER && JSON.stringify(next.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools))
+    if (JSON.stringify(next.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools) && (who(req) !== OWNER || authOf(req)?.via === "local"))
       throw new HttpError(403, "只有本人可以修改云端工具设置");
     await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
     next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
