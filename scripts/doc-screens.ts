@@ -734,6 +734,8 @@ noteChange(refundLine.id, ago(17, 3), { type: "scope", origin: "follow", summary
 noteChange(refundLine.id, ago(13, 5), { type: "decision", origin: "follow", summary: "满减按各行实付比例分摊，尾差归最后一行", detail: "阿青在群里定的口径，和需求文档第 8 行一致。", refs: [`src:${chat}#L3-L3`, `src:${prd}#L8-L9`] });
 noteChange(flowItem.id, ago(10, 2), { type: "stage", origin: "flow", summary: "「澄清需求」做完：三处退款金额的口径对齐了", refs: [`src:${prd}#L7-L10`] });
 noteChange(refundLine.id, ago(7, 6), { type: "deadline", origin: "follow", summary: "全量上线从 11 月 28 日推到 12 月 2 日", detail: "回放上月数据要多两天准备测试账号。", risk: "再往后推会撞上 12 月的大促封板", next: "回放脚本本周内跑通", refs: [`src:${chat}#L2-L2`] });
+// The same message noted first by the assistant in the owner's conversation, the date added by item-follow (items/changes.ts `added`).
+run(app.db, "update item_changes set origin = 'owner', source_key = 'lark:om_demo_deadline', added = ? where item_id = ? and type = 'deadline'", JSON.stringify([{ origin: "follow", runId: null, at: ago(7, 5), fields: ["due", "summary"] }]), refundLine.id);
 noteChange(refundLine.id, ago(4, 1), { type: "result", origin: "metric", summary: "测试环境退款错算率从 2.1% 降到 0.3%", detail: "按已发货行计算后，剩下的错算都来自满减分摊。" });
 noteChange(negDefect.id, ago(2, 4), { type: "blocker", origin: "problem", summary: "满减分摊到最后一行出现负数", detail: "大额满减券的订单，最后一行承担尾差后可退金额为负。", risk: "这类订单上线后会退出负数金额", next: "小王改成超出部分顺延到前一行，再补回归用例", refs: [`src:${chat}#L6-L6`] });
 noteChange(flowItem.id, ago(0, 4), { type: "stage", origin: "flow", summary: "编码评审通过，等你核对分支后推送", next: "核对分支，推送后进预发验收" });
