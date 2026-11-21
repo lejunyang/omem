@@ -104,5 +104,5 @@ export function memberCapabilities(app: App, userId: string) {
     const from = access.source(c, s.id);
     return from ? [[s.id, from]] : [];
   }))]));
-  return { preset: access.preset, overrides: access.overrides, caps, spaceCaps, ownSpaceCaps, effective };
+  return { preset: access.preset, spaceRoleGrants: access.preset === "observer" ? "catalogOnly" : "legacyAndCatalog", overrides: access.overrides, caps, spaceCaps, ownSpaceCaps, effective };
 }

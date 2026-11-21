@@ -120,6 +120,35 @@ describe("roles and permissions", async () => {
     expect((await as("observer-test", "/api/rules")).status).toBe(200);
   });
 
+  it("allows ordinary observer answers and mapped edits only", async () => {
+    const id = "answer-reader";
+    createUser(app, { id, name: "参与者", role: "observer" });
+    addMember(app,"team",id,"reader");
+    tokens[id] = createApiToken(app,id,"test");
+    sqlRun(app.db,"insert into conversations(id,space_id,user_id,created_at,updated_at) values('demo-question','team',?,'','')",id);
+    const r = createRun(app,{kind:"ask",title:"询问",spaceId:"team",userId:id,input:{conversationId:"demo-question"}});
+    const {createAsk} = await import("../src/agents/asks.ts");
+    const ask = (props: Partial<Parameters<typeof createAsk>[1]> = {}) => createAsk(app,{runId:r.id,userId:id,question:"选哪一天？",...props}).id;
+    const post = (path: string, body: object = {}) => as(id,path,{method:"POST",body:JSON.stringify(body)});
+    expect((await post("/api/asks/"+ask()+"/answer",{text:"周一"})).status).toBe(200);
+    expect((await post("/api/asks/"+ask()+"/dismiss")).status).toBe(200);
+    for (const card of [ask({kind:"approval"}),ask({context:{handler:"flow-save"}}),ask({userId:"ann"})])
+      expect((await post("/api/asks/"+card+"/answer",{text:"好"})).status).toBe(403);
+    const item = {space:"team",kind:"todo",title:"测试事项"};
+    expect((await post("/api/items",item)).status).toBe(403);
+    addMember(app,"team",id,"editor");
+    const made = await post("/api/items",item);
+    expect(made.status).toBe(200);
+    const own = await made.json();
+    sqlRun(app.db,"update items set user_id='owner' where id=?",own.id);
+    expect((await as(id,"/api/items/"+own.id,{method:"PATCH",body:JSON.stringify({title:"改名"})})).status).toBe(403);
+    expect((await post("/api/items",{...item,space:"other"})).status).toBe(403);
+    expect((await post("/api/memories",{space:"team"})).status).toBe(403);
+    expect((await as(id,"/api/wiki/team/page/example",{method:"PUT",body:"{}"})).status).toBe(403);
+    await fetch(base+"/api/members/"+id+"/capabilities",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({preset:"observer",overrides:[{capability:"items.edit",scope_kind:"space",scope_id:"team",effect:"deny"}]})});
+    expect((await post("/api/items",item)).status).toBe(403);
+  });
+
   it("applies a revoked run capability to lists, details and the next SSE event", async () => {
     const id = "stream-reader";
     createUser(app, { id, name: "观察者", role: "observer" });

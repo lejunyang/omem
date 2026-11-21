@@ -553,7 +553,18 @@ export async function checkRoute(app: App, req: FastifyRequest, userId: string) 
   if (isOwner(app, userId)) return;
   const rule = ROUTE_RULES[routeKey(req)] ?? ROUTE_RULES[`* ${req.routeOptions.url}`];
   if (!rule) throw new HttpError(403, "这个接口只对 omem 的主人开放");
-  if (rule === "self" && !["GET", "HEAD", "OPTIONS"].includes(req.method) && one<{ role: string }>(app.db, "select role from users where id=?", userId)?.role === "observer") throw new HttpError(403, "观察者不能执行这项操作");
+  if (rule === "self" && !["GET", "HEAD", "OPTIONS"].includes(req.method) && one<{ role: string }>(app.db, "select role from users where id=?", userId)?.role === "observer") {
+    const path = routeKey(req);
+    if (path === "POST /api/asks/:id/answer" || path === "POST /api/asks/:id/dismiss") {
+      requirePerm(app, userId, "ask.send");
+      const ordinary = one(app.db, `select 1 from asks a join conversations c on c.id=a.conversation_id
+        join runs r on r.id=a.run_id and r.kind='ask' and coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))=c.id
+        where a.id=? and a.kind='question' and a.tool is null and a.args is null and a.context is null
+        and a.user_id=? and c.user_id=a.user_id and r.user_id=a.user_id`, (req.params as {id:string}).id, userId);
+      if (ordinary) return;
+    }
+    throw new HttpError(403, "观察者不能执行这项操作");
+  }
   if (rule === "public" || rule === "self") return;
   if (rule === "owner") throw new HttpError(403, "这个接口只对 omem 的主人开放");
   if ("g" in rule) return requirePerm(app, userId, rule.g);

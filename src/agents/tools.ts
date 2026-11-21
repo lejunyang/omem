@@ -3829,6 +3829,12 @@ def({
   }),
   handler: async (ctx, a) => {
     if (ctx.shadow) return "（对比运行）不向本人提问，按你认为最合理的选择继续。";
+    if (ctx.userId && findUser(ctx.app, ctx.userId)?.role === "observer") {
+      const ownChat = ctx.runId && one(ctx.app.db, `select 1 from runs r join conversations c
+        on c.id=coalesce(json_extract(r.input,'$.conversationId'),json_extract(r.input,'$.threadId'))
+        where r.id=? and r.kind='ask' and c.user_id=? and r.user_id=c.user_id`, ctx.runId, ctx.userId);
+      if (!ownChat || a.to) throw new HttpError(403, "只能在自己的对话中追问");
+    }
     checkBrief(a.question, "问题");
     if (a.fields?.length && a.options?.length) throw new HttpError(400, "有 fields 时不给 options：选项写成一个 choice 字段");
     if (a.fields) checkFields(a.fields);
