@@ -19,6 +19,10 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 插件按成员投递通知和提问（2026-11-21）
+
+普通投递、更新、提问和撤回共用一个插件出口。宿主保存投递回执，验证回答人的绑定身份。实现从 `src/plugins/notifier.ts` 读起，文件示例在 `examples/plugins/localnotice/`。
+
 ## 2026-11-21 · 远程页：把会话交给成员
 
 - 会话主人在画面上方点“交给成员”，在右侧抽屉（`web/src/components/RemoteGrants.vue`）里选人、只看或可操作、多久，已交给的人一行一个，可改模式、从现在起延长、收回（`confirmDialog`）。候选人由 `/api/users` 和每人的 `/api/members/:id/capabilities` 里的 `remote.view` / `remote.operate` 算出（`web/src/lib/remote-grants.ts`）。

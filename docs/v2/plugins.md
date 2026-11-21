@@ -763,3 +763,36 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 ```
 
 仓库示例可用 `omem plugin install examples/plugins/formats` 安装。信任后上传包含 `{"title":"订单","body":"已创建"}` 的 JSONL 文件，或让写作角色按“接口说明”写一页。示例代码见 [formats/server.mjs](../../examples/plugins/formats/server.mjs)。
+
+## 加一个通知出口
+
+宿主决定收件人和投递时间。插件通过 `api.notifier` 登记出口，本人信任插件后，成员还要为自己的账号打开出口。清单在 `permissions.notify` 下分别声明 `deliver: true` 和 `ask: true`。只声明前一项可以发送普通通知。已信任的开发目录增加通知权限也需要重新确认。
+
+`resolve(user)` 收到成员 id 和绑定身份的 provider、subject，返回 `{ ok, hint? }`。宿主只向启用的出口投递符合最低紧急程度的通知。静默通知留在网页，普通通知在免打扰结束后补送，延后汇总的通知在宿主释放时进入队列。发送时宿主再次核对设置和可达性。
+
+`deliver(n, signal)` 收到标题、Markdown 正文、链接、收件人、紧急程度和稳定的 `dedupKey`。有关联事项时，`about` 给出事项标题和网页链接。返回的 `ref` 是平台消息标识。通知的新状态调用 `update(ref, n, signal)`；省略更新方法或回执时，新状态保留在网页。宿主按出口保存投递结果，成功后网页将通知记为已推送。回调超时为 15 秒，失败后按退避时间重试，最多尝试六次。平台可能在宿主超时前已经收下消息，插件应使用去重键避免重复创建。
+
+`ask(a, signal)` 额外收到提问种类、选项标签、表单字段、是否允许文字、是否要求批准和有效期。回答入口先在外部平台验证操作人，再传回其绑定身份。例如：
+
+```ts
+await api.answerAsk({
+  notifier: "file", ref: platformMessageId,
+  user: { provider: "local-demo", subject: authenticatedSubject },
+  choice: 0
+});
+```
+
+选项从 0 开始，表单用 `values`，文字用 `text`。审批必须明确传 `approved`。宿主按插件、出口、回执及成员找到投递记录，核对投递当时与现在的身份绑定、白名单和提问状态，然后走网页的回答路径。收件人身份来自平台认证的事件。收到的 HTTP 请求自行填写的 subject 不能当作这个身份。提问被回答、过期或撤回后，宿主用 `retract(ref, signal)` 关闭外部消息。
+
+每个出口的 `askKinds` 默认只有 `question`，包含普通选择、确认和表单。建议使用 `suggestion`，工具审批使用 `approval`，宿主处理的决定按处理器单独列出，如 `handler:command-gate` 和 `handler:flow-stage`。成员可以传空数组只收通知。高权限提问需要对相应出口逐类显式开启。
+
+### 用文件试发和试答
+
+将 `examples/plugins/localnotice` 复制到数据目录的 `plugins/`，在插件设置中信任并以隔离模式运行。用 `omem user link owner local-demo operator` 绑定这个示例的本机使用者。在已登录的账号下调用：
+
+| 请求 | 用法 |
+| --- | --- |
+| `GET /api/notify/outlets` | 查看内置网页、飞书和已注册的插件出口。每行有可达性和原因、是否支持提问、个人设置、最近投递时间和错误。 |
+| `PUT /api/notify/outlets` | 传 `{"outlets":[{"id":"localnotice:file","minUrgency":"normal","askKinds":["question"]}]}` 替换自己的插件出口列表。最低紧急程度可选 later、normal、urgent。移除一行即关闭。本人可另传成员的 userId。 |
+| `POST /api/notify/outlets/localnotice:file/test` | 用当前账号试发。查看数据目录 `plugin-data/localnotice/<回执>.json`，同一条通知的更新写回同一个文件。 |
+| `POST /api/plugins/localnotice/call/localnotice_answer` | 本人手动传 `{"ref":"提问回执","choice":0}` 模拟点击。回答后文件变为 `{"closed":true}`。示例只模拟选项。 |
