@@ -37,7 +37,7 @@ omem login https://omem.example.com          # 浏览器里登录并确认，拿
 omem tool --remote <名字> search query="退款"  # 或 --url <地址>；不带时用 omem remote default 设的默认地址
 ```
 
-MCP 写 `["mcp", "--remote", "<名字>"]`（或 `["mcp", "--url", "<地址>"]`）。凭据按顺序取：记下的远程地址自己的（`omem login` 的令牌，或 `omem remote add <名字> <地址> --auth-cmd "<命令>"`），再是环境变量 `OMEM_TOKEN`（API 令牌）、`OMEM_AUTH_CMD`（一条输出凭据的命令，比如组织登录体系的 JWT，过期或被拒时重新执行；服务端要有认它的鉴权插件）。工具与下面 `--peer` 的那套相同（不对外发消息、不交办编码），再按你的角色和空间裁剪；会话、`--agent`、`--model`、`--effort`、`--spaces`、`--read-only` 用法相同（环境变量写 `OMEM_SESSION`、`OMEM_AGENT`、`OMEM_MODEL`、`OMEM_EFFORT`），每个会话在对方运行页记成你的一条运行。账号还在等批准、角色没有 `tools.external` 权限时，调用会返回原因。`omem open [页面]` 用同一个凭据在浏览器里登录对方的网页。
+MCP 写 `["mcp", "--remote", "<名字>"]`（或 `["mcp", "--url", "<地址>"]`）。凭据按顺序取：记下的远程地址自己的（`omem login` 的令牌，或 `omem remote add <名字> <地址> --auth-cmd "<命令>"`），再是环境变量 `OMEM_TOKEN`（API 令牌）、`OMEM_AUTH_CMD`（一条输出凭据的命令，比如组织登录体系的 JWT，过期或被拒时重新执行；服务端要有认它的鉴权插件）。工具与下面 `--peer` 的那套相同（不对外发消息、不交办编码），再按你的角色、成员能力和空间裁剪；会话、`--agent`、`--model`、`--effort`、`--spaces`、`--read-only` 用法相同（环境变量写 `OMEM_SESSION`、`OMEM_AGENT`、`OMEM_MODEL`、`OMEM_EFFORT`），每个会话在对方运行页记成你的一条运行。账号还在等批准、角色没有 `tools.external` 权限时，调用会返回原因。`omem open [页面]` 用同一个凭据在浏览器里登录对方的网页。
 
 **在另一台设备上用这个库**：本机和另一台装着 omem 的机器（常驻服务器）配过对（`omem peer add`，见 README“多台设备”），就可以用本机的模型整理那台机器上的原件、记忆、Wiki 和事项，不用它自己的模型：
 
