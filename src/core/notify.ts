@@ -106,18 +106,11 @@ export type Notification = {
 };
 
 type Sink = (n: Notification, app: App) => Promise<void> | void;
-const sinks = new Map<Sink, string | undefined>();
-export const hasNotificationSink = (id: string) => [...sinks.values()].includes(id);
+const sinks = new Set<Sink>();
 /** External channels (Feishu bot, Telegram, a plugin's channel…) register here to receive notifications; the returned function takes the sink out again. */
-export function addNotificationSink(sink: Sink, id?: string) {
-  sinks.set(sink, id);
+export function addNotificationSink(sink: Sink) {
+  sinks.add(sink);
   return () => { sinks.delete(sink); };
-}
-
-export async function testNotificationSink(app: App, id: string, n: Notification) {
-  const sink = [...sinks].find(([, channel]) => channel === id)?.[0];
-  if (!sink) throw new HttpError(409, "出口未连接");
-  await sink(n, app);
 }
 
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
@@ -133,7 +126,7 @@ export function notify(
     view?: "flow";
     /** The `later` notifications this one stands for (releaseLater). */
     bundle?: string[] },
-  target?: string,
+  { push = true } = {},
 ) {
   const userId = input.userId ?? "owner";
   const replaced = input.replaces ? one<{ id: string; user_id: string; dedup: string | null }>(app.db, "select id, user_id, json_extract(context,'$.dedupKey') dedup from notifications where id = ?", input.replaces) : undefined;
@@ -211,13 +204,12 @@ export function notify(
   // The earlier one is now history: read, and no longer waiting for the morning.
   if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });
-  if (!held) deliver(app, n, target);
+  if (!held && push) deliver(app, n);
   return n;
 }
 
-const deliver = (app: App, n: Notification, target?: string) => {
-  for (const [sink, id] of sinks) {
-    if (target && id !== target) continue;
+const deliver = (app: App, n: Notification) => {
+  for (const sink of sinks) {
     try { Promise.resolve(sink(n, app)).catch(e => console.warn("[omem] 通知发送失败", e)); }
     catch (error) { console.warn("[omem] 通知发送失败", error); }
   }
@@ -365,17 +357,10 @@ export function takeDeferred(app: App): Notification[] {
     .map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: null, userId: r.user_id }));
 }
 
-export function recordLarkDelivery(app: App, userId: string, error: string | null) {
-  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value=excluded.value",
-    "notify.lark:" + userId, JSON.stringify({ at: now(), error }));
-}
-
 /** Remember the Feishu card a notification went out as (see `replaces`). */
 export function setNotificationCard(app: App, id: string, messageId: string, bot?: string | null) {
   run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.larkMessageId', ?, '$.larkBot', ?) where id = ?", messageId, bot ?? null, id);
   markPushed(app, id, "lark", messageId);
-  const row = one<{user_id:string}>(app.db, "select user_id from notifications where id=?", id);
-  if (row) recordLarkDelivery(app, row.user_id, null);
 }
 /** The Feishu card sent for a notification, if any. */
 export function notificationCardOf(app: App, id: string) {

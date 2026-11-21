@@ -61,6 +61,7 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
     expect((await server.inject({ method: "PUT", url, headers, payload: { userId: "owner", outlets: [setting] } })).statusCode).toBe(403);
     expect((await server.inject({ method: "PUT", url, headers, payload: { outlets: [] } })).statusCode).toBe(200);
     expect((await server.inject({ method: "PUT", url, payload: { userId: "reader", outlets: [] } })).statusCode).toBe(200);
+    for (const id of ["web", "lark"]) expect((await server.inject({ method: "POST", url: url + "/" + id + "/test" })).statusCode).toBe(404);
     const test = await server.inject({ method: "POST", url: url + "/" + outlet + "/test" });
     expect(test.statusCode, test.body).toBe(200);
     expect(message(test.json().id).user.id).toBe("owner");
@@ -205,7 +206,7 @@ it.each(["isolated", "inprocess"] as const)("%s 只授予普通投递时隔离�
   await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
   await trustPlugin(app, "probe", mode);
   const heard: string[] = [];
-  undo.push(addNotificationSink(n => { heard.push(n.id); }, "lark"));
+  undo.push(addNotificationSink(n => { heard.push(n.id); }));
   const timeout = AbortSignal.timeout.bind(AbortSignal);
   vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => timeout(ms === 15000 ? 50 : ms));
   try {

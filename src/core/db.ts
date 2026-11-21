@@ -2348,6 +2348,8 @@ export const migrations: readonly string[] = [
   create index outlet_dedup on outlet_deliveries(outlet,dedup,seq);
   create unique index outlet_ask_ref on outlet_deliveries(outlet,ref,user_id) where op='ask';
   create index outlet_object on outlet_deliveries(object_id,op);`,
+  `create index notifications_pushed_at on notifications(user_id,json_extract(context,'$.pushed.channel'),json_extract(context,'$.pushed.at') desc)
+    where json_extract(context,'$.pushed.channel') is not null;`,
 ];
 
 export type Db = DatabaseSync;

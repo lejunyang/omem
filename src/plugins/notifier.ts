@@ -3,8 +3,9 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { activeUser, canWrite, findUser, identitiesOf, identityOwner, larkOpenIdOf } from "../core/users.ts";
 import { HttpError, json, now, untilAbort, webLink } from "../core/util.ts";
-import { addNotificationSink, deliveryPlan, hasNotificationSink, markPushed, notify, testNotificationSink, type Notification } from "../core/notify.ts";
+import { addNotificationSink, deliveryPlan, markPushed, notify, type Notification } from "../core/notify.ts";
 import { answerAsk, getAsk, type Ask } from "../agents/asks.ts";
+import { larkBotInfo } from "../channels/lark-send.ts";
 import { askUrgency } from "../agents/ask-urgency.ts";
 import { staleDays } from "../agents/ask-expiry.ts";
 import { audit } from "../auth/permissions.ts";
@@ -74,7 +75,7 @@ function readNotification(app: App, id: string) {
   return r && { ...json<Partial<Notification>>(r.context, {}), ...r };
 }
 function larkReachable(app: App, userId: string) {
-  if (!hasNotificationSink("lark")) return false;
+  if (!larkBotInfo("main")) return false;
   return userId === "owner" ? !!(app.config.lark.ownerOpenId || one(app.db, "select 1 from kv where key='lark_owner_chat' and value!=''")) : !!larkOpenIdOf(app, userId);
 }
 
@@ -196,25 +197,18 @@ export async function listOutlets(app: App, userId: string) {
       setting: settings(app, userId).find(s => s.id === id) ?? null, lastDelivery: history.get(id)?.updated ?? null, lastError: history.get(id)?.error ?? null };
   }));
   const lark = larkReachable(app, userId);
-  const webAt = one<{at:string}>(app.db, "select at from notifications where user_id=? order by at desc limit 1", userId)?.at;
-  const larkStatus = one<{value:string}>(app.db, "select value from kv where key=?", "notify.lark:" + userId);
-  const last = json<{at:string; error:string|null} | null>(larkStatus?.value, null);
   return [...["web","lark"].map(id => ({ id, name: id === "web" ? "网页" : "飞书", plugin: null, builtin: true, supportsAsk: true,
-    reachable: { ok: id === "web" || lark }, setting: null, lastDelivery: (id === "web" ? webAt : last?.at) ?? null, lastError: id === "lark" ? last?.error ?? null : null })), ...plugins];
+    reachable: { ok: id === "web" || lark }, setting: null, lastDelivery: one<{at:string}>(app.db,
+      "select json_extract(context,'$.pushed.at') at from notifications where user_id=? and json_extract(context,'$.pushed.channel')=? order by json_extract(context,'$.pushed.at') desc limit 1", userId, id)?.at ?? null })), ...plugins];
 }
 
 export async function testOutlet(app: App, outlet: string, userId: string) {
-  const builtin = outlet === "web" || outlet === "lark";
-  if (!builtin && !notifiers.has(outlet)) throw new HttpError(404, "没有这个出口");
-  if (outlet === "lark" && !larkReachable(app, userId)) throw new HttpError(409, "飞书不可达");
-  const n = notify(app, { userId, title: "测试通知", body: "这条通知用来测试你的出口。", urgency: "urgent" }, "web");
-  if (outlet === "lark") await testNotificationSink(app, outlet, n);
-  if (!builtin) {
-    enqueue(app, outlet, n.id, userId, "test", n.id);
-    const row = one<Delivery>(app.db, "select * from outlet_deliveries where outlet=? and object_id=? and op='test'", outlet, n.id)!;
-    await attempt(app, row);
-    const result = one<{error:string|null}>(app.db, "select error from outlet_deliveries where seq=?", row.seq);
-    if (result?.error) throw new HttpError(502, result.error);
-  }
+  if (!notifiers.has(outlet)) throw new HttpError(404, "没有这个插件出口");
+  const n = notify(app, { userId, title: "测试通知", body: "这条通知用来测试你的出口。", urgency: "urgent" }, { push: false });
+  enqueue(app, outlet, n.id, userId, "test", n.id);
+  const row = one<Delivery>(app.db, "select * from outlet_deliveries where outlet=? and object_id=? and op='test'", outlet, n.id)!;
+  await attempt(app, row);
+  const result = one<{error:string|null}>(app.db, "select error from outlet_deliveries where seq=?", row.seq);
+  if (result?.error) throw new HttpError(502, result.error);
   return { id: n.id };
 }

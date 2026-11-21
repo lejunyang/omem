@@ -792,7 +792,7 @@ await api.answerAsk({
 
 | 请求 | 用法 |
 | --- | --- |
-| `GET /api/notify/outlets` | 查看内置网页、飞书和已注册的插件出口。每行有可达性和原因、是否支持提问、个人设置、最近投递时间和错误。 |
+| `GET /api/notify/outlets` | 查看内置网页、飞书和已注册的插件出口。每行有可达性和原因、是否支持提问、个人设置、最近推送时间。插件出口另提供最近错误和试发，内置出口试发返回 404。 |
 | `PUT /api/notify/outlets` | 传 `{"outlets":[{"id":"localnotice:file","minUrgency":"normal","askKinds":["question"]}]}` 替换自己的插件出口列表。最低紧急程度可选 later、normal、urgent。移除一行即关闭。本人可另传成员的 userId。 |
 | `POST /api/notify/outlets/localnotice:file/test` | 用当前账号试发。查看数据目录 `plugin-data/localnotice/<回执>.json`，同一条通知的更新写回同一个文件。 |
 | `POST /api/plugins/localnotice/call/localnotice_answer` | 本人手动传 `{"ref":"提问回执","choice":0}` 模拟点击。回答后文件变为 `{"closed":true}`。示例只模拟选项。 |
