@@ -100,9 +100,13 @@ async function send(app: App, row: Delivery, def: Notifier, signal: AbortSignal)
   const expiresAt = ask ? expiry(app, ask) : null;
   if (ask && (!def.ask || !setting?.askKinds.includes(kindOf(ask)) || !live(ask, expiresAt))) return;
   if (!ask && (!n || n.read_at || n.quiet)) return;
-  if (row.state === "deferred" && n && (n.pushed || Date.now() - Date.parse(n.at) >= 86400000)) return;
-  const plan = deliveryPlan(app, { outlet: "plugin", urgency, scheduled: n?.scheduled });
-  if (plan.when === "later") return { due: Date.parse(plan.at!) };
+  const previous = n?.replaces ? one<{ref: string | null}>(app.db,
+    "select ref from outlet_deliveries where outlet=? and dedup=? and state='sent' and seq<? order by seq desc limit 1", outlet, row.dedup, row.seq) : undefined;
+  if (!previous) {
+    if (row.state === "deferred" && n && (n.pushed || Date.now() - Date.parse(n.at) >= 86400000)) return;
+    const plan = deliveryPlan(app, { outlet: "plugin", urgency, scheduled: n?.scheduled });
+    if (plan.when === "later") return { due: Date.parse(plan.at!) };
+  }
   const user = recipient(app, userId);
   const resolved = await reach(def, user, signal);
   if (!resolved.ok) throw new Error(resolved.hint ?? "出口无法送达此人");
@@ -123,8 +127,6 @@ async function send(app: App, row: Delivery, def: Notifier, signal: AbortSignal)
       requiresApproval: ask.kind === "approval", allowText: ask.allowText, fields: ask.ui?.fields ?? [], expiresAt: expiresAt ?? null }, signal));
     return { ref: result.ref, identities: user.identities };
   }
-  const previous = one<{ref: string | null}>(app.db,
-    "select ref from outlet_deliveries where outlet=? and dedup=? and state='sent' and seq<? order by seq desc limit 1", outlet, row.dedup, row.seq);
   let ref = previous?.ref;
   if (previous) {
     if (!ref || !def.update) return;

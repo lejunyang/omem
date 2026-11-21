@@ -92,10 +92,12 @@ describe.each(["isolated", "inprocess"] as const)("通知出口 %s", mode => {
       expect(JSON.stringify(message(n.id))).not.toContain("事项私有详情");
       expect(message(n.id)).not.toHaveProperty("sourceRefs");
       expect(listNotifications(app).find(x => x.id === n.id)).toMatchObject({ unread: false, pushed: { channel: outlet } });
+      vi.setSystemTime(new Date("2026-11-22T23:00:00Z"));
       const next = notify(app, { title: "第二步", replaces: n.id });
       await drainOutlets(app);
       expect(message(n.id).title).toBe("第二步");
       expect(existsSync(file(next.id))).toBe(false);
+      vi.setSystemTime(new Date("2026-11-23T09:01:00Z"));
       app.config.notify.outlets.owner[0].minUrgency = "later";
       const later = notify(app, { title: "汇总", urgency: "later" });
       await drainOutlets(app);
