@@ -282,6 +282,7 @@ export async function lessonsForTask(app: App, input: LessonInput) {
 }
 
 export type RoleRunInput = {
+  boardAccess?: "read" | "write";
   /** Host-assigned trees for this invocation (helpers carry their own leases). */
   worktrees?: WorktreeRef[];
   worktreeAccess?: "read" | "commit";
@@ -466,7 +467,7 @@ export function recordIsolation(app: App, runId: string | null, userId: string, 
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
+  input: { boardAccess?: "read" | "write"; actor: Actor; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
   const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -518,6 +519,11 @@ export function prepareRun(
   for (const t of input.addTools ?? []) tools.add(t);
   // A replay arm reads and nothing else, whatever its role or profile may do elsewhere.
   if (input.replay) for (const t of [...tools]) if (!input.replay.tools.includes(t)) tools.delete(t);
+  if (input.boardAccess) {
+    const allowed = new Set(["search", "scan", "find_symbol", "read_source", "read_page", "recall", "attach_artifact"]);
+    if (input.boardAccess === "write") for (const name of ["remember", "write_page", "upsert_item"]) allowed.add(name);
+    for (const name of tools) if (!allowed.has(name)) tools.delete(name);
+  }
   // Not what the person it works for may not do (src/auth/tools.ts), nor what needs something they lack.
   dropUnavailable(app, userId, tools);
   const baseCapabilities = backendCapabilities(profile);
@@ -541,7 +547,7 @@ export function prepareRun(
   const base = new URL(app.baseUrl);
   if (egressRequested(app.config,profile) && egressSupport().ok) base.hostname = "127.0.0.1";
   const toolBase = base.origin;
-  const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
+  const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
   const token = issueToolToken({ browserProfilesRoot, runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
@@ -576,7 +582,7 @@ export function prepareRun(
   const mesh = userId === OWNER && tools.has("ask_agent") ? meshNote(app) : "";
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
-  const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
+  const readOnly = !!(input.boardAccess || input.reviewCheck || input.reviewLead || input.replay);
   // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
   // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
   const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
@@ -595,11 +601,11 @@ export function prepareRun(
       ...agentToolEnv(app.home, toolBase, token, commandGateDir(app)),
       ...(browserProfilesRoot ? { OMEM_BROWSER_PROFILES: browserProfilesRoot } : {}),
       ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
-      ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
+      ...(guest || input.boardAccess || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
     } },
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
-    extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
+    extraMcp: input.boardAccess || input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
     allowWrites: readOnly ? false : spec ? spec.writes : role!.writes,
     fullAccess,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
@@ -846,7 +852,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
 
   // The order to move on in: the chooser's ranking by the owner's routing notes when it ran, then the
   // static order (the role's other backends, the fallbacks, the candidates) for whatever it did not rank.
-  const single = !!input.shadow || execution?.source === "flow" || (execution && app.config.agents.routing.pinnedFallback === "never");
+  const single = !!input.boardAccess || !!input.shadow || execution?.source === "flow" || (execution && app.config.agents.routing.pinnedFallback === "never");
   const candidates = single ? [primary] : chosen ? distinctProfiles([primary, ...chosen.order, ...failoverProfiles(app, actor, primary, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, primary, own);
   // A space kept on this machine only is never handed to an AI borrowed from someone else's server (core/mesh.ts):
   // such backends are passed over; when the run starts on one, it says so instead.

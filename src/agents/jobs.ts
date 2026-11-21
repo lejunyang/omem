@@ -275,6 +275,8 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
 }
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
+registerHandler("peer-work", async ctx => (await import("./peer-work.ts")).runIncomingWork(ctx));
+
 registerHandler("agent", async (ctx) => {
   // Someone looking for the owner, handled (mentions/mentions.ts): its time limit and the short reminder when it fails.
   if (ctx.run.input.mention) return runMentionHandling(ctx, runAgentTask);

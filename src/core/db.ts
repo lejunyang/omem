@@ -2410,6 +2410,8 @@ export const migrations: readonly string[] = [
    end;`,
   `create index progress_code_takeovers on run_events(run_id)
      where type='status' and json_extract(data,'$.text') glob '这一轮做 T*';`,
+  `create unique index peer_work_attempt on runs(json_extract(input,'$.pair'),json_extract(input,'$.request.key'))
+     where kind='peer-work';`,
 ];
 
 export type Db = DatabaseSync;

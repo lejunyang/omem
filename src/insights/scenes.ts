@@ -5,7 +5,7 @@ export type Scene = typeof scenes[number];
 /** 固定口径；未知的新类型必须先补这张表。档案和角色只细分通用 Agent 运行。 */
 export const sceneTable = {
   ask: "问答", guest: "问答", "peer-agent": "问答", "lark-command": "问答", tutor: "问答",
-  agent: "排查", "agent-followup": "排查", "rule-fire": "排查", "rule-script": "排查", "study-trial": "排查", "peer-trial": "排查",
+  agent: "排查", "agent-followup": "排查", "rule-fire": "排查", "rule-script": "排查", "study-trial": "排查", "peer-trial": "排查", "peer-work": "排查",
   code: "编码", "req-split": "编码", design: "编码", review: "评审", "speaking-review": "评审", "note-review": "评审",
   brief: "文档与知识", "lark-resource-parse": "文档与知识",
   "commit-claim": "提醒与跟进", "item-follow": "提醒与跟进", heartbeat: "提醒与跟进", wake: "提醒与跟进", mention: "提醒与跟进", "item-settle": "提醒与跟进", "work-state": "提醒与跟进", "flow-stage": "提醒与跟进", "problem-follow": "提醒与跟进",

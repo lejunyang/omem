@@ -3183,7 +3183,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/peer/exec", async (req) => {
     const b = q(z.object({ command: z.string(), args: z.unknown().optional() }), req.body);
     const { runPeerCommand } = await import("../core/peer-exec.ts");
-    return { node: (await import("../core/peers.ts")).nodeId(app), result: await runPeerCommand(app, b.command, b.args) };
+    return { node: (await import("../core/peers.ts")).nodeId(app), result: await runPeerCommand(app, b.command, b.args, { user: who(req), token: bearer(req) ?? "" }) };
   });
   // One omem tool call from another device's Agent, as the owner with the tool set `omem mcp`
   // gives minus everything that acts outward (agents/peer-agent.ts); recorded in a run per session.

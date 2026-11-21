@@ -622,7 +622,11 @@ export const configSchema = z.object({
   /** Previews of a delegation's workspace (docs/v2/preview.md): stopped after this long with no connection. */
   preview: z.object({ idleMinutes: z.number().int().min(1).max(24 * 60).default(30) }).default({ idleMinutes: 30 }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
-  node: z.object({ id: z.string().optional() }).default({}),
+  node: z.object({
+    id: z.string().optional(),
+    acceptWork: z.enum(["off", "read", "write"]).optional(),
+    acceptWorkFrom: z.record(z.string().regex(/^[0-9a-f]{16}$/), z.enum(["off", "read", "write"])).optional(),
+  }).default({}),
   /**
    * Copies of other devices' data kept here by themselves (src/core/peer-backup.ts): the device, the
    * data directory its data is pulled into (not this instance's own), how many hours apart, and what
