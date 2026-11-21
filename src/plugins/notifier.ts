@@ -11,6 +11,7 @@ import { askUrgency } from "../agents/ask-urgency.ts";
 import { staleDays } from "../agents/ask-expiry.ts";
 import { saveConfig, type outletSettings } from "../core/config.ts";
 import { audit, isOwner } from "../auth/permissions.ts";
+import { requireMemberAction } from "../auth/member-management.ts";
 import { requireAskAccess } from "../auth/routes.ts";
 import { notifiers } from "./process-hooks.ts";
 import type { OutletIdentity, OutNotification, Notifier } from "./types.ts";
@@ -211,7 +212,14 @@ export async function answerFromOutlet(app: App, plugin: string, input: unknown)
   audit(app, userId, "notify.answer", ask.id, { outlet });
 }
 
-export async function listOutlets(app: App, userId: string) {
+function outletTarget(app: App, requester: string, target?: string) {
+  if (target === undefined) return requester;
+  requireMemberAction(app, requester, "manage", target === requester ? undefined : target);
+  return getUser(app, target).id;
+}
+
+export async function listOutlets(app: App, requester: string, target?: string) {
+  const userId = outletTarget(app, requester, target);
   const user = recipient(app, userId);
   const permitted = permittedAskKinds(app, userId);
   const plugins = await Promise.all([...notifiers].map(async ([id, e]) => {
@@ -222,18 +230,16 @@ export async function listOutlets(app: App, userId: string) {
     const saved = settings(app, userId).find(s => s.id === id);
     const setting = saved ? { ...saved, askKinds: saved.askKinds.filter(kind => permitted(id, kind)) } : null;
     return { id, name: e.def.name, plugin: e.plugin, builtin: false, supportsAsk: !!e.def.ask, reachable,
-      setting, lastDelivery: history?.updated ?? null, lastError: history?.error ?? null };
+      grantedAskKinds: app.config.notify.outletAskGrants[userId]?.[id] ?? [], setting, lastDelivery: history?.updated ?? null, lastError: history?.error ?? null };
   }));
   const lark = larkReachable(app, userId);
   return [...["web","lark"].map(id => ({ id, name: id === "web" ? "网页" : "飞书", plugin: null, builtin: true, supportsAsk: true,
-    reachable: { ok: id === "web" || lark }, setting: null, lastDelivery: one<{at:string}>(app.db,
+    grantedAskKinds: [], reachable: { ok: id === "web" || lark }, setting: null, lastDelivery: one<{at:string}>(app.db,
       "select json_extract(context,'$.pushed.at') at from notifications where user_id=? and json_extract(context,'$.pushed.channel')=? order by json_extract(context,'$.pushed.at') desc limit 1", userId, id)?.at ?? null })), ...plugins];
 }
 
 export function setOutlets(app: App, requester: string, body: { userId?: string; outlets: z.infer<typeof outletSettings> }) {
-  const userId = body.userId ?? requester;
-  if (userId !== requester && !isOwner(app, requester)) throw new HttpError(403, "只能设置自己的通知出口");
-  getUser(app, userId);
+  const userId = outletTarget(app, requester, body.userId);
   const saved = settings(app, userId);
   if (body.outlets.some(s => !notifiers.has(s.id) && !saved.some(old => old.id === s.id))) throw new HttpError(400, "没有这个通知出口");
   const outlets = { ...app.config.notify.outlets, [userId]: body.outlets };

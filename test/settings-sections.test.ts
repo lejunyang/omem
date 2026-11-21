@@ -1,9 +1,19 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { forgetPlugin, loadPlugins } from "../src/plugins/registry.ts";
 import { expect, it } from "vitest";
 import { testApp } from "./helpers.ts";
-import { createApiToken, createUser } from "../src/core/users.ts";
+import { upsertSource } from "../src/sources/store.ts";
+import { addMember, createApiToken, createUser } from "../src/core/users.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { savePeers } from "../src/core/peers.ts";
+import { remember } from "../src/memory/store.ts";
+import { roleSourceText, saveRoleOverride } from "../src/agents/builtin-roles.ts";
+import { createProposal } from "../src/agents/proposals.ts";
 import { saveRole } from "../src/auth/permissions.ts";
 import { configSchema } from "../src/core/config.ts";
-import { ownerSettings, settingSections } from "../src/auth/settings-sections.ts";
+import { ROUTE_RULES } from "../src/auth/routes.ts";
+import { ownerControls, ownerSettings, settingSections } from "../src/auth/settings-sections.ts";
 import { startServer } from "../src/server/http.ts";
 
 it("maps every schema key including optional settings, and reserves identity and host controls", () => {
@@ -15,12 +25,17 @@ it("maps every schema key including optional settings, and reserves identity and
 it("projects sections, rejects mixed writes atomically and audits changed keys without values", async () => {
   const app = testApp();
   app.config.shares.expiryDays = 7;
+  app.config.notify.outletAskGrants.other = { mailbox: ["approval"] };
+  app.config.notify.outlets.other = [];
   const server = await startServer(app, { port: 0, quiet: true });
   try {
     createUser(app, { id: "reader", name: "读者", role: "observer" });
     const headers = { authorization: "Bearer " + createApiToken(app, "reader") };
     const get = (url: string) => server.inject({ url, headers });
     const put = (payload: object) => server.inject({ method: "PUT", url: "/api/settings", headers, payload });
+    expect((await get("/api/me")).json().ownerName).toBe("主人");
+    app.db.prepare("update users set name=? where id='owner'").run("项目负责人");
+    expect((await get("/api/me")).json().ownerName).toBe("项目负责人");
     expect((await get("/api/settings")).statusCode).toBe(403);
     for (const capability of ["settings.assistant.view", "settings.assistant.edit", "settings.security.view", "settings.channels.edit"]) {
       app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values('reader',?,'global','','allow','0','owner','0')").run(capability);
@@ -31,8 +46,14 @@ it("projects sections, rejects mixed writes atomically and audits changed keys w
     expect(view.config.agents.accounts).toBeUndefined();
     expect(view.config.security).toBeUndefined();
     expect(view.config.token).toBeUndefined();
+    expect(view.config.notify).not.toHaveProperty("outlets");
+    expect(view.config.notify).not.toHaveProperty("outletAskGrants");
+    const owner = (await server.inject({ url: "/api/settings?section=assistant" })).json();
+    expect(owner.config.notify.outletAskGrants.other.mailbox).toEqual(["approval"]);
+    expect(owner.config.notify.outlets.other).toEqual([]);
     expect(view.home).toBeUndefined();
     expect((await put({ ...view.config, port: app.config.port + 1, timezone: "UTC" })).statusCode).toBe(403);
+    expect((await put({ remoteGrants: { defaultHours: 4, maxHours: 24 } })).statusCode).toBe(403);
     const hidden = await put({ mentions: { reply: { lark: { group: "auto" } } } });
     expect(hidden.statusCode).toBe(403);
     expect(hidden.body).toContain("mentions.reply");
@@ -81,5 +102,167 @@ it("separates review form access and delegation tier selection", async () => {
         for (const tier of tiers.json().tiers) expect(Object.keys(tier).sort()).toEqual(["checkCount", "id", "name"]);
       }
     }
+  } finally { await server.close(); app.db.close(); }
+});
+
+
+it("成员读插件列表、详情和改图标都能渲染权限，服务命令和目录仅本人可见", async () => {
+  const app = testApp();
+  const root = join(app.home, "plugins");
+  const dir = join(root, "probe");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "plugin.yaml"), JSON.stringify({
+    id: "probe", name: "探针", tools: ["read_page"],
+    services: [{ name: "echo", command: "node", args: ["private-service.mjs"] }],
+  }));
+  await loadPlugins(app, [{ dir: root, source: "data" }]);
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    createUser(app, { id: "reader", name: "读者", role: "observer" });
+    const headers = { authorization: "Bearer " + createApiToken(app, "reader") };
+    const grant = app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values('reader',?,'global','','allow','0','owner')");
+    grant.run("settings.ai.view");
+    const url = "/api/plugins/probe";
+    const owner = (await server.inject({ url })).json();
+    expect(owner).toMatchObject({ dir, services: [{ command: "node private-service.mjs" }], permissions: { services: ["node private-service.mjs"] } });
+    const list = await server.inject({ url: "/api/plugins", headers });
+    const detail = await server.inject({ url, headers });
+    expect(list.statusCode).toBe(200);
+    expect(detail.statusCode).toBe(200);
+    const card = detail.json();
+    expect(list.json().find((p: { id: string }) => p.id === "probe")).toEqual(card);
+    expect(card).toMatchObject({
+      id: "probe", iconChosen: false, services: [], streams: [], spaces: [], flows: [], rules: [], hooks: [], mcp: [],
+      agents: [], skills: [], tools: [], permissions: {
+        tools: [], writes: false, hostTools: ["read_page"], providers: [], platforms: [], uses: [], services: [], agentLogin: [], space: null,
+      },
+    });
+    expect(card).not.toHaveProperty("dir");
+    expect(detail.body).not.toContain("private-service.mjs");
+    grant.run("settings.ai.edit");
+    const edited = await server.inject({ method: "PUT", url: url + "/icon", headers, payload: { icon: "star" } });
+    expect(edited.statusCode).toBe(200);
+    expect(edited.json()).toEqual({ ...card, icon: "star", iconChosen: true });
+  } finally { forgetPlugin("probe"); await server.close(); app.db.close(); }
+});
+
+it("旧 agents.manage 成员可改档案摘要，凭据、目录、私有记忆和档案原文只对本人可见", async () => {
+  const app = testApp();
+  saveRole(app, { id: "profiles", name: "档案管理", scope: "global", permissions: ["agents.manage"] });
+  createUser(app, { id: "manager", name: "成员", role: "profiles" });
+  const headers = { authorization: "Bearer " + createApiToken(app, "manager") };
+  const url = "/api/agents/example";
+  const rawUrl = "/api/library-files/agent/example";
+  const privateFields = {
+    cwd: join(app.home, "private"), prompt: "档案的私有指令", fullAccess: true,
+    mcp: { demo: { url: "https://example.org/mcp", headers: { Authorization: "fixture-secret" } } },
+  };
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const summary = { name: "example", description: "示例", status: "draft", model: "example-model" };
+    expect((await server.inject({ method: "PUT", url, payload: { ...summary, ...privateFields } })).statusCode).toBe(200);
+    const memory = remember(app, { spaceId: "personal", kind: "fact", content: "档案的专属记忆", createdBy: "user", agent: "example" });
+    expect((await server.inject({ url: "/api/agents", headers })).json()).toContainEqual(summary);
+    expect((await server.inject({ url, headers })).json()).toEqual(summary);
+    for (const field of ["cwd", "mcp", "fullAccess", "mcpServers", "prompt"]) {
+      const refused = await server.inject({ method: "PUT", url, headers, payload: { description: "忽略整次修改", [field]: null } });
+      expect(refused.statusCode, field).toBe(403);
+    }
+    const updated = await server.inject({ method: "PUT", url, headers, payload: { status: "active" } });
+    expect(updated.json()).toEqual({ ...summary, status: "active" });
+    expect((await server.inject({ url })).json()).toMatchObject({ ...privateFields, memories: [{ id: memory.id }] });
+
+    const { raw } = (await server.inject({ url: rawUrl })).json();
+    expect(raw).toContain("fixture-secret");
+    expect((await server.inject({ url: rawUrl, headers })).statusCode).toBe(403);
+    expect((await server.inject({ method: "PUT", url: rawUrl, headers, payload: { raw } })).statusCode).toBe(403);
+    expect((await server.inject({ method: "PUT", url: rawUrl, payload: { raw } })).statusCode).toBe(200);
+    const skillUrl = "/api/library-files/skill/example";
+    const skillRaw = "---\ndescription: 示例技能\n---\n技能正文\n";
+    expect((await server.inject({ method: "PUT", url: skillUrl, headers, payload: { raw: skillRaw } })).statusCode).toBe(200);
+    expect((await server.inject({ url: skillUrl, headers })).json()).toEqual({ raw: skillRaw });
+
+    const roleUrl = "/api/roles/reviewer";
+    const roleText = roleSourceText("reviewer") + "\n本人给评审的私有指令\n";
+    const role = saveRoleOverride(app, "reviewer", roleText);
+    const roleMemory = remember(app, { spaceId: "personal", kind: "fact", content: "评审的专属记忆", createdBy: "user", agent: "reviewer" });
+    const proposal = createProposal(app, { target: "reviewer", kind: "prompt", title: "调整评审重点", reason: "复盘建议", content: { prompt: "私有建议正文" }, runId: null });
+    app.config.agents.roles.reviewer = "example";
+    app.config.agents.roleModels.reviewer = { example: { model: "example-model", effort: "high" } };
+    const roleRow = { name: role.name, description: role.description };
+    const roleSummary = { ...roleRow, defaults: { agent: "example", byBackend: app.config.agents.roleModels.reviewer } };
+    expect((await server.inject({ url: "/api/roles", headers })).json()).toContainEqual(roleRow);
+    const memberRole = await server.inject({ url: roleUrl, headers });
+    expect(memberRole.statusCode).toBe(200);
+    expect(memberRole.json()).toEqual(roleSummary);
+    expect((await server.inject({ method: "POST", url: roleUrl + "/customize", headers })).json()).toEqual({ ok: true });
+    const ownRole = (await server.inject({ url: roleUrl })).json();
+    expect(ownRole).toMatchObject({ ...roleSummary, role: { own: roleText }, body: expect.stringContaining("本人给评审的私有指令"),
+      memories: [{ id: roleMemory.id }], proposals: [{ id: proposal, status: "pending" }] });
+    expect((await server.inject({ method: "POST", url: roleUrl + "/customize" })).json()).toEqual({ raw: roleText });
+  } finally { await server.close(); app.db.close(); }
+});
+
+it("整机诊断仅本人可读，旧 settings.manage 权限不能读取私有失败运行和设备地址", async () => {
+  const app = testApp();
+  saveRole(app, { id: "settings-admin", name: "设置管理", scope: "global", permissions: ["settings.manage"] });
+  createUser(app, { id: "manager", name: "成员", role: "settings-admin" });
+  const headers = { authorization: "Bearer " + createApiToken(app, "manager") };
+  savePeers(app, [{ id: "device", url: "https://device.example.org", token: "fixture", addedAt: "2026-01-01" }]);
+  app.db.prepare("insert into runs(id,kind,status,title,error,space_id,user_id,created_at) values('past','agent','failed','私有任务','示例错误','personal','owner','2026-01-01')").run();
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    expect((await server.inject({ url: "/api/settings?section=system", headers })).statusCode).toBe(200);
+    const url = "/api/diag";
+    const member = await server.inject({ url, headers });
+    expect(member.statusCode).toBe(403);
+    expect(member.json()).not.toHaveProperty("recentFailures");
+    expect(member.json()).not.toHaveProperty("peers");
+    const owner = await server.inject({ url });
+    expect(owner.statusCode).toBe(200);
+    expect(owner.json()).toMatchObject({
+      home: app.home, recentFailures: [{ title: "私有任务", error: "示例错误" }],
+      peers: [{ id: "device", url: "https://device.example.org" }],
+    });
+  } finally { await server.close(); app.db.close(); }
+});
+
+it("checks section grants on the card APIs and omits host settings from member responses", async () => {
+  const app = testApp();
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    createUser(app, { id: "cards", name: "成员" });
+    const headers = { authorization: "Bearer " + createApiToken(app, "cards") };
+    const get = (url: string) => server.inject({ url, headers });
+    for (const route of Object.values(ownerControls).flat()) expect(ROUTE_RULES[route], route).toBe("owner");
+    const groups = {
+      AI: ["ai", "/api/ai", "/api/agents/load"],
+      knowledge: ["knowledge", "/api/storage", "/api/search/providers", "/api/lark/captured", "/api/lark/wiki-crawls"],
+      assistant: ["assistant", "/api/schedules", "/api/replays", "/api/agents", "/api/mentions"],
+      channels: ["channels", "/api/desktop"],
+      members: ["members", "/api/auth/providers"],
+    };
+    for (const [area, ...urls] of Object.values(groups)) {
+      for (const url of urls) expect((await get(url)).statusCode, url).toBe(403);
+      app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values('cards',?,'global','','allow','0','owner')").run(`settings.${area}.view`);
+      for (const url of urls) expect((await get(url)).statusCode, url).toBe(200);
+    }
+    createSpace(app, { id: "proj", name: "项目" });
+    addMember(app, "proj", "cards", "reader");
+    for (const id of ["shown", "hidden"]) {
+      const src = upsertSource(app, { spaceId: "proj", kind: "chat", uri: `lark:${id}`, title: id, text: "一段聊天" });
+      app.db.prepare("insert into lark_cursors(chat_id,name) values(?,?)").run(id,id);
+      if (id === "hidden") app.db.prepare("update sources set visibility='restricted' where id=?").run(src.id);
+    }
+    expect((await get("/api/lark/captured")).json().chats.map((c: {chatId: string}) => c.chatId)).toEqual(["shown"]);
+    app.config.ai.providers = [{ id: "demo", name: "测试", kind: "openai", baseUrl: "https://example.com/private", backends: [] }];
+    expect((await get("/api/ai")).json().providers[0]).toEqual({ id: "demo", name: "测试", kind: "openai", hasKey: false, keyHint: "" });
+    app.config.guard.modelDir = "private-model-directory";
+    app.config.documents.doclingArtifacts = "private-model-directory";
+    app.config.rerank.model = "private-model-directory";
+    expect((await get("/api/settings")).body).not.toContain("private-model-directory");
+    expect((await get("/api/settings?section=ai")).json().agents[0]).not.toHaveProperty("command");
+    const restricted = await server.inject({ method: "PUT", url: "/api/ai/keys/demo", headers, payload: { key: null } });
+    expect(restricted.statusCode).toBe(403);
   } finally { await server.close(); app.db.close(); }
 });

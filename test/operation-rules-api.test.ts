@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { loadConfig, saveConfig } from "../src/core/config.ts";
 import { createApiToken, createUser } from "../src/core/users.ts";
+import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { setToolResolverForTests } from "../src/core/tools.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -35,6 +37,12 @@ it("protects owner routes, versions edits and preserves scoped rules through the
     for (const method of ["GET","PUT"] as const) {
       expect((await server.inject({url:"/api/security/egress",method,headers:{authorization:`Bearer ${token}`}})).statusCode).toBe(403);
     }
+    setSandboxSupportForTests({ ok: false, reason: "unavailable" });
+    setToolResolverForTests(() => null);
+    expect((await server.inject({ url })).json()).toMatchObject({ rules: [], enforcedBy: { http: [] } });
+    setSandboxSupportForTests({ ok: true });
+    setToolResolverForTests(name => name === "aad" ? ["aad"] : null);
+    expect((await server.inject({ url })).json()).toMatchObject({ rules: [], enforcedBy: { http: ["browser", "egress"] } });
     const egress = {mode:"all-sandboxed",default:"approve",tunnelWhenUnsure:"deny",inspect:["*.example.org"],waitSeconds:20};
     expect((await server.inject({url:"/api/security/egress",method:"PUT",payload:egress})).json()).toEqual(egress);
     expect((await server.inject({url:"/api/security/egress"})).json()).toMatchObject({...egress,rootGenerated:false,runs:[],pending:[]});
@@ -51,6 +59,8 @@ it("protects owner routes, versions edits and preserves scoped rules through the
     await server.inject({ url: "/api/security/command-rules", method: "PUT", payload: { rules: [{ command: "acme", args: "^read", action: "allow" }] } });
     expect((await server.inject({ url })).json().rules.slice(0, 2)).toEqual(edited.json().rules);
   } finally {
+    setSandboxSupportForTests(undefined);
+    setToolResolverForTests(null);
     await server.close();
     app.db.close();
   }

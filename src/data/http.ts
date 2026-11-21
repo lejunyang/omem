@@ -10,7 +10,8 @@ import { all, one, tx } from "../core/db.ts";
 import { HttpError, json } from "../core/util.ts";
 import { metricProviders } from "../plugins/process-hooks.ts";
 import { getItem } from "../items/store.ts";
-import { descendantIds, rootOf } from "../items/tree.ts";
+import { visibleBranchIds } from "../items/member-work.ts";
+import { rootOf } from "../items/tree.ts";
 import { changeOf, defineMetric, latestOf, listMetrics, metricPoints, metricTable, metricViewSchema, nextTake, readMetric, requireMetric, tileSeries } from "./metrics.ts";
 
 /**
@@ -22,8 +23,8 @@ import { changeOf, defineMetric, latestOf, listMetrics, metricPoints, metricTabl
 export function registerMetricRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   const readable = (req: FastifyRequest) => spacesWithCapability(app, who(req), "metrics.view");
   const visibleBranch = (id: string, req: FastifyRequest) => {
-    requireItem(app, id, who(req), "read");
-    return [id, ...descendantIds(app, id, readable(req) ?? undefined)];
+    const user = who(req);
+    return visibleBranchIds(app, requireItem(app, id, user, "read"), user);
   };
   server.get("/api/metrics/providers", async (req) => {
     const spaces = readable(req);

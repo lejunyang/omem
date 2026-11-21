@@ -194,8 +194,10 @@ describe("coach 复盘流程定义", () => {
     expect(input.denyTools).toEqual(expect.arrayContaining(["remember", "propose_profile_change", "propose_repo_lesson"]));
     const coach = loadRole("coach", app);
     expect(coach.tools).toEqual(expect.arrayContaining(["read_flow_reviews", "save_flow", "stay_quiet"]));
-    expect(runner.toolSections(coach.body, new Set(coach.tools.filter((t) => !input.denyTools!.includes(t))))).toContain("读流程回顾");
-    expect(runner.toolSections(coach.body, new Set(coach.tools.filter((t) => !input.denyTools!.includes(t))))).not.toContain("复盘步骤");
+    const tools = new Set(coach.tools.filter(t => !input.denyTools!.includes(t)));
+    const guide = runner.toolSections(coach.body, tools, true, ["background", r.kind]);
+    expect(guide).toContain("## 读流程回顾");
+    expect(guide).not.toContain("## 复盘步骤");
   });
   it("coach 的 save_flow 只出等本人启用的草稿；read_flow_reviews 只读自己的", async () => {
     const app = appFor(); saveFlow(app, flow(stages), "owner");

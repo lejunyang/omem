@@ -8,6 +8,8 @@ import { connect } from "node:net";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { egressStatus } from "../src/agents/egress-run.ts";
+import { createRun } from "../src/agents/runs.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { inspection } from "../src/agents/egress-ca.ts";
 import { egressPolicy } from "../src/agents/egress-policy.ts";
@@ -163,3 +165,14 @@ it.skipIf(!ssl)("解密名单内按路径审批并验证上游证书，名单外
   expect(await open(false, host, "/read")).toMatchObject({ output: expect.stringContaining("502") });
   expect(await open(true, outside, "/read")).toMatchObject({ subject: "upstream", output: expect.stringContaining("done") });
 }, 20000);
+
+it("出网状态按运行列出标题", () => {
+  const app = testApp();
+  cleanup.push(() => app.db.close());
+  const r = createRun(app, { kind: "ask", title: "核对材料" });
+  app.db.prepare("insert into run_events(run_id,seq,at,type,data) values(?,17,?,'status',?)")
+    .run(r.id, r.createdAt, JSON.stringify({ hosts: [{ host: "example.com", denied: 1, count: 1, bytes: 0 }] }));
+  app.db.prepare("insert into egress_runs values(?,17,?)").run(r.id, r.createdAt);
+  const status = egressStatus(app);
+  for (const rows of [status.runs, status.denied]) expect(rows[0]).toMatchObject({ runId: r.id, title: r.title });
+});

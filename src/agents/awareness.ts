@@ -65,13 +65,18 @@ export function awarenessNote(app: App, runId: string | null | undefined, withTo
     const userId = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", runId)?.user_id ?? OWNER;
     const context = turn?.context ?? r.input.turnContext as TurnContext | undefined;
     const hints = context?.candidates.map(c => `- ${c.itemId}「${truncate(c.title, 60)}」：${c.reason}`) ?? [];
+    const related = relatedNote(app, runId);
+    const places = turn || !context ? itemPlacesNote(app, runId, userId, withTools, turn?.here, turn?.linked) : "";
+    const candidates = !context && (r.kind === "ask" || r.kind === "agent") ? candidatesNote(app, runId, userId, withTools) : "";
     const parts = [
       // What other paths already made of the message this turn answers (turn-context.ts, core/handling.ts).
       context?.handled ? `# 这条消息别处已经处理过\n${context.handled}\n已经记成的变化不用再记一遍；要补充（比如定下了日期）就引用同一条消息再记，宿主会补进原来那一条。别处负责回复的，不要再回一遍。` : "",
-      relatedNote(app, runId),
-      turn || !context ? itemPlacesNote(app, runId, userId, withTools, turn?.here, turn?.linked) : "",
+      related,
+      related && withTools ? "任务后面有“同时在办的相关工作”时，说明别的运行正在（或刚刚）处理同一个会话、同一条消息或同一个事项。动手前先 `read_run` 看它做到哪、结论是什么，需要时 `read_conversation` 看它回在了哪里；它已经在答的不要再答一遍，要补充就接着它的结论说，结论不一致时说明哪边更新、依据是什么。" : "",
+      places,
       hints.length ? ["# 可能是同一件事的在办事项", ...hints, ...(withTools ? ["用 read_item 核实后再关联。"] : [])].join("\n") : "",
-      !context && (r.kind === "ask" || r.kind === "agent") ? candidatesNote(app, runId, userId, withTools) : "",
+      candidates,
+      (places || hints.length || candidates) && withTools ? "“这件事还在这些会话里进行”列出同一件事项在别处的进展：下结论前看一眼那些会话说到哪了，给本人一个统一的结论，不要只按眼前这个会话说。“可能是同一件事的在办事项”是宿主猜的，读过确认是同一件事再关联。" : "",
     ].filter(Boolean);
     return parts.length ? `\n\n---\n\n${parts.join("\n\n")}` : "";
   } catch (e) {

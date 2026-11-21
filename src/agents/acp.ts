@@ -17,7 +17,8 @@ import { NetworkUnavailableError } from "./network-policy.ts";
 const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
 const QUEUE_END_TEXT = /(?:已排到|轮到你|队列已结束|(?:no longer|out of) (?:in )?queue|开始处理你的请求)/i;
 // Housekeeping lines some CLIs print as message text before the model answers.
-const AGENT_NOTICE = /^\s*(?:Skill descriptions were shortened|Disable unused skills or plugins)/i;
+// Also the agent's own warnings about its setup (a model its catalog has no metadata for, features under development).
+const AGENT_NOTICE = /^\s*(?:Skill descriptions were shortened|Disable unused skills or plugins|Warning: (?:Model metadata for\b|Under-development features enabled))/i;
 
 function optionValues(option: SessionConfigOption): string[] {  if (option.type !== "select") return [];
   const out: string[] = [];

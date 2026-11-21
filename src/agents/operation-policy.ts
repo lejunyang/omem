@@ -4,6 +4,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { App } from "../core/app.ts";
 import { legacyCommand, migrateCommands, operationRulesSchema, saveConfig, type OperationRule } from "../core/config.ts";
 import { OWNER } from "../core/users.ts";
+import { toolCommand } from "../core/tools.ts";
+import { egressSupport } from "./sandbox.ts";
 import { audit } from "../auth/permissions.ts";
 import type { ToolContext } from "./tools.ts";
 
@@ -17,7 +19,12 @@ export function operationWho(ctx: ToolContext): OperationWho {
   return { member: ctx.userId ?? OWNER, role: ctx.role, profile: ctx.spec, space: ctx.spaceId, backend: ctx.agentProfile, runId: ctx.runId };
 }
 /** Where each kind of rule is acted on. `browser`: a browser session driven by aad asks before a page's request goes out (agents/http-gate.ts). */
-export const enforcedBy = { command: ["command-gate","acp"], file: ["acp"], tool: ["omem"], http: ["browser","egress"] };
+export function enforcedBy() {
+  const http: string[] = [];
+  if (toolCommand("aad")) http.push("browser");
+  if (egressSupport().ok) http.push("egress");
+  return { command: ["command-gate", "acp"], file: ["acp"], tool: ["omem"], http };
+}
 export function currentRules(app: App) {
   const { operationRules, commandRules } = app.config.security;
   return operationRules.length || !commandRules.length ? operationRules : migrateCommands(commandRules);
