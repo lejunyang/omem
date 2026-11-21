@@ -25,7 +25,7 @@ export type MessageFile = { key: string; name: string; chatId: string; sourceId?
 
 const MEDIA = /\.(mp4|mov|avi|webm|mkv|m4v|mp3|wav|ogg|opus|m4a|aac|flac|amr)$/i;
 
-export async function messageFile(app: App, messageId: string, key: string | undefined, may: { space(id: string): boolean; chat(id: string): boolean; writable?: string[] | null; user?: string }): Promise<MessageFile> {
+export async function messageFile(app: App, messageId: string, key: string | undefined, may: { space(id: string): boolean; chat(id: string): boolean; writable?: string[] | null; archivedSpace?: string; user?: string }): Promise<MessageFile> {
   const row = one<{ chat_id: string; content: string; raw_content: string | null; msg_type: string; resources: string; source_id: string | null }>(
     app.db,
     "select chat_id, content, raw_content, msg_type, resources, source_id from lark_messages where message_id = ?",
@@ -43,7 +43,7 @@ export async function messageFile(app: App, messageId: string, key: string | und
     content = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
     type = m.msg_type ?? m.message_type ?? "";
   }
-  const spaceId = (row?.source_id ? one<{ space_id: string }>(app.db, "select space_id from sources where id = ?", row.source_id)?.space_id : undefined) ?? captureSpace(app, chatId!);
+  const spaceId = may.archivedSpace ?? (row?.source_id ? one<{ space_id: string }>(app.db, "select space_id from sources where id = ?", row.source_id)?.space_id : undefined) ?? captureSpace(app, chatId!);
   if (!may.space(spaceId) && !may.chat(chatId!)) throw new HttpError(403, "这条消息所在的群不在本次任务能读的范围内");
 
   const refs = json<Record<string, ResourceRef>>(row?.resources, {});

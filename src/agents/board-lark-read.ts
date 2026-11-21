@@ -16,19 +16,24 @@ export function boardLarkDocument(ctx: ToolContext, doc: string) {
       !/^\/(docx|wiki|docs)\/[a-zA-Z0-9]+\/?$/.test(link.pathname)) throw unbounded();
   const { url, type, token } = normalizeDocUrl(link.href);
   // A document imported through /docx/ may have been filed under its /wiki/ link.
-  const known = one(ctx.app.db, `select 1 from sources where kind='doc' and deleted_at is null
-    and (uri=? or origin_key=?) and space_id in (select value from json_each(?)) limit 1`,
-    url, type === "docx" ? `lark:doc:${token}` : null, JSON.stringify(spaces(ctx)));
+  const key = `lark:doc:${token}`;
+  const target = type === "docx" ? "(uri=? or origin_key=? or origin_key glob ?)" : "uri=?";
+  const keys = type === "docx" ? [url, key, key + "#*"] : [url];
+  const known = one(ctx.app.db, `select 1 from sources where ${target} and kind='doc' and deleted_at is null
+    and exists (select 1 from json_each(?) where value=space_id) limit 1`, ...keys, JSON.stringify(spaces(ctx)));
   if (!known) throw denied();
-  return url;
+  return link.hash.startsWith("#share-") ? url + link.hash : url;
 }
 
 export function requireBoardLarkMessages(ctx: ToolContext, ids: string[]) {
   if (!ids.length || ids.length > 50 || !ids.every(id => /^om_[\w-]+$/.test(id))) throw unbounded();
-  const row = one<{ n: number }>(ctx.app.db, `select count(*) n from lark_messages m join sources s on s.id=m.source_id
+  const found = all<{ message_id: string; space_id: string }>(ctx.app.db, `select m.message_id, min(s.space_id) space_id
+    from lark_messages m left join lark_message_lines l on l.message_id=m.message_id
+    join sources s on s.id=coalesce(l.source_id, m.source_id)
     where m.message_id in (select value from json_each(?)) and s.kind='chat' and s.deleted_at is null
-    and s.space_id in (select value from json_each(?))`, JSON.stringify(ids), JSON.stringify(spaces(ctx)));
-  if (row?.n !== new Set(ids).size) throw denied();
+    and s.space_id in (select value from json_each(?)) group by m.message_id`, JSON.stringify(ids), JSON.stringify(spaces(ctx)));
+  if (found.length !== new Set(ids).size) throw denied();
+  return found;
 }
 
 function requireBoardLarkChat(ctx: ToolContext, id: string) {
@@ -60,18 +65,25 @@ function readFlags(command: string[], allowed: Record<string, RegExp>) {
   return args;
 }
 
-export function boardLarkCommand(ctx: ToolContext, command: string[]) {
+export function boardLarkCommand(ctx: ToolContext, command: string[], chatPages: Set<string>) {
   let args: Map<string, string>;
+  let onNextPage: ((token: string) => void) | undefined;
   switch (command.slice(0, 2).join(" ")) {
     case "docs +fetch":
       args = readFlags(command, { "--doc": /^https:\/\//, "--doc-format": /^(xml|markdown)$/ });
       args.set("--doc", boardLarkDocument(ctx, args.get("--doc") ?? ""));
       break;
-    case "im +chat-messages-list":
+    case "im +chat-messages-list": {
       args = readFlags(command, { "--chat-id": /^oc_[\w-]+$/, "--page-size": /^\d{1,3}$/, "--order": /^(asc|desc)$/,
-        "--start": /^[0-9T:.+Z-]+$/, "--end": /^[0-9T:.+Z-]+$/ });
+        "--start": /^[0-9T:.+Z-]+$/, "--end": /^[0-9T:.+Z-]+$/, "--page-token": /^(?!-)[^\s]+$/ });
       requireBoardLarkChat(ctx, args.get("--chat-id") ?? "");
+      const query = [...args].filter(([flag]) => flag !== "--page-token").sort(([a], [b]) => a.localeCompare(b));
+      const page = (token: string) => JSON.stringify([ctx.runId, query, token]);
+      const token = args.get("--page-token");
+      if (token && !chatPages.has(page(token))) throw unbounded();
+      onNextPage = next => { chatPages.add(page(next)); };
       break;
+    }
     case "im +messages-mget":
       args = readFlags(command, { "--message-ids": /^om_/ });
       requireBoardLarkMessages(ctx, (args.get("--message-ids") ?? "").split(","));
@@ -83,5 +95,5 @@ export function boardLarkCommand(ctx: ToolContext, command: string[]) {
       break;
     default: throw unbounded();
   }
-  return [...command.slice(0, 2), ...Array.from(args).flat()];
+  return { command: [...command.slice(0, 2), ...Array.from(args).flat()], onNextPage };
 }

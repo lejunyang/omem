@@ -105,8 +105,8 @@ export type ToolContext = {
   writable?: string[];
   /** Cross-device board writes include memories, pages and items only. */
   boardAccess?: "read" | "write";
-  /** This device is executing a task received from a paired device. */
-  incomingWork?: boolean;
+  /** A task received from a peer. Its tool token owns the authorized chat continuations. */
+  incomingWork?: { chatPages: Set<string> };
   /** Skills explicitly assigned to the actor of a cross-device board run. */
   profileSkills?: string[];
   /** Item discovery only; never grants ordinary read or write tool access. */
@@ -4883,10 +4883,10 @@ const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后
 /** A message's attachment as omem keeps it (channels/lark-message-files.ts), in words the agent acts on. */
 async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
   featureGate(ctx, "messages");
-  if (ctx.incomingWork) requireBoardLarkMessages(ctx, [messageId]);
   const { messageFile } = await import("../channels/lark-message-files.ts");
   const f = await messageFile(ctx.app, messageId, key, {
     user: ctx.userId, space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id),
+    archivedSpace: ctx.incomingWork ? requireBoardLarkMessages(ctx, [messageId])[0].space_id : undefined,
     writable: ctx.boardAccess ? [] : ctx.writable,
   });
   if (f.sourceId) {
@@ -4953,12 +4953,12 @@ def({
   schema: z.object({ command: larkCommand }),
   handler: async (ctx, a) => {
     ownerOnly(ctx, commandFeature(a.command));
-    const command = ctx.incomingWork ? boardLarkCommand(ctx, a.command) : a.command;
+    const { command, onNextPage } = ctx.incomingWork ? boardLarkCommand(ctx, a.command, ctx.incomingWork.chatPages) : { command: a.command, onNextPage: undefined };
     // Saving a message's attachment is a write to lark-cli (it writes a file): omem's own copy instead.
     const download = (await import("../channels/lark-message-files.ts")).resourceDownload(command);
     if (download) return messageFileText(ctx, download.messageId, download.key);
     const c = await import("../channels/lark-cli-tools.ts");
-    return c.larkRead(ctx.app, command);
+    return c.larkRead(ctx.app, command, onNextPage);
   },
 });
 
