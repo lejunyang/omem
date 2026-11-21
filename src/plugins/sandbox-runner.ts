@@ -81,6 +81,8 @@ const tools = new Map<string, PluginTool>();
 const readers = new Map<string, PlatformReader>();
 const objects = new Map<string, PluginObject>();
 const items = new Map<string, import("./types.ts").ItemProvider>();
+const parsers = new Map<string, import("./types.ts").SourceParser>();
+const kinds = new Map<string, import("./types.ts").WikiPageKind>();
 const reviews = new Map<string, import("./types.ts").ReviewProvider>();
 const subscriptions = new Map<string, import("./types.ts").Subscription>();
 const hooks = new Map<string, PluginHook>();
@@ -89,10 +91,20 @@ async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { items: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { items: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
+  const declared: { parsers: unknown[]; kinds: unknown[]; items: unknown[]; reviews: unknown[]; subscriptions: unknown[]; tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { parsers: [], kinds: [], items: [], reviews: [], subscriptions: [], tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
+    sourceParser(def) {
+      if (typeof def.parse !== "function") throw new Error("解析器缺少 parse 方法");
+      parsers.set(def.id, def);
+      declared.parsers.push({ id: def.id, label: def.label, match: def.match });
+    },
+    wikiPageKind(def) {
+      const { check, ...meta } = def;
+      kinds.set(def.kind, def);
+      declared.kinds.push({ ...meta, checked: !!check });
+    },
     subscribe(def) {
       subscriptions.set(def.id, def);
       declared.subscriptions.push({ id: def.id, events: def.events });
@@ -158,7 +170,7 @@ process.on("message", async (m: Msg) => {
   }
   try {
     let value: unknown;
-    if (m.t === "event" || m.t === "review" || m.t === "item") {
+    if (m.t === "event" || m.t === "review" || m.t === "item" || m.t === "parse" || m.t === "check") {
       const ctx: import("./types.ts").CallContext = {
         userId: m.userId, spaceId: m.spaceId, signal: AbortSignal.timeout(15000),
         async connection(provider) {
@@ -166,7 +178,9 @@ process.on("message", async (m: Msg) => {
           return c ? connectionOf(c, m.id!) : null;
         },
       };
-      if (m.t === "event") await subscriptions.get(m.name)!.handle(ctx, m.event);
+      if (m.t === "parse") value = await parsers.get(m.name)!.parse(ctx, { ...m.arg, bytes: Buffer.from(m.arg.bytes, "base64") });
+      else if (m.t === "check") value = await kinds.get(m.name)!.check!(ctx, m.arg);
+      else if (m.t === "event") await subscriptions.get(m.name)!.handle(ctx, m.event);
       else if (m.t === "item") {
         const def = items.get(m.name)!;
         value = m.method === "pull" ? await def.pull(ctx, m.arg) : await def.setStatus!({ ...ctx, idempotencyKey: m.key }, m.arg);

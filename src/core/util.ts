@@ -126,3 +126,14 @@ export function localStamp(t: string | number | Date, timeZone?: string, opts: {
   const s = d.toLocaleString("sv-SE", { timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", ...(opts.seconds ? { second: "2-digit" } : {}) });
   return opts.short ? s.slice(5) : s;
 }
+
+export async function untilAbort<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted();
+  let abort!: () => void;
+  const expired = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try { return await Promise.race([work(), expired]); }
+  finally { signal.removeEventListener("abort", abort); }
+}

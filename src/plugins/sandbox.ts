@@ -26,6 +26,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(here, f)).find((f) => existsSync(f))!;
 
 type Declared = {
+  parsers: Omit<import("./types.ts").SourceParser, "parse">[];
+  kinds: (Omit<import("./types.ts").WikiPageKind, "check"> & { checked: boolean })[];
   items: (Pick<import("./types.ts").ItemProvider, "id" | "label" | "statuses" | "targetHint"> & { writable: boolean })[];
   reviews: { id: string; label: string; objectKind: string; resolves: boolean }[];
   subscriptions: Pick<import("./types.ts").Subscription, "id" | "events">[];
@@ -43,7 +45,7 @@ const CALL_MS = 5 * 60_000;
 export async function startSandbox(
   app: App,
   plugin: { id: string; dir: string; server: string; services: { name: string }[] },
-  opts: { itemProvider: import("./types.ts").ProcessApi["itemProvider"]; reviewProvider: import("./types.ts").ProcessApi["reviewProvider"]; subscribe: import("./types.ts").ProcessApi["subscribe"]; prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
+  opts: Pick<import("./types.ts").ProcessApi, "sourceParser" | "wikiPageKind"> & { itemProvider: import("./types.ts").ProcessApi["itemProvider"]; reviewProvider: import("./types.ts").ProcessApi["reviewProvider"]; subscribe: import("./types.ts").ProcessApi["subscribe"]; prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
 ): Promise<Sandbox> {
   const data = join(app.home, "plugin-data", plugin.id);
   mkdirSync(data, { recursive: true });
@@ -68,7 +70,7 @@ export async function startSandbox(
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
-      const callMs = String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event" || msg.t === "review" || msg.t === "item") ? 15000 : CALL_MS;
+      const callMs = String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event" || msg.t === "review" || msg.t === "item" || msg.t === "parse" || msg.t === "check") ? 15000 : CALL_MS;
       const timer = setTimeout(() => {
         pending.delete(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
@@ -170,10 +172,18 @@ export async function startSandbox(
   });
 
   try {
-    const proxy = (t: "review" | "item", name: string) =>
+    const proxy = (t: "review" | "item" | "parse" | "check", name: string) =>
       (ctx: import("./types.ts").CallContext, method: string, arg: unknown, note?: string) =>
         ask({ t, name, method, arg, note, userId: ctx.userId, spaceId: ctx.spaceId,
           key: "idempotencyKey" in ctx ? ctx.idempotencyKey : undefined }, undefined, ctx);
+    for (const def of declared.parsers) {
+      const invoke = proxy("parse", def.id);
+      opts.sourceParser({ ...def, parse: (ctx, input) => invoke(ctx, "parse", { ...input, bytes: Buffer.from(input.bytes).toString("base64") }) });
+    }
+    for (const def of declared.kinds) {
+      const invoke = proxy("check", def.kind);
+      opts.wikiPageKind({ ...def, check: def.checked ? (ctx, page) => invoke(ctx, "check", page) : undefined });
+    }
     for (const def of declared.items ?? []) {
       const invoke = proxy("item", def.id);
       opts.itemProvider({ ...def, pull: (ctx, req) => invoke(ctx, "pull", req),
