@@ -1,7 +1,8 @@
 import { decideScene, describeScene } from "../core/decision-log.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { archivedMessageSpaces, messageSourceSpaces } from "../core/capture-space.ts";
+import { messageSourceSpaces } from "../core/capture-space.ts";
+import { watchSourceSpaces } from "../core/message-origins.ts";
 import { now } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { rulesNaming } from "../rules/store.ts";
@@ -239,24 +240,6 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
   } catch {
     return null;
   }
-}
-
-/** Include both the queued text's origin and any archives found since it was queued. */
-function watchSourceSpaces(app: App, watchSpace: string | null, batch: { meta: Record<string, unknown> }[]) {
-  const messageIds = batch.flatMap(({ meta }) => typeof meta.externalId === "string" ? [meta.externalId] : []);
-  const archived = archivedMessageSpaces(app, messageIds);
-  const spaces = new Set<string>();
-  if (watchSpace) spaces.add(watchSpace);
-  for (const { meta } of batch) {
-    const stored = typeof meta.externalId === "string" ? archived.get(meta.externalId) : undefined;
-    if (meta.needsSourceArchive && !stored) return null;
-    const queued = meta.sourceSpaces;
-    if (Array.isArray(queued) && queued.length && queued.every(id => typeof id === "string" && id)) {
-      for (const id of queued) spaces.add(id);
-    } else if (!stored) return null;
-    for (const id of stored ?? []) spaces.add(id);
-  }
-  return [...spaces];
 }
 
 /** The owner's memories closest to the groups and the batch (instructions and lessons included), a few lines. */

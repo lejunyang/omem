@@ -6,6 +6,9 @@ import { findSpace } from "./spaces.ts";
 import { json } from "./util.ts";
 import { chatSettings } from "../agents/threads.ts";
 
+import { archivedMessageSpaces } from "./message-origins.ts";
+export { archivedMessageSpaces };
+
 type Settings = ReturnType<typeof chatSettings>;
 const subscriptionsOf = (app: App) => json<{ chatId: string; spaceId: string }[]>(one<{ value: string }>(app.db, "select value from kv where key='lark_subscriptions'")?.value, []);
 const mappedGroups = (app: App) => (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
@@ -55,25 +58,6 @@ export function captureSpace(app: App, chatId?: string, userId: string = OWNER):
   if (userId !== OWNER) return personalSpaceId(userId);
   const def = app.config.lark.capture.space;
   return findSpace(app, def) ? def : "personal";
-}
-
-/** A message can have archived copies in several spaces. Look up only the incoming message ids. */
-export function archivedMessageSpaces(app: App, messageIds: string[]) {
-  const spaces = new Map<string, string[]>();
-  if (!messageIds.length) return spaces;
-  const rows = all<{ message_id: string; space_id: string }>(app.db, `
-    with ids as (select value from json_each(?))
-    select m.message_id, s.space_id from lark_messages m join sources s on s.id = m.source_id
-      where m.message_id in (select value from ids)
-    union
-    select l.message_id, s.space_id from lark_message_lines l join sources s on s.id = l.source_id
-      where l.message_id in (select value from ids)`, JSON.stringify(messageIds));
-  for (const row of rows) {
-    const known = spaces.get(row.message_id);
-    if (known) known.push(row.space_id);
-    else spaces.set(row.message_id, [row.space_id]);
-  }
-  return spaces;
 }
 
 /** Snapshot incoming messages together, before rules or watches wait to handle them. */

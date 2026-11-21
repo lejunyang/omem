@@ -56,6 +56,8 @@ import { getMemory, listMemories, memoryHistory, remember, retract, supersede, t
 import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFolder, relocateFolder, removeFolder } from "../memory/folders.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
 import { defaultBaseRef, fetchBranchAsync, git, listBranches, resolveRef } from "../core/git.ts";
+import { embeddingSpaces } from "../search/embeddings.ts";
+import { readProcess } from "../search/read-process.ts";
 import { search, shadowedFiles, withOverlays, type HitType } from "../search/search.ts";
 import { codeVersion, codeVersions } from "../sources/code-index.ts";
 import { branchIndexes, indexBranch, overlayRepo, runOverlaySpaces } from "./worktree-index.ts";
@@ -320,6 +322,16 @@ const sourceKinds: Record<string, HitType[]> = {
   requirements: ["requirement"],
 };
 
+/** Only restricted embedders need the provenance of material delivered to the agent. */
+async function querySourceSpaces(ctx: ToolContext) {
+  if (!ctx.runId) return undefined;
+  const granted = embeddingSpaces(ctx.app, null);
+  if (!granted) return null;
+  return readProcess(ctx.app).request<string[] | null | undefined>(
+    { op: "watch-origins", runId: ctx.runId, granted }, ctx.app.config.embeddings.timeoutMs,
+  ).catch(() => null);
+}
+
 /**
  * Search as this run sees the library. A replay arm (ctx.view) searches wide (every level, the memory
  * history) through the cache it shares with the other arm, then keeps what its view lets through.
@@ -498,6 +510,7 @@ def({
     const onBranch = a.branch ? await branchSpaces(ctx, a.space, a.branch) : null;
     const underSpace = a.under ? space(ctx, a.space && a.space !== "*" ? a.space : undefined) : null;
     const hits = await viewSearch(ctx, a.query, {
+      sourceSpaces: await querySourceSpaces(ctx),
       spaces: underSpace ? [underSpace] : (onBranch?.spaces ?? spacesFor(ctx, a.space)),
       types: sourceKinds[a.scope ?? "all"],
       limit: a.limit ?? 12,

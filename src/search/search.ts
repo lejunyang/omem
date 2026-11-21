@@ -50,6 +50,8 @@ export type SearchOptions = {
   userId?: string;
   /** Additional sharing rules for sending candidates to a plugin (federation). */
   shared?: SharedSearchAccess;
+  /** Origins of the query material, independent of the spaces searched. Null means an unknown origin. */
+  sourceSpaces?: readonly string[] | null;
   spaces?: string[];
   types?: HitType[];
   limit?: number;
@@ -420,7 +422,7 @@ async function searchInner(app: App, query: string, input: SearchOptions): Promi
   }
 
   if (types.has("chunk") && route.vector) {
-    const vec = await vectorSearch(app, query, opts.spaces, underIds ? pool * 5 : pool).catch(() => []);
+    const vec = await vectorSearch(app, query, opts.spaces, underIds ? pool * 5 : pool, opts.sourceSpaces).catch(() => []);
     if (vec.length) {
       const ids = vec.map((v) => v.chunkId);
       const rows = await searchRows<ChunkRow & { deleted_at: string | null }>(

@@ -9,6 +9,7 @@ import { searchPhases, searchStage } from "./trace.ts";
 
 export type ReadJob =
   | { op: "sql"; sql: string; params: SQLInputValue[]; stage?: string }
+  | { op: "watch-origins"; runId: string; granted: readonly string[] }
   | { op: "prepare"; spaces?: string[] }
   | { op: "vector"; query: string; spaces?: string[]; limit: number; config: Pick<Config, "embeddings">; vector?: Float32Array }
   | { op: "embed"; texts: string[]; kind: "query" | "passage"; config: Pick<Config, "embeddings"> }

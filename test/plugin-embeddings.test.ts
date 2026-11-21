@@ -10,6 +10,10 @@ import { persistChatMessages } from "../src/channels/lark-messages.ts";
 import { memoriesFor, routeWatchedMessages } from "../src/channels/lark-watch.ts";
 import { findThread, setChatSettings, threadMessages } from "../src/agents/threads.ts";
 import { watchedNote } from "../src/agents/sessions.ts";
+import { callTool } from "../src/agents/tools.ts";
+import { receive } from "../src/agents/inbox.ts";
+import { takeSteering } from "../src/agents/steer.ts";
+import { closeReadProcess } from "../src/search/read-process.ts";
 import { saveContext } from "../src/channels/listen.ts";
 import { runActions } from "../src/rules/actions.ts";
 import { pollFastRules } from "../src/rules/fast.ts";
@@ -115,6 +119,46 @@ function personalEmbedder() {
   api.embedder({ id: "small", name: "示例", model: "first", dimensions: 2, embed });
   return embed;
 }
+
+it.each(["规则转入项目消息", "补充消息来源不明", "沿用上轮项目原话", "全部来自个人空间"])("关注助手主动搜索：%s", async mode => {
+  const app = fixture();
+  const embed = personalEmbedder();
+  cleanup.push(() => closeReadProcess(app));
+  app.config.rerank.enabled = false;
+  const query = "refundWindow";
+  upsertSource(app, { spaceId: "personal", kind: "code", uri: "refund.ts", title: "退款",
+    text: "export function refundWindow() { return 7; }" });
+  const watch = saveContext(app, { kind: "place", name: "个人关注", spaceId: "personal", chats: ["personal-group"], knobs: { depth: "investigate" } });
+  const conversationId = watch.conversationId!;
+  if (mode === "沿用上轮项目原话") {
+    const prior = await receive(app, { channel: "listen", conversationId, speaker: "项目成员", text: query, meta: { sourceSpaces: ["allowed"] } });
+    app.db.prepare("update runs set status='done' where id=?").run(prior.runId);
+  }
+  const first = await receive(app, { channel: "listen", conversationId, speaker: "成员",
+    text: mode === "全部来自个人空间" ? query : "跟进退款问题", meta: { sourceSpaces: ["personal"] } });
+  const runId = first.runId!;
+  if (mode === "规则转入项目消息") {
+    const rule = saveRule(app, { name: "跟进项目", description: "把项目群问题交给关注", judge: "code",
+      conditions: { field: "chat.id", op: "equals", value: "project-group" }, actions: [{ type: "context", context: watch.id }] });
+    const [result] = await runActions(app, rule, { key: "lark:project-message", kind: "message", via: "capture",
+      at: new Date().toISOString(), sourceSpaces: ["allowed"], chat: { id: "project-group", name: "项目群", kind: "group" },
+      message: { id: "project-message", text: query, type: "text", mentionsOwner: false, mentionsBot: false } }, "");
+    expect(result).toMatchObject({ ok: true, runId });
+  } else if (mode === "补充消息来源不明") {
+    app.db.prepare("update runs set status='running' where id=?").run(runId);
+    await receive(app, { channel: "listen", conversationId, speaker: "成员", text: query, externalMessageId: "legacy-message" });
+    expect(takeSteering(app, runId)).toContain(query);
+  }
+  expect(threadMessages(app, conversationId).some(message => message.text.includes(query))).toBe(true);
+  const ctx = { app, runId, spaceId: "personal", actor: "agent" as const, spaces: ["personal"], tools: new Set(["search"]) };
+  for (const space of [undefined, "personal"]) {
+    const found = await callTool(ctx, "search", { query, space });
+    expect(found.isError).toBe(false);
+    expect(found.text).toContain("全文");
+    expect(found.text).toContain("符号");
+  }
+  expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "全部来自个人空间" ? [[query], [query]] : []);
+});
 
 it("关注可查个人记忆时仍按群消息来源授权，混合批次不外发", async () => {
   const app = fixture();

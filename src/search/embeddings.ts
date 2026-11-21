@@ -310,14 +310,14 @@ export async function embedLocally(app: App, texts: string[], kind: "query" | "p
   return encodeBatch(e, texts, kind, 120_000);
 }
 
-export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {
+export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number, sourceSpaces?: readonly string[] | null) {
   if (app.config.embeddings.provider === "none") return [];
   if (app.config.embeddings.provider !== "local" && !testEmbedder) {
     const e = await getEmbedder(app);
     if (!e) return [];
     spaces = e.spaces ? e.spaces.filter(s => !spaces || spaces.includes(s)) : spaces;
     if (spaces && !spaces.length) return [];
-    const vector = await embedQuery(app, query, "query", spaces);
+    const vector = await embedQuery(app, query, "query", spaces, sourceSpaces);
     if (!vector) return [];
     return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, vector, config: { embeddings: app.config.embeddings } }, 30_000));
   }
@@ -325,7 +325,7 @@ export async function vectorSearch(app: App, query: string, spaces: string[] | u
   if (!testEmbedder) return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, config: { embeddings: app.config.embeddings } }, 30_000));
   const e = await getEmbedder(app);
   if (!e) return [];
-  const q = await embedQuery(app, query);
+  const q = await embedQuery(app, query, "query", spaces, sourceSpaces);
   if (!q) return [];
   await vectorIndex().prepare(app, spaces);
   return vectorIndex().search(app, q, spaces, limit);
