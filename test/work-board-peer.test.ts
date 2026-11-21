@@ -7,7 +7,7 @@ import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { now } from "../src/core/util.ts";
 import { addPeer, invite, savePeers, listPeers } from "../src/core/peers.ts";
-import { createApiToken, createUser } from "../src/core/users.ts";
+import { createApiToken, createUser, pairedTokens } from "../src/core/users.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { saveConfig } from "../src/core/config.ts";
 import { startServer } from "../src/server/http.ts";
@@ -129,6 +129,22 @@ it("未开启接活、空间缺失、非映射成员、未配对及旧协议均�
   expect(JSON.stringify(info)).not.toContain("设备材料：");
   const spy = vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({result:{version:0}}),{status:200}));
   await expect(selectDevice(f.here,{device:"lab"},"owner","personal")).rejects.toThrow("版本不兼容"); spy.mockRestore();
+});
+it("单改全局接活档位保留设备 ID 和禁用来源，显式移除覆盖后继承全局",async () => {
+  const f = await setup();
+  const pair = pairedTokens(f.there)[0].id;
+  f.there.config.node.acceptWorkFrom = { [pair]: "off" };
+  const put = (node: object) => fetch(f.there.baseUrl + "/api/settings",{method:"PUT",
+    headers:{"content-type":"application/json"},body:JSON.stringify({node})});
+  const global = await put({acceptWork:"write"});
+  expect(global.status).toBe(200);
+  expect((await global.json()).config.node).toEqual({id:"lab",acceptWork:"write",acceptWorkFrom:{[pair]:"off"}});
+  const req = {key:"policy-check",from:"desk",space:"personal",access:"write",goal:"记录核对结果",accept:"给出依据",
+    deadline:new Date(Date.now()+60000).toISOString()};
+  await expect(workCommand(f.here,"lab","work-accept",req)).rejects.toThrow("关闭接活");
+  expect(f.remoteRuns()).toHaveLength(0);
+  expect((await put({acceptWorkFrom:{}})).status).toBe(200);
+  await expect(workCommand(f.here,"lab","work-accept",req)).resolves.toHaveProperty("runId");
 });
 it("同一尝试重发不重复起运行；先取消的键永远作废",async () => {
   const f = await setup(); const t = await f.dispatch(); await f.poll();
