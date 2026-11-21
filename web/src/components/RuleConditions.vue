@@ -14,7 +14,7 @@ type Leaf = { field: string; op: string; value: string | boolean | string[] };
 export type Condition = Leaf | { all: Condition[] } | { any: Condition[] } | { not: Condition };
 type Row = { kind: "leaf"; negate: boolean; field: string; op: string; value: string } | { kind: "group"; mode: "all" | "any"; rows: Row[] };
 
-const props = defineProps<{ modelValue: Condition | null; fields: Record<string, string>; ops: readonly string[]; descriptions?: Record<string, string>; valueOptions?: Record<string, { value: string; label: string }[]>; boolFields?: string[]; fieldOps?: Record<string, string[]> }>();
+const props = defineProps<{ modelValue: Condition | null; disabled?: boolean; fields: Record<string, string>; ops: readonly string[]; descriptions?: Record<string, string>; valueOptions?: Record<string, { value: string; label: string }[]>; boolFields?: string[]; fieldOps?: Record<string, string[]> }>();
 const emit = defineEmits<{ "update:modelValue": [value: Condition | null] }>();
 
 const OP_LABEL: Record<string, string> = { gte: "≥", lte: "≤", equals: "是", contains: "包含", startsWith: "开头是", endsWith: "结尾是", matches: "匹配正则", in: "是其中之一（逗号分隔）", is: "为" };
@@ -144,7 +144,7 @@ function onField(r: Extract<Row, { kind: "leaf" }>, f: string) {
     <template v-if="!rawMode">
       <template v-for="(r, i) in rows" :key="i">
         <div v-if="r.kind === 'leaf'" class="cond">
-          <UiCheckbox v-model="r.negate" size="sm" aria-label="取反" @change="push">不</UiCheckbox>
+          <UiCheckbox :disabled="disabled" v-model="r.negate" size="sm" aria-label="取反" @change="push">不</UiCheckbox>
           <UiSelect :model-value="r.field" size="sm" width="150px" :options="fieldOptions" aria-label="字段" @change="(v) => onField(r, v as string)" />
           <UiSelect v-model="r.op" size="sm" width="132px" :options="opOptions(r.field)" aria-label="运算" @change="onOp(r)" />
           <UiSelect v-if="r.op === 'is'" v-model="r.value" size="sm" width="90px" :options="[{ value: 'true', label: '是' }, { value: 'false', label: '否' }]" aria-label="值" @change="push" />
@@ -162,7 +162,7 @@ function onField(r: Extract<Row, { kind: "leaf" }>, f: string) {
           </div>
           <div v-for="(x, j) in r.rows" :key="j" class="cond">
             <template v-if="x.kind === 'leaf'">
-              <UiCheckbox v-model="x.negate" size="sm" aria-label="取反" @change="push">不</UiCheckbox>
+              <UiCheckbox :disabled="disabled" v-model="x.negate" size="sm" aria-label="取反" @change="push">不</UiCheckbox>
               <UiSelect :model-value="x.field" size="sm" width="150px" :options="fieldOptions" aria-label="字段" @change="(v) => onField(x, v as string)" />
               <UiSelect v-model="x.op" size="sm" width="132px" :options="opOptions(x.field)" aria-label="运算" @change="onOp(x)" />
               <UiSelect v-if="x.op === 'is'" v-model="x.value" size="sm" width="90px" :options="[{ value: 'true', label: '是' }, { value: 'false', label: '否' }]" aria-label="值" @change="push" />

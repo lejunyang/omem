@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { hasCap, hasPerm } from "../lib/caps";
 import { fullAccessHint } from "../lib/probes";
 import { computed, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
@@ -436,17 +437,18 @@ async function loadCurrent() {
   await Promise.all([loadSpec(), loadRole(), loadSkill()]);
 }
 onMounted(async () => {
+  if (!hasPerm("agents.manage")) return;
   await Promise.all([loadLists(), get<Options>("/api/profile-options").then((o) => (options.value = o)).catch(() => {})]);
   await loadCurrent();
 });
-watch(() => [route.query.tab, route.query.name, route.query.role, route.query.new], () => void loadCurrent());
+watch(() => [route.query.tab, route.query.name, route.query.role, route.query.new], () => { if (hasPerm("agents.manage")) void loadCurrent(); });
 const empty = computed(() => !creating.value && !specName.value && !roleName.value && !skillName.value && !groupId.value);
 </script>
 
 <template>
   <ReviewSettings v-if="tab === 'review'">
     <template #tabs>
-      <div class="head row wrap">
+      <div v-if="hasPerm('agents.manage')" class="head row wrap">
         <button class="tab" @click="go({ tab: 'agents' })">Agent 档案</button>
         <button class="tab" @click="go({ tab: 'skills' })">技能</button>
         <button class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
@@ -459,7 +461,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
       <button class="tab" @click="go({ tab: 'agents' })">Agent 档案</button>
       <button class="tab" @click="go({ tab: 'skills' })">技能</button>
       <button class="tab on">MCP 服务</button>
-      <button class="tab" @click="go({ tab: 'review' })">评审</button>
+      <button v-if="hasCap('settings.assistant.view')" class="tab" @click="go({ tab: 'review' })">评审</button>
     </div>
     <McpServices :servers="mcpServers" :loading="loading" :error="mcpError" @changed="loadLists" @dirty="(on) => dirty = on" />
   </div>
@@ -469,7 +471,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <button class="tab" :class="{ on: tab === 'agents' }" @click="go({ tab: 'agents' })">Agent 档案</button>
         <button class="tab" :class="{ on: tab === 'skills' }" @click="go({ tab: 'skills' })">技能</button>
         <button class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
-        <button class="tab" @click="go({ tab: 'review' })">评审</button>
+        <button v-if="hasCap('settings.assistant.view')" class="tab" @click="go({ tab: 'review' })">评审</button>
       </div>
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />

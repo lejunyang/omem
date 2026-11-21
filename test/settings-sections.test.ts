@@ -66,6 +66,13 @@ it("separates review form access and delegation tier selection", async () => {
       const tiers = await get("/api/review-tiers");
       expect(tiers.statusCode).toBe(reader ? 403 : 200);
       if (reader) {
+        const review = (await get("/api/review-settings")).json();
+        const payload = { tiers: review.tiers, checks: {}, rereviewAllEvery: 4 };
+        const save = () => server.inject({ method: "PUT", url: "/api/review-settings", headers, payload });
+        expect((await save()).statusCode).toBe(403);
+        app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,'settings.assistant.edit','global','','allow','0','owner')").run(id);
+        expect((await save()).statusCode).toBe(200);
+        expect((await get("/api/review-settings")).json().rereviewAllEvery).toBe(4);
         const agents = (await get("/api/settings?section=assistant")).json().agents;
         expect(agents.length).toBeGreaterThan(0);
         for (const backend of agents)

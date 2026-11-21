@@ -11,6 +11,7 @@ import UiSegmented from "./UiSegmented.vue";
 import UiSelect from "./UiSelect.vue";
 import AiDefaults from "./AiDefaults.vue";
 import { confirmDialog } from "../lib/dialog";
+import { hasCap, hasPerm } from "../lib/caps";
 import { toast } from "../store";
 
 /**
@@ -27,6 +28,7 @@ type Settings = { tiers: Tier[]; rereviewAllEvery: number; rotation?: Pick[]; cr
 
 const route = useRoute();
 const router = useRouter();
+const editable = computed(() => hasCap("settings.assistant.edit"));
 const loading = ref(true);
 const saving = ref(false);
 const dirty = ref(false);
@@ -65,7 +67,7 @@ function reset(s: Settings) {
 }
 async function load() {
   try {
-    const [s, o, st] = await Promise.all([get<Settings>("/api/review-settings"), get<typeof options.value>("/api/review-options"), get<{ agents: Backend[] }>("/api/settings")]);
+    const [s, o, st] = await Promise.all([get<Settings>("/api/review-settings"), get<typeof options.value>("/api/review-options"), get<{ agents: Backend[] }>("/api/settings?section=assistant")]);
     options.value = o;
     backends.value = st.agents;
     reset(s);
@@ -85,6 +87,7 @@ async function go(query: Record<string, string>) {
 }
 
 async function save() {
+  if (!editable.value) return;
   saving.value = true;
   try {
     const body = {
@@ -186,7 +189,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
           <button v-for="t in tiers" :key="t.id" class="li" :class="{ on: t.id === tierId }" @click="go({ tier: t.id })">
             <span class="grow"><strong>{{ t.name }}</strong><span class="muted small sub">{{ roundsPerTier(t) }}{{ t.when || t.guide ? "" : " · 其他情况都用它" }}{{ t.guide ? " · AI 判断" : "" }}</span></span>
           </button>
-          <button class="li add" @click="newTier"><Icon name="plus" :size="14" />新建档位</button>
+          <button v-if="editable" class="li add" @click="newTier"><Icon name="plus" :size="14" />新建档位</button>
 
           <div class="group">评审项</div>
           <button v-for="c in checks" :key="c.name" class="li" :class="{ on: c.name === checkName }" @click="go({ check: c.name })">
@@ -195,7 +198,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
               <span class="muted small sub mono ellipsis">{{ c.name }} · {{ aiText(c) }}</span>
             </span>
           </button>
-          <button class="li add" :class="{ on: adding }" @click="go({ add: '1' })"><Icon name="plus" :size="14" />加专项评审</button>
+          <button v-if="editable" class="li add" :class="{ on: adding }" @click="go({ add: '1' })"><Icon name="plus" :size="14" />加专项评审</button>
 
           <div class="group">模型</div>
           <button class="li" :class="{ on: rotating }" @click="go({ rotation: '1' })">
@@ -203,7 +206,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
           </button>
         </template>
       </div>
-      <div v-if="dirty" class="savebar row">
+      <div v-if="editable && dirty" class="savebar row">
         <span class="small">有未保存的修改</span><span class="spacer" />
         <button class="btn ghost sm" :disabled="saving" @click="saved && reset(saved)">撤销</button>
         <button class="btn primary sm" :disabled="saving" @click="save">保存</button>
@@ -211,19 +214,19 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
     </aside>
 
     <main class="detail">
-      <div v-if="tier" class="page">
+      <fieldset v-if="tier" :disabled="!editable" class="page">
         <header class="row dh">
           <input v-model="tier.name" class="input title" maxlength="20" aria-label="档位名称" @input="touch" />
-          <button v-if="tierIndex > 0 && !isLast" class="btn sm" :title="`先于「${tiers[tierIndex - 1].name}」匹配`" @click="moveUp">↑ 上移</button>
-          <button class="btn sm primary" :disabled="saving || !dirty" @click="save">保存</button>
-          <button v-if="tiers.length > 1" class="btn ghost sm icon danger" title="删除档位" aria-label="删除档位" @click="removeTier"><Icon name="trash" :size="14" /></button>
+          <button v-if="editable && tierIndex > 0 && !isLast" class="btn sm" :title="`先于「${tiers[tierIndex - 1].name}」匹配`" @click="moveUp">↑ 上移</button>
+          <button v-if="editable" class="btn sm primary" :disabled="saving || !dirty" @click="save">保存</button>
+          <button v-if="editable && tiers.length > 1" class="btn ghost sm icon danger" title="删除档位" aria-label="删除档位" @click="removeTier"><Icon name="trash" :size="14" /></button>
         </header>
 
         <section class="block">
           <div class="block-head"><h3>什么时候用</h3><span class="muted small">改动指标由 omem 在编码完成后算好</span></div>
           <p v-if="isLast" class="muted small">这是兜底档：上面的档位都没匹配上时用它，不设条件。要按条件分档，在它上面新建档位。</p>
           <template v-else>
-            <RuleConditions v-model="tier.when" :fields="options.fields" :ops="options.ops" :descriptions="options.descriptions" :bool-fields="['change.checksPassed']" :field-ops="fieldOps" @update:model-value="touch" />
+            <RuleConditions :disabled="!editable" v-model="tier.when" :fields="options.fields" :ops="options.ops" :descriptions="options.descriptions" :bool-fields="['change.checksPassed']" :field-ops="fieldOps" @update:model-value="touch" />
             <label class="field"><span>也可以用一句话说明（由 AI 判断）</span>
               <textarea v-model="tier.guide" class="input" rows="2" maxlength="2000" placeholder="例如：改到计费、对账、权限这类出错代价大的逻辑" @input="touch" /></label>
             <small class="muted">满足上面的条件就用这一档；条件不满足时，再请模型对照这句话看改动，符合就升到这一档。只写说明、不设条件也可以。</small>
@@ -244,28 +247,28 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
         <section class="block">
           <div class="block-head"><h3>怎么推进</h3></div>
           <div class="row opt"><span class="grow">由评审负责人协调<span class="muted small sub">合并重复的问题、逐条接受或驳回、写修改单，下一轮只复审受影响的评审项；修改不收敛、同一问题僵持或需求有分歧时停下来问你</span></span>
-            <UiCheckbox v-model="tier.lead" switch aria-label="由评审负责人协调" @change="touch" /></div>
+            <UiCheckbox :disabled="!editable" v-model="tier.lead" switch aria-label="由评审负责人协调" @change="touch" /></div>
           <div class="row opt"><span class="grow">开始评审前先给我看计划<span class="muted small sub">编码完成后把档位、评审项和理由发给你，确认或换档后再评审</span></span>
-            <UiCheckbox v-model="tier.confirmPlan" switch aria-label="开始评审前先给我看计划" @change="touch" /></div>
+            <UiCheckbox :disabled="!editable" v-model="tier.confirmPlan" switch aria-label="开始评审前先给我看计划" @change="touch" /></div>
           <label class="row opt"><span class="grow">评审要求修改时，最多自动再改几轮<span class="muted small sub">到上限后停下来等你决定</span></span>
             <input v-model.number="tier.maxRounds" class="input num" type="number" min="1" max="10" inputmode="numeric" aria-label="最多轮数" @input="touch" /></label>
           <label v-if="tier.lead" class="row opt"><span class="grow">每隔几轮全部评审项重审一次<span class="muted small sub">防止只复审一部分时漏掉新问题；所有档位共用</span></span>
             <input v-model.number="rereviewAllEvery" class="input num" type="number" min="1" max="10" inputmode="numeric" aria-label="全部重审的间隔" @input="touch" /></label>
           <div class="row opt"><span class="grow">多轮时换模型复审<span class="muted small sub">第 1 轮用各评审项自己的模型；从第 2 轮起每项换用下面列表里的下一个，同一轮各项也错开，多看几种意见。交办时也可以单独开关</span></span>
-            <UiCheckbox :model-value="!!tier.rotateModels" switch aria-label="多轮时换模型复审" @update:model-value="(v) => { tier!.rotateModels = !!v; touch(); }" /></div>
+            <UiCheckbox :disabled="!editable" :model-value="!!tier.rotateModels" switch aria-label="多轮时换模型复审" @update:model-value="(v) => { tier!.rotateModels = !!v; touch(); }" /></div>
           <small v-if="tier.rotateModels" class="muted">{{ rotation.length ? `在 ${rotation.length} 个模型间轮换` : "还没有设置轮换的模型，不会换" }}，<a href="#" @click.prevent="go({ rotation: '1' })">在“换模型复审”里设置</a>（所有档位共用）。</small>
           <small class="muted">每轮 {{ tier.checks.length }} 个评审运行{{ tier.lead ? " + 1 个负责人运行" : "" }}。</small>
         </section>
-      </div>
+      </fieldset>
 
-      <div v-else-if="check" class="page">
+      <fieldset v-else-if="check" :disabled="!editable" class="page">
         <header class="row dh">
           <h2>{{ check.label }}</h2>
           <span class="badge" :class="{ accent: !check.builtin }">{{ check.builtin ? "内置" : "专项" }}</span>
           <span class="muted small mono">{{ check.name }}</span>
           <span class="spacer" />
-          <router-link class="btn sm" :to="profileLink(check)">编辑提示词和默认 AI<Icon name="right" :size="13" /></router-link>
-          <button class="btn sm primary" :disabled="saving || !dirty" @click="save">保存</button>
+          <router-link v-if="hasPerm('agents.manage')" class="btn sm" :to="profileLink(check)">编辑提示词和默认 AI<Icon name="right" :size="13" /></router-link>
+          <button v-if="editable" class="btn sm primary" :disabled="saving || !dirty" @click="save">保存</button>
         </header>
         <p v-if="check.about" class="muted about">{{ check.about }}</p>
         <p v-if="check.missing" class="err small">档案不存在或还是草稿，评审时会跳过这一项。</p>
@@ -278,13 +281,13 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
         <section class="block">
           <div class="block-head"><h3>用在哪些档位</h3></div>
           <div class="row wrap">
-            <UiCheckbox v-for="t in tiers" :key="t.id" :model-value="inTier(t, check.name)" @change="(v) => setInTier(t, check!.name, v)">{{ t.name }}</UiCheckbox>
+            <UiCheckbox :disabled="!editable" v-for="t in tiers" :key="t.id" :model-value="inTier(t, check.name)" @change="(v) => setInTier(t, check!.name, v)">{{ t.name }}</UiCheckbox>
           </div>
         </section>
 
         <section class="block">
           <div class="block-head"><h3>额外在什么时候加上</h3><span class="muted small">不管落在哪个档位，满足就加进这次评审</span></div>
-          <RuleConditions v-model="check.when" :fields="options.fields" :ops="options.ops" :descriptions="options.descriptions" :bool-fields="['change.checksPassed']" :field-ops="fieldOps" @update:model-value="touch" />
+          <RuleConditions :disabled="!editable" v-model="check.when" :fields="options.fields" :ops="options.ops" :descriptions="options.descriptions" :bool-fields="['change.checksPassed']" :field-ops="fieldOps" @update:model-value="touch" />
           <label class="field"><span>也可以用一句话说明（由 AI 判断）</span>
             <textarea v-model="check.guide" class="input" rows="2" maxlength="2000" placeholder="例如：改了数据库查询、循环里有网络或磁盘读写" @input="touch" /></label>
           <small class="muted">条件写不出来的情况写在这里：编码完成后请模型对照改动判断，符合就加上这项评审。</small>
@@ -301,14 +304,14 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
           <div class="row wrap small"><span class="badge mono">{{ aiText(check) }}</span><span class="muted">评审时只能用只读工具，不能写文件、发消息或交办，不论档案平时怎么设</span></div>
         </section>
 
-        <div v-if="!check.builtin" class="row"><button class="btn ghost sm danger" @click="removeCheck">不再用作评审项</button></div>
-      </div>
+        <div v-if="editable && !check.builtin" class="row"><button class="btn ghost sm danger" @click="removeCheck">不再用作评审项</button></div>
+      </fieldset>
 
-      <div v-else-if="rotating" class="page">
+      <fieldset v-else-if="rotating" :disabled="!editable" class="page">
         <header class="row dh">
           <h2>换模型复审</h2>
           <span class="spacer" />
-          <button class="btn sm primary" :disabled="saving || !dirty" @click="save">保存</button>
+          <button v-if="editable" class="btn sm primary" :disabled="saving || !dirty" @click="save">保存</button>
         </header>
         <p class="muted about">评审要用另一个模型再看一遍时，从这里选模型。列表为空时不复看、不逐轮换模型；默认评审仍可从任务选型候选找别家的模型。</p>
         <section class="block stack">
@@ -327,15 +330,16 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
           <div class="block-head"><h3>模型</h3><span class="muted small">最多 12 个</span></div>
           <div class="rotation stack">
             <div v-for="(p, i) in rotation" :key="i" class="row wrap">
-              <AiDefaults :model-value="{ agent: p.profile, model: p.model, effort: p.effort }" :backends="backends.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => { Object.assign(p, { profile: v.agent ?? '', model: v.model || undefined, effort: v.effort || undefined }); touch(); }" />
-              <button class="btn ghost sm danger" @click="rotation.splice(i, 1); touch()">移除</button>
+              <AiDefaults v-if="editable" :cached-only="!hasPerm('settings.manage')" :model-value="{ agent: p.profile, model: p.model, effort: p.effort }" :backends="backends.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => { Object.assign(p, { profile: v.agent ?? '', model: v.model || undefined, effort: v.effort || undefined }); touch(); }" />
+              <span v-else>{{ [p.profile, p.model, p.effort].filter(Boolean).join(" · ") }}</span>
+              <button v-if="editable" class="btn ghost sm danger" @click="rotation.splice(i, 1); touch()">移除</button>
             </div>
-            <div><button class="btn sm" :disabled="rotation.length >= 12" @click="rotation.push({ profile: '' }); touch()">＋ 添加模型</button></div>
+            <div v-if="editable"><button class="btn sm" :disabled="rotation.length >= 12" @click="rotation.push({ profile: '' }); touch()">＋ 添加模型</button></div>
           </div>
         </section>
-      </div>
+      </fieldset>
 
-      <div v-else-if="adding" class="page">
+      <div v-else-if="editable && adding" class="page">
         <header class="row dh"><h2>加专项评审</h2></header>
         <p class="muted about">专项评审就是一个 Agent 档案：在档案里写清它只看什么（比如鉴权和越权、性能、数据迁移），这里把它挂成评审项，再选它用在哪些档位、什么改动时额外加上。</p>
         <section class="block">
@@ -345,7 +349,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
             <input v-model="newLabel" class="input short" maxlength="12" placeholder="简称，如：安全" aria-label="简称" />
             <button class="btn primary sm" :disabled="!pick || !newLabel.trim()" @click="addCheck">加上</button>
           </div>
-          <small class="muted">没有合适的档案？<router-link :to="{ query: { tab: 'agents', new: '1' } }">新建 Agent 档案</router-link>，写好提示词后回到这里。</small>
+          <small v-if="hasPerm('agents.manage')" class="muted">没有合适的档案？<router-link :to="{ query: { tab: 'agents', new: '1' } }">新建 Agent 档案</router-link>，写好提示词后回到这里。</small>
         </section>
       </div>
 
@@ -353,7 +357,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
         <Icon name="check" :size="34" />
         <h3>评审</h3>
         <p>交办编码完成后，按改动大小选一个档位，档位决定做哪几项评审。每项评审各开一个会话独立进行，要求修改的问题汇总后交给编码 Agent 再改一轮。</p>
-        <div class="row wrap center"><button class="btn" @click="go({ tier: tiers[0]?.id ?? '' })">看看档位</button><button class="btn ghost" @click="go({ add: '1' })">加专项评审</button></div>
+        <div class="row wrap center"><button class="btn" @click="go({ tier: tiers[0]?.id ?? '' })">看看档位</button><button v-if="editable" class="btn ghost" @click="go({ add: '1' })">加专项评审</button></div>
       </div>
     </main>
   </div>
@@ -376,6 +380,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
 .savebar { padding: 10px 12px; border-top: 1px solid var(--line); background: var(--panel); }
 .detail { flex: 1; min-width: 0; overflow-y: auto; }
 .page { max-width: 880px; padding: 16px 24px 48px; display: grid; gap: 14px; margin: 0; }
+fieldset.page { border: 0; min-width: 0; }
 .dh { gap: 10px; flex-wrap: wrap; }
 .dh h2 { font-size: 18px; font-weight: 650; }
 .title { flex: 1; min-width: 140px; font-size: 16px; font-weight: 600; }

@@ -24,6 +24,7 @@ const isOwner = (me: Who) => !me || me.role === "owner";
 
 /** Before capabilities: what a member could open (the nav's `member: true` pages) and the old permissions. */
 function legacy(me: Me, cap: string, space?: string) {
+  if (cap === "settings.assistant.view" || cap === "settings.assistant.edit") return me.perms.includes("agents.manage") && me.perms.includes("code.delegate");
   if (cap === "work.view") return false;
   if (cap === "rules.view" || cap === "rules.edit") return me.perms.includes("agents.manage");
   if (cap === "settings.members") return me.perms.includes("users.manage");

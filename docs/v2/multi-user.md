@@ -222,7 +222,7 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 | 原件 · 标注、调整单份关注程度 | `POST sources/:id/notes`、`PUT sources/:id/attention`、`POST source-notes/:id/review`、`DELETE source-notes/:id` | 路由标了 `sources.edit`，处理函数只让本人操作 | 来源空间的 `sources.edit` 和这份原件的阅读权限。成员标注记为 member，本人标注仍受保护 |
 | 原件 · 整批调整、目录定级和复核 | `POST sources/attention`、`PUT sources/node-level`、`POST sources/node-level/review` | 处理函数只认本人 | 路由也标明本人专用。一次操作可能涉及目录内受限原件 |
 | 事项 · 编辑内容及关系 | `PUT items/:id/parent`、`POST/DELETE items/:id/materials…`、`POST/DELETE items/:id/objects…`、`POST items/:id/split-requirements` | 调整上级仅本人可用，其他入口按登录身份先拦观察者 | 检查本人事项的 `items.edit`；调整关系还检查新旧上级。外部对象动作、拆需求保留各自的目标权限 |
-| 助手 · 查看评审设置 | `GET review-settings`、`GET review-options` | 交办编码权限 | `settings.assistant.view`；`GET settings?section=assistant` 提供表单用的模型选项。交办人从 `GET review-tiers` 取档位 id、名称和检查数 |
+| 助手 · 查看评审设置 | `GET review-settings`、`GET review-options` | 交办编码权限 | 只需 `settings.assistant.view` 即可从侧栏或 `#/agents?tab=review` 打开表单。持有 Agent 管理权的人从 Agent 页的“评审”进入。`GET settings?section=assistant` 提供表单用的模型选项。交办人从 `GET review-tiers` 取档位 id、名称和检查数 |
 | 助手 · 编辑评审设置 | `PUT review-settings` | 交办编码权限 | `settings.assistant.edit` |
 | AI · 修改角色模型 | `PUT agent-role-model` | 全局设置权限 | `settings.ai.edit`，读取模型配置另需 view |
 | 远程 · 查看、导航 | `POST remote/sessions/:id/view`、`POST remote/sessions/:id/navigate` | 观察者先被通用写请求检查拦下 | 按会话所有权或有效授权决定；受托者需匹配的能力，导航需操作授权 |
