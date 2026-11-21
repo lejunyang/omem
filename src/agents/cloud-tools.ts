@@ -83,8 +83,15 @@ export async function cloudTurn(app: App, profile: AgentProfile, ctx: ToolContex
     const clean: AgentResult = JSON.parse(sanitized(JSON.stringify(result)));
     if (clean.text) emit({ type: "text", text: clean.text });
     return clean;
-  } catch (e) { throw new Error(sanitized((e as Error).message)); }
-  finally {
+  } catch (error) {
+    if (!(error instanceof Error)) throw new Error(sanitized(String(error)));
+    if (error.stack) error.stack = sanitized(error.stack);
+    if (sanitized(error.message) !== error.message)
+      Object.defineProperty(error, "message", { value: sanitized(error.message), configurable: true });
+    // Nested provider errors can contain the original request.
+    delete error.cause;
+    throw error;
+  } finally {
     req.signal?.removeEventListener("abort", stop);
     revoke(g, "本轮结束");
   }

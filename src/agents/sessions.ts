@@ -16,7 +16,7 @@ import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
 import { chatSettings, describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
 import { retargetToolToken, revokeToolToken } from "./tools.ts";
-import { replyOf, sessionPrompt, type AgentEvent } from "./types.ts";
+import { isAgentRunError, replyOf, sessionPrompt, type AgentEvent } from "./types.ts";
 import { autoTurnsSinceOwner, maxAutoTurns, progressMessages, refreshWork } from "./agent-work.ts";
 import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
@@ -484,7 +484,7 @@ ${WAKE_NOTE}`
     if (old) void retireSession(app, old, t.agentSession, t.agentCwd ?? prep.cwd, (e) => e.type === "status" && console.warn(`[omem] ${e.text}`));
   };
 
-  let sandboxFailure: SandboxStartError | undefined;
+  let firstFailure: Error | undefined;
   if (prep.profile.transport !== "acp") {
     // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
     try {
@@ -517,7 +517,7 @@ ${WAKE_NOTE}`
       try {
         r = await run(canResume);
       } catch (e) {
-        if (!canResume || e instanceof SandboxStartError || (e as Error).message === "CANCELLED") throw e;
+        if (!canResume || (isAgentRunError(e) && e.kind === "queue") || e instanceof SandboxStartError || (e as Error).message === "CANCELLED") throw e;
         emit({ type: "status", text: "无法继续之前的 Agent 会话，改为新会话" });
         r = await run(false);
         mode = "fresh";
@@ -526,8 +526,10 @@ ${WAKE_NOTE}`
       retireReplaced(r.sessionId);
       return { text: replyOf(r), agent: r.agent, profileId: prep.profile.id, mode };
     } catch (e) {
-      if (!(e instanceof SandboxStartError)) throw e;
-      sandboxFailure = e;
+      if (ctx.signal?.aborted) throw e;
+      if (isAgentRunError(e) && e.kind === "queue") noteBreakdown(app, prep.profile, e, emit);
+      else if (!(e instanceof SandboxStartError)) throw e;
+      firstFailure = e;
     } finally {
       revokeToolToken(prep.token);
     }
@@ -565,12 +567,12 @@ ${WAKE_NOTE}`
   const hasNext = (i: number) => chain.slice(i + 1).some((_, k) => usable(i + 1 + k));
   const writeCount = () => one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", ctx.run.id)!.n;
   /** Why the previous backend was left, and what it already wrote (for the one taking over). */
-  if (sandboxFailure && !hasNext(0)) throw sandboxFailure;
-  let left = sandboxFailure?.message ?? "";
+  if (firstFailure && !hasNext(0)) throw firstFailure;
+  let left = firstFailure?.message ?? "";
   let carry = "";
   let writesBefore = 0;
   let quietBefore = false;
-  for (let step = sandboxFailure ? 1 : 0; step < chain.length; step++) {
+  for (let step = firstFailure ? 1 : 0; step < chain.length; step++) {
     if (!usable(step)) continue;
     writesBefore = writeCount();
     quietBefore = quietSet(app, ctx.run.id);
