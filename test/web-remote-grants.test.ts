@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { endedMessage, expiryLabel, grantCandidates, modesFor } from "../web/src/lib/remote-grants.ts";
+import { endedMessage, endedText, expiryLabel, fromCandidates, grantCandidates, isEnded, modesFor } from "../web/src/lib/remote-grants.ts";
 
 describe("handing a remote session to a member (web/src/lib/remote-grants.ts)", () => {
   it("offers only active members with a remote capability, not yet given this session", () => {
@@ -35,5 +35,20 @@ describe("handing a remote session to a member (web/src/lib/remote-grants.ts)", 
     expect(endedMessage({ expiresAt: "2026-11-21T09:59:59Z" }, "本人", now)).toBe("授权到期了");
     expect(endedMessage({ expiresAt: "2026-11-21T12:00:00Z" }, "本人", now)).toBe("本人收回了这次授权");
     expect(endedMessage({ expiresAt: "2026-11-21T12:00:00Z" }, null, now)).toBe("会话的主人收回了这次授权");
+  });
+
+  it("reads the server's candidates, minus those already given the session", () => {
+    const rows = [{ id: "a", name: "小周", caps: ["remote.view"] }, { id: "b", name: "小林", caps: ["remote.view", "remote.operate"] }, { id: "c", name: "小吴", caps: [] }];
+    expect(fromCandidates(rows, ["b"])).toEqual([{ id: "a", name: "小周", view: true, operate: false }]);
+    expect(fromCandidates(rows).map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
+  it("says why a grant ended, by the server's reason", () => {
+    expect(endedText("revoked", "小王")).toBe("小王收回了这次授权");
+    expect(endedText("revoked", null)).toBe("会话的主人收回了这次授权");
+    expect(endedText("expired", "小王")).toBe("授权到期了");
+    expect(endedText("closed", "小王")).toBe("会话已经关了");
+    expect(isEnded({ id: "rs1", grantId: "rg1", ended: "closed", endedAt: "2026-11-21T10:00:00Z" })).toBe(true);
+    expect(isEnded({ id: "rs1", kind: "browser", title: "后台" })).toBe(false);
   });
 });

@@ -20,6 +20,13 @@ updated: 2026-11-21
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 网页：统一的进度视图，远程授权按原因结束，Wiki 用模板开始（2026-11-21）
+
+- 进度视图从 `web/src/components/ProgressBoard.vue` 和 `web/src/lib/progress.ts` 读起：读 `GET /api/runs/:id/progress` 或 `/api/items/:id/progress`，一块一行摘要，展开是任务的紧凑行，只读、每项链到自己的页面。运行页（`views/Runs.vue`）用它替换原来的任务板位置，任务板一块可展开原来的 `TaskBoard`；接口不存在时照旧显示 `TaskBoard`。`views/WorkDetail.vue` 和 `views/Items.vue` 各加一个“在做的”。刷新跟着 `run`、`work`、`changed item` 事件。
+- 远程页（`views/Remote.vue`、`components/RemoteGrants.vue`、`lib/remote-grants.ts`）：抽屉读 `GET /api/remote/grant-candidates`，旧服务端退回读成员列表；被授权的一侧订 `remote-grant-ended` 事件，按 `revoked` / `expired` / `closed` 说话；`GET /api/remote` 里最近结束的条目不再当成会话。
+- Wiki（`views/Wiki.vue`）：类型清单带 `templates=1`，编辑时正文为空才出现“用模板开始”。
+- 演示数据（`scripts/doc-screens.ts`）：退款改造的需求上补了两轮的编码交办和评审，新截图 `progress-board`、`work-progress`。
+
 ## 从旧交办的助手分工找回首轮（2026-11-21）
 
 从 `src/agents/progress.ts` 的编码投影读起。助手分工同时记有主轮和修改项号。即使拆项后还没写检查点就中断，修改项也能列出分派它的可见主轮。多项共用的主轮在交办总量里只算一次。

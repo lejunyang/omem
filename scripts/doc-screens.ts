@@ -994,6 +994,46 @@ const boardAsk = createRun(app, { kind: "ask", spaceId: "shop", title: "上月�
   course(coupons, (a) => Object.assign(a[0], { queuedAt: ago(16.1), startedAt: ago(11), status: "running" }), "running");
   for (const task of [logs, coupons]) run(app.db, "update runs set status='running', started_at=?, ai=? where id=?", ago(task === logs ? 7.6 : 11), JSON.stringify({ profile: "codex", model: "gpt-6.2-sol", effort: task === logs ? "high" : "medium" }), runOf(task));
   run(app.db, "update runs set status='done', started_at=?, finished_at=?, output=json_set(coalesce(output,'{}'),'$.answer',?) where id=?", ago(17), ago(16), "已经分三块在查：对账单逐笔对、部分发货订单的退款日志、满减券的分摊口径。三块都有结果后我再汇总给你。", boardAsk.id);
+  // What the first part reported using; the two still running have not reported yet ("有 N 个没有用量数据").
+  addRunEvent(app, runOf(bills), "usage", { input: 18_400, output: 2_150 });
+}
+
+// ---- the same ask also delegated a fix, in two rounds, with a review (shots progress-board, work-progress) --
+// The ask and the delegation hang on the requirement in its flow (flowItem), so its work page shows them with
+// the flow's stage: a board still running, a delegation waiting for the owner to accept it (T2 done on the
+// second try), a review passed in its second round.
+{
+  const { addTask, takeTasks, updateTask } = await import("../src/agents/code-tasks.ts");
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const codex = (effort: string) => JSON.stringify({ profile: "codex", model: "gpt-6.2-sol", effort });
+  run(app.db, "update runs set input=json_set(input,'$.itemId',?) where id=?", flowItem.id, boardAsk.id);
+  const reviewPlan = { tier: "standard", tierName: "标准", checks: ["reviewer", "review-business"], maxRounds: 3, reasons: ["改了退款日志和导出两处"], metrics: {} };
+  const first = createRun(app, { kind: "code", spaceId: "shop", parentId: boardAsk.id, title: "退款日志写明走了哪条分摊路径", input: { task: "退款日志里写明这笔退款走的是旧的整单比例还是按行分摊，导出任务读这一项；补部分发货的回放用例。", repos: ["shop"], itemId: flowItem.id } });
+  const tasks = [
+    addTask(app, first.id, { title: "退款日志写明分摊路径", doneWhen: "每条退款日志带 split=legacy 或 split=line，单测覆盖两种。", kind: "build" }, "coder"),
+    addTask(app, first.id, { title: "部分发货订单补回放用例", doneWhen: "上月 5 笔差额订单都在用例里，按行分摊后差额为 0。", kind: "build" }, "coder"),
+    addTask(app, first.id, { title: "导出任务读日志里的分摊路径", doneWhen: "导出的退款表多一列“分摊方式”，和日志一致。", kind: "build" }, "coder"),
+  ];
+  takeTasks(app, first.id, first.id);
+  updateTask(app, first.id, tasks[0].seq, { state: "done", commits: { shop: ["3f2a91c"] } });
+  // T2 did not pass its check in the first round: sent back, done by the second round.
+  updateTask(app, first.id, tasks[1].seq, { state: "todo", attempts: 1 }, { kind: "verify", by: "reviewer", text: "回放用例只放了 3 笔，少了 A1033 和 A1041" });
+  updateTask(app, first.id, tasks[2].seq, { state: "done", commits: { shop: ["8c41d07"] } });
+  setRunOutput(app, first.id, { reviewPlan, reviewStage: "done", verdict: "changes-requested", coderAI: { profile: "codex", model: "gpt-6.2-sol", effort: "high" } });
+  run(app.db, "update runs set status='done', created_at=?, started_at=?, finished_at=?, ai=? where id=?", ago(15.5), ago(15), ago(9), codex("high"), first.id);
+  recordReview(app, { codeRunId: first.id, round: 1, check: "reviewer", tier: "standard", verdict: "changes_requested", summary: "回放用例少了两笔差额订单。", findings: [{ severity: "major", file: "test/replay.test.js", line: 12, title: "回放用例只覆盖了 3 笔差额订单", detail: "", suggestion: "把 A1033、A1041 加进去", evidence: [], confidence: "high" }] as never, ai: { profile: "codex", model: "gpt-6.2-sol", effort: "medium" } });
+  recordReview(app, { codeRunId: first.id, round: 1, check: "review-business", tier: "standard", verdict: "approved", summary: "分摊方式的取值和需求一致。", findings: [], ai: { profile: "codex", model: "gpt-6.2-sol", effort: "medium" } });
+  for (const f of all<{ id: number }>(app.db, "select f.id from review_findings f join reviews v on v.id = f.review_id where v.code_run_id = ?", first.id))
+    run(app.db, "update review_findings set state='accepted', decision='fix' where id=?", f.id);
+  const second = createRun(app, { kind: "code", spaceId: "shop", title: "退款日志写明走了哪条分摊路径 · 第 2 轮", input: { continueFrom: first.id, round: 2, task: "补上 A1033、A1041 两笔回放用例", repos: ["shop"], itemId: flowItem.id } });
+  takeTasks(app, first.id, second.id);
+  updateTask(app, first.id, tasks[1].seq, { state: "done", commits: { shop: ["d93e5b2"] } });
+  setRunOutput(app, second.id, { reviewPlan: { ...reviewPlan, checks: ["reviewer"] }, reviewStage: "done", verdict: "approved", coderAI: { profile: "codex", model: "gpt-6.2-sol", effort: "high" } });
+  run(app.db, "update runs set status='done', created_at=?, started_at=?, finished_at=?, ai=? where id=?", ago(8), ago(7.8), ago(2), codex("high"), second.id);
+  recordReview(app, { codeRunId: second.id, round: 2, check: "reviewer", tier: "standard", verdict: "approved", summary: "5 笔差额订单都在用例里，回放通过。", findings: [], ai: { profile: "codex", model: "gpt-6.2-sol", effort: "medium" } });
+  // What each round reported using (made-up figures).
+  addRunEvent(app, first.id, "usage", { input: 96_300, output: 8_420 });
+  addRunEvent(app, second.id, "usage", { input: 41_800, output: 3_960 });
 }
 
 // ---- operation rules and two rule packs (设置 → 安全, shot security-rules) ------------------------
@@ -1191,7 +1231,7 @@ await sendToday(app);
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
-  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
+  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}`);
   const cleanup = async () => { await server.close(); app.db.close(); rmSync(home, { recursive: true, force: true }); process.exit(); };
   process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
@@ -1243,6 +1283,8 @@ async function prepareRemoteDemo(page: Page) {
     return r.fulfill({ json: { ...s, src: `/remote/${id}/` } });
   });
   await page.route("**/remote/rs_demo*/", (r) => r.fulfill({ contentType: "text/html", body: `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:14px/1.6 system-ui,sans-serif;background:#eef1f4;color:#1f2937}header{background:#1f2937;color:#fff;padding:10px 20px;font-weight:600}main{padding:20px}table{border-collapse:collapse;background:#fff;width:100%}td,th{border-bottom:1px solid #e5e7eb;padding:8px 12px;text-align:left}</style><header>示例商城 · 售后后台</header><main><h3>售后单 R1005</h3><table><tr><th>商品</th><th>状态</th><th>实付</th></tr><tr><td>短袖 T 恤 × 1</td><td>已发货</td><td>39.90</td></tr><tr><td>帆布包 × 1</td><td>未发货</td><td>59.00</td></tr></table><p>应退：39.90（只退已发货的行）</p></main>` }));
+  const names: Record<string, string> = { xiaozhou: "小周", xiaolin: "小林", xiaowu: "小吴" };
+  await page.route("**/api/remote/grant-candidates", (r) => r.fulfill({ json: Object.entries(caps).map(([id, list]) => ({ id, name: names[id], caps: list })).filter((c) => c.caps.length) }));
   await page.route("**/api/members/*/capabilities", (r) => {
     const id = decodeURIComponent(r.request().url().split("/api/members/")[1].split("/")[0]);
     return r.fulfill({ json: { preset: "member", overrides: [], caps: caps[id] ?? [], spaceCaps: {}, ownSpaceCaps: {}, effective: {} } });
@@ -1302,7 +1344,24 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   } },
   // A piece of work split into parts done side by side: who has each, the track of when they ran, one sent back.
   { name: "run-board", path: `/runs/${boardAsk.id}`, prepare: async (p) => {
+    await p.locator(".pg-sum", { hasText: "任务板" }).click();
+    await p.getByRole("button", { name: "看时间轴和报告" }).click();
     await p.locator(".tb .rows .row").nth(1).click();
+    await p.locator(".tb").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(400);
+  } },
+  // The whole work of that ask, block by block: the board, the delegation (T2 opened on its two tries), the review.
+  { name: "progress-board", path: `/runs/${boardAsk.id}`, prepare: async (p) => {
+    for (const kind of ["任务板", "编码交办"]) await p.locator(".pg-sum", { hasText: kind }).click();
+    await p.getByRole("button", { name: "第 2 次" }).first().click();
+    await p.locator(".pg").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(400);
+  } },
+  // The same on the requirement's work page (在做的), next to its flow.
+  { name: "work-progress", path: `/work/${flowItem.id}`, prepare: async (p) => {
+    await p.locator(".pg-sum", { hasText: "需求交付" }).click();
+    await p.locator(".pg-sum", { hasText: "退款日志写明走了哪条分摊路径" }).filter({ hasText: "编码交办" }).click();
+    await p.locator(".pg").evaluate((el) => el.scrollIntoView({ block: "start" }));
     await p.waitForTimeout(400);
   } },
   { name: "insights", path: "/insights?tab=omem", space: "personal" },

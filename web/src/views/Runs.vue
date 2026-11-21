@@ -14,6 +14,7 @@ import { pageParam } from "../lib/route";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
 import TaskBoard from "../components/TaskBoard.vue";
+import ProgressBoard from "../components/ProgressBoard.vue";
 import ContextUsage from "../components/ContextUsage.vue";
 import CodeWork from "../components/CodeWork.vue";
 import CodeWorkList from "../components/CodeWorkList.vue";
@@ -251,6 +252,9 @@ function hintOf(r: { title: string; input?: Record<string, unknown> }) {
 const taskLong = computed(() => taskText.value.split("\n").length > 14 || taskText.value.length > 1200);
 const taskOpen = ref(false);
 watch(id, () => (taskOpen.value = false));
+/** Whether the progress view answered: an older server has none, and the board shows on its own then. */
+const progressState = ref<"ready" | "empty" | "error" | null>(null);
+watch(id, () => (progressState.value = null));
 const finalText = computed(() => out.value.answer ?? out.value.summary ?? "");
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 /** A coding run (a delegation's round or a branch review) opens as its whole work (CodeWork). */
@@ -485,7 +489,10 @@ const kindOptions = computed(() => [
           <div class="card pad"><Markdown :source="String(finalText)" :space="detail.run.spaceId ?? undefined" /></div>
         </section>
 
-        <section v-if="detail.board" class="block">
+        <!-- The whole work this run belongs to, block by block (the board's own track opens from its block);
+             an older server without the view keeps the board alone. -->
+        <ProgressBoard class="block" :run="detail.run.id" :focus="detail.board?.taskId" label="分头在做的" @state="(s) => (progressState = s)" />
+        <section v-if="detail.board && progressState === 'error'" class="block">
           <TaskBoard :work-id="detail.board.workId" :focus="detail.board.taskId" />
         </section>
 
