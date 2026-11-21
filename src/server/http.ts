@@ -1161,7 +1161,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // --------------------------------------------------------------------- wiki
-  server.get("/api/wiki/kinds", async req => kindList(formatScope(req, "wiki.view")));
+  server.get("/api/wiki/kinds", async req => kindList(formatScope(req, "wiki.view"), (req.query as { templates?: string }).templates === "1"));
   server.get("/api/wiki/:space", async (req) => {
     const space = (req.params as { space: string }).space;
     syncWiki(app, space);

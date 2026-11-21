@@ -128,10 +128,10 @@ export function pageKind(space: string, kind?: string) {
   const entry = kind && kinds.get(kind);
   return entry && available(entry, space) ? entry : undefined;
 }
-export function kindList(space: Scope) {
-  return [...Object.entries(builtins).map(([kind, label]) => ({ kind, label, describe: label, plugin: null, hasTemplate: false, upkeep: null })),
+export function kindList(space: Scope, templates = false) {
+  return [...Object.entries(builtins).map(([kind, label]) => ({ kind, label, describe: label, plugin: null, hasTemplate: false, ...(templates && { template: null }), upkeep: null })),
     ...[...kinds.values()].filter(e => available(e, space)).map(({ plugin, def }) => ({
-      kind: def.kind, label: def.label, describe: def.describe, plugin, hasTemplate: !!def.template, upkeep: def.upkeep ?? null,
+      kind: def.kind, label: def.label, describe: def.describe, plugin, hasTemplate: !!def.template, ...(templates && { template: def.template }), upkeep: def.upkeep ?? null,
     }))];
 }
 export function kindBrief(space: string, selected?: string) {
