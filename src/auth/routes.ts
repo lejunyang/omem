@@ -344,9 +344,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/code-works/:id": cap("code.work.view", "run:p.id"),
   "POST /api/delegate": CODE,
   "POST /api/review-branch": CODE,
-  "GET /api/review-settings": CODE,
+  "GET /api/review-tiers": CODE,
+  "GET /api/review-settings": cap("settings.assistant.view"),
   "PUT /api/review-settings": cap("settings.assistant.edit"),
-  "GET /api/review-options": CODE,
+  "GET /api/review-options": cap("settings.assistant.view"),
   "GET /api/ide/cli": CODE,
   "GET /api/ide/open": CODE,
   // Previews of a delegation's workspace (docs/v2/preview.md): the owner's commands and servers.

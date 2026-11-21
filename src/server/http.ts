@@ -27,7 +27,7 @@ import { listMcpServers, saveMcpServer, deleteMcpServer } from "../agents/mcp-se
 import { testMcpServer } from "../agents/mcp-test.ts";
 import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, roleTools, saveRoleOverride, setRoleFullAccess, setRoleMcp, setRoleTools } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
-import { cachedProbe } from "../agents/probe.ts";
+import { cachedProbe, userProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
@@ -2107,6 +2107,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ------------------------------------------------------------------- code review (docs/v2/review.md)
+  server.get("/api/review-tiers", async () => {
+    const { reviewTiers } = await import("../agents/review.ts");
+    return { tiers: reviewTiers(app).map(({ id, name, checks }) => ({ id, name, checkCount: checks.length })) };
+  });
   server.get("/api/review-settings", async () => {
     const { reviewChecks, reviewTiers } = await import("../agents/review.ts");
     const checks = reviewChecks(app).map((c) => {
@@ -3330,7 +3334,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
     return {
       config: settingsView(app.config, visible, access.owner),
-      ...(visible("ai") && access.owner && { agents: listAgentProfiles(app) }),
+      ...(visible("ai") && access.owner ? { agents: listAgentProfiles(app) } : visible("assistant") && {
+        agents: listAgentProfiles(app).map(({ id, name, installed, transport, model, effort }) => {
+          const probe = userProbe(app, who(req), id);
+          return { id, name, installed, transport, model, effort, probe: probe && {
+            at: probe.at, models: probe.models, efforts: probe.efforts, effortsByModel: probe.effortsByModel,
+          } };
+        }),
+      }),
       ...(visible("system") && access.owner && { home: app.home }),
       ...(visible("knowledge") && { rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null }),
       ...(visible("security") && { approvalTools: toolList().map(t => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }),
