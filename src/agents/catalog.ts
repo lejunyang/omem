@@ -12,6 +12,7 @@ import { commandExists } from "./spawn.ts";
  * ACP registry (`omem agents registry`) or by hand in config.agents.profiles.
  */
 export type CatalogEntry = {
+  egressHosts?: string[];
   id: string;
   name: string;
   command: string;
@@ -75,7 +76,7 @@ const DEVICE_CODE = "\\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\\b";
 
 export const acpCatalog: CatalogEntry[] = [
   {
-    id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server", skills: { read: ["${CODEX_HOME:-~/.codex}/skills", "~/.agents/skills"], write: "~/.agents/skills" },
+    id: "codex", egressHosts: ["api.openai.com","chatgpt.com","auth.openai.com"], name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server", skills: { read: ["${CODEX_HOME:-~/.codex}/skills", "~/.agents/skills"], write: "~/.agents/skills" },
     account: { cli: "codex", env: { CODEX_HOME: "{home}/.codex" }, dirs: [".codex"], owns: [".codex"], login: { args: ["login", "--device-auth"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, status: { args: ["login", "status"], user: "(?:as|account:?)\\s+([^\\s()]+@[^\\s()]+|[^\\s()]+)" }, logout: { args: ["logout"] } },
   },
   // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
@@ -85,11 +86,11 @@ export const acpCatalog: CatalogEntry[] = [
     account: { env: { TRAE_HOME: "{home}/.trae", XDG_RUNTIME_DIR: "{home}/.run", TMPDIR: "{home}/.tmp" }, dirs: [".trae", ".run", ".tmp"], owns: [".trae"], login: { args: ["login", "--sso-device"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, status: { args: ["login", "status"], user: "(?:as|user:?|account:?)\\s+([^\\s()]+)" }, logout: { args: ["logout"] } },
   },
   {
-    id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" },
+    id: "claude", egressHosts: ["api.anthropic.com","platform.claude.com"], name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" },
     // `claude setup-token` prints a long-lived token on the person's own machine; pasted here, it goes in the vault.
     account: { cli: "claude", env: { CLAUDE_CONFIG_DIR: "{home}/.claude" }, dirs: [".claude"], owns: [".claude", ".claude.json"], tokenEnv: "CLAUDE_CODE_OAUTH_TOKEN", status: { args: ["auth", "status"], user: "([^\\s\"]+@[^\\s\"]+)" } },
   },
-  { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
+  { id: "gemini", egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
   { id: "copilot", name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
   { id: "qwen", name: "Qwen Code", command: "qwen", args: ["--acp"], npm: "@qwen-code/qwen-code" },
   { id: "cursor", name: "Cursor Agent", command: "cursor-agent", args: ["acp"], install: "curl https://cursor.com/install -fsS | bash（Windows 见 cursor.com/cli）" },

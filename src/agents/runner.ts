@@ -44,7 +44,7 @@ import { addRunEvent, runUser } from "./runs.ts";
 import { SandboxStartError } from "./spawn.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
-import { accountOf } from "./sandbox.ts";
+import { accountOf, egressRequested, egressSupport } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -451,6 +451,10 @@ function accountProfile(app: App, input: Parameters<typeof resolveRunProfile>[1]
 
 /** Called for the selected attempt, including a conversation reusing a live process. */
 export function recordIsolation(app: App, runId: string | null, userId: string, profile: AgentProfile) {
+  // Said only when this run would have gone through the proxy here: a member's run, with egress isolation asked for.
+  const egress = app.config.security.egress.mode;
+  if (profile.peer && runId && userId !== OWNER && egress !== "off" && (egress === "all-sandboxed" || app.config.agents.accountIsolation === "require"))
+    addRunEvent(app, runId, "status", { text: "代跑的运行不经这台的出网代理" });
   const reason = unisolatedReason(app, userId, profile);
   if (!reason) return;
   if (app.config.agents.accountIsolation === "require") throw new Error(`这台机器不能隔离成员的运行：${reason}`);
@@ -531,6 +535,9 @@ export function prepareRun(
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const account = accountOf(profile);
+  const base = new URL(app.baseUrl);
+  if (egressRequested(app.config,profile) && egressSupport().ok) base.hostname = "127.0.0.1";
+  const toolBase = base.origin;
   const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
@@ -580,8 +587,8 @@ export function prepareRun(
     now: `现在：${localTime(app, input.replay?.view.asOf)}`,
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
-    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: {
-      ...agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app)),
+    mcp: { url: `${toolBase}/mcp`, baseUrl: toolBase, token, stdio: mcpBridge(), env: {
+      ...agentToolEnv(app.home, toolBase, token, commandGateDir(app)),
       ...(browserProfilesRoot ? { OMEM_BROWSER_PROFILES: browserProfilesRoot } : {}),
       ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
       ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
@@ -843,6 +850,11 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   for (let k = candidates.length - 1; k > 0; k--) if (accountBlocked(app, input.userId ?? OWNER, candidates[k])) candidates.splice(k, 1);
   // The member's own accounts on the rest, so their quota and spent marks (not the owner's) decide the order.
   for (let k = 1; k < candidates.length; k++) candidates[k] = accountFor(app, input.userId, candidates[k]);
+  // Routine work on a member's line (items/member-routine.ts): on their own account or not at all, never the owner's login.
+  if (input.runId && one<{ v: number | null }>(app.db, "select json_extract(input, '$.ownAccountOnly') v from runs where id = ?", input.runId)?.v) {
+    for (let k = candidates.length - 1; k >= 0; k--) if (!accountOf(candidates[k])) candidates.splice(k, 1);
+    if (!candidates.length) throw new Error("这是成员的线上的例行整理，只用成员自己的 AI 账号跑：没有登录了的、能隔离的后端");
+  }
   if (localOnly(app, input.spaceId)) {
     if (lentByOthers(app, candidates[0])) throw new HttpError(400, `这个空间设了“仅本机”，不能用别人的 omem 借出的 AI（${candidates[0].id}）：给这次运行或这个角色换一个本机的后端`);
     for (let k = candidates.length - 1; k > 0; k--) if (lentByOthers(app, candidates[k])) candidates.splice(k, 1);

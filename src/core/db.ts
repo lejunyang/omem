@@ -2371,6 +2371,25 @@ export const migrations: readonly string[] = [
    );
    create index if not exists cloud_tool_usage_at on cloud_tool_usage(at);`,
   REVOKE_LEGACY_PROBE_TOKENS,
+  `create table if not exists outlet_deliveries (
+    seq integer primary key, outlet text not null, object_id text not null, user_id text not null,
+    op text not null, dedup text not null, urgency text not null, state text not null default 'pending', due integer not null,
+    attempts integer not null default 0, updated text, error text, ref text, identities text,
+    unique(outlet, object_id, op)
+  );
+  create index if not exists outlet_due on outlet_deliveries(state,due);
+  create index if not exists outlet_history on outlet_deliveries(user_id,outlet,updated desc);
+  create index if not exists outlet_dedup on outlet_deliveries(outlet,dedup,seq);
+  create unique index if not exists outlet_ask_ref on outlet_deliveries(outlet,ref,user_id) where op='ask';
+  create index if not exists outlet_object on outlet_deliveries(object_id,op);`,
+  `create index if not exists notifications_pushed_at on notifications(user_id,json_extract(context,'$.pushed.channel'),json_extract(context,'$.pushed.at') desc)
+    where json_extract(context,'$.pushed.channel') is not null;`,
+  `create table if not exists egress_runs (
+     run_id text primary key, seq integer not null, updated_at text not null,
+     foreign key(run_id,seq) references run_events(run_id,seq) on delete cascade
+   );
+   create index if not exists egress_recent on egress_runs(updated_at desc);
+   create index if not exists asks_egress_pending on asks(created_at desc) where status='pending' and json_type(context,'$.egressFallback') is not null;`,
 ];
 
 export type Db = DatabaseSync;
@@ -2390,15 +2409,19 @@ export function openDb(path: string): Db {
           !db.prepare("select 1 from sqlite_schema where type='table' and name='stored_file_refs'").get()) {
         i--;
       }
-      // The cloud-tools branch used the change ledger version for cloud_tool_usage.
+      // Early cloud-tools and egress databases used the change ledger version for their own tables.
       if (i === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
           !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
         i--;
       }
+      // Main assigned the next three slots to outlet deliveries, notifications and egress.
+      // Install cloud tools first, then replay main's idempotent migrations.
+      const cloudIndex = migrations.indexOf(REVOKE_LEGACY_PROBE_TOKENS) - 1;
       // A library installing cloud tools for the first time can only have manual tokens.
       // Skip the following revocation in the same commit as table creation, even on restart.
-      const firstCloudInstall = migrations[i + 1] === REVOKE_LEGACY_PROBE_TOKENS &&
+      const firstCloudInstall = i >= cloudIndex && i <= cloudIndex + 3 &&
         !db.prepare("select 1 from sqlite_schema where type='table' and name='cloud_tool_usage'").get();
+      if (firstCloudInstall) i = cloudIndex;
       // A capabilities database may already have migrated its observer role at the
       // version main used for the metric series index. Supply that missing index once.
       const fromCapabilitiesBranch = migrations[i] === MEMBER_CAPABILITIES_MIGRATION

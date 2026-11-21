@@ -33,6 +33,11 @@ export type Line = {
   /** src/items/lifecycle.ts: null 进行中, `watching` 观察中 until `watchUntil`. */
   phase: "watching" | null; phaseSince: string | null; watchUntil: string | null;
   watch?: { flaggedMetrics: number; openProblems: number; openItems: number };
+  /**
+   * For someone other than the owner (src/items/member-work.ts): whether some of what is under it is not theirs to see
+   * (then no state, people or next steps of the line come), whether it is their own line, and whose it is.
+   */
+  partial?: boolean; mine?: boolean; person?: { id: string; name: string }; can?: { edit: boolean; operate: boolean };
 };
 /** A line that ended (GET /api/work `ended`, /api/work/ended). */
 export type EndedLine = { id: string; title: string; status: string; closedAt: string | null; summary: string | null; reason: string | null; spaceId: string };
@@ -46,7 +51,7 @@ export const changeTypeLabel: Record<string, string> = {
   scope: "范围", decision: "决定", deadline: "时间", blocker: "风险", info: "信息", stage: "阶段", result: "结果", owner: "负责人", resolved: "解除", todo: "待办", question: "待定",
 };
 /** Where a change was seen. */
-export const originLabel: Record<string, string> = { follow: "群聊和文档", flow: "流程", metric: "指标", problem: "在跟的问题", owner: "你定的", line: "观察与结束", meeting: "会议", review: "评审", commit: "提交认领" };
+export const originLabel: Record<string, string> = { follow: "群聊和文档", flow: "流程", metric: "指标", problem: "在跟的问题", owner: "你定的", line: "观察与结束", meeting: "会议", review: "评审", commit: "提交认领", member: "成员回答" };
 /** What a change's source key names, in a few words (src/items/changes.ts sourceKeys). */
 export function sourceLabel(key: string | undefined) {
   if (!key) return "";
@@ -59,6 +64,7 @@ export function sourceLabel(key: string | undefined) {
   if (k.startsWith("review:")) return "一次评审";
   if (k.startsWith("commits:")) return "一批提交";
   if (k.startsWith("src:")) return "原件里的几行";
+  if (k.startsWith("ask:")) return "替你问的一个问题";
   return "";
 }
 export const nextKindLabel: Record<NextKind, string> = { read: "读", test: "测", code: "改", ask: "问", data: "数据" };
@@ -92,6 +98,7 @@ export const ORIGIN_FILTERS: { key: string; label: string }[] = [
   { key: "problem", label: "问题" },
   { key: "owner", label: "你定的" },
   { key: "line", label: "观察与结束" },
+  { key: "member", label: "成员回答" },
 ];
 
 const DAY = 86_400_000;

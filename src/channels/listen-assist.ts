@@ -11,6 +11,8 @@ import { materialsBrief } from "../items/materials.ts";
 import { getItem, type Item } from "../items/store.ts";
 import { descendantIds } from "../items/tree.ts";
 import { metricLessons } from "../data/metrics.ts";
+import { mayRunRoutine, ownAccountProblem } from "../items/member-routine.ts";
+import { OWNER } from "../core/users.ts";
 import { itemContext, listContexts, type ListenContext } from "./listen.ts";
 
 /**
@@ -55,6 +57,8 @@ function queue(app: App, c: ListenContext, item: Item, mode: "suggest" | "act", 
         listenAssist: c.id,
         lineState: item.id,
         why,
+        // A member's line never runs on the owner's login (agents/runner.ts).
+        ...(item.userId !== OWNER ? { ownAccountOnly: true } : {}),
         assistantScope: { spaces: [...new Set([item.spaceId, "personal"])], userId: item.userId, denyTools: lineStateDenied(mode), lark: { chats: [], draft: true } },
       },
     });
@@ -78,6 +82,8 @@ export async function assistDue(app: App, at = Date.now()) {
     try { item = getItem(app, c.itemId); } catch { continue; }
     // A work item under a line is looked at with its line (its own 关注 folds into the line's).
     if (item.parentId || !["open", "waiting", "snoozed"].includes(item.status)) continue;
+    // A member's line: only with the routine on and their own AI account (items/member-routine.ts).
+    if (item.userId !== OWNER && !mayRunRoutine(app, item.userId)) continue;
     const last = one<{ value: string }>(app.db, "select value from kv where key = ?", key(c.id))?.value;
     const changed = !last || lastMoved(app, item) > last || !!one(app.db, `select 1 from item_changes where item_id in (${[item.id, ...descendantIds(app, item.id)].map(() => "?").join(",")}) and at > ? limit 1`, item.id, ...descendantIds(app, item.id), last);
     const soon = !!item.dueAt && Date.parse(item.dueAt) - at < 3 * 86400_000;
@@ -100,6 +106,9 @@ export async function refreshLine(app: App, itemId: string, by: string) {
   const item = getItem(app, itemId);
   if (item.userId !== by) throw new HttpError(403, "只能更新自己的工作线");
   if (item.parentId) throw new HttpError(400, "这件事挂在上层下面：在它的工作线上更新");
+  // A member's “更新” runs on their own AI account, never the owner's (items/member-routine.ts).
+  const problem = ownAccountProblem(app, item.userId);
+  if (problem) throw new HttpError(409, problem);
   let c = itemContext(app, item.id);
   if (!c || c.status !== "active") {
     const { setItemListening } = await import("./listen-items.ts");

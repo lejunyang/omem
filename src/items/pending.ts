@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { capabilityAccess } from "../auth/capabilities.ts";
 import { all } from "../core/db.ts";
 import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { toAsk } from "../agents/asks.ts";
@@ -97,10 +98,12 @@ export async function pendingView(app: App, userId: string) {
        ))` : ""}
      order by a.created_at desc, a.id limit 100`, userId, userId);
   const actions: PendingAction[] = [];
+  // An item opens on its work page for whoever may open the work pages (their own lines there), else on 事项.
+  const workPage = userId === OWNER || !!capabilityAccess(app, userId).range("work.view")?.length;
   function add(via: PendingAction["via"], key: string, group: PendingAction["group"], label: string, title: string, createdAt: string,
     extra: Partial<Pick<PendingAction, "itemId" | "lineId" | "lineTitle" | "askId" | "href" | "count" | "deadline">> = {}) {
     actions.push({ id: `${via}:${key}`, via, group, label, title: titleOf(title), createdAt,
-      href: extra.itemId ? `#/${userId === OWNER ? "work" : "items"}/${encodeURIComponent(extra.itemId)}` : "#/work", ...extra });
+      href: extra.itemId ? `#/${workPage ? "work" : "items"}/${encodeURIComponent(extra.itemId)}` : "#/work", ...extra });
   }
   const asks = askRows.map(row => toAsk(row, userId));
   const askIds = new Set(asks.map(a => a.id));

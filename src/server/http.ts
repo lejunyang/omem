@@ -66,7 +66,7 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewR
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, networkPolicySchema, saveConfig } from "../core/config.ts";
+import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
 import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
@@ -377,6 +377,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     disableRulePack(app, id);
     audit(app, who(req), "operation.pack.disable", id);
     return { ok: true };
+  });
+  server.get("/api/security/egress", async () => (await import("../agents/egress-run.ts")).egressStatus(app));
+  server.put("/api/security/egress", async req => {
+    const egress = q(egressSchema.strict(), req.body);
+    const next = { ...app.config, security: { ...app.config.security, egress } };
+    saveConfig(next,app.home);
+    Object.assign(app.config,next);
+    audit(app,who(req),"egress.settings","security",{ mode:egress.mode });
+    return egress;
   });
   const rulesView = () => currentRules(app).map(r => ({ ...r, enforcedBy: enforcedBy[r.match.kind] }));
   server.get("/api/security/operation-rules", async () => ({ rules: rulesView() }));
@@ -2558,6 +2567,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   server.get("/api/approvals/ladder", async () => [...new Set([...app.config.approvals.tools, ...(app.config.approvals.report ?? [])])].map((tool) => ({ tool, rung: toolAlwaysApproves(tool) ? "ask" : rungOf(app, tool), streak: approvalStreak(app, tool) })));
+  server.get("/api/notify/outlets", async req => {
+    const { listOutlets } = await import("../plugins/notifier.ts");
+    return { outlets: await listOutlets(app, who(req)) };
+  });
+  server.put("/api/notify/outlets", async req => {
+    const b = q(z.object({ userId: z.string().optional(), outlets: outletSettings }).strict(), req.body);
+    const { setOutlets } = await import("../plugins/notifier.ts");
+    return setOutlets(app, who(req), b);
+  });
+  server.post("/api/notify/outlets/:id/test", async req => {
+    const { testOutlet } = await import("../plugins/notifier.ts");
+    return testOutlet(app, (req.params as {id:string}).id, who(req));
+  });
   server.get("/api/notifications/outcomes", async (req) => {
     const { days } = q(z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }), req.query);
     return outcomeBreakdown(app, days);
@@ -3372,6 +3394,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       throw new HttpError(403, "只有本人可以修改云端工具设置");
     await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
     next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
+    // Outlet preferences and delegated approval grants change through the per-member outlet route.
+    next.notify.outlets = app.config.notify.outlets;
+    next.notify.outletAskGrants = app.config.notify.outletAskGrants;
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
     next.security = structuredClone(app.config.security);
     // Network conditions likewise have their own owner-only editor.

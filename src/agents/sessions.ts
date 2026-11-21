@@ -24,7 +24,7 @@ import { WAKE_NOTE } from "./wakes.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
 import { accountBlocked, accountFor, recordedAccount } from "./accounts.ts";
 import { SandboxStartError } from "./spawn.ts";
-import { accountTag } from "./sandbox.ts";
+import { accountTag, egressRequested } from "./sandbox.ts";
 import { afterTurn, noteRateLimit } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
 import { awarenessNote } from "./awareness.ts";
@@ -641,7 +641,7 @@ ${WAKE_NOTE}`
       curPrep.profile = networkAttempt.profile;
       const stepKey = `${JSON.stringify(curPrep.profile.env)}|${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(curPrep.profile) ? `|${accountTag(curPrep.profile)}` : ""}`;
       let l = step === 0 ? live.get(threadId) : undefined;
-      if (l && (l.key !== stepKey || !l.handle.alive() || tooLong)) {
+      if (l && (egressRequested(app.config,used) || l.key !== stepKey || !l.handle.alive() || tooLong)) {
         release(threadId);
         l = undefined;
       }
@@ -739,7 +739,8 @@ ${WAKE_NOTE}`
         const cur = live.get(threadId);
         if (cur) {
           cur.busy = false;
-          if (done) keepAlive(app, cur);
+          if (egressRequested(app.config, used)) release(threadId);
+          else if (done) keepAlive(app, cur);
         }
       }
     } catch (e) {

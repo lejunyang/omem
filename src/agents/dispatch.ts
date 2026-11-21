@@ -57,7 +57,7 @@ async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (
   }
   // The CLIs take no system prompt here: the instructions open a new session, a resumed one has them
   // (a session that cannot be resumed fails, and the caller starts a new one).
-  return runCli(profile, { ...req, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, req, req.prompt, emit), system: undefined }, emit);
+  return runCli(profile, { ...req, app, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, req, req.prompt, emit), system: undefined }, emit);
 }
 
 async function runDoubaoTurn(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
@@ -71,7 +71,7 @@ async function runDoubaoTurn(app: App, profile: AgentProfile, req: AgentRequest,
   // The CLI requires its exact offered spelling, including spaces and capitalization.
   // Resolve here so profile defaults, role overrides and automatic choices all use the probe.
   if (profile.model) profile = { ...profile, model: resolveModelOption(profile.model, probeFor(app, profile)?.models ?? []).value };
-  return runDoubaoCli(profile, { ...req, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, req, req.prompt, emit), system: undefined }, emit);
+  return runDoubaoCli(profile, { ...req, app, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, req, req.prompt, emit), system: undefined }, emit);
 }
 
 /**

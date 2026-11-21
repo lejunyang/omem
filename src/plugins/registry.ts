@@ -96,6 +96,7 @@ export const manifestSchema = z.object({
   permissions: z
     .object({
       events: z.array(z.enum(["item.status", "item.created", "review.finished", "finding.decision", "finding.resolution", "finding.thread"])).default([]),
+      notify: z.object({ deliver: z.boolean().default(false), ask: z.boolean().default(false) }).optional(),
       sourceParser: z.boolean().default(false),
       wikiPageKind: z.boolean().default(false),
       reviewProvider: z.boolean().default(false),
@@ -208,7 +209,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     manifest,
     dir,
     source,
-    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked) : "none",
+    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked, manifest.permissions.notify) : "none",
     linked,
     enabled: !app.config.plugins.disabled.includes(manifest.id),
     specs: [],
@@ -253,6 +254,7 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
   if (p.source === "data" && trustMode(app, manifest.id) === "isolated") return loadIsolated(app, p);
   const api: PluginApi = {
     ...processApi(p),
+    answerAsk: outletAnswerFor(app, p),
     id: manifest.id,
     object(def) { p.connectors.push(registerObject(manifest.id, def)); },
     hook(def) { p.connectors.push(registerHook(manifest.id, def)); },
@@ -340,6 +342,15 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
  * the same tool as the button (under the tool's approval rung), whichever plugin brings it.
  */
 const ACTIONS_GROUP = "object-actions";
+function outletAnswerFor(app: App, p: LoadedPlugin): PluginApi["answerAsk"] {
+  const lifetime = new AbortController();
+  p.connectors.push(() => lifetime.abort());
+  return async input => {
+    const { answerFromOutlet } = await import("./notifier.ts");
+    lifetime.signal.throwIfAborted();
+    await answerFromOutlet(app, p.manifest.id, input);
+  };
+}
 function processApi(p: LoadedPlugin) {
   const version = p.manifest.permissions.sourceParser
     ? installInfo(p.dir)?.version || p.manifest.version || codeHash(p.dir)
@@ -369,6 +380,7 @@ async function loadIsolated(app: App, p: LoadedPlugin) {
   if (!server || !existsSync(server)) return;
   const sb = await startSandbox(app, { id: manifest.id, dir: p.dir, server, services: manifest.services }, {
     ...processApi(p),
+    answerAsk: outletAnswerFor(app, p),
     prefix: `${manifest.id}_`,
     packageRoot: packageRoot(),
     connected: connectedTo(manifest.id),
@@ -397,7 +409,7 @@ export async function trustPlugin(app: App, id: string, mode: RunMode = "isolate
   const p = getPlugin(id);
   if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
   const before = trustMode(app, id);
-  setTrust(app, id, p.dir, mode, p.linked);
+  setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify);
   if (p.trust !== "trusted" || before !== mode) {
     unloadCode(p);
     p.trust = "trusted";
@@ -722,6 +734,7 @@ export function describePlugin(p: LoadedPlugin) {
     permissions: {
       tools: p.tools.filter((t) => !t.name.startsWith("plugin_")).map((t) => ({ name: t.name, write: t.write, approval: t.approval })),
       writes: p.tools.some((t) => t.write) || (!codeRuns(p) && p.manifest.permissions.write),
+      notify: p.manifest.permissions.notify,
       hostTools: p.manifest.tools,
       providers: codeRuns(p) ? p.providers : p.manifest.permissions.connectors,
       platforms: codeRuns(p) ? p.platforms : p.manifest.permissions.platforms,

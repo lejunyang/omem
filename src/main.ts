@@ -148,6 +148,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   (await import("./rules/omem-events.ts")).attachOmemEvents(app);
   const { loadPlugins } = await import("./plugins/registry.ts");
   await loadPlugins(app);
+  (await import("./plugins/notifier.ts")).startNotifierOutlets(app);
   const server = await startServer(app, opts);
   {
     const { compactArchiveQueue } = await import("./sources/archive.ts");
@@ -179,8 +180,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     if (runId) addRunEvent(app, runId, e.type, e);
     else if (e.type === "status") console.log(`[omem] ${e.text}`);
   });
+  (await import("./plugins/event-delivery.ts")).startPluginDelivery(app, opts.background !== false);
   if (opts.background !== false) {
-    (await import("./plugins/event-delivery.ts")).startPluginDelivery(app);
     startMemoryWatch();
     startLoopMonitor();
     // Plugins linked for development (omem plugin link): loaded again when their files or links change.

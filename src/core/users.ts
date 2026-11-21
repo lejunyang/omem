@@ -24,7 +24,11 @@ export type UserStatus = "active" | "pending";
  * `larkCapture`: which of their Feishu chats omem saves in the background (channels/lark-member-capture.ts);
  * off unless they turn it on: granting “群聊消息 / 单聊消息” only lets the assistant read them when asked.
  */
-export type UserSettings = { loginAny?: boolean; featuresOff?: Record<string, string[]>; larkCapture?: { group?: boolean; p2p?: boolean } };
+export type UserSettings = {
+  loginAny?: boolean; featuresOff?: Record<string, string[]>; larkCapture?: { group?: boolean; p2p?: boolean };
+  /** The routine work on the person's own lines (items/member-routine.ts): off unless they or the owner turn it on. */
+  lineRoutine?: boolean;
+};
 export type User = {
   id: string;
   name: string;
@@ -318,4 +322,10 @@ export function userForToken(app: App, token: string): string | null {
 export function userName(app: App, userId: string | null | undefined) {
   if (!userId || userId === OWNER) return "本人";
   return findUser(app, userId)?.name ?? userId;
+}
+/** A person as someone else reads the name: the owner by their own name (“本人” is the owner's word for themselves), else “主人”. */
+export function nameForOthers(app: App, userId: string | null | undefined) {
+  if (userId && userId !== OWNER) return userName(app, userId);
+  const n = findUser(app, OWNER)?.name?.trim();
+  return n && n !== "本人" ? n : "主人";
 }

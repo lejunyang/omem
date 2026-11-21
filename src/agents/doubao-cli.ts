@@ -81,7 +81,7 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
     prompt = `先完整读取文件 ${file}（UTF-8），那是这一轮的完整内容，按它执行并回答；回答里不要提这个文件。`;
   }
   // -p 从参数读提示；新版 CLI 无法把 Node 子进程默认的 socket 接为 stdin。
-  const child = launch(exe, doubaoArgs(profile, req, prompt), { cwd: req.cwd, workspace: req.workspace, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore", sandbox: account });
+  const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => launch(exe, doubaoArgs(profile, req, prompt), { cwd: req.cwd, workspace: req.workspace, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore", sandbox }));
   emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
   if (req.runId) shellToolRuns.add(req.runId);
   let stdout = "";

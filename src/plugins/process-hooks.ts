@@ -2,7 +2,7 @@ import { untilAbort } from "../core/util.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { pluginConnection } from "../auth/connections.ts";
-import type { CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
+import type { Notifier, CallContext, ItemProvider, MetricProvider, Retriever, Reranker, ReviewProvider, ProcessApi, Subscription } from "../../packages/plugin-sdk/server.ts";
 import type { PluginManifest } from "./registry.ts";
 
 import { registerFormats } from "./formats.ts";
@@ -14,6 +14,7 @@ type Entry<T> = {
   def: T;
   context(app: App, userId: string, spaceId: string, signal: AbortSignal): CallContext;
 };
+export const notifiers = new Map<string, Entry<Notifier> & { lifetime: AbortSignal }>();
 export const subscriptions = new Map<string, Entry<Subscription>>();
 export const itemProviders = new Map<string, Entry<ItemProvider>>();
 export const reviewProviders = new Map<string, Entry<ReviewProvider>>();
@@ -26,7 +27,7 @@ export type RegisteredReranker = Entry<Reranker>;
 export const rerankers = new Map<string, RegisteredReranker>();
 export const metricProviders = new Map<string, Entry<MetricProvider>>();
 
-export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[], version = manifest.version): ProcessApi {
+export function registerProcessHooks(manifest: PluginManifest, undo: (() => void)[], version = manifest.version): Omit<ProcessApi, "answerAsk"> {
   const spaces = pluginSpaces(manifest).map(s => s.id);
   const lifetime = new AbortController();
   undo.push(() => lifetime.abort());
@@ -53,11 +54,18 @@ export function registerProcessHooks(manifest: PluginManifest, undo: (() => void
     if (!/^[a-z][a-z0-9-]{0,47}$/.test(def.id)) throw new Error("插件能力 id 无效");
     const key = manifest.id + ":" + def.id;
     if (map.has(key)) throw new Error("重复注册 " + key);
-    map.set(key, { plugin: manifest.id, def, spaces, context });
+    const entry = { plugin: manifest.id, def, spaces, context, lifetime: lifetime.signal };
+    map.set(key, entry);
     undo.push(() => { map.delete(key); });
   }
   return {
     ...registerFormats(manifest, version, spaces, context, undo),
+    notifier(def) {
+      if (!manifest.permissions.notify?.deliver) throw new Error("缺少 permissions.notify.deliver");
+      if (!def.name?.trim() || typeof def.deliver !== "function") throw new Error("通知出口需要名称与 deliver");
+      const interactive = manifest.permissions.notify.ask;
+      add(notifiers, { ...def, ask: interactive ? def.ask : undefined, retract: interactive ? def.retract : undefined });
+    },
     subscribe(def) {
       if (!def.events.length || !def.events.every(t => manifest.permissions.events.includes(t))) throw new Error("订阅未在 permissions.events 声明");
       add(subscriptions, def);

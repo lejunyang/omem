@@ -239,7 +239,7 @@ export function accountBlocked(app: App, userId: string, p: AgentProfile): strin
   const strict = app.config.agents.accountIsolation === "require";
   if (!SAFE_ID.test(userId)) return strict ? "这台机器不能隔离成员的运行：成员 ID 不适合作为账号目录" : null;
   const capability = isolationCapability(p);
-  if (!capability.supported) return strict ? `这台机器不能隔离成员的运行：${capability.reason}` : null;
+  if (!capability.supported) return strict ? `这台机器不能隔离成员的运行：${capability.reason}${app.config.security.egress.mode === "off" ? "" : "；本机出网隔离不可用"}` : null;
   const entry = accountEntryFor(app, p);
   if (!entry || loggedIn(app, userId, entry.id)) return null;
   const policy = accountPolicy(app, entry.id);
