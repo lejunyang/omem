@@ -6,7 +6,7 @@ export type AdapterJob = {
   id: string;
   package: string;
   action: "install" | "upgrade";
-  via: "osdk" | "npm";
+  via: "osdk" | "npm" | "download" | "npx" | "uvx";
   command: string;
   startedAt: string;
   finishedAt?: string;
