@@ -111,6 +111,8 @@ describe("logging in", async () => {
     const { cookie } = await loginAs("c_wang");
     const mine = await (await me(cookie)).json();
     expect(mine.status).toBe("pending");
+    const settings = () => remote("/api/settings", { cookie: `omem_sid=${cookie}` });
+    expect((await settings()).status).toBe(403);
     const blocked = await remote("/api/conversations", { cookie: `omem_sid=${cookie}` });
     expect(blocked.status).toBe(403);
     expect((await blocked.json()).code).toBe("pending");
@@ -122,8 +124,13 @@ describe("logging in", async () => {
     expect((await local(`/api/users/${wang.id}`, { method: "PATCH", body: JSON.stringify({ approve: true }) })).status).toBe(200);
     expect((await remote("/api/conversations", { cookie: `omem_sid=${cookie}` })).status).toBe(200);
     expect(resolveIdentity(app, "lark", "ou_wang")).toBe(wang.id);
-    // Still a member: owner routes stay closed.
-    expect((await remote("/api/settings", { cookie: `omem_sid=${cookie}` })).status).toBe(403);
+    // 批准后的普通成员需要读取出借策略和 AI 账号默认方式。
+    const approved = await settings();
+    expect(approved.status).toBe(200);
+    expect((await approved.json()).config).toEqual({
+      credentials: { lending: app.config.credentials.lending, confirm: { inviteAsOwner: app.config.credentials.confirm.inviteAsOwner } },
+      agents: { accountsDefault: app.config.agents.accountsDefault },
+    });
   });
 
   it("gives an account made ahead of time to the Feishu login with its email, enterprise mailbox first", async () => {
@@ -193,6 +200,7 @@ describe("logging in", async () => {
     const blocked = await remote("/api/conversations", { cookie: `omem_sid=${second.cookie}` });
     expect(blocked.status).toBe(403);
     expect((await blocked.json()).code).toBe("restricted");
+    expect((await remote("/api/settings", { cookie: `omem_sid=${second.cookie}` })).status).toBe(403);
     // Someone new cannot sign up with it any more.
     expect((await loginAs("newbie", { provider: "gh" })).redirect).toMatch(/请用飞书登录/);
 
