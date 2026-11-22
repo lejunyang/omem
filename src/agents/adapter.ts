@@ -118,7 +118,8 @@ export type AdapterJob = {
   id: string;
   package: string;
   action: "install" | "upgrade";
-  via: "osdk" | "npm";
+  /** `download`: a program from the ACP registry (agents/registry-update.ts); `npx` / `uvx`: a registry package run through them. */
+  via: "osdk" | "npm" | "download" | "npx" | "uvx";
   /** The command line, for the page to show (no secrets in it: package, prefix, registry). */
   command: string;
   startedAt: string;
@@ -189,18 +190,25 @@ function runInstaller(job: AdapterJob, file: string, args: string[], cwd: string
 }
 
 function startJob(app: App, id: string, action: AdapterJob["action"], plan: { file: string; args: string[]; via: AdapterJob["via"]; before: string | null; npmName: string }, finish: (job: AdapterJob, code: number) => Promise<void>) {
+  return startTask(id, action, { package: plan.npmName, via: plan.via, command: [plan.file, ...plan.args].join(" "), before: plan.before }, async (job) => {
+    const code = await runInstaller(job, plan.file, plan.args, app.home);
+    forgetAvailability();
+    await finish(job, code);
+  });
+}
+
+/**
+ * Start a job for a backend: one at a time across all backends, refused while this one already has a
+ * running job. `work` sets `ok` (and `after`, `message`); a throw ends it as failed.
+ */
+export function startTask(id: string, action: AdapterJob["action"], meta: Pick<AdapterJob, "package" | "via" | "command" | "before">, work: (job: AdapterJob) => Promise<void>) {
   const running = jobs.get(id);
   if (running?.running) throw new HttpError(409, `${id} 正在${running.action === "install" ? "安装" : "升级"}`);
-  const job: AdapterJob = {
-    id, package: plan.npmName, action, via: plan.via, command: [plan.file, ...plan.args].join(" "),
-    startedAt: new Date().toISOString(), running: true, before: plan.before, output: "",
-  };
+  const job: AdapterJob = { id, action, ...meta, startedAt: new Date().toISOString(), running: true, output: "" };
   jobs.set(id, job);
   const p = queue.then(async () => {
     try {
-      const code = await runInstaller(job, plan.file, plan.args, app.home);
-      forgetAvailability();
-      await finish(job, code);
+      await work(job);
     } catch (e) {
       job.ok = false;
       job.message = (e as Error).message;

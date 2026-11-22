@@ -28,7 +28,16 @@ const syncFor = ref<string | null>(null);
 const onto = ref("");
 const mode = ref<"merge" | "rebase">("merge");
 const multi = computed(() => (list.value?.length ?? 0) > 1);
-const diverged = computed(() => !!list.value?.some((b) => (b.behind ?? 0) > 0));
+/** The repositories to push when there are several (all by default); the others are left exactly as they are. */
+const chosen = ref<string[]>([]);
+watch(list, (l) => {
+  const ids = (l ?? []).map((b) => b.space);
+  const kept = chosen.value.filter((id) => ids.includes(id));
+  chosen.value = kept.length ? kept : ids;
+});
+const pushing = computed(() => (list.value ?? []).filter((b) => !multi.value || chosen.value.includes(b.space)));
+const left = computed(() => (list.value ?? []).filter((b) => !pushing.value.includes(b)));
+const diverged = computed(() => pushing.value.some((b) => (b.behind ?? 0) > 0));
 const locked = computed(() => props.busy || working.value || !!props.confirmedAt);
 
 async function load() {
@@ -84,12 +93,13 @@ async function sync() {
   }
 }
 async function confirmRun() {
-  const lines = (list.value ?? []).map((b) => `${multi.value ? `${props.spaceName(b.space)}：` : ""}${b.branch}（${b.commits.length} 个提交${squash.value && b.commits.length > 1 ? "，压缩成一个" : ""}）→ ${b.remote ? `origin/${b.branch}` : "没有 origin，只在本地"}`);
-  const ok = await confirmDialog("确认并推送？", { message: `${lines.join("\n")}${force.value ? "\n\n远端有本地没有的提交，会按上次拉取的状态覆盖。" : ""}\n\n确认后归还工作区，分支保留。`, okText: "确认并推送" });
+  const lines = pushing.value.map((b) => `${multi.value ? `${props.spaceName(b.space)}：` : ""}${b.branch}（${b.commits.length} 个提交${squash.value && b.commits.length > 1 ? "，压缩成一个" : ""}）→ ${b.remote ? `origin/${b.branch}` : "没有 origin，只在本地"}`);
+  const skip = left.value.map((b) => `${props.spaceName(b.space)}：不动，分支 ${b.branch} 保留`);
+  const ok = await confirmDialog("确认并推送？", { message: `${[...lines, ...skip].join("\n")}${force.value ? "\n\n远端有本地没有的提交，会按上次拉取的状态覆盖。" : ""}\n\n确认后归还工作区，分支保留。`, okText: "确认并推送" });
   if (!ok) return;
   working.value = true;
   try {
-    const r = await post<{ pushed: { branch: string }[]; notes: string[] }>(`/api/runs/${props.runId}/apply`, { ...(squash.value && message.value.trim() ? { squash: message.value.trim() } : {}), ...(force.value ? { force: true } : {}) });
+    const r = await post<{ pushed: { branch: string }[]; notes: string[] }>(`/api/runs/${props.runId}/apply`, { ...(squash.value && message.value.trim() ? { squash: message.value.trim() } : {}), ...(force.value ? { force: true } : {}), ...(left.value.length ? { spaces: pushing.value.map((b) => b.space) } : {}) });
     toast(r.pushed.length ? `已推送 ${r.pushed.map((p) => p.branch).join("、")}` : r.notes.join("；") || "已确认", "ok");
     emit("changed");
   } catch (e) {
@@ -139,14 +149,18 @@ const pushState = (b: Branch) => !b.remote ? "没有 origin" : !b.pushed ? "未�
       </div>
     </div>
     <div v-if="list?.length && !confirmedAt" class="confirm stack">
+      <div v-if="multi" class="row wrap pick" role="group" aria-label="要推送的仓库">
+        <span class="muted small">推送</span>
+        <UiCheckbox v-for="b in list" :key="b.space" v-model="chosen" :value="b.space" size="sm" :disabled="locked">{{ spaceName(b.space) }}</UiCheckbox>
+      </div>
       <div class="row wrap">
         <UiCheckbox v-model="squash" size="sm" :disabled="locked">压缩成一个提交</UiCheckbox>
         <UiCheckbox v-if="diverged" v-model="force" size="sm" :disabled="locked" title="远端分支有本地没有的提交时：按上次拉取的状态覆盖">覆盖远端</UiCheckbox>
       </div>
       <input v-if="squash" v-model="message" class="input sm" maxlength="10000" :disabled="locked" placeholder="压缩后的提交信息" aria-label="压缩后的提交信息" />
       <div class="row">
-        <button class="btn primary sm" :disabled="locked || (squash && !message.trim())" @click="confirmRun">确认并推送</button>
-        <span class="muted small">推到 origin 的同名分支，归还工作区；分支保留。</span>
+        <button class="btn primary sm" :disabled="locked || (squash && !message.trim()) || !pushing.length" @click="confirmRun">确认并推送</button>
+        <span class="muted small">{{ left.length ? `只推 ${pushing.map((b) => spaceName(b.space)).join("、")}，${left.map((b) => spaceName(b.space)).join("、")} 不动。` : "" }}推到 origin 的同名分支，归还工作区；分支保留。</span>
       </div>
     </div>
   </section>
@@ -169,6 +183,7 @@ const pushState = (b: Branch) => !b.remote ? "没有 origin" : !b.pushed ? "未�
 .where code { overflow-wrap: anywhere; white-space: normal; }
 .sync { align-items: center; gap: 8px; }
 .sync .grow { flex: 1; min-width: 160px; }
+.pick { align-items: center; gap: 6px 14px; }
 .confirm { gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
 .err { color: var(--danger); margin: 0; }
 </style>

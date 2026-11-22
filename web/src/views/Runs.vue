@@ -64,9 +64,9 @@ const aiOptions = computed(() => {
   for (const b of ais.value) {
     opts.push({ value: b.profile, label: b.profile, hint: `近 30 天 ${b.runs} 次` });
     // A backend that ran one model (and every run says so): its own row already covers it.
-    if (b.models.length > 1 || (b.models[0] && b.models[0].runs < b.runs)) for (const m of b.models) opts.push({ value: `${b.profile}${AI_SEP}${m.model}`, label: `${b.profile}${AI_SEP}${m.model}`, hint: `${m.runs} 次`, indent: true });
+    if (b.models.length > 1 || (b.models[0] && b.models[0].runs < b.runs)) for (const m of b.models) opts.push({ value: `${b.profile}${AI_SEP}${m.model}`, label: m.model, hint: `${b.profile} · ${m.runs} 次`, indent: true });
   }
-  if (aiFilter.value && !opts.some((o) => o.value === aiFilter.value)) opts.push({ value: aiFilter.value, label: aiFilter.value });
+  if (aiFilter.value && !opts.some((o) => o.value === aiFilter.value)) opts.push({ value: aiFilter.value, label: aiFilter.value.split(AI_SEP).pop()! });
   return opts;
 });
 const loadAis = () => get<{ backends: typeof ais.value }>("/api/runs/ais").then((r) => (ais.value = r.backends)).catch(() => {});
@@ -380,8 +380,13 @@ const kindOptions = computed(() => [
           <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
           <div v-if="filtersOpen" id="run-filters" class="more-filters">
             <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
-            <ChipPicker v-model="kindFilter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
-            <div class="by-filter"><UiSelect v-model="byFilter" size="sm" width="132px" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" /><UiSelect v-model="viaFilter" size="sm" width="112px" aria-label="触发方式" :options="viaOptions" title="按触发方式筛选：找助手（@ 或私聊机器人）、有人找你……" /><UiSelect v-model="aiFilter" size="sm" width="180px" aria-label="后端或模型" :options="aiOptions" :search-at="8" title="按运行用的 AI 后端筛选，后端下面缩进的是它用过的模型" /></div>
+            <!-- Two columns of the same widths: 类型 · 后端 above, 触发人 · 触发方式 below. -->
+            <div class="filter-grid">
+              <ChipPicker v-model="kindFilter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
+              <UiSelect v-model="aiFilter" size="sm" width="100%" aria-label="后端或模型" :options="aiOptions" :search-at="8" :title="aiFilter ? `后端或模型：${aiFilter}` : '按运行用的 AI 后端筛选，后端下面缩进的是它用过的模型'" />
+              <UiSelect v-model="byFilter" size="sm" width="100%" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" />
+              <UiSelect v-model="viaFilter" size="sm" width="100%" aria-label="触发方式" :options="viaOptions" title="按触发方式筛选：找助手（@ 或私聊机器人）、有人找你……" />
+            </div>
             <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
           </div>
         </template>
@@ -639,7 +644,8 @@ const kindOptions = computed(() => [
 .head .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13px; color: var(--ink); }
 .head .delegate { grid-area: delegate; }
 .head .status-filter { grid-area: status; justify-self: start; }
-.head .by-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+.head .filter-grid { display: grid; grid-template-columns: 132px 124px; gap: 6px; align-items: start; }
+.head .filter-grid > * { min-width: 0; }
 .run .by { display: flex; align-items: center; gap: 4px; }
 .linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .linkish:hover { text-decoration: underline; }

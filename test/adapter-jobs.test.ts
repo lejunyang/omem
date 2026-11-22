@@ -17,6 +17,36 @@ describe("installing and upgrading a backend's npm package from settings", () =>
     expect(adapter.adapterJob("gemini")).toBeNull();
   });
 
+  it("knows what a registry backend was added at and moves an npx one to the registry's version", async () => {
+    const reg = await import("../src/agents/registry-update.ts");
+    const dl = join(app.home, "agents", "antigravity-acp", "1.5.2", "agy_acp_server.par");
+    expect(reg.registrySource(app.home, { id: "antigravity-acp", transport: "acp", command: dl, args: [] })).toMatchObject({ kind: "download", registryId: "antigravity-acp", version: "1.5.2" });
+    expect(reg.registrySource(app.home, { id: "auggie", transport: "acp", command: "npx", args: ["-y", "@augmentcode/auggie@0.37.0", "--acp"] })).toMatchObject({ kind: "npx", pkg: "@augmentcode/auggie", version: "0.37.0", at: 1 });
+    expect(reg.registrySource(app.home, { id: "fa", transport: "acp", command: "uvx", args: ["fast-agent-acp==0.10.63"] })).toMatchObject({ kind: "uvx", pkg: "fast-agent-acp", version: "0.10.63" });
+    expect(reg.registrySource(app.home, { id: "codex", transport: "acp", command: "codex-acp", args: [] })).toBeNull();
+    expect(reg.versionNewer("2026.11.19", "2026.9.30")).toBe(true);
+    expect(reg.versionNewer("0.37.0", "0.37.0")).toBe(false);
+    expect(reg.versionNewer("3000.14.30821", "3000.14.9")).toBe(true);
+
+    app.config.agents.profiles = [...app.config.agents.profiles, { id: "auggie", name: "Auggie (ACP)", transport: "acp", command: "npx", args: ["-y", "@augmentcode/auggie@0.37.0", "--acp"], env: {}, idleTimeoutMs: 600_000 } as any];
+    reg.resetRegistryCacheForTests([{ id: "auggie", name: "Auggie", version: "0.38.1", distribution: { npx: { package: "@augmentcode/auggie@0.38.1", args: ["--acp"] } } }]);
+    const status = await reg.registryStatus(app, "auggie");
+    expect(status).toMatchObject({ version: "0.37.0", latest: "0.38.1", upgradable: true, via: "npx" });
+    adapter.resetAdapterJobsForTests();
+    // Stubbing the registry fetch: upgradeRegistryAgent asks it afresh, so keep the cache warm through fetch.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ agents: [{ id: "auggie", name: "Auggie", version: "0.38.1", distribution: { npx: { package: "@augmentcode/auggie@0.38.1", args: ["--acp"] } } }] }))) as typeof fetch;
+    try {
+      await reg.upgradeBackend(app, "auggie");
+      const end = await adapter.waitForAdapterJob("auggie");
+      expect(end).toMatchObject({ ok: true, before: "0.37.0", after: "0.38.1", via: "npx" });
+      expect(app.config.agents.profiles.find((p) => p.id === "auggie")!.args).toEqual(["-y", "@augmentcode/auggie@0.38.1", "--acp"]);
+      await expect(reg.upgradeBackend(app, "auggie", "1.0.0")).rejects.toThrow(/不能指定 version/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }, 60_000);
+
   // A fake npm on PATH that "installs" gemini slowly into a prefix, the way a global install lays it out.
   describe.skipIf(process.platform === "win32")("as a background job", () => {
     const root = mkdtempSync(join(tmpdir(), "omem-adapter-"));

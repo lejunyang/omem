@@ -2074,8 +2074,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/runs/:id/apply-targets",async (req) => codeApplyTargets(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/apply", async (req) => {
-    const b = q(z.object({ squash: z.string().trim().max(10000).optional(), force: z.boolean().optional() }), req.body ?? {});
-    return applyCodeRun(app, (req.params as { id: string }).id, { squash: b.squash || undefined, force: b.force });
+    // `spaces`: push only these repositories of a delegation on work branches; the others are left as they are.
+    const b = q(z.object({ squash: z.string().trim().max(10000).optional(), force: z.boolean().optional(), spaces: z.array(z.string().min(1)).max(50).optional() }), req.body ?? {});
+    return applyCodeRun(app, (req.params as { id: string }).id, { squash: b.squash || undefined, force: b.force, spaces: b.spaces });
   });
   // A delegation's work branch (src/agents/code-branch.ts): its state, and what the owner does with it before confirming.
   server.get("/api/runs/:id/branch", async (req) => {
@@ -3173,24 +3174,27 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return probe;
   });
 
-  // The npm adapter behind an ACP backend (src/agents/adapter.ts): installed and newest version, and the
-  // install or upgrade job running in the background (`?quick=1` skips asking npm for the newest version).
+  // The npm adapter behind an ACP backend (src/agents/adapter.ts), or the version a backend added from the
+  // ACP registry was added at (agents/registry-update.ts): installed and newest version, and the install or
+  // upgrade job running in the background (`?quick=1` skips asking for the newest version).
   server.get("/api/agents/:id/adapter", async (req) => {
     const { adapterStatus, hasAdapter, adapterJob, canInstall } = await import("../agents/adapter.ts");
     const id = (req.params as { id: string }).id;
     const owner = who(req) === OWNER;
     const job = owner ? adapterJob(id) : null;
     if ((req.query as { quick?: string }).quick) return { id, job, canInstall: owner && canInstall(app, id) };
-    if (!hasAdapter(app, id)) return { id, package: null, job, canInstall: owner && canInstall(app, id) };
-    const status = await adapterStatus(app, id);
+    const reg = await import("../agents/registry-update.ts");
+    const npmAdapter = hasAdapter(app, id), fromRegistry = !npmAdapter && reg.isRegistryBackend(app, id);
+    if (!npmAdapter && !fromRegistry) return { id, package: null, job, canInstall: owner && canInstall(app, id) };
+    const status = fromRegistry ? await reg.registryStatus(app, id, !!(req.query as { fresh?: string }).fresh) : await adapterStatus(app, id);
     if (owner) return status;
     const { package: pkg, version, latest, upgradable } = status;
     return { id, package: pkg, version, latest, upgradable };
   });
   server.post("/api/agents/:id/adapter/upgrade", async (req) => {
-    const { upgradeAdapter } = await import("../agents/adapter.ts");
+    const { upgradeBackend } = await import("../agents/registry-update.ts");
     const b = q(z.object({ version: z.string().max(40).optional() }), req.body ?? {});
-    return { job: await upgradeAdapter(app, (req.params as { id: string }).id, b.version) };
+    return { job: await upgradeBackend(app, (req.params as { id: string }).id, b.version) };
   });
   server.post("/api/agents/:id/install", async (req) => {
     const { installAdapter } = await import("../agents/adapter.ts");

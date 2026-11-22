@@ -654,12 +654,12 @@ export const peerCommands: Record<string, Command> = {
     run: async (app) => (await import("./peer-inspect.ts")).agentsReport(app),
   },
   "agent-upgrade": {
-    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版：osdk 管着的那一份用 osdk use -g npm:<包>，其余用 npm i -g <包>@latest（从 osdk.toml 的 [registries.npm] 那个公开源装，不受这台机器 .npmrc 的影响，装进命令实际所在的 npm 前缀）；给 version（如 2.7.0）时装这个版本，并且这一次不受这台机器 npm 的发布时长下限限制；等装完才返回（和设置页共用一个后台任务，已经在装时报 409），版本变了就重新检测模型；新会话起生效",
+    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版，从 ACP 注册表下载或用 npx / uvx 添加的后端升到注册表上的版本：osdk 管着的那一份用 osdk use -g npm:<包>，其余用 npm i -g <包>@latest（从 osdk.toml 的 [registries.npm] 那个公开源装，不受这台机器 .npmrc 的影响，装进命令实际所在的 npm 前缀）；给 version（如 2.7.0）时装这个版本，并且这一次不受这台机器 npm 的发布时长下限限制；等装完才返回（和设置页共用一个后台任务，已经在装时报 409），版本变了就重新检测模型；新会话起生效",
     schema: z.object({ id: z.string().regex(/^[a-z0-9-]{1,40}$/), version: z.string().regex(/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/).optional() }),
     // A company mirror may lag behind: src/agents/adapter.ts installs from the public registry, into the prefix in use, then probes again.
     run: async (app, a) => {
       const m = await import("../agents/adapter.ts");
-      await m.upgradeAdapter(app, a.id, a.version);
+      await (await import("../agents/registry-update.ts")).upgradeBackend(app, a.id, a.version);
       return m.waitForAdapterJob(a.id);
     },
   },

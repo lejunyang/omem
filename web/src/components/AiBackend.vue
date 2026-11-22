@@ -46,7 +46,17 @@ watch(open, (o) => { if (o && prober.value && mayProbe.value) void detectProbe(p
 
 // ---- the npm adapter behind the ACP agent (src/agents/adapter.ts): installed and newest version, upgrade in
 // place. The upgrade is a job on the server: the page follows it, and a refresh finds it still running.
-type Adapter = { id: string; package: string | null; version?: string | null; latest?: string | null; latestError?: string; upgradable?: boolean; via?: "osdk" | "npm"; job?: AdapterJob | null };
+type Adapter = { id: string; package: string | null; version?: string | null; latest?: string | null; latestError?: string; upgradable?: boolean; via?: AdapterJob["via"]; job?: AdapterJob | null };
+/** How each way installs, for the confirmation, and the verb on the running line. */
+const VIA: Record<AdapterJob["via"], { how: string; line: string }> = {
+  osdk: { how: "用 osdk 装（osdk 管着这一份），替换这台机器上正在用的那一份", line: "用 osdk " },
+  npm: { how: "从 omem 指定的公开 npm 源装，替换这台机器上正在用的那一份", line: "用 npm " },
+  download: { how: "从 ACP 注册表下载这个版本的程序，按注册表给的 sha256 校验后换上（上一版留着）", line: "下载并" },
+  npx: { how: "把配置里 npx 运行的包换成注册表上的这个版本，下次启动时由 npx 取", line: "" },
+  uvx: { how: "把配置里 uvx 运行的包换成注册表上的这个版本，下次启动时由 uvx 取", line: "" },
+};
+/** Registry backends: “检查更新” asks the registry again instead of the ten-minute copy. */
+const fresh = ref(false);
 const acp = computed(() => props.profiles.find((p) => p.transport === "acp" && p.installed && !p.peer));
 const adapter = ref<Adapter | null>(null);
 const checking = ref(false), starting = ref(false);
@@ -56,7 +66,8 @@ async function checkAdapter() {
   if (!acp.value) return;
   checking.value = true;
   try {
-    adapter.value = await get<Adapter>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter`);
+    adapter.value = await get<Adapter>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter${fresh.value ? "?fresh=1" : ""}`);
+    fresh.value = false;
     if (adapter.value.job) follow(adapter.value.job);
   }
   catch { adapter.value = null; }
@@ -80,8 +91,8 @@ const noEffort = computed(() => {
 async function upgradeAdapter() {
   const a = adapter.value;
   if (!a?.package || !a.latest || !acp.value) return;
-  const how = a.via === "osdk" ? "用 osdk 装（osdk 管着这一份）" : "从 omem 指定的公开 npm 源装";
-  if (!(await confirmDialog(`把 ${a.package} 升级到 ${a.latest}？`, { message: `${how}，替换这台机器上正在用的那一份；正在跑的会话不受影响，新会话起用新版。带原生程序的包在慢的源上要装好几分钟，在后台装，可以离开这页。装完会重新检测模型。`, okText: "升级" }))) return;
+  const how = VIA[a.via ?? "npm"].how;
+  if (!(await confirmDialog(`把 ${a.package} 升级到 ${a.latest}？`, { message: `${how}；正在跑的会话不受影响，新会话起用新版。带原生程序的包在慢的源上要装好几分钟，在后台装，可以离开这页。装完会重新检测模型。`, okText: "升级" }))) return;
   starting.value = true;
   try {
     const r = await post<{ job: AdapterJob }>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter/upgrade`, {});
@@ -281,10 +292,10 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
             <span class="spacer" />
             <button v-if="upgrading" class="btn sm" disabled>升级中…</button>
             <button v-else-if="adapter?.upgradable" class="btn sm" @click="upgradeAdapter">升级到 {{ adapter.latest }}</button>
-            <button v-else-if="adapter" class="btn ghost sm" :disabled="checking" @click="checkAdapter">{{ checking ? "查询中…" : "检查更新" }}</button>
+            <button v-else-if="adapter" class="btn ghost sm" :disabled="checking" @click="fresh = true; checkAdapter()">{{ checking ? "查询中…" : "检查更新" }}</button>
           </div>
           <div v-if="p === acp && job && (job.running || job.ok === false)" class="small job" :class="{ 'warn-text': job.ok === false }">
-            <template v-if="job.running">在后台{{ job.via === "osdk" ? "用 osdk " : "用 npm " }}升级，已 {{ jobElapsed(job) }}，可以离开这页<span v-if="job.output" class="muted mono ell job-out" :title="job.output">{{ lastLine(job.output) }}</span></template>
+            <template v-if="job.running">在后台{{ VIA[job.via].line }}升级，已 {{ jobElapsed(job) }}，可以离开这页<span v-if="job.output" class="muted mono ell job-out" :title="job.output">{{ lastLine(job.output) }}</span></template>
             <template v-else>上次升级没成功（{{ jobElapsed(job) }}）：{{ job.message ?? lastLine(job.output) }}</template>
           </div>
           <div v-if="editing === p.id" class="stack">

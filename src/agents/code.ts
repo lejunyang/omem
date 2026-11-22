@@ -1190,13 +1190,13 @@ function removeWorktrees(app: App, runId: string, opts: { applied?: boolean } = 
  * applied is committed there and becomes the new start, so later rounds' diffs (and the next
  * apply) hold only what came after.
  */
-export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: boolean; squash?: string; force?: boolean } = {}) {
+export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: boolean; squash?: string; force?: boolean; spaces?: string[] } = {}) {
   const r = getRun(app, runId);
   if (isBranchWork(worktreesOf(app, String(r.input.continueFrom ?? r.id)))) {
     // The commits are on the branch already (and in the main directory when it has the branch).
     if (opts.keepWorking) return { applied: false, spaces: [] as string[], targets: [] as AppliedTarget[] };
     if (r.kind !== "code" || isBranchReview(r)) throw new HttpError(400, "只有编码交办能确认");
-    return confirmBranchRun(app, runId, { squash: opts.squash, force: opts.force });
+    return confirmBranchRun(app, runId, { squash: opts.squash, force: opts.force, spaces: opts.spaces });
   }
   const targets = applyTargets(app, runId);
   if (!targets.length) throw new HttpError(404, "没有可应用的改动");

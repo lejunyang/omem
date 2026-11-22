@@ -33,14 +33,21 @@ updated: 2026-11-22
 
 登记凭据种类时就建立本人的持有。AI 后端和命令行都能按出借设置选到尚未检查或检查无结果的本机登录。检查明确报缺失或过期后停止出借，后续检查异常仍保留上次结论。只读命令须由资源服务实时核实发起人的读取权。持有选择从 `src/agents/credentials.ts` 读起，命令选人和执行分别见 `credential-access.ts` 和 `credential-execution.ts`。
 
-## 设置 → 空间改成紧凑的树；运行页按后端或模型筛选（2026-11-22）
+## 设置 → 空间改成紧凑的树；运行页按后端或模型筛选；确认交办只推一部分仓库（2026-11-22）
 
 - `web/src/views/settings/Spaces.vue`：左边每个空间一行（名字 + 仓库数），业务空间下的仓库可以折叠（展开状态存在浏览器里，筛选时全展开，筛选也匹配仓库名和目录），说明和目录放进悬停提示；不属于任何业务的仓库在“独立仓库”小标题下。右边不再空着：打开时依次选地址里的 `?space=`、上次在这页打开的、当前空间、列表第一个；空间的说明、原件 / 页 / 仓库数（仓库是所属业务和目录名）移到右边的标题下。底部“关闭”换成“还原”（丢掉没保存的修改）；新建表单取消后回到原来的空间。右边的仓库清单每个两行（名字和索引状态一行、目录一行）。
-- 运行页：全部运行 → 筛选 多了“后端或模型”下拉，列出近 30 天用过的后端（AI 档案）和它们用过的模型（只有一个模型的后端不再分列）。接口 `GET /api/runs/ais`（只统计这个人能看的运行），`GET /api/runs` 加 `ai`、`model` 参数；后端按运行记下的 `ai.profile`，没有时用排队时的 `profile_id`（`src/agents/runs.ts` 的 `runAis`）。测试 `test/run-ai-filter.test.ts`。
+- 确认交办可以只推一部分仓库：`confirmBranchRun` / `applyCodeRun` 加 `spaces`（`POST /api/runs/:id/apply` 和工具 `apply_code_run` 同名参数），没选的仓库不压缩、不推送、分支原样，工作区照样归还，结果的 notes 写“没动”；分支面板（`CodeBranchPanel.vue`）在有几个仓库时列出勾选框。测试 `test/code-confirm-some.test.ts`。
+- 运行页：全部运行 → 筛选 多了“后端或模型”下拉（和“全部类型”同一行，下面是触发人、触发方式，两列对齐），列出近 30 天用过的后端（AI 档案）和它们用过的模型（只有一个模型的后端不再分列）。接口 `GET /api/runs/ais`（只统计这个人能看的运行），`GET /api/runs` 加 `ai`、`model` 参数；后端按运行记下的 `ai.profile`，没有时用排队时的 `profile_id`（`src/agents/runs.ts` 的 `runAis`）。测试 `test/run-ai-filter.test.ts`。
 
 ## 观察者读取个人凭据清单时隐藏出借方式和成员名单（2026-11-22）
 
 从 `src/agents/credentials.ts` 的 `myCredentials` 读起。凭据清单和设置接口复用 `src/auth/capabilities.ts` 的成员身份判断。观察者仍能读取自己的凭据清单，响应省略全局出借方式，候选成员为空。两处接口的对照用例在 `test/credentials.test.ts`。
+
+## 从 ACP 注册表添加的后端也能升级（2026-11-22）
+
+- 从注册表“下载”的程序装在 `<数据目录>/agents/<id>/<版本>/`，npx / uvx 添加的在参数里写死了 `<包>@<版本>` / `<包>==<版本>`，以前没有任何地方会把它们升上去。`src/agents/registry-update.ts` 从配置认出这三种来源和版本（`registrySource`），和注册表（缓存十分钟，“检查更新”时重新读）比较。
+- 设置 → 后端与模型 展开这类后端，适配器那一行显示版本和“有新版 x”，升级走同一个后台任务（`adapter.ts` 拆出的 `startTask`）：下载的程序按注册表的 sha256 校验后解压到新版本目录，配置改指过去，留上一版、删更早的，再检测一次模型；npx / uvx 只改参数里的版本，下次启动时取（不在任务里检测，免得在任务里下载）。`POST /api/agents/:id/adapter/upgrade` 和远程命令 `agent-upgrade` 经 `upgradeBackend` 分到 npm 适配器或注册表；注册表后端不能指定 version。
+- 测试：`test/adapter-jobs.test.ts`（来源识别、版本比较、npx 后端升级改参数）。
 
 ## 后端的 npm 包在网页上安装和升级，改成后台任务；ACP 目录对照注册表刷新（2026-11-22）
 
