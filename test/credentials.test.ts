@@ -14,7 +14,7 @@ import { sandboxStatus } from "../src/agents/own-run.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
 import type { CredentialDef } from "../packages/plugin-sdk/credential.ts";
-import { forgetPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
+import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { codeHash, setTrust, trustState } from "../src/plugins/trust.ts";
 
 let app: App;
@@ -240,4 +240,25 @@ it("成员的每日检查只能读取秘密，检查失败当天只提醒一次"
   const c = listConnections(app, "ann")[0];
   expect(connectionSecrets(app, c.id)?.accessToken).toBe("fixture-secret-ann");
   expect(all(app.db, "select id from notifications where user_id='ann' and title like '%检查失败%'")).toHaveLength(1);
+});
+
+it("同一份插件代码登记的安装和状态声明改变时需要重新确认", async () => {
+  const dir = join(app.home, "plugins", "credprobe");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "plugin.yaml"), "id: credprobe\nname: 示例插件\npermissions:\n  credential: true\n");
+  writeFileSync(join(dir, "server.mjs"), `export default api => api.credential({
+    id: "demo", name: "示例", provides: { commands: [{name: "demo", state: [process.env.FIXTURE_CREDENTIAL_STATE]}] },
+    async login() { return {user:"demo"} }
+  });`);
+  vi.stubEnv("FIXTURE_CREDENTIAL_STATE", ".demo-a");
+  try {
+    await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
+    await trustPlugin(app, "credprobe", "inprocess");
+    await setPluginEnabled(app, "credprobe", false);
+    vi.stubEnv("FIXTURE_CREDENTIAL_STATE", ".demo-b");
+    expect((await setPluginEnabled(app, "credprobe", true)).trust).toBe("changed");
+    expect(myCredentials(app, "ann").credentials).toHaveLength(0);
+    await trustPlugin(app, "credprobe", "inprocess");
+    expect(myCredentials(app, "ann").credentials[0].kind).toBe("credprobe:demo");
+  } finally { vi.unstubAllEnvs(); }
 });
