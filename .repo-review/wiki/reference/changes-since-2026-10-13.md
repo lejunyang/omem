@@ -39,6 +39,13 @@ updated: 2026-11-22
 
 从 `src/agents/credentials.ts` 的 `myCredentials` 读起。凭据清单和设置接口复用 `src/auth/capabilities.ts` 的成员身份判断。观察者仍能读取自己的凭据清单，响应省略全局出借方式，候选成员为空。两处接口的对照用例在 `test/credentials.test.ts`。
 
+## 在网页上登录这台机器的后端，Claude Code 能贴授权码登录（2026-11-22）
+
+- 以前这台机器本身（服务在用、成员借用的那份）的登录要到机器上跑 CLI。`src/agents/machine-login.ts` 用目录里已有的账号声明（`account.login` / `status` / `cli`），以服务自己的环境和 HOME 跑登录命令，不进成员沙箱：链接、验证码给页面，状态命令退出码 0 算登录。接口 `GET|POST|DELETE /api/agents/:id/machine-login`（`?check=1` 现查一次）、`POST …/machine-login/input`，都只给本人（`routes.ts`）。网页：设置 → 后端与模型 展开后端，最上面“这台机器的登录”（`web/src/components/MachineLogin.vue`），目录没声明登录方式的后端不显示。
+- 登录声明加 `input`（`catalog.ts` 的 `AccountSpec.login`、配置里 `account` 的校验）：登录命令打印链接后等人把授权页给的码贴回去。Claude Code 用 `claude auth login`（在管道上也读这一行），所以成员在 账号 → 我的 AI 账号 也能直接登录 Claude Code，不必在自己电脑上 `claude setup-token` 再粘贴令牌（令牌仍可用）。成员这边 `accounts.ts` 的 `sendLoginInput`、`POST /api/me/agent-accounts/:backend/login/input`，页面上多一个授权码输入框。
+- 现在声明了无界面登录的：Codex（设备码）、TraeX（设备码）、Claude Code（贴授权码）、豆包命令行（二维码链接）。Gemini、Copilot、Qwen 等其他后端没有声明，页面上不出现登录，仍要在机器上登录。
+- 测试：`test/machine-login.test.ts`（假 CLI 打印链接、等授权码、状态命令）。
+
 ## 从 ACP 注册表添加的后端也能升级（2026-11-22）
 
 - 从注册表“下载”的程序装在 `<数据目录>/agents/<id>/<版本>/`，npx / uvx 添加的在参数里写死了 `<包>@<版本>` / `<包>==<版本>`，以前没有任何地方会把它们升上去。`src/agents/registry-update.ts` 从配置认出这三种来源和版本（`registrySource`），和注册表（缓存十分钟，“检查更新”时重新读）比较。

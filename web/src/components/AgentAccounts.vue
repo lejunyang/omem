@@ -34,6 +34,8 @@ type Backend = {
   error?: string;
   url?: string;
   code?: string;
+  /** The login waits for the code the authorization page shows (Claude Code). */
+  input?: boolean;
   quota?: Quota | null;
 };
 type Mine = { supported: boolean; reason?: string; owner: boolean; backends: Backend[] };
@@ -85,6 +87,16 @@ const pasteToken = (b: Backend) =>
     if (!token?.trim()) return;
     const r = await post<{ state: string }>(`/api/me/agent-accounts/${b.id}/token`, { token: token.trim() });
     toast(r.state === "logged-in" ? `${b.name} 已登录` : `令牌已保存，但 ${b.name} 说还没登录`, r.state === "logged-in" ? "ok" : "error");
+  });
+/** The code the authorization page showed, written to the waiting login (one per backend). */
+const pasted = ref<Record<string, string>>({});
+const sendCode = (b: Backend) =>
+  act(b, "input", async () => {
+    const text = (pasted.value[b.id] ?? "").trim();
+    if (!text) return;
+    await post(`/api/me/agent-accounts/${b.id}/login/input`, { text });
+    pasted.value = { ...pasted.value, [b.id]: "" };
+    toast("已提交授权码，等它确认", "ok");
   });
 const check = (b: Backend) => act(b, "check", () => post(`/api/me/agent-accounts/${b.id}/check`));
 const readQuota = (b: Backend) => act(b, "quota", () => post(`/api/me/agent-accounts/${b.id}/quota`));
@@ -156,12 +168,16 @@ function reveal(kind: string) {
             <button v-else class="btn ghost sm danger" :disabled="!!busy" @click="logout(b)">取消</button>
           </div>
           <div v-if="b.state === 'logging-in' && b.url" class="stack tight login">
-            <span class="small">在打开的页面里完成登录{{ b.code ? "，验证码是" : "" }}<strong v-if="b.code" class="mono code">{{ b.code }}</strong>。完成后这里会自动变成“已登录”。</span>
+            <span class="small">在打开的页面里完成登录{{ b.code ? "，验证码是" : "" }}<strong v-if="b.code" class="mono code">{{ b.code }}</strong>。{{ b.input ? "页面最后会给出一段授权码，粘贴到下面提交。" : "" }}完成后这里会自动变成“已登录”。</span>
             <span class="row wrap tight-row">
               <a :href="b.url" target="_blank" rel="noopener noreferrer" class="mono small ellipsis link" :title="b.url">{{ b.url }}</a>
               <button class="btn ghost sm" @click="copy(b.url!)">复制链接</button>
               <button v-if="b.code" class="btn ghost sm" @click="copy(b.code!)">复制验证码</button>
             </span>
+            <form v-if="b.input" class="row wrap tight-row" @submit.prevent="sendCode(b)">
+              <input v-model="pasted[b.id]" class="input sm mono grow" maxlength="4000" autocomplete="off" spellcheck="false" placeholder="授权页给出的授权码" :aria-label="`${b.name} 的授权码`" />
+              <button class="btn sm primary" type="submit" :disabled="!!busy || !(pasted[b.id] ?? '').trim()">{{ busy === `${b.id}:input` ? "提交中…" : "提交" }}</button>
+            </form>
           </div>
           <div v-if="b.state === 'logged-in' && b.quota" class="row wrap quota small">
             <span class="muted">额度{{ b.quota.plan ? `（${b.quota.plan}）` : "" }}</span>

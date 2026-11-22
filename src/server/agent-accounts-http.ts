@@ -6,7 +6,7 @@ import { configSchema, saveConfig } from "../core/config.ts";
 import { findUser, OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { isOwner } from "../auth/permissions.ts";
-import { accountEntry, allAccounts, checkAccount, myAccounts, readMyQuota, removeAccount, saveToken, startLogin } from "../agents/accounts.ts";
+import { accountEntry, allAccounts, checkAccount, myAccounts, readMyQuota, removeAccount, saveToken, sendLoginInput, startLogin } from "../agents/accounts.ts";
 import { sandboxSupport } from "../agents/sandbox.ts";
 
 /**
@@ -53,6 +53,13 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
     const body = z.object({ method: z.string().max(80).optional() }).safeParse(req.body ?? {});
     if (!body.success) throw new HttpError(400, "登录方式不对");
     return startLogin(app, userId, backendOf(req), body.data.method || "native");
+  });
+  // The code the authorization page showed, for a login that waits for it (Claude Code's).
+  server.post("/api/me/agent-accounts/:backend/login/input", async (req) => {
+    const userId = member(req);
+    const body = z.object({ text: z.string().min(1).max(4000) }).safeParse(req.body ?? {});
+    if (!body.success) throw new HttpError(400, "要粘贴授权码");
+    return sendLoginInput(app, userId, backendOf(req), body.data.text);
   });
   server.post("/api/me/agent-accounts/:backend/token", async (req) => {
     const userId = member(req);

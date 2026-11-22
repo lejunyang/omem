@@ -338,9 +338,9 @@ export function recordedAccount<P extends AgentProfile>(app: App, userId: string
 // ---------------------------------------------------------------- commands in the user's sandbox
 
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g;
-const clean = (s: string) => s.replace(ANSI, "");
+export const clean = (s: string) => s.replace(ANSI, "");
 
-function cliOf(entry: AccountEntry) {
+export function cliOf(entry: AccountEntry) {
   const c = entry.account.cli ?? entry.command;
   return /[~$/]/.test(c) ? expandPath(c) : c;
 }
@@ -420,7 +420,8 @@ function afterLogin(app: App, userId: string, backend: string) {
 
 // ---------------------------------------------------------------- logging in
 
-type Pending = { stop(): void; url: string; code?: string; startedAt: string; method: string };
+/** `input`: the login command waits for the code from the authorization page (`sendLoginInput`). */
+type Pending = { stop(): void; url: string; code?: string; startedAt: string; method: string; child?: ChildProcessWithoutNullStreams; input?: boolean };
 const logins = new Map<string, Pending>();
 const loginKey = (app: App, userId: string, backend: string) => `${app.home}|${userId}|${backend}`;
 
@@ -458,7 +459,7 @@ export function loginMethods(app: App, entry: AccountEntry) {
  * (`<plugin>:<id>`, in omem's process). Returns the link and code to show; `done` when it finished
  * without needing one. The link and code also go to their Feishu private chat.
  */
-export function startLogin(app: App, userId: string, backend: string, method = "native"): Promise<{ url?: string; code?: string; done?: boolean }> {
+export function startLogin(app: App, userId: string, backend: string, method = "native"): Promise<{ url?: string; code?: string; done?: boolean; input?: boolean }> {
   const entry = requireEntry(app, backend);
   const support = sandboxSupport();
   if (!support.ok) throw new HttpError(400, `这台机器不能按人登录 AI 账号：${support.reason}`);
@@ -467,7 +468,7 @@ export function startLogin(app: App, userId: string, backend: string, method = "
   if (!spec) throw new HttpError(400, `${entry.name} 没有无界面登录：${entry.account.tokenEnv ? "粘贴令牌" : loginMethodsFor(entry.id).length ? "选一个插件提供的登录方式" : "这个后端暂时不能按人登录"}`);
   const key = loginKey(app, userId, backend);
   const running = logins.get(key);
-  if (running?.method === "native") return Promise.resolve({ url: running.url, ...(running.code ? { code: running.code } : {}) });
+  if (running?.method === "native") return Promise.resolve({ url: running.url, ...(running.code ? { code: running.code } : {}), ...(running.input ? { input: true } : {}) });
   if (running) {
     logins.delete(key);
     running.stop();
@@ -480,9 +481,10 @@ export function startLogin(app: App, userId: string, backend: string, method = "
   }
   const urlRe = new RegExp(spec.url);
   const codeRe = spec.code ? new RegExp(spec.code) : null;
+  const inputRe = spec.input ? new RegExp(spec.input, "i") : null;
   let out = "";
   return new Promise((resolve, reject) => {
-    let found: { url: string; code?: string } | null = null;
+    let found: { url: string; code?: string; input?: boolean } | null = null;
     let settled = false;
     const finish = (err?: Error) => {
       if (settled) return;
@@ -493,7 +495,7 @@ export function startLogin(app: App, userId: string, backend: string, method = "
         stop(child);
         return reject(err ?? new HttpError(502, "登录命令没有给出链接"));
       }
-      const pending: Pending = { stop: () => stop(child), ...found, startedAt: now(), method: "native" };
+      const pending: Pending = { stop: () => stop(child), ...found, startedAt: now(), method: "native", child };
       logins.set(key, pending);
       const overall = setTimeout(() => stop(child), spec.timeoutMs ?? 600_000);
       overall.unref?.();
@@ -513,8 +515,9 @@ export function startLogin(app: App, userId: string, backend: string, method = "
       const url = urlRe.exec(text)?.[0];
       if (!url) return;
       const code = codeRe?.exec(text.replace(url, ""))?.[0];
-      found = { url, ...(code ? { code } : {}) };
-      if (!codeRe || code) finish();
+      const asks = !!inputRe?.test(text.replace(url, ""));
+      found = { url, ...(code ? { code } : {}), ...(asks ? { input: true } : {}) };
+      if ((!codeRe || code) && (!inputRe || asks)) finish();
       // The code may come a line after the link.
       else codeTimer ??= setTimeout(() => finish(), 3000);
     };
@@ -525,6 +528,20 @@ export function startLogin(app: App, userId: string, backend: string, method = "
       if (!settled) finish(new HttpError(502, `登录命令退出了（${code}），没有给出链接：${clean(out).trim().slice(-300) || "没有输出"}`));
     });
   });
+}
+
+/**
+ * The code the authorization page showed, for a login command that waits for it (`account.login.input`,
+ * e.g. Claude Code's `auth login`): written to the command as one line. The command then finishes by
+ * itself and the check after it says whether it worked.
+ */
+export function sendLoginInput(app: App, userId: string, backend: string, text: string) {
+  const pending = logins.get(loginKey(app, userId, backend));
+  if (!pending?.input || !pending.child) throw new HttpError(409, "没有在等授权码的登录：重新点“登录”");
+  const line = text.trim();
+  if (!line || line.length > 4000 || /[\r\n]/.test(line)) throw new HttpError(400, "授权码是一行文字");
+  pending.child.stdin.write(line + "\n");
+  return { ok: true };
 }
 
 /** What a plugin's method gets for one person (docs/v2/agent-accounts.md §6). */
@@ -844,6 +861,8 @@ export type AccountBackendView = {
   error?: string;
   url?: string;
   code?: string;
+  /** The login waits for the code the authorization page shows (`sendLoginInput`). */
+  input?: boolean;
   quota?: ReturnType<typeof quotaView>;
 };
 
@@ -878,7 +897,7 @@ function viewOf(app: App, userId: string, e: AccountEntry, withQuota = false): A
     ...(s.checkedAt ? { checkedAt: s.checkedAt } : {}),
     ...(s.expiresAt ? { expiresAt: new Date(s.expiresAt).toISOString() } : {}),
     ...(s.error && state !== "logged-in" ? { error: s.error } : {}),
-    ...(pending?.url ? { url: pending.url, ...(pending.code ? { code: pending.code } : {}) } : {}),
+    ...(pending?.url ? { url: pending.url, ...(pending.code ? { code: pending.code } : {}), ...(pending.input ? { input: true } : {}) } : {}),
     ...(quota ? { quota } : {}),
   };
 }

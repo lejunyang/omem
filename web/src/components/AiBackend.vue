@@ -5,12 +5,13 @@ import { followAdapterJob, jobElapsed, lastLine, type AdapterJob } from "../lib/
 import { confirmDialog } from "../lib/dialog";
 import { detectProbe, probes } from "../lib/probes";
 import { networkBlock } from "../lib/network-status";
-import { toast } from "../store";
+import { state, toast } from "../store";
 import { fmt } from "../lib/time";
 import Icon from "./Icon.vue";
 import MonoLine from "./MonoLine.vue";
 import UiSelect from "./UiSelect.vue";
 import AiNetworkConditions from "./AiNetworkConditions.vue";
+import MachineLogin from "./MachineLogin.vue";
 
 /**
  * One backend in settings → AI: its ACP agent and CLI fallback together (one account, `source`), with
@@ -31,6 +32,8 @@ type Limit = { profile: string; model?: string; max: number; perDay?: number };
 const props = defineProps<{ source: string; profiles: Profile[]; all: Profile[]; config: any; load: AgentLoad | null }>();
 const emit = defineEmits<{ save: [agents: Record<string, unknown>, note: string]; reload: []; network: [policies: unknown[]] }>();
 const open = ref(false);
+/** This machine's login is the owner's to start (agents/machine-login.ts). */
+const isOwner = computed(() => state.me?.role === "owner" || !state.me);
 const ids = computed(() => props.profiles.map((p) => p.id));
 /** ACP first: it reports its models and is what a new run picks. */
 const primary = computed(() => props.profiles[0]);
@@ -256,6 +259,8 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
     <div v-if="open" class="be-body">
       <p v-if="blocked" class="small warn-text">{{ blocked }}</p>
       <p v-if="primary.pluginBackend" class="small" :class="primary.pluginBackend.available ? 'muted' : 'warn-text'">{{ primary.pluginBackend.available ? `这个后端来自插件 ${primary.pluginBackend.name}，启动命令写在它的清单里。` : `现在用不了：${primary.pluginBackend.reason ?? "它的插件停用了"}（来自插件 ${primary.pluginBackend.name}）。` }}<RouterLink :to="{ path: '/settings', query: { tab: 'plugins', plugin: primary.pluginBackend.plugin } }">去插件页</RouterLink></p>
+
+      <MachineLogin v-if="isOwner && !primary.peer" :backend="source" />
 
       <section class="part">
         <h4>默认模型</h4>

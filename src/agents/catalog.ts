@@ -74,8 +74,12 @@ export type AccountSpec = {
   mounts?: string[];
   /** What under the account folder belongs to this backend: removed when the user logs out of it. */
   owns: string[];
-  /** Logging in without a screen: arguments, and patterns that find the link and the code in what it prints. */
-  login?: { args: string[]; url: string; code?: string; timeoutMs?: number };
+  /**
+   * Logging in without a screen: arguments, and patterns that find the link and the code in what it prints.
+   * `input`: the command then waits for the code the authorization page shows to be pasted back (a pattern
+   * for its prompt); the page asks the person for it and omem writes it to the command.
+   */
+  login?: { args: string[]; url: string; code?: string; input?: string; timeoutMs?: number };
   /** Exit code 0 is logged in; `user` finds the account name in the output. */
   status?: { args: string[]; user?: string };
   logout?: { args: string[] };
@@ -101,7 +105,7 @@ export const acpCatalog: CatalogEntry[] = [
   {
     id: "claude", statePaths: ["${CLAUDE_CONFIG_DIR:-~/.claude}"], stateFiles: ["~/.claude.json"], egressHosts: ["api.anthropic.com","platform.claude.com"], name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" },
     // `claude setup-token` prints a long-lived token on the person's own machine; pasted here, it goes in the vault.
-    account: { cli: "claude", env: { CLAUDE_CONFIG_DIR: "{home}/.claude" }, dirs: [".claude"], owns: [".claude", ".claude.json"], tokenEnv: "CLAUDE_CODE_OAUTH_TOKEN", status: { args: ["auth", "status"], user: "([^\\s\"]+@[^\\s\"]+)" } },
+    account: { cli: "claude", env: { CLAUDE_CONFIG_DIR: "{home}/.claude" }, dirs: [".claude"], owns: [".claude", ".claude.json"], tokenEnv: "CLAUDE_CODE_OAUTH_TOKEN", login: { args: ["auth", "login"], url: LOGIN_URL, input: "Paste code", timeoutMs: 900_000 }, status: { args: ["auth", "status"], user: "([^\\s\"]+@[^\\s\"]+)" } },
   },
   { id: "gemini", statePaths: ["~/.gemini"], egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
   { id: "copilot", statePaths: ["~/.copilot"], name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },

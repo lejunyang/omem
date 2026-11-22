@@ -67,6 +67,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // Each person's own AI accounts (docs/v2/agent-accounts.md): the handlers act on the caller's own only.
   "GET /api/me/agent-accounts": "self",
   "POST /api/me/agent-accounts/:backend/login": "self",
+  "POST /api/me/agent-accounts/:backend/login/input": "self",
   "POST /api/me/agent-accounts/:backend/token": "self",
   "POST /api/me/agent-accounts/:backend/check": "self",
   "POST /api/me/agent-accounts/:backend/quota": "self",
@@ -418,6 +419,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/ai": cap("settings.ai.view"),
   "POST /api/agents/:id/probe": "handler",
   "GET /api/agents/:id/adapter": cap("settings.ai.view"),
+  "GET /api/agents/:id/machine-login": "owner",
+  "POST /api/agents/:id/machine-login": "owner",
+  "POST /api/agents/:id/machine-login/input": "owner",
+  "DELETE /api/agents/:id/machine-login": "owner",
   "GET /api/agent-registry": cap("settings.ai.view"),
   "GET /api/agents/load": cap("settings.ai.view"),
   "PUT /api/plugins/:id/settings": cap("settings.ai.edit"),

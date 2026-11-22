@@ -3196,6 +3196,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ version: z.string().max(40).optional() }), req.body ?? {});
     return { job: await upgradeBackend(app, (req.params as { id: string }).id, b.version) };
   });
+  // This machine's own login to a backend (agents/machine-login.ts): state, start, the pasted code, cancel.
+  // `:id` is the account backend (an ACP agent and its CLI fallback share it). Owner only (route rules).
+  server.get("/api/agents/:id/machine-login", async (req) => {
+    const m = await import("../agents/machine-login.ts");
+    const id = (req.params as { id: string }).id;
+    return (req.query as { check?: string }).check ? m.checkMachineLogin(app, id) : m.machineLogin(app, id);
+  });
+  server.post("/api/agents/:id/machine-login", async (req) => (await import("../agents/machine-login.ts")).startMachineLogin(app, (req.params as { id: string }).id));
+  server.post("/api/agents/:id/machine-login/input", async (req) => {
+    const b = q(z.object({ text: z.string().min(1).max(4000) }), req.body ?? {});
+    return (await import("../agents/machine-login.ts")).sendMachineLoginInput(app, (req.params as { id: string }).id, b.text);
+  });
+  server.delete("/api/agents/:id/machine-login", async (req) => (await import("../agents/machine-login.ts")).cancelMachineLogin(app, (req.params as { id: string }).id));
   server.post("/api/agents/:id/install", async (req) => {
     const { installAdapter } = await import("../agents/adapter.ts");
     return { job: await installAdapter(app, (req.params as { id: string }).id) };
