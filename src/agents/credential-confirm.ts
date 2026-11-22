@@ -35,9 +35,12 @@ export async function confirmCredential(app: App, runId: string, requester: stri
   const title = one<{title: string}>(app.db, "select title from runs where id=?", runId)!.title;
   const expiresAt = new Date(Date.now() + timeout).toISOString();
   const ask = createAsk(app, { runId: null, userId: holder, allowText: false, options,
-    question: `${userName(app, requester)}想借用你的凭据读取 ${resource}。\n任务：${title}${thread ? "\n来源会话：" + thread.title : ""}\n命令：\n${line}`,
-    context: { handler, askedBy: requester, fromRun: runId, sourceConversation: thread?.id, expiresAt } });
+    question: `${userName(app, requester)}想借用你的凭据读取 ${resource}。\n任务：${title}${thread ? "\n来源会话：" + (thread.title || thread.key || "网页会话") : ""}\n命令：\n${line}`,
+    context: { handler, askedBy: requester, fromRun: runId, expiresAt } });
   const pending = waitDecision(ask.id, timeout, signal);
+  if (thread?.settings.group) void import("../channels/lark-credential-confirm.ts").then(({ remindHolderInGroup }) =>
+    remindHolderInGroup(app, ask, thread, runId)).catch((error: Error) =>
+    addRunEvent(app, runId, "status", { text: `群内确认提醒未送达：${error.message}`, askId: ask.id }));
   if (thread) void import("./inbox.ts").then(({ deliverToThread }) =>
     deliverToThread(app, thread.id, `已请 ${userName(app, holder)} 确认，等他答复。`)).catch(() => {});
   const answer = await pending;

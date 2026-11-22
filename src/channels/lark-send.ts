@@ -506,6 +506,12 @@ export async function sendEphemeral(chatId: string, person: string, card: Record
   return { messageId: d?.message_id };
 }
 
+/** After a slow callback, update the exclusive card using its token and recipient. */
+export async function updateEphemeralCard(token: string, openId: string, card: Record<string, unknown>, bot?: string | null) {
+  check(await larkClientFor(bot).request({ method: "POST", url: "/open-apis/interactive/v1/card/update",
+    data: { token, open_ids: [openId], card: larkCardMarkdown(card) } }), "更新临时卡片");
+}
+
 /** Buzz people about a message the bot sent (in-app urgent; they must be in its chat). */
 export async function urgentLark(messageId: string, people: string[], bot?: string | null) {
   const groups = new Map<string, string[]>();
