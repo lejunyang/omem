@@ -21,6 +21,8 @@ export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; re
 
 /** What a run for one user's own account carries on its profile (accounts.ts sets it in prepareRun). */
 export type SandboxAccount = {
+  /** Relative backend and credential state allowed inside a borrowed member HOME. */
+  borrowedPaths?: string[];
   network?: SandboxNetwork;
   userId: string;
   /** The account backend (catalog id): codex, claude, traex, doubao-cli. */
@@ -232,7 +234,18 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   const absolute = [...ro].filter(p => isAbsolute(p));
   const roList = acct.network ? [...new Set([...absolute, ...absolute.map(real)])] :
     absolute.map(real).filter(p => hide.some(h => inside(p, h)));
-  const rw = [real(acct.home), ...(acct.network && real(acct.home) !== acct.home ? [acct.home] : []), ...(workspace?.rw ?? [real(cwd)])];
+  const home = real(acct.home);
+  const work = workspace?.rw ?? [real(cwd)];
+  const rw = acct.borrowedPaths ? work.filter(p => !inside(home, p) && !inside(p, home)) : [home, ...(acct.network && home !== acct.home ? [acct.home] : []), ...work];
+  if (acct.borrowedPaths) {
+    hide.push(home);
+    for (const rel of acct.borrowedPaths) {
+      const path = resolve(home, rel);
+      if (!existsSync(path)) continue;
+      if (path === home || !inside(path, home) || realpathSync(path) !== path) throw new Error("出借状态目录越过账号目录或含符号链接");
+      rw.push(path);
+    }
+  }
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,

@@ -17,7 +17,7 @@ import { accountCatalog, type AccountSpec, type CatalogEntry } from "./catalog.t
 import { forgetQuota, quotaKind, quotaView, refreshQuota } from "./quota.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
-import { credentialKindsForBackend } from "./credential-registry.ts";
+import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
 import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, credentialInstallDirs, credentialStateRels, hasCredentials, removeAllCredentials } from "./credentials.ts";
 
 /**
@@ -250,7 +250,12 @@ export function accountBlocked(app: App, userId: string, p: AgentProfile): strin
     if (credentialKindsForBackend(entry.id).length || app.config.credentials.lending !== "auto")
       return `${entry.name} 没有可用的登录，请先登录自己的账号`;
   }
-  if (!capability.supported && (strict || entry && policy !== "owner")) return `这台机器不能隔离成员的运行：${capability.reason}${app.config.security.egress.mode === "off" ? "" : "；本机出网隔离不可用"}`;
+  if (!capability.supported) {
+    if (strict) return `这台机器不能隔离成员的运行：${capability.reason}${app.config.security.egress.mode === "off" ? "" : "；本机出网隔离不可用"}`;
+    if (entry && (credentialKindsForBackend(entry.id).length || app.config.credentials.lending !== "auto" || app.config.agents.accountsDefault !== "owner"))
+      return `这台机器不能使用成员的 ${entry.name} 登录：${capability.reason}`;
+    return null;
+  }
   if (!entry) return null;
   if (policy === "own") return `${entry.name} 只能用自己的账号：在 账号 → 我的 AI 账号 里登录 ${entry.name} 后再试`;
   if (policy === "own-or-other") return `${entry.name} 要用自己的账号（没登录时换别的后端）：在 账号 → 我的 AI 账号 里登录 ${entry.name}`;
@@ -263,7 +268,7 @@ export function unisolatedReason(app: App, userId: string, p: AgentProfile): str
 }
 
 export function accountFor<P extends AgentProfile>(app: App, userId: string | undefined, p: P): P {
-  if (!userId || !SAFE_ID.test(userId) || accountOf(p) || !member(app, userId) ) return p;
+  if (!userId || !SAFE_ID.test(userId) || accountOf(p) || !member(app, userId)) return p;
   const entry = accountEntryFor(app, p);
   const sandbox = isolationCapability(p).supported;
   if (entry) {
@@ -272,7 +277,12 @@ export function accountFor<P extends AgentProfile>(app: App, userId: string | un
     if (use) {
       if (use.holder === OWNER) return { ...p, [credentialUse]: use };
       ensureAccountHome(app, use.holder, entry);
-      return { ...p, [credentialUse]: use, ownAccount: accountRun(app, use.holder, entry, false) };
+      const account = accountRun(app, use.holder, entry, false);
+      if (use.holder !== userId) {
+        const state = credentialMethod(use.kind)!.provides.commands.flatMap(c => c.state ?? []);
+        account.borrowedPaths = [...new Set([...entry.account.owns, ...state])];
+      }
+      return { ...p, [credentialUse]: use, ownAccount: account };
     }
     if (own) return { ...p, ownAccount: accountRun(app, userId, entry) };
   }

@@ -150,3 +150,46 @@ it("插件必须声明权限并信任进程内运行；隔离方式解释原因"
   expect(trustState(app, "credprobe", dir, true, undefined, false, [], undefined, true)).toBe("changed");
   expect(codeHash(dir)).toBeTruthy();
 });
+
+it("出借按自己、本人、最近使用的成员选，逐后端覆盖全局规则", async () => {
+  const { withAccount } = await import("../src/agents/accounts.ts");
+  const { credentialSucceeded, selectedCredential, setCredentialSharing } = await import("../src/agents/credentials.ts");
+  const { accountOf } = await import("../src/agents/sandbox.ts");
+  const { recordIsolation } = await import("../src/agents/runner.ts");
+  const { createRun, runEvents } = await import("../src/agents/runs.ts");
+  const profile = allProfiles(app.config).find(p => p.id === "traex")!;
+  const choose = (id = "ann") => withAccount(app, id, profile);
+  expect(choose()).toBe(profile);
+  createUser(app, { id: "cora", name: "成员 C" });
+  add({ check: async ctx => ({ state: "ok", user: ctx.userId }) });
+  const kind = "sample:sso";
+  for (const id of ["bob", "cora"]) {
+    await startCredentialLogin(app, id, kind);
+    await until(() => credentialHold(app, id, kind).state === "logged-in");
+    setCredentialSharing(app, id, kind, { scope: "members", members: ["ann"] });
+  }
+  credentialSucceeded(app, choose("cora"));
+  const borrowed = choose();
+  expect(accountOf(borrowed)).toMatchObject({ userId: "cora", home: accountHome(app, "cora") });
+  const runId = createRun(app, { kind: "ask", userId: "ann", title: "测试出借" }).id;
+  recordIsolation(app, runId, "ann", borrowed);
+  expect(JSON.stringify(runEvents(app, runId))).toContain("sample:sso");
+  expect(one(app.db, "select actor from audit_events where action='credentials.borrow'")).toEqual({ actor: "ann" });
+  await checkCredential(app, "owner", kind);
+  expect(selectedCredential(choose())?.holder).toBe("owner");
+  app.config.agents.accountIsolation = "require";
+  expect(selectedCredential(choose())?.holder).toBe("cora");
+  app.config.agents.accountIsolation = "prefer";
+  app.config.agents.accountsDefault = "own";
+  expect(() => choose()).toThrow(/只能用自己/);
+  app.config.agents.accounts.traex = "owner";
+  expect(selectedCredential(choose())?.holder).toBe("owner");
+  for (const mode of ["confirm", "off"] as const) {
+    app.config.credentials.lending = mode;
+    expect(() => choose()).toThrow(/没有可用的登录/);
+    expect(() => recordIsolation(app, runId, "ann", borrowed)).toThrow(/出借设置/);
+  }
+  await startCredentialLogin(app, "ann", kind);
+  await until(() => credentialHold(app, "ann", kind).state === "logged-in");
+  expect(selectedCredential(choose())?.holder).toBe("ann");
+});
