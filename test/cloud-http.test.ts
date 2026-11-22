@@ -149,7 +149,7 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
         : await fetch(url + "?" + new URLSearchParams({ args: JSON.stringify(args) }));
       text = (await receipt.json()).receipt;
     } else {
-      expect(req.system).toContain("云端只读工具");
+      expect(req.system).toContain("## 云端工具");
       expect(req.system).not.toContain("oct_");
       const conn = req.cloudChannel ?? JSON.parse(req.prompt.split("\n").at(-1)!);
       bearer = JSON.stringify(conn).match(/oct_[\w-]+/)![0];

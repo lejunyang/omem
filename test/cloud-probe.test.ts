@@ -1,7 +1,7 @@
 import { fakeCloudReceipt } from "./fake-cloud-probe.ts";
 import { expect, it } from "vitest";
 import { agentProfileSchema, cloudToolsSchema } from "../src/core/config.ts";
-import { cloudAccess, cloudAddress, confirmProbe, probeCloud, probeReceipt } from "../src/agents/cloud-probe.ts";
+import { checkCloudAddress, cloudAccess, cloudAddress, confirmProbe, probeCloud, probeReceipt } from "../src/agents/cloud-probe.ts";
 import { testApp } from "./helpers.ts";
 
 it("requires a confirmed callback and an independently returned receipt", async () => {
@@ -67,10 +67,30 @@ it("limits credentials to selected read tools and public HTTPS", () => {
   expect(cloudToolsSchema.parse({})).toMatchObject({ enabled: false, credentialIn: "channel", backends: [] });
   for (const bad of [{ tools: ["write_page"] }, { tools: ["peer_read"] }, { ttlMinutes: 31 }, { maxCalls: 0 }])
     expect(cloudToolsSchema.safeParse(bad).success).toBe(false);
+  // A study stage hands its result in with these; a run gets them only when its own tool list has them.
+  expect(cloudToolsSchema.safeParse({ tools: ["search", "read_ledger", "propose_directions", "trial_report", "record_finding", "close_direction"] }).success).toBe(true);
   const app = testApp();
   for (const url of ["http://public.example.com", "https://localhost", "https://10.1.2.3", "https://[::1]", "https://x.local"]) {
     app.config.webUrl = url;
     expect(cloudAddress(app)).toBeNull();
   }
   app.db.close();
+});
+
+it("takes an internal http address only when the owner allows it, and still checks it resolves", async () => {
+  expect(cloudToolsSchema.parse({}).privateAddress).toBe(false);
+  const app = testApp();
+  try {
+    app.config.webUrl = "http://10.1.2.3:4317/";
+    expect(cloudAddress(app)).toBeNull();
+    await expect(checkCloudAddress(app, "http://10.1.2.3:4317")).rejects.toThrow("公网");
+    app.config.agents.cloudTools.privateAddress = true;
+    expect(cloudAddress(app)).toBe("http://10.1.2.3:4317");
+    await expect(checkCloudAddress(app, "http://10.1.2.3:4317")).resolves.toBeUndefined();
+    // Credentials, a query or another scheme stay refused either way.
+    for (const url of ["http://u:p@10.1.2.3:4317", "http://10.1.2.3:4317/?x=1", "ftp://10.1.2.3"]) {
+      app.config.webUrl = url;
+      expect(cloudAddress(app)).toBeNull();
+    }
+  } finally { app.db.close(); }
 });

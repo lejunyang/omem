@@ -55,10 +55,10 @@ export async function cloudTurn(app: App, profile: AgentProfile, ctx: ToolContex
   emit: (e: AgentEvent) => void, execute: (req: AgentRequest, emit: (e: AgentEvent) => void) => Promise<AgentResult>) {
   const access = cloudAccess(app, profile);
   if (!ctx.runId || req.runId !== ctx.runId || !access.mode) throw new Error(access.reason ?? "缺少对应的云端运行");
-  try { await checkCloudAddress(access.url); }
+  try { await checkCloudAddress(app, access.url); }
   catch {
-    emit({ type: "status", text: "公网地址不可用，本轮只使用已有材料" });
-    return execute({ ...req, system: req.system?.replace(/\n\n## 云端只读工具[\s\S]*?(?=\n\n---|$)/, ""),
+    emit({ type: "status", text: "回调地址不可用，本轮只使用已有材料" });
+    return execute({ ...req, system: req.system?.replace(/\n\n## 云端工具[\s\S]*?(?=\n\n---|$)/, ""),
       capabilities: { ...req.capabilities!, cloudHttp: false, omemAccess: "none" }, mcp: undefined, extraMcp: undefined }, emit);
   }
   req.signal?.throwIfAborted();
@@ -76,7 +76,7 @@ export async function cloudTurn(app: App, profile: AgentProfile, ctx: ToolContex
     };
     const turn = { ...req, mcp: undefined, extraMcp: undefined };
     if (cfg.credentialIn === "channel") turn.cloudChannel = channel;
-    else turn.prompt += "\n\n本轮只读工具连接（仅用于请求，不要复述）\n" + JSON.stringify(channel);
+    else turn.prompt += "\n\n本轮工具连接（仅用于请求，不要复述）\n" + JSON.stringify(channel);
     const result = await execute(turn, event => {
       if (event.type === "session") g.session = event.sessionId;
       // A streamed echo can split the token across frames. Emit the redacted, assembled reply once.
@@ -136,7 +136,7 @@ export async function cloudRequest(app: App, secret: string, mode: Access["mode"
   try {
     if (!activeUser(findUser(app, user))) throw new HttpError(403, "成员已停用，请停止重试");
     if (input.includes("oct_")) throw new HttpError(400, "工具参数不能包含凭据");
-    if (name !== undefined && ![...tools].some(t => t === name)) throw new HttpError(403, "工具不在本轮只读名单内，请停止重试");
+    if (name !== undefined && ![...tools].some(t => t === name)) throw new HttpError(403, "工具不在本轮名单内，请停止重试");
     const ctx = { ...g.ctx, tools, spaces: scopeFor(app, user, g.ctx.spaces) };
     const result = name === undefined ? { tools: toolSchemas(tools) } : await searchRun.run(g.runId, () => callTool(ctx, name, args));
     current(g);

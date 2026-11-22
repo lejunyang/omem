@@ -3,14 +3,14 @@
  * cloud-probe.ts; the setting is `agents.cloudTools`). Off by default; a backend is used only when it is
  * named, its probe at the current address succeeded and the owner confirmed it. Pure.
  */
-export type CloudToolsConfig = { enabled: boolean; tools: string[]; ttlMinutes: number; maxCalls: number; backends: string[]; credentialIn: "channel" | "message" };
+export type CloudToolsConfig = { enabled: boolean; privateAddress?: boolean; tools: string[]; ttlMinutes: number; maxCalls: number; backends: string[]; credentialIn: "channel" | "message" };
 export type CloudProbe = { id: string; url: string; at: string; mode: false | "header" | "url"; reason: string; confirmed: boolean };
 export type CloudStatus = CloudToolsConfig & {
   url: string | null; addressError: string | null; activeCredentials: number;
   /** `title`: the run's own title (null when the run is gone; absent from an older server). */
   recent: { runId: string; title?: string | null; calls: number; errors: number; lastError: string | null; at: string }[];
   profiles: { backend: string; probe: CloudProbe | null; reason?: string }[];
-  /** The read-only tools a cloud backend may be given (`cloudToolNames`), with the first sentence of each one's description. */
+  /** The tools a cloud backend may be given (`cloudToolNames`), with the first sentence of each one's description. */
   availableTools?: { name: string; description: string }[];
 };
 
@@ -23,7 +23,7 @@ export function toolOptions(s: Pick<CloudStatus, "availableTools" | "tools">): {
   return s.availableTools.map((t) => ({ value: t.name, label: t.description.split(/[：:，,。；;（(]/)[0].trim() || t.name, hint: t.name }));
 }
 
-export const cloudConfig = (s: CloudToolsConfig): CloudToolsConfig => ({ enabled: s.enabled, tools: [...s.tools], ttlMinutes: s.ttlMinutes, maxCalls: s.maxCalls, backends: [...s.backends], credentialIn: s.credentialIn });
+export const cloudConfig = (s: CloudToolsConfig): CloudToolsConfig => ({ enabled: s.enabled, privateAddress: !!s.privateAddress, tools: [...s.tools], ttlMinutes: s.ttlMinutes, maxCalls: s.maxCalls, backends: [...s.backends], credentialIn: s.credentialIn });
 
 /** What a backend's probe says, in a few words, and whether it waits for the owner's confirmation. */
 export function probeState(p: CloudProbe | null, url: string | null): { text: string; tone: "ok" | "warn" | "muted"; confirm: boolean } {

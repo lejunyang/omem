@@ -82,7 +82,7 @@ import { loopbackIp, trustedLocal, viaProxy } from "./origin.ts";
 import { listenSecure, type SecureListener } from "./secure.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { cloudRequest, cloudUsage, revokeCloud } from "../agents/cloud-tools.ts";
-import { cloudBackendStatus, cloudAddress, checkCloudAddress, confirmProbe, probeCloud, probeReceipt } from "../agents/cloud-probe.ts";
+import { cloudBackendStatus, cloudAddress, cloudAddressHint, checkCloudAddress, confirmProbe, probeCloud, probeReceipt } from "../agents/cloud-probe.ts";
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute, requestReviewAudience } from "../auth/routes.ts";
@@ -242,8 +242,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   } });
   server.get("/api/cloud-tools", async () => {
     const url = cloudAddress(app);
-    let addressError = url ? null : "请配置公网 HTTPS webUrl";
-    if (url) await checkCloudAddress(url).catch(e => { addressError = e.message; });
+    let addressError = url ? null : cloudAddressHint(app);
+    if (url) await checkCloudAddress(app, url).catch(e => { addressError = e.message; });
     return { ...app.config.agents.cloudTools, ...cloudUsage(app), url, addressError,
       profiles: cloudBackendStatus(app) };
   });

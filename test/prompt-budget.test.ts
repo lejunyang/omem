@@ -116,7 +116,7 @@ it("bounds the HTTP instructions for each cloud role including every allowed too
       cfg.enabled = true;
       const on = prepare();
       expect(on.capabilities.omemAccess).toBe("http");
-      expect(on.system).toContain("云端只读工具");
+      expect(on.system).toContain("## 云端工具");
       expect(on.parts.common - off.parts.common).toBeLessThan(400);
       checkBudget(on, http[role][chat ? 0 : 1], role);
       revokeToolToken(off.token);

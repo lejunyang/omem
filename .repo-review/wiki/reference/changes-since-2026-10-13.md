@@ -68,6 +68,13 @@ updated: 2026-11-23
 
 从 `src/agents/credentials.ts` 的 `myCredentials` 读起。凭据清单和设置接口复用 `src/auth/capabilities.ts` 的成员身份判断。观察者仍能读取自己的凭据清单，响应省略全局出借方式，候选成员为空。两处接口的对照用例在 `test/credentials.test.ts`。
 
+## 云端后端可以用内网地址回调，课题的阶段能交给云端跑（2026-11-22）
+
+- 实测：豆包 OpenAPI 的云端沙箱能用 curl 访问公司内网 IP 上的 omem（带回了只有本机会返回的响应），能执行 shell，也能访问 GitHub。
+- `agents.cloudTools.privateAddress`（默认关，本人在 设置 → 安全 →“云端后端调工具”里打开，先确认一次）：`cloud-probe.ts` 的 `cloudAddress` 接受内网的 http(s) `webUrl`，`checkCloudAddress(app, url)` 只要求能解析；探测和确认照旧。
+- `cloudToolNames` 加课题交结果的 `read_ledger`、`propose_directions`、`trial_report`、`record_finding`、`close_direction`。签发凭据时与运行自己的工具取交集（`cloud-tools.ts` 原逻辑），所以只在课题的阶段可用。`runner.ts` 的云端小节改名“## 云端工具”，有交结果工具时提示必须用工具交回。
+- 测试：`test/cloud-probe.test.ts`（内网地址只在开关打开时接受、凭据和查询串仍拒绝、课题工具可选）。
+
 ## Copilot 的设备码登录、Gemini 的 API key（2026-11-22）
 
 - 在本机装了 Gemini CLI 0.70、Copilot CLI 1.0.114、Qwen Code 0.28.3 实测：Copilot 的 `login --device-code` 打印 GitHub 的设备页和验证码，和 Codex 同一种，加进目录（`account.login`，`COPILOT_HOME` 放进账号目录，也可粘贴 `COPILOT_GITHUB_TOKEN`）；它没有查状态的命令，登录命令以 0 退出就算登录（成员的 `accounts.ts` 和本机的 `machine-login.ts` 都这样认）。Gemini 自己的登录只在真终端里问授权码（管道上直接拒绝，`-i` 也不行），浏览器方式回调本机回环端口，所以只给成员加了粘贴 `GEMINI_API_KEY`，本机的登录仍要在终端里做。Qwen 已经去掉 `qwen auth`，只能在交互界面里 `/auth` 或用环境变量给 key，没有加。

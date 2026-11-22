@@ -19,19 +19,29 @@ function publicIp(ip: string) {
     && !(a === 169 && b === 254) && !(a === 172 && b >= 16 && b <= 31) && !(a === 192 && [0,168].includes(b)) && !(a === 198 && [18,19].includes(b));
 }
 
+/**
+ * The address a cloud backend calls back on: `webUrl`, public HTTPS. With `agents.cloudTools.privateAddress`
+ * the owner allows an internal one over http too (a cloud that runs inside the same network, as the probe
+ * then shows); credentials, query and fragment are refused either way.
+ */
 export function cloudAddress(app: App) {
+  const internal = app.config.agents.cloudTools.privateAddress;
   try {
     const u = new URL(app.config.webUrl ?? "");
     const host = u.hostname.replace(/^\[|\]$/g, "");
-    if (u.protocol === "https:" && !u.username && !u.password && !u.search && !u.hash && (isIP(host) ? publicIp(host) : publicName(host))) return u.href.replace(/\/$/, "");
+    if (u.username || u.password || u.search || u.hash) return null;
+    if (internal ? ["http:", "https:"].includes(u.protocol) && !!host
+      : u.protocol === "https:" && (isIP(host) ? publicIp(host) : publicName(host))) return u.href.replace(/\/$/, "");
   } catch { /* Report the same configuration guidance for an absent or invalid URL. */ }
   return null;
 }
+export const cloudAddressHint = (app: App) => app.config.agents.cloudTools.privateAddress ? "请配置 webUrl（http 或 https）" : "请配置公网 HTTPS webUrl";
 
-export async function checkCloudAddress(url: string) {
+export async function checkCloudAddress(app: App, url: string) {
   const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
   const ips = isIP(host) ? [host] : (await lookup(host, { all: true }).catch(() => [])).map(r => r.address);
-  if (!ips.length || !ips.every(publicIp)) throw new HttpError(400, "webUrl 没有解析到可用的公网地址");
+  if (!ips.length) throw new HttpError(400, "webUrl 解析不到地址");
+  if (!app.config.agents.cloudTools.privateAddress && !ips.every(publicIp)) throw new HttpError(400, "webUrl 没有解析到可用的公网地址");
 }
 
 function fingerprint(p: AgentProfile) {
@@ -93,8 +103,8 @@ export function probeReceipt(app: App, key: string, method: string, authorizatio
 export async function probeCloud(app: App, backend: string, execute?: typeof runBackend) {
   const p = cloudProfile(app, backend);
   const url = cloudAddress(app);
-  if (!url) throw new HttpError(400, "请配置公网 HTTPS webUrl");
-  await checkCloudAddress(url);
+  if (!url) throw new HttpError(400, cloudAddressHint(app));
+  await checkCloudAddress(app, url);
   const nonce = randomUUID();
   const entry: Challenge = { app, url, nonce, next: { header: randomUUID(), url: randomUUID() },
     receipts: { header: randomUUID(), url: randomUUID() }, failure: "没有收到探测请求" };
@@ -130,7 +140,7 @@ export function cloudAccess(app: App, p: AgentProfile, probe?: Probe | null) {
   const url = cloudAddress(app);
   if (!cfg.enabled || caps.where !== "cloud" || caps.omemAccess !== "none") return { reason: "云端工具未启用" };
   if (!cfg.backends.includes(p.id)) return { reason: "未选中这个后端" };
-  if (!url) return { reason: "需要公网 HTTPS webUrl" };
+  if (!url) return { reason: app.config.agents.cloudTools.privateAddress ? "需要 webUrl" : "需要公网 HTTPS webUrl" };
   const r = probe === undefined ? lastProbe(app, p.id) : probe;
   if (!r?.mode || !r.confirmed || r.url !== url || r.fingerprint !== fingerprint(p)) return { reason: "需要本人确认当前地址的成功探测" };
   if (cfg.credentialIn === "channel" && !caps.credentialChannel) return { reason: "后端没有安全凭据通道" };

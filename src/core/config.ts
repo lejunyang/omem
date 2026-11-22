@@ -8,9 +8,18 @@ import { systemZone, validZone } from "./util.ts";
 import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
 import { isIP } from "node:net";
 
-export const cloudToolNames = ["search", "read_source", "read_page", "read_item"] as const;
+/**
+ * What a cloud backend may be allowed to call over HTTP: a few read tools, and the tools a study stage
+ * hands its result in with (they only reach a run whose own tool list already has them: a study stage).
+ */
+export const cloudToolNames = ["search", "read_source", "read_page", "read_item", "read_ledger", "propose_directions", "trial_report", "record_finding", "close_direction"] as const;
 export const cloudToolsSchema = z.object({
   enabled: z.boolean().default(false),
+  /**
+   * The address may be on the internal network over plain http (`webUrl` such as http://10.0.0.5:4317):
+   * for a cloud that runs inside the same network. The probe still has to succeed and be confirmed.
+   */
+  privateAddress: z.boolean().default(false),
   tools: z.array(z.enum(cloudToolNames)).max(cloudToolNames.length).default(["search", "read_source"]),
   ttlMinutes: z.number().int().min(1).max(30).default(15),
   maxCalls: z.number().int().min(1).max(100).default(32),

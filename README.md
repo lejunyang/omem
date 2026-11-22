@@ -126,7 +126,7 @@ flowchart LR
 
 豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。
 
-云端会话可以按运行授权检索、读原文。默认关闭。本人探测并确认后端后，可指定它能使用的只读工具。每次调用沿用成员和运行的空间权限。[配置云端只读工具](docs/v2/external-access.md#云端后端调只读工具)。
+云端会话可以按运行授权检索、读原文，课题的阶段也能交给云端后端跑并用工具交结果。默认关闭。本人探测并确认后端后，可指定它能使用的工具；云端和这台机器在同一个内网时，可以允许用内网的 http 地址。每次调用沿用成员和运行的空间权限。[配置云端工具](docs/v2/external-access.md#云端后端调工具)。
 
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → 后端与模型 → 添加 Agent”做同样的事；内置目录里有 npm 包的，在“其他支持的 Agent”里点“安装”就在后台装好（有 osdk 和 Node 时用 osdk 装）。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → 后端与模型 → API key 添加 OpenAI 或 Anthropic 的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → 后端与模型 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。
 
