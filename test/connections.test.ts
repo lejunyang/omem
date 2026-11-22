@@ -1,7 +1,8 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { join, resolve } from "node:path";
+import { afterAll, describe, expect, it, onTestFinished } from "vitest";
+import { releaseAll } from "../src/agents/sessions.ts";
 import { accessToken, disconnect, renewConnections } from "../src/auth/connections.ts";
 import { scopesFor } from "../src/auth/features.ts";
 import { asLarkUser, larkCliAs } from "../src/auth/lark-user.ts";
@@ -38,10 +39,16 @@ setAuthFetchForTests((async (url: string | URL | Request, init?: RequestInit) =>
 describe("connections", async () => {
   const home = mkdtempSync(join(tmpdir(), "omem-conn-"));
   process.env.OMEM_TEST_LARK_SECRET2 = "test-secret";
-  writeFileSync(join(home, "config.json"), JSON.stringify({ webUrl: "http://omem.test", lark: { appId: "cli_test", appSecretEnv: "OMEM_TEST_LARK_SECRET2", ownerOpenId: "ou_owner" }, auth: { enabled: true } }));
+  writeFileSync(join(home, "config.json"), JSON.stringify({
+    webUrl: "http://omem.test",
+    lark: { appId: "cli_test", appSecretEnv: "OMEM_TEST_LARK_SECRET2", ownerOpenId: "ou_owner" },
+    auth: { enabled: true },
+    agents: { default: "fake", profiles: [{ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "thread" } }] },
+  }));
   const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
   afterAll(() => {
     setLarkCliForTests(null);
+    releaseAll();
     server.close();
   });
   const base = app.baseUrl!;
@@ -148,7 +155,11 @@ describe("connections", async () => {
     createUser(app, { name: "小波", id: "bob", status: "pending" });
     storeConnection(app, { userId: "bob", provider: "lark", accountId: "on_bob", accountName: "小波", scopes: scopesFor("lark", ["messages"]), accessToken: "at_bob", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
     const calls: { args: string[]; as?: string }[] = [];
-    setLarkCliForTests(async (args, _cwd, as) => (calls.push({ args, as }), { ok: true, data: { chats: [], events: [] } }));
+    setLarkCliForTests(async (args, _cwd, as) => {
+      if (args.includes("--help")) return "Risk: read";
+      calls.push({ args, as });
+      return { ok: true, data: { chats: [], events: [] } };
+    });
     // Turned off through the account page's switch.
     const login = await remote("/api/auth/lark/start");
     const state = new URL(login.headers.get("location")!).searchParams.get("state")!;
@@ -158,6 +169,10 @@ describe("connections", async () => {
     expect(off.status).toBe(200);
     const messages = (await off.json()).connections[0].features.find((f: { id: string }) => f.id === "messages");
     expect(messages).toMatchObject({ on: true, paused: true });
+    onTestFinished(() => {
+      disconnect(app, "ann", "lark");
+      run(app.db, "delete from kv where key in ('lark_calendar_at:ann', 'lark_minutes_at:ann')");
+    });
     await pollMembers(app);
     expect(calls.some((c) => c.as === "ann" && c.args.includes("+chat-list"))).toBe(false);
     expect(calls.some((c) => c.as === "ann" && c.args.includes("+agenda"))).toBe(true); // calendar is still on
@@ -166,14 +181,11 @@ describe("connections", async () => {
     const refused = await callTool(ctx, "lark_read", { command: ["im", "+chat-list"] });
     expect(refused.isError).toBe(true);
     expect(refused.text).toContain("关掉了「群聊消息」");
-    expect((await callTool(ctx, "lark_read", { command: ["calendar", "+agenda"] })).text).not.toContain("关掉了");
+    expect((await callTool(ctx, "lark_read", { command: ["calendar", "+agenda"] })).isError).toBe(false);
     // Back on: used again at once.
     await remote("/api/auth/connections/lark/features/messages", { method: "PUT", cookie, headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ on: true }) });
-    expect((await callTool(ctx, "lark_read", { command: ["im", "+chat-list"] })).text).not.toContain("关掉了");
+    expect((await callTool(ctx, "lark_read", { command: ["im", "+chat-list"] })).isError).toBe(false);
     expect((await remote("/api/auth/connections/lark/features/offline", { method: "PUT", cookie, headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ on: false }) })).status).toBe(400);
-    // The tests after this one start from ann's own connection and fresh hourly checks.
-    disconnect(app, "ann", "lark");
-    run(app.db, "delete from kv where key in ('lark_calendar_at:ann', 'lark_minutes_at:ann')");
   });
 
   it("asks the person to authorize again when refreshing fails, and tells them once", async () => {
@@ -218,11 +230,11 @@ describe("connections", async () => {
   });
 
   it("runs a member's tool calls on Feishu as the member", async () => {
-    const { callTool, issueToolToken, toolContextForToken } = await import("../src/agents/tools.ts");
+    const { callTool, contextToolNames, issueToolToken, toolContextForToken } = await import("../src/agents/tools.ts");
     const seen: (string | undefined)[] = [];
     setLarkCliForTests(async (args, _cwd, as) => {
+      if (args.includes("--help")) return "Risk: read";
       seen.push(as);
-      if (args[1] === "--help" || args.includes("--help")) return "read";
       return { ok: true, data: { chats: [] } };
     });
     const ctx = (user: string) => toolContextForToken(app, issueToolToken({ runId: null, spaceId: `personal-${user}`, spaces: null, tools: null, actor: "agent", userId: user, larkChats: [] }))!;
@@ -231,6 +243,31 @@ describe("connections", async () => {
     expect(refused.text).toMatch(/还没有连接飞书/);
     expect(refused.text).toContain("http://omem.test/#/login?provider=lark&features=messages");
     expect(seen).toEqual([]);
+    storeConnection(app, { userId: "zhou", provider: "lark", accountId: "on_zhou", accountName: "小周", scopes: scopesFor("lark", ["messages", "docs", "doc-write"]), accessToken: "at_zhou", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    const member = ctx("zhou");
+    const directory = contextToolNames(member);
+    createUser(app, { name: "观察者", id: "observer", role: "observer" });
+    const limited = ctx("observer");
+    const limitedDirectory = contextToolNames(limited);
+    for (const name of ["lark_read", "lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy"]) {
+      expect(directory.has(name)).toBe(true);
+      expect(limitedDirectory.has(name)).toBe(false);
+      expect(await callTool(limited, name, {})).toMatchObject({ deniedCapability: "connector.use" });
+    }
+    for (const name of ["lark_write", "lark_invite", "lark_doc_authorize"]) {
+      expect(directory.has(name)).toBe(false);
+      expect(await callTool(member, name, {})).toMatchObject({ isError: true, deniedCapability: "owner" });
+    }
+    const doc = "https://tenant.larkoffice.com/docx/abc";
+    for (const name of ["lark_doc_fetch", "lark_doc_update"]) {
+      const result = await callTool(member, name, { doc, identity: "bot", command: "append", content: "进度" });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("自己的飞书连接");
+    }
+    for (const user of ["zhou", "owner"]) {
+      expect((await callTool(ctx(user), "lark_read", { command: ["im", "+chat-list"] })).isError).toBe(false);
+    }
+    expect(seen).toEqual(["zhou", undefined]);
   });
 
   it("a member without Feishu gets a link with what is missing ticked; once granted, the conversation goes on by itself", async () => {

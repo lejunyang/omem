@@ -4627,7 +4627,6 @@ function ownerOnly(ctx: ToolContext, feature?: string | null) {
 }
 
 async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean, docEditScope?: DocEditScope, scopeNote?: string, wikiWrite?: { operation: WikiWriteOperation; targets: WikiWriteTarget[] }) {
-  ownerOnly(ctx, "doc-write");
   if (personal || ctx.actor === "user" || ctx.approved) return null;
   const docDecision = docEditScope ? await docEditDecision(ctx.app, ctx.userId ?? OWNER, docEditScope, name) : null;
   const treeDecision = wikiWrite ? await wikiWriteDecision(ctx.app, ctx.userId ?? OWNER, wikiWrite.operation, wikiWrite.targets) : null;
@@ -4720,6 +4719,7 @@ function requesterOf(ctx: ToolContext): { openId: string; name: string } | null 
  * editor of this doc, and the call goes again. Without a grant yet: the link, for the agent to send them.
  */
 async function botForRequester<T>(ctx: ToolContext, doc: string, fn: () => Promise<T>): Promise<T> {
+  if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "成员只能使用自己的飞书连接读写文档");
   try {
     return await fn();
   } catch (e) {
@@ -4791,6 +4791,7 @@ def({
     summary: z.string().min(1).max(500).optional().describe("给本人看的一两句改动摘要，写用途和主要内容，不贴正文或 HTML/XML"),
   }),
   handler: async (ctx, a) => {
+    ownerOnly(ctx, "doc-write");
     const w = await import("../channels/lark-doc-write.ts");
     const place = await w.placeFor(ctx.app, a.parent);
     const wait = await ownerDocGate(ctx, "lark_doc_create", a, `在 ${place.label} 新建文档《${a.title}》。\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content)}`, place.personal, undefined, undefined, { operation: "create", targets: place.wiki ? [place.wiki] : [] });
@@ -4889,6 +4890,7 @@ def({
   write: true,
   schema: z.object({ doc: z.string().describe("要移动的文档或知识库页面链接"), target: z.string().describe("目标：知识库页面链接、云空间文件夹链接或 my_library") }),
   handler: async (ctx, a) => {
+    ownerOnly(ctx, "doc-write");
     const w = await import("../channels/lark-doc-write.ts");
     const from = await w.docPlace(ctx.app, a.doc);
     const to = await w.placeFor(ctx.app, a.target);
