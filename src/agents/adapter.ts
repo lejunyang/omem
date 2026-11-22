@@ -263,7 +263,9 @@ async function settle(app: App, id: string, job: AdapterJob, code: number, want:
   if (!there) {
     job.message = code === 0
       ? `装完了，但 omem 的 PATH 里找不到命令 ${profile?.command ?? id}：把装到的 bin 目录加进 omem 服务的 PATH 后重启`
-      : `${job.message ? job.message + "；" : ""}装到一半出错，命令 ${profile?.command ?? id} 现在找不到了：可以在“其他支持的 Agent”里重新安装`;
+      : job.action === "install"
+        ? `${job.message ? job.message + "；" : ""}没装上：${lastLine(job.output) || `安装命令退出码 ${code}`}`
+        : `${job.message ? job.message + "；" : ""}装到一半出错，命令 ${profile?.command ?? id} 现在找不到了：可以在“其他支持的 Agent”里重新安装`;
   } else if (!job.ok && !job.message) job.message = code === 0 ? `装完以后版本是 ${job.after ?? "未知"}，不是 ${want}` : `安装命令退出码 ${code}`;
   // osdk on Windows: every command it puts on PATH is a link to one program, and while any of them runs
   // (a long `omem peer open`, say) it cannot add a new one.
@@ -304,12 +306,30 @@ export async function upgradeAdapter(app: App, id: string, version?: string) {
 export async function installAdapter(app: App, id: string) {
   const { entry, npmName } = npmBackend(app, id);
   if (commandExists(entry.command)) throw new HttpError(409, `${entry.command} 已经装好了`);
-  let plan: Parameters<typeof startJob>[3];
-  if (osdkReady()) plan = { file: "osdk", args: ["--yes", "use", "-g", `npm:${npmName}@latest`], via: "osdk", before: null, npmName };
-  else {
-    if (!commandExists("npm")) throw new HttpError(400, "这台机器上没有 npm，也没有 osdk：先装 Node.js");
-    const reg = await registry();
-    plan = { file: "npm", args: ["i", "-g", `${npmName}@latest`, ...(reg ? [`--registry=${reg}`] : [])], via: "npm", before: null, npmName };
-  }
-  return startJob(app, id, "install", plan, (job, code) => settle(app, id, job, code, undefined));
+  const useOsdk = osdkReady();
+  if (!useOsdk && !commandExists("npm")) throw new HttpError(400, "这台机器上没有 npm，也没有 osdk：先装 Node.js");
+  const reg = await registry();
+  const npmArgs = ["i", "-g", `${npmName}@latest`, ...(reg ? [`--registry=${reg}`] : [])];
+  const osdkArgs = ["--yes", "use", "-g", `npm:${npmName}@latest`];
+  const first = useOsdk ? { file: "osdk", args: osdkArgs } : { file: "npm", args: npmArgs };
+  return startTask(id, "install", { package: npmName, via: useOsdk ? "osdk" : "npm", command: [first.file, ...first.args].join(" "), before: null }, async (job) => {
+    let code = await runInstaller(job, first.file, first.args, app.home);
+    forgetAvailability();
+    // osdk refuses some machines outright (a private registry in ~/.npmrc it cannot isolate from, a shim in use on
+    // Windows): nothing was installed, so npm from the public registry is tried in the same job.
+    if (useOsdk && code !== 0 && !commandExists(entry.command) && commandExists("npm")) {
+      const refused = lastLine(job.output);
+      job.output = `${job.output}\nosdk 没装上，改用 npm：npm ${npmArgs.join(" ")}`;
+      job.via = "npm";
+      job.command = ["npm", ...npmArgs].join(" ");
+      const before = job.output;
+      code = await runInstaller(job, "npm", npmArgs, app.home);
+      job.output = `${before}\n${job.output}`.slice(-6000);
+      forgetAvailability();
+      if (code !== 0) job.message = `osdk 没装上（${refused}），npm 也没装上`;
+    }
+    await settle(app, id, job, code, undefined);
+  });
 }
+
+const lastLine = (text: string) => text.trim().split(/\r?\n/).at(-1)?.trim().slice(0, 300) ?? "";

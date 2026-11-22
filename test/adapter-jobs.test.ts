@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -88,6 +88,26 @@ describe("installing and upgrading a backend's npm package from settings", () =>
       expect(existsSync(join(prefix, "bin", "gemini"))).toBe(true);
       expect(adapter.canInstall(app, "gemini")).toBe(false);
       expect(adapter.hasAdapter(app, "gemini")).toBe(true);
+    }, 30_000);
+
+    it("falls back to npm in the same job when osdk refuses to install", async () => {
+      rmSync(prefix, { recursive: true, force: true });
+      forgetAvailability();
+      // osdk and node present: the install goes through osdk first, which refuses like it does with a private registry in ~/.npmrc.
+      writeFileSync(join(bin, "osdk"), "#!/bin/sh\necho 'error: cannot safely isolate global npm install: registry preflight passed through' >&2\nexit 1\n");
+      writeFileSync(join(bin, "node"), "#!/bin/sh\nexit 0\n");
+      chmodSync(join(bin, "osdk"), 0o755);
+      chmodSync(join(bin, "node"), 0o755);
+      try {
+        const job = await adapter.installAdapter(app, "gemini");
+        expect(job.via).toBe("osdk");
+        const end = await adapter.waitForAdapterJob("gemini");
+        expect(end).toMatchObject({ running: false, ok: true, via: "npm", after: "9.9.9" });
+        expect(end!.output).toMatch(/cannot safely isolate[\s\S]*改用 npm[\s\S]*added 1 package/);
+      } finally {
+        rmSync(join(bin, "osdk"), { force: true });
+        rmSync(join(bin, "node"), { force: true });
+      }
     }, 30_000);
   });
 });
