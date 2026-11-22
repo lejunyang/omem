@@ -1,3 +1,4 @@
+import { maybeSendCredentialOnboarding } from "../agents/credentials.ts";
 import { receive, type Inbound } from "../agents/inbox.ts";
 import { getRun, waitForRun } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
@@ -16,6 +17,7 @@ export async function answerFromChannel(
   input: Inbound & { channel: string; chatId: string },
   hooks: { onStart?: (runId: string) => void | Promise<void>; onMerged?: () => void | Promise<void>; onCard?: (card: Record<string, unknown>) => void | Promise<void> } = {},
 ): Promise<string | null> {
+  if (input.userId) maybeSendCredentialOnboarding(app, input.userId);
   const r = await receive(app, input);
   if (r.card) await hooks.onCard?.(r.card);
   if (r.reply !== null && r.reply !== "[card]") return r.reply;

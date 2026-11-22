@@ -193,3 +193,40 @@ it("出借按自己、本人、最近使用的成员选，逐后端覆盖全局�
   await until(() => credentialHold(app, "ann", kind).state === "logged-in");
   expect(selectedCredential(choose())?.holder).toBe("ann");
 });
+
+it("网页与机器人首次入口只发一次清单，成员只能管理自己的凭据", async () => {
+  const { startServer } = await import("../src/server/http.ts");
+  const { createApiToken } = await import("../src/core/users.ts");
+  const { createLoginLink } = await import("../src/auth/login.ts");
+  const { answerFromChannel } = await import("../src/channels/common.ts");
+  add({ required: false });
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
+    const base = "/api/credentials", path = base + "/sample:sso";
+    await server.inject({ method: "POST", url: "/api/auth/link/" + createLoginLink(app, "ann", "cli") });
+    for (const id of ["ann", "bob", "bob"]) {
+      await answerFromChannel(app, { channel: "telegram", chatId: id, userId: id, text: "/whoami" });
+    }
+    expect(all(app.db, "select user_id from notifications where title='接入清单' and body like '%可选%' order by user_id"))
+      .toEqual([{ user_id: "ann" }, { user_id: "bob" }]);
+    expect((await server.inject({ method: "POST", url: path + "/login", headers, payload: { userId: "bob" } })).statusCode).toBe(200);
+    await until(() => credentialHold(app, "ann", "sample:sso").state === "logged-in");
+    expect(credentialHold(app, "bob", "sample:sso").state).toBe("none");
+    expect((await server.inject({ url: base, headers })).json().credentials[0].user).toBe("ann@example.test");
+    expect((await server.inject({ method: "PUT", url: path + "/sharing", headers, payload: { scope: "all" } })).statusCode).toBe(200);
+    expect((await server.inject({ url: base + "/all", headers })).statusCode).toBe(403);
+    expect((await server.inject({ method: "DELETE", url: base + "/ann/sample:sso", headers })).statusCode).toBe(403);
+    expect((await server.inject({ url: base + "/all" })).json().people[0].credentials[0].sharing.scope).toBe("all");
+    expect((await server.inject({ method: "DELETE", url: base + "/ann/sample:sso" })).statusCode).toBe(200);
+    expect(credentialHold(app, "ann", "sample:sso").state).toBe("none");
+    run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by,updated_at) values('ann','settings.security.edit','global','','allow','0','owner','0')");
+    for (const payload of [{ agents: { accountsDefault: "own" } }, { credentials: { lending: "off" } }]) {
+      expect((await server.inject({ method: "PUT", url: "/api/settings", headers, payload })).statusCode).toBe(403);
+      expect((await server.inject({ method: "PUT", url: "/api/settings", payload })).statusCode).toBe(200);
+    }
+    const config = (await server.inject({ url: "/api/settings?section=security" })).json().config;
+    expect(config.agents.accountsDefault).toBe("own");
+    expect(config.credentials.lending).toBe("off");
+  } finally { await server.close(); }
+});
