@@ -293,7 +293,7 @@ export function accountFor<P extends AgentProfile>(app: App, userId: string | un
       const account = accountRun(app, use.holder, entry, false);
       if (use.holder !== userId) {
         const state = credentialMethod(use.kind)!.provides.commands.flatMap(c => c.state ?? []);
-        account.borrowedPaths = [...new Set([...entry.account.owns, ...state])];
+        account.borrowed = { state: [...new Set([...entry.account.owns, ...state])], dirs: entry.account.dirs ?? [] };
       }
       return { ...p, [credentialUse]: use, ownAccount: account };
     }

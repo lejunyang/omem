@@ -21,8 +21,8 @@ export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; re
 
 /** What a run for one user's own account carries on its profile (accounts.ts sets it in prepareRun). */
 export type SandboxAccount = {
-  /** Relative backend and credential state allowed inside a borrowed member HOME. */
-  borrowedPaths?: string[];
+  /** In a borrowed HOME, bind only shared state and create the other required directories privately. */
+  borrowed?: { state: string[]; dirs: string[] };
   network?: SandboxNetwork;
   userId: string;
   /** The account backend (catalog id): codex, claude, traex, doubao-cli. */
@@ -100,6 +100,8 @@ const inside = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWit
 
 export type SandboxPlan = {
   network?: SandboxNetwork;
+  /** Empty directories created in the sandbox with mode 0700. */
+  privateDirs?: string[];
   /** Replaced by empty folders (tmpfs). */
   hide: string[];
   ro: string[];
@@ -121,7 +123,7 @@ export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointer
  * always private.
  */
 export function bwrapArgs(plan: SandboxPlan): string[] {
-  const rank = { tmpfs: 0, ro: 1, rw: 2 } as const;
+  const rank = { dir: 0, tmpfs: 1, ro: 2, rw: 3 } as const;
   const ops = new Map<string, { path: string; kind: keyof typeof rank }>();
   const add = (path: string, kind: keyof typeof rank) => {
     const p = posix.normalize(path).replace(/\/+$/, "") || "/";
@@ -129,11 +131,16 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
     const old = ops.get(p);
     if (!old || rank[kind] > rank[old.kind]) ops.set(p, { path: p, kind });
   };
+  for (const p of plan.privateDirs ?? []) add(p, "dir");
   for (const p of [...plan.hide, "/tmp"]) add(p, "tmpfs");
   for (const p of plan.ro) add(p, "ro");
   for (const p of plan.rw) add(p, "rw");
   const sorted = [...ops.values()].sort((a, b) => depth(a.path) - depth(b.path) || rank[a.kind] - rank[b.kind] || a.path.localeCompare(b.path));
-  const mounts = sorted.flatMap((o) => (o.kind === "tmpfs" ? ["--tmpfs", o.path] : o.kind === "ro" ? ["--ro-bind-try", o.path, o.path] : ["--bind", o.path, o.path]));
+  const mounts = sorted.flatMap(({ kind, path }) => {
+    if (kind === "dir") return ["--perms", "0700", "--dir", path];
+    if (kind === "tmpfs") return ["--tmpfs", path];
+    return [kind === "ro" ? "--ro-bind-try" : "--bind", path, path];
+  });
   const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
   const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
   const n = plan.network;
@@ -236,20 +243,26 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
     absolute.map(real).filter(p => hide.some(h => inside(p, h)));
   const home = real(acct.home);
   const work = workspace?.rw ?? [real(cwd)];
-  const rw = acct.borrowedPaths ? work.filter(p => !inside(home, p) && !inside(p, home)) : [home, ...(acct.network && home !== acct.home ? [acct.home] : []), ...work];
-  if (acct.borrowedPaths) {
+  const rw = acct.borrowed ? work.filter(p => !inside(home, p) && !inside(p, home)) : [home, ...(acct.network && home !== acct.home ? [acct.home] : []), ...work];
+  const privateDirs: string[] = [];
+  if (acct.borrowed) {
     hide.push(home);
-    for (const rel of acct.borrowedPaths) {
+    for (const rel of acct.borrowed.state) {
       const path = resolve(home, rel);
       if (!existsSync(path)) continue;
       if (path === home || !inside(path, home) || realpathSync(path) !== path) throw new Error("出借状态目录越过账号目录或含符号链接");
       rw.push(path);
     }
+    for (const rel of acct.borrowed.dirs) {
+      const path = resolve(home, rel);
+      if (!inside(path, home)) throw new Error("出借运行目录越过账号目录");
+      if (path !== home && !rw.some(mount => inside(path, mount))) privateDirs.push(path);
+    }
   }
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ network: acct.network, hide, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
+    args: bwrapArgs({ network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
     env: sandboxEnv(process.env, runEnv, acct, hide, nodeBin),
   };
 }
