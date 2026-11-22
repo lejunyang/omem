@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
 import { OWNER } from "../core/users.ts";
-import { HttpError, truncate } from "../core/util.ts";
+import { COMMAND_OUTPUT_LIMIT, HttpError, truncate } from "../core/util.ts";
 import { createRun, getRun, updateQueuedRun, cancelRun, type Run } from "../agents/runs.ts";
 import { eventSummary } from "./compile.ts";
 import { decidedBlocks } from "../channels/lark-send.ts";
@@ -32,7 +32,6 @@ type ScriptInput = {
 
 /** How long an approval card stays good: past this the run does not start. */
 const APPROVAL_DAYS = 3;
-const OUTPUT_MAX = 20_000;
 
 export async function scriptAction(app: App, rule: Rule, a: ScriptAction, e: RuleEvent, reason: string): Promise<{ action: string; ok: boolean; detail: string; runId?: string }> {
   runtimeCommand(a.runtime);
@@ -183,8 +182,8 @@ export async function runScript(app: App, run: Run, signal?: AbortSignal) {
     const stop = () => p.kill(process.platform === "win32" ? undefined : "SIGKILL");
     const timer = setTimeout(() => ((timedOut = true), stop()), input.timeoutSec * 1000);
     signal?.addEventListener("abort", stop, { once: true });
-    p.stdout.setEncoding("utf8").on("data", (d: string) => (stdout = (stdout + d).slice(-OUTPUT_MAX)));
-    p.stderr.setEncoding("utf8").on("data", (d: string) => (stderr = (stderr + d).slice(-OUTPUT_MAX)));
+    p.stdout.setEncoding("utf8").on("data", (d: string) => (stdout = (stdout + d).slice(-COMMAND_OUTPUT_LIMIT)));
+    p.stderr.setEncoding("utf8").on("data", (d: string) => (stderr = (stderr + d).slice(-COMMAND_OUTPUT_LIMIT)));
     p.on("error", (err) => (stderr += `\n${err.message}`));
     p.on("close", (code, sig) => {
       clearTimeout(timer);

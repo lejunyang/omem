@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
@@ -11,6 +11,26 @@ import { registerCredential, setCredentialSharing, startCredentialLogin } from "
 import { accountOf, sandboxCommand, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { forgetPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
 import { testApp } from "./helpers.ts";
+
+it("示例命令按虚构项目读取权限输出 JSON 与退出码", () => {
+  const app = testApp();
+  const file = resolve("examples/plugins/acmeauth/bin/acme-demo");
+  const show = (project: string) => spawnSync(process.execPath, [file, "show", "--project", project], {
+    env: { ...process.env, HOME: app.home }, encoding: "utf8",
+  });
+  try {
+    expect(JSON.parse(show("sample").stderr).code).toBe("AUTH_REQUIRED");
+    mkdirSync(join(app.home, ".acme-demo"));
+    const account = join(app.home, ".acme-demo/account.json");
+    writeFileSync(account, JSON.stringify({ user: "member-a", expiresAt: Date.now() + 60_000 }));
+    expect(show("sample").status).toBe(0);
+    const denied = show("other");
+    expect(denied.status).toBe(3);
+    expect(JSON.parse(denied.stderr)).toMatchObject({ code: "DENIED", details: { links: ["https://example.test/request"] } });
+    writeFileSync(account, JSON.stringify({ user: "member-a", expiresAt: 1 }));
+    expect(JSON.parse(show("sample").stderr).code).toBe("EXPIRED");
+  } finally { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
+});
 
 // 成员登录要按 POSIX 路径核对账号目录（见 credentials.test.ts 的说明），Windows 上跳过。
 it.skipIf(process.platform === "win32")("示例插件一次登录供给命令行与后端，借用沙箱只挂本凭据的状态", async () => {

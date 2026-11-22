@@ -96,6 +96,8 @@ import type { SearchOptions } from "../search/search.ts";
 export type ToolContext = {
   /** Host-only identity of the ACP prompt currently using this token and the command wrappers. */
   commandTurn?: string;
+  /** Account whose HOME the local process sees. Defaults to the machine login. */
+  commandHomeUser?: string | null;
   /** Host-selected directory for browsers opened locally by this run. */
   browserProfilesRoot?: string;
   app: App;

@@ -175,6 +175,14 @@ function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | 
     body: id === OWNER ? "用的是这台机器上已有的登录，请在本机重新授权。" : `请重新授权 ${m.name}。此前的账号文件会保留。`, link: "#/account" });
   save(app, id, m.kind, { ...hold, notified: { ...hold.notified, [state]: today } });
 }
+export function expireCommandCredential(app: App, id: string, m: CredentialMethod) {
+  return serial(keyOf(app, id, m.kind), async () => {
+    const hold = credentialHold(app, id, m.kind);
+    if (hold.state === "none" || m.signal.aborted) return;
+    save(app, id, m.kind, { ...hold, state: "expired", refreshAt: undefined });
+    reminder(app, id, m, "expired");
+  });
+}
 function remindHold(app: App, id: string, m: CredentialMethod) {
   const s = credentialHold(app, id, m.kind);
   if (s.state === "expired" || s.expiresAt !== undefined && s.expiresAt <= Date.now()) reminder(app, id, m, "expired");

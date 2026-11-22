@@ -34,7 +34,7 @@ function headers(input: http.IncomingHttpHeaders) {
   for (const key of ["connection", "keep-alive", "proxy-connection", "proxy-authorization", "proxy-authenticate", "transfer-encoding", "upgrade", "trailer", "te", ...(input.connection ?? "").toLowerCase().split(",").map(k => k.trim())]) delete copy[key];
   return copy;
 }
-const callbackPath = /^\/(?:mcp|api\/(?:tools(?:\/[a-zA-Z0-9_-]+)?|command-gate|operation-gate\/http|remote\/agent-browser))$/;
+const callbackPath = /^\/(?:mcp|api\/(?:tools(?:\/[a-zA-Z0-9_-]+)?|command-gate|credentials\/outcome|operation-gate\/http|remote\/agent-browser))$/;
 const hostName = (url: URL) => url.hostname.replace(/^\[|\]$/g, "");
 class Refused extends Error { }
 export async function startProxy(path: string, opts: ProxyOptions) {

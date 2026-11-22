@@ -76,6 +76,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/tools/:name": "public",
   // Checks a run's token and that the request comes from this machine itself (agents/command-gate.ts).
   "POST /api/command-gate": "public",
+  "POST /api/credentials/outcome": "public",
   "POST /api/remote/agent-browser": "public", // Local agent run token in the handler.
   "GET /api/operation-gate/http": "public",
   "POST /api/operation-gate/http": "public",

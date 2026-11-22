@@ -70,6 +70,7 @@ import { callTool, contextToolNames, mcpTools, toolContextForToken, toolList } f
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
+import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
@@ -177,7 +178,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (req.routeOptions.url === "/api/cloud-tools/challenge/:nonce") return;
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).
-    if (req.routeOptions.url === "/api/remote/agent-browser") return; // Authenticated by gateCaller.
+    if (req.routeOptions.url === "/api/credentials/outcome" || req.routeOptions.url === "/api/remote/agent-browser") return; // Authenticated by gateCaller.
     if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|operation-gate|code-index\/notify|hooks)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
     await checkBearer(app, bearerToken(req));
@@ -342,7 +343,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     const b = q(z.object({ command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
-    return commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+    const decision = await commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+    if (decision.decision === "allow" && reportable(ctx) && credentialCommand(b.command)) return { ...decision, report: true };
+    return decision;
   });
   // A request a page is about to send in a browser an agent drives (agents/http-gate.ts): the same
   // callers as the command gate — this machine, a run's token. GET says which requests to ask about.
@@ -353,6 +356,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     return ctx;
   };
+  server.post("/api/credentials/outcome", async req => {
+    const ctx = gateCaller(req);
+    if (!ctx.runId || !reportable(ctx)) throw new HttpError(403, "需要发起人自己账号的本机运行");
+    return credentialOutcome(app, ctx.userId ?? OWNER, ctx.runId, q(outcomeSchema, req.body));
+  });
   server.post("/api/remote/agent-browser", async req => {
     const ctx = gateCaller(req);
     if (!ctx.browserProfilesRoot || !ctx.runId) throw new HttpError(403, "只有本机受管运行可以登记浏览器");

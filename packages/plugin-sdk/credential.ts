@@ -40,16 +40,23 @@ export type CredentialContext = {
 };
 
 export type CredentialOutcome = { json: string; equals: unknown };
-/** One command-line tool the credential provides (readOnly / resource / outcomes are phase 2). */
+type CommandMatch = {
+  subcommand?: string[];
+  /** Exact argument vector, including flags. */
+  args?: string[];
+  /** Named options, e.g. { instance: "sample", verbose: true }. False requires absence. */
+  options?: Record<string, string | boolean>;
+};
+/** One command-line tool the credential provides. */
 export type CredentialCommand = {
   name: string;
   /** Install directories mounted read-only into members' sandboxes (`~` is this machine's HOME). */
   install?: string[];
   /** State directories it writes, relative to HOME. */
   state?: string[];
-  readOnly?: { subcommand?: string[]; [key: string]: unknown }[];
-  resource?: { match?: Record<string, unknown>; key: string; [key: string]: unknown }[];
-  outcomes?: { unauthenticated?: CredentialOutcome[]; expired?: CredentialOutcome[]; denied?: CredentialOutcome[]; applyUrl?: string; [key: string]: unknown };
+  readOnly?: CommandMatch[];
+  resource?: { match: CommandMatch; key: string }[];
+  outcomes?: { unauthenticated?: CredentialOutcome[]; expired?: CredentialOutcome[]; denied?: CredentialOutcome[]; applyUrl?: string };
 };
 export type CredentialDef = {
   /** Unique within the plugin; the full name is `<plugin>:<id>`. */

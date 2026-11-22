@@ -71,7 +71,15 @@ export function registerCredential(plugin: string, def: CredentialDef, settings 
   for (const name of ["refresh", "check", "logout", "provide", "precheck"] as const)
     if (def[name] !== undefined && typeof def[name] !== "function") throw new Error(`凭据 ${name} 需要回调函数`);
   const provides = providesSchema.parse(def.provides);
-  for (const c of provides.commands) for (const p of c.state) stateRel(p);
+  for (const [i, c] of provides.commands.entries()) {
+    for (const p of c.state) stateRel(p);
+    // Zod objects enumerate fields in schema order. Outcome precedence belongs to the declaration.
+    if (c.outcomes) {
+      const validated = c.outcomes;
+      const keys = Object.keys(def.provides.commands![i]!.outcomes!) as (keyof typeof validated)[];
+      c.outcomes = Object.fromEntries(keys.map(key => [key, validated[key]]));
+    }
+  }
   const kind = `${plugin}:${def.id}`;
   if (registry.has(kind)) throw new Error("凭据重复注册：" + kind);
   const lifetime = new AbortController();
