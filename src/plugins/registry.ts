@@ -11,7 +11,7 @@ import { registerFeatures } from "../auth/features.ts";
 import { appConfig } from "../auth/apps.ts";
 import { listConnections } from "../auth/vault.ts";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
@@ -31,6 +31,7 @@ import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
 import { acceptCredentialDeclarations, codeHash, setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
 import { startSandbox } from "./sandbox.ts";
+import { importFresh } from "./fresh-import.ts";
 import { installInfo } from "./install.ts";
 import { broughtBy, seedContributions, pluginMcpSchema } from "./contributions.ts";
 import { pluginSpaceSchema, pluginSpaces, ensurePluginSpaces, describeSpaces } from "./spaces.ts";
@@ -194,8 +195,9 @@ async function importServer(dir: string, m: PluginManifest, source: LoadedPlugin
   const id = m.id;
   const file = source === "builtin" ? (built ? join(packageRoot(), "dist", "plugins", id, "server.js") : join(dir, "server.ts")) : serverFile(dir, m);
   if (!file || !existsSync(file)) return null;
-  // A changed file must load anew after trust is withdrawn and given again.
-  const mod = (await import(`${pathToFileURL(file).href}?v=${Date.now()}`)) as { default?: PluginRegister };
+  // A changed file must load anew after trust is withdrawn and given again, and so must the files
+  // it imports from the plugin's folder (fresh-import.ts); a built-in's are next to its server file.
+  const mod = (await importFresh(file, source === "builtin" ? dirname(file) : dir)) as { default?: PluginRegister };
   if (typeof mod.default !== "function") throw new Error(`插件 ${id} 的 server 没有默认导出 register(api)`);
   return mod.default;
 }
@@ -769,6 +771,8 @@ export function describePlugin(p: LoadedPlugin) {
       platforms: codeRuns(p) ? p.platforms : p.manifest.permissions.platforms,
       // Backends it logs members in to (writes credentials into their account folders).
       agentLogin: codeRuns(p) ? [...new Set(p.logins.map((l) => l.split(":")[0]))] : p.manifest.permissions.agentLogin,
+      // Credentials it registers for members (agents/credentials.ts): a linked folder's code is re-confirmed on every change.
+      credential: p.manifest.permissions.credential,
       uses: p.manifest.connectors.map((c) => c.provider),
       services: [...p.manifest.services.map((s) => [s.command, ...s.args].join(" ")), ...Object.values(p.manifest.mcp).filter((s) => s.command).map((s) => [s.command, ...s.args].join(" "))],
       space: p.manifest.space?.id ?? null,

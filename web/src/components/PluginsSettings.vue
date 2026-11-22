@@ -52,7 +52,7 @@ type Plugin = {
   installed: { source: string; version: string; installedAt: string } | null;
   /** AI backends it declares (docs/v2/plugins.md 声明式 ACP 后端): the command is code, read before trusting. */
   backends?: { id: string; name: string; command: string; args: string[] }[];
-  permissions: { flow?: { signal?: boolean; run?: boolean; gate?: boolean }; tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; agentLogin?: string[]; uses: string[]; services: string[]; space: string | null };
+  permissions: { flow?: { signal?: boolean; run?: boolean; gate?: boolean }; tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; agentLogin?: string[]; credential?: boolean; uses: string[]; services: string[]; space: string | null };
 };
 
 const route = useRoute();
@@ -76,6 +76,7 @@ function permissionLines(p: Plugin) {
     m.providers.length ? `带来可连接的平台：${m.providers.length > 6 ? `${m.providers.length} 个` : m.providers.join("、")}` : "",
     m.platforms.length ? `给这些平台加读取和同步：${m.platforms.map((x) => x.replace(/^connect-/, "")).join("、")}` : "",
     m.agentLogin?.length ? `给成员登录这些 AI 后端，把凭据写进他们的账号目录：${m.agentLogin.join("、")}` : "",
+    m.credential ? "给成员登记凭据：成员授权一次，凭据写进他们的账号目录，供给 AI 后端和命令行" : "",
     m.uses.length ? `以你的身份调用：${m.uses.join("、")}` : "",
     m.services.length ? `在这台机器上运行：${m.services.join("；")}` : "",
     m.space ? `用自己的空间 ${m.space}` : "",
@@ -181,7 +182,7 @@ async function trust(p: Plugin, mode: "isolated" | "inprocess" = "isolated") {
       ? "它的代码在单独的进程里运行：只能读它自己的目录、写它自己的数据目录，读不到 omem 的密钥和你的其他文件，也不能启动别的程序（信任后单独加入的命令 MCP 除外）；读平台、存原件都经过 omem，按调用它的人的权限。"
       : "它的代码在 omem 的进程里运行，能读写你能读写的所有文件、用 omem 的全部权限。只对你自己写的或逐行看过的插件这样做；内容块、新的连接器、鉴权方式和聊天渠道只能这样运行。";
   const ok = await confirmDialog(`信任插件“${p.name}”？`, {
-    message: `${how}${p.linked ? "它是链接的开发目录，信任按这个目录记：之后改代码不用再确认，改了会自动重新加载。" : "代码以后有改动，要在这里重新确认。"}\n\n${what}`,
+    message: `${how}${p.linked && !p.permissions.credential ? "它是链接的开发目录，信任按这个目录记：之后改代码不用再确认，改了会自动重新加载。" : p.linked ? "它是链接的开发目录，又给成员登记凭据：代码每改一次都要在这里重新确认。" : "代码以后有改动，要在这里重新确认。"}\n\n${what}`,
     okText: mode === "isolated" ? "隔离运行" : "在 omem 里运行",
     danger: mode === "inprocess",
   });
@@ -286,7 +287,7 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
         </button>
         <strong>{{ p.name }}</strong><span class="muted small mono">{{ p.id }}</span>
         <span v-if="p.linked" class="badge accent" title="omem plugin link 链接的目录：不复制，改了就重新加载；只在这台设备上">开发中</span>
-        <span class="badge" :class="{ warn: p.trust === 'required' || p.trust === 'changed', ok: p.trust === 'trusted' }">{{ p.linked && p.trust === "changed" ? "链接的目录换了，需要重新确认" : TRUST[p.trust] }}</span>
+        <span class="badge" :class="{ warn: p.trust === 'required' || p.trust === 'changed', ok: p.trust === 'trusted' }">{{ p.linked && p.trust === "changed" ? (p.permissions.credential ? "代码改过，需要重新确认" : "链接的目录换了，需要重新确认") : TRUST[p.trust] }}</span>
         <span v-if="p.source !== 'builtin' || p.version" class="muted small path" :title="p.linked ? p.dir ?? '' : undefined">{{ p.source === "builtin" ? "" : sourceLabel(p) }}{{ p.version ? `${p.source === "builtin" ? "" : " · "}${p.version}` : "" }}</span>
         <span class="spacer" />
         <button v-if="p.settings" class="btn ghost sm" @click="editing = p">设置</button>

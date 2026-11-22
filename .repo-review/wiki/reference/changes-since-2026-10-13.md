@@ -49,6 +49,10 @@ updated: 2026-11-22
 - 设置 → 安全 → 凭据的出借（`CredentialLending.vue`）管 `credentials.lending`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`；设置 → 成员 → 成员的凭据（`CredentialHolds.vue`）读 `GET /api/credentials/all`，可以替成员退出。卡片链接 `?card=credentials`、`?card=credential-holds`。
 - 纯函数和测试：`web/src/lib/credentials.ts`、`test/web-credentials.test.ts`。演示数据（`scripts/doc-screens.ts`）装上 `examples/plugins/acmeauth`，另登记一个演示的代码托管凭据，三个成员各有有效 / 快到期 / 没登录的持有；演示里把成员账号沙箱当作可用。新截图 `account-credentials`。
 
+## 在 omem 里运行的插件重新加载时，引用的文件一起换新（2026-11-22）
+
+从 `src/plugins/fresh-import.ts` 读起。原来重新加载插件只给入口文件加版本号，入口从插件目录里引用的文件仍是服务启动时缓存的那份：改了 `src/` 下的文件再重新信任，入口找不到新的导出就报错。现在头一次导入插件时注册 Node 的同线程解析钩子（`module.registerHooks`，每次导入几乎没有额外开销），把入口的版本号带给它从插件目录里引用的文件（`node_modules/` 除外）。插件页把“给成员登记凭据”列进权限，声明了凭据的链接插件改了代码标“代码改过，需要重新确认”。验证在 `test/plugin-fresh-import.test.ts`（起一个 Node 子进程，vitest 自己的模块加载不经过这个钩子）。
+
 ## 凭据第一期：插件登记、按人持有、供给和出借（2026-11-22）
 
 - 从 `src/agents/credentials.ts` 和 `credential-registry.ts` 读起，设计和接口在 `docs/v2/credentials.md`。`api.credential` 声明一次授权覆盖的后端、命令行、安装和状态目录；只有声明 `permissions.credential` 且被信任为进程内运行的插件能登记，隔离模式下说明原因。声明进信任指纹，链接开发目录的插件按代码指纹重新确认。
