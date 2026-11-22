@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { App } from "../src/core/app.ts";
@@ -110,12 +110,12 @@ it("续签不响应取消也在两分钟内结束，不堵住退出", async () =
   await logoutCredential(app, "ann", "sample:sso");
 });
 it.skipIf(process.platform === "win32")("安装目录只读、状态预建；本人默认清单显示 state；拒绝逃逸和符号链接", () => {
-  const install = join(app.home, "outside-install");
-  mkdirSync(install);
-  add({ provides: { backends: ["traex"], commands: [{ name: "acme", install: ["~/.fixture-install-missing"], state: [".fixture-state"] }] } });
+  const install = mkdtempSync(join(tmpdir(), "credential-install-"));
+  undo.push(() => rmSync(install, { recursive: true, force: true }));
+  add({ provides: { backends: ["traex"], commands: [{ name: "acme", install: [install, "~/.fixture-install-missing"], state: [".fixture-state"] }] } });
   const home = ensureAccountHome(app, "ann");
   expect(existsSync(join(home, ".fixture-state"))).toBe(true);
-  expect(credentialInstallDirs(app)).toEqual([]);
+  expect(credentialInstallDirs(app)).toEqual([canonical(install)]);
   expect(myCredentials(app, "ann").credentials[0].missingInstall).toContain(canonical(join(homedir(), ".fixture-install-missing")));
   expect(sandboxStatus(app).defaults.writable).toContain(canonical(join(homedir(), ".fixture-state")));
   expect(() => registerCredential("bad", { id: "sso", name: "坏路径", login: async () => ({ user: "a" }), provides: { commands: [{ name: "x", state: ["../secrets"] }] } }, () => ({}), app)).toThrow();
@@ -229,4 +229,15 @@ it("网页与机器人首次入口只发一次清单，成员只能管理自己�
     expect(config.agents.accountsDefault).toBe("own");
     expect(config.credentials.lending).toBe("off");
   } finally { await server.close(); }
+});
+
+it("成员的每日检查只能读取秘密，检查失败当天只提醒一次", async () => {
+  add({ async check(ctx) { await ctx.secret.set("changed"); return { state: "ok" }; } });
+  await startCredentialLogin(app, "ann", "sample:sso");
+  await until(() => credentialHold(app, "ann", "sample:sso").state === "logged-in");
+  await checkCredential(app, "ann", "sample:sso");
+  await checkCredential(app, "ann", "sample:sso");
+  const c = listConnections(app, "ann")[0];
+  expect(connectionSecrets(app, c.id)?.accessToken).toBe("fixture-secret-ann");
+  expect(all(app.db, "select id from notifications where user_id='ann' and title like '%检查失败%'")).toHaveLength(1);
 });

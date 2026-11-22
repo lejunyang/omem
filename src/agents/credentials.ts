@@ -1,4 +1,6 @@
 import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { canonical } from "./own-sandbox.ts";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type { CredentialContext } from "../../packages/plugin-sdk/credential.ts";
@@ -93,8 +95,13 @@ export function credentialAccountView(app: App, id: string, backend: string) {
   const m = credentialKindsForBackend(backend).find(m => usable(app, id, m.kind));
   return m ? { ...credentialHold(app, id, m.kind), kind: m.kind, name: m.name } : null;
 }
-function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal): CredentialContext {
-  const home = id === OWNER ? homedir() : ensureAccountHome(app, id);
+function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal, readOnly = false): CredentialContext {
+  const home = id === OWNER ? homedir() : accountHome(app, id);
+  if (id !== OWNER) {
+    const expected = join(canonical(app.home), "accounts", id, "home");
+    if (canonical(home) !== expected || m.provides.commands.some(c => c.state?.some(p => canonical(join(home, p)) !== join(expected, p))))
+      throw new Error("账号状态目录含符号链接");
+  }
   const env = id === OWNER ? { ...process.env } : Object.assign({}, ...m.provides.backends.map(b => {
     const e = accountEntry(app, b); return e ? accountEnv(app, id, e) : {};
   }));
@@ -102,7 +109,7 @@ function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal)
     async get() { signal.throwIfAborted(); const c = findConnection(app, id, secretProvider(m.kind)); return c ? connectionSecrets(app, c.id)?.accessToken ?? null : null; },
     async set(value) {
       signal.throwIfAborted();
-      if (id === OWNER) throw new Error("本机凭据只检查，不写入");
+      if (readOnly || id === OWNER) throw new Error("检查凭据时不能写入秘密");
       const provider = secretProvider(m.kind);
       if (value === null) { const c = findConnection(app, id, provider); if (c) deleteConnection(app, c.id); return; }
       if (!value || value.length > 65_536) throw new Error("秘密需要 1–65536 个字符");
@@ -214,7 +221,7 @@ export function checkCredential(app: App, id: string, kind: string) {
     const s = credentialHold(app, id, kind);
     if (!m.check) return s;
     try {
-      const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal))));
+      const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, true))));
       const expiresAt = result.state === "missing" ? undefined : result.expiresAt ?? s.expiresAt;
       save(app, id, kind, { ...credentialHold(app, id, kind), state: result.state === "missing" ? "none" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in",
         user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined });
@@ -228,14 +235,17 @@ export function logoutCredential(app: App, id: string, kind: string, actor = id)
   if (id === OWNER) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机退出");
   logins.get(keyOf(app, id, kind))?.abort.abort();
   return serial(keyOf(app, id, kind), async () => {
-    if (m.logout && existsSync(accountHome(app, id))) await timed(m, 20_000, signal => m.logout!(context(app, id, m, signal))).catch(() => {});
+    if (m.logout && existsSync(accountHome(app, id))) {
+      try { await timed(m, 20_000, signal => m.logout!(context(app, id, m, signal))); }
+      catch { throw new HttpError(502, "退出凭据失败，请重试"); }
+    }
     const c = findConnection(app, id, secretProvider(kind)); if (c) deleteConnection(app, c.id);
     save(app, id, kind, { ...credentialHold(app, id, kind), state: "none", user: undefined, expiresAt: undefined, refreshAt: undefined, checkedAt: now(), error: undefined });
     audit(app, actor, "credentials.logout", kind, { holder: id });
   });
 }
 export async function removeAllCredentials(app: App, id: string) {
-  for (const m of credentialMethods()) await logoutCredential(app, id, m.kind);
+  for (const m of credentialMethods()) await logoutCredential(app, id, m.kind).catch(() => {});
   for (const c of listConnections(app, id)) if (c.provider.startsWith("credential:")) deleteConnection(app, c.id);
   run(app.db, "delete from credential_holds where user_id=?", id);
 }
