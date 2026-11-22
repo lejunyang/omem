@@ -3171,20 +3171,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return probe;
   });
 
-  // The npm adapter behind an ACP backend (src/agents/adapter.ts): installed and newest version; upgrade in place.
+  // The npm adapter behind an ACP backend (src/agents/adapter.ts): installed and newest version, and the
+  // install or upgrade job running in the background (`?quick=1` skips asking npm for the newest version).
   server.get("/api/agents/:id/adapter", async (req) => {
-    const { adapterStatus, hasAdapter } = await import("../agents/adapter.ts");
+    const { adapterStatus, hasAdapter, adapterJob, canInstall } = await import("../agents/adapter.ts");
     const id = (req.params as { id: string }).id;
-    if (!hasAdapter(app, id)) return { id, package: null };
+    const owner = who(req) === OWNER;
+    const job = owner ? adapterJob(id) : null;
+    if ((req.query as { quick?: string }).quick) return { id, job, canInstall: owner && canInstall(app, id) };
+    if (!hasAdapter(app, id)) return { id, package: null, job, canInstall: owner && canInstall(app, id) };
     const status = await adapterStatus(app, id);
-    if (who(req) === OWNER) return status;
+    if (owner) return status;
     const { package: pkg, version, latest, upgradable } = status;
     return { id, package: pkg, version, latest, upgradable };
   });
   server.post("/api/agents/:id/adapter/upgrade", async (req) => {
     const { upgradeAdapter } = await import("../agents/adapter.ts");
     const b = q(z.object({ version: z.string().max(40).optional() }), req.body ?? {});
-    return upgradeAdapter(app, (req.params as { id: string }).id, b.version);
+    return { job: await upgradeAdapter(app, (req.params as { id: string }).id, b.version) };
+  });
+  server.post("/api/agents/:id/install", async (req) => {
+    const { installAdapter } = await import("../agents/adapter.ts");
+    return { job: await installAdapter(app, (req.params as { id: string }).id) };
   });
 
   // Per-role model/effort defaults: agents.roleModels[role][profileId] = { model, effort }.
@@ -3215,6 +3223,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Official ACP registry: agents beyond the built-in catalog, runnable via npx / uvx / a downloaded binary.
   server.get("/api/agent-registry", async () => {
     const { fetchRegistry, registryOptions } = await import("../agents/catalog.ts");
+    const { registryAlias } = await import("../setup.ts");
     const have = new Set(listAgentProfiles(app).filter((p) => p.installed).map((p) => p.id));
     return (await fetchRegistry()).map((a) => ({
       id: a.id,
@@ -3222,7 +3231,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       version: a.version,
       description: a.description,
       website: a.website ?? a.repository,
-      added: have.has(a.id),
+      // The registry's id for a built-in backend differs at times (claude-acp is claude).
+      added: have.has(a.id) || have.has(registryAlias(a.id) ?? ""),
       ways: registryOptions(a).filter((o) => o.available).map((o) => o.kind),
     }));
   });

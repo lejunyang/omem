@@ -128,7 +128,7 @@ flowchart LR
 
 云端会话可以按运行授权检索、读原文。默认关闭。本人探测并确认后端后，可指定它能使用的只读工具。每次调用沿用成员和运行的空间权限。[配置云端只读工具](docs/v2/external-access.md#云端后端调只读工具)。
 
-`omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → 后端与模型 → 添加 Agent”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → 后端与模型 → API key 添加 OpenAI 或 Anthropic 的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → 后端与模型 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。
+`omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → 后端与模型 → 添加 Agent”做同样的事；内置目录里有 npm 包的，在“其他支持的 Agent”里点“安装”就在后台装好（有 osdk 和 Node 时用 osdk 装）。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → 后端与模型 → API key 添加 OpenAI 或 Anthropic 的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → 后端与模型 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。
 
 设置 → 后端与模型 → 决策 可配置多个模型，按顺序或每次随机先问一个；不可用、拒答或出错会换下一个，刚出错的 5 分钟内排到最后，判断记录显示由谁回答及换用情况。 巡检、盯群、有人找你和直接答复分别设最低把握，按后续结果记录漏看、多看；同页可看报告，也可用命令离线比较其他决策模型。
 
@@ -599,7 +599,7 @@ omem peer call <设备> ide '{}'              # 只读：网页版 VS Code 的�
 omem peer call <设备> replays '{}'          # 只读：夜间复盘的状态（定时、replay-judge 的模型、上次结果或没跑的原因）和最近的结论
 omem peer call <设备> quality '{}'          # 只读：每晚抽检统计、加严名单、待检页数和最近 20 条摘要（不含问题正文）
 omem peer call <设备> replay-run '{"run_id":"r…","axis":"M1"}'   # 立即复盘一题（不带参数按选题规则挑）
-omem peer call <设备> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适配器（如 codex-acp）升到 npm 最新版（从 osdk.toml 的公开源装），返回前后版本；加 "version":"2.7.0" 装指定版本，这一次不受那台机器 npm 的发布时长下限限制
+omem peer call <设备> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适配器（如 codex-acp）升到 npm 最新版（osdk 管着的用 osdk，其余从 osdk.toml 的公开源用 npm 装），等装完返回前后版本；加 "version":"2.7.0" 装指定版本，这一次不受那台机器 npm 的发布时长下限限制
 omem peer call <设备> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
 omem peer call <设备> lark-docs-refresh '{"metadataOnly":true,"unchecked":true}'  # 只补读从没读过知识库位置的文档的目录（不重读正文），补全原件页的知识库目录树
 omem peer call <设备> sources-merge-duplicates '{}'  # 列出同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件；'{"dryRun":false}' 合并（旧 id 保留为别名）

@@ -448,8 +448,8 @@ async function addAgentsInteractive(config: Config, home: string) {
 }
 
 /** Registry ids that the built-in catalog already covers under another id. */
-function registryAlias(id: string) {
-  return ({ "claude-acp": "claude", "codex-acp": "codex", "github-copilot-cli": "copilot", "qwen-code": "qwen", "codebuddy-code": "codebuddy", "factory-droid": "droid", "grok-build": "grok", "minimax-code": "minimax", "amp-acp": "amp", "mistral-vibe": "vibe", "pi-acp": "pi" } as Record<string, string>)[id];
+export function registryAlias(id: string) {
+  return ({ "claude-acp": "claude", "codex-acp": "codex", "github-copilot-cli": "copilot", "qwen-code": "qwen", "codebuddy-code": "codebuddy", "factory-droid": "droid", "grok-build": "grok", "minimax-code": "minimax", "amp-acp": "amp", "mistral-vibe": "vibe", "pi-acp": "pi", "kimi-code": "kimi", "glm-acp-agent": "glm" } as Record<string, string>)[id];
 }
 
 async function addCatalogAgent(e: CatalogEntry, config: Config): Promise<AgentProfile | null> {

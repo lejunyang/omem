@@ -105,11 +105,12 @@ export const acpCatalog: CatalogEntry[] = [
   },
   { id: "gemini", statePaths: ["~/.gemini"], egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
   { id: "copilot", statePaths: ["~/.copilot"], name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
-  { id: "qwen", statePaths: ["~/.qwen"], name: "Qwen Code", command: "qwen", args: ["--acp"], npm: "@qwen-code/qwen-code" },
+  { id: "qwen", statePaths: ["~/.qwen"], name: "Qwen Code", command: "qwen", args: ["--acp", "--experimental-skills"], previousArgs: [["--acp"]], npm: "@qwen-code/qwen-code" },
   { id: "cursor", name: "Cursor Agent", command: "cursor-agent", args: ["acp"], install: "curl https://cursor.com/install -fsS | bash（Windows 见 cursor.com/cli）" },
-  { id: "opencode", statePaths: ["~/.local/share/opencode", "~/.local/state/opencode"], name: "OpenCode", command: "opencode", args: ["acp"], npm: "opencode-ai" },
+  // The npm package opencode-ai stays on 1.x; 2.x ships as a program (ACP registry: binary).
+  { id: "opencode", statePaths: ["~/.local/share/opencode", "~/.local/state/opencode"], name: "OpenCode", command: "opencode", args: ["acp"], install: "curl -fsSL https://opencode.ai/install | bash（或从 ACP 注册表下载）" },
   { id: "goose", name: "goose", command: "goose", args: ["acp"], install: "见 block.github.io/goose 安装说明" },
-  { id: "kimi", name: "Kimi CLI", command: "kimi", args: ["acp"], install: "uv tool install kimi-cli" },
+  { id: "kimi", name: "Kimi Code", command: "kimi", args: ["acp"], npm: "@moonshot-ai/kimi-code" },
   { id: "kilo", name: "Kilo", command: "kilo", args: ["acp"], npm: "@kilocode/cli" },
   { id: "auggie", name: "Auggie (Augment)", command: "auggie", args: ["--acp"], env: { AUGMENT_DISABLE_AUTO_UPDATE: "1" }, npm: "@augmentcode/auggie" },
   { id: "cline", name: "Cline", command: "cline", args: ["--acp"], npm: "cline" },
@@ -125,13 +126,16 @@ export const acpCatalog: CatalogEntry[] = [
     npm: "droid",
   },
   { id: "grok", name: "Grok Build", command: "grok", args: ["agent", "stdio"], npm: "@xai-official/grok" },
-  { id: "minimax", name: "MiniMax Code", command: "mcode", args: ["acp"], npm: "@minimax-ai/code" },
+  { id: "minimax", name: "MiniMax Code", command: "code-acp", args: ["acp"], npm: "@minimax-ai/code-acp" },
   { id: "amp", name: "Amp", command: "amp-acp", npm: "amp-acp" },
   { id: "vibe", name: "Mistral Vibe", command: "vibe-acp", install: "uv tool install mistral-vibe" },
   { id: "junie", name: "Junie (JetBrains)", command: "junie", args: ["--acp=true"], install: "见 jetbrains.com/junie" },
   { id: "devin", name: "Devin", command: "devin", args: ["acp"], install: "见 devin.ai/cli" },
   { id: "pi", name: "pi", command: "pi-acp", npm: "pi-acp" },
   { id: "deepagents", name: "DeepAgents", command: "deepagents-acp", npm: "deepagents-acp" },
+  { id: "kiro", name: "Kiro CLI", command: "kiro-cli", args: ["acp", "--agent-engine=v3"], install: "见 kiro.dev/cli（或从 ACP 注册表下载）" },
+  { id: "bob", name: "IBM Bob", command: "bob", args: ["acp"], npm: "@ibm/bob" },
+  { id: "glm", name: "GLM", command: "glm-acp-agent", npm: "glm-acp-agent" },
 ];
 
 /**

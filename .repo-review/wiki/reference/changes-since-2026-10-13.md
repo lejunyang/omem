@@ -21,6 +21,15 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 后端的 npm 包在网页上安装和升级，改成后台任务；ACP 目录对照注册表刷新（2026-11-22）
+
+- 起因：在一台慢的镜像上同时点了 codex 和 claude 两个适配器的“升级”，带原生程序的包下了十几分钟；请求一直挂着，页面停在“升级中”，刷新后能再点一次；600 秒的超时只让请求返回，npm 进程还活着，正在升级的标记却清掉了；装到一半时旧版已经挪走、命令链接还没建，claude 的命令找不到了，后端掉进“未安装”。
+- `src/agents/adapter.ts`：安装和升级都是服务端的后台任务（`AdapterJob`），一次只跑一个（同一个全局前缀），进程真正退出才算结束，45 分钟还没装完就停掉整个进程组。`GET /api/agents/:id/adapter` 带上任务（`?quick=1` 只要任务，不问 npm 最新版），`POST …/adapter/upgrade` 和新的 `POST /api/agents/:id/install` 立即返回任务。装完核对命令还在不在：装到一半命令没了，提示到“其他支持的 Agent”里重装；PATH 里找不到时说要把 bin 目录加进服务的 PATH。装完清掉 `availability.ts` 里缓存的“命令在不在”（以前缓存到重启）。
+- 有 osdk 和 Node 时新装走 `osdk --yes use -g npm:<包>@latest`；升级时 `osdk where -g` 认得正在用的那一份才走 osdk，否则仍用 npm 装进命令所在的前缀。
+- 网页：`AiBackend.vue` 跟着任务轮询，刷新后还能看到“在后台升级，已 N 分”和最后一行输出，失败时留一行原因；设置 → 后端与模型 → 其他支持的 Agent 里目录带 npm 包的多了“安装”按钮（`installable`，只给本人）。跟任务的轮询在 `web/src/lib/adapter-job.ts`。远程命令 `agent-upgrade` 用同一个任务，等装完才返回。
+- ACP 目录（`src/agents/catalog.ts`）按官方注册表 11-22 的版本刷新：Qwen 加 `--experimental-skills`（旧参数自动换）；Kimi 换成 npm 包 `@moonshot-ai/kimi-code`；MiniMax 换成 `@minimax-ai/code-acp`（命令 `code-acp acp`）；OpenCode 的 npm 包停在 1.x，改成安装说明；新增 Kiro CLI、IBM Bob、GLM。注册表列表里 `claude-acp` 这类和内置 id 不同的条目按别名算“已可用”（`setup.ts` 的 `registryAlias`）。
+- 测试：`test/adapter-jobs.test.ts`（假 npm 走一遍后台安装，POSIX 上跑）。
+
 ## 2026-11-22　缺少登录时按发起人的实时读取权借用命令登录
 
 从 `src/agents/credential-execution.ts` 读起。命令垫片在本地执行前询问宿主。插件按完整参数核实发起人可读具体资源后，宿主可在自动出借人的环境执行只读调用，并把两路输出交回。发起人收到拒绝时保留原结果和申请链接。插件回执契约见 `packages/plugin-sdk/credential.ts`。

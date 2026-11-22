@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { get, post } from "../../api";
-import { toast } from "../../store";
+import { state, toast } from "../../store";
+import { confirmDialog } from "../../lib/dialog";
+import { followAdapterJob, jobElapsed, lastLine, type AdapterJob } from "../../lib/adapter-job";
 import { network } from "../../lib/network-status";
 import { useBackends, useSettings, type Profile } from "./ctx";
 import AiBackend, { type AgentLoad } from "../../components/AiBackend.vue";
@@ -117,6 +119,46 @@ async function loadAgentLoad() {
 onMounted(loadAgentLoad);
 const missingProfiles = computed(() => profiles.value.filter((p) => !p.installed));
 
+// ---- installing a catalog npm package from the page (src/agents/adapter.ts): a job on the server, followed here.
+const isOwner = computed(() => state.me?.role === "owner" || !state.me);
+const installJobs = ref<Record<string, AdapterJob>>({});
+const followers = new Map<string, ReturnType<typeof followAdapterJob>>();
+function followInstall(job: AdapterJob) {
+  let f = followers.get(job.id);
+  if (!f) {
+    const target = ref<AdapterJob | null>(null);
+    watch(target, (j) => { if (j) installJobs.value = { ...installJobs.value, [j.id]: j }; });
+    f = followAdapterJob(target, (j) => {
+      if (j.ok) toast(`已装好 ${j.package}${j.after ? ` ${j.after}` : ""}。第一次用前先在终端运行它登录。`, "ok");
+      else toast(`${j.package} 没装好：${j.message ?? lastLine(j.output)}`, "error");
+      void load();
+      if (j.ok) void loadProbes();
+    });
+    followers.set(job.id, f);
+  }
+  f(job);
+}
+onBeforeUnmount(() => followers.forEach((f) => f.stop()));
+// A job started before this page opened (or before a refresh) is picked up again.
+watch(() => (isOwner.value ? missingProfiles.value.filter((p) => p.installable).map((p) => p.id).join(",") : ""), async (ids) => {
+  for (const id of ids ? ids.split(",") : []) {
+    if (installJobs.value[id]) continue;
+    const r = await get<{ job: AdapterJob | null }>(`/api/agents/${encodeURIComponent(id)}/adapter?quick=1`).catch(() => null);
+    if (r?.job) followInstall(r.job);
+  }
+}, { immediate: true });
+async function installBackend(p: Profile) {
+  const how = commandHint(p);
+  if (!(await confirmDialog(`安装 ${p.name ?? p.id}？`, { message: `${how}。带原生程序的包在慢的源上要装好几分钟，在后台装，可以离开这页。装好后第一次用前要在终端运行它登录。`, okText: "安装" }))) return;
+  try {
+    const r = await post<{ job: AdapterJob }>(`/api/agents/${encodeURIComponent(p.id)}/install`, {});
+    followInstall(r.job);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+const commandHint = (p: Profile) => `装 npm 包 ${p.install?.replace(/^npm i -g /, "") ?? p.id}：这台机器有 osdk 和 Node 时用 osdk 装，否则用 npm 从公开源装`;
+
 type RegistryAgent = { id: string; name: string; version: string; description?: string; website?: string; added: boolean; ways: string[] };
 const registry = ref<RegistryAgent[] | null>(null);
 const registryBusy = ref("");
@@ -199,7 +241,14 @@ async function saveEdit() {
                 <button class="btn ghost sm" @click="editProfile(p)">{{ editingProfile === p.id ? "收起" : "编辑" }}</button>
               </div>
               <p v-if="p.pluginBackend" class="small miss-plugin" :class="{ warn: !p.pluginBackend.available }">{{ p.pluginBackend.available ? `来自插件 ${p.pluginBackend.name}` : `来自插件 ${p.pluginBackend.name}，现在用不了：${p.pluginBackend.reason ?? "它的插件停用了"}` }}。<RouterLink :to="{ path: '/settings', query: { tab: 'plugins', plugin: p.pluginBackend.plugin } }">去插件页</RouterLink></p>
-              <div v-if="p.install" class="miss-install small muted"><span>安装</span><MonoLine :text="p.install" copy /></div>
+              <div v-if="p.install" class="miss-install small muted">
+                <span>安装</span><MonoLine :text="p.install" copy />
+                <button v-if="p.installable && isOwner" class="btn sm" :disabled="installJobs[p.id]?.running" @click="installBackend(p)">{{ installJobs[p.id]?.running ? "安装中…" : "安装" }}</button>
+              </div>
+              <div v-if="installJobs[p.id] && (installJobs[p.id].running || installJobs[p.id].ok === false)" class="small" :class="installJobs[p.id].running ? 'muted' : 'warn-text'">
+                <template v-if="installJobs[p.id].running">在后台{{ installJobs[p.id].via === "osdk" ? "用 osdk " : "用 npm " }}安装，已 {{ jobElapsed(installJobs[p.id]) }}，可以离开这页<span v-if="installJobs[p.id].output" class="mono job-out" :title="installJobs[p.id].output">{{ lastLine(installJobs[p.id].output) }}</span></template>
+                <template v-else>没装好：{{ installJobs[p.id].message ?? lastLine(installJobs[p.id].output) }}</template>
+              </div>
               <div v-if="editingProfile === p.id" class="stack edit-box">
                 <textarea v-model="editJson" class="textarea mono" rows="9" />
                 <div class="row"><span class="spacer" /><button class="btn ghost sm" @click="editingProfile = null">取消</button><button class="btn primary sm" @click="saveEdit">保存</button></div>
@@ -310,9 +359,15 @@ async function saveEdit() {
 }
 .miss-install {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+}
+.job-out {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .miss-plugin {
   margin: 0;

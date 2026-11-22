@@ -45,7 +45,7 @@ export function adapterPrefix(profile: Pick<AgentProfile, "command" | "args">): 
   return basename(up) === "lib" && process.platform !== "win32" ? dirname(up) : up;
 }
 
-function installedAdapter(profile: Pick<AgentProfile, "command" | "args">): { name: string; version: string | null; dir: string } | null {
+export function installedAdapter(profile: Pick<AgentProfile, "command" | "args">): { name: string; version: string | null; dir: string } | null {
   const found = resolveCommand(profile.command);
   if (!found) return null;
   let dir: string;
