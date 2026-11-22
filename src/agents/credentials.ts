@@ -382,7 +382,7 @@ export async function tickCredentialChecks(app: App, at = Date.now()) {
 }
 const installed = (path: string) => statSync(path, { throwIfNoEntry: false })?.isDirectory();
 export function credentialInstallDirs(app: App) {
-  return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m).install).filter(installed))];
+  return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m).install.map(d => d.path)).filter(installed))];
 }
 export function credentialStatePaths(app: App) { return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m).state))]; }
 export function credentialStateRels(app: App) {
@@ -401,18 +401,23 @@ function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
   const p = logins.get(keyOf(app, id, m.kind));
   const state: CredentialState = p ? "logging-in" : s.state === "expired" || s.expiresAt !== undefined && s.expiresAt <= Date.now() ? "expired"
     : !usableCredential(app, id, m.kind, s) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
-  const missing = declaredPaths(app, m).install.filter(p => !installed(p));
+  const missing = declaredPaths(app, m).install.filter(d => !installed(d.path));
+  const login = id !== OWNER && sandboxSupport().ok;
   return { kind: m.kind, plugin: m.plugin, name: m.name, describe: m.describe ?? "", required: !!m.required, state,
     user: s.user, expiresAt: s.expiresAt, checkedAt: s.checkedAt, error: s.error, sharing: s.sharing,
-    backends: m.provides.backends, commands: m.provides.commands.map(c => c.name), login: id !== OWNER && sandboxSupport().ok,
+    backends: m.provides.backends, commands: m.provides.commands.map(c => c.name), supplied: s.provision !== undefined, login,
     machine: id === OWNER, url: p?.url, code: p?.code,
-    reason: id === OWNER ? "用的是这台机器上已有的登录" : !sandboxSupport().ok ? sandboxSupport().reason : undefined,
-    missingInstall: missing };
+    reason: id === OWNER ? "用的是这台机器上已有的登录" : !login ? "成员账号沙箱不可用" : undefined,
+    missingInstall: missing.map(d => d.declared).filter(p => p.startsWith("~/")), missingInstallCount: missing.length };
 }
 export function myCredentials(app: App, id: string) {
   const rows = all<Row>(app.db, "select * from credential_holds where user_id=?", id);
   const holds = new Map(rows.map(r => [r.kind, fromRow(r)]));
-  return { credentials: credentialMethods().map(m => viewOf(app, id, m, holds.get(m.kind) ?? emptyHold(id))) };
+  const candidates = all<{ id: string; name: string }>(app.db, `select id,name from users
+    where status='active' and disabled_at is null and kind='person' and id not in (?,?)
+    and exists (select 1 from users where id=? and kind='person') order by id limit 200`, OWNER, id, id);
+  return { lending: app.config.credentials.lending, candidates,
+    credentials: credentialMethods().map(m => viewOf(app, id, m, holds.get(m.kind) ?? emptyHold(id))) };
 }
 export function allCredentials(app: App) {
   const rows = all<Row & { holder_name: string | null }>(app.db, `select h.*, u.name as holder_name from credential_holds h

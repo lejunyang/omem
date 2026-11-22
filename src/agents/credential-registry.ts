@@ -46,7 +46,7 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
     const install = m.provides.commands.flatMap(c => c.install ?? []).map(p => {
       if (p.split("/").includes("..")) throw new Error("安装目录不能包含 ..");
       if (!(isAbsolute(p) || p.startsWith("~/"))) throw new Error("凭据安装目录需要绝对路径或 ~/ 开头");
-      return p.startsWith("~/") ? join(home, p.slice(2)) : p;
+      return { declared: p, path: p.startsWith("~/") ? join(home, p.slice(2)) : p };
     });
     return { state, install };
   }
@@ -61,7 +61,7 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
     if (p.startsWith("~/") && !under(path, home)) throw new Error("HOME 中的安装目录不能指向 HOME 外");
     normalizeSandbox({ mode: "off", writable: [], hidden: [path] }, home, data);
     if (under(path, data)) throw new Error("凭据安装目录不能位于 omem 数据目录");
-    return path;
+    return { declared: p, path };
   });
   return { state: writable, install };
 }

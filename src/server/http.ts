@@ -3579,6 +3579,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const access = capabilityAccess(app, who(req), null);
     return {
       owner: who(req) === OWNER && access.active,
+      memberCredentials: access.active && access.kind === "person" && access.preset !== "observer",
       view: (section: Section) => !!access.source(`settings.${section}.view`),
       edit: (section: Section) => !!access.source(`settings.${section}.edit`),
     };
@@ -3592,12 +3593,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (section !== undefined && !sections.includes(section)) throw new HttpError(400, "不认识的设置区域");
     const access = settingsAccess(req);
     const visible = (s: Section) => (!section || s === section) && access.view(s);
-    if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
+    const credentialPolicy = (!section || section === "security") && (access.memberCredentials || access.view("security"));
+    if (!credentialPolicy && !sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
     const profiles = visible("ai") || visible("assistant") || visible("knowledge") ? listAgentProfiles(app) : [];
     const readOnlyProbes = visible("ai") && access.owner ? null : cachedProbeViews(app, profiles.map(p => p.id), who(req));
     return {
       ...((visible("ai") || visible("assistant") || visible("knowledge")) && { unavailableBackends: profiles.filter(p => p.pluginBackend?.available === false).map(({id,name,pluginBackend}) => ({id,name,pluginBackend})) }),
-      config: settingsView(app.config, visible, access.owner),
+      config: settingsView(app.config, visible, access.owner, credentialPolicy),
       ...(visible("ai") && access.owner ? { agents: profiles } : (visible("ai") || visible("assistant") || visible("knowledge")) && {
         agents: profiles.map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
           const probe = readOnlyProbes?.get(id) ?? null;

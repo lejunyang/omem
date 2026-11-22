@@ -78,7 +78,7 @@ export function capabilityCatalog(app: App) {
 export type Override = { capability: Capability; scope_kind: "global" | "space"; scope_id: string; effect: "allow" | "deny" };
 /** Request-local snapshot. A null target requests only global capabilities. */
 export function capabilityAccess(app: App, userId: string, targetSpace?: string | null) {
-  const user = one<{ role: string; active: number }>(app.db, "select role, status='active' and disabled_at is null active from users where id=?", userId);
+  const user = one<{ role: string; kind: string; active: number }>(app.db, "select role, kind, status='active' and disabled_at is null active from users where id=?", userId);
   const roles = new Map(listRoles(app).map(r => [r.id, r.permissions]));
   const preset = user?.role ?? "";
   const grants = roles.get(preset) ?? [];
@@ -114,7 +114,7 @@ export function capabilityAccess(app: App, userId: string, targetSpace?: string 
     return null;
   }
   const range = (cap: Capability, own = false) => user?.active && preset === "owner" ? null : spaces.filter(s => source(cap, s.id, own)).map(s => s.id);
-  return { preset, active: !!user?.active, overrides, source, range, spaces };
+  return { preset, kind: user?.kind, active: !!user?.active, overrides, source, range, spaces };
 }
 export const spacesWithCapability = (app: App, userId: string, cap: Capability) => capabilityAccess(app, userId).range(cap);
 export function memberCapabilities(app: App, userId: string) {
