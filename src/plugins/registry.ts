@@ -29,7 +29,7 @@ import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
-import { codeHash, setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
+import { acceptCredentialDeclarations, codeHash, setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
 import { startSandbox } from "./sandbox.ts";
 import { installInfo } from "./install.ts";
 import { broughtBy, seedContributions, pluginMcpSchema } from "./contributions.ts";
@@ -254,6 +254,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
 async function loadCode(app: App, p: LoadedPlugin) {
   p.connectors.push(registerPluginBackends(p.manifest.id));
   await loadPluginCode(app, p);
+  if (p.trust === "changed") return;
   replaceSubscriptions(app, p.manifest.id, [...subscriptions.values()].filter(s => s.plugin === p.manifest.id).map(s => s.def));
   rememberGateScopes(app, p.manifest.id);
 }
@@ -261,6 +262,7 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
   const { manifest } = p;
   const prefix = `${manifest.id}_`;
   if (p.source === "data" && trustMode(app, manifest.id) === "isolated") return loadIsolated(app, p);
+  const credentials: Parameters<PluginApi["credential"]>[0][] = [];
   const api: PluginApi = {
     ...processApi(p),
     answerAsk: outletAnswerFor(app, p),
@@ -317,7 +319,7 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
     },
     credential(def) {
       if (!manifest.permissions.credential) throw new Error(`插件 ${manifest.id} 没有声明 permissions.credential`);
-      p.connectors.push(registerCredential(manifest.id, def, () => pluginSettings(app, manifest.id, manifest.settings, OWNER), app));
+      credentials.push(def);
     },
     settings: () => pluginSettings(app, manifest.id, manifest.settings, OWNER),
     fetch: authFetch,
@@ -345,6 +347,15 @@ async function loadPluginCode(app: App, p: LoadedPlugin) {
   };
   const reg = await importServer(p.dir, manifest, p.source);
   if (reg) await reg(api);
+  if (manifest.permissions.credential) {
+    const declarations = credentials.map(({ id, provides }) => ({ id, provides })).sort((a, b) => a.id.localeCompare(b.id));
+    if (p.source === "data" && !acceptCredentialDeclarations(app, manifest.id, declarations)) {
+      unloadCode(p);
+      p.trust = "changed";
+      return;
+    }
+    for (const def of credentials) p.connectors.push(registerCredential(manifest.id, def, () => pluginSettings(app, manifest.id, manifest.settings, OWNER), app));
+  }
   await actionRungs(app, manifest.id);
   groupTools(p);
 }
@@ -422,8 +433,8 @@ export async function trustPlugin(app: App, id: string, mode: RunMode = "isolate
   const p = getPlugin(id);
   if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
   const before = trustMode(app, id);
-  setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify, p.manifest.permissions.embedder, p.manifest.backends, p.manifest.permissions.flow, p.manifest.permissions.credential);
   if (p.trust !== "trusted" || before !== mode) {
+    setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify, p.manifest.permissions.embedder, p.manifest.backends, p.manifest.permissions.flow, p.manifest.permissions.credential);
     unloadCode(p);
     p.trust = "trusted";
     try {

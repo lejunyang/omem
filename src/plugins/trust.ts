@@ -46,7 +46,7 @@ export type RunMode = "isolated" | "inprocess";
 /** `dir`: a linked plugin (links.ts) is trusted by its directory, so editing it needs no new confirmation. */
 type NotifyGrants = { ask: boolean; deliver: boolean };
 type FlowGrants = { [name: string]: boolean | undefined };
-type Record = { credentialHash?: string; embedder?: boolean; backends?: string; flow?: FlowGrants; notify?: NotifyGrants; hash: string; at: string; mode?: RunMode; dir?: string };
+type Record = { credentialDeclarations?: string; credentialHash?: string; embedder?: boolean; backends?: string; flow?: FlowGrants; notify?: NotifyGrants; hash: string; at: string; mode?: RunMode; dir?: string };
 const file = (app: App) => join(app.home, "secrets", "plugin-trust.json");
 
 function read(app: App): { [id: string]: Record } {
@@ -75,6 +75,17 @@ export function trustState(app: App, id: string, dir: string, linked = false, no
   if (linked && Object.entries(flow ?? {}).some(([key, granted]) => granted && !r.flow?.[key])) return "changed";
   if (linked || r.dir) return linked && r.dir === dir ? "trusted" : "changed";
   return r.hash === codeHash(dir) ? "trusted" : "changed";
+}
+
+/** Bind the actual grants too: a plugin can derive its declarations from settings at load time. */
+export function acceptCredentialDeclarations(app: App, id: string, declarations: unknown[]) {
+  const records = read(app);
+  const record = records[id];
+  const fingerprint = createHash("sha256").update(JSON.stringify(declarations)).digest("hex");
+  if (record.credentialDeclarations !== undefined) return record.credentialDeclarations === fingerprint;
+  record.credentialDeclarations = fingerprint;
+  write(app, records);
+  return true;
 }
 
 /** How the owner chose to run it; plugins trusted before there was a choice ran inside omem. */
