@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CredentialDef } from "../packages/plugin-sdk/credential.ts";
+import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { accountHome } from "../src/agents/accounts.ts";
 import { commandGateDir, gatePaths } from "../src/agents/command-gate.ts";
 import { knownAccess, recordAccess } from "../src/agents/credential-access.ts";
@@ -136,18 +137,14 @@ it("本地 denied 保留退出码、输出和申请链接，已知无权时即�
   expect(verify).not.toHaveBeenCalled();
 });
 
-it("未授权令牌、操作规则拒绝、缺资源、非只读、私有出借和 confirm/off 都不使用其他登录", async () => {
+it("未授权令牌、操作规则拒绝、缺资源、非只读、私有出借和 off 都不使用其他登录", async () => {
   expect((await gate(args, {}, "invalid")).status).toBe(401);
   app.config.security.operationRules = [{ id: "deny", revision: 1, enabled: true, action: "deny", match: { kind: "command", executable: name } }];
   expect((await gate()).decision).toBe("deny");
   app.config.security.operationRules = [];
   for (const argv of [["edit", "--project", "sample"], ["show"]]) expect((await gate(argv)).execution).toBeUndefined();
-  for (const mode of ["confirm", "off"] as const) {
-    app.config.credentials.lending = mode;
-    const v = await gate();
-    expect(v.execution).toBeUndefined();
-    if (mode === "confirm") expect(v.notice).toContain("需要持有人确认");
-  }
+  app.config.credentials.lending = "off";
+  expect((await gate()).execution).toBeUndefined();
   app.config.credentials.lending = "auto";
   run(app.db, "update credential_holds set sharing=?", JSON.stringify({ scope: "self" }));
   expect((await gate()).execution).toBeUndefined();
@@ -240,4 +237,47 @@ it.skipIf(!linuxSandbox)("先用已知有权的持有人，随后用本人；两
   expect(verify.mock.calls.map(([ctx, req]) => [ctx.userId, req.user])).toEqual([["first", "reader"], ["owner", "reader"]]);
   for (const id of ["first", "owner"]) expect(knownAccess(app, kind, resource, id)?.allowed).toBe(0);
   expect(knownAccess(app, kind, resource, "reader")?.allowed).toBe(1);
+});
+
+async function pendingConfirmation() {
+  const pending = () => listAsks(app, { userId: "owner", status: "pending" })[0];
+  await vi.waitFor(() => expect(pending()?.handler).toBe("credential-confirm"));
+  return pending();
+}
+
+it("本人状态未知也先预检和确认，任务同意在同一根运行复用，其他根运行重新问", async () => {
+  app.config.credentials.lending = "confirm";
+  const first = gate();
+  const ask = await pendingConfirmation();
+  expect(ask.question).toContain([name, ...args].join(" "));
+  await expect(answerAsk(app, ask.id, { by: "reader", choice: 1 })).rejects.toThrow("只有持有人");
+  await answerAsk(app, ask.id, { by: "owner", choice: 1 });
+  expect((await first).execution.code).toBe(0);
+  for (const parentId of [runId, null]) {
+    const child = createRun(app, { kind: "ask", spaceId: "personal-reader", title: "继续读取", input: {}, parentId }).id;
+    const auth = issueToolToken({ actor: "agent", userId: "reader", commandHomeUser: "reader", runId: child, spaceId: "personal-reader", spaces: [], tools: new Set() });
+    try {
+      const next = gate(args, {}, auth);
+      if (parentId) expect((await next).execution.code).toBe(0);
+      else {
+        await answerAsk(app, (await pendingConfirmation()).id, { by: "owner", choice: 2 });
+        expect(await next).toMatchObject({ decision: "deny", message: "持有人没同意" });
+      }
+    } finally { revokeToolToken(auth); }
+  }
+  expect(verify).toHaveBeenCalledTimes(3);
+});
+
+it("auto 对有权限记录的私有持有人等十分钟，超时返回最近的申请链接", async () => {
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
+  recordAccess(app, kind, resource, "owner", false, runId, url);
+  recordAccess(app, kind, resource, "owner", true, runId);
+  vi.useFakeTimers();
+  try {
+    const next = gate();
+    const ask = await pendingConfirmation();
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(await next).toMatchObject({ decision: "deny", message: expect.stringContaining(url) });
+    await expect(answerAsk(app, ask.id, { by: "owner", choice: 0 })).rejects.toThrow("失效");
+  } finally { vi.useRealTimers(); }
 });

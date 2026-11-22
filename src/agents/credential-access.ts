@@ -42,14 +42,14 @@ export function knownAccess(app: App, kind: string, resource: string, user: stri
     since, kind, resource, user, since);
 }
 
-export function sharedHolders(app: App, requester: string, kind: string, limit: number, resource?: string) {
-  return all<{ id: string; name: string }>(app.db, `select u.id,u.name from credential_holds h
+export function sharedHolders(app: App, requester: string, kind: string, limit: number, resource?: string, includePrivate = false) {
+  return all<{ id: string; name: string; shared: number }>(app.db, `select u.id,u.name,${shares} as shared from credential_holds h
     join users u on u.id=h.user_id
     left join credential_access a on a.kind=h.kind and a.resource=? and a.user_id=u.id and a.observed_at>?
     where coalesce(a.allowed,1)=1 and h.kind=? and (h.state='logged-in' or (h.user_id=? and h.state='none'))
-    and (h.expires_at is null or h.expires_at>?) and h.user_id<>? and ${shares}
+    and (h.expires_at is null or h.expires_at>?) and h.user_id<>? and (shared or (? and a.allowed=1))
     and u.disabled_at is null and u.status='active' and u.kind='person'
-    order by a.allowed desc,(u.id=?) desc,h.last_used_at desc,u.id limit ?`, resource ?? null, cutoff(), kind, OWNER, Date.now(), requester, requester, OWNER, limit);
+    order by shared desc,a.allowed desc,(u.id=?) desc,h.last_used_at desc,u.id limit ?`, requester, resource ?? null, cutoff(), kind, OWNER, Date.now(), requester, +includePrivate, OWNER, limit);
 }
 
 export async function checkAccess(app: App, requester: string, runId: string | null, method: CredentialMethod,
@@ -95,4 +95,9 @@ export async function whoCan(app: App, requester: string, runId: string | null, 
     .map(row => ({ kind: row.kind, name: row.name, observedAt: row.observed_at }));
   const latestLink = rows.filter(row => row.apply_at && row.apply_at > cutoff()).sort((a,b) => b.apply_at!.localeCompare(a.apply_at!))[0];
   return { resource, allowed: people(1), denied: people(0), applyUrl: latestLink?.apply_url ?? null };
+}
+
+export function recentApplicationUrl(app: App, kind: string, resource: string) {
+  return one<{apply_url: string}>(app.db, `select apply_url from credential_access where kind=? and resource=?
+    and apply_at>? order by apply_at desc limit 1`, kind, resource, cutoff())?.apply_url;
 }

@@ -2451,6 +2451,14 @@ export const migrations: readonly string[] = [
      apply_url text, apply_at text, primary key(kind,resource,user_id)
    );
    create index credential_access_resource on credential_access(resource,kind,observed_at desc);`,
+  `create table credential_run_grants(
+     root text not null references runs(id) on delete cascade, requester text not null, holder text not null,
+     kind text not null, resource text not null, primary key(root,requester,holder,kind,resource)
+   );
+   create index credential_ask_expiry on asks(json_extract(context,'$.expiresAt'))
+     where status='pending' and json_extract(context,'$.handler')='credential-confirm';
+   create index card_ask_id on card_interactions(json_extract(payload,'$.askId')) where purpose='ask';
+   create index credential_application on credential_access(kind,resource,apply_at desc);`,
 ];
 
 export type Db = DatabaseSync;

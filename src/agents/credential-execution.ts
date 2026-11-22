@@ -9,7 +9,9 @@ import { activeUser, findUser, OWNER } from "../core/users.ts";
 import { COMMAND_OUTPUT_LIMIT, COMMAND_TIMEOUT_SEC } from "../core/util.ts";
 import { catalogProfile } from "./catalog.ts";
 import { localAccount } from "./accounts.ts";
-import { applicationUrl, checkAccess, knownAccess, sharedHolders } from "./credential-access.ts";
+import { commandLine } from "./command-gate.ts";
+import { confirmCredential } from "./credential-confirm.ts";
+import { recentApplicationUrl, applicationUrl, checkAccess, knownAccess, sharedHolders } from "./credential-access.ts";
 import { commandResource, credentialArgs, credentialCommand, credentialOutcome } from "./credential-outcome.ts";
 import { availableLogin, credentialMemberEnv, usableCredential } from "./credentials.ts";
 import { launchRun } from "./egress-run.ts";
@@ -77,14 +79,14 @@ export async function credentialExecution(ctx: ToolContext, entry: Entry, args: 
   const denied = knownAccess(app, kind, resource, requester);
   if (denied?.allowed === 0) return { notice: "没有这个资源的权限" + (denied.apply_url ? "，可前往 " + denied.apply_url : "") };
   if (app.config.credentials.lending === "off") return;
-  const candidates = () => sharedHolders(app, requester, kind, 2, resource);
+  const mode = app.config.credentials.lending;
+  const candidates = () => sharedHolders(app, requester, kind, 2, resource, mode === "auto");
   const holders = candidates();
-  if (app.config.credentials.lending === "confirm") return holders.length ? { notice: "需要持有人确认（第三期）" } : undefined;
   let last: Execution | undefined;
   for (const holder of holders) {
     const eligible = () => live() && !method.signal.aborted && activeUser(findUser(app, requester)) &&
-      app.config.credentials.lending === "auto" && !usableCredential(app, requester, kind) &&
-      availableLogin(app, holder.id, kind) && candidates().some(u => u.id === holder.id) &&
+      app.config.credentials.lending === mode && !usableCredential(app, requester, kind) &&
+      availableLogin(app, holder.id, kind) && candidates().some(u => u.id === holder.id && (u.shared || !holder.shared)) &&
       knownAccess(app, kind, resource, requester)?.allowed !== 0;
     if (!eligible()) continue;
     const owner = holder.id === OWNER;
@@ -94,6 +96,15 @@ export async function credentialExecution(ctx: ToolContext, entry: Entry, args: 
     if (permission?.allowed !== true || permission.verifiedRead !== true) {
       const url = applicationUrl(permission?.applyUrl);
       return { execution: last, notice: url ? "可前往 " + url + " 申请权限" : undefined };
+    }
+    if (!eligible()) continue;
+    if (mode === "confirm" || !holder.shared) {
+      const consent = await confirmCredential(app, runId, requester, holder.id, kind, resource, commandLine(command.name, args),
+        AbortSignal.any([runSignal, method.signal]));
+      if (!consent) {
+        const url = recentApplicationUrl(app, kind, resource);
+        return { decision: "deny" as const, message: "持有人没同意" + (url ? "，可前往 " + url + " 申请权限" : "") };
+      }
     }
     const cwd = mkdtempSync(join(tmpdir(), "omem-credential-"));
     try {

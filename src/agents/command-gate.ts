@@ -153,7 +153,7 @@ async function request(path, data, timeout) {
     req.on("information", ({ statusCode }) => {
       if (statusCode !== 102 || !data.credentialExecution) return;
       clearTimeout(timer);
-      timer = setTimeout(expire, ${(COMMAND_TIMEOUT_SEC * 2 + 60) * 1000});
+      timer = setTimeout(expire, ${((COMMAND_TIMEOUT_SEC + 600) * 2 + 60) * 1000});
     });
     req.once("close", () => clearTimeout(timer));
     req.on("error", reject);
@@ -388,7 +388,14 @@ export type Decision = { decision: "allow" | "deny" | "pending"; message?: strin
 /** Gate requests waiting for an ask's answer (in this process). */
 const waiting = new Map<string, Set<(a: Ask) => void>>();
 
-function waitDecision(id: string, ms: number, signal?: AbortSignal): Promise<Ask | null> {
+export function signalDecision(ask: Ask) {
+  const set = waiting.get(ask.id);
+  if (!set?.size) return false;
+  for (const wake of [...set]) wake(ask);
+  return true;
+}
+
+export function waitDecision(id: string, ms: number, signal?: AbortSignal): Promise<Ask | null> {
   return new Promise((resolve) => {
     const set = waiting.get(id) ?? new Set();
     waiting.set(id, set);
@@ -689,11 +696,7 @@ registerAskHandler("command-gate", async (app, ask, context) => {
   record(app, ask.runId, ask.answeredBy ?? "", ask.approved ? "command.approve" : "command.reject", { command: c.command, args: c.args, cwd: c.cwd, approver: by, result: ask.approved ? `${by} 批准` : `${by} 拒绝${ask.answer ? `：${truncate(ask.answer, 200)}` : ""}`, rule: c.rule, askId: ask.id });
   const fresh = getAsk(app, ask.id);
   await closeCard(app, fresh, c).catch(() => {});
-  const set = waiting.get(ask.id);
-  if (set?.size) {
-    for (const w of [...set]) w(fresh);
-    return;
-  }
+  if (signalDecision(fresh)) return;
   if (c.egressFallback !== undefined) return;
   const line = `\`${truncate(commandLine(c.command, c.args), 300)}\``;
   await tellRun(
