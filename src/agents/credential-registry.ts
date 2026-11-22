@@ -88,6 +88,8 @@ export function registerCredential(plugin: string, def: CredentialDef, settings 
     declaredPaths(app, m);
     run(app.db, "insert into credential_kinds(kind,plugin,declaration) values(?,?,?) on conflict(kind) do update set declaration=excluded.declaration",
       kind, plugin, JSON.stringify({ id: def.id, name: def.name, describe: def.describe, required: !!def.required, provides }));
+    // Registered again (new code, trust given again): the owner's last check is stale, check on the next tick.
+    run(app.db, "update credential_holds set check_day='' where user_id='owner' and kind=?", kind);
   }
   registry.set(kind, m);
   return () => { lifetime.abort(); if (registry.get(kind) === m) registry.delete(kind); };

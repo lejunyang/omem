@@ -65,7 +65,7 @@ import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePage
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
-import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewRounds, queueReason, runEvents, runUser } from "../agents/runs.ts";
+import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewRounds, runAis, queueReason, runEvents, runUser } from "../agents/runs.ts";
 import { callTool, contextToolNames, mcpTools, onToolTokenRevoked, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -1836,10 +1836,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // --------------------------------------------------------------------- runs
   server.get("/api/runs", async (req) => {
-    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), by: z.string().max(200).optional(), via: z.string().max(40).optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
+    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), by: z.string().max(200).optional(), via: z.string().max(40).optional(), ai: z.string().max(80).optional(), model: z.string().max(120).optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     // Someone other than the owner: their own runs and the ones they may read (src/auth/permissions.ts).
     const visibleTo = runAudience(app, who(req));
-    const opts = { reviewAudience: runAudience(app,who(req),"code.review.view"), id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, by: o.by, via: o.via, visibleTo };
+    const opts = { reviewAudience: runAudience(app,who(req),"code.review.view"), id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, by: o.by, via: o.via, ai: o.ai, model: o.model, visibleTo };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
   });
@@ -1862,6 +1862,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return (await import("../agents/assistants.ts")).updateAssistant(app, who(req), (req.params as { id: string }).id, b);
   });
   server.delete("/api/assistants/:id", async (req) => (await import("../agents/assistants.ts")).removeAssistant(app, who(req), (req.params as { id: string }).id));
+  // Backends and models of recent runs (the run page's “后端 / 模型” filter), within the runs this person may read.
+  server.get("/api/runs/ais", async (req) => ({ backends: runAis(app, { visibleTo: runAudience(app, who(req)) }) }));
   // People behind recent runs (the run page's “触发人” filter); someone other than the owner sees those of their own runs.
   server.get("/api/runs/triggerers", async (req) => {
     const { triggerers } = await import("../core/run-trigger.ts");

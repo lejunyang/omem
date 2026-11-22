@@ -203,14 +203,18 @@ export function reviewRounds(app: App, ids: string[], audience?: RunAudience) {
   return { rounds, children };
 }
 
-type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: RunAudience; reviewAudience?: RunAudience };
+type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; ai?: string; model?: string; visibleTo?: RunAudience; reviewAudience?: RunAudience };
+
+/** The backend a run used: what it recorded, or the profile it was queued with (older runs). */
+const RUN_PROFILE = "coalesce(json_extract(ai, '$.profile'), profile_id)";
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
  * the runs a built-in role took part in. Any of them matches; `exclude` lists kinds left out (the run
  * page lists coding work on its own). `q` matches the title, the id or the
  * task. `by`: the person behind it (a trigger key, `user:<id>` / `lark:<open_id>` …; `name:<name>` is that person by name,
- * whichever app's id came with each run). `via`: how it came about (chat, mention, guest, rule…). `visibleTo`: someone other than the owner sees their own runs, and those whose every
+ * whichever app's id came with each run). `via`: how it came about (chat, mention, guest, rule…). `ai` / `model`:
+ * the backend (AI profile) and model it ran on. `visibleTo`: someone other than the owner sees their own runs, and those whose every
  * readable space is in `spaces` (src/auth/permissions.ts canReadRun).
  */
 function runWhere(opts: RunFilter) {
@@ -240,6 +244,8 @@ function runWhere(opts: RunFilter) {
   if (opts.by?.startsWith("name:")) where.push("trigger_by is not null and trigger_by != 'user:owner' and json_extract(trigger, '$.by.name') = ?"), params.push(opts.by.slice(5));
   else if (opts.by) where.push("trigger_by = ?"), params.push(opts.by);
   if (opts.via) where.push("json_extract(trigger, '$.via') = ?"), params.push(opts.via);
+  if (opts.ai) where.push(`${RUN_PROFILE} = ?`), params.push(opts.ai);
+  if (opts.model) where.push("json_extract(ai, '$.model') = ?"), params.push(opts.model);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
   const q = opts.q?.trim();
   // A run looked up by its exact id is shown even when it ended quietly.
@@ -262,6 +268,24 @@ export function listRuns(app: App, opts: RunFilter & { limit?: number; offset?: 
   const review = opts.reviewAudience && runPredicate(opts.reviewAudience);
   const hidden = review ? `, (kind in ('code','review') and not ${review.sql}) hide_review` : "";
   return all<Row & { hide_review?:number }>(app.db, `select ${cols}${hidden} from runs ${w.sql} order by created_at desc limit ? offset ?`, ...(review?.params ?? []), ...w.params, limit, opts.offset ?? 0).map(row => row.hide_review ? { ...toRun(row), input:{}, output:{}, error:null } : toRun(row));
+}
+
+/** Backends and models of recent runs (the run page's “后端 / 模型” filter), the most used first. */
+export function runAis(app: App, opts: { days?: number; visibleTo?: RunAudience } = {}) {
+  const since = new Date(Date.now() - (opts.days ?? 30) * 86400_000).toISOString();
+  const filter = opts.visibleTo && runPredicate(opts.visibleTo);
+  const rows = all<{ profile: string; model: string | null; n: number }>(app.db,
+    `select ${RUN_PROFILE} profile, json_extract(ai, '$.model') model, count(*) n from runs
+      where created_at > ? and ${RUN_PROFILE} is not null ${filter ? `and ${filter.sql}` : ""} group by profile, model`,
+    since, ...(filter?.params ?? []));
+  const backends = new Map<string, { profile: string; runs: number; models: { model: string; runs: number }[] }>();
+  for (const r of rows) {
+    const b = backends.get(r.profile) ?? { profile: r.profile, runs: 0, models: [] };
+    b.runs += r.n;
+    if (r.model) b.models.push({ model: r.model, runs: r.n });
+    backends.set(r.profile, b);
+  }
+  return [...backends.values()].sort((a, b) => b.runs - a.runs).map((b) => ({ ...b, models: b.models.sort((x, y) => y.runs - x.runs) }));
 }
 
 export function countRuns(app: App, opts: RunFilter = {}) {

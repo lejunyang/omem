@@ -326,6 +326,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // runs
   "GET /api/runs": cap("runs.view", "own-list"),
   "GET /api/runs/triggerers": "self",
+  "GET /api/runs/ais": "self",
   // Assistants (agents/assistants.ts): everyone sees who is here; each manages their own, the owner all.
   "GET /api/assistants": "self",
   "POST /api/assistants": "self",

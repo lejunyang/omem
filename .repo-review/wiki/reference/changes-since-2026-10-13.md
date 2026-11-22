@@ -21,6 +21,11 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 设置 → 空间改成紧凑的树；运行页按后端或模型筛选（2026-11-22）
+
+- `web/src/views/settings/Spaces.vue`：左边每个空间一行（名字 + 仓库数），业务空间下的仓库可以折叠（展开状态存在浏览器里，筛选时全展开，筛选也匹配仓库名和目录），说明和目录放进悬停提示；不属于任何业务的仓库在“独立仓库”小标题下。右边不再空着：打开时依次选地址里的 `?space=`、上次在这页打开的、当前空间、列表第一个；空间的说明、原件 / 页 / 仓库数（仓库是所属业务和目录名）移到右边的标题下。底部“关闭”换成“还原”（丢掉没保存的修改）；新建表单取消后回到原来的空间。右边的仓库清单每个两行（名字和索引状态一行、目录一行）。
+- 运行页：全部运行 → 筛选 多了“后端或模型”下拉，列出近 30 天用过的后端（AI 档案）和它们用过的模型（只有一个模型的后端不再分列）。接口 `GET /api/runs/ais`（只统计这个人能看的运行），`GET /api/runs` 加 `ai`、`model` 参数；后端按运行记下的 `ai.profile`，没有时用排队时的 `profile_id`（`src/agents/runs.ts` 的 `runAis`）。测试 `test/run-ai-filter.test.ts`。
+
 ## 观察者读取个人凭据清单时隐藏出借方式和成员名单（2026-11-22）
 
 从 `src/agents/credentials.ts` 的 `myCredentials` 读起。凭据清单和设置接口复用 `src/auth/capabilities.ts` 的成员身份判断。观察者仍能读取自己的凭据清单，响应省略全局出借方式，候选成员为空。两处接口的对照用例在 `test/credentials.test.ts`。
@@ -48,6 +53,10 @@ updated: 2026-11-22
 - “我的 AI 账号”里由凭据供给的后端标“由 × 供给”，退出换成跳到凭据那一行；还是收到 409 时把说明渲染在那一行下面。
 - 设置 → 安全 → 凭据的出借（`CredentialLending.vue`）管 `credentials.lending`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`；设置 → 成员 → 成员的凭据（`CredentialHolds.vue`）读 `GET /api/credentials/all`，可以替成员退出。卡片链接 `?card=credentials`、`?card=credential-holds`。
 - 纯函数和测试：`web/src/lib/credentials.ts`、`test/web-credentials.test.ts`。演示数据（`scripts/doc-screens.ts`）装上 `examples/plugins/acmeauth`，另登记一个演示的代码托管凭据，三个成员各有有效 / 快到期 / 没登录的持有；演示里把成员账号沙箱当作可用。新截图 `account-credentials`。
+
+## 本人那份凭据检查出错时照旧出借本机登录（2026-11-22）
+
+从 `src/agents/credentials.ts` 的 `backendUsable`、`selectCredential` 读起。原来本人的持有只有检查成功才算可借，插件的检查一出错（或插件没有 `check`），成员就借不到本人的本机登录了，比没有凭据时更严；检查失败还要等第二天才重查。现在只有检查明确说没登录或过期才不借；`credential-registry.ts` 在插件重新登记凭据时让本人那份下一分钟重查。回归在 `test/credentials.test.ts` 最后一条。
 
 ## 在 omem 里运行的插件重新加载时，引用的文件一起换新（2026-11-22）
 
