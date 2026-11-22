@@ -2,12 +2,12 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { App } from "../src/core/app.ts";
+import { App } from "../src/core/app.ts";
 import { testApp } from "./helpers.ts";
-import { all, one, run } from "../src/core/db.ts";
+import { all, migrations, one, run } from "../src/core/db.ts";
 import { createUser } from "../src/core/users.ts";
-import { closeVault, connectionSecrets, listConnections } from "../src/auth/vault.ts";
-import { accountHome, accountRun, accountState, checkAccount, ensureAccountHome, loggedIn } from "../src/agents/accounts.ts";
+import { closeVault, connectionSecrets, listConnections, storeConnection } from "../src/auth/vault.ts";
+import { accountHome, accountRun, accountState, checkAccount, ensureAccountHome, loggedIn, withAccount } from "../src/agents/accounts.ts";
 import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
@@ -78,6 +78,40 @@ it("检查凭据供给的后端沿用持有，退出后登录文件和后端登�
   await logoutCredential(app, "ann", "sample:sso");
   expect(existsSync(file)).toBe(false);
   expect(loggedIn(app, "ann", "traex")).toBe(false);
+});
+
+it("升级旧原生检查缓存后，自己的凭据过期会改借有效登录或提示登录", async () => {
+  const backend = "fixture", kind = "sample:sso";
+  const profile = agentProfileSchema.parse({ id: backend, transport: "acp", command: process.execPath,
+    account: { env: {}, dirs: [".fixture"], owns: [".fixture"], tokenEnv: "FIXTURE_TOKEN" } });
+  let state: "ok" | "expired" | "missing" = "ok";
+  add({ provides: { backends: [backend] }, provide: undefined, async check() { return { state }; } });
+  for (const id of ["ann", "bob"]) {
+    await startCredentialLogin(app, id, kind);
+    await until(() => credentialHold(app, id, kind).state === "logged-in");
+    run(app.db, "insert into kv(key,value) values(?,?)", "agent_account:" + id + ":" + backend, JSON.stringify({ state: "logged-in", method: "native" }));
+  }
+  // The old cache has the same shape for a status probe and for a separately pasted token.
+  storeConnection(app, { userId: "bob", provider: "agent:" + backend, accountId: backend, accountName: "demo", scopes: [], accessToken: "fixture-token" });
+  setCredentialSharing(app, "bob", kind, { scope: "all" });
+  app.db.exec("pragma user_version=" + (migrations.findIndex(sql => sql.includes("create table credential_kinds(")) + 1));
+  app.db.close();
+  app = App.open(app.home);
+  app.config.agents.profiles = [profile];
+  expect(await checkAccount(app, "ann", backend)).toMatchObject({ state: "logged-in", method: kind });
+  expect(selectedCredential(withAccount(app, "ann", profile))?.holder).toBe("ann");
+  state = "expired";
+  await checkCredential(app, "ann", kind);
+  expect(loggedIn(app, "ann", backend)).toBe(false);
+  expect(selectedCredential(withAccount(app, "ann", profile))?.holder).toBe("bob");
+  setCredentialSharing(app, "bob", kind, { scope: "self" });
+  expect(() => withAccount(app, "ann", profile)).toThrow(/登录/);
+  await checkCredential(app, "bob", kind);
+  expect(loggedIn(app, "bob", backend)).toBe(true);
+  expect(accountState(app, "bob", backend)).toMatchObject({ method: "native", state: "logged-in" });
+  state = "missing";
+  await checkCredential(app, "ann", kind);
+  expect(await checkAccount(app, "ann", backend)).toMatchObject({ method: kind, state: "none" });
 });
 
 it("退出清理独占状态，共用的后端和嵌套命令目录由最后一份持有清理", async () => {

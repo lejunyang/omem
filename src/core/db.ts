@@ -2444,6 +2444,15 @@ export const migrations: readonly string[] = [
    create index credential_check_due on credential_holds(check_day,user_id,kind);
    create index credential_lenders on credential_holds(kind,state,last_used_at desc);
    create table credential_onboarding(user_id text primary key, notified_at text not null);`,
+  // A native status check could have observed a credential's files. Only a separate vault token
+  // can substantiate that old cache when a hold for the same person supplied the same backend.
+  `update kv set value=json_set(value,'$.requiresToken',json('true'))
+   where key in (select 'agent_account:' || h.user_id || ':' || backend.value
+     from credential_kinds k join credential_holds h on h.kind=k.kind,
+       json_each(k.declaration,'$.provides.backends') backend
+     where h.state!='none' or h.checked_at is not null)
+   and json_valid(value) and json_extract(value,'$.method')='native'
+   and json_extract(value,'$.state')!='none';`,
 ];
 
 export type Db = DatabaseSync;

@@ -241,23 +241,26 @@ function providedPaths(app: App, provides: CredentialMethod["provides"]) {
 }
 
 /** Include temporarily disabled plugins and logins that have not yet saved their first hold. */
-function retainedCredentials(app: App, id: string, except?: string) {
+export function retainedCredentialPaths(app: App, id: string, except?: string) {
   const rows = all<{ kind: string; declaration: string }>(app.db, `select h.kind,k.declaration from credential_holds h
     join credential_kinds k on k.kind=h.kind where h.user_id=? and h.state!='none'`, id);
   const retained = new Map<string, CredentialMethod["provides"]>();
   for (const row of rows) if (row.kind !== except) retained.set(row.kind, JSON.parse(row.declaration).provides);
   for (const m of credentialMethods())
     if (m.kind !== except && logins.has(keyOf(app, id, m.kind))) retained.set(m.kind, m.provides);
-  return retained;
-}
-export function retainedCredentialPaths(app: App, id: string, except?: string) {
-  return [...retainedCredentials(app, id, except).values()].map(provides => providedPaths(app, provides));
+  return [...retained.values()].map(provides => providedPaths(app, provides));
 }
 
 /** Check the provider that owns these files, including when its login has expired or its plugin is disabled. */
-export function suppliedCredentialKind(app: App, id: string, backend: string) {
-  return credentialAccountView(app, id, backend)?.kind
-    ?? [...retainedCredentials(app, id)].find(([, provides]) => provides.backends.includes(backend))?.[0];
+export function suppliedCredentialKind(app: App, id: string, backend: string, hasIndependentLogin: boolean) {
+  const current = credentialAccountView(app, id, backend)?.kind
+    ?? credentialKindsForBackend(backend).find(m => logins.has(keyOf(app, id, m.kind)))?.kind;
+  if (current) return current;
+  // A provider may report a missing login while its CLI files still exist.
+  return one<{ kind: string }>(app.db, `select h.kind from credential_holds h join credential_kinds k on k.kind=h.kind
+    where h.user_id=? and (h.state!='none' or (? and h.checked_at is not null)) and exists
+    (select 1 from json_each(k.declaration,'$.provides.backends') where value=?)
+    order by (h.state!='none') desc,h.checked_at desc,h.kind limit 1`, id, Number(!hasIndependentLogin), backend)?.kind;
 }
 export function logoutCredential(app: App, id: string, kind: string, actor = id) {
   const m = requireCredential(kind);

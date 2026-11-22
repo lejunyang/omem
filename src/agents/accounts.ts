@@ -195,7 +195,8 @@ export function accountProfiles(app: App, userId: string, backend: string): Agen
 
 function stored(app: App, userId: string, backend: string): Stored {
   try {
-    return JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", KV(userId, backend))?.value ?? "") as Stored;
+    const { requiresToken, ...state } = JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", KV(userId, backend))?.value ?? "") as Stored & { requiresToken?: boolean };
+    return requiresToken && !findConnection(app, userId, TOKEN_PROVIDER(backend)) ? { state: "none" } : state;
   } catch {
     return { state: "none" };
   }
@@ -394,12 +395,12 @@ async function checkNative(app: App, userId: string, entry: AccountEntry): Promi
 /** Ask whether this user is still logged in (检查): the backend's own check, or the plugin's refresh for a plugin login. */
 export async function checkAccount(app: App, userId: string, backend: string): Promise<Stored> {
   const entry = requireEntry(app, backend);
-  const supplied = suppliedCredentialKind(app, userId, backend);
+  const s = stored(app, userId, backend);
+  const supplied = suppliedCredentialKind(app, userId, backend, s.state !== "none");
   if (supplied) {
     const { state, user, expiresAt, checkedAt, error } = await checkCredential(app, userId, supplied);
     return { state: expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
   }
-  const s = stored(app, userId, backend);
   if (isPlugin(s.method) && s.state !== "none") return refreshPluginLogin(app, userId, backend);
   return checkNative(app, userId, entry);
 }
@@ -717,7 +718,7 @@ export function clearAccountPaths(app: App, userId: string, rels: string[], exce
   const paths = accountStatePaths(app, userId, rels);
   const credentials = retainedCredentialPaths(app, userId, except.kind);
   const prefix = KV(userId, "");
-  const states = all<{ key: string }>(app.db, "select key from kv where key glob ? and json_extract(value,'$.state') != 'none'", prefix + "*");
+  const states = all<{ key: string }>(app.db, "select key from kv where key glob ? and json_extract(value,'$.state') != 'none' and json_extract(value,'$.requiresToken') is not 1", prefix + "*");
   const active = new Set(states.map(row => row.key.slice(prefix.length)));
   const providers = new Set(listConnections(app, userId).map(c => c.provider));
   const accounts = accountEntries(app).filter(e => e.id !== except.backend &&
