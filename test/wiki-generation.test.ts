@@ -89,8 +89,11 @@ it("supports plan-only HTTP and CLI entry with the same scope defaults", async (
 }, 60000);
 
 it("exposes the entry to the assistant, keeps writers separate, and rejects a removed target scope", () => {
-  const assistant = prepareRun(app, { actor: { role: "assistant" }, spaceId: "project", runId: null });
-  expect(assistant.system).toContain("generate_wiki");
+  const assistant = prepareRun(app, { actor: { role: "assistant" }, spaceId: "project", runId: null, scene: { chat: true, kind: "ask" } });
+  // Wiki 的操作步骤已移到 curate 分组帮助，主助手的入口由本轮工具清单决定。
+  expect(assistant.tools.has("generate_wiki")).toBe(true);
+  const writer = prepareRun(app, { actor: { role: "wiki-writer" }, spaceId: "project", runId: null });
+  expect(writer.tools.has("generate_wiki")).toBe(false);
   expect(() => prepareRun(app, { actor: { role: "wiki-writer" }, spaceId: "project", runId: null, spaces: ["project"], readScope: ["materials"] })).toThrow("不能访问");
 });
 
