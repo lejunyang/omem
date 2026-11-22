@@ -178,7 +178,7 @@ it("升级旧原生检查缓存后，自己的凭据过期会改借有效登录�
   // The old cache has the same shape for a status probe and for a separately pasted token.
   storeConnection(app, { userId: "bob", provider: "agent:" + backend, accountId: backend, accountName: "demo", scopes: [], accessToken: "fixture-token" });
   setCredentialSharing(app, "bob", kind, { scope: "all" });
-  app.db.exec("alter table credential_holds drop column owned_paths; pragma user_version=" + (migrations.findIndex(sql => sql.includes("create table credential_kinds(")) + 1));
+  app.db.exec("alter table credential_holds drop column supplied_backends; alter table credential_holds drop column provision; pragma user_version=" + (migrations.findIndex(sql => sql.includes("create table credential_kinds(")) + 1));
   app.db.close();
   app = App.open(app.home);
   app.config.agents.profiles = [profile];
@@ -239,7 +239,7 @@ it("升级时保留有歧义的旧持有，退出后重启不再认领；仅设�
   await until(() => credentialHold(app, "ann", kind).state === "logged-in");
   run(app.db, "update credential_holds set state='none',expires_at=null,refresh_at=null,account_name=null where user_id='ann' and kind=?", kind);
   setCredentialSharing(app, "bob", kind, { scope: "self" });
-  app.db.exec("alter table credential_holds drop column owned_paths; pragma user_version=" + (migrations.findIndex(sql => sql.includes("'$.requiresToken'")) + 1));
+  app.db.exec("alter table credential_holds drop column supplied_backends; alter table credential_holds drop column provision; pragma user_version=" + (migrations.findIndex(sql => sql.includes("'$.requiresToken'")) + 1));
   app.db.close(); app = App.open(app.home);
   app.config.agents.profiles = [profile];
   expect(myCredentials(app, "ann").credentials[0]).toMatchObject({ state: "none", checkedAt: expect.any(String) });
@@ -278,7 +278,8 @@ it.each(["停用", "撤销信任"])("插件%s后成员和本人代办均可按�
   }
   if (mode === "停用") await setPluginEnabled(app, "credprobe", false);
   else untrustPlugin(app, "credprobe");
-  run(app.db, "update credential_holds set owned_paths=null where user_id='ann'");
+  run(app.db, `update credential_holds as h set provision=json_object('declared',json_extract(k.declaration,'$.provides'),'paths',null)
+    from credential_kinds k where k.kind=h.kind and h.user_id='ann'`);
   const server = await startServer(app, { port: 0, quiet: true });
   try {
     for (const user of ["ann", "bob"]) {
@@ -302,6 +303,71 @@ it.each(["停用", "撤销信任"])("插件%s后成员和本人代办均可按�
       expect((await server.inject({ method: "DELETE", url, headers })).statusCode).toBe(404);
     }
   } finally { await server.close(); }
+});
+
+it("同种凭据从 A 改供 B，旧文件仍按持有退出，新后端要等供给成功", async () => {
+  const { startServer } = await import("../src/server/http.ts");
+  const kind = "sample:sso", home = accountHome(app, "ann");
+  const [a, b] = ["echo-a", "echo-b"].map(id => agentProfileSchema.parse({
+    id, transport: "acp", command: "fixture-backend", account: { owns: ["." + id] },
+  }));
+  app.config.agents.profiles = [a, b];
+  add({ id: "shared", provides: { commands: [{ name: "shared", state: [".echo-a/shared"] }] },
+    login: async () => ({ user: "demo" }),
+    provide: async ctx => { writeFileSync(join(ctx.home, ".echo-a/shared/login"), "shared"); } });
+  await startCredentialLogin(app, "ann", "sample:shared");
+  const def = add({ provides: { backends: [a.id], commands: [{ name: "old-cli" }] },
+    login: async () => ({ user: "demo" }),
+    provide: async ctx => { writeFileSync(join(ctx.home, ".echo-a/login"), "demo"); } });
+  await startCredentialLogin(app, "ann", kind);
+  setCredentialSharing(app, "ann", kind, { scope: "all" });
+  undo.pop()!();
+  const provide = vi.fn(async () => {});
+  add({ ...def, provides: { backends: [b.id], commands: [{ name: "new-cli" }] },
+    check: async () => ({ state: "ok" }), refresh: async () => ({}), provide });
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
+    for (const [url, caller, target] of [
+      ["/api/me/agent-accounts/", headers, "/api/credentials/"],
+      ["/api/agent-accounts/ann/", undefined, "/api/credentials/ann/"],
+    ] as const) {
+      const refused = await server.inject({ method: "DELETE", url: url + a.id, headers: caller });
+      expect(refused.statusCode).toBe(409);
+      for (const text of [a.id, "old-cli", "DELETE " + target + kind]) expect(refused.json().error).toContain(text);
+    }
+    for (const id of [a.id, b.id]) expect(await checkAccount(app, "ann", id)).toMatchObject({ state: "none", method: kind });
+    expect(accountState(app, "ann", a.id).state).toBe("none");
+    expect(loggedIn(app, "ann", b.id)).toBe(false);
+    for (const who of ["ann", "bob"]) expect(() => withAccount(app, who, b)).toThrow(/登录/);
+
+    provide.mockRejectedValueOnce(Error("fixture"));
+    await refreshCredential(app, "ann", kind);
+    await checkCredential(app, "ann", kind);
+    expect(loggedIn(app, "ann", b.id)).toBe(false);
+    await expect(removeAccount(app, "ann", b.id)).rejects.toThrow(/new-cli/);
+    await refreshCredential(app, "ann", kind);
+    for (const who of ["ann", "bob"]) expect(selectedCredential(withAccount(app, who, b))?.holder).toBe("ann");
+    await expect(removeAccount(app, "ann", a.id)).rejects.toThrow(/old-cli/);
+    await logoutCredential(app, "ann", kind);
+    expect(existsSync(join(home, ".echo-a/login"))).toBe(false);
+    expect(readFileSync(join(home, ".echo-a/shared/login"), "utf8")).toBe("shared");
+  } finally { await server.close(); }
+});
+
+it("登录排队时按该次请求拦截退出，即使插件再次重新登记", async () => {
+  const kind = "sample:sso";
+  const def = add({ provides: { backends: ["echo-a"] }, provide: undefined, login: async () => ({ user: "demo" }) });
+  await startCredentialLogin(app, "ann", kind);
+  undo.pop()!();
+  add({ ...def, provides: { backends: ["echo-b"] } });
+  const queued = startCredentialLogin(app, "ann", kind);
+  undo.pop()!();
+  add({ ...def, provides: { backends: ["echo-c"] } });
+  // Both DELETE calls inspect the pending request before it gets its turn in the queue.
+  const old = removeAccount(app, "ann", "echo-a"), pending = removeAccount(app, "ann", "echo-b");
+  await Promise.all([expect(old).rejects.toMatchObject({ status: 409 }), expect(pending).rejects.toMatchObject({ status: 409 }),
+    expect(queued).rejects.toThrow(/取消/)]);
 });
 
 it("续签使用新的后端目录后，退出只清理两次实际供给的路径", async () => {

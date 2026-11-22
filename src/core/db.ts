@@ -2455,6 +2455,13 @@ export const migrations: readonly string[] = [
    and json_extract(value,'$.state')!='none';`,
   `update credential_holds set state='missing' where state='none' and checked_at is not null;`,
   `alter table credential_holds add column owned_paths text;`,
+  // Freeze the last known declaration before a plugin can register a different scope.
+  `alter table credential_holds rename column owned_paths to provision;
+   alter table credential_holds add column supplied_backends text not null default '[]';
+   update credential_holds as h set
+     provision=case when h.user_id!='owner' then json_object('declared',json_extract(k.declaration,'$.provides'),'paths',json(h.provision)) end,
+     supplied_backends=json_extract(k.declaration,'$.provides.backends')
+     from credential_kinds k where k.kind=h.kind and h.state!='none';`,
 ];
 
 export type Db = DatabaseSync;

@@ -403,7 +403,10 @@ export async function checkAccount(app: App, userId: string, backend: string): P
   const s = stored(app, userId, backend);
   const supplied = suppliedCredentialKind(app, userId, backend, s.state !== "none");
   if (supplied) {
-    const { state, user, expiresAt, checkedAt, error } = await checkCredential(app, userId, supplied);
+    const method = credentialMethod(supplied);
+    if (!method) return { state: "none", method: supplied };
+    const { state, user, expiresAt, checkedAt, error, suppliedBackends } = await checkCredential(app, userId, supplied);
+    if (!method.provides.backends.includes(backend) || !suppliedBackends.includes(backend)) return { state: "none", method: supplied, checkedAt };
     return { state: state === "missing" ? "none" : expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
   }
   if (isPlugin(s.method) && s.state !== "none") return refreshPluginLogin(app, userId, backend);
@@ -751,12 +754,12 @@ export function clearAccountPaths(app: App, userId: string, rels: string[], exce
  * folder when nothing else is left in it.
  */
 export async function removeAccount(app: App, userId: string, backend: string, actor = userId) {
-  const sources = [...heldCredentialDeclarations(app, userId)].filter(([, m]) => m.provides.backends.includes(backend));
+  const sources = [...heldCredentialDeclarations(app, userId)].filter(([, m]) => m.provision.backends.includes(backend));
   if (sources.length) {
     const base = actor === userId ? "/api/credentials" : `/api/credentials/${userId}`;
-    const details = sources.map(([kind, { name, provides }]) => {
-      const commands = provides.commands.map(c => c.name).join("、") || "无";
-      return `${name}（${kind}）覆盖后端 ${provides.backends.join("、")}，命令 ${commands}。退出整份凭据请调用 DELETE ${base}/${kind}`;
+    const details = sources.map(([kind, { name, provision }]) => {
+      const commands = provision.commands.join("、") || "无";
+      return `${name}（${kind}）覆盖后端 ${provision.backends.join("、")}，命令 ${commands}。退出整份凭据请调用 DELETE ${base}/${kind}`;
     });
     throw new HttpError(409, `${accountEntry(app, backend)?.name ?? backend} 的登录由凭据供给，请按凭据管理。\n${details.join("\n")}`);
   }

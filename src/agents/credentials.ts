@@ -21,14 +21,31 @@ const refreshResult = loginResult.omit({ user: true });
 const checkResult = refreshResult.extend({ state: z.enum(["ok", "expired", "missing"]), user: z.string().trim().min(1).max(200).optional() });
 const sharingSchema = z.object({ scope: z.enum(["self", "members", "all"]), members: z.array(z.string()).max(200).default([]) }).strict();
 export type CredentialSharing = z.infer<typeof sharingSchema>;
+type Provision = { backends: string[]; commands: string[]; paths: string[] };
+type Provides = CredentialMethod["provides"];
+function declarationProvision(app: App, provides: Provides, paths?: string[] | null): Provision {
+  return { backends: provides.backends, commands: provides.commands.map(c => c.name),
+    paths: paths ?? [...provides.commands.flatMap(c => c.state ?? []),
+      ...accountCatalog(app.config.agents.profiles, "declared").filter(e => provides.backends.includes(e.id)).flatMap(e => e.account.owns)] };
+}
+function mergeProvision(previous: Provision | undefined, next: Provision): Provision {
+  if (!previous) return next;
+  const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
+  return { backends: union(previous.backends, next.backends), commands: union(previous.commands, next.commands), paths: union(previous.paths, next.paths) };
+}
+function readProvision(app: App, raw: string | null): Provision | undefined {
+  if (!raw) return;
+  const p: Provision | { declared: Provides; paths: string[] | null } = JSON.parse(raw);
+  return "declared" in p ? declarationProvision(app, p.declared, p.paths) : p;
+}
 export type Hold = {
   state: "none" | "missing" | "logged-in" | "expired"; user?: string; expiresAt?: number; refreshAt?: number;
   checkedAt?: string; checkedDay: string; lastUsedAt?: string; error?: string;
-  sharing: CredentialSharing; notified: Record<string, string>; ownedPaths?: string[];
+  sharing: CredentialSharing; notified: Record<string, string>; provision?: Provision; suppliedBackends: string[];
 };
 type Row = { user_id: string; kind: string; state: Hold["state"]; account_name: string | null;
   expires_at: number | null; refresh_at: number | null; checked_at: string | null; check_day: string;
-  last_used_at: string | null; error: string | null; sharing: string; notified: string; owned_paths: string | null };
+  last_used_at: string | null; error: string | null; sharing: string; notified: string; provision: string | null; supplied_backends: string };
 const day = (app: App, at = Date.now()) => zonedParts(at, app.config.timezone).date;
 const refreshAt = (expiresAt?: number) => expiresAt === undefined ? undefined : Math.max(expiresAt - 600_000, Date.now() + 60_000);
 function member(app: App, id: string) {
@@ -38,47 +55,49 @@ function member(app: App, id: string) {
 const secretProvider = (kind: string) => `credential:${kind}`;
 const keyOf = (app: App, id: string, kind: string) => `${app.home}|${id}|${kind}`;
 
-function fromRow(r: Row): Hold {
+function fromRow(app: App, r: Row): Hold {
   return { state: r.state, user: r.account_name ?? undefined, expiresAt: r.expires_at ?? undefined,
     refreshAt: r.refresh_at ?? undefined, checkedAt: r.checked_at ?? undefined, checkedDay: r.check_day,
     lastUsedAt: r.last_used_at ?? undefined, error: r.error ?? undefined, sharing: JSON.parse(r.sharing), notified: JSON.parse(r.notified),
-    ownedPaths: r.owned_paths === null ? undefined : JSON.parse(r.owned_paths) };
+    provision: readProvision(app, r.provision), suppliedBackends: JSON.parse(r.supplied_backends) };
 }
 function emptyHold(id: string): Hold {
-  return { state: "none", checkedDay: "", sharing: { scope: id === OWNER ? "all" : "self", members: [] }, notified: {} };
+  return { state: "none", suppliedBackends: [], checkedDay: "", sharing: { scope: id === OWNER ? "all" : "self", members: [] }, notified: {} };
 }
 export function credentialHold(app: App, userId: string, kind: string): Hold {
   const r = one<Row>(app.db, "select * from credential_holds where user_id=? and kind=?", userId, kind);
-  return r ? fromRow(r) : emptyHold(userId);
+  return r ? fromRow(app, r) : emptyHold(userId);
 }
 function save(app: App, userId: string, kind: string, hold: Hold) {
-  run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,refresh_at,check_day,checked_at,sharing,notified,last_used_at,error,owned_paths)
-    values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(user_id,kind) do update set state=excluded.state,account_name=excluded.account_name,
+  run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,refresh_at,check_day,checked_at,sharing,notified,last_used_at,error,provision,supplied_backends)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(user_id,kind) do update set state=excluded.state,account_name=excluded.account_name,
     expires_at=excluded.expires_at,refresh_at=excluded.refresh_at,check_day=excluded.check_day,checked_at=excluded.checked_at,
-    sharing=excluded.sharing,notified=excluded.notified,last_used_at=excluded.last_used_at,error=excluded.error,owned_paths=excluded.owned_paths`,
+    sharing=excluded.sharing,notified=excluded.notified,last_used_at=excluded.last_used_at,error=excluded.error,provision=excluded.provision,supplied_backends=excluded.supplied_backends`,
     userId, kind, hold.state, hold.user ?? null, hold.expiresAt ?? null, hold.refreshAt ?? null, hold.checkedDay,
     hold.checkedAt ?? null, JSON.stringify(hold.sharing), JSON.stringify(hold.notified), hold.lastUsedAt ?? null, hold.error ?? null,
-    hold.ownedPaths ? JSON.stringify(hold.ownedPaths) : null);
+    hold.provision ? JSON.stringify(hold.provision) : null, JSON.stringify(hold.suppliedBackends));
 }
 function usable(app: App, id: string, kind: string, s: Pick<Hold, "state" | "expiresAt"> = credentialHold(app, id, kind)) {
   return s.state === "logged-in" && (s.expiresAt === undefined || s.expiresAt > Date.now()) && (id === OWNER || existsSync(accountHome(app, id)));
 }
-export const credentialBackendLogin = (app: App, id: string, backend: string) => credentialKindsForBackend(backend).some(m => usable(app, id, m.kind));
+function backendUsable(app: App, id: string, backend: string, kind: string, hold = credentialHold(app, id, kind)) {
+  return hold.suppliedBackends.includes(backend) && usable(app, id, kind, hold);
+}
+export const credentialBackendLogin = (app: App, id: string, backend: string) => credentialKindsForBackend(backend).some(m => backendUsable(app, id, backend, m.kind));
 export type CredentialUse = { holder: string; kind: string; requester: string; backend: string };
 export const credentialUse = Symbol("credentialUse");
 export function selectedCredential(profile: object) {
   return (profile as { [credentialUse]?: CredentialUse })[credentialUse];
 }
-export function mayUseCredential(app: App, use: CredentialUse) {
-  const hold = credentialHold(app, use.holder, use.kind);
-  if (!credentialMethod(use.kind)?.provides.backends.includes(use.backend) || !usable(app, use.holder, use.kind, hold)) return false;
+export function mayUseCredential(app: App, use: CredentialUse, hold = credentialHold(app, use.holder, use.kind)) {
+  if (!credentialMethod(use.kind)?.provides.backends.includes(use.backend) || !backendUsable(app, use.holder, use.backend, use.kind, hold)) return false;
   if (use.holder === use.requester) return true;
   return app.config.credentials.lending === "auto" && (use.holder === OWNER || member(app, use.holder)) &&
     (hold.sharing.scope === "all" || hold.sharing.scope === "members" && hold.sharing.members.includes(use.requester));
 }
 export function selectCredential(app: App, requester: string, backend: string, allowLoan: boolean, sandbox: boolean) {
   const methods = credentialKindsForBackend(backend);
-  const own = methods.find(m => sandbox && usable(app, requester, m.kind));
+  const own = methods.find(m => sandbox && backendUsable(app, requester, backend, m.kind));
   if (own) return { requester, backend, holder: requester, kind: own.kind };
   if (!allowLoan || !methods.length || app.config.credentials.lending !== "auto") return;
   const kinds = methods.map(m => m.kind);
@@ -87,7 +106,7 @@ export function selectCredential(app: App, requester: string, backend: string, a
   for (const row of rows) {
     if (row.user_id === requester || (row.user_id === OWNER ? app.config.agents.accountIsolation === "require" : !sandbox)) continue;
     const use = { requester, backend, holder: row.user_id, kind: row.kind };
-    if (mayUseCredential(app, use)) return use;
+    if (mayUseCredential(app, use, fromRow(app, row))) return use;
   }
 }
 export function credentialSucceeded(app: App, profile: object) {
@@ -103,20 +122,21 @@ export function credentialSucceeded(app: App, profile: object) {
 export function credentialAccountView(app: App, id: string, backend: string) {
   for (const m of credentialKindsForBackend(backend)) {
     const hold = credentialHold(app, id, m.kind);
-    if (usable(app, id, m.kind, hold)) return { ...hold, kind: m.kind, name: m.name };
+    if (backendUsable(app, id, backend, m.kind, hold)) return { ...hold, kind: m.kind, name: m.name };
   }
   return null;
 }
 function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal, mode: "supply" | "check" | "logout"): CredentialContext {
   const home = id === OWNER ? homedir() : accountHome(app, id);
   if (id !== OWNER) {
-    const paths = heldPaths(app, m.provides);
+    const provision = declarationProvision(app, m.provides);
     if (mode === "supply") {
+      signal.throwIfAborted();
       const hold = credentialHold(app, id, m.kind);
-      const ownedPaths = [...new Set([...(hold.ownedPaths ?? []), ...paths])];
-      accountStatePaths(app, id, ownedPaths);
-      save(app, id, m.kind, { ...hold, state: hold.state === "none" ? "missing" : hold.state, ownedPaths });
-    } else accountStatePaths(app, id, paths);
+      const merged = mergeProvision(hold.provision, provision);
+      accountStatePaths(app, id, merged.paths);
+      save(app, id, m.kind, { ...hold, state: hold.state === "none" ? "missing" : hold.state, provision: merged });
+    } else accountStatePaths(app, id, provision.paths);
   }
   const env = id === OWNER ? { ...process.env } : Object.assign({}, ...m.provides.backends.map(b => {
     const e = accountEntry(app, b); return e ? accountEnv(app, id, e) : {};
@@ -162,7 +182,7 @@ function remindHold(app: App, id: string, m: CredentialMethod) {
   else if (s.state === "logged-in" && s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS) reminder(app, id, m, "expiring");
 }
 type LoginReply = { url?: string; code?: string; done?: boolean };
-type Pending = { abort: AbortController; reply: Promise<LoginReply>; url?: string; code?: string };
+type Pending = { method: CredentialMethod; abort: AbortController; reply: Promise<LoginReply>; url?: string; code?: string };
 const logins = new Map<string, Pending>();
 export function startCredentialLogin(app: App, id: string, kind: string): Promise<LoginReply> {
   const m = requireCredential(kind);
@@ -174,7 +194,7 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
   ensureAccountHome(app, id);
   const abort = new AbortController();
   let resolve!: (v: LoginReply) => void, reject!: (e: unknown) => void;
-  const p: Pending = { abort, reply: new Promise((yes, no) => { resolve = yes; reject = no; }) };
+  const p: Pending = { method: m, abort, reply: new Promise((yes, no) => { resolve = yes; reject = no; }) };
   logins.set(key, p);
   let replied = false;
   const answer = (fn: () => void) => { if (!replied) { replied = true; clearTimeout(first); fn(); } };
@@ -194,7 +214,7 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
       })));
       if (m.provide) await untilAbort(signal, () => m.provide!(ctx));
       signal.throwIfAborted();
-      save(app, id, kind, { ...credentialHold(app, id, kind), ...result, expiresAt: result.expiresAt, state: "logged-in", refreshAt: refreshAt(result.expiresAt), checkedAt: now(), error: undefined });
+      save(app, id, kind, { ...credentialHold(app, id, kind), ...result, suppliedBackends: m.provides.backends, expiresAt: result.expiresAt, state: "logged-in", refreshAt: refreshAt(result.expiresAt), checkedAt: now(), error: undefined });
       remindHold(app, id, m);
       answer(() => resolve({ done: true }));
     } catch {
@@ -223,7 +243,7 @@ export function refreshCredential(app: App, id: string, kind: string) {
           if (m.provide) await untilAbort(signal, () => m.provide!(ctx));
           return result;
         });
-        save(app, id, kind, { ...credentialHold(app, id, kind), ...result, expiresAt: result.expiresAt, refreshAt: refreshAt(result.expiresAt), checkedAt: now(), error: undefined });
+        save(app, id, kind, { ...credentialHold(app, id, kind), ...result, suppliedBackends: m.provides.backends, expiresAt: result.expiresAt, refreshAt: refreshAt(result.expiresAt), checkedAt: now(), error: undefined });
       } else if (s.expiresAt !== undefined && s.expiresAt <= Date.now()) save(app, id, kind, { ...credentialHold(app, id, kind), state: "expired", refreshAt: undefined });
       else save(app, id, kind, { ...credentialHold(app, id, kind), refreshAt: s.expiresAt });
     } catch { save(app, id, kind, { ...credentialHold(app, id, kind), state: "expired", refreshAt: undefined, error: "续签或供给失败，请重新授权", checkedAt: now() }); }
@@ -240,30 +260,28 @@ export function checkCredential(app: App, id: string, kind: string) {
       const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, "check"))));
       const expiresAt = result.state === "missing" ? undefined : result.expiresAt ?? s.expiresAt;
       save(app, id, kind, { ...credentialHold(app, id, kind), state: result.state === "missing" ? "missing" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in",
+        suppliedBackends: id === OWNER ? m.provides.backends : s.suppliedBackends,
         user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined });
     } catch { save(app, id, kind, { ...credentialHold(app, id, kind), checkedAt: now(), checkedDay: day(app), error: "检查失败，请稍后重试" }); reminder(app, id, m, "failed"); }
     remindHold(app, id, m);
     return credentialHold(app, id, kind);
   });
 }
-function heldPaths(app: App, provides: CredentialMethod["provides"], saved?: string[]) {
-  if (saved) return saved;
-  const entries = accountCatalog(app.config.agents.profiles, "declared");
-  return [...provides.commands.flatMap(c => c.state ?? []),
-    ...entries.filter(entry => provides.backends.includes(entry.id)).flatMap(entry => entry.account.owns)];
-}
-
-type Declaration = Pick<CredentialMethod, "name" | "provides">;
-/** Include temporarily disabled plugins and logins that have not yet saved their first hold. */
+/** The files a callback may have written, even if the plugin has since changed or stopped. */
 export function heldCredentialDeclarations(app: App, id: string) {
-  const rows = all<Pick<Row, "kind" | "state" | "expires_at" | "owned_paths"> & { declaration: string }>(app.db, `select h.kind,h.state,h.expires_at,h.owned_paths,k.declaration from credential_holds h
-    join credential_kinds k on k.kind=h.kind where h.user_id=? and h.state!='none'
+  const rows = all<Row & { name: string }>(app.db, `select h.*,json_extract(k.declaration,'$.name') as name from credential_holds h
+    join credential_kinds k on k.kind=h.kind where h.user_id=? and h.provision is not null
     order by (h.state='missing'), h.checked_at desc,h.kind`, id);
-  const held = new Map<string, Declaration & Pick<Hold, "state" | "expiresAt" | "ownedPaths"> & { pending?: boolean }>();
-  for (const row of rows) held.set(row.kind, { ...JSON.parse(row.declaration), state: row.state, expiresAt: row.expires_at ?? undefined,
-    ownedPaths: row.owned_paths === null ? undefined : JSON.parse(row.owned_paths) });
-  for (const m of credentialMethods()) if (logins.has(keyOf(app, id, m.kind))) {
-    held.set(m.kind, { ...(held.get(m.kind) ?? { name: m.name, provides: m.provides, state: "none" }), pending: true });
+  const held = new Map<string, { name: string; provision: Provision; hold: Hold; pending?: boolean }>();
+  for (const row of rows) {
+    const hold = fromRow(app, row);
+    held.set(row.kind, { name: row.name, provision: hold.provision!, hold });
+  }
+  for (const [key, { method: m }] of logins) {
+    if (key !== keyOf(app, id, m.kind)) continue;
+    const previous = held.get(m.kind);
+    held.set(m.kind, { name: m.name, pending: true, hold: previous?.hold ?? emptyHold(id),
+      provision: mergeProvision(previous?.provision, declarationProvision(app, m.provides)) });
   }
   return held;
 }
@@ -271,35 +289,35 @@ export function heldCredentialDeclarations(app: App, id: string) {
 export function retainedCredentialPaths(app: App, id: string, except?: string) {
   const held = heldCredentialDeclarations(app, id);
   if (except) held.delete(except);
-  return [...held.values()].map(m => heldPaths(app, m.provides, m.ownedPaths));
+  return [...held.values()].map(m => m.provision.paths);
 }
 
-/** Check the provider that owns these files, including when its login has expired or its plugin is disabled. */
 export function suppliedCredentialKind(app: App, id: string, backend: string, hasIndependentLogin: boolean) {
   const held = heldCredentialDeclarations(app, id);
-  const methods = credentialKindsForBackend(backend);
-  return methods.find(m => { const source = held.get(m.kind); return source && usable(app, id, m.kind, source); })?.kind
-    ?? methods.find(m => held.get(m.kind)?.pending)?.kind
-    ?? [...held].find(([, source]) => source.provides.backends.includes(backend) && (source.state !== "missing" || !hasIndependentLogin))?.[0];
+  const sources = [...held].filter(([, h]) => h.provision.backends.includes(backend));
+  return sources.find(([kind, h]) => credentialMethod(kind)?.provides.backends.includes(backend) && backendUsable(app, id, backend, kind, h.hold))?.[0]
+    ?? sources.find(([, h]) => h.pending)?.[0]
+    ?? sources.find(([, h]) => h.hold.state !== "missing" || !hasIndependentLogin)?.[0]
+    // Checking a newly advertised backend must not turn a shared file into a native login.
+    ?? (!hasIndependentLogin ? credentialKindsForBackend(backend).find(m => held.has(m.kind))?.kind : undefined);
 }
 export function logoutCredential(app: App, id: string, kind: string, actor = id) {
   if (id === OWNER) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机退出");
   const key = keyOf(app, id, kind);
   logins.get(key)?.abort.abort();
   return serial(key, async () => {
-    const row = one<{ declaration: string }>(app.db, "select declaration from credential_kinds where kind=?", kind);
+    const row = one(app.db, "select 1 from credential_kinds where kind=?", kind);
     if (!row) throw new HttpError(404, "没有这个凭据种类");
     const hold = credentialHold(app, id, kind);
     if (hold.state === "none") return;
-    const declaration: Declaration = JSON.parse(row.declaration);
     const m = credentialMethod(kind);
     if (m?.logout && existsSync(accountHome(app, id))) {
       try { await timed(m, 20_000, signal => m.logout!(context(app, id, m, signal, "logout"))); }
       catch { throw new HttpError(502, "退出凭据失败，请重试"); }
     }
-    clearAccountPaths(app, id, heldPaths(app, declaration.provides, hold.ownedPaths), { kind });
+    clearAccountPaths(app, id, hold.provision?.paths ?? [], { kind });
     const c = findConnection(app, id, secretProvider(kind)); if (c) deleteConnection(app, c.id);
-    save(app, id, kind, { ...credentialHold(app, id, kind), state: "none", ownedPaths: undefined, user: undefined, expiresAt: undefined, refreshAt: undefined, checkedAt: now(), error: undefined });
+    save(app, id, kind, { ...credentialHold(app, id, kind), state: "none", provision: undefined, suppliedBackends: [], user: undefined, expiresAt: undefined, refreshAt: undefined, checkedAt: now(), error: undefined });
     audit(app, actor, "credentials.logout", kind, { holder: id });
   });
 }
@@ -378,7 +396,7 @@ function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
 }
 export function myCredentials(app: App, id: string) {
   const rows = all<Row>(app.db, "select * from credential_holds where user_id=?", id);
-  const holds = new Map(rows.map(r => [r.kind, fromRow(r)]));
+  const holds = new Map(rows.map(r => [r.kind, fromRow(app, r)]));
   return { credentials: credentialMethods().map(m => viewOf(app, id, m, holds.get(m.kind) ?? emptyHold(id))) };
 }
 export function allCredentials(app: App) {
@@ -389,7 +407,7 @@ export function allCredentials(app: App) {
     const m = credentialMethod(r.kind); if (!m) continue;
     let person = people.get(r.user_id);
     if (!person) { person = { userId: r.user_id, name: r.user_id === OWNER ? "本人" : r.holder_name ?? r.user_id, credentials: [] }; people.set(r.user_id, person); }
-    const { url, code, ...v } = viewOf(app, r.user_id, m, fromRow(r));
+    const { url, code, ...v } = viewOf(app, r.user_id, m, fromRow(app, r));
     person.credentials.push(v);
   }
   return { kinds: credentialMethods().map(m => ({ kind: m.kind, name: m.name })), people: [...people.values()], limit: 2000 };
