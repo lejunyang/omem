@@ -7,6 +7,10 @@ import { keyOf } from "../core/ai-keys.ts";
 import { pluginBackendStatus } from "./catalog.ts";
 
 const available = new Map<string, boolean>();
+/** Look for the commands again (after an adapter was installed, upgraded or broke halfway: agents/adapter.ts). */
+export function forgetAvailability() {
+  available.clear();
+}
 export function backendAvailable(profile: AgentProfile, home: string) {
   if (profile.transport === "doubao") return doubaoTokenExists(home);
   // Whether the device still answers is the run's to find out; unpaired, it is gone.

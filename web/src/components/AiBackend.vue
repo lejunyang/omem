@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, post } from "../api";
+import { followAdapterJob, jobElapsed, lastLine, type AdapterJob } from "../lib/adapter-job";
 import { confirmDialog } from "../lib/dialog";
 import { detectProbe, probes } from "../lib/probes";
 import { networkBlock } from "../lib/network-status";
@@ -43,19 +44,33 @@ const models = computed(() => probe.value?.models ?? []);
 const efforts = computed(() => probe.value?.effortsByModel?.[primary.value.model ?? ""] ?? probe.value?.efforts ?? []);
 watch(open, (o) => { if (o && prober.value && mayProbe.value) void detectProbe(prober.value.id); });
 
-// ---- the npm adapter behind the ACP agent (src/agents/adapter.ts): installed and newest version, upgrade in place
-type Adapter = { id: string; package: string | null; version?: string | null; latest?: string | null; latestError?: string; upgradable?: boolean };
+// ---- the npm adapter behind the ACP agent (src/agents/adapter.ts): installed and newest version, upgrade in
+// place. The upgrade is a job on the server: the page follows it, and a refresh finds it still running.
+type Adapter = { id: string; package: string | null; version?: string | null; latest?: string | null; latestError?: string; upgradable?: boolean; via?: "osdk" | "npm"; job?: AdapterJob | null };
 const acp = computed(() => props.profiles.find((p) => p.transport === "acp" && p.installed && !p.peer));
 const adapter = ref<Adapter | null>(null);
-const checking = ref(false), upgrading = ref(false);
+const checking = ref(false), starting = ref(false);
+const job = ref<AdapterJob | null>(null);
+const upgrading = computed(() => starting.value || !!job.value?.running);
 async function checkAdapter() {
   if (!acp.value) return;
   checking.value = true;
-  try { adapter.value = await get<Adapter>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter`); }
+  try {
+    adapter.value = await get<Adapter>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter`);
+    if (adapter.value.job) follow(adapter.value.job);
+  }
   catch { adapter.value = null; }
   finally { checking.value = false; }
 }
 watch(open, (o) => { if (o && !adapter.value) void checkAdapter(); });
+const follow = followAdapterJob(job, (j) => {
+  if (j.probe && acp.value) probes.data[acp.value.id] = j.probe;
+  if (j.ok) toast(`${j.package} 已是 ${j.after}`);
+  else toast(`升级没成功${j.after ? `，仍是 ${j.after}` : ""}：${j.message ?? lastLine(j.output)}`, "error");
+  void checkAdapter();
+  if (!j.ok) emit("reload");
+});
+onBeforeUnmount(() => follow.stop());
 /** Models the last detection gave no effort levels for while others have them: an adapter older than the model. */
 const noEffort = computed(() => {
   const by = probe.value?.effortsByModel;
@@ -65,18 +80,17 @@ const noEffort = computed(() => {
 async function upgradeAdapter() {
   const a = adapter.value;
   if (!a?.package || !a.latest || !acp.value) return;
-  if (!(await confirmDialog(`把 ${a.package} 升级到 ${a.latest}？`, { message: "从 omem 指定的公开 npm 源装，替换这台机器上正在用的那一份；正在跑的会话不受影响，新会话起用新版。装完会重新检测模型。", okText: "升级" }))) return;
-  upgrading.value = true;
+  const how = a.via === "osdk" ? "用 osdk 装（osdk 管着这一份）" : "从 omem 指定的公开 npm 源装";
+  if (!(await confirmDialog(`把 ${a.package} 升级到 ${a.latest}？`, { message: `${how}，替换这台机器上正在用的那一份；正在跑的会话不受影响，新会话起用新版。带原生程序的包在慢的源上要装好几分钟，在后台装，可以离开这页。装完会重新检测模型。`, okText: "升级" }))) return;
+  starting.value = true;
   try {
-    const r = await post<{ ok: boolean; after: string | null; output: string; probe?: (typeof probes.data)[string] }>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter/upgrade`, {});
-    if (r.probe) probes.data[acp.value.id] = r.probe;
-    if (r.ok) toast(`${a.package} 已是 ${r.after}`);
-    else toast(`升级没成功，仍是 ${r.after ?? "未知版本"}：${r.output.trim().split("\n").slice(-2).join(" ").slice(0, 200)}`, "error");
-    await checkAdapter();
+    const r = await post<{ job: AdapterJob }>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter/upgrade`, {});
+    follow(r.job);
   } catch (e) {
     toast((e as Error).message, "error");
+    void checkAdapter();
   } finally {
-    upgrading.value = false;
+    starting.value = false;
   }
 }
 
@@ -265,8 +279,13 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
               <span v-else-if="adapter.latestError" class="muted ell" :title="adapter.latestError">查不到最新版</span>
             </template>
             <span class="spacer" />
-            <button v-if="adapter?.upgradable" class="btn sm" :disabled="upgrading" @click="upgradeAdapter">{{ upgrading ? "升级中…" : `升级到 ${adapter.latest}` }}</button>
+            <button v-if="upgrading" class="btn sm" disabled>升级中…</button>
+            <button v-else-if="adapter?.upgradable" class="btn sm" @click="upgradeAdapter">升级到 {{ adapter.latest }}</button>
             <button v-else-if="adapter" class="btn ghost sm" :disabled="checking" @click="checkAdapter">{{ checking ? "查询中…" : "检查更新" }}</button>
+          </div>
+          <div v-if="p === acp && job && (job.running || job.ok === false)" class="small job" :class="{ 'warn-text': job.ok === false }">
+            <template v-if="job.running">在后台{{ job.via === "osdk" ? "用 osdk " : "用 npm " }}升级，已 {{ jobElapsed(job) }}，可以离开这页<span v-if="job.output" class="muted mono ell job-out" :title="job.output">{{ lastLine(job.output) }}</span></template>
+            <template v-else>上次升级没成功（{{ jobElapsed(job) }}）：{{ job.message ?? lastLine(job.output) }}</template>
           </div>
           <div v-if="editing === p.id" class="stack">
             <textarea v-model="editJson" class="textarea mono" rows="9" />
@@ -368,6 +387,8 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
 .cmd-line { flex: 1 1 0; }
 .be-body > * { min-width: 0; }
 .adapter { padding-left: 2px; }
+.job { display: grid; gap: 2px; padding-left: 2px; min-width: 0; }
+.job-out { display: block; }
 .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mrow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: start; }
 .num { width: 72px; margin: 0 4px; }

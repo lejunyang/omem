@@ -74,6 +74,7 @@ export const ownerControls: Record<string, string[]> = {
   "agents.profiles": [
     "POST /api/agent-registry/:id",
     "POST /api/agents/:id/adapter/upgrade",
+    "POST /api/agents/:id/install",
   ],
   "agents.cloudTools": [
     "POST /api/cloud-tools/revoke",

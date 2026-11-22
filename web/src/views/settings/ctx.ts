@@ -12,7 +12,7 @@ import { detectProbe, probes as shared, seedProbe, type Probe } from "../../lib/
  * the configuration as the server returned it, the installed backends, and one way to save a part of
  * the configuration (`PUT /api/settings`, which says when a change needs a restart).
  */
-export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string };
+export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; installable?: boolean; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string };
   /** `false` for someone who may only look: `probe` is the cached result, and the backend is never asked. */
   canProbe?: boolean; probe?: Probe | null };
 /** A plugin's backend the configuration still names after the plugin went (`unavailableBackends`). */

@@ -132,7 +132,8 @@ export function listAgentProfiles(app: App) {
     if (p.transport === "doubao") return { ...p, ...network, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
     if (p.transport === "doubao-cli") return { ...p, ...network, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : DOUBAO_CLI_INSTALL };
     const e = catalogEntry(p.id);
-    return { ...p, ...network, installed: backendAvailable(p, app.home), install: e && e.command === p.command ? installHint(e) : undefined };
+    // `installable`: a catalog npm package settings can install from the page (agents/adapter.ts).
+    return { ...p, ...network, installed: backendAvailable(p, app.home), install: e && e.command === p.command ? installHint(e) : undefined, ...(e?.npm && e.command === p.command && { installable: true }) };
   });
 }
 
