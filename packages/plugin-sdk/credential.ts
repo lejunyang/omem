@@ -81,7 +81,10 @@ export type CredentialDef = {
    * read its entire result, and the complete argv is a read of exactly req.resource. Leave it
    * unset for advisory answers, ambiguous options, or a service that only checks the login in ctx.
    */
-  precheck?(ctx: CredentialContext, req: { resource: string; user: string; command?: { name: string; args: readonly string[] } }): Promise<{ allowed: boolean | null; verifiedRead?: true; missing?: string; applyUrl?: string }>;
+  /** req.user is the omem id; `account` is the account this person last logged in with for this credential
+   * (from your login or check) and `email` the email omem has for them, each present when known. Map them to
+   * the principal your service checks; answer allowed: null when you cannot tell who it is. */
+  precheck?(ctx: CredentialContext, req: { resource: string; user: string; account?: string; email?: string; command?: { name: string; args: readonly string[] } }): Promise<{ allowed: boolean | null; verifiedRead?: true; missing?: string; applyUrl?: string }>;
 };
 export type CredentialApi = {
   credential(def: CredentialDef): void;

@@ -48,6 +48,8 @@ type Plugin = {
   hooks?: Hook[];
   enabled: boolean;
   runMode: "isolated" | "inprocess" | null;
+  /** Trusted for good: later code changes load without asking again. */
+  permanentTrust?: boolean;
   version: string | null;
   installed: { source: string; version: string; installedAt: string } | null;
   /** AI backends it declares (docs/v2/plugins.md 声明式 ACP 后端): the command is code, read before trusting. */
@@ -195,6 +197,20 @@ async function trust(p: Plugin, mode: "isolated" | "inprocess" = "isolated") {
     toast((e as Error).message, "error");
   }
 }
+/** Trust for good: later code, declaration and grant changes of this plugin load without asking again. */
+async function setPermanent(p: Plugin, permanent: boolean) {
+  if (permanent && !(await confirmDialog(`永久信任“${p.name}”？`, {
+    message: `以后它的代码、声明和权限怎么更新，都直接按现在的方式（${p.runMode === "inprocess" ? "在 omem 里" : "隔离"}）运行，不再请你确认。只对你自己维护的插件这样做；随时可以在这里关掉。`,
+    okText: "永久信任",
+  }))) return;
+  try {
+    await post(`/api/plugins/${p.id}/trust`, { mode: p.runMode ?? "isolated", permanent });
+    toast(permanent ? `${p.name} 以后更新不再确认` : `${p.name} 以后代码改了要重新确认`, "ok");
+    await load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 async function untrust(p: Plugin) {
   if (!(await confirmDialog(`撤销对“${p.name}”的信任？`, { message: "它的工具马上不可用，服务会停止；档案、技能和页面还在。", okText: "撤销" }))) return;
   await del(`/api/plugins/${p.id}/trust`);
@@ -295,6 +311,7 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
         <span v-if="p.trust === 'trusted' && p.runMode" class="badge" :class="{ warn: p.runMode === 'inprocess' }">{{ p.runMode === "isolated" ? "隔离运行" : "在 omem 里运行" }}</span>
         <button v-if="p.trust === 'required' || p.trust === 'changed'" class="btn sm primary" @click="trust(p)">信任并运行</button>
         <button v-if="p.trust === 'required' || p.trust === 'changed' || (p.trust === 'trusted' && p.runMode === 'isolated')" class="btn ghost sm" @click="trust(p, 'inprocess')">在 omem 里运行…</button>
+        <UiCheckbox v-if="p.trust === 'trusted' && p.source === 'data'" :model-value="!!p.permanentTrust" switch size="sm" :aria-label="`永久信任${p.name}`" @change="(v) => setPermanent(p, v)">永久信任</UiCheckbox>
         <button v-if="p.trust === 'trusted'" class="btn ghost sm danger" @click="untrust(p)">撤销信任</button>
         <button v-if="p.installed" class="btn ghost sm" :disabled="busy" @click="update(p)">更新</button>
         <button v-if="p.installed" class="btn ghost sm danger" @click="remove(p)">删除</button>

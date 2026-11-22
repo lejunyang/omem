@@ -162,7 +162,10 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   // Trust: a data-directory plugin's code runs only after the owner confirms it (trust.ts).
   server.put("/api/plugins/:id/icon", async (req) => pluginView(setPluginIcon(app, plugin(req).manifest.id, String((req.body as { icon?: unknown })?.icon ?? "")), req));
   // isolated (default): its own process, only its directory; inprocess: inside omem, with omem's rights.
-  server.post("/api/plugins/:id/trust", async (req) => trustPlugin(app, plugin(req).manifest.id, (req.body as { mode?: string } | undefined)?.mode === "inprocess" ? "inprocess" : "isolated"));
+  server.post("/api/plugins/:id/trust", async (req) => {
+    const b = req.body as { mode?: string; permanent?: unknown } | undefined;
+    return trustPlugin(app, plugin(req).manifest.id, b?.mode === "inprocess" ? "inprocess" : "isolated", typeof b?.permanent === "boolean" ? b.permanent : undefined);
+  });
   // Turned off: its code unloads, its agents, page and nav entry go away; on again loads it.
   server.put("/api/plugins/:id/enabled", async (req) => setPluginEnabled(app, plugin(req).manifest.id, !!(req.body as { on?: unknown })?.on));
   // Someone else's plugin (install.ts): an npm package or a GitHub tag; its code waits for trust.

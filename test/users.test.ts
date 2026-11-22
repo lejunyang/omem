@@ -76,7 +76,12 @@ describe("users: identities, spaces, per-user turns and API", async () => {
     expect(accessibleSpaces(app, "wang")).toContain("wang-notes");
     // Runs: only their own (and those they may read).
     expect(((await fetch(`${base}/api/runs`, { headers: h }).then((r) => r.json())) as { runs: { userId?: string }[] }).runs.every((r) => !r.userId || r.userId === "wang")).toBe(true);
-    expect((await fetch(`${base}/api/settings`, { headers: h })).status).toBe(403);
+    // Settings: a member reads only the lending policy that applies to their credentials (docs/v2/credentials.md).
+    const settings = await fetch(`${base}/api/settings`, { headers: h });
+    expect(settings.status).toBe(200);
+    const config = ((await settings.json()) as { config: Record<string, unknown> }).config;
+    expect(Object.keys(config).sort()).toEqual(["agents", "credentials"]);
+    expect(Object.keys(config.agents as object)).toEqual(["accountsDefault"]);
     const asked = await fetch(`${base}/api/ask`, { method: "POST", headers: h, body: JSON.stringify({ text: "/whoami" }) }).then((r) => r.json());
     expect(asked.reply).toMatch(/小王/);
     expect((await fetch(`${base}/api/ask`, { method: "POST", headers: h, body: JSON.stringify({ text: "hi", space: "secret" }) })).status).toBe(403);

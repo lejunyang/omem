@@ -88,8 +88,10 @@ export function emailHolder(app: App, email: string | null | undefined, except?:
 }
 
 export function createUser(app: App, input: { name: string; id?: string; role?: string; status?: UserStatus; email?: string | null; avatar?: string | null }) {
-  // A name that is mostly not Latin (“用户 u200”) slugs to stray dashes; the personal space's id would not match.
-  let id = slugify(input.id ?? input.name).replace(/[^a-z0-9-]/g, "").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "") || `u${Date.now().toString(36)}`;
+  // The email's local part when there is one (it is usually the person's account name elsewhere too), else
+  // the name. A name that is mostly not Latin (“用户 u200”) slugs to stray dashes; the personal space's id would not match.
+  const fromEmail = normalEmail(input.email)?.split("@")[0].replace(/[._+]+/g, "-");
+  let id = slugify(input.id ?? (fromEmail || input.name)).replace(/[^a-z0-9-]/g, "").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "") || `u${Date.now().toString(36)}`;
   if (findUser(app, id)) {
     // Someone logging in for the first time has no say in the id: take the next free one.
     if (input.id) throw new HttpError(409, `用户已存在：${id}`);

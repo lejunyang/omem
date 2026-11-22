@@ -57,7 +57,7 @@ api.credential({
       },
     }],
   },
-  precheck?(ctx, req: { resource: string; user: string; command?: { name: string; args: readonly string[] } }): Promise<{ allowed: boolean | null; verifiedRead?: true; missing?: string; applyUrl?: string }>,
+  precheck?(ctx, req: { resource: string; user: string; account?: string; email?: string; command?: { name: string; args: readonly string[] } }): Promise<{ allowed: boolean | null; verifiedRead?: true; missing?: string; applyUrl?: string }>,  // account：这个人上次用这种凭据登录的账号名；email：omem 里他的邮箱；知道才给
 });
 ```
 

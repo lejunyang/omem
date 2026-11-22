@@ -2,7 +2,8 @@ import { mkdirSync, rmSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { accountHome } from "../src/agents/accounts.ts";
 import { recordAccess, whoCan } from "../src/agents/credential-access.ts";
-import { registerCredential } from "../src/agents/credentials.ts";
+import { precheckCredential, registerCredential } from "../src/agents/credentials.ts";
+import { credentialMethod } from "../src/agents/credential-registry.ts";
 import { all, run } from "../src/core/db.ts";
 import { createUser } from "../src/core/users.ts";
 import { testApp } from "./helpers.ts";
@@ -66,4 +67,20 @@ it.skipIf(process.platform === "win32")("预检优先用发起人的身份，缺
   for (const mode of ["off", "confirm"] as const) { app.config.credentials.lending = mode; await whoCan(app, "reader", null, "new", kind); }
   expect(calls).toHaveLength(10);
   expect(all(app.db, "select 1 from audit_events where action='credentials.precheck'")).toHaveLength(10);
+});
+
+it("预检带上被查的人上次登录的账号名和 omem 里的邮箱，不知道的不给", async () => {
+  const seen: unknown[] = [];
+  unregister = registerCredential("demo", { id: "account", name: "示例", provides: {}, async login(ctx) { return { user: ctx.userId }; },
+    async precheck(_ctx, req) { seen.push(req); return { allowed: null }; },
+  }, () => ({}), app);
+  createUser(app, { id: "mailer", name: "小王", email: "Xiao.Wang@example.test" });
+  run(app.db, "insert into credential_holds(user_id,kind,state,account_name,sharing) values(?,?,'expired','xiaowang',?)", "mailer", kind, JSON.stringify({ scope: "self", members: [] }));
+  const method = credentialMethod(kind)!;
+  await precheckCredential(app, "owner", method, "db:a", "mailer");
+  await precheckCredential(app, "owner", method, "db:a", "reader");
+  expect(seen).toEqual([
+    { resource: "db:a", user: "mailer", account: "xiaowang", email: "xiao.wang@example.test" },
+    { resource: "db:a", user: "reader" },
+  ]);
 });

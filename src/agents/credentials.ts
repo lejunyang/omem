@@ -177,9 +177,21 @@ async function timed<T>(m: CredentialMethod, ms: number, work: (signal: AbortSig
   try { return await untilAbort(signal, () => work(signal)); }
   finally { clearTimeout(timer); ctrl.abort(); }
 }
+/**
+ * Who a precheck asks about, beyond the omem id (which a resource service does not know): the account
+ * this person last logged in with for this credential (from the plugin's verified login or check) and
+ * the email omem has for them (their sign-in, or as the owner added them). Either is left out when
+ * unknown; the plugin maps them to the principal its service checks.
+ */
+function precheckSubject(app: App, user: string, kind: string) {
+  const account = credentialHold(app, user, kind).user;
+  const email = findUser(app, user)?.email ?? undefined;
+  return { ...(account ? { account } : {}), ...(email ? { email } : {}) };
+}
 export function precheckCredential(app: App, holder: string, m: CredentialMethod, resource: string, user: string, command?: { name: string; args: readonly string[] }) {
   const check = m.precheck!;
-  return timed(m, 20_000, signal => check(context(app, holder, m, signal, "check"), { resource, user, ...(command ? { command } : {}) }));
+  const subject = precheckSubject(app, user, m.kind);
+  return timed(m, 20_000, signal => check(context(app, holder, m, signal, "check"), { resource, user, ...subject, ...(command ? { command } : {}) }));
 }
 
 function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | "expiring" | "failed") {

@@ -29,9 +29,10 @@ import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
-import { acceptCredentialDeclarations, codeHash, setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
+import { acceptCredentialDeclarations, codeHash, setTrust, setTrustPermanent, trustMode, trustPermanent, trustState, type RunMode } from "./trust.ts";
 import { startSandbox } from "./sandbox.ts";
 import { forgetPluginToolCapabilities, setPluginToolCapabilities } from "../auth/tools.ts";
+import { audit } from "../auth/permissions.ts";
 import { importFresh } from "./fresh-import.ts";
 import { installInfo } from "./install.ts";
 import { broughtBy, seedContributions, pluginMcpSchema } from "./contributions.ts";
@@ -433,12 +434,18 @@ async function actionRungs(app: App, plugin: string) {
 }
 
 /** The owner confirms a data plugin's code (as it is now): it runs from here on, no restart. */
-export async function trustPlugin(app: App, id: string, mode: RunMode = "isolated") {
+/** `permanent`: trust it for good (later code changes load without asking); undefined keeps the earlier choice. */
+export async function trustPlugin(app: App, id: string, mode: RunMode = "isolated", permanent?: boolean) {
   const p = getPlugin(id);
   if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
   const before = trustMode(app, id);
+  if (p.trust === "trusted" && before === mode && permanent !== undefined && permanent !== trustPermanent(app, id)) {
+    setTrustPermanent(app, id, permanent);
+    audit(app, OWNER, permanent ? "plugins.trust.permanent" : "plugins.trust.permanent.off", id, { mode });
+  }
   if (p.trust !== "trusted" || before !== mode) {
-    setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify, p.manifest.permissions.embedder, p.manifest.backends, p.manifest.permissions.flow, p.manifest.permissions.credential);
+    setTrust(app, id, p.dir, mode, p.linked, p.manifest.permissions.notify, p.manifest.permissions.embedder, p.manifest.backends, p.manifest.permissions.flow, p.manifest.permissions.credential, permanent);
+    if (permanent !== undefined) audit(app, OWNER, permanent ? "plugins.trust.permanent" : "plugins.trust.permanent.off", id, { mode });
     unloadCode(p);
     p.trust = "trusted";
     try {
@@ -749,6 +756,8 @@ export function describePlugin(p: LoadedPlugin) {
     page: p.enabled && p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) || devPages(p) } : null,
     enabled: p.enabled,
     runMode: p.source === "data" && p.trust !== "none" ? (host ? trustMode(host, p.manifest.id) : "isolated") : null,
+    // Trusted for good: later code changes load without asking again (trust.ts).
+    permanentTrust: p.source === "data" && !!host && trustPermanent(host, p.manifest.id),
     version: installInfo(p.dir)?.version || p.manifest.version || null,
     installed: installInfo(p.dir),
     settings: p.manifest.settings.length > 0,

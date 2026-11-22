@@ -25,6 +25,13 @@ updated: 2026-11-22
 
 阶段卡住等本人确认一份表格时，卡片和事项页上只列依据的标题，表格地址藏在依据原件里，本人找不到要看的东西。`stage_report` 加 `links: [{label, url}]`（http(s)，最多 10 个），存进阶段的 `control.links`：再交一次不带 `links` 的结果保留上次的，传空数组清掉。事项页这一段多一行“交给你看”（`ItemFlow.vue`、`ItemFlowPage.vue`），进度视图里链接排在依据前面（`outputs` 的 `kind: "link"`，新标签页打开），做完或卡住时给本人的进度卡末尾带“交给你看：[名称](地址)”（`src/flows/store.ts`）。`roles/_common.md` 的“流程里的一个阶段”要求等本人确认某份东西而卡住时必须带上链接。读起：`src/flows/engine.ts` 的 `reportStage`、`src/agents/progress.ts` 的 `flowView`；测试 `test/flows.test.ts`“卡住等本人确认一份表格时带上链接”。
 
+## 插件永久信任、预检带账号名和邮箱、新成员用邮箱前缀做 ID（2026-11-22）
+
+- 永久信任：`src/plugins/trust.ts` 的信任记录带 `permanent`，`trustState` 对它直接算“已信任”（链接的插件仍要目录不变），`acceptCredentialDeclarations` 接受新声明；`setTrust` 在再次信任时保留这个选择。`registry.ts` 的 `trustPlugin` 收 `permanent` 参数（只改开关时不重新加载，写 `audit_events`），`describePlugin` 带 `permanentTrust`；网页在插件卡片上加开关。
+- 预检：`src/agents/credentials.ts` 的 `precheckCredential` 给插件的 `req` 加上 `account`（这个人这份持有的账号名）和 `email`（omem 里他的邮箱），SDK 类型同步。插件据此找到资源服务要查的人，不用本人手填对照表。
+- 新成员 ID：`src/core/users.ts` 的 `createUser` 有邮箱时用邮箱前缀（原来中文名会退回 `u` 加时间戳的随机串）。已有成员不改名。
+- `test/users.test.ts` 里“成员读设置被拒”改成成员只读到出借相关的两项（凭据第二期起就是这样）。
+
 ## 聊天交办的后台任务复用持有人的同意（2026-11-22）
 
 从 `src/core/db.ts` 的 `credential_task_runs` 读起。发起聊天结束后，后台交办仍可保存和复用任务同意。同一聊天另开的任务要单独询问。任务链最后一个运行结束时清除授权。

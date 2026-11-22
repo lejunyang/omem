@@ -46,7 +46,8 @@ export type RunMode = "isolated" | "inprocess";
 /** `dir`: a linked plugin (links.ts) is trusted by its directory, so editing it needs no new confirmation. */
 type NotifyGrants = { ask: boolean; deliver: boolean };
 type FlowGrants = { [name: string]: boolean | undefined };
-type Record = { credentialDeclarations?: string; credentialHash?: string; embedder?: boolean; backends?: string; flow?: FlowGrants; notify?: NotifyGrants; hash: string; at: string; mode?: RunMode; dir?: string };
+/** `permanent`: the owner trusts this plugin whatever it becomes (its code, declarations and grants change without asking again). */
+type Record = { credentialDeclarations?: string; credentialHash?: string; embedder?: boolean; backends?: string; flow?: FlowGrants; notify?: NotifyGrants; hash: string; at: string; mode?: RunMode; dir?: string; permanent?: boolean };
 const file = (app: App) => join(app.home, "secrets", "plugin-trust.json");
 
 function read(app: App): { [id: string]: Record } {
@@ -68,6 +69,9 @@ function write(app: App, all: { [id: string]: Record }) {
 export function trustState(app: App, id: string, dir: string, linked = false, notify?: NotifyGrants, embedder = false, backends: unknown[] = [], flow?: FlowGrants, credential = false): "trusted" | "changed" | "required" {
   const r = read(app)[id];
   if (!r) return "required";
+  // Trusted for good: later code, declarations and grants load without asking. A linked plugin still
+  // only from the directory it was trusted in (another directory is other code).
+  if (r.permanent) return !linked || !r.dir || r.dir === dir ? "trusted" : "changed";
   if (linked && (credential || r.credentialHash) && r.credentialHash !== codeHash(dir)) return "changed";
   if (linked && (backends.length || r.backends && r.backends !== "[]") && r.backends !== JSON.stringify(backends)) return "changed";
   // A trust by directory holds only for that linked directory; a copy (or another directory) is checked by its code.
@@ -82,7 +86,7 @@ export function acceptCredentialDeclarations(app: App, id: string, declarations:
   const records = read(app);
   const record = records[id];
   const fingerprint = createHash("sha256").update(JSON.stringify(declarations)).digest("hex");
-  if (record.credentialDeclarations !== undefined) return record.credentialDeclarations === fingerprint;
+  if (record.credentialDeclarations !== undefined && !record.permanent) return record.credentialDeclarations === fingerprint;
   record.credentialDeclarations = fingerprint;
   write(app, records);
   return true;
@@ -94,10 +98,25 @@ export const trustMode = (app: App, id: string): RunMode => {
   return r ? (r.mode ?? "inprocess") : "isolated";
 };
 
-export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated", linked = false, notify?: NotifyGrants, embedder = false, backends: unknown[] = [], flow?: FlowGrants, credential = false) {
+/** `permanent`: undefined keeps what was chosen before (trusting again after a change does not drop it). */
+export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated", linked = false, notify?: NotifyGrants, embedder = false, backends: unknown[] = [], flow?: FlowGrants, credential = false, permanent?: boolean) {
   const all = read(app);
-  if (dir && linked) all[id] = { credentialHash: credential ? codeHash(dir) : undefined, hash: "", at: now(), mode, dir, notify, embedder, flow, backends: JSON.stringify(backends) };
-  else if (dir) all[id] = { hash: codeHash(dir), at: now(), mode };
+  const keep = permanent ?? all[id]?.permanent;
+  const forGood = keep ? { permanent: true } : {};
+  if (dir && linked) all[id] = { credentialHash: credential ? codeHash(dir) : undefined, hash: "", at: now(), mode, dir, notify, embedder, flow, backends: JSON.stringify(backends), ...forGood };
+  else if (dir) all[id] = { hash: codeHash(dir), at: now(), mode, ...forGood };
   else delete all[id];
+  write(app, all);
+}
+
+/** Whether the owner trusts this plugin for good (setTrust's `permanent`). */
+export const trustPermanent = (app: App, id: string) => !!read(app)[id]?.permanent;
+
+/** Turn trust-for-good on or off for a plugin already trusted, without reloading it. */
+export function setTrustPermanent(app: App, id: string, permanent: boolean) {
+  const all = read(app);
+  if (!all[id]) return;
+  if (permanent) all[id].permanent = true;
+  else delete all[id].permanent;
   write(app, all);
 }
