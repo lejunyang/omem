@@ -21,6 +21,13 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 凭据第四期：账号页的清单、出借设置和成员页的总览（2026-11-22）
+
+- 账号页在“我的 AI 账号”上面多了“凭据”（`web/src/components/CredentialList.vue`，由 `AgentAccounts.vue` 放进来）：每种一行，必做、状态、到期，供给的后端和命令点开看；登录 / 重新授权打开授权页、显示验证码并轮询到状态变化；退出前说清会一起退出哪些；“谁能借”选只给自己 / 指定成员 / 所有成员，指定成员选了人才保存。本人的凭据只有“谁能借”。
+- “我的 AI 账号”里由凭据供给的后端标“由 × 供给”，退出换成跳到凭据那一行；还是收到 409 时把说明渲染在那一行下面。
+- 设置 → 安全 → 凭据的出借（`CredentialLending.vue`）管 `credentials.lending`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`；设置 → 成员 → 成员的凭据（`CredentialHolds.vue`）读 `GET /api/credentials/all`，可以替成员退出。卡片链接 `?card=credentials`、`?card=credential-holds`。
+- 纯函数和测试：`web/src/lib/credentials.ts`、`test/web-credentials.test.ts`。演示数据（`scripts/doc-screens.ts`）装上 `examples/plugins/acmeauth`，另登记一个演示的代码托管凭据，三个成员各有有效 / 快到期 / 没登录的持有；演示里把成员账号沙箱当作可用。新截图 `account-credentials`。
+
 ## 凭据第一期：插件登记、按人持有、供给和出借（2026-11-22）
 
 - 从 `src/agents/credentials.ts` 和 `credential-registry.ts` 读起，设计和接口在 `docs/v2/credentials.md`。`api.credential` 声明一次授权覆盖的后端、命令行、安装和状态目录；只有声明 `permissions.credential` 且被信任为进程内运行的插件能登记，隔离模式下说明原因。声明进信任指纹，链接开发目录的插件按代码指纹重新确认。
