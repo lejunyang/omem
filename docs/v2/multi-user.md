@@ -324,7 +324,7 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 ### 在哪里检查
 
 1. **HTTP 路由声明权限。** 每个路由带 `config: { perm, space? }`（space 是从参数或 body 里取空间的函数），由一个 preHandler 统一判断，`MEMBER_ROUTES` 删掉。`test/route-perms.test.ts` 遍历全部 `/api/` 路由，要求每个都声明了权限；分享链接、登录回调这类公开路由显式标 `public`。网页版 VS Code（`/ide`）只给有 `code.delegate` 的人。
-2. **工具声明权限。** 按 `TOOL_GROUPS` 给每组一个默认权限（`read` → `space.read`，`curate` → `memory.write` / `wiki.write`，编码交办 → `code.delegate`……），个别工具再覆盖。`scopeFor(app, userId, requested, perm)` 加一个参数，返回用户有这项权限的空间。建立运行的工具清单时就去掉用户没有权限的工具，不要等调用时才报错，免得 Agent 反复尝试。
+2. **工具声明权限。** 按 `TOOL_GROUPS` 给每组一个默认权限（`read` → `space.read`，`curate` → `memory.write` / `wiki.write`，编码交办 → `code.delegate`……），个别工具再覆盖。`scopeFor(app, userId, requested, perm)` 加一个参数，返回用户有这项权限的空间。建立运行的工具清单时就去掉用户没有权限的工具，不要等调用时才报错，免得 Agent 反复尝试。内置插件带来的工具（connect、各平台包；`src/auth/tools.ts` 的 `setPluginToolCapabilities`，加载时登记、卸载时去掉）按调用者自己算：只读的要“提问”（`ask.send`），会写入的要在本次运行的空间里有“改原件”（`sources.edit`），保存时宿主照旧按空间再核对。数据目录里装的插件是本人为自己信任的代码，在 omem 进程里运行时能做 omem 能做的一切，它的工具只给本人；平台对象的动作（`object-actions` 组）也只给本人。既不在覆盖表、也不是插件工具、也不在任何分组里的工具只给本人。
 3. **以谁的身份调用外部平台。** 现在 `ownerOnly` 保证只有本人的运行能以本人身份用飞书。改成 `asRunUser(ctx, "lark")`：用发起这次运行的用户自己的飞书连接；他没有连接就返回 403，并告诉 Agent“请用户在账号页“已连接的应用”里连接飞书”。**不能**回落到本人的 lark-cli 登录，否则成员可以借 Agent 读本人的文档。写入规则不变（只放行 lark-cli 标为 write 的命令，不在用户自己的文件里时先经批准），批准人从“本人”换成“这个用户”。
 4. **后台任务。** 规则、定时任务、做梦、复盘都带 `user_id`，按建立者的权限运行；本人建的照旧能用全部空间。
 5. **审计。** 角色、空间成员、身份绑定、连接、共享的变化写进 `audit_events`（谁、什么时候、改了什么），在设置 → 成员里能看到。

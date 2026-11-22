@@ -57,18 +57,20 @@ describe("plugin connectors", async () => {
   it("calls the platform as the person using the tool, at its API only", async () => {
     createUser(app, { name: "小安", id: "ann" });
     const ctx = (user: string) => toolContextForToken(app, issueToolToken({ runId: null, spaceId: `personal-${user}`, spaces: null, tools: null, actor: "agent", userId: user }))!;
-    expect((await callTool(ctx("ann"), "demo_me", {})).text).toBe("未连接");
+    // A data-directory plugin's tools are the owner's (src/auth/tools.ts): a member is refused at the entry.
+    expect((await callTool(ctx("ann"), "demo_me", {})).text).toContain("仅限本人");
+    expect((await callTool(ctx("owner"), "demo_me", {})).text).toBe("未连接");
+    // Someone else's connection is not the caller's.
     storeConnection(app, { userId: "ann", provider: "demo-api", accountId: "a1", accountName: "小安在示例平台", scopes: ["read"], accessToken: "tok_ann", expiresIn: 3600 });
-    expect((await callTool(ctx("ann"), "demo_me", {})).text).toBe("小安在示例平台：小安的数据");
-    expect(seen.at(-1)).toEqual({ url: "https://api.example.test/v1/me", auth: "Bearer tok_ann" });
+    expect((await callTool(ctx("owner"), "demo_me", {})).text).toBe("未连接");
+    storeConnection(app, { userId: "owner", provider: "demo-api", accountId: "o1", accountName: "本人在示例平台", scopes: ["read"], accessToken: "tok_owner", expiresIn: 3600 });
+    expect((await callTool(ctx("owner"), "demo_me", {})).text).toBe("本人在示例平台：小安的数据");
+    expect(seen.at(-1)).toEqual({ url: "https://api.example.test/v1/me", auth: "Bearer tok_owner" });
     // Somewhere else: the token is not sent.
     const n = seen.length;
-    expect((await callTool(ctx("ann"), "demo_me", { path: "https://evil.example/steal" })).text).toMatch(/只能请求/);
-    expect((await callTool(ctx("ann"), "demo_me", { path: "https://api.example.test/v1evil" })).text).toMatch(/只能请求/);
+    expect((await callTool(ctx("owner"), "demo_me", { path: "https://evil.example/steal" })).text).toMatch(/只能请求/);
+    expect((await callTool(ctx("owner"), "demo_me", { path: "https://api.example.test/v1evil" })).text).toMatch(/只能请求/);
     expect(seen.length).toBe(n);
-    // Someone else's connection is not theirs.
-    createUser(app, { name: "小陈", id: "chen" });
-    expect((await callTool(ctx("chen"), "demo_me", {})).text).toBe("未连接");
   });
 
   it("takes them away with its code", () => {
