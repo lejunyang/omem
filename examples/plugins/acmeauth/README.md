@@ -1,0 +1,7 @@
+# 本机示例账号
+
+在装有 bubblewrap 的 Linux 上，把本目录复制到 omem 数据目录的 `plugins/acmeauth`。将 `bin` 中两个文件安装到运行服务的用户的 `~/.local/lib/acmeauth`，将该目录加入服务的 PATH。重启服务，在插件设置中信任它并选择「在 omem 里运行」。
+
+成员调用 `POST /api/credentials/acmeauth:demo/login` 后即可用 `GET /api/credentials` 查看状态。成员沙箱里的 `acme-demo whoami` 输出虚构账号名。选择后端 `acmeauth:demo` 进行一次对话，它通过 ACP 返回同一个账号名。调用 `DELETE /api/credentials/acmeauth:demo` 退出会移除账号文件。
+
+示例在成员 HOME 的 `.acme-demo/account.json` 写入虚构账号名，续签有效期为七天。登录、检查和对话都在本机完成。

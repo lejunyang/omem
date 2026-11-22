@@ -29,6 +29,16 @@ plugins/<id>/
 
 数据目录里的代码用 `api.z`（宿主的 zod），服务用 `OMEM_SERVICE_SDK` 指向的帮助模块。装进来的插件可以带自己的依赖（安装时装进它目录的 `node_modules`），本人手放的插件不能 `import` 宿主没有的包。
 
+### 插件登记凭据
+
+`api.credential`（SDK `credential.ts`）用 `login(ctx, show)` 登记一种授权，声明 `provides.backends`、命令行安装和状态目录，以及第二期才使用的只读、资源和失败匹配。清单要写 `permissions.credential: true`，选择“在 omem 里运行”。可运行的离线示例见 [acmeauth](../../examples/plugins/acmeauth/README.md)。一种凭据供给多个后端，旧 `api.agentLogin` 保持原样。
+
+登录及续签成功后宿主调用 `provide`，秘密按人存入密钥库，不进持有表和返回值。成员在后端账号页检查供给的登录时，宿主读取这份持有，有 `check` 就执行。单个后端的退出请求返回 409 并列出供给范围。退出整份凭据后，宿主清理它独占的供给文件。本人只调用 `check`，HOME 是本机的主目录；成员 HOME 是他的账号目录。安装目录只读，状态目录相对 HOME，路径受现有沙箱限制。凭据插件链接开发目录也校验代码指纹，改声明或回调需重新确认。详见 [凭据](credentials.md)。
+
+`check` 返回 `missing` 时停止使用这份登录，但保留供给文件的归属。成员或本人代办退出整份凭据时，即使插件已停用或撤销信任，宿主也按保存的声明清理本地文件和秘密，不再运行该插件的回调。
+
+插件自带后端的登录目录只需在后端的 `account.owns` 中声明，不必再写进命令的 `state`。宿主在成员登录和续签时累计保存后端 ID、命令名和路径。重新登记同一种凭据会更新供给声明；成员在新范围内成功供给后才能使用新增后端。其他持有共用的目录留到最后一份退出。即使插件已经卸载，宿主也能按持有记录清理独占路径。
+
 ### 隔离运行
 
 信任时选运行方式，默认**隔离运行**（`src/plugins/sandbox.ts`、`sandbox-runner.ts`）：
@@ -37,7 +47,7 @@ plugins/<id>/
 - **工具与平台包**：它的工具和平台包的读取器在 omem 里注册成代理，调用时转给它的进程。参数由插件自己的 zod 定义检查，宿主列工具时用它给出的 JSON Schema。
 - **宿主代办的事**：要读平台（`ctx.connection(...).fetch`）、读写插件记录（`ctx.store`）、存原件（`ctx.saveSource`）、设盯着（`ctx.watches`）、启动服务时，进程向 omem 发请求。omem 按**正在进行的那次调用**的人和空间回答，不认插件自己报的身份。令牌由 omem 加在请求上，插件拿不到。
 - **写法要求**：`ctx.store`、`ctx.saveSource`、`ctx.watches` 在隔离运行时返回 Promise，所以要写 `await`；写了 `await` 在 omem 进程里运行时也照样能用。
-- **不能做的**：内容块（`api.block`）和放块的插槽（`api.slot`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）、AI 账号的登录方式（`api.agentLogin`）、聊天渠道（`api.channel`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
+- **不能做的**：内容块（`api.block`）和放块的插槽（`api.slot`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）、AI 账号的登录方式（`api.agentLogin`）、凭据（`api.credential`，需要读写成员账号目录）、聊天渠道（`api.channel`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
 
 **在 omem 里运行**：代码以 omem 的全部权限运行，只适合你自己写的或逐行看过的插件。运行方式记在 `secrets/plugin-trust.json` 的 `mode` 里；以前信任过的插件按原来的方式在 omem 里运行。代码注册了清单没声明的东西，或者没能启动，信任会被撤回。
 

@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
+import { credentialSucceeded } from "./credentials.ts";
 import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
@@ -17,7 +18,7 @@ import { toolContextForToken, revokeToolToken } from "./tools.ts";
 /** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   try {
-    return await withNetworkPolicy(app, profile, { signal: req.signal, runId: req.runId, stop: () => { if (req.mcp) revokeToolToken(req.mcp.token); } }, (p, signal) => {
+    const result = await withNetworkPolicy(app, profile, { signal: req.signal, runId: req.runId, stop: () => { if (req.mcp) revokeToolToken(req.mcp.token); } }, (p, signal) => {
       const turn = { ...req, capabilities: req.capabilities ?? backendCapabilities(p), signal, env: { ...req.env, ...networkEnvironment(app, p) } };
       const events = quotaEvents(app, p, emit);
       if (turn.capabilities.omemAccess !== "http") return runOn(app, p, turn, events);
@@ -25,6 +26,8 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
       if (!ctx) throw new Error("缺少本轮的工具权限");
       return cloudTurn(app, profile, ctx, turn, events, (request, watch) => runOn(app, p, request, watch));
     });
+    credentialSucceeded(app, profile);
+    return result;
   } finally {
     afterTurn(app, profile);
   }

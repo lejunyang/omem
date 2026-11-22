@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, sep } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -15,8 +15,11 @@ import { backendAvailable } from "./availability.ts";
 import { sourceOf } from "./capacity.ts";
 import { accountCatalog, type AccountSpec, type CatalogEntry } from "./catalog.ts";
 import { forgetQuota, quotaKind, quotaView, refreshQuota } from "./quota.ts";
+import { canonical } from "./own-sandbox.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
+import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
+import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, suppliedCredentialKind, checkCredential, credentialInstallDirs, credentialStateRels, heldCredentialDeclarations, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
 
 /**
  * Each omem user's own AI accounts (docs/v2/agent-accounts.md). A member logs in to a backend once
@@ -77,7 +80,7 @@ export function accountEntryFor(app: App, p: AgentProfile): AccountEntry | null 
 }
 
 export function accountPolicy(app: App, backend: string): AccountPolicy {
-  return app.config.agents.accounts?.[backend] ?? "owner";
+  return app.config.agents.accounts?.[backend] ?? app.config.agents.accountsDefault;
 }
 
 // ---------------------------------------------------------------- folders
@@ -88,6 +91,17 @@ export function accountRoot(app: App, userId: string) {
 }
 export function accountHome(app: App, userId: string) {
   return join(accountRoot(app, userId), "home");
+}
+
+/** Resolve member state only beneath the real account HOME, without following links in it. */
+export function accountStatePaths(app: App, userId: string, rels: string[]) {
+  const home = accountHome(app, userId);
+  const expected = join(canonical(app.home), "accounts", userId, "home");
+  const paths = rels.map(rel => join(home, rel));
+  if (canonical(home) !== expected || paths.some((path, i) =>
+    !path.startsWith(home + sep) || canonical(path) !== join(expected, rels[i])))
+    throw new Error("账号状态目录越界或含符号链接");
+  return paths;
 }
 
 /** mkdir 0700, refusing a symbolic link anywhere from the data folder down. Whether anything was made. */
@@ -125,7 +139,7 @@ function isLink(p: string) {
 export function ensureAccountHome(app: App, userId: string, entry?: AccountEntry) {
   const home = accountHome(app, userId);
   let made = privateDir(app.home, join("accounts", userId, "home"));
-  for (const d of entry?.account.dirs ?? []) made = privateDir(home, d) || made;
+  for (const d of [...(entry?.account.dirs ?? []), ...credentialStateRels(app)]) made = privateDir(home, d) || made;
   if (made && app.config.agentSkills.takeOver) {
     try {
       writeAccountEntries(app, [home]);
@@ -152,14 +166,14 @@ export function accountEnv(app: App, userId: string, entry: AccountEntry): Recor
 }
 
 function localAccount(app: App, userId: string, backend: string): SandboxAccount {
-  return { userId, backend, home: accountHome(app, userId), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir()] };
+  return { userId, backend, home: accountHome(app, userId), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
 }
 
 /** What a run (or a login) with this user's account of this backend carries (agents/sandbox.ts). */
-export function accountRun(app: App, userId: string, entry: AccountEntry): SandboxAccount {
+export function accountRun(app: App, userId: string, entry: AccountEntry, nativeToken = true): SandboxAccount {
   const base = localAccount(app, userId, entry.id);
   const spec = entry.account;
-  const token = spec.tokenEnv ? accountToken(app, userId, entry.id) : null;
+  const token = nativeToken && spec.tokenEnv ? accountToken(app, userId, entry.id) : null;
   const env = accountEnv(app, userId, entry);
   if (spec.tokenEnv && token) env[spec.tokenEnv] = token;
   return {
@@ -179,12 +193,17 @@ export function accountProfiles(app: App, userId: string, backend: string): Agen
 
 // ---------------------------------------------------------------- state
 
-function stored(app: App, userId: string, backend: string): Stored {
+function readStored(value: string | undefined): Stored {
+  if (!value) return { state: "none" };
   try {
-    return JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", KV(userId, backend))?.value ?? "") as Stored;
+    return JSON.parse(value) as Stored;
   } catch {
     return { state: "none" };
   }
+}
+function stored(app: App, userId: string, backend: string): Stored {
+  const row = one<{ value: string }>(app.db, "select value from kv where key = ?", KV(userId, backend));
+  return readStored(row?.value);
 }
 function save(app: App, userId: string, backend: string, s: Stored) {
   run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", KV(userId, backend), JSON.stringify(s));
@@ -203,6 +222,7 @@ export function accountToken(app: App, userId: string, backend: string): string 
 /** Logged in at the last check, the folder is still there, and a plugin login has not run out. */
 export function loggedIn(app: App, userId: string, backend: string) {
   if (!SAFE_ID.test(userId) || userId === OWNER) return false;
+  if (credentialBackendLogin(app, userId, backend)) return true;
   const s = stored(app, userId, backend);
   return s.state === "logged-in" && (s.expiresAt === undefined || s.expiresAt > Date.now()) && existsSync(accountHome(app, userId));
 }
@@ -239,10 +259,21 @@ export function accountBlocked(app: App, userId: string, p: AgentProfile): strin
   const strict = app.config.agents.accountIsolation === "require";
   if (!SAFE_ID.test(userId)) return strict ? "这台机器不能隔离成员的运行：成员 ID 不适合作为账号目录" : null;
   const capability = isolationCapability(p);
-  if (!capability.supported) return strict ? `这台机器不能隔离成员的运行：${capability.reason}${app.config.security.egress.mode === "off" ? "" : "；本机出网隔离不可用"}` : null;
   const entry = accountEntryFor(app, p);
-  if (!entry || loggedIn(app, userId, entry.id)) return null;
-  const policy = accountPolicy(app, entry.id);
+  if (entry && capability.supported && loggedIn(app, userId, entry.id)) return null;
+  const policy = accountPolicy(app, sourceOf(p));
+  if (entry && policy === "owner") {
+    if (selectCredential(app, userId, entry.id, true, capability.supported)) return null;
+    if (credentialKindsForBackend(entry.id).length || app.config.credentials.lending !== "auto")
+      return `${entry.name} 没有可用的登录，请先登录自己的账号`;
+  }
+  if (!capability.supported) {
+    if (strict) return `这台机器不能隔离成员的运行：${capability.reason}${app.config.security.egress.mode === "off" ? "" : "；本机出网隔离不可用"}`;
+    if (entry && (credentialKindsForBackend(entry.id).length || app.config.credentials.lending !== "auto" || app.config.agents.accountsDefault !== "owner"))
+      return `这台机器不能使用成员的 ${entry.name} 登录：${capability.reason}`;
+    return null;
+  }
+  if (!entry) return null;
   if (policy === "own") return `${entry.name} 只能用自己的账号：在 账号 → 我的 AI 账号 里登录 ${entry.name} 后再试`;
   if (policy === "own-or-other") return `${entry.name} 要用自己的账号（没登录时换别的后端）：在 账号 → 我的 AI 账号 里登录 ${entry.name}`;
   return strict ? `这台机器不能隔离成员的运行：借用 ${entry.name} 的本人登录需要本人的 HOME，请先登录自己的账号` : null;
@@ -254,9 +285,25 @@ export function unisolatedReason(app: App, userId: string, p: AgentProfile): str
 }
 
 export function accountFor<P extends AgentProfile>(app: App, userId: string | undefined, p: P): P {
-  if (!userId || !SAFE_ID.test(userId) || accountOf(p) || !member(app, userId) || !isolationCapability(p).supported) return p;
+  if (!userId || !SAFE_ID.test(userId) || accountOf(p) || !member(app, userId)) return p;
   const entry = accountEntryFor(app, p);
-  if (entry && loggedIn(app, userId, entry.id)) return { ...p, ownAccount: accountRun(app, userId, entry) };
+  const sandbox = isolationCapability(p).supported;
+  if (entry) {
+    const own = sandbox && loggedIn(app, userId, entry.id);
+    const use = selectCredential(app, userId, entry.id, !own && accountPolicy(app, entry.id) === "owner", sandbox);
+    if (use) {
+      if (use.holder === OWNER) return { ...p, [credentialUse]: use };
+      ensureAccountHome(app, use.holder, entry);
+      const account = accountRun(app, use.holder, entry, false);
+      if (use.holder !== userId) {
+        const state = credentialMethod(use.kind)!.provides.commands.flatMap(c => c.state ?? []);
+        account.borrowed = { state: [...new Set([...entry.account.owns, ...state])], dirs: entry.account.dirs ?? [] };
+      }
+      return { ...p, [credentialUse]: use, ownAccount: account };
+    }
+    if (own) return { ...p, ownAccount: accountRun(app, userId, entry) };
+  }
+  if (!sandbox) return p;
   if (!entry && app.config.agents.accountIsolation === "require") {
     ensureAccountHome(app, userId);
     return { ...p, ownAccount: localAccount(app, userId, p.id) };
@@ -353,6 +400,14 @@ async function checkNative(app: App, userId: string, entry: AccountEntry): Promi
 export async function checkAccount(app: App, userId: string, backend: string): Promise<Stored> {
   const entry = requireEntry(app, backend);
   const s = stored(app, userId, backend);
+  const supplied = suppliedCredentialKind(app, userId, backend, s.state !== "none");
+  if (supplied) {
+    const method = credentialMethod(supplied);
+    if (!method) return { state: "none", method: supplied };
+    const { state, user, expiresAt, checkedAt, error, suppliedBackends } = await checkCredential(app, userId, supplied);
+    if (!method.provides.backends.includes(backend) || !suppliedBackends.includes(backend)) return { state: "none", method: supplied, checkedAt };
+    return { state: state === "missing" ? "none" : expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
+  }
   if (isPlugin(s.method) && s.state !== "none") return refreshPluginLogin(app, userId, backend);
   return checkNative(app, userId, entry);
 }
@@ -665,12 +720,48 @@ export async function saveToken(app: App, userId: string, backend: string, token
   return checkNative(app, userId, entry);
 }
 
+/** Remove only this provider's state. Other logins may own the same directory or a subtree. */
+export function clearAccountPaths(app: App, userId: string, rels: string[], except: { kind?: string; backend?: string }) {
+  const paths = accountStatePaths(app, userId, rels);
+  const credentials = retainedCredentialPaths(app, userId, except.kind);
+  const prefix = KV(userId, "");
+  const rows = all<{ key: string; value: string }>(app.db, "select key,value from kv where key glob ?", prefix + "*");
+  const states = new Map(rows.map(row => [row.key.slice(prefix.length), row.value]));
+  const providers = new Set(listConnections(app, userId).map(c => c.provider));
+  const accounts = accountCatalog(app.config.agents.profiles, "declared").filter(e => {
+    if (e.id === except.backend) return false;
+    const hasToken = providers.has(TOKEN_PROVIDER(e.id));
+    return readStored(states.get(e.id)).state !== "none" || hasToken || logins.has(loginKey(app, userId, e.id));
+  });
+  const home = accountHome(app, userId);
+  const keep = [...credentials.flat(), ...accounts.flatMap(e => e.account.owns)].map(rel => join(home, rel));
+  function remove(path: string) {
+    if (keep.some(p => path === p || path.startsWith(p + sep))) return;
+    if (keep.some(p => p.startsWith(path + sep)) && lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) {
+      for (const child of readdirSync(path)) remove(join(path, child));
+    } else {
+      rmSync(path, { recursive: true, force: true });
+    }
+  }
+  for (const path of new Set(paths)) remove(path);
+  return accounts.length === 0 && credentials.length === 0;
+}
+
 /**
  * Log this user out of a backend: a plugin login's own `logout`, the backend's logout command (failing
  * is fine), the token and the plugin secrets, the backend's part of the folder — the whole account
  * folder when nothing else is left in it.
  */
-export async function removeAccount(app: App, userId: string, backend: string) {
+export async function removeAccount(app: App, userId: string, backend: string, actor = userId) {
+  const sources = [...heldCredentialDeclarations(app, userId)].filter(([, m]) => m.provision.backends.includes(backend));
+  if (sources.length) {
+    const base = actor === userId ? "/api/credentials" : `/api/credentials/${userId}`;
+    const details = sources.map(([kind, { name, provision }]) => {
+      const commands = provision.commands.join("、") || "无";
+      return `${name}（${kind}）覆盖后端 ${provision.backends.join("、")}，命令 ${commands}。退出整份凭据请调用 DELETE ${base}/${kind}`;
+    });
+    throw new HttpError(409, `${accountEntry(app, backend)?.name ?? backend} 的登录由凭据供给，请按凭据管理。\n${details.join("\n")}`);
+  }
   const entry = requireEntry(app, backend);
   const key = loginKey(app, userId, backend);
   const pending = logins.get(key);
@@ -698,13 +789,8 @@ export async function removeAccount(app: App, userId: string, backend: string) {
   try {
     forgetQuota(app, userId, backend);
   } catch {}
-  for (const rel of entry.account.owns) {
-    const p = join(home, normalize(rel));
-    if (!p.startsWith(home + sep)) continue;
-    rmSync(p, { recursive: true, force: true });
-  }
-  const others = accountEntries(app).some((e) => e.id !== backend && (stored(app, userId, e.id).state !== "none" || accountToken(app, userId, e.id) || logins.has(loginKey(app, userId, e.id))));
-  if (!others) rmSync(accountRoot(app, userId), { recursive: true, force: true });
+  if (clearAccountPaths(app, userId, entry.account.owns, { backend }))
+    rmSync(accountRoot(app, userId), { recursive: true, force: true });
 }
 
 /**
@@ -714,6 +800,7 @@ export async function removeAccount(app: App, userId: string, backend: string) {
  */
 export async function removeAllAccounts(app: App, userId: string, actor: string) {
   if (!SAFE_ID.test(userId) || userId === OWNER) return { backends: [] as string[] };
+  await removeAllCredentials(app, userId);
   const backends: string[] = [];
   for (const e of accountEntries(app)) {
     const has = stored(app, userId, e.id).state !== "none" || logins.has(loginKey(app, userId, e.id)) || listConnections(app, userId).some((c) => c.provider === TOKEN_PROVIDER(e.id) || c.provider.startsWith(`${TOKEN_PROVIDER(e.id)}:`));
@@ -761,7 +848,8 @@ export type AccountBackendView = {
 };
 
 function viewOf(app: App, userId: string, e: AccountEntry, withQuota = false): AccountBackendView {
-  const s = userId === OWNER ? ({ state: "none" } as Stored) : stored(app, userId, e.id);
+  const cred = userId === OWNER ? null : credentialAccountView(app, userId, e.id);
+  const s = cred ? { ...cred, state: "logged-in" as const, method: cred.kind } : userId === OWNER ? ({ state: "none" } as Stored) : stored(app, userId, e.id);
   const pending = logins.get(loginKey(app, userId, e.id));
   const methods = loginMethods(app, e);
   const gone = s.state === "logged-in" && !existsSync(accountHome(app, userId));

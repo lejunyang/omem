@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+if (process.argv[2] === "whoami") {
+  process.stdout.write(fs.readFileSync(path.join(process.env.HOME, ".acme-demo", "account.json")));
+} else {
+  console.error("用法：acme-demo whoami");
+  process.exitCode = 2;
+}

@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+const send = message => console.log(JSON.stringify({ jsonrpc: "2.0", ...message }));
+createInterface({ input: process.stdin }).on("line", line => {
+  const { id, method, params } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  else if (method === "session/new") send({ id, result: { sessionId: randomUUID() } });
+  else if (method === "session/prompt") {
+    try {
+      const { user } = JSON.parse(readFileSync(join(process.env.HOME, ".acme-demo", "account.json"), "utf8"));
+      send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+        sessionUpdate: "agent_message_chunk", content: { type: "text", text: "当前示例账号 " + user },
+      } } });
+      send({ id, result: { stopReason: "end_turn" } });
+    } catch { send({ id, error: { code: -32000, message: "请先登录示例账号" } }); }
+  } else send({ id, error: { code: -32601, message: "不支持这个方法" } });
+});

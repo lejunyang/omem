@@ -1,4 +1,5 @@
 import type { ZodType } from "zod";
+export type { CredentialApi, CredentialCommand, CredentialContext, CredentialDef, CredentialOutcome } from "./credential.ts";
 import type { PluginConnection } from "./objects.ts";
 
 export type CallContext = {

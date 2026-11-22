@@ -13,7 +13,7 @@ export const settingSections = {
   plugins: "ai", remoteGrants: "channels", shares: "channels", auth: "members", timezone: "assistant",
   language: "system", concurrency: "ai", interactiveConcurrency: "ai", dream: "assistant", sessions: "ai",
   agents: "ai", review: "assistant", approvals: "security", asks: "assistant", archive: "knowledge",
-  security: "security", ide: "system", preview: "system", node: "channels", backups: "channels",
+  security: "security", credentials: "security", ide: "system", preview: "system", node: "channels", backups: "channels",
   wiki: "knowledge", replies: "assistant", notes: "knowledge", memory: "knowledge", embeddings: "knowledge",
   search: "knowledge", rerank: "knowledge", documents: "knowledge", ai: "ai", guard: "security",
   lark: "channels", telegram: "channels", mentions: "assistant", notify: "assistant", mcp: "ai",
@@ -22,7 +22,7 @@ export const settingSections = {
   workState: "assistant", media: "knowledge", onebot: "channels",
 } satisfies Record<keyof Config, Section>;
 export const sectionByPath: Record<string, Section> = {
-  ...settingSections, "agents.accounts": "members", "agents.accountIsolation": "members",
+  ...settingSections, "agents.accounts": "members", "agents.accountsDefault": "security", "agents.accountIsolation": "members",
   "agents.progress": "assistant", "agents.design": "assistant", "agents.autoAdvance": "assistant",
   "agents.workBoard": "assistant", "lark.capture": "knowledge", "lark.knowledge": "knowledge",
   "lark.commands": "assistant", "lark.guests": "assistant", "lark.invite": "assistant",
@@ -63,6 +63,8 @@ export const ownerControls: Record<string, string[]> = {
     "PUT /api/agent-accounts/:backend/policy",
     "DELETE /api/agent-accounts/:user/:backend",
   ],
+  "credentials": ["GET /api/credentials/all", "DELETE /api/credentials/:user/:kind"],
+  "agents.accountsDefault": [],
   "agents.accountIsolation": [],
   "agents.networkPolicies": [
     "GET /api/agents/network-policies",

@@ -1,3 +1,4 @@
+import { allCredentials, logoutCredential, myCredentials, setCredentialSharing, startCredentialLogin } from "../agents/credentials.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
@@ -14,8 +15,25 @@ import { sandboxSupport } from "../agents/sandbox.ts";
  * removing a member's login are the owner's (src/auth/routes.ts).
  */
 export function registerAgentAccountRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
+  const kindOf = (req: FastifyRequest) => (req.params as { kind: string }).kind;
+  server.get("/api/credentials", async req => myCredentials(app, who(req)));
+  server.post("/api/credentials/:kind/login", async req => startCredentialLogin(app, who(req), kindOf(req)));
+  server.put("/api/credentials/:kind/sharing", async req => setCredentialSharing(app, who(req), kindOf(req), req.body));
+  server.delete("/api/credentials/:kind", async req => {
+    await logoutCredential(app, who(req), kindOf(req));
+    return { ok: true };
+  });
+  server.get("/api/credentials/all", async () => allCredentials(app));
+  server.delete("/api/credentials/:user/:kind", async req => {
+    const { user, kind } = req.params as { user: string; kind: string };
+    if (!findUser(app, user) || user === OWNER) throw new HttpError(404, "没有这个成员");
+    await logoutCredential(app, user, kind, who(req));
+    return { ok: true };
+  });
+
+  const backendId = (req: FastifyRequest) => (req.params as { backend: string }).backend;
   const backendOf = (req: FastifyRequest) => {
-    const id = (req.params as { backend: string }).backend;
+    const id = backendId(req);
     if (!accountEntry(app, id)) throw new HttpError(404, `后端 ${id} 不能按人登录`);
     return id;
   };
@@ -53,7 +71,7 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
   });
   server.delete("/api/me/agent-accounts/:backend", async (req) => {
     const userId = member(req);
-    await removeAccount(app, userId, backendOf(req));
+    await removeAccount(app, userId, backendId(req));
     return { ok: true };
   });
 
@@ -71,7 +89,7 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
   server.delete("/api/agent-accounts/:user/:backend", async (req) => {
     const { user } = req.params as { user: string };
     if (!findUser(app, user) || user === OWNER) throw new HttpError(404, "没有这个成员");
-    await removeAccount(app, user, backendOf(req));
+    await removeAccount(app, user, backendId(req), who(req));
     return { ok: true };
   });
 }

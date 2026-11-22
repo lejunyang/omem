@@ -191,7 +191,19 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     void import("./agents/quota.ts").then((m) => m.startQuotaWatch(app));
     // Members' logins through a plugin's method (agents/accounts.ts): refreshed before they run out, from what kv keeps.
     {
-      const tick = () => void import("./agents/accounts.ts").then((m) => m.tickAgentLogins(app)).catch((e) => console.warn("[omem] 续签成员的 AI 账号登录失败：", e.message));
+      let checking = false;
+      const tick = async () => {
+        if (checking) return;
+        checking = true;
+        try {
+          const m = await import("./agents/accounts.ts");
+          await m.tickAgentLogins(app);
+          const credentials = await import("./agents/credentials.ts");
+          await credentials.tickCredentialRefreshes(app);
+          await credentials.tickCredentialChecks(app);
+        } catch (e) { console.warn("[omem] 检查账号与凭据失败：", (e as Error).message); }
+        finally { checking = false; }
+      };
       setTimeout(tick, 20_000).unref();
       setInterval(tick, 60_000).unref();
     }

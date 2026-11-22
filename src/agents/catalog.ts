@@ -198,8 +198,9 @@ export function referencedPluginProfiles(ids: Set<string>) {
  * (`agents.profiles`) that carry an `account` — keyed by their source, so one replaces a catalog entry
  * of the same id. A device's agent or an API key never takes part.
  */
-export function accountCatalog(profiles: AgentProfile[] = []): (CatalogEntry & { account: AccountSpec })[] {
-  const out = [...acpCatalog, ...accountOnlyCatalog].filter((e): e is CatalogEntry & { account: AccountSpec } => !!e.account);
+export function accountCatalog(profiles: AgentProfile[] = [], scope: "active" | "declared" = "active"): (CatalogEntry & { account: AccountSpec })[] {
+  const backends = scope === "active" ? acpCatalog : [...acpCatalog.filter(entry => !entry.plugin), ...pluginDeclarations.values()];
+  const out = [...backends, ...accountOnlyCatalog].filter((e): e is CatalogEntry & { account: AccountSpec } => !!e.account);
   for (const p of profiles) {
     if (!p.account || p.peer || p.keyRef || p.transport === "doubao") continue;
     const id = p.source ?? p.id;

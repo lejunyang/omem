@@ -1,3 +1,5 @@
+import { audit } from "../auth/permissions.ts";
+import { credentialSucceeded, mayUseCredential, selectedCredential } from "./credentials.ts";
 import { sceneWords, toolSections, UnknownScene, type InstructionScene } from "./instruction-sections.ts";
 import type { RunKind } from "./run-kinds.ts";
 export { toolSections } from "./instruction-sections.ts";
@@ -43,7 +45,7 @@ import { commandGateDir } from "./command-gate.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
-import { accountBlocked, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
+import { accountBlocked, accountPolicy, accountFor, unisolatedReason, withAccount } from "./accounts.ts";
 import { addRunEvent, runUser } from "./runs.ts";
 import { SandboxStartError } from "./spawn.ts";
 import { canonical, runAccess, under } from "./own-sandbox.ts";
@@ -461,6 +463,16 @@ function accountProfile(app: App, input: Parameters<typeof resolveRunProfile>[1]
 
 /** Called for the selected attempt, including a conversation reusing a live process. */
 export function recordIsolation(app: App, runId: string | null, userId: string, profile: AgentProfile) {
+  const use = selectedCredential(profile);
+  if (use) {
+    if (!mayUseCredential(app, use) || use.requester !== userId || use.holder !== userId && accountPolicy(app, use.backend) !== "owner")
+      throw new Error("凭据或出借设置已变化，请重新选择账号");
+    if (use.holder !== userId) {
+      const detail = { ...use, runId, reason: "发起人没有自己的后端登录" };
+      audit(app, userId, "credentials.borrow", use.kind, detail);
+      if (runId) addRunEvent(app, runId, "status", { ...detail, text: `借用 ${use.holder} 的 ${use.kind}：${detail.reason}` });
+    }
+  }
   // Said only when this run would have gone through the proxy here: a member's run, with egress isolation asked for.
   const egress = app.config.security.egress.mode;
   if (profile.peer && runId && userId !== OWNER && egress !== "off" && (egress === "all-sandboxed" || app.config.agents.accountIsolation === "require"))
@@ -928,7 +940,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   for (let k = 1; k < candidates.length; k++) candidates[k] = accountFor(app, input.userId, candidates[k]);
   // Routine work on a member's line (items/member-routine.ts): on their own account or not at all, never the owner's login.
   if (input.runId && one<{ v: number | null }>(app.db, "select json_extract(input, '$.ownAccountOnly') v from runs where id = ?", input.runId)?.v) {
-    for (let k = candidates.length - 1; k >= 0; k--) if (!accountOf(candidates[k])) candidates.splice(k, 1);
+    for (let k = candidates.length - 1; k >= 0; k--) if (accountOf(candidates[k])?.userId !== input.userId) candidates.splice(k, 1);
     if (!candidates.length) throw new Error("这是成员的线上的例行整理，只用成员自己的 AI 账号跑：没有登录了的、能隔离的后端");
   }
   if (localOnly(app, input.spaceId)) {
@@ -1088,12 +1100,16 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         const ai = { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort };
         let result: AgentResult;
         try {
-          result = input.reuseSession && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp"
-            ? await backgroundTurn(app, prep, req, `${task}${prep.awareness}`, input.runId, watch)
-            : await runBackend(app, prep.profile, req, watch);
+          if (input.reuseSession && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp") {
+            result = await backgroundTurn(app, prep, req, `${task}${prep.awareness}`, input.runId, watch);
+            credentialSucceeded(app, prep.profile);
+          } else {
+            result = await runBackend(app, prep.profile, req, watch);
+          }
         } catch (e) {
           if (!quietAfterAll(app, input.runId, quietBefore, e)) throw e;
           emit({ type: "status", text: `这一轮已经用 stay_quiet 结束，后端收尾时出错（${(e as Error).message.slice(0, 120)}），按已完成处理` });
+          credentialSucceeded(app, prep.profile);
           result = { text: "", stopReason: "end_turn", agent: prep.profile.name ?? prep.profile.id };
         }
         revokeToolToken(prep.token);

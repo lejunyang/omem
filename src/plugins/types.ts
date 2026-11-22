@@ -233,6 +233,13 @@ export type PluginApi = import("../../packages/plugin-sdk/server.ts").ProcessApi
    */
   agentLogin(def: import("../agents/agent-logins.ts").AgentLoginDef): void;
   /**
+   * One authorization per person that provides several AI backends and command-line tools
+   * (docs/v2/credentials.md): `login` leads the person through signing in, omem keeps the hold,
+   * refreshes it before `expiresAt`, calls `provide` and mounts what `provides` declares. A plugin in
+   * the data directory declares `permissions.credential: true`; only code trusted to run inside omem.
+   */
+  credential(def: import("../agents/credential-registry.ts").CredentialDef): void;
+  /**
    * The owner's values of this plugin's settings (manifest `settings`, 设置 → 插件), defaults filled in;
    * read it when needed (not once at load) so a change takes effect without reloading. Code running
    * isolated reads them per call through `ctx.settings()` instead.

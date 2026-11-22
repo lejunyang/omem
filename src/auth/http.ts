@@ -1,3 +1,4 @@
+import { maybeSendCredentialOnboarding } from "../agents/credentials.ts";
 import { ownerOnlyMemberGrants, requireDelegableChanges, requireMemberSpaceGrant } from "./member-management.ts";
 import { capabilityAccess, capabilityCatalog, globalCapability, isCapability, memberCapabilities, type Override } from "./capabilities.ts";
 import { consumeProbeTicket } from "./cloud-probe-ticket.ts";
@@ -159,6 +160,7 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   const back = (reply: FastifyReply, base: string, path: string) => reply.header("cache-control", "no-store").redirect(path.startsWith("/lark/#/") ? `${base}${path}` : `${base}/#${path}`);
   const startSession = (req: FastifyRequest, reply: FastifyReply, base: string, userId: string, via: string, restricted: boolean) => {
     const s = createSession(app, userId, { via, restricted, ip: req.ip ?? "", userAgent: String(req.headers["user-agent"] ?? "") });
+    if (!restricted) maybeSendCredentialOnboarding(app, userId);
     reply.header("set-cookie", sessionCookie(s.token, s.maxAge, secure(base)));
   };
 

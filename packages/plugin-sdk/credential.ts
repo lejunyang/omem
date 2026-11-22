@@ -1,0 +1,79 @@
+/**
+ * Credentials (docs/v2/credentials.md, phase 1): one authorization per person that provides several
+ * AI backends and command-line tools. Declared in `register(api)`:
+ *
+ *     api.credential({
+ *       id: "corp",
+ *       name: "公司账号",
+ *       required: true,
+ *       async login(ctx, show) {
+ *         const device = await startDeviceFlow(ctx.signal);
+ *         show({ url: device.url, code: device.code });
+ *         const token = await waitForToken(device, ctx.signal);
+ *         await ctx.secret.set(token.refresh);
+ *         await writeCredentials(ctx.home, token);
+ *         return { user: token.user, expiresAt: token.expiresAt };
+ *       },
+ *       async refresh(ctx) { … return { expiresAt } or null },
+ *       async check(ctx) { … return { state: "ok" | "expired" | "missing", … } },
+ *       async logout(ctx) { await revoke(await ctx.secret.get()); },
+ *       async provide(ctx) { await writeCredentials(ctx.home, await exchange(await ctx.secret.get())); },
+ *       provides: { backends: ["somebackend"], commands: [{ name: "acme", install: ["~/.local/share/acme"], state: [".local/share/acme/data"] }] },
+ *     });
+ *
+ * The manifest declares `permissions.credential: true`; omem calls it only once the owner trusts the
+ * plugin and runs it inside omem. No imports here, so omem's own type checks can compare these with
+ * the host's (src/agents/credentials.ts).
+ */
+export type CredentialContext = {
+  userId: string;
+  /** This person's account folder (HOME inside the sandbox their runs start in); for the owner, this machine's HOME. */
+  home: string;
+  /** `HOME` for this person. */
+  env: Record<string, string>;
+  /** One secret omem keeps for the plugin per person and credential (in its vault, never in the account folder). */
+  secret: { get(): Promise<string | null>; set(value: string | null): Promise<void> };
+  /** The plugin's own settings (the owner's values from 设置 → 插件, defaults filled in). */
+  settings: Record<string, string | number | boolean>;
+  /** Aborted when the login times out (11 minutes) or the person cancels or logs out. */
+  signal: AbortSignal;
+};
+
+export type CredentialOutcome = { json: string; equals: unknown };
+/** One command-line tool the credential provides (readOnly / resource / outcomes are phase 2). */
+export type CredentialCommand = {
+  name: string;
+  /** Install directories mounted read-only into members' sandboxes (`~` is this machine's HOME). */
+  install?: string[];
+  /** State directories it writes, relative to HOME. */
+  state?: string[];
+  readOnly?: { subcommand?: string[]; [key: string]: unknown }[];
+  resource?: { match?: Record<string, unknown>; key: string; [key: string]: unknown }[];
+  outcomes?: { unauthenticated?: CredentialOutcome[]; expired?: CredentialOutcome[]; denied?: CredentialOutcome[]; applyUrl?: string; [key: string]: unknown };
+};
+export type CredentialDef = {
+  /** Unique within the plugin; the full name is `<plugin>:<id>`. */
+  id: string;
+  name: string;
+  describe?: string;
+  /** Shown as required in the onboarding list. */
+  required?: boolean;
+  /** Call `show` with the link (and code) the person opens; omem puts it on their page and in their Feishu private chat. */
+  login(ctx: CredentialContext, show: (link: { url: string; code?: string }) => void): Promise<{ user: string; expiresAt?: number }>;
+  /** 10 minutes before `expiresAt` (at most once a minute) and when the person presses 检查: the new `expiresAt`, or null to ask them to log in again. */
+  refresh?(ctx: CredentialContext): Promise<{ expiresAt?: number } | null>;
+  /** Read-only: is this person still logged in? */
+  check?(ctx: CredentialContext): Promise<{ state: "ok" | "expired" | "missing"; user?: string; expiresAt?: number }>;
+  /** When they log out (revoke what you hold); omem removes the secret and the declared state directories afterwards. */
+  logout?(ctx: CredentialContext): Promise<void>;
+  /** After a login or a refresh: write the credential where this person's tools look for it. */
+  provide?(ctx: CredentialContext): Promise<void>;
+  provides: { backends?: string[]; commands?: CredentialCommand[] };
+  /** Phase 2: whether this person may use a resource, without running the command. */
+  precheck?(ctx: CredentialContext, req: { resource: string; user: string }): Promise<{ allowed: boolean | null; missing?: string; applyUrl?: string }>;
+};
+export type CredentialApi = {
+  credential(def: CredentialDef): void;
+  /** The owner's values of this plugin's settings; read when needed so a change takes effect without reloading. In-process plugins only. */
+  settings(): Record<string, string | number | boolean>;
+};

@@ -2433,6 +2433,18 @@ export const migrations: readonly string[] = [
    create index if not exists memories_embedded on memories(status, space_id) where embedding is not null;`,
   `alter table listen_problems add column source_spaces text;`,
   `create index rules_full_access on rules(id,name) where instr(json(actions), '"fullAccess":true') > 0;`,
+  `create table credential_kinds(kind text primary key, plugin text not null, declaration text not null);
+   create table credential_holds(
+     user_id text not null, kind text not null, state text not null default 'none',
+     account_name text, expires_at real, refresh_at real, check_day text not null default '',
+     checked_at text, sharing text not null, notified text not null default '{}',
+     last_used_at text, error text, provision text, supplied_backends text not null default '[]',
+     primary key(user_id,kind)
+   );
+   create index credential_refresh_due on credential_holds(refresh_at) where state='logged-in';
+   create index credential_check_due on credential_holds(check_day,user_id,kind);
+   create index credential_lenders on credential_holds(kind,state,last_used_at desc);
+   create table credential_onboarding(user_id text primary key, notified_at text not null);`,
 ];
 
 export type Db = DatabaseSync;

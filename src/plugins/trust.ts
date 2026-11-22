@@ -46,7 +46,7 @@ export type RunMode = "isolated" | "inprocess";
 /** `dir`: a linked plugin (links.ts) is trusted by its directory, so editing it needs no new confirmation. */
 type NotifyGrants = { ask: boolean; deliver: boolean };
 type FlowGrants = { [name: string]: boolean | undefined };
-type Record = { embedder?: boolean; backends?: string; flow?: FlowGrants; notify?: NotifyGrants; hash: string; at: string; mode?: RunMode; dir?: string };
+type Record = { credentialDeclarations?: string; credentialHash?: string; embedder?: boolean; backends?: string; flow?: FlowGrants; notify?: NotifyGrants; hash: string; at: string; mode?: RunMode; dir?: string };
 const file = (app: App) => join(app.home, "secrets", "plugin-trust.json");
 
 function read(app: App): { [id: string]: Record } {
@@ -65,9 +65,10 @@ function write(app: App, all: { [id: string]: Record }) {
 }
 
 /** trusted: confirmed and unchanged; changed: confirmed, but the code is not what was confirmed; required: never confirmed. */
-export function trustState(app: App, id: string, dir: string, linked = false, notify?: NotifyGrants, embedder = false, backends: unknown[] = [], flow?: FlowGrants): "trusted" | "changed" | "required" {
+export function trustState(app: App, id: string, dir: string, linked = false, notify?: NotifyGrants, embedder = false, backends: unknown[] = [], flow?: FlowGrants, credential = false): "trusted" | "changed" | "required" {
   const r = read(app)[id];
   if (!r) return "required";
+  if (linked && (credential || r.credentialHash) && r.credentialHash !== codeHash(dir)) return "changed";
   if (linked && (backends.length || r.backends && r.backends !== "[]") && r.backends !== JSON.stringify(backends)) return "changed";
   // A trust by directory holds only for that linked directory; a copy (or another directory) is checked by its code.
   if (linked && ((embedder && !r.embedder) || (notify?.ask && !r.notify?.ask) || (notify?.deliver && !r.notify?.deliver))) return "changed";
@@ -76,15 +77,26 @@ export function trustState(app: App, id: string, dir: string, linked = false, no
   return r.hash === codeHash(dir) ? "trusted" : "changed";
 }
 
+/** Bind the actual grants too: a plugin can derive its declarations from settings at load time. */
+export function acceptCredentialDeclarations(app: App, id: string, declarations: unknown[]) {
+  const records = read(app);
+  const record = records[id];
+  const fingerprint = createHash("sha256").update(JSON.stringify(declarations)).digest("hex");
+  if (record.credentialDeclarations !== undefined) return record.credentialDeclarations === fingerprint;
+  record.credentialDeclarations = fingerprint;
+  write(app, records);
+  return true;
+}
+
 /** How the owner chose to run it; plugins trusted before there was a choice ran inside omem. */
 export const trustMode = (app: App, id: string): RunMode => {
   const r = read(app)[id];
   return r ? (r.mode ?? "inprocess") : "isolated";
 };
 
-export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated", linked = false, notify?: NotifyGrants, embedder = false, backends: unknown[] = [], flow?: FlowGrants) {
+export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated", linked = false, notify?: NotifyGrants, embedder = false, backends: unknown[] = [], flow?: FlowGrants, credential = false) {
   const all = read(app);
-  if (dir && linked) all[id] = { hash: "", at: now(), mode, dir, notify, embedder, flow, backends: JSON.stringify(backends) };
+  if (dir && linked) all[id] = { credentialHash: credential ? codeHash(dir) : undefined, hash: "", at: now(), mode, dir, notify, embedder, flow, backends: JSON.stringify(backends) };
   else if (dir) all[id] = { hash: codeHash(dir), at: now(), mode };
   else delete all[id];
   write(app, all);

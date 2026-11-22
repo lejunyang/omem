@@ -100,7 +100,7 @@ export function connectionView(app: App, c: Connection): ConnectionView {
   };
 }
 // `agent:<backend>` rows are tokens for a person's own AI accounts (agents/accounts.ts), shown there instead.
-export const connectionsOf = (app: App, userId: string) => listConnections(app, userId).filter((c) => !c.provider.startsWith("agent:")).map((c) => connectionView(app, c));
+export const connectionsOf = (app: App, userId: string) => listConnections(app, userId).filter((c) => !c.provider.startsWith("agent:") && !c.provider.startsWith("credential:")).map((c) => connectionView(app, c));
 
 async function refresh(app: App, c: Connection): Promise<string> {
   const p = loginProvider(c.provider);

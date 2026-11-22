@@ -188,6 +188,7 @@ async function main() {
     connector: unsupported("新的连接器"),
     authenticator: unsupported("鉴权方式"),
     agentLogin: unsupported("AI 账号的登录方式"),
+    credential: unsupported("凭据（需要在 omem 里运行才能读写成员账号目录）"),
     settings: unsupported("api.settings（隔离运行时在工具的 ctx.settings() 里读）"),
     appConfig: unsupported("连接器的应用配置"),
     service: (name) => ({ ensure: () => rpc("service.ensure", { name }) }),
