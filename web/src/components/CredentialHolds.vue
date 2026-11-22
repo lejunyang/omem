@@ -4,7 +4,7 @@ import { del, get } from "../api";
 import { fmtTime, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
 import { settingsKey } from "../lib/caps";
-import { STATE_LABEL, expiryText, lentTo, overviewLines, stateTone, type CredentialOverview } from "../lib/credentials";
+import { stateLabel, expiryText, lentTo, overviewLines, stateTone, type CredentialOverview } from "../lib/credentials";
 import { settingsContext } from "../views/settings/ctx";
 import SetCard from "./SetCard.vue";
 import Skeleton from "./Skeleton.vue";
@@ -71,7 +71,7 @@ async function logOut(userId: string, person: string, kind: string, name: string
         <li v-for="l in lines" :key="l.key" class="hold" :class="{ first: l.first, several }">
           <span class="h-who ellipsis" :title="l.person.name">{{ l.first ? l.person.name : "" }}</span>
           <span v-if="several" class="h-kind ellipsis" :title="l.c.describe">{{ l.c.name }}</span>
-          <span class="h-state" :class="stateTone(l.c.state)"><span class="dot" aria-hidden="true" />{{ STATE_LABEL[l.c.state] }}</span>
+          <span class="h-state" :class="stateTone(l.c.state)"><span class="dot" aria-hidden="true" />{{ stateLabel(l.c) }}</span>
           <span class="h-when ellipsis" :title="fullTime(l.c.expiresAt)">{{ expiryText(l.c) || (l.c.machine ? "这台机器的登录" : "") }}</span>
           <span class="h-lend ellipsis" :title="lentTo(l.c.sharing, nameOf)">{{ lentTo(l.c.sharing, nameOf) }}</span>
           <span class="h-ops">
@@ -104,7 +104,7 @@ async function logOut(userId: string, person: string, kind: string, name: string
 /* One line per person and kind; a person's first line carries the name and the rule above it. */
 .hold {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) 76px minmax(0, 0.9fr) minmax(0, 1.2fr) auto;
+  grid-template-columns: minmax(0, 0.9fr) 10.5em minmax(0, 0.9fr) minmax(0, 1.2fr) auto;
   align-items: center;
   gap: 12px;
   min-height: 40px;
@@ -113,7 +113,7 @@ async function logOut(userId: string, person: string, kind: string, name: string
   font-size: 13px;
 }
 .hold.several {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) 76px minmax(0, 0.9fr) minmax(0, 1.2fr) auto;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) 10.5em minmax(0, 0.9fr) minmax(0, 1.2fr) auto;
 }
 .hold.first:not(:first-child) {
   border-top: 1px solid var(--line);

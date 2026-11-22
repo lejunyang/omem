@@ -486,7 +486,7 @@ posixIt("总览和个人清单各查询一次持有，登录中的链接与验�
     queries.mockClear();
     const { people } = allCredentials(app);
     expect(queries.mock.calls).toHaveLength(1);
-    expect(people.map(p => p.credentials.map(c => c.state))).toEqual([["logging-in", "expired"], ["none"], ["none", "none"]]);
+    expect(people.map(p => p.credentials.map(c => c.state))).toEqual([["logging-in", "expired"], ["none"], ["unknown", "unknown"]]);
     for (const c of people.flatMap(p => p.credentials)) {
       expect(c).not.toHaveProperty("url");
       expect(c).not.toHaveProperty("code");
@@ -836,11 +836,20 @@ it("本人那份没检查过或检查出错时照旧借本机登录；检查明�
   const kind = "sample:sso";
   const profile = allProfiles(app.config).find(p => p.id === "traex")!;
   const choose = () => selectedCredential(withAccount(app, "ann", profile));
+  function expectOwnerView(state: "unknown" | "none" | "expired", error?: string) {
+    const expected = { state, machine: true, error };
+    expect(myCredentials(app, "owner").credentials.find(c => c.kind === kind)).toMatchObject(expected);
+    const owner = allCredentials(app).people.find(p => p.userId === "owner");
+    expect(owner?.credentials.find(c => c.kind === kind)).toMatchObject(expected);
+  }
   add({ async check() { throw new Error("插件内部错误"); } });
+  expectOwnerView("unknown");
+  expect(myCredentials(app, "ann").credentials[0].state).toBe("none");
   expect(choose()).toMatchObject({ holder: "owner", kind });
   await tickCredentialChecks(app);
   await checkCredential(app, "owner", kind);
   expect(credentialHold(app, "owner", kind)).toMatchObject({ state: "none", error: "检查失败，请稍后重试" });
+  expectOwnerView("unknown", "检查失败，请稍后重试");
   expect(all(app.db, "select id from notifications where user_id='owner' and title like '%检查失败%'")).toHaveLength(1);
   expect(choose()).toMatchObject({ holder: "owner", kind });
 
@@ -850,11 +859,14 @@ it("本人那份没检查过或检查出错时照旧借本机登录；检查明�
   await tickCredentialChecks(app);
   expect(check).toHaveBeenCalledOnce();
   for (const state of ["missing", "expired"] as const) {
+    const displayState = state === "missing" ? "none" : "expired";
     check.mockResolvedValueOnce({ state });
     await checkCredential(app, "owner", kind);
+    expectOwnerView(displayState);
     expect(() => choose()).toThrow(/没有可用的登录/);
     check.mockRejectedValueOnce(new Error("示例错误"));
     await checkCredential(app, "owner", kind);
+    expectOwnerView(displayState, "检查失败，请稍后重试");
     expect(credentialHold(app, "owner", kind)).toMatchObject({ state, error: "检查失败，请稍后重试" });
     expect(() => choose()).toThrow(/没有可用的登录/);
   }

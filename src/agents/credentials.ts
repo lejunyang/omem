@@ -403,10 +403,11 @@ export function maybeSendCredentialOnboarding(app: App, id: string) {
   notify(app, { userId: id, title: "接入清单", body: missing.map(m => `${m.name}（${m.required ? "必做" : "可选"}）${m.describe ? "：" + m.describe : ""}；覆盖 ${[...m.provides.backends, ...m.provides.commands.map(c => c.name)].join("、")}`).join("\n"), link: "#/account" });
   return true;
 }
-export type CredentialState = "none" | "ok" | "expiring" | "expired" | "logging-in";
+export type CredentialState = "unknown" | "none" | "ok" | "expiring" | "expired" | "logging-in";
 function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
   const p = logins.get(keyOf(app, id, m.kind));
   const state: CredentialState = p ? "logging-in" : s.state === "expired" || s.expiresAt !== undefined && s.expiresAt <= Date.now() ? "expired"
+    : id === OWNER && s.state === "none" ? "unknown"
     : !usableCredential(app, id, m.kind, s) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
   const missing = declaredPaths(app, m).install.filter(d => !installed(d.path));
   const login = id !== OWNER && sandboxSupport().ok;

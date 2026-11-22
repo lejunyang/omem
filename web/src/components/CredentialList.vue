@@ -5,7 +5,7 @@ import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
 import { hasCap } from "../lib/caps";
 import {
-  STATE_LABEL, SCOPE_LABEL, canCancel, coverage, credAnchor, expiryText, lendCandidates, lendingNote, needsAction, settled, sharingBody, sharingSaved, stateTone,
+  stateLabel, SCOPE_LABEL, canCancel, coverage, credAnchor, expiryText, lendCandidates, lendingNote, needsAction, settled, sharingBody, sharingSaved, stateTone,
   type Credential, type SharingScope,
 } from "../lib/credentials";
 import ChipPicker from "./ChipPicker.vue";
@@ -155,8 +155,8 @@ const fullTime = (ms?: number) => (ms === undefined ? "" : fmtTime(new Date(ms).
       <div v-for="c in list" :id="credAnchor(c.kind)" :key="c.kind" class="cred" tabindex="-1">
         <div class="cred-head">
           <span class="cred-name">{{ c.name }}</span>
-          <span v-if="c.required" class="badge" :class="{ warn: needsAction(c) }" :title="needsAction(c) ? '还没登录：要用的工具得先登录它' : '必做的一项，已经登录了'">必做</span>
-          <span class="cred-state" :class="stateTone(c.state)"><span class="dot" aria-hidden="true" />{{ STATE_LABEL[c.state] }}</span>
+          <span v-if="c.required" class="badge" :class="{ warn: needsAction(c) }" :title="needsAction(c) ? '还没登录：要用的工具得先登录它' : '使用这些工具需要这份凭据'">必做</span>
+          <span class="cred-state" :class="stateTone(c.state)"><span class="dot" aria-hidden="true" />{{ stateLabel(c) }}</span>
           <span v-if="expiryText(c)" class="muted small" :title="fullTime(c.expiresAt)">{{ expiryText(c) }}</span>
           <span v-if="c.user && c.state !== 'none'" class="muted small ellipsis cred-user" :title="c.user">{{ c.user }}</span>
           <span class="spacer" />
@@ -200,7 +200,11 @@ const fullTime = (ms?: number) => (ms === undefined ? "" : fmtTime(new Date(ms).
           </div>
           <span v-if="lendingNote(c.lending)" class="small" :class="c.lending === 'off' ? 'warn-text' : 'muted'">{{ lendingNote(c.lending) }}</span>
         </div>
-        <p v-if="c.machine" class="small muted">用的是这台机器上已有的登录{{ c.state === "none" ? "：这台机器上还没登录它，在本机登录后这里会变成“有效”" : "" }}。</p>
+        <p v-if="c.machine" class="small muted">
+          这份凭据使用本机登录。
+          <template v-if="c.state === 'unknown'">检查出结果前，成员仍按出借设置借用。</template>
+          <template v-else-if="c.state === 'none'">请先在本机登录，检查确认后即可按出借设置借用。</template>
+        </p>
         <p v-else-if="!c.login && c.reason" class="small warn-text">这台机器上不能登录：{{ c.reason }}</p>
         <p v-if="c.error && c.state !== 'logging-in'" class="small warn-text err">{{ c.error }}</p>
         <p v-if="c.missingInstall.length" class="small muted" :title="c.missingInstall.join('\n')">这台机器上缺 {{ c.missingInstall.length }} 个安装目录，用到的命令行可能跑不了。</p>
