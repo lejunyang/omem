@@ -407,7 +407,7 @@ export async function checkAccount(app: App, userId: string, backend: string): P
     if (!method) return { state: "none", method: supplied };
     const { state, user, expiresAt, checkedAt, error, suppliedBackends } = await checkCredential(app, userId, supplied);
     if (!method.provides.backends.includes(backend) || !suppliedBackends.includes(backend)) return { state: "none", method: supplied, checkedAt };
-    return { state: state === "missing" ? "none" : expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
+    return { state: state === "missing" || state === "protected" ? "none" : expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
   }
   if (isPlugin(s.method) && s.state !== "none") return refreshPluginLogin(app, userId, backend);
   return checkNative(app, userId, entry);

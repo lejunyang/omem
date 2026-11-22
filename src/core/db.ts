@@ -2462,6 +2462,23 @@ export const migrations: readonly string[] = [
      provision=case when h.user_id!='owner' then json_object('declared',json_extract(k.declaration,'$.provides'),'paths',json(h.provision)) end,
      supplied_backends=json_extract(k.declaration,'$.provides.backends')
      from credential_kinds k where k.kind=h.kind and h.state!='none';`,
+  // A read-only check could revive an old logout. Its check day is durable, but its
+  // account name, expiry and shared files do not establish a new authorization. The
+  // check day is local, so even the day before a UTC logout can overlap that logout.
+  `create index credential_logout_history on audit_events(coalesce(json_extract(detail,'$.holder'),actor),target,at desc)
+     where action='credentials.logout';
+   update credential_holds as h set state='protected',supplied_backends='[]',account_name=null,
+     expires_at=null,refresh_at=null,error=null
+     where h.user_id!='owner' and h.provision is not null and (
+       ((h.state='missing' or (h.state='logged-in' and h.account_name is null)) and json_extract(h.provision,'$.paths') is null)
+       or h.check_day>=date((select a.at from audit_events a where a.action='credentials.logout'
+         and coalesce(json_extract(a.detail,'$.holder'),a.actor)=h.user_id and a.target=h.kind
+         order by a.at desc limit 1),'-1 day'));
+   drop index credential_logout_history;
+   update kv set value=json_set(value,'$.requiresToken',json('true'))
+     where key in (select 'agent_account:' || h.user_id || ':' || b.value from credential_holds h,
+       json_each(coalesce(h.provision->'$.backends',h.provision->'$.declared.backends')) b where h.state='protected')
+     and json_valid(value) and json_extract(value,'$.method')='native' and json_extract(value,'$.state')!='none';`,
 ];
 
 export type Db = DatabaseSync;

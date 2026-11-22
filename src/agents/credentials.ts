@@ -39,7 +39,7 @@ function readProvision(app: App, raw: string | null): Provision | undefined {
   return "declared" in p ? declarationProvision(app, p.declared, p.paths) : p;
 }
 export type Hold = {
-  state: "none" | "missing" | "logged-in" | "expired"; user?: string; expiresAt?: number; refreshAt?: number;
+  state: "none" | "protected" | "missing" | "logged-in" | "expired"; user?: string; expiresAt?: number; refreshAt?: number;
   checkedAt?: string; checkedDay: string; lastUsedAt?: string; error?: string;
   sharing: CredentialSharing; notified: Record<string, string>; provision?: Provision; suppliedBackends: string[];
 };
@@ -219,7 +219,8 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
       answer(() => resolve({ done: true }));
     } catch {
       if (!signal.aborted || timeout.aborted || !replied) {
-        save(app, id, kind, { ...credentialHold(app, id, kind), state: "expired", error: "授权或供给失败，请重新登录", checkedAt: now() });
+        const hold = credentialHold(app, id, kind);
+        save(app, id, kind, { ...hold, state: hold.state === "protected" ? "protected" : "expired", error: "授权或供给失败，请重新登录", checkedAt: now() });
         reminder(app, id, m, "failed");
       }
       answer(() => reject(new HttpError(502, signal.aborted ? "登录取消或超时，请重试" : "授权或供给失败，请重新登录")));
@@ -251,11 +252,14 @@ export function refreshCredential(app: App, id: string, kind: string) {
     return credentialHold(app, id, kind);
   });
 }
+function canCheck(id: string, state: Hold["state"]) {
+  return id === OWNER || (state !== "none" && state !== "protected");
+}
 export function checkCredential(app: App, id: string, kind: string) {
   const m = requireCredential(kind);
   return serial(keyOf(app, id, kind), async () => {
     const s = credentialHold(app, id, kind);
-    if (!m.check || id !== OWNER && s.state === "none") return s;
+    if (!m.check || !canCheck(id, s.state)) return s;
     try {
       const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, "check"))));
       const expiresAt = result.state === "missing" ? undefined : result.expiresAt ?? s.expiresAt;
@@ -271,7 +275,7 @@ export function checkCredential(app: App, id: string, kind: string) {
 export function heldCredentialDeclarations(app: App, id: string) {
   const rows = all<Row & { name: string }>(app.db, `select h.*,json_extract(k.declaration,'$.name') as name from credential_holds h
     join credential_kinds k on k.kind=h.kind where h.user_id=? and h.provision is not null
-    order by (h.state='missing'), h.checked_at desc,h.kind`, id);
+    order by (h.state in ('missing','protected')), h.checked_at desc,h.kind`, id);
   const held = new Map<string, { name: string; provision: Provision; hold: Hold; pending?: boolean }>();
   for (const row of rows) {
     const hold = fromRow(app, row);
@@ -297,7 +301,7 @@ export function suppliedCredentialKind(app: App, id: string, backend: string, ha
   const sources = [...held].filter(([, h]) => h.provision.backends.includes(backend));
   return sources.find(([kind, h]) => credentialMethod(kind)?.provides.backends.includes(backend) && backendUsable(app, id, backend, kind, h.hold))?.[0]
     ?? sources.find(([, h]) => h.pending)?.[0]
-    ?? sources.find(([, h]) => h.hold.state !== "missing" || !hasIndependentLogin)?.[0]
+    ?? sources.find(([, h]) => !hasIndependentLogin || (h.hold.state !== "missing" && h.hold.state !== "protected"))?.[0]
     // Checking a newly advertised backend must not turn a shared file into a native login.
     ?? (!hasIndependentLogin ? credentialKindsForBackend(backend).find(m => held.has(m.kind))?.kind : undefined);
 }
@@ -356,8 +360,9 @@ export async function tickCredentialChecks(app: App, at = Date.now()) {
   let count = 0;
   for (const r of rows) {
     const m = credentialMethod(r.kind);
-    if (!m?.check || r.user_id !== OWNER && (r.state === "none" || !member(app, r.user_id))) {
-      if (m && r.state !== "none" && member(app, r.user_id)) remindHold(app, r.user_id, m);
+    const eligible = canCheck(r.user_id, r.state) && (r.user_id === OWNER || member(app, r.user_id));
+    if (!m?.check || !eligible) {
+      if (m && eligible && r.user_id !== OWNER) remindHold(app, r.user_id, m);
       run(app.db, "update credential_holds set check_day=? where user_id=? and kind=?", day(app, at), r.user_id, r.kind);
       continue;
     }
