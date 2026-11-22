@@ -15,7 +15,7 @@ import { sandboxSupport } from "./sandbox.ts";
 import { accountCatalog } from "./catalog.ts";
 
 export { registerCredential } from "./credential-registry.ts";
-import { credentialKindsForBackend, credentialMethod, credentialMethods, declaredPaths, requireCredential, type CredentialMethod } from "./credential-registry.ts";
+import { credentialKindsForBackend, credentialMethod, credentialMethods, declaredPaths, defaultSharingScope, requireCredential, type CredentialMethod } from "./credential-registry.ts";
 const THREE_DAYS = 3 * 86400_000;
 const loginResult = z.object({ user: z.string().trim().min(1).max(200), expiresAt: z.number().finite().positive().optional() }).strict();
 const refreshResult = loginResult.omit({ user: true });
@@ -57,7 +57,7 @@ function fromRow(r: Row): Hold {
     provision: r.provision === null ? undefined : JSON.parse(r.provision), suppliedBackends: JSON.parse(r.supplied_backends) };
 }
 function emptyHold(id: string): Hold {
-  return { state: "none", suppliedBackends: [], checkedDay: "", sharing: { scope: id === OWNER ? "all" : "self", members: [] }, notified: {} };
+  return { state: "none", suppliedBackends: [], checkedDay: "", sharing: { scope: defaultSharingScope(id), members: [] }, notified: {} };
 }
 export function credentialHold(app: App, userId: string, kind: string): Hold {
   const r = one<Row>(app.db, "select * from credential_holds where user_id=? and kind=?", userId, kind);
@@ -80,12 +80,12 @@ export function usableCredential(app: App, id: string, kind: string, s: Pick<Hol
  * only a check that says so (`missing` / `expired`) makes it unusable. Never checked, or a check that
  * failed (`none`, the error kept on the hold), leaves it as it was.
  */
-function ownerUnknown(hold: Pick<Hold, "state">) {
-  return hold.state === "none";
+export function availableLogin(app: App, id: string, kind: string, hold = credentialHold(app, id, kind)) {
+  return (id === OWNER && hold.state === "none") || usableCredential(app, id, kind, hold);
 }
 function backendUsable(app: App, id: string, backend: string, kind: string, hold = credentialHold(app, id, kind)) {
-  if (id === OWNER) return !!credentialMethod(kind)?.provides.backends.includes(backend) && (ownerUnknown(hold) || usableCredential(app, id, kind, hold));
-  return hold.suppliedBackends.includes(backend) && usableCredential(app, id, kind, hold);
+  const backends = id === OWNER ? credentialMethod(kind)?.provides.backends : hold.suppliedBackends;
+  return !!backends?.includes(backend) && availableLogin(app, id, kind, hold);
 }
 export const credentialBackendLogin = (app: App, id: string, backend: string) => credentialKindsForBackend(backend).some(m => backendUsable(app, id, backend, m.kind));
 export type CredentialUse = { holder: string; kind: string; requester: string; backend: string };
@@ -107,15 +107,11 @@ export function selectCredential(app: App, requester: string, backend: string, a
   const kinds = methods.map(m => m.kind);
   const rows = all<Row>(app.db, `select * from credential_holds where kind in (${kinds.map(() => "?").join(",")})
     and (state='logged-in' or user_id=?) order by (user_id=?) desc,last_used_at desc,user_id,kind`, ...kinds, OWNER, OWNER);
-  // The owner's hold exists once checked; a kind without `check` (or not ticked yet) still lends the machine login.
-  const candidates: { user: string; kind: string; hold: Hold }[] = [
-    ...kinds.filter(kind => !rows.some(r => r.user_id === OWNER && r.kind === kind)).map(kind => ({ user: OWNER, kind, hold: emptyHold(OWNER) })),
-    ...rows.map(r => ({ user: r.user_id, kind: r.kind, hold: fromRow(r) })),
-  ].sort((a, b) => Number(b.user === OWNER) - Number(a.user === OWNER));
-  for (const c of candidates) {
-    if (c.user === requester || (c.user === OWNER ? app.config.agents.accountIsolation === "require" : !sandbox)) continue;
-    const use = { requester, backend, holder: c.user, kind: c.kind };
-    if (mayUseCredential(app, use, c.hold)) return use;
+  for (const row of rows) {
+    const holder = row.user_id;
+    if (holder === requester || (holder === OWNER ? app.config.agents.accountIsolation === "require" : !sandbox)) continue;
+    const use = { requester, backend, holder, kind: row.kind };
+    if (mayUseCredential(app, use, fromRow(row))) return use;
   }
 }
 export function credentialSucceeded(app: App, profile: object) {
@@ -196,7 +192,7 @@ function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | 
 export function expireCommandCredential(app: App, id: string, m: CredentialMethod) {
   return serial(keyOf(app, id, m.kind), async () => {
     const hold = credentialHold(app, id, m.kind);
-    if (hold.state === "none" || m.signal.aborted) return;
+    if (!canCheck(id, hold.state) || m.signal.aborted) return;
     save(app, id, m.kind, { ...hold, state: "expired", refreshAt: undefined });
     reminder(app, id, m, "expired");
   });
@@ -377,10 +373,6 @@ export async function tickCredentialRefreshes(app: App, at = Date.now()) {
   return rows.length;
 }
 export async function tickCredentialChecks(app: App, at = Date.now()) {
-  for (const m of credentialMethods()) if (m.check) {
-    const s = credentialHold(app, OWNER, m.kind);
-    if (!one(app.db, "select 1 from credential_holds where user_id=? and kind=?", OWNER, m.kind)) save(app, OWNER, m.kind, s);
-  }
   const rows = all<Row>(app.db, "select * from credential_holds indexed by credential_check_due where check_day<? order by check_day limit 32", day(app, at));
   let count = 0;
   for (const r of rows) {

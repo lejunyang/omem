@@ -45,6 +45,7 @@ it.skipIf(process.platform === "win32")("示例插件一次登录供给命令行
     await trustPlugin(app, "acmeauth", "inprocess");
     const kind = "acmeauth:demo";
     expect(await startCredentialLogin(app, "bob", kind)).toEqual({ done: true });
+    setCredentialSharing(app, "owner", kind, { scope: "self" });
     setCredentialSharing(app, "bob", kind, { scope: "all" });
     const entry = accountEntry(app, kind)!;
     const account = accountOf(withAccount(app, "ann", catalogProfile(entry)))!;
@@ -82,6 +83,7 @@ it.skipIf(!sandboxSupport().ok)("借用沙箱可在私有目录创建临时文�
     createUser(app, { id: "ann", name: "成员 A" });
     createUser(app, { id: "bob", name: "成员 B" });
     await startCredentialLogin(app, "bob", "example:login");
+    setCredentialSharing(app, "owner", "example:login", { scope: "self" });
     setCredentialSharing(app, "bob", "example:login", { scope: "all" });
     const acct = accountOf(withAccount(app, "ann", profile))!;
     for (const dir of ["", ".tmp", ".run"]) writeFileSync(join(acct.home, dir, "private.txt"), "private");

@@ -9,7 +9,7 @@ import { whoCan } from "../src/agents/credential-access.ts";
 import { issueToolToken, revokeToolToken } from "../src/agents/tools.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { COMMAND_OUTPUT_LIMIT } from "../src/core/util.ts";
-import { all, run } from "../src/core/db.ts";
+import { all } from "../src/core/db.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -74,7 +74,6 @@ if (mode === 'denied') {
     });
   }
   try {
-    run(app.db, "insert into credential_holds(user_id,kind,state,sharing) values('owner',?,'logged-in','{}')", kind);
     const streamed = await invoke(["show", "--project", "stream"]);
     expect(streamed).toMatchObject({ code: 0, out: expect.stringContaining("complete"), err: expect.stringContaining("ready-err") });
     const result = await invoke(["show", "--project", "denied"]);

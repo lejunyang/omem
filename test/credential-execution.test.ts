@@ -7,7 +7,7 @@ import type { CredentialDef } from "../packages/plugin-sdk/credential.ts";
 import { accountHome } from "../src/agents/accounts.ts";
 import { commandGateDir, gatePaths } from "../src/agents/command-gate.ts";
 import { knownAccess, recordAccess } from "../src/agents/credential-access.ts";
-import { registerCredential } from "../src/agents/credentials.ts";
+import { checkCredential, credentialHold, registerCredential, setCredentialSharing } from "../src/agents/credentials.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { issueToolToken, revokeToolToken } from "../src/agents/tools.ts";
@@ -21,6 +21,7 @@ const resource = "project:sample", url = "https://example.test/request";
 let app: ReturnType<typeof testApp>, server: Awaited<ReturnType<typeof startServer>>;
 let token: string, runId: string, ownerHome: string, drop: () => void;
 const linuxSandbox = process.platform === "linux" && sandboxSupport().ok;
+const check = vi.fn<NonNullable<CredentialDef["check"]>>();
 const verify = vi.fn<NonNullable<CredentialDef["precheck"]>>();
 function hold(user: string, scope: "all" | "self") {
   if (user !== "owner") mkdirSync(accountHome(app, user), { recursive: true });
@@ -34,6 +35,7 @@ beforeEach(async () => {
   createUser(app, { id: "reader", name: "读者" });
   runId = createRun(app, { kind: "ask", spaceId: "personal-reader", title: "示例", input: {} }).id;
   token = issueToolToken({ actor: "agent", userId: "reader", commandHomeUser: "reader", runId, spaceId: "personal-reader", spaces: [], tools: new Set() });
+  check.mockReset().mockResolvedValue({ state: "ok" });
   verify.mockReset().mockImplementation(async (_ctx, req) => {
     // The fixture's resource service grants the reader one project and one complete command form.
     const allowed = req.user === "reader" && req.resource === resource;
@@ -41,10 +43,9 @@ beforeEach(async () => {
     return { allowed, verifiedRead: allowed && exact ? true : undefined };
   });
   drop = registerCredential("fixture", { id: "account", name: "示例账号", async login() { return { user: "demo" }; },
-    precheck: verify, provides: { commands: [{ name, readOnly: [{ subcommand: ["show"] }], state: [".sample"],
+    check, precheck: verify, provides: { commands: [{ name, readOnly: [{ subcommand: ["show"] }], state: [".sample"],
       resource: [{ key: "project:{option.project}", match: {} }], outcomes: { denied: [{ json: "$.code", equals: "DENIED" }], applyUrl: "$.url" } }] },
   }, () => ({}), app);
-  hold("owner", "all");
   commandGateDir(app);
   const bin = join(app.home, "bin-fixtures");
   mkdirSync(bin);
@@ -101,6 +102,24 @@ it("缺登录且服务确认发起人有权时由出借人执行，垫片保留�
   expect(knownAccess(app, kind, resource, "owner")?.allowed).toBe(1);
   expect(all(app.db, "select action from audit_events where action in ('credentials.command','credentials.precheck')")).toHaveLength(2);
   expect(all(app.db, "select seq from run_events where run_id=? and data like '%发起人缺少有效登录%'", runId)).toHaveLength(1);
+});
+
+it("本人登录检查超时后仍按发起人的实时读取权选人，明确缺失后停止出借", async () => {
+  check.mockImplementationOnce(() => new Promise(() => {}));
+  vi.useFakeTimers();
+  try {
+    const pending = checkCredential(app, "owner", kind);
+    await vi.advanceTimersByTimeAsync(120_001);
+    await pending;
+  } finally { vi.useRealTimers(); }
+  expect(credentialHold(app, "owner", kind)).toMatchObject({ state: "none", error: "检查失败，请稍后重试" });
+  verify.mockResolvedValueOnce({ allowed: null });
+  expect((await gate()).execution).toBeUndefined();
+  expect((await gate()).execution?.code).toBe(0);
+  check.mockResolvedValueOnce({ state: "missing" });
+  await checkCredential(app, "owner", kind);
+  expect((await gate()).execution).toBeUndefined();
+  expect(verify).toHaveBeenCalledTimes(2);
 });
 
 it("本地 denied 保留退出码、输出和申请链接，已知无权时即使缺登录也继续本地执行", async () => {
@@ -161,7 +180,7 @@ it("资源服务回复期间撤回出借时不启动命令", async () => {
 // /bin/echo substitutes for bubblewrap to inspect the POSIX mount arguments.
 it.skipIf(process.platform === "win32")("成员出借只挂载该命令的登录目录，沙箱不可用时不代跑", async () => {
   createUser(app, { id: "lender", name: "出借人" }); hold("lender", "all");
-  run(app.db, "delete from credential_holds where user_id='owner'");
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
   const state = join(accountHome(app, "lender"), ".sample"); mkdirSync(state);
   setSandboxSupportForTests({ ok: false });
   expect((await gate()).execution).toBeUndefined();
@@ -178,7 +197,7 @@ it.skipIf(process.platform === "win32")("成员出借只挂载该命令的登录
 // Real namespaces require Linux with working bubblewrap.
 it.skipIf(!linuxSandbox)("在成员沙箱中用出借人的登录运行假命令，只读结果返回发起人", async () => {
   createUser(app, { id: "lender", name: "出借人" }); hold("lender", "all");
-  run(app.db, "delete from credential_holds where user_id='owner'");
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
   const home = accountHome(app, "lender");
   mkdirSync(join(home, ".sample"));
   writeFileSync(join(home, ".sample", "fixture-account"), "sample-lender");

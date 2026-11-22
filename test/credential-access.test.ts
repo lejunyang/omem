@@ -52,7 +52,6 @@ it.skipIf(process.platform === "win32")("预检优先用发起人的身份，缺
     },
   }, () => ({}), app);
   for (let i = 0; i < 6; i++) { createUser(app, { id: "member-" + i, name: "成员 " + i }); hold("member-" + i, { scope: "all" }); }
-  hold("owner", { scope: "all" });
   hold("reader", { scope: "self" });
   const data = await whoCan(app, "reader", null, "db:a", kind);
   expect(calls).toHaveLength(5);

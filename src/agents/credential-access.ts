@@ -5,7 +5,7 @@ import { OWNER, userName } from "../core/users.ts";
 import { audit } from "../auth/permissions.ts";
 import { addRunEvent } from "./runs.ts";
 import { credentialMethods, type CredentialMethod } from "./credential-registry.ts";
-import { precheckCredential, usableCredential } from "./credentials.ts";
+import { availableLogin, precheckCredential, usableCredential } from "./credentials.ts";
 
 const cutoff = () => new Date(Date.now() - 30 * 86400_000).toISOString();
 const shares = `(json_extract(h.sharing,'$.scope')='all' or
@@ -46,10 +46,10 @@ export function sharedHolders(app: App, requester: string, kind: string, limit: 
   return all<{ id: string; name: string }>(app.db, `select u.id,u.name from credential_holds h
     join users u on u.id=h.user_id
     left join credential_access a on a.kind=h.kind and a.resource=? and a.user_id=u.id and a.observed_at>?
-    where coalesce(a.allowed,1)=1 and h.kind=? and h.state='logged-in'
+    where coalesce(a.allowed,1)=1 and h.kind=? and (h.state='logged-in' or (h.user_id=? and h.state='none'))
     and (h.expires_at is null or h.expires_at>?) and h.user_id<>? and ${shares}
     and u.disabled_at is null and u.status='active' and u.kind='person'
-    order by a.allowed desc,(u.id=?) desc,h.last_used_at desc,u.id limit ?`, resource ?? null, cutoff(), kind, Date.now(), requester, requester, OWNER, limit);
+    order by a.allowed desc,(u.id=?) desc,h.last_used_at desc,u.id limit ?`, resource ?? null, cutoff(), kind, OWNER, Date.now(), requester, requester, OWNER, limit);
 }
 
 export async function checkAccess(app: App, requester: string, runId: string | null, method: CredentialMethod,
@@ -83,7 +83,7 @@ export async function whoCan(app: App, requester: string, runId: string | null, 
         const holders = sharedHolders(app, requester, method.kind, 5);
         if (!holders.some(user => user.id === target)) continue;
         const holder = usableCredential(app, requester, method.kind) ? requester : app.config.credentials.lending === "auto"
-          ? holders.find(u => usableCredential(app, u.id, method.kind))?.id : undefined;
+          ? holders.find(u => availableLogin(app, u.id, method.kind))?.id : undefined;
         if (!holder) continue;
         await checkAccess(app, requester, runId, method, holder, target, resource);
       }

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome } from "../../packages/plugin-sdk/credential.ts";
 import type { App } from "../core/app.ts";
 import { run } from "../core/db.ts";
+import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { canonical, normalizeSandbox, under } from "./own-sandbox.ts";
 
@@ -66,6 +67,8 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
   return { state: writable, install };
 }
 
+export const defaultSharingScope = (id: string) => id === OWNER ? "all" : "self";
+
 export function registerCredential(plugin: string, def: CredentialDef, settings = () => ({} as Record<string, string | number | boolean>), app?: App) {
   if (!ID.test(def.id) || !def.name?.trim() || typeof def.login !== "function") throw new Error("凭据需要有效的 id、name 和 login");
   for (const name of ["refresh", "check", "logout", "provide", "precheck"] as const)
@@ -89,7 +92,8 @@ export function registerCredential(plugin: string, def: CredentialDef, settings 
     run(app.db, "insert into credential_kinds(kind,plugin,declaration) values(?,?,?) on conflict(kind) do update set declaration=excluded.declaration",
       kind, plugin, JSON.stringify({ id: def.id, name: def.name, describe: def.describe, required: !!def.required, provides }));
     // Registered again (new code, trust given again): the owner's last check is stale, check on the next tick.
-    run(app.db, "update credential_holds set check_day='' where user_id='owner' and kind=?", kind);
+    run(app.db, `insert into credential_holds(user_id,kind,sharing) values(?,?,?)
+      on conflict(user_id,kind) do update set check_day=''`, OWNER, kind, JSON.stringify({ scope: defaultSharingScope(OWNER), members: [] }));
   }
   registry.set(kind, m);
   return () => { lifetime.abort(); if (registry.get(kind) === m) registry.delete(kind); };

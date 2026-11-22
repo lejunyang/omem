@@ -11,7 +11,7 @@ import { catalogProfile } from "./catalog.ts";
 import { localAccount } from "./accounts.ts";
 import { applicationUrl, checkAccess, knownAccess, sharedHolders } from "./credential-access.ts";
 import { commandResource, credentialArgs, credentialCommand, credentialOutcome } from "./credential-outcome.ts";
-import { credentialMemberEnv, usableCredential } from "./credentials.ts";
+import { availableLogin, credentialMemberEnv, usableCredential } from "./credentials.ts";
 import { launchRun } from "./egress-run.ts";
 import { decide, digest, operationWho } from "./operation-policy.ts";
 import { ownRun } from "./own-run.ts";
@@ -84,7 +84,7 @@ export async function credentialExecution(ctx: ToolContext, entry: Entry, args: 
   for (const holder of holders) {
     const eligible = () => live() && !method.signal.aborted && activeUser(findUser(app, requester)) &&
       app.config.credentials.lending === "auto" && !usableCredential(app, requester, kind) &&
-      usableCredential(app, holder.id, kind) && candidates().some(u => u.id === holder.id) &&
+      availableLogin(app, holder.id, kind) && candidates().some(u => u.id === holder.id) &&
       knownAccess(app, kind, resource, requester)?.allowed !== 0;
     if (!eligible()) continue;
     const owner = holder.id === OWNER;
