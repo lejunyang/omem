@@ -1,12 +1,14 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { mkdirSync, renameSync, writeFileSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 import { testApp } from "./helpers.ts";
 import { setKey } from "../src/core/ai-keys.ts";
-import { configSchema } from "../src/core/config.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
+import { configPath, configSchema, saveConfig } from "../src/core/config.ts";
 import { embedPending, embedQuery, embeddingHealth, resumeEmbedding, testEmbedding } from "../src/search/embeddings.ts";
-import { vectorCounts } from "../src/search/embedding-index.ts";
+import { storedModel, vectorCounts } from "../src/search/embedding-index.ts";
 import { pack } from "../src/search/vector-codec.ts";
 import { remember } from "../src/memory/store.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -154,6 +156,92 @@ it("预览模型、维度和服务地址变更，只有确认后清空索引", a
     Object.assign(app.config.embeddings, { dimensions: 2, url: undefined });
     app.db.prepare("delete from kv where key='embedding_model'").run();
   }
+});
+
+it("保存和再次确认都按磁盘合并后的地址校验权限与重建目标", async () => {
+  const { app } = await setup();
+  app.config.ai = configSchema.shape.ai.parse(app.config.ai);
+  saveConfig(app.config, app.home);
+  expect(await embedPending(app)).toBe(2);
+  const original = storedModel(app);
+  const path = configPath(app.home);
+  const server = await startServer(app, { port: 0, quiet: true });
+  close.push(() => server.close());
+  const save = (token = "", headers = {}) => server.inject({ method: "PUT", url: "/api/settings?confirmEmbedding=" + token,
+    headers, payload: { search: { retrievers: [{ provider: "example:notes" }] } } });
+  const base = app.config.ai.providers[0].baseUrl;
+  function setAddress(suffix: string) {
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    config.ai.providers[0].baseUrl = base + suffix;
+    writeFileSync(path, JSON.stringify(config));
+  }
+
+  setAddress("/first");
+  createUser(app, { id: "editor", name: "编辑", role: "admin" });
+  app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values('editor','settings.knowledge.edit','global','','allow','0','owner')").run();
+  const member = await save("", { authorization: "Bearer " + createApiToken(app, "editor") });
+  expect(member.statusCode).toBe(403);
+  expect(member.body).toContain("ai.providers");
+  const first = await save();
+  expect(first.statusCode).toBe(409);
+  expect(first.json()).toMatchObject({ confirmation: "embedding-model", clear: 2, to: "api:" + JSON.stringify([base + "/first", "m", 2]) });
+  setAddress("/second");
+  const second = await save(first.json().token);
+  expect(second.statusCode).toBe(409);
+  expect(second.json().to).toBe("api:" + JSON.stringify([base + "/second", "m", 2]));
+  expect(second.json().token).not.toBe(first.json().token);
+  expect(storedModel(app)).toBe(original);
+  expect(vectorCounts(app).clear).toBe(2);
+  expect(app.config.ai.providers[0].baseUrl).toBe(base);
+  expect(JSON.parse(readFileSync(path, "utf8")).search.retrievers).toEqual([]);
+
+  expect((await save(second.json().token)).statusCode).toBe(200);
+  expect(app.config.ai.providers[0].baseUrl).toBe(base + "/second");
+  expect(storedModel(app)).toBe(second.json().to);
+  expect(vectorCounts(app).clear).toBe(0);
+  expect(await embedPending(app)).toBe(2);
+});
+
+it("磁盘停用向量后保存旧网页设置，确认停用时保留索引", async () => {
+  const { app } = await setup();
+  saveConfig(app.config, app.home);
+  expect(await embedPending(app)).toBe(2);
+  const path = configPath(app.home);
+  const config = JSON.parse(readFileSync(path, "utf8"));
+  config.embeddings.provider = "none";
+  writeFileSync(path, JSON.stringify(config));
+  const server = await startServer(app, { port: 0, quiet: true });
+  close.push(() => server.close());
+  const save = (token = "") => server.inject({ method: "PUT", url: "/api/settings?confirmEmbedding=" + token,
+    payload: { embeddings: { batch: 4 } } });
+  const preview = await save();
+  expect(preview.statusCode).toBe(409);
+  expect(preview.json()).toMatchObject({ to: "none", clear: 0, rebuild: 0 });
+  expect(app.config.embeddings.provider).toBe("api");
+  expect((await save(preview.json().token)).statusCode).toBe(200);
+  expect(app.config.embeddings.provider).toBe("none");
+  expect(vectorCounts(app).clear).toBe(2);
+});
+
+it("确认重建后写配置失败，保留原模型和可用向量", async () => {
+  const { app } = await setup();
+  saveConfig(app.config, app.home);
+  expect(await embedPending(app)).toBe(2);
+  const original = storedModel(app);
+  const server = await startServer(app, { port: 0, quiet: true });
+  close.push(() => server.close());
+  const save = (token = "") => server.inject({ method: "PUT", url: "/api/settings?confirmEmbedding=" + token,
+    payload: { embeddings: { model: "replacement" } } });
+  const preview = await save();
+  expect(preview.statusCode).toBe(409);
+  const path = configPath(app.home);
+  renameSync(path, path + ".bak");
+  mkdirSync(path);
+  expect((await save(preview.json().token)).statusCode).toBe(500);
+  expect(app.config.embeddings.model).toBe("m");
+  expect(storedModel(app)).toBe(original);
+  expect(vectorCounts(app).clear).toBe(2);
+  expect(await embedQuery(app, "核对材料")).not.toBeNull();
 });
 
 it("旧 openai 索引升级沿用向量，地址变更仍要求确认", async () => {

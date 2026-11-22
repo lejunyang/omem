@@ -1,4 +1,4 @@
-import { embeddingId, modelChange, replaceIndex } from "../search/embedding-index.ts";
+import { embeddingId, modelChange, replaceIndex, retainedIndexPreview } from "../search/embedding-index.ts";
 import { testEmbedding, resumeEmbedding } from "../search/embeddings.ts";
 import { itemRunSummary } from "../items/places.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
@@ -69,7 +69,7 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewR
 import { callTool, contextToolNames, mcpTools, onToolTokenRevoked, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
+import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
 import { credentialExecution } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
@@ -3661,9 +3661,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       changedSettings(app.config, next, access.edit, access.owner);
     }
     if (proposed.security?.includes("approvals")) next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
-    // Which cloud backends may call tools over HTTP is the owner's, signed in as themselves (not a request trusted only for coming from this machine).
-    if (JSON.stringify(next.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools) && (who(req) !== OWNER || authOf(req)?.via === "local"))
-      throw new HttpError(403, "只有本人可以修改云端工具设置");
     // Outlet preferences and delegated approval grants change through the per-member outlet route.
     next.notify.outlets = app.config.notify.outlets;
     next.notify.outletAskGrants = app.config.notify.outletAskGrants;
@@ -3673,6 +3670,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.agents.ownSandbox = app.config.agents.ownSandbox;
     next.agents.fullAccess = app.config.agents.fullAccess;
     next.agents.networkPolicies = app.config.agents.networkPolicies;
+    const save = prepareConfigSave(next, app.home);
+    const candidate = save.candidate;
+    // Which cloud backends may call tools over HTTP is the owner's, signed in as themselves (not a request trusted only for coming from this machine).
+    if (JSON.stringify(candidate.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools) && (who(req) !== OWNER || authOf(req)?.via === "local"))
+      throw new HttpError(403, "只有本人可以修改云端工具设置");
     // Everything else is read on use; these are only read when the service starts.
     const atStartup: [string, (c: typeof next) => unknown][] = [
       ["监听地址和端口", (c) => [c.host, c.port]],
@@ -3680,16 +3682,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       ["Telegram", (c) => c.telegram],
       ["QQ / 微信（OneBot）", (c) => c.onebot],
     ];
-    const restart = atStartup.filter(([, pick]) => JSON.stringify(pick(app.config)) !== JSON.stringify(pick(next))).map(([label]) => label);
-    const changes = changedSettings(app.config, next, access.edit, access.owner);
-    const checkModel = access.owner && (Object.hasOwn(req.body as object, "embeddings") || embeddingId(app.config) !== embeddingId(next));
-    const change = checkModel ? modelChange(app, next) : null;
-    if (change && (req.query as { confirmEmbedding?: string }).confirmEmbedding !== change.token)
-      return reply.code(409).send({ confirmation: "embedding-model", ...change });
+    const restart = atStartup.filter(([, pick]) => JSON.stringify(pick(app.config)) !== JSON.stringify(pick(candidate))).map(([label]) => label);
+    const changes = changedSettings(app.config, candidate, access.edit, access.owner);
+    const checkModel = access.owner && (Object.hasOwn(req.body as object, "embeddings") || embeddingId(app.config) !== embeddingId(candidate));
+    const change = checkModel ? modelChange(app, candidate) : null;
+    const preview = change ?? (access.owner ? retainedIndexPreview(app, next, candidate) : null);
+    if (preview && (req.query as { confirmEmbedding?: string }).confirmEmbedding !== preview.token)
+      return reply.code(409).send({ confirmation: "embedding-model", ...preview });
+    const hasChanges = Object.keys(changes).length > 0;
+    if (hasChanges || change) save.write();
     if (change) replaceIndex(app, change.to);
     if (checkModel) resumeEmbedding(app);
-    if (!Object.keys(changes).length) return { config: settingsView(app.config, access.view, access.owner), restart };
-    saveConfig(next, app.home);
+    if (!hasChanges) return { config: settingsView(app.config, access.view, access.owner), restart };
     audit(app, who(req), "settings.update", "settings", { changes });
     // A provider taken out takes its key with it.
     for (const id of Object.keys(readKeys(app.home))) if (!id.startsWith("mcp:") && !next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);

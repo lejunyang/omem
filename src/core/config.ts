@@ -1507,7 +1507,14 @@ export function mergeConfig(base: unknown, ours: unknown, theirs: unknown): unkn
 export function saveConfig(config: Config, home?: string): void;
 export function saveConfig<T>(config: Config, home: string, validate: (candidate: Config) => T): T;
 export function saveConfig<T>(config: Config, home = omemHome(), validate?: (candidate: Config) => T) {
-  mkdirSync(home, { recursive: true });
+  const save = prepareConfigSave(config, home);
+  const result = validate?.(save.candidate);
+  save.write();
+  return result;
+}
+
+/** Inspect the merged settings and synchronously commit that same candidate after validation. */
+export function prepareConfigSave(config: Config, home: string) {
   const path = configPath(home);
   const base = loadedAs.get(resolve(home));
   let theirs: unknown;
@@ -1528,16 +1535,18 @@ export function saveConfig<T>(config: Config, home = omemHome(), validate?: (can
   }
   if (parsed && process.env.OMEM_PORT) parsed.port = Number(process.env.OMEM_PORT);
   const candidate = parsed ?? config;
-  const result = validate?.(candidate);
-  const security = candidate.security;
-  const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules } };
-  writeFileSync(path, JSON.stringify(persisted, null, 2) + "\n");
-  if (parsed) {
-    // Only the sections the file changed are replaced: others keep their objects (some are held by reference).
-    for (const k of Object.keys(parsed) as (keyof Config)[]) if (!same(config[k], parsed[k])) (config as Record<string, unknown>)[k] = parsed[k];
+  function write() {
+    mkdirSync(home, { recursive: true });
+    const security = candidate.security;
+    const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules } };
+    writeFileSync(path, JSON.stringify(persisted, null, 2) + "\n");
+    if (parsed) {
+      // Only the sections the file changed are replaced: others keep their objects (some are held by reference).
+      for (const k of Object.keys(parsed) as (keyof Config)[]) if (!same(config[k], parsed[k])) (config as Record<string, unknown>)[k] = parsed[k];
+    }
+    loadedAs.set(resolve(home), structuredClone(config));
   }
-  loadedAs.set(resolve(home), structuredClone(config));
-  return result;
+  return { candidate, write };
 }
 
 export function allProfiles(config: Config): AgentProfile[] {

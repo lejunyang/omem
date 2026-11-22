@@ -212,6 +212,53 @@ it.each(["个人材料", "项目材料", "混合更新", "旧问题", "未知消
   expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "个人材料" ? [[query]] : []);
 });
 
+it.each(["read_source", "read_conversation"])("个人关注用 %s 读取另一关注的项目原话，当轮和定时回查均只走全文与符号", async tool => {
+  const { app, embed, query, watch, conversationId, search } = watchSearchFixture();
+  const other = saveContext(app, { kind: "place", name: "另一条个人关注", spaceId: "personal", chats: ["other-group"] });
+  const externalId = "project-message";
+  // The single-message read relies on the queued origin. The conversation read also needs the later archive.
+  const queued = tool === "read_source" ? "allowed" : "personal";
+  const id = addMessage(app, other.conversationId!, "user", query, null, { sourceSpaces: [queued], externalId });
+  if (tool === "read_conversation") persistChatMessages(app, { chatId: "project-group", name: "项目群", spaceId: "allowed",
+    messages: [{ message_id: externalId, create_time: String(Date.now()), msg_type: "text", content: { text: query } }] });
+
+  const current = await receive(app, { channel: "listen", conversationId, speaker: "成员", text: "查另一条关注提到的函数", meta: { sourceSpaces: ["personal"] } });
+  const ctx = { app, runId: current.runId!, spaceId: "personal", actor: "agent" as const, spaces: ["personal"], tools: new Set([tool]) };
+  const read = await callTool(ctx, tool, tool === "read_source" ? { source: "msg:" + id } : { conversation: other.conversationId });
+  expect(read.isError).toBe(false);
+  expect(read.text).toContain(query);
+  await search(ctx.runId);
+  expect(embed).not.toHaveBeenCalled();
+
+  await trackProblem(app, ctx.runId, { title: "核对退款时限", state: "open", known: query, done_when: "核对完成", recheck_after: "10m" });
+  app.db.prepare("update runs set status='done' where id=?").run(ctx.runId);
+  const [problem] = problemsOf(app, watch.id);
+  expect(problem.sourceSpaces?.slice().sort()).toEqual(["allowed", "personal"]);
+  expect(await problemsDue(app, problem.recheckAt!)).toBe(1);
+  const check = threadMessages(app, conversationId).at(-1)!;
+  expect(check.text).toContain(query);
+  expect(check.meta).toMatchObject({ recheck: problem.id, sourceSpaces: problem.sourceSpaces });
+  const [{ run_id }] = all<{ run_id: string }>(app.db, "select run_id from messages where id=?", check.id);
+  await search(run_id);
+  expect(embed).not.toHaveBeenCalled();
+});
+
+it.each(["个人消息", "来源不明的消息", "来源不明的摘要"])("显式读取另一关注时只登记返回页中的材料：%s", async mode => {
+  const { app, embed, query, conversationId, search } = watchSearchFixture();
+  const other = saveContext(app, { kind: "place", name: "另一条个人关注", spaceId: "personal", chats: ["other-group"] });
+  const earlier = addMessage(app, other.conversationId!, "user", "之前的项目材料", null, { sourceSpaces: ["allowed"] });
+  app.db.prepare("update messages set created_at=? where id=?").run("2026-01-01T00:00:00.000Z", earlier);
+  addMessage(app, other.conversationId!, "user", query, null, mode === "来源不明的消息" ? {} : { sourceSpaces: ["personal"] });
+  if (mode === "来源不明的摘要") updateThread(app, other.conversationId!, { summary: "旧会话摘要" });
+  const current = await receive(app, { channel: "listen", conversationId, speaker: "成员", text: "只查最新消息", meta: { sourceSpaces: ["personal"] } });
+  const ctx = { app, runId: current.runId!, spaceId: "personal", actor: "agent" as const, spaces: ["personal"], tools: new Set(["read_conversation"]) };
+  const read = await callTool(ctx, "read_conversation", { conversation: other.conversationId, limit: 1 });
+  expect(read.text).toContain(query);
+  expect(read.text).not.toContain("之前的项目材料");
+  await search(ctx.runId);
+  expect(embed.mock.calls.map(([texts]) => texts)).toEqual(mode === "个人消息" ? [[query]] : []);
+});
+
 it("新会话带入旧问题正文后，主动搜索沿用问题来源", async () => {
   const { app, watch, embed, query, search, conversationId } = watchSearchFixture();
   const first = await receive(app, { channel: "listen", conversationId, text: query, speaker: "成员", meta: { sourceSpaces: ["allowed"] } });
