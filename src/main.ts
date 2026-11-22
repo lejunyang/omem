@@ -202,78 +202,78 @@ export async function boot(home?: string, opts: BootOptions = {}) {
           await credentials.tickCredentialRefreshes(app);
           await credentials.tickCredentialChecks(app);
         } catch (e) { console.warn("[omem] 检查账号与凭据失败：", (e as Error).message); }
-          finally { checking = false; }
-        };
-        setTimeout(tick, 20_000).unref();
-        setInterval(tick, 60_000).unref();
+        finally { checking = false; }
+      };
+      setTimeout(tick, 20_000).unref();
+      setInterval(tick, 60_000).unref();
+    }
+    // Wiki pages whose originals changed are checked, and loose pages sorted into folders (src/wiki/upkeep.ts).
+    void import("./wiki/upkeep.ts").then((m) => m.startWikiUpkeep(app));
+    // The agents' own skill folders (agents/agent-skills.ts): nothing while the takeover is off.
+    {
+      let last = 0;
+      const tick = () => {
+        // Skills that arrived or changed go to the skill organizer once they settle (agentSkills.autoOrganize).
+        import("./agents/agent-skills.ts").then((m) => m.scheduleSkillOrganize(app)).catch((e) => console.warn("[omem] 安排整理技能分组失败：", e.message));
+        const every = app.config.agentSkills.everyMinutes * 60_000;
+        if (!app.config.agentSkills.takeOver || Date.now() - last < every - 5_000) return;
+        last = Date.now();
+        import("./agents/agent-skills.ts").then((m) => m.tickAgentSkills(app)).catch((e) => console.warn("[omem] 收取 Agent 自带的技能失败：", e.message));
+      };
+      setTimeout(tick, 15_000).unref();
+      setInterval(tick, 60_000).unref();
+    }
+    // The owner's commands in one-to-one chats (lark.commands; nothing happens while it is off).
+    setInterval(() => {
+      if (app.config.lark.commands.enabled)
+        import("./channels/lark-commands.ts").then((m) => m.pollOwnerCommands(app)).catch((e) => console.warn("[omem] 读取私聊指令失败：", e.message));
+    }, 60_000).unref();
+    // Rules set to check every minute (a login code someone asks for): the owner's search, not the capture.
+    setInterval(() => {
+      import("./rules/fast.ts").then((m) => m.pollFastRules(app)).catch((e) => console.warn("[omem] 规则快速检查失败：", e.message));
+    }, 60_000).unref();
+    // Documents rules watch that the bot cannot subscribe to: checked on the rule's schedule instead.
+    setInterval(() => {
+      import("./channels/lark-doc-events.ts").then((m) => m.pollRuleDocs(app)).catch((e) => console.warn("[omem] 定时检查规则盯的文档失败：", e.message));
+    }, 60_000).unref();
+    // The owner's meetings, for meeting rules and 「关注」 (nothing runs while neither wants them).
+    setInterval(() => {
+      import("./channels/lark-meetings.ts").then((m) => m.tickMeetings(app)).catch((e) => console.warn("[omem] 跟进会议失败：", e.message));
+    }, 15_000).unref();
+    import("./channels/lark-messages.ts")
+      .then((m) => m.cleanUpLarkIds(app))
+      .catch((e) => console.warn("[omem] 整理飞书聊天里的 id 失败：", e.message));
+    // Long jobs interrupted by a restart carry on (runs are re-queued by the worker itself).
+    import("./channels/lark-docs.ts")
+      .then((m) => m.resumeRefresh(app))
+      .catch((e) => console.warn("[omem] 继续重新读取飞书文档失败：", e.message));
+    // Answers given before citations were counted count too (once).
+    import("./sources/cites.ts")
+      .then((m) => m.backfillCites(app))
+      .catch((e) => console.warn("[omem] 统计原件被引用次数失败：", e.message));
+    import("./channels/lark-wiki.ts")
+      .then((m) => m.resumeCrawls(app))
+      .catch((e) => console.warn("[omem] 继续爬取飞书知识库失败：", e.message));
+    // Compressing attachments: a job cut off by the restart carries on; media.auto picks up new files.
+    void import("./core/media.ts").then((m) => {
+      try {
+        if (m.resumeMediaJob(app)) console.log("[omem] 继续上次没做完的附件压缩");
+      } catch (e) {
+        console.warn("[omem] 继续附件压缩失败：", (e as Error).message);
       }
-      // Wiki pages whose originals changed are checked, and loose pages sorted into folders (src/wiki/upkeep.ts).
-      void import("./wiki/upkeep.ts").then((m) => m.startWikiUpkeep(app));
-      // The agents' own skill folders (agents/agent-skills.ts): nothing while the takeover is off.
-      {
-        let last = 0;
-        const tick = () => {
-          // Skills that arrived or changed go to the skill organizer once they settle (agentSkills.autoOrganize).
-          import("./agents/agent-skills.ts").then((m) => m.scheduleSkillOrganize(app)).catch((e) => console.warn("[omem] 安排整理技能分组失败：", e.message));
-          const every = app.config.agentSkills.everyMinutes * 60_000;
-          if (!app.config.agentSkills.takeOver || Date.now() - last < every - 5_000) return;
-          last = Date.now();
-          import("./agents/agent-skills.ts").then((m) => m.tickAgentSkills(app)).catch((e) => console.warn("[omem] 收取 Agent 自带的技能失败：", e.message));
-        };
-        setTimeout(tick, 15_000).unref();
-        setInterval(tick, 60_000).unref();
-      }
-      // The owner's commands in one-to-one chats (lark.commands; nothing happens while it is off).
       setInterval(() => {
-        if (app.config.lark.commands.enabled)
-          import("./channels/lark-commands.ts").then((m) => m.pollOwnerCommands(app)).catch((e) => console.warn("[omem] 读取私聊指令失败：", e.message));
+        try { m.tickAutoCompress(app); } catch (e) { console.warn("[omem] 自动压缩附件失败：", (e as Error).message); }
       }, 60_000).unref();
-      // Rules set to check every minute (a login code someone asks for): the owner's search, not the capture.
-      setInterval(() => {
-        import("./rules/fast.ts").then((m) => m.pollFastRules(app)).catch((e) => console.warn("[omem] 规则快速检查失败：", e.message));
-      }, 60_000).unref();
-      // Documents rules watch that the bot cannot subscribe to: checked on the rule's schedule instead.
-      setInterval(() => {
-        import("./channels/lark-doc-events.ts").then((m) => m.pollRuleDocs(app)).catch((e) => console.warn("[omem] 定时检查规则盯的文档失败：", e.message));
-      }, 60_000).unref();
-      // The owner's meetings, for meeting rules and 「关注」 (nothing runs while neither wants them).
-      setInterval(() => {
-        import("./channels/lark-meetings.ts").then((m) => m.tickMeetings(app)).catch((e) => console.warn("[omem] 跟进会议失败：", e.message));
-      }, 15_000).unref();
-      import("./channels/lark-messages.ts")
-        .then((m) => m.cleanUpLarkIds(app))
-        .catch((e) => console.warn("[omem] 整理飞书聊天里的 id 失败：", e.message));
-      // Long jobs interrupted by a restart carry on (runs are re-queued by the worker itself).
-      import("./channels/lark-docs.ts")
-        .then((m) => m.resumeRefresh(app))
-        .catch((e) => console.warn("[omem] 继续重新读取飞书文档失败：", e.message));
-      // Answers given before citations were counted count too (once).
-      import("./sources/cites.ts")
-        .then((m) => m.backfillCites(app))
-        .catch((e) => console.warn("[omem] 统计原件被引用次数失败：", e.message));
-      import("./channels/lark-wiki.ts")
-        .then((m) => m.resumeCrawls(app))
-        .catch((e) => console.warn("[omem] 继续爬取飞书知识库失败：", e.message));
-      // Compressing attachments: a job cut off by the restart carries on; media.auto picks up new files.
-      void import("./core/media.ts").then((m) => {
+    });
+    // The vector change log keeps its recent part (search/vectors.ts).
+    setInterval(() => {
+      void import("./search/vectors.ts").then((m) => m.pruneVectorLog(app)).catch((e) => console.warn("[omem] 清理向量变更记录失败：", (e as Error).message));
+    }, 3600_000).unref();
+    // Vectors stored as float32 values are stored packed, a small batch a second, until none are left (search/vectors.ts).
+    void import("./search/vectors.ts").then((m) => {
+      const step = () => {
         try {
-          if (m.resumeMediaJob(app)) console.log("[omem] 继续上次没做完的附件压缩");
-        } catch (e) {
-          console.warn("[omem] 继续附件压缩失败：", (e as Error).message);
-        }
-        setInterval(() => {
-          try { m.tickAutoCompress(app); } catch (e) { console.warn("[omem] 自动压缩附件失败：", (e as Error).message); }
-        }, 60_000).unref();
-      });
-      // The vector change log keeps its recent part (search/vectors.ts).
-      setInterval(() => {
-        void import("./search/vectors.ts").then((m) => m.pruneVectorLog(app)).catch((e) => console.warn("[omem] 清理向量变更记录失败：", (e as Error).message));
-      }, 3600_000).unref();
-      // Vectors stored as float32 values are stored packed, a small batch a second, until none are left (search/vectors.ts).
-      void import("./search/vectors.ts").then((m) => {
-        const step = () => {
-          try {
-            if (m.packStoredVectors(app) > 0) setTimeout(step, 1000).unref();
+          if (m.packStoredVectors(app) > 0) setTimeout(step, 1000).unref();
         } catch (e) {
           console.warn("[omem] 向量改存紧凑格式失败：", (e as Error).message);
           setTimeout(step, 60_000).unref();

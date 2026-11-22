@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type { CredentialContext } from "../../packages/plugin-sdk/credential.ts";
@@ -30,7 +30,10 @@ type Row = { user_id: string; kind: string; state: Hold["state"]; account_name: 
   last_used_at: string | null; error: string | null; sharing: string; notified: string };
 const day = (app: App, at = Date.now()) => zonedParts(at, app.config.timezone).date;
 const refreshAt = (expiresAt?: number) => expiresAt === undefined ? undefined : Math.max(expiresAt - 600_000, Date.now() + 60_000);
-const member = (app: App, id: string) => id !== OWNER && activeUser(findUser(app, id)) && findUser(app, id)?.kind === "person";
+function member(app: App, id: string) {
+  const user = findUser(app, id);
+  return id !== OWNER && activeUser(user) && user.kind === "person";
+}
 const secretProvider = (kind: string) => `credential:${kind}`;
 const keyOf = (app: App, id: string, kind: string) => `${app.home}|${id}|${kind}`;
 
@@ -91,7 +94,7 @@ export function credentialAccountView(app: App, id: string, backend: string) {
   return m ? { ...credentialHold(app, id, m.kind), kind: m.kind, name: m.name } : null;
 }
 function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal): CredentialContext {
-  const home = id === OWNER ? homedir() : accountHome(app, id);
+  const home = id === OWNER ? homedir() : ensureAccountHome(app, id);
   const env = id === OWNER ? { ...process.env } : Object.assign({}, ...m.provides.backends.map(b => {
     const e = accountEntry(app, b); return e ? accountEnv(app, id, e) : {};
   }));
@@ -121,7 +124,7 @@ async function timed<T>(m: CredentialMethod, ms: number, work: (signal: AbortSig
   const timer = setTimeout(() => ctrl.abort(new Error("凭据操作超时")), ms);
   const signal = AbortSignal.any([m.signal, ctrl.signal]);
   try { return await untilAbort(signal, () => work(signal)); }
-  finally { clearTimeout(timer); }
+  finally { clearTimeout(timer); ctrl.abort(); }
 }
 function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | "expiring" | "failed") {
   const hold = credentialHold(app, id, m.kind), today = day(app);
@@ -153,7 +156,8 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
   let replied = false;
   const answer = (fn: () => void) => { if (!replied) { replied = true; clearTimeout(first); fn(); } };
   const first = setTimeout(() => abort.abort(new Error("60 秒内没有给出登录链接")), 60_000);
-  const signal = AbortSignal.any([abort.signal, m.signal, AbortSignal.timeout(660_000)]);
+  const timeout = AbortSignal.timeout(660_000);
+  const signal = AbortSignal.any([abort.signal, m.signal, timeout]);
   void serial(key, async () => {
     try {
       const ctx = context(app, id, m, signal);
@@ -171,12 +175,12 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
       remindHold(app, id, m);
       answer(() => resolve({ done: true }));
     } catch {
-      if (!signal.aborted || !replied) {
+      if (!signal.aborted || timeout.aborted || !replied) {
         save(app, id, kind, { ...credentialHold(app, id, kind), state: "expired", error: "授权或供给失败，请重新登录", checkedAt: now() });
         reminder(app, id, m, "failed");
       }
       answer(() => reject(new HttpError(502, signal.aborted ? "登录取消或超时，请重试" : "授权或供给失败，请重新登录")));
-    } finally { clearTimeout(first); if (logins.get(key) === p) logins.delete(key); }
+    } finally { clearTimeout(first); abort.abort(); if (logins.get(key) === p) logins.delete(key); }
   });
   return p.reply;
 }
@@ -211,9 +215,9 @@ export function checkCredential(app: App, id: string, kind: string) {
     if (!m.check) return s;
     try {
       const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal))));
-      const expiresAt = result.expiresAt ?? s.expiresAt;
+      const expiresAt = result.state === "missing" ? undefined : result.expiresAt ?? s.expiresAt;
       save(app, id, kind, { ...credentialHold(app, id, kind), state: result.state === "missing" ? "none" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in",
-        user: result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined });
+        user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined });
     } catch { save(app, id, kind, { ...credentialHold(app, id, kind), checkedAt: now(), checkedDay: day(app), error: "检查失败，请稍后重试" }); reminder(app, id, m, "failed"); }
     remindHold(app, id, m);
     return credentialHold(app, id, kind);
@@ -247,8 +251,13 @@ export function setCredentialSharing(app: App, id: string, kind: string, body: u
   return { kind, sharing };
 }
 export async function tickCredentialRefreshes(app: App, at = Date.now()) {
-  const rows = all<Row>(app.db, "select * from credential_holds indexed by credential_refresh_due where state='logged-in' and refresh_at<=? order by refresh_at limit 32", at);
-  for (const r of rows) if (r.user_id !== OWNER && member(app, r.user_id) && credentialMethod(r.kind)) await refreshCredential(app, r.user_id, r.kind);
+  const kinds = credentialMethods().map(m => m.kind);
+  if (!kinds.length) return 0;
+  const rows = all<Row>(app.db, `select h.* from credential_holds h indexed by credential_refresh_due
+    join users u on u.id=h.user_id where h.state='logged-in' and h.refresh_at<=? and h.user_id!=?
+    and h.kind in (${kinds.map(() => "?").join(",")}) and u.disabled_at is null and u.status='active'
+    order by h.refresh_at limit 32`, at, OWNER, ...kinds);
+  for (const r of rows) await refreshCredential(app, r.user_id, r.kind);
   return rows.length;
 }
 export async function tickCredentialChecks(app: App, at = Date.now()) {
@@ -260,13 +269,18 @@ export async function tickCredentialChecks(app: App, at = Date.now()) {
   let count = 0;
   for (const r of rows) {
     const m = credentialMethod(r.kind);
-    if (!m?.check || r.user_id !== OWNER && (r.state === "none" || !member(app, r.user_id))) { if (m && r.state !== "none" && member(app, r.user_id)) remindHold(app, r.user_id, m); run(app.db, "update credential_holds set check_day=? where user_id=? and kind=?", day(app, at), r.user_id, r.kind); continue; }
+    if (!m?.check || r.user_id !== OWNER && (r.state === "none" || !member(app, r.user_id))) {
+      if (m && r.state !== "none" && member(app, r.user_id)) remindHold(app, r.user_id, m);
+      run(app.db, "update credential_holds set check_day=? where user_id=? and kind=?", day(app, at), r.user_id, r.kind);
+      continue;
+    }
     await checkCredential(app, r.user_id, r.kind); count++;
   }
   return count;
 }
+const installed = (path: string) => statSync(path, { throwIfNoEntry: false })?.isDirectory();
 export function credentialInstallDirs(app: App) {
-  return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m).install).filter(existsSync))];
+  return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m).install).filter(installed))];
 }
 export function credentialStatePaths(app: App) { return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m).state))]; }
 export function credentialStateRels(app: App) {
@@ -285,7 +299,7 @@ function viewOf(app: App, id: string, m: CredentialMethod) {
   const s = credentialHold(app, id, m.kind), p = logins.get(keyOf(app, id, m.kind));
   const state: CredentialState = p ? "logging-in" : s.state === "expired" || s.expiresAt !== undefined && s.expiresAt <= Date.now() ? "expired"
     : !usable(app, id, m.kind) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
-  const missing = declaredPaths(app, m).install.filter(p => !existsSync(p));
+  const missing = declaredPaths(app, m).install.filter(p => !installed(p));
   return { kind: m.kind, plugin: m.plugin, name: m.name, describe: m.describe ?? "", required: !!m.required, state,
     user: s.user, expiresAt: s.expiresAt, checkedAt: s.checkedAt, error: s.error, sharing: s.sharing,
     backends: m.provides.backends, commands: m.provides.commands.map(c => c.name), login: id !== OWNER && sandboxSupport().ok,
