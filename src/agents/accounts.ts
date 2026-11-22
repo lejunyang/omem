@@ -19,7 +19,7 @@ import { canonical } from "./own-sandbox.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
 import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
-import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, suppliedCredentialKind, checkCredential, credentialInstallDirs, credentialStateRels, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
+import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, suppliedCredentialKind, checkCredential, credentialInstallDirs, credentialStateRels, heldCredentialDeclarations, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
 
 /**
  * Each omem user's own AI accounts (docs/v2/agent-accounts.md). A member logs in to a backend once
@@ -742,8 +742,17 @@ export function clearAccountPaths(app: App, userId: string, rels: string[], exce
  * is fine), the token and the plugin secrets, the backend's part of the folder — the whole account
  * folder when nothing else is left in it.
  */
-export async function removeAccount(app: App, userId: string, backend: string) {
+export async function removeAccount(app: App, userId: string, backend: string, actor = userId) {
   const entry = requireEntry(app, backend);
+  const sources = [...heldCredentialDeclarations(app, userId)].filter(([, m]) => m.provides.backends.includes(backend));
+  if (sources.length) {
+    const base = actor === userId ? "/api/credentials" : `/api/credentials/${userId}`;
+    const details = sources.map(([kind, { name, provides }]) => {
+      const commands = provides.commands.map(c => c.name).join("、") || "无";
+      return `${name}（${kind}）覆盖后端 ${provides.backends.join("、")}，命令 ${commands}。退出整份凭据请调用 DELETE ${base}/${kind}`;
+    });
+    throw new HttpError(409, `${entry.name} 的登录由凭据供给，请按凭据管理。\n${details.join("\n")}`);
+  }
   const key = loginKey(app, userId, backend);
   const pending = logins.get(key);
   if (pending) {

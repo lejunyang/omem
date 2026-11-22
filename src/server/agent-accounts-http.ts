@@ -88,7 +88,7 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
   server.delete("/api/agent-accounts/:user/:backend", async (req) => {
     const { user } = req.params as { user: string };
     if (!findUser(app, user) || user === OWNER) throw new HttpError(404, "没有这个成员");
-    await removeAccount(app, user, backendOf(req));
+    await removeAccount(app, user, backendOf(req), who(req));
     return { ok: true };
   });
 }

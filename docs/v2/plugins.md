@@ -33,7 +33,7 @@ plugins/<id>/
 
 `api.credential`（SDK `credential.ts`）用 `login(ctx, show)` 登记一种授权，声明 `provides.backends`、命令行安装和状态目录，以及第二期才使用的只读、资源和失败匹配。清单要写 `permissions.credential: true`，选择“在 omem 里运行”。可运行的离线示例见 [acmeauth](../../examples/plugins/acmeauth/README.md)。一种凭据供给多个后端，旧 `api.agentLogin` 保持原样。
 
-登录及续签成功后宿主调用 `provide`，秘密按人存入密钥库，不进持有表和返回值。成员在后端账号页检查供给的登录时，宿主读取这份持有，有 `check` 就执行。退出后宿主清理独占的供给文件。本人只调用 `check`，HOME 是本机的主目录；成员 HOME 是他的账号目录。安装目录只读，状态目录相对 HOME，路径受现有沙箱限制。凭据插件链接开发目录也校验代码指纹，改声明或回调需重新确认。详见 [凭据](credentials.md)。
+登录及续签成功后宿主调用 `provide`，秘密按人存入密钥库，不进持有表和返回值。成员在后端账号页检查供给的登录时，宿主读取这份持有，有 `check` 就执行。单个后端的退出请求返回 409 并列出供给范围。退出整份凭据后，宿主清理它独占的供给文件。本人只调用 `check`，HOME 是本机的主目录；成员 HOME 是他的账号目录。安装目录只读，状态目录相对 HOME，路径受现有沙箱限制。凭据插件链接开发目录也校验代码指纹，改声明或回调需重新确认。详见 [凭据](credentials.md)。
 
 ### 隔离运行
 

@@ -122,6 +122,7 @@ api.credential({
 
 - `GET /api/credentials`（自己的持有和清单）、`POST /api/credentials/:kind/login`、`DELETE /api/credentials/:kind`、`PUT /api/credentials/:kind/sharing`；本人另有 `GET /api/credentials/all`（每个成员登了什么、出借给谁，不含凭据）和 `DELETE /api/credentials/:user/:kind`（替成员退出）。
 - `:kind` 是完整的 `<插件>:<凭据 id>`。登录返回 `{url, code?}` 或 `{done: true}`，之后从自己的清单读取当前状态。出借设置的请求体为 `{"scope":"self"}`、`{"scope":"all"}` 或 `{"scope":"members","members":["member-a"]}`。成员只能操作自己的凭据。
+- 对凭据供给的后端，成员调用 `DELETE /api/me/agent-accounts/:backend` 或本人调用 `DELETE /api/agent-accounts/:user/:backend` 会收到 HTTP 409。响应为 `{error: string}`，逐份列出凭据名称、完整 kind、覆盖的后端和命令，以及当前调用者可用的凭据 DELETE 路径。持有、供给文件、出借和续签保留。调用对应的凭据 DELETE 才会退出整份授权。
 - 设置：`credentials.lending`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`，都只有本人能改，归“安全”区域。
 - 成员沙箱里只读挂载声明过的 `install`；本人沙箱的默认可写清单加上声明过的 `state`。
 

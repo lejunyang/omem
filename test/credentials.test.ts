@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/core/app.ts";
 import { testApp } from "./helpers.ts";
 import { all, migrations, one, run } from "../src/core/db.ts";
-import { createUser } from "../src/core/users.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
 import { closeVault, connectionSecrets, listConnections, storeConnection } from "../src/auth/vault.ts";
 import { accountHome, accountRun, accountState, checkAccount, ensureAccountHome, loggedIn, withAccount } from "../src/agents/accounts.ts";
 import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
@@ -78,6 +78,73 @@ it("检查凭据供给的后端沿用持有，退出后登录文件和后端登�
   await logoutCredential(app, "ann", "sample:sso");
   expect(existsSync(file)).toBe(false);
   expect(loggedIn(app, "ann", "traex")).toBe(false);
+});
+
+it.each([
+  { actor: "成员", backendPath: "/api/me/agent-accounts/echo", credentialPath: "/api/credentials/sample:sso" },
+  { actor: "本人", backendPath: "/api/agent-accounts/ann/echo", credentialPath: "/api/credentials/ann/sample:sso" },
+])("$actor 从旧接口退出供给的后端收到 409，只有退出整份凭据才停止出借和续签", async ({ actor, backendPath, credentialPath }) => {
+  const { startServer } = await import("../src/server/http.ts");
+  const kind = "sample:sso", home = accountHome(app, "ann");
+  const backends = ["echo", "echo-lite"];
+  const profiles = backends.map(id => agentProfileSchema.parse({ id, transport: "acp", command: "fixture-backend",
+    account: { owns: ["." + id] } }));
+  app.config.agents.profiles = profiles;
+  const dirs = [".echo", ".echo-lite", ".acme/data"];
+  const refresh = vi.fn(async () => ({ expiresAt: Date.now() + 7200_000 }));
+  const logout = vi.fn(async () => {});
+  add({ provides: { backends, commands: [{ name: "acme", state: [".acme/data"] }] }, refresh, logout,
+    async provide(ctx) {
+      for (const dir of dirs) {
+        mkdirSync(join(ctx.home, dir), { recursive: true });
+        writeFileSync(join(ctx.home, dir, "login"), ctx.userId);
+      }
+    } });
+  const server = await startServer(app, { port: 0, quiet: true });
+  const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
+  const caller = actor === "成员" ? headers : undefined;
+  try {
+    expect((await server.inject({ method: "POST", url: "/api/credentials/" + kind + "/login", headers })).statusCode).toBe(200);
+    await until(() => credentialHold(app, "ann", kind).state === "logged-in");
+    setCredentialSharing(app, "ann", kind, { scope: "members", members: ["bob"] });
+    const hold = credentialHold(app, "ann", kind);
+    expect(hold.refreshAt).toEqual(expect.any(Number));
+    const accountList = async () => (await server.inject({ url: "/api/me/agent-accounts", headers })).json().backends;
+    async function expectAvailable() {
+      const accounts = await accountList();
+      for (const dir of dirs) expect(readFileSync(join(home, dir, "login"), "utf8")).toBe("ann");
+      for (const profile of profiles) {
+        expect(accounts).toContainEqual(expect.objectContaining({ id: profile.id, state: "logged-in", method: kind }));
+        expect(loggedIn(app, "ann", profile.id)).toBe(true);
+        for (const requester of ["ann", "bob"])
+          expect(selectedCredential(withAccount(app, requester, profile))).toMatchObject({ holder: "ann", kind, requester });
+      }
+      expect(credentialHold(app, "ann", kind)).toEqual(hold);
+    }
+    await expectAvailable();
+    const refused = await server.inject({ method: "DELETE", url: backendPath, headers: caller });
+    expect(refused.statusCode).toBe(409);
+    const { error } = refused.json();
+    for (const detail of ["示例授权", kind, ...backends, "acme", "DELETE " + credentialPath]) expect(error).toContain(detail);
+    expect(error).not.toContain("fixture-secret");
+    expect(logout).not.toHaveBeenCalled();
+    await expectAvailable();
+    expect(await tickCredentialRefreshes(app, hold.refreshAt)).toBe(1);
+    expect(refresh).toHaveBeenCalledOnce();
+
+    expect((await server.inject({ method: "DELETE", url: credentialPath, headers: caller })).statusCode).toBe(200);
+    expect(logout).toHaveBeenCalledOnce();
+    expect(credentialHold(app, "ann", kind)).toMatchObject({ state: "none", refreshAt: undefined });
+    expect(await tickCredentialRefreshes(app, Date.now() + 86400_000)).toBe(0);
+    expect(refresh).toHaveBeenCalledOnce();
+    const accounts = await accountList();
+    for (const dir of dirs) expect(existsSync(join(home, dir, "login"))).toBe(false);
+    for (const profile of profiles) {
+      expect(accounts).toContainEqual(expect.objectContaining({ id: profile.id, state: "none" }));
+      expect(loggedIn(app, "ann", profile.id)).toBe(false);
+      for (const requester of ["ann", "bob"]) expect(() => withAccount(app, requester, profile)).toThrow(/登录/);
+    }
+  } finally { await server.close(); }
 });
 
 it("升级旧原生检查缓存后，自己的凭据过期会改借有效登录或提示登录", async () => {
