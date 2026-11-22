@@ -35,7 +35,7 @@ import { isFixes, tickFixes, cancelFixReruns, fixModelStage, fixMinutes } from "
 import { pushAuthorized, pushSummary } from "../studies/push.ts";
 import { isClosed } from "../items/store.ts";
 import { initFollow, followContexts, followLimit, followView, shownChanges, changesBrief } from "./follow.ts";
-import { atomic, changeStage, flushProgress, markProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
+import { atomic, changeStage, flushProgress, markProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl, type StageLink } from "./store.ts";
 import { saveReview, storedReview, type FlowEnd } from "./review.ts";
 import { stopCodeWork } from "../agents/code-steer.ts";
 
@@ -714,7 +714,7 @@ function escalateStage(app: App, f: ItemFlow, d: FlowStage, s: StageRow, feedbac
   return true;
 }
 
-export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; pluginEvidence?: StageControl["pluginEvidence"]; note: string; waitingOn?: string; unsure?: boolean };
+export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; pluginEvidence?: StageControl["pluginEvidence"]; links?: StageLink[]; note: string; waitingOn?: string; unsure?: boolean };
 export function reportStage(app: App, itemId: string, stageId: string, report: StageReport, by: FlowActor) {
   return serial(app, itemId, async () => {
     const f = running(app, itemId), d = definition(f, stageId);
@@ -743,6 +743,11 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     s = { ...s, control: finishUsage(app, s, new Date()) };
     withdraw(app, s);
     if (report.pluginEvidence) s.control.pluginEvidence = report.pluginEvidence;
+    // A later report without links keeps the earlier ones: the sheet the owner is asked to confirm stays on the stage.
+    if (report.links) {
+      if (report.links.some((l) => !/^https?:\/\//i.test(l.url))) throw new HttpError(400, "链接要以 http:// 或 https:// 开头");
+      s.control.links = report.links.length ? report.links : undefined;
+    }
     if (asksOwner) {
       const askId = question(app, f, d, { ...s, askId: null }, "done", d.by === "owner" ? { ask: "这一段是你来做的，助手说已经做完了。是这样吗？", result: report.note, evidence, after: true } : { ask: "助手说这一段做完了，确认吗？不对就点“还不行”写意见。", result: report.note, evidence, after: true }, ["确认", "还不行"]);
       changeStage(app, itemId, stageId, "doing", { askId, evidence, waitingOn: "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
@@ -1086,7 +1091,7 @@ export function flowView(app: App, id: string) {
       const pluginEvidence = review
         ? [...(s.control.pluginEvidence ?? s.evidence.map(text => ({ text }))), ...review.failed.flatMap(v => v.evidence ?? [])]
         : s.control.pluginEvidence ?? [];
-      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, pluginEvidence, gateReview: review ? { ...review, ask: reviewAskId ? gateAsks.get(reviewAskId) ?? null : null } : undefined, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, result: stageResult(app, id, s), gate: d.gate, fixed: d.fixed,
+      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, links: s.control.links ?? [], pluginEvidence, gateReview: review ? { ...review, ask: reviewAskId ? gateAsks.get(reviewAskId) ?? null : null } : undefined, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, result: stageResult(app, id, s), gate: d.gate, fixed: d.fixed,
         round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: isFixes(d) ? fixMinutes(app, s, new Date()) : usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
         carrier: { kind, ...(typeof d.by === "object" && "runner" in d.by ? { runner: runnerIdentity(d.by.runner) } : {}), label: typeof d.by === "object" && "runner" in d.by ? describeStage(d).carrier : kind === "trials" ? "助手，一个一个去试" : kind === "fixes" ? "助手，一条一条去改" : objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link, ...(object.statusLabel !== undefined ? { statusLabel: object.statusLabel, fields: object.fields ?? [], disabled: !!object.disabled } : {}) } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), upstream: s.control.upstream ? { askId: s.control.upstream.askId, stage: s.control.upstream.stage, name: stageName(f!, s.control.upstream.stage), reason: s.control.upstream.reason } : null, tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId), shots: stageShots(app, id, d.id, f!.startedAt, s.round, s.control.runId) };

@@ -16,6 +16,8 @@ export type StageControl = {
   gateReview?: import("./plugin-gates.ts").GateReview;
   gateReviewResult?: { review: import("./plugin-gates.ts").GateReview; askId: string };
   pluginEvidence?: import("../../packages/plugin-sdk/server.ts").FlowEvidence[];
+  /** What the carrier handed the owner to open (a sheet to fill in, a doc to confirm, a preview), shown on the stage. */
+  links?: StageLink[];
   objectAfter?: string;
   recorded?: boolean;
   gateLimit?: boolean; grantedGate?: boolean;
@@ -34,6 +36,7 @@ export type StageControl = {
   /** An upstream stage was reopened while this one was being done: the card asking the owner whether to stop it. */
   upstream?: { askId: string; stage: string; reason: string };
 };
+export type StageLink = { label: string; url: string };
 export type StageRow = {
   itemId: string; id: string; state: StageState; attempt: number; enteredAt: string | null; doneAt: string | null;
   by: string | null; waitingOn: string | null; evidence: string[]; note: string; askId: string | null;
@@ -121,7 +124,10 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
   const asked = state === "blocked" && !!by.runId && !!one(app.db, "select 1 from asks where run_id=? and status='pending' limit 1", by.runId);
   // A result or a stop from a run carries what it saw: its screenshots go on the card too.
   const images = what && by.runId && (state === "done" || state === "blocked") ? runImages(app, [by.runId]).map((a) => a.id) : [];
-  if (what && !asked) markProgress(app, itemId, { head: `「${name}」${what}`, note: note ? cardText(note, state === "done" || state === "blocked" ? 3000 : 300) : "" }, state === "blocked" && ownerWait(next.waitingOn), images);
+  // What it handed the owner to open goes on the card as links, not only on the work page.
+  const links = state === "done" || state === "blocked" ? (next.control.links ?? []).map((l) => `[${l.label.replace(/[[\]]/g, "")}](${l.url})`).join("　") : "";
+  const text = [note ? cardText(note, state === "done" || state === "blocked" ? 3000 : 300) : "", links && `交给你看：${links}`].filter(Boolean).join("\n\n");
+  if (what && !asked) markProgress(app, itemId, { head: `「${name}」${what}`, note: text }, state === "blocked" && ownerWait(next.waitingOn), images);
   return next;
 }
 

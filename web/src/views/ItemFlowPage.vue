@@ -162,6 +162,10 @@ function openRef(r: string) {
             <ShotGrid v-if="images(t.artifacts).length" :items="images(t.artifacts)" />
             <RunArtifacts v-if="others(t.artifacts).length" :items="others(t.artifacts)" />
           </div>
+          <p v-if="s.links?.length" class="refs small">
+            交给你看：
+            <a v-for="l in s.links" :key="l.url" :href="l.url" target="_blank" rel="noopener noreferrer" :title="l.url">{{ l.label }}</a>
+          </p>
           <p v-if="s.evidence.length || s.object || s.carrier.link" class="refs small muted">
             依据：
             <a v-if="s.object" :href="s.object.link">{{ s.object.title }}（{{ s.object.statusLabel ?? s.object.status }}）</a>

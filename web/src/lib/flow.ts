@@ -6,6 +6,8 @@ export type FlowStage = {
   id: string; name: string; instruction: string; state: StageState; attempt: number;
   since: string; enteredAt: string | null; doneAt: string | null; by: string | null;
   waitingOn: string | null; evidence: string[]; note: string; gate: string; fixed: boolean;
+  /** What the carrier handed you to open (a sheet to fill in, a doc to confirm); absent from an older server. */
+  links?: { label: string; url: string }[];
   /** `runner`: the plugin's job the stage is given to, by full name and display name (the id again when its plugin is gone). */
   question: string | null; carrier: { kind: string; label: string; link?: string; runner?: { id: string; name: string } };
   /** What the stage follows. A plugin's object says its state in words and may carry a few fields. */

@@ -21,6 +21,10 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 流程阶段交给本人看的链接（2026-11-22）
+
+阶段卡住等本人确认一份表格时，卡片和事项页上只列依据的标题，表格地址藏在依据原件里，本人找不到要看的东西。`stage_report` 加 `links: [{label, url}]`（http(s)，最多 10 个），存进阶段的 `control.links`：再交一次不带 `links` 的结果保留上次的，传空数组清掉。事项页这一段多一行“交给你看”（`ItemFlow.vue`、`ItemFlowPage.vue`），进度视图里链接排在依据前面（`outputs` 的 `kind: "link"`，新标签页打开），做完或卡住时给本人的进度卡末尾带“交给你看：[名称](地址)”（`src/flows/store.ts`）。`roles/_common.md` 的“流程里的一个阶段”要求等本人确认某份东西而卡住时必须带上链接。读起：`src/flows/engine.ts` 的 `reportStage`、`src/agents/progress.ts` 的 `flowView`；测试 `test/flows.test.ts`“卡住等本人确认一份表格时带上链接”。
+
 ## 聊天交办的后台任务复用持有人的同意（2026-11-22）
 
 从 `src/core/db.ts` 的 `credential_task_runs` 读起。发起聊天结束后，后台交办仍可保存和复用任务同意。同一聊天另开的任务要单独询问。任务链最后一个运行结束时清除授权。

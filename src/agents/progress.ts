@@ -24,7 +24,7 @@ export const states = {
   trial: { queued: "queued", running: "running", reported: "submitted", skipped: "cancelled" },
 } as const satisfies Record<string, Record<string, TaskStatus>>;
 
-type Output = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page"; ref: string; label: string; target?: EvidenceTarget };
+type Output = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page" | "link"; ref: string; label: string; target?: EvidenceTarget };
 type Decision = { by?: string; at?: string; ref?: string; result: string; note?: string };
 export type ProgressTask = {
   id: string; href: string; title: string; state: TaskStatus; goal?: string; accept?: string; needs?: string[]; waitingOn?: string;
@@ -248,10 +248,14 @@ function flowView(app: App, reader: Reader, graph: Forest, f: ItemFlow, instance
     const status = s?.state ?? "pending";
     return [task(graph, [...ids, s?.control.runId], {
       id: d.id, href: flowHref(id) + "?stage=" + encodeURIComponent(d.id), title: d.name, goal: d.note, accept: describeStage(d).done, needs: d.needs,
-      state: states.flow[status], waitingOn: wait, outputs: s?.evidence.flatMap(ref => {
-        const target = evidence.get(ref);
-        return target ? [{ kind: "evidence" as const, ref, label: target.title, target }] : [];
-      })
+      // Links first: when a stage waits on the owner, the thing to open is what the card should lead with.
+      state: states.flow[status], waitingOn: wait, outputs: [
+        ...(s?.control.links ?? []).map(l => ({ kind: "link" as const, ref: l.url, label: l.label })),
+        ...(s?.evidence ?? []).flatMap(ref => {
+          const target = evidence.get(ref);
+          return target ? [{ kind: "evidence" as const, ref, label: target.title, target }] : [];
+        }),
+      ]
     })];
   });
   const visibleStages = new Set(tasks.map(t => t.id));

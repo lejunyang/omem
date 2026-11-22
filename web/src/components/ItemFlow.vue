@@ -233,6 +233,10 @@ async function stop() {
             <dt>跟着</dt>
             <dd><a :href="stage.object.link" :target="stage.object.statusLabel ? '_blank' : undefined" rel="noopener noreferrer">{{ stage.object.title }}</a> <span class="badge" :title="stage.object.status">{{ stage.object.statusLabel ?? objectStatusWords(stage.object.status) }}</span><span v-if="stage.object.disabled" class="muted">（读它的插件停用了）</span><span v-if="stage.object.fields?.length" class="muted object-fields">{{ stage.object.fields.map((f) => `${f.label} ${f.value}`).join(" · ") }}</span></dd>
           </template>
+          <template v-if="stage.links?.length">
+            <dt>交给你看</dt>
+            <dd class="evidence"><a v-for="l in stage.links" :key="l.url" :href="l.url" target="_blank" rel="noopener noreferrer" :title="l.url">{{ l.label }}</a></dd>
+          </template>
           <template v-if="stage.evidence.length">
             <dt>依据</dt>
             <dd class="evidence"><template v-for="(r, i) in stage.evidence" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原件 {{ i + 1 }}</a><a v-else-if="evidenceLink(r)" :href="evidenceLink(r)!" :title="r">{{ evidenceWord(r) }} {{ i + 1 }}</a><span v-else class="muted" :title="r">{{ r.length > 24 ? `${r.slice(0, 22)}…` : r }}</span></template></dd>

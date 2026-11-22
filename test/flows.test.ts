@@ -364,6 +364,25 @@ describe("只有本人能定的事", () => {
     expect(s("a").state).toBe("blocked");
     expect(all(app.db, "select id from notifications where json_extract(context, '$.entityId') = ?", item.id)).toHaveLength(0);
   });
+  it("卡住等本人确认一份表格时带上链接：事项页这一段、进度视图和给本人的卡片都能直接点开", async () => {
+    const { app, item, s } = await setup([stage("a"), stage("b")]);
+    const runId = s("a").by!;
+    const agent = { actor: "assistant", runId, userId: "owner" } as const;
+    await expect(reportStage(app, item.id, "a", { state: "blocked", note: "核对稿填好了", waitingOn: "本人", links: [{ label: "核对表", url: "javascript:alert(1)" }] }, agent)).rejects.toThrow("http");
+    const links = [{ label: "埋点核对表", url: "https://tenant.larkoffice.com/sheets/example" }];
+    await reportStage(app, item.id, "a", { state: "blocked", note: "核对稿填好了，等本人改完确认", waitingOn: "本人", links }, agent);
+    expect(flowView(app, item.id).stages.find((x) => x.id === "a")!.links).toEqual(links);
+    const card = one<{ body: string }>(app.db, "select body from notifications where id = ?", itemFlow(app, item.id)!.card!)!;
+    expect(card.body).toContain("交给你看：[埋点核对表](https://tenant.larkoffice.com/sheets/example)");
+    const { itemProgress } = await import("../src/agents/progress.ts");
+    const task = itemProgress(app, item.id, { user: "owner" }).find((v) => v.kind === "flow")!.tasks.find((t) => t.id === "a")!;
+    expect(task.outputs?.[0]).toEqual({ kind: "link", ref: links[0].url, label: "埋点核对表" });
+    // A later report without links keeps them; an empty list clears them.
+    await reportStage(app, item.id, "a", { state: "blocked", note: "还在等本人", waitingOn: "本人" }, agent);
+    expect(flowView(app, item.id).stages.find((x) => x.id === "a")!.links).toEqual(links);
+    await reportStage(app, item.id, "a", { state: "blocked", note: "表格作废了", waitingOn: "本人", links: [] }, agent);
+    expect(flowView(app, item.id).stages.find((x) => x.id === "a")!.links).toEqual([]);
+  });
   it("本人承担的阶段，助手说做完了只会变成问本人的确认；本人确认才完成", async () => {
     const { app, item, s } = await setup([{ id: "push", name: "推送", by: "owner" }, stage("deploy")]);
     expect(s("push")).toMatchObject({ state: "doing", by: "owner" });

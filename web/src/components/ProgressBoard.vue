@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, onServerResync } from "../api";
 import {
-  accessText, BLOCK_LABEL, blockHref, blockTone, decisionText, doneCount, KIND_LABEL, lateText, missingText, orderTasks, outputHref, outputLabel, readProgress,
+  accessText, BLOCK_LABEL, blockHref, blockTone, decisionText, doneCount, KIND_LABEL, lateText, missingText, orderTasks, outputHref, outputLabel, outputUrl, readProgress,
   pendingNeeds, placeLabel, remoteHref, runIdsOf, shortId, TASK_LABEL, taskHref, taskTone, took, usageText, waitLabel, whoLabel, ownerWait,
   type ProgressTask, type ProgressUsage, type ProgressView,
 } from "../lib/progress";
@@ -144,7 +144,8 @@ const blockLink: Record<ProgressView["kind"], string> = { board: "看任务板",
             </div>
             <span v-if="t.outputs?.length" class="pg-outs">
               <template v-for="o in t.outputs.slice(0, 2)" :key="o.kind + o.ref">
-                <router-link v-if="outputHref(b, o)" :to="outputHref(b, o)!" class="pg-out" :title="outputLabel(o)">{{ outputLabel(o) }}</router-link>
+                <a v-if="outputUrl(o)" :href="outputUrl(o)!" target="_blank" rel="noopener noreferrer" class="pg-out" :title="o.ref">{{ outputLabel(o) }}</a>
+                <router-link v-else-if="outputHref(b, o)" :to="outputHref(b, o)!" class="pg-out" :title="outputLabel(o)">{{ outputLabel(o) }}</router-link>
                 <span v-else class="pg-out mono" :title="o.label">{{ outputLabel(o) }}</span>
               </template>
               <span v-if="t.outputs.length > 2" class="pg-more">另 {{ t.outputs.length - 2 }} 项</span>

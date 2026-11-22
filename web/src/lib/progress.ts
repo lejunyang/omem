@@ -15,7 +15,8 @@ export type AttemptPlace = { local?: boolean; device?: string; deviceName?: stri
 export type ProgressAttempt = { runId: string; status: string; startedAt?: string; endedAt?: string; queuedMs?: number; runMs?: number; usage: ProgressUsage } & AttemptPlace;
 /** What a stage's evidence points at, as the server read it (only what the reader may open). */
 export type EvidenceTarget = { kind: "source" | "design" | "run" | "object"; id: string; title: string };
-export type ProgressOutput = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page"; ref: string; label: string; target?: EvidenceTarget };
+/** `link`: an address the task handed you to open (ref is the http(s) URL), opened in a new tab. */
+export type ProgressOutput = { kind: "report" | "commit" | "branch" | "finding" | "evidence" | "page" | "link"; ref: string; label: string; target?: EvidenceTarget };
 export type ProgressDecision = { by?: string; at?: string; ref?: string; result: string; note?: string };
 export type TaskState = "pending" | "queued" | "running" | "submitted" | "accepted" | "redo" | "blocked" | "failed" | "cancelled";
 export type ProgressTask = {
@@ -203,7 +204,7 @@ export function blockHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">): s
 }
 /** A link for what a task handed in, when it has a page here; commits and branches have none. */
 export function outputHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">, o: ProgressOutput): string | null {
-  if (o.kind === "commit" || o.kind === "branch") return null;
+  if (o.kind === "commit" || o.kind === "branch" || o.kind === "link") return null;
   if (o.kind === "evidence") {
     const t = o.target;
     if (t?.kind === "source") return `/sources/${encodeURIComponent(t.id)}`;
@@ -214,6 +215,11 @@ export function outputHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">, o
   if (o.kind === "page") return /^[\w-]+\/.+/.test(o.ref) ? `/wiki/${o.ref}` : null;
   if (b.kind === "board") return `/runs/${encodeURIComponent(o.ref)}`;
   return blockHref(b);
+}
+
+/** An outside address a task handed in (kind `link`), only when it is http(s). */
+export function outputUrl(o: ProgressOutput): string | null {
+  return o.kind === "link" && /^https?:\/\//i.test(o.ref) ? o.ref : null;
 }
 
 /** Every run the blocks name: an event about one of them means the view may have changed. */
