@@ -41,7 +41,9 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
   const home = canonical(homedir()), data = canonical(app.home);
   const state = m.provides.commands.flatMap(c => (c.state ?? []).map(p => join(home, stateRel(p))));
   const writable = normalizeSandbox({ mode: "off", writable: state, hidden: [] }, home, data).writable;
+  if (writable.some(p => !under(p, home))) throw new Error("凭据状态目录必须位于 HOME 内");
   const install = m.provides.commands.flatMap(c => c.install ?? []).map(p => {
+    if (p.split("/").includes("..")) throw new Error("安装目录不能包含 ..");
     if (!(isAbsolute(p) || p.startsWith("~/"))) throw new Error("凭据安装目录需要绝对路径或 ~/ 开头");
     const path = canonical(p.startsWith("~/") ? join(home, p.slice(2)) : p);
     normalizeSandbox({ mode: "off", writable: [], hidden: [path] }, home, data);

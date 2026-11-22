@@ -7,6 +7,7 @@ import { all } from "../core/db.ts";
 import { listAgentSpecs } from "./specs.ts";
 import { listRoleStates } from "./builtin-roles.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
+import { credentialStatePaths } from "./credentials.ts";
 import { expandPath } from "./accounts.ts";
 import { acpCatalog, accountOnlyCatalog } from "./catalog.ts";
 import { sourceOf } from "./capacity.ts";
@@ -53,7 +54,7 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   const data = canonical(app.home);
   const { dirs, existing, mounts } = backendState(profile);
   const config = normalizeSandbox({ ...settings, writable: [...settings.writable, ...existing] }, home, data);
-  const state = [...dirs, ...cachePaths.map(p => join(home, p))];
+  const state = [...dirs, ...cachePaths.map(p => join(home, p)), ...credentialStatePaths(app)];
   const checked = normalizeSandbox({ ...config, writable: state }, home, data);
   for (const dir of checked.writable) checkStateDirectory(dir);
   for (const file of existing) {

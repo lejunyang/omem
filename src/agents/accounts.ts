@@ -17,6 +17,7 @@ import { accountCatalog, type AccountSpec, type CatalogEntry } from "./catalog.t
 import { forgetQuota, quotaKind, quotaView, refreshQuota } from "./quota.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
+import { credentialBackendLogin, credentialAccountView, credentialInstallDirs, credentialStateRels, hasCredentials, removeAllCredentials } from "./credentials.ts";
 
 /**
  * Each omem user's own AI accounts (docs/v2/agent-accounts.md). A member logs in to a backend once
@@ -125,7 +126,7 @@ function isLink(p: string) {
 export function ensureAccountHome(app: App, userId: string, entry?: AccountEntry) {
   const home = accountHome(app, userId);
   let made = privateDir(app.home, join("accounts", userId, "home"));
-  for (const d of entry?.account.dirs ?? []) made = privateDir(home, d) || made;
+  for (const d of [...(entry?.account.dirs ?? []), ...credentialStateRels(app)]) made = privateDir(home, d) || made;
   if (made && app.config.agentSkills.takeOver) {
     try {
       writeAccountEntries(app, [home]);
@@ -152,7 +153,7 @@ export function accountEnv(app: App, userId: string, entry: AccountEntry): Recor
 }
 
 function localAccount(app: App, userId: string, backend: string): SandboxAccount {
-  return { userId, backend, home: accountHome(app, userId), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir()] };
+  return { userId, backend, home: accountHome(app, userId), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
 }
 
 /** What a run (or a login) with this user's account of this backend carries (agents/sandbox.ts). */
@@ -203,6 +204,7 @@ export function accountToken(app: App, userId: string, backend: string): string 
 /** Logged in at the last check, the folder is still there, and a plugin login has not run out. */
 export function loggedIn(app: App, userId: string, backend: string) {
   if (!SAFE_ID.test(userId) || userId === OWNER) return false;
+  if (credentialBackendLogin(app, userId, backend)) return true;
   const s = stored(app, userId, backend);
   return s.state === "logged-in" && (s.expiresAt === undefined || s.expiresAt > Date.now()) && existsSync(accountHome(app, userId));
 }
@@ -704,7 +706,7 @@ export async function removeAccount(app: App, userId: string, backend: string) {
     rmSync(p, { recursive: true, force: true });
   }
   const others = accountEntries(app).some((e) => e.id !== backend && (stored(app, userId, e.id).state !== "none" || accountToken(app, userId, e.id) || logins.has(loginKey(app, userId, e.id))));
-  if (!others) rmSync(accountRoot(app, userId), { recursive: true, force: true });
+  if (!others && !hasCredentials(app, userId)) rmSync(accountRoot(app, userId), { recursive: true, force: true });
 }
 
 /**
@@ -714,6 +716,7 @@ export async function removeAccount(app: App, userId: string, backend: string) {
  */
 export async function removeAllAccounts(app: App, userId: string, actor: string) {
   if (!SAFE_ID.test(userId) || userId === OWNER) return { backends: [] as string[] };
+  await removeAllCredentials(app, userId);
   const backends: string[] = [];
   for (const e of accountEntries(app)) {
     const has = stored(app, userId, e.id).state !== "none" || logins.has(loginKey(app, userId, e.id)) || listConnections(app, userId).some((c) => c.provider === TOKEN_PROVIDER(e.id) || c.provider.startsWith(`${TOKEN_PROVIDER(e.id)}:`));
@@ -761,7 +764,8 @@ export type AccountBackendView = {
 };
 
 function viewOf(app: App, userId: string, e: AccountEntry, withQuota = false): AccountBackendView {
-  const s = userId === OWNER ? ({ state: "none" } as Stored) : stored(app, userId, e.id);
+  const cred = userId === OWNER ? null : credentialAccountView(app, userId, e.id);
+  const s = cred ? { ...cred, state: "logged-in" as const, method: cred.kind } : userId === OWNER ? ({ state: "none" } as Stored) : stored(app, userId, e.id);
   const pending = logins.get(loginKey(app, userId, e.id));
   const methods = loginMethods(app, e);
   const gone = s.state === "logged-in" && !existsSync(accountHome(app, userId));
