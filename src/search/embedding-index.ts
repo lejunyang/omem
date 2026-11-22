@@ -92,6 +92,15 @@ export function modelChange(app: App, next: Config) {
   return { ...vectorCounts(app, entry?.spaces.length ? entry.spaces : undefined), token, to };
 }
 
+/** A concurrent edit can also turn vectors off or select an already matching index. */
+export function retainedIndexPreview(app: App, requested: Config, merged: Config) {
+  const from = embeddingId(requested) ?? requested.embeddings.provider;
+  const to = embeddingId(merged) ?? merged.embeddings.provider;
+  if (from === to) return null;
+  const token = createHash("sha256").update(JSON.stringify(["retain", from, to])).digest("hex");
+  return { clear: 0, rebuild: 0, pending: pendingVectorCount(app), token, to };
+}
+
 export function replaceIndex(app: App, id: string) {
   tx(app.db, () => {
     run(app.db, "update chunks set embedding=null where embedding is not null");
