@@ -2455,9 +2455,20 @@ export const migrations: readonly string[] = [
      root text not null references runs(id) on delete cascade, requester text not null, holder text not null,
      kind text not null, resource text not null, primary key(root,requester,holder,kind,resource)
    );
+   -- A chat can dispatch several independent tasks. A continued coding round points
+   -- to its own task even when its parent_id still points to the originating chat.
+   create view credential_task_runs as
+     select r.id, r.status, r.title, (with recursive lineage(id,kind,parent,continued,depth) as (
+       select r.id,r.kind,r.parent_id,json_extract(r.input,'$.continueFrom'),0
+       union all
+       select p.id,p.kind,p.parent_id,json_extract(p.input,'$.continueFrom'),l.depth+1
+       from lineage l join runs p on p.id=coalesce(l.continued,l.parent)
+       where l.depth<100 and (l.continued is not null or p.kind!='ask' or l.kind='ask')
+     ) select id from lineage order by depth desc limit 1) root from runs r;
    create trigger credential_grant_end after update of status on runs
-     when new.status in ('done','failed','cancelled') begin
-       delete from credential_run_grants where root=new.id;
+     when new.status in ('done','failed','cancelled') and exists(select 1 from credential_run_grants) begin
+       delete from credential_run_grants where root=(select root from credential_task_runs where id=new.id)
+         and root not in (select root from credential_task_runs where status in ('queued','running'));
      end;
    create index credential_ask_expiry on asks(json_extract(context,'$.expiresAt'))
      where status='pending' and json_extract(context,'$.handler')='credential-confirm';

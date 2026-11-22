@@ -27,12 +27,14 @@ export function expireCredentialAsks(app: App) {
 
 export async function confirmCredential(app: App, runId: string, requester: string, holder: string, kind: string,
   resource: string, line: string, signal: AbortSignal) {
-  const root = rootRun(app, runId, { user: OWNER }) ?? runId;
+  const task = one<{root: string; title: string}>(app.db, `select root,title from credential_task_runs
+    where id=? and status in ('queued','running')`, runId);
+  if (!task) return false;
+  const { root, title } = task;
   const scope = [root, requester, holder, kind, resource];
   if (one(app.db, "select 1 from credential_run_grants where root=? and requester=? and holder=? and kind=? and resource=?", ...scope)) return true;
-  const conversation = conversationOfRun(app, runId) ?? conversationOfRun(app, root);
+  const conversation = conversationOfRun(app, runId) ?? conversationOfRun(app, rootRun(app, runId, { user: OWNER }) ?? null);
   const thread = conversation ? findThread(app, conversation) : null;
-  const title = one<{title: string}>(app.db, "select title from runs where id=?", runId)!.title;
   const expiresAt = new Date(Date.now() + timeout).toISOString();
   const ask = createAsk(app, { runId: null, userId: holder, allowText: false, options,
     question: `${userName(app, requester)}想借用你的凭据读取 ${resource}。\n任务：${title}${thread ? "\n来源会话：" + (thread.title || thread.key || "网页会话") : ""}\n命令：\n${line}`,
@@ -45,9 +47,9 @@ export async function confirmCredential(app: App, runId: string, requester: stri
     deliverToThread(app, thread.id, `已请 ${userName(app, holder)} 确认，等他答复。`)).catch(() => {});
   const answer = await pending;
   if (!answer) cancelAsk(app, ask.id, "持有人没同意");
-  const granted = answer?.choice === 0 || answer?.choice === 1;
-  if (answer?.choice === 1 && !signal.aborted) run(app.db, `insert or ignore into credential_run_grants
-    select ?,?,?,?,? where exists(select 1 from runs where id=? and status in ('running','queued'))`, ...scope, root);
   addRunEvent(app, root, "status", { text: `凭据确认：${userName(app, holder)} · ${answer?.answer ?? "持有人没同意"}`, askId: ask.id, runId, requester, holder, kind, resource });
-  return granted && !signal.aborted;
+  if (signal.aborted || !answer) return false;
+  if (answer.choice !== 1) return answer.choice === 0;
+  return !!run(app.db, `insert or replace into credential_run_grants
+    select ?,?,?,?,? where exists(select 1 from runs where id=? and status in ('running','queued'))`, ...scope, runId).changes;
 }

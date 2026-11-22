@@ -258,7 +258,10 @@ it("本人状态未知也先预检和确认，任务同意在同一根运行复�
     const auth = issueToolToken({ actor: "agent", userId: "reader", commandHomeUser: "reader", runId: child, spaceId: "personal-reader", spaces: [], tools: new Set() });
     try {
       const next = gate(args, {}, auth);
-      if (parentId) expect((await next).execution.code).toBe(0);
+      if (parentId) {
+        expect((await next).execution.code).toBe(0);
+        run(app.db, "update runs set status='done' where id=?", child);
+      }
       else {
         await answerAsk(app, (await pendingConfirmation()).id, { by: "owner", choice: 2 });
         expect(await next).toMatchObject({ decision: "deny", message: "持有人没同意" });
@@ -269,6 +272,44 @@ it("本人状态未知也先预检和确认，任务同意在同一根运行复�
   expect(all(app.db, "select root from credential_run_grants")).toEqual([{ root: runId }]);
   run(app.db, "update runs set status='done' where id=?", runId);
   expect(all(app.db, "select root from credential_run_grants")).toEqual([]);
+});
+
+it.each(["agent", "code"] as const)("聊天结束后，%s 交办的任务同意持续到最后一个运行结束", async (kind) => {
+  app.config.credentials.lending = "confirm";
+  const tokens: string[] = [];
+  function start(kind: "agent" | "code", parentId: string, input = {}) {
+    const { id } = createRun(app, { kind, spaceId: "personal-reader", userId: "reader", title: "后台读取", parentId, input });
+    run(app.db, "update runs set status='running' where id=?", id);
+    const auth = issueToolToken({ actor: "agent", userId: "reader", commandHomeUser: "reader", runId: id, spaceId: "personal-reader", spaces: [], tools: new Set() });
+    tokens.push(auth);
+    return { id, read: () => gate(args, {}, auth) };
+  }
+  const finish = (id: string) => run(app.db, "update runs set status='done' where id=?", id);
+  try {
+    const task = start(kind, runId);
+    finish(runId);
+    const first = task.read();
+    await answerAsk(app, (await pendingConfirmation()).id, { by: "owner", choice: 1 });
+    expect((await first).execution.code).toBe(0);
+    expect(all(app.db, "select root from credential_run_grants")).toEqual([{ root: task.id }]);
+    expect((await task.read()).execution.code).toBe(0);
+
+    const next = kind === "code" ? start("code", runId, { continueFrom: task.id }) : start("agent", task.id);
+    finish(task.id);
+    expect((await next.read()).execution.code).toBe(0);
+    expect(listAsks(app, { userId: "owner" })).toHaveLength(1);
+
+    const other = start(kind, runId);
+    const anotherRead = other.read();
+    await answerAsk(app, (await pendingConfirmation()).id, { by: "owner", choice: 2 });
+    expect(await anotherRead).toMatchObject({ decision: "deny" });
+    finish(next.id);
+    expect(all(app.db, "select root from credential_run_grants")).toEqual([]);
+    const fresh = start(kind, runId).read();
+    await answerAsk(app, (await pendingConfirmation()).id, { by: "owner", choice: 0 });
+    expect((await fresh).execution.code).toBe(0);
+    expect(verify).toHaveBeenCalledTimes(5);
+  } finally { tokens.forEach(revokeToolToken); }
 });
 
 it("auto 对有权限记录的私有持有人等十分钟，超时返回最近的申请链接", async () => {
