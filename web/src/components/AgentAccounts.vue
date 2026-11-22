@@ -1,14 +1,19 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { del, get, post } from "../api";
 import { fmtTime, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
+import { credAnchor, suppliedBy, type Credential } from "../lib/credentials";
+import CredentialList from "./CredentialList.vue";
+import Markdown from "./Markdown.vue";
 import UiSelect from "./UiSelect.vue";
 
 /**
  * 我的 AI 账号 (docs/v2/agent-accounts.md): the backends a person can log in to with their own
  * account; their runs on them then use it. Each backend lists its own login and the login methods
- * plugins bring for it. Shown only where the machine can start the sandbox.
+ * plugins bring for it. Shown only where the machine can start the sandbox. Above them, the
+ * credentials (components/CredentialList): a backend one of them supplies says so and is logged in
+ * and out there, not here.
  */
 type Policy = "owner" | "own" | "own-or-other";
 type Quota = { plan: string | null; readAt: string; windows: { name: string; used: number; resetsIn?: string; perDayLeft?: number }[]; avoid?: string; error?: string };
@@ -83,16 +88,47 @@ const pasteToken = (b: Backend) =>
   });
 const check = (b: Backend) => act(b, "check", () => post(`/api/me/agent-accounts/${b.id}/check`));
 const readQuota = (b: Backend) => act(b, "quota", () => post(`/api/me/agent-accounts/${b.id}/quota`));
+/** The server's answer when a credential supplies the backend after all (409): shown under it as it came. */
+const conflict = ref<Record<string, string>>({});
 const logout = async (b: Backend) => {
   const after = b.policy === "own" ? "用不了这个后端，直到你重新登录" : b.policy === "own-or-other" ? "换别的后端" : "借用 omem 主人的登录";
   if (!(await confirmDialog(`退出 ${b.name}`, { message: `退出后删除你在这台机器上的 ${b.name} 登录和它的文件（会话记录、设置）。之后你的运行${after}。`, okText: "退出并删除", danger: true }))) return;
-  await act(b, "logout", () => del(`/api/me/agent-accounts/${b.id}`));
+  busy.value = `${b.id}:logout`;
+  try {
+    await del(`/api/me/agent-accounts/${b.id}`);
+    delete conflict.value[b.id];
+  } catch (e) {
+    if ((e as { status?: number }).status === 409) conflict.value = { ...conflict.value, [b.id]: (e as Error).message };
+    else toast((e as Error).message, "error");
+  } finally {
+    busy.value = null;
+    await Promise.all([load(), credList.value?.reload()]);
+  }
 };
 const copy = (text: string) => navigator.clipboard?.writeText(text).then(() => toast("已复制", "ok"), () => {});
 const canLogin = (b: Backend) => b.methods.length > 0;
+
+// ---- the credentials above (components/CredentialList) ------------------------------------------
+const creds = ref<Credential[]>([]);
+const credList = ref<InstanceType<typeof CredentialList> | null>(null);
+const names = computed(() => Object.fromEntries((mine.value?.backends ?? []).map((b) => [b.id, b.name])));
+/** The credential that logs this backend in and out (lib/credentials.ts `suppliedBy`). */
+const source = (b: Backend) => suppliedBy(b, creds.value);
+/** To the credential's row above, focused, so the keyboard lands there too. */
+function reveal(kind: string) {
+  void nextTick(() => {
+    const el = document.getElementById(credAnchor(kind));
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.focus({ preventScroll: true });
+    el.classList.add("flash");
+    window.setTimeout(() => el.classList.remove("flash"), 1600);
+  });
+}
 </script>
 
 <template>
+  <CredentialList ref="credList" :backend-names="names" @loaded="(l) => (creds = l)" @changed="load" />
   <template v-if="mine?.supported">
     <h2 class="section-title">我的 AI 账号</h2>
     <p v-if="mine.owner" class="muted small">你用运行 omem 的这台机器上已有的登录，不用在这里登录。成员没登录时借不借用你的，在 <router-link to="/settings?card=agent-accounts">设置 → 成员 → 成员的 AI 账号</router-link> 里按后端设。</p>
@@ -104,8 +140,13 @@ const canLogin = (b: Backend) => b.methods.length > 0;
             <strong>{{ b.name }}</strong>
             <span class="badge" :class="{ accent: b.state === 'logged-in', danger: b.state === 'expired', warn: b.state === 'logging-in' }">{{ STATE[b.state] }}</span>
             <span v-if="b.user" class="muted small ellipsis" :title="b.user">{{ b.user }}</span>
+            <span v-if="source(b)" class="badge">由 {{ source(b)!.name }} 供给</span>
             <span class="spacer" />
-            <template v-if="b.state !== 'logging-in'">
+            <template v-if="source(b)">
+              <button v-if="b.state !== 'none'" class="btn ghost sm" :disabled="!!busy" @click="check(b)">{{ busy === `${b.id}:check` ? "检查中…" : "检查" }}</button>
+              <button class="btn ghost sm" @click="reveal(source(b)!.kind)">去凭据里管理</button>
+            </template>
+            <template v-else-if="b.state !== 'logging-in'">
               <UiSelect v-if="b.methods.length > 1" :model-value="picked[b.id] ?? ''" size="sm" width="180px" :aria-label="`${b.name} 的登录方式`" :options="b.methods.map((m) => ({ value: m.id, label: m.label }))" @change="(v) => (picked[b.id] = v)" />
               <button v-if="canLogin(b)" class="btn sm" :class="{ primary: b.state !== 'logged-in' }" :disabled="!!busy" @click="login(b)">{{ busy === `${b.id}:login` ? "正在启动…" : b.state === "logged-in" ? "重新登录" : "登录" }}</button>
               <button v-if="b.token" class="btn sm" :class="{ primary: !canLogin(b) && b.state !== 'logged-in' }" :disabled="!!busy" @click="pasteToken(b)">粘贴令牌</button>
@@ -129,8 +170,12 @@ const canLogin = (b: Backend) => b.methods.length > 0;
             <span class="spacer" />
             <button class="btn ghost sm" :disabled="!!busy" @click="readQuota(b)">{{ busy === `${b.id}:quota` ? "读取中…" : "重新读取" }}</button>
           </div>
-          <span class="muted small">{{ POLICY[b.policy] }}{{ b.methodLabel && b.state !== "none" ? ` · 用${b.methodLabel}登录` : "" }}{{ b.expiresAt && b.state === "logged-in" ? ` · ${fmtTime(b.expiresAt)} 到期，到期前自动续` : "" }}{{ b.checkedAt ? ` · 上次检查 ${fmtTime(b.checkedAt)}` : "" }}</span>
+          <span class="muted small">{{ POLICY[b.policy] }}{{ b.methodLabel && b.state !== "none" && !source(b) ? ` · 用${b.methodLabel}登录` : "" }}{{ b.expiresAt && b.state === "logged-in" ? ` · ${fmtTime(b.expiresAt)} 到期，到期前自动续` : "" }}{{ b.checkedAt ? ` · 上次检查 ${fmtTime(b.checkedAt)}` : "" }}</span>
           <span v-if="b.error && b.state !== 'logging-in'" class="small warn-text err">{{ b.error }}</span>
+          <div v-if="conflict[b.id]" class="conflict" role="alert">
+            <Markdown :source="conflict[b.id]" compact breaks :linkify="false" />
+            <button class="btn ghost sm" @click="delete conflict[b.id]">知道了</button>
+          </div>
         </div>
       </div>
     </template>
@@ -177,6 +222,17 @@ const canLogin = (b: Backend) => b.methods.length > 0;
   min-width: 0;
 }
 .err {
+  overflow-wrap: anywhere;
+}
+.conflict {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 </style>
