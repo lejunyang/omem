@@ -21,7 +21,7 @@ const checkResult = refreshResult.extend({ state: z.enum(["ok", "expired", "miss
 const sharingSchema = z.object({ scope: z.enum(["self", "members", "all"]), members: z.array(z.string()).max(200).default([]) }).strict();
 export type CredentialSharing = z.infer<typeof sharingSchema>;
 export type Hold = {
-  state: "none" | "logged-in" | "expired"; user?: string; expiresAt?: number; refreshAt?: number;
+  state: "none" | "missing" | "logged-in" | "expired"; user?: string; expiresAt?: number; refreshAt?: number;
   checkedAt?: string; checkedDay: string; lastUsedAt?: string; error?: string;
   sharing: CredentialSharing; notified: Record<string, string>;
 };
@@ -57,7 +57,7 @@ function save(app: App, userId: string, kind: string, hold: Hold) {
     userId, kind, hold.state, hold.user ?? null, hold.expiresAt ?? null, hold.refreshAt ?? null, hold.checkedDay,
     hold.checkedAt ?? null, JSON.stringify(hold.sharing), JSON.stringify(hold.notified), hold.lastUsedAt ?? null, hold.error ?? null);
 }
-function usable(app: App, id: string, kind: string, s = credentialHold(app, id, kind)) {
+function usable(app: App, id: string, kind: string, s: Pick<Hold, "state" | "expiresAt"> = credentialHold(app, id, kind)) {
   return s.state === "logged-in" && (s.expiresAt === undefined || s.expiresAt > Date.now()) && (id === OWNER || existsSync(accountHome(app, id)));
 }
 export const credentialBackendLogin = (app: App, id: string, backend: string) => credentialKindsForBackend(backend).some(m => usable(app, id, m.kind));
@@ -172,6 +172,8 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
   const signal = AbortSignal.any([abort.signal, m.signal, timeout]);
   void serial(key, async () => {
     try {
+      const hold = credentialHold(app, id, kind);
+      if (hold.state === "none") save(app, id, kind, { ...hold, state: "missing" });
       const ctx = context(app, id, m, signal);
       const result = loginResult.parse(await untilAbort(signal, () => m.login(ctx, link => {
         signal.throwIfAborted();
@@ -224,11 +226,11 @@ export function checkCredential(app: App, id: string, kind: string) {
   const m = requireCredential(kind);
   return serial(keyOf(app, id, kind), async () => {
     const s = credentialHold(app, id, kind);
-    if (!m.check) return s;
+    if (!m.check || id !== OWNER && s.state === "none") return s;
     try {
       const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, true))));
       const expiresAt = result.state === "missing" ? undefined : result.expiresAt ?? s.expiresAt;
-      save(app, id, kind, { ...credentialHold(app, id, kind), state: result.state === "missing" ? "none" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in",
+      save(app, id, kind, { ...credentialHold(app, id, kind), state: result.state === "missing" ? "missing" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in",
         user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined });
     } catch { save(app, id, kind, { ...credentialHold(app, id, kind), checkedAt: now(), checkedDay: day(app), error: "检查失败，请稍后重试" }); reminder(app, id, m, "failed"); }
     remindHold(app, id, m);
@@ -240,14 +242,17 @@ function providedPaths(app: App, provides: CredentialMethod["provides"]) {
     ...provides.backends.flatMap(backend => accountEntry(app, backend)?.account.owns ?? [])];
 }
 
+type Declaration = Pick<CredentialMethod, "name" | "provides">;
 /** Include temporarily disabled plugins and logins that have not yet saved their first hold. */
 export function heldCredentialDeclarations(app: App, id: string) {
-  const rows = all<{ kind: string; declaration: string }>(app.db, `select h.kind,k.declaration from credential_holds h
-    join credential_kinds k on k.kind=h.kind where h.user_id=? and h.state!='none'`, id);
-  const held = new Map<string, Pick<CredentialMethod, "name" | "provides">>();
-  for (const row of rows) held.set(row.kind, JSON.parse(row.declaration));
-  for (const m of credentialMethods())
-    if (logins.has(keyOf(app, id, m.kind))) held.set(m.kind, m);
+  const rows = all<Pick<Row, "kind" | "state" | "expires_at"> & { declaration: string }>(app.db, `select h.kind,h.state,h.expires_at,k.declaration from credential_holds h
+    join credential_kinds k on k.kind=h.kind where h.user_id=? and h.state!='none'
+    order by (h.state='missing'), h.checked_at desc,h.kind`, id);
+  const held = new Map<string, Declaration & Pick<Hold, "state" | "expiresAt"> & { pending?: boolean }>();
+  for (const row of rows) held.set(row.kind, { ...JSON.parse(row.declaration), state: row.state, expiresAt: row.expires_at ?? undefined });
+  for (const m of credentialMethods()) if (logins.has(keyOf(app, id, m.kind))) {
+    held.set(m.kind, { ...(held.get(m.kind) ?? { name: m.name, provides: m.provides, state: "none" }), pending: true });
+  }
   return held;
 }
 
@@ -259,32 +264,34 @@ export function retainedCredentialPaths(app: App, id: string, except?: string) {
 
 /** Check the provider that owns these files, including when its login has expired or its plugin is disabled. */
 export function suppliedCredentialKind(app: App, id: string, backend: string, hasIndependentLogin: boolean) {
-  const current = credentialAccountView(app, id, backend)?.kind
-    ?? credentialKindsForBackend(backend).find(m => logins.has(keyOf(app, id, m.kind)))?.kind;
-  if (current) return current;
-  // A provider may report a missing login while its CLI files still exist.
-  return one<{ kind: string }>(app.db, `select h.kind from credential_holds h join credential_kinds k on k.kind=h.kind
-    where h.user_id=? and (h.state!='none' or (? and h.checked_at is not null)) and exists
-    (select 1 from json_each(k.declaration,'$.provides.backends') where value=?)
-    order by (h.state!='none') desc,h.checked_at desc,h.kind limit 1`, id, Number(!hasIndependentLogin), backend)?.kind;
+  const held = heldCredentialDeclarations(app, id);
+  const methods = credentialKindsForBackend(backend);
+  return methods.find(m => { const source = held.get(m.kind); return source && usable(app, id, m.kind, source); })?.kind
+    ?? methods.find(m => held.get(m.kind)?.pending)?.kind
+    ?? [...held].find(([, source]) => source.provides.backends.includes(backend) && (source.state !== "missing" || !hasIndependentLogin))?.[0];
 }
 export function logoutCredential(app: App, id: string, kind: string, actor = id) {
-  const m = requireCredential(kind);
   if (id === OWNER) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机退出");
-  logins.get(keyOf(app, id, kind))?.abort.abort();
-  return serial(keyOf(app, id, kind), async () => {
-    if (m.logout && existsSync(accountHome(app, id))) {
+  const key = keyOf(app, id, kind);
+  logins.get(key)?.abort.abort();
+  return serial(key, async () => {
+    const row = one<{ declaration: string }>(app.db, "select declaration from credential_kinds where kind=?", kind);
+    if (!row) throw new HttpError(404, "没有这个凭据种类");
+    if (credentialHold(app, id, kind).state === "none") return;
+    const declaration: Declaration = JSON.parse(row.declaration);
+    const m = credentialMethod(kind);
+    if (m?.logout && existsSync(accountHome(app, id))) {
       try { await timed(m, 20_000, signal => m.logout!(context(app, id, m, signal))); }
       catch { throw new HttpError(502, "退出凭据失败，请重试"); }
     }
-    clearAccountPaths(app, id, providedPaths(app, m.provides), { kind });
+    clearAccountPaths(app, id, providedPaths(app, declaration.provides), { kind });
     const c = findConnection(app, id, secretProvider(kind)); if (c) deleteConnection(app, c.id);
     save(app, id, kind, { ...credentialHold(app, id, kind), state: "none", user: undefined, expiresAt: undefined, refreshAt: undefined, checkedAt: now(), error: undefined });
     audit(app, actor, "credentials.logout", kind, { holder: id });
   });
 }
 export async function removeAllCredentials(app: App, id: string) {
-  for (const m of credentialMethods()) await logoutCredential(app, id, m.kind).catch(() => {});
+  for (const kind of heldCredentialDeclarations(app, id).keys()) await logoutCredential(app, id, kind).catch(() => {});
   for (const c of listConnections(app, id)) if (c.provider.startsWith("credential:")) deleteConnection(app, c.id);
   run(app.db, "delete from credential_holds where user_id=?", id);
 }
