@@ -34,6 +34,9 @@ import { recordReview } from "../src/agents/review.ts";
 import { addRunEvent, createRun, setRunOutput } from "../src/agents/runs.ts";
 import { App } from "../src/core/app.ts";
 import { networkPolicySchema } from "../src/core/config.ts";
+import { registerCredential, setCredentialSharing, startCredentialLogin } from "../src/agents/credentials.ts";
+import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { closeVault } from "../src/auth/vault.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
@@ -433,9 +436,33 @@ writeFileSync(join(journalDir, "agents", "coach.md"), "---\ndescription: 陪本�
 cpSync(new URL("../examples/plugins/stagekit", import.meta.url), join(home, "plugins", "stagekit"), { recursive: true });
 mkdirSync(join(home, "plugins", "helperkit"), { recursive: true });
 writeFileSync(join(home, "plugins", "helperkit", "plugin.yaml"), ["id: helperkit", "name: 本机助手示例", "description: 声明一个本机的 ACP 后端（演示，命令不存在）。", "backends:", "  - { id: helper, name: 本机助手, command: demo-acp, args: [serve], install: 安装 demo-acp 命令行 }"].join("\n"));
+// 凭据 (examples/plugins/acmeauth): one local login that supplies a command line and an AI backend; the
+// members log in to it further down. Members' own accounts need the sandbox, which the demo machine may
+// not have (Windows, a Mac): their pages are shown as on a Linux machine with bubblewrap. No member's run
+// is started in the demo, so nothing is actually sandboxed.
+cpSync(new URL("../examples/plugins/acmeauth", import.meta.url), join(home, "plugins", "acmeauth"), { recursive: true });
+setSandboxSupportForTests({ ok: true, bwrap: "bwrap" });
 await loadPlugins(app);
 await trustPlugin(app, "stagekit", "isolated");
 await trustPlugin(app, "helperkit", "isolated");
+await trustPlugin(app, "acmeauth", "inprocess");
+// A second, optional kind from a fictional plugin: a code host's command line, logged in on a page with a
+// code (a login shows its link and code for about 8 seconds, then completes).
+const demoWait = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
+  const t = setTimeout(resolve, ms);
+  signal.addEventListener("abort", () => { clearTimeout(t); reject(signal.reason); }, { once: true });
+});
+registerCredential("codehub", {
+  id: "token", name: "示例代码托管", describe: "代码托管的命令行登录：查合并请求、流水线和评审意见。",
+  provides: { commands: [{ name: "hub-demo", state: [".config/hub-demo"], readOnly: [{ subcommand: ["pr", "list"] }] }] },
+  async login(ctx, show) {
+    show({ url: "https://code.example.com/login/device", code: "DEMO-4821" });
+    await demoWait(8000, ctx.signal);
+    await ctx.secret.set(`demo-${ctx.userId}`);
+    return { user: `${ctx.userId}@example.com`, expiresAt: Date.now() + 30 * 86400_000 };
+  },
+  async logout() {},
+}, () => ({}), app);
 const pluginTurn = async (plugin: string, agent: string, spaceId: string, title: string, runId = `r_${plugin}_demo`) => {
   const { id: conversationId } = await createSession(app, { plugin, agent, spaceId, userId: "owner", title });
   run(app.db, "insert into runs(id,kind,space_id,status,title,input,created_at,lane) values(?,?,?,?,?,?,?,?)", runId, "ask", spaceId, "running", title, JSON.stringify({ conversationId }), new Date().toISOString(), conversationId);
@@ -1312,6 +1339,24 @@ const xiaolinToken = createApiToken(app, xiaolin.id, "演示");
 const xiaowuToken = createApiToken(app, xiaowu.id, "演示");
 // The owner signed in with a token: the cloud tools card is not served to a page opened straight on the machine.
 const ownerToken = createApiToken(app, "owner", "演示");
+// ---- 凭据 (src/agents/credentials.ts): who holds what (the `account-credentials` shot, 设置 → 成员) ----
+// 小吴 logged in to the example account (valid a week) and lends it to 小林; 小林's ends in two days and he
+// lends it to everyone; 小周 only chose not to lend; the owner's is this machine's own login.
+{
+  const demoKind = "acmeauth:demo", day = 86400_000;
+  for (const id of [xiaowu.id, xiaolin.id]) await startCredentialLogin(app, id, demoKind);
+  setCredentialSharing(app, xiaowu.id, demoKind, { scope: "members", members: [xiaolin.id] });
+  setCredentialSharing(app, xiaolin.id, demoKind, { scope: "all" });
+  setCredentialSharing(app, xiaozhou.id, demoKind, { scope: "self" });
+  const soon = Date.now() + 2 * day - 3 * 3600_000;
+  run(app.db, "update credential_holds set expires_at=?, refresh_at=? where user_id=? and kind=?", soon, soon - 600_000, xiaolin.id, demoKind);
+  // 小吴 also logged in to the code host (its own login waits on a page, so the hold is written as it ends up).
+  run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,refresh_at,check_day,checked_at,sharing,notified,provision,supplied_backends)
+    values(?,?,'logged-in',?,?,?,'',?,?,'{}',?,'[]')`, xiaowu.id, "codehub:token", "xiaowu@example.com", Date.now() + 25 * day, Date.now() + 25 * day - 600_000, new Date().toISOString(),
+    JSON.stringify({ scope: "self", members: [] }), JSON.stringify({ backends: [], commands: ["hub-demo"], paths: [".config/hub-demo"] }));
+  run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,check_day,checked_at,sharing,notified,supplied_backends)
+    values('owner',?,'logged-in',null,?,'',?,?,'{}',?)`, demoKind, Date.now() + 20 * day, new Date().toISOString(), JSON.stringify({ scope: "all", members: [] }), JSON.stringify(["acmeauth:demo"]));
+}
 // 小林's own line (src/items/member-work.ts), and what waits for him: the owner's assistant asked him how
 // the refund API is going (src/items/member-progress.ts).
 {
@@ -1355,7 +1400,7 @@ if (serveOnly) {
   console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   console.log(`向量和重排的假云端接口：${fakeApiUrl}（模型名写 missing-model 会失败）`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
-  const cleanup = async () => { await server.close(); for (const id of ["stagekit", "helperkit"]) forgetPlugin(id); app.events.emit("close"); app.db.close(); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); process.exit(); };
+  const cleanup = async () => { await server.close(); for (const id of ["stagekit", "helperkit", "acmeauth"]) forgetPlugin(id); app.events.emit("close"); app.db.close(); closeVault(home); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); process.exit(); };
   process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
   await new Promise(() => {});
 }
@@ -1822,6 +1867,26 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.locator("#set-cloud-tools").scrollIntoViewIfNeeded();
     await p.waitForTimeout(300);
   } },
+  // 账号 → 凭据 as 小林 sees it: the example account soon to end (lent to everyone), the code host not logged
+  // in yet, and below them the AI backend the example account supplies. Whether the example's install
+  // directory exists depends on the machine taking the shot: it is left out here.
+  { name: "account-credentials", path: "/account", init: { "omem-token": xiaolinToken }, before: async (p) => {
+    await p.route("**/api/credentials", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const data = await (await route.fetch()).json();
+      for (const c of data.credentials) c.missingInstall = [];
+      await route.fulfill({ json: data });
+    });
+  }, prepare: async (p) => {
+    await p.locator(".cred").first().waitFor();
+    await p.locator(".cred-title").evaluate((el) => {
+      el.scrollIntoView({ block: "start" });
+      let s: HTMLElement | null = el.parentElement;
+      while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
+      (s ?? document.scrollingElement)?.scrollBy(0, -24);
+    });
+    await p.waitForTimeout(400);
+  } },
   // The settings page as 小林 sees it: only the assistant area, and in it what only the owner changes stays read-only.
   { name: "settings-member", path: "/settings?tab=reply", init: { "omem-token": xiaolinToken }, prepare: async (p) => {
     await p.locator("#set-guests").scrollIntoViewIfNeeded();
@@ -1875,8 +1940,10 @@ for (const s of shots.filter((s) => !only || only.includes(s.name))) {
 await browser.close();
 await server.close();
 // The isolated plugins (stagekit) run in their own processes inside it: stop them before the directory goes.
-for (const id of ["stagekit", "helperkit"]) forgetPlugin(id);
+for (const id of ["stagekit", "helperkit", "acmeauth"]) forgetPlugin(id);
 app.events.emit("close");
 app.db.close();
+// The members' credentials put secrets in the vault: its file is open until closed (Windows will not delete it).
+closeVault(home);
 rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 if (failed) process.exitCode = 1;

@@ -17,6 +17,7 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 import { hasCap, settingsKey } from "../lib/caps";
 import MemberCaps, { type Capability, type MemberCapsData } from "./MemberCaps.vue";
 import NotifyOutlets from "./NotifyOutlets.vue";
+import CredentialHolds from "./CredentialHolds.vue";
 
 /**
  * Settings → 成员 (src/auth, docs/v2/multi-user.md): whether other people can log in and with what,
@@ -289,6 +290,8 @@ async function setRoutine(u: User, on: boolean) {
   }
 }
 const liveInvites = computed(() => invites.value.filter((i) => !i.revokedAt && !i.usedAt && Date.parse(i.expiresAt) > Date.now()).length);
+/** Names by id, for who a credential is lent to (components/CredentialHolds). */
+const names = computed(() => Object.fromEntries((users.value ?? []).map((u) => [u.id, u.name])));
 const initial = (name: string) => [...(name.trim() || "?")][0].toUpperCase();
 onMounted(() => load().catch(fail));
 </script>
@@ -478,6 +481,8 @@ onMounted(() => load().catch(fail));
       <MemberCaps v-if="capsFor && catalog && roles" :user="capsFor" :catalog="catalog" :roles="roles.roles" :owner="isOwner" @close="capsFor = null" @saved="(d) => capsSaved(capsFor!, d)" />
 
       <slot name="after-members" />
+
+      <CredentialHolds :names="names" />
 
       <SetCard title="角色">
         <template #help>全局角色决定能不能改 Agent、规则、建空间等全库共用的事，也可以给“所有空间”的权限（别人的个人空间除外）；空间角色决定在一个空间里能读、写什么。内置角色不能改，复制一份再改。</template>
