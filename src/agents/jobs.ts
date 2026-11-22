@@ -1226,6 +1226,7 @@ registerHandler("heartbeat", async (ctx) => {
     console.warn(`[omem] 指标：${(e as Error).message}`);
   }
   // Command approvals past their time (their timers do not survive a restart).
+  (await import("./credential-confirm.ts")).expireCredentialAsks(app);
   await (await import("./command-gate.ts")).expireCommandAsks(app);
   // Questions nobody waits for any more lapse; notifications the owner read in Feishu count as read.
   (await import("./ask-expiry.ts")).sweepStaleAsks(app);

@@ -9,7 +9,7 @@ import { deliveryPlan, inQuietHours } from "../core/notify.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { larkOpenIdOf, nameForOthers, OWNER, userName } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
-import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, decidedBlocks, decidedColor, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, resultSummary, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, decidedBlocks, decidedColor, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, resultSummary, sendEphemeral, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
 import { getTask } from "../agents/code-tasks.ts";
 
@@ -106,7 +106,7 @@ function questionBlocks(app: App, ask: Ask): CardBlock[] {
  */
 export function askCard(app: App, ask: Ask, opts: { mention?: string | null; note?: string } = {}): Record<string, unknown> {
   if (ask.status !== "pending") return answeredCard(app, ask);
-  const blocks = questionBlocks(app, ask);
+  const blocks: CardBlock[] = ask.handler === "credential-confirm" ? [{ markdown: cardText(ask.question) }] : questionBlocks(app, ask);
   // The asking turn's answer, when it only said again what the card says (foldIntoAsk): kept, folded.
   if (opts.note) blocks.push({ fold: { title: "这一轮的说明", markdown: resolveCitationsSync(app, truncate(opts.note, 6000)) } });
   if (ask.askedBy) blocks.unshift({ note: `${cardText(nameForOthers(app, ask.askedBy))} 的助手替 ta 问你，回答会交给 ta。` });
@@ -314,17 +314,21 @@ export async function foldIntoAsk(app: App, runId: string, chatId: string, answe
   return inter.message_id;
 }
 
-async function postAsk(app: App, ask: Ask, to: NonNullable<ReturnType<typeof targetFor>>) {
-  const who = answererId(app, ask, to.bot);
-  const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
-  const card = bindCard(askCard(app, ask, { mention: groupMention(app, to.chatId, who) }), id);
+export async function postEphemeralAsk(app: App, ask: Ask, chatId: string, bot: string, person: string) {
+  await postAsk(app, ask, { target: { chatId, bot }, chatId, bot }, person);
+}
+
+async function postAsk(app: App, ask: Ask, to: NonNullable<ReturnType<typeof targetFor>>, ephemeralTo?: string) {
+  const who = ephemeralTo ?? answererId(app, ask, to.bot);
+  const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id, ...(ephemeralTo ? { ephemeral: true } : {}) }, bot: to.bot });
+  const card = bindCard(askCard(app, ask, { mention: ephemeralTo ? null : groupMention(app, to.chatId, who) }), id);
   try {
-    const sent = await sendLark(to.target, { card });
+    const sent = ephemeralTo ? await sendEphemeral(to.chatId!, ephemeralTo, card, to.bot) : await sendLark(to.target, { card });
     bindInteraction(app, id, sent.messageId);
     markAskSent(app, ask.id);
     // A click may have completed while the send request was still returning.
     const current = getAsk(app, ask.id);
-    if (current.status !== "pending") await updateLarkCard(sent.messageId, askCard(app, current), to.bot).catch(() => {});
+    if (!ephemeralTo && current.status !== "pending") await updateLarkCard(sent.messageId, askCard(app, current), to.bot).catch(() => {});
   } catch (error) {
     if (!getInteraction(app, id)?.messageId) run(app.db, "update card_interactions set status = 'expired' where id = ?", id);
     throw error;
@@ -374,12 +378,15 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       return true;
     },
     async revised(app, ask) {
-      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and status = 'open' and json_extract(payload, '$.askId') = ? and message_id is not null order by created_at desc limit 1", ask.id);
+      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and status = 'open' and json_extract(payload, '$.askId') = ? and json_extract(payload,'$.ephemeral') is null and message_id is not null order by created_at desc limit 1", ask.id);
       if (row?.message_id) await updateLarkCard(row.message_id, bindCard(askCard(app, ask), row.id), getInteraction(app, row.id)?.bot).catch(() => {});
     },
     async closed(app, ask) {
+      if (ask.handler === "credential-confirm") {
+        run(app.db, "update card_interactions set status='done' where purpose='ask' and json_extract(payload,'$.askId')=? and json_extract(payload,'$.ephemeral')=1", ask.id);
+      }
       // The card that reached Feishu: a send that failed leaves an expired row without a message.
-      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and json_extract(payload, '$.askId') = ? and message_id is not null order by status = 'open' desc, created_at desc limit 1", ask.id);
+      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and json_extract(payload, '$.askId') = ? and message_id is not null and json_extract(payload,'$.ephemeral') is null order by status = 'open' desc, created_at desc limit 1", ask.id);
       if (!row?.message_id) return;
       closeInteraction(app, row.id, ask.answeredBy ?? "");
       await updateLarkCard(row.message_id, askCard(app, ask), getInteraction(app, row.id)?.bot).catch(() => {});

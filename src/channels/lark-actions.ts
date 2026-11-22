@@ -7,7 +7,7 @@ import { markReadIds } from "../core/notify.ts";
 import { currentBot } from "../core/bot-context.ts";
 import { larkUser } from "./lark-bots.ts";
 import { larkCardMarkdown } from "./lark-markdown.ts";
-import { bindInteraction, buildCard, closeInteraction, decidedBlocks, deliverLark, describeAction, getInteraction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, closeInteraction, decidedBlocks, deliverLark, describeAction, getInteraction, interactionForMessage, sendLark, updateEphemeralCard, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
 
 /**
  * A button press, select or form submit on one of the bot's cards
@@ -32,8 +32,12 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     void work.then(async (late) => {
       const messageId = data.context?.open_message_id ?? data.open_message_id;
       const card = late.card as { type?: string; data?: Record<string, unknown> } | undefined;
-      if (messageId && card?.type === "raw" && card.data) await updateLarkCard(messageId, card.data, interactionForMessage(app, messageId)?.bot);
-      else if (late.toast.type === "error") console.warn("[omem] 卡片操作失败", late.toast.content);
+      if (messageId && card?.type === "raw" && card.data) {
+        const inter = interactionForMessage(app, messageId);
+        if (inter?.payload.ephemeral === true) {
+          if (data.token && data.operator?.open_id) await updateEphemeralCard(data.token, data.operator.open_id, card.data, inter.bot);
+        } else await updateLarkCard(messageId, card.data, inter?.bot);
+      } else if (late.toast.type === "error") console.warn("[omem] 卡片操作失败", late.toast.content);
     }).catch((e) => console.warn("[omem] 卡片操作后续处理失败", e));
     return { toast: { type: "info", content: "已收到，正在处理" } };
   } finally {

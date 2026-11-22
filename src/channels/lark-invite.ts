@@ -217,7 +217,7 @@ export async function resolveInvites(app: App, invites: InviteSpec[], botsSeenIn
 type AddResult = { invalid: string[]; notExisted: string[]; pending: string[] };
 
 /** Add members to a chat as the owner: one call, at most 50 people or 5 bots. The one lark-cli call for it. */
-export async function addChatMembers(chatId: string, kind: "open_id" | "app_id", ids: string[]): Promise<AddResult> {
+export async function addChatMembers(chatId: string, kind: "open_id" | "user_id" | "app_id", ids: string[]): Promise<AddResult> {
   const v = await larkCli(["im", "chat.members", "create", "--chat-id", chatId, "--member-id-type", kind, "--succeed-type", "1", "--data", JSON.stringify({ id_list: ids }), "--as", "user"], 60_000);
   const d = v?.data ?? v ?? {};
   const list = (x: unknown) => (Array.isArray(x) ? x.map(String) : []);
