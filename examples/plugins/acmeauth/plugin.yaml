@@ -1,0 +1,11 @@
+id: acmeauth
+name: 示例授权
+description: 用本地虚构账号演示一次登录供给命令行和 AI 后端。
+permissions:
+  credential: true
+backends:
+  - id: demo
+    name: 示例回声后端
+    command: acme-demo-agent
+    account:
+      owns: [.acme-demo]
