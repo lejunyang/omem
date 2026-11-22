@@ -640,11 +640,11 @@ export function prepareRun(
     : `# 角色：${role!.description}\n\n${render(role!.body)}`;
   const descriptions: Record<string, string> = {
     search: "检索材料", read_source: "按行读原件", read_page: "读 Wiki 页", read_item: "读事项",
-    read_ledger: "读课题台账", propose_directions: "交这一轮的方向", trial_report: "交这个试验的结果", record_finding: "记一条发现", close_direction: "结束一个方向",
+    read_ledger: "读课题台账", propose_directions: "交这一轮的方向", trial_report: "交这个试验的结果", record_finding: "记一条发现", close_direction: "结束一个方向", stage_report: "交这一段的结果",
   };
   const common = commonGuide(guideTools, capabilities, scene, matched) + (access?.mode ? "\n\n## 云端工具\n" +
     [...tools].map(t => t + "：" + (descriptions[t] ?? t)).join("、") + "。连接信息在本轮消息或安全通道。GET 工具地址查看参数。" +
-    (tools.has("trial_report") || tools.has("propose_directions") || tools.has("record_finding") ? "这一段的结果要用对应的工具交回，只写在回复里不算交了。" : "") +
+    (tools.has("trial_report") || tools.has("propose_directions") || tools.has("record_finding") || tools.has("stage_report") ? "这一段的结果要用对应的工具交回，只写在回复里不算交了。" : "") +
     (access.mode === "header" ? "按连接信息设置 Authorization 请求头，POST 地址/工具名，正文是 JSON 参数对象。" :
       "GET 地址/工具名?args=URL编码的JSON参数。每个地址只用一次，下次用响应里的 next。") +
     "只在此地址使用凭据。被拒、过期或次数用完就停止，查不到就照实说，不要编。" : "");
@@ -871,7 +871,11 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const textAnswer = (input.role === "assistant" || input.role === "guest") && !input.choose && !input.spec;
   const needsAccess = required.length > 0 || (input.requiredTools === undefined && declared.length > 0 && !textAnswer);
   const requirement = required.length ? required.join("、") : "omem 工具";
-  const supports = (profile: AgentProfile) => !needsAccess || ["mcp", "shell-bridge"].includes(backendCapabilities(profile).omemAccess);
+  // A cloud backend reaches omem's tools over HTTP (cloud-tools.ts) when its probe is confirmed: enough when
+  // every tool this run must hand its result in with is among the tools the owner lets a cloud backend call.
+  const overHttp = (profile: AgentProfile) => required.length > 0 && !!input.runId && backendCapabilities(profile).where === "cloud"
+    && !!cloudAccess(app, profile).mode && required.every(t => app.config.agents.cloudTools.tools.some(name => name === t));
+  const supports = (profile: AgentProfile) => !needsAccess || ["mcp", "shell-bridge"].includes(backendCapabilities(profile).omemAccess) || overHttp(profile);
   const told = await lessonsOfTask(app, input);
   const lessons = told.text;
   // Nothing pins the AI (no execution, no caller's pick, not a session being continued, not a coding

@@ -12,7 +12,7 @@ import { isIP } from "node:net";
  * What a cloud backend may be allowed to call over HTTP: a few read tools, and the tools a study stage
  * hands its result in with (they only reach a run whose own tool list already has them: a study stage).
  */
-export const cloudToolNames = ["search", "read_source", "read_page", "read_item", "read_ledger", "propose_directions", "trial_report", "record_finding", "close_direction"] as const;
+export const cloudToolNames = ["search", "read_source", "read_page", "read_item", "read_ledger", "propose_directions", "trial_report", "record_finding", "close_direction", "stage_report"] as const;
 export const cloudToolsSchema = z.object({
   enabled: z.boolean().default(false),
   /**

@@ -74,6 +74,7 @@ updated: 2026-11-23
 - `agents.cloudTools.privateAddress`（默认关，本人在 设置 → 安全 →“云端后端调工具”里打开，先确认一次）：`cloud-probe.ts` 的 `cloudAddress` 接受内网的 http(s) `webUrl`，`checkCloudAddress(app, url)` 只要求能解析；探测和确认照旧。
 - `cloudToolNames` 加课题交结果的 `read_ledger`、`propose_directions`、`trial_report`、`record_finding`、`close_direction`。签发凭据时与运行自己的工具取交集（`cloud-tools.ts` 原逻辑），所以只在课题的阶段可用。`runner.ts` 的云端小节改名“## 云端工具”，有交结果工具时提示必须用工具交回。
 - 测试：`test/cloud-probe.test.ts`（内网地址只在开关打开时接受、凭据和查询串仍拒绝、课题工具可选）。
+- 在 ljy1 上第一次让课题的“定方向”在豆包 OpenAPI 上跑时，选后端把它跳过了：判断能否交结果只认 MCP 和命令桥，而且“必须的工具”算进了阶段顺带的 `attach_artifact` 等。改成：流程阶段只把交结果的那一个工具当必须（定方向 `propose_directions`、试验 `trial_report`、其余 `stage_report`，`flows/engine.ts`），云端后端探测已确认、必须的工具都在云端名单里时算能交结果（`runner.ts` 的 `overHttp`）；`stage_report` 也加进可选的云端工具。
 
 ## Copilot 的设备码登录、Gemini 的 API key（2026-11-22）
 
