@@ -283,6 +283,32 @@ it("出借按自己、本人、最近使用的成员选，逐后端覆盖全局�
   expect(selectedCredential(choose())?.holder).toBe("ann");
 });
 
+it("CLI 续接成功后即使最近使用时间写入失败也只执行一次", async () => {
+  const cli = await import("../src/agents/cli.ts");
+  const { threadTurn } = await import("../src/agents/sessions.ts");
+  const { createRun } = await import("../src/agents/runs.ts");
+  const { createThread } = await import("../src/agents/threads.ts");
+  const { personalSpaceId } = await import("../src/core/users.ts");
+  app.baseUrl = "http://127.0.0.1:1";
+  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fixture", transport: "claude-cli", command: process.execPath,
+    account: { env: {}, dirs: [".fixture"], owns: [".fixture"] } })];
+  add({ provides: { backends: ["fixture"] }, provide: undefined });
+  await startCredentialLogin(app, "ann", "sample:sso");
+  await until(() => credentialHold(app, "ann", "sample:sso").state === "logged-in");
+  const thread = createThread(app, { channel: "web", userId: "ann", spaceId: personalSpaceId("ann"), settings: { profile: "fixture" } });
+  const backend = vi.spyOn(cli, "runCli").mockResolvedValue({ text: "完成", agent: "fixture", sessionId: "session-test", stopReason: "end_turn" });
+  const turn = () => threadTurn({ app, run: createRun(app, { kind: "ask", userId: "ann", title: "续接", lane: thread.id }),
+    signal: new AbortController().signal, event() {}, output() {} }, thread.id, [], "ann", "测试消息");
+  try {
+    expect((await turn()).mode).toBe("fresh");
+    backend.mockClear();
+    app.db.exec("create temp trigger fail_recency before update of last_used_at on credential_holds begin select raise(abort,'recency unavailable'); end");
+    expect(await turn()).toMatchObject({ text: "完成", mode: "resumed" });
+    expect(backend).toHaveBeenCalledTimes(1);
+    expect(backend.mock.calls[0][1].resumeSessionId).toBe("session-test");
+  } finally { backend.mockRestore(); }
+});
+
 it("长驻会话重建换出借人时，启动、审计、最近使用和后续会话都跟随新的持有", async () => {
   const acp = await import("../src/agents/acp.ts");
   const dispatch = await import("../src/agents/dispatch.ts");

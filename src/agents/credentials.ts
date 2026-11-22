@@ -89,7 +89,13 @@ export function selectCredential(app: App, requester: string, backend: string, a
 }
 export function credentialSucceeded(app: App, profile: object) {
   const use = selectedCredential(profile);
-  if (use) run(app.db, "update credential_holds set last_used_at=? where user_id=? and kind=?", now(), use.holder, use.kind);
+  if (!use) return;
+  try {
+    run(app.db, "update credential_holds set last_used_at=? where user_id=? and kind=?", now(), use.holder, use.kind);
+  } catch {
+    // Recency only ranks future loans. Retrying this completed turn could repeat tool actions.
+    console.warn("[omem] 更新凭据最近使用时间失败，已保留本轮结果");
+  }
 }
 export function credentialAccountView(app: App, id: string, backend: string) {
   for (const m of credentialKindsForBackend(backend)) {
