@@ -265,6 +265,11 @@ async function settle(app: App, id: string, job: AdapterJob, code: number, want:
       ? `装完了，但 omem 的 PATH 里找不到命令 ${profile?.command ?? id}：把装到的 bin 目录加进 omem 服务的 PATH 后重启`
       : `${job.message ? job.message + "；" : ""}装到一半出错，命令 ${profile?.command ?? id} 现在找不到了：可以在“其他支持的 Agent”里重新安装`;
   } else if (!job.ok && !job.message) job.message = code === 0 ? `装完以后版本是 ${job.after ?? "未知"}，不是 ${want}` : `安装命令退出码 ${code}`;
+  // osdk on Windows: every command it puts on PATH is a link to one program, and while any of them runs
+  // (a long `omem peer open`, say) it cannot add a new one.
+  if (!job.ok && job.via === "osdk" && /syncing shim[\s\S]*os error 32/i.test(job.output)) {
+    job.message = "osdk 加不了新命令：有别的 osdk 命令正在运行（Windows 上它们共用一个程序文件，比如开着的 omem peer open）。停掉它们后再装，或在终端里用 npm i -g 装";
+  }
   if (job.ok && profile && job.after !== job.before) {
     job.probe = await probeProfile(profile, app);
     if (!job.probe.error) saveProbe(app, id, job.probe);

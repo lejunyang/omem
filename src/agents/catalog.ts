@@ -107,8 +107,17 @@ export const acpCatalog: CatalogEntry[] = [
     // `claude setup-token` prints a long-lived token on the person's own machine; pasted here, it goes in the vault.
     account: { cli: "claude", env: { CLAUDE_CONFIG_DIR: "{home}/.claude" }, dirs: [".claude"], owns: [".claude", ".claude.json"], tokenEnv: "CLAUDE_CODE_OAUTH_TOKEN", login: { args: ["auth", "login"], url: LOGIN_URL, input: "Paste code", timeoutMs: 900_000 }, status: { args: ["auth", "status"], user: "([^\\s\"]+@[^\\s\"]+)" } },
   },
-  { id: "gemini", statePaths: ["~/.gemini"], egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
-  { id: "copilot", statePaths: ["~/.copilot"], name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
+  // Its own login needs a real terminal (it refuses to ask for the code when stdin is a pipe) and calls back to
+  // a loopback port: from a page, only an API key works.
+  {
+    id: "gemini", statePaths: ["~/.gemini"], egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli",
+    account: { env: { GEMINI_CLI_HOME: "{home}" }, dirs: [".gemini"], owns: [".gemini"], tokenEnv: "GEMINI_API_KEY" },
+  },
+  // `login --device-code` prints GitHub's device page and a code; there is no status command, so the login's exit code says.
+  {
+    id: "copilot", statePaths: ["~/.copilot"], name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot",
+    account: { env: { COPILOT_HOME: "{home}/.copilot" }, dirs: [".copilot"], owns: [".copilot"], login: { args: ["login", "--device-code"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, tokenEnv: "COPILOT_GITHUB_TOKEN" },
+  },
   { id: "qwen", statePaths: ["~/.qwen"], name: "Qwen Code", command: "qwen", args: ["--acp", "--experimental-skills"], previousArgs: [["--acp"]], npm: "@qwen-code/qwen-code" },
   { id: "cursor", name: "Cursor Agent", command: "cursor-agent", args: ["acp"], install: "curl https://cursor.com/install -fsS | bash（Windows 见 cursor.com/cli）" },
   // The npm package opencode-ai stays on 1.x; 2.x ships as a program (ACP registry: binary).

@@ -39,6 +39,11 @@ updated: 2026-11-22
 
 从 `src/agents/credentials.ts` 的 `myCredentials` 读起。凭据清单和设置接口复用 `src/auth/capabilities.ts` 的成员身份判断。观察者仍能读取自己的凭据清单，响应省略全局出借方式，候选成员为空。两处接口的对照用例在 `test/credentials.test.ts`。
 
+## Copilot 的设备码登录、Gemini 的 API key（2026-11-22）
+
+- 在本机装了 Gemini CLI 0.70、Copilot CLI 1.0.114、Qwen Code 0.28.3 实测：Copilot 的 `login --device-code` 打印 GitHub 的设备页和验证码，和 Codex 同一种，加进目录（`account.login`，`COPILOT_HOME` 放进账号目录，也可粘贴 `COPILOT_GITHUB_TOKEN`）；它没有查状态的命令，登录命令以 0 退出就算登录（成员的 `accounts.ts` 和本机的 `machine-login.ts` 都这样认）。Gemini 自己的登录只在真终端里问授权码（管道上直接拒绝，`-i` 也不行），浏览器方式回调本机回环端口，所以只给成员加了粘贴 `GEMINI_API_KEY`，本机的登录仍要在终端里做。Qwen 已经去掉 `qwen auth`，只能在交互界面里 `/auth` 或用环境变量给 key，没有加。
+- osdk 在 Windows 上把命令入口都做成同一个程序的硬链接，有任何一个入口在运行（比如开着的 `omem peer open`）时装新包会在“syncing shim”报文件被占用；安装任务遇到这个错误时说明原因（`adapter.ts` 的 `settle`）。
+
 ## 在网页上登录这台机器的后端，Claude Code 能贴授权码登录（2026-11-22）
 
 - 以前这台机器本身（服务在用、成员借用的那份）的登录要到机器上跑 CLI。`src/agents/machine-login.ts` 用目录里已有的账号声明（`account.login` / `status` / `cli`），以服务自己的环境和 HOME 跑登录命令，不进成员沙箱：链接、验证码给页面，状态命令退出码 0 算登录。接口 `GET|POST|DELETE /api/agents/:id/machine-login`（`?check=1` 现查一次）、`POST …/machine-login/input`，都只给本人（`routes.ts`）。网页：设置 → 后端与模型 展开后端，最上面“这台机器的登录”（`web/src/components/MachineLogin.vue`），目录没声明登录方式的后端不显示。

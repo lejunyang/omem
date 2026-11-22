@@ -114,10 +114,16 @@ export function startMachineLogin(app: App, backend: string): Promise<MachineLog
       pending.set(k, p);
       const overall = setTimeout(() => stop(child), spec.timeoutMs ?? 600_000);
       overall.unref?.();
-      child.once("close", () => {
+      child.once("close", (exit) => {
         clearTimeout(overall);
-        if (pending.get(k) === p) pending.delete(k);
+        const mine = pending.get(k) === p;
+        if (mine) pending.delete(k);
         forgetAvailability();
+        // No status command (Copilot): the login finishing cleanly is the only word on it. A cancelled one says nothing.
+        if (!e.account.status) {
+          if (mine) known.set(k, exit === 0 ? { state: "logged-in", checkedAt: now() } : { state: "none", error: `登录没有完成（退出码 ${exit}）`, checkedAt: now() });
+          return;
+        }
         void checkMachineLogin(app, backend).catch(() => {});
       });
       resolve(machineLogin(app, backend));

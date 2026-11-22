@@ -499,9 +499,17 @@ export function startLogin(app: App, userId: string, backend: string, method = "
       logins.set(key, pending);
       const overall = setTimeout(() => stop(child), spec.timeoutMs ?? 600_000);
       overall.unref?.();
-      child.once("close", () => {
+      child.once("close", (exit) => {
         clearTimeout(overall);
-        if (logins.get(key) === pending) logins.delete(key);
+        const mine = logins.get(key) === pending;
+        if (mine) logins.delete(key);
+        // No status command (Copilot): the login finishing cleanly is the only word on it.
+        if (!entry.account.status && mine) {
+          const before = stored(app, userId, backend);
+          save(app, userId, backend, exit === 0 ? { state: "logged-in", method: "native", checkedAt: now() } : { ...before, error: `登录没有完成（退出码 ${exit}）`, checkedAt: now() });
+          if (exit === 0 && before.state !== "logged-in") afterLogin(app, userId, backend);
+          return;
+        }
         void checkNative(app, userId, entry).catch(() => {});
       });
       void tell(app, userId, entry, `${entry.name} 自己的登录`, found, Math.round((spec.timeoutMs ?? 600_000) / 60_000));

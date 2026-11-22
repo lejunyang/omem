@@ -32,7 +32,23 @@ app.config.agents.profiles = [...app.config.agents.profiles, {
   account: { cli: process.execPath, env: {}, owns: [], login: { args: [script, "login"], url: "https://[^\\s\"'<>]+", input: "Paste code", timeoutMs: 60_000 }, status: { args: [script, "status"], user: "as (\\S+)" } },
 } as any];
 
+// A device-code login with no status command (as Copilot's): it prints the page and a code, then ends by itself.
+const device = join(dir, "device-cli.mjs");
+writeFileSync(device, `console.log("To authenticate, visit https://github.example.test/login/device and enter code ABCD-1234"); console.log("Waiting for authorization..."); setTimeout(() => process.exit(0), 800);`);
+app.config.agents.profiles = [...app.config.agents.profiles, {
+  id: "devicecli", name: "Device (ACP)", transport: "acp", command: "device-cli-acp", args: [], env: {}, idleTimeoutMs: 600_000,
+  account: { cli: process.execPath, env: {}, owns: [], login: { args: [device], url: "https://[^\\s\"'<>]+", code: "\\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\\b" } },
+} as any];
+
 describe("this machine's own login from settings", () => {
+  it("takes a clean exit of a login without a status command as logged in", async () => {
+    expect(machineLogin(app, "devicecli")).toMatchObject({ canLogin: true, canCheck: false, state: "unknown" });
+    const started = await startMachineLogin(app, "devicecli");
+    expect(started.pending).toMatchObject({ url: "https://github.example.test/login/device", code: "ABCD-1234", input: false });
+    for (let i = 0; i < 60 && machineLogin(app, "devicecli").pending; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(machineLogin(app, "devicecli")).toMatchObject({ state: "logged-in", pending: null });
+  }, 30_000);
+
   it("checks, shows the link, takes the pasted code and checks again", async () => {
     expect(machineLogin(app, "fakeagent")).toMatchObject({ canLogin: true, canCheck: true, state: "unknown", pending: null });
     expect(await checkMachineLogin(app, "fakeagent")).toMatchObject({ state: "none" });
