@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canCancel, coverage, credAnchor, expiryText, lendCandidates, lendingNote, lentTo, needsAction, overviewLines, settled, sharingBody, sharingSaved, sharingText, stateTone, suppliedBy,
+  canCancel, coverage, credAnchor, expiryText, lendCandidates, lendingNote, lentTo, needsAction, overviewLines, settled, sharingBody, sharingSaved, sharingText, stateLabel, stateTone, suppliedBy,
   type CredentialOverview,
 } from "../web/src/lib/credentials.ts";
 
@@ -15,6 +15,12 @@ describe("credentials on the account and members pages (web/src/lib/credentials.
     expect(expiryText({ state: "ok" }, now)).toBe("");
     expect(expiryText({ state: "none", expiresAt: now + D }, now)).toBe("");
     expect(expiryText({ state: "logging-in", expiresAt: now + D }, now)).toBe("");
+  });
+  it("distinguishes an unknown machine login from one confirmed missing on both pages", () => {
+    expect(stateLabel({ machine: true, state: "unknown" })).toBe("状态未知");
+    expect(stateLabel({ machine: true, state: "none" })).toBe("没登录（已停止出借）");
+    expect(stateLabel({ machine: true, state: "expired" })).toBe("过期");
+    expect(stateLabel({ machine: false, state: "none" })).toBe("没登录");
   });
   it("colours by state and marks only a required one not logged in, not the machine's own", () => {
     expect([stateTone("ok"), stateTone("expiring"), stateTone("expired"), stateTone("logging-in"), stateTone("none")]).toEqual(["ok", "warn", "danger", "accent", "muted"]);
@@ -53,6 +59,7 @@ describe("credentials on the account and members pages (web/src/lib/credentials.
     const list = [
       { kind: "kit:corp", backends: ["echo", "other"], state: "expired" as const },
       { kind: "kit:repo", backends: ["echo"], state: "ok" as const },
+      { kind: "kit:unknown", backends: ["solo"], state: "unknown" as const },
       { kind: "kit:none", backends: ["solo"], state: "none" as const },
     ];
     expect(suppliedBy({ id: "echo", method: "kit:repo" }, list)?.kind).toBe("kit:repo");

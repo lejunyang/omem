@@ -51,14 +51,16 @@ export function commandExists(command: string) {
 }
 
 /** `sandbox`: run for one user's own account, inside bubblewrap (agents/sandbox.ts); the profile carries it (`accountOf`). */
-type LaunchOptions = { cwd: string; env?: NodeJS.ProcessEnv; ownSandbox?: OwnSandbox; sandbox?: SandboxAccount; workspace?: WorkspaceMounts };
+type LaunchOptions = { cwd: string; baseEnv?: NodeJS.ProcessEnv; directOnly?: boolean; env?: NodeJS.ProcessEnv; ownSandbox?: OwnSandbox; sandbox?: SandboxAccount; workspace?: WorkspaceMounts };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin: "ignore" | number }): Omit<ChildProcessWithoutNullStreams, "stdin"> & { stdin: null };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" }): ChildProcessWithoutNullStreams;
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" | "ignore" | number }) {
   // Agents get tools osdk installed (desktop control) on PATH without the owner putting osdk shims there.
-  const env = withAgentPath({ ...process.env, ...opts.env });
+  const base = opts.baseEnv ?? process.env;
+  const env = withAgentPath({ ...base, ...opts.env });
   const resolved = resolveCommand(command, env);
   if (!resolved) throw new Error(`找不到命令 ${command}。请安装对应 Agent CLI 或在设置中修改命令。`);
+  if (opts.directOnly && resolved.prefix.includes("/c")) throw new Error("命令需要经过 shell 才能启动");
   let boxed;
   if (opts.ownSandbox) {
     const box = opts.ownSandbox;
@@ -69,9 +71,9 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
       if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
-    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(process.env, { ...opts.env, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
+    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...opts.env, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
       args: bwrapArgs({ ...plan, cwd, command: resolved.file, args: [...resolved.prefix, ...args] }) };
-  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...opts.env, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace) : null;
+  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...opts.env, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base) : null;
   const child = spawn(boxed?.file ?? resolved.file, boxed?.args ?? [...resolved.prefix, ...args], {
     cwd: opts.cwd,
     env: boxed?.env ?? env,

@@ -1,9 +1,33 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-if (process.argv[2] === "whoami") {
-  process.stdout.write(fs.readFileSync(path.join(process.env.HOME, ".acme-demo", "account.json")));
-} else {
-  console.error("用法：acme-demo whoami");
-  process.exitCode = 2;
+
+function main() {
+  let account;
+  try {
+    account = JSON.parse(fs.readFileSync(path.join(process.env.HOME, ".acme-demo", "account.json"), "utf8"));
+  } catch {
+    console.error(JSON.stringify({ code: "AUTH_REQUIRED" }));
+    return 1;
+  }
+  if (account.expiresAt <= Date.now()) {
+    console.error(JSON.stringify({ code: "EXPIRED" }));
+    return 1;
+  }
+  const [action, option, project] = process.argv.slice(2);
+  if (action === "whoami") {
+    console.log(JSON.stringify({ user: account.user }));
+    return 0;
+  }
+  if (action === "show" && option === "--project" && project) {
+    if (project === "sample" || project === account.user) {
+      console.log(JSON.stringify({ project, title: "示例项目" }));
+      return 0;
+    }
+    console.error(JSON.stringify({ code: "DENIED", details: { links: ["https://example.test/request"] } }));
+    return 3;
+  }
+  console.error("用法：acme-demo whoami 或 acme-demo show --project sample");
+  return 2;
 }
+process.exitCode = main();

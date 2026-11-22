@@ -34,7 +34,7 @@ function headers(input: http.IncomingHttpHeaders) {
   for (const key of ["connection", "keep-alive", "proxy-connection", "proxy-authorization", "proxy-authenticate", "transfer-encoding", "upgrade", "trailer", "te", ...(input.connection ?? "").toLowerCase().split(",").map(k => k.trim())]) delete copy[key];
   return copy;
 }
-const callbackPath = /^\/(?:mcp|api\/(?:tools(?:\/[a-zA-Z0-9_-]+)?|command-gate|operation-gate\/http|remote\/agent-browser))$/;
+const callbackPath = /^\/(?:mcp|api\/(?:tools(?:\/[a-zA-Z0-9_-]+)?|command-gate|credentials\/outcome|operation-gate\/http|remote\/agent-browser))$/;
 const hostName = (url: URL) => url.hostname.replace(/^\[|\]$/g, "");
 class Refused extends Error { }
 export async function startProxy(path: string, opts: ProxyOptions) {
@@ -154,6 +154,9 @@ export async function startProxy(path: string, opts: ProxyOptions) {
       reply.on("error", () => res.destroy());
       if (r) reply.on("data", b => { r.bytes += b.length; });
       reply.pipe(res);
+    });
+    if (callback && url.pathname === "/api/command-gate") upstream.on("information", info => {
+      if (info.statusCode === 102 && !res.destroyed) res.writeProcessing();
     });
     res.once("close", () => upstream.destroy());
     upstream.on("error", () => { if (!res.headersSent) res.writeHead(502).end("上游连接或证书验证失败"); else res.destroy(); });

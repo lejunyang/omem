@@ -158,9 +158,9 @@ describe("accounts of members", async () => {
     fetch(app.baseUrl + path, { ...init, headers: { ...(user ? { authorization: `Bearer ${tokens[user]}` } : {}), ...(init.body ? { "content-type": "application/json" } : {}), ...(init.headers as Record<string, string>) } });
   const codex = allProfiles(app.config).find((p) => p.id === "codex")!;
   const codexCli = allProfiles(app.config).find((p) => p.id === "codex-cli")!;
-  const loggedIn = (user: string, backend: string) => {
+  const loggedIn = (user: string, backend: string, accountName?: string) => {
     ensureAccountHome(app, user);
-    sqlRun(app.db, "insert or replace into kv(key, value) values(?, ?)", `agent_account:${user}:${backend}`, JSON.stringify({ state: "logged-in", checkedAt: new Date().toISOString() }));
+    sqlRun(app.db, "insert or replace into kv(key, value) values(?, ?)", `agent_account:${user}:${backend}`, JSON.stringify({ state: "logged-in", user: accountName, checkedAt: new Date().toISOString() }));
   };
 
   it("leaves the owner and machines without the sandbox as they were", () => {
@@ -292,11 +292,12 @@ describe("accounts of members", async () => {
   it("lets each member see and remove only their own accounts", async () => {
     setSandboxSupportForTests({ ok: true, bwrap: "/usr/bin/bwrap" });
     loggedIn("ann", "codex");
-    loggedIn("bob", "codex");
+    const privateLogin = "member-b-fixture-login";
+    loggedIn("bob", "codex", privateLogin);
     const mine = await (await as("ann", "/api/me/agent-accounts")).json();
     expect(mine).toMatchObject({ supported: true, owner: false });
     expect(mine.backends.find((b: { id: string }) => b.id === "codex").state).toBe("logged-in");
-    expect(JSON.stringify(mine)).not.toContain("bob");
+    expect(JSON.stringify(mine)).not.toContain(privateLogin);
     expect((await as("ann", "/api/agent-accounts")).status).toBe(403);
     expect((await as("ann", "/api/agent-accounts/bob/codex", { method: "DELETE" })).status).toBe(403);
     expect((await as("ann", "/api/me/agent-accounts/codex", { method: "DELETE" })).status).toBe(200);
@@ -305,6 +306,7 @@ describe("accounts of members", async () => {
     // The owner's overview: who logged in to what, no tokens.
     const all = await (await as(null, "/api/agent-accounts")).json();
     const bob = all.people.find((p: { userId: string }) => p.userId === "bob");
+    expect(bob.backends).toContainEqual(expect.objectContaining({ id: "codex", user: privateLogin }));
     expect(bob.backends.map((b: { id: string }) => b.id)).toEqual(expect.arrayContaining(["codex", "claude"]));
     expect(JSON.stringify(all)).not.toContain("tok-example");
   });

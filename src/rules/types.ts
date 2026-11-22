@@ -1,3 +1,4 @@
+import { COMMAND_TIMEOUT_SEC } from "../core/util.ts";
 import { z } from "zod";
 
 /**
@@ -267,7 +268,7 @@ export const actionSchema = z.discriminatedUnion("type", [
     type: z.literal("script"),
     runtime: z.enum(["node", "python", "bash"]),
     code: z.string().min(1).max(100_000),
-    timeoutSec: z.number().int().min(1).max(3600).default(60),
+    timeoutSec: z.number().int().min(1).max(COMMAND_TIMEOUT_SEC).default(60),
     approval: z
       .object({ by: z.enum(["none", "owner", "person", "ai"]).default("owner"), person: z.string().trim().max(200).optional(), hint: z.string().trim().max(1000).optional() })
       .default({ by: "owner" }),

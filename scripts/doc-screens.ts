@@ -1355,7 +1355,8 @@ const ownerToken = createApiToken(app, "owner", "演示");
     values(?,?,'logged-in',?,?,?,'',?,?,'{}',?,'[]')`, xiaowu.id, "codehub:token", "xiaowu@example.com", Date.now() + 25 * day, Date.now() + 25 * day - 600_000, new Date().toISOString(),
     JSON.stringify({ scope: "self", members: [] }), JSON.stringify({ backends: [], commands: ["hub-demo"], paths: [".config/hub-demo"] }));
   run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,check_day,checked_at,sharing,notified,supplied_backends)
-    values('owner',?,'logged-in',null,?,'',?,?,'{}',?)`, demoKind, Date.now() + 20 * day, new Date().toISOString(), JSON.stringify({ scope: "all", members: [] }), JSON.stringify(["acmeauth:demo"]));
+    values('owner',?,'logged-in',null,?,'',?,?,'{}',?)
+    on conflict(user_id,kind) do update set state=excluded.state,expires_at=excluded.expires_at,checked_at=excluded.checked_at,sharing=excluded.sharing,supplied_backends=excluded.supplied_backends`, demoKind, Date.now() + 20 * day, new Date().toISOString(), JSON.stringify({ scope: "all", members: [] }), JSON.stringify(["acmeauth:demo"]));
 }
 // 小林's own line (src/items/member-work.ts), and what waits for him: the owner's assistant asked him how
 // the refund API is going (src/items/member-progress.ts).

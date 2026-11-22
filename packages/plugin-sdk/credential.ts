@@ -40,16 +40,23 @@ export type CredentialContext = {
 };
 
 export type CredentialOutcome = { json: string; equals: unknown };
-/** One command-line tool the credential provides (readOnly / resource / outcomes are phase 2). */
+type CommandMatch = {
+  subcommand?: string[];
+  /** Exact argument vector, including flags. */
+  args?: string[];
+  /** Named options, e.g. { instance: "sample", verbose: true }. False requires absence. */
+  options?: Record<string, string | boolean>;
+};
+/** One command-line tool the credential provides. */
 export type CredentialCommand = {
   name: string;
   /** Install directories mounted read-only into members' sandboxes (`~` is this machine's HOME). */
   install?: string[];
   /** State directories it writes, relative to HOME. */
   state?: string[];
-  readOnly?: { subcommand?: string[]; [key: string]: unknown }[];
-  resource?: { match?: Record<string, unknown>; key: string; [key: string]: unknown }[];
-  outcomes?: { unauthenticated?: CredentialOutcome[]; expired?: CredentialOutcome[]; denied?: CredentialOutcome[]; applyUrl?: string; [key: string]: unknown };
+  readOnly?: CommandMatch[];
+  resource?: { match: CommandMatch; key: string }[];
+  outcomes?: { unauthenticated?: CredentialOutcome[]; expired?: CredentialOutcome[]; denied?: CredentialOutcome[]; applyUrl?: string };
 };
 export type CredentialDef = {
   /** Unique within the plugin; the full name is `<plugin>:<id>`. */
@@ -69,8 +76,12 @@ export type CredentialDef = {
   /** After a login or a refresh: write the credential where this person's tools look for it. */
   provide?(ctx: CredentialContext): Promise<void>;
   provides: { backends?: string[]; commands?: CredentialCommand[] };
-  /** Phase 2: whether this person may use a resource, without running the command. */
-  precheck?(ctx: CredentialContext, req: { resource: string; user: string }): Promise<{ allowed: boolean | null; missing?: string; applyUrl?: string }>;
+  /** Query access for req.user (the subject), using ctx only to authenticate the query.
+   * Only return verifiedRead for a command when the resource service confirms this subject can
+   * read its entire result, and the complete argv is a read of exactly req.resource. Leave it
+   * unset for advisory answers, ambiguous options, or a service that only checks the login in ctx.
+   */
+  precheck?(ctx: CredentialContext, req: { resource: string; user: string; command?: { name: string; args: readonly string[] } }): Promise<{ allowed: boolean | null; verifiedRead?: true; missing?: string; applyUrl?: string }>;
 };
 export type CredentialApi = {
   credential(def: CredentialDef): void;

@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/core/app.ts";
 import { testApp } from "./helpers.ts";
@@ -12,7 +12,7 @@ import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
-import { allCredentials, checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, selectCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
+import { allCredentials, checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
 import type { CredentialDef } from "../packages/plugin-sdk/credential.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin, untrustPlugin } from "../src/plugins/registry.ts";
 import { codeHash, setTrust, trustState } from "../src/plugins/trust.ts";
@@ -107,6 +107,7 @@ posixIt.each([
   const server = await startServer(app, { port: 0, quiet: true });
   const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
   const caller = actor === "成员" ? headers : undefined;
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
   try {
     expect((await server.inject({ method: "POST", url: "/api/credentials/" + kind + "/login", headers })).statusCode).toBe(200);
     await until(() => credentialHold(app, "ann", kind).state === "logged-in");
@@ -137,7 +138,8 @@ posixIt.each([
     expect(refresh).toHaveBeenCalledOnce();
 
     expect(await checkAccount(app, "ann", "echo")).toMatchObject({ state: "none", method: kind });
-    expect(myCredentials(app, "ann").credentials[0]).toMatchObject({ state: "none", checkedAt: expect.any(String) });
+    const credential = async () => (await server.inject({ url: "/api/credentials", headers })).json().credentials[0];
+    expect(await credential()).toMatchObject({ state: "none", supplied: true, checkedAt: expect.any(String) });
     for (const profile of profiles) {
       expect(loggedIn(app, "ann", profile.id)).toBe(false);
       for (const requester of ["ann", "bob"]) expect(() => withAccount(app, requester, profile)).toThrow(/登录/);
@@ -149,6 +151,7 @@ posixIt.each([
     for (const dir of dirs) expect(readFileSync(join(home, dir, "login"), "utf8")).toBe("ann");
 
     expect((await server.inject({ method: "DELETE", url: credentialPath, headers: caller })).statusCode).toBe(200);
+    expect(await credential()).toMatchObject({ state: "none", supplied: false });
     expect(logout).toHaveBeenCalledOnce();
     expect(credentialHold(app, "ann", kind)).toMatchObject({ state: "none", refreshAt: undefined });
     expect(await tickCredentialRefreshes(app, Date.now() + 86400_000)).toBe(0);
@@ -177,6 +180,7 @@ posixIt("自己的凭据过期会改借有效登录或提示登录，独立的�
   await saveToken(app, "bob", backend, "fixture-token");
   let state: "ok" | "expired" | "missing" = "ok";
   add({ provides: { backends: [backend] }, provide: undefined, async check() { return { state }; } });
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
   for (const id of ["ann", "bob"]) {
     await startCredentialLogin(app, id, kind);
     await until(() => credentialHold(app, id, kind).state === "logged-in");
@@ -319,6 +323,7 @@ posixIt("同种凭据从 A 改供 B，旧文件仍按持有退出，新后端要
   const def = add({ provides: { backends: [a.id], commands: [{ name: "old-cli" }] },
     login: async () => ({ user: "demo" }),
     provide: async ctx => { writeFileSync(join(ctx.home, ".echo-a/login"), "demo"); } });
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
   await startCredentialLogin(app, "ann", kind);
   setCredentialSharing(app, "ann", kind, { scope: "all" });
   undo.pop()!();
@@ -477,11 +482,11 @@ posixIt("总览和个人清单各查询一次持有，登录中的链接与验�
     const own = myCredentials(app, "ann");
     expect(own.credentials.map(c => c.state)).toEqual(["expired", "logging-in"]);
     expect(own.credentials[1]).toMatchObject({ url: "https://auth.example.test/pending", code: "DEMO" });
-    expect(queries.mock.calls).toHaveLength(1);
+    expect(queries.mock.calls).toHaveLength(3); // Caller profile, all holds, eligible candidates.
     queries.mockClear();
     const { people } = allCredentials(app);
     expect(queries.mock.calls).toHaveLength(1);
-    expect(people.map(p => p.credentials.map(c => c.state))).toEqual([["logging-in", "expired"], ["none"]]);
+    expect(people.map(p => p.credentials.map(c => c.state))).toEqual([["logging-in", "expired"], ["none"], ["unknown", "unknown"]]);
     for (const c of people.flatMap(p => p.credentials)) {
       expect(c).not.toHaveProperty("url");
       expect(c).not.toHaveProperty("code");
@@ -507,7 +512,7 @@ it.skipIf(process.platform === "win32")("安装目录只读、状态预建；本
   const home = ensureAccountHome(app, "ann");
   expect(existsSync(join(home, ".fixture-state"))).toBe(true);
   expect(credentialInstallDirs(app)).toEqual([canonical(install)]);
-  expect(myCredentials(app, "ann").credentials[0].missingInstall).toContain(canonical(join(homedir(), ".fixture-install-missing")));
+  expect(myCredentials(app, "ann").credentials[0].missingInstall).toEqual(["~/.fixture-install-missing"]);
   expect(sandboxStatus(app).defaults.writable).toContain(canonical(join(homedir(), ".fixture-state")));
   expect(() => registerCredential("bad", { id: "sso", name: "坏路径", login: async () => ({ user: "a" }), provides: { commands: [{ name: "x", state: ["../secrets"] }] } }, () => ({}), app)).toThrow();
   const rel = ".fixture-link"; symlinkSync(app.home, join(home, rel), "dir");
@@ -515,6 +520,93 @@ it.skipIf(process.platform === "win32")("安装目录只读、状态预建；本
   expect(() => ensureAccountHome(app, "ann")).toThrow(/符号链接/);
   expect(() => registerCredential("third", { id: "sso", name: "安装", login: async () => ({ user: "a" }), provides: { commands: [{ name: "x", install: [app.home] }] } }, () => ({}), app)).toThrow();
 });
+it("凭据清单返回出借方式和至多 200 位可选成员，仅含 id 和显示名", async () => {
+  const { startServer } = await import("../src/server/http.ts");
+  add();
+  app.config.credentials.lending = "confirm";
+  run(app.db, "insert into users(id,name,role,created_at,kind,status,disabled_at) values " +
+    "('paused','停用','member','0','person','active','1'),('waiting','待批准','member','0','person','pending',null),('bot','服务','member','0','service','active',null)");
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
+    const list = async () => (await server.inject({ url: "/api/credentials", headers })).json();
+    const initial = await list();
+    expect(initial).toMatchObject({ lending: "confirm", credentials: [{ supplied: false }] });
+    expect(initial.candidates).toEqual([{ id: "bob", name: "成员 B" }]);
+    expect((await server.inject({ url: "/api/users", headers })).statusCode).toBe(403);
+    const bot = { authorization: "Bearer " + createApiToken(app, "bot") };
+    const botList = (await server.inject({ url: "/api/credentials", headers: bot })).json();
+    expect(botList.candidates).toEqual([]);
+    expect(botList).not.toHaveProperty("lending");
+    expect((await server.inject({ url: "/api/settings", headers: bot })).statusCode).toBe(403);
+    run(app.db, `with recursive n(i) as (values(1) union all select i+1 from n where i<200)
+      insert into users(id,name,role,created_at) select 'member-'||i,'成员 '||i,'member','0' from n`);
+    app.config.credentials.lending = "off";
+    const next = await list();
+    expect(next.lending).toBe("off");
+    expect(next.candidates).toHaveLength(200);
+  } finally { await server.close(); }
+});
+
+it("观察者可读自己的凭据清单，出借策略和候选成员对其隐藏", async () => {
+  const { startServer } = await import("../src/server/http.ts");
+  add();
+  run(app.db, "update users set role='observer' where id='ann'");
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
+    const res = await server.inject({ url: "/api/credentials", headers });
+    expect(res.statusCode).toBe(200);
+    const list = res.json();
+    expect(list).toMatchObject({ credentials: [{ kind: "sample:sso" }], candidates: [] });
+    expect(list).not.toHaveProperty("lending");
+    expect((await server.inject({ url: "/api/settings?section=security", headers })).statusCode).toBe(403);
+  } finally { await server.close(); }
+});
+
+it("清单只显示 HOME 相对的安装声明，绝对路径只计入缺失数量", async () => {
+  const { startServer } = await import("../src/server/http.ts");
+  const privateDir = join(tmpdir(), "fixture-private-" + basename(app.home));
+  const relative = "~/.fixture-install-missing";
+  add({ provides: { commands: [{ name: "demo", install: [relative, privateDir] }] } });
+  setSandboxSupportForTests({ ok: false, reason: "spawn " + privateDir + " ENOENT" });
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
+    const res = await server.inject({ url: "/api/credentials", headers });
+    expect(res.json().credentials[0]).toMatchObject({ missingInstall: [relative], missingInstallCount: 2, login: false });
+    expect(res.body).not.toContain(basename(privateDir));
+  } finally { await server.close(); }
+});
+
+it("成员可读出借的三项设置，授予安全区域编辑权限后也只能由本人改", async () => {
+  const { startServer } = await import("../src/server/http.ts");
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
+    const policy = { credentials: { lending: "confirm", confirm: { inviteAsOwner: true } }, agents: { accountsDefault: "own" } };
+    expect((await server.inject({ method: "PUT", url: "/api/settings", payload: policy })).statusCode).toBe(200);
+    for (const url of ["/api/settings", "/api/settings?section=security"]) {
+      const res = await server.inject({ url, headers });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ config: policy });
+    }
+    expect((await server.inject({ url: "/api/settings?section=system", headers })).statusCode).toBe(403);
+    for (const action of ["view", "edit"])
+      run(app.db, "insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values('ann',?,'global','','allow','0','owner')", "settings.security." + action);
+    const config = (await server.inject({ url: "/api/settings?section=security", headers })).json().config;
+    expect(config).toMatchObject(policy);
+    expect(config.credentials).toEqual(policy.credentials);
+    for (const key of ["security", "approvals", "agents.ownSandbox", "agents.fullAccess", "token"]) expect(config).not.toHaveProperty(key);
+    for (const payload of [
+      { credentials: { ...policy.credentials, lending: "off" } },
+      { credentials: { ...policy.credentials, confirm: { inviteAsOwner: false } } },
+      { agents: { accountsDefault: "owner" } },
+    ])
+      expect((await server.inject({ method: "PUT", url: "/api/settings", headers, payload })).statusCode).toBe(403);
+  } finally { await server.close(); }
+});
+
 it("凭据声明拒绝错误 readOnly/resource/outcomes，保存声明且查询走索引", () => {
   const def = add();
   expect(one<{declaration:string}>(app.db, "select declaration from credential_kinds")?.declaration).toContain("db:{option.instance}");
@@ -554,6 +646,7 @@ posixIt("出借按自己、本人、最近使用的成员选，逐后端覆盖�
   createUser(app, { id: "cora", name: "成员 C" });
   add({ check: async ctx => ({ state: "ok", user: ctx.userId }) });
   const kind = "sample:sso";
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
   for (const id of ["bob", "cora"]) {
     await startCredentialLogin(app, id, kind);
     await until(() => credentialHold(app, id, kind).state === "logged-in");
@@ -566,6 +659,7 @@ posixIt("出借按自己、本人、最近使用的成员选，逐后端覆盖�
   recordIsolation(app, runId, "ann", borrowed);
   expect(JSON.stringify(runEvents(app, runId))).toContain("sample:sso");
   expect(one(app.db, "select actor from audit_events where action='credentials.borrow'")).toEqual({ actor: "ann" });
+  setCredentialSharing(app, "owner", kind, { scope: "all" });
   await checkCredential(app, "owner", kind);
   expect(selectedCredential(choose())?.holder).toBe("owner");
   app.config.agents.accountIsolation = "require";
@@ -624,6 +718,7 @@ posixIt("长驻会话重建换出借人时，启动、审计、最近使用和�
   createUser(app, { id: "cora", name: "成员 C" });
   const kind = "sample:sso";
   add({ provides: { backends: ["fixture"] }, provide: undefined });
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
   for (const id of ["bob", "cora"]) {
     await startCredentialLogin(app, id, kind);
     await until(() => credentialHold(app, id, kind).state === "logged-in");
@@ -738,18 +833,41 @@ it.runIf(process.platform === "win32")("Windows 上登记带状态和安装目�
 });
 
 it("本人那份没检查过或检查出错时照旧借本机登录；检查明确说没登录才不借；插件重新登记后下一轮重查", async () => {
-  add({ check: vi.fn(async () => { throw new Error("插件内部错误"); }) });
-  // Not checked yet (no row for the owner): the machine login lends as it did before credentials.
-  expect(selectCredential(app, "ann", "traex", true, true)).toMatchObject({ holder: "owner", kind: "sample:sso" });
+  const kind = "sample:sso";
+  const profile = allProfiles(app.config).find(p => p.id === "traex")!;
+  const choose = () => selectedCredential(withAccount(app, "ann", profile));
+  function expectOwnerView(state: "unknown" | "none" | "expired", error?: string) {
+    const expected = { state, machine: true, error };
+    expect(myCredentials(app, "owner").credentials.find(c => c.kind === kind)).toMatchObject(expected);
+    const owner = allCredentials(app).people.find(p => p.userId === "owner");
+    expect(owner?.credentials.find(c => c.kind === kind)).toMatchObject(expected);
+  }
+  add({ async check() { throw new Error("插件内部错误"); } });
+  expectOwnerView("unknown");
+  expect(myCredentials(app, "ann").credentials[0].state).toBe("none");
+  expect(choose()).toMatchObject({ holder: "owner", kind });
   await tickCredentialChecks(app);
-  expect(credentialHold(app, "owner", "sample:sso")).toMatchObject({ state: "none", error: "检查失败，请稍后重试" });
-  expect(selectCredential(app, "ann", "traex", true, true)).toMatchObject({ holder: "owner" });
-  // The plugin's code changed and registered again: the owner's check runs on the next tick, not tomorrow.
+  await checkCredential(app, "owner", kind);
+  expect(credentialHold(app, "owner", kind)).toMatchObject({ state: "none", error: "检查失败，请稍后重试" });
+  expectOwnerView("unknown", "检查失败，请稍后重试");
+  expect(all(app.db, "select id from notifications where user_id='owner' and title like '%检查失败%'")).toHaveLength(1);
+  expect(choose()).toMatchObject({ holder: "owner", kind });
+
   for (const fn of undo.splice(0)) fn();
-  const check = vi.fn(async () => ({ state: "missing" as const }));
+  const check = vi.fn<NonNullable<CredentialDef["check"]>>().mockResolvedValue({ state: "missing" });
   add({ check });
   await tickCredentialChecks(app);
   expect(check).toHaveBeenCalledOnce();
-  expect(credentialHold(app, "owner", "sample:sso").state).toBe("missing");
-  expect(selectCredential(app, "ann", "traex", true, true)).toBeUndefined();
+  for (const state of ["missing", "expired"] as const) {
+    const displayState = state === "missing" ? "none" : "expired";
+    check.mockResolvedValueOnce({ state });
+    await checkCredential(app, "owner", kind);
+    expectOwnerView(displayState);
+    expect(() => choose()).toThrow(/没有可用的登录/);
+    check.mockRejectedValueOnce(new Error("示例错误"));
+    await checkCredential(app, "owner", kind);
+    expectOwnerView(displayState, "检查失败，请稍后重试");
+    expect(credentialHold(app, "owner", kind)).toMatchObject({ state, error: "检查失败，请稍后重试" });
+    expect(() => choose()).toThrow(/没有可用的登录/);
+  }
 });

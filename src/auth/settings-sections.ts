@@ -206,8 +206,12 @@ function assign(values: Values, path: string, value: unknown) {
   if (!child) values[key] = value;
   else values[key] = { ...(values[key] as Values), [child]: value };
 }
-export function settingsView(config: Config, visible: (s: Section) => boolean, owner: boolean) {
+export function settingsView(config: Config, visible: (s: Section) => boolean, owner: boolean, credentialPolicy = visible("security")) {
   const result: Values = {};
+  if (!owner && credentialPolicy) {
+    result.credentials = { lending: config.credentials.lending, confirm: { inviteAsOwner: config.credentials.confirm.inviteAsOwner } };
+    assign(result, "agents.accountsDefault", config.agents.accountsDefault);
+  }
   for (const [path, value] of entries(config)) {
     if (visible(sectionOf(path)) && path !== "token" && (owner || !ownerSettings.includes(path) || publicOwnerFields.has(path))) assign(result, path, value);
   }

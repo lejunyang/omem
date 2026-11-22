@@ -1,5 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
+export const COMMAND_TIMEOUT_SEC = 3600;
+export const COMMAND_OUTPUT_LIMIT = 20_000;
 export const now = () => new Date().toISOString();
 
 /** Short sortable id: time prefix + randomness. */

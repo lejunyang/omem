@@ -66,10 +66,12 @@ import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
 import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewRounds, runAis, queueReason, runEvents, runUser } from "../agents/runs.ts";
-import { callTool, contextToolNames, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
+import { callTool, contextToolNames, mcpTools, onToolTokenRevoked, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, saveConfig } from "../core/config.ts";
+import { credentialExecution } from "../agents/credential-execution.ts";
+import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
@@ -177,7 +179,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (req.routeOptions.url === "/api/cloud-tools/challenge/:nonce") return;
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).
-    if (req.routeOptions.url === "/api/remote/agent-browser") return; // Authenticated by gateCaller.
+    if (req.routeOptions.url === "/api/credentials/outcome" || req.routeOptions.url === "/api/remote/agent-browser") return; // Authenticated by gateCaller.
     if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|operation-gate|code-index\/notify|hooks)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
     await checkBearer(app, bearerToken(req));
@@ -336,13 +338,37 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/mcp", async (_req, reply) => reply.status(405).send({ error: "use POST" }));
   // A protected command an agent's process is about to run (agents/command-gate.ts): only from this
   // machine, only with a run's token; a long poll while the approver decides.
-  server.post("/api/command-gate", async (req) => {
+  server.post("/api/command-gate", async (req, reply) => {
     const s = req.raw.socket;
     if (viaProxy(req.raw) || !(loopbackIp(req.ip ?? "") || (!!s.remoteAddress && s.remoteAddress === s.localAddress))) throw new HttpError(403, "命令拦截只接受本机的请求");
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
-    const b = q(z.object({ command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
-    return commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+    const b = q(z.object({ credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
+    const decision = await commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+    if (decision.decision === "allow" && reportable(ctx)) {
+      const entry = credentialCommand(b.command);
+      if (entry && b.credentialExecution) {
+        // Extend the wrapper's offline timeout only once the authenticated host answers.
+        reply.raw.writeProcessing?.();
+        const token = bearer(req), rules = app.config.security.operationRules, legacy = app.config.security.commandRules;
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        const unsubscribe = onToolTokenRevoked(token, cancel);
+        s.once("close", cancel);
+        const live = () => {
+          const current = toolContextForToken(app, token);
+          return !controller.signal.aborted && !s.destroyed && current?.runId === ctx.runId && current?.commandTurn === ctx.commandTurn &&
+            rules === app.config.security.operationRules && legacy === app.config.security.commandRules;
+        };
+        try {
+          const loan = await credentialExecution(ctx, entry, b.args, live, controller.signal);
+          if (!live()) return { decision: "deny", message: "运行或操作规则已变化，请重新执行" };
+          return { ...decision, report: true, ...loan };
+        } finally { s.off("close", cancel); unsubscribe(); }
+      }
+      if (entry) return { ...decision, report: true };
+    }
+    return decision;
   });
   // A request a page is about to send in a browser an agent drives (agents/http-gate.ts): the same
   // callers as the command gate — this machine, a run's token. GET says which requests to ask about.
@@ -353,6 +379,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     return ctx;
   };
+  server.post("/api/credentials/outcome", async req => {
+    const ctx = gateCaller(req);
+    if (!ctx.runId || !reportable(ctx)) throw new HttpError(403, "需要发起人自己账号的本机运行");
+    return credentialOutcome(app, ctx.userId ?? OWNER, ctx.runId, q(outcomeSchema, req.body));
+  });
   server.post("/api/remote/agent-browser", async req => {
     const ctx = gateCaller(req);
     if (!ctx.browserProfilesRoot || !ctx.runId) throw new HttpError(403, "只有本机受管运行可以登记浏览器");
@@ -3560,6 +3591,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const access = capabilityAccess(app, who(req), null);
     return {
       owner: who(req) === OWNER && access.active,
+      memberCredentials: access.memberCredentials,
       view: (section: Section) => !!access.source(`settings.${section}.view`),
       edit: (section: Section) => !!access.source(`settings.${section}.edit`),
     };
@@ -3573,12 +3605,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (section !== undefined && !sections.includes(section)) throw new HttpError(400, "不认识的设置区域");
     const access = settingsAccess(req);
     const visible = (s: Section) => (!section || s === section) && access.view(s);
-    if (!sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
+    const credentialPolicy = (!section || section === "security") && (access.memberCredentials || access.view("security"));
+    if (!credentialPolicy && !sections.some(visible)) throw new HttpError(403, "没有查看设置的权限");
     const profiles = visible("ai") || visible("assistant") || visible("knowledge") ? listAgentProfiles(app) : [];
     const readOnlyProbes = visible("ai") && access.owner ? null : cachedProbeViews(app, profiles.map(p => p.id), who(req));
     return {
       ...((visible("ai") || visible("assistant") || visible("knowledge")) && { unavailableBackends: profiles.filter(p => p.pluginBackend?.available === false).map(({id,name,pluginBackend}) => ({id,name,pluginBackend})) }),
-      config: settingsView(app.config, visible, access.owner),
+      config: settingsView(app.config, visible, access.owner, credentialPolicy),
       ...(visible("ai") && access.owner ? { agents: profiles } : (visible("ai") || visible("assistant") || visible("knowledge")) && {
         agents: profiles.map(({ id, name, installed, transport, model, effort, pluginBackend }) => {
           const probe = readOnlyProbes?.get(id) ?? null;

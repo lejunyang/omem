@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome } from "../../packages/plugin-sdk/credential.ts";
 import type { App } from "../core/app.ts";
 import { run } from "../core/db.ts";
+import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { canonical, normalizeSandbox, under } from "./own-sandbox.ts";
 
@@ -46,7 +47,7 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
     const install = m.provides.commands.flatMap(c => c.install ?? []).map(p => {
       if (p.split("/").includes("..")) throw new Error("安装目录不能包含 ..");
       if (!(isAbsolute(p) || p.startsWith("~/"))) throw new Error("凭据安装目录需要绝对路径或 ~/ 开头");
-      return p.startsWith("~/") ? join(home, p.slice(2)) : p;
+      return { declared: p, path: p.startsWith("~/") ? join(home, p.slice(2)) : p };
     });
     return { state, install };
   }
@@ -61,17 +62,27 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
     if (p.startsWith("~/") && !under(path, home)) throw new Error("HOME 中的安装目录不能指向 HOME 外");
     normalizeSandbox({ mode: "off", writable: [], hidden: [path] }, home, data);
     if (under(path, data)) throw new Error("凭据安装目录不能位于 omem 数据目录");
-    return path;
+    return { declared: p, path };
   });
   return { state: writable, install };
 }
+
+export const defaultSharingScope = (id: string) => id === OWNER ? "all" : "self";
 
 export function registerCredential(plugin: string, def: CredentialDef, settings = () => ({} as Record<string, string | number | boolean>), app?: App) {
   if (!ID.test(def.id) || !def.name?.trim() || typeof def.login !== "function") throw new Error("凭据需要有效的 id、name 和 login");
   for (const name of ["refresh", "check", "logout", "provide", "precheck"] as const)
     if (def[name] !== undefined && typeof def[name] !== "function") throw new Error(`凭据 ${name} 需要回调函数`);
   const provides = providesSchema.parse(def.provides);
-  for (const c of provides.commands) for (const p of c.state) stateRel(p);
+  for (const [i, c] of provides.commands.entries()) {
+    for (const p of c.state) stateRel(p);
+    // Zod objects enumerate fields in schema order. Outcome precedence belongs to the declaration.
+    if (c.outcomes) {
+      const validated = c.outcomes;
+      const keys = Object.keys(def.provides.commands![i]!.outcomes!) as (keyof typeof validated)[];
+      c.outcomes = Object.fromEntries(keys.map(key => [key, validated[key]]));
+    }
+  }
   const kind = `${plugin}:${def.id}`;
   if (registry.has(kind)) throw new Error("凭据重复注册：" + kind);
   const lifetime = new AbortController();
@@ -81,7 +92,8 @@ export function registerCredential(plugin: string, def: CredentialDef, settings 
     run(app.db, "insert into credential_kinds(kind,plugin,declaration) values(?,?,?) on conflict(kind) do update set declaration=excluded.declaration",
       kind, plugin, JSON.stringify({ id: def.id, name: def.name, describe: def.describe, required: !!def.required, provides }));
     // Registered again (new code, trust given again): the owner's last check is stale, check on the next tick.
-    run(app.db, "update credential_holds set check_day='' where user_id='owner' and kind=?", kind);
+    run(app.db, `insert into credential_holds(user_id,kind,sharing) values(?,?,?)
+      on conflict(user_id,kind) do update set check_day=''`, OWNER, kind, JSON.stringify({ scope: defaultSharingScope(OWNER), members: [] }));
   }
   registry.set(kind, m);
   return () => { lifetime.abort(); if (registry.get(kind) === m) registry.delete(kind); };

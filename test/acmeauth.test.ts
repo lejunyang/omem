@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
@@ -11,6 +11,26 @@ import { registerCredential, setCredentialSharing, startCredentialLogin } from "
 import { accountOf, sandboxCommand, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { forgetPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
 import { testApp } from "./helpers.ts";
+
+it("示例命令按虚构项目读取权限输出 JSON 与退出码", () => {
+  const app = testApp();
+  const file = resolve("examples/plugins/acmeauth/bin/acme-demo");
+  const show = (project: string) => spawnSync(process.execPath, [file, "show", "--project", project], {
+    env: { ...process.env, HOME: app.home }, encoding: "utf8",
+  });
+  try {
+    expect(JSON.parse(show("sample").stderr).code).toBe("AUTH_REQUIRED");
+    mkdirSync(join(app.home, ".acme-demo"));
+    const account = join(app.home, ".acme-demo/account.json");
+    writeFileSync(account, JSON.stringify({ user: "member-a", expiresAt: Date.now() + 60_000 }));
+    expect(show("sample").status).toBe(0);
+    const denied = show("other");
+    expect(denied.status).toBe(3);
+    expect(JSON.parse(denied.stderr)).toMatchObject({ code: "DENIED", details: { links: ["https://example.test/request"] } });
+    writeFileSync(account, JSON.stringify({ user: "member-a", expiresAt: 1 }));
+    expect(JSON.parse(show("sample").stderr).code).toBe("EXPIRED");
+  } finally { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
+});
 
 // 成员登录要按 POSIX 路径核对账号目录（见 credentials.test.ts 的说明），Windows 上跳过。
 it.skipIf(process.platform === "win32")("示例插件一次登录供给命令行与后端，借用沙箱只挂本凭据的状态", async () => {
@@ -25,6 +45,7 @@ it.skipIf(process.platform === "win32")("示例插件一次登录供给命令行
     await trustPlugin(app, "acmeauth", "inprocess");
     const kind = "acmeauth:demo";
     expect(await startCredentialLogin(app, "bob", kind)).toEqual({ done: true });
+    setCredentialSharing(app, "owner", kind, { scope: "self" });
     setCredentialSharing(app, "bob", kind, { scope: "all" });
     const entry = accountEntry(app, kind)!;
     const account = accountOf(withAccount(app, "ann", catalogProfile(entry)))!;
@@ -62,6 +83,7 @@ it.skipIf(!sandboxSupport().ok)("借用沙箱可在私有目录创建临时文�
     createUser(app, { id: "ann", name: "成员 A" });
     createUser(app, { id: "bob", name: "成员 B" });
     await startCredentialLogin(app, "bob", "example:login");
+    setCredentialSharing(app, "owner", "example:login", { scope: "self" });
     setCredentialSharing(app, "bob", "example:login", { scope: "all" });
     const acct = accountOf(withAccount(app, "ann", profile))!;
     for (const dir of ["", ".tmp", ".run"]) writeFileSync(join(acct.home, dir, "private.txt"), "private");

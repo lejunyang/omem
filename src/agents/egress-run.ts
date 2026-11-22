@@ -8,7 +8,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { all, one, run, withinTx } from "../core/db.ts";
 import { accountOf, egressRequested, egressSupport, type SandboxAccount } from "./sandbox.ts";
 import { addRunEvent } from "./runs.ts";
-import { onToolTokenRevoked, toolContextForToken } from "./tools.ts";
+import { onToolTokenRevoked, toolContextForToken, type ToolContext } from "./tools.ts";
 import type { McpAccess } from "./types.ts";
 import { networkEnvironment } from "./network-policy.ts";
 import { backendHosts, egressPolicy } from "./egress-policy.ts";
@@ -54,7 +54,7 @@ function summarize(app: App, runId: string, hosts: HostUsage[]) {
 }
 
 export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: AgentProfile,
-  req: { app?: App; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount) => T) {
+  req: { app?: App; context?: ToolContext; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount) => T) {
   const account = accountOf(profile);
   const app = req.app;
   if (!app || !account || !egressRequested(app.config, profile)) return start(account);
@@ -65,7 +65,7 @@ export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: A
     if (req.runId) addRunEvent(app, req.runId, "status", { text: reason });
     return start(account);
   }
-  const ctx = req.mcp ? toolContextForToken(app, req.mcp.token) : { app, userId: account.userId, spaceId: "", spaces: [], tools: new Set<string>(), actor: "agent" as const, runId: req.runId ?? null, agentProfile: profile.id };
+  const ctx = req.mcp ? toolContextForToken(app, req.mcp.token) : req.context ?? { app, userId: account.userId, spaceId: "", spaces: [], tools: new Set<string>(), actor: "agent" as const, runId: req.runId ?? null, agentProfile: profile.id };
   if (!ctx) throw new Error("本次运行的工具令牌已失效");
   const { inspect } = app.config.security.egress;
   const dir = await mkdtemp("/tmp/omem-net-");

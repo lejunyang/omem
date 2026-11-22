@@ -64,15 +64,20 @@ export function hostMatches(pattern: string, hostname: string) {
   const host = pattern.toLowerCase();
   return host.startsWith("*.") ? hostname.endsWith(host.slice(1)) : hostname === host;
 }
+type CommandConditions = Pick<Extract<OperationRule["match"], {kind: "command"}>, "subcommand" | "argv" | "argsRegex">;
+/** Also embedded in the offline PATH wrapper. Keep this function self-contained. */
+export function commandArgsMatch(m: CommandConditions, args: string[], test: (pattern: string, input: string) => boolean) {
+  const words = args.filter(a => !a.startsWith("-"));
+  return (!m.subcommand || m.subcommand.every((w,i) => words[i] === w)) &&
+    (!m.argv || m.argv.every(({index,regex}) => args[index] !== undefined && test(regex,args[index]!))) &&
+    (!m.argsRegex || test(m.argsRegex,args.join(" ")));
+}
 function target(m: OperationRule["match"], op: Operation): boolean | undefined {
   if (m.kind === "command" && op.kind === "command") {
     if (executableName(m.executable) !== executableName(op.executable)) return false;
     const args = op.argv;
     if (!args) return m.subcommand || m.argv || m.argsRegex ? undefined : true;
-    const words = args.filter(a => !a.startsWith("-"));
-    return (!m.subcommand || m.subcommand.every((w,i) => words[i] === w)) &&
-      (!m.argv || m.argv.every(({index,regex}) => args[index] !== undefined && matches(regex,args[index]!))) &&
-      (!m.argsRegex || matches(m.argsRegex,args.join(" ")));
+    return commandArgsMatch(m,args,matches);
   }
   if (m.kind === "http" && op.kind === "http") {
     const u = new URL(op.url);

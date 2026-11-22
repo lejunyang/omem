@@ -96,6 +96,8 @@ import type { SearchOptions } from "../search/search.ts";
 export type ToolContext = {
   /** Host-only identity of the ACP prompt currently using this token and the command wrappers. */
   commandTurn?: string;
+  /** Account whose HOME the local process sees. Defaults to the machine login. */
+  commandHomeUser?: string | null;
   /** Host-selected directory for browsers opened locally by this run. */
   browserProfilesRoot?: string;
   app: App;
@@ -462,6 +464,13 @@ def({
       return `空间 ${s.id} 已关联仓库 ${root}，但索引同步失败；关联已保留，重试 connect_repository 可重新同步。`;
     }
   },
+});
+
+def({
+  name: "who_can",
+  description: "查询资源的权限记录、得知时间和申请链接。成员可查自己及向自己开放凭据的持有人。",
+  schema: z.object({ resource: z.string().trim().min(1).max(1024), kind: z.string().min(1).max(200).optional() }),
+  handler: async (ctx, args) => JSON.stringify(await (await import("./credential-access.ts")).whoCan(ctx.app, ctx.userId ?? OWNER, ctx.runId, args.resource, args.kind)),
 });
 
 def({

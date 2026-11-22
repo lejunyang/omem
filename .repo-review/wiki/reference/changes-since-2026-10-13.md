@@ -21,10 +21,22 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 账号页和成员总览区分本机登录的未知与停借（2026-11-22）
+
+从 `src/agents/credentials.ts` 的 `viewOf` 读起。两个页面共用 `web/src/lib/credentials.ts` 的状态标签。本机登录还没有检查结论时显示「状态未知」，沿用出借设置。检查确认缺失后显示「没登录（已停止出借）」。
+
+## 本机登录检查失败时的凭据出借（2026-11-22）
+
+登记凭据种类时就建立本人的持有。AI 后端和命令行都能按出借设置选到尚未检查或检查无结果的本机登录。检查明确报缺失或过期后停止出借，后续检查异常仍保留上次结论。只读命令须由资源服务实时核实发起人的读取权。持有选择从 `src/agents/credentials.ts` 读起，命令选人和执行分别见 `credential-access.ts` 和 `credential-execution.ts`。
+
 ## 设置 → 空间改成紧凑的树；运行页按后端或模型筛选（2026-11-22）
 
 - `web/src/views/settings/Spaces.vue`：左边每个空间一行（名字 + 仓库数），业务空间下的仓库可以折叠（展开状态存在浏览器里，筛选时全展开，筛选也匹配仓库名和目录），说明和目录放进悬停提示；不属于任何业务的仓库在“独立仓库”小标题下。右边不再空着：打开时依次选地址里的 `?space=`、上次在这页打开的、当前空间、列表第一个；空间的说明、原件 / 页 / 仓库数（仓库是所属业务和目录名）移到右边的标题下。底部“关闭”换成“还原”（丢掉没保存的修改）；新建表单取消后回到原来的空间。右边的仓库清单每个两行（名字和索引状态一行、目录一行）。
 - 运行页：全部运行 → 筛选 多了“后端或模型”下拉，列出近 30 天用过的后端（AI 档案）和它们用过的模型（只有一个模型的后端不再分列）。接口 `GET /api/runs/ais`（只统计这个人能看的运行），`GET /api/runs` 加 `ai`、`model` 参数；后端按运行记下的 `ai.profile`，没有时用排队时的 `profile_id`（`src/agents/runs.ts` 的 `runAis`）。测试 `test/run-ai-filter.test.ts`。
+
+## 观察者读取个人凭据清单时隐藏出借方式和成员名单（2026-11-22）
+
+从 `src/agents/credentials.ts` 的 `myCredentials` 读起。凭据清单和设置接口复用 `src/auth/capabilities.ts` 的成员身份判断。观察者仍能读取自己的凭据清单，响应省略全局出借方式，候选成员为空。两处接口的对照用例在 `test/credentials.test.ts`。
 
 ## 后端的 npm 包在网页上安装和升级，改成后台任务；ACP 目录对照注册表刷新（2026-11-22）
 
@@ -34,6 +46,14 @@ updated: 2026-11-22
 - 网页：`AiBackend.vue` 跟着任务轮询，刷新后还能看到“在后台升级，已 N 分”和最后一行输出，失败时留一行原因；设置 → 后端与模型 → 其他支持的 Agent 里目录带 npm 包的多了“安装”按钮（`installable`，只给本人）。跟任务的轮询在 `web/src/lib/adapter-job.ts`。远程命令 `agent-upgrade` 用同一个任务，等装完才返回。
 - ACP 目录（`src/agents/catalog.ts`）按官方注册表 11-22 的版本刷新：Qwen 加 `--experimental-skills`（旧参数自动换）；Kimi 换成 npm 包 `@moonshot-ai/kimi-code`；MiniMax 换成 `@minimax-ai/code-acp`（命令 `code-acp acp`）；OpenCode 的 npm 包停在 1.x，改成安装说明；新增 Kiro CLI、IBM Bob、GLM。注册表列表里 `claude-acp` 这类和内置 id 不同的条目按别名算“已可用”（`setup.ts` 的 `registryAlias`）。
 - 测试：`test/adapter-jobs.test.ts`（假 npm 走一遍后台安装，POSIX 上跑）。
+
+## 2026-11-22　缺少登录时按发起人的实时读取权借用命令登录
+
+从 `src/agents/credential-execution.ts` 读起。命令垫片在本地执行前询问宿主。插件按完整参数核实发起人可读具体资源后，宿主可在自动出借人的环境执行只读调用，并把两路输出交回。发起人收到拒绝时保留原结果和申请链接。插件回执契约见 `packages/plugin-sdk/credential.ts`。
+
+## 2026-11-22　凭据命令结果与资源权限查询
+
+从 `src/agents/credential-access.ts` 读起。`who_can` 返回指定资源最近三十天的权限记录和申请链接。没有可见记录时，宿主按查询者的出借范围使用插件预检。权限记录留在本机。命令执行从 `src/agents/command-gate.ts` 和 `credential-outcome.ts` 读起。命令的 stdout、stderr 实时送回，宿主把资源读取和拒绝写进记录，登录失效时提醒持有人。
 
 ## 凭据第四期：账号页的清单、出借设置和成员页的总览（2026-11-22）
 

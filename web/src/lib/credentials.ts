@@ -4,7 +4,7 @@
  * one hold per person and kind, lent to whom its holder says. Pure: the pages pass in what the server
  * answered and the time.
  */
-export type CredentialState = "none" | "ok" | "expiring" | "expired" | "logging-in";
+export type CredentialState = "unknown" | "none" | "ok" | "expiring" | "expired" | "logging-in";
 export type SharingScope = "self" | "members" | "all";
 export type Sharing = { scope: SharingScope; members: string[] };
 /** `credentials.lending`: lend as each holder says, ask the holder each time, or not at all. */
@@ -44,7 +44,10 @@ export type Credential = {
 export type HolderRow = { userId: string; name: string; credentials: Omit<Credential, "url" | "code">[] };
 export type CredentialOverview = { kinds: { kind: string; name: string }[]; people: HolderRow[]; limit: number };
 
-export const STATE_LABEL: Record<CredentialState, string> = { none: "没登录", ok: "有效", expiring: "快到期", expired: "过期", "logging-in": "登录中" };
+export const STATE_LABEL: Record<CredentialState, string> = { unknown: "状态未知", none: "没登录", ok: "有效", expiring: "快到期", expired: "过期", "logging-in": "登录中" };
+export function stateLabel(c: Pick<Credential, "machine" | "state">) {
+  return c.machine && c.state === "none" ? "没登录（已停止出借）" : STATE_LABEL[c.state];
+}
 /** The status colour: valid is ok, soon to end is warn, ended is danger, a login going on is accent. */
 export function stateTone(s: CredentialState): "ok" | "warn" | "danger" | "accent" | "muted" {
   return s === "ok" ? "ok" : s === "expiring" ? "warn" : s === "expired" ? "danger" : s === "logging-in" ? "accent" : "muted";
@@ -58,7 +61,7 @@ export function span(ms: number) {
 }
 /** When it ends, as one says it: “2 天后到期”, “3 小时前过期”; nothing when it has no end or no login. */
 export function expiryText(c: { state: CredentialState; expiresAt?: number }, now = Date.now()): string {
-  if (c.expiresAt === undefined || c.state === "none" || c.state === "logging-in") return "";
+  if (c.expiresAt === undefined || c.state === "unknown" || c.state === "none" || c.state === "logging-in") return "";
   const left = c.expiresAt - now;
   return left > 0 ? `${span(left)}后到期` : `${span(left)}前过期`;
 }
@@ -105,7 +108,7 @@ export function coverage(c: Pick<Credential, "backends" | "commands">, backendNa
  * cannot be logged out of alone). Null: the backend's own login, logged out of as before.
  */
 export function suppliedBy<C extends Pick<Credential, "kind" | "backends" | "state">>(b: { id: string; method?: string }, list: C[]): C | null {
-  return list.find((c) => c.kind === b.method) ?? list.find((c) => c.backends.includes(b.id) && c.state !== "none") ?? null;
+  return list.find((c) => c.kind === b.method) ?? list.find((c) => c.backends.includes(b.id) && c.state !== "none" && c.state !== "unknown") ?? null;
 }
 
 /**

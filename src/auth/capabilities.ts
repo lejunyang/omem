@@ -76,11 +76,17 @@ export function capabilityCatalog(app: App) {
   });
 }
 export type Override = { capability: Capability; scope_kind: "global" | "space"; scope_id: string; effect: "allow" | "deny" };
+export function memberAccessProfile(app: App, userId: string) {
+  const user = one<{ role: string; kind: string; active: number }>(app.db, "select role, kind, status='active' and disabled_at is null active from users where id=?", userId);
+  const active = !!user?.active;
+  return { preset: user?.role ?? "", kind: user?.kind, active,
+    memberCredentials: active && user.kind === "person" && user.role !== "observer" };
+}
 /** Request-local snapshot. A null target requests only global capabilities. */
 export function capabilityAccess(app: App, userId: string, targetSpace?: string | null) {
-  const user = one<{ role: string; active: number }>(app.db, "select role, status='active' and disabled_at is null active from users where id=?", userId);
+  const profile = memberAccessProfile(app, userId);
   const roles = new Map(listRoles(app).map(r => [r.id, r.permissions]));
-  const preset = user?.role ?? "";
+  const { preset, active } = profile;
   const grants = roles.get(preset) ?? [];
   const overrides = all<Override>(app.db, "select capability,scope_kind,scope_id,effect from member_capability_overrides where user_id=? and revoked=0", userId);
   const spaces = targetSpace === null ? [] : all<{ id: string; kind: string; owner_id: string; mirror: number; parent_id: string }>(app.db,
@@ -90,7 +96,7 @@ export function capabilityAccess(app: App, userId: string, targetSpace?: string 
   const effects = new Map(overrides.map(o => [JSON.stringify([o.capability, o.scope_kind, o.scope_id]), o.effect]));
   const presetCaps = new Set(capabilityKeys.filter(c => presetGrants(preset, grants, c)));
   function source(cap: Capability, space?: string, own = false): string | null {
-    if (!user?.active) return null;
+    if (!active) return null;
     if (byId.get(space ?? "")?.mirror && ["items.edit", "items.operate", "flows.operate", "sources.edit"].includes(cap)) return null;
     if (preset === "owner") return "preset";
     const local: string[] = [];
@@ -113,8 +119,8 @@ export function capabilityAccess(app: App, userId: string, targetSpace?: string 
     if (!(preset === "observer" && byId.get(space ?? "")?.kind === "personal") && local.some(p => legacyCapabilities[p]?.includes(cap))) return "spaceRole";
     return null;
   }
-  const range = (cap: Capability, own = false) => user?.active && preset === "owner" ? null : spaces.filter(s => source(cap, s.id, own)).map(s => s.id);
-  return { preset, active: !!user?.active, overrides, source, range, spaces };
+  const range = (cap: Capability, own = false) => active && preset === "owner" ? null : spaces.filter(s => source(cap, s.id, own)).map(s => s.id);
+  return { ...profile, overrides, source, range, spaces };
 }
 export const spacesWithCapability = (app: App, userId: string, cap: Capability) => capabilityAccess(app, userId).range(cap);
 export function memberCapabilities(app: App, userId: string) {

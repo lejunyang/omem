@@ -176,3 +176,22 @@ it("出网状态按运行列出标题", () => {
   const status = egressStatus(app);
   for (const rows of [status.runs, status.denied]) expect(rows[0]).toMatchObject({ runId: r.id, title: r.title });
 });
+
+it("凭据命令的宿主回调经过出网代理仍能收到预检开始的通知", async () => {
+  const port = await listen(http.createServer((_req, res) => { res.writeProcessing(); res.end("done"); }));
+  const origin = "http://127.0.0.1:" + port;
+  const path = socketPath();
+  const proxy = await startProxy(path, { callback: { origin, token: "fixture" },
+    needsBody: () => false, check: async () => ({ allowed: false }) });
+  cleanup.push(() => proxy.close());
+  const notices: number[] = [];
+  const req = http.request({ socketPath: path, method: "POST", path: origin + "/api/command-gate", agent: false,
+    headers: { authorization: "Bearer fixture" } });
+  const response = once(req, "response");
+  req.on("information", info => notices.push(info.statusCode));
+  req.end();
+  const [res] = await response;
+  res.resume(); await once(res, "end");
+  expect(res.statusCode).toBe(200);
+  expect(notices).toEqual([102]);
+});
