@@ -2438,47 +2438,13 @@ export const migrations: readonly string[] = [
      user_id text not null, kind text not null, state text not null default 'none',
      account_name text, expires_at real, refresh_at real, check_day text not null default '',
      checked_at text, sharing text not null, notified text not null default '{}',
-     last_used_at text, error text, primary key(user_id,kind)
+     last_used_at text, error text, provision text, supplied_backends text not null default '[]',
+     primary key(user_id,kind)
    );
    create index credential_refresh_due on credential_holds(refresh_at) where state='logged-in';
    create index credential_check_due on credential_holds(check_day,user_id,kind);
    create index credential_lenders on credential_holds(kind,state,last_used_at desc);
    create table credential_onboarding(user_id text primary key, notified_at text not null);`,
-  // A native status check could have observed a credential's files. Only a separate vault token
-  // can substantiate that old cache when a hold for the same person supplied the same backend.
-  `update kv set value=json_set(value,'$.requiresToken',json('true'))
-   where key in (select 'agent_account:' || h.user_id || ':' || backend.value
-     from credential_kinds k join credential_holds h on h.kind=k.kind,
-       json_each(k.declaration,'$.provides.backends') backend
-     where h.state!='none' or h.checked_at is not null)
-   and json_valid(value) and json_extract(value,'$.method')='native'
-   and json_extract(value,'$.state')!='none';`,
-  `update credential_holds set state='missing' where state='none' and checked_at is not null;`,
-  `alter table credential_holds add column owned_paths text;`,
-  // Freeze the last known declaration before a plugin can register a different scope.
-  `alter table credential_holds rename column owned_paths to provision;
-   alter table credential_holds add column supplied_backends text not null default '[]';
-   update credential_holds as h set
-     provision=case when h.user_id!='owner' then json_object('declared',json_extract(k.declaration,'$.provides'),'paths',json(h.provision)) end,
-     supplied_backends=json_extract(k.declaration,'$.provides.backends')
-     from credential_kinds k where k.kind=h.kind and h.state!='none';`,
-  // A read-only check could revive an old logout. Its check day is durable, but its
-  // account name, expiry and shared files do not establish a new authorization. The
-  // check day is local, so even the day before a UTC logout can overlap that logout.
-  `create index credential_logout_history on audit_events(coalesce(json_extract(detail,'$.holder'),actor),target,at desc)
-     where action='credentials.logout';
-   update credential_holds as h set state='protected',supplied_backends='[]',account_name=null,
-     expires_at=null,refresh_at=null,error=null
-     where h.user_id!='owner' and h.provision is not null and (
-       ((h.state='missing' or (h.state='logged-in' and h.account_name is null)) and json_extract(h.provision,'$.paths') is null)
-       or h.check_day>=date((select a.at from audit_events a where a.action='credentials.logout'
-         and coalesce(json_extract(a.detail,'$.holder'),a.actor)=h.user_id and a.target=h.kind
-         order by a.at desc limit 1),'-1 day'));
-   drop index credential_logout_history;
-   update kv set value=json_set(value,'$.requiresToken',json('true'))
-     where key in (select 'agent_account:' || h.user_id || ':' || b.value from credential_holds h,
-       json_each(coalesce(h.provision->'$.backends',h.provision->'$.declared.backends')) b where h.state='protected')
-     and json_valid(value) and json_extract(value,'$.method')='native' and json_extract(value,'$.state')!='none';`,
 ];
 
 export type Db = DatabaseSync;

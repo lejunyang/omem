@@ -193,18 +193,17 @@ export function accountProfiles(app: App, userId: string, backend: string): Agen
 
 // ---------------------------------------------------------------- state
 
-function readStored(value: string | undefined, hasToken: () => boolean): Stored {
+function readStored(value: string | undefined): Stored {
   if (!value) return { state: "none" };
   try {
-    const { requiresToken, ...state } = JSON.parse(value) as Stored & { requiresToken?: boolean };
-    return requiresToken && !hasToken() ? { state: "none" } : state;
+    return JSON.parse(value) as Stored;
   } catch {
     return { state: "none" };
   }
 }
 function stored(app: App, userId: string, backend: string): Stored {
   const row = one<{ value: string }>(app.db, "select value from kv where key = ?", KV(userId, backend));
-  return readStored(row?.value, () => !!findConnection(app, userId, TOKEN_PROVIDER(backend)));
+  return readStored(row?.value);
 }
 function save(app: App, userId: string, backend: string, s: Stored) {
   run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", KV(userId, backend), JSON.stringify(s));
@@ -407,7 +406,7 @@ export async function checkAccount(app: App, userId: string, backend: string): P
     if (!method) return { state: "none", method: supplied };
     const { state, user, expiresAt, checkedAt, error, suppliedBackends } = await checkCredential(app, userId, supplied);
     if (!method.provides.backends.includes(backend) || !suppliedBackends.includes(backend)) return { state: "none", method: supplied, checkedAt };
-    return { state: state === "missing" || state === "protected" ? "none" : expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
+    return { state: state === "missing" ? "none" : expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
   }
   if (isPlugin(s.method) && s.state !== "none") return refreshPluginLogin(app, userId, backend);
   return checkNative(app, userId, entry);
@@ -732,7 +731,7 @@ export function clearAccountPaths(app: App, userId: string, rels: string[], exce
   const accounts = accountCatalog(app.config.agents.profiles, "declared").filter(e => {
     if (e.id === except.backend) return false;
     const hasToken = providers.has(TOKEN_PROVIDER(e.id));
-    return readStored(states.get(e.id), () => hasToken).state !== "none" || hasToken || logins.has(loginKey(app, userId, e.id));
+    return readStored(states.get(e.id)).state !== "none" || hasToken || logins.has(loginKey(app, userId, e.id));
   });
   const home = accountHome(app, userId);
   const keep = [...credentials.flat(), ...accounts.flatMap(e => e.account.owns)].map(rel => join(home, rel));

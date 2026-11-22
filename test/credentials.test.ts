@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/core/app.ts";
 import { testApp } from "./helpers.ts";
-import { all, migrations, one, run } from "../src/core/db.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { createApiToken, createUser } from "../src/core/users.ts";
-import { closeVault, connectionSecrets, listConnections, storeConnection } from "../src/auth/vault.ts";
-import { accountHome, accountRun, accountState, checkAccount, ensureAccountHome, loggedIn, removeAccount, withAccount } from "../src/agents/accounts.ts";
+import { closeVault, connectionSecrets, listConnections } from "../src/auth/vault.ts";
+import { accountHome, accountRun, accountState, checkAccount, ensureAccountHome, loggedIn, removeAccount, saveToken, withAccount } from "../src/agents/accounts.ts";
 import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
@@ -164,24 +164,21 @@ it.each([
   } finally { await server.close(); }
 });
 
-it("升级旧原生检查缓存后，自己的凭据过期会改借有效登录或提示登录", async () => {
+it("自己的凭据过期会改借有效登录或提示登录，独立的原生令牌仍可用", async () => {
   const backend = "fixture", kind = "sample:sso";
   const profile = agentProfileSchema.parse({ id: backend, transport: "acp", command: process.execPath,
     account: { env: {}, dirs: [".fixture"], owns: [".fixture"], tokenEnv: "FIXTURE_TOKEN" } });
+  app.config.agents.profiles = [profile];
+  const probe = vi.spyOn(await import("../src/agents/probe.ts"), "probeAccount").mockResolvedValue(undefined);
+  undo.push(() => probe.mockRestore());
+  await saveToken(app, "bob", backend, "fixture-token");
   let state: "ok" | "expired" | "missing" = "ok";
   add({ provides: { backends: [backend] }, provide: undefined, async check() { return { state }; } });
   for (const id of ["ann", "bob"]) {
     await startCredentialLogin(app, id, kind);
     await until(() => credentialHold(app, id, kind).state === "logged-in");
-    run(app.db, "insert into kv(key,value) values(?,?)", "agent_account:" + id + ":" + backend, JSON.stringify({ state: "logged-in", method: "native" }));
   }
-  // The old cache has the same shape for a status probe and for a separately pasted token.
-  storeConnection(app, { userId: "bob", provider: "agent:" + backend, accountId: backend, accountName: "demo", scopes: [], accessToken: "fixture-token" });
   setCredentialSharing(app, "bob", kind, { scope: "all" });
-  app.db.exec("alter table credential_holds drop column supplied_backends; alter table credential_holds drop column provision; pragma user_version=" + (migrations.findIndex(sql => sql.includes("create table credential_kinds(")) + 1));
-  app.db.close();
-  app = App.open(app.home);
-  app.config.agents.profiles = [profile];
   expect(await checkAccount(app, "ann", backend)).toMatchObject({ state: "logged-in", method: kind });
   expect(selectedCredential(withAccount(app, "ann", profile))?.holder).toBe("ann");
   state = "expired";
@@ -234,106 +231,26 @@ it("退出清理独占状态，共用的后端和嵌套命令目录由最后一�
   expect(existsSync(join(home, ".trae"))).toBe(false);
 });
 
-it("升级时保留有歧义的旧持有，退出后重启不再认领；仅设置过出借的不占用文件", async () => {
+it("只改出借设置或已整份退出时，重启后的检查不会认领后端文件", async () => {
   const kind = "sample:sso", backend = "echo";
   const profile = agentProfileSchema.parse({ id: backend, transport: "acp", command: "fixture-backend", account: { owns: [".echo"] } });
-  add({ provides: { backends: [backend], commands: [{ name: "acme", state: [".acme/data"] }] }, check: async () => ({ state: "ok" }) });
-  await startCredentialLogin(app, "ann", kind);
-  await until(() => credentialHold(app, "ann", kind).state === "logged-in");
-  run(app.db, "update credential_holds set state='none',expires_at=null,refresh_at=null,account_name=null where user_id='ann' and kind=?", kind);
-  setCredentialSharing(app, "bob", kind, { scope: "self" });
-  app.db.exec("alter table credential_holds drop column supplied_backends; alter table credential_holds drop column provision; pragma user_version=" + (migrations.findIndex(sql => sql.includes("'$.requiresToken'")) + 1));
-  app.db.close(); app = App.open(app.home);
   app.config.agents.profiles = [profile];
-  expect(myCredentials(app, "ann").credentials[0]).toMatchObject({ state: "none", checkedAt: expect.any(String) });
-  await expect(removeAccount(app, "ann", backend)).rejects.toThrow(/sample:sso/);
-  expect(existsSync(join(accountHome(app, "ann"), ".acme/data/login.json"))).toBe(true);
-  await removeAccount(app, "bob", backend);
+  const check = vi.fn<NonNullable<CredentialDef["check"]>>(async () => ({ state: "ok" }));
+  add({ provides: { backends: [backend] }, login: async () => ({ user: "demo" }), provide: undefined, check });
+  await startCredentialLogin(app, "ann", kind);
   await logoutCredential(app, "ann", kind);
-  app.db.close(); app = App.open(app.home);
+  setCredentialSharing(app, "bob", kind, { scope: "all" });
+
+  app.db.close();
+  app = App.open(app.home);
   app.config.agents.profiles = [profile];
   await tickCredentialChecks(app);
-  expect(await checkCredential(app, "ann", kind)).toMatchObject({ state: "none", checkedAt: expect.any(String) });
-  await removeAccount(app, "ann", backend);
-});
-
-it.each(["旧 none", "已迁移 missing", "已被旧检查恢复"])("升级%s：共用文件不会重新授权已退出的持有", async version => {
-  const kind = "sample:sso", other = "sample:private", holder = "ann";
-  const [a, b] = ["echo-a", "echo-b"].map(id => agentProfileSchema.parse({
-    id, transport: "acp", command: "fixture-backend", account: { owns: [".shared"] },
-  }));
-  app.config.agents.profiles = [a, b];
-  const file = join(accountHome(app, holder), ".shared/session");
-  const check = vi.fn<NonNullable<CredentialDef["check"]>>(async ctx => ({
-    state: ctx.userId === holder && existsSync(file) ? "ok" : "missing", user: "demo",
-  }));
-  const provide = vi.fn<NonNullable<CredentialDef["provide"]>>(async () => {
-    mkdirSync(join(accountHome(app, holder), ".shared"), { recursive: true });
-    writeFileSync(file, "shared");
-  });
-  const refresh = vi.fn(async () => ({}));
-  const def = add({ provides: { backends: [a.id] }, login: async () => ({ user: "demo" }), check, provide, refresh });
-  add({ ...def, id: "private", provides: { backends: [b.id] }, check: async ctx => ({ state: ctx.userId === holder ? "ok" : "missing" }) });
-  await startCredentialLogin(app, holder, other);
-  await logoutCredential(app, holder, other);
-  await startCredentialLogin(app, holder, kind);
-  await startCredentialLogin(app, holder, other);
-  setCredentialSharing(app, holder, kind, { scope: "all" });
-  await logoutCredential(app, holder, kind, "owner");
-  expect(readFileSync(file, "utf8")).toBe("shared");
-
-  // Reopen at the corresponding old schema, including the logout audit and the other valid hold.
-  app.db.exec("alter table credential_holds drop column supplied_backends");
-  if (version === "旧 none") {
-    app.db.exec("alter table credential_holds drop column provision; pragma user_version=" +
-      (migrations.findIndex(sql => sql.includes("'$.requiresToken'")) + 1));
-  } else {
-    app.db.exec("alter table credential_holds rename column provision to owned_paths");
-    run(app.db, "update credential_holds set owned_paths=json_extract(owned_paths,'$.paths')");
-    run(app.db, "update credential_holds set state=?,account_name=?,check_day=date('now') where kind=?",
-      version === "已迁移 missing" ? "missing" : "logged-in", version === "已迁移 missing" ? null : "demo", kind);
-    app.db.exec("pragma user_version=" + (migrations.indexOf("alter table credential_holds add column owned_paths text;") + 1));
+  for (const id of ["ann", "bob"]) {
+    expect(await checkCredential(app, id, kind)).toMatchObject({ state: "none", suppliedBackends: [] });
+    expect(loggedIn(app, id, backend)).toBe(false);
+    await removeAccount(app, id, backend);
   }
-  run(app.db, "insert into kv(key,value) values(?,?)", "agent_account:ann:echo-a", JSON.stringify({ state: "logged-in", method: "native" }));
-  app.db.close(); app = App.open(app.home);
-  app.config.agents.profiles = [a, b];
-
-  await tickCredentialChecks(app, Date.now() + 86400_000);
-  expect(loggedIn(app, holder, a.id)).toBe(false);
-  await checkCredential(app, holder, kind);
-  await refreshCredential(app, holder, kind);
-  expect(await checkAccount(app, holder, a.id)).toMatchObject({ state: "none", method: kind });
-  expect(check.mock.calls.some(([ctx]) => ctx.userId === holder)).toBe(false);
-  expect(refresh).not.toHaveBeenCalled();
-  expect(myCredentials(app, holder).credentials.find(c => c.kind === kind)).toMatchObject({ state: "none", sharing: { scope: "all" } });
-  for (const who of [holder, "bob"]) expect(() => withAccount(app, who, a)).toThrow(/登录/);
-  expect(loggedIn(app, holder, a.id)).toBe(false);
-  expect(loggedIn(app, holder, b.id)).toBe(true);
-  expect(() => withAccount(app, "bob", b)).toThrow(/登录/);
-  await expect(removeAccount(app, holder, a.id)).rejects.toMatchObject({ status: 409 });
-
-  if (version === "旧 none") {
-    await logoutCredential(app, holder, kind);
-    await removeAccount(app, holder, a.id);
-    expect(readFileSync(file, "utf8")).toBe("shared");
-  } else {
-    if (version === "已迁移 missing") {
-      await logoutCredential(app, holder, other);
-      expect(readFileSync(file, "utf8")).toBe("shared");
-    }
-    provide.mockRejectedValueOnce(Error("fixture"));
-    await expect(startCredentialLogin(app, holder, kind)).rejects.toThrow(/供给失败/);
-    await checkCredential(app, holder, kind);
-    expect(myCredentials(app, holder).credentials.find(c => c.kind === kind)?.state).toBe("none");
-    expect(() => withAccount(app, "bob", a)).toThrow(/登录/);
-  }
-  await startCredentialLogin(app, holder, kind);
-  await checkCredential(app, holder, kind);
-  expect(selectedCredential(withAccount(app, "bob", a))).toMatchObject({ holder, kind });
-  await logoutCredential(app, holder, other);
-  expect(readFileSync(file, "utf8")).toBe("shared");
-  await logoutCredential(app, holder, kind);
-  expect(existsSync(file)).toBe(false);
+  expect(check.mock.calls.map(([ctx]) => ctx.userId)).toEqual(["owner"]);
 });
 
 it.each(["停用", "撤销信任"])("插件%s后成员和本人代办均可按持久声明清理，不再执行插件代码", async mode => {
@@ -360,8 +277,6 @@ it.each(["停用", "撤销信任"])("插件%s后成员和本人代办均可按�
   }
   if (mode === "停用") await setPluginEnabled(app, "credprobe", false);
   else untrustPlugin(app, "credprobe");
-  run(app.db, `update credential_holds as h set provision=json_object('declared',json_extract(k.declaration,'$.provides'),'paths',null)
-    from credential_kinds k where k.kind=h.kind and h.user_id='ann'`);
   const server = await startServer(app, { port: 0, quiet: true });
   try {
     for (const user of ["ann", "bob"]) {
@@ -404,7 +319,10 @@ it("同种凭据从 A 改供 B，旧文件仍按持有退出，新后端要等�
   await startCredentialLogin(app, "ann", kind);
   setCredentialSharing(app, "ann", kind, { scope: "all" });
   undo.pop()!();
-  const provide = vi.fn(async () => {});
+  const provide = vi.fn<NonNullable<CredentialDef["provide"]>>(async ctx => {
+    mkdirSync(join(ctx.home, ".echo-b"), { recursive: true });
+    writeFileSync(join(ctx.home, ".echo-b/login"), "new");
+  });
   add({ ...def, provides: { backends: [b.id], commands: [{ name: "new-cli" }] },
     check: async () => ({ state: "ok" }), refresh: async () => ({}), provide });
   const server = await startServer(app, { port: 0, quiet: true });
@@ -429,10 +347,16 @@ it("同种凭据从 A 改供 B，旧文件仍按持有退出，新后端要等�
     expect(loggedIn(app, "ann", b.id)).toBe(false);
     await expect(removeAccount(app, "ann", b.id)).rejects.toThrow(/new-cli/);
     await refreshCredential(app, "ann", kind);
+    expect(credentialHold(app, "ann", kind)).toMatchObject({
+      provision: { backends: [a.id, b.id], commands: ["old-cli", "new-cli"], paths: [".echo-a", ".echo-b"] },
+      suppliedBackends: [b.id],
+    });
+    expect(readFileSync(join(home, ".echo-b/login"), "utf8")).toBe("new");
     for (const who of ["ann", "bob"]) expect(selectedCredential(withAccount(app, who, b))?.holder).toBe("ann");
     await expect(removeAccount(app, "ann", a.id)).rejects.toThrow(/old-cli/);
     await logoutCredential(app, "ann", kind);
     expect(existsSync(join(home, ".echo-a/login"))).toBe(false);
+    expect(existsSync(join(home, ".echo-b/login"))).toBe(false);
     expect(readFileSync(join(home, ".echo-a/shared/login"), "utf8")).toBe("shared");
   } finally { await server.close(); }
 });

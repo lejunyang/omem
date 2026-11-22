@@ -22,10 +22,9 @@ const checkResult = refreshResult.extend({ state: z.enum(["ok", "expired", "miss
 const sharingSchema = z.object({ scope: z.enum(["self", "members", "all"]), members: z.array(z.string()).max(200).default([]) }).strict();
 export type CredentialSharing = z.infer<typeof sharingSchema>;
 type Provision = { backends: string[]; commands: string[]; paths: string[] };
-type Provides = CredentialMethod["provides"];
-function declarationProvision(app: App, provides: Provides, paths?: string[] | null): Provision {
+function declarationProvision(app: App, provides: CredentialMethod["provides"]): Provision {
   return { backends: provides.backends, commands: provides.commands.map(c => c.name),
-    paths: paths ?? [...provides.commands.flatMap(c => c.state ?? []),
+    paths: [...provides.commands.flatMap(c => c.state ?? []),
       ...accountCatalog(app.config.agents.profiles, "declared").filter(e => provides.backends.includes(e.id)).flatMap(e => e.account.owns)] };
 }
 function mergeProvision(previous: Provision | undefined, next: Provision): Provision {
@@ -33,13 +32,8 @@ function mergeProvision(previous: Provision | undefined, next: Provision): Provi
   const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
   return { backends: union(previous.backends, next.backends), commands: union(previous.commands, next.commands), paths: union(previous.paths, next.paths) };
 }
-function readProvision(app: App, raw: string | null): Provision | undefined {
-  if (!raw) return;
-  const p: Provision | { declared: Provides; paths: string[] | null } = JSON.parse(raw);
-  return "declared" in p ? declarationProvision(app, p.declared, p.paths) : p;
-}
 export type Hold = {
-  state: "none" | "protected" | "missing" | "logged-in" | "expired"; user?: string; expiresAt?: number; refreshAt?: number;
+  state: "none" | "missing" | "logged-in" | "expired"; user?: string; expiresAt?: number; refreshAt?: number;
   checkedAt?: string; checkedDay: string; lastUsedAt?: string; error?: string;
   sharing: CredentialSharing; notified: Record<string, string>; provision?: Provision; suppliedBackends: string[];
 };
@@ -55,18 +49,18 @@ function member(app: App, id: string) {
 const secretProvider = (kind: string) => `credential:${kind}`;
 const keyOf = (app: App, id: string, kind: string) => `${app.home}|${id}|${kind}`;
 
-function fromRow(app: App, r: Row): Hold {
+function fromRow(r: Row): Hold {
   return { state: r.state, user: r.account_name ?? undefined, expiresAt: r.expires_at ?? undefined,
     refreshAt: r.refresh_at ?? undefined, checkedAt: r.checked_at ?? undefined, checkedDay: r.check_day,
     lastUsedAt: r.last_used_at ?? undefined, error: r.error ?? undefined, sharing: JSON.parse(r.sharing), notified: JSON.parse(r.notified),
-    provision: readProvision(app, r.provision), suppliedBackends: JSON.parse(r.supplied_backends) };
+    provision: r.provision === null ? undefined : JSON.parse(r.provision), suppliedBackends: JSON.parse(r.supplied_backends) };
 }
 function emptyHold(id: string): Hold {
   return { state: "none", suppliedBackends: [], checkedDay: "", sharing: { scope: id === OWNER ? "all" : "self", members: [] }, notified: {} };
 }
 export function credentialHold(app: App, userId: string, kind: string): Hold {
   const r = one<Row>(app.db, "select * from credential_holds where user_id=? and kind=?", userId, kind);
-  return r ? fromRow(app, r) : emptyHold(userId);
+  return r ? fromRow(r) : emptyHold(userId);
 }
 function save(app: App, userId: string, kind: string, hold: Hold) {
   run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,refresh_at,check_day,checked_at,sharing,notified,last_used_at,error,provision,supplied_backends)
@@ -106,7 +100,7 @@ export function selectCredential(app: App, requester: string, backend: string, a
   for (const row of rows) {
     if (row.user_id === requester || (row.user_id === OWNER ? app.config.agents.accountIsolation === "require" : !sandbox)) continue;
     const use = { requester, backend, holder: row.user_id, kind: row.kind };
-    if (mayUseCredential(app, use, fromRow(app, row))) return use;
+    if (mayUseCredential(app, use, fromRow(row))) return use;
   }
 }
 export function credentialSucceeded(app: App, profile: object) {
@@ -220,7 +214,7 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
     } catch {
       if (!signal.aborted || timeout.aborted || !replied) {
         const hold = credentialHold(app, id, kind);
-        save(app, id, kind, { ...hold, state: hold.state === "protected" ? "protected" : "expired", error: "授权或供给失败，请重新登录", checkedAt: now() });
+        save(app, id, kind, { ...hold, state: "expired", error: "授权或供给失败，请重新登录", checkedAt: now() });
         reminder(app, id, m, "failed");
       }
       answer(() => reject(new HttpError(502, signal.aborted ? "登录取消或超时，请重试" : "授权或供给失败，请重新登录")));
@@ -253,7 +247,7 @@ export function refreshCredential(app: App, id: string, kind: string) {
   });
 }
 function canCheck(id: string, state: Hold["state"]) {
-  return id === OWNER || (state !== "none" && state !== "protected");
+  return id === OWNER || state !== "none";
 }
 export function checkCredential(app: App, id: string, kind: string) {
   const m = requireCredential(kind);
@@ -275,10 +269,10 @@ export function checkCredential(app: App, id: string, kind: string) {
 export function heldCredentialDeclarations(app: App, id: string) {
   const rows = all<Row & { name: string }>(app.db, `select h.*,json_extract(k.declaration,'$.name') as name from credential_holds h
     join credential_kinds k on k.kind=h.kind where h.user_id=? and h.provision is not null
-    order by (h.state in ('missing','protected')), h.checked_at desc,h.kind`, id);
+    order by (h.state='missing'), h.checked_at desc,h.kind`, id);
   const held = new Map<string, { name: string; provision: Provision; hold: Hold; pending?: boolean }>();
   for (const row of rows) {
-    const hold = fromRow(app, row);
+    const hold = fromRow(row);
     held.set(row.kind, { name: row.name, provision: hold.provision!, hold });
   }
   for (const [key, { method: m }] of logins) {
@@ -301,7 +295,7 @@ export function suppliedCredentialKind(app: App, id: string, backend: string, ha
   const sources = [...held].filter(([, h]) => h.provision.backends.includes(backend));
   return sources.find(([kind, h]) => credentialMethod(kind)?.provides.backends.includes(backend) && backendUsable(app, id, backend, kind, h.hold))?.[0]
     ?? sources.find(([, h]) => h.pending)?.[0]
-    ?? sources.find(([, h]) => !hasIndependentLogin || (h.hold.state !== "missing" && h.hold.state !== "protected"))?.[0]
+    ?? sources.find(([, h]) => !hasIndependentLogin || h.hold.state !== "missing")?.[0]
     // Checking a newly advertised backend must not turn a shared file into a native login.
     ?? (!hasIndependentLogin ? credentialKindsForBackend(backend).find(m => held.has(m.kind))?.kind : undefined);
 }
@@ -401,7 +395,7 @@ function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
 }
 export function myCredentials(app: App, id: string) {
   const rows = all<Row>(app.db, "select * from credential_holds where user_id=?", id);
-  const holds = new Map(rows.map(r => [r.kind, fromRow(app, r)]));
+  const holds = new Map(rows.map(r => [r.kind, fromRow(r)]));
   return { credentials: credentialMethods().map(m => viewOf(app, id, m, holds.get(m.kind) ?? emptyHold(id))) };
 }
 export function allCredentials(app: App) {
@@ -412,7 +406,7 @@ export function allCredentials(app: App) {
     const m = credentialMethod(r.kind); if (!m) continue;
     let person = people.get(r.user_id);
     if (!person) { person = { userId: r.user_id, name: r.user_id === OWNER ? "本人" : r.holder_name ?? r.user_id, credentials: [] }; people.set(r.user_id, person); }
-    const { url, code, ...v } = viewOf(app, r.user_id, m, fromRow(app, r));
+    const { url, code, ...v } = viewOf(app, r.user_id, m, fromRow(r));
     person.credentials.push(v);
   }
   return { kinds: credentialMethods().map(m => ({ kind: m.kind, name: m.name })), people: [...people.values()], limit: 2000 };
