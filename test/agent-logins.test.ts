@@ -196,8 +196,8 @@ describe("插件提供的 AI 账号登录方式", () => {
     writePlugin("nodecl", "id: nodecl\nname: 没声明\n");
     await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
     await expect(trustPlugin(app, "nodecl", "inprocess")).rejects.toThrow(/permissions\.agentLogin/);
-    // A backend nobody can log in to per person.
-    writePlugin("badbackend", "id: badbackend\nname: 后端不对\npermissions:\n  agentLogin: [gemini]\n", PROBE.replace('backend: "traex"', 'backend: "gemini"'));
+    // Gemini 已支持成员粘贴 API key，改用目录中没有 account 声明的 Qwen。
+    writePlugin("badbackend", "id: badbackend\nname: 后端不对\npermissions:\n  agentLogin: [qwen]\n", PROBE.replace('backend: "traex"', 'backend: "qwen"'));
     await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
     await expect(trustPlugin(app, "badbackend", "inprocess")).rejects.toThrow(/不能按人登录/);
     // Untrusted: its method goes away at once.
