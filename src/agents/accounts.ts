@@ -19,7 +19,7 @@ import { canonical } from "./own-sandbox.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
 import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
-import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, credentialInstallDirs, credentialStateRels, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
+import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, suppliedCredentialKind, checkCredential, credentialInstallDirs, credentialStateRels, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
 
 /**
  * Each omem user's own AI accounts (docs/v2/agent-accounts.md). A member logs in to a backend once
@@ -394,6 +394,11 @@ async function checkNative(app: App, userId: string, entry: AccountEntry): Promi
 /** Ask whether this user is still logged in (检查): the backend's own check, or the plugin's refresh for a plugin login. */
 export async function checkAccount(app: App, userId: string, backend: string): Promise<Stored> {
   const entry = requireEntry(app, backend);
+  const supplied = suppliedCredentialKind(app, userId, backend);
+  if (supplied) {
+    const { state, user, expiresAt, checkedAt, error } = await checkCredential(app, userId, supplied);
+    return { state: expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
+  }
   const s = stored(app, userId, backend);
   if (isPlugin(s.method) && s.state !== "none") return refreshPluginLogin(app, userId, backend);
   return checkNative(app, userId, entry);

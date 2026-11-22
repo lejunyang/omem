@@ -7,7 +7,7 @@ import { testApp } from "./helpers.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { createUser } from "../src/core/users.ts";
 import { closeVault, connectionSecrets, listConnections } from "../src/auth/vault.ts";
-import { accountHome, accountRun, ensureAccountHome, loggedIn } from "../src/agents/accounts.ts";
+import { accountHome, accountRun, accountState, checkAccount, ensureAccountHome, loggedIn } from "../src/agents/accounts.ts";
 import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
@@ -62,6 +62,24 @@ it("SDK 契约、按人持有和 provide：凭据不进库、接口或日志", a
   expect(loggedIn(app, "ann", "traex")).toBe(false);
   expect(listConnections(app, "ann").some(c => c.provider.startsWith("credential:"))).toBe(false);
 });
+it("检查凭据供给的后端沿用持有，退出后登录文件和后端登录状态一起消失", async () => {
+  const check = vi.fn(async () => ({ state: "ok" as const, user: "demo" }));
+  add({ check, async provide(ctx) {
+    mkdirSync(ctx.env.TRAE_HOME, { recursive: true });
+    writeFileSync(join(ctx.env.TRAE_HOME, "login"), "demo");
+  } });
+  await startCredentialLogin(app, "ann", "sample:sso");
+  await until(() => credentialHold(app, "ann", "sample:sso").state === "logged-in");
+  const file = join(accountHome(app, "ann"), ".trae/login");
+  expect(readFileSync(file, "utf8")).toBe("demo");
+  expect(await checkAccount(app, "ann", "traex")).toMatchObject({ state: "logged-in", method: "sample:sso", user: "demo" });
+  expect(check).toHaveBeenCalledOnce();
+  expect(accountState(app, "ann", "traex").state).toBe("none");
+  await logoutCredential(app, "ann", "sample:sso");
+  expect(existsSync(file)).toBe(false);
+  expect(loggedIn(app, "ann", "traex")).toBe(false);
+});
+
 it("退出清理独占状态，共用的后端和嵌套命令目录由最后一份持有清理", async () => {
   add();
   add({ id: "other", provides: { backends: ["traex"], commands: [{ name: "other", state: [".acme/data/other"] }] },
