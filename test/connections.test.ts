@@ -270,6 +270,33 @@ describe("connections", async () => {
     expect(seen).toEqual(["zhou", undefined]);
   });
 
+  it("checks Drive document ownership and asks the member to approve shared edits", async () => {
+    const { callTool } = await import("../src/agents/tools.ts");
+    const ctx = { app, runId: null, spaceId: "personal-ann", spaces: null, tools: null, actor: "agent" as const, userId: "ann", larkChats: [] };
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["docs", "doc-write"]), accessToken: "at_ann", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    const writes: string[] = [];
+    setLarkCliForTests(async (args, _cwd, as) => {
+      expect(as).toBe("ann");
+      if (args.includes("+node-get")) throw new Error("131014 not mounted in wiki");
+      if (args.includes("batch_query")) {
+        const { request_docs } = JSON.parse(args[args.indexOf("--data") + 1]);
+        return { data: { metas: [{ owner_id: request_docs[0].doc_token === "Mine" ? "ou_ann" : "ou_owner" }] } };
+      }
+      if (args.includes("+update")) writes.push(args[args.indexOf("--doc") + 1]);
+      return { ok: true, data: {} };
+    });
+    const edit = (doc: string) => callTool(ctx, "lark_doc_update", { doc, command: "append", content: "进度" });
+    const mine = "https://tenant.larkoffice.com/docx/Mine";
+    const shared = "https://tenant.larkoffice.com/docx/Shared";
+    const waitSeconds = app.config.approvals.waitSeconds;
+    app.config.approvals.waitSeconds = 0;
+    onTestFinished(() => { app.config.approvals.waitSeconds = waitSeconds; });
+    expect((await edit(mine)).text).toContain("已编辑");
+    expect((await edit(shared)).text).toContain("批准");
+    expect(writes).toEqual([mine]);
+    expect(one(app.db, "select user_id from asks where tool = 'lark_doc_update' and status = 'pending'")).toEqual({ user_id: "ann" });
+  });
+
   it("a member without Feishu gets a link with what is missing ticked; once granted, the conversation goes on by itself", async () => {
     const { callTool } = await import("../src/agents/tools.ts");
     const { createRun } = await import("../src/agents/runs.ts");

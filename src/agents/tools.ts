@@ -4693,7 +4693,7 @@ def({
     };
     const r = a.identity === "bot"
       ? await botForRequester(ctx, input.doc, () => w.fetchForEdit(ctx.app, input, { asBot: true }))
-      : await w.fetchForEdit(ctx.app, input).catch((e) => ownerDenied(ctx.app, e));
+      : await w.fetchForEdit(ctx.app, input).catch((e) => ownerDenied(ctx, e));
     const max = 60_000;
     const body = r.content.length > max ? `${r.content.slice(0, max)}\n…（已截断，共 ${r.content.length} 字；用 scope=outline / section / range 缩小范围）` : r.content;
     return `版本 ${r.revision ?? "未知"}${r.tips ? `\n飞书的提示：${truncate(r.tips, 300)}` : ""}\n\n${body || "（没有内容）"}`;
@@ -4739,7 +4739,9 @@ async function botForRequester<T>(ctx: ToolContext, doc: string, fn: () => Promi
 }
 
 /** The owner cannot open or edit the doc: say what to do instead of only the lark-cli error. */
-function ownerDenied(app: App, e: unknown): never {
+function ownerDenied(ctx: ToolContext, e: unknown): never {
+  if ((ctx.userId ?? OWNER) !== OWNER) throw e;
+  const app = ctx.app;
   const msg = (e as Error).message;
   const bot = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value || "omem 的机器人";
   if (/3380004|no permission|lacks view|forbidden|没有权限|无权限/i.test(msg) && !/机器人/.test(msg))
@@ -4835,7 +4837,7 @@ def({
     }
     // A member without a connection is asked for writing too, not just reading (src/auth/connect-wait.ts).
     ownerOnly(ctx, "doc-write");
-    const place = await w.docPlace(ctx.app, a.doc).catch((e) => ownerDenied(ctx.app, e));
+    const place = await w.docPlace(ctx.app, a.doc).catch((e) => ownerDenied(ctx, e));
     const places = [place];
     for (const doc of a.approval_docs ?? []) {
       if (doc === a.doc) continue;
@@ -4852,7 +4854,7 @@ def({
     const wikiWrite = a.command !== "overwrite" && places.every(p => p.wiki) ? { operation: "edit" as const, targets: places.map(p => p.wiki!) } : undefined;
     const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑以下文档：\n${targets}\n\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content ?? verb)}\n首次操作：${verb}`, places.every((p) => p.personal), scope, undefined, wikiWrite);
     if (wait) return wait;
-    const r = await w.updateDoc(ctx.app, { ...edit, content: await docCitations(ctx, edit.content, a.format ? a.format === "markdown" : !a.command.startsWith("block_")) }).catch((e) => ownerDenied(ctx.app, e));
+    const r = await w.updateDoc(ctx.app, { ...edit, content: await docCitations(ctx, edit.content, a.format ? a.format === "markdown" : !a.command.startsWith("block_")) }).catch((e) => ownerDenied(ctx, e));
     const extra = [
       r.result && r.result !== "success" ? `结果：${r.result}` : "",
       r.newBlocks.length ? `新 block：${r.newBlocks.map((b) => `${b.block_id}${b.block_type ? `（${b.block_type}）` : ""}`).join("、")}` : "",

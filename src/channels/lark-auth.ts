@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { inQuietHours, notify } from "../core/notify.ts";
 import { HttpError, zonedParts } from "../core/util.ts";
 import { larkActing, larkActor, larkCli, LarkScopeError, onOwnerLoginMissing, OWNER_LOGIN_DOMAINS } from "./lark-cli.ts";
+import { larkOpenIdOf } from "../core/users.ts";
 import { one, run } from "../core/db.ts";
 
 /**
@@ -53,6 +54,12 @@ export async function userScopes(fresh = false) {
 export async function cliUser() {
   const s = await status();
   return s.openId ? { openId: s.openId, name: s.name } : null;
+}
+
+/** The open_id in the app that issued the current caller's credentials. */
+export async function actingOpenId(app: App) {
+  const actor = larkActing();
+  return actor ? larkOpenIdOf(app, actor.userId) : (await cliUser())?.openId;
 }
 
 /** Which needs of these features the login lacks (empty when all are there, or when scopes cannot be read: `unknown`). */
