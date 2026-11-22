@@ -71,6 +71,18 @@ export function recordWatchMaterial(app: App, anchor: string, spaces: Origins) {
   });
 }
 
+/** An explicit message read becomes material for the watch turn that received it. */
+export function recordReadMessages(app: App, runId: string | null | undefined, space: string,
+  messages: { meta: Record<string, unknown> }[], summary?: Pick<Thread, "summary" | "settings">) {
+  if (!runId || (!messages.length && !summary?.summary)) return;
+  const turn = one<{ anchor: string | null }>(app.db, `select coalesce(r.input ->> '$.messageIds[0]', r.input ->> '$.messageId') anchor
+    from runs r join conversations c on c.id=(r.input ->> '$.conversationId')
+    where r.id=? and r.kind='ask' and c.channel='listen'`, runId);
+  if (!turn?.anchor) return;
+  const origins = watchSourceSpaces(app, space, messages);
+  recordWatchMaterial(app, turn.anchor, summary ? mergeOrigins(origins, summaryOrigins(summary)) : origins);
+}
+
 /** A follow-up search can quote earlier batches from session history or its summary. Walk only this
  * conversation's metadata in the read worker, stopping at the first unknown or unauthorized origin. */
 export function watchRunSourceSpaces(app: Pick<App, "db">, runId: string, granted?: readonly string[]) {
