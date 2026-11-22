@@ -726,7 +726,7 @@ export function clearAccountPaths(app: App, userId: string, rels: string[], exce
   const rows = all<{ key: string; value: string }>(app.db, "select key,value from kv where key glob ?", prefix + "*");
   const states = new Map(rows.map(row => [row.key.slice(prefix.length), row.value]));
   const providers = new Set(listConnections(app, userId).map(c => c.provider));
-  const accounts = accountEntries(app).filter(e => {
+  const accounts = accountCatalog(app.config.agents.profiles, "declared").filter(e => {
     if (e.id === except.backend) return false;
     const hasToken = providers.has(TOKEN_PROVIDER(e.id));
     return readStored(states.get(e.id), () => hasToken).state !== "none" || hasToken || logins.has(loginKey(app, userId, e.id));
@@ -751,7 +751,6 @@ export function clearAccountPaths(app: App, userId: string, rels: string[], exce
  * folder when nothing else is left in it.
  */
 export async function removeAccount(app: App, userId: string, backend: string, actor = userId) {
-  const entry = requireEntry(app, backend);
   const sources = [...heldCredentialDeclarations(app, userId)].filter(([, m]) => m.provides.backends.includes(backend));
   if (sources.length) {
     const base = actor === userId ? "/api/credentials" : `/api/credentials/${userId}`;
@@ -759,8 +758,9 @@ export async function removeAccount(app: App, userId: string, backend: string, a
       const commands = provides.commands.map(c => c.name).join("、") || "无";
       return `${name}（${kind}）覆盖后端 ${provides.backends.join("、")}，命令 ${commands}。退出整份凭据请调用 DELETE ${base}/${kind}`;
     });
-    throw new HttpError(409, `${entry.name} 的登录由凭据供给，请按凭据管理。\n${details.join("\n")}`);
+    throw new HttpError(409, `${accountEntry(app, backend)?.name ?? backend} 的登录由凭据供给，请按凭据管理。\n${details.join("\n")}`);
   }
+  const entry = requireEntry(app, backend);
   const key = loginKey(app, userId, backend);
   const pending = logins.get(key);
   if (pending) {

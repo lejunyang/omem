@@ -178,7 +178,7 @@ it("升级旧原生检查缓存后，自己的凭据过期会改借有效登录�
   // The old cache has the same shape for a status probe and for a separately pasted token.
   storeConnection(app, { userId: "bob", provider: "agent:" + backend, accountId: backend, accountName: "demo", scopes: [], accessToken: "fixture-token" });
   setCredentialSharing(app, "bob", kind, { scope: "all" });
-  app.db.exec("pragma user_version=" + (migrations.findIndex(sql => sql.includes("create table credential_kinds(")) + 1));
+  app.db.exec("alter table credential_holds drop column owned_paths; pragma user_version=" + (migrations.findIndex(sql => sql.includes("create table credential_kinds(")) + 1));
   app.db.close();
   app = App.open(app.home);
   app.config.agents.profiles = [profile];
@@ -239,7 +239,7 @@ it("升级时保留有歧义的旧持有，退出后重启不再认领；仅设�
   await until(() => credentialHold(app, "ann", kind).state === "logged-in");
   run(app.db, "update credential_holds set state='none',expires_at=null,refresh_at=null,account_name=null where user_id='ann' and kind=?", kind);
   setCredentialSharing(app, "bob", kind, { scope: "self" });
-  app.db.exec("pragma user_version=" + (migrations.findIndex(sql => sql.includes("'$.requiresToken'")) + 1));
+  app.db.exec("alter table credential_holds drop column owned_paths; pragma user_version=" + (migrations.findIndex(sql => sql.includes("'$.requiresToken'")) + 1));
   app.db.close(); app = App.open(app.home);
   app.config.agents.profiles = [profile];
   expect(myCredentials(app, "ann").credentials[0]).toMatchObject({ state: "none", checkedAt: expect.any(String) });
@@ -258,24 +258,33 @@ it.each(["停用", "撤销信任"])("插件%s后成员和本人代办均可按�
   const { startServer } = await import("../src/server/http.ts");
   const dir = join(app.home, "plugins", "credprobe"), kind = "credprobe:sso";
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "plugin.yaml"), "id: credprobe\nname: 示例插件\npermissions:\n  credential: true\n");
-  writeFileSync(join(dir, "server.mjs"), `import {writeFileSync} from 'node:fs'; import {join} from 'node:path';
-    export default api => api.credential({ id: 'sso', name: '离线授权', provides: {backends:['echo'], commands:[{name:'demo', state:['.demo']}]},
+  const backend = "credprobe:echo", sharedKind = "credprobe:shared";
+  writeFileSync(join(dir, "plugin.yaml"), JSON.stringify({ id: "credprobe", name: "示例插件", permissions: { credential: true },
+    backends: [{ id: "echo", name: "示例", command: "fixture-backend", account: { owns: [".demo"] } },
+      { id: "nested", name: "共享", command: "fixture-nested", account: { owns: [".demo/shared"] } }] }));
+  writeFileSync(join(dir, "server.mjs"), `import {mkdirSync, writeFileSync} from 'node:fs'; import {join} from 'node:path';
+    export default api => { api.credential({ id: 'shared', name: '共享授权', provides: {backends:['credprobe:nested']},
+      async login() { return {user:'demo'} }, async provide(ctx) { mkdirSync(join(ctx.home,'.demo/shared'),{recursive:true}); writeFileSync(join(ctx.home,'.demo/shared/login'),'shared') } });
+    api.credential({ id: 'sso', name: '离线授权', provides: {backends:['credprobe:echo']},
       async login(ctx, show) { await ctx.secret.set('offline-test');
         if (ctx.userId === 'bob') { writeFileSync(join(ctx.home,'.demo','login'), 'demo'); show({url:'https://auth.example.test/pending'}); return new Promise(() => {}) }
         return {user:'demo', expiresAt:Date.now()+3600000} },
-      async provide(ctx) { writeFileSync(join(ctx.home,'.demo','login'), 'demo') }, async logout() { throw Error('不应调用') } });`);
-  app.config.agents.profiles = [agentProfileSchema.parse({ id: "echo", transport: "acp", command: "fixture-backend", account: { owns: [".demo"] } })];
+      async provide(ctx) { writeFileSync(join(ctx.home,'.demo','login'), 'demo') }, async logout() { throw Error('不应调用') } }); };`);
   await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
   await trustPlugin(app, "credprobe", "inprocess");
-  for (const user of ["ann", "bob"]) await startCredentialLogin(app, user, kind);
+  for (const user of ["ann", "bob"]) {
+    await startCredentialLogin(app, user, sharedKind);
+    await startCredentialLogin(app, user, kind);
+  }
   if (mode === "停用") await setPluginEnabled(app, "credprobe", false);
   else untrustPlugin(app, "credprobe");
+  run(app.db, "update credential_holds set owned_paths=null where user_id='ann'");
   const server = await startServer(app, { port: 0, quiet: true });
   try {
     for (const user of ["ann", "bob"]) {
       const self = user === "ann", headers = self ? { authorization: "Bearer " + createApiToken(app, user) } : undefined;
-      const url = self ? "/api/me/agent-accounts/echo" : `/api/agent-accounts/${user}/echo`;
+      if (!self) forgetPlugin("credprobe");
+      const url = self ? "/api/me/agent-accounts/" + backend : `/api/agent-accounts/${user}/${backend}`;
       const target = self ? `/api/credentials/${kind}` : `/api/credentials/${user}/${kind}`;
       const refused = await server.inject({ method: "DELETE", url, headers });
       expect(refused.statusCode).toBe(409);
@@ -284,11 +293,39 @@ it.each(["停用", "撤销信任"])("插件%s后成员和本人代办均可按�
       expect(readFileSync(path, "utf8")).toBe("demo");
       expect((await server.inject({ method: "DELETE", url: target, headers })).statusCode).toBe(200);
       expect(existsSync(path)).toBe(false);
+      const sharedFile = join(accountHome(app, user), ".demo/shared/login");
+      expect(readFileSync(sharedFile, "utf8")).toBe("shared");
+      expect((await server.inject({ method: "DELETE", url: target.replace(kind, sharedKind), headers })).statusCode).toBe(200);
+      expect(existsSync(sharedFile)).toBe(false);
       expect(listConnections(app, user)).toHaveLength(0);
       expect(credentialHold(app, user, kind)).toMatchObject({ state: "none", refreshAt: undefined });
-      expect((await server.inject({ method: "DELETE", url, headers })).statusCode).toBe(200);
+      expect((await server.inject({ method: "DELETE", url, headers })).statusCode).toBe(404);
     }
   } finally { await server.close(); }
+});
+
+it("续签使用新的后端目录后，退出只清理两次实际供给的路径", async () => {
+  const kind = "sample:sso", home = accountHome(app, "ann");
+  const configure = (path: string) => {
+    app.config.agents.profiles = [agentProfileSchema.parse({ id: "echo", transport: "acp", command: "fixture-backend",
+      account: { env: { ECHO_HOME: "{home}/" + path }, owns: [path] } })];
+  };
+  add({ provides: { backends: ["echo"] }, login: async () => ({ user: "demo" }), refresh: async () => ({}),
+    async provide(ctx) {
+      mkdirSync(ctx.env.ECHO_HOME, { recursive: true });
+      writeFileSync(join(ctx.env.ECHO_HOME, "login"), "demo");
+    } });
+  configure(".first");
+  await startCredentialLogin(app, "ann", kind);
+  configure(".second");
+  await refreshCredential(app, "ann", kind);
+  configure(".unused");
+  mkdirSync(join(home, ".unused"));
+  writeFileSync(join(home, ".unused/login"), "independent");
+  for (const dir of [".first", ".second"]) expect(readFileSync(join(home, dir, "login"), "utf8")).toBe("demo");
+  await logoutCredential(app, "ann", kind);
+  for (const dir of [".first", ".second"]) expect(existsSync(join(home, dir))).toBe(false);
+  expect(readFileSync(join(home, ".unused/login"), "utf8")).toBe("independent");
 });
 
 it.skipIf(process.platform === "win32")("退出时重新校验账号目录，拒绝经符号链接清理", async () => {

@@ -11,6 +11,7 @@ import { audit } from "../auth/permissions.ts";
 import { connectionSecrets, deleteConnection, findConnection, listConnections, storeConnection } from "../auth/vault.ts";
 import { accountEntry, accountEnv, accountHome, accountStatePaths, clearAccountPaths, ensureAccountHome } from "./accounts.ts";
 import { sandboxSupport } from "./sandbox.ts";
+import { accountCatalog } from "./catalog.ts";
 
 export { registerCredential } from "./credential-registry.ts";
 import { credentialKindsForBackend, credentialMethod, credentialMethods, declaredPaths, requireCredential, type CredentialMethod } from "./credential-registry.ts";
@@ -23,11 +24,11 @@ export type CredentialSharing = z.infer<typeof sharingSchema>;
 export type Hold = {
   state: "none" | "missing" | "logged-in" | "expired"; user?: string; expiresAt?: number; refreshAt?: number;
   checkedAt?: string; checkedDay: string; lastUsedAt?: string; error?: string;
-  sharing: CredentialSharing; notified: Record<string, string>;
+  sharing: CredentialSharing; notified: Record<string, string>; ownedPaths?: string[];
 };
 type Row = { user_id: string; kind: string; state: Hold["state"]; account_name: string | null;
   expires_at: number | null; refresh_at: number | null; checked_at: string | null; check_day: string;
-  last_used_at: string | null; error: string | null; sharing: string; notified: string };
+  last_used_at: string | null; error: string | null; sharing: string; notified: string; owned_paths: string | null };
 const day = (app: App, at = Date.now()) => zonedParts(at, app.config.timezone).date;
 const refreshAt = (expiresAt?: number) => expiresAt === undefined ? undefined : Math.max(expiresAt - 600_000, Date.now() + 60_000);
 function member(app: App, id: string) {
@@ -40,7 +41,8 @@ const keyOf = (app: App, id: string, kind: string) => `${app.home}|${id}|${kind}
 function fromRow(r: Row): Hold {
   return { state: r.state, user: r.account_name ?? undefined, expiresAt: r.expires_at ?? undefined,
     refreshAt: r.refresh_at ?? undefined, checkedAt: r.checked_at ?? undefined, checkedDay: r.check_day,
-    lastUsedAt: r.last_used_at ?? undefined, error: r.error ?? undefined, sharing: JSON.parse(r.sharing), notified: JSON.parse(r.notified) };
+    lastUsedAt: r.last_used_at ?? undefined, error: r.error ?? undefined, sharing: JSON.parse(r.sharing), notified: JSON.parse(r.notified),
+    ownedPaths: r.owned_paths === null ? undefined : JSON.parse(r.owned_paths) };
 }
 function emptyHold(id: string): Hold {
   return { state: "none", checkedDay: "", sharing: { scope: id === OWNER ? "all" : "self", members: [] }, notified: {} };
@@ -50,12 +52,13 @@ export function credentialHold(app: App, userId: string, kind: string): Hold {
   return r ? fromRow(r) : emptyHold(userId);
 }
 function save(app: App, userId: string, kind: string, hold: Hold) {
-  run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,refresh_at,check_day,checked_at,sharing,notified,last_used_at,error)
-    values(?,?,?,?,?,?,?,?,?,?,?,?) on conflict(user_id,kind) do update set state=excluded.state,account_name=excluded.account_name,
+  run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,refresh_at,check_day,checked_at,sharing,notified,last_used_at,error,owned_paths)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(user_id,kind) do update set state=excluded.state,account_name=excluded.account_name,
     expires_at=excluded.expires_at,refresh_at=excluded.refresh_at,check_day=excluded.check_day,checked_at=excluded.checked_at,
-    sharing=excluded.sharing,notified=excluded.notified,last_used_at=excluded.last_used_at,error=excluded.error`,
+    sharing=excluded.sharing,notified=excluded.notified,last_used_at=excluded.last_used_at,error=excluded.error,owned_paths=excluded.owned_paths`,
     userId, kind, hold.state, hold.user ?? null, hold.expiresAt ?? null, hold.refreshAt ?? null, hold.checkedDay,
-    hold.checkedAt ?? null, JSON.stringify(hold.sharing), JSON.stringify(hold.notified), hold.lastUsedAt ?? null, hold.error ?? null);
+    hold.checkedAt ?? null, JSON.stringify(hold.sharing), JSON.stringify(hold.notified), hold.lastUsedAt ?? null, hold.error ?? null,
+    hold.ownedPaths ? JSON.stringify(hold.ownedPaths) : null);
 }
 function usable(app: App, id: string, kind: string, s: Pick<Hold, "state" | "expiresAt"> = credentialHold(app, id, kind)) {
   return s.state === "logged-in" && (s.expiresAt === undefined || s.expiresAt > Date.now()) && (id === OWNER || existsSync(accountHome(app, id)));
@@ -104,9 +107,17 @@ export function credentialAccountView(app: App, id: string, backend: string) {
   }
   return null;
 }
-function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal, readOnly = false): CredentialContext {
+function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal, mode: "supply" | "check" | "logout"): CredentialContext {
   const home = id === OWNER ? homedir() : accountHome(app, id);
-  if (id !== OWNER) accountStatePaths(app, id, providedPaths(app, m.provides));
+  if (id !== OWNER) {
+    const paths = heldPaths(app, m.provides);
+    if (mode === "supply") {
+      const hold = credentialHold(app, id, m.kind);
+      const ownedPaths = [...new Set([...(hold.ownedPaths ?? []), ...paths])];
+      accountStatePaths(app, id, ownedPaths);
+      save(app, id, m.kind, { ...hold, state: hold.state === "none" ? "missing" : hold.state, ownedPaths });
+    } else accountStatePaths(app, id, paths);
+  }
   const env = id === OWNER ? { ...process.env } : Object.assign({}, ...m.provides.backends.map(b => {
     const e = accountEntry(app, b); return e ? accountEnv(app, id, e) : {};
   }));
@@ -114,7 +125,7 @@ function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal,
     async get() { signal.throwIfAborted(); const c = findConnection(app, id, secretProvider(m.kind)); return c ? connectionSecrets(app, c.id)?.accessToken ?? null : null; },
     async set(value) {
       signal.throwIfAborted();
-      if (readOnly || id === OWNER) throw new Error("检查凭据时不能写入秘密");
+      if (mode === "check" || id === OWNER) throw new Error("检查凭据时不能写入秘密");
       const provider = secretProvider(m.kind);
       if (value === null) { const c = findConnection(app, id, provider); if (c) deleteConnection(app, c.id); return; }
       if (!value || value.length > 65_536) throw new Error("秘密需要 1–65536 个字符");
@@ -172,9 +183,7 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
   const signal = AbortSignal.any([abort.signal, m.signal, timeout]);
   void serial(key, async () => {
     try {
-      const hold = credentialHold(app, id, kind);
-      if (hold.state === "none") save(app, id, kind, { ...hold, state: "missing" });
-      const ctx = context(app, id, m, signal);
+      const ctx = context(app, id, m, signal, "supply");
       const result = loginResult.parse(await untilAbort(signal, () => m.login(ctx, link => {
         signal.throwIfAborted();
         const l = z.object({ url: z.httpUrl().max(2000), code: z.string().max(64).optional() }).parse(link);
@@ -207,7 +216,7 @@ export function refreshCredential(app: App, id: string, kind: string) {
     try {
       if (m.refresh) {
         const result = await timed(m, 120_000, async signal => {
-          const ctx = context(app, id, m, signal);
+          const ctx = context(app, id, m, signal, "supply");
           const r = await untilAbort(signal, () => m.refresh!(ctx));
           if (r === null) throw new Error("重新授权");
           const result = refreshResult.parse(r);
@@ -228,7 +237,7 @@ export function checkCredential(app: App, id: string, kind: string) {
     const s = credentialHold(app, id, kind);
     if (!m.check || id !== OWNER && s.state === "none") return s;
     try {
-      const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, true))));
+      const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, "check"))));
       const expiresAt = result.state === "missing" ? undefined : result.expiresAt ?? s.expiresAt;
       save(app, id, kind, { ...credentialHold(app, id, kind), state: result.state === "missing" ? "missing" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in",
         user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined });
@@ -237,19 +246,22 @@ export function checkCredential(app: App, id: string, kind: string) {
     return credentialHold(app, id, kind);
   });
 }
-function providedPaths(app: App, provides: CredentialMethod["provides"]) {
+function heldPaths(app: App, provides: CredentialMethod["provides"], saved?: string[]) {
+  if (saved) return saved;
+  const entries = accountCatalog(app.config.agents.profiles, "declared");
   return [...provides.commands.flatMap(c => c.state ?? []),
-    ...provides.backends.flatMap(backend => accountEntry(app, backend)?.account.owns ?? [])];
+    ...entries.filter(entry => provides.backends.includes(entry.id)).flatMap(entry => entry.account.owns)];
 }
 
 type Declaration = Pick<CredentialMethod, "name" | "provides">;
 /** Include temporarily disabled plugins and logins that have not yet saved their first hold. */
 export function heldCredentialDeclarations(app: App, id: string) {
-  const rows = all<Pick<Row, "kind" | "state" | "expires_at"> & { declaration: string }>(app.db, `select h.kind,h.state,h.expires_at,k.declaration from credential_holds h
+  const rows = all<Pick<Row, "kind" | "state" | "expires_at" | "owned_paths"> & { declaration: string }>(app.db, `select h.kind,h.state,h.expires_at,h.owned_paths,k.declaration from credential_holds h
     join credential_kinds k on k.kind=h.kind where h.user_id=? and h.state!='none'
     order by (h.state='missing'), h.checked_at desc,h.kind`, id);
-  const held = new Map<string, Declaration & Pick<Hold, "state" | "expiresAt"> & { pending?: boolean }>();
-  for (const row of rows) held.set(row.kind, { ...JSON.parse(row.declaration), state: row.state, expiresAt: row.expires_at ?? undefined });
+  const held = new Map<string, Declaration & Pick<Hold, "state" | "expiresAt" | "ownedPaths"> & { pending?: boolean }>();
+  for (const row of rows) held.set(row.kind, { ...JSON.parse(row.declaration), state: row.state, expiresAt: row.expires_at ?? undefined,
+    ownedPaths: row.owned_paths === null ? undefined : JSON.parse(row.owned_paths) });
   for (const m of credentialMethods()) if (logins.has(keyOf(app, id, m.kind))) {
     held.set(m.kind, { ...(held.get(m.kind) ?? { name: m.name, provides: m.provides, state: "none" }), pending: true });
   }
@@ -259,7 +271,7 @@ export function heldCredentialDeclarations(app: App, id: string) {
 export function retainedCredentialPaths(app: App, id: string, except?: string) {
   const held = heldCredentialDeclarations(app, id);
   if (except) held.delete(except);
-  return [...held.values()].map(m => providedPaths(app, m.provides));
+  return [...held.values()].map(m => heldPaths(app, m.provides, m.ownedPaths));
 }
 
 /** Check the provider that owns these files, including when its login has expired or its plugin is disabled. */
@@ -277,16 +289,17 @@ export function logoutCredential(app: App, id: string, kind: string, actor = id)
   return serial(key, async () => {
     const row = one<{ declaration: string }>(app.db, "select declaration from credential_kinds where kind=?", kind);
     if (!row) throw new HttpError(404, "没有这个凭据种类");
-    if (credentialHold(app, id, kind).state === "none") return;
+    const hold = credentialHold(app, id, kind);
+    if (hold.state === "none") return;
     const declaration: Declaration = JSON.parse(row.declaration);
     const m = credentialMethod(kind);
     if (m?.logout && existsSync(accountHome(app, id))) {
-      try { await timed(m, 20_000, signal => m.logout!(context(app, id, m, signal))); }
+      try { await timed(m, 20_000, signal => m.logout!(context(app, id, m, signal, "logout"))); }
       catch { throw new HttpError(502, "退出凭据失败，请重试"); }
     }
-    clearAccountPaths(app, id, providedPaths(app, declaration.provides), { kind });
+    clearAccountPaths(app, id, heldPaths(app, declaration.provides, hold.ownedPaths), { kind });
     const c = findConnection(app, id, secretProvider(kind)); if (c) deleteConnection(app, c.id);
-    save(app, id, kind, { ...credentialHold(app, id, kind), state: "none", user: undefined, expiresAt: undefined, refreshAt: undefined, checkedAt: now(), error: undefined });
+    save(app, id, kind, { ...credentialHold(app, id, kind), state: "none", ownedPaths: undefined, user: undefined, expiresAt: undefined, refreshAt: undefined, checkedAt: now(), error: undefined });
     audit(app, actor, "credentials.logout", kind, { holder: id });
   });
 }

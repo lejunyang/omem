@@ -31,8 +31,9 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
     return { ok: true };
   });
 
+  const backendId = (req: FastifyRequest) => (req.params as { backend: string }).backend;
   const backendOf = (req: FastifyRequest) => {
-    const id = (req.params as { backend: string }).backend;
+    const id = backendId(req);
     if (!accountEntry(app, id)) throw new HttpError(404, `后端 ${id} 不能按人登录`);
     return id;
   };
@@ -70,7 +71,7 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
   });
   server.delete("/api/me/agent-accounts/:backend", async (req) => {
     const userId = member(req);
-    await removeAccount(app, userId, backendOf(req));
+    await removeAccount(app, userId, backendId(req));
     return { ok: true };
   });
 
@@ -88,7 +89,7 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
   server.delete("/api/agent-accounts/:user/:backend", async (req) => {
     const { user } = req.params as { user: string };
     if (!findUser(app, user) || user === OWNER) throw new HttpError(404, "没有这个成员");
-    await removeAccount(app, user, backendOf(req), who(req));
+    await removeAccount(app, user, backendId(req), who(req));
     return { ok: true };
   });
 }

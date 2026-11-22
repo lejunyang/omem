@@ -2454,6 +2454,7 @@ export const migrations: readonly string[] = [
    and json_valid(value) and json_extract(value,'$.method')='native'
    and json_extract(value,'$.state')!='none';`,
   `update credential_holds set state='missing' where state='none' and checked_at is not null;`,
+  `alter table credential_holds add column owned_paths text;`,
 ];
 
 export type Db = DatabaseSync;
