@@ -552,9 +552,10 @@ export const configSchema = z.object({
        * in to or may borrow (the run's fallback order). Keyed by the account backend (catalog id:
        * codex, claude, traex, doubao-cli). Only on machines that can start the sandbox (agents/sandbox.ts).
        */
+      accountsDefault: z.enum(["owner", "own", "own-or-other"]).default("owner"),
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accountsDefault: "owner" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
@@ -564,6 +565,10 @@ export const configSchema = z.object({
    * matches the change decides which review checks run; checks are built-in review roles or agent
    * specs. Conditions use the rule condition shape and are validated in src/agents/review.ts.
    */
+  credentials: z.object({
+    lending: z.enum(["auto", "confirm", "off"]).default("auto"),
+    confirm: z.object({ inviteAsOwner: z.boolean().default(false) }).default({ inviteAsOwner: false }),
+  }).default({ lending: "auto", confirm: { inviteAsOwner: false } }),
   review: z
     .object({
       tiers: z.array(z.object({

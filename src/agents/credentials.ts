@@ -56,6 +56,36 @@ function usable(app: App, id: string, kind: string, s = credentialHold(app, id, 
 }
 export const hasCredentials = (app: App, id: string) => !!one(app.db, "select 1 from credential_holds where user_id=? and state!='none' limit 1", id);
 export const credentialBackendLogin = (app: App, id: string, backend: string) => credentialKindsForBackend(backend).some(m => usable(app, id, m.kind));
+export type CredentialUse = { holder: string; kind: string; requester: string; backend: string };
+export const credentialUse = Symbol("credentialUse");
+export function selectedCredential(profile: object) {
+  return (profile as { [credentialUse]?: CredentialUse })[credentialUse];
+}
+export function mayUseCredential(app: App, use: CredentialUse) {
+  const hold = credentialHold(app, use.holder, use.kind);
+  if (!credentialMethod(use.kind)?.provides.backends.includes(use.backend) || !usable(app, use.holder, use.kind, hold)) return false;
+  if (use.holder === use.requester) return true;
+  return app.config.credentials.lending === "auto" && (use.holder === OWNER || member(app, use.holder)) &&
+    (hold.sharing.scope === "all" || hold.sharing.scope === "members" && hold.sharing.members.includes(use.requester));
+}
+export function selectCredential(app: App, requester: string, backend: string, allowLoan: boolean, sandbox: boolean) {
+  const methods = credentialKindsForBackend(backend);
+  const own = methods.find(m => sandbox && usable(app, requester, m.kind));
+  if (own) return { requester, backend, holder: requester, kind: own.kind };
+  if (!allowLoan || !methods.length || app.config.credentials.lending !== "auto") return;
+  const kinds = methods.map(m => m.kind);
+  const rows = all<Row>(app.db, `select * from credential_holds where kind in (${kinds.map(() => "?").join(",")})
+    and state='logged-in' order by (user_id=?) desc,last_used_at desc,user_id,kind`, ...kinds, OWNER);
+  for (const row of rows) {
+    if (row.user_id === requester || (row.user_id === OWNER ? app.config.agents.accountIsolation === "require" : !sandbox)) continue;
+    const use = { requester, backend, holder: row.user_id, kind: row.kind };
+    if (mayUseCredential(app, use)) return use;
+  }
+}
+export function credentialSucceeded(app: App, profile: object) {
+  const use = selectedCredential(profile);
+  if (use) run(app.db, "update credential_holds set last_used_at=? where user_id=? and kind=?", now(), use.holder, use.kind);
+}
 export function credentialAccountView(app: App, id: string, backend: string) {
   const m = credentialKindsForBackend(backend).find(m => usable(app, id, m.kind));
   return m ? { ...credentialHold(app, id, m.kind), kind: m.kind, name: m.name } : null;
@@ -189,7 +219,7 @@ export function checkCredential(app: App, id: string, kind: string) {
     return credentialHold(app, id, kind);
   });
 }
-export function logoutCredential(app: App, id: string, kind: string) {
+export function logoutCredential(app: App, id: string, kind: string, actor = id) {
   const m = requireCredential(kind);
   if (id === OWNER) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机退出");
   logins.get(keyOf(app, id, kind))?.abort.abort();
@@ -197,7 +227,7 @@ export function logoutCredential(app: App, id: string, kind: string) {
     if (m.logout && existsSync(accountHome(app, id))) await timed(m, 20_000, signal => m.logout!(context(app, id, m, signal))).catch(() => {});
     const c = findConnection(app, id, secretProvider(kind)); if (c) deleteConnection(app, c.id);
     save(app, id, kind, { ...credentialHold(app, id, kind), state: "none", user: undefined, expiresAt: undefined, refreshAt: undefined, checkedAt: now(), error: undefined });
-    audit(app, id, "credentials.logout", kind, {});
+    audit(app, actor, "credentials.logout", kind, { holder: id });
   });
 }
 export async function removeAllCredentials(app: App, id: string) {

@@ -17,7 +17,8 @@ import { accountCatalog, type AccountSpec, type CatalogEntry } from "./catalog.t
 import { forgetQuota, quotaKind, quotaView, refreshQuota } from "./quota.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
-import { credentialBackendLogin, credentialAccountView, credentialInstallDirs, credentialStateRels, hasCredentials, removeAllCredentials } from "./credentials.ts";
+import { credentialKindsForBackend } from "./credential-registry.ts";
+import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, credentialInstallDirs, credentialStateRels, hasCredentials, removeAllCredentials } from "./credentials.ts";
 
 /**
  * Each omem user's own AI accounts (docs/v2/agent-accounts.md). A member logs in to a backend once
@@ -78,7 +79,7 @@ export function accountEntryFor(app: App, p: AgentProfile): AccountEntry | null 
 }
 
 export function accountPolicy(app: App, backend: string): AccountPolicy {
-  return app.config.agents.accounts?.[backend] ?? "owner";
+  return app.config.agents.accounts?.[backend] ?? app.config.agents.accountsDefault;
 }
 
 // ---------------------------------------------------------------- folders
@@ -157,10 +158,10 @@ function localAccount(app: App, userId: string, backend: string): SandboxAccount
 }
 
 /** What a run (or a login) with this user's account of this backend carries (agents/sandbox.ts). */
-export function accountRun(app: App, userId: string, entry: AccountEntry): SandboxAccount {
+export function accountRun(app: App, userId: string, entry: AccountEntry, nativeToken = true): SandboxAccount {
   const base = localAccount(app, userId, entry.id);
   const spec = entry.account;
-  const token = spec.tokenEnv ? accountToken(app, userId, entry.id) : null;
+  const token = nativeToken && spec.tokenEnv ? accountToken(app, userId, entry.id) : null;
   const env = accountEnv(app, userId, entry);
   if (spec.tokenEnv && token) env[spec.tokenEnv] = token;
   return {
@@ -241,10 +242,16 @@ export function accountBlocked(app: App, userId: string, p: AgentProfile): strin
   const strict = app.config.agents.accountIsolation === "require";
   if (!SAFE_ID.test(userId)) return strict ? "这台机器不能隔离成员的运行：成员 ID 不适合作为账号目录" : null;
   const capability = isolationCapability(p);
-  if (!capability.supported) return strict ? `这台机器不能隔离成员的运行：${capability.reason}${app.config.security.egress.mode === "off" ? "" : "；本机出网隔离不可用"}` : null;
   const entry = accountEntryFor(app, p);
-  if (!entry || loggedIn(app, userId, entry.id)) return null;
-  const policy = accountPolicy(app, entry.id);
+  if (entry && capability.supported && loggedIn(app, userId, entry.id)) return null;
+  const policy = accountPolicy(app, sourceOf(p));
+  if (entry && policy === "owner") {
+    if (selectCredential(app, userId, entry.id, true, capability.supported)) return null;
+    if (credentialKindsForBackend(entry.id).length || app.config.credentials.lending !== "auto")
+      return `${entry.name} 没有可用的登录，请先登录自己的账号`;
+  }
+  if (!capability.supported && (strict || entry && policy !== "owner")) return `这台机器不能隔离成员的运行：${capability.reason}${app.config.security.egress.mode === "off" ? "" : "；本机出网隔离不可用"}`;
+  if (!entry) return null;
   if (policy === "own") return `${entry.name} 只能用自己的账号：在 账号 → 我的 AI 账号 里登录 ${entry.name} 后再试`;
   if (policy === "own-or-other") return `${entry.name} 要用自己的账号（没登录时换别的后端）：在 账号 → 我的 AI 账号 里登录 ${entry.name}`;
   return strict ? `这台机器不能隔离成员的运行：借用 ${entry.name} 的本人登录需要本人的 HOME，请先登录自己的账号` : null;
@@ -256,9 +263,20 @@ export function unisolatedReason(app: App, userId: string, p: AgentProfile): str
 }
 
 export function accountFor<P extends AgentProfile>(app: App, userId: string | undefined, p: P): P {
-  if (!userId || !SAFE_ID.test(userId) || accountOf(p) || !member(app, userId) || !isolationCapability(p).supported) return p;
+  if (!userId || !SAFE_ID.test(userId) || accountOf(p) || !member(app, userId) ) return p;
   const entry = accountEntryFor(app, p);
-  if (entry && loggedIn(app, userId, entry.id)) return { ...p, ownAccount: accountRun(app, userId, entry) };
+  const sandbox = isolationCapability(p).supported;
+  if (entry) {
+    const own = sandbox && loggedIn(app, userId, entry.id);
+    const use = selectCredential(app, userId, entry.id, !own && accountPolicy(app, entry.id) === "owner", sandbox);
+    if (use) {
+      if (use.holder === OWNER) return { ...p, [credentialUse]: use };
+      ensureAccountHome(app, use.holder, entry);
+      return { ...p, [credentialUse]: use, ownAccount: accountRun(app, use.holder, entry, false) };
+    }
+    if (own) return { ...p, ownAccount: accountRun(app, userId, entry) };
+  }
+  if (!sandbox) return p;
   if (!entry && app.config.agents.accountIsolation === "require") {
     ensureAccountHome(app, userId);
     return { ...p, ownAccount: localAccount(app, userId, p.id) };

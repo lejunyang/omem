@@ -1,3 +1,4 @@
+import { credentialSucceeded } from "./credentials.ts";
 import { runAccess } from "./own-sandbox.ts";
 import { ownRun } from "./own-run.ts";
 import type { App } from "../core/app.ts";
@@ -5,7 +6,7 @@ import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { accountBlocked, accountFor } from "./accounts.ts";
 import { accountOf } from "./sandbox.ts";
 import { runBackend } from "./dispatch.ts";
-import { profileFor } from "./runner.ts";
+import { profileFor, recordIsolation } from "./runner.ts";
 import { replyOf } from "./types.ts";
 
 /**
@@ -34,7 +35,9 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
         const cwd = accountOf(profile)?.home ?? app.home;
         const isolation = ownRun(app, profile, cwd, true);
         const access = runAccess(app.config.agents.fullAccess, { owner: !opts.userId || opts.userId === "owner", box: isolation.box, allowWrites: false });
+        if (opts.userId) recordIsolation(app, null, opts.userId, profile);
         const r = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, ...access, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
+        credentialSucceeded(app, profile);
         const text = replyOf(r).trim();
         if (text) return text;
       } catch {

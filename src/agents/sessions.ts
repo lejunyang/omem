@@ -1,3 +1,4 @@
+import { credentialSucceeded } from "./credentials.ts";
 import { recordWatchMaterial, summaryOrigins } from "../core/message-origins.ts";
 import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
 import { one } from "../core/db.ts";
@@ -508,7 +509,8 @@ ${WAKE_NOTE}`
     if (!t.agentSession || t.agentSession === sessionId) return;
     const found = allProfiles(app.config).find((p) => p.id === t.agentProfile?.split("|")[0]);
     // The replaced session was made with this member's own account: cleaned up with it.
-    const old = found && t.agentProfile?.endsWith(`|acct:${userId}`) ? recordedAccount(app, userId, found) : found;
+    const holder = t.agentProfile?.split("|").find(part => part.startsWith("acct:"))?.slice(5);
+    const old = found && holder ? recordedAccount(app, holder, found) : found;
     // In the background, after the reply: a failure goes to the service log, not the finished run.
     if (old) void retireSession(app, old, t.agentSession, t.agentCwd ?? prep.cwd, (e) => e.type === "status" && console.warn(`[omem] ${e.text}`));
   };
@@ -553,6 +555,7 @@ ${WAKE_NOTE}`
         r = await run(false);
         mode = "fresh";
       }
+      credentialSucceeded(app, prep.profile);
       save(r.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
       retireReplaced(r.sessionId);
       return { text: replyOf(r), agent: r.agent, profileId: prep.profile.id, mode };
@@ -645,6 +648,7 @@ ${WAKE_NOTE}`
           },
           emit,
         );
+        credentialSucceeded(app, used);
         answer = replyOf(r);
         mode = "fresh";
         break;
@@ -733,6 +737,7 @@ ${WAKE_NOTE}`
         }
         save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
         retireReplaced(l.handle.sessionId);
+        credentialSucceeded(app, used);
         answer = replyOf(r);
         done = true;
         afterTurn(app, used);
