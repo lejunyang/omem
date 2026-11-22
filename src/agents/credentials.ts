@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { CredentialContext } from "../../packages/plugin-sdk/credential.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { activeUser, findUser, OWNER, userName } from "../core/users.ts";
+import { activeUser, findUser, OWNER } from "../core/users.ts";
 import { HttpError, now, untilAbort, zonedParts } from "../core/util.ts";
 import { notify } from "../core/notify.ts";
 import { audit } from "../auth/permissions.ts";
@@ -42,9 +42,12 @@ function fromRow(r: Row): Hold {
     refreshAt: r.refresh_at ?? undefined, checkedAt: r.checked_at ?? undefined, checkedDay: r.check_day,
     lastUsedAt: r.last_used_at ?? undefined, error: r.error ?? undefined, sharing: JSON.parse(r.sharing), notified: JSON.parse(r.notified) };
 }
+function emptyHold(id: string): Hold {
+  return { state: "none", checkedDay: "", sharing: { scope: id === OWNER ? "all" : "self", members: [] }, notified: {} };
+}
 export function credentialHold(app: App, userId: string, kind: string): Hold {
   const r = one<Row>(app.db, "select * from credential_holds where user_id=? and kind=?", userId, kind);
-  return r ? fromRow(r) : { state: "none", checkedDay: "", sharing: { scope: userId === OWNER ? "all" : "self", members: [] }, notified: {} };
+  return r ? fromRow(r) : emptyHold(userId);
 }
 function save(app: App, userId: string, kind: string, hold: Hold) {
   run(app.db, `insert into credential_holds(user_id,kind,state,account_name,expires_at,refresh_at,check_day,checked_at,sharing,notified,last_used_at,error)
@@ -326,10 +329,10 @@ export function maybeSendCredentialOnboarding(app: App, id: string) {
   return true;
 }
 export type CredentialState = "none" | "ok" | "expiring" | "expired" | "logging-in";
-function viewOf(app: App, id: string, m: CredentialMethod) {
-  const s = credentialHold(app, id, m.kind), p = logins.get(keyOf(app, id, m.kind));
+function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
+  const p = logins.get(keyOf(app, id, m.kind));
   const state: CredentialState = p ? "logging-in" : s.state === "expired" || s.expiresAt !== undefined && s.expiresAt <= Date.now() ? "expired"
-    : !usable(app, id, m.kind) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
+    : !usable(app, id, m.kind, s) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
   const missing = declaredPaths(app, m).install.filter(p => !installed(p));
   return { kind: m.kind, plugin: m.plugin, name: m.name, describe: m.describe ?? "", required: !!m.required, state,
     user: s.user, expiresAt: s.expiresAt, checkedAt: s.checkedAt, error: s.error, sharing: s.sharing,
@@ -338,15 +341,20 @@ function viewOf(app: App, id: string, m: CredentialMethod) {
     reason: id === OWNER ? "用的是这台机器上已有的登录" : !sandboxSupport().ok ? sandboxSupport().reason : undefined,
     missingInstall: missing };
 }
-export const myCredentials = (app: App, id: string) => ({ credentials: credentialMethods().map(m => viewOf(app, id, m)) });
+export function myCredentials(app: App, id: string) {
+  const rows = all<Row>(app.db, "select * from credential_holds where user_id=?", id);
+  const holds = new Map(rows.map(r => [r.kind, fromRow(r)]));
+  return { credentials: credentialMethods().map(m => viewOf(app, id, m, holds.get(m.kind) ?? emptyHold(id))) };
+}
 export function allCredentials(app: App) {
-  const rows = all<Row>(app.db, "select * from credential_holds order by user_id,kind limit 2000");
+  const rows = all<Row & { holder_name: string | null }>(app.db, `select h.*, u.name as holder_name from credential_holds h
+    left join users u on u.id=h.user_id order by h.user_id,h.kind limit 2000`);
   const people = new Map<string, { userId: string; name: string; credentials: Omit<ReturnType<typeof viewOf>, "url" | "code">[] }>();
   for (const r of rows) {
     const m = credentialMethod(r.kind); if (!m) continue;
     let person = people.get(r.user_id);
-    if (!person) { person = { userId: r.user_id, name: userName(app, r.user_id), credentials: [] }; people.set(r.user_id, person); }
-    const { url, code, ...v } = viewOf(app, r.user_id, m);
+    if (!person) { person = { userId: r.user_id, name: r.user_id === OWNER ? "本人" : r.holder_name ?? r.user_id, credentials: [] }; people.set(r.user_id, person); }
+    const { url, code, ...v } = viewOf(app, r.user_id, m, fromRow(r));
     person.credentials.push(v);
   }
   return { kinds: credentialMethods().map(m => ({ kind: m.kind, name: m.name })), people: [...people.values()], limit: 2000 };

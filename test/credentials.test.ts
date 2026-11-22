@@ -12,7 +12,7 @@ import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
-import { checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
+import { allCredentials, checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
 import type { CredentialDef } from "../packages/plugin-sdk/credential.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { codeHash, setTrust, trustState } from "../src/plugins/trust.ts";
@@ -155,6 +155,41 @@ it("登录中重复请求共享链接；取消阻止晚回调供给和秘密写�
   await expect(ctx.secret.set("late-secret")).rejects.toThrow();
   expect(credentialHold(app, "ann", "sample:sso").state).toBe("none");
 });
+it("总览和个人清单各查询一次持有，登录中的链接与验证码只给本人", async () => {
+  const kind = "sample:sso";
+  add();
+  add({ id: "pending", async login(_ctx, show) {
+    show({ url: "https://auth.example.test/pending", code: "DEMO" });
+    return new Promise(() => {});
+  } });
+  for (const id of ["ann", "bob"]) {
+    await startCredentialLogin(app, id, kind);
+    await until(() => credentialHold(app, id, kind).state === "logged-in");
+  }
+  setCredentialSharing(app, "ann", "sample:pending", { scope: "self" });
+  await startCredentialLogin(app, "ann", "sample:pending");
+  rmSync(accountHome(app, "bob"), { recursive: true });
+  run(app.db, "update credential_holds set expires_at=1 where user_id='ann' and kind=?", kind);
+  const queries = vi.spyOn(app.db, "prepare");
+  try {
+    const own = myCredentials(app, "ann");
+    expect(own.credentials.map(c => c.state)).toEqual(["expired", "logging-in"]);
+    expect(own.credentials[1]).toMatchObject({ url: "https://auth.example.test/pending", code: "DEMO" });
+    expect(queries.mock.calls).toHaveLength(1);
+    queries.mockClear();
+    const { people } = allCredentials(app);
+    expect(queries.mock.calls).toHaveLength(1);
+    expect(people.map(p => p.credentials.map(c => c.state))).toEqual([["logging-in", "expired"], ["none"]]);
+    for (const c of people.flatMap(p => p.credentials)) {
+      expect(c).not.toHaveProperty("url");
+      expect(c).not.toHaveProperty("code");
+    }
+  } finally {
+    queries.mockRestore();
+    await logoutCredential(app, "ann", "sample:pending");
+  }
+});
+
 it("续签不响应取消也在两分钟内结束，不堵住退出", async () => {
   add({ provide: async () => {}, refresh: () => new Promise(() => {}) });
   await startCredentialLogin(app, "ann", "sample:sso"); await until(() => credentialHold(app, "ann", "sample:sso").state === "logged-in");
