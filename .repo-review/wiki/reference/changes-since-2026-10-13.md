@@ -21,6 +21,12 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-22：豆包 CLI 用空普通文件连接标准输入
+
+- 从 `src/agents/doubao-cli.ts` 的 `emptyStdin` 读起。CLI 即使给了 `-p` 也会读非终端 stdin；`ignore` 对应的 `/dev/null` 在原生输入桥中可报“无法以 UTF-8 格式读取标准输入”，Node 创建的管道又是 socket。普通运行、帮助和模型探测统一传入可读的空普通文件，不依赖版本号；短提示和长提示的传递方式沿用原实现。
+- 父进程在启动后关闭自己的文件描述符，输入文件留到子进程关闭后删除，启动抛错也清理。`src/agents/spawn.ts` 只扩展 `stdin` 参数类型以接受已有文件描述符，其他后端的默认值和启动方式保持原样。会话删除仍走 `src/agents/doubao.ts` 的 OpenAPI，没有删除会话的 CLI 启动点。
+- `test/fake-doubao-cli.ts` 模拟字符设备读取失败、socket 拒绝和 stdin 内容追加。`test/doubao-cli.test.ts` 覆盖内联与长提示、模型探测和临时文件回收；换回旧的 `ignore` 启动后，两条新增用例都复现退出码 2。CLI 2.37.1 真机用 `GPT 6.1 Sol / high / ask_risky` 调修复后的长提示分支，收到“收到”，会话清理查询为不存在。验收和实现状态见 `docs/v2/acceptance.md`、`status.md`。
+
 ## 2026-11-22：网页用上第二轮补齐的服务端字段
 
 - 流程定义页（`web/src/views/Flows.vue`、`lib/flow-hooks.ts`）：去掉校验失败时自己解析 YAML 列阶段的兜底，停用标记只看校验的 `unavailableReferences` 和列表的 `unavailableChecks`（`FlowStageHooks.vue`、`FlowChecks.vue` 收 `unavailable`），插件信号名取列表的 `stageSummaries`；停用插件后改阶段名照常保存。“新用到的能力没有插件提供”的提示改成只对新增或改参的引用说。

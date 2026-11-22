@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { existsSync, statSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { closeSync, existsSync, openSync, statSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
@@ -17,7 +17,7 @@ import { aiUsageText, type AgentEvent, type AgentRequest, type AgentResult } fro
  *
  * - omem tools: through `omem tool` in its shell (the run's token and `omem` on PATH reach the
  *   commands it runs), so the instructions tell it so.
- * - The prompt: there is no stdin; a long one goes into a file it is told to read.
+ * - The prompt stays in -p; stdin is an empty regular file. A long prompt goes into a file it is told to read.
  * - The npm `doubao` is a node wrapper that may stop to ask about an update, and on Windows a .cmd
  *   that cmd.exe re-parses; the native binary it starts is called directly when it is there.
  * - Conversations are kept in the Doubao account (`doubao --list`); dispatch.ts deletes finished
@@ -54,6 +54,26 @@ export const shellToolRuns = new Set<string>();
 
 /** Longest prompt passed as an argument; longer ones go through a file. */
 const INLINE_MAX = 6000;
+
+/** The native input bridge accepts regular files; /dev/null can fail to read and Node pipes are sockets. */
+function emptyStdin<T extends Pick<ChildProcess, "once">>(start: (fd: number) => T): T {
+  const dir = join(tmpdir(), "omem-doubao");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${randomUUID()}.stdin`);
+  writeFileSync(file, "", { mode: 0o600, flag: "wx" });
+  const fd = openSync(file, "r");
+  try {
+    let child: T;
+    try { child = start(fd); }
+    finally { closeSync(fd); }
+    // Keep it until close: Windows can keep the inherited handle open during the turn.
+    child.once("close", () => rmSync(file, { force: true }));
+    return child;
+  } catch (e) {
+    rmSync(file, { force: true });
+    throw e;
+  }
+}
 
 type CwdOption = "-C" | "--cwd" | "--directory" | "--workdir" | "--working-directory";
 export function doubaoCwdOptionFromHelp(help: string): CwdOption | null {
@@ -103,12 +123,12 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
     writeFileSync(file, req.prompt);
     prompt = `先完整读取文件 ${file}（UTF-8），那是这一轮的完整内容，按它执行并回答；回答里不要提这个文件。`;
   }
-  // -p 从参数读提示；新版 CLI 无法把 Node 子进程默认的 socket 接为 stdin。
+  // -p still reads non-terminal stdin as context, so give the native bridge a readable empty file.
   const box = req.ownSandbox;
   const ownSandbox = box && file && !box.hidden.some(path => under(file!, path))
     ? { ...box, plan: { ...box.plan, ro: [...box.plan.ro, file] } } : box;
   const { args, permission } = doubaoCommand(profile, req, prompt, await doubaoCwdOption(profile));
-  const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore", sandbox }));
+  const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => emptyStdin(stdin => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin, sandbox })));
   emit({ type: "status", text: aiUsageText(profile, permission === "always_allow" ? "完全访问" : "风险审批", req.selection) });
   emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
   if (req.runId) shellToolRuns.add(req.runId);
@@ -181,7 +201,7 @@ function check(exe: string, args: string[], account?: ReturnType<typeof accountO
     // A user's own account: in their sandbox, from their account folder.
     let child: ReturnType<typeof spawn>;
     try {
-      child = account ? launch(exe, args, { cwd: account.home, stdin: "ignore", sandbox: account }) : spawn(r.file, [...r.prefix, ...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, cwd: tmpdir() });
+      child = emptyStdin(stdin => account ? launch(exe, args, { cwd: account.home, stdin, sandbox: account }) : spawn(r.file, [...r.prefix, ...args], { stdio: [stdin, "pipe", "pipe"], windowsHide: true, cwd: tmpdir() }));
     } catch (e) {
       return resolve({ code: null, out: (e as Error).message });
     }

@@ -236,6 +236,22 @@ describe("doubao cli", () => {
     }
   });
 
+  it.each(["只回复两个字：收到", "只回复两个字：收到" + "\n".repeat(7000)])("uses readable empty stdin for inline and file prompts (%#)", async prompt => {
+    const temp = mkdtempSync(join(tmpdir(), "doubao-stdin-test-"));
+    for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, temp);
+    try {
+      const result = await runDoubaoCli(fake, { cwd: temp, prompt, env: { OMEM_TOKEN: "fixture" } }, () => {});
+      expect(result.text).toBe(`echo:${prompt} model= effort= env=fixture`);
+      expect(result.sessionId).toBe("s-1");
+      expect(readdirSync(join(temp, "omem-doubao"))).toEqual([]);
+      expect(await probeDoubaoCli(fake)).toEqual({ models: ["Auto", "Pro 1"], effortsByModel: { Auto: ["low", "medium", "high"], "Pro 1": ["low", "medium", "high", "xhigh", "max"] } });
+      expect(readdirSync(join(temp, "omem-doubao"))).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
   it("continues a session and reports a failed turn with the CLI's message", async () => {
     const r = await runDoubaoCli(fake, { cwd: process.cwd(), prompt: "again", resumeSessionId: "s-7" }, () => {});
     expect(r.sessionId).toBe("s-7");
