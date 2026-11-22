@@ -59,6 +59,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/capabilities": { member: "read" },
   "GET /api/members/:id/capabilities": { member: "read", target: true },
   "PUT /api/members/:id/capabilities": { member: "manage", target: true },
+  "GET /api/credentials": "self",
+  "POST /api/credentials/:kind/login": "self",
+  "PUT /api/credentials/:kind/sharing": "self",
+  "DELETE /api/credentials/:kind": "self",
   "GET /api/me": "self",
   // Each person's own AI accounts (docs/v2/agent-accounts.md): the handlers act on the caller's own only.
   "GET /api/me/agent-accounts": "self",
