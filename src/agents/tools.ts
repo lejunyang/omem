@@ -5897,13 +5897,14 @@ def({
 
 def({
   name: "apply_code_run",
-  description: "本人明确要求确认 / 推送 / 合入时用。本人要先推上去验证、之后还要接着改时传 keep_going：只把工作分支推到 origin，交办和工作区留着，之后的修改接着提交在同一分支。工作分支上的交办：可先压缩成一个提交（squash_message），把每个仓库的工作分支推到 origin 的同名分支并设为上游，然后归还工作区，分支保留；远端有本地没有的提交时拒绝，本人同意覆盖才传 force。这次改动之前开始的旧交办：把改动应用到原目标分支的工作区（未提交的修改），之后可用 code_git_action 提交。",
+  description: "本人明确要求确认 / 推送 / 合入时用。本人要先推上去验证、之后还要接着改时传 keep_going：只把工作分支推到 origin，交办和工作区留着，之后的修改接着提交在同一分支。工作分支上的交办：可先压缩成一个提交（squash_message），把每个仓库的工作分支推到 origin 的同名分支并设为上游（本人只要推其中几个仓库时传 spaces，其余不动），然后归还工作区，分支保留；远端有本地没有的提交时拒绝，本人同意覆盖才传 force。这次改动之前开始的旧交办：把改动应用到原目标分支的工作区（未提交的修改），之后可用 code_git_action 提交。",
   write: true,
   schema: z.object({
     run_id: z.string(),
     squash_message: z.string().max(10000).optional().describe("本人要求压缩成一个提交时传：压缩后的提交信息"),
     force: z.boolean().optional().describe("本人同意覆盖远端分支时才传（按上次拉取的远端状态带 lease）"),
     keep_going: z.boolean().optional().describe("只推送、不结束交办：本人要先验证推上去的版本，之后还要改"),
+    spaces: z.array(z.string()).optional().describe("交办改了几个仓库、本人只要推其中一部分时传：要推送的仓库空间 id；没列的仓库不压缩、不推送，分支原样保留"),
   }),
   handler: async (ctx, a) => {
     if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "确认交办只对本人开放");
@@ -5911,6 +5912,7 @@ def({
     const repos = (r.input as { repos?: string[] }).repos ?? (r.spaceId ? [r.spaceId] : []);
     for (const id of repos) inScope(ctx, id, "代码");
     if (a.keep_going) {
+      if (a.spaces) throw new HttpError(400, "只推一部分仓库要在确认时用，不能和 keep_going 一起传");
       if (a.squash_message) throw new HttpError(400, "接着改的交办不能压缩：压缩会改写之后还要接着提交的分支");
       const t = await import("./code-tasks.ts");
       const { deliverWork } = await import("./code-loop.ts");
@@ -5920,7 +5922,7 @@ def({
       return `已推送，交办没有结束：\n${lines.join("\n") || "- 没有要推送的分支"}\n之后的修改提交在同一分支上，要再推送就再调用一次；全部改完后照常确认。${paused ? "\n交办现在暂停着：本人验证后要接着改（或给了新的问题），用 continue_code_run。" : ""}`;
     }
     const { applyCodeRun } = await import("./code.ts");
-    const res = applyCodeRun(ctx.app, a.run_id, { squash: a.squash_message?.trim() || undefined, force: a.force }) as ReturnType<typeof applyCodeRun> & { pushed?: { space: string; branch: string; forced?: boolean }[]; notes?: string[] };
+    const res = applyCodeRun(ctx.app, a.run_id, { squash: a.squash_message?.trim() || undefined, force: a.force, spaces: a.spaces }) as ReturnType<typeof applyCodeRun> & { pushed?: { space: string; branch: string; forced?: boolean }[]; notes?: string[] };
     if (res.pushed) return `已确认运行 ${a.run_id}：\n${[...res.pushed.map((p) => `- ${p.space}：推送 ${p.branch} 到 origin${p.forced ? "（覆盖了远端）" : ""}`), ...(res.notes ?? []).map((n) => `- ${n}`)].join("\n")}\n工作区已归还，分支保留。`;
     return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n可在网页填写提交信息，或在本人要求后先 code_git_status 再 code_git_action 提交或推送。编码用的 worktree 已删除，接收工作区保留。`;
   },

@@ -501,7 +501,11 @@ export function landLocally(root: string, wt: WorktreeRef): string {
  * with a lease when it was squashed or `force`), then give the workspaces back. Branches stay. A
  * repository without origin gets the work on the branch it was cut from (`landLocally`).
  */
-export function confirmBranchRun(app: App, runId: string, opts: { squash?: string; force?: boolean; push?: boolean } = {}) {
+/**
+ * Confirm a delegation on work branches: squash (when asked) and push each repository's branch, then give the workspaces back.
+ * `spaces`: only these repositories are squashed and pushed; the others' branches stay exactly as they are (kept, not pushed).
+ */
+export function confirmBranchRun(app: App, runId: string, opts: { squash?: string; force?: boolean; push?: boolean; spaces?: string[] } = {}) {
   const run = getRun(app, runId);
   const first = String(run.input.continueFrom ?? run.id);
   const firstRun = getRun(app, first);
@@ -509,9 +513,15 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
   if (firstRun.output.appliedAt) throw new HttpError(409, "这次交办已经确认过");
   if (firstRun.output.discardedAt) throw new HttpError(409, "这次交办已经丢弃");
   if ((firstRun.output.syncPending as unknown[] | undefined)?.length) throw new HttpError(409, "还有没处理完的 Git 冲突，先在提醒卡片里继续或放弃这次同步");
-  const wts = ((firstRun.output.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits);
+  const every = ((firstRun.output.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits);
+  if (opts.spaces) {
+    const unknown = opts.spaces.filter((id) => !every.some((w) => w.space === id));
+    if (unknown.length) throw new HttpError(400, `这次交办没有改到 ${unknown.join("、")}`);
+    if (!opts.spaces.length) throw new HttpError(400, "至少选一个要推送的仓库");
+  }
+  const wts = opts.spaces ? every.filter((w) => opts.spaces!.includes(w.space)) : every;
   const pushed: { space: string; branch: string; at: string; forced?: boolean }[] = [];
-  const notes: string[] = [];
+  const notes: string[] = every.filter((w) => !wts.includes(w)).map((w) => `${w.space}：没动（分支 ${w.branch} 保留，没有推送）`);
   if (opts.squash?.trim()) for (const wt of wts) squashRange(targetOf(app, runId, wt.space));
   for (const wt of wts) {
     const t = targetOf(app, runId, wt.space);
@@ -532,7 +542,8 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
     }
     pushed.push(pushWorkBranch(t.root, wt, force, pushed));
   }
-  for (const wt of wts) {
+  // Every workspace goes back, the repositories left alone too: their branches stay where they are.
+  for (const wt of every) {
     const root = getSpace(app, wt.space).rootPath!;
     releaseWorktree(root, first, wt);
   }

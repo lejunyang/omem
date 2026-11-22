@@ -2074,8 +2074,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/runs/:id/apply-targets",async (req) => codeApplyTargets(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/apply", async (req) => {
-    const b = q(z.object({ squash: z.string().trim().max(10000).optional(), force: z.boolean().optional() }), req.body ?? {});
-    return applyCodeRun(app, (req.params as { id: string }).id, { squash: b.squash || undefined, force: b.force });
+    // `spaces`: push only these repositories of a delegation on work branches; the others are left as they are.
+    const b = q(z.object({ squash: z.string().trim().max(10000).optional(), force: z.boolean().optional(), spaces: z.array(z.string().min(1)).max(50).optional() }), req.body ?? {});
+    return applyCodeRun(app, (req.params as { id: string }).id, { squash: b.squash || undefined, force: b.force, spaces: b.spaces });
   });
   // A delegation's work branch (src/agents/code-branch.ts): its state, and what the owner does with it before confirming.
   server.get("/api/runs/:id/branch", async (req) => {
