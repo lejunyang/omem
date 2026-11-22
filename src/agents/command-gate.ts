@@ -16,7 +16,7 @@ import { delimiter, join } from "node:path";
 import type { App } from "../core/app.ts";
 import type { CommandRule } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
-import { COMMAND_OUTPUT_LIMIT, now, truncate, webLink } from "../core/util.ts";
+import { COMMAND_OUTPUT_LIMIT, COMMAND_TIMEOUT_SEC, now, truncate, webLink } from "../core/util.ts";
 import { findUser, listUsers, OWNER, userName } from "../core/users.ts";
 import { audit } from "../auth/permissions.ts";
 import { addRunEvent } from "./runs.ts";
@@ -139,7 +139,7 @@ async function request(path, data, timeout) {
   const body = JSON.stringify(data);
   const http = await import(url.protocol === "https:" ? "node:https" : "node:http");
   return new Promise((ok, reject) => {
-    const req = http.request(url, { method: "POST", signal: AbortSignal.timeout(timeout), headers: {
+    const req = http.request(url, { method: "POST", headers: {
       "content-type": "application/json", "content-length": Buffer.byteLength(body), authorization: "Bearer " + process.env.OMEM_TOKEN,
     } }, (res) => {
       let text = "";
@@ -148,6 +148,14 @@ async function request(path, data, timeout) {
       res.on("error", reject);
       res.on("end", () => { let value; try { value = JSON.parse(text); } catch {} ok({ status: res.statusCode, value }); });
     });
+    const expire = () => req.destroy(new Error("omem 请求超时"));
+    let timer = setTimeout(expire, timeout);
+    req.on("information", ({ statusCode }) => {
+      if (statusCode !== 102 || !data.credentialExecution) return;
+      clearTimeout(timer);
+      timer = setTimeout(expire, ${(COMMAND_TIMEOUT_SEC * 2 + 60) * 1000});
+    });
+    req.once("close", () => clearTimeout(timer));
     req.on("error", reject);
     req.end(body);
   });
@@ -157,7 +165,7 @@ async function ask() {
   if (!process.env.OMEM_URL || !process.env.OMEM_TOKEN) return offline("命令 " + name + " 受命令规则保护，这个环境里没有 omem 运行的令牌（OMEM_URL / OMEM_TOKEN），不执行。");
   let res;
   try {
-    res = await request("/api/command-gate", { command: name, args, cwd: process.cwd(),
+    res = await request("/api/command-gate", { command: name, args, cwd: process.cwd(), credentialExecution: true,
       approver: process.env.OMEM_APPROVER, reason: process.env.OMEM_REASON }, credentialRules.get(win ? name.toLowerCase() : name)?.length === 0 ? 5000 : 310_000);
   } catch (e) { return offline("连不上 omem：" + e.message + "。命令 " + name + " 受命令规则保护，连不上时不执行。"); }
   if (res.status !== 200 || typeof res.value?.decision !== "string") fail("omem 没有放行命令 " + name + "：" + (res.value?.error || "HTTP " + res.status));
@@ -166,6 +174,12 @@ async function ask() {
 
 const v = await ask();
 if (v.decision !== "allow") fail(v.message || "omem 的命令规则不允许执行 " + name + "。");
+if (v.notice) process.stderr.write("[omem] " + v.notice + "\n");
+if (v.execution) {
+  const write = (stream, data) => new Promise(done => stream.write(Buffer.from(data, "base64"), done));
+  await Promise.all([write(process.stdout, v.execution.stdout), write(process.stderr, v.execution.stderr)]);
+  process.exit(v.execution.code);
+}
 const stdio = v.report ? ["inherit", "pipe", "pipe"] : "inherit";
 const file = realCommand();
 if (!file) fail("omem 放行了 " + name + "，但 PATH 里（除拦截目录外）找不到这个命令。");

@@ -165,7 +165,7 @@ export function accountEnv(app: App, userId: string, entry: AccountEntry): Recor
   return Object.fromEntries(Object.entries(entry.account.env).map(([k, v]) => [k, expandHome(v, home)]));
 }
 
-function localAccount(app: App, userId: string, backend: string): SandboxAccount {
+export function localAccount(app: App, userId: string, backend: string): SandboxAccount {
   return { userId, backend, home: accountHome(app, userId), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
 }
 

@@ -7,3 +7,5 @@
 示例在成员 HOME 的 `.acme-demo/account.json` 写入虚构账号名，续签有效期为七天。登录、检查和对话都在本机完成。
 
 用 `acme-demo show --project sample` 查看公共示例项目，换成示例账号名则查看其个人项目。垫片识别拒绝时会显示示例申请链接。用 `who_can(resource="project:sample", kind="acmeauth:demo")` 查询权限记录，没有记录时会用插件预检。
+
+示例的权限数据来自本地演示规则，`precheck` 只为 `who_can` 返回查询结果。接入真实资源服务后，插件可按完整参数核验发起人的读取权，并用 `verifiedRead` 明确授权本次只读代跑。

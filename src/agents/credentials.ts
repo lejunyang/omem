@@ -120,6 +120,11 @@ export function credentialAccountView(app: App, id: string, backend: string) {
   }
   return null;
 }
+export function credentialMemberEnv(app: App, id: string, m: CredentialMethod): Record<string, string> {
+  return Object.assign({}, ...m.provides.backends.map(b => {
+    const e = accountEntry(app, b); return e ? accountEnv(app, id, e) : {};
+  }));
+}
 function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal, mode: "supply" | "check" | "logout"): CredentialContext {
   const home = id === OWNER ? homedir() : accountHome(app, id);
   if (id !== OWNER) {
@@ -132,9 +137,7 @@ function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal,
       save(app, id, m.kind, { ...hold, state: hold.state === "none" ? "missing" : hold.state, provision: merged });
     } else accountStatePaths(app, id, provision.paths);
   }
-  const env = id === OWNER ? { ...process.env } : Object.assign({}, ...m.provides.backends.map(b => {
-    const e = accountEntry(app, b); return e ? accountEnv(app, id, e) : {};
-  }));
+  const env = id === OWNER ? process.env : credentialMemberEnv(app, id, m);
   return { userId: id, home, env: { ...env, HOME: home }, signal, settings: m.settings(), secret: {
     async get() { signal.throwIfAborted(); const c = findConnection(app, id, secretProvider(m.kind)); return c ? connectionSecrets(app, c.id)?.accessToken ?? null : null; },
     async set(value) {
@@ -163,9 +166,9 @@ async function timed<T>(m: CredentialMethod, ms: number, work: (signal: AbortSig
   try { return await untilAbort(signal, () => work(signal)); }
   finally { clearTimeout(timer); ctrl.abort(); }
 }
-export function precheckCredential(app: App, holder: string, m: CredentialMethod, resource: string, user: string) {
+export function precheckCredential(app: App, holder: string, m: CredentialMethod, resource: string, user: string, command?: { name: string; args: readonly string[] }) {
   const check = m.precheck!;
-  return timed(m, 20_000, signal => check(context(app, holder, m, signal, "check"), { resource, user }));
+  return timed(m, 20_000, signal => check(context(app, holder, m, signal, "check"), { resource, user, ...(command ? { command } : {}) }));
 }
 
 function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | "expiring" | "failed") {

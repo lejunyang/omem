@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { all, run } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { now } from "../core/util.ts";
 import { OWNER, userName } from "../core/users.ts";
 import { audit } from "../auth/permissions.ts";
@@ -35,12 +35,37 @@ function visibleRecords(app: App, requester: string, resource: string, kind?: st
     resource, cutoff(), ...(kind ? [kind] : []), requester, OWNER, requester, requester);
 }
 
-function sharedHolders(app: App, requester: string, kind: string, limit: number) {
+export function knownAccess(app: App, kind: string, resource: string, user: string) {
+  const since = cutoff();
+  return one<{ allowed: number; apply_url: string | null }>(app.db,
+    "select allowed,case when apply_at>? then apply_url end as apply_url from credential_access where kind=? and resource=? and user_id=? and observed_at>?",
+    since, kind, resource, user, since);
+}
+
+export function sharedHolders(app: App, requester: string, kind: string, limit: number, resource?: string) {
   return all<{ id: string; name: string }>(app.db, `select u.id,u.name from credential_holds h
-    join users u on u.id=h.user_id where h.kind=? and h.state='logged-in'
+    join users u on u.id=h.user_id
+    left join credential_access a on a.kind=h.kind and a.resource=? and a.user_id=u.id and a.observed_at>?
+    where coalesce(a.allowed,1)=1 and h.kind=? and h.state='logged-in'
     and (h.expires_at is null or h.expires_at>?) and h.user_id<>? and ${shares}
     and u.disabled_at is null and u.status='active' and u.kind='person'
-    order by (u.id=?) desc,h.last_used_at desc,u.id limit ?`, kind, Date.now(), requester, requester, OWNER, limit);
+    order by a.allowed desc,(u.id=?) desc,h.last_used_at desc,u.id limit ?`, resource ?? null, cutoff(), kind, Date.now(), requester, requester, OWNER, limit);
+}
+
+export async function checkAccess(app: App, requester: string, runId: string | null, method: CredentialMethod,
+  holder: string, target: string, resource: string, command?: { name: string; args: readonly string[] }) {
+  const detail = { holder, target, resource, runId };
+  audit(app, requester, "credentials.precheck", method.kind, detail);
+  if (runId) addRunEvent(app, runId, "status", { text: `使用${userName(app, holder)}的${method.name}预检${resource}，查询对象为${userName(app, target)}。`, ...detail });
+  try {
+    const result = await precheckCredential(app, holder, method, resource, target, command);
+    if (command && result.allowed === true) {
+      // A denial received during this check takes precedence over the in-flight confirmation.
+      if (result.verifiedRead !== true || knownAccess(app, method.kind, resource, target)?.allowed === 0) return;
+    }
+    if (typeof result.allowed === "boolean") recordAccess(app, method.kind, resource, target, result.allowed, "precheck", result.applyUrl);
+    return result;
+  } catch { /* A failed or cancelled check leaves access unknown. */ }
 }
 
 export async function whoCan(app: App, requester: string, runId: string | null, resource: string, kind?: string) {
@@ -60,13 +85,7 @@ export async function whoCan(app: App, requester: string, runId: string | null, 
         const holder = usableCredential(app, requester, method.kind) ? requester : app.config.credentials.lending === "auto"
           ? holders.find(u => usableCredential(app, u.id, method.kind))?.id : undefined;
         if (!holder) continue;
-        const detail = { holder, target, resource, runId };
-        audit(app, requester, "credentials.precheck", method.kind, detail);
-        if (runId) addRunEvent(app, runId, "status", { text: `使用${userName(app, holder)}的${method.name}预检${resource}，查询对象为${userName(app, target)}。`, ...detail });
-        try {
-          const result = await precheckCredential(app, holder, method, resource, target);
-          if (typeof result.allowed === "boolean") recordAccess(app, method.kind, resource, target, result.allowed, "precheck", result.applyUrl);
-        } catch { /* A failed or cancelled check leaves access unknown. */ }
+        await checkAccess(app, requester, runId, method, holder, target, resource);
       }
     }
     await Promise.all([worker(), worker()]);

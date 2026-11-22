@@ -155,6 +155,9 @@ export async function startProxy(path: string, opts: ProxyOptions) {
       if (r) reply.on("data", b => { r.bytes += b.length; });
       reply.pipe(res);
     });
+    if (callback && url.pathname === "/api/command-gate") upstream.on("information", info => {
+      if (info.statusCode === 102 && !res.destroyed) res.writeProcessing();
+    });
     res.once("close", () => upstream.destroy());
     upstream.on("error", () => { if (!res.headersSent) res.writeHead(502).end("上游连接或证书验证失败"); else res.destroy(); });
     if (body) { r!.bytes += body.length; upstream.end(body); }

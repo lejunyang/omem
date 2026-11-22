@@ -223,7 +223,7 @@ export function omemInstallDir() {
  * What `launch` starts instead of the command, for a run of one user's own account: bwrap with
  * the mounts worked out from where the command really lives.
  */
-export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts): { file: string; args: string[]; env: Record<string, string> } {
+export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env): { file: string; args: string[]; env: Record<string, string> } {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
   const hide = [...new Set([...acct.hide, homedir(), "/tmp"].filter((p) => isAbsolute(p) && existsSync(p)).map(real))];
@@ -263,6 +263,6 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   return {
     file: s.bwrap,
     args: bwrapArgs({ network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
-    env: sandboxEnv(process.env, runEnv, acct, hide, nodeBin),
+    env: sandboxEnv(baseEnv, runEnv, acct, hide, nodeBin),
   };
 }

@@ -27,7 +27,7 @@ export function credentialCommand(name: string) {
   }
 }
 
-export function commandResource(command: CredentialCommand, args: string[]) {
+export function credentialArgs(args: string[]) {
   const options = new Map<string, string | true>();
   for (const [i, arg] of args.entries()) {
     if (arg === "--") break;
@@ -38,10 +38,17 @@ export function commandResource(command: CredentialCommand, args: string[]) {
     }
   }
   const words = args.filter(a => !a.startsWith("-"));
+  function matches(match: NonNullable<CredentialCommand["readOnly"]>[number]) {
+    if (match.subcommand?.some((w,i) => words[i] !== w)) return false;
+    if (match.args && (match.args.length !== args.length || match.args.some((w,i) => w !== args[i]))) return false;
+    return Object.entries(match.options ?? {}).every(([k,v]) => typeof v === "boolean" ? v === options.has(k) : v === options.get(k));
+  }
+  return { matches, options };
+}
+
+export function commandResource(command: CredentialCommand, args: string[], { matches, options } = credentialArgs(args)) {
   for (const { match, key } of command.resource ?? []) {
-    if (match.subcommand?.some((w,i) => words[i] !== w)) continue;
-    if (match.args && (match.args.length !== args.length || match.args.some((w,i) => w !== args[i]))) continue;
-    if (Object.entries(match.options ?? {}).some(([k,v]) => typeof v === "boolean" ? v !== options.has(k) : v !== options.get(k))) continue;
+    if (!matches(match)) continue;
     let complete = true;
     const resource = key.replace(/\{option\.([\w-]+)\}/g, (_, opt: string) => {
       const value = options.get(opt);
