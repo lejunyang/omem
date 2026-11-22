@@ -46,7 +46,8 @@ export async function confirmCredential(app: App, runId: string, requester: stri
   const answer = await pending;
   if (!answer) cancelAsk(app, ask.id, "持有人没同意");
   const granted = answer?.choice === 0 || answer?.choice === 1;
-  if (answer?.choice === 1 && !signal.aborted) run(app.db, "insert or ignore into credential_run_grants values(?,?,?,?,?)", ...scope);
+  if (answer?.choice === 1 && !signal.aborted) run(app.db, `insert or ignore into credential_run_grants
+    select ?,?,?,?,? where exists(select 1 from runs where id=? and status in ('running','queued'))`, ...scope, root);
   addRunEvent(app, root, "status", { text: `凭据确认：${userName(app, holder)} · ${answer?.answer ?? "持有人没同意"}`, askId: ask.id, runId, requester, holder, kind, resource });
   return granted && !signal.aborted;
 }

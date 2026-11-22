@@ -266,6 +266,9 @@ it("本人状态未知也先预检和确认，任务同意在同一根运行复�
     } finally { revokeToolToken(auth); }
   }
   expect(verify).toHaveBeenCalledTimes(3);
+  expect(all(app.db, "select root from credential_run_grants")).toEqual([{ root: runId }]);
+  run(app.db, "update runs set status='done' where id=?", runId);
+  expect(all(app.db, "select root from credential_run_grants")).toEqual([]);
 });
 
 it("auto 对有权限记录的私有持有人等十分钟，超时返回最近的申请链接", async () => {
@@ -280,4 +283,21 @@ it("auto 对有权限记录的私有持有人等十分钟，超时返回最近�
     expect(await next).toMatchObject({ decision: "deny", message: expect.stringContaining(url) });
     await expect(answerAsk(app, ask.id, { by: "owner", choice: 0 })).rejects.toThrow("失效");
   } finally { vi.useRealTimers(); }
+});
+
+it("这一次同意只放行一次，下一次拒绝时垫片以 126 退出并显示申请链接", async () => {
+  app.config.credentials.lending = "confirm";
+  recordAccess(app, kind, resource, "owner", false, runId, url);
+  recordAccess(app, kind, resource, "owner", true, runId);
+  for (const choice of [0, 2]) {
+    const result = wrapper();
+    await answerAsk(app, (await pendingConfirmation()).id, { by: "owner", choice });
+    const { code, stdout, stderr } = await result;
+    if (choice === 0) expect(code).toBe(0);
+    else {
+      expect(code).toBe(126);
+      expect(stdout).toBe("");
+      expect(stderr.toString()).toContain("持有人没同意，可前往 " + url);
+    }
+  }
 });

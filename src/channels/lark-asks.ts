@@ -378,7 +378,7 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       return true;
     },
     async revised(app, ask) {
-      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and status = 'open' and json_extract(payload, '$.askId') = ? and message_id is not null order by created_at desc limit 1", ask.id);
+      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and status = 'open' and json_extract(payload, '$.askId') = ? and json_extract(payload,'$.ephemeral') is null and message_id is not null order by created_at desc limit 1", ask.id);
       if (row?.message_id) await updateLarkCard(row.message_id, bindCard(askCard(app, ask), row.id), getInteraction(app, row.id)?.bot).catch(() => {});
     },
     async closed(app, ask) {

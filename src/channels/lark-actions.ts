@@ -34,11 +34,10 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
       const card = late.card as { type?: string; data?: Record<string, unknown> } | undefined;
       if (messageId && card?.type === "raw" && card.data) {
         const inter = interactionForMessage(app, messageId);
-        if ((inter?.payload as { ephemeral?: boolean })?.ephemeral) {
-          if (data.token && data.operator?.open_id) await updateEphemeralCard(data.token, data.operator.open_id, card.data, inter?.bot);
+        if (inter?.payload.ephemeral === true) {
+          if (data.token && data.operator?.open_id) await updateEphemeralCard(data.token, data.operator.open_id, card.data, inter.bot);
         } else await updateLarkCard(messageId, card.data, inter?.bot);
-      }
-      else if (late.toast.type === "error") console.warn("[omem] 卡片操作失败", late.toast.content);
+      } else if (late.toast.type === "error") console.warn("[omem] 卡片操作失败", late.toast.content);
     }).catch((e) => console.warn("[omem] 卡片操作后续处理失败", e));
     return { toast: { type: "info", content: "已收到，正在处理" } };
   } finally {

@@ -2455,6 +2455,10 @@ export const migrations: readonly string[] = [
      root text not null references runs(id) on delete cascade, requester text not null, holder text not null,
      kind text not null, resource text not null, primary key(root,requester,holder,kind,resource)
    );
+   create trigger credential_grant_end after update of status on runs
+     when new.status in ('done','failed','cancelled') begin
+       delete from credential_run_grants where root=new.id;
+     end;
    create index credential_ask_expiry on asks(json_extract(context,'$.expiresAt'))
      where status='pending' and json_extract(context,'$.handler')='credential-confirm';
    create index card_ask_id on card_interactions(json_extract(payload,'$.askId')) where purpose='ask';

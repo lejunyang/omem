@@ -60,7 +60,7 @@ export async function remindHolderInGroup(app: App, ask: Ask, thread: Thread, ru
       } finally {
         audit(app, OWNER, "credentials.confirm.invite", chatId, { askId: ask.id, runId, holder, result });
         notify(app, { userId: OWNER, title: "凭据确认使用了你的身份邀请持有人",
-          body: `${userName(app, holder)} · ${thread.title || chatId} · ${result}。确认编号 ${ask.id}。`, link: `#/runs/${runId}` });
+          body: `${userName(app, holder)} · ${thread.title || "来源群"}（${chatId}） · ${result}。确认编号 ${ask.id}。`, link: `#/runs/${runId}` });
       }
       if (result !== "已加入") return;
     }

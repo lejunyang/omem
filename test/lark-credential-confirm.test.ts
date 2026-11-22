@@ -7,24 +7,29 @@ import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { registerLarkAsks } from "../src/channels/lark-asks.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { rememberPerson } from "../src/channels/lark-people.ts";
-import { setLarkClient } from "../src/channels/lark-send.ts";
+import { recordInteraction, setLarkClient } from "../src/channels/lark-send.ts";
 import { one } from "../src/core/db.ts";
-import { createUser, linkIdentity } from "../src/core/users.ts";
+import { startServer } from "../src/server/http.ts";
+import { createApiToken, createUser, linkIdentity } from "../src/core/users.ts";
 import { testApp } from "./helpers.ts";
 
 const app = testApp();
 const openId = "ou_holder";
 const dm = vi.fn(), patch = vi.fn(), ephemeral = vi.fn(), members = vi.fn(), invite = vi.fn(), cli = vi.fn();
 
-beforeAll(() => {
+let server: Awaited<ReturnType<typeof startServer>>;
+let holderToken: string;
+beforeAll(async () => {
   createUser(app, { id: "holder", name: "持有人甲" });
   linkIdentity(app, "holder", "lark", openId);
   rememberPerson(app, { botOpenId: openId, cliOpenId: "ou_cli_holder", name: "持有人甲" });
+  server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
+  holderToken = createApiToken(app, "holder");
   registerLarkAsks(app, () => "ou_owner");
   setLarkClient({ im: { message: { create: dm, patch }, chatMembers: { get: members, create: invite } }, request: ephemeral });
   setLarkCliForTests(cli);
 });
-afterAll(() => { setLarkClient(null); setLarkCliForTests(null); app.db.close(); });
+afterAll(async () => { await server.close(); setLarkClient(null); setLarkCliForTests(null); app.db.close(); });
 
 it.each([
   { source: "在群", group: true, member: true, bot: true, owner: false, groupCard: true },
@@ -73,10 +78,40 @@ it.each([
     if (member) {
       expect((await click(ephemeralId, "ou_other")).toast.type).toBe("error");
       expect((await click(ephemeralId)).card).toBeTruthy();
+    } else if (source === "网页") {
+      const headers = { authorization: "Bearer " + holderToken };
+      const inbox = await server.inject({ url: "/api/asks?status=pending", headers });
+      expect(inbox.json()).toEqual([expect.objectContaining({ id: ask.id, userId: "holder" })]);
+      const response = await server.inject({ method: "POST", url: `/api/asks/${ask.id}/answer`, headers, payload: { choice: 0 } });
+      expect(response.json()).toMatchObject({ status: "answered", choice: 0 });
     } else await answerAsk(app, ask.id, { by: "holder", choice: 0 });
     expect(await waiting).toBe(true);
     await vi.waitFor(() => expect(patch).toHaveBeenCalledWith(expect.objectContaining({ path: { message_id: privateId } })));
     expect(ephemeral).toHaveBeenCalledTimes(+groupCard);
     if (groupCard) expect((await click(member ? privateId : ephemeralId)).toast.content).toContain("处理过");
   } finally { controller.abort(); await waiting; }
+});
+
+it.each([true, false])("群卡延迟更新只使用回调 token，有 token=%s", async hasToken => {
+  vi.clearAllMocks();
+  const messageId = "ephemeral-late-" + hasToken;
+  recordInteraction(app, { purpose: "ask", payload: { askId: "sample", ephemeral: true }, messageId, chatId: "oc_trigger",
+    conversationId: null, runId: null, allowed: [openId] });
+  // Hold the decision past Feishu's response deadline to exercise the delayed update transport.
+  let finish!: () => void;
+  const response = new Promise<{ toast: string; card: Record<string, unknown> }>(resolve => {
+    finish = () => resolve({ toast: "已处理", card: { schema: "2.0" } });
+  });
+  const handle = vi.spyOn(await import("../src/channels/lark-asks.ts"), "handleAskAction").mockReturnValueOnce(response);
+  try {
+    const ack = await handleCardAction(app, { operator: { open_id: openId }, context: { open_message_id: messageId },
+      ...(hasToken ? { token: "fixture-callback" } : {}), action: { value: { action: "ask:0" } } });
+    expect(ack.toast.type).toBe("info");
+    finish();
+    await new Promise(resolve => setImmediate(resolve));
+    if (hasToken) expect(ephemeral).toHaveBeenCalledWith({ method: "POST", url: "/open-apis/interactive/v1/card/update",
+      data: { token: "fixture-callback", open_ids: [openId], card: { schema: "2.0" } } });
+    else expect(ephemeral).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+  } finally { handle.mockRestore(); }
 });

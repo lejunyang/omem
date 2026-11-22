@@ -139,7 +139,7 @@ export function lendingNote(l?: Lending) {
 }
 export const LENDING: { value: Lending; label: string; hint: string }[] = [
   { value: "auto", label: "直接借", hint: "按各人的出借设置直接借，不再问" },
-  { value: "confirm", label: "先问持有人", hint: "每次要用别人的凭据先问持有人，他同意才用。确认卡还在做，现在这一档和“不借”一样" },
+  { value: "confirm", label: "先问持有人", hint: "只读命令通过权限预检后，持有人可在十分钟内同意这一次或这次任务。AI 后端只用自己的登录" },
   { value: "off", label: "不借", hint: "只用自己的；没有就提示去登录或申请权限" },
 ];
 export const ACCOUNTS_DEFAULT: { value: AccountsDefault; label: string; hint: string }[] = [
