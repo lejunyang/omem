@@ -21,6 +21,14 @@ updated: 2026-11-22
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 2026-11-22：插件登记凭据并按成员持有和检查
+
+- 从 `src/agents/credentials.ts` 读起。`api.credential` 声明一次授权覆盖的后端、命令行、安装和状态目录；只有声明 `permissions.credential` 且被信任为进程内运行的插件可登记，隔离模式说明原因。链接开发目录的凭据插件也按代码指纹重新确认。
+- `credential_kinds`、`credential_holds`、`credential_onboarding` 是本机表，不随快照同步。秘密仍走密钥库。登录与续签先完成供给，持有再生效；同份持有的回调串行且超时取消。每日检查和续签查询按索引，每批最多 32 份，过期及三天内到期按人通知。
+- `accounts.ts` 预建声明的状态目录，成员安装目录只读；`own-run.ts` 把声明的状态目录列入本人沙箱默认可写清单。目录按现有规范化、符号链接与数据目录限制校验。本人只检查本机登录，不调用登录、续签、供给或退出。
+
+- 成员通过 `/api/credentials` 管理自己的授权和出借范围。网页和机器人共用首次清单标记。AI 后端按自己的、本人开放的、最近使用的成员登录选择；`credentials.lending` 控制出借，`agents.accountsDefault` 可被逐后端策略覆盖。验证见 `test/credentials.test.ts` 和 `test/acmeauth.test.ts`。
+
 ## 2026-11-22：豆包 CLI 用空普通文件连接标准输入
 
 - 从 `src/agents/doubao-cli.ts` 的 `emptyStdin` 读起。CLI 即使给了 `-p` 也会读非终端 stdin；`ignore` 对应的 `/dev/null` 在原生输入桥中可报“无法以 UTF-8 格式读取标准输入”，Node 创建的管道又是 socket。普通运行、帮助和模型探测统一传入可读的空普通文件，不依赖版本号；短提示和长提示的传递方式沿用原实现。

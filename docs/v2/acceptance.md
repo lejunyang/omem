@@ -126,6 +126,16 @@
 
 自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
+## 插件凭据第一期（2026-11-22，docs/v2/credentials.md）
+
+- 假插件声明 `permissions.credential: true` 后仅进程内信任可登记；隔离模式给出需要访问账号目录的原因。修改链接插件的安装目录、状态和匹配声明后，需要重新确认信任。
+- 成员登录收到设备链接；登录完成后执行 `provide` 才标有效。续签后再次供给；失败标过期，秘密及错误原文不出现在库表、接口与日志里。
+- 本人只执行只读 `check`，上下文 HOME 是本机主目录，不执行 login、refresh、provide 或 logout。过期与三天内到期同一状态一天最多通知一次。
+- 成员状态目录预建，安装目录只读挂载；不存在的安装在状态中列出。本人沙箱默认清单包含声明的状态目录。目录逃逸、符号链接扩大授权及 omem 数据目录挂载被拒绝。
+- 从网页和机器人先后进入，各成员各收一次清单，包括可选凭据。成员访问总览或替他人退出返回 403。本人能通过安全分区修改默认策略，替成员退出后其持有失效。
+- 在 auto 档分别使用自己的、本人开放的和最近成功使用的成员凭据；核对运行事件和审计。切换 confirm/off 后拒绝借用。用 acmeauth 在借用沙箱中运行回声后端，能看到出借的账号，看不到持有人 HOME 的其他文件。
+- 续签和检查使用索引且每批最多 32 份；快照不带凭据种类、持有、接入标记，覆盖拉取保留本机状态。自动验证在 `test/credentials.test.ts`、`test/pull-complete.test.ts`，假客户端与假命令行，不启动真实 Agent。
+
 ## 成员用自己的 AI 账号：额度、模型、技能、换后端、停用、插件登录（2026-11-20 晚，docs/v2/agent-accounts.md）
 
 准备同下一节：一台装好 bubblewrap 的 Linux，成员小王、小李；本人开着 Agent → 技能 里的“接管”。
