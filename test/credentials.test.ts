@@ -58,8 +58,44 @@ it("SDK 契约、按人持有和 provide：凭据不进库、接口或日志", a
   expect(JSON.stringify(all(app.db, "select * from credential_holds"))).not.toContain("fixture-secret");
   expect(credentialHold(app, "ann", "sample:sso").sharing.scope).toBe("self");
   await logoutCredential(app, "ann", "sample:sso");
+  expect(existsSync(join(accountHome(app, "ann"), ".acme/data/login.json"))).toBe(false);
   expect(loggedIn(app, "ann", "traex")).toBe(false);
   expect(listConnections(app, "ann").some(c => c.provider.startsWith("credential:"))).toBe(false);
+});
+it("退出清理独占状态，共用的后端和嵌套命令目录由最后一份持有清理", async () => {
+  add();
+  add({ id: "other", provides: { backends: ["traex"], commands: [{ name: "other", state: [".acme/data/other"] }] },
+    async provide(ctx) {
+      mkdirSync(ctx.env.TRAE_HOME, { recursive: true });
+      writeFileSync(join(ctx.env.TRAE_HOME, "login"), "shared");
+      writeFileSync(join(ctx.home, ".acme/data/other/login"), "other");
+    } });
+  for (const kind of ["sample:sso", "sample:other"]) {
+    await startCredentialLogin(app, "ann", kind);
+    await until(() => credentialHold(app, "ann", kind).state === "logged-in");
+  }
+  const home = accountHome(app, "ann");
+  await logoutCredential(app, "ann", "sample:sso", "owner");
+  expect(existsSync(join(home, ".acme/data/login.json"))).toBe(false);
+  expect(readFileSync(join(home, ".acme/data/other/login"), "utf8")).toBe("other");
+  expect(readFileSync(join(home, ".trae/login"), "utf8")).toBe("shared");
+  await logoutCredential(app, "ann", "sample:other");
+  expect(existsSync(join(home, ".acme/data/other"))).toBe(false);
+  expect(existsSync(join(home, ".trae"))).toBe(false);
+});
+
+it.skipIf(process.platform === "win32")("退出时重新校验账号目录，拒绝经符号链接清理", async () => {
+  add();
+  await startCredentialLogin(app, "ann", "sample:sso");
+  await until(() => credentialHold(app, "ann", "sample:sso").state === "logged-in");
+  const dir = join(accountHome(app, "ann"), ".acme");
+  rmSync(dir, { recursive: true });
+  const outside = join(app.home, "outside");
+  mkdirSync(join(outside, "data"), { recursive: true });
+  symlinkSync(outside, dir, "dir");
+  await expect(logoutCredential(app, "ann", "sample:sso")).rejects.toThrow(/符号链接/);
+  expect(existsSync(join(outside, "data"))).toBe(true);
+  expect(credentialHold(app, "ann", "sample:sso").state).toBe("logged-in");
 });
 it("续签后供给，失败变过期；同种状态一天最多通知一次", async () => {
   const provide = vi.fn(async () => {}), refresh = vi.fn(async () => ({ expiresAt: Date.now() + 2 * 3600_000 }));

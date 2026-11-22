@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, sep } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -15,10 +15,11 @@ import { backendAvailable } from "./availability.ts";
 import { sourceOf } from "./capacity.ts";
 import { accountCatalog, type AccountSpec, type CatalogEntry } from "./catalog.ts";
 import { forgetQuota, quotaKind, quotaView, refreshQuota } from "./quota.ts";
+import { canonical } from "./own-sandbox.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
 import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
-import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, credentialInstallDirs, credentialStateRels, hasCredentials, removeAllCredentials } from "./credentials.ts";
+import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, credentialInstallDirs, credentialStateRels, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
 
 /**
  * Each omem user's own AI accounts (docs/v2/agent-accounts.md). A member logs in to a backend once
@@ -90,6 +91,17 @@ export function accountRoot(app: App, userId: string) {
 }
 export function accountHome(app: App, userId: string) {
   return join(accountRoot(app, userId), "home");
+}
+
+/** Resolve member state only beneath the real account HOME, without following links in it. */
+export function accountStatePaths(app: App, userId: string, rels: string[]) {
+  const home = accountHome(app, userId);
+  const expected = join(canonical(app.home), "accounts", userId, "home");
+  const paths = rels.map(rel => join(home, rel));
+  if (canonical(home) !== expected || paths.some((path, i) =>
+    !path.startsWith(home + sep) || canonical(path) !== join(expected, rels[i])))
+    throw new Error("账号状态目录越界或含符号链接");
+  return paths;
 }
 
 /** mkdir 0700, refusing a symbolic link anywhere from the data folder down. Whether anything was made. */
@@ -695,6 +707,30 @@ export async function saveToken(app: App, userId: string, backend: string, token
   return checkNative(app, userId, entry);
 }
 
+/** Remove only this provider's state. Other logins may own the same directory or a subtree. */
+export function clearAccountPaths(app: App, userId: string, rels: string[], except: { kind?: string; backend?: string }) {
+  const paths = accountStatePaths(app, userId, rels);
+  const credentials = retainedCredentialPaths(app, userId, except.kind);
+  const prefix = KV(userId, "");
+  const states = all<{ key: string }>(app.db, "select key from kv where key glob ? and json_extract(value,'$.state') != 'none'", prefix + "*");
+  const active = new Set(states.map(row => row.key.slice(prefix.length)));
+  const providers = new Set(listConnections(app, userId).map(c => c.provider));
+  const accounts = accountEntries(app).filter(e => e.id !== except.backend &&
+    (active.has(e.id) || providers.has(TOKEN_PROVIDER(e.id)) || logins.has(loginKey(app, userId, e.id))));
+  const home = accountHome(app, userId);
+  const keep = [...credentials.flat(), ...accounts.flatMap(e => e.account.owns)].map(rel => join(home, rel));
+  function remove(path: string) {
+    if (keep.some(p => path === p || path.startsWith(p + sep))) return;
+    if (keep.some(p => p.startsWith(path + sep)) && lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) {
+      for (const child of readdirSync(path)) remove(join(path, child));
+    } else {
+      rmSync(path, { recursive: true, force: true });
+    }
+  }
+  for (const path of new Set(paths)) remove(path);
+  return accounts.length === 0 && credentials.length === 0;
+}
+
 /**
  * Log this user out of a backend: a plugin login's own `logout`, the backend's logout command (failing
  * is fine), the token and the plugin secrets, the backend's part of the folder — the whole account
@@ -728,13 +764,8 @@ export async function removeAccount(app: App, userId: string, backend: string) {
   try {
     forgetQuota(app, userId, backend);
   } catch {}
-  for (const rel of entry.account.owns) {
-    const p = join(home, normalize(rel));
-    if (!p.startsWith(home + sep)) continue;
-    rmSync(p, { recursive: true, force: true });
-  }
-  const others = accountEntries(app).some((e) => e.id !== backend && (stored(app, userId, e.id).state !== "none" || accountToken(app, userId, e.id) || logins.has(loginKey(app, userId, e.id))));
-  if (!others && !hasCredentials(app, userId)) rmSync(accountRoot(app, userId), { recursive: true, force: true });
+  if (clearAccountPaths(app, userId, entry.account.owns, { backend }))
+    rmSync(accountRoot(app, userId), { recursive: true, force: true });
 }
 
 /**

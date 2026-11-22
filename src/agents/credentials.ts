@@ -1,6 +1,4 @@
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { canonical } from "./own-sandbox.ts";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type { CredentialContext } from "../../packages/plugin-sdk/credential.ts";
@@ -11,7 +9,7 @@ import { HttpError, now, untilAbort, zonedParts } from "../core/util.ts";
 import { notify } from "../core/notify.ts";
 import { audit } from "../auth/permissions.ts";
 import { connectionSecrets, deleteConnection, findConnection, listConnections, storeConnection } from "../auth/vault.ts";
-import { accountEntry, accountEnv, accountHome, ensureAccountHome } from "./accounts.ts";
+import { accountEntry, accountEnv, accountHome, accountStatePaths, clearAccountPaths, ensureAccountHome } from "./accounts.ts";
 import { sandboxSupport } from "./sandbox.ts";
 
 export { registerCredential } from "./credential-registry.ts";
@@ -59,7 +57,6 @@ function save(app: App, userId: string, kind: string, hold: Hold) {
 function usable(app: App, id: string, kind: string, s = credentialHold(app, id, kind)) {
   return s.state === "logged-in" && (s.expiresAt === undefined || s.expiresAt > Date.now()) && (id === OWNER || existsSync(accountHome(app, id)));
 }
-export const hasCredentials = (app: App, id: string) => !!one(app.db, "select 1 from credential_holds where user_id=? and state!='none' limit 1", id);
 export const credentialBackendLogin = (app: App, id: string, backend: string) => credentialKindsForBackend(backend).some(m => usable(app, id, m.kind));
 export type CredentialUse = { holder: string; kind: string; requester: string; backend: string };
 export const credentialUse = Symbol("credentialUse");
@@ -97,11 +94,7 @@ export function credentialAccountView(app: App, id: string, backend: string) {
 }
 function context(app: App, id: string, m: CredentialMethod, signal: AbortSignal, readOnly = false): CredentialContext {
   const home = id === OWNER ? homedir() : accountHome(app, id);
-  if (id !== OWNER) {
-    const expected = join(canonical(app.home), "accounts", id, "home");
-    if (canonical(home) !== expected || m.provides.commands.some(c => c.state?.some(p => canonical(join(home, p)) !== join(expected, p))))
-      throw new Error("账号状态目录含符号链接");
-  }
+  if (id !== OWNER) accountStatePaths(app, id, providedPaths(app, m.provides));
   const env = id === OWNER ? { ...process.env } : Object.assign({}, ...m.provides.backends.map(b => {
     const e = accountEntry(app, b); return e ? accountEnv(app, id, e) : {};
   }));
@@ -230,6 +223,21 @@ export function checkCredential(app: App, id: string, kind: string) {
     return credentialHold(app, id, kind);
   });
 }
+function providedPaths(app: App, provides: CredentialMethod["provides"]) {
+  return [...provides.commands.flatMap(c => c.state ?? []),
+    ...provides.backends.flatMap(backend => accountEntry(app, backend)?.account.owns ?? [])];
+}
+
+/** Include temporarily disabled plugins and logins that have not yet saved their first hold. */
+export function retainedCredentialPaths(app: App, id: string, except?: string) {
+  const rows = all<{ kind: string; declaration: string }>(app.db, `select h.kind,k.declaration from credential_holds h
+    join credential_kinds k on k.kind=h.kind where h.user_id=? and h.state!='none'`, id);
+  const retained = new Map<string, CredentialMethod["provides"]>();
+  for (const row of rows) if (row.kind !== except) retained.set(row.kind, JSON.parse(row.declaration).provides);
+  for (const m of credentialMethods())
+    if (m.kind !== except && logins.has(keyOf(app, id, m.kind))) retained.set(m.kind, m.provides);
+  return [...retained.values()].map(provides => providedPaths(app, provides));
+}
 export function logoutCredential(app: App, id: string, kind: string, actor = id) {
   const m = requireCredential(kind);
   if (id === OWNER) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机退出");
@@ -239,6 +247,7 @@ export function logoutCredential(app: App, id: string, kind: string, actor = id)
       try { await timed(m, 20_000, signal => m.logout!(context(app, id, m, signal))); }
       catch { throw new HttpError(502, "退出凭据失败，请重试"); }
     }
+    clearAccountPaths(app, id, providedPaths(app, m.provides), { kind });
     const c = findConnection(app, id, secretProvider(kind)); if (c) deleteConnection(app, c.id);
     save(app, id, kind, { ...credentialHold(app, id, kind), state: "none", user: undefined, expiresAt: undefined, refreshAt: undefined, checkedAt: now(), error: undefined });
     audit(app, actor, "credentials.logout", kind, { holder: id });
