@@ -12,7 +12,7 @@ import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
-import { allCredentials, checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
+import { allCredentials, checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, selectCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
 import type { CredentialDef } from "../packages/plugin-sdk/credential.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin, untrustPlugin } from "../src/plugins/registry.ts";
 import { codeHash, setTrust, trustState } from "../src/plugins/trust.ts";
@@ -735,4 +735,21 @@ it.runIf(process.platform === "win32")("Windows 上登记带状态和安装目�
   add({ provides: { backends: ["traex"], commands: [{ name: "acme", state: [".acme/data"], install: ["~/.local/share/acme"] }] } as CredentialDef["provides"] });
   expect(one(app.db, "select kind from credential_kinds where kind = ?", "sample:sso")).toBeTruthy();
   expect(() => add({ id: "bad", provides: { backends: [], commands: [{ name: "acme", state: ["../escape"] }] } as CredentialDef["provides"] })).toThrow(/相对 HOME/);
+});
+
+it("本人那份没检查过或检查出错时照旧借本机登录；检查明确说没登录才不借；插件重新登记后下一轮重查", async () => {
+  add({ check: vi.fn(async () => { throw new Error("插件内部错误"); }) });
+  // Not checked yet (no row for the owner): the machine login lends as it did before credentials.
+  expect(selectCredential(app, "ann", "traex", true, true)).toMatchObject({ holder: "owner", kind: "sample:sso" });
+  await tickCredentialChecks(app);
+  expect(credentialHold(app, "owner", "sample:sso")).toMatchObject({ state: "none", error: "检查失败，请稍后重试" });
+  expect(selectCredential(app, "ann", "traex", true, true)).toMatchObject({ holder: "owner" });
+  // The plugin's code changed and registered again: the owner's check runs on the next tick, not tomorrow.
+  for (const fn of undo.splice(0)) fn();
+  const check = vi.fn(async () => ({ state: "missing" as const }));
+  add({ check });
+  await tickCredentialChecks(app);
+  expect(check).toHaveBeenCalledOnce();
+  expect(credentialHold(app, "owner", "sample:sso").state).toBe("missing");
+  expect(selectCredential(app, "ann", "traex", true, true)).toBeUndefined();
 });

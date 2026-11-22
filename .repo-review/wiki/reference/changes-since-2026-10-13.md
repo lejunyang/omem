@@ -42,6 +42,10 @@ updated: 2026-11-22
 - 设置 → 安全 → 凭据的出借（`CredentialLending.vue`）管 `credentials.lending`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`；设置 → 成员 → 成员的凭据（`CredentialHolds.vue`）读 `GET /api/credentials/all`，可以替成员退出。卡片链接 `?card=credentials`、`?card=credential-holds`。
 - 纯函数和测试：`web/src/lib/credentials.ts`、`test/web-credentials.test.ts`。演示数据（`scripts/doc-screens.ts`）装上 `examples/plugins/acmeauth`，另登记一个演示的代码托管凭据，三个成员各有有效 / 快到期 / 没登录的持有；演示里把成员账号沙箱当作可用。新截图 `account-credentials`。
 
+## 本人那份凭据检查出错时照旧出借本机登录（2026-11-22）
+
+从 `src/agents/credentials.ts` 的 `backendUsable`、`selectCredential` 读起。原来本人的持有只有检查成功才算可借，插件的检查一出错（或插件没有 `check`），成员就借不到本人的本机登录了，比没有凭据时更严；检查失败还要等第二天才重查。现在只有检查明确说没登录或过期才不借；`credential-registry.ts` 在插件重新登记凭据时让本人那份下一分钟重查。回归在 `test/credentials.test.ts` 最后一条。
+
 ## 在 omem 里运行的插件重新加载时，引用的文件一起换新（2026-11-22）
 
 从 `src/plugins/fresh-import.ts` 读起。原来重新加载插件只给入口文件加版本号，入口从插件目录里引用的文件仍是服务启动时缓存的那份：改了 `src/` 下的文件再重新信任，入口找不到新的导出就报错。现在头一次导入插件时注册 Node 的同线程解析钩子（`module.registerHooks`，每次导入几乎没有额外开销），把入口的版本号带给它从插件目录里引用的文件（`node_modules/` 除外）。插件页把“给成员登记凭据”列进权限，声明了凭据的链接插件改了代码标“代码改过，需要重新确认”。验证在 `test/plugin-fresh-import.test.ts`（起一个 Node 子进程，vitest 自己的模块加载不经过这个钩子）。
