@@ -3,9 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { HttpError, truncate } from "../core/util.ts";
-import { asOwner, cliUser } from "./lark-auth.ts";
-import { larkActing, larkCli, larkCliOutput } from "./lark-cli.ts";
-import { larkOpenIdOf } from "../core/users.ts";
+import { actingOpenId, asOwner } from "./lark-auth.ts";
+import { larkCli, larkCliOutput } from "./lark-cli.ts";
 import { personalLibrary, wikiNode } from "./lark-wiki.ts";
 
 /**
@@ -126,9 +125,7 @@ export async function writeTarget(app: App, args: string[], target: string | und
     return { key: `${node.objType}:${node.objToken}`, label: `${personal ? "个人文档库" : "知识库"}里的《${node.title || node.nodeToken}》`, personal, tokens: [node.nodeToken, node.objToken] };
   }
   const type = FILE_TYPES[m[1]];
-  // Owner ids are in the calling app's id space: lark-cli's for the owner, the bot app's for someone's connection.
-  const acting = larkActing();
-  const me = acting ? larkOpenIdOf(app, acting.userId) : (await cliUser())?.openId;
+  const me = await actingOpenId(app);
   let personal = false;
   let title = "";
   if (me) {

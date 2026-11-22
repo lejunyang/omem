@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
-import { asOwner, cliUser } from "./lark-auth.ts";
+import { actingOpenId, asOwner } from "./lark-auth.ts";
 import { larkCli, larkCliAsBot } from "./lark-cli.ts";
 import { larkAppSecret, readLarkSecrets } from "./lark-setup.ts";
 import { personalLibrary, wikiNode, type WikiNode } from "./lark-wiki.ts";
@@ -47,9 +47,9 @@ async function spaceName(app: App, spaceId: string) {
   return one<{ name: string }>(app.db, "select name from wiki_spaces where id = ? and name != ''", spaceId)?.name ?? "";
 }
 
-/** Who owns a Drive doc or folder (`drive metas`), and whether that is the owner. */
-async function ownedByOwner(app: App, token: string, type: string) {
-  const me = (await cliUser())?.openId;
+/** Who owns a Drive doc or folder (`drive metas`), and whether that is the person using the tool. */
+async function ownedByCaller(app: App, token: string, type: string) {
+  const me = await actingOpenId(app);
   if (!me) return false;
   const v = await asOwner(app, "读取云空间文件信息", () => larkCli(["drive", "metas", "batch_query", "--data", JSON.stringify({ request_docs: [{ doc_token: token, doc_type: type }] }), "--as", "user"], 60_000));
   const m = (v?.data?.metas ?? [])[0] as { owner_id?: string } | undefined;
@@ -83,7 +83,7 @@ export async function placeFor(app: App, parent?: string | null): Promise<Place>
 }
 
 async function folderPlace(app: App, token: string): Promise<Place> {
-  const mine = await ownedByOwner(app, token, "folder");
+  const mine = await ownedByCaller(app, token, "folder");
   return { personal: mine, label: `${mine ? "我的" : "别人的"}云空间文件夹 ${token}`, parent: { token }, folder: token };
 }
 
@@ -94,7 +94,7 @@ export async function docPlace(app: App, doc: string): Promise<Place & { token: 
   const node = await wikiNode(app, doc);
   if (node) return { ...(await wikiPlace(app, node, false)), token, objToken: node.objToken, objType: node.objType, node };
   const type = m?.[1] === "docs" ? "doc" : "docx";
-  const mine = await ownedByOwner(app, token, type);
+  const mine = await ownedByCaller(app, token, type);
   return { personal: mine, label: `${mine ? "我的" : "别人的"}云空间文档 ${token}`, parent: { token }, token, objToken: token, objType: type };
 }
 

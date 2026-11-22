@@ -9,6 +9,7 @@ const toolCapabilities: Record<string, ToolCapability> = {
   // Asking a member for the owner (items/member-progress.ts): only the owner's runs, the handler checks again.
   ask_member_progress: "owner",
   add_users: "owner", attention_rules: "owner", save_flow: "owner", lark_invite: "owner",
+  lark_read: "connector.use", lark_doc_authorize: "owner",
   track_problem: "owner", revise_reply_outcome: "owner", classify_source: "owner",
   create_space: "owner", connect_repository: "owner", propose_archive_rule: "agents.manage",
   digest_sources: "agents.manage", lark_wiki_crawl: "settings.manage",
