@@ -8,6 +8,7 @@ import { activeUser, findUser, OWNER } from "../core/users.ts";
 import { HttpError, now, untilAbort, zonedParts } from "../core/util.ts";
 import { notify } from "../core/notify.ts";
 import { audit } from "../auth/permissions.ts";
+import { memberAccessProfile } from "../auth/capabilities.ts";
 import { connectionSecrets, deleteConnection, findConnection, listConnections, storeConnection } from "../auth/vault.ts";
 import { accountEntry, accountEnv, accountHome, accountStatePaths, clearAccountPaths, ensureAccountHome } from "./accounts.ts";
 import { sandboxSupport } from "./sandbox.ts";
@@ -413,10 +414,11 @@ function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
 export function myCredentials(app: App, id: string) {
   const rows = all<Row>(app.db, "select * from credential_holds where user_id=?", id);
   const holds = new Map(rows.map(r => [r.kind, fromRow(r)]));
-  const candidates = all<{ id: string; name: string }>(app.db, `select id,name from users
+  const { memberCredentials } = memberAccessProfile(app, id);
+  const candidates = memberCredentials ? all<{ id: string; name: string }>(app.db, `select id,name from users
     where status='active' and disabled_at is null and kind='person' and id not in (?,?)
-    and exists (select 1 from users where id=? and kind='person') order by id limit 200`, OWNER, id, id);
-  return { lending: app.config.credentials.lending, candidates,
+    order by id limit 200`, OWNER, id) : [];
+  return { ...(memberCredentials && { lending: app.config.credentials.lending }), candidates,
     credentials: credentialMethods().map(m => viewOf(app, id, m, holds.get(m.kind) ?? emptyHold(id))) };
 }
 export function allCredentials(app: App) {

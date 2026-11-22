@@ -134,6 +134,7 @@ R 缺少有效持有时，宿主先按运行身份检查操作规则，再匹配
 ## 接口和设置
 
 - `GET /api/credentials`（自己的持有和清单）、`POST /api/credentials/:kind/login`、`DELETE /api/credentials/:kind`、`PUT /api/credentials/:kind/sharing`；本人另有 `GET /api/credentials/all`（每个成员登了什么、出借给谁，不含凭据）和 `DELETE /api/credentials/:user/:kind`（替成员退出）。
+- 个人清单在顶层向本人和活跃的非观察者个人账号返回出借方式 `lending` 和候选成员 `candidates`（至多 200 个，只含 id 和显示名）。观察者和服务账号读取自己的清单时，`candidates` 为空数组，响应省略 `lending`。
 - `:kind` 是完整的 `<插件>:<凭据 id>`。登录返回 `{url, code?}` 或 `{done: true}`，之后从自己的清单读取当前状态。出借设置的请求体为 `{"scope":"self"}`、`{"scope":"all"}` 或 `{"scope":"members","members":["member-a"]}`。成员只能操作自己的凭据。
 - 对凭据供给的后端，成员调用 `DELETE /api/me/agent-accounts/:backend` 或本人调用 `DELETE /api/agent-accounts/:user/:backend` 会收到 HTTP 409。响应为 `{error: string}`，逐份列出凭据名称、完整 kind、覆盖的后端和命令，以及当前调用者可用的凭据 DELETE 路径。持有、供给文件、出借和续签保留。调用对应的凭据 DELETE 才会退出整份授权。
 - 设置：`credentials.lending`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`，都只有本人能改，归“安全”区域。
@@ -153,6 +154,6 @@ R 缺少有效持有时，宿主先按运行身份检查操作规则，再匹配
 - 账号页“凭据”（`web/src/components/CredentialList.vue`，放在“我的 AI 账号”上面）：每种一行，必做、状态、到期的相对时间，“供给 N 项”点开看覆盖的后端和命令。登录拿到 `url` 就开新标签页并显示 `code`，有 `登录中` 时每 3 秒读一次清单，最多 12 分钟。“取消”就是 `DELETE`，它也会退出之前的登录，所以只有第一次登录（清单里没有 `user` 和 `expiresAt`）才给。本人的持有没有登录和退出。
 - 谁能借：`UiSegmented` 选只给自己 / 指定成员 / 所有成员；指定成员从 `GET /api/users` 取名单（只有能管理成员的人读得到；读不到时不出现这一档），选了第一个人才保存。
 - “我的 AI 账号”里由凭据供给的后端（`method` 是某个 kind，或某份没退出的凭据覆盖它）标“由 × 供给”，退出换成跳到那一行；仍然收到 409 时把 `error` 渲染在那一行下面。
-- 设置 → 安全 → 凭据的出借（`CredentialLending.vue`）：三项写进 `PUT /api/settings`；成员读 `/api/settings` 拿不到这三项（只有本人能改的项不发给别人），只读的卡上写“只有××能看”。
+- 设置 → 安全 → 凭据的出借（`CredentialLending.vue`）。本人通过 `PUT /api/settings` 修改三项。普通成员可通过 `GET /api/settings` 读取这三项，默认观察者访问安全分区返回 403。
 - 设置 → 成员 → 成员的凭据（`CredentialHolds.vue`）：`GET /api/credentials/all` 一人一种一行，过期、快到期的排前面，多于 8 人可按名字找，替成员退出走 `DELETE /api/credentials/:user/:kind`。
 - 纯函数在 `web/src/lib/credentials.ts`（`test/web-credentials.test.ts`）；文档截图 `account-credentials`。

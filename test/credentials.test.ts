@@ -479,7 +479,7 @@ posixIt("总览和个人清单各查询一次持有，登录中的链接与验�
     const own = myCredentials(app, "ann");
     expect(own.credentials.map(c => c.state)).toEqual(["expired", "logging-in"]);
     expect(own.credentials[1]).toMatchObject({ url: "https://auth.example.test/pending", code: "DEMO" });
-    expect(queries.mock.calls).toHaveLength(2); // One query for all holds, one for lending candidates.
+    expect(queries.mock.calls).toHaveLength(3); // Caller profile, all holds, eligible candidates.
     queries.mockClear();
     const { people } = allCredentials(app);
     expect(queries.mock.calls).toHaveLength(1);
@@ -532,7 +532,9 @@ it("凭据清单返回出借方式和至多 200 位可选成员，仅含 id 和�
     expect(initial.candidates).toEqual([{ id: "bob", name: "成员 B" }]);
     expect((await server.inject({ url: "/api/users", headers })).statusCode).toBe(403);
     const bot = { authorization: "Bearer " + createApiToken(app, "bot") };
-    expect((await server.inject({ url: "/api/credentials", headers: bot })).json().candidates).toEqual([]);
+    const botList = (await server.inject({ url: "/api/credentials", headers: bot })).json();
+    expect(botList.candidates).toEqual([]);
+    expect(botList).not.toHaveProperty("lending");
     expect((await server.inject({ url: "/api/settings", headers: bot })).statusCode).toBe(403);
     run(app.db, `with recursive n(i) as (values(1) union all select i+1 from n where i<200)
       insert into users(id,name,role,created_at) select 'member-'||i,'成员 '||i,'member','0' from n`);
@@ -540,6 +542,22 @@ it("凭据清单返回出借方式和至多 200 位可选成员，仅含 id 和�
     const next = await list();
     expect(next.lending).toBe("off");
     expect(next.candidates).toHaveLength(200);
+  } finally { await server.close(); }
+});
+
+it("观察者可读自己的凭据清单，出借策略和候选成员对其隐藏", async () => {
+  const { startServer } = await import("../src/server/http.ts");
+  add();
+  run(app.db, "update users set role='observer' where id='ann'");
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
+    const res = await server.inject({ url: "/api/credentials", headers });
+    expect(res.statusCode).toBe(200);
+    const list = res.json();
+    expect(list).toMatchObject({ credentials: [{ kind: "sample:sso" }], candidates: [] });
+    expect(list).not.toHaveProperty("lending");
+    expect((await server.inject({ url: "/api/settings?section=security", headers })).statusCode).toBe(403);
   } finally { await server.close(); }
 });
 

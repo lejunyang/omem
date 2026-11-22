@@ -3589,7 +3589,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const access = capabilityAccess(app, who(req), null);
     return {
       owner: who(req) === OWNER && access.active,
-      memberCredentials: access.active && access.kind === "person" && access.preset !== "observer",
+      memberCredentials: access.memberCredentials,
       view: (section: Section) => !!access.source(`settings.${section}.view`),
       edit: (section: Section) => !!access.source(`settings.${section}.edit`),
     };
