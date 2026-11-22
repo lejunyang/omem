@@ -24,10 +24,41 @@ const route = useRoute();
 // ---- the list ----
 const filter = ref("");
 const showPersonal = ref(false);
-const matches = (s: Space) => !filter.value.trim() || `${s.name} ${s.description}`.toLowerCase().includes(filter.value.trim().toLowerCase());
-const listed = computed(() => nestedSpaces(state.spaces.filter((s) => s.kind !== "personal")).filter(({ space }) => matches(space)));
-const personal = computed(() => state.spaces.filter((s) => s.kind === "personal" && matches(s)));
+const filtering = computed(() => !!filter.value.trim());
+const matches = (s: Space) => !filtering.value || `${s.name} ${s.description} ${s.rootPath ?? ""}`.toLowerCase().includes(filter.value.trim().toLowerCase());
 const reposOf = (id: string) => state.spaces.filter((c) => c.parentId === id);
+/** Business spaces whose repositories are shown; kept in this browser. The chosen one's group opens by itself. */
+const OPEN_KEY = "omem.settings.spaces.open";
+const expanded = ref(new Set<string>((() => { try { return JSON.parse(localStorage.getItem(OPEN_KEY) ?? "[]") as string[]; } catch { return []; } })()));
+function toggle(id: string) {
+  const next = new Set(expanded.value);
+  if (!next.delete(id)) next.add(id);
+  expanded.value = next;
+  try { localStorage.setItem(OPEN_KEY, JSON.stringify([...next])); } catch { /* private window */ }
+}
+const isOpen = (id: string) => filtering.value || expanded.value.has(id);
+/**
+ * One row per space: business spaces, their repositories under them (folded unless opened), then repositories of no
+ * business. Filtering keeps a business space when it or one of its repositories matches.
+ */
+const listed = computed(() => {
+  const rows: { space: Space; child: boolean; repos: number; standaloneHead?: boolean }[] = [];
+  let standalone = false;
+  for (const { space: s, child } of nestedSpaces(state.spaces.filter((x) => x.kind !== "personal"))) {
+    if (child) {
+      const parent = state.spaces.find((p) => p.id === s.parentId);
+      if (parent && isOpen(parent.id) && (matches(s) || matches(parent))) rows.push({ space: s, child, repos: 0 });
+      continue;
+    }
+    const repos = reposOf(s.id);
+    if (!matches(s) && !repos.some(matches)) continue;
+    const head = s.kind === "repo" && !standalone;
+    if (head) standalone = true;
+    rows.push({ space: s, child, repos: repos.length, standaloneHead: head });
+  }
+  return rows;
+});
+const personal = computed(() => state.spaces.filter((s) => s.kind === "personal" && matches(s)));
 const isRepo = (s: Space) => s.kind === "repo" && !!s.rootPath;
 /** Last folder of a repo path, without the hash suffix added to cloned repos. */
 const dirName = (p: string) => (p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p).replace(/-[0-9a-f]{12}$/, "");
@@ -52,7 +83,7 @@ const creating = ref(false);
 const newSpace = ref({ name: "", kind: "project", rootPath: "", description: "", init: false });
 const creatingSpace = ref(false);
 function startCreate() {
-  editing.value = null;
+  // The space being edited stays behind the form: 取消 goes back to it.
   creating.value = true;
   void nextTick(() => document.getElementById("new-space-name")?.focus());
 }
@@ -102,6 +133,9 @@ async function openSpace(s: Space) {
   const ticket = ++opening;
   creating.value = false;
   editing.value = { ...s, settings: { ...s.settings } };
+  if (s.parentId && !expanded.value.has(s.parentId)) toggle(s.parentId);
+  if (s.kind === "personal") showPersonal.value = true;
+  try { localStorage.setItem(LAST_KEY, s.id); } catch { /* private window */ }
   related.value = (s.related ?? []).filter((r) => !r.via);
   suggestions.value = [];
   newRepo.value = "";
@@ -255,16 +289,25 @@ async function changeRoot() {
   if (path && path !== s.rootPath) await relink(path);
 }
 
+/** The space opened last on this page, opened again next time. */
+const LAST_KEY = "omem.settings.spaces.last";
+/** The original of the space being edited, to throw away unsaved changes. */
+const original = computed(() => state.spaces.find((s) => s.id === editing.value?.id) ?? null);
+/** What the header says about the space: its description, then counts (or the business it belongs to). */
+const parentName = computed(() => (editing.value?.parentId ? state.spaces.find((s) => s.id === editing.value!.parentId)?.name ?? "" : ""));
+
 onMounted(() => {
-  // `?space=<id>` (from a page that needs one of its settings, e.g. a preview command): open it.
-  const want = route.query.space;
-  if (typeof want !== "string") return;
-  const s = state.spaces.find((x) => x.id === want);
-  if (s) void openSpace(s);
-  else void loadSpaces().then(() => {
-    const t = state.spaces.find((x) => x.id === want);
-    if (t) void openSpace(t);
-  });
+  // `?space=<id>` (from a page that needs one of its settings, e.g. a preview command) first; otherwise the one
+  // opened here last, the current space, or the first in the list: the right side is never empty while there are spaces.
+  const query = typeof route.query.space === "string" ? route.query.space : "";
+  const pick = () => {
+    let last = "";
+    try { last = localStorage.getItem(LAST_KEY) ?? ""; } catch { /* private window */ }
+    const s = [query, last, state.space].map((id) => id && state.spaces.find((x) => x.id === id)).find(Boolean) || listed.value[0]?.space;
+    if (s) void openSpace(s);
+    return !!s;
+  };
+  if (!pick() || (query && !state.spaces.some((x) => x.id === query))) void loadSpaces().then(pick);
 });
 </script>
 
@@ -278,37 +321,44 @@ onMounted(() => {
           <button class="btn ghost sm icon" :class="{ on: creating }" aria-label="新建空间" title="新建空间" @click="startCreate"><Icon name="plus" :size="15" /></button>
         </div>
         <div class="sp-items">
-          <button
-            v-for="{ space: s, child } in listed"
-            :key="s.id"
-            type="button"
-            class="sp-item"
-            :class="{ child, on: editing?.id === s.id }"
-            :aria-current="editing?.id === s.id ? 'true' : undefined"
-            @click="openSpace(s)"
-          >
-            <span class="sp-name">
-              <Icon v-if="s.kind === 'repo'" name="code" :size="13" />
-              <span class="ellipsis">{{ s.name }}</span>
-              <span v-if="!child" class="sp-kind">{{ kindLabel[s.kind] ?? s.kind }}</span>
-            </span>
-            <span v-if="!child && s.description" class="sp-desc">{{ s.description }}</span>
-            <span v-if="!child || (s.rootPath && dirName(s.rootPath) !== s.name) || s.settings?.submodules?.failed?.length" class="sp-meta">
-              <template v-if="child && s.rootPath"><span v-if="dirName(s.rootPath) !== s.name" class="mono ellipsis" :title="s.rootPath">{{ dirName(s.rootPath) }}</span></template>
-              <template v-else>{{ summary(s) }}</template>
-              <span v-if="s.settings?.submodules?.failed?.length" class="warn-text" :title="submoduleTip(s)"> · 子模块 {{ s.settings.submodules.failed.length }} 个失败</span>
-            </span>
-          </button>
+          <template v-for="{ space: s, child, repos, standaloneHead } in listed" :key="s.id">
+            <div v-if="standaloneHead" class="sp-label">独立仓库</div>
+            <div class="sp-row" :class="{ child, on: editing?.id === s.id }">
+              <button
+                v-if="!child && repos"
+                type="button"
+                class="sp-fold"
+                :aria-expanded="isOpen(s.id)"
+                :aria-label="`${isOpen(s.id) ? '收起' : '展开'} ${s.name} 的仓库`"
+                :disabled="filtering"
+                @click="toggle(s.id)"
+              ><Icon name="right" :size="12" class="sp-chev" :class="{ open: isOpen(s.id) }" /></button>
+              <span v-else-if="!child" class="sp-fold" aria-hidden="true" />
+              <button
+                type="button"
+                class="sp-item"
+                :aria-current="editing?.id === s.id ? 'true' : undefined"
+                :title="[s.description, s.rootPath].filter(Boolean).join('\n') || undefined"
+                @click="openSpace(s)"
+              >
+                <Icon v-if="s.kind === 'repo'" name="code" :size="13" class="sp-icon" />
+                <span class="sp-name ellipsis">{{ s.name }}</span>
+                <span v-if="s.settings?.submodules?.failed?.length" class="sp-warn" :title="submoduleTip(s)" :aria-label="`子模块 ${s.settings.submodules.failed.length} 个失败`" />
+                <span v-if="!child && repos" class="sp-count" :title="`${repos} 个仓库`">{{ repos }}</span>
+              </button>
+            </div>
+          </template>
           <p v-if="!listed.length && !personal.length" class="muted small sp-empty">没有匹配的空间。</p>
           <template v-if="personal.length">
             <button type="button" class="sp-group" :aria-expanded="showPersonal || !!filter.trim()" @click="showPersonal = !showPersonal">
               <Icon name="right" :size="12" class="sp-chev" :class="{ open: showPersonal || !!filter.trim() }" />个人空间<span class="muted"> {{ personal.length }}</span>
             </button>
             <template v-if="showPersonal || filter.trim()">
-              <button v-for="s in personal" :key="s.id" type="button" class="sp-item child" :class="{ on: editing?.id === s.id }" @click="openSpace(s)">
-                <span class="sp-name"><span class="ellipsis">{{ s.name }}</span></span>
-                <span class="sp-meta">{{ summary(s) }}</span>
-              </button>
+              <div v-for="s in personal" :key="s.id" class="sp-row child" :class="{ on: editing?.id === s.id }">
+                <button type="button" class="sp-item" :aria-current="editing?.id === s.id ? 'true' : undefined" :title="summary(s)" @click="openSpace(s)">
+                  <span class="sp-name ellipsis">{{ s.name }}</span>
+                </button>
+              </div>
             </template>
           </template>
         </div>
@@ -341,7 +391,13 @@ onMounted(() => {
               <h3 class="set-title ellipsis">{{ editing.name || "（没有名字）" }}</h3>
               <span class="badge">{{ kindLabel[editing.kind] ?? editing.kind }}</span>
             </div>
-            <MonoLine class="sp-id" :text="editing.id" copy />
+            <p v-if="original?.description" class="sp-lede">{{ original.description }}</p>
+            <div class="sp-facts small muted">
+              <span v-if="isRepo(editing)">{{ parentName ? `属于 ${parentName}` : "独立仓库" }}<template v-if="editing.rootPath && dirName(editing.rootPath) !== editing.name"> · <span class="mono">{{ dirName(editing.rootPath) }}</span></template></span>
+              <span v-else>{{ summary(editing) }}</span>
+              <span v-if="editing.settings?.submodules?.failed?.length" class="warn-text" :title="submoduleTip(editing)">子模块 {{ editing.settings.submodules.failed.length }} 个失败</span>
+              <MonoLine class="sp-id" :text="editing.id" copy />
+            </div>
           </header>
           <p v-if="editing.settings.mirror" class="sp-sec muted small">这是 {{ editing.settings.mirror.peer }} 的空间的只读镜像，内容由同步写入。</p>
 
@@ -366,7 +422,10 @@ onMounted(() => {
               <button class="btn ghost sm" @click="suggestions = suggestions.filter((x) => x.space !== r.space)">不是</button>
             </div>
             <div v-for="c in reposOf(editing.id)" :key="c.id" class="line-row">
-              <div class="grow"><span>{{ c.name }}</span> <span class="muted small">{{ codeIndexLabel(c) }}</span><MonoLine :text="c.rootPath ?? ''" /></div>
+              <div class="grow repo-line">
+                <div class="repo-head"><span class="repo-name ellipsis">{{ c.name }}</span><span class="muted small ellipsis" :title="codeIndexLabel(c)">{{ codeIndexLabel(c) }}</span></div>
+                <MonoLine :text="c.rootPath ?? ''" />
+              </div>
               <button class="btn ghost sm" @click="syncRepo(c.id)">同步</button>
               <button class="btn ghost sm" @click="openSpace(c)">设置</button>
               <button class="btn ghost sm danger" @click="moveRepo(c.id, null)">移出</button>
@@ -461,7 +520,7 @@ onMounted(() => {
           <footer class="sp-foot">
             <button v-if="canDelete" class="btn ghost danger" :title="spaceContentOf.length ? `还有内容，不能删除：${spaceContentOf.map((c) => `${c.label} ${c.count}`).join('、')}` : '删除这个空的空间'" :disabled="spaceContentOf.length > 0" @click="removeSpace">删除空间</button>
             <span class="spacer" />
-            <button class="btn ghost" @click="editing = null">关闭</button>
+            <button class="btn ghost" :disabled="!original" title="丢掉没保存的修改" @click="original && openSpace(original)">还原</button>
             <button class="btn primary" @click="saveSpace">保存</button>
           </footer>
         </div>
@@ -529,77 +588,103 @@ onMounted(() => {
 }
 .sp-items {
   overflow-y: auto;
-  padding: 4px;
+  padding: 6px;
   display: grid;
   align-content: start;
 }
-.sp-item {
+.sp-label {
+  padding: 12px 10px 4px 30px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sp-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+.sp-row:hover {
+  background: var(--hover);
+}
+.sp-row.on {
+  background: var(--accent-soft);
+}
+.sp-row.on .sp-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.sp-row.child {
+  padding-left: 22px;
+}
+.sp-fold {
+  flex: none;
   display: grid;
-  gap: 2px;
-  width: 100%;
+  place-items: center;
+  width: 22px;
+  height: 30px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.sp-fold:disabled {
+  cursor: default;
+}
+span.sp-fold {
+  cursor: default;
+}
+.sp-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 30px;
   border: 0;
   background: none;
   text-align: left;
   font: inherit;
   color: inherit;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
+  padding: 0 8px 0 2px;
   cursor: pointer;
-  min-width: 0;
 }
-.sp-item:hover {
-  background: var(--hover);
-}
-.sp-item.on {
-  background: var(--accent-soft);
-}
-.sp-item.child {
-  padding-left: 26px;
+.sp-row.child .sp-item {
+  padding-left: 8px;
 }
 .sp-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--ink);
 }
-.sp-name > .ellipsis {
-  min-width: 0;
+.sp-row.child .sp-name {
+  font-size: 13px;
+  color: var(--ink-2);
 }
-.sp-name :deep(svg) {
+.sp-icon {
+  flex: none;
   color: var(--muted);
 }
-.sp-kind {
+.sp-count {
   flex: none;
   margin-left: auto;
   font-size: 12px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
-.sp-desc {
-  font-size: 13px;
-  color: var(--ink-2);
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-.sp-meta {
-  display: flex;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
+.sp-warn {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
 }
 .sp-group {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 4px;
-  padding: 8px 10px;
+  margin-top: 6px;
+  padding: 8px 10px 8px 6px;
   border: 0;
   border-top: 1px solid var(--line);
   background: none;
@@ -641,8 +726,21 @@ form .sp-head {
   gap: 8px;
   min-width: 0;
 }
+.sp-lede {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--ink-2);
+  max-width: 72ch;
+}
+.sp-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+}
 .sp-id {
-  max-width: 360px;
+  max-width: 280px;
 }
 .sp-sec {
   display: grid;
@@ -699,6 +797,20 @@ form .sp-head {
   padding: 6px 0;
   border-top: 1px solid var(--line);
   min-width: 0;
+}
+.repo-line {
+  display: grid;
+  gap: 2px;
+}
+.repo-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.repo-name {
+  flex: none;
+  max-width: 60%;
 }
 .line-row .btn,
 .line-row .badge {
