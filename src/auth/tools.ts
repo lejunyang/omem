@@ -36,11 +36,30 @@ const toolCapabilities: Record<string, ToolCapability> = {
   list_pages: "wiki.view", read_page: "wiki.view", recall: "memories.view", req_read: "requirements.view", req_tree: "requirements.view",
 };
 
+/**
+ * Built-in plugins' tools (plugins/registry.ts groupTools: connect, the platform packs). They work as
+ * whoever calls them: they read a platform through that person's own connection, and what they save
+ * goes through the host, checked against the spaces that person may edit. So a read tool needs only the
+ * assistant (ask.send) and one that writes needs sources.edit in some space of the run. A plugin from
+ * the data directory is code the owner trusted for themself (in omem's process it can do anything
+ * omem can): its tools stay the owner's, and so do the buttons on an item's platform objects
+ * (the object-actions group).
+ */
+const pluginTools = new Map<string, ToolCapability>();
+export function setPluginToolCapabilities(tools: { name: string; write: boolean }[]) {
+  for (const t of tools) pluginTools.set(t.name, t.write ? "sources.edit" : "ask.send");
+}
+export function forgetPluginToolCapabilities(names: string[]) {
+  for (const name of names) pluginTools.delete(name);
+}
+
 type ToolScope = { spaces: string[] | null; writable?: string[] };
 const unrestricted: ToolScope = { spaces: null };
 
 export function toolCapability(name: string): ToolCapability {
   if (Object.hasOwn(toolCapabilities, name)) return toolCapabilities[name];
+  const plugin = pluginTools.get(name);
+  if (plugin) return plugin;
   return TOOL_GROUPS.find(g => g.tools.includes(name))?.capability ?? "owner";
 }
 

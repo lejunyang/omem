@@ -31,6 +31,7 @@ import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
 import { acceptCredentialDeclarations, codeHash, setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
 import { startSandbox } from "./sandbox.ts";
+import { forgetPluginToolCapabilities, setPluginToolCapabilities } from "../auth/tools.ts";
 import { importFresh } from "./fresh-import.ts";
 import { installInfo } from "./install.ts";
 import { broughtBy, seedContributions, pluginMcpSchema } from "./contributions.ts";
@@ -390,6 +391,7 @@ function groupTools(p: LoadedPlugin) {
   const shared = TOOL_GROUPS.find((g) => g.id === ACTIONS_GROUP);
   if (shared) shared.tools = [...new Set([...shared.tools, ...actions])];
   const own = names.filter((n) => !shared || !actions.has(n));
+  if (p.source === "builtin") setPluginToolCapabilities(p.tools.filter((t) => own.includes(t.name)));
   const group = TOOL_GROUPS.find((g) => g.id === p.manifest.id);
   if (group) group.tools = own;
   else if (own.length) TOOL_GROUPS.push({ capability: "owner", id: p.manifest.id, label: p.manifest.name, tools: own });
@@ -470,6 +472,7 @@ export function untrustPlugin(app: App, id: string) {
 function unloadCode(p: LoadedPlugin) {
   const names = p.tools.map((t) => t.name);
   unregisterTools(names);
+  forgetPluginToolCapabilities(names);
   const shared = TOOL_GROUPS.find((g) => g.id === ACTIONS_GROUP);
   if (shared) shared.tools = shared.tools.filter((t) => !names.includes(t));
   p.tools.splice(0);

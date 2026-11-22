@@ -42,6 +42,10 @@ updated: 2026-11-22
 - 设置 → 安全 → 凭据的出借（`CredentialLending.vue`）管 `credentials.lending`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`；设置 → 成员 → 成员的凭据（`CredentialHolds.vue`）读 `GET /api/credentials/all`，可以替成员退出。卡片链接 `?card=credentials`、`?card=credential-holds`。
 - 纯函数和测试：`web/src/lib/credentials.ts`、`test/web-credentials.test.ts`。演示数据（`scripts/doc-screens.ts`）装上 `examples/plugins/acmeauth`，另登记一个演示的代码托管凭据，三个成员各有有效 / 快到期 / 没登录的持有；演示里把成员账号沙箱当作可用。新截图 `account-credentials`。
 
+## 成员能用内置插件带来的工具（2026-11-22）
+
+从 `src/auth/tools.ts` 的 `setPluginToolCapabilities` 读起。11-21 工具改成按成员能力判定以后，内置插件的工具（connect 的 `connect_read`、`connect_watch`，各平台包）落在“仅限本人”的分组里，成员用自己的连接读平台也被拒。现在内置插件加载时按每个工具的 `write` 登记能力：只读的要 `ask.send`，会写入的要 `sources.edit`（只在调用者能改原件的空间里）。数据目录里装的插件的工具、平台对象的动作仍只给本人（`plugin-connectors` 的测试改成以本人验证连接器，并验证成员在入口被拒）。回归在 `test/plugin-tool-capability.test.ts`，原来失败的 `connect-plugin`、`platform-packs` 8 条恢复通过。
+
 ## 本人那份凭据检查出错时照旧出借本机登录（2026-11-22）
 
 从 `src/agents/credentials.ts` 的 `backendUsable`、`selectCredential` 读起。原来本人的持有只有检查成功才算可借，插件的检查一出错（或插件没有 `check`），成员就借不到本人的本机登录了，比没有凭据时更严；检查失败还要等第二天才重查。现在只有检查明确说没登录或过期才不借；`credential-registry.ts` 在插件重新登记凭据时让本人那份下一分钟重查。回归在 `test/credentials.test.ts` 最后一条。
