@@ -126,6 +126,11 @@
 
 自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
+## 插件凭据第二期
+
+- 向成员 A 开放一种凭据，成员 B 保持私有。两人对同一资源各有记录时，A 查不到 B 的记录和申请链接，本人能查到两人。三十天前的结果按未知处理。
+- 用一个支持预检的假插件查询新资源。核对查询身份和被查人、最多五人及并发二。令插件返回未知，确认该人没有新增记录。测试在 `test/credential-access.test.ts`。
+
 ## 插件凭据第一期（2026-11-22，docs/v2/credentials.md）
 
 - 假插件声明 `permissions.credential: true` 后仅进程内信任可登记；隔离模式给出需要访问账号目录的原因。修改链接插件的安装目录、状态和匹配声明后，需要重新确认信任。

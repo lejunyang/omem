@@ -465,6 +465,13 @@ def({
 });
 
 def({
+  name: "who_can",
+  description: "查询资源的权限记录、得知时间和申请链接。成员可查自己及向自己开放凭据的持有人。",
+  schema: z.object({ resource: z.string().trim().min(1).max(1024), kind: z.string().min(1).max(200).optional() }),
+  handler: async (ctx, args) => JSON.stringify(await (await import("./credential-access.ts")).whoCan(ctx.app, ctx.userId ?? OWNER, ctx.runId, args.resource, args.kind)),
+});
+
+def({
   name: "list_spaces",
   description: "列出可访问的知识空间（领域隔离：个人、项目、代码仓库、学习、通用），以及空间之间的关联。业务空间下的代码仓库缩进列在它下面：限定在业务空间时也包括这些仓库。交办工作区是进行中的交办改过的文件（临时，只读），工作区删除后消失。",
   schema: z.object({}),

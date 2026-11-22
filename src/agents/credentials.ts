@@ -71,11 +71,11 @@ function save(app: App, userId: string, kind: string, hold: Hold) {
     hold.checkedAt ?? null, JSON.stringify(hold.sharing), JSON.stringify(hold.notified), hold.lastUsedAt ?? null, hold.error ?? null,
     hold.provision ? JSON.stringify(hold.provision) : null, JSON.stringify(hold.suppliedBackends));
 }
-function usable(app: App, id: string, kind: string, s: Pick<Hold, "state" | "expiresAt"> = credentialHold(app, id, kind)) {
+export function usableCredential(app: App, id: string, kind: string, s: Pick<Hold, "state" | "expiresAt"> = credentialHold(app, id, kind)) {
   return s.state === "logged-in" && (s.expiresAt === undefined || s.expiresAt > Date.now()) && (id === OWNER || existsSync(accountHome(app, id)));
 }
 function backendUsable(app: App, id: string, backend: string, kind: string, hold = credentialHold(app, id, kind)) {
-  return hold.suppliedBackends.includes(backend) && usable(app, id, kind, hold);
+  return hold.suppliedBackends.includes(backend) && usableCredential(app, id, kind, hold);
 }
 export const credentialBackendLogin = (app: App, id: string, backend: string) => credentialKindsForBackend(backend).some(m => backendUsable(app, id, backend, m.kind));
 export type CredentialUse = { holder: string; kind: string; requester: string; backend: string };
@@ -163,6 +163,11 @@ async function timed<T>(m: CredentialMethod, ms: number, work: (signal: AbortSig
   try { return await untilAbort(signal, () => work(signal)); }
   finally { clearTimeout(timer); ctrl.abort(); }
 }
+export function precheckCredential(app: App, holder: string, m: CredentialMethod, resource: string, user: string) {
+  const check = m.precheck!;
+  return timed(m, 20_000, signal => check(context(app, holder, m, signal, "check"), { resource, user }));
+}
+
 function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | "expiring" | "failed") {
   const hold = credentialHold(app, id, m.kind), today = day(app);
   if (hold.notified[state] === today) return;
@@ -375,7 +380,7 @@ export function credentialStateRels(app: App) {
 }
 export function maybeSendCredentialOnboarding(app: App, id: string) {
   if (!member(app, id)) return false;
-  const missing = credentialMethods().filter(m => !usable(app, id, m.kind));
+  const missing = credentialMethods().filter(m => !usableCredential(app, id, m.kind));
   if (!missing.length || !run(app.db, "insert into credential_onboarding(user_id,notified_at) values(?,?) on conflict(user_id) do nothing", id, now()).changes) return false;
   notify(app, { userId: id, title: "接入清单", body: missing.map(m => `${m.name}（${m.required ? "必做" : "可选"}）${m.describe ? "：" + m.describe : ""}；覆盖 ${[...m.provides.backends, ...m.provides.commands.map(c => c.name)].join("、")}`).join("\n"), link: "#/account" });
   return true;
@@ -384,7 +389,7 @@ export type CredentialState = "none" | "ok" | "expiring" | "expired" | "logging-
 function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
   const p = logins.get(keyOf(app, id, m.kind));
   const state: CredentialState = p ? "logging-in" : s.state === "expired" || s.expiresAt !== undefined && s.expiresAt <= Date.now() ? "expired"
-    : !usable(app, id, m.kind, s) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
+    : !usableCredential(app, id, m.kind, s) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
   const missing = declaredPaths(app, m).install.filter(p => !installed(p));
   return { kind: m.kind, plugin: m.plugin, name: m.name, describe: m.describe ?? "", required: !!m.required, state,
     user: s.user, expiresAt: s.expiresAt, checkedAt: s.checkedAt, error: s.error, sharing: s.sharing,

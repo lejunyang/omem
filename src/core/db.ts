@@ -2445,6 +2445,12 @@ export const migrations: readonly string[] = [
    create index credential_check_due on credential_holds(check_day,user_id,kind);
    create index credential_lenders on credential_holds(kind,state,last_used_at desc);
    create table credential_onboarding(user_id text primary key, notified_at text not null);`,
+  `create table credential_access(
+     kind text not null, resource text not null, user_id text not null references users(id) on delete cascade,
+     allowed integer not null check(allowed in (0,1)), observed_at text not null, source text not null,
+     apply_url text, apply_at text, primary key(kind,resource,user_id)
+   );
+   create index credential_access_resource on credential_access(resource,kind,observed_at desc);`,
 ];
 
 export type Db = DatabaseSync;
