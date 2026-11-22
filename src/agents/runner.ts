@@ -1100,16 +1100,19 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         const ai = { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort };
         let result: AgentResult;
         try {
-          result = input.reuseSession && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp"
-            ? await backgroundTurn(app, prep, req, `${task}${prep.awareness}`, input.runId, watch)
-            : await runBackend(app, prep.profile, req, watch);
+          if (input.reuseSession && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp") {
+            result = await backgroundTurn(app, prep, req, `${task}${prep.awareness}`, input.runId, watch);
+            credentialSucceeded(app, prep.profile);
+          } else {
+            result = await runBackend(app, prep.profile, req, watch);
+          }
         } catch (e) {
           if (!quietAfterAll(app, input.runId, quietBefore, e)) throw e;
           emit({ type: "status", text: `这一轮已经用 stay_quiet 结束，后端收尾时出错（${(e as Error).message.slice(0, 120)}），按已完成处理` });
+          credentialSucceeded(app, prep.profile);
           result = { text: "", stopReason: "end_turn", agent: prep.profile.name ?? prep.profile.id };
         }
         revokeToolToken(prep.token);
-        credentialSucceeded(app, prep.profile);
         clearDown(app, prep.profile);
         return { ...result, profileId: prep.profile.id, ai };
       } catch (e) {

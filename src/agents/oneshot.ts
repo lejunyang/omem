@@ -1,4 +1,3 @@
-import { credentialSucceeded } from "./credentials.ts";
 import { runAccess } from "./own-sandbox.ts";
 import { ownRun } from "./own-run.ts";
 import type { App } from "../core/app.ts";
@@ -37,7 +36,6 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
         const access = runAccess(app.config.agents.fullAccess, { owner: !opts.userId || opts.userId === "owner", box: isolation.box, allowWrites: false });
         if (opts.userId) recordIsolation(app, null, opts.userId, profile);
         const r = await runBackend(app, profile, { cwd, ownSandbox: isolation.box, ...access, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
-        credentialSucceeded(app, profile);
         const text = replyOf(r).trim();
         if (text) return text;
       } catch {

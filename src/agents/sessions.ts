@@ -1,4 +1,4 @@
-import { credentialSucceeded } from "./credentials.ts";
+import { credentialSucceeded, selectedCredential } from "./credentials.ts";
 import { recordWatchMaterial, summaryOrigins } from "../core/message-origins.ts";
 import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
 import { one } from "../core/db.ts";
@@ -400,10 +400,14 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   holdForRun(app, prep.profile, ctx.run.id);
   // Tool tokens are scoped to the sender, so each person gets their own agent session.
   // A member's own account (agents/accounts.ts) is part of the key: a session never continues under another account.
-  const keyOf = (p: AgentProfile) => `${p.id}|${label}|${prep.cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(p) ? `|${accountTag(p)}` : ""}`;
+  const keyOf = ({ profile: p, cwd }: typeof prep) => {
+    const use = selectedCredential(p);
+    return `${p.id}|${label}|${cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(p) ? `|${accountTag(p)}` : ""}${use ? `|credential:${use.kind}` : ""}`;
+  };
+  const liveKey = (selected: typeof prep) => `${JSON.stringify(selected.profile.env)}|${keyOf(selected)}${selected.fullAccess ? "|full" : ""}${selected.acpWritable ? "|write" : ""}`;
   const cloudKey = (selected: typeof prep) => selected.capabilities.omemAccess === "http"
     ? "|http:" + [selected.capabilities.cloudHttp, ...selected.tools].join(",") : "";
-  const sessionKey = keyOf(prep.profile) + cloudKey(prep);
+  const sessionKey = keyOf(prep) + cloudKey(prep);
   const tooLong = t.agentTurns >= app.config.sessions.maxTurns;
   const canResume = !!t.agentSession && t.agentProfile === sessionKey && t.agentCwd === prep.cwd && !tooLong;
   const said = coordinate || handoff || watched || woken ? "" : messages.filter((m) => m.role === "user").map((m) => m.text).join("\n");
@@ -501,8 +505,8 @@ ${WAKE_NOTE}`
   };
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
-  const save = (sessionId: string | undefined, turns: number, on: AgentProfile = prep.profile) =>
-    updateThread(app, threadId, { agentProfile: keyOf(on) + cloudKey(on === prep.profile ? prep : curPrep), agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns, settings: { ...getThread(app, threadId).settings, instructionScene: (on === prep.profile ? prep : curPrep).scene.join(" "), ...(sentFocus && focus ? { focusSeen: { hash: focus.hash, turn: turns } } : {}) } });
+  const save = (sessionId: string | undefined, turns: number, selected = prep) =>
+    updateThread(app, threadId, { agentProfile: keyOf(selected) + cloudKey(selected), agentSession: sessionId ?? null, agentCwd: selected.cwd, agentTurns: turns, settings: { ...getThread(app, threadId).settings, instructionScene: selected.scene.join(" "), ...(sentFocus && focus ? { focusSeen: { hash: focus.hash, turn: turns } } : {}) } });
   // The session this thread had is not coming back once a new one replaced it: remove it from the
   // backend's own list (Codex, TraeX, Doubao keep every session the owner can browse).
   const retireReplaced = (sessionId: string | undefined) => {
@@ -515,11 +519,15 @@ ${WAKE_NOTE}`
     if (old) void retireSession(app, old, t.agentSession, t.agentCwd ?? prep.cwd, (e) => e.type === "status" && console.warn(`[omem] ${e.text}`));
   };
 
+  const checkAccount = (selected: typeof prep) => {
+    try { recordIsolation(app, ctx.run.id, userId, selected.profile); }
+    catch (e) { revokeToolToken(selected.token); throw e; }
+  };
   let firstFailure: Error | undefined;
   if (prep.profile.transport !== "acp") {
     // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
     try {
-      recordIsolation(app, ctx.run.id, userId, prep.profile);
+      checkAccount(prep);
       if (prep.isolation.note) emit({ type: "status", text: prep.isolation.note });
       const run = async (resume: boolean) =>
         runBackend(
@@ -555,7 +563,6 @@ ${WAKE_NOTE}`
         r = await run(false);
         mode = "fresh";
       }
-      credentialSucceeded(app, prep.profile);
       save(r.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
       retireReplaced(r.sessionId);
       return { text: replyOf(r), agent: r.agent, profileId: prep.profile.id, mode };
@@ -592,7 +599,6 @@ ${WAKE_NOTE}`
     orderReason = r.reason;
   };
   let mode: TurnResult["mode"] = "fresh";
-  let used: AgentProfile = prep.profile;
   let curPrep = prep;
   let answer: string | null = null;
   // An account out of quota, or a backend that broke down minutes ago, is skipped while another can take the turn.
@@ -611,20 +617,21 @@ ${WAKE_NOTE}`
     writesBefore = writeCount();
     quietBefore = quietSet(app, ctx.run.id);
     if (step > 0) {
-      used = chain[step];
-      limitFor.profile = used;
+      const candidate = chain[step];
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
+      curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: candidate.id, userId, lark, model: t.settings.model ?? candidate.model ?? undefined, effort: t.settings.effort ?? candidate.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
       // The fallback runs with this member's own account of it when they have one (prepareRun chose it).
-      used = curPrep.profile;
+      const used = curPrep.profile;
+      limitFor.profile = used;
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
       emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to: aiLabel({ profile: used.id, model: used.model, effort: used.effort }), why: left || "默认后端不可用", orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
     }
     let networkAttempt: Awaited<ReturnType<typeof beginNetworkAttempt>> | undefined;
     let networkStopped: Promise<void> | undefined;
     try {
-      recordIsolation(app, ctx.run.id, userId, used);
+      const used = curPrep.profile;
+      checkAccount(curPrep);
       if (curPrep.isolation.note) emit({ type: "status", text: curPrep.isolation.note });
       if (used.transport !== "acp") {
         const r = await runBackend(
@@ -648,16 +655,32 @@ ${WAKE_NOTE}`
           },
           emit,
         );
-        credentialSucceeded(app, used);
         answer = replyOf(r);
         mode = "fresh";
         break;
       }
       networkAttempt = await beginNetworkAttempt(app, used, { signal: ctx.signal, runId: ctx.run.id, stop: () => { networkStopped = live.get(threadId)?.handle.stopped; release(threadId); } });
       curPrep.profile = networkAttempt.profile;
-      const stepKey = `${JSON.stringify(curPrep.profile.env)}|${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${curPrep.acpWritable ? "|write" : ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(curPrep.profile) ? `|${accountTag(curPrep.profile)}` : ""}`;
+      const openSession = async (selected: typeof prep, signal: AbortSignal, resumeSessionId?: string): Promise<Live> => {
+        const { profile, cwd } = selected;
+        try {
+          const handle = await openAcp(profile, {
+            app, cwd, signal, resumeSessionId, env: networkEnvironment(app, profile),
+            cleanup: await sessionCleanup(app, profile, { cwd, runId: ctx.run.id, persistSession: true }, emit),
+            mcp: selected.mcp, extraMcp: selected.extraMcp, ownSandbox: selected.isolation.box,
+            allowWrites: selected.allowWrites, modes: selected.modes, fullAccess: selected.fullAccess,
+            acpWritable: selected.acpWritable, system: selected.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
+          }, emit);
+          const session = { threadId, key: liveKey(selected), handle, token: selected.token, lastUsed: Date.now(), busy: true };
+          live.set(threadId, session);
+          return session;
+        } catch (e) {
+          revokeToolToken(selected.token);
+          throw e;
+        }
+      };
       let l = step === 0 ? live.get(threadId) : undefined;
-      if (l && (curPrep.isolation.box || egressRequested(app.config,used) || l.key !== stepKey || !l.handle.alive() || tooLong)) {
+      if (l && (curPrep.isolation.box || egressRequested(app.config, used) || l.key !== liveKey(curPrep) || !l.handle.alive() || tooLong)) {
         release(threadId);
         l = undefined;
       }
@@ -667,34 +690,8 @@ ${WAKE_NOTE}`
         mode = "live";
         emit({ type: "status", text: `继续会话中的 ${l.handle.agent}` });
       } else {
-        let handle: AcpHandle;
-        try {
-          handle = await openAcp(
-            used,
-            {
-              app,
-              signal: networkAttempt.signal,
-              env: networkEnvironment(app, used),
-              cwd: curPrep.cwd,
-              cleanup: await sessionCleanup(app, used, { cwd: curPrep.cwd, runId: ctx.run.id, persistSession: true }, emit),
-              mcp: curPrep.mcp,
-              extraMcp: curPrep.extraMcp,
-              ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites,
-              modes: curPrep.modes,
-              fullAccess: curPrep.fullAccess, acpWritable: curPrep.acpWritable,
-              system: curPrep.system,
-              resumeSessionId: step === 0 && canResume ? t.agentSession! : undefined,
-              queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
-            },
-            emit,
-          );
-        } catch (e) {
-          revokeToolToken(curPrep.token);
-          throw e;
-        }
-        l = { threadId, key: stepKey, handle, token: curPrep.token, lastUsed: Date.now(), busy: false };
-        live.set(threadId, l);
-        mode = handle.resumed ? "resumed" : "fresh";
+        l = await openSession(curPrep, networkAttempt.signal, step === 0 && canResume ? t.agentSession! : undefined);
+        mode = l.handle.resumed ? "resumed" : "fresh";
       }
       l.busy = true;
       let done = false;
@@ -722,28 +719,24 @@ ${WAKE_NOTE}`
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          const again = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
-          const handle = await openAcp(
-            networkProfile(app, again.profile),
-            { app, signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, ownSandbox: again.isolation.box, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, acpWritable: again.acpWritable, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
-            emit,
-          );
-          l = { threadId, key: stepKey, handle, token: again.token, lastUsed: Date.now(), busy: true };
-          live.set(threadId, l);
+          curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
+          curPrep.profile = networkProfile(app, curPrep.profile);
+          limitFor.profile = curPrep.profile;
+          checkAccount(curPrep);
+          l = await openSession(curPrep, networkAttempt.signal);
           mode = "fresh";
-          curPrep = again;
-          const turn = turnMessage(again, true);
-          r = await handle.prompt(sessionPrompt(handle, { ...again, ...turn }, turn.prompt, emit), emit, networkAttempt.signal);
+          const turn = turnMessage(curPrep, true);
+          r = await l.handle.prompt(sessionPrompt(l.handle, { ...curPrep, ...turn }, turn.prompt, emit), emit, networkAttempt.signal);
         }
-        save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
+        credentialSucceeded(app, curPrep.profile);
+        save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1, curPrep);
         retireReplaced(l.handle.sessionId);
-        credentialSucceeded(app, used);
         answer = replyOf(r);
         done = true;
-        afterTurn(app, used);
-        clearDown(app, used);
+        afterTurn(app, curPrep.profile);
+        clearDown(app, curPrep.profile);
         if (step > 0) {
-          save(l.handle.sessionId, 1, used);
+          const used = curPrep.profile;
           // Not pinned by the owner: the next turns continue on the backend that answered.
           if (!pinned) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, auto: { profile: used.id, model: used.model ?? undefined, effort: used.effort ?? undefined } } });
         }
@@ -756,7 +749,7 @@ ${WAKE_NOTE}`
         const cur = live.get(threadId);
         if (cur) {
           cur.busy = false;
-          if (curPrep.isolation.box || egressRequested(app.config, used)) release(threadId);
+          if (curPrep.isolation.box || egressRequested(app.config, curPrep.profile)) release(threadId);
           else if (done) keepAlive(app, cur);
         }
       }
@@ -775,6 +768,7 @@ ${WAKE_NOTE}`
         answer = "";
         break;
       }
+      const used = curPrep.profile;
       noteQuota(app, used, e, emit);
       const busy = isRetryableAgentError(e);
       // The backend broke down (crash, dropped connection, silent past the watchdog, the upstream stream
@@ -792,5 +786,5 @@ ${WAKE_NOTE}`
   }
   // The live session keeps curPrep's token (retargeted on reuse); non-live paths revoked theirs.
   if (!live.get(threadId)) revokeToolToken(curPrep.token);
-  return { text: answer ?? "", agent: used.name ?? used.id, profileId: used.id, mode };
+  return { text: answer ?? "", agent: curPrep.profile.name ?? curPrep.profile.id, profileId: curPrep.profile.id, mode };
 }

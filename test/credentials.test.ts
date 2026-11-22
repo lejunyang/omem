@@ -8,11 +8,11 @@ import { all, one, run } from "../src/core/db.ts";
 import { createUser } from "../src/core/users.ts";
 import { closeVault, connectionSecrets, listConnections } from "../src/auth/vault.ts";
 import { accountHome, accountRun, ensureAccountHome, loggedIn } from "../src/agents/accounts.ts";
-import { allProfiles } from "../src/core/config.ts";
+import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
-import { checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
+import { checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
 import type { CredentialDef } from "../packages/plugin-sdk/credential.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { codeHash, setTrust, trustState } from "../src/plugins/trust.ts";
@@ -228,6 +228,57 @@ it("出借按自己、本人、最近使用的成员选，逐后端覆盖全局�
   await startCredentialLogin(app, "ann", kind);
   await until(() => credentialHold(app, "ann", kind).state === "logged-in");
   expect(selectedCredential(choose())?.holder).toBe("ann");
+});
+
+it("长驻会话重建换出借人时，启动、审计、最近使用和后续会话都跟随新的持有", async () => {
+  const acp = await import("../src/agents/acp.ts");
+  const dispatch = await import("../src/agents/dispatch.ts");
+  const { releaseThreadSession, threadTurn } = await import("../src/agents/sessions.ts");
+  const { createRun } = await import("../src/agents/runs.ts");
+  const { createThread, getThread } = await import("../src/agents/threads.ts");
+  const { personalSpaceId } = await import("../src/core/users.ts");
+  app.baseUrl = "http://127.0.0.1:1";
+  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fixture", transport: "acp", command: process.execPath,
+    account: { env: {}, dirs: [".fixture"], owns: [".fixture"] } })];
+  createUser(app, { id: "cora", name: "成员 C" });
+  const kind = "sample:sso";
+  add({ provides: { backends: ["fixture"] }, provide: undefined });
+  for (const id of ["bob", "cora"]) {
+    await startCredentialLogin(app, id, kind);
+    await until(() => credentialHold(app, id, kind).state === "logged-in");
+    setCredentialSharing(app, id, kind, { scope: "all" });
+  }
+  const thread = createThread(app, { channel: "web", userId: "ann", spaceId: personalSpaceId("ann"), settings: { profile: "fixture" } });
+  const open = vi.spyOn(acp, "openAcp").mockImplementation(async profile => {
+    const holder = selectedCredential(profile)!.holder;
+    let turns = 0;
+    return { sessionId: "session-" + holder, agent: "fixture", resumed: false, system: false, alive: () => true,
+      close() {}, async discard() {}, steer: async () => "idle",
+      async prompt() {
+        if (holder === "bob" && ++turns === 2) {
+          setCredentialSharing(app, holder, kind, { scope: "self" });
+          throw new Error("会话已失效");
+        }
+        return { text: holder, stopReason: "end_turn", agent: "fixture" };
+      },
+    };
+  });
+  const retire = vi.spyOn(dispatch, "retireSession").mockResolvedValue();
+  const turn = () => threadTurn({ app, run: createRun(app, { kind: "ask", userId: "ann", title: "测试出借", lane: thread.id }),
+    signal: new AbortController().signal, event() {}, output() {} }, thread.id, [], "ann", "测试消息");
+  try {
+    expect(await turn()).toMatchObject({ text: "bob", mode: "fresh" });
+    const firstUse = credentialHold(app, "bob", kind).lastUsedAt;
+    expect(firstUse).toBeTruthy();
+    expect(await turn()).toMatchObject({ text: "cora", mode: "fresh" });
+    expect(credentialHold(app, "bob", kind).lastUsedAt).toBe(firstUse);
+    expect(credentialHold(app, "cora", kind).lastUsedAt).toBeTruthy();
+    expect(getThread(app, thread.id).agentProfile).toContain("|acct:cora");
+    expect(all(app.db, "select json_extract(detail,'$.holder') as holder from audit_events where action='credentials.borrow' order by rowid"))
+      .toEqual([{ holder: "bob" }, { holder: "bob" }, { holder: "cora" }]);
+    expect(await turn()).toMatchObject({ text: "cora", mode: "live" });
+    expect(open).toHaveBeenCalledTimes(2);
+  } finally { releaseThreadSession(thread.id); open.mockRestore(); retire.mockRestore(); }
 });
 
 it("网页与机器人首次入口只发一次清单，成员只能管理自己的凭据", async () => {
