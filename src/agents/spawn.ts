@@ -52,9 +52,9 @@ export function commandExists(command: string) {
 
 /** `sandbox`: run for one user's own account, inside bubblewrap (agents/sandbox.ts); the profile carries it (`accountOf`). */
 type LaunchOptions = { cwd: string; env?: NodeJS.ProcessEnv; ownSandbox?: OwnSandbox; sandbox?: SandboxAccount; workspace?: WorkspaceMounts };
-export function launch(command: string, args: string[], opts: LaunchOptions & { stdin: "ignore" }): Omit<ChildProcessWithoutNullStreams, "stdin"> & { stdin: null };
+export function launch(command: string, args: string[], opts: LaunchOptions & { stdin: "ignore" | number }): Omit<ChildProcessWithoutNullStreams, "stdin"> & { stdin: null };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" }): ChildProcessWithoutNullStreams;
-export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" | "ignore" }) {
+export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" | "ignore" | number }) {
   // Agents get tools osdk installed (desktop control) on PATH without the owner putting osdk shims there.
   const env = withAgentPath({ ...process.env, ...opts.env });
   const resolved = resolveCommand(command, env);

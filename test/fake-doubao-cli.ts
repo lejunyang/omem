@@ -11,6 +11,16 @@ if (args.includes("--help")) {
   console.log(process.env.FAKE_CWD_HELP ?? "  -C <dir>  工作目录，必须放在业务参数之前");
   process.exit(0);
 }
+// Even -p with an inline prompt reads non-terminal stdin. The native bridge cannot read /dev/null.
+const input = fstatSync(0);
+if (input.isCharacterDevice()) {
+  console.error("invalid_arguments: 无法以 UTF-8 格式读取标准输入。");
+  process.exit(2);
+}
+if (input.isSocket()) {
+  console.error("internal_error: 无法连接标准输入，任务未启动。请重试");
+  process.exit(1);
+}
 if (process.env.FAKE_DIRECTORY) {
   const directory = opt("-C") ?? opt("--cwd") ?? opt("--directory");
   if (directory && args.indexOf(directory) > args.indexOf("-p")) process.exit(2);
@@ -32,14 +42,11 @@ if (resume === "1") {
   console.log("Error: IM request failed: 712017001");
   process.exit(1);
 }
-// 新版 CLI 的非交互任务拒绝 Node 子进程默认的 socket stdin。
-if (fstatSync(0).isSocket()) {
-  console.error("internal_error: 无法连接标准输入，任务未启动。请重试");
-  process.exit(1);
-}
 let prompt = opt("-p") ?? "";
 const file = /读取文件 (.+?)（UTF-8）/.exec(prompt)?.[1];
 if (file) prompt = readFileSync(file, "utf8");
+const context = readFileSync(0, "utf8");
+if (context) prompt += `\n\n${context}`;
 if (prompt === "fail") {
   console.log("Error: 无法启动主任务");
   process.exit(1);
