@@ -25,11 +25,46 @@ import * as reviews from "../src/agents/review-chain.ts";
 import * as runner from "../src/agents/runner.ts";
 import { prepareRun, runRole } from "../src/agents/runner.ts";
 import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
-import { revokeToolToken } from "../src/agents/tools.ts";
+import { issueToolToken, revokeToolToken } from "../src/agents/tools.ts";
+import { agentToolEnv } from "../src/agents/tool-cli.ts";
+import { startServer } from "../src/server/http.ts";
 
 const fake: AgentProfile = { id: "doubao-cli", transport: "doubao-cli", command: process.execPath, args: [resolve("test/fake-doubao-cli.ts")], env: {}, idleTimeoutMs: 60_000 };
 
 describe("doubao cli", () => {
+  it("binds concurrent turns to their own tools even when the daemon passes an old token and URL", async () => {
+    const app = testApp();
+    const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
+    const address = server.server.address() as { port: number };
+    app.baseUrl = `http://127.0.0.1:${address.port}`;
+    const temp = mkdtempSync(join(tmpdir(), "doubao-tools-'$-"));
+    const log = join(temp, "paths.log");
+    const tokens: string[] = [];
+    for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, temp);
+    try {
+      const results = await Promise.all(["one", "two"].map(async id => {
+        createSpace(app, { id, name: `项目 ${id}` });
+        const token = issueToolToken({ runId: null, spaceId: id, spaces: [id], tools: new Set(["list_spaces"]), actor: "agent" });
+        tokens.push(token);
+        return runDoubaoCli({ ...fake, env: { FAKE_STALE_TOOLS: "1", FAKE_TOOL_PATHS: log } }, {
+          cwd: app.home, prompt: "列出本轮空间", mcp: { url: "", baseUrl: app.baseUrl!, token, stdio: { command: "", args: [] }, env: agentToolEnv(app.home, app.baseUrl!, token) },
+        }, () => {});
+      }));
+      expect(results[0].text).toContain("项目 one"); expect(results[0].text).not.toContain("项目 two");
+      expect(results[1].text).toContain("项目 two"); expect(results[1].text).not.toContain("项目 one");
+      const commands = readFileSync(log, "utf8").trim().split("\n");
+      expect(new Set(commands).size).toBe(2);
+      expect(readdirSync(join(temp, "omem-doubao"))).toEqual([]);
+      for (const token of tokens) expect(commands.join("\n")).not.toContain(token);
+      await expect(runDoubaoCli({ ...fake, command: join(temp, "missing") }, { cwd: app.home, prompt: "fail",
+        mcp: { url: "", baseUrl: app.baseUrl!, token: tokens[0], stdio: { command: "", args: [] } } }, () => {})).rejects.toThrow();
+      expect(readdirSync(join(temp, "omem-doubao"))).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs(); tokens.forEach(revokeToolToken);
+      await server.close(); app.db.close();
+      rmSync(app.home, { recursive: true, force: true }); rmSync(temp, { recursive: true, force: true });
+    }
+  });
   it.each([
     ["  -C <目录> 设置工作区\n 必须放在 -p 之前", "-C"],
     ["  --cwd <DIRECTORY> Working directory", "--cwd"],

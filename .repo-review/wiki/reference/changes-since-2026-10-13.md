@@ -10,7 +10,7 @@ updated: 2026-11-23
 
 **这个文件只留最近的改动**，新的加在最前面。更早的移到了同目录的归档里，找旧改动时按关键词在这几个文件里搜，不用整份读：
 
-- [2026-11-21 下半天](./changes-2026-11-21-second-half.md)（55 节）：编码交办的用量归集、云端工具的令牌和探测、成员权限按区域和对象检查、严格运行的出网代理、插件的通知出口，以及成员的线和“等我的”、变化台账、“今天”并进简报、需求到交付的链路、远程会话交给成员、插件的检索 / 原件格式 / 页面类型、HTTP 规则的判定入口、成员能力和成员沙箱里的编码。
+- [2026-11-21 下半天](./changes-2026-11-21-second-half.md)（61 节）：编码交办的用量归集、云端工具的令牌和探测、成员权限按区域和对象检查、严格运行的出网代理、插件的通知出口，以及成员的线和“等我的”、变化台账、“今天”并进简报、需求到交付的链路、远程会话交给成员、插件的检索 / 原件格式 / 页面类型、HTTP 规则的判定入口、成员能力和成员沙箱里的编码。
 - [2026-11-21 上半天](./changes-2026-11-21-first-half.md)（60 节）：整理第一批（方案、设置页和数据页重做、其余页面整理）、工作线三四期和关注页、指标由本人确认、协同任务板、等本人处理的清单和提问卡的免打扰、按后端能力裁剪常驻说明和云端会话收尾、操作规则和规则包、对象授权、成员在助手里看流程和存规则、插件订阅事项与评审。
 - [2026-11-20](./changes-2026-11-20.md)（24 节）：关注（盯群换成关注、从历史学、主动推进）、工作线的事项上下层和现状、演示和 Chrome 扩展的录制、成员用自己的 AI 账号、工作上的指标、每晚复查回复结果、插件设置。
 - [2026-11-19](./changes-2026-11-19.md)：编码交办、流程、评审复核、会议、网页、设备和插件回调。
@@ -20,6 +20,10 @@ updated: 2026-11-23
 - [2026-10](./changes-2026-10.md)（10-13 至 10-31，128 节）：规则页与规则引擎、多 Agent 协作、访客与私聊指令、分档评审、多个飞书机器人、会议规则、插件、设备的外部 Agent、夜间复盘、原件治理、需求树。
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
+
+## 机器人文档调用与豆包每轮工具的凭据（2026-11-23）
+
+机器人文档调用此前只把 App ID 与 App Secret 交给 lark-cli，环境变量凭据通道不会换取租户令牌。现由 SDK 缓存、刷新机器人的租户令牌，再显式传给 CLI；不继承用户令牌与认证代理。豆包 CLI 共享后台可能沿用前轮的环境，每轮改用私有临时命令绑定自己的工具地址、令牌和环境，通过本轮提示给出；并发运行互不覆盖，结束及启动失败后回收。入口：`src/channels/lark-cli.ts`、`src/agents/doubao-cli.ts`、`tool-cli.ts`；回归：`test/lark-cli-auth.test.ts`、`test/doubao-cli.test.ts`。
 
 ## 远程浏览器按资料目录识别占用（2026-11-23）
 
@@ -384,40 +388,3 @@ Web 远程的“先关闭”仍由 `src/remote/sessions.ts` 传给 aad。含修�
 ## 成员查看插件卡片（2026-11-21）
 
 从 `src/plugins/http.ts` 的 `pluginView` 读起。插件列表、详情和改图标共用成员视图，保留插件权限摘要；服务和服务命令返回空数组。
-
-## 设置页的成员接口（2026-11-21）
-
-从 `src/auth/settings-sections.ts`、`src/auth/routes.ts` 读区域权限及本人专属操作。设置读写隐藏其他成员的通知出口，`GET /api/notify/outlets?user=…` 返回目标的出口和已授权种类，`GET /api/me` 提供 `ownerName`。设置卡片的权限和返回字段见 `docs/v2/multi-user.md`。
-
-进度的去重用量、落点和可见证据从 `src/agents/progress.ts` 读起。出网与云端工具状态附运行标题，云端工具的可选名单和说明从 `src/agents/cloud-tools.ts` 读起。
-
-事项链路和指标按 `src/items/member-work.ts` 的可见子树统计。晚到妙记追加会议结果的条件在 `src/channels/lark-meetings.ts`。HTTP 规则可用的执行点由 `src/agents/operation-policy.ts` 给出，空规则和已有规则口径一致。
-
-## 额外飞书机器人的群回复说明（2026-11-21）
-
-从 `src/agents/sessions.ts` 的 `threadTurn` 看群消息提示。额外机器人沿用主助手时，与主机器人一样收到结合群上下文、直接回复的说明。同事提问的那一轮还会说明哪些事由提问人决定。
-
-## 2026-11-21：云端向量、重排和插件向量
-
-- 向量的 openai 配置归一为 api，可引用 AI 服务商密钥；共同提供者层负责批量、重试、维度校验、归一化、积压和降级。模型、维度或服务变化先预览并确认重建，本地模型也一样。
-- 新增通行云端重排接口，兼容两种响应字段；非本地被动记忆门槛共用 pluginPassiveThreshold，空着使用余弦门槛。重排失败保持融合顺序。
-- SDK api.embedder 与 permissions.embedder 支持进程内和沙箱向量。宿主限制空间，插件升级模型变化先暂停通知，重新确认后才重建；新增向量权限需重新信任。
-- 新增本人专用的固定文本检测接口，GET /api/search/providers 合并向量 / 重排状态、积压、错误和未授权空间。云端网页字段另行接入。
-- 从 `src/search/embedding-provider.ts`、`embedding-index.ts`、`embeddings.ts`、`rerank.ts`、`providers.ts`、`src/plugins/process-hooks.ts`、`sandbox-runner.ts` 和 `packages/plugin-sdk/server.ts` 读起。配置和验收见 `docs/v2/architecture.md`、`plugins.md`、`acceptance.md`；假服务与沙箱回归在 `test/search-api-*.test.ts` 和 `plugin-embeddings.test.ts`。
-
-## 常驻说明按对话、后台和运行类型选节（2026-11-21）
-
-合并时留在常驻说明里的四段（它们是高频动作的规则，不是偶尔才走的流程；改成“先读分组说明再做”的话，弱一些的模型会跳过）：`roles/_common.md` 的“怎么写记忆”（只给这次能写记忆的运行）、“问本人、给本人选项”、“流程里的一个阶段”（只给承担流程阶段的运行），`roles/assistant.md` 的“提问时怎么查”。分组说明页里保留同样的内容。受影响的预算是主助手、ingest、dreamer、coder、distiller、coach 六个角色；主助手对话时的常驻说明约 1.9 万字符（这一轮开始前约 3.1 万）。
-
-从 `src/agents/instruction-sections.ts` 看小节的条件，从 `runner.ts` 和 `sessions.ts` 看场景来自哪里。群里被 @ 和关联事项的操作说明随本轮消息发送，原会话可以接着处理唤醒。写记忆、编码交办、流程验收等 17 个流程的正文移到工具分组。每轮的 `prompt.scene` 记录场景词，`test/prompt-budget.test.ts` 覆盖 44 个角色的对话和后台预算。
-
-## 设置页按区域显示，接上通知出口、出网代理、云端工具和成员的例行整理（2026-11-21）
-
-网页侧。设置页先读 `GET /api/settings/sections`，判断都在 `web/src/lib/settings-access.ts`（纯函数）和 `lib/caps.ts` 的 `settingsArea` / `settingsKey` / `settingsCard`；`Settings.vue` 的 `TAB_KEYS` 写每个分类读写哪些配置键，`SetCard` / `SetRow` / `SetGate` 带 `keys` 后决定显示和只读（`lib/set-readonly.ts`，只读的控件 `inert`），`settings/ctx.ts` 把保存的 403 换成指出键的一句话。新卡：`components/NotifyOutlets.vue`（`/api/notify/outlets`，账号页也用）、`EgressSettings.vue`（`/api/security/egress`）、`CloudToolsSettings.vue`（`/api/cloud-tools`）；成员详情的例行整理在 `MembersSettings.vue`（`/api/work/routine?user=`）。演示数据和截图在 `scripts/doc-screens.ts`（`settings-outlets`、`settings-egress`、`settings-cloud-tools`、`settings-member`）。
-
-## 网页：统一的进度视图，远程授权按原因结束，Wiki 用模板开始（2026-11-21）
-
-- 进度视图从 `web/src/components/ProgressBoard.vue` 和 `web/src/lib/progress.ts` 读起：读 `GET /api/runs/:id/progress` 或 `/api/items/:id/progress`，一块一行摘要，展开是任务的紧凑行，只读、每项链到自己的页面。运行页（`views/Runs.vue`）用它替换原来的任务板位置，任务板一块可展开原来的 `TaskBoard`；接口不存在时照旧显示 `TaskBoard`。`views/WorkDetail.vue` 和 `views/Items.vue` 各加一个“在做的”。刷新跟着 `run`、`work`、`changed item` 事件。
-- 远程页（`views/Remote.vue`、`components/RemoteGrants.vue`、`lib/remote-grants.ts`）：抽屉读 `GET /api/remote/grant-candidates`，旧服务端退回读成员列表；被授权的一侧订 `remote-grant-ended` 事件，按 `revoked` / `expired` / `closed` 说话；`GET /api/remote` 里最近结束的条目不再当成会话。
-- Wiki（`views/Wiki.vue`）：类型清单带 `templates=1`，编辑时正文为空才出现“用模板开始”。
-- 演示数据（`scripts/doc-screens.ts`）：退款改造的需求上补了两轮的编码交办和评审，新截图 `progress-board`、`work-progress`。

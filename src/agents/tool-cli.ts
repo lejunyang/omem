@@ -4,7 +4,7 @@
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** One JSON object, `key=value` pairs (a value that parses as JSON is JSON), or a file (`-` = stdin). */
 export function toolArgs(rest: string[], file?: string): Record<string, unknown> {
@@ -29,13 +29,27 @@ function object(text: string) {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+function toolCliPath() {
+  const cli = [resolve(here, "../cli.js"), resolve(here, "../cli.ts")].find(existsSync);
+  if (!cli) throw new Error("找不到 omem 命令入口");
+  return cli;
+}
+
+/** A shell backend may reuse a daemon's old environment. This private command binds one turn's access. */
+export function boundToolCommand(dir: string, env: Record<string, string>) {
+  const cli = toolCliPath();
+  const file = join(dir, "omem.cjs");
+  writeFileSync(file, `Object.assign(process.env, ${JSON.stringify(env)});\nprocess.argv = [process.execPath, ${JSON.stringify(cli)}, ...process.argv.slice(2)];\nimport(${JSON.stringify(pathToFileURL(cli).href)}).catch(e => { console.error(e.message); process.exitCode = 1; });\n`, { mode: 0o600, flag: "wx" });
+  const quote = (s: string) => process.platform === "win32" ? `"${s.replaceAll('"', '""')}"` : `'${s.replaceAll("'", "'\\''")}'`;
+  return { file, command: `${quote(process.execPath)} ${quote(file)}` };
+}
+
 /**
  * An `omem` on the agent's PATH that runs this very omem (same node, same code), whatever is
  * installed globally; written once under <home>/bin.
  */
 function shimDir(home: string) {
-  const cli = [resolve(here, "../cli.js"), resolve(here, "../cli.ts")].find(existsSync);
-  if (!cli) return null;
+  const cli = toolCliPath();
   const dir = join(home, "bin");
   const files: [string, string][] =
     process.platform === "win32"

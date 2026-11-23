@@ -2,8 +2,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
+import { Client, Domain, LoggerLevel } from "@larksuiteoapi/node-sdk";
 
 const exec = promisify(execFile);
+const botClients = new Map<string, Client>();
 
 /** `as`: whose token a call ran with (someone's connection); absent: lark-cli's own login, the owner's. */
 type Override = (args: string[], cwd?: string, as?: string) => Promise<any>;
@@ -86,8 +88,20 @@ export function larkCliWithInput(args: string[], stdin: string) {
  */
 export async function larkCliAsBot(bot: { appId: string; appSecret: string; brand?: string }, args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
   if (override) { const result = await override(args, cwd, `bot:${bot.appId}`); assertLarkResult(result); return result; }
-  const env = { ...process.env, LARKSUITE_CLI_APP_ID: bot.appId, LARKSUITE_CLI_APP_SECRET: bot.appSecret, LARKSUITE_CLI_BRAND: bot.brand ?? "feishu" };
   try {
+    const brand = bot.brand ?? "feishu";
+    const key = `${brand}:${bot.appId}`;
+    let client = botClients.get(key);
+    if (!client || client.appSecret !== bot.appSecret) {
+      client = new Client({ appId: bot.appId, appSecret: bot.appSecret, domain: brand === "lark" ? Domain.Lark : Domain.Feishu, loggerLevel: LoggerLevel.fatal });
+      botClients.set(key, client);
+    }
+    // The CLI's env credential provider consumes tokens; it does not mint one from App Secret.
+    // The SDK owns caching and renewal. Only the selected bot's tenant token reaches the CLI.
+    const token = await client.tokenManager.getTenantAccessToken();
+    if (typeof token !== "string" || !token) throw new Error("未能获取机器人的访问令牌，请检查机器人应用凭据");
+    const env: NodeJS.ProcessEnv = { ...process.env, LARKSUITE_CLI_APP_ID: bot.appId, LARKSUITE_CLI_TENANT_ACCESS_TOKEN: token, LARKSUITE_CLI_BRAND: brand, LARKSUITE_CLI_STRICT_MODE: "bot", LARKSUITE_CLI_DEFAULT_AS: "bot" };
+    for (const name of ["LARKSUITE_CLI_APP_SECRET", "LARKSUITE_CLI_USER_ACCESS_TOKEN", "LARKSUITE_CLI_TENANT_ACCESS_TOKEN_SOURCE", "LARKSUITE_CLI_AUTH_PROXY", "LARKSUITE_CLI_PROFILE"]) delete env[name];
     const { stdout } = await exec(process.execPath, [larkCliScript(), ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd, env });
     const value = JSON.parse(stdout);
     assertLarkResult(value);

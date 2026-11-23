@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, openSync, statSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, statSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
@@ -8,6 +8,7 @@ import { sandboxStartError, idleWatchdog, launch, resolveCommand, stop } from ".
 import { accountOf } from "./sandbox.ts";
 import { under } from "./own-sandbox.ts";
 import { aiUsageText, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { boundToolCommand } from "./tool-cli.ts";
 
 /**
  * The Doubao CLI (`npm i -g @bytedance/doubao-cli`, command `doubao`, signed in with `doubao login`).
@@ -15,8 +16,8 @@ import { aiUsageText, type AgentEvent, type AgentRequest, type AgentResult } fro
  * (files, shell) and prints only the final reply to stdout; stderr carries
  * `{"type":"session","session_id":…}`, and `--resume <id>` continues that conversation.
  *
- * - omem tools: through `omem tool` in its shell (the run's token and `omem` on PATH reach the
- *   commands it runs), so the instructions tell it so.
+ * - omem tools: a private command in each turn's prompt binds its token and address, even when
+ *   the shared CLI daemon launches shells with a previous turn's environment.
  * - The prompt stays in -p; stdin is an empty regular file. A long prompt goes into a file it is told to read.
  * - The npm `doubao` is a node wrapper that may stop to ask about an update, and on Windows a .cmd
  *   that cmd.exe re-parses; the native binary it starts is called directly when it is there.
@@ -115,67 +116,76 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
   let file: string | undefined;
   let prompt = req.prompt;
   const account = accountOf(profile);
-  if (!direct || prompt.length > INLINE_MAX) {
-    // In a user's sandbox /tmp is its own: the file goes in their account folder, which it sees.
-    const dir = account ? join(account.home, ".omem-prompts") : join(tmpdir(), "omem-doubao");
-    mkdirSync(dir, { recursive: true });
-    file = join(dir, `${randomUUID()}.md`);
-    writeFileSync(file, req.prompt);
-    prompt = `先完整读取文件 ${file}（UTF-8），那是这一轮的完整内容，按它执行并回答；回答里不要提这个文件。`;
-  }
-  // -p still reads non-terminal stdin as context, so give the native bridge a readable empty file.
-  const box = req.ownSandbox;
-  const ownSandbox = box && file && !box.hidden.some(path => under(file!, path))
-    ? { ...box, plan: { ...box.plan, ro: [...box.plan.ro, file] } } : box;
-  const { args, permission } = doubaoCommand(profile, req, prompt, await doubaoCwdOption(profile));
-  const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => emptyStdin(stdin => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin, sandbox })));
-  emit({ type: "status", text: aiUsageText(profile, permission === "always_allow" ? "完全访问" : "风险审批", req.selection) });
-  emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
-  if (req.runId) shellToolRuns.add(req.runId);
-  let stdout = "";
-  let stderr = "";
-  let sessionId: string | undefined;
+  const dir = account ? join(account.home, ".omem-prompts") : join(tmpdir(), "omem-doubao");
+  let toolsDir: string | undefined;
   try {
-    await new Promise<void>((resolve, reject) => {
-      const watchdog = idleWatchdog(profile.idleTimeoutMs, () => {
-        stop(child);
-        reject(new Error("豆包 CLI 长时间没有结果，已停止"));
+    if (req.mcp?.token && req.mcp.baseUrl) {
+      mkdirSync(dir, { recursive: true });
+      toolsDir = mkdtempSync(join(dir, "tools-"));
+      const bound = boundToolCommand(toolsDir, { ...req.mcp.env, OMEM_URL: req.mcp.baseUrl, OMEM_TOKEN: req.mcp.token });
+      prompt += `\n\n【本轮 omem 命令】\n${bound.command}\n本轮所有 omem 工具都用上面这个命令加上 tool 和参数（例如：上面的命令 tool help）。它已绑定本轮权限；说明里的 omem tool 都指这个入口。不要沿用前轮入口。`;
+    }
+    if (!direct || prompt.length > INLINE_MAX) {
+      // In a user's sandbox /tmp is its own: the file goes in their account folder, which it sees.
+      mkdirSync(dir, { recursive: true });
+      file = join(dir, `${randomUUID()}.md`);
+      writeFileSync(file, prompt, { mode: 0o600 });
+      prompt = `先完整读取文件 ${file}（UTF-8），那是这一轮的完整内容，按它执行并回答；回答里不要提这个文件。`;
+    }
+    // -p still reads non-terminal stdin as context, so give the native bridge a readable empty file.
+    const box = req.ownSandbox;
+    const extra = [file, toolsDir].filter((path): path is string => !!path && !box?.hidden.some(hidden => under(path, hidden)));
+    const ownSandbox = box ? { ...box, plan: { ...box.plan, ro: [...box.plan.ro, ...extra] } } : box;
+    const { args, permission } = doubaoCommand(profile, req, prompt, await doubaoCwdOption(profile));
+    const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => emptyStdin(stdin => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin, sandbox })));
+    emit({ type: "status", text: aiUsageText(profile, permission === "always_allow" ? "完全访问" : "风险审批", req.selection) });
+    emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
+    if (req.runId) shellToolRuns.add(req.runId);
+    let stdout = "";
+    let stderr = "";
+    let sessionId: string | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const watchdog = idleWatchdog(profile.idleTimeoutMs, () => {
+          stop(child);
+          reject(new Error("豆包 CLI 长时间没有结果，已停止"));
+        });
+        const onAbort = () => {
+          stop(child);
+          reject(new Error("CANCELLED"));
+        };
+        req.signal?.addEventListener("abort", onAbort, { once: true });
+        child.stdout.on("data", (d: Buffer) => {
+          stdout += d.toString();
+          watchdog.touch();
+        });
+        child.stderr.on("data", (d: Buffer) => {
+          stderr = (stderr + d.toString()).slice(-8000);
+          const id = sessionIn(stderr);
+          if (id && id !== sessionId) {
+            sessionId = id;
+            emit({ type: "session", sessionId: id, resumed: id === req.resumeSessionId });
+          }
+        });
+        child.once("error", (e) => {
+          watchdog.close();
+          reject(e);
+        });
+        child.once("close", (code) => {
+          watchdog.close();
+          req.signal?.removeEventListener("abort", onAbort);
+          if (code !== 0) reject(sandboxStartError(account, stderr) ?? new Error(`豆包 CLI 退出码 ${code}：${errorText(stdout, stderr)}`));
+          else resolve();
+        });
       });
-      const onAbort = () => {
-        stop(child);
-        reject(new Error("CANCELLED"));
-      };
-      req.signal?.addEventListener("abort", onAbort, { once: true });
-      child.stdout.on("data", (d: Buffer) => {
-        stdout += d.toString();
-        watchdog.touch();
-      });
-      child.stderr.on("data", (d: Buffer) => {
-        stderr = (stderr + d.toString()).slice(-8000);
-        const id = sessionIn(stderr);
-        if (id && id !== sessionId) {
-          sessionId = id;
-          emit({ type: "session", sessionId: id, resumed: id === req.resumeSessionId });
-        }
-      });
-      child.once("error", (e) => {
-        watchdog.close();
-        reject(e);
-      });
-      child.once("close", (code) => {
-        watchdog.close();
-        req.signal?.removeEventListener("abort", onAbort);
-        if (code !== 0) reject(sandboxStartError(account, stderr) ?? new Error(`豆包 CLI 退出码 ${code}：${errorText(stdout, stderr)}`));
-        else resolve();
-      });
-    });
+    } finally { if (req.runId) shellToolRuns.delete(req.runId); }
+    const text = stdout.trim();
+    if (text) emit({ type: "text", text });
+    return { text, stopReason: "end_turn", agent: "doubao", sessionId };
   } finally {
     if (file) rmSync(file, { force: true });
-    if (req.runId) shellToolRuns.delete(req.runId);
+    if (toolsDir) rmSync(toolsDir, { recursive: true, force: true });
   }
-  const text = stdout.trim();
-  if (text) emit({ type: "text", text });
-  return { text, stopReason: "end_turn", agent: "doubao", sessionId };
 }
 
 function sessionIn(stderr: string): string | undefined {

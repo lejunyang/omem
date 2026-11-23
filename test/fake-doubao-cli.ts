@@ -1,4 +1,5 @@
 import { appendFileSync, fstatSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 // Behaves like `doubao` in the ways omem relies on: argument errors for the probe, the reply on
 // stdout, the session on stderr. Replies "echo:<prompt>" (the file's content when told to read one).
@@ -52,6 +53,16 @@ if (prompt === "fail") {
   process.exit(1);
 }
 console.error(JSON.stringify({ type: "session", session_id: resume ?? "s-1" }));
+if (process.env.FAKE_STALE_TOOLS) {
+  // Model the shared CLI daemon: it launches shell commands with an earlier turn's credentials.
+  const command = /【本轮 omem 命令】\n([^\n]+)/.exec(prompt)?.[1];
+  if (!command) { console.log("missing bound tool command"); process.exit(1); }
+  const result = spawnSync(`${command} tool list_spaces`, { shell: true, encoding: "utf8", windowsHide: true,
+    env: { ...process.env, OMEM_TOKEN: "ot_stale", OMEM_URL: "http://127.0.0.1:1" } });
+  if (process.env.FAKE_TOOL_PATHS) appendFileSync(process.env.FAKE_TOOL_PATHS, command + "\n");
+  process.stdout.write(result.stdout ?? ""); process.stderr.write(result.stderr ?? "");
+  process.exit(result.status ?? 1);
+}
 if (prompt.endsWith("fail-after-session")) {
   console.log("Error: 任务中断");
   process.exit(1);
