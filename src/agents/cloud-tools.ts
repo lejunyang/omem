@@ -23,8 +23,12 @@ function rotate(g: Grant) {
   grants.set(g.hash, g);
   return secret;
 }
+/** Credentials of runs that ended: a cloud sandbox keeps files between sessions, so a later run may find one in an old script. */
+const retired = new Map<string, number>();
 function revoke(g: Grant, reason: string) {
   if (!grants.delete(g.hash)) return;
+  retired.set(g.hash, Date.now());
+  if (retired.size > 500) retired.delete(retired.keys().next().value!);
   audit(g.ctx.app, g.ctx.userId ?? OWNER, "cloud-tools.revoke", g.runId, { reason });
 }
 export function revokeCloud(app: App, session?: string) {
@@ -110,6 +114,7 @@ function current(g: Grant) {
 
 export async function cloudRequest(app: App, secret: string, mode: Access["mode"], name?: string, args?: unknown) {
   const g = grants.get(hash(secret));
+  if (!g && retired.has(hash(secret))) throw new HttpError(401, "这是之前一次运行的凭据，已作废：沙箱里早先留下的脚本或文件里的地址和凭据都不能用。只用本轮消息（或安全通道）里给的连接信息重新请求");
   if (!g || g.ctx.app !== app) throw new HttpError(401, "凭据无效、已使用或已作废，请停止重试");
   try {
     if (g.access.mode !== mode) throw new HttpError(403, "凭据与本轮请求不符，请停止重试");

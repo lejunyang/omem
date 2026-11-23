@@ -214,6 +214,12 @@ it.each([["header", "message"], ["url", "message"], ["header", "channel"]])("pro
     expect(JSON.stringify([history, all(app.db, "select * from audit_events"), events.mock.calls])).not.toContain(bearer);
     const status = (await server.inject({ url: "/api/cloud-tools", headers: owner })).json();
     expect(status).toMatchObject({ activeCredentials: 0, recent: [{ runId: id, title: "读资料", calls: 2, errors: 0 }] });
+    if (mode === "header") {
+      // A later run in the same cloud sandbox may find this run's credential in an old script.
+      const stale = await fetch(ingress.base + "/api/tools", { headers: { authorization: "Bearer " + bearer } });
+      expect(stale.status).toBe(401);
+      expect((await stale.json()).error).toContain("之前一次运行的凭据");
+    }
     expect(status.availableTools.map((t: { name: string }) => t.name).sort()).toEqual([...cloudToolNames].sort());
     expect(status.availableTools.every((t: { description: string }) => t.description.length > 1)).toBe(true);
     for (const path of ["cloud-tools", "cloud-tools/revoke", "cloud-tools/probe", "cloud-tools/probe/confirm"]) {

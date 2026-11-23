@@ -648,7 +648,7 @@ export function prepareRun(
     (tools.has("trial_report") || tools.has("propose_directions") || tools.has("record_finding") || tools.has("stage_report") ? "这一段的结果要用对应的工具交回，只写在回复里不算交了。" : "") +
     (access.mode === "header" ? "按连接信息设置 Authorization 请求头，POST 地址/工具名，正文是 JSON 参数对象。" :
       "GET 地址/工具名?args=URL编码的JSON参数。每个地址只用一次，下次用响应里的 next。") +
-    "只在此地址使用凭据。被拒、过期或次数用完就停止，查不到就照实说，不要编。" : "");
+    "连接信息每轮都不同：只用本轮给的，不要沿用沙箱里早先留下的脚本或文件中的地址和凭据。只在此地址使用凭据。被拒、过期或次数用完就停止，查不到就照实说，不要编。" : "");
   // Who else is on the network (core/mesh.ts): for the owner's own assistant and profiles that can ask.
   const mesh = userId === OWNER && tools.has("ask_agent") ? meshNote(app) : "";
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n${capabilities.localTools ? commandLoginNote(app, userId) : ""}` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;

@@ -175,7 +175,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const token = bearer(req);
     if (typeof token === "string" && token.startsWith("oct_") && !(req.headers.authorization?.startsWith("Bearer oct_") &&
       ((req.method === "GET" && route === "/api/tools") || (req.method === "POST" && route === "/api/tools/:name"))))
-      throw new HttpError(403, "云端凭据只允许指定的只读工具接口");
+      throw new HttpError(403, "云端凭据只能用于 GET /api/tools（看工具和参数）和 POST /api/tools/<工具名>（正文是 JSON 参数），请求头 Authorization: Bearer <凭据>");
     if (req.routeOptions.url === "/api/cloud-tools/challenge/:nonce") return;
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).

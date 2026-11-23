@@ -37,6 +37,10 @@ updated: 2026-11-24
 
 新设置 `credentials.ownerFallback`（设置 → 安全 → 凭据的出借，默认关，只在出借方式 `auto` 时生效）：成员的只读命令先用他自己的登录；没有，或跑出没登录 / 过期 / 没权限，就提醒他授权（`inviteCredential`：替他发起登录并把链接发给他，没权限时发申请链接，同种凭据每天一次），同时用开放给他的本人登录跑完这条命令，不做发起人权限预检。成员运行借用本人 HOME 时命令照常在本人环境里跑，只多一行 `[omem]` 说明，结果不记到成员名下（`report: false`）。只读声明的子命令匹配跳过前面的全局选项和值（`--site cn log …`）。成员运行的常驻说明加了一行：这些命令用谁的登录由 omem 决定，不要自己换 profile 或发起登录（`commandLoginNote`）。另外，授权完成后接着做的那一轮回复只在 `meta.runId` 里记着运行，问答页和远程会话把它当成没回答，又把运行输出显示了一遍：网页现在也认 `meta.runId`。入口：`src/agents/credential-execution.ts`、`credentials.ts`、`credential-outcome.ts`、`web/src/views/Ask.vue`、`web/src/components/RemoteChat.vue`、`CredentialLending.vue`；回归：`test/credential-execution.test.ts`。
 
+## 云端后端用了之前运行留下的凭据时说清楚（2026-11-24）
+
+豆包 OpenAPI 的云端沙箱在会话之间保留文件，后一次运行会翻到前一次留下的脚本，用里面已作废的凭据调工具，只得到“凭据无效”就停了（课题小结因此没交回结果）。现在已结束运行的凭据被用到时，回复说明这是之前一次运行的、只用本轮给的连接信息；凭据打到别的接口时，403 写明能用的两个接口和请求头；云端工具说明里加了不要沿用沙箱里旧脚本的地址和凭据（`src/agents/cloud-tools.ts`、`src/server/http.ts`、`src/agents/runner.ts`，测试 `test/cloud-http.test.ts`）。
+
 ## 豆包命令行长时间编译测试时不再被当成没有反应（2026-11-24）
 
 豆包命令行用 `-p` 跑时整轮结束才输出，编码交办里一次 Rust 编译加测试超过空闲上限（30 分钟）就被停掉，报“豆包 CLI 长时间没有结果”。现在 Linux 上每分钟看一次它的进程树（含已结束的子进程）用掉的 CPU 时间，还在涨就算有动静（`src/agents/spawn.ts` 的 `treeCpuTicks` / `touchWhileBusy`，`src/agents/doubao-cli.ts`，测试 `test/tree-cpu.test.ts`）；别的系统仍只按输出算。
