@@ -423,6 +423,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/agents/:id/machine-login": "owner",
   "POST /api/agents/:id/machine-login/input": "owner",
   "DELETE /api/agents/:id/machine-login": "owner",
+  "POST /api/agents/:id/logins": "owner",
+  "DELETE /api/agents/:id/logins": "owner",
   "GET /api/agent-registry": cap("settings.ai.view"),
   "GET /api/agents/load": cap("settings.ai.view"),
   "PUT /api/plugins/:id/settings": cap("settings.ai.edit"),

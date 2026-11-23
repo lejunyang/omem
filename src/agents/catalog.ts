@@ -84,6 +84,8 @@ export type AccountSpec = {
   /** Exit code 0 is logged in; `user` finds the account name in the output. */
   status?: { args: string[]; user?: string };
   logout?: { args: string[] };
+  /** Set only for the login, status and logout commands (not for runs): e.g. no display, so a login does not open a browser on the machine. */
+  cliEnv?: Record<string, string>;
   /** A long-lived token can stand in for a login: the variable it goes in (kept in omem's vault, per user). */
   tokenEnv?: string;
 };
@@ -117,6 +119,14 @@ export const acpCatalog: CatalogEntry[] = [
   {
     id: "antigravity", name: "Antigravity CLI", command: "agy", args: ["acp"], statePaths: ["~/.gemini/antigravity-cli"], quota: "antigravity-usage",
     install: "见 antigravity.google/docs/getting-started 安装官方 CLI，再运行 agy acp --login 登录",
+    // With a D-Bus session it keeps the login in the system keyring, one per system user whatever HOME is. With no
+    // bus it keeps it in $XDG_CONFIG_HOME/antigravity: its own config and runtime folders and no bus make a login of its own.
+    // `acp --login` prints the link and waits for the code (or the page's whole URL) to be pasted back; `-p /usage` runs no model turn.
+    account: {
+      env: { XDG_CONFIG_HOME: "{home}/.config", XDG_RUNTIME_DIR: "{home}/.run", DBUS_SESSION_BUS_ADDRESS: "" }, dirs: [".config", ".run"], owns: [".config/antigravity", ".gemini/antigravity-cli"],
+      cliEnv: { DISPLAY: "", WAYLAND_DISPLAY: "", BROWSER: "" },
+      login: { args: ["acp", "--login"], url: LOGIN_URL, input: "paste the authorization code", timeoutMs: 900_000 }, status: { args: ["-p", "/usage", "--output-format", "json"] },
+    },
   },
   // `login --device-code` prints GitHub's device page and a code; there is no status command, so the login's exit code says.
   {
@@ -289,8 +299,11 @@ export function launchConfigEnv(profile: Pick<AgentProfile, "id" | "source" | "c
   return Object.keys(next).length === Object.keys(base).length ? {} : { [spec.env]: JSON.stringify(next) };
 }
 
+/** `<id>#<n>`: another login of the same backend (agents/login-slots.ts) is the same catalog entry. */
+export const baseSource = (id: string) => id.split("#")[0];
 export function catalogEntry(id: string) {
-  return acpCatalog.find((e) => e.id === id);
+  const base = baseSource(id);
+  return acpCatalog.find((e) => e.id === base);
 }
 
 /** Profile that runs an npm-published agent through npx without a global install. */

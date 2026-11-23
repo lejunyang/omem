@@ -3,6 +3,7 @@ import type { App } from "../core/app.ts";
 import { HttpError, now } from "../core/util.ts";
 import { accountEntry, clean, cliOf, type AccountEntry } from "./accounts.ts";
 import { forgetAvailability } from "./availability.ts";
+import { canAddLogin, slotEntry, slotProfile } from "./login-slots.ts";
 import { launch, stop } from "./spawn.ts";
 
 /**
@@ -27,6 +28,10 @@ export type MachineLogin = {
   error?: string;
   checkedAt?: string;
   pending: { url: string; code?: string; input: boolean; startedAt: string; sent?: boolean } | null;
+  /** Another login of the owner's can be added for this backend (agents/login-slots.ts). */
+  canAdd: boolean;
+  /** This is such an extra login (its own folder; removing it logs out). */
+  extra: boolean;
 };
 
 type Pending = { child: ChildProcessWithoutNullStreams; url: string; code?: string; input: boolean; startedAt: string; sent?: boolean };
@@ -35,20 +40,23 @@ const known = new Map<string, Pick<MachineLogin, "state" | "user" | "error" | "c
 const key = (app: App, backend: string) => `${app.home}|${backend}`;
 
 function entryOf(app: App, backend: string): AccountEntry {
-  const e = accountEntry(app, backend);
+  const e = backend.includes("#") ? slotProfile(app, backend) && slotEntry(app, backend) : accountEntry(app, backend);
   if (!e) throw new HttpError(404, `后端 ${backend} 没有声明怎么登录`);
   return e;
 }
 
-function startCli(app: App, entry: AccountEntry, args: string[]) {
-  return launch(cliOf(entry), args, { cwd: app.home, env: {} });
+/** An extra login runs its commands with its own folder's variables (login-slots.ts); the machine's own login with the service's. */
+function startCli(app: App, entry: AccountEntry, args: string[], backend: string) {
+  const slot = slotProfile(app, backend);
+  return launch(cliOf(entry), args, { cwd: slot?.loginDir ?? app.home, env: { ...slot?.env, ...entry.account.cliEnv } });
 }
 
 export function machineLogin(app: App, backend: string): MachineLogin {
   const e = entryOf(app, backend);
   const p = pending.get(key(app, backend));
   return {
-    backend, name: e.name, canLogin: !!e.account.login, canCheck: !!e.account.status,
+    backend, name: slotProfile(app, backend)?.name ?? e.name, canLogin: !!e.account.login, canCheck: !!e.account.status,
+    canAdd: canAddLogin(app, backend), extra: !!slotProfile(app, backend),
     ...(known.get(key(app, backend)) ?? { state: "unknown" as const }),
     pending: p ? { url: p.url, ...(p.code ? { code: p.code } : {}), input: p.input, startedAt: p.startedAt, ...(p.sent ? { sent: true } : {}) } : null,
   };
@@ -63,7 +71,7 @@ export async function checkMachineLogin(app: App, backend: string): Promise<Mach
     let out = "";
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = startCli(app, e, spec.args);
+      child = startCli(app, e, spec.args, backend);
     } catch (err) {
       return resolve({ code: null, out: (err as Error).message });
     }
@@ -92,7 +100,7 @@ export function startMachineLogin(app: App, backend: string): Promise<MachineLog
   if (running) return Promise.resolve(machineLogin(app, backend));
   let child: ChildProcessWithoutNullStreams;
   try {
-    child = startCli(app, e, spec.args);
+    child = startCli(app, e, spec.args, backend);
   } catch (err) {
     throw new HttpError(500, `启动登录失败：${(err as Error).message}`);
   }

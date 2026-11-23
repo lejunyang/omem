@@ -226,7 +226,7 @@ async function saveEdit() {
       <section id="set-backends" class="card set-card backends">
         <header class="set-card-head"><h3 class="set-title">后端</h3></header>
         <div class="set-card-body">
-          <AiBackend v-for="g in backendGroups" :key="g.source" :source="g.source" :profiles="g.profiles" :all="profiles" :config="config" :load="agentLoad" @save="saveAgents" @reload="loadAgentLoad" @network="(v) => (config.agents.networkPolicies = v)" />
+          <AiBackend v-for="g in backendGroups" :key="g.source" :source="g.source" :profiles="g.profiles" :all="profiles" :config="config" :load="agentLoad" @save="saveAgents" @reload="loadAgentLoad" @changed="() => { void load(); void loadAgentLoad(); }" @network="(v) => (config.agents.networkPolicies = v)" />
           <div v-if="!backendGroups.length" class="set-pad muted">还没有可用的 Agent，从下面任选一个安装。</div>
           <div v-if="orphanNetwork.length" class="set-pad">
             <div class="small muted">没装的后端上还有网络条件：</div>

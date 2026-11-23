@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { del, get, post } from "../api";
+import { confirmDialog } from "../lib/dialog";
 import { toast } from "../store";
 import { fmt } from "../lib/time";
 
@@ -14,8 +15,11 @@ type Info = {
   backend: string; name: string; canLogin: boolean; canCheck: boolean;
   state: "unknown" | "logged-in" | "none"; user?: string; error?: string; checkedAt?: string;
   pending: { url: string; code?: string; input: boolean; startedAt: string; sent?: boolean } | null;
+  /** Another login of the owner's can be added (src/agents/login-slots.ts); this one is such a login. */
+  canAdd?: boolean; extra?: boolean;
 };
 const props = defineProps<{ backend: string }>();
+const emit = defineEmits<{ changed: [] }>();
 const info = ref<Info | null>(null);
 const busy = ref("");
 const pasted = ref("");
@@ -66,13 +70,38 @@ const send = () => run("input", async () => {
   pasted.value = "";
   return r;
 });
+async function addLogin() {
+  busy.value = "add";
+  try {
+    const r = await post<{ name: string }>(`/api/agents/${encodeURIComponent(props.backend)}/logins`, {});
+    toast(`已加上「${r.name}」，在它的卡片里登录`, "ok");
+    emit("changed");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    busy.value = "";
+  }
+}
+async function removeLogin() {
+  if (!info.value || !(await confirmDialog(`删除「${info.value.name}」？`, { message: "这个账号的登录和它的目录一起删掉，选了它的角色、档位和候选也一并去掉。账号本身不受影响，以后可以再加回来重新登录。", okText: "删除", danger: true }))) return;
+  busy.value = "remove";
+  try {
+    await del(`/api/agents/${encodeURIComponent(props.backend)}/logins`);
+    toast("已删除", "ok");
+    emit("changed");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    busy.value = "";
+  }
+}
 const copy = (text: string) => navigator.clipboard?.writeText(text).then(() => toast("已复制", "ok"), () => {});
 const when = (iso: string) => fmt(iso, { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 </script>
 
 <template>
   <section v-if="info && (info.canLogin || info.canCheck)" class="part">
-    <h4>这台机器的登录</h4>
+    <h4>{{ info.extra ? "这个账号的登录" : "这台机器的登录" }}</h4>
     <div class="row wrap small">
       <span class="badge" :class="{ accent: info.state === 'logged-in', warn: info.state === 'none' || !!info.pending }">{{ info.pending ? "登录中" : info.state === "logged-in" ? "已登录" : info.state === "none" ? "没登录" : "没检查" }}</span>
       <span v-if="info.user" class="muted ell" :title="info.user">{{ info.user }}</span>
@@ -86,7 +115,7 @@ const when = (iso: string) => fmt(iso, { hour12: false, month: "2-digit", day: "
     </div>
     <p v-if="info.state === 'none' && info.error && !info.pending" class="small muted ell" :title="info.error">{{ info.error }}</p>
     <div v-if="info.pending" class="stack tight login">
-      <span class="small">在打开的页面里登录{{ info.pending.code ? "，验证码是" : "" }}<strong v-if="info.pending.code" class="mono">{{ info.pending.code }}</strong>。{{ info.pending.input ? "页面最后会给出一段授权码，粘贴到下面提交。" : "" }}登录的是这台机器上 omem 用的账号：没有自己账号的运行都用它。</span>
+      <span class="small">在打开的页面里登录{{ info.pending.code ? "，验证码是" : "" }}<strong v-if="info.pending.code" class="mono">{{ info.pending.code }}</strong>。{{ info.pending.input ? "页面最后会给出一段授权码，粘贴到下面提交。" : "" }}{{ info.extra ? "登录的是这个后端的另一个账号，登录状态只放在它自己的目录里。" : "登录的是这台机器上 omem 用的账号：没有自己账号的运行都用它。" }}</span>
       <span class="row wrap tight-row">
         <a :href="info.pending.url" target="_blank" rel="noopener noreferrer" class="mono small ell link" :title="info.pending.url">{{ info.pending.url }}</a>
         <button class="btn ghost sm" @click="copy(info.pending.url)">复制链接</button>
@@ -98,6 +127,11 @@ const when = (iso: string) => fmt(iso, { hour12: false, month: "2-digit", day: "
       </form>
     </div>
     <p v-else-if="!info.canLogin" class="small muted">这个后端没有无界面的登录方式，要在这台机器的终端里登录。</p>
+    <div v-if="(info.canAdd || info.extra) && !info.pending" class="row wrap small">
+      <span class="muted grow">{{ info.extra ? "另加的账号：有自己的登录目录、额度和用量，可以单独选给角色或候选。" : "同一个后端可以再登录一个账号：它会作为单独的后端出现，有自己的登录目录和额度。" }}</span>
+      <button v-if="info.canAdd" class="btn ghost sm" :disabled="!!busy" @click="addLogin">{{ busy === "add" ? "正在加…" : "再加一个账号" }}</button>
+      <button v-if="info.extra" class="btn ghost sm danger" :disabled="!!busy" @click="removeLogin">{{ busy === "remove" ? "正在删除…" : "删除这个账号" }}</button>
+    </div>
   </section>
 </template>
 

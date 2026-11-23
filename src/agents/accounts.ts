@@ -105,6 +105,7 @@ export function accountStatePaths(app: App, userId: string, rels: string[]) {
 }
 
 /** mkdir 0700, refusing a symbolic link anywhere from the data folder down. Whether anything was made. */
+export const ensurePrivateDir = (base: string, rel: string) => privateDir(base, rel);
 function privateDir(base: string, rel: string) {
   let at = base;
   let made = false;
@@ -347,7 +348,7 @@ export function cliOf(entry: AccountEntry) {
 
 function start(app: App, userId: string, entry: AccountEntry, args: string[]): ChildProcessWithoutNullStreams {
   const home = ensureAccountHome(app, userId, entry);
-  return launch(cliOf(entry), args, { cwd: home, env: {}, sandbox: accountRun(app, userId, entry) });
+  return launch(cliOf(entry), args, { cwd: home, env: { ...entry.account.cliEnv }, sandbox: accountRun(app, userId, entry) });
 }
 
 /** Run one short command of the backend in the user's sandbox: its exit code and what it printed. */

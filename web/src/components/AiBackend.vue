@@ -30,7 +30,7 @@ type Candidate = { profile: string; model?: string; effort?: string; when: strin
 type Limit = { profile: string; model?: string; max: number; perDay?: number };
 
 const props = defineProps<{ source: string; profiles: Profile[]; all: Profile[]; config: any; load: AgentLoad | null }>();
-const emit = defineEmits<{ save: [agents: Record<string, unknown>, note: string]; reload: []; network: [policies: unknown[]] }>();
+const emit = defineEmits<{ save: [agents: Record<string, unknown>, note: string]; reload: []; changed: []; network: [policies: unknown[]] }>();
 const open = ref(false);
 /** This machine's login is the owner's to start (agents/machine-login.ts). */
 const isOwner = computed(() => state.me?.role === "owner" || !state.me);
@@ -260,7 +260,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
       <p v-if="blocked" class="small warn-text">{{ blocked }}</p>
       <p v-if="primary.pluginBackend" class="small" :class="primary.pluginBackend.available ? 'muted' : 'warn-text'">{{ primary.pluginBackend.available ? `这个后端来自插件 ${primary.pluginBackend.name}，启动命令写在它的清单里。` : `现在用不了：${primary.pluginBackend.reason ?? "它的插件停用了"}（来自插件 ${primary.pluginBackend.name}）。` }}<RouterLink :to="{ path: '/settings', query: { tab: 'plugins', plugin: primary.pluginBackend.plugin } }">去插件页</RouterLink></p>
 
-      <MachineLogin v-if="isOwner && !primary.peer" :backend="source" />
+      <MachineLogin v-if="isOwner && !primary.peer" :backend="source" @changed="emit('changed')" />
 
       <section class="part">
         <h4>默认模型</h4>

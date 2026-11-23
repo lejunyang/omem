@@ -8,6 +8,12 @@ omem 不自带模型。理解、调查和写作交给你已经装好的 Agent（
 
 按[官方说明](https://antigravity.google/docs/getting-started?tab=cli)安装 `agy`，在运行 omem 的机器上用同一个系统账号执行 `agy acp --login` 完成登录。omem 会识别 PATH 中的 `agy`，在 设置 → 后端与模型 中显示 **Antigravity CLI**（id 为 `antigravity`），通过 `agy acp` 运行并复用 CLI 登录；点“检测模型”读取账号可用的模型。
 
+### 同一个后端登录几个账号
+
+Codex、Claude Code、TraeX、Copilot、Antigravity CLI 这类把登录放在指定目录里、能在网页上登录的后端，可以在 设置 → 后端与模型 展开后端，在“这台机器的登录”下点 **再加一个账号**。它会作为一个单独的后端出现（如“Antigravity CLI · 账号 2”），有自己的登录目录、额度和用量，可以单独选给角色、档位或自动选择的候选。在它的卡片里点“登录”，打开链接登录后把页面给出的授权码（Antigravity 也可以贴落地页的完整网址）粘贴回来。不要了就点“删除这个账号”。
+
+成员要用自己的 Antigravity 账号时，在 账号 → 我的 AI 账号 里登录，方式相同。Gemini CLI 不能在网页上完成 Google 登录：成员只能粘贴 API key，本人的第二个号也加不了。
+
 ACP 注册表下载到数据目录的 `antigravity-acp` 是独立运行包，使用另一套认证配置，不能直接沿用 CLI 登录。已经装好并登录 `agy` 时选 **Antigravity CLI** 即可。原先手动添加的、同样以 `agy acp` 启动的后端会顶替内置的 **Antigravity CLI**，保留原来的名字和设置，并共用它的额度显示。
 
 展开后端可看各模型组的周额度、5 小时额度和重置时间，也可以点“重新读取”。omem 调用 `agy -p /usage --output-format json` 查询，这由 CLI 自己处理，不启动模型回合。额度快用完时按模型组避让，不影响其他组；分组里没报出模型范围的只展示、不用于避让。读取失败会显示原因并保留上次结果；旧版本没报结构化额度时需要升级 CLI。

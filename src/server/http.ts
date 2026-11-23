@@ -3214,6 +3214,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return (await import("../agents/machine-login.ts")).sendMachineLoginInput(app, (req.params as { id: string }).id, b.text);
   });
   server.delete("/api/agents/:id/machine-login", async (req) => (await import("../agents/machine-login.ts")).cancelMachineLogin(app, (req.params as { id: string }).id));
+  // Another login of the owner's for a backend (agents/login-slots.ts): `:id` is the backend's source; removing takes `<source>#<n>`.
+  server.post("/api/agents/:id/logins", async (req) => (await import("../agents/login-slots.ts")).addLogin(app, (req.params as { id: string }).id, who(req)));
+  server.delete("/api/agents/:id/logins", async (req) => (await import("../agents/login-slots.ts")).removeLogin(app, (req.params as { id: string }).id, who(req)));
   server.post("/api/agents/:id/install", async (req) => {
     const { installAdapter } = await import("../agents/adapter.ts");
     return { job: await installAdapter(app, (req.params as { id: string }).id) };

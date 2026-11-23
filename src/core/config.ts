@@ -137,6 +137,8 @@ export const agentProfileSchema = z.object({
   peer: z.object({ id: z.string().min(1), agent: z.string().min(1) }).optional(),
   /** Runs with the API key of this AI provider (`ai.providers`, key in secrets/ai-keys.json; core/ai-keys.ts). */
   keyRef: z.string().optional(),
+  /** Another login of the owner's (agents/login-slots.ts): the folder its `env` points the backend's login at. */
+  loginDir: z.string().optional(),
   /**
    * Each omem user can run it with an account of their own (docs/v2/agent-accounts.md §2), like the
    * catalog's backends: keyed by its source (`source`, else its id). Not for a device's agent or an API key.

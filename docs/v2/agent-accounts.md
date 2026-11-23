@@ -1,5 +1,7 @@
 # 每个人用自己的 AI 账号（设计稿）
 
+> 2026-11-24：**本人的多个账号**。设置 → 后端与模型 展开一个“登录放在可指定目录里”（`account.env` 用到 `{home}`）的后端，“这台机器的登录”下点“再加一个账号”：多出一个后端 `<后端>-<n>`（source `<后端>#<n>`，`src/agents/login-slots.ts`），`env` 把这些变量指向 `<数据目录>/logins/<id>`，HOME 不变，Agent 里跑的命令照样用本人机器上的其他登录。它的登录在自己的卡片里做（同一套“这台机器的登录”，命令带它自己的变量），额度、用量、能力按自己的 source 记，可以单独选给角色、档位和自动选择的候选；“删除这个账号”去掉这个后端、所有选了它的地方和它的目录。Antigravity CLI 也有了 `account` 声明，成员可以在“我的 AI 账号”里用网页登录自己的 agy（贴回授权码）。登录、状态和退出命令额外带 `account.cliEnv`（agy 用它清掉 `DISPLAY`，免得登录时在机器上打开浏览器）。另加账号的变量也作用于 Agent 里跑的命令（agy 的另加账号里，读 `XDG_CONFIG_HOME` 的工具看不到本人 `~/.config` 下的配置，也连不上密钥环）。
+
 > 状态：三期都已实现（第一、二期 2026-11-20 上午，第一期剩下的几项和第三期的插件登录 2026-11-20 晚），还没在真机上跑过。和 [multi-user.md](multi-user.md) 的关系：那里写的是“成员的运行用本人配置的后端”，这份把它改成“可以用成员自己的账号”。
 >
 > 2026-11-22：本人（这台机器本身）的登录也能在网页上做：设置 → 后端与模型 展开后端里的“这台机器的登录”，用同一份 `account.login` / `status` 声明，以服务自己的环境跑，不进沙箱（`src/agents/machine-login.ts`）。`account.login.input` 表示登录命令等人贴回授权页给的码：Claude Code 改用 `claude auth login` 登录（成员也能在“我的 AI 账号”里直接登录，令牌方式保留）。Copilot 用 `copilot login --device-code`，没有状态命令时按登录命令的退出码认；Gemini 只能粘贴 `GEMINI_API_KEY`（它自己的登录要真终端）。
@@ -86,6 +88,8 @@ omem 支持多人登录以后，同事在 omem 里提问、交办，背后跑的
 | Codex | `CODEX_HOME`、`HOME` | `codex login --device-auth`（设备码） | 空目录下 `login status` 为未登录 |
 | Claude Code | `CLAUDE_CONFIG_DIR`、`HOME` | `claude setup-token` 打印长期令牌，之后可用 `CLAUDE_CODE_OAUTH_TOKEN` 直接注入 | Linux 上凭据文件和配置都落在 `CLAUDE_CONFIG_DIR`（macOS 在钥匙串，不随目录变） |
 | TraeX | `TRAE_HOME`（也认 `TRAECLI_HOME`）、`HOME`、私有的 `XDG_RUNTIME_DIR` 和 `TMPDIR`（0700） | `traex login --sso-device`（设备码） | 两个空账号同时完成 ACP 初始化，各自只查自己的登录文件；技能从 `$TRAE_HOME/skills` 读；目录不能是符号链接 |
+| Antigravity CLI（`agy`） | 私有的 `XDG_CONFIG_HOME`、`XDG_RUNTIME_DIR`，**不给 D-Bus 会话总线**（`DBUS_SESSION_BUS_ADDRESS` 为空） | `agy acp --login`：打印授权链接，等人贴回授权码或落地页的完整网址 | 2026-11-24 实测 1.5.15：有 D-Bus 时登录存系统密钥环，每个系统用户只有一份，换 HOME 也读到同一个登录；没有总线时日志写“Using file-based token storage”，登录存到 `$XDG_CONFIG_HOME/antigravity`，HOME 不用换。ACP 握手没有 `session/delete`，也没有删会话的命令；有 `auth.logout`。`agy -p /usage` 不跑模型回合，没登录时在标准输入结束后报错退出，用作状态检查 |
+| Gemini CLI | `GEMINI_CLI_HOME` | 没有：`-p` 模式没登录时直接报“需要交互终端”，只有交互界面能走 Google 登录 | 网页上只能贴 `GEMINI_API_KEY`，或在终端以对应目录登一次 |
 | 豆包命令行 | `HOME`、`XDG_DATA_HOME`，**还要私有的 `/tmp` 和 PID 视图** | 二维码 | 只分开目录时，两份进程用了同一个 `/tmp` 下的服务 socket，后启动的连进了前一个账号的服务；用 bubblewrap 各给一个 `/tmp` 和 PID 命名空间后才各连各的。程序可以直接从本机安装的绝对路径启动，不用每人复制一份 |
 
 所以 omem 能用同一个办法处理所有后端：**每个用户一个账号目录（当作他的 HOME），在沙箱里启动 Agent，把对应变量指向它**。差异写进 Agent 目录（`src/agents/catalog.ts`），运行时不按 Agent 名特判。豆包这一行也说明只换目录变量不够，沙箱（私有 `/tmp`、PID 视图）是必需的，不是加固项。

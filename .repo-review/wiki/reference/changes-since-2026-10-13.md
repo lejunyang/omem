@@ -25,6 +25,10 @@ updated: 2026-11-24
 
 数据目录所在的上级目录是链接（比如 `/home` 指向另一块盘）时，课题的每个试验都被判成“工作区槽位不能指向其他目录”而 blocked。现在只拦槽位本身是链接的情况，链接和槽位按解析后的真实路径比较（`src/studies/workspace.ts` 的 `owned`，测试 `test/study-workspace.test.ts`）。
 
+## 本人的多个账号、Antigravity CLI 按人登录（2026-11-24）
+
+后端卡片“这台机器的登录”下可以“再加一个账号”：生成后端 `<后端>-<n>`，source 为 `<后端>#<n>`，`env` 把目录 `account.env` 的变量指向 `<数据目录>/logins/<id>`，HOME 不变；登录、检查走同一套机器登录，命令带它自己的变量；额度按 source 分开，`catalogEntry` 认 `#` 前的部分。删除时去掉后端、角色 / 档位 / 兜底 / 候选里的引用和目录。Antigravity CLI 加了 `account`：私有的 `XDG_CONFIG_HOME`、`XDG_RUNTIME_DIR`、空的 `DBUS_SESSION_BUS_ADDRESS`（没有总线时 agy 把登录存到 `$XDG_CONFIG_HOME/antigravity`），`acp --login` 贴回授权码，`-p /usage` 作状态检查；新的 `account.cliEnv` 只给登录、检查、退出命令。入口：`src/agents/login-slots.ts`、`machine-login.ts`、`catalog.ts`、`web/src/components/MachineLogin.vue`；回归：`test/login-slots.test.ts`。
+
 ## 命令垫片的循环兜底、同一程序的后端合并、不支持清理的会话不再重试（2026-11-24）
 
 常驻服务器上一次运行里，垫片经符号链接别名找到自己，同一条命令两分钟内套了一千八百多层，每层一个进程。除 11-23 按真实路径排除外，再加三道：垫片跳过任何内容是 omem 垫片的文件（另一个数据目录的垫片在 PATH 上时不会互相启动）；经垫片启动的子进程带嵌套层数，被垫片直接再启动或超过 8 层就拒绝，不再请求服务；服务端同一运行、同一命令和参数一分钟内超过 60 次就拒绝并在运行里记一条。凭据代跑的 PATH 按真实路径去掉垫片目录。

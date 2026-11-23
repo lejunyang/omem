@@ -125,7 +125,7 @@ describe("the catalog", () => {
     expect(ids).toEqual(expect.arrayContaining(["codex", "claude", "traex", "doubao-cli"]));
     for (const e of accountCatalog()) {
       expect(e.account.owns.length).toBeGreaterThan(0);
-      expect(Object.values(e.account.env).every((v) => v.startsWith("{home}"))).toBe(true);
+      expect(Object.values(e.account.env).every((v) => v === "" || v.startsWith("{home}"))).toBe(true);
       expect(e.account.login || e.account.tokenEnv).toBeTruthy();
     }
     expect(accountCatalog().find((e) => e.id === "codex")!.account.cli).toBe("codex");
