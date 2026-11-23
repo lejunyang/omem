@@ -579,12 +579,12 @@ it("清单只显示 HOME 相对的安装声明，绝对路径只计入缺失数�
   } finally { await server.close(); }
 });
 
-it("成员可读出借的三项设置，授予安全区域编辑权限后也只能由本人改", async () => {
+it("成员可读出借的几项设置，授予安全区域编辑权限后也只能由本人改", async () => {
   const { startServer } = await import("../src/server/http.ts");
   const server = await startServer(app, { port: 0, quiet: true });
   try {
     const headers = { authorization: "Bearer " + createApiToken(app, "ann") };
-    const policy = { credentials: { lending: "confirm", confirm: { inviteAsOwner: true } }, agents: { accountsDefault: "own" } };
+    const policy = { credentials: { lending: "confirm", ownerFallback: true, confirm: { inviteAsOwner: true } }, agents: { accountsDefault: "own" } };
     expect((await server.inject({ method: "PUT", url: "/api/settings", payload: policy })).statusCode).toBe(200);
     for (const url of ["/api/settings", "/api/settings?section=security"]) {
       const res = await server.inject({ url, headers });

@@ -8,7 +8,7 @@ import RunActivity from "./RunActivity.vue";
 import { state, toast } from "../store";
 
 /** A conversation with the assistant beside the remote screen (views/Remote.vue): the same thread as on 问答. */
-type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string };
+type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; meta?: { runId?: unknown } };
 
 const props = defineProps<{ conversationId: string | null }>();
 const emit = defineEmits<{ "update:conversationId": [id: string] }>();
@@ -28,7 +28,8 @@ async function load() {
     get<AskItem[]>(`/api/asks?conversation=${encodeURIComponent(id)}&status=pending`).catch(() => []),
   ]);
   if (mine !== seq || id !== props.conversationId) return;
-  messages.value = r.messages;
+  // A reply posted later carries its run only in meta (see Ask.vue).
+  messages.value = r.messages.map((m) => (m.runId || typeof m.meta?.runId !== "string" ? m : { ...m, runId: m.meta.runId }));
   asks.value = pending;
   await scrollDown();
 }

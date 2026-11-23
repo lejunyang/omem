@@ -70,7 +70,7 @@ import { callTool, contextToolNames, mcpTools, onToolTokenRevoked, toolContextFo
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
-import { credentialExecution } from "../agents/credential-execution.ts";
+import { credentialExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
@@ -350,7 +350,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       return { decision: "deny", message: "同一条命令一分钟内重复了 60 次以上，疑似在循环启动自己，omem 拒绝执行。" };
     }
     const decision = await commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
-    if (decision.decision === "allow" && reportable(ctx)) {
+    const reports = reportable(ctx);
+    if (decision.decision === "allow" && (reports || ownerFallback(app, ctx))) {
       const entry = credentialCommand(b.command);
       if (entry && b.credentialExecution) {
         // Extend the wrapper's offline timeout only once the authenticated host answers.
@@ -368,10 +369,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         try {
           const loan = await credentialExecution(ctx, entry, b.args, live, controller.signal);
           if (!live()) return { decision: "deny", message: "运行或操作规则已变化，请重新执行" };
-          return { ...decision, report: true, ...loan };
+          // Outcomes are reported only for the requester's own environment (the owner's HOME is not theirs).
+          return { ...decision, report: reports, ...loan };
         } finally { s.off("close", cancel); unsubscribe(); }
       }
-      if (entry) return { ...decision, report: true };
+      if (entry) return { ...decision, report: reports };
     }
     return decision;
   });

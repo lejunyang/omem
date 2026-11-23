@@ -578,8 +578,14 @@ export const configSchema = z.object({
    */
   credentials: z.object({
     lending: z.enum(["auto", "confirm", "off"]).default("auto"),
+    /**
+     * With lending "auto": a member's declared read-only command uses their own login first; when it
+     * gives nothing usable (no login, expired, no permission) they are asked to authorize and the
+     * owner's login (if lent to them) answers now — without the precheck that they could read it.
+     */
+    ownerFallback: z.boolean().default(false),
     confirm: z.object({ inviteAsOwner: z.boolean().default(false) }).default({ inviteAsOwner: false }),
-  }).default({ lending: "auto", confirm: { inviteAsOwner: false } }),
+  }).default({ lending: "auto", ownerFallback: false, confirm: { inviteAsOwner: false } }),
   review: z
     .object({
       tiers: z.array(z.object({

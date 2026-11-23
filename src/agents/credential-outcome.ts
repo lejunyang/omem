@@ -37,9 +37,18 @@ export function credentialArgs(args: string[]) {
       options.set(flag[1]!, flag[2] ?? (next !== undefined && !next.startsWith("-") ? next : true));
     }
   }
-  const words = args.filter(a => !a.startsWith("-"));
+  // Words that are not options; `value` when the word may be the value of the option right before it.
+  const words = args.flatMap((a, i) => a.startsWith("-") ? [] : [{ word: a, value: i > 0 && /^--?[\w-]+$/.test(args[i - 1]!) }]);
+  /** The subcommand starts at the first word, or after global options and their values (`--site cn log …`). */
+  function subcommandAt(sub: string[]) {
+    for (let k = 0; k + sub.length <= words.length; k++) {
+      if (sub.every((w, j) => words[k + j]!.word === w)) return true;
+      if (!words[k]!.value) return false;
+    }
+    return false;
+  }
   function matches(match: NonNullable<CredentialCommand["readOnly"]>[number]) {
-    if (match.subcommand?.some((w,i) => words[i] !== w)) return false;
+    if (match.subcommand && !subcommandAt(match.subcommand)) return false;
     if (match.args && (match.args.length !== args.length || match.args.some((w,i) => w !== args[i]))) return false;
     return Object.entries(match.options ?? {}).every(([k,v]) => typeof v === "boolean" ? v === options.has(k) : v === options.get(k));
   }
@@ -81,7 +90,7 @@ export function classifyFailure(command: CredentialCommand, output: string) {
   return { reason: "failed" as const, applyUrl: null };
 }
 
-export async function credentialOutcome(app: App, user: string, runId: string, req: z.infer<typeof outcomeSchema>) {
+export async function credentialOutcome(app: App, user: string, runId: string, req: z.infer<typeof outcomeSchema>, remind = true) {
   const entry = credentialCommand(req.command);
   if (!entry) return {};
   const { method, command } = entry;
@@ -92,7 +101,7 @@ export async function credentialOutcome(app: App, user: string, runId: string, r
     return {};
   }
   const result = classifyFailure(command, req.output);
-  if (result.reason === "expired" || result.reason === "unauthenticated") await expireCommandCredential(app, user, method);
+  if (result.reason === "expired" || result.reason === "unauthenticated") await expireCommandCredential(app, user, method, remind);
   if (resource && result.reason === "denied") recordAccess(app, method.kind, resource, user, false, runId, result.applyUrl ?? undefined);
   return result;
 }

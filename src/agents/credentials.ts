@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { CredentialContext } from "../../packages/plugin-sdk/credential.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { activeUser, findUser, OWNER } from "../core/users.ts";
+import { activeUser, findUser, OWNER, userName } from "../core/users.ts";
 import { HttpError, now, untilAbort, zonedParts } from "../core/util.ts";
 import { notify } from "../core/notify.ts";
 import { audit } from "../auth/permissions.ts";
@@ -201,13 +201,41 @@ function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | 
     body: id === OWNER ? "用的是这台机器上已有的登录，请在本机重新授权。" : `请重新授权 ${m.name}。此前的账号文件会保留。`, link: "#/account" });
   save(app, id, m.kind, { ...hold, notified: { ...hold.notified, [state]: today } });
 }
-export function expireCommandCredential(app: App, id: string, m: CredentialMethod) {
+/** `remind` false: the caller asks them itself (inviteCredential), with the login link. */
+export function expireCommandCredential(app: App, id: string, m: CredentialMethod, remind = true) {
   return serial(keyOf(app, id, m.kind), async () => {
     const hold = credentialHold(app, id, m.kind);
     if (!canCheck(id, hold.state) || m.signal.aborted) return;
     save(app, id, m.kind, { ...hold, state: "expired", refreshAt: undefined });
-    reminder(app, id, m, "expired");
+    if (remind) reminder(app, id, m, "expired");
   });
+}
+/**
+ * A member's own login gave nothing for a read-only command (credential-execution.ts, owner fallback):
+ * ask them once a day to authorize — omem starts the login and sends them its link — or, when the
+ * service said no permission, send the application link. Never waits for them.
+ */
+export function inviteCredential(app: App, id: string, m: CredentialMethod, reason: "none" | "unauthenticated" | "expired" | "denied",
+  detail: { command: string; applyUrl: string | null; covered: boolean }) {
+  if (!member(app, id) || m.signal.aborted || (reason === "denied" && !detail.applyUrl)) return;
+  const hold = credentialHold(app, id, m.kind), today = day(app);
+  const key = reason === "denied" ? `denied:${detail.applyUrl!.slice(0, 300)}` : "invite";
+  if (hold.notified[key] === today) return;
+  const kept = Object.entries(hold.notified).filter(([k, v]) => !(k === "invite" || k.startsWith("denied:")) || v === today);
+  save(app, id, m.kind, { ...hold, notified: { ...Object.fromEntries(kept), [key]: today } });
+  const covered = detail.covered ? `这次先用${userName(app, OWNER)}的登录查了；` : "";
+  if (reason === "denied") {
+    notify(app, { userId: id, title: `${m.name}：你没有这个资源的权限`,
+      body: `运行 ${detail.command} 时资源服务说你没有权限。${covered}需要以后用你自己的账号查，可前往 ${detail.applyUrl} 申请。`, link: "#/account" });
+    return;
+  }
+  const state = reason === "none" ? `你还没有在 omem 里授权${m.name}` : `你的${m.name}登录${reason === "expired" ? "过期了" : "失效了"}`;
+  const why = `运行 ${detail.command} 要用${m.name}，${state}。${covered}授权后 omem 就用你自己的账号查。`;
+  try {
+    startCredentialLogin(app, id, m.kind, why).catch(() => { /* Failure is reported to them by the login itself. */ });
+  } catch {
+    notify(app, { userId: id, title: `请授权 ${m.name}`, body: why, link: "#/account" });
+  }
 }
 function remindHold(app: App, id: string, m: CredentialMethod) {
   const s = credentialHold(app, id, m.kind);
@@ -217,7 +245,8 @@ function remindHold(app: App, id: string, m: CredentialMethod) {
 type LoginReply = { url?: string; code?: string; done?: boolean };
 type Pending = { method: CredentialMethod; abort: AbortController; reply: Promise<LoginReply>; url?: string; code?: string };
 const logins = new Map<string, Pending>();
-export function startCredentialLogin(app: App, id: string, kind: string): Promise<LoginReply> {
+/** `why`: said before the link when omem starts the login on its own (inviteCredential). */
+export function startCredentialLogin(app: App, id: string, kind: string, why?: string): Promise<LoginReply> {
   const m = requireCredential(kind);
   if (!member(app, id)) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机授权");
   const support = sandboxSupport();
@@ -242,7 +271,7 @@ export function startCredentialLogin(app: App, id: string, kind: string): Promis
         const l = z.object({ url: z.httpUrl().max(2000), code: z.string().max(64).optional() }).parse(link);
         p.url = l.url; p.code = l.code;
         notify(app, { userId: id, title: `omem 正在为你登录 ${m.name}`,
-          body: `请打开 ${l.url}${l.code ? `，验证码 ${l.code}` : ""}。11 分钟内完成授权。`, link: "#/account", urgency: "urgent" });
+          body: `${why ? why + "\n" : ""}请打开 ${l.url}${l.code ? `，验证码 ${l.code}` : ""}。11 分钟内完成授权。`, link: "#/account", urgency: "urgent" });
         answer(() => resolve(l));
       })));
       if (m.provide) await untilAbort(signal, () => m.provide!(ctx));

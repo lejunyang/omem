@@ -18,7 +18,7 @@ import { currentSpace, relTime, state, toast } from "../store";
 type Conversation = { id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
 /** A file pasted, dropped or picked into the box (src/agents/attachments.ts); the text refers to it as [label]. */
 type Attachment = { name: string; filename: string; kind: "image" | "file"; label: string; size: number };
-type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; meta?: { attachments?: Attachment[] } };
+type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; meta?: { attachments?: Attachment[]; runId?: unknown } };
 
 const route = useRoute();
 const router = useRouter();
@@ -74,7 +74,9 @@ async function loadConversation() {
   try {
     const r = await get<{ messages: Message[]; conversation?: Conversation }>(`/api/conversations/${want}`).catch(() => ({ messages: [] }));
     if (seq !== convSeq || want !== id.value) return;
-    messages.value = r.messages;
+    // A reply posted later (after an authorization or a delegated result) carries its run only in meta:
+    // without it that run would look unanswered and its output would show a second time below.
+    messages.value = r.messages.map((m) => (m.runId || typeof m.meta?.runId !== "string" ? m : { ...m, runId: m.meta.runId }));
     conversationSpace.value = "conversation" in r ? r.conversation?.space_id ?? null : null;
   } finally {
     if (seq === convSeq) convLoading.value = false;

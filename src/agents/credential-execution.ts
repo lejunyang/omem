@@ -5,7 +5,8 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { audit } from "../auth/permissions.ts";
-import { activeUser, findUser, OWNER } from "../core/users.ts";
+import type { App } from "../core/app.ts";
+import { activeUser, findUser, OWNER, userName } from "../core/users.ts";
 import { COMMAND_OUTPUT_LIMIT, COMMAND_TIMEOUT_SEC } from "../core/util.ts";
 import { catalogProfile } from "./catalog.ts";
 import { localAccount } from "./accounts.ts";
@@ -13,7 +14,8 @@ import { commandLine, gatePaths } from "./command-gate.ts";
 import { confirmCredential } from "./credential-confirm.ts";
 import { recentApplicationUrl, applicationUrl, checkAccess, knownAccess, sharedHolders } from "./credential-access.ts";
 import { commandResource, credentialArgs, credentialCommand, credentialOutcome } from "./credential-outcome.ts";
-import { availableLogin, credentialMemberEnv, usableCredential } from "./credentials.ts";
+import { credentialMethods } from "./credential-registry.ts";
+import { availableLogin, credentialHold, credentialMemberEnv, inviteCredential, usableCredential } from "./credentials.ts";
 import { launchRun } from "./egress-run.ts";
 import { decide, digest, operationWho } from "./operation-policy.ts";
 import { ownRun } from "./own-run.ts";
@@ -69,15 +71,113 @@ function commandEnv(owner: boolean, guarded: string) {
   return env;
 }
 
+type Ran = { execution: Execution; output: string; aborted: boolean };
+
+/**
+ * Run one declared read-only command with `holder`'s login (the owner's machine login, or a member's
+ * account directory) in a throwaway directory. "unavailable": this machine cannot run it as that
+ * holder (no sandbox); undefined: starting it failed.
+ */
+async function runWith(ctx: ToolContext & { runId: string }, entry: Entry, args: string[], holder: string, eligible: () => boolean,
+  runSignal: AbortSignal, event?: { reason: string; text: string; audited?: string }): Promise<Ran | "unavailable" | undefined> {
+  const { app, runId } = ctx, { method, command } = entry, owner = holder === OWNER;
+  if (!owner && !sandboxSupport().ok) return "unavailable";
+  const cwd = mkdtempSync(join(tmpdir(), "omem-credential-"));
+  try {
+    const account = owner ? undefined : { ...localAccount(app, holder, method.kind), env: credentialMemberEnv(app, holder, method),
+      borrowed: { state: command.state ?? [], dirs: [] } };
+    const profile = { ...catalogProfile({ id: method.kind, name: method.name, command: command.name }), ownAccount: account };
+    const ownBox = owner && app.config.agents.ownSandbox.mode !== "off" ? ownRun(app, profile, cwd, false).box : undefined;
+    if (owner && app.config.agents.ownSandbox.mode !== "off" && !ownBox) return "unavailable";
+    const op = { kind: "command" as const, executable: command.name, argv: args, cwd };
+    const signal = AbortSignal.any([runSignal, method.signal, AbortSignal.timeout(COMMAND_TIMEOUT_SEC * 1000)]);
+    const child = await launchRun(profile, { app, runId, context: ctx, signal }, sandbox => {
+      if (!eligible()) throw new Error("出借设置或运行已变化");
+      const rule = decide(app, op, { ...operationWho(ctx), member: holder });
+      if (rule.action !== "allow" && rule.action !== "log") throw new Error("持有人的命令规则需要另行放行");
+      if (event) {
+        const detail = { runId, holder, command: command.name, argsHash: digest(args), resource: commandResource(command, args) ?? null, reason: event.reason };
+        if (event.audited) audit(app, ctx.userId ?? OWNER, event.audited, method.kind, detail);
+        addRunEvent(app, runId, "status", { ...detail, text: event.text });
+      }
+      return launch(command.name, args, { cwd, sandbox, ownSandbox: ownBox, baseEnv: commandEnv(owner, gatePaths(app.home).guarded), directOnly: true, stdin: "ignore" });
+    });
+    const { execution, output } = await collect(child, signal);
+    return { execution, output, aborted: signal.aborted };
+  } catch {
+    return;
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+}
+
+/**
+ * Settings → 安全 → 本人的登录兜底: a member's read-only command uses the member's own login first;
+ * when that gives nothing usable (no login, expired, no permission) the member is asked to authorize
+ * and the owner's login answers this command now, without waiting for them.
+ */
+export function ownerFallback(app: App, ctx: ToolContext) {
+  const requester = ctx.userId ?? OWNER;
+  return app.config.credentials.ownerFallback && app.config.credentials.lending === "auto" && requester !== OWNER &&
+    ctx.actor === "agent" && !!ctx.runId && !ctx.shadow && !ctx.boardAccess && !ctx.view && ctx.role !== "guest" &&
+    (ctx.commandHomeUser === requester || ctx.commandHomeUser === OWNER);
+}
+
+const REASON_TEXT = { none: "没有可用的", unauthenticated: "没登录", expired: "登录过期了", denied: "没有这个资源的权限" } as const;
+
+async function fallbackExecution(ctx: ToolContext & { runId: string }, entry: Entry, args: string[], display: string, live: () => boolean, runSignal: AbortSignal) {
+  const { app, runId } = ctx, requester = ctx.userId ?? OWNER, { method, command } = entry, { kind } = method;
+  // In a run that borrows the owner's HOME the command would otherwise just run with the owner's login.
+  const isolated = ctx.commandHomeUser === requester;
+  const eligible = () => live() && !method.signal.aborted && activeUser(findUser(app, requester)) && ownerFallback(app, ctx);
+  const name = userName(app, requester);
+  let last: Execution | undefined, reason: keyof typeof REASON_TEXT = "none", applyUrl: string | null = null;
+  if (usableCredential(app, requester, kind)) {
+    const own = await runWith(ctx, entry, args, requester, eligible, runSignal,
+      { reason: "发起人自己的登录", text: `使用${name}自己的${method.name}运行 ${display}。` });
+    if (own && own !== "unavailable") {
+      last = own.execution;
+      if (own.aborted || !eligible()) return { execution: last };
+      const result: { reason?: "unauthenticated" | "expired" | "denied" | "failed"; applyUrl?: string | null } =
+        await credentialOutcome(app, requester, runId, { command: command.name, args, code: last.code, output: own.output }, false);
+      if (last.code === 0 || !result.reason || result.reason === "failed") return { execution: last };
+      reason = result.reason;
+      applyUrl = result.applyUrl ?? null;
+    } else if (isolated) return { notice: `无法用${name}自己的${method.name}运行这条命令` };
+    // Not isolated and his login cannot be started here: the owner's login below still answers.
+  }
+  const hold = credentialHold(app, OWNER, kind);
+  const lends = hold.sharing.scope === "all" || hold.sharing.scope === "members" && hold.sharing.members.includes(requester);
+  const usable = lends && availableLogin(app, OWNER, kind, hold) &&
+    app.config.agents.accountIsolation !== "require" && app.config.security.egress.mode !== "all-sandboxed";
+  inviteCredential(app, requester, method, reason, { command: display, applyUrl, covered: usable });
+  const asked = reason === "denied" ? (applyUrl ? "已把申请链接发给他" : "") : `已提醒他授权${method.name}`;
+  if (!usable || !eligible()) {
+    return { execution: last, notice: `${name}${REASON_TEXT[reason]}${method.name}${reason === "none" ? "登录" : ""}${asked ? "，" + asked : ""}。` };
+  }
+  const text = `${name}${REASON_TEXT[reason]}${method.name}${reason === "none" ? "登录" : ""}${asked ? "，" + asked : ""}；这次用${userName(app, OWNER)}的${method.name}运行 ${display}。`;
+  if (!isolated) {
+    // The command runs right after this answer, in the owner's environment this run already has.
+    const detail = { runId, holder: OWNER, command: command.name, argsHash: digest(args), resource: commandResource(command, args) ?? null, reason: "发起人的登录查不到，用本人的登录兜底" };
+    audit(app, requester, "credentials.command", kind, detail);
+    addRunEvent(app, runId, "status", { ...detail, text });
+    return { notice: text };
+  }
+  const ran = await runWith(ctx, entry, args, OWNER, eligible, runSignal, { reason: "发起人的登录查不到，用本人的登录兜底", text, audited: "credentials.command" });
+  if (!ran || ran === "unavailable") return { execution: last, notice: `无法在${userName(app, OWNER)}的环境中执行此命令` };
+  if (!ran.aborted) await credentialOutcome(app, OWNER, runId, { command: command.name, args, code: ran.execution.code, output: ran.output });
+  return { execution: ran.execution, notice: text };
+}
+
 /** Called only after the command gate allows the original argv in this run. Never called from an outcome report. */
 export async function credentialExecution(ctx: ToolContext, entry: Entry, args: string[], live: () => boolean, runSignal: AbortSignal) {
   const { app, runId } = ctx, requester = ctx.userId ?? OWNER;
   const { method, command } = entry, { kind } = method;
-  if (!runId || ctx.commandHomeUser !== requester || !live() || !activeUser(findUser(app, requester)) || usableCredential(app, requester, kind)) return;
+  if (!runId || !live() || !activeUser(findUser(app, requester))) return;
   const parsed = credentialArgs(args);
   const readOnly = command.readOnly?.find(parsed.matches);
   if (!readOnly) return;
   const display = [command.name, ...(readOnly.subcommand ?? [])].join(" ");
+  if (ownerFallback(app, ctx)) return fallbackExecution({ ...ctx, runId }, entry, args, display, live, runSignal);
+  if (ctx.commandHomeUser !== requester || usableCredential(app, requester, kind)) return;
   const resource = commandResource(command, args, parsed);
   if (!resource || !method.precheck) return;
   const denied = knownAccess(app, kind, resource, requester);
@@ -110,32 +210,30 @@ export async function credentialExecution(ctx: ToolContext, entry: Entry, args: 
         return { decision: "deny" as const, message: "持有人没同意" + (url ? "，可前往 " + url + " 申请权限" : "") };
       }
     }
-    const cwd = mkdtempSync(join(tmpdir(), "omem-credential-"));
-    try {
-      const account = owner ? undefined : { ...localAccount(app, holder.id, kind), env: credentialMemberEnv(app, holder.id, method),
-        borrowed: { state: command.state ?? [], dirs: [] } };
-      const profile = { ...catalogProfile({ id: kind, name: method.name, command: command.name }), ownAccount: account };
-      const ownBox = owner && app.config.agents.ownSandbox.mode !== "off" ? ownRun(app, profile, cwd, false).box : undefined;
-      if (owner && app.config.agents.ownSandbox.mode !== "off" && !ownBox) continue;
-      const op = { kind: "command" as const, executable: command.name, argv: args, cwd };
-      const signal = AbortSignal.any([runSignal, method.signal, AbortSignal.timeout(COMMAND_TIMEOUT_SEC * 1000)]);
-      const child = await launchRun(profile, { app, runId, context: ctx, signal }, sandbox => {
-        if (!eligible()) throw new Error("出借设置或运行已变化");
-        const lenderRule = decide(app, op, { ...operationWho(ctx), member: holder.id });
-        if (lenderRule.action !== "allow" && lenderRule.action !== "log") throw new Error("出借人的命令规则需要另行放行");
-        const detail = { runId, holder: holder.id, command: command.name, argsHash: digest(args), resource, reason: "发起人缺少有效登录，资源服务已确认读取权" };
-        audit(app, requester, "credentials.command", kind, detail);
-        addRunEvent(app, runId, "status", { ...detail, text: `使用${holder.name}的${method.name}运行 ${display} 读取 ${resource}。原因是${detail.reason}。` });
-        return launch(command.name, args, { cwd, sandbox, ownSandbox: ownBox, baseEnv: commandEnv(owner, gatePaths(app.home).guarded), directOnly: true, stdin: "ignore" });
-      });
-      const { execution, output } = await collect(child, signal);
-      last = execution;
-      if (signal.aborted) break;
-      const result = await credentialOutcome(app, holder.id, runId, { command: command.name, args, code: last.code, output });
-      if (!("reason" in result) || result.reason === "failed") break;
-    } catch {
-      return { execution: last, notice: "无法在出借人的环境中执行此命令" };
-    } finally { rmSync(cwd, { recursive: true, force: true }); }
+    const reason = "发起人缺少有效登录，资源服务已确认读取权";
+    const ran = await runWith({ ...ctx, runId }, entry, args, holder.id, eligible, runSignal,
+      { reason, text: `使用${holder.name}的${method.name}运行 ${display} 读取 ${resource}。原因是${reason}。`, audited: "credentials.command" });
+    if (ran === "unavailable") continue;
+    if (!ran) return { execution: last, notice: "无法在出借人的环境中执行此命令" };
+    last = ran.execution;
+    if (ran.aborted) break;
+    const result = await credentialOutcome(app, holder.id, runId, { command: command.name, args, code: last.code, output: ran.output });
+    if (!("reason" in result) || result.reason === "failed") break;
   }
   return { execution: last };
+}
+
+/**
+ * For a member's run with local tools: whose login the declared commands use is omem's call, so the
+ * agent runs them as they are instead of switching profiles or starting a login for the member itself.
+ */
+export function commandLoginNote(app: App, userId: string) {
+  if (userId === OWNER) return "";
+  const names = [...new Set(credentialMethods().flatMap(m => m.provides.commands.filter(c => c.readOnly?.length).map(c => c.name)))];
+  if (!names.length) return "";
+  const who = userName(app, userId), owner = userName(app, OWNER);
+  const fallback = app.config.credentials.ownerFallback && app.config.credentials.lending === "auto"
+    ? `${who}自己的登录查不到（没登录、过期、没权限）时，omem 会提醒他授权，并在同一条命令里改用${owner}的登录接着查`
+    : `${who}自己没有可用登录时，omem 按出借设置决定能不能借别人的`;
+  return `- 命令行登录：${names.join("、")} 用谁的登录由 omem 决定，直接运行即可；不要自己换 profile、配置文件或令牌，不要自己发起这些命令的登录，也不要为此让${who}去授权。${fallback}；输出里以 [omem] 开头的行会说明这次用了谁的登录、为什么\n`;
 }

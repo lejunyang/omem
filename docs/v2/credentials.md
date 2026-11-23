@@ -26,6 +26,10 @@ omem 给一个团队用以后，Agent 跑的命令行工具（公司内部的命
 | `confirm` | 不直接借：每次要用别人的凭据时，先问持有人，他同意才用（见“确认”）；出借设置在这一档表示“可以来问我”的范围 |
 | `off` | 不借也不问，只用自己的；没有就提示登录或申请权限 |
 
+**本人的登录兜底**（本人定，`credentials.ownerFallback`，默认关，只在 `auto` 档生效）：打开后，成员跑一条声明为只读的命令时，先用他自己的登录；他没有可用登录，或自己的登录跑出来是“没登录 / 过期 / 没权限”，宿主就提醒他去授权（没登录、过期：宿主替他发起登录，把链接发给他；没权限：把资源服务给的申请链接发给他；同一种凭据每天一次），同时不等他，用本人的登录把这条命令接着跑完，结果交回他的运行。这条路不做“发起人自己能不能读”的预检，借的是本人的登录和权限，所以只用本人那份、且要本人的出借设置开放给这个成员。成员的运行借用本人 HOME（没隔离）时，命令本来就在本人的环境里，宿主只在他有登录时先在他的账号目录里试一次，查不到再让命令照常在本人环境里跑；这时结果不记到成员名下。每次换用本人的登录都写运行事件和 `credentials.command` 审计，命令的标准错误里有一行 `[omem]` 说明用了谁的、为什么。
+
+成员运行的常驻说明里会写明：这些命令用谁的登录由 omem 决定，直接运行，不要自己换 profile、配置文件或令牌，也不要自己发起登录。
+
 **成员的 AI 后端用谁的登录**（管理员定，已有的 `agents.accounts`，补一个全局默认 `agents.accountsDefault`）：可以借（按上面的出借）/ 必须自己登录 / 自己没登录就换一个他登录过的后端。
 
 ## 插件登记一种凭据
@@ -47,7 +51,7 @@ api.credential({
       name: "acme",                 // 可执行文件名
       install: ["~/.local/share/acme"],        // 只读挂进成员沙箱的安装目录
       state: [".local/share/acme/data"],       // 它要写的状态目录（相对 HOME）
-      readOnly: [{ subcommand: ["db", "query"] }, { subcommand: ["log", "search"] }],   // 算只读的调用，匹配写法同操作规则的命令匹配
+      readOnly: [{ subcommand: ["db", "query"] }, { subcommand: ["log"] }],   // 算只读的调用：子命令按前缀匹配（["log"] 覆盖 log 下的全部子命令），前面的全局选项和它的值（--site cn）跳过
       resource: [{ match: { subcommand: ["db", "query"] }, key: "db:{option.instance}" }], // 这次调用碰的是哪个资源
       outcomes: {                   // 失败时怎么认原因；按顺序匹配，都不中算普通失败
         unauthenticated: [{ json: "$.code", equals: "AUTH_REQUIRED" }],
@@ -141,7 +145,7 @@ R 缺少有效持有时，宿主先按运行身份检查操作规则，再匹配
 - 个人清单在顶层向本人和活跃的非观察者个人账号返回出借方式 `lending` 和候选成员 `candidates`（至多 200 个，只含 id 和显示名）。观察者和服务账号读取自己的清单时，`candidates` 为空数组，响应省略 `lending`。
 - `:kind` 是完整的 `<插件>:<凭据 id>`。登录返回 `{url, code?}` 或 `{done: true}`，之后从自己的清单读取当前状态。出借设置的请求体为 `{"scope":"self"}`、`{"scope":"all"}` 或 `{"scope":"members","members":["member-a"]}`。成员只能操作自己的凭据。
 - 对凭据供给的后端，成员调用 `DELETE /api/me/agent-accounts/:backend` 或本人调用 `DELETE /api/agent-accounts/:user/:backend` 会收到 HTTP 409。响应为 `{error: string}`，逐份列出凭据名称、完整 kind、覆盖的后端和命令，以及当前调用者可用的凭据 DELETE 路径。持有、供给文件、出借和续签保留。调用对应的凭据 DELETE 才会退出整份授权。
-- 设置：`credentials.lending`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`，都只有本人能改，归“安全”区域。
+- 设置：`credentials.lending`、`credentials.ownerFallback`、`credentials.confirm.inviteAsOwner`、`agents.accountsDefault`，都只有本人能改，归“安全”区域。
 - 成员沙箱里只读挂载声明过的 `install`；本人沙箱的默认可写清单加上声明过的 `state`。
 
 ## 分期

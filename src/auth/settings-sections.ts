@@ -209,7 +209,7 @@ function assign(values: Values, path: string, value: unknown) {
 export function settingsView(config: Config, visible: (s: Section) => boolean, owner: boolean, credentialPolicy = visible("security")) {
   const result: Values = {};
   if (!owner && credentialPolicy) {
-    result.credentials = { lending: config.credentials.lending, confirm: { inviteAsOwner: config.credentials.confirm.inviteAsOwner } };
+    result.credentials = { lending: config.credentials.lending, ownerFallback: config.credentials.ownerFallback, confirm: { inviteAsOwner: config.credentials.confirm.inviteAsOwner } };
     assign(result, "agents.accountsDefault", config.agents.accountsDefault);
   }
   for (const [path, value] of entries(config)) {

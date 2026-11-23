@@ -342,3 +342,61 @@ it("这一次同意只放行一次，下一次拒绝时垫片以 126 退出并�
     }
   }
 });
+
+it("兜底打开后：成员没登录时不预检，提醒他授权并用本人的登录执行；本人的登录不借给他时只提醒", async () => {
+  app.config.credentials.ownerFallback = true;
+  const result = await gate();
+  expect(result.execution?.code, JSON.stringify(result)).toBe(0);
+  expect(result.notice).toContain("这次用");
+  expect(verify).not.toHaveBeenCalled();
+  expect(credentialHold(app, "reader", kind).notified.invite).toBeTruthy();
+  expect(all(app.db, "select seq from run_events where run_id=? and data like '%兜底%'", runId)).toHaveLength(1);
+  // A second command the same day does not ask again.
+  const before = all(app.db, "select * from credential_holds where user_id='reader'");
+  await gate();
+  expect(all(app.db, "select * from credential_holds where user_id='reader'")).toEqual(before);
+  // The owner's login is not lent to this member: nothing runs elsewhere, the member is still asked.
+  setCredentialSharing(app, "owner", kind, { scope: "self" });
+  const kept = await gate();
+  expect(kept.execution).toBeUndefined();
+  expect(kept.notice).not.toContain("这次用");
+});
+
+it("成员借用本人 HOME 的运行：兜底时不另起进程、不回报结果，只说明用了谁的登录；关掉时照旧不处理", async () => {
+  const borrowed = issueToolToken({ actor: "agent", userId: "reader", commandHomeUser: "owner", runId, spaceId: "personal-reader", spaces: [], tools: new Set() });
+  try {
+    expect(await gate(args, {}, borrowed)).toEqual({ status: 200, decision: "allow" });
+    app.config.credentials.ownerFallback = true;
+    const result = await gate(args, {}, borrowed);
+    expect(result).toMatchObject({ decision: "allow", report: false });
+    expect(result.execution).toBeUndefined();
+    expect(result.notice).toContain("这次用");
+    // Global options before the subcommand still match the declaration.
+    expect((await gate(["--site", "cn", "show", "--project", "sample"], {}, borrowed)).notice).toContain("这次用");
+    expect((await gate(["edit", "--project", "sample"], {}, borrowed)).notice).toBeUndefined();
+  } finally { revokeToolToken(borrowed); }
+});
+
+it.skipIf(!linuxSandbox)("兜底时先用成员自己的登录；他没权限就把申请链接发给他，再用本人的登录执行", async () => {
+  app.config.credentials.ownerFallback = true;
+  hold("reader", "self");
+  const home = accountHome(app, "reader");
+  mkdirSync(join(home, ".sample"), { recursive: true });
+  writeFileSync(join(home, ".sample", "fixture-denied"), "");
+  mkdirSync(join(ownerHome, ".sample"));
+  writeFileSync(join(ownerHome, ".sample", "fixture-account"), "sample-owner");
+  const result = await gate();
+  expect(result.execution?.code, JSON.stringify(result)).toBe(0);
+  expect(Buffer.from(result.execution.stdout, "base64").toString()).toContain("sample-owner");
+  expect(knownAccess(app, kind, resource, "reader")?.allowed).toBe(0);
+  expect(result.notice).toContain("没有这个资源的权限");
+});
+
+it("成员的运行说明里写明这些命令用谁的登录由 omem 决定，主人的运行里不写", async () => {
+  const { commandLoginNote } = await import("../src/agents/credential-execution.ts");
+  expect(commandLoginNote(app, "owner")).toBe("");
+  expect(commandLoginNote(app, "reader")).toContain(name);
+  expect(commandLoginNote(app, "reader")).not.toContain("接着查");
+  app.config.credentials.ownerFallback = true;
+  expect(commandLoginNote(app, "reader")).toContain("接着查");
+});
