@@ -1,7 +1,7 @@
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { StringDecoder } from "node:string_decoder";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { audit } from "../auth/permissions.ts";
@@ -9,7 +9,7 @@ import { activeUser, findUser, OWNER } from "../core/users.ts";
 import { COMMAND_OUTPUT_LIMIT, COMMAND_TIMEOUT_SEC } from "../core/util.ts";
 import { catalogProfile } from "./catalog.ts";
 import { localAccount } from "./accounts.ts";
-import { commandLine } from "./command-gate.ts";
+import { commandLine, gatePaths } from "./command-gate.ts";
 import { confirmCredential } from "./credential-confirm.ts";
 import { recentApplicationUrl, applicationUrl, checkAccess, knownAccess, sharedHolders } from "./credential-access.ts";
 import { commandResource, credentialArgs, credentialCommand, credentialOutcome } from "./credential-outcome.ts";
@@ -50,12 +50,16 @@ async function collect(child: ChildProcess & Pick<ChildProcessWithoutNullStreams
   } finally { signal.removeEventListener("abort", abort); }
 }
 
-function commandEnv(owner: boolean) {
+const realDir = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+
+function commandEnv(owner: boolean, guarded: string) {
   const env: NodeJS.ProcessEnv = {};
   for (const key of ["SystemRoot", "WINDIR", "PATHEXT", "LANG", "LC_ALL", "TZ", "TEMP", "TMP"]) {
     if (process.env[key]) env[key] = process.env[key];
   }
-  env.PATH = (process.env.PATH ?? "").split(delimiter).filter(p => isAbsolute(p) && p !== process.env.OMEM_COMMAND_GATE).join(delimiter);
+  // Never the command gate's wrappers (whatever path reaches them): the wrapper would ask omem again.
+  const gates = new Set([guarded, process.env.OMEM_COMMAND_GATE].filter((p): p is string => !!p).map(realDir));
+  env.PATH = (process.env.PATH ?? "").split(delimiter).filter(p => isAbsolute(p) && !gates.has(realDir(p))).join(delimiter);
   if (owner) {
     env.HOME = env.USERPROFILE = homedir();
     for (const key of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "APPDATA", "LOCALAPPDATA"]) {
@@ -122,7 +126,7 @@ export async function credentialExecution(ctx: ToolContext, entry: Entry, args: 
         const detail = { runId, holder: holder.id, command: command.name, argsHash: digest(args), resource, reason: "发起人缺少有效登录，资源服务已确认读取权" };
         audit(app, requester, "credentials.command", kind, detail);
         addRunEvent(app, runId, "status", { ...detail, text: `使用${holder.name}的${method.name}运行 ${display} 读取 ${resource}。原因是${detail.reason}。` });
-        return launch(command.name, args, { cwd, sandbox, ownSandbox: ownBox, baseEnv: commandEnv(owner), directOnly: true, stdin: "ignore" });
+        return launch(command.name, args, { cwd, sandbox, ownSandbox: ownBox, baseEnv: commandEnv(owner, gatePaths(app.home).guarded), directOnly: true, stdin: "ignore" });
       });
       const { execution, output } = await collect(child, signal);
       last = execution;

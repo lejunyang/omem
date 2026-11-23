@@ -72,7 +72,7 @@ import { all, one, run } from "../core/db.ts";
 import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
 import { credentialExecution } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
-import { approverChoices, commandGate, commandGateDir } from "../agents/command-gate.ts";
+import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, rezoneScheduler, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
@@ -344,6 +344,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     const b = q(z.object({ credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
+    const burst = gateBurst([ctx.runId ?? digest(bearer(req)), b.command, digest(b.args)].join("\n"));
+    if (burst) {
+      if (ctx.runId && burst === "first") addRunEvent(app, ctx.runId, "status", { text: `命令 ${b.command} 一分钟内以同样的参数请求了 60 次以上，疑似进程在循环启动自己，已拒绝。` });
+      return { decision: "deny", message: "同一条命令一分钟内重复了 60 次以上，疑似在循环启动自己，omem 拒绝执行。" };
+    }
     const decision = await commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
     if (decision.decision === "allow" && reportable(ctx)) {
       const entry = credentialCommand(b.command);

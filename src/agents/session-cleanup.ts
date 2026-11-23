@@ -182,7 +182,11 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
     if (e instanceof NetworkUnavailableError || e instanceof PluginBackendUnavailable) return; // Defer without spending the cleanup retry budget.
     const attempts = p.attempts + 1;
     const why = (e as Error).message.slice(0, 160);
-    if (attempts >= GIVE_UP_AFTER) {
+    // A backend without session/delete will not gain it by waiting: stop now (it can still be retried by hand).
+    if ((e as { unsupportedCleanup?: boolean }).unsupportedCleanup) {
+      update(app, p, "attempts = ?, failed_at = ?, failure_reason = ?", attempts, now(), why);
+      emit({ type: "status", text: `后端会话 ${p.session_id}（${p.profile_id ?? p.transport}）不能自动清理，不再重试：${why}` });
+    } else if (attempts >= GIVE_UP_AFTER) {
       update(app, p, "attempts = ?, failed_at = ?, failure_reason = ?", attempts, now(), why);
       emit({ type: "status", text: `后端会话 ${p.session_id}（${p.profile_id ?? p.transport}）清理了 ${attempts} 次都失败，不再重试：${why}` });
     } else {

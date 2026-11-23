@@ -51,4 +51,6 @@ it("retires a thread's replaced ACP session through a connection of its own", as
   await retireSession(app, { ...profile, env: { FAKE_MODE: "thread" } }, "other", process.cwd(), (e) => e.type === "status" && events.push(e.text));
   expect(events.some(t => t.includes("不支持自动清理"))).toBe(true);
   expect(all(app.db, "select session_id,ready from session_cleanup")).toEqual([{ session_id: "other", ready: 1 }]);
+  // Waiting will not make the backend support it: no retries, but the row stays for a manual retry.
+  expect(all(app.db, "select attempts, failed_at is not null failed from session_cleanup")).toEqual([{ attempts: 1, failed: 1 }]);
 });

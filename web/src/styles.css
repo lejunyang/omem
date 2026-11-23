@@ -1221,7 +1221,7 @@ a.pg-tt:hover { color: var(--accent); }
 a.pg-out { color: var(--accent); }
 .pg-out.mono { font-family: var(--mono); font-size: 12px; }
 .pg-more { color: var(--muted); white-space: nowrap; }
-.pg-res { font-size: 12px; color: var(--muted); white-space: nowrap; text-align: right; }
+.pg-res { grid-column: -2; font-size: 12px; color: var(--muted); white-space: nowrap; text-align: right; }
 .pg-task.tone-owner .pg-res { color: var(--warn); font-weight: 600; }
 .pg-task.tone-danger .pg-res { color: var(--danger); font-weight: 600; }
 .pg-task.tone-running .pg-res { color: var(--accent); }

@@ -6,6 +6,21 @@ import { agentProfileSchema, builtinProfiles, allProfiles, configSchema } from "
 import { codexArgs } from "../src/agents/cli.ts";
 
 describe("ACP agent catalog", () => {
+  it("a saved backend running a built-in entry's program takes its place and shares its source", () => {
+    const saved = { id: "antigravity-acp", name: "Google Antigravity (ACP)", transport: "acp", command: "/home/u/.local/bin/agy", args: ["acp"], model: "gemini-x" };
+    const config = configSchema.parse({ agents: { profiles: [saved] } });
+    const ids = allProfiles(config).map(p => p.id);
+    expect(ids).toContain("antigravity-acp");
+    expect(ids).not.toContain("antigravity");
+    expect(allProfiles(config).find(p => p.id === "antigravity-acp")).toMatchObject({ source: "antigravity", model: "gemini-x" });
+    // The built-in id in use, its own environment, or a program omem downloaded from the registry: both stay.
+    for (const c of [
+      { agents: { profiles: [saved], roles: { assistant: "antigravity" } } },
+      { agents: { profiles: [{ ...saved, env: { HOME: "/tmp/other" } }] } },
+      { agents: { profiles: [{ ...saved, command: "/home/u/.omem/agents/antigravity-acp/1.0.0/agy" }] } },
+    ]) expect(allProfiles(configSchema.parse(c)).map(p => p.id)).toEqual(expect.arrayContaining(["antigravity", "antigravity-acp"]));
+  });
+
   it("builtin profiles are valid and unique", () => {
     const ids = builtinProfiles.map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);

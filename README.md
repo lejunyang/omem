@@ -127,7 +127,7 @@ flowchart LR
 
 豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。
 
-Antigravity CLI 按 PATH 中的 `agy` 识别，以 `agy acp` 启动并复用 CLI 登录。额度通过 CLI 自己的 `/usage` 读取，不消耗模型额度；后端页显示各模型组的已用比例和重置时间，快用完时按模型组避让。ACP 注册表下载的 `antigravity-acp` 是另一份独立运行包，认证配置与 CLI 分开；已经装好并登录 `agy` 时直接选 `antigravity`。
+Antigravity CLI 按 PATH 中的 `agy` 识别，以 `agy acp` 启动并复用 CLI 登录。额度通过 CLI 自己的 `/usage` 读取，不消耗模型额度；后端页显示各模型组的已用比例和重置时间，快用完时按模型组避让。ACP 注册表下载的 `antigravity-acp` 是另一份独立运行包，认证配置与 CLI 分开；已经装好并登录 `agy` 时直接选 `antigravity`；原先手动添加、同样以 `agy acp` 启动的后端会顶替它，保留原名和设置并共用额度。
 
 云端会话可以按运行授权检索、读原文，课题的阶段也能交给云端后端跑并用工具交结果。默认关闭。本人探测并确认后端后，可指定它能使用的工具；云端和这台机器在同一个内网时，可以允许用内网的 http 地址。每次调用沿用成员和运行的空间权限。[配置云端工具](docs/v2/external-access.md#云端后端调工具)。
 

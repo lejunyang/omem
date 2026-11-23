@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { acpCatalog, catalogProfile, referencedPluginProfiles, upgradeProfileArgs } from "../agents/catalog.ts";
@@ -1569,8 +1569,31 @@ export function allProfiles(config: Config): AgentProfile[] {
   for (const p of referencedPluginProfiles(referenced)) byId.set(p.id, p);
   for (const e of acpCatalog.filter(e => e.plugin)) byId.set(e.id, catalogProfile(e));
   for (const p of keyedProfiles(config)) byId.set(p.id, p);
-  for (const p of config.agents.profiles) byId.set(p.id, p.peer ? peerProfile(p) : upgradeProfileArgs(p));
+  for (const p of config.agents.profiles) {
+    const profile = p.peer ? peerProfile(p) : upgradeProfileArgs(p);
+    const twin = p.peer ? undefined : sameProgramBuiltin(profile);
+    // A saved backend that runs a built-in entry's program the same way is that backend under
+    // another name: it takes the entry's place (unless the entry's own id is in use) and shares its
+    // quota, login and account folder.
+    if (twin && !referenced.has(twin.id) && !config.agents.profiles.some(o => o.id === twin.id)) {
+      byId.delete(twin.id);
+      byId.set(p.id, { ...profile, source: profile.source ?? twin.source ?? twin.id });
+    } else byId.set(p.id, profile);
+  }
   return [...byId.values()];
+}
+
+/**
+ * The built-in entry whose program a saved profile runs: the same command name (a path to it
+ * counts), the same arguments, no environment of its own. Programs omem downloaded from the ACP
+ * registry (under <home>/agents/<id>/<version>/) are their own packages and never match.
+ */
+function sameProgramBuiltin(p: AgentProfile): AgentProfile | undefined {
+  if (p.source || p.keyRef || Object.keys(p.env ?? {}).length || /[\\/]agents[\\/][^\\/]+[\\/][^\\/]+[\\/]/.test(p.command)) return undefined;
+  const name = basename(p.command).replace(/\.(exe|cmd|bat|ps1)$/i, "");
+  const norm = (s: string) => (process.platform === "win32" ? s.toLowerCase() : s);
+  return builtinProfiles.find(b => b.id !== p.id && b.transport === p.transport && !Object.keys(b.env ?? {}).length && norm(b.command) === norm(name) &&
+    JSON.stringify(b.args) === JSON.stringify(p.args));
 }
 
 /**

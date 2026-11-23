@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
-import { GATE_EXIT, matchCommandRule, syncCommandGate } from "../src/agents/command-gate.ts";
+import { GATE_EXIT, gateBurst, matchCommandRule, syncCommandGate } from "../src/agents/command-gate.ts";
 import { agentToolEnv } from "../src/agents/tool-cli.ts";
 import { issueToolToken } from "../src/agents/tools.ts";
 import { createThread } from "../src/agents/threads.ts";
@@ -141,6 +141,34 @@ describe("command rules", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("REAL status");
     expect(r.err).toBe("");
+  });
+
+  it("skips another data directory's wrappers, so two of them on PATH cannot start each other", async () => {
+    app.config.security.commandRules = [rule({ command: "acmectl", args: "^deploy" })];
+    const other = mkdtempSync(join(tmpdir(), "omem-gate-other-"));
+    const otherDir = syncCommandGate(other, [rule({ command: "acmectl", args: "^deploy" })])!;
+    const env = envWith();
+    env[pathKey] = [syncCommandGate(app.home, app.config.security.commandRules), otherDir, realDir, process.env[pathKey]].filter(Boolean).join(delimiter);
+    const r = await acmectl(["status"], env);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("REAL status");
+  });
+
+  it("refuses when wrappers are already nested too deep", async () => {
+    app.config.security.commandRules = [rule({ command: "acmectl", args: "^deploy" })];
+    const r = await acmectl(["status"], envWith({ OMEM_GATE_DEPTH: "8" }));
+    expect(r.code).toBe(GATE_EXIT);
+    expect(r.out).not.toContain("REAL");
+    expect(r.err).toContain("循环启动");
+  });
+
+  it("the server refuses the same call repeated too fast", () => {
+    const key = `burst-${Math.random()}`;
+    const at = Date.now();
+    for (let i = 0; i < 60; i++) expect(gateBurst(key, at + i)).toBe(false);
+    expect(gateBurst(key, at + 60)).toBe("first");
+    expect(gateBurst(key, at + 61)).toBe("again");
+    expect(gateBurst(key, at + 120_000)).toBe(false);
   });
 
   it("a call no rule matches runs the real command", async () => {
