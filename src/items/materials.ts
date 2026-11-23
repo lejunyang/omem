@@ -175,18 +175,38 @@ export async function materialSpaces(app: App, itemId: string, userId: string) {
   return [...new Set((await materialViews(app, itemId, userId)).filter((m) => m.readable && !m.missing && m.spaceId && m.kind !== "run").map((m) => m.spaceId!))];
 }
 
+/**
+ * Whether a delegation or branch review in `repos` is the item's own work: it changes the item's code,
+ * a repository of the item's earlier delegations and reviews or of its repository materials (an item
+ * with none yet takes any). Work in another repository done while working on the item (a tool's bug
+ * found while testing it) has the item only as background, `contextItemId`: its materials, not its
+ * requirement points, flow or timeline, and it is not one of the item's materials.
+ */
+export function workItem(app: App, itemId: string | undefined, repos: string[]): { itemId?: string; contextItemId?: string } {
+  if (!itemId) return {};
+  const known = new Set<string>();
+  for (const m of all<{ kind: string; ref: string; meta: string; repos: string | null }>(app.db, `select m.kind, m.ref, m.meta, json_extract(r.input, '$.repos') repos
+    from item_materials m left join runs r on m.kind = 'run' and r.id = m.ref and r.kind = 'code' where m.item_id = ? and m.kind in ('run', 'repo', 'space')`, itemId)) {
+    if (m.kind === "run") for (const s of json<string[]>(m.repos, [])) known.add(s);
+    else if (m.kind === "repo") known.add(json<{ space?: string }>(m.meta, {}).space ?? m.ref.split("#")[0]);
+    else if (findSpace(app, m.ref)?.rootPath) known.add(m.ref);
+  }
+  return !known.size || repos.some((r) => known.has(r)) ? { itemId } : { contextItemId: itemId };
+}
+
 const COMPACT_MATERIALS = 12, COMPACT_DETAIL = 1500;
 const KIND_LABEL: Record<MaterialKind, string> = { source: "原件", conversation: "会话", repo: "仓库分支", space: "空间", run: "运行", req: "需求点", object: "对象" };
 
 /**
  * The item and its materials, as a section of a review's or delegation's task. With requirement nodes
  * among them, the tree under them follows; `since` lists the business changes after that time (the
- * delegation's earlier rounds were built before them).
+ * delegation's earlier rounds were built before them). `background`: the work only uses the item as
+ * background (workItem): no requirement points, and the brief says so.
  */
-export async function materialsBrief(app: App, itemId: string, userId: string, opts: { since?: string; compact?: boolean } = {}) {
+export async function materialsBrief(app: App, itemId: string, userId: string, opts: { since?: string; compact?: boolean; background?: boolean } = {}) {
   const item = getItem(app, itemId);
   const all_ = (await materialViews(app, itemId, userId)).filter((m) => m.readable && !m.missing);
-  const reqs = all_.filter((m) => m.kind === "req").map((m) => m.ref);
+  const reqs = opts.background ? [] : all_.filter((m) => m.kind === "req").map((m) => m.ref);
   const every = all_.filter((m) => m.kind !== "req");
   // A flow stage reads what it needs with tools: the latest materials and a short description are
   // enough to start (an item's notes and materials grow with every round).
@@ -199,7 +219,9 @@ export async function materialsBrief(app: App, itemId: string, userId: string, o
   // The owner's business decisions on the item (a review finding not to change, and why).
   const decisions = all<{ text: string; at: string }>(app.db, "select text, at from item_events where item_id = ? and kind = 'decision' order by id", itemId);
   return [
-    `## 所属事项：${item.title}（${item.id}）`,
+    opts.background
+      ? `## 背景：事项「${item.title}」（${item.id}）\n\n这次改的仓库不是这件事的代码，是做这件事时发现、要在别处改的。下面的说明和材料只作背景；这件事的需求点、流程和评审结论不归这次交办，评审也不按它的需求点拆分。`
+      : `## 所属事项：${item.title}（${item.id}）`,
     item.detail ? opts.compact && item.detail.length > COMPACT_DETAIL ? `${item.detail.slice(0, COMPACT_DETAIL)}…（说明较长，完整的用 read_item 看）` : item.detail : "",
     decisions.length ? `本人的业务决定（以这些为准）：\n${decisions.map((d) => `- ${d.at.slice(0, 10)} ${d.text}`).join("\n")}` : "",
     list.length ? `材料（用 read_source 读原件，search 限定到这些空间检索；“运行”是之前为这个事项做过的交办或评审，可用 read_run 看结论）：\n${list.map(line).join("\n")}${every.length > list.length ? `\n- ……另有 ${every.length - list.length} 份较早的材料，用 read_item 看全部` : ""}` : reqs.length ? "" : "这个事项还没有材料。",

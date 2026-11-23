@@ -379,6 +379,7 @@ const ctx = computed(() => detail.value?.context ?? null);
       <div class="row wrap about small">
         <span class="badge">{{ work.branchReview ? "分支评审" : "交办编码" }}</span>
         <router-link v-if="work.item" :to="`/items/${work.item.id}`" :title="work.item.title" class="ellipsis link">事项：{{ work.item.title }}</router-link>
+        <router-link v-else-if="work.background" :to="`/items/${work.background.id}`" :title="`做「${work.background.title}」时顺带改的：只用它的材料作背景，不归它的需求点和流程`" class="ellipsis link muted">为事项：{{ work.background.title }}</router-link>
         <span v-else class="muted">没归到事项</span>
         <router-link v-for="r in work.reqs.slice(0, 3)" :key="r.id" :to="`/code/reqs/${r.id}`" class="ellipsis link" :title="r.title">需求：{{ r.title }}</router-link>
         <span class="muted">{{ work.spaceId ? spaceName(work.spaceId) : "" }} · 开始于 {{ fmtTime(work.createdAt) }}<template v-if="aiLabel(run)"> · <span class="mono">{{ aiLabel(run) }}</span></template></span>

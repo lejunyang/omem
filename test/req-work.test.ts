@@ -189,3 +189,52 @@ describe("coding seen from the requirement tree", () => {
     expect(() => codeHere(app, root.id, OWNER)).toThrow(/不是在等/);
   });
 });
+
+describe("a delegation in another repository than the item's code", () => {
+  it("has the item only as background: no requirement points, flow or material link", async () => {
+    const toolDir = mkdtempSync(join(tmpdir(), "omem-req-work-tool-"));
+    const tgit = (...args: string[]) => execFileSync("git", args, { cwd: toolDir, encoding: "utf8", env });
+    tgit("init", "-q", "-b", "main");
+    writeFileSync(join(toolDir, "mock.ts"), "export const mock = 0;\n");
+    tgit("add", "-A");
+    tgit("commit", "-q", "-m", "init");
+    createSpace(app, { id: "mock-tool", name: "联调用的 Mock 工具", kind: "repo", rootPath: toolDir });
+    const tree = saveReqs(app, [{ op: "add", key: "page", kind: "page", title: "订单详情页" }, { op: "add", parent: "$page", kind: "feature", title: "详情页显示可退金额" }],
+      { by: "user", label: "本人" }, { canWrite: () => {}, canRead: () => {}, defaultSpace: "shop" });
+    const item = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "订单详情改造", userId: OWNER }, "user");
+    addLocalMaterials(app, item.id, [{ kind: "req", ref: tree.keys.page }], OWNER, "user");
+    const ctx: ToolContext = { app, runId: null, spaceId: "shop", spaces: null, tools: null, actor: "agent" };
+    const { workItem, materialsBrief, itemsOfRun } = await import("../src/items/materials.ts");
+    const { listCodeWorks } = await import("../src/agents/code-works.ts");
+
+    // No code of its own yet: any repository is the item's.
+    expect(workItem(app, item.id, ["mock-tool"])).toEqual({ itemId: item.id });
+    const own = await callTool(ctx, "delegate_code", { repo_spaces: ["shop-api"], task: "订单详情接上退款接口", item_id: item.id });
+    const ownId = own.text.match(/运行 (r\w+)/)![1];
+    expect(getRun(app, ownId).input).toMatchObject({ itemId: item.id });
+    expect(own.text).not.toMatch(/只作背景/);
+
+    // A bug of the mock tool found while testing it: another repository, so background only.
+    const side = await callTool(ctx, "delegate_code", { repo_spaces: ["mock-tool"], task: "Mock 工具沿原型链找原生 getter", item_id: item.id });
+    expect(side.isError).toBeFalsy();
+    expect(side.text).toMatch(/只作背景/);
+    const sideId = side.text.match(/运行 (r\w+)/)![1];
+    const input = getRun(app, sideId).input as { itemId?: string; contextItemId?: string };
+    expect(input.itemId).toBeUndefined();
+    expect(input.contextItemId).toBe(item.id);
+    expect(itemsOfRun(app, sideId)).toEqual([]);
+    expect(itemsOfRun(app, ownId).map((i) => i.id)).toEqual([item.id]);
+    const works = new Map(listCodeWorks(app, {}).map((w) => [w.rootId, w]));
+    expect(works.get(sideId)).toMatchObject({ item: null, background: { id: item.id, title: "订单详情改造" }, reqs: [] });
+    expect(works.get(ownId)).toMatchObject({ item: { id: item.id }, background: null });
+    expect(reqWork(app, tree.keys.page, OWNER).map((w) => w.rootId)).toEqual([ownId]);
+
+    // The coder still reads the item, without its requirement points.
+    const background = await materialsBrief(app, item.id, OWNER, { background: true });
+    expect(background).toMatch(/背景：事项「订单详情改造」/);
+    expect(background).not.toMatch(/详情页显示可退金额/);
+    expect(await materialsBrief(app, item.id, OWNER)).toMatch(/详情页显示可退金额/);
+    // The repository the item's own delegation changed counts from now on.
+    expect(workItem(app, item.id, ["shop-api", "mock-tool"])).toEqual({ itemId: item.id });
+  });
+});

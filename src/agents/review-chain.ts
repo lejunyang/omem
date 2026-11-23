@@ -79,7 +79,7 @@ const roundOf = (r: Run) => (r.input as { round?: number }).round ?? 1;
  */
 export async function reviewContext(app: App, codeRunId: string, note?: string, opts: { since?: Record<string, string>; to?: Record<string, string>; dirs?: Record<string, string>; cwd?: string } = {}) {
   const run = getRun(app, codeRunId);
-  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string; peerReviewer?: PeerReviewer };
+  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string; contextItemId?: string; fromReview?: string; peerReviewer?: PeerReviewer };
   const { decisionsBrief, workRuns } = await import("./review-fix.ts");
   const view = codeDiffView(app, codeRunId);
   const out = view.output as Out;
@@ -93,7 +93,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const workspace = reviewWorkspace(app, root, worktrees, opts.cwd);
   const { materialSpaces, materialsBrief } = await import("../items/materials.ts");
   const owner = runUser(app, run.id);
-  const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ? await materialSpaces(app, input.itemId, owner) : [])])];
+  const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ?? input.contextItemId ? await materialSpaces(app, (input.itemId ?? input.contextItemId)!, owner) : [])])];
   const indexed = out.indexedSpaces ?? [];
   const since = opts.since;
   const ranged = since ? worktrees.map((w) => {
@@ -142,7 +142,8 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const rereview = branchReview ? (await import("./rereview.ts")).rereviewText(app, run.id, worktrees.map((w) => ({ space: w.space, path: workDirOf(w), tip: w.tip }))) : "";
   const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
-    input.itemId ? await materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
+    input.itemId ? await materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined })
+      : input.contextItemId ? await materialsBrief(app, input.contextItemId, owner, { background: true }) : "",
     decisionsBrief(app, [...workRuns(app, run.id), ...(input.fromReview ? workRuns(app, input.fromReview) : [])]),
     note ? `## 本人确认评审计划时补充\n\n${note}` : "",
     worktrees.length ? "评审时只读编码工作树。需要写文件的测试请在本轮快照里跑；没有现成快照时，把所需源码复制到临时目录再测。" : "",

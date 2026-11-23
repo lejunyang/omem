@@ -107,7 +107,7 @@ export function queueNextCodeRound(
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
-    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; fromReview?: string; taskMode?: boolean };
+    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; contextItemId?: string; fromReview?: string; taskMode?: boolean };
     // What the owner added while the last round ran and nobody delivered yet goes with this round's task.
     const notes = pendingNotes(app, chain.lastCodeRunId!);
     const roundNotes = notes.length ? notesText(notes, app.config.timezone) : null;
@@ -134,6 +134,7 @@ export function queueNextCodeRound(
         roundReview: opts.roundReview ?? input.roundReview,
         readSpaces: input.readSpaces,
         itemId: input.itemId,
+        contextItemId: input.contextItemId,
         fromReview: input.fromReview,
         // A task-driven round's brief is its tasks, not `task`: the notes go along on their own.
         ...(input.taskMode ? { taskMode: true, ...(roundNotes ? { roundNotes } : {}) } : {}),

@@ -5086,7 +5086,7 @@ def({
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
     from_branch: z.string().optional().describe("在已有分支上继续开发：提交接着加在这条分支上（本地没有、origin 上有的先建本地分支）；不带未提交修改"),
     branch: z.string().max(200).optional().describe("新工作分支的名字（本人指定了才传，如 feat/refund-shipped）；不传时用临时名，编码 Agent 按功能改名。本地已有同名分支就当作 from_branch"),
-    item_id: z.string().optional().describe("这次交办所属的事项：编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库），交办本身也记到事项上；不传而在已有分支上接着改时，沿用这条分支上之前交办的事项"),
+    item_id: z.string().optional().describe("这次交办所属的事项：做的是这件事要的改动时传，编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库）和需求点，交办本身也记到事项上、跟着它的流程走；不传而在已有分支上接着改时，沿用这条分支上之前交办的事项。做这件事时发现、要在别的仓库改的问题（工具的缺陷、另一个服务的修复）一般不传，背景写进 task；传了而改的仓库不在这件事以前的交办和仓库材料里时，宿主只把它当背景（读得到材料，不带需求点、不挂到事项和流程上）"),
     sync: syncSchema.optional(),
     sync_only: z.boolean().optional().describe("这次只做 Git 同步（拉取、合并、变基、解决冲突），不再编码；结果的提交在应用时快进到目标分支"),
     pre_check: z.boolean().optional().describe("编码前检查（默认做：查改动会碰到什么、以前出过的问题、要回归的）。改文案、样式这类一眼看得清影响的小改动填 false"),
@@ -5104,7 +5104,10 @@ def({
     // A business space stands for its repository when it has just one (codeRepos).
     const ids = [...new Set((await import("./code.ts")).codeRepos(ctx.app, "", a.repo_spaces.map((r) => codeSpace(ctx, r))).map((r) => r.id))];
     // Without one, work on a branch belongs to the item its earlier delegations were done for.
-    const itemId = a.item_id ? itemFor(ctx, a.item_id) : (await import("./review-fix.ts")).itemOnBranch(ctx.app, ids, a.from_branch ?? a.branch, ctx.userId ?? OWNER) ?? undefined;
+    const asked = a.item_id ? itemFor(ctx, a.item_id) : (await import("./review-fix.ts")).itemOnBranch(ctx.app, ids, a.from_branch ?? a.branch, ctx.userId ?? OWNER) ?? undefined;
+    // Another repository than the item's code: the item is background only.
+    const scoped = (await import("../items/materials.ts")).workItem(ctx.app, asked, ids);
+    const itemId = scoped.itemId;
     const { codeRepos, homeSpace } = await import("./code.ts");
     const home = homeSpace(ctx.app, a.space ? space(ctx, a.space) : undefined, itemId, ids);
     const repos = codeRepos(ctx.app, home, ids);
@@ -5128,7 +5131,7 @@ def({
     const r = queueCodeWork(ctx.app, {
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, reviewExecutions: await reviewAIsOf(ctx, a.review_executions), ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, execution, reviewExecution, reviewExecutions: await reviewAIsOf(ctx, a.review_executions), ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, contextItemId: scoped.contextItemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
@@ -5147,7 +5150,8 @@ def({
     const chain = codeChainFor(ctx.app, r);
     const tasks = !!r.input.taskMode;
     const designNote = baseline ? `照方案 ${baseline.id}《${baseline.title}》实现。` : a.design === "always" ? "编码前先写方案，写好后等本人确认。" : a.design === "never" ? "不写方案，直接编码。" : "";
-    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。${designNote}完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。${carried}`;
+    const background = scoped.contextItemId ? `事项 ${scoped.contextItemId} 只作背景：改的仓库不在它以前的交办和仓库材料里，编码 Agent 读得到它的材料，但不带它的需求点，交办也不挂到它和它的流程上。` : "";
+    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。${designNote}${background}完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。${carried}`;
   },
 });
 
@@ -5207,7 +5211,7 @@ def({
     review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择（设备的外部 Agent 发起时不用填：评审由它自己做）"),
     review_executions: reviewAIsSchema,
     read_spaces: z.array(z.string()).optional().describe("评审者还要读的空间：需求文档所在的空间、迁移需求的源仓库、相关案例所在的项目空间"),
-    item_id: z.string().optional().describe("这次评审所属的事项（需求）：评审者会读到事项的材料，评审和分支记到事项上，结论写进事项时间线。大型需求先用 upsert_item 建事项、挂好材料再评审"),
+    item_id: z.string().optional().describe("这次评审所属的事项（需求）：评审者会读到事项的材料，评审和分支记到事项上，结论写进事项时间线。大型需求先用 upsert_item 建事项、挂好材料再评审。评审的仓库不在这件事以前的交办和仓库材料里时，事项只作背景"),
     design_id: z.string().optional().describe("对照的方案（别人的技术方案评估后的、或自己的）：拆分把分支改到的文件归到各个决定上，评审按决定看。不传时取事项上最新的方案；都没有就由拆分写一份变更说明"),
   }),
   handler: async (ctx, a) => {

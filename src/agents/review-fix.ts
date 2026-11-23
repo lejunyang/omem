@@ -318,7 +318,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   ].filter(Boolean).join("\n\n");
 
   const root = getRun(app, runs[0]);
-  const input = root.input as { repos?: string[]; branches?: Record<string, { branch: string }>; readSpaces?: string[]; itemId?: string; reviewTier?: string };
+  const input = root.input as { repos?: string[]; branches?: Record<string, { branch: string }>; readSpaces?: string[]; itemId?: string; contextItemId?: string; reviewTier?: string };
   const branchReview = isBranchReview(root);
   const repos = input.repos ?? worktreesOf(app, root.id).map((w) => w.space);
   // A delegation already confirmed onto its work branch: what is asked now is new work on that branch,
@@ -391,6 +391,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
       fromBranches: { ...Object.fromEntries(Object.entries(input.branches ?? {}).map(([space, b]) => [space, b.branch])), ...confirmedOn },
       readSpaces: input.readSpaces,
       itemId: input.itemId,
+      contextItemId: input.contextItemId,
       reviewTier: input.reviewTier,
       roundReview: req.review,
       execution: req.execution,

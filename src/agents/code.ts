@@ -26,7 +26,7 @@ import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from ".
 import { isSourceFile } from "../sources/chunk.ts";
 import { OWNER } from "../core/users.ts";
 import { retireRecordedSession } from "./session-cleanup.ts";
-import { linkRunToItem, materialSpaces, materialsBrief } from "../items/materials.ts";
+import { linkRunToItem, materialSpaces, materialsBrief, workItem } from "../items/materials.ts";
 import { getItem } from "../items/store.ts";
 
 export function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000, env: Record<string, string> = {}): Promise<{ code: number; output: string; ms: number }> {
@@ -96,6 +96,8 @@ export type CodeInput = {
   readSpaces?: string[];
   /** The item this work is for: the coder and reviewers read its materials (src/items/materials.ts). */
   itemId?: string;
+  /** The item this work was done while working on, in another repository: background only (materials.ts workItem). */
+  contextItemId?: string;
   /** The branch review this fixes: its reviewers also respect what the owner decided there. */
   fromReview?: string;
   /**
@@ -164,7 +166,8 @@ export type BranchReviewRequest = {
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
 export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null, userId = OWNER) {
   const ids = [...new Set(req.repos)];
-  const home = homeSpace(app, req.space, req.itemId, ids);
+  const scoped = workItem(app, req.itemId, ids);
+  const home = homeSpace(app, req.space, scoped.itemId, ids);
   codeRepos(app, home, ids);
   const branches = Object.fromEntries(ids.map((id) => [id, { branch: req.branches?.[id] ?? req.branch, ...(req.base ? { base: req.base } : {}) }]));
   const r = createRun(app, {
@@ -181,7 +184,7 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
       reviewTier: req.reviewTier || undefined,
       reviewChecks: req.reviewChecks,
       readSpaces: req.readSpaces?.length ? [...new Set(req.readSpaces)] : undefined,
-      itemId: req.itemId,
+      ...scoped,
       peerReviewer: req.peerReviewer,
       designId: req.designId,
       rereviewOf: req.rereviewOf,
@@ -192,7 +195,7 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
     parentId: parentId ?? undefined,
     userId,
   });
-  if (req.itemId) linkRunToItem(app, r, req.itemId, userId);
+  if (scoped.itemId) linkRunToItem(app, r, scoped.itemId, userId);
   return r;
 }
 /**
@@ -392,10 +395,11 @@ export async function runCodeTask(ctx: RunContext) {
     : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${workDirOf(worktrees[0])}）\n\n## 分支\n\n${branchText(0)}`;
   const cwd = multi ? workDir : workDirOf(worktrees[0]);
   // The run's space may be a project; the agents read it and every repository (and their related spaces).
-  const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? []), ...(input.itemId ? await materialSpaces(app, input.itemId, owner) : [])])];
+  const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? []), ...(input.itemId ?? input.contextItemId ? await materialSpaces(app, (input.itemId ?? input.contextItemId)!, owner) : [])])];
   // Later rounds also see the business changes to the requirement points since the delegation began.
   const began = continueFrom ? getRun(app, continueFrom).createdAt : undefined;
-  const itemBrief = input.itemId ? `\n\n${await materialsBrief(app, input.itemId, owner, { since: began })}` : "";
+  const itemBrief = input.itemId ? `\n\n${await materialsBrief(app, input.itemId, owner, { since: began })}`
+    : input.contextItemId ? `\n\n${await materialsBrief(app, input.contextItemId, owner, { background: true })}` : "";
   // Retried after a failure: the worktree keeps what the failed attempt changed.
   const retryOf = (input as { retryOf?: string }).retryOf;
   const retried = retryOf ? getRun(app, retryOf) : null;

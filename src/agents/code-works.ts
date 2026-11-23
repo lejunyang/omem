@@ -41,6 +41,8 @@ export type CodeWork = {
   /** Findings of the latest round the owner has not decided on (round-driven delegations and branch reviews). */
   open: number;
   item: { id: string; title: string } | null;
+  /** The item it was done while working on, in another repository: background only (materials.ts workItem). */
+  background: { id: string; title: string } | null;
   reqs: { id: string; title: string; kind: string }[];
   repos: WorkRepo[];
   /** The machine of an outside Agent that codes it (`omem tool --peer`). */
@@ -66,14 +68,14 @@ export const STALE_MS = 2 * 86400_000;
 
 type RootRow = {
   id: string; space_id: string | null; user_id: string | null; status: string; title: string; created_at: string;
-  task: string | null; item_id: string | null; repos: string | null; branches: string | null; from_branches: string | null; task_mode: number | null; peer: string | null;
+  task: string | null; item_id: string | null; context_item_id: string | null; repos: string | null; branches: string | null; from_branches: string | null; task_mode: number | null; peer: string | null;
   worktrees: string | null; applied_at: string | null; discarded_at: string | null; pushed: string | null; paused: string | null; until: number | null;
   settled: string | null; superseded: string | null;
 };
 type RoundRow = { id: string; root: string; status: string; title: string; round: number | null; verdict: string | null; applied_at: string | null; discarded_at: string | null; stopped: string | null; stage: string | null; design_by: string | null; created_at: string; finished_at: string | null };
 
 const ROOT_COLS = `id, space_id, user_id, status, title, created_at,
-  substr(json_extract(input, '$.task'), 1, 4000) task, json_extract(input, '$.itemId') item_id, json_extract(input, '$.repos') repos,
+  substr(json_extract(input, '$.task'), 1, 4000) task, json_extract(input, '$.itemId') item_id, json_extract(input, '$.contextItemId') context_item_id, json_extract(input, '$.repos') repos,
   json_extract(input, '$.branches') branches, json_extract(input, '$.fromBranches') from_branches, json_extract(input, '$.taskMode') task_mode,
   json_extract(input, '$.peerCoder.caller') peer, json_extract(output, '$.worktrees') worktrees, json_extract(output, '$.appliedAt') applied_at,
   json_extract(output, '$.discardedAt') discarded_at, json_extract(output, '$.pushed') pushed, json_extract(output, '$.work.paused') paused, json_extract(output, '$.work.until') until,
@@ -172,7 +174,8 @@ function buildWorks(app: App, roots: RootRow[]): CodeWork[] {
     tasks.get(t.work_id)!.push({ kind: t.kind, state: t.state, later: Number(t.later) ? 1 : 0, n: t.n });
   }
   const itemIds = [...new Set(roots.map((r) => r.item_id).filter((x): x is string => !!x))];
-  const items = new Map(itemIds.length ? all<{ id: string; title: string }>(app.db, `select id, title from items where id in (${itemIds.map(() => "?").join(",")})`, ...itemIds).map((x) => [x.id, x]) : []);
+  const titled = [...new Set([...itemIds, ...roots.map((r) => r.context_item_id).filter((x): x is string => !!x)])];
+  const items = new Map(titled.length ? all<{ id: string; title: string }>(app.db, `select id, title from items where id in (${titled.map(() => "?").join(",")})`, ...titled).map((x) => [x.id, x]) : []);
   const reqs = new Map<string, { id: string; title: string; kind: string }[]>();
   if (itemIds.length)
     for (const m of all<{ item_id: string; id: string; title: string; kind: string }>(app.db, `select m.item_id, n.id, n.title, n.kind from item_materials m join req_nodes n on n.id = m.ref
@@ -192,7 +195,7 @@ function buildWorks(app: App, roots: RootRow[]): CodeWork[] {
     const work: CodeWork = {
       rootId: root.id, latestId: last.id, title: root.title, spaceId: root.space_id, stage: { key: "", text: "", cls: "", group: "idle" }, now: "", next: { text: "", actions: [] },
       branchReview, branchWork, taskMode: !!root.task_mode, rounds: list.length, progress, open: open.get(last.id) ?? 0,
-      item: root.item_id ? items.get(root.item_id) ?? null : null, reqs: root.item_id ? reqs.get(root.item_id) ?? [] : [], repos, peer: root.peer, createdAt: root.created_at, updatedAt,
+      item: root.item_id ? items.get(root.item_id) ?? null : null, background: root.context_item_id ? items.get(root.context_item_id) ?? null : null, reqs: root.item_id ? reqs.get(root.item_id) ?? [] : [], repos, peer: root.peer, createdAt: root.created_at, updatedAt,
     };
     describe(work, root, list, reviewing.has(last.id), nowMs - Date.parse(updatedAt));
     return work;

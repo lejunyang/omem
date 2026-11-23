@@ -21,6 +21,8 @@ export type CodeWork = {
   progress: { build: [number, number]; fix: [number, number]; owner: number; assistant: number; later: number } | null;
   open: number;
   item: { id: string; title: string } | null;
+  /** The item it was done while working on, in another repository: background only, no flow or requirement points. */
+  background?: { id: string; title: string } | null;
   reqs: { id: string; title: string; kind: string }[];
   repos: WorkRepo[];
   peer: string | null;

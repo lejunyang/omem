@@ -98,7 +98,7 @@ import { runWrites, visibleRunEvent, writeVisible } from "../agents/run-writes.t
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { refExcerpt } from "../items/evidence.ts";
 import { getItem, ITEM_KINDS, itemEvents, listItems, upsertItem } from "../items/store.ts";
-import { addMaterials, itemsOfRun, linkRunToItem, materialViews, removeMaterials, type MaterialView } from "../items/materials.ts";
+import { addMaterials, itemsOfRun, linkRunToItem, materialViews, removeMaterials, workItem, type MaterialView } from "../items/materials.ts";
 import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
@@ -2281,8 +2281,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办「${open.title}」（${open.id}），在它上面接着改，或者先确认 / 丢弃它`);
     }
     if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
-    const r = createRun(app, { kind: "code", spaceId: businessOf(app, s.id), title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(!b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(b.maxRounds ? { maxRounds: b.maxRounds } : {}) } : {}) }, userId });
-    if (b.itemId) linkRunToItem(app, r, b.itemId, userId);
+    // Another repository than the item's code: the item is background only.
+    const scoped = workItem(app, b.itemId, repos);
+    const r = createRun(app, { kind: "code", spaceId: businessOf(app, s.id), title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, ...scoped, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(!b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(b.maxRounds ? { maxRounds: b.maxRounds } : {}) } : {}) }, userId });
+    if (scoped.itemId) linkRunToItem(app, r, scoped.itemId, userId);
     return r;
   });
 
