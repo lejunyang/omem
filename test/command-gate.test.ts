@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -116,6 +116,31 @@ describe("command rules", () => {
     expect((env[pathKey] ?? "").split(delimiter)).not.toContain(join(home, "bin", "guarded"));
     const guarded = agentToolEnv(home, "http://127.0.0.1:1", "ot_x", join(home, "bin", "guarded"));
     expect(guarded[pathKey]!.split(delimiter)[0]).toBe(join(home, "bin", "guarded"));
+  });
+
+  it.skipIf(win)("excludes a guarded directory reached through a symlink alias", async () => {
+    app.config.security.commandRules = [rule({ command: "acmectl", args: "^deploy" })];
+    const env = envWith();
+    const guarded = join(app.home, "bin", "guarded");
+    const alias = join(mkdtempSync(join(tmpdir(), "omem-gate-alias-")), "guarded");
+    symlinkSync(guarded, alias, "dir");
+    env[pathKey] = [alias, realDir, process.env[pathKey]].filter(Boolean).join(delimiter);
+    const r = await acmectl(["status"], env);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("REAL status");
+    expect(r.err).toBe("");
+  });
+
+  it.skipIf(win)("skips a wrapper file alias outside the guarded directory", async () => {
+    app.config.security.commandRules = [rule({ command: "acmectl", args: "^deploy" })];
+    const env = envWith();
+    const aliasDir = mkdtempSync(join(tmpdir(), "omem-gate-file-alias-"));
+    symlinkSync(join(app.home, "bin", "guarded", "acmectl"), join(aliasDir, "acmectl"));
+    env[pathKey] = [aliasDir, realDir, process.env[pathKey]].filter(Boolean).join(delimiter);
+    const r = await acmectl(["status"], env);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("REAL status");
+    expect(r.err).toBe("");
   });
 
   it("a call no rule matches runs the real command", async () => {
