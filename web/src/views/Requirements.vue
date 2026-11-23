@@ -11,20 +11,20 @@ import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
-import CodeWork, { type ReqFocus, type WorkTab } from "../components/CodeWork.vue";
+import CodeTabs from "../components/CodeTabs.vue";
 import CodeWorkRow from "../components/CodeWorkRow.vue";
 import RunArtifacts, { type Artifact } from "../components/RunArtifacts.vue";
 import type { CodeWork as Work } from "../lib/works";
-import { POINT_STATUS, type ChangePoint } from "../lib/reviews";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { fmtTime, relTime, state, toast } from "../store";
 import { pageParam } from "../lib/route";
 
 /**
- * A space's requirement tree (src/items/requirements.ts, docs/v2/requirements.md): system → module →
- * page → feature, test points under features. Each node shows its history (corrections and business
- * changes with their reasons), links to other businesses, and its state in the latest review. What an
- * Agent wrote waits here for the owner's confirmation.
+ * 编码 → 需求: a space's requirement tree (src/items/requirements.ts, docs/v2/requirements.md): system →
+ * module → page → feature, test points under features. Each node shows its history (corrections and
+ * business changes with their reasons), links to other businesses, its state in the latest review, its
+ * test results and the delegations done for it (they open under 交办). What an Agent wrote waits here
+ * for the owner's confirmation.
  */
 type Kind = "system" | "module" | "page" | "feature" | "test";
 type State = { runId: string; round: number; status: string; locations: { file: string; start?: number; end?: number }[]; note: string; at: string };
@@ -35,7 +35,7 @@ type TestResult = { id: string; runId: string; workId: string | null; round: num
 type Node = { id: string; spaceId: string; parentId: string | null; kind: Kind; title: string; body: string; acceptance: string; refs: string[]; tests: { file?: string; name?: string }[]; confirmed: boolean; status: "active" | "deleted" | "removed"; version: number; createdBy: string; updatedAt: string; depth: number; state: State | null; testState?: TestState | null; links: number; work: { total: number; waiting: number } | null };
 type Version = { id: string; version: number; change: string; title: string; reason: string; sourceRefs: string[]; by: string; runId: string | null; at: string };
 type Link = { id: string; direction: "in" | "out"; note: string; other: { id: string; spaceId: string; kind: Kind; title: string; status: string } | null };
-// The delegations and branch reviews done for the items this node belongs to, as the run page's “编码” lists them (src/agents/code-works.ts).
+// The delegations and branch reviews done for the items this node belongs to, as 交办 lists them (src/agents/code-works.ts).
 type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; works: Work[]; testState: TestState | null; testResults: TestResult[]; items?: { id: string; title: string }[] };
 
 const KIND: Record<Kind, string> = { system: "系统", module: "模块", page: "页面", feature: "功能", test: "测试点" };
@@ -51,40 +51,7 @@ const loading = ref(true);
 const showRemoved = ref(false);
 const detail = ref<Detail | null>(null);
 const detailLoading = ref(false);
-const selectedId = pageParam("reqs");
-// A delegation opened inside the page (`?work=<run>`): its overview replaces the node's detail.
-const workId = computed(() => (typeof route.query.work === "string" ? route.query.work : ""));
-const openWork = (runId: string) => router.push({ path: `/reqs/${selectedId.value}`, query: { work: runId } });
-const closeWork = () => router.push(`/reqs/${selectedId.value}`);
-// While a delegation is open the tree is its map: picking a node it touches keeps it open and shows that
-// node's part. The path above it leads out, to the nodes' own pages, like the back button.
-const workTab = computed<WorkTab>({
-  get: () => (typeof route.query.tab === "string" ? (route.query.tab as WorkTab) : "overview"),
-  set: (tab) => void router.replace({ path: route.path, query: { ...route.query, tab } }),
-});
-const workPoints = ref<ChangePoint[]>([]);
-/** Whose split the tree shows when this round has none of its own (WorkPane's inherited split). */
-const workPointsFrom = ref<string | null>(null);
-watch(workId, (id) => { if (!id) { workPoints.value = []; workPointsFrom.value = null; } });
-/** This round's change points by requirement node, and the worst status among a node's own points. */
-const RANK = { missing: 3, partial: 2, done: 1, extra: 0 } as const;
-const pointsByNode = computed(() => {
-  const m = new Map<string, ChangePoint["status"]>();
-  for (const p of workPoints.value) if (p.req && (!m.has(p.req) || RANK[p.status] > RANK[m.get(p.req)!])) m.set(p.req, p.status);
-  return m;
-});
-/** Nodes this round touches: those with points and every node above them. */
-const touched = computed(() => {
-  const out = new Set<string>();
-  for (const id of pointsByNode.value.keys()) {
-    const n = byId.value.get(id);
-    if (!n) continue;
-    out.add(id);
-    for (const a of ancestors(n)) out.add(a);
-  }
-  return out;
-});
-const extraPoints = computed(() => workPoints.value.filter((p) => !p.req && !p.parent));
+const selectedId = pageParam("/code/reqs/:id?");
 const live = computed(() => (detail.value?.works ?? []).filter((w) => w.stage.group !== "ended"));
 const past = computed(() => (detail.value?.works ?? []).filter((w) => w.stage.group === "ended"));
 const showPast = ref(false);
@@ -102,24 +69,6 @@ ${r.name}`;
 const olderTests = computed(() => { const latest = new Set(latestTests.value.map((r) => r.id)); return (detail.value?.testResults ?? []).filter((r) => !latest.has(r.id)); });
 const showOlderTests = ref(false);
 const reloadDetail = () => void loadDetail();
-/** The item of the open delegation, for the path above it; kept while another of its rounds opens. */
-const openedItem = ref<string | null>(null);
-watch([workId, () => detail.value?.works], () => {
-  const w = detail.value?.works.find((x) => x.rootId === workId.value || x.latestId === workId.value);
-  if (w) openedItem.value = w.item?.title ?? null;
-  else if (!workId.value) openedItem.value = null;
-}, { immediate: true });
-/**
- * The chosen node with everything under it, for the open delegation's “需求点” tab: the tree's node
- * at once, so the tab does not show the last node's part while the detail loads.
- */
-const focus = computed<ReqFocus | null>(() => {
-  const n = byId.value.get(selectedId.value) ?? (detail.value?.node.id === selectedId.value ? detail.value.node : null);
-  if (!n) return null;
-  const ids = new Set([n.id]);
-  for (const x of nodes.value) if (ancestors(x).includes(n.id)) ids.add(x.id);
-  return { id: n.id, title: n.title, ids: [...ids], body: n.body, acceptance: n.acceptance };
-});
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 const pending = computed(() => nodes.value.filter((n) => !n.confirmed && n.status === "active").length);
 const waiting = computed(() => nodes.value.reduce((t, n) => t + (n.work?.waiting ?? 0), 0));
@@ -150,15 +99,14 @@ async function loadDetail() {
   const request = ++detailRequest;
   const id = selectedId.value;
   const space = state.space;
-  const current = () => !disposed && request === detailRequest && id === selectedId.value && space === state.space && route.path.split("/")[1] === "reqs";
+  const current = () => !disposed && request === detailRequest && id === selectedId.value && space === state.space && route.matched.at(-1)?.path === "/code/reqs/:id?";
   if (!id) {
     detail.value = null;
     detailLoading.value = false;
     return;
   }
   // A slow response must not leave the previous requirement under the newly selected tree row.
-  // Picking another point of the same open coding work keeps WorkPane and its loaded diff alive.
-  if (!workId.value && detail.value?.node.id !== id) detail.value = null;
+  if (detail.value?.node.id !== id) detail.value = null;
   detailLoading.value = true;
   try {
     const d = await get<Detail>(`/api/requirements/${id}`);
@@ -199,9 +147,9 @@ onBeforeUnmount(() => {
   clearTimeout(linkTimer);
   unsubscribe();
 });
-const open = (id: string) => router.push(workId.value ? { path: `/reqs/${id}`, query: { work: workId.value, tab: "req" } } : `/reqs/${id}`);
-/** A node the open delegation does not touch (greyed in the tree) opens on its own, with its own work. */
-const pick = (n: Node) => (workId.value && workPoints.value.length && !touched.value.has(n.id) ? router.push(`/reqs/${n.id}`) : open(n.id));
+const open = (id: string) => router.push(`/code/reqs/${id}`);
+/** A delegation done for this node: it opens under 交办. */
+const openWork = (runId: string) => router.push(`/code/${runId}`);
 
 // ---- folding and search -------------------------------------------------------------------------
 // Folded nodes per space, kept in this browser. A space opened for the first time shows systems and
@@ -370,9 +318,9 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
   <div class="reqs">
     <aside class="list-col">
       <div class="head row">
-        <strong class="ellipsis">{{ spaceName(state.space) }} · 需求</strong>
+        <CodeTabs current="reqs" />
         <span class="spacer" />
-        <button v-if="canWrite" class="btn ghost sm icon" title="新建顶层节点" aria-label="新建顶层节点" @click="router.push('/reqs'); startAdd(null)"><Icon name="plus" :size="15" /></button>
+        <button v-if="canWrite" class="btn ghost sm icon" :title="`在「${spaceName(state.space)}」新建顶层节点`" aria-label="新建顶层节点" @click="router.push('/code/reqs'); startAdd(null)"><Icon name="plus" :size="15" /></button>
       </div>
       <div class="filters">
         <input v-model="query" class="input sm" type="search" placeholder="搜索标题、需求、验收或 id" aria-label="搜索需求" />
@@ -392,24 +340,19 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else>
-          <div v-if="workId && workPoints.length" class="work-legend muted small">{{ workPointsFrom ? `这一轮没有自己的需求拆分，沿用${workPointsFrom}的：` : "这次编码的变更：" }}标出每个需求点的状态；没涉及的变灰，点开看它自己的需求和编码</div>
-          <div v-for="n in visible" :key="n.id" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test', hit: matches?.has(n.id), idle: workId && workPoints.length && !touched.has(n.id) }" :style="{ paddingLeft: `${4 + n.depth * 16}px` }">
+          <div v-for="n in visible" :key="n.id" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test', hit: matches?.has(n.id) }" :style="{ paddingLeft: `${4 + n.depth * 16}px` }">
             <button v-if="hasKids.has(n.id)" type="button" class="fold" :aria-expanded="!!matches || !folded.has(n.id)" :aria-label="folded.has(n.id) ? `展开 ${n.title}` : `收起 ${n.title}`" :disabled="!!matches" @click="toggle(n.id)"><Icon :name="!matches && folded.has(n.id) ? 'right' : 'down'" :size="13" /></button>
             <span v-else class="fold-gap" />
-            <button type="button" class="pick" @click="pick(n)">
+            <button type="button" class="pick" @click="open(n.id)">
             <span class="k" :class="`k-${n.kind}`">{{ KIND[n.kind] }}</span>
             <span class="t ellipsis" :title="n.title">{{ n.title }}</span>
             <span v-if="!n.confirmed && n.status === 'active'" class="dot" title="待本人确认" />
-            <template v-if="workId && workPoints.length">
-              <span v-if="pointsByNode.get(n.id)" class="badge" :class="POINT_STATUS[pointsByNode.get(n.id)!].cls">{{ POINT_STATUS[pointsByNode.get(n.id)!].text }}</span>
-            </template>
-            <span v-else-if="n.state && STATE[n.state.status]" class="badge" :class="STATE[n.state.status].cls">{{ STATE[n.state.status].text }}</span>
+            <span v-if="n.state && STATE[n.state.status]" class="badge" :class="STATE[n.state.status].cls">{{ STATE[n.state.status].text }}</span>
             <span v-if="n.testState" class="badge" :class="TEST[n.testState.status].cls" :title="`测试：通过 ${n.testState.passed}，失败 ${n.testState.failed}，跳过 ${n.testState.skipped}`">测试{{ n.testState.status === "failed" ? `失败 ${n.testState.failed}` : TEST[n.testState.status].text }}</span>
             <span v-if="n.work?.waiting" class="badge accent" :title="`${n.work.waiting} 次编码或评审等你处理`">等你 {{ n.work.waiting }}</span>
             <span v-else-if="n.work?.total" class="muted wk" :title="`${n.work.total} 次编码或评审进行中`"><Icon name="code" :size="13" /></span>
             </button>
           </div>
-          <button v-if="workId && extraPoints.length" type="button" class="node extra" @click="workTab = 'change'"><span class="fold-gap" /><span class="k">需求外</span><span class="t ellipsis">需求点以外的改动</span><span class="badge warn">{{ extraPoints.length }}</span></button>
           <div v-if="matches && !matches.size" class="empty muted small">没有匹配的需求点。</div>
           <div v-if="!nodes.length" class="empty muted small">
             这个空间还没有需求树。点右上角的 + 建系统或模块，或者在事项页点“拆需求点”，让 AI 读事项的材料拆好再给你确认。
@@ -445,17 +388,6 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
       <div v-else-if="detailLoading && !detail" class="page" aria-busy="true">
         <h2 v-if="byId.get(selectedId)" class="title">{{ byId.get(selectedId)!.title }}</h2>
         <Skeleton variant="text" :rows="8" />
-      </div>
-
-      <div v-else-if="detail && workId" class="page wide">
-        <nav class="crumbs muted small" aria-label="路径">
-          <template v-for="(p, i) in detail.path" :key="p.id">
-            <span v-if="i" aria-hidden="true">/</span>
-            <a href="#" @click.prevent="router.push(`/reqs/${p.id}`)">{{ p.title }}</a>
-          </template>
-          <span aria-hidden="true">/</span><span>{{ openedItem ?? "编码" }}</span>
-        </nav>
-        <CodeWork v-model:tab="workTab" :run-id="workId" :focus="focus" from="reqs" @close="closeWork" @open="openWork" @points="(p, from) => { workPoints = p; workPointsFrom = from; }" />
       </div>
 
       <div v-else-if="detail" class="page">
@@ -496,7 +428,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
         </section>
 
         <section v-if="detail.works.length" class="block">
-          <div class="block-head"><strong>编码</strong><span class="muted small">挂了这个需求点（或它的上级）的事项做过的交办和分支评审；运行页的“编码”里也能找到</span></div>
+          <div class="block-head"><strong>编码</strong><span class="muted small">挂了这个需求点（或它的上级）的事项做过的交办和分支评审，点开在“交办”里看</span></div>
           <CodeWorkRow v-for="w in live" :key="w.rootId" :work="w" @pick="openWork(w.latestId)" />
           <p v-if="!live.length" class="muted small">没有进行中的编码。</p>
           <button v-if="past.length" type="button" class="lnk small" :aria-expanded="showPast" @click="showPast = !showPast">{{ showPast ? "收起" : `已推送、应用或丢弃的 ${past.length} 次` }}</button>
@@ -506,7 +438,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
         </section>
 
         <section v-if="detail.state" class="block">
-          <div class="block-head"><strong>最近一次评审</strong><span class="badge" :class="STATE[detail.state.status]?.cls">{{ STATE[detail.state.status]?.text ?? detail.state.status }}</span><router-link :to="`/runs/${detail.state.runId}`" class="small">第 {{ detail.state.round }} 轮</router-link><span class="muted small">{{ relTime(detail.state.at) }}</span></div>
+          <div class="block-head"><strong>最近一次评审</strong><span class="badge" :class="STATE[detail.state.status]?.cls">{{ STATE[detail.state.status]?.text ?? detail.state.status }}</span><router-link :to="`/code/${detail.state.runId}`" class="small">第 {{ detail.state.round }} 轮</router-link><span class="muted small">{{ relTime(detail.state.at) }}</span></div>
           <div v-if="detail.state.locations.length" class="small mono">{{ detail.state.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end ? `-${l.end}` : ""}` : ""}`).join("、") }}</div>
           <div v-if="detail.state.note" class="small">{{ detail.state.note }}</div>
         </section>
@@ -518,7 +450,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
               <span class="badge" :class="TEST[r.status].cls">{{ TEST[r.status].text }}</span>
               <span class="small mono ellipsis grow" :title="[r.file, r.name].filter(Boolean).join(' › ')">{{ [r.file, r.name].filter(Boolean).join(" › ") }}</span>
               <span v-if="r.mode" class="muted small">{{ r.mode }}</span>
-              <router-link :to="`/runs/${r.runId}`" class="small">第 {{ r.round }} 轮</router-link>
+              <router-link :to="`/${r.workId ? 'code' : 'runs'}/${r.runId}`" class="small">第 {{ r.round }} 轮</router-link>
               <span class="muted small">{{ relTime(r.at) }}</span>
             </div>
             <div v-if="r.note" class="small pre">{{ r.note }}</div>
@@ -529,7 +461,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
             <div v-for="r in olderTests" :key="r.id" class="row wrap small">
               <span class="badge" :class="TEST[r.status].cls">{{ TEST[r.status].text }}</span>
               <span class="mono ellipsis grow">{{ [r.file, r.name].filter(Boolean).join(" › ") }}</span>
-              <router-link :to="`/runs/${r.runId}`">第 {{ r.round }} 轮</router-link>
+              <router-link :to="`/${r.workId ? 'code' : 'runs'}/${r.runId}`">第 {{ r.round }} 轮</router-link>
               <span class="muted">{{ relTime(r.at) }}{{ r.pruned ? " · 产物已清理" : "" }}</span>
             </div>
           </template>
@@ -618,21 +550,6 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
 }
 .wk {
   display: inline-flex;
-}
-.node.idle .pick {
-  opacity: 0.45;
-}
-.node.extra {
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-  min-height: 28px;
-}
-.work-legend {
-  padding: 2px 8px 6px;
 }
 .lnk {
   border: 0;
@@ -742,10 +659,6 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
-}
-/* An open delegation shows code: give it more room. */
-.page.wide {
-  max-width: 1280px;
 }
 .crumbs {
   display: flex;

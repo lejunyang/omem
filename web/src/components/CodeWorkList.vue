@@ -6,9 +6,9 @@ import Skeleton from "./Skeleton.vue";
 import { GROUPS, type CodeWork } from "../lib/works";
 
 /**
- * Every delegation and branch review, one row each, grouped by who it waits on (the run page's
- * “编码”; src/agents/code-works.ts). `space` null: all spaces. Ended ones come last, the latest few
- * unless asked for more.
+ * Every delegation and branch review, one row each, grouped by who it waits on (编码 → 交办;
+ * src/agents/code-works.ts). `space` null: all spaces. Ended ones come last, the latest few unless
+ * asked for more. `active` is the open work's first round.
  */
 const props = defineProps<{ space: string | null; q: string; active: string | null }>();
 const emit = defineEmits<{ pick: [work: CodeWork] }>();
@@ -55,8 +55,7 @@ const ended = computed(() => works.value.filter((w) => w.stage.group === "ended"
         <CodeWorkRow v-for="w in g.list" :key="w.rootId" :work="w" :active="w.rootId === active" @pick="emit('pick', w)" />
       </section>
       <button v-if="ended >= 10 && !allEnded" type="button" class="lnk small more" @click="allEnded = true">看更早结束的</button>
-      <p v-if="!works.length" class="muted small empty">{{ q.trim() ? "没有符合条件的交办。" : "这里还没有交办。让助手改代码、评审分支，或点右上角的“交办”。" }}</p>
-      <router-link to="/designs" class="small designs-link">方案与变更说明 →</router-link>
+      <p v-if="!works.length" class="muted small empty">{{ q.trim() ? "没有符合条件的交办。" : "这里还没有交办。让助手改代码、评审分支，或点上面的“交办”。" }}</p>
     </template>
   </div>
 </template>
@@ -67,6 +66,4 @@ const ended = computed(() => works.value.filter((w) => w.stage.group === "ended"
 .gh b { color: var(--ink-2); font-weight: 600; }
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 6px 10px; justify-self: start; }
 .empty { padding: 10px; margin: 0; }
-.designs-link { justify-self: start; padding: 10px 10px 6px; color: var(--muted); }
-.designs-link:hover { color: var(--accent); }
 </style>

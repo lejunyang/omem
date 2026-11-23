@@ -63,13 +63,13 @@ describe("工作页的呈现（web/src/lib/work）", () => {
       [item]: { kind: "item", id: item, title: "一个很长很长很长很长很长很长很长很长很长很长很长很长的事项标题" },
       [`code-work:${runId}`]: { kind: "run", id: runId, title: "编码交办" },
     });
-    expect(shown.map((o) => o.link)).toEqual([`#/work/${item}`, `#/runs/${runId}`, "#/design/d1", null, null]);
+    expect(shown.map((o) => o.link)).toEqual([`#/work/${item}`, `#/code/${runId}`, "#/code/designs/d1", null, null]);
     expect(shown[0].label.length).toBeLessThanOrEqual(43);
     expect(shown[0].title).toContain("事项标题");
     expect(shown[1].label).toBe("运行：编码交办");
     // The flow page's evidence: a run, a plan or an item opens; a platform object or a word is text.
     expect([runId, `run:${runId}`, `code-work:${runId}`, "design:d1", item, `item:${item}`, "github:pr:12", "编码阶段"].map(evidenceLink))
-      .toEqual([`#/runs/${runId}`, `#/runs/${runId}`, `#/runs/${runId}`, "#/design/d1", `#/work/${item}`, `#/work/${item}`, null, null]);
+      .toEqual([`#/runs/${runId}`, `#/runs/${runId}`, `#/code/${runId}`, "#/code/designs/d1", `#/work/${item}`, `#/work/${item}`, null, null]);
     expect([runId, item, "design:d1"].map(evidenceWord)).toEqual(["运行", "事项", "方案"]);
   });
 

@@ -109,7 +109,7 @@ const fixOf = (f: Finding) => {
 };
 function openWork(id: string) {
   if (props.stay) emit("open", id);
-  else router.push(`/runs/${id}`);
+  else router.push(`/code/${id}`);
 }
 const NEWER_STATUS: Record<string, string> = { queued: "排队中", running: "进行中", done: "已完成", failed: "失败", cancelled: "已停止" };
 
@@ -273,7 +273,7 @@ async function startFix(applyFirst = false) {
     clearQuotes(props.runId, "fix");
     toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
     if (props.stay) emit("started", r.id);
-    else router.push(`/runs/${r.id}`);
+    else router.push(`/code/${r.id}`);
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {

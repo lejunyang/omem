@@ -200,7 +200,8 @@ export function taskHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">, t: 
 /** Where the block's own page is (its actions live there). */
 export function blockHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">): string | null {
   if (b.kind === "flow" || b.kind === "study") return b.itemId ? `/items/${encodeURIComponent(b.itemId)}/flow` : null;
-  return b.runId ? `/runs/${encodeURIComponent(b.runId)}` : null;
+  // A delegation or a branch review opens under 编码 → 交办.
+  return b.runId ? `/${b.kind === "code" || b.kind === "review" ? "code" : "runs"}/${encodeURIComponent(b.runId)}` : null;
 }
 /** A link for what a task handed in, when it has a page here; commits and branches have none. */
 export function outputHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">, o: ProgressOutput): string | null {
@@ -208,7 +209,7 @@ export function outputHref(b: Pick<ProgressView, "kind" | "runId" | "itemId">, o
   if (o.kind === "evidence") {
     const t = o.target;
     if (t?.kind === "source") return `/sources/${encodeURIComponent(t.id)}`;
-    if (t?.kind === "design") return `/design/${encodeURIComponent(t.id)}`;
+    if (t?.kind === "design") return `/code/designs/${encodeURIComponent(t.id)}`;
     if (t?.kind === "run") return `/runs/${encodeURIComponent(t.id)}`;
     return null;
   }

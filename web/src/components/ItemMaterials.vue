@@ -58,7 +58,7 @@ const kindOptions = [{ value: "source" as const, label: "原件" }, { value: "re
 // The req-splitter role reads the materials and writes the requirement tree (src/agents/req-split.ts).
 const splitting = ref(false);
 async function split() {
-  const note = await promptDialog("拆需求点", { message: "AI 读这个事项的材料，把需求点和测试点写进业务空间的需求树，写完在需求页确认。可以补充要求（拆到多细、重点、哪些先不拆）。", placeholder: "可以不填", okText: "开始拆" });
+  const note = await promptDialog("拆需求点", { message: "AI 读这个事项的材料，把需求点和测试点写进业务空间的需求树，写完在“编码 → 需求”里确认。可以补充要求（拆到多细、重点、哪些先不拆）。", placeholder: "可以不填", okText: "开始拆" });
   if (note === null) return;
   splitting.value = true;
   try {
@@ -155,8 +155,8 @@ function addCurrent() {
       <div class="muted small gt">{{ g.title }}</div>
       <div v-for="m in g.list" :key="m.id" class="m">
         <div class="mrow">
-          <router-link v-if="m.kind === 'run'" :to="`/runs/${m.ref}`" class="t ellipsis" :title="m.title">{{ m.title }}</router-link>
-          <router-link v-else-if="m.kind === 'req'" :to="`/reqs/${m.ref}`" class="t ellipsis" :title="m.title">{{ m.title }}</router-link>
+          <router-link v-if="m.kind === 'run'" :to="`/code/${m.ref}`" class="t ellipsis" :title="m.title">{{ m.title }}</router-link>
+          <router-link v-else-if="m.kind === 'req'" :to="`/code/reqs/${m.ref}`" class="t ellipsis" :title="m.title">{{ m.title }}</router-link>
           <a v-else-if="m.kind === 'source' && m.readable && !m.missing" href="#" class="t ellipsis" :title="m.title" @click.prevent="openCitation({ kind: 'source', id: m.ref }, true)">{{ m.title }}</a>
           <router-link v-else-if="m.kind === 'conversation'" :to="`/ask/${m.ref}`" class="t ellipsis">{{ m.title }}</router-link>
           <span v-else class="t ellipsis" :title="m.title">{{ m.kind === "repo" ? `${spaceName(m.meta.space ?? m.ref)} · ${m.meta.branch ?? "当前检出"}` : m.title }}</span>

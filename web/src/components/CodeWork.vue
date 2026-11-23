@@ -25,6 +25,7 @@ import ReviewSummary from "./ReviewSummary.vue";
 import RunActivity from "./RunActivity.vue";
 import RunArtifacts from "./RunArtifacts.vue";
 import PreCheckCard from "./PreCheckCard.vue";
+import { ApiError } from "../api";
 import { confirmDialog } from "../lib/dialog";
 import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
 import { refAction } from "../lib/refs";
@@ -34,19 +35,17 @@ import { countLine } from "../lib/designs";
 import { fmtTime, openCitation, relTime, state, statusLabel, toast } from "../store";
 
 /**
- * One delegation or branch review, the same on the run page and the requirements page
- * (docs/v2/coding-work.md): what it is for, where it stands, what comes next and its branches at the
- * top; then 概览 (tasks, the owner's questions, the review), 需求点, 变更, 评审, 活动 (every round and
- * what happened in it) and 分支, all available while it still codes. A work based on a design has
- * 方案 (DesignView) in place of 需求点 and 变更. `runId` is any of its rounds: the
- * one opened (活动 shows it; the rest follows the latest). On the requirements page `focus` is the node
- * chosen in the tree: “需求点” shows that node's part of the change, and the change points go up
- * (`points`) so the tree can mark each node with this round's status.
+ * One delegation or branch review (编码 → 交办, docs/v2/coding-work.md): what it is for, where it
+ * stands, what comes next and its branches at the top; then 概览 (tasks, the owner's questions, the
+ * review), 需求点, 变更, 评审, 活动 (every round and what happened in it) and 分支, all available while
+ * it still codes. A work based on a design has 方案 (DesignView) in place of 需求点 and 变更. `runId`
+ * is any of its rounds: the one opened (活动 shows it; the rest follows the latest). In 需求点 a point
+ * picked from the list shows its part of the change and the code. `loaded` tells the page the work's
+ * first round and all its rounds; `missing` that there is no such work (not coding work, or not visible).
  */
-export type ReqFocus = { id: string; title: string; ids: string[]; body: string; acceptance: string };
 export type WorkTab = "overview" | "design" | "req" | "change" | "review" | "artifacts" | "activity" | "branch";
-const props = defineProps<{ runId: string; focus?: ReqFocus | null; tab?: WorkTab; from?: "runs" | "reqs" }>();
-const emit = defineEmits<{ close: []; open: [runId: string]; points: [points: ChangePoint[], from: string | null]; "update:tab": [tab: WorkTab] }>();
+const props = defineProps<{ runId: string; tab?: WorkTab }>();
+const emit = defineEmits<{ open: [runId: string]; loaded: [rootId: string, rounds: string[]]; missing: []; "update:tab": [tab: WorkTab] }>();
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 
 // ---- data: the work (summary of all rounds) and the opened round -------------------------------
@@ -63,18 +62,24 @@ const loading = ref(true);
 let seq = 0;
 async function load() {
   const request = ++seq, id = props.runId;
+  const workReq = get<CodeWorkDetail>(`/api/code-works/${id}`);
   try {
-    const [w, d, i] = await Promise.all([get<CodeWorkDetail>(`/api/code-works/${id}`), get<Detail>(`/api/runs/${id}`), get<Improvement | null>(`/api/code/${id}/improve`)]);
+    const [w, d, i] = await Promise.all([workReq, get<Detail>(`/api/runs/${id}`), get<Improvement | null>(`/api/code/${id}/improve`)]);
     if (request !== seq) return;
     work.value = w;
     detail.value = d;
     improvement.value = i;
+    emit("loaded", w.rootId, w.roundList.map((r) => r.id));
   } catch (e) {
     if (request !== seq) return;
     work.value = null;
     detail.value = null;
     improvement.value = null;
-    toast((e as Error).message, "error");
+    // No such work (not coding work, or not visible), whichever request failed first.
+    const why = await workReq.then(() => null, (x: unknown) => x);
+    if (request !== seq) return;
+    if (why instanceof ApiError && why.status === 404) emit("missing");
+    else toast((e as Error).message, "error");
   } finally {
     if (request === seq) loading.value = false;
   }
@@ -233,19 +238,21 @@ const mapRunId = computed(() => (mapRv.value === rv ? run.value?.id ?? "" : inhe
 const mapDiffs = computed(() => (mapRv.value === rv ? diffs.value : parsePatches(srcPatches.value)));
 const mapPoints = computed(() => mapRv.value.changePoints.value);
 const inheritedLabel = computed(() => (inherited.value && mapRv.value === srcRv ? `${inherited.value.sameWork ? "" : `「${inherited.value.title}」`}第 ${inherited.value.round} 轮` : null));
-watch([mapPoints, inheritedLabel], ([p, from]) => emit("points", p, from), { immediate: true });
+/** The requirement point picked in 需求点: its change points (and those under them) and their code. */
+const focusId = ref<string | null>(null);
+watch(() => work.value?.rootId, () => (focusId.value = null));
+const focus = computed(() => (focusId.value ? work.value?.points.find((p) => p.id === focusId.value) ?? null : null));
 const focusPoints = computed(() => {
-  const f = props.focus;
+  const f = focus.value;
   if (!f) return [];
   const all = mapPoints.value;
-  const picked = new Set(all.filter((p) => p.req && f.ids.includes(p.req)).map((p) => p.id));
+  const picked = new Set(all.filter((p) => p.req === f.id).map((p) => p.id));
   for (let grew = true; grew; ) {
     grew = false;
     for (const p of all) if (p.parent && picked.has(p.parent) && !picked.has(p.id)) { picked.add(p.id); grew = true; }
   }
   return all.filter((p) => picked.has(p.id));
 });
-const reqOpen = ref(false);
 const POINT_STATE: Record<string, { text: string; cls: string }> = { done: { text: "已实现", cls: "ok" }, partial: { text: "部分实现", cls: "warn" }, missing: { text: "没实现", cls: "danger" } };
 
 // ---- tabs (always there, also while coding) -----------------------------------------------------
@@ -272,7 +279,7 @@ const tabs = computed(() => [
     ? [{ id: "design" as const, label: designWaits.value ? "方案 · 等你确认" :`方案 ${design.value.counts.decisions || ""}`.trim() }]
     : [
         ...(design.value ? [{ id: "design" as const, label: `变更说明 ${design.value.counts.decisions || ""}`.trim() }] : []),
-        ...(props.focus || work.value?.points.length ? [{ id: "req" as const, label: props.focus ? `需求点 ${focusPoints.value.length ? pointCount(focusPoints.value) : 0}` : `需求点 ${work.value!.points.length}` }] : []),
+        ...(work.value?.points.length ? [{ id: "req" as const, label: `需求点 ${work.value!.points.length}` }] : []),
         { id: "change" as const, label: rv.changePoints.value.length ? `变更 ${pointCount(rv.changePoints.value)}` : "变更" },
       ]),
   { id: "review" as const, label: "评审" },
@@ -364,18 +371,16 @@ const ctx = computed(() => detail.value?.context ?? null);
     <p v-else-if="!work || !run" class="muted small">打不开这次交办。</p>
     <template v-else>
       <div class="row wrap wh">
-        <button v-if="from === 'reqs'" class="btn ghost sm icon" title="回到需求点" aria-label="回到需求点" @click="emit('close')"><Icon name="left" :size="15" /></button>
         <h2 class="title" :title="work.title">{{ work.title }}</h2>
         <button class="btn ghost sm" @click="explaining = null; asking = 'open'"><Icon name="chat" :size="14" />提问</button>
         <OpenInIde :key="`${run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${run.status}`" :run-id="run.id" :space-name="spaceName" />
         <WorkPreview v-if="!work.branchReview" :key="`pv:${run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}`" :run-id="run.id" />
-        <router-link v-if="from === 'reqs'" :to="`/runs/${work.latestId}`" class="btn sm">运行页<Icon name="external" :size="13" /></router-link>
       </div>
       <div class="row wrap about small">
         <span class="badge">{{ work.branchReview ? "分支评审" : "交办编码" }}</span>
         <router-link v-if="work.item" :to="`/items/${work.item.id}`" :title="work.item.title" class="ellipsis link">事项：{{ work.item.title }}</router-link>
         <span v-else class="muted">没归到事项</span>
-        <router-link v-for="r in work.reqs.slice(0, 3)" :key="r.id" :to="`/reqs/${r.id}`" class="ellipsis link" :title="r.title">需求：{{ r.title }}</router-link>
+        <router-link v-for="r in work.reqs.slice(0, 3)" :key="r.id" :to="`/code/reqs/${r.id}`" class="ellipsis link" :title="r.title">需求：{{ r.title }}</router-link>
         <span class="muted">{{ work.spaceId ? spaceName(work.spaceId) : "" }} · 开始于 {{ fmtTime(work.createdAt) }}<template v-if="aiLabel(run)"> · <span class="mono">{{ aiLabel(run) }}</span></template></span>
       </div>
 
@@ -455,29 +460,29 @@ const ctx = computed(() => detail.value?.context ?? null);
         <template v-if="focus">
           <section class="card pad req">
             <div class="row wrap">
+              <button class="btn ghost sm icon" title="回到这次交办的全部需求点" aria-label="回到全部需求点" @click="focusId = null"><Icon name="left" :size="15" /></button>
               <strong class="ellipsis">{{ focus.title }}</strong>
               <template v-for="s in (['done', 'partial', 'missing'] as const)" :key="s">
                 <span v-if="focusPoints.some((p) => p.status === s)" class="badge" :class="POINT_STATUS[s].cls">{{ POINT_STATUS[s].text }} {{ focusPoints.filter((p) => p.status === s).length }}</span>
               </template>
               <span class="spacer" />
-              <button v-if="focus.body || focus.acceptance" class="lnk small" :aria-expanded="reqOpen" @click="reqOpen = !reqOpen">{{ reqOpen ? "收起需求" : "看需求和验收" }}</button>
+              <router-link :to="`/code/reqs/${focus.id}`" class="small">需求和验收</router-link>
             </div>
-            <template v-if="reqOpen">
-              <Markdown v-if="focus.body" class="small" :source="focus.body" />
-              <Markdown v-if="focus.acceptance" class="small" :source="`**验收**\n\n${focus.acceptance}`" />
-            </template>
           </section>
           <p v-if="inheritedLabel" class="muted small inherited">{{ busy ? `这一轮还在进行，先用${inheritedLabel}的拆分和那时的代码。` : `这一轮没有自己的需求拆分，这里用${inheritedLabel}的拆分和那时的代码。` }}</p>
           <ChangeView :key="mapRunId" :rv="mapRv" :run-id="mapRunId" :diffs="mapDiffs" :only="focusPoints.map((p) => p.id)" @explain="explain" />
         </template>
         <section v-else class="card pad points">
-          <div class="row wrap"><strong class="small">这次交办的需求点</strong><span class="muted small">状态来自评审的需求拆分；点开看需求和它的全部编码</span></div>
-          <router-link v-for="p in work.points" :key="p.id" :to="`/reqs/${p.id}`" class="point">
-            <span class="ellipsis">{{ p.title }}</span>
-            <span v-if="p.status && POINT_STATE[p.status]" class="badge" :class="POINT_STATE[p.status].cls">{{ POINT_STATE[p.status].text }}</span>
-            <span v-else class="badge">还没评审</span>
-            <span v-if="p.at" class="muted small">{{ relTime(p.at) }}</span>
-          </router-link>
+          <div class="row wrap"><strong class="small">这次交办的需求点</strong><span class="muted small">状态来自评审的需求拆分；点一个看它在这一轮的变更和代码</span></div>
+          <div v-for="p in work.points" :key="p.id" class="point">
+            <button type="button" class="pick" @click="focusId = p.id">
+              <span class="ellipsis">{{ p.title }}</span>
+              <span v-if="p.status && POINT_STATE[p.status]" class="badge" :class="POINT_STATE[p.status].cls">{{ POINT_STATE[p.status].text }}</span>
+              <span v-else class="badge">还没评审</span>
+              <span v-if="p.at" class="muted small">{{ relTime(p.at) }}</span>
+            </button>
+            <router-link :to="`/code/reqs/${p.id}`" class="small open" :title="`在“需求”里打开「${p.title}」：需求、验收、测试结果和它的全部编码`">需求</router-link>
+          </div>
         </section>
       </template>
 
@@ -546,7 +551,7 @@ const ctx = computed(() => detail.value?.context ?? null);
     </div>
     <template v-if="run">
       <AskAboutRun v-if="asking" :key="run.id" basket :draft="askDraft" :minimized="asking === 'min'" :run-id="run.id" :run-title="run.title" :space-id="run.spaceId" @close="asking = null" @minimize="asking = 'min'" />
-      <FixBasket v-if="fixOpen" :key="`fix:${run.id}`" :run-id="run.id" :rv="rv" :can-fix="canFix" :branch-review="branchReview" @close="fixOpen = false" />
+      <FixBasket v-if="fixOpen" :key="`fix:${run.id}`" :run-id="run.id" :rv="rv" :can-fix="canFix" :branch-review="branchReview" @close="fixOpen = false" @started="(id) => emit('open', id)" />
       <QuoteDock v-if="!explaining && !fixOpen && (asking === 'min' || (!asking && askQuotes.length) || fixQuotes.length)" :ask="askQuotes.length" :fix="fixQuotes.length" :asking="!!asking" @ask="asking = 'open'" @fix="fixOpen = true" />
       <AskAboutRun v-if="explaining" :key="`${run.id}:${explaining.id}`" :run-id="run.id" :run-title="run.title" :space-id="run.spaceId" :context="explainContext" :heading="`${explaining.id} ${explaining.title}`" @close="explaining = null">
         <div class="explain">
@@ -584,9 +589,11 @@ const ctx = computed(() => detail.value?.context ?? null);
 .req { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .inherited { margin: 0; }
 .points { display: grid; gap: 4px; }
-.point { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-top: 1px solid var(--line); color: inherit; min-width: 0; }
-.point:hover { text-decoration: none; background: var(--hover); }
+.point { display: flex; align-items: center; gap: 8px; padding: 0 4px; border-top: 1px solid var(--line); min-width: 0; }
+.point:hover { background: var(--hover); }
+.point .pick { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 6px 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .point .ellipsis { flex: 1; min-width: 0; }
+.point .open { flex: none; }
 .design-wait { gap: 8px 10px; padding: 10px 14px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }
 .design-wait .grow { flex: 1 1 14em; min-width: 0; }
 .flow-waiting-here { margin: 0 0 14px; }

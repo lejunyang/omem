@@ -24,7 +24,7 @@ import { fmtTime, openCitation, relTime, state, toast } from "../store";
  * the whole first; then the requirement points on the left and the decision cards on the right. A
  * card shows one line per field until it is opened; opened it has the contract snippets, the tables,
  * the rejected approaches, the question, the concerns and, after coding or a branch review, where it
- * landed. The same component on its own page (#/design/:id), in a delegation's “方案” tab and from an
+ * landed. The same component on 编码 → 方案 (#/code/designs/:id), in a delegation's “方案” tab and from an
  * item. `embedded`: inside another page (no page title, no link back to the work).
  */
 const props = defineProps<{ designId: string; embedded?: boolean }>();
@@ -94,7 +94,7 @@ const activeReq = ref<string | null>(null);
 const reqList = computed(() => {
   const d = detail.value;
   if (!d) return [];
-  const known = d.reqs.map((r) => ({ key: r.id, title: r.title, link: `/reqs/${r.id}` as string | null }));
+  const known = d.reqs.map((r) => ({ key: r.id, title: r.title, link: `/code/reqs/${r.id}` as string | null }));
   const ids = new Set(known.map((r) => r.key));
   const loose = [...new Set(d.body.decisions.flatMap((x) => x.reqs).filter((r) => !ids.has(r)))].map((r) => ({ key: r, title: r, link: null }));
   return [...known, ...loose].map((r) => ({ ...r, n: d.body.decisions.filter((x) => x.reqs.includes(r.key)).length }));
@@ -288,7 +288,7 @@ watch(() => props.designId, () => {
             <span v-else class="mono muted">{{ s }}</span>
           </template>
           <router-link v-if="detail.item" :to="`/items/${detail.item.id}`" class="link ellipsis" :title="detail.item.title">事项：{{ detail.item.title }}</router-link>
-          <router-link v-if="detail.work && !embedded" :to="`/runs/${detail.work.rootId}`" class="link ellipsis" :title="detail.work.title">{{ detail.work.branchReview ? "分支评审" : "交办" }}：{{ detail.work.title }}</router-link>
+          <router-link v-if="detail.work && !embedded" :to="`/code/${detail.work.rootId}`" class="link ellipsis" :title="detail.work.title">{{ detail.work.branchReview ? "分支评审" : "交办" }}：{{ detail.work.title }}</router-link>
           <span v-if="detail.repos.length" class="muted">仓库：{{ detail.repos.map(spaceName).join("、") }}</span>
         </div>
       </header>
@@ -297,7 +297,7 @@ watch(() => props.designId, () => {
         <span class="spinner" aria-hidden="true" />
         <span>{{ draftingText(detail.origin) }}{{ detail.revision ? `：下面是第 ${detail.revision} 版，新的一版写好后会替换` : "，写好后这里显示决定" }}。</span>
         <router-link v-if="writingRun" :to="`/runs/${writingRun}`" class="link">看过程</router-link>
-        <router-link v-else-if="detail.work && !embedded" :to="`/runs/${detail.work.rootId}`" class="link">看交办</router-link>
+        <router-link v-else-if="detail.work && !embedded" :to="`/code/${detail.work.rootId}`" class="link">看交办</router-link>
       </div>
       <p v-if="!current" class="note small">这是第 {{ revision }} 版，不是最新的。<button class="lnk" @click="revision = null">看最新的第 {{ latestRevision }} 版</button></p>
 

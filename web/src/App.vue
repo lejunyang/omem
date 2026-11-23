@@ -20,22 +20,24 @@ const route = useRoute();
 const router = useRouter();
 async function selectSpace(space: string) {
   if (space === state.space) return;
-  // Leave the old requirement (and its open work) before the space key remounts the page.
-  // A requirement link can still set state.space itself to open its own business tree.
-  if (route.path.split("/")[1] === "reqs") await router.replace("/reqs");
+  // Leave the old requirement before the space key remounts the page. A requirement link can still set
+  // state.space itself to open its own business tree.
+  if (route.path.startsWith("/code/reqs/")) await router.replace("/code/reqs");
   state.space = space;
 }
 watch(() => state.space, () => {
   const section = route.path.split("/")[1];
   // The knowledge-base list is not per space: it stays.
   if (["ask", "sources", "runs"].includes(section) && route.path !== "/sources/kb") void router.replace(`/${section}`);
+  // An open delegation (编码 → 交办) leaves with the space too; 方案 has its own space filter.
+  else if (route.matched.at(-1)?.path === "/code/:id?" && route.params.id) void router.replace("/code");
 });
 const menu = ref(false);
 const loadError = ref("");
 // Who gets an entry (lib/caps.ts): `cap` a global capability, `space` a space-scoped one held in any
-// space (`own`: the person's own items and runs count), `perm` an old global permission, `member` anyone.
-// An entry with none of these is the owner's.
-type NavEntry = { to: string; label: string; icon: string; exact?: boolean; member?: boolean; cap?: string; space?: string; own?: boolean; perm?: string };
+// space (`own`: the person's own items and runs count), `spaces` any of several such, `perm` an old
+// global permission, `member` anyone. An entry with none of these is the owner's.
+type NavEntry = { to: string; label: string; icon: string; exact?: boolean; member?: boolean; cap?: string; space?: string; spaces?: string[]; own?: boolean; perm?: string };
 const reviewEntry: NavEntry = { to: "/agents?tab=review", label: "评审设置", icon: "layers", cap: "settings.assistant.view" };
 const reviewTab = computed(() => route.path === "/agents" && route.query.tab === "review");
 const nav = ref<NavEntry[]>([
@@ -47,7 +49,8 @@ const nav = ref<NavEntry[]>([
   // Items moving through a flow, by stage: for the owner it is the work page's 按阶段 (no entry of its own);
   // everyone else keeps the board here.
   { to: "/board", label: "流程", icon: "branch", space: "flows.view" },
-  { to: "/reqs", label: "需求", icon: "target", space: "requirements.view" },
+  // 交办, 方案 and 需求 (components/CodeTabs.vue): for whoever may read any of them.
+  { to: "/code", label: "编码", icon: "code", spaces: ["code.work.view", "designs.view", "requirements.view"], own: true },
   { to: "/memory", label: "记忆", icon: "brain", space: "memories.view" },
   { to: "/sources", label: "原件", icon: "file", space: "sources.view" },
   { to: "/learn", label: "学习", icon: "cap" },
@@ -103,7 +106,7 @@ const owner = computed(() => !state.me || state.me.role === "owner");
 const settingsEntry = computed(() => owner.value || settingsAnywhere() || hasPerm("users.manage"));
 const settingsLabel = computed(() => (owner.value || ["knowledge", "assistant", "ai", "channels", "system"].some((a) => settingsArea(a as "ai", "view")) ? "设置" : "成员与记录"));
 const allowed = (n: NavEntry) =>
-  owner.value || !!n.member || (!!n.cap && hasCap(n.cap)) || (!!n.space && capAnywhere(n.space, { own: n.own })) || (!!n.perm && hasPerm(n.perm));
+  owner.value || !!n.member || (!!n.cap && hasCap(n.cap)) || (!!n.space && capAnywhere(n.space, { own: n.own })) || (!!n.spaces && n.spaces.some((c) => capAnywhere(c, { own: n.own }))) || (!!n.perm && hasPerm(n.perm));
 // The owner finds the flow board on the work page (按阶段); everyone else in the nav.
 const shownNav = computed(() => nav.value
   .map(n => n.to === "/agents" && !hasPerm("agents.manage") ? reviewEntry : n)

@@ -74,7 +74,7 @@ async function submit() {
     });
     toast("开始评估这份方案，写好后在方案页查看", "ok");
     emit("close");
-    void router.push(`/design/${r.id}`);
+    void router.push(`/code/designs/${r.id}`);
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {

@@ -46,7 +46,7 @@ describe("流程呈现", () => {
   });
   it("依据使用现有引用入口及运行、方案路由", () => {
     expect(evidenceLink("src:s123#L1-L3")).toBeNull();
-    expect(evidenceLink("design:d123")).toBe("#/design/d123");
+    expect(evidenceLink("design:d123")).toBe("#/code/designs/d123");
     expect(evidenceLink("run:r123")).toBe("#/runs/r123");
   });
 });

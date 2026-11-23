@@ -2,7 +2,7 @@
 title: 2026-11-21 下半天的变化
 summary: 编码交办的用量归集、云端工具的令牌和探测、成员权限按区域和对象检查、出网代理、插件的通知出口；成员的线和“等我的”、变化台账、“今天”并进简报、需求到交付的链路、远程会话交给成员、插件的检索和原件格式、HTTP 规则的判定入口、成员能力和成员沙箱里的编码。
 kind: reference
-updated: 2026-11-23
+updated: 2026-11-24
 ---
 
 从 [2026-10-13 之后的变化](./changes-since-2026-10-13.md) 移过来的 2026-11-21 下午到晚上的改动，原样保留；每条给出改了什么和从哪个文件读起。
@@ -316,3 +316,42 @@ updated: 2026-11-23
 
 - `GET /api/work/:id` 多一个页面级的 `refTargets`：`textTargets`（`src/items/changes.ts`）扫目标、现状、每周一句、收尾原因、下一步和变化的文字，认出本人的事项（`i0m…`）和运行（`r0m…`）id，配上标题；认不出的、别人的不给。
 - `WorkDetail.vue` 把它并进 `targets`，现状那一句和四周各一句改用 `RichText` 加 `readableIds` 渲染（原来是纯文字），下一步的依据也用页面级的那份：id 变成“事项：标题 / 运行：标题”的链接，提交号和路径变成小号等宽。
+
+## 2026-11-21：任务板可以派到其他设备
+
+- `dispatch_work` 每块可指定 device、mode 和 access。borrow 借 ACP 在本机只读，remote 在对方同名空间起运行。选择前核对配对、在线、协议与空间权限；在线设备只返回后端空位和仓库空间名称。读 `src/agents/work-device.ts`、`tools.ts`。
+- 接活四条命令放进 peerCommands，经既有 /api/peer/exec 按配对令牌校验；node.acceptWork 默认关闭，acceptWorkFrom 按配对标识覆盖。远端档案按名字找，找不到用主助手；只读令牌拒写，写模式只开放任务空间的记忆、页面和事项。读 `src/agents/peer-work.ts`、`runner.ts`。
+- 尝试记设备、模式、远端运行、期限与幂等键；本地轮询队列按索引限批处理，短时断网恢复继续，到期或失联一小时失败。取消先到也作废幂等键，重派后旧结果只记迟到。产物复用课题的 2 MB / 8 MB 上限，远端用量进入本地运行。读 `src/agents/work-board.ts`、`studies/remote.ts`。
+- readBoard 和统一进度返回 deviceName、mode、remoteRunId、remoteUrl、deadline、lateAt；远端用量跟随本地尝试去重汇总。飞书卡片并列标设备，从 `src/agents/progress.ts`、`progress-runs.ts`、`src/channels/lark-work-progress.ts` 读起。接活开关与进度网页细节待接入。双临时 App 和假 ACP 的验证见 `test/work-board-peer.test.ts`。
+
+## 插件阶段的验收与恢复（2026-11-21）
+
+从 `examples/plugins/stagekit/README.md` 可走通文件信号、作业、验收词否决和本人越过。队列恢复和等待中的外部作业取消见 `test/flow-plugin-worker.test.ts`。检查的适用范围与证据在 `src/flows/plugin-gates.ts`，后端来源解析在 `src/agents/catalog.ts`。
+
+## 插件第四期：流程提供者、完成检查与 ACP 目录（2026-11-21）
+
+- 完成信号和 Git 共用巡检，证据留在阶段，失败退避；从 `src/flows/plugin-signals.ts` 读起。
+- 运行器由本人确认，持久运行恢复同键作业，期限取消；从 `src/flows/plugin-runner.ts`、`src/agents/runs.ts` 读起。
+- 结果检查默认关闭，只能收紧，强制错误暂停，本人单次越过留审计；从 `src/flows/plugin-gates.ts`、`src/flows/engine.ts` 读起。
+- backends 声明进入信任指纹与统一目录，停用移出，保存配置显示来源；从 `src/plugins/backends.ts`、`src/agents/catalog.ts`、`src/plugins/trust.ts` 读起。
+- 文件示例在 `examples/plugins/stagekit/`。网页选择、阶段证据与错误、检查设置、后端来源待接，字段见 `docs/v2/flows.md`。
+
+## 2026-11-21 · 本机登录沙箱与统一的完全访问模式
+
+豆包 CLI 的审批模式在准备运行时按可写角色和 `runAccess` 的强制档位决定，参数层不再读取全局设置或合并后的完全访问标记。未隔离的访客沿用风险审批，ACP、Codex 和 Claude 的模式及 ACP 独立写权限保持原计算。`test/doubao-cli.test.ts` 覆盖沙箱关闭、不支持时回退和已隔离的档位组合，`test/full-access.test.ts` 覆盖角色行为表。
+
+多仓库运行在准备阶段收集分配的工作树、快照、核对过的产物目录及后端状态目录，再应用隐藏与只读规则。启动参数、运行状态和 Agent 当轮说明共用这份挂载计划；设置接口的默认示例也经过相同的状态目录校验。Git links/pointers、只读工作树与可写快照沿用原规则。回归覆盖 `test/own-run.test.ts`、`test/workspace-mounts.test.ts` 和 `test/own-sandbox-linux.test.ts`。
+
+从 `src/agents/own-run.ts` 看本地运行选择，从 `own-sandbox.ts` 看挂载和后端模式。工作区及 ACP 写权限按角色保留，`GET/PUT /api/security/sandbox` 供本人检查和保存设置。配置组合及使用范围见 [本人的运行进沙箱](../../../docs/v2/agent-accounts.md#本人的运行进沙箱)。
+
+## 整机诊断仅本人可读（2026-11-21）
+
+`GET /api/diag` 随对等设备管理在 `src/auth/settings-sections.ts` 中登记为本人专属。成员仍可按区域读取设置卡片。
+
+## 直接评审分支的用量（2026-11-21）
+
+从 `src/agents/progress.ts` 的 `allocate` 读起。运行页和事项页按展示的块分配用量。直接评审已有分支时，首轮计入评审块；页面有对应编码块时，共用运行计入编码块，独立重评仍计入评审块。
+
+## 成员查看插件卡片（2026-11-21）
+
+从 `src/plugins/http.ts` 的 `pluginView` 读起。插件列表、详情和改图标共用成员视图，保留插件权限摘要；服务和服务命令返回空数组。

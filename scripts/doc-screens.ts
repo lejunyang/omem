@@ -1398,7 +1398,7 @@ await sendToday(app);
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
-  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
+  console.log(`演示数据：${url}/#/code/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   console.log(`向量和重排的假云端接口：${fakeApiUrl}（模型名写 missing-model 会失败）`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
   const cleanup = async () => { await server.close(); for (const id of ["stagekit", "helperkit", "acmeauth"]) forgetPlugin(id); app.events.emit("close"); app.db.close(); closeVault(home); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); process.exit(); };
@@ -1576,7 +1576,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "sources-review", path: `/sources/${kbOld}`, space: "refund", prepare: async (p) => { await p.getByRole("button", { name: /待复核/ }).click(); await p.waitForTimeout(600); } },
   { name: "memory", path: "/memory" },
   { name: "items", path: `/items/${item.id}` },
-  { name: "requirements-loading", path: `/reqs/${requirementPages.apply}`, prepare: async (p) => {
+  { name: "requirements-loading", path: `/code/reqs/${requirementPages.apply}`, prepare: async (p) => {
     await p.route(`**/api/requirements/${requirementPages.records}`, async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await route.continue().catch(() => {});
@@ -1584,13 +1584,13 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.locator(".list-col .pick").filter({ hasText: "退款记录页" }).click();
     await p.locator("main.detail [aria-busy='true']").waitFor();
   } },
-  { name: "review-overview", path: `/runs/${r.id}` },
-  { name: "review-checks", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "评审" }).click(); await p.locator(".check-head").nth(1).click(); await p.waitForTimeout(300); } },
-  { name: "review-change", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick", { hasText: "补测试与说明" }).click(); await p.waitForTimeout(900); await p.getByRole("button", { name: "下一处" }).click(); await p.waitForTimeout(1200); } },
-  { name: "review-split-diff", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.getByRole("radio", { name: "左右" }).click(); await p.getByRole("radio", { name: "文件" }).click(); await p.locator(".tree .row-btn.file").first().click(); await p.waitForTimeout(1200); } },
-  { name: "review-activity", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); await p.locator(".sec-head").nth(1).click(); await p.waitForTimeout(300); } },
-  { name: "run-context", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); const s = p.locator("details.usage summary"); await s.click(); await s.scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
-  { name: "review-quotes", path: `/runs/${r.id}`, prepare: async (p) => {
+  { name: "review-overview", path: `/code/${r.id}` },
+  { name: "review-checks", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "评审" }).click(); await p.locator(".check-head").nth(1).click(); await p.waitForTimeout(300); } },
+  { name: "review-change", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick", { hasText: "补测试与说明" }).click(); await p.waitForTimeout(900); await p.getByRole("button", { name: "下一处" }).click(); await p.waitForTimeout(1200); } },
+  { name: "review-split-diff", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.getByRole("radio", { name: "左右" }).click(); await p.getByRole("radio", { name: "文件" }).click(); await p.locator(".tree .row-btn.file").first().click(); await p.waitForTimeout(1200); } },
+  { name: "review-activity", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); await p.locator(".sec-head").nth(1).click(); await p.waitForTimeout(300); } },
+  { name: "run-context", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); const s = p.locator("details.usage summary"); await s.click(); await s.scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
+  { name: "review-quotes", path: `/code/${r.id}`, prepare: async (p) => {
     await p.getByRole("tab", { name: /变更/ }).click();
     await p.locator(".pick").first().click();
     await p.waitForTimeout(1500);
@@ -1612,7 +1612,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.locator("textarea[aria-label='问题']").fill("[1] 这里换算成分的时候，[2] 的尾差会不会出现负数？");
     await p.waitForTimeout(300);
   } },
-  { name: "delegate-sync", path: "/runs", prepare: async (p) => { await p.getByRole("button", { name: "交办" }).first().click(); await p.waitForTimeout(400); await p.locator("textarea").first().fill("把 main 合并进来，再把退款精度改成超出两位小数报错"); await p.getByText("拉取目标分支在 origin 上的新提交").click(); await p.waitForTimeout(300); } },
+  { name: "delegate-sync", path: "/code", prepare: async (p) => { await p.getByRole("button", { name: "交办" }).first().click(); await p.waitForTimeout(400); await p.locator("textarea").first().fill("把 main 合并进来，再把退款精度改成超出两位小数报错"); await p.getByText("拉取目标分支在 origin 上的新提交").click(); await p.waitForTimeout(300); } },
   { name: "rules", path: `/rules?id=${rule.id}` },
   { name: "meeting-rule-confirmation", path: `/rules?id=${meetingRule.id}`, prepare: async (p) => { await p.getByText("入会确认", { exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "agents", path: "/agents" },
@@ -1651,11 +1651,11 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "ask-citations-dark", path: `/ask/${t.id}`, dark: true },
   { name: "memory-dark", path: "/memory", dark: true },
   { name: "sources-dark", path: `/sources/${prd}`, dark: true },
-  { name: "design-own", path: `/design/${ownDesign.id}` },
-  { name: "design-external", path: `/design/${extDesign.id}` },
-  { name: "review-change-mobile", path: `/runs/${r.id}`, width: 390, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.waitForTimeout(400); } },
+  { name: "design-own", path: `/code/designs/${ownDesign.id}` },
+  { name: "design-external", path: `/code/designs/${extDesign.id}` },
+  { name: "review-change-mobile", path: `/code/${r.id}`, width: 390, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.waitForTimeout(400); } },
   // 评审页：问题发到合并请求以后的状态，和发布、读讨论的入口。
-  { name: "review-sync", path: `/runs/${r.id}`, prepare: async (p) => {
+  { name: "review-sync", path: `/code/${r.id}`, prepare: async (p) => {
     await p.locator(".rsync").waitFor();
     await p.locator(".rsync").scrollIntoViewIfNeeded();
     await p.waitForTimeout(400);

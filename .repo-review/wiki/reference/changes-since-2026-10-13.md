@@ -10,7 +10,7 @@ updated: 2026-11-24
 
 **这个文件只留最近的改动**，新的加在最前面。更早的移到了同目录的归档里，找旧改动时按关键词在这几个文件里搜，不用整份读：
 
-- [2026-11-21 下半天](./changes-2026-11-21-second-half.md)（61 节）：编码交办的用量归集、云端工具的令牌和探测、成员权限按区域和对象检查、严格运行的出网代理、插件的通知出口，以及成员的线和“等我的”、变化台账、“今天”并进简报、需求到交付的链路、远程会话交给成员、插件的检索 / 原件格式 / 页面类型、HTTP 规则的判定入口、成员能力和成员沙箱里的编码。
+- [2026-11-21 下半天](./changes-2026-11-21-second-half.md)（68 节）：编码交办的用量归集、云端工具的令牌和探测、成员权限按区域和对象检查、严格运行的出网代理、插件的通知出口，以及成员的线和“等我的”、变化台账、“今天”并进简报、需求到交付的链路、远程会话交给成员、插件的检索 / 原件格式 / 页面类型、HTTP 规则的判定入口、成员能力和成员沙箱里的编码。
 - [2026-11-21 上半天](./changes-2026-11-21-first-half.md)（60 节）：整理第一批（方案、设置页和数据页重做、其余页面整理）、工作线三四期和关注页、指标由本人确认、协同任务板、等本人处理的清单和提问卡的免打扰、按后端能力裁剪常驻说明和云端会话收尾、操作规则和规则包、对象授权、成员在助手里看流程和存规则、插件订阅事项与评审。
 - [2026-11-20](./changes-2026-11-20.md)（24 节）：关注（盯群换成关注、从历史学、主动推进）、工作线的事项上下层和现状、演示和 Chrome 扩展的录制、成员用自己的 AI 账号、工作上的指标、每晚复查回复结果、插件设置。
 - [2026-11-19](./changes-2026-11-19.md)：编码交办、流程、评审复核、会议、网页、设备和插件回调。
@@ -20,6 +20,14 @@ updated: 2026-11-24
 - [2026-10](./changes-2026-10.md)（10-13 至 10-31，128 节）：规则页与规则引擎、多 Agent 协作、访客与私聊指令、分档评审、多个飞书机器人、会议规则、插件、设备的外部 Agent、夜间复盘、原件治理、需求树。
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
+
+## 在别的仓库改的交办不再挂到事项的需求点和流程上（2026-11-24）
+
+联调一件需求时查出联调工具的缺陷，助手交办修工具时带上了那件事的 `item_id`。结果交办页顶上显示那件事流程里等本人的段（埋点、验收），评审的需求拆分拿到那件事的几十个需求点，照“上轮状态”给每个点交了已实现 / 部分实现，宿主记成了这次交办的结果，需求点的“最近一次评审”被一次没改业务代码的交办覆盖。现在交办（`delegate_code`、`review_branch`、网页的交办）带了事项而改的仓库不在这件事以前的交办和仓库材料里时，宿主存成 `contextItemId`（`src/items/materials.ts` 的 `workItem`；事项还没有任何仓库记录时照旧算这件事的）：编码和评审的任务里是“背景：事项「…」”，有说明和材料、没有需求点；交办不挂到事项上，评审不按需求点拆分、不写 `req_status`，不跟流程；`GET /api/code-works` 多一个 `background`，交办页写“为事项：…”，没有流程的等待。续轮和按评审修改沿用它。`item_id` 的工具说明和 `skills/omem/references/code.md` 改成只在做这件事要的改动时传。测试 `test/req-work.test.ts`。
+
+## 编码：交办、方案、需求合成左侧一项（2026-11-24）
+
+本人说方案页藏在运行页“编码”列表底部找不到，需求页单独一项又别扭，要合成一个入口。左侧菜单的“需求”换成“编码”（`#/code`），列表列顶上三个标签（`web/src/components/CodeTabs.vue`，按 `code.work.view` / `designs.view` / `requirements.view` 各自显示）：“交办”（`web/src/views/Code.vue`）是原来运行页的“编码”列表和交办对话框（拆成 `components/DelegateDialog.vue`，加了 Esc 关闭和焦点归还）；“方案”（`views/Designs.vue`）改成左边列表、右边方案，`views/Design.vue` 删掉；“需求”（`views/Requirements.vue`）去掉了在树里打开交办的那一套（`?work=`、树上的变更状态、需求外一行），需求点下的编码点开转到“交办”。按需求点看代码挪进交办自己的“需求点”标签：`CodeWork` 去掉 `focus` / `from` / `points`，点一个功能点只看它的变更点和代码；新增 `loaded`、`missing` 两个事件，页面据此在同一交办的各轮之间保留视图、把不是编码的运行转回运行页。运行页去掉“编码 / 全部运行”切换和“交办”按钮，打开编码运行时转到 `#/code/<id>`；`main.ts` 里 `#/reqs/…`（带 `work` 的转到那次交办）、`#/designs`、`#/design/<id>` 都转到新位置，服务端通知、飞书卡片里的链接不用改。`lib/route.ts` 的 `pageParam` 可以传路由模式（`/code/reqs/:id?`），给同在 `/code` 下的几个页面用。验证：网页类型检查、11 个相关测试文件、截图脚本的虚构数据上 1440 / 390 走查；重拍了交办、方案、需求相关的截图。
 
 ## 需求页：测试点的行不再撑高，测试结果不再超出卡片（2026-11-24）
 
@@ -370,25 +378,6 @@ Web 远程的“先关闭”仍由 `src/remote/sessions.ts` 传给 aad。含修�
 
 直连中断后，反向请求沿用原配对的派单身份。签名只对当前命令、参数和反向凭据有效。传输入口在 `src/core/peers.ts`，接活端核验在 `src/agents/peer-work.ts`。
 
-## 2026-11-21：任务板可以派到其他设备
-
-- `dispatch_work` 每块可指定 device、mode 和 access。borrow 借 ACP 在本机只读，remote 在对方同名空间起运行。选择前核对配对、在线、协议与空间权限；在线设备只返回后端空位和仓库空间名称。读 `src/agents/work-device.ts`、`tools.ts`。
-- 接活四条命令放进 peerCommands，经既有 /api/peer/exec 按配对令牌校验；node.acceptWork 默认关闭，acceptWorkFrom 按配对标识覆盖。远端档案按名字找，找不到用主助手；只读令牌拒写，写模式只开放任务空间的记忆、页面和事项。读 `src/agents/peer-work.ts`、`runner.ts`。
-- 尝试记设备、模式、远端运行、期限与幂等键；本地轮询队列按索引限批处理，短时断网恢复继续，到期或失联一小时失败。取消先到也作废幂等键，重派后旧结果只记迟到。产物复用课题的 2 MB / 8 MB 上限，远端用量进入本地运行。读 `src/agents/work-board.ts`、`studies/remote.ts`。
-- readBoard 和统一进度返回 deviceName、mode、remoteRunId、remoteUrl、deadline、lateAt；远端用量跟随本地尝试去重汇总。飞书卡片并列标设备，从 `src/agents/progress.ts`、`progress-runs.ts`、`src/channels/lark-work-progress.ts` 读起。接活开关与进度网页细节待接入。双临时 App 和假 ACP 的验证见 `test/work-board-peer.test.ts`。
-
-## 插件阶段的验收与恢复（2026-11-21）
-
-从 `examples/plugins/stagekit/README.md` 可走通文件信号、作业、验收词否决和本人越过。队列恢复和等待中的外部作业取消见 `test/flow-plugin-worker.test.ts`。检查的适用范围与证据在 `src/flows/plugin-gates.ts`，后端来源解析在 `src/agents/catalog.ts`。
-
-## 插件第四期：流程提供者、完成检查与 ACP 目录（2026-11-21）
-
-- 完成信号和 Git 共用巡检，证据留在阶段，失败退避；从 `src/flows/plugin-signals.ts` 读起。
-- 运行器由本人确认，持久运行恢复同键作业，期限取消；从 `src/flows/plugin-runner.ts`、`src/agents/runs.ts` 读起。
-- 结果检查默认关闭，只能收紧，强制错误暂停，本人单次越过留审计；从 `src/flows/plugin-gates.ts`、`src/flows/engine.ts` 读起。
-- backends 声明进入信任指纹与统一目录，停用移出，保存配置显示来源；从 `src/plugins/backends.ts`、`src/agents/catalog.ts`、`src/plugins/trust.ts` 读起。
-- 文件示例在 `examples/plugins/stagekit/`。网页选择、阶段证据与错误、检查设置、后端来源待接，字段见 `docs/v2/flows.md`。
-
 ## 2026-11-22 · 本人沙箱的目录与审批
 
 `src/agents/runner.ts` 按本轮传给豆包 CLI 的参数显示「完全访问」或「风险审批」。访客单项开着时，运行页也能区分实际采用的审批方式。
@@ -404,23 +393,3 @@ Web 远程的“先关闭”仍由 `src/remote/sessions.ts` 传给 aad。含修�
 多仓库评审自动找到的原工作树只进入本人沙箱的只读计划。成员账号按评审入口提供的工作目录和显式授权挂载，见 `src/agents/runner.ts`。
 
 设置中生成的 Claude 和 Codex API 档案继承基础后端的状态目录布局。状态布局见 `src/agents/catalog.ts`，运行和设置示例共用 `src/agents/own-run.ts`。
-
-## 2026-11-21 · 本机登录沙箱与统一的完全访问模式
-
-豆包 CLI 的审批模式在准备运行时按可写角色和 `runAccess` 的强制档位决定，参数层不再读取全局设置或合并后的完全访问标记。未隔离的访客沿用风险审批，ACP、Codex 和 Claude 的模式及 ACP 独立写权限保持原计算。`test/doubao-cli.test.ts` 覆盖沙箱关闭、不支持时回退和已隔离的档位组合，`test/full-access.test.ts` 覆盖角色行为表。
-
-多仓库运行在准备阶段收集分配的工作树、快照、核对过的产物目录及后端状态目录，再应用隐藏与只读规则。启动参数、运行状态和 Agent 当轮说明共用这份挂载计划；设置接口的默认示例也经过相同的状态目录校验。Git links/pointers、只读工作树与可写快照沿用原规则。回归覆盖 `test/own-run.test.ts`、`test/workspace-mounts.test.ts` 和 `test/own-sandbox-linux.test.ts`。
-
-从 `src/agents/own-run.ts` 看本地运行选择，从 `own-sandbox.ts` 看挂载和后端模式。工作区及 ACP 写权限按角色保留，`GET/PUT /api/security/sandbox` 供本人检查和保存设置。配置组合及使用范围见 [本人的运行进沙箱](../../../docs/v2/agent-accounts.md#本人的运行进沙箱)。
-
-## 整机诊断仅本人可读（2026-11-21）
-
-`GET /api/diag` 随对等设备管理在 `src/auth/settings-sections.ts` 中登记为本人专属。成员仍可按区域读取设置卡片。
-
-## 直接评审分支的用量（2026-11-21）
-
-从 `src/agents/progress.ts` 的 `allocate` 读起。运行页和事项页按展示的块分配用量。直接评审已有分支时，首轮计入评审块；页面有对应编码块时，共用运行计入编码块，独立重评仍计入评审块。
-
-## 成员查看插件卡片（2026-11-21）
-
-从 `src/plugins/http.ts` 的 `pluginView` 读起。插件列表、详情和改图标共用成员视图，保留插件权限摘要；服务和服务命令返回空数组。

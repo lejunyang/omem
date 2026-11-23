@@ -16,18 +16,12 @@ import RunActivity from "../components/RunActivity.vue";
 import TaskBoard from "../components/TaskBoard.vue";
 import ProgressBoard from "../components/ProgressBoard.vue";
 import ContextUsage from "../components/ContextUsage.vue";
-import CodeWork from "../components/CodeWork.vue";
-import CodeWorkList from "../components/CodeWorkList.vue";
 import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { promptDialog } from "../lib/dialog";
-import { hasPerm } from "../lib/caps";
 
 const route = useRoute();
 const router = useRouter();
-/** 编码: one row per delegation or branch review (CodeWorkList); 全部运行: every other run, newest first. Kept in this browser. */
-const view = ref<"code" | "all">((() => { try { return localStorage.getItem("omem.runs.view") === "code" ? "code" : "all"; } catch { return "all"; } })());
-watch(view, (v) => { try { localStorage.setItem("omem.runs.view", v); } catch { /* private window */ } });
-/** Coding and review runs are listed as their work under 编码, not one row per round here. */
+/** Coding and review runs are listed as their work under 编码 → 交办 (views/Code.vue), not one row per round here. */
 const CODE_KINDS = "code,review";
 const runs = ref<Run[]>([]);
 const total = ref(0);
@@ -74,7 +68,6 @@ const loadPeople = () => get<{ people: { key: string; name: string; runs: number
 /** The filter's key for a run's person: one entry per person by name (run-trigger.ts triggerers), you as yourself. */
 const personKey = (by: { key: string; name: string }) => (by.key === "user:owner" ? by.key : `name:${by.name}`);
 function filterBy(key: string) {
-  view.value = "all";
   scope.value = "all";
   byFilter.value = key;
 }
@@ -93,8 +86,6 @@ const detail = ref<{ can?: { operate: boolean; edit: boolean }; run: Run; events
 const REPLY_LABELS: Record<string, string> = { resolved: "解决了", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "看不出", silent: "没人接话", unjudged: "没判" };
 const REVISABLE = ["resolved", "followup", "corrected", "taken_over", "unrelated"];
 const isOwner = computed(() => !state.me || state.me.role === "owner");
-/** 交办 hands work to the coding Agent on this machine: the owner, or someone given 交办编码. */
-const mayDelegate = computed(() => hasPerm("code.delegate"));
 /** 停止 / 重试 on the opened run (`can.operate`); an older server sends no `can`: shown as before. */
 const mayOperate = computed(() => detail.value?.can?.operate ?? true);
 async function reviseReply(label: string) {
@@ -233,7 +224,9 @@ watch(keyword, () => {
   keywordTimer = setTimeout(() => void load(), idQuery(keyword.value) ? 0 : 250);
 });
 watch(id, loadDetail);
-watch(() => detail.value?.run.kind, (k) => { if (k === "code" && view.value !== "code" && !keyword.value.trim()) view.value = "code"; });
+// A delegation's round or a branch review is coding work: it opens under 编码 → 交办 (links and
+// notifications still point here).
+watch(() => detail.value?.run, (r) => { if (r?.kind === "code") void router.replace({ path: `/code/${r.id}`, query: route.query }); });
 const off = onServerEvent((e) => {
   if (e.type === "run") {
     // Keep the list itself stable: only refresh when a new top-level run might appear
@@ -279,8 +272,6 @@ const progressState = ref<"ready" | "empty" | "error" | null>(null);
 watch(id, () => (progressState.value = null));
 const finalText = computed(() => out.value.answer ?? out.value.summary ?? "");
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
-/** A coding run (a delegation's round or a branch review) opens as its whole work (CodeWork). */
-const codeRoot = computed(() => (detail.value?.run.kind === "code" ? String((detail.value.run.input as { continueFrom?: string }).continueFrom ?? detail.value.run.id) : null));
 async function act(action: "cancel" | "retry") {
   if (!detail.value) return;
   try {
@@ -297,69 +288,6 @@ async function act(action: "cancel" | "retry") {
     toast((e as Error).message, "error");
   }
 }
-const delegateOpen = ref(false);
-type DelegateMode = "code" | "review";
-const mode = ref<DelegateMode>("code");
-const modeOptions = [
-  { value: "code" as const, label: "实现" },
-  { value: "review" as const, label: "评审分支" },
-];
-const emptyTask = () => ({ repos: [] as string[], task: "", check: "", branch: "", base: "", fromBranch: "", pull: false, onto: "", syncMode: "merge" as "merge" | "rebase", syncOnly: false });
-const syncModeOptions = [{ value: "merge" as const, label: "合并" }, { value: "rebase" as const, label: "变基" }];
-const ontoOptions = computed(() => [{ value: "", label: "不合并别的分支" }, ...branchOptions.value]);
-const wantsSync = computed(() => task.value.pull || !!task.value.onto);
-const task = ref(emptyTask());
-type BranchList = { current: string; base: string | null; branches: { name: string; commit: string; at: string; subject: string; remote: boolean }[] };
-const branchList = ref<BranchList | null>(null);
-const branchLoading = ref(false);
-// Branches of the first chosen repository (repositories of one requirement usually share the branch name).
-async function loadBranches(fetch = false) {
-  const repo = task.value.repos[0];
-  if (!repo) return void (branchList.value = null);
-  branchLoading.value = true;
-  try {
-    branchList.value = await get<BranchList>(`/api/spaces/${encodeURIComponent(repo)}/branches${fetch ? "?fetch=1" : ""}`);
-  } catch (e) {
-    branchList.value = null;
-    toast((e as Error).message, "error");
-  } finally {
-    branchLoading.value = false;
-  }
-}
-const branchOptions = computed(() => (branchList.value?.branches ?? []).map((b) => ({ value: b.name, label: b.name, hint: `${fmtTime(b.at, false)} · ${b.subject}` })));
-const baseOptions = computed(() => [{ value: "", label: `默认（${branchList.value?.base ?? "main"}）` }, ...branchOptions.value]);
-const fromOptions = computed(() => [{ value: "", label: `当前检出（${branchList.value?.current ?? "HEAD"}）` }, ...branchOptions.value]);
-watch([delegateOpen, () => task.value.repos[0]], ([open]) => {
-  if (open) void loadBranches();
-});
-const repos = computed(() => state.spaces.filter((s) => s.rootPath));
-const current = computed(() => state.spaces.find((s) => s.id === state.space));
-// Start from the current repository, or the repositories related to the current project.
-watch(delegateOpen, (open) => {
-  if (!open || task.value.repos.length) return;
-  const here = current.value;
-  const ids = repos.value.map((r) => r.id);
-  task.value.repos = here?.rootPath ? [here.id] : (here?.related ?? []).map((r) => r.space).filter((id) => ids.includes(id));
-});
-async function delegate() {
-  try {
-    // A task started from a project belongs to the project; otherwise to its first repository.
-    const space = current.value?.kind === "project" ? current.value.id : task.value.repos[0];
-    const t = task.value;
-    const r = mode.value === "review"
-      ? await post<Run>("/api/review-branch", { space, repos: t.repos, branch: t.branch, base: t.base || undefined, task: t.task.trim() || undefined })
-      : await post<Run>("/api/delegate", {
-          space, repos: t.repos, checkCommand: t.check || undefined, fromBranch: t.fromBranch || undefined,
-          task: t.task.trim() || (t.syncOnly ? `同步${t.pull ? "：拉取最新代码" : ""}${t.onto ? `，${t.syncMode === "merge" ? "合并" : "变基到"} ${t.onto}` : ""}` : t.task),
-          ...(wantsSync.value ? { sync: { pull: t.pull || undefined, onto: t.onto || undefined, mode: t.syncMode }, syncOnly: t.syncOnly } : {}),
-        });
-    delegateOpen.value = false;
-    task.value = emptyTask();
-    router.push(`/runs/${r.id}`);
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
 // The hint carries the other language, so the filter box finds a kind or role by either name.
 const kindOptions = computed(() => [
   ...Object.entries(runKindLabel).filter(([k]) => !CODE_KINDS.split(",").includes(k)).map(([k, label]) => ({ value: k, label, hint: k })),
@@ -371,31 +299,23 @@ const kindOptions = computed(() => [
 <template>
   <div class="runs">
     <aside class="list-col">
-      <div class="head" :class="{ code: view === 'code' }">
-        <UiSegmented v-model="view" class="view-pick" size="sm" aria-label="运行页视图" :options="[{ value: 'code', label: '编码' }, { value: 'all', label: '全部运行' }]" />
-        <label class="search"><Icon name="search" :size="14" /><input v-model="keyword" :placeholder="view === 'code' ? '标题、分支、任务里的字或 id' : '标题、id 或任务里的字'" :aria-label="view === 'code' ? '搜索交办' : '搜索运行记录'" /></label>
-        <button v-if="mayDelegate" class="btn sm delegate" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
-        <template v-if="view === 'all'">
-          <button type="button" class="btn ghost sm more-toggle" :class="{ on: moreFilters > 0 }" :aria-expanded="filtersOpen" aria-controls="run-filters" @click="filtersOpen = !filtersOpen">筛选<span v-if="moreFilters" class="n">{{ moreFilters }}</span><Icon name="down" :size="13" class="chev" :class="{ open: filtersOpen }" /></button>
-          <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
-          <div v-if="filtersOpen" id="run-filters" class="more-filters">
-            <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
-            <!-- Two columns of the same widths: 类型 · 后端 above, 触发人 · 触发方式 below. -->
-            <div class="filter-grid">
-              <ChipPicker v-model="kindFilter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
-              <UiSelect v-model="aiFilter" size="sm" width="100%" aria-label="后端或模型" :options="aiOptions" :search-at="8" :title="aiFilter ? `后端或模型：${aiFilter}` : '按运行用的 AI 后端筛选，后端下面缩进的是它用过的模型'" />
-              <UiSelect v-model="byFilter" size="sm" width="100%" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" />
-              <UiSelect v-model="viaFilter" size="sm" width="100%" aria-label="触发方式" :options="viaOptions" title="按触发方式筛选：找助手（@ 或私聊机器人）、有人找你……" />
-            </div>
-            <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
+      <div class="head">
+        <label class="search"><Icon name="search" :size="14" /><input v-model="keyword" placeholder="标题、id 或任务里的字" aria-label="搜索运行记录" /></label>
+        <button type="button" class="btn ghost sm more-toggle" :class="{ on: moreFilters > 0 }" :aria-expanded="filtersOpen" aria-controls="run-filters" @click="filtersOpen = !filtersOpen">筛选<span v-if="moreFilters" class="n">{{ moreFilters }}</span><Icon name="down" :size="13" class="chev" :class="{ open: filtersOpen }" /></button>
+        <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
+        <div v-if="filtersOpen" id="run-filters" class="more-filters">
+          <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
+          <!-- Two columns of the same widths: 类型 · 后端 above, 触发人 · 触发方式 below. -->
+          <div class="filter-grid">
+            <ChipPicker v-model="kindFilter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
+            <UiSelect v-model="aiFilter" size="sm" width="100%" aria-label="后端或模型" :options="aiOptions" :search-at="8" :title="aiFilter ? `后端或模型：${aiFilter}` : '按运行用的 AI 后端筛选，后端下面缩进的是它用过的模型'" />
+            <UiSelect v-model="byFilter" size="sm" width="100%" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" />
+            <UiSelect v-model="viaFilter" size="sm" width="100%" aria-label="触发方式" :options="viaOptions" title="按触发方式筛选：找助手（@ 或私聊机器人）、有人找你……" />
           </div>
-        </template>
-        <UiSegmented v-else v-model="scope" class="scope-filter" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
+          <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
+        </div>
       </div>
-      <div v-if="view === 'code'" class="items">
-        <CodeWorkList :space="scope === 'space' ? state.space : null" :q="keyword" :active="codeRoot" @pick="(w) => router.push(`/runs/${w.latestId}`)" />
-      </div>
-      <div v-else class="items" @scroll.passive="onListScroll">
+      <div class="items" @scroll.passive="onListScroll">
         <Skeleton v-if="listLoading && !runs.length" :rows="8" />
         <VirtualList v-else :items="runs" :item-key="(r) => r.id" :estimate="54">
           <template #default="{ item: r }">
@@ -418,13 +338,12 @@ const kindOptions = computed(() => [
     <main class="detail">
       <div v-if="detailLoading" class="pad-loading"><Skeleton variant="text" :rows="8" /></div>
       <div v-else-if="!detail" class="empty">
-        <Icon :name="view === 'code' ? 'code' : 'activity'" :size="34" />
-        <h3>{{ view === "code" ? "编码" : "后台运行" }}</h3>
-        <p v-if="view === 'code'">每次交办编码和分支评审是一行，按等谁分组，等你决定或确认的在最上面。点开看它现在在做什么、下一步、分支推到哪，以及修改项、评审和每一轮的过程。</p>
-        <p v-else>问答、整理、Wiki 写作和巡检都会在这里留下记录：Agent 做了哪些调查、结果如何。交办编码和评审在“编码”里。</p>
+        <Icon name="activity" :size="34" />
+        <h3>后台运行</h3>
+        <p>问答、整理、Wiki 写作和巡检都会在这里留下记录：Agent 做了哪些调查、结果如何。交办编码和分支评审在“编码”里。</p>
       </div>
-      <!-- A delegation's round or a branch review: the whole work, the same view as on the requirements page. -->
-      <CodeWork v-else-if="codeRoot" :key="codeRoot" :run-id="detail.run.id" from="runs" @open="(r) => router.push(`/runs/${r}`)" />
+      <!-- Coding work moves on to 编码 → 交办 (the watch above). -->
+      <div v-else-if="detail.run.kind === 'code'" class="pad-loading"><Skeleton variant="text" :rows="8" /></div>
       <template v-else>
         <header class="dh">
           <div class="row wrap small">
@@ -532,72 +451,10 @@ const kindOptions = computed(() => [
       </template>
     </main>
 
-    <div v-if="delegateOpen && mayDelegate" class="modal-overlay" @mousedown.self="delegateOpen = false">
-      <div class="modal stack">
-        <div class="row"><strong>交办编码任务</strong><span class="spacer" /><UiSegmented v-model="mode" size="sm" aria-label="交办方式" :options="modeOptions" /><button class="btn ghost sm icon" @click="delegateOpen = false"><Icon name="x" /></button></div>
-        <p v-if="mode === 'code'" class="muted small">每个仓库各开一个独立的 Git worktree，由编码 Agent 一起实现，分别运行检查命令，再由评审 Agent 审查。确认后所有仓库一起应用。</p>
-        <p v-else class="muted small">把已有的分支检出到独立工作区，取它从基线分叉以来的全部改动，按评审档位交给各评审项审查。只出评审意见，不改代码。</p>
-        <div v-if="!repos.length" class="muted">还没有关联代码目录的空间，请先在设置里新建代码仓库空间。</div>
-        <template v-else>
-          <div class="field">
-            <span>{{ mode === "review" ? "分支所在的仓库（可多选，分支名相同）" : "仓库（可多选，一起改）" }}</span>
-            <div class="repo-picks">
-              <UiCheckbox v-for="r in repos" :key="r.id" v-model="task.repos" :value="r.id" size="sm">{{ r.name }}</UiCheckbox>
-            </div>
-          </div>
-          <div v-if="task.repos.length" class="branch-row">
-            <template v-if="mode === 'review'">
-              <div class="field grow"><span>要评审的分支</span><UiSelect v-model="task.branch" :options="branchOptions" :placeholder="branchLoading ? '读取分支…' : '选择分支'" :search-at="1" aria-label="要评审的分支" /></div>
-              <div class="field grow"><span>对照的基线</span><UiSelect v-model="task.base" :options="baseOptions" :search-at="1" aria-label="基线分支" /></div>
-            </template>
-            <div v-else class="field grow"><span>从哪里开始改</span><UiSelect v-model="task.fromBranch" :options="fromOptions" :search-at="1" aria-label="起点分支" /></div>
-            <button class="btn ghost sm" :disabled="branchLoading" title="从 origin 拉取全部分支" @click="loadBranches(true)"><Icon name="refresh" :size="13" />拉取</button>
-          </div>
-          <!-- Git work before coding (src/agents/code-sync.ts): conflicts go to the coding Agent, then to the owner. -->
-          <div v-if="mode === 'code' && task.repos.length" class="field sync">
-            <span>编码前先同步（可选）</span>
-            <div class="row wrap">
-              <UiCheckbox v-model="task.pull" size="sm">拉取目标分支在 origin 上的新提交</UiCheckbox>
-            </div>
-            <div class="row wrap">
-              <UiSelect v-model="task.onto" :options="ontoOptions" :search-at="1" width="220px" size="sm" aria-label="再合并或变基到的分支" />
-              <UiSegmented v-if="task.onto" v-model="task.syncMode" size="sm" :options="syncModeOptions" aria-label="合并还是变基" />
-              <UiCheckbox v-if="wantsSync" v-model="task.syncOnly" size="sm">只同步，不再编码</UiCheckbox>
-            </div>
-            <span v-if="wantsSync" class="hint">冲突先交给编码 Agent 解决，拿不准的会问你，解决不了的停下来给你；同步的提交在应用时快进到目标分支，之后可以在“接收位置与提交”里推送（变基过的要强制推送）。</span>
-          </div>
-          <label class="field"><span>{{ mode === "review" ? "需求说明和评审要求（可选）" : "任务" }}</span><textarea v-model="task.task" class="textarea" rows="6" :placeholder="mode === 'review' ? '需求要解决什么、验收标准、相关文档或讨论、特别关心的点' : '目标、背景、验收标准、相关讨论'" /></label>
-          <label v-if="mode === 'code'" class="field"><span>检查命令（可选，默认用空间设置）</span><input v-model="task.check" class="input mono" placeholder="pnpm test" /></label>
-          <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.repos.length || (mode === 'review' ? !task.branch : !task.task.trim() && !(wantsSync && task.syncOnly))" @click="delegate">{{ mode === "review" ? "开始评审" : "交办" }}</button></div>
-        </template>
-      </div>
-    </div>
   </div>
 </template>
 
 <style scoped>
-.sync .row { gap: 10px; align-items: center; }
-.branch-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-}
-.branch-row .grow {
-  flex: 1 1 200px;
-  min-width: 0;
-}
-.repo-picks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  max-height: 160px;
-  overflow: auto;
-}
-.repo-title {
-  margin: 12px 0 6px;
-  font-weight: 600;
-}
 .pad-loading {
   max-width: 760px;
   padding: 8px 0;
@@ -620,7 +477,6 @@ const kindOptions = computed(() => [
   grid-template-columns: auto 1fr auto;
   /* A search and the most used status on top; the rest behind 筛选. */
   grid-template-areas:
-    "view . delegate"
     "search search search"
     "status . more"
     "filters filters filters";
@@ -632,24 +488,15 @@ const kindOptions = computed(() => [
 .head .more-toggle .chev { color: var(--muted); transition: transform 0.15s ease; }
 .head .more-toggle .chev.open { transform: rotate(180deg); }
 .head .more-filters { grid-area: filters; display: grid; gap: 8px; justify-items: start; padding-top: 8px; border-top: 1px dashed var(--line); }
-.head.code {
-  grid-template-areas:
-    "view . delegate"
-    "search search search"
-    "scope scope scope";
-}
-.head .view-pick { grid-area: view; justify-self: start; }
 .head .search { grid-area: search; display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); }
 .head .search:focus-within { border-color: var(--accent); }
 .head .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13px; color: var(--ink); }
-.head .delegate { grid-area: delegate; }
 .head .status-filter { grid-area: status; justify-self: start; }
 .head .filter-grid { display: grid; grid-template-columns: 132px 124px; gap: 6px; align-items: start; }
 .head .filter-grid > * { min-width: 0; }
 .run .by { display: flex; align-items: center; gap: 4px; }
 .linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .linkish:hover { text-decoration: underline; }
-.head .scope-filter { grid-area: scope; justify-self: start; }
 .sm-select {
   width: auto;
   height: 28px;
@@ -922,24 +769,6 @@ const kindOptions = computed(() => [
 .hint-sel {
   font-weight: 400;
   letter-spacing: 0;
-}
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 12, 16, 0.35);
-  z-index: 55;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: 10vh;
-}
-.modal {
-  width: min(620px, calc(100vw - 24px));
-  background: var(--panel);
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-lg);
-  padding: 18px;
 }
 @media (max-width: 760px) {
   .runs {

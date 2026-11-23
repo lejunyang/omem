@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import { post } from "../api";
 import Icon from "./Icon.vue";
 import UiCheckbox from "./UiCheckbox.vue";
@@ -15,8 +14,7 @@ import NextRoundReview from "./NextRoundReview.vue";
  * fix sends them as one task, as the 概览's fix box does.
  */
 const props = defineProps<{ runId: string; rv: Reviews; canFix: boolean; branchReview: boolean }>();
-const emit = defineEmits<{ close: [] }>();
-const router = useRouter();
+const emit = defineEmits<{ close: []; started: [runId: string] }>();
 const quotes = computed(() => quotesOf(props.runId, "fix"));
 const findingIds = computed(() => props.rv.findings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id));
 const withFindings = ref(true);
@@ -39,7 +37,7 @@ async function start() {
     clearQuotes(props.runId, "fix");
     toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
     emit("close");
-    router.push(`/runs/${r.id}`);
+    emit("started", r.id);
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {

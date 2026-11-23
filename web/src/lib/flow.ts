@@ -210,9 +210,9 @@ export function nextWords(s: FlowStage, who?: string | null) {
  */
 export function evidenceLink(ref: string) {
   const r = ref.trim();
-  if (r.startsWith("design:")) return `#/design/${encodeURIComponent(r.slice(7))}`;
+  if (r.startsWith("design:")) return `#/code/designs/${encodeURIComponent(r.slice(7))}`;
   const run = RUN_REF.exec(r);
-  if (run) return `#/runs/${encodeURIComponent(run[1] ?? run[2])}`;
+  if (run) return `#/${r.startsWith("code-work:") ? "code" : "runs"}/${encodeURIComponent(run[1] ?? run[2])}`;
   const item = ITEM_REF.exec(r);
   if (item) return `#/work/${encodeURIComponent(item[1] ?? item[2])}`;
   return null;

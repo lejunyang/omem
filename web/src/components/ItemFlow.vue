@@ -281,7 +281,7 @@ async function stop() {
               <span v-if="t.verdict" class="test-meta test-verdict" :class="t.verdict">{{ verdictWords[t.verdict] }}</span>
             </summary>
             <div class="test-body">
-              <div v-if="t.req" class="muted">需求点：<a :href="`#/reqs/${t.req.id}`">{{ t.req.title }}</a></div>
+              <div v-if="t.req" class="muted">需求点：<a :href="`#/code/reqs/${t.req.id}`">{{ t.req.title }}</a></div>
               <Markdown v-if="t.note" :source="t.note" class="stage-text" />
               <RunArtifacts v-if="t.artifacts.length" :items="t.artifacts" />
               <div v-else class="muted">这一条没有交截图或录屏。</div>
@@ -312,7 +312,7 @@ async function stop() {
             <Markdown v-if="c.detail" :source="c.detail" class="stage-text" />
             <div v-if="c.type === 'deadline' && c.due" class="muted">{{ c.status === "merged" ? "截止时间改成了" : "提出改成" }} {{ dueWords(c) }}</div>
             <div v-if="c.stages.length" class="muted">影响：{{ c.stages.map(stageName).join("、") }}</div>
-            <div v-if="c.req" class="muted">需求点：<a :href="`#/reqs/${c.req}`">打开</a></div>
+            <div v-if="c.req" class="muted">需求点：<a :href="`#/code/reqs/${c.req}`">打开</a></div>
             <div class="evidence">
               <template v-for="(r, i) in c.refs" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原话 {{ i + 1 }}</a></template>
               <a :href="`#/runs/${c.runId}`" class="muted">看这次是怎么读的</a>

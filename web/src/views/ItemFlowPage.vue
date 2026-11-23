@@ -94,7 +94,7 @@ function discuss(s?: Stage) {
 }
 function openMaterial(m: Material) {
   if (m.kind === "run") return void router.push(`/runs/${m.ref}`);
-  if (m.kind === "req") return void router.push(`/reqs/${m.ref}`);
+  if (m.kind === "req") return void router.push(`/code/reqs/${m.ref}`);
   if (m.kind === "conversation") return void router.push(`/ask/${m.ref}`);
   if (m.kind === "source" && m.readable) openCitation({ kind: "source", id: m.ref }, true);
 }

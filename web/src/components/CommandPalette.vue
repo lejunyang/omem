@@ -70,8 +70,10 @@ const navs = [
   { label: "事项", to: "/items", icon: "checkbox" },
   { label: "记忆", to: "/memory", icon: "brain" },
   { label: "原件", to: "/sources", icon: "file" },
+  { label: "编码", to: "/code", icon: "code" },
+  { label: "方案", to: "/code/designs", icon: "layers" },
+  { label: "需求", to: "/code/reqs", icon: "target" },
   { label: "运行记录", to: "/runs", icon: "activity" },
-  { label: "方案", to: "/designs", icon: "layers" },
   { label: "学习", to: "/learn", icon: "cap" },
   { label: "设置", to: "/settings", icon: "settings" },
 ];

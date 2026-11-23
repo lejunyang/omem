@@ -28,9 +28,20 @@ const routes: RouteRecordRaw[] = [
     beforeEnter: (to) => (!state.me || state.me.role === "owner" ? { path: `/work/${String(to.params.id)}`, query: { ...to.query, tab: "flow" }, hash: to.hash } : true),
   } as RouteRecordRaw,
   view("/items/:id?", () => import("./views/Items.vue"), "/items"),
-  view("/reqs/:id?", () => import("./views/Requirements.vue"), "/reqs"),
-  view("/designs", () => import("./views/Designs.vue")),
-  view("/design/:id", () => import("./views/Design.vue"), "/design"),
+  // 编码: 交办 (delegations and branch reviews), 方案 and 需求, one tab each (components/CodeTabs.vue).
+  view("/code/designs/:id?", () => import("./views/Designs.vue"), "/code/designs"),
+  view("/code/reqs/:id?", () => import("./views/Requirements.vue"), "/code/reqs"),
+  view("/code/:id?", () => import("./views/Code.vue"), "/code"),
+  // Their old addresses, in notifications, Feishu cards and links kept from before. A requirement opened
+  // with one of its delegations (`?work=`) is that delegation now.
+  { path: "/designs", redirect: (to) => ({ path: "/code/designs", query: to.query }) },
+  { path: "/design/:id", redirect: (to) => ({ path: `/code/designs/${String(to.params.id)}`, query: to.query }) },
+  {
+    path: "/reqs/:id?",
+    redirect: (to) => (typeof to.query.work === "string"
+      ? { path: `/code/${to.query.work}`, query: typeof to.query.tab === "string" ? { tab: to.query.tab } : {} }
+      : { path: `/code/reqs${to.params.id ? `/${String(to.params.id)}` : ""}`, query: to.query }),
+  },
   view("/memory", () => import("./views/Memory.vue")),
   view("/sources/kb", () => import("./views/KnowledgeBases.vue"), "/sources/kb"),
   view("/sources/:id?", () => import("./views/Sources.vue"), "/sources"),
@@ -71,7 +82,7 @@ setNavigation((to) => void router.isReady().then(() => router.replace(to)));
 // After the first view has settled, pull every other chunk at idle; a share link or a login page
 // (opened by someone who may never see the app) does not.
 const BARE_START = /^\/(share\/|login|cli-login)/;
-router.isReady().then(() => !BARE_START.test(router.currentRoute.value.path) && preloadWhenIdle(["/", "/work", "/ask", "/graph", "/wiki", "/items", "/designs", "/design", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/flows", "/notifications", "/settings", "/listen", "/account"]));
+router.isReady().then(() => !BARE_START.test(router.currentRoute.value.path) && preloadWhenIdle(["/", "/work", "/ask", "/graph", "/wiki", "/items", "/code", "/code/designs", "/code/reqs", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/flows", "/notifications", "/settings", "/listen", "/account"]));
 
 // After the service is updated, chunks the open page knows by their old names are gone. Opening a
 // view that needs one reloads once (the new index points at the new chunks); a part of a page that

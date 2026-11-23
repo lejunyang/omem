@@ -3,13 +3,14 @@ import { countParts, ORIGIN_LABELS, STATUS_CLS, statusText, type DesignSummary }
 import { relTime, state } from "../store";
 
 /** One design in a list (an item's designs, the list page): title, origin, status, counts, when. */
-const props = defineProps<{ design: DesignSummary; item?: { id: string; title: string } | null; showSpace?: boolean }>();
+/** `active`: the one open beside the list (编码 → 方案). */
+const props = defineProps<{ design: DesignSummary; item?: { id: string; title: string } | null; showSpace?: boolean; active?: boolean }>();
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 const parts = () => countParts(props.design.counts);
 </script>
 
 <template>
-  <router-link :to="`/design/${design.id}`" class="drow">
+  <router-link :to="`/code/designs/${design.id}`" class="drow" :class="{ on: active }" :aria-current="active ? 'page' : undefined">
     <span class="t ellipsis" :title="design.title">{{ design.title }}</span>
     <span class="row wrap small meta">
       <span class="badge">{{ ORIGIN_LABELS[design.origin] }}<template v-if="design.author"> · {{ design.author }}</template></span>
@@ -27,6 +28,7 @@ const parts = () => countParts(props.design.counts);
 <style scoped>
 .drow { display: grid; gap: 4px; padding: 8px 10px; border-radius: 8px; color: inherit; min-width: 0; }
 .drow:hover { background: var(--hover); text-decoration: none; }
+.drow.on { background: var(--accent-soft); }
 .t { font-weight: 550; min-width: 0; }
 .meta { gap: 4px 8px; }
 .it { max-width: 260px; }

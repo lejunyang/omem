@@ -246,8 +246,9 @@ export function otherRefs(refs: string[], targets: Record<string, RefTarget> = {
   return refs.filter((r) => !/^(src|mem|msg):/.test(r)).map((r) => {
     const t = targets[r];
     if (t?.kind === "item") return { r, label: `事项：${clip(t.title, 40)}`, title: t.title, link: `#/work/${encodeURIComponent(t.id)}` };
-    if (t?.kind === "run") return { r, label: `运行：${clip(t.title, 30)}`, title: t.title, link: `#/runs/${encodeURIComponent(t.id)}` };
-    if (r.startsWith("design:")) return { r, label: "方案", title: r, link: `#/design/${encodeURIComponent(r.slice(7))}` };
+    // Coding work (`code-work:`) opens under 编码 → 交办.
+    if (t?.kind === "run") return { r, label: `运行：${clip(t.title, 30)}`, title: t.title, link: `#/${r.startsWith("code-work:") ? "code" : "runs"}/${encodeURIComponent(t.id)}` };
+    if (r.startsWith("design:")) return { r, label: "方案", title: r, link: `#/code/designs/${encodeURIComponent(r.slice(7))}` };
     return { r, label: clip(r, 24), title: r, link: null };
   });
 }

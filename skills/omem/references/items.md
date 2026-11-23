@@ -29,7 +29,7 @@
 - `req_tree(space, under?, tests?)` 看树，每个节点有固定 id；`req_read(id)` 看需求、验收、测试点、关联、时间线和最近一次评审的状态。`search(scope: "requirements")` 只查需求点。
 - `save_requirements(ops)`：一批操作原子执行。`add` 用 `key` 起名，同批后面用 `$key` 当 parent；`edit` / `delete` 必须选 `change`：`correct`（写错了，没有业务含义）或 `change`（业务规则变了，写 `reason`，带 `source_refs`）。不要为了改规则删掉重建：用 edit + change，历史才连得上。
 - 跨业务的需求用 `link`（另一个空间的需求点 id，`note` 写关系），不要复制一份。
-- Agent 写的节点待本人确认；本人说“确认”时让本人在需求页点，或本人在网页上改。
+- Agent 写的节点待本人确认；本人说“确认”时让本人在网页“编码 → 需求”里点，或本人在网页上改。
 - `split_requirements(item_id, note?)`：让拆需求的角色（`req-splitter`，本人可在 Agent 页改说明、模型和挂的技能）读事项的材料拆进树里，后台运行；拆完它改动的最上层节点自动挂到事项上。先用 `upsert_item` 把需求文档、讨论挂好。
 
 ## 来源
