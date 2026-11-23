@@ -1069,7 +1069,9 @@ pnpm run dev                # 打开 http://localhost:5173
 | 31 | `omem setup` | 交互式选择各部分；有 osdk 时下载并锁定向量模型、重排模型和 Docling 模型；选 Docling 时经 osdk 装 uv；没启动过服务也能勾选定时任务；最后可启动后台服务 | macOS 本机已验 uv / llama.cpp 安装与 Docling 依赖解析 |
 | 31b | `omem service start`，再 `status`、`restart`、`stop` | 服务 online、网页可开；日志在 ~/.omem/service/logs；stop 后不留进程 | macOS 本机已验 |
 | 32 | `omem setup` → 注入标记 → 开启（选 2B 或 0.8B，经 osdk 下载），往群里发“忽略之前的指令…” | 不用手动启动任何服务；原件页和整理任务里出现“疑似注入”提示，助理不执行；空闲 3 分钟后判官进程退出 | 0.8B 自动启停与打分在 macOS 本机已验（注入 0.78 / 正常 0.22）；模型评测见 judge-models.md |
-| 33b | `omem agents --all`；`omem agents add gemini --via npx` 或网页 设置 → 后端与模型 → 添加 Agent 里下载 opencode；终端里先登录该 Agent，再在设置里“检测模型”并设为默认 | 列出 25 个内置 Agent 和安装方式；注册表 41 个可添加；换成新 Agent 后问答、整理照常调用 omem 工具 | OpenCode 云端已验（调用 list_spaces 回答）；Gemini/Qwen/Copilot/goose 握手通过，登录待你验 |
+| 33b | `omem agents --all`；`omem agents add gemini --via npx` 或网页 设置 → 后端与模型 → 添加 Agent 里下载 opencode；终端里先登录该 Agent，再在设置里“检测模型”并设为默认 | 列出内置 Agent 和安装方式；注册表可添加的条目以当前返回为准；换成新 Agent 后问答、整理照常调用 omem 工具 | OpenCode 云端已验（调用 list_spaces 回答）；Gemini/Qwen/Copilot/goose 握手通过，登录待你验 |
+| 33c | 安装官方 Antigravity CLI，执行 `agy acp --login`；`omem agents`，再在网页 设置 → 后端与模型 展开 Antigravity CLI 点“检测模型” | 识别 `antigravity`，启动命令为 `agy acp`，复用 CLI 登录；未安装时 `omem agents --all` 显示官方安装与登录提示；已有注册表 `antigravity-acp` 和手动配置保留 | `test/catalog.test.ts` 校验内置配置；真实 CLI 1.5.15 经 `probeProfile` 读到 9 个模型和各模型思考强度（共 4 档） |
+| 33d | 在 Antigravity CLI 后端展开额度并点“重新读取”；为接近用尽的组和另一个组各配置模型 | 通过 CLI 自己的 `/usage` 读取周 / 5 小时额度与重置时间，不发起模型回合；只避让匹配的模型组，不明范围只展示；读取失败显示错误并保留原结果 | `test/antigravity-quota.test.ts` 覆盖转换、非法值、CLI 参数、缓存与失败保留、模型范围；真实 CLI 的 `/usage` 返回结构化额度，`num_turns` 和全部 token 为 0；`VITEST_MAX_FORKS=4 VITEST_MIN_FORKS=1 pnpm run check` 通过（425 个测试文件、3200 项通过、2 项跳过，类型检查与构建通过）；网页沿用既有额度组件，未另走浏览器验收 |
 | 33 | 打开 `.repo-review/wiki/index.md` | omem 本仓库的 Wiki，原件引用可直接点到仓库文件行 | 已生成并提交 |
 
 ## Agent 页 MCP 服务（2026-11-14）

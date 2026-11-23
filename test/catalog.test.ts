@@ -11,7 +11,8 @@ describe("ACP agent catalog", () => {
     expect(new Set(ids).size).toBe(ids.length);
     for (const p of builtinProfiles) expect(agentProfileSchema.parse(p)).toMatchObject({ id: p.id, command: p.command });
     expect(ids.slice(0, 3)).toEqual(["codex", "traex", "claude"]);
-    expect(ids).toEqual(expect.arrayContaining(["gemini", "copilot", "qwen", "cursor", "opencode", "goose", "kimi", "codebuddy", "droid"]));
+    expect(ids).toEqual(expect.arrayContaining(["gemini", "antigravity", "copilot", "qwen", "cursor", "opencode", "goose", "kimi", "codebuddy", "droid"]));
+    expect(builtinProfiles.find(p => p.id === "antigravity")).toMatchObject({ transport: "acp", command: "agy", args: ["acp"] });
     expect(acpCatalog.length).toBeGreaterThan(20);
   });
 

@@ -10,6 +10,7 @@ import { accountOf } from "./sandbox.ts";
 import { sourceOf } from "./capacity.ts";
 import { launch, resolveCommand, stop } from "./spawn.ts";
 import type { AgentEvent } from "./types.ts";
+import { readAntigravityQuota } from "./antigravity-quota.ts";
 
 /**
  * The plan usage limits of the account behind a backend (its source): what share of each window
@@ -33,8 +34,10 @@ export type QuotaWindow = {
   resetsAt?: string;
   /** A window that counts only one family of models (lower case, matched against the model name). */
   model?: string;
+  /** Model names advertised by a provider's group; [] means display only (scope unknown). */
+  models?: string[];
 };
-export type QuotaSnapshot = { at: string; via: "codex-app-server" | "claude-usage" | "event"; plan?: string; windows: QuotaWindow[]; error?: string };
+export type QuotaSnapshot = { at: string; via: "codex-app-server" | "claude-usage" | "antigravity-usage" | "event"; plan?: string; windows: QuotaWindow[]; error?: string };
 
 const KEY = "agent_quota";
 const DAY = 86_400_000;
@@ -74,7 +77,9 @@ export function quotaOf(app: App, p: AgentProfile): QuotaSnapshot | null {
 
 /** Windows still running (their reset not past) and relevant to the profile's model. */
 function liveWindows(snap: QuotaSnapshot | null, model?: string | null, now = Date.now()) {
-  return (snap?.windows ?? []).filter((w) => (!w.resetsAt || Date.parse(w.resetsAt) > now) && (!w.model || !model || model.toLowerCase().includes(w.model)));
+  return (snap?.windows ?? []).filter((w) => (!w.resetsAt || Date.parse(w.resetsAt) > now)
+    && (!w.model || !model || model.toLowerCase().includes(w.model))
+    && (w.models === undefined || !model || w.models.some(m => `-${model.toLowerCase()}-`.includes(`-${m}-`))));
 }
 
 /**
@@ -89,6 +94,8 @@ export function quotaAvoid(app: App, p: AgentProfile, now = Date.now()): string 
   const quotaAvoidAbove = own.avoidAbove ?? cap.quotaAvoidAbove ?? 90;
   const quotaPerDayBelow = own.perDayBelow ?? cap.quotaPerDayBelow ?? 0;
   for (const w of liveWindows(quotaOf(app, p), p.model, now)) {
+    // A grouped limit cannot choose a backend's unspecified default model for it.
+    if (w.models && !p.model) continue;
     if (quotaAvoidAbove < 100 && w.usedPercent >= quotaAvoidAbove) return `${w.name} 已用 ${Math.round(w.usedPercent)}%`;
     const perDay = perDayLeft(w, now);
     if (quotaPerDayBelow > 0 && perDay !== null && perDay < quotaPerDayBelow) return `${w.name} 剩 ${Math.round(100 - w.usedPercent)}%，距重置 ${days(w, now)} 天，每天约 ${perDay.toFixed(1)}%`;
@@ -305,7 +312,8 @@ export async function refreshQuota(app: App, p: AgentProfile, maxAgeMs = 10 * 60
   if (running) return running;
   const job = (async () => {
     try {
-      const r = await withNetworkPolicy(app, p, {}, (profile, signal) => kind === "codex-app-server" ? readCodex(profile, signal) : readClaude(app, profile, signal));
+      const r = await withNetworkPolicy(app, p, {}, (profile, signal) => kind === "codex-app-server" ? readCodex(profile, signal)
+        : kind === "antigravity-usage" ? readAntigravityQuota(profile, signal) : readClaude(app, profile, signal));
       const snap: QuotaSnapshot = { at: new Date().toISOString(), via: kind, ...(r.plan ? { plan: r.plan } : {}), windows: r.windows };
       save(app, source, snap);
       return snap;

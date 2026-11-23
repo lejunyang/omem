@@ -21,6 +21,10 @@ updated: 2026-11-23
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## Antigravity 官方 CLI 内置后端（2026-11-23）
+
+内置目录新增 `antigravity`，按 PATH 中的 `agy` 识别，以 `agy acp` 启动，复用在终端通过 `agy acp --login` 完成的 CLI 登录。Web、`omem agents` 和 `omem setup` 共用目录，不再需要手写启动配置。注册表的 `antigravity-acp` 仍是独立运行包，认证与 CLI 分开，已有配置保留。额度用 CLI 本地处理的 `agy -p /usage --output-format json` 读取，把剩余比例换算为已用比例，保留分组和重置时间，接入现有缓存、展示和调度避让；模型范围从 CLI 的分组说明读取，不明范围只展示。真实 CLI 1.5.15 已读到 9 个模型，额度命令没有模型回合和 token 消耗。入口：`src/agents/catalog.ts`、`antigravity-quota.ts`、`quota.ts`；回归：`test/catalog.test.ts`、`test/antigravity-quota.test.ts`。使用说明在 README 和文档站的 Agent 页。
+
 ## 机器人文档调用与豆包每轮工具的凭据（2026-11-23）
 
 机器人文档调用此前只把 App ID 与 App Secret 交给 lark-cli，环境变量凭据通道不会换取租户令牌。现由 SDK 缓存、刷新机器人的租户令牌，再显式传给 CLI；不继承用户令牌与认证代理。豆包 CLI 共享后台可能沿用前轮的环境，每轮改用私有临时命令绑定自己的工具地址、令牌和环境，通过本轮提示给出；并发运行互不覆盖，结束及启动失败后回收。入口：`src/channels/lark-cli.ts`、`src/agents/doubao-cli.ts`、`tool-cli.ts`；回归：`test/lark-cli-auth.test.ts`、`test/doubao-cli.test.ts`。

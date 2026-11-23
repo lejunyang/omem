@@ -45,9 +45,10 @@ export type CatalogEntry = {
   /**
    * How the plan's usage limits of the logged-in account can be read (agents/quota.ts):
    * `codex-app-server` asks `codex app-server` (account/rateLimits/read), `claude-usage` runs the
-   * local `/usage` command in an ACP session. Accounts behind an API key have none.
+   * local `/usage` command in an ACP session; `antigravity-usage` reads the CLI's structured /usage.
+   * Accounts behind an API key have none.
    */
-  quota?: "codex-app-server" | "claude-usage";
+  quota?: "codex-app-server" | "claude-usage" | "antigravity-usage";
   /**
    * Where the agent finds its own skills (agent-skills.ts takes them over when the owner turns that
    * on): `read` every folder it loads, `write` the one omem puts the omem guide and the group hubs in
@@ -112,6 +113,10 @@ export const acpCatalog: CatalogEntry[] = [
   {
     id: "gemini", statePaths: ["~/.gemini"], egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli",
     account: { env: { GEMINI_CLI_HOME: "{home}" }, dirs: [".gemini"], owns: [".gemini"], tokenEnv: "GEMINI_API_KEY" },
+  },
+  {
+    id: "antigravity", name: "Antigravity CLI", command: "agy", args: ["acp"], statePaths: ["~/.gemini/antigravity-cli"], quota: "antigravity-usage",
+    install: "见 antigravity.google/docs/getting-started 安装官方 CLI，再运行 agy acp --login 登录",
   },
   // `login --device-code` prints GitHub's device page and a code; there is no status command, so the login's exit code says.
   {

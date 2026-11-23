@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| Antigravity 官方 CLI 内置后端：识别 PATH 中的 `agy`，后端 id `antigravity`，以 `agy acp` 启动并复用 CLI 登录；`agy -p /usage --output-format json` 读取各模型组的额度与重置时间，复用额度缓存、展示和避让；按 CLI 报告的模型范围匹配，不明范围只展示。注册表独立包 `antigravity-acp` 保留，认证与 CLI 分开，不自动替换已有配置 | 已实现（2026-11-23）；`test/catalog.test.ts`、`test/antigravity-quota.test.ts`；真实 CLI 1.5.15 读到 9 个模型、4 档思考强度；额度命令无模型回合和 token 消耗；登录在终端完成 | `src/agents/catalog.ts`、`antigravity-quota.ts`、`quota.ts`、`src/core/config.ts` |
 | 插件凭据第三期的持有人确认 | 已实现（2026-11-22）。预检确认发起人可读后，持有人从“等我的”、机器人私聊或群内独享卡回答。每个后台交办单独取得任务同意，限同一双方、凭据和资源，任务链最后一个运行结束时清除。拒绝或十分钟超时返回申请链接（如有）。 | `src/agents/credential-confirm.ts`、`src/channels/lark-credential-confirm.ts` |
 | 插件凭据第二期的命令结果和资源权限查询 | 垫片实时转发输出，记录资源读取成功或拒绝，识别登录过期并通知。成员按出借范围用 `who_can` 查询权限和申请链接，无可见记录时调用插件预检。 | `src/agents/credential-access.ts`、`src/agents/credential-outcome.ts`、`test/credential-{access,outcome}.test.ts` |
 | 插件凭据第二期的只读命令代跑 | 原交办第 3 条要求本地 `denied` 或已知无权时换人，第 7 条要求验收拒绝后重跑成功。现实现保留本地退出码、stdout 和 stderr，有申请链接时一并显示。三十天内已知发起人无权的资源继续在本地执行。代跑只用于缺少有效本地登录、匹配 `readOnly` 且持有人已开放或按第三期确认的调用。本机登录未检查或检查出错时沿用本人出借设置，已知缺失或过期时停止出借。插件须按经鉴权的发起人、命令名和完整 argv 向资源服务实时核实本次读取范围，并返回 `allowed: true` 和 `verifiedRead: true`。离线示例的预检仅演示权限查询。假服务定向测试覆盖代跑，真实服务适配待验证。 | `src/agents/credential-execution.ts`、`packages/plugin-sdk/credential.ts`、`test/credential-execution.test.ts` |
