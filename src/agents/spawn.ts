@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
 import { canonical, ownSandboxEnv, type OwnSandbox } from "./own-sandbox.ts";
@@ -105,6 +105,48 @@ export function stop(child: ChildProcess) {
   };
   kill("SIGTERM");
   setTimeout(() => kill("SIGKILL"), 2000).unref();
+}
+
+/**
+ * CPU time (clock ticks) used so far by `pid` and everything under it, reaped children included; Linux only,
+ * undefined elsewhere or when the process is gone.
+ */
+export function treeCpuTicks(pid: number | undefined): number | undefined {
+  if (!pid || process.platform !== "linux") return undefined;
+  const kids = new Map<number, number[]>(), ticks = new Map<number, number>();
+  let dirs: string[];
+  try { dirs = readdirSync("/proc"); } catch { return undefined; }
+  for (const d of dirs) {
+    if (!/^\d+$/.test(d)) continue;
+    try {
+      // The name in parentheses can hold spaces: after the last ")" come "state ppid … utime stime cutime cstime".
+      const stat = readFileSync(`/proc/${d}/stat`, "utf8"), f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      const n = Number(d), ppid = Number(f[1]);
+      ticks.set(n, Number(f[11]) + Number(f[12]) + Number(f[13]) + Number(f[14]));
+      kids.set(ppid, [...(kids.get(ppid) ?? []), n]);
+    } catch { /* gone meanwhile */ }
+  }
+  if (!ticks.has(pid)) return undefined;
+  let sum = 0;
+  const todo = [pid], seen = new Set<number>();
+  while (todo.length) { const p = todo.pop()!; if (seen.has(p)) continue; seen.add(p); sum += ticks.get(p) ?? 0; todo.push(...(kids.get(p) ?? [])); }
+  return sum;
+}
+
+/**
+ * Keep `watchdog` alive while the process tree under `pid` keeps using CPU: a print-mode agent that only writes
+ * its answer at the end may be building or testing for longer than the idle limit. Returns a stop function.
+ */
+export function touchWhileBusy(pid: number | undefined, watchdog: { touch(): void }, everyMs = 60_000) {
+  let last = treeCpuTicks(pid);
+  if (last === undefined) return () => {};
+  const timer = setInterval(() => {
+    const now = treeCpuTicks(pid);
+    if (now !== undefined && now > last!) watchdog.touch();
+    if (now !== undefined) last = now;
+  }, everyMs);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 /** Abort if the agent stays silent for too long; any activity resets the timer. */

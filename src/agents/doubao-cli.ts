@@ -4,7 +4,7 @@ import { closeSync, existsSync, openSync, statSync, mkdirSync, mkdtempSync, rmSy
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
-import { sandboxStartError, idleWatchdog, launch, resolveCommand, stop } from "./spawn.ts";
+import { sandboxStartError, idleWatchdog, launch, resolveCommand, stop, touchWhileBusy } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { under } from "./own-sandbox.ts";
 import { aiUsageText, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
@@ -150,6 +150,8 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
           stop(child);
           reject(new Error("豆包 CLI 长时间没有结果，已停止"));
         });
+        // -p prints only when the turn ends: a long build or test run is not silence while its processes use CPU.
+        const stopBusy = touchWhileBusy(child.pid, watchdog);
         const onAbort = () => {
           stop(child);
           reject(new Error("CANCELLED"));
@@ -168,11 +170,11 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
           }
         });
         child.once("error", (e) => {
-          watchdog.close();
+          watchdog.close(); stopBusy();
           reject(e);
         });
         child.once("close", (code) => {
-          watchdog.close();
+          watchdog.close(); stopBusy();
           req.signal?.removeEventListener("abort", onAbort);
           if (code !== 0) reject(sandboxStartError(account, stderr) ?? new Error(`豆包 CLI 退出码 ${code}：${errorText(stdout, stderr)}`));
           else resolve();

@@ -25,6 +25,10 @@ updated: 2026-11-24
 
 新设置 `credentials.ownerFallback`（设置 → 安全 → 凭据的出借，默认关，只在出借方式 `auto` 时生效）：成员的只读命令先用他自己的登录；没有，或跑出没登录 / 过期 / 没权限，就提醒他授权（`inviteCredential`：替他发起登录并把链接发给他，没权限时发申请链接，同种凭据每天一次），同时用开放给他的本人登录跑完这条命令，不做发起人权限预检。成员运行借用本人 HOME 时命令照常在本人环境里跑，只多一行 `[omem]` 说明，结果不记到成员名下（`report: false`）。只读声明的子命令匹配跳过前面的全局选项和值（`--site cn log …`）。成员运行的常驻说明加了一行：这些命令用谁的登录由 omem 决定，不要自己换 profile 或发起登录（`commandLoginNote`）。另外，授权完成后接着做的那一轮回复只在 `meta.runId` 里记着运行，问答页和远程会话把它当成没回答，又把运行输出显示了一遍：网页现在也认 `meta.runId`。入口：`src/agents/credential-execution.ts`、`credentials.ts`、`credential-outcome.ts`、`web/src/views/Ask.vue`、`web/src/components/RemoteChat.vue`、`CredentialLending.vue`；回归：`test/credential-execution.test.ts`。
 
+## 豆包命令行长时间编译测试时不再被当成没有反应（2026-11-24）
+
+豆包命令行用 `-p` 跑时整轮结束才输出，编码交办里一次 Rust 编译加测试超过空闲上限（30 分钟）就被停掉，报“豆包 CLI 长时间没有结果”。现在 Linux 上每分钟看一次它的进程树（含已结束的子进程）用掉的 CPU 时间，还在涨就算有动静（`src/agents/spawn.ts` 的 `treeCpuTicks` / `touchWhileBusy`，`src/agents/doubao-cli.ts`，测试 `test/tree-cpu.test.ts`）；别的系统仍只按输出算。
+
 ## 数据目录在链接路径下时课题试验能拿到工作区（2026-11-24）
 
 数据目录所在的上级目录是链接（比如 `/home` 指向另一块盘）时，课题的每个试验都被判成“工作区槽位不能指向其他目录”而 blocked。现在只拦槽位本身是链接的情况，链接和槽位按解析后的真实路径比较（`src/studies/workspace.ts` 的 `owned`，测试 `test/study-workspace.test.ts`）。
