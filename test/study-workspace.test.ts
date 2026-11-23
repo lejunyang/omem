@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,8 +39,8 @@ afterEach(async () => {
   }
 });
 async function git(dir: string, ...args: string[]) { const r = await gitAsync(dir, args, { timeoutMs: 10000 }); if (!r.ok) throw new Error(r.stderr); return r.stdout.trim(); }
-async function setup(n = 2, configure?: (a: App) => void) {
-  const app = testApp(); apps.push(app); app.config.flows.autoAdvance = 20;
+async function setup(n = 2, configure?: (a: App) => void, home?: string) {
+  const app = testApp(home); apps.push(app); app.config.flows.autoAdvance = 20;
   const root = join(app.home, "original"); mkdirSync(root);
   await git(root, "init", "-q"); await git(root, "config", "user.name", "test"); await git(root, "config", "user.email", "test@example.com");
   writeFileSync(join(root, "entry.txt"), "before"); await git(root, "add", "entry.txt"); await git(root, "commit", "-qm", "first");
@@ -88,6 +89,16 @@ describe("课题的工作区", () => {
     await __testHandlers.get("study-trial")!({ app: f.app, run: enqueued.at(-1)!, signal: new AbortController().signal, event() {}, output() {} }); expect(fake).toHaveBeenCalledOnce();
     await stopFlow(f.app, f.item.id); expect(worktreesOf(f.app, first.id)).toEqual([]); expect(direction(f.app, d.id).workspace_run_id).toBeNull(); expect(await git(cwd, "status", "--porcelain")).toBe("");
     expect(readFileSync(join(f.root, "owner-untracked.txt"), "utf8")).toBe("keep");
+  });
+  it("数据目录在链接过的路径下（/home 指向别处）也能租到槽位", async () => {
+    const real = mkdtempSync(join(tmpdir(), "omem-real-")), linked = `${real}-link`;
+    symlinkSync(real, linked, "junction"); mkdirSync(join(real, "home"));
+    try {
+      const f = await setup(1, undefined, join(linked, "home"));
+      await f.select();
+      expect(trials(f.app, f.item.id)[0].result ?? "").not.toBe("blocked");
+      expect(String(getRun(f.app, f.stage().by!).input.cwd)).toContain("workspaces");
+    } finally { for (const a of apps.splice(0)) { a.events.emit("close"); for (const r of all<{ item_id: string }>(a.db, "select item_id from item_flows where ended_at is null")) await stopFlow(a, r.item_id); await new Promise((r) => setImmediate(r)); a.db.close(); } rmSync(linked, { force: true, recursive: false }); rmSync(real, { recursive: true, force: true }); }
   });
   it("入队就唤醒的 worker 等工作区准备完，再读当前的运行目录", async () => {
     const f = await setup(1); let worker: Promise<unknown> | undefined;

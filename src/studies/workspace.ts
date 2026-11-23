@@ -52,8 +52,9 @@ function owned(app: App, owner: string, wt: WorktreeRef) {
   if (resolve(wt.path) !== expected || runRel.startsWith("..") || isAbsolute(runRel)) throw new Error("工作区路径不是宿主管理的运行目录");
   if (wt.slot) {
     if (!Array.from({ length: MAX_POOL }, (_, i) => resolve(managedSlot(app, wt.space, i + 1))).includes(resolve(wt.slot))) throw new Error("工作区槽位不属于宿主");
-    if (existsSync(wt.slot) && resolve(realpathSync(wt.slot)) !== resolve(wt.slot)) throw new Error("工作区槽位不能指向其他目录");
-    if (existsSync(wt.path) && resolve(realpathSync(wt.path)) !== resolve(wt.slot)) throw new Error("工作区链接不匹配租用槽位");
+    // The data directory may itself sit under a linked path (/home -> /data/home): only the slot itself must not be a link.
+    if (lstatSync(wt.slot, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("工作区槽位不能指向其他目录");
+    if (existsSync(wt.path) && existsSync(wt.slot) && realpathSync(wt.path) !== realpathSync(wt.slot)) throw new Error("工作区链接不匹配租用槽位");
   } else if (lstatSync(wt.path, { throwIfNoEntry: false })?.isSymbolicLink()) {
     throw new Error("独立工作区不能是目录链接");
   }
