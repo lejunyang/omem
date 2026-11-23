@@ -137,10 +137,10 @@ async function remove(a: Artifact) {
         <div v-if="!items" class="section-title">{{ g.label }} · {{ g.list.length }}</div>
         <div class="grid">
             <article v-for="a in g.list" :key="a.id" class="tile">
-              <button class="thumb" :aria-label="`打开 ${base(a.name)}`" @click="show(a)">
+              <button class="thumb" :class="{ flat: a.kind !== 'image' && a.kind !== 'video' }" :aria-label="`打开 ${base(a.name)}`" @click="show(a)">
                 <img v-if="a.kind === 'image'" :src="a.url" :alt="a.caption || base(a.name)" loading="lazy" />
                 <video v-else-if="a.kind === 'video'" :src="`${a.url}#t=0.1`" preload="metadata" muted playsinline />
-                <span v-else class="ph"><Icon :name="KIND[a.kind].icon" :size="26" /><span class="small">{{ KIND[a.kind].text }}</span></span>
+                <span v-else class="ph"><Icon :name="KIND[a.kind].icon" :size="16" /><span class="small">{{ KIND[a.kind].text }}</span></span>
                 <span v-if="a.kind === 'video'" class="play"><Icon name="play" :size="22" /></span>
               </button>
               <div class="cap small">
@@ -189,7 +189,9 @@ async function remove(a: Artifact) {
 .thumb { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 10; width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--line); background: var(--sunken); cursor: zoom-in; overflow: hidden; color: var(--muted); }
 .thumb img, .thumb video { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
 .thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.ph { display: grid; justify-items: center; gap: 4px; }
+/* Nothing to preview (a log, a report, a file): a short strip with its kind, not an empty 16:10 frame. */
+.thumb.flat { aspect-ratio: auto; height: 40px; place-items: center start; padding: 0 10px; }
+.ph { display: inline-flex; align-items: center; gap: 6px; }
 .play { position: absolute; inset: auto auto 8px 8px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
 .cap { padding: 8px 10px; display: grid; gap: 2px; min-width: 0; }
 .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }

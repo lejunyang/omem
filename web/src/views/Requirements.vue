@@ -513,7 +513,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
 
         <section v-if="detail.testResults.length" class="block">
           <div class="block-head"><strong>测试结果</strong><span v-if="detail.testState" class="badge" :class="TEST[detail.testState.status].cls">{{ TEST[detail.testState.status].text }}</span><span class="muted small">每个测试最近一次的结果；编码 Agent 用 report_tests 交的</span></div>
-          <div v-for="r in latestTests" :key="r.id" class="test">
+          <div v-for="r in latestTests" :key="r.id" class="test-result">
             <div class="row wrap">
               <span class="badge" :class="TEST[r.status].cls">{{ TEST[r.status].text }}</span>
               <span class="small mono ellipsis grow" :title="[r.file, r.name].filter(Boolean).join(' › ')">{{ [r.file, r.name].filter(Boolean).join(" › ") }}</span>
@@ -771,6 +771,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
   border-radius: 10px;
   padding: 12px 14px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
 }
@@ -838,7 +839,6 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
     padding: 12px 16px 32px;
   }
 }
-.test { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--line); }
-.test:first-of-type { border-top: 0; }
-.test .pre { white-space: pre-wrap; }
+.test-result { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 8px 0; border-top: 1px solid var(--line); }
+.test-result .pre { white-space: pre-wrap; }
 </style>
