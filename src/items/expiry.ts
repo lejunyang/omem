@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { now, truncate, localStamp } from "../core/util.ts";
 import { getItem, isClosed, itemEvents, listItems, upsertItem, type Item, type ItemKind } from "./store.ts";
+import { deadlineAlreadyOffered } from "./deadline-check.ts";
 import { lineLike } from "./tree.ts";
 
 /**
@@ -215,7 +216,7 @@ export function digestFor(app: App, userId: string, at = new Date()) {
   );
   // Tomorrow's, minus what the previous digest already announced (its window ended a day after it).
   const shown = Date.parse(last) + DAY;
-  const soon = dueItems(app, { at, withinDays: 1, userId }).filter((d) => !d.backlog && Date.parse(d.expiry.at) > Math.max(at.getTime(), shown));
+  const soon = dueItems(app, { at, withinDays: 1, userId }).filter((d) => !d.backlog && Date.parse(d.expiry.at) > Math.max(at.getTime(), shown) && !deadlineAlreadyOffered(app, d.item));
   return closed.length || soon.length ? { since: last, closed, soon } : null;
 }
 

@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
 import { plainCitations } from "../channels/common.ts";
+import { deadlineReminder } from "./deadline-check.ts";
 import { validateItemRefs } from "./evidence.ts";
 import { addItemEvent, dueReminders, itemEvents, reminderSourceRefs, upsertItem, type Item } from "./store.ts";
 
@@ -15,20 +16,22 @@ export function itemIsUrgent(app: App, item: Item, at = new Date()): boolean {
  * "unread-gated": they are wanted by definition. At night only urgent/overdue ones push;
  * the rest are marked reminded at the next daytime run instead of re-pushing for days.
  */
-export function deliverDueReminders(app: App) {
+export function deliverDueReminders(app: App, at = new Date()) {
   const delivered: Item[] = [];
-  for (const item of dueReminders(app)) {
+  for (const item of dueReminders(app, at.toISOString())) {
     const valid: string[] = [], invalid: string[] = [];
     for (const ref of reminderSourceRefs(app, item)) {
       try { validateItemRefs(app, [ref], item.userId); valid.push(ref); }
       catch { invalid.push(ref); }
     }
-    const urgent = itemIsUrgent(app, item);
+    const urgent = itemIsUrgent(app, item, at);
     try {
       // Explicitly scheduled: the owner chose the time, so it fires even in quiet hours;
       // urgent/overdue is marked so phone do-not-distrust (and future channels) can prioritise it.
-      notify(app, { title: `提醒：${item.title}`, body: invalid.length ? plainCitations(item.detail) : item.detail, link: `#/items/${item.id}`, entity: "item", entityId: item.id, userId: item.userId, sourceRefs: valid, urgency: urgent ? "urgent" : "normal", scheduled: true });
-      addItemEvent(app, item.id, "reminded", invalid.length ? "已按时提醒；部分来源已删除、行号失效或无访问权限，未作为通知链接" : "已按时提醒（含飞书操作卡片）", "agent", invalid);
+      const precheck = deadlineReminder(app, item, at);
+      if (precheck === "hold") continue;
+      if (precheck === "plain") notify(app, { title: `提醒：${item.title}`, body: invalid.length ? plainCitations(item.detail) : item.detail, link: `#/items/${item.id}`, entity: "item", entityId: item.id, userId: item.userId, sourceRefs: valid, urgency: urgent ? "urgent" : "normal", scheduled: true });
+      addItemEvent(app, item.id, "reminded", precheck === "covered" ? "提醒已并入临期预查卡" : invalid.length ? "已按时提醒；部分来源已删除、行号失效或无访问权限，未作为通知链接" : "已按时提醒（含飞书操作卡片）", "agent", invalid);
       upsertItem(app, item.id, { remindAt: null, status: item.status === "snoozed" ? "open" : item.status }, "agent");
       delivered.push(item);
     } catch (error) {

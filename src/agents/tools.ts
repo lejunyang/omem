@@ -94,6 +94,7 @@ import type { OperationRule } from "../core/config.ts";
 import { saveRuleWithConfirmation } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
+import { assignedInput, assignedToolInput, syncAssigned } from "../items/assigned-sweep.ts";
 import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
@@ -2738,6 +2739,14 @@ function turnLine(ctx: ToolContext, permission: "items.edit" | "items.operate") 
   const spaces = ctx.writable ?? ctx.spaces;
   return line && (!spaces || spaces.includes(line.space_id)) && can(ctx.app, ctx.userId ?? OWNER, permission, line.space_id) ? line : undefined;
 }
+
+def({
+  name: "sync_assigned_item",
+  description: "本人启用的指派清点规则专用：list 分页列已追踪的对象；save 按平台实例与稳定对象键幂等同步本人指派事项。只凭已核对的状态和期限写入 omem，不操作外部平台。",
+  write: true,
+  schema: assignedToolInput,
+  handler: (ctx, a) => JSON.stringify(syncAssigned(ctx.app, assignedInput.parse(a), ctx)),
+});
 
 def({
   name: "upsert_item",

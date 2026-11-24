@@ -19,6 +19,8 @@ import { findSpace, getSpace, listSpaces, relatedIds, relatedSpaces, updateSpace
 import { json, sha256, newId, now, truncate, localStamp } from "../core/util.ts";
 import { itemLessons } from "../items/auto.ts";
 import { deliverDueReminders } from "../items/reminders.ts";
+import { offerDeadlineChecks, queueDeadlineCheck } from "../items/deadline-check.ts";
+import { ASSIGNED_SWEEP_RULE, isAssignedSweepRule, notifyAssignedSweep } from "../items/assigned-sweep.ts";
 import { listItems, upsertItem, UTC } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
 import { appendToSource, getSource, sourceText } from "../sources/store.ts";
@@ -321,6 +323,8 @@ async function runAgentTask(ctx: RunContext) {
     /** A silent agent picking up a topic it follows continues its earlier session. */
     resumeSessionId?: string;
   };
+  const assignedSweep = name === "assistant" && rule?.id === ASSIGNED_SWEEP_RULE;
+  if (assignedSweep && !isAssignedSweepRule(ctx.app, rule?.id)) return { quiet: true };
   // Started while the rule's run for this chat was in progress (rules/actions.ts joinLane): the
   // triggers that joined since come with the task, and it continues that run's session.
   const { triggers, moreTriggers, resumeFromRun } = ctx.run.input as { triggers?: { messageId: string | null; topicId: string | null; at: string; summary: string }[]; moreTriggers?: number; resumeFromRun?: string };
@@ -382,11 +386,12 @@ async function runAgentTask(ctx: RunContext) {
       // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
       choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
-      addTools: [...(rule ? ["report_rule_failure"] : []), ...((rule as { runAs?: string[] } | undefined)?.runAs?.length ? ["act_as"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []),
+      addTools: [...(rule ? ["report_rule_failure"] : []), ...(assignedSweep ? ["sync_assigned_item"] : []), ...((rule as { runAs?: string[] } | undefined)?.runAs?.length ? ["act_as"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []),
         // A look at a line hands in what it found (items/lines.ts); it may also find nothing new.
         ...((ctx.run.input as { lineState?: string }).lineState ? ["submit_line_state", "stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []),
         // A meeting's summary hands in what it decided for the items it is about (agents/meeting-outcomes.ts).
         ...(typeof (ctx.run.input as { meetingId?: unknown }).meetingId === "string" && !(ctx.run.input as { meetingWindow?: boolean }).meetingWindow ? ["meeting_outcomes"] : []), ...lent],
+      ...(assignedSweep ? { investigationTools: ["read_page", "list_skills", "read_skill", "connect_list", "connect_request", "lark_read", "read_source", "search", "sync_assigned_item"] } : {}),
       execution,
       // A rule's switch turns it on for its runs; left off, they follow the agent's own setting (prepareRun),
       // like every other run of that agent. (Off used to mean off even with the assistant on full access:
@@ -421,6 +426,10 @@ async function runAgentTask(ctx: RunContext) {
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
   // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).
   let answer = replyOf(r).trim() || "（没有输出）";
+  if (assignedSweep) {
+    notifyAssignedSweep(ctx.app, ctx.run.id);
+    return { answer, ai: r.ai };
+  }
   // A run nobody waits on whose answer is posted: when the owner spoke in its scope meanwhile, one more
   // turn with their words (awareness.ts). Silent and meeting runs post through tools, checked there.
   if (!silent && !meeting) {
@@ -1213,8 +1222,12 @@ export async function syncSubmodules(app: App, spaceId: string, onProgress?: (te
 
 registerHandler("heartbeat", async (ctx) => {
   const app = ctx.app;
-  // 1. Due reminders need no model: deliver them directly. Expired working files go too.
-  const due = deliverDueReminders(app);
+  // These chores do not depend on fresh material or on the heartbeat’s model gate.
+  const at = new Date();
+  offerDeadlineChecks(app, at);
+  const due = deliverDueReminders(app, at);
+  queueDeadlineCheck(app, at);
+  // Expired working files go too.
   expireWorkFiles(app);
   await expireTemporaryRules(app);
   await (await import("../channels/listen.ts")).expireContexts(app);

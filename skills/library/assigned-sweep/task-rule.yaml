@@ -1,0 +1,14 @@
+name: 清点指派给我的事
+description: 工作日早上按 assigned-sweep 技能，只读查询本人被指派且有时限的事项，更新 omem 的事项和来源。
+enabled: false
+spaceId: personal
+trigger:
+  event: schedule
+  cron: '0 9 * * 1-5'
+judge: code
+actions:
+  - type: agent
+    spec: assistant
+    reply: none
+    hideThinking: true
+    task: 先用 read_skill(name=assigned-sweep) 读完整做法，再逐个平台清点。结论留在运行里，由宿主统一通知，不自行发消息。

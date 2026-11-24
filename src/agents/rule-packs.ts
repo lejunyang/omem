@@ -9,6 +9,11 @@ import { listPlugins } from "../plugins/registry.ts";
 import { commandGateDir } from "./command-gate.ts";
 import { currentRules, digest, saveOperationRules } from "./operation-policy.ts";
 import { listSkills } from "./specs.ts";
+import { one, run } from "../core/db.ts";
+import { OWNER } from "../core/users.ts";
+import { ASSIGNED_SWEEP_RULE } from "../items/assigned-sweep.ts";
+import { saveRule } from "../rules/store.ts";
+import { ruleInputSchema } from "../rules/types.ts";
 
 const packRule = operationRuleSchema.pick({ id: true, title: true, match: true, action: true, approval: true }).strict();
 const manifestSchema = z.object({
@@ -123,4 +128,18 @@ export function disableRulePack(app: App, id: string) {
   if (!packCatalog(app).has(id)) throw new HttpError(404, "没有这个规则包");
   saveOperationRules(app, currentRules(app).filter(rule => installedPackId(rule) !== id));
   commandGateDir(app);
+}
+
+/** Bundled task rules go on the rules page, not into the security policy packs above.
+ * Seed once, always off. The owner's later edit, activation or removal is theirs. */
+export function seedBundledTaskRules(app: App, root: string) {
+  const marker = `rule_pack_seeded:${ASSIGNED_SWEEP_RULE}`;
+  if (one(app.db, "select 1 from kv where key=?", marker)) return;
+  if (!one(app.db, "select 1 from rules where id=?", ASSIGNED_SWEEP_RULE)) {
+    const file = join(root, "skills", "library", "assigned-sweep", "task-rule.yaml");
+    if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) return;
+    const rule = ruleInputSchema.parse(YAML.parse(readFileSync(file, "utf8")));
+    saveRule(app, { ...rule, id: ASSIGNED_SWEEP_RULE, enabled: false }, "user", OWNER);
+  }
+  run(app.db, "insert or ignore into kv(key,value) values(?,'1')", marker);
 }

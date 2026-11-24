@@ -377,7 +377,9 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
     async show(app, ask) {
       const to = targetFor(app, ask, ownerOpenId());
       if (!to) return false;
-      const plan = deliveryPlan(app, { outlet: "lark", urgency: askUrgency(app, ask) });
+      // A deadline check can be the owner’s explicit timed reminder, not an additional nudge.
+      const scheduled = ask.handler === "item-deadline-check" && !!one(app.db, "select 1 from asks where id=? and json_extract(context,'$.scheduledReminder')=1", ask.id);
+      const plan = deliveryPlan(app, { outlet: "lark", urgency: askUrgency(app, ask), scheduled });
       if (plan.when === "later") {
         run(app.db, "update asks set context = json_set(coalesce(context,'{}'), '$.deferredUntil', ?) where id = ?", plan.at!, ask.id);
       } else {

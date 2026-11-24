@@ -26,6 +26,7 @@ function titleOf(text: string) {
 }
 
 const askCategories: Record<string, [PendingAction["group"], string]> = {
+  "item-deadline-check": ["work", "临期预查"],
   "today": ["propose", "今天"], "line-propose": ["propose", "工作线"], "line-next": ["propose", "下一步"], "line-end": ["propose", "工作线"],
   "wiki-questions": ["ask", "提问"], "item-follow": ["propose", "变化"], "flow-stage": ["work", "流程"], "flow-reconcile-step": ["work", "流程"], "flow-save": ["propose", "流程"],
   "situation-enable": ["propose", "情境"], "situation-teach": ["propose", "情境"], "situation-teach-edit": ["propose", "情境"],

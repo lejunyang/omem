@@ -16,6 +16,7 @@ import { decideNext, decideProposal, heldProposals, lineNextDue, linesCard, mark
 import { pendingActions, pendingMetrics, pendingProfileProposals, type PendingAction } from "./pending.ts";
 import { getItem, isClosed } from "./store.ts";
 import { todayMinute, todayOn } from "./today-time.ts";
+import { assignedForToday } from "./assigned-sweep.ts";
 import { descendantIds } from "./tree.ts";
 
 /**
@@ -283,9 +284,12 @@ export async function buildToday(app: App, at = new Date(), userId = OWNER): Pro
   const later = laterPart(app, userId);
   const weekly = userId === OWNER ? await weeklyPart(app, at) : "";
   const situationText = situations.ids.length ? `**下次同类的事**：${situations.ids.length} 条情境提议，选下方的按钮。` : "";
-  const sections = [brief, waiting, situationText, lines.text, nightText, profiles.text, metrics.text, later, weekly].filter(Boolean);
+  const assigned = assignedForToday(app, userId);
+  const assignedText = assigned.length ? ["**外部指派**", ...assigned.slice(0, 5).map(i => `- ${link(app, oneLine(i.title, 60), `#/items/${i.id}`)}（${md(app, i.due_at)} 截止）`),
+    ...(assigned.length > 5 ? [`其余见${link(app, "事项页", "#/items")}。`] : [])].join("\n") : "";
+  const sections = [brief, waiting, situationText, lines.text, assignedText, nightText, profiles.text, metrics.text, later, weekly].filter(Boolean);
   // Held notifications (and the week's report, notified on its own) alone are no reason for a card.
-  if (!brief && !waiting && !situationText && !lines.text && !nightText && !profiles.text && !metrics.text) return null;
+  if (!brief && !waiting && !situationText && !lines.text && !assignedText && !nightText && !profiles.text && !metrics.text) return null;
   return {
     question: [`**${todayTitle(app, at)}**`, ...sections, fields.length ? "下面能选的选了再提交，可以只选一部分；没选的照旧在工作页“需要你处理”和各条线上。" : ""].filter(Boolean).join("\n\n"),
     fields,

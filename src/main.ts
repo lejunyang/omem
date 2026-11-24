@@ -131,6 +131,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   const { seedBuiltinSkills } = await import("./agents/specs.ts");
   const { packageRoot } = await import("./setup.ts");
   seedBuiltinSkills(app, packageRoot());
+  (await import("./agents/rule-packs.ts")).seedBundledTaskRules(app, packageRoot());
   const { seedBuiltinFlows } = await import("./flows/definitions.ts");
   seedBuiltinFlows(app, packageRoot());
   const { attachFlows } = await import("./flows/engine.ts");
