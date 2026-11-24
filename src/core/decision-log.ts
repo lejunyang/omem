@@ -1,6 +1,6 @@
 import type { App } from "./app.ts";
 import { all, one, run, tx } from "./db.ts";
-import { decide, describeDecision, type DecisionQuestion, type DecisionResult } from "./decision.ts";
+import { decide, decideMany, describeDecision, type DecisionOptions, type DecisionQuestion, type DecisionResult } from "./decision.ts";
 import { DECISION_SCENES, type DecisionScene, type DecisionReport } from "./decision-scenes.ts";
 import { json, newId, now } from "./util.ts";
 
@@ -44,16 +44,43 @@ function capMaterial(material: Material): string {
   return result;
 }
 
+type SceneContext = { ref?: string; sources?: string[] };
+type SceneQuestion = SceneContext & { question: DecisionQuestion; scene?: DecisionScene };
+type SceneAnswers<T> = { [K in keyof T]: T[K] extends { scene: DecisionScene } ? SceneResult : DecisionResult };
+
 export async function decideScene(app: App, scene: DecisionScene, material: Material, question: DecisionQuestion,
-  opts: NonNullable<Parameters<typeof decide>[3]> & { ref?: string; sources?: string[] } = {}): Promise<SceneResult | null> {
+  opts: DecisionOptions & SceneContext = {}): Promise<SceneResult | null> {
   const { ref, sources, ...ask } = opts;
   const r = await decide(app, material, question, ask);
-  if (!r) return null;
+  return r ? recordDecision(app, scene, question, capMaterial(material), r, { ref, sources }) : null;
+}
+
+/** Ask together, then apply each question's own scene and record the decisions as a batch. */
+export async function decideSceneMany<T extends Record<string, SceneQuestion>>(app: App, material: Material, questions: T,
+  opts: DecisionOptions & SceneContext = {}): Promise<SceneAnswers<T> | null> {
+  const { ref, sources, ...ask } = opts;
+  const entries = Object.entries(questions);
+  const results = await decideMany(app, material, Object.fromEntries(entries.map(([name, q]) => [name, q.question])), ask);
+  if (!results) return null;
+  const recorded = entries.filter(([, q]) => q.scene !== undefined);
+  if (recorded.length) {
+    const snapshot = capMaterial(material);
+    tx(app.db, () => {
+      for (const [name, q] of recorded) {
+        results[name] = recordDecision(app, q.scene!, q.question, snapshot, results[name], { ref: q.ref ?? ref, sources: q.sources ?? sources });
+      }
+    });
+  }
+  return results as SceneAnswers<T>;
+}
+
+function recordDecision(app: App, scene: DecisionScene, question: DecisionQuestion, material: string, r: DecisionResult,
+  { ref, sources }: SceneContext): SceneResult {
   const threshold = sceneThreshold(app, scene);
   const taken = takeDecision(scene, r, threshold);
   const id = newId("d");
   run(app.db, `insert into decisions(id,at,scene,"by",question,material,probabilities,choice,taken,threshold,ref,sources)
-    values(?,?,?,?,?,?,?,?,?,?,?,?)`, id, now(), scene, r.by, JSON.stringify(question), capMaterial(material), JSON.stringify(r.probabilities), r.choice, taken, threshold, ref ?? null, JSON.stringify(scene === "heartbeat" ? [...new Set(sources ?? [])] : []));
+    values(?,?,?,?,?,?,?,?,?,?,?,?)`, id, now(), scene, r.by, JSON.stringify(question), material, JSON.stringify(r.probabilities), r.choice, taken, threshold, ref ?? null, JSON.stringify(scene === "heartbeat" ? [...new Set(sources ?? [])] : []));
   return { ...r, taken, lowered: taken !== r.choice, id, threshold };
 }
 

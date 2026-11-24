@@ -2517,6 +2517,7 @@ TraeX 与其他 ACP 的清理补验：
 | decision-multi-settings | 保存两个决策模型和随机模式，刷新设置 | 顺序、模型、随机模式保留，各行分别显示状态；一个缺 key 时另一个仍可用 | `test/settings-restart.test.ts` |
 | decision-multi-order | 上下移动模型，在顺序与随机之间切换；让先问的返回错误或拒答 | 顺序模式先问首个可用的，随机模式随机先问；失败自动换下一个，调用出错后 5 分钟排到最后；记录写回答者与换用情况 | 核心专项测试；真实模型待验 |
 | decision-multi-trial | 试用接口指定提供方和模型 | 只测试指定模型，不改变保存的列表 | `test/settings-restart.test.ts` |
+| decision-batch | 同一份材料一次问是 / 否和选择题；先问的模型漏一题；有些题带场景 | 两种接口都按题名取答案；漏答则换模型重问整批；仅有场景的题单独套门槛、写记录并截短材料；超过 8 题不发请求 | `test/decision-batch.test.ts` |
 
 
 ### 决策场景校准（2026-11-15）

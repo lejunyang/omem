@@ -4,7 +4,7 @@ import { baseOf, categoryStatus, clefModel, decisionStatus, decisionStatuses, ty
 /**
  * The decision model (docs/v2/ai-models.md): bounded judgments — one of a few options, or yes/no —
  * with a probability for each, from whichever API settings → AI → 决策 names. The three APIs differ
- * in shape; this turns one question into each and reads the answer back:
+ * in shape; this sends named questions together and reads the answers back:
  *
  * - OpenAI Decisions (`POST {base}/decisions`): `input` + `questions: [{type, name, instructions,
  *   choices: [{value, description}]}]`, yes/no as `predicate`; answers is an array.
@@ -43,6 +43,12 @@ const MEDIA_LABEL: Record<DecisionMedia, string> = { images: "图片", audio: "�
 const yesNoOptions = (q: Extract<DecisionQuestion, { type: "yesno" }>) => ({ yes: q.yes || "是", no: q.no || "否" });
 
 type Usable = CategoryStatus & DecisionChoice;
+type Material = string | Record<string, unknown>;
+type Questions = [string, DecisionQuestion][];
+type Answer = Omit<DecisionResult, "by">;
+export type DecisionOptions = { timeoutMs?: number; signal?: AbortSignal; media?: DecisionMediaInput; only?: DecisionChoice };
+const MAX_QUESTIONS = 8;
+
 /** A decision model that just failed is asked after the others for this long, not first on every call. */
 const COOL_MS = 5 * 60_000;
 const down = new Map<string, number>();
@@ -75,7 +81,19 @@ export function decisionOrder(app: App, rand: () => number = Math.random): Usabl
  * and the next is asked; throws when none of them answers. `only`: ask this one and no other (trying
  * one out from settings, whether or not it is among the configured ones).
  */
-export async function decide(app: App, material: string | Record<string, unknown>, q: DecisionQuestion, opts: { timeoutMs?: number; signal?: AbortSignal; media?: DecisionMediaInput; only?: DecisionChoice } = {}): Promise<DecisionResult | null> {
+export async function decide(app: App, material: Material, q: DecisionQuestion, opts: DecisionOptions = {}): Promise<DecisionResult | null> {
+  return (await decideQuestions(app, material, [["q", q]], opts, true))?.q ?? null;
+}
+
+/** Ask every named question against the same material. Never mix answers from different models. */
+export async function decideMany(app: App, material: Material, questions: Record<string, DecisionQuestion>, opts: DecisionOptions = {}): Promise<Record<string, DecisionResult> | null> {
+  const entries = Object.entries(questions);
+  if (entries.length > MAX_QUESTIONS) throw new Error(`一次最多问 ${MAX_QUESTIONS} 个决策问题`);
+  if (!entries.length) return {};
+  return decideQuestions(app, material, entries, opts, false);
+}
+
+async function decideQuestions(app: App, material: Material, questions: Questions, opts: DecisionOptions, single: boolean): Promise<Record<string, DecisionResult> | null> {
   const order = opts.only ? [decisionStatus(app.config, opts.only, app.home)].filter((s) => s.ready) : decisionOrder(app);
   if (!order.length) return null;
   const media = Object.fromEntries(Object.entries(opts.media ?? {}).filter(([, v]) => v?.length)) as DecisionMediaInput;
@@ -89,9 +107,10 @@ export async function decide(app: App, material: string | Record<string, unknown
   let last: unknown;
   for (const s of able) {
     try {
-      const r = await ask(app, s, material, q, AbortSignal.any([AbortSignal.timeout(each), ...(opts.signal ? [opts.signal] : [])]), media);
+      const { answers, by } = await ask(app, s, material, questions, AbortSignal.any([AbortSignal.timeout(each), ...(opts.signal ? [opts.signal] : [])]), media, single);
       down.delete(choiceKey(s));
-      return passed.length ? { ...r, by: `${r.by}；${passed.join("、")}没答上，换了一个` } : r;
+      const via = passed.length ? `${by}；${passed.join("、")}没答上，换了一个` : by;
+      return Object.fromEntries(Object.entries(answers).map(([name, answer]) => [name, { ...answer, by: via }]));
     } catch (e) {
       if (opts.signal?.aborted) throw e;
       last = e;
@@ -103,17 +122,15 @@ export async function decide(app: App, material: string | Record<string, unknown
   throw last;
 }
 
-async function ask(app: App, s: Usable, material: string | Record<string, unknown>, q: DecisionQuestion, signal: AbortSignal, media: DecisionMediaInput): Promise<DecisionResult> {
-  if (s.provider === "startlux") return startlux(app, material, q, signal);
+async function ask(app: App, s: Usable, material: Material, questions: Questions, signal: AbortSignal, media: DecisionMediaInput, single: boolean) {
+  if (s.provider === "startlux") return startlux(app, material, questions, signal, single);
   const p = app.config.ai.providers.find((x) => x.id === s.provider)!;
   const key = keyOf(p.id, app.home);
   const by = `${p.name || p.id} · ${s.model}`;
-  if (p.kind === "openai") return { ...(await openaiDecide(baseOf(p), key, s.model, material, q, signal)), by };
-  if (p.kind === "cloudflare") {
-    const model = clefModel(s.model);
-    return { ...(await systemOne(`${baseOf(p)}/run/@cf/cloudflare/${model}`, { authorization: `Bearer ${key}` }, model, material, q, signal, false, media)), by };
-  }
-  return { ...(await systemOne(`${baseOf(p)}/v1/systemone`, { authorization: `Bearer ${key}` }, s.model, material, q, signal)), by };
+  if (p.kind === "openai") return { answers: await openaiDecide(baseOf(p), key, s.model, material, questions, signal, single), by };
+  const model = p.kind === "cloudflare" ? clefModel(s.model) : s.model;
+  const url = p.kind === "cloudflare" ? `${baseOf(p)}/run/@cf/cloudflare/${model}` : `${baseOf(p)}/v1/systemone`;
+  return { answers: await systemOne(url, { authorization: `Bearer ${key}` }, model, material, questions, signal, { single, media }), by };
 }
 
 async function post(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal) {
@@ -129,58 +146,72 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
 
 const best = (probs: Record<string, number>) => Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
 
-async function openaiDecide(base: string, key: string, model: string, material: string | Record<string, unknown>, q: DecisionQuestion, signal: AbortSignal): Promise<Omit<DecisionResult, "by">> {
-  const input = typeof material === "string" ? material : [{ role: "user", content: [{ type: "input_json", data: material }] }];
-  const question =
-    q.type === "yesno"
-      ? { type: "predicate", name: "q", instructions: q.instructions }
-      : { type: "choice", name: "q", instructions: q.instructions, choices: Object.entries(q.options).map(([value, description]) => ({ value, description })) };
-  const body = await post(`${base}/decisions`, { authorization: `Bearer ${key}` }, { model, input, questions: [question] }, signal);
-  const a = (body.answers ?? []).find((x: { name?: string }) => x.name === "q") ?? body.answers?.[0];
-  if (!a || a.type === "refusal") throw new DecisionRefused("决策模型拒绝回答这个问题");
-  if (q.type === "yesno") {
-    const y = Number(a.probability);
-    if (!Number.isFinite(y)) throw new Error("决策模型的回答里没有概率");
-    return { choice: y >= 0.5 ? "yes" : "no", probabilities: { yes: y, no: 1 - y }, confidence: null };
-  }
-  const probabilities = Object.fromEntries(((a.probabilities ?? []) as { value: string; probability: number }[]).map((x) => [String(x.value), Number(x.probability)]));
-  return { choice: String(a.choice ?? best(probabilities)), probabilities, confidence: typeof a.confidence === "number" ? a.confidence : null };
+function readAnswers<A extends { type?: string }>(questions: Questions, single: boolean, find: (name: string) => A | undefined, read: (a: A, q: DecisionQuestion) => Answer): Record<string, Answer> {
+  const matched = questions.map(([name, q]) => ({ name, q, answer: find(name) }));
+  // The legacy single-question API treated an absent answer as a refusal. For a batch,
+  // a missing answer is a model error, even if another question was explicitly refused.
+  const missing = single ? undefined : matched.find(({ answer }) => !answer);
+  if (missing) throw new Error(`决策模型未返回问题「${missing.name}」的答案`);
+  return Object.fromEntries(matched.map(({ name, q, answer }) => {
+    if (!answer || answer.type === "refusal") throw new DecisionRefused("决策模型拒绝回答这个问题");
+    const result = read(answer, q);
+    if (!single && !result.choice) throw new Error(`决策模型未返回问题「${name}」的答案`);
+    return [name, result];
+  }));
 }
 
+function readYesNo(probability: unknown): Answer {
+  const y = Number(probability);
+  if (!Number.isFinite(y)) throw new Error("决策模型的回答里没有概率");
+  return { choice: y >= 0.5 ? "yes" : "no", probabilities: { yes: y, no: 1 - y }, confidence: null };
+}
+
+type OpenAIAnswer = { name?: string; type?: string; probability?: number; choice?: string; probabilities?: { value: string; probability: number }[]; confidence?: number };
+async function openaiDecide(base: string, key: string, model: string, material: Material, questions: Questions, signal: AbortSignal, single: boolean) {
+  const input = typeof material === "string" ? material : [{ role: "user", content: [{ type: "input_json", data: material }] }];
+  const items = questions.map(([name, q]) => q.type === "yesno"
+    ? { type: "predicate", name, instructions: q.instructions }
+    : { type: "choice", name, instructions: q.instructions, choices: Object.entries(q.options).map(([value, description]) => ({ value, description })) });
+  const body = await post(`${base}/decisions`, { authorization: `Bearer ${key}` }, { model, input, questions: items }, signal);
+  const answers = (body.answers ?? []) as OpenAIAnswer[];
+  if (!Array.isArray(answers)) throw new Error("决策模型的答案不是数组");
+  return readAnswers(questions, single, (name) => answers.find((a) => a?.name === name) ?? (single ? answers[0] : undefined), (a, q) => {
+    if (q.type === "yesno") return readYesNo(a.probability);
+    const probabilities = Object.fromEntries((a.probabilities ?? []).map((x) => [String(x.value), Number(x.probability)]));
+    return { choice: String(a.choice ?? best(probabilities)), probabilities, confidence: typeof a.confidence === "number" ? a.confidence : null };
+  });
+}
+
+type SystemOneAnswer = { type?: string; noul?: number; choice?: string; probabilities?: Record<string, number>; confidence?: number };
 /** Jev's System One shape (TypeSafe, OpenRouter, Clef, StartLux). `model` empty for StartLux. */
-async function systemOne(url: string, headers: Record<string, string>, model: string, material: string | Record<string, unknown>, q: DecisionQuestion, signal: AbortSignal, yesNoAsChoice = false, media: DecisionMediaInput = {}): Promise<Omit<DecisionResult, "by">> {
-  let question: Record<string, unknown>;
-  if (q.type === "yesno" && !yesNoAsChoice) {
+async function systemOne(url: string, headers: Record<string, string>, model: string, material: Material, questions: Questions, signal: AbortSignal,
+  { single, yesNoAsChoice = false, media = {} }: { single: boolean; yesNoAsChoice?: boolean; media?: DecisionMediaInput }) {
+  const items = Object.fromEntries(questions.map(([name, q]) => {
+    if (q.type === "choice") return [name, { type: "choice", instructions: q.instructions, criteria: q.options }];
     const o = yesNoOptions(q);
-    question = { type: "noul", instructions: q.instructions, criteria: { true: o.yes, false: o.no } };
-  } else if (q.type === "yesno") {
-    const o = yesNoOptions(q);
-    question = { type: "choice", instructions: q.instructions, criteria: { yes: o.yes, no: o.no } };
-  } else {
-    question = { type: "choice", instructions: q.instructions, criteria: q.options };
-  }
-  const raw = await post(url, headers, { ...(model ? { model } : {}), state: material, ...media, questions: { q: question } }, signal);
+    return [name, yesNoAsChoice
+      ? { type: "choice", instructions: q.instructions, criteria: o }
+      : { type: "noul", instructions: q.instructions, criteria: { true: o.yes, false: o.no } }];
+  }));
+  const raw = await post(url, headers, { ...(model ? { model } : {}), state: material, ...media, questions: items }, signal);
   // Cloudflare's REST API wraps the body in {result, success, errors}.
   const body = raw?.answers ? raw : (raw?.result ?? raw);
-  const a = body?.answers?.q;
-  if (!a || a.type === "refusal") throw new DecisionRefused("决策模型拒绝回答这个问题");
-  if (a.type === "noul") {
-    const y = Number(a.noul);
-    if (!Number.isFinite(y)) throw new Error("决策模型的回答里没有概率");
-    return { choice: y >= 0.5 ? "yes" : "no", probabilities: { yes: y, no: 1 - y }, confidence: null };
-  }
-  const probabilities = Object.fromEntries(Object.entries((a.probabilities ?? {}) as Record<string, number>).map(([k, v]) => [k, Number(v)]));
-  return { choice: String(a.choice ?? best(probabilities)), probabilities, confidence: typeof a.confidence === "number" ? a.confidence : null };
+  const answers = (body?.answers ?? {}) as Record<string, SystemOneAnswer>;
+  return readAnswers(questions, single, (name) => Object.hasOwn(answers, name) ? answers[name] : undefined, (a) => {
+    if (a.type === "noul") return readYesNo(a.noul);
+    const probabilities = Object.fromEntries(Object.entries(a.probabilities ?? {}).map(([k, v]) => [k, Number(v)]));
+    return { choice: String(a.choice ?? best(probabilities)), probabilities, confidence: typeof a.confidence === "number" ? a.confidence : null };
+  });
 }
 
-async function startlux(app: App, material: string | Record<string, unknown>, q: DecisionQuestion, signal: AbortSignal): Promise<DecisionResult> {
+async function startlux(app: App, material: Material, questions: Questions, signal: AbortSignal, single: boolean) {
   const { judgeDone, judgeUrl } = await import("../sources/judge.ts");
   try {
     const url = await judgeUrl(app);
     // The local server reads `state` as an object of named parts.
     const state = typeof material === "string" ? { material } : material;
-    const r = await systemOne(`${url.replace(/\/$/, "")}/v1/systemone`, {}, "", state, q, signal, true);
-    return { ...r, by: "StartLux-Decision（本机）" };
+    const answers = await systemOne(`${url.replace(/\/$/, "")}/v1/systemone`, {}, "", state, questions, signal, { single, yesNoAsChoice: true });
+    return { answers, by: "StartLux-Decision（本机）" };
   } finally {
     judgeDone(app);
   }
