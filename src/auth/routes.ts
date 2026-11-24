@@ -253,6 +253,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/items/:id/study/scope": "self",
   "PUT /api/items/:id/study/scope": "self",
   "POST /api/items/:id/study/findings/:finding/fix": CODE,
+  "POST /api/items/:id/study/fix-queue": CODE,
+  "DELETE /api/items/:id/study/fix-queue/:finding": CODE,
   "POST /api/items/:id/flow/changes/:change": cap("flows.operate", "item:p.id"),
   "POST /api/items/:id/study/choose": "self",
   "POST /api/items/:id/study/findings/:finding": "self",
