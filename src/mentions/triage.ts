@@ -1,4 +1,4 @@
-import { decideScene, type SceneResult } from "../core/decision-log.ts";
+import { decideScene, decideSceneMany, type SceneResult } from "../core/decision-log.ts";
 import { outcomeLine, outcomeStats } from "../core/notify-outcome.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
@@ -173,7 +173,7 @@ function criteria(app: App) {
 
 /**
  * Judge. With a decision model: the action, then (for handle) who handles it and, when the reply may
- * go out by itself, whether it can move on alone — one short call each. Without one: the general model
+ * go out by itself, whether it can move on alone. Ask those last two together when both are needed. Without a decision model: the general model
  * once, writing everything (settings `noDecision: general`), or the setting's fixed answer.
  */
 export async function triage(app: App, material: Record<string, string>, opts: { needProgress: boolean; signal?: AbortSignal; ref?: string }): Promise<Triage> {
@@ -195,15 +195,24 @@ export async function triage(app: App, material: Record<string, string>, opts: {
     const parts = [part("做法", d, { ignore: "不用管", notify: "简短提醒", handle: "先查再告诉本人" })];
     let handler = "assistant";
     let canProgress = false;
-    if (action === "handle" && Object.keys(handlers).length > 1) {
-      const h = await decide(app, material, { type: "choice", instructions: "这件事交给谁先查：问题明显属于某个 Agent 档案说明的领域就选它，否则选主助手。", options: handlers }, { signal: opts.signal, timeoutMs: 20_000 });
+    if (action === "handle") {
+      const pickHandler = Object.keys(handlers).length > 1;
+      const who = { type: "choice", instructions: "这件事交给谁先查：问题明显属于某个 Agent 档案说明的领域就选它，否则选主助手。", options: handlers } as const;
+      const mayReply = { type: "yesno", instructions: "查清以后，能不能不经本人拍板就直接答复对方？涉及承诺、排期、审批、权限或本人的意见时答否。", yes: "能直接答复", no: "要本人定" } as const;
+      const ask = { signal: opts.signal, timeoutMs: 20_000, ref: opts.ref };
+      const both = pickHandler && opts.needProgress ? await decideSceneMany(app, material, {
+        handler: { question: who }, progress: { scene: "progress", question: mayReply },
+      }, ask).catch((e) => {
+        if (opts.signal?.aborted) throw e;
+        // If one backend cannot answer both, the old path can still get each answer separately.
+        return null;
+      }) : null;
+      const h = pickHandler ? both?.handler ?? await decide(app, material, who, ask) : null;
       if (h && h.choice in handlers) {
         handler = h.choice;
         parts.push(part("交给", h, Object.fromEntries(Object.keys(handlers).map((k) => [k, k === "assistant" ? "主助手" : k]))));
       }
-    }
-    if (action === "handle" && opts.needProgress) {
-      const p = await decideScene(app, "progress", material, { type: "yesno", instructions: "查清以后，能不能不经本人拍板就直接答复对方？涉及承诺、排期、审批、权限或本人的意见时答否。", yes: "能直接答复", no: "要本人定" }, { signal: opts.signal, timeoutMs: 20_000, ref: opts.ref });
+      const p = opts.needProgress ? both?.progress ?? await decideScene(app, "progress", material, mayReply, ask) : null;
       if (p) {
         canProgress = p.taken === "yes";
         parts.push(part("查清后", p, { yes: "能直接答复", no: "要本人定" }));

@@ -8,8 +8,11 @@ import { agentProfileSchema } from "../src/core/config.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { setKey } from "../src/core/ai-keys.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
+import { setLarkClient } from "../src/channels/lark-send.ts";
+import { setFirstLookBudgetForTests } from "../src/rules/first-look.ts";
+import { saveProbe } from "../src/rules/probes.ts";
 import { receive } from "../src/agents/inbox.ts";
-import { createRun, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
+import { createRun, listRuns, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
 import { answerAsk } from "../src/agents/asks.ts";
@@ -88,6 +91,77 @@ describe("情境", () => {
     expect(findRule(app, id)).toBeNull();
     expect(listSituations(app, "owner", { contextId: c.id, status: "active" })).toHaveLength(0);
   }, 90_000);
+
+  describe("情境的快速通道", () => {
+    const sent: { op: string; args: any }[] = [];
+    const lookOf = (lane: string) => listRuns(app, { kind: "first-look" }).filter(r => r.lane === lane);
+    const promptsOf = () => readFileSync(prompts, "utf8").trim().split("\n").map(line => JSON.parse(line) as string);
+    beforeAll(() => {
+      app.config.lark.ownerOpenId = "ou_owner";
+      app.config.agents.profiles.push(agentProfileSchema.parse({ id: "fake-look", transport: "acp", command: process.execPath,
+        args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "first-look", FAKE_PROMPT_LOG: prompts } }));
+      app.config.agents.roles["first-look"] = "fake-look";
+      const send = (op: string) => async (args: any) => {
+        sent.push({ op, args });
+        return { code: 0, data: { message_id: `om_first_${sent.length}` } };
+      };
+      setLarkClient({ im: { message: { create: send("create"), reply: send("reply") } } } as never);
+      saveProbe(app, { name: "situation-status", description: "查演练状态", runtime: "node",
+        code: "const e = JSON.parse(process.env.OMEM_EVENT); console.log('PROBE-OUT:' + (e.message?.id ?? e.kind));" }, "owner");
+    });
+    afterEach(() => { setFirstLookBudgetForTests(null); sent.length = 0; });
+    afterAll(() => {
+      delete app.config.agents.roles["first-look"];
+      app.config.agents.profiles = app.config.agents.profiles.filter(p => p.id !== "fake-look");
+      setLarkClient(null);
+    });
+
+    it("首个规则信号先查再看；答完照常处理，后续信号只跑预查", async () => {
+      const { context: c } = await saveSituation(app, "owner", { name: "项目 B 演练", note: "核对项目 B 的演练范围", recognize: "群里说了演练开始",
+        knobs: { batchMinutes: 0, firstLook: true, probes: ["situation-status"], firstTo: "chat", reply: "auto" } });
+      try {
+        await dispatchRuleEvent(app, signal("om_situation_first", "演练开始 项目 B [answered]"));
+        const [i] = listSituations(app, "owner", { contextId: c.id });
+        const [look] = lookOf(i.conversationId);
+        const first = one<{ id: string }>(app.db, "select id from runs where lane=? and kind='ask'", i.conversationId)!;
+        expect((await waitForRun(app, look.id)).output).toMatchObject({ outcome: "answered", delivered: { to: "chat" } });
+        expect((await waitForRun(app, first.id)).status).toBe("done");
+        const lookPrompt = promptsOf().find(p => p.includes("# 先看一眼：情境「项目 B 演练」"))!;
+        for (const piece of [c.note!, c.recognize!, "演练开始 项目 B", "PROBE-OUT:om_situation_first"]) expect(lookPrompt).toContain(piece);
+        const handler = promptsOf().find(p => p.includes(`# 情境：${i.title}`))!;
+        for (const piece of ["PROBE-OUT:om_situation_first", "快速结论 answered", "窗口内别的运行"]) expect(handler).toContain(piece);
+        expect(sent.find(x => x.op === "reply")?.args.path.message_id).toBe("om_situation_first");
+
+        await dispatchRuleEvent(app, signal("om_situation_next", "演练开始 项目 B，后续进展"));
+        const next = one<{ id: string }>(app.db, "select id from runs where lane=? and kind='ask' order by rowid desc", i.conversationId)!;
+        expect(next.id).not.toBe(first.id);
+        expect((await waitForRun(app, next.id)).status).toBe("done");
+        expect(lookOf(i.conversationId)).toHaveLength(1);
+        expect(promptsOf().find(p => p.includes("PROBE-OUT:om_situation_next"))).toContain(`事项 ${i.itemId}`);
+        expect(sent.filter(x => x.op === "reply")).toHaveLength(1);
+      } finally { await deleteSituation(app, "owner", c.id); }
+    }, 90_000);
+
+    it("手工开始超时照常处理，非群事件降为私聊；当天先看上限不挡新开", async () => {
+      setFirstLookBudgetForTests(2000);
+      const { context: c } = await saveSituation(app, "owner", { name: "手工演练", note: "核对范围", recognize: "群里说了演练开始",
+        knobs: { batchMinutes: 0, perDay: 1, firstLook: true, probes: ["situation-status"], firstTo: "ephemeral" } });
+      try {
+        const { instance: i, runId } = await startSituation(app, "owner", c.id, "练习超时 [slow]");
+        const [look] = lookOf(i.conversationId);
+        expect((await waitForRun(app, look.id)).output).toMatchObject({ outcome: "escalate", stages: { look: { by: "host", reason: expect.stringContaining("秒内没看完") } }, delivered: { to: "dm" } });
+        expect((await waitForRun(app, runId!)).status).toBe("done");
+        const handler = promptsOf().find(p => p.includes(`# 情境：${i.title}`))!;
+        expect(handler).toContain("PROBE-OUT:situation-start");
+        expect(handler).toContain("先看一眼没有结论");
+        expect(sent.find(x => x.op === "create")?.args.data.receive_id).toBe("ou_owner");
+        expect(JSON.stringify(sent)).not.toContain("不用查了");
+        const second = await startSituation(app, "owner", c.id, "当天另一回");
+        expect(lookOf(second.instance.conversationId)).toHaveLength(0);
+        expect((await waitForRun(app, second.runId!)).status).toBe("done");
+      } finally { await deleteSituation(app, "owner", c.id); }
+    }, 90_000);
+  });
 
   it("给其他运行带现状；收事项事件、变化和本人在别处的话，不回自己的记录或重复信息", async () => {
     const { context: c } = await make("项目 A 值守");

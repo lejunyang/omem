@@ -219,16 +219,17 @@ describe("对象巡检与信号", () => {
   it("同一状态不重复发信号；状态变化记一行信号、每件事一笔时间线并推进一次", async () => {
     const a = item(), b = item(); saveFlow(app, raw(), "user"); await startFlow(app, a.id, "objects", owner); await startFlow(app, b.id, "objects", owner);
     const obj = await attachObject(app, a.id, url(), "owner"); await attachObject(app, b.id, url(), "owner");
-    oldChecks(); await pollObjects(app); expect(all(app.db, "select * from flow_signals")).toHaveLength(0);
+    const objectSignals = () => all<{ type: string; keys: string }>(app.db, "select * from flow_signals where type like ?", `object.${kind}.%`);
+    oldChecks(); await pollObjects(app); expect(objectSignals()).toHaveLength(0);
     set("1", { status: "merged" }); oldChecks(); await flowReminders(app);
-    const signals = all<{ type: string; keys: string }>(app.db, "select * from flow_signals where type != 'reconcile'");
+    const signals = objectSignals();
     expect(signals).toHaveLength(1); expect(signals[0].type).toBe(`object.${kind}.merged`); expect(JSON.parse(signals[0].keys)).toEqual({ object: obj.id, items: [a.id, b.id] });
     for (const i of [a, b]) {
       expect(getStage(app, i.id, "merge")).toMatchObject({ state: "done", evidence: [`object:${obj.id}`] });
       expect(itemEvents(app, i.id).filter((e) => e.text.includes("进行中 → 已合并"))).toHaveLength(1);
       expect(stageLog(app, i.id).filter((s) => s.stageId === "merge" && s.toState === "done")).toHaveLength(1);
     }
-    await flowReminders(app); expect(all(app.db, "select * from flow_signals where type != 'reconcile'")).toHaveLength(1);
+    await flowReminders(app); expect(objectSignals()).toHaveLength(1);
   });
   it("ctx.emit 只记 plugin 前缀信号；keys 与 payload 分别限制 4000 字符", async () => {
     const context = pluginContext(app, getPlugin("objectprobe").env, { userId: "owner", spaceId: "personal", runId: null, actor: "user" });

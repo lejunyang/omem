@@ -83,6 +83,7 @@
 ## 情境
 
 - `save_situation(name, note, recognize, id?, space?, spec?, owner_requested?)`：仅本人对话的主助手。说明写本人要的，不编步骤；修改带 id，回复对照原说明和新说明。只有本轮明确要求建或改才传 `owner_requested=true`，其余等宿主卡片。
+- 情境启用“先看一眼”时，手工开始也会先跑所选预查，再私聊第一条；不管先看结果如何，处理者都会接着跟这一回。
 - `start_situation(name, about)`：本人明确开始一回；`name` 是现有情境名或 id，`about` 是这次的范围。
 - `update_situation(current?, extend_minutes?, summary?)`：仅实例处理会话；更新现状、延长窗口或用小结结束。复查用窗口内的 `wake`，异常用 `notify` 私下说。
 - `propose_situation(item_id, name, note, recognize, steps, until)`：仅事项收尾的教学轮；依据本人逐步指挥的至少三轮，给出步骤及下次自主做到哪一步。提议由本人处理，不自动启用。

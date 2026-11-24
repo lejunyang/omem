@@ -33,10 +33,10 @@ const HOLD_MS = 5 * 60_000;
 const laneOf = (contextId: string, chatId: string) => `firstlook:listen:${contextId}:${chatId}`;
 
 /** First looks a 关注 started today: its `perDay` counts these too. */
-function looksToday(app: App, contextId: string) {
+export function looksToday(app: App, contextId: string) {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  return one<{ n: number }>(app.db, "select count(*) n from runs where kind = 'first-look' and lane like ? and created_at >= ?", `firstlook:listen:${contextId}:%`, start.toISOString())?.n ?? 0;
+  return one<{ n: number }>(app.db, "select count(*) n from runs where kind = 'first-look' and (lane like ? or lane in (select conversation_id from situation_instances where context_id = ?)) and created_at >= ?", `firstlook:listen:${contextId}:%`, contextId, start.toISOString())?.n ?? 0;
 }
 
 /** A message routed to a 关注 with the fast path on: into the queued first look of its group, or a new one. */
@@ -161,7 +161,7 @@ export function escalate(app: App, r: Run, input: FirstLookInput, messages: Look
     d.to === "none" ? "第一条消息没有发出去。" : `第一条消息已经发到${DEST_TEXT[d.to]}，告诉了还在查什么；你的结论照这个关注的回复方式发。`,
   ].filter(Boolean).join("\n\n");
   return import("../agents/inbox.ts").then(async ({ receive }) => {
-    const res = await receive(app, { conversationId: l.conversationId, channel: LISTEN_CHANNEL, speaker: "先看一眼", text, meta: { firstLook: r.id, addressed: true, chatId: input.chat.id }, mergeMs: 0, fixedWindow: true });
+    const res = await receive(app, { conversationId: l.conversationId, channel: LISTEN_CHANNEL, speaker: "先看一眼", text, meta: { firstLook: r.id, addressed: true, chatId: input.chat!.id }, mergeMs: 0, fixedWindow: true });
     // The batch it joined runs now (a fixed window is not brought forward by receive); other held batches go back to their time.
     if (res.runId) updateQueuedRun(app, res.runId, { notBefore: now() });
     release(app, held.filter((h) => h.id !== res.runId));
@@ -171,6 +171,6 @@ export function escalate(app: App, r: Run, input: FirstLookInput, messages: Look
 
 /** For the 关注 page: its recent first looks and how each went. */
 export function recentLooks(app: App, contextId: string, limit = 20) {
-  return all<{ id: string; status: string; created_at: string; output: string | null }>(app.db, "select id, status, created_at, output from runs where kind = 'first-look' and lane like ? order by created_at desc limit ?", `firstlook:listen:${contextId}:%`, limit)
+  return all<{ id: string; status: string; created_at: string; output: string | null }>(app.db, "select id, status, created_at, output from runs where kind = 'first-look' and (lane like ? or lane in (select conversation_id from situation_instances where context_id = ?)) order by created_at desc limit ?", `firstlook:listen:${contextId}:%`, contextId, limit)
     .map((x) => ({ id: x.id, status: x.status, at: x.created_at, outcome: (JSON.parse(x.output ?? "{}") as { outcome?: string }).outcome ?? null }));
 }

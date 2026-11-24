@@ -110,6 +110,9 @@ describe("临期预查", () => {
     const thread = one<{ id: string }>(app.db, "select id from conversations where json_extract(settings,'$.itemId')=?", item.id)!;
     expect(one(app.db, "select 1 from item_materials where item_id=? and kind='conversation' and ref=?", item.id, thread.id)).toBeTruthy();
     expect(one(app.db, "select 1 from runs where lane=? and kind='ask'", thread.id)).toBeTruthy();
+    const continuation = one<{ text: string }>(app.db, "select text from messages where conversation_id=? and role='user'", thread.id)!;
+    expect(continuation.text).toContain("flow_start 的内联阶段清单");
+    expect(continuation.text).toContain("需要确认的外部动作照常确认");
   });
 
   it("提醒等不及预查时仍照常发，迟到的结果不再发第二条", () => {

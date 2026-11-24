@@ -25,8 +25,7 @@ function git(path: string, args: string[]) {
   if (!r.ok) throw new Error(`${args.join(" ")}: ${r.stderr}`);
   return r.stdout.trim();
 }
-// The patrol may also queue a reconcile (flows/reconcile.ts): that row is its own, not a Git signal.
-const signals = (app: App) => all<{ outcome: string; keys: string }>(app.db, "select * from flow_signals where type != 'reconcile' order by id");
+const signals = (app: App) => all<{ type: string; outcome: string; keys: string }>(app.db, "select * from flow_signals order by id");
 async function setup(options: { count?: number; type?: GitSignal; by?: "owner" | "wait"; applied?: boolean; pushedBefore?: boolean } = {}) {
   const app = testApp(); apps.push(app);
   app.config.flows.autoAdvance = 20;
@@ -113,7 +112,7 @@ describe("Git 完成信号", () => {
   it("交办没应用时不完成，同一个原因只记一次；重新尝试会重新记", async () => {
     const t = await setup({ applied: false }); t.push();
     await checkGitSignals(t.app); await checkGitSignals(t.app);
-    expect(t.s().state).toBe("doing"); expect(signals(t.app)).toHaveLength(1);
+    expect(t.s().state).toBe("doing"); expect(signals(t.app).filter(s => s.type !== "reconcile")).toHaveLength(1);
     expect(signals(t.app)[0].outcome).toContain("还没应用");
     await reopenStage(t.app, t.item.id, "push", "再核对一次", [], owner);
     await checkGitSignals(t.app); expect(signals(t.app)).toHaveLength(2);
@@ -156,7 +155,7 @@ describe("Git 完成信号", () => {
     const fetches = () => network.mock.calls.filter((c) => (c[1] as string[]).includes("fetch")).length;
     const calls = fetches(); expect(calls).toBe(1);
     await flowReminders(t.app); expect(fetches()).toBe(calls);
-    expect(t.s().state).toBe("doing"); expect(signals(t.app)).toHaveLength(1);
+    expect(t.s().state).toBe("doing"); expect(signals(t.app).filter(s => s.type !== "reconcile")).toHaveLength(1);
     run(t.app.db, "update kv set value=? where key like 'flow-git-checked:%'", new Date(Date.now() - 601_000).toISOString());
     await checkGitSignals(t.app); expect(fetches()).toBeGreaterThan(calls);
     expect(network.mock.calls.filter((c) => (c[1] as string[]).includes("fetch")).every((c) => c[2]!.timeoutMs! <= 15_000)).toBe(true);

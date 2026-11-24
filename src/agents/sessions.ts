@@ -1,5 +1,5 @@
 import { instanceOfThread } from "../situations/instances.ts";
-import { situationPrompt } from "../situations/prompt.ts";
+import { situationLookMaterial, situationPrompt } from "../situations/prompt.ts";
 import { credentialSucceeded, selectedCredential } from "./credentials.ts";
 import { recordWatchMaterial, summaryOrigins } from "../core/message-origins.ts";
 import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
@@ -526,7 +526,10 @@ ${renderMessages(messages, app)}
 ${hostToldNote(app, handoff)}
 这一轮不能交办、续轮或推送（continue_code_run、apply_code_run 不可用）。`
         : situation
-        ? situationPrompt(app, situation, renderMessages(messages, app), situationClosing, withTools)
+        ? situationPrompt(app, situation, renderMessages(messages.map(m => {
+            const look = situationLookMaterial(app, situation, m.meta.situationLookRun);
+            return look ? { ...m, text: `${m.text}\n\n${look}` } : m;
+          }), app), situationClosing, withTools, messages.some(m => m.meta.situationStart === true))
         : woken
         ? `# 唤醒
 

@@ -7,7 +7,8 @@ import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { listContexts } from "../channels/listen.ts";
 import { requireSituation, saveSituation } from "./settings.ts";
-import { instanceOfThread, MAX_EXTENSION_MINUTES, startSituation, updateSituation } from "./instances.ts";
+import { instanceOfThread, startSituation, updateSituation } from "./instances.ts";
+import { MAX_EXTENSION_MINUTES } from "./limits.ts";
 import { proposeSituation } from "./teaching.ts";
 
 const name = z.string().trim().min(1).max(80);

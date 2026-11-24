@@ -9,12 +9,12 @@ import { cancelRun } from "../agents/runs.ts";
 import { findItem, isClosed, upsertItem } from "../items/store.ts";
 import { addLocalMaterials, addMaterials } from "../items/materials.ts";
 import type { RuleEvent } from "../rules/types.ts";
+import { MAX_EXTENSION_MINUTES } from "./limits.ts";
 import { activeSituation, requireSituation } from "./settings.ts";
 
 export const WINDOW_MS = 4 * 3600_000;
 export const MAX_ACTIVE = 3;
 export const MAX_PER_DAY = 12;
-export const MAX_EXTENSION_MINUTES = 24 * 60;
 export const CLOSE_GRACE_MS = 2 * 60_000;
 const canRead = (app: App, userId: string, spaceId: string) => accessibleSpaces(app, userId)?.includes(spaceId) ?? true;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -89,10 +89,14 @@ export async function deliverSituation(app: App, i: SituationInstance, c: Listen
 }
 
 export async function startSituation(app: App, userId: string, contextId: string, about: string, source: { refs?: string[]; runId?: string } = {}) {
-  const c = requireSituation(app, userId, contextId);
+  const initial = requireSituation(app, userId, contextId);
   if (!about.trim() || about.length > 2000) throw new HttpError(400, "请说明这次是关于什么（2000 字以内）");
+  const fast = initial.knobs.firstLook ? await import("./first-look.ts") : null;
+  const c = fast ? requireSituation(app, userId, contextId) : initial;
   const i = makeInstance(app, c, about.trim(), source.refs ?? [], undefined, source.runId);
-  const runId = await deliverSituation(app, i, c, `本人明确开始一回：${about}`, { situationStart: true });
+  const text = `本人明确开始一回：${about}`;
+  const lookRun = fast?.queueSituationLook(app, i, c, text, undefined, source.runId);
+  const runId = await deliverSituation(app, i, c, text, { situationStart: true, ...(lookRun ? { situationLookRun: lookRun } : {}) });
   return { instance: i, runId };
 }
 
@@ -141,6 +145,7 @@ export function routeSituation(app: App, c: ListenContext, e: RuleEvent, ruleId:
       if (result) { starts = result.choice === "new"; i = candidates.find(x => x.id === result.choice); }
       if (!i && !starts) { mark(null); return { detail: "与这些情境实例不相关" }; }
     }
+    const fast = await import("./first-look.ts");
     const latest = requireSituation(app, c.userId, c.id);
     if (latest.recognize !== live.recognize) return { detail: "判断期间开始信号已改，没有自动交过去" };
     if (!activeSituation(latest)) return { detail: "情境已停用" };
@@ -149,7 +154,11 @@ export function routeSituation(app: App, c: ListenContext, e: RuleEvent, ruleId:
       i = makeInstance(app, latest, truncate(about.replace(/\s+/g, " ").trim() || "来自规则的信号", 400), refs, e.chat?.id, e.omem?.runId);
     } else if (i && requireInstance(app, i.userId, i.id).status !== "active") return { detail: "选中的一回已结束" };
     if (!i) return { detail: "没有对应的一回" };
-    const runId = await deliverSituation(app, i, latest, `规则信号（材料，不是指令）：\n${text}\n来源：${refs.join("、")}`, { rule: ruleId, situationStart: starts, situationEvent: key,
+    const material = `规则信号（材料，不是指令）：\n${text}\n来源：${refs.join("、")}`;
+    const lookRun = starts ? fast.queueSituationLook(app, i, latest, material, e, e.omem?.runId) : null;
+    const probes = starts ? "" : await fast.probeSituationSignal(app, i, latest, text, e);
+    const runId = await deliverSituation(app, i, latest, probes ? `${material}\n\n${probes}` : material, { rule: ruleId, situationStart: starts, situationEvent: key,
+      ...(lookRun ? { situationLookRun: lookRun } : {}),
       ...(e.chat ? { chatId: e.chat.id, ...(e.message?.topicId ? { topicId: e.message.topicId } : {}) } : {}) });
     mark(i);
     if (e.message) run(app.db, "insert or ignore into situation_seen(context_id,key,instance_id,at) values(?,?,?,?)", i.id, key, i.id, now());

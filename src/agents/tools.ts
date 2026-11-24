@@ -1,5 +1,5 @@
 import { inlineStages } from "../flows/inline.ts";
-import { readReconcileObject, reconcileResultSchema, submitReconcile } from "../flows/reconcile.ts";
+import { reconcileResultSchema } from "../flows/reconcile-schema.ts";
 import { beforeBehavior, changeWords, noteBehavior } from "./behavior-changes.ts";
 import { saveSituationArgs, startSituationArgs, updateSituationArgs, proposeSituationArgs, saveFromChat, startFromChat, updateFromTurn, proposeFromSettle } from "../situations/tools.ts";
 import { changeSchema, stepReportSchema, type StepOperation } from "../items/change-step-store.ts";
@@ -2687,7 +2687,7 @@ def({
   handler: async (ctx, a) => {
     if (ctx.role !== "flow-reconcile" || !ctx.runId) throw new HttpError(403, "只有对账运行可以重读对象");
     flowItem(ctx, a.item, "flow");
-    return JSON.stringify(await readReconcileObject(ctx.app, getRun(ctx.app, ctx.runId), a.item, a.object));
+    return JSON.stringify(await (await import("../flows/reconcile.ts")).readReconcileObject(ctx.app, getRun(ctx.app, ctx.runId), a.item, a.object));
   },
 });
 def({
@@ -2696,7 +2696,7 @@ def({
   handler: async (ctx, a) => {
     if (ctx.role !== "flow-reconcile" || !ctx.runId) throw new HttpError(403, "只有对账运行可以交结论");
     const item = flowItem(ctx, a.item, "flow");
-    const next = await submitReconcile(ctx.app, getRun(ctx.app, ctx.runId), a, item.userId,
+    const next = await (await import("../flows/reconcile.ts")).submitReconcile(ctx.app, getRun(ctx.app, ctx.runId), a, item.userId,
       (chat, draft) => larkPost({ ...ctx, larkChats: [chat], larkDraft: false }, { chat_id: chat }, { text: draft }));
     return JSON.stringify({ ok: true, next });
   },

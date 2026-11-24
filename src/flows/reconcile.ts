@@ -1,4 +1,5 @@
-import { z } from "zod";
+import type { z } from "zod";
+import type { reconcileResultSchema } from "./reconcile-schema.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
@@ -104,10 +105,6 @@ export async function readReconcileObject(app: App, r: Run, itemId: string, obje
   return { read: true, evidence: `object:${id}`, ...data };
 }
 
-const stepText = (max: number) => z.string().trim().min(1).max(max);
-export const reconcileResultSchema = z.object({ item: z.string(), summary: stepText(1000), steps: z.array(z.object({
-  stage: z.string(), action: stepText(400), person: stepText(80).optional(), draft: stepText(1500).optional(), chat: stepText(100).optional(),
-}).refine(s => (!!s.draft === !!s.person) && (!s.chat || !!s.draft), "找别人写 person 和 draft；只有本人能做则只填 action")).max(5).optional() });
 type Step = NonNullable<z.infer<typeof reconcileResultSchema>["steps"]>[number];
 type Next = { stage: string; action: string; delivery: string };
 const HANDLER = "flow-reconcile-step";

@@ -81,11 +81,13 @@
 
 宿主只做数据准备：一次检索、几条 SQL，不替模型做多轮检索，也不写规则清单式的提示词。
 
-问题（`roles/mention-triage.md`，本人可在 Agent 页改）：三个选项和各自的判断标准，一段话。决策模型最多问三次，都是一次往返：
+问题（`roles/mention-triage.md`，本人可在 Agent 页改）：三个选项和各自的判断标准，一段话。决策模型按情况判断以下三题：
 
 1. 动作：`ignore` / `notify` / `handle`（拿不准选 handle）。
 2. 只在 handle 且有 Agent 档案时：交给谁（选项是“可以交给”里的每一项）。
 3. 只在 handle 且这类会话的回复是“自动”时：查清后能不能不经本人拍板就答复。
+
+第 2、3 题都需要时，同一份材料用 `decideSceneMany` 合问一次；仍只有第 3 题应用 `progress` 门槛及写该场景记录。合问失败退回原来的逐题问法。
 
 没有决策模型时（`noDecision`）：`general` 用通用模型（助手的后端，一次不带工具的调用，同一段标准加 JSON 输出格式，多给出“对方要什么”和紧急程度）；`notify` 一律简短提醒；`handle` 一律交给主助手。决策模型出错时，`ai.decision.fallback = general` 且 `noDecision = general` 改用通用模型，否则按 `noDecision`（`general` 时按简短提醒）。
 
