@@ -24,6 +24,12 @@ let token: string, runId: string, ownerHome: string, drop: () => void;
 const linuxSandbox = process.platform === "linux" && sandboxSupport().ok;
 const check = vi.fn<NonNullable<CredentialDef["check"]>>();
 const verify = vi.fn<NonNullable<CredentialDef["precheck"]>>();
+/** The fixture's login; a test about a member who has not logged in yet keeps it waiting on the link. */
+let login: CredentialDef["login"] = async () => ({ user: "demo" });
+const waitingLogin: CredentialDef["login"] = (ctx, show) => {
+  show({ url: "https://example.test/login" });
+  return new Promise((_, reject) => ctx.signal.addEventListener("abort", () => reject(ctx.signal.reason), { once: true }));
+};
 function hold(user: string, scope: "all" | "self") {
   if (user !== "owner") mkdirSync(accountHome(app, user), { recursive: true });
   run(app.db, "insert into credential_holds(user_id,kind,state,sharing) values(?,?,'logged-in',?)", user, kind, JSON.stringify({ scope }));
@@ -43,7 +49,8 @@ beforeEach(async () => {
     const exact = req.command?.name === name && JSON.stringify(req.command.args) === JSON.stringify(args);
     return { allowed, verifiedRead: allowed && exact ? true : undefined };
   });
-  drop = registerCredential("fixture", { id: "account", name: "示例账号", async login() { return { user: "demo" }; },
+  login = async () => ({ user: "demo" });
+  drop = registerCredential("fixture", { id: "account", name: "示例账号", login: (ctx, show) => login(ctx, show),
     check, precheck: verify, provides: { commands: [{ name, readOnly: [{ subcommand: ["show"] }], state: [".sample"],
       resource: [{ key: "project:{option.project}", match: {} }], outcomes: { denied: [{ json: "$.code", equals: "DENIED" }], applyUrl: "$.url" } }] },
   }, () => ({}), app);
@@ -344,6 +351,8 @@ it("这一次同意只放行一次，下一次拒绝时垫片以 126 退出并�
 });
 
 it("兜底打开后：成员没登录时不预检，提醒他授权并用本人的登录执行；本人的登录不借给他时只提醒", async () => {
+  // He has not finished the login omem starts for him.
+  login = waitingLogin;
   app.config.credentials.ownerFallback = true;
   const result = await gate();
   expect(result.execution?.code, JSON.stringify(result)).toBe(0);
@@ -363,6 +372,7 @@ it("兜底打开后：成员没登录时不预检，提醒他授权并用本人�
 });
 
 it("成员借用本人 HOME 的运行：兜底时不另起进程、不回报结果，只说明用了谁的登录；关掉时照旧不处理", async () => {
+  login = waitingLogin;
   const borrowed = issueToolToken({ actor: "agent", userId: "reader", commandHomeUser: "owner", runId, spaceId: "personal-reader", spaces: [], tools: new Set() });
   try {
     expect(await gate(args, {}, borrowed)).toEqual({ status: 200, decision: "allow" });

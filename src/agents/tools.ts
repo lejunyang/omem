@@ -1848,15 +1848,26 @@ def({
  * command printed), omem's answers to permission requests, and steps still going when the run ended.
  * Without this a woken run read only the final text and took a finished query for one awaiting approval.
  */
+/** The tool an `omem_call` step ran (the backend's raw input, with or without an MCP wrapper). */
+export function calledThrough(title: string, input: unknown): string | null {
+  if (!/omem_call$/.test(title) || !input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  const a = (raw.arguments && typeof raw.arguments === "object" ? raw.arguments : raw) as Record<string, unknown>;
+  return typeof a.tool === "string" ? a.tool : null;
+}
+
 function runSteps(events: { type: string; data: unknown }[], status: string): string {
   const steps = new Map<string, { title: string; status: string; output?: string }>();
   const lines: string[] = [];
   for (const e of events) {
-    const d = (e.data ?? {}) as { id?: string; title?: string; status?: string; output?: string; text?: string };
+    const d = (e.data ?? {}) as { id?: string; title?: string; status?: string; output?: string; text?: string; input?: unknown };
     if (e.type === "tool" && d.id) {
       const prev = steps.get(d.id);
       if (!prev) lines.push(`step:${d.id}`);
-      steps.set(d.id, { title: d.title ?? prev?.title ?? "工具", status: d.status ?? prev?.status ?? "", output: d.output ?? prev?.output });
+      const title = d.title ?? prev?.title ?? "工具";
+      // A call through omem_call is named by the tool it ran.
+      const inner = d.input ? calledThrough(title, d.input) : null;
+      steps.set(d.id, { title: inner ? `${title} → ${inner}` : prev && prev.title.startsWith(title) ? prev.title : title, status: d.status ?? prev?.status ?? "", output: d.output ?? prev?.output });
     } else if (e.type === "status" && d.text && /^(允许|拒绝)操作/.test(d.text)) lines.push(`宿主${d.text}（omem 当场回答，不用等审批）`);
   }
   if (!lines.length) return "";

@@ -128,7 +128,7 @@ describe("logging in", async () => {
     const approved = await settings();
     expect(approved.status).toBe(200);
     expect((await approved.json()).config).toEqual({
-      credentials: { lending: app.config.credentials.lending, confirm: { inviteAsOwner: app.config.credentials.confirm.inviteAsOwner } },
+      credentials: { lending: app.config.credentials.lending, ownerFallback: app.config.credentials.ownerFallback, confirm: { inviteAsOwner: app.config.credentials.confirm.inviteAsOwner } },
       agents: { accountsDefault: app.config.agents.accountsDefault },
     });
   });

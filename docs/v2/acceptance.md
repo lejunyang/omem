@@ -1,5 +1,10 @@
 # v2 验收清单
 
+## 运行页的每一步带参数（2026-11-24）
+
+- 打开一次用了 `omem_call` 的运行，展开“过程”：那一步显示成它实际调用的工具（如“查事项”），旁边写“经 omem_call”；点开一步看到参数和输出末尾，参数是那个工具自己的参数，不是外层包装。完成事件不带参数时也保留开始时的参数。Codex（`mcp.omem.omem_call`，参数在 `arguments` 里）和 Claude Code（`Tool: omem/omem_call`）两种标题都认。
+- 下一轮用 `read_run` 回看这次运行：步骤写成 `mcp.omem.omem_call → list_items：完成`（`test/read-run-steps.test.ts`）。
+
 ## 本人的多个账号、Antigravity CLI 按人登录（2026-11-24）
 
 - 设置 → 后端与模型 展开 Antigravity CLI，“这台机器的登录”下点“再加一个账号”：多出“Antigravity CLI · 账号 2”，点它的“登录”，打开链接登录另一个 Google 账号，把授权码或落地页网址贴回提交：显示已登录；原来那张卡的登录不变；两张卡的额度各读各的。“删除这个账号”后这一张消失，选了它的角色和候选一并去掉，`<数据目录>/logins/antigravity-2` 删除。`test/login-slots.test.ts` 用假命令覆盖：目录、各自登录、第三个编号、按 source 分开的额度、删除时的引用和目录。真实 agy 只实测了“没有 D-Bus 时改存 `XDG_CONFIG_HOME`”和登录提示，完整登录要本人在网页上走一次。

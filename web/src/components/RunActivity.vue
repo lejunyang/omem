@@ -53,13 +53,52 @@ onBeforeUnmount(() => {
   offResync();
 });
 
-/** Tool calls with their latest status, one row per call id. */
+type Step = { id: string; title: string; status: string; phase?: string; input?: unknown; output?: string };
+/**
+ * Tool calls with their latest status, one row per call id. The finishing event usually carries only
+ * the output, so the arguments from the start are kept. A call through `omem_call` is named by the
+ * tool it ran, with that tool's own arguments.
+ */
 const steps = computed(() => {
-  const map = new Map<string, { title: string; status: string; phase?: string }>();
-  for (const e of events.value)
-    if (e.type === "tool") map.set(e.data.id ?? String(e.seq), { title: e.data.title, status: e.data.status ?? "", phase: e.data.phase });
+  const map = new Map<string, Step>();
+  for (const e of events.value) {
+    if (e.type !== "tool") continue;
+    const id = e.data.id ?? String(e.seq);
+    const prev = map.get(id);
+    map.set(id, {
+      id,
+      title: e.data.title ?? prev?.title ?? "",
+      status: e.data.status ?? prev?.status ?? "",
+      phase: e.data.phase ?? prev?.phase,
+      input: e.data.input ?? prev?.input,
+      output: typeof e.data.output === "string" ? e.data.output : prev?.output,
+    });
+  }
   return [...map.values()];
 });
+function viaCall(s: Step): { tool: string; args: unknown } | null {
+  if (!/omem_call$/.test(s.title) || !s.input || typeof s.input !== "object") return null;
+  const raw = s.input as Record<string, unknown>;
+  const a = (raw.arguments && typeof raw.arguments === "object" ? raw.arguments : raw) as Record<string, unknown>;
+  return typeof a.tool === "string" ? { tool: a.tool, args: a.args ?? {} } : null;
+}
+function stepLabel(s: Step) {
+  const via = viaCall(s);
+  return via ? prettyTool(via.tool) : prettyTool(s.title);
+}
+/** What a step was called with, as readable text; long values are cut so a row stays light. */
+function stepArgs(s: Step) {
+  const via = viaCall(s);
+  let v: unknown = via ? via.args : s.input;
+  if (v && typeof v === "object" && !via) {
+    const raw = v as Record<string, unknown>;
+    if (raw.arguments !== undefined && (raw.server !== undefined || raw.tool !== undefined)) v = raw.arguments;
+  }
+  if (v === undefined || v === null) return "";
+  const text = typeof v === "string" ? v : JSON.stringify(v, null, 2);
+  return text.length > 4000 ? `${text.slice(0, 4000)}\n…（共 ${text.length} 字）` : text;
+}
+const shownStep = ref<string | null>(null);
 const statusLines = computed(() => events.value.filter((e) => e.type === "status" || e.type === "check").slice(-3));
 const text = computed(() => events.value.filter((e) => e.type === "text").map((e) => e.data.text).join("") + live.value);
 const running = computed(() => run.value && ["queued", "running"].includes(run.value.status));
@@ -90,7 +129,7 @@ defineExpose({ text });
       <span v-if="running" class="spin" aria-hidden="true" />
       <Icon v-else name="check" :size="14" />
       <span class="label">{{ running ? (run?.status === "queued" ? "排队中" : "进行中") : "过程" }} · {{ steps.length }} 步</span>
-      <span v-if="running && steps.length" class="muted ellipsis last">{{ prettyTool(steps[steps.length - 1].title) }}</span>
+      <span v-if="running && steps.length" class="muted ellipsis last">{{ stepLabel(steps[steps.length - 1]) }}</span>
       <Icon :name="expanded ? 'down' : 'right'" :size="14" />
     </button>
     <div v-if="!running && (writes.length || (link && steps.length))" class="wrote small">
@@ -106,10 +145,21 @@ defineExpose({ text });
       <router-link v-if="link" :to="`/runs/${runId}`" class="muted rec">运行记录</router-link>
     </div>
     <ol v-if="expanded && steps.length" class="steps">
-      <li v-for="(s, i) in steps" :key="i" :class="s.status">
-        <span class="dot" />
-        <span class="ellipsis">{{ prettyTool(s.title) }}</span>
-        <span v-if="s.phase" class="badge">{{ s.phase === "reviewer" ? "评审" : s.phase === "pre-check" ? "编码前检查" : "编码" }}</span>
+      <li v-for="s in steps" :key="s.id" :class="s.status">
+        <button class="step" :aria-expanded="shownStep === s.id" :title="s.title" @click="shownStep = shownStep === s.id ? null : s.id">
+          <span class="dot" />
+          <span class="ellipsis">{{ stepLabel(s) }}</span>
+          <span v-if="viaCall(s)" class="muted via">经 omem_call</span>
+          <span v-if="s.phase" class="badge">{{ s.phase === "reviewer" ? "评审" : s.phase === "pre-check" ? "编码前检查" : "编码" }}</span>
+        </button>
+        <div v-if="shownStep === s.id" class="step-detail small">
+          <div class="muted">参数</div>
+          <pre>{{ stepArgs(s) || "（没有记录参数）" }}</pre>
+          <template v-if="s.output">
+            <div class="muted">输出</div>
+            <pre>{{ s.output }}</pre>
+          </template>
+        </div>
       </li>
     </ol>
     <div v-if="expanded && statusLines.length" class="status muted small">
@@ -196,11 +246,48 @@ defineExpose({ text });
   margin-left: 10px;
 }
 .steps li {
+  display: grid;
+  gap: 4px;
+  padding-left: 8px;
+  min-width: 0;
+}
+.step {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-left: 8px;
   min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.step:hover .ellipsis {
+  color: var(--ink);
+}
+.step .via {
+  flex: none;
+  font-size: 11.5px;
+}
+.step-detail {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 4px 14px;
+  min-width: 0;
+}
+.step-detail pre {
+  margin: 0 0 4px;
+  padding: 6px 8px;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
 }
 .dot {
   width: 6px;

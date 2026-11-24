@@ -15,6 +15,8 @@ it("read_run shows what a run did: omem's answers to permission requests, each c
   addRunEvent(app, r.id, "tool", { id: "t1", title: "query employee", status: "in_progress" });
   addRunEvent(app, r.id, "tool", { id: "t1", title: "query employee", status: "completed", output: "Status: 7" });
   addRunEvent(app, r.id, "tool", { id: "t2", title: "duty plan get", status: "in_progress" });
+  addRunEvent(app, r.id, "tool", { id: "t3", title: "mcp.omem.omem_call", status: "in_progress", input: { server: "omem", tool: "omem_call", arguments: { tool: "list_items", args: {} } } });
+  addRunEvent(app, r.id, "tool", { id: "t3", title: "mcp.omem.omem_call", status: "completed", output: "共 2 件" });
   addRunEvent(app, r.id, "text", { text: "账号查询仍在等命令执行许可" });
   flushRunText(app, r.id);
   run(app.db, "update runs set status = 'done' where id = ?", r.id);
@@ -24,6 +26,7 @@ it("read_run shows what a run did: omem's answers to permission requests, each c
   expect(text).toContain("query employee：完成");
   expect(text).toContain("输出末尾：Status: 7");
   expect(text).toContain("duty plan get：运行结束时还没跑完");
+  expect(text).toContain("mcp.omem.omem_call → list_items：完成");
 });
 
 it("keeps the end of what a finished command printed", () => {
