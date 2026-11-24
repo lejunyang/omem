@@ -48,7 +48,7 @@ export const DIRECT_ALL = 30;
  */
 export type ToolCapability = Capability | GlobalPerm | "memory.write" | "wiki.write" | "owner";
 export const TOOL_GROUPS: { capability: ToolCapability; id: string; label: string; doc?: string; tools: string[] }[] = [
-  { id: "study", capability: "owner", label: "研究：方向、试验和发现", doc: "flows", tools: ["propose_directions", "trial_report", "read_ledger", "record_finding", "revise_study_finding", "close_direction", "study_push"] },
+  { id: "study", capability: "owner", label: "研究：方向、试验和发现", doc: "flows", tools: ["propose_directions", "trial_report", "read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "study_push"] },
   { id: "flow", capability: "owner", label: "流程：一件事的阶段和关卡", doc: "flows", tools: ["list_flows", "save_flow", "flow_start", "stage_report", "stage_reopen", "note_item_change", "claim_commits", "attach_object", "read_flow_reviews"] },
   { id: "read", capability: "sources.view", label: "查找与阅读原件", doc: "sources", tools: ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_conversations", "read_conversation", "peer_search", "peer_read", "who_can"] },
   { id: "collect", capability: "sources.edit", label: "收进材料", doc: "sources", tools: ["import_url", "save_note", "write_file", "digest_sources", "lark_wiki_crawl"] },

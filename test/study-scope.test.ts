@@ -44,7 +44,7 @@ describe("研究范围", () => {
     for (const [space, expected] of [["repo-a", ["repo-a"]], ["project", ["repo-a", "repo-b"]], ["personal", []]] as const) {
       const item = upsertItem(a, undefined, { spaceId: space, kind: "watch", title: "研究" }, "user");
       expect(scopeView(a, item.id).repos.map((r) => r.id)).toEqual(expected);
-      expect(studyView(a, item.id).scope).toEqual({ repos: scopeView(a, item.id).repos, allowCode: false, thirdParty: false, pushRemote: "", pushPrefix: "" });
+      expect(studyView(a, item.id).scope).toEqual({ repos: scopeView(a, item.id).repos, allowCode: false, thirdParty: false, pushRemote: "", pushPrefix: "", fixAI: {} });
       expect(studyView(a, item.id).scope).not.toHaveProperty("candidates");
     }
   });

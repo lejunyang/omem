@@ -17,6 +17,7 @@ export const reviseStudyFindingSchema = z.object({
   item: text(100), finding: text(100), kind: kind.optional(), title: text(300).optional(), repro: text(20000).optional(),
   state: z.enum(["confirmed", "rejected", "later", "fixed"]).optional(), reason: z.string().trim().max(4000).optional(),
 }).strict();
+export const queueStudyFixesSchema = z.object({ item: text(100), findings: z.array(text(100)).min(1).max(200), note: z.string().trim().max(4000).optional() }).strict();
 export const closeDirectionSchema = z.object({ direction: text(100), state: z.enum(["done", "dropped"]), conclusion: text(12000) });
 export type Proposal = z.infer<typeof proposalSchema>;
 export type TrialReport = z.infer<typeof trialReportSchema>;

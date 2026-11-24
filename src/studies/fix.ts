@@ -6,7 +6,7 @@ import { can } from "../auth/permissions.ts";
 import { getItem } from "../items/store.ts";
 import { codeWork } from "../agents/code-works.ts";
 import { queueCodeWork } from "../agents/code-delegate.ts";
-import { studyScope } from "./scope.ts";
+import { fixExecutions, studyScope } from "./scope.ts";
 import { captureBaseline } from "./workspace.ts";
 import { assertOwner, direction, findings, trial, type Finding } from "./store.ts";
 
@@ -18,7 +18,7 @@ export function fixVerified(app: App, f: Pick<Finding, "id" | "work_id">) {
 }
 export function findingFix(app: App, f: Finding) {
   const w = f.work_id ? codeWork(app, f.work_id) : null;
-  return w ? { workId: w.rootId, status: w.stage.key, link: `#/runs/${w.latestId}`, ...fixVerified(app, f) } : null;
+  return w ? { workId: w.rootId, status: w.stage.key, active: w.stage.group === "active", link: `#/runs/${w.latestId}`, ...fixVerified(app, f) } : null;
 }
 export async function fixFinding(app: App, itemId: string, finding: string, note: string | undefined, user: string) {
   assertOwner(app, itemId, user);
@@ -53,7 +53,7 @@ export async function queueFindingFix(app: App, itemId: string, finding: string,
     "改动只留在这次交办的分支上。\n改完照复现办法验证，交代改之前和改之后各是什么结果。\n不合并、不推送。",
   ].filter(Boolean).join("\n\n");
   // Called under studyOperation's per-item lock, so two clicks cannot create two works.
-  const r = queueCodeWork(app, { spaceId: item.spaceId, userId: item.userId, title: f.title.slice(0, 80), input: { itemId, repos: scope.repos.map((r) => r.id), task, startCommits } });
+  const r = queueCodeWork(app, { spaceId: item.spaceId, userId: item.userId, title: f.title.slice(0, 80), input: { itemId, repos: scope.repos.map((r) => r.id), task, startCommits, ...fixExecutions(scope) } });
   run(app.db, "update study_findings set work_id=?,state='confirmed',updated_at=? where id=?", r.id, now(), f.id);
   return findingFix(app, { ...f, work_id: r.id });
 }

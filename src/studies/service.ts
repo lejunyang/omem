@@ -17,6 +17,7 @@ import { checkDirectionChoice, resolveEnv, thirdPartyReason } from "./envs.ts";
 import { captureBaseline } from "./workspace.ts";
 import { studyPushes } from "./push.ts";
 import { findingFix } from "./fix.ts";
+import { queuePosition } from "./fix-queue.ts";
 
 /** Resolve the stage from the host's flow copy, never from the caller's task text. */
 export function runStage(app: App, runId: string) {
@@ -123,7 +124,8 @@ export function readLedger(app: App, input: { item: string; direction?: string; 
   const selected = trials(app, input.item).filter((t) => (!input.direction || t.direction_id === input.direction) && (!input.object || t.object.includes(input.object)) && (!input.result || t.result === input.result) && (!input.round || t.round === input.round)).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, input.limit ?? 200);
   return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}${t.peer ? `，在设备 ${t.peer} 上跑` : ""}）\n${t.summary}\n证据：${t.evidence}${images(app, t)}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => {
     const fix = findingFix(app, f);
-    return `${f.id}（${f.fixed_at ? `已改好：${f.fixed_note || "未写依据"}` : f.state}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${fix?.status ?? "交办记录不可用"}；重跑：${fix?.verified ?? "未验证"}；试验：${fix?.reruns.join("、") || "无"}` : ""}`;
+    const queued = queuePosition(app, input.item, f.id);
+    return `${f.id}（${f.fixed_at ? `已改好：${f.fixed_note || "未写依据"}` : f.state}${queued ? `，排第 ${queued} 个等改` : ""}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${fix?.status ?? "交办记录不可用"}；重跑：${fix?.verified ?? "未验证"}；试验：${fix?.reruns.join("、") || "无"}` : ""}`;
   })].join("\n\n");
 }
 /** The owner picks this round's direction on the item page (null: no run this round): the same answer as on the card. */
@@ -164,7 +166,7 @@ export function studyView(app: App, itemId: string) {
     }),
     trials: [...history].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id)).slice(0, 200).map(present),
     findings: findings(app, itemId).map((f) => ({ id: f.id, kind: f.kind, title: f.title, repro: f.repro, state: f.state, stateReason: f.state_reason, sameAs: f.same_as, createdAt: f.created_at, updatedAt: f.updated_at,
-      round: f.round, fixedAt: f.fixed_at, fixedNote: f.fixed_note, revised: f.revised ? json<{ kind: string; title: string; repro: string } | null>(f.revised, null) : null,
+      round: f.round, fixedAt: f.fixed_at, fixedNote: f.fixed_note, queued: queuePosition(app, itemId, f.id), fixNote: f.fix_note, revised: f.revised ? json<{ kind: string; title: string; repro: string } | null>(f.revised, null) : null,
       fix: findingFix(app, f), trials: json<string[]>(f.trials, []).flatMap((id) => { const t = history.find((t) => t.id === id); return t ? [present(t)] : []; }) })),
     coverage: coverage(app, item), idleRounds: idleRounds(app, itemId),
   };

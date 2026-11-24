@@ -209,3 +209,38 @@ describe("本人手动发起的改动也会被重跑验证", () => {
     expect(getRun(f.app, rerun.run_id!).input.cwd).toBe(cwd);
   });
 });
+
+describe("交给改：一次交多条，宿主逐条交办，评审通过即标改好", () => {
+  it("按顺序一次一条，用范围里的 AI；评审通过标改好、没过留给本人，队列接着走", async () => {
+    const f = await setup(undefined, 3); await f.finishTrial(); await f.finishTrial(); await f.finishTrial();
+    const ts = trials(f.app, f.item.id), titles = ["退出码错误", "配置缺字段时崩溃", "帮助文本拼错"];
+    const [a, b, c] = titles.map((title, i) => recordFinding(f.app, { item: f.item.id, kind: i ? "gap" : "defect", title, repro: "### 现象\n照做复现", trials: [ts[i].id], distinct_from: [] }));
+    const { queueFixes, tickFixQueue, unqueueFix } = await import("../src/studies/fix-queue.ts");
+    const { studyOperation } = await import("../src/flows/engine.ts");
+    const tick = () => studyOperation(f.app, f.item.id, () => tickFixQueue(f.app, f.item.id));
+    expect(() => putScope(f.app, f.item.id, { fixAI: { coder: { profile: "no-such-backend" } } }, "owner")).toThrow();
+    f.app.config.agents.profiles.push(agentProfileSchema.parse({ id: "coder-ai", transport: "acp", command: "node", model: "big" }));
+    putScope(f.app, f.item.id, { fixAI: { coder: { profile: "coder-ai" }, reviewer: { profile: "coder-ai" } } }, "owner");
+    expect(() => queueFixes(f.app, f.item.id, [a], undefined, "someone")).toThrow();
+    queueFixes(f.app, f.item.id, [a, b, c], "只改报错，不动别的", "owner"); unqueueFix(f.app, f.item.id, c, "owner");
+    await tick();
+    const first = findings(f.app, f.item.id).find((x) => x.id === a)!;
+    expect(first.work_id).toBeTruthy(); expect(findings(f.app, f.item.id).find((x) => x.id === b)!.work_id).toBeNull();
+    const w = getRun(f.app, first.work_id!);
+    expect(w.input).toMatchObject({ execution: { profile: "coder-ai", source: "user" }, reviewExecution: { profile: "coder-ai" } }); expect(String(w.input.task)).toContain("只改报错");
+    expect(studyView(f.app, f.item.id).findings.find((x) => x.id === b)!.queued).toBe(1);
+    await tick(); expect(findings(f.app, f.item.id).find((x) => x.id === b)!.work_id).toBeNull();
+    // Review passed: the finding is fixed and the next one is delegated.
+    setRunOutput(f.app, w.id, { verdict: "approved" }); run(f.app.db, "update runs set status='done',started_at=?,finished_at=? where id=?", now(), now(), w.id);
+    await tick();
+    const fixedA = findings(f.app, f.item.id).find((x) => x.id === a)!;
+    expect(fixedA.fixed_at).toBeTruthy(); expect(fixedA.fixed_note).toContain("评审通过"); expect(fixedA.fix_queued_at).toBeNull();
+    const second = findings(f.app, f.item.id).find((x) => x.id === b)!; expect(second.work_id).toBeTruthy();
+    // Review did not pass: it stays open for the owner, and leaves the queue.
+    setRunOutput(f.app, second.work_id!, { verdict: "changes_requested" }); run(f.app.db, "update runs set status='failed',finished_at=? where id=?", now(), second.work_id!);
+    await tick();
+    const after = findings(f.app, f.item.id).find((x) => x.id === b)!; expect(after.fixed_at).toBeNull(); expect(after.fix_queued_at).toBeNull();
+    expect(() => queueFixes(f.app, f.item.id, [a], undefined, "owner")).toThrow("已改好");
+    expect(findings(f.app, f.item.id).find((x) => x.id === c)!.work_id).toBeNull();
+  });
+});

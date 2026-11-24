@@ -8,9 +8,11 @@ import { closeDirection, direction, setFindingState } from "./store.ts";
 import { chooseDirection, studyView } from "./service.ts";
 import { putScope, scopeView } from "./scope.ts";
 import { fixFinding } from "./fix.ts";
+import { queueFixes, tickFixQueue, unqueueFix } from "./fix-queue.ts";
 import { cancelTrials } from "./trials.ts";
 import { registerPeerTrialRoutes } from "./remote-host.ts";
 
+const ai = z.object({ profile: z.string().min(1).max(100), model: z.string().max(200).optional(), effort: z.string().max(40).optional() }).optional();
 export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   // Trials another of the owner's devices hands to this one (remote-host.ts).
   registerPeerTrialRoutes(server, app, who);
@@ -19,7 +21,7 @@ export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req
   server.get("/api/items/:id/study", async (req) => studyView(app, itemId(req, false)));
   server.get("/api/items/:id/study/scope", async (req) => scopeView(app, itemId(req, false)));
   server.put("/api/items/:id/study/scope", async (req) => {
-    const id = itemId(req, true), b = z.object({ repos: z.array(z.string()).max(100).optional(), allowCode: z.boolean().optional(), thirdParty: z.boolean().optional(), pushRemote: z.string().max(100).optional(), pushPrefix: z.string().max(200).optional() }).safeParse(req.body);
+    const id = itemId(req, true), b = z.object({ repos: z.array(z.string()).max(100).optional(), allowCode: z.boolean().optional(), thirdParty: z.boolean().optional(), pushRemote: z.string().max(100).optional(), pushPrefix: z.string().max(200).optional(), fixAI: z.object({ coder: ai, reviewer: ai }).optional() }).safeParse(req.body);
     if (!b.success) throw new HttpError(400, "范围字段不对");
     return studyOperation(app, id, async () => {
       const view = putScope(app, id, b.data, who(req));
@@ -31,6 +33,18 @@ export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req
     const id = itemId(req, true), b = z.object({ note: z.string().max(4000).optional() }).safeParse(req.body ?? {});
     if (!b.success) throw new HttpError(400, "修改要求不对");
     await studyOperation(app, id, async () => fixFinding(app, id, (req.params as { finding: string }).finding, b.data.note, who(req)));
+    return studyView(app, id);
+  });
+  // Hand several findings to the study's fix queue at once (fix-queue.ts); delegated one at a time.
+  server.post("/api/items/:id/study/fix-queue", async (req) => {
+    const id = itemId(req, true), b = z.object({ findings: z.array(z.string().max(100)).min(1).max(200), note: z.string().max(4000).optional() }).safeParse(req.body);
+    if (!b.success) throw new HttpError(400, "要给出交给改的发现");
+    await studyOperation(app, id, async () => { queueFixes(app, id, b.data.findings, b.data.note, who(req)); await tickFixQueue(app, id); });
+    return studyView(app, id);
+  });
+  server.delete("/api/items/:id/study/fix-queue/:finding", async (req) => {
+    const id = itemId(req, true);
+    await studyOperation(app, id, async () => unqueueFix(app, id, (req.params as { finding: string }).finding, who(req)));
     return studyView(app, id);
   });
   // The owner's pick of this round's direction, made on the item page instead of the card.

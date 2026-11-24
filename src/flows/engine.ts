@@ -32,6 +32,7 @@ import { capabilitiesPath, planningMaterials } from "../studies/materials.ts";
 import { envMaterials, trialStage } from "../studies/envs.ts";
 import { trial } from "../studies/store.ts";
 import { isFixes, tickFixes, cancelFixReruns, fixModelStage, fixMinutes } from "../studies/fixes.ts";
+import { attachFixQueue } from "../studies/fix-queue.ts";
 import { pushAuthorized, pushSummary } from "../studies/push.ts";
 import { isClosed } from "../items/store.ts";
 import { initFollow, followContexts, followLimit, followView, shownChanges, changesBrief } from "./follow.ts";
@@ -1129,6 +1130,7 @@ const attached = new WeakSet<App>();
 export function attachFlows(app: App) {
   if (attached.has(app)) return;
   attached.add(app);
+  attachFixQueue(app);
   const listener = (e: AppEvent) => {
     if (e.type === "changed" && e.entity === "item") {
       const f = itemFlow(app, e.id);
@@ -1259,7 +1261,7 @@ async function runStageAgent(ctx: Parameters<Parameters<typeof registerHandler>[
   // the role's own tools) are welcome but optional, so a backend that reaches only a few tools (a cloud one
   // over HTTP, cloud-tools.ts) can still take the stage.
   const requiredTools = [ctx.run.kind === "study-trial" ? "trial_report" : planner ? "propose_directions" : "stage_report"];
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, requiredTools, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "revise_study_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "record_finding", "revise_study_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push", "revise_study_finding"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, requiredTools, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push", "revise_study_finding", "queue_study_fixes"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
 }
 registerHandler("flow-stage", runFlowStage);

@@ -2483,6 +2483,10 @@ export const migrations: readonly string[] = [
    alter table study_findings add column fixed_note text not null default '';
    alter table study_findings add column revised text;
    alter table study_trials add column features text not null default '[]';`,
+  // A study's fix queue (studies/fix-queue.ts) and the AI its changes are coded and reviewed with.
+  `alter table study_findings add column fix_queued_at text;
+   alter table study_findings add column fix_note text not null default '';
+   alter table study_scopes add column fix_ai text not null default '{}';`,
 ];
 
 export type Db = DatabaseSync;

@@ -21,7 +21,10 @@ export type StudyScope = {
   repos: { id: string; name: string }[]; allowCode: boolean; thirdParty: boolean; candidates?: { id: string; name: string }[];
   /** Standing permission to push: only to this remote, only under this branch prefix. Both set, or it cannot push. */
   pushRemote?: string | null; pushPrefix?: string | null;
+  /** The AI the study's changes are coded with, and the one that reviews them; unset uses omem's defaults. */
+  fixAI?: { coder?: StudyAI; reviewer?: StudyAI };
 };
+export type StudyAI = { profile: string; model?: string; effort?: string };
 /** A push a trial made under the study's standing permission. */
 export type StudyPush = { id: string; trialId: string | null; repo: string; remote: string; branch: string; commit: string; note: string; at: string };
 export function scopeWords(s: StudyScope) {
@@ -44,8 +47,10 @@ export type StudyFinding = {
   fixedAt?: string | null; fixedNote?: string;
   /** The wording before someone re-described it (revise_study_finding), kept once. */
   revised?: { kind: FindingKind; title: string; repro: string } | null;
+  /** Its place among the findings handed over to be changed and not yet delegated (1 = next), and the owner's note for them, or why it could not be delegated. */
+  queued?: number | null; fixNote?: string;
   /** The code delegation started from this finding, and where it stands. */
-  fix?: { workId: string; status: string; link: string; /** How the failed trials went when run again on the change. */ verified?: TrialResult | null; reruns?: string[] } | null;
+  fix?: { workId: string; status: string; link: string; /** Still being worked on or reviewed. */ active?: boolean; /** How the failed trials went when run again on the change. */ verified?: TrialResult | null; reruns?: string[] } | null;
 };
 export type StudyView = {
   directions: StudyDirection[]; trials: StudyTrial[]; findings: StudyFinding[];

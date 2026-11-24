@@ -34,7 +34,7 @@ import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, activeUser, identityOwner, findUser, requireMembershipSpace, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
-import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema, reviseStudyFindingSchema } from "../studies/schema.ts";
+import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema, reviseStudyFindingSchema, queueStudyFixesSchema } from "../studies/schema.ts";
 import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf, LARK_DOMAIN_FEATURES } from "../auth/features.ts";
@@ -2515,6 +2515,18 @@ def({
     const store = await import("../studies/store.ts");
     store.assertOwner(ctx.app, a.item, ctx.userId ?? OWNER);
     return (await import("../flows/engine.ts")).studyOperation(ctx.app, a.item, async () => store.reviseFinding(ctx.app, a));
+  },
+});
+def({
+  name: "queue_study_fixes", description: "本人在对话里说把研究的哪些发现交给改时用：一次交多条（不限轮次和类型），宿主按交的顺序一次交办一条，用研究范围里指定的 AI 改代码和评审，评审通过的自动标为已改好，没过的留给本人。研究范围要允许改代码。note 是给每条交办都带上的要求。不要替本人挑哪些该改。", write: true, schema: queueStudyFixesSchema,
+  handler: async (ctx, a) => {
+    flowItem(ctx, a.item, "write");
+    const q = await import("../studies/fix-queue.ts");
+    return (await import("../flows/engine.ts")).studyOperation(ctx.app, a.item, async () => {
+      const n = q.queueFixes(ctx.app, a.item, a.findings, a.note, ctx.userId ?? OWNER);
+      const started = await q.tickFixQueue(ctx.app, a.item);
+      return `已交给改 ${n} 条，按顺序一次交办一条${started ? `；第一条的交办：${started.workId}` : "；前面还有在改的"}。`;
+    });
   },
 });
 def({

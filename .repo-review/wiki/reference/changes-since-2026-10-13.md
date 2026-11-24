@@ -22,6 +22,10 @@ updated: 2026-11-25
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 研究：交给改（2026-11-25）
+
+`src/studies/fix-queue.ts`：`queueFixes` / `unqueueFix` / `tickFixQueue` / `attachFixQueue`（`engine.ts` 的 `attachFlows` 挂上）。表 `study_findings` 加 `fix_queued_at`、`fix_note`，`study_scopes` 加 `fix_ai`；`scope.ts` 的 `fixExecutions` 把它变成交办的 `execution` / `reviewExecution`。同一研究一次一个交办，评审通过（`stage.key = done`）即 `markFixedByChange`；`fixes.ts` 重跑仍失败时清掉。接口 `POST/DELETE /api/items/:id/study/fix-queue`，工具 `queue_study_fixes`（`study` 组）。网页 `ItemStudy.vue`：“交给改…”“挑几条交给改”“不排了”，范围里选改代码和评审的 AI。
+
 ## 2026-11-25 · 成员选 AI 与飞书授权
 
 成员可指定自己的会话后端和模型，或在账号页设个人默认与任务偏好。自动选型沿用本人的候选和说明，并参考成员偏好。允许借用且本人额度充足时借本人，紧张时切到成员登录。需要授权时飞书机器人发官方链接或二维码，完成后继续原运行。群话题显示等待提示，授权卡片在同群仅发起成员可见。运行事件记录选择原因和等待状态。入口见 `src/agents/member-run-ai.ts`、`src/channels/lark-ai-login.ts` 和 `test/member-ai.test.ts`。

@@ -118,8 +118,10 @@ export async function tickFixes(app: App, item: Item, f: ItemFlow, d: FlowStage,
   const t = reruns.find((t) => t.state === "queued");
   if (!t) {
     // Every failed trial passed on the change that passed review: the finding is closed as fixed.
-    const passed = fixVerified(app, v).verified === "passed";
+    const verified = fixVerified(app, v).verified, passed = verified === "passed";
     if (passed) markFixedByChange(app, v, `交办 ${v.work_id} 评审通过，原来没通过的试验在改动上重跑都通过`);
+    // Review passing had closed it; a failed trial still failing on the change reopens it.
+    if (verified === "failed") run(app.db, "update study_findings set fixed_at=null,fixed_note='',state_reason=?,updated_at=? where id=?", `交办 ${v.work_id} 评审通过了，但原来没通过的试验改后重跑仍然没通过`, now(), v.id);
     c.fixIndex = (c.fixIndex ?? 0) + 1; c.fixWorkId = undefined;
     return save(`${v.title}：重跑已结束${passed ? "，标为已改好" : ""}`);
   }

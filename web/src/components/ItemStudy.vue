@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { get, onServerEvent, onServerResync, post, put } from "../api";
+import { del, get, onServerEvent, onServerResync, post, put } from "../api";
 import { promptDialog } from "../lib/dialog";
 import { refAction } from "../lib/refs";
 import { landOn } from "../lib/landing";
 import { objectStatusWords } from "../lib/flow";
-import { byConcern, byUnjudged, directionWords, findingWord, kindWords, progress, scopeWords, total, trialTone, trialWord, verifiedWords, type StudyDirection, type StudyFinding, type StudyScope, type StudyTrial, type StudyView } from "../lib/study";
+import { byConcern, byUnjudged, directionWords, findingWord, kindWords, progress, scopeWords, total, trialTone, trialWord, verifiedWords, type StudyDirection, type StudyFinding, type StudyAI, type StudyScope, type StudyTrial, type StudyView } from "../lib/study";
 import { fmtTime } from "../store";
 import RankBars from "./charts/RankBars.vue";
 import Markdown from "./Markdown.vue";
@@ -14,6 +14,7 @@ import RunArtifacts from "./RunArtifacts.vue";
 import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
+import UiSelect from "./UiSelect.vue";
 
 /**
  * A study's ledger on the item page (docs/v2/studies.md): what it found, what it tried, the directions
@@ -25,6 +26,12 @@ const props = withDefaults(defineProps<{ itemId: string; editable?: boolean; cho
 const data = ref<StudyView | null>(null), error = ref(""), loading = ref(true), busy = ref(false);
 const tab = ref<Tab>("findings"), everyRound = ref(false), showFixed = ref(false);
 const router = useRouter();
+/** Picking several findings to hand over to be changed at once. */
+const selecting = ref(false), chosen = ref<Set<string>>(new Set());
+/** The AI backends the coding and review AI can be picked from, loaded with the scope. */
+const backends = ref<{ id: string; name: string }[]>([]);
+const canFix = computed(() => !!data.value?.scope?.allowCode && !!data.value.scope.repos.length);
+const fixable = (f: StudyFinding) => !f.fixedAt && !["rejected", "duplicate"].includes(f.state) && !f.queued && !f.fix?.active;
 let seq = 0, epoch = 0, picked = false;
 /** The repositories that could be added to the scope, loaded when the owner opens it. */
 const candidates = ref<{ id: string; name: string }[]>([]);
@@ -113,11 +120,12 @@ async function choose(d: StudyDirection | null) {
 async function openScope(e: Event) {
   if (!(e.target as HTMLDetailsElement).open || candidates.value.length) return;
   const id = props.itemId;
+  void get<{ backends: { id: string; name: string; installed?: boolean }[] }>("/api/profile-options").then((o) => (backends.value = o.backends.filter((b) => b.installed !== false))).catch(() => {});
   try { const scope = await get<StudyScope>(`/api/items/${id}/study/scope`); if (id === props.itemId) candidates.value = scope.candidates ?? scope.repos; }
   catch (err) { error.value = (err as Error).message; }
 }
 /** The owner changes what this study may touch. */
-async function saveScope(patch: { repos?: string[]; allowCode?: boolean; thirdParty?: boolean; pushRemote?: string | null; pushPrefix?: string | null }) {
+async function saveScope(patch: { repos?: string[]; allowCode?: boolean; thirdParty?: boolean; pushRemote?: string | null; pushPrefix?: string | null; fixAI?: { coder?: StudyAI; reviewer?: StudyAI } }) {
   if (busy.value || !props.editable) return;
   const generation = epoch;
   busy.value = true; error.value = "";
@@ -134,13 +142,38 @@ function toggleRepo(id: string, on: boolean) {
   const now = (data.value?.scope?.repos ?? []).map((r) => r.id);
   void saveScope({ repos: on ? [...new Set([...now, id])] : now.filter((x) => x !== id) });
 }
-/** The owner turns a finding into a code delegation: the change stays on its own branch and goes through review. */
-async function fix(f: StudyFinding) {
+/**
+ * The owner hands findings over to be changed (one, or the ones picked): the host delegates them one at
+ * a time with the study's coding AI, each change is reviewed, and passing review marks it fixed.
+ */
+async function handOver(list: StudyFinding[]) {
+  if (!list.length) return;
   const generation = epoch;
-  const answer = await promptDialog("去改这一条", { message: `${f.title}\n会发起一次编码交办：改动留在它自己的分支上，经过评审，不合并也不推送，改完由你决定用不用。`, fields: [{ id: "note", label: "要补的要求（可不填）", value: "", maxLength: 2000 }], okText: "发起修改" });
+  const answer = await promptDialog(list.length > 1 ? `交给改：${list.length} 条` : "交给改", {
+    message: `${list.map((f) => `· ${f.title}`).join("\n")}\n\n按顺序一次交办一条：改动留在各自的分支上，经过评审；评审通过的标为已改好，没过的留给你看。不合并也不推送，用不用由你定。`,
+    fields: [{ id: "note", label: "给每条都带上的要求（可不填）", value: "", maxLength: 2000 }], okText: "交给改",
+  });
   if (!answer || generation !== epoch) return;
-  await send(`findings/${encodeURIComponent(f.id)}/fix`, { note: answer.note?.trim() || undefined });
+  await send("fix-queue", { findings: list.map((f) => f.id), note: answer.note?.trim() || undefined });
+  if (!error.value) { selecting.value = false; chosen.value = new Set(); }
 }
+const selected = computed(() => allFindings.value.filter((f) => chosen.value.has(f.id)));
+function choose_(f: StudyFinding, on: boolean) { const n = new Set(chosen.value); on ? n.add(f.id) : n.delete(f.id); chosen.value = n; }
+async function unqueue(f: StudyFinding) {
+  if (busy.value || !props.editable) return;
+  const generation = epoch;
+  busy.value = true; error.value = ""; ++seq;
+  try { const view = await del<StudyView>(`/api/items/${props.itemId}/study/fix-queue/${encodeURIComponent(f.id)}`); if (generation === epoch) { ++seq; take(view); } }
+  catch (e) { if (generation === epoch) error.value = (e as Error).message; }
+  finally { if (generation === epoch) busy.value = false; }
+}
+/** The coding or review AI of the study's changes: a backend (empty = omem's default) and an optional model. */
+function setAI(which: "coder" | "reviewer", patch: Partial<StudyAI>) {
+  const now = data.value?.scope?.fixAI ?? {}, cur = now[which];
+  const next = { ...cur, ...patch } as StudyAI;
+  void saveScope({ fixAI: { ...now, [which]: next.profile ? { profile: next.profile, ...(next.model ? { model: next.model } : {}) } : undefined } });
+}
+const backendOptions = computed(() => [{ value: "", label: "默认" }, ...backends.value.map((b) => ({ value: b.id, label: b.name }))]);
 async function close(d: StudyDirection, state: "done" | "dropped") {
   const generation = epoch;
   const answer = await promptDialog(state === "done" ? "这个方向做完了" : "放下这个方向", {
@@ -198,7 +231,14 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
           <UiCheckbox v-for="r in candidates.length ? candidates : data.scope.repos" :key="r.id" :model-value="data.scope.repos.some((x) => x.id === r.id)" size="sm" :disabled="busy || !editable" @change="(v: boolean) => toggleRepo(r.id, v)">{{ r.name }}</UiCheckbox>
           <span v-if="!data.scope.repos.length && !candidates.length" class="muted">这件事所在的空间下面没有仓库。试验只能读材料，跑不了命令。</span>
         </div>
-        <UiCheckbox :model-value="data.scope.allowCode" switch :disabled="busy || !editable" @change="(v: boolean) => saveScope({ allowCode: v })">可以改代码：从一条发现发起编码交办。改动留在交办自己的分支上，经过评审，不合并、不推送</UiCheckbox>
+        <UiCheckbox :model-value="data.scope.allowCode" switch :disabled="busy || !editable" @change="(v: boolean) => saveScope({ allowCode: v })">可以改代码：发现可以交给改，一次交办一条。改动留在交办自己的分支上，经过评审，评审通过的标为已改好；不合并、不推送</UiCheckbox>
+        <div v-if="data.scope.allowCode" class="fix-ai">
+          <div v-for="w in (['coder', 'reviewer'] as const)" :key="w" class="fix-ai-row">
+            <span class="muted">{{ w === "coder" ? "改代码用的 AI" : "评审改动用的 AI" }}</span>
+            <UiSelect :model-value="data.scope.fixAI?.[w]?.profile ?? ''" :options="backendOptions" size="sm" width="12rem" :aria-label="w === 'coder' ? '改代码用的后端' : '评审用的后端'" :disabled="busy || !editable" @change="(v) => setAI(w, { profile: v as string, model: undefined })" />
+            <input v-if="data.scope.fixAI?.[w]?.profile" class="input mono" :value="data.scope.fixAI?.[w]?.model ?? ''" placeholder="模型（留空用后端默认）" :aria-label="w === 'coder' ? '改代码用的模型' : '评审用的模型'" :disabled="busy || !editable" @change="(e) => setAI(w, { model: (e.target as HTMLInputElement).value.trim() || undefined })" />
+          </div>
+        </div>
         <UiCheckbox :model-value="data.scope.thirdParty" switch :disabled="busy || !editable" @change="(v: boolean) => saveScope({ thirdParty: v })">本机可以执行第三方样本的代码：拿别人的仓库当样本时，会在这台机器上跑它的安装脚本和构建脚本（只在研究自己的工作区里）</UiCheckbox>
         <div class="push">
           <div>推送：只推到下面这个远端、这个分支前缀下面。两项都填了，试验才能把自己工作区里的提交推上去（比如推到测试分支让托管的流水线跑）；主分支和别的远端推不了，每次推送都留记录。留空就是不推。</div>
@@ -234,14 +274,27 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
       <div v-if="tab === 'findings'" class="rows">
         <p v-if="!allFindings.length" class="muted small">还没有发现。一轮试验跑完，小结会把几个试验里的同一个问题归并成一条，列在这里等你看。</p>
         <p v-else-if="!findings.length" class="muted small">发现都改好了。</p>
+        <div v-if="editable && canFix && findings.some(fixable)" class="rows-head small muted">
+          <template v-if="!selecting"><span>可以挑几条一起交给改，按顺序一次交办一条</span><button type="button" class="link" @click="selecting = true">挑几条交给改</button></template>
+          <template v-else>
+            <span>已挑 {{ selected.length }} 条</span>
+            <span class="row">
+              <button type="button" class="link" @click="chosen = new Set(findings.filter((f) => fixable(f) && f.state === 'confirmed').map((f) => f.id))">挑认可的</button>
+              <button type="button" class="btn sm primary" :disabled="busy || !selected.length" @click="handOver(selected)">交给改</button>
+              <button type="button" class="btn sm ghost" @click="selecting = false; chosen = new Set()">取消</button>
+            </span>
+          </template>
+        </div>
         <details v-for="f in findings" :key="f.id" class="entry" :open="f.state === 'new' && fresh <= 3">
           <summary>
+            <UiCheckbox v-if="selecting && fixable(f)" size="sm" :model-value="chosen.has(f.id)" :aria-label="`挑这条：${f.title}`" @click.stop @change="(v: boolean) => choose_(f, v)" />
             <span class="kind" :class="f.kind">{{ kindWords[f.kind] }}</span>
             <span class="entry-name">{{ f.title }}</span>
-            <span class="entry-meta" :class="f.fixedAt ? 'fixed' : f.state === 'new' ? 'waiting' : 'muted'">{{ findingWord(f) }}</span>
+            <span class="entry-meta" :class="f.fixedAt ? 'fixed' : f.state === 'new' ? 'waiting' : 'muted'">{{ f.queued ? `排第 ${f.queued} 个等改` : findingWord(f) }}</span>
           </summary>
           <div class="entry-body">
             <Markdown :source="f.repro" class="text" />
+            <div v-if="f.fixNote && !f.fixedAt" class="muted">{{ f.queued ? `交给改时的要求：${f.fixNote}` : f.fixNote }}</div>
             <div v-if="f.fixedAt" class="fix"><span class="fix-ok">{{ fmtTime(f.fixedAt) }} 标为已改好</span><template v-if="f.fixedNote">：{{ f.fixedNote }}</template></div>
             <div v-if="f.stateReason" class="muted">你写的原因：{{ f.stateReason }}</div>
             <details v-if="f.revised" class="sub">
@@ -264,7 +317,8 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
                 <button v-if="f.state !== 'confirmed'" type="button" class="btn sm" :class="f.state === 'new' ? 'primary' : 'ghost'" :disabled="busy" @click="judge(f, 'confirmed')">认可</button>
                 <button v-if="f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'rejected')">不算</button>
                 <button v-if="f.state === 'new'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'later')">以后再说</button>
-                <button v-if="data.scope?.allowCode && data.scope.repos.length && !f.fix && f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="fix(f)">去改…</button>
+                <button v-if="canFix && fixable(f)" type="button" class="btn sm ghost" :disabled="busy" @click="handOver([f])">交给改…</button>
+                <button v-if="f.queued" type="button" class="btn sm ghost" :disabled="busy" @click="unqueue(f)">不排了</button>
                 <button v-if="f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="markFixed(f)">已改好…</button>
               </template>
               <button v-else type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'confirmed')">没改好，重新打开</button>
@@ -416,6 +470,10 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
 .entry-meta { flex: 0 1 auto; font-size: 12px; }
 .entry-meta.waiting { color: var(--warn); font-weight: 600; }
 .entry-meta.fixed { color: var(--ok); }
+.fix-ai { display: grid; gap: 6px; }
+.fix-ai-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.fix-ai-row > .muted { min-width: 7.5em; }
+.fix-ai-row .input { width: 14rem; max-width: 100%; }
 .entry-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 0 0 12px 15px; font-size: 12.5px; }
 .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); transform: translateY(-1px); }
 .kind, .state { flex: none; min-width: 2.4em; font-size: 12px; color: var(--muted); }

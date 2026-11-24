@@ -213,7 +213,7 @@ async function runPeerTrial(ctx: RunContext) {
         role: builtin ? name as RoleName : "assistant", spec: spec?.status === "active" ? spec : undefined, execution, ownAI: !!req.tier && !execution,
         spaceId: input.spaces[0] ?? "personal", spaces: input.spaces.length ? input.spaces : undefined, cwd: dirs[0]?.dir, task, runId: r.id,
         signal: AbortSignal.any([ctx.signal, limit]), addTools: ["trial_report", "attach_artifact"],
-        denyTools: ["read_ledger", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", "study_push", "propose_directions", "record_finding", "revise_study_finding", "close_direction"],
+        denyTools: ["read_ledger", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", "study_push", "propose_directions", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction"],
         artifacts: true, onEvent: (e) => ctx.event(e.type, e),
       });
       return { text: result.text, ai: result.ai, sessionId: result.sessionId };
