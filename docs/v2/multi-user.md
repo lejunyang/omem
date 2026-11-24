@@ -373,9 +373,10 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 | 表格与多维表格 | 读电子表格、多维表格 | `sheets:spreadsheet:read` `sheets:spreadsheet.meta:read` `base:app:read` `base:table:read` `base:field:read` `base:record:read` `base:view:read`（飞书现在的细分权限，旧的 `sheets:spreadsheet:readonly`、`bitable:app:readonly` 新应用申请不到） |
 | 日程 | 采集日程 | `calendar:calendar:read` `calendar:calendar.event:read` |
 | 妙记与会议 | 妙记、入会事件 | `minutes:minutes:readonly` `minutes:minutes.artifacts:read` `vc:meeting.meetingevent:read` |
-| 让助手写文档 | `lark_doc_*`、`lark_write` | `docx:document:write_only` `docx:document:create` `wiki:node:create` `wiki:node:move` |
+| 让助手写文档 | 新建、编辑、移动和完整复制文档 | `docx:document:write_only` `docx:document:create` `wiki:node:create` `wiki:node:move` `wiki:node:copy` |
 
 - 「文档与知识库」会和其他功能一样带上 `offline_access`。已有旧版文档授权的成员若缺 `search:docs:read`，可在账号页重新打开这一项。已经能采集的连接可以继续按其现有权限使用。
+- 成员请求完整复制知识库文档时，先核对读节点、知识库和复制所需权限。一张卡片可以勾选「文档与知识库」和「让助手写文档」。同一轮发现还缺权限时，在原私聊卡片补上。
 
 - **继续用 lark-cli。** lark-cli 可以从环境变量取应用和用户令牌（`LARKSUITE_CLI_APP_ID`、`LARKSUITE_CLI_USER_ACCESS_TOKEN`，1.0.98 里有；这时它的 `auth` 命令不能用），所以现有的采集、`lark_read`、`lark_write`、文档读写不用重写。做法是一个异步上下文：为某人做的事放在 `asLarkUser(app, 用户, …)` 里（`src/auth/lark-user.ts`；每次工具调用都这样包着），里面的 `larkCli` 就注入这个人的令牌（`lark-cli.ts` 的 `larkActor`）。本人照旧用 lark-cli 自己的登录。缺 scope（`LarkScopeError`）时：本人照旧收到设备码链接，别人收到“到账号页授权这一项”的通知（`asOwner` 里按上下文分开）。个人文档库这类缓存按人分开。
 - 本人的 lark-cli 现在可能指向另一个应用，open_id 和机器人应用不同。迁移时提示本人把 lark-cli 也换到机器人应用（`lark-setup.ts` 已经支持），或者直接用飞书登录 + 连接代替 lark-cli 登录。

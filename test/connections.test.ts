@@ -149,6 +149,9 @@ describe("connections", async () => {
     ].sort());
     expect(grantedFeatures("lark", originalDocScopes)).not.toContain("docs");
     expect(grantedFeatures("lark", [...originalDocScopes, "search:docs:read"])).toContain("docs");
+    const write = new URL((await remote("/api/auth/lark/start?features=docs,doc-write")).headers.get("location")!);
+    expect(write.searchParams.get("scope")!.split(" ")).toContain("wiki:node:copy");
+    expect(write.searchParams.get("scope")!.split(" ")).not.toContain("wiki:wiki");
     // The login page lists what can be ticked (background access comes along, not listed).
     const session = await (await remote("/api/auth/session")).json();
     expect(session.login.providers[0].features.map((f: { id: string }) => f.id)).toEqual(expect.arrayContaining(["messages", "calendar"]));
@@ -367,6 +370,48 @@ describe("connections", async () => {
     connectionGranted(app, userId, "lark");
     expect(pending()).toEqual([]);
     await expect.poll(() => [thread.id, legacy.id].map((id) => !!one(app.db, "select 1 from messages where conversation_id = ? and text like '[授权]%'", id))).toEqual([true, true]);
+  });
+
+  it("requests one combined card before copying a Wiki doc and resumes legacy copy waits", async () => {
+    const { callTool } = await import("../src/agents/tools.ts");
+    const { createRun } = await import("../src/agents/runs.ts");
+    const { connectionGranted } = await import("../src/auth/connect-wait.ts");
+    const { createThread } = await import("../src/agents/threads.ts");
+    const userId = "wiki-copier", spaceId = "personal-wiki-copier";
+    createUser(app, { name: "小李", id: userId });
+    const thread = createThread(app, { spaceId, channel: "lark", userId });
+    const legacy = createThread(app, { spaceId, channel: "lark", userId });
+    const r = createRun(app, { kind: "agent", spaceId, title: "复制周报", input: { conversationId: thread.id }, userId });
+    const grant = (scopes: string[]) => storeConnection(app, { userId, provider: "lark", accountId: "on_li", accountName: "小李", scopes, accessToken: "at_li", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    grant(["offline_access", "docx:document:write_only"]);
+    const doc = "https://tenant.larkoffice.com/wiki/Test";
+    const ctx = { app, runId: r.id, spaceId, spaces: null, tools: null, actor: "agent" as const, userId, larkChats: [] };
+    const commands: string[][] = [];
+    setLarkCliForTests(async (args) => { commands.push(args); throw new LarkScopeError(["docx:document"], "缺少权限"); });
+    onTestFinished(() => setLarkCliForTests(null));
+    const copy = () => callTool(ctx, "lark_doc_copy", { doc, target: "my_library", summary: "复制周报" });
+    const link = "http://omem.test/#/login?provider=lark&features=docs%2Cdoc-write";
+    expect((await copy()).text).toContain(link);
+    expect(commands).toEqual([]);
+    expect((await callTool(ctx, "lark_doc_fetch", { doc })).text).toContain(link);
+    expect((await copy()).text).toContain(link);
+    expect(one(app.db, "select count(*) n, min(link) link from notifications where user_id = ?", userId)).toEqual({ n: 1, link });
+    const key = `connect_wait:${userId}`;
+    const pending = () => JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value ?? "[]");
+    run(app.db, "update kv set value = ? where key = ?", JSON.stringify([...pending(), {
+      conversationId: legacy.id, features: [], scopes: ["wiki:wiki"], reason: "以本人身份复制飞书文档缺少飞书权限 wiki:wiki", at: new Date().toISOString(),
+    }]), key);
+    grant(scopesFor("lark", ["docs"]));
+    connectionGranted(app, userId, "lark");
+    expect(pending()).toHaveLength(2);
+    grant(scopesFor("lark", ["docs", "doc-write"]));
+    connectionGranted(app, userId, "lark");
+    expect(pending()).toEqual([]);
+    await expect.poll(() => [thread.id, legacy.id].map((id) => !!one(app.db, "select 1 from messages where conversation_id = ? and text like '[授权]%'", id))).toEqual([true, true]);
+    await expect(asLarkUser(app, userId, () => asOwner(app, "复制文档", async () => {
+      throw new LarkScopeError(["wiki:wiki", "wiki:node:copy"], "缺少权限");
+    }, { feature: "doc-write", alternatives: ["wiki:node:copy", "wiki:wiki"] }))).rejects.toThrow(/当前连接已授权 wiki:node:copy/);
+    expect(one(app.db, "select count(*) n from notifications where user_id = ?", userId)).toEqual({ n: 1 });
   });
 
   it("captures a member's own chats with their token, and does not read again what they can already see", async () => {

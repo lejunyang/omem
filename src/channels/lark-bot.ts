@@ -327,7 +327,10 @@ export function larkNotificationOutlet(app: App) {
     const sent = await sendLark(target, { card });
     setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
   });
-  return { push, sendDeferred: () => sendDeferredLark(app, push, targetOf) };
+  return {
+    push: (n: Notification) => withDeferredPush(app, n.replaces ? [n.id, n.replaces] : [n.id], () => push(n)),
+    sendDeferred: () => sendDeferredLark(app, push, targetOf),
+  };
 }
 
 /** Morning delivery. A batch snapshot can become stale while the previous card is in flight. */

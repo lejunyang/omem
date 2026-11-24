@@ -4876,6 +4876,7 @@ def({
   handler: async (ctx, a) => {
     ownerOnly(ctx, "doc-write");
     const w = await import("../channels/lark-doc-write.ts");
+    w.checkCopyScopes(ctx.app);
     const from = await w.docPlace(ctx.app, a.doc);
     const to = await w.placeFor(ctx.app, a.target);
     if (!from.node || !to.wiki) throw new HttpError(400, "完整复制目前需要知识库里的来源文档，目标需为知识库节点或 my_library");

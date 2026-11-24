@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
-import { LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE } from "../auth/features.ts";
+import { LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE } from "../auth/features.ts";
+import { findConnection } from "../auth/vault.ts";
 import { inQuietHours, notify } from "../core/notify.ts";
 import { HttpError, zonedParts } from "../core/util.ts";
 import { larkActing, larkActor, larkCli, LarkScopeError, onOwnerLoginMissing, OWNER_LOGIN_DOMAINS } from "./lark-cli.ts";
@@ -25,6 +26,7 @@ export const USER_FEATURES: Record<string, { label: string; anyOf: string[] }[]>
     { label: "编辑文档", anyOf: [LARK_LEGACY_DOC_SCOPE, "docx:document:write_only"] },
     { label: "在知识库新建节点", anyOf: ["wiki:node:create", "wiki:wiki"] },
     { label: "移动知识库节点", anyOf: ["wiki:node:move", "wiki:wiki"] },
+    { label: "复制知识库节点", anyOf: [LARK_WIKI_COPY_SCOPE, LARK_LEGACY_WIKI_SCOPE] },
   ],
 };
 
@@ -110,14 +112,14 @@ export async function requestUserScopes(app: App, scopes: string[], reason: stri
  * Run a lark-cli call as the owner; a missing scope becomes a login link for the owner and an error
  * the agent can act on (wait, tell the owner) instead of an opaque failure.
  */
-export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>, options: { documentRead?: boolean } = {}): Promise<T> {
+export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>, permission?: { feature: "docs" | "doc-write"; alternatives: string[] }): Promise<T> {
   try {
     return await fn();
   } catch (e) {
     if (!(e instanceof LarkScopeError)) throw e;
-    // Document reads can use the current read-only permission even when the CLI reports the old one.
-    const documentRead = options.documentRead && e.scopes.some((s) => s === LARK_LEGACY_DOC_SCOPE || s === LARK_DOC_READ_SCOPE);
-    const scope = documentRead ? LARK_DOC_READ_SCOPE : e.scopes[0];
+    // Feishu often lists broad legacy scopes first. Prefer the permission for the actual operation.
+    const preferred = permission && e.scopes.some((s) => permission.alternatives.includes(s)) ? permission : null;
+    const scope = preferred?.alternatives[0] ?? e.scopes[0];
     // Someone else's connection (src/auth/lark-user.ts): they authorize the scope on their own connection, from the account page.
     const actor = larkActing();
     // A colleague's grant (auth/grants.ts) lacks it: dropped, so the next try gives them a fresh link with what is needed.
@@ -126,11 +128,13 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>,
       throw new HttpError(403, `对方的飞书授权少了 ${scope}：再用 identity=bot 试一次会拿到新的授权链接，发给他重新同意。`);
     }
     if (actor) {
+      if (preferred && findConnection(app, actor.userId, "lark")?.scopes.includes(scope))
+        throw new HttpError(403, `${reason}被飞书拒绝。当前连接已授权 ${scope}，请检查具体文档或知识库的访问权限。`);
       const { needConnection } = await import("../auth/connect-wait.ts");
-      const request = documentRead ? { features: ["docs"], requiredScopes: [scope] } : { scopes: [scope] };
+      const request = preferred ? { features: [preferred.feature], requiredScopes: [scope] } : { scopes: [scope] };
       throw new HttpError(403, needConnection(app, actor.userId, actor.runId, { ...request, reason: `${reason}缺少飞书权限 ${scope}` }));
     }
-    const missing = documentRead ? scope : e.scopes.join(" 或 ");
+    const missing = preferred ? scope : e.scopes.join(" 或 ");
     let link = "";
     try {
       link = (await requestUserScopes(app, [scope], reason)).url;

@@ -2,10 +2,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
+import { LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE, LARK_WIKI_NODE_READ, LARK_WIKI_SPACE_READ } from "../auth/features.ts";
+import { needConnection } from "../auth/connect-wait.ts";
+import { findConnection } from "../auth/vault.ts";
 import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { actingOpenId, asOwner } from "./lark-auth.ts";
-import { larkCli, larkCliAsBot } from "./lark-cli.ts";
+import { larkActing, larkCli, larkCliAsBot } from "./lark-cli.ts";
 import { larkAppSecret, readLarkSecrets } from "./lark-setup.ts";
 import { personalLibrary, wikiNode, type WikiNode } from "./lark-wiki.ts";
 
@@ -36,7 +39,7 @@ const DOC = /\/(docx|wiki|docs)\/([A-Za-z0-9]+)/;
 
 async function spaceName(app: App, spaceId: string) {
   try {
-    const v = await asOwner(app, "读取知识库信息", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: spaceId }), "--as", "user", "--format", "json"], 60_000));
+    const v = await asOwner(app, "读取知识库信息", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: spaceId }), "--as", "user", "--format", "json"], 60_000), { feature: "docs", alternatives: LARK_WIKI_SPACE_READ });
     const d = v?.data ?? v;
     const name = d?.space?.name ?? d?.name;
     if (name) return String(name);
@@ -118,13 +121,30 @@ export async function createDoc(app: App, input: { title: string; content: strin
   return { url: String(d.url ?? ""), documentId: String(d.document_id ?? ""), warnings: (v?.data?.warnings ?? []) as unknown[] };
 }
 
+/** Ask for copy and its prerequisite reads together before making any Wiki requests. */
+export function checkCopyScopes(app: App) {
+  const actor = larkActing();
+  if (!actor || actor.userId.startsWith("lark:")) return;
+  const connection = findConnection(app, actor.userId, "lark");
+  if (connection?.status !== "active") return;
+  const have = new Set(connection.scopes);
+  const missingCopy = ![LARK_WIKI_COPY_SCOPE, LARK_LEGACY_WIKI_SCOPE].some((scope) => have.has(scope));
+  const missingReads = [LARK_WIKI_NODE_READ, LARK_WIKI_SPACE_READ].filter((options) => !options.some((scope) => have.has(scope))).map(([scope]) => scope);
+  const requiredScopes = missingCopy ? [...missingReads, LARK_WIKI_COPY_SCOPE] : missingReads;
+  if (!requiredScopes.length) return;
+  throw new HttpError(403, needConnection(app, actor.userId, actor.runId, {
+    features: missingCopy ? ["doc-write"] : ["docs"], requiredScopes,
+    reason: `以本人身份复制飞书文档缺少飞书权限 ${requiredScopes.join("、")}`,
+  }));
+}
+
 /** The fixed node-copy command is the only high-risk-labelled CLI operation exposed here. */
 export async function copyDoc(app: App, source: WikiNode, target: NonNullable<Place["wiki"]>, title?: string) {
   const v = await asOwner(app, "以本人身份复制飞书文档", () => larkCli([
     "wiki", "+node-copy", "--space-id", source.spaceId, "--node-token", source.nodeToken,
     ...(target.nodeToken ? ["--target-parent-node-token", target.nodeToken] : ["--target-space-id", target.spaceId]),
     ...(title ? ["--title", title] : []), "--as", "user", "--yes", "--format", "json",
-  ], 180_000));
+  ], 180_000), { feature: "doc-write", alternatives: [LARK_WIKI_COPY_SCOPE, LARK_LEGACY_WIKI_SCOPE] });
   return v?.data ?? v;
 }
 
@@ -238,7 +258,7 @@ export async function fetchForEdit(app: App, input: FetchInput, opts: { asBot?: 
   if (input.contextAfter) args.push("--context-after", String(input.contextAfter));
   const v = opts.asBot
     ? await larkCliAsBot(ownBot(app), args, 60_000).catch((e) => botDenied(app, e))
-    : await asOwner(app, "读取飞书文档", () => larkCli(args, 60_000), { documentRead: true });
+    : await asOwner(app, "读取飞书文档", () => larkCli(args, 60_000), { feature: "docs", alternatives: [LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE] });
   const d = v?.data?.document ?? {};
   return { content: String(d.content ?? ""), revision: d.revision_id ?? null, tips: typeof d.tips === "string" ? d.tips : "" };
 }

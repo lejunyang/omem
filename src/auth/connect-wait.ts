@@ -3,7 +3,7 @@ import { one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { json, now, webLink } from "../core/util.ts";
 import { findUser, OWNER, userName } from "../core/users.ts";
-import { featuresOf, grantedFeatures, LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE } from "./features.ts";
+import { featuresOf, grantedFeatures, LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE } from "./features.ts";
 import { findConnection } from "./vault.ts";
 
 /**
@@ -12,10 +12,12 @@ import { findConnection } from "./vault.ts";
  * with what is missing already ticked; the request is remembered, and once their authorization comes
  * back with it, the conversation it came from goes on by itself (an `[授权]` turn, like an answer).
  */
-type Waiting = { conversationId: string; features: string[]; scopes: string[]; reason: string; at: string };
+type Waiting = { conversationId: string; features: string[]; scopes: string[]; reason: string; at: string; runId?: string; offeredFeatures?: string[]; offeredScopes?: string[]; noticeId?: string };
 /** A request older than this is not picked up again: the person has moved on. */
 const KEEP_MS = 6 * 3600_000;
 const key = (userId: string) => `connect_wait:${userId}`;
+const legacyRead = `读取飞书文档缺少飞书权限 ${LARK_LEGACY_DOC_SCOPE}`;
+const legacyCopy = `以本人身份复制飞书文档缺少飞书权限 ${LARK_LEGACY_WIKI_SCOPE}`;
 
 function waiting(app: App, userId: string): Waiting[] {
   const list = json<Waiting[]>(one<{ value: string }>(app.db, "select value from kv where key = ?", key(userId))?.value, []);
@@ -42,20 +44,28 @@ export function connectLink(app: App, features: string[], scopes: string[] = [])
  * returns the message for the agent: the link to pass on, and that the work resumes by itself.
  */
 export function needConnection(app: App, userId: string, runId: string | null | undefined, what: { features?: string[]; scopes?: string[]; requiredScopes?: string[]; reason: string }) {
-  const features = withNeeded(what.features ?? []), scopes = what.scopes ?? [];
+  const conversationId = runId ? one<{ c: string | null }>(app.db, "select json_extract(input, '$.conversationId') c from runs where id = ?", runId)?.c : null;
+  const list = conversationId ? waiting(app, userId) : [];
+  const pending = list.find((w) => w.conversationId === conversationId);
+  // Calls in one turn can add requirements. A new turn can be about a different task.
+  const previous = pending?.runId === runId ? pending : undefined;
+  const features = withNeeded([...(previous?.offeredFeatures ?? []), ...(what.features ?? [])]);
+  const scopes = [...new Set([...(previous?.offeredScopes ?? []), ...(what.scopes ?? [])])];
   const link = connectLink(app, features, scopes);
   const labels = features.map((f) => featuresOf("lark").find((x) => x.id === f)?.label ?? f);
-  const asked = labels.length ? `「${labels.join("」「")}」` : scopes.length ? scopes.join("、") : "飞书";
-  const conversationId = runId ? one<{ c: string | null }>(app.db, "select json_extract(input, '$.conversationId') c from runs where id = ?", runId)?.c : null;
+  const asked = [...labels.map((label) => `「${label}」`), ...scopes].join("、") || "飞书";
   const name = userName(app, userId);
-  if (conversationId) {
-    const list = waiting(app, userId).filter((w) => w.conversationId !== conversationId);
-    // A bundled feature can be offered on the login page even when the blocked call only needs part of it.
-    save(app, userId, [...list, { conversationId, features: what.requiredScopes ? [] : features, scopes: what.requiredScopes ?? scopes, reason: what.reason, at: now() }]);
+  let noticeId = pending?.noticeId;
+  if (!noticeId || link !== connectLink(app, pending?.offeredFeatures ?? [], pending?.offeredScopes ?? [])) {
+    try {
+      noticeId = notify(app, { userId, tone: "warning", title: "飞书授权：助手需要你确认", body: `${what.reason}，需要你给 omem 授权${asked}。打开链接用飞书确认就行${conversationId ? "，授权完成后助手会接着做刚才的事" : ""}。`, link, urgency: "normal", replaces: noticeId }).id;
+    } catch { /* A person without a channel still gets the link through the agent's reply. */ }
   }
-  try {
-    notify(app, { userId, tone: "warning", title: "飞书授权：助手需要你确认", body: `${what.reason}，需要你给 omem 授权${asked}。打开链接用飞书确认就行${conversationId ? "，授权完成后助手会接着做刚才的事" : ""}。`, link, urgency: "normal" });
-  } catch { /* A person without a channel still gets the link through the agent's reply. */ }
+  if (conversationId) {
+    const requiredFeatures = withNeeded([...(previous?.features ?? []), ...(what.requiredScopes ? [] : what.features ?? [])]);
+    const requiredScopes = [...new Set([...(previous?.scopes ?? []), ...(what.requiredScopes ?? what.scopes ?? [])])];
+    save(app, userId, [...list.filter((w) => w !== pending), { conversationId, runId: runId ?? undefined, features: requiredFeatures, scopes: requiredScopes, offeredFeatures: features, offeredScopes: scopes, noticeId, reason: what.reason, at: now() }]);
+  }
   const linkPart = /^https?:/.test(link) ? `授权链接：${link}` : `授权页面在 omem 网页的 ${link}（omem 没有配置对外网址，链接只能写成这样）`;
   return `${name}${what.reason}，需要授权${asked}。已私聊发给对方；你在回复里也把这个链接给他：${linkPart}。告诉他打开后用飞书确认${conversationId ? "，授权完成后你会自动接着做，不用再说一遍" : "，授权后再让你试一次"}。不要换别的方式绕过。`;
 }
@@ -69,7 +79,8 @@ export function connectionGranted(app: App, userId: string, provider: string) {
   if (!c || c.status !== "active") return;
   const have = new Set(grantedFeatures(provider, c.scopes)), scopes = new Set(c.scopes);
   const ready = list.filter((w) => w.features.every((f) => have.has(f)) && w.scopes.every((s) => {
-    if (s === LARK_LEGACY_DOC_SCOPE && w.reason === `读取飞书文档缺少飞书权限 ${LARK_LEGACY_DOC_SCOPE}`) return scopes.has(LARK_DOC_READ_SCOPE) || scopes.has(s);
+    if (s === LARK_LEGACY_DOC_SCOPE && w.reason === legacyRead) return scopes.has(LARK_DOC_READ_SCOPE) || scopes.has(s);
+    if (s === LARK_LEGACY_WIKI_SCOPE && w.reason === legacyCopy) return scopes.has(LARK_WIKI_COPY_SCOPE) || scopes.has(s);
     return scopes.has(s);
   }));
   save(app, userId, list.filter((w) => !ready.includes(w)));

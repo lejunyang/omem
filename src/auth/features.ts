@@ -9,6 +9,10 @@ export type Feature = { id: string; label: string; description: string; scopes: 
 
 export const LARK_DOC_READ_SCOPE = "docx:document:readonly";
 export const LARK_LEGACY_DOC_SCOPE = "docx:document";
+export const LARK_LEGACY_WIKI_SCOPE = "wiki:wiki";
+export const LARK_WIKI_COPY_SCOPE = "wiki:node:copy";
+export const LARK_WIKI_NODE_READ = ["wiki:node:retrieve", "wiki:node:read", "wiki:wiki:readonly", LARK_LEGACY_WIKI_SCOPE];
+export const LARK_WIKI_SPACE_READ = ["wiki:wiki:readonly", "wiki:space:read", LARK_LEGACY_WIKI_SCOPE];
 // Existing connections with the original docs permissions and search can still capture recent docs.
 const DOCS_REQUIRED_SCOPES = [LARK_DOC_READ_SCOPE, "docs:document.content:read", "wiki:node:read", "wiki:wiki:readonly", "drive:file:download", "search:docs:read"];
 
@@ -42,7 +46,7 @@ export const FEATURES: Record<string, Feature[]> = {
     { id: "sheets", label: "表格与多维表格", description: "读你能看到的电子表格和多维表格", scopes: ["sheets:spreadsheet:read", "sheets:spreadsheet.meta:read", "base:app:read", "base:table:read", "base:field:read", "base:record:read", "base:view:read"] },
     { id: "calendar", label: "日程", description: "读你的日程", scopes: ["calendar:calendar:read", "calendar:calendar.event:read"] },
     { id: "minutes", label: "妙记与会议", description: "读你的妙记，知道你加入了哪个会议", scopes: ["minutes:minutes:readonly", "minutes:minutes.artifacts:read", "vc:meeting.meetingevent:read"] },
-    { id: "doc-write", label: "让助手写文档", description: "助手以你的身份新建、编辑文档（别人的文件先经你批准）", scopes: ["docx:document:write_only", "docx:document:create", "wiki:node:create", "wiki:node:move"] },
+    { id: "doc-write", label: "让助手写文档", description: "助手以你的身份新建、编辑和复制文档（别人的文件先经你批准）", scopes: ["docx:document:write_only", "docx:document:create", "wiki:node:create", "wiki:node:move", LARK_WIKI_COPY_SCOPE] },
   ],
 };
 

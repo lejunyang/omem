@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { LARK_WIKI_NODE_READ, LARK_WIKI_SPACE_READ } from "../auth/features.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError, json, newId } from "../core/util.ts";
@@ -46,7 +47,7 @@ function toNode(n: any): WikiNode {
 /** A wiki node by node token, doc token or URL; null when the doc is not in a knowledge base. */
 export async function wikiNode(app: App, token: string): Promise<WikiNode | null> {
   try {
-    const v = await asOwner(app, "读取飞书知识库", () => larkCli(["wiki", "+node-get", "--node-token", token, "--as", "user", "--format", "json"], 60_000));
+    const v = await asOwner(app, "读取飞书知识库", () => larkCli(["wiki", "+node-get", "--node-token", token, "--as", "user", "--format", "json"], 60_000), { feature: "docs", alternatives: LARK_WIKI_NODE_READ });
     const d = v?.data ?? v;
     return toNode(d?.node ?? d);
   } catch (e) {
@@ -103,7 +104,7 @@ export async function wikiLocation(app: App, token: string, known?: WikiNode | n
   if (!node) return result;
   try {
     result.spaceName = await cachedLocation(app, `space:${node.spaceId}`, async () => {
-      const v = await asOwner(app, "读取飞书知识库名称", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: node.spaceId }), "--as", "user", "--format", "json"]));
+      const v = await asOwner(app, "读取飞书知识库名称", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: node.spaceId }), "--as", "user", "--format", "json"]), { feature: "docs", alternatives: LARK_WIKI_SPACE_READ });
       const d = v?.data ?? v;
       const name = d?.space?.name ?? d?.name;
       if (typeof name !== "string" || !name.trim()) throw new Error("知识库没有返回名称");
@@ -137,6 +138,7 @@ export async function wikiChildren(app: App, node: Pick<WikiNode, "spaceId" | "n
   for (let page = 0; nodes.length < max && page < 200; page++) {
     const v = await asOwner(app, "读取飞书知识库的子页面", () =>
       larkCli(["wiki", "+node-list", "--space-id", node.spaceId, ...(node.nodeToken ? ["--parent-node-token", node.nodeToken] : []), "--page-size", "50", ...(token ? ["--page-token", token] : []), "--as", "user", "--format", "json"], 60_000),
+      { feature: "docs", alternatives: LARK_WIKI_NODE_READ },
     );
     const d = v?.data ?? v;
     const page = ((d?.nodes ?? d?.items ?? []) as unknown[]).map(toNode);
@@ -164,7 +166,7 @@ export async function personalLibrary(app: App): Promise<string> {
   const who = larkActing()?.userId ?? "owner";
   const known = personalSpaces.get(who);
   if (known) return known;
-  const v = await asOwner(app, "查找个人文档库", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: "my_library" }), "--as", "user", "--format", "json"], 60_000));
+  const v = await asOwner(app, "查找个人文档库", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: "my_library" }), "--as", "user", "--format", "json"], 60_000), { feature: "docs", alternatives: LARK_WIKI_SPACE_READ });
   const d = v?.data ?? v;
   const id = String(d?.space?.space_id ?? d?.space_id ?? "");
   if (!id) throw new Error("读不到个人文档库的空间 id");

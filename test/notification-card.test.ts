@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { notificationCard } from "../src/channels/item-notification.ts";
+import { larkNotificationOutlet } from "../src/channels/lark-bot.ts";
 import { sendLark, setLarkClient } from "../src/channels/lark-send.ts";
 import { notify } from "../src/core/notify.ts";
 import { upsertItem } from "../src/items/store.ts";
@@ -99,6 +100,35 @@ it("lets a later notification stand for an earlier one: the earlier card is the 
   expect(before.read_at).toBeTruthy();
   expect(JSON.parse(before.context).replacedBy).toBe(done.id);
   expect(() => notify(app, { title: "别人的", body: "", replaces: "n_missing" })).toThrow(/没有可以更新的通知/);
+});
+
+it("updates the first authorization card even when the second requirement arrives before it was sent", async () => {
+  const app = fresh();
+  app.config.lark.ownerOpenId = "ou_example";
+  app.config.notify.quietStart = app.config.notify.quietEnd = 0;
+  let release!: () => void;
+  const paused = new Promise<void>(resolve => { release = resolve; });
+  const create = vi.fn(async () => {
+    await paused;
+    return { code: 0, data: { message_id: "om_auth" } };
+  });
+  const patch = vi.fn().mockResolvedValue({ code: 0 });
+  setLarkClient({ im: { message: { create, patch } } });
+  const outlet = larkNotificationOutlet(app);
+  const first = notify(app, { title: "请授权读取", link: "https://omem.example.com/#/login?features=docs" }, { push: false });
+  const sending = outlet.push(first);
+  let updating: Promise<void> | undefined;
+  try {
+    await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+    const next = notify(app, { title: "请授权读取和复制", link: "https://omem.example.com/#/login?features=docs,doc-write", replaces: first.id }, { push: false });
+    updating = outlet.push(next);
+  } finally {
+    release();
+    await Promise.all([sending, updating]);
+  }
+  expect(create).toHaveBeenCalledOnce();
+  expect(patch).toHaveBeenCalledOnce();
+  expect(patch.mock.calls[0][0]).toMatchObject({ path: { message_id: "om_auth" }, data: { content: expect.stringContaining("features=docs,doc-write") } });
 });
 
 it("an update about an item (a suggestion, a metric, a moved deadline) offers no button that closes or cancels it", () => {
