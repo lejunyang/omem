@@ -35,6 +35,8 @@ type Action =
   | { type: "delay"; minutes: number }
   | { type: "check"; question: string }
   | { type: "script"; runtime: "node" | "python" | "bash"; code: string; timeoutSec: number; approval: { by: "none" | "owner" | "person" | "ai"; person?: string; hint?: string } };
+type QuietStats = { days7: { fired: number; quiet: number }; days30: { fired: number; quiet: number } };
+const quietLine = (s: QuietStats) => `触发 / 安静结束：7 天 ${s.days7.fired} / ${s.days7.quiet} · 30 天 ${s.days30.fired} / ${s.days30.quiet}`;
 type Rule = {
   id?: string;
   spaceId?: string;
@@ -48,6 +50,7 @@ type Rule = {
   judgeWith?: "decision" | "general";
   actions: Action[];
   hits?: number;
+  quietStats?: QuietStats;
   lastFiredAt?: string | null;
   conditionText?: string;
   createdBy?: string;
@@ -96,7 +99,7 @@ const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger:
  * action kinds only (src/rules/visibility.ts `ruleSummary`); the page is a read-only list of them.
  */
 const readOnly = computed(() => !hasCap("rules.edit"));
-type RuleSummary = { id: string; name: string; description: string; enabled: boolean; spaceId?: string | null; event?: string; actions?: { type: string }[] };
+type RuleSummary = { quietStats?: QuietStats; id: string; name: string; description: string; enabled: boolean; spaceId?: string | null; event?: string; actions?: { type: string }[] };
 const summaries = ref<RuleSummary[]>([]);
 const shownSummary = computed(() => summaries.value.find((r) => r.id === selectedId.value) ?? null);
 const triggerLabel = (e?: string) => TRIGGERS.find((t) => t.value === e)?.label ?? e ?? "";
@@ -606,6 +609,7 @@ function startFrom(text: string) {
             <button class="grow pick" type="button" @click="router.replace({ query: { id: r.id } })">
               <div class="row"><strong class="ellipsis">{{ r.name }}</strong></div>
               <div class="muted small clamp">{{ r.description }}</div>
+              <div v-if="r.quietStats" class="muted small">{{ quietLine(r.quietStats) }}</div>
               <div class="muted small">{{ spaceName(r.spaceId ?? undefined) }} · {{ triggerLabel(r.event) }} · {{ r.enabled ? "开着" : "关着" }}</div>
             </button>
           </div>
@@ -648,6 +652,7 @@ function startFrom(text: string) {
             <div class="row"><strong class="ellipsis">{{ r.name }}</strong><span v-if="r.createdBy === 'agent' && !r.enabled" class="badge">待确认</span></div>
             <div v-if="r.origin" class="muted small">来自插件 {{ r.origin.name }}{{ r.enabled ? "，已启用" : "，还没启用" }}</div>
             <div class="muted small clamp">{{ r.description }}</div>
+            <div v-if="r.quietStats" class="muted small">{{ quietLine(r.quietStats) }}</div>
             <div class="muted small">
               <span :title="r.spaceId ? '只在这个空间的规则列表里出现' : '全局规则：在每个空间的规则列表里都会列出'">{{ spaceName(r.spaceId) }}</span>
               · 命中 {{ r.hits ?? 0 }} 次<template v-if="r.lastFiredAt"> · {{ relTime(r.lastFiredAt) }}</template>

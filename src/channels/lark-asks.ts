@@ -104,7 +104,7 @@ function questionBlocks(app: App, ask: Ask): CardBlock[] {
  * `mention`: the person who has to answer, in the posting bot's ids; @-ed at the top of a card posted
  * in a group (only while it waits for them).
  */
-export function askCard(app: App, ask: Ask, opts: { mention?: string | null; note?: string } = {}): Record<string, unknown> {
+export function askCard(app: App, ask: Ask, opts: { mention?: string | null; note?: string; title?: string } = {}): Record<string, unknown> {
   if (ask.status !== "pending") return answeredCard(app, ask);
   const blocks: CardBlock[] = ask.handler === "credential-confirm" ? [{ markdown: cardText(ask.question) }] : questionBlocks(app, ask);
   // The asking turn's answer, when it only said again what the card says (foldIntoAsk): kept, folded.
@@ -146,7 +146,7 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null; not
     else blocks.push({ markdown: `要填的：\n${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` }, { note: "在 omem 网页上填写，或直接回复文字（设置 → 设备 填网页地址后这里会有链接）。" });
     return buildCard({ title: TITLE.question, color: "blue", blocks });
   }
-  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
+  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: opts.title ?? TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
   const elements = (card.body as { elements: unknown[] }).elements;
   const choices = ask.kind === "approval" ? [row([button("批准", "approve", "primary", ask.allowText, "approve"), button("拒绝", "reject", "danger", ask.allowText, "reject")])] : optionRows(ask);
   if (withText(ask)) {
@@ -318,10 +318,17 @@ export async function postEphemeralAsk(app: App, ask: Ask, chatId: string, bot: 
   await postAsk(app, ask, { target: { chatId, bot }, chatId, bot }, person);
 }
 
-async function postAsk(app: App, ask: Ask, to: NonNullable<ReturnType<typeof targetFor>>, ephemeralTo?: string) {
+/** An action attached to a notification should use the same permission and card callback as an ask. */
+export async function postNotificationAsk(app: App, askId: string, target: Target, title: string) {
+  const ask = getAsk(app, askId);
+  if (ask.status !== "pending") return null;
+  return postAsk(app, ask, { target, chatId: target.chatId ?? null, bot: "main" }, undefined, title);
+}
+
+async function postAsk(app: App, ask: Ask, to: NonNullable<ReturnType<typeof targetFor>>, ephemeralTo?: string, title?: string) {
   const who = ephemeralTo ?? answererId(app, ask, to.bot);
   const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id, ...(ephemeralTo ? { ephemeral: true } : {}) }, bot: to.bot });
-  const card = bindCard(askCard(app, ask, { mention: ephemeralTo ? null : groupMention(app, to.chatId, who) }), id);
+  const card = bindCard(askCard(app, ask, { mention: ephemeralTo || title ? null : groupMention(app, to.chatId, who), title }), id);
   try {
     const sent = ephemeralTo ? await sendEphemeral(to.chatId!, ephemeralTo, card, to.bot) : await sendLark(to.target, { card });
     bindInteraction(app, id, sent.messageId);
@@ -329,6 +336,7 @@ async function postAsk(app: App, ask: Ask, to: NonNullable<ReturnType<typeof tar
     // A click may have completed while the send request was still returning.
     const current = getAsk(app, ask.id);
     if (!ephemeralTo && current.status !== "pending") await updateLarkCard(sent.messageId, askCard(app, current), to.bot).catch(() => {});
+    return sent;
   } catch (error) {
     if (!getInteraction(app, id)?.messageId) run(app.db, "update card_interactions set status = 'expired' where id = ?", id);
     throw error;

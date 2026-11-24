@@ -239,7 +239,7 @@ async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type
   const adopted = !!a.adopt && e.chat?.kind === "group" && adoptChat(app, c, e.chat.id);
   if (adopted) c = getContext(app, a.context)!;
   if (m) {
-    const there = one<{ id: string; status: string | null; meta: string }>(app.db, "select x.id, r.status, x.meta from messages x left join runs r on r.id = x.run_id where x.conversation_id = ? and json_extract(x.meta, '$.externalId') = ? order by x.created_at desc limit 1", conversationId, m.id);
+    const there = one<{ id: string; status: string | null; run_id: string; meta: string }>(app.db, "select x.id, r.id run_id, r.status, x.meta from messages x left join runs r on r.id = x.run_id where x.conversation_id = ? and json_extract(x.meta, '$.externalId') = ? order by x.created_at desc limit 1", conversationId, m.id);
     if (there?.status === "queued") {
       const meta = JSON.parse(there.meta);
       // A newer watch snapshot cannot resolve a legacy rule's missing origin.
@@ -248,7 +248,7 @@ async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type
       run(app.db, "update messages set meta = ? where id = ?", JSON.stringify({
         ...meta, rule: rule.id, addressed: true, sourceSpaces: [...sourceSpaces],
       }), there.id);
-      return { action: "context", ok: true, detail: `这条消息已经在关注「${c.name}」等着看的一批里，标为规则要处理的` };
+      return { action: "context", ok: true, detail: `这条消息已经在关注「${c.name}」等着看的一批里，标为规则要处理的`, runId: there.run_id };
     }
     run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values(?,?,?,?)", `listen:${c.id}`, m.id, rule.id, now());
   }

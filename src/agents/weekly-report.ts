@@ -1,3 +1,4 @@
+import { highQuietRules } from "../rules/quiet-stats.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
@@ -174,6 +175,7 @@ export function weeklyTask(app: App, since: string, until: string, label: string
     section("本周结束和进入观察的工作线（结束的带收尾小结）", linesEnded(app, since)),
     section("事项本周的变化（已结束的在前）", itemChanges(app, since)),
     section("流程进展", flowProgress(app, since)),
+    section("安静率高的规则（过去 7 天，供本人核对，不自动改规则）", highQuietRules(app, new Date(until))),
     section("编码交办和评审", coding(app, since)),
     section("会议", meetings(app, since)),
     metrics.length || flagged.length

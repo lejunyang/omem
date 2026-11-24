@@ -306,7 +306,7 @@ function diffKnobs(k: ListenKnobs, kind: ListenKind): Partial<ListenKnobs> {
 /** The handling conversation of a 关注: made on first need, its posting scope and title kept in step. */
 function ensureConversation(app: App, ctx: ListenContext) {
   const spaceId = ctx.spaceId ?? (ctx.chats[0] ? captureSpace(app, ctx.chats[0]) : "personal");
-  const settings = { lark: larkScopeOf(ctx), ...(ctx.spec !== "assistant" ? { spec: ctx.spec } : {}), listen: ctx.id };
+  const settings = { lark: larkScopeOf(ctx), spec: ctx.spec !== "assistant" ? ctx.spec : undefined, listen: ctx.id };
   const t = ctx.conversationId ? findThread(app, ctx.conversationId) : null;
   if (t) {
     run(app.db, "update conversations set channel = ?, external_id = ?, status = 'active' where id = ?", LISTEN_CHANNEL, ctx.id, t.id);
@@ -337,6 +337,24 @@ export function removeContext(app: App, id: string) {
   run(app.db, "delete from listen_contexts where id = ?", id);
   if (c.conversationId) run(app.db, "update conversations set status = 'archived' where id = ?", c.conversationId);
   indexChats(app, c.chats);
+}
+
+/** Only settings, not activity times. Keep the stored form to restore absent fields too. */
+export function contextRevision(app: App, id: string) {
+  const r = one<Row>(app.db, "select * from listen_contexts where id = ?", id);
+  if (!r) return null;
+  const { created_at: _created, updated_at: _updated, settings, ...fields } = r;
+  return { ...fields, settings: json<Stored>(settings, {}) };
+}
+
+export function restoreContextRevision(app: App, id: string, prior: ReturnType<typeof contextRevision>) {
+  const current = requireContext(app, id);
+  if (!prior) return removeContext(app, id);
+  run(app.db, `update listen_contexts set name=?, chats=?, item_id=?, spec=?, space_id=?, conversation_id=?, settings=?, status=?, expires_at=?, updated_at=? where id=?`,
+    prior.name, prior.chats, prior.item_id, prior.spec, prior.space_id, prior.conversation_id, JSON.stringify(prior.settings), prior.status, prior.expires_at, now(), id);
+  const restored = requireContext(app, id);
+  if (restored.kind !== "default") ensureConversation(app, restored);
+  indexChats(app, [...new Set([...current.chats, ...restored.chats])]);
 }
 
 /** A place's groups adopted from rules go back this long after their last message or problem, once none is open. */

@@ -2737,7 +2737,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/notifications", async (req) => {
     const list = listNotifications(app, 50, who(req));
     // Unread on the web: only what reached the person nowhere else (core/notify.ts countsAsUnread).
-    const notifications = list.map((n) => ({ ...n, ...(n.bundle?.length ? { bundleItems: n.bundle.flatMap((id) => {
+    const notifications = list.map((n) => ({ ...n, ...(n.askId && one(app.db,
+      "select 1 from asks where id=? and user_id=? and status='pending' and json_extract(context,'$.handler')='behavior-change'", n.askId, who(req)) ? { behaviorChange: n.askId } : {}), ...(n.bundle?.length ? { bundleItems: n.bundle.flatMap((id) => {
       const item = one<{ id: string; title: string; link: string | null }>(app.db, "select id, title, link from notifications where id = ? and user_id = ?", id, who(req));
       return item ? [item] : [];
     }) } : {}) }));
@@ -2847,7 +2848,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { describe } = await import("../rules/conditions.ts");
     // Temporary wake-up rules are listed with the timed wakes (/api/wakes).
     const view = ruleView(req);
-    return listRules(app,{spaces:view.spaces}).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).filter(view.visible).map(r => view.edit ? { ...r, conditionText: describe(r.conditions) } : view.summary(r));
+    const rules = listRules(app,{spaces:view.spaces}).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).filter(view.visible);
+    const stats = await (await import("../rules/quiet-stats.ts")).ruleQuietStats(app, rules.map((r) => r.id));
+    return rules.map((r) => {
+      const { days7, days30 } = stats.get(r.id)!;
+      return { ...(view.edit ? { ...r, conditionText: describe(r.conditions) } : view.summary(r)), quietStats: { days7, days30 } };
+    });
   });
   // 有人找你, listed last on the rules page: the default for messages looking for the owner that no rule took.
   server.get("/api/mentions", async (req) => {

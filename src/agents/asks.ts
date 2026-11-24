@@ -139,7 +139,7 @@ export function getAsk(app: App, id: string, requester?: string): Ask {
 }
 
 export function listAsks(app: App, opts: { status?: Ask["status"]; conversationId?: string; userId?: string; runId?: string; limit?: number } = {}): Ask[] {
-  const where: string[] = [];
+  const where = ["json_extract(context, '$.notificationOnly') is not 1"];
   const params: string[] = [];
   if (opts.status) where.push("status = ?") && params.push(opts.status);
   if (opts.conversationId) where.push("conversation_id = ?") && params.push(opts.conversationId);
@@ -191,6 +191,7 @@ export function createAsk(
     now(),
   );
   const ask = getAsk(app, id);
+  if (input.context?.notificationOnly) return ask; // Its notification owns visibility and timing.
   app.emit({ type: "ask", id, status: "pending", conversationId: ask.conversationId });
   nudgePlugin(app, ask.conversationId);
   // Suggestions belong under the reply: shown once the run has delivered it (settleAsks / showSuggestions).
@@ -501,12 +502,14 @@ async function recordAnswer(app: App, before: Ask, context: Record<string, unkno
       run(app.db, "update asks set result = ? where id = ?", `${r.isError ? "失败：" : ""}${truncate(forOwner(r.text), 4000)}`, id);
     }
     const ask = getAsk(app, id);
-    closed(app, ask);
+    if (!context.notificationOnly) closed(app, ask);
     if (action) return ask;
     if (handler) {
       run(app.db, "update asks set consumed = 1 where id = ?", id);
       await handler.handle(app, ask, context);
-      return getAsk(app, id);
+      const settled = getAsk(app, id);
+      if (context.notificationOnly) closed(app, settled);
+      return settled;
     }
     if (ask.kind === "suggestion") {
       if (ask.conversationId && !input.viaMessage) {

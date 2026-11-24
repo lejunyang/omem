@@ -1,3 +1,4 @@
+import { beforeBehavior, noteBehavior } from "../agents/behavior-changes.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
@@ -126,7 +127,7 @@ function render(c: ListenContext, scenes: Scene[], cases: Map<string, CaseLite>,
 }
 
 /** listen-coach's hand-in (tool submit_playbook): write the lessons, file the cases, and maybe propose a new brief. */
-export async function submitPlaybook(app: App, runId: string | null, input: { scenes: Scene[]; case_scenes?: { case: string; scene: string }[]; brief?: { handle: string[]; skip: string[]; valid: string }; notes?: string }) {
+export async function submitPlaybook(app: App, runId: string | null, input: { scenes: Scene[]; case_scenes?: { case: string; scene: string }[]; brief?: { handle: string[]; skip: string[]; valid: string }; notes?: string; change_reason?: string }, actor: "agent" | "user" = "agent") {
   const contextId = runId ? (one<{ c: string | null }>(app.db, "select json_extract(input, '$.contextId') c from runs where id = ? and kind = 'listen-coach'", runId)?.c ?? null) : null;
   if (!contextId) throw new HttpError(403, "只有整理关注经验的运行可以交经验");
   const c = requireContext(app, contextId);
@@ -134,17 +135,24 @@ export async function submitPlaybook(app: App, runId: string | null, input: { sc
   const known = new Map(
     (ids.length ? all<CaseLite>(app.db, `select * from reply_samples where context_id = ? and id in (${ids.map(() => "?").join(",")})`, c.id, ...ids) : []).map((x) => [x.id, x]),
   );
+  const tracking = { app, runId, actor };
+  const watch = { kind: "watch", id: c.id } as const;
+  const lessons = { kind: "playbook", id: c.id } as const;
+  const beforeLessons = beforeBehavior(tracking, lessons);
   const text = render(c, input.scenes, known, input.notes);
   const path = playbookPath(c);
   const r = writeWorkFile(app, { spaceId: c.spaceId ?? "personal", path, title: `关注「${c.name}」的经验`, text, runId });
   for (const s of input.scenes) for (const id of s.cases ?? []) if (known.has(id)) run(app.db, "update reply_samples set scene = ? where id = ?", s.name, id);
   for (const x of input.case_scenes ?? []) if (known.has(x.case)) run(app.db, "update reply_samples set scene = ? where id = ?", x.scene, x.case);
   saveContext(app, { id: c.id, kind: c.kind, playbookAt: now(), playbookFile: path });
+  noteBehavior(tracking, lessons, c.name, beforeLessons, { change_reason: input.change_reason ?? "整理近期案例，归纳各场景怎么处理" });
   let briefNote = "";
   if (input.brief && c.kind !== "default") {
     const same = c.brief && JSON.stringify([c.brief.handle, c.brief.skip, c.brief.valid]) === JSON.stringify([input.brief.handle, input.brief.skip, input.brief.valid]);
     if (!same) {
+      const beforeWatch = beforeBehavior(tracking, watch);
       saveContext(app, { id: c.id, kind: c.kind, brief: { ...input.brief, at: now() } });
+      noteBehavior(tracking, watch, c.name, beforeWatch, { change_reason: input.change_reason ?? "按近期案例修订关注说明" });
       try {
         const { askBrief } = await import("./watch-trial.ts");
         await askBrief(app, c.id, true);

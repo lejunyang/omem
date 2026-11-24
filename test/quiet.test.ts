@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { mayStayQuiet } from "../src/agents/quiet.ts";
 import { loadRole } from "../src/agents/runner.ts";
 import { createRun, getRun, runEvents, waitForRun, type Run } from "../src/agents/runs.ts";
@@ -11,6 +11,7 @@ import { addMessage, createThread, threadMessages, updateThread } from "../src/a
 import { expandTools } from "../src/agents/tool-help.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { one, run } from "../src/core/db.ts";
+import { listNotifications } from "../src/core/notify.ts";
 import { newId } from "../src/core/util.ts";
 import { boot } from "../src/main.ts";
 import { testApp } from "./helpers.ts";
@@ -76,7 +77,7 @@ describe("staying quiet end to end", async () => {
   const home = mkdtempSync(join(tmpdir(), "omem-quiet-"));
   writeFileSync(
     join(home, "config.json"),
-    JSON.stringify({ agents: { default: "fake", profiles: [fake("fake", { FAKE_MODE: "thread" }), fake("quiet", { FAKE_SAY: "没有新变化。", FAKE_QUIET: "查过了，没有新变化" }), fake("emptyq", { FAKE_SAY: "没有新变化。", FAKE_QUIET: "查过了，没有新变化", FAKE_EMPTY_STREAM: "1" })] }, sessions: { mergeMs: 0 } }),
+    JSON.stringify({ agents: { default: "fake", profiles: [fake("fake", { FAKE_MODE: "thread" }), fake("quiet", { FAKE_SAY: "没有新变化。", FAKE_QUIET: "查过了，没有新变化" }), fake("unresolvedq", { FAKE_SAY: "已结束。", FAKE_QUIET: "核实问题仍在，没有安排后续", FAKE_QUIET_STATE: "unresolved" }), fake("emptyq", { FAKE_SAY: "没有新变化。", FAKE_QUIET: "查过了，没有新变化", FAKE_EMPTY_STREAM: "1" })] }, sessions: { mergeMs: 0 } }),
   );
   const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
   afterAll(() => {
@@ -95,6 +96,15 @@ describe("staying quiet end to end", async () => {
     expect(done.output).toMatchObject({ quiet: true, stayQuiet: "查过了，没有新变化" });
     expect(one<{ quiet: number }>(app.db, "select quiet from runs where id = ?", r.id)?.quiet).toBe(1);
     expect(replies()).toHaveLength(0);
+  }, 60_000);
+
+  it("checks an unresolved wake at completion and keeps the notification tied to that run", async () => {
+    const q = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+    updateThread(app, q.id, { settings: { profile: "unresolvedq" } });
+    const note = addMessage(app, q.id, "assistant", "复查项目 A", null, { wake: { note: "复查项目 A" }, record: true });
+    const r = createRun(app, { kind: "ask", spaceId: "personal", title: "唤醒：复查项目 A", input: { conversationId: q.id, messageIds: [note], wake: true }, lane: q.id });
+    expect((await waitForRun(app, r.id)).output).toMatchObject({ quiet: true, stayQuietState: "unresolved" });
+    await vi.waitFor(() => expect(listNotifications(app).filter((n) => n.runId === r.id)).toMatchObject([{ urgency: "normal", body: expect.stringContaining("核实问题仍在") }]));
   }, 60_000);
 
   it("a turn answering the owner cannot stay quiet: the answer goes out", async () => {

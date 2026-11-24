@@ -23,7 +23,7 @@ import { deliveryPlan, inQuietHours, QUIET_HANDLED } from "../core/notify.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress } from "./lark-code-progress.ts";
-import { registerLarkAsks } from "./lark-asks.ts";
+import { postNotificationAsk, registerLarkAsks } from "./lark-asks.ts";
 import { showSuggestions } from "../agents/asks.ts";
 import { startReplyProgress } from "./lark-progress.ts";
 import { finishCot } from "./lark-cot.ts";
@@ -304,6 +304,11 @@ export function larkNotificationOutlet(app: App) {
         setNotificationCard(app, n.id, r.messageId, notifyConversation(n)?.bot);
         return;
       }
+    }
+    if (n.askId && one(app.db, "select 1 from asks where id=? and user_id=? and json_extract(context,'$.notificationOnly')=1", n.askId, n.userId)) {
+      const sent = await postNotificationAsk(app, n.askId, target, n.title);
+      if (sent) setNotificationCard(app, n.id, sent.messageId, "main");
+      return;
     }
     // Cards keep external notification links; internal routes stay in the web app.
     const card = notificationCard(app, n, images);

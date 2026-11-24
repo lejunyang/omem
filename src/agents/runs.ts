@@ -638,6 +638,10 @@ function kick(app: App) {
         // conversation turn that a wake-up or a watched group's batch started and that had nothing to say.
         const quiet = status === "done" && out && (out as { quiet?: boolean }).quiet === true && (!INTERACTIVE.has(r.kind) || r.input.wake === true || !!r.input.mention || r.kind === "ask") ? 1 : 0;
         run(app.db, "update runs set status=?, quiet=?, finished_at=? where id=?", status, quiet, now(), r.id);
+        if (status === "done" && one(app.db, "select 1 from runs where id = ? and json_extract(output, '$.stayQuietState') = 'unresolved'", r.id)) {
+          void import("./quiet-followup.ts").then(({ checkQuietFollowup }) => checkQuietFollowup(app, r.id))
+            .catch((e) => console.warn(`[omem] 检查未恢复问题的后续失败：${(e as Error).message}`));
+        }
         if (r.kind === "code") trySettleCodeChain(app, r.id);
         if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
         settleWorkRound(app, r);

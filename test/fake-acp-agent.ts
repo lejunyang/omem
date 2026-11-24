@@ -915,7 +915,7 @@ ${JSON.stringify({ check, tools })}`);
           const client = new Client({ name: "fake", version: "1" });
           await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
           const direct = (await client.listTools()).tools.some((t) => t.name === "stay_quiet");
-          const args = { reason: process.env.FAKE_QUIET };
+          const args = { reason: process.env.FAKE_QUIET, ...(process.env.FAKE_QUIET_STATE ? { state: process.env.FAKE_QUIET_STATE } : {}) };
           const r = await client.callTool(direct ? { name: "stay_quiet", arguments: args } : { name: "omem_call", arguments: { tool: "stay_quiet", args } });
           await client.close();
           if (r.isError) await say(`stay_quiet 不能用：${(r.content as { text?: string }[]).map((c) => c.text ?? "").join("")}\n\n`);

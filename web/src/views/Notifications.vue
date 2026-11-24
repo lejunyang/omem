@@ -8,7 +8,7 @@ import HelpText from "../components/HelpText.vue";
 import { fmtTime, state, toast } from "../store";
 
 /** `unread`: reached the person nowhere else (pushed to Feishu, kept quiet or in-app only are not); `pushed`: went out to Feishu. */
-type N = { id: string; at: string; title: string; body: string; link: string | null; readAt: string | null; unread?: boolean; held?: boolean; bundleItems?: { id: string; title: string; link: string | null }[]; pushed?: { channel: string; at: string } | null; larkMessageId?: string; quiet?: string; ignoreRule?: { id: string; rule: string } | null };
+type N = { behaviorChange?: string; id: string; at: string; title: string; body: string; link: string | null; readAt: string | null; unread?: boolean; held?: boolean; bundleItems?: { id: string; title: string; link: string | null }[]; pushed?: { channel: string; at: string } | null; larkMessageId?: string; quiet?: string; ignoreRule?: { id: string; rule: string } | null };
 const inFeishu = (n: N) => !!(n.pushed || n.larkMessageId);
 const list = ref<N[]>([]);
 const loading = ref(true);
@@ -39,6 +39,16 @@ async function load() {
     loading.value = false;
   }
 }
+const acting = ref<string[]>([]);
+async function settleChange(id: string, choice: number) {
+  acting.value.push(id);
+  try {
+    const answer = await post<{ result?: string }>(`/api/asks/${id}/answer`, { choice });
+    toast(answer.result || "已处理", "ok");
+    await load();
+  } catch (e) { toast((e as Error).message, "error"); }
+  finally { acting.value = acting.value.filter((key) => key !== id); }
+}
 async function readAll() {
   await post("/api/notifications/read", {});
   state.unread = 0;
@@ -46,7 +56,7 @@ async function readAll() {
 }
 /** A long body shows its first few lines; the rest on demand. */
 const opened = ref<Record<string, boolean>>({});
-const long = (n: N) => n.body.length > 220 || n.body.split("\n").length > 4;
+const long = (n: N) => n.behaviorChange ? n.body.length > 650 || n.body.split("\n").length > 16 : n.body.length > 220 || n.body.split("\n").length > 4;
 /** A page of this site written out as text (`#/wiki/…`) becomes a link named by its last part. */
 function bodyOf(n: N) {
   return n.body.replace(/(^|[\s：])(#\/[^\s)）]+)/g, (_, pre: string, href: string) => {
@@ -100,6 +110,10 @@ onMounted(async () => {
         <div class="body" :class="{ clip: long(n) && !opened[n.id] }"><Markdown :source="bodyOf(n)" compact /></div>
         <button v-if="long(n)" type="button" class="lnk small" :aria-expanded="!!opened[n.id]" @click="opened[n.id] = !opened[n.id]">{{ opened[n.id] ? "收起" : "展开全文" }}</button>
       </template>
+      <div v-if="n.behaviorChange" class="row">
+        <button class="btn sm" :disabled="acting.includes(n.behaviorChange)" @click="settleChange(n.behaviorChange, 0)">保留</button>
+        <button class="btn sm" :disabled="acting.includes(n.behaviorChange)" @click="settleChange(n.behaviorChange, 1)">撤回</button>
+      </div>
       <p v-if="n.ignoreRule" class="hint lesson">从这条提醒记下的忽略规则：{{ n.ignoreRule.rule }}</p>
     </div>
   </div>

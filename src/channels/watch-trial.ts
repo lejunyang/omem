@@ -228,6 +228,7 @@ export async function decideBrief(app: App, p: { contextId: string; at: string }
   const decided = { by, at: now(), timeZone: app.config.timezone };
   const c = getContext(app, p.contextId);
   if (!c || c.status !== "active") return buildCard({ title: "已经不关注了", color: "grey", blocks: decidedBlocks({ ...decided, verdict: "这张卡片过期了" }) });
+  if (c.brief?.at !== p.at) return buildCard({ title: "关注说明已经变更", color: "grey", blocks: decidedBlocks({ ...decided, verdict: "这张卡片过期了" }) });
   if (act === "stop") {
     saveContext(app, { id: c.id, kind: c.kind, status: "paused" });
     audit(app, OWNER, "lark.watch.stop", c.id, {});

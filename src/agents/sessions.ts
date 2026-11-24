@@ -1,7 +1,7 @@
 import { credentialSucceeded, selectedCredential } from "./credentials.ts";
 import { recordWatchMaterial, summaryOrigins } from "../core/message-origins.ts";
 import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
-import { one } from "../core/db.ts";
+import { all, one } from "../core/db.ts";
 import { hostToldOwner } from "./code-chain.ts";
 import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
 import { aiLabel, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type OrderSource } from "./choose-ai.ts";
@@ -520,12 +520,15 @@ ${WAKE_NOTE}`
         ? (withTools ? watchedText!.full : watchedText!.facts)
         : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${withTools ? NEW_TURN_NOTE : "回答本人的新消息。"}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${currentBrief}` : ""}`) + (promptOverride ? "" : awarenessNote(app, ctx.run.id, withTools, resolved)) + (sentFocus ? `\n\n${focus!.text}` : "") + (asked ? `\n\n${asked.text}` : "");
     const context = fresh ? `# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0], ownerCold(currentBrief), withTools)}\n\n---\n\n` : "";
+    const reverts = promptOverride ? [] : all<{ text: string }>(app.db, `select text from messages where conversation_id = ? and json_extract(meta,'$.behaviorReverted') is not null
+      and created_at >= coalesce((select max(started_at) from runs where id != ? and lane = ? and status = 'done'), '') order by created_at desc limit 6`, threadId, ctx.run.id, threadId);
+    const reverted = reverts.length ? `\n\n# 本人撤回的设置改动\n\n${reverts.reverse().map((m) => m.text).join("\n")}` : "";
     const changed = !fresh && t.settings.instructionScene !== selected.scene.join(" ");
     const sceneUpdate = changed ? `\n\n# 本轮适用的场景说明（替代先前按场景选择的小节）\n\n${selected.sceneGuide || "本轮没有适用的小节。"}` : "";
     const switchNote = switched && !promptOverride
       ? `宿主已将会话的 AI 设为 ${aiLabel(switched)}，本轮由 ${aiLabel({ profile: selected.profile.id, model: selected.profile.model, effort: selected.profile.effort })} 接手。如果本条消息只是要求切换，直接告知结果。如果还交代了任务，接着完成。\n\n`
       : "";
-    return { prompt: `${turnHeader(selected)}\n\n${context}${switchNote}${newPart}${groupReply && !promptOverride ? `\n\n${groupReply}` : ""}${sceneUpdate}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
+    return { prompt: `${turnHeader(selected)}\n\n${context}${switchNote}${newPart}${groupReply && !promptOverride ? `\n\n${groupReply}` : ""}${sceneUpdate}${reverted}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
   };
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 

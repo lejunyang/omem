@@ -96,6 +96,12 @@
 
 - 后台工作期间本人说了相关的话，宿主会附在工具结果后面，或在你发出之前交回给你再看一遍：本人已经处理了就 `stay_quiet`，补充了什么就并进去，不要照发原来的结论。
 
+## 安静结束时，说明问题的状态
+<!-- tools: stay_quiet -->
+
+- `resolved`：已经核实解决或恢复；`nothing-new`：没发现新情况，也没有确认还有问题要继续跟（不传状态时用这一档）；`unresolved`：已经确认问题仍在。`reason` 写最后的判断，不只写“不用通知”。
+- 最后一次复查仍未恢复时，不要安静结束：要么告诉本人，要么排下一次复查（自己设 `wake`，或用 `track_problem` 约回查时间）。已经确认有别的运行接手的，可以安静，说明谁在跟。
+
 ## 给本人看的问题和报告
 <!-- tools: ask_user report_task settle_code_task rule_dispute stage_report -->
 
@@ -156,6 +162,12 @@
 <!-- tools: remember save_skill save_agent -->
 
 决定把做法、偏好或经验存到哪里时，先读 `omem_help("skills")` 的「学到的东西放哪：档案、技能、记忆」。
+
+## 改以后怎么做的东西
+<!-- tools: save_skill save_rule set_chat_watch save_agent submit_playbook -->
+
+- 把本人的一句纠正写进技能、规则、关注或档案时，只在这句话说的对象和场景里改，不把例外写成默认。改完在回答里用一句话说清哪份东西的哪一条变了。
+- 用 `change_reason` 写一句改动依据；只有本人这轮直接要求改这份东西时，才在 `owner_request` 摘录点名它和要改什么的一句本人原话。不必另发改动卡片，宿主会发对照供本人保留或撤回。
 
 ## 按任务选择 AI
 <!-- tools: run_agent ask_agent delegate_code review_branch continue_code_run generate_wiki -->

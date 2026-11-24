@@ -1,5 +1,6 @@
 import { inlineStages } from "../flows/inline.ts";
 import { readReconcileObject, reconcileResultSchema, submitReconcile } from "../flows/reconcile.ts";
+import { beforeBehavior, changeWords, noteBehavior } from "./behavior-changes.ts";
 import { boardLarkCommand, boardLarkDocument, requireBoardLarkMessages } from "./board-lark-read.ts";
 import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
@@ -1058,6 +1059,7 @@ def({
     + " 不要把单次任务的过程、查到的资料、临时结论写进档案：可复用的步骤用 save_skill（本人可按仓库/场景教它），偏好、风格、经验和“这次怎么做”的结论用 remember（scope=agent 的经验/偏好只有该档案看得到，会随工作积累）。"
     + " 本人明确要求改身份时直接改；你自己觉得有用时用 draft=true 起草，等本人 /approve。",
   schema: z.object({
+    ...changeWords,
     name: z.string().describe("小写字母、数字、连字符"),
     description: z.string().optional().describe("做什么、什么时候该交给它（用于自动挑选）"),
     prompt: z.string().optional().describe("system prompt 正文：职责、步骤、输出格式、注意事项"),
@@ -1076,8 +1078,11 @@ def({
     draft: z.boolean().optional(),
   }),
   handler: (ctx, a) => {
-    const { draft, ...rest } = a;
+    const { draft, change_reason, owner_request, ...rest } = a;
+    const target = { kind: "agent", id: a.name } as const;
+    const before = beforeBehavior(ctx, target);
     const spec = saveAgentSpec(ctx.app, { ...rest, status: draft ? "draft" : (findAgentSpec(ctx.app, a.name)?.status ?? "active") } as never, ctx.actor);
+    noteBehavior(ctx, target, spec.name, before, { change_reason, owner_request });
     return `已保存 Agent 档案 ${spec.name}${spec.status === "draft" ? "（草稿，本人 /approve agent " + spec.name + " 后启用）" : ""}。`;
   },
 });
@@ -1574,12 +1579,16 @@ def({
     "整理技能分组（含从 Agent 自带目录收进来的技能）：把技能放进分组（group，null 移出分组）、写它在组里的用途（purpose，组的总入口按用途分节列出）、启用或停用（enabled）；给分组写标题、一句话说明（description：做哪类事时该读这一组，Agent 只看得到这句）或整组停用。一次可改多项。",
   write: true,
   schema: z.object({
+    ...changeWords,
     skills: z.array(z.object({ name: z.string(), group: z.string().nullable().optional(), purpose: z.string().nullable().optional().describe("几个字的用途，如“日志与监控”“数据库”"), enabled: z.boolean().optional() })).max(400).optional(),
     groups: z.array(z.object({ id: z.string(), title: z.string().optional(), description: z.string().optional(), enabled: z.boolean().optional() })).max(50).optional(),
   }),
   handler: async (ctx, a) => {
     const { organizeSkills } = await import("./agent-skills.ts");
+    const target = { kind: "skill-groups", id: "skill-groups" } as const;
+    const before = beforeBehavior(ctx, target);
     const r = organizeSkills(ctx.app, { skills: a.skills, groups: a.groups }, ctx.role === "skill-organizer" ? "organizer" : ctx.actor);
+    noteBehavior(ctx, target, "技能分组", before, a);
     return `已更新 ${r.changed} 项。${r.kept.length ? `本人定过、没有改：${r.kept.join("、")}。` : ""}`;
   },
 });
@@ -1640,6 +1649,7 @@ def({
   description:
     "新建或修改技能：把一套做法（步骤、格式、命令、检查清单）写成可复用的 SKILL.md。本人明确要求时直接保存；从经验中提炼、本人没要求时用 draft=true。",
   schema: z.object({
+    ...changeWords,
     name: z.string().describe("小写字母、数字、连字符"),
     description: z.string().describe("一句话：做什么、什么时候用"),
     body: z.string().describe("Markdown 正文：何时用、步骤、示例、注意事项"),
@@ -1657,7 +1667,11 @@ def({
       const { skillFilesOf } = await import("../remote/recordings.ts");
       files = { ...skillFilesOf(ctx.app, a.from_recording, ctx.userId ?? OWNER, a.recording_requests), ...files };
     }
+    const targetSkill = { kind: "skill", id: a.name } as const;
+    const fileNames = Object.keys(files ?? {});
+    const before = beforeBehavior(ctx, targetSkill, fileNames);
     const sk = saveSkill(ctx.app, { name: a.name, description: a.description, body: a.body, files, status: a.draft ? "draft" : "active" }, ctx.actor);
+    noteBehavior(ctx, targetSkill, sk.name, before, a, fileNames);
     if (a.from_recording) (await import("../remote/recordings.ts")).updateRecording(ctx.app, a.from_recording, { skill: sk.name });
     // Skills are reusable global files; "belonging to" an agent means being listed in
     // that spec's frontmatter. Name the target when teaching as the main assistant;
@@ -1668,9 +1682,12 @@ def({
       if (target) {
         checkProfile(ctx, target);
         const spec = findAgentSpec(ctx.app, target);
+        const mount = { kind: spec ? "agent" : "role", id: target } as const;
+        const priorMount = beforeBehavior(ctx, mount);
         if (spec) {
           if (!spec.skills.includes(sk.name)) saveAgentSpec(ctx.app, { name: target, skills: [...spec.skills, sk.name] }, ctx.actor);
         } else updateRoleMeta(ctx.app, target, (m) => (m.skills.includes(sk.name) ? m : { ...m, skills: [...m.skills, sk.name] }), ctx.actor);
+        noteBehavior(ctx, mount, target, priorMount, { ...a, change_reason: `挂上技能「${sk.name}」${a.change_reason ? `：${a.change_reason}` : ""}` });
         attachedTo = target;
       }
     }
@@ -3527,6 +3544,7 @@ def({
     "本人说“别自动回了”是改 reply（draft 或 none），不是 remove；说不用关注了才 remove=true。机器人不在群里时回复不了、也收不到实时消息：先用 lark_invite（bots: [\"self\"]）把 omem 的机器人拉进群。",
   write: true,
   schema: z.object({
+    ...changeWords,
     chat_id: z.string().optional().describe("群 chat_id（oc_…）：当前群从会话里看，分享的群在消息里，也可用 list_lark_chats 查"),
     chats: z.array(z.string()).max(20).optional().describe("同一个关注的其余群（合成一个上下文）；改已有关注时传完整的群列表"),
     context: z.string().optional().describe("要改的关注：id（ctx…）或本人叫它的名字"),
@@ -3583,10 +3601,12 @@ def({
       // A different set of groups is a new 关注 of its own, unless it extends the one this group is in.
       if (prev && a.chats && !a.context && !a.chats.every((x) => prev!.chats.includes(x)) && !prev.chats.every((x) => [a.chat_id, ...a.chats!].includes(x))) prev = null;
     }
+    const oldWatch = beforeBehavior(ctx, { kind: "watch", id: prev?.id ?? "" });
     if (a.remove) {
       if (!prev) return item ? "没有在关注这件事。" : "没有在关注这个群。";
       if (prev.kind === "item" && prev.itemId) I.setItemListening(ctx.app, prev.itemId, false);
       else L.saveContext(ctx.app, { id: prev.id, kind: prev.kind, status: "paused" });
+      noteBehavior(ctx, { kind: "watch", id: prev.id }, prev.name, oldWatch, a);
       return `不再关注「${prev.name}」（案例和经验留着，在 连接 → 飞书会话 里可以重新打开）。`;
     }
     const kind = prev?.kind ?? (item ? "item" : "place");
@@ -3637,6 +3657,7 @@ def({
       },
       (id) => groupName(ctx.app, id),
     );
+    noteBehavior(ctx, { kind: "watch", id: saved.id }, saved.name, oldWatch, a);
     // A matter's 关注 that only reads has no handler reading its groups (follow.ts notes the changes).
     const reads = !(saved.kind === "item" && saved.knobs.reply === "none");
     let seeded = 0;
@@ -3766,6 +3787,7 @@ def({
     "交一个「关注」整理好的经验（只给 listen-coach 用）：按场景写，每个场景写什么时候算、要不要回、查什么、怎么回、回完怎么跟、别怎样，列出依据的案例 id；整份替换旧的经验。说明本身该改时在 brief 里交完整的新说明，宿主发给本人确认。",
   write: true,
   schema: z.object({
+    change_reason: changeWords.change_reason,
     scenes: z
       .array(
         z.object({
@@ -3785,7 +3807,7 @@ def({
     brief: z.object({ handle: z.array(z.string().trim().min(1).max(200)).min(1).max(12), skip: z.array(z.string().trim().min(1).max(200)).max(12), valid: z.string().trim().min(2).max(600) }).optional(),
     notes: z.string().max(1000).optional().describe("写在经验开头的一两句总体观察"),
   }),
-  handler: async (ctx, a) => (await import("../channels/listen-coach.ts")).submitPlaybook(ctx.app, ctx.runId, a),
+  handler: async (ctx, a) => (await import("../channels/listen-coach.ts")).submitPlaybook(ctx.app, ctx.runId, a, ctx.actor),
 });
 
 /** One `lark_invite` call: at most this many groups and members in all, so the approval card shows every one. */
@@ -4002,6 +4024,7 @@ def({
     "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议、飞书文档或表格有改动、事项上挂的合并请求这类平台对象变了状态）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。本人说“这个群 / 这里 / 当前会话”时不要按群名去查：条件写 {field: chat.id, op: equals, value: current}，保存时换成本会话的飞书群（不在飞书会话里会被拒绝）；定时和文档变化规则的结果默认发回本会话（“发到”，rule.conversationId 写 current 也是本会话），Agent 动作 reply 写 auto 才会在群里说话。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：在主人会话中，回复后展示启用确认卡片；在成员会话中，启用确认单独交给系统主人；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；只有系统主人明确要求立即启用时才传 enabled=true。成员新建或更新已停用规则后须由主人确认启用。",
   write: true,
   schema: z.object({
+    ...changeWords,
     id: z.string().optional().describe("修改已有规则时填（list_rules）"),
     description: z.string().describe("本人的原话，写全：什么情况、做什么、回复方式"),
     name: z.string().optional(),
@@ -4049,9 +4072,11 @@ def({
       const seen = one<{ name: string; chat_mode: string | null }>(ctx.app.db, "select name, chat_mode from lark_cursors where chat_id = ?", action.to.chatId ?? "");
       action.to = { ...action.to, name: action.to.name || seen?.name || "", kind: action.to.kind ?? (seen?.chat_mode === "p2p" ? "p2p" : "group") };
     }
+    const oldRule = beforeBehavior(ctx, { kind: "rule", id: a.id ?? "" });
     const { rule: saved, confirmation } = saveRuleWithConfirmation(ctx.app, {
       ...input, id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false,
     } as never, ctx.userId ?? OWNER, { ownerAsked, runId: origin ? ctx.runId : null, ownerConversation });
+    noteBehavior(ctx, { kind: "rule", id: saved.id }, saved.name, oldRule, { ...a, change_reason: a.change_reason ?? a.description });
     const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
     const confirmationNote = ownerConversation
       ? "回复送达后，本会话会展示启用确认卡片，主人可直接点击启用。"
@@ -4276,12 +4301,15 @@ def({
   name: "stay_quiet",
   description:
     "这一轮没有要告诉本人或群里的：宿主不发这一轮的回答，思考过程也不留。只用于没人等你回答的一轮（唤醒、盯群的一批消息、规则触发、交办交回的修改项、后台整理），比如查过没有变化、这批消息不用管、结论已经用 lark_send 发过；有人问你、@ 你的一轮不能用，直接回答。调用后用一句很短的话结束这一轮（不会发出去），不用再写回答。",
-  schema: z.object({ reason: z.string().min(1).max(300).describe("一句话：为什么这一轮不用说话") }),
+  schema: z.object({
+    reason: z.string().trim().min(1).max(300).describe("一句话：最后的判断和为什么这一轮不用说话"),
+    state: z.enum(["resolved", "nothing-new", "unresolved"]).default("nothing-new").describe("resolved 已解决或恢复；nothing-new 没有新情况（默认）；unresolved 已确认问题仍在，需有人继续跟"),
+  }),
   handler: async (ctx, a) => {
     const { mayStayQuiet } = await import("./quiet.ts");
     const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
     if (!r || !mayStayQuiet(ctx.app, r)) throw new HttpError(409, "这一轮在回答别人的消息，不能不回：直接写回答。");
-    setRunOutput(ctx.app, r.id, { stayQuiet: a.reason.trim() });
+    setRunOutput(ctx.app, r.id, { stayQuiet: a.reason, stayQuietState: a.state });
     // A 关注's batch looked at and left: a case of its own (channels/watch-trial.ts).
     const trial = await import("../channels/watch-trial.ts");
     const listening = trial.contextOfRun(ctx.app, r.id);

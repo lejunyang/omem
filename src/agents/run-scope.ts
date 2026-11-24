@@ -178,6 +178,7 @@ export function conclusionOf(output: Record<string, unknown>, error: string | nu
 }
 
 const SHARED: Record<ScopeKind, string> = { chat: "同一个会话", conversation: "同一个会话", item: "同一个事项", message: "同一条消息" };
+const SAME_SCOPE = "a.kind = b.kind and a.key = b.key and (a.topic = '' or b.topic = '' or a.topic = b.topic)";
 
 /**
  * The runs whose keys meet this run's: under way, or ended within RECENT_MINUTES — the same chat (and
@@ -193,7 +194,7 @@ export function relatedRuns(app: App, runId: string, limit = 6): RelatedRun[] {
   const rows = all<{ id: string; kind: string; title: string; status: string; input: string; output: string; error: string | null; roles: string | null; started_at: string | null; finished_at: string | null; kinds: string }>(
     app.db,
     `select r.id, r.kind, r.title, r.status, r.input, r.output, r.error, r.roles, r.started_at, r.finished_at, group_concat(distinct b.kind) kinds
-       from run_scope a join run_scope b on a.kind = b.kind and a.key = b.key and (a.topic = '' or b.topic = '' or a.topic = b.topic)
+       from run_scope a join run_scope b on ${SAME_SCOPE}
        join runs r on r.id = b.run_id
       where a.run_id = ? and a.kind != 'run' and b.run_id != ?
         and (r.status = 'running' or (r.status in ('done','failed') and r.finished_at > ?))
@@ -223,6 +224,17 @@ export function relatedRuns(app: App, runId: string, limit = 6): RelatedRun[] {
       shared: [...new Set(r.kinds.split(",").map((k) => SHARED[k as ScopeKind]).filter(Boolean))],
     };
   });
+}
+
+/** For an unfinished issue, a child doing the work counts too. The same key and topic rules apply. */
+export function hasRunningInScope(app: App, runId: string) {
+  ensureScope(app, runId);
+  return !!one(app.db, `select 1 from run_scope a
+    join run_scope b on ${SAME_SCOPE}
+    join runs r on r.id = b.run_id join runs self on self.id = a.run_id
+    where a.run_id = ? and a.kind != 'run' and b.run_id != a.run_id and r.status = 'running'
+      and coalesce(r.user_id, 'owner') = coalesce(self.user_id, 'owner')
+      and r.kind not in (${IGNORED_KINDS.map(() => "?").join(",")}) limit 1`, runId, ...IGNORED_KINDS);
 }
 
 const hm = (iso: string | null, tz: string) => (iso ? new Date(iso).toLocaleTimeString("zh-CN", { hour12: false, timeZone: tz, hour: "2-digit", minute: "2-digit" }) : "");

@@ -457,7 +457,7 @@ async function runAgentTask(ctx: RunContext) {
       const { resolveCitations } = await import("../channels/common.ts");
       await sendLark({ replyTo: replyAt.messageId, inThread: replyAt.inThread !== false, bot: lark?.bot, runId: ctx.run.id }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
     }
-    else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
+    else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), runId: ctx.run.id, link: `#/runs/${ctx.run.id}` });
   } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name, ...topLevel });
   return { answer, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
 }

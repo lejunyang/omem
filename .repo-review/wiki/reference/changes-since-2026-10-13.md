@@ -30,6 +30,11 @@ updated: 2026-11-25
 
 巡检给阶段停太久、或事项有新动静的流程排一次对账，六小时内不重排。对账重读挂接对象和群证据，通过原状态机纠正，签字不代点；只读没法解时把最小一步或草稿放进待处理。`flow_start` 可用内联清单开始一次性流程，外部写入要确认，走完可用现有草稿卡存为模板。入口 `src/flows/reconcile.ts`、`inline.ts`，设计见 `docs/v2/flows.md` 文末。
 
+## 行为改动对照、规则安静率与复查收尾（2026-11-25）
+
+- Agent 写入技能（含附件）、规则、关注、档案与角色设置时记录前后差异，按不急的通知汇总，支持本人保留或撤回。入口：`src/agents/behavior-changes.ts`。
+- 规则页列近 7 / 30 天触发与安静结束次数，周报列高安静率的规则及理由。`stay_quiet` 增加状态，未恢复又无人跟进时由宿主发一次普通提醒。入口：`src/rules/quiet-stats.ts`、`src/agents/quiet-followup.ts`。
+
 ## 研究：交给改（2026-11-25）
 
 `src/studies/fix-queue.ts`：`queueFixes` / `unqueueFix` / `tickFixQueue` / `attachFixQueue`（`engine.ts` 的 `attachFlows` 挂上）。表 `study_findings` 加 `fix_queued_at`、`fix_note`，`study_scopes` 加 `fix_ai`；`scope.ts` 的 `fixExecutions` 把它变成交办的 `execution` / `reviewExecution`。同一研究一次一个交办，评审通过（`stage.key = done`）即 `markFixedByChange`；`fixes.ts` 重跑仍失败时清掉。接口 `POST/DELETE /api/items/:id/study/fix-queue`，工具 `queue_study_fixes`（`study` 组）。网页 `ItemStudy.vue`：“交给改…”“挑几条交给改”“不排了”，范围里选改代码和评审的 AI。
