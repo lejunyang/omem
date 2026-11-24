@@ -653,7 +653,7 @@ export function prepareRun(
     : `# 角色：${role!.description}\n\n${render(role!.body)}`;
   const descriptions: Record<string, string> = {
     search: "检索材料", read_source: "按行读原件", read_page: "读 Wiki 页", read_item: "读事项",
-    read_ledger: "读课题台账", propose_directions: "交这一轮的方向", trial_report: "交这个试验的结果", record_finding: "记一条发现", close_direction: "结束一个方向", stage_report: "交这一段的结果",
+    read_ledger: "读研究记录", propose_directions: "交这一轮的方向", trial_report: "交这个试验的结果", record_finding: "记一条发现", revise_study_finding: "改一条研究发现", queue_study_fixes: "把发现交给改", close_direction: "结束一个方向", stage_report: "交这一段的结果",
   };
   const common = commonGuide(guideTools, capabilities, scene, matched) + (access?.mode ? "\n\n## 云端工具\n" +
     [...tools].map(t => t + "：" + (descriptions[t] ?? t)).join("、") + "。连接信息在本轮消息或安全通道。GET 工具地址查看参数。" +
