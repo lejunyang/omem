@@ -35,6 +35,13 @@ function fingerprint(p: AgentProfile) {
   return createHash("sha256").update(JSON.stringify([p.transport, p.command, p.args, p.archiveArgs ?? [], Object.entries(p.env).sort(([a], [b]) => a.localeCompare(b))])).digest("hex");
 }
 
+/** A member may change accounts between background turns of the same task. */
+export function sessionMatchesAccount(app: App, sessionId: string, profile: AgentProfile) {
+  const account = accountOf(profile);
+  const key = `acp:${fingerprint(profile)}${account ? `@acct:${account.userId}` : ""}`;
+  return !!one(app.db, "select 1 from session_cleanup where backend_key = ? and session_id = ? and profile_id = ?", key, sessionId, profile.id);
+}
+
 /** One lifecycle for temporary turns, pooled ACP sessions and explicitly replaced sessions. */
 export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<AgentRequest, "cwd" | "runId" | "persistSession" | "resumeSessionId">, emit: Emit): Promise<SessionCleanup> {
   const acp = profile.transport === "acp";

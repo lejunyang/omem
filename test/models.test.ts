@@ -3,6 +3,7 @@ import { createThread, findThread } from "../src/agents/threads.ts";
 import { normalizeModel, resolveModelOption, resolveRoleProfile } from "../src/agents/models.ts";
 import { saveProbe } from "../src/agents/probe.ts";
 import { run } from "../src/core/db.ts";
+import { linkIdentity } from "../src/core/users.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { testApp } from "./helpers.ts";
 
@@ -29,7 +30,9 @@ describe("model name normalization", () => {
 });
 
 describe("feishu /model card actions", () => {
+  // Only the owner changes a conversation's AI from this card (members use /agent and /model for themselves).
   const recordModelCard = (app: ReturnType<typeof testApp>, threadId: string, messageId: string) => {
+    linkIdentity(app, "owner", "lark", "ou_owner", { kind: "alias" });
     run(
       app.db,
       "insert into card_interactions(id,message_id,chat_id,conversation_id,run_id,purpose,allowed,payload,created_at) values(?,?,?,?,?,?,?,?,?)",
@@ -54,6 +57,19 @@ describe("feishu /model card actions", () => {
     const updated = findThread(app, t.id)!;
     expect(updated.settings.model).toBe("gpt-6.1-sol");
     expect(updated.settings.effort).toBe("high");
+  });
+
+  it("someone other than the owner cannot change the conversation's AI from the card", async () => {
+    const app = testApp();
+    const t = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_g", settings: { model: "gpt-6.1-sol" } });
+    recordModelCard(app, t.id, "om_member");
+    const r = await handleCardAction(app, {
+      operator: { open_id: "ou_someone" },
+      context: { open_message_id: "om_member" },
+      action: { tag: "button", value: { action: "model:off" } },
+    });
+    expect(r.toast).toMatchObject({ type: "warning", content: expect.stringContaining("/model") });
+    expect(findThread(app, t.id)!.settings.model).toBe("gpt-6.1-sol");
   });
 
   it("restores defaults from the off button without queuing an agent turn", async () => {

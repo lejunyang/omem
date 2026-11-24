@@ -32,6 +32,7 @@ export type UserSettings = {
   larkDocs?: import("../channels/lark-doc-filter.ts").DocCaptureSettings;
   /** The routine work on the person's own lines (items/member-routine.ts): off unless they or the owner turn it on. */
   lineRoutine?: boolean;
+  memberAi?: import("../agents/member-ai.ts").MemberAi;
 };
 export type User = {
   id: string;

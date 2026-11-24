@@ -99,7 +99,7 @@ export const accountSpecSchema = z
     dirs: z.array(accountRel).max(20).optional(),
     mounts: z.array(noHome.pipe(z.string().min(1).max(500))).max(20).optional(),
     owns: z.array(accountRel).min(1, "owns 至少写一个：退出时删掉这个后端在账号目录里的哪些东西").max(20),
-    login: z.object({ args: z.array(noHome).max(20), url: accountPattern, code: accountPattern.optional(), input: accountPattern.optional(), timeoutMs: z.number().int().min(30_000).max(3_600_000).optional() }).strict().optional(),
+    login: z.object({ args: z.array(noHome).max(20), url: accountPattern, code: accountPattern.optional(), input: accountPattern.optional(), qrArgs: z.array(noHome).min(1).max(20).optional(), timeoutMs: z.number().int().min(30_000).max(3_600_000).optional() }).strict().optional(),
     status: z.object({ args: z.array(noHome).max(20), user: accountPattern.optional() }).strict().optional(),
     logout: z.object({ args: z.array(noHome).max(20) }).strict().optional(),
     tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/).optional(),

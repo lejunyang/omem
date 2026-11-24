@@ -38,7 +38,8 @@ import { describeFlags, guardSource } from "../sources/guard.ts";
 import { learningProgress, studyStats } from "../learn/cards.ts";
 import { getGoal, listGoals, localClock, upsertGoal } from "../learn/goals.ts";
 import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
-import { createRun, getRun, listRuns, runUser, registerHandler, updateQueuedRun, type RunContext } from "./runs.ts";
+import { createRun, getRun, listRuns, ResumeAfterAiLogin, runUser, registerHandler, updateQueuedRun, type RunContext } from "./runs.ts";
+import { aiLoginWait } from "./credential-wait.ts";
 import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
 import { relationCandidates } from "../core/space-candidates.ts";
 import { nearMemories, sameTopicPairs } from "../memory/passive.ts";
@@ -232,8 +233,9 @@ registerHandler("ask", async (ctx) => {
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode, channelDelivered: true };
   }
-  if (ctx.run.input.recoverReply && !ctx.signal.aborted) {
-    await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids, recoverReply: true });
+  const login = aiLoginWait(ctx.app, ctx.run.id);
+  if ((ctx.run.input.recoverReply || login) && !ctx.signal.aborted) {
+    await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids, recoverReply: true, ...(login?.replyTo ? { larkReplyTo: login.replyTo, larkInThread: !!login.inThread } : {}) });
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode, channelDelivered: true };
   }
@@ -401,7 +403,7 @@ async function runAgentTask(ctx: RunContext) {
   let r;
   try { r = await go(resumeSessionId); }
   catch (e) {
-    if (!resumeSessionId || ctx.signal.aborted || (e as Error).message === "CANCELLED") throw e;
+    if (e instanceof ResumeAfterAiLogin || !resumeSessionId || ctx.signal.aborted || (e as Error).message === "CANCELLED") throw e;
     ctx.event("status", { text: "无法接上上一轮的 Agent 会话，改用新会话（带这项工作的经过）" });
     r = await go(undefined);
   }

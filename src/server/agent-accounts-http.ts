@@ -2,12 +2,14 @@ import { allCredentials, logoutCredential, myCredentials, setCredentialSharing, 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { configSchema, saveConfig } from "../core/config.ts";
+import { allProfiles, configSchema, saveConfig } from "../core/config.ts";
 import { findUser, OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { isOwner } from "../auth/permissions.ts";
-import { accountEntry, allAccounts, checkAccount, myAccounts, readMyQuota, removeAccount, saveToken, sendLoginInput, startLogin } from "../agents/accounts.ts";
+import { accountEntry, allAccounts, checkAccount, isAiMember, myAccounts, readMyQuota, removeAccount, saveToken, sendLoginInput, startLogin } from "../agents/accounts.ts";
 import { sandboxSupport } from "../agents/sandbox.ts";
+import { memberAi, setMemberAi } from "../agents/member-ai.ts";
+import { backendAvailable } from "../agents/availability.ts";
 
 /**
  * Each person's own AI accounts over HTTP (docs/v2/agent-accounts.md). `/api/me/…` always acts on the
@@ -46,7 +48,14 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
     return userId;
   };
 
-  server.get("/api/me/agent-accounts", async (req) => myAccounts(app, who(req)));
+  server.get("/api/me/agent-accounts", async (req) => {
+    const id = who(req);
+    return { ...myAccounts(app, id), ...(isAiMember(app, id) ? {
+      ai: memberAi(app, id),
+      profiles: allProfiles(app.config).filter(p => backendAvailable(p, app.home)).map(p => ({ id: p.id, name: p.name ?? p.id })),
+    } : {}) };
+  });
+  server.put("/api/me/agent-accounts/settings", async req => setMemberAi(app, who(req), req.body));
   // `method`: the backend's own login (`native`, the default) or a plugin's (`<plugin>:<id>`).
   server.post("/api/me/agent-accounts/:backend/login", async (req) => {
     const userId = member(req);

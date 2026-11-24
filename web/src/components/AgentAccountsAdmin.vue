@@ -66,7 +66,7 @@ const OPTIONS: { value: Policy; label: string }[] = [
   { value: "own", label: "只能用自己的" },
 ];
 const SAVED: Record<Policy, string> = {
-  owner: "已保存：没登录的成员借用你的登录",
+  owner: "已保存：允许成员借用你的登录",
   own: "已保存：没登录的成员用不了这个后端",
   "own-or-other": "已保存：没登录的成员换一个他登录过、或允许借用的后端",
 };
@@ -112,7 +112,7 @@ async function remove(person: Overview["people"][number], b: { id: string; name:
       <p v-if="apart.length" class="set-link muted iso-apart">在这些后端上成员的运行分不开：{{ apart.join("；") }}。</p>
     </template>
     <template v-if="data.supported">
-    <div class="set-pad small muted head">成员没登录时，每个后端怎么办<template v-if="data.bwrap"> · bubblewrap {{ data.bwrap }}</template></div>
+    <div class="set-pad small muted head">后端的账号规则<template v-if="data.bwrap"> · bubblewrap {{ data.bwrap }}</template></div>
     <SetRow v-for="b in data.backends" :key="b.id" :label="b.name">
       <UiSegmented :model-value="b.policy" size="sm" :aria-label="`${b.name}：成员没登录时`" :options="OPTIONS" @change="(v) => setPolicy(b.id, v)" />
     </SetRow>

@@ -400,6 +400,8 @@ export class ResumeRunAt extends Error {
   at: string;
   constructor(at: number) { super("等待下一次检查"); this.at = new Date(at).toISOString(); }
 }
+/** The account login may succeed while this attempt is returning to the queue. */
+export class ResumeAfterAiLogin extends ResumeRunAt {}
 type Handler = (ctx: RunContext) => Promise<Record<string, unknown> | void>;
 const handlers = new Map<string, Handler>();
 const controllers = new Map<string, AbortController>();
@@ -494,6 +496,8 @@ export function queueReason(app: App, r: Run): string | null {
   if (r.status !== "queued") return null;
   const row = one<Row>(app.db, "select * from runs where id = ?", r.id);
   if (!row) return null;
+  const login = r.input.aiLoginWait as import("./credential-wait.ts").AiLoginWait | undefined;
+  if (login && !login.ready && row.not_before && row.not_before > now()) return "等待成员登录 " + login.name;
   if (row.not_before && row.not_before > now()) return `定时，${localStamp(row.not_before, app.config.timezone)} 开始`;
   if (row.lane) {
     const busy = one<{ id: string }>(app.db, "select id from runs where lane = ? and status = 'running'", row.lane);
@@ -644,7 +648,9 @@ function kick(app: App) {
         flushText(app, r.id);
         if (stopping && !controller.signal.aborted) return;
         if (error instanceof ResumeRunAt && !controller.signal.aborted) {
-          run(app.db, "update runs set status='queued',not_before=? where id=?", error.at, r.id);
+          run(app.db, `update runs set status='queued',not_before=case
+            when ? and json_extract(input, '$.aiLoginWait.ready') = 1 then null else ? end where id=?`,
+            Number(error instanceof ResumeAfterAiLogin), error.at, r.id);
           return;
         }
         const failure = controller.signal.reason;

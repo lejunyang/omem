@@ -13,7 +13,7 @@ import { connectionSecrets, deleteConnection, findConnection, listConnections, s
 import { accountEntry, accountEnv, accountHome, accountStatePaths, clearAccountPaths, ensureAccountHome } from "./accounts.ts";
 import { sandboxSupport } from "./sandbox.ts";
 import { accountCatalog } from "./catalog.ts";
-import { credentialReady, credentialWaits } from "./credential-wait.ts";
+import { backendLoginReady, credentialReady, credentialWaits } from "./credential-wait.ts";
 
 export { registerCredential } from "./credential-registry.ts";
 import { credentialKindsForBackend, credentialMethod, credentialMethods, declaredPaths, defaultSharingScope, requireCredential, type CredentialMethod } from "./credential-registry.ts";
@@ -105,17 +105,17 @@ export function mayUseCredential(app: App, use: CredentialUse, hold = credential
   return app.config.credentials.lending === "auto" && (use.holder === OWNER || member(app, use.holder)) &&
     (hold.sharing.scope === "all" || hold.sharing.scope === "members" && hold.sharing.members.includes(use.requester));
 }
-export function selectCredential(app: App, requester: string, backend: string, allowLoan: boolean, sandbox: boolean) {
+export function selectCredential(app: App, requester: string, backend: string, allowLoan: boolean, sandbox: boolean, ownerOnly = false) {
   const methods = credentialKindsForBackend(backend);
   const own = methods.find(m => sandbox && backendUsable(app, requester, backend, m.kind));
-  if (own) return { requester, backend, holder: requester, kind: own.kind };
+  if (own && !ownerOnly) return { requester, backend, holder: requester, kind: own.kind };
   if (!allowLoan || !methods.length || app.config.credentials.lending !== "auto") return;
   const kinds = methods.map(m => m.kind);
   const rows = all<Row>(app.db, `select * from credential_holds where kind in (${kinds.map(() => "?").join(",")})
     and (state='logged-in' or user_id=?) order by (user_id=?) desc,last_used_at desc,user_id,kind`, ...kinds, OWNER, OWNER);
   for (const row of rows) {
     const holder = row.user_id;
-    if (holder === requester || (holder === OWNER ? app.config.agents.accountIsolation === "require" : !sandbox)) continue;
+    if (holder === requester || (holder === OWNER ? app.config.agents.accountIsolation === "require" : ownerOnly || !sandbox)) continue;
     const use = { requester, backend, holder, kind: row.kind };
     if (mayUseCredential(app, use, fromRow(row))) return use;
   }
@@ -259,7 +259,7 @@ type LoginReply = { url?: string; code?: string; done?: boolean };
 type Pending = { method: CredentialMethod; abort: AbortController; reply: Promise<LoginReply>; url?: string; code?: string };
 const logins = new Map<string, Pending>();
 /** `why`: said before the link when omem starts the login on its own (inviteCredential). */
-export function startCredentialLogin(app: App, id: string, kind: string, why?: string): Promise<LoginReply> {
+export function startCredentialLogin(app: App, id: string, kind: string, why?: string, notifyPrivate = true): Promise<LoginReply> {
   const m = requireCredential(kind);
   const owner = id === OWNER;
   if (owner && !m.ownerLogin) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机授权");
@@ -286,7 +286,7 @@ export function startCredentialLogin(app: App, id: string, kind: string, why?: s
         const l = z.object({ url: z.httpUrl().max(2000), code: z.string().max(64).optional() }).parse(link);
         p.url = l.url; p.code = l.code;
         // The card opens the official page itself: no stop at the account page on the way.
-        notify(app, { userId: id, title: `omem 正在为你登录 ${m.name}`,
+        if (notifyPrivate) notify(app, { userId: id, title: `omem 正在为你登录 ${m.name}`,
           body: `${why ? why + "\n" : ""}打开链接${l.code ? `，验证码 ${l.code}` : ""}，在官方页面确认。11 分钟内完成授权${credentialWaits(app, id, kind).length ? "，完成后助手会接着做刚才的事" : ""}。`, link: l.url, urgency: "urgent" });
         answer(() => resolve(l));
       };
@@ -297,13 +297,14 @@ export function startCredentialLogin(app: App, id: string, kind: string, why?: s
         refreshAt: owner ? undefined : refreshAt(result.expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined, notified: {} });
       remindHold(app, id, m);
       credentialReady(app, id, kind, m.name);
+      for (const backend of m.provides.backends) backendLoginReady(app, id, backend);
       answer(() => resolve({ done: true }));
     } catch {
       if (!signal.aborted || timeout.aborted || !replied) {
         const hold = credentialHold(app, id, kind);
         // The owner's login on this machine is what it was: only the attempt failed.
         save(app, id, kind, { ...hold, ...(owner ? {} : { state: "expired" as const }), error: "授权或供给失败，请重新登录", checkedAt: now() });
-        if (!owner || hold.state !== "logged-in") reminder(app, id, m, "failed");
+        if (notifyPrivate && (!owner || hold.state !== "logged-in")) reminder(app, id, m, "failed");
       }
       answer(() => reject(new HttpError(502, signal.aborted ? "登录取消或超时，请重试" : "授权或供给失败，请重新登录")));
     } finally { clearTimeout(first); abort.abort(); if (logins.get(key) === p) logins.delete(key); }
@@ -353,7 +354,10 @@ export function checkCredential(app: App, id: string, kind: string) {
         suppliedBackends: id === OWNER ? m.provides.backends : s.suppliedBackends,
         user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app),
         error: state === "expired" && unchanged ? COMMAND_EXPIRED : undefined });
-      if (state === "logged-in" && s.state !== "logged-in") credentialReady(app, id, kind, m.name);
+      if (state === "logged-in" && s.state !== "logged-in") {
+        credentialReady(app, id, kind, m.name);
+        for (const backend of s.suppliedBackends) backendLoginReady(app, id, backend);
+      }
     } catch { save(app, id, kind, { ...credentialHold(app, id, kind), checkedAt: now(), checkedDay: day(app), error: "检查失败，请稍后重试" }); reminder(app, id, m, "failed"); }
     remindHold(app, id, m);
     return credentialHold(app, id, kind);

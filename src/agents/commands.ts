@@ -1,4 +1,10 @@
 import { effortsFor, userProbe, type ProbeInfo } from "./probe.ts";
+import { isAiMember } from "./accounts.ts";
+import { memberAi, memberThreadAi, setMemberAi, setMemberThreadAi } from "./member-ai.ts";
+import { threadActor } from "./sessions.ts";
+import { resolveRunProfile } from "./runner.ts";
+import { resolveModelOption } from "./models.ts";
+import { backendAvailable } from "./availability.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, saveConfig, type Config } from "../core/config.ts";
 import { findSpace, listSpaces, relatedIds } from "../core/spaces.ts";
@@ -190,11 +196,40 @@ const commands: Record<string, Command> = {
   },
   model: {
     card: (c) => modelCardCommand(c),
-    usage: "/model [模型名] [effort=low|medium|high] | off | save <模型> [effort=…]",
-    help: "查看/临时更换本会话的模型和思考强度；save 存为该任务的默认；off 恢复默认。模型名不区分大小写、点和连字符（GPT-Sol-6.1 = gpt-6.1-sol）",
+    usage: "/model [模型名] [effort=low|medium|high] | off | save <模型> [effort=…] | save off",
+    help: "查看或更换会话模型及思考强度。成员用 save 保存个人默认，off 清除会话选择，save off 清除个人模型和强度",
     run: async ({ app, thread, args, inb }) => {
       const text = args.trim();
       const profiles = allProfiles(app.config);
+      const userId = inb.userId ?? OWNER;
+      if (userId !== OWNER) {
+        if (!isAiMember(app, userId)) return "这个账号不能设置会话模型。";
+        const personal = memberAi(app, userId);
+        const local = memberThreadAi(app, thread, userId);
+        const profile = resolveRunProfile(app, { actor: threadActor(app, thread).actor, profileId: local.profile ?? thread.settings.profile });
+        const probe = cachedProbeSync(app, profile.id, userId);
+        if (!text) return [
+          `当前后端：${profile.id} · ${local.model ?? thread.settings.model ?? profile.model ?? "默认模型"}`,
+          probe?.models.length ? `可选模型：${probe.models.join("、")}` : "",
+          "用 /model 模型名 指定你在本会话的模型，用 /model save 模型名 保存为个人默认。",
+        ].filter(Boolean).join("\n");
+        if (text === "off") {
+          setMemberThreadAi(app, thread.id, userId, { model: undefined, effort: undefined });
+          return "已清除你在本会话指定的模型和思考强度。";
+        }
+        if (text === "save off") {
+          setMemberAi(app, userId, { model: "", effort: "" });
+          return "已清除你的个人默认模型和思考强度。";
+        }
+        const save = text.startsWith("save ");
+        const { model, effort } = parseModelArgs(save ? text.slice(5) : text);
+        if (!model && !effort) return "用法：/model 模型名 effort=low|medium|high";
+        const target = save && personal.profile ? cachedProbeSync(app, personal.profile, userId) : probe;
+        const named = model && target?.models.length ? resolveModelOption(model, target.models).value : model;
+        if (save) setMemberAi(app, userId, { model: named ?? personal.model ?? "", effort: effort ?? "" });
+        else setMemberThreadAi(app, thread.id, userId, { model: named, effort });
+        return `已设置${save ? "你的个人默认" : "你在本会话的"}模型：${named ?? "默认模型"} / ${effort ?? "默认强度"}。`;
+      }
       const profileId = thread.settings.profile ?? app.config.agents.default ?? profiles[0]?.id;
       const profile = profiles.find((p) => p.id === profileId);
       const probe = cachedProbeSync(app, profileId, thread.userId);
@@ -251,11 +286,27 @@ const commands: Record<string, Command> = {
     },
   },
   agent: {
-    usage: "/agent [后端id|default]",
+    usage: "/agent [后端id|default] | save <后端id|default>",
     help: "本会话使用哪个后端 Agent（codex、claude…）",
-    run: ({ app, thread, args }) => {
+    run: ({ app, thread, args, inb }) => {
       const id = args.trim();
       const profiles = allProfiles(app.config);
+      const userId = inb.userId ?? OWNER;
+      if (userId !== OWNER) {
+        if (!isAiMember(app, userId)) return "这个账号不能设置会话后端。";
+        const local = memberThreadAi(app, thread, userId);
+        if (!id) return `当前：${local.profile ?? thread.settings.profile ?? "自动选择"}\n可选：${profiles.map(p => p.id).join("、")}\n用 /agent 后端id 指定本会话，或用 /agent save 后端id 保存个人默认。`;
+        const save = id.startsWith("save ");
+        const value = save ? id.slice(5).trim() : id;
+        const available = profiles.filter(p => backendAvailable(p, app.home));
+        if (value !== "default" && !available.some(p => p.id === value)) return `后端 ${value} 不可用。可选：${available.map(p => p.id).join("、")}`;
+        if (save) {
+          setMemberAi(app, userId, { profile: value === "default" ? "" : value, model: "", effort: "" });
+          return value === "default" ? "已清除你的个人默认 AI。" : `已将 ${value} 保存为你的个人默认后端。`;
+        }
+        setMemberThreadAi(app, thread.id, userId, { profile: value === "default" ? undefined : value, model: undefined, effort: undefined });
+        return value === "default" ? "已清除你在本会话的 AI 选择。" : `你在本会话将使用 ${value}。`;
+      }
       if (!id) return `当前：${thread.settings.profile ?? "默认"}\n可选：${profiles.map((p) => `${p.id}${p.model ? `(${p.model})` : ""}`).join(", ")}`;
       if (id !== "default" && !profiles.some((p) => p.id === id)) return `没有后端 ${id}。可选：${profiles.map((p) => p.id).join(", ")}`;
       updateThread(app, thread.id, { settings: { profile: id === "default" ? undefined : id } });

@@ -153,7 +153,7 @@ omem 现在按对象 id 存：结构化消息 `lark_messages` 的主键是 `mess
 | `connector.use:<provider>` | 能连接哪个平台 | member 及以上：lark |
 | `share.external` | 生成对外分享链接 | member 及以上 |
 
-AI 后端和额度暂时不限制，成员的运行用本人配置的后端和任务选型；Linux 上装了 bubblewrap 时，成员可以登录自己的 AI 账号，他的运行就在沙箱里用他自己的账号，本人按后端定没登录的成员借用本人的还是不能用，见 [agent-accounts.md](agent-accounts.md)。`code.delegate` 和 `desktop.control` 只给本人，原因是它们在宿主机上动手，与额度无关。以后要按后端限制时，再加 `agent.backend:<id>`。
+成员的运行沿用本人的候选、适用说明和总体偏好，也可按个人设置指定默认后端、模型或写选型偏好。允许借用时，本人额度充足用本人登录，额度紧张用成员自己的登录。缺登录时，飞书机器人发官方授权卡片，授权完成后原运行继续。Linux 上用 bubblewrap 隔离成员自己的账号。逐后端账号策略与完整流程见 [agent-accounts.md](agent-accounts.md)。`code.delegate` 和 `desktop.control` 只给本人，原因是它们在宿主机上动手，与额度无关。以后要按后端限制时，再加 `agent.backend:<id>`。
 
 空间：
 

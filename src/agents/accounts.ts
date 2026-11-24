@@ -1,25 +1,26 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, sep } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
-import { findUser, listUsers, OWNER, userName } from "../core/users.ts";
+import { activeUser, findUser, listUsers, OWNER, userName } from "../core/users.ts";
 import { HttpError, now } from "../core/util.ts";
 import { audit } from "../auth/permissions.ts";
 import { deleteConnection, connectionSecrets, findConnection, listConnections, storeConnection } from "../auth/vault.ts";
 import { writeAccountEntries } from "./agent-skills.ts";
 import { loginMethod, loginMethodsFor, type AgentLoginContext, type AgentLoginMethod } from "./agent-logins.ts";
 import { backendAvailable } from "./availability.ts";
-import { sourceOf } from "./capacity.ts";
+import { outOfQuotaUntil, sourceOf } from "./capacity.ts";
 import { accountCatalog, type AccountSpec, type CatalogEntry } from "./catalog.ts";
-import { forgetQuota, quotaKind, quotaView, refreshQuota } from "./quota.ts";
+import { forgetQuota, quotaKind, quotaPressure, quotaView, refreshQuota } from "./quota.ts";
 import { canonical } from "./own-sandbox.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
 import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
-import { credentialUse, selectCredential, credentialBackendLogin, credentialAccountView, suppliedCredentialKind, checkCredential, credentialInstallDirs, credentialStateRels, heldCredentialDeclarations, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
+import { backendLoginReady } from "./credential-wait.ts";
+import { credentialUse, selectCredential, selectedCredential, credentialBackendLogin, credentialAccountView, suppliedCredentialKind, checkCredential, credentialInstallDirs, credentialStateRels, heldCredentialDeclarations, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
 
 /**
  * Each omem user's own AI accounts (docs/v2/agent-accounts.md). A member logs in to a backend once
@@ -237,6 +238,12 @@ function member(app: App, userId: string) {
   return !!u && u.role !== "owner" && u.kind === "person";
 }
 
+export function isAiMember(app: App, userId: string) {
+  if (userId === OWNER) return false;
+  const u = findUser(app, userId);
+  return activeUser(u) && u.role !== "owner" && u.kind === "person";
+}
+
 /** Where this profile executes and whether it can use a member HOME on this node. */
 function isolationCapability(p: AgentProfile) {
   if (p.peer) return { execution: "peer", supported: false, reason: "设备代跑尚未隔离成员账号" };
@@ -326,6 +333,50 @@ export function withAccount<P extends AgentProfile>(app: App, userId: string, p:
   throw new Error(reason);
 }
 
+export const memberAccountChoice = Symbol("memberAccountChoice");
+export class MemberOwnerQuotaChanged extends Error {}
+type MemberAccountChoice = { holder: string; reason: string; ownerPressure?: string };
+type AccountPlan<P> = { kind: "ready"; profile: P; reason?: string } | { kind: "blocked"; reason: string } |
+  { kind: "login"; entry: AccountEntry; reason: string };
+
+/** Resolve before checking capacity. The owner's spent marks must not hide a member's own account. */
+export function memberAccountPlan<P extends AgentProfile>(app: App, userId: string, p: P, ownOnly = false): AccountPlan<P> {
+  if (!isAiMember(app, userId)) return { kind: "ready", profile: p };
+  const entry = accountEntryFor(app, p);
+  const backend = sourceOf(p);
+  const policy = accountPolicy(app, backend);
+  const supported = SAFE_ID.test(userId) && isolationCapability(p).supported;
+  const own = !!entry && supported && loggedIn(app, userId, entry.id);
+  const pressure = quotaPressure(app, p);
+  const tight = outOfQuotaUntil(app, p) ? "额度已用完" : pressure.reason;
+  const selected = (profile: P, holder: string, reason: string, ownerPressure?: string): AccountPlan<P> => ({
+    kind: "ready", reason, profile: { ...profile, [memberAccountChoice]: { holder, reason, ownerPressure } },
+  });
+  if (ownOnly || tight) {
+    const why = ownOnly ? "这次运行只用成员自己的账号" : `本人额度紧张（${tight}）`;
+    if (own) return selected(accountFor(app, userId, p), userId, `${why}，使用成员自己的登录`, tight ?? undefined);
+    return entry && supported && !ownOnly
+      ? { kind: "login", entry, reason: `${why}，等待成员登录自己的 ${entry.name}` }
+      : { kind: "blocked", reason: `${why}，没有可用的成员登录` };
+  }
+  if (entry && pressure.known && policy === "owner" && app.config.agents.accountIsolation !== "require") {
+    const use = selectCredential(app, userId, entry.id, true, supported, true);
+    if (use) return selected({ ...p, [credentialUse]: use }, OWNER, "本人额度充足，借用本人登录");
+    if (!credentialKindsForBackend(entry.id).length && app.config.credentials.lending === "auto" && (supported || !accountBlocked(app, userId, p)))
+      return selected(p, OWNER, "本人额度充足，借用本人登录");
+  }
+  const blocked = accountBlocked(app, userId, p);
+  if (blocked) return { kind: "blocked", reason: blocked };
+  const profile = accountFor(app, userId, p);
+  const holder = selectedCredential(profile)?.holder ?? (entry ? accountOf(profile)?.userId : undefined) ?? OWNER;
+  const why = policy === "owner" && !pressure.known ? "本人额度未知，按后端设置" : "按后端账号设置";
+  return selected(profile, holder, `${why}，${holder === userId ? "用成员自己的登录" : holder === OWNER ? "沿用本机登录" : "借用已开放的成员凭据"}`);
+}
+
+export function selectedMemberAccount(p: AgentProfile): MemberAccountChoice | undefined {
+  return (p as AgentProfile & { [memberAccountChoice]?: MemberAccountChoice })[memberAccountChoice];
+}
+
 /**
  * The same profile with this user's account whether or not they are logged in now: for cleaning up
  * a session their account made earlier (session-cleanup.ts). Null when the account folder is gone.
@@ -346,9 +397,11 @@ export function cliOf(entry: AccountEntry) {
   return /[~$/]/.test(c) ? expandPath(c) : c;
 }
 
-function start(app: App, userId: string, entry: AccountEntry, args: string[]): ChildProcessWithoutNullStreams {
+function start(app: App, userId: string, entry: AccountEntry, args: string[], loginTmp?: string): ChildProcessWithoutNullStreams {
   const home = ensureAccountHome(app, userId, entry);
-  return launch(cliOf(entry), args, { cwd: home, env: { ...entry.account.cliEnv }, sandbox: accountRun(app, userId, entry) });
+  const sandbox = accountRun(app, userId, entry);
+  if (loginTmp) sandbox.env.TMPDIR = loginTmp;
+  return launch(cliOf(entry), args, { cwd: home, env: { ...entry.account.cliEnv }, sandbox });
 }
 
 /** Run one short command of the backend in the user's sandbox: its exit code and what it printed. */
@@ -415,6 +468,7 @@ export async function checkAccount(app: App, userId: string, backend: string): P
 
 /** Just logged in: what their account offers (models, quota) is read in the background. */
 function afterLogin(app: App, userId: string, backend: string) {
+  backendLoginReady(app, userId, backend);
   void import("./probe.ts").then((m) => m.probeAccount(app, userId, backend)).catch(() => {});
   for (const p of accountProfiles(app, userId, backend).filter((x) => quotaKind(x)).slice(0, 1)) void refreshQuota(app, p, 0).catch(() => {});
 }
@@ -422,8 +476,10 @@ function afterLogin(app: App, userId: string, backend: string) {
 // ---------------------------------------------------------------- logging in
 
 /** `input`: the login command waits for the code from the authorization page (`sendLoginInput`). */
-type Pending = { stop(): void; url: string; code?: string; startedAt: string; method: string; child?: ChildProcessWithoutNullStreams; input?: boolean };
+export type AccountLoginReply = { url?: string; code?: string; qr?: string; done?: boolean; input?: boolean };
+type Pending = AccountLoginReply & { stop(): void; startedAt: string; method: string; child?: ChildProcessWithoutNullStreams };
 const logins = new Map<string, Pending>();
+const starting = new Map<string, Promise<AccountLoginReply>>();
 const loginKey = (app: App, userId: string, backend: string) => `${app.home}|${userId}|${backend}`;
 
 /** The link and code also go to the person's Feishu private chat (through the bot), saying it is omem asking. */
@@ -460,68 +516,87 @@ export function loginMethods(app: App, entry: AccountEntry) {
  * (`<plugin>:<id>`, in omem's process). Returns the link and code to show; `done` when it finished
  * without needing one. The link and code also go to their Feishu private chat.
  */
-export function startLogin(app: App, userId: string, backend: string, method = "native"): Promise<{ url?: string; code?: string; done?: boolean; input?: boolean }> {
+export function startLogin(app: App, userId: string, backend: string, method = "native", notifyPrivate = true): Promise<AccountLoginReply> {
+  const key = loginKey(app, userId, backend);
+  const already = starting.get(key);
+  if (already) return already;
+  const pending = beginLogin(app, userId, backend, method, notifyPrivate).finally(() => starting.delete(key));
+  starting.set(key, pending);
+  return pending;
+}
+
+function beginLogin(app: App, userId: string, backend: string, method: string, notifyPrivate: boolean): Promise<AccountLoginReply> {
   const entry = requireEntry(app, backend);
   const support = sandboxSupport();
   if (!support.ok) throw new HttpError(400, `这台机器不能按人登录 AI 账号：${support.reason}`);
-  if (method !== "native") return startPluginLogin(app, userId, entry, method);
+  if (method !== "native") return startPluginLogin(app, userId, entry, method, notifyPrivate);
   const spec = entry.account.login;
   if (!spec) throw new HttpError(400, `${entry.name} 没有无界面登录：${entry.account.tokenEnv ? "粘贴令牌" : loginMethodsFor(entry.id).length ? "选一个插件提供的登录方式" : "这个后端暂时不能按人登录"}`);
   const key = loginKey(app, userId, backend);
   const running = logins.get(key);
-  if (running?.method === "native") return Promise.resolve({ url: running.url, ...(running.code ? { code: running.code } : {}), ...(running.input ? { input: true } : {}) });
+  if (running?.method === "native") return Promise.resolve({ url: running.url, code: running.code, qr: running.qr, input: running.input });
   if (running) {
     logins.delete(key);
     running.stop();
   }
   let child: ChildProcessWithoutNullStreams;
+  const loginTmp = spec.qrArgs ? mkdtempSync(join(ensureAccountHome(app, userId, entry), ".login-qr-")) : undefined;
+  const cleanTmp = () => { if (loginTmp) rmSync(loginTmp, { recursive: true, force: true }); };
   try {
-    child = start(app, userId, entry, spec.args);
+    child = start(app, userId, entry, spec.qrArgs ?? spec.args, loginTmp);
   } catch (e) {
+    cleanTmp();
     throw new HttpError(500, `启动登录失败：${(e as Error).message}`);
   }
+  child.once("close", cleanTmp);
+  const pending: Pending = { stop: () => stop(child), startedAt: now(), method: "native", child };
+  logins.set(key, pending);
+  const current = () => logins.get(key) === pending;
   const urlRe = new RegExp(spec.url);
   const codeRe = spec.code ? new RegExp(spec.code) : null;
   const inputRe = spec.input ? new RegExp(spec.input, "i") : null;
   let out = "";
   return new Promise((resolve, reject) => {
-    let found: { url: string; code?: string; input?: boolean } | null = null;
+    let found: AccountLoginReply | null = null;
     let settled = false;
     const finish = (err?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(firstTimer);
       clearTimeout(codeTimer);
-      if (err || !found) {
+      if (err || !found || !current()) {
+        if (current()) logins.delete(key);
         stop(child);
-        return reject(err ?? new HttpError(502, "登录命令没有给出链接"));
+        return reject(err ?? new HttpError(502, "登录已取消"));
       }
-      const pending: Pending = { stop: () => stop(child), ...found, startedAt: now(), method: "native", child };
-      logins.set(key, pending);
+      Object.assign(pending, found);
       const overall = setTimeout(() => stop(child), spec.timeoutMs ?? 600_000);
       overall.unref?.();
       child.once("close", (exit) => {
         clearTimeout(overall);
-        const mine = logins.get(key) === pending;
-        if (mine) logins.delete(key);
+        if (!current()) return;
+        logins.delete(key);
         // No status command (Copilot): the login finishing cleanly is the only word on it.
-        if (!entry.account.status && mine) {
+        if (!entry.account.status) {
           const before = stored(app, userId, backend);
           save(app, userId, backend, exit === 0 ? { state: "logged-in", method: "native", checkedAt: now() } : { ...before, error: `登录没有完成（退出码 ${exit}）`, checkedAt: now() });
-          if (exit === 0 && before.state !== "logged-in") afterLogin(app, userId, backend);
+          if (exit === 0) afterLogin(app, userId, backend);
           return;
         }
         void checkNative(app, userId, entry).catch(() => {});
       });
-      void tell(app, userId, entry, `${entry.name} 自己的登录`, found, Math.round((spec.timeoutMs ?? 600_000) / 60_000));
+      if (notifyPrivate && found.url) void tell(app, userId, entry, entry.name + " 自己的登录", { url: found.url, code: found.code }, Math.round((spec.timeoutMs ?? 600_000) / 60_000));
       resolve(found);
     };
-    const firstTimer = setTimeout(() => finish(new HttpError(504, `登录命令 60 秒内没有给出链接：${clean(out).trim().slice(-300) || "没有输出"}`)), 60_000);
+    const firstTimer = setTimeout(() => finish(new HttpError(504, "登录命令 60 秒内没有给出链接或二维码")), 60_000);
     let codeTimer: NodeJS.Timeout | undefined;
     const look = (d: Buffer) => {
       out = (out + d.toString()).slice(-20_000);
       const text = clean(out);
-      const url = urlRe.exec(text)?.[0];
+      const link = urlRe.exec(text)?.[0];
+      const url = link?.startsWith("https://") ? link : undefined;
+      const qr = !url && loginTmp ? loginQr(text, loginTmp) : undefined;
+      if (qr) { found = { qr }; finish(); return; }
       if (!url) return;
       const code = codeRe?.exec(text.replace(url, ""))?.[0];
       const asks = !!inputRe?.test(text.replace(url, ""));
@@ -534,9 +609,51 @@ export function startLogin(app: App, userId: string, backend: string, method = "
     child.stderr.on("data", look);
     child.once("error", (e) => finish(new HttpError(500, `启动登录失败：${e.message}`)));
     child.once("close", (code) => {
-      if (!settled) finish(new HttpError(502, `登录命令退出了（${code}），没有给出链接：${clean(out).trim().slice(-300) || "没有输出"}`));
+      if (settled) return;
+      if (code === 0 && entry.account.status && current()) {
+        settled = true;
+        logins.delete(key);
+        clearTimeout(firstTimer);
+        clearTimeout(codeTimer);
+        void checkNative(app, userId, entry).then(state => {
+          if (state.state !== "logged-in") throw new HttpError(502, "登录命令已退出，账号仍未登录");
+          backendLoginReady(app, userId, backend);
+          resolve({ done: true });
+        }).catch(reject);
+      } else finish(new HttpError(502, "登录命令没有给出链接或二维码（退出码 " + code + "）"));
     });
   });
+}
+
+function loginQr(text: string, directory: string) {
+  const at = text.lastIndexOf(directory + "/");
+  if (at < 0) return;
+  const match = /^[^\r\n]*?\.png(?=\s|["']|$)/.exec(text.slice(at));
+  if (!match) return;
+  const parts = match[0].slice(directory.length + 1).split("/");
+  if (parts.length > 8 || parts.some(part => !part || part === "." || part === "..")) return;
+  let dirFd: number | undefined;
+  let fd: number | undefined;
+  try {
+    const dirFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY;
+    dirFd = openSync(directory, dirFlags);
+    const name = parts.pop()!;
+    for (const part of parts) {
+      const next = openSync("/proc/self/fd/" + dirFd + "/" + part, dirFlags);
+      closeSync(dirFd);
+      dirFd = next;
+    }
+    fd = openSync("/proc/self/fd/" + dirFd + "/" + name, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const file = fstatSync(fd);
+    if (!file.isFile() || file.size > 1024 * 1024) return;
+    const png = Buffer.alloc(file.size);
+    if (readSync(fd, png) !== png.length) return;
+    if (png.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) return "data:image/png;base64," + png.toString("base64");
+  } catch { /* The CLI has not finished writing the image. */ }
+  finally {
+    if (fd !== undefined) closeSync(fd);
+    if (dirFd !== undefined) closeSync(dirFd);
+  }
 }
 
 /**
@@ -585,7 +702,7 @@ const validExpiry = (v: unknown) => (typeof v === "number" && Number.isFinite(v)
 /** Ten minutes before it runs out, and never sooner than a minute from now. */
 const nextRefresh = (expiresAt: number | undefined, at = Date.now()) => (expiresAt === undefined ? undefined : Math.max(expiresAt - REFRESH_BEFORE_MS, at + REFRESH_GAP_MS));
 
-function startPluginLogin(app: App, userId: string, entry: AccountEntry, key: string): Promise<{ url?: string; code?: string; done?: boolean }> {
+function startPluginLogin(app: App, userId: string, entry: AccountEntry, key: string, notifyPrivate: boolean): Promise<AccountLoginReply> {
   const m = loginMethod(key);
   if (!m || m.backend !== entry.id) throw new HttpError(404, `${entry.name} 没有登录方式 ${key}（插件停用或没被信任时它的登录方式不在）`);
   const lk = loginKey(app, userId, entry.id);
@@ -621,7 +738,7 @@ function startPluginLogin(app: App, userId: string, entry: AccountEntry, key: st
       if (pending.url === url && pending.code === code) return;
       pending.url = url;
       pending.code = code;
-      void tell(app, userId, entry, m.label, { url, ...(code ? { code } : {}) }, 11);
+      if (notifyPrivate) void tell(app, userId, entry, m.label, { url, ...(code ? { code } : {}) }, 11);
       answer(() => resolve({ url, ...(code ? { code } : {}) }));
     };
     Promise.resolve()
@@ -872,6 +989,7 @@ export type AccountBackendView = {
   code?: string;
   /** The login waits for the code the authorization page shows (`sendLoginInput`). */
   input?: boolean;
+  qr?: string;
   quota?: ReturnType<typeof quotaView>;
 };
 
@@ -906,7 +1024,8 @@ function viewOf(app: App, userId: string, e: AccountEntry, withQuota = false): A
     ...(s.checkedAt ? { checkedAt: s.checkedAt } : {}),
     ...(s.expiresAt ? { expiresAt: new Date(s.expiresAt).toISOString() } : {}),
     ...(s.error && state !== "logged-in" ? { error: s.error } : {}),
-    ...(pending?.url ? { url: pending.url, ...(pending.code ? { code: pending.code } : {}), ...(pending.input ? { input: true } : {}) } : {}),
+    ...(withQuota && pending?.url ? { url: pending.url, ...(pending.code ? { code: pending.code } : {}), ...(pending.input ? { input: true } : {}) } : {}),
+    ...(withQuota && pending?.qr ? { qr: pending.qr } : {}),
     ...(quota ? { quota } : {}),
   };
 }

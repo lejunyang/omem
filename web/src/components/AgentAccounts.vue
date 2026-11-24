@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { del, get, post } from "../api";
+import { del, get, post, put } from "../api";
 import { fmtTime, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { credAnchor, suppliedBy, type Credential } from "../lib/credentials";
@@ -36,11 +36,15 @@ type Backend = {
   code?: string;
   /** The login waits for the code the authorization page shows (Claude Code). */
   input?: boolean;
+  qr?: string;
   quota?: Quota | null;
 };
-type Mine = { supported: boolean; reason?: string; owner: boolean; backends: Backend[] };
+type AiSettings = { profile?: string; model?: string; guidance?: string };
+type Mine = { supported: boolean; reason?: string; owner: boolean; backends: Backend[]; ai?: AiSettings; profiles?: { id: string; name: string }[] };
 
 const mine = ref<Mine | null>(null);
+const ai = ref<AiSettings | null>(null);
+const savingAi = ref(false);
 const busy = ref<string | null>(null);
 /** The login method picked per backend (the one that logged them in, else the first). */
 const picked = ref<Record<string, string>>({});
@@ -49,6 +53,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 async function load() {
   try {
     mine.value = await get<Mine>("/api/me/agent-accounts");
+    if (!ai.value && mine.value.ai) ai.value = { ...mine.value.ai };
   } catch {
     mine.value = null;
   }
@@ -60,8 +65,23 @@ async function load() {
 onMounted(load);
 onBeforeUnmount(() => clearTimeout(timer));
 
+async function saveAi() {
+  if (!ai.value) return;
+  savingAi.value = true;
+  try {
+    const { profile = "", model = "", guidance = "" } = ai.value;
+    ai.value = await put<AiSettings>("/api/me/agent-accounts/settings", {
+      profile, model, guidance, ...(profile !== (mine.value?.ai?.profile ?? "") || model !== (mine.value?.ai?.model ?? "") ? { effort: "" } : {}),
+    });
+    if (mine.value) mine.value.ai = { ...ai.value };
+    toast("已保存个人 AI 设置", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally { savingAi.value = false; }
+}
+
 const STATE: Record<Backend["state"], string> = { none: "没登录", "logged-in": "已登录", expired: "登录过期", "logging-in": "登录中" };
-const POLICY: Record<Policy, string> = { owner: "没登录时借用 omem 主人的", own: "没登录时这个后端用不了", "own-or-other": "没登录时换一个你登录过、或允许借用的后端" };
+const POLICY: Record<Policy, string> = { owner: "允许借用 omem 主人的登录", own: "只能用自己的登录", "own-or-other": "没有自己的登录时可换后端" };
 
 async function act(b: Backend, what: string, fn: () => Promise<unknown>) {
   busy.value = `${b.id}:${what}`;
@@ -140,12 +160,31 @@ function reveal(kind: string) {
 </script>
 
 <template>
+  <template v-if="ai && mine?.profiles">
+    <h2 class="section-title">个人 AI 设置</h2>
+    <form class="card pad stack" @submit.prevent="saveAi">
+      <label class="stack tight">
+        默认后端
+        <UiSelect :model-value="ai.profile ?? ''" aria-label="默认后端" :options="[{ value: '', label: '按任务选型' }, ...mine.profiles.map(p => ({ value: p.id, label: p.name }))]" @change="(profile) => { if (ai) { ai.profile = profile; ai.model = ''; } }" />
+      </label>
+      <label class="stack tight">
+        默认模型
+        <input v-model="ai.model" class="input" maxlength="200" placeholder="留空时用后端默认模型" spellcheck="false" />
+      </label>
+      <label class="stack tight">
+        选型偏好
+        <textarea v-model="ai.guidance" class="textarea" maxlength="2000" rows="3" placeholder="例如，整理讨论记录时优先用响应快的模型" />
+      </label>
+      <p class="muted small">指定后端或模型后会优先使用该选择。启用任务选型时，偏好会和 omem 主人的说明一起交给决策模型。</p>
+      <div><button class="btn primary" :disabled="savingAi">{{ savingAi ? "正在保存…" : "保存设置" }}</button></div>
+    </form>
+  </template>
   <CredentialList ref="credList" :backend-names="names" @loaded="(l) => (creds = l)" @changed="load" />
   <template v-if="mine?.supported">
     <h2 class="section-title">我的 AI 账号</h2>
     <p v-if="mine.owner" class="muted small">你用运行 omem 的这台机器上已有的登录，不用在这里登录。成员没登录时借不借用你的，在 <router-link to="/settings?card=agent-accounts">设置 → 成员 → 成员的 AI 账号</router-link> 里按后端设。</p>
     <template v-else>
-      <p class="muted small">在这里登录以后，你发起的运行就用你自己的账号，额度和使用记录算在你名下。这台机器上所有人的 Agent 都以同一个系统用户运行，靠沙箱把各人的账号目录隔开：你的运行看不到别人的目录，也看不到 omem 主人的登录。点“登录”后，链接和验证码也会由机器人发到你的飞书私聊。</p>
+      <p class="muted small">允许借用的后端会在 omem 主人的额度充足时优先使用他的登录。额度紧张时用你的登录。如果需要授权，飞书机器人会发登录卡片，授权后继续原来的运行。</p>
       <div class="list">
         <div v-for="b in mine.backends" :key="b.id" class="card pad stack acct">
           <div class="row wrap head">
@@ -178,6 +217,10 @@ function reveal(kind: string) {
               <input v-model="pasted[b.id]" class="input sm mono grow" maxlength="4000" autocomplete="off" spellcheck="false" placeholder="授权页给出的授权码" :aria-label="`${b.name} 的授权码`" />
               <button class="btn sm primary" type="submit" :disabled="!!busy || !(pasted[b.id] ?? '').trim()">{{ busy === `${b.id}:input` ? "提交中…" : "提交" }}</button>
             </form>
+          </div>
+          <div v-if="b.state === 'logging-in' && b.qr" class="stack tight login">
+            <span class="small">扫描官方二维码，完成后这里会显示“已登录”。</span>
+            <img :src="b.qr" :alt="`${b.name} 的授权二维码`" width="180" height="180" />
           </div>
           <div v-if="b.state === 'logged-in' && b.quota" class="row wrap quota small">
             <span class="muted">额度{{ b.quota.plan ? `（${b.quota.plan}）` : "" }}</span>

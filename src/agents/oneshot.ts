@@ -2,7 +2,8 @@ import { runAccess } from "./own-sandbox.ts";
 import { ownRun } from "./own-run.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
-import { accountBlocked, accountFor } from "./accounts.ts";
+import { accountBlocked, accountFor, memberAccountPlan } from "./accounts.ts";
+import { excluded } from "./capacity.ts";
 import { accountOf } from "./sandbox.ts";
 import { runBackend } from "./dispatch.ts";
 import { profileFor, recordIsolation } from "./runner.ts";
@@ -13,7 +14,7 @@ import { replyOf } from "./types.ts";
  * notification muted, merge two versions of a role). The assistant's backend first, one other
  * as fallback; null when none answers, and callers fall back to doing nothing.
  */
-export async function askModel(app: App, prompt: string, opts: { timeoutMs?: number; signal?: AbortSignal; userId?: string } = {}): Promise<string | null> {
+export async function askModel(app: App, prompt: string, opts: { timeoutMs?: number; signal?: AbortSignal; userId?: string; memberRouting?: boolean } = {}): Promise<string | null> {
   const profiles = allProfiles(app.config);
   let base: AgentProfile | undefined;
   try {
@@ -27,10 +28,14 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
   timer.unref();
   opts.signal?.addEventListener("abort", () => ctrl.abort(), { once: true });
   try {
-    for (const candidate of chain.filter(p => !opts.userId || !accountBlocked(app, opts.userId, p)).slice(0, 2)) {
+    const eligible = opts.memberRouting && opts.userId ? chain.flatMap(p => {
+      const plan = memberAccountPlan(app, opts.userId!, p);
+      return plan.kind === "ready" && !excluded(app, plan.profile) ? [plan.profile] : [];
+    }) : chain.filter(p => !opts.userId || !accountBlocked(app, opts.userId, p));
+    for (const candidate of eligible.slice(0, 2)) {
       if (ctrl.signal.aborted) break;
       try {
-        const profile = accountFor(app, opts.userId, candidate);
+        const profile = opts.memberRouting ? candidate : accountFor(app, opts.userId, candidate);
         const cwd = accountOf(profile)?.home ?? app.home;
         const isolation = ownRun(app, profile, cwd, true);
         const access = runAccess(app.config.agents.fullAccess, { owner: !opts.userId || opts.userId === "owner", box: isolation.box, allowWrites: false });

@@ -80,7 +80,7 @@ export type AccountSpec = {
    * `input`: the command then waits for the code the authorization page shows to be pasted back (a pattern
    * for its prompt); the page asks the person for it and omem writes it to the command.
    */
-  login?: { args: string[]; url: string; code?: string; input?: string; timeoutMs?: number };
+  login?: { args: string[]; url: string; code?: string; input?: string; qrArgs?: string[]; timeoutMs?: number };
   /** Exit code 0 is logged in; `user` finds the account name in the output. */
   status?: { args: string[]; user?: string };
   logout?: { args: string[] };
@@ -180,7 +180,7 @@ export const accountOnlyCatalog: CatalogEntry[] = [
       dirs: [".local/share"],
       mounts: ["${XDG_DATA_HOME:-~/.local/share}/doubao_cli/app"],
       owns: [".local/share/doubao_cli"],
-      login: { args: ["login", "--qr=full"], url: LOGIN_URL, timeoutMs: 600_000 },
+      login: { args: ["login", "--qr=full"], qrArgs: ["login", "--qr=png"], url: LOGIN_URL, timeoutMs: 600_000 },
       status: { args: ["auth", "status"] },
     },
   },

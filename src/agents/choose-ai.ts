@@ -4,7 +4,8 @@ import { decide, decisionReady, describeDecision } from "../core/decision.ts";
 import { truncate } from "../core/util.ts";
 import { choosableProfiles, downReason, excluded, excludedReason, limitOf, perDayOf, usedOf, usedToday } from "./capacity.ts";
 import { probeFor } from "./probe.ts";
-import { accountBlocked, accountFor } from "./accounts.ts";
+import { isAiMember, memberAccountPlan, selectedMemberAccount } from "./accounts.ts";
+import { memberAi } from "./member-ai.ts";
 import { jsonIn } from "./oneshot.ts";
 import { quotaAvoid, quotaView } from "./quota.ts";
 
@@ -67,7 +68,7 @@ export function candidateWhen(list: Candidate[], c: Candidate) {
 }
 
 /** The owner's candidates as profiles, installed and not left out (limit 0, quota spent, daily cap); why the others were left out goes to `left`. */
-export function candidateProfiles(app: App, left?: string[]): (AgentProfile & { when: string })[] {
+export function candidateProfiles(app: App, left?: string[], userId?: string): (AgentProfile & { when: string })[] {
   const r = app.config.agents.routing;
   if (!r.automatic) return [];
   const usable = new Set(choosableProfiles(app).map((p) => p.id));
@@ -78,8 +79,10 @@ export function candidateProfiles(app: App, left?: string[]): (AgentProfile & { 
     // An empty model or effort in the settings means the backend's own (not a model named "").
     const model = c.model || undefined;
     const out = { ...p, model: model ?? p.model, effort: c.effort || (model && model !== p.model ? undefined : p.effort), when: candidateWhen(r.candidates, c) };
-    if (!excluded(app, out)) return [out];
-    left?.push(`${label({ profile: out.id, model: out.model, effort: out.effort })}：${excludedReason(app, out) ?? "不可用"}`);
+    const plan = userId ? memberAccountPlan(app, userId, out) : null;
+    const reason = plan && plan.kind !== "ready" ? plan.reason : excludedReason(app, plan?.profile ?? out);
+    if (!reason) return [out];
+    left?.push(`${label({ profile: out.id, model: out.model, effort: out.effort })}：${reason}`);
     return [];
   });
 }
@@ -135,19 +138,25 @@ export async function chooseAI(
   const left: string[] = [];
   // A member's run: their own account where they are logged in (its quota, its models), and no
   // backend the owner keeps to own accounts that they have not logged in to (agents/accounts.ts).
-  const others = candidateProfiles(app, left).map((c) => accountFor(app, o.userId, c)).filter((c) => {
+  const member = o.userId && isAiMember(app, o.userId) ? o.userId : undefined;
+  const guidance = memberAi(app, member).guidance;
+  const status = (p: AgentProfile) => {
+    const plan = member ? memberAccountPlan(app, member, p) : null;
+    if (plan && plan.kind !== "ready") return plan.reason;
+    const effective = plan?.profile ?? p;
+    return [selectedMemberAccount(effective)?.reason, state(app, effective)].filter(Boolean).join("，");
+  };
+  const others = candidateProfiles(app, left, member).filter((c) => {
     if (same({ profile: c.id, model: c.model, effort: c.effort })) return false;
     if (o.accepts && !o.accepts(c)) {
       left.push(`${c.id}：本次任务需要 omem 工具`);
       return false;
     }
-    const blocked = o.userId ? accountBlocked(app, o.userId, c) : null;
-    if (blocked) {
-      left.push(`${label({ profile: c.id, model: c.model, effort: c.effort })}：${blocked}`);
-      return false;
-    }
-    const down = downReason(app, c);
-    const why = quotaAvoid(app, c) ?? (down ? `刚出过故障：${truncate(down, 60)}` : null);
+    const plan = member ? memberAccountPlan(app, member, c) : null;
+    if (plan && plan.kind !== "ready") return false;
+    const effective = plan?.profile ?? c;
+    const down = downReason(app, effective);
+    const why = quotaAvoid(app, effective) ?? (down ? `刚出过故障：${truncate(down, 60)}` : null);
     if (why) left.push(`${label({ profile: c.id, model: c.model, effort: c.effort })}：${why}`);
     return !why;
   });
@@ -157,14 +166,14 @@ export async function chooseAI(
   }
   const strip = ({ when: _, ...p }: AgentProfile & { when: string }) => p as AgentProfile;
   const opts: Record<string, { pick: AiPick | null; profile: AgentProfile; text: string }> = {
-    keep: { pick: null, profile: o.current, text: `按原来的设置用 ${current}（${state(app, accountFor(app, o.userId, o.current))}）` },
+    keep: { pick: null, profile: o.current, text: `按原来的设置用 ${current}（${status(o.current)}）` },
   };
   if (o.accepts && !o.accepts(o.current)) {
     delete opts.keep;
     left.push(`${current}：本次任务需要 omem 工具`);
   }
   others.forEach((c, i) => {
-    opts[`c${i + 1}`] = { pick: { profile: c.id, model: c.model, effort: c.effort }, profile: strip(c), text: `${label({ profile: c.id, model: c.model, effort: c.effort })}：${c.when}（${state(app, c)}）` };
+    opts[`c${i + 1}`] = { pick: { profile: c.id, model: c.model, effort: c.effort }, profile: strip(c), text: `${label({ profile: c.id, model: c.model, effort: c.effort })}：${c.when}（${status(c)}）` };
   });
   const keys = Object.keys(opts);
   const options = Object.values(opts).map((v) => truncate(v.text, 200));
@@ -174,8 +183,11 @@ export async function chooseAI(
     由谁做: o.who,
     现在: now,
     ...(r.guidance.trim() ? { 本人的总体偏好: r.guidance.trim() } : {}),
+    ...(guidance ? { 成员的选型偏好: guidance } : {}),
   };
-  const instructions = "为这个任务选用哪个 AI，并排出先后（选中的用不了时按这个顺序换）。按本人的偏好和每个候选写的适用场景对照任务和现在的时间；同样合适时选空闲的、额度宽裕的，不选快用完和刚出过故障的（原来的设置快用完时也一样）；拿不准就按原来的设置。";
+  const instructions = "为这个任务选用哪个 AI，并排出先后（选中的用不了时按这个顺序换）。按本人的偏好" +
+    (guidance ? "、成员写的选型偏好" : "") +
+    "和每个候选的适用场景对照任务和时间。同样合适时选空闲、额度宽裕、已能运行的，快用完和刚出过故障的排到后面。拿不准就按原来的设置。";
   const nameOf = (k: string) => (opts[k].pick ? label(opts[k].pick!) : `原来的 ${current}`);
   const done = (order: string[], reason: string, by: OrderSource): ChooseResult => {
     const pick = opts[order[0]].pick;
@@ -208,7 +220,7 @@ export async function chooseAI(
     "选项：",
     ...Object.entries(opts).map(([k, v]) => `- ${k}：${v.text}`),
   ].join("\n");
-  const v = jsonIn<{ order?: unknown; choice?: string; reason?: string }>(await askModel(app, prompt, { timeoutMs: 60_000, signal: o.signal, userId: o.userId }).catch(() => null));
+  const v = jsonIn<{ order?: unknown; choice?: string; reason?: string }>(await askModel(app, prompt, { timeoutMs: 60_000, signal: o.signal, userId: o.userId, memberRouting: !!member }).catch(() => null));
   const given = [...(Array.isArray(v?.order) ? v!.order : []), v?.choice].filter((k): k is string => typeof k === "string" && !!opts[k]);
   if (!given.length) {
     record({ outcome: "failed", by: "通用模型", reason: "没有给出可用的选择，按原来的设置", options });
@@ -228,15 +240,16 @@ const ORDER_TTL = 10 * 60_000;
 const orders = new WeakMap<App, Map<string, { at: number; keys: string[]; reason: string }>>();
 export async function fallbackOrder(
   app: App,
-  o: { scene: ChooseScene; who: string; from: AgentProfile; why: string; options: AgentProfile[]; signal?: AbortSignal; now?: number },
+  o: { scene: ChooseScene; who: string; from: AgentProfile; why: string; options: AgentProfile[]; userId?: string; signal?: AbortSignal; now?: number },
 ): Promise<{ order: AgentProfile[]; by: OrderSource; reason: string }> {
   const r = app.config.agents.routing;
   const keep = (reason: string) => ({ order: o.options, by: "static" as const, reason });
   if (o.options.length < 2) return keep("只剩一个可换的");
-  if (!r.automatic || (!r.guidance.trim() && !r.candidates.some((c) => c.when.trim()))) return keep("没有选型说明");
+  const guidance = memberAi(app, o.userId).guidance;
+  if (!r.automatic || (!guidance && !r.guidance.trim() && !r.candidates.some((c) => c.when.trim()))) return keep("没有选型说明");
   if (!decisionReady(app)) return keep("没有配置决策模型");
   const names = o.options.map((p) => label({ profile: p.id, model: p.model, effort: p.effort }));
-  const key = `${o.scene}|${o.who}|${names.join(",")}`;
+  const key = JSON.stringify([o.scene, o.who, names, o.userId, guidance]);
   const now = o.now ?? Date.now();
   let cache = orders.get(app);
   if (!cache) { cache = new Map(); orders.set(app, cache); }
@@ -256,9 +269,10 @@ export async function fallbackOrder(
     为什么换: truncate(o.why, 300),
     现在: new Date(now).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, weekday: "short", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }),
     ...(r.guidance.trim() ? { 本人的总体偏好: r.guidance.trim() } : {}),
+    ...(guidance ? { 成员的选型偏好: guidance } : {}),
   };
   try {
-    const d = await decide(app, material, { type: "choice", instructions: "原来的 AI 现在用不了，要换一个接手。按本人的偏好和每个选项写的适用场景，选最该接手的（其余按合适程度排在后面）；同样合适时选空闲的、额度宽裕的，不选快用完和刚出过故障的。", options: opts }, { signal: o.signal, timeoutMs: 20_000 });
+    const d = await decide(app, material, { type: "choice", instructions: "原来的 AI 现在用不了，要换一个接手。按本人的偏好、成员的选型偏好和每项适用场景排序；同样合适时选空闲的、额度宽裕的，不选快用完和刚出过故障的。", options: opts }, { signal: o.signal, timeoutMs: 20_000 });
     if (!d || !opts[d.choice]) return keep("决策模型没有给出顺序");
     const keys = ranked(Object.keys(opts), d.probabilities, d.choice);
     const reason = describeDecision(d, Object.fromEntries(Object.keys(opts).map((k, i) => [k, names[i]])));

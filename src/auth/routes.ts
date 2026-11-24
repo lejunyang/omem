@@ -66,6 +66,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/me": "self",
   // Each person's own AI accounts (docs/v2/agent-accounts.md): the handlers act on the caller's own only.
   "GET /api/me/agent-accounts": "self",
+  "PUT /api/me/agent-accounts/settings": "self",
   "POST /api/me/agent-accounts/:backend/login": "self",
   "POST /api/me/agent-accounts/:backend/login/input": "self",
   "POST /api/me/agent-accounts/:backend/token": "self",

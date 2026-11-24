@@ -344,6 +344,7 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
   const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;
   const isModelCard = inter.purpose === "model" || buttonAction?.action?.startsWith("model:") || (typeof formValue === "object" && formValue !== null && "modelText" in formValue);
   if (isModelCard) {
+    if (operatorUser() !== OWNER) return { toast: { type: "warning", content: "用 /agent 或 /model 更改你在本会话的 AI" } };
     const { applyModelCard } = await import("./lark-model-card.ts");
     const r = applyModelCard(app, inter.conversationId, { value, formValue });
     if (r.probe) {

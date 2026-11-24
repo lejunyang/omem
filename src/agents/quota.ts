@@ -103,6 +103,13 @@ export function quotaAvoid(app: App, p: AgentProfile, now = Date.now()): string 
   return null;
 }
 
+/** A known window for this model, including a spent window even when early avoidance is disabled. */
+export function quotaPressure(app: App, p: AgentProfile) {
+  const windows = liveWindows(quotaOf(app, p), p.model).filter(w => !w.models || p.model);
+  const spent = windows.find(w => w.usedPercent >= 100);
+  return { known: windows.length > 0, reason: spent ? `${spent.name} 已用完` : quotaAvoid(app, p) };
+}
+
 const days = (w: QuotaWindow, now: number) => (w.resetsAt ? Math.round(((Date.parse(w.resetsAt) - now) / DAY) * 10) / 10 : null);
 /** Remaining percent per day until the reset, for windows of a day or longer. */
 export function perDayLeft(w: QuotaWindow, now = Date.now()): number | null {

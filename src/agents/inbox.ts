@@ -33,6 +33,8 @@ export type Inbound = Partial<ThreadAddress> & {
   contextLabel?: string;
   /** Channel message id, so later replies can land in the right place (topic). */
   externalMessageId?: string;
+  /** Sender in the originating bot's app, resolved by the Feishu adapter. */
+  larkSenderId?: string;
   topicRootId?: string;
   /** The message this one replies to / quotes (Feishu 引用回复): sender, readable text and optional origin link. */
   quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
@@ -161,6 +163,10 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     if (score !== null && score >= app.config.guard.threshold) meta.contextSuspect = Math.round(score * 100) / 100;
   }
   if (inb.externalMessageId) meta.externalId = inb.externalMessageId;
+  if ((inb.channel === "lark" || inb.channel?.startsWith("lark:")) && inb.externalMessageId) {
+    meta.larkInThread = !!inb.topicId;
+    if (inb.larkSenderId) meta.larkSenderId = inb.larkSenderId;
+  }
   if (inb.topicRootId) meta.topicRootId = inb.topicRootId;
   if (inb.quote) meta.quote = inb.quote;
   if (inb.speaker) meta.speaker = inb.speaker;
@@ -175,7 +181,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   const waiting = queuedInLane(app, thread.id, "ask");
   // Bursts merge into a waiting turn of the same sender, or of someone whose access the sender's covers
   // (steer.ts mayJoinTurn): the turn keeps its own user's permissions.
-  if (waiting && mayJoinTurn(app, (waiting.input.userId as string | undefined) ?? OWNER, userId, [{ meta }])) {
+  if (waiting && !waiting.input.aiLoginWait && mayJoinTurn(app, (waiting.input.userId as string | undefined) ?? OWNER, userId, [{ meta }])) {
     const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
     // A fixed window (a watched chat's batch) is never pushed back, only brought forward.
     const due = inb.fixedWindow ? app.db.prepare("select not_before from runs where id = ?").get(waiting.id) as { not_before: string | null } | undefined : undefined;

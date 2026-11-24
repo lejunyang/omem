@@ -24,7 +24,10 @@ import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
 import { WAKE_NOTE } from "./wakes.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
-import { accountBlocked, accountFor, recordedAccount } from "./accounts.ts";
+import { accountBlocked, accountFor, isAiMember, memberAccountPlan, MemberOwnerQuotaChanged, recordedAccount, selectedMemberAccount } from "./accounts.ts";
+import { memberThreadAi } from "./member-ai.ts";
+import { selectMemberRunAccount } from "./member-run-ai.ts";
+import { aiLoginWait } from "./credential-wait.ts";
 import { SandboxStartError } from "./spawn.ts";
 import { accountTag, egressRequested } from "./sandbox.ts";
 import { afterTurn, noteRateLimit } from "./quota.ts";
@@ -369,20 +372,32 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const fullAccess = guestTurn ? app.config.lark.guests.fullAccess : undefined;
   // The AI of this thread: the owner's pick (/model, the thread's backend) if any; otherwise the one
   // chosen when its agent session started (choose-ai.ts), kept for as long as that session goes on.
-  const pinned = !!(t.settings.profile || t.settings.model || t.settings.effort);
-  let auto = pinned ? null : (t.settings.auto ?? null);
+  const member = !guestTurn && isAiMember(app, userId);
+  const login = aiLoginWait(app, ctx.run.id);
+  if (login && (!member || login.userId !== userId)) throw new Error("等待登录的成员已不可用");
+  const personal = member ? memberThreadAi(app, t, userId) : {};
+  const specified = !!(personal.profile || personal.model || personal.effort);
+  const choice = login?.pick ?? (specified ? { ...personal, profile: personal.profile ?? t.settings.profile } : { profile: t.settings.profile, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
+  const pinned = !!(choice.profile || choice.model || choice.effort);
+  const previousAuto = member ? t.settings.memberAuto?.[userId] : t.settings.auto;
+  let auto = pinned ? null : (previousAuto ?? null);
+  const saveAuto = (pick: typeof auto) => {
+    const settings = getThread(app, threadId).settings;
+    updateThread(app, threadId, { settings: member ? { memberAuto: { ...settings.memberAuto, [userId]: pick } } : { auto: pick } });
+  };
   let own: AgentProfile | undefined;
   let chosen: ChooseResult | null = null;
-  if (!pinned && (!t.agentSession || t.agentTurns >= app.config.sessions.maxTurns) && !live.has(threadId)) {
+  const otherSender = member && t.agentProfile?.split("|")[5] !== userId;
+  if (!pinned && ((!t.agentSession || t.agentTurns >= app.config.sessions.maxTurns) && !live.has(threadId) || otherSender)) {
     const current = resolveRunProfile(app, { actor });
     chosen = await chooseAI(app, { scene: "conversation", userId, task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }), onRecord: (r) => ctx.event("status", choiceEvent(r)) });
     const pick = chosen?.pick;
     auto = pick ? { profile: pick.profile, model: pick.model, effort: pick.effort } : null;
-    if (JSON.stringify(auto) !== JSON.stringify(t.settings.auto ?? null)) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, auto } });
+    if (JSON.stringify(auto) !== JSON.stringify(previousAuto ?? null)) saveAuto(auto);
     if (pick) own = current;
-  } else if (pinned && !t.agentSession) {
-    const p = resolveRunProfile(app, { actor, profileId: t.settings.profile ?? undefined, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
-    ctx.event("status", choiceEvent({ scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: "这个会话用 /model 或会话设置指定了 AI" }));
+  } else if (pinned && !promptOverride && (!t.agentSession || specified)) {
+    const p = resolveRunProfile(app, { actor, profileId: choice.profile, model: choice.model, effort: choice.effort });
+    ctx.event("status", choiceEvent({ scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: login ? "继续等待登录前的 AI 选择" : specified ? "成员指定了 AI" : "这个会话用 /model 或会话设置指定了 AI" }));
   }
   const watched = messages.some((m) => typeof m.meta.speaker === "string");
   const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
@@ -390,7 +405,11 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // Only wake notes in this turn (none from the owner): the agent picks up its own work.
   const woken = messages.every((m) => !!m.meta.wake);
   const scene = { kind: ctx.run.kind, chat: !coordinate && !handoff && !woken && !watched, awareness: !promptOverride };
-  const prep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
+  const profileArgs = { actor, profileId: choice.profile ?? auto?.profile, model: choice.model ?? auto?.model, effort: choice.effort ?? auto?.effort };
+  const raw = resolveRunProfile(app, profileArgs);
+  const memberOptions = { userId, runId: ctx.run.id, threadId, messages, pinned: specified, signal: ctx.signal, revising: !!promptOverride };
+  const profile = member ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, userId).slice(1) }) : undefined;
+  const prep = prepareRun(app, { ...profileArgs, profile, scene, spaceId: space, runId: ctx.run.id, userId, lark, denyTools, addTools, fullAccess, guestTurn });
   // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
   const limitFor = { profile: prep.profile };
   const emit = (e: AgentEvent) => {
@@ -403,7 +422,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // A member's own account (agents/accounts.ts) is part of the key: a session never continues under another account.
   const keyOf = ({ profile: p, cwd }: typeof prep) => {
     const use = selectedCredential(p);
-    return `${p.id}|${label}|${cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(p) ? `|${accountTag(p)}` : ""}${use ? `|credential:${use.kind}` : ""}`;
+    return `${p.id}|${label}|${cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(p) ? `|${accountTag(p)}` : ""}${use ? `|credential:${use.kind}` : ""}${specified ? "|member-specified" : ""}`;
   };
   const liveKey = (selected: typeof prep) => `${JSON.stringify(selected.profile.env)}|${keyOf(selected)}${selected.fullAccess ? "|full" : ""}${selected.acpWritable ? "|write" : ""}`;
   const cloudKey = (selected: typeof prep) => selected.capabilities.omemAccess === "http"
@@ -528,7 +547,13 @@ ${WAKE_NOTE}`
     try { recordIsolation(app, ctx.run.id, userId, selected.profile); }
     catch (e) { revokeToolToken(selected.token); throw e; }
   };
+  const writeCount = () => one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", ctx.run.id)!.n;
+  const memberRetry = (p: AgentProfile) => selectMemberRunAccount(app, resolveRunProfile(app, {
+    actor, profileId: p.id, model: p.model, effort: p.effort,
+  }), memberOptions);
+  const canSwitchAccount = (p: AgentProfile) => member && selectedMemberAccount(p)?.holder === "owner" && !ctx.signal.aborted && !promptOverride && !writeCount();
   let firstFailure: Error | undefined;
+  let firstReplacement: AgentProfile | undefined;
   if (prep.profile.transport !== "acp") {
     // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
     try {
@@ -542,6 +567,7 @@ ${WAKE_NOTE}`
             cwd: prep.cwd,
             runId: ctx.run.id,
             capabilities: prep.capabilities,
+            strictSelection: specified ? { model: !!choice.model, effort: !!choice.effort } : undefined,
             system: prep.system,
             parts: prep.parts,
             scene: prep.scene,
@@ -563,7 +589,7 @@ ${WAKE_NOTE}`
       try {
         r = await run(canResume);
       } catch (e) {
-        if (!canResume || (isAgentRunError(e) && e.kind === "queue") || e instanceof SandboxStartError || (e as Error).message === "CANCELLED") throw e;
+        if (!canResume || (member && isRetryableAgentError(e)) || (isAgentRunError(e) && e.kind === "queue") || e instanceof SandboxStartError || (e as Error).message === "CANCELLED") throw e;
         emit({ type: "status", text: "无法继续之前的 Agent 会话，改为新会话" });
         r = await run(false);
         mode = "fresh";
@@ -573,9 +599,11 @@ ${WAKE_NOTE}`
       return { text: replyOf(r), agent: r.agent, profileId: prep.profile.id, mode };
     } catch (e) {
       if (ctx.signal?.aborted) throw e;
-      if (isAgentRunError(e) && e.kind === "queue") noteBreakdown(app, prep.profile, e, emit);
+      if (canSwitchAccount(prep.profile) && (noteQuota(app, prep.profile, e, emit) || e instanceof MemberOwnerQuotaChanged)) {
+        firstReplacement = await memberRetry(prep.profile);
+      } else if (isAgentRunError(e) && e.kind === "queue") noteBreakdown(app, prep.profile, e, emit);
       else if (!(e instanceof SandboxStartError)) throw e;
-      firstFailure = e;
+      firstFailure = e instanceof Error ? e : new Error(String(e));
     } finally {
       revokeToolToken(prep.token);
     }
@@ -586,11 +614,15 @@ ${WAKE_NOTE}`
   // Where the turn goes when its AI cannot answer: the thread's own AI when another was chosen, the
   // role's other backends, the fallbacks, the routing candidates (runner.ts failoverProfiles).
   // The chooser's ranking by the owner's routing notes first (on the turn that chose), then the static order.
-  const chain = (chosen ? distinctProfiles([prep.profile, ...chosen.order, ...failoverProfiles(app, actor, prep.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, prep.profile, own))
-    // Not a backend kept to members' own accounts that this member has not logged in to; the member's
-    // own account on the rest, so their quota and spent marks (not the owner's) decide what is skipped.
-    .filter((p, i) => i === 0 || !accountBlocked(app, userId, p))
-    .map((p, i) => (i === 0 ? p : accountFor(app, userId, p)));
+  const fallback = failoverProfiles(app, actor, prep.profile, own, member ? userId : undefined);
+  const chain = distinctProfiles([prep.profile, ...(chosen?.order ?? []), ...fallback]).flatMap((p, i) => {
+    if (i === 0) return [p];
+    if (!member) return !excluded(app, p) && !accountBlocked(app, userId, p) ? [accountFor(app, userId, p)] : [];
+    const plan = memberAccountPlan(app, userId, p, !!login && p.id === login.pick.profile);
+    return plan.kind === "ready" && !excluded(app, plan.profile) ? [plan.profile] : [];
+  });
+  if (member && (specified || login) && app.config.agents.routing.pinnedFallback === "never") chain.splice(1);
+  if (firstReplacement) chain.splice(1, 0, firstReplacement);
   let orderBy: OrderSource = chosen ? chosen.by : "static";
   let orderReason = chosen?.reason ?? "";
   let ordered = !!chosen;
@@ -598,7 +630,7 @@ ${WAKE_NOTE}`
   const reorder = async (from: number, why: string) => {
     if (ordered || chain.length - from < 2) return;
     ordered = true;
-    const r = await fallbackOrder(app, { scene: "conversation", who: label, from: chain[0], why, options: chain.slice(from), signal: ctx.signal });
+    const r = await fallbackOrder(app, { scene: "conversation", who: label, from: chain[0], why, options: chain.slice(from), userId: member ? userId : undefined, signal: ctx.signal });
     chain.splice(from, chain.length - from, ...r.order);
     orderBy = r.by;
     orderReason = r.reason;
@@ -610,7 +642,6 @@ ${WAKE_NOTE}`
   const skip = (p: AgentProfile) => excluded(app, p) || !!downReason(app, p);
   const usable = (i: number) => !skip(chain[i]) || !chain.slice(i + 1).some((p) => !skip(p));
   const hasNext = (i: number) => chain.slice(i + 1).some((_, k) => usable(i + 1 + k));
-  const writeCount = () => one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", ctx.run.id)!.n;
   /** Why the previous backend was left, and what it already wrote (for the one taking over). */
   if (firstFailure && !hasNext(0)) throw firstFailure;
   let left = firstFailure?.message ?? "";
@@ -625,7 +656,7 @@ ${WAKE_NOTE}`
       const candidate = chain[step];
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: candidate.id, userId, lark, model: t.settings.model ?? candidate.model ?? undefined, effort: t.settings.effort ?? candidate.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
+      curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profile: member ? candidate : undefined, profileId: candidate.id, userId, lark, model: t.settings.model ?? candidate.model ?? undefined, effort: t.settings.effort ?? candidate.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
       // The fallback runs with this member's own account of it when they have one (prepareRun chose it).
       const used = curPrep.profile;
       limitFor.profile = used;
@@ -636,6 +667,7 @@ ${WAKE_NOTE}`
     let networkStopped: Promise<void> | undefined;
     try {
       const used = curPrep.profile;
+      const strictSelection = specified && used.id === raw.id ? { model: !!choice.model, effort: !!choice.effort } : undefined;
       checkAccount(curPrep);
       if (curPrep.isolation.note) emit({ type: "status", text: curPrep.isolation.note });
       if (used.transport !== "acp") {
@@ -646,6 +678,7 @@ ${WAKE_NOTE}`
             cwd: curPrep.cwd,
             runId: ctx.run.id,
             capabilities: curPrep.capabilities,
+            strictSelection,
             system: curPrep.system,
             parts: curPrep.parts,
             scene: curPrep.scene,
@@ -655,6 +688,7 @@ ${WAKE_NOTE}`
             fullAccess: curPrep.fullAccess, acpWritable: curPrep.acpWritable,
             signal: ctx.signal,
             mcp: curPrep.mcp,
+            persistSession: member,
             extraMcp: curPrep.extraMcp,
             queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
           },
@@ -662,6 +696,10 @@ ${WAKE_NOTE}`
         );
         answer = replyOf(r);
         mode = "fresh";
+        if (member) {
+          save(r.sessionId, 1, curPrep);
+          retireReplaced(r.sessionId);
+        }
         break;
       }
       networkAttempt = await beginNetworkAttempt(app, used, { signal: ctx.signal, runId: ctx.run.id, stop: () => { networkStopped = live.get(threadId)?.handle.stopped; release(threadId); } });
@@ -670,7 +708,7 @@ ${WAKE_NOTE}`
         const { profile, cwd } = selected;
         try {
           const handle = await openAcp(profile, {
-            app, cwd, signal, resumeSessionId, env: networkEnvironment(app, profile),
+            app, cwd, signal, resumeSessionId, env: networkEnvironment(app, profile), strictSelection,
             cleanup: await sessionCleanup(app, profile, { cwd, runId: ctx.run.id, persistSession: true }, emit),
             mcp: selected.mcp, extraMcp: selected.extraMcp, ownSandbox: selected.isolation.box,
             allowWrites: selected.allowWrites, modes: selected.modes, fullAccess: selected.fullAccess,
@@ -724,7 +762,8 @@ ${WAKE_NOTE}`
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
+          const renewed = member ? await memberRetry(used) : undefined;
+          curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profile: renewed, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
           curPrep.profile = networkProfile(app, curPrep.profile);
           limitFor.profile = curPrep.profile;
           checkAccount(curPrep);
@@ -743,7 +782,7 @@ ${WAKE_NOTE}`
         if (step > 0) {
           const used = curPrep.profile;
           // Not pinned by the owner: the next turns continue on the backend that answered.
-          if (!pinned) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, auto: { profile: used.id, model: used.model ?? undefined, effort: used.effort ?? undefined } } });
+          if (!pinned) saveAuto({ profile: used.id, model: used.model ?? undefined, effort: used.effort ?? undefined });
         }
         break;
       } catch (e) {
@@ -774,7 +813,14 @@ ${WAKE_NOTE}`
         break;
       }
       const used = curPrep.profile;
-      noteQuota(app, used, e, emit);
+      const spent = noteQuota(app, used, e, emit);
+      if ((spent || e instanceof MemberOwnerQuotaChanged) && canSwitchAccount(used)) {
+        revokeToolToken(curPrep.token);
+        const next = await memberRetry(used);
+        chain.splice(step + 1, 0, next);
+        left = "本人额度紧张";
+        continue;
+      }
       const busy = isRetryableAgentError(e);
       // The backend broke down (crash, dropped connection, silent past the watchdog, the upstream stream
       // cut off): another one takes over, told what this attempt already wrote, and this one (or its

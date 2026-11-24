@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { activeUser, findUser, userName } from "../core/users.ts";
 import { json, now } from "../core/util.ts";
+import type { AiPick } from "./choose-ai.ts";
 
 /**
  * A conversation stopped because a command's login was missing or expired (credential-outcome.ts):
@@ -48,4 +49,38 @@ export function credentialReady(app: App, holder: string, kind: string, name: st
       .catch((e) => console.warn(`[omem] ${name}登录后接着做没有开始：${(e as Error).message}`));
   }
   return list.length;
+}
+
+/** An AI login is needed before any model work. The original run, with all of its inputs, can resume. */
+export type AiLoginWait = {
+  userId: string;
+  backend: string;
+  name: string;
+  pick: AiPick;
+  deadline: string;
+  ready?: boolean;
+  threadId?: string;
+  replyTo?: string;
+  inThread?: boolean;
+};
+
+export function aiLoginWait(app: App, runId: string | null): AiLoginWait | undefined {
+  if (!runId) return;
+  const value = one<{ value: string | null }>(app.db, "select json_extract(input, '$.aiLoginWait') value from runs where id = ?", runId)?.value;
+  return value ? json<AiLoginWait | undefined>(value, undefined) : undefined;
+}
+
+export function waitForBackendLogin(app: App, runId: string, wait: AiLoginWait) {
+  run(app.db, "update runs set input = json_set(input, '$.aiLoginWait', json(?)) where id = ? and status = 'running'", JSON.stringify(wait), runId);
+}
+
+/** Called only after the provider login and any plugin provisioning have succeeded. */
+export function backendLoginReady(app: App, userId: string, backend: string) {
+  if (!activeUser(findUser(app, userId))) return;
+  run(app.db, `update runs set input = json_set(input, '$.aiLoginWait.ready', json('true')),
+    not_before = case when status = 'queued' then null else not_before end
+    where (user_id = ? or user_id is null) and status in ('queued','running')
+      and json_extract(input, '$.aiLoginWait.userId') = ?
+      and json_extract(input, '$.aiLoginWait.backend') = ?
+      and json_extract(input, '$.aiLoginWait.deadline') > ?`, userId, userId, backend, now());
 }

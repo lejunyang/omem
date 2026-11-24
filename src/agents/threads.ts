@@ -24,8 +24,11 @@ export type ThreadSettings = {
   /** Temporary model/effort override for this thread (set with /model); cleared with /model off. */
   model?: string | null;
   effort?: string | null;
+  /** Member commands affect only that member's turns even when the conversation is shared. */
+  memberAi?: Record<string, import("./member-ai.ts").MemberAiPick>;
   /** The AI chosen when the thread's current agent session started (agents/choose-ai.ts), or the one a failed-over turn moved to; used while nothing above pins one. */
   auto?: { profile: string; model?: string; effort?: string } | null;
+  memberAuto?: Record<string, NonNullable<ThreadSettings["auto"]> | null>;
   /** Other threads whose summaries are included as background. */
   links?: string[];
   /** Sources used by the summarizer for this watch conversation. */

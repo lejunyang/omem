@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
-import { effortsFor, userProbe } from "./probe.ts";
+import { effortsFor, probeFor, userProbe } from "./probe.ts";
+import { isAiMember, memberAccountPlan } from "./accounts.ts";
 import { allProfiles } from "../core/config.ts";
 import { backendAvailable } from "./availability.ts";
 import { resolveModelOption } from "./models.ts";
@@ -24,13 +25,17 @@ export function validateExecution(app: App, choice?: Execution, userId?: string)
   if (e.source === "auto" && !app.config.agents.routing.automatic) throw new HttpError(403, "已关闭助手自主选型；使用档案默认值，只有本人明确指定才能临时更换");
   const backend = allProfiles(app.config).find((p) => p.id === e.profile);
   if (!backend || !backendAvailable(backend, app.home)) throw new HttpError(400, `后端 ${e.profile} 不可用，请先 list_ai_backends 核对`);
-  const probe = userProbe(app, userId, e.profile);
+  const candidate = { ...backend, model: e.model ?? backend.model };
+  const plan = userId && isAiMember(app, userId) ? memberAccountPlan(app, userId, candidate) : null;
+  const probe = plan ? plan.kind === "ready" ? probeFor(app, plan.profile) : null : userProbe(app, userId, e.profile);
   if (e.model && probe?.models.length) {
     const resolved = resolveModelOption(e.model, probe.models);
     if (!resolved.matched) throw new HttpError(400, `模型 ${e.model} 不在 ${e.profile} 的检测结果中`);
     e.model = resolved.value;
   }
-  if (e.source === "auto" && excluded(app, { ...backend, model: e.model ?? backend.model })) throw new HttpError(400, `${e.profile}${e.model ? ` · ${e.model}` : ""} 当前不可自动使用：${excludedReason(app, { ...backend, model: e.model ?? backend.model }) ?? "不可用"}，换一个`);
+  const effective = plan?.kind === "ready" ? { ...plan.profile, model: e.model ?? backend.model } : candidate;
+  if (e.source === "auto" && (plan?.kind === "blocked" || (plan?.kind !== "login" && excluded(app, effective))))
+    throw new HttpError(400, `${e.profile}${e.model ? ` · ${e.model}` : ""} 当前不可自动使用：${plan?.kind === "blocked" ? plan.reason : excludedReason(app, effective) ?? "不可用"}，换一个`);
   const levels = e.model ? effortsFor(probe, e.model) : [];
   const knownEmpty = e.model && probe?.effortsByModel && Object.hasOwn(probe.effortsByModel, e.model ?? backend.model ?? "") && !levels.length;
   if (e.effort && (knownEmpty || (levels.length && !levels.includes(e.effort)))) throw new HttpError(400, `思考强度 ${e.effort} 不适用于该模型`);
