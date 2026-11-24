@@ -5,6 +5,8 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 在线流程对账与解除阻塞：巡检最多每六小时一次，与跟进共用每日限额和事项通道；对照阶段、挂接对象和群材料；确认卡补证据，最小动作进待处理 | 已实现（2026-11-25）；`test/flow-reconcile.test.ts`，未接真实平台 | `src/flows/reconcile.ts`、`engine.ts`、`roles/flow-reconcile.md` |
+| 一次性流程：`flow_start` 接受内联清单，使用实例副本，外部动作先确认，走完建议存成模板 | 已实现（2026-11-25）；`test/flow-reconcile.test.ts` | `src/flows/inline.ts`、`engine.ts`、`review.ts`、`roles/assistant.md` |
 | Antigravity 官方 CLI 内置后端：识别 PATH 中的 `agy`，后端 id `antigravity`，以 `agy acp` 启动并复用 CLI 登录；`agy -p /usage --output-format json` 读取各模型组的额度与重置时间，复用额度缓存、展示和避让；按 CLI 报告的模型范围匹配，不明范围只展示。注册表独立包 `antigravity-acp` 保留，认证与 CLI 分开，不自动替换已有配置 | 已实现（2026-11-23）；`test/catalog.test.ts`、`test/antigravity-quota.test.ts`；真实 CLI 1.5.15 读到 9 个模型、4 档思考强度；额度命令无模型回合和 token 消耗；登录在终端完成 | `src/agents/catalog.ts`、`antigravity-quota.ts`、`quota.ts`、`src/core/config.ts` |
 | 成员 AI 选择与登录：按实际账号看额度，允许借用且本人额度充足时用本人，紧张时用成员账号；飞书内发官方设备码或扫码卡片，授权后原运行继续；会话与个人默认、成员选型偏好、账号选择事件 | 已实现（2026-11-25），假 ACP 与假飞书覆盖 9 项。真实 TraeX / 豆包授权及飞书租户权限待验 | `src/agents/accounts.ts`、`member-ai.ts`、`member-run-ai.ts`、`credential-wait.ts`、`src/channels/lark-ai-login.ts`、`web/src/components/AgentAccounts.vue`、`test/member-ai.test.ts` |
 | 规则以成员的身份运行：Agent 动作的 `runAs` 列成员，保存后逐人征得同意（规则的结果会话是飞书群时在群里问，否则私聊；先查 omem 账号、提问能力和飞书关联），成员在账号页同意或撤回；一次运行用 `act_as` 依次换人，登记过的命令行用他的登录在他的账号沙箱里跑、飞书个人工具使用他的连接，文档和其他文件的写入按这个成员判断归属和审批，写入留审计及运行事件；缺登录提醒成员，机器人发消息和读群历史 | 已实现（2026-11-25），`test/rule-run-as.test.ts`、`test/rule-run-as-lark.test.ts`；未在常驻服务器上用真实成员、飞书账号和研发平台命令验证 | `src/rules/run-as.ts`、`src/rules/store.ts`、`actions.ts`、`src/agents/credential-execution.ts`、`credential-outcome.ts`、`tools.ts`（`act_as`）、`src/server/http.ts`、`web/src/views/Rules.vue`、`web/src/components/RunAsConsents.vue` |

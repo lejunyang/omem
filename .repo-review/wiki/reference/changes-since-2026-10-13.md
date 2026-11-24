@@ -26,6 +26,10 @@ updated: 2026-11-25
 
 - 宿主可用 `decideMany` 对同一份材料一次问最多 8 题，漏答就换模型重问整批；`decideSceneMany` 对有场景的题各套门槛、各写一条记录。设置试用和 CLI 回放仍逐题。入口：`src/core/decision.ts`、`src/core/decision-log.ts`。
 
+## 流程：对账、解除阻塞与一次性阶段清单（2026-11-25）
+
+巡检给阶段停太久、或事项有新动静的流程排一次对账，六小时内不重排。对账重读挂接对象和群证据，通过原状态机纠正，签字不代点；只读没法解时把最小一步或草稿放进待处理。`flow_start` 可用内联清单开始一次性流程，外部写入要确认，走完可用现有草稿卡存为模板。入口 `src/flows/reconcile.ts`、`inline.ts`，设计见 `docs/v2/flows.md` 文末。
+
 ## 研究：交给改（2026-11-25）
 
 `src/studies/fix-queue.ts`：`queueFixes` / `unqueueFix` / `tickFixQueue` / `attachFixQueue`（`engine.ts` 的 `attachFlows` 挂上）。表 `study_findings` 加 `fix_queued_at`、`fix_note`，`study_scopes` 加 `fix_ai`；`scope.ts` 的 `fixExecutions` 把它变成交办的 `execution` / `reviewExecution`。同一研究一次一个交办，评审通过（`stage.key = done`）即 `markFixedByChange`；`fixes.ts` 重跑仍失败时清掉。接口 `POST/DELETE /api/items/:id/study/fix-queue`，工具 `queue_study_fixes`（`study` 组）。网页 `ItemStudy.vue`：“交给改…”“挑几条交给改”“不排了”，范围里选改代码和评审的 AI。

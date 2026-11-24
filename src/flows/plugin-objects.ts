@@ -186,11 +186,11 @@ export function detachObject(app: App, itemId: string, id: string, userId: strin
  * `prefer` first (the item whose button was pressed). False when there is none to read it as, or the
  * read failed (kept on the object as its error, the way polling keeps it).
  */
-export async function refreshObject(app: App, id: string, prefer?: string): Promise<boolean> {
+export async function refreshObject(app: App, id: string, prefer?: string, opts?: { linkedItemOnly?: boolean }): Promise<boolean> {
   const r = row(app, id), def = r ? pluginObjectKind(r.kind) : undefined;
   if (!r || !def) return false;
   const items = linkedItems(app, id).map((x) => getItem(app, x)).filter((i) => !isClosed(i.status) && canWrite(app, i.userId, i.spaceId));
-  const item = items.find((i) => i.id === prefer) ?? items[0];
+  const item = items.find((i) => i.id === prefer) ?? (opts?.linkedItemOnly ? undefined : items[0]);
   if (!item) return false;
   try {
     const result = await serial(app, `${r.kind}:${r.key}`, async () => {

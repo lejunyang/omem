@@ -1,3 +1,5 @@
+import { inlineStages } from "../flows/inline.ts";
+import { readReconcileObject, reconcileResultSchema, submitReconcile } from "../flows/reconcile.ts";
 import { boardLarkCommand, boardLarkDocument, requireBoardLarkMessages } from "./board-lark-read.ts";
 import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
@@ -2539,10 +2541,21 @@ def({
     return (await import("../flows/engine.ts")).studyOperation(ctx.app, d.item_id, async () => { await store.closeDirection(ctx.app, a.direction, a.state, a.conclusion); return "方向已结束，结论已记下。"; });
   },
 });
-async function flowRefs(ctx: ToolContext, list: string[]) {
+async function flowRefs(ctx: ToolContext, list: string[], itemId?: string) {
   const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
   for (const ref of list) {
-    if (ref.startsWith("src:")) { validateItemRefs(ctx.app, [ref], ctx.userId ?? OWNER, ctx.spaces); continue; }
+    if (ref.startsWith("src:")) {
+      validateItemRefs(ctx.app, [ref], ctx.userId ?? OWNER, ctx.spaces);
+      await requireReadable(ctx.app, ctx.userId ?? OWNER, ref.slice(4).split("#")[0]);
+      continue;
+    }
+    if (ref.startsWith("object:") && itemId) {
+      const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+      const id = ref.slice(7);
+      if (!one(ctx.app.db, "select 1 from item_materials where item_id=? and kind='object' and ref=?", itemId, id)
+        || r?.kind === "flow-reconcile" && !(r.output.reconcileRead as string[] | undefined)?.includes(id)) throw new HttpError(403, "只能引用这次读到的已关联对象");
+      continue;
+    }
     if (ref.startsWith("design:")) {
       const d = (await import("../designs/store.ts")).getDesign(ctx.app, ref.slice(7));
       if (d.userId !== (ctx.userId ?? OWNER) || allowed && !allowed.includes(d.spaceId)) throw new HttpError(403, "不能引用该方案");
@@ -2616,26 +2629,48 @@ def({
   },
 });
 def({
-  name: "flow_start", description: "传 flow：让事项开始走这个流程，同一事项已有进行中的流程时拒绝。不传 flow：本人说再来一轮时，开始事项已有流程的下一轮，这一轮还没做完时不能开始。",
-  write: true, schema: z.object({ item: z.string(), flow: z.string().optional().describe("流程名；不传就是对事项已有的流程开下一轮") }), handler: async (ctx, a) => {
+  name: "flow_start", description: "传 flow：开始已有模板；或传 stages（可同时给 name）：只为该事项开始一次性流程，不存模板。两者均不传才是本人要求的下一轮。同一事项只能有一个进行中的流程。",
+  write: true, schema: z.object({ item: z.string(), flow: z.string().trim().min(1).optional(), name: z.string().trim().min(1).max(200).optional(), stages: inlineStages.optional() }), handler: async (ctx, a) => {
     flowItem(ctx, a.item, "flow");
     const engine = await import("../flows/engine.ts");
-    return JSON.stringify(a.flow ? await engine.startFlow(ctx.app, a.item, a.flow, flowActor(ctx), ctx.spaces) : await engine.startRound(ctx.app, a.item, flowActor(ctx)));
+    if (a.flow && a.stages || a.name && !a.stages) throw new HttpError(400, "模板与一次性清单二选一；name 只和 stages 一起用");
+    const start = a.stages ? { stages: a.stages, name: a.name } : a.flow;
+    return JSON.stringify(start ? await engine.startFlow(ctx.app, a.item, start, flowActor(ctx), ctx.spaces) : await engine.startRound(ctx.app, a.item, flowActor(ctx)));
   },
 });
 def({
   name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段不会直接完成，而是变成一个问本人的确认。blocked：做不下去，waiting_on 写等谁或等什么；等本人看、改或确认某份东西（表格、文档、预览页）时，把它的地址放进 links，卡片上直接能点开；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：这一段不需要，写原因；要本人确认或由本人承担的阶段不能由你跳过，把理由告诉本人。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), links: z.array(z.object({ label: z.string().trim().min(1).max(80).describe("一句话说是什么，如“埋点核对表”"), url: z.string().trim().max(2000).describe("http(s) 地址") })).max(10).optional().describe("要本人打开的产物：表格、文档、预览页。传了就替换这一段之前交的链接，传空数组清掉"), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional() }), handler: async (ctx, a) => {
     checkBrief(a.note, "note ");
-    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.evidence ?? []);
+    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.evidence ?? [], a.item);
     return JSON.stringify(await (await import("../flows/engine.ts")).reportStage(ctx.app, a.item, a.stage, { ...a, waitingOn: a.waiting_on }, flowActor(ctx)));
   },
 });
 def({
   name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过，正在做的照做并问本人要不要停下。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), reason: z.string().trim().min(1).max(4000), refs: z.array(z.string()).max(50).optional() }), handler: async (ctx, a) => {
-    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.refs ?? []);
+    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.refs ?? [], a.item);
     return JSON.stringify(await (await import("../flows/engine.ts")).reopenStage(ctx.app, a.item, a.stage, a.reason, a.refs ?? [], flowActor(ctx)));
+  },
+});
+def({
+  name: "read_flow_object", description: "对账时重读这件事项已挂对象的真实状态（只读平台）；读不到就返回原因，不把缓存说成现状。object 填 object:<id>。",
+  write: true, schema: z.object({ item: z.string(), object: z.string() }),
+  handler: async (ctx, a) => {
+    if (ctx.role !== "flow-reconcile" || !ctx.runId) throw new HttpError(403, "只有对账运行可以重读对象");
+    flowItem(ctx, a.item, "flow");
+    return JSON.stringify(await readReconcileObject(ctx.app, getRun(ctx.app, ctx.runId), a.item, a.object));
+  },
+});
+def({
+  name: "submit_flow_reconcile", description: "交一行对账结论（summary）和最多五个卡住阶段的最小动作（steps）。需找别人时填 person、draft；有确切的关联群可填 chat，按关注档位发或留给本人。只有本人能做时只填 stage、action。没有变化或动作就只交结论，不通知。",
+  write: true, schema: reconcileResultSchema,
+  handler: async (ctx, a) => {
+    if (ctx.role !== "flow-reconcile" || !ctx.runId) throw new HttpError(403, "只有对账运行可以交结论");
+    const item = flowItem(ctx, a.item, "flow");
+    const next = await submitReconcile(ctx.app, getRun(ctx.app, ctx.runId), a, item.userId,
+      (chat, draft) => larkPost({ ...ctx, larkChats: [chat], larkDraft: false }, { chat_id: chat }, { text: draft }));
+    return JSON.stringify({ ok: true, next });
   },
 });
 def({

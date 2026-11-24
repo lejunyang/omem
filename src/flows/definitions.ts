@@ -25,7 +25,7 @@ const aiChoice = z.object({ profile: text(200), model: text(200).optional(), eff
 export const budgetSchema = z.object({ minutes: z.number().positive("分钟预算必须大于 0").max(525600).optional(), fixes: z.number().int().min(0).max(20).optional(), trials: z.number().int().nonnegative("试验预算不能小于 0").max(100000).optional() }).strict();
 const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "时刻必须写成 HH:mm（00:00–23:59）");
 const weekdays = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
-const objectName = z.union([z.enum(["code-work", "design"]), z.custom<`${string}:${string}`>((kind) => typeof kind === "string" && kind.includes(":"), "这种内置对象在后续阶段实现")]);
+const objectName = z.union([z.enum(["code-work", "design"]), z.templateLiteral([z.string(), ":", z.string()], { error: "这种内置对象在后续阶段实现" })]);
 const carrier = z.union([
   z.object({ runner: providerId, with: providerParams }).strict(),
   z.object({ run: z.object({ agent: slug.optional(), skill: slug.optional() }).strict() }).strict(),
@@ -33,7 +33,7 @@ const carrier = z.union([
   z.object({ object: objectName }).strict(),
   z.enum(["owner", "wait"]),
 ], { error: "承担者只能是 run、object、owner 或 wait；person 和插件对象在后续阶段实现" });
-const stageSchema = z.object({
+export const stageFields = z.object({
   id: slug, name: text(200), note: text(1000).optional(), needs: z.array(slug).optional(), when: text(300).optional(), by: carrier,
   tools: z.array(z.string().refine((n) => TOOL_GROUPS.find((g) => g.id === "study")!.tools.includes(n), "阶段 tools 只允许 study 分组里的工具")).max(6).optional(),
   done: z.union([text(300), z.object({ signal: z.union([z.enum(["git.pushed", "git.merged"]), providerId]), with: providerParams }).strict(), z.object({ object: objectName, status: z.union([text(100), z.array(text(100)).min(1, "至少写一个状态")]) }).strict()], { error: "完成规则只能是 confirm、Git 信号、对象状态或一句话；其他规则在后续阶段实现" }).optional(),
@@ -42,7 +42,8 @@ const stageSchema = z.object({
   window: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d$/, "时间段必须写成 HH:mm-HH:mm").refine((s) => s.slice(0, 5) !== s.slice(6), "时间段的开始和结束不能相同").optional(),
   budget: budgetSchema.optional(), escalate: z.object({ to: tierSchema, max: z.number().int().min(0).max(100) }).strict().optional(),
   together: z.literal("push", { error: "together 只能写 push：同一次推送的几件事项一起做这一段" }).optional(),
-}).strict().refine((s) => !s.together || typeof s.by === "object" && "run" in s.by, { path: ["together"], message: "together 只用于由运行承担（by: { run: … }）的阶段" }).refine((s) => !(typeof s.done === "object" && "signal" in s.done) || s.by === "owner" || s.by === "wait", { path: ["done"], message: "Git 信号只允许用于 owner 或 wait 承担的阶段" });
+}).strict();
+const stageSchema = stageFields.refine((s) => !s.together || typeof s.by === "object" && "run" in s.by, { path: ["together"], message: "together 只用于由运行承担（by: { run: … }）的阶段" }).refine((s) => !(typeof s.done === "object" && "signal" in s.done) || s.by === "owner" || s.by === "wait", { path: ["done"], message: "Git 信号只允许用于 owner 或 wait 承担的阶段" });
 export const flowSchema = z.object({
   id: slug, name: text(200), description: text(2000).optional(),
   for: z.object({ kinds: z.array(z.enum(["todo", "waiting", "watch", "decision"], { error: "事项类型只能是 todo / waiting / watch / decision" })).optional(), spaces: z.array(text(100)).optional() }).strict().optional(),

@@ -8,6 +8,7 @@ import { addChange } from "../items/changes.ts";
 import { emitOmem } from "../rules/omem-events.ts";
 import type { FlowDefinition } from "./definitions.ts";
 import type { Execution } from "../agents/execution.ts";
+import { withdrawReconcileAsks } from "./reconcile.ts";
 import type { StageEvent } from "./review.ts";
 
 export type StageState = "pending" | "gated" | "doing" | "blocked" | "done" | "skipped" | "stale";
@@ -97,6 +98,7 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
     run(app.db, "update item_flows set updated_at=? where item_id=?", at, itemId);
     run(app.db, "update items set updated_at=? where id=?", at, itemId);
   });
+  if (changed || next.attempt !== prev?.attempt || next.round !== prev?.round) withdrawReconcileAsks(app, itemId, id);
   app.emit({ type: "changed", entity: "item", id: itemId });
   // A stage moved (or started waiting on the owner): rules about omem's own events hear of it.
   const shown = (s: StageState, waitingOn: string | null | undefined) => s === "doing" && waitingOn === "owner" ? "waiting-owner" : s;

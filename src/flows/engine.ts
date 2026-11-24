@@ -8,8 +8,8 @@ import { artifactsByIds, runImages } from "../agents/artifacts.ts";
 import { all, one, run } from "../core/db.ts";
 import { decide, decisionReady, describeDecision } from "../core/decision.ts";
 import { notify } from "../core/notify.ts";
-import { HttpError, json, now, truncate } from "../core/util.ts";
-import { cancelAsk, createAsk, getAsk, registerAskHandler, type Ask } from "../agents/asks.ts";
+import { HttpError, json, now, truncate, webLink } from "../core/util.ts";
+import { cancelAsk, createAsk, getAsk, registerAskHandler, reviseAsk, type Ask } from "../agents/asks.ts";
 import { stopRun, createRun, getRun, registerHandler } from "../agents/runs.ts";
 import { validateExecution, executionArgs, type Execution } from "../agents/execution.ts";
 import { dailyCapReached, outOfQuotaUntil } from "../agents/capacity.ts";
@@ -39,6 +39,8 @@ import { initFollow, followContexts, followLimit, followView, shownChanges, chan
 import { atomic, changeStage, flushProgress, markProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl, type StageLink } from "./store.ts";
 import { saveReview, storedReview, type FlowEnd } from "./review.ts";
 import { stopCodeWork } from "../agents/code-steer.ts";
+import { inlineDefinition, inlineId, inlineTemplate, type InlineStart } from "./inline.ts";
+import { assertReconcileStage, queueReconcile, reconcileReminder, withdrawReconcileAsks } from "./reconcile.ts";
 
 const host: FlowActor = { actor: "host" };
 // This is an execution lock, not a projection/cache: each pass reads the item's own rows.
@@ -55,6 +57,7 @@ function serial<T>(app: App, id: string, fn: () => Promise<T>): Promise<T> {
   void next.finally(() => { if (map!.get(id) === next) map!.delete(id); }).catch(() => {});
   return next;
 }
+export const flowOperation = serial;
 function running(app: App, id: string) {
   const f = itemFlow(app, id);
   if (!f || f.endedAt) throw new HttpError(409, "事项没有进行中的流程");
@@ -485,18 +488,22 @@ export function startRound(app: App, itemId: string, by: FlowActor, at = new Dat
   });
 }
 
-export async function startFlow(app: App, itemId: string, flowId: string, by: FlowActor, runSpaces: string[] | null = null) {
+export async function startFlow(app: App, itemId: string, flowId: string | InlineStart, by: FlowActor, runSpaces: string[] | null = null) {
   attachFlows(app);
   return serial(app, itemId, async () => {
     const item = by.userId ? requireItem(app, itemId, by.userId, "flow") : getItem(app, itemId);
     const range = by.userId ? spacesWithCapability(app, by.userId, "flows.view") : null;
     const visibleSpaces = range && new Set(runSpaces ? range.filter(id => runSpaces.includes(id)) : range);
-    const f = readFlow(app, flowId, visibleSpaces);
+    const f = typeof flowId === "string" ? readFlow(app, flowId, visibleSpaces) : inlineDefinition(flowId, item.title);
+    if (typeof flowId === "string" && inlineId(f.id)) throw new HttpError(400, "这个 id 留给一次性流程，请更换模板 id");
+    if (isClosed(item.status)) throw new HttpError(409, "事项已结束");
     if (hasRunner(f) && !runnerApproved(app, f)) throw new HttpError(403, "含插件运行器的流程需要本人确认");
     if (visibleSpaces && !flowAppliesTo(f, item)) throw new HttpError(400, "这个流程不适用于该事项");
+    if (by.userId && item.userId !== by.userId) throw new HttpError(403, "只能开始自己的事项流程");
     if (itemFlow(app, itemId)?.endedAt === null) throw new HttpError(409, "事项已经在走一个流程");
     atomic(app, () => {
       for (const s of itemStages(app, itemId)) { withdraw(app, s); dropUpstream(app, s, "重新开始了流程"); }
+      withdrawReconcileAsks(app, itemId);
       run(app.db, "delete from item_stages where item_id=?", itemId);
       const at = now();
       run(app.db, `insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at,round_started_at) values(?,?,?,?,?,?,?) on conflict(item_id) do update set flow_id=excluded.flow_id,definition=excluded.definition,started_at=excluded.started_at,ended_at=null,auto_streak=0,card=null,started_by=excluded.started_by,updated_at=excluded.updated_at,round=1,round_started_at=excluded.round_started_at,round_closed_at=null,next_round_at=null`, itemId, f.id, JSON.stringify(f), at, by.actor, at, at);
@@ -724,13 +731,31 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     const f = running(app, itemId), d = definition(f, stageId);
     if (d.tools?.includes("propose_directions") || isTrials(d) || isFixes(d)) throw new HttpError(403, "研究方向和试验由专门的工具交结果，不能用 stage_report 绕过本人选择或试验队列");
     let s = getStage(app, itemId, stageId);
+    const fromReconcile = assertReconcileStage(app, f, s, by, report.evidence ?? []);
+    if (fromReconcile) {
+      if (report.state === "blocked") throw new HttpError(400, "对账不改阻塞状态；有要找人处理的最小一步，用 submit_flow_reconcile 交");
+      const gate = s.control.question === "gate" || s.control.question === "when";
+      if (s.state === "gated" || s.control.gateReview || s.control.budgetExceeded || s.control.question === "skip" || s.control.question === "refuse") {
+        if (s.askId && (gate || s.control.gateReview) && report.state === "done") {
+          if (await enrichReconcileAsk(app, s, report, gate)) changeStage(app, itemId, stageId, s.state, { evidence: [...new Set([...s.evidence, ...report.evidence ?? []])] }, by, `对账依据：${report.note}`, report.evidence);
+          return flowView(app, itemId);
+        }
+        throw new HttpError(409, "这一段仍有本人要处理的关卡，不能由对账改状态");
+      }
+      if (report.state === "skip" && s.state !== "doing" && s.state !== "blocked") throw new HttpError(409, "对账只跳过已开始的阶段");
+      if (report.state === "done" && s.control.question === "done" && s.askId && getAsk(app, s.askId).status === "pending") {
+        if (await enrichReconcileAsk(app, s, report)) changeStage(app, itemId, stageId, s.state, { evidence: [...new Set([...s.evidence, ...report.evidence ?? []])] }, by, report.note, report.evidence);
+        return flowView(app, itemId);
+      }
+      if (s.state === "blocked" && !s.enteredAt) throw new HttpError(409, "该阶段尚未开始，不能在对账时补录");
+    }
     if (s.control.budgetExceeded && by.actor !== "owner") throw new HttpError(409, "到了这一段的时间预算，等本人处理");
     if (!report.note.trim()) throw new HttpError(400, "交结果需要说明");
     if (["done", "skip"].includes(report.state) && isStudy(f) && d.tools?.includes("record_finding")) report = { ...report, note: [report.note, pushSummary(app, f)].filter(Boolean).join("\n") };
     if (report.state === "skip" ? s.state === "done" : !["doing", "blocked"].includes(s.state)) throw new HttpError(409, "已完成阶段不能跳过；交结果需要阶段进行中或卡住");
     if (report.state === "skip" && s.state === "skipped") return flowView(app, itemId);
     // An old carrier cannot finish the replacement's attempt.
-    if (by.runId && (s.by === s.control.runId && !!s.by) && s.by !== by.runId) throw new HttpError(409, "这不是当前阶段的承担运行");
+    if (!fromReconcile && by.runId && (s.by === s.control.runId && !!s.by) && s.by !== by.runId) throw new HttpError(409, "这不是当前阶段的承担运行");
     if (by.runId && getRun(app, by.runId).input.flowStartedAt && (stageItemStart(getRun(app, by.runId).input, itemId) !== f.startedAt || getRun(app, by.runId).input.stageId !== stageId || s.control.runId !== by.runId)) throw new HttpError(409, "这次运行所属的流程、阶段或尝试已变化");
     const evidence = report.evidence ?? [];
     if (report.state === "blocked" && report.unsure && escalateStage(app, f, d, s, report.note, new Date(), evidence)) {
@@ -755,6 +780,7 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     if (asksOwner) {
       const askId = question(app, f, d, { ...s, askId: null }, "done", d.by === "owner" ? { ask: "这一段是你来做的，助手说已经做完了。是这样吗？", result: report.note, evidence, after: true } : { ask: "助手说这一段做完了，确认吗？不对就点“还不行”写意见。", result: report.note, evidence, after: true }, ["确认", "还不行"]);
       changeStage(app, itemId, stageId, "doing", { askId, evidence, waitingOn: "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
+      if (fromReconcile) await enrichReconcileAsk(app, { ...s, askId }, report);
     } else if (report.state === "done" && (typeof d.done === "object" || typeof d.by === "object" && "object" in d.by)) {
       changeStage(app, itemId, stageId, "doing", { askId: null, evidence, control: { ...s.control, reported: true } }, by, report.note, evidence);
     } else {
@@ -764,6 +790,16 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     await advanceNow(app, itemId, "承担者交结果");
     return flowView(app, itemId);
   });
+}
+const RECONCILED_DONE = "确认已做完";
+async function enrichReconcileAsk(app: App, s: StageRow, report: StageReport, startGate = false) {
+  const ask = getAsk(app, s.askId!);
+  if (ask.status !== "pending") throw new HttpError(409, "这张确认卡已经失效");
+  const current = ask.question.split("\n\n**对账查到的依据**\n")[0];
+  const text = `${current}\n\n**对账查到的依据**\n${askNote(report.note, 800)}${startGate ? "\n如果已做完，点“确认已做完”，不用再开始。" : ""}\n${report.evidence!.map(ref => ref.startsWith("src:") ? `[看原文](${ref})` : ref.startsWith("object:") ? `[看事项上的对象](${webLink(app, `#/work/${s.itemId}`)})` : ref.startsWith("design:") ? `[看方案](${webLink(app, `#/designs/${ref.slice(7)}`)})` : `[看运行](${webLink(app, `#/runs/${ref.replace(/^(run:|code-work:)/, "")}`)})`).join("　")}`;
+  if (ask.question === text) return false;
+  await reviseAsk(app, ask.id, text, startGate ? { label: RECONCILED_DONE } : undefined);
+  return true;
 }
 function validEvidence(app: App, ref: string) {
   if (/^src:[\w-]+(?:#L\d+(?:-L?\d+)?)?$/.test(ref)) return !!one(app.db, "select 1 from sources where id=? and deleted_at is null", ref.slice(4).split("#")[0]);
@@ -883,6 +919,11 @@ export function reopenStage(app: App, itemId: string, stageId: string, reason: s
   return serial(app, itemId, async () => {
     if (opts.startedAt && (itemFlow(app, itemId)?.startedAt !== opts.startedAt || itemFlow(app, itemId)?.endedAt)) throw new HttpError(409, "流程已有新的状态");
     if (!reason.trim()) throw new HttpError(400, "重开需要原因");
+    const f = itemFlow(app, itemId);
+    if (f && assertReconcileStage(app, f, getStage(app, itemId, stageId), by, refs)) {
+      const s = getStage(app, itemId, stageId);
+      if (s.state !== "done" && s.state !== "skipped") throw new HttpError(409, "对账只重开结果已被新依据推翻的已完成或已跳过阶段");
+    }
     await reopenNow(app, itemId, stageId, reason, refs, by, opts.feedback ? reason : undefined);
     if (by.actor === "owner") resetStreak(app, itemId);
     await advanceNow(app, itemId, "重开阶段");
@@ -918,6 +959,7 @@ async function end(app: App, id: string, note: string, how: FlowEnd) {
   if (!itemFlow(app, id) || itemFlow(app, id)!.endedAt) return;
   await cancelFixReruns(app, id);
   await cancelTrials(app, id);
+  withdrawReconcileAsks(app, id);
   for (const s of itemStages(app, id)) { withdraw(app, s); dropUpstream(app, s, "流程结束了"); if (s.state === "doing" && s.control.runId) await stopStageRun(app, s.itemId, s.control.runId); }
   run(app.db, "update item_flows set ended_at=?,next_round_at=null,updated_at=? where item_id=?", now(), now(), id);
   // Keep ending on the same audit/timeline path (no extra completion ping).
@@ -931,7 +973,14 @@ async function end(app: App, id: string, note: string, how: FlowEnd) {
     if (last.control.recorded) run(app.db, "update item_stages set note=? where item_id=? and stage_id=?", last.note, id, last.id);
   }
   // The review is figures from the records, no model; it may queue the coach for the definition (review.ts).
-  try { saveReview(app, id, how); } catch (e) { console.warn(`[omem] 流程回顾没有存下：${(e as Error).message}`); }
+  try {
+    const review = saveReview(app, id, how);
+    const f = itemFlow(app, id)!;
+    if (review?.templateSuggestion && getItem(app, id).userId === "owner" && !one(app.db, `select 1 from asks where json_extract(context,'$.inlineStartedAt')=? and json_extract(context,'$.itemId')=?`, f.startedAt, id)) {
+      const draft = inlineTemplate(getItem(app, id).spaceId, f.definition);
+      proposeFlow(app, JSON.stringify(draft), host, { itemId: id, startedAt: f.startedAt });
+    }
+  } catch (e) { console.warn(`[omem] 流程回顾没有存下：${(e as Error).message}`); }
   // A 关注 made for this flow ends with it; one the owner keeps goes on.
   try { (await import("../channels/listen-items.ts")).flowEnded(app, id); } catch (e) { console.warn(`[omem] 事项的关注没有停下：${(e as Error).message}`); }
   // A top-level item whose flow ran to its end, with nothing open under it, goes into 观察 (items/lifecycle.ts).
@@ -952,6 +1001,8 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
   const itemId = String(ctx.itemId), stageId = String(ctx.stageId);
   const f = running(app, itemId), d = definition(f, stageId), s = getStage(app, itemId, stageId);
   if (ctx.kind === "upstream") return answerUpstream(app, f, d, s, ask.choice === 0);
+  if ((ctx.kind === "gate" || ctx.kind === "when") && ask.options[ask.choice ?? -1]?.label === RECONCILED_DONE)
+    return actionNow(app, itemId, stageId, "done", `本人确认已做完：${s.note.replace(/^对账依据：/, "")}`, { actor: "owner", userId: ask.userId });
   let text = answerText(ask);
   // Words without a button: on "start?" they start the stage with them, on "done?" they send it back
   // with them; the owner's own stage takes only its buttons.
@@ -1014,10 +1065,10 @@ registerAskHandler("flow-plugin-gate", async (app, ask, ctx) => {
     item, ask.createdAt, Number(ctx.logId ?? 0), ...upstream)) throw new HttpError(409, "上游已重开，结果需要复核");
 }, (app, ctx, answer) => serial(app, String(ctx.itemId), answer));
 
-export function proposeFlow(app: App, raw: string, by: FlowActor) {
+export function proposeFlow(app: App, raw: string, by: FlowActor, inline?: {itemId: string; startedAt: string}) {
   const f = parseFlowForSave(app, raw);
-  return createAsk(app, { runId: by.runId ?? null, userId: hasRunner(f) ? "owner" : by.userId ?? "owner", question: `启用流程「${f.name}」吗？\n${describeFlow(f)}\n${f.stages.map((s) => { const w = describeStage(s); return `- ${s.name}：${w.carrier}；${w.gate}，${w.done}${w.when ? `；${w.when}` : ""}${[w.ai, w.time, w.budget].filter(Boolean).map((v) => `；${v}`).join("")}`; }).join("\n")}`,
-    options: [{ label: "启用" }, { label: "不用" }], allowText: false, context: { handler: "flow-save", raw } });
+  return createAsk(app, { runId: by.runId ?? null, userId: hasRunner(f) ? "owner" : by.userId ?? "owner", question: `${inline ? `这次的「${f.name}」已走完，要存成以后可复用的模板吗？` : `启用流程「${f.name}」吗？`}\n${describeFlow(f)}\n${f.stages.map((s) => { const w = describeStage(s); return `- ${s.name}：${w.carrier}；${w.gate}，${w.done}${w.when ? `；${w.when}` : ""}${[w.ai, w.time, w.budget].filter(Boolean).map((v) => `；${v}`).join("")}`; }).join("\n")}`,
+    options: [{ label: inline ? "存成模板" : "启用" }, { label: "不用" }], allowText: false, context: { handler: "flow-save", raw, ...(inline ? { itemId: inline.itemId, inlineStartedAt: inline.startedAt } : {}) } });
 }
 registerAskHandler("flow-save", async (app, ask, ctx) => {
   if (ask.userId !== "owner" || ask.answeredBy !== "owner" || ask.choice !== 0) return;
@@ -1116,13 +1167,14 @@ export async function flowReminders(app: App, at = new Date()) {
     await advanceNow(app, id, "例行检查", at);
     if (itemFlow(app, id)?.endedAt) return;
     for (const s of itemStages(app, id)) {
-      if (!["gated", "blocked"].includes(s.state) && !(s.state === "doing" && s.by === "owner")) continue;
+      if (!["gated", "blocked"].includes(s.state) && !(s.state === "doing" && (s.by === "owner" || s.control.question === "done"))) continue;
       const n = s.control.reminders ?? 0;
       if (at.getTime() - Date.parse(s.control.reminderAt ?? s.since) < app.config.flows.staleDays * 86400_000 * 2 ** n) continue;
       const item = getItem(app, id), f = itemFlow(app, id)!, d = definition(f, s.id);
-      notify(app, { userId: item.userId, title: `「${item.title}」还停在「${d.name}」`, body: s.note, urgency: "later", link: `#/items/${id}` });
+      notify(app, { userId: item.userId, title: `「${item.title}」还停在「${d.name}」`, body: [s.note, reconcileReminder(app, f, s)].filter(Boolean).join("\n\n"), urgency: "later", link: `#/items/${id}` });
       changeStage(app, id, s.id, s.state, { control: { ...s.control, reminders: n + 1, reminderAt: at.toISOString() } }, host, s.note);
     }
+    queueReconcile(app, id, at);
   });
 }
 

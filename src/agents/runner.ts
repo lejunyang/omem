@@ -589,11 +589,12 @@ export function prepareRun(
   const base = new URL(app.baseUrl);
   if (egressRequested(app.config,profile) && egressSupport().ok) base.hostname = "127.0.0.1";
   const toolBase = base.origin;
-  const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
+  const reconciling = roleName === "flow-reconcile";
+  const browserProfilesRoot = !reconciling && (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
   const browserGuard = browserProfilesRoot && userId !== OWNER ? guardUrlNow() : null;
-  const readOnly = !!(input.boardAccess || input.reviewCheck || input.reviewLead || input.replay);
+  const readOnly = reconciling || !!(input.boardAccess || input.reviewCheck || input.reviewLead || input.replay);
   // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
   // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
   const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
@@ -619,7 +620,7 @@ export function prepareRun(
     if (under(target, isolation.box.data) && !under(target, canonical(space.rootPath ?? spaceDir(app, space.id))))
       throw new Error("档案的工作目录不属于本空间，不能从 omem 数据目录挂回沙箱");
   }
-  const accessMode = runAccess(app.config.agents.fullAccess, {
+  const accessMode = runAccess(reconciling ? "per-role" : app.config.agents.fullAccess, {
     owner: userId === OWNER && !input.shadow && !input.boardAccess, guest: guestTurn, box: isolation.box, allowWrites, legacyFull,
   });
   const memorySpaces = spacesWithCapability(app, userId, "memories.view");
@@ -690,7 +691,7 @@ export function prepareRun(
     } },
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
-    extraMcp: (input.boardAccess && profile.peer) || input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!(input.replay || input.boardAccess)),
+    extraMcp: (input.boardAccess && profile.peer) || input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, readOnly),
     allowWrites,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,

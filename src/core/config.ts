@@ -157,6 +157,7 @@ export const DEFAULT_FEEDBACK_EMOJI = {
 export const roleNames = [
   "commit-claim",
   "item-follow",
+  "flow-reconcile",
   "assistant",
   "ingest",
   "archivist",

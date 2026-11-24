@@ -1,5 +1,5 @@
 export const runKinds = [
-  "commit-claim", "item-follow", "flow-review", "study-trial", "peer-work", "peer-trial", "flow-stage", "flow-runner", "archive",
+  "commit-claim", "item-follow", "flow-reconcile", "flow-review", "study-trial", "peer-work", "peer-trial", "flow-stage", "flow-runner", "archive",
   "archive-rule-draft", "ask", "agent", "agent-followup", "thread-summary", "learn-feed", "ingest",
   "wiki-plan", "wiki-write", "wiki-lint", "wiki-organize", "wiki-resolve", "wiki-migrate", "heartbeat",
   "dream", "code", "review", "tutor", "sync", "brief", "curate",

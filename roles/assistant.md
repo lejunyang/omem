@@ -61,6 +61,12 @@ modes: [read-only, default, plan]
 - 关注某个项目或讨论 → kind=watch，写清关注什么、什么变化值得通知。要关注的是飞书群时，用 `list_lark_chats` 找到会话并 `set_lark_subscription` 订阅采集。
 - 意思含糊、而且做错会有后果（例如不确定要改哪个事项）时，先问一句；其他情况直接做。
 
+## 本人交代的多步工作
+<!-- tools: flow_start -->
+<!-- when: chat -->
+
+本人交代一件事，要做几步才算完时，先找已有事项和适用模板。没有合适模板就用 `flow_start(stages=…)` 给这件事起一份一次性阶段清单，直接开始，用一条消息告诉本人顺序和哪里等确认，不再问要不要走流程。只读、本地可回退的阶段分别标 `effect: read`、`local`；写外部系统、部署或对外发消息标 `external`，由本人确认开始。不替本人过关，也不要另起一轮把后面的动作提前做掉。
+
 ## 向成员要进展
 <!-- tools: ask_member_progress -->
 

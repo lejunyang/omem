@@ -30,7 +30,7 @@ const toolCapabilities: Record<string, ToolCapability> = {
   list_conversations: "conversations.view", read_conversation: "conversations.view",
   list_runs: "runs.view", read_run: "runs.view",
   metric_read: "metrics.view", metric_define: "memory.write", metric_record: "memory.write",
-  read_flow_reviews: "flows.view", flow_start: "flows.operate", stage_report: "flows.operate", stage_reopen: "flows.operate",
+  read_flow_reviews: "flows.view", read_flow_object: "flows.operate", submit_flow_reconcile: "flows.operate", flow_start: "flows.operate", stage_report: "flows.operate", stage_reopen: "flows.operate",
   switch_run_ai: "runs.operate", take_over_run: "runs.operate",
   ask_user: "ask.send", wait_answer: "ask.send", list_rules: "rules.view", save_rule: "rules.edit", list_items: "items.view", read_item: "items.view",
   list_flows: "flows.view", upsert_item: "items.edit", search: "search.use", read_source: "sources.view",

@@ -351,12 +351,15 @@ export function nudgePlugin(app: App, conversationId: string | null) {
 }
 
 /**
- * A question still waiting, said again more plainly (same options, same answer path): shown again
- * where it was shown, its buttons kept.
+ * A question still waiting, shown again where it was shown. The answer path and old button
+ * indices stay the same; a host handler can append one choice it understands.
  */
-export async function reviseAsk(app: App, id: string, question: string): Promise<Ask> {
-  if (getAsk(app, id).status !== "pending") throw new HttpError(409, "这个提问已经结束了");
-  run(app.db, "update asks set question = ? where id = ?", question, id);
+export async function reviseAsk(app: App, id: string, question: string, addOption?: AskOption): Promise<Ask> {
+  const before = getAsk(app, id);
+  if (before.status !== "pending") throw new HttpError(409, "这个提问已经结束了");
+  if (addOption && before.options.length < 6 && !before.options.some(o => o.label === addOption.label))
+    run(app.db, "update asks set question=?,options=? where id=?", question, JSON.stringify([...before.options, addOption]), id);
+  else run(app.db, "update asks set question=? where id=?", question, id);
   const ask = getAsk(app, id);
   app.emit({ type: "ask", id, status: ask.status, conversationId: ask.conversationId });
   for (const s of sinks) await s.revised?.(app, ask).catch(() => {});

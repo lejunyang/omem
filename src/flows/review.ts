@@ -1,3 +1,4 @@
+import { inlineId } from "./inline.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { json, localStamp, now, truncate } from "../core/util.ts";
@@ -174,6 +175,7 @@ export type FlowReview = {
   changes: { total: number; byType: Record<string, number>; byStatus: Record<string, number> };
   /** Signals recorded for the item during the flow (device-local, kept thirty days), by type. */
   signals: Record<string, number>;
+  templateSuggestion?: string;
 };
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -197,6 +199,7 @@ export function computeReview(app: App, itemId: string, how: FlowEnd): FlowRevie
   const changes = all<{ type: string; status: string }>(app.db, "select type,status from item_changes where item_id=? and at>=? and at<=?", itemId, f.started_at, endedAt);
   const tally = (key: "type" | "status") => countBy([...new Set(changes.map((c) => c[key]))].map((k) => ({ key: k, n: changes.filter((c) => c[key] === k).length })));
   return {
+    ...(how === "completed" && inlineId(f.flow_id) ? { templateSuggestion: "这次的阶段如果还会再用，可以存成模板。" } : {}),
     itemId, title: item.title, flowId: f.flow_id, flowName: definition.name, how, startedAt: f.started_at, endedAt,
     minutes: round1((Date.parse(endedAt) - Date.parse(f.started_at)) / 60000), rounds: f.round,
     stages: stages.map((s) => ({ ...s, doingMinutes: round1(s.doingMinutes), gatedMinutes: round1(s.gatedMinutes), blockedMinutes: round1(s.blockedMinutes), ownerMinutes: round1(s.ownerMinutes), blocks: s.blocks.map((b) => ({ ...b, minutes: round1(b.minutes), note: truncate(b.note, 300) })), skipNote: s.skipNote && truncate(s.skipNote, 300),
@@ -220,7 +223,7 @@ export function saveReview(app: App, itemId: string, how: FlowEnd) {
   run(app.db, `insert into item_flow_reviews(item_id,started_at,flow_id,user_id,ended_at,how,review,updated_at) values(?,?,?,?,?,?,?,?)
     on conflict(item_id,started_at) do update set flow_id=excluded.flow_id,user_id=excluded.user_id,ended_at=excluded.ended_at,how=excluded.how,review=excluded.review,updated_at=excluded.updated_at`,
     itemId, r.startedAt, r.flowId, item.userId, r.endedAt, how, JSON.stringify(r), now());
-  try { coachIfDue(app, r.flowId, item.userId); } catch (e) { console.warn(`[omem] 流程复盘没有排上：${(e as Error).message}`); }
+  try { if (!inlineId(r.flowId)) coachIfDue(app, r.flowId, item.userId); } catch (e) { console.warn(`[omem] 流程复盘没有排上：${(e as Error).message}`); }
   return r;
 }
 
@@ -277,6 +280,7 @@ export function reviewText(r: FlowReview, timezone: string) {
   return [
     `「${r.title}」（${r.itemId}）：${HOW[r.how]}；${localStamp(r.startedAt, timezone).slice(0, 16)} 开始，用了 ${mins(r.minutes)}${r.rounds > 1 ? `，${r.rounds} 轮` : ""}；本人要求返工 ${r.reworks} 次${r.longestOwnerWait ? `；等本人最久的是「${r.longestOwnerWait.name}」${mins(r.longestOwnerWait.minutes)}` : ""}`,
     ...r.stages.map(stage),
+    r.templateSuggestion ?? "",
     r.changes.total ? `跟进记下的变化 ${r.changes.total} 条：${Object.entries(r.changes.byType).map(([k, n]) => `${k} ${n}`).join("、")}；处理：${Object.entries(r.changes.byStatus).map(([k, n]) => `${k} ${n}`).join("、")}` : "",
   ].filter(Boolean).join("\n");
 }

@@ -44,6 +44,7 @@
 | `list_flows` | 按成员的看流程权限和本轮可读空间列定义（id、名称、说明、阶段名）；填 `item` 时从这些定义里列出适用于该事项的流程 id。省略适用空间或填写空列表的定义可用于各空间，仍须符合事项类型。 |
 | `save_flow` | `yaml` 是整份 YAML。先给本人看阶段、承担者、关卡与完成要求；本人选“启用”才保存。只用于主人的共享定义。 |
 | `flow_start` | `item`、`flow`；一个事项同时只能有一个进行中的流程。成员只能启动本轮可见且适用于该事项类型和空间的流程。开始时复制定义，之后改模板不影响它。 |
+| `flow_start`（内联清单） | `item, stages, name?`，不同时传 `flow`。没有适用模板而本人交代多步工作时直接开始，一条消息说清清单。阶段沿用 `id / name / needs / by / done / gate` 等字段，另加 `effect: read / local / external`（只读 / 本地可回退 / 写外部或发消息）。前两种默认自动，外部动作或不确定的动作先问，单纯等待可自动。清单不进模板；研究专用阶段和插件运行器用已启用模板。 |
 | `flow_start`（不传 `flow`） | `item`；本人说“再来一轮”时开始下一轮。定义须有 `repeat`，上一轮所有阶段完成或跳过后才可调用。只重做 `repeat.from` 及之后的阶段，之前的保留。 |
 | `stage_report` | `item`、`stage`、`state: done / blocked / skip`、`note`；可带 `evidence`、`links`、`waiting_on`、`unsure`。`links` 是交给本人打开的产物（`[{label, url}]`，http(s)，最多 10 个），显示在事项页这一段和给本人的卡片上；再交一次带 `links` 的结果会替换它，不带就保留上次的。做完须有依据，卡住写等谁或等什么，跳过写理由。结果说不清、要不要继续定不下来时用 `blocked` 加 `unsure: true`；宿主按阶段的升档上限带反馈重做，用完仍卡住。缺权限、缺材料等确定的阻碍不标拿不准。运行交过的截图（`$OMEM_ARTIFACTS` 或 `attach_artifact`）在报做完或卡住时附在给本人的卡片上（最多 4 张），事项页这一段下面列出全部截图。 |
 | `report_tests`、`attach_artifact` | 只在承担一个阶段的运行里有。验证或验收的阶段用它们逐条交结果：`report_tests` 的每条写需求点（`req`）、`status`、`mode`（在哪测、怎么测）、`note`（做了什么、看到什么）和这一条的截图、录屏（先放进 `$OMEM_ARTIFACTS`）。事项页按条显示，本人照着看完再确认这一段。 一个运行同时做几件事项的这一段时（流程写了 `together: push`，任务开头会说），`report_tests` 带 `item` 指明这批结果是哪件的，每件各交一次 `stage_report`。 |
@@ -98,3 +99,9 @@
 - 下游经常因为上游重开要复核 → 看是不是两段的顺序或 `needs` 写反了。
 
 有站得住的修改，就用 `save_flow` 交一份完整的 YAML：`id` 不变，只改要改的地方，其余原样保留。它只是一份草稿，本人在卡片上点“启用”才生效，所以说明里要写清改了哪几处、依据是哪几件事（事项 id）的哪几项数字。一次最多交一份。没有就 `stay_quiet` 写一句原因。复盘流程时不写记忆、不提档案或仓库约定的建议。
+
+## 对账时
+
+`read_flow_object(item, object)` 与 `submit_flow_reconcile(item, summary, steps?)` 只给对账角色。前者用事项自己的连接重读挂接的 `object:<id>`，`read: false` 表示没核对，不引用缓存当现状。用 `stage_report` 和 `stage_reopen` 时每次附可复核的依据；若已在等本人过开始关卡或确认结果，`stage_report(state="done")` 只补原卡片的依据和结论。正在由另一个运行处理的阶段不要代交，也不能跳过本人关卡。
+
+`steps` 每段最多一条、总共最多五条：`{stage, action}` 写只有本人能做的最小一步；找别人配合另填 `person, draft`，确认知道关联群时可加 `chat`（群 id）。能直接发的按事项关注档发，其他情况由宿主留在待处理。没有动作时只交 `summary`，不上卡片。不要另用发消息或通知工具。
