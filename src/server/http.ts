@@ -353,7 +353,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // A rule's run switched to a member who agreed (rules/run-as.ts): declared commands run on their login.
     const runAs = ctx.runId && b.credentialExecution && decision.decision === "allow" ? await import("../rules/run-as.ts") : null;
     const member = runAs?.actingAs(ctx.runId);
-    const asEntry = member ? credentialCommand(b.command) : null;
+    const asEntry = member ? credentialCommand(b.command, b.args) : null;
     if (runAs && member && asEntry && ctx.runId) {
       const runId = ctx.runId;
       const ruleId = (getRun(app, runId).input as { rule?: { id?: string } }).rule?.id ?? "";
@@ -368,7 +368,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     }
     const reports = reportable(ctx);
     if (decision.decision === "allow" && (reports || ownerFallback(app, ctx))) {
-      const entry = credentialCommand(b.command);
+      const entry = credentialCommand(b.command, b.args);
       if (entry && b.credentialExecution) {
         // Extend the wrapper's offline timeout only once the authenticated host answers.
         reply.raw.writeProcessing?.();

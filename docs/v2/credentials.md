@@ -52,7 +52,7 @@ api.credential({
       name: "acme",                 // 可执行文件名
       install: ["~/.local/share/acme"],        // 只读挂进成员沙箱的安装目录
       state: [".local/share/acme/data"],       // 它要写的状态目录（相对 HOME）
-      readOnly: [{ subcommand: ["db", "query"] }, { subcommand: ["log"] }],   // 算只读的调用：子命令按前缀匹配（["log"] 覆盖 log 下的全部子命令），前面的全局选项和它的值（--site cn）跳过
+      readOnly: [{ subcommand: ["db", "query"] }, { subcommand: ["log"] }],   // 算只读的调用（每条命令最多 256 条）：子命令按前缀匹配（["log"] 覆盖 log 下的全部子命令），前面的全局选项和它的值（--site cn）跳过
       resource: [{ match: { subcommand: ["db", "query"] }, key: "db:{option.instance}" }], // 这次调用碰的是哪个资源
       outcomes: {                   // 失败时怎么认原因；按顺序匹配，都不中算普通失败
         unauthenticated: [{ json: "$.code", equals: "AUTH_REQUIRED" }],
@@ -70,6 +70,8 @@ api.credential({
 - 清单声明 `permissions.credential: true`，本人信任插件并选“在 omem 里运行”才生效。声明里的 `install`、`state`、匹配规则都进信任指纹。
 - 已有的 `api.agentLogin` 继续可用；新的插件用 `api.credential`，一种凭据供给多个对象。
 - 宿主按 `expiresAt` 在到期前续签（沿用现有的十分钟提前量），续签后调 `provide`；每天对每份持有调一次 `check`。
+
+同一个命令行的不同子命令用不同的登录时（比如某个命令行的 `tracker …` 走项目管理平台自己的登录，其余走云账号），各自登记一条同名的命令，并在要单独分出去的那条上写 `subcommand: ["tracker"]`：宿主按调用的子命令前缀分流（跳过前面的全局选项和它的值），最长的前缀优先，没写 `subcommand` 的那条接其余调用。分流决定这次用哪种凭据：借用、以成员身份执行、结果分类和失效后发起登录都按选中的那条。
 
 ## 运行时用谁的
 

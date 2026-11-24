@@ -22,6 +22,10 @@ updated: 2026-11-24
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 凭据按子命令分流（2026-11-25）
+
+插件登记的命令可带 `subcommand` 前缀（`packages/plugin-sdk/credential.ts`、`credential-registry.ts`）：`credential-outcome.ts` 的 `credentialCommand(name, args)` 在同名的登记里取参数能匹配上的最长前缀，没前缀的接其余调用；命令垫片、成员身份执行和结果回报都按它选凭据。每条命令的 `readOnly` 上限从 64 提到 256。`test/credential-subcommand.test.ts`。
+
 ## 规则的飞书工具跟随成员身份（2026-11-25）
 
 `src/agents/tools.ts` 按工具声明分发飞书身份。个人读写使用当前成员的连接，`lark_chat_history`、显式选机器人的文档工具和机器人消息保留各自的机器人凭据。邀请、回溯和本人的采集设置要求先换回本人。写入审批按飞书调用者查文件归属和历史批准，批准卡只发给当前成员，延迟执行绑定原申请身份并重查同意。实际写入留下 `lark.run-as.write` 审计和运行事件。知识库爬取持久化读取者，附件下载也使用成员连接。用 `test/rule-run-as-lark.test.ts` 覆盖分发、审批、撤回、缺登录和后台续跑。

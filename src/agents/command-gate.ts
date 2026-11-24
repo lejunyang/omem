@@ -60,7 +60,7 @@ const norm = (name: string) => (win ? name.toLowerCase() : name);
  */
 export function syncCommandGate(home: string, rules: ({ command: string; args?: string } & Parameters<typeof commandArgsMatch>[0])[]): string | null {
   const { guarded, script } = gatePaths(home);
-  const declared = credentialMethods().flatMap(m => m.provides.commands.map(c => norm(c.name)));
+  const declared = [...new Set(credentialMethods().flatMap(m => m.provides.commands.map(c => norm(c.name))))];
   const names = [...new Set([...declared, ...rules.map(r => norm(r.command.trim())).filter(Boolean)])];
   if (!names.length) {
     if (existsSync(guarded)) rmSync(guarded, { recursive: true, force: true });

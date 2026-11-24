@@ -50,6 +50,12 @@ type CommandMatch = {
 /** One command-line tool the credential provides. */
 export type CredentialCommand = {
   name: string;
+  /**
+   * Optional: only invocations whose subcommand starts with these words belong to this credential
+   * (after global options, as in readOnly matches). Two credentials can then share one executable —
+   * `bytedcli meego …` for one login, the rest of `bytedcli` for another; the longest prefix wins.
+   */
+  subcommand?: string[];
   /** Install directories mounted read-only into members' sandboxes (`~` is this machine's HOME). */
   install?: string[];
   /** State directories it writes, relative to HOME. */

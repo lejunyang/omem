@@ -24,9 +24,10 @@ const providesSchema = z.object({
   backends: z.array(z.string().min(1).max(100)).max(32).default([]),
   commands: z.array(z.object({
     name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/),
+    subcommand: z.array(z.string().min(1).max(100)).min(1).max(8).optional(),
     install: z.array(z.string().min(1).max(1024)).max(32).default([]),
     state: z.array(z.string().min(1).max(1024)).max(32).default([]),
-    readOnly: z.array(match).max(64).optional(),
+    readOnly: z.array(match).max(256).optional(),
     resource: z.array(z.object({ match, key: z.string().min(1).max(1024) }).strict()).max(64).optional(),
     outcomes: z.object({ unauthenticated: z.array(outcome).optional(), expired: z.array(outcome).optional(),
       denied: z.array(outcome).optional(), applyUrl: z.string().startsWith("$.").optional() }).strict().optional(),

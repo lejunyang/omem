@@ -21,11 +21,24 @@ export const outcomeSchema = z.object({
   code: z.number().int(), output: z.string().max(COMMAND_OUTPUT_LIMIT),
 }).strict();
 
-export function credentialCommand(name: string) {
+/**
+ * The declaration this invocation belongs to: same executable, and of those that name a subcommand
+ * prefix the longest one the arguments start with; one without a prefix takes the rest.
+ */
+export function credentialCommand(name: string, args: string[] = []) {
+  let best: { method: ReturnType<typeof credentialMethods>[number]; command: CredentialCommand } | undefined;
+  let depth = -1;
+  const parsed = credentialArgs(args);
   for (const method of credentialMethods()) {
-    const command = method.provides.commands.find(c => executableName(c.name) === executableName(name));
-    if (command) return { method, command };
+    for (const command of method.provides.commands) {
+      if (executableName(command.name) !== executableName(name)) continue;
+      const d = command.subcommand?.length ?? 0;
+      if (d <= depth || (command.subcommand && !parsed.matches({ subcommand: command.subcommand }))) continue;
+      best = { method, command };
+      depth = d;
+    }
   }
+  return best;
 }
 
 export function credentialArgs(args: string[]) {
@@ -93,7 +106,7 @@ export function classifyFailure(command: CredentialCommand, output: string) {
 
 /** onBehalf: the run works as this person with their consent (rules/run-as.ts): their login is waited for like one's own. */
 export async function credentialOutcome(app: App, user: string, runId: string, req: z.infer<typeof outcomeSchema>, remind = true, onBehalf = false) {
-  const entry = credentialCommand(req.command);
+  const entry = credentialCommand(req.command, req.args);
   if (!entry) return {};
   const { method, command } = entry;
   const resource = commandResource(command, req.args);
