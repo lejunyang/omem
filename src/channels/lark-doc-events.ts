@@ -181,11 +181,14 @@ export async function subscribeCapturedDocs(app: App, limit = 50) {
   );
   let ok = 0;
   for (const r of rows) {
-    const m = json<{ url?: string; documentId?: string }>(r.meta, {});
+    const m = json<{ url?: string; documentId?: string; capturedBy?: string }>(r.meta, {});
     try {
       const p = parseLink(m.url ?? r.uri);
       // A captured knowledge-base page keeps the document id it read; no need to ask the wiki again.
-      const ref: DocRef = m.documentId ? { token: m.documentId, type: "docx", url: p.url, ...(p.kind === "wiki" ? { nodeToken: p.token } : {}) } : await docRef(app, p.url);
+      const { withLarkDocReader } = await import("./lark-docs.ts");
+      const ref: DocRef | null = m.documentId ? { token: m.documentId, type: "docx", url: p.url, ...(p.kind === "wiki" ? { nodeToken: p.token } : {}) }
+        : await withLarkDocReader(app, r.space_id, m, () => docRef(app, p.url));
+      if (!ref) continue;
       if ((await subscribeDoc(app, ref, { sourceId: r.id, spaceId: r.space_id })).status === "ok") ok++;
     } catch {
       /* Not a link the bot can subscribe to: left for the periodic check. */
@@ -768,8 +771,10 @@ async function flush(app: App, token: string, p: Pending): Promise<RuleEvent[]> 
     if (source) {
       // The captured copy is read again (what the periodic check would have done) and compared.
       const before = source.text;
-      const { importLarkDocument } = await import("./lark-docs.ts");
-      const r = await importLarkDocument(app, source.space_id, json<{ url?: string }>(source.meta, {}).url ?? source.uri);
+      const { importLarkDocument, withLarkDocReader } = await import("./lark-docs.ts");
+      const meta = json<{ url?: string; capturedBy?: string }>(source.meta, {});
+      const r = await withLarkDocReader(app, source.space_id, meta, () => importLarkDocument(app, source.space_id, meta.url ?? source.uri));
+      if (!r) return [];
       const after = one<SourceRow>(app.db, "select id, space_id, uri, title, text, meta from sources where id = ?", r.id);
       title = after?.title ?? title;
       ({ added, removed } = lineDiff(before, after?.text ?? before));

@@ -1,20 +1,29 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { asLarkUser } from "../src/auth/lark-user.ts";
+import { scopesFor } from "../src/auth/features.ts";
+import { deleteConnection, storeConnection } from "../src/auth/vault.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
+import { notificationCard } from "../src/channels/item-notification.ts";
 import { checkLarkDocs, continueRefresh, csvToTable, docDue, ignoreMissingDocs, importLarkDocument, missingDocs, refreshLarkDocs, retryMissingDocs, startRefresh } from "../src/channels/lark-docs.ts";
 import { all, one, run } from "../src/core/db.ts";
+import { listNotifications } from "../src/core/notify.ts";
+import { addMember, createUser, personalSpaceId } from "../src/core/users.ts";
+import { createSpace } from "../src/core/spaces.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const ORIGIN = "https://example.feishu.cn";
+const OWNER_QUEUE = "lark_doc_missing:reader:owner";
 
 /** A fake lark-cli: docs by token, media downloads written into the cwd it was given. */
-function fakeCli(docs: Record<string, { title: string; content: string; revision?: number; edited?: number } | "denied">) {
+function fakeCli(docs: Record<string, { title: string; content: string; revision?: number; edited?: number } | "denied">, record?: (args: string[], reader?: string) => void) {
   const calls: string[][] = [];
-  setLarkCliForTests(async (args, cwd) => {
+  setLarkCliForTests(async (args, cwd, reader) => {
     calls.push(args);
+    record?.(args, reader);
     const flag = (name: string) => args[args.indexOf(name) + 1];
     if (args[0] === "wiki" && args[1] === "+node-get") throw new Error("131014 not mounted in wiki");
     if (args[0] === "docs" && args[1] === "+fetch") {
@@ -111,9 +120,11 @@ describe("feishu docs as originals", () => {
     expect(missingDocs(app)).toMatchObject([{ url: `${ORIGIN}/docx/Secret2`, parents: [linked2.id] }, { url: `${ORIGIN}/docx/Secret`, parents: [r.id] }]);
     expect(all(app.db, "select title from notifications").map((n: any) => n.title)).toEqual(["《项目 A 方案》：链接的飞书文档中有 2 篇读不到"]);
     // One reason for the lot, not the same long error after every doc.
-    const body = (all(app.db, "select body from notifications")[0] as { body: string }).body;
-    expect(body).toMatch(/^没有权限：\n- \[/);
-    expect(body).not.toContain("permission denied");
+    const [notice] = listNotifications(app);
+    expect(notice.body).toMatch(/^没有权限：\n- \[/);
+    expect(notice.body).not.toMatch(/permission denied|docs-missing/);
+    expect(notice.link).toBe(`${ORIGIN}/docx/Main`);
+    expect(JSON.stringify(notificationCard(app, { ...notice, userId: "owner" }))).toContain(`"default_url":"${ORIGIN}/docx/Main"`);
 
     // Seven media in all (including the synced block's and a linked doc's); Main is read once despite the link back.
     expect(calls.filter((c) => c[1] === "+media-download")).toHaveLength(7);
@@ -140,6 +151,85 @@ describe("feishu docs as originals", () => {
     expect(parent.text).toBe(`见 <a href="src:${secret}">内部文档</a>`);
     expect(JSON.parse(parent.meta).missing).toEqual({});
     expect(missingDocs(app)).toEqual([]);
+  });
+
+  it("keeps linked-document failures and retries separate by reader, even in a shared space", async () => {
+    const app = testApp();
+    app.config.lark.appId = "cli_test";
+    const reader = createUser(app, { id: "member", name: "小王" });
+    const connect = () => storeConnection(app, { userId: reader.id, provider: "lark", accountId: "member_lark", accountName: reader.name, scopes: scopesFor("lark", ["docs"]), accessToken: "test-token" });
+    const connection = connect();
+    const space = createSpace(app, { id: "project-a", name: "项目 A" });
+    addMember(app, space.id, reader.id, "editor");
+    const linked = `${ORIGIN}/docx/Linked`;
+    const memberReads: (string | undefined)[] = [];
+    fakeCli({ Member: { title: "成员周报", content: linked }, Owner: { title: "本人周报", content: linked }, Linked: "denied" },
+      (args, actor) => { if (args[1] === "+fetch") memberReads.push(actor); });
+    const member = await asLarkUser(app, reader.id, () => importLarkDocument(app, space.id, `${ORIGIN}/docx/Member`));
+    expect(memberReads).toEqual([reader.id, reader.id]);
+    expect(all(app.db, "select id from notifications")).toEqual([]);
+    const owner = await importLarkDocument(app, space.id, `${ORIGIN}/docx/Owner`);
+    expect(all(app.db, "select title, user_id from notifications")).toEqual([{ title: "《本人周报》：链接的飞书文档中有 1 篇读不到", user_id: "owner" }]);
+    expect(missingDocs(app).map((m) => m.parents)).toEqual(expect.arrayContaining([[member.id], [owner.id]]));
+
+    const retries: (string | undefined)[] = [];
+    fakeCli({ Linked: { title: "附录", content: "正文" } }, (args, actor) => { if (args[1] === "+fetch") retries.push(actor); });
+    deleteConnection(app, connection.id);
+    expect(await retryMissingDocs(app, { force: true })).toMatchObject({ tried: 1 });
+    expect(retries).toEqual([undefined]);
+    expect(missingDocs(app)).toMatchObject([{ parents: [member.id], tries: 0 }]);
+    expect(one(app.db, "select text from sources where id = ?", member.id)).toEqual({ text: linked });
+    connect();
+    expect(await retryMissingDocs(app, { force: true })).toMatchObject({ tried: 1 });
+    expect(retries).toEqual([undefined, reader.id]);
+    expect(missingDocs(app)).toEqual([]);
+  });
+
+  it("moves legacy failures to their recorded reader and parks entries with conflicting evidence", async () => {
+    const app = testApp();
+    app.config.lark.appId = "cli_test";
+    const member = createUser(app, { id: "member", name: "小王" });
+    storeConnection(app, { userId: member.id, provider: "lark", accountId: "member_lark", accountName: member.name, scopes: scopesFor("lark", ["docs"]), accessToken: "test-token" });
+    const personal = personalSpaceId(member.id);
+    const parent = (spaceId: string, capturedBy: string) => upsertSource(app, { spaceId, kind: "doc", uri: `${ORIGIN}/docx/${capturedBy}`, title: "周报", text: "原文", meta: { capturedBy } }).id;
+    const memberParent = parent(personal, member.id);
+    const ownerParent = parent("personal", "owner");
+    const entry = (token: string, spaceId: string, parents: string[]) => ({ url: `${ORIGIN}/docx/${token}`, spaceId, parents, error: "没有权限", since: new Date().toISOString(), tries: 0, lastTry: 0 });
+    run(app.db, "insert into kv(key,value) values('lark_doc_missing', ?)", JSON.stringify([
+      entry("MemberLink", personal, [memberParent]),
+      entry("OwnerLink", "personal", [ownerParent]),
+      entry("MixedLink", personal, [memberParent, ownerParent]),
+    ]));
+    const reads: [string, string | undefined][] = [];
+    fakeCli({ MemberLink: "denied", OwnerLink: "denied", MixedLink: "denied" }, (args, reader) => {
+      if (args[1] === "+fetch") reads.push([args[args.indexOf("--doc") + 1], reader]);
+    });
+    expect(await retryMissingDocs(app, { force: true })).toEqual({ tried: 2, imported: [] });
+    expect(reads).toEqual(expect.arrayContaining([[`${ORIGIN}/docx/MemberLink`, member.id], [`${ORIGIN}/docx/OwnerLink`, undefined]]));
+    expect(one(app.db, "select 1 from kv where key = 'lark_doc_missing'")).toBeUndefined();
+    expect(missingDocs(app, { all: true }).find((m) => m.url.endsWith("/MixedLink"))).toMatchObject({ gaveUp: "reader", tries: 0 });
+  });
+
+  it("uses the stored reader for update checks and refreshes of member documents", async () => {
+    const app = testApp();
+    app.config.lark.appId = "cli_test";
+    const member = createUser(app, { id: "member", name: "小王" });
+    const connection = storeConnection(app, { userId: member.id, provider: "lark", accountId: "member_lark", accountName: member.name, scopes: scopesFor("lark", ["docs"]), accessToken: "test-token" });
+    const spaceId = personalSpaceId(member.id);
+    const uri = `${ORIGIN}/docx/Member`;
+    upsertSource(app, { spaceId, kind: "doc", uri, title: "周报", text: "旧内容", meta: { via: "lark-cli", capturedBy: member.id, revision: "1", fetchedAt: "2026-01-01T00:00:00Z" } });
+    const tokens: [string, string | undefined][] = [];
+    fakeCli({ Member: { title: "周报", content: "新内容", revision: 2, edited: Math.floor(Date.now() / 1000) } }, (args, reader) => {
+      if (args[1] === "metas" || args[1] === "+fetch") tokens.push([args[1], reader]);
+    });
+    expect(await checkLarkDocs(app, { force: true })).toMatchObject({ checked: 1, edited: 1 });
+    run(app.db, "update sources set meta = json_set(meta, '$.fetchedAt', ?) where uri = ?", "2026-01-01T00:00:00Z", uri);
+    expect(await refreshLarkDocs(app, { space: spaceId })).toMatchObject({ done: 1 });
+    expect(tokens).toEqual([["metas", member.id], ["+fetch", member.id], ["+fetch", member.id]]);
+    deleteConnection(app, connection.id);
+    expect(await checkLarkDocs(app, { force: true })).toMatchObject({ checked: 0 });
+    expect(await refreshLarkDocs(app, { space: spaceId })).toMatchObject({ skipped: 1 });
+    expect(tokens).toHaveLength(3);
   });
 
   it("refreshes old copies without handing unchanged content to ingest", async () => {
@@ -216,10 +306,10 @@ describe("feishu docs as originals", () => {
     fakeCli({ Main: { title: "周报", content: `${ORIGIN}/docx/A ${ORIGIN}/docx/B` }, A: "denied", B: "denied" });
     await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
     expect(missingDocs(app)).toHaveLength(2);
-    expect(all(app.db, "select body from notifications")[0]).toMatchObject({ body: expect.stringContaining("每 1 小时，最多 2 次") });
+    expect(all(app.db, "select body from notifications")[0]).toMatchObject({ body: expect.stringContaining("每 1 小时重试，最多 2 次") });
     // Not yet due; then due (an hour later) twice → given up, quietly.
     expect((await retryMissingDocs(app)).tried).toBe(0);
-    const later = () => run(app.db, "update kv set value = replace(value, '\"lastTry\":', '\"lastTry\":-') where key = 'lark_doc_missing'");
+    const later = () => run(app.db, "update kv set value = replace(value, '\"lastTry\":', '\"lastTry\":-') where key = ?", OWNER_QUEUE);
     later();
     expect((await retryMissingDocs(app)).tried).toBe(2);
     later();
@@ -235,7 +325,7 @@ describe("feishu docs as originals", () => {
     // Asked explicitly: retried even after giving up, unless dismissed by the owner.
     const list = missingDocs(app, { all: true });
     list.find((m) => m.url.endsWith("/B"))!.gaveUp = "owner";
-    run(app.db, "update kv set value = ? where key = 'lark_doc_missing'", JSON.stringify(list));
+    run(app.db, "update kv set value = ? where key = ?", JSON.stringify(list), OWNER_QUEUE);
     fakeCli({ A: { title: "能读了", content: "x" }, B: { title: "也能读了", content: "y" } });
     const forced = await retryMissingDocs(app, { force: true });
     expect(forced).toMatchObject({ tried: 1, imported: [{ spaceId: "personal" }] });

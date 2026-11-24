@@ -114,6 +114,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   useProcessZone(app.config.timezone);
   ensurePersonalSpace(app);
   ensureDefaultSchedules(app);
+  (await import("./channels/lark-docs.ts")).migrateMissingDocReaders(app);
   // Built-in roles copied only to attach a skill follow the source again (builtin-roles.ts).
   const { simplifyRoleCopies } = await import("./agents/builtin-roles.ts");
   for (const n of simplifyRoleCopies(app)) console.log(`[omem] 内置角色 ${n} 只多挂了技能或工具：改成叠加设置，以后跟着源码更新`);

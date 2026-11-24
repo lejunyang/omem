@@ -2,10 +2,13 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { json, now, truncate } from "../core/util.ts";
-import { accessibleSpaces } from "../core/users.ts";
+import { accessibleSpaces, activeUser, findUser, OWNER } from "../core/users.ts";
+import { usableFeatures } from "../auth/connections.ts";
+import { asLarkUser } from "../auth/lark-user.ts";
+import { findConnection } from "../auth/vault.ts";
 import { keepOriginal } from "../sources/import.ts";
 import { hasStoredFile } from "../core/stored-files.ts";
 import { sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
@@ -16,7 +19,7 @@ import { clearWikiLocationCache } from "./lark-wiki.ts";
 import { withExtension } from "./lark-messages.ts";
 
 /**
- * Feishu/Lark docs as originals, read through lark-cli with the owner's identity.
+ * Feishu/Lark docs as originals, read through lark-cli with the reader's identity.
  *
  * `docs +fetch --doc-format markdown` returns Markdown with leftover DocxXML for
  * blocks Markdown has no form for. Everything that would need a Feishu login to
@@ -31,13 +34,15 @@ import { withExtension } from "./lark-messages.ts";
  *   document into the space its knowledge base is filed under, sources/kb-home.ts) and the
  *   link becomes `src:<id>`, `lark.capture.docLinkDepth` levels deep (at most
  *   `docMaxLinked` per doc); beyond that, links point at local copies when those exist.
- *   Docs that cannot be read are kept as Feishu links, the owner is told once, and
- *   they are retried later (`retryMissingDocs`); when one becomes readable only the
+ *   Unreadable docs stay Feishu links. The owner hears about their own failures once.
+ *   Each reader's failures are retried with their own connection; only the
  *   link in the parent is rewritten, so the parent is not understood again.
  */
 
 const SHEET_ROWS = 200;
-const MISSING_KEY = "lark_doc_missing";
+const LEGACY_MISSING_KEY = "lark_doc_missing";
+const MISSING_PREFIX = "lark_doc_missing:reader:";
+const UNATTRIBUTED_MISSING_KEY = "lark_doc_missing:unattributed";
 const DOC_PATH = /^\/(docx|wiki|docs)\/([A-Za-z0-9]+)/;
 const DOC_URL = /https?:\/\/[\w.-]*(?:feishu\.cn|larksuite\.com|larkoffice\.com)\/(?:docx|docs|wiki)\/[A-Za-z0-9]+[^\s)"'<>\]]*/g;
 
@@ -518,7 +523,7 @@ type ImportOpts = {
   depth?: number;
   /** Docs being imported further up this chain (a link back to one of them is not followed). */
   chain?: Set<string>;
-  /** Unreadable docs first seen in this chain; the top of the chain tells the owner once. */
+  /** Unreadable docs first seen in the owner's import chain, for one summary. */
   unreadable?: Missing[];
   /** A linked doc read within this many ms is not read again. */
   freshMs?: number;
@@ -707,10 +712,13 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   if (r.status === "unchanged") run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), r.id);
   if (wiki) linkWikiSource(app, wiki.nodeToken, r.id);
   if (redirected) noteKbRoute(app, r.id, asked, uri, redirected);
-  if (missing.length) unreadable.push(...recordMissing(app, spaceId, r.id, doc.title, missing));
+  if (missing.length) {
+    const fresh = recordMissing(app, acting?.userId ?? OWNER, spaceId, r.id, doc.title, missing);
+    if (!acting) unreadable.push(...fresh);
+  }
   // Linked docs that link back were saved before this one existed.
   if (r.status === "created") for (const id of related) relinkParent(app, id, url, r.id, doc.title);
-  if (!opts.unreadable && unreadable.length) tellUnreadable(app, `《${doc.title}》`, r.id, unreadable);
+  if (!opts.unreadable && unreadable.length) tellUnreadable(app, `《${doc.title}》`, url, unreadable);
   const every = [...missing, ...nestedMissing].filter((m, i, list) => list.findIndex((x) => x.url === m.url) === i);
   return { ...r, related: [...new Set(related)], missing: every };
 }
@@ -727,8 +735,8 @@ type Missing = {
   since: string;
   tries: number;
   lastTry: number;
-  /** No more retries: too many failures, or the owner said not to bother. */
-  gaveUp?: "tries" | "owner" | "gone";
+  /** No more automatic retries, or a legacy entry with no provable reader. */
+  gaveUp?: "tries" | "owner" | "gone" | "reader";
 };
 
 /**
@@ -739,56 +747,92 @@ export function isPermanent(error: string) {
   return /\b338000[23]\b|deleted|not found|Unsupported document type|unsupported --doc input/i.test(error);
 }
 
-function missingList(app: App): Missing[] {
-  return json(one<{ value: string }>(app.db, "select value from kv where key = ?", MISSING_KEY)?.value, []);
+function missingList(app: App, key: string): Missing[] {
+  return json(one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value, []);
 }
-function saveMissing(app: App, list: Missing[]) {
-  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", MISSING_KEY, JSON.stringify(list));
+function saveMissing(app: App, key: string, list: Missing[]) {
+  if (!list.length) run(app.db, "delete from kv where key = ?", key);
+  else run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", key, JSON.stringify(list));
+}
+
+/** Move old entries out of the shared queue before any retries. An ambiguous entry stays on file. */
+export function migrateMissingDocReaders(app: App) {
+  if (!one(app.db, "select 1 from kv where key = ?", LEGACY_MISSING_KEY)) return;
+  withinTx(app.db, () => {
+    const groups = new Map<string, Missing[]>();
+    const parent = (id: string) => one<{ reader: string | null; fetchedAt: string | null }>(app.db,
+      "select json_extract(meta, '$.capturedBy') reader, json_extract(meta, '$.fetchedAt') fetchedAt from sources where id = ? and deleted_at is null", id);
+    for (const m of missingList(app, LEGACY_MISSING_KEY)) {
+      const first = m.parents[0] ? parent(m.parents[0]) : undefined;
+      // A later fetch can replace capturedBy, so it cannot identify the reader who first queued the link.
+      const reader = first?.reader && (!first.fetchedAt || first.fetchedAt <= m.since)
+        && m.parents.slice(1).every((id) => parent(id)?.reader === first.reader) ? first.reader : null;
+      const key = reader ? MISSING_PREFIX + reader : UNATTRIBUTED_MISSING_KEY;
+      const list = groups.get(key) ?? missingList(app, key);
+      const existing = list.find((d) => d.spaceId === m.spaceId && d.url === m.url);
+      if (existing) existing.parents = [...new Set([...existing.parents, ...m.parents])];
+      else list.push(reader ? m : { ...m, gaveUp: m.gaveUp ?? "reader" });
+      groups.set(key, list);
+    }
+    for (const [key, list] of groups) saveMissing(app, key, list);
+    run(app.db, "delete from kv where key = ?", LEGACY_MISSING_KEY);
+  });
+}
+
+function missingQueues(app: App) {
+  migrateMissingDocReaders(app);
+  return all<{ key: string; value: string }>(app.db, "select key,value from kv where key glob ? or key = ?", MISSING_PREFIX + "*", UNATTRIBUTED_MISSING_KEY);
 }
 
 export function missingDocs(app: App, opts: { all?: boolean } = {}) {
-  return missingList(app).filter((m) => opts.all || !m.gaveUp);
+  return missingQueues(app).flatMap((q) => json<Missing[]>(q.value, [])).filter((m) => opts.all || !m.gaveUp);
 }
 
 /** Stop retrying some (or all) unreadable docs; they stay Feishu links and are not reported again. */
 export function ignoreMissingDocs(app: App, urls: string[] | "all") {
-  const list = missingList(app);
-  let n = 0;
-  for (const m of list)
-    if (!m.gaveUp && (urls === "all" || urls.includes(m.url))) {
-      m.gaveUp = "owner";
-      n++;
+  return withinTx(app.db, () => {
+    let n = 0;
+    for (const q of missingQueues(app)) {
+      const list = json<Missing[]>(q.value, []);
+      const matches = list.filter((m) => !m.gaveUp && (urls === "all" || urls.includes(m.url)));
+      if (!matches.length) continue;
+      for (const m of matches) m.gaveUp = "owner";
+      saveMissing(app, q.key, list);
+      n += matches.length;
     }
-  saveMissing(app, list);
-  return n;
+    return n;
+  });
 }
 
 /** Remember unreadable linked docs; returns the ones not known before (only those are reported). */
-function recordMissing(app: App, spaceId: string, parentId: string, parentTitle: string, found: LarkDocResult["missing"]) {
-  const list = missingList(app);
-  const fresh: Missing[] = [];
-  for (const f of found) {
-    const m = list.find((x) => x.url === f.url && x.spaceId === spaceId);
-    if (m) {
-      if (!m.parents.includes(parentId)) m.parents.push(parentId);
-      m.error = f.error;
-      continue;
+function recordMissing(app: App, reader: string, spaceId: string, parentId: string, parentTitle: string, found: LarkDocResult["missing"]) {
+  return withinTx(app.db, () => {
+    migrateMissingDocReaders(app);
+    const key = MISSING_PREFIX + reader;
+    const list = missingList(app, key);
+    const fresh: Missing[] = [];
+    for (const f of found) {
+      const m = list.find((x) => x.url === f.url && x.spaceId === spaceId);
+      if (m) {
+        if (!m.parents.includes(parentId)) m.parents.push(parentId);
+        m.error = f.error;
+        continue;
+      }
+      const gone = isPermanent(f.error);
+      const added: Missing = { ...f, spaceId, parents: [parentId], parentTitle, since: now(), tries: 0, lastTry: Date.now(), ...(gone ? { gaveUp: "gone" as const } : {}) };
+      list.push(added);
+      if (!gone) fresh.push(added);
     }
-    const gone = isPermanent(f.error);
-    const added: Missing = { ...f, spaceId, parents: [parentId], parentTitle, since: new Date().toISOString(), tries: 0, lastTry: Date.now(), ...(gone ? { gaveUp: "gone" as const } : {}) };
-    list.push(added);
-    // Deleted docs and links lark-cli cannot read as docs stay Feishu links without a word: nothing the owner can do.
-    if (!gone) fresh.push(added);
-  }
-  saveMissing(app, list);
-  return fresh;
+    saveMissing(app, key, list);
+    return fresh;
+  });
 }
 
 function retryNote(app: App) {
   const { docRetryHours, docRetryMax } = app.config.lark.capture;
   return docRetryMax > 0
-    ? `多半是没有权限。在飞书里申请到权限后 omem 会重试（每 ${docRetryHours} 小时，最多 ${docRetryMax} 次，之后不再尝试），读到后只整理新读到的文档并更新原文里的链接。不需要的话：omem lark docs-missing --ignore all。`
-    : "多半是没有权限。按设置不会重试（lark.capture.docRetryMax 为 0）；申请到权限后可以用 omem lark docs-missing --retry 读一次。";
+    ? `omem 会每 ${docRetryHours} 小时重试，最多 ${docRetryMax} 次。`
+    : "自动重试已关闭。";
 }
 
 /** Why a doc could not be read, in a few words: the same long lark-cli error repeated per doc said nothing more. */
@@ -799,7 +843,7 @@ export function unreadableReason(error: string) {
   return truncate(error.replace(/^飞书 CLI：/, ""), 60);
 }
 
-function tellUnreadable(app: App, title: string, id: string | null, docs: Missing[]) {
+function tellUnreadable(app: App, title: string, url: string | null, docs: Missing[]) {
   const shown = docs.slice(0, 30);
   // Grouped by reason, each doc one short line: a link and where it was linked from.
   const groups = new Map<string, Missing[]>();
@@ -809,11 +853,30 @@ function tellUnreadable(app: App, title: string, id: string | null, docs: Missin
   }
   const line = (f: Missing) => `- [${(f.title || "无标题").replace(/[[\]]/g, "")}](${f.url})${f.parentTitle && !title.includes(f.parentTitle) ? `（在《${f.parentTitle}》里）` : ""}`;
   const body = [...groups].map(([why, list]) => `${groups.size > 1 ? `**${why}**（${list.length} 篇）：` : `${why}：`}\n${list.map(line).join("\n")}`).join("\n\n");
+  const apply = groups.has("没有权限") ? "如需阅读，可打开对应的飞书链接申请权限。" : "";
   notify(app, {
     title: `${title}：链接的飞书文档中有 ${docs.length} 篇读不到`,
-    body: `${body}${docs.length > shown.length ? `\n- ……另有 ${docs.length - shown.length} 篇，见 omem lark docs-missing` : ""}\n\n${retryNote(app)}`,
-    link: id ? `#/sources/${id}` : null,
+    body: `${body}${docs.length > shown.length ? `\n- ……另有 ${docs.length - shown.length} 篇` : ""}\n\n${apply}${retryNote(app)}`,
+    link: url,
   });
+}
+
+function canReadAs(app: App, reader: string, spaceId: string) {
+  if (reader === OWNER) return true;
+  if (!activeUser(findUser(app, reader)) || accessibleSpaces(app, reader)?.includes(spaceId) === false) return false;
+  const connection = findConnection(app, reader, "lark");
+  return connection?.status === "active" && usableFeatures(app, connection).includes("docs");
+}
+
+function readAs<T>(app: App, reader: string, read: () => Promise<T>) {
+  // Leave background owner reads outside a user run so the login reminder keeps its normal cadence.
+  return reader === OWNER && !larkActing() ? read() : asLarkUser(app, reader, read);
+}
+
+export function withLarkDocReader<T>(app: App, spaceId: string, meta: Pick<LarkDocMeta, "capturedBy">, read: () => Promise<T>) {
+  const reader = meta.capturedBy ?? OWNER;
+  if (canReadAs(app, reader, spaceId)) return readAs(app, reader, read);
+  return null;
 }
 
 /**
@@ -824,31 +887,57 @@ function tellUnreadable(app: App, title: string, id: string | null, docs: Missin
  */
 export async function retryMissingDocs(app: App, opts: { force?: boolean } = {}) {
   const { docRetryHours, docRetryMax, docLinkDepth } = app.config.lark.capture;
-  const list = missingList(app);
   const imported: { spaceId: string; id: string }[] = [];
-  const still: Missing[] = [];
   let tried = 0;
-  for (const m of list) {
-    // Recorded before failures were told apart.
-    if (!m.gaveUp && isPermanent(m.error)) m.gaveUp = "gone";
-    // Asked explicitly: also the ones given up after too many tries, but never the ones the owner dismissed.
-    if (m.gaveUp === "owner" || (!opts.force && (m.gaveUp || m.tries >= docRetryMax || Date.now() - (m.lastTry ?? 0) < docRetryHours * 3600_000))) {
-      still.push(m);
-      continue;
-    }
-    tried++;
-    try {
-      const r = await importLarkDocument(app, m.spaceId, m.url, { depth: Math.max(0, docLinkDepth - 1), force: true, unreadable: [] });
-      imported.push({ spaceId: m.spaceId, id: r.id });
-      const row = one<{ title: string }>(app.db, "select title from sources where id = ?", r.id);
-      for (const parent of m.parents) relinkParent(app, parent, m.url, r.id, row?.title ?? m.title);
-    } catch (e) {
-      const tries = m.tries + 1;
-      const error = (e as Error).message.slice(0, 200);
-      still.push({ ...m, tries, error, lastTry: Date.now(), ...(isPermanent(error) ? { gaveUp: "gone" as const } : tries >= docRetryMax ? { gaveUp: "tries" as const } : {}) });
+  const due = (m: Missing) => m.gaveUp !== "owner" && (opts.force
+    || (!m.gaveUp && !isPermanent(m.error) && m.tries < docRetryMax && Date.now() - (m.lastTry ?? 0) >= docRetryHours * 3600_000));
+  for (const q of missingQueues(app)) {
+    if (q.key === UNATTRIBUTED_MISSING_KEY) continue;
+    const reader = q.key.slice(MISSING_PREFIX.length);
+    for (const m of json<Missing[]>(q.value, [])) {
+      if (!due(m) || !canReadAs(app, reader, m.spaceId)) continue;
+      const matches = (d: Missing) => d.spaceId === m.spaceId && d.url === m.url;
+      // Claim before calling Feishu. Reload before saving to keep links added by concurrent imports.
+      const claimedAt = withinTx(app.db, () => {
+        const list = missingList(app, q.key);
+        const current = list.find(matches);
+        if (!current || current.lastTry !== m.lastTry || !due(current)) return null;
+        current.lastTry = Math.max(Date.now(), (current.lastTry ?? 0) + 1);
+        saveMissing(app, q.key, list);
+        return current.lastTry;
+      });
+      if (claimedAt === null) continue;
+      tried++;
+      let error: string | undefined;
+      try {
+        const r = await readAs(app, reader, () => importLarkDocument(app, m.spaceId, m.url, { depth: Math.max(0, docLinkDepth - 1), force: true, unreadable: [] }));
+        const current = missingList(app, q.key).find(matches);
+        const row = one<{ title: string }>(app.db, "select title from sources where id = ?", r.id);
+        if (current?.gaveUp !== "owner") {
+          for (const parent of current?.parents ?? []) {
+            const p = one<{ space_id: string }>(app.db, "select space_id from sources where id = ?", parent);
+            if (p && (reader === OWNER || accessibleSpaces(app, reader)?.includes(p.space_id) !== false)) relinkParent(app, parent, m.url, r.id, row?.title ?? m.title);
+          }
+        }
+        imported.push({ spaceId: m.spaceId, id: r.id });
+      } catch (e) {
+        error = (e as Error).message.slice(0, 200);
+      }
+      withinTx(app.db, () => {
+        const list = missingList(app, q.key);
+        const index = list.findIndex(matches);
+        const current = list[index];
+        if (!current || current.lastTry !== claimedAt || current.gaveUp === "owner") return;
+        if (error === undefined) list.splice(index, 1);
+        else {
+          current.error = error;
+          current.tries++;
+          current.gaveUp = isPermanent(error) ? "gone" : current.tries >= docRetryMax ? "tries" : undefined;
+        }
+        saveMissing(app, q.key, list);
+      });
     }
   }
-  saveMissing(app, still);
   return { tried, imported };
 }
 
@@ -949,12 +1038,15 @@ export async function continueRefresh(app: App, opts: { log?: (s: string) => voi
     const id = s.todo[0];
     const row = one<{ space_id: string; uri: string; meta: string; deleted_at: string | null }>(app.db, "select space_id, uri, meta, deleted_at from sources where id = ?", id);
     const meta = json<Partial<LarkDocMeta>>(row?.meta, {});
-    if (!row || row.deleted_at || ((s.metadataOnly ? meta.wikiMetadataCheckedAt : meta.fetchedAt) ?? "") >= s.startedAt) s.skipped++;
+    const reader = meta.capturedBy ?? OWNER;
+    if (!row || row.deleted_at || !canReadAs(app, reader, row.space_id)
+      || ((s.metadataOnly ? meta.wikiMetadataCheckedAt : meta.fetchedAt) ?? "") >= s.startedAt) s.skipped++;
     else {
       try {
-        if (s.metadataOnly) await refreshLarkWikiLocation(app, id);
+        if (s.metadataOnly) await readAs(app, reader, () => refreshLarkWikiLocation(app, id));
         else {
-          const r = await importLarkDocument(app, row.space_id, meta.url ?? row.uri, { force: true, unreadable: s.unreadable, depth: storedDepth(app, id) });
+          const r = await readAs(app, reader, () => importLarkDocument(app, row.space_id, meta.url ?? row.uri,
+            { force: true, unreadable: s.unreadable, depth: storedDepth(app, id) }));
           const after = json<Partial<LarkDocMeta>>(one<{ meta: string }>(app.db, "select meta from sources where id = ?", r.id)?.meta, {}).revision;
           const ids = new Set(s.changed[row.space_id] ?? []);
           if (r.status !== "unchanged" && meta.revision && meta.revision !== after) ids.add(r.id);
@@ -1039,8 +1131,8 @@ export function resumeRefresh(app: App) {
 const DAY = 86400_000;
 
 /**
- * Feishu's own last-edit time (and who made it, an open_id of the owner's lark-cli app) for docs,
- * 200 at a time (`drive metas batch_query`, read-only as the owner). Keyed by token.
+ * Feishu's own last-edit time (and who made it, an open_id in the acting app), 200 docs per call.
+ * Keyed by token.
  */
 export async function docMetas(tokens: { token: string; type: string }[]) {
   const out = new Map<string, { modifiedMs: number; modifier?: string }>();
@@ -1087,12 +1179,28 @@ export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s:
   const byEvent = docEventsArrive(app) ? subscribedSourceIds(app) : new Set<string>();
   const due = rows
     .map((r) => ({ ...r, m: json<Partial<LarkDocMeta>>(r.meta, {}) }))
+    .map((r) => ({ ...r, reader: r.m.capturedBy ?? OWNER }))
     .filter((r) => opts.force || (!byEvent.has(r.id) && docDue(r.m, now, steps)))
+    .filter((r) => canReadAs(app, r.reader, r.space_id))
     .map((r) => ({ ...r, ...normalizeDocUrl(r.m.url ?? r.uri) }));
   if (!due.length) return { checked: 0, edited: 0, changed: [] as { spaceId: string; ids: string[] }[] };
-  const edits = await lastEdits(due.map((d) => ({ token: d.token, type: d.type })));
+  const groups = new Map<string, typeof due>();
+  for (const d of due) {
+    const group = groups.get(d.reader) ?? [];
+    group.push(d);
+    groups.set(d.reader, group);
+  }
+  const edits = new Map<string, Map<string, number>>();
+  for (const [reader, docs] of groups) {
+    try {
+      edits.set(reader, await readAs(app, reader, () => lastEdits(docs)));
+    } catch (e) {
+      if (reader === OWNER) throw e;
+      opts.log?.(`成员的飞书文档检查失败：${(e as Error).message}`);
+    }
+  }
   const stampOf = (d: (typeof due)[number]) => {
-    const at = edits.get(d.token);
+    const at = edits.get(d.reader)?.get(d.token);
     return { checkedAt: new Date().toISOString(), ...(at ? { modifiedAt: new Date(at).toISOString() } : {}) };
   };
   const stamp = (d: (typeof due)[number]) => {
@@ -1101,7 +1209,9 @@ export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s:
   };
   // Not edited since it was read: just note the check. Edited ones are read again below, one by one.
   const edited = due.filter((d) => {
-    const at = edits.get(d.token);
+    const checked = edits.get(d.reader);
+    if (!checked) return false;
+    const at = checked.get(d.token);
     if (at && at > Date.parse(d.m.modifiedAt ?? d.m.fetchedAt ?? d.updated_at)) return true;
     stamp(d);
     return false;
@@ -1111,7 +1221,8 @@ export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s:
   let read = 0;
   for (const d of edited) {
     try {
-      const r = await importLarkDocument(app, d.space_id, d.url, { depth: storedDepth(app, d.id) });
+      const r = await withLarkDocReader(app, d.space_id, d.m, () => importLarkDocument(app, d.space_id, d.url, { depth: storedDepth(app, d.id) }));
+      if (!r) continue;
       const ids = changed.get(d.space_id) ?? new Set();
       if (r.status !== "unchanged") ids.add(r.id);
       for (const x of r.related) ids.add(x);
@@ -1161,7 +1272,7 @@ export function larkDocsStatus(app: App) {
   const metas = docs.map((d) => json<Partial<LarkDocMeta>>(d.meta, {}));
   for (const m of metas) for (const f of Object.values(m.media ?? {})) f ? media.add(f) : failedMedia++;
   const steps = app.config.lark.capture.docRecheckDays;
-  const missing = missingList(app);
+  const missing = missingDocs(app, { all: true });
   return {
     docs: docs.length,
     withoutLocalMedia: docs.filter((d) => remote.test(d.text)).length,
@@ -1174,6 +1285,7 @@ export function larkDocsStatus(app: App) {
       gaveUpAfterTries: missing.filter((m) => m.gaveUp === "tries").length,
       dismissed: missing.filter((m) => m.gaveUp === "owner").length,
       deletedOrNotDocx: missing.filter((m) => m.gaveUp === "gone").length,
+      readerUnknown: missing.filter((m) => m.gaveUp === "reader").length,
     },
     updateChecks: { dueNow: metas.filter((m) => docDue(m, Date.now(), steps)).length, neverChecked: metas.filter((m) => !m.checkedAt).length },
     refresh: refreshProgress(app),
