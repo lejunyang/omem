@@ -6,6 +6,7 @@ import { state, toast } from "../../store";
 import { byChat, type ListenView } from "../../lib/listen";
 import { intIn, useSettings } from "./ctx";
 import HelpText from "../../components/HelpText.vue";
+import LarkDocExclusions from "../../components/LarkDocExclusions.vue";
 import LarkCapturedChats, { type CapturedChat } from "../../components/LarkCapturedChats.vue";
 import ProviderApps from "../../components/ProviderApps.vue";
 import SetCard from "../../components/SetCard.vue";
@@ -21,6 +22,8 @@ import UiSelect from "../../components/UiSelect.vue";
  * login, read-only) and the platforms members connect. 关注 is not set here: one line points to the work page.
  */
 const { config, saveConfig } = useSettings();
+/** The owner's own Feishu (lark-cli): someone else managing settings sees only the shared rows; their own documents are on their account page. */
+const isOwner = computed(() => !state.me || state.me.role === "owner");
 type Sub = "docs" | "capture" | "platforms";
 const SUBS: { value: Sub; label: string }[] = [
   { value: "docs", label: "飞书文档" },
@@ -28,7 +31,7 @@ const SUBS: { value: Sub; label: string }[] = [
   { value: "platforms", label: "其他平台" },
 ];
 const route = useRoute();
-const fromCard: Record<string, Sub> = { "lark-docs": "docs", "lark-capture": "capture", platforms: "platforms", "source-parsers": "platforms" };
+const fromCard: Record<string, Sub> = { "lark-docs": "docs", "lark-recent-docs": "docs", "lark-capture": "capture", platforms: "platforms", "source-parsers": "platforms" };
 const sub = ref<Sub>(fromCard[String(route.query.card ?? "")] ?? (SUBS.some((s) => s.value === route.query.sub) ? (route.query.sub as Sub) : "docs"));
 
 // 关注: only how many there are, and where they live now.
@@ -194,6 +197,17 @@ onMounted(() => {
         </SetRow>
       </SetCard>
 
+      <SetCard v-if="isOwner" id="set-lark-recent-docs" title="你最近打开的文档">
+        <template #help>定时采集时读你最近打开过的飞书文档（文档、旧版文档和知识库页面），每篇读一次，之后由文档检查跟进改动；读的时候按上面的层数跟随它的链接。下面排除的文档和从别处链过去的都不再自动读；你让助理读的照常读。成员各自在账号页设置自己的。</template>
+        <SetRow label="读最近打开的文档">
+          <UiCheckbox :model-value="config.lark.capture.recentDocs" switch size="sm" aria-label="读最近打开的文档" @change="(v) => saveCapture({ recentDocs: v }, v ? '会读最近打开的文档' : '不再读最近打开的文档')" />
+        </SetRow>
+        <SetRow label="多少天内打开的" :off="!config.lark.capture.recentDocs">
+          <input class="input set-num" type="number" inputmode="numeric" min="1" max="90" aria-label="多少天内打开的" :value="config.lark.capture.recentDocsDays ?? 7" @change="saveCapture({ recentDocsDays: intIn($event, 1, 90, 7) })" />
+        </SetRow>
+        <div class="set-pad"><LarkDocExclusions :disabled="!config.lark.capture.recentDocs" /></div>
+      </SetCard>
+
       <SetCard v-if="crawls.length" title="知识库爬取">
         <template #aside><button class="btn ghost sm" @click="loadCrawls">刷新</button></template>
         <div v-for="c in shownCrawls" :key="c.id" class="crawl">
@@ -208,7 +222,7 @@ onMounted(() => {
         <div v-if="crawls.length > 5" class="set-pad"><button class="btn ghost sm" @click="showAllCrawls = !showAllCrawls">{{ showAllCrawls ? "只看最近的" : `全部 ${crawls.length} 个` }}</button></div>
       </SetCard>
 
-      <SetCard title="以你的身份写文档">
+      <SetCard v-if="isOwner" title="以你的身份写文档">
         <template #help>你让助理整理成文档时，它用 lark-cli 以你的身份新建、编辑和移动飞书文档。放在你的个人文档库或你自己的云空间文件夹里直接做；放进别人也在用的知识库、别人的文件夹或文档时，每次新建、编辑、覆盖和移动都会先把具体位置发给你批准。lark-cli 缺权限时会把授权链接发到你的飞书私聊。</template>
         <SetRow label="lark-cli 授权">
           <template #hint>

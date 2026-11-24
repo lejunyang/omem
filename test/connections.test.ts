@@ -162,6 +162,36 @@ describe("connections", async () => {
     larkProvider.grantedScopes = real;
   });
 
+  it("登录页勾的“存进 omem”在授权回来时生效，只改勾了功能的那几项；读过的文档关掉后不再搜", async () => {
+    const { pollMembers } = await import("../src/channels/lark-member-capture.ts");
+    const { findUser, updateUser } = await import("../src/core/users.ts");
+    const original = findUser(app, "ann")?.settings.larkCapture;
+    const login = await remote("/api/auth/lark/start?features=messages,docs&capture=group");
+    const state = new URL(login.headers.get("location")!).searchParams.get("state")!;
+    await remote(`/api/auth/lark/callback?code=c&state=${state}`);
+    const before = findUser(app, "ann")!.settings.larkCapture;
+    onTestFinished(() => {
+      updateUser(app, "ann", { settings: { larkCapture: original ?? {} } });
+      run(app.db, "delete from kv where key like 'lark_recent_doc%' or key in ('lark_calendar_at:ann', 'lark_minutes_at:ann')");
+      disconnect(app, "ann", "lark");
+    });
+    expect(before).toMatchObject({ group: true, docs: false });
+    expect(before?.p2p).toBeUndefined();
+    expect(one(app.db, "select 1 from kv where key = ?", `auth_capture:${state}`)).toBeUndefined();
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["docs"]), accessToken: "at_ann6", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    const calls: string[][] = [];
+    setLarkCliForTests(async (args) => {
+      if (args.includes("--help")) return "Risk: read";
+      calls.push(args);
+      return { ok: true, data: { results: [], has_more: false } };
+    });
+    await pollMembers(app);
+    expect(calls.some((a) => a.includes("+search"))).toBe(false);
+    updateUser(app, "ann", { settings: { larkCapture: { ...before, docs: true } } });
+    await pollMembers(app);
+    expect(calls.some((a) => a.includes("+search"))).toBe(true);
+  });
+
   it("does not use a feature turned off in omem, though Feishu still grants it; nor an account waiting for approval", async () => {
     const { pollMembers } = await import("../src/channels/lark-member-capture.ts");
     const { callTool } = await import("../src/agents/tools.ts");

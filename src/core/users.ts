@@ -25,7 +25,11 @@ export type UserStatus = "active" | "pending";
  * off unless they turn it on: granting “群聊消息 / 单聊消息” only lets the assistant read them when asked.
  */
 export type UserSettings = {
-  loginAny?: boolean; featuresOff?: Record<string, string[]>; larkCapture?: { group?: boolean; p2p?: boolean };
+  loginAny?: boolean; featuresOff?: Record<string, string[]>;
+  /** `docs`: their recently opened documents (on when never set, as before it existed). */
+  larkCapture?: { group?: boolean; p2p?: boolean; docs?: boolean };
+  /** Which documents omem leaves out when it keeps them on its own (channels/lark-doc-filter.ts). */
+  larkDocs?: import("../channels/lark-doc-filter.ts").DocCaptureSettings;
   /** The routine work on the person's own lines (items/member-routine.ts): off unless they or the owner turn it on. */
   lineRoutine?: boolean;
 };

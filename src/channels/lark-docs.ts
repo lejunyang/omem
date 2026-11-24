@@ -533,6 +533,8 @@ type ImportOpts = {
   force?: boolean;
   /** A wiki page's child nodes count as its links (default); a crawl queues them itself. */
   wikiChildren?: boolean;
+  /** Automatic capture: linked documents the person left out (lark-doc-filter.ts) are not followed. */
+  skip?: (url: string) => Promise<string | null>;
   /** Docs this whole import may still read (`docMaxPerImport`), shared down the chain. */
   budget?: { left: number };
 };
@@ -660,9 +662,10 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     if (depth <= 0 || chain.has(link.url) || budget.left <= 0) continue;
     // Children have their own cap (docWikiChildren, applied when listing them); links share docMaxLinked.
     if (!childUrls.has(link.url) && followed++ >= cfg.docMaxLinked) continue;
+    if (opts.skip && (await opts.skip(link.url).catch(() => null))) continue;
     budget.left--;
     try {
-      const r = await importLarkDocument(app, spaceId, link.url, { depth: depth - 1, chain, unreadable, budget, archive: opts.archive });
+      const r = await importLarkDocument(app, spaceId, link.url, { depth: depth - 1, chain, unreadable, budget, archive: opts.archive, skip: opts.skip });
       const row = one<{ title: string }>(app.db, "select title from sources where id = ?", r.id);
       local.set(link.url, { id: r.id, title: row?.title ?? link.title });
       if (r.status !== "unchanged") related.push(r.id);

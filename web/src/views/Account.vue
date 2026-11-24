@@ -9,6 +9,7 @@ import NotifyOutlets from "../components/NotifyOutlets.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import Skeleton from "../components/Skeleton.vue";
 import HelpText from "../components/HelpText.vue";
+import LarkDocExclusions from "../components/LarkDocExclusions.vue";
 import MonoLine from "../components/MonoLine.vue";
 import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
@@ -76,7 +77,7 @@ const notice = computed(() =>
 );
 // Connected platforms (src/auth/connections.ts): features turned on one at a time (an incremental authorization each).
 type Feature = { id: string; label: string; description: string; on?: boolean; paused?: boolean };
-type Conn = { id: string; provider: string; label: string; accountName: string; status: "active" | "expired" | "error"; scopes: string[]; features: Feature[]; background: boolean; lastError: string | null; updatedAt: string; capture?: { group: boolean; p2p: boolean } };
+type Conn = { id: string; provider: string; label: string; accountName: string; status: "active" | "expired" | "error"; scopes: string[]; features: Feature[]; background: boolean; lastError: string | null; updatedAt: string; capture?: { group: boolean; p2p: boolean; docs: boolean } };
 type KeyField = { key: string; label: string; secret: boolean; optional: boolean; hint: string };
 type Available = { id: string; label: string; unavailable: string | null; group: string; docs: string; identity: boolean; credentials: KeyField[] | null; features: Feature[] };
 type Connections = { connections: Conn[]; available: Available[]; may: boolean };
@@ -140,7 +141,7 @@ async function useFeature(provider: string, f: Feature, on: boolean) {
   }
 }
 /** Which Feishu chats omem saves in the background; granting the messages features alone saves nothing. */
-async function setCapture(patch: { group?: boolean; p2p?: boolean }) {
+async function setCapture(patch: { group?: boolean; p2p?: boolean; docs?: boolean }) {
   try {
     conns.value = { ...conns.value!, ...(await put<{ connections: Conn[] }>("/api/auth/connections/lark/capture", patch)) };
     toast("已保存采集范围", "ok");
@@ -329,7 +330,7 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
         </div>
         <div v-if="p.id === 'lark' && connOf('lark')?.capture" class="stack tight capture">
           <strong class="small">采集到 omem</strong>
-          <p class="muted small">授权消息只让助手在你让它看时读。要把聊天保存到你的个人空间（之后能检索、整理），在这里打开；默认不采集。每次读最近活跃的 30 个会话，已经在共享空间里的群不再存一份。</p>
+          <p class="muted small">授权消息只让助手在你让它看时读。要把聊天保存到你的个人空间（之后能检索、整理），在这里打开；默认不采集。每次读最近活跃的 30 个会话，已经在共享空间里的群不再存一份。文档是你最近打开过的，连同它们链接的文档。</p>
           <div class="row wrap feature">
             <div class="stack tight"><span>群聊</span><span class="muted small">{{ featureOn(connOf('lark')!, "messages") ? "你所在的群" : "先授权“群聊消息”" }}</span></div>
             <span class="spacer" />
@@ -340,6 +341,12 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
             <span class="spacer" />
             <UiCheckbox :model-value="connOf('lark')!.capture!.p2p" switch size="sm" :disabled="!featureOn(connOf('lark')!, 'messages-p2p')" aria-label="采集单聊" @change="(v) => setCapture({ p2p: v })" />
           </div>
+          <div class="row wrap feature">
+            <div class="stack tight"><span>读过的文档</span><span class="muted small">{{ featureOn(connOf('lark')!, "docs") ? "你最近一周打开过的飞书文档" : "先授权“飞书文档”" }}</span></div>
+            <span class="spacer" />
+            <UiCheckbox :model-value="connOf('lark')!.capture!.docs" switch size="sm" :disabled="!featureOn(connOf('lark')!, 'docs')" aria-label="采集读过的文档" @change="(v) => setCapture({ docs: v })" />
+          </div>
+          <LarkDocExclusions v-if="featureOn(connOf('lark')!, 'docs')" :disabled="!connOf('lark')!.capture!.docs" />
         </div>
         <p v-if="connOf(p.id) && !p.credentials" class="muted small">关掉的功能 omem 不再使用，{{ p.label }}那边的授权还在；要连授权一起撤销，在{{ p.label }}里取消对这个应用的授权。</p>
         <div v-if="!connOf(p.id) && !p.credentials" class="row"><button class="btn sm primary" :disabled="!conns?.may || !!p.unavailable || !(picked[p.id] ?? []).length" @click="connect(p.id, picked[p.id] ?? [])">连接{{ p.label }}</button></div>

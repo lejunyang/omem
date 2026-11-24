@@ -79,13 +79,13 @@ export function setFeatureOff(app: App, userId: string, provider: string, featur
 }
 
 /** Which of their Feishu chats omem saves in the background (channels/lark-member-capture.ts); off by default. */
-export function setChatCapture(app: App, userId: string, patch: { group?: boolean; p2p?: boolean }) {
+export function setChatCapture(app: App, userId: string, patch: { group?: boolean; p2p?: boolean; docs?: boolean }) {
   const u = findUser(app, userId);
   if (!u) throw new HttpError(404, "没有这个用户");
   updateUser(app, userId, { settings: { larkCapture: { ...(u.settings.larkCapture ?? {}), ...patch } } });
 }
 
-export type ConnectionView = Connection & { label: string; features: { id: string; label: string; description: string; on: boolean; paused: boolean }[]; background: boolean; credentials: boolean; capture?: { group: boolean; p2p: boolean } };
+export type ConnectionView = Connection & { label: string; features: { id: string; label: string; description: string; on: boolean; paused: boolean }[]; background: boolean; credentials: boolean; capture?: { group: boolean; p2p: boolean; docs: boolean } };
 export function connectionView(app: App, c: Connection): ConnectionView {
   const on = new Set(grantedFeatures(c.provider, c.scopes));
   const off = new Set(featuresOff(app, c.userId, c.provider));
@@ -96,7 +96,7 @@ export function connectionView(app: App, c: Connection): ConnectionView {
     // A key does not run out: it works in the background as long as it is valid.
     background: !!loginProvider(c.provider)?.credentials || !!connectionSecrets(app, c.id)?.refreshToken,
     credentials: !!loginProvider(c.provider)?.credentials,
-    ...(c.provider === "lark" ? { capture: { group: !!findUser(app, c.userId)?.settings.larkCapture?.group, p2p: !!findUser(app, c.userId)?.settings.larkCapture?.p2p } } : {}),
+    ...(c.provider === "lark" ? { capture: { group: !!findUser(app, c.userId)?.settings.larkCapture?.group, p2p: !!findUser(app, c.userId)?.settings.larkCapture?.p2p, docs: findUser(app, c.userId)?.settings.larkCapture?.docs ?? true } } : {}),
   };
 }
 // `agent:<backend>` rows are tokens for a person's own AI accounts (agents/accounts.ts), shown there instead.

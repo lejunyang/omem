@@ -14,11 +14,12 @@ import { addMember, createUser, emailHolder, findUser, getUser, identitiesOf, li
 import { AUDIT_GROUPS, auditRows } from "./audit-view.ts";
 import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
 import { connectionsOf, connectWithCredentials, disconnect, setChatCapture, setFeatureOff } from "./connections.ts";
+import { docCaptureOf, setDocCapture } from "../channels/lark-doc-filter.ts";
 import { appView, setAppConfig } from "./apps.ts";
 import { listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { featuresOf, scopesFor } from "./features.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
-import { approveUser, beginLogin, completeLogin, consumeLoginLink, createLoginLink, larkAppLogin, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, safeReturn, validInvite } from "./login.ts";
+import { approveUser, beginLogin, captureChoice, completeLogin, consumeLoginLink, pendingCapture, createLoginLink, larkAppLogin, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, safeReturn, validInvite } from "./login.ts";
 import { knownBearer } from "./authenticators.ts";
 import { approveCliLogin, cliLoginInfo, denyCliLogin, normalizeCode, pollCliLogin, startCliLogin } from "./cli-login.ts";
 import { canLogIn, enabledProviders, loginProvider, loginProviders, offeredConnectors } from "./providers.ts";
@@ -187,7 +188,7 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
 
   server.get("/api/auth/:provider/start", async (req, reply) => {
     const { provider } = req.params as { provider: string };
-    const o = parse(z.object({ purpose: z.enum(["login", "bind", "connect"]).default("login"), features: z.string().max(300).optional(), scopes: z.string().regex(/^[\w:., -]*$/).max(1000).optional(), invite: z.string().max(80).optional(), return: z.string().max(300).optional() }), req.query);
+    const o = parse(z.object({ purpose: z.enum(["login", "bind", "connect"]).default("login"), features: z.string().max(300).optional(), capture: z.string().regex(/^[a-z0-9,-]*$/).max(60).optional(), scopes: z.string().regex(/^[\w:., -]*$/).max(1000).optional(), invite: z.string().max(80).optional(), return: z.string().max(300).optional() }), req.query);
     const base = baseUrl(app, req);
     try {
       const a = resolveAuth(app, req);
@@ -203,7 +204,9 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       const optional = lp?.optionalIdentityScopes?.length ? await lp.grantedScopes?.(app).catch(() => null) : null;
       const identity = [...(lp?.identityScopes ?? []), ...(lp?.optionalIdentityScopes ?? []).filter((s) => optional?.has(s))];
       const scopes = o.purpose === "connect" ? [...new Set([...scopesFor(provider, features), ...named, ...(named.length ? scopesFor(provider, ["offline"]) : [])])] : o.purpose === "login" ? [...new Set([...identity, ...scopesFor(provider, features)])] : identity;
-      const url = beginLogin(app, { provider, purpose: o.purpose, redirectUri: callbackUrl(base, provider), userId: a?.userId, sessionHash: a?.sessionHash, invite: o.invite, returnTo: o.return, scopes });
+      const url = beginLogin(app, { provider, purpose: o.purpose, redirectUri: callbackUrl(base, provider), userId: a?.userId, sessionHash: a?.sessionHash, invite: o.invite, returnTo: o.return, scopes,
+        // What to save into omem, chosen next to the features (Login.vue): applied once the authorization comes back.
+        capture: provider === "lark" && o.capture !== undefined ? captureChoice(o.capture, features) : undefined });
       return reply.header("cache-control", "no-store").redirect(url);
     } catch (e) {
       return back(reply, base, `${o.purpose === "login" ? "/login" : "/account"}?error=${encodeURIComponent((e as Error).message)}`);
@@ -224,7 +227,9 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     const o = parse(z.object({ code: z.string().max(512).optional(), state: z.string().max(128).default(""), error: z.string().max(200).optional() }).passthrough(), req.query);
     const base = baseUrl(app, req);
     try {
+      const capture = pendingCapture(app, o.state);
       const r = await completeLogin(app, { provider, state: o.state, code: o.code, error: o.error });
+      if (capture && r.kind !== "granted" && r.userId !== OWNER) setChatCapture(app, r.userId, capture);
       // A colleague's grant: no omem account to go back to, just say it worked.
       if (r.kind === "granted") return reply.type("text/html; charset=utf-8").header("cache-control", "no-store").send(page("已授权", `<h2>已授权</h2><p>${esc(r.name)}，omem 会把它的机器人加为你请它改的那篇文档的可编辑协作者，由机器人来改。回到飞书，让它接着做就行。</p><p>不想再用时，在飞书的“账号与安全 → 授权管理”里取消这个应用的授权。</p>`));
       if (r.kind === "bound") {
@@ -337,10 +342,18 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   });
   // Which of their Feishu chats omem saves (granting the messages features alone saves nothing).
   server.put("/api/auth/connections/lark/capture", async (req) => {
-    const patch = parse(z.object({ group: z.boolean().optional(), p2p: z.boolean().optional() }), req.body);
+    const patch = parse(z.object({ group: z.boolean().optional(), p2p: z.boolean().optional(), docs: z.boolean().optional() }), req.body);
     setChatCapture(app, who(req), patch);
     audit(app, who(req), "connection.capture", who(req), patch);
     return { connections: connectionsOf(app, who(req)) };
+  });
+  // Which Feishu documents omem leaves out when it keeps them on its own (channels/lark-doc-filter.ts); everyone their own.
+  server.get("/api/lark/doc-capture", async (req) => ({ capture: docCaptureOf(app, who(req)) }));
+  server.put("/api/lark/doc-capture", async (req) => {
+    const patch = parse(z.object({ on: z.boolean().optional(), skipLibrary: z.boolean().optional(), add: z.string().max(500).optional(), remove: z.string().max(100).optional() }), req.body);
+    const capture = await setDocCapture(app, who(req), patch);
+    audit(app, who(req), "connection.doc-capture", who(req), { ...patch });
+    return { capture };
   });
   server.delete("/api/auth/connections/:provider", async (req) => {
     const { provider } = req.params as { provider: string };

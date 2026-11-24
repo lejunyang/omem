@@ -322,7 +322,7 @@ function htmlToText(html: string) {
  * A web page or a Feishu doc as an original. For Feishu docs, `related` lists linked docs that were
  * imported or changed along with it (they need understanding too) and `missing` those that could not be read.
  */
-export async function importUrl(app: App, spaceId: string, url: string, opts: { depth?: number; archive?: boolean; user?: string } = {}): Promise<UpsertResult & { related?: string[]; missing?: { url: string; title: string; error: string }[] }> {
+export async function importUrl(app: App, spaceId: string, url: string, opts: { depth?: number; archive?: boolean; user?: string; skip?: (url: string) => Promise<string | null> } = {}): Promise<UpsertResult & { related?: string[]; missing?: { url: string; title: string; error: string }[] }> {
   const special = /feishu\.cn|larksuite\.com|larkoffice\.com/.test(url);
   const parsers = fileParsers(app, spaceId, opts.user ?? OWNER);
   const order = app.config.documents.parserOrder ?? [];
@@ -330,7 +330,7 @@ export async function importUrl(app: App, spaceId: string, url: string, opts: { 
   const parser = pickParser(parsers.list, order, name, special || builtinFile(name), undefined, url);
   if (special && !parser) {
     const { importLarkDocument } = await import("../channels/lark-docs.ts");
-    return importLarkDocument(app, spaceId, url, { depth: opts.depth, archive: opts.archive });
+    return importLarkDocument(app, spaceId, url, { depth: opts.depth, archive: opts.archive, skip: opts.skip });
   }
   const res = await fetch(url, { headers: { "user-agent": "omem/0.2 (+personal knowledge capture)" }, signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new HttpError(502, `抓取失败：HTTP ${res.status}`);

@@ -44,10 +44,27 @@ const shown = computed(() => {
  * who you are). A new account still waits for approval before omem uses any of them.
  */
 const picked = ref<Record<string, string[]>>({});
+/**
+ * Feishu only: what of the ticked messages / documents omem saves into the person's space on its own
+ * (src/auth/login.ts captureChoice). Reading them when asked needs only the feature; saving is separate.
+ * Documents they open are saved unless unticked (as before the choice existed); chats are not.
+ */
+const CAPTURES: { id: string; feature: string; label: string; hint: string }[] = [
+  { id: "docs", feature: "docs", label: "读过的文档存进 omem", hint: "你最近打开的飞书文档，之后能检索；可以在账号页排除个人文档库或某些文档" },
+  { id: "group", feature: "messages", label: "群聊记录存进 omem", hint: "你最近活跃的群，已经在共享空间里的群不再存一份" },
+  { id: "p2p", feature: "messages-p2p", label: "单聊记录存进 omem", hint: "你和别人的私聊，只存进你自己的空间" },
+];
+const capture = ref<string[]>(["docs"]);
+const capturesFor = (p: Provider) => (p.id === "lark" ? CAPTURES.filter((c) => picked.value[p.id]?.includes(c.feature)) : []);
+function setCapture(q: URLSearchParams, p: Provider) {
+  const shown = capturesFor(p);
+  if (shown.length) q.set("capture", shown.filter((c) => capture.value.includes(c.id)).map((c) => c.id).join(","));
+}
 function start(p: Provider, purpose: "login" | "bind" = "login") {
   const q = new URLSearchParams({ purpose });
   if (invite.value && purpose === "login") q.set("invite", invite.value);
   if (purpose === "login" && picked.value[p.id]?.length) q.set("features", picked.value[p.id].join(","));
+  if (purpose === "login") setCapture(q, p);
   if (purpose === "login" && p.id === askedProvider.value && askedScopes.value.length) q.set("scopes", askedScopes.value.join(","));
   if (back.value !== "/") q.set("return", back.value);
   else if (purpose === "login" && asking.value) q.set("return", "/login?granted=1");
@@ -57,6 +74,7 @@ function start(p: Provider, purpose: "login" | "bind" = "login") {
 function connect(p: Provider) {
   const q = new URLSearchParams({ purpose: "connect" });
   if (picked.value[p.id]?.length) q.set("features", picked.value[p.id].join(","));
+  setCapture(q, p);
   if (askedScopes.value.length) q.set("scopes", askedScopes.value.join(","));
   q.set("return", "/login?granted=1");
   location.href = `/api/auth/${p.id}/start?${q}`;
@@ -127,6 +145,12 @@ onMounted(async () => {
             <span class="feat"><span>{{ f.label }}</span><span class="muted small">{{ f.description }}</span></span>
           </UiCheckbox>
         </div>
+        <div v-if="capturesFor(askedProviderOf(s)!).length" class="stack tight features save">
+            <span class="muted small">授权只让助手在你让它看时读。下面勾上的才会定时存进你的个人空间：</span>
+            <UiCheckbox v-for="c in capturesFor(askedProviderOf(s)!)" :key="c.id" v-model="capture" :value="c.id" size="sm">
+              <span class="feat"><span>{{ c.label }}</span><span class="muted small">{{ c.hint }}</span></span>
+            </UiCheckbox>
+        </div>
         <p v-if="askedScopes.length" class="muted small">另外要补的权限：<span class="mono">{{ askedScopes.join("、") }}</span></p>
         <div class="row wrap">
           <button class="btn primary" :disabled="!!askedProviderOf(s)!.unavailable || (!picked[askedProvider]?.length && !askedScopes.length)" @click="connect(askedProviderOf(s)!)">去{{ askedProviderOf(s)!.label }}授权</button>
@@ -163,6 +187,12 @@ onMounted(async () => {
           <div class="stack tight features">
             <UiCheckbox v-for="f in p.features" :key="f.id" v-model="picked[p.id]" :value="f.id" size="sm">
               <span class="feat"><span>{{ f.label }}</span><span class="muted small">{{ f.description }}</span></span>
+            </UiCheckbox>
+          </div>
+          <div v-if="capturesFor(p).length" class="stack tight features save">
+            <span class="muted small">授权只让助手在你让它看时读。下面勾上的才会定时存进你的个人空间：</span>
+            <UiCheckbox v-for="c in capturesFor(p)" :key="c.id" v-model="capture" :value="c.id" size="sm">
+              <span class="feat"><span>{{ c.label }}</span><span class="muted small">{{ c.hint }}</span></span>
             </UiCheckbox>
           </div>
         </section>
@@ -206,6 +236,10 @@ h2 {
 }
 .features {
   gap: 10px;
+}
+.save {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
 }
 /* The name on one line, what it does on the next: a long description never wraps under the name. */
 .feat {

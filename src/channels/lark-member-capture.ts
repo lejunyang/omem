@@ -9,6 +9,7 @@ import { one, run } from "../core/db.ts";
 import { json } from "../core/util.ts";
 import { larkCli } from "./lark-cli.ts";
 import { persistChatMessages, timeMs, type LarkMessage } from "./lark-messages.ts";
+import { docCaptureOf } from "./lark-doc-filter.ts";
 import { captureCalendar, captureMinutes, captureRecentDocs, fetchMessages } from "./lark-personal.ts";
 
 /**
@@ -48,7 +49,7 @@ export async function captureForMember(app: App, userId: string) {
     const who = { userId, spaceId: personalSpaceId(userId) };
     if (features.includes("calendar")) await captureCalendar(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 的飞书日程读取失败：${(e as Error).message}`));
     if (features.includes("minutes")) await captureMinutes(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 的妙记读取失败：${(e as Error).message}`));
-    if (features.includes("docs") && app.config.lark.capture.recentDocs) await captureRecentDocs(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 最近打开的飞书文档读取失败：${(e as Error).message}`));
+    if (features.includes("docs") && docCaptureOf(app, userId).on) await captureRecentDocs(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 最近打开的飞书文档读取失败：${(e as Error).message}`));
     for (const [spaceId, ids] of touched) scheduleIngest(app, spaceId, [...ids], `${userName(app, userId)}的飞书新消息、日程或妙记`);
     return kept;
   });
@@ -99,7 +100,8 @@ export async function pollMembers(app: App) {
   for (const c of listConnections(app)) {
     if (c.provider !== "lark" || c.userId === "owner" || c.status !== "active" || findUser(app, c.userId)?.status !== "active") continue;
     const usable = usableFeatures(app, c);
-    if (!usable.some((f) => CAPTURED.includes(f) && !f.startsWith("messages")) && !chatTypes(app, c.userId, usable).length) continue;
+    const others = usable.filter((f) => CAPTURED.includes(f) && !f.startsWith("messages") && (f !== "docs" || docCaptureOf(app, c.userId).on));
+    if (!others.length && !chatTypes(app, c.userId, usable).length) continue;
     try {
       await captureForMember(app, c.userId);
       people++;

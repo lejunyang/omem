@@ -40,7 +40,25 @@ function requireProvider(app: App, id: string): LoginProvider {
 }
 
 /** Start a login or a bind: where the browser goes next. */
-export function beginLogin(app: App, input: { provider: string; purpose: Purpose; redirectUri: string; userId?: string; sessionHash?: string | null; invite?: string | null; returnTo?: string; scopes?: string[] }) {
+/** Which of the granted kinds to save into omem (`larkCapture`), from the ticked features: chats and docs only where the feature is asked for. */
+export type CaptureChoice = { group?: boolean; p2p?: boolean; docs?: boolean };
+export function captureChoice(picked: string, features: string[]): CaptureChoice {
+  const on = new Set(picked.split(",").filter(Boolean));
+  return {
+    ...(features.includes("messages") ? { group: on.has("group") } : {}),
+    ...(features.includes("messages-p2p") ? { p2p: on.has("p2p") } : {}),
+    ...(features.includes("docs") ? { docs: on.has("docs") } : {}),
+  };
+}
+/** The choice made with this authorization (kv, next to auth_states), taken once. */
+export function pendingCapture(app: App, state: string): CaptureChoice | null {
+  const key = `auth_capture:${state}`;
+  const v = json<CaptureChoice | null>(one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value, null);
+  if (v) run(app.db, "delete from kv where key = ?", key);
+  return v && Object.keys(v).length ? v : null;
+}
+
+export function beginLogin(app: App, input: { provider: string; purpose: Purpose; redirectUri: string; userId?: string; sessionHash?: string | null; invite?: string | null; returnTo?: string; scopes?: string[]; capture?: CaptureChoice }) {
   const p = requireProvider(app, input.provider);
   if (!p.authorizeUrl) throw new HttpError(400, `${p.label}用填写的密钥连接，不经过授权页`);
   if (input.purpose !== "connect" && !canLogIn(p)) throw new HttpError(400, `${p.label}只用来连接，不能登录或绑定`);
@@ -57,6 +75,8 @@ export function beginLogin(app: App, input: { provider: string; purpose: Purpose
     "insert into auth_states(state,provider,verifier,purpose,user_id,session_hash,invite,redirect_uri,return_to,created_at,scopes) values(?,?,?,?,?,?,?,?,?,?,?)",
     state, p.id, verifier, input.purpose, input.userId ?? null, input.sessionHash ?? null, input.invite ?? null, input.redirectUri, safeReturn(input.returnTo), now(), (input.scopes ?? []).join(" "),
   );
+  run(app.db, "delete from kv where key like 'auth_capture:%' and key not in (select 'auth_capture:' || state from auth_states)");
+  if (input.capture && Object.keys(input.capture).length) run(app.db, "insert into kv(key,value) values(?,?)", `auth_capture:${state}`, JSON.stringify(input.capture));
   return p.authorizeUrl(app, { state, challenge, redirectUri: input.redirectUri, scopes: input.scopes ?? [] });
 }
 

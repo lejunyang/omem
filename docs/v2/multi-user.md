@@ -428,6 +428,13 @@ connectors:
 - 插件工具里 `ctx.connection("github")` 返回 `{ account, scopes, fetch(path, init) }`。`fetch` 由宿主带上**当前运行用户**的令牌发出，插件拿不到刷新令牌；没有连接时抛出一条看得懂的错误。走 Nango 的提供方，`fetch` 经 Nango Proxy 发出。
 - 采集类插件写原件仍然走宿主的 `upsertSource`，必须给 `origin_key`，目标空间按用户权限校验。
 
+### 文档采集的范围（2026-11-24）
+
+- 每人一份：`users.settings.larkCapture.docs`（成员读不读最近打开的文档；没设过按打开算，和这项出现之前一样）和 `larkDocs`（`skipLibrary`、`exclude`）。本人的总开关仍是 `lark.capture.recentDocs`，不再管成员的。
+- 排除项按链接认：`/docx|docs|doc/<token>` 单篇，`/wiki/<token>` 页面连同子页面（沿父节点往上找），`/wiki/space/<id>` 整个知识库，`/drive/folder/<token>` 文件夹（往下列五层、两千篇，半小时内复用）。个人文档库用 `my_library` 查到的空间 id 认，成员默认跳过，本人默认不跳。
+- 生效范围：最近打开的文档、它们按层数跟随的链接和子页面（`ImportOpts.skip`），以及本人聊天里出现的文档链接。读不到节点信息时不跳过，按原来的方式读或失败。本人让助手读的、规则和监听指定的不受影响；已入库的不删。
+- 登录页和账号页的连接链接可带 `capture=docs,group,p2p`：只对这次勾了的功能写入，存在 `kv` 的 `auth_capture:<state>`，授权回来时取一次（`src/auth/login.ts`）。
+
 ### 多用户采集与去重
 
 1. **`origin_key`。** 原件加一列平台原生身份（不唯一，建索引）：

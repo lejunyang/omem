@@ -13,6 +13,8 @@ import { chatSettings, setChatSettings } from "../agents/threads.ts";
 import { importFile, importUrl } from "../sources/import.ts";
 import { findSourceByUri, upsertSource } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
+import { docSkipper, type DocSkipper } from "./lark-doc-filter.ts";
+import { OWNER } from "../core/users.ts";
 import { flattenReplies, persistChatMessages, isApp, keepResources, learnPeople, mentionIds, messageText, quotedMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
 import { routeWatchedMessages, type ChatMessage } from "./lark-watch.ts";
 import { queueMention } from "./lark-mentions.ts";
@@ -252,13 +254,16 @@ const DOC_LINK = /https?:\/\/[\w.-]*(?:feishu\.cn|larksuite\.com|larkoffice\.com
 
 async function importLinkedDocs(app: App, spaceId: string, text: string): Promise<string[]> {
   const ids: string[] = [];
+  let skip: DocSkipper | null = null;
   for (const url of new Set(text.match(DOC_LINK) ?? [])) {
+    skip ??= docSkipper(app, OWNER);
+    if (await skip(url).catch(() => null)) continue;
     // Also one filed into another space since (source_locations remembers where it came from).
     const updatedAt = findSourceByUri(app, spaceId, url)?.updatedAt ?? (await import("./lark-docs.ts")).findLarkDoc(app, spaceId, url, true)?.updated_at;
     // A doc linked again within a day is not re-read.
     if (updatedAt && Date.now() - Date.parse(updatedAt) < 86400_000) continue;
     try {
-      const r = await importUrl(app, spaceId, url, { archive: true });
+      const r = await importUrl(app, spaceId, url, { archive: true, skip });
       ids.push(r.id, ...(r.related ?? []));
     } catch (e) {
       console.warn(`[omem] 读取飞书文档失败 ${url}：${(e as Error).message}`);
@@ -681,6 +686,7 @@ const ownerSpace = (app: App) => (findSpace(app, app.config.lark.capture.space) 
 export async function captureRecentDocs(app: App, touched: Map<string, Set<string>>, who?: CaptureFor) {
   const cfg = app.config.lark.capture;
   const spaceId = who?.spaceId ?? ownerSpace(app);
+  const skip = docSkipper(app, who?.userId ?? OWNER);
   let token: string | undefined;
   let read = 0;
   for (let page = 0; page < 3 && read < RECENT_DOCS_PER_POLL; page++) {
@@ -693,8 +699,10 @@ export async function captureRecentDocs(app: App, touched: Map<string, Set<strin
       if (!/^https?:\/\//.test(url)) continue;
       const seenKey = forKey(`lark_recent_doc:${url}`, who);
       if (one(app.db, "select 1 from kv where key = ?", seenKey) || one(app.db, "select 1 from sources where uri = ? and space_id = ?", url, spaceId) || (!who && one(app.db, "select 1 from sources where uri = ?", url))) continue;
+      // Left out by its reader: not read, and not counted against this pass.
+      if (await skip(url).catch(() => null)) continue;
       try {
-        const s = await importUrl(app, spaceId, url, { archive: true, user: who?.userId });
+        const s = await importUrl(app, spaceId, url, { archive: true, user: who?.userId, skip });
         touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), s.id, ...(s.related ?? [])]));
       } catch (e) {
         console.warn(`[omem] 读取最近打开的飞书文档失败 ${url}：${(e as Error).message}`);
