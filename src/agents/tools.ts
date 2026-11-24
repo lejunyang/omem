@@ -1149,7 +1149,7 @@ const LEND_DENIED = new Set([
   "lark_write", "lark_invite", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize",
   "lark_send", "lark_react", "lark_card", "lark_send_file", "reply_to_asker", "meeting_suggest",
   "run_agent", "ask_agent", ...WORK_BOARD_TOOLS, ...CODE_STARTERS,
-  "stay_quiet", "report_rule_failure", ...ROLE_TOOLS,
+  "stay_quiet", "report_rule_failure", "act_as", ...ROLE_TOOLS,
 ]);
 const MAX_LENT_TOOLS = 12;
 
@@ -4603,6 +4603,23 @@ def({
   },
 });
 
+def({
+  name: "act_as",
+  description: "规则运行里换身份：这条规则在规则页列了“以谁的身份运行”、对方也同意了时，换成他（user 填他的 id 或名字），之后插件登记过的命令行用他的登录在他的账号环境里跑，lark_read 以他的身份读飞书；user=null 换回本人。只能换成规则列的、已经同意的人；换不了会说原因（没同意、撤回、账号停用），跳过他继续。",
+  schema: z.object({ user: z.string().min(1).max(200).nullable() }),
+  handler: async (ctx, a) => {
+    if (!ctx.runId || ctx.actor !== "agent") throw new HttpError(403, "只在 omem 的规则运行里换身份");
+    if (runUser(ctx.app, ctx.runId) !== OWNER || (ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的规则运行能换成成员的身份");
+    const rule = (getRun(ctx.app, ctx.runId).input as { rule?: { id: string; runAs?: string[] } }).rule;
+    if (!rule?.runAs?.length) throw new HttpError(403, "这条规则没有列“以谁的身份运行”");
+    const { switchIdentity } = await import("../rules/run-as.ts");
+    const who = switchIdentity(ctx.app, ctx.runId, rule, a.user);
+    const text = who ? `现在以${userName(ctx.app, who)}的身份做` : "换回本人的身份";
+    addRunEvent(ctx.app, ctx.runId, "status", { text, actingAs: who });
+    return `${text}。`;
+  },
+});
+
 // ---- Feishu docs written as the owner -------------------------------------------------
 
 /**
@@ -4998,6 +5015,9 @@ def({
     const download = (await import("../channels/lark-message-files.ts")).resourceDownload(command);
     if (download) return messageFileText(ctx, download.messageId, download.key);
     const c = await import("../channels/lark-cli-tools.ts");
+    // A rule's run that switched to a member (act_as) reads as them.
+    const member = (await import("../rules/run-as.ts")).actingAs(ctx.runId);
+    if (member) return (await import("../auth/lark-user.ts")).asLarkUser(ctx.app, member, () => c.larkRead(ctx.app, command, onNextPage), ctx.runId);
     return c.larkRead(ctx.app, command, onNextPage);
   },
 });

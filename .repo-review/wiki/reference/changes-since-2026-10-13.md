@@ -22,6 +22,10 @@ updated: 2026-11-24
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 规则以成员的身份运行（2026-11-25）
+
+Agent 动作新增 `runAs`（`src/rules/types.ts`，只有本人能加人，`store.ts` 校验）。`src/rules/run-as.ts`：表 `rule_run_as`，保存后 `syncRunAs` 逐人检查（账号、`ask.send`、飞书关联）并用 `asks`（handler `rule-run-as`，只能本人答）发卡片，结果会话是飞书群时发在群里；`decideRunAs` 给账号页同意 / 撤回；`switchIdentity` / `actingAs` 记一次运行当前的身份。工具 `act_as`（`wake` 组，规则运行带 `runAs` 时加上）；命令垫片请求到 `/api/command-gate` 时，换了身份的运行由 `memberExecution` 用成员的持有在他的账号沙箱里跑，`credentialOutcome` 多了 `onBehalf`，登录失效时替他发起登录并等。`lark_read` 在换了身份时包进 `asLarkUser`。接口 `GET /api/rules/:id/run-as`、`POST /api/rules/:id/run-as/:userId/ask`、`GET /api/rule-run-as-candidates`、`GET/POST /api/me/run-as`；网页规则页选人和状态，账号页 `RunAsConsents.vue`。
+
 ## 成员自己的远程浏览器与本机地址守卫（2026-11-25）
 
 `src/remote/browser-guard.ts`：不是本人的浏览器由 `aad mcp` 带守卫环境启动（去掉桌面代理来源，`*_proxy` 指向守卫，`no_proxy=<-loopback>`），守卫复用 `egress-proxy.ts`（新增 TCP 监听、`limits`、`unref`，`Destination` 带 `local` 和 `ip`），拒绝本机和链路本地地址。`sessions.ts` 的 `guarded`、`mayBrowse`；只有守卫下的浏览器能交给成员操作（`grants.ts`），普通会话的操作授权按只看处理。新能力 `remote.browser`；桌面、屏幕、复制本机登录、显示窗口只给本人（`remote/http.ts`）。成员运行带 `OMEM_BROWSER_PROXY`，`browser.mjs` 用它启动，`agent-browser.ts` 核对启动参数。自定义角色可带细分能力（`permissions.ts` 的 `validPermissions`、`capabilities.ts` 的 `presetGrants`），网页分组抽到 `web/src/lib/capability-areas.ts`。

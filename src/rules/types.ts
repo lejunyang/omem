@@ -167,6 +167,11 @@ export const actionSchema = z.discriminatedUnion("type", [
       .optional(),
     /** The owner's 完全访问 for these runs: commands outside the backend's sandbox, no approvals. Only the owner sets it, on the rules page. */
     fullAccess: z.boolean().optional(),
+    /**
+     * Members whose identity the run may switch to, one after another (rules/run-as.ts): each must have
+     * agreed on the card omem sends them. Only the owner lists them (rules page, or the owner's own turn).
+     */
+    runAs: z.array(z.string().trim().min(1)).max(20).optional().transform((v) => (v?.length ? [...new Set(v)] : undefined)),
   }),
   z.object({ type: z.literal("watch"), spec: z.string(), on: z.enum(["all", "mention", "keyword"]).default("mention"), pattern: z.string().optional(), reply: reply.default("draft") }),
   /**

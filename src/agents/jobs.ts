@@ -372,7 +372,7 @@ async function runAgentTask(ctx: RunContext) {
       // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
       choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
-      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []),
+      addTools: [...(rule ? ["report_rule_failure"] : []), ...((rule as { runAs?: string[] } | undefined)?.runAs?.length ? ["act_as"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []),
         // A look at a line hands in what it found (items/lines.ts); it may also find nothing new.
         ...((ctx.run.input as { lineState?: string }).lineState ? ["submit_line_state", "stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []),
         // A meeting's summary hands in what it decided for the items it is about (agents/meeting-outcomes.ts).

@@ -70,7 +70,7 @@ import { callTool, contextToolNames, mcpTools, onToolTokenRevoked, toolContextFo
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
-import { credentialExecution, ownerFallback } from "../agents/credential-execution.ts";
+import { credentialExecution, memberExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
@@ -350,6 +350,22 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       return { decision: "deny", message: "同一条命令一分钟内重复了 60 次以上，疑似在循环启动自己，omem 拒绝执行。" };
     }
     const decision = await commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+    // A rule's run switched to a member who agreed (rules/run-as.ts): declared commands run on their login.
+    const runAs = ctx.runId && b.credentialExecution && decision.decision === "allow" ? await import("../rules/run-as.ts") : null;
+    const member = runAs?.actingAs(ctx.runId);
+    const asEntry = member ? credentialCommand(b.command) : null;
+    if (runAs && member && asEntry && ctx.runId) {
+      const runId = ctx.runId;
+      const ruleId = (getRun(app, runId).input as { rule?: { id?: string } }).rule?.id ?? "";
+      reply.raw.writeProcessing?.();
+      const token = bearer(req), controller = new AbortController(), cancel = () => controller.abort();
+      const unsubscribe = onToolTokenRevoked(token, cancel);
+      s.once("close", cancel);
+      const live = () => !controller.signal.aborted && !s.destroyed && toolContextForToken(app, token)?.runId === runId && runAs.actingAs(runId) === member;
+      try {
+        return await memberExecution({ ...ctx, runId }, asEntry, b.args, member, ruleId, live, controller.signal, () => runAs.consented(app, ruleId, member));
+      } finally { s.off("close", cancel); unsubscribe(); }
+    }
     const reports = reportable(ctx);
     if (decision.decision === "allow" && (reports || ownerFallback(app, ctx))) {
       const entry = credentialCommand(b.command);
@@ -2868,6 +2884,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/rules/:id/permissions", async (req) => {
     const { getRule } = await import("../rules/store.ts");
     return (await import("../rules/permissions.ts")).rulePermissions(app, getRule(app, (req.params as { id: string }).id));
+  });
+  // Whose identity a rule may use (rules/run-as.ts): each listed person's answer, asking again, who can be listed.
+  server.get("/api/rules/:id/run-as", async (req) => {
+    const { getRule } = await import("../rules/store.ts");
+    return (await import("../rules/run-as.ts")).runAsOf(app, getRule(app, (req.params as { id: string }).id));
+  });
+  server.post("/api/rules/:id/run-as/:userId/ask", async (req) => {
+    const p = req.params as { id: string; userId: string };
+    const { getRule } = await import("../rules/store.ts");
+    return (await import("../rules/run-as.ts")).reaskRunAs(app, getRule(app, p.id), p.userId);
+  });
+  server.get("/api/rule-run-as-candidates", async () => {
+    const { runAsBlocker } = await import("../rules/run-as.ts");
+    const { listUsers } = await import("../core/users.ts");
+    return listUsers(app).filter((u) => u.id !== OWNER && !u.disabledAt).map((u) => ({ id: u.id, name: u.name, blocker: runAsBlocker(app, u.id) }));
+  });
+  server.get("/api/me/run-as", async (req) => (await import("../rules/run-as.ts")).myRunAs(app, who(req)));
+  server.post("/api/me/run-as/:ruleId", async (req) => {
+    const b = q(z.object({ grant: z.boolean() }), req.body);
+    const { decideRunAs, myRunAs } = await import("../rules/run-as.ts");
+    decideRunAs(app, (req.params as { ruleId: string }).ruleId, who(req), b.grant, who(req));
+    return myRunAs(app, who(req));
   });
   const saveWebRule = async (req: FastifyRequest<{ Body: import("../rules/store.ts").RuleSaveInput; Params: { id?: string } }>) => {
     const { saveRuleWithConfirmation } = await import("../rules/confirmation.ts");

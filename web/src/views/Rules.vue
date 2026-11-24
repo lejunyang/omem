@@ -23,7 +23,7 @@ import { fmtTime, relTime, state, toast } from "../store";
 type Reply = "none" | "draft" | "auto";
 type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string }; fullAccess?: boolean }
+  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string }; fullAccess?: boolean; runAs?: string[] }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "context"; context: string; adopt?: boolean }
   | { type: "invite-bot" }
@@ -66,6 +66,25 @@ const selectedId = computed(() => (typeof route.query.id === "string" ? route.qu
 const creating = computed(() => route.query.new === "1");
 const form = ref<Rule | null>(null);
 const firings = ref<Firing[]>([]);
+/** Whose identity the rule's agent may use (src/rules/run-as.ts): who can be listed, and each listed person's answer. */
+type RunAsPerson = { userId: string; name: string; status: "pending" | "granted" | "declined" | "revoked" | "unavailable"; reason: string | null };
+const runAsCandidates = ref<{ id: string; name: string; blocker: string | null }[]>([]);
+const runAsState = ref<RunAsPerson[]>([]);
+const RUN_AS_LABEL: Record<RunAsPerson["status"], string> = { pending: "等他同意", granted: "已同意", declined: "没同意", revoked: "撤回了", unavailable: "用不了" };
+const runAsOptions = computed(() => runAsCandidates.value.map((u) => ({ value: u.id, label: u.name, hint: u.blocker ?? undefined })));
+async function loadRunAs(id: string) {
+  runAsState.value = [];
+  if (form.value?.actions.some((a) => a.type === "agent" && a.runAs?.length)) runAsState.value = await get<RunAsPerson[]>(`/api/rules/${id}/run-as`).catch(() => []);
+}
+const runAsOf = (userId: string) => runAsState.value.find((p) => p.userId === userId);
+async function reaskRunAs(userId: string) {
+  try {
+    runAsState.value = await post<RunAsPerson[]>(`/api/rules/${form.value!.id}/run-as/${userId}/ask`, {});
+    toast("已经重新问他", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 const dirty = ref(false);
 const saving = ref(false);
 const drafting = ref(false);
@@ -150,13 +169,15 @@ async function loadCurrent(protectEdits = false) {
     dirty.value = false;
     perms.value = null;
     if (r.trigger.event === "meeting" || r.trigger.event === "doc") void checkPermissions(r.id!);
+    void loadRunAs(r.id!);
   } catch (e) {
     if (current()) toast((e as Error).message, "error");
   }
 }
 onMounted(async () => {
   if (readOnly.value) return void (await loadList());
-  await Promise.all([loadList(), get<Options>("/api/rule-options").then((o) => (options.value = o)).catch(() => {})]);
+  await Promise.all([loadList(), get<Options>("/api/rule-options").then((o) => (options.value = o)).catch(() => {}),
+    get<typeof runAsCandidates.value>("/api/rule-run-as-candidates").then((c) => (runAsCandidates.value = c)).catch(() => {})]);
   await loadCurrent();
 });
 watch(() => [route.query.id, route.query.new], () => void (readOnly.value || loadCurrent()));
@@ -852,6 +873,19 @@ function startFrom(text: string) {
                 <UiCheckbox :model-value="!!a.fullAccess" size="sm" @change="(v) => ((a.fullAccess = v || undefined), touch())">完全访问：命令不进沙箱、不经审批</UiCheckbox>
                 <small class="muted">{{ a.fullAccess ? accessHint(a) : "不勾时跟这个 Agent 自己的设置（Agent 页里打开了完全访问就同样不进沙箱）；那里没开、这条规则又要联网排查（报警、值班）时在这里打开。交给别的 Agent 时它也照此运行。" }}</small>
               </div>
+              <div class="stack tight">
+                <div class="row wrap">
+                  <span class="small">以谁的身份运行</span>
+                  <UiSelect :model-value="a.runAs ?? []" multiple size="sm" width="260px" :options="runAsOptions" :search-at="6" placeholder="本人（默认）" aria-label="以谁的身份运行" @update:model-value="(v) => ((a.runAs = v.length ? v : undefined), touch())" />
+                </div>
+                <small class="muted">选了成员时，这一次运行会依次换成每个人：插件登记过的命令行（比如研发平台的）用他的登录跑，飞书以他的身份读。保存后机器人会问每个人同不同意，规则是在群里设的就在群里问，不然私聊问；没同意的人运行时跳过。</small>
+                <div v-for="u in a.runAs ?? []" :key="u" class="row wrap run-as">
+                  <span>{{ runAsOf(u)?.name ?? runAsCandidates.find((c) => c.id === u)?.name ?? u }}</span>
+                  <span class="badge" :class="{ ok: runAsOf(u)?.status === 'granted' }">{{ runAsOf(u) ? RUN_AS_LABEL[runAsOf(u)!.status] : "保存后问他" }}</span>
+                  <small v-if="runAsOf(u)?.reason" class="muted">{{ runAsOf(u)!.reason }}</small>
+                  <button v-if="form?.id && runAsOf(u) && runAsOf(u)!.status !== 'granted'" class="btn ghost sm" @click="reaskRunAs(u)">再问一次</button>
+                </div>
+              </div>
               <textarea v-model="a.task" class="input" rows="2" placeholder="交给它的要求（触发的消息会自动附上），例如：分析报警，需要关注就 @ 值班人" @input="touch" />
             </template>
             <template v-else-if="a.type === 'context'">
@@ -1337,5 +1371,9 @@ function startFrom(text: string) {
   .page {
     padding: 12px 16px 32px;
   }
+}
+.run-as {
+  gap: 8px;
+  align-items: center;
 }
 </style>

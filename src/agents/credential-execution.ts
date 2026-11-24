@@ -167,6 +167,34 @@ async function fallbackExecution(ctx: ToolContext & { runId: string }, entry: En
   return { execution: ran.execution, notice: text };
 }
 
+/**
+ * A rule's run that switched to a member who agreed (rules/run-as.ts, act_as): a declared command runs
+ * on that member's login in their account sandbox, whatever it does — they agreed to this rule using
+ * their identity. Never falls back to the owner's login: without theirs it is refused and they are asked
+ * to log in (the run goes on once they do, credential-wait.ts).
+ */
+export async function memberExecution(ctx: ToolContext & { runId: string }, entry: Entry, args: string[], member: string, ruleId: string,
+  live: () => boolean, runSignal: AbortSignal, stillConsented: () => boolean) {
+  const { app, runId } = ctx, { method, command } = entry, name = userName(app, member);
+  const display = [command.name, ...args.filter((x) => !x.startsWith("-")).slice(0, 2)].join(" ");
+  if (!sandboxSupport().ok) return { decision: "deny" as const, message: `这台机器不能在${name}的账号环境里运行命令（需要沙箱），这次跳过他` };
+  if (!usableCredential(app, member, method.kind)) {
+    inviteCredential(app, member, method, "none", { command: display, applyUrl: null, covered: false });
+    return { decision: "deny" as const, message: `${name}没有可用的${method.name}登录，已提醒他授权；这次跳过他` };
+  }
+  const eligible = () => live() && !method.signal.aborted && activeUser(findUser(app, member)) && stillConsented();
+  const ran = await runWith(ctx, entry, args, member, eligible, runSignal,
+    { reason: `规则以${name}的身份运行（他已同意）`, text: `以${name}的${method.name}运行 ${display}。`, audited: "credentials.command" });
+  if (!ran || ran === "unavailable") return { decision: "deny" as const, message: `无法在${name}的环境中执行这条命令` };
+  let notice: string | undefined;
+  if (!ran.aborted) {
+    const result = await credentialOutcome(app, member, runId, { command: command.name, args, code: ran.execution.code, output: ran.output }, true, true);
+    notice = (result as { notice?: string }).notice;
+  }
+  audit(app, member, "rule.run-as.command", ruleId, { runId, command: command.name, argsHash: digest(args) });
+  return { decision: "allow" as const, execution: ran.execution, notice };
+}
+
 /** Called only after the command gate allows the original argv in this run. Never called from an outcome report. */
 export async function credentialExecution(ctx: ToolContext, entry: Entry, args: string[], live: () => boolean, runSignal: AbortSignal) {
   const { app, runId } = ctx, requester = ctx.userId ?? OWNER;

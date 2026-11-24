@@ -9,7 +9,8 @@ import { validateExecution } from "../agents/execution.ts";
 import { fieldsOf } from "./conditions.ts";
 import { checkWaitRule } from "./fast.ts";
 import { ruleInputSchema, type Rule, type RuleAction, type RuleInput, type Temporary } from "./types.ts";
-import { OWNER } from "../core/users.ts";
+import { findUser, OWNER } from "../core/users.ts";
+import { forgetRunAs, syncRunAs } from "./run-as.ts";
 import { isOwner } from "../auth/permissions.ts";
 import { moveRuleWorkFiles } from "../sources/work.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
@@ -190,6 +191,13 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
       // Left out by an agent's edit: the owner's choice stays.
       if (a.fullAccess === undefined && had.includes(a.spec)) a.fullAccess = true;
     }
+    // Whose identity it may use is the owner's to list (each person still agrees on a card): a member's
+    // agent cannot add anyone; the owner's own agent may, in the turn the owner asked for it.
+    const listed = (before ? JSON.parse(before.actions) as RuleAction[] : []).flatMap((a) => (a.type === "agent" ? a.runAs ?? [] : []));
+    for (const a of r.actions) {
+      if (a.type !== "agent" || !a.runAs) continue;
+      if (a.runAs.some((u) => !listed.includes(u)) && (actor !== OWNER || input.temporary)) throw new HttpError(403, "以谁的身份运行只能由本人指定（规则页，或本人在对话里要求的这一轮）");
+    }
     // Where a rule forwards to (and may add the bot or make a group as the owner) is the owner's pick too.
     const target = (a: Extract<RuleAction, { type: "forward" }>) => (a.to.kind === "origin" ? "origin" : a.to.chatId);
     const targets = (before ? JSON.parse(before.actions) as RuleAction[] : []).flatMap((a) => (a.type === "forward" ? [target(a)] : []));
@@ -208,6 +216,10 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
       if (a.type === "agent" && a.space) getSpace(app, a.space);
       // The backend must exist and offer the model and effort (checked against its last detection).
       if (a.type === "agent" && a.ai) validateExecution(app, { ...a.ai, source: "user", reason: `规则「${r.name}」指定` });
+      if (a.type === "agent" && a.runAs) {
+        if (a.runAs.includes(OWNER)) throw new HttpError(400, "以谁的身份运行只列成员：本人的身份不用列");
+        for (const u of a.runAs) if (!findUser(app, u)) throw new HttpError(400, `没有这个成员：${u}`);
+      }
     }
     // 交给关注: one that exists (a place or a matter; the built-in “someone looks for you” has no conversation to take it).
     if (a.type === "context" && !["place", "item"].includes(getContext(app, a.context)?.kind ?? "")) throw new HttpError(400, `没有这个关注：${a.context}（交给关注要选一个已有的关注）`);
@@ -262,7 +274,9 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
   if (r.trigger.event === "schedule") upsertSchedule(app, { id: `rule:${id}`, kind: "rule", cron: r.trigger.cron!, config: { ruleId: id }, enabled: r.enabled });
   else if (prev && JSON.parse(prev.trigger).event === "schedule") deleteSchedule(app, `rule:${id}`);
   queueMicrotask(() => app.emit({ type: "changed", entity: "rule", id, spaceId: r.spaceId }));
-  return { rule: getRule(app, id), needsOwnerConfirmation };
+  const saved = getRule(app, id);
+  syncRunAs(app, saved);
+  return { rule: saved, needsOwnerConfirmation };
 }
 
 export function deleteRule(app: App, id: string) {
@@ -270,6 +284,7 @@ export function deleteRule(app: App, id: string) {
   run(app.db, "delete from rules where id = ?", id);
   if (one(app.db, "select 1 from schedules where id = ?", `rule:${id}`)) deleteSchedule(app, `rule:${id}`);
   run(app.db, "delete from rule_handled where rule_id = ?", id);
+  forgetRunAs(app, id);
   queueMicrotask(() => app.emit({ type: "changed", entity: "rule", id, spaceId: rule.spaceId }));
 }
 

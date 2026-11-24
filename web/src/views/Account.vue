@@ -10,6 +10,7 @@ import UiCheckbox from "../components/UiCheckbox.vue";
 import Skeleton from "../components/Skeleton.vue";
 import HelpText from "../components/HelpText.vue";
 import LarkDocExclusions from "../components/LarkDocExclusions.vue";
+import RunAsConsents from "../components/RunAsConsents.vue";
 import MonoLine from "../components/MonoLine.vue";
 import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
@@ -384,6 +385,8 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
 
       <!-- Where one's own notifications go (the owner sets theirs under 设置 → 通知与打扰). -->
       <NotifyOutlets v-if="state.me && state.me.role !== 'owner'" />
+
+      <RunAsConsents />
 
       <h2 class="section-title">登录的设备</h2>
       <div v-if="!acc.sessions.length" class="card pad muted small">{{ acc.via === "local" ? "你在运行 omem 的这台机器上，不用登录。" : "没有登录的设备。" }}</div>

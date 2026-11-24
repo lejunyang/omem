@@ -402,7 +402,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "GET /api/profile-options", "PUT /api/profiles/:name/skills", "POST /api/profiles/:name/review", "POST /api/profile-proposals/:id/apply", "POST /api/profile-proposals/:id/reject",
       "GET /api/library-files/skill/:name", "PUT /api/library-files/skill/:name",
       "GET /api/skills", "GET /api/skill-groups", "GET /api/skill-groups/:id", "GET /api/skills/:name", "PUT /api/skills/:name", "PUT /api/skills/:name/status", "DELETE /api/skills/:name", "GET /api/skills/:name/files", "GET /api/skills/:name/file", "PUT /api/skills/:name/file", "DELETE /api/skills/:name/file",
-      "GET /api/rules/:id/permissions",
+      "GET /api/rules/:id/permissions", "GET /api/rules/:id/run-as", "POST /api/rules/:id/run-as/:userId/ask", "GET /api/rule-run-as-candidates",
       "GET /api/rule-options", "POST /api/rule-conversations", "GET /api/wakes", "DELETE /api/wakes/:id", "GET /api/watches", "DELETE /api/watches/:chatId",
       "GET /api/listen", "GET /api/listen/:id", "POST /api/listen", "PUT /api/listen/:id", "DELETE /api/listen/:id", "POST /api/listen/:id/coach", "POST /api/listen/:id/learn", "GET /api/lark/chats/:id/detail", "PUT /api/cases/:id", "POST /api/items/:id/listen", "POST /api/rules/:id/to-listen",
       "GET /api/notify-ignore-rules", "POST /api/notify-ignore-rules/delete", "POST /api/schedules/:id/run",
@@ -542,6 +542,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "DELETE /api/auth/connections/:provider": "self",
   "PUT /api/auth/connections/:provider/features/:feature": "self",
   "GET /api/lark/doc-capture": "self",
+  // Rules that asked to use one's identity (rules/run-as.ts): each person sees and decides their own.
+  "GET /api/me/run-as": "self",
+  "POST /api/me/run-as/:ruleId": "self",
   "PUT /api/lark/doc-capture": "self",
   "PUT /api/auth/connections/lark/capture": "self",
   "POST /api/auth/connections/:provider/credentials": "self",

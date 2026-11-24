@@ -91,7 +91,8 @@ export function classifyFailure(command: CredentialCommand, output: string) {
   return { reason: "failed" as const, applyUrl: null };
 }
 
-export async function credentialOutcome(app: App, user: string, runId: string, req: z.infer<typeof outcomeSchema>, remind = true) {
+/** onBehalf: the run works as this person with their consent (rules/run-as.ts): their login is waited for like one's own. */
+export async function credentialOutcome(app: App, user: string, runId: string, req: z.infer<typeof outcomeSchema>, remind = true, onBehalf = false) {
   const entry = credentialCommand(req.command);
   if (!entry) return {};
   const { method, command } = entry;
@@ -108,7 +109,7 @@ export async function credentialOutcome(app: App, user: string, runId: string, r
     // and the conversation goes on once it works (credential-wait.ts). Otherwise only a reminder.
     const requester = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", runId)?.user_id ?? user;
     // Only one's own login (or the owner's): a lender is not asked to log in because a borrower's command failed.
-    const waits = remind && (user === requester || user === OWNER) && canStartLogin(app, user, method) && waitForCredential(app, user, method.kind, runId, requester);
+    const waits = remind && (user === requester || user === OWNER || onBehalf) && canStartLogin(app, user, method) && waitForCredential(app, user, method.kind, runId, requester);
     await expireCommandCredential(app, user, method, remind && !waits);
     if (waits) {
       startCredentialLogin(app, user, method.kind, `运行 ${command.name} 时${method.name}报告${result.reason === "expired" ? "登录过期" : "没有登录"}。`)

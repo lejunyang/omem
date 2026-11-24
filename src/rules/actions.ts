@@ -1,3 +1,4 @@
+import { consented, runAsOf } from "./run-as.ts";
 import type { App } from "../core/app.ts";
 import { CODE_STARTERS } from "../agents/tool-help.ts";
 import { notify } from "../core/notify.ts";
@@ -362,6 +363,7 @@ async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, r
     separateReplyNote(a),
     ruleFiles(app, rule),
     reply !== "none" ? powerNote(a) : "",
+    runAsNote(app, rule, a),
     `任务执行失败或无法完成时调用 report_rule_failure(summary)，宿主按规则${a.failureTo === "chat" ? "发到本群" : "只通知本人"}；不要自行换渠道，然后调用 stay_quiet 结束这一轮。`,
     "",
     reply === "auto" && threadId
@@ -388,7 +390,7 @@ async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, r
       task,
       ...(threadId && reply === "auto" ? { threadId } : {}),
       ...(replyAt && reply === "auto" ? { replyAt } : {}),
-      rule: { id: rule.id, name: rule.name, mergeReply: a.mergeReply, failureTo: a.failureTo ?? "owner", failureChatId: chatId, failureBot: bot },
+      rule: { id: rule.id, name: rule.name, mergeReply: a.mergeReply, failureTo: a.failureTo ?? "owner", failureChatId: chatId, failureBot: bot, ...(a.runAs ? { runAs: a.runAs } : {}) },
       hideThinking: !!a.hideThinking,
       ...ruleAI(rule, a),
       lark,
@@ -401,6 +403,23 @@ async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, r
     userId: OWNER,
   });
   return { action: "agent", ok: true, detail: `交给 ${spec.name}${replyAt && reply === "auto" ? replyAt.inThread === false ? "，回复本条消息" : "，在消息的话题里处理" : ""}${a.merge !== false && a.mergeReply === "separate" ? "，每次触发分别处理" : ""}`, runId: r.id };
+}
+
+/** Whose identity this run may take, one after another (run-as.ts), and who cannot be used this time. */
+function runAsNote(app: App, rule: Rule, a: AgentAction) {
+  if (!a.runAs?.length) return "";
+  const people = runAsOf(app, { id: rule.id, actions: [a] });
+  const ok = people.filter((p) => consented(app, rule.id, p.userId));
+  const skipped = people.filter((p) => !ok.includes(p));
+  const why = { pending: "还没同意", declined: "没同意", revoked: "撤回了同意", unavailable: "现在用不了", granted: "" } as const;
+  return [
+    "\n# 以成员的身份做",
+    "",
+    ok.length
+      ? `这条规则要依次以这些人的身份做：${ok.map((p) => `${p.name}（${p.userId}）`).join("、")}。轮到谁就先调用 act_as(user=他的 id)，再运行要用他登录的命令（插件登记过的命令行会用他的登录在他的账号环境里跑）、用 lark_read 以他的身份读飞书；做完一个再换下一个，最后 act_as(user=null) 换回本人。某个人的命令失败（没登录、过期、没权限）就记下原因、跳过他继续，不要替他重试别人的登录。结果里按人分开写。`
+      : "这条规则列了要以哪些成员的身份做，但这次没有一个人可用。",
+    skipped.length ? `这次不能用：${skipped.map((p) => `${p.name}（${p.reason ?? why[p.status]}）`).join("、")}；在结果里说明，不要用本人的身份替他们做。` : "",
+  ].filter((x) => x !== "").join("\n");
 }
 
 /**

@@ -2474,6 +2474,9 @@ export const migrations: readonly string[] = [
      where status='pending' and json_extract(context,'$.handler')='credential-confirm';
    create index card_ask_id on card_interactions(json_extract(payload,'$.askId')) where purpose='ask';
    create index credential_application on credential_access(kind,resource,apply_at desc);`,
+  // A rule's agent may switch to members who agreed to it (rules/run-as.ts).
+  `create table rule_run_as(rule_id text not null, user_id text not null, status text not null, reason text, ask_id text,
+     updated_at text not null, primary key(rule_id, user_id));`,
 ];
 
 export type Db = DatabaseSync;
