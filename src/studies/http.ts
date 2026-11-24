@@ -23,7 +23,7 @@ export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req
     if (!b.success) throw new HttpError(400, "范围字段不对");
     return studyOperation(app, id, async () => {
       const view = putScope(app, id, b.data, who(req));
-      if (b.data.repos || b.data.thirdParty === false) await cancelTrials(app, id, "课题范围已调整，当前试验停止，按新的范围重新定方向");
+      if (b.data.repos || b.data.thirdParty === false) await cancelTrials(app, id, "研究范围已调整，当前试验停止，按新的范围重新定方向");
       return view;
     });
   });
@@ -41,7 +41,7 @@ export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req
     return studyView(app, id);
   });
   server.post("/api/items/:id/study/findings/:finding", async (req) => {
-    const id = itemId(req, true), b = z.object({ state: z.enum(["confirmed", "rejected", "later"]), reason: z.string().max(4000).optional() }).safeParse(req.body);
+    const id = itemId(req, true), b = z.object({ state: z.enum(["confirmed", "rejected", "later", "fixed"]), reason: z.string().max(4000).optional() }).safeParse(req.body);
     if (!b.success) throw new HttpError(400, "发现的状态或原因不对");
     await studyOperation(app, id, async () => setFindingState(app, id, (req.params as { finding: string }).finding, b.data.state, b.data.reason));
     return studyView(app, id);

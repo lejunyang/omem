@@ -363,8 +363,8 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
                 <dd><code>at: "10:00"</code> 这一轮里不早于这个时刻开始；<code>window: "01:00-06:00"</code> 只在这个时间段里开始，可以跨午夜。</dd>
                 <dt><code>budget</code></dt>
                 <dd><code>{ minutes: 240 }</code> 这一段每轮最多跑这么久，到了就停下来等你。逐个去试的阶段还可以写 <code>trials: 8</code>，每轮最多试这么多个，没试完的留到下一轮。</dd>
-                <dt>课题</dt>
-                <dd>给一个项目找问题和改进点时用（内置的 <code>study</code> 是一份完整的例子）：定方向的阶段写 <code>tools: [propose_directions]</code>，提出的方向由你选；试验的阶段写 <code>by: { object: trials }</code>（可写 <code>agent</code>、<code>skill</code>），按选定的方向一个一个去试，每个记一条结果；小结的阶段写 <code>tools: [read_ledger, record_finding, close_direction]</code>，把试验归并成发现；再加一段 <code>by: { object: fixes }</code>（可写 <code>budget: { fixes: 2 }</code>），方向允许改代码时把这一轮新发现的缺陷逐条交办去改，改完重跑当初失败的试验。结果都在事项页的“课题的台账”里。</dd>
+                <dt>研究</dt>
+                <dd>给一个项目找问题和改进点时用（内置的 <code>study</code> 是一份完整的例子）：定方向的阶段写 <code>tools: [propose_directions]</code>，提出的方向由你选；试验的阶段写 <code>by: { object: trials }</code>（可写 <code>agent</code>、<code>skill</code>），按选定的方向一个一个去试，每个记一条结果；小结的阶段写 <code>tools: [read_ledger, record_finding, close_direction]</code>，把试验归并成发现；再加一段 <code>by: { object: fixes }</code>（可写 <code>budget: { fixes: 2 }</code>），方向允许改代码时把这一轮新发现的缺陷逐条交办去改，改完重跑当初失败的试验。结果都在事项页的“研究记录”里。</dd>
                 <dt><code>repeat</code></dt>
                 <dd>写在最外层，不在某一段里：<code>{ from: 某一段的 id, every: manual }</code>。做完以后从那一段起可以再来一轮；<code>manual</code> 你点了才开始，<code>[tue, fri]</code> 每周二、周五，<code>day</code> 每天，<code>done</code> 做完接着来。</dd>
                 <dt><code>note</code></dt>

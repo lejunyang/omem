@@ -22,6 +22,9 @@ updated: 2026-11-24
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 研究：发现的写法、改好与避开做过的方向（2026-11-25）
+
+界面上“课题”改叫“研究”、“台账”改叫“研究记录”，表和工具名不变。`skills/library/study-summary` 要求发现正文按“条件 / 现象 / 为什么是问题 / 建议”分节，`read_ledger` 给出试验截图的 Markdown（`web/src/lib/markdown.ts` 允许 `/api/artifacts/…` 的图片）。新工具 `revise_study_finding`（`study` 组，主助手加 `group:study` 去掉 `propose_directions` / `trial_report`），`store.ts` 的 `reviseFinding` 首次改写存 `revised`；`setFindingState` 多 `fixed`（`fixed_at` / `fixed_note`），`fixes.ts` 重跑全过时 `markFixedByChange`。`materials.ts`：覆盖按 `study_trials.features` 统计（旧试验按反引号命令认），`planningMaterials` 加“以前的方向”；`service.ts` 校验 features。`engine.ts` 的 `startRound` 带 `note`，记成 `round-note` 事件供 `ownerWords` 读。网页 `ItemStudy.vue`：“就这条问”“看不懂，重写”“已改好…”、收起已改好的；`ItemFlow.vue` 研究再来一轮先问看什么。见 `docs/v2/studies.md` 最后一节。
 ## 凭据按子命令分流（2026-11-25）
 
 插件登记的命令可带 `subcommand` 前缀（`packages/plugin-sdk/credential.ts`、`credential-registry.ts`）：`credential-outcome.ts` 的 `credentialCommand(name, args)` 在同名的登记里取参数能匹配上的最长前缀，没前缀的接其余调用；命令垫片、成员身份执行和结果回报都按它选凭据。每条命令的 `readOnly` 上限从 64 提到 256。`test/credential-subcommand.test.ts`。

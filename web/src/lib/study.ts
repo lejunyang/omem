@@ -7,6 +7,8 @@ export type StudyTrial = {
   state: "queued" | "running" | "reported" | "skipped"; result: TrialResult | null; summary: string;
   evidence: string[]; artifacts: Artifact[]; findings: { kind: FindingKind; title: string; repro: string }[];
   runId: string | null; attempts: number; prior: string | null; unsure: boolean; escalated: boolean; updatedAt: string;
+  /** The headings of the feature list it covers, as named when the direction was proposed. */
+  features?: string[];
   /** The commit of each repository in the study's own workspace this trial ran on, by repository space. */
   commits?: Record<string, string>;
   /** A rerun after a code change: the finding it checks and the delegation whose workspace it ran in. */
@@ -37,6 +39,11 @@ export type FindingKind = "defect" | "gap" | "idea";
 export type StudyFinding = {
   id: string; kind: FindingKind; title: string; repro: string; trials: StudyTrial[];
   state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; stateReason: string; sameAs: string | null; createdAt: string; updatedAt: string;
+  round?: number;
+  /** Closed as fixed: when, and by what (a commit, a delegation whose reruns passed). */
+  fixedAt?: string | null; fixedNote?: string;
+  /** The wording before someone re-described it (revise_study_finding), kept once. */
+  revised?: { kind: FindingKind; title: string; repro: string } | null;
   /** The code delegation started from this finding, and where it stands. */
   fix?: { workId: string; status: string; link: string; /** How the failed trials went when run again on the change. */ verified?: TrialResult | null; reruns?: string[] } | null;
 };
@@ -64,9 +71,12 @@ export function trialTone(t: Pick<StudyTrial, "state" | "result">) {
 /** Read first what did not go well: failed, could not run, unclear, running, passed, then the ones not run. */
 const order = (t: StudyTrial) => t.result === "failed" ? 0 : t.result === "blocked" ? 1 : t.result === "unclear" ? 2 : t.state === "running" ? 3 : t.result === "passed" ? 4 : t.state === "queued" ? 5 : 6;
 export const byConcern = (a: StudyTrial, b: StudyTrial) => order(a) - order(b) || a.seq - b.seq;
-/** Findings the owner has not judged come first, then the ones put off. */
+/** Findings the owner has not judged come first, then the ones put off; the ones fixed go to the end. */
 const findingOrder: Record<StudyFinding["state"], number> = { new: 0, later: 1, confirmed: 2, rejected: 3, duplicate: 4 };
-export const byUnjudged = (a: StudyFinding, b: StudyFinding) => findingOrder[a.state] - findingOrder[b.state] || b.createdAt.localeCompare(a.createdAt);
+const rankOf = (f: StudyFinding) => f.fixedAt ? 5 : findingOrder[f.state];
+export const byUnjudged = (a: StudyFinding, b: StudyFinding) => rankOf(a) - rankOf(b) || b.createdAt.localeCompare(a.createdAt);
+/** Where a finding stands, in a word: fixed overrides the owner's earlier call. */
+export const findingWord = (f: StudyFinding) => f.fixedAt ? "已改好" : findingWords[f.state];
 
 /** The parts of a direction's progress bar, in a fixed order, leaving out the empty ones. */
 export function progress(d: StudyDirection) {

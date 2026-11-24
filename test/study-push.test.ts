@@ -28,7 +28,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   for (const f of fixtures.splice(0)) { f.app.events.emit("close"); await stopFlow(f.app, f.item.id); await new Promise((r) => setImmediate(r)); f.app.db.close(); rmSync(f.app.home, { recursive: true, force: true }); }
 });
-describe("课题登记范围内推送", () => {
+describe("研究登记范围内推送", () => {
   it("工具只临时给已授权的试验和重跑，默认 group 不授出", async () => {
     const f = await setup(); expect(expandTools(["group:study"])).not.toContain("study_push");
     const observed: string[][] = [];

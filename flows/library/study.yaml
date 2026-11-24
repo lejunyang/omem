@@ -1,5 +1,5 @@
 id: study
-name: 课题：给一个项目找问题和改进点
+name: 研究：给一个项目找问题和改进点
 description: 按需要一轮一轮转：对着功能清单定方向，按方向逐个去试，之后小结并把试验归并成发现
 for: { kinds: [watch] }
 repeat: { from: plan, every: manual }

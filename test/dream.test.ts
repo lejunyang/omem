@@ -21,7 +21,7 @@ describe("daily brief study rounds", () => {
   const since = "2026-11-01T00:00:00.000Z", ended = "2026-11-02T00:00:00.000Z";
   function setup(study = true) {
     const app = testApp();
-    const item = upsertItem(app, undefined, { spaceId: "personal", kind: "watch", title: "示例商城课题" }, "user");
+    const item = upsertItem(app, undefined, { spaceId: "personal", kind: "watch", title: "示例商城研究" }, "user");
     const definition = { id: "demo", name: "示例流程", stages: [{ id: "plan", name: "方向", by: { run: {} }, ...(study ? { tools: ["propose_directions"] } : {}) }] };
     run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at) values(?,'demo',?,'2026-10-30T00:00:00.000Z','owner',?)", item.id, JSON.stringify(definition), since);
     run(app.db, "insert into kv(key,value) values('brief_at',?)", since);
@@ -66,7 +66,7 @@ describe("daily brief study rounds", () => {
       expect(studyBrief(app, ended, ended)).toBe("");
     } finally { fake.mockRestore(); app.db.close(); }
   });
-  it("没结束的轮次、非课题流程和其他本人的事项都不加入探索", () => {
+  it("没结束的轮次、非研究流程和其他本人的事项都不加入探索", () => {
     const f = setup(false);
     try {
       f.close(); expect(studyBrief(f.app, since, ended)).toBe("");

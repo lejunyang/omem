@@ -34,7 +34,7 @@ import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, activeUser, identityOwner, findUser, requireMembershipSpace, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
-import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
+import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema, reviseStudyFindingSchema } from "../studies/schema.ts";
 import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf, LARK_DOMAIN_FEATURES } from "../auth/features.ts";
@@ -2466,7 +2466,7 @@ def({
   },
 });
 def({
-  name: "propose_directions", description: "定方向阶段交零到三个方向，宿主对账去重后请本人选；空数组是正常结果，note 写原因。", write: true, schema: proposalSchema,
+  name: "propose_directions", description: "定方向阶段交零到三个方向，宿主对账去重后请本人选；空数组是正常结果，note 写原因。每个试验的 features 填它覆盖的功能清单二级标题原文，覆盖情况按它统计。", write: true, schema: proposalSchema,
   handler: async (ctx, a) => {
     flowItem(ctx, a.item, "write");
     return (await import("../studies/service.ts")).proposeDirections(ctx.app, a, flowActor(ctx));
@@ -2485,7 +2485,7 @@ def({
   },
 });
 def({
-  name: "study_push", description: "将本试验工作区的 HEAD 推到课题登记的远端和固定分支前缀，必须干净，不能强推。", write: true, schema: studyPushSchema,
+  name: "study_push", description: "将本试验工作区的 HEAD 推到研究登记的远端和固定分支前缀，必须干净，不能强推。", write: true, schema: studyPushSchema,
   handler: async (ctx, a) => {
     const store = await import("../studies/store.ts");
     const item = flowItem(ctx, store.trial(ctx.app, a.trial).item_id, "write");
@@ -2493,19 +2493,28 @@ def({
   },
 });
 def({
-  name: "read_ledger", description: "按课题、方向、对象、结果和轮次读试验摘要、证据、候选与正式发现；定方向阶段禁止读取。", schema: ledgerSchema,
+  name: "read_ledger", description: "按研究、方向、对象、结果和轮次读试验摘要、证据、候选与正式发现；定方向阶段禁止读取。", schema: ledgerSchema,
   handler: async (ctx, a) => {
     flowItem(ctx, a.item, "read");
     return (await import("../studies/service.ts")).readLedger(ctx.app, a, ctx.runId);
   },
 });
 def({
-  name: "record_finding", description: "把有复现依据的试验归并成发现。遇到相近标题先读：same_as 合并到已有发现，distinct_from 列明确不同的已有发现 id；至少一个本课题有结果的试验。", write: true, schema: recordFindingSchema,
+  name: "record_finding", description: "把有复现依据的试验归并成发现。repro 是 Markdown 正文，分“条件 / 现象 / 为什么是问题 / 建议”几段，命令和输出放代码块，可以放 read_ledger 给出的图片。遇到相近标题先读：same_as 合并到已有发现，distinct_from 列明确不同的已有发现 id；至少一个本研究有结果的试验。", write: true, schema: recordFindingSchema,
   handler: async (ctx, a) => {
     flowItem(ctx, a.item, "write");
     (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
     const { studyOperation } = await import("../flows/engine.ts");
     return studyOperation(ctx.app, a.item, async () => (await import("../studies/store.ts")).recordFinding(ctx.app, a));
+  },
+});
+def({
+  name: "revise_study_finding", description: "本人在对话里要改一条研究发现时用：重写标题或正文（Markdown，分条件 / 现象 / 为什么是问题 / 建议几段，第一次改时宿主留原文）、改类型，或改状态（confirmed 认可、rejected 不算、later 以后再说、fixed 已改好，reason 写依据，比如修复的提交或交办）。只改本人明确要改的，不自己判发现成不成立。", write: true, schema: reviseStudyFindingSchema,
+  handler: async (ctx, a) => {
+    flowItem(ctx, a.item, "write");
+    const store = await import("../studies/store.ts");
+    store.assertOwner(ctx.app, a.item, ctx.userId ?? OWNER);
+    return (await import("../flows/engine.ts")).studyOperation(ctx.app, a.item, async () => store.reviseFinding(ctx.app, a));
   },
 });
 def({

@@ -109,7 +109,7 @@ create table shares (
 
 云端就跑在同一个内网里时（实测豆包 OpenAPI 的云端沙箱能访问公司内网 IP），本人可以打开“允许内网地址”（`agents.cloudTools.privateAddress`），`webUrl` 用内网的 http 地址，例如 `http://10.0.0.5:4317`。凭据会以明文在内网里传；探测照样要通过、要本人确认。
 
-可选的工具除了读材料的 `search`、`read_source`、`read_page`、`read_item`，还有课题交结果用的 `read_ledger`、`propose_directions`、`trial_report`、`record_finding`、`close_direction`。签发凭据时取“设置里选的”和“这次运行本来就有的”交集，所以后几个只在课题自己的阶段里可用，别的运行拿不到；写入照样经过工具层对事项本人和空间的校验。
+可选的工具除了读材料的 `search`、`read_source`、`read_page`、`read_item`，还有研究交结果用的 `read_ledger`、`propose_directions`、`trial_report`、`record_finding`、`close_direction`。签发凭据时取“设置里选的”和“这次运行本来就有的”交集，所以后几个只在研究自己的阶段里可用，别的运行拿不到；写入照样经过工具层对事项本人和空间的校验。
 
 公网入口只转发探测和云端工具请求。下面的 Nginx 配置适用于独立域名、路径从根开始的部署。把 `map` 放进 `http` 块，把 `location` 放进该域名已有证书的 HTTPS `server` 块。带头工具请求必须携带云端运行凭据，宿主再检查有效期、次数和本轮权限。
 

@@ -118,7 +118,8 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
   server.delete("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, await stopFlow(app, id, who(req))); });
   server.post("/api/items/:id/flow/round", async (req) => {
     const id = itemId(req, true);
-    return view(app, id, await startRound(app, id, { actor: "owner", userId: who(req) }));
+    const note = body(z.object({ note: z.string().max(4000).optional() }), req.body ?? {}).note ?? "";
+    return view(app, id, await startRound(app, id, { actor: "owner", userId: who(req) }, new Date(), note));
   });
   // The owner settles one change the follow-up found: fold it in, make it its own item, or leave it.
   server.post("/api/items/:id/flow/changes/:change", async (req) => {

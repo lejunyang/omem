@@ -78,8 +78,8 @@ async function setup(o: Opts = {}) {
   await addPeer(here, code);
   createSpace(here, { id: "project", name: "项目 A" }); createSpace(here, { id: "repo", name: "仓库 A", kind: "repo", rootPath: root, parentId: "project" });
   here.config.studies.envs = [{ id: "box", name: "构建机", note: "在构建机上跑。", thirdParty: o.thirdParty?.env ?? false, peer: "build-box" }];
-  const item = upsertItem(here, undefined, { spaceId: "project", kind: "watch", title: "示例课题" }, "user");
-  saveFlow(here, JSON.stringify({ id: "remote-study", name: "课题", stages: [
+  const item = upsertItem(here, undefined, { spaceId: "project", kind: "watch", title: "示例研究" }, "user");
+  saveFlow(here, JSON.stringify({ id: "remote-study", name: "研究", stages: [
     { id: "plan", name: "定方向", by: { run: {} }, tools: ["propose_directions"] },
     { id: "try", name: "试验", by: { object: "trials", agent: "assistant", skill: "study-trial" }, ai: "cheap", ...(o.budget ? { budget: o.budget } : {}) },
     { id: "summary", name: "小结", by: { run: {} }, tools: ["read_ledger", "record_finding"] },
@@ -104,7 +104,7 @@ async function setup(o: Opts = {}) {
 }
 
 describe("把试验派给另一台设备", () => {
-  it("那台按远端地址认出仓库，取一次缺的提交，在自己的工作区里跑；结果和证据回到本机台账", async () => {
+  it("那台按远端地址认出仓库，取一次缺的提交，在自己的工作区里跑；结果和证据回到本机的研究记录", async () => {
     const f = await setup();
     await f.select();
     const [t0] = trials(f.here, f.item.id);
@@ -175,7 +175,7 @@ describe("把试验派给另一台设备", () => {
     expect(t).toMatchObject({ state: "reported", result: "blocked", failures: 0 }); expect(t.summary).toContain("没有接受这个试验");
     expect(f.remoteRuns()).toHaveLength(0);
     await expect(acceptPeerTrial(f.there, "svc-someone", {})).rejects.toThrow(/只接受本人自己设备/);
-    const body = { from: { node: "laptop", item: "i1", title: "示例课题", trial: "st_1" }, trial: { id: "st_1", object: "样本", check: "安装" }, direction: { goal: "g", approach: "a", note: "", thirdParty: true }, env: { name: "构建机", note: "", thirdParty: false }, repos: [], minutes: 30 };
+    const body = { from: { node: "laptop", item: "i1", title: "示例研究", trial: "st_1" }, trial: { id: "st_1", object: "样本", check: "安装" }, direction: { goal: "g", approach: "a", note: "", thirdParty: true }, env: { name: "构建机", note: "", thirdParty: false }, repos: [], minutes: 30 };
     await expect(acceptPeerTrial(f.there, "owner", body)).rejects.toThrow(/不允许/);
     expect((await acceptPeerTrial(f.there, "owner", { ...body, env: { ...body.env, thirdParty: true } })).runId).toMatch(/^r/);
   }, 60_000);

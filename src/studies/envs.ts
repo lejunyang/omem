@@ -6,7 +6,7 @@ import { studyScope } from "./scope.ts";
 
 export type StudyEnv = { id: string; name: string; note: string; thirdParty: boolean; ai?: FlowStage["ai"]; peer?: string };
 export function studyEnvs(app: App, item: string): StudyEnv[] {
-  return [{ id: "local", name: "本机", note: "在本机的课题工作区里执行。", thirdParty: studyScope(app, item).thirdParty }, ...app.config.studies.envs];
+  return [{ id: "local", name: "本机", note: "在本机的研究工作区里执行。", thirdParty: studyScope(app, item).thirdParty }, ...app.config.studies.envs];
 }
 export function resolveEnv(app: App, item: string, value: string) {
   const key = value.trim().toLowerCase() || "local", envs = studyEnvs(app, item);
@@ -31,11 +31,11 @@ export async function checkEnvPeers(app: App, next: StudyEnv[], before: StudyEnv
     if (knownCards(app).find((c) => c.peer === e.peer)?.card?.as === "service") throw new HttpError(400, `执行环境「${e.name}」：${e.peer} 是别人的服务，试验只派给你自己的设备`);
   }
 }
-export const thirdPartyReason = "这个方向要执行第三方样本的代码：在课题的范围里打开本机执行，或让它换一个允许的环境";
+export const thirdPartyReason = "这个方向要执行第三方样本的代码：在研究的范围里打开本机执行，或让它换一个允许的环境";
 export function checkDirectionChoice(app: App, item: string, d: { env: string; third_party: number }, allowCode?: boolean) {
   if (d.third_party && !resolveEnv(app, item, d.env).thirdParty) throw new HttpError(409, thirdPartyReason);
   const scope = studyScope(app, item);
-  if (allowCode && !scope.allowCode) throw new HttpError(409, "先在课题范围里打开可以改代码");
+  if (allowCode && !scope.allowCode) throw new HttpError(409, "先在研究范围里打开可以改代码");
   return allowCode ?? scope.allowCode;
 }
 export function trialStage(app: App, item: string, env: string, d: FlowStage): FlowStage {

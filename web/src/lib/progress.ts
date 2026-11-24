@@ -47,7 +47,7 @@ export function readProgress(data: unknown): { views: ProgressView[]; total: Pro
   return { views: Array.isArray(page?.views) ? page!.views : [], total: page?.totalUsage ?? null };
 }
 
-export const KIND_LABEL: Record<ProgressKind, string> = { board: "任务板", code: "编码交办", review: "评审", flow: "流程", study: "课题" };
+export const KIND_LABEL: Record<ProgressKind, string> = { board: "任务板", code: "编码交办", review: "评审", flow: "流程", study: "研究" };
 export const TASK_LABEL: Record<TaskState, string> = {
   pending: "待开始", queued: "排队", running: "在做", submitted: "交了，待验收", accepted: "已接受",
   redo: "退回重做", blocked: "阻塞", failed: "没做成", cancelled: "已取消",

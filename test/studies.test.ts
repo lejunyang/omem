@@ -43,14 +43,14 @@ afterEach(async () => {
 });
 const planned = (n = 3) => ({ goal: "逐项核验命令", approach: "用 demo-cli 逐个走入口", acceptance: `${n} 项跑完`, env: "local", estimate: "30 分钟", trials: Array.from({ length: n }, (_, i) => ({ object: `功能 ${i + 1}`, check: "执行帮助命令" })) });
 function definition(extra: object = {}, every: unknown = "manual") {
-  return JSON.stringify({ id: "demo-study", name: "示例课题", repeat: { from: "plan", every }, stages: [
+  return JSON.stringify({ id: "demo-study", name: "示例研究", repeat: { from: "plan", every }, stages: [
     { id: "plan", name: "定方向", by: { run: {} }, tools: ["propose_directions"] },
     { id: "try", name: "试验", by: { object: "trials" }, budget: { trials: 8, minutes: 240 }, ...extra },
     { id: "summary", name: "小结", by: { run: {} }, tools: ["read_ledger", "record_finding", "close_direction"] },
   ] });
 }
 async function setup(extra: object = {}, every: unknown = "manual") {
-  const app = fixture(), item = upsertItem(app, undefined, { spaceId: "personal", title: "示例商城课题", kind: "watch" }, "user");
+  const app = fixture(), item = upsertItem(app, undefined, { spaceId: "personal", title: "示例商城研究", kind: "watch" }, "user");
   saveFlow(app, definition(extra, every), "user"); await startFlow(app, item.id, "demo-study", owner);
   const s = (id: string) => getStage(app, item.id, id);
   const by = () => ({ actor: "assistant", userId: "owner", runId: s("plan").control.runId });
@@ -76,7 +76,7 @@ async function summary(f: Awaited<ReturnType<typeof setup>>) {
 }
 const ctx = (f: Awaited<ReturnType<typeof setup>>, id?: string): ToolContext => ({ app: f.app, runId: id ?? null, spaceId: "personal", spaces: ["personal"], writable: ["personal"], tools: null, actor: "agent", userId: "owner", role: "assistant" });
 
-describe("课题定义与内置材料", () => {
+describe("研究定义与内置材料", () => {
   it("阶段只授 study 工具，trials 支持档位、时间、预算和人话", () => {
     const raw = definition({ ai: "cheap", at: "10:00", window: "23:00-06:00", escalate: { to: "strong", max: 2 }, tools: ["trial_report"] });
     const d = parseFlow(raw).stages[1];
@@ -98,7 +98,7 @@ describe("课题定义与内置材料", () => {
   });
   it("梳理任务指定 write_file 工作文件，定方向只带覆盖次数日期和提交标题", async () => {
     const app = fixture(); seedBuiltinFlows(app, resolve("."));
-    const item = upsertItem(app, undefined, { spaceId: "personal", title: "demo-cli 课题", kind: "watch" }, "user");
+    const item = upsertItem(app, undefined, { spaceId: "personal", title: "demo-cli 研究", kind: "watch" }, "user");
     await startFlow(app, item.id, "study", owner);
     const task = String(getRun(app, getStage(app, item.id, "map").by!).input.task);
     expect(task).toContain("write_file"); expect(task).toContain(capabilitiesPath(item.id)); expect(task).toContain("不要写 Wiki");
@@ -267,6 +267,7 @@ describe("试验运行与预算", () => {
     const fake = vi.spyOn(runner, "runRole").mockImplementation(async (app, input) => {
       expect(input.execution).toMatchObject({ profile: "trial-ai", model: "small", source: "flow" });
       expect(input.addTools).toEqual(["trial_report", "attach_artifact"]); expect(input.artifacts).toBe(true);
+      for (const t of ["record_finding", "revise_study_finding", "close_direction"]) expect(input.denyTools).toContain(t);
       expect(input.task).toContain("# 做一个试验"); expect(input.task).toContain("仅用测试样本");
       const report = await callTool(ctx(f, input.runId!), "trial_report", { trial: f.s("try").control.trialId, result: "passed", summary: "假运行已按步骤检查" });
       expect(report.isError).toBe(false);
@@ -294,7 +295,7 @@ describe("试验运行与预算", () => {
     await __testHandlers.get("study-trial")!({ app: f.app, run: old, signal: new AbortController().signal, event() {}, output() {} });
     expect(fake).not.toHaveBeenCalled(); expect(trials(f.app, f.item.id)[0]).toMatchObject({ state: "queued", attempts: 0 }); expect(f.s("try").control.runId).toBeUndefined();
   });
-  it("定方向 worker 移除台账与历史运行工具；附加工具只从阶段副本读取", async () => {
+  it("定方向 worker 移除记录与历史运行工具；附加工具只从阶段副本读取", async () => {
     const f = await setup(), old = getRun(f.app, f.s("plan").by!);
     const flow = itemFlow(f.app, f.item.id)!; flow.definition.stages[0].tools!.push("read_ledger"); run(f.app.db, "update item_flows set definition=? where item_id=?", JSON.stringify(flow.definition), f.item.id);
     const fake = vi.spyOn(runner, "runRole").mockImplementation(async (_app, input) => {
@@ -306,20 +307,20 @@ describe("试验运行与预算", () => {
   });
 });
 
-describe("台账、发现、证据和权限", () => {
-  it("coach 不属于流程阶段，可读本次可读空间的台账，不能越过空间范围", async () => {
+describe("记录、发现、证据和权限", () => {
+  it("coach 不属于流程阶段，可读本次可读空间的记录，不能越过空间范围", async () => {
     const f = await setup(); await select(f, 1); await result(f, "unclear");
     const finding = recordFinding(f.app, { item: f.item.id, kind: "defect", title: "退款出口未检查", repro: "虚构样本中的复现步骤", trials: [trials(f.app, f.item.id)[0].id] });
     run(f.app.db, "update study_findings set state='rejected',state_reason='测试夹具缺少前置条件' where id=?", finding);
-    const coach = createRun(f.app, { kind: "profile-review", title: "复盘课题技能", spaceId: "personal", input: { target: "assistant" } });
+    const coach = createRun(f.app, { kind: "profile-review", title: "复盘研究技能", spaceId: "personal", input: { target: "assistant" } });
     const tools = runner.loadRole("coach", f.app).tools;
     expect(tools).toContain("read_ledger");
     const context: ToolContext = { ...ctx(f, coach.id), role: "coach", tools: new Set(tools) };
     const ledger = await callTool(context, "read_ledger", { item: f.item.id });
     expect(ledger.text).toContain("unclear"); expect(ledger.text).toContain("rejected"); expect(ledger.text).toContain("测试夹具缺少前置条件");
     expect(one<{ state: string }>(f.app.db, "select state from study_findings where id=?", finding)?.state).toBe("rejected");
-    const other = createSpace(f.app, { name: "另一个课题空间" });
-    const hidden = upsertItem(f.app, undefined, { spaceId: other.id, title: "不可读课题", kind: "watch" }, "user");
+    const other = createSpace(f.app, { name: "另一个研究空间" });
+    const hidden = upsertItem(f.app, undefined, { spaceId: other.id, title: "不可读研究", kind: "watch" }, "user");
     const denied = await callTool(context, "read_ledger", { item: hidden.id });
     expect(denied.isError).toBe(true);
     expect(denied.text).toContain("不能访问");
@@ -340,14 +341,14 @@ describe("台账、发现、证据和权限", () => {
     const id = recordFinding(f.app, { item: f.item.id, kind: "defect", title: "异常参数返回成功", repro: "执行 demo-cli --bad，预期 1，实际 0", trials: [t] });
     const v = studyView(f.app, f.item.id); expect(v.trials[0].artifacts).toHaveLength(1); expect(v.findings[0]).toMatchObject({ id, trials: [{ id: t, result: "failed", artifacts: [{ kind: "text" }] }] });
   });
-  it("发现相近需明确区分，same_as 只合并依据；不能拿无结果或其他课题作依据", async () => {
+  it("发现相近需明确区分，same_as 只合并依据；不能拿无结果或其他研究作依据", async () => {
     const f = await setup(); await select(f, 3); await result(f, "failed"); const t = trials(f.app, f.item.id);
     const input = { item: f.item.id, kind: "defect" as const, title: "帮助命令输出错误", repro: "运行 demo-cli help，预期显示帮助，实际为空", trials: [t[0].id] };
     const id = recordFinding(f.app, input); expect(() => recordFinding(f.app, { ...input, title: "帮助命令输出错误内容" })).toThrow(id);
     expect(() => recordFinding(f.app, { ...input, trials: [t[1].id] })).toThrow("有结果");
     await result(f, "failed"); expect(recordFinding(f.app, { ...input, trials: [t[1].id], same_as: id })).toBe(id); expect(JSON.parse(findings(f.app, f.item.id)[0].trials)).toEqual([t[0].id, t[1].id]);
     const second = recordFinding(f.app, { ...input, title: "帮助命令输出错误内容", distinct_from: [id] }); expect(second).not.toBe(id);
-    const other = upsertItem(f.app, undefined, { title: "另一个课题", spaceId: "personal" }, "user"); expect(() => recordFinding(f.app, { ...input, item: other.id })).toThrow("本课题");
+    const other = upsertItem(f.app, undefined, { title: "另一个研究", spaceId: "personal" }, "user"); expect(() => recordFinding(f.app, { ...input, item: other.id })).toThrow("本研究");
   });
   it("结束或放弃必须写结论，未做的跳过", async () => {
     const f = await setup({ budget: { trials: 1 } }); await select(f, 3); await result(f);
@@ -411,12 +412,12 @@ describe("没有新发现的轮次", () => {
   });
 });
 
-describe("台账随事项拉取", () => {
+describe("研究记录随事项拉取", () => {
   it("三表合并并更新，check 与 JSON 里的原件引用映射到本机", async () => {
     const local = fixture(), remote = fixture();
     const a = appendToSource(local, { spaceId: "personal", kind: "chat", uri: "chat:study", title: "示例讨论", lines: ["共同消息", "本机消息"] });
     const b = appendToSource(remote, { spaceId: "personal", kind: "chat", uri: "chat:study", title: "示例讨论", lines: ["共同消息", "远端消息"] });
-    const item = upsertItem(remote, undefined, { title: "台账拉取", spaceId: "personal" }, "user");
+    const item = upsertItem(remote, undefined, { title: "研究记录拉取", spaceId: "personal" }, "user");
     const p = planned(1); p.trials[0].check = `读 src:${b.id}#L2`;
     const [d] = saveProposals(remote, { item: item.id, directions: [p] }, 1); confirmDirection(remote, d.id, "只读材料");
     putScope(remote, item.id, { repos: [], allowCode: true, thirdParty: true }, "owner");
@@ -464,5 +465,45 @@ describe("真实跑过一轮以后改的", () => {
     expect(blocked.kept[0].prior).toContain("工作区里没有可用的解析器");
     expect(reconcile(plan, tried("failed")).removed).toHaveLength(1);
     expect(reconcile(plan, tried("passed")).removed).toHaveLength(1);
+  });
+});
+
+describe("发现写法、改好与避开做过的方向", () => {
+  it("覆盖按试验标的功能统计，旧试验按反引号里的命令认；以前的方向和发现标题带给定方向，细节不带", async () => {
+    const f = await setup({ budget: { trials: 1 } });
+    writeWorkFile(f.app, { spaceId: "personal", path: capabilitiesPath(f.item.id), text: "# 功能\n## `install` 安装工具\n示例\n## `run` 执行任务\n示例\n## 配置文件\n示例" });
+    await expect(proposeDirections(f.app, { item: f.item.id, directions: [{ ...planned(1), trials: [{ object: "安装", check: "断网", features: ["安装"] }] }] }, f.by())).rejects.toThrow("对不上");
+    await proposeDirections(f.app, { item: f.item.id, directions: [{ ...planned(2), trials: [{ object: "断网安装", check: "退出码", features: ["`install` 安装工具"] }, { object: "坏配置", check: "执行 demo run 看报错", features: ["配置文件"] }] }] }, f.by());
+    await answerAsk(f.app, f.s("plan").askId!, { choice: 0, by: "owner" }); await result(f, "failed");
+    run(f.app.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",env,state,result,created_at,updated_at) values('st-old',?,?,1,9,'老试验','执行 demo run --help','','reported','passed',?,?)`, f.item.id, directions(f.app, f.item.id)[0].id, now(), now());
+    const c = coverage(f.app, f.item).features.map((x) => x.trials); expect(c).toEqual([1, 1, 0]);
+    recordFinding(f.app, { item: f.item.id, kind: "defect", title: "断网安装返回成功", repro: "### 条件\n断网\n### 现象\n退出 0", trials: [trials(f.app, f.item.id)[0].id] });
+    const m = await planningMaterials(f.app, f.item);
+    expect(m).toContain("以前的方向"); expect(m).toContain("逐项核验命令"); expect(m).toContain("断网安装返回成功"); expect(m).not.toContain("### 现象");
+  });
+  it("对话里重写只留第一次的原文；标为改好排到最后，重新打开清掉；改好的不再交办", async () => {
+    const f = await setup({ budget: { trials: 1 } }); await select(f, 1); await result(f, "failed");
+    const id = recordFinding(f.app, { item: f.item.id, kind: "gap", title: "报错不带字段名", repro: "一段话", trials: [trials(f.app, f.item.id)[0].id] });
+    const tool = (a: object, patch: Partial<ToolContext> = {}) => callTool({ ...ctx(f), ...patch }, "revise_study_finding", { item: f.item.id, finding: id, ...a });
+    expect((await tool({ title: "别人改" }, { userId: "another" })).isError).toBe(true);
+    expect((await tool({})).isError).toBe(true);
+    expect((await tool({ repro: "### 条件\n第一版改写", kind: "defect" })).isError).toBe(false);
+    await tool({ title: "配置报错不带字段名", repro: "### 条件\n第二版" });
+    let v = studyView(f.app, f.item.id).findings[0];
+    expect(v).toMatchObject({ kind: "defect", title: "配置报错不带字段名", repro: "### 条件\n第二版", revised: { kind: "gap", title: "报错不带字段名", repro: "一段话" } });
+    expect((await tool({ state: "fixed", reason: "提交 abc1234" })).isError).toBe(false);
+    v = studyView(f.app, f.item.id).findings[0]; expect(v).toMatchObject({ state: "confirmed", fixedNote: "提交 abc1234" }); expect(v.fixedAt).toBeTruthy();
+    expect(readLedger(f.app, { item: f.item.id }, null)).toContain("已改好：提交 abc1234");
+    putScope(f.app, f.item.id, { allowCode: true }, "owner");
+    await expect((await import("../src/studies/fix.ts")).queueFindingFix(f.app, f.item.id, id)).rejects.toThrow("改好");
+    const server = await startServer(f.app, { port: 0, quiet: true }); servers.push(server);
+    const back = (await server.inject({ method: "POST", url: `/api/items/${f.item.id}/study/findings/${id}`, payload: { state: "confirmed" } })).json().findings[0];
+    expect(back.fixedAt).toBeNull(); expect(back.fixedNote).toBe("");
+  });
+  it("本人开始下一轮时写的话，定方向的任务里能看到", async () => {
+    const f = await setup({ budget: { trials: 1 } }); await select(f, 1); await result(f); await summary(f);
+    await startRound(f.app, f.item.id, owner, new Date(), "这一轮只看配置文件，别再碰安装");
+    const task = String(getRun(f.app, f.s("plan").by!).input.task);
+    expect(task).toContain("这一轮只看配置文件，别再碰安装"); expect(task).toContain("以前的方向");
   });
 });

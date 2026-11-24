@@ -47,8 +47,8 @@ async function setup(n = 2, configure?: (a: App) => void, home?: string) {
   const base = await git(root, "rev-parse", "HEAD"); writeFileSync(join(root, "owner-untracked.txt"), "keep");
   createSpace(app, { id: "project", name: "项目 A" }); createSpace(app, { id: "repo", name: "仓库 A", kind: "repo", rootPath: root, parentId: "project" });
   configure?.(app);
-  const item = upsertItem(app, undefined, { spaceId: "project", kind: "watch", title: "示例课题" }, "user");
-  saveFlow(app, JSON.stringify({ id: "workspace-study", name: "课题", stages: [
+  const item = upsertItem(app, undefined, { spaceId: "project", kind: "watch", title: "示例研究" }, "user");
+  saveFlow(app, JSON.stringify({ id: "workspace-study", name: "研究", stages: [
     { id: "plan", name: "定方向", by: { run: {} }, tools: ["propose_directions"] },
     { id: "try", name: "试验", by: { object: "trials" }, ai: "cheap", escalate: { to: "strong", max: 1 } },
     { id: "summary", name: "小结", by: { run: {} }, tools: ["read_ledger", "record_finding"] },
@@ -64,7 +64,7 @@ async function setup(n = 2, configure?: (a: App) => void, home?: string) {
   return { app, item, root, base, stage, select, finish };
 }
 
-describe("课题的工作区", () => {
+describe("研究的工作区", () => {
   it("运行拿到数据目录的工作区，试验间清理，基线不随原仓库 HEAD 改变", async () => {
     const f = await setup(), enqueued: ReturnType<typeof getRun>[] = [];
     f.app.events.on("event", (e) => { if (e.type === "run" && e.status === "queued") { const r = getRun(f.app, e.runId); if (r.kind === "study-trial") enqueued.push(r); } });
@@ -159,7 +159,7 @@ describe("课题的工作区", () => {
 });
 
 describe("从发现发起编码交办", () => {
-  it("HTTP 授权、状态、重复点击、交办视图和台账；起点是试验方向基线", async () => {
+  it("HTTP 授权、状态、重复点击、交办视图和记录；起点是试验方向基线", async () => {
     const f = await setup(1); await f.select(); await f.finish();
     const t = trials(f.app, f.item.id)[0], id = recordFinding(f.app, { item: f.item.id, kind: "defect", title: "异常退出码", repro: "执行示例命令，预期 1，实际 0", trials: [t.id] });
     const server = await startServer(f.app, { port: 0, quiet: true }); servers.push(server); const url = `/api/items/${f.item.id}/study/findings/${id}/fix`;

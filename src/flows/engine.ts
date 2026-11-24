@@ -63,7 +63,7 @@ function running(app: App, id: string) {
 export function studyOperation<T>(app: App, itemId: string, fn: () => Promise<T>) {
   return serial(app, itemId, async () => {
     const result = await fn();
-    await advanceNow(app, itemId, "课题台账变化");
+    await advanceNow(app, itemId, "研究记录变化");
     app.emit({ type: "changed", entity: "item", id: itemId });
     return result;
   });
@@ -193,7 +193,7 @@ const ownerTurn = (app: App, f: ItemFlow, d: FlowStage, s: StageRow) =>
   question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
 /** What the owner wrote in this round when they finished, skipped or redid stages, newest first ("将问题发到 MR 吧"). */
 function ownerWords(app: App, f: ItemFlow, stages?: string[]) {
-  return all<{ stage_id: string; note: string; at: string }>(app.db, `select stage_id, note, at from item_stage_log where item_id=? and round=? and actor='owner' and (to_state in ('done','skipped') or event='refuse') and note<>''
+  return all<{ stage_id: string; note: string; at: string }>(app.db, `select stage_id, note, at from item_stage_log where item_id=? and round=? and actor='owner' and (to_state in ('done','skipped') or event in ('refuse','round-note')) and note<>''
     ${stages ? `and stage_id in (select value from json_each(?))` : ""} and at>=? order by id desc limit 6`, f.itemId, f.round, ...(stages ? [JSON.stringify(stages)] : []), f.roundStartedAt)
     .filter((r) => !ROUTINE.has(r.note) && !OWNER_DEFAULT.has(r.note) && !r.note.startsWith("上游「"));
 }
@@ -246,7 +246,7 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
     typeof d.by === "object" && "object" in d.by ? d.by.object === "code-work" && review ? `这一段跟着分支评审「${review.title}」（${review.rootId}）：它只出评审意见，不是编码。要按本人的意见补查，用 review_branch 带 rereview_of=${review.latestId}，把意见写进 note（群聊、作者回复这类外面来的写进 inputs）；不要发起 delegate_code、不要改作者的代码。复审开始以后就结束，不用 stage_report，流程跟着复审出结论；本人的意见不需要复审（只是告知、或该作者自己改）时，用 stage_report 报 blocked 写清楚，交给本人定。` : d.by.object === "code-work" ? `按这件事的需求点发起交办，delegate_code 带上 item_id=${item.id}；同一分支上已有别的事项的交办在进行时，用 continue_code_run 把这件的修改交给它（when: now，new_item: true，item_id=${item.id}）。事项上已经有一个在做的交办、要改的已经在里面（本人先直接交办了）：不用再发，交代一句是哪个交办就结束。交办开始或并进去以后，这一段由流程跟着交办走、评审通过就完成：不要用 stage_report 报 blocked 去等交办，交代一句交给了哪个交办就结束；只有发不出交办、要本人拍板时才报 blocked。` : `为这件事写方案，交给本人确认。` : "",
     feedback ? rows.find((s) => s.id === d.id)?.control.escalated ? `上一次的结论或错误：${feedback}。这一轮重新核对并交结果。` : `本人说还不行，原因：${feedback}。这一轮按这个意见重做。` : "",
     typeof d.by === "object" && "run" in d.by && d.by.run.skill === "study-map" ? `功能清单用 write_file(path="${capabilitiesPath(item.id)}", space="${item.spaceId}", item="${item.id}", content=...) 写成工作文件；stage_report 的 evidence 填返回的 src: 引用。不要写 Wiki 页。` : "",
-    planner ? `结束前用 propose_directions(item="${item.id}", directions=[...], note?) 交提案，允许空数组。这一段不能读取台账，不用 stage_report 完成，等本人选定以后宿主会推进。` : typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" && review ? "" : typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" ? `发起或并进交办（或确认要改的已在事项上在做的交办里）后就结束，不用 stage_report；发不出交办时用 stage_report(item="${item.id}", stage="${d.id}") 报 blocked 写清等谁或等什么，不要替本人确认。` : `结束前必须用 stage_report(item="${item.id}", stage="${d.id}") 交代：done 附依据；blocked 写等谁或等什么；skip 写原因。不要以运行结束代替交结果；不要替本人确认。`,
+    planner ? `结束前用 propose_directions(item="${item.id}", directions=[...], note?) 交提案，允许空数组。这一段不能读取研究记录，不用 stage_report 完成，等本人选定以后宿主会推进。` : typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" && review ? "" : typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" ? `发起或并进交办（或确认要改的已在事项上在做的交办里）后就结束，不用 stage_report；发不出交办时用 stage_report(item="${item.id}", stage="${d.id}") 报 blocked 写清等谁或等什么，不要替本人确认。` : `结束前必须用 stage_report(item="${item.id}", stage="${d.id}") 交代：done 附依据；blocked 写等谁或等什么；skip 写原因。不要以运行结束代替交结果；不要替本人确认。`,
     planner ? envMaterials(app, item.id) : "",
   ].filter(Boolean).join("\n\n");
 }
@@ -449,7 +449,7 @@ function closeRound(app: App, f: ItemFlow, at: Date) {
   });
   if (pause && f.definition.repeat) notify(app, { userId: getItem(app, f.itemId).userId, title: `连着 ${idle} 轮没有新发现`, body: `「${getItem(app, f.itemId).title}」连着 ${idle} 轮没有新发现，要换方向、暂停还是结束由你定。`, urgency: "later", link: `#/items/${f.itemId}` });
 }
-function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date) {
+function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date, note = "") {
   if (!f.definition.repeat) throw new HttpError(409, "这份流程没有设置轮次");
   if (!roundComplete(app, f)) throw new HttpError(409, "这一轮还没做完，不能开始下一轮");
   closeRound(app, f, at);
@@ -460,7 +460,9 @@ function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date) {
     for (const d of f.definition.stages.slice(from)) {
       const s = getStage(app, f.itemId, d.id);
       withdraw(app, s); dropUpstream(app, s, "开始了新的一轮");
-      changeStage(app, f.itemId, d.id, "pending", { round: f.round + 1, attempt: 0, enteredAt: null, doneAt: null, by: null, waitingOn: null, evidence: [], askId: null, control: {} }, by, `开始第 ${f.round + 1} 轮`);
+      // The owner's words for the new round ride on its first stage, where the stages after it read them (ownerWords).
+      const said = note && d.id === f.definition.repeat!.from;
+      changeStage(app, f.itemId, d.id, "pending", { round: f.round + 1, attempt: 0, enteredAt: null, doneAt: null, by: null, waitingOn: null, evidence: [], askId: null, control: {} }, by, said ? note : `开始第 ${f.round + 1} 轮`, [], said ? "round-note" : undefined);
     }
     if (by.actor === "host" && noStarts) run(app.db, "update item_flows set auto_streak=auto_streak+1 where item_id=?", f.itemId);
     const next = itemFlow(app, f.itemId)!;
@@ -470,11 +472,12 @@ function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date) {
     }
   });
 }
-export function startRound(app: App, itemId: string, by: FlowActor, at = new Date()) {
+/** `note`: what the owner wants this round to look at; the stages of the round read it as the owner's words. */
+export function startRound(app: App, itemId: string, by: FlowActor, at = new Date(), note = "") {
   return serial(app, itemId, async () => {
     if (getItem(app, itemId).userId !== by.userId) throw new HttpError(403, "只有事项本人能开始下一轮");
     const f = running(app, itemId);
-    roundNow(app, f, by, at);
+    roundNow(app, f, by, at, note.trim());
     resetStreak(app, itemId);
     await advanceNow(app, itemId, "本人开始下一轮", at);
     return flowView(app, itemId);
@@ -718,7 +721,7 @@ export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: strin
 export function reportStage(app: App, itemId: string, stageId: string, report: StageReport, by: FlowActor) {
   return serial(app, itemId, async () => {
     const f = running(app, itemId), d = definition(f, stageId);
-    if (d.tools?.includes("propose_directions") || isTrials(d) || isFixes(d)) throw new HttpError(403, "课题方向和试验由专门的工具交结果，不能用 stage_report 绕过本人选择或试验队列");
+    if (d.tools?.includes("propose_directions") || isTrials(d) || isFixes(d)) throw new HttpError(403, "研究方向和试验由专门的工具交结果，不能用 stage_report 绕过本人选择或试验队列");
     let s = getStage(app, itemId, stageId);
     if (s.control.budgetExceeded && by.actor !== "owner") throw new HttpError(409, "到了这一段的时间预算，等本人处理");
     if (!report.note.trim()) throw new HttpError(400, "交结果需要说明");
@@ -1256,7 +1259,7 @@ async function runStageAgent(ctx: Parameters<Parameters<typeof registerHandler>[
   // the role's own tools) are welcome but optional, so a backend that reaches only a few tools (a cloud one
   // over HTTP, cloud-tools.ts) can still take the stage.
   const requiredTools = [ctx.run.kind === "study-trial" ? "trial_report" : planner ? "propose_directions" : "stage_report"];
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, requiredTools, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, requiredTools, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "revise_study_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "record_finding", "revise_study_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push", "revise_study_finding"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
 }
 registerHandler("flow-stage", runFlowStage);

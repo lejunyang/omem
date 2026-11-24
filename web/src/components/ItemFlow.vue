@@ -103,7 +103,13 @@ async function pick() {
 }
 /** The owner starts the next round of a repeating flow. */
 async function nextRound() {
-  const id = props.itemId;
+  const id = props.itemId, generation = epoch;
+  // A study's next round can be steered: what to look at, or what to leave alone, read by its planner.
+  if (data.value?.flow?.study) {
+    const answer = await promptDialog("再来一轮", { message: "定方向时会看到以前各轮的方向和发现，避开做过的。想让这一轮看什么、别碰什么，写在下面；不写就由它对着功能清单挑没碰过的。", fields: [{ id: "note", label: "这一轮看什么（可不填）", value: "", maxLength: 2000 }], okText: "开始" });
+    if (!answer || generation !== epoch) return;
+    return mutate(id, `/api/items/${id}/flow/round`, answer.note?.trim() ? { note: answer.note.trim() } : {});
+  }
   await mutate(id, `/api/items/${id}/flow/round`, {});
 }
 /** The owner changes how long this stage may run in this round, and how often a stronger model may look. */

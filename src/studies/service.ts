@@ -9,7 +9,7 @@ import { artifactInbox, artifactsByIds, attachPath } from "../agents/artifacts.t
 import { getRun } from "../agents/runs.ts";
 import { changeStage, getStage, itemFlow, type FlowActor } from "../flows/store.ts";
 import { studyOperation } from "../flows/engine.ts";
-import { assertOwner, confirmDirection, direction, findings, idleRounds, saveProposals, trial, trials, directions, type PlannedTrial, type Trial } from "./store.ts";
+import { assertOwner, confirmDirection, direction, findings, idleRounds, normalize, saveProposals, trial, trials, directions, type PlannedTrial, type Trial } from "./store.ts";
 import { coverage } from "./materials.ts";
 import type { Proposal, TrialReport } from "./schema.ts";
 import { studyScope } from "./scope.ts";
@@ -27,7 +27,7 @@ export function runStage(app: App, runId: string) {
 export function assertLedgerReader(app: App, runId: string | null) {
   if (!runId) return;
   const { r, d } = runStage(app, runId);
-  if (d?.tools?.includes("propose_directions") || Array.isArray(r.input.stageTools) && r.input.stageTools.includes("propose_directions")) throw new HttpError(403, "定方向阶段不能读取台账；提交以后由宿主对账");
+  if (d?.tools?.includes("propose_directions") || Array.isArray(r.input.stageTools) && r.input.stageTools.includes("propose_directions")) throw new HttpError(403, "定方向阶段不能读取记录；提交以后由宿主对账");
 }
 export function proposeDirections(app: App, p: Proposal, by: FlowActor) {
   return studyOperation(app, p.item, async () => {
@@ -37,6 +37,10 @@ export function proposeDirections(app: App, p: Proposal, by: FlowActor) {
     if (r.kind !== "flow-stage" || !f || f.endedAt || f.itemId !== p.item || f.startedAt !== r.input.flowStartedAt || !d?.tools?.includes("propose_directions")) throw new HttpError(403, "这不是定方向阶段的运行");
     const s = getStage(app, p.item, d.id);
     if (s.state !== "doing" || s.control.runId !== r.id || s.control.reported) throw new HttpError(409, "这次定方向已结束或已交提案");
+    // Coverage counts trials by the headings they name, so a name must be one of the list's own.
+    const listed = coverage(app, getItem(app, p.item)).features.map((f) => normalize(f.title));
+    const unknown = [...new Set(p.directions.flatMap((d) => d.trials.flatMap((t) => t.features ?? [])).filter((n) => !listed.includes(normalize(n))))];
+    if (unknown.length) throw new HttpError(400, listed.length ? `features 填功能清单里的二级标题原文，这些对不上：${unknown.join("、")}` : `还没有功能清单，features 先不填：${unknown.join("、")}`);
     const proposed = saveProposals(app, { ...p, directions: p.directions.map((d) => ({ ...d, env: resolveEnv(app, p.item, d.env ?? "").id })) }, f.round);
     const text = proposed.length ? [`这一轮提了 ${proposed.length} 个方向，选一个：`, ...proposed.map((d, i) => {
       const env = resolveEnv(app, p.item, d.env), removed = json<{ object: string; check: string; prior: string }[]>(d.removed, []);
@@ -109,18 +113,23 @@ export async function reportTrial(app: App, report: TrialReport, by: FlowActor) 
   });
   return "已记下试验结果；候选发现由小结归并。";
 }
+/** A trial's screenshots as Markdown a finding's body can carry as they are. */
+function images(app: App, t: Trial) {
+  const shots = artifactsByIds(app, json<string[]>(t.evidence, []).filter((r) => !r.startsWith("src:"))).filter((a) => a.kind === "image");
+  return shots.length ? `\n图片（要放进发现正文就原样抄这一行）：${shots.map((a) => `![${(a.caption || a.name).replace(/[[\]]/g, "")}](${a.url})`).join(" ")}` : "";
+}
 export function readLedger(app: App, input: { item: string; direction?: string; object?: string; result?: string; round?: number; limit?: number }, runId: string | null) {
   assertLedgerReader(app, runId);
   const selected = trials(app, input.item).filter((t) => (!input.direction || t.direction_id === input.direction) && (!input.object || t.object.includes(input.object)) && (!input.result || t.result === input.result) && (!input.round || t.round === input.round)).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, input.limit ?? 200);
-  return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}${t.peer ? `，在设备 ${t.peer} 上跑` : ""}）\n${t.summary}\n证据：${t.evidence}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => {
+  return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}${t.peer ? `，在设备 ${t.peer} 上跑` : ""}）\n${t.summary}\n证据：${t.evidence}${images(app, t)}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => {
     const fix = findingFix(app, f);
-    return `${f.id}（${f.state}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${fix?.status ?? "交办记录不可用"}；重跑：${fix?.verified ?? "未验证"}；试验：${fix?.reruns.join("、") || "无"}` : ""}`;
+    return `${f.id}（${f.fixed_at ? `已改好：${f.fixed_note || "未写依据"}` : f.state}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${fix?.status ?? "交办记录不可用"}；重跑：${fix?.verified ?? "未验证"}；试验：${fix?.reruns.join("、") || "无"}` : ""}`;
   })].join("\n\n");
 }
 /** The owner picks this round's direction on the item page (null: no run this round): the same answer as on the card. */
 export async function chooseDirection(app: App, itemId: string, directionId: string | null, note: string | undefined, by: string, allowCode?: boolean) {
   assertOwner(app, itemId, by);
-  if (allowCode && !studyScope(app, itemId).allowCode) throw new HttpError(409, "先在课题范围里打开可以改代码");
+  if (allowCode && !studyScope(app, itemId).allowCode) throw new HttpError(409, "先在研究范围里打开可以改代码");
   const f = itemFlow(app, itemId);
   const d = f && !f.endedAt ? f.definition.stages.find((d) => d.tools?.includes("propose_directions")) : undefined;
   const askId = d ? getStage(app, itemId, d.id).askId : null;
@@ -142,7 +151,7 @@ export function studyView(app: App, itemId: string) {
     const evidence = json<string[]>(t.evidence, []);
     return { id: t.id, directionId: t.direction_id, round: t.round, seq: t.seq, object: t.object, check: t.check, env: t.env, state: t.state, result: t.result, summary: t.summary,
       evidence, artifacts: artifactsByIds(app, evidence.filter((r) => !r.startsWith("src:"))), findings: json<{ kind: string; title: string; repro: string }[]>(t.findings, []),
-      fixOf: t.fix_of, workId: t.work_id, commits: json<Record<string, string>>(t.commits, {}), runId: t.run_id, peer: t.peer, peerRunId: t.peer_run, attempts: t.attempts, prior: t.prior, unsure: !!t.unsure, escalated: !!t.escalated, updatedAt: t.updated_at };
+      features: json<string[]>(t.features, []), fixOf: t.fix_of, workId: t.work_id, commits: json<Record<string, string>>(t.commits, {}), runId: t.run_id, peer: t.peer, peerRunId: t.peer_run, attempts: t.attempts, prior: t.prior, unsure: !!t.unsure, escalated: !!t.escalated, updatedAt: t.updated_at };
   };
   return {
     scope: studyScope(app, itemId), pushes: studyPushes(app, itemId),
@@ -155,6 +164,7 @@ export function studyView(app: App, itemId: string) {
     }),
     trials: [...history].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id)).slice(0, 200).map(present),
     findings: findings(app, itemId).map((f) => ({ id: f.id, kind: f.kind, title: f.title, repro: f.repro, state: f.state, stateReason: f.state_reason, sameAs: f.same_as, createdAt: f.created_at, updatedAt: f.updated_at,
+      round: f.round, fixedAt: f.fixed_at, fixedNote: f.fixed_note, revised: f.revised ? json<{ kind: string; title: string; repro: string } | null>(f.revised, null) : null,
       fix: findingFix(app, f), trials: json<string[]>(f.trials, []).flatMap((id) => { const t = history.find((t) => t.id === id); return t ? [present(t)] : []; }) })),
     coverage: coverage(app, item), idleRounds: idleRounds(app, itemId),
   };

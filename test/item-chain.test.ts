@@ -127,7 +127,7 @@ describe("工作项的链路：需求 → 发现 → 方案 → 交付", () => {
 
   it("每段有上限，多的记在 more 里", () => {
     const { app } = setup();
-    const item = upsertItem(app, undefined, { spaceId: "shop", title: "课题", userId: OWNER }, "user");
+    const item = upsertItem(app, undefined, { spaceId: "shop", title: "研究", userId: OWNER }, "user");
     for (let i = 0; i < CHAIN_MAX.segment + 3; i++) finding(app, item.id, `f${i}`, `发现 ${i}`);
     const g = itemChain(app, item.id, OWNER).groups[0];
     expect(g.findings).toHaveLength(CHAIN_MAX.segment);

@@ -25,9 +25,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
   for (const f of fixtures.splice(0)) { f.app.events.emit("close"); if (!itemFlow(f.app, f.item.id)?.endedAt) await stopFlow(f.app, f.item.id); await new Promise((r) => setImmediate(r)); f.app.db.close(); rmSync(f.app.home, { recursive: true, force: true }); }
 });
-describe("课题逐条改缺陷", () => {
+describe("研究逐条改缺陷", () => {
   it("fixes 接受 AI、默认两条、最多二十条，并给出人话", () => {
-    const raw = (fixes?: number) => JSON.stringify({ id: "test", name: "课题", stages: [{ id: "fix", name: "改", by: { object: "fixes", agent: "assistant" }, ai: "cheap", budget: { fixes, minutes: 240 } }] });
+    const raw = (fixes?: number) => JSON.stringify({ id: "test", name: "研究", stages: [{ id: "fix", name: "改", by: { object: "fixes", agent: "assistant" }, ai: "cheap", budget: { fixes, minutes: 240 } }] });
     expect(describeStage(parseFlow(raw()).stages[0]).budget).toContain("2 条");
     expect(() => parseFlow(raw(21))).toThrow(); expect(() => parseFlow(raw(-1))).toThrow();
     expect(parseFlow(raw(20)).stages[0].by).toMatchObject({ object: "fixes" });
@@ -84,6 +84,8 @@ describe("课题逐条改缺陷", () => {
     await __testHandlers.get("study-trial")!({ app: f.app, run: r, signal: new AbortController().signal, event() {}, output() {} }); expect(fake).toHaveBeenCalledOnce();
     await f.finishTrial(result, "fix"); expect(f.stage().state).toBe("done");
     expect(studyView(f.app, f.item.id).findings[0].fix).toMatchObject({ workId: work.id, verified: result, reruns: [t.id] });
+    // Passing reruns close the finding as fixed; a failing one leaves it open.
+    expect(!!studyView(f.app, f.item.id).findings[0].fixedAt).toBe(result === "passed");
     expect(readLedger(f.app, { item: f.item.id }, null)).toContain(`重跑：${result}`);
     await reopenStage(f.app, f.item.id, "fix", "重新看结果", [], { actor: "owner", userId: "owner" });
     expect(all(f.app.db, "select id from runs where kind='code'")).toHaveLength(1); expect(trials(f.app, f.item.id).filter((t) => t.fix_of)).toHaveLength(1);
@@ -125,6 +127,7 @@ describe("课题逐条改缺陷", () => {
     const s = f.stage(); await reportTrial(f.app, { trial: s.control.trialId!, result, summary: "照复现步骤验证", unsure: true }, { actor: "assistant", userId: "owner", runId: s.control.runId });
     run(f.app.db, "update runs set status='done',finished_at=? where id=?", now(), s.control.runId!); await advance(f.app, f.item.id);
     expect(f.stage().state).toBe("done"); expect(studyView(f.app, f.item.id).findings[0].fix?.verified).toBe(result);
+    expect(!!studyView(f.app, f.item.id).findings[0].fixedAt).toBe(result === "passed");
     expect(trials(f.app, f.item.id).filter((t) => t.fix_of).map((t) => [t.attempts, t.escalated])).toEqual([[1, 0], [1, 0]]);
   });
   it.each([true, false])("有试验定义 %s：重跑取试验 AI，否则取改阶段 AI，worker 保持同一档", async (hasTrialStage) => {

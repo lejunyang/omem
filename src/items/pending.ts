@@ -29,7 +29,7 @@ const askCategories: Record<string, [PendingAction["group"], string]> = {
   "today": ["propose", "今天"], "line-propose": ["propose", "工作线"], "line-next": ["propose", "下一步"], "line-end": ["propose", "工作线"],
   "wiki-questions": ["ask", "提问"], "item-follow": ["propose", "变化"], "flow-stage": ["work", "流程"], "flow-save": ["propose", "流程"],
   "rule-enable": ["propose", "规则"], "reply-promote": ["propose", "回复"], "approval-promote": ["propose", "授权"],
-  "flow-gate-promote": ["propose", "授权"], "commit-claim": ["work", "认领"], "study-plan": ["work", "课题"],
+  "flow-gate-promote": ["propose", "授权"], "commit-claim": ["work", "认领"], "study-plan": ["work", "研究"],
 };
 
 function askCategory(ask: ReturnType<typeof toAsk>): [PendingAction["group"], string] {

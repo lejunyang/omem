@@ -107,7 +107,7 @@ const off = computed(() => !status.value?.enabled);
 
 <template>
   <SetCard v-if="!missing" id="set-cloud-tools" title="云端后端调工具">
-    <template #help>没有 MCP 的云端后端经这台 omem 的地址调几个工具（读材料，以及课题的阶段交结果），每次运行一个短期凭据，限工具、空间和次数，本轮结束就作废。默认关。</template>
+    <template #help>没有 MCP 的云端后端经这台 omem 的地址调几个工具（读材料，以及研究的阶段交结果），每次运行一个短期凭据，限工具、空间和次数，本轮结束就作废。默认关。</template>
     <p v-if="local" class="set-pad small muted">这张卡要用登录后的会话或令牌打开：直接在运行 omem 的机器上打开的页面不算本人登录，服务端不认。</p>
     <Skeleton v-else-if="!status && !error" :rows="3" />
     <div v-else-if="error" class="set-pad row" role="alert"><span class="grow small">读不到云端工具的状态：{{ error }}</span><button class="btn ghost sm" @click="load">重试</button></div>
@@ -137,7 +137,7 @@ const off = computed(() => !status.value?.enabled);
           <UiCheckbox :model-value="status.backends.includes(p.backend)" switch :aria-label="`对${name(p.backend)}启用`" @change="(v) => save({ backends: v ? [...status!.backends, p.backend] : status!.backends.filter((b) => b !== p.backend) }, v ? `已对${name(p.backend)}启用` : `不再对${name(p.backend)}启用`)" />
         </div>
       </div>
-      <SetRow label="允许的工具" hint="读材料的工具，和课题交结果的工具（后者只在课题的阶段里可用）" block :off="off">
+      <SetRow label="允许的工具" hint="读材料的工具，和研究交结果的工具（后者只在研究的阶段里可用）" block :off="off">
         <UiSelect :model-value="status.tools" multiple size="sm" width="100%" aria-label="允许云端后端调的工具" :options="toolOptions(status)" @change="(v) => (v as string[]).length ? save({ tools: v as string[] }, '已保存允许的工具') : toast('至少留一个工具；不想给就关掉总开关', 'error')" />
       </SetRow>
       <SetRow label="凭据多久有效" hint="分钟，1–30" :off="off">

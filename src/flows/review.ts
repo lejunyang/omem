@@ -20,6 +20,8 @@ export type StageEvent =
   | "stale"
   /** The owner said its result was not right yet: done again (or blocked after the third time). */
   | "refuse"
+  /** The owner started a new round with words for it (engine.ts startRound): read as the owner's words, not a state change. */
+  | "round-note"
   /** Done again by a stronger model (it ended without a result, or was unsure). */
   | "escalate"
   /** It went to gated: a confirm gate, the auto-advance limit, or the question whether it is needed at all. */

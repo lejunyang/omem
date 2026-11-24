@@ -30,14 +30,14 @@ export async function captureBaseline(app: App, item: string) {
 /** Never reset or clean a code work's checkout during verification. */
 export async function fixWorkspace(app: App, item: string, work: string) {
   const w = codeWork(app, work);
-  if (!w || w.item?.id !== item) throw new Error("交办不属于这个课题");
+  if (!w || w.item?.id !== item) throw new Error("交办不属于这个研究");
   const refs = [...w.roundList].reverse().flatMap((r) => worktreesOf(app, r.id));
   const selected = studyScope(app, item).repos.map((repo) => {
     const wt = refs.find((r) => r.space === repo.id);
     if (!wt || !existsSync(workDirOf(wt))) throw new Error(`${repo.name} 的交办工作区不可用`);
     return wt;
   });
-  if (!selected.length) throw new Error("课题没有登记仓库");
+  if (!selected.length) throw new Error("研究没有登记仓库");
   const commits: Record<string, string> = {};
   for (const wt of selected) commits[wt.space] = await checked(workDirOf(wt), ["rev-parse", "HEAD"]);
   return { cwd: workDirOf(selected[0]), commits, note: `## 交办工作区\n${selected.map((w) => `${w.space}：${workDirOf(w)}（${commits[w.space]}）`).join("\n")}` };
@@ -90,7 +90,7 @@ export async function checkoutManaged(app: App, owner: string, repo: Space, base
 }
 export async function prepareWorkspace(app: App, d: Direction, runId: string) {
   const repos = studyScope(app, d.item_id).repos, baseline = json<Record<string, string>>(d.baseline, {});
-  if (!repos.length) return { cwd: undefined, commits: {}, note: "这个课题没有登记仓库" };
+  if (!repos.length) return { cwd: undefined, commits: {}, note: "这个研究没有登记仓库" };
   if (!d.workspace_run_id) await cleanupStudyWorkspaces(app, d.item_id);
   const owner = d.workspace_run_id ?? runId;
   if (!d.workspace_run_id) run(app.db, "update study_directions set workspace_run_id=? where id=?", owner, d.id);
@@ -101,7 +101,7 @@ export async function prepareWorkspace(app: App, d: Direction, runId: string) {
     selected.push(await checkoutManaged(app, owner, repo, base));
   }
   return { cwd: selected[0] ? workDirOf(selected[0]) : undefined, commits: Object.fromEntries(selected.map((w) => [w.space, w.base])),
-    note: selected.length ? `## 课题工作区\n${selected.map((w) => `${w.space}：${workDirOf(w)}（${w.base}）`).join("\n")}` : "这个课题没有登记仓库" };
+    note: selected.length ? `## 研究工作区\n${selected.map((w) => `${w.space}：${workDirOf(w)}（${w.base}）`).join("\n")}` : "这个研究没有登记仓库" };
 }
 /** Give back what `owner` holds (checkoutManaged): leases returned, its own worktrees removed. What could not be is kept, and returned. */
 export async function releaseManaged(app: App, owner: string) {
@@ -115,7 +115,7 @@ export async function releaseManaged(app: App, owner: string) {
         await checked(root, ["worktree", "remove", "--force", wt.path]);
         await checked(root, ["worktree", "prune"]);
       }
-    } catch (e) { remaining.push(wt); console.warn(`[omem] 课题工作区清理失败：${(e as Error).message}`); }
+    } catch (e) { remaining.push(wt); console.warn(`[omem] 研究工作区清理失败：${(e as Error).message}`); }
   }
   saveRefs(app, owner, remaining);
   return remaining;

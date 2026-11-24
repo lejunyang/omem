@@ -4,13 +4,14 @@ import { HttpError, json, newId, now } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { cancelRun } from "../agents/runs.ts";
 import { atomic, itemFlow, type ItemFlow } from "../flows/store.ts";
-import type { Proposal, FindingInput, TrialReport } from "./schema.ts";
+import type { Proposal, FindingInput, TrialReport, ReviseStudyFinding } from "./schema.ts";
 import { cleanupStudyWorkspaces } from "./workspace.ts";
 
-export type PlannedTrial = { object: string; check: string; prior?: string };
+/** `features`: the headings of the study's feature list this trial covers (coverage counts them). */
+export type PlannedTrial = { object: string; check: string; prior?: string; features?: string[] };
 export type Direction = { id: string; item_id: string; round: number; goal: string; approach: string; acceptance: string; env: string; estimate: string; state: "proposed" | "confirmed" | "active" | "done" | "dropped"; conclusion: string; note: string; plan: string; removed: string; baseline: string; third_party: number; allow_code: number; workspace_run_id: string | null; created_at: string; updated_at: string };
-export type Trial = { fix_of: string | null; work_id: string | null; id: string; item_id: string; direction_id: string; round: number; seq: number; object: string; check: string; env: string; state: "queued" | "running" | "reported" | "skipped"; result: TrialReport["result"] | null; summary: string; evidence: string; run_id: string | null; attempts: number; prior: string | null; findings: string; unsure: number; failures: number; escalated: number; commits: string; peer: string | null; peer_run: string | null; peer_seen: string | null; created_at: string; updated_at: string };
-export type Finding = { round: number; flow_started_at: string | null; id: string; item_id: string; kind: FindingInput["kind"]; title: string; repro: string; trials: string; state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; state_reason: string; same_as: string | null; work_id: string | null; created_at: string; updated_at: string };
+export type Trial = { fix_of: string | null; work_id: string | null; id: string; item_id: string; direction_id: string; round: number; seq: number; object: string; check: string; env: string; state: "queued" | "running" | "reported" | "skipped"; result: TrialReport["result"] | null; summary: string; evidence: string; run_id: string | null; attempts: number; prior: string | null; findings: string; unsure: number; failures: number; escalated: number; commits: string; peer: string | null; peer_run: string | null; peer_seen: string | null; features: string; created_at: string; updated_at: string };
+export type Finding = { round: number; flow_started_at: string | null; id: string; item_id: string; kind: FindingInput["kind"]; title: string; repro: string; trials: string; state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; state_reason: string; same_as: string | null; work_id: string | null; fixed_at: string | null; fixed_note: string; revised: string | null; created_at: string; updated_at: string };
 export const directions = (app: App, item: string) => all<Direction>(app.db, "select * from study_directions where item_id=? order by created_at,rowid", item);
 export const trials = (app: App, item: string) => all<Trial>(app.db, "select * from study_trials where item_id=? order by direction_id,seq", item);
 export const findings = (app: App, item: string) => all<Finding>(app.db, "select * from study_findings where item_id=? order by created_at,rowid", item);
@@ -56,7 +57,7 @@ export function confirmDirection(app: App, id: string, note: string, baseline: R
     run(app.db, `update study_directions set state='done',conclusion=case when conclusion='' then '试验都跑完了，小结没有写结论；本人选了新的方向' else conclusion end,updated_at=?
       where item_id=? and id!=? and state in ('confirmed','active')
         and not exists(select 1 from study_trials t where t.direction_id=study_directions.id and t.state in ('queued','running'))`, at, d.item_id, id);
-    for (const [i, t] of json<PlannedTrial[]>(d.plan, []).entries()) run(app.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",env,state,prior,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, newId("st"), d.item_id, id, d.round, i + 1, t.object, t.check, d.env, "queued", t.prior ?? null, at, at);
+    for (const [i, t] of json<PlannedTrial[]>(d.plan, []).entries()) run(app.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",env,state,prior,features,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, newId("st"), d.item_id, id, d.round, i + 1, t.object, t.check, d.env, "queued", t.prior ?? null, JSON.stringify(t.features ?? []), at, at);
   });
 }
 export function continuing(app: App, item: string) {
@@ -94,10 +95,10 @@ export function similarTitle(a: string, b: string) {
 export function recordFinding(app: App, input: FindingInput) {
   if (input.same_as && input.distinct_from?.length) throw new HttpError(400, "same_as 和 distinct_from 不能同时填写");
   const evidence = [...new Set(input.trials)];
-  if (!evidence.length || evidence.some((id) => !one(app.db, "select 1 from study_trials where id=? and item_id=? and result is not null", id, input.item))) throw new HttpError(400, "依据至少有一个，且必须是本课题里有结果的试验");
+  if (!evidence.length || evidence.some((id) => !one(app.db, "select 1 from study_trials where id=? and item_id=? and result is not null", id, input.item))) throw new HttpError(400, "依据至少有一个，且必须是本研究里有结果的试验");
   const existing = findings(app, input.item), target = existing.find((f) => f.id === input.same_as);
-  if (input.same_as && !target) throw new HttpError(400, "same_as 必须是本课题的发现");
-  if (input.distinct_from?.some((id) => !existing.some((f) => f.id === id))) throw new HttpError(400, "distinct_from 必须是本课题的发现");
+  if (input.same_as && !target) throw new HttpError(400, "same_as 必须是本研究的发现");
+  if (input.distinct_from?.some((id) => !existing.some((f) => f.id === id))) throw new HttpError(400, "distinct_from 必须是本研究的发现");
   const similar = existing.filter((f) => similarTitle(f.title, input.title) && !input.distinct_from?.includes(f.id));
   if (!target && similar.length) throw new HttpError(409, `有相近发现，先读再决定 same_as 或 distinct_from：\n${similar.slice(0, 10).map((f) => `${f.id}（${f.state}）${f.title}\n${f.repro}`).join("\n")}`);
   const at = now();
@@ -110,9 +111,38 @@ export function recordFinding(app: App, input: FindingInput) {
   run(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,created_at,updated_at,round,flow_started_at) values(?,?,?,?,?,?,?,?,?,?,?)", id, input.item, input.kind, input.title, input.repro, JSON.stringify(evidence), "new", at, at, flow?.round ?? 0, flow?.startedAt ?? null);
   return id;
 }
-export function setFindingState(app: App, item: string, id: string, state: "confirmed" | "rejected" | "later", reason = "") {
-  if (!findings(app, item).some((f) => f.id === id)) throw new HttpError(404, "没有这条发现");
-  run(app.db, "update study_findings set state=?,state_reason=?,updated_at=? where id=? and item_id=?", state, reason, now(), id, item);
+/**
+ * The owner's call on a finding. "fixed" closes it: it stays confirmed, with when and by what (a
+ * commit, a delegation); any other call reopens it.
+ */
+export function setFindingState(app: App, item: string, id: string, state: "confirmed" | "rejected" | "later" | "fixed", reason = "") {
+  const f = findings(app, item).find((f) => f.id === id);
+  if (!f) throw new HttpError(404, "没有这条发现");
+  if (state === "fixed") {
+    if (f.state === "duplicate" || f.state === "rejected") throw new HttpError(409, "不算或重复的发现不用标改好");
+    run(app.db, "update study_findings set state='confirmed',fixed_at=?,fixed_note=?,updated_at=? where id=? and item_id=?", now(), reason, now(), id, item);
+  } else run(app.db, "update study_findings set state=?,state_reason=?,fixed_at=null,fixed_note='',updated_at=? where id=? and item_id=?", state, reason, now(), id, item);
+}
+/** Closed by a change that passed review and whose failed trials passed when run again (studies/fixes.ts). */
+export function markFixedByChange(app: App, f: Pick<Finding, "id" | "item_id" | "fixed_at" | "state">, note: string) {
+  if (f.fixed_at || !["new", "confirmed", "later"].includes(f.state)) return;
+  run(app.db, "update study_findings set state='confirmed',fixed_at=?,fixed_note=?,updated_at=? where id=? and fixed_at is null", now(), note, now(), f.id);
+}
+/**
+ * Someone re-describes a finding (the owner in a conversation, through the assistant): the first
+ * wording is kept once, so what the summary wrote can still be compared.
+ */
+export function reviseFinding(app: App, input: ReviseStudyFinding) {
+  const f = findings(app, input.item).find((f) => f.id === input.finding);
+  if (!f) throw new HttpError(404, "没有这条发现");
+  if (!input.title && !input.repro && !input.kind && !input.state) throw new HttpError(400, "要改标题、正文、类型或状态中的至少一项");
+  if (input.title || input.repro || input.kind) {
+    const first = f.revised ?? JSON.stringify({ kind: f.kind, title: f.title, repro: f.repro });
+    run(app.db, "update study_findings set kind=?,title=?,repro=?,revised=?,updated_at=? where id=?", input.kind ?? f.kind, input.title ?? f.title, input.repro ?? f.repro, first, now(), f.id);
+  }
+  if (input.state) setFindingState(app, input.item, f.id, input.state, input.reason ?? "");
+  const after = findings(app, input.item).find((x) => x.id === f.id)!;
+  return `${after.id}（${after.fixed_at ? "已改好" : after.state}）${after.title}`;
 }
 
 /** A flow that proposes directions or runs trials keeps a ledger. */
@@ -131,5 +161,5 @@ export function idleRounds(app: App, item: string, includeCurrent = false, at = 
   return count;
 }
 export function assertOwner(app: App, item: string, user: string) {
-  if (getItem(app, item).userId !== user) throw new HttpError(403, "只有事项本人能修改课题");
+  if (getItem(app, item).userId !== user) throw new HttpError(403, "只有事项本人能修改研究");
 }

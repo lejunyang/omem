@@ -27,9 +27,9 @@ export async function studyFixture(budget: FlowStage["budget"] = { fixes: 2, min
   writeFileSync(join(root, "entry.txt"), "before"); await git(root, "add", "."); await git(root, "commit", "-qm", "baseline");
   createSpace(app, { id: "project", name: "项目 A" });
   createSpace(app, { id: "repo", name: "仓库 A", kind: "repo", rootPath: root, parentId: "project" });
-  const item = upsertItem(app, undefined, { spaceId: "project", kind: "watch", title: "示例课题" }, "user");
+  const item = upsertItem(app, undefined, { spaceId: "project", kind: "watch", title: "示例研究" }, "user");
   putScope(app, item.id, { allowCode: true }, "owner");
-  saveFlow(app, JSON.stringify({ id: "fix-study", name: "课题", repeat: { from: "plan", every: "manual" }, stages: [
+  saveFlow(app, JSON.stringify({ id: "fix-study", name: "研究", repeat: { from: "plan", every: "manual" }, stages: [
     { id: "plan", name: "定方向", by: { run: {} }, tools: ["propose_directions"] },
     { id: "try", name: "试验", by: { object: "trials" }, ai: "cheap" },
     { id: "summary", name: "小结", by: { run: {} }, tools: ["read_ledger", "record_finding"] },

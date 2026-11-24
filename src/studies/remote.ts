@@ -54,7 +54,7 @@ export type Dispatch = { ok: true; run: string } | { ok: false; retry: boolean; 
 
 /** Send a trial to the device its environment names; on success the trial is running there. */
 export async function dispatchPeerTrial(app: App, item: Item, f: ItemFlow, d: FlowStage, t: Trial, env: StudyEnv, usedMinutes: number): Promise<Dispatch> {
-  if (item.userId !== OWNER) return { ok: false, retry: false, reason: "设备课题试验只支持本人的账号，请为成员选择本机环境" };
+  if (item.userId !== OWNER) return { ok: false, retry: false, reason: "设备研究试验只支持本人的账号，请为成员选择本机环境" };
   const peer = env.peer!;
   const dir = direction(app, t.direction_id);
   if (!findPeer(app, peer)) return { ok: false, retry: false, reason: `执行环境「${env.name}」的设备 ${peer} 已不在配对的设备里` };

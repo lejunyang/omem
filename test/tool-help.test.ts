@@ -13,7 +13,7 @@ const ctxFor = (tools: string[] | null): ToolContext => ({ app: testApp(), runId
 describe("omem tools offered to agents", () => {
   it("puts every tool in exactly one group, each with a reference page", () => {
     expect(expandTools(["group:improve"])).toEqual(["improve_start", "improve_round", "improve_status"]);
-    expect(expandTools(["group:study"])).toEqual(["propose_directions", "trial_report", "read_ledger", "record_finding", "close_direction"]);
+    expect(expandTools(["group:study"])).toEqual(["propose_directions", "trial_report", "read_ledger", "record_finding", "revise_study_finding", "close_direction"]);
     for (const t of expandTools(["group:study"])) expect(CORE_TOOLS).not.toContain(t);
     expect(expandTools(["group:coding"])).toContain("propose_repo_lesson");
     expect(CORE_TOOLS).not.toContain("propose_repo_lesson");

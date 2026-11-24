@@ -30,13 +30,14 @@ export async function fixFinding(app: App, itemId: string, finding: string, note
 /** The owner action and unattended stages share enqueueing, baseline selection and ledger writes. */
 export async function queueFindingFix(app: App, itemId: string, finding: string, note?: string) {
   const item = getItem(app, itemId), scope = studyScope(app, itemId);
-  if (!scope.allowCode) throw new HttpError(409, "先在课题范围里打开可以改代码");
+  if (!scope.allowCode) throw new HttpError(409, "先在研究范围里打开可以改代码");
   const f = findings(app, itemId).find((f) => f.id === finding);
   if (!f) throw new HttpError(404, "没有这条发现");
   if (!["new", "confirmed", "later"].includes(f.state)) throw new HttpError(409, "这条发现的状态不能发起修改");
+  if (f.fixed_at) throw new HttpError(409, "这条发现已标为改好");
   const previous = f.work_id ? codeWork(app, f.work_id) : null;
   if (previous && previous.stage.group !== "ended") throw new HttpError(409, "这条发现已有进行中的交办");
-  if (!scope.repos.length) throw new HttpError(409, "先在课题范围里登记仓库");
+  if (!scope.repos.length) throw new HttpError(409, "先在研究范围里登记仓库");
   const evidence = json<string[]>(f.trials, []).map((id) => trial(app, id));
   const startCommits = evidence.length ? json<Record<string, string>>(direction(app, evidence[0].direction_id).baseline, {}) : {};
   const current = await captureBaseline(app, itemId), fallback: string[] = [];

@@ -404,7 +404,7 @@ function readableItem(c: Ctx, itemId: string) {
   return !!i && (!c.f.space || i.space_id === c.f.space) && (allowed === null || allowed.includes(i.space_id)) && (c.viewer === OWNER || i.user_id === c.viewer);
 }
 export function studySection(c: Ctx): Section {
-  const s = section("study", "课题", "只数台账里的试验、发现和结束的方向。发现多少不代表做得好坏。");
+  const s = section("study", "研究", "只数记录里的试验、发现和结束的方向。发现多少不代表做得好坏。");
   const allowed = accessibleSpaces(c.app, c.viewer);
   // Only items that have a ledger: a handful, found through the directions' item index.
   const items = all<{ id: string; title: string; space_id: string }>(c.app.db, "select id,title,space_id from items where id in (select distinct item_id from study_directions)")
@@ -543,7 +543,7 @@ function compute(app: App, viewer: string, input: Filters): Cached {
       return s;
     } catch {
       // No SQL, paths or stored material in public errors.
-      return { ...section(build.name.replace("Section", ""), ({ usageSection: "用量与覆盖", coverageSection: "用在哪", shieldSection: "替本人挡了多少", othersSection: "给别人带来什么", qualitySection: "质量", deliverySection: "交付", flowsSection: "流程", studySection: "课题", knowledgeSection: "知识", costSection: "成本" } as Record<string, string>)[build.name], "这部分暂时无法读取。"), error: "这部分暂时无法读取，请稍后重试。" };
+      return { ...section(build.name.replace("Section", ""), ({ usageSection: "用量与覆盖", coverageSection: "用在哪", shieldSection: "替本人挡了多少", othersSection: "给别人带来什么", qualitySection: "质量", deliverySection: "交付", flowsSection: "流程", studySection: "研究", knowledgeSection: "知识", costSection: "成本" } as Record<string, string>)[build.name], "这部分暂时无法读取。"), error: "这部分暂时无法读取，请稍后重试。" };
     }
   }).filter(s => !s.empty || s.id !== "study" && (s.id !== "flows" || s.notes.length > 0));
   const unique = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((s): s is string => !!s))].sort();

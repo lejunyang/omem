@@ -101,7 +101,7 @@ const totalText = computed(() => {
 const summaries = computed(() => new Map((blocks.value ?? []).map((b) => [keyOf(b), summaryOf(b)])));
 const resultText = (t: ProgressTask) => decisionText(t) || TASK_LABEL[t.state] || t.state;
 const ATTEMPT: Record<string, string> = { queued: "排队", running: "在做", done: "做完", failed: "没做成", cancelled: "已取消" };
-const blockLink: Record<ProgressView["kind"], string> = { board: "看任务板", code: "打开交办", review: "看评审", flow: "看流程", study: "看课题" };
+const blockLink: Record<ProgressView["kind"], string> = { board: "看任务板", code: "打开交办", review: "看评审", flow: "看流程", study: "看研究" };
 </script>
 
 <template>

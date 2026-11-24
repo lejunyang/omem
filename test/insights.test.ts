@@ -28,7 +28,7 @@ function sample(a: ReturnType<typeof setup>, id: string, decision: string | null
   clearInsightsCache(a);
 }
 function study(a: ReturnType<typeof setup>, space = "personal") {
-  const item = upsertItem(a, undefined, { spaceId: space, title: "示例商城课题", kind: "watch" }, "user");
+  const item = upsertItem(a, undefined, { spaceId: space, title: "示例商城研究", kind: "watch" }, "user");
   const at = "2026-11-05T02:00:00.000Z", d = `d-${item.id}`;
   run(a.db, "insert into study_directions(id,item_id,round,goal,approach,acceptance,state,created_at,updated_at) values(?,?,1,'核验退款','逐项验证','可复现','done',?,?)", d, item.id, at, at);
   for (const [i, result] of ["passed", "failed", "blocked", "unclear"].entries()) {
@@ -42,7 +42,7 @@ function study(a: ReturnType<typeof setup>, space = "personal") {
   clearInsightsCache(a);
   return item;
 }
-it("课题只数期间台账，结果表、事项与运行明细、模型次数和导出可核对", () => {
+it("研究只数期间记录，结果表、事项与运行明细、模型次数和导出可核对", () => {
   const a = setup(), item = study(a);
   seed(a, "study-trial", { input: { itemId: item.id }, ai: { model: "model-b" } });
   const s = report(a).sections.find(s => s.id === "study")!;
@@ -58,8 +58,8 @@ it("课题只数期间台账，结果表、事项与运行明细、模型次数�
   for (const m of s.metrics) expect(insightRecords(a, "owner", filters, m.key).total).toBe(m.value);
   expect(insightRecords(a, "owner", filters, "study:findings").records.every(r => r.link === `#/items/${item.id}`)).toBe(true);
   expect(insightRecords(a, "owner", filters, "study:directions").records.every(r => r.link === `#/items/${item.id}`)).toBe(true);
-  expect(exportInsights(a, "owner", filters, "md")).toContain("## 课题");
-  expect(exportInsights(a, "owner", filters, "csv")).toContain('"课题","试验数","4"');
+  expect(exportInsights(a, "owner", filters, "md")).toContain("## 研究");
+  expect(exportInsights(a, "owner", filters, "csv")).toContain('"研究","试验数","4"');
   const specific = report(a, { model: "model-a" }).sections.find(s => s.id === "study")!;
   expect(specific.metrics.find(m => m.key === "study:trials")?.value).toBe(3);
   expect(specific.metrics.some(m => m.key === "study:findings")).toBe(false);
@@ -102,7 +102,7 @@ it("流程按定义和阶段数在做、等你、卡住的平均小时数和返�
   const member = createUser(a, { name: "示例成员" });
   expect(report(a, {}, member.id).sections.some(s => s.id === "flows")).toBe(false);
 });
-it("课题数出有改动的发现，以及改后重跑通过、仍然失败的", () => {
+it("研究数出有改动的发现，以及改后重跑通过、仍然失败的", () => {
   const a = setup(), item = study(a);
   const old = "2026-10-30T02:00:00.000Z";
   for (const [i, result] of [[0, "passed"], [1, "failed"], [3, null]] as const) {
@@ -117,10 +117,10 @@ it("课题数出有改动的发现，以及改后重跑通过、仍然失败的"
   expect(metric(a, "study:trials").value).toBe(4);
   expect(report(a, { model: "model-a" }).sections.find(s => s.id === "study")!.metrics.some(m => m.key === "study:findings:fixed")).toBe(false);
 });
-it("课题按事项可读空间隔离，权限撤销后不复用缓存，没有已交试验就不出现", () => {
+it("研究按事项可读空间隔离，权限撤销后不复用缓存，没有已交试验就不出现", () => {
   const a = setup();
   expect(report(a).sections.some(s => s.id === "study")).toBe(false);
-  const space = createSpace(a, { name: "共享课题" });
+  const space = createSpace(a, { name: "共享研究" });
   const user = createUser(a, { name: "示例成员" });
   addMember(a, space.id, user.id, "reader");
   const item = study(a, space.id), hidden = study(a);

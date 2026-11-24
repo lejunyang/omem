@@ -2477,6 +2477,12 @@ export const migrations: readonly string[] = [
   // A rule's agent may switch to members who agreed to it (rules/run-as.ts).
   `create table rule_run_as(rule_id text not null, user_id text not null, status text not null, reason text, ask_id text,
      updated_at text not null, primary key(rule_id, user_id));`,
+  // A study finding can be closed as fixed (and by what), keeps its first wording when someone
+  // re-describes it, and a trial names the features of the study's list it covers (studies/store.ts).
+  `alter table study_findings add column fixed_at text;
+   alter table study_findings add column fixed_note text not null default '';
+   alter table study_findings add column revised text;
+   alter table study_trials add column features text not null default '[]';`,
 ];
 
 export type Db = DatabaseSync;

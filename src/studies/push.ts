@@ -45,7 +45,7 @@ export async function studyPush(app: App, input: z.infer<typeof studyPushSchema>
     const s = d ? getStage(app, item.id, d.id) : null;
     const kind = typeof d?.by === "object" && "object" in d.by ? d.by.object : null;
     if (r.kind !== "study-trial" || !f || f.endedAt || f.startedAt !== r.input.flowStartedAt || f.round !== r.input.round || s?.state !== "doing" || s.control.runId !== r.id || t.state !== "running" || !(kind === "trials" && !t.fix_of || kind === "fixes" && t.fix_of)) throw new HttpError(403, "只有当前试验和改后重跑能推送");
-    if (!pushAuthorized(app, item.id)) throw new HttpError(403, "课题没有登记推送授权");
+    if (!pushAuthorized(app, item.id)) throw new HttpError(403, "研究没有登记推送授权");
     const cwd = typeof r.input.cwd === "string" ? r.input.cwd : "";
     const expected = t.work_id ? (await fixWorkspace(app, item.id, t.work_id)).cwd : (() => {
       const owner = direction(app, t.direction_id).workspace_run_id;

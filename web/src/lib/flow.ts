@@ -197,7 +197,7 @@ export function nextWords(s: FlowStage, who?: string | null) {
   if (s.question === "skip") return `等你补充跳过的原因：${task}。`;
   if (s.question === "refuse") return `等你补充哪里还不行：${task}。写明原因后重开这一段。`;
   if (s.question === "done") return `做完了，确认吗？${task}。确认后继续推进后面的阶段。`;
-  if (s.asking === "direction") return "这一轮的方向提出来了：在下面的台账里选一个，或者这一轮不跑。";
+  if (s.asking === "direction") return "这一轮的方向提出来了：在下面的记录里选一个，或者这一轮不跑。";
   if (s.state === "gated") return `要开始这一段了：${task}。你同意才开始。`;
   if (s.waitingSignal?.type.includes(":")) return `轮到你：${task}。${s.waitingSignal.available === false ? "等的信号现在没人能判断，做完以后点一下。" : "插件看到信号后这一段会自己完成；也可以直接点做完。"}`;
   if (s.waitingSignal) return `轮到你：${task}。${s.waitingSignal.type === "git.merged" ? "合进目标分支" : "推到远端"}以后这一段会自己完成，后面的阶段接着走；也可以直接点做完。`;

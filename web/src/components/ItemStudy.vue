@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { get, onServerEvent, onServerResync, post, put } from "../api";
 import { promptDialog } from "../lib/dialog";
 import { refAction } from "../lib/refs";
 import { landOn } from "../lib/landing";
 import { objectStatusWords } from "../lib/flow";
-import { byConcern, byUnjudged, directionWords, findingWords, kindWords, progress, scopeWords, total, trialTone, trialWord, verifiedWords, type StudyDirection, type StudyFinding, type StudyScope, type StudyTrial, type StudyView } from "../lib/study";
+import { byConcern, byUnjudged, directionWords, findingWord, kindWords, progress, scopeWords, total, trialTone, trialWord, verifiedWords, type StudyDirection, type StudyFinding, type StudyScope, type StudyTrial, type StudyView } from "../lib/study";
 import { fmtTime } from "../store";
 import RankBars from "./charts/RankBars.vue";
 import Markdown from "./Markdown.vue";
@@ -22,7 +23,8 @@ import UiSegmented from "./UiSegmented.vue";
 type Tab = "findings" | "trials" | "directions" | "coverage";
 const props = withDefaults(defineProps<{ itemId: string; editable?: boolean; choosing?: boolean; focus?: { kind: "direction" | "trial"; id: string } | null }>(), { editable: true, focus: null });
 const data = ref<StudyView | null>(null), error = ref(""), loading = ref(true), busy = ref(false);
-const tab = ref<Tab>("findings"), everyRound = ref(false);
+const tab = ref<Tab>("findings"), everyRound = ref(false), showFixed = ref(false);
+const router = useRouter();
 let seq = 0, epoch = 0, picked = false;
 /** The repositories that could be added to the scope, loaded when the owner opens it. */
 const candidates = ref<{ id: string; name: string }[]>([]);
@@ -34,8 +36,11 @@ const pushDirty = computed(() => pushRemote.value.trim() !== (data.value?.scope?
 
 const proposed = computed(() => props.choosing ? data.value?.directions.filter((d) => d.state === "proposed") ?? [] : []);
 const going = computed(() => data.value?.directions.filter((d) => d.state === "confirmed" || d.state === "active").at(-1) ?? null);
-const findings = computed(() => [...data.value?.findings ?? []].sort(byUnjudged));
-const fresh = computed(() => findings.value.filter((f) => f.state === "new").length);
+const allFindings = computed(() => [...data.value?.findings ?? []].sort(byUnjudged));
+const fixedCount = computed(() => allFindings.value.filter((f) => f.fixedAt).length);
+/** Fixed ones are out of the way unless asked for. */
+const findings = computed(() => showFixed.value ? allFindings.value : allFindings.value.filter((f) => !f.fixedAt));
+const fresh = computed(() => allFindings.value.filter((f) => f.state === "new" && !f.fixedAt).length);
 const round = computed(() => Math.max(0, ...(data.value?.trials ?? []).map((t) => t.round)));
 const trials = computed(() => {
   const all = data.value?.trials ?? [];
@@ -48,7 +53,7 @@ const tried = computed(() => (data.value?.coverage.features ?? []).filter((f) =>
 const untried = computed(() => (data.value?.coverage.features ?? []).filter((f) => !f.trials));
 const empty = computed(() => !!data.value && !data.value.directions.length && !data.value.trials.length && !data.value.findings.length && !data.value.coverage.ref);
 const tabs = computed(() => [
-  { value: "findings" as Tab, label: `发现 ${findings.value.length}` },
+  { value: "findings" as Tab, label: `发现 ${allFindings.value.length - fixedCount.value}` },
   { value: "trials" as Tab, label: `试验 ${data.value?.trials.length ?? 0}` },
   { value: "directions" as Tab, label: `方向 ${data.value?.directions.length ?? 0}` },
   { value: "coverage" as Tab, label: "覆盖" },
@@ -139,7 +144,7 @@ async function fix(f: StudyFinding) {
 async function close(d: StudyDirection, state: "done" | "dropped") {
   const generation = epoch;
   const answer = await promptDialog(state === "done" ? "这个方向做完了" : "放下这个方向", {
-    message: `${d.goal}\n没跑的试验不再跑。结论会留在台账里，以后定方向时能看到。`,
+    message: `${d.goal}\n没跑的试验不再跑。结论会留在记录里，以后定方向时能看到。`,
     fields: [{ id: "conclusion", label: "结论", value: "", required: true, maxLength: 4000 }],
     okText: state === "done" ? "做完了" : "放下",
   });
@@ -156,15 +161,32 @@ async function judge(f: StudyFinding, state: "confirmed" | "rejected" | "later")
   }
   await send(`findings/${encodeURIComponent(f.id)}`, { state, reason });
 }
+/**
+ * Take one finding into a conversation: the assistant gets the item, the finding's id and its text, the
+ * owner writes the rest. `rewrite`: ask it to check the trials and re-describe it (revise_study_finding).
+ */
+function discuss(f: StudyFinding, rewrite = false) {
+  const quote = `${f.title}\n\n${f.repro}`.slice(0, 1500).replace(/\n/g, "\n> ");
+  const head = `关于研究（事项 ${props.itemId}）的发现 ${f.id}（${kindWords[f.kind]}，${findingWord(f)}）：\n\n> ${quote}\n\n`;
+  const ask = rewrite ? "这条写得不清楚。请用 read_ledger 读它依据的试验，必要时读代码确认它成不成立，再用 revise_study_finding 重写正文：分“条件 / 现象 / 为什么是问题 / 建议”几节，命令和输出放代码块。不成立就告诉我原因，先不改状态。" : "";
+  void router.push({ path: "/ask", query: { draft: head + ask } });
+}
+/** The owner closes a finding as fixed, saying by what (a commit, a release); any other call reopens it. */
+async function markFixed(f: StudyFinding) {
+  const generation = epoch;
+  const answer = await promptDialog("标为已改好", { message: `${f.title}\n改好的发现排到最后，之后定方向和归并时不会再当成新问题。`, fields: [{ id: "note", label: "怎么改好的（提交、版本或交办，可不填）", value: "", maxLength: 2000 }], okText: "已改好" });
+  if (!answer || generation !== epoch) return;
+  await send(`findings/${encodeURIComponent(f.id)}`, { state: "fixed", reason: answer.note?.trim() || undefined });
+}
 /** The commits a trial ran on, shortened. */
 const shas = (t: StudyTrial) => Object.values(t.commits ?? {}).map((c) => c.slice(0, 8)).join("、");
 const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上` : "", t.fixOf ? "改动之后的重跑" : "", t.unsure ? "它自己拿不准" : "", t.escalated ? "请更好的模型看过" : "", t.attempts > 1 ? `第 ${t.attempts} 次` : "", everyRound.value ? `第 ${t.round} 轮` : ""].filter(Boolean).join(" · ");
 </script>
 
 <template>
-  <section class="item-study" aria-label="课题" :aria-busy="busy">
+  <section class="item-study" aria-label="研究" :aria-busy="busy">
     <div class="study-head">
-      <span class="study-name">课题的台账</span>
+      <span class="study-name">研究记录</span>
       <span v-if="fresh" class="study-fresh">{{ fresh }} 条发现等你看</span>
       <span v-if="data && data.idleRounds > 0" class="muted small">连着 {{ data.idleRounds }} 轮没有新发现</span>
     </div>
@@ -177,7 +199,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
           <span v-if="!data.scope.repos.length && !candidates.length" class="muted">这件事所在的空间下面没有仓库。试验只能读材料，跑不了命令。</span>
         </div>
         <UiCheckbox :model-value="data.scope.allowCode" switch :disabled="busy || !editable" @change="(v: boolean) => saveScope({ allowCode: v })">可以改代码：从一条发现发起编码交办。改动留在交办自己的分支上，经过评审，不合并、不推送</UiCheckbox>
-        <UiCheckbox :model-value="data.scope.thirdParty" switch :disabled="busy || !editable" @change="(v: boolean) => saveScope({ thirdParty: v })">本机可以执行第三方样本的代码：拿别人的仓库当样本时，会在这台机器上跑它的安装脚本和构建脚本（只在课题自己的工作区里）</UiCheckbox>
+        <UiCheckbox :model-value="data.scope.thirdParty" switch :disabled="busy || !editable" @change="(v: boolean) => saveScope({ thirdParty: v })">本机可以执行第三方样本的代码：拿别人的仓库当样本时，会在这台机器上跑它的安装脚本和构建脚本（只在研究自己的工作区里）</UiCheckbox>
         <div class="push">
           <div>推送：只推到下面这个远端、这个分支前缀下面。两项都填了，试验才能把自己工作区里的提交推上去（比如推到测试分支让托管的流水线跑）；主分支和别的远端推不了，每次推送都留记录。留空就是不推。</div>
           <div class="push-line">
@@ -190,7 +212,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
           <summary>推过 {{ data.pushes.length }} 次</summary>
           <ul><li v-for="x in data.pushes" :key="x.id"><span class="mono">{{ x.remote }} {{ x.branch }}</span><span class="muted"> · {{ x.commit.slice(0, 8) }} · {{ fmtTime(x.at) }}</span><span v-if="x.note" class="muted prior">{{ x.note }}</span></li></ul>
         </details>
-        <p class="muted">试验在宿主给这个课题单独建的工作区里跑，不碰你的仓库目录。别的执行环境在 设置 → 推进工作 → 课题的试验在哪跑 里登记。</p>
+        <p class="muted">试验在宿主给这个研究单独建的工作区里跑，不碰你的仓库目录。别的执行环境在 设置 → 推进工作 → 研究的试验在哪跑 里登记。</p>
       </div>
     </details>
     <Skeleton v-if="loading" variant="text" :rows="3" />
@@ -207,19 +229,26 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
           <span v-for="p in progress(going)" :key="p.tone" class="legend-item"><i :class="`t-${p.tone}`" />{{ p.label }} {{ p.n }}</span>
         </div>
       </div>
-      <UiSegmented v-model="tab" size="sm" aria-label="台账的几部分" :options="tabs" />
+      <UiSegmented v-model="tab" size="sm" aria-label="记录的几部分" :options="tabs" />
 
       <div v-if="tab === 'findings'" class="rows">
-        <p v-if="!findings.length" class="muted small">还没有发现。一轮试验跑完，小结会把几个试验里的同一个问题归并成一条，列在这里等你看。</p>
+        <p v-if="!allFindings.length" class="muted small">还没有发现。一轮试验跑完，小结会把几个试验里的同一个问题归并成一条，列在这里等你看。</p>
+        <p v-else-if="!findings.length" class="muted small">发现都改好了。</p>
         <details v-for="f in findings" :key="f.id" class="entry" :open="f.state === 'new' && fresh <= 3">
           <summary>
             <span class="kind" :class="f.kind">{{ kindWords[f.kind] }}</span>
             <span class="entry-name">{{ f.title }}</span>
-            <span class="entry-meta" :class="f.state === 'new' ? 'waiting' : 'muted'">{{ findingWords[f.state] }}</span>
+            <span class="entry-meta" :class="f.fixedAt ? 'fixed' : f.state === 'new' ? 'waiting' : 'muted'">{{ findingWord(f) }}</span>
           </summary>
           <div class="entry-body">
             <Markdown :source="f.repro" class="text" />
+            <div v-if="f.fixedAt" class="fix"><span class="fix-ok">{{ fmtTime(f.fixedAt) }} 标为已改好</span><template v-if="f.fixedNote">：{{ f.fixedNote }}</template></div>
             <div v-if="f.stateReason" class="muted">你写的原因：{{ f.stateReason }}</div>
+            <details v-if="f.revised" class="sub">
+              <summary>重写过，看原来的写法</summary>
+              <div class="muted">{{ kindWords[f.revised.kind] }} · {{ f.revised.title }}</div>
+              <Markdown :source="f.revised.repro" class="text" />
+            </details>
             <div v-if="f.trials.length" class="basis">
               <div class="muted">依据的试验</div>
               <div v-for="t in f.trials" :key="t.id" class="basis-row">
@@ -231,13 +260,20 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
             </div>
             <div v-if="f.fix" class="fix">已有改动：{{ objectStatusWords(f.fix.status) }}<template v-if="f.fix.verified"> · <span :class="f.fix.verified === 'passed' ? 'fix-ok' : 'fix-bad'">{{ verifiedWords[f.fix.verified] }}</span></template> · <a :href="f.fix.link">看这次交办</a></div>
             <div v-if="editable && f.state !== 'duplicate'" class="row wrap">
-              <button v-if="f.state !== 'confirmed'" type="button" class="btn sm" :class="f.state === 'new' ? 'primary' : 'ghost'" :disabled="busy" @click="judge(f, 'confirmed')">认可</button>
-              <button v-if="f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'rejected')">不算</button>
-              <button v-if="f.state === 'new'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'later')">以后再说</button>
-              <button v-if="data.scope?.allowCode && data.scope.repos.length && !f.fix && f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="fix(f)">去改…</button>
+              <template v-if="!f.fixedAt">
+                <button v-if="f.state !== 'confirmed'" type="button" class="btn sm" :class="f.state === 'new' ? 'primary' : 'ghost'" :disabled="busy" @click="judge(f, 'confirmed')">认可</button>
+                <button v-if="f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'rejected')">不算</button>
+                <button v-if="f.state === 'new'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'later')">以后再说</button>
+                <button v-if="data.scope?.allowCode && data.scope.repos.length && !f.fix && f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="fix(f)">去改…</button>
+                <button v-if="f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="markFixed(f)">已改好…</button>
+              </template>
+              <button v-else type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'confirmed')">没改好，重新打开</button>
+              <button type="button" class="btn sm ghost" @click="discuss(f)">就这条问</button>
+              <button type="button" class="btn sm ghost" title="让助手读依据的试验和代码，按条件 / 现象 / 为什么是问题 / 建议重写这条" @click="discuss(f, true)">看不懂，重写</button>
             </div>
           </div>
         </details>
+        <button v-if="fixedCount" type="button" class="link small" @click="showFixed = !showFixed">{{ showFixed ? "收起已改好的" : `看已改好的 ${fixedCount} 条` }}</button>
       </div>
 
       <div v-else-if="tab === 'trials'" class="rows">
@@ -327,7 +363,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
 </template>
 
 <style scoped>
-.item-study { display: grid; gap: 10px; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.item-study { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
 .study-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .study-name { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .study-fresh { font-size: 12.5px; font-weight: 600; color: var(--warn); }
@@ -369,7 +405,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
 .bar .t-skip, .legend-item .t-skip { background: var(--line); }
 
 /* One line per finding, trial or direction; opened to read it. No boxes: hairlines between rows. */
-.rows { display: grid; gap: 2px; }
+.rows { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; min-width: 0; }
 .rows > p { margin: 4px 0; }
 .rows-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding-bottom: 4px; }
 .entry { border-bottom: 1px solid var(--line); }
@@ -379,7 +415,8 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上`
 .entry-name { flex: 1 1 12em; min-width: 0; }
 .entry-meta { flex: 0 1 auto; font-size: 12px; }
 .entry-meta.waiting { color: var(--warn); font-weight: 600; }
-.entry-body { display: grid; gap: 8px; padding: 0 0 12px 15px; font-size: 12.5px; }
+.entry-meta.fixed { color: var(--ok); }
+.entry-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 0 0 12px 15px; font-size: 12.5px; }
 .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); transform: translateY(-1px); }
 .kind, .state { flex: none; min-width: 2.4em; font-size: 12px; color: var(--muted); }
 .kind.defect { color: var(--danger); }

@@ -197,13 +197,13 @@ async function runPeerTrial(ctx: RunContext) {
     const pick = req.tier ? app.config.agents.tiers[req.tier] : undefined;
     const execution = pick ? validateExecution(app, { ...pick, source: "flow", reason: `${req.from.node} 派来的试验写了档位 ${req.tier}` }) : undefined;
     const task = trialTask({
-      header: `## ${req.from.node} 上的课题派来的一个试验：${req.from.title}`,
+      header: `## ${req.from.node} 上的研究派来的一个试验：${req.from.title}`,
       dir: req.direction, env: req.env,
       trial: { id: req.trial.id, object: req.trial.object, check: req.trial.check, prior: req.trial.prior, summary: req.trial.previous },
       extra: [
         `这个试验是本人的另一台设备 ${req.from.node} 派来的，在这台的工作区里做：结果和证据文件会送回那台。evidence 只收 $OMEM_ARTIFACTS 里的文件，不收 src: 引用；单个文件超过 ${MAX_EVIDENCE_FILE / 1024 / 1024} MB 的文本只带回开头，其他大文件不带回。`,
         `这个试验最多 ${req.minutes} 分钟，到了会被停下。`,
-        dirs.length ? `## 试验工作区\n${dirs.map((d) => `${d.space}：${d.dir}（${d.commit}）`).join("\n")}` : "这个课题没有登记仓库。",
+        dirs.length ? `## 试验工作区\n${dirs.map((d) => `${d.space}：${d.dir}（${d.commit}）`).join("\n")}` : "这个研究没有登记仓库。",
         ...notes,
       ],
     }) + skill;
@@ -213,7 +213,7 @@ async function runPeerTrial(ctx: RunContext) {
         role: builtin ? name as RoleName : "assistant", spec: spec?.status === "active" ? spec : undefined, execution, ownAI: !!req.tier && !execution,
         spaceId: input.spaces[0] ?? "personal", spaces: input.spaces.length ? input.spaces : undefined, cwd: dirs[0]?.dir, task, runId: r.id,
         signal: AbortSignal.any([ctx.signal, limit]), addTools: ["trial_report", "attach_artifact"],
-        denyTools: ["read_ledger", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", "study_push", "propose_directions", "record_finding", "close_direction"],
+        denyTools: ["read_ledger", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", "study_push", "propose_directions", "record_finding", "revise_study_finding", "close_direction"],
         artifacts: true, onEvent: (e) => ctx.event(e.type, e),
       });
       return { text: result.text, ai: result.ai, sessionId: result.sessionId };

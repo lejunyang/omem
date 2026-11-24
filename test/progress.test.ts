@@ -306,7 +306,7 @@ describe("进度投影", () => {
     expect(review.tasks.map(t => t.attempts.map(a => a.runId))).toEqual([["code", "retry"], ["code"]]);
   });
 
-  it("流程保留关卡和依赖，课题默认只展开当前轮，重跑仍归原试验", () => {
+  it("流程保留关卡和依赖，研究默认只展开当前轮，重跑仍归原试验", () => {
     const { app, item, add } = fixture();
     const definition = { id: "flow", name: "核验", stages: [{ id: "plan", name: "方向", by: "owner", tools: ["propose_directions"], needs: [] }, { id: "try", name: "试验", by: "wait", needs: ["plan"] }] };
     run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at,round) values(?,'flow',?,?,'owner',?,2)", item.id, JSON.stringify(definition), at, at);
@@ -437,7 +437,7 @@ describe("进度投影", () => {
     createUser(app, { id: "reader", name: "读者", role: "observer" });
     addMember(app, "shared", "reader", "editor");
     const item = upsertItem(app, undefined, { title: "共享事项", spaceId: "shared" });
-    const definition = { id: "study", name: "课题", stages: [{ id: "plan", name: "方向", by: "owner", tools: ["propose_directions"] }] };
+    const definition = { id: "study", name: "研究", stages: [{ id: "plan", name: "方向", by: "owner", tools: ["propose_directions"] }] };
     run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at) values(?,'study',?,?,'owner',?)", item.id, JSON.stringify(definition), at, at);
     add("code", "code", null, { itemId: item.id, flowStartedAt: at }, { reviewPlan: { checks: ["style"] } }, ["shared"]);
     run(app.db, "update runs set space_id='shared' where id='code'");

@@ -61,7 +61,8 @@ marked.use({
       return `<pre><code class="hljs${language ? " language-" + escapeHtml(language) : ""}">${highlight(text, language)}</code></pre>`;
     },
     image({ href, title, text }) {
-      const src = href.startsWith("omem-file:") ? `/api/files/${encodeURIComponent(href.slice(10))}` : /^https?:/i.test(href) || /^\/api\/files\/[\w.-]+$/.test(href) ? href : "";
+      // Run artifacts are served by their key (a capability), so a finding or summary can show a trial's screenshot.
+      const src = href.startsWith("omem-file:") ? `/api/files/${encodeURIComponent(href.slice(10))}` : /^https?:/i.test(href) || /^\/api\/files\/[\w.-]+$/.test(href) || /^\/api\/artifacts\/[\w-]+\.[\w-]+\/[^\s?#]+$/.test(href) ? href : "";
       if (!src) return escapeHtml(text);
       const url = escapeHtml(src.startsWith("/api/") ? authUrl(src) : src);
       if (/\.(mp4|mov|webm)$/i.test(src)) return `<video src="${url}" controls preload="metadata" title="${escapeHtml(text)}"></video>`;

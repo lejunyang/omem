@@ -7,8 +7,8 @@ import { cancelRun, getRun } from "../agents/runs.ts";
 import type { Item } from "../items/store.ts";
 import { studyStageCarrier, type FlowStage } from "../flows/definitions.ts";
 import { changeStage, type ItemFlow, type StageRow } from "../flows/store.ts";
-import { direction, findings, trial, trials } from "./store.ts";
-import { findingFix, queueFindingFix } from "./fix.ts";
+import { direction, findings, markFixedByChange, trial, trials } from "./store.ts";
+import { findingFix, fixVerified, queueFindingFix } from "./fix.ts";
 import { studyScope } from "./scope.ts";
 import { startTrial, type TrialAI } from "./trials.ts";
 import { pushSummary } from "./push.ts";
@@ -21,7 +21,7 @@ export function fixModelStage(f: ItemFlow, d: FlowStage): FlowStage {
 }
 export function eligibleFixes(app: App, f: ItemFlow, d: FlowStage) {
   if (!studyScope(app, f.itemId).allowCode) return [];
-  return findings(app, f.itemId).filter((v) => v.flow_started_at === f.startedAt && v.round === f.round && v.kind === "defect" && ["new", "confirmed"].includes(v.state) && !v.work_id && json<string[]>(v.trials, []).some((id) => {
+  return findings(app, f.itemId).filter((v) => v.flow_started_at === f.startedAt && v.round === f.round && v.kind === "defect" && ["new", "confirmed"].includes(v.state) && !v.work_id && !v.fixed_at && json<string[]>(v.trials, []).some((id) => {
     const t = trial(app, id);
     return t.item_id === f.itemId && t.result === "failed" && !!direction(app, t.direction_id).allow_code;
   })).slice(0, d.budget?.fixes ?? 2);
@@ -116,7 +116,13 @@ export async function tickFixes(app: App, item: Item, f: ItemFlow, d: FlowStage,
     reruns = trials(app, item.id).filter((t) => t.fix_of === id && t.work_id === v.work_id);
   }
   const t = reruns.find((t) => t.state === "queued");
-  if (!t) { c.fixIndex = (c.fixIndex ?? 0) + 1; c.fixWorkId = undefined; return save(`${v.title}：重跑已结束`); }
+  if (!t) {
+    // Every failed trial passed on the change that passed review: the finding is closed as fixed.
+    const passed = fixVerified(app, v).verified === "passed";
+    if (passed) markFixedByChange(app, v, `交办 ${v.work_id} 评审通过，原来没通过的试验在改动上重跑都通过`);
+    c.fixIndex = (c.fixIndex ?? 0) + 1; c.fixWorkId = undefined;
+    return save(`${v.title}：重跑已结束${passed ? "，标为已改好" : ""}`);
+  }
   if (c.waitUntil && Date.parse(c.waitUntil) > at.getTime()) return false;
   const model = fixModelStage(f, d);
   const picked = await chooseAI(app, f, { ...model, id: d.id, escalate: undefined }, { ...s, control: { ...c, escalated: false } }, at);

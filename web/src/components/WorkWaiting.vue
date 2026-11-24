@@ -33,7 +33,7 @@ type Group = "ask" | "approve" | "propose" | "work";
 const HANDLERS: Record<string, { label: string; group: Group }> = {
   "flow-stage": { label: "流程", group: "work" },
   "item-follow": { label: "变化", group: "work" },
-  "study-plan": { label: "课题", group: "work" },
+  "study-plan": { label: "研究", group: "work" },
   "design-confirm": { label: "方案", group: "work" },
   "review-done": { label: "评审", group: "work" },
   "review-plan": { label: "评审", group: "work" },
