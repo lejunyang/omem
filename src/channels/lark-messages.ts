@@ -8,7 +8,7 @@ import { importFile, keepOriginal, needsDocumentConversion } from "../sources/im
 import { resourceKeys } from "./lark-resource-keys.ts";
 import { queueResourceParsing } from "./lark-resource-parse.ts";
 import { findSourceByUri, sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
-import { larkCli } from "./lark-cli.ts";
+import { larkActing, larkCli } from "./lark-cli.ts";
 import { noteDocLinks } from "../sources/doc-links.ts";
 import { cliIdsIn, learnCliPeople, peopleByCliIds } from "./lark-people.ts";
 
@@ -438,7 +438,7 @@ const pendingResources = new Map<string, Promise<string | null>>();
 /** Keys that could not be read recently: a broken image is not fetched again on every render. */
 const failedResources = new Map<string, number>();
 export function messageResourceFile(app: App, messageId: string, key: string): Promise<string | null> {
-  const cacheKey = `${messageId}/${key}`;
+  const cacheKey = `${app.home}:${larkActing()?.userId ?? "owner"}/${messageId}/${key}`;
   const known = knownResourceFile(app, messageId, key);
   if (known) return Promise.resolve(known);
   if ((failedResources.get(cacheKey) ?? 0) > Date.now() - 10 * 60_000) return Promise.resolve(null);
@@ -473,8 +473,10 @@ async function downloadResource(app: App, messageId: string, key: string): Promi
         const path = existsSync(res.local_path) ? res.local_path : join(dir, res.local_path);
         if (existsSync(path)) file = keepOriginal(app, withExtension(path));
       }
-    } catch {}
-    if (!file) {
+    } catch (error) {
+      if (larkActing()?.ruleId) throw error;
+    }
+    if (!file && !larkActing()?.ruleId) {
       // The bot reads resources of messages in chats it is a member of.
       const { larkClient } = await import("./lark-send.ts");
       try {

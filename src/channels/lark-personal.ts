@@ -12,7 +12,7 @@ import type { CapturePolicy } from "../core/config.ts";
 import { chatSettings, setChatSettings } from "../agents/threads.ts";
 import { importFile, importUrl } from "../sources/import.ts";
 import { findSourceByUri, upsertSource } from "../sources/store.ts";
-import { larkCli } from "./lark-cli.ts";
+import { larkActing, larkCli } from "./lark-cli.ts";
 import { docSkipper, type DocSkipper } from "./lark-doc-filter.ts";
 import { OWNER } from "../core/users.ts";
 import { flattenReplies, persistChatMessages, isApp, keepResources, learnPeople, mentionIds, messageText, quotedMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
@@ -101,7 +101,8 @@ export function chatKind(app: App, c: { chat_id: string; chat_mode: string; p2p_
  */
 export async function listLarkChats(app: App, pages = 3): Promise<LarkChat[]> {
   const all = await rawChats(pages, false);
-  const key = "lark_unmuted";
+  const actor = larkActing();
+  const key = actor ? `lark_unmuted:${actor.userId}` : "lark_unmuted";
   let cache = json<{ at?: number; pages?: number; ids?: string[] }>(one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value, {});
   if (!cache.at || Date.now() - cache.at > 30 * 60_000 || (cache.pages ?? 0) < pages) {
     try {

@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { larkActing } from "./lark-cli.ts";
 import { all, one, run } from "../core/db.ts";
 import { canonicalSourceId } from "../sources/duplicates.ts";
 import { json } from "../core/util.ts";
@@ -134,14 +135,15 @@ export function citationUrl(app: App, ref: string): string | null {
   return target(app, normalize(ref)).url;
 }
 
-const failedAt = { at: 0 };
+const failedAt = new WeakMap<App, Map<string, number>>();
 /**
  * Fill in the chat positions of cited Feishu messages that were saved without one (before omem kept
  * them, or arrived through the bot): one read-only lark-cli call, at most every few minutes when
  * it fails. Without it those citations open the chat instead of the message.
  */
 export async function prefetchLarkPositions(app: App, mds: string[]) {
-  if (app.config.lark.capture.mode === "off" || Date.now() - failedAt.at < 10 * 60_000) return;
+  const reader = larkActing()?.userId ?? "owner";
+  if (app.config.lark.capture.mode === "off" || Date.now() - (failedAt.get(app)?.get(reader) ?? 0) < 10 * 60_000) return;
   const ids = new Set<string>();
   // Cited omem messages by their Feishu id: the bot's own chats have no lark_messages row to hold the position.
   const messages = new Map<string, string>();
@@ -169,7 +171,9 @@ export async function prefetchLarkPositions(app: App, mds: string[]) {
       if (own) run(app.db, "update messages set meta = json_set(meta, '$.larkPosition', ?) where id = ?", pos, own);
     }
   } catch (e) {
-    failedAt.at = Date.now();
+    let failures = failedAt.get(app);
+    if (!failures) failedAt.set(app, failures = new Map());
+    failures.set(reader, Date.now());
     console.warn(`[omem] 读取被引用的飞书消息位置失败：${(e as Error).message}`);
   }
 }

@@ -22,7 +22,14 @@ export function setLarkCliForTests(fn: Override | null) {
  * written against lark-cli works for anyone who connected Feishu and never falls back to the owner's
  * login. The owner, and anything outside such a context, use lark-cli's own login as before.
  */
-export type LarkActor = { app: { home: string }; userId: string; runId?: string | null };
+export type LarkActor = {
+  app: { home: string };
+  userId: string;
+  runId?: string | null;
+  ruleId?: string;
+  beforeCall?: (args: string[]) => void;
+  afterWrite?: (args: string[]) => void;
+};
 export const larkActor = new AsyncLocalStorage<LarkActor>();
 /** `rejected`: Feishu turned the token down (lark-cli's `authentication` errors), so it is refreshed before the next call. */
 type Credentials = { appId: string; token: string; brand?: string; rejected?: () => void };
@@ -123,9 +130,12 @@ export async function larkCliAsBot(bot: { appId: string; appSecret: string; bran
 
 /** Run the official lark-cli (bundled npm dependency) and parse its JSON output. */
 export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
+  const context = larkActor.getStore();
+  context?.beforeCall?.(args);
   const actor = larkActing();
   if (actor && !credentials) throw new Error("飞书：还不能以这个用户的身份调用（没有接上连接器）");
   const user = actor ? await credentials!(actor, args) : null;
+  context?.beforeCall?.(args);
   if (override) { const result = await override(args, cwd, actor?.userId); if (!user) noticeLoginGone(result); assertLarkResult(result); return result; }
   const script = larkCliScript();
   const env = user ? { ...process.env, LARKSUITE_CLI_APP_ID: user.appId, LARKSUITE_CLI_USER_ACCESS_TOKEN: user.token, LARKSUITE_CLI_BRAND: user.brand ?? "feishu" } : undefined;
@@ -175,6 +185,13 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
       throw new Error("飞书登录不可用：请在运行 omem 的电脑上执行 lark-cli auth login 后重试");
     throw new Error(detail ? `飞书 CLI：${redactLarkError(detail).slice(0, 300)}${hint ? `（${redactLarkError(hint).slice(0, 200)}）` : ""}` : "飞书 CLI 调用失败，请检查登录和网络");
   }
+}
+
+/** A remote mutation, after the tool has validated its command and approval. */
+export async function larkCliWrite(args: string[], timeoutMs?: number, cwd?: string): Promise<any> {
+  const value = await larkCli(args, timeoutMs, cwd);
+  larkActor.getStore()?.afterWrite?.(args);
+  return value;
 }
 
 /** The business domains omem's login asks for (setup and a re-login after the login was lost). */

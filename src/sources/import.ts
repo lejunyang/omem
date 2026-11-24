@@ -322,8 +322,10 @@ function htmlToText(html: string) {
  * A web page or a Feishu doc as an original. For Feishu docs, `related` lists linked docs that were
  * imported or changed along with it (they need understanding too) and `missing` those that could not be read.
  */
+export const isLarkImportUrl = (url: string) => /feishu\.cn|larksuite\.com|larkoffice\.com/.test(url);
+
 export async function importUrl(app: App, spaceId: string, url: string, opts: { depth?: number; archive?: boolean; user?: string; skip?: (url: string) => Promise<string | null> } = {}): Promise<UpsertResult & { related?: string[]; missing?: { url: string; title: string; error: string }[] }> {
-  const special = /feishu\.cn|larksuite\.com|larkoffice\.com/.test(url);
+  const special = isLarkImportUrl(url);
   const parsers = fileParsers(app, spaceId, opts.user ?? OWNER);
   const order = app.config.documents.parserOrder ?? [];
   const name = basename(new URL(url).pathname);

@@ -38,8 +38,11 @@ import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recor
 import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf, LARK_DOMAIN_FEATURES } from "../auth/features.ts";
-import { can, canAccessRun, canReadRun, runAudience, requirePerm } from "../auth/permissions.ts";
-import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
+import { audit, can, canAccessRun, canReadRun, runAudience, requirePerm } from "../auth/permissions.ts";
+import { asLarkUser, asRuleLarkUser, canActOnLark } from "../auth/lark-user.ts";
+import { larkActor } from "../channels/lark-cli.ts";
+import { commandPath } from "../channels/lark-cli-tools.ts";
+import { actingAs } from "../rules/run-as.ts";
 import { needConnection } from "../auth/connect-wait.ts";
 import { hiddenSourceIds, readableSourceIds, hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate, localStamp } from "../core/util.ts";
@@ -69,7 +72,7 @@ import {
 } from "../sources/attention.ts";
 import { catalog, nodePath, treeChildren, type TreeFilter } from "../sources/catalog.ts";
 import { canonicalSourceId } from "../sources/duplicates.ts";
-import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
+import { importText, importUrl, isLarkImportUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { addWatch, listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { checkSlug, confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
@@ -134,6 +137,10 @@ export type ToolContext = {
   larkPowers?: { urgent: boolean; private: boolean };
   /** This call was approved by the owner (a held call running after the OK): do not hold it again. */
   approved?: boolean;
+  /** Feishu user for this call, saved with the approval so replay uses the same identity. */
+  larkUserId?: string;
+  /** A document approval by the member whose identity this rule is using. */
+  larkApproved?: boolean;
   /** Single-invocation rule approval. A tool can still require its own confirmation. */
   operationGrant?: { key: string; expiresAt: number; approver: string; resolved?: { from: unknown; target: string } };
   /** A person pressed an object's action button on this item's page (src/flows/object-actions.ts): the call is about that item and object. */
@@ -4495,7 +4502,7 @@ def({
   handler: async (ctx, a) => {
     const r = await importUrl(ctx.app, writeSpace(ctx, a.space, "sources.edit"), a.url, { depth: a.depth, user: ctx.userId ?? OWNER });
     const linked = r.related?.length ? `；链接的文档新增或更新 ${r.related.length} 篇：${r.related.join("、")}` : "";
-    const missing = r.missing?.length ? `；读不到 ${r.missing.length} 篇（已提醒本人）：${r.missing.map((m) => m.title || m.url).join("、")}` : "";
+    const missing = r.missing?.length ? `；读不到 ${r.missing.length} 篇：${r.missing.map((m) => m.title || m.url).join("、")}` : "";
     return `已保存原件 ${r.id}（${r.status}）${linked}${missing}`;
   },
 });
@@ -4605,7 +4612,7 @@ def({
 
 def({
   name: "act_as",
-  description: "规则运行里换身份：这条规则在规则页列了“以谁的身份运行”、对方也同意了时，换成他（user 填他的 id 或名字），之后插件登记过的命令行用他的登录在他的账号环境里跑，lark_read 以他的身份读飞书；user=null 换回本人。只能换成规则列的、已经同意的人；换不了会说原因（没同意、撤回、账号停用），跳过他继续。",
+  description: "规则运行里换成规则列出的已同意成员（user 填 id 或名字）。插件登记的命令行用他的登录跑，飞书个人读写工具用他的连接；他的文件直接写，其他文件和任务由他批准。飞书消息仍由机器人发。user=null 换回本人，拉人进群前先换回。换不了或成员没飞书登录时，记下原因并跳过他。",
   schema: z.object({ user: z.string().min(1).max(200).nullable() }),
   handler: async (ctx, a) => {
     if (!ctx.runId || ctx.actor !== "agent") throw new HttpError(403, "只在 omem 的规则运行里换身份");
@@ -4638,26 +4645,35 @@ function commandFeature(command: string[], write = false) {
 }
 /** A member who turned this feature off in omem (auth/connections.ts featuresOff): not used, though Feishu still grants it. */
 function featureGate(ctx: ToolContext, feature: string | null | undefined) {
-  const user = ctx.userId ?? OWNER;
+  const user = ctx.larkUserId ?? ctx.userId ?? OWNER;
   if (!feature || user === OWNER || !featuresOff(ctx.app, user, "lark").includes(feature)) return;
   const label = featuresOf("lark").find((f) => f.id === feature)?.label ?? feature;
   throw new HttpError(403, `${userName(ctx.app, user)}在 omem 的账号页关掉了「${label}」：要用就在账号页重新打开（飞书那边的授权还在）`);
 }
 function ownerOnly(ctx: ToolContext, feature?: string | null) {
-  const user = ctx.userId ?? OWNER;
+  const user = ctx.larkUserId ?? ctx.userId ?? OWNER;
   if (user !== OWNER) {
     requirePerm(ctx.app, user, "connector.use");
-    if (!canActOnLark(ctx.app, user)) throw new HttpError(403, needConnection(ctx.app, user, ctx.runId, { features: feature ? [feature] : [], reason: "还没有连接飞书（或连接要重新授权）" }));
+    const delegated = user !== (ctx.userId ?? OWNER);
+    if (!canActOnLark(ctx.app, user)) throw new HttpError(403, needConnection(ctx.app, user, delegated ? null : ctx.runId, {
+      features: feature ? [feature] : [], reason: delegated ? "没有可用的飞书个人登录（尚未连接或需要重新授权）" : "还没有连接飞书（或连接要重新授权）",
+    }) + (delegated ? " 本次先跳过这位成员。" : ""));
     featureGate(ctx, feature);
   }
   // Like the bot's lark_* tools: omem's own runs only (an outside agent over `omem mcp` has no Feishu scope).
   if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份用飞书只在 omem 自己的运行里可用");
 }
 
+function holdLarkWrite(ctx: ToolContext, name: string, args: Record<string, unknown>, question: string, scope?: Record<string, unknown>) {
+  return held(ctx, name, args, question, scope, undefined, ctx.larkUserId);
+}
+
 async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean, docEditScope?: DocEditScope, scopeNote?: string, wikiWrite?: { operation: WikiWriteOperation; targets: WikiWriteTarget[] }) {
-  if (personal || ctx.actor === "user" || ctx.approved) return null;
-  const docDecision = docEditScope ? await docEditDecision(ctx.app, ctx.userId ?? OWNER, docEditScope, name) : null;
-  const treeDecision = wikiWrite ? await wikiWriteDecision(ctx.app, ctx.userId ?? OWNER, wikiWrite.operation, wikiWrite.targets) : null;
+  const user = ctx.larkUserId ?? ctx.userId ?? OWNER;
+  const delegated = user !== (ctx.userId ?? OWNER);
+  if (personal || (delegated ? ctx.larkApproved : ctx.actor === "user" || ctx.approved)) return null;
+  const docDecision = docEditScope ? await docEditDecision(ctx.app, user, docEditScope, name) : null;
+  const treeDecision = wikiWrite ? await wikiWriteDecision(ctx.app, user, wikiWrite.operation, wikiWrite.targets) : null;
   const decision = [docDecision, treeDecision].filter(d => d !== null).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (decision?.status === "answered" && decision.approved) return null;
   if (decision?.status === "answered") throw new HttpError(403, `本人已拒绝这项文档编辑${decision.answer ? `：${decision.answer}` : ""}。按理由调整，不要换个方式绕过。`);
@@ -4665,7 +4681,7 @@ async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string,
   if (decision) return `文档编辑正在等本人批准（${decision.id}），不要重复发审批。当前这处编辑尚未执行；用 wait_answer 等批准后再调用。`;
   const scopeText = scopeNote ? `\n\n${scopeNote}` : docEditScope ? `\n\n批准范围：以上文档的${docEditScope.commands.includes("overwrite") ? "编辑（含整篇覆盖）" : "追加和局部替换"}，包括后续对话中的编辑和失败重试；其他文档、移动或新建需另行批准。` : "";
   const why = name === "lark_write" ? "不是你自己的文件，或会通知到别人" : "不在你的个人文档库或你自己的云空间里";
-  const r = await held(ctx, name, args, `以你的身份${what}${scopeText}\n\n${why}，确认位置和改动后批准。`, docEditScope ? { docEditScope } : undefined);
+  const r = await holdLarkWrite(ctx, name, args, `以你的身份${what}${scopeText}\n\n${why}，确认位置和改动后批准。`, docEditScope ? { docEditScope } : undefined);
   if (r.isError) throw new HttpError(403, r.text);
   return r.text;
 }
@@ -4684,12 +4700,13 @@ def({
     const w = await import("../channels/lark-doc-write.ts");
     const place = await w.docPlace(ctx.app, a.under);
     if (!place.node || place.node.nodeType !== "origin") throw new HttpError(400, "under 必须是实际的知识库节点，不能是云空间文档或快捷方式");
-    if (ctx.approved) return `已批准 ${place.label} 及所有子页面的指定操作；后续在范围内的写入可复用。`;
+    const user = ctx.larkUserId ?? ctx.userId ?? OWNER;
+    if (user === (ctx.userId ?? OWNER) ? ctx.approved : ctx.larkApproved) return `已批准 ${place.label} 及所有子页面的指定操作；后续在范围内的写入可复用。`;
     const scope: WikiWriteScope = { root: { spaceId: place.node.spaceId, nodeToken: place.node.nodeToken }, operations: [...new Set(a.operations)].sort() };
-    const pending = one<{ id: string }>(ctx.app.db, "select id from asks where user_id = ? and tool = 'lark_doc_authorize' and status = 'pending' and json_extract(context, '$.wikiWriteScope') = ? order by created_at desc limit 1", ctx.userId ?? OWNER, JSON.stringify(scope));
+    const pending = one<{ id: string }>(ctx.app.db, "select id from asks where user_id = ? and tool = 'lark_doc_authorize' and status = 'pending' and json_extract(context, '$.wikiWriteScope') = ? order by created_at desc limit 1", user, JSON.stringify(scope));
     if (pending) return `节点授权正在等本人批准（${pending.id}），用 wait_answer 等结果，不要重复申请。`;
     const labels = { create: "新建子页面", copy: "完整复制文档到范围内", edit: "追加和局部编辑", move: "范围内移动（来源和目标都在此节点下）" };
-    const r = await held(ctx, "lark_doc_authorize", a, `批准 ${place.label} 及所有子页面的写入？\n节点：${a.under}\n\n用途：${docPreview(a.summary)}\n操作：${scope.operations.map(op => labels[op]).join("、")}\n\n包括以后新增的子页面，跨会话和定时规则持续有效。整篇覆盖、范围外写入需另行批准；实际操作仍按你的要求执行。`, { wikiWriteScope: scope });
+    const r = await holdLarkWrite(ctx, "lark_doc_authorize", a, `批准 ${place.label} 及所有子页面的写入？\n节点：${a.under}\n\n用途：${docPreview(a.summary)}\n操作：${scope.operations.map(op => labels[op]).join("、")}\n\n包括以后新增的子页面，跨会话和定时规则持续有效。整篇覆盖、范围外写入需另行批准；实际操作仍按你的要求执行。`, { wikiWriteScope: scope });
     if (r.isError) throw new HttpError(403, r.text);
     return r.text;
   },
@@ -4701,7 +4718,7 @@ def({
     "以本人身份读飞书文档的当前内容，带 block id，供 lark_doc_update 的 block_* 局部编辑定位用（只读，不存为原件；要收进知识库用 import_url）。大文档先 scope=outline 看目录，再 scope=section + 标题的 start_block_id 读那一节；只有关键词时 scope=keyword；整张表格用 scope=range，start_block_id 和 end_block_id 都给表格的 id（默认只返回表头和命中的行）。看到 <excerpt> 表示只拿到容器或表格的一部分。默认 DocxXML。",
   schema: z.object({
     doc: z.string().describe("文档链接（/docx/… 或 /wiki/…，可带 #share 选区）"),
-    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（以本人身份）。bot：用 omem 自己的机器人读写，群里同事请你改他的文档时用（不用本人批准）：机器人还没有这篇的权限时，工具会给一个授权链接让你发给他，他同意后 omem 用它把机器人加为这篇的可编辑协作者，再试就行"),
+    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（当前飞书个人身份，规则里跟随 act_as）。bot：用 omem 自己的机器人读写，群里同事请你改他的文档时用（不用本人批准）：机器人还没有这篇的权限时，工具会给一个授权链接让你发给他，他同意后 omem 用它把机器人加为这篇的可编辑协作者，再试就行"),
     scope: z.enum(["outline", "section", "range", "keyword"]).optional().describe("不填 = 整篇"),
     keyword: z.string().optional().describe("scope=keyword 的关键词，多个用 | 分隔"),
     start_block_id: z.string().optional(),
@@ -4768,7 +4785,7 @@ async function botForRequester<T>(ctx: ToolContext, doc: string, fn: () => Promi
 
 /** The owner cannot open or edit the doc: say what to do instead of only the lark-cli error. */
 function ownerDenied(ctx: ToolContext, e: unknown): never {
-  if ((ctx.userId ?? OWNER) !== OWNER) throw e;
+  if ((ctx.larkUserId ?? ctx.userId ?? OWNER) !== OWNER) throw e;
   const app = ctx.app;
   const msg = (e as Error).message;
   const bot = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value || "omem 的机器人";
@@ -4848,7 +4865,7 @@ def({
     revision_id: z.number().int().optional().describe("基于哪个版本改（lark_doc_fetch 返回的 revision）；不填 = 最新"),
     format: z.enum(["markdown", "xml"]).optional(),
     summary: z.string().min(1).max(500).optional().describe("本次任务整体改动的一两句摘要，说明改什么、保留什么；不贴正文或 HTML/XML"),
-    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（以本人身份）。bot：用 omem 自己的机器人读写，群里同事请你改他的文档时用（不用本人批准）：机器人还没有这篇的权限时，工具会给一个授权链接让你发给他，他同意后 omem 用它把机器人加为这篇的可编辑协作者，再试就行"),
+    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（当前飞书个人身份，规则里跟随 act_as）。bot：用 omem 自己的机器人读写，群里同事请你改他的文档时用（不用本人批准）：机器人还没有这篇的权限时，工具会给一个授权链接让你发给他，他同意后 omem 用它把机器人加为这篇的可编辑协作者，再试就行"),
     approval_docs: z.array(z.string().min(1)).min(1).max(20).optional().describe("首次审批时列出本次任务所有要编辑的文档链接，一次批准这些文档的后续编辑。只列本人要求修改的文档；不填只批准当前文档"),
   }),
   handler: async (ctx, a) => {
@@ -5006,7 +5023,7 @@ def({
 def({
   name: "lark_read",
   description:
-    "以本人身份运行一条只读的 lark-cli 命令，读飞书的表格、多维表格、幻灯片、云空间文件和评论、Markdown 文件、知识库、任务、日历、邮件、聊天记录、会议与妙记、通讯录、OKR、审批等。只放行 lark-cli 自己标为 read 的命令（--help 里的 Risk）。先读官方说明：command=[\"skills\", \"read\", \"lark-sheets\"]（或 lark-base、lark-task、lark-drive……，带 references/… 读附带文件），[\"schema\", \"<服务.资源.方法>\"] 看参数，[\"<域>\", \"--help\"] 看命令列表。说明里的 `lark-cli <命令> --as user` 在这里写成 command 数组、去掉 lark-cli 和 --as。做法见技能 lark-suite。",
+    "以当前飞书个人身份运行一条只读的 lark-cli 命令，读飞书的表格、多维表格、幻灯片、云空间文件和评论、Markdown 文件、知识库、任务、日历、邮件、聊天记录、会议与妙记、通讯录、OKR、审批等。只放行 lark-cli 自己标为 read 的命令（--help 里的 Risk）。先读官方说明：command=[\"skills\", \"read\", \"lark-sheets\"]（或 lark-base、lark-task、lark-drive……，带 references/… 读附带文件），[\"schema\", \"<服务.资源.方法>\"] 看参数，[\"<域>\", \"--help\"] 看命令列表。说明里的 `lark-cli <命令> --as user` 在这里写成 command 数组、去掉 lark-cli 和 --as。做法见技能 lark-suite。",
   schema: z.object({ command: larkCommand }),
   handler: async (ctx, a) => {
     ownerOnly(ctx, commandFeature(a.command));
@@ -5015,9 +5032,6 @@ def({
     const download = (await import("../channels/lark-message-files.ts")).resourceDownload(command);
     if (download) return messageFileText(ctx, download.messageId, download.key);
     const c = await import("../channels/lark-cli-tools.ts");
-    // A rule's run that switched to a member (act_as) reads as them.
-    const member = (await import("../rules/run-as.ts")).actingAs(ctx.runId);
-    if (member) return (await import("../auth/lark-user.ts")).asLarkUser(ctx.app, member, () => c.larkRead(ctx.app, command, onNextPage), ctx.runId);
     return c.larkRead(ctx.app, command, onNextPage);
   },
 });
@@ -5025,7 +5039,7 @@ def({
 def({
   name: "lark_write",
   description:
-    "以本人身份运行一条写入的 lark-cli 命令：表格（sheets）、多维表格（base）、幻灯片（slides）、云空间 Markdown 文件（markdown）、任务（task），以及给文档、表格等加评论或标记解决（drive 的评论命令）。只在本人要求时用。target 填要改的那个文件的链接（命令里必须改的就是它）；新建到本人云空间根目录时可不填。本人自己的文件直接写；别人的文件和任务（会通知到负责人和关注人）先请本人批准，批准按文件复用（换轮、换会话和失败重试不再问），首次可用 approval_targets 一次列出本次要改的全部文件。高风险操作（删除、清空等）、文档正文（用 lark_doc_update）、消息、邮件和日程不能用。写前先用 lark_read 读官方说明和当前内容；写后再读一次核对。",
+    "以当前飞书个人身份运行一条写入的 lark-cli 命令：表格（sheets）、多维表格（base）、幻灯片（slides）、云空间 Markdown 文件（markdown）、任务（task），以及给文档、表格等加评论或标记解决（drive 的评论命令）。只在本人要求时用。target 填要改的那个文件的链接（命令里必须改的就是它）；新建到本人云空间根目录时可不填。本人自己的文件直接写；别人的文件和任务（会通知到负责人和关注人）先请本人批准，批准按文件复用（换轮、换会话和失败重试不再问），首次可用 approval_targets 一次列出本次要改的全部文件。高风险操作（删除、清空等）、文档正文（用 lark_doc_update）、消息、邮件和日程不能用。写前先用 lark_read 读官方说明和当前内容；写后再读一次核对。",
   write: true,
   schema: z.object({
     command: larkCommand,
@@ -7204,6 +7218,32 @@ const metaArgs = { omem_help: z.object({ topic: z.string().optional() }), omem_c
 /** Tools whose write into a mirror space goes to the space's home (core/mesh-write.ts FORWARDED). */
 const MIRROR_FORWARDED = new Set(["remember", "supersede", "forget", "save_note", "write_page"]);
 
+/** Whether a tool uses a personal connection or the bot, or needs the owner's own identity. */
+export const LARK_TOOL_IDENTITIES: Readonly<Partial<Record<string, "user" | "bot" | "bot-with-user-read" | "owner">>> = {
+  lark_read: "user", lark_write: "user",
+  lark_doc_fetch: "user", lark_doc_create: "user", lark_doc_update: "user",
+  lark_doc_move: "user", lark_doc_copy: "user", lark_doc_authorize: "user",
+  lark_wiki_crawl: "user", import_url: "user",
+  lark_message_file: "user", list_lark_chats: "user",
+  // Posting uses the bot. Resolving a citation may read a missing Feishu message position.
+  lark_send: "bot-with-user-read", lark_card: "bot-with-user-read",
+  lark_send_file: "bot-with-user-read", lark_react: "bot",
+  lark_chat_history: "bot", meeting_suggest: "bot",
+  lark_invite: "owner", reply_to_asker: "owner",
+  set_lark_subscription: "owner", set_lark_capture_policy: "owner", set_lark_backfill: "owner",
+  propose_knowledge_mapping: "owner", save_rule: "owner",
+};
+
+function ruleLarkMember(ctx: ToolContext) {
+  return ctx.actor === "agent" && (ctx.userId ?? OWNER) === OWNER ? actingAs(ctx.runId) : null;
+}
+
+function larkToolIdentity(name: string, args: Record<string, unknown>) {
+  if ((name === "lark_doc_fetch" || name === "lark_doc_update") && args.identity === "bot") return "bot";
+  if (name === "import_url" && !isLarkImportUrl(String(args.url))) return undefined;
+  return LARK_TOOL_IDENTITIES[name];
+}
+
 async function toolRuleApprover(app: App, entry = "owner") {
   // Tools have no trusted nomination channel. Like commands, "run" defaults to the owner.
   if (entry === "owner" || entry === "run") return OWNER;
@@ -7289,6 +7329,10 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   ctx = { ...ctx, ...scope };
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
+  const larkIdentity = larkToolIdentity(name, parsed.data);
+  const acting = ruleLarkMember(ctx);
+  if (acting && larkIdentity === "owner") return { text: "这项操作需要本人身份，请先 act_as(null) 换回本人。", isError: true };
+  if (larkIdentity === "user") ctx.larkUserId ??= acting ?? ctx.userId ?? OWNER;
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
   const op = { kind: "tool" as const, name, args: parsed.data };
   const who = operationWho(ctx);
@@ -7363,9 +7407,7 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
     // A background run about to post, and the owner spoke in its scope since it began: its words go back to it first (awareness.ts).
     const recheck = await preSendCheck(ctx.app, ctx.runId, name, data as Record<string, unknown>);
     if (recheck) return recheck;
-    // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
-    // ... and Feishu as the person this run works for (their own connection; src/auth/lark-user.ts).
-    const text = await asLarkUser(ctx.app, ctx.userId ?? OWNER, () => withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data)), ctx.runId);
+    const text = await runWithLarkIdentity(ctx, tool, parsed.data as Record<string, unknown>);
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
     const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : tool.write ? followWork(ctx, parsed.data as Record<string, unknown>) : "";
     const linked = await afterToolCall(ctx.app, ctx.runId, ctx.userId, name, parsed.data as Record<string, unknown>, String(text));
@@ -7373,6 +7415,40 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
   } catch (error) {
     return { text: (error as Error).message + (await steering(ctx)), isError: true };
   }
+}
+
+function runWithLarkIdentity(ctx: ToolContext, tool: Tool, args: Record<string, unknown>) {
+  const { app, runId } = ctx;
+  const owner = ctx.userId ?? OWNER;
+  const citationRead = LARK_TOOL_IDENTITIES[tool.name] === "bot-with-user-read";
+  const userId = ctx.larkUserId ?? (citationRead ? ruleLarkMember(ctx) : null) ?? owner;
+  const invoke = () => withBot(ctx.larkBot, () => tool.handler(ctx, args));
+  if (userId !== owner) {
+    const ruleId = runId && (getRun(app, runId).input.rule as { id?: string } | undefined)?.id;
+    if (!ruleId || !runId) throw new HttpError(403, "找不到这次换身份的规则");
+    const actor = { userId, ruleId, runId };
+    if (citationRead) return asRuleLarkUser(app, actor, invoke, { citationPositionsOnly: true });
+    return asRuleLarkUser(app, actor, () => {
+      // These tools can use local data in ordinary runs; check the connection up front when delegated.
+      if (tool.name === "lark_message_file" || tool.name === "list_lark_chats") ownerOnly(ctx, "messages");
+      if (tool.name === "lark_wiki_crawl" && (args.action === "start" || args.action === "continue")) ownerOnly(ctx, "docs");
+      if (tool.name === "import_url") ownerOnly(ctx, "docs");
+      return invoke();
+    }, {
+      afterWrite(command) {
+        const operation = commandPath(command).join(" ");
+        audit(app, userId, "lark.run-as.write", ruleId, { runId, tool: tool.name, operation });
+        addRunEvent(app, runId, "status", { text: `以${userName(app, userId)}的身份写入飞书（${operation}）`, actingAs: userId });
+      },
+    });
+  }
+  // A new tool that reaches the personal CLI must declare its identity before a switched run can use it.
+  if (ctx.larkUserId === undefined && ruleLarkMember(ctx)) {
+    return larkActor.run({ app, userId, runId, beforeCall: () => {
+      throw new HttpError(403, "本次调用没有声明飞书个人身份，无法在换身份后使用个人登录");
+    } }, invoke);
+  }
+  return asLarkUser(app, userId, invoke, runId);
 }
 
 /** Messages that arrived for this turn's conversation while it runs (steer.ts). */
@@ -7391,17 +7467,21 @@ async function steering(ctx: ToolContext) {
  * A tool listed in `approvals.tools`: the call waits for the owner's OK. Approved, it runs with
  * the context it was made in (also after this run has ended); refused, the reason goes back.
  */
-async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string, extraContext?: Record<string, unknown>, rule?: OperationRule): Promise<{ text: string; isError: boolean }> {
+async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string, extraContext?: Record<string, unknown>, rule?: OperationRule, larkApprover?: string): Promise<{ text: string; isError: boolean }> {
   const { createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
   const { app, tools: allowed, ...rest } = ctx;
+  const requester = ctx.userId ?? OWNER;
+  const delegated = larkApprover !== undefined && larkApprover !== requester;
   const ask = createAsk(app, {
     runId: ctx.runId,
-    userId: rule ? ctx.operationGrant!.approver : ctx.userId ?? OWNER,
+    ...(delegated && { conversationId: null }),
+    userId: rule ? ctx.operationGrant!.approver : larkApprover ?? requester,
     kind: "approval",
     question: question ?? `${ctx.spec ?? ctx.role ?? "助理"} 要调用 ${name}：\n${truncate(JSON.stringify(args, null, 1), 1500)}`,
     tool: name,
     args,
-    context: { ...rest, tools: allowed ? [...allowed] : null, ...extraContext },
+    context: { ...rest, tools: allowed ? [...allowed] : null, ...extraContext,
+      ...(delegated && { larkApprover, askedBy: requester, toName: userName(app, larkApprover) }) },
   });
   const got = await waitForAnswer(app, ask.id, (rule?.approval?.waitSeconds ?? app.config.approvals.waitSeconds) * 1000, ctx.userId ?? OWNER);
   if (got.status === "pending")
@@ -7410,19 +7490,22 @@ async function held(ctx: ToolContext, name: string, args: Record<string, unknown
 }
 
 setApprovalExecutor(async (app, ask, snapshot) => {
-  const { operationApproval, askedBy: _asker, toName: _recipient, ...s } = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null; operationApproval?: OperationRule; askedBy?: string; toName?: string };
+  const { operationApproval, askedBy: _asker, toName: _recipient, larkApprover, ...s } = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null; operationApproval?: OperationRule; askedBy?: string; toName?: string; larkApprover?: string };
   const member = s.userId ?? OWNER;
-  const approver = operationApproval ? s.operationGrant?.approver : member;
+  const approver = operationApproval ? s.operationGrant?.approver : larkApprover ?? member;
   if (!ask.tool || !approver || ask.userId !== approver || ask.answeredBy !== approver ||
       !activeUser(findUser(app, approver)) || !activeUser(findUser(app, member)) || ask.runId !== s.runId || (ask.runId && runUser(app, ask.runId) !== member))
     return { text: "审批人或运行成员已变化，工具审批已失效。", isError: true };
-  const ctx: ToolContext = { ...s, app, spaces: scopeFor(app, member, s.spaces), tools: s.tools ? new Set(s.tools) : null, approved: !operationApproval || s.approved };
+  const ctx: ToolContext = { ...s, app, spaces: scopeFor(app, member, s.spaces), tools: s.tools ? new Set(s.tools) : null,
+    approved: !operationApproval || s.approved, larkApproved: s.larkApproved || (!!larkApprover && larkApprover === s.larkUserId) };
+  // Approvals saved before Feishu identity was snapshotted belong to the original run user.
+  if (larkToolIdentity(ask.tool, ask.args ?? {}) === "user") ctx.larkUserId ??= member;
   if (!ask.approved) {
     auditOperation(app, { kind: "tool", name: ask.tool, args: ask.args }, operationWho(ctx), operationApproval, "approve", "refused", approver);
     return { text: "已拒绝", isError: false };
   }
   const out = await callTool(ctx, ask.tool, ask.args ?? {});
-  if (operationApproval || out.isError) return out;
+  if (operationApproval || larkApprover || out.isError) return out;
   // The owner keeps approving this tool: ask once whether it may run and be reported instead (approval-ladder.ts).
   void import("./approval-ladder.ts").then((m) => m.suggestPromotion(app, ask, (t) => !alwaysApprove.has(t))).catch((e) => console.warn(`[omem] 审批阶梯：${(e as Error).message}`));
   return out;

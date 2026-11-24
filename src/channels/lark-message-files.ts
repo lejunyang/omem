@@ -7,7 +7,7 @@ import { one, run } from "../core/db.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { HttpError, json } from "../core/util.ts";
 import { importFile } from "../sources/import.ts";
-import { larkCli } from "./lark-cli.ts";
+import { larkActing, larkCli } from "./lark-cli.ts";
 import { messageResourceFile, type ResourceRef } from "./lark-messages.ts";
 import { resourceKeys } from "./lark-resource-keys.ts";
 
@@ -36,9 +36,12 @@ export async function messageFile(app: App, messageId: string, key: string | und
   let type = row?.msg_type ?? "";
   if (!row) {
     // Not captured: Feishu says which chat it is in (a read).
-    const v = await larkCli(["im", "+messages-mget", "--message-ids", messageId, "--as", "user", "--format", "json"]).catch(() => null);
+    const v = await larkCli(["im", "+messages-mget", "--message-ids", messageId, "--as", "user", "--format", "json"]).catch((error) => {
+      if (larkActing()?.ruleId) throw error;
+      return null;
+    });
     const m = ((v?.data?.messages ?? v?.data?.items ?? []) as { chat_id?: string; content?: unknown; msg_type?: string; message_type?: string }[])[0];
-    if (!m?.chat_id) throw new HttpError(404, `读不到消息 ${messageId}：omem 没有采集到它，本人的 lark-cli 也读不到`);
+    if (!m?.chat_id) throw new HttpError(404, `读不到消息 ${messageId}：omem 没有采集到它，当前飞书身份也读不到`);
     chatId = m.chat_id;
     content = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
     type = m.msg_type ?? m.message_type ?? "";
@@ -58,7 +61,7 @@ export async function messageFile(app: App, messageId: string, key: string | und
   if (may.writable && !may.writable.includes(spaceId)) throw new HttpError(403, "附件尚未存为原件，本次运行不能在消息所在空间保存附件");
   const file = (ref?.file && storedPath(app, ref.file) ? ref.file : null) ?? (await messageResourceFile(app, messageId, k));
   const path = file ? storedPath(app, file) : null;
-  if (!file || !path) throw new HttpError(404, `下载不到这个附件（本人的 lark-cli 和机器人都读不到它）`);
+  if (!file || !path) throw new HttpError(404, "下载不到这个附件");
   if (MEDIA.test(name) || MEDIA.test(file) || ["media", "audio"].includes(ref?.type ?? type)) return { key: k, name, chatId: chatId!, path, media: true };
 
   // Imported under its own name (the stored copy is named by its hash), like the bot's saved files.

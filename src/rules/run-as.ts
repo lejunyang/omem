@@ -13,7 +13,7 @@ import type { Rule } from "./types.ts";
  * agent action (`runAs`); each is asked once — on a card in the group the rule was set up from, else in
  * their private chat with the bot — and only those who agreed can be switched to. In one run the agent
  * goes through them in turn with `act_as`: the commands a plugin declares (credential-registry.ts) then
- * run on that person's login in their own account sandbox, and lark_read reads as them. A person can
+ * run on that person's login in their own account sandbox, and personal Feishu tools use their connection. A person can
  * withdraw on their account page; the owner sees each one's state on the rules page.
  */
 export type RunAsStatus = "pending" | "granted" | "declined" | "revoked" | "unavailable";
@@ -82,7 +82,7 @@ function ask(app: App, rule: Rule, userId: string) {
     question: [
       `${userName(app, OWNER)}的规则「${rule.name}」想在运行时用你的身份做事：${rule.description}`,
       task ? `要做的：${task.slice(0, 500)}` : "",
-      "同意后，这条规则的助手轮到你时，会用你的登录运行插件登记过的命令（比如研发平台的命令行）、以你的身份读飞书；每次都记在运行里。你随时可以在 omem 的“账号”页撤回。",
+      "同意后，这条规则的助手轮到你时，会用你的登录运行插件登记过的命令（比如研发平台的命令行）、用你的飞书连接读写。你自己的飞书文件可直接写，其他文件和任务由机器人私聊请你批准。助手用机器人发消息。以你的身份写入会留下审计和运行记录。你随时可以在 omem 的“账号”页撤回。",
     ].filter(Boolean).join("\n\n"),
     options: [{ label: "同意" }, { label: "不同意" }],
     allowText: false,

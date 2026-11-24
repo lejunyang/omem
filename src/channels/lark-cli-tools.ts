@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { actingOpenId, asOwner } from "./lark-auth.ts";
-import { larkCli, larkCliOutput } from "./lark-cli.ts";
+import { larkCli, larkCliOutput, larkCliWrite } from "./lark-cli.ts";
 import { personalLibrary, wikiNode } from "./lark-wiki.ts";
 
 /**
@@ -61,10 +61,10 @@ function checkArgs(args: string[]) {
 const isGuide = (args: string[]) => (args[0] === "skills" && (args[1] === "read" || args[1] === "list")) || args[0] === "schema";
 
 /** Run in a scratch directory: files a command downloads go there and are removed after; their names are reported. */
-async function run(app: App, args: string[], label: string) {
+async function run(app: App, args: string[], label: string, execute = larkCli) {
   const dir = mkdtempSync(join(tmpdir(), "omem-lark-"));
   try {
-    const v = await asOwner(app, label, () => larkCli([...args, "--as", "user"], 180_000, dir));
+    const v = await asOwner(app, label, () => execute([...args, "--as", "user"], 180_000, dir));
     const files = readdirSync(dir).map((f) => `${f}（${statSync(join(dir, f)).size} 字节）`);
     return { value: v?.data ?? v, files };
   } finally {
@@ -160,7 +160,7 @@ export function checkTouches(args: string[], target: WriteTarget) {
 
 /** `written`: told the full output once the write succeeded (the record ids it made, say). */
 export async function larkWrite(app: App, args: string[], path: string[], written?: (output: string) => void) {
-  const r = await run(app, args, `以本人身份写飞书（${path.join(" ")}）`);
+  const r = await run(app, args, `写飞书（${path.join(" ")}）`, larkCliWrite);
   const out = show(r.value);
   written?.(out);
   return truncate(out, 4000);

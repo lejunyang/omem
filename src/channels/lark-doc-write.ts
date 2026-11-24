@@ -8,7 +8,7 @@ import { findConnection } from "../auth/vault.ts";
 import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { actingOpenId, asOwner } from "./lark-auth.ts";
-import { larkActing, larkCli, larkCliAsBot } from "./lark-cli.ts";
+import { larkActing, larkCli, larkCliAsBot, larkCliWrite } from "./lark-cli.ts";
 import { larkAppSecret, readLarkSecrets } from "./lark-setup.ts";
 import { personalLibrary, wikiNode, type WikiNode } from "./lark-wiki.ts";
 
@@ -115,7 +115,7 @@ async function withContent<T>(content: string, fn: (ref: string, cwd: string) =>
 export async function createDoc(app: App, input: { title: string; content: string; format?: "markdown" | "xml"; place: Place }) {
   const parent = "position" in input.place.parent ? ["--parent-position", input.place.parent.position] : ["--parent-token", input.place.parent.token];
   const v = await withContent(input.content, (ref, cwd) =>
-    asOwner(app, "以本人身份新建飞书文档", () => larkCli(["docs", "+create", "--as", "user", "--title", input.title, "--doc-format", input.format ?? "markdown", "--content", ref, ...parent], 120_000, cwd), { feature: "doc-write", alternatives: ["docx:document:create", LARK_LEGACY_DOC_SCOPE] }),
+    asOwner(app, "以本人身份新建飞书文档", () => larkCliWrite(["docs", "+create", "--as", "user", "--title", input.title, "--doc-format", input.format ?? "markdown", "--content", ref, ...parent], 120_000, cwd), { feature: "doc-write", alternatives: ["docx:document:create", LARK_LEGACY_DOC_SCOPE] }),
   );
   const d = v?.data?.document ?? v?.data ?? {};
   return { url: String(d.url ?? ""), documentId: String(d.document_id ?? ""), warnings: (v?.data?.warnings ?? []) as unknown[] };
@@ -133,7 +133,7 @@ export function checkCopyScopes(app: App) {
     .filter((options) => !options.some((scope) => have.has(scope))).map(([scope]) => scope);
   const requiredScopes = missingCopy ? [...missingReads, LARK_WIKI_COPY_SCOPE] : missingReads;
   if (!requiredScopes.length) return;
-  throw new HttpError(403, needConnection(app, actor.userId, actor.runId, {
+  throw new HttpError(403, needConnection(app, actor.userId, actor.ruleId ? null : actor.runId, {
     features: ["doc-write"], requiredScopes,
     reason: `以本人身份复制飞书文档缺少飞书权限 ${requiredScopes.join("、")}`,
   }));
@@ -141,7 +141,7 @@ export function checkCopyScopes(app: App) {
 
 /** The fixed node-copy command is the only high-risk-labelled CLI operation exposed here. */
 export async function copyDoc(app: App, source: WikiNode, target: NonNullable<Place["wiki"]>, title?: string) {
-  const v = await asOwner(app, "以本人身份复制飞书文档", () => larkCli([
+  const v = await asOwner(app, "以本人身份复制飞书文档", () => larkCliWrite([
     "wiki", "+node-copy", "--space-id", source.spaceId, "--node-token", source.nodeToken,
     ...(target.nodeToken ? ["--target-parent-node-token", target.nodeToken] : ["--target-space-id", target.spaceId]),
     ...(title ? ["--title", title] : []), "--as", "user", "--yes", "--format", "json",
@@ -219,7 +219,7 @@ export async function updateDoc(app: App, input: UpdateInput, opts: { asBot?: bo
   const run = (content: string[], cwd?: string) =>
     opts.asBot
       ? larkCliAsBot(ownBot(app), args(content, "bot"), 120_000, cwd).catch((e) => botDenied(app, e))
-      : asOwner(app, "以本人身份编辑飞书文档", () => larkCli(args(content, "user"), 120_000, cwd), { feature: "doc-write", alternatives: ["docx:document:write_only", LARK_LEGACY_DOC_SCOPE] });
+      : asOwner(app, "以本人身份编辑飞书文档", () => larkCliWrite(args(content, "user"), 120_000, cwd), { feature: "doc-write", alternatives: ["docx:document:write_only", LARK_LEGACY_DOC_SCOPE] });
   const v = input.content !== undefined ? await withContent(input.content, (ref, cwd) => run(["--content", ref], cwd)) : await run([]);
   const d = v?.data ?? {};
   return {
@@ -276,6 +276,6 @@ export async function moveDoc(app: App, from: Awaited<ReturnType<typeof docPlace
     args = ["wiki", "+move-to-drive", "--node-token", from.node.nodeToken, "--folder-token", to.folder];
   } else throw new HttpError(400, "目标位置不对");
   const scope = to.wiki ? "wiki:node:move" : "space:document:move";
-  const v = await asOwner(app, "以本人身份移动飞书文档", () => larkCli([...args, "--as", "user", "--format", "json"], 180_000), { feature: "doc-write", alternatives: [scope, LARK_LEGACY_WIKI_SCOPE] });
+  const v = await asOwner(app, "以本人身份移动飞书文档", () => larkCliWrite([...args, "--as", "user", "--format", "json"], 180_000), { feature: "doc-write", alternatives: [scope, LARK_LEGACY_WIKI_SCOPE] });
   return v?.data ?? v;
 }

@@ -47,6 +47,8 @@ const DOC_PATH = /^\/(docx|wiki|docs)\/([A-Za-z0-9]+)/;
 const DOC_URL = /https?:\/\/[\w.-]*(?:feishu\.cn|larksuite\.com|larkoffice\.com)\/(?:docx|docs|wiki)\/[A-Za-z0-9]+[^\s)"'<>\]]*/g;
 
 export type LarkDocMeta = {
+  /** An import using a rule's member consent does not authorize ordinary background refreshes. */
+  ruleCapture?: true;
   wikiSpaceName?: string;
   wikiParentTitle?: string;
   wikiPath?: string;
@@ -679,6 +681,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   text = rewriteLinks(text, origin, local);
 
   const keptMedia = Object.fromEntries(Object.entries(ctx.media).filter(([t]) => ctx.used.has(t)));
+  const acting = larkActing();
   const meta: LarkDocMeta = {
     ...wikiMeta,
     url: uri === wikiUrl ? wikiUrl : url,
@@ -695,13 +698,13 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     media: keptMedia,
     // Who read it, and whether parts of other files are in it as that person saw them: then it is that
     // person's copy (sources/store.ts originKeyOf), never handed to someone else as theirs.
-    capturedBy: larkActing()?.userId ?? "owner",
+    capturedBy: acting?.userId ?? "owner",
+    ...(acting?.ruleId ? { ruleCapture: true } : {}),
     ...(ctx.embeds ? { perReader: true } : {}),
     ...(missing.length ? { missing: Object.fromEntries(missing.map((m) => [m.url, { title: m.title, error: m.error }])) } : {}),
   };
   // Someone else's capture of a document already kept in a shared space they read: one copy, and a note
   // that they can see it (docs/v2/multi-user.md, “采集前先查”). The same revision reads the same for everyone.
-  const acting = larkActing();
   if (acting && doc.documentId && !one(app.db, "select 1 from sources where space_id = ? and uri = ?", spaceId, uri)) {
     const readable = accessibleSpaces(app, acting.userId) ?? [];
     // A copy carrying other files as its reader saw them (perReader) has its own key: not reused here.
@@ -715,7 +718,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   if (r.status === "unchanged") run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), r.id);
   if (wiki) linkWikiSource(app, wiki.nodeToken, r.id);
   if (redirected) noteKbRoute(app, r.id, asked, uri, redirected);
-  if (missing.length) {
+  if (missing.length && !acting?.ruleId) {
     const fresh = recordMissing(app, acting?.userId ?? OWNER, spaceId, r.id, doc.title, missing);
     if (!acting) unreadable.push(...fresh);
   }
@@ -876,7 +879,8 @@ function readAs<T>(app: App, reader: string, read: () => Promise<T>) {
   return reader === OWNER && !larkActing() ? read() : asLarkUser(app, reader, read);
 }
 
-export function withLarkDocReader<T>(app: App, spaceId: string, meta: Pick<LarkDocMeta, "capturedBy">, read: () => Promise<T>) {
+export function withLarkDocReader<T>(app: App, spaceId: string, meta: Pick<LarkDocMeta, "capturedBy" | "ruleCapture">, read: () => Promise<T>) {
+  if (meta.ruleCapture) return null;
   const reader = meta.capturedBy ?? OWNER;
   if (canReadAs(app, reader, spaceId)) return readAs(app, reader, read);
   return null;
@@ -1182,6 +1186,7 @@ export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s:
   const byEvent = docEventsArrive(app) ? subscribedSourceIds(app) : new Set<string>();
   const due = rows
     .map((r) => ({ ...r, m: json<Partial<LarkDocMeta>>(r.meta, {}) }))
+    .filter((r) => !r.m.ruleCapture)
     .map((r) => ({ ...r, reader: r.m.capturedBy ?? OWNER }))
     .filter((r) => opts.force || (!byEvent.has(r.id) && docDue(r.m, now, steps)))
     .filter((r) => canReadAs(app, r.reader, r.space_id))

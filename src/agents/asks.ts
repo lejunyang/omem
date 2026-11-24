@@ -438,6 +438,8 @@ export async function answerAsk(app: App, id: string, input: AnswerInput): Promi
   const row = askRow(app, id);
   const before = toAsk(row);
   const context = JSON.parse(row.context ?? "{}") as Record<string, unknown>;
+  if (context.larkApprover && (input.by !== before.userId || input.by !== context.larkApprover))
+    throw new HttpError(403, "只有这次使用飞书身份的成员能批准");
   const scope = before.handler && askHandlers.get(before.handler)?.scope;
   // An answer tied to a flow must be saved and acted on under the same item lock.
   if (scope) return scope(app, context, () => recordAnswer(app, getAsk(app, id), context, { ...input, deferEffects: false }));

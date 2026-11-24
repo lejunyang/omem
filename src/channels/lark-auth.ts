@@ -132,7 +132,7 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>,
         throw new HttpError(403, `${reason}被飞书拒绝。当前连接已授权 ${scope}，请检查具体文档或知识库的访问权限。`);
       const { needConnection } = await import("../auth/connect-wait.ts");
       const request = preferred ? { features: [preferred.feature], requiredScopes: [scope] } : { scopes: [scope] };
-      throw new HttpError(403, needConnection(app, actor.userId, actor.runId, { ...request, reason: `${reason}缺少飞书权限 ${scope}` }));
+      throw new HttpError(403, needConnection(app, actor.userId, actor.ruleId ? null : actor.runId, { ...request, reason: `${reason}缺少飞书权限 ${scope}` }));
     }
     const missing = preferred ? scope : e.scopes.join(" 或 ");
     let link = "";

@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
 import { LARK_WIKI_NODE_READ, LARK_WIKI_SPACE_READ } from "../auth/features.ts";
+import { asRuleLarkUser, type RuleLarkUser } from "../auth/lark-user.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError, json, newId } from "../core/util.ts";
@@ -89,6 +90,7 @@ export function clearWikiLocationCache(app: App) { locationCaches.delete(app); }
 function cachedLocation<T>(app: App, key: string, read: () => Promise<T>): Promise<T> {
   let cache = locationCaches.get(app);
   if (!cache) locationCaches.set(app, cache = new Map());
+  key = `${larkActing()?.userId ?? "owner"}:${key}`;
   const prior = cache.get(key);
   if (prior && prior.until > Date.now()) return prior.value as Promise<T>;
   if (cache.size > 2000) cache.clear();
@@ -184,6 +186,8 @@ const ONE = "lark_wiki_crawl/";
 type Entry = { url: string; depth: number; title?: string; node?: WikiNode };
 export type WikiCrawl = {
   id: string;
+  /** The member whose connection this rule's crawl uses, including after a restart. */
+  reader?: RuleLarkUser;
   /** omem space the docs go into. */
   spaceId: string;
   root: string;
@@ -320,11 +324,15 @@ export async function startCrawl(app: App, input: { spaceId: string; url: string
   const { url } = normalizeDocUrl(input.url);
   const node = await wikiNode(app, url);
   if (!node) throw new HttpError(400, "这篇文档不在知识库里：知识库爬取只能从知识库页面开始（普通文档的链接会按 docLinkDepth 跟随）");
-  const same = crawls(app).find((c) => c.root === url && c.spaceId === input.spaceId && (c.status === "running" || c.status === "paused"));
+  const actor = larkActing();
+  const reader = actor?.ruleId && actor.runId ? { userId: actor.userId, ruleId: actor.ruleId, runId: actor.runId } : undefined;
+  const same = crawls(app).find((c) => c.root === url && c.spaceId === input.spaceId &&
+    c.reader?.userId === reader?.userId && c.reader?.ruleId === reader?.ruleId && (c.status === "running" || c.status === "paused"));
   if (same) throw new HttpError(409, `这个知识库页面已经在爬取（${same.id}，${same.status === "paused" ? "已暂停，用 continue 继续" : "进行中"}）`);
   const cfg = app.config.lark.capture;
   const c: WikiCrawl = {
     id: newId("wc"),
+    reader,
     spaceId: input.spaceId,
     root: url,
     rootTitle: node.title,
@@ -351,6 +359,9 @@ export async function startCrawl(app: App, input: { spaceId: string; url: string
 /** Continue a paused crawl (its next batch), or a running one interrupted by a restart. */
 export function continueCrawl(app: App, id: string, opts: { batch?: number | null; maxDocs?: number; background?: boolean } = {}) {
   const c = getCrawl(app, id);
+  const actor = larkActing();
+  if (c.reader?.ruleId !== actor?.ruleId || (c.reader && c.reader.userId !== actor?.userId))
+    throw new HttpError(403, "请在原规则里换成开始爬取时的身份再继续");
   if (c.status === "done" || c.status === "stopped") throw new HttpError(409, `这个爬取已经${c.status === "done" ? "完成" : "停止"}`);
   if (opts.batch !== undefined) c.batch = opts.batch;
   if (opts.maxDocs) c.maxDocs = opts.maxDocs;
@@ -376,7 +387,7 @@ export function resumeCrawls(app: App) {
 const driving = new Set<string>();
 
 /** Errors no page of a crawl gets past (lark-cli.ts wording, old and new): the crawl pauses on them. */
-export const CRAWL_HALT = /缺少飞书权限|登录不可用|token_missing|need_user_authorization|不接受你的授权|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|请检查登录和网络/i;
+export const CRAWL_HALT = /缺少飞书权限|登录不可用|没有可用的飞书个人登录|已撤回同意或账号不可用|token_missing|need_user_authorization|不接受你的授权|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|请检查登录和网络/i;
 /** This many failures in a row pause a crawl too: something is wrong beyond the pages. */
 const FAILED_IN_ROW = 10;
 
@@ -390,6 +401,21 @@ function drive(app: App, id: string) {
 
 /** Read queued nodes one by one until the batch, the queue or `maxDocs` runs out; progress is saved after each. */
 export async function crawlLoop(app: App, id: string) {
+  const c = getCrawl(app, id);
+  if (!c.reader) return readCrawl(app, id);
+  try {
+    return await asRuleLarkUser(app, c.reader, () => readCrawl(app, id), { feature: "docs" });
+  } catch (e) {
+    const current = getCrawl(app, id);
+    if (current.status !== "running") return current;
+    current.status = "paused";
+    current.halted = (e as Error).message.slice(0, 300);
+    put(app, current);
+    return current;
+  }
+}
+
+async function readCrawl(app: App, id: string) {
   const { findLarkDoc, importLarkDocument, relinkParent } = await import("./lark-docs.ts");
   // The space's copy of a page: by its wiki link, or by the document behind it (a /docx/ copy).
   const captured = (c: WikiCrawl, url: string, node: WikiNode) =>

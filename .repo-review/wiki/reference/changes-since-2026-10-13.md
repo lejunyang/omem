@@ -22,6 +22,10 @@ updated: 2026-11-24
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 规则的飞书工具跟随成员身份（2026-11-25）
+
+`src/agents/tools.ts` 按工具声明分发飞书身份。个人读写使用当前成员的连接，`lark_chat_history`、显式选机器人的文档工具和机器人消息保留各自的机器人凭据。邀请、回溯和本人的采集设置要求先换回本人。写入审批按飞书调用者查文件归属和历史批准，批准卡只发给当前成员，延迟执行绑定原申请身份并重查同意。实际写入留下 `lark.run-as.write` 审计和运行事件。知识库爬取持久化读取者，附件下载也使用成员连接。用 `test/rule-run-as-lark.test.ts` 覆盖分发、审批、撤回、缺登录和后台续跑。
+
 ## 规则以成员的身份运行（2026-11-25）
 
 Agent 动作新增 `runAs`（`src/rules/types.ts`，只有本人能加人，`store.ts` 校验）。`src/rules/run-as.ts`：表 `rule_run_as`，保存后 `syncRunAs` 逐人检查（账号、`ask.send`、飞书关联）并用 `asks`（handler `rule-run-as`，只能本人答）发卡片，结果会话是飞书群时发在群里；`decideRunAs` 给账号页同意 / 撤回；`switchIdentity` / `actingAs` 记一次运行当前的身份。工具 `act_as`（`wake` 组，规则运行带 `runAs` 时加上）；命令垫片请求到 `/api/command-gate` 时，换了身份的运行由 `memberExecution` 用成员的持有在他的账号沙箱里跑，`credentialOutcome` 多了 `onBehalf`，登录失效时替他发起登录并等。`lark_read` 在换了身份时包进 `asLarkUser`。接口 `GET /api/rules/:id/run-as`、`POST /api/rules/:id/run-as/:userId/ask`、`GET /api/rule-run-as-candidates`、`GET/POST /api/me/run-as`；网页规则页选人和状态，账号页 `RunAsConsents.vue`。
