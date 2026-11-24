@@ -12,7 +12,7 @@ function visibleCondition(condition: Condition | null, spaces: Set<string>): boo
 }
 
 export function ruleVisible(rule: Rule, spaces: Set<string> | null) {
-  return !spaces || ((!rule.spaceId || spaces.has(rule.spaceId)) && visibleCondition(rule.conditions, spaces));
+  return !spaces || (!(rule.origin && "kind" in rule.origin) && (!rule.spaceId || spaces.has(rule.spaceId)) && visibleCondition(rule.conditions, spaces));
 }
 
 /** Read-only consumers receive descriptive fields. Actions can carry executable code or credentials. */

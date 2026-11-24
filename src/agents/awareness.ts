@@ -1,9 +1,10 @@
+import { activeSituationsNote, OWNER_WORDS } from "../situations/awareness.ts";
 import type { ResolvedTurn, TurnContext } from "./turn-context.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
-import { addRunEvent, cancelRun, getRun, setRunOutput, type Run, type RunContext } from "./runs.ts";
+import { addRunEvent, cancelRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { mayStayQuiet, quietReason } from "./quiet.ts";
 import { addScope, chatName, conclusionOf, relatedNote, scopeOf } from "./run-scope.ts";
 import { candidatesNote, itemPlacesNote, linkRunPlaces, placeView } from "../items/places.ts";
@@ -58,11 +59,11 @@ export function isBackground(app: App, r: Run) {
  * The run's awareness sections (related runs, the item's other places, candidates), separated from
  * the task by a rule; "" when there is nothing. Never fails a run.
  */
-export function awarenessNote(app: App, runId: string | null | undefined, withTools = true, turn?: ResolvedTurn): string {
+export function awarenessNote(app: App, runId: string | null | undefined, withTools = true, turn?: ResolvedTurn, hideSituations = false): string {
   if (!runId) return "";
   try {
     const r = getRun(app, runId);
-    const userId = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", runId)?.user_id ?? OWNER;
+    const userId = runUser(app, runId);
     const context = turn?.context ?? r.input.turnContext as TurnContext | undefined;
     const hints = context?.candidates.map(c => `- ${c.itemId}「${truncate(c.title, 60)}」：${c.reason}`) ?? [];
     const related = relatedNote(app, runId);
@@ -71,6 +72,7 @@ export function awarenessNote(app: App, runId: string | null | undefined, withTo
     const parts = [
       // What other paths already made of the message this turn answers (turn-context.ts, core/handling.ts).
       context?.handled ? `# 这条消息别处已经处理过\n${context.handled}\n已经记成的变化不用再记一遍；要补充（比如定下了日期）就引用同一条消息再记，宿主会补进原来那一条。别处负责回复的，不要再回一遍。` : "",
+      !hideSituations && !r.input.guest && !r.input.fromPeer && r.kind !== "guest" ? activeSituationsNote(app, userId, typeof r.input.conversationId === "string" ? r.input.conversationId : undefined, Array.isArray(r.input.spaces) ? r.input.spaces as string[] : null) : "",
       related,
       related && withTools ? "任务后面有“同时在办的相关工作”时，说明别的运行正在（或刚刚）处理同一个会话、同一条消息或同一个事项。动手前先 `read_run` 看它做到哪、结论是什么，需要时 `read_conversation` 看它回在了哪里；它已经在答的不要再答一遍，要补充就接着它的结论说，结论不一致时说明哪边更新、依据是什么。" : "",
       places,
@@ -149,10 +151,8 @@ export function ownerMoves(app: App, runId: string): OwnerMove[] {
     const inputIds = new Set((r.input.messageIds as string[] | undefined) ?? []);
     const rows = all<{ id: string; conversation_id: string; text: string; created_at: string; ext: string | null; title: string }>(app.db,
       `select m.id, m.conversation_id, m.text, m.created_at, json_extract(m.meta, '$.externalId') ext, c.title from messages m join conversations c on c.id = m.conversation_id
-        where m.conversation_id in (${ids.map(() => "?").join(",")}) and m.role = 'user' and m.created_at > ? and coalesce(m.run_id, '') != ?
+        where m.conversation_id in (${ids.map(() => "?").join(",")}) and ${OWNER_WORDS} and m.created_at > ? and coalesce(m.run_id, '') != ?
           and c.user_id = ? and coalesce(json_extract(m.meta, '$.userId'), 'owner') = ?
-          and json_extract(m.meta, '$.speaker') is null and json_extract(m.meta, '$.asker') is null and json_extract(m.meta, '$.wake') is null
-          and json_extract(m.meta, '$.command') is null and json_extract(m.meta, '$.agentReport') is null and json_extract(m.meta, '$.codeResult') is null
         order by m.created_at limit 50`,
       ...ids, since, runId, userId, userId);
     for (const m of rows) {

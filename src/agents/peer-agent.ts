@@ -39,7 +39,7 @@ export const PEER_DENY = new Set([
   "switch_run_ai", "generate_wiki", "digest_sources",
   "continue_code_run", "stop_code_run", "resplit_change_points", "retry_code_progress",
   "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action",
-  "connect_repository", "save_agent", "save_skill", "organize_skills", "save_rule", "ignore_notification_rule",
+  "connect_repository", "save_agent", "save_skill", "organize_skills", "save_rule", "save_situation", "start_situation", "update_situation", "propose_situation", "ignore_notification_rule",
 ]);
 
 /**

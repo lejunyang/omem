@@ -1,6 +1,7 @@
 import { inlineStages } from "../flows/inline.ts";
 import { readReconcileObject, reconcileResultSchema, submitReconcile } from "../flows/reconcile.ts";
 import { beforeBehavior, changeWords, noteBehavior } from "./behavior-changes.ts";
+import { saveSituationArgs, startSituationArgs, updateSituationArgs, proposeSituationArgs, saveFromChat, startFromChat, updateFromTurn, proposeFromSettle } from "../situations/tools.ts";
 import { boardLarkCommand, boardLarkDocument, requireBoardLarkMessages } from "./board-lark-read.ts";
 import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
@@ -4018,6 +4019,19 @@ def({
   },
 });
 
+def({ name: "save_situation", write: true, schema: saveSituationArgs,
+  description: "保存一类反复发生的事：名字、本人给的说明、怎么认出开始信号；修改提供 id。只有本人明确要求才传 owner_requested=true，否则回复后等本人确认。",
+  handler: (ctx, a) => saveFromChat(ctx, a, ownerAskedThisTurn(ctx), sp => writeSpace(ctx, sp, "rules.edit"), runLarkChat(ctx)) });
+def({ name: "start_situation", write: true, schema: startSituationArgs,
+  description: "本人明确说已经开始或现在要开始某一回时，用已有情境的名字或 id 和这次的范围手动开一回。不要把假设或询问当开始。",
+  handler: (ctx, a) => startFromChat(ctx, a, ownerAskedThisTurn(ctx), sp => writeSpace(ctx, sp, "items.edit")) });
+def({ name: "update_situation", write: true, schema: updateSituationArgs,
+  description: "更新当前这一回情境的现状；extend_minutes 从现在至少盯多久；summary 交小结并结束这一回。",
+  handler: (ctx, a) => updateFromTurn(ctx, a, sp => writeSpace(ctx, sp, "items.edit")) });
+def({ name: "propose_situation", write: true, schema: proposeSituationArgs,
+  description: "事项收尾交情境提议：三条以上本人教过的步骤、下次自主做到哪一步，再加名字、说明、怎么认出来。只把提议交给本人，不直接启用。",
+  handler: (ctx, a) => proposeFromSettle(ctx, a, sp => writeSpace(ctx, sp, "items.edit")) });
+
 def({
   name: "save_rule",
   description:
@@ -4397,9 +4411,13 @@ def({
   }),
   handler: async (ctx, a) => {
     if (!a.after === !a.on_message) throw new HttpError(400, "after 和 on_message 二选一：过一段时间唤醒传 after，等消息唤醒传 on_message");
+    const conversation = ctx.runId && getRun(ctx.app, ctx.runId).input.conversationId;
+    const instance = typeof conversation === "string" && (await import("../situations/instances.ts")).instanceOfThread(ctx.app, conversation);
+    if (instance && (a.agent || a.on_message || instance.status !== "active" || instance.closingRun)) throw new HttpError(409, "情境只可在窗口内唤醒本会话复查");
     if (a.on_message) return wakeOnMessageRule(ctx, a.note, a.agent, a.on_message);
     const { scheduleWake, wakeTime } = await import("./wakes.ts");
     const at = wakeTime(a.after!);
+    if (instance && at >= instance.windowUntil) throw new HttpError(400, "复查时间超出情境窗口，先用 update_situation 延长窗口");
     const { target, setBy } = await wakeOrigin(ctx, a.agent);
     const r = scheduleWake(ctx.app, { at, note: a.note, target, setBy, skipIfOwnerSpoke: a.skip_if_owner_replies });
     return `已设唤醒 ${r.id}：${at}${target.spec && !target.resumeRunId ? `唤醒 ${target.spec}` : "唤醒你"}。不需要了用 cancel_wake 取消。`;

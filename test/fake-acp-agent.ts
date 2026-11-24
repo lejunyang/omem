@@ -168,6 +168,21 @@ new AgentSideConnection(
       // FAKE_PROMPT_LOG=file: each turn's prompt, one JSON string a line (what the host sent).
       if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, JSON.stringify(prompt) + "\n");
       const say =(text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      if (process.env.FAKE_MODE === "situation") {
+        if (prompt.includes("这是情境的开始信号。只生成")) {
+          await say(JSON.stringify({ name: "开始演练", trigger: { event: "message" }, conditions: { field: "message.text", op: "contains", value: "演练开始" }, judge: "code" }));
+        } else if (prompt.includes("窗口已到。只核对已有材料") && prompt.includes("版本 B")) {
+          const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+          const client = new Client({ name: "fake-situation", version: "1" });
+          await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) } as Record<string, string> }));
+          try {
+            const result = await client.callTool({ name: "update_situation", arguments: { summary: "已核对版本 B 的恢复。" } });
+            if (result.isError) throw new Error(JSON.stringify(result.content));
+            await say("交了演练小结。");
+          } finally { await client.close(); }
+        } else await say("已检查演练范围，依据记录在当前会话。");
+        return { stopReason: "end_turn" };
+      }
       if (process.env.FAKE_MODE === "peer-gate") {
         let status = 0;
         try { runAcme(); } catch (e) { status = (e as { status: number }).status; }

@@ -1,5 +1,6 @@
+import { instanceOfThread } from "../situations/instances.ts";
 import type { App } from "../core/app.ts";
-import { all, one, run, tx } from "../core/db.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { captureSpace } from "../core/capture-space.ts";
 import { addMessage, chatSettings, createThread, findThread, setChatSettings, updateThread, type WatchBrief, type WatchRule } from "../agents/threads.ts";
@@ -11,17 +12,18 @@ import { findAgentSpec } from "../agents/specs.ts";
  * - place: one or several Feishu groups (an on-call group, the groups of a requirement);
  * - item: a matter, an item with the groups and conversations linked to it (flows/follow.ts reads its
  *   changes; with replies on it also answers about the matter in those groups);
+ * - situation: a recurring situation, with a separate conversation for each instance;
  * - default: the built-in “someone looks for you” (mentions/), every private chat and @ of the owner.
  *
  * Each has a brief (what to handle, what to leave, what a reply must have; the owner confirms it), a set
- * of knobs instead of fixed rules, one handling conversation (channel `listen`, key = its id) that reads
+ * of knobs instead of fixed rules, an ordinary watch conversation (channel `listen`, key = its id) that reads
  * its groups in one context, and cases (reply_samples.context_id) and lessons (listen-coach) of its own.
  * A group may be in several 关注 at once: each gets the messages, only one replies to a message (`lead`).
  *
  * The chat index lives in chat_settings (channel `lark-watch`: `contexts`, `spaceId`), so capture and the
  * “someone looks for you” path find a chat's 关注 with one lookup.
  */
-export type ListenKind = "place" | "item" | "default";
+export type ListenKind = "place" | "item" | "situation" | "default";
 export type ListenKnobs = {
   /** addressed: only messages for the owner or the bot; relevant: what the screening finds related to the brief; all: everything. */
   listen: "addressed" | "relevant" | "all";
@@ -62,6 +64,8 @@ export type ListenKnobs = {
 export type ListenContext = {
   id: string;
   kind: ListenKind;
+  userId: string;
+  recognize?: string;
   name: string;
   chats: string[];
   itemId: string | null;
@@ -112,22 +116,25 @@ export const DEFAULT_KNOBS: ListenKnobs = {
 const KIND_KNOBS: Record<ListenKind, Partial<ListenKnobs>> = {
   place: {},
   item: { reply: "none", listen: "relevant", assist: "suggest" },
+  situation: { reply: "none", meetings: "off", backlog: "off" },
   default: { listen: "addressed" },
 };
 /** Who replies when several 关注 got the same message: the most specific. */
-const PRIORITY: Record<ListenKind, number> = { item: 0, place: 1, default: 2 };
+const PRIORITY: Record<ListenKind, number> = { item: 0, situation: 0, place: 1, default: 2 };
 
 type Row = {
-  id: string; kind: ListenKind; name: string; chats: string; item_id: string | null; spec: string; space_id: string | null;
+  id: string; kind: ListenKind; user_id: string; name: string; chats: string; item_id: string | null; spec: string; space_id: string | null;
   conversation_id: string | null; settings: string; status: "active" | "paused"; expires_at: string | null; created_at: string; updated_at: string;
 };
-type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; playbookFile?: string; byFlow?: boolean; adopted?: Record<string, string>; added?: string[]; dropped?: string[] };
+type Stored = { recognize?: string; note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; playbookFile?: string; byFlow?: boolean; adopted?: Record<string, string>; added?: string[]; dropped?: string[] };
 
 function toContext(r: Row): ListenContext {
   const s = json<Stored>(r.settings, {});
   return {
     id: r.id,
     kind: r.kind,
+    userId: r.user_id,
+    ...(s.recognize ? { recognize: s.recognize } : {}),
     name: r.name,
     chats: json<string[]>(r.chats, []),
     itemId: r.item_id,
@@ -204,7 +211,10 @@ export function chatListened(app: App, chatId: string) {
 export function contextOfConversation(app: App, conversationId: string | null | undefined): ListenContext | null {
   if (!conversationId) return null;
   const r = one<Row>(app.db, "select * from listen_contexts where conversation_id = ?", conversationId);
-  return r ? toContext(r) : null;
+  if (r) return toContext(r);
+  const i = instanceOfThread(app, conversationId);
+  const c = i && getContext(app, i.contextId);
+  return c && c.userId === i.userId ? { ...c, conversationId, itemId: i.itemId, spaceId: i.spaceId } : null;
 }
 
 /** Where the handler may post: its groups (none when it only reads), as drafts unless replies are direct. */
@@ -215,6 +225,7 @@ export function larkScopeOf(c: ListenContext) {
 export type ContextInput = {
   id?: string;
   kind: ListenKind;
+  recognize?: string;
   name?: string;
   chats?: string[];
   itemId?: string | null;
@@ -242,7 +253,7 @@ export type ContextInput = {
 export function saveContext(app: App, input: ContextInput, chatName: (chatId: string) => string = (id) => id): ListenContext {
   const prev = input.id ? getContext(app, input.id) : null;
   const kind = prev?.kind ?? input.kind;
-  const chats = [...new Set(input.chats ?? prev?.chats ?? [])];
+  const chats = kind === "situation" ? [] : [...new Set(input.chats ?? prev?.chats ?? [])];
   if (kind === "place" && !chats.length) throw new HttpError(400, "关注至少要有一个群");
   if (kind === "item" && !(input.itemId ?? prev?.itemId)) throw new HttpError(400, "事情型关注要关联一个事项");
   const spec = input.spec ?? prev?.spec ?? "assistant";
@@ -260,6 +271,7 @@ export function saveContext(app: App, input: ContextInput, chatName: (chatId: st
   const id = prev?.id ?? input.id ?? (kind === "default" ? DEFAULT_CONTEXT_ID : newId("ctx"));
   const name = (input.name ?? prev?.name ?? (chats.length ? chats.map(chatName).join("、") : "关注")).slice(0, 80);
   const stored: Stored = {
+    recognize: input.recognize ?? prev?.recognize,
     note: input.note ?? prev?.note,
     brief: input.brief ?? prev?.brief,
     knobs: diffKnobs(knobs, kind),
@@ -280,7 +292,7 @@ export function saveContext(app: App, input: ContextInput, chatName: (chatId: st
   const spaceId = input.spaceId === undefined ? (prev?.spaceId ?? null) : input.spaceId;
   const expiresAt = input.expiresAt === undefined ? (prev?.expiresAt ?? null) : input.expiresAt;
   const status = input.status ?? prev?.status ?? "active";
-  tx(app.db, () => {
+  withinTx(app.db, () => {
     run(
       app.db,
       `insert into listen_contexts(id,kind,name,chats,item_id,spec,space_id,conversation_id,settings,status,expires_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -292,7 +304,7 @@ export function saveContext(app: App, input: ContextInput, chatName: (chatId: st
     );
   });
   const ctx = getContext(app, id)!;
-  if (kind !== "default") ensureConversation(app, ctx);
+  if (kind !== "default" && kind !== "situation") ensureConversation(app, ctx);
   indexChats(app, [...new Set([...(prev?.chats ?? []), ...chats])]);
   return getContext(app, id)!;
 }
@@ -397,7 +409,8 @@ export async function expireContexts(app: App, at = now()) {
   const { notify } = await import("../core/notify.ts");
   const { localStamp } = await import("../core/util.ts");
   for (const c of due) {
-    saveContext(app, { id: c.id, kind: c.kind, status: "paused" });
+    if (c.kind === "situation") await (await import("../situations/settings.ts")).saveSituation(app, c.userId, { id: c.id, status: "paused" });
+    else saveContext(app, { id: c.id, kind: c.kind, status: "paused" });
     notify(app, { title: `不再关注「${c.name}」了`, body: `到了设定的时间（${localStamp(c.expiresAt!, app.config.timezone)}）。还要继续就再说一声，或在 连接 → 飞书会话 里打开。` });
   }
   return due.length;

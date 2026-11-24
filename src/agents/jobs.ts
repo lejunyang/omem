@@ -99,7 +99,8 @@ async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: str
     runRole(ctx.app, {
       role,
       ...(denyTools?.length ? { denyTools } : {}),
-      requiredTools: role === "item-keeper" ? ["settle_items"] : undefined,
+      requiredTools: role === "item-keeper" ? (ctx.run.input.situationTeaching ? ["propose_situation"] : ["settle_items"]) : undefined,
+      ...(role === "item-keeper" && ctx.run.input.situationTeaching ? { addTools: ["propose_situation"] } : {}),
       spaceId,
       spaces,
       alsoRead: readSpaces,
@@ -155,6 +156,8 @@ registerHandler("ask", async (ctx) => {
   const ids = input.messageIds ?? (input.messageId ? [input.messageId] : []);
   const all = threadMessages(ctx.app, input.conversationId, { limit: 400 });
   const msgs = all.filter((m) => ids.includes(m.id));
+  const instance = (await import("../situations/instances.ts")).instanceOfThread(ctx.app, input.conversationId);
+  if (instance?.status === "ended") return { answer: "", quiet: true, skipped: "情境已结束" };
   if (!msgs.length) return { answer: "", skipped: "消息已不存在" };
   const coordinate = (ctx.run.input as { coordinate?: { workId: string; sourceRunIds?: string[] } }).coordinate;
   // A coding round's result handed to the assistant, already told by a turn about the same work that
@@ -189,6 +192,11 @@ registerHandler("ask", async (ctx) => {
   }
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   let answer = r.text.trim() || "（Agent 没有给出文字回答）";
+  if (instance && msgs.some(m => m.meta.situationClose)) {
+    (await import("../situations/instances.ts")).finishSituation(ctx.app, instance.userId, instance.id, undefined, ctx.run.id);
+    addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { replyTo: ids });
+    return { answer, quiet: true, session: r.mode };
+  }
   if (coordinate) {
     const id = await deliverCoordination(ctx, coordinate, answer, { agent: r.agent, session: r.mode, replyTo: ids });
     maybeSummarize(ctx.app, input.conversationId);
@@ -952,6 +960,15 @@ export async function sweepItems(app: App) {
 }
 
 registerHandler("item-settle", async (ctx) => {
+  if (typeof ctx.run.input.situationTeaching === "string") {
+    const { findItem } = await import("../items/store.ts");
+    const { teachingTask } = await import("../situations/teaching.ts");
+    const item = findItem(ctx.app, ctx.run.input.situationTeaching);
+    const task = item?.userId === OWNER && item.status === "done" ? teachingTask(ctx.app, item) : "";
+    if (!item || !task) return { quiet: true };
+    const r = await agent(ctx, "item-keeper", item.spaceId, task, null);
+    return { ...quietOf(ctx, r.text), quiet: true };
+  }
   const { task, checks } = ctx.run.input as { task: string; checks: { id: string; latestMs: number }[] };
   const r = await agent(ctx, "item-keeper", "personal", `这些事项还开着，本人之后在来源会话里有动静：\n\n${task}`, null);
   // Judged once: the same lines do not come back; a later reply of the owner's does.

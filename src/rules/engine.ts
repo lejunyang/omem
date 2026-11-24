@@ -109,7 +109,7 @@ async function consider(app: App, rule: Rule, e: RuleEvent) {
   if (rule.temporary && rule.temporary.expiresAt < e.at) return;
   // Someone asked the bot directly: it answers, the rules stay out of it (core/handling.ts REPLY_ORDER).
   // (`direct` is the only path before rules there; addressed is its one indexed look-up, run for every rule.)
-  if (e.kind === "message" && addressed(app, e.key)) {
+  if (e.kind === "message" && !(rule.origin && "kind" in rule.origin) && addressed(app, e.key)) {
     noteYield(app, { event: e.key.replace(/^lark:/, ""), actor: "rule", to: HANDLERS.direct, reason: "有人 @ 了机器人，由当场回答的那一轮处理，规则不再看" });
     return;
   }

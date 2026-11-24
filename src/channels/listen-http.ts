@@ -1,3 +1,5 @@
+import { registerSituationRoutes } from "../situations/http.ts";
+import { deleteSituation, saveSituation, situationRuleId } from "../situations/settings.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
@@ -65,6 +67,7 @@ function view(app: App, c: ListenContext) {
   const s = caseStats(app, c);
   return {
     ...c,
+    ...(c.kind === "situation" ? { ruleId: situationRuleId(c.id) } : {}),
     groups: groupNames(app, c.chats),
     // A matter's line, and whether it launched and is being watched (items/lifecycle.ts): the page says so.
     item: c.itemId ? one<{ id: string; title: string; status: string; phase: "watching" | null; watchUntil: string | null }>(app.db, "select id, title, status, phase, watch_until watchUntil from items where id = ?", c.itemId) ?? null : null,
@@ -112,10 +115,12 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人可以看和改关注");
   };
 
+  registerSituationRoutes(server, app, who);
   server.get("/api/listen", async (req) => {
     owner(req);
     defaultContext(app);
-    return listContexts(app).map((c) => view(app, c));
+    const { kind } = parse(z.object({ kind: z.enum(["default", "place", "item", "situation"]).optional() }), req.query);
+    return listContexts(app, { kind }).filter(c => c.userId === OWNER).map((c) => view(app, c));
   });
 
   server.get("/api/listen/:id", async (req) => {
@@ -137,8 +142,9 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
 
   server.post("/api/listen", async (req) => {
     owner(req);
-    const b = parse(z.object({ name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).min(1).max(200), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), expiresAt: z.string().nullable().optional() }), req.body);
+    const b = parse(z.object({ kind: z.enum(["place", "situation"]).optional(), recognize: z.string().max(1000).optional(), status: z.enum(["active", "paused"]).optional(), name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).max(200).optional(), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), expiresAt: z.string().nullable().optional() }), req.body);
     const knobs = cleanKnobs(b.knobs);
+    if (b.kind === "situation") return view(app, (await saveSituation(app, OWNER, { ...b, knobs })).context);
     if ((knobs.reply ?? "draft") !== "none" && !b.brief?.handle.length) throw new HttpError(400, "要在群里回复的关注先写要处理哪些消息（或回复方式选“只看不回”）");
     const { groupName, seedContext } = await import("./lark-watch.ts");
     const c = saveContext(app, { kind: "place", name: b.name, chats: b.chats, note: b.note, spec: b.spec, spaceId: b.spaceId, brief: b.brief ? { ...b.brief, at: now(), confirmedAt: now() } : undefined, knobs, expiresAt: b.expiresAt ?? null }, (id) => groupName(app, id));
@@ -149,7 +155,8 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
   server.put("/api/listen/:id", async (req) => {
     owner(req);
     const c = requireContext(app, (req.params as { id: string }).id);
-    const b = parse(z.object({ name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).max(200).optional(), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().nullable().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), status: z.enum(["active", "paused"]).optional(), expiresAt: z.string().nullable().optional() }), req.body);
+    const b = parse(z.object({ recognize: z.string().max(1000).optional(), name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).max(200).optional(), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().nullable().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), status: z.enum(["active", "paused"]).optional(), expiresAt: z.string().nullable().optional() }), req.body);
+    if (c.kind === "situation") return view(app, (await saveSituation(app, OWNER, { ...b, id: c.id, knobs: cleanKnobs(b.knobs) })).context);
     // The owner writing the brief here is confirming it.
     const brief = b.brief ? { ...b.brief, at: c.brief?.at ?? now(), confirmedAt: now() } : undefined;
     // A matter's groups follow its items: the owner's choice is kept as added / taken out (listen-items.ts).
@@ -160,7 +167,9 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
 
   server.delete("/api/listen/:id", async (req) => {
     owner(req);
-    removeContext(app, (req.params as { id: string }).id);
+    const c = requireContext(app, (req.params as { id: string }).id);
+    if (c.kind === "situation") await deleteSituation(app, OWNER, c.id);
+    else removeContext(app, c.id);
     return { ok: true };
   });
 

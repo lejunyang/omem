@@ -1,3 +1,5 @@
+import { instanceOfThread } from "../situations/instances.ts";
+import { situationPrompt } from "../situations/prompt.ts";
 import { credentialSucceeded, selectedCredential } from "./credentials.ts";
 import { recordWatchMaterial, summaryOrigins } from "../core/message-origins.ts";
 import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
@@ -358,15 +360,17 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const app = ctx.app;
   await refreshForRun(app);
   const t = getThread(app, threadId);
+  const situation = t.channel === "listen" && userId === "owner" ? instanceOfThread(app, t.id) : null;
+  const situationClosing = !!situation && messages.some(m => m.meta.situationClose);
   const resolved = contextForTurn(ctx, t, messages, userId);
   const { actor, label } = threadActor(app, t);
   const lark = larkScope(t, userId);
   // Someone who cannot read the conversation's space still gets their turn, in a space of theirs.
   const space = turnSpaceFor(app, userId, t.spaceId);
-  const denyTools = (ctx.run.input as { denyTools?: string[] }).denyTools;
+  const denyTools = situationClosing ? [...new Set([...(ctx.run.input.denyTools as string[] ?? []), "wake", "run_agent", "ask_agent", "delegate_code", "upsert_item"])] : (ctx.run.input as { denyTools?: string[] }).denyTools;
   // One agent session serves every kind of turn, so it always has stay_quiet; the tool refuses a turn
   // that answers someone (quiet.ts), and only the turns allowed to stay quiet mention it.
-  const addTools = ["stay_quiet", ...(t.channel === "listen" ? ["track_problem"] : [])];
+  const addTools = ["stay_quiet", ...(situation ? ["update_situation"] : t.channel === "listen" ? ["track_problem"] : [])];
   // A turn answering a colleague in a group (ownerPresent gated / free) runs with the guest setting.
   const guestTurn = messages.some((m) => typeof m.meta?.asker === "string");
   const fullAccess = guestTurn ? app.config.lark.guests.fullAccess : undefined;
@@ -404,7 +408,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const handoff = (ctx.run.input as { handoff?: { kind: string } }).handoff;
   // Only wake notes in this turn (none from the owner): the agent picks up its own work.
   const woken = messages.every((m) => !!m.meta.wake);
-  const scene = { kind: ctx.run.kind, chat: !coordinate && !handoff && !woken && !watched, awareness: !promptOverride };
+  const awareness = promptOverride ? "" : awarenessNote(app, ctx.run.id, true, resolved, guestTurn);
+  const scene = { kind: ctx.run.kind, chat: !coordinate && !handoff && !woken && !watched, awareness: !promptOverride, situation: awareness.includes("# 正在进行的情境\n") };
   const profileArgs = { actor, profileId: choice.profile ?? auto?.profile, model: choice.model ?? auto?.model, effort: choice.effort ?? auto?.effort };
   const raw = resolveRunProfile(app, profileArgs);
   const memberOptions = { userId, runId: ctx.run.id, threadId, messages, pinned: specified, signal: ctx.signal, revising: !!promptOverride };
@@ -447,7 +452,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const ownerCold = (brief: string) => [...(brief ? [`## 本人近况\n\n${brief}`] : []), ...(people.length ? [`## 这个群里常和本人打交道的人\n\n${people.join("\n")}`] : [])];
   const hits = await passiveForTurn(app, ctx.run.id, threadId, prep, said, canResume || live.has(threadId));
   // `promptOverride`: one more turn in the same run (the check before a background turn posts, awareness.ts).
-  const watchedText = watched && !promptOverride ? await watchedMaterial(app, messages, resolved) : null;
+  const watchedText = watched && !promptOverride && !situation ? await watchedMaterial(app, messages, resolved) : null;
   // Someone @-ed the bot in a group a 关注 reads: that 关注's cases and lessons on the question, as this
   // turn's material (watch-trial.ts directExperience; never for a guest). What was picked is on the run.
   const asked = !watched && !coordinate && !handoff && !woken && !promptOverride && chatId
@@ -510,6 +515,8 @@ ${renderMessages(messages, app)}
 3. 只有“在等本人决定”的项、宿主问本人要不要先推送，以及轮数用完、本人暂停、运行失败时，才需要本人回复；写清本人要决定的是什么，给的选择是本人看得懂的做法，不是转给编码 Agent 的指令。其余不要让本人确认或回复。
 ${hostToldNote(app, handoff)}
 这一轮不能交办、续轮或推送（continue_code_run、apply_code_run 不可用）。`
+        : situation
+        ? situationPrompt(app, situation, renderMessages(messages, app), situationClosing, withTools)
         : woken
         ? `# 唤醒
 
@@ -518,7 +525,7 @@ ${renderMessages(messages, app)}
 ${WAKE_NOTE}`
         : watched
         ? (withTools ? watchedText!.full : watchedText!.facts)
-        : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${withTools ? NEW_TURN_NOTE : "回答本人的新消息。"}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${currentBrief}` : ""}`) + (promptOverride ? "" : awarenessNote(app, ctx.run.id, withTools, resolved)) + (sentFocus ? `\n\n${focus!.text}` : "") + (asked ? `\n\n${asked.text}` : "");
+        : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${withTools ? NEW_TURN_NOTE : "回答本人的新消息。"}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${currentBrief}` : ""}`) + (promptOverride ? "" : withTools ? awareness : awarenessNote(app, ctx.run.id, false, resolved, guestTurn)) + (sentFocus ? `\n\n${focus!.text}` : "") + (asked ? `\n\n${asked.text}` : "");
     const context = fresh ? `# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0], ownerCold(currentBrief), withTools)}\n\n---\n\n` : "";
     const reverts = promptOverride ? [] : all<{ text: string }>(app.db, `select text from messages where conversation_id = ? and json_extract(meta,'$.behaviorReverted') is not null
       and created_at >= coalesce((select max(started_at) from runs where id != ? and lane = ? and status = 'done'), '') order by created_at desc limit 6`, threadId, ctx.run.id, threadId);

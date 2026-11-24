@@ -34,9 +34,9 @@ const ACTIONS = `动作（按顺序执行，至少一个）：
 - {"type":"check","question":"要模型判断的问题"}：模型看事件和前面动作的结果回答是或否，否就不做后面的动作（规则中途要人判断、条件写不清时用）
 - {"type":"meeting-bot","bots":["main"],"confirm":true,"record":true,"spec":"旁听的档案名（不旁听写空字符串）","task":"旁听时要它特别留意的","answer":false,"answerFrom":"all","answerMode":"draft","answerMax":5,"answerSpoken":false,"answerBy":"assistant","answerNames":[],"proactive":false,"proactiveMax":5,"meetingKind":"auto","importShared":true,"leaveWithOwner":true,"listen":"window","listenEvery":5,"listenLines":60,"listenPrefilter":true,"listenRollover":8}：只用于 meeting 触发。bots 是要拉进会议的 omem 机器人（main 是主机器人，其余写 lark.bots 的 id；空数组表示不拉机器人、只以本人身份记录）；confirm=true 始终先问，false 直接拉，也可写会议条件（沿用上面的条件结构）：满足时先发卡片问本人，不满足直接拉；record 把会议的转写、会中聊天、进出记录存成会议原件；spec 旁听并在需要本人时提醒；answer 允许机器人在会中聊天里回答点名它的问题（只读会议所在空间和本人对访客开放的空间），answerFrom 是谁问才答（all 所有参会人，owner 只有本人），answerMode 是 draft（答案先发卡片给本人，本人点了才发到会里）或 auto（直接发），answerMax 是每场会最多回答几次，answerSpoken=true 时说话时叫到机器人也算，answerBy 是谁来查（assistant 主助手按本人权限查，guest 只读开放空间），answerNames 是机器人的其他叫法（如“助理”）；proactive 让旁听档案在会上主动查会上提到的点（交给本人决定是否发到会里），meetingKind 是会议性质（auto 自己判断、problem 解决问题、review 需求评审、other 同步周会），proactiveMax 是每场最多交几条；importShared 导入会上共享的文档；leaveWithOwner 本人离会时机器人一起离开；listen 是旁听方式（window 会中每隔 listenEvery 分钟看一次新说的，攒满 listenLines 行提前看；after 会中不看，只在会后写纪要），listenPrefilter 先用决策模型判断这一段值不值得看，listenRollover 是同一个 Agent 会话最多连着看几段，之后换新会话并带上已记下的事。本人没提这些就用默认值`;
 
-export async function draftRule(app: App, description: string, current?: Partial<RuleInput>): Promise<{ rule?: RuleInput; error?: string; summary?: string }> {
+export async function draftRule(app: App, description: string, current?: Partial<RuleInput>, situationId?: string): Promise<{ rule?: RuleInput; error?: string; summary?: string }> {
   const specs = listAgentSpecs(app).map((s) => `- ${s.name}：${s.description}`).join("\n") || "（还没有 Agent 档案）";
-  const contexts = listContexts(app, { activeOnly: true }).filter((c) => c.kind !== "default").slice(0, 60)
+  const contexts = listContexts(app, { activeOnly: true }).filter((c) => c.kind === "place" || c.kind === "item").slice(0, 60)
     .map((c) => `- ${c.id}：「${truncate(c.name, 40)}」（${c.kind === "item" ? "一件事" : `${c.chats.length} 个群`}）${c.note ? `：${truncate(c.note, 80)}` : ""}`).join("\n") || "（还没有关注）";
   const botName = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value;
   const backends = listAgentProfiles(app).filter((p) => p.installed).map((p) => {
@@ -53,7 +53,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     "",
     LANGUAGE,
     "",
-    ACTIONS,
+    situationId ? `这是情境的开始信号。只生成 message / doc / object / omem 触发，once=event，不等待、不跳过。唯一动作是 {"type":"context","context":${JSON.stringify(situationId)}}。不要把“同类事件每次都用这个情境”当成“同一回”。` : ACTIONS,
     "",
     `已有的 Agent 档案：\n${specs}`,
     "",
@@ -88,9 +88,9 @@ export async function draftRule(app: App, description: string, current?: Partial
   const raw = response?.rule && typeof response.rule === "object" && !Array.isArray(response.rule) ? response.rule as Record<string, unknown> : response;
   if (!raw) return { error: "模型没有给出可用的规则，请换个说法或手动填写" };
   if (typeof raw.error === "string") return { error: `模型没能生成规则：${raw.error}` };
-  const missing = [!raw.name && "规则名称", !Array.isArray(raw.actions) && "动作清单"].filter(Boolean);
+  const missing = [!raw.name && "规则名称", !situationId && !Array.isArray(raw.actions) && "动作清单"].filter(Boolean);
   if (missing.length) return { error: `模型没有生成完整的规则，缺少${missing.join("、")}。请重新生成，或在下方手动填写。` };
-  const parsed = ruleInputSchema.safeParse({ ...raw, spaceId: current?.spaceId, conversationId: current?.conversationId, description, enabled: current?.enabled ?? false });
+  const parsed = ruleInputSchema.safeParse({ ...raw, ...(situationId ? { actions: [{ type: "context", context: situationId }] } : {}), spaceId: current?.spaceId, conversationId: current?.conversationId, description, enabled: current?.enabled ?? false });
   if (!parsed.success) return { error: `模型给出的规则不完整：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；")}` };
   const rule = parsed.data;
   return { rule, summary: `条件：${describe(rule.conditions)}；判断：${rule.judge}；动作：${rule.actions.map((a) => a.type).join("、")}` };

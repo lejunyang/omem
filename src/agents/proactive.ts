@@ -14,7 +14,7 @@ import { listRules, type Firing } from "../rules/store.ts";
  * threshold. The host only gathers and counts; what to propose is the agents' call (roles/dreamer.md).
  */
 
-const KIND_LABEL: Record<ListenContext["kind"], string> = { place: "地方型", item: "事情型", default: "内置" };
+const KIND_LABEL: Record<ListenContext["kind"], string> = { place: "地方型", item: "事情型", situation: "情境", default: "内置" };
 const REPLY: Record<ListenContext["knobs"]["reply"], string> = { none: "不回", draft: "草稿", auto: "直接回" };
 const OWNER_ASKS: Record<ListenContext["knobs"]["ownerAsks"], string> = { notify: "只提醒本人", draft: "替本人拟草稿", answer: "可以直接答" };
 const LISTEN: Record<ListenContext["knobs"]["listen"], string> = { addressed: "只看找本人或机器人的", relevant: "看和说明相关的", all: "全看" };

@@ -39,7 +39,16 @@ function localize(db: DatabaseSync, from: "r" | "main", protectedRuns: string[] 
   const ids = (from === "r" ? "id in (select id from r.runs)" : "1") + (protectedRuns.length ? ` and id not in (${protectedRuns.map(() => "?").join(",")})` : "");
   // Retain the origin's revision time: a completion just after the snapshot must win the next pull.
   run(db, `update main.runs set status = 'cancelled', error = '在另一台机器上排队或运行中，拉取时取消', finished_at = coalesce(finished_at, started_at, created_at), profile_id = null, lane = null, not_before = null where status in ('queued','running') and ${ids}`, ...protectedRuns);
-  if (from === "main") run(db, "update conversations set agent_session = null, agent_cwd = null where agent_session is not null");
+  if (from === "main") {
+    run(db, "update conversations set agent_session = null, agent_cwd = null where agent_session is not null");
+    // An overwrite may restore a live window; keep its last known state but never resume it here.
+    run(db, `update items set status='cancelled', closed_at=updated_at where status not in ('done','cancelled','expired')
+      and id in (select item_id from situation_instances where status='active')`);
+    run(db, `update situation_instances set status='ended', summary=current, ended_at=window_until, closing_run=null, closing_deadline=null where status='active'`);
+    run(db, "delete from situation_feedback");
+    run(db, "delete from situation_seen");
+    run(db, "update listen_contexts set status='paused' where kind='situation'");
+  }
   const asks = from === "r" ? "id in (select id from r.asks)" : "1";
   for (const a of all<{ id: string; sync_updated_at: string }>(db, `select id,sync_updated_at from main.asks where status = 'pending' and kind != 'suggestion' and ${asks} and (run_id is null or not exists(select 1 from main.runs where id = main.asks.run_id and status in ('queued','running')))`)) {
     run(db, "update asks set status = 'cancelled', sync_updated_at = '' where id = ?", a.id);
@@ -295,13 +304,13 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
         const quoted = (c: string) => `"${c.replaceAll('"', '""')}"`;
         const match = t.key.map((k) => `l.${quoted(k)} is x.${quoted(k)}`).join(" and ");
         const sourceCheck = cols.includes("source_id") ? " and (x.source_id is null or x.source_id in (select id from main.sources))" : "";
-        const values = cols.map((c) => t.name === "digest_jobs" && c === "status" ? "case when x.status = 'active' then 'paused' else x.status end" : `x.${quoted(c)}`);
+        const values = cols.map((c) => (t.name === "digest_jobs" || t.name === "listen_contexts") && c === "status" ? (`case when x.status = 'active'${t.name === "listen_contexts" ? " and x.kind = 'situation'" : ""} then 'paused' else x.status end`) : `x.${quoted(c)}`);
         // A row this side already has under another key (the same `sync_key`) is not taken a second time.
         const known = cols.includes("sync_key") ? ` and (x.sync_key = '' or not exists(select 1 from main.${t.name} k where k.sync_key = x.sync_key))` : "";
         const added = run(db, `insert into main.${t.name}(${cols.map(quoted).join(",")}) select ${values.join(",")} from r.${t.name} x where not exists(select 1 from main.${t.name} l where ${match})${sourceCheck}${known}`).changes;
         let updated = 0;
         if (t.newer) {
-          const stamp = (a: string) => t.newer!.replace(/\b(finished_at|started_at|created_at|updated_at|due_at|handled_at|sync_updated_at|checked_at|removed_at|resolved_at|decided_at|settled_at|labelled_at|revised_at|at)\b/g, `${a}.$1`);
+          const stamp = (a: string) => t.newer!.replace(/\b(finished_at|started_at|ended_at|created_at|updated_at|due_at|handled_at|sync_updated_at|checked_at|removed_at|resolved_at|decided_at|settled_at|labelled_at|revised_at|at)\b/g, `${a}.$1`);
           const update = cols.filter((c) => !t.key.includes(c));
           updated = Number(run(db, `update main.${t.name} as l set ${update.map((c) => `${quoted(c)} = ${t.name === "digest_jobs" && c === "status" ? "case when x.status = 'active' then 'paused' else x.status end" : `x.${quoted(c)}`}`).join(",")} from r.${t.name} x where ${match} and ${stamp("x")} > ${stamp("l")}${sourceCheck}${t.name === "runs" ? " and l.status not in ('queued','running')" : ""}`).changes);
         }

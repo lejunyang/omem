@@ -11,6 +11,7 @@ import { now, truncate } from "../core/util.ts";
  * Kinds and what “changed” means for each (CHANGED, the one place it is said):
  */
 export const CHOICE_KINDS = {
+  situation: "要不要跟这一类事（按情境名）",
   line: "要不要建成工作线（按名字）",
   "line-end": "这条线要不要结束",
   "item-candidate": "助手自己建的候选事项要不要（按标题）",
@@ -26,6 +27,7 @@ const DAY = 86_400_000;
  * `versioned`: a new version of the object (its content fingerprint) may be proposed again.
  */
 export const CHANGED: Record<ChoiceKind, { days: number | null; versioned: boolean; why: string }> = {
+  situation: { days: null, versioned: false, why: "说过不用的同名情境不再提" },
   line: { days: 14, versioned: false, why: "说过不用建的名字两周内不再问" },
   "line-end": { days: 14, versioned: false, why: "说过还没完的线两周内不再问要不要结束" },
   "item-candidate": { days: 14, versioned: false, why: "说过不要的同名候选两周内不再建" },

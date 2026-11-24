@@ -1,4 +1,5 @@
 import { beforeBehavior, noteBehavior } from "../agents/behavior-changes.ts";
+import { situationCases } from "../situations/instances.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
@@ -23,7 +24,8 @@ function freshCases(app: App, c: ListenContext) {
   const cases = one<{ n: number }>(app.db, "select count(*) n from reply_samples where context_id = ? and (decision in ('sent','edited','dropped','disliked') or owner_reply is not null or verdict is not null) and max(created_at, coalesce(decided_at, ''), coalesce(owner_reply_at, '')) > ?", c.id, c.playbookAt ?? "")?.n ?? 0;
   // Problems followed to their end (listen-problems.ts) teach how far to follow: each counts as a case.
   const closed = one<{ n: number }>(app.db, "select count(*) n from listen_problems where context_id = ? and state = 'closed' and closed_at > ?", c.id, c.playbookAt ?? "")?.n ?? 0;
-  return cases + closed;
+  const ended = c.kind === "situation" ? one<{ n: number }>(app.db, "select count(*) n from situation_instances where context_id=? and user_id=? and status='ended' and ended_at>?", c.id, c.userId, c.playbookAt ?? "")?.n ?? 0 : 0;
+  return cases + closed + ended;
 }
 
 /** Problems it followed: how many rounds each took, what it waited for, how it ended (the newest first). */
@@ -71,10 +73,11 @@ export function coachTask(app: App, c: ListenContext) {
   const playbook = playbookOf(app, c, 12000, { demos: false });
   const shown = demoLessonsOf(app, c, 6000);
   const problems = problemsMaterial(app, c);
+  const situations = c.kind === "situation" ? situationCases(app, c, 30) : [];
   return [
     `# 关注「${c.name}」（${c.id}）`,
     "",
-    c.kind === "default" ? "这是内置的“有人找你”：所有私聊和 @ 本人的消息。" : `${c.kind === "item" ? "事情型" : "地方型"}关注，${c.chats.length} 个群。`,
+    c.kind === "situation" ? "这是情境：一类会反复发生的事。整理每回的查证、取舍与如何收尾，不建议在群里回话。" : c.kind === "default" ? "这是内置的“有人找你”：所有私聊和 @ 本人的消息。" : `${c.kind === "item" ? "事情型" : "地方型"}关注，${c.chats.length} 个群。`,
     c.note ? `本人要的：${c.note}` : "",
     briefText(c) || "（还没有关注说明）",
     "",
@@ -86,6 +89,7 @@ export function coachTask(app: App, c: ListenContext) {
     casesText(rows) || "（没有）",
     "",
     ...(problems ? ["## 跟过的问题（助手回完以后接着跟的，新的在前）", "", problems, ""] : []),
+    ...(situations.length ? ["## 已收尾的情境实例", ...situations.map(i => `- ${i.title}（事项 ${i.itemId}）：${truncate(i.summary, 400)}`)] : []),
     "按角色说明整理成场景，用 submit_playbook 交完整的新版本；案例不够看出规律就 stay_quiet。",
   ].filter((x) => x !== "").join("\n");
 }
@@ -141,13 +145,13 @@ export async function submitPlaybook(app: App, runId: string | null, input: { sc
   const beforeLessons = beforeBehavior(tracking, lessons);
   const text = render(c, input.scenes, known, input.notes);
   const path = playbookPath(c);
-  const r = writeWorkFile(app, { spaceId: c.spaceId ?? "personal", path, title: `关注「${c.name}」的经验`, text, runId });
+  const r = writeWorkFile(app, { spaceId: c.kind === "situation" ? "personal" : c.spaceId ?? "personal", path, title: `关注「${c.name}」的经验`, text, runId });
   for (const s of input.scenes) for (const id of s.cases ?? []) if (known.has(id)) run(app.db, "update reply_samples set scene = ? where id = ?", s.name, id);
   for (const x of input.case_scenes ?? []) if (known.has(x.case)) run(app.db, "update reply_samples set scene = ? where id = ?", x.scene, x.case);
   saveContext(app, { id: c.id, kind: c.kind, playbookAt: now(), playbookFile: path });
   noteBehavior(tracking, lessons, c.name, beforeLessons, { change_reason: input.change_reason ?? "整理近期案例，归纳各场景怎么处理" });
   let briefNote = "";
-  if (input.brief && c.kind !== "default") {
+  if (input.brief && c.kind !== "default" && c.kind !== "situation") {
     const same = c.brief && JSON.stringify([c.brief.handle, c.brief.skip, c.brief.valid]) === JSON.stringify([input.brief.handle, input.brief.skip, input.brief.valid]);
     if (!same) {
       const beforeWatch = beforeBehavior(tracking, watch);

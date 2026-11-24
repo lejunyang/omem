@@ -1,3 +1,4 @@
+import { situationToday, answerSituationToday } from "../situations/teaching.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, truncate, webLink, zonedParts } from "../core/util.ts";
@@ -268,24 +269,28 @@ async function weeklyPart(app: App, at: Date) {
 export async function buildToday(app: App, at = new Date(), userId = OWNER): Promise<Built | null> {
   const fields: UiField[] = [];
   const lines = linesPart(app, at, userId, fields);
+  const situations = situationToday(app, userId, FIELDS_MAX - fields.length);
+  fields.push(...situations.fields);
   const night = nightPart(app, at, userId, fields);
   const replay = userId === OWNER ? await replayPart(app, fields) : { text: "", effects: [], ran: false };
   const profiles = profilePart(app, userId, fields);
   const metrics = metricPart(app, userId, fields);
   const skip = new Set((night.ctx.ends as string[] | undefined) ?? []);
+  for (const id of situations.ids) skip.add(id);
   const waiting = waitingPart(app, await pendingActions(app, userId), skip);
   const nightText = [night.text, replay.text && (night.text ? replay.text : `**夜里整理出来的**\n${replay.text}`)].filter(Boolean).join("\n");
   const brief = userId === OWNER ? briefPart(app, at) : "";
   const later = laterPart(app, userId);
   const weekly = userId === OWNER ? await weeklyPart(app, at) : "";
-  const sections = [brief, waiting, lines.text, nightText, profiles.text, metrics.text, later, weekly].filter(Boolean);
+  const situationText = situations.ids.length ? `**下次同类的事**：${situations.ids.length} 条情境提议，选下方的按钮。` : "";
+  const sections = [brief, waiting, situationText, lines.text, nightText, profiles.text, metrics.text, later, weekly].filter(Boolean);
   // Held notifications (and the week's report, notified on its own) alone are no reason for a card.
-  if (!brief && !waiting && !lines.text && !nightText && !profiles.text && !metrics.text) return null;
+  if (!brief && !waiting && !situationText && !lines.text && !nightText && !profiles.text && !metrics.text) return null;
   return {
     question: [`**${todayTitle(app, at)}**`, ...sections, fields.length ? "下面能选的选了再提交，可以只选一部分；没选的照旧在工作页“需要你处理”和各条线上。" : ""].filter(Boolean).join("\n\n"),
     fields,
     context: {
-      handler: "today", day: zonedParts(at, app.config.timezone).date, next: lines.offered, ...night.ctx, ...(replay.effects.length ? { effects: replay.effects } : {}), replayRan: replay.ran,
+      handler: "today", situations: situations.ids, day: zonedParts(at, app.config.timezone).date, next: lines.offered, ...night.ctx, ...(replay.effects.length ? { effects: replay.effects } : {}), replayRan: replay.ran,
       ...(profiles.ids.length ? { profiles: profiles.ids } : {}), ...(metrics.ids.length ? { metrics: metrics.ids } : {}), ...(brief ? { brief: true } : {}),
     },
   };
@@ -385,6 +390,7 @@ async function settle(app: App, ask: Ask, ctx: Record<string, unknown>) {
   const tryOne = async (what: string, f: () => unknown) => {
     try { await f(); } catch (e) { console.warn(`[omem] 今天：${what}没办成：${(e as Error).message}`); }
   };
+  for (const id of (ctx.situations as string[] | undefined) ?? []) await tryOne("情境提议", async () => { if (await answerSituationToday(app, id, pick(`sit_${id}`), by)) count("处理情境提议"); });
   for (const id of (ctx.next as string[] | undefined) ?? []) {
     const p = pick(`n_${id}`);
     if (!p) continue;

@@ -80,8 +80,10 @@ function ownerSpokeSince(app: App, conversationId: string, since: string) {
  * it set the wake for itself, reporting to the conversation it was set from.
  */
 export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: string; skipped?: string } {
+  const situation = w.target.conversationId && one<{ status: string; window_until: string; closing_run: string | null }>(app.db, "select status,window_until,closing_run from situation_instances where conversation_id=?", w.target.conversationId);
+  if (situation && (situation.status !== "active" || situation.closing_run || situation.window_until <= now())) return { skipped: "情境窗口已结束" };
   // Set where the work was then; the owner may have carried it on elsewhere since (agents/home.ts).
-  const target = w.target.conversationId ? { ...w.target, conversationId: homeFor(app, w.setBy.runId, w.target.conversationId, w.setAt) } : w.target;
+  const target = w.target.conversationId && !situation ? { ...w.target, conversationId: homeFor(app, w.setBy.runId, w.target.conversationId, w.setAt) } : w.target;
   if (target.conversationId && w.skipIfOwnerSpoke && ownerSpokeSince(app, target.conversationId, w.setAt)) return { skipped: "本人之后已经说过话" };
   const stamp = (iso: string) => new Date(iso).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   const body = `${w.setBy.agent} 在 ${stamp(w.setAt)} 设的唤醒，现在（${stamp(now())}）到了${trigger ? `；触发它的事件：${trigger}` : ""}。备注：${w.note}`;

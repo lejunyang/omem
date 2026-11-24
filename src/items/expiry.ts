@@ -79,7 +79,9 @@ export function dueItems(app: App, opts: { at?: Date; withinDays?: number; space
   const since = expirySince(app);
   const backlog = backlogApplied(app);
   const out: DueItem[] = [];
+  const instanceItems = new Set(all<{ item_id: string }>(app.db, "select item_id from situation_instances where status='active'").map(i => i.item_id));
   for (const item of listItems(app, { status: "active", userId: opts.userId, spaceIds: opts.spaceIds, limit: 100_000 })) {
+    if (instanceItems.has(item.id)) continue;
     const expiry = itemExpiry(app, item);
     if (!expiry || Date.parse(expiry.at) > at) continue;
     out.push({ item, expiry, lastActivity: lastActivity(app, item), backlog: !backlog && expiry.at < since });
@@ -134,7 +136,9 @@ export async function handledCandidates(app: App, opts: { maxReactionChecks?: nu
   const backlog = backlogApplied(app);
   let reactionChecks = opts.maxReactionChecks ?? 15;
   const out: Candidate[] = [];
+  const instanceItems = new Set(all<{ item_id: string }>(app.db, "select item_id from situation_instances where status='active'").map(i => i.item_id));
   for (const item of listItems(app, { status: "active", userId: opts.userId, limit: 100_000 })) {
+    if (instanceItems.has(item.id)) continue;
     if (!backlog && item.createdAt < since) continue;
     // A line is not closed by one reply in its chat: its lifecycle ends it (items/lifecycle.ts).
     if (lineLike(app, item)) continue;

@@ -1,3 +1,4 @@
+import { SITUATIONS_MIGRATION } from "../situations/schema.ts";
 import { migrateItemProviders } from "../items/provider-schema.ts";
 import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -2487,6 +2488,7 @@ export const migrations: readonly string[] = [
   `alter table study_findings add column fix_queued_at text;
    alter table study_findings add column fix_note text not null default '';
    alter table study_scopes add column fix_ai text not null default '{}';`,
+  SITUATIONS_MIGRATION,
 ];
 
 export type Db = DatabaseSync;

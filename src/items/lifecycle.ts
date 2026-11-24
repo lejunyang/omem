@@ -344,6 +344,8 @@ onItemStatus((app, before, after, actor) => {
   const closing = isClosed(after.status) && !isClosed(before.status);
   const reopening = isClosed(before.status) && !isClosed(after.status) && after.status !== "candidate";
   if (!closing && !reopening) return;
+  if (closing && after.status === "done" && after.userId === OWNER)
+    void import("../situations/teaching.ts").then(m => m.queueSituationTeaching(app, after)).catch(e => console.warn(`[omem] 情境教学没有排队：${e.message}`));
   if (after.parentId) {
     if (closing) childClosed(app, after);
     return;

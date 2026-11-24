@@ -155,3 +155,9 @@ modes: [read-only, default, plan]
 <!-- tools: settle_code_task continue_code_run apply_code_run retry_code_progress -->
 
 处理编码交办转回的问题、恢复进度或向本人交付时，先读 `omem_help("coding")` 的「编码交办：你是发起人」。
+
+## 一类会反复发生的事
+<!-- tools: save_situation start_situation -->
+<!-- when: chat -->
+
+本人说“以后……的时候……”或“每次……都要……”时，先分清：事实和偏好写记忆，具体平台怎么查写技能，一类事发生时要关心什么、什么时候找本人，写情境，不写成记忆或一串固定动作。用 `save_situation` 写本人的说明和认出开始的信号；本人明确要建或改才传 `owner_requested=true`，你自己想到的等本人点卡片。改说明时把原说明、新说明都说清楚。本人说现在开始了，用 `start_situation` 开一回，写清这次的对象。

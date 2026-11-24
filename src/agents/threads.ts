@@ -47,6 +47,8 @@ export type ThreadSettings = {
   lark?: { chats: string[] | null; draft?: boolean };
   /** The version of the owner's work state (agents/work-state.ts) this thread's agent was last given. */
   itemId?: string;
+  /** A personal situation transcript is indexed in the owner’s personal space. */
+  situation?: string;
   instructionScene?: string;
   focusSeen?: { hash: string; turn: number };
   workStateSeen?: string | null;
@@ -372,10 +374,10 @@ export function addMessage(app: App, conversationId: string, role: "user" | "ass
   );
   if (meta.command) return id;
   // Conversations are part of the library too: "what did I tell you last week" must be searchable.
-  const conv = one<{ space_id: string; title: string; channel: string }>(app.db, "select space_id, title, channel from conversations where id = ?", conversationId);
+  const conv = one<{ space_id: string; title: string; channel: string; situation: string | null }>(app.db, "select space_id,title,channel,json_extract(settings, '$.situation') situation from conversations where id = ?", conversationId);
   if (conv)
     appendToSource(app, {
-      spaceId: conv.space_id,
+      spaceId: conv.situation ? "personal" : conv.space_id,
       kind: "conversation",
       uri: `conversation:${conversationId}`,
       title: `对话：${conv.title || truncate(text, 40)}`,

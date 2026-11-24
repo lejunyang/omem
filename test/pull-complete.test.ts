@@ -52,6 +52,8 @@ describe("complete portable pulls", () => {
       "plugin_events", "plugin_deliveries", "plugin_subscriptions", "outlet_deliveries",
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
+      // Only finished situation cases are portable, not this device’s delivery or dedupe state.
+      "situation_feedback", "situation_seen",
       // Live goals measure this machine's delegation worktree; unlike portable task/checkpoint history, never resume them on a pulled device.
       "board_peer_polls", "agent_work_tasks", "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors", "git_commit_cursors",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).

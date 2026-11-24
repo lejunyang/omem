@@ -40,7 +40,7 @@ export type ListenMeetingRun = { contextId: string; meetingId: string; topic: st
 
 const log = (text: string) => console.log(`[omem] 关注 · 会议：${text}`);
 const topicOf = (row: Pick<MeetingRow, "topic">) => row.topic.trim();
-const KIND_LABEL: Record<ListenContext["kind"], string> = { place: "看着几个群", item: "跟着一件事项和它的群", default: "有人找你，以及本人加入的会议" };
+const KIND_LABEL: Record<ListenContext["kind"], string> = { place: "看着几个群", item: "跟着一件事项和它的群", situation: "情境", default: "有人找你，以及本人加入的会议" };
 
 /**
  * Whether the default 关注 looks at the owner's meetings: Feishu and its bot are set up, the owner's

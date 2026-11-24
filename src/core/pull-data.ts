@@ -87,6 +87,8 @@ export const pullTables: Table[] = [
   { name: "reply_samples", key: ["id"], newer: "max(created_at, coalesce(decided_at, ''), coalesce(settled_at, ''))" },
   // 「关注」(channels/listen.ts): the owner's settings for each, whichever node changed them last.
   { name: "listen_contexts", key: ["id"], newer: "updated_at" },
+  // Ended cases are portable; prepareData removes live instances before merging.
+  { name: "situation_instances", key: ["id"], newer: "coalesce(ended_at, started_at)", local: ["closing_run", "closing_deadline"] },
   // The problems each 关注 follows (channels/listen-problems.ts): where each stands, its last update wins.
   { name: "listen_problems", key: ["id"], newer: "updated_at" },
   // Metrics (src/data/metrics.ts): definitions by their last change, points as recorded.
@@ -190,6 +192,7 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
   for (const t of all<{ name: string }>(remote, "select name from sqlite_master where type = 'trigger' and name glob '*_sync_*'")) remote.exec(`drop trigger ${t.name}`);
   const prepared: Prepared = { databasePath, sources: [], ids: new Map(), lines: new Map(), aliases: [], moves: [] };
   try {
+    run(remote, "delete from situation_instances where status='active'");
     const lookup = local.prepare("select * from sources where space_id = ? and uri = ?");
     // A source the other side has moved to another space is not at its new place here. It is the one
     // where it used to be (a move records the place it leaves in `source_locations`), unless the other

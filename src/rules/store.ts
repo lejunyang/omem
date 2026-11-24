@@ -178,6 +178,9 @@ export function saveRule(app: App, input: RuleSaveInput, by: "user" | "agent" = 
 
 /** Check the stored rule before writing either its new state or its schedule. */
 export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent", actor?: string, opts: SaveOptions = {}) {
+  const existing = input.id ? findRule(app, input.id) : null;
+  if (existing?.origin && "kind" in existing.origin && (!opts.origin || !("kind" in opts.origin) || opts.origin.contextId !== existing.origin.contextId))
+    throw new HttpError(409, "这是情境生成的规则，请到关注里修改或启停");
   const r = ruleInputSchema.parse(input);
   if (r.actions.some((a) => a.type === "script") && (by !== "user" || actor !== OWNER || input.temporary))
     throw new HttpError(403, "带脚本的规则只能由本人在规则页保存：脚本在这台机器上执行");
@@ -221,8 +224,11 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
         for (const u of a.runAs) if (!findUser(app, u)) throw new HttpError(400, `没有这个成员：${u}`);
       }
     }
-    // 交给关注: one that exists (a place or a matter; the built-in “someone looks for you” has no conversation to take it).
-    if (a.type === "context" && !["place", "item"].includes(getContext(app, a.context)?.kind ?? "")) throw new HttpError(400, `没有这个关注：${a.context}（交给关注要选一个已有的关注）`);
+    if (a.type === "context") {
+      const c = getContext(app, a.context);
+      if (!c || c.kind === "default") throw new HttpError(400, `没有这个关注：${a.context}（交给关注要选一个已有的关注）`);
+      if (c.kind === "situation" && ((actor && actor !== c.userId) || a.adopt)) throw new HttpError(403, "只有本人规则可交给本人的情境，情境不收编群");
+    }
   }
   const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;
   if (r.actions.some((a) => a.type === "wake") && !input.temporary && !prevTemp) throw new HttpError(400, "“唤醒”只用于 Agent 设的临时规则（wake 的 on_message）");
@@ -250,7 +256,7 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
     app.db,
     `insert into rules(id, name, description, enabled, trigger, conditions, judge, judge_with, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id, origin) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      on conflict(id) do update set name = excluded.name, description = excluded.description, enabled = excluded.enabled, trigger = excluded.trigger,
-       conditions = excluded.conditions, judge = excluded.judge, judge_with = excluded.judge_with, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary), space_id = excluded.space_id, conversation_id = excluded.conversation_id, origin = coalesce(rules.origin, excluded.origin)`,
+       conditions = excluded.conditions, judge = excluded.judge, judge_with = excluded.judge_with, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary), space_id = excluded.space_id, conversation_id = excluded.conversation_id, origin = case when json_extract(excluded.origin,'$.kind') = 'situation' then excluded.origin else coalesce(rules.origin,excluded.origin) end`,
     id,
     r.name,
     r.description,
@@ -279,8 +285,9 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
   return { rule: saved, needsOwnerConfirmation };
 }
 
-export function deleteRule(app: App, id: string) {
+export function deleteRule(app: App, id: string, situationId?: string) {
   const rule = getRule(app, id);
+  if (rule.origin && "kind" in rule.origin && rule.origin.contextId !== situationId) throw new HttpError(409, "这是情境生成的规则，请到关注里删除");
   run(app.db, "delete from rules where id = ?", id);
   if (one(app.db, "select 1 from schedules where id = ?", `rule:${id}`)) deleteSchedule(app, `rule:${id}`);
   run(app.db, "delete from rule_handled where rule_id = ?", id);
@@ -305,7 +312,7 @@ export function addressed(app: App, key: string) {
 }
 /** Whether any rule took this event (claimed it, to act now or after a wait). */
 export function claimedByRule(app: App, key: string) {
-  return !!one(app.db, "select 1 from rule_handled where key = ? and rule_id != ?", key, ADDRESSED);
+  return !!one(app.db, "select 1 from rule_handled h left join rules r on r.id=h.rule_id where h.key = ? and h.rule_id != ? and coalesce(json_extract(r.origin, '$.kind'), '') != 'situation'", key, ADDRESSED);
 }
 /**
  * Events the rules are judging right now, in this process (by event key; engine.ts marks them).
@@ -336,7 +343,7 @@ export function rulesJudging(key: string) {
 export function ruleClaim(app: App, key: string, chatKey: string, since: string): { rule: string; waiting: boolean } | null {
   const fired = one<{ name: string }>(app.db,
     `select r.name from rule_firings f join rules r on r.id = f.rule_id
-      where f.event_key in (?, ?) or (f.event_key = ? and f.at >= ?) order by f.id desc limit 1`,
+      where coalesce(json_extract(r.origin, '$.kind'), '') != 'situation' and (f.event_key in (?, ?) or (f.event_key = ? and f.at >= ?)) order by f.id desc limit 1`,
     key, `follow:${key}`, chatKey, since);
   if (fired) return { rule: fired.name, waiting: false };
   const pending = one<{ name: string }>(app.db,

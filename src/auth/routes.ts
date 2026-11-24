@@ -416,6 +416,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
     ].map((r) => [r, AGENTS]),
   ),
 
+  "POST /api/listen/:id/start": "owner",
+  "GET /api/situation-instances": "owner",
+  "GET /api/situation-instances/:id": "owner",
+  "POST /api/situation-instances/:id/end": "owner",
   ...Object.fromEntries(Object.values(ownerControls).flat().map(route => [route, "owner" as const])),
   "GET /api/ai": cap("settings.ai.view"),
   "POST /api/agents/:id/probe": "handler",

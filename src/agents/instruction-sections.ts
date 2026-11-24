@@ -1,14 +1,14 @@
 import { runKinds, type RunKind } from "./run-kinds.ts";
 
-export type InstructionScene = { kind?: RunKind; chat: boolean; awareness?: boolean };
-const known = new Set<string>(["chat", "background", "memory-write", "awareness", ...runKinds]);
+export type InstructionScene = { kind?: RunKind; chat: boolean; awareness?: boolean; situation?: boolean };
+const known = new Set<string>(["chat", "background", "memory-write", "awareness", "situation", ...runKinds]);
 
 export class UnknownScene extends Error {}
 
 export function sceneWords(scene: InstructionScene, tools: Set<string>) {
   return [scene.chat ? "chat" : "background", ...(scene.kind ? [scene.kind] : []),
     ...(tools.has("remember") || tools.has("supersede") ? ["memory-write"] : []),
-    ...(scene.awareness ? ["awareness"] : [])];
+    ...(scene.awareness ? ["awareness"] : []), ...(scene.situation ? ["situation"] : [])];
 }
 
 /** Validate every alternative, including a section hidden by a tool or capability. */

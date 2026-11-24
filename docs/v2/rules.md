@@ -282,3 +282,7 @@ Agent 动作可勾选“隐藏思考气泡”（`hideThinking`），不影响成
 
 `trigger.fast`（规则页“快速检查（每分钟）”，只用于新消息规则）：平常的采集（`lark-poll`，常驻服务器上每 10 分钟）之外，`rules/fast.ts` 的 `pollFastRules` 每分钟用本人的 lark-cli 搜两类消息：群里 @ 本人的（`+messages-search --at-chatter-ids <本人> --chat-type group`）和私聊的（`--chat-type p2p`），`--query` 是这些规则条件里 `message.text contains` 的词（没有就不带）。窗口从上次结束往前多看 2 分钟（搜索有延迟），只交给勾了快速检查的规则；同一条消息之后随采集再来时按 `rule_handled` 不重复触发。本人自己发的不算。实测常驻服务器上验证码机器人的私聊消息在搜索里马上能搜到（时间只到分钟）。
 
+
+## 情境生成的开始规则
+
+[情境](situations.md)把一句“怎么认出来”固化成普通触发条件；`origin.kind = situation` 及 `contextId`、`name` 标出来源，启停、改动和删除在情境入口完成。动作仍是 `context`；交给情境时按信号选择哪一回，不收编群聊，也不接管回复。

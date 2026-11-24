@@ -199,7 +199,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     kind: "ask",
     spaceId: turnSpaceFor(app, userId, thread.spaceId),
     title: truncate(text.replace(/\s+/g, " "), 60),
-    input: { conversationId: thread.id, messageIds: [messageId], ...(inb.fromAsk ? { fromAsk: true } : {}), ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
+    input: { conversationId: thread.id, messageIds: [messageId], ...(thread.settings.situation && thread.settings.itemId ? { itemId: thread.settings.itemId } : {}), ...(inb.fromAsk ? { fromAsk: true } : {}), ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
     lane: thread.id,
     userId,
     notBefore: mergeMs ? notBefore : null,

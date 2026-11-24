@@ -230,6 +230,10 @@ async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type
   let c = getContext(app, a.context);
   if (!c || c.kind === "default") throw new HttpError(404, `没有这个关注：${a.context}`);
   if (c.status !== "active" || (c.expiresAt && c.expiresAt <= now())) throw new HttpError(409, `关注「${c.name}」已经停下，没有交过去；要接着交，先在 连接 → 飞书会话 里重新打开它`);
+  if (c.kind === "situation") {
+    const r = await (await import("../situations/instances.ts")).routeSituation(app, c, e, rule.id);
+    return { action: "context", ok: true, ...r };
+  }
   if (!c.conversationId) throw new HttpError(409, `关注「${c.name}」还没有会话`);
   const conversationId = c.conversationId;
   const m = e.message;
