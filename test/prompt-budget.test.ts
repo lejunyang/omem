@@ -12,7 +12,8 @@ import { testApp } from "./helpers.ts";
 // longer than MCP's. Allow each measurement up to 64 extra characters across all five blocks.
 const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground: number, noneChat: number, noneBackground: number]> = {
   "commit-claim": ["commit-claim", 4379, 4484, 2206, 2206],
-  "item-follow": ["item-follow", 5035, 5140, 2862, 2862],
+  // The item-follow role now classifies actual next steps and records their completion conditions.
+  "item-follow": ["item-follow", 5415, 5520, 3242, 3242],
   "flow-reconcile": ["flow-reconcile", 6000, 6000, 4000, 4000],
   "assistant": ["agent", 19268, 18792, 1679, 1581],
   "ingest": ["ingest", 10091, 10000, 4763, 4763],

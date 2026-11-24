@@ -10,7 +10,7 @@ import { closeDueSituations, deliverSituation, listSituations, touchSituation, t
 /** Same attribution as ownerMoves: synthetic instructions, wakes and other speakers are not the owner's words. */
 export const OWNER_WORDS = `m.role='user' and coalesce(json_extract(m.meta,'$.userId'),'owner')=c.user_id
   and json_extract(m.meta,'$.speaker') is null and json_extract(m.meta,'$.asker') is null and json_extract(m.meta,'$.wake') is null
-  and json_extract(m.meta,'$.command') is null and json_extract(m.meta,'$.agentReport') is null and json_extract(m.meta,'$.codeResult') is null
+  and json_extract(m.meta,'$.command') is null and json_extract(m.meta,'$.agentReport') is null and json_extract(m.meta,'$.codeResult') is null and json_extract(m.meta,'$.itemStepApproval') is null
   and json_extract(m.meta,'$.fromAsk') is null and json_extract(m.meta,'$.submission') is null`;
 
 export function activeSituationsNote(app: App, userId: string, conversationId?: string, spaces?: string[] | null) {

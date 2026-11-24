@@ -290,6 +290,7 @@ export async function lessonsForTask(app: App, input: LessonInput) {
 export type RoleRunInput = {
   borrow?: { device: string; backend: string };
   boardAccess?: "read" | "write";
+  itemTakeoverRead?: boolean;
   /** Host-assigned trees for this invocation (helpers carry their own leases). */
   worktrees?: WorktreeRef[];
   worktreeAccess?: "read" | "commit";
@@ -510,7 +511,7 @@ const boardWrites = new Set(["remember", "write_page", "upsert_item"]);
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; investigationTools?: readonly string[]; boardAccess?: "read" | "write"; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean; worktrees?: WorktreeRef[]; reviewTrees?: WorktreeRef[]; worktreeAccess?: "read" | "commit"; inbox?: string },
+  input: { actor: Actor; investigationTools?: readonly string[]; itemTakeoverRead?: boolean; boardAccess?: "read" | "write"; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean; worktrees?: WorktreeRef[]; reviewTrees?: WorktreeRef[]; worktreeAccess?: "read" | "commit"; inbox?: string },
 ): PreparedRun {
   const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -593,11 +594,11 @@ export function prepareRun(
   if (egressRequested(app.config,profile) && egressSupport().ok) base.hostname = "127.0.0.1";
   const toolBase = base.origin;
   const reconciling = roleName === "flow-reconcile";
-  const browserProfilesRoot = !reconciling && (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.investigationTools && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
+  const browserProfilesRoot = !reconciling && (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.investigationTools && !input.itemTakeoverRead && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
   const browserGuard = browserProfilesRoot && userId !== OWNER ? guardUrlNow() : null;
-  const readOnly = reconciling || !!(input.boardAccess || input.investigationTools || input.reviewCheck || input.reviewLead || input.replay);
+  const readOnly = reconciling || !!(input.boardAccess || input.investigationTools || input.itemTakeoverRead || input.reviewCheck || input.reviewLead || input.replay);
   // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
   // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
   const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
@@ -624,7 +625,7 @@ export function prepareRun(
       throw new Error("档案的工作目录不属于本空间，不能从 omem 数据目录挂回沙箱");
   }
   const accessMode = runAccess(reconciling ? "per-role" : app.config.agents.fullAccess, {
-    owner: userId === OWNER && !input.shadow && !input.boardAccess && !input.investigationTools, guest: guestTurn, box: isolation.box, allowWrites, legacyFull,
+    owner: userId === OWNER && !input.shadow && !input.boardAccess && !input.investigationTools && !input.itemTakeoverRead, guest: guestTurn, box: isolation.box, allowWrites, legacyFull,
   });
   const memorySpaces = spacesWithCapability(app, userId, "memories.view");
   const guide = spaceGuide(app, space.id).trim();
@@ -690,7 +691,7 @@ export function prepareRun(
       // Someone else's run: the browsers it opens go through the guard that keeps them off this machine (remote/browser-guard.ts).
       ...(browserProfilesRoot && browserGuard ? { OMEM_BROWSER_PROXY: browserGuard } : {}),
       ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
-      ...(guest || input.boardAccess || input.investigationTools || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
+      ...(guest || input.boardAccess || input.investigationTools || input.itemTakeoverRead || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
     } },
     // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
     // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.

@@ -5,6 +5,7 @@ import { itemFocus } from "../agents/turn-context.ts";
 import { itemFlow, itemStages } from "../flows/store.ts";
 import { CODE_STARTERS } from "../agents/tool-help.ts";
 import { lineTimeline } from "../items/changes.ts";
+import { stepBrief } from "../items/change-step-store.ts";
 import { lineEndCases, md } from "../items/lifecycle.ts";
 import { declinedNext, nextOf } from "../items/lines.ts";
 import { materialsBrief } from "../items/materials.ts";
@@ -76,7 +77,7 @@ export async function assistDue(app: App, at = Date.now()) {
   const created: string[] = [];
   for (const c of listContexts(app, { kind: "item", activeOnly: true })) {
     if (today >= PER_DAY) break;
-    const mode = c.knobs.assist ?? "off";
+    const mode = c.knobs.assist ?? "act";
     if (mode === "off" || !c.itemId) continue;
     let item: Item;
     try { item = getItem(app, c.itemId); } catch { continue; }
@@ -112,7 +113,7 @@ export async function refreshLine(app: App, itemId: string, by: string) {
   let c = itemContext(app, item.id);
   if (!c || c.status !== "active") {
     const { setItemListening } = await import("./listen-items.ts");
-    c = setItemListening(app, item.id, true, c ? {} : { reply: "none", assist: "suggest" })!;
+    c = setItemListening(app, item.id, true, c ? {} : { reply: "none" })!;
   }
   const { runsInLane, getRun } = await import("../agents/runs.ts");
   const busy = runsInLane(app, lane(c.id));
@@ -168,7 +169,7 @@ export async function lineStateTask(app: App, c: ListenContext, item: Item, mode
     tree.length ? `\n## 下面的工作项\n\n${tree.join("\n")}` : "\n## 下面的工作项\n\n（没有，这件事自己就是一项工作）",
     `\n${await materialsBrief(app, item.id, item.userId, { compact: true })}`,
     summary ? `\n## 它的群里最近在聊\n\n${truncate(summary, 1500)}` : "",
-    changes.length ? `\n## 关键变化（新的在前，含下面的工作项）\n\n${changes.map((x) => `- ${localStamp(x.at, tz).slice(5)} [${x.type}·${x.origin}]${x.itemId !== item.id ? `「${truncate(x.itemTitle, 30)}」` : ""} ${truncate(x.summary, 160)}`).join("\n")}` : "\n## 关键变化\n\n（还没有记下的变化）",
+    changes.length ? `\n## 关键变化（新的在前，含下面的工作项）\n\n${changes.map((x) => `- ${localStamp(x.at, tz).slice(5)} [${x.type}·${x.origin}]${x.itemId !== item.id ? `「${truncate(x.itemTitle, 30)}」` : ""} ${truncate(x.summary, 160)}${x.steps?.length ? `\n  ${truncate(stepBrief(x.steps), 320)}` : ""}`).join("\n")}` : "\n## 关键变化\n\n（还没有记下的变化）",
     `\n## 数据\n\n${plan ? "已有观测计划。" : "还没有观测计划。"}${metrics.length ? `指标：${metrics.map((m) => `${m.name}${m.status === "proposed" ? "（AI 提议，待本人确认）" : ""}`).join("、")}（metric_read 看变化）。` : "还没有指标。"}${lessons ? `\n\n${lessons}` : ""}`,
     item.now ? `\n## 上次写的现状（${localStamp(item.now.at, tz)}）\n\n${item.now.text}${item.now.people.length ? `\n人：${item.now.people.map((p) => `${p.name}（${p.role}）`).join("、")}` : ""}${item.now.weeks.length ? `\n${item.now.weeks.map((w) => `${w.label}：${w.text}`).join("\n")}` : ""}` : "",
     open.length ? `\n## 还没定的下一步（这次交的会替换没开始的那些）\n\n${open.map((n) => `- [${n.status === "doing" ? "在做" : "没定"}] ${n.text}`).join("\n")}` : "",

@@ -14,7 +14,8 @@ describe("where a line stands (item 关注 assist)", () => {
     const app = testApp();
     const item = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "新版消息中心", dueAt: new Date(Date.now() + 2 * 86400_000).toISOString() } as never, "user");
     const c = saveContext(app, { kind: "item", itemId: item.id, name: "新版消息中心" });
-    expect(c.knobs.assist).toBe("suggest");
+    expect(c.knobs.assist).toBe("act");
+    saveContext(app, { id: c.id, kind: "item", knobs: { assist: "suggest" } });
     defineMetric(app, { name: "消息中心报错", query: "前端监控：/message 的 JS 报错", itemId: item.id });
     const ids = await assistDue(app);
     expect(ids).toHaveLength(1);

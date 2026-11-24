@@ -872,6 +872,24 @@ ${JSON.stringify({ check, tools })}`);
             if (process.env.FAKE_TOOL_LOG) appendFileSync(process.env.FAKE_TOOL_LOG, JSON.stringify({ name, text, isError: !!r.isError }) + "\n");
             return text;
           };
+          if (process.env.FAKE_ITEM_COMMANDS) {
+            for (const command of JSON.parse(process.env.FAKE_ITEM_COMMANDS) as string[][]) {
+              const { outcome } = await conn.requestPermission({ sessionId: p.sessionId,
+                toolCall: { toolCallId: `item-${command.join("-")}`, kind: "execute", rawInput: { command } },
+                options: [{ kind: "allow_once", optionId: "yes", name: "allow" }, { kind: "reject_once", optionId: "no", name: "reject" }] });
+              if (process.env.FAKE_TOOL_LOG) appendFileSync(process.env.FAKE_TOOL_LOG, JSON.stringify({ command, outcome }) + "\n");
+              if (process.env.FAKE_ITEM_EXECUTE) {
+                const step_id = [...prompt.matchAll(/（step_id: ([^\s）]+)）/g)].at(-1)?.[1];
+                if (!step_id) throw Error("执行轮没有收到要写回的步骤");
+                const allowed = outcome.outcome === "selected" && outcome.optionId === "yes";
+                await call("submit_item_step", { step_id, execution_status: allowed ? "executed" : "failed", result: allowed ? "已核对：示例单 A-17 已转为待复测" : "命令未获批准", refs: [] });
+              }
+            }
+          }
+          if (process.env.FAKE_ITEM_STEP) {
+            if (direct.has("lark_send")) throw Error("接手调查不能直接发送飞书消息");
+            await call("submit_item_step", JSON.parse(process.env.FAKE_ITEM_STEP));
+          }
           if (prompt.includes("# 发出前复核")) {
             if (process.env.FAKE_AWARE_QUIET) {
               await call("stay_quiet", { reason: "本人已经处理了" });

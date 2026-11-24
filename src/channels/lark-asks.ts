@@ -213,7 +213,7 @@ function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { targe
     const t = one<{ channel: string; external_id: string | null; last: string | null; topic: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastTopicId') topic, json_extract(settings, '$.lastMessageId') last from conversations where id = ?", ask.conversationId);
     // The host's own decisions about background work (a review plan, a finished review) reach the
     // person in Feishu even when the work was asked for elsewhere; an agent's question stays in its chat.
-    const hostAsk = !!one(app.db, "select 1 from asks where id = ? and json_extract(context, '$.handler') is not null", ask.id);
+    const hostAsk = !!one(app.db, "select 1 from asks where id = ? and (json_extract(context, '$.handler') is not null or json_extract(context, '$.itemStepOperation') is not null)", ask.id);
     if (t && t.channel !== "lark" && !t.channel.startsWith("lark:") && !hostAsk) return null;
     if (t?.external_id && (t.channel === "lark" || t.channel.startsWith("lark:"))) {
       // The card goes through the bot of the conversation (lark.bots), whose ids it then uses.

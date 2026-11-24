@@ -51,6 +51,13 @@
 | `stage_reopen` | `item`、`stage`、`reason`，可带 `refs`。该段重新开始，下游已完成的变成待复核，已跳过的保持跳过；正在做的照做，宿主问本人要不要停下（停下就取消并待复核，交办只停不删）。 |
 | `read_flow_reviews` | `flow?`、`item?`、`limit?`（默认 10，最多 20）。读已经结束的流程的回顾，新的在前：怎么结束的（`how`：completed / stopped / closed）、用了多久、轮次、返工合计、等本人最久的一段，每段的 `doingMinutes / gatedMinutes / blockedMinutes / ownerMinutes`、卡住的原因、`starts / reopened / refused / staled / escalated / reworks`、跳过及原因、关卡的问与答（`gate.direct`：问过且每次都直接同意）、现在的连续同意次数和是否已授权。只读本人自己的、可读空间里的事项。数字是宿主按阶段日志算的，口径见 `docs/v2/flows.md` 文末。 |
 | `note_item_change` | 只给 `item-follow` 角色交结果，不随分组授出。`item` 只能是本次运行跟进的事项；`type` 为 scope / decision / deadline / blocker / info / stage / result / owner / resolved（后四个：某一段做完或卡住、关键结果、负责人变了、风险解除）；`summary` 一句话，可带 `detail`（原因和经过）、`risk`（带来的风险）、`next`（接下来做什么、谁做）、需求点 `req`、本流程阶段 id 数组 `stages`。同一张表还有宿主自己写的变化（流程阶段做完、卡住、等本人，指标越过门槛，在跟的问题有了结论），都只记下、不发卡片，和跟进记的一起排成工作线的时间线。`refs` 至少一条本批次原件的行引用，deadline 必填 ISO 时间或日期 `due`；新时间是本人说的或材料写明已经定了才加 `decided: true`（截止时间直接改并告诉本人一次），只是有人提议就不加，由本人在卡片上选改或不改。`scope` / `decision` 是本人自己拍板或直接让助手去做的也加 `decided: true`：引用里有本人那句话时宿主当作本人选了并进，重开受影响的第一段（同一段的几条合成一次），不发卡片。不直接改需求点；其余影响进行中或已完成阶段的，等事项本人选并进、另开或不用管。 |
+| `submit_item_step` | 只给本次事项的接手轮和批准操作说明后的执行轮。`step_id` 填本轮指定的步骤，`result` 写结论，`refs` 放可读依据（原件、记忆、会话消息或 `run:<id>`）。接手时达到 `done_when` 才填 `done: true`；只读核对确实要本人定时可附 `decision: { title, options }`。`other` 到点回查一次，必要时可交一条关联群 `lark_send`，不绕过关注的回复档。 |
+
+`me-write` 还没有执行时，`result` 和 `refs` 写只读核对所得和依据。可重放的飞书写入、关联群机器人发言或平台对象动作交 `operation: { tool, args }`（卡片显示完整参数）；没有对应工具才交 `operation_note: { action, target, expected }`，分别写具体动作、对象和预期结果，不同时传两种。按技能用查询命令仍走现有规则，接手轮不运行会改外部状态的命令。`suggest` 不出执行卡；`act` 等本人点执行，才重放工具或在事项会话开普通主助手轮。批准只限一步，工具、命令和飞书写入各自的审批都照常。
+
+普通执行轮用 `execution_status: executed / failed / uncertain` 写回，不填 `done`、`decision` 或新的操作。已核对才报 `executed`；明确没有完成的报 `failed` 并写原因；可能已改但不能确认就报 `uncertain`，下次接手先只读核对，不重做。
+
+`note_item_change` 有下一步时传 `steps` 而不是只填文字 `next`，每条是 `{ who, step, done_when }`，`who` 取 `me-read / me-write / owner / other`。`other` 再填 `waiting_for` 和带时区的 `check_at`。可把“核对后更新”拆成同一变化里先读后写的两步。宿主用步骤生成时间线里的下一步；旧记录的 `next` 仍可读。`read_item` 的变化带 `steps`，含核对状态、回查时间、结果和引用。
 
 `read_item(item_id)` 的 `flow` 返回流程摘要、阶段状态、进入时间、承担者、等待对象、依据和最近 50 条日志，还带当前轮、重复方式、下一轮时间、是否可手动开始、各段等待的时刻、指定和实际 AI、预算及已用分钟、升档次数、最近 10 轮结果快照。`changes` 是最近十条变化、状态与引用，`follow` 是当前订阅原件、已处理位置及待处理数量。工具只能修改本次运行可读且可写空间里、属于调用者的事项。
 

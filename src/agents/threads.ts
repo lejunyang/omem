@@ -372,7 +372,8 @@ export function addMessage(app: App, conversationId: string, role: "user" | "ass
     truncate(text.replace(/\s+/g, " "), 40),
     conversationId,
   );
-  if (meta.command) return id;
+  // Keep one-turn approvals in the conversation, not as reusable instructions in the search index.
+  if (meta.command || meta.itemStepApproval) return id;
   // Conversations are part of the library too: "what did I tell you last week" must be searchable.
   const conv = one<{ space_id: string; title: string; channel: string; situation: string | null }>(app.db, "select space_id,title,channel,json_extract(settings, '$.situation') situation from conversations where id = ?", conversationId);
   if (conv)

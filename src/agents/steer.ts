@@ -39,11 +39,12 @@ export async function injectSteering(app: App, runId: string, deliver: AcpHandle
 export function claimSteering(app: App, runId: string) {
   const r = one<{ kind: string; status: string; lane: string | null; input: string }>(app.db, "select kind, status, lane, input from runs where id = ?", runId);
   if (!r || r.kind !== "ask" || r.status !== "running" || !r.lane || ending(app, runId)) return null;
-  const input = JSON.parse(r.input) as { conversationId?: string; userId?: string; messageId?: string; messageIds?: string[] };
+  const input = JSON.parse(r.input) as { conversationId?: string; userId?: string; messageId?: string; messageIds?: string[]; itemStepApproval?: string };
   const conversationId = input.conversationId;
-  if (!conversationId) return null;
+  // A card authorizes one step, not messages moved in from another turn (in either direction).
+  if (!conversationId || input.itemStepApproval) return null;
   const next = queuedInLane(app, r.lane, "ask");
-  if (!next) return null;
+  if (!next || next.input.itemStepApproval) return null;
   const ids = (next.input.messageIds as string[] | undefined) ?? [];
   const msgs = threadMessages(app, conversationId, { limit: 400 }).filter((m) => ids.includes(m.id) && m.role === "user" && !m.meta.answer);
   if (!msgs.length) return null;

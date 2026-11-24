@@ -2,6 +2,7 @@ import { inlineStages } from "../flows/inline.ts";
 import { readReconcileObject, reconcileResultSchema, submitReconcile } from "../flows/reconcile.ts";
 import { beforeBehavior, changeWords, noteBehavior } from "./behavior-changes.ts";
 import { saveSituationArgs, startSituationArgs, updateSituationArgs, proposeSituationArgs, saveFromChat, startFromChat, updateFromTurn, proposeFromSettle } from "../situations/tools.ts";
+import { changeSchema, stepReportSchema, type StepOperation } from "../items/change-step-store.ts";
 import { boardLarkCommand, boardLarkDocument, requireBoardLarkMessages } from "./board-lark-read.ts";
 import { knownKind, checkKind } from "../plugins/formats.ts";
 import { ruleVisible, ruleSummary } from "../rules/visibility.ts";
@@ -95,7 +96,7 @@ import { saveRuleWithConfirmation } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
 import { assignedInput, assignedToolInput, syncAssigned } from "../items/assigned-sweep.ts";
-import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
+import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, TOOL_GROUPS, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
@@ -109,6 +110,7 @@ export type ToolContext = {
   /** Host-selected directory for browsers opened locally by this run. */
   browserProfilesRoot?: string;
   app: App;
+  itemStepOperation?: { id: string; recheck: boolean };
   runId: string | null;
   /** Default space for tools that take an optional `space`. */
   spaceId: string;
@@ -2614,12 +2616,19 @@ def({
 
 def({
   name: "note_item_change", description: "交代这批新内容让本次跟进的事项变了什么；一条只说一个变化，每条带批次内原件的行引用，deadline 必须填 due。只给 item-follow 角色交结果。",
-  write: true, schema: z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info", "stage", "result", "owner", "resolved"]).describe("scope 范围 / decision 决定 / deadline 时间 / blocker 阻塞或风险 / info 其他信息 / stage 某一段做完或卡住 / result 关键结果、数据越过门槛 / owner 负责人变了 / resolved 之前的风险解除了"), summary: z.string().trim().min(1).max(500).describe("一句话：变了什么"), detail: z.string().max(6000).optional().describe("原因和经过"), risk: z.string().trim().max(1000).optional().describe("这条变化带来的风险（没有就不填）"), next: z.string().trim().max(1000).optional().describe("接下来要做什么、谁做（没有就不填）"), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional(),
-    decided: z.boolean().optional().describe("deadline：新时间是本人说的，或材料写明已经定了，填 true，截止时间直接改；scope / decision：本人自己拍板、或本人直接让助手去做的，填 true，引用里有本人那句话时直接并进、不再问本人。只是有人提议就不填，由本人定") }),
+  write: true, schema: changeSchema,
   handler: async (ctx, a) => {
     if (ctx.role !== "item-follow" || !ctx.runId) throw new HttpError(403, "只有 item-follow 能交事项变化");
     flowItem(ctx, a.item, "write"); await flowRefs(ctx, a.refs);
     return JSON.stringify((await import("../flows/follow.ts")).noteItemChange(ctx.app, ctx.runId, a));
+  },
+});
+def({
+  name: "submit_item_step", description: "接手轮写回只读核对的结果和依据；有本人要定的事才填 decision；要写外部系统，交可重放的工具或操作说明，不直接执行。操作说明获准后的执行轮用 execution_status 交结果。",
+  write: true, schema: stepReportSchema,
+  handler: async (ctx, a) => {
+    if (ctx.role !== "assistant" || !ctx.runId) throw new HttpError(403, "只有接手运行能写回下一步");
+    return (await import("../flows/takeover.ts")).submitItemStep(ctx.app, ctx.runId, a, ctx.spaces);
   },
 });
 def({
@@ -3583,7 +3592,7 @@ def({
     strictness: z.number().min(0.5).max(0.95).optional(),
     per_day: z.number().int().min(1).max(500).optional(),
     meetings: z.enum(["off", "ask", "listen"]).optional(),
-    assist: z.enum(["off", "suggest", "act"]).optional().describe("事情型关注：主动推进，off / suggest 只提建议（默认）/ act 只读的事先做"),
+    assist: z.enum(["off", "suggest", "act"]).optional().describe("事项关注的主动推进：off 不接手 / suggest 只读核对、写入只提建议 / act（默认）写入要本人确认"),
     prefilter: z.boolean().optional().describe("false：每批都交给你，不先筛（本人要求这个群每批都看时）"),
     space: z.string().optional().describe("这些群的材料与记录放哪个空间"),
     remove: z.boolean().optional().describe("不再关注（本人说不用关注了时）"),
@@ -5921,6 +5930,10 @@ def({
     const done: string[] = [];
     const unchanged: string[] = [];
     for (const r of targets) {
+      if (r.input.itemStepApproval && r.status !== "queued") {
+        unchanged.push(`${r.id}：已确认的外部操作不能重开，请先核对结果`);
+        continue;
+      }
       if (typeof r.output.replacedBy === "string") {
         unchanged.push(`${r.id} 已由 ${r.output.replacedBy} 接手`);
         continue;
@@ -7415,6 +7428,22 @@ async function checkToolOperation(
   return null;
 }
 
+/** The confirmation shows exactly the canonical tool arguments that will be replayed. */
+export async function itemStepOperation(app: App, userId: string, spaceId: string, op: StepOperation): Promise<StepOperation> {
+  const { loadRole } = await import("./runner.ts");
+  const allowed = new Set(["lark_send", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_write",
+    ...(TOOL_GROUPS.find(g => g.id === "object-actions")?.tools ?? [])]);
+  const tool = allowed.has(op.tool) && toolList().find(t => t.name === op.tool && t.write);
+  if (!tool || !contextToolNames({ app, userId, spaceId, spaces: [spaceId], writable: [spaceId], runId: null, actor: "agent", tools: new Set(loadRole("assistant", app).tools) }).has(op.tool))
+    throw new HttpError(403, "主助手没有这项外部写入工具；不能改用命令或其他工具绕过");
+  const args = tool.schema.parse(op.args) as Record<string, unknown>;
+  if (op.tool === "lark_send" && (args.user_id || args.urgent || args.only_to || !args.chat_id || (args.mentions as string[] | undefined)?.includes("all")))
+    throw new HttpError(400, "只能用机器人在事项关注的关联群回复，不私聊、不加急、不指定部分成员");
+  if (op.tool === "lark_write" && args.approval_targets) throw new HttpError(400, "只确认这一个目标，不随操作申请其他文件的审批");
+  if (JSON.stringify(args).length > 7000) throw new HttpError(400, "操作参数太长，不能完整放在确认卡片里");
+  return { tool: op.tool, args };
+}
+
 export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean; deniedCapability?: string }> {
   if (name === "omem_help" || name === "omem_call") {
     const parsed = metaArgs[name].safeParse(args ?? {});
@@ -7440,6 +7469,14 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   ctx = { ...ctx, ...scope };
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
+  if (ctx.itemStepOperation) {
+    try {
+      const { checkStepOperation } = await import("../flows/takeover.ts");
+      const op = await itemStepOperation(ctx.app, ctx.userId ?? OWNER, ctx.spaceId, { tool: name, args: parsed.data as Record<string, unknown> });
+      const c = checkStepOperation(ctx.app, ctx.runId, ctx.userId ?? OWNER, ctx.itemStepOperation.id, name, op.args, ctx.itemStepOperation.recheck);
+      ctx = { ...ctx, larkChats: c.knobs.reply === "none" ? [] : c.chats, larkDraft: c.knobs.reply !== "auto" };
+    } catch (e) { return { text: (e as Error).message, isError: true }; }
+  }
   const larkIdentity = larkToolIdentity(name, parsed.data);
   const acting = ruleLarkMember(ctx);
   if (acting && larkIdentity === "owner") return { text: "这项操作需要本人身份，请先 act_as(null) 换回本人。", isError: true };
@@ -7616,6 +7653,8 @@ setApprovalExecutor(async (app, ask, snapshot) => {
     return { text: "已拒绝", isError: false };
   }
   const out = await callTool(ctx, ask.tool, ask.args ?? {});
+  if (ctx.runId && ctx.itemStepOperation && !ctx.itemStepOperation.recheck)
+    (await import("../flows/takeover.ts")).noteStepOperationResult(app, ctx.runId, ctx.itemStepOperation.id, out);
   if (operationApproval || larkApprover || out.isError) return out;
   // The owner keeps approving this tool: ask once whether it may run and be reported instead (approval-ladder.ts).
   void import("./approval-ladder.ts").then((m) => m.suggestPromotion(app, ask, (t) => !alwaysApprove.has(t))).catch((e) => console.warn(`[omem] 审批阶梯：${(e as Error).message}`));

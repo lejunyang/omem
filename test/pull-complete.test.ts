@@ -56,6 +56,8 @@ describe("complete portable pulls", () => {
       "situation_feedback", "situation_seen",
       // Live goals measure this machine's delegation worktree; unlike portable task/checkpoint history, never resume them on a pulled device.
       "board_peer_polls", "agent_work_tasks", "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors", "git_commit_cursors",
+      // Takeover steps can hold live execution approvals; pull merges the change, not its execution queue.
+      "item_change_steps",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
       // Subscriptions and pending external writes are tied to this device's connections.

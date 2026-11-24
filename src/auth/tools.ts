@@ -21,7 +21,7 @@ const toolCapabilities: Record<string, ToolCapability> = {
   scan: "search.use", find_symbol: "search.use", source_outline: "sources.view", list_sources: "sources.view",
   write_file: "sources.edit", save_note: "sources.edit", import_url: "sources.edit", annotate_source: "sources.edit", set_source_attention: "sources.edit",
   describe_source: "sources.edit", review_notes: "sources.edit",
-  attach_object: "items.edit",
+  attach_object: "items.edit", note_item_change: "items.edit", submit_item_step: "items.edit",
   list_memory_folders: "memories.view", remember: "memory.write", supersede: "memory.write", forget: "memory.write",
   review_memories: "memory.write", organize_memories: "memory.write",
   write_page: "wiki.write", correct_page: "wiki.write", move_page: "wiki.write", confirm_page: "wiki.write", generate_wiki: "wiki.write",

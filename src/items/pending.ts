@@ -28,7 +28,7 @@ function titleOf(text: string) {
 const askCategories: Record<string, [PendingAction["group"], string]> = {
   "item-deadline-check": ["work", "临期预查"],
   "today": ["propose", "今天"], "line-propose": ["propose", "工作线"], "line-next": ["propose", "下一步"], "line-end": ["propose", "工作线"],
-  "wiki-questions": ["ask", "提问"], "item-follow": ["propose", "变化"], "flow-stage": ["work", "流程"], "flow-reconcile-step": ["work", "流程"], "flow-save": ["propose", "流程"],
+  "item-step": ["work", "下一步"], "wiki-questions": ["ask", "提问"], "item-follow": ["propose", "变化"], "flow-stage": ["work", "流程"], "flow-reconcile-step": ["work", "流程"], "flow-save": ["propose", "流程"],
   "situation-enable": ["propose", "情境"], "situation-teach": ["propose", "情境"], "situation-teach-edit": ["propose", "情境"],
   "rule-enable": ["propose", "规则"], "reply-promote": ["propose", "回复"], "approval-promote": ["propose", "授权"],
   "flow-gate-promote": ["propose", "授权"], "commit-claim": ["work", "认领"], "study-plan": ["work", "研究"],
@@ -87,7 +87,8 @@ export async function pendingView(app: App, userId: string) {
     `select a.*, i.id itemId, coalesce(json_extract(a.context,'$.deadline'),json_extract(a.context,'$.expiresAt')) deadline
      from asks a left join runs r on r.id=coalesce(a.run_id,json_extract(a.context,'$.runId')) left join conversations t on t.id=a.conversation_id
      left join items i on i.id=coalesce(json_extract(a.context,'$.itemId'),json_extract(a.context,'$.lineId'),json_extract(r.input,'$.itemId'),json_extract(r.input,'$.lineState'))
-     where a.status='pending' and a.user_id=? and (i.id is null or ${itemOwner}) and ${visible("i.space_id")}
+     where a.status='pending' and a.user_id=? and (i.id is null or ${itemOwner})
+       and (coalesce(json_extract(a.context,'$.handler'),'')!='item-step' or i.status not in ('done','cancelled','expired')) and ${visible("i.space_id")}
        and ${visible("r.space_id")} and ${visible("t.space_id")} and ${visible("json_extract(a.context,'$.spaceId')")}
        and ${visible("json_extract(a.context,'$.repo')")}
        ${spaces ? `and (coalesce(json_extract(a.context,'$.handler'),'') not in ('line-next','line-propose') or not exists (

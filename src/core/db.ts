@@ -2489,6 +2489,14 @@ export const migrations: readonly string[] = [
    alter table study_findings add column fix_note text not null default '';
    alter table study_scopes add column fix_ai text not null default '{}';`,
   SITUATIONS_MIGRATION,
+  `create table item_change_steps (
+     id text primary key, change_id text not null references item_changes(id) on delete cascade,
+     batch_id text not null, anchor text not null, item_id text not null, who text not null,
+     step text not null, done_when text not null, waiting_for text, check_at text, state text not null,
+     run_id text, ask_id text, result text, refs text, updated_at text not null);
+   create index item_change_steps_change on item_change_steps(change_id,id);
+   create index item_change_steps_batch on item_change_steps(batch_id,id);
+   create index item_change_steps_ready on item_change_steps(check_at,batch_id) where state in ('pending','waiting');`,
 ];
 
 export type Db = DatabaseSync;

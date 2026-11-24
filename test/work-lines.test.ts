@@ -198,7 +198,7 @@ describe("工作线：现状和下一步", () => {
     const lone = upsertItem(app, undefined, { title: "项目 A" }, "user");
     const again = await refreshLine(app, lone.id, "owner");
     expect(getRun(app, again.id).input.lineState).toBe(lone.id);
-    expect(itemContext(app, lone.id)!.knobs).toMatchObject({ reply: "none", assist: "suggest" });
+    expect(itemContext(app, lone.id)!.knobs).toMatchObject({ reply: "none", assist: "act" });
     await expect(refreshLine(app, req.id, "owner")).rejects.toThrow(/工作线上更新/);
   });
 
@@ -273,7 +273,7 @@ describe("工作线：每晚提议", () => {
     const made = one<{ id: string }>(app.db, "select id from items where kind = 'line' and title = '项目 A 上线'")!;
     expect(getItem(app, other.id).parentId).toBe(made.id);
     expect(getItem(app, made.id).detail).toBe("12 月上线");
-    expect(itemContext(app, made.id)).toMatchObject({ status: "active", knobs: { reply: "none", assist: "suggest" } });
+    expect(itemContext(app, made.id)).toMatchObject({ status: "active", knobs: { reply: "none", assist: "act" } });
     expect(itemContext(app, made.id)!.chats).toEqual(["oc_a"]);
     // 不用: not asked again for two weeks.
     const r2 = running(app, "work-state");
@@ -311,7 +311,7 @@ describe("工作线：接口", () => {
     expect(l.next.map((n: { text: string }) => n.text)).toEqual(["补测试"]);
     expect(l.children[0]).toMatchObject({ id: req.id, parentId: line.id, flow: { name: "示例交付", current: { id: "test" } } });
     expect(l.children[0].flow.stages.map((s: { state: string }) => s.state)).toEqual(["done", "doing", "pending"]);
-    expect(l.listen).toMatchObject({ assist: "suggest" });
+    expect(l.listen).toMatchObject({ assist: "act" });
     expect(w.loose.map((i: { id: string }) => i.id)).toEqual([loose.id]);
     expect(Object.keys(w.waiting).sort()).toEqual(["asks", "candidates", "changes", "drafts", "gates", "total"]);
     const d = (await server.inject(`/api/work/${req.id}`)).json();

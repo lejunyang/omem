@@ -708,8 +708,12 @@ async function tellRun(app: App, ask: Ask, c: GateContext, note: string) {
   const { notify } = await import("../core/notify.ts");
   const fallback = () => notify(app, { title: "命令审批有了结果", body: note, link: runId ? `#/runs/${runId}` : "#/" });
   if (!runId) return fallback();
-  const r = one<{ input: string }>(app.db, "select input from runs where id = ?", runId);
-  const input = safeJson(r?.input) as { conversationId?: string; threadId?: string; spec?: string };
+  const r = one<{ input: string; user_id: string | null }>(app.db, "select input,user_id from runs where id = ?", runId);
+  const input = safeJson(r?.input) as { conversationId?: string; threadId?: string; spec?: string; itemStepApproval?: string };
+  // An approval received while the original request is waiting still goes through signalDecision.
+  // Once it is no longer waiting, don't start an untracked second attempt at this one-shot step.
+  if (input.itemStepApproval) return notify(app, { userId: r?.user_id ?? OWNER, title: "事项步骤的命令审批有了结果",
+    body: "原执行轮已不在等这项审批，不会自动再执行。请先核对步骤结果。", link: `#/runs/${runId}` });
   const conversationId = input.conversationId ?? input.threadId;
   const target = conversationId ? { conversationId } : input.spec ? { spec: input.spec, resumeRunId: runId } : null;
   if (!target) return fallback();

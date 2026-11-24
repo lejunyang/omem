@@ -153,7 +153,11 @@ export async function ask(app: App, input: { text: string; ownerText?: boolean; 
   return { conversationId: r.thread.id, messageId: r.messageId, runId: r.runId, reply: r.reply, merged: r.merged };
 }
 
-registerHandler("ask", async (ctx) => {
+registerHandler("ask", ctx => ctx.run.input.itemStepApproval
+  ? import("../flows/takeover.ts").then(m => m.runApprovedItemStep(ctx, runAsk))
+  : runAsk(ctx));
+
+async function runAsk(ctx: RunContext) {
   const input = ctx.run.input as { conversationId: string; messageIds?: string[]; messageId?: string; userId?: string };
   const ids = input.messageIds ?? (input.messageId ? [input.messageId] : []);
   const all = threadMessages(ctx.app, input.conversationId, { limit: 400 });
@@ -205,9 +209,11 @@ registerHandler("ask", async (ctx) => {
     return { answer, messageId: id, session: r.mode };
   }
   // Nobody waits on it and the owner spoke in its scope meanwhile: one more turn with their words first (awareness.ts).
-  answer = await recheckAnswer(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id), prompt)).text);
-  // A reply that says nothing (only what it is about to do, a bare “收到”, only ways out): back to it once (reply-check.ts).
-  answer = await reviseHollow(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id), prompt)).text);
+  if (!ctx.run.input.itemStepApproval) {
+    answer = await recheckAnswer(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id), prompt)).text);
+    // A reply that says nothing (only what it is about to do, a bare “收到”, only ways out): back to it once (reply-check.ts).
+    answer = await reviseHollow(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id), prompt)).text);
+  }
   // It said it has nothing to say (stay_quiet, only where nobody waits on the turn): nothing is posted.
   const quiet = quietReason(ctx.app, ctx.run.id);
   // Woken by a wake-up it set: nobody waits on it either.
@@ -252,7 +258,7 @@ registerHandler("ask", async (ctx) => {
   const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
   maybeSummarize(ctx.app, input.conversationId);
   return { answer, messageId: id, session: r.mode };
-});
+}
 
 /**
  * The main assistant's reply after agents reported: posted where the owner follows the work (its

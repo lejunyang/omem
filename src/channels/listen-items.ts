@@ -1,3 +1,4 @@
+import { stepBrief, stepViews } from "../items/change-step-store.ts";
 import type { itemFocus } from "../agents/turn-context.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -215,12 +216,13 @@ export function itemStateText(app: App, { item, flow, stages }: ReturnType<typeo
     const name = at && flow.definition.stages.find(s => s.id === at.id)?.name;
     stage = at ? `，流程走到「${name ?? at.id}」（${STAGE_STATE[at.state]}）` : "，流程在走";
   }
-  const changes = all<{ type: string; status: string; summary: string; due: string | null }>(app.db, "select type, status, summary, due from item_changes where item_id = ? order by at desc, id desc limit 3", item.id);
+  const changes = all<{ id: string; type: string; status: string; summary: string; due: string | null }>(app.db, "select id, type, status, summary, due from item_changes where item_id = ? order by at desc, id desc limit 3", item.id);
   return [
     "## 这件事现在的样子",
     "",
     `- 事项 ${item.id}「${truncate(item.title, 80)}」[${item.kind}/${item.status}]，截止 ${item.dueAt ?? "未定"}${stage}`,
     ...(changes.length ? [`- 最近的变化：${changes.map((c) => `[${c.type}/${c.status}] ${truncate(c.summary, 80)}${c.due ? `（${c.due}）` : ""}`).join("；")}`] : []),
+    ...changes.flatMap(c => stepViews(app, c.id).filter(s => s.status === "done").map(s => `- ${truncate(stepBrief([s]), 300)}`)),
     "- 群里有人问这件事的进展、范围、时间，按这些和 read_item 查到的回答；提议还没被本人定下的，不说成已经定了。",
   ].join("\n");
 }

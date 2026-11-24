@@ -15,7 +15,9 @@ import { itemContext } from "../channels/listen.ts";
 import { itemFlow, itemStages, type ItemFlow } from "./store.ts";
 import { sourceReadable } from "../auth/visibility.ts";
 import { itemFollowLane } from "./reconcile.ts";
-import { CHANGE_TYPES, recordChange } from "../items/changes.ts";
+import { recordChange } from "../items/changes.ts";
+import { changeSchema, saveChangeSteps, stepBrief, stepViews } from "../items/change-step-store.ts";
+import { checkDueChangeSteps, queueChangeSteps } from "./takeover.ts";
 
 type Source = { id: string; kind: string; title: string; space_id: string; updated_at: string; uri: string; captured_at: string };
 type Cursor = { source_id: string; line: number; source_updated_at: string; started_at: string; seen: string | null };
@@ -26,21 +28,21 @@ type Cursor = { source_id: string; line: number; source_updated_at: string; star
 type Part = { source: string; from: number; to: number; updatedAt: string; lines: { line: number; text: string; owner?: boolean }[]; seen?: number[] };
 type Batch = { startedAt: string; parts: Part[] };
 type ChangeRow = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; req: string | null; stages: string; refs: string; run_id: string; status: string; ask_id: string | null; due: string | null; risk?: string | null; next?: string | null; origin?: string; noise?: number };
-const viewChange = (r: ChangeRow) => ({ id: r.id, itemId: r.item_id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, req: r.req, stages: json<string[]>(r.stages, []), refs: json<string[]>(r.refs, []), runId: r.run_id, status: r.status, askId: r.ask_id, due: r.due, risk: r.risk ?? null, next: r.next ?? null, origin: r.origin ?? "follow", noise: !!r.noise });
+const viewChange = (app: App, r: ChangeRow) => ({ id: r.id, itemId: r.item_id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, req: r.req, stages: json<string[]>(r.stages, []), refs: json<string[]>(r.refs, []), runId: r.run_id, status: r.status, askId: r.ask_id, due: r.due, risk: r.risk ?? null, next: r.next ?? null, origin: r.origin ?? "follow", noise: !!r.noise, steps: stepViews(app, r.id) });
 /** What following the item's places found (origin `follow`); the other writers' changes are on the line's timeline (items/changes.ts). */
 export function recentChanges(app: App, id: string) {
-  return all<ChangeRow>(app.db, "select * from item_changes where item_id=? and origin='follow' order by at desc,id desc limit 10", id).map(viewChange);
+  return all<ChangeRow>(app.db, "select * from item_changes where item_id=? and origin='follow' order by at desc,id desc limit 10", id).map(r => viewChange(app, r));
 }
 /** What the item page lists: every change still waiting for the owner, and the ten that were last noted or settled. */
 export function shownChanges(app: App, id: string) {
-  const waiting = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and status='asked' order by at desc,id desc limit 40", id).map(viewChange);
-  const recent = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and origin='follow' order by updated_at desc,id desc limit 10", id).map(viewChange);
+  const waiting = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and status='asked' order by at desc,id desc limit 40", id).map(r => viewChange(app, r));
+  const recent = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and origin='follow' order by updated_at desc,id desc limit 10", id).map(r => viewChange(app, r));
   return [...waiting, ...recent.filter((c) => !waiting.some((w) => w.id === c.id))].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
 }
 export function changesBrief(app: App, id: string) {
   // A proposed deadline reads differently from one that has moved: say which it is.
   const due = (c: ReturnType<typeof viewChange>) => c.type !== "deadline" || !c.due ? "" : c.status === "merged" ? `（截止时间已改成 ${c.due}）` : c.status === "dismissed" ? `（提议改成 ${c.due}，没有改）` : `（提议改成 ${c.due}，本人还没定）`;
-  return `## 最近的变化\n${recentChanges(app, id).map((c) => `- [${c.type}/${c.status}] ${c.summary}${due(c)} ${c.refs.join(" ")}`).join("\n") || "暂无"}`;
+  return `## 最近的变化\n${recentChanges(app, id).map((c) => `- [${c.type}/${c.status}] ${c.summary}${due(c)} ${c.refs.join(" ")}${c.steps.length ? `\n${stepBrief(c.steps)}` : ""}`).join("\n") || "暂无"}`;
 }
 
 const KINDS = ["chat", "doc", "meeting", "conversation"];
@@ -231,6 +233,7 @@ async function patrol(app: App, at: Date) {
   // A matter's 关注 reads the groups the item is linked to now.
   try { (await import("../channels/listen-items.ts")).syncItemContexts(app); } catch (e) { console.warn(`[omem] 事项关注的群没有更新：${(e as Error).message}`); }
   if (!app.config.flows.follow.enabled) return;
+  checkDueChangeSteps(app, at);
   // Items with a flow running, and items the owner keeps a 关注 on.
   for (const { item_id: id } of all<{ item_id: string }>(app.db, "select item_id from item_flows where ended_at is null union select item_id from listen_contexts where kind='item' and status='active' and item_id is not null")) {
     const f = followAnchor(app, id, at.toISOString());
@@ -277,7 +280,7 @@ async function patrol(app: App, at: Date) {
   }
 }
 
-export const changeSchema = z.object({ item: z.string(), type: z.enum(CHANGE_TYPES), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), risk: z.string().trim().max(1000).optional(), next: z.string().trim().max(1000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional(), decided: z.boolean().optional() });
+
 /**
  * The item's deadline moves to the time a change names. Whatever other proposal was still waiting for
  * the owner is settled by it.
@@ -305,7 +308,7 @@ function changesOfRun(app: App, r: Run) {
 function handedIn(app: App, runId: string, row: ChangeRow, ownWord = false) {
   const out = getRun(app, runId).output, ids = out.followChanges as string[] | undefined, own = out.followOwnWords as string[] | undefined;
   setRunOutput(app, runId, { followChanges: [...new Set([...(ids ?? []), row.id])], ...(ownWord ? { followOwnWords: [...new Set([...(own ?? []), row.id])] } : {}) });
-  return viewChange(row);
+  return viewChange(app, row);
 }
 /** Some line a change cites is the person's own (Part `owner`): what they said themselves, not someone's proposal. */
 function saidByOwner(batch: Batch, refs: string[]) {
@@ -332,6 +335,8 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   if (a.stages?.some((s) => !f.flow?.definition.stages.some((d) => d.id === s))) throw new HttpError(400, f.flow ? "阶段必须在这件事的流程里" : "这件事没有在走的流程，不填 stages");
   if (a.req) { const req = findReq(app, a.req); if (!req || req.spaceId !== item.spaceId) throw new HttpError(400, "需求点不在事项空间里"); }
   if (a.type === "deadline" && !z.union([z.string().date(), z.string().datetime({ offset: true })]).safeParse(a.due).success) throw new HttpError(400, "deadline 必须填写 ISO 时间或日期 due");
+  if (a.next?.trim() && !a.steps?.length) throw new HttpError(400, "有下一步时要填 steps：谁做、做什么、做到什么算完");
+  const next = a.steps?.map(s => `${s.who === "other" ? `等${s.waiting_for}：` : ""}${s.step}`).join("；").slice(0, 1000);
   const detail = a.detail ?? null, due = a.type === "deadline" ? a.due! : null;
   // The person's own word on what is to be done (they said it, or told the assistant to do it): settled, not asked about again.
   const ownWord = !!a.decided && (a.type === "scope" || a.type === "decision") && saidByOwner(batch, a.refs);
@@ -346,14 +351,16 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   if (old) {
     // The same finding, now said to be settled, while the first one was only a proposal.
     if (a.type === "deadline" && a.decided && ["noted", "asked"].includes(old.status)) tx(app.db, () => decidedDeadline(app, old, runId));
+    saveChangeSteps(app, a.item, old.id, runId, batch.startedAt, a.steps);
     return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", old.id)!, ownWord && old.status === "noted");
   }
   if (changesOfRun(app, r).length >= 30) throw new HttpError(400, "一批最多记 30 条变化，请合并同一件事的表述");
   // The one way into the ledger (items/changes.ts): the same message already noted by another writer
   // (the assistant's upsert_item, an earlier batch) is added to, not noted twice.
   const rec = tx(app.db, () => {
-    const got = recordChange(app, { itemId: a.item, type: a.type, summary: a.summary, detail, req: a.req ?? null, stages: a.stages ?? [], refs: a.refs, runId, due, risk: a.risk || null, next: a.next || null, origin: "follow" })!;
+    const got = recordChange(app, { itemId: a.item, type: a.type, summary: a.summary, detail, req: a.req ?? null, stages: a.stages ?? [], refs: a.refs, runId, due, risk: a.risk || null, next: next || null, origin: "follow" })!;
     const row = one<ChangeRow>(app.db, "select * from item_changes where id=?", got.id)!;
+    saveChangeSteps(app, a.item, row.id, runId, batch.startedAt, a.steps);
     // Somebody proposing another date is not a decision: it stays as noted and the owner is asked when the batch is done.
     if (a.type === "deadline" && a.decided && row.due && ["noted", "asked"].includes(row.status)) decidedDeadline(app, row, runId);
     return got;
@@ -389,7 +396,7 @@ function askGroup(app: App, r: Run, rows: ChangeRow[]) {
   const stages = flow ? itemStages(app, id) : [], definitions = flow?.definition.stages ?? [];
   const states: Record<string, string> = { doing: "进行中", done: "已完成", pending: "未开始", blocked: "卡住", gated: "等本人确认", stale: "待复核", skipped: "已跳过" };
   const impact = (ids: string[]) => ids.map((id) => `${definitions.find((s) => s.id === id)?.name ?? id}（${states[stages.find((s) => s.id === id)?.state ?? "pending"]}）`).join("、");
-  const group = rows.map(viewChange);
+  const group = rows.map(r => viewChange(app, r));
   const ask = createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
     question: `「${item.title}」有新变化：\n\n${group.map((c) => [`**${HEADS[c.type] ?? "有变化"}：${c.summary}**`, c.detail ?? "", `- 影响：${impact(c.stages)}`, `- 原话：${c.refs.map((r, i) => `[${i + 1}](${r})`).join(" ")}`].filter(Boolean).join("\n")).join("\n\n")}`,
     options: group.length === 1 ? choices.map((label) => ({ label })) : [],
@@ -423,7 +430,15 @@ export function finishFollow(app: App, r: Run): Promise<void> {
     commitBatch(app, id, batch);
     run(app.db, "update flow_signals set outcome=? where type='context.batch' and item_id=? and json_extract(keys,'$.runId')=?", counts.total ? `记了 ${counts.total} 条变化，问了本人 ${counts.asked} 条${own.length ? `，按本人的话并进 ${own.length} 条` : ""}` : "看过，没有变化", id, r.id);
   });
-  return mergeOwnWords(app, r, own);
+  const queue = () => {
+    // A failed extraction can be retried without losing the next steps already handed in.
+    for (const c of changes) run(app.db, `update item_change_steps set batch_id=? where change_id=? and state in ('pending','waiting')
+      and batch_id in (select id from runs where status in ('failed','cancelled'))`, r.id, c.id);
+    queueChangeSteps(app, r.id);
+  };
+  if (own.length) return mergeOwnWords(app, r, own).then(queue);
+  queue();
+  return Promise.resolve();
 }
 /**
  * What the person said themselves is folded in as their 并进 would be: the first stage each touches is

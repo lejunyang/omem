@@ -115,7 +115,7 @@ export const DEFAULT_KNOBS: ListenKnobs = {
 };
 const KIND_KNOBS: Record<ListenKind, Partial<ListenKnobs>> = {
   place: {},
-  item: { reply: "none", listen: "relevant", assist: "suggest" },
+  item: { reply: "none", listen: "relevant", assist: "act" },
   situation: { reply: "none", meetings: "off", backlog: "off" },
   default: { listen: "addressed" },
 };
@@ -270,11 +270,15 @@ export function saveContext(app: App, input: ContextInput, chatName: (chatId: st
   const at = now();
   const id = prev?.id ?? input.id ?? (kind === "default" ? DEFAULT_CONTEXT_ID : newId("ctx"));
   const name = (input.name ?? prev?.name ?? (chats.length ? chats.map(chatName).join("、") : "关注")).slice(0, 80);
+  const storedKnobs = diffKnobs(knobs, kind);
+  // An explicit choice stays explicit even when it equals the current default.
+  const wasSet = prev && json<Stored>(one<{ settings: string }>(app.db, "select settings from listen_contexts where id=?", prev.id)?.settings, {}).knobs?.assist !== undefined;
+  if (kind === "item" && (input.knobs?.assist !== undefined || wasSet)) storedKnobs.assist = knobs.assist;
   const stored: Stored = {
     recognize: input.recognize ?? prev?.recognize,
     note: input.note ?? prev?.note,
     brief: input.brief ?? prev?.brief,
-    knobs: diffKnobs(knobs, kind),
+    knobs: storedKnobs,
     since: input.since ?? prev?.since ?? at,
     playbookAt: input.playbookAt ?? prev?.playbookAt,
     playbookFile: input.playbookFile ?? prev?.playbookFile,
@@ -326,7 +330,8 @@ function ensureConversation(app: App, ctx: ListenContext) {
     updateThread(app, t.id, { title: ctx.name, settings: { ...rest, ...settings } as never });
     return t.id;
   }
-  const created = createThread(app, { spaceId, channel: LISTEN_CHANNEL, key: ctx.id, title: ctx.name, settings: settings as never });
+  const userId = ctx.itemId ? one<{ user_id: string }>(app.db, "select user_id from items where id=?", ctx.itemId)?.user_id : undefined;
+  const created = createThread(app, { spaceId, userId, channel: LISTEN_CHANNEL, key: ctx.id, title: ctx.name, settings: settings as never });
   run(app.db, "update listen_contexts set conversation_id = ? where id = ?", created.id, ctx.id);
   return created.id;
 }

@@ -181,7 +181,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   const waiting = queuedInLane(app, thread.id, "ask");
   // Bursts merge into a waiting turn of the same sender, or of someone whose access the sender's covers
   // (steer.ts mayJoinTurn): the turn keeps its own user's permissions.
-  if (waiting && !waiting.input.aiLoginWait && mayJoinTurn(app, (waiting.input.userId as string | undefined) ?? OWNER, userId, [{ meta }])) {
+  if (waiting && !waiting.input.itemStepApproval && !waiting.input.aiLoginWait && mayJoinTurn(app, (waiting.input.userId as string | undefined) ?? OWNER, userId, [{ meta }])) {
     const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
     // A fixed window (a watched chat's batch) is never pushed back, only brought forward.
     const due = inb.fixedWindow ? app.db.prepare("select not_before from runs where id = ?").get(waiting.id) as { not_before: string | null } | undefined : undefined;

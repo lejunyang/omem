@@ -359,7 +359,7 @@ export async function createLine(app: App, p: { name: string; goal?: string; ite
   const line = upsertItem(app, undefined, { kind: "line", title: p.name, detail: p.goal ?? "", spaceId: p.spaceId ?? common ?? "personal", userId }, by);
   await intoLine(app, line.id, { items: p.items ?? [], sources: p.sources ?? [] }, by, userId);
   const { setItemListening } = await import("../channels/listen-items.ts");
-  setItemListening(app, line.id, true, { reply: "none", assist: "suggest" });
+  setItemListening(app, line.id, true, { reply: "none" });
   return getItem(app, line.id);
 }
 

@@ -3,6 +3,7 @@ import { all, one, run } from "../core/db.ts";
 import { json, newId, now, truncate } from "../core/util.ts";
 import { descendantIds, rootOf } from "./tree.ts";
 import { handlerOfOrigin, noteHandling } from "../core/handling.ts";
+import { CHANGE_TYPES, stepBrief, stepViews } from "./change-step-store.ts";
 
 /**
  * The key changes of an item (`item_changes`), one change each: a sentence, why, what it risks, what
@@ -48,7 +49,7 @@ import { handlerOfOrigin, noteHandling } from "../core/handling.ts";
  * first (`origin`, `run_id`, `at`) and who added to it later (`added`).
  */
 export type ChangeOrigin = "follow" | "flow" | "metric" | "problem" | "owner" | "line" | "meeting" | "review" | "commit" | "member";
-export const CHANGE_TYPES = ["scope", "decision", "deadline", "blocker", "info", "stage", "result", "owner", "resolved", "todo", "question"] as const;
+export { CHANGE_TYPES } from "./change-step-store.ts";
 export type ChangeType = (typeof CHANGE_TYPES)[number];
 
 /** Someone who added to a change after it was first noted: who, in which run, when, and which parts. */
@@ -64,6 +65,7 @@ export type ChangeLite = {
   sourceKey?: string;
   /** Who added to it after it was first noted. */
   added?: ChangeAddition[];
+  steps?: ReturnType<typeof stepViews>;
 };
 type Row = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; risk: string | null; next: string | null; refs: string; status: string; origin: string; noise: number; title: string; item_user?: string; run_id?: string; source_key?: string | null; added?: string | null };
 
@@ -119,13 +121,15 @@ export function changeLite(app: App, r: Row, lines = new Map<string, { id: strin
   const refs = json<string[]>(r.refs, []);
   const targets = refTargets(app, refs, r.item_user ?? "owner");
   const added = r.added ? json<ChangeAddition[]>(r.added, []) : [];
+  const steps = stepViews(app, r.id), detail = steps.length ? [r.detail, stepBrief(steps)].filter(Boolean).join("\n\n") : r.detail;
   return {
-    id: r.id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, risk: r.risk, next: r.next, refs,
+    id: r.id, at: r.at, type: r.type, summary: r.summary, detail, risk: r.risk, next: r.next, refs,
     status: r.status, origin: r.origin ?? "follow", noise: !!r.noise, itemId: r.item_id, itemTitle: r.title, lineId: line.id, lineTitle: line.title,
     ...(targets ? { refTargets: targets } : {}),
     ...(r.run_id ? { runId: r.run_id } : {}),
     ...(r.source_key ? { sourceKey: r.source_key } : {}),
     ...(added.length ? { added } : {}),
+    ...(steps.length ? { steps } : {}),
   };
 }
 export const CHANGE_COLS = "c.id, c.item_id, c.at, c.type, c.summary, c.detail, c.risk, c.next, c.refs, c.status, c.origin, c.noise, c.run_id, c.source_key, c.added, i.title, coalesce(i.user_id,'owner') item_user";

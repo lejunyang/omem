@@ -34,7 +34,7 @@ const SENDS = new Set(["notify", "lark_send", "lark_card", "lark_send_file", "re
  * watched groups, rules, handlings of someone looking for the owner), and the roles that tell the
  * owner things by themselves. Not coding, reviews, Wiki or memory work: they do not post to the owner.
  */
-const BACKGROUND_KINDS = new Set(["ask", "agent", "heartbeat", "ingest", "brief", "item-settle"]);
+const BACKGROUND_KINDS = new Set(["ask", "agent", "heartbeat", "ingest", "brief", "item-settle", "item-takeover"]);
 
 type Aware = { seen?: string[]; recheckedAt?: string; recheck?: { by: string; lines: number } };
 const awareOf = (r: Run) => (r.output.awareness ?? {}) as Aware;
@@ -196,7 +196,7 @@ function recheckText(app: App, r: Run, moves: OwnerMove[], seenRefs: boolean, wh
  * to the run — once per run. Null: go ahead.
  */
 export async function preSendCheck(app: App, runId: string | null | undefined, name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean } | null> {
-  if (!runId || !SENDS.has(name)) return null;
+  if (!runId || (!SENDS.has(name) && !(name === "submit_item_step" && (args.decision || args.operation || args.operation_note)))) return null;
   let r: Run;
   try { r = getRun(app, runId); } catch { return null; }
   if (r.status !== "running" || awareOf(r).recheckedAt || !isBackground(app, r)) return null;

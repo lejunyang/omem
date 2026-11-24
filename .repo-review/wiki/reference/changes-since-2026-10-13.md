@@ -43,6 +43,16 @@ updated: 2026-11-25
 
 `assigned-sweep` 随库播种，配套规则默认关闭：工作日早上主助手按本人的查询技能清点共享平台上指派给本人的有期事项，按原件键复用事项，新发现且三天内到期的合发一条，其余进“今天”。`src/items/deadline-check.ts` 随巡检挑两天内截止、一天没动且无流程的本人事项，排一轮只读预查；同一截止不重复，结果并入原提醒或独立待处理。本人点“按这个开始”才在事项的私有会话续做。
 
+## 2026-11-25 · 事项下一步可以按技能查和做
+
+- 接手时可用技能里的命令只读核对，命令和操作规则照常。要写但没有可重放工具时，`submit_item_step` 交 `operation_note`，本人看到对象、动作、依据和预期结果后选择执行或不执行。
+- 本人同意才在事项会话排普通主助手轮，现有审批不变。结果写回这一步；中断或结果不明确时不自动重做，下次先只读核对。`suggest` 只留建议。见 `src/flows/takeover.ts` 和 `test/item-takeover.test.ts`。
+
+## 2026-11-25 · 事项变化的下一步有人接
+
+- `note_item_change` 交具体步骤和完成条件。`src/flows/takeover.ts` 同批排一次接手：只读调查安静写回；外部操作先让本人确认原参数，执行仍走现有审批；等别人到点回查一次，等本人进待处理和“今天”。未定的范围不推进。
+- 复用事项关注 `assist`，默认 `act`；每天每事项最多六次自动接手。沿用事项范围、消息处理记录和发出前复核。见 `test/item-takeover.test.ts`。
+
 ## 研究：交给改（2026-11-25）
 
 `src/studies/fix-queue.ts`：`queueFixes` / `unqueueFix` / `tickFixQueue` / `attachFixQueue`（`engine.ts` 的 `attachFlows` 挂上）。表 `study_findings` 加 `fix_queued_at`、`fix_note`，`study_scopes` 加 `fix_ai`；`scope.ts` 的 `fixExecutions` 把它变成交办的 `execution` / `reviewExecution`。同一研究一次一个交办，评审通过（`stage.key = done`）即 `markFixedByChange`；`fixes.ts` 重跑仍失败时清掉。接口 `POST/DELETE /api/items/:id/study/fix-queue`，工具 `queue_study_fixes`（`study` 组）。网页 `ItemStudy.vue`：“交给改…”“挑几条交给改”“不排了”，范围里选改代码和评审的 AI。
