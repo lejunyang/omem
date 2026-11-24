@@ -25,7 +25,8 @@ function git(path: string, args: string[]) {
   if (!r.ok) throw new Error(`${args.join(" ")}: ${r.stderr}`);
   return r.stdout.trim();
 }
-const signals = (app: App) => all<{ outcome: string; keys: string }>(app.db, "select * from flow_signals order by id");
+// The patrol may also queue a reconcile (flows/reconcile.ts): that row is its own, not a Git signal.
+const signals = (app: App) => all<{ outcome: string; keys: string }>(app.db, "select * from flow_signals where type != 'reconcile' order by id");
 async function setup(options: { count?: number; type?: GitSignal; by?: "owner" | "wait"; applied?: boolean; pushedBefore?: boolean } = {}) {
   const app = testApp(); apps.push(app);
   app.config.flows.autoAdvance = 20;
