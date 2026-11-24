@@ -12,7 +12,7 @@ export const LARK_LEGACY_DOC_SCOPE = "docx:document";
 export const LARK_LEGACY_WIKI_SCOPE = "wiki:wiki";
 export const LARK_WIKI_COPY_SCOPE = "wiki:node:copy";
 export const LARK_WIKI_NODE_READ = ["wiki:node:retrieve", "wiki:node:read", "wiki:wiki:readonly", LARK_LEGACY_WIKI_SCOPE];
-export const LARK_WIKI_SPACE_READ = ["wiki:wiki:readonly", "wiki:space:read", LARK_LEGACY_WIKI_SCOPE];
+export const LARK_WIKI_SPACE_READ = ["wiki:space:read", "wiki:wiki:readonly", LARK_LEGACY_WIKI_SCOPE];
 // Existing connections with the original docs permissions and search can still capture recent docs.
 const DOCS_REQUIRED_SCOPES = [LARK_DOC_READ_SCOPE, "docs:document.content:read", "wiki:node:read", "wiki:wiki:readonly", "drive:file:download", "search:docs:read"];
 
@@ -38,7 +38,7 @@ export const FEATURES: Record<string, Feature[]> = {
       requiredScopes: DOCS_REQUIRED_SCOPES,
       scopes: [
         ...DOCS_REQUIRED_SCOPES,
-        "wiki:node:retrieve", "wiki:space:retrieve",
+        "wiki:node:retrieve", "wiki:space:retrieve", "wiki:space:read",
         "space:document:retrieve", "drive:drive.metadata:readonly",
         "docs:document.media:download", "board:whiteboard:node:read", "docs:permission.member:auth",
       ],
@@ -46,7 +46,15 @@ export const FEATURES: Record<string, Feature[]> = {
     { id: "sheets", label: "表格与多维表格", description: "读你能看到的电子表格和多维表格", scopes: ["sheets:spreadsheet:read", "sheets:spreadsheet.meta:read", "base:app:read", "base:table:read", "base:field:read", "base:record:read", "base:view:read"] },
     { id: "calendar", label: "日程", description: "读你的日程", scopes: ["calendar:calendar:read", "calendar:calendar.event:read"] },
     { id: "minutes", label: "妙记与会议", description: "读你的妙记，知道你加入了哪个会议", scopes: ["minutes:minutes:readonly", "minutes:minutes.artifacts:read", "vc:meeting.meetingevent:read"] },
-    { id: "doc-write", label: "让助手写文档", description: "助手以你的身份新建、编辑和复制文档（别人的文件先经你批准）", scopes: ["docx:document:write_only", "docx:document:create", "wiki:node:create", "wiki:node:move", LARK_WIKI_COPY_SCOPE] },
+    {
+      id: "doc-write", label: "让助手写文档",
+      description: "以你的身份新建、编辑、移动和复制文档，含定位知识库和读取待编辑文档所需的权限（别人的文件先经你批准）",
+      scopes: [
+        LARK_DOC_READ_SCOPE, "wiki:node:read", "wiki:node:retrieve", "wiki:space:read", "drive:drive.metadata:readonly",
+        "docx:document:create", "docx:document:write_only", "docs:document.media:upload",
+        "wiki:node:create", "wiki:node:move", LARK_WIKI_COPY_SCOPE, "space:document:move",
+      ],
+    },
   ],
 };
 
@@ -56,8 +64,8 @@ export const LARK_DOMAIN_FEATURES: Record<string, string> = { im: "messages", co
 export function larkCommandFeatures(args: string[]): string[] {
   const f = LARK_DOMAIN_FEATURES[args[0] ?? ""];
   if (!f) return [];
-  const write = f === "docs" && args.slice(1, 3).some((a) => /^\+?(update|create|write|append|replace|insert|delete|move|upload)/.test(a));
-  return write ? ["docs", "doc-write"] : [f];
+  const write = f === "docs" && args.slice(1, 3).some((a) => /^\+?(?:node-)?(update|create|write|append|replace|insert|delete|move|copy|upload)/.test(a));
+  return write ? ["doc-write"] : [f];
 }
 
 /** Plugin providers whose features follow the owner's settings (the scopes they filled in): read each time. */

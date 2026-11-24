@@ -144,14 +144,17 @@ describe("connections", async () => {
     const docs = new URL((await remote("/api/auth/lark/start?features=docs")).headers.get("location")!);
     const originalDocScopes = ["docx:document:readonly", "docs:document.content:read", "wiki:node:read", "wiki:wiki:readonly", "drive:file:download"];
     expect(docs.searchParams.get("scope")!.split(" ").sort()).toEqual([
-      ...originalDocScopes, "search:docs:read", "wiki:node:retrieve", "wiki:space:retrieve", "space:document:retrieve", "drive:drive.metadata:readonly",
+      ...originalDocScopes, "search:docs:read", "wiki:node:retrieve", "wiki:space:retrieve", "wiki:space:read", "space:document:retrieve", "drive:drive.metadata:readonly",
       "docs:document.media:download", "board:whiteboard:node:read", "docs:permission.member:auth", "offline_access", "contact:user.email:readonly",
     ].sort());
     expect(grantedFeatures("lark", originalDocScopes)).not.toContain("docs");
     expect(grantedFeatures("lark", [...originalDocScopes, "search:docs:read"])).toContain("docs");
-    const write = new URL((await remote("/api/auth/lark/start?features=docs,doc-write")).headers.get("location")!);
-    expect(write.searchParams.get("scope")!.split(" ")).toContain("wiki:node:copy");
-    expect(write.searchParams.get("scope")!.split(" ")).not.toContain("wiki:wiki");
+    const write = new URL((await remote("/api/auth/lark/start?features=doc-write")).headers.get("location")!);
+    expect(write.searchParams.get("scope")!.split(" ").sort()).toEqual([
+      "docx:document:readonly", "wiki:node:read", "wiki:node:retrieve", "wiki:space:read", "drive:drive.metadata:readonly",
+      "docx:document:create", "docx:document:write_only", "docs:document.media:upload", "wiki:node:create", "wiki:node:move", "wiki:node:copy", "space:document:move",
+      "offline_access", "contact:user.email:readonly",
+    ].sort());
     // The login page lists what can be ticked (background access comes along, not listed).
     const session = await (await remote("/api/auth/session")).json();
     expect(session.login.providers[0].features.map((f: { id: string }) => f.id)).toEqual(expect.arrayContaining(["messages", "calendar"]));
@@ -318,7 +321,7 @@ describe("connections", async () => {
     const r = createRun(app, { kind: "agent", spaceId: "personal-wu", title: "改文档", input: { conversationId: thread.id }, userId: "wu" });
     const refused = await callTool({ app, runId: r.id, spaceId: "personal-wu", spaces: null, tools: null, actor: "agent", userId: "wu", larkChats: [] }, "lark_doc_update", { doc: "https://tenant.larkoffice.com/docx/abc", command: "append", content: "进度" });
     expect(refused.isError).toBe(true);
-    expect(refused.text).toContain("http://omem.test/#/login?provider=lark&features=docs%2Cdoc-write");
+    expect(refused.text).toContain("http://omem.test/#/login?provider=lark&features=doc-write");
     expect(refused.text).toContain("自动接着做");
     // Granted something else: still waiting. Granted what was asked: an [授权] turn in that conversation.
     storeConnection(app, { userId: "wu", provider: "lark", accountId: "on_wu", accountName: "小吴", scopes: scopesFor("lark", ["calendar"]), accessToken: "at_wu", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
@@ -326,7 +329,7 @@ describe("connections", async () => {
     const said = () => one<{ text: string }>(app.db, "select text from messages where conversation_id = ? and text like '[授权]%'", thread.id)?.text;
     await new Promise((res) => setTimeout(res, 50));
     expect(said()).toBeUndefined();
-    storeConnection(app, { userId: "wu", provider: "lark", accountId: "on_wu", accountName: "小吴", scopes: scopesFor("lark", ["docs", "doc-write"]), accessToken: "at_wu2", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    storeConnection(app, { userId: "wu", provider: "lark", accountId: "on_wu", accountName: "小吴", scopes: scopesFor("lark", ["doc-write"]), accessToken: "at_wu2", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
     connectionGranted(app, "wu", "lark");
     await new Promise((res) => setTimeout(res, 50));
     expect(said()).toContain("小吴已在飞书完成授权");
@@ -390,7 +393,7 @@ describe("connections", async () => {
     setLarkCliForTests(async (args) => { commands.push(args); throw new LarkScopeError(["docx:document"], "缺少权限"); });
     onTestFinished(() => setLarkCliForTests(null));
     const copy = () => callTool(ctx, "lark_doc_copy", { doc, target: "my_library", summary: "复制周报" });
-    const link = "http://omem.test/#/login?provider=lark&features=docs%2Cdoc-write";
+    const link = "http://omem.test/#/login?provider=lark&features=doc-write";
     expect((await copy()).text).toContain(link);
     expect(commands).toEqual([]);
     expect((await callTool(ctx, "lark_doc_fetch", { doc })).text).toContain(link);
@@ -404,7 +407,7 @@ describe("connections", async () => {
     grant(scopesFor("lark", ["docs"]));
     connectionGranted(app, userId, "lark");
     expect(pending()).toHaveLength(2);
-    grant(scopesFor("lark", ["docs", "doc-write"]));
+    grant(scopesFor("lark", ["doc-write"]));
     connectionGranted(app, userId, "lark");
     expect(pending()).toEqual([]);
     await expect.poll(() => [thread.id, legacy.id].map((id) => !!one(app.db, "select 1 from messages where conversation_id = ? and text like '[授权]%'", id))).toEqual([true, true]);

@@ -3,7 +3,7 @@ import { one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { json, now, webLink } from "../core/util.ts";
 import { findUser, OWNER, userName } from "../core/users.ts";
-import { featuresOf, grantedFeatures, LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE } from "./features.ts";
+import { featuresOf, grantedFeatures, LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE, scopesFor } from "./features.ts";
 import { findConnection } from "./vault.ts";
 
 /**
@@ -28,8 +28,7 @@ function save(app: App, userId: string, list: Waiting[]) {
   else run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", key(userId), JSON.stringify(list.slice(-10)));
 }
 
-/** Writing a document needs reading it too. */
-const withNeeded = (features: string[]) => [...new Set(features.flatMap((f) => (f === "doc-write" ? ["docs", f] : [f])))].filter((f) => featuresOf("lark").some((x) => x.id === f));
+const knownFeatures = (features: string[]) => [...new Set(features)].filter((f) => featuresOf("lark").some((x) => x.id === f));
 
 /** The page that asks for exactly this: the login page, which also turns features on for someone already logged in. */
 export function connectLink(app: App, features: string[], scopes: string[] = []) {
@@ -49,7 +48,10 @@ export function needConnection(app: App, userId: string, runId: string | null | 
   const pending = list.find((w) => w.conversationId === conversationId);
   // Calls in one turn can add requirements. A new turn can be about a different task.
   const previous = pending?.runId === runId ? pending : undefined;
-  const features = withNeeded([...(previous?.offeredFeatures ?? []), ...(what.features ?? [])]);
+  const alreadyOffered = previous?.offeredFeatures ?? [];
+  const coveredScopes = new Set([...scopesFor("lark", alreadyOffered), ...(previous?.offeredScopes ?? [])]);
+  const covered = what.requiredScopes?.length && what.requiredScopes.every((s) => coveredScopes.has(s));
+  const features = knownFeatures([...alreadyOffered, ...(covered ? [] : what.features ?? [])]);
   const scopes = [...new Set([...(previous?.offeredScopes ?? []), ...(what.scopes ?? [])])];
   const link = connectLink(app, features, scopes);
   const labels = features.map((f) => featuresOf("lark").find((x) => x.id === f)?.label ?? f);
@@ -62,7 +64,7 @@ export function needConnection(app: App, userId: string, runId: string | null | 
     } catch { /* A person without a channel still gets the link through the agent's reply. */ }
   }
   if (conversationId) {
-    const requiredFeatures = withNeeded([...(previous?.features ?? []), ...(what.requiredScopes ? [] : what.features ?? [])]);
+    const requiredFeatures = knownFeatures([...(previous?.features ?? []), ...(what.requiredScopes ? [] : what.features ?? [])]);
     const requiredScopes = [...new Set([...(previous?.scopes ?? []), ...(what.requiredScopes ?? what.scopes ?? [])])];
     save(app, userId, [...list.filter((w) => w !== pending), { conversationId, runId: runId ?? undefined, features: requiredFeatures, scopes: requiredScopes, offeredFeatures: features, offeredScopes: scopes, noticeId, reason: what.reason, at: now() }]);
   }
