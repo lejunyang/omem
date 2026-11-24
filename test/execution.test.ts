@@ -108,6 +108,52 @@ describe("temporary AI choices", () => {
     expect((await callTool(ctx, "switch_run_ai", { run_id: code.id, execution: other })).text).toContain("continue_code_run");
   });
 
+  it("reuses a conversation's running turn when the replacement asks for the same AI", async () => {
+    const app = fixture();
+    const requested = { profile: "second", source: "user", reason: "换到另一个后端" };
+    app.config.agents.roleModels.assistant = { second: { model: "m2", effort: "low" } };
+    const thread = createThread(app, { channel: "lark", spaceId: "personal" });
+    const original = createRun(app, { kind: "ask", title: "换到另一个后端", spaceId: "personal", lane: thread.id, input: { conversationId: thread.id, messageIds: ["msg-switch"] } });
+    const start = (id: string, ai: NonNullable<typeof original.ai>) =>
+      app.db.prepare("update runs set status = 'running', ai = ? where id = ?").run(JSON.stringify(ai), id);
+    const switchAI = (id: string, execution = requested) => callTool(
+      { app, runId: id, spaceId: "personal", spaces: null, tools: null, actor: "agent" },
+      "switch_run_ai", { run_id: id, execution },
+    );
+    start(original.id, { profile: "first", model: "m1" });
+    expect((await switchAI(original.id, { ...requested, profile: "first" })).text).toContain("first · m1，本轮无需重开");
+    expect(getRun(app, original.id).output.replacedBy).toBeUndefined();
+    const replies = await Promise.all([switchAI(original.id), switchAI(original.id)]);
+    const replacement = String(getRun(app, original.id).output.replacedBy);
+    expect(replies.map((r) => r.text)).toEqual(expect.arrayContaining([
+      expect.stringContaining(`重新排队为 ${replacement}`),
+      expect.stringContaining(`已由 ${replacement} 接手`),
+    ]));
+    expect(getRun(app, replacement).input).toMatchObject({ ai: requested, messageIds: ["msg-switch"] });
+    start(replacement, { profile: "second", model: "m2", effort: "low" });
+    const explicit = { ...requested, model: "m2", effort: "low", reason: "确认会话已经在用这个 AI" };
+    for (const execution of [explicit, requested]) {
+      const reply = await switchAI(replacement, execution);
+      expect(reply.isError).toBe(false);
+      expect(reply.text).toContain("second · m2 · low，本轮无需重开");
+    }
+    expect(getRun(app, replacement).status).toBe("running");
+    expect(getRun(app, replacement).output.replacedBy).toBeUndefined();
+    expect(listRuns(app, { kind: "ask" })).toHaveLength(2);
+
+    // Even if this attempt fell back, replaying the switch command must not start it again.
+    start(replacement, { profile: "first", model: "m1" });
+    expect((await switchAI(replacement)).text).toContain("本轮实际使用 first · m1");
+    expect(getRun(app, replacement).output.replacedBy).toBeUndefined();
+
+    // A different effort on the same backend still switches the turn.
+    const changed = { ...explicit, effort: "high" };
+    expect((await switchAI(replacement, changed)).isError).toBe(false);
+    const latest = String(getRun(app, replacement).output.replacedBy);
+    expect(getRun(app, latest).input.ai).toEqual(changed);
+    expect(listRuns(app, { kind: "ask" })).toHaveLength(3);
+  });
+
   it("uses the assistant role without creating a profile and retains the caller's limits", async () => {
     const app = fixture(); const server = await startServer(app, { port: 0, quiet: true });
     try {

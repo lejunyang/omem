@@ -16,7 +16,7 @@ import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchi
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
 import { readBoard, dispatchBoard, cancelBoard, reportPage, reviewBoard } from "./work-board.ts";
 import { workInConversation, refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
-import { executionSchema, validateExecution, type Execution } from "./execution.ts";
+import { executionArgs, executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
 import { designBodySchema } from "../designs/types.ts";
 import { checkFields, checkView, fieldsSchema, viewSchema } from "./ui-blocks.ts";
@@ -74,13 +74,13 @@ import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSo
 import { addWatch, listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { checkSlug, confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { keepOwnerSection } from "./work-state.ts";
-import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOutput } from "./runs.ts";
+import { addRunEvent, cancelRun, createRun, getRun, listRuns, runEvents, runUser, setRunOutput, stopRequested } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
 import { afterToolCall, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillsOutsideScope, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
-import { describeThread, findThread, getThread, listThreads, threadMessages } from "./threads.ts";
+import { describeThread, findThread, getThread, listThreads, threadMessages, updateThread } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
 import type { OperationRule } from "../core/config.ts";
@@ -5743,7 +5743,7 @@ def({
 def({
   name: "switch_run_ai",
   description:
-    "给已经安排的运行换 AI（后端、模型、强度）：比如某个后端一直排队或失败、本人要求中途换模型。传运行 id；本人在对话里说“换某个 AI 再试”时传这一轮自己的运行 id：这个会话从这一轮起都改用新的 AI，这一轮由它重新做，不用另外交给别的 Agent；with_children=true 时连同它的子运行（如 Wiki 规划下的各页写作）一起换。排队中的直接改；进行中的停下后用新 AI 重新排队；失败的用新 AI 重试；已完成和已取消的不动。编码交办不用这个，用 continue_code_run 的 execution / review_execution。",
+    "给已经安排的运行换 AI（后端、模型、强度）。后端一直排队或失败、本人要求中途换模型时，传运行 id。对话轮次切换时，会话以后都用新 AI，只有实际需要切换时才重开这一轮。接手的 Agent 会收到切换结果，直接回答这次请求。with_children=true 时连同它的子运行（如 Wiki 各页写作）一起换。排队中的直接改，进行中的停下后重排，失败的重试，已完成和已取消的不动。编码交办用 continue_code_run 的 execution / review_execution。",
   write: true,
   schema: z.object({
     run_id: z.string(),
@@ -5752,6 +5752,7 @@ def({
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution, ctx.userId)!;
+    const [{ threadActor, releaseThreadSession }, { resolveRunProfile }] = await Promise.all([import("./sessions.ts"), import("./runner.ts")]);
     const root = getRun(ctx.app, a.run_id);
     const allowed = ctx.writable ?? ctx.spaces;
     const visible = (r: { id: string; spaceId: string | null }) => (!r.spaceId || !allowed || allowed.includes(r.spaceId)) && canAccessRun(ctx.app, ctx.userId ?? OWNER, r.id, "runs.operate");
@@ -5760,16 +5761,40 @@ def({
     const targets = [root, ...(a.with_children === false ? [] : listRuns(ctx.app, { parentId: root.id, limit: 500 }).filter((r) => visible(r) && r.kind !== "code" && r.kind !== "review"))];
     if (targets.some(r => r.input.boardTaskId && ["queued", "running", "failed"].includes(r.status)))
       throw new HttpError(409, "任务板子任务换 AI 请用 work_review 退回并指定 execution；只切换发起运行可传 with_children=false");
-    const { cancelRun } = await import("./runs.ts");
     const done: string[] = [];
+    const unchanged: string[] = [];
     for (const r of targets) {
+      if (typeof r.output.replacedBy === "string") {
+        unchanged.push(`${r.id} 已由 ${r.output.replacedBy} 接手`);
+        continue;
+      }
+      if (r.status === "done" || r.status === "cancelled" || stopRequested(r.id)) continue;
       // A conversation turn runs on its conversation's backend: the choice goes there (as /agent and
       // /model do), so the turn queued again, and the ones after it, run on the new one in a new session.
       const conv = r.kind === "ask" ? findThread(ctx.app, String((r.input as { conversationId?: string }).conversationId ?? "")) : null;
       if (conv) {
-        const { updateThread } = await import("./threads.ts");
-        const { releaseThreadSession } = await import("./sessions.ts");
-        updateThread(ctx.app, conv.id, { settings: { profile: execution.profile, model: execution.model ?? null, effort: execution.effort ?? null } });
+        const { actor } = threadActor(ctx.app, conv);
+        const resolveChoice = (choice: Execution) => resolveRunProfile(ctx.app, { actor, ...executionArgs(choice) });
+        const target = resolveChoice(execution);
+        const matches = (choice: { profile: string; model?: string; effort?: string }) =>
+          choice.profile === target.id && choice.model === target.model && choice.effort === target.effort;
+        const configured = conv.settings.profile === target.id
+          ? resolveRunProfile(ctx.app, { actor, profileId: target.id, model: conv.settings.model ?? undefined, effort: conv.settings.effort ?? undefined })
+          : null;
+        const alreadySet = configured && matches({ profile: configured.id, model: configured.model, effort: configured.effort });
+        const alreadyRunning = r.status === "running" && r.ai && matches(r.ai);
+        // A fallback can make the actual AI differ. Allow a first switch back to the requested AI,
+        // but an attempt already made for this turn must not start over with the same choice.
+        const applied = r.input.ai as Execution | undefined;
+        const attempted = alreadySet && applied?.profile === target.id ? resolveChoice(applied) : null;
+        const alreadyTried = attempted && matches({ profile: attempted.id, model: attempted.model, effort: attempted.effort });
+        if (!alreadySet) updateThread(ctx.app, conv.id, { settings: { profile: execution.profile, model: execution.model ?? null, effort: execution.effort ?? null } });
+        if (r.status !== "failed" && (alreadyRunning || alreadyTried || (alreadySet && !r.ai))) {
+          const selected = [target.id, target.model, target.effort].filter(Boolean).join(" · ");
+          const actual = r.ai && !alreadyRunning ? `，本轮实际使用 ${[r.ai.profile, r.ai.model, r.ai.effort].filter(Boolean).join(" · ")}` : "";
+          unchanged.push(`${r.id} 的会话已设为 ${selected}，本轮无需重开${actual}`);
+          continue;
+        }
         releaseThreadSession(conv.id);
       }
       // Agent rounds keep their choice in execution (it decides whether a session can be resumed); others in ai.
@@ -5786,7 +5811,8 @@ def({
       }
     }
     const ai = [execution.profile, execution.model, execution.effort].filter(Boolean).join(" · ");
-    return done.length ? `换成 ${ai}：\n${done.join("\n")}` : "没有需要换的运行（都已完成或已取消）。";
+    const result = [...(done.length ? [`换成 ${ai}：\n${done.join("\n")}`] : []), ...unchanged];
+    return result.join("\n") || "没有需要换的运行（都已完成或已停止）。";
   },
 });
 

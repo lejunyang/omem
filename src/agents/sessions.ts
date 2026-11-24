@@ -31,6 +31,7 @@ import { afterTurn, noteRateLimit } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
 import { awarenessNote } from "./awareness.ts";
 import { attachmentText } from "./attachments.ts";
+import type { Execution } from "./execution.ts";
 
 /**
  * Agent sessions behind threads. Three levels of continuity, cheapest first:
@@ -150,7 +151,7 @@ function larkScope(t: Thread, userId: string): { chats: string[] | null; draft?:
   return { chats: (t.channel === "lark" || "bot" in bot) && chat ? [chat] : [], ...bot };
 }
 
-function actorFor(app: App, t: Thread): { actor: Actor; label: string } {
+export function threadActor(app: App, t: Thread): { actor: Actor; label: string } {
   if (t.settings.spec) {
     const spec = findAgentSpec(app, t.settings.spec);
     if (spec && spec.status === "active") return { actor: { spec }, label: spec.name };
@@ -355,7 +356,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   await refreshForRun(app);
   const t = getThread(app, threadId);
   const resolved = contextForTurn(ctx, t, messages, userId);
-  const { actor, label } = actorFor(app, t);
+  const { actor, label } = threadActor(app, t);
   const lark = larkScope(t, userId);
   // Someone who cannot read the conversation's space still gets their turn, in a space of theirs.
   const space = turnSpaceFor(app, userId, t.spaceId);
@@ -438,6 +439,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
     ctx.event("status", { text: `带上关注的经验：${asked.picked.cases.length} 个相近案例${asked.picked.playbook ? "、经验文件" : ""}${asked.picked.lessons ? `、本人最近 ${asked.picked.lessons} 次对回复的决定` : ""}（${asked.picked.why}）` });
   }
   let sentFocus = false;
+  const switched = ctx.run.input.ai as Execution | undefined;
   const turnMessage = (selected: typeof prep, fresh: boolean, carry = "") => {
     const withTools = selected.tools.size > 0 && selected.capabilities.omemAccess !== "http";
     const currentBrief = brief && !withTools ? workStateBrief(app, undefined, false) : brief;
@@ -501,7 +503,10 @@ ${WAKE_NOTE}`
     const context = fresh ? `# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0], ownerCold(currentBrief), withTools)}\n\n---\n\n` : "";
     const changed = !fresh && t.settings.instructionScene !== selected.scene.join(" ");
     const sceneUpdate = changed ? `\n\n# 本轮适用的场景说明（替代先前按场景选择的小节）\n\n${selected.sceneGuide || "本轮没有适用的小节。"}` : "";
-    return { prompt: `${turnHeader(selected)}\n\n${context}${newPart}${groupReply && !promptOverride ? `\n\n${groupReply}` : ""}${sceneUpdate}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
+    const switchNote = switched && !promptOverride
+      ? `宿主已将会话的 AI 设为 ${aiLabel(switched)}，本轮由 ${aiLabel({ profile: selected.profile.id, model: selected.profile.model, effort: selected.profile.effort })} 接手。如果本条消息只是要求切换，直接告知结果。如果还交代了任务，接着完成。\n\n`
+      : "";
+    return { prompt: `${turnHeader(selected)}\n\n${context}${switchNote}${newPart}${groupReply && !promptOverride ? `\n\n${groupReply}` : ""}${sceneUpdate}${carry ? `\n\n---\n\n${carry}` : ""}`, contextChars: context.length };
   };
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
