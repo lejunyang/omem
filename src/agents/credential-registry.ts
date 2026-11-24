@@ -71,7 +71,7 @@ export const defaultSharingScope = (id: string) => id === OWNER ? "all" : "self"
 
 export function registerCredential(plugin: string, def: CredentialDef, settings = () => ({} as Record<string, string | number | boolean>), app?: App) {
   if (!ID.test(def.id) || !def.name?.trim() || typeof def.login !== "function") throw new Error("凭据需要有效的 id、name 和 login");
-  for (const name of ["refresh", "check", "logout", "provide", "precheck"] as const)
+  for (const name of ["ownerLogin", "refresh", "check", "logout", "provide", "precheck"] as const)
     if (def[name] !== undefined && typeof def[name] !== "function") throw new Error(`凭据 ${name} 需要回调函数`);
   const provides = providesSchema.parse(def.provides);
   for (const [i, c] of provides.commands.entries()) {

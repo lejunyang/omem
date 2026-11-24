@@ -261,7 +261,7 @@ child.on("close", async (code, signal) => {
       try {
         const res = await request("/api/credentials/outcome", { command: name, args, code: code ?? 1, output: code === 0 ? "" : output }, 5000);
         const reason = { denied: "没有这个资源的权限", expired: "登录已过期", unauthenticated: "需要重新登录" }[res.value?.reason];
-        if (res.status === 200 && reason) process.stderr.write("[omem] " + reason + (res.value.applyUrl ? "，可前往 " + res.value.applyUrl : "") + "。\n");
+        if (res.status === 200 && reason) process.stderr.write("[omem] " + reason + (res.value.applyUrl ? "，可前往 " + res.value.applyUrl : "") + "。" + (res.value.notice ? res.value.notice : "") + "\n");
       } catch {}
     }
     process.exitCode = code ?? 1;

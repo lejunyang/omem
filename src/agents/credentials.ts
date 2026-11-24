@@ -13,10 +13,16 @@ import { connectionSecrets, deleteConnection, findConnection, listConnections, s
 import { accountEntry, accountEnv, accountHome, accountStatePaths, clearAccountPaths, ensureAccountHome } from "./accounts.ts";
 import { sandboxSupport } from "./sandbox.ts";
 import { accountCatalog } from "./catalog.ts";
+import { credentialReady, credentialWaits } from "./credential-wait.ts";
 
 export { registerCredential } from "./credential-registry.ts";
 import { credentialKindsForBackend, credentialMethod, credentialMethods, declaredPaths, defaultSharingScope, requireCredential, type CredentialMethod } from "./credential-registry.ts";
 const THREE_DAYS = 3 * 86400_000;
+/**
+ * The service itself said the login no longer works (a command's outcome). A check that only reads
+ * what is on disk (the owner's) cannot see that, so it does not undo it unless the login changed.
+ */
+const COMMAND_EXPIRED = "命令报告登录已失效，需要重新登录";
 const loginResult = z.object({ user: z.string().trim().min(1).max(200), expiresAt: z.number().finite().positive().optional() }).strict();
 const refreshResult = loginResult.omit({ user: true });
 const checkResult = refreshResult.extend({ state: z.enum(["ok", "expired", "missing"]), user: z.string().trim().min(1).max(200).optional() });
@@ -194,11 +200,18 @@ export function precheckCredential(app: App, holder: string, m: CredentialMethod
   return timed(m, 20_000, signal => check(context(app, holder, m, signal, "check"), { resource, user, ...subject, ...(command ? { command } : {}) }));
 }
 
+/** Whether omem can start this person's login (a member's in their account sandbox, the owner's through the plugin's ownerLogin). */
+export const canStartLogin = (app: App, id: string, m: CredentialMethod) => id === OWNER ? !!m.ownerLogin : member(app, id) && sandboxSupport().ok;
+/** The account page, starting this credential's login as it opens. */
+export const loginLink = (kind: string) => `#/account?login=${encodeURIComponent(kind)}`;
 function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | "expiring" | "failed") {
   const hold = credentialHold(app, id, m.kind), today = day(app);
   if (hold.notified[state] === today) return;
+  const startable = canStartLogin(app, id, m);
   notify(app, { userId: id, title: `${m.name} ${state === "expired" ? "登录过期了" : state === "failed" ? "授权或检查失败" : "三天内到期"}`,
-    body: id === OWNER ? "用的是这台机器上已有的登录，请在本机重新授权。" : `请重新授权 ${m.name}。此前的账号文件会保留。`, link: "#/account" });
+    body: startable ? `打开这条通知会开始重新登录 ${m.name}，在官方页面确认即可。${id === OWNER ? "" : "此前的账号文件会保留。"}`
+      : id === OWNER ? "用的是这台机器上已有的登录，请在本机重新授权。" : `请重新授权 ${m.name}。此前的账号文件会保留。`,
+    link: startable ? loginLink(m.kind) : "#/account" });
   save(app, id, m.kind, { ...hold, notified: { ...hold.notified, [state]: today } });
 }
 /** `remind` false: the caller asks them itself (inviteCredential), with the login link. */
@@ -206,7 +219,7 @@ export function expireCommandCredential(app: App, id: string, m: CredentialMetho
   return serial(keyOf(app, id, m.kind), async () => {
     const hold = credentialHold(app, id, m.kind);
     if (!canCheck(id, hold.state) || m.signal.aborted) return;
-    save(app, id, m.kind, { ...hold, state: "expired", refreshAt: undefined });
+    save(app, id, m.kind, { ...hold, state: "expired", refreshAt: undefined, error: COMMAND_EXPIRED });
     if (remind) reminder(app, id, m, "expired");
   });
 }
@@ -248,12 +261,14 @@ const logins = new Map<string, Pending>();
 /** `why`: said before the link when omem starts the login on its own (inviteCredential). */
 export function startCredentialLogin(app: App, id: string, kind: string, why?: string): Promise<LoginReply> {
   const m = requireCredential(kind);
-  if (!member(app, id)) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机授权");
+  const owner = id === OWNER;
+  if (owner && !m.ownerLogin) throw new HttpError(400, "用的是这台机器上已有的登录，请在本机授权");
+  if (!owner && !member(app, id)) throw new HttpError(400, "只有已启用的成员可以登录凭据");
   const support = sandboxSupport();
-  if (!support.ok) throw new HttpError(400, "成员凭据需要账号沙箱：" + support.reason);
+  if (!owner && !support.ok) throw new HttpError(400, "成员凭据需要账号沙箱：" + support.reason);
   const key = keyOf(app, id, kind), pending = logins.get(key);
   if (pending) return pending.reply;
-  ensureAccountHome(app, id);
+  if (!owner) ensureAccountHome(app, id);
   const abort = new AbortController();
   let resolve!: (v: LoginReply) => void, reject!: (e: unknown) => void;
   const p: Pending = { method: m, abort, reply: new Promise((yes, no) => { resolve = yes; reject = no; }) };
@@ -265,25 +280,30 @@ export function startCredentialLogin(app: App, id: string, kind: string, why?: s
   const signal = AbortSignal.any([abort.signal, m.signal, timeout]);
   void serial(key, async () => {
     try {
-      const ctx = context(app, id, m, signal, "supply");
-      const result = loginResult.parse(await untilAbort(signal, () => m.login(ctx, link => {
+      const ctx = context(app, id, m, signal, owner ? "check" : "supply");
+      const show = (link: { url: string; code?: string }) => {
         signal.throwIfAborted();
         const l = z.object({ url: z.httpUrl().max(2000), code: z.string().max(64).optional() }).parse(link);
         p.url = l.url; p.code = l.code;
+        // The card opens the official page itself: no stop at the account page on the way.
         notify(app, { userId: id, title: `omem 正在为你登录 ${m.name}`,
-          body: `${why ? why + "\n" : ""}请打开 ${l.url}${l.code ? `，验证码 ${l.code}` : ""}。11 分钟内完成授权。`, link: "#/account", urgency: "urgent" });
+          body: `${why ? why + "\n" : ""}打开链接${l.code ? `，验证码 ${l.code}` : ""}，在官方页面确认。11 分钟内完成授权${credentialWaits(app, id, kind).length ? "，完成后助手会接着做刚才的事" : ""}。`, link: l.url, urgency: "urgent" });
         answer(() => resolve(l));
-      })));
-      if (m.provide) await untilAbort(signal, () => m.provide!(ctx));
+      };
+      const result = loginResult.parse(await untilAbort(signal, () => owner ? m.ownerLogin!(ctx, show) : m.login(ctx, show)));
+      if (!owner && m.provide) await untilAbort(signal, () => m.provide!(ctx));
       signal.throwIfAborted();
-      save(app, id, kind, { ...credentialHold(app, id, kind), ...result, suppliedBackends: m.provides.backends, expiresAt: result.expiresAt, state: "logged-in", refreshAt: refreshAt(result.expiresAt), checkedAt: now(), error: undefined });
+      save(app, id, kind, { ...credentialHold(app, id, kind), ...result, suppliedBackends: m.provides.backends, expiresAt: result.expiresAt, state: "logged-in",
+        refreshAt: owner ? undefined : refreshAt(result.expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined, notified: {} });
       remindHold(app, id, m);
+      credentialReady(app, id, kind, m.name);
       answer(() => resolve({ done: true }));
     } catch {
       if (!signal.aborted || timeout.aborted || !replied) {
         const hold = credentialHold(app, id, kind);
-        save(app, id, kind, { ...hold, state: "expired", error: "授权或供给失败，请重新登录", checkedAt: now() });
-        reminder(app, id, m, "failed");
+        // The owner's login on this machine is what it was: only the attempt failed.
+        save(app, id, kind, { ...hold, ...(owner ? {} : { state: "expired" as const }), error: "授权或供给失败，请重新登录", checkedAt: now() });
+        if (!owner || hold.state !== "logged-in") reminder(app, id, m, "failed");
       }
       answer(() => reject(new HttpError(502, signal.aborted ? "登录取消或超时，请重试" : "授权或供给失败，请重新登录")));
     } finally { clearTimeout(first); abort.abort(); if (logins.get(key) === p) logins.delete(key); }
@@ -325,9 +345,15 @@ export function checkCredential(app: App, id: string, kind: string) {
     try {
       const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, "check"))));
       const expiresAt = result.state === "missing" ? undefined : result.expiresAt ?? s.expiresAt;
-      save(app, id, kind, { ...credentialHold(app, id, kind), state: result.state === "missing" ? "missing" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in",
+      let state: Hold["state"] = result.state === "missing" ? "missing" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in";
+      // The same login on disk the service already turned down: still expired until a new login.
+      const unchanged = s.state === "expired" && s.error === COMMAND_EXPIRED && expiresAt === s.expiresAt && (result.user ?? s.user) === s.user;
+      if (state === "logged-in" && unchanged) state = "expired";
+      save(app, id, kind, { ...credentialHold(app, id, kind), state,
         suppliedBackends: id === OWNER ? m.provides.backends : s.suppliedBackends,
-        user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined });
+        user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app),
+        error: state === "expired" && unchanged ? COMMAND_EXPIRED : undefined });
+      if (state === "logged-in" && s.state !== "logged-in") credentialReady(app, id, kind, m.name);
     } catch { save(app, id, kind, { ...credentialHold(app, id, kind), checkedAt: now(), checkedDay: day(app), error: "检查失败，请稍后重试" }); reminder(app, id, m, "failed"); }
     remindHold(app, id, m);
     return credentialHold(app, id, kind);
@@ -451,12 +477,13 @@ function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
     : id === OWNER && s.state === "none" ? "unknown"
     : !usableCredential(app, id, m.kind, s) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
   const missing = declaredPaths(app, m).install.filter(d => !installed(d.path));
-  const login = id !== OWNER && sandboxSupport().ok;
+  // As canStartLogin, without reading the person again for every row (the caller is an active person).
+  const login = id === OWNER ? !!m.ownerLogin : sandboxSupport().ok;
   return { kind: m.kind, plugin: m.plugin, name: m.name, describe: m.describe ?? "", required: !!m.required, state,
     user: s.user, expiresAt: s.expiresAt, checkedAt: s.checkedAt, error: s.error, sharing: s.sharing,
     backends: m.provides.backends, commands: m.provides.commands.map(c => c.name), supplied: s.provision !== undefined, login,
     machine: id === OWNER, url: p?.url, code: p?.code,
-    reason: id === OWNER ? "用的是这台机器上已有的登录" : !login ? "成员账号沙箱不可用" : undefined,
+    reason: id === OWNER ? (login ? undefined : "用的是这台机器上已有的登录") : !login ? "成员账号沙箱不可用" : undefined,
     missingInstall: missing.map(d => d.declared).filter(p => p.startsWith("~/")), missingInstallCount: missing.length };
 }
 export function myCredentials(app: App, id: string) {

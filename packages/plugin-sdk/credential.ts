@@ -67,6 +67,12 @@ export type CredentialDef = {
   required?: boolean;
   /** Call `show` with the link (and code) the person opens; omem puts it on their page and in their Feishu private chat. */
   login(ctx: CredentialContext, show: (link: { url: string; code?: string }) => void): Promise<{ user: string; expiresAt?: number }>;
+  /**
+   * Optional: the owner's own login on this machine, through the tool's official flow (ctx.home is this
+   * machine's HOME; ctx.secret cannot be written). Call `show` with the official link, resolve when it is
+   * done. Without it, the owner logs in on the machine themselves and omem only checks.
+   */
+  ownerLogin?(ctx: CredentialContext, show: (link: { url: string; code?: string }) => void): Promise<{ user: string; expiresAt?: number }>;
   /** 10 minutes before `expiresAt` (at most once a minute) and when the person presses 检查: the new `expiresAt`, or null to ask them to log in again. */
   refresh?(ctx: CredentialContext): Promise<{ expiresAt?: number } | null>;
   /** Read-only: is this person still logged in? */

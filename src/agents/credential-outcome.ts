@@ -1,14 +1,15 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { run } from "../core/db.ts";
+import { one, run } from "../core/db.ts";
 import { COMMAND_OUTPUT_LIMIT, now } from "../core/util.ts";
 import { applicationUrl, recordAccess } from "./credential-access.ts";
 import { credentialMethods, type CredentialCommand } from "./credential-registry.ts";
-import { expireCommandCredential } from "./credentials.ts";
+import { canStartLogin, expireCommandCredential, startCredentialLogin } from "./credentials.ts";
+import { waitForCredential } from "./credential-wait.ts";
 import { executableName, field } from "./operation-policy.ts";
 
 import type { ToolContext } from "./tools.ts";
-import { OWNER } from "../core/users.ts";
+import { OWNER, userName } from "../core/users.ts";
 
 export function reportable(ctx: ToolContext) {
   return ctx.actor === "agent" && !!ctx.runId && !ctx.shadow && !ctx.boardAccess && !ctx.view && ctx.role !== "guest" && ctx.commandHomeUser !== null &&
@@ -101,7 +102,20 @@ export async function credentialOutcome(app: App, user: string, runId: string, r
     return {};
   }
   const result = classifyFailure(command, req.output);
-  if (result.reason === "expired" || result.reason === "unauthenticated") await expireCommandCredential(app, user, method, remind);
+  let notice: string | undefined;
+  if (result.reason === "expired" || result.reason === "unauthenticated") {
+    // A conversation is stuck on it: omem starts the login now (the card carries the official link)
+    // and the conversation goes on once it works (credential-wait.ts). Otherwise only a reminder.
+    const requester = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", runId)?.user_id ?? user;
+    // Only one's own login (or the owner's): a lender is not asked to log in because a borrower's command failed.
+    const waits = remind && (user === requester || user === OWNER) && canStartLogin(app, user, method) && waitForCredential(app, user, method.kind, runId, requester);
+    await expireCommandCredential(app, user, method, remind && !waits);
+    if (waits) {
+      startCredentialLogin(app, user, method.kind, `运行 ${command.name} 时${method.name}报告${result.reason === "expired" ? "登录过期" : "没有登录"}。`)
+        .catch(() => { /* Reported to them by the login itself. */ });
+      notice = `已把${method.name}的登录链接发给${userName(app, user)}，授权完成后这段对话会自动接着做。不要自己发起登录，也不要为等授权设唤醒或轮询；先把这次没查到的告诉对方。`;
+    }
+  }
   if (resource && result.reason === "denied") recordAccess(app, method.kind, resource, user, false, runId, result.applyUrl ?? undefined);
-  return result;
+  return notice ? { ...result, notice } : result;
 }

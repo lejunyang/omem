@@ -22,6 +22,10 @@ updated: 2026-11-24
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 凭据失效后发起登录、授权后接着做（2026-11-24）
+
+插件凭据加了可选的 `ownerLogin`：本人那份也能在 omem 里走工具自己的官方登录（`startCredentialLogin` 对本人调它，失败不改本人的持有状态）。对话里的命令报没登录或过期时，`credential-outcome.ts` 记下这段对话（`credential-wait.ts`）并当场发起登录，卡片链接直接是官方页，命令垫片的 `[omem]` 行让助手别自己登录或轮询；登录完成或检查看到换了新登录（`checkCredential`）时 `credentialReady` 给对话发 `[授权]` 消息。提醒在能发起登录时链接到 `#/account?login=<种类>`，账号页打开就开始登录。命令报过的过期（`COMMAND_EXPIRED`）不会被只读本机文件的检查改回有效，过期时账号页不再显示续签期限。运行的常驻说明对本人也写明命令登录由 omem 发起（`commandLoginNote`）。
+
 ## 运行页的每一步带参数（2026-11-24）
 
 运行页“过程”里每一步可以展开看参数和输出。开始和完成两条事件按调用 id 合并时保留开始时的参数，`omem_call` 那一步按它实际调用的工具显示，参数取那个工具自己的。`read_run` 给下一轮的步骤摘要也写成 `omem_call → 工具名`（`tools.ts` 的 `calledThrough`）。见 `web/src/components/RunActivity.vue`、`src/agents/tools.ts`。

@@ -228,7 +228,11 @@ export async function credentialExecution(ctx: ToolContext, entry: Entry, args: 
  * agent runs them as they are instead of switching profiles or starting a login for the member itself.
  */
 export function commandLoginNote(app: App, userId: string) {
-  if (userId === OWNER) return "";
+  if (userId === OWNER) {
+    const startable = credentialMethods().filter(m => m.ownerLogin).flatMap(m => m.provides.commands.map(c => c.name));
+    if (!startable.length) return "";
+    return `- 命令行登录：${[...new Set(startable)].join("、")} 报没登录或登录过期时，omem 自己发起官方登录、把链接发给${userName(app, OWNER)}，授权后这段对话会自动接着做（输出里以 [omem] 开头的行会说明）。不要自己发起这些命令的登录，也不要为等授权设唤醒或轮询\n`;
+  }
   const names = [...new Set(credentialMethods().flatMap(m => m.provides.commands.filter(c => c.readOnly?.length).map(c => c.name)))];
   if (!names.length) return "";
   const who = userName(app, userId), owner = userName(app, OWNER);

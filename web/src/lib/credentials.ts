@@ -63,6 +63,8 @@ export function span(ms: number) {
 export function expiryText(c: { state: CredentialState; expiresAt?: number }, now = Date.now()): string {
   if (c.expiresAt === undefined || c.state === "unknown" || c.state === "none" || c.state === "logging-in") return "";
   const left = c.expiresAt - now;
+  // The service turned the login down before its renewal date: that date says nothing now.
+  if (c.state === "expired" && left > 0) return "";
   return left > 0 ? `${span(left)}后到期` : `${span(left)}前过期`;
 }
 

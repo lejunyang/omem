@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
 import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
@@ -15,7 +16,8 @@ import UiSegmented from "./UiSegmented.vue";
 /**
  * 账号 → 凭据 (src/agents/credentials.ts, docs/v2/credentials.md): the kinds plugins registered, one row
  * each — whether this person is logged in and until when, what it supplies, logging in or out, and who
- * may borrow it. The owner's are the logins already on this machine: no login here, only who may borrow.
+ * may borrow it. The owner's are the logins already on this machine: logged in here only when the plugin
+ * offers the tool's own login for it. `?login=<kind>` (a reminder's link) starts that login as the page opens.
  * Nothing shows when no plugin registered one. `loaded`: the list, for “我的 AI 账号” to mark the backends
  * a credential supplies; `changed`: a login or logout finished (the backends' states changed too).
  */
@@ -68,9 +70,23 @@ async function loadPeople() {
     peopleAsked.value = true;
   }
 }
+const route = useRoute();
+const router = useRouter();
+/** A reminder's link: start the login now and show its link in the row (a window opened without a click would be blocked). */
+async function loginFromLink() {
+  const kind = typeof route.query.login === "string" ? route.query.login : "";
+  if (!kind) return;
+  void router.replace({ query: { ...route.query, login: undefined } });
+  const c = list.value?.find((x) => x.kind === kind);
+  if (!c) return;
+  await nextTick();
+  document.getElementById(credAnchor(c.kind))?.scrollIntoView({ block: "center" });
+  if (c.login && c.state !== "logging-in") await login(c, false);
+}
 onMounted(async () => {
   pollUntil = Date.now() + POLL_FOR;
   await load();
+  await loginFromLink();
   if (list.value?.length) await loadPeople();
 });
 onBeforeUnmount(() => clearTimeout(timer));
@@ -80,11 +96,11 @@ const nameOf = (id: string) => people.value?.find((p) => p.value === id)?.label 
 const backendName = (id: string) => props.backendNames?.[id] ?? id;
 const missing = computed(() => (list.value ?? []).filter(needsAction).length);
 
-async function login(c: Credential) {
+async function login(c: Credential, openPage = true) {
   busy.value = `${c.kind}:login`;
   try {
     const r = await post<{ url?: string; code?: string; done?: boolean }>(`/api/credentials/${encodeURIComponent(c.kind)}/login`);
-    if (r.url) window.open(r.url, "_blank", "noopener,noreferrer");
+    if (r.url && openPage) window.open(r.url, "_blank", "noopener,noreferrer");
     else if (r.done) {
       toast(`${c.name} 已登录`, "ok");
       emit("changed");
@@ -168,13 +184,13 @@ const fullTime = (ms?: number) => (ms === undefined ? "" : fmtTime(new Date(ms).
           <span v-if="expiryText(c)" class="muted small" :title="fullTime(c.expiresAt)">{{ expiryText(c) }}</span>
           <span v-if="c.user && c.state !== 'none'" class="muted small ellipsis cred-user" :title="c.user">{{ c.user }}</span>
           <span class="spacer" />
-          <span v-if="!c.machine && c.login" class="cred-ops">
+          <span v-if="c.login" class="cred-ops">
             <template v-if="c.state === 'logging-in'">
               <button v-if="canCancel(c)" class="btn ghost sm danger" :disabled="!!busy" @click="cancel(c)">取消</button>
             </template>
             <template v-else>
               <button class="btn sm" :class="{ primary: c.state === 'none' || c.state === 'expired' }" :disabled="!!busy" @click="login(c)">{{ busy === `${c.kind}:login` ? "正在启动…" : c.state === "none" ? "登录" : "重新授权" }}</button>
-              <button v-if="c.state !== 'none'" class="btn ghost sm danger" :disabled="!!busy" @click="logout(c)">退出</button>
+              <button v-if="c.state !== 'none' && !c.machine" class="btn ghost sm danger" :disabled="!!busy" @click="logout(c)">退出</button>
             </template>
           </span>
         </div>
@@ -211,7 +227,7 @@ const fullTime = (ms?: number) => (ms === undefined ? "" : fmtTime(new Date(ms).
         <p v-if="c.machine" class="small muted">
           这份凭据使用本机登录。
           <template v-if="c.state === 'unknown'">检查出结果前，成员仍按出借设置借用。</template>
-          <template v-else-if="c.state === 'none'">请先在本机登录，检查确认后即可按出借设置借用。</template>
+          <template v-else-if="c.state === 'none' || c.state === 'expired'">{{ c.login ? "点“登录”在官方页面授权，完成后自动变成“有效”。" : "请先在本机登录，检查确认后即可按出借设置借用。" }}</template>
         </p>
         <p v-else-if="!c.login && c.reason" class="small warn-text">这台机器上不能登录：{{ c.reason }}</p>
         <p v-if="c.error && c.state !== 'logging-in'" class="small warn-text err">{{ c.error }}</p>
