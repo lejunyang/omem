@@ -5,7 +5,12 @@
  * must first be enabled for the app in the developer console (all of them, once); `offline_access` is
  * what lets omem keep working in the background (a refresh token).
  */
-export type Feature = { id: string; label: string; description: string; scopes: string[] };
+export type Feature = { id: string; label: string; description: string; scopes: string[]; requiredScopes?: string[] };
+
+export const LARK_DOC_READ_SCOPE = "docx:document:readonly";
+export const LARK_LEGACY_DOC_SCOPE = "docx:document";
+// Existing connections with the original docs permissions and search can still capture recent docs.
+const DOCS_REQUIRED_SCOPES = [LARK_DOC_READ_SCOPE, "docs:document.content:read", "wiki:node:read", "wiki:wiki:readonly", "drive:file:download", "search:docs:read"];
 
 export const FEATURES: Record<string, Feature[]> = {
   lark: [
@@ -23,7 +28,17 @@ export const FEATURES: Record<string, Feature[]> = {
       description: "助手在你让它看时，以你的身份读你的单聊。默认不采集，要保存到 omem 在账号页打开采集",
       scopes: ["im:chat:read", "im:message:readonly", "im:message.p2p_msg:get_as_user", "im:resource", "contact:user.base:readonly"],
     },
-    { id: "docs", label: "文档与知识库", description: "读你能看到的文档和知识库目录", scopes: ["docx:document:readonly", "docs:document.content:read", "wiki:node:read", "wiki:wiki:readonly", "drive:file:download"] },
+    {
+      id: "docs", label: "文档与知识库",
+      description: "搜索、读取你能看到的文档、附件和知识库。服务器开启最近文档采集时，最近打开的文档会收进你的个人空间",
+      requiredScopes: DOCS_REQUIRED_SCOPES,
+      scopes: [
+        ...DOCS_REQUIRED_SCOPES,
+        "wiki:node:retrieve", "wiki:space:retrieve",
+        "space:document:retrieve", "drive:drive.metadata:readonly",
+        "docs:document.media:download", "board:whiteboard:node:read", "docs:permission.member:auth",
+      ],
+    },
     { id: "sheets", label: "表格与多维表格", description: "读你能看到的电子表格和多维表格", scopes: ["sheets:spreadsheet:read", "sheets:spreadsheet.meta:read", "base:app:read", "base:table:read", "base:field:read", "base:record:read", "base:view:read"] },
     { id: "calendar", label: "日程", description: "读你的日程", scopes: ["calendar:calendar:read", "calendar:calendar.event:read"] },
     { id: "minutes", label: "妙记与会议", description: "读你的妙记，知道你加入了哪个会议", scopes: ["minutes:minutes:readonly", "minutes:minutes.artifacts:read", "vc:meeting.meetingevent:read"] },
@@ -78,10 +93,10 @@ export function scopesFor(provider: string, ids: string[]) {
   return [...new Set(chosen.flatMap((f) => f.scopes))];
 }
 
-/** Features whose every scope the connection has. */
+/** Features whose required scopes the connection has. Authorization can also request scopes for supporting operations. */
 export function grantedFeatures(provider: string, scopes: string[]) {
   const have = new Set(scopes);
   return featuresOf(provider)
-    .filter((f) => f.scopes.every((s) => have.has(s)))
+    .filter((f) => (f.requiredScopes ?? f.scopes).every((s) => have.has(s)))
     .map((f) => f.id);
 }

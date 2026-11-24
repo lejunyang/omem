@@ -3,7 +3,7 @@ import { one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { json, now, webLink } from "../core/util.ts";
 import { findUser, OWNER, userName } from "../core/users.ts";
-import { featuresOf, grantedFeatures } from "./features.ts";
+import { featuresOf, grantedFeatures, LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE } from "./features.ts";
 import { findConnection } from "./vault.ts";
 
 /**
@@ -41,7 +41,7 @@ export function connectLink(app: App, features: string[], scopes: string[] = [])
  * Record what the run was refused for and tell the person (a card in their private chat with the link);
  * returns the message for the agent: the link to pass on, and that the work resumes by itself.
  */
-export function needConnection(app: App, userId: string, runId: string | null | undefined, what: { features?: string[]; scopes?: string[]; reason: string }) {
+export function needConnection(app: App, userId: string, runId: string | null | undefined, what: { features?: string[]; scopes?: string[]; requiredScopes?: string[]; reason: string }) {
   const features = withNeeded(what.features ?? []), scopes = what.scopes ?? [];
   const link = connectLink(app, features, scopes);
   const labels = features.map((f) => featuresOf("lark").find((x) => x.id === f)?.label ?? f);
@@ -50,7 +50,8 @@ export function needConnection(app: App, userId: string, runId: string | null | 
   const name = userName(app, userId);
   if (conversationId) {
     const list = waiting(app, userId).filter((w) => w.conversationId !== conversationId);
-    save(app, userId, [...list, { conversationId, features, scopes, reason: what.reason, at: now() }]);
+    // A bundled feature can be offered on the login page even when the blocked call only needs part of it.
+    save(app, userId, [...list, { conversationId, features: what.requiredScopes ? [] : features, scopes: what.requiredScopes ?? scopes, reason: what.reason, at: now() }]);
   }
   try {
     notify(app, { userId, tone: "warning", title: "飞书授权：助手需要你确认", body: `${what.reason}，需要你给 omem 授权${asked}。打开链接用飞书确认就行${conversationId ? "，授权完成后助手会接着做刚才的事" : ""}。`, link, urgency: "normal" });
@@ -67,7 +68,10 @@ export function connectionGranted(app: App, userId: string, provider: string) {
   const c = findConnection(app, userId, provider);
   if (!c || c.status !== "active") return;
   const have = new Set(grantedFeatures(provider, c.scopes)), scopes = new Set(c.scopes);
-  const ready = list.filter((w) => w.features.every((f) => have.has(f)) && w.scopes.every((s) => scopes.has(s)));
+  const ready = list.filter((w) => w.features.every((f) => have.has(f)) && w.scopes.every((s) => {
+    if (s === LARK_LEGACY_DOC_SCOPE && w.reason === `读取飞书文档缺少飞书权限 ${LARK_LEGACY_DOC_SCOPE}`) return scopes.has(LARK_DOC_READ_SCOPE) || scopes.has(s);
+    return scopes.has(s);
+  }));
   save(app, userId, list.filter((w) => !ready.includes(w)));
   for (const w of ready) {
     void import("../agents/inbox.ts")

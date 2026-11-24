@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, onTestFinished } from "vitest";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { accessToken, disconnect, renewConnections } from "../src/auth/connections.ts";
-import { scopesFor } from "../src/auth/features.ts";
+import { grantedFeatures, scopesFor } from "../src/auth/features.ts";
 import { asLarkUser, larkCliAs } from "../src/auth/lark-user.ts";
 import { asOwner } from "../src/channels/lark-auth.ts";
 import { personalLibrary } from "../src/channels/lark-wiki.ts";
@@ -141,6 +141,14 @@ describe("connections", async () => {
     expect(asked).toEqual(expect.arrayContaining([...scopesFor("lark", ["calendar"])]));
     expect(asked).toContain("offline_access");
     expect(asked).not.toContain("im:message:readonly");
+    const docs = new URL((await remote("/api/auth/lark/start?features=docs")).headers.get("location")!);
+    const originalDocScopes = ["docx:document:readonly", "docs:document.content:read", "wiki:node:read", "wiki:wiki:readonly", "drive:file:download"];
+    expect(docs.searchParams.get("scope")!.split(" ").sort()).toEqual([
+      ...originalDocScopes, "search:docs:read", "wiki:node:retrieve", "wiki:space:retrieve", "space:document:retrieve", "drive:drive.metadata:readonly",
+      "docs:document.media:download", "board:whiteboard:node:read", "docs:permission.member:auth", "offline_access", "contact:user.email:readonly",
+    ].sort());
+    expect(grantedFeatures("lark", originalDocScopes)).not.toContain("docs");
+    expect(grantedFeatures("lark", [...originalDocScopes, "search:docs:read"])).toContain("docs");
     // The login page lists what can be ticked (background access comes along, not listed).
     const session = await (await remote("/api/auth/session")).json();
     expect(session.login.providers[0].features.map((f: { id: string }) => f.id)).toEqual(expect.arrayContaining(["messages", "calendar"]));
@@ -320,6 +328,45 @@ describe("connections", async () => {
     await new Promise((res) => setTimeout(res, 50));
     expect(said()).toContain("小吴已在飞书完成授权");
     expect(one(app.db, "select 1 from kv where key = 'connect_wait:wu'")).toBeUndefined();
+  });
+
+  it("offers the read-only docs feature for a doc fetch and resumes old waits with the new scope", async () => {
+    const { callTool } = await import("../src/agents/tools.ts");
+    const { createRun } = await import("../src/agents/runs.ts");
+    const { connectionGranted } = await import("../src/auth/connect-wait.ts");
+    const { createThread } = await import("../src/agents/threads.ts");
+    const userId = "doc-reader", spaceId = "personal-doc-reader";
+    createUser(app, { name: "小林", id: userId });
+    const thread = createThread(app, { spaceId, channel: "lark", userId });
+    const legacy = createThread(app, { spaceId, channel: "lark", userId });
+    const r = createRun(app, { kind: "agent", spaceId, title: "读文档", input: { conversationId: thread.id }, userId });
+    const grant = (scopes: string[]) => storeConnection(app, { userId, provider: "lark", accountId: "on_lin", accountName: "小林", scopes, accessToken: "at_lin", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    grant(["offline_access"]);
+    let missing = "docx:document";
+    setLarkCliForTests(async () => { throw new LarkScopeError([missing], "缺少权限"); });
+    onTestFinished(() => setLarkCliForTests(null));
+    const read = () => callTool({ app, runId: r.id, spaceId, spaces: null, tools: null, actor: "agent", userId, larkChats: [] }, "lark_doc_fetch", { doc: "https://tenant.larkoffice.com/docx/abc" });
+    const link = "http://omem.test/#/login?provider=lark&features=docs";
+    for (const scope of ["docx:document", "docx:document:readonly"]) {
+      missing = scope;
+      const refused = await read();
+      expect(refused.isError).toBe(true);
+      expect(refused.text).toContain(`授权链接：${link}。`);
+      expect(refused.text).toContain("文档与知识库");
+      expect(one(app.db, "select link from notifications where user_id = ? order by rowid desc limit 1", userId)).toEqual({ link });
+    }
+    const key = `connect_wait:${userId}`;
+    const pending = () => JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value ?? "[]");
+    run(app.db, "update kv set value = ? where key = ?", JSON.stringify([...pending(), {
+      conversationId: legacy.id, features: [], scopes: ["docx:document"], reason: "读取飞书文档缺少飞书权限 docx:document", at: new Date().toISOString(),
+    }]), key);
+    grant(["docx:document:write_only"]);
+    connectionGranted(app, userId, "lark");
+    expect(pending()).toHaveLength(2);
+    grant(["docx:document:readonly"]);
+    connectionGranted(app, userId, "lark");
+    expect(pending()).toEqual([]);
+    await expect.poll(() => [thread.id, legacy.id].map((id) => !!one(app.db, "select 1 from messages where conversation_id = ? and text like '[授权]%'", id))).toEqual([true, true]);
   });
 
   it("captures a member's own chats with their token, and does not read again what they can already see", async () => {

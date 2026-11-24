@@ -236,7 +236,9 @@ export async function fetchForEdit(app: App, input: FetchInput, opts: { asBot?: 
   if (input.maxDepth !== undefined) args.push("--max-depth", String(input.maxDepth));
   if (input.contextBefore) args.push("--context-before", String(input.contextBefore));
   if (input.contextAfter) args.push("--context-after", String(input.contextAfter));
-  const v = opts.asBot ? await larkCliAsBot(ownBot(app), args, 60_000).catch((e) => botDenied(app, e)) : await asOwner(app, "读取飞书文档", () => larkCli(args, 60_000));
+  const v = opts.asBot
+    ? await larkCliAsBot(ownBot(app), args, 60_000).catch((e) => botDenied(app, e))
+    : await asOwner(app, "读取飞书文档", () => larkCli(args, 60_000), { documentRead: true });
   const d = v?.data?.document ?? {};
   return { content: String(d.content ?? ""), revision: d.revision_id ?? null, tips: typeof d.tips === "string" ? d.tips : "" };
 }
