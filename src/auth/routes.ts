@@ -465,19 +465,19 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // remote operation (docs/v2/remote.md): each person's own sessions and recordings
   "GET /api/remote": "self",
   "GET /api/remote/grant-candidates": "self",
-  "GET /api/remote/screens": g("desktop.control"),
+  "GET /api/remote/screens": "handler", // remote/http.ts: the owner, or someone with remote.browser (a browser only)
   "GET /api/remote/browser-profiles": g("desktop.control"),
-  "POST /api/remote/sessions": g("desktop.control"),
+  "POST /api/remote/sessions": "handler", // remote/http.ts: the owner, or someone with remote.browser (a browser only)
   "POST /api/remote/sessions/:id/view": "handler",
   "POST /api/remote/sessions/:id/grants": "self",
   "PATCH /api/remote/sessions/:id/grants/:grantId": "self",
   "DELETE /api/remote/sessions/:id/grants/:grantId": "self",
   "POST /api/remote/sessions/:id/viewer": g("desktop.control"),
-  "GET /api/remote/settings": g("desktop.control"),
-  "PUT /api/remote/settings": g("desktop.control"),
-  "POST /api/remote/settings/probe": g("desktop.control"),
+  "GET /api/remote/settings": "handler", // remote/http.ts: the owner, or someone with remote.browser (a browser only)
+  "PUT /api/remote/settings": "handler", // remote/http.ts: the owner, or someone with remote.browser (a browser only)
+  "POST /api/remote/settings/probe": "handler", // remote/http.ts: the owner, or someone with remote.browser (a browser only)
   "POST /api/remote/sessions/:id/navigate": "handler",
-  "DELETE /api/remote/sessions/:id": g("desktop.control"),
+  "DELETE /api/remote/sessions/:id": "handler", // remote/http.ts: the owner, or someone with remote.browser (a browser only)
   "POST /api/remote/sessions/:id/recording": g("desktop.control"),
   "DELETE /api/remote/sessions/:id/recording": g("desktop.control"),
   "GET /api/remote/recordings": g("desktop.control"),

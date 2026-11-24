@@ -1,6 +1,6 @@
 import { runPredicate, type RunAudience } from "./run-scope.ts";
 import { sourceVisible } from "./visibility.ts";
-import { capabilityAccess, isCapability, type Capability } from "./capabilities.ts";
+import { capabilityAccess, capabilityKeys, globalCapability, isCapability, type Capability } from "./capabilities.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, now, slugify } from "../core/util.ts";
@@ -20,7 +20,7 @@ export const GLOBAL_PERMS = {
   "spaces.create": "新建空间",
   "runs.read.all": "看所有人的运行",
   "code.delegate": "交办编码和评审（在宿主机上跑命令）",
-  "desktop.control": "操作桌面",
+  "desktop.control": "操作桌面（不是本人时只能开自己的浏览器）",
   "share.external": "生成对外分享链接",
   "connector.use": "连接第三方平台（飞书等）",
   "tools.external": "在自己的电脑上用 omem 工具（omem tool、omem mcp 连远程地址）",
@@ -77,8 +77,14 @@ export function findRole(app: App, id: string): Role | null {
   return r ? toRole(r) : null;
 }
 
+/**
+ * A role holds the coarse permissions above and, since 2026-11-25, the fine-grained capabilities of
+ * auth/capabilities.ts too (what a member's 能做什么 sheet sets one by one): a global role any of them,
+ * a space role those that apply within a space.
+ */
 function validPermissions(scope: RoleScope, perms: string[]) {
-  const ok = new Set<string>(scope === "space" ? SPACE_LIST : [...Object.keys(GLOBAL_PERMS), ...everySpace(SPACE_LIST)]);
+  const caps = capabilityKeys.filter((c) => scope === "global" || !globalCapability(c));
+  const ok = new Set<string>([...(scope === "space" ? SPACE_LIST : [...Object.keys(GLOBAL_PERMS), ...everySpace(SPACE_LIST)]), ...caps]);
   const bad = perms.filter((p) => !ok.has(p));
   if (bad.length) throw new HttpError(400, `不认识的权限：${bad.join("、")}`);
   return [...new Set(perms)];

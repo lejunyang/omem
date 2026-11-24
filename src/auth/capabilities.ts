@@ -37,6 +37,7 @@ const definitions = {
   "metrics.view": ["space", "看指标", "查看空间里的指标和变化"],
   "remote.view": ["global", "看远程会话", "看授权给他的远程会话"],
   "remote.operate": ["global", "操作远程会话", "操作授权给他的远程会话"],
+  "remote.browser": ["global", "用自己的远程浏览器", "在远程页开自己的浏览器、保存自己的登录配置；不能连桌面，也访问不了运行 omem 的机器上的地址"],
   "settings.members": ["global", "管理成员权限", "修改成员的预设和能力覆盖"],
 } as const;
 export type Capability = keyof typeof definitions;
@@ -59,9 +60,11 @@ export const legacyCapabilities: Record<string, Capability[]> = {
 const personal: Capability[] = ["ask.send", "conversations.view", "notifications.view", "runs.operate"];
 function presetGrants(role: string, permissions: string[], cap: Capability) {
   if (role === "owner") return true;
+  // A role that lists the capability itself (a custom role, permissions.ts validPermissions).
+  if (permissions.includes(cap)) return true;
   if (cap === "agents.view") return role !== "observer";
   if (cap === "settings.members" && role === "admin") return true;
-  if (cap === "remote.view" || cap === "remote.operate") return false;
+  if (cap === "remote.view" || cap === "remote.operate" || cap === "remote.browser") return permissions.includes(cap);
   if (cap.startsWith("settings.") && cap !== "settings.members") return (cap === "settings.members.view" && (role === "admin" || permissions.includes("users.manage")))
     || permissions.some(p => legacyCapabilities[p]?.includes(cap));
   if (role === "observer") return cap.endsWith(".view") || cap === "ask.send" || cap === "search.use";
@@ -116,7 +119,7 @@ export function capabilityAccess(app: App, userId: string, targetSpace?: string 
     }
     if (presetCaps.has(cap) || (own && ["items.view", "runs.view"].includes(cap))) return "preset";
     // Personal spaces have an automatic manager membership, including for read-only observers.
-    if (!(preset === "observer" && byId.get(space ?? "")?.kind === "personal") && local.some(p => legacyCapabilities[p]?.includes(cap))) return "spaceRole";
+    if (!(preset === "observer" && byId.get(space ?? "")?.kind === "personal") && local.some(p => p === cap || legacyCapabilities[p]?.includes(cap))) return "spaceRole";
     return null;
   }
   const range = (cap: Capability, own = false) => active && preset === "owner" ? null : spaces.filter(s => source(cap, s.id, own)).map(s => s.id);

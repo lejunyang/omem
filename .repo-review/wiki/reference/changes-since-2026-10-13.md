@@ -22,6 +22,10 @@ updated: 2026-11-24
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 成员自己的远程浏览器与本机地址守卫（2026-11-25）
+
+`src/remote/browser-guard.ts`：不是本人的浏览器由 `aad mcp` 带守卫环境启动（去掉桌面代理来源，`*_proxy` 指向守卫，`no_proxy=<-loopback>`），守卫复用 `egress-proxy.ts`（新增 TCP 监听、`limits`、`unref`，`Destination` 带 `local` 和 `ip`），拒绝本机和链路本地地址。`sessions.ts` 的 `guarded`、`mayBrowse`；只有守卫下的浏览器能交给成员操作（`grants.ts`），普通会话的操作授权按只看处理。新能力 `remote.browser`；桌面、屏幕、复制本机登录、显示窗口只给本人（`remote/http.ts`）。成员运行带 `OMEM_BROWSER_PROXY`，`browser.mjs` 用它启动，`agent-browser.ts` 核对启动参数。自定义角色可带细分能力（`permissions.ts` 的 `validPermissions`、`capabilities.ts` 的 `presetGrants`），网页分组抽到 `web/src/lib/capability-areas.ts`。
+
 ## 文档采集的范围（2026-11-24）
 
 新增 `src/channels/lark-doc-filter.ts`：各人的 `settings.larkDocs`（跳过个人文档库、按链接排除文档 / 知识库页面及子页面 / 整个知识库 / 云空间文件夹）和成员的 `larkCapture.docs` 开关。`captureRecentDocs` 和本人聊天里的文档链接先过 `docSkipper`，`importLarkDocument` 的 `skip` 让跟随的链接和子页面也跳过。接口 `GET/PUT /api/lark/doc-capture`（各人自己的）。登录与连接的 `capture` 参数存在 `kv` 的 `auth_capture:<state>`，回调时写进 `larkCapture`。界面：`LarkDocExclusions.vue` 用在账号页和 设置 → 采集 → 飞书文档 的“你最近打开的文档”（本人）；登录页勾消息或文档时出现“存进 omem”的选择；“以你的身份写文档”只给本人。

@@ -12,7 +12,7 @@ import { HttpError } from "../core/util.ts";
 import { attachRecording, getDemo, listDemos, requireDemo, startDemo, stopDemo } from "./demos.ts";
 import { importRecording, importSchema } from "./import.ts";
 import { fromExtension, getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
-import { browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, ownsAgentBrowser, restartViewer, screens, sessionView, startRecording, stopRecording, viewerAccess, viewerPath } from "./sessions.ts";
+import { browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, mayBrowse, navigate, openBrowser, openDesktop, ownsAgentBrowser, restartViewer, screens, sessionView, startRecording, stopRecording, viewerAccess, viewerPath } from "./sessions.ts";
 import { cachedProbe, probeRunning, probeVideo, readSettings, remoteSettingsSchema, saveSettings, viewerArgs } from "./settings.ts";
 
 import { REMOTE_BASE, proxyHttp, viewerCookie } from "./proxy.ts";
@@ -25,7 +25,11 @@ const profiles = (app: App, userId: string) => {
 };
 /** This machine's own browsers carry the owner's logins: only the owner starts from a copy of them. */
 const ownerOnly = (userId: string) => {
-  if (userId !== OWNER) throw new HttpError(403, "只有本人能用这台机器上浏览器的登录");
+  if (userId !== OWNER) throw new HttpError(403, "只有本人能用这台机器的屏幕和本机浏览器的登录");
+};
+/** Is allowed to open browser sessions of their own (sessions.ts mayBrowse). */
+const browsesFor = (app: App) => (userId: string) => {
+  if (!mayBrowse(app, userId)) throw new HttpError(403, "没有使用远程浏览器的权限");
 };
 
 /** The message that hands a finished recording to the assistant in the page's conversation. */
@@ -49,6 +53,7 @@ async function organize(app: App, r: Recording, userId: string, conversationId?:
 }
 
 export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
+  const browses = browsesFor(app);
   markInterrupted(app);
   const q = <T>(schema: z.ZodType<T>, v: unknown): T => {
     const r = schema.safeParse(v ?? {});
@@ -64,12 +69,12 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
   // Whether the page is offered at all: aad installed on this machine.
   server.get("/api/remote", async (req) => {
     const status = desktopControl.status();
-    return { available: status.installed, version: status.version, sessions: listSessions(app, who(req)), profiles: can(app, who(req), "desktop.control") ? profiles(app, who(req)) : [], windowAvailable: browserWindowAvailable() };
+    return { available: status.installed, version: status.version, sessions: listSessions(app, who(req)), profiles: mayBrowse(app, who(req)) ? profiles(app, who(req)) : [], mayBrowse: mayBrowse(app, who(req)), desktop: who(req) === OWNER, windowAvailable: browserWindowAvailable() };
   });
   const grantFields = z.object({ mode: z.enum(["view", "operate"]), hours: z.number().positive().optional() });
   server.get("/api/remote/grant-candidates", async req => {
     const actor = who(req);
-    if (!can(app, actor, "desktop.control") && !ownsAgentBrowser(actor)) throw new HttpError(403, "只有能管理远程会话的人可以选成员");
+    if (!mayBrowse(app, actor) && !ownsAgentBrowser(actor)) throw new HttpError(403, "只有能管理远程会话的人可以选成员");
     return grantCandidates(app, actor);
   });
   server.post("/api/remote/sessions/:id/grants", async req => {
@@ -84,13 +89,13 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
     const { id, grantId } = req.params as { id: string; grantId: string };
     return changeGrant(app, getSession(id), who(req), null, grantId);
   });
-  server.get("/api/remote/screens", async () => screens());
+  server.get("/api/remote/screens", async (req) => (ownerOnly(who(req)), screens()));
   // This machine's own browser profiles, whose logins a session can start from a copy of.
   server.get("/api/remote/browser-profiles", async (req) => (ownerOnly(who(req)), browserProfiles()));
   // How sessions are shown: each user's picture settings, and which video codecs work here.
-  server.get("/api/remote/settings", async (req) => ({ settings: readSettings(app, who(req)), video: cachedProbe(app), probing: probeRunning() }));
-  server.put("/api/remote/settings", async (req) => saveSettings(app, who(req), q(remoteSettingsSchema.partial(), req.body)));
-  server.post("/api/remote/settings/probe", async () => probeVideo(app));
+  server.get("/api/remote/settings", async (req) => (browses(who(req)), { settings: readSettings(app, who(req)), video: cachedProbe(app), probing: probeRunning() }));
+  server.put("/api/remote/settings", async (req) => (browses(who(req)), saveSettings(app, who(req), q(remoteSettingsSchema.partial(), req.body))));
+  server.post("/api/remote/settings/probe", async (req) => (browses(who(req)), probeVideo(app)));
   server.post("/api/remote/sessions", async (req, reply) => {
     const b = q(z.object({
       kind: z.enum(["browser", "desktop"]),
@@ -103,13 +108,16 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
       monitor: z.number().int().min(0).optional(),
       window: z.string().max(200).optional(),
       title: z.string().max(200).optional(),
+      forMembers: z.boolean().optional(),
     }), req.body);
     const userId = who(req);
-    if (b.copyFrom) ownerOnly(userId);
+    // Someone other than the owner only ever gets a browser, never this machine's screen.
+    if (b.kind === "desktop" || b.copyFrom || b.forMembers) ownerOnly(userId);
+    browses(userId);
     const settings = readSettings(app, userId);
     const viewer = viewerArgs(settings, b.kind, cachedProbe(app));
     const s = b.kind === "browser"
-      ? await openBrowser(app, { url: b.url || undefined, browser: b.browser ?? (settings.browser || undefined), profile: b.profile || undefined, copyFrom: b.copyFrom, closeRunning: b.closeRunning, visible: b.visible, viewer, userId })
+      ? await openBrowser(app, { url: b.url || undefined, browser: b.browser ?? (settings.browser || undefined), profile: b.profile || undefined, copyFrom: b.copyFrom, closeRunning: b.closeRunning, visible: b.visible, viewer, userId, forMembers: b.forMembers })
       : await openDesktop(app, { monitor: b.monitor, window: b.window, title: b.title?.slice(0, 60), viewer, userId });
     return view(s, reply, userId);
   });
@@ -123,6 +131,7 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
   server.post("/api/remote/sessions/:id/navigate", async (req) => navigate(app, (req.params as { id: string }).id, q(z.object({ url: z.string().min(1).max(2048) }), req.body).url, who(req)));
   server.delete("/api/remote/sessions/:id", async (req) => {
     const id = (req.params as { id: string }).id;
+    browses(who(req));
     getSession(id, who(req));
     await closeSession(app, id);
     return { ok: true };

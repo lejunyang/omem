@@ -151,6 +151,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   await loadPlugins(app);
   (await import("./plugins/notifier.ts")).startNotifierOutlets(app);
   const server = await startServer(app, opts);
+  // Browsers others work in go through it (remote/browser-guard.ts); runs are given its address as they start.
+  void import("./remote/browser-guard.ts").then((m) => m.startBrowserGuard());
   {
     const { compactArchiveQueue } = await import("./sources/archive.ts");
     const n = compactArchiveQueue(app);

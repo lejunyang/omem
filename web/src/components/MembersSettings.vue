@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { groupCapabilities } from "../lib/capability-areas";
 import HelpText from "./HelpText.vue";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { routineText, type Routine } from "../lib/routine";
@@ -59,10 +60,14 @@ const globalRoles = computed(() => (roles.value?.roles ?? []).filter((r) => r.sc
 const spaceRoles = computed(() => (roles.value?.roles ?? []).filter((r) => r.scope === "space"));
 const roleName = (id: string) => (id === "owner" && "主人") || roles.value?.roles.find((r) => r.id === (id === "owner" ? "manager" : id))?.name || id;
 const permLabel = (p: string) => {
+  const cap = catalog.value?.find((c) => c.key === p);
+  if (cap) return cap.name;
   const [name, all] = p.split("@");
   const text = roles.value?.global[name] ?? roles.value?.space[name] ?? name;
   return all ? `${text}（所有空间）` : text;
 };
+/** The capabilities a role being edited may hold: all of them for a global role, those within a space for a space role. */
+const roleCaps = computed(() => (draft.value && catalog.value ? groupCapabilities(catalog.value.filter((c) => draft.value!.scope === "global" || c.scope === "space")) : []));
 // A global role can hold its own permissions and space permissions in every space.
 const permChoices = (scope: "global" | "space") =>
   scope === "space" ? Object.keys(roles.value?.space ?? {}) : [...Object.keys(roles.value?.global ?? {}), ...Object.keys(roles.value?.space ?? {}).map((p) => `${p}@*`)];
@@ -231,6 +236,7 @@ async function revoke(i: Invite) {
 }
 function editRole(r?: Role, scope: "global" | "space" = "space") {
   draft.value = r ? { id: r.builtin ? undefined : r.id, name: r.builtin ? `${r.name}（副本）` : r.name, scope: r.scope, description: r.description, permissions: r.permissions.filter((p) => p !== "*") } : { name: "", scope, description: "", permissions: scope === "space" ? ["space.read"] : [] };
+  if (!catalog.value) void get<Capability[]>("/api/capabilities").then((c) => (catalog.value = c)).catch(() => {});
   void nextTick(() => document.querySelector(".editor")?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
 }
 async function saveRole() {
@@ -494,9 +500,19 @@ onMounted(() => load().catch(fail));
             <strong>{{ draft.id ? "编辑角色" : `新建${draft.scope === "global" ? "全局" : "空间"}角色` }}</strong>
             <input v-model="draft.name" class="input sm" placeholder="名字，如：审稿人" maxlength="40" aria-label="角色名字" />
             <input v-model="draft.description" class="input sm" placeholder="一句话说明" maxlength="200" aria-label="角色说明" />
+            <span class="small muted">基本权限</span>
             <div class="perm-grid">
               <UiCheckbox v-for="p in permChoices(draft.scope)" :key="p" v-model="draft.permissions" :value="p" size="sm">{{ permLabel(p) }}</UiCheckbox>
             </div>
+            <template v-if="roleCaps.length">
+              <span class="small muted">细分能力（和成员“能做什么”里的同一套；{{ draft.scope === "global" ? "空间里的能力在他能读的空间里生效" : "在这个角色所在的空间里生效" }}）</span>
+              <div v-for="g in roleCaps" :key="g.label" class="stack tight">
+                <span class="small">{{ g.label }}</span>
+                <div class="perm-grid">
+                  <UiCheckbox v-for="c in g.caps" :key="c.key" v-model="draft.permissions" :value="c.key" size="sm" :title="c.description">{{ c.name }}</UiCheckbox>
+                </div>
+              </div>
+            </template>
             <div class="row"><button class="btn sm primary" @click="saveRole">保存</button><button class="btn ghost sm" @click="draft = null">取消</button></div>
           </div>
           <div v-for="scope in ['global', 'space'] as const" :key="scope" class="set-pad roles">

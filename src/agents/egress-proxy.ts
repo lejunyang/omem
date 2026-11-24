@@ -8,7 +8,8 @@ import { lookup } from "node:dns/promises";
 import { once } from "node:events";
 import type { Duplex } from "node:stream";
 
-export type Destination = { url: URL; method: string; tunnel: boolean; private: boolean; body?: Buffer; contentType?: string };
+/** `local`: the address is this machine's own (loopback, unspecified or one of its interfaces); `ip`: the address the proxy will connect to. */
+export type Destination = { url: URL; method: string; tunnel: boolean; private: boolean; local?: boolean; ip?: string; body?: Buffer; contentType?: string };
 export type HostUsage = { host: string; count: number; bytes: number; denied: number; backend: boolean; lastDeniedAt?: number; error?: string };
 export type ProxyOptions = {
   check: (d: Destination) => Promise<{ allowed: boolean; reason?: string; backend?: boolean }>;
@@ -18,6 +19,10 @@ export type ProxyOptions = {
   resolve?: (host: string) => Promise<string>;
   ca?: Buffer;
   upstreamProxy?: (protocol: string) => URL | undefined;
+  /** A browser opens many connections to many hosts over a long time (remote/browser-guard.ts); a run's defaults are 64 and 256. */
+  limits?: { connections: number; hosts: number };
+  /** Does not keep the process alive by itself (a proxy that lives as long as omem). */
+  unref?: boolean;
 };
 
 const reserved = new BlockList();
@@ -37,7 +42,10 @@ function headers(input: http.IncomingHttpHeaders) {
 const callbackPath = /^\/(?:mcp|api\/(?:tools(?:\/[a-zA-Z0-9_-]+)?|command-gate|credentials\/outcome|operation-gate\/http|remote\/agent-browser))$/;
 const hostName = (url: URL) => url.hostname.replace(/^\[|\]$/g, "");
 class Refused extends Error { }
-export async function startProxy(path: string, opts: ProxyOptions) {
+/** `listen`: a socket path (a run's sandbox) or a loopback TCP port (a browser, which cannot use a path). */
+export async function startProxy(listen: string | { host: string; port: number }, opts: ProxyOptions) {
+  const maxConnections = opts.limits?.connections ?? 64;
+  const maxHosts = opts.limits?.hosts ?? 256;
   const usage = new Map<string, HostUsage>();
   const sockets = new Set<Duplex>();
   const lifetime = new AbortController();
@@ -52,7 +60,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
   let closed = false;
   let connecting = 0;
   async function dial(url: URL, ip: string, port: number) {
-    if (connecting >= 64) throw new Refused("等待上游的连接数已达上限");
+    if (connecting >= maxConnections) throw new Refused("等待上游的连接数已达上限");
     connecting++;
     try { return await connectPeer(url, ip, port); } finally { connecting--; }
   }
@@ -76,7 +84,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
   function row(url: URL) {
     let r = usage.get(url.host);
     if (!r) {
-      if (usage.size >= 256) throw new Refused("运行访问的主机数已达上限");
+      if (usage.size >= maxHosts) throw new Refused("运行访问的主机数已达上限");
       r = { host: url.host, count: 0, bytes: 0, denied: 0, backend: false };
       usage.set(url.host, r);
     }
@@ -131,7 +139,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
         }
         body = Buffer.concat(chunks);
       }
-      await gate({ url, method: req.method!, body, tunnel: false, private: local(ip) || privateAddress(ip), contentType: req.headers["content-type"] }, r);
+      await gate({ url, method: req.method!, body, tunnel: false, private: local(ip) || privateAddress(ip), local: local(ip), ip, contentType: req.headers["content-type"] }, r);
     }
     if (closed || res.destroyed) return;
     const h = headers(req.headers);
@@ -166,7 +174,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
   let requests = 0;
   function handler(inside?: URL): http.RequestListener {
     return (req, res) => {
-      if (requests >= 64) { res.writeHead(429, { connection: "close" }).end("代理请求数已达上限"); return; }
+      if (requests >= maxConnections) { res.writeHead(429, { connection: "close" }).end("代理请求数已达上限"); return; }
       requests++;
       const finished = new Promise<void>(resolve => res.once("close", resolve));
       void send(req, res, inside).catch(e => {
@@ -176,7 +184,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
     };
   }
   const server = http.createServer(handler());
-  server.maxConnections = 64;
+  server.maxConnections = maxConnections;
   server.on("connection", track);
   server.on("connect", (req, socket, head) => {
     void (async () => {
@@ -188,7 +196,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
       if (cert) {
         const tls = https.createServer(cert, handler(url));
         tls.on("tlsClientError", (_e, s) => {
-          if (usage.has(url.host) || usage.size < 256) {
+          if (usage.has(url.host) || usage.size < maxHosts) {
             const host = row(url);
             host.denied++;
             host.lastDeniedAt = Date.now();
@@ -204,7 +212,7 @@ export async function startProxy(path: string, opts: ProxyOptions) {
       const r = row(url);
       const ip = await address(url);
       if (servicePort(url, ip)) refuse(r, "宿主入口需要本次运行令牌");
-      await gate({ url, method: "CONNECT", private: local(ip) || privateAddress(ip), tunnel: true }, r);
+      await gate({ url, method: "CONNECT", private: local(ip) || privateAddress(ip), local: local(ip), ip, tunnel: true }, r);
       if (closed || socket.destroyed) return;
       const peer = await dial(url, ip, Number(url.port || 443));
       if (closed || socket.destroyed) { peer.destroy(); return; }
@@ -220,7 +228,10 @@ export async function startProxy(path: string, opts: ProxyOptions) {
       socket.end("HTTP/1.1 " + (e instanceof Refused ? "403 Forbidden" : "502 Bad Gateway") + "\r\nConnection: close\r\nContent-Length: " + Buffer.byteLength(reason) + "\r\n\r\n" + reason);
     });
   });
-  server.listen(path);
+  if (typeof listen === "string") server.listen(listen);
+  else server.listen(listen.port, listen.host);
   await once(server, "listening");
-  return { usage, close() { closed = true; lifetime.abort(); server.close(); for (const s of sockets) s.destroy(); } };
+  if (opts.unref) server.unref();
+  const bound = server.address();
+  return { usage, port: bound && typeof bound === "object" ? bound.port : 0, close() { closed = true; lifetime.abort(); server.close(); for (const s of sockets) s.destroy(); } };
 }

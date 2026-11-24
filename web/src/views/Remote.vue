@@ -18,7 +18,7 @@ import { endedMessage, endedText, expiryLabel, isEnded, MODE_LABEL, type EndedGr
  * Remote operation (docs/v2/remote.md): a browser page or the desktop of the machine omem runs on,
  * shown through aad's viewer, with a recording that the assistant beside it turns into a skill.
  */
-type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; window: string | null; recording: string | null; viewers: number; src?: string;
+type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; window: string | null; recording: string | null; viewers: number; src?: string; guarded?: boolean;
   /** Whose it is; `grant`: what this person was handed; `grants`: who the owner handed it to (owner only); `runId`: opened by a run. */
   ownerId?: string; ownerName?: string; mine?: boolean; grant?: RemoteGrant | null; grants?: RemoteGrant[]; runId?: string | null; spaceId?: string | null };
 type BrowserProfile = { browser: "chrome" | "edge" | "brave"; id: string; name: string };
@@ -85,14 +85,19 @@ function setConversation(id: string | null) {
 
 async function load() {
   try {
-    const r = await get<{ available: boolean; version: string | null; sessions: (Session | EndedGrant)[]; profiles: string[]; windowAvailable: boolean }>("/api/remote");
+    const r = await get<{ available: boolean; version: string | null; sessions: (Session | EndedGrant)[]; profiles: string[]; windowAvailable: boolean; mayBrowse?: boolean; desktop?: boolean }>("/api/remote");
+    mayBrowse.value = r.mayBrowse ?? hasPerm("desktop.control");
+    machine.value = r.desktop ?? hasPerm("desktop.control");
+    if (!machine.value) kind.value = "browser";
     available.value = r.available;
     version.value = r.version;
     sessions.value = live(r.sessions);
     profiles.value = r.profiles;
     windowAvailable.value = r.windowAvailable;
     if (!r.windowAvailable) visible.value = false;
-    if (r.available && canControl.value) recordings.value = await get<Recording[]>("/api/remote/recordings");
+    if (r.available && machine.value) recordings.value = await get<Recording[]>("/api/remote/recordings");
+    if (machine.value) void loadBrowserProfiles();
+    openFromLink();
     if (soloId.value) {
       const s = sessions.value.find((x) => x.id === soloId.value);
       const gone = r.sessions.find((x): x is EndedGrant => isEnded(x) && x.id === soloId.value);
@@ -107,10 +112,35 @@ async function load() {
   }
 }
 /**
- * Opening sessions, recording and the picture settings are for those who control this machine
- * (`desktop.control`); someone handed a session only sees the sessions handed to them.
+ * Opening browser sessions and the picture settings are for the owner and whoever has `remote.browser`
+ * (`mayBrowse`); the desktop, recording and copying this machine's own browser logins only for the owner
+ * (`machine`). Others' browsers never reach this machine's addresses (src/remote/browser-guard.ts).
+ * Someone handed a session only sees the sessions handed to them.
  */
-const canControl = computed(() => hasPerm("desktop.control"));
+const mayBrowse = ref(hasPerm("desktop.control"));
+const machine = ref(hasPerm("desktop.control"));
+const canControl = computed(() => mayBrowse.value);
+/** The owner opening a browser to hand to members: kept off this machine's addresses like theirs. */
+const forMembers = ref(false);
+/**
+ * A link that opens one's own long-lived profile at once (`#/remote?profile=后台&url=https://…`): sent to
+ * someone to log in on a site in their own profile, which later work reuses.
+ */
+let linkUsed = false;
+function openFromLink() {
+  if (linkUsed || !mayBrowse.value || active.value) return;
+  const p = typeof route.query.profile === "string" ? route.query.profile.trim().slice(0, 40) : "";
+  const u = typeof route.query.url === "string" && /^https?:\/\//.test(route.query.url) ? route.query.url : "";
+  if (!p && !u) return;
+  linkUsed = true;
+  const same = sessions.value.find((s) => s.mine !== false && s.kind === "browser" && p && s.browser?.profile === p);
+  if (same) return void show(same);
+  kind.value = "browser";
+  profile.value = p;
+  url.value = u;
+  if (p && !profiles.value.includes(p)) profiles.value.push(p);
+  void open();
+}
 /** Said in place of the picture when a session handed to this person was taken back or ran out. */
 const lost = ref("");
 /** The session whose 交给成员 sheet is open. */
@@ -191,7 +221,6 @@ async function loadBrowserProfiles() {
 onMounted(() => {
   void load();
   timer = setInterval(() => (tick.value = Date.now()), 1000);
-  void loadBrowserProfiles();
 });
 onBeforeUnmount(() => timer && clearInterval(timer));
 const pageTitle = document.title;
@@ -370,7 +399,7 @@ const profileOptions = computed<SelectOption<string>[]>(() => [
   { value: "", label: "临时资料", hint: "关掉就清空" },
   ...profiles.value.map((p) => ({ value: p, label: p, hint: "保留登录", group: "omem 的长期资料" })),
   { value: "__new", label: "新建长期资料…", group: "omem 的长期资料" },
-  ...(browserProfiles.value ?? []).map((p) => ({ value: `copy:${p.browser}:${p.id}`, label: p.name, hint: `${BROWSER_NAMES[p.browser]} · ${p.id}`, group: "复制这台机器上浏览器的登录" })),
+  ...(machine.value && !forMembers.value ? browserProfiles.value ?? [] : []).map((p) => ({ value: `copy:${p.browser}:${p.id}`, label: p.name, hint: `${BROWSER_NAMES[p.browser]} · ${p.id}`, group: "复制这台机器上浏览器的登录" })),
 ]);
 // A profile of this machine's own browser, copied: its logins come along.
 const copying = computed(() => {
@@ -479,7 +508,7 @@ async function open() {
   try {
     const shared = area.value.startsWith("w:") ? screens.value?.windows.find((w) => w.window === area.value.slice(2)) : undefined;
     const body = kind.value === "browser"
-      ? { kind: "browser", url: url.value.trim() || undefined, ...(copying.value ? { copyFrom: copying.value } : { profile: profile.value || undefined }), closeRunning: closeRunning.value, visible: visible.value }
+      ? { kind: "browser", url: url.value.trim() || undefined, ...(copying.value && machine.value && !forMembers.value ? { copyFrom: copying.value } : { profile: profile.value.startsWith("copy:") ? undefined : profile.value || undefined }), closeRunning: closeRunning.value, ...(machine.value && !forMembers.value ? { visible: visible.value } : {}), ...(machine.value && forMembers.value ? { forMembers: true } : {}) }
       : { kind: "desktop", ...(area.value.startsWith("m:") ? { monitor: Number(area.value.slice(2)) } : shared ? { window: shared.window, title: shared.title } : {}) };
     const s = await post<Session>("/api/remote/sessions", body);
     sessions.value = [...sessions.value, s];
@@ -613,6 +642,7 @@ const counts = (r: Recording) => {
               <span class="ellipsis">{{ s.title }}</span>
               <span v-if="s.runId" class="stab-tag" title="助手在一次运行里打开的">助手</span>
               <span v-if="!s.mine && s.ownerName" class="stab-tag">{{ s.ownerName }}的</span>
+              <span v-if="s.guarded && machine && s.mine !== false" class="stab-tag" title="访问不了这台机器上的地址，可以交给成员操作">给成员用</span>
               <span v-if="s.grants?.length" class="stab-tag on" :title="`交给了 ${s.grants.map((g) => g.userName).join('、')}`">交给 {{ s.grants.length }} 人</span>
               <span v-if="s.recording" class="dot" title="录制中" />
               <button v-if="canControl && s.mine !== false" class="x" :aria-label="`关闭 ${s.title}`" title="关闭会话" @click.stop="close(s)"><Icon name="x" :size="13" /></button>
@@ -667,7 +697,7 @@ const counts = (r: Recording) => {
         <div v-else-if="!active" class="opener card pad stack">
           <p v-if="lost" class="lost small" role="status">{{ lost }}</p>
           <h2>打开远程画面</h2>
-          <UiSegmented v-model="kind" :options="[{ value: 'browser', label: '浏览器' }, { value: 'desktop', label: '桌面' }]" aria-label="打开什么" @change="kind === 'desktop' && loadScreens(true)" />
+          <UiSegmented v-if="machine" v-model="kind" :options="[{ value: 'browser', label: '浏览器' }, { value: 'desktop', label: '桌面' }]" aria-label="打开什么" @change="kind === 'desktop' && loadScreens(true)" />
           <template v-if="kind === 'browser'">
             <label class="field"><span>网址</span><input v-model="url" class="input" placeholder="https://…（可以先空着，打开后再在上面输入）" @keydown.enter.prevent="open" /></label>
             <div class="field">
@@ -677,7 +707,12 @@ const counts = (r: Recording) => {
               <span v-else-if="!profile" class="hint">什么都没登录，关掉就清空。要保留登录，新建一份长期资料，或复制这台机器上浏览器的登录。</span>
             </div>
             <UiCheckbox v-if="profile" v-model="closeRunning" aria-label="先关闭占用这份资料的浏览器">先关闭占用这份资料的浏览器（会关闭它的所有窗口，并清理已退出进程留下的锁）</UiCheckbox>
-            <div class="field">
+            <div v-if="machine" class="field">
+              <UiCheckbox v-model="forMembers" aria-label="给成员用">给成员用</UiCheckbox>
+              <span class="hint">交给成员操作的浏览器要这样开：它访问不了这台机器上的地址（包括 omem 自己），不在电脑桌面上显示，也不复制本机浏览器的登录。普通的浏览器只能交给成员看。</span>
+            </div>
+            <p v-else class="hint">这个浏览器开在运行 omem 的机器上，访问不了那台机器自己的地址（localhost、127.0.0.1 和它的局域网地址）。长期资料里的登录只有你能用。</p>
+            <div v-if="machine && !forMembers" class="field">
               <UiCheckbox v-model="visible" :disabled="!windowAvailable" aria-label="在运行 omem 的电脑桌面上也显示浏览器窗口">在运行 omem 的电脑桌面上也显示浏览器窗口</UiCheckbox>
               <span v-if="windowAvailable" class="hint">默认只在当前远程画面里看和操作。勾选后，那台电脑前的人也能直接看和操作这个窗口。</span>
               <span v-else class="hint">后台服务没有连接到桌面，浏览器仍可在远程画面里使用。要在电脑上也显示窗口，请从那台电脑的桌面终端重启 omem 服务。</span>
@@ -725,7 +760,7 @@ const counts = (r: Recording) => {
               <button class="btn ghost sm" @click="reconnect(true)"><Icon name="refresh" :size="13" />现在刷新</button>
             </div>
           </div>
-          <div v-if="!soloId && !fullscreen && canControl && active.mine !== false" class="controls row">
+          <div v-if="!soloId && !fullscreen && machine && active.mine !== false" class="controls row">
             <template v-if="!active.recording">
               <input v-model="goal" class="input grow" placeholder="这次要教的事（一句话；也可以先在右边和助手说）" aria-label="这次要教的事" />
               <UiSelect
@@ -750,7 +785,7 @@ const counts = (r: Recording) => {
         </div>
       </section>
 
-      <aside v-if="!soloId && canControl" class="side">
+      <aside v-if="!soloId && machine" class="side">
         <div class="side-head row"><strong>助手</strong><span class="spacer" /><button v-if="conversationId" class="btn ghost sm" @click="setConversation(null)">新对话</button></div>
         <RemoteChat ref="chat" class="chat" :conversation-id="conversationId" @update:conversation-id="setConversation" />
         <div class="recs">

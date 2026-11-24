@@ -38,6 +38,15 @@
 
 本机运行用 `desktop-control/scripts/browser.mjs open` 打开的页面自动登记。宿主依据运行令牌取成员、空间和资料目录，从 Chrome 的 `DevToolsActivePort` 读取端口，并核对目标页面所在浏览器的启动参数。运行事件带 `sessionId` 和 `link`（`#/remote/<会话>`）。页面关闭即结束授权。运行结束、停止查看或 omem 退出时，浏览器仍按原启动方式管理。使用独立 aad MCP 的流程按技能中的 `register` 步骤登记；录制仍由启动浏览器的一方管理。
 
+## 成员自己的浏览器（2026-11-25）
+
+- 能力 `remote.browser`（用自己的远程浏览器，所有预设默认都没有；在成员的“能做什么”里或自定义角色里给）。有它的人在远程页只开得了浏览器：桌面、`/screens`、复制本机浏览器的登录、在电脑桌面上显示窗口都只有本人能用。长期资料存在 `remote/profiles/@<成员>/`，只有他自己能用。旧的 `desktop.control` 给了别人时也按这一条走。
+- 本机地址守卫（`src/remote/browser-guard.ts`）：不是本人的浏览器（成员开的，或本人勾“给成员用”开的）由 `aad mcp` 用去掉桌面代理来源、`all_proxy` / `http(s)_proxy` 指向守卫、`no_proxy=<-loopback>` 的环境启动。Chromium 在 Linux 上没有桌面代理设置时按环境变量走代理，`<-loopback>` 去掉它对回环的默认直连，所以页面、框架、worker、WebSocket 和解析到 127.0.0.1 的名字都经过守卫。守卫复用 `egress-proxy.ts`，自己解析名字、只连检查过的地址，拒绝本机地址（回环、未指定地址、本机各网卡地址）和链路本地地址（169.254/16、fe80::/10，云上的元数据服务在这里）；其余内网地址放行，公司的站点和单点登录通常在内网。打开和换地址时先查一次，给出明确的拒绝原因。只在 Linux 上可用，别的系统拒绝给成员开浏览器。
+- 交给成员：只有守卫下的浏览器能交给成员“操作”；普通浏览器只能交给成员看，已有的操作授权在这种会话上按“只看”处理。
+- 成员运行里助手开的浏览器：运行环境带 `OMEM_BROWSER_PROXY`（守卫地址，omem 启动时就开好），`desktop-control` 的 `browser.mjs` 用 `--proxy-server` 和 `--proxy-bypass-list=<-loopback>` 启动；登记时宿主读浏览器的启动参数，不是本人的运行而没经过守卫的浏览器不登记。
+- 打开自己某份长期资料的链接：`#/remote?profile=<名>&url=<网址>`，打开就用这份资料开浏览器（已开着就切过去），用来发给成员登录某个平台，之后的操作复用这份登录。
+- 没挡的：WebRTC 的 UDP（助手开的浏览器带了 `disable_non_proxied_udp`，aad 开的没有）；下载会落在那台机器上。
+
 ## 画面设置
 
 每个人一份，存在这台机器的 kv（`remote_settings:<用户>`，不随 `omem pull` 走）。接口 `GET/PUT /api/remote/settings`，打开会话时换成 `aad assist` 的参数：

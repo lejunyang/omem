@@ -30,9 +30,9 @@ export function aadJson(args: string[], timeoutMs = 60_000): any {
 }
 
 /** A long-lived aad process, its standard input kept open (closing it is how `record` is stopped). */
-export function spawnAad(args: string[]): ChildProcess {
+export function spawnAad(args: string[], env?: NodeJS.ProcessEnv): ChildProcess {
   const [bin, ...rest] = aadCommand();
-  const proc = spawn(bin, [...rest, ...args], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const proc = spawn(bin, [...rest, ...args], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, ...(env ? { env } : {}) });
   // A program that cannot start emits "error" and no "exit": unhandled, it would end omem. Report it
   // the way an early exit is reported, so whoever waits on the process fails with the reason.
   let exited = false;
@@ -104,8 +104,9 @@ export class AadMcp {
   /** Why the process is no longer there: a request after that fails at once instead of waiting. */
   private gone: Error | null = null;
 
-  constructor(args: string[]) {
-    this.proc = spawnAad(["mcp", ...args]);
+  /** `env`: what the browsers it opens inherit (remote/browser-guard.ts for a guarded one). */
+  constructor(args: string[], env?: NodeJS.ProcessEnv) {
+    this.proc = spawnAad(["mcp", ...args], env);
     this.proc.stderr?.on("data", (d) => (this.err = (this.err + d).slice(-2000)));
     createInterface({ input: this.proc.stdout! }).on("line", (line) => {
       let msg: any;

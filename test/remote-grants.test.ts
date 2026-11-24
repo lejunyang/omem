@@ -14,6 +14,7 @@ import { all, run } from "../src/core/db.ts";
 import { createApiToken, createUser, personalSpaceId, updateUser } from "../src/core/users.ts";
 import { setToolResolverForTests } from "../src/core/tools.ts";
 import { startServer } from "../src/server/http.ts";
+import { guardUrlNow, startBrowserGuard } from "../src/remote/browser-guard.ts";
 import { testApp } from "./helpers.ts";
 
 describe("browser session grants", () => {
@@ -35,8 +36,8 @@ describe("browser session grants", () => {
   const api = (path: string, method = "GET", body?: object, as = "test-owner") =>
     fetch(app.baseUrl + "/api/remote" + path, { method, headers: { authorization: "Bearer " + as,
       ...(body && { "content-type": "application/json" }) }, body: body && JSON.stringify(body) });
-  async function open() {
-    const r = await api("/sessions", "POST", { kind: "browser" });
+  async function open(extra: object = {}) {
+    const r = await api("/sessions", "POST", { kind: "browser", ...extra });
     expect(r.status).toBe(200);
     return (await r.json()).id as string;
   }
@@ -58,8 +59,11 @@ describe("browser session grants", () => {
   }
 
   it("requires the capability and grant, isolates cookies, and filters viewer input before aad", async () => {
-    const id = await open(), other = await open();
+    const id = await open({ forMembers: true }), other = await open();
     const path = `/sessions/${id}`;
+    // A browser that can reach this machine is only ever shown to someone else.
+    const refused = await api(`/sessions/${other}/grants`, "POST", { userId: member, mode: "operate" });
+    expect([refused.status, (await refused.json()).error]).toEqual([400, expect.stringContaining("给成员用")]);
     expect((await api(path + "/view", "POST", undefined, token)).ok).toBe(false);
     cap("view");
     expect((await fetch(app.baseUrl + "/remote/" + id + "/?token=viewer", { headers: { authorization: "Bearer " + token } })).ok).toBe(false);
@@ -179,7 +183,12 @@ describe("browser session grants", () => {
     const actorToken = createApiToken(app, actor);
     const spaceId = personalSpaceId(actor);
     const job = createRun(app, { kind: "agent", title: "浏览器", spaceId, userId: actor });
+    startBrowserGuard();
+    await expect.poll(guardUrlNow).toBeTruthy();
     const prep = prepareRun(app, { actor: { role: "assistant" }, runId: job.id, spaceId, userId: actor, profileId: "codex" });
+    // Someone else's run: its browsers are launched through the guard (remote/browser-guard.ts).
+    expect(prep.mcp.env?.OMEM_BROWSER_PROXY).toBe(guardUrlNow());
+    let launched = ["--user-data-dir=" + join(app.home, "remote", "profiles", "@" + actor, "demo")];
     const root = join(app.home, "remote", "profiles", "@" + actor), dir = join(root, "demo");
     mkdirSync(dir, { recursive: true });
     expect(prep.mcp.env?.OMEM_BROWSER_PROFILES).toBe(root);
@@ -189,7 +198,7 @@ describe("browser session grants", () => {
       res.end(JSON.stringify(req.url === "/json/version" ? {} : { id: pageId }));
     });
     const ws = new WebSocketServer({ server: cdp, path: "/devtools/page/" + pageId });
-    ws.on("connection", client => client.on("message", () => client.send(JSON.stringify({ id: 1, result: { arguments: ["--user-data-dir=" + dir] } }))));
+    ws.on("connection", client => client.on("message", () => client.send(JSON.stringify({ id: 1, result: { arguments: launched } }))));
     cdp.listen(0, "127.0.0.1");
     await once(cdp, "listening");
     const port = (cdp.address() as { port: number }).port;
@@ -199,6 +208,9 @@ describe("browser session grants", () => {
       "open", "demo", "--url", "https://example.test/"], { env });
     try {
       expect((await api("/agent-browser", "POST", { profile: "demo", pageId }, actorToken)).ok).toBe(false);
+      // Not launched through the guard: not shown to them.
+      await expect(launch()).rejects.toThrow(/403/);
+      launched = [...launched, `--proxy-server=${guardUrlNow()}`, "--proxy-bypass-list=<-loopback>"];
       const log = join(app.home, "registration.jsonl");
       process.env.FAKE_AAD_LOG = log;
       const { sessionId } = JSON.parse((await launch()).stdout);

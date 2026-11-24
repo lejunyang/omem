@@ -82,7 +82,7 @@ export function ownSandboxEnv(base: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv, s
   const out = { ...base };
   for (const key of Object.keys(out)) if (/^OMEM_/i.test(key)) delete out[key];
   Object.assign(out, run);
-  const runKeys = ["OMEM_TOKEN", "OMEM_URL", "OMEM_ARTIFACTS", "OMEM_RUN_DIR", "OMEM_COMMAND_GATE", "OMEM_DESKTOP_TOOLS", "OMEM_BROWSER_PROFILES"];
+  const runKeys = ["OMEM_TOKEN", "OMEM_URL", "OMEM_ARTIFACTS", "OMEM_RUN_DIR", "OMEM_COMMAND_GATE", "OMEM_DESKTOP_TOOLS", "OMEM_BROWSER_PROFILES", "OMEM_BROWSER_PROXY"];
   for (const key of Object.keys(out)) if (secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
   out.TMPDIR = "/tmp";
   return out;

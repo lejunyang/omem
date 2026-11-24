@@ -5,7 +5,7 @@ import { HttpError, newId, now } from "../core/util.ts";
 import { audit } from "../auth/permissions.ts";
 
 export type Mode = "view" | "operate";
-type Session = { id: string; userId: string; kind: string };
+type Session = { id: string; userId: string; kind: string; guarded?: boolean };
 type Grant = { id: string; sessionId: string; userId: string; userName: string; mode: Mode; expiresAt: string };
 const columns = "g.id,g.session_id sessionId,g.user_id userId,u.name userName,g.mode,g.expires_at expiresAt";
 const joined = "from remote_grants g join users u on u.id=g.user_id";
@@ -95,6 +95,8 @@ type Edit = { userId?: string; mode?: Mode; hours?: number };
 export function changeGrant(app: App, s: Session, actor: string, edit: Edit | null, id?: string) {
   if (actor !== OWNER && actor !== s.userId) throw new HttpError(403, "只有会话主人能管理授权");
   if (s.kind !== "browser") throw new HttpError(400, "只能授权浏览器会话");
+  // Operating a browser that can reach this machine would hand over the owner's local access (browser-guard.ts).
+  if (edit?.mode === "operate" && !s.guarded) throw new HttpError(400, "这个浏览器能访问本机地址，只能给成员看；要让成员操作，新开一个“给成员用”的浏览器");
   let expired: Grant | undefined;
   const result = withinTx(app.db, () => {
     const previous = id ? one<Grant>(app.db, `select ${columns} ${joined} where g.session_id=? and g.id=? and g.revoked_at is null`, s.id, id) : null;

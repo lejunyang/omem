@@ -4,7 +4,9 @@ import { join, resolve } from "node:path";
 import WebSocket from "ws";
 import { addRunEvent } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
+import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
+import { launchedGuarded } from "./browser-guard.ts";
 import { attachAgentPage, closeSession } from "./sessions.ts";
 
 /** Read Chrome's announcement from the profile chosen by the host for this run.
@@ -26,6 +28,7 @@ export async function registerAgentBrowser(app: App, opts: {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new HttpError(409, "浏览器没有公布调试端口");
   const socket = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/${opts.pageId}`, { handshakeTimeout: 5000, maxPayload: 1 << 20 });
   let sessionId: string | undefined;
+  let launchArgs: string[] = [];
   const ended = () => { if (sessionId) void closeSession(app, sessionId); };
   socket.on("error", ended).on("close", ended);
   try {
@@ -40,13 +43,19 @@ export async function registerAgentBrowser(app: App, opts: {
       const message = (data: Buffer) => {
         try {
           const response = JSON.parse(data.toString());
-          if (response.id === 1) done(response.result?.arguments?.includes("--user-data-dir=" + resolve(dir)) === true);
+          if (response.id === 1) {
+            launchArgs = (response.result?.arguments ?? []) as string[];
+            done(launchArgs.includes("--user-data-dir=" + resolve(dir)));
+          }
         } catch { done(false); }
       };
       socket.on("message", message).once("close", closed).once("open", () =>
         socket.send(JSON.stringify({ id: 1, method: "Browser.getBrowserCommandLine" })));
     });
-    const { session, added } = await attachAgentPage(app, { ...opts, port, detach: () => socket.terminate() });
+    // Someone else's run: its browser must go through the guard (browser-guard.ts), or it is not shown to them.
+    const guarded = await launchedGuarded(launchArgs);
+    if (opts.userId !== OWNER && !guarded) throw new HttpError(403, "这个浏览器没有经过 omem 的本机地址守卫启动：用 desktop-control 的 browser.mjs 重新打开（先关掉它）");
+    const { session, added } = await attachAgentPage(app, { ...opts, port, guarded, detach: () => socket.terminate() });
     if (added) {
       sessionId = session.id;
       if (socket.readyState !== WebSocket.OPEN) {

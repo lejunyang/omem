@@ -1,3 +1,4 @@
+import { guardUrlNow } from "../remote/browser-guard.ts";
 import { audit } from "../auth/permissions.ts";
 import { credentialSucceeded, mayUseCredential, selectedCredential } from "./credentials.ts";
 import { commandLoginNote } from "./credential-execution.ts";
@@ -581,6 +582,7 @@ export function prepareRun(
   const browserProfilesRoot = (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
     : undefined;
+  const browserGuard = browserProfilesRoot && userId !== OWNER ? guardUrlNow() : null;
   const readOnly = !!(input.boardAccess || input.reviewCheck || input.reviewLead || input.replay);
   // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
   // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
@@ -671,6 +673,8 @@ export function prepareRun(
       ...agentToolEnv(app.home, toolBase, token, commandGateDir(app)),
       ...(input.inbox ? { OMEM_ARTIFACTS: input.inbox } : {}),
       ...(browserProfilesRoot ? { OMEM_BROWSER_PROFILES: browserProfilesRoot } : {}),
+      // Someone else's run: the browsers it opens go through the guard that keeps them off this machine (remote/browser-guard.ts).
+      ...(browserProfilesRoot && browserGuard ? { OMEM_BROWSER_PROXY: browserGuard } : {}),
       ...(profile.peer ? { OMEM_PEER_MEMBER: userId } : {}),
       ...(guest || input.boardAccess || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}),
     } },

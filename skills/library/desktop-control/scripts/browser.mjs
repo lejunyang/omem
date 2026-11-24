@@ -222,6 +222,9 @@ async function open() {
     // Local Network Access checks in a test profile.
     "--disable-features=DisableLoadExtensionCommandLineSwitch,LocalNetworkAccessChecks",
     `--window-size=${windowSize()}`,
+    // In a run omem started for someone other than its owner: everything goes through omem's guard,
+    // loopback included, so the page cannot reach services on this machine.
+    ...(process.env.OMEM_BROWSER_PROXY ? [`--proxy-server=${process.env.OMEM_BROWSER_PROXY}`, "--proxy-bypass-list=<-loopback>", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] : []),
     ...(has("--visible") ? [] : ["--headless=new"]),
     "about:blank",
   ];

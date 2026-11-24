@@ -9,6 +9,7 @@ import { can } from "../auth/permissions.ts";
 import { effectiveGrant, endSessionGrants, grantsFor, recentlyEnded, type Mode } from "./grants.ts";
 import { OWNER, activeUser, findUser } from "../core/users.ts";
 import { AadMcp, aadJson, finalJson, firstJsonLine, spawnAad } from "./aad.ts";
+import { checkGuardedUrl, guardedBrowserEnv } from "./browser-guard.ts";
 import { createRecording, recordingDir, recordingSummary, updateRecording, type Recording } from "./recordings.ts";
 
 /**
@@ -32,6 +33,8 @@ type Live = {
   /** Browser sessions: the `aad mcp` that opened the browser, and records and replays on it. */
   mcp?: AadMcp;
   browser?: { name: string; port: number; pageId: string; url: string | null; profile: string | null };
+  /** Browser sessions others work in: everything it fetches goes through browser-guard.ts, never to this machine. */
+  guarded?: boolean;
   /** Desktop sessions: the one window shared, when not the whole screen; a recording watches it. */
   window?: string;
   origin?: { runId: string; spaceId: string; detach: () => void };
@@ -53,15 +56,26 @@ export const sessionView = (s: Live) => ({
   window: s.window ?? null,
   recording: s.recording?.id ?? null,
   viewers: s.connections.size,
+  guarded: !!s.guarded,
 });
 
 export function viewerAccess(app: App, s: Live, user: string) {
   const managesBrowser = user === OWNER && s.kind === "browser";
-  if (managesBrowser || (s.userId === user && (s.origin ? activeUser(findUser(app, user)) : can(app, user, "desktop.control"))))
+  if (managesBrowser || (s.userId === user && (s.origin ? activeUser(findUser(app, user)) : user === OWNER || (s.kind === "browser" && mayBrowse(app, user)))))
     return { mode: "operate" as Mode, grantId: null, expiresAt: null };
   const grant = effectiveGrant(app, s, user);
   if (!grant) throw new HttpError(403, "没有这个会话的有效授权");
-  return { mode: grant.mode, grantId: grant.id, expiresAt: grant.expiresAt };
+  // A browser that can reach this machine is only shown to someone else, never handed over (browser-guard.ts).
+  const mode: Mode = grant.mode === "operate" && !s.guarded && user !== OWNER ? "view" : grant.mode;
+  return { mode, grantId: grant.id, expiresAt: grant.expiresAt };
+}
+
+/**
+ * Who may open browser sessions of their own: the owner, and someone given `remote.browser` (or the
+ * older `desktop.control`). Desktop sessions stay the owner's alone; others only ever get a browser.
+ */
+export function mayBrowse(app: App, user: string) {
+  return user === OWNER || can(app, user, "remote.browser") || can(app, user, "desktop.control");
 }
 
 export function ownsAgentBrowser(user: string) {
@@ -69,7 +83,7 @@ export function ownsAgentBrowser(user: string) {
 }
 
 export function listSessions(app: App, user: string) {
-  const desktop = can(app, user, "desktop.control");
+  const desktop = mayBrowse(app, user);
   const access = capabilityAccess(app, user, null);
   const sessions = [...live.values()];
   const manages = (s: Live) => s.userId === user || (user === OWNER && s.kind === "browser");
@@ -184,15 +198,20 @@ export async function browserProfiles() {
  * `copyFrom` starts it from a copy of one of this machine's own browser profiles, so its logins come along;
  * the browser using that profile must be closed first (`closeRunning` closes it).
  */
-export async function openBrowser(app: App, opts: { url?: string; browser?: string; profile?: string; copyFrom?: { browser: string; id: string }; closeRunning?: boolean; visible?: boolean; viewer?: string[]; userId: string }) {
+export async function openBrowser(app: App, opts: { url?: string; browser?: string; profile?: string; copyFrom?: { browser: string; id: string }; closeRunning?: boolean; visible?: boolean; viewer?: string[]; userId: string; forMembers?: boolean }) {
+  // Someone else's browser, or one the owner opens to hand over: kept off this machine's addresses,
+  // without a window on its screen and without a copy of the owner's own browser logins.
+  const guarded = opts.userId !== OWNER || !!opts.forMembers;
+  if (guarded && (opts.visible || opts.copyFrom)) throw new HttpError(403, "给成员用的浏览器不在这台电脑上显示窗口，也不复制本机浏览器的登录");
   if (opts.visible && !browserWindowAvailable()) throw new HttpError(409, "后台服务没有连接到 X11 桌面。请取消显示电脑窗口，或从桌面终端重启 omem 服务。");
   if (opts.url && !/^https?:\/\//.test(opts.url)) throw new HttpError(400, "网址要以 http:// 或 https:// 开头");
+  if (guarded && opts.url) await checkGuardedUrl(opts.url);
   if (opts.profile && opts.closeRunning) {
     for (const session of [...live.values()]) {
       if (session.userId === opts.userId && session.browser?.profile === opts.profile) await closeSession(app, session.id);
     }
   }
-  const mcp = await new AadMcp(["--allow-input", ...(opts.copyFrom ? ["--allow-profile-copy"] : [])]).start();
+  const mcp = await new AadMcp(["--allow-input", ...(opts.copyFrom ? ["--allow-profile-copy"] : [])], guarded ? await guardedBrowserEnv() : undefined).start();
   try {
     const args: Record<string, unknown> = { headless: !opts.visible, ...(opts.url ? { url: opts.url } : {}) };
     if (opts.profile) {
@@ -233,6 +252,7 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
       source,
       mcp,
       browser: { name: opened.browser, port: Number(opened.port), pageId: String(opened.page_id), url: opts.url ?? null, profile: opts.profile ?? (opts.copyFrom ? `${BROWSER_NAMES[opts.copyFrom.browser]} · ${opts.copyFrom.id}` : null) },
+      guarded,
     });
     mcp.proc.on("exit", () => void closeSession(app, s.id));
     return s;
@@ -244,7 +264,7 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
 
 /** Attach only the viewer. The process that opened the browser retains its lifetime. */
 export async function attachAgentPage(app: App, opts: {
-  userId: string; runId: string; spaceId: string; profile: string; pageId: string; port: number; detach: () => void;
+  userId: string; runId: string; spaceId: string; profile: string; pageId: string; port: number; detach: () => void; guarded?: boolean;
 }) {
   const existing = () => [...live.values()].find(s => s.origin?.runId === opts.runId && s.userId === opts.userId &&
     s.browser?.port === opts.port && s.browser.pageId === opts.pageId);
@@ -263,7 +283,7 @@ export async function attachAgentPage(app: App, opts: {
   }
   const session = add(app, { userId: opts.userId, kind: "browser", source, assist, title: opts.profile,
     origin: { runId: opts.runId, spaceId: opts.spaceId, detach: opts.detach },
-    browser: { name: "chrome", profile: opts.profile, port: opts.port, pageId: opts.pageId, url: null } });
+    browser: { name: "chrome", profile: opts.profile, port: opts.port, pageId: opts.pageId, url: null }, guarded: !!opts.guarded });
   return { session, added: true };
 }
 
@@ -420,6 +440,7 @@ export async function navigate(app: App, sessionId: string, url: string, userId:
   if (viewerAccess(app, s, userId).mode !== "operate") throw new HttpError(403, "需要这个会话的操作授权");
   if (s.kind !== "browser") throw new HttpError(400, "只有浏览器会话有地址");
   if (!/^https?:\/\//.test(url)) throw new HttpError(400, "网址要以 http:// 或 https:// 开头");
+  if (s.guarded) await checkGuardedUrl(url);
   await goTo(s, url);
   s.browser!.url = url;
   s.title = new URL(url).host;

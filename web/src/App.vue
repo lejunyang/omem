@@ -72,7 +72,7 @@ async function addPluginPages() {
 // Remote operation (views/Remote.vue) only where this machine has ai-auto-desktop installed: for those who
 // control it, and for those who may be handed a session (看 / 操作授权给他的远程会话).
 async function addRemotePage() {
-  const handed = hasCap("remote.view") ? "remote.view" : hasCap("remote.operate") ? "remote.operate" : undefined;
+  const handed = hasCap("remote.browser") ? "remote.browser" : hasCap("remote.view") ? "remote.view" : hasCap("remote.operate") ? "remote.operate" : undefined;
   if (!hasPerm("desktop.control") && !handed) return;
   const r = await get<{ available: boolean }>("/api/remote").catch(() => ({ available: false }));
   if (r.available && !nav.value.some((n) => n.to === "/remote")) {
@@ -114,7 +114,7 @@ const shownNav = computed(() => nav.value
 // Pages someone other than the owner may open: the nav they see, a line's page under 工作, the graph (Wiki), their account.
 const open = computed(() => [...shownNav.value.map((n) => n.to), ...(shownNav.value.some((n) => n.to === "/") ? ["/work"] : []), "/graph", "/account", ...(settingsEntry.value ? ["/settings"] : []),
   // 远程 joins the nav only after asking whether this machine has it: a link opened straight at it is judged before that.
-  ...(hasPerm("desktop.control") || hasCap("remote.view") || hasCap("remote.operate") ? ["/remote"] : [])]);
+  ...(hasPerm("desktop.control") || hasCap("remote.browser") || hasCap("remote.view") || hasCap("remote.operate") ? ["/remote"] : [])]);
 // Landing on a page they cannot use (the start page, an old link) goes to 问答, without drawing it first
 // (its requests would only come back refused).
 // Until the router has resolved the address the page was opened at (its view loads on demand), the path
