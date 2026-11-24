@@ -15,6 +15,7 @@ import { isOwner } from "../auth/permissions.ts";
 import { moveRuleWorkFiles } from "../sources/work.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
 import { getContext } from "../channels/listen.ts";
+import { probeExists } from "./probe-key.ts";
 
 type Row = {
   space_id: string | null;
@@ -71,7 +72,7 @@ function checkDocRule(r: ReturnType<typeof ruleInputSchema.parse>) {
   const bad = fields.filter((f) => !/^(doc|change)\./.test(f));
   if (bad.length) throw new HttpError(400, `文档变化规则只能用文档和变化的字段，不能用 ${[...new Set(bad)].join("、")}`);
   if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "文档变化规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
-  const allowed = new Set(["notify", "delay", "check", "script", "context"]);
+  const allowed = new Set(["notify", "delay", "check", "script", "probe", "context"]);
   // Like a schedule: the agent may post only into the conversation the rule names (发到).
   if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
     throw new HttpError(400, "文档变化规则没有群：只能交给 Agent（不开话题、不静默排查）、交给关注、通知本人、延时、模型判断或执行脚本");
@@ -102,7 +103,7 @@ function checkObjectRule(r: ReturnType<typeof ruleInputSchema.parse>) {
     if (unknown.length) throw new HttpError(400, `${def.label}没有这些状态：${unknown.join("、")}`);
   }
   if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "对象状态变化规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
-  const allowed = new Set(["notify", "delay", "check", "script", "context"]);
+  const allowed = new Set(["notify", "delay", "check", "script", "probe", "context"]);
   if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
     throw new HttpError(400, "对象状态变化规则没有群：只能交给 Agent（不开话题、不静默排查）、交给关注、通知本人、延时、模型判断或执行脚本");
   if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
@@ -126,7 +127,7 @@ function checkOmemRule(r: ReturnType<typeof ruleInputSchema.parse>) {
   const bad = fields.filter((f) => !f.startsWith("omem."));
   if (bad.length) throw new HttpError(400, `“omem 里发生的事”规则只能用 omem 的字段，不能用 ${[...new Set(bad)].join("、")}`);
   if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "“omem 里发生的事”规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
-  const allowed = new Set(["notify", "delay", "check", "script", "context"]);
+  const allowed = new Set(["notify", "delay", "check", "script", "probe", "context"]);
   if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
     throw new HttpError(400, "“omem 里发生的事”规则没有群：只能交给 Agent（不开话题、不静默排查）、交给关注、通知本人、延时、模型判断或执行脚本");
   if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
@@ -214,6 +215,9 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
   if (r.actions.at(-1)?.type === "check") throw new HttpError(400, "模型判断后面要有动作：它决定后面的动作做不做");
   if (r.spaceId) getSpace(app, r.spaceId);
   if (r.conversationId && getThread(app, r.conversationId).userId !== "owner") throw new HttpError(403, "只能投递到本人的会话");
+  // Probes are named, saved by the owner (rules/probes.ts): a rule may only name ones that exist.
+  for (const n of r.actions.flatMap((a) => (a.type === "probe" ? [a.name] : a.type === "agent" ? a.probes ?? [] : [])))
+    if (!probeExists(app, n)) throw new HttpError(400, `预查库里没有「${n}」：先在预查页保存它`);
   for (const a of r.actions) {
     if (a.type === "agent" || a.type === "watch") {
       if (a.type === "agent" && a.space) getSpace(app, a.space);

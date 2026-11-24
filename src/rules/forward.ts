@@ -61,7 +61,9 @@ export async function targetChat(app: App, label: string, to: Target, person?: {
   return { chatId, note: `，已用你的身份建群「${name}」（你、${other.sender_name} 和机器人）` };
 }
 
-export async function forwardAction(app: App, rule: Rule, a: ForwardAction, e: RuleEvent) {
+/** `got`: what earlier probe and script steps printed (fenced), posted under the message. */
+export async function forwardAction(app: App, rule: Rule, a: ForwardAction, e: RuleEvent, got = "") {
+  const text = () => forwardText(e, a.note) + (got ? `\n\n**前面的步骤拿到的**\n${got}` : "");
   if (!e.message) throw new HttpError(400, "这次触发没有消息可转发");
   const { sendLark } = await import("../channels/lark-send.ts");
   // The same message forwarded twice (a retry, a second capture) is posted once.
@@ -73,16 +75,16 @@ export async function forwardAction(app: App, rule: Rule, a: ForwardAction, e: R
     if (!e.chat) throw new HttpError(400, "这次触发没有会话");
     if (e.chat.kind === "group") {
       const { note } = await targetChat(app, rule.name, { chatId: e.chat.id, name: e.chat.name, kind: "group" });
-      await sendLark({ replyTo: e.message.id, inThread: !!e.message.topicId, uuid: uuidFor(e.chat.id) }, { markdown: forwardText(e, a.note) });
+      await sendLark({ replyTo: e.message.id, inThread: !!e.message.topicId, uuid: uuidFor(e.chat.id) }, { markdown: text() });
       return { action: "forward", ok: true, detail: `已回复在「${e.chat.name}」的这条消息下${note}` };
     }
     if (e.sender?.kind !== "user" || !e.sender.id) throw new HttpError(400, "私聊的对方不是人（或不知道是谁），没法拉群");
     const { chatId, note } = await targetChat(app, rule.name, { chatId: e.chat.id, name: e.chat.name, kind: "p2p" }, { id: e.sender.id, name: e.sender.name });
-    await sendLark({ chatId, uuid: uuidFor(chatId) }, { markdown: forwardText(e, a.note) });
+    await sendLark({ chatId, uuid: uuidFor(chatId) }, { markdown: text() });
     return { action: "forward", ok: true, detail: `已发到和 ${e.sender.name} 的群${note}` };
   }
   if (e.chat?.id === a.to.chatId && !e.awaited) return { action: "forward", ok: true, detail: "目标就是消息所在的会话，没有转发" };
   const { chatId, note } = await targetChat(app, rule.name, a.to as Target);
-  await sendLark({ chatId, uuid: uuidFor(chatId) }, { markdown: forwardText(e, a.note) });
+  await sendLark({ chatId, uuid: uuidFor(chatId) }, { markdown: text() });
   return { action: "forward", ok: true, detail: `已转发到「${a.to.name || a.to.chatId}」${note}` };
 }

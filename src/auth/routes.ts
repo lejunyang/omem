@@ -391,6 +391,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/learn/goals": "owner",
   "POST /api/learn/generate": "owner",
   "GET /api/home": "owner",
+  // 预查库 (rules/probes.ts, docs/v2/first-look.md): names and what each finds for whoever reads rules; the code, changes and trial runs are the owner's.
+  "GET /api/probes": cap("rules.view"), "GET /api/probes/:name": "owner", "PUT /api/probes/:name": "owner", "DELETE /api/probes/:name": "owner",
+  "POST /api/probes/try": "owner", "POST /api/probes/:name/try": "owner", "GET /api/first-look/options": cap("rules.view"),
   // Skill groups and the agents' own skill folders (agents/agent-skills.ts): the owner's machine.
   "PUT /api/skill-groups": "owner", "PUT /api/skill-groups/:id": "owner",
   "PUT /api/agent-skills/settings": "owner", "POST /api/agent-skills/sweep": "owner", "POST /api/agent-skills/restore": "owner", "POST /api/agent-skills/organize": "owner",

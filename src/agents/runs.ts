@@ -406,7 +406,7 @@ type Handler = (ctx: RunContext) => Promise<Record<string, unknown> | void>;
 const handlers = new Map<string, Handler>();
 const controllers = new Map<string, AbortController>();
 /** Conversations get their own slots so a long background job never delays a reply. */
-const INTERACTIVE = new Set<string>(["ask", "agent"]);
+const INTERACTIVE = new Set<string>(["ask", "agent", "first-look"]);
 /**
  * The bulk digest of stored material (digest.ts: grading and distilling batch after batch) gets a
  * slot of its own, one at a time: new material (ingest), the heartbeat and other background work

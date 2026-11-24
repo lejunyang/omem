@@ -55,7 +55,7 @@ const source = (app: App) => upsertSource(app, { spaceId: "personal", kind: "not
 describe("决策门槛和记录", () => {
   it("旧配置加载默认值；提供的门槛逐项校验", () => {
     const app = setup();
-    expect(app.config.ai.decision.thresholds).toEqual({ heartbeat: 0.6, watch: 0.6, follow: 0.6, meeting: 0.6, triage: 0.6, progress: 0.7, item: 0.6 });
+    expect(app.config.ai.decision.thresholds).toEqual({ heartbeat: 0.6, watch: 0.6, follow: 0.6, meeting: 0.6, triage: 0.6, progress: 0.7, item: 0.6, firstlook: 0.7 });
     for (const n of [0.49, 1, NaN]) expect(configSchema.safeParse({ ai: { decision: { thresholds: { triage: n } } } }).success).toBe(false);
   });
   it.each([0.41, 0.58, 0.59, 0.6, 0.8])("不用管的把握 %s 按门槛执行", async (p) => {

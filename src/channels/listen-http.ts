@@ -34,6 +34,9 @@ const knobsSchema = z
     meetingSkip: z.array(z.string().trim().min(1).max(200)).max(50).nullable(),
     assist: z.enum(["off", "suggest", "act"]).nullable(),
     prefilter: z.boolean().nullable(),
+    firstLook: z.boolean().nullable(),
+    probes: z.array(z.string().trim().min(1).max(40)).max(8).nullable(),
+    firstTo: z.enum(["chat", "dm", "ephemeral"]).nullable(),
   })
   .partial();
 /** A body that does not parse is the client's mistake (400), not the server's. */

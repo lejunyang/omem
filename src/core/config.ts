@@ -200,6 +200,7 @@ export const roleNames = [
   "work-state",
   "listen-coach",
   "outcome-reviewer",
+  "first-look",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -863,6 +864,7 @@ export const configSchema = z.object({
           triage: z.number().min(0.5).max(0.99).default(DECISION_SCENES.triage.default),
           progress: z.number().min(0.5).max(0.99).default(DECISION_SCENES.progress.default),
           item: z.number().min(0.5).max(0.99).default(DECISION_SCENES.item.default),
+          firstlook: z.number().min(0.5).max(0.99).default(DECISION_SCENES.firstlook.default),
         }).optional(),
         /** The guest gatekeeper (lark-guest.ts) asks the decision model first. */
         gatekeeper: z.boolean().default(true),
@@ -1280,6 +1282,14 @@ export const configSchema = z.object({
   heartbeat: z
     .object({ gate: z.enum(["off", "decision"]).default("decision"), sweepHours: z.number().min(1).max(72).default(12) })
     .default({ gate: "decision", sweepHours: 12 }),
+  /**
+   * The fast path (docs/v2/first-look.md): where a first look's message goes when a rule action or a
+   * 关注 does not say — the triggering chat, the owning user's private chat with the bot, or a card in
+   * the group only that user sees (falls back to the private chat when it cannot be sent).
+   */
+  firstLook: z
+    .object({ to: z.enum(["chat", "dm", "ephemeral"]).default("dm") })
+    .default({ to: "dm" }),
   /**
    * Reactions on what the bots sent (src/channels/lark-feedback.ts). Feishu emoji_type names, matched
    * without case; anything not listed is neutral. Acknowledgements (OK, DONE, +1…) say "received", not

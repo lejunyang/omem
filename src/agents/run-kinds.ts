@@ -8,5 +8,6 @@ export const runKinds = [
   "triage", "digest", "peer-agent", "replay", "replay-arm", "replay-judge", "kb-scout",
   "req-split", "design", "speaking-review", "mention", "work-state", "quality-audit", "wiki-sweep",
   "listen-coach", "outcome-review", "problem-follow", "item-deadline-check",
+  "first-look", "probe",
 ] as const;
 export type RunKind = (typeof runKinds)[number];

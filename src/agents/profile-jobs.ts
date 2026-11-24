@@ -48,6 +48,7 @@ const ROLE_RUNS: Record<string, string[]> = {
   designer: ["design"],
   "mention-triage": ["mention"],
   "work-state": ["work-state"],
+  "first-look": ["first-look"],
 };
 
 type EvidenceRun = { id: string; kind: string; status: string; title: string; error: string | null; created_at: string; finished_at: string | null; input: string; output: string | null; lane?: string | null; quiet?: number };

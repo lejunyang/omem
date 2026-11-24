@@ -469,12 +469,16 @@ async function runAgentTask(ctx: RunContext) {
   if (silent || meeting || getRun(ctx.app, ctx.run.id).output.ruleFailure) {
     // Whatever it had to say it already posted (or told the owner); the text stays in the run.
   } else if (rule && quietReason(ctx.app, ctx.run.id)) {
+    // A first look's deep run with nothing to add: its first message is told so (rules/first-look.ts).
+    if (ctx.run.input.firstLook) await (await import("../rules/first-look.ts")).deliverDeep(ctx.app, getRun(ctx.app, ctx.run.id), null);
     // Nothing more to say. When it already posted (lark_send, to @ someone) its bubble stays: it did
     // work; with nothing posted the bubble goes too.
     if (!one(ctx.app.db, "select 1 from lark_sent where run_id = ? limit 1", ctx.run.id)) return { answer, quiet: true, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
   } else if (rule) {
     // A rule's agent answers in the chat only when the rule says so; otherwise the owner gets it.
-    if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: name, rule: rule.id, ...topLevel });
+    // A first look's deep run: where the first message went (rules/first-look.ts).
+    if (ctx.run.input.firstLook) await (await import("../rules/first-look.ts")).deliverDeep(ctx.app, getRun(ctx.app, ctx.run.id), answer);
+    else if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: name, rule: rule.id, ...topLevel });
     else if (replyAt) {
       const { sendLark } = await import("../channels/lark-send.ts");
       const { resolveCitations } = await import("../channels/common.ts");
@@ -1608,16 +1612,21 @@ export function scheduleSpaceSync(app: App, spaceId: string) {
 
 // A rule that waits to see whether anyone responds: its time is up (rules/engine.ts).
 registerHandler("rule-fire", async (ctx) => {
-  const { ruleId, key, event, actions, reason, discussion, wait, since } = ctx.run.input as { ruleId: string; key: string; event: import("../rules/types.ts").RuleEvent; actions?: import("../rules/types.ts").RuleAction[]; reason?: string; discussion?: string; wait?: Extract<import("../rules/types.ts").RuleAction, { type: "wait-message" }>; since?: number };
+  const { ruleId, key, event, actions, reason, discussion, outputs, wait, since } = ctx.run.input as { ruleId: string; key: string; event: import("../rules/types.ts").RuleEvent; actions?: import("../rules/types.ts").RuleAction[]; reason?: string; discussion?: string; outputs?: import("../rules/probes.ts").StepOutput[]; wait?: Extract<import("../rules/types.ts").RuleAction, { type: "wait-message" }>; since?: number };
   // A “wait for a message” step: read that chat until the message comes, then the actions after it.
   if (wait) return (await import("../rules/fast.ts")).waitThenAct(ctx.app, { ruleId, key, event, wait, actions: actions ?? [], reason, since: since ?? Date.now() }, ctx.signal);
   const { fireAfterWait } = await import("../rules/engine.ts");
   // `actions`: what followed a delay in the rule (rules/actions.ts); otherwise a wait for a response.
-  return fireAfterWait(ctx.app, ruleId, key, event, actions ? { actions, reason, discussion } : undefined);
+  return fireAfterWait(ctx.app, ruleId, key, event, actions ? { actions, reason, discussion, outputs } : undefined);
 });
 
 // A rule's script (rules/script.ts): approved on its card, or not needing approval.
 registerHandler("rule-script", async (ctx) => (await import("../rules/script.ts")).runScript(ctx.app, ctx.run, ctx.signal));
+
+// 快速通道 (rules/first-look.ts): probes, the fast first look, and a deep run only when it asks for one.
+registerHandler("first-look", async (ctx) => (await import("../rules/first-look.ts")).firstLookRun(ctx));
+// A probe runs inside its caller (rules/probes.ts); one a restart left queued just ends, its caller runs it again.
+registerHandler("probe", async (ctx) => (await import("../rules/probes.ts")).orphanProbe(ctx.run));
 
 // An outside Agent's session run (peer-agent.ts) is open while it is used and closed by a timer; one
 // left over from a restart is requeued by the worker and simply ends here.

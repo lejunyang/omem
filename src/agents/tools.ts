@@ -4352,6 +4352,48 @@ def({
   },
 });
 
+// ---- 快速通道 (docs/v2/first-look.md): probes and the first look's hand-in --------------------------
+
+def({
+  name: "propose_probe",
+  description:
+    "提议把一组只读查询存成预查（rules/probes.ts）：同一类消息每次都要先跑同样几条查询时用。宿主把完整代码发给本人，本人点“保存”才进预查库（以本人名义），点“不要”以后不再提同名的。代码只读；事件 JSON 从标准输入或环境变量 OMEM_EVENT 读，正则取到的值在其中的 captures（也在 OMEM_CAPTURES），不要把消息内容拼进命令。",
+  write: true,
+  schema: z.object({
+    name: z.string().describe("预查的名字，短，用文字、数字、下划线或短横线，例如 账号状态"),
+    description: z.string().describe("一句话：它查什么、输出什么"),
+    match: z.string().optional().describe("匹配消息的正则（不区分大小写）；不匹配就跳过，捕获组（含命名组）交给脚本。不写就每条都跑"),
+    runtime: z.enum(["node", "python", "bash"]),
+    code: z.string().describe("完整代码，只读；从标准输入读事件 JSON"),
+    why: z.string().describe("为什么提：哪类消息、之前每次都查了什么"),
+    timeout_sec: z.number().int().optional().describe("最长秒数，默认 20，最多 120"),
+    direct: z.boolean().optional().describe("输出可以不经模型原样发出（结果本身就是答案时）"),
+  }),
+  handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的助手可以提议预查");
+    const { conversationOfRun } = await import("./asks.ts");
+    return (await import("../rules/probes.ts")).proposeProbe(ctx.app, { runId: ctx.runId, conversationId: ctx.runId ? conversationOfRun(ctx.app, ctx.runId) : null }, a);
+  },
+});
+
+def({
+  name: "first_look_outcome",
+  description:
+    "交“先看一眼”的结果（只给 first-look 用）。answered：材料和预查已经够答完，text 写结论，evidence 写依据；escalate：答不完要深查，text 写已经知道的，next 写还要查什么；owner：要本人拍板，text 写要本人定的问题。text 是给人看的几行，宿主按设置发出去。",
+  schema: z.object({
+    outcome: z.enum(["answered", "escalate", "owner"]),
+    text: z.string().trim().min(1).max(1500).describe("几行给人看的话"),
+    evidence: z.string().trim().max(1000).optional().describe("answered 的依据：预查结果里的哪一行、原文引用"),
+    next: z.string().trim().max(600).optional().describe("escalate：接下来要查什么"),
+  }),
+  handler: async (ctx, a) => {
+    const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    if (!r || r.kind !== "first-look") throw new HttpError(409, "只有“先看一眼”的运行用这个工具交结果");
+    setRunOutput(ctx.app, r.id, { firstLook: { outcome: a.outcome, text: a.text, ...(a.evidence ? { evidence: a.evidence } : {}), ...(a.next ? { next: a.next } : {}) } });
+    return "已交。用一句很短的话结束这一轮。";
+  },
+});
+
 /** Where a wake-up set from this run goes back to, and who set it. */
 async function wakeOrigin(ctx: ToolContext, agent?: string): Promise<{ target: import("./wakes.ts").WakeTarget; setBy: { runId: string | null; agent: string } }> {
   const input = (ctx.runId ? getRun(ctx.app, ctx.runId).input : {}) as { conversationId?: string; threadId?: string; spec?: string };

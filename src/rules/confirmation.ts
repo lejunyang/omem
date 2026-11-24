@@ -25,8 +25,8 @@ export function confirmRule(app: App, rule: Rule, runId: string | null, ownerCon
   for (const ask of all<{ id: string }>(app.db, "select id from asks where status = 'pending' and json_extract(context, '$.handler') = 'rule-enable' and json_extract(context, '$.ruleId') = ?", rule.id)) cancelAsk(app, ask.id);
   if (rule.enabled) return null;
   const actions = rule.actions.map(a => a.type === "agent"
-    ? `交给 ${a.spec ?? "assistant"}${a.task ? `：${a.task}` : ""}（${a.reply === "auto" ? "直接回复" : a.reply === "draft" ? "回复先确认" : a.reply === "silent" ? "静默排查" : "只告诉本人"}）`
-    : ({ notify: "通知本人", capture: "优先采集", watch: "持续监听", context: `交给关注「${a.type === "context" ? getContext(app, a.context)?.name ?? a.context : ""}」`, "invite-bot": "拉机器人进群", forward: `转发到「${a.type === "forward" ? a.to.name || a.to.chatId : ""}」`, "meeting-bot": "拉机器人入会", wake: "唤醒", delay: "延时", check: "模型判断", script: "执行脚本", "wait-message": `等「${a.type === "wait-message" ? a.name || a.chatId : ""}」的新消息` })[a.type]);
+    ? `${a.firstLook ? "先看一眼，要深查再" : ""}交给 ${a.spec ?? "assistant"}${a.task ? `：${a.task}` : ""}（${a.reply === "auto" ? "直接回复" : a.reply === "draft" ? "回复先确认" : a.reply === "silent" ? "静默排查" : "只告诉本人"}）`
+    : ({ notify: "通知本人", capture: "优先采集", watch: "持续监听", context: `交给关注「${a.type === "context" ? getContext(app, a.context)?.name ?? a.context : ""}」`, "invite-bot": "拉机器人进群", forward: `转发到「${a.type === "forward" ? a.to.name || a.to.chatId : ""}」`, "meeting-bot": "拉机器人入会", wake: "唤醒", delay: "延时", check: "模型判断", script: "执行脚本", probe: `预查「${a.type === "probe" ? a.name : ""}」`, "wait-message": `等「${a.type === "wait-message" ? a.name || a.chatId : ""}」的新消息` })[a.type]);
   return createAsk(app, {
     runId, conversationId: ownerConversation, userId: OWNER,
     question: [

@@ -129,6 +129,9 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
       });
       if (r.runId && c.id === takers[0].id) run(app.db, "update handled_messages set run_id = ? where channel = 'lark' and message_id = ?", r.runId, m.id);
     }
+    // 快速通道: the one 关注 that answers here (or the first reading one) looks first, without waiting for its batch.
+    const fast = (lead ?? takers[0]).knobs.firstLook ? (lead ?? takers[0]) : null;
+    if (fast && !before) (await import("./listen-first-look.ts")).queueListenLook(app, fast, { id: chatId, name: chatName }, { id: m.id, text: m.text, sender: m.sender, topicId: m.topicId ?? null, at: at ? new Date(at).toISOString() : now() });
     n++;
   }
   return n;

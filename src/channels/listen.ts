@@ -60,6 +60,14 @@ export type ListenKnobs = {
   batchMinutes: number;
   /** false: every batch goes to the handler unscreened. */
   prefilter?: boolean;
+  /**
+   * 快速通道 (docs/v2/first-look.md, channels/listen-first-look.ts): each message is looked at as it comes
+   * — screened, the `probes` run, a fast model's first look — and the batch runs at once only when that
+   * asks to look deeper. `firstTo`: where the first look's message goes; unset, settings `firstLook.to`.
+   */
+  firstLook?: boolean;
+  probes?: string[];
+  firstTo?: "chat" | "dm" | "ephemeral";
 };
 export type ListenContext = {
   id: string;

@@ -763,6 +763,39 @@ ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      // FAKE_MODE=first-look (test/first-look.test.ts): the fast first look hands in what the message asks
+      // for — “[answered]”, “[owner]”, else escalate; “[slow]” never answers (the budget runs out), “[none]”
+      // ends without a hand-in, “[fail]” fails the turn. Any other task (a deep run, a 关注's batch) answers
+      // with what of the first look's work reached it.
+      if (process.env.FAKE_MODE === "first-look") {
+        if (process.env.FAKE_PROMPT_FILE) appendFileSync(process.env.FAKE_PROMPT_FILE, JSON.stringify(prompt) + "\n");
+        if (!prompt.includes("# 先看一眼：")) {
+          await say(`深查结论 ${JSON.stringify({ probe: /PROBE-OUT:\w+/.test(prompt), look: prompt.includes("快速结论"), material: prompt.includes("先看一眼已经做的") || prompt.includes("先看一眼看了这"), outputs: prompt.includes("前面的步骤拿到的") })}`);
+          return { stopReason: "end_turn" as const };
+        }
+        if (prompt.includes("[fail]")) throw RequestError.internalError({ details: "fake first look failed" });
+        if (prompt.includes("[slow]")) {
+          await new Promise((r) => setTimeout(r, 30_000));
+          return { stopReason: "end_turn" as const };
+        }
+        if (prompt.includes("[none]")) {
+          await say("看完了");
+          return { stopReason: "end_turn" as const };
+        }
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-first-look", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const direct = new Set((await client.listTools()).tools.map((t) => t.name));
+          const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
+          const outcome = prompt.includes("[answered]") ? "answered" : prompt.includes("[owner]") ? "owner" : "escalate";
+          const seen = /PROBE-OUT:(\w+)/.exec(prompt)?.[1];
+          const r = await call("first_look_outcome", { outcome, text: `快速结论 ${outcome}${seen ? ` 看到 ${seen}` : ""}`, ...(outcome === "answered" ? { evidence: "预查输出第一行" } : {}), ...(outcome === "escalate" ? { next: "查日志" } : {}) });
+          if (r.isError) throw new Error(JSON.stringify(r.content));
+          await say("已交");
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
       // FAKE_MODE=work-state: the nightly write-up (agents/work-state-job.ts). It rewrites the work state with
       // a 本人补充 of its own (the host keeps the owner's), and writes a card for each person the task lists.
       if (process.env.FAKE_MODE === "work-state") {

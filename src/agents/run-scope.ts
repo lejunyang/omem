@@ -126,7 +126,7 @@ export type RelatedRun = {
 };
 
 const KIND_LABEL: Record<string, string> = {
-  ask: "对话", agent: "Agent", heartbeat: "定时巡检", mention: "有人找你（分诊）", ingest: "整理新材料", "rule-fire": "规则", "rule-script": "规则脚本",
+  ask: "对话", agent: "Agent", heartbeat: "定时巡检", mention: "有人找你（分诊）", ingest: "整理新材料", "rule-fire": "规则", "rule-script": "规则脚本", "first-look": "先看一眼", probe: "预查",
   code: "编码交办", review: "评审", dream: "整理记忆", "item-settle": "事项收尾", guest: "访客提问", "lark-command": "私聊指令", "wiki-write": "写 Wiki", "wiki-plan": "规划 Wiki",
 };
 

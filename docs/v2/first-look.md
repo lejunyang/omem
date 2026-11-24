@@ -1,0 +1,147 @@
+# 快速通道：预查、先看一眼、按需深查
+
+群里有人报问题时，原来的路径是：规则交给 Agent，或关注攒一批再交给 Agent，Agent 从零开始查。很多问题其实跑一两条固定的只读查询、看一眼就能答。快速通道把一次处理分成三层：
+
+1. **预查**：本人存好的只读脚本，按消息跑，输出交给后面的层。不经模型，几秒内出结果。
+2. **先看一眼**：一个快模型（便宜档、低 effort）拿着消息、前后几句、预查结果和说明，几步内给结论，三选一：`answered`（答完了）、`escalate`（要接着查）、`owner`（要本人定）。
+3. **深查**：只有 `escalate` 才起，就是原来的那次运行（规则的 Agent 动作，或关注的这一批），任务里带上预查输出和先看一眼的结论。
+
+宿主只做数据、调度和权限：查什么、怎么答由 Agent 判断（`roles/first-look.md`），宿主不替模型拼规则。
+
+## 预查库
+
+代码在 `src/rules/probes.ts`，存在 `kv` 表（键 `rule-probe:<名字>`），不加新表。每个预查有：
+
+| 字段 | 说明 |
+| --- | --- |
+| `name` | 名字，文字、数字、下划线、点或短横线，最多 40 字 |
+| `description` | 一句话：它查什么、输出什么（模型读预查结果时看到） |
+| `match` | 可选，正则（不区分大小写）；消息不匹配就跳过，不起运行。捕获组交给脚本：`"0"` 是整段匹配，`"1"` 起是分组，命名组按名字 |
+| `runtime` | `node` / `python` / `bash` |
+| `code` | 代码，最多 5 万字 |
+| `timeoutSec` | 默认 20，最多 120 |
+| `direct` | 默认关。打开后，预查成功且有输出时，输出原样作为先看一眼的结论（`answered`），不经模型 |
+
+**安全线**
+
+- 只有本人能保存、修改、删除预查（`saveProbe` / `deleteProbe` 的 `actor` 必须是本人，HTTP 接口也只给本人）。Agent 只能用 `propose_probe` 提议，本人在卡片上看完整代码后点“保存”才进库。规则里引用的预查必须已在库里，保存规则时检查。
+- 执行沿用规则脚本的 `execScript`（`src/rules/script.ts`，从 `runScript` 抽出，没有另写一份）：在数据目录 `rules/scripts/<运行>` 里跑，跑完删掉；环境只带 PATH、HOME、语言、临时目录，拿不到 omem 的密钥和令牌；超时杀掉；命令门禁照旧。
+- 事件以 JSON 交给脚本：标准输入和环境变量 `OMEM_EVENT`，捕获组另在 `OMEM_CAPTURES`，预查名在 `OMEM_PROBE`；消息内容不拼进代码或命令行。
+- 每次执行是一个 `probe` 运行（运行页能看到输出、退出码和耗时），挂在先看一眼或规则触发下面。
+- 失败、超时或跳过不挡后面：结果里写“失败 / 超时 / 不匹配”，后面的模型当作没有这条信息。
+- 输出交给后面时截短（单条 4000 字，先看一眼里 3000 字），放进 ```` ```text ```` 代码块（输出里的三个反引号换掉），所以在卡片、通知、模型材料里都不会被当成 Markdown 或 HTML。
+
+**提议**：`propose_probe(name, description, match?, runtime, code, why, timeout_sec?, direct?)`，只有本人的助手能用。宿主私聊本人一张卡片（完整代码、为什么提），点“保存”以本人名义存入（`via: "proposal"`），点“不要”记进 `items/choices.ts`（种类 `probe`，按名字），以后同名的不再提；库里已有同名的直接拒绝。主助手的角色说明里写了什么时候提（`roles/assistant.md`「预查」）。
+
+## 先看一眼
+
+运行种类 `first-look`（`src/rules/first-look.ts` 的 `firstLookRun`），角色 `first-look`（`roles/first-look.md`）：只读工具（`search`、`scan`、`read_source`、`read_page`、`recall`、`read_conversation`），必须用交结果的 `first_look_outcome(outcome, text, evidence?, next?)` 结束（在 `ROLE_TOOLS` 里，只给这个角色）。
+
+**选哪个 AI**（`firstLookAI`）：
+
+1. 本人在设置里给角色 `first-look` 指定了后端或模型（`agents.roles` / `agents.roleModels`）：用它；
+2. 否则有便宜档 `agents.tiers.cheap`：用它，effort 取 `low`（后端没有 `low` 时用档上写的，再没有用它最低的一档）；
+3. 否则默认后端，用它最低的 effort。
+
+**时间**：90 秒（`FIRST_LOOK_BUDGET_MS`）。超时、出错、没交结论都按 `escalate` 处理（`by: "host"`），这种结论不发到群里，只告诉本人。
+
+**决策模型复核**：快模型说 `answered` 时，有决策模型就问一次场景 `firstlook`（“先看一眼的结论”，冒险选项“够了”，谨慎选项“接着查”，默认门槛 0.7，见 ai-models.md）；不到门槛改成 `escalate`，`next` 写“核对快模型的结论”。没有决策模型就信快模型。`direct` 预查给的结论不复核。
+
+**运行页**：`output.stages` 记每一层的耗时和结果：`prefilter`（关注）、`probes`（`ms`，每个预查的名字、成败、跳过原因、耗时、运行 id）、`look`（`ms`、结论、`by`、原因、用的 AI）、`decision`（门槛、概率、说法，或为什么跳过）、`first`（发到哪、为什么降级）、`deep`（深查运行 id）。运行事件里每层一条状态。深查运行的 `input.firstLook.runId` 和 `parentId` 指回来。
+
+## 入口
+
+### 规则
+
+- `agent` 动作新增三项：`firstLook`（开关）、`probes`（预查名，最多 8 个）、`firstTo`（第一条发到哪，`chat` / `dm` / `ephemeral`，不写用设置 `firstLook.to`）。打开后：触发 → 预查 → 先看一眼 → 只有 `escalate` 才起这个 Agent 动作原来的运行（`deepAgent`）。深查任务里多一节“先看一眼已经做的”（预查输出、快模型的结论和还要查什么、第一条发到了哪），回复方式按第一条去的地方：第一条在群里就允许直接回复，否则只告诉本人；深查不并入同一规则正在跑的会话（它已经有自己的触发）。
+- 每条规则每天最多先看 30 次（`RULE_FIRST_LOOKS_PER_DAY`），超过后走原来的路径（直接交给 Agent）。没有会话或消息的触发（定时、文档变化等）也走原路径。
+- 新动作 `probe`（`{"type": "probe", "name": …}`）：当场跑一个预查。
+- `probe` 的输出和 `script` 的输出交给后面的动作：Agent 动作的任务（“前面的步骤拿到的”一节）、`check` 的判断材料、`notify` 的正文、`forward` 转发的正文。`script` 需要批准时照旧排队等批准，拿不到输出；`approval.by = none` 且后面有用得到输出的动作时当场执行。输出随 `delay` 带到延时之后；`wait-message` 之后不带。
+
+### 关注
+
+关注的设置（`knobs`）新增同样三项：`firstLook`、`probes`、`firstTo`。打开后（`src/channels/listen-first-look.ts`）：
+
+- 消息照旧进这一批，同时排一个先看一眼，**不等这一批的窗口**。同一关注、同一个群 20 秒内到的消息并成一次看（`LISTEN_MERGE_MS`，固定窗口，不往后推）；已经在跑的那次不再并入，之后到的等下一次。选 20 秒是为了把“连发三条说一件事”并起来，又不让第一条等太久。
+- 先看一眼开始时：关注已停或关掉了先看一眼就交回；这一批已经开始处理这几条就让开；然后有决策模型时先做和这一批一样的预筛（`prefilterBatch`），不用看就交回这一批照常处理；再跑预查和快模型。
+- 先看一眼工作时，这一批被压住（最多 5 分钟，防止先看一眼的运行死掉后这一批一直不跑），只有一方回答：
+  - `answered` / `owner`：这几条从这一批里拿走（拿空了这一批取消），关注的会话里留一条“先看一眼已经答了 / 交给本人定”的记录；
+  - `escalate`：预查输出和快模型的结论作为一条消息（发言人“先看一眼”）并进这一批，这一批马上跑，按关注自己的回复方式回复；
+  - 发出第一条前再看一次：这一批已经开始处理这几条（重启、窗口比先看一眼还短）就让开，不发，在处理记录里记“让开”。
+- 每条消息只由一个关注先看：多个关注读同一个群时，取回答的那个（没有就第一个），且它要打开了先看一眼。
+- 每天的次数计入关注原有的 `perDay`。
+- 不打开时行为不变。
+
+## 第一条发到哪
+
+设置 `firstLook.to`（默认 `dm`）；规则的 Agent 动作和关注各自可用 `firstTo` 改。
+
+| 去处 | 怎么发 |
+| --- | --- |
+| `chat` | 机器人在触发消息下回复（话题内） |
+| `dm` | 机器人私聊本人（本人和主机器人的私聊） |
+| `ephemeral` | 群里只有本人看得到的卡片；带“发给大家”（以机器人身份把结论回复到触发消息下）和“不用了” |
+
+降级（`resolveDest`），每次降级的原因记在 `stages.first.why`：
+
+- `owner` 只发给本人：`chat` 改 `ephemeral`；
+- `chat` 只在允许直接回复时才真的发到群里：规则的 Agent 动作 `reply` 是 `auto` 或 `silent`、关注的回复是 `auto` 且这个群是关注的群；关注的回复是 `none` / `draft`、规则是 `none` / `draft` 时改 `ephemeral`；
+- 私聊里没有“只有本人看得到”：改 `dm`；
+- `ephemeral` 发不出（本人不在群里、接口报错、不知道本人在这个机器人里的 id）改 `dm`；`dm` 也不知道怎么私聊本人时记一条通知；
+- 快模型没给结论（超时、出错、没交）时不发到群里。
+
+运行可发的会话仍由运行限定：深查只在触发的群里发；第一条只发到触发的群或本人私聊。
+
+`escalate` 之后：
+
+- 第一条写已经知道的和“还在查什么”，带“不用查了”（停掉深查运行；关注是停掉那一批）；
+- 深查的结论发到第一条去的地方：在群里就是话题内回复；`ephemeral` 再发一张只有本人看得到的卡片，带“发给大家”；`dm` 私聊本人。第一条卡片上的“不用查了”去掉，能改的卡片（群里、私聊）注明“深查已经交了结论”；
+- 关注的深查就是这一批，结论按关注的回复方式发，不另发。
+
+卡片的按钮只有它所属的用户能点（`card_interactions.allowed` 是那个用户在这个机器人里的 open_id）。规则和关注目前都属于本人，所以是本人；id 按用户查（`larkOwnerOpenId` / `larkOpenIdOf`），不写死。每次发送记在 `lark_sent`、卡片交互（`card_interactions`，用途 `first-look`）、运行事件和处理记录（`core/handling.ts`：在群里答了记 `replied`，给本人看的记 `drafted`；点“发给大家”后改 `replied`）。
+
+## 默认值
+
+| 项 | 默认 | 在哪改 |
+| --- | --- | --- |
+| 第一条去处 | `dm` | 设置 `firstLook.to`；规则动作 / 关注的 `firstTo` |
+| 先看一眼时限 | 90 秒 | 代码常量 |
+| 规则每天先看次数 | 每条 30 次 | 代码常量 |
+| 关注每天次数 | 关注的 `perDay` | 关注设置 |
+| 关注并消息窗口 | 20 秒 | 代码常量 |
+| 关注这一批最长被压住 | 5 分钟 | 代码常量 |
+| 决策复核门槛 | 0.7 | 设置 → 决策 → `ai.decision.thresholds.firstlook` |
+| 预查超时 | 20 秒，最多 120 | 每个预查 |
+| 预查输出交给后面 | 单条 4000 字 | 代码常量 |
+| 每个动作最多预查数 | 8 | — |
+
+## HTTP 接口
+
+都要登录；“本人”指系统主人（`OWNER`），在 `src/auth/routes.ts` 和处理函数里各查一次。
+
+| 方法和路径 | 参数 | 返回 | 谁能调 |
+| --- | --- | --- | --- |
+| `GET /api/probes` | — | `[{ name, description, match?, runtime, timeoutSec, direct, createdBy, createdAt, updatedAt, via?, lines }]`，不含代码 | 有 `rules.view` 的人 |
+| `GET /api/probes/:name` | — | 完整预查（含 `code`）；没有返回 404 | 本人 |
+| `PUT /api/probes/:name` | body：`{ description, match?, runtime, code, timeoutSec?, direct? }` | 保存后的预查；正则写错、运行时不可用返回 400 | 本人 |
+| `DELETE /api/probes/:name` | — | `{ ok: true }`；没有返回 404 | 本人 |
+| `POST /api/probes/:name/try` | body：`{ text?, event? }`（样例消息文字；`event` 是事件的其他字段，如 `chat`、`sender`） | `{ matched, captures, ok, output, stderr, exitCode, timedOut, ms, runId }`；不匹配时 `matched: false`、不执行 | 本人 |
+| `POST /api/probes/try` | body：同 `PUT` 再加 `name` 和 `sample: { text?, event? }`，试跑还没保存的 | 同上 | 本人 |
+| `GET /api/first-look/options` | — | `{ to, destinations: [{ value, label, note? }], probes: [{ name, description, match, direct }], budgetSec, rulePerDay, probeTimeoutMax }`，给规则页和关注设置用 | 有 `rules.view` 的人 |
+
+沿用的接口：
+
+- 规则：`POST /api/rules`、`PUT /api/rules/:id` 的 `actions[]` 里，`agent` 动作可带 `firstLook`、`probes`、`firstTo`；新动作 `{ type: "probe", name }`。引用不存在的预查返回 400。
+- 关注：`POST /api/listen`、`PUT /api/listen/:id` 的 `knobs` 可带 `firstLook`、`probes`、`firstTo`（`null` 清掉）。
+- 设置：`PUT /api/settings` 的 `firstLook.to`（设置分区“助手”）；`ai.decision.thresholds.firstlook`。
+- 运行：`GET /api/runs?kind=first-look` 列出先看一眼（关注的先看一眼 `lane` 是 `firstlook:listen:<关注>:<群>`）；`GET /api/runs/:id` 的 `output.stages` 是每层的耗时和结果，返回里的子运行就是它下面的预查（种类 `probe`）和规则的深查（`GET /api/runs?parent=<id>` 也能列）；`POST /api/runs/:id/cancel` 停下。关注的深查是那一批（`output.deep.runId`）。
+- 卡片按钮走飞书卡片回调（`lark-actions.ts`）：`probe-proposal` 的 `save` / `drop`，`first-look` 的 `share` / `stop` / `dismiss`。
+
+## 没做的
+
+- 网页（规则页、关注设置里的三项，预查库的编辑页和试跑）：接口已经齐，界面另做。
+- 预查只能由本人存；成员的规则和关注目前也都属于本人，“所属用户”按用户查 id，但没有成员自己的预查库。
+- 规则的 `wait-message` 之后不带前面步骤的输出；需要批准的 `script` 不会等批准完再把输出交给后面。
+- 时限、每天次数、合并窗口是代码常量，没有做成设置。
+- 关注正在跑的先看一眼不并入新消息；新消息等下一次。
+- `ephemeral` 卡片发出后不能改，所以深查结论另发一张，第一张上的按钮不变（“不用查了”点了会提示已经查完）。

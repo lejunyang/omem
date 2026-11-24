@@ -172,6 +172,15 @@ export const actionSchema = z.discriminatedUnion("type", [
      * agreed on the card omem sends them. Only the owner lists them (rules page, or the owner's own turn).
      */
     runAs: z.array(z.string().trim().min(1)).max(20).optional().transform((v) => (v?.length ? [...new Set(v)] : undefined)),
+    /**
+     * 快速通道 (rules/first-look.ts, docs/v2/first-look.md): `firstLook` runs the named `probes`, then a
+     * fast model, and this agent only when that asks to look deeper. `firstTo`: where the first look's
+     * message goes (the chat, the owner's private chat, a card in the group only the owner sees);
+     * unset, settings `firstLook.to`.
+     */
+    firstLook: z.boolean().optional(),
+    probes: z.array(z.string().trim().min(1).max(40)).max(8).optional(),
+    firstTo: z.enum(["chat", "dm", "ephemeral"]).optional(),
   }),
   z.object({ type: z.literal("watch"), spec: z.string(), on: z.enum(["all", "mention", "keyword"]).default("mention"), pattern: z.string().optional(), reply: reply.default("draft") }),
   /**
@@ -269,6 +278,11 @@ export const actionSchema = z.discriminatedUnion("type", [
    * named person (name, email or user id), or one the model picks from the event by `hint`
    * (“文档的所有者”). Only the owner can save a rule with a script.
    */
+  /**
+   * Run a saved probe (rules/probes.ts) on the event, now: what it prints goes to the actions after it
+   * (an agent's task, a check, the body of a notification or a forward). No match, it is skipped.
+   */
+  z.object({ type: z.literal("probe"), name: z.string().trim().min(1).max(40) }),
   z.object({
     type: z.literal("script"),
     runtime: z.enum(["node", "python", "bash"]),

@@ -160,11 +160,11 @@ async function consider(app: App, rule: Rule, e: RuleEvent) {
  * A waiting rule's time is up (run kind rule-fire). With `later`, a delay in the rule's actions passed:
  * the actions after it run now, as they were when it fired.
  */
-export async function fireAfterWait(app: App, ruleId: string, key: string, e: RuleEvent, later?: { actions: Rule["actions"]; reason?: string; discussion?: string }) {
+export async function fireAfterWait(app: App, ruleId: string, key: string, e: RuleEvent, later?: { actions: Rule["actions"]; reason?: string; discussion?: string; outputs?: import("./probes.ts").StepOutput[] }) {
   const rule = listRules(app, { enabledOnly: true }).find((r) => r.id === ruleId);
   if (!rule) return { summary: "规则已停用或删除，没有执行" };
   if (!later) return { summary: await act(app, rule, e, key) };
-  const results = await runActions(app, rule, e, later.reason ?? "", { discussion: later.discussion }, later.actions);
+  const results = await runActions(app, rule, e, later.reason ?? "", { discussion: later.discussion, outputs: later.outputs }, later.actions);
   recordFiring(app, { ruleId: rule.id, eventKey: `${key}#later`, summary: eventSummary(e), judgedBy: "code", reason: "延时到了，接着做后面的动作", results }, { skipped: true });
   return { summary: results.map((r) => `${r.action}：${r.detail}`).join("；") };
 }

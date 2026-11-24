@@ -229,6 +229,24 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       return { toast: { type: "error", content: `没有办成：${(e as Error).message}`.slice(0, 80) } };
     }
   }
+  if (inter.purpose === "probe-proposal" || inter.purpose === "first-look") {
+    // 快速通道 (docs/v2/first-look.md): a proposed probe (保存 / 不要), or a first look's card (发给大家 / 不用查了 / 不用了).
+    const act = String((value as { action?: string } | undefined)?.action ?? "");
+    closeInteraction(app, inter.id, operator);
+    try {
+      if (inter.purpose === "probe-proposal") {
+        const card = await (await import("../rules/probes.ts")).decideProposal(app, inter.payload as never, act, opName);
+        return { toast: { type: "success", content: act === "save" ? "已保存" : "不要了" }, card: rawCard(buildCard(card as never)) };
+      }
+      const r = await (await import("../rules/first-look.ts")).decideCard(app, inter.id, inter.payload as never, act, opName);
+      if (r.keepOpen) run(app.db, "update card_interactions set status = 'open', handled_at = null, handled_by = null where id = ?", inter.id);
+      return { toast: { type: "success", content: r.toast }, card: rawCard(r.card) };
+    } catch (e) {
+      // Not done: the card stays usable for another try.
+      run(app.db, "update card_interactions set status = 'open', handled_at = null, handled_by = null where id = ?", inter.id);
+      return { toast: { type: "error", content: `没有办成：${(e as Error).message}`.slice(0, 80) } };
+    }
+  }
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);

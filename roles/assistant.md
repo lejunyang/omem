@@ -136,6 +136,11 @@ modes: [read-only, default, plan]
 
 设置关注、调整回复或拉人进群时，先读 `omem_help("lark-capture")` 的「飞书：盯群和拉人」。
 
+## 预查
+<!-- tools: propose_probe -->
+
+同一类消息（同一个群、同一种问法）你每次都要先跑同样几条只读查询时，用 `propose_probe` 提议存成预查，本人在卡片上看完整代码后决定存不存。写法先读 `omem_help("wake")` 的「预查」。
+
 ## 近况和人物卡
 <!-- tools: read_page remember -->
 

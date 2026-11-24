@@ -20,6 +20,7 @@ export const settingSections = {
   quality: "assistant", heartbeat: "assistant", feedback: "assistant", agentSkills: "ai",
   replay: "assistant", items: "assistant", studies: "assistant", flows: "assistant", workLines: "assistant",
   workState: "assistant", media: "knowledge", onebot: "channels",
+  firstLook: "assistant",
 } satisfies Record<keyof Config, Section>;
 export const sectionByPath: Record<string, Section> = {
   ...settingSections, "agents.accounts": "members", "agents.accountsDefault": "security", "agents.accountIsolation": "members",

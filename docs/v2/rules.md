@@ -68,6 +68,14 @@
   - 只有本人能保存带脚本的规则（网页或接口，`saveRule` 的 `actor` 是本人）：脚本在这台机器上执行。助理的 `save_rule`、管理员和 Agent 设的临时规则都不能写脚本，模型从原话生成规则时也不生成脚本。
   - 这条和“宿主不执行模型写的程序”不冲突：条件仍是宿主求值的 JSON，脚本是本人自己写、自己保存的。
 
+### 预查与先看一眼
+
+详见 [first-look.md](first-look.md)。
+
+- `probe`（`name`）：当场跑预查库里的一个只读脚本（本人存的，`src/rules/probes.ts`），是一个 `probe` 运行。正则不匹配就跳过；失败或超时不挡后面的动作。
+- `probe` 和 `script` 的输出交给后面的动作：Agent 动作的任务、`check` 的材料、`notify` 和 `forward` 的正文，截短后放在 ```` ```text ```` 代码块里。`script` 要批准时照旧排队，拿不到输出；`approval.by = none` 且后面用得到输出时当场执行。输出随 `delay` 带过去，`wait-message` 之后不带。
+- `agent` 动作的 `firstLook`（开关）、`probes`（预查名）、`firstTo`（`chat` / `dm` / `ephemeral`）：先跑预查，再由快模型先看一眼，答完了就不起这个 Agent，只有要接着查时才起，任务里带上预查输出和先看一眼的结论。第一条在群里只在 `reply` 为 `auto` / `silent` 时；每条规则每天先看 30 次，超过走原路径。
+
 ### 文档变化规则
 
 “《差旅报销制度》有人改了、在里面 @ 我时提醒我”：触发 `doc`，`trigger.docs` 写这篇的链接，条件 `change.mentionsOwner is true`，动作通知本人。实现在 `src/channels/lark-doc-events.ts`。

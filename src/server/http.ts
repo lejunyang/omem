@@ -2021,6 +2021,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   (await import("../items/work-http.ts")).registerWorkRoutes(server, app, who);
   // 「关注」(channels/listen-http.ts): 连接 → 飞书会话.
   (await import("../channels/listen-http.ts")).registerListenRoutes(server, app, who);
+  // 预查库 and 快速通道 (rules/probes-http.ts, docs/v2/first-look.md).
+  (await import("../rules/probes-http.ts")).registerProbeRoutes(server, app, who);
   // Metrics (src/data/): an item's numbers, omem's own use.
   (await import("../data/http.ts")).registerMetricRoutes(server, app, who);
   registerStudyRoutes(server, app, who);

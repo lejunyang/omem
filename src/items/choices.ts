@@ -18,6 +18,7 @@ export const CHOICE_KINDS = {
   metric: "提议的指标要不要（按名字）",
   "meeting-item": "一场会的结果要不要记到某件事项",
   profile: "复盘提的档案改动要不要（按档案和标题）",
+  probe: "助手提议的预查要不要（按名字）",
 } as const;
 export type ChoiceKind = keyof typeof CHOICE_KINDS;
 export type Choice = "keep" | "drop" | "later" | "merged";
@@ -34,6 +35,7 @@ export const CHANGED: Record<ChoiceKind, { days: number | null; versioned: boole
   metric: { days: null, versioned: true, why: "说过不要的指标不再提，换了查法才可以再提" },
   "meeting-item": { days: null, versioned: false, why: "说过不用记的，这场会的结果不再问要不要记到这件事" },
   profile: { days: 30, versioned: true, why: "说过不要的档案改动一个月内不再提，内容改了才可以再提" },
+  probe: { days: null, versioned: false, why: "说过不要的同名预查不再提" },
 };
 /** “以后再说” waits this long by default. */
 export const LATER_DAYS = 7;

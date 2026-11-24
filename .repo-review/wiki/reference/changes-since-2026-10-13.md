@@ -53,6 +53,16 @@ updated: 2026-11-25
 - `note_item_change` 交具体步骤和完成条件。`src/flows/takeover.ts` 同批排一次接手：只读调查安静写回；外部操作先让本人确认原参数，执行仍走现有审批；等别人到点回查一次，等本人进待处理和“今天”。未定的范围不推进。
 - 复用事项关注 `assist`，默认 `act`；每天每事项最多六次自动接手。沿用事项范围、消息处理记录和发出前复核。见 `test/item-takeover.test.ts`。
 
+## 快速通道：预查、先看一眼、按需深查（2026-11-25）
+
+设计和接口在 `docs/v2/first-look.md`。
+
+- 预查库 `src/rules/probes.ts`（kv `rule-probe:<名字>`，注意不是后端检测用的 `probe:<档案>`）：只有本人能存、改、删；执行用从 `rules/script.ts` 抽出的 `execScript`（`runScript` 也改用它），每次一个 `probe` 运行；`runProbes` 并行、不抛错。工具 `propose_probe`（卡片用途 `probe-proposal`，“不要”记在 `items/choices.ts` 的种类 `probe`）。HTTP 在 `src/rules/probes-http.ts`。键名和 `probeExists` 单独放在 `probe-key.ts`：`rules/store.ts` 只引它，不经 `probes.ts → script.ts → compile.ts` 引进模型调用（否则 `rule-draft.test.ts` 对 `oneshot.ts` 的 mock 失效）。
+- 先看一眼 `src/rules/first-look.ts`：运行种类 `first-look`，角色 `roles/first-look.md`，交结果的 `first_look_outcome`（`ROLE_TOOLS`）；AI 用 `firstLookAI`；决策场景 `firstlook`（`decision-scenes.ts`、`ai.decision.thresholds.firstlook`）；`output.stages` 记每层耗时。去处 `resolveDest` / `deliverFirst`，深查结论 `deliverDeep`（`agents/jobs.ts` 的 `runAgentTask` 在 `input.firstLook` 时调用），按钮 `decideCard`（卡片用途 `first-look`，`lark-actions.ts`）。设置 `firstLook.to`。
+- 规则：`types.ts` 的 Agent 动作加 `firstLook` / `probes` / `firstTo`，新动作 `probe`；`actions.ts` 的 `runActions` 带 `outputs` 给后面的动作（延时的 `rule-fire` 也带），`deepAgent` 是先看一眼之后的深查；`store.ts` 保存时检查预查存在。
+- 关注：`ListenKnobs` 加同三项，`lark-watch.ts` 的 `routeWatchedMessages` 调 `queueListenLook`；`src/channels/listen-first-look.ts` 负责合并、压住这一批、答完拿走、要查时把结论并进这一批。
+- 测试 `test/first-look.test.ts`，假 Agent 的 `FAKE_MODE=first-look`。
+
 ## 研究：交给改（2026-11-25）
 
 `src/studies/fix-queue.ts`：`queueFixes` / `unqueueFix` / `tickFixQueue` / `attachFixQueue`（`engine.ts` 的 `attachFlows` 挂上）。表 `study_findings` 加 `fix_queued_at`、`fix_note`，`study_scopes` 加 `fix_ai`；`scope.ts` 的 `fixExecutions` 把它变成交办的 `execution` / `reviewExecution`。同一研究一次一个交办，评审通过（`stage.key = done`）即 `markFixedByChange`；`fixes.ts` 重跑仍失败时清掉。接口 `POST/DELETE /api/items/:id/study/fix-queue`，工具 `queue_study_fixes`（`study` 组）。网页 `ItemStudy.vue`：“交给改…”“挑几条交给改”“不排了”，范围里选改代码和评审的 AI。

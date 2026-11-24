@@ -5,7 +5,9 @@ import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
 import { OWNER } from "../core/users.ts";
 import { COMMAND_OUTPUT_LIMIT, HttpError, truncate } from "../core/util.ts";
-import { createRun, getRun, updateQueuedRun, cancelRun, type Run } from "../agents/runs.ts";
+import { addRunEvent, createRun, getRun, setRunOutput, updateQueuedRun, cancelRun, type Run } from "../agents/runs.ts";
+import { run as sql } from "../core/db.ts";
+import { now } from "../core/util.ts";
 import { eventSummary } from "./compile.ts";
 import { decidedBlocks } from "../channels/lark-send.ts";
 import type { Rule, RuleAction, RuleEvent } from "./types.ts";
@@ -48,6 +50,34 @@ export async function scriptAction(app: App, rule: Rule, a: ScriptAction, e: Rul
   const r = createRun(app, { kind: "rule-script", spaceId: rule.spaceId ?? e.doc?.space ?? "personal", title, input, notBefore: new Date(Date.now() + APPROVAL_DAYS * 86400_000).toISOString(), userId: OWNER });
   await sendApprovalCard(app, rule, r.id, input, approver);
   return { action: "script", ok: true, detail: `等 ${approver.name} 在卡片上批准后执行（${approver.why}）`, runId: r.id };
+}
+
+/**
+ * A script that needs no approval and whose output the actions after it use (rules/actions.ts): run
+ * now, here, still as a run of its own (kind rule-script), and its output handed back. It failing does
+ * not stop the rule: its output says so.
+ */
+export async function scriptNow(app: App, rule: Rule, a: ScriptAction, e: RuleEvent) {
+  runtimeCommand(a.runtime);
+  const input: ScriptInput = { ruleId: rule.id, ruleName: rule.name, runtime: a.runtime, code: a.code, timeoutSec: a.timeoutSec, event: e, approval: { by: "none", status: "none" } };
+  const r = createRun(app, { kind: "rule-script", spaceId: rule.spaceId ?? e.doc?.space ?? "personal", title: truncate(`规则「${rule.name}」的脚本（${a.runtime}）：${eventSummary(e).replace(/\s+/g, " ")}`, 80), input, userId: OWNER });
+  // Running from now: the worker does not pick it up as well.
+  sql(app.db, "update runs set status = 'running', started_at = ? where id = ? and status = 'queued'", now(), r.id);
+  app.emit({ type: "run", runId: r.id, status: "running" });
+  try {
+    const out = await runScript(app, getRun(app, r.id));
+    setRunOutput(app, r.id, out);
+    sql(app.db, "update runs set status = 'done', finished_at = ? where id = ?", now(), r.id);
+    app.emit({ type: "run", runId: r.id, status: "done" });
+    const o = out as { stdout?: string; ms?: number };
+    return { runId: r.id, ok: true, text: (o.stdout ?? "").trim(), ms: o.ms };
+  } catch (err) {
+    const message = (err as Error).message;
+    addRunEvent(app, r.id, "error", { message });
+    sql(app.db, "update runs set status = 'failed', error = ?, finished_at = ? where id = ?", message, now(), r.id);
+    app.emit({ type: "run", runId: r.id, status: "failed" });
+    return { runId: r.id, ok: false, text: message };
+  }
 }
 
 /** Who approves: the owner, the person named on the rule, or the one the model reads off the event. */
@@ -150,53 +180,72 @@ export function runtimeCommand(runtime: ScriptAction["runtime"]): { cmd: string;
 }
 
 /** A small environment of its own: enough to find programs and a home, nothing of omem's. */
-function scriptEnv(input: ScriptInput, dir: string) {
+function baseEnv(extra: Record<string, string>, dir: string) {
   const keep = ["PATH", "Path", "PATHEXT", "SYSTEMROOT", "SystemRoot", "COMSPEC", "WINDIR", "HOME", "USERPROFILE", "LANG", "LC_ALL", "TZ", "TMPDIR", "TEMP", "TMP", "SHELL"];
   const env: Record<string, string> = {};
   for (const k of keep) if (process.env[k] !== undefined) env[k] = process.env[k]!;
-  return { ...env, OMEM_EVENT: JSON.stringify(input.event), OMEM_RULE: input.ruleName, OMEM_WORKDIR: dir, PYTHONIOENCODING: "utf-8" };
+  return { ...env, ...extra, OMEM_WORKDIR: dir, PYTHONIOENCODING: "utf-8" };
 }
 
-/** Run kind rule-script: approved (or not needing it), run the script and keep what it printed. */
-export async function runScript(app: App, run: Run, signal?: AbortSignal) {
-  const input = run.input as unknown as ScriptInput;
-  if (input.approval.by !== "none" && input.approval.status !== "approved") return { skipped: input.approval.status === "declined" ? "审批人决定不执行" : "没有得到批准，没有执行" };
-  const { cmd, ext } = runtimeCommand(input.runtime);
-  const dir = join(app.home, "rules", "scripts", run.id);
+export type ScriptResult = { code: number | null; stdout: string; stderr: string; timedOut: boolean; ms: number };
+
+/**
+ * Runs code the owner saved, the one way scripts run on this machine (a rule's script action, a probe
+ * of rules/probes.ts): a directory of its own under the data directory, a small environment (`env` adds
+ * OMEM_* values — never omem's secrets), the input on stdin, the command rules' wrappers in front of
+ * PATH, output capped at COMMAND_OUTPUT_LIMIT, killed at the timeout or the signal. The directory is
+ * removed afterwards. Never throws for the script's own failure: the caller reads `code` / `timedOut`.
+ */
+export async function execScript(app: App, o: { runId: string; spaceId: string; runtime: ScriptAction["runtime"]; code: string; timeoutSec: number; stdin: string; env: Record<string, string>; signal?: AbortSignal }): Promise<ScriptResult> {
+  const { cmd, ext } = runtimeCommand(o.runtime);
+  const dir = join(app.home, "rules", "scripts", o.runId);
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `script${ext}`);
-  writeFileSync(file, input.code);
+  writeFileSync(file, o.code);
   const started = Date.now();
   // Command rules apply to scripts too (agents/command-gate.ts): the wrappers in front of PATH, and a
   // token that only identifies this run to the gate (no tools).
   const { commandGateDir, withGatePath } = await import("../agents/command-gate.ts");
   const gateDir = commandGateDir(app);
   const { issueToolToken, revokeToolToken } = await import("../agents/tools.ts");
-  const gateToken = gateDir ? issueToolToken({ runId: run.id, spaceId: run.spaceId ?? "personal", spaces: [], tools: new Set(), actor: "agent", userId: OWNER }) : null;
-  const env = gateDir ? withGatePath({ ...scriptEnv(input, dir), OMEM_URL: app.baseUrl, OMEM_TOKEN: gateToken! }, gateDir) : scriptEnv(input, dir);
-  const result = await new Promise<{ code: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean }>((resolve) => {
-    const p = spawn(cmd, [file], { cwd: dir, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    const stop = () => p.kill(process.platform === "win32" ? undefined : "SIGKILL");
-    const timer = setTimeout(() => ((timedOut = true), stop()), input.timeoutSec * 1000);
-    signal?.addEventListener("abort", stop, { once: true });
-    p.stdout.setEncoding("utf8").on("data", (d: string) => (stdout = (stdout + d).slice(-COMMAND_OUTPUT_LIMIT)));
-    p.stderr.setEncoding("utf8").on("data", (d: string) => (stderr = (stderr + d).slice(-COMMAND_OUTPUT_LIMIT)));
-    p.on("error", (err) => (stderr += `\n${err.message}`));
-    p.on("close", (code, sig) => {
-      clearTimeout(timer);
-      resolve({ code, signal: sig, stdout, stderr, timedOut });
+  const gateToken = gateDir ? issueToolToken({ runId: o.runId, spaceId: o.spaceId, spaces: [], tools: new Set(), actor: "agent", userId: OWNER }) : null;
+  const env = gateDir ? withGatePath({ ...baseEnv(o.env, dir), OMEM_URL: app.baseUrl, OMEM_TOKEN: gateToken! }, gateDir) : baseEnv(o.env, dir);
+  try {
+    const result = await new Promise<Omit<ScriptResult, "ms">>((resolve) => {
+      const p = spawn(cmd, [file], { cwd: dir, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      let timedOut = false;
+      const stop = () => p.kill(process.platform === "win32" ? undefined : "SIGKILL");
+      const timer = setTimeout(() => ((timedOut = true), stop()), o.timeoutSec * 1000);
+      if (o.signal?.aborted) stop();
+      o.signal?.addEventListener("abort", stop, { once: true });
+      p.stdout.setEncoding("utf8").on("data", (d: string) => (stdout = (stdout + d).slice(-COMMAND_OUTPUT_LIMIT)));
+      p.stderr.setEncoding("utf8").on("data", (d: string) => (stderr = (stderr + d).slice(-COMMAND_OUTPUT_LIMIT)));
+      p.on("error", (err) => (stderr += `\n${err.message}`));
+      p.on("close", (code) => {
+        clearTimeout(timer);
+        resolve({ code, stdout, stderr, timedOut });
+      });
+      p.stdin.on("error", () => {});
+      p.stdin.end(o.stdin);
     });
-    p.stdin.on("error", () => {});
-    p.stdin.end(JSON.stringify(input.event));
-  });
-  if (gateToken) revokeToolToken(gateToken);
-  // Nothing of the event or the code stays on disk once the output is in the run.
-  rmSync(dir, { recursive: true, force: true });
+    return { ...result, ms: Date.now() - started };
+  } finally {
+    if (gateToken) revokeToolToken(gateToken);
+    // Nothing of the event or the code stays on disk once the output is in the run.
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Run kind rule-script: approved (or not needing it), run the script and keep what it printed. */
+export async function runScript(app: App, run: Run, signal?: AbortSignal) {
+  const input = run.input as unknown as ScriptInput;
+  if (input.approval.by !== "none" && input.approval.status !== "approved") return { skipped: input.approval.status === "declined" ? "审批人决定不执行" : "没有得到批准，没有执行" };
+  const event = JSON.stringify(input.event);
+  const result = await execScript(app, { runId: run.id, spaceId: run.spaceId ?? "personal", runtime: input.runtime, code: input.code, timeoutSec: input.timeoutSec, stdin: event, env: { OMEM_EVENT: event, OMEM_RULE: input.ruleName }, signal });
   const ok = result.code === 0 && !result.timedOut;
-  const out = { exitCode: result.code, timedOut: result.timedOut, ms: Date.now() - started, stdout: result.stdout, stderr: result.stderr, approvedBy: input.approval.decidedBy ?? null };
+  const out = { exitCode: result.code, timedOut: result.timedOut, ms: result.ms, stdout: result.stdout, stderr: result.stderr, approvedBy: input.approval.decidedBy ?? null };
   if (!ok) {
     notify(app, { title: `规则「${input.ruleName}」的脚本${result.timedOut ? "超时" : "失败"}`, body: truncate(result.stderr || result.stdout || `退出码 ${result.code}`, 600), link: `#/runs/${run.id}` });
     throw new Error(result.timedOut ? `脚本超过 ${input.timeoutSec} 秒没结束，已停止` : `脚本退出码 ${result.code}：${truncate(result.stderr.trim() || result.stdout.trim(), 300)}`);
