@@ -11,6 +11,7 @@ import Skeleton from "../../components/Skeleton.vue";
 import UiCheckbox from "../../components/UiCheckbox.vue";
 import UiSegmented from "../../components/UiSegmented.vue";
 import UiSelect from "../../components/UiSelect.vue";
+import { FIRST_TO_EFFECT, firstLookOptions, type FirstLookOptions, type FirstTo } from "../../lib/first-look";
 
 /**
  * 设置 → 助手 → 代你回复: someone looking for the owner (有人找你), people who are not users asking the bot,
@@ -26,6 +27,33 @@ const reasonText = (r: Record<string, number>) => Object.entries(r).sort((a, b) 
 onMounted(() => void get<{ replies: ReplyStats | null }>("/api/mentions").then((r) => (replyStats.value = r.replies)).catch(() => {}));
 
 const off = computed(() => config.value?.mentions?.enabled === false);
+
+// 快速通道 (docs/v2/first-look.md): where a first look's first message goes by default, and which AI looks.
+const fl = ref<FirstLookOptions | null>(null);
+onMounted(() => void firstLookOptions(true).then((o) => (fl.value = o)).catch(() => {}));
+const FIRST_TO: { value: FirstTo; label: string }[] = [{ value: "dm", label: "私聊发给我" }, { value: "ephemeral", label: "群里只有我看得到" }, { value: "chat", label: "发到群里" }];
+const firstTo = computed<FirstTo>(() => config.value?.firstLook?.to ?? fl.value?.to ?? "dm");
+function saveFirstTo(v: FirstTo) {
+  void saveConfig({ firstLook: { ...(config.value.firstLook ?? {}), to: v } }, `第一条默认${FIRST_TO.find((x) => x.value === v)?.label}`);
+}
+/**
+ * The AI a first look runs on, worked out the way the server does (src/rules/first-look.ts firstLookAI):
+ * the role's own pick in the Agent page, else the 省的 tier at low effort, else the default backend's lowest.
+ */
+const fastAI = computed(() => {
+  const a = config.value?.agents;
+  if (!a) return null;
+  const role: string | undefined = a.roles?.["first-look"];
+  const models: Record<string, { model?: string; effort?: string }> | undefined = a.roleModels?.["first-look"];
+  if (role || models) {
+    const backend = role || a.default || "";
+    const m = (backend && models?.[backend]) || undefined;
+    return { what: [backend || "默认后端", m?.model, m?.effort].filter(Boolean).join(" · "), from: "按你在 Agent 页给“先看一眼”指定的" };
+  }
+  const cheap = a.tiers?.cheap as { profile: string; model?: string; effort?: string } | undefined;
+  if (cheap) return { what: [cheap.profile, cheap.model].filter(Boolean).join(" · ") + " · low", from: `跟随“省的”档位，用低 effort（后端没有 low 时用档上写的${cheap.effort ? ` ${cheap.effort}` : ""}，再没有用最低一档）` };
+  return { what: `${a.default || "默认后端"} · 最低 effort`, from: "没配“省的”档位：用默认后端的最低 effort" };
+});
 const skipKeys = [
   { key: "read" as const, label: "已读" },
   { key: "reacted" as const, label: "回了表情" },
@@ -170,6 +198,25 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
       </template>
     </SetCard>
 
+    <SetCard id="set-first-look" title="快速通道" :keys="['firstLook']">
+      <template #help>规则或关注打开“先快速看一眼”后，消息一来先跑选的预查，再让快模型在 {{ fl?.budgetSec ?? 90 }} 秒内看一眼：答完了、要接着查、要你定。只有要接着查才起深查。这里定第一条消息默认发到哪，每条规则和每个关注可以自己改。</template>
+      <SetRow label="第一条消息默认发到哪" block>
+        <UiSegmented :model-value="firstTo" size="sm" :options="FIRST_TO" aria-label="第一条消息默认发到哪" @change="(v) => saveFirstTo(v as FirstTo)" />
+        <template #hint>{{ FIRST_TO_EFFECT[firstTo] }}</template>
+      </SetRow>
+      <SetRow label="先看一眼用的 AI" block>
+        <div class="fast-ai">
+          <code v-if="fastAI">{{ fastAI.what }}</code>
+          <span v-else class="muted">看不到 AI 的设置</span>
+          <router-link to="/agents?tab=agents&role=first-look" class="small">在 Agent 页换</router-link>
+        </div>
+        <template v-if="fastAI" #hint>{{ fastAI.from }}。和其他内置角色一样，在 Agent 页的“先看一眼”角色里改后端、模型和思考强度。</template>
+      </SetRow>
+      <SetRow v-if="fl" label="预查库" :hint="fl.probes.length ? `${fl.probes.length} 个预查：${fl.probes.slice(0, 3).map((p) => p.name).join('、')}${fl.probes.length > 3 ? ' 等' : ''}` : '还没有预查'">
+        <router-link to="/rules/probes" class="btn sm">管理预查</router-link>
+      </SetRow>
+    </SetCard>
+
     <SetCard id="set-guests" title="访客提问" :keys="['lark.guests']">
       <template #help>没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的模型在 Agent 页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</template>
       <SetRow label="回答未登记的人和别的机器人">
@@ -274,6 +321,17 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
 </template>
 
 <style scoped>
+.fast-ai {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.fast-ai code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
 .cmd-in {
   width: 140px;
 }

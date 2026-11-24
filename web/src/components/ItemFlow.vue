@@ -185,6 +185,7 @@ async function stop() {
     <template v-else-if="data?.flow">
       <div class="flow-head">
         <span class="flow-name">{{ data.flow.name }}</span>
+        <span v-if="data.flow.id.startsWith('once-')" class="badge once" title="助手为这件事临时排的阶段清单，不是保存过的流程模板；完整走完后会问你要不要存成模板">一次性清单</span>
         <span v-if="data.flow.repeat" class="muted small">第 {{ data.flow.round ?? 1 }} 轮</span>
         <span v-if="data.flow.endedAt" class="muted small">{{ completed ? "走完了" : "已停止" }}</span>
         <span class="spacer" />
@@ -356,6 +357,7 @@ async function stop() {
 .item-flow { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
 .flow-head { display: flex; align-items: baseline; gap: 8px; }
 .flow-name { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.once { font-size: 11.5px; }
 .link { padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12.5px; }
 .link:hover { color: var(--ink); text-decoration: underline; }
 .link:disabled { cursor: default; opacity: 0.6; }

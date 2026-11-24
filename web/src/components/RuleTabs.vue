@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { useRoute } from "vue-router";
 
-/** The two kinds of rules share one page header: what to do on events, and where materials go (flows have their own page, FlowTabs). */
+/**
+ * The kinds of rules share one page header: what to do on events, where materials go, and the probes rules
+ * and 关注 run before a first look (预查库: the owner writes them, the host runs them). Flows have their own page, FlowTabs.
+ */
 const route = useRoute();
 </script>
 
@@ -9,6 +12,7 @@ const route = useRoute();
   <nav class="rule-tabs" aria-label="规则类型">
     <router-link to="/rules" class="tab" :class="{ on: route.path === '/rules' }">任务规则</router-link>
     <router-link to="/rules/archive" class="tab" :class="{ on: route.path === '/rules/archive' }">归档规则</router-link>
+    <router-link to="/rules/probes" class="tab" :class="{ on: route.path === '/rules/probes' }">预查</router-link>
   </nav>
 </template>
 

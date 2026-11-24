@@ -157,6 +157,12 @@ function saveDecisionRows(rows: DecisionRow[]) {
 function editDecisionRow(i: number, patch: Partial<DecisionRow>) {
   saveDecisionRows(decisionRows.value.map((r, n) => n === i ? { ...r, ...patch } : r));
 }
+/** A new row starts on a provider no row uses yet (the same one again looks like nothing was added); all used: the first, as before. */
+function nextDecisionProvider() {
+  const used = new Set(decisionRows.value.map((r) => r.provider).filter(Boolean));
+  const choices = providerOptions.value.filter((p) => p.value);
+  return (choices.find((p) => !used.has(p.value)) ?? choices[0])?.value ?? "startlux";
+}
 function moveDecisionRow(i: number, step: number) {
   const rows = [...decisionRows.value];
   [rows[i], rows[i + step]] = [rows[i + step]!, rows[i]!];
@@ -287,7 +293,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
             <button class="btn ghost sm" :aria-label="`移除模型 ${i + 1}`" @click="saveDecisionRows(decisionRows.filter((_, n) => n !== i))">移除</button>
           </div>
         </div>
-        <button class="btn ghost sm" :disabled="decisionRows.length >= 9" @click="saveDecisionRows([...decisionRows, { provider: providerOptions.find((p) => p.value)?.value ?? 'startlux', model: '' }])">添加一个</button>
+        <button class="btn ghost sm" :disabled="decisionRows.length >= 9" @click="saveDecisionRows([...decisionRows, { provider: nextDecisionProvider(), model: '' }])">添加一个</button>
         <UiSegmented :model-value="catValue.pick ?? 'fixed'" aria-label="决策模型选择方式" :options="[{ value: 'fixed', label: '按顺序（固定用第一个）' }, { value: 'random', label: '每次随机选一个' }]" @change="(v) => setCat({ pick: v })" />
       </template>
       <template v-if="cat === 'voice'">

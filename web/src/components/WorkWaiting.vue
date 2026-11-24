@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { post, type Ask } from "../api";
+import { get, post, type Ask } from "../api";
 import AskCard from "./AskCard.vue";
 import Icon from "./Icon.vue";
 import SideSheet from "./SideSheet.vue";
@@ -17,7 +17,7 @@ import { changeTone, changeTypeLabel, type ChangeLite, type GateLite, type ItemL
  */
 export type Waiting = { total: number; asks: Ask[]; gates: GateLite[]; candidates: ItemLite[]; changes: ChangeLite[]; drafts: number };
 /** One thing waiting for the owner, whatever kind it is (src/items/pending.ts). */
-export type PendingAction = { id: string; via: string; group: string; label: string; title: string; href: string; count?: number; createdAt: string; lineTitle?: string };
+export type PendingAction = { id: string; via: string; group: string; label: string; title: string; href: string; count?: number; createdAt: string; lineTitle?: string; askId?: string };
 const props = defineProps<{ waiting: Waiting; pending?: PendingAction[] }>();
 /** What waits on another page (metrics to confirm, proposed changes to a profile, skill drafts): a line each, leading there. */
 const elsewhere = computed(() => (props.pending ?? []).filter((p) => ["metric", "profile", "skill", "item-update"].includes(p.via)));
@@ -32,6 +32,12 @@ const changes = computed(() => (props.waiting.asks.some((a) => a.handler === "it
 type Group = "ask" | "approve" | "propose" | "work";
 const HANDLERS: Record<string, { label: string; group: Group }> = {
   "flow-stage": { label: "流程", group: "work" },
+  // A flow's reconciliation left the owner the smallest next step, or a draft for someone (src/flows/reconcile.ts).
+  "flow-reconcile-step": { label: "流程", group: "work" },
+  // A change's next step taken over: a choice for the owner, or 执行 / 不执行 one write (src/flows/takeover.ts).
+  "item-step": { label: "下一步", group: "work" },
+  // What a read-only look before a deadline found, to start from (src/items/deadline-check.ts).
+  "item-deadline-check": { label: "临期预查", group: "work" },
   "item-follow": { label: "变化", group: "work" },
   "study-plan": { label: "研究", group: "work" },
   "design-confirm": { label: "方案", group: "work" },
@@ -53,6 +59,10 @@ const HANDLERS: Record<string, { label: string; group: Group }> = {
   "reply-promote": { label: "以后自动", group: "propose" },
   "approval-promote": { label: "以后自动", group: "propose" },
   "flow-gate-promote": { label: "以后自动", group: "propose" },
+  // 情境 (src/situations): one the assistant proposed, one learned from being shown, and its edit form.
+  "situation-enable": { label: "情境", group: "propose" },
+  "situation-teach": { label: "情境", group: "propose" },
+  "situation-teach-edit": { label: "情境", group: "propose" },
   "command-gate": { label: "命令", group: "approve" },
   // The owner's assistant asking a member how one of the owner's lines is going (src/items/member-progress.ts).
   "member-progress": { label: "问进展", group: "ask" },
@@ -69,7 +79,16 @@ const GROUPS: { value: Group; label: string }[] = [
   { value: "work", label: "流程与编码" },
   { value: "propose", label: "提议" },
 ];
-const rows = computed(() => props.waiting.asks.map((a) => ({ ask: a, ...kindOf(a), lead: plainLine(a.question, 150) || "（没有文字）", picks: a.ui?.fields?.length ?? 0 })));
+/**
+ * 情境 proposals are suggestions, which `waiting.asks` leaves out (they belong under a reply), yet they wait
+ * for the owner here too (docs/v2/situations.md “怎么教”): fetched one by one from the pending list.
+ */
+const extra = ref<Ask[]>([]);
+watch(() => (props.pending ?? []).filter((p) => p.via === "ask" && p.label === "情境" && p.askId && !askIds.value.has(p.askId)).map((p) => p.askId).join(","), async (ids) => {
+  const list = await Promise.all(ids.split(",").filter(Boolean).slice(0, 20).map((id) => get<Ask>(`/api/asks/${encodeURIComponent(id)}`).catch(() => null)));
+  extra.value = list.filter((a): a is Ask => !!a && a.status === "pending");
+}, { immediate: true });
+const rows = computed(() => [...props.waiting.asks, ...extra.value].map((a) => ({ ask: a, ...kindOf(a), lead: plainLine(a.question, 150) || "（没有文字）", picks: a.ui?.fields?.length ?? 0 })));
 const counts = computed(() => Object.fromEntries(GROUPS.map((g) => [g.value, rows.value.filter((r) => r.group === g.value).length])) as Record<Group, number>);
 const filter = ref<Group | "">("");
 const shown = computed(() => (filter.value ? rows.value.filter((r) => r.group === filter.value) : rows.value));
@@ -82,8 +101,20 @@ const listed = computed(() => (more.value ? shown.value : shown.value.slice(0, F
 const openId = ref<string | null>(null);
 const opened = computed(() => rows.value.find((r) => r.ask.id === openId.value) ?? null);
 watch(opened, (r) => { if (!r) openId.value = null; });
-function answered() {
+/**
+ * An answer that leads to a form to fill (a 情境 proposal's “改一改” makes its edit form, `#/ui/<id>` in the
+ * result): that form opens here as soon as the list has it, filled in with the proposal.
+ */
+const nextId = ref<string | null>(null);
+watch(rows, (list) => {
+  if (nextId.value && list.some((r) => r.ask.id === nextId.value)) {
+    openId.value = nextId.value;
+    nextId.value = null;
+  }
+});
+function answered(done?: Ask) {
   openId.value = null;
+  nextId.value = done?.result?.match(/#\/ui\/([A-Za-z0-9_-]+)/)?.[1] ?? null;
   emit("changed");
 }
 async function dismiss(a: Ask) {
@@ -105,7 +136,7 @@ async function decide(i: ItemLite, keep: boolean) {
     deciding.value = null;
   }
 }
-const nothing = computed(() => !props.waiting.asks.length && !gates.value.length && !changes.value.length && !props.waiting.candidates.length && !props.waiting.drafts && !elsewhere.value.length);
+const nothing = computed(() => !rows.value.length && !gates.value.length && !changes.value.length && !props.waiting.candidates.length && !props.waiting.drafts && !elsewhere.value.length);
 </script>
 
 <template>

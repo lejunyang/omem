@@ -60,6 +60,7 @@ import { remember } from "../src/memory/store.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { resolveCitationsNow } from "../src/channels/citations.ts";
 import { saveRule } from "../src/rules/store.ts";
+import { saveProbe } from "../src/rules/probes.ts";
 import { startServer } from "../src/server/http.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { addSourceNote, setAttention, setNodeLevel } from "../src/sources/attention.ts";
@@ -882,6 +883,84 @@ const dutyListen = saveContext(app, {
   brief: { handle: ["报退款金额不对、带订单号或截图的", "测试同学问回放结果的"], skip: ["闲聊和表情", "产品讨论需求口径的"], valid: "查到了退款单或代码依据，说得出哪一行算错、为什么", at: ago(3), confirmedAt: ago(3) },
   knobs: { reply: "draft" },
 });
+// ---- 快速通道: probes, a rule that looks first, one first look's layers; a 情境 with its rounds --------
+// Seeded only before the shots that show them (fastLane()), so the earlier pages keep their screenshots.
+const FAST_RULE = "rule_demo_fast", DRILL = "ctx_demo_drill";
+let fastLaneSeeded = false;
+const seedFastLane = async () => void (await fastLane());
+async function fastLane() {
+if (fastLaneSeeded) return;
+fastLaneSeeded = true;
+saveProbe(app, { name: "refund-order", description: "按退款单号查状态、各行退款金额和分摊明细（只读副本）", match: "(?<refund>R\\d{4,})", runtime: "node", timeoutSec: 20, direct: false,
+  code: [
+    "// 正则捕获到的退款单号在 OMEM_CAPTURES；只读查询，输出给快模型看。",
+    "const id = JSON.parse(process.env.OMEM_CAPTURES).refund;",
+    "const res = await fetch(`http://127.0.0.1:8080/readonly/refunds/${id}`);",
+    "if (!res.ok) { console.error(`查不到 ${id}：${res.status}`); process.exit(1); }",
+    "const r = await res.json();",
+    "console.log(`退款单 ${id}：${r.status}，共退 ${r.total} 元`);",
+    "for (const line of r.lines) console.log(`- ${line.sku}：退 ${line.amount}（分摊优惠 ${line.discount}）`);",
+  ].join("\n") }, "owner");
+saveProbe(app, { name: "release-window", description: "今天是不是封版日、下一个发布窗口几点", runtime: "bash", timeoutSec: 10, direct: true,
+  code: "#!/usr/bin/env bash\n# 发布日历是团队共享的只读文件\ngrep \"$(date +%F)\" ~/release-calendar.txt || echo \"今天不封版，下一个窗口：每天 14:00\"" }, "owner");
+saveProbe(app, { name: "refund-alarm", description: "退款接口近 10 分钟的报错数和最多的错误码", match: "报错|失败|5\\d\\d", runtime: "python", timeoutSec: 30, direct: false,
+  code: "import json, urllib.request\nwith urllib.request.urlopen('http://127.0.0.1:8080/readonly/refund-errors?minutes=10') as r:\n    data = json.load(r)\nprint(f\"近 10 分钟报错 {data['count']} 次，最多的是 {data['top']}\")" }, "owner", "proposal");
+const probeRun = (probe: string, at: string, ok: boolean, stdout: string, ms: number) => {
+  const pr = createRun(app, { kind: "probe", spaceId: "shop", title: `预查「${probe}」：R1005 退了 312 元，比应退多了 60`, input: { probe, runtime: "node", timeoutSec: 20, captures: probe === "refund-order" ? { refund: "R1005" } : {}, matched: "R1005 退了 312 元，比应退多了 60" } });
+  setRunOutput(app, pr.id, { exitCode: ok ? 0 : 1, timedOut: false, ms, stdout, stderr: ok ? "" : "查不到 R1005：502" });
+  run(app.db, "update runs set status = ?, created_at = ?, started_at = ?, finished_at = ? where id = ?", ok ? "done" : "failed", at, at, at, pr.id);
+  return pr.id;
+};
+const lookProbe = probeRun("refund-order", ago(0, 2), true, "退款单 R1005：已退款，共退 312 元\n- SKU-88 衬衫：退 189.00（分摊优惠 21.00）\n- SKU-91 袜子：退 123.00（分摊优惠 39.00）", 840);
+probeRun("refund-alarm", ago(1, 5), true, "近 10 分钟报错 3 次，最多的是 REFUND_AMOUNT_EXCEEDED", 1210);
+const fastRule = saveRule(app, {
+  id: FAST_RULE, name: "答疑群报退款金额不对时先查单",
+  description: "退款答疑群里有人报退款金额不对并带了退款单号，先按单号查退款单和分摊明细，能答就直接答；答不了的再交给助手细查。",
+  enabled: true, spaceId: "shop",
+  trigger: { event: "message", once: "event", waitMinutes: 0, unless: ["owner-engaged"] },
+  conditions: { all: [{ field: "chat.name", op: "contains", value: "退款答疑" }, { field: "message.text", op: "matches", value: "R\\d{4,}" }] },
+  judge: "code",
+  actions: [{ type: "agent", spec: "assistant", task: "看这张退款单金额对不对，说清哪一行、为什么", reply: "draft", ownTopic: true, mergeReply: "separate", firstLook: true, probes: ["refund-order"], firstTo: "ephemeral" }],
+} as never);
+const lookRun = createRun(app, { kind: "first-look", spaceId: "shop", title: "先看一眼：R1005 退了 312 元，比应退多了 60", input: { ruleId: fastRule.id, text: "R1005 退了 312 元，比应退多了 60，麻烦看下" } });
+setRunOutput(app, lookRun.id, { outcome: "answered", answer: "R1005 按新口径算没有多退：衬衫和袜子按实付比例分摊了 60 元满减，两行合计 312 元，和退款单一致。用户看到的“多了 60”是把满减算回了原价。", stages: {
+  prefilter: "规则条件已经筛过：退款答疑群、消息带退款单号",
+  probes: { ms: 860, results: [{ name: "refund-order", ok: true, ms: 840, runId: lookProbe }] },
+  look: { ms: 14200, outcome: "answered", by: "model", ai: { profile: "codex", model: "gpt-6.1-luna", effort: "low" } },
+  decision: { taken: "yes", threshold: 0.7, said: "依据够：有分摊明细", probabilities: { yes: 0.86, no: 0.14 } },
+  first: { at: ago(0, 2), to: "ephemeral", why: [] },
+} });
+run(app.db, "update runs set status = 'done', created_at = ?, started_at = ?, finished_at = ? where id = ?", ago(0, 2), ago(0, 2), ago(0, 2), lookRun.id);
+
+// ---- a 情境: a weekly drill, with one round going on and two ended -------------------------------
+const drill = saveContext(app, {
+  id: DRILL, kind: "situation", name: "项目 A 例行演练", spaceId: "shop", spec: "assistant", status: "active",
+  note: "演练开始后我在意的是：退款链路有没有被切走、回切后数据对不对得上。每一步卡住超过 15 分钟告诉我；结束时给我一份三行小结，写进演练记录表。",
+  recognize: "项目 A 的演练群里有人发“演练开始”，或演练记录表新增了一行",
+  knobs: { firstLook: true, probes: ["release-window"], firstTo: "dm" },
+} as never);
+saveRule(app, {
+  id: `situation:${drill.id}`, name: `情境：${drill.name}`, description: drill.recognize!, enabled: true,
+  trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] },
+  conditions: { all: [{ field: "chat.name", op: "contains", value: "演练" }, { field: "message.text", op: "contains", value: "演练开始" }] },
+  judge: "code", actions: [{ type: "context", context: drill.id }],
+} as never, "user", "owner", { origin: { kind: "situation", contextId: drill.id, name: drill.name } });
+const drillRound = (about: string, started: string, until: string, current: string, ended?: { at: string; summary: string }) => {
+  const title = `${drill.name}：${about}`;
+  const it = upsertItem(app, undefined, { userId: "owner", spaceId: "shop", kind: "todo", title, detail: about, sourceRefs: [] }, "agent");
+  const th = createThread(app, { userId: "owner", spaceId: "shop", channel: "listen", key: `sit_demo_${it.id}`, title, settings: { itemId: it.id } });
+  const sid = `sit_demo_${it.id.slice(-8)}`;
+  run(app.db, `insert into situation_instances(id,context_id,user_id,item_id,conversation_id,space_id,title,status,started_at,window_until,current,summary,ended_at)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, sid, drill.id, "owner", it.id, th.id, "shop", title, ended ? "ended" : "active", started, until, current, ended?.summary ?? null, ended?.at ?? null);
+  if (ended) run(app.db, "update items set status = 'done', closed_at = ? where id = ?", ended.at, it.id);
+  return it.id;
+};
+const drillItem = drillRound("11 月第 4 周，切到备用退款通道", ago(0, 1), new Date(Date.now() + 3 * 3600_000).toISOString(), "已切到备用通道 40 分钟，退款单正常；回切排在 16:00，小李在核对切换期间的 23 张单。");
+drillRound("11 月第 3 周，切到备用退款通道", ago(7, 2), ago(7, -2), "已回切", { at: ago(7, -1), summary: "切换 52 分钟，回切后有 2 张单重复退款，小王已手工冲正；下次回切前先停自动重试。" });
+drillRound("11 月第 2 周，只演练数据回放", ago(14, 3), ago(14, -1), "已结束", { at: ago(14, 0), summary: "回放 1,240 张单，金额全部对上；用时比上次少 20 分钟。" });
+return { lookRun: lookRun.id, drillItem };
+}
+
 // 问这条线: one question already asked in the line's 关注 conversation (or a conversation of its own).
 const lineChat = itemContext(app, refundLine.id)?.conversationId ?? createThread(app, { channel: "web", spaceId: "shop", title: "问这条线：示例商城 · 退款改造", userId: "owner" }).id;
 addMessage(app, lineChat, "user", "现在卡在哪？");
@@ -1398,6 +1477,8 @@ await sendToday(app);
 const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0), host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
+  const fl = await fastLane();
+  console.log(`快速通道：${url}/#/rules/probes；${url}/#/rules?id=${FAST_RULE}；先看一眼 ${url}/#/runs/${fl?.lookRun}；情境 ${url}/#/listen/${DRILL}?tab=rounds、事项 ${url}/#/items/${fl?.drillItem}`);
   console.log(`演示数据：${url}/#/code/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   console.log(`向量和重排的假云端接口：${fakeApiUrl}（模型名写 missing-model 会失败）`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
@@ -1911,6 +1992,14 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.locator(".item-external").scrollIntoViewIfNeeded();
     await p.waitForTimeout(400);
   } },
+  // 快速通道 and 情境 (seeded just before, see fastLane): the probe library with a sample filled in, a rule
+  // that looks first, and a situation's rounds.
+  { name: "probes", path: "/rules/probes?name=refund-order", before: seedFastLane, prepare: async (p) => {
+    await p.getByLabel("示例消息").fill("R1005 退了 312 元，比应退多了 60，麻烦看下");
+    await p.waitForTimeout(300);
+  } },
+  { name: "rule-first-look", path: `/rules?id=${FAST_RULE}`, before: seedFastLane, prepare: async (p) => { await p.locator(".fast").first().scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
+  { name: "situation-rounds", path: `/listen/${DRILL}?tab=rounds`, before: seedFastLane },
 ];
 let failed = 0;
 for (const s of shots.filter((s) => !only || only.includes(s.name))) {

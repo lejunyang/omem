@@ -162,6 +162,11 @@ export const runKindLabel: Record<string, string> = {
   "replay-judge": "复盘评判",
   mention: "有人找你",
   "problem-follow": "在跟的问题",
+  "first-look": "先看一眼",
+  probe: "预查",
+  "item-takeover": "接手下一步",
+  "flow-reconcile": "流程对账",
+  "item-deadline-check": "临期预查",
 };
 export const statusLabel: Record<string, string> = {
   queued: "排队中",

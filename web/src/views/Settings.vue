@@ -40,7 +40,7 @@ const TAB_KEYS: Record<Tab, { keys: string[]; legacy?: boolean }> = {
   search: { keys: ["embeddings", "rerank", "memory", "notes", "search"] },
   storage: { keys: ["media"], legacy: true },
   notify: { keys: ["notify", "agents.progress"] },
-  reply: { keys: ["mentions", "lark.guests", "lark.commands", "lark.invite", "replies"] },
+  reply: { keys: ["mentions", "firstLook", "lark.guests", "lark.commands", "lark.invite", "replies"] },
   advance: { keys: ["agents.autoAdvance", "flows", "agents.design", "items", "studies"] },
   review: { keys: ["quality", "replay"] },
   schedules: { keys: ["timezone", "heartbeat", "workState"] },
@@ -90,7 +90,7 @@ const VIEWS: Partial<Record<Tab, ReturnType<typeof defineAsyncComponent>>> = {
  * Cards that moved keep working from the old links: `?tab=lark&focus=mentions` and the like.
  */
 const CARDS: Record<string, Tab> = {
-  mentions: "reply", guests: "reply", commands: "reply", invite: "reply", "reply-check": "reply", "reply-outcome": "reply",
+  mentions: "reply", "first-look": "reply", guests: "reply", commands: "reply", invite: "reply", "reply-check": "reply", "reply-outcome": "reply",
   "notify-times": "notify", "notify-outlets": "notify", progress: "notify",
   "auto-advance": "advance", "flow-follow": "advance", "gate-ladder": "advance", "commit-claim": "advance", design: "advance", "study-envs": "advance", "item-expiry": "advance", "item-sync": "advance",
   audit: "review", replay: "review",

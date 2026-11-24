@@ -37,7 +37,7 @@ const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
 type WorkFile = { id: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; lines: number };
-const detail = ref<{ can?: { edit: boolean; operate: boolean }; item: Item; external?: External | null; auto?: { why: string; by: string }; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[] } | null>(null);
+const detail = ref<{ can?: { edit: boolean; operate: boolean }; item: Item; external?: External | null; auto?: { why: string; by: string }; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[]; situation?: { id: string; contextId: string; name: string | null; status: "active" | "ended" } } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const adding = ref(false);
@@ -331,6 +331,10 @@ async function addNote() {
           <span class="spacer" />
           <button class="btn ghost sm icon" @click="router.push('/items')"><Icon name="x" /></button>
         </header>
+        <p v-if="detail.situation" class="sit-banner small">
+          <Icon name="eye" :size="14" />
+          <span>这是情境<router-link :to="`/listen/${encodeURIComponent(detail.situation.contextId)}?tab=rounds`">「{{ detail.situation.name ?? "已删除的情境" }}」</router-link>的一回{{ detail.situation.status === "active" ? "，正在进行" : "，已结束" }}。</span>
+        </p>
         <div v-if="detail.item.status === 'candidate'" class="cand-banner">
           <p><strong>候选：</strong>{{ detail.auto?.by ? `${detail.auto.by}自己建的` : "助手自己建的" }}，你还没说要不要。在你决定之前它不提醒、不进上面的列表。</p>
           <RichText v-if="detail.auto?.why" tag="p" class="small why" :text="detail.auto.why" />
@@ -773,6 +777,22 @@ async function addNote() {
 }
 .strike {
   text-decoration: line-through;
+}
+.sit-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.sit-banner :deep(svg) {
+  color: var(--accent);
+  flex: none;
 }
 .panel-overlay {
   position: fixed;

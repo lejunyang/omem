@@ -16,6 +16,8 @@ import RunActivity from "../components/RunActivity.vue";
 import TaskBoard from "../components/TaskBoard.vue";
 import ProgressBoard from "../components/ProgressBoard.vue";
 import ContextUsage from "../components/ContextUsage.vue";
+import FirstLookStages from "../components/FirstLookStages.vue";
+import { msText } from "../lib/first-look";
 import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { promptDialog } from "../lib/dialog";
 
@@ -415,6 +417,23 @@ const kindOptions = computed(() => [
           </div>
         </section>
 
+        <section v-if="detail.run.kind === 'first-look' && out.stages" class="card pad block">
+          <div class="section-title">各层用了多久、结果如何</div>
+          <FirstLookStages :stages="out.stages" :outcome="out.outcome" />
+        </section>
+        <section v-if="detail.run.kind === 'probe' && (out.stdout !== undefined || out.stderr !== undefined)" class="card pad block probe-out">
+          <div class="section-title">预查{{ detail.run.input?.trial ? "（试跑）" : "" }}的结果</div>
+          <div class="row wrap small">
+            <span class="badge" :class="out.exitCode === 0 && !out.timedOut ? 'ok' : 'danger'">{{ out.timedOut ? "超时" : out.exitCode === 0 ? "成功" : "失败" }}</span>
+            <span>退出码 {{ out.exitCode ?? "—" }}</span>
+            <span>用时 {{ msText(out.ms) }}</span>
+            <span v-if="detail.run.input?.probe" class="muted">预查「{{ detail.run.input.probe }}」 · <router-link :to="`/rules/probes?name=${encodeURIComponent(detail.run.input.probe)}`">在预查库里打开</router-link></span>
+          </div>
+          <div v-if="detail.run.input?.captures && Object.keys(detail.run.input.captures).length" class="small muted">匹配到的：<code v-for="(v, k) in detail.run.input.captures" :key="k" class="cap">{{ k }}={{ v }}</code></div>
+          <pre class="pre">{{ out.stdout || "（没有输出）" }}</pre>
+          <pre v-if="out.stderr" class="pre err">{{ out.stderr }}</pre>
+        </section>
+
         <section v-if="taskText" class="card pad block" data-ask-label="任务原文">
           <div class="section-title row">任务<span class="spacer" /><button v-if="taskLong" class="btn ghost sm" @click="taskOpen = !taskOpen">{{ taskOpen ? "收起" : "展开全部" }}</button></div>
           <div class="pre task" :class="{ clipped: taskLong && !taskOpen }">{{ taskText }}</div>
@@ -633,6 +652,32 @@ const kindOptions = computed(() => [
 .pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.probe-out {
+  display: grid;
+  gap: 8px;
+}
+.probe-out .row {
+  gap: 10px;
+  align-items: center;
+}
+.probe-out pre.pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--sunken);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.probe-out pre.err {
+  color: var(--danger);
+}
+.probe-out .cap {
+  margin-left: 6px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .pre.task.clipped {
   max-height: 16.5em;

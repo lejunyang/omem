@@ -119,6 +119,7 @@ function openRef(r: string) {
         <h1>{{ item.title }}</h1>
         <div class="meta small muted row wrap">
           <span v-if="flow?.flow">{{ flow.flow.name }}</span>
+          <span v-if="flow?.flow?.id.startsWith('once-')" class="badge" title="助手为这件事临时排的阶段清单，不是保存过的流程模板">一次性清单</span>
           <span v-if="current">· 现在在「{{ current.name }}」，{{ stageWords[current.state] }}</span>
           <span v-if="ended">· 流程已结束</span>
           <span v-if="item.spaceId !== 'personal'" class="badge">{{ spaceName(item.spaceId) }}</span>

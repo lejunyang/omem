@@ -38,6 +38,13 @@ export function listSituations(app: App, userId: string, opts: { contextId?: str
 export function instanceOfThread(app: App, id: string) {
   return one<SituationInstance>(app.db, `select ${columns} from situation_instances where conversation_id=?`, id) ?? null;
 }
+/** The round an item is, for its page: the situation's id and name. Only its own person, as everywhere here. */
+export function instanceOfItem(app: App, userId: string, itemId: string) {
+  if (userId !== OWNER) return null;
+  return one<{ id: string; contextId: string; name: string | null; status: SituationInstance["status"] }>(app.db,
+    `select s.id, s.context_id contextId, c.name, s.status from situation_instances s left join listen_contexts c on c.id=s.context_id
+     where s.item_id=? and s.user_id=?`, itemId, userId) ?? null;
+}
 export function requireInstance(app: App, userId: string, id: string) {
   const i = one<SituationInstance>(app.db, `select ${columns} from situation_instances where id=? and user_id=?`, id, userId);
   if (!i || userId !== OWNER || !canRead(app, userId, i.spaceId)) throw new HttpError(404, "没有这一回情境");

@@ -6,9 +6,15 @@ import { fmtTime, memoryKindLabel, openCitation, relTime, toast } from "../store
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import {
   ASSIST_OPTIONS, BACKLOG_OPTIONS, batchOptions, DEPTH_OPTIONS, groupOptions, KIND_LABEL, KNOB, lines, LISTEN_OPTIONS, MEETING_OPTIONS, oneLine, OTHERS_ASKS_OPTIONS, OUTCOME_LABEL,
-  OWNER_ASKS_OPTIONS, perDayOptions, PREFILTER_OPTIONS, REPLY_OPTIONS, replyLabel, STRICTNESS_OPTIONS,
-  type ChatDetail, type ListenDetail, type ListenKnobs, type ListenMemory, type ListenView,
+  OWNER_ASKS_OPTIONS, perDayOptions, PREFILTER_OPTIONS, REPLY_OPTIONS, replyLabel, STRICTNESS_OPTIONS, SITUATION_VERSUS, SITUATION_WHAT,
+  situationBody, situationForm, situationProblem,
+  type ChatDetail, type ListenDetail, type ListenKnobs, type ListenMemory, type ListenView, type SituationFormValue,
 } from "../lib/listen";
+import type { FirstLookFields as FirstLook } from "../lib/first-look";
+import FirstLookFields from "../components/FirstLookFields.vue";
+import HelpText from "../components/HelpText.vue";
+import SituationForm from "../components/SituationForm.vue";
+import SituationRounds from "../components/SituationRounds.vue";
 import { dayLabel } from "../lib/work";
 import DemoControl from "../components/DemoControl.vue";
 import Icon from "../components/Icon.vue";
@@ -81,6 +87,8 @@ const groupOpts = computed(() => groupOptions(captured.value, c.value?.groups ??
 
 // ---- the header ------------------------------------------------------------------------------------
 const isDefault = computed(() => c.value?.kind === "default");
+/** A 情境 (docs/v2/situations.md): no groups of its own; its rounds, its lessons, its settings. */
+const isSituation = computed(() => c.value?.kind === "situation");
 const groupsOpen = ref(false);
 /** Its groups, most recently active first, each with when it last had a message (capture's chat list). */
 const groupRows = computed(() => {
@@ -93,7 +101,7 @@ const groupRows = computed(() => {
 const watching = computed(() => (c.value?.kind === "item" && c.value.item?.phase === "watching" ? c.value.item : null));
 
 // ---- tabs ----------------------------------------------------------------------------------------
-type Tab = "summary" | "lessons" | "memories" | "handling" | "settings" | "cases";
+type Tab = "summary" | "lessons" | "memories" | "handling" | "settings" | "cases" | "rounds";
 const cases = computed(() => detail.value?.cases ?? chat.value?.cases ?? []);
 const memories = computed<ListenMemory[]>(() => detail.value?.memories ?? chat.value?.memories ?? []);
 const num = (n: number) => (n ? ` ${n}` : "");
@@ -104,6 +112,7 @@ const tabs = computed<{ key: Tab; label: string }[]>(() => {
   const settings = { key: "settings" as Tab, label: "设置" };
   if (props.embedded) return [settings, lessons];
   if (isDefault.value) return [lessons, settings];
+  if (isSituation.value) return [{ key: "rounds", label: "各回" }, lessons, settings];
   return [
     { key: "summary", label: "在聊什么" },
     lessons,
@@ -140,6 +149,8 @@ type KnobForm = Pick<ListenKnobs, "listen" | "depth" | "reply" | "ownerAsks" | "
   assist: "off" | "suggest" | "act";
   strictness: number | null;
   prefilter: "global" | "on" | "off";
+  /** 快速通道, as FirstLookFields edits it: left out when off / none / the setting's default. */
+  fast: FirstLook;
 };
 type Form = { note: string; chats: string[]; handle: string; skip: string; valid: string; knobs: KnobForm };
 function toForm(v: ListenView): Form {
@@ -154,17 +165,54 @@ function toForm(v: ListenView): Form {
       listen: k.listen, depth: k.depth, reply: k.reply, ownerAsks: k.ownerAsks, othersAsks: k.othersAsks, backlog: k.backlog, meetings: k.meetings,
       assist: k.assist ?? "off", batchMinutes: k.batchMinutes, perDay: k.perDay, strictness: k.strictness ?? null,
       prefilter: k.prefilter === undefined ? "global" : k.prefilter ? "on" : "off",
+      fast: { ...(k.firstLook ? { firstLook: true } : {}), ...(k.probes?.length ? { probes: [...k.probes] } : {}), ...(k.firstTo ? { firstTo: k.firstTo } : {}) },
     },
   };
 }
 const form = reactive<Form>({ note: "", chats: [], handle: "", skip: "", valid: "", knobs: {} as KnobForm });
 const snapshot = ref("");
+// A 情境's own form (components/SituationForm): what it cares about, how it is recognized, who handles it.
+const sitForm = reactive<SituationFormValue>(situationForm(null));
+const sitSnapshot = ref("");
 function resetForm(v: ListenView) {
+  if (v.kind === "situation") {
+    const f = situationForm(v);
+    Object.assign(sitForm, f);
+    sitSnapshot.value = JSON.stringify(f);
+    snapshot.value = "";
+    return;
+  }
   const f = toForm(v);
   Object.assign(form, f);
   snapshot.value = JSON.stringify(f);
 }
-const dirty = computed(() => !!snapshot.value && JSON.stringify(form) !== snapshot.value);
+const dirty = computed(() => (sitSnapshot.value && isSituation.value ? JSON.stringify(sitForm) !== sitSnapshot.value : !!snapshot.value && JSON.stringify(form) !== snapshot.value));
+const sitProblem = computed(() => situationProblem(sitForm));
+/** Saving a new “怎么认出来” has the model compile it into the rule again: a few seconds. */
+const regenerating = ref(false);
+async function saveSituation() {
+  const v = c.value;
+  if (!v || saving.value || sitProblem.value) return;
+  const body = situationBody(sitForm, JSON.parse(sitSnapshot.value) as SituationFormValue);
+  if (!Object.keys(body).length) return;
+  saving.value = true;
+  regenerating.value = "recognize" in body;
+  try {
+    const next = await put<ListenView>(`/api/listen/${encodeURIComponent(v.id)}`, body);
+    if (detail.value?.context.id === next.id) {
+      detail.value = { ...detail.value, context: next };
+      resetForm(next);
+    }
+    toast("recognize" in body ? "已保存，开始信号的规则已重新生成" : "已保存", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+function resetSituation() {
+  if (sitSnapshot.value) Object.assign(sitForm, JSON.parse(sitSnapshot.value));
+}
 const saving = ref(false);
 const unconfirmed = computed(() => !!c.value?.brief && (!c.value.brief.confirmedAt || (c.value.brief.at ?? "") > c.value.brief.confirmedAt));
 /**
@@ -196,6 +244,13 @@ async function save() {
   for (const key of Object.keys(form.knobs) as (keyof KnobForm)[]) {
     const now = form.knobs[key];
     if (JSON.stringify(now) === JSON.stringify(was.knobs[key])) continue;
+    if (key === "fast") {
+      const f = now as FirstLook, b = was.knobs.fast;
+      if (!!f.firstLook !== !!b.firstLook) knobs.firstLook = !!f.firstLook;
+      if (JSON.stringify(f.probes ?? []) !== JSON.stringify(b.probes ?? [])) knobs.probes = f.probes?.length ? f.probes : null;
+      if ((f.firstTo ?? null) !== (b.firstTo ?? null)) knobs.firstTo = f.firstTo ?? null;
+      continue;
+    }
     knobs[key] = key === "prefilter" ? (now === "global" ? null : now === "on") : now;
   }
   if (Object.keys(knobs).length) body.knobs = knobs;
@@ -232,11 +287,14 @@ async function rename() {
   const name = await promptDialog("改名", { value: v.name, okText: "保存", message: "经验按名字存成文件：改名后会另起一份，之前的经验要重新整理一次才会接上。" });
   if (name?.trim() && name.trim() !== v.name) await update({ name: name.trim() }, "已改名");
 }
-const setStatus = (on: boolean) => update({ status: on ? "active" : "paused" }, on ? "继续关注" : "已暂停：不再处理这些群的新消息");
+const setStatus = (on: boolean) => update({ status: on ? "active" : "paused" }, isSituation.value ? (on ? "情境已启用" : "已停用：不再开新的一回，进行中的照常收尾") : on ? "继续关注" : "已暂停：不再处理这些群的新消息");
 async function remove() {
   const v = c.value;
   if (!v) return;
-  if (!(await confirmDialog(`删除关注「${v.name}」？`, { message: "它不再处理这些群的消息，处理它的会话会归档；群的采集和已有的记忆不受影响。只想停一阵，用暂停。", okText: "删除", danger: true }))) return;
+  const message = v.kind === "situation"
+    ? "进行中的各回会立即结束（按最后的现状写小结），它生成的开始信号规则一起删掉；已有的事项和经验文件留着。只想停一阵，用停用。"
+    : "它不再处理这些群的消息，处理它的会话会归档；群的采集和已有的记忆不受影响。只想停一阵，用暂停。";
+  if (!(await confirmDialog(`删除${v.kind === "situation" ? "情境" : "关注"}「${v.name}」？`, { message, okText: "删除", danger: true }))) return;
   try {
     await del(`/api/listen/${encodeURIComponent(v.id)}`);
     toast(`已删除：${v.name}`, "ok");
@@ -271,7 +329,7 @@ onBeforeUnmount(off);
 const creating = ref(false);
 const joinTo = ref<string | null>(null);
 const joinable = computed(() =>
-  allListens.value.filter((v) => v.kind !== "default" && !v.chats.includes(chatId.value)).map((v) => ({ value: v.id as string | null, label: v.name, hint: v.status === "active" ? KIND_LABEL[v.kind] : "已暂停" })),
+  allListens.value.filter((v) => v.kind !== "default" && v.kind !== "situation" && !v.chats.includes(chatId.value)).map((v) => ({ value: v.id as string | null, label: v.name, hint: v.status === "active" ? KIND_LABEL[v.kind] : "已暂停" })),
 );
 async function join() {
   const v = allListens.value.find((x) => x.id === joinTo.value);
@@ -297,7 +355,7 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
 
 <template>
   <div class="listen-page" :class="{ embedded }">
-    <nav v-if="!embedded" class="crumbs small muted"><router-link to="/">工作</router-link><span>/</span><span>{{ chatId ? "飞书群" : "关注" }}</span></nav>
+    <nav v-if="!embedded" class="crumbs small muted"><router-link to="/">工作</router-link><span>/</span><span>{{ chatId ? "飞书群" : isSituation ? "情境" : "关注" }}</span></nav>
     <Skeleton v-if="loading" variant="text" :rows="7" />
     <div v-else-if="error && !detail && !chat" class="empty">
       <h3>打不开这一页</h3>
@@ -314,12 +372,13 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
             <button v-if="!isDefault" type="button" class="btn ghost sm icon" title="改名" aria-label="改名" @click="rename"><Icon name="edit" :size="15" /></button>
           </div>
           <div v-if="!isDefault" class="head-acts row">
-            <UiCheckbox switch size="sm" :model-value="c.status === 'active'" :aria-label="`关注 ${c.name}`" @change="setStatus">{{ c.status === "active" ? "关注中" : "已暂停" }}</UiCheckbox>
+            <UiCheckbox switch size="sm" :model-value="c.status === 'active'" :aria-label="`${isSituation ? '启用情境' : '关注'} ${c.name}`" @change="setStatus">{{ isSituation ? (c.status === "active" ? "启用中" : "已停用") : c.status === "active" ? "关注中" : "已暂停" }}</UiCheckbox>
             <button type="button" class="btn ghost sm danger" @click="remove"><Icon name="trash" :size="14" />删除</button>
           </div>
         </div>
         <p class="facts small muted">
           <span v-if="c.item"><router-link :to="`/work/${c.item.id}`">{{ c.item.title === c.name ? "这条工作线" : `工作线「${c.item.title}」` }}</router-link>的关注</span>
+          <span v-else-if="isSituation">情境 · 处理者 {{ c.spec === "assistant" ? "主助手" : c.spec }}</span>
           <span v-else>{{ isDefault ? "所有私聊和 @ 你的消息" : `${KIND_LABEL[c.kind]}关注` }}</span>
           <template v-if="!isDefault"><span>·</span><span :title="fmtTime(c.since)">{{ fmtTime(c.since, false) }} 开始</span></template>
           <template v-if="c.expiresAt"><span>·</span><span :title="fmtTime(c.expiresAt)">{{ dayLabel(c.expiresAt) }}停</span></template>
@@ -339,7 +398,8 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
         </div>
         <p v-if="watching" class="watch-note small" role="note"><Icon name="eye" :size="14" />这条线在观察中<template v-if="watching.watchUntil">（到 {{ dayLabel(watching.watchUntil) }}）</template>：已经上线，助手只关心报错、用户反馈和数据异常，普通讨论不处理。</p>
         <p v-if="unconfirmed && tab !== 'settings'" class="confirm-note small" role="note">关注说明是助手{{ c.brief?.confirmedAt ? "改过" : "拟" }}的，还没经你确认。<button type="button" class="lnk" @click="tab = 'settings'">去看看</button></p>
-        <DemoControl :context-id="c.id" :name="c.name" />
+        <p v-if="isSituation && c.recognize" class="recognize small"><span class="muted">怎么认出来</span><span class="r-text">{{ c.recognize }}</span><router-link v-if="c.ruleId" :to="`/rules?id=${encodeURIComponent(c.ruleId)}`" class="muted">生成的规则</router-link></p>
+        <DemoControl v-if="!isSituation" :context-id="c.id" :name="c.name" />
       </header>
 
       <!-- one group -->
@@ -391,8 +451,13 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
       </div>
 
       <div class="panel" :role="embedded ? undefined : 'tabpanel'" :aria-labelledby="embedded ? undefined : `ltab-${tab}`">
+        <!-- 一个情境的各回 -->
+        <section v-if="tab === 'rounds' && detail && c" class="chapter">
+          <SituationRounds :context-id="c.id" :name="c.name" :active="c.status === 'active'" />
+        </section>
+
         <!-- 在聊什么 -->
-        <section v-if="tab === 'summary' && detail && c" class="chapter">
+        <section v-else-if="tab === 'summary' && detail && c" class="chapter">
           <p v-if="c.summaryAt" class="muted small lead" :title="fmtTime(c.summaryAt)">{{ relTime(c.summaryAt) }}写的。它每处理几批消息更新一次，之后每次处理都带着读。</p>
           <Markdown v-if="detail.summary" :source="detail.summary" class="prose" />
           <p v-else class="muted">还没有总结。它处理过几批消息后会写一段这些群在聊什么，之后每次处理都带着读。</p>
@@ -459,6 +524,22 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
           <p v-else class="muted">还没处理过。</p>
         </section>
 
+        <!-- 一个情境的设置 -->
+        <section v-else-if="tab === 'settings' && detail && c && isSituation" class="chapter settings">
+          <HelpText>{{ SITUATION_WHAT }} {{ SITUATION_VERSUS }}</HelpText>
+          <div class="card pad form">
+            <SituationForm v-model="sitForm" />
+            <div class="row wrap actions">
+              <span v-if="saving && regenerating" class="small muted spacer">正在重新生成开始信号的规则…</span>
+              <span v-else-if="dirty && sitProblem" class="small muted spacer">{{ sitProblem }}</span>
+              <span v-else-if="dirty" class="small muted spacer">有没保存的修改</span>
+              <span v-else class="spacer" />
+              <button type="button" class="btn" :disabled="!dirty" @click="resetSituation">还原</button>
+              <button type="button" class="btn primary" :disabled="!dirty || saving || !!sitProblem" @click="saveSituation">保存</button>
+            </div>
+          </div>
+        </section>
+
         <!-- 设置 -->
         <section v-else-if="tab === 'settings' && detail && c" class="chapter settings">
           <p v-if="isDefault" class="muted small">
@@ -514,6 +595,9 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
                   <div class="field"><span>{{ KNOB.othersAsks.label }}</span><UiSegmented v-model="form.knobs.othersAsks" class="knob" size="sm" :aria-label="KNOB.othersAsks.label" :options="OTHERS_ASKS_OPTIONS" /><span class="hint">{{ KNOB.othersAsks.hint }}</span></div>
                 </div>
               </template>
+
+              <div class="section-title knobs-title">快速通道</div>
+              <FirstLookFields v-model="form.knobs.fast" where="listen" />
 
               <div class="section-title knobs-title">其他</div>
               <div class="knobs">
@@ -662,6 +746,18 @@ const outcomeTone = { handled: "ok", quiet: "", screened: "" } as const;
 }
 .gwhen {
   flex: none;
+}
+.recognize {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.recognize .r-text {
+  color: var(--ink-2);
+  min-width: 0;
 }
 .watch-note,
 .confirm-note {

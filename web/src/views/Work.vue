@@ -8,6 +8,7 @@ import Icon from "../components/Icon.vue";
 import Markdown from "../components/Markdown.vue";
 import PluginSlots from "../components/PluginSlots.vue";
 import Skeleton from "../components/Skeleton.vue";
+import SituationList from "../components/SituationList.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import WorkChange from "../components/WorkChange.vue";
 import WorkLine from "../components/WorkLine.vue";
@@ -423,6 +424,7 @@ async function ask(text = question.value) {
             <span class="n" :class="{ zero: !p.openProblems }">{{ p.openProblems ? `${p.openProblems} 个` : "没有" }}</span>
           </router-link>
         </section>
+        <SituationList v-if="!shared && data" />
         <router-link v-if="home?.study.due" to="/learn" class="card pad study"><Icon name="cap" :size="16" /><span><strong>{{ home.study.due }} 张卡片待复习</strong><span class="muted small"> · 今天已复习 {{ home.study.reviewedToday }} 张</span></span></router-link>
       </aside>
     </div>

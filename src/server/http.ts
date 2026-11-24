@@ -1738,7 +1738,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     const a = autoInfo(app, id);
-    return { can: { edit: itemAccess(app, who(req), item, "write"), operate: itemAccess(app, who(req), item, "operate") }, item, external, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: itemRuns(app, id, who(req), !mine) };
+    // One round of a 情境 (situations/instances.ts): the page says which and links to it.
+    const situation = mine ? (await import("../situations/instances.ts")).instanceOfItem(app, who(req), id) : null;
+    return { can: { edit: itemAccess(app, who(req), item, "write"), operate: itemAccess(app, who(req), item, "operate") }, item, external, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), ...(situation ? { situation } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: (await materialViews(app, id, who(req))).map(materialForPage(app, who(req))), places: mine ? itemPlaces(app, id, who(req)) : [], runs: itemRuns(app, id, who(req), !mine) };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.
