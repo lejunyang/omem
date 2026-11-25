@@ -283,7 +283,7 @@ export async function buildToday(app: App, at = new Date(), userId = OWNER): Pro
   const brief = userId === OWNER ? briefPart(app, at) : "";
   const later = laterPart(app, userId);
   const weekly = userId === OWNER ? await weeklyPart(app, at) : "";
-  const situationText = situations.ids.length ? `**下次同类的事**：${situations.ids.length} 条情境提议，选下方的按钮。` : "";
+  const situationText = situations.ids.length ? `**下次同类的事**：${situations.ids.length} 条持续跟进的提议，选下方的按钮。` : "";
   const assigned = assignedForToday(app, userId);
   const assignedText = assigned.length ? ["**外部指派**", ...assigned.slice(0, 5).map(i => `- ${link(app, oneLine(i.title, 60), `#/items/${i.id}`)}（${md(app, i.due_at)} 截止）`),
     ...(assigned.length > 5 ? [`其余见${link(app, "事项页", "#/items")}。`] : [])].join("\n") : "";
@@ -394,7 +394,7 @@ async function settle(app: App, ask: Ask, ctx: Record<string, unknown>) {
   const tryOne = async (what: string, f: () => unknown) => {
     try { await f(); } catch (e) { console.warn(`[omem] 今天：${what}没办成：${(e as Error).message}`); }
   };
-  for (const id of (ctx.situations as string[] | undefined) ?? []) await tryOne("情境提议", async () => { if (await answerSituationToday(app, id, pick(`sit_${id}`), by)) count("处理情境提议"); });
+  for (const id of (ctx.situations as string[] | undefined) ?? []) await tryOne("持续跟进的提议", async () => { if (await answerSituationToday(app, id, pick(`sit_${id}`), by)) count("处理持续跟进的提议"); });
   for (const id of (ctx.next as string[] | undefined) ?? []) {
     const p = pick(`n_${id}`);
     if (!p) continue;

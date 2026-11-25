@@ -181,7 +181,7 @@ export function saveRule(app: App, input: RuleSaveInput, by: "user" | "agent" = 
 export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent", actor?: string, opts: SaveOptions = {}) {
   const existing = input.id ? findRule(app, input.id) : null;
   if (existing?.origin && "kind" in existing.origin && (!opts.origin || !("kind" in opts.origin) || opts.origin.contextId !== existing.origin.contextId))
-    throw new HttpError(409, "这是情境生成的规则，请到关注里修改或启停");
+    throw new HttpError(409, "这是持续跟进的规则：在规则页改它，或用 save_situation");
   const r = ruleInputSchema.parse(input);
   if (r.actions.some((a) => a.type === "script") && (by !== "user" || actor !== OWNER || input.temporary))
     throw new HttpError(403, "带脚本的规则只能由本人在规则页保存：脚本在这台机器上执行");
@@ -231,7 +231,7 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
     if (a.type === "context") {
       const c = getContext(app, a.context);
       if (!c || c.kind === "default") throw new HttpError(400, `没有这个关注：${a.context}（交给关注要选一个已有的关注）`);
-      if (c.kind === "situation" && ((actor && actor !== c.userId) || a.adopt)) throw new HttpError(403, "只有本人规则可交给本人的情境，情境不收编群");
+      if (c.kind === "situation" && ((actor && actor !== c.userId) || a.adopt)) throw new HttpError(403, "只有本人的规则能交给本人的持续跟进，持续跟进不收编群");
     }
   }
   const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;
@@ -291,7 +291,7 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
 
 export function deleteRule(app: App, id: string, situationId?: string) {
   const rule = getRule(app, id);
-  if (rule.origin && "kind" in rule.origin && rule.origin.contextId !== situationId) throw new HttpError(409, "这是情境生成的规则，请到关注里删除");
+  if (rule.origin && "kind" in rule.origin && rule.origin.contextId !== situationId) throw new HttpError(409, "这是持续跟进的规则：在规则页删除它");
   run(app.db, "delete from rules where id = ?", id);
   if (one(app.db, "select 1 from schedules where id = ?", `rule:${id}`)) deleteSchedule(app, `rule:${id}`);
   run(app.db, "delete from rule_handled where rule_id = ?", id);

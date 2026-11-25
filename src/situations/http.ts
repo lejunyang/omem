@@ -9,7 +9,7 @@ import { finishSituation, listSituations, requireInstance, startSituation } from
 export function registerSituationRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   function owner(req: FastifyRequest) {
     const user = who(req);
-    if (user !== OWNER) throw new HttpError(403, "只有本人可管理自己的情境");
+    if (user !== OWNER) throw new HttpError(403, "只有本人可以管理自己的持续跟进");
     return user;
   }
   function parse<T>(s: z.ZodType<T>, body: unknown) {

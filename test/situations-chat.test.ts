@@ -27,7 +27,7 @@ async function setup(reply?: ListenKnobs["reply"]) {
   const app = testApp();
   app.config.lark.appId = "cli_omem";
   app.config.lark.ownerOpenId = OWNER_ID;
-  const context = saveContext(app, { kind: "situation", name: "项目 A 演练", recognize: "群里说演练开始", note: "进展发到这一回的群", spaceId: "personal", knobs: { batchMinutes: 0, ...(reply && { reply }) } });
+  const context = saveContext(app, { kind: "situation", name: "项目 A 演练", recognize: "群里说演练开始", note: "进展发到这一次的群", spaceId: "personal", knobs: { batchMinutes: 0, ...(reply && { reply }) } });
   saveRule(app, { ...ruleInputSchema.parse({ name: context.name, description: context.recognize, trigger: { event: "message" },
     conditions: { field: "message.text", op: "contains", value: "演练开始" }, actions: [{ type: "context", context: context.id }] }), id: situationRuleId(context.id) },
     "user", "owner", { origin: { kind: "situation", contextId: context.id, name: context.name } });
@@ -57,7 +57,7 @@ async function setup(reply?: ListenKnobs["reply"]) {
 
 afterEach(() => { setLarkCliForTests(null); setLarkClient(null); });
 
-describe("情境的本回群", () => {
+describe("持续跟进这一次的群", () => {
   it("默认不发，不查群、不绑定，提示只私下通知", async () => {
     const { app, context, read, bind, cli } = await setup();
     expect(context.knobs.reply).toBe("none");
@@ -84,7 +84,7 @@ describe("情境的本回群", () => {
     const source = upsertSource(app, { spaceId: "personal", kind: "chat", uri: `lark:${FIRST}`, title: "项目 A 演练群", text: "演练消息" });
     const archive = upsertSource(app, { spaceId: "personal", kind: "chat", uri: `lark:${NEXT}@2026-10`, title: "项目 A 演练群历史", text: "先前的消息" });
     const prompt = situationPrompt(app, read(), "新线索", false, true);
-    expect(prompt).toContain("还没绑定这一回的群");
+    expect(prompt).toContain("还没绑定这一次的群");
     expect(prompt).toContain("update_situation(chat=");
     expect(prompt).toContain("找不到或拿不准是哪个群就不绑");
     expect(await post(FIRST)).toMatchObject({ isError: true });
@@ -95,8 +95,8 @@ describe("情境的本回群", () => {
     expect(read().chatId).toBe(FIRST);
     expect(getThread(app, instance.conversationId).settings.lark).toEqual({ chats: [FIRST], draft: reply === "draft" });
     const boundPrompt = situationPrompt(app, read(), "新线索", false, true);
-    expect(boundPrompt).toContain(`这一回的群是 ${FIRST}`);
-    expect(boundPrompt).toContain("用 lark_send 发到这一回的群");
+    expect(boundPrompt).toContain(`这一次的群是 ${FIRST}`);
+    expect(boundPrompt).toContain("用 lark_send 发到这一次的群");
     expect(boundPrompt.includes("先变成给本人的确认卡片")).toBe(reply === "draft");
     expect(await post(FIRST)).toMatchObject({ isError: false });
     expect(send.mock.calls[0][0].data.receive_id).toBe(reply === "draft" ? OWNER_ID : FIRST);
@@ -142,13 +142,13 @@ describe("情境的本回群", () => {
     const { app, ctx, context, bind, post, send } = await setup("draft");
     expect(await bind(FIRST)).toMatchObject({ isError: false });
     const thread = createThread(app, { spaceId: "personal", channel: "web" });
-    const messageId = addMessage(app, thread.id, "user", "请改这个情境的回复档");
-    const ownerRun = createRun(app, { kind: "ask", title: "设置情境", lane: thread.id, input: { conversationId: thread.id, messageIds: [messageId] } });
+    const messageId = addMessage(app, thread.id, "user", "请改这条持续跟进的回复档");
+    const ownerRun = createRun(app, { kind: "ask", title: "设置持续跟进", lane: thread.id, input: { conversationId: thread.id, messageIds: [messageId] } });
     const owner = { ...ctx, runId: ownerRun.id };
     expect(await callTool(owner, "save_situation", { id: context.id, reply: "auto" })).toMatchObject({ isError: false, text: expect.stringContaining("先给你看 → 直接发") });
     expect(requireSituation(app, "owner", context.id).knobs.reply).toBe("draft");
     const ask = one<{ id: string; question: string }>(app.db, "select id,question from asks where run_id=? and status='pending'", ownerRun.id)!;
-    expect(ask.question).toContain("在这一回的群里：先给你看 → 直接发");
+    expect(ask.question).toContain("在这一次的群里：先给你看 → 直接发");
     await answerAsk(app, ask.id, { choice: 0, by: "owner" });
     expect(requireSituation(app, "owner", context.id).knobs.reply).toBe("auto");
     expect(await post(FIRST)).toMatchObject({ isError: false });

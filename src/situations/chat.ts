@@ -29,20 +29,20 @@ export function allowSituationInvite(app: App, runId: string | null, userId: str
   const [invite] = input.invites;
   if (input.invites.length !== 1 || !situationChatScope(app, instance).chats.includes(invite.chat_id) || invite.people?.length ||
       invite.bots?.length !== 1 || (invite.bots[0] !== "self" && invite.bots[0] !== app.config.lark.appId) || input.bots_seen_in?.length)
-    throw new HttpError(403, "情境处理只能用 lark_invite 把 omem 自己的机器人拉进这一回绑定的群");
+    throw new HttpError(403, "持续跟进的处理只能用 lark_invite 把 omem 自己的机器人拉进这一次绑定的群");
 }
 
 export function situationSendError(error: unknown, canInvite = true) {
   const detail = error as { code?: number; response?: { data?: { code?: number } }; message?: string };
   if ((detail?.response?.data?.code ?? detail?.code) !== 230002 && !/230002|(?:bot|user).{0,25}(?:not in|out of) (?:the )?chat/i.test(detail?.message ?? "")) return error;
-  return new HttpError(400, canInvite ? "机器人不在这一回的群里；用 lark_invite（bots: [\"self\"]）拉 omem 机器人进群再发。" : "机器人不在这一回的群里；本次运行没有 lark_invite，请本人拉 omem 机器人进群后再发。");
+  return new HttpError(400, canInvite ? "机器人不在这一次的群里；用 lark_invite（bots: [\"self\"]）拉 omem 机器人进群再发。" : "机器人不在这一次的群里；本次运行没有 lark_invite，请本人拉 omem 机器人进群后再发。");
 }
 
 export function contextForBinding(app: App, instance: SituationInstance) {
-  if (instance.status !== "active") throw new HttpError(409, "这一回已经结束");
-  if (!canWrite(app, instance.userId, instance.spaceId)) throw new HttpError(403, "不能写这个空间的情境");
+  if (instance.status !== "active") throw new HttpError(409, "这一次跟进已经结束");
+  if (!canWrite(app, instance.userId, instance.spaceId)) throw new HttpError(403, "不能写这个空间的持续跟进");
   const context = requireSituation(app, instance.userId, instance.contextId);
-  if (context.knobs.reply === "none") throw new HttpError(403, "本人没有允许这个情境在群里发，只能私下告诉本人");
+  if (context.knobs.reply === "none") throw new HttpError(403, "本人没有允许这条持续跟进在群里发，只能私下告诉本人");
   return context;
 }
 
@@ -52,7 +52,7 @@ export function bindSituationChat(app: App, instance: SituationInstance, chatId:
   run(app.db, "update situation_instances set chat_id=? where id=?", chatId, fresh.id);
   updateThread(app, fresh.conversationId, { settings: { lark: larkScopeOf(context, chatId) } });
   if (fresh.chatId !== chatId) {
-    const action = fresh.chatId ? `把这一回的群从 ${fresh.chatId} 换成` : "绑定这一回的群";
+    const action = fresh.chatId ? `把这一次的群从 ${fresh.chatId} 换成` : "绑定这一次的群";
     addItemEvent(app, fresh.itemId, "situation-chat", `${action}「${name}」（${chatId}） · [处理运行](#/runs/${runId})`, "agent", [], runId);
   }
 }

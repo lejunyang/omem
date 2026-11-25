@@ -59,7 +59,7 @@ import { recordTests } from "../src/items/req-tests.ts";
 import { remember } from "../src/memory/store.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { resolveCitationsNow } from "../src/channels/citations.ts";
-import { saveRule } from "../src/rules/store.ts";
+import { recordFiring, saveRule } from "../src/rules/store.ts";
 import { saveProbe } from "../src/rules/probes.ts";
 import { startServer } from "../src/server/http.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -69,6 +69,7 @@ import { writePage } from "../src/wiki/store.ts";
 import { defineMetric, recordPoints } from "../src/data/metrics.ts";
 import { snapshotOmemUsage } from "../src/data/omem-usage.ts";
 import { writeWorkFile } from "../src/sources/work.ts";
+import { overflowIssues, overflowReport } from "./overflow-check.ts";
 
 const serveOnly = process.argv.includes("--serve");
 // --only=a,b: capture just these (the others keep their files).
@@ -932,7 +933,7 @@ setRunOutput(app, lookRun.id, { outcome: "answered", answer: "R1005 按新口径
 } });
 run(app.db, "update runs set status = 'done', created_at = ?, started_at = ?, finished_at = ? where id = ?", ago(0, 2), ago(0, 2), ago(0, 2), lookRun.id);
 
-// ---- a 情境: a weekly drill, with one round going on and two ended -------------------------------
+// ---- a 持续跟进 rule: a weekly drill, with one follow-up going on and two ended ----------------------
 const drill = saveContext(app, {
   id: DRILL, kind: "situation", name: "项目 A 例行演练", spaceId: "shop", spec: "assistant", status: "active",
   note: "演练开始后我在意的是：退款链路有没有被切走、回切后数据对不对得上。每一步卡住超过 15 分钟告诉我；结束时给我一份三行小结，写进演练记录表。",
@@ -940,11 +941,15 @@ const drill = saveContext(app, {
   knobs: { firstLook: true, probes: ["release-window"], firstTo: "dm" },
 } as never);
 saveRule(app, {
-  id: `situation:${drill.id}`, name: `情境：${drill.name}`, description: drill.recognize!, enabled: true,
+  id: `situation:${drill.id}`, name: drill.name, description: drill.recognize!, enabled: true,
   trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] },
-  conditions: { all: [{ field: "chat.name", op: "contains", value: "演练" }, { field: "message.text", op: "contains", value: "演练开始" }] },
+  conditions: { all: [{ field: "chat.name", op: "contains", value: "演练" }, { field: "sender.kind", op: "equals", value: "bot" }, { field: "message.text", op: "contains", value: "演练开始" }] },
   judge: "code", actions: [{ type: "context", context: drill.id }],
-} as never, "user", "owner", { origin: { kind: "situation", contextId: drill.id, name: drill.name } });
+} as never, "user", "owner", { origin: { kind: "situation", contextId: drill.id, name: drill.name, manual: true } });
+// Its firings: one a bot's card (its whole JSON, with a long link), the way real ones look.
+const drillCard = JSON.stringify({ header: { title: "演练开始 · 项目 A 退款链路" }, elements: [{ tag: "div", text: "切换到备用退款通道，预计 40 分钟" }, { tag: "action", actions: [{ tag: "button", text: "打开演练记录表", url: "https://tenant.larkoffice.com/base/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789?table=tbl0123456789abcdef&view=vew0123456789abcdef" }] }] });
+recordFiring(app, { ruleId: `situation:${drill.id}`, eventKey: "lark:om_demo_drill_1", summary: `群「项目 A 演练群」里 演练机器人 发了卡片：${drillCard}`, judgedBy: "code", reason: "", results: [{ action: "context", ok: true, detail: "开始一次跟进 sit_demo_1" }] });
+recordFiring(app, { ruleId: `situation:${drill.id}`, eventKey: "lark:om_demo_drill_2", summary: "群「项目 A 演练群」里 演练机器人：演练开始，回切排在 16:00", judgedBy: "code", reason: "", results: [{ action: "context", ok: true, detail: "并入正在进行的跟进 sit_demo_1" }] });
 const drillRound = (about: string, started: string, until: string, current: string, ended?: { at: string; summary: string }) => {
   const title = `${drill.name}：${about}`;
   const it = upsertItem(app, undefined, { userId: "owner", spaceId: "shop", kind: "todo", title, detail: about, sourceRefs: [] }, "agent");
@@ -1478,7 +1483,7 @@ const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0)
 const url = app.baseUrl;
 if (serveOnly) {
   const fl = await fastLane();
-  console.log(`快速通道：${url}/#/rules/probes；${url}/#/rules?id=${FAST_RULE}；先看一眼 ${url}/#/runs/${fl?.lookRun}；情境 ${url}/#/listen/${DRILL}?tab=rounds、事项 ${url}/#/items/${fl?.drillItem}`);
+  console.log(`快速通道：${url}/#/rules/probes；${url}/#/rules?id=${FAST_RULE}；先看一眼 ${url}/#/runs/${fl?.lookRun}；持续跟进 ${url}/#/rules?id=situation:${DRILL}&tab=rounds、事项 ${url}/#/items/${fl?.drillItem}`);
   console.log(`演示数据：${url}/#/code/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   console.log(`向量和重排的假云端接口：${fakeApiUrl}（模型名写 missing-model 会失败）`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
@@ -1992,16 +1997,18 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.locator(".item-external").scrollIntoViewIfNeeded();
     await p.waitForTimeout(400);
   } },
-  // 快速通道 and 情境 (seeded just before, see fastLane): the probe library with a sample filled in, a rule
-  // that looks first, and a situation's rounds.
+  // 快速通道 and 持续跟进 (seeded just before, see fastLane): the probe library with a sample filled in, a rule
+  // that looks first, and a 持续跟进 rule — its settings and its follow-ups (各次).
   { name: "probes", path: "/rules/probes?name=refund-order", before: seedFastLane, prepare: async (p) => {
     await p.getByLabel("示例消息").fill("R1005 退了 312 元，比应退多了 60，麻烦看下");
     await p.waitForTimeout(300);
   } },
   { name: "rule-first-look", path: `/rules?id=${FAST_RULE}`, before: seedFastLane, prepare: async (p) => { await p.locator(".fast").first().scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
-  { name: "situation-rounds", path: `/listen/${DRILL}?tab=rounds`, before: seedFastLane },
+  { name: "situation-rule", path: `/rules?id=situation:${DRILL}`, before: seedFastLane },
+  { name: "situation-rounds", path: `/rules?id=situation:${DRILL}&tab=rounds`, before: seedFastLane },
 ];
 let failed = 0;
+let overflowCount = 0;
 for (const s of shots.filter((s) => !only || only.includes(s.name))) {
   const width = s.width ?? 1440;
   // Reduced motion: charts are captured drawn, not mid-entrance.
@@ -2020,6 +2027,10 @@ for (const s of shots.filter((s) => !only || only.includes(s.name))) {
     if (s.prepare) await s.prepare(page);
     await page.screenshot({ path: join(out, `${s.name}.png`) });
     console.log(`${s.name}.png`);
+    // The same check as scripts/screens.ts: printed with each shot (the shots are not failed for it).
+    const issues = await overflowIssues(page);
+    overflowCount += issues.length;
+    if (issues.length) console.log(overflowReport(`  ${s.name}`, issues, 10));
   } catch (e) {
     failed++;
     console.error(`${s.name}: ${(e as Error).message.split("\n")[0]}`);
@@ -2036,4 +2047,5 @@ app.db.close();
 // The members' credentials put secrets in the vault: its file is open until closed (Windows will not delete it).
 closeVault(home);
 rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+if (overflowCount) console.log(`截图页面上共 ${overflowCount} 处溢出（见上；细查用 node scripts/screens.ts 对着 --serve 的地址）`);
 if (failed) process.exitCode = 1;

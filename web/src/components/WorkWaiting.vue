@@ -59,10 +59,10 @@ const HANDLERS: Record<string, { label: string; group: Group }> = {
   "reply-promote": { label: "以后自动", group: "propose" },
   "approval-promote": { label: "以后自动", group: "propose" },
   "flow-gate-promote": { label: "以后自动", group: "propose" },
-  // 情境 (src/situations): one the assistant proposed, one learned from being shown, and its edit form.
-  "situation-enable": { label: "情境", group: "propose" },
-  "situation-teach": { label: "情境", group: "propose" },
-  "situation-teach-edit": { label: "情境", group: "propose" },
+  // 持续跟进 rules (src/situations): one the assistant proposed, one learned from being shown, and its edit form.
+  "situation-enable": { label: "持续跟进", group: "propose" },
+  "situation-teach": { label: "持续跟进", group: "propose" },
+  "situation-teach-edit": { label: "持续跟进", group: "propose" },
   "command-gate": { label: "命令", group: "approve" },
   // The owner's assistant asking a member how one of the owner's lines is going (src/items/member-progress.ts).
   "member-progress": { label: "问进展", group: "ask" },
@@ -80,11 +80,11 @@ const GROUPS: { value: Group; label: string }[] = [
   { value: "propose", label: "提议" },
 ];
 /**
- * 情境 proposals are suggestions, which `waiting.asks` leaves out (they belong under a reply), yet they wait
+ * 持续跟进 proposals are suggestions, which `waiting.asks` leaves out (they belong under a reply), yet they wait
  * for the owner here too (docs/v2/situations.md “怎么教”): fetched one by one from the pending list.
  */
 const extra = ref<Ask[]>([]);
-watch(() => (props.pending ?? []).filter((p) => p.via === "ask" && p.label === "情境" && p.askId && !askIds.value.has(p.askId)).map((p) => p.askId).join(","), async (ids) => {
+watch(() => (props.pending ?? []).filter((p) => p.via === "ask" && p.label === "持续跟进" && p.askId && !askIds.value.has(p.askId)).map((p) => p.askId).join(","), async (ids) => {
   const list = await Promise.all(ids.split(",").filter(Boolean).slice(0, 20).map((id) => get<Ask>(`/api/asks/${encodeURIComponent(id)}`).catch(() => null)));
   extra.value = list.filter((a): a is Ask => !!a && a.status === "pending");
 }, { immediate: true });
@@ -102,7 +102,7 @@ const openId = ref<string | null>(null);
 const opened = computed(() => rows.value.find((r) => r.ask.id === openId.value) ?? null);
 watch(opened, (r) => { if (!r) openId.value = null; });
 /**
- * An answer that leads to a form to fill (a 情境 proposal's “改一改” makes its edit form, `#/ui/<id>` in the
+ * An answer that leads to a form to fill (a 持续跟进 proposal's “改一改” makes its edit form, `#/ui/<id>` in the
  * result): that form opens here as soon as the list has it, filled in with the proposal.
  */
 const nextId = ref<string | null>(null);
@@ -232,8 +232,8 @@ h3 { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--mut
 .chip:hover { background-image: linear-gradient(var(--hover), var(--hover)); }
 .chip.on { background: var(--ink); color: var(--bg); }
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.li { all: unset; box-sizing: border-box; display: flex; gap: 8px; align-items: flex-start; padding: 7px 8px; margin: 0 -8px; border-radius: 8px; cursor: pointer; color: inherit; min-width: 0; text-decoration: none; }
-.li:hover { background: var(--hover); text-decoration: none; }
+.li { all: unset; box-sizing: border-box; display: flex; gap: 8px; align-items: flex-start; padding: 7px 0; border-radius: 8px; cursor: pointer; color: inherit; min-width: 0; text-decoration: none; }
+.li:hover { background: var(--hover); box-shadow: -8px 0 0 var(--hover), 8px 0 0 var(--hover); text-decoration: none; }
 .li:focus-visible { outline: 2px solid var(--accent); }
 .li :deep(svg) { flex: none; margin-top: 2px; }
 .go { color: var(--line-strong); margin-top: 3px; }

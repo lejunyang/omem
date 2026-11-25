@@ -163,7 +163,7 @@ async function runAsk(ctx: RunContext) {
   const all = threadMessages(ctx.app, input.conversationId, { limit: 400 });
   const msgs = all.filter((m) => ids.includes(m.id));
   const instance = (await import("../situations/instances.ts")).instanceOfThread(ctx.app, input.conversationId);
-  if (instance?.status === "ended") return { answer: "", quiet: true, skipped: "情境已结束" };
+  if (instance?.status === "ended") return { answer: "", quiet: true, skipped: "这一次跟进已结束" };
   if (!msgs.length) return { answer: "", skipped: "消息已不存在" };
   const coordinate = (ctx.run.input as { coordinate?: { workId: string; sourceRunIds?: string[] } }).coordinate;
   // A coding round's result handed to the assistant, already told by a turn about the same work that

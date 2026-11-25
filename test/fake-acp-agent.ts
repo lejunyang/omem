@@ -169,7 +169,7 @@ new AgentSideConnection(
       if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, JSON.stringify(prompt) + "\n");
       const say =(text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
       if (process.env.FAKE_MODE === "situation") {
-        if (prompt.includes("这是情境的开始信号。只生成")) {
+        if (prompt.includes("这是一条持续跟进规则的开始条件")) {
           await say(JSON.stringify({ name: "开始演练", trigger: { event: "message" }, conditions: { field: "message.text", op: "contains", value: "演练开始" }, judge: "code" }));
         } else if (prompt.includes("窗口已到。只核对已有材料") && prompt.includes("版本 B")) {
           const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };

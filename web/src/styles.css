@@ -163,6 +163,25 @@ textarea {
   resize: vertical;
   max-width: 100%;
 }
+/*
+ * Long unbroken strings (links, ids, a card's JSON) wrap inside running text instead of widening their
+ * box past its card. `anywhere`, not `break-word`: only it lets a flex or grid item shrink to fit.
+ * Something meant to stay on one line says so (`.ellipsis`, `white-space: nowrap`), which this leaves alone.
+ */
+p,
+li,
+dd,
+blockquote,
+figcaption,
+.note,
+.hint {
+  overflow-wrap: anywhere;
+}
+/* Text in a flex row shrinks with the row instead of pushing it wider (buttons and badges keep their size). */
+.row > :where(span, strong, small, em, b, a, label, p, code):where(:not(.btn, .badge, .icon)) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 /* Paragraphs inside stacked layouts take spacing from the stack's gap, not browser margins. */
 .stack > p,
 .field > p,

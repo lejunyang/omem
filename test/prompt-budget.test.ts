@@ -17,7 +17,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "item-follow": ["item-follow", 5978, 6083, 3576, 3576],
   "flow-reconcile": ["flow-reconcile", 5142, 5142, 2462, 2462],
   // Mid-round branch sync: the assistant passes `sync` and waits on the round, the coder calls sync_branch.
-  "assistant": ["agent", 20448, 19749, 1679, 1581],
+  // 情境 became 持续跟进的规则: the assistant's note on save_situation says what to call it with the owner.
+  "assistant": ["agent", 20504, 19805, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   "archive-rule-writer": ["archive-rule-draft", 3091, 3091, 2091, 2091],

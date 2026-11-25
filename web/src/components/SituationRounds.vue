@@ -10,10 +10,10 @@ import RichText from "./RichText.vue";
 import Skeleton from "./Skeleton.vue";
 
 /**
- * A 情境's rounds (GET /api/situation-instances?contextId=): the ones going on first — what it is about,
+ * A 持续跟进 rule's follow-ups, 各次 (GET /api/situation-instances?contextId=): the ones going on first — what it is about,
  * when it started, how long its window runs, where it stands, its item — then the ended ones with their
  * summary. The owner starts one by hand (what it is about) and ends one going on (a summary, or the last
- * “现状”). `active`: the situation is on (a paused one starts no new round).
+ * “现状”). `active`: the rule is on (a paused one starts no new follow-up).
  */
 const props = defineProps<{ contextId: string; name: string; active: boolean }>();
 const emit = defineEmits<{ changed: [] }>();
@@ -41,22 +41,22 @@ const going = computed(() => (list.value ?? []).filter((i) => i.status === "acti
 const ended = computed(() => (list.value ?? []).filter((i) => i.status === "ended"));
 const ENDED_FIRST = 10;
 const allEnded = ref(false);
-/** “项目 A 例行演练：11 月这次” → “11 月这次”: the title repeats the situation's name. */
+/** “项目 A 例行演练：11 月这次” → “11 月这次”: the title repeats the rule's name. */
 const about = (i: SituationInstance) => plainLine(i.title.startsWith(`${props.name}：`) ? i.title.slice(props.name.length + 1) : i.title, 120);
 const windowText = (i: SituationInstance) => (i.closingRun ? "正在收尾" : new Date(i.windowUntil).getTime() < Date.now() ? "窗口到了，等收尾" : `窗口到 ${fmtTime(i.windowUntil)}`);
 
 const busy = ref(false);
 async function start() {
-  const v = await promptDialog(`开始一回「${props.name}」`, {
-    message: "写这一回是关于什么：对象、时间、在哪个群或文档。处理者从这句话开始查清这一回的范围。",
-    fields: [{ id: "about", label: "这一回是关于什么", value: "", required: true, maxLength: 2000 }],
+  const v = await promptDialog(`开始一次「${props.name}」`, {
+    message: "写这一次是关于什么：对象、时间、在哪个群或文档。处理者从这句话开始查清这一次的范围。",
+    fields: [{ id: "about", label: "这一次是关于什么", value: "", required: true, maxLength: 2000 }],
     okText: "开始",
   });
   if (!v?.about?.trim()) return;
   busy.value = true;
   try {
     const r = await post<{ instance: SituationInstance; runId: string | null }>(`/api/listen/${encodeURIComponent(props.contextId)}/start`, { about: v.about.trim() });
-    toast(r.runId ? "已开始一回，处理者在看了" : "已开始一回", "ok");
+    toast(r.runId ? "已开始这一次，处理者在看了" : "已开始这一次", "ok");
     await load();
     emit("changed");
   } catch (e) {
@@ -66,7 +66,7 @@ async function start() {
   }
 }
 async function end(i: SituationInstance) {
-  const v = await promptDialog(`结束这一回？`, {
+  const v = await promptDialog(`结束这一次？`, {
     message: `「${about(i)}」。写一句小结会进经验；不写就用它最后的现状：${plainLine(i.current, 200) || "（还没有）"}`,
     fields: [{ id: "summary", label: "小结（可不填）", value: "", maxLength: 3000 }],
     okText: "结束",
@@ -74,7 +74,7 @@ async function end(i: SituationInstance) {
   if (v === null) return;
   try {
     await post(`/api/situation-instances/${encodeURIComponent(i.id)}/end`, v.summary?.trim() ? { summary: v.summary.trim() } : {});
-    toast("这一回结束了", "ok");
+    toast("这一次结束了", "ok");
     await load();
     emit("changed");
   } catch (e) {
@@ -86,13 +86,13 @@ async function end(i: SituationInstance) {
 <template>
   <section class="rounds">
     <div class="bar row wrap">
-      <span class="muted small grow">{{ list ? (going.length ? `进行中 ${going.length} 回` : "没有进行中的") + (ended.length ? ` · 结束了 ${ended.length} 回` : "") : "" }}</span>
-      <button type="button" class="btn sm" :disabled="busy || !active" :title="active ? '' : '情境停用时不开新的一回'" @click="start"><Icon name="plus" :size="14" />手动开始一回</button>
+      <span class="muted small grow">{{ list ? (going.length ? `进行中 ${going.length} 次` : "没有进行中的") + (ended.length ? ` · 结束了 ${ended.length} 次` : "") : "" }}</span>
+      <button type="button" class="btn sm" :disabled="busy || !active" :title="active ? '' : '规则停用时不开始新的跟进'" @click="start"><Icon name="plus" :size="14" />手动开始一次</button>
     </div>
     <p v-if="error" class="err small" role="alert">{{ error }} <button type="button" class="btn ghost sm" @click="load">重试</button></p>
     <Skeleton v-else-if="!list" variant="list" :rows="3" />
     <template v-else>
-      <p v-if="!list.length" class="muted empty-line">还没有开始过。认出来时会自动开一回；你也可以手动开始一回，写清这次是关于什么。</p>
+      <p v-if="!list.length" class="muted empty-line">还没有开始过。规则命中时会自动开始一次跟进；你也可以手动开始一次，写清这次是关于什么。</p>
 
       <ul v-if="going.length" class="going">
         <li v-for="i in going" :key="i.id" class="round">
@@ -124,7 +124,7 @@ async function end(i: SituationInstance) {
             <span class="small muted when" :title="i.endedAt ? fmtTime(i.endedAt) : ''">{{ i.endedAt ? `结束 · ${fmtTime(i.endedAt, false)}` : "" }}</span>
           </li>
         </ul>
-        <button v-if="!allEnded && ended.length > ENDED_FIRST" type="button" class="lnk small" @click="allEnded = true">再看 {{ ended.length - ENDED_FIRST }} 回</button>
+        <button v-if="!allEnded && ended.length > ENDED_FIRST" type="button" class="lnk small" @click="allEnded = true">再看 {{ ended.length - ENDED_FIRST }} 次</button>
       </div>
     </template>
   </section>

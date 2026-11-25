@@ -37,3 +37,6 @@ export const SITUATIONS_MIGRATION = `
 `;
 
 export const SITUATION_CHAT_MIGRATION = `alter table situation_instances add column chat_id text;`;
+
+/** 持续跟进 rules are named like any rule: drop the old “情境：” prefix the host used to add. */
+export const SITUATION_RULE_NAME_MIGRATION = `update rules set name = substr(name, 4) where json_extract(origin,'$.kind') = 'situation' and name like '情境：%' and length(name) > 3;`;

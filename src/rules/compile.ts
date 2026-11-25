@@ -53,7 +53,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     "",
     LANGUAGE,
     "",
-    situationId ? `这是情境的开始信号。只生成 message / doc / object / omem 触发，once=event，不等待、不跳过。唯一动作是 {"type":"context","context":${JSON.stringify(situationId)}}。不要把“同类事件每次都用这个情境”当成“同一回”。` : ACTIONS,
+    situationId ? `这是一条持续跟进规则的开始条件：命中后开一次跟进（或并进正在进行的那一次）。只生成 message / doc / object / omem 触发，once=event，不等待、不跳过。唯一动作是 {"type":"context","context":${JSON.stringify(situationId)}}。只写什么时候开始，不要把“同类的事每次都交给这条规则”写成“同一次”。` : ACTIONS,
     "",
     `已有的 Agent 档案：\n${specs}`,
     "",

@@ -43,7 +43,7 @@ export type ListenView = {
   spaceId: string | null;
   conversationId: string | null;
   note?: string;
-  /** A 情境: how it is recognized (one sentence the host compiles into the rule `ruleId`). */
+  /** A 持续跟进 rule: the one sentence on when it starts (compiled into the rule `ruleId` unless set by hand there). */
   recognize?: string;
   ruleId?: string;
   brief?: ListenBrief;
@@ -92,10 +92,10 @@ export type ListenDetail = {
 };
 export type ChatDetail = { chat: { id: string; name: string }; contexts: ListenView[]; paused: ListenView[]; cases: ListenCase[]; memories: ListenMemory[] };
 
-export const KIND_LABEL: Record<ListenKind, string> = { place: "群", item: "事情", default: "默认", situation: "情境" };
+export const KIND_LABEL: Record<ListenKind, string> = { place: "群", item: "事情", default: "默认", situation: "持续跟进" };
 
 /**
- * One time a 情境 happened (src/situations/instances.ts): its own item and conversation, a window that a new
+ * One follow-up a 持续跟进 rule started (src/situations/instances.ts): its own item and conversation, a window that a new
  * signal pushes on, what it stands at now, and a summary once it ended.
  */
 export type SituationInstance = {
@@ -103,9 +103,10 @@ export type SituationInstance = {
   status: "active" | "ended"; startedAt: string; windowUntil: string; current: string; summary: string | null;
   endedAt: string | null; closingRun: string | null; closingDeadline: string | null;
 };
-/** What a 情境 is, against a rule and a flow: for the empty states and the new-situation dialog. */
-export const SITUATION_WHAT = "情境是一类会反复发生的事，比如项目 A 的例行演练：每发生一次是一回，各回有自己的对象、时间窗口和事项，但共用你写的说明和攒下的经验。";
-export const SITUATION_VERSUS = "和规则不同，它不是“遇到 X 就做 Y”的一步，而是整段跟下来：认出开始的信号后开一回，窗口里有新动静就接着看，需要你知道时私下告诉你，结束时写小结、攒经验。和流程不同，它不规定阶段和步骤，只写你在意什么，怎么查由处理者按技能判断。";
+/** What a 持续跟进 rule does, in one sentence (the rules page, the work page's list). */
+export const SITUATION_WHAT = "命中后开一次跟进：建一件事项，处理者在一段时间内自己复查，结束时写小结。";
+/** …and when to use one, against a one-step action and a flow. */
+export const SITUATION_VERSUS = "适合一类会反复发生的事，比如项目 A 的例行演练：各次有自己的对象和事项，共用你写的说明和攒下的经验。和一步做完的动作不同，窗口里有新动静它会接着看，需要你知道时私下告诉你；和流程不同，它不规定阶段和步骤，怎么查由处理者按技能判断。";
 
 /*
  * The knobs in the owner's words: each option says what happens, and each knob has one line on what it
@@ -238,32 +239,22 @@ export function byChat(items: ListenView[]) {
   return m;
 }
 
-/** A 情境's form (components/SituationForm) from its view, and what saving it sends (POST / PUT /api/listen). */
-export type SituationFormValue = { name: string; note: string; recognize: string; spec: string; spaceId: string; reply: ListenKnobs["reply"]; fast: { firstLook?: boolean; probes?: string[]; firstTo?: ListenKnobs["firstTo"] }; active: boolean };
+/** A 持续跟进 rule's own settings (components/SituationForm, under 持续跟进 on the rules page) from its view. */
+export type SituationFormValue = { note: string; spec: string; spaceId: string; reply: ListenKnobs["reply"]; fast: { firstLook?: boolean; probes?: string[]; firstTo?: ListenKnobs["firstTo"] } };
 export const SITUATION_REPLY_OPTIONS: Opt<ListenKnobs["reply"]>[] = [
   { value: "none", label: "不发" }, { value: "draft", label: "先给我看" }, { value: "auto", label: "直接发" },
 ];
 export function situationForm(v: ListenView | null, defaults: Partial<SituationFormValue> = {}): SituationFormValue {
   const k = v?.knobs;
   return {
-    name: v?.name ?? "", note: v?.note ?? "", recognize: v?.recognize ?? "", spec: v?.spec ?? "assistant", spaceId: v?.spaceId ?? "personal",
+    note: v?.note ?? "", spec: v?.spec ?? "assistant", spaceId: v?.spaceId ?? "personal",
     fast: { ...(k?.firstLook ? { firstLook: true } : {}), ...(k?.probes?.length ? { probes: [...k.probes] } : {}), ...(k?.firstTo ? { firstTo: k.firstTo } : {}) },
-    reply: k?.reply ?? "none", active: v ? v.status === "active" : true,
+    reply: k?.reply ?? "none",
     ...defaults,
   };
 }
-/** The body to save: everything for a new one; for an existing one only what changed (the server keeps the rest). */
-export function situationBody(f: SituationFormValue, was?: SituationFormValue) {
+/** What saving the settings sends (POST / PUT /api/listen, kind situation): the knobs as the server keeps them. */
+export function situationBody(f: SituationFormValue) {
   const knobs = { reply: f.reply, firstLook: f.fast.firstLook ?? false, probes: f.fast.probes?.length ? f.fast.probes : null, firstTo: f.fast.firstTo ?? null };
-  const all = { name: f.name.trim(), note: f.note.trim(), recognize: f.recognize.trim(), spec: f.spec, spaceId: f.spaceId, knobs, status: f.active ? "active" : "paused" };
-  if (!was) return { kind: "situation", ...all };
-  const before = situationBody(was) as typeof all;
-  return Object.fromEntries(Object.entries(all).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(before[key as keyof typeof all])));
-}
-/** What keeps a 情境 from saving, in the owner's words (the server's limits: 80 / 2000 / 1000). */
-export function situationProblem(f: SituationFormValue) {
-  if (!f.name.trim()) return "写一个名字";
-  if (!f.note.trim()) return "写下这类事发生时你在意什么";
-  if (!f.recognize.trim()) return "写一句怎么认出来";
-  return "";
+  return { note: f.note.trim(), spec: f.spec, spaceId: f.spaceId, knobs };
 }

@@ -8,7 +8,7 @@ import UiSelect from "./UiSelect.vue";
 /**
  * 快速通道's three settings (docs/v2/first-look.md): look first with a fast model, which probes to run
  * before it, and where its first message goes. On a rule's 交给 Agent action, in a 关注's settings and in
- * a 情境's. `where`: what the deeper run is there (the rule's agent, the 关注's batch) for the one-line help.
+ * a 持续跟进 rule's. `where`: what the deeper run is there (the rule's agent, the 关注's batch) for the one-line help.
  * Emits the whole set on every change; `firstTo` left out means the setting (设置 → 代你回复 → 快速通道).
  */
 const props = defineProps<{ modelValue: FirstLookFields; where: "rule" | "listen" | "situation"; disabled?: boolean }>();
@@ -43,7 +43,7 @@ const effective = computed<FirstTo>(() => props.modelValue.firstTo ?? options.va
 const DEEP: Record<typeof props.where, string> = {
   rule: "只有它说要接着查，才交给这个 Agent 按上面的设置深查",
   listen: "只有它说要接着查，才把这几条连同它的结论并进这一批，由这个关注照常处理",
-  situation: "只有它说要接着查，才开一回或并进进行中的一回，由处理者接着做",
+  situation: "不管它答没答完，这一次跟进都照常开始，它的结论和预查结果一起交给处理者",
 };
 </script>
 

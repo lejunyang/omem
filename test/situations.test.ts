@@ -60,16 +60,16 @@ function toolContext(runId: string) {
 }
 const asOwner = async () => {
   const t = createThread(app, { spaceId: "personal", channel: "web" });
-  const messageId = addMessage(app, t.id, "user", "请保存这个情境");
+  const messageId = addMessage(app, t.id, "user", "请保存这条持续跟进的规则");
   const r = createRun(app, { kind: "ask", lane: t.id, spaceId: "personal", input: { conversationId: t.id, messageIds: [messageId] }, title: "本人测试", notBefore: new Date(Date.now() + 600_000).toISOString() });
   return toolContext(r.id);
 };
 
-describe("情境", () => {
-  it("固化并维护同一条规则；命中后经 fake ACP 处理；无模型并入最近一回，模型可拒绝和另开", async () => {
+describe("持续跟进的规则", () => {
+  it("固化并维护同一条规则；命中后经 fake ACP 处理；无模型并入最近一次，模型可拒绝和另开", async () => {
     const { context: c } = await make("例行演练");
     const id = situationRuleId(c.id);
-    expect(findRule(app, id)).toMatchObject({ enabled: true, origin: { kind: "situation", contextId: c.id, name: c.name }, actions: [{ type: "context", context: c.id }] });
+    expect(findRule(app, id)).toMatchObject({ name: c.name, enabled: true, origin: { kind: "situation", contextId: c.id, name: c.name }, actions: [{ type: "context", context: c.id }] });
     await dispatchRuleEvent(app, signal("om_test_a"));
     const [first] = listSituations(app, "owner", { contextId: c.id });
     expect(getItem(app, first.itemId).sourceRefs).toEqual(["lark:om_test_a"]);
@@ -86,13 +86,13 @@ describe("情境", () => {
     expect(listSituations(app, "owner", { contextId: c.id })).toHaveLength(2);
     await saveSituation(app, "owner", { id: c.id, name: "项目演练", status: "paused" });
     expect(findRule(app, id)).toMatchObject({ enabled: false, origin: { name: "项目演练" } });
-    expect(() => saveRule(app, { ...findRule(app, id)!, temporary: undefined, enabled: true })).toThrow(/情境生成/);
+    expect(() => saveRule(app, { ...findRule(app, id)!, temporary: undefined, enabled: true })).toThrow(/持续跟进的规则/);
     await deleteSituation(app, "owner", c.id);
     expect(findRule(app, id)).toBeNull();
     expect(listSituations(app, "owner", { contextId: c.id, status: "active" })).toHaveLength(0);
   }, 90_000);
 
-  describe("情境的快速通道", () => {
+  describe("持续跟进的快速通道", () => {
     const sent: { op: string; args: any }[] = [];
     const lookOf = (lane: string) => listRuns(app, { kind: "first-look" }).filter(r => r.lane === lane);
     const promptsOf = () => readFileSync(prompts, "utf8").trim().split("\n").map(line => JSON.parse(line) as string);
@@ -126,9 +126,9 @@ describe("情境", () => {
         const first = one<{ id: string }>(app.db, "select id from runs where lane=? and kind='ask'", i.conversationId)!;
         expect((await waitForRun(app, look.id)).output).toMatchObject({ outcome: "answered", delivered: { to: "chat" } });
         expect((await waitForRun(app, first.id)).status).toBe("done");
-        const lookPrompt = promptsOf().find(p => p.includes("# 先看一眼：情境「项目 B 演练」"))!;
+        const lookPrompt = promptsOf().find(p => p.includes("# 先看一眼：持续跟进「项目 B 演练」"))!;
         for (const piece of [c.note!, c.recognize!, "演练开始 项目 B", "PROBE-OUT:om_situation_first"]) expect(lookPrompt).toContain(piece);
-        const handler = promptsOf().find(p => p.includes(`# 情境：${i.title}`))!;
+        const handler = promptsOf().find(p => p.includes(`# 持续跟进：${i.title}`))!;
         for (const piece of ["PROBE-OUT:om_situation_first", "快速结论 answered", "窗口内别的运行"]) expect(handler).toContain(piece);
         expect(sent.find(x => x.op === "reply")?.args.path.message_id).toBe("om_situation_first");
 
@@ -151,13 +151,13 @@ describe("情境", () => {
         const [look] = lookOf(i.conversationId);
         expect((await waitForRun(app, look.id)).output).toMatchObject({ outcome: "escalate", stages: { look: { by: "host", reason: expect.stringContaining("秒内没看完") } }, delivered: { to: "dm" } });
         expect((await waitForRun(app, runId!)).status).toBe("done");
-        const handler = promptsOf().find(p => p.includes(`# 情境：${i.title}`))!;
+        const handler = promptsOf().find(p => p.includes(`# 持续跟进：${i.title}`))!;
         expect(handler).toContain("PROBE-OUT:situation-start");
         expect(handler).toContain("先看一眼没有结论");
         expect(sent.find(x => x.op === "create")?.args.data.receive_id).toBe("ou_owner");
         expect(JSON.stringify(sent)).not.toContain("不用查了");
         expect(JSON.stringify(sent)).not.toContain('"action":"continue"');
-        const second = await startSituation(app, "owner", c.id, "当天另一回");
+        const second = await startSituation(app, "owner", c.id, "当天另一次");
         expect(lookOf(second.instance.conversationId)).toHaveLength(0);
         expect((await waitForRun(app, second.runId!)).status).toBe("done");
       } finally { await deleteSituation(app, "owner", c.id); }
@@ -171,7 +171,7 @@ describe("情境", () => {
     updateSituation(app, i, { current: "刚验证项目 A 的入口" }, runId!);
     const other = await receive(app, { channel: "web", text: "请核对项目 A 的表现" });
     expect((await waitForRun(app, other.runId!)).status).toBe("done");
-    expect(readFileSync(prompts, "utf8")).toContain("正在进行的情境");
+    expect(readFileSync(prompts, "utf8")).toContain("正在进行的跟进");
     expect(readFileSync(prompts, "utf8")).toContain("刚验证项目 A 的入口");
     addItemEvent(app, i.itemId, "note", "看完自己的记录", "agent", [], runId!);
     addItemEvent(app, i.itemId, "note", "发现入口出错", "agent", [], other.runId!);
@@ -236,13 +236,13 @@ describe("情境", () => {
     const teaching = queueSituationTeaching(app, done) ?? one<{ id: string }>(app.db, "select id from runs where lane=?", `situation-teaching:${i.id}`)!;
     const args = { name: "项目 A 演练", recognize: "有人发出开始信号", note: "先读范围，再查记录", steps: ["核对范围", "查测试记录", "收集结论"], until: "收集结论" };
     expect(await proposeSituation(app, i.id, teaching.id, args)).toContain("待处理");
-    const p = (await pendingActions(app, "owner")).find(x => x.label === "情境" && x.itemId === i.id)!;
+    const p = (await pendingActions(app, "owner")).find(x => x.label === "持续跟进" && x.itemId === i.id)!;
     expect(p.askId).toBeTruthy();
     expect((await buildToday(app))?.fields.find(f => f.id === `sit_${p.askId}`)).toMatchObject({ options: ["可以", "改一改", "不用"] });
     await answerAsk(app, p.askId!, { choice: 2, by: "owner" });
     expect(await proposeSituation(app, i.id, teaching.id, args)).toContain("说过不用");
     fakeDecision(() => ({ type: "predicate", probability: 0.99 }));
-    expect(await proposeSituation(app, i.id, teaching.id, { ...args, name: "项目 A 例行练习" })).toContain("同类情境不用再提");
+    expect(await proposeSituation(app, i.id, teaching.id, { ...args, name: "项目 A 例行练习" })).toContain("同类的持续跟进不用再提");
   }, 90_000);
 
   it("复用关注 HTTP 接口并可手工开始、结束或读实例", async () => {
@@ -250,7 +250,7 @@ describe("情境", () => {
     expect(created.statusCode, created.body).toBe(200);
     const c = created.json();
     expect(c).toMatchObject({ userId: "owner", kind: "situation", recognize: "发出开始信号" });
-    const started = await server.inject({ method: "POST", url: `/api/listen/${c.id}/start`, payload: { about: "手工开一回" } });
+    const started = await server.inject({ method: "POST", url: `/api/listen/${c.id}/start`, payload: { about: "手工开一次" } });
     expect(started.statusCode, started.body).toBe(200);
     const { instance } = started.json();
     expect((await server.inject({ url: `/api/situation-instances?contextId=${c.id}&status=active` })).json()).toMatchObject([{ id: instance.id, status: "active" }]);

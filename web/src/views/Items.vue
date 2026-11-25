@@ -333,7 +333,7 @@ async function addNote() {
         </header>
         <p v-if="detail.situation" class="sit-banner small">
           <Icon name="eye" :size="14" />
-          <span>这是情境<router-link :to="`/listen/${encodeURIComponent(detail.situation.contextId)}?tab=rounds`">「{{ detail.situation.name ?? "已删除的情境" }}」</router-link>的一回{{ detail.situation.status === "active" ? "，正在进行" : "，已结束" }}。</span>
+          <span>这是持续跟进<router-link :to="`/rules?id=${encodeURIComponent(`situation:${detail.situation.contextId}`)}&tab=rounds`">「{{ detail.situation.name ?? "已删除的规则" }}」</router-link>开的一次跟进{{ detail.situation.status === "active" ? "，正在进行" : "，已结束" }}。</span>
         </p>
         <div v-if="detail.item.status === 'candidate'" class="cand-banner">
           <p><strong>候选：</strong>{{ detail.auto?.by ? `${detail.auto.by}自己建的` : "助手自己建的" }}，你还没说要不要。在你决定之前它不提醒、不进上面的列表。</p>

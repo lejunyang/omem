@@ -649,7 +649,7 @@ export function prepareRun(
   const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
   const guideTools = access?.mode ? new Set<string>() : tools;
   const awareness = input.awarenessNote?.(tools.size > 0) ?? "";
-  const scene = sceneWords({ chat: false, ...input.scene, awareness: !!(input.scene?.awareness || awareness), situation: input.scene?.situation || awareness.includes("# 正在进行的情境\n") }, tools);
+  const scene = sceneWords({ chat: false, ...input.scene, awareness: !!(input.scene?.awareness || awareness), situation: input.scene?.situation || awareness.includes("# 正在进行的跟进\n") }, tools);
   const matched: string[] = [];
   const render = (text: string) => toolSections(text, guideTools, capabilities.localTools, scene, matched);
   const instructions = spec?.instructions && render(spec.instructions);

@@ -261,7 +261,7 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
           const { situationOfRun, situationChatScope, situationSendError } = await import("../situations/chat.ts");
           const situation = situationOfRun(app, inter.runId, OWNER);
           if (!situation || !situationChatScope(app, situation, true).chats.includes(p.situationChat))
-            throw new Error("这一回的群或回复档已改，请不要发这条草稿");
+            throw new Error("这一次的群或回复档已改，请不要发这条草稿");
           await deliverLark(p.target, p.content, p.delivery).catch(error => { throw situationSendError(error); });
         } else await deliverLark(p.target, p.content, p.delivery);
       } catch (e) {

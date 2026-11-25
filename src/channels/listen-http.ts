@@ -119,6 +119,16 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
   };
 
   registerSituationRoutes(server, app, who);
+  /**
+   * A 持续跟进 rule's start, set on the rules page next to its settings: trigger, conditions and judging
+   * (checked against the rule schema when saved), whether they are what “生成条件” gave unchanged, and
+   * whether to compile the sentence again over conditions set by hand.
+   */
+  const startRule = (body: unknown) => {
+    const b = parse(z.object({ trigger: z.record(z.string(), z.unknown()).optional(), conditions: z.unknown().optional(), judge: z.enum(["code", "ai", "code+ai"]).optional(), judgeWith: z.enum(["decision", "general"]).optional(), fromSentence: z.boolean().optional(), regenerate: z.boolean().optional() }), body);
+    const set = b.trigger !== undefined || b.conditions !== undefined || b.judge !== undefined || b.judgeWith !== undefined;
+    return { ...(set ? { rule: { trigger: b.trigger, conditions: b.conditions ?? null, judge: b.judge, judgeWith: b.judgeWith } as never } : {}), ...(b.fromSentence ? { fromSentence: true } : {}), ...(b.regenerate ? { regenerate: true } : {}) };
+  };
   server.get("/api/listen", async (req) => {
     owner(req);
     defaultContext(app);
@@ -147,7 +157,7 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
     owner(req);
     const b = parse(z.object({ kind: z.enum(["place", "situation"]).optional(), recognize: z.string().max(1000).optional(), status: z.enum(["active", "paused"]).optional(), name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).max(200).optional(), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), expiresAt: z.string().nullable().optional() }), req.body);
     const knobs = cleanKnobs(b.knobs);
-    if (b.kind === "situation") return view(app, (await saveSituation(app, OWNER, { ...b, knobs })).context);
+    if (b.kind === "situation") return view(app, (await saveSituation(app, OWNER, { ...b, ...startRule(req.body), knobs })).context);
     if ((knobs.reply ?? "draft") !== "none" && !b.brief?.handle.length) throw new HttpError(400, "要在群里回复的关注先写要处理哪些消息（或回复方式选“只看不回”）");
     const { groupName, seedContext } = await import("./lark-watch.ts");
     const c = saveContext(app, { kind: "place", name: b.name, chats: b.chats, note: b.note, spec: b.spec, spaceId: b.spaceId, brief: b.brief ? { ...b.brief, at: now(), confirmedAt: now() } : undefined, knobs, expiresAt: b.expiresAt ?? null }, (id) => groupName(app, id));
@@ -159,7 +169,10 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
     owner(req);
     const c = requireContext(app, (req.params as { id: string }).id);
     const b = parse(z.object({ recognize: z.string().max(1000).optional(), name: z.string().trim().min(1).max(80).optional(), chats: z.array(z.string()).max(200).optional(), note: z.string().max(2000).optional(), spec: z.string().optional(), spaceId: z.string().nullable().optional(), brief: briefSchema.optional(), knobs: knobsSchema.optional(), status: z.enum(["active", "paused"]).optional(), expiresAt: z.string().nullable().optional() }), req.body);
-    if (c.kind === "situation") return view(app, (await saveSituation(app, OWNER, { ...b, id: c.id, knobs: cleanKnobs(b.knobs) })).context);
+    if (c.kind === "situation") {
+      const r = await saveSituation(app, OWNER, { ...b, ...startRule(req.body), id: c.id, knobs: cleanKnobs(b.knobs) });
+      return { ...view(app, r.context), ...(r.conditionsKept ? { conditionsKept: true } : {}) };
+    }
     // The owner writing the brief here is confirming it.
     const brief = b.brief ? { ...b.brief, at: c.brief?.at ?? now(), confirmedAt: now() } : undefined;
     // A matter's groups follow its items: the owner's choice is kept as added / taken out (listen-items.ts).

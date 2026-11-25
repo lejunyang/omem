@@ -423,7 +423,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // Only wake notes in this turn (none from the owner): the agent picks up its own work.
   const woken = messages.every((m) => !!m.meta.wake);
   const awareness = promptOverride ? "" : awarenessNote(app, ctx.run.id, true, resolved, guestTurn);
-  const scene = { kind: ctx.run.kind, chat: !coordinate && !handoff && !woken && !watched, awareness: !promptOverride, situation: awareness.includes("# 正在进行的情境\n") };
+  const scene = { kind: ctx.run.kind, chat: !coordinate && !handoff && !woken && !watched, awareness: !promptOverride, situation: awareness.includes("# 正在进行的跟进\n") };
   const profileArgs = { actor, profileId: choice.profile ?? auto?.profile, model: choice.model ?? auto?.model, effort: choice.effort ?? auto?.effort };
   const raw = resolveRunProfile(app, profileArgs);
   const memberOptions = { userId, runId: ctx.run.id, threadId, messages, pinned: specified, signal: ctx.signal, revising: !!promptOverride };

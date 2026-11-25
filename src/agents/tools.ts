@@ -3405,7 +3405,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   const situation = situationOfRun(ctx.app, ctx.runId, ctx.userId ?? OWNER);
   if (situation) {
     const { chats, draft } = situationChatScope(ctx.app, situation);
-    if (!chat || !chats.includes(chat)) throw new HttpError(403, "本次任务不能往这个飞书会话发消息：这一回的群或回复档已改");
+    if (!chat || !chats.includes(chat)) throw new HttpError(403, "本次任务不能往这个飞书会话发消息：这一次的群或回复档已改");
     ctx = { ...ctx, larkDraft: draft };
   }
   if (watched && textual && (ctx.larkDraft || trial.mustDraft(ctx.app, watched, target.replyTo))) {
@@ -4049,22 +4049,22 @@ def({
     }
     const rules = listRules(ctx.app).filter(r => !r.spaceId || r.spaceId === ctx.spaceId);
     return rules.length
-      ? rules.map((r) => `- ${r.id} ${r.enabled ? "" : "（未启用）"}「${r.name}」：${r.description}\n  触发 ${r.trigger.event}${r.trigger.once === "chat" ? "（每群一次）" : ""} · 条件 ${describe(r.conditions)} · 判断 ${r.judge} · 动作 ${r.actions.map((a) => a.type + ("spec" in a ? `:${a.spec}` : "")).join("、")} · 命中 ${r.hits} 次`).join("\n")
+      ? rules.map((r) => `- ${r.id} ${r.enabled ? "" : "（未启用）"}「${r.name}」${r.origin && "kind" in r.origin ? "（持续跟进的规则，用 save_situation 改）" : ""}：${r.description}\n  触发 ${r.trigger.event}${r.trigger.once === "chat" ? "（每群一次）" : ""} · 条件 ${describe(r.conditions)} · 判断 ${r.judge} · 动作 ${r.actions.map((a) => a.type + ("spec" in a ? `:${a.spec}` : "")).join("、")} · 命中 ${r.hits} 次`).join("\n")
       : "还没有规则。";
   },
 });
 
 def({ name: "save_situation", write: true, schema: saveSituationArgs,
-  description: "保存一类反复发生的事：名字、本人给的说明、怎么认出开始信号、在每一回群里的回复档；修改提供 id。只有本人明确要求才传 owner_requested=true，否则回复后等本人确认。",
+  description: "新建或修改一条持续跟进的规则（一类会反复发生的事，命中后开一次跟进：建事项、窗口内自己复查、结束写小结）：名字、本人给的说明、一句话描述什么时候开始（recognize，宿主编成触发条件；本人在规则页手改过条件的不会被覆盖）、这一次的群里的回复档；修改提供 id。和本人说话时叫它“持续跟进的规则”。只有本人明确要求才传 owner_requested=true，否则回复后等本人确认。",
   handler: (ctx, a) => saveFromChat(ctx, a, ownerAskedThisTurn(ctx), sp => writeSpace(ctx, sp, "rules.edit"), runLarkChat(ctx)) });
 def({ name: "start_situation", write: true, schema: startSituationArgs,
-  description: "本人明确说已经开始或现在要开始某一回时，用已有情境的名字或 id 和这次的范围手动开一回。不要把假设或询问当开始。",
+  description: "本人明确说某件事已经开始或现在要开始时，用已有持续跟进规则的名字或 id 和这次的范围手动开一次跟进。不要把假设或询问当开始。",
   handler: (ctx, a) => startFromChat(ctx, a, ownerAskedThisTurn(ctx), sp => writeSpace(ctx, sp, "items.edit")) });
 def({ name: "update_situation", write: true, schema: updateSituationArgs,
-  description: "更新当前这一回情境的现状；chat 绑定本回对应的群；extend_minutes 从现在至少盯多久；summary 交小结并结束这一回，不发群消息。",
+  description: "更新本次运行所在的这一次跟进：现状；chat 绑定这一次对应的群；extend_minutes 从现在至少盯多久；summary 交小结并结束这一次，不发群消息。",
   handler: (ctx, a) => updateFromTurn(ctx, a, sp => writeSpace(ctx, sp, "items.edit")) });
 def({ name: "propose_situation", write: true, schema: proposeSituationArgs,
-  description: "事项收尾交情境提议：三条以上本人教过的步骤、下次自主做到哪一步，再加名字、说明、怎么认出来。只把提议交给本人，不直接启用。",
+  description: "事项收尾时提议一条持续跟进的规则：三条以上本人教过的步骤、下次自主做到哪一步，再加名字、说明、一句话描述什么时候开始。只把提议交给本人，不直接启用。",
   handler: (ctx, a) => proposeFromSettle(ctx, a, sp => writeSpace(ctx, sp, "items.edit")) });
 
 def({
@@ -4491,7 +4491,7 @@ def({
     if ([a.after, a.on_message, a.on_run_end].filter(Boolean).length !== 1) throw new HttpError(400, "after、on_message、on_run_end 三选一");
     const conversation = ctx.runId && getRun(ctx.app, ctx.runId).input.conversationId;
     const instance = typeof conversation === "string" && (await import("../situations/instances.ts")).instanceOfThread(ctx.app, conversation);
-    if (instance && (a.agent || a.on_message || a.on_run_end || instance.status !== "active" || instance.closingRun)) throw new HttpError(409, "情境只可在窗口内唤醒本会话复查");
+    if (instance && (a.agent || a.on_message || a.on_run_end || instance.status !== "active" || instance.closingRun)) throw new HttpError(409, "持续跟进只能在窗口内唤醒本会话复查");
     if (a.on_message) return wakeOnMessageRule(ctx, a.note, a.agent, a.on_message);
     const { scheduleWake, wakeTime, scheduleRoundWake } = await import("./wakes.ts");
     if (a.on_run_end) {
@@ -4504,7 +4504,7 @@ def({
       return r.existing ? `已经设过同目的的唤醒 ${r.id}，不会重复唤醒。` : `已设唤醒 ${r.id}：编码轮次 ${id} 结束后唤醒。`;
     }
     const at = wakeTime(a.after!);
-    if (instance && at >= instance.windowUntil) throw new HttpError(400, "复查时间超出情境窗口，先用 update_situation 延长窗口");
+    if (instance && at >= instance.windowUntil) throw new HttpError(400, "复查时间超出这一次跟进的窗口，先用 update_situation 延长窗口");
     const { target, setBy } = await wakeOrigin(ctx, a.agent);
     const r = scheduleWake(ctx.app, { at, note: a.note, target, setBy, skipIfOwnerSpoke: a.skip_if_owner_replies });
     return `已设唤醒 ${r.id}：${at}${target.spec && !target.resumeRunId ? `唤醒 ${target.spec}` : "唤醒你"}。不需要了用 cancel_wake 取消。`;

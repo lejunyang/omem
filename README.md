@@ -192,9 +192,9 @@ npm install -g @omem-ai/cli
 
 ## 日常用途
 
-**跟一类反复发生的事**：告诉助手“每次演练开始前先查这次的范围，异常就私下告诉我”，再说怎么认出开始。它用情境为每次演练单独开一回；别的运行也能看到这一回并把发现记回对应事项。也可以直接说这次开始了。网页上情境列在工作页右栏，可以新建、改说明，在情境页看各回、手动开始或结束一回。见 [情境](docs/v2/situations.md)。
+**跟一类反复发生的事**：告诉助手“每次演练开始前先查这次的范围，异常就私下告诉我”，再说怎么认出开始。它记成一条持续跟进的规则，每次演练单独开一次跟进；别的运行也能看到这一次并把发现记回对应事项。也可以直接说这次开始了。网页上它和别的规则一起在规则页：可以新建，用一句话生成条件或直接设条件，在“各次”里看、手动开始或结束一次；工作页右栏列着正在跟进的。见 [持续跟进的规则](docs/v2/situations.md)。
 
-每回有不同的协作群时，在情境设置的「这一回的群里」选「先给我看」或「直接发」，再在说明里写清怎么认出群、哪些进展发过去。默认不发群消息。
+每次有不同的协作群时，在规则设置的「这一次的群里」选「先给我看」或「直接发」，再在说明里写清怎么认出群、哪些进展发过去。默认不发群消息。
 
 | 想做的事 | 怎么做 |
 | --- | --- |
@@ -225,7 +225,7 @@ npm install -g @omem-ai/cli
 | 把几个同事或别的机器人拉进一批群 | 对助理说“把小王、小李和日报机器人拉进项目 A 的三个群”：它查出每个人（重名时先让你挑），发一张审批卡片到你和机器人的私聊，列出每个群和每个人，批准后一次拉完并逐群告诉你谁进了、谁在等群主审批。只拉机器人默认不用批准（设置 → 代你回复 → 拉人进群 可改成也要批准） |
 | 群里报的问题很多跑一两条固定查询就能答，不想每次都等 Agent 从头查 | 把那几条只读查询存成预查（规则页的“预查”页签里写和试跑，只有你能存；助手发现反复在查同样几条时会把代码发给你问要不要存），在规则的“交给 Agent”或关注里打开“先看一眼”：先跑预查，再由快模型在 90 秒内看一眼，答得了就答，要你定就只告诉你，答不了才交给 Agent 深查（带着预查结果和快模型的结论）。第一条默认私聊你，也可发到群里或群里只有你看得到的卡片（点“发给大家”才发出）；要深查时可点“不用查了”。见 [快速通道](docs/v2/first-look.md) |
 | 「先看一眼」给了结论，但还想再核对 | 在规则或关注发给你个人的第一张卡片上点“接着查”。原来的处理者带着结论和依据接手，结果回到同一处。卡片先显示一句结论，依据展开再看。 |
-| 同一类事经常发生，每回都要先查一下，再持续跟 | 用[情境](docs/v2/situations.md)写清怎么认出来、发生时关心什么，并打开“先看一眼”。新开一回时先跑所选预查、发第一条结论，再带着结果继续跟；后续事件只附预查结果，不重复先看。不是群消息触发的，第一条只私聊你。 |
+| 同一类事经常发生，每次都要先查一下，再持续跟 | 用[持续跟进的规则](docs/v2/situations.md)写清什么时候开始、发生时关心什么，并打开“先看一眼”。新开一次时先跑所选预查、发第一条结论，再带着结果继续跟；后续事件只附预查结果，不重复先看。不是群消息触发的，第一条只私聊你。 |
 | 盯一张飞书表格，有人新增一行就查一下并回到群里 | 规则 → 文档变化：电子表格按行比对，每个新增或改动的行单独触发；条件里可以排除本人的改动；“发到”选一个群，Agent 回复在对应消息下并 @ 修改人；规则自己回写表格不会再次触发。在群里对助手说“这个群……”就能给当前群建规则 |
 | 想知道规则拦下了什么、谁批准的、以你的身份发出过什么 | 设置 → 安全 → 记录：按时间列出规则的判定和批准、代你发出的回复和拉群、成员和登录的变动，可按类筛，点一行看当时记下的内容 |
 | 同一个工具既有读又有写，想只审批写操作 | 设置 → 安全 → 操作规则：按命令名、子命令（如 `mr create`）、参数正则写一条“要批准”，可限定成员、角色、空间和后端；文件读写和 omem 工具也能这样管。插件或技能带的规则包在同一页选范围启用。见 [操作规则与审批](docs/v2/command-gate.md)。 |
@@ -682,7 +682,7 @@ omem peer acp <设备> <Agent>              # 用它的 ACP Agent（stdio 上说
 pnpm run dev          # node --watch 运行 API，Vite 运行网页
 pnpm run check        # 类型检查 + 测试 + 构建
 pnpm run build:plugins   # 只构建插件页面（web/dist/plugins/<id>）和 SDK；dev 时 Vite 直接从源码提供插件页面，带热更新
-node scripts/screens.ts http://127.0.0.1:5173 screens   # 桌面与手机截图
+node scripts/screens.ts http://127.0.0.1:5173 screens   # 桌面与手机截图，并检查元素溢出（有问题退出码非零；OVERFLOW_REPORT_ONLY=1 只报告）
 node scripts/doc-screens.ts         # 文档站与 README 的功能截图（先 pnpm run build；用虚构演示数据，输出 site/public/screens）
 pnpm --filter omem-docs run dev   # 文档站（VitePress）
 node scripts/eval-retrieval.ts corpus.jsonl queries.jsonl [--vector]
@@ -726,7 +726,7 @@ packages/cli          轻量命令行（@omem-ai/cli）：只有连远程 omem �
 packages/plugin-sdk   插件 SDK（@omem-ai/plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，objects.ts / slots.ts 是对象和插槽的类型，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
 skills/library  内置技能（如 lark-messaging、lark-docs、lark-suite、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
-scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
+scripts/      脚本：更新（upgrade.ts）、截图与溢出检查（screens.ts、overflow-check.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
 vscode/       VS Code 插件（workspace 里的包 omem-vscode；omem 的网页版 VS Code 启动前从源码编译装进去，连本机 omem 不用设置）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办、修改项与看改动、方案视图（按决定看改动）；在真实 VS Code 里跑的测试在 vscode/test
 chrome/       Chrome 扩展（workspace 里的包 omem-chrome）：DevTools 网络面板（筛选、Mock、资源搜索）、用户状态、设备模拟与居中模拟器、「拾取」（截图、元素样式与间距、侧栏拾取篮）、「录制」（侧栏，把操作、请求和截图交给 omem 整理成技能）、「演示」（侧栏顶部，拾取和录制记进一次演示）；默认不连 CDP，注入页面的脚本在 chrome/src/inject，扩展自己的约定在 chrome/AGENTS.md，真实 Chromium 的 e2e 在 chrome/e2e
 site/         文档站（VitePress，workspace 里的包 omem-docs）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）

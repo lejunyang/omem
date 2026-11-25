@@ -1,21 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import { get, onServerEvent } from "../api";
 import { SITUATION_VERSUS, SITUATION_WHAT, type ListenView, type SituationInstance } from "../lib/listen";
 import { plainLine } from "../lib/plain";
 import HelpText from "./HelpText.vue";
 import Icon from "./Icon.vue";
-import SituationDialog from "./SituationDialog.vue";
 import Skeleton from "./Skeleton.vue";
 
 /**
- * The owner's 情境 on the work page's rail, beside 在跟的问题 (the place 关注) — a matter's 关注 lives on its
- * line. A row each: the name, the first sentence of what the owner wrote, how it is recognized, whether it
- * is on and how many rounds go on now; it opens the situation's page. Empty: what a situation is, against a
- * rule and a flow, and a way to make one.
+ * The owner's 持续跟进 rules on the work page's rail, beside 在跟的问题 (the place 关注): what goes on now.
+ * A row each — the name, whether it is on and how many follow-ups go on now, the first sentence of what
+ * the owner wrote — opening the rule on the rules page (its 各次). The rules are made and changed there;
+ * empty, one line on what they are and a way to make one.
  */
-const router = useRouter();
 const list = ref<ListenView[] | null>(null);
 const going = ref<Record<string, number>>({});
 let seq = 0;
@@ -37,36 +34,33 @@ const off = onServerEvent((e) => {
 });
 onBeforeUnmount(off);
 const sorted = computed(() => (list.value ?? []).slice().sort((a, b) => (going.value[b.id] ?? 0) - (going.value[a.id] ?? 0) || (a.status === b.status ? 0 : a.status === "active" ? -1 : 1)));
-
-const creating = ref(false);
-function created(v: ListenView) {
-  creating.value = false;
-  void router.push(`/listen/${encodeURIComponent(v.id)}`);
-}
+const ruleLink = (v: ListenView, tab?: string) => ({ path: "/rules", query: { id: `situation:${v.id}`, ...(tab ? { tab } : {}) } });
+const NEW = { path: "/rules", query: { new: "1", follow: "1" } };
 </script>
 
 <template>
   <section class="situations" aria-labelledby="sit-title">
     <h2 id="sit-title" class="section-title row">
-      <span class="grow">情境</span>
-      <button v-if="list?.length" type="button" class="btn ghost sm icon" title="新建情境" aria-label="新建情境" @click="creating = true"><Icon name="plus" :size="14" /></button>
+      <span class="grow">持续跟进</span>
+      <router-link v-if="list?.length" :to="NEW" class="btn ghost sm icon" title="新建持续跟进的规则" aria-label="新建持续跟进的规则"><Icon name="plus" :size="14" /></router-link>
     </h2>
     <Skeleton v-if="!list" variant="list" :rows="2" />
     <template v-else-if="!list.length">
-      <HelpText>{{ SITUATION_WHAT }} {{ SITUATION_VERSUS }}</HelpText>
-      <button type="button" class="btn sm new" @click="creating = true"><Icon name="plus" :size="14" />新建情境</button>
+      <HelpText>持续跟进是一种规则：{{ SITUATION_WHAT }} {{ SITUATION_VERSUS }}</HelpText>
+      <router-link :to="NEW" class="btn sm new"><Icon name="plus" :size="14" />新建持续跟进的规则</router-link>
     </template>
-    <router-link v-for="v in sorted" v-else :key="v.id" :to="`/listen/${encodeURIComponent(v.id)}`" class="sit" :class="{ off: v.status !== 'active' }">
-      <span class="top">
-        <span class="name">{{ v.name }}</span>
-        <span v-if="v.status !== 'active'" class="state muted">停用</span>
-        <span v-else-if="going[v.id]" class="state on">进行中 {{ going[v.id] }} 回</span>
-        <span v-else class="state muted">在等</span>
-      </span>
-      <span v-if="v.note" class="note">{{ plainLine(v.note, 80) }}</span>
-      <span v-if="v.recognize" class="rec" :title="v.recognize">认出：{{ v.recognize }}</span>
-    </router-link>
-    <SituationDialog v-if="creating" @close="creating = false" @created="created" />
+    <template v-else>
+      <router-link v-for="v in sorted" :key="v.id" :to="ruleLink(v, going[v.id] ? 'rounds' : undefined)" class="sit" :class="{ off: v.status !== 'active' }">
+        <span class="top">
+          <span class="name">{{ v.name }}</span>
+          <span v-if="v.status !== 'active'" class="state muted">停用</span>
+          <span v-else-if="going[v.id]" class="state on">进行中 {{ going[v.id] }} 次</span>
+          <span v-else class="state muted">在等</span>
+        </span>
+        <span v-if="v.note" class="note">{{ plainLine(v.note, 80) }}</span>
+      </router-link>
+      <router-link to="/rules" class="manage small">在规则页管理</router-link>
+    </template>
   </section>
 </template>
 
@@ -90,15 +84,16 @@ function created(v: ListenView) {
 .sit {
   display: grid;
   gap: 1px;
-  padding: 7px 8px;
-  margin: 0 -8px;
+  padding: 7px 0;
   border-radius: 8px;
   color: inherit;
   text-decoration: none;
   min-width: 0;
 }
+/* The hover background reaches past the text with a shadow, not a negative margin (that widens the rail). */
 .sit:hover {
   background: var(--hover);
+  box-shadow: -8px 0 0 var(--hover), 8px 0 0 var(--hover);
   text-decoration: none;
 }
 .sit:focus-visible {
@@ -131,8 +126,7 @@ function created(v: ListenView) {
   color: var(--accent);
   font-weight: 600;
 }
-.note,
-.rec {
+.note {
   font-size: 12.5px;
   min-width: 0;
   overflow: hidden;
@@ -142,7 +136,9 @@ function created(v: ListenView) {
 .note {
   color: var(--ink-2);
 }
-.rec {
+.manage {
+  justify-self: start;
+  margin-top: 4px;
   color: var(--muted);
 }
 </style>

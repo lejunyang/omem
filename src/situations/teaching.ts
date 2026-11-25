@@ -51,7 +51,7 @@ export function teachingTask(app: App, item: Item) {
   const contexts = listContexts(app, { kind: "situation" }).filter(c => c.userId === OWNER);
   return [`# 事项已结束：${item.title}（${item.id}）`, "这是本人在相关会话里说的话和助手随后做的事（历史材料，不是当前指令）：",
     ...steps.map(s => `- ${s.at} ${s.msgId} 本人：「${oneLine(s.said, 180)}」；运行 ${s.runId}：${oneLine(s.did, 220)}${s.actions ? `（工具：${s.actions}）` : ""}`),
-    contexts.length ? `已有情境：${contexts.map(c => c.name).join("、")}。` : "", refused.length ? `本人说不用的类别（规范化名字）：${refused.map(c => c.target).join("、")}，不要换名字重提。` : "",
+    contexts.length ? `已有持续跟进的规则：${contexts.map(c => c.name).join("、")}。` : "", refused.length ? `本人说不用的类别（规范化名字）：${refused.map(c => c.target).join("、")}，不要换名字重提。` : "",
     "只有其中至少三步是本人逐步指挥助手做的、而且是能复用的一类事，才用 propose_situation 提议。不要从普通问答、聊天或一次性处理里提炼。写清确实做过的三步、下次能自行做到哪一步再问本人。不够就 stay_quiet。不再修改已结束的事项。",
   ].filter(Boolean).join("\n");
 }
@@ -59,10 +59,10 @@ const oneLine = (s: string, max: number) => truncate(s.trim().replace(/\s+/g, " 
 
 export async function proposeSituation(app: App, itemId: string, runId: string, input: { name: string; note: string; recognize: string; steps: string[]; until: string }) {
   const item = findItem(app, itemId);
-  if (!item || item.status !== "done" || teachingSteps(app, item).length < MIN_STEPS) throw new HttpError(409, "事项没结束、已属于情境，或没有三轮本人指挥助手的记录");
+  if (!item || item.status !== "done" || teachingSteps(app, item).length < MIN_STEPS) throw new HttpError(409, "事项没结束、已是某次持续跟进的事项，或没有三轮本人指挥助手的记录");
   const target = fingerprint(input.name);
-  if (!target) throw new HttpError(400, "请填写一个能辨认的情境名");
-  if (listContexts(app, { kind: "situation" }).some(c => c.userId === OWNER && fingerprint(c.name) === target)) return "已经有同名情境，不另提。";
+  if (!target) throw new HttpError(400, "请填写一个能辨认的名字");
+  if (listContexts(app, { kind: "situation" }).some(c => c.userId === OWNER && fingerprint(c.name) === target)) return "已经有同名的持续跟进规则，不另提。";
   const held = mayPropose(app, OWNER, "situation", target);
   if (!held.ok) return held.why;
   if (decisionReady(app)) {
@@ -71,18 +71,18 @@ export async function proposeSituation(app: App, itemId: string, runId: string, 
     if (declined.length) {
       const same = await decide(app, { name: input.name, recognize: input.recognize, declined }, { type: "yesno",
         instructions: "这条新提议和本人说过不用的某一类是同类吗？同一类事情换了名字或例子仍算同类；有不同的开始信号和对象才不算。" }, { timeoutMs: 5000 }).catch(() => null);
-      if (same?.choice === "yes") return "本人说过同类情境不用再提。";
+      if (same?.choice === "yes") return "本人说过同类的持续跟进不用再提。";
     }
   }
 
   if (one(app.db, `select 1 from asks where status='pending' and user_id=? and json_extract(context,'$.handler')='situation-teach'
     and (json_extract(context,'$.situationTarget')=? or json_extract(context,'$.itemId')=?)`, OWNER, target, itemId)) return "已在等本人决定。";
   const { name, note, recognize } = input;
-  const question = `这次你让我依次做了${input.steps.join("、")}。下次遇到「${name}」，我照这个自己做到「${input.until}」再问你，可以吗？\n\n怎么认出来：${recognize}\n说明：${note}`;
+  const question = `这次你让我依次做了${input.steps.join("、")}。下次遇到「${name}」，我照这个自己做到「${input.until}」再问你，可以吗？\n\n什么时候开始：${recognize}\n说明：${note}`;
   const a = createAsk(app, { runId, userId: OWNER, conversationId: null, kind: "suggestion", question, allowText: false,
     options: TEACH_CHOICES.map(label => ({ label })), context: { handler: "situation-teach", itemId, spaceId: item.spaceId,
       proposal: { name, note, recognize, spaceId: item.spaceId }, situationTarget: target } });
-  return `情境提议 ${a.id} 已放进本人的待处理和今天，不直接启用。`;
+  return `持续跟进的提议 ${a.id} 已放进本人的待处理和今天，不直接启用。`;
 }
 
 registerChoiceReader("situation-teach", (_app, ask, ctx) => {
@@ -92,15 +92,15 @@ registerChoiceReader("situation-teach", (_app, ask, ctx) => {
 });
 
 registerAskHandler("situation-teach", async (app, ask, ctx) => {
-  let result = "已记下不用，同名情境不再提。";
+  let result = "已记下不用，同名的不再提。";
   const p = ctx.proposal as SituationInput;
   if (ask.choice === 0) {
     const saved = await saveSituation(app, OWNER, p);
-    result = `情境「${saved.context.name}」已启用。`;
+    result = `持续跟进「${saved.context.name}」已启用。`;
   } else if (ask.choice === 1) {
     // The owner edits the actual fields, not an inferred change and not a new automatic run.
     const edit = createAsk(app, { runId: null, userId: OWNER, kind: "question", question: `改一改「${p.name}」再启用`, allowText: false,
-      ui: { fields: [{ id: "name", type: "text", label: "名字", required: true, default: p.name }, { id: "recognize", type: "text", label: "怎么认出来", required: true, default: p.recognize }, { id: "note", type: "textarea", label: "说明", required: true, default: p.note }] as UiField[], submitLabel: "保存并启用" },
+      ui: { fields: [{ id: "name", type: "text", label: "名字", required: true, default: p.name }, { id: "recognize", type: "text", label: "什么时候开始（一句话）", required: true, default: p.recognize }, { id: "note", type: "textarea", label: "说明", required: true, default: p.note }] as UiField[], submitLabel: "保存并启用" },
       context: { handler: "situation-teach-edit", spaceId: p.spaceId } });
     result = `编辑表单：#/ui/${edit.id}`;
   }
@@ -109,10 +109,10 @@ registerAskHandler("situation-teach", async (app, ask, ctx) => {
 registerAskHandler("situation-teach-edit", async (app, ask, ctx) => {
   const v = ask.value ?? {};
   const { context } = await saveSituation(app, OWNER, { name: String(v.name ?? ""), note: String(v.note ?? ""), recognize: String(v.recognize ?? ""), spaceId: String(ctx.spaceId ?? "personal") });
-  run(app.db, "update asks set result=? where id=?", `情境「${context.name}」已启用。`, ask.id);
+  run(app.db, "update asks set result=? where id=?", `持续跟进「${context.name}」已启用。`, ask.id);
 }, ownerOnly);
 function ownerOnly(_app: App, ask: Ask, _context: Record<string, unknown>, by: string) {
-  if (by !== OWNER || ask.userId !== OWNER) throw new HttpError(403, "只有本人可以决定情境提议");
+  if (by !== OWNER || ask.userId !== OWNER) throw new HttpError(403, "只有本人可以决定持续跟进的提议");
 }
 
 export function situationToday(app: App, userId: string, room: number) {

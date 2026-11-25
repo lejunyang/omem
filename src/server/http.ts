@@ -2856,9 +2856,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const view = ruleView(req);
     const rules = listRules(app,{spaces:view.spaces}).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).filter(view.visible);
     const stats = await (await import("../rules/quiet-stats.ts")).ruleQuietStats(app, rules.map((r) => r.id));
+    // A 持续跟进 rule lists the follow-up's space and the first line of what it is for (its settings are a 关注 row).
+    const { getContext } = await import("../channels/listen.ts");
+    const follow = (r: (typeof rules)[number]) => {
+      const c = r.origin && "kind" in r.origin ? getContext(app, r.origin.contextId) : null;
+      return c ? { follow: { spaceId: c.spaceId ?? "personal", note: c.note ?? "", spec: c.spec, status: c.status } } : {};
+    };
     return rules.map((r) => {
       const { days7, days30 } = stats.get(r.id)!;
-      return { ...(view.edit ? { ...r, conditionText: describe(r.conditions) } : view.summary(r)), quietStats: { days7, days30 } };
+      return { ...(view.edit ? { ...r, conditionText: describe(r.conditions), ...follow(r) } : view.summary(r)), quietStats: { days7, days30 } };
     });
   });
   // 有人找你, listed last on the rules page: the default for messages looking for the owner that no rule took.
@@ -2920,6 +2926,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return myRunAs(app, who(req));
   });
   const saveWebRule = async (req: FastifyRequest<{ Body: import("../rules/store.ts").RuleSaveInput; Params: { id?: string } }>) => {
+    // A 持续跟进 rule (situations/settings.ts): its name, on / off, sentence and start rule; owner only.
+    if (req.params.id?.startsWith("situation:")) return (await import("../situations/settings.ts")).saveSituationAsRule(app, who(req), req.params.id.slice(10), (req.body ?? {}) as Record<string, unknown>);
     const { saveRuleWithConfirmation } = await import("../rules/confirmation.ts");
     const input = req.params.id ? { ...req.body, id: req.params.id } : req.body;
     return saveRuleWithConfirmation(app, input, who(req)).rule;
@@ -2927,13 +2935,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/rules", saveWebRule);
   server.put("/api/rules/:id", saveWebRule);
   server.delete("/api/rules/:id", async (req) => {
-    (await import("../rules/store.ts")).deleteRule(app, (req.params as { id: string }).id);
+    const id = (req.params as { id: string }).id;
+    if (id.startsWith("situation:")) {
+      await (await import("../situations/settings.ts")).deleteSituation(app, who(req), id.slice(10));
+      return { ok: true };
+    }
+    (await import("../rules/store.ts")).deleteRule(app, id);
     return { ok: true };
   });
   // The model writes a rule from the owner's words (nothing is saved); the page shows it to edit.
   server.post("/api/rules/draft", async (req) => {
-    const b = q(z.object({ description: z.string().min(1), current: z.record(z.string(), z.unknown()).optional() }), req.body);
-    return (await import("../rules/compile.ts")).draftRule(app, b.description, b.current as never);
+    // `follow`: the rule is a 持续跟进 one (its id, or "new"): only what starts it is drafted, the action stays.
+    const b = q(z.object({ description: z.string().min(1), current: z.record(z.string(), z.unknown()).optional(), follow: z.string().max(80).optional() }), req.body);
+    return (await import("../rules/compile.ts")).draftRule(app, b.description, b.current as never, b.follow);
   });
   // Try a rule on recent captured messages without firing anything.
   server.post("/api/rules/test", async (req) => {

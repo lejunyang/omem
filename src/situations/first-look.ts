@@ -18,13 +18,13 @@ export function queueSituationLook(app: App, i: SituationInstance, c: ListenCont
   const input: FirstLookInput = {
     source: "situation", userId: i.userId, chat,
     messages: message ? [{ id: message.id, text: message.text, sender: e?.sender?.name ?? "?", topicId: message.topicId, at: e!.at }] : [],
-    brief: `本人的说明：${c.note ?? ""}\n怎么认出来：${c.recognize ?? ""}`,
+    brief: `本人的说明：${c.note ?? ""}\n什么时候开始：${c.recognize ?? ""}`,
     probes: c.knobs.probes ?? [], to: c.knobs.firstTo ?? app.config.firstLook.to,
     direct: chat?.kind === "group" && c.knobs.reply === "auto", bot: chat ? e?.bot : undefined,
     situation: { instanceId: i.id, contextId: c.id, name: c.name, text, event: probeEvent(text, e) },
   };
   return createRun(app, { kind: "first-look", input, spaceId: i.spaceId, lane: i.conversationId, userId: i.userId, parentId,
-    title: truncate(`先看一眼（情境「${c.name}」）：${i.current}`, 80) }).id;
+    title: truncate(`先看一眼（持续跟进「${c.name}」）：${i.current}`, 80) }).id;
 }
 
 function probeEvent(text: string, e?: RuleEvent): Record<string, unknown> {
@@ -41,7 +41,7 @@ export function probeMaterial(results: ProbeResult[]) {
 
 export function lookMaterial(o: Outcome, d: Delivered) {
   return [o.by === "host" ? `先看一眼没有结论：${o.reason ?? "未交结果"}`
-    : `先看一眼的结论（供核对，仍须跟进这一回；${{ answered: "答完了", owner: "要本人定", escalate: "要接着查" }[o.outcome]}）：${o.text}`,
+    : `先看一眼的结论（供核对，仍须跟进这一次；${{ answered: "答完了", owner: "要本人定", escalate: "要接着查" }[o.outcome]}）：${o.text}`,
     o.evidence && `依据：${o.evidence}`, o.next && `还要查：${o.next}`,
     d.to === "none" ? "第一条没有发出去。" : `第一条已发到${DEST_TEXT[d.to]}。`,
   ].filter(Boolean).join("\n");

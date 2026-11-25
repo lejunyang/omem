@@ -77,7 +77,7 @@ export function coachTask(app: App, c: ListenContext) {
   return [
     `# 关注「${c.name}」（${c.id}）`,
     "",
-    c.kind === "situation" ? "这是情境：一类会反复发生的事。整理每回的查证、取舍与如何收尾，不建议在群里回话。" : c.kind === "default" ? "这是内置的“有人找你”：所有私聊和 @ 本人的消息。" : `${c.kind === "item" ? "事情型" : "地方型"}关注，${c.chats.length} 个群。`,
+    c.kind === "situation" ? "这是一条持续跟进的规则：一类会反复发生的事，每次命中开一次跟进。整理每次的查证、取舍与如何收尾，不建议在群里回话。" : c.kind === "default" ? "这是内置的“有人找你”：所有私聊和 @ 本人的消息。" : `${c.kind === "item" ? "事情型" : "地方型"}关注，${c.chats.length} 个群。`,
     c.note ? `本人要的：${c.note}` : "",
     briefText(c) || "（还没有关注说明）",
     "",
@@ -89,7 +89,7 @@ export function coachTask(app: App, c: ListenContext) {
     casesText(rows) || "（没有）",
     "",
     ...(problems ? ["## 跟过的问题（助手回完以后接着跟的，新的在前）", "", problems, ""] : []),
-    ...(situations.length ? ["## 已收尾的情境实例", ...situations.map(i => `- ${i.title}（事项 ${i.itemId}）：${truncate(i.summary, 400)}`)] : []),
+    ...(situations.length ? ["## 已收尾的各次跟进", ...situations.map(i => `- ${i.title}（事项 ${i.itemId}）：${truncate(i.summary, 400)}`)] : []),
     "按角色说明整理成场景，用 submit_playbook 交完整的新版本；案例不够看出规律就 stay_quiet。",
   ].filter((x) => x !== "").join("\n");
 }

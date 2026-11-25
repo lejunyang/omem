@@ -15,6 +15,13 @@ updated: 2026-11-25
 - 规则和关注答完或等本人拍板时，私聊和群里仅本人可见的第一张卡片有“接着查”。由原处理者带着结论、依据和待查点接手；沿用每日上限和关注回复档。卡片显示交接人和时间、可停深查，运行和消息处理记录也记一笔。公开回复和情境不加入口。
 - 快模型用首句和短要点写结论，依据单列；没有换行的长段落在卡片上只露首句，其余可展开，转发仍用全文。见 `docs/v2/first-look.md`。
 
+## “情境”并进规则，叫“持续跟进”；界面溢出能检查出来（2026-11-25）
+
+- 对本人只有规则：原来的情境就是动作为“持续跟进”的规则，每命中一次开“一次跟进”，列表叫“各次”，“这一回的群里”改叫“这一次的群里”。网页、卡片、通知、工具返回、角色说明和文档里不再出现“情境”“一回”；内部的表、`kind = situation`、文件名、工具名（`save_situation` 等）、接口路径不变，工具说明写“持续跟进的规则”。生成的规则名不再带“情境：”，启动迁移 `SITUATION_RULE_NAME_MIGRATION` 去掉旧前缀（只动 `origin.kind = situation` 的）。
+- 规则页是它的家：列表标“持续跟进”、开关能用；详情分设置 / 各次 / 经验和案例 / 触发记录四栏（`?tab=`），设置用和其他规则同一套触发、条件、判断控件，“用一句话描述”可选、带“生成条件”／“重新生成条件”；“做什么”固定为持续跟进，下面是说明、处理者、空间、这一次的群里、快速通道；规则页可以新建（`#/rules?new=1&follow=1`）。`#/listen/<id>` 跳到 `#/rules?id=situation:<id>` 并保留 `tab`；工作页右栏只列状态、链到规则页。`SituationDialog.vue` 删掉，经验和案例抽成 `ListenLessons.vue`。
+- 后端：`PUT /api/listen/:id` 和 `POST /api/listen` 收 `trigger` / `conditions` / `judge` / `judgeWith` / `fromSentence` / `regenerate`；`PUT` / `DELETE /api/rules/situation:<id>` 转到 `saveSituationAsRule` / `deleteSituation`，名字、启停、删除两边一致，只有本人能改。直接改过的条件记 `origin.manual`，之后换一句话只改描述、返回 `conditionsKept`，“重新生成条件”才重编。没写那句话时不能选 AI 判断。经验文件路径仍是 `关注/情境-<id>/经验.md`（不搬数据），页面上不再显示路径。测试 `test/situation-rules.test.ts`。
+- 溢出检查：`scripts/overflow-check.ts` 找超出视口、伸出自己的框、被裁掉又不是省略号的元素，打印选择器路径和像素，跳过横向滚动容器；`scripts/screens.ts` 有问题退出码非零（`OVERFLOW_REPORT_ONLY=1` / `--report-only` 只报告），`doc-screens.ts` 截图时打印同一检查。`styles.css` 给 `p`、`li`、`dd`、`.note`、`.hint` 和 `.row` 里的文字加 `overflow-wrap: anywhere` / `min-width: 0`。顺手修了：触发记录的长原文（机器人卡片 JSON）折三行可展开，`.firing` 用 `minmax(0, 1fr)`；规则详情“做什么”在 390 宽伸出 121px（网格列没设 `minmax(0, 1fr)`）；工作页右栏两处负外边距的悬停底色改成 `box-shadow`。`omem-design` 加了检查步骤和长内容的三种处理（换行、折叠、省略）。
+
 ## 只给一个人看的群内卡片 @ 这个人（2026-11-25）
 
 - 关注的回复草稿、先看一眼、要本人批准的卡片在群里以“仅本人可见”发出，混在群消息里容易被划过去：一条草稿等了两小时没人看见。`sendEphemeral` 现在在卡片顶部 @ 收卡片的人（卡片里已经 @ 过的不重复）。`src/channels/lark-send.ts`；`test/lark-wiki.test.ts`。
