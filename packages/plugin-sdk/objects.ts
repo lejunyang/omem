@@ -1,3 +1,6 @@
+import type { PluginHookAccept, PluginHookOptions, PluginHookRequest } from "./hook.ts";
+export type * from "./hook.ts";
+
 /** The part of the host context used by object readers and tools. */
 export type PluginObjectContext = {
   plugin: string; userId: string; spaceId: string; runId: string | null;
@@ -27,10 +30,8 @@ export type PluginObject = {
   statuses: Record<string, string>; final: string[]; poll?: { minutes: number };
   actions?: PluginObjectAction[];
 };
-/** A callback's request as it came: check the platform's signature yourself. */
-export type PluginHookRequest = { headers: Record<string, string>; query: Record<string, string>; body: string };
 /** `refresh`: objects omem reads again now (kind without the plugin prefix); `emit`: signals to record. */
 export type PluginHookResult = { refresh?: { kind: string; key: string }[]; emit?: PluginSignal[] };
 /** Called at `POST /api/hooks/<plugin id>/<name>/<secret>`; the owner makes the secret on the plugin's page. */
-export type PluginHook = { name: string; label?: string; handle(ctx: PluginObjectContext, req: PluginHookRequest): PluginHookResult | void | Promise<PluginHookResult | void> };
+export type PluginHook = PluginHookOptions & { accept?: PluginHookAccept; handle(ctx: PluginObjectContext, req: PluginHookRequest): PluginHookResult | void | Promise<PluginHookResult | void> };
 export type PluginObjectApi = { object(def: PluginObject): void; hook(def: PluginHook): void };

@@ -1,9 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { one, run, tx } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError, json, now } from "../core/util.ts";
-import type { PluginContext, PluginHook, PluginHookRequest, PluginHookResult } from "./types.ts";
+import { runHookAccept, type HookResponder } from "./hook-accept.ts";
+import { HOOK_PER_MINUTE, hookKeyHeader, hookPath, validateHookOptions } from "./hook-request.ts";
+import type { PluginHook, PluginHookOptions, PluginHookRequest, PluginHookResult } from "./types.ts";
 
 /**
  * Callbacks from outside (docs/v2/plugins.md, “回调”): a platform tells omem something changed (a merge
@@ -12,20 +14,30 @@ import type { PluginContext, PluginHook, PluginHookRequest, PluginHookResult } f
  * owner on the plugin's page (only its hash is kept). What `handle` returns is acted on by the host:
  * the objects it names are read again (src/flows/plugin-objects.ts) and its signals recorded.
  */
-export type RegisteredHook = { plugin: string; name: string; label?: string; handle(ctx: PluginContext, req: PluginHookRequest): PluginHookResult | void | Promise<PluginHookResult | void> };
+export type RegisteredHook = Omit<PluginHook, "accept"> & { plugin: string; respond?: HookResponder };
 const hooks = new Map<string, RegisteredHook>();
 const id = (plugin: string, name: string) => `${plugin}/${name}`;
 
-export function validateHook(def: Pick<PluginHook, "name" | "label">) {
+export function validateHook(def: PluginHook) {
   if (typeof def.name !== "string" || !/^[a-z][a-z0-9-]{0,39}$/.test(def.name)) throw new Error(`回调名字不合法：${def.name}`);
   if (def.label !== undefined && (typeof def.label !== "string" || def.label.length > 40)) throw new Error(`回调 ${def.name} 的说明最多 40 字`);
-}
-export function registerHook(plugin: string, def: Omit<RegisteredHook, "plugin">) {
-  validateHook(def);
   if (typeof def.handle !== "function") throw new Error(`回调 ${def.name} 需要 handle`);
+  if (def.accept !== undefined && (def.ack !== "first" || typeof def.accept !== "function")) throw new Error(`回调 ${def.name} 的 accept 需要 ack: "first" 和同步函数`);
+  validateHookOptions(def);
+}
+export function hookMetadata(def: PluginHookOptions): PluginHookOptions {
+  const { name, label, ack, format, secretHeader, headers, dedup, rateLimit, unauthorizedBody, rateLimitedBody, unavailableBody } = def;
+  const options = structuredClone({ name, label, ack, format, secretHeader, headers, dedup, rateLimit, unauthorizedBody, rateLimitedBody, unavailableBody });
+  for (const body of [options.unauthorizedBody, options.rateLimitedBody, options.unavailableBody]) JSON.stringify(body);
+  return options;
+}
+export function registerHook(plugin: string, def: PluginHook, sandboxResponder?: HookResponder) {
+  validateHook(def);
   const key = id(plugin, def.name);
   if (hooks.has(key)) throw new Error(`回调重复注册：${key}`);
-  const entry: RegisteredHook = { plugin, name: def.name, ...(def.label ? { label: def.label } : {}), handle: def.handle };
+  const { accept } = def;
+  const respond: HookResponder | undefined = accept ? (req, state) => runHookAccept(accept, req, state) : sandboxResponder;
+  const entry: RegisteredHook = { ...hookMetadata(def), plugin, handle: def.handle, respond };
   hooks.set(key, entry);
   return () => { if (hooks.get(key) === entry) hooks.delete(key); };
 }
@@ -49,39 +61,54 @@ export function createHookSecret(app: App, plugin: string, name: string) {
 export function revokeHookSecret(app: App, plugin: string, name: string) {
   return run(app.db, "delete from kv where key=?", kvKey(plugin, name)).changes > 0;
 }
-export function checkHookSecret(app: App, plugin: string, name: string, secret: string) {
+export function checkHookSecret(app: App, plugin: string, name: string, secret: string, markUsed = true) {
   const s = stored(app, plugin, name);
-  if (!s || !secret.startsWith("omk_")) return false;
-  const a = Buffer.from(hash(secret)), b = Buffer.from(s.hash);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
-  run(app.db, "update kv set value=? where key=?", JSON.stringify({ ...s, usedAt: now() }), kvKey(plugin, name));
+  const expected = typeof s?.hash === "string" && /^[0-9a-f]{64}$/.test(s.hash) ? s.hash : "00".repeat(32);
+  const match = timingSafeEqual(Buffer.from(hash(secret), "hex"), Buffer.from(expected, "hex"));
+  if (!match || !s || !pluginHook(plugin, name)) return false;
+  if (markUsed) run(app.db, "update kv set value=? where key=?", JSON.stringify({ ...s, usedAt: now() }), kvKey(plugin, name));
   return true;
 }
 /** The plugin's callbacks as its page shows them: whether a secret is set, when it was last used. */
 export function describeHooks(app: App | null, plugin: string) {
   return pluginHooks(plugin).map((h) => {
     const s = app ? stored(app, plugin, h.name) : null;
-    return { name: h.name, label: h.label ?? null, path: `/api/hooks/${plugin}/${h.name}/`, secret: s ? { createdAt: s.createdAt, usedAt: s.usedAt ?? null } : null };
+    const headerPath = hookPath(plugin, h.name);
+    return { name: h.name, label: h.label ?? null, path: `${headerPath}/`, headerPath, secretHeader: hookKeyHeader(h), ack: h.ack ?? null,
+      rateLimit: h.rateLimit ?? { perMinute: HOOK_PER_MINUTE }, secret: s ? { createdAt: s.createdAt, usedAt: s.usedAt ?? null } : null };
   });
 }
-/** Secrets of callbacks no plugin declares any more go with the plugin (forgetPlugin). */
-export function forgetHookSecrets(app: App, plugin: string) {
-  for (const r of all<{ key: string }>(app.db, "select key from kv where key like ?", `plugin-hook:${plugin}/%`)) run(app.db, "delete from kv where key=?", r.key);
+export function forgetPluginHooks(app: App, plugin: string) {
+  tx(app.db, () => {
+    const prefix = `plugin-hook:${plugin}/`;
+    run(app.db, "delete from kv where substr(key,1,length(?))=?", prefix, prefix);
+    run(app.db, `update plugin_hook_deliveries set status='failed',error='插件已移除',body=null,envelope=null,due_at=null,key_until=null
+      where plugin=? and status in ('admitting','pending','running')`, plugin);
+    run(app.db, "update plugin_hook_deliveries set key_until=null where plugin=? and key_until is not null", plugin);
+  });
 }
 
 // ------------------------------------------------------------------ calls
 
-export const HOOK_PER_MINUTE = 60;
-export const HOOK_BODY_MAX = 1024 * 1024;
-const calls = new WeakMap<App, Map<string, number[]>>();
-/** At most HOOK_PER_MINUTE calls a minute per callback; false when over. */
-export function hookAllowed(app: App, plugin: string, name: string, at = Date.now()) {
-  let map = calls.get(app); if (!map) calls.set(app, map = new Map());
-  const key = id(plugin, name), recent = (map.get(key) ?? []).filter((t) => at - t < 60_000);
-  if (recent.length >= HOOK_PER_MINUTE) { map.set(key, recent); return false; }
-  recent.push(at);
-  map.set(key, recent);
-  return true;
+type Rate = { recent: number[]; tokens: number; last: number };
+const calls = new WeakMap<App, WeakMap<RegisteredHook, Rate>>();
+export function hookRetryAfter(app: App, hook: RegisteredHook, at = Date.now()) {
+  const { perMinute, burst } = hook.rateLimit ?? { perMinute: HOOK_PER_MINUTE };
+  let map = calls.get(app); if (!map) calls.set(app, map = new WeakMap());
+  let rate = map.get(hook);
+  if (!rate) map.set(hook, rate = { recent: [], last: at, tokens: burst ?? 0 });
+  if (burst !== undefined) {
+    const step = 60_000 / perMinute;
+    rate.tokens = Math.min(burst, rate.tokens + Math.max(0, at - rate.last) / step);
+    rate.last = at;
+    if (rate.tokens < 1) return Math.max(1, Math.ceil((1 - rate.tokens) * step / 1000));
+    rate.tokens--;
+  } else {
+    rate.recent = rate.recent.filter(time => at - time < 60_000);
+    if (rate.recent.length >= perMinute) return Math.max(1, Math.ceil((60_000 - (at - rate.recent[0])) / 1000));
+    rate.recent.push(at);
+  }
+  return 0;
 }
 
 const parseResult = (v: unknown): PluginHookResult => {
@@ -98,30 +125,36 @@ const parseResult = (v: unknown): PluginHookResult => {
  * in the plugin's space, then the host reads again the objects it names (only this plugin's kinds, only
  * ones omem already follows) and records its signals. Written to audit_events either way.
  */
-export async function runHook(app: App, plugin: string, name: string, req: PluginHookRequest) {
-  const hook = pluginHook(plugin, name);
-  if (!hook) throw new HttpError(404, "没有这个回调");
+export async function runHook(app: App, hook: RegisteredHook, req: PluginHookRequest, track: (work: Promise<unknown>) => void) {
+  const { plugin, name } = hook;
   const { getPlugin } = await import("./registry.ts");
   const { pluginContext } = await import("./blocks.ts");
-  const p = getPlugin(plugin);
-  const ctx = pluginContext(app, p.env, { userId: OWNER, spaceId: p.manifest.space?.id ?? "personal", runId: null, actor: "user" });
   const { audit } = await import("../auth/permissions.ts");
+  const assertActive = () => { if (pluginHook(plugin, name) !== hook) throw new Error("回调已停用或重新加载"); };
   const started = Date.now();
   try {
     const { timed, refreshObjectByKey } = await import("../flows/plugin-objects.ts");
-    const result = parseResult(await timed(() => hook.handle(ctx, req)));
+    assertActive();
+    const p = getPlugin(plugin);
+    const ctx = pluginContext(app, p.env, { userId: OWNER, spaceId: p.manifest.space?.id ?? "personal", runId: null, actor: "user" });
+    const work = Promise.resolve().then(() => { assertActive(); return hook.handle(ctx, req); });
+    track(work);
+    const result = parseResult(await timed(() => work));
+    assertActive();
     const refreshed: string[] = [], skipped: string[] = [];
     for (const r of result.refresh ?? []) {
+      assertActive();
       const kind = r.kind.includes(":") ? r.kind : `${plugin}:${r.kind}`;
       if (!kind.startsWith(`${plugin}:`)) { skipped.push(`${kind} ${r.key}`); continue; }
       (await refreshObjectByKey(app, kind, r.key) ? refreshed : skipped).push(`${kind} ${r.key}`);
     }
-    for (const s of result.emit ?? []) await ctx.emit(s);
+    for (const s of result.emit ?? []) { assertActive(); await ctx.emit(s); }
     const out = { ok: true, refreshed: refreshed.length, skipped: skipped.length, emitted: result.emit?.length ?? 0 };
     audit(app, "hook", "plugin.hook", `${plugin}/${name}`, { ...out, refreshedKeys: refreshed.slice(0, 20), ms: Date.now() - started });
     return out;
   } catch (e) {
-    audit(app, "hook", "plugin.hook", `${plugin}/${name}`, { ok: false, error: (e as Error).message, ms: Date.now() - started });
-    throw new HttpError(400, `回调处理失败：${(e as Error).message}`);
+    const error = e instanceof Error ? e.message : String(e);
+    audit(app, "hook", "plugin.hook", `${plugin}/${name}`, { ok: false, error, ms: Date.now() - started });
+    throw new HttpError(400, `回调处理失败：${error}`);
   }
 }

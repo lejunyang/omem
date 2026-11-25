@@ -119,8 +119,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/code-index/hook": "owner",
   "DELETE /api/code-index/hook": "owner",
   "POST /api/code-index/notify": "public",
-  // A plugin's callback from outside: its secret is in the path (src/plugins/hooks.ts).
+  // Plugin callbacks authenticate with their own secret (src/plugins/hook-http.ts).
+  "POST /api/hooks/:plugin/:name": "public",
   "POST /api/hooks/:plugin/:name/:secret": "public",
+  "GET /api/plugins/:id/hooks/:name/deliveries": "owner",
 
   // sources
   "GET /api/sources": cap("sources.view", "q.space"),

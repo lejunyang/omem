@@ -6,6 +6,7 @@ import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { killPid } from "../core/procs.ts";
 import { HttpError, now, sha256 } from "../core/util.ts";
+import { forgetPluginHooks } from "./hooks.ts";
 import { readLinks } from "./links.ts";
 import { builtinPluginsDir, dataPluginsDir, manifestSchema, type PluginManifest } from "./registry.ts";
 
@@ -246,4 +247,5 @@ export function removeInstalled(app: App, id: string) {
   const dir = checkedTarget(app, id);
   if (!installInfo(dir)) throw new HttpError(400, `插件 ${id} 不是装进来的，不删除；要删就自己删 ${dir}`);
   rmSync(dir, { recursive: true, force: true });
+  forgetPluginHooks(app, id);
 }

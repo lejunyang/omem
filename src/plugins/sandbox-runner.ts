@@ -3,7 +3,8 @@ import { z } from "zod";
 import { htmlToMarkdown } from "../sources/html.ts";
 import type { PlatformReader, PluginApi, PluginConnection, PluginPlatform, PluginTool, PluginObject, PluginHook } from "./types.ts";
 import { validateObject } from "./objects.ts";
-import { validateHook } from "./hooks.ts";
+import { hookMetadata, validateHook } from "./hooks.ts";
+import { runHookAccept } from "./hook-accept.ts";
 
 /**
  * A plugin's code in its own process (src/plugins/sandbox.ts): started with Node's permission model,
@@ -175,7 +176,7 @@ async function main() {
       validateHook(def);
       if (hooks.has(def.name)) throw new Error(`回调重复注册：${def.name}`);
       hooks.set(def.name, def);
-      declared.hooks.push({ name: def.name, ...(def.label ? { label: def.label } : {}) });
+      declared.hooks.push({ ...hookMetadata(def), accepts: !!def.accept });
     },
     z,
     tool(t) {
@@ -277,6 +278,10 @@ process.on("message", async (m: Msg) => {
       const def = objects.get(m.kind);
       if (!def) throw new Error(`没有对象类型 ${m.kind}`);
       value = m.t === "object.match" ? await def.match(m.url) : await def.read(contextOf({ ...m.ctx, call: m.id }, process.env.OMEM_PLUGIN_ID!), m.key);
+    } else if (m.t === "hook.accept") {
+      const accept = hooks.get(m.name)?.accept;
+      if (!accept) throw new Error(`回调 ${m.name} 没有 accept`);
+      value = runHookAccept(accept, m.req, m.state);
     } else if (m.t === "hook") {
       const def = hooks.get(m.name);
       if (!def) throw new Error(`没有回调 ${m.name}`);

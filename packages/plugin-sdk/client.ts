@@ -19,6 +19,7 @@ export type PluginSlotView = SlotViewOf<Exclude<SlotComponentAll, { type: "page"
 export type PluginSlotBlock<T> = SlotBlockOf<T, SlotPluginContext, Exclude<SlotComponentAll, { type: "page" }>>;
 export type * from "./server";
 export type { PluginObject, PluginObjectAction, PluginObjectState, PluginObjectContext, PluginObjectApi, PluginConnection, PluginSignal, PluginHook, PluginHookRequest, PluginHookResult } from "./objects";
+export type * from "./hook.ts";
 export type { AgentLoginApi, AgentLoginContext, AgentLoginDef, AgentLoginResult } from "./agent-login";
 export type { CredentialApi, CredentialCommand, CredentialContext, CredentialDef, CredentialOutcome } from "./credential";
 

@@ -3,6 +3,7 @@ import { join, relative, resolve } from "node:path";
 import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { HttpError, now } from "../core/util.ts";
+import { forgetPluginHooks } from "./hooks.ts";
 import { setTrust } from "./trust.ts";
 
 /**
@@ -73,6 +74,7 @@ export function unlinkPlugin(app: App, id: string) {
   delete all[id];
   writeLinks(app, all);
   setTrust(app, id, null);
+  forgetPluginHooks(app, id);
   return true;
 }
 

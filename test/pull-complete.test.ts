@@ -49,7 +49,7 @@ describe("complete portable pulls", () => {
       "credential_kinds", "credential_holds", "credential_onboarding", "credential_access", "credential_run_grants",
       // Who agreed to a rule using their identity (rules/run-as.ts): tied to this machine's members and their logins; a pulled copy asks again.
       "rule_run_as",
-      "plugin_events", "plugin_deliveries", "plugin_subscriptions", "outlet_deliveries",
+      "plugin_events", "plugin_deliveries", "plugin_subscriptions", "outlet_deliveries", "plugin_hook_deliveries",
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
       // Only finished situation cases are portable, not this device’s delivery or dedupe state.
@@ -108,6 +108,8 @@ describe("complete portable pulls", () => {
       run(app.db, "insert into git_commit_cursors(space_id,branch,commit_id,updated_at,tip,tip_at) values('demo','main',?,'2026-11-15',?,'2026-11-15')", commit, commit);
     for (const [app, id] of [[local, "local"], [remote, "remote"]] as const) {
       const item = upsertItem(app, undefined, { title: "外部事项" });
+      run(app.db, `insert into plugin_hook_deliveries(id,plugin,name,received_at,status,format,body,envelope,due_at)
+        values(?,'demo','events',0,'pending','webhook','{}','{}',0)`, id);
       run(app.db, `insert into item_provider_targets(id,provider,target,user_id,space_id,mode,import_mode,cursor)
         values(?,'demo:issues','repo','owner','personal','confirm','direct','page2')`, id);
       run(app.db, "insert into external_item_links(item_id,target_id,provider,user_id,subjects,external_key,synced_at,snapshot) values(?,?,'demo:issues','owner','{}','a','2026-11-21','{}')", item.id, id);
@@ -117,17 +119,20 @@ describe("complete portable pulls", () => {
     let localClosed = false;
     try {
       const copied = App.open(f.dbDir);
+      expect(all(copied.db, "select id from plugin_hook_deliveries")).toEqual([]);
       expect(all(copied.db, "select * from item_provider_targets")).toEqual([]);
       expect(all(copied.db, "select * from item_provider_writes")).toEqual([]);
       try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); expect(all(copied.db, "select * from item_follow_cursors")).toEqual([]); expect(all(copied.db, "select * from git_commit_cursors")).toEqual([]); }
       finally { copied.db.close(); }
       mergeLibrary(local, f);
+      expect(all(local.db, "select id from plugin_hook_deliveries")).toEqual([{ id: "local" }]);
       expect(all(local.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]);
       expect(all(local.db, "select source_id,line from item_follow_cursors")).toEqual([{ source_id: "local_source", line: 12 }]);
       expect(all(local.db, "select commit_id from git_commit_cursors")).toEqual([{ commit_id: "local_commit" }]);
       local.db.close(); localClosed = true;
       overwriteLocal(local.home, f);
       const after = App.open(local.home);
+      expect(all(after.db, "select id,status from plugin_hook_deliveries")).toEqual([{ id: "local", status: "pending" }]);
       expect(all(after.db, "select id,cursor from item_provider_targets")).toEqual([{ id: "local", cursor: null }]);
       expect(all(after.db, "select * from item_provider_writes")).toEqual([]);
       expect(all(after.db, "select commit_id from git_commit_cursors")).toEqual([{ commit_id: "local_commit" }]);

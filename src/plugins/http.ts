@@ -21,8 +21,11 @@ import { setTrust } from "./trust.ts";
 import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
 import { savePluginSettings } from "./settings.ts";
 import { pluginStore } from "./store.ts";
-import { checkHookSecret, createHookSecret, forgetHookSecrets, HOOK_BODY_MAX, hookAllowed, pluginHook, revokeHookSecret, runHook } from "./hooks.ts";
+import { createHookSecret, pluginHook, revokeHookSecret } from "./hooks.ts";
+import { recentHookDeliveries } from "./hook-inbox.ts";
+import { hookKeyHeader, hookPath } from "./hook-request.ts";
 import { liveConnect, PLUGIN_INSTRUCTIONS_MAX, realtimeSecret, voiceStatus } from "../core/voice.ts";
+export { registerHookRoutes } from "./hook-http.ts";
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -73,17 +76,25 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   server.get("/api/plugins/:id", async (req) => pluginView(describePlugin(plugin(req)), req));
   // A callback's secret (hooks.ts): made and shown once, or revoked, by the owner on the plugin's page.
   const hookOf = (req: FastifyRequest) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能管理回调");
     const p = plugin(req), name = (req.params as { name: string }).name;
-    if (!pluginHook(p.manifest.id, name)) throw new HttpError(404, `插件 ${p.manifest.id} 没有回调 ${name}`);
-    return { plugin: p.manifest.id, name };
+    const hook = pluginHook(p.manifest.id, name);
+    if (!hook) throw new HttpError(404, `插件 ${p.manifest.id} 没有回调 ${name}`);
+    return hook;
   };
   server.post("/api/plugins/:id/hooks/:name/secret", async (req) => {
     const h = hookOf(req), secret = createHookSecret(app, h.plugin, h.name);
-    return { secret, path: `/api/hooks/${h.plugin}/${h.name}/${secret}` };
+    const headerPath = hookPath(h.plugin, h.name);
+    return { secret, path: `${headerPath}/${secret}`, headerPath, secretHeader: hookKeyHeader(h) };
   });
   server.delete("/api/plugins/:id/hooks/:name/secret", async (req) => {
     const h = hookOf(req);
     return { revoked: revokeHookSecret(app, h.plugin, h.name) };
+  });
+  server.get("/api/plugins/:id/hooks/:name/deliveries", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看回调投递");
+    const p = plugin(req), name = (req.params as { name: string }).name;
+    return recentHookDeliveries(app, p.manifest.id, name);
   });
   server.get("/api/plugins/:id/sessions", async (req) => listSessions(app, plugin(req).manifest.id, who(req)));
   server.post("/api/plugins/:id/sessions", async (req) => {
@@ -326,27 +337,5 @@ export function attachPluginStreams(app: App, server: Server) {
       },
       () => refuse("503 Service Unavailable"),
     );
-  });
-}
-
-/**
- * The public address of a plugin's callbacks (hooks.ts): no login, the secret in the path. A wrong
- * plugin, name or secret all answer 404 the same way; the body comes as raw text (up to 1 MB) so the
- * plugin can check the platform's signature over exactly what was sent.
- */
-export async function registerHookRoutes(server: FastifyInstance, app: App) {
-  await server.register(async (scope) => {
-    scope.removeAllContentTypeParsers();
-    scope.addContentTypeParser("*", { parseAs: "string", bodyLimit: HOOK_BODY_MAX }, (_req, body, done) => done(null, body));
-    scope.post("/api/hooks/:plugin/:name/:secret", { bodyLimit: HOOK_BODY_MAX }, async (req, reply) => {
-      const p = req.params as { plugin: string; name: string; secret: string };
-      if (!pluginHook(p.plugin, p.name) || !checkHookSecret(app, p.plugin, p.name, p.secret)) return reply.status(404).send({ error: "没有这个回调" });
-      if (!hookAllowed(app, p.plugin, p.name)) return reply.status(429).header("retry-after", "60").send({ error: "回调太频繁：每分钟最多 60 次" });
-      const headers: Record<string, string> = {};
-      for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) headers[k] = Array.isArray(v) ? v.join(", ") : String(v);
-      const query: Record<string, string> = {};
-      for (const [k, v] of Object.entries((req.query ?? {}) as Record<string, unknown>)) query[k] = Array.isArray(v) ? String(v[0]) : String(v);
-      return runHook(app, p.plugin, p.name, { headers, query, body: typeof req.body === "string" ? req.body : "" });
-    });
   });
 }

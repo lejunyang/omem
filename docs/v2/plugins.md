@@ -347,11 +347,85 @@ api.hook({
 });
 ```
 
+> 本段基础说明保留旧式路径回调和同步示例；当前地址、校验和处理方式以[外部事件收件箱](#外部事件收件箱)为准。
+
 - **地址**：`POST /api/hooks/<插件 id>/<名字>/<密钥>`，不用登录。密钥由本人在 设置 → 插件 的插件卡上“生成地址”，只显示这一次（宿主只存哈希，kv 里的 `plugin-hook:<插件>/<名字>`）；可以重新生成（旧的马上失效）或撤销。插件卡上列出每个回调、地址有没有、什么时候生成、上次被调用的时间。卸载插件时删掉它的密钥。管理接口 `POST` / `DELETE /api/plugins/:id/hooks/:name/secret` 只给本人。
 - **校验**：插件、名字、密钥不对一律 404；每个回调每分钟最多 60 次，多了 429（`retry-after: 60`）；正文最大 1 MB（超了 413）。正文按原始文本交给插件，平台的签名由插件自己校验；`handle` 十五秒内要回来。
 - **执行**：`handle` 以本人身份、在插件的空间里跑（`ctx` 和对象的 `read` 一样，隔离运行的插件经子进程代理）。返回的 `refresh` 里，`kind` 不带前缀就是本插件的类型，别的插件的类型跳过；只重读 omem 已经在跟的对象（有未结束的事项挂着它），读法和轮询一样（`refreshObject`），状态变了或修订变了照常记信号、推进流程、发规则事件。`emit` 记成 `plugin.<id>.<kind>` 信号（也是 omem 内部事件 `plugin.signal`）。每次调用写一条 `audit_events`（`plugin.hook`，成功时记重读了几个、跳过几个、发了几个信号，失败时记原因），失败回 400。
 - **修订**：对象的 `read` 可以多交 `revision`（插件自己定的“有变化”标记，如头提交加评论数）和 `note`（这次变了什么）。状态没变而修订变了，宿主记 `object.<全名>.updated`；流程阶段可以写 `done: { object, status: "updated" }` 等它，规则的对象触发选“有更新”。`updated` 是保留字，插件的状态不能叫这个名字。
 - **轮询还在**：有回调的对象类型可以把 `poll.minutes` 设长（如 60）当兜底；对象进了终态、或没有未结束的事项挂着它，照旧不再读。
+
+### 外部事件收件箱
+
+示例事件平台可以对 `POST /api/hooks/<插件>/<名字>` 发请求，带 `Authorization: Bearer <密钥>`。声明 `secretHeader: "X-Callback-Key"` 后，也可以用这个头直接传密钥。平台不能设置请求头时，再用旧路径 `POST /api/hooks/<插件>/<名字>/<密钥>`；路径可能留在投递日志里。本人在 设置 → 插件 复制地址、生成或撤销密钥；密钥只显示一次，宿主只存哈希。插件、名字或密钥不对统一返回 401。轮换或撤销只影响之后的请求，不撤回已收件的投递。
+
+```ts
+api.hook({
+  name: "updates",
+  ack: "first",
+  format: "webhook",
+  headers: ["X-Signature"],
+  dedup: { bodyFields: ["event.id"], windowHours: 24 },
+  rateLimit: { perMinute: 120, burst: 30 },
+  handle(ctx, req) {
+    if (!verify(req.headers["x-signature"], req.body)) throw new Error("签名不对");
+    if (!req.deliveryKey) return;
+    return { emit: [{ kind: "received", keys: { delivery: req.deliveryKey } }] };
+  },
+});
+```
+
+- **先收件再处理**：`ack: "first"` 在 SQLite 提交后应答，普通 webhook 首次返回 202 和 `{ ok, id, duplicate }`。之后才调用插件，抛错后等 5 秒、30 秒重试，最多尝试三次。服务重启会继续排队，重跑中断的尝试。收到 2xx 不等于处理成功；插件若执行外部写入，应使用稳定的 `req.deliveryId` 避免在中断和重试时重复写。未声明 `ack` 的仍等处理结束，普通 webhook 成功返回 `ok/refreshed/skipped/emitted`，失败返回 400，不由宿主重试。
+- **投递标识**：按顺序取 `X-Idempotency-Key`、`X-Event-Id`、`Idempotency-Key`、`X-Request-Id`、`X-GitHub-Delivery` 中第一个可用的值，再取 `dedup.bodyFields` 列出的外层 JSON 正文字段（点号取对象的嵌套属性）。`dedup.headers` 可替换默认头列表，空数组表示不看头。只接受非空字符串或安全整数，最多 256 字节；没有标识就不猜。用 `dedup.requireMatch: true` 时，头和体都必须有值且一致，否则 400（`IDEMPOTENCY_MISMATCH`）。按插件和回调名去重，默认 24 小时，可设 1–168 小时。相同标识和原始正文哈希的重投沿用原编号；同一标识正文不同默认回 409（`IDEMPOTENCY_CONFLICT`）。比较的是原始字节，JSON 空格或字段顺序变动也算不同；旧记录无法比对时按冲突处理。没有 `accept` 的原样重投仍不占限流额度；声明 `accept` 后，每次调用都受限流保护。同步处理失败时释放标识，允许发送方再投。
+- **限流与上限**：默认每个回调滚动一分钟 60 次；改 `rateLimit.perMinute` 可调整次数。另设 `burst` 时使用令牌桶，允许瞬间用完 `burst`，按 `perMinute` 匀速补充。两个数最大 10,000。超限返回 429 和 `Retry-After`（秒）。正文最多 1 MiB，头最多 64 个且合计不超过 16 KiB，查询串最多 8 KiB。每个服务进程最多同时处理 4 个回调；SQLite 最多保留 256 个待处理或处理中异步投递、10,000 条总记录，满了回 503 和 `Retry-After`，不挤掉未处理投递或有效的去重标识。终态记录最多留七天，按条数可更早清理。只在处理完成前存异步正文。
+- **原件和权限**：处理器拿到 `method`、`headers`、`query`、原始文本 `body`、`deliveryId`、`deliveryKey` 和 `event: { format, data, trust: "untrusted" }`。异步只保留 `Content-Type`、常见或声明的标识头，以及 `headers` 明确列出的头；不把密钥头、Cookie 等认证头传给插件或存入收件箱。第三方签名仍由插件校验；要在应答前拒绝无效签名，可在 `accept` 里同步校验。收到的内容只作材料，不是指令，不调用模型做判断。`refresh`、`emit` 和审计仍走原插件权限，不新增数据读取、工具调用或助手对话入口。
+- **查看结果**：本人可用 `GET /api/plugins/:id/hooks/:name/deliveries` 看最近 50 条投递的时间、标识、状态、累计处理耗时、尝试次数和错误；不返回正文、头或密钥。历史满且不能腾出记录时，重投计入原记录的重复次数和最近重投时间。
+
+处理器超过 15 秒仍未退出时，收件记失败，不在旁边再开一次；处理器退出前仍占并发槽。异步恢复按一个数据目录一个服务进程工作。收件与密钥留在本机，不随设备拉取，移除插件时撤销密钥并结束未完成的投递。
+
+`format` 缺省为 `auto`；不想自动识别可指定 `webhook` 或 `openai-chat`。不声明 `accept` 时的应答如下：
+
+| 格式 | `event.data` | 应答 |
+| --- | --- | --- |
+| 普通 webhook | 完整 JSON；不是 JSON 时为原始文本 | 普通 HTTP JSON 回执 |
+| [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) | 最后一条 `role: "user"` 的字符串 `content`。能解析成 JSON 对象或数组就取解析结果，否则保留文本 | 固定的 assistant 消息“已收到 · 投递编号”。`stream: true` 时按 SSE 发内容、`stop` 和 `[DONE]`。不是聊天服务，不支持内容部件数组、工具、用量或模型调用 |
+
+### 把一个要求固定受理应答的事件平台接进来
+
+示例事件平台投递订阅事件时发 `Authorization: Bearer <密钥>` 和 `Idempotency-Key`。后者必须等于 JSON 正文的 `execution_id`。首次受理和原样重投都要回 202，正文回显执行 ID，并带 `accepted: true` 和 `duplicate`。不同正文复用标识回 409；同一标识若正在等待首次受理，暂回 503，请对方稍后再试。不要把请求提供的回调地址当成宿主的外发目的地；示例插件直接拒绝这类任务。
+
+```ts
+const errorBody = (code: string, message: string) => ({ error: { code, message } });
+
+api.hook({
+  name: "events",
+  ack: "first",
+  format: "webhook",
+  dedup: { headers: ["Idempotency-Key"], bodyFields: ["execution_id"], requireMatch: true },
+  unauthorizedBody: errorBody("UNAUTHORIZED", "密钥无效"),
+  rateLimitedBody: errorBody("RATE_LIMITED", "请稍后再投"),
+  unavailableBody: errorBody("BUSY", "请稍后再投"),
+  accept(req, { duplicate, conflict }) {
+    const event = req.event.data as {
+      execution_id: string | number;
+      input?: { parts?: unknown[] };
+      event?: unknown;
+      return_url?: unknown;
+    };
+    if (conflict) return { status: 409, body: errorBody("ID_CONFLICT", "这个编号已用于另一条请求") };
+    if (Object.hasOwn(event, "return_url") || !Array.isArray(event.input?.parts) || !event.event)
+      return { status: 422, body: errorBody("EVENT_ONLY", "只接收订阅事件") };
+    return { status: 202, body: { execution_id: event.execution_id, accepted: true, duplicate } };
+  },
+  handle(_ctx, req) {
+    return { emit: [{ kind: "received", keys: { delivery: req.deliveryId } }] };
+  },
+});
+```
+
+`accept` 只用于 `ack: "first"`，宿主先将新请求提交为待受理，再传入解析后的请求和 `{ duplicate, conflict, deliveryId }`。重投与冲突用原投递编号；冲突时 `duplicate` 为 `false`。宿主用返回的 `status`、`headers?` 和 `body` 应答：字符串直接发，其余按 JSON 发，连接与报文长度等传输头由宿主管理。首次返回 2xx 才提交入队；重复、冲突或插件拒绝均不入队，重启也不会执行未受理完成的记录。写入失败回 503，不交给 `handle`。
+
+`accept` 没有插件上下文，不发请求、不写文件、不做任何有副作用的事。抛错或用时超过 50 毫秒回 500，不入队；隔离运行时宿主另有 500 毫秒通信时限。同进程的同步函数不能被宿主中途打断，超时在函数返回后判定，需要硬性应答上限时用隔离运行。
 
 ## 订阅事项与评审事件
 
@@ -708,6 +782,8 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 | `GET /api/plugins/:id/services`、`POST …/services/:name/start`、`…/stop` | 服务状态与最近输出；启动、停止（代码未被信任时拒绝） |
 | `POST` / `DELETE /api/plugins/:id/hooks/:name/secret` | 本人生成（返回只显示一次的密钥和地址）/ 撤销回调的密钥 |
 | `POST /api/hooks/:plugin/:name/:secret` | 外部平台调回调（不用登录，见“回调”） |
+| `POST /api/hooks/:plugin/:name` | 用 Bearer 或声明的请求头验证外部投递 |
+| `GET /api/plugins/:id/hooks/:name/deliveries` | 本人查看最近的收件和处理结果，不返回正文或请求头 |
 | `GET /api/plugins/:id/streams/:name`（WebSocket） | 流，只给本人，转到插件的服务 |
 | `GET /api/plugins/:id/voice` | 语音能不能用（清单声明了没有、语音模型配好了没有） |
 | `POST /api/plugins/:id/voice/realtime/secret`、`POST …/voice/live/sdp` | 外壳为页面开语音会话，带插件的说明、不带工具；外壳不替页面转发 |

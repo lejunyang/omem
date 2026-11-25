@@ -73,6 +73,14 @@ api.hook({ name: "mr", label: "合并请求有变化", handle(ctx, req) {
 
 地址是 `POST /api/hooks/<插件 id>/mr/<密钥>`，密钥由本人在 设置 → 插件 生成；每分钟最多 60 次，正文最大 1 MB，每次写审计。
 
+平台能配置请求头时，优先用不带密钥的 `POST /api/hooks/<插件 id>/mr`，设置 `Authorization: Bearer <密钥>`，或按 `secretHeader` 声明的名字直接传密钥。旧路径仍可用。
+
+`PluginHookOptions` 可声明 `ack: "first"`：宿主先持久化、再应答，之后调用 `handle`，失败有限重试，重启继续。不声明就同步处理。`dedup.headers` 可替换常见投递标识头，`dedup.bodyFields` 可取 JSON 正文的点号路径，`dedup.requireMatch` 要求两处都提供并一致，否则 400。`dedup.windowHours` 默认 24；同一标识下用原始正文哈希区分重复和冲突。额外签名头填进 `headers`，认证头不下传；`rateLimit` 可设 `perMinute` 和 `burst`。
+
+`req.event` 提供 `format`、`data` 和 `trust: "untrusted"`。原始文本仍在 `req.body`，`req.deliveryId` 是处理重试和发送方重投共用的收件编号，`req.deliveryKey` 是发送方的标识（没提供就是 `null`）。支持 `webhook` 和 `openai-chat`（最后一条用户文本），默认自动识别。异步模式的 2xx 只表示收件。
+
+异步回调可用 `accept(req, { duplicate, conflict, deliveryId })` 同步返回 `{ status, headers?, body }`，不做 I/O，不拿插件上下文。只有首次投递返回 2xx 才执行 `handle`；重复和冲突都不执行。默认冲突回 409，抛错或超时回 500。可用 `unauthorizedBody`、`rateLimitedBody`、`unavailableBody` 自定 401、429、503 的 JSON 体。完整示例见 `docs/v2/plugins.md`。
+
 ### 动作
 
 对象可以声明按钮（`PluginObjectAction`）。每个动作是本插件自己的一个工具，宿主把对象的键放进 `arg`（默认 `key`）调用它：

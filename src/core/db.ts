@@ -1,6 +1,7 @@
 import { SITUATIONS_MIGRATION, SITUATION_CHAT_MIGRATION, SITUATION_RULE_NAME_MIGRATION } from "../situations/schema.ts";
 import { migrateItemProviders } from "../items/provider-schema.ts";
 import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
+import { HOOK_BODY_HASH_MIGRATION, HOOK_INBOX_MIGRATION } from "../plugins/hook-schema.ts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { noteSync, sqlName } from "./loop-monitor.ts";
 
@@ -2499,6 +2500,8 @@ export const migrations: readonly string[] = [
    create index item_change_steps_ready on item_change_steps(check_at,batch_id) where state in ('pending','waiting');`,
   SITUATION_CHAT_MIGRATION,
   SITUATION_RULE_NAME_MIGRATION,
+  HOOK_INBOX_MIGRATION,
+  HOOK_BODY_HASH_MIGRATION,
 ];
 
 export type Db = DatabaseSync;

@@ -10,6 +10,7 @@ import { OWNER } from "../core/users.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
 import { registerObject, withObjectActions } from "./objects.ts";
 import { registerHook } from "./hooks.ts";
+import { HOOK_ACCEPT_IPC_MS } from "./hook-accept.ts";
 import { emitPluginSignal } from "./signals.ts";
 import { ensureService } from "./services.ts";
 import { pluginStore } from "./store.ts";
@@ -39,7 +40,7 @@ type Declared = {
   reviews: { id: string; label: string; objectKind: string; resolves: boolean }[];
   subscriptions: Pick<import("./types.ts").Subscription, "id" | "events">[];
   objects: Omit<PluginObject, "match" | "read">[];
-  hooks?: { name: string; label?: string }[];
+  hooks?: (import("./types.ts").PluginHookOptions & { accepts: boolean })[];
   tools: { name: string; description: string; jsonSchema: Record<string, unknown>; write: boolean; page: boolean; approval: boolean; whenConnected: boolean }[];
   platforms: (Omit<PluginPlatform, "readers"> & { readers: { kind: string; label: string; id: string; read: boolean; changes: boolean }[] })[];
 };
@@ -77,7 +78,8 @@ export async function startSandbox(
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
-      const callMs = String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event" || msg.t === "review" || msg.t === "item" || msg.t === "parse" || msg.t === "check") ? 15000 : CALL_MS;
+      const callMs = msg.t === "hook.accept" ? HOOK_ACCEPT_IPC_MS :
+        String(msg.t).startsWith("object.") || (msg.t === "hook" || msg.t === "event" || msg.t === "review" || msg.t === "item" || msg.t === "parse" || msg.t === "check") ? 15000 : CALL_MS;
       const timer = setTimeout(() => {
         pending.delete(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
@@ -268,7 +270,7 @@ export async function startSandbox(
       const toolCtx: ToolContext = { app, userId: ctx.userId, spaceId: ctx.spaceId, runId: null, actor: ctx.actor, spaces: [ctx.spaceId], tools: new Set() };
       return ask({ t: "hook", name: def.name, req, ctx: { userId: ctx.userId, spaceId: ctx.spaceId, runId: null, actor: ctx.actor, conversationId: null, settings: opts.settings(ctx.userId) } }, toolCtx);
     },
-  }));
+  }, def.accepts ? (req, state) => ask({ t: "hook.accept", name: def.name, req, state }) : undefined));
   for (const t of declared.tools) {
     if (!t.name.startsWith(opts.prefix)) throw new Error(`插件 ${plugin.id} 的工具名要以 ${opts.prefix} 开头：${t.name}`);
     registerTool(

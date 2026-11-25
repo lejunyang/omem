@@ -172,6 +172,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.addHook("onRequest", async (req, reply) => {
     const route = req.routeOptions.url;
     mark(`${req.method} ${route ?? req.url.split("?")[0]}`);
+    if (route?.startsWith("/api/hooks/")) return;
     const token = bearer(req);
     if (typeof token === "string" && token.startsWith("oct_") && !(req.headers.authorization?.startsWith("Bearer oct_") &&
       ((req.method === "GET" && route === "/api/tools") || (req.method === "POST" && route === "/api/tools/:name"))))

@@ -19,7 +19,8 @@ import UiCheckbox from "./UiCheckbox.vue";
  * withdrawing it), updating or removing installed ones, and their services: running or not, recent output.
  * Its callbacks (api.hook): the address another system calls, with a secret made here and shown once.
  */
-type Hook = { name: string; label: string | null; path: string; secret: { createdAt: string; usedAt: string | null } | null };
+type Hook = { name: string; label: string | null; headerPath: string; secretHeader: string; ack: "first" | null;
+  rateLimit: { perMinute: number; burst?: number }; secret: { createdAt: string; usedAt: string | null } | null };
 type Service = { name: string; description: string; command: string; running: boolean; startedAt: string | null; streams: number; log: string[] };
 type Plugin = {
   id: string;
@@ -62,7 +63,7 @@ const editing = ref<Plugin | null>(null);
 const plugins = ref<Plugin[] | null>(null);
 const services = ref<Record<string, Service[]>>({});
 /** A callback address with its secret, right after it was made: shown this once. */
-const freshHook = ref<{ key: string; url: string } | null>(null);
+const freshHook = ref<{ key: string; secret: string; legacyUrl: string } | null>(null);
 const openLog = ref<string | null>(null);
 const picking = ref<string | null>(null);
 const source = ref("");
@@ -227,27 +228,28 @@ async function service(p: Plugin, name: string, action: "start" | "stop") {
 }
 
 const hookUrl = (path: string) => `${location.origin}${path}`;
+const hookHeader = (h: Hook) => h.secretHeader === "authorization" ? "Authorization: Bearer " : `${h.secretHeader}: `;
 const when = (at: string) => new Date(at).toLocaleString();
 async function makeSecret(p: Plugin, h: Hook) {
-  if (h.secret && !(await confirmDialog(`重新生成“${h.label ?? h.name}”的回调地址？`, { message: "旧地址马上失效，外部平台要改成新地址。", okText: "重新生成" }))) return;
+  if (h.secret && !(await confirmDialog(`重新生成“${h.label ?? h.name}”的回调密钥？`, { message: "旧密钥马上失效，外部平台要换用新密钥。", okText: "重新生成" }))) return;
   try {
     const r = await post<{ secret: string; path: string }>(`/api/plugins/${p.id}/hooks/${h.name}/secret`);
-    freshHook.value = { key: `${p.id}/${h.name}`, url: hookUrl(r.path) };
+    freshHook.value = { key: `${p.id}/${h.name}`, secret: r.secret, legacyUrl: hookUrl(r.path) };
     await load();
   } catch (e) {
     toast((e as Error).message, "error");
   }
 }
 async function revokeSecret(p: Plugin, h: Hook) {
-  if (!(await confirmDialog(`撤销“${h.label ?? h.name}”的回调地址？`, { message: "外部平台再调用会得到 404，omem 回到按间隔去读。", okText: "撤销" }))) return;
+  if (!(await confirmDialog(`撤销“${h.label ?? h.name}”的回调密钥？`, { message: "外部平台之后用这个密钥投递会收到 401；已收下的投递不受影响。", okText: "撤销" }))) return;
   await del(`/api/plugins/${p.id}/hooks/${h.name}/secret`);
   if (freshHook.value?.key === `${p.id}/${h.name}`) freshHook.value = null;
   await load();
 }
-async function copyHook(url: string) {
+async function copyHook(text: string, what: string) {
   try {
-    await navigator.clipboard.writeText(url);
-    toast("已复制回调地址", "ok");
+    await navigator.clipboard.writeText(text);
+    toast(`已复制${what}`, "ok");
   } catch {
     toast("复制失败，请手动选中复制", "error");
   }
@@ -384,19 +386,33 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
           <strong>回调</strong>
           <span class="mono">{{ h.name }}</span>
           <span v-if="h.label" class="muted">{{ h.label }}</span>
-          <span class="muted">{{ h.secret ? `地址生成于 ${when(h.secret.createdAt)}${h.secret.usedAt ? ` · 上次调用 ${when(h.secret.usedAt)}` : " · 还没被调用过"}` : "还没有地址" }}</span>
+          <span class="muted">{{ h.secret ? `密钥生成于 ${when(h.secret.createdAt)}${h.secret.usedAt ? ` · 上次调用 ${when(h.secret.usedAt)}` : " · 还没被调用过"}` : "还没有密钥" }}</span>
           <span class="spacer" />
-          <button class="btn ghost sm" :disabled="!p.enabled" @click="makeSecret(p, h)">{{ h.secret ? "重新生成" : "生成地址" }}</button>
+          <button class="btn ghost sm" :disabled="!p.enabled" @click="makeSecret(p, h)">{{ h.secret ? "重新生成" : "生成密钥" }}</button>
           <button v-if="h.secret" class="btn ghost sm" @click="revokeSecret(p, h)">撤销</button>
         </div>
-        <div v-if="freshHook?.key === `${p.id}/${h.name}`" class="row wrap small hook-fresh">
-          <code class="mono path grow">{{ freshHook.url }}</code>
-          <button class="btn sm" @click="copyHook(freshHook.url)">复制</button>
+        <div v-if="h.secret" class="row wrap small hook-fresh">
+          <code class="mono path grow">{{ hookUrl(h.headerPath) }}</code>
+          <button class="btn sm" @click="copyHook(hookUrl(h.headerPath), '回调地址')">复制地址</button>
         </div>
         <p class="muted small">
-          {{ freshHook?.key === `${p.id}/${h.name}` ? "这个地址只显示这一次：填进外部平台的 webhook（POST），之后在这里只能重新生成。" : h.secret ? `地址形如 ${hookUrl(h.path)}<密钥>；密钥只在生成时显示。` : "生成地址后填进外部平台的 webhook，平台有变化时会叫醒 omem 去读，不用一直等轮询。" }}
-          外部平台要能访问到这台 omem；每分钟最多 60 次，正文最大 1 MB。
+          在外部平台填 POST 回调地址，把密钥放在请求头 <code>{{ hookHeader(h) }}&lt;密钥&gt;</code>。密钥只在生成时显示。
+          {{ h.ack === "first" ? "先应答，再处理。" : "处理完再应答。" }}每分钟 {{ h.rateLimit.perMinute }} 次<span v-if="h.rateLimit.burst">，突发 {{ h.rateLimit.burst }} 次</span>；正文最大 1 MiB。
         </p>
+        <template v-if="freshHook?.key === `${p.id}/${h.name}`">
+          <div class="row wrap small hook-fresh">
+            <code class="mono path grow">{{ hookHeader(h) }}{{ freshHook.secret }}</code>
+            <button class="btn sm" @click="copyHook(hookHeader(h) + freshHook.secret, '请求头')">复制请求头</button>
+          </div>
+          <details class="muted small stack">
+            <summary>外部平台不支持添加请求头？</summary>
+            <p>也可以用带密钥的地址。注意：密钥可能留在外部平台的投递日志里。</p>
+            <div class="row wrap hook-fresh">
+              <code class="mono path grow">{{ freshHook.legacyUrl }}</code>
+              <button class="btn sm" @click="copyHook(freshHook.legacyUrl, '带密钥的地址')">复制带密钥的地址</button>
+            </div>
+          </details>
+        </template>
       </div>
     </div>
   </div>
@@ -442,6 +458,7 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
   border-radius: var(--radius-sm);
   padding: 4px 8px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .log {
   max-height: 240px;
