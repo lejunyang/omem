@@ -21,8 +21,12 @@ export function codeRework(app: App, item: Item, work: CodeWorkDetail, since: st
   if (previous && (!whileOpen(since) || last.finishedAt === since || !notes.length && !tasks.some(task => whileOpen(task.createdAt) && (!task.coderRun || task.coderRun === last.id)))) return null;
   const missing = tasks.filter(task => !hasResult(task));
   const undelivered = notes.filter(note => !note.deliveredAt);
+  // The owner pushed or applied the branch: that is the acceptance of what was reviewed, whatever the last
+  // round's verdict was (a round paused on its budget never gets one). Holding out for an approved round
+  // would keep the flow on a work that has ended. What the owner asked for and nobody did still counts.
+  const shipped = work.stage.key === "ended" && work.stage.cls === "ok";
   const parts = [missing.length ? `修改项 ${missing.map(task => `${taskLabel(task.seq)}「${task.title}」`).join("、")}还没有通过验证或给出不做的说明` : "",
     undelivered.length ? `补充要求尚未交到编码 Agent：${undelivered.map(note => note.text.slice(0, 80)).join("、")}` : "",
-    last.status !== "done" || last.verdict !== "approved" ? "这一轮的评审没有通过" : ""].filter(Boolean);
+    !shipped && (last.status !== "done" || last.verdict !== "approved") ? "这一轮的评审没有通过" : ""].filter(Boolean);
   return { round: previous ? last.round : undefined, verified: previous && !busy && !parts.length, blocked: !busy && parts.length ? `第 ${last.round} 轮已结束：${parts.join("；")}` : undefined };
 }

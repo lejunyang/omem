@@ -673,6 +673,12 @@ describe("对象与工具", () => {
     // What the stage run wrote while the round was still going is not shown over the host's newer reason.
     if (blocked) expect(flowView(app, item.id).stages.find((x) => x.id === "code")).toMatchObject({ note: expect.stringContaining(blocked), result: "" });
     expect(one<{ n: number }>(app.db, "select count(*) n from runs where kind='code'")?.n).toBe(1);
+    if (!blocked) return;
+    // The owner pushes the branch themselves: the work has ended, so the unpassed review no longer holds
+    // the stage; a change the owner asked for and nobody did still does.
+    setRunOutput(app, work.id, { appliedAt: new Date().toISOString(), settled: "pushed-outside" });
+    await advance(app, item.id);
+    expect(s("code").state).toBe(outcome === "review-failed" ? "done" : "blocked");
   });
   it("跟着分支评审的段按本人意见重做：任务是带 rereview_of 复审，不发起编码交办", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);

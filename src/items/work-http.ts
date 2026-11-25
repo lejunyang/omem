@@ -306,6 +306,12 @@ export function registerWorkRoutes(server: FastifyInstance, app: App, who: (req:
   server.post("/api/work/:id/refresh", async (req) => {
     const id = (req.params as { id: string }).id;
     requireItem(app, id, who(req), "operate");
+    // “更新” first re-reads what the flows on this line follow (a branch pushed outside, a merged request, an
+    // answered card): the stage states are most of what the page shows, and they need no model to recheck.
+    const { advanceFlowNow } = await import("../flows/engine.ts");
+    const flows = all<{ id: string }>(app.db, `select i.id from items i join item_flows f on f.item_id=i.id
+      where (i.id=? or i.parent_id=?) and f.ended_at is null and i.status not in ('done','cancelled','expired')`, id, id);
+    for (const flow of flows) await advanceFlowNow(app, flow.id).catch(e => console.warn(`[omem] 更新时重查流程失败 ${flow.id}`, e));
     const { refreshLine } = await import("../channels/listen-assist.ts");
     const r = await refreshLine(app, id, who(req));
     return { runId: r.id, status: r.status };

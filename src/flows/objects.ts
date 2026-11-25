@@ -48,7 +48,9 @@ export function codeWorkSince(app: App, item: Item, since: string, newRoundOnly 
 
 function codeWorkObject(app: App, item: Item, work: CodeWorkDetail): FlowObject {
   const last = work.roundList.at(-1);
-  const done = last?.status === "done" && last.verdict === "approved" && ["done", "review-ok", "ended"].includes(work.stage.key);
+  // Pushed or applied by the owner counts as done even when the last round's review had not passed (code-rework.ts).
+  const shipped = work.stage.key === "ended" && work.stage.cls === "ok" && !work.branchReview;
+  const done = shipped || last?.status === "done" && last.verdict === "approved" && ["done", "review-ok", "ended"].includes(work.stage.key);
   const dropped = done ? droppedFor(app, item, work.rootId) : null;
   return { ref: `code-work:${work.rootId}`, title: work.title, status: work.stage.key, done: done && !dropped, link: `#/runs/${work.latestId}`, ...(dropped ? { dropped } : {}) };
 }
