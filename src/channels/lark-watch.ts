@@ -181,6 +181,11 @@ function handledToday(app: App, conversationId: string) {
   return one<{ n: number }>(app.db, "select count(*) n from runs where kind = 'ask' and lane = ? and created_at >= ? and status in ('done','running') and json_extract(output, '$.prefiltered') is null", conversationId, start.toISOString())?.n ?? 0;
 }
 
+export function watchBatchLimit(app: App, context: ListenContext, conversationId: string) {
+  const done = handledToday(app, conversationId);
+  return done >= context.knobs.perDay ? `今天已经处理了 ${done} 批，到了这个关注每天的上限（${context.knobs.perDay}）` : null;
+}
+
 /**
  * Before a 关注's batch goes to its handler (a full agent run), the decision model asks whether there is
  * anything an assistant can usefully step in on, given the brief, the lessons and the group: most batches
@@ -192,8 +197,8 @@ function handledToday(app: App, conversationId: string) {
 export async function prefilterBatch(app: App, conversationId: string, batch: { id?: string; text: string; meta: Record<string, unknown> }[], signal?: AbortSignal, log?: { ref: string; reason: (text: string) => void }): Promise<string | null> {
   const ctx = contextOfConversation(app, conversationId);
   if (!ctx) return null;
-  const done = handledToday(app, conversationId);
-  if (done >= ctx.knobs.perDay && !batch.some((m) => m.meta.addressed)) return `今天已经处理了 ${done} 批，到了这个关注每天的上限（${ctx.knobs.perDay}）`;
+  const limit = batch.some((m) => m.meta.addressed) ? null : watchBatchLimit(app, ctx, conversationId);
+  if (limit) return limit;
   if (ctx.knobs.listen !== "relevant" || !(ctx.knobs.prefilter ?? app.config.lark.watchPrefilter !== false)) return null;
   if (batch.some((m) => m.meta.addressed)) return null;
   const { decisionReady } = await import("../core/decision.ts");

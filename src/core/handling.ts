@@ -48,12 +48,12 @@ const actorOf = (origin: string): Handler | null =>
 export { actorOf as handlerOfOrigin };
 
 /** A path noted something from an event: what it decided, and the change or run it became. */
-export function noteHandling(app: App, h: { event: string; actor: Handler; decision: HandlingDecision; by?: string | null; runId?: string | null; changeId?: string | null; reason?: string | null }) {
+export function noteHandling(app: App, h: { event: string; actor: Handler; decision: HandlingDecision; by?: string | null; runId?: string | null; changeId?: string | null; reason?: string | null; stage?: "deep" }) {
   if (!h.event) return;
   run(app.db, `insert into handled_messages(channel,message_id,rule,run_id,at,actor,decision,change_id,reason) values(?,?,?,?,?,?,?,?,?)
     on conflict(channel,message_id) do update set decision = excluded.decision, change_id = coalesce(excluded.change_id, change_id),
       run_id = coalesce(excluded.run_id, run_id), reason = coalesce(excluded.reason, reason), at = excluded.at`,
-    `handled:${h.actor}`, h.event, h.by ?? "", h.runId ?? null, now(), h.actor, h.decision, h.changeId ?? null, h.reason ? truncate(h.reason, 300) : null);
+    `handled:${h.actor}${h.stage ? `:${h.stage}` : ""}`, h.event, h.by ?? "", h.runId ?? null, now(), h.actor, h.decision, h.changeId ?? null, h.reason ? truncate(h.reason, 300) : null);
 }
 
 /** A path stepped aside for an event: for whom, why. Once per path and event (the first reason stays). */
@@ -74,7 +74,7 @@ function fromRow(app: App, r: Row): Handling | null {
     return { ...base, actor, label: HANDLERS[actor] ?? actor, decision: "yielded", by: r.rule || null };
   }
   if (r.channel.startsWith("handled:")) {
-    const actor = r.channel.slice(8) as Handler;
+    const actor = r.channel.slice(8).split(":", 1)[0] as Handler;
     return { ...base, actor, label: HANDLERS[actor] ?? actor, decision: (r.decision as HandlingDecision) ?? "noted", by: r.rule || null };
   }
   if (r.channel === "lark") {

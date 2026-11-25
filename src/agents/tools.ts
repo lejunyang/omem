@@ -4399,8 +4399,8 @@ def({
     "交“先看一眼”的结果（只给 first-look 用）。answered：材料和预查已经够答完，text 写结论，evidence 写依据；escalate：答不完要深查，text 写已经知道的，next 写还要查什么；owner：要本人拍板，text 写要本人定的问题。text 是给人看的几行，宿主按设置发出去。",
   schema: z.object({
     outcome: z.enum(["answered", "escalate", "owner"]),
-    text: z.string().trim().min(1).max(1500).describe("几行给人看的话"),
-    evidence: z.string().trim().max(1000).optional().describe("answered 的依据：预查结果里的哪一行、原文引用"),
+    text: z.string().trim().min(1).max(1500).describe("第一行给提问的人一句结论（四十字以内），必要时另起最多三条以 - 开头的短要点，只写怎么办、找谁、去哪看。owner 第一行写要本人定的问题，要点写可选做法和倾向。原因链路、历史背景、排查过程和引用放 evidence"),
+    evidence: z.string().trim().max(1000).optional().describe("依据：预查或原文引用、原因链路、历史背景、排查过程"),
     next: z.string().trim().max(600).optional().describe("escalate：接下来要查什么"),
   }),
   handler: async (ctx, a) => {

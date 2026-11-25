@@ -71,6 +71,7 @@
 - 代码写法：只读，不改任何东西；从标准输入读事件 JSON（也在环境变量 `OMEM_EVENT`），正则取到的值在 `captures` 里（`"0"` 是整段匹配，`"1"` 起是分组，命名组按名字；也在 `OMEM_CAPTURES`）。不要把消息内容拼进命令行或 SQL。输出写清楚、短，后面的模型直接读它；`direct: true` 只给输出本身就是答案的预查（结果会原样发出，不经模型）。
 - 规则里：`agent` 动作可写 `firstLook: true`、`probes: ["名字"]`、`firstTo`（`chat` / `dm` / `ephemeral`）；单独的 `{"type": "probe", "name": …}` 动作当场跑一个预查，输出交给后面的动作。
 - `first_look_outcome(outcome, text, evidence?, next?)`：只给 first-look 角色交结果，见 roles/first-look.md。
+  `text` 第一行一句结论（四十字以内），必要时另起最多三条行动要点；`owner` 第一行写要本人定的问题，要点写备选做法和倾向。原因、背景、排查过程和引用放 `evidence`。
 
 ## 问本人、给本人选项
 

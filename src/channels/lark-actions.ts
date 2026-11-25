@@ -232,7 +232,11 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
   if (inter.purpose === "probe-proposal" || inter.purpose === "first-look") {
     // 快速通道 (docs/v2/first-look.md): a proposed probe (保存 / 不要), or a first look's card (发给大家 / 不用查了 / 不用了).
     const act = String((value as { action?: string } | undefined)?.action ?? "");
-    closeInteraction(app, inter.id, operator);
+    if (inter.purpose === "first-look") {
+      if (act === "continue" && !inter.allowed.length) return { toast: { type: "error", content: "无法确认卡片的主人" } };
+      if (!run(app.db, "update card_interactions set status = 'done', handled_at = ?, handled_by = ? where id = ? and status = 'open'", new Date().toISOString(), operator, inter.id).changes) return { toast: { type: "info", content: "已经处理过了" } };
+      inter = getInteraction(app, inter.id)!;
+    } else closeInteraction(app, inter.id, operator);
     try {
       if (inter.purpose === "probe-proposal") {
         const card = await (await import("../rules/probes.ts")).decideProposal(app, inter.payload as never, act, opName);

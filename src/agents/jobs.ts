@@ -231,6 +231,9 @@ async function runAsk(ctx: RunContext) {
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode };
   }
+  if (msgs.some((message) => message.meta.firstLookRequested)) {
+    await (await import("../channels/listen-first-look.ts")).deliverRequestedLooks(ctx.app, ctx.run, msgs, quiet ? null : answer);
+  }
   // A watched group's batch with nothing to do: kept in the conversation, out of the run list.
   if (msgs.every((m) => typeof m.meta.speaker === "string") && quiet) {
     const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });

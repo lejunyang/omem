@@ -47,7 +47,7 @@ export function claimSteering(app: App, runId: string) {
   if (!next || next.input.itemStepApproval) return null;
   const ids = (next.input.messageIds as string[] | undefined) ?? [];
   const msgs = threadMessages(app, conversationId, { limit: 400 }).filter((m) => ids.includes(m.id) && m.role === "user" && !m.meta.answer);
-  if (!msgs.length) return null;
+  if (!msgs.length || msgs.some((message) => message.meta.firstLookRequested)) return null;
   const turnUser = input.userId ?? OWNER, sender = (next.input.userId as string | undefined) ?? OWNER;
   if (!mayJoinTurn(app, turnUser, sender, msgs)) return null;
   const taken = new Set(msgs.map((m) => m.id));
@@ -118,10 +118,10 @@ type Trigger = { messageId: string | null; topicId: string | null; at: string; s
  * The same rule fired again in this chat while this run works on it (rules/actions.ts joinLane): the
  * triggers waiting in the lane's next run come to this one, which drops that run.
  */
-function takeTriggers(app: App, runId: string, lane: string, input: { rule?: { id?: string; mergeReply?: string }; lark?: { chats?: string[] | null } }): string | null {
-  if (input.rule?.mergeReply === "separate" || ending(app, runId)) return null;
+function takeTriggers(app: App, runId: string, lane: string, input: { firstLook?: unknown; rule?: { id?: string; mergeReply?: string }; lark?: { chats?: string[] | null } }): string | null {
+  if (input.firstLook || input.rule?.mergeReply === "separate" || ending(app, runId)) return null;
   const next = queuedInLane(app, lane, "agent");
-  if (!next || (next.input.rule as { id?: string } | undefined)?.id !== input.rule?.id) return null;
+  if (!next || next.input.firstLook || (next.input.rule as { id?: string } | undefined)?.id !== input.rule?.id) return null;
   if ((next.input.rule as { mergeReply?: string }).mergeReply === "separate") return null;
   const triggers = (next.input.triggers as Trigger[] | undefined) ?? [];
   if (!triggers.length) return null;

@@ -13,10 +13,11 @@ import { setKey } from "../src/core/ai-keys.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
+import { handlingOf } from "../src/core/handling.ts";
 import { listNotifications } from "../src/core/notify.ts";
 import { OWNER } from "../src/core/users.ts";
 import { runActions } from "../src/rules/actions.ts";
-import { deliverFirst, resolveDest, setFirstLookBudgetForTests, type FirstLookInput } from "../src/rules/first-look.ts";
+import { deliverFirst, resolveDest, RULE_FIRST_LOOKS_PER_DAY, setFirstLookBudgetForTests, type Delivered, type FirstLookInput } from "../src/rules/first-look.ts";
 import { getProbe, listProbes, matchProbe, runProbes, saveProbe } from "../src/rules/probes.ts";
 import { saveRule } from "../src/rules/store.ts";
 import type { RuleEvent } from "../src/rules/types.ts";
@@ -168,8 +169,51 @@ describe("规则：先看一眼", () => {
     const reply = client.calls.find((c) => c.op === "reply")!;
     expect(reply.args.path.message_id).toBe("om_a1");
     expect(JSON.stringify(reply.args)).toContain("快速结论 answered 看到 42");
+    expect(client.sent()).not.toContain("接着查");
     expect(listRuns(app, { parentId: look.id, kind: "agent" })).toHaveLength(0);
     expect(listRuns(app, { parentId: look.id, kind: "probe" })).toHaveLength(1);
+  }, 120_000);
+
+  it("answered 的私聊卡片只让本人交给规则指定的 AI 一次，到上限可稍后再试", async () => {
+    useClient();
+    app.config.agents.profiles.push(fake("fake-deep"));
+    try {
+      const r = rule("核对导出", [{ type: "agent", spec: "assistant", ai: { profile: "fake-deep" }, reply: "draft", firstLook: true, probes: ["uid"], firstTo: "dm" }]);
+      const [res] = await runActions(app, r, event("om_rule_continue", "UID 18 导出失败 [answered]"), "");
+      const look = await waitForRun(app, res.runId!);
+      const delivery = look.output.delivered as Delivered;
+      expect(look.output.firstLookResult).toMatchObject({ outcome: "answered", text: "快速结论 answered 看到 18", evidence: "预查输出第一行" });
+      expect(client.sent()).toContain("接着查");
+      expect((await click(delivery.messageId!, "continue", "ou_other")).toast.type).toBe("error");
+      const capped = Array.from({ length: RULE_FIRST_LOOKS_PER_DAY - 1 }, () => createRun(app, { kind: "first-look", title: "配额用例", input: { rule: { id: r.id } }, notBefore: "2999-01-01T00:00:00Z" }));
+      expect((await click(delivery.messageId!, "continue")).toast.content).toContain("今天先看一眼的上限");
+      expect(listRuns(app, { parentId: look.id, kind: "agent" })).toHaveLength(0);
+      for (const cap of capped) run(app.db, "delete from runs where id = ?", cap.id);
+      const attempts = await Promise.all([click(delivery.messageId!, "continue"), click(delivery.messageId!, "continue")]);
+      const clicked = attempts.filter((attempt) => attempt.toast.content === "已交给深查");
+      expect(clicked).toHaveLength(1);
+      expect(JSON.stringify(clicked[0].card)).toContain("让接着查");
+      expect(JSON.stringify(clicked[0].card)).toContain("不用查了");
+      expect(JSON.stringify(clicked[0].card)).not.toContain('"action":"continue"');
+      const children = listRuns(app, { parentId: look.id, kind: "agent" });
+      expect(children).toHaveLength(1);
+      const [deep] = children;
+      for (const text of ["本人要求接着查", "快速结论 answered 看到 18", "预查输出第一行", "PROBE-OUT:18"]) expect(deep.input.task).toContain(text);
+      expect(deep.input.execution).toMatchObject({ profile: "fake-deep" });
+      expect(getRun(app, look.id).output.stages).toMatchObject({ deep: { runId: deep.id, detail: expect.stringContaining("本人要求接着查") } });
+      expect(handlingOf(app, "om_rule_continue")).toEqual(expect.arrayContaining([
+        expect.objectContaining({ decision: "drafted", runId: look.id }),
+        expect.objectContaining({ decision: "handed", runId: deep.id }),
+      ]));
+      const finished = await waitForRun(app, deep.id);
+      expect(finished.status, finished.error ?? "").toBe("done");
+      expect(finished.profileId).toBe("fake-deep");
+      expect(getRun(app, look.id).output.deepDelivered).toMatchObject({ to: "dm" });
+      expect((await click(delivery.messageId!, "continue")).toast.content).not.toBe("已交给深查");
+      expect(listRuns(app, { parentId: look.id, kind: "agent" })).toHaveLength(1);
+    } finally {
+      app.config.agents.profiles = app.config.agents.profiles.filter((profile) => profile.id !== "fake-deep");
+    }
   }, 120_000);
 
   it("escalate: the deep run gets the probe output and the first look's words, and answers where the first message went; 不用查了 is put away", async () => {
@@ -250,6 +294,7 @@ describe("规则：先看一眼", () => {
     expect(client.calls.filter((c) => c.op === "reply")).toHaveLength(0);
     expect(client.calls.map((c) => c.op)).toEqual(["ephemeral"]);
     expect(JSON.stringify(client.calls[0].args)).toContain("要你定");
+    expect(client.sent()).toContain("接着查");
     expect(listRuns(app, { parentId: look.id, kind: "agent" })).toHaveLength(0);
   }, 120_000);
 
@@ -332,6 +377,7 @@ describe("第一条发到哪", () => {
     expect((await click(card2, "dismiss")).toast.content).toBe("好的");
     expect((await click(card2, "share")).toast.content).toBe("已经处理过了");
   });
+
 });
 
 describe("关注：先看一眼", () => {
@@ -361,6 +407,42 @@ describe("关注：先看一眼", () => {
     expect(threadMessages(app, c.conversationId!).some((m) => m.text.includes("先看一眼已经答了这几条"))).toBe(true);
     expect(one(app.db, "select decision from handled_messages where channel = 'handled:watch' and message_id = 'om_l2'")).toMatchObject({ decision: "drafted" });
     expect(client.calls.filter((x) => x.op === "reply")).toHaveLength(0);
+  }, 120_000);
+
+  it("关注答完后接着查另起一批，配额拦住时不消耗卡片", async () => {
+    useClient();
+    const chat = "oc_watch_continue";
+    setOwnerInChatForTests(chat, true);
+    const context = saveContext(app, { kind: "place", name: "项目 A 值班", chats: [chat], brief: { ...BRIEF, at: now(), confirmedAt: now() }, knobs: { reply: "none", listen: "all", batchMinutes: 10, firstLook: true, probes: ["uid"], firstTo: "ephemeral", perDay: 1 } });
+    await route("om_watch_continue", "UID 28 导出失败 [answered]", chat);
+    const [look] = looksIn(context.id);
+    const [old] = batchOf(context.conversationId!);
+    updateQueuedRun(app, look.id, { notBefore: now() });
+    const done = await waitForRun(app, look.id);
+    const delivery = done.output.delivered as Delivered;
+    expect(getRun(app, old.id).status).toBe("cancelled");
+    expect(client.sent()).toContain("接着查");
+    const cap = createRun(app, { kind: "ask", title: "配额用例", input: { conversationId: context.conversationId }, lane: context.conversationId, notBefore: "2999-01-01T00:00:00Z" });
+    run(app.db, "update runs set status = 'done' where id = ?", cap.id);
+    expect((await click(delivery.messageId!, "continue")).toast.content).toContain("这个关注每天的上限");
+    run(app.db, "delete from runs where id = ?", cap.id);
+    const clicked = await click(delivery.messageId!, "continue");
+    expect(clicked.toast.content).toBe("已交给深查");
+    expect(JSON.stringify(clicked.card)).toContain("不用查了");
+    expect(JSON.stringify(clicked.card)).toContain("让接着查");
+    const deepId = (getRun(app, look.id).output.deep as { runId: string }).runId;
+    expect(deepId).not.toBe(old.id);
+    expect((await click(delivery.messageId!, "continue")).toast.content).not.toBe("已交给深查");
+    expect(batchOf(context.conversationId!)).toHaveLength(2);
+    const deepMessages = getRun(app, deepId).input.messageIds as string[];
+    const material = threadMessages(app, context.conversationId!).find((message) => deepMessages.includes(message.id) && message.meta.firstLookRequested === look.id)!.text;
+    for (const text of ["本人要求接着查", "快速结论 answered 看到 28", "预查输出第一行", "om_watch_continue"]) expect(material).toContain(text);
+    expect(handlingOf(app, "om_watch_continue")).toContainEqual(expect.objectContaining({ actor: "watch", decision: "handed", runId: deepId }));
+    const deep = await waitForRun(app, deepId);
+    expect(deep.status, deep.error ?? "").toBe("done");
+    expect(getRun(app, look.id).output.deepDelivered).toMatchObject({ to: "ephemeral" });
+    expect(client.calls.filter((entry) => entry.op === "reply")).toHaveLength(0);
+    expect(JSON.stringify(client.calls.at(-1)!.args)).not.toContain("发给大家");
   }, 120_000);
 
   it("escalate runs the batch now with both results; a batch already on the messages answers alone", async () => {

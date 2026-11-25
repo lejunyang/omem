@@ -3,7 +3,7 @@ import { all, one, run as sql } from "../core/db.ts";
 import { noteHandling, noteYield } from "../core/handling.ts";
 import { OWNER } from "../core/users.ts";
 import { now, truncate } from "../core/util.ts";
-import { cancelRun, createRun, queuedInLane, updateQueuedRun, type Run, type RunContext } from "../agents/runs.ts";
+import { addRunEvent, cancelRun, createRun, queuedInLane, updateQueuedRun, type Run, type RunContext } from "../agents/runs.ts";
 import { addMessage } from "../agents/threads.ts";
 import { probesText, type ProbeResult } from "../rules/probes.ts";
 import { DEST_TEXT, type Delivered, type FirstLookInput, type LookMessage, type Outcome } from "../rules/first-look.ts";
@@ -184,21 +184,36 @@ export function settle(app: App, r: Run, input: FirstLookInput, messages: LookMe
  * escalate: what the probes and the first look found joins the batch (a message of its own, not the
  * owner's words), and the batch runs now — or a batch of its own when none is waiting.
  */
-export function escalate(app: App, r: Run, input: FirstLookInput, messages: LookMessage[], o: Outcome, results: ProbeResult[], d: Delivered, held: Held): Promise<{ runId: string | null; detail: string }> {
+export async function escalate(app: App, r: Run, input: FirstLookInput, messages: LookMessage[], d: Delivered, held: Held, material: { outcome: Outcome; results: ProbeResult[] } | { requested: string }): Promise<{ runId: string | null; detail: string }> {
   const l = input.listen!;
+  const requested = "requested" in material ? material.requested : null;
+  const { receive } = await import("../agents/inbox.ts");
+  if (requested) {
+    const { watchBatchLimit } = await import("./lark-watch.ts");
+    const context = getContext(app, l.contextId);
+    if (!context || context.status !== "active" || (context.expiresAt && context.expiresAt <= now()) || context.userId !== input.userId || context.conversationId !== l.conversationId || !input.chat || !context.chats.includes(input.chat.id)) return { runId: null, detail: "这个关注已停用或不再处理这个群" };
+    const limit = watchBatchLimit(app, context, l.conversationId);
+    if (limit) return { runId: null, detail: limit };
+  }
+  const o = "outcome" in material ? material.outcome : null;
+  const results = "results" in material ? material.results : [];
   const text = [
-    `先看一眼看了这 ${messages.length} 条（${messages.map((m) => `飞书消息 ${m.id}`).join("、")}），要接着查。`,
+    requested ?? `先看一眼看了这 ${messages.length} 条（${messages.map((m) => `飞书消息 ${m.id}`).join("、")}），要接着查。`,
     results.length ? `预查结果：\n${probesText(results, 2500)}` : "",
-    o.by === "model" ? `已经知道的：${o.text || "（没写）"}${o.evidence ? `\n依据：${o.evidence}` : ""}\n还要查：${o.next || "（没写）"}${o.reason ? `\n为什么还要查：${o.reason}` : ""}` : `先看一眼没有结论：${o.reason ?? ""}`,
-    d.to === "none" ? "第一条消息没有发出去。" : `第一条消息已经发到${DEST_TEXT[d.to]}，告诉了还在查什么；你的结论照这个关注的回复方式发。`,
+    !o ? "" : o.by === "model" ? `已经知道的：${o.text || "（没写）"}${o.evidence ? `\n依据：${o.evidence}` : ""}\n还要查：${o.next || "（没写）"}${o.reason ? `\n为什么还要查：${o.reason}` : ""}` : `先看一眼没有结论：${o.reason ?? ""}`,
+    d.to === "none" ? "第一条消息没有发出去。" : `第一条消息已经发到${DEST_TEXT[d.to]}${requested ? "；群里仍照这个关注的回复方式处理" : "，告诉了还在查什么；你的结论照这个关注的回复方式发"}。`,
   ].filter(Boolean).join("\n\n");
-  return import("../agents/inbox.ts").then(async ({ receive }) => {
-    const res = await receive(app, { conversationId: l.conversationId, channel: LISTEN_CHANNEL, speaker: "先看一眼", text, meta: { firstLook: r.id, addressed: true, chatId: input.chat!.id }, mergeMs: 0, fixedWindow: true });
-    // The batch it joined runs now (a fixed window is not brought forward by receive); other held batches go back to their time.
-    if (res.runId) updateQueuedRun(app, res.runId, { notBefore: now() });
-    release(app, held.filter((h) => h.id !== res.runId));
-    return { runId: res.runId, detail: res.runId ? `交给关注的这一批，马上处理（${res.runId}）` : "没有交出去" };
-  });
+  const res = await receive(app, { conversationId: l.conversationId, channel: LISTEN_CHANNEL, speaker: "先看一眼", text, meta: { firstLook: r.id, ...(requested ? { firstLookRequested: r.id } : {}), addressed: true, chatId: input.chat!.id }, mergeMs: 0, fixedWindow: true });
+  if (res.runId) updateQueuedRun(app, res.runId, { notBefore: now() });
+  release(app, held.filter((h) => h.id !== res.runId));
+  return { runId: res.runId, detail: res.runId ? `交给关注的这一批，马上处理（${res.runId}）` : res.reply || "没有交出去" };
+}
+
+export async function deliverRequestedLooks(app: App, batch: Run, messages: { meta: Record<string, unknown> }[], answer: string | null) {
+  const ids = new Set(messages.map((message) => message.meta.firstLookRequested).filter((id): id is string => typeof id === "string"));
+  if (!ids.size) return;
+  const { deliverDeep } = await import("../rules/first-look.ts");
+  for (const id of ids) await deliverDeep(app, batch, answer, id).catch((error: Error) => addRunEvent(app, batch.id, "status", { text: `深查结论没发出去：${truncate(error.message, 120)}` }));
 }
 
 /** For the 关注 page: its recent first looks and how each went. */

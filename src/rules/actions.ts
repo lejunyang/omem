@@ -45,7 +45,7 @@ function joinLane(app: App, rule: Rule, a: AgentAction, e: RuleEvent, lane: stri
   const trigger = triggerOf(e);
   // Each trigger on its own, as before: no lane, so they also run side by side.
   if (a.merge === false) return { triggers: [trigger] };
-  const own = runsInLane(app, lane).filter((r) => r.kind === "agent" && (r.input.rule as { id?: string } | undefined)?.id === rule.id);
+  const own = runsInLane(app, lane).filter((r) => r.kind === "agent" && !r.input.firstLook && (r.input.rule as { id?: string } | undefined)?.id === rule.id);
   if (a.mergeReply === "separate") {
     // A wave (alerts one after another): the triggers wait together in the lane's next run, which
     // handles them in one go, each still done and answered on its own. The running one is left alone.

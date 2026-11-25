@@ -156,6 +156,7 @@ describe("情境", () => {
         expect(handler).toContain("先看一眼没有结论");
         expect(sent.find(x => x.op === "create")?.args.data.receive_id).toBe("ou_owner");
         expect(JSON.stringify(sent)).not.toContain("不用查了");
+        expect(JSON.stringify(sent)).not.toContain('"action":"continue"');
         const second = await startSituation(app, "owner", c.id, "当天另一回");
         expect(lookOf(second.instance.conversationId)).toHaveLength(0);
         expect((await waitForRun(app, second.runId!)).status).toBe("done");

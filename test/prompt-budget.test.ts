@@ -59,7 +59,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "work-state": ["work-state", 6510, 6510, 3951, 3951],
   "listen-coach": ["listen-coach", 6049, 6154, 3044, 3044],
   "outcome-reviewer": ["outcome-review", 4925, 4925, 2752, 2752],
-  "first-look": ["first-look", 4629, 4629, 2070, 2070],
+  // 实测：首句、短要点和改写对照后，MCP 为 4822 字符，无工具为 2248。
+  "first-look": ["first-look", 4822, 4822, 2248, 2248],
 };
 
 function checkBudget(prep: PreparedRun, measuredSize: number, role: RoleName) {

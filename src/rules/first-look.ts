@@ -6,6 +6,7 @@ import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { now, truncate } from "../core/util.ts";
 import { addRunEvent, getRun, setRunOutput, stopRun, type Run, type RunContext } from "../agents/runs.ts";
 import { eventSummary } from "./compile.ts";
+import { continuedMaterial, OWNER_CONTINUED, splitFirstLookText } from "./first-look-material.ts";
 import { fenced, probesText, runProbes, type ProbeResult } from "./probes.ts";
 import type { Rule, RuleAction, RuleEvent } from "./types.ts";
 
@@ -18,7 +19,7 @@ import type { Rule, RuleAction, RuleEvent } from "./types.ts";
  *    handing in one of answered / escalate / owner (`first_look_outcome`) within FIRST_LOOK_BUDGET_MS;
  *    running out of time, failing or handing in nothing is escalate. An `answered` is checked by the
  *    decision model (scene `firstlook`) when there is one: below its threshold it is escalate after all;
- * 3. 深查 — only on escalate: the rule's agent run (or the 关注's batch, at once), with the probe output
+ * 3. 深查 — on escalate or the owner's request: the rule's agent run (or the 关注's batch, at once), with the probe output
  *    and the first look's words in its task.
  *
  * The first look's words go where the rule or the 关注 says (`chat` / `dm` / `ephemeral`, settings
@@ -258,6 +259,7 @@ export async function firstLookRun(ctx: RunContext) {
     }
     // 4. the first message
     if (input.situation && !situation?.lookStillNeeded(app, input.situation.instanceId)) return { quiet: true };
+    ctx.output({ firstLookResult: { outcome: o.outcome, text: o.text, evidence: o.evidence, next: o.next, reason: o.reason, by: o.by }, lookedMessageIds: messages.map((message) => message.id) });
     const delivered = await deliverFirst(app, r, input, messages, o);
     stages.first = { at: delivered.at, to: delivered.to, why: delivered.why };
     ctx.output({ stages, delivered, outcome: o.outcome, ...(situation ? { situationLook: situation.lookMaterial(o, delivered) } : {}) });
@@ -265,7 +267,7 @@ export async function firstLookRun(ctx: RunContext) {
     // 5. what comes after
     let deep: { runId: string | null; detail: string } | null = null;
     if (o.outcome === "escalate") {
-      deep = input.rule ? await deepRule(app, r, input, o, results, delivered) : listen ? await listen.escalate(app, r, input, messages, o, results, delivered, held) : null;
+      deep = input.rule ? await deepRule(app, r, input, delivered, deepMaterial(o, results, delivered)) : listen ? await listen.escalate(app, r, input, messages, delivered, held, { outcome: o, results }) : null;
       held = [];
       if (deep) {
         stages.deep = { runId: deep.runId, at: now(), detail: deep.detail };
@@ -312,13 +314,14 @@ function larkIdOf(app: App, userId: string, bot: string | undefined) {
 }
 
 type CardBody = { title: string; subtitle?: string; color: string; blocks: Record<string, unknown>[] };
-type Buttons = { share?: boolean; stop?: boolean; dismiss?: boolean };
+type Buttons = { share?: boolean; continueDeep?: boolean; stop?: boolean; dismiss?: boolean };
 /** What a first-look card carries for its buttons (lark-actions.ts → decideCard). */
-export type CardPayload = { lookRunId: string; stage: "first" | "deep"; body: CardBody; buttons: Buttons; share: string; chatId: string; replyTo: string; bot?: string; ephemeral?: boolean; source: FirstLookInput["source"] };
+export type CardPayload = { lookRunId: string; stage: "first" | "deep"; body: CardBody; buttons: Buttons; share: string; chatId: string; replyTo: string; bot?: string; ephemeral?: boolean; note?: string; source: FirstLookInput["source"] };
 
 function cardOf(body: CardBody, b: Buttons, note?: string) {
   const buttons = [
     ...(b.share ? [{ text: "发给大家", value: "share", style: "primary" }] : []),
+    ...(b.continueDeep ? [{ text: "接着查", value: "continue", style: "default" }] : []),
     ...(b.stop ? [{ text: "不用查了", value: "stop", style: "danger" }] : []),
     ...(b.dismiss ? [{ text: "不用了", value: "dismiss" }] : []),
   ];
@@ -340,8 +343,11 @@ async function firstBody(app: App, input: FirstLookInput, messages: LookMessage[
   const { resolveCitationsSync } = await import("../channels/common.ts");
   const where = input.situation ? `情境「${input.situation.name}」` : `${input.chat!.kind === "p2p" ? "私聊" : "群"}「${input.chat!.name}」${input.listen ? ` · 关注「${input.listen.name}」` : input.rule ? ` · 规则「${input.rule.name}」` : ""}`;
   const blocks: Record<string, unknown>[] = messages.length ? [await quoteBlock(input, messages)] : [];
-  if (o.text) blocks.push({ markdown: resolveCitationsSync(app, truncate(o.text, 3000)) });
-  else if (o.reason) blocks.push({ markdown: `先看一眼没有结论：${o.reason}` });
+  if (o.text) {
+    const { lead, more } = splitFirstLookText(truncate(o.text, 3000));
+    blocks.push({ markdown: resolveCitationsSync(app, lead) });
+    if (more) blocks.push({ fold: { title: "展开", markdown: resolveCitationsSync(app, more) } });
+  } else if (o.reason) blocks.push({ markdown: `先看一眼没有结论：${o.reason}` });
   if (o.evidence) blocks.push({ fold: { title: "依据", markdown: resolveCitationsSync(app, truncate(o.evidence, 2000)) } });
   if (input.situation) blocks.push({ note: "这一回会照常跟进。" });
   else if (o.outcome === "escalate") blocks.push({ markdown: `**还在查**：${o.next || "交给深查接着看"}` });
@@ -379,17 +385,16 @@ async function sendTo(app: App, run: Run, input: FirstLookInput, to: Dest, body:
     }
   }
   // dm: the owner's private chat with the main bot (as other owner-only cards), a member by their open_id.
-  const dmButtons = { stop: buttons.stop };
   const ownerChat = input.userId === OWNER ? one<{ value: string }>(app.db, "select value from kv where key = 'lark_owner_chat'")?.value : undefined;
-  const dmId = input.userId === OWNER ? (ownerChat ? null : send.larkOwnerOpenId(app, "main")) : larkOpenIdOf(app, input.userId);
+  const dmId = input.userId === OWNER ? send.larkOwnerOpenId(app, "main") : larkOpenIdOf(app, input.userId);
+  const dmButtons = { stop: buttons.stop, continueDeep: !!dmId && buttons.continueDeep };
   if (!ownerChat && !dmId) {
     why.push("机器人还不知道怎么私聊本人");
     if (input.userId === OWNER) notify(app, { title: body.title + (body.subtitle ? `：${body.subtitle}` : ""), body: payload.share || "（没有结论）", link: `#/runs/${run.id}` });
     return { to: "none" as const, messageId: null, interactionId: null };
   }
   const res = await send.sendLark(ownerChat ? { chatId: ownerChat, bot: "main", runId: run.id, purpose: "card" } : { userId: dmId!, bot: "main", runId: run.id, purpose: "card" }, { card: send.buildCard(cardOf(body, dmButtons) as never) });
-  const mainId = input.userId === OWNER ? send.larkOwnerOpenId(app, "main") : larkOpenIdOf(app, input.userId);
-  const interactionId = send.recordInteraction(app, { messageId: res.messageId, chatId: null, conversationId: input.listen?.conversationId ?? null, runId: run.id, purpose: "first-look", allowed: mainId ? [mainId] : allowed, payload: { ...payload, body, buttons: dmButtons }, bot: "main" });
+  const interactionId = send.recordInteraction(app, { messageId: res.messageId, chatId: null, conversationId: input.listen?.conversationId ?? null, runId: run.id, purpose: "first-look", allowed: dmId ? [dmId] : allowed, payload: { ...payload, body, buttons: dmButtons }, bot: "main" });
   return { to: "dm" as const, messageId: res.messageId, interactionId };
 }
 
@@ -408,7 +413,8 @@ export async function deliverFirst(app: App, r: Run, input: FirstLookInput, mess
   const replyTo = messages.at(-1)?.id ?? "";
   const body = await firstBody(app, input, messages, o);
   const share = o.text ? shareText(o) : "";
-  const buttons: Buttons = { share: to === "ephemeral" && o.outcome !== "owner" && !!share && input.chat?.kind === "group", stop: !input.situation && o.outcome === "escalate", dismiss: to === "ephemeral" };
+  const continueDeep = to !== "chat" && (o.outcome === "answered" || o.outcome === "owner") && (input.source === "rule" ? !!input.rule : input.source === "listen" && !!input.listen);
+  const buttons: Buttons = { share: to === "ephemeral" && o.outcome !== "owner" && !!share && input.chat?.kind === "group", continueDeep, stop: !input.situation && o.outcome === "escalate", dismiss: to === "ephemeral" };
   const payload = { lookRunId: r.id, stage: "first" as const, share, chatId: input.chat?.id ?? "", replyTo, bot: input.bot, source: input.source };
   try {
     const sent = await sendTo(app, r, input, to, body, buttons, payload, why);
@@ -427,7 +433,7 @@ function noteSent(app: App, input: FirstLookInput, messages: LookMessage[], to: 
 
 // ------------------------------------------------------------------ the deep run
 
-function deepMaterial(input: FirstLookInput, o: Outcome, results: ProbeResult[], d: Delivered) {
+function deepMaterial(o: Outcome, results: ProbeResult[], d: Delivered) {
   return [
     "# 先看一眼已经做的",
     "",
@@ -439,14 +445,15 @@ function deepMaterial(input: FirstLookInput, o: Outcome, results: ProbeResult[],
   ].join("\n");
 }
 
-async function deepRule(app: App, r: Run, input: FirstLookInput, o: Outcome, results: ProbeResult[], d: Delivered) {
+async function deepRule(app: App, r: Run, input: FirstLookInput, d: Delivered, material: string, requested = false) {
   const { findRule } = await import("./store.ts");
   const rule = findRule(app, input.rule!.id);
   if (!rule || !rule.enabled) return { runId: null, detail: "规则已停用或删除，没有起深查" };
+  if (requested && !rule.actions.some((action) => JSON.stringify(action) === JSON.stringify(input.rule!.action))) return { runId: null, detail: "规则动作已修改，请重新触发" };
   const { deepAgent } = await import("./actions.ts");
   const to = d.to === "none" ? resolveDest(input, "escalate").to : d.to;
   try {
-    const res = await deepAgent(app, rule, input.rule!.action, input.rule!.event, input.rule!.reason, { material: deepMaterial(input, o, results, d), lookRunId: r.id, to, toText: DEST_TEXT[to] }, input.outputs);
+    const res = await deepAgent(app, rule, input.rule!.action, input.rule!.event, input.rule!.reason, { material, lookRunId: r.id, to, toText: DEST_TEXT[to] }, input.outputs);
     return { runId: res.runId ?? null, detail: res.detail };
   } catch (e) {
     return { runId: null, detail: `没有起来：${(e as Error).message}` };
@@ -458,12 +465,12 @@ async function deepRule(app: App, r: Run, input: FirstLookInput, o: Outcome, res
  * message went — the chat, a card only the user sees (with 发给大家), or their private chat — and the
  * first message's 不用查了 is put away. `answer` null: it had nothing more to say.
  */
-export async function deliverDeep(app: App, deep: Run, answer: string | null) {
-  const lookId = (deep.input.firstLook as { runId?: string } | undefined)?.runId;
+export async function deliverDeep(app: App, deep: Run, answer: string | null, lookId = (deep.input.firstLook as { runId?: string } | undefined)?.runId) {
   if (!lookId) return;
   const look = getRun(app, lookId);
   const input = look.input as unknown as FirstLookInput;
   const d = look.output.delivered as Delivered | undefined;
+  if (input.listen && ((look.output.deep as { runId?: string } | undefined)?.runId !== deep.id || look.output.deepDelivered || !d || (d.to !== "dm" && d.to !== "ephemeral"))) return;
   const send = await import("../channels/lark-send.ts");
   const replyTo = d?.replyTo ?? input.messages.at(-1)!.id;
   const to: Dest = !d || d.to === "none" ? resolveDest(input, "escalate").to : d.to;
@@ -477,7 +484,7 @@ export async function deliverDeep(app: App, deep: Run, answer: string | null) {
       const { resolveCitationsSync } = await import("../channels/common.ts");
       const body: CardBody = { title: "深查结论", subtitle: `${input.chat!.kind === "p2p" ? "私聊" : "群"}「${input.chat!.name}」`, color: "green", blocks: [await quoteBlock(input, input.messages), { markdown: resolveCitationsSync(app, truncate(answer, 6000)) }] };
       const why: string[] = [];
-      const res = await sendTo(app, deep, input, to, body, { share: to === "ephemeral" && input.chat?.kind === "group", dismiss: to === "ephemeral" }, { lookRunId: look.id, stage: "deep", share: truncate(answer, 6000), chatId: input.chat!.id, replyTo, bot: input.bot, source: input.source }, why);
+      const res = await sendTo(app, deep, input, to, body, { share: !input.listen && to === "ephemeral" && input.chat?.kind === "group", dismiss: to === "ephemeral" }, { lookRunId: look.id, stage: "deep", share: truncate(answer, 6000), chatId: input.chat!.id, replyTo, bot: input.bot, source: input.source }, why);
       sent = { to: res.to, messageId: res.messageId };
       if (why.length) addRunEvent(app, deep.id, "status", { text: why.join("；") });
     }
@@ -491,7 +498,7 @@ export async function deliverDeep(app: App, deep: Run, answer: string | null) {
       const left = buttons.share || buttons.dismiss;
       sql(app.db, "update card_interactions set payload = ? where id = ?", JSON.stringify({ ...p, buttons }), inter.id);
       if (!left) send.closeInteraction(app, inter.id, "host");
-      if (!p.ephemeral && d.messageId) await send.updateLarkCard(d.messageId, send.buildCard(cardOf(p.body, buttons, answer ? "深查已经交了结论" : "深查看完了，没有更多要说的") as never), inter.bot).catch(() => {});
+      if (!p.ephemeral && d.messageId) await send.updateLarkCard(d.messageId, send.buildCard(cardOf(p.body, buttons, [p.note, answer ? "深查已经交了结论" : "深查看完了，没有更多要说的"].filter(Boolean).join("\n")) as never), inter.bot).catch(() => {});
     }
   }
   setRunOutput(app, look.id, { deepDelivered: { runId: deep.id, to: sent.to, messageId: sent.messageId, at: now(), quiet: !answer } });
@@ -499,6 +506,28 @@ export async function deliverDeep(app: App, deep: Run, answer: string | null) {
 }
 
 // ------------------------------------------------------------------ the buttons
+
+async function continueFirstLook(app: App, look: Run, input: FirstLookInput, interactionId: string, by: string) {
+  const delivered = look.output.delivered as Delivered | undefined;
+  if (look.kind !== "first-look" || !delivered || delivered.interactionId !== interactionId || delivered.to === "chat" || delivered.to === "none" || input.situation || !["answered", "owner"].includes(String(look.output.outcome))) throw new Error("这张卡片不能接着查");
+  if (look.output.deep || look.output.deepDelivered) throw new Error("已经交给深查，不再重复运行");
+  if (look.status !== "done") throw new Error("先看一眼还没结束，请稍后再点");
+  const ids = look.output.lookedMessageIds as string[] | undefined;
+  const messages = ids ? input.messages.filter((message) => ids.includes(message.id)) : input.messages;
+  if (input.rule && ruleLooksToday(app, input.rule.id) >= RULE_FIRST_LOOKS_PER_DAY) throw new Error(`这条规则已到今天先看一眼的上限（${RULE_FIRST_LOOKS_PER_DAY} 次）`);
+  const material = continuedMaterial(app, look, input, messages);
+  const deep = input.rule
+    ? await deepRule(app, look, input, delivered, material, true)
+    : input.listen
+      ? await (await import("../channels/listen-first-look.ts")).escalate(app, look, input, messages, delivered, [], { requested: material })
+      : null;
+  if (!deep?.runId) throw new Error(deep?.detail ?? "没有可接手深查的 Agent");
+  const at = now();
+  const detail = `${OWNER_CONTINUED}：${deep.detail}`;
+  setRunOutput(app, look.id, { deep: { runId: deep.runId }, stages: { ...(look.output.stages as Record<string, unknown> | undefined), deep: { runId: deep.runId, at, detail, by } } });
+  addRunEvent(app, look.id, "status", { text: `深查：${detail}` });
+  for (const message of messages) noteHandling(app, { event: message.id, actor: input.rule ? "rule" : "watch", decision: "handed", by: input.rule?.id ?? input.listen?.contextId, runId: deep.runId, reason: `${OWNER_CONTINUED}，已交给深查`, stage: "deep" });
+}
 
 /**
  * A button on a first-look card (lark-actions.ts; only the user it belongs to may press it). 发给大家:
@@ -513,7 +542,13 @@ export async function decideCard(app: App, interactionId: string, payload: CardP
   let buttons = { ...payload.buttons };
   let note: string;
   let toast: string;
-  if (act === "share" && buttons.share) {
+  if (act === "continue") {
+    if (!buttons.continueDeep || payload.stage !== "first") throw new Error("这张卡片已不能接着查");
+    await continueFirstLook(app, look, input, interactionId, by);
+    buttons = { ...buttons, continueDeep: false, stop: !!deepRunOf(app, getRun(app, look.id)) };
+    note = `${by} ${at} 让接着查`;
+    toast = "已交给深查";
+  } else if (act === "share" && buttons.share) {
     await send.sendLark({ replyTo: payload.replyTo, inThread: true, bot: payload.bot, runId: look.id, purpose: "answer" }, { markdown: payload.share });
     const { noteHandling } = await import("../core/handling.ts");
     noteHandling(app, { event: payload.replyTo, actor: payload.source === "rule" ? "rule" : "watch", decision: "replied", by: input.rule?.id ?? input.listen?.contextId ?? input.situation?.contextId ?? null, runId: look.id, reason: `${by}按了“发给大家”` });
@@ -532,9 +567,10 @@ export async function decideCard(app: App, interactionId: string, payload: CardP
     note = `${by} ${at} 说不用了`;
     toast = "好的";
   }
-  const keepOpen = !!(buttons.share || buttons.stop || buttons.dismiss);
-  sql(app.db, "update card_interactions set payload = ? where id = ?", JSON.stringify({ ...payload, buttons }), interactionId);
-  return { card: send.buildCard(cardOf(payload.body, buttons, note) as never), toast, keepOpen };
+  const keepOpen = !!(buttons.share || buttons.continueDeep || buttons.stop || buttons.dismiss);
+  const fullNote = [payload.note, note].filter(Boolean).join("\n");
+  sql(app.db, "update card_interactions set payload = ? where id = ?", JSON.stringify({ ...payload, buttons, note: act === "continue" ? note : payload.note }), interactionId);
+  return { card: send.buildCard(cardOf(payload.body, buttons, fullNote) as never), toast, keepOpen };
 }
 
 /** The deep run a 不用查了 stops: the rule's agent run, or the 关注's batch the first look handed on. Null when it already ended. */
