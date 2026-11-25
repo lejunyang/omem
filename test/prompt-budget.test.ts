@@ -14,9 +14,9 @@ import { testApp } from "./helpers.ts";
 const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground: number, noneChat: number, noneBackground: number]> = {
   "commit-claim": ["commit-claim", 4630, 4735, 2206, 2206],
   // The item-follow role now classifies actual next steps and records their completion conditions.
-  "item-follow": ["item-follow", 5666, 5771, 3242, 3242],
-  "flow-reconcile": ["flow-reconcile", 4931, 4931, 2251, 2251],
-  "assistant": ["agent", 19993, 19294, 1679, 1581],
+  "item-follow": ["item-follow", 5978, 6083, 3576, 3576],
+  "flow-reconcile": ["flow-reconcile", 5142, 5142, 2462, 2462],
+  "assistant": ["agent", 20173, 19474, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   "archive-rule-writer": ["archive-rule-draft", 3091, 3091, 2091, 2091],

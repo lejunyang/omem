@@ -41,7 +41,8 @@ export function checkQuietFollowup(app: App, id: string) {
   const lineage = chain(app, r);
   const context = lineage.map((p) => contextOfRun(app, p.id)).find(Boolean);
   const rule = lineage.map((p) => p.input.rule as { name?: string } | undefined).find(Boolean);
-  if (!rule && !context) return;
+  // A recheck the assistant set for itself is also a live matter; background housekeeping is not.
+  if (!rule && !context && !r.input.wake) return;
   const runIds = lineage.map((p) => p.id);
   if (alreadyTakenUp(app, runIds)) return;
   const at = now();
@@ -91,7 +92,7 @@ export function checkQuietFollowup(app: App, id: string) {
   const origin = lineage.findLast((p) => p.input.rule || contextOfRun(app, p.id)) ?? r;
   const triggers = origin.input.triggers as { summary?: string }[] | undefined;
   const subject = problems[0]?.title || triggers?.[0]?.summary || trigger?.text || origin.title;
-  const label = rule?.name ? `规则「${rule.name}」` : context ? `关注「${context.name}」` : "规则";
+  const label = rule?.name ? `规则「${rule.name}」` : context ? `关注「${context.name}」` : "约好的复查";
   tx(app.db, () => {
     const slots = dedup.map((key) => `quiet_unresolved:${sha256(key)}`);
     const already = slots.some((key) => one(app.db, "select 1 from kv where key = ?", key));
