@@ -183,8 +183,12 @@ function askText(app: App, f: ItemFlow, d: FlowStage, s: StageRow, p: AskParts) 
 // The owner's "确认" overwrites a stage's latest line; what the stage produced is the last thing its
 // carrier said, falling back to that line.
 function resultNote(app: App, itemId: string, row: StageRow) {
-  const said = one<{ note: string }>(app.db, "select note from item_stage_log where item_id=? and stage_id=? and actor not in ('host','owner') and note<>'' order by id desc limit 1", itemId, row.id);
-  return said?.note ?? row.note;
+  const said = one<{ id: number; note: string }>(app.db, "select id, note from item_stage_log where item_id=? and stage_id=? and actor not in ('host','owner') and note<>'' order by id desc limit 1", itemId, row.id);
+  if (!said) return row.note;
+  // The host put the stage back to work or blocked it for a reason of its own since then (it now follows a coding
+  // round, the round ended unapproved): what the carrier wrote describes an earlier state, the stage's own line is current.
+  const moved = one(app.db, "select 1 from item_stage_log where item_id=? and stage_id=? and id>? and actor='host' and to_state in ('doing','blocked') and from_state<>to_state limit 1", itemId, row.id, said.id);
+  return moved ? row.note : said.note;
 }
 /** What the stage's carrier last wrote in full, when the stage's line is now something else ("本人确认"). */
 function stageResult(app: App, itemId: string, row: StageRow) {

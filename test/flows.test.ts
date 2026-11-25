@@ -612,6 +612,7 @@ describe("对象与工具", () => {
       run(app.db, "update code_tasks set created_at=? where id=?", new Date(Date.parse(after) + 1).toISOString(), task.id);
       updateTask(app, work.id, task.seq, { coderRun: work.id, state: outcome === "unfinished" ? "owner" : outcome === "wontdo" ? "wontdo" : "done", ...(outcome === "wontdo" ? { answer: "字段已经由通用表单提供" } : {}) });
     }
+    run(app.db, "insert into item_stage_log (item_id, stage_id, at, from_state, to_state, actor, note) values (?,?,?,?,?,?,?)", item.id, "code", new Date().toISOString(), "doing", "blocked", "assistant", "原交办第 9 轮结束后才能启动新一轮");
     await reportStage(app, item.id, "code", { state: "blocked", waitingOn: "下一轮", note: "等下一轮" }, { actor: "assistant", runId: stageRun });
     expect(s("code")).toMatchObject({ state: "doing", by: `code-work:${work.id}`, note: expect.stringContaining("第 9 轮") });
     run(app.db, "update runs set status='done' where id=?", stageRun);
@@ -621,6 +622,8 @@ describe("对象与工具", () => {
     const blocked = outcome === "unfinished" ? "补充退款原因" : outcome === "review-failed" ? "评审没有通过" : null;
     expect(s("code").state).toBe(blocked ? "blocked" : "done");
     if (blocked) expect(s("code").note).toContain(blocked);
+    // What the stage run wrote while the round was still going is not shown over the host's newer reason.
+    if (blocked) expect(flowView(app, item.id).stages.find((x) => x.id === "code")).toMatchObject({ note: expect.stringContaining(blocked), result: "" });
     expect(one<{ n: number }>(app.db, "select count(*) n from runs where kind='code'")?.n).toBe(1);
   });
   it("跟着分支评审的段按本人意见重做：任务是带 rereview_of 复审，不发起编码交办", async () => {
