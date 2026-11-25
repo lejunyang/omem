@@ -247,6 +247,15 @@ export async function firstLookRun(ctx: RunContext) {
         return { answer: o.text, outcome: o.outcome, stages, yielded: took, quiet: true };
       }
     }
+    // Answered while this look worked (a draft the owner just sent, the owner's own words): no second answer.
+    if (listen) {
+      const answered = listen.answeredMeanwhile(app, input, messages, r.createdAt);
+      if (answered) {
+        listen.yieldAnswered(app, r.id, messages, answered);
+        ctx.output({ stages, yielded: answered });
+        return { answer: o.text, outcome: o.outcome, stages, yielded: answered, quiet: true };
+      }
+    }
     // 4. the first message
     if (input.situation && !situation?.lookStillNeeded(app, input.situation.instanceId)) return { quiet: true };
     const delivered = await deliverFirst(app, r, input, messages, o);

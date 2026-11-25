@@ -25,7 +25,10 @@ import { briefText } from "./watch-trial.ts";
  *
  * Only one answers: while the first look works its batch is held back (HOLD_MS at most); a batch that
  * started on these messages anyway (a restart, a 关注 with a window shorter than the look) has them, and
- * the first look steps aside (core/handling.ts noteYield) instead of answering too.
+ * the first look steps aside (core/handling.ts noteYield) instead of answering too. It also steps aside
+ * when the chat was answered since these messages came in (a reply of omem's went out there, say a draft
+ * the owner just sent, or the owner wrote there themselves), or while a draft of this 关注's for the chat
+ * still waits for the owner: the batch knows what was said or drafted, a second answer would not.
  */
 export const LISTEN_MERGE_MS = 20_000;
 const HOLD_MS = 5 * 60_000;
@@ -93,6 +96,11 @@ export async function prepareListen(ctx: RunContext, input: FirstLookInput): Pro
   for (const x of taken) noteYield(app, { event: x.m.id, actor: "watch", to: "关注的这一批", reason: "这一批已经开始处理这条，先看一眼让开", runId: ctx.run.id });
   const left = rows.filter((x) => !taken.includes(x));
   if (!left.length) return { done: { skipped: "这几条已经由关注的这一批在处理" } };
+  const answered = answeredMeanwhile(app, input, left.map((x) => x.m), ctx.run.createdAt);
+  if (answered) {
+    yieldAnswered(app, ctx.run.id, left.map((x) => x.m), answered);
+    return { done: { skipped: `${answered}：交回这一批` } };
+  }
   // Screened like a batch (lark-watch.ts prefilterBatch: only with a decision model, the day's limit always).
   const { prefilterBatch } = await import("./lark-watch.ts");
   const batch = left.filter((x) => x.row).map((x) => ({ id: x.row!.id, text: x.row!.text, meta: JSON.parse(x.row!.meta) as Record<string, unknown> }));
@@ -109,6 +117,30 @@ export async function prepareListen(ctx: RunContext, input: FirstLookInput): Pro
     if (updateQueuedRun(app, id, { notBefore: new Date(Date.now() + HOLD_MS).toISOString() })) held.push({ id, notBefore: r.not_before });
   }
   return { messages: left.map((x) => x.m), held, ...(batch.length ? { prefilter: "看过，要看" } : {}) };
+}
+
+const DRAFT_WAITS_MS = 24 * 3600_000;
+/**
+ * Why a first look on these messages would be a second answer, or null: since they came in a reply went
+ * into the chat (omem's, or the owner's own words), or a draft of this 关注's for the chat still waits.
+ * `since`: when this look was queued, on this machine's clock (lark_sent.at is too); the owner's own
+ * messages are compared on Feishu's clock, with the messages' own times.
+ */
+export function answeredMeanwhile(app: App, input: FirstLookInput, messages: LookMessage[], since: string): string | null {
+  const chat = input.chat?.id, l = input.listen;
+  if (!chat || !l) return null;
+  if (one(app.db, "select 1 from lark_sent where chat_id = ? and purpose = 'answer' and at >= ? limit 1", chat, since)) return "这几条之后已经有回复发进了这个群";
+  const ids = messages.map((m) => m.id);
+  const last = ids.length ? one<{ ms: number | null }>(app.db, `select max(create_ms) ms from lark_messages where message_id in (${ids.map(() => "?").join(",")})`, ...ids)?.ms : null;
+  if (last && one(app.db, "select 1 from lark_messages where chat_id = ? and sender_kind = 'owner' and create_ms > ? limit 1", chat, last)) return "这几条之后本人已经在群里回了";
+  if (one(app.db, `select 1 from card_interactions where status = 'open' and purpose = 'watch-draft' and conversation_id = ?
+    and json_extract(payload, '$.chatId') = ? and created_at >= ? limit 1`, l.conversationId, chat, new Date(Date.now() - DRAFT_WAITS_MS).toISOString())) return "这个群还有一条等本人确认的草稿";
+  return null;
+}
+
+/** The batch has these: the first look says why it stepped aside. */
+export function yieldAnswered(app: App, runId: string, messages: LookMessage[], why: string) {
+  for (const m of messages) noteYield(app, { event: m.id, actor: "watch", to: "关注的这一批", reason: `${why}，先看一眼让开，由这一批接着判断`, runId });
 }
 
 /** Held batches go back to when they were due. */

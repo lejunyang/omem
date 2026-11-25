@@ -390,6 +390,38 @@ describe("关注：先看一眼", () => {
     expect(client.calls).toHaveLength(0);
   }, 180_000);
 
+  it("steps aside when the chat was answered since the message came, or a draft of the 关注's still waits there", async () => {
+    useClient();
+    setOwnerInChatForTests("oc_listen3", true);
+    const c = saveContext(app, { kind: "place", name: "值班群三", chats: ["oc_listen3"], brief: { ...BRIEF, at: now(), confirmedAt: now() }, knobs: { reply: "draft", listen: "all", batchMinutes: 10, firstLook: true, firstTo: "ephemeral" } });
+    const looks = () => looksIn(c.id);
+    // A reply went into the group after the message came in (the owner sent a waiting draft): no first look on top of it.
+    await route("om_n1", "UID 51 怎么处理 [answered]", "oc_listen3");
+    const [first] = looks();
+    run(app.db, "insert into lark_sent(message_id, chat_id, run_id, conversation_id, purpose, bot, at) values('om_sent_n1', 'oc_listen3', null, ?, 'answer', 'main', ?)", c.conversationId, now());
+    updateQueuedRun(app, first.id, { notBefore: now() });
+    const stepped = await waitForRun(app, first.id);
+    expect(stepped.output.skipped).toBe("这几条之后已经有回复发进了这个群：交回这一批");
+    expect(one(app.db, "select reason from handled_messages where channel = 'yield:watch' and message_id = 'om_n1'")).toMatchObject({ reason: expect.stringContaining("先看一眼让开") });
+    // The batch still has the message and decides with what was said.
+    expect(batchOf(c.conversationId!).some((r) => r.status === "queued")).toBe(true);
+    expect(client.calls).toHaveLength(0);
+    // A draft of this 关注's for the group still waits for the owner: the same.
+    run(app.db, "delete from lark_sent where message_id = 'om_sent_n1'");
+    run(app.db, "insert into card_interactions(id, channel, message_id, chat_id, conversation_id, run_id, purpose, allowed, payload, status, created_at) values('ci_n_draft', 'lark', 'om_card_n', null, ?, null, 'watch-draft', '[]', ?, 'open', ?)",
+      c.conversationId, JSON.stringify({ contextId: c.id, chatId: "oc_listen3" }), now());
+    await route("om_n2", "有人看下吗 [answered]", "oc_listen3");
+    const second = looks().find((r) => r.id !== first.id)!;
+    updateQueuedRun(app, second.id, { notBefore: now() });
+    expect((await waitForRun(app, second.id)).output.skipped).toBe("这个群还有一条等本人确认的草稿：交回这一批");
+    // Answered or dropped, the next message gets its first look again.
+    run(app.db, "update card_interactions set status = 'done' where id = 'ci_n_draft'");
+    await route("om_n3", "UID 52 打不开 [answered]", "oc_listen3");
+    const third = looks().find((r) => r.id !== first.id && r.id !== second.id)!;
+    updateQueuedRun(app, third.id, { notBefore: now() });
+    expect((await waitForRun(app, third.id)).output).toMatchObject({ outcome: "answered", delivered: { to: "ephemeral" } });
+  }, 180_000);
+
   it("a 关注 without it batches as before", async () => {
     const c = saveContext(app, { kind: "place", name: "普通群", chats: ["oc_plain"], brief: { ...BRIEF, at: now(), confirmedAt: now() }, knobs: { reply: "draft", listen: "all", batchMinutes: 10 } });
     await route("om_p1", "UID 41 打不开", "oc_plain");
