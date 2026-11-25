@@ -202,7 +202,12 @@ export async function inspectGitSignal(app: App, itemId: string, type: GitSignal
   const checkedBranches = !applied && object.done ? branches.map(wt => ({ space: wt.space, branch: wt.branch!, head: heads?.[wt.space] ?? checkedRepos.find(repo => repo.space === wt.space)?.check?.commit })) : [];
   // A batch pushed while the work goes on (code-delivery.ts) is what the owner asked to see on the remote.
   const delivered = !applied && type === "git.pushed" ? workState(app, rootId).delivered?.at(-1)?.branches : undefined;
-  const targets = (applied?.output.appliedTo as AppliedTarget[] | undefined) ?? (checkedBranches.length && checkedBranches.every(target => target.head) ? checkedBranches : delivered ?? []);
+  // The owner pushed the branch themselves (code-branch.ts settles the work as pushed outside): nothing
+  // was applied through omem, and the heads seen on the remote then are what to look for.
+  const outside = applied && !applied.output.appliedTo ? [...new Map(((applied.output.pushed ?? []) as { space: string; branch: string | null; head?: string }[])
+    .filter(pushed => pushed.head).map(pushed => [pushed.space, { space: pushed.space, branch: pushed.branch, head: pushed.head }])).values()] : [];
+  const targets = (applied?.output.appliedTo as AppliedTarget[] | undefined) ?? (outside.length ? outside
+    : checkedBranches.length && checkedBranches.every(target => target.head) ? checkedBranches : delivered ?? []);
   evidence.push(rootId, ...(latestId !== rootId ? [latestId] : []));
   if (!targets.length) return { object, keys, note: "编码交办还没应用到仓库，继续等本人", evidence, ready: false };
   for (const target of targets) {

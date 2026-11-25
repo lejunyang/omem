@@ -166,6 +166,13 @@ describe("Git 完成信号", () => {
     await reopenStage(t.app, t.item.id, "push", "再核对一次", [], owner);
     await checkGitSignals(t.app); expect(signals(t.app)).toHaveLength(2);
   });
+  it("本人在 omem 外推了分支、交办因此结束：按当时远端上的提交认出已推送", async () => {
+    const t = await setup({ applied: false }); t.push();
+    const [r] = t.repos;
+    setRunOutput(t.app, t.work.id, { appliedAt: new Date().toISOString(), settled: "pushed-outside", pushed: [{ space: r.space, branch: r.branch, head: r.head, outside: true }] });
+    await checkGitSignals(t.app);
+    expect(t.s().state).toBe("done");
+  });
   it("没有交办或没有远端都继续等，不重复记原因", async () => {
     const t = await setup();
     run(t.app.db, "delete from item_materials where item_id=? and kind='run'", t.item.id);
