@@ -149,6 +149,8 @@ it("同时用标题、对象、参与者找候选，关联私聊时保留群列�
 it.each(["no", "low", "error"] as const)("候选结果 %s 不挂上，没有新线索的七天内不再问", async verdict => {
   const t = setup(), group = chat(t.app, "oc_mention", "月牙桥退款闲聊");
   group.say("主要是聊别的项目", t.base - 1000);
+  // A card a bot posted days ago: no clue and no line to follow, but it shows what the group is about.
+  run(t.app.db, "insert into lark_messages(message_id,chat_id,content,create_ms,sender_kind,sender_name) values('msg_card','oc_mention','<card> 走查报告已交付',?,'app','示例机器人')", t.base - 5 * DAY);
   await t.patrol(); // No decision model.
   expect(itemMaterials(t.app, t.item.id)).toEqual([]);
   const calls = judge(t.app, () => {
@@ -161,7 +163,7 @@ it.each(["no", "low", "error"] as const)("候选结果 %s 不挂上，没有新�
   expect(calls).toHaveLength(1);
   expect(itemMaterials(t.app, t.item.id)).toEqual([]);
   // The model is shown why the chat is a candidate and what else it talks about, not only the lines that hit.
-  expect(calls[0].material.place1).toMatchObject({ 会话: "月牙桥退款闲聊", 为什么是候选: expect.stringContaining("会话名称和事项名称相近") });
+  expect(calls[0].material.place1).toMatchObject({ 会话: "月牙桥退款闲聊", 为什么是候选: expect.stringContaining("会话名称和事项名称相近"), 这个会话最近的其他消息: ["示例机器人：<card> 走查报告已交付"] });
   // A chat turned down under an older way of asking is judged again, once.
   run(t.app.db, "update item_chat_follow set clues=json_remove(clues,'$.v') where item_id=?", t.item.id);
   await t.patrol(DAY + 1000);
