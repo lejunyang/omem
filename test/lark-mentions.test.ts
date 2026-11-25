@@ -221,7 +221,7 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
   it("a handling's tools: what the assistant reads with, without coding, rules or posting", () => {
     const prep = prepareRun(app, { actor: { role: "assistant" }, spaceId: "personal", spaces: null, denyTools: MENTION_DENY, addTools: mentionTools({ reply: "draft" } as MentionInfo), userId: OWNER, runId: null, lark: { chats: [] } });
     const tools = [...(toolContextForToken(app, prep.token)!.tools ?? [])];
-    expect(tools).toEqual(expect.arrayContaining(["search", "read_source", "list_items", "upsert_item", "notify", "stay_quiet", "reply_to_asker"]));
+    expect(tools).toEqual(expect.arrayContaining(["search", "read_source", "list_items", "upsert_item", "notify", "stay_quiet", "reply_to_asker", "stage_reopen"]));
     for (const t of ["delegate_code", "save_rule", "set_chat_watch", "run_agent", "lark_write"]) expect(tools).not.toContain(t);
     expect(mentionTools({ reply: "off" } as MentionInfo)).not.toContain("reply_to_asker");
   });

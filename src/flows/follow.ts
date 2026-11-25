@@ -5,7 +5,6 @@ import { HttpError, json, localStamp, newId, now } from "../core/util.ts";
 import { accessibleSpaces, canWrite, OWNER } from "../core/users.ts";
 import { mayRunRoutine } from "../items/member-routine.ts";
 import { decideScene } from "../core/decision-log.ts";
-import { notify } from "../core/notify.ts";
 import { createRun, getRun, registerHandler, setRunOutput, type Run } from "../agents/runs.ts";
 import { answerAsk, cancelAsk, createAsk, registerAskHandler } from "../agents/asks.ts";
 import { addItemEvent, getItem, isClosed, upsertItem, type Item } from "../items/store.ts";
@@ -16,8 +15,11 @@ import { itemFlow, itemStages, type ItemFlow } from "./store.ts";
 import { sourceReadable } from "../auth/visibility.ts";
 import { itemFollowLane } from "./reconcile.ts";
 import { recordChange } from "../items/changes.ts";
-import { changeSchema, saveChangeSteps, stepBrief, stepViews } from "../items/change-step-store.ts";
+import { changeSchema, saveChangeSteps, settleUnqueuedSteps, stepBrief, stepsOf, stepViews } from "../items/change-step-store.ts";
 import { checkDueChangeSteps, queueChangeSteps } from "./takeover.ts";
+import { otherItemForEvidence, reopenForEvidence, withFollowEvidence } from "./follow-evidence.ts";
+import { applyDeadline, decidedDeadline } from "../items/change-deadline.ts";
+import { notifyChange } from "../items/change-notice.ts";
 
 type Source = { id: string; kind: string; title: string; space_id: string; updated_at: string; uri: string; captured_at: string };
 type Cursor = { source_id: string; line: number; source_updated_at: string; started_at: string; seen: string | null };
@@ -281,33 +283,15 @@ async function patrol(app: App, at: Date) {
 }
 
 
-/**
- * The item's deadline moves to the time a change names. Whatever other proposal was still waiting for
- * the owner is settled by it.
- */
-function applyDeadline(app: App, c: ChangeRow, actor: "agent" | "user", runId?: string) {
-  const refs = json<string[]>(c.refs, []);
-  upsertItem(app, c.item_id, { dueAt: c.due!, sourceRefs: refs, note: `${c.summary}（依据：${refs.join(" ")}）` }, actor, runId);
-  run(app.db, "update item_changes set status='merged',updated_at=? where id=?", now(), c.id);
-  for (const other of all<ChangeRow>(app.db, "select * from item_changes where item_id=? and type='deadline' and status='asked' and id!=?", c.item_id, c.id)) {
-    run(app.db, "update item_changes set status='dismissed',updated_at=? where id=?", now(), other.id);
-    if (other.ask_id) cancelAsk(app, other.ask_id, "截止时间已经另外定了");
-  }
-}
-/** Said by the owner, or written down as settled: the deadline moves at once and the owner is told once. */
-function decidedDeadline(app: App, c: ChangeRow, runId: string) {
-  const item = getItem(app, c.item_id), refs = json<string[]>(c.refs, []);
-  applyDeadline(app, c, "agent", runId);
-  const previous = one<{ id: string }>(app.db, "select id from notifications where title=? and json_extract(context,'$.entityId')=? order by rowid desc limit 1", `「${item.title}」截止时间变了`, item.id);
-  notify(app, { userId: item.userId, title: `「${item.title}」截止时间变了`, body: `${c.summary}\n新的截止时间：${c.due}\n${refs.join(" ")}`, urgency: "later", plain: true, entity: "item", entityId: item.id, sourceRefs: refs, runId, link: `#/items/${item.id}`, ...(previous ? { replaces: previous.id } : {}) });
-}
 function changesOfRun(app: App, r: Run) {
   const ids = json<string[]>(JSON.stringify(getRun(app, r.id).output.followChanges ?? []), []);
   return all<ChangeRow>(app.db, `select * from item_changes where item_id=? and (run_id=? or id in (${ids.map(() => "?").join(",") || "''"})) order by at,id`, String(r.input.itemId), r.id, ...ids);
 }
-function handedIn(app: App, runId: string, row: ChangeRow, ownWord = false) {
-  const out = getRun(app, runId).output, ids = out.followChanges as string[] | undefined, own = out.followOwnWords as string[] | undefined;
-  setRunOutput(app, runId, { followChanges: [...new Set([...(ids ?? []), row.id])], ...(ownWord ? { followOwnWords: [...new Set([...(own ?? []), row.id])] } : {}) });
+function handedIn(app: App, runId: string, row: ChangeRow, fold: boolean) {
+  const out = getRun(app, runId).output, ids = out.followChanges as string[] | undefined;
+  const folds = out.followFolds as string[] | undefined;
+  setRunOutput(app, runId, { followChanges: [...new Set([...(ids ?? []), row.id])],
+    ...(fold && row.status === "noted" ? { followFolds: [...new Set([...(folds ?? []), row.id])] } : {}) });
   return viewChange(app, row);
 }
 /** Some line a change cites is the person's own (Part `owner`): what they said themselves, not someone's proposal. */
@@ -340,6 +324,7 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   const detail = a.detail ?? null, due = a.type === "deadline" ? a.due! : null;
   // The person's own word on what is to be done (they said it, or told the assistant to do it): settled, not asked about again.
   const ownWord = !!a.decided && (a.type === "scope" || a.type === "decision") && saidByOwner(batch, a.refs);
+  const fold = ownWord || a.fold === "in-scope" && ["scope", "decision", "blocker"].includes(a.type);
   // A retried run may hand in the same finding after the first run already updated a deadline.
   const old = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and origin='follow' and type=? and summary=? and refs=? and detail is ? and stages=? and req is ? and due is ? order by at desc limit 10", a.item, a.type, a.summary, JSON.stringify(a.refs), detail, JSON.stringify(a.stages ?? []), a.req ?? null, due).find((c) => {
     const previous = c.run_id && one(app.db, "select 1 from runs where id=?", c.run_id) ? getRun(app, c.run_id).input.batch as Batch | undefined : undefined;
@@ -349,10 +334,9 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
     });
   });
   if (old) {
-    // The same finding, now said to be settled, while the first one was only a proposal.
-    if (a.type === "deadline" && a.decided && ["noted", "asked"].includes(old.status)) tx(app.db, () => decidedDeadline(app, old, runId));
-    saveChangeSteps(app, a.item, old.id, runId, batch.startedAt, a.steps);
-    return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", old.id)!, ownWord && old.status === "noted");
+    if (a.type === "deadline" && old.due && ["noted", "asked"].includes(old.status)) tx(app.db, () => decidedDeadline(app, old, runId));
+    if (old.status !== "elsewhere") saveChangeSteps(app, a.item, old.id, runId, batch.startedAt, a.steps);
+    return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", old.id)!, fold);
   }
   if (changesOfRun(app, r).length >= 30) throw new HttpError(400, "一批最多记 30 条变化，请合并同一件事的表述");
   // The one way into the ledger (items/changes.ts): the same message already noted by another writer
@@ -360,36 +344,19 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   const rec = tx(app.db, () => {
     const got = recordChange(app, { itemId: a.item, type: a.type, summary: a.summary, detail, req: a.req ?? null, stages: a.stages ?? [], refs: a.refs, runId, due, risk: a.risk || null, next: next || null, origin: "follow" })!;
     const row = one<ChangeRow>(app.db, "select * from item_changes where id=?", got.id)!;
-    saveChangeSteps(app, a.item, row.id, runId, batch.startedAt, a.steps);
-    // Somebody proposing another date is not a decision: it stays as noted and the owner is asked when the batch is done.
-    if (a.type === "deadline" && a.decided && row.due && ["noted", "asked"].includes(row.status)) decidedDeadline(app, row, runId);
+    if (row.status !== "elsewhere") saveChangeSteps(app, a.item, row.id, runId, batch.startedAt, a.steps);
+    if (a.type === "deadline" && row.due && ["noted", "asked"].includes(row.status)) decidedDeadline(app, row, runId);
     return got;
   });
-  return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", rec.id)!, ownWord && rec.status === "noted");
+  return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", rec.id)!, fold);
 }
 
 const choices = ["并进这件事", "另开一件事", "不用管"];
-const deadlineChoices = ["改成这个时间", "不改"];
 const HEADS: Record<string, string> = { scope: "范围变了", decision: "有了新决定", blocker: "有阻塞" };
-/** Changes of this batch that touch a stage under way or done: what folding in would reopen. */
-function reopening(app: App, r: Run) {
-  const id = String(r.input.itemId), flow = followAnchor(app, id)?.flow;
-  // With no flow running there are no stages to reopen: only a proposed deadline is asked about.
-  const stages = flow ? itemStages(app, id) : [];
-  return changesOfRun(app, r).filter((c) => c.status === "noted" && ["scope", "decision", "blocker"].includes(c.type))
-    .filter((c) => json<string[]>(c.stages, []).some((id) => stages.some((s) => s.id === id && ["doing", "done"].includes(s.state))));
-}
-/** The person's own word in this batch (`followOwnWords`): folded in as if they had chosen 并进 on the card. */
-function ownWords(app: App, r: Run) {
-  const own = new Set(json<string[]>(JSON.stringify(getRun(app, r.id).output.followOwnWords ?? []), []));
-  return reopening(app, r).filter((c) => own.has(c.id) && c.type !== "blocker");
-}
-function askChanges(app: App, r: Run, except: ChangeRow[] = []) {
-  const changes = reopening(app, r).filter((c) => !except.some((x) => x.id === c.id));
+function askChanges(app: App, r: Run, changes: ChangeRow[]) {
   // At most three cards for these. Each field in the overflow card remains an independent owner choice.
   const groups = changes.length <= 3 ? changes.map((c) => [c]) : [changes.slice(0, 1), changes.slice(1, 2), changes.slice(2)];
   for (const group of groups) askGroup(app, r, group);
-  askDeadline(app, r);
 }
 function askGroup(app: App, r: Run, rows: ChangeRow[]) {
   const id = String(r.input.itemId), item = getItem(app, id), flow = followAnchor(app, id)?.flow;
@@ -404,79 +371,114 @@ function askGroup(app: App, r: Run, rows: ChangeRow[]) {
     context: { handler: "item-follow", itemId: id, startedAt: (r.input.batch as Batch).startedAt, changes: group.map((c) => c.id) } });
   for (const c of group) run(app.db, "update item_changes set status='asked',ask_id=?,updated_at=? where id=?", ask.id, now(), c.id);
 }
-function askDeadline(app: App, r: Run) {
-  const id = String(r.input.itemId), item = getItem(app, id);
-  // A proposed deadline is the owner's to accept, whatever stage the flow is at. One card: the latest proposal of the batch.
-  const proposal = changesOfRun(app, r).filter((c) => c.type === "deadline" && c.due).at(-1);
-  if (proposal?.status === "noted" && proposal.due !== item.dueAt) {
-    const ask = createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
-      question: `「${item.title}」有人提出改截止时间：\n\n${[`**${proposal.summary}**`, proposal.detail ?? "", `- 提出改成：${proposal.due}`, `- 现在的截止时间：${item.dueAt ?? "未定"}`, `- 原话：${json<string[]>(proposal.refs, []).map((r, i) => `[${i + 1}](${r})`).join(" ")}`].filter(Boolean).join("\n")}`,
-      options: deadlineChoices.map((label) => ({ label })),
-      context: { handler: "item-follow", itemId: id, startedAt: (r.input.batch as Batch).startedAt, changes: [proposal.id] } });
-    run(app.db, "update item_changes set status='asked',ask_id=?,updated_at=? where id=?", ask.id, now(), proposal.id);
-  }
-}
-/**
- * The batch is done: what only the person can settle is asked on cards, their own word is folded in
- * without asking (the returned promise, after the cards and the cursor are settled).
- */
 export function finishFollow(app: App, r: Run): Promise<void> {
-  const id = String(r.input.itemId), batch = r.input.batch as Batch, f = followAnchor(app, id);
-  if (!f || f.startedAt !== batch.startedAt) return Promise.resolve();
-  const own = ownWords(app, r);
-  askChanges(app, r, own);
-  const changes = changesOfRun(app, r), counts = { total: changes.length, asked: changes.filter((c) => c.status === "asked").length };
-  tx(app.db, () => {
-    commitBatch(app, id, batch);
-    run(app.db, "update flow_signals set outcome=? where type='context.batch' and item_id=? and json_extract(keys,'$.runId')=?", counts.total ? `记了 ${counts.total} 条变化，问了本人 ${counts.asked} 条${own.length ? `，按本人的话并进 ${own.length} 条` : ""}` : "看过，没有变化", id, r.id);
-  });
-  const queue = () => {
+  const id = String(r.input.itemId), batch = r.input.batch as Batch, item = getItem(app, id);
+  return withFollowEvidence(app, item.userId, async () => {
+    const f = followAnchor(app, id);
+    if (!f || f.startedAt !== batch.startedAt) return;
+    const changes = changesOfRun(app, r);
+    const eligible = changes.filter(c => c.status === "noted" && ["scope", "decision", "blocker"].includes(c.type));
+    const otherItems = new Set<string>();
+    for (const c of eligible) {
+      const other = otherItemForEvidence(app, item, json<string[]>(c.refs, []));
+      if (!other) continue;
+      otherItems.add(c.id);
+      const note = `已由事项「${other.title}」（${other.id}）处理。`;
+      tx(app.db, () => {
+        run(app.db, "update item_changes set status='elsewhere',detail=?,updated_at=? where id=?",
+          [c.detail, note].filter(Boolean).join("\n"), now(), c.id);
+        settleUnqueuedSteps(app, c.id, "skipped", note);
+      });
+    }
+    const remaining = eligible.filter(c => !otherItems.has(c.id));
+    const stages = f.flow ? itemStages(app, id).filter(s => s.state === "doing" || s.state === "done") : [];
+    const affected = remaining.filter(c => json<string[]>(c.stages, []).some(stage => stages.some(s => s.id === stage)));
+    const output = getRun(app, r.id).output;
+    // Older runs kept the owner's decisions under followOwnWords.
+    const folds = new Set([...(output.followFolds as string[] | undefined ?? []), ...(output.followOwnWords as string[] | undefined ?? [])]);
+    const automatic = remaining.filter(c => folds.has(c.id));
+    // Ask after trying to merge so failures share the same three-card limit. Keep the affected
+    // stage snapshot: reopening one stage may change downstream states during this batch.
+    const merged = f.flow && automatic.length ? await mergeFollowChanges(app, r, item, f.flow, automatic, new Set(affected.map(c => c.id))) : new Set<string>();
+    askChanges(app, r, affected.filter(c => !merged.has(c.id)));
+    const settled = changesOfRun(app, r);
+    const asked = settled.filter(c => c.status === "asked").length;
+    const folded = settled.filter(c => c.status === "merged" && folds.has(c.id)).length;
+    if (otherItems.size || merged.size) app.emit({ type: "changed", entity: "item", id });
+    tx(app.db, () => {
+      commitBatch(app, id, batch);
+      run(app.db, "update flow_signals set outcome=? where type='context.batch' and item_id=? and json_extract(keys,'$.runId')=?", changes.length ? `记了 ${changes.length} 条变化，问了本人 ${asked} 条${folded ? `，并进 ${folded} 条` : ""}` : "看过，没有变化", id, r.id);
+    });
     // A failed extraction can be retried without losing the next steps already handed in.
     for (const c of changes) run(app.db, `update item_change_steps set batch_id=? where change_id=? and state in ('pending','waiting')
       and batch_id in (select id from runs where status in ('failed','cancelled'))`, r.id, c.id);
     queueChangeSteps(app, r.id);
-  };
-  if (own.length) return mergeOwnWords(app, r, own).then(queue);
-  queue();
-  return Promise.resolve();
+  });
 }
-/**
- * What the person said themselves is folded in as their 并进 would be: the first stage each touches is
- * reopened once with all of them (one reopen per stage, so a second does not stop the run the first
- * started). Where that cannot be done, they are asked after all.
- */
-async function mergeOwnWords(app: App, r: Run, own: ChangeRow[]) {
-  const itemId = String(r.input.itemId), f = itemFlow(app, itemId);
-  if (!own.length || !f || f.endedAt) return;
-  const item = getItem(app, itemId), byStage = new Map<string, ChangeRow[]>();
-  for (const c of own) {
-    const stage = f.definition.stages.find((s) => json<string[]>(c.stages, []).includes(s.id));
+
+function mergeReason(app: App, c: ChangeRow) {
+  const steps = stepsOf(app, c.id).map(s => `- ${s.waiting_for ? `等${s.waiting_for}：` : s.who === "owner" ? "本人： " : ""}${s.step}。做到：${s.done_when}${s.check_at ? `。回查：${s.check_at}` : ""}`);
+  return [c.summary, c.detail, steps.length ? `下一步\n${steps.join("\n")}` : "", json<string[]>(c.refs, []).join(" ")].filter(Boolean).join("\n");
+}
+
+/** The first affected stage takes the feedback and the steps. Reopen it once with the whole group. */
+async function mergeFollowChanges(app: App, r: Run, item: Item, f: ItemFlow, rows: ChangeRow[], affected: Set<string>) {
+  const merged = new Set<string>(), byStage = new Map<string, ChangeRow[]>();
+  const done = (c: ChangeRow, stageId: string) => {
+    tx(app.db, () => {
+      run(app.db, "update item_changes set status='merged',updated_at=? where id=?", now(), c.id);
+      settleUnqueuedSteps(app, c.id, "flow", `由「${f.definition.stages.find(s => s.id === stageId)?.name ?? stageId}」阶段接着做`);
+    });
+    merged.add(c.id);
+  };
+  for (const c of rows) {
+    const refs = json<string[]>(c.refs, []);
+    const reopened = reopenForEvidence(app, item.id, f.startedAt, refs);
+    if (reopened) { done(c, reopened.stage_id); continue; }
+    if (!affected.has(c.id)) continue;
+    const stage = f.definition.stages.find(s => json<string[]>(c.stages, []).includes(s.id));
     if (stage) byStage.set(stage.id, [...byStage.get(stage.id) ?? [], c]);
   }
   const { reopenStage } = await import("./engine.ts");
-  for (const [stageId, group] of byStage) {
-    const ids = group.map((c) => c.id);
-    run(app.db, `update item_changes set status='merged',updated_at=? where id in (${ids.map(() => "?").join(",")}) and status='noted'`, now(), ...ids);
+  const notices: string[] = [], cited = new Set<string>();
+  for (const stage of f.definition.stages) {
+    const group = byStage.get(stage.id);
+    if (!group) continue;
+    const refs = [...new Set(group.flatMap(c => json<string[]>(c.refs, [])))];
     try {
-      await reopenStage(app, itemId, stageId, group.map((c) => `${c.summary}\n${c.detail ?? ""}`.trim()).join("\n\n"), [...new Set(group.flatMap((c) => json<string[]>(c.refs, [])))], { actor: "owner", userId: item.userId }, { feedback: true, startedAt: f.startedAt });
+      await reopenStage(app, item.id, stage.id, group.map(c => mergeReason(app, c)).join("\n\n"), refs,
+        { actor: "owner", userId: item.userId, runId: r.id }, { feedback: true, startedAt: f.startedAt });
     } catch (e) {
-      console.warn(`[omem] 本人说的变化没能并进，改为问本人：${(e as Error).message}`);
-      run(app.db, `update item_changes set status='noted',updated_at=? where id in (${ids.map(() => "?").join(",")})`, now(), ...ids);
-      askGroup(app, r, group.map((c) => one<ChangeRow>(app.db, "select * from item_changes where id=?", c.id)!));
+      // Advancing can fail after the engine has already written the reopen.
+      if (!reopenForEvidence(app, item.id, f.startedAt, refs, stage.id)) {
+        console.warn(`[omem] 变化没能并进，改为问本人：${(e as Error).message}`);
+        continue;
+      }
     }
+    for (const c of group) done(c, stage.id);
+    refs.forEach(ref => cited.add(ref));
+    notices.push(`重开「${stage.name}」\n${group.map(c => `- ${c.summary}`).join("\n")}`);
   }
+  if (notices.length) {
+    const refs = [...cited];
+    notifyChange(app, { userId: item.userId, title: `「${item.title}」已并进新变化`,
+      body: `${notices.join("\n\n")}\n\n原话：${refs.map((ref, i) => `[${i + 1}](${ref})`).join(" ")}`,
+      sourceRefs: refs, runId: r.id });
+  }
+  return merged;
 }
 
 /** Apply the owner's decision on one change: 0 fold it into this item, 1 make it an item of its own, 2 leave it. */
 async function applyChoice(app: App, itemId: string, c: ChangeRow, choice: number) {
-  const item = getItem(app, itemId), f = itemFlow(app, itemId);
+  const item = getItem(app, itemId);
   if (c.type === "deadline") {
     // A proposed deadline has two answers: take the time, or leave the deadline as it is.
     if (choice === 0) tx(app.db, () => applyDeadline(app, c, "user"));
     else run(app.db, "update item_changes set status='dismissed',updated_at=? where id=?", now(), c.id);
     return;
   }
-  if (choice === 0) {
+  if (choice === 0) return withFollowEvidence(app, item.userId, async () => {
+    const f = itemFlow(app, itemId);
     if (!f || f.endedAt) throw new HttpError(409, "这件事没有在走的流程，不能并进");
     const affected = json<string[]>(c.stages, []);
     const stage = f.definition.stages.find((s) => affected.includes(s.id));
@@ -484,12 +486,16 @@ async function applyChoice(app: App, itemId: string, c: ChangeRow, choice: numbe
     run(app.db, "update item_changes set status='merged',updated_at=? where id=?", now(), c.id);
     const { reopenStage } = await import("./engine.ts");
     try {
-      await reopenStage(app, itemId, stage.id, `${c.summary}\n${c.detail ?? ""}`, json(c.refs, []), { actor: "owner", userId: item.userId }, { feedback: true, startedAt: f.startedAt });
+      const refs = json<string[]>(c.refs, []);
+      const reopened = reopenForEvidence(app, item.id, f.startedAt, refs);
+      if (!reopened) await reopenStage(app, itemId, stage.id, mergeReason(app, c), refs, { actor: "owner", userId: item.userId }, { feedback: true, startedAt: f.startedAt });
+      settleUnqueuedSteps(app, c.id, "flow", `由「${f.definition.stages.find(s => s.id === reopened?.stage_id)?.name ?? stage.name}」阶段接着做`);
     } catch (e) {
       run(app.db, "update item_changes set status='asked',updated_at=? where id=?", now(), c.id);
       throw e;
     }
-  } else if (choice === 1) {
+  });
+  if (choice === 1) {
     const refs = json<string[]>(c.refs, []);
     const materials = [...new Set(refs.map((r) => r.slice(4).split("#")[0]))].map((ref) => ({ kind: "source" as const, ref }));
     const attach = await prepareMaterials(app, materials, item.userId, "user");

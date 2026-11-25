@@ -2615,7 +2615,7 @@ def({
 });
 
 def({
-  name: "note_item_change", description: "交代这批新内容让本次跟进的事项变了什么；一条只说一个变化，每条带批次内原件的行引用，deadline 必须填 due。只给 item-follow 角色交结果。",
+  name: "note_item_change", description: "交代这批新内容让本次跟进的事项变了什么；一条只说一个变化，每条带批次内原件的行引用。范围内的反馈可用 fold: in-scope 并进流程；deadline 填 due，直接更新。只给 item-follow 角色交结果。",
   write: true, schema: changeSchema,
   handler: async (ctx, a) => {
     if (ctx.role !== "item-follow" || !ctx.runId) throw new HttpError(403, "只有 item-follow 能交事项变化");
@@ -2677,8 +2677,11 @@ def({
 def({
   name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过，正在做的照做并问本人要不要停下。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), reason: z.string().trim().min(1).max(4000), refs: z.array(z.string()).max(50).optional() }), handler: async (ctx, a) => {
-    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.refs ?? [], a.item);
-    return JSON.stringify(await (await import("../flows/engine.ts")).reopenStage(ctx.app, a.item, a.stage, a.reason, a.refs ?? [], flowActor(ctx)));
+    const item = flowItem(ctx, a.item, "flow"), refs = a.refs ?? [], by = flowActor(ctx);
+    await flowRefs(ctx, refs, a.item);
+    const mention = ctx.runId ? getRun(ctx.app, ctx.runId).input.mention as import("../mentions/channel.ts").MentionInfo | undefined : undefined;
+    if (mention) return JSON.stringify(await (await import("../mentions/flow.ts")).reopenFromMention(ctx.app, item, a.stage, a.reason, refs, by, mention));
+    return JSON.stringify(await (await import("../flows/engine.ts")).reopenStage(ctx.app, a.item, a.stage, a.reason, refs, by));
   },
 });
 def({

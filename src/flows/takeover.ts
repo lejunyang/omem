@@ -40,7 +40,8 @@ function eligible(app: App, s: Step, at = now()) {
   const flow = itemFlow(app, item.id);
   if (flow?.roundClosedAt && !flow.endedAt) return null;
   const change = one<{ type: string; status: string; noise: number }>(app.db, "select type,status,noise from item_changes where id=?", s.change_id);
-  if (!change || change.noise || ["dismissed", "split"].includes(change.status)) return null;
+  if (!change || change.noise || ["dismissed", "split", "elsewhere"].includes(change.status)) return null;
+  if (change.status === "merged" && ["scope", "decision", "blocker"].includes(change.type)) return null;
   return { item, c, mode: c.knobs.assist ?? "act", change };
 }
 
@@ -138,8 +139,9 @@ export function checkDueChangeSteps(app: App, at: Date) {
   for (const { batch_id } of all<{ batch_id: string }>(app.db, `select distinct s.batch_id from item_change_steps s join runs b on b.id=s.batch_id
     join items i on i.id=s.item_id join item_changes c on c.id=s.change_id
     where ((s.state='pending' and b.created_at>=?) or (s.state='waiting' and s.check_at<=?)) and b.status='done'
-      and i.status not in ('done','expired','cancelled','candidate') and c.noise=0 and c.status not in ('asked','dismissed','split')
-      and (c.type not in ('scope','deadline') or c.status='merged') order by s.batch_id`, new Date(+at - 7 * 86400_000).toISOString(), at.toISOString())) queueChangeSteps(app, batch_id, at);
+      and i.status not in ('done','expired','cancelled','candidate') and c.noise=0 and c.status not in ('asked','dismissed','split','elsewhere')
+      and (c.type not in ('scope','deadline') or c.status='merged')
+      and not (c.status='merged' and c.type in ('scope','decision','blocker')) order by s.batch_id`, new Date(+at - 7 * 86400_000).toISOString(), at.toISOString())) queueChangeSteps(app, batch_id, at);
 }
 
 function assertStep(app: App, runId: string, id: string) {

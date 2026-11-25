@@ -8,17 +8,20 @@ import { setDecisionFetchForTests, resetDecisionCooldownForTests } from "../src/
 import { appendToSource, sourceText, upsertSource } from "../src/sources/store.ts";
 import { upsertItem, getItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
+import { recordChange } from "../src/items/changes.ts";
 import { createThread, addMessage } from "../src/agents/threads.ts";
-import { getRun, listRuns, __testHandlers } from "../src/agents/runs.ts";
-import { answerAsk, getAsk, listAsks } from "../src/agents/asks.ts";
-import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { createRun, getRun, listRuns, __testHandlers } from "../src/agents/runs.ts";
+import { answerAsk, createAsk, getAsk, listAsks } from "../src/agents/asks.ts";
+import { callTool, revokeToolToken, toolContextForToken, type ToolContext } from "../src/agents/tools.ts";
 import { loadRole } from "../src/agents/runner.ts";
 import * as runner from "../src/agents/runner.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
+import * as engine from "../src/flows/engine.ts";
 import { startFlow, stopFlow, flowView, flowReminders, ownerAction } from "../src/flows/engine.ts";
 import { followContexts, followLimit, finishFollow, noteItemChange, recentChanges, settleChange } from "../src/flows/follow.ts";
 import { startServer } from "../src/server/http.ts";
 import { getStage } from "../src/flows/store.ts";
+import { MENTION_DENY, mentionTools, type MentionInfo } from "../src/mentions/mentions.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: App[] = [];
@@ -60,7 +63,7 @@ describe("流程上下文跟进", () => {
     const t = await setup();
     t.app.config.flows.follow.maxRunsPerDay = 1;
     const { r } = await t.processing();
-    finishFollow(t.app, r); run(t.app.db, "update runs set status='done' where id=?", r.id);
+    await finishFollow(t.app, r); run(t.app.db, "update runs set status='done' where id=?", r.id);
     t.message();
     const cursor = one(t.app.db, "select * from item_follow_cursors where item_id=?", t.item.id);
     await followContexts(t.app); await followContexts(t.app);
@@ -122,7 +125,7 @@ describe("流程上下文跟进", () => {
     const original = getStage(t.app, t.item.id, "code").control.runId;
     const { r, ref } = await t.processing();
     noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: "小王提出运费也要退", stages: ["code"], refs: [ref] });
-    finishFollow(t.app, r); await answerAsk(t.app, listAsks(t.app, { runId: r.id })[0].id, { choice: 0, by: "owner" });
+    await finishFollow(t.app, r); await answerAsk(t.app, listAsks(t.app, { runId: r.id })[0].id, { choice: 0, by: "owner" });
     const s = getStage(t.app, t.item.id, "code"); expect(s.control.runId).not.toBe(original);
     expect(getRun(t.app, s.control.runId!).input.task).toContain("本人说还不行，原因：小王提出运费也要退");
     expect(getRun(t.app, s.control.runId!).input.task).toContain("[scope/merged]");
@@ -147,8 +150,99 @@ describe("流程上下文跟进", () => {
     const task = String(getRun(t.app, s.control.runId!).input.task);
     expect(task).toContain("本人要求运费也退"); expect(task).toContain("本人要求退款单显示运费");
     expect(all(t.app.db, "select 1 from item_stage_log where item_id=? and stage_id='code' and event='reopen'", t.item.id)).toHaveLength(1);
-    expect(one(t.app.db, "select outcome from flow_signals where json_extract(keys,'$.runId')=?", r.id)).toEqual({ outcome: "记了 3 条变化，问了本人 1 条，按本人的话并进 2 条" });
+    expect(one(t.app.db, "select outcome from flow_signals where json_extract(keys,'$.runId')=?", r.id)).toEqual({ outcome: "记了 3 条变化，问了本人 1 条，并进 2 条" });
   });
+  it("范围内的两条反馈只重开一次，通知一条，下一步随阶段走", async () => {
+    const t = await setup([{ id: "code", name: "编码", by: { run: {} } }, { id: "end", name: "收尾", by: "wait" }]);
+    await ownerAction(t.app, t.item.id, "code", "done", "完成第一版", "owner");
+    t.app.config.flows.follow.maxMessages = 1;
+    const issue = t.message("user", 0, "验收发现附件没保留"), feedback = t.message("user", 0, "按验收标准保留说明链接");
+    await followContexts(t.app);
+    const r = t.queued()[0]; run(t.app.db, "update runs set status='running' where id=?", r.id);
+    const shared = { item: t.item.id, stages: ["code"], fold: "in-scope" as const };
+    const change = noteItemChange(t.app, r.id, { ...shared, type: "blocker", summary: "附件保存有缺陷", refs: [issue], steps: [
+      { who: "me-read", step: "核对附件保存", done_when: "重新打开还能看到附件" },
+      { who: "other", step: "回查验收结果", done_when: "验收通过", waiting_for: "小王", check_at: "2026-12-02T09:00:00+08:00" },
+    ] });
+    noteItemChange(t.app, r.id, { ...shared, type: "scope", summary: "恢复说明链接", refs: [feedback] });
+    await Promise.all([finishFollow(t.app, r), finishFollow(t.app, r)]);
+    expect(listAsks(t.app, { runId: r.id })).toHaveLength(0);
+    expect(listRuns(t.app, { kind: "item-takeover" })).toHaveLength(0);
+    expect(recentChanges(t.app, t.item.id).find(c => c.id === change.id)).toMatchObject({ status: "merged", steps: [{ status: "flow" }, { status: "flow" }] });
+    const reopened = all(t.app.db, "select 1 from item_stage_log where item_id=? and event='reopen'", t.item.id);
+    expect(reopened).toHaveLength(1);
+    const task = getRun(t.app, getStage(t.app, t.item.id, "code").control.runId!).input.task;
+    for (const phrase of ["核对附件保存", "重新打开还能看到附件", "等小王", "恢复说明链接", issue, feedback]) expect(task).toContain(phrase);
+    const notices = all<{ body: string; context: string; link: string | null }>(t.app.db, "select body,context,link from notifications where title like '%已并进新变化'");
+    expect(notices).toHaveLength(1);
+    for (const phrase of ["附件保存有缺陷", "恢复说明链接", "重开「编码」", issue, feedback]) expect(notices[0].body).toContain(phrase);
+    expect(JSON.parse(notices[0].context)).toMatchObject({ urgency: "later", plain: true });
+    expect(notices[0].link).toBeNull();
+  });
+  it("范围内的反馈无法重开时用原来的选择卡", async () => {
+    const t = await setup();
+    const { r, ref } = await t.processing();
+    vi.spyOn(engine, "reopenStage").mockRejectedValueOnce(new Error("演示重开失败"));
+    noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: "恢复帮助入口", stages: ["code"], refs: [ref], fold: "in-scope" });
+    await finishFollow(t.app, r);
+    expect(listAsks(t.app, { runId: r.id })[0].options.map(o => o.label)).toEqual(["并进这件事", "另开一件事", "不用管"]);
+    expect(recentChanges(t.app, t.item.id)[0].status).toBe("asked");
+    expect(all(t.app.db, "select 1 from notifications where title like '%已并进新变化'")).toHaveLength(0);
+  });
+  it.each(["ask", "in-scope"] as const)("另一件事项先按 %s 处理时，重叠行只记账", async (fold) => {
+    const t = await setup();
+    const other = upsertItem(t.app, undefined, { title: "示例商城缺陷" }, "user");
+    await addMaterials(t.app, other.id, [{ kind: "source", ref: t.src.id }], "owner");
+    await startFlow(t.app, other.id, "demo", owner);
+    t.app.config.flows.follow.maxMessages = 1;
+    const first = t.message(), second = t.message(), third = t.message();
+    await followContexts(t.app);
+    const [a, b] = [t.item.id, other.id].map(id => t.queued().find(r => r.input.itemId === id)!);
+    for (const r of [a, b]) run(t.app.db, "update runs set status='running' where id=?", r.id);
+    const finding = { type: "blocker" as const, summary: "附件未保存", stages: ["code"] };
+    noteItemChange(t.app, a.id, { ...finding, item: t.item.id, refs: [`${first}-${second.split("#")[1]}`], fold });
+    noteItemChange(t.app, b.id, { ...finding, item: other.id, refs: [`${second}-${third.split("#")[1]}`], fold: "in-scope",
+      steps: [{ who: "me-read", step: "核对保存", done_when: "查到原因" }] });
+    await Promise.all([finishFollow(t.app, a), finishFollow(t.app, b)]);
+    expect(listAsks(t.app, { runId: a.id })).toHaveLength(fold === "ask" ? 1 : 0);
+    expect(listAsks(t.app, { runId: b.id })).toHaveLength(0);
+    expect(recentChanges(t.app, other.id)[0]).toMatchObject({ status: "elsewhere", detail: expect.stringContaining(t.item.title), steps: [{ status: "skipped" }] });
+    expect(all(t.app.db, "select 1 from item_stage_log where item_id=? and event='reopen'", other.id)).toHaveLength(0);
+    expect(listRuns(t.app, { kind: "item-takeover" })).toHaveLength(0);
+  });
+  it.each([true, false])("有人找你与事项跟进并发，同一段话只重开一次（跟进先到：%s）", async (followFirst) => {
+    const t = await setup([{ id: "code", name: "编码", by: { run: {} } }, { id: "end", name: "收尾", by: "wait" }]);
+    const { r, ref } = await t.processing();
+    const info = { chatId: "oc_example", refs: [ref], reply: "draft" } as MentionInfo;
+    const m = createRun(t.app, { kind: "agent", title: "有人找你", input: { mention: info } });
+    const args = { item: t.item.id, stage: "code", reason: "附件保存后丢失，补齐保存并用验收样例复测", refs: [ref] };
+    t.app.baseUrl = "http://127.0.0.1:1";
+    const prep = runner.prepareRun(t.app, { actor: { role: "assistant" }, spaceId: "personal", runId: m.id,
+      denyTools: MENTION_DENY, addTools: mentionTools(info), lark: { chats: [] } });
+    const ctx = toolContextForToken(t.app, prep.token)!;
+    try {
+      expect(ctx.tools?.has("stage_reopen")).toBe(true);
+      noteItemChange(t.app, r.id, { item: t.item.id, type: "blocker", summary: "附件保存后丢失", refs: [ref], stages: ["code"], fold: "in-scope" });
+      const mention = () => callTool(ctx, "stage_reopen", args);
+      if (followFirst) {
+        await Promise.all([finishFollow(t.app, r), mention().then(result => expect(result.text).toContain("已经按这段原话重开"))]);
+      } else {
+        const unrelated = upsertItem(t.app, undefined, { title: "另一件示例事项" }, "user");
+        await startFlow(t.app, unrelated.id, "demo", owner);
+        expect((await callTool(ctx, "stage_reopen", { ...args, item: unrelated.id })).text).toContain("事项材料里没有");
+        expect((await callTool(ctx, "stage_reopen", { ...args, refs: [] })).text).toContain("触发这次处理的原话");
+        expect((await mention()).isError).toBe(false);
+        const task = getRun(t.app, getStage(t.app, t.item.id, "code").control.runId!).input.task;
+        expect(task).toContain(args.reason);
+        expect(task).toContain(ref);
+        await finishFollow(t.app, r);
+      }
+    } finally { revokeToolToken(prep.token); }
+    expect(all(t.app.db, "select 1 from item_stage_log where item_id=? and event='reopen'", t.item.id)).toHaveLength(1);
+    expect(recentChanges(t.app, t.item.id)[0].status).toBe("merged");
+    expect(listAsks(t.app, { runId: r.id })).toHaveLength(0);
+  });
+
   it("从流程开始时的末尾订阅；不到安静时间继续攒，安静后由巡检起运行", async () => {
     const t = await setup();
     expect(flowView(t.app, t.item.id).follow[0]).toMatchObject({ sourceId: t.src.id, line: 1, pending: 0 });
@@ -192,7 +286,7 @@ describe("流程上下文跟进", () => {
   it("没配决策模型或模型失败都照常起运行", async () => {
     const t = await setup(); const { r } = await t.processing(); expect(r.kind).toBe("item-follow");
     expect(all(t.app.db, "select * from decisions")).toHaveLength(0);
-    run(t.app.db, "update runs set status='done' where id=?", r.id); finishFollow(t.app, r);
+    run(t.app.db, "update runs set status='done' where id=?", r.id); await finishFollow(t.app, r);
     t.app.config.ai.providers = [{ id: "decision", name: "决策", kind: "openai", backends: [] }];
     t.app.config.ai.decision.provider = "decision"; t.app.config.ai.decision.model = "decision-model";
     setKey(t.app.home, "decision", "example-key"); setDecisionFetchForTests(async () => { throw new Error("暂不可用"); });
@@ -217,7 +311,7 @@ describe("流程上下文跟进", () => {
     const t = await setup(); const { r, ref } = await t.processing();
     noteItemChange(t.app, r.id, { item: t.item.id, type: "info", summary: "小王同步了进度", refs: [ref] });
     const before = all(t.app.db, "select id from notifications").length;
-    finishFollow(t.app, r); finishFollow(t.app, r);
+    await finishFollow(t.app, r); await finishFollow(t.app, r);
     expect(listAsks(t.app, { runId: r.id })).toHaveLength(0);
     expect(all(t.app.db, "select id from notifications")).toHaveLength(before);
     const read = await callTool({ app: t.app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent" }, "read_item", { item_id: t.item.id });
@@ -227,11 +321,16 @@ describe("流程上下文跟进", () => {
   });
   it("deadline 校验 due，更新截止时间、带引用记时间线，同一变化只通知一次", async () => {
     const t = await setup(); const { r, ref } = await t.processing();
-    const a = { item: t.item.id, type: "deadline" as const, summary: "本人确认改到十二月二日", refs: [ref], decided: true };
+    const a = { item: t.item.id, type: "deadline" as const, summary: "小王说改到十二月二日", refs: [ref] };
     for (const due of [undefined, "明天", "2026-02-30", "2026-12-02T09:00:00"]) expect(() => noteItemChange(t.app, r.id, { ...a, due })).toThrow("due");
     noteItemChange(t.app, r.id, { ...a, due: "2026-12-02" }); noteItemChange(t.app, r.id, { ...a, due: "2026-12-02" });
     expect(getItem(t.app, t.item.id).dueAt).toBe("2026-12-02");
-    expect(all(t.app.db, "select context from notifications where json_extract(context,'$.runId')=? and json_extract(context,'$.urgency')='later'", r.id)).toHaveLength(1);
+    const notices = all<{ body: string }>(t.app.db, "select body from notifications where json_extract(context,'$.runId')=? and json_extract(context,'$.urgency')='later'", r.id);
+    expect(notices).toHaveLength(1);
+    expect(notices[0].body).toContain("2026-12-01 → 2026-12-02");
+    expect(notices[0].body).toContain(ref);
+    expect(notices[0].body).toContain("小王说改到十二月二日");
+    expect(listAsks(t.app, { runId: r.id })).toHaveLength(0);
     expect(one<{ source_refs: string }>(t.app.db, "select source_refs from item_events where run_id=? and source_refs!='[]'", r.id)!.source_refs).toContain(ref);
     expect(recentChanges(t.app, t.item.id)[0].status).toBe("merged");
     const first = recentChanges(t.app, t.item.id)[0].id;
@@ -240,43 +339,42 @@ describe("流程上下文跟进", () => {
     const retry = t.queued().find((next) => next.id !== r.id)!;
     run(t.app.db, "update runs set status='running' where id=?", retry.id);
     expect(noteItemChange(t.app, retry.id, { ...a, due: "2026-12-02" }).id).toBe(first);
-    finishFollow(t.app, getRun(t.app, retry.id));
+    await finishFollow(t.app, getRun(t.app, retry.id));
     expect(recentChanges(t.app, t.item.id)).toHaveLength(1);
     expect(all(t.app.db, "select id from notifications where json_extract(context,'$.urgency')='later' and title like '%截止时间变了' ")).toHaveLength(1);
   });
-  it.each([0, 1])("别人只是提议改期：截止时间不动，问本人改不改，选 %s 后才处理", async (choice) => {
+  function oldDeadlineCard(t: Awaited<ReturnType<typeof setup>>, r: ReturnType<typeof getRun>, ref: string) {
+    const due = "2026-12-05";
+    const proposal = recordChange(t.app, { itemId: t.item.id, type: "deadline", origin: "follow", summary: "小李提出延到十二月五日", refs: [ref], runId: r.id, due })!;
+    const ask = createAsk(t.app, { runId: r.id, userId: "owner", question: "改截止时间吗？", options: [{ label: "改成这个时间" }, { label: "不改" }],
+      context: { handler: "item-follow", itemId: t.item.id, startedAt: (r.input.batch as { startedAt: string }).startedAt, changes: [proposal.id] } });
+    run(t.app.db, "update item_changes set status='asked',ask_id=? where id=?", ask.id, proposal.id);
+    return { proposal, ask };
+  }
+  it.each([0, 1])("已经发出的旧改期卡仍能回答 %s", async (choice) => {
     const t = await setup(); const { r, ref } = await t.processing();
-    const before = all(t.app.db, "select id from notifications").length;
-    const earlier = noteItemChange(t.app, r.id, { item: t.item.id, type: "deadline", summary: "小王提出改到十二月三日", refs: [ref], due: "2026-12-03" });
-    const change = noteItemChange(t.app, r.id, { item: t.item.id, type: "deadline", summary: "小李提出延到十二月五日，本人还没表态", refs: [ref], due: "2026-12-05" });
-    expect(change).toMatchObject({ status: "noted", due: "2026-12-05" });
-    expect(getItem(t.app, t.item.id).dueAt).toBe("2026-12-01");
-    expect(all(t.app.db, "select id from notifications")).toHaveLength(before);
-    finishFollow(t.app, r); finishFollow(t.app, r);
-    // One card, about the latest proposal of the batch; the earlier one stays on the list.
-    const asks = listAsks(t.app, { runId: r.id }); expect(asks).toHaveLength(1);
-    expect(asks[0].options.map((o) => o.label)).toEqual(["改成这个时间", "不改"]);
-    expect(asks[0].question).toContain("提出改成：2026-12-05"); expect(asks[0].question).toContain("现在的截止时间：2026-12-01"); expect(asks[0].question).toContain(ref);
-    // Whoever does a later stage reads it as a proposal, not as the new deadline.
-    expect((await callTool({ app: t.app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent" }, "read_item", { item_id: t.item.id })).text).toContain("2026-12-01");
-    expect(recentChanges(t.app, t.item.id).find((c) => c.id === change.id)).toMatchObject({ status: "asked", due: "2026-12-05", detail: null });
-    expect(recentChanges(t.app, t.item.id).find((c) => c.id === earlier.id)!.status).toBe("noted");
-    await expect(settleChange(t.app, t.item.id, change.id, "split", "owner")).rejects.toThrow("改或不改");
-    await expect(answerAsk(t.app, asks[0].id, { choice, by: "other" })).rejects.toThrow("本人");
-    if (choice === 0) await answerAsk(t.app, asks[0].id, { choice, by: "owner" });
-    else await settleChange(t.app, t.item.id, change.id, "dismiss", "owner");
-    expect(getAsk(t.app, asks[0].id)).toMatchObject({ status: "answered", choice });
-    expect(recentChanges(t.app, t.item.id).find((c) => c.id === change.id)!.status).toBe(choice === 0 ? "merged" : "dismissed");
+    const { proposal, ask } = oldDeadlineCard(t, r, ref);
+    await expect(settleChange(t.app, t.item.id, proposal.id, "split", "owner")).rejects.toThrow("改或不改");
+    await expect(answerAsk(t.app, ask.id, { choice, by: "other" })).rejects.toThrow("本人");
+    if (choice === 0) await answerAsk(t.app, ask.id, { choice, by: "owner" });
+    else await settleChange(t.app, t.item.id, proposal.id, "dismiss", "owner");
+    expect(getAsk(t.app, ask.id)).toMatchObject({ status: "answered", choice });
+    expect(recentChanges(t.app, t.item.id).find(c => c.id === proposal.id)!.status).toBe(choice === 0 ? "merged" : "dismissed");
     expect(getItem(t.app, t.item.id).dueAt).toBe(choice === 0 ? "2026-12-05" : "2026-12-01");
-    if (choice === 0) expect(one<{ source_refs: string }>(t.app.db, "select source_refs from item_events where item_id=? and text like '%小李提出延到十二月五日%'", t.item.id)!.source_refs).toContain(ref);
-    // The owner chose: nothing more to be told about.
     expect(all(t.app.db, "select id from notifications where title like '%截止时间变了'")).toHaveLength(0);
   });
-  it("提议还在等本人时，本人在群里定了时间：直接改，原来那张卡片收回", async () => {
+  it("新时间与当前截止时间一致时只记账", async () => {
     const t = await setup(); const { r, ref } = await t.processing();
-    const proposal = noteItemChange(t.app, r.id, { item: t.item.id, type: "deadline", summary: "小李提出延到十二月五日", refs: [ref], due: "2026-12-05" });
-    finishFollow(t.app, r); run(t.app.db, "update runs set status='done' where id=?", r.id);
-    const ask = listAsks(t.app, { runId: r.id })[0];
+    const result = noteItemChange(t.app, r.id, { item: t.item.id, type: "deadline", due: "2026-12-01", summary: "小李说十二月一日上线", refs: [ref] });
+    await finishFollow(t.app, r);
+    expect(result.status).toBe("merged");
+    expect(listAsks(t.app, { runId: r.id })).toHaveLength(0);
+    expect(all(t.app.db, "select id from notifications where title like '%截止时间变了'")).toHaveLength(0);
+  });
+  it("改期时收回已经被取代的旧卡片", async () => {
+    const t = await setup(); const { r, ref } = await t.processing();
+    const { proposal, ask } = oldDeadlineCard(t, r, ref);
+    await finishFollow(t.app, r); run(t.app.db, "update runs set status='done' where id=?", r.id);
     const said = t.message("owner", 0, "延到十二月八日");
     await followContexts(t.app);
     const next = t.queued().find((q) => q.id !== r.id)!;
@@ -285,7 +383,7 @@ describe("流程上下文跟进", () => {
     expect(getItem(t.app, t.item.id).dueAt).toBe("2026-12-08");
     expect(recentChanges(t.app, t.item.id).find((c) => c.id === proposal.id)!.status).toBe("dismissed");
     expect(getAsk(t.app, ask.id).status).toBe("cancelled");
-    finishFollow(t.app, getRun(t.app, next.id));
+    await finishFollow(t.app, getRun(t.app, next.id));
     expect(listAsks(t.app, { runId: next.id })).toHaveLength(0);
     // The time the item already has is not asked about again.
     await expect(settleChange(t.app, t.item.id, proposal.id, "merge", "owner")).rejects.toThrow("处理过");
@@ -296,7 +394,7 @@ describe("流程上下文跟进", () => {
     const { r, ref } = await t.processing();
     const change = noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: "小王提出运费也要退", detail: "原来只退商品款；小王提出还退运费，尚未同意", stages: ["code", "verify"], refs: [ref] });
     expect(getStage(t.app, t.item.id, "code").state).toBe("done");
-    finishFollow(t.app, r);
+    await finishFollow(t.app, r);
     const ask = listAsks(t.app, { runId: r.id })[0];
     expect(ask.question).toContain("编码（已完成）"); expect(ask.question).toContain(ref);
     await expect(answerAsk(t.app, ask.id, { choice, by: "other" })).rejects.toThrow("本人");
@@ -316,7 +414,7 @@ describe("流程上下文跟进", () => {
   it("并进运行阶段时，新任务带返工反馈及最近变化；未开始阶段的变化不提问", async () => {
     const t = await setup(); const { r, ref } = await t.processing();
     noteItemChange(t.app, r.id, { item: t.item.id, type: "blocker", summary: "小王说测试账号还没到", stages: ["verify"], refs: [ref] });
-    finishFollow(t.app, r); expect(listAsks(t.app, { runId: r.id })).toHaveLength(0);
+    await finishFollow(t.app, r); expect(listAsks(t.app, { runId: r.id })).toHaveLength(0);
     // Switch the next carrier to a run in the saved per-item definition, as if that flow began with it.
     const f = JSON.parse(one<{ definition: string }>(t.app.db, "select definition from item_flows where item_id=?", t.item.id)!.definition);
     f.stages[1].by = { run: {} };
@@ -328,7 +426,7 @@ describe("流程上下文跟进", () => {
   it("同一批最多三张卡片，第三张的多条变化逐条选择", async () => {
     const t = await setup(); const { r, ref } = await t.processing();
     for (let i = 0; i < 5; i++) noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: `小王提出第 ${i + 1} 项`, stages: ["code"], refs: [ref] });
-    finishFollow(t.app, r); finishFollow(t.app, r);
+    await finishFollow(t.app, r); await finishFollow(t.app, r);
     const asks = listAsks(t.app, { runId: r.id }); expect(asks).toHaveLength(3);
     const form = asks.find((a) => a.ui?.fields?.length)!; expect(form.ui!.fields).toHaveLength(3);
     const fields = form.ui!.fields!;
@@ -339,7 +437,7 @@ describe("流程上下文跟进", () => {
   it("结束后不跟进，也拒绝尚未回答的变化卡片；重启从新末尾开始", async () => {
     const t = await setup(); const { r, ref } = await t.processing();
     noteItemChange(t.app, r.id, { item: t.item.id, type: "decision", summary: "本人确定补运费", stages: ["code"], refs: [ref] });
-    finishFollow(t.app, r); const ask = listAsks(t.app, { runId: r.id })[0];
+    await finishFollow(t.app, r); const ask = listAsks(t.app, { runId: r.id })[0];
     run(t.app.db, "update runs set status='done' where id=?", r.id);
     await stopFlow(t.app, t.item.id); t.message(); await followContexts(t.app);
     expect(t.queued()).toHaveLength(1); expect(flowView(t.app, t.item.id).follow).toEqual([]);
@@ -360,7 +458,7 @@ describe("流程上下文跟进", () => {
     await followContexts(t.app, new Date(Date.now() + 21 * 60000)); expect(t.queued()).toHaveLength(1);
     const r = t.queued()[0]; run(t.app.db, "update runs set status='running' where id=?", r.id);
     noteItemChange(t.app, r.id, { item: t.item.id, type: "info", summary: "会议确认方案", refs: [`src:${doc.id}#L1`] });
-    finishFollow(t.app, getRun(t.app, r.id)); expect(flowView(t.app, t.item.id).follow.find((s) => s.sourceId === doc.id)!.pending).toBe(0);
+    await finishFollow(t.app, getRun(t.app, r.id)); expect(flowView(t.app, t.item.id).follow.find((s) => s.sourceId === doc.id)!.pending).toBe(0);
   });
   it("普通会话忽略助手；多行消息引用实际转录行号", async () => {
     const t = await setup(); const c = createThread(t.app, { spaceId: "personal", channel: "web" });
@@ -382,7 +480,7 @@ describe("流程上下文跟进", () => {
   });
   it("成功后到达的新消息保留到下一批；没变化也记一次批次结局", async () => {
     const t = await setup(); const { r } = await t.processing();
-    t.message(); finishFollow(t.app, r); run(t.app.db, "update runs set status='done' where id=?", r.id);
+    t.message(); await finishFollow(t.app, r); run(t.app.db, "update runs set status='done' where id=?", r.id);
     expect(flowView(t.app, t.item.id).follow[0].pending).toBe(1);
     await followContexts(t.app); expect(t.queued()).toHaveLength(2);
     expect(one<{ outcome: string }>(t.app.db, "select outcome from flow_signals where json_extract(keys,'$.runId')=?", r.id)!.outcome).toBe("看过，没有变化");
@@ -414,7 +512,7 @@ describe("原件查找、文档的新行和在事项页逐条处理", () => {
     run(t.app.db, "update runs set status='running' where id=?", r.id);
     expect(() => noteItemChange(t.app, r.id, { item: t.item.id, type: "info", summary: "旧的一行", refs: [`src:${doc.id}#L1`] })).toThrow("这一批");
     noteItemChange(t.app, r.id, { item: t.item.id, type: "info", summary: "文档写明运费也退", refs: [`src:${doc.id}#L3`] });
-    finishFollow(t.app, getRun(t.app, r.id)); run(t.app.db, "update runs set status='done' where id=?", r.id);
+    await finishFollow(t.app, getRun(t.app, r.id)); run(t.app.db, "update runs set status='done' where id=?", r.id);
     run(t.app.db, "update sources set text=?,updated_at=? where id=?", "退商品款\n部分发货的运费也退", later(2000), doc.id);
     await followContexts(t.app, new Date(Date.now() + 42 * 60000));
     expect(t.queued()).toHaveLength(1);
@@ -424,7 +522,7 @@ describe("原件查找、文档的新行和在事项页逐条处理", () => {
     const t = await setup(); const { r, ref } = await t.processing();
     for (let i = 0; i < 5; i++) noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: `小王提出第 ${i + 1} 项`, stages: ["code"], refs: [ref] });
     for (let i = 0; i < 8; i++) noteItemChange(t.app, r.id, { item: t.item.id, type: "info", summary: `同步第 ${i + 1} 条进度`, refs: [ref] });
-    finishFollow(t.app, r);
+    await finishFollow(t.app, r);
     const asks = listAsks(t.app, { runId: r.id }), form = asks.find((a) => a.ui?.fields?.length)!, single = asks.find((a) => !a.ui?.fields?.length)!;
     // The page lists every change that waits for the owner, however many newer ones there are.
     const shown = flowView(t.app, t.item.id).changes;

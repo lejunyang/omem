@@ -5,6 +5,7 @@ import { canWrite, scopeFor } from "../core/users.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler } from "./asks.ts";
 import { getRun, runUser } from "./runs.ts";
+import { decidedDeadline } from "../items/change-deadline.ts";
 import { recordChange } from "../items/changes.ts";
 import { itemsAt, materialCandidates, type Place } from "../items/places.ts";
 import { getItem, isClosed, upsertItem, type Item } from "../items/store.ts";
@@ -22,8 +23,7 @@ import { mayPropose } from "../items/choices.ts";
  * the meeting was handed to follows that item; the group it was started in is linked to the item; its
  * record is already a material of the item. An item that only reads alike is a candidate: the outcomes
  * wait on a question to the owner (on the work page's 等你处理 like every ask) and are written when they
- * say so. A to-do's date is its own; a new deadline for the item moves it only when settled (`decided`),
- * otherwise it is asked about (改成这个时间 / 不改), as item-follow does with a proposed date.
+ * say so. A to-do's date is its own; a new deadline for the item moves it and notifies the owner.
  */
 
 const ref = z.string().regex(/^src:[\w-]+#L\d+(?:-L?\d+)?$/, "引用写成 src:<会议记录的原件id>#L起-L止");
@@ -33,7 +33,7 @@ export const outcomesSchema = z.object({
   decisions: z.array(entry).max(20).optional().describe("会上定下来的：谁定的、定了什么"),
   todos: z.array(entry.extend({ due: z.string().date().optional().describe("这件待办自己的截止日期（YYYY-MM-DD）") })).max(20).optional().describe("待办：谁、做什么、什么时候之前"),
   open_questions: z.array(entry).max(20).optional().describe("提了但没定下来的问题"),
-  deadline: z.object({ due: z.string().date(), summary: z.string().trim().min(1).max(300), decided: z.boolean().optional().describe("会上已经定了（本人说的或明确拍板）才填 true；只是有人提议不填"), refs: z.array(ref).min(1).max(6) }).optional()
+  deadline: z.object({ due: z.string().date(), summary: z.string().trim().min(1).max(300), decided: z.boolean().optional().describe("兼容旧调用，改期直接更新，无需填"), refs: z.array(ref).min(1).max(6) }).optional()
     .describe("这件事项本身的截止时间变了才填（不是某个待办的日期）"),
 });
 export type Outcomes = z.infer<typeof outcomesSchema>;
@@ -84,7 +84,7 @@ export function outcomesTask(app: App, meetingId: string, userId: string): strin
     confirmed.length ? `这场会已确认关联的事项：\n${confirmed.map((c) => line(c.item, c.why)).join("\n")}` : "这场会还没有确认关联的事项。",
     candidates.length ? `只是看起来相关（还没确认，交上去会先问本人）：\n${candidates.map((c) => line(c.item, c.reasons.join("，"))).join("\n")}` : "",
     "",
-    `会上对某件事项有决定、待办或没定下来的问题时，用 meeting_outcomes 交给宿主，一件事项调一次：decisions（谁定的、定了什么）、todos（谁、做什么、有日期就写 due）、open_questions（提了没定的）；每条都引用会议记录原件 src:${m.source_id} 的行。事项本身的截止时间变了才填 deadline，会上定了才写 decided。和这些事项都无关的不用交；交过的同一场会再交不会重复记。`,
+    `会上对某件事项有决定、待办或没定下来的问题时，用 meeting_outcomes 交给宿主，一件事项调一次：decisions（谁定的、定了什么）、todos（谁、做什么、有日期就写 due）、open_questions（提了没定的）；每条都引用会议记录原件 src:${m.source_id} 的行。事项本身的截止时间明确变了才填 deadline，summary 写谁说明改期，仍在问是否延期的写 open_questions。和这些事项都无关的不用交；交过的同一场会再交不会重复记。`,
   ].filter((x) => x !== "").join("\n");
 }
 
@@ -118,28 +118,12 @@ function writeOutcomes(app: App, m: MeetingRow, item: Item, o: Outcomes, runId: 
     for (const e of o.open_questions ?? []) note("question", e);
   });
   let deadline = "";
-  if (o.deadline && o.deadline.due !== item.dueAt?.slice(0, 10)) {
-    const d = o.deadline;
+  if (o.deadline) tx(app.db, () => {
+    const d = o.deadline!;
     const r = recordChange(app, { itemId: item.id, type: "deadline", origin: "meeting", runId, refs: d.refs, due: d.due, summary: d.summary, source: `meeting:${m.meeting_id}#deadline` });
-    const row = r && one<{ status: string; ask_id: string | null }>(app.db, "select status, ask_id from item_changes where id = ?", r.id);
-    if (r && row && ["noted", "asked"].includes(row.status)) {
-      if (d.decided) {
-        upsertItem(app, item.id, { dueAt: d.due, sourceRefs: d.refs, note: `${d.summary}（会议「${m.topic}」上定的）` }, "agent", runId ?? undefined);
-        run(app.db, "update item_changes set status = 'merged', updated_at = ? where id = ?", now(), r.id);
-        if (row.ask_id) cancelAsk(app, row.ask_id, "截止时间已经定了");
-        deadline = `截止时间改成了 ${d.due}`;
-      } else if (!row.ask_id) {
-        const ask = createAsk(app, {
-          runId, conversationId: null, userId: item.userId, allowText: false,
-          question: `会议「${m.topic || "无标题"}」上有人提出改「${item.title}」的截止时间：\n\n**${d.summary}**\n- 提出改成：${d.due}\n- 现在的截止时间：${item.dueAt ?? "未定"}\n- 原话：${d.refs.map((x, i) => `[${i + 1}](${x})`).join(" ")}`,
-          options: [{ label: "改成这个时间" }, { label: "不改" }],
-          context: { handler: "meeting-deadline", itemId: item.id, changeId: r.id, due: d.due },
-        });
-        run(app.db, "update item_changes set status = 'asked', ask_id = ?, updated_at = ? where id = ?", ask.id, now(), r.id);
-        deadline = "改期的提议问了本人";
-      }
-    }
-  }
+    const row = r && one<{ id: string; item_id: string; status: string; ask_id: string | null; due: string; refs: string; summary: string }>(app.db, "select id,item_id,status,ask_id,due,refs,summary from item_changes where id = ?", r.id);
+    if (row && ["noted", "asked"].includes(row.status) && decidedDeadline(app, row, runId ?? undefined)) deadline = `截止时间改成了 ${d.due}`;
+  });
   return { created, updated, deadline };
 }
 

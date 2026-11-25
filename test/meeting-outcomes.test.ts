@@ -7,7 +7,7 @@ import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import { createRun } from "../src/agents/runs.ts";
-import { answerAsk, listAsks } from "../src/agents/asks.ts";
+import { answerAsk, createAsk, listAsks } from "../src/agents/asks.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { meetingLinks, outcomesTask } from "../src/agents/meeting-outcomes.ts";
 import { resetMeetingsForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
@@ -136,19 +136,29 @@ describe("会议结束后，把决定结构化地写到关联的事项", () => {
     expect((await callTool(t.ctx(window.id), "meeting_outcomes", t.outcomes(t.line.id))).isError).toBe(true);
   });
 
-  it("会上有人提议改截止时间：不直接改，问本人改不改；会上定了的才直接改", async () => {
+  it("会议交来的改期直接更新并通知一次", async () => {
     const t = await setup();
-    const proposal = { item_id: t.line.id, deadline: { due: "2026-12-15", summary: "提出上线改到 12 月 15 日", refs: [t.src(5)] } };
+    const proposal = { item_id: t.line.id, deadline: { due: "2026-12-15", summary: "小王说上线改到 12 月 15 日", refs: [t.src(5)] } };
+    const r = await callTool(t.ctx(t.summaryRun().id), "meeting_outcomes", proposal);
+    expect(r.text).toContain("截止时间改成了 2026-12-15");
     await callTool(t.ctx(t.summaryRun().id), "meeting_outcomes", proposal);
-    expect(getItem(t.app, t.line.id).dueAt).toBe("2026-12-10");
-    const ask = listAsks(t.app, { status: "pending" }).find((a) => a.handler === "meeting-deadline")!;
-    expect(ask.options.map((o) => o.label)).toEqual(["改成这个时间", "不改"]);
-    await answerAsk(t.app, ask.id, { choice: 0, by: "owner" });
-    expect(getItem(t.app, t.line.id).dueAt?.slice(0, 10)).toBe("2026-12-15");
+    expect(getItem(t.app, t.line.id).dueAt).toBe("2026-12-15");
+    expect(listAsks(t.app, { status: "pending" }).some(a => a.handler === "meeting-deadline")).toBe(false);
+    const notices = all<{ body: string }>(t.app.db, "select body from notifications where title like '%截止时间变了'");
+    expect(notices).toHaveLength(1);
+    expect(notices[0].body).toContain("2026-12-10 → 2026-12-15");
+    expect(notices[0].body).toContain(t.src(5));
+  });
 
-    const decided = { item_id: t.line.id, deadline: { due: "2026-12-20", summary: "本人定了上线改到 12 月 20 日", decided: true, refs: [t.src(5)] } };
-    const r = await callTool(t.ctx(t.summaryRun().id), "meeting_outcomes", decided);
-    expect(r.text).toContain("截止时间改成了 2026-12-20");
-    expect(getItem(t.app, t.line.id).dueAt?.slice(0, 10)).toBe("2026-12-20");
+  it("已经发出的会议改期卡仍能回答", async () => {
+    const t = await setup();
+    const id = t.summaryRun().id;
+    const ask = createAsk(t.app, { runId: id, userId: "owner", question: "会议改期吗？", options: [{ label: "改成这个时间" }, { label: "不改" }],
+      context: { handler: "meeting-deadline", itemId: t.line.id, changeId: "ic_old", due: "2026-12-15" } });
+    const at = new Date().toISOString();
+    run(t.app.db, `insert into item_changes(id,item_id,at,type,summary,refs,run_id,status,ask_id,updated_at,due,origin)
+      values('ic_old',?,?,'deadline','小王提出改期',?,?,'asked',?,?,'2026-12-15','meeting')`, t.line.id, at, JSON.stringify([t.src(5)]), id, ask.id, at);
+    await answerAsk(t.app, ask.id, { choice: 0, by: "owner" });
+    expect(getItem(t.app, t.line.id).dueAt).toBe("2026-12-15");
   });
 });

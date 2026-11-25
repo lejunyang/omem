@@ -10,7 +10,7 @@ import { appendToSource } from "../src/sources/store.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
 import { addMaterials, removeMaterials } from "../src/items/materials.ts";
 import { createRun, getRun, listRuns } from "../src/agents/runs.ts";
-import { answerAsk, listAsks } from "../src/agents/asks.ts";
+import { listAsks } from "../src/agents/asks.ts";
 import { createThread, findThread, threadMessages } from "../src/agents/threads.ts";
 import { itemFocus } from "../src/agents/turn-context.ts";
 import { watchedNote } from "../src/agents/sessions.ts";
@@ -89,7 +89,7 @@ describe("事情型关注", () => {
     expect(itemContext(app, other.id)).toMatchObject({ byFlow: true, knobs: { reply: "none" } });
   });
 
-  it("follows an item the owner keeps a 关注 on with no flow: changes without stages, a proposed deadline asked", async () => {
+  it("follows an item the owner keeps a 关注 on with no flow: changes without stages, a deadline applied directly", async () => {
     const { app, item, message } = await setup();
     app.config.flows.follow.maxMessages = 1;
     const c = setItemListening(app, item.id, true)!;
@@ -105,11 +105,9 @@ describe("事情型关注", () => {
     expect(String(queued[0].input.task)).not.toContain("## 观察期");
     run(app.db, "update runs set status='running' where id=?", queued[0].id);
     expect(() => noteItemChange(app, queued[0].id, { item: item.id, type: "scope", summary: "范围变了", stages: ["code"], refs: [ref] })).toThrow("没有在走的流程");
-    noteItemChange(app, queued[0].id, { item: item.id, type: "deadline", summary: "小王提出改到 12 月 8 日", due: "2026-12-08", refs: [ref] });
-    finishFollow(app, getRun(app, queued[0].id));
-    const ask = listAsks(app, { runId: queued[0].id })[0];
-    expect(ask.question).toContain("改截止时间");
-    await answerAsk(app, ask.id, { choice: 0, by: "owner" });
+    noteItemChange(app, queued[0].id, { item: item.id, type: "deadline", summary: "小王说改到 12 月 8 日", due: "2026-12-08", refs: [ref] });
+    await finishFollow(app, getRun(app, queued[0].id));
+    expect(listAsks(app, { runId: queued[0].id })).toHaveLength(0);
     expect(getItem(app, item.id).dueAt).toBe("2026-12-08");
 
     // Off: nothing follows any more; closed items are not followed either.

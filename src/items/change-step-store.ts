@@ -20,7 +20,8 @@ export const changeSchema = z.object({
   next: z.string().trim().max(1000).optional().describe("旧字段，有下一步时改用 steps"),
   steps: changeStepsSchema.optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(),
   refs: z.array(z.string()).min(1).max(50), due: z.string().optional().describe("deadline 必填：ISO 时间或日期"),
-  decided: z.boolean().optional().describe("deadline 确认已定时填 true；scope 或 decision 只有本人的拍板原话能直接并进，别人提议不填"),
+  fold: z.enum(["in-scope", "ask"]).optional().describe("scope、decision、blocker 影响进行中或已完成阶段时适用。in-scope：按既定目标处理的反馈；ask：扩大范围、推翻本人决定或需要本人拍板（默认）"),
+  decided: z.boolean().optional().describe("scope 或 decision 有本人的拍板原话时填 true；deadline 直接更新，无需填"),
 });
 const operationSchema = z.object({ tool: z.string().min(1), args: z.record(z.string(), z.unknown()) });
 export type StepOperation = z.infer<typeof operationSchema>;
@@ -46,7 +47,7 @@ export type Step = {
   state: string; run_id: string | null; ask_id: string | null; result: string | null; refs: string | null;
 };
 const STEP_LABEL: Record<string, string> = {
-  pending: "待接手", waiting: "等别人", queued: "已接手", owner: "等本人", proposed: "等确认执行", approved: "已同意执行",
+  flow: "交给流程", pending: "待接手", waiting: "等别人", queued: "已接手", owner: "等本人", proposed: "等确认执行", approved: "已同意执行",
   done: "已处理", checked: "已回查，仍在等", declined: "不执行", suggested: "仅建议", blocked: "未完成", submitted: "已调用，见结果", skipped: "未接手",
   executed: "已执行", failed: "执行失败", uncertain: "不确定，需要核对",
 };
@@ -67,4 +68,10 @@ export function saveChangeSteps(app: App, itemId: string, changeId: string, batc
   steps.forEach((s, i) => run(app.db, `insert into item_change_steps(id,change_id,batch_id,anchor,item_id,who,step,done_when,waiting_for,check_at,state,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?)`, `${changeId}:${i + 1}`, changeId, batchId, anchor, itemId, s.who, s.step, s.done_when,
   s.who === "other" ? s.waiting_for : null, s.who === "other" ? new Date(s.check_at).toISOString() : null, s.who === "other" ? "waiting" : "pending", now()));
+}
+
+/** These steps belong to a stage or another item, including any later checks. */
+export function settleUnqueuedSteps(app: App, changeId: string, state: "flow" | "skipped", result: string) {
+  run(app.db, "update item_change_steps set state=?,result=?,updated_at=? where change_id=? and state in ('pending','waiting')",
+    state, result, now(), changeId);
 }

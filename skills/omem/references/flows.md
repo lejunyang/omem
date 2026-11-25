@@ -53,6 +53,10 @@
 | `note_item_change` | 只给 `item-follow` 角色交结果，不随分组授出。`item` 只能是本次运行跟进的事项；`type` 为 scope / decision / deadline / blocker / info / stage / result / owner / resolved（后四个：某一段做完或卡住、关键结果、负责人变了、风险解除）；`summary` 一句话，可带 `detail`（原因和经过）、`risk`（带来的风险）、`next`（接下来做什么、谁做）、需求点 `req`、本流程阶段 id 数组 `stages`。同一张表还有宿主自己写的变化（流程阶段做完、卡住、等本人，指标越过门槛，在跟的问题有了结论），都只记下、不发卡片，和跟进记的一起排成工作线的时间线。`refs` 至少一条本批次原件的行引用，deadline 必填 ISO 时间或日期 `due`；新时间是本人说的或材料写明已经定了才加 `decided: true`（截止时间直接改并告诉本人一次），只是有人提议就不加，由本人在卡片上选改或不改。`scope` / `decision` 是本人自己拍板或直接让助手去做的也加 `decided: true`：引用里有本人那句话时宿主当作本人选了并进，重开受影响的第一段（同一段的几条合成一次），不发卡片。不直接改需求点；其余影响进行中或已完成阶段的，等事项本人选并进、另开或不用管。 |
 | `submit_item_step` | 只给本次事项的接手轮和批准操作说明后的执行轮。`step_id` 填本轮指定的步骤，`result` 写结论，`refs` 放可读依据（原件、记忆、会话消息或 `run:<id>`）。接手时达到 `done_when` 才填 `done: true`；只读核对确实要本人定时可附 `decision: { title, options }`。`other` 到点回查一次，必要时可交一条关联群 `lark_send`，不绕过关注的回复档。 |
 
+2026-11-25 起，`note_item_change` 新增可选参数 `fold`。对影响进行中或已完成阶段的 `scope`、`decision`、`blocker`，原定范围内的反馈填 `in-scope`，扩范围、推翻本人决定或要本人拍板的填 `ask`（默认）。并进时宿主将 `steps` 和原件的行引用交给重开的阶段。上表中 `deadline` 的旧卡片说明只适用于先前已发出的卡片。现在填 `due` 后直接更新并告知，`summary` 写谁给出了新时间；问本人是否同意延期的，按待回答的问题处理。
+
+「有人找你」的处理运行调用 `stage_reopen` 时，事项必须是本人的、流程正在推进且已关联触发会话。原因写清调查结论、要做什么及验证条件，`refs` 带触发消息和调查依据。若已按同一段话重开，工具返回已有阶段。
+
 `me-write` 还没有执行时，`result` 和 `refs` 写只读核对所得和依据。可重放的飞书写入、关联群机器人发言或平台对象动作交 `operation: { tool, args }`（卡片显示完整参数）；没有对应工具才交 `operation_note: { action, target, expected }`，分别写具体动作、对象和预期结果，不同时传两种。按技能用查询命令仍走现有规则，接手轮不运行会改外部状态的命令。`suggest` 不出执行卡；`act` 等本人点执行，才重放工具或在事项会话开普通主助手轮。批准只限一步，工具、命令和飞书写入各自的审批都照常。
 
 普通执行轮用 `execution_status: executed / failed / uncertain` 写回，不填 `done`、`decision` 或新的操作。已核对才报 `executed`；明确没有完成的报 `failed` 并写原因；可能已改但不能确认就报 `uncertain`，下次接手先只读核对，不重做。

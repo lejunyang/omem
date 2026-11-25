@@ -190,7 +190,7 @@ export type ChangeInput = {
 type LedgerRow = { id: string; item_id: string; type: string; summary: string; detail: string | null; risk: string | null; next: string | null; refs: string; status: string; origin: string; run_id: string; due: string | null; req: string | null; stages: string; source_key: string | null; sources: string | null; added: string | null };
 export type Recorded = { id: string; created: boolean; updated: boolean; origin: string; status: string };
 /** Settled by the owner: a later writer leaves the words as they are (it is still counted as having seen it). */
-const SETTLED = new Set(["dismissed", "merged", "split"]);
+const SETTLED = new Set(["dismissed", "merged", "split", "elsewhere"]);
 const clean = (s: string, n: number) => truncate(s.replace(/\s+/g, " ").trim(), n);
 
 /** The changes already in the ledger for one of these keys, on this item and of this type, oldest first. */
