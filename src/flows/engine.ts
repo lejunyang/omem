@@ -237,14 +237,18 @@ async function ownerAlreadySaid(app: App, item: Item, f: ItemFlow, d: FlowStage)
     return answer?.choice === "yes" && (answer.probabilities.yes ?? 1) >= 0.7 ? { from, note: said.note } : null;
   } catch { return null; }
 }
-/** A push that already happened can finish the stage before the owner needs an update. */
-function announceOwnerTurn(app: App, itemId: string, stageId: string, startedAt: string, attempt: number) {
+/** The owner's own stage: one card with what to do and a button to say it is done (no “开始吗” before it). */
+const ownerTurn = (app: App, f: ItemFlow, d: FlowStage, s: StageRow) =>
+  question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
+/** The owner's turn, asked once its signal check found the stage not done yet; a pending “确认并推送” card is that question already. */
+function askOwnerNow(app: App, itemId: string, stageId: string, startedAt: string, attempt: number) {
   const f = itemFlow(app, itemId);
   if (!f || f.endedAt || f.startedAt !== startedAt) return;
   const s = getStage(app, itemId, stageId);
   if (s.state !== "doing" || s.attempt !== attempt || s.askId || s.control.reported) return;
   const d = definition(f, stageId);
-  markProgress(app, itemId, { head: `「${d.name}」等你` }, !pendingPushConfirmation(app, getItem(app, itemId), d));
+  if (pendingPushConfirmation(app, getItem(app, itemId), d)) return;
+  changeStage(app, itemId, stageId, "doing", { askId: ownerTurn(app, f, d, s), control: { ...s.control, question: "owner" } }, host, s.note);
 }
 
 async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedback?: string) {
@@ -426,12 +430,18 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       addLocalMaterials(app, item.id, [{ kind: "run", ref: r.id, label: r.title }], item.userId);
     }
   } else if (d.by === "owner") {
+    // The delegation's “确认并推送” card is this stage's question already: nothing more is asked.
     const onCard = pendingPushConfirmation(app, item, d);
-    started("owner", "owner", null, control, ownerTurnNote(d, onCard));
-    if (!onCard && typeof d.done === "object" && "signal" in d.done) {
+    const signal = typeof d.done === "object" && "signal" in d.done;
+    if (!onCard) control.question = "owner";
+    started("owner", "owner", onCard || signal ? null : ownerTurn(app, f, d, s), control, ownerTurnNote(d, onCard));
+    if (onCard) markProgress(app, item.id, { head: `「${d.name}」等你` });
+    else if (signal) {
+      // A stage a push or merge completes may already be done (the owner pushed before the flow got
+      // here): look first, and only ask when the signal is not there yet.
       const attempt = s.attempt + 1, startedAt = f.startedAt;
-      setImmediate(() => void checkGitSignals(app).catch(() => undefined).then(() => serial(app, item.id, async () => announceOwnerTurn(app, item.id, d.id, startedAt, attempt))));
-    } else markProgress(app, item.id, { head: `「${d.name}」等你` }, !onCard);
+      setImmediate(() => void checkGitSignals(app).catch(() => undefined).then(() => serial(app, item.id, async () => askOwnerNow(app, item.id, d.id, startedAt, attempt))));
+    }
     return true;
   }
   const missing = typeof d.by === "object" && "object" in d.by && d.by.object.includes(":") && !carrier;
@@ -557,6 +567,12 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
         changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: { ...control, reported: true, budgetExceeded: true } }, host, `到了这一段的时间预算（${d.budget.minutes} 分钟）`);
         changed = true; continue;
       }
+      // A “开始吗” card sent for the owner's own stage before such stages stopped asking: taken back, the stage starts.
+      if (s.state === "gated" && d.by === "owner" && d.gate !== "confirm" && s.control.question === "gate" && prerequisitesDone(d, itemStages(app, itemId))) {
+        withdraw(app, s);
+        s = changeStage(app, itemId, d.id, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, gateLimit: undefined, admitted: true } }, host, s.note);
+        changed = true;
+      }
       if (["pending", "stale"].includes(s.state)) {
         const rows = itemStages(app, itemId);
         // A stage still asked about after an upstream reopen is not settled yet, even once it got done.
@@ -607,9 +623,15 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       // (a delegation still coding): only the owner's own turn stops it.
       const following = s.state === "blocked" && typeof d.by === "object" && "object" in d.by && s.waitingOn !== "owner" && !s.control.budgetExceeded && !!stageObject(app, item, s, d.by.object);
       if (s.state !== "doing" && !following) continue;
-      if (s.by === "owner" && !s.askId && !s.control.reported && [ownerTurnNote(d, false), ownerTurnNote(d, true)].includes(s.note)) {
-        const note = ownerTurnNote(d, pendingPushConfirmation(app, item, d));
-        if (note !== s.note) {
+      if (s.by === "owner" && !s.control.reported && (!s.askId || s.control.question === "owner")) {
+        const onCard = pendingPushConfirmation(app, item, d);
+        const note = ownerTurnNote(d, onCard);
+        if (onCard && (s.askId || s.note !== note)) {
+          // The delegation's card arrived after this stage asked: one card for one decision.
+          withdraw(app, s);
+          s = changeStage(app, itemId, d.id, "doing", { askId: null, control: { ...s.control, question: undefined } }, host, note);
+          markProgress(app, itemId, { head: `「${d.name}」等你` });
+        } else if (!onCard && !s.askId && s.note === ownerTurnNote(d, true)) {
           s = changeStage(app, itemId, d.id, "doing", {}, host, note);
           markProgress(app, itemId, { head: `「${d.name}」等你` });
         }

@@ -99,15 +99,15 @@ describe("Git 完成信号", () => {
     expect(stageLog(t.app, t.item.id).filter((l) => l.stageId === "push" && l.toState === "done")).toMatchObject([{ actor: "host", refs: [t.work.id], note: expect.stringContaining(`shop-0@feat/refund（${t.repos[0].head.slice(0, 7)}）`) }]);
     expect(JSON.parse(signals(t.app).at(-1)!.keys)).toEqual([{ space: "shop-0", branch: "feat/refund", commits: [t.repos[0].head] }]);
   });
-  it("轮到本人推送时先查一次：已经推了就直接完成，没推就在流程进度等本人", async () => {
+  it("轮到本人推送时先查一次：已经推了就直接完成、不问本人；没推才问一张“轮到你了”", async () => {
     let t0 = await setup({ pushedBefore: true });
     expect(t0.s()).toMatchObject({ state: "doing", askId: null });
     await vi.waitFor(() => expect(t0.s().state).toBe("done"));
     expect(listAsks(t0.app)).toHaveLength(0);
     t0 = await setup();
-    await vi.waitFor(() => expect(one(t0.app.db, "select id from notifications where body like '%等你：推送%'")).toBeDefined());
-    expect(t0.s()).toMatchObject({ state: "doing", waitingOn: "owner", askId: null });
-    expect(listAsks(t0.app)).toHaveLength(0);
+    await vi.waitFor(() => expect(t0.s().askId).toBeTruthy());
+    expect(t0.s()).toMatchObject({ state: "doing", waitingOn: "owner" });
+    expect(listAsks(t0.app).map((a) => a.question.includes("轮到你了"))).toEqual([true]);
   });
   it("交办确认卡已能推送，流程只提示在哪里操作；答卡后按 Git 信号推进", async () => {
     const t = await setup({ confirmation: true, applied: false, count: 2 });

@@ -129,8 +129,8 @@ describe("阶段推进", () => {
     await expect(startFlow(app, item.id, "demo", owner)).rejects.toThrow("已经");
     await done(app, item.id, "a"); expect(s("b").state).toBe("doing");
     await done(app, item.id, "b"); expect(s("c")).toMatchObject({ state: "doing", by: "owner" });
-    expect(s("c")).toMatchObject({ waitingOn: "owner", askId: null });
-    await ownerAction(app, item.id, "c", "done");
+    expect(getAsk(app, s("c").askId!).question).toContain("轮到你了");
+    await answerAsk(app, s("c").askId!, { choice: 0, by: "owner" });
     expect(itemFlow(app, item.id)!.endedAt).toBeTruthy();
     expect(one(app.db, "select status from items where id=?", item.id)).toMatchObject({ status: "open" });
     const n = all(app.db, "select * from notifications where title=?", item.title).length;
@@ -269,7 +269,7 @@ describe("阶段推进", () => {
 function jsonContext(app: App, id: string): Record<string, unknown> { return JSON.parse(one<{ context: string }>(app.db, "select context from notifications where id=?", id)!.context); }
 
 describe("只有本人能定的事", () => {
-  it("已到自动上限时，本人阶段在流程进度等你，显式关卡和条件仍照常询问", async () => {
+  it("已到自动上限时，本人阶段不问“开始吗”，只有一张“轮到你了”；显式关卡和条件仍照常询问", async () => {
     const { app, item, s } = await setup([
       stage("prep", { by: "wait" }),
       stage("manual", { by: "owner", note: "抽查退款记录" }),
@@ -277,26 +277,29 @@ describe("只有本人能定的事", () => {
       stage("conditional", { by: "owner", when: "需要补发通知吗" }),
     ], { autoAdvance: 1 });
     await done(app, item.id, "prep");
-    expect(s("manual")).toMatchObject({ state: "doing", waitingOn: "owner", askId: null, note: "等你：抽查退款记录" });
-    const card = one<{ body: string }>(app.db, "select body from notifications where id=?", itemFlow(app, item.id)!.card!);
-    expect(card?.body).toContain("等你：抽查退款记录");
-    expect(all(app.db, "select id from asks")).toHaveLength(0);
-    await ownerAction(app, item.id, "manual", "done");
+    expect(s("manual")).toMatchObject({ state: "doing", waitingOn: "owner", note: "等你：抽查退款记录", control: { question: "owner" } });
+    const turn = all<{ id: string }>(app.db, "select id from asks");
+    expect(turn).toEqual([{ id: s("manual").askId }]);
+    expect(getAsk(app, turn[0].id).question).toContain("轮到你了");
+    expect(getAsk(app, turn[0].id).question).not.toContain("开始吗");
+    await answerAsk(app, turn[0].id, { by: "owner", choice: 0 });
+    expect(s("manual").state).toBe("done");
     expect(s("explicit")).toMatchObject({ state: "gated", control: { gateLimit: false } });
     const gate = getAsk(app, s("explicit").askId!);
     expect(gate.question).toContain("轮到这一段了，开始吗？");
     await answerAsk(app, gate.id, { by: "owner", choice: 0 });
-    expect(s("explicit")).toMatchObject({ state: "doing", waitingOn: "owner", askId: null });
+    expect(s("explicit")).toMatchObject({ state: "doing", waitingOn: "owner" });
     await ownerAction(app, item.id, "explicit", "done");
     expect(getAsk(app, s("conditional").askId!).question).toContain("这一段要做吗？");
   });
-  it("仍可回答旧的本人开始关卡", async () => {
+  it("以前发出的本人阶段“开始吗”卡片被收回，直接轮到本人", async () => {
     const { app, item, s } = await setup([stage("prep", { by: "wait" }), stage("owner", { by: "owner" })]);
     const ask = createAsk(app, { runId: null, question: "轮到这一段了，开始吗？", options: [{ label: "开始" }], context: { handler: "flow-stage", itemId: item.id, stageId: "owner", startedAt: itemFlow(app, item.id)!.startedAt, kind: "gate" } });
     run(app.db, "update item_stages set state='gated', ask_id=?, waiting_on='owner', control=? where item_id=? and stage_id='owner'", ask.id, JSON.stringify({ question: "gate", gateLimit: true }), item.id);
     await done(app, item.id, "prep");
-    await answerAsk(app, ask.id, { by: "owner", choice: 0 });
-    expect(s("owner")).toMatchObject({ state: "doing", waitingOn: "owner", askId: null });
+    expect(getAsk(app, ask.id).status).toBe("cancelled");
+    expect(s("owner")).toMatchObject({ state: "doing", waitingOn: "owner", control: { question: "owner" } });
+    expect(getAsk(app, s("owner").askId!).question).toContain("轮到你了");
   });
   it("进度卡只说发生了什么：开始流程、本人自己的操作不发；助手一次推进几段是一张卡，新卡替换旧卡", async () => {
     const { app, item, s } = await setup([stage("a", { gate: "confirm" }), stage("b"), stage("c"), stage("d")]);
@@ -629,7 +632,8 @@ describe("对象与工具", () => {
     vi.mocked(decide).mockResolvedValue({ choice: "yes", probabilities: { yes: 0.55, no: 0.45 }, confidence: 0.55, by: "test" });
     await ownerAction(unsure.app, unsure.item.id, "a", "done", "先看看");
     expect(unsure.s("pick")).toMatchObject({ state: "doing", by: "owner", waitingOn: "owner" });
-    expect(unsure.s("pick")).toMatchObject({ askId: null, note: "等你：在评审概览里定每个问题" });
+    expect(unsure.s("pick").note).toBe("等你：在评审概览里定每个问题");
+    expect(unsure.s("pick").askId).toBeTruthy();
     // The owner's own step is done without having to write why.
     await ownerAction(unsure.app, unsure.item.id, "pick", "done", "");
     expect(unsure.s("pick")).toMatchObject({ state: "done", note: "本人做完了" });
