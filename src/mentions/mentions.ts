@@ -246,10 +246,7 @@ registerHandler("mention", async (ctx: RunContext) => {
       updateQueuedRun(app, earlier.id, { input: { ...prev.input, task: `${prev.input.task}\n\n# 后来又发了\n\n${messageLines(app, channel, open)}`, mention: { ...m, messageIds: [...new Set([...m.messageIds, ...more.messageIds])], refs: [...new Set([...m.refs, ...more.refs])], lastMessageId: more.lastMessageId } } });
       return { quiet: true, summary: "同一个人在同一话题又发了消息，并进还没开始的那次处理（在下面的“后续任务”里）", joined: earlier.id };
     }
-    if (!spend(app, "handle")) {
-      shortReminder(app, input, open, ctx.run.id, capNote(app, "handle", true));
-      return { summary: capNote(app, "handle", false) };
-    }
+    // Carrying on with a matter already being handled: not a new one, today's allowance is not touched.
     const m = prev.input.mention as MentionInfo;
     const r = startHandling(app, channel, ctx.run, input, open, { action: "handle", what: m.what, handler: String(prev.input.spec ?? "assistant"), urgency: m.urgency, canProgress: m.reply === "auto", reason: `接着 ${earlier.id}`, by: "设置" }, earlier.id);
     return { summary: "同一个人在同一话题又发了消息，交给接着处理的那次运行（在下面的“后续任务”里）", handleRun: r.id };
@@ -393,7 +390,7 @@ export function mentionTools(mention: MentionInfo | undefined) {
 /**
  * A 有人找你 problem still open got new messages worth looking at, or its time to look again
  * (listen-problems.ts `problem-follow`): the handling that tracked it goes on, with its session.
- * Null when that handling is gone or today's handlings are used up.
+ * Null when that handling is gone. A matter carried on does not count against today's handlings.
  */
 export function continueProblem(app: App, p: Problem, messageIds: string[], from: { id: string; spaceId: string | null }, why: string) {
   const prev = p.runId ? one<{ id: string }>(app.db, "select id from runs where id = ?", p.runId) : null;
@@ -402,7 +399,7 @@ export function continueProblem(app: App, p: Problem, messageIds: string[], from
   const channel = mentionChannel(m.channel);
   const fresh = channel.messages(app, messageIds);
   const open = fresh.length ? fresh : channel.messages(app, m.messageIds);
-  if (!open.length || !spend(app, "handle")) return null;
+  if (!open.length) return null;
   const input: Input = { channel: m.channel, chatId: m.chatId, chatName: m.chatName, chatKind: m.chatKind, topicId: m.topicId ?? null, messageIds: open.map((x) => x.id) } as Input;
   const t = { action: "handle", what: p.title, handler: String(getRun(app, prev.id).input.spec ?? "assistant"), urgency: m.urgency, canProgress: m.reply === "auto", reason: why, by: "设置" } as Triage;
   return startHandling(app, channel, from, input, open, t, prev.id, undefined, { why, fresh: fresh.length > 0 });

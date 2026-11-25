@@ -333,12 +333,23 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     const first = handlingOf((await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id)).id);
     await waitForRun(app, first.id);
     const calls = decision.calls;
+    // Carrying on is not a new matter: today's handlings, even used up, are not touched.
+    const used = mentionUsage(app).handle;
+    app.config.mentions.perDay.handle = used;
     const m2 = msg("@勒 补充：是部分发货的", { thread_id: "omt_f" });
     store([m2]);
     const again = await waitForRun(app, queueMention(app, group, [m2], "ou_owner")!.id);
     expect(decision.calls).toBe(calls);
     const next = getRun(app, String(again.output.handleRun));
     expect(next.input.resumeFromRun).toBe(first.id);
+    expect(mentionUsage(app).handle).toBe(used);
+    // A new matter is what the allowance stops.
+    const other = msg("@勒 另一件事：对账单今天能出吗？", { thread_id: "omt_g" });
+    store([other]);
+    const capped = await waitForRun(app, queueMention(app, group, [other], "ou_owner")!.id);
+    expect(capped.output.handleRun).toBeUndefined();
+    expect(notifiedBy(capped.id)!.body).toContain(`交给助手查已到每天 ${used} 次的上限`);
+    app.config.mentions.perDay.handle = 1000;
     await waitForRun(app, next.id);
   }, 90000);
 

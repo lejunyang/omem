@@ -1174,7 +1174,7 @@ export const configSchema = z.object({
       timeoutMinutes: z.number().int().min(1).max(60).default(10),
       guidance: z.string().max(4000).default(""),
       noDecision: z.enum(["general", "notify", "handle"]).default("general"),
-      perDay: z.object({ triage: z.number().int().min(0).max(1000).default(80), handle: z.number().int().min(0).max(500).default(20) }).default({ triage: 80, handle: 20 }),
+      perDay: z.object({ triage: z.number().int().min(0).max(1000).default(80), handle: z.number().int().min(0).max(10000).default(1000) }).default({ triage: 80, handle: 1000 }),
       reply: z
         .object({
           lark: z
@@ -1195,7 +1195,7 @@ export const configSchema = z.object({
         })
         .default({ lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } }),
     })
-    .default({ enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } }),
+    .default({ enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 1000 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } }),
   /**
    * When omem may push to chat channels. Defaults:
    * - quiet hours: nothing outside urgent/overdue 22:00–09:00 local;

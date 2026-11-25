@@ -60,7 +60,7 @@ const skipKeys = [
   { key: "replied" as const, label: "在那里回复了" },
 ];
 function saveMentions(patch: Record<string, unknown>, note = "已保存") {
-  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } };
+  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 1000 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } };
   void saveConfig({ mentions: { ...cur, ...patch } }, note);
 }
 /** Answering the asker is per channel (`mentions.reply.<channel>`); Feishu is the one there is. */
@@ -187,10 +187,10 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
           />
         </SetRow>
         <SetRow label="每天最多分诊" hint="次；超过就只发简短提醒" :off="off">
-          <input class="input set-num" type="number" inputmode="numeric" min="0" max="1000" aria-label="每天最多分诊" :disabled="off" :value="config.mentions?.perDay?.triage ?? 80" @change="saveMentions({ perDay: { ...(config.mentions?.perDay ?? { triage: 80, handle: 20 }), triage: Math.max(0, Math.min(1000, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
+          <input class="input set-num" type="number" inputmode="numeric" min="0" max="1000" aria-label="每天最多分诊" :disabled="off" :value="config.mentions?.perDay?.triage ?? 80" @change="saveMentions({ perDay: { ...(config.mentions?.perDay ?? { triage: 80, handle: 1000 }), triage: Math.max(0, Math.min(1000, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
         </SetRow>
         <SetRow label="每天最多交给助手查" hint="次；超过就只发简短提醒" :off="off">
-          <input class="input set-num" type="number" inputmode="numeric" min="0" max="500" aria-label="每天最多交给助手查" :disabled="off" :value="config.mentions?.perDay?.handle ?? 20" @change="saveMentions({ perDay: { ...(config.mentions?.perDay ?? { triage: 80, handle: 20 }), handle: Math.max(0, Math.min(500, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
+          <input class="input set-num" type="number" inputmode="numeric" min="0" max="10000" aria-label="每天最多交给助手查" :disabled="off" :value="config.mentions?.perDay?.handle ?? 1000" @change="saveMentions({ perDay: { ...(config.mentions?.perDay ?? { triage: 80, handle: 1000 }), handle: Math.max(0, Math.min(500, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
         </SetRow>
         <SetRow label="查背景最多几分钟" hint="1–60；超过就发简短提醒" :off="off">
           <input class="input set-num" type="number" inputmode="numeric" min="1" max="60" aria-label="查背景最多几分钟" :disabled="off" :value="config.mentions?.timeoutMinutes ?? 10" @change="saveMentions({ timeoutMinutes: intIn($event, 1, 60, 10) })" />
