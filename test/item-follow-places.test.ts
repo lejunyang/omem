@@ -160,8 +160,16 @@ it.each(["no", "low", "error"] as const)("候选结果 %s 不挂上，没有新�
   await t.patrol(DAY);
   expect(calls).toHaveLength(1);
   expect(itemMaterials(t.app, t.item.id)).toEqual([]);
-  group.say("再次转发会议室安排", t.base + 8 * DAY - 1000);
-  await t.patrol(8 * DAY);
+  // The model is shown why the chat is a candidate and what else it talks about, not only the lines that hit.
+  expect(calls[0].material.place1).toMatchObject({ 会话: "月牙桥退款闲聊", 为什么是候选: expect.stringContaining("会话名称和事项名称相近") });
+  // A chat turned down under an older way of asking is judged again, once.
+  run(t.app.db, "update item_chat_follow set clues=json_remove(clues,'$.v') where item_id=?", t.item.id);
+  await t.patrol(DAY + 1000);
+  await t.patrol(DAY + 2000);
+  expect(calls).toHaveLength(2);
+  calls.length = 1;
+  group.say("再次转发会议室安排", t.base + 9 * DAY - 1000);
+  await t.patrol(9 * DAY);
   expect(calls).toHaveLength(2);
 });
 
