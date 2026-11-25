@@ -16,7 +16,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   // The item-follow role now classifies actual next steps and records their completion conditions.
   "item-follow": ["item-follow", 5978, 6083, 3576, 3576],
   "flow-reconcile": ["flow-reconcile", 5142, 5142, 2462, 2462],
-  "assistant": ["agent", 20173, 19474, 1679, 1581],
+  // Mid-round branch sync: the assistant passes `sync` and waits on the round, the coder calls sync_branch.
+  "assistant": ["agent", 20448, 19749, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   "archive-rule-writer": ["archive-rule-draft", 3091, 3091, 2091, 2091],
@@ -27,7 +28,7 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "wiki-checker": ["wiki-write", 6403, 6403, 4035, 4035],
   "heartbeat": ["heartbeat", 7546, 7455, 3407, 3407],
   "dreamer": ["dream", 10446, 10250, 4908, 4908],
-  "coder": ["code", 7248, 7248, 2834, 2834],
+  "coder": ["code", 7434, 7434, 3005, 3005],
   "reviewer": ["review", 4762, 4762, 2589, 2589],
   "tutor": ["tutor", 4513, 4513, 1954, 1954],
   "brief": ["brief", 7971, 7775, 3732, 3732],
