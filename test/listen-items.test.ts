@@ -109,6 +109,15 @@ describe("事情型关注", () => {
     await finishFollow(app, getRun(app, queued[0].id));
     expect(listAsks(app, { runId: queued[0].id })).toHaveLength(0);
     expect(getItem(app, item.id).dueAt).toBe("2026-12-08");
+    // The 关注's page lists this pass as its handling (the item's follow does the reading, not the 关注's own handler).
+    {
+      const { startServer } = await import("../src/server/http.ts");
+      const server = await startServer(app, { port: 0, quiet: true });
+      try {
+        const page = (await server.inject(`/api/listen/${itemContext(app, item.id)!.id}`)).json() as { handling: { id: string; outcome: string; reason: string }[] };
+        expect(page.handling).toEqual([expect.objectContaining({ id: queued[0].id, outcome: "handled", reason: expect.stringContaining("记了 1 条变化：小王说改到 12 月 8 日") })]);
+      } finally { await server.close(); }
+    }
 
     // Off: nothing follows any more; closed items are not followed either.
     setItemListening(app, item.id, false);

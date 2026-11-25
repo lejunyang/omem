@@ -5,7 +5,9 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
-import { HttpError, json, now } from "../core/util.ts";
+import { HttpError, json, now, truncate } from "../core/util.ts";
+import { descendantIds } from "../items/tree.ts";
+import { getItem } from "../items/store.ts";
 import { findThread } from "../agents/threads.ts";
 import { playbookOf, playbookPath } from "./listen-cases.ts";
 import { contextsOfChat, defaultContext, getContext, listContexts, removeContext, requireContext, saveContext, type ListenContext, type ListenKnobs } from "./listen.ts";
@@ -102,16 +104,35 @@ function memoriesFrom(app: App, chats: string[], limit = 30) {
   );
 }
 
-/** The handling of a 关注's batches lately: runs in its conversation, with why the quiet ones said nothing. */
+/**
+ * The handling of a 关注's batches lately: runs in its conversation, with why the quiet ones said nothing.
+ * An item's 关注 is mostly worked by the item's own follow (flows/follow.ts: role item-follow reads the
+ * places of the item and everything under it, private chats included) and by the takeovers that act on
+ * what it found; those are its handling too, or the page of a followed item stays empty while work goes on.
+ */
 function handlingOf(app: App, c: ListenContext, limit = 30) {
-  if (!c.conversationId) return [];
-  return all<{ id: string; status: string; title: string; created_at: string; output: string | null }>(
-    app.db, "select id, status, title, created_at, output from runs where kind = 'ask' and lane = ? order by created_at desc limit ?", c.conversationId, limit,
-  ).map((r) => {
-    const o = json<{ prefiltered?: string; stayQuiet?: string; quiet?: boolean; answer?: string }>(r.output, {});
-    return { id: r.id, status: r.status, title: r.title, at: r.created_at, outcome: o.prefiltered ? "screened" : o.stayQuiet || o.quiet ? "quiet" : "handled", reason: o.prefiltered ?? o.stayQuiet ?? null };
+  const items = c.kind === "item" && c.itemId ? [c.itemId, ...descendantIds(app, c.itemId)] : [];
+  const lanes = [...(c.conversationId ? [c.conversationId] : []), ...items.map((id) => `item-follow:${id}`)];
+  if (!lanes.length) return [];
+  const rows = all<{ id: string; kind: string; status: string; title: string; created_at: string; output: string | null }>(
+    app.db, `select id, kind, status, title, created_at, output from runs where lane in (${lanes.map(() => "?").join(",")}) and kind in ('ask','item-follow','item-takeover') order by created_at desc limit ?`, ...lanes, limit,
+  );
+  return rows.map((r) => {
+    const o = json<{ prefiltered?: string; stayQuiet?: string; quiet?: boolean; answer?: string; followChanges?: string[]; followFolds?: string[] }>(r.output, {});
+    if (r.kind === "item-follow") {
+      const ids = (o.followChanges ?? []).slice(0, 20);
+      const noted = ids.length ? all<{ summary: string }>(app.db, `select summary from item_changes where id in (${ids.map(() => "?").join(",")}) order by at`, ...ids) : [];
+      const folded = (o.followFolds ?? []).length;
+      const reason = noted.length ? `记了 ${noted.length} 条变化${folded ? `，${folded} 条并进流程` : ""}：${truncate(noted.map((n) => n.summary).join("；"), 300)}` : "新消息里没有这件事的变化";
+      return { id: r.id, status: r.status, title: r.title, at: r.created_at, outcome: noted.length ? "handled" : "quiet", reason };
+    }
+    // A takeover's last words say what it did; a batch in the 关注's conversation says why it kept quiet.
+    const did = r.kind === "item-takeover" && o.stayQuiet;
+    return { id: r.id, status: r.status, title: r.title, at: r.created_at, outcome: o.prefiltered ? "screened" : did ? "handled" : o.stayQuiet || o.quiet ? "quiet" : "handled", reason: o.prefiltered ?? o.stayQuiet ?? null };
   });
 }
+
+const lineNowText = (app: App, itemId: string) => { try { return getItem(app, itemId).now?.text ?? ""; } catch { return ""; } };
 
 export function registerListenRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   const owner = (req: FastifyRequest) => {
@@ -144,7 +165,9 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
     const playbookSource = one<{ id: string; updated_at: string }>(app.db, "select id, updated_at from sources where uri = ? and deleted_at is null order by captured_at desc limit 1", `work/${path}`);
     return {
       context: view(app, c),
-      summary: t?.summary ?? "",
+      // An item's 关注 has no summary of its own until its handler has spoken in its groups; the line's
+      // current state (what the routine and the follow keep up to date) is what it is about.
+      summary: t?.summary || (c.kind === "item" && c.itemId ? lineNowText(app, c.itemId) : ""),
       playbook: { text: playbookOf(app, c, 20000), path, sourceId: playbookSource?.id ?? null, updatedAt: playbookSource?.updated_at ?? null },
       cases: casesOf(app, { contextId: c.id }),
       memories: memoriesFrom(app, c.chats),
