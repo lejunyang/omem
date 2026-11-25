@@ -20,7 +20,7 @@ import { getItem, type Item } from "../items/store.ts";
 import { addLocalMaterials, materialsBrief } from "../items/materials.ts";
 import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
-import { hasRunner, runnerApproved, retainItemRunnerGrant, flowAppliesTo, flowsFor, parseFlow, parseFlowForSave, runnerIdentity, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { hasRunner, runnerApproved, retainItemRunnerGrant, flowAppliesTo, flowsFor, parseFlow, parseFlowForSave, runnerIdentity, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema, ordinaryOwnerTurn } from "./definitions.ts";
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { codeWorkSettledAt, codeWorkSince, findObject, latestCodeWork, objectKind } from "./objects.ts";
 import { pollObjects } from "./plugin-objects.ts";
@@ -40,10 +40,11 @@ import { atomic, changeStage, flushProgress, markProgress, getStage, itemFlow, i
 import { saveReview, storedReview, type FlowEnd } from "./review.ts";
 import { stopCodeWork } from "../agents/code-steer.ts";
 import { inlineDefinition, inlineId, inlineTemplate, type InlineStart } from "./inline.ts";
-import { assertReconcileStage, pendingReconcileAsk, queueReconcile, reconcileReminder, withdrawReconcileAsks } from "./reconcile.ts";
+import { assertReconcileStage, hasFocusedOwnerWords, pendingReconcileAsk, queueReconcile, reconcileReminder, withdrawReconcileAsks } from "./reconcile.ts";
 import { itemFlowSpaces } from "./spaces.ts";
-import { ownerTurnNote, pendingPushConfirmation } from "./owner-turn.ts";
-import { attachBlockerReviews, queueDeliveryFallback } from "./blocker-review.ts";
+import { observableOwnerTurn, ownerTaskLine, ownerTimingAt, ownerTurnNote, pendingPushConfirmation } from "./owner-turn.ts";
+import { prematureStart, unmetNeed } from "./prerequisites.ts";
+import { attachBlockerReviews, queueDeliveryFallback, queueTimedOwnerReconcile } from "./blocker-review.ts";
 import { ownerActiveToday } from "./delivery.ts";
 import { appendCardEvidence, flowEvidenceLinks, stageCard, stageCardActions, stageCardLabels, stageCardText, type StageCard } from "./stage-card.ts";
 import { canResumeStage, externalRetry } from "./stage-retry.ts";
@@ -313,7 +314,7 @@ const OWNER_DEFAULT = new Set(["本人确认完成", "本人做完了", "本人�
 /**
  * The owner's turn comes right after they finished the stage before it with words that already settle
  * it ("评审结论" finished with "将问题发到 MR 吧" settles "挑问题"): asking again is asking twice. A
- * decision model reads the words against what this stage asks; unsure or unavailable asks the owner.
+ * decision model reads the words against what this stage asks; unsure or unavailable leaves it open.
  */
 async function ownerAlreadySaid(app: App, item: Item, f: ItemFlow, d: FlowStage) {
   if (!d.needs.length || !decisionReady(app)) return null;
@@ -329,7 +330,7 @@ async function ownerAlreadySaid(app: App, item: Item, f: ItemFlow, d: FlowStage)
     return answer?.choice === "yes" && (answer.probabilities.yes ?? 1) >= 0.7 ? { from, note: said.note } : null;
   } catch { return null; }
 }
-/** The owner's own stage: one card with what to do and a button to say it is done (no “开始吗” before it). */
+/** The action card for explicit owner confirmation and the push fallback. */
 const ownerTurn = (app: App, f: ItemFlow, d: FlowStage, s: StageRow) =>
   question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
 /** The owner's turn, asked once its signal check found the stage not done yet; a pending “确认并推送” card is that question already. */
@@ -467,7 +468,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
     await tickTrials(app, item, f, d, next, current, stageAI);
     return true;
   }
-  if (d.by === "owner" && !(typeof d.done === "object" && "signal" in d.done)) {
+  if (ordinaryOwnerTurn(d) || d.by === "owner" && d.done === "confirm") {
     const said = await ownerAlreadySaid(app, item, f, d);
     if (said) {
       withdraw(app, s);
@@ -500,7 +501,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
     return false;
   }
   let carrier: string | null = null;
-  const control: StageControl = { ...s.control, question: undefined, confirmed: undefined, reported: false, waitUntil: undefined, admitted: undefined, execution: ai.execution, budgetStartedAt: typeof d.by === "object" && "run" in d.by ? at : undefined };
+  const control: StageControl = { ...s.control, question: undefined, confirmed: undefined, reported: false, waitUntil: undefined, ownerPlanAt: undefined, ownerCheckAt: undefined, admitted: undefined, execution: ai.execution, budgetStartedAt: typeof d.by === "object" && "run" in d.by ? at : undefined };
   withdraw(app, s);
   if (typeof d.by === "object") {
     const obj = "object" in d.by ? stageObject(app, item, s, d.by.object) : null;
@@ -536,7 +537,9 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       return true;
     }
     if (!onCard) control.question = "owner";
-    started("owner", "owner", onCard || signal ? null : ownerTurn(app, f, d, s), control, ownerTurnNote(d, onCard));
+    if (ordinaryOwnerTurn(d)) control.ownerPlanAt = ownerTimingAt(app, d, at);
+    started("owner", "owner", d.done === "confirm" ? ownerTurn(app, f, d, s) : null, control, ownerTurnNote(d, onCard));
+    if (ordinaryOwnerTurn(d)) markProgress(app, item.id, { head: `「${d.name}」到你了`, note: ownerTaskLine(d), announce: true });
     if (onCard) markProgress(app, item.id, { head: `「${d.name}」等你` });
     if (signal && (!onCard || gitType)) {
       // A stage a push or merge completes may already be done (the owner pushed before the flow got
@@ -645,9 +648,6 @@ export async function startFlow(app: App, itemId: string, flowId: string | Inlin
 export function advance(app: App, itemId: string, cause = "状态变化") {
   return serial(app, itemId, () => advanceNow(app, itemId, cause));
 }
-function prerequisitesDone(d: FlowStage, rows: StageRow[]) {
-  return d.needs.every(id => rows.some(s => s.id === id && ["done", "skipped"].includes(s.state) && !s.control.upstream));
-}
 async function advanceNow(app: App, itemId: string, _cause: string, at = new Date()) {
   if (!itemFlow(app, itemId) || itemFlow(app, itemId)!.endedAt) return;
   const item = getItem(app, itemId);
@@ -657,8 +657,23 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
     for (const d of itemFlow(app, itemId)!.definition.stages) {
       const f = itemFlow(app, itemId)!;
       let s = getStage(app, itemId, d.id);
+      const missing = (rows = itemStages(app, itemId)) => unmetNeed(f.definition.stages, d.needs, rows);
+      if (s.state === "doing" && d.needs.length) {
+        const upstream = missing();
+        const carrier = upstream && s.control.runId ? getRun(app, s.control.runId) : null;
+        if (upstream && (!carrier || carrier.status !== "running" && !carrier.startedAt)
+          && (!s.by || s.by === "owner" || s.by === s.control.runId) && prematureStart(app, f, d, s, upstream)) {
+          const note = `『${d.name}』开早了：上游『${stageName(f, upstream)}』还没完成，已收回`;
+          withdraw(app, s);
+          changeStage(app, itemId, s.id, "pending", { by: null, enteredAt: null, askId: null, waitingOn: null,
+            control: { ...s.control, question: undefined, runId: undefined, reported: undefined, budgetStartedAt: undefined, ownerPlanAt: undefined, ownerCheckAt: undefined } }, host, note, [], "premature-start");
+          if (carrier?.status === "queued") await stopStageRun(app, itemId, carrier.id);
+          markProgress(app, itemId, { head: note, announce: true });
+          changed = true; continue;
+        }
+      }
       if (s.state === "blocked" && s.control.externalRetry && s.control.waitUntil) {
-        if (s.control.waitUntil > at.toISOString() || !prerequisitesDone(d, itemStages(app, itemId)) || stageRunActive(app, s)) continue;
+        if (s.control.waitUntil > at.toISOString() || missing() || stageRunActive(app, s)) continue;
         await resumeBlockedNow(app, f, d, s, s.control.externalRetry.instruction, s.evidence, host, { ...s.control.externalRetry, attempts: s.control.externalRetry.attempts + 1 });
         s = getStage(app, itemId, d.id);
         changed = true;
@@ -677,8 +692,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
         changed = true; continue;
       }
       if (s.state === "gated" && s.control.question === "gate") {
-        const rows = itemStages(app, itemId);
-        const upstream = d.needs.find(id => !prerequisitesDone({ ...d, needs: [id] }, rows));
+        const upstream = missing();
         if (upstream) {
           withdrawStartGate(app, s, stageName(f, upstream));
           changed = true; continue;
@@ -692,7 +706,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       if (["pending", "stale"].includes(s.state)) {
         const rows = itemStages(app, itemId);
         // A stage still asked about after an upstream reopen is not settled yet, even once it got done.
-        if (!prerequisitesDone(d, rows)) continue;
+        if (missing(rows)) continue;
         const previous = d.tools?.includes("propose_directions") ? continuing(app, itemId) : null;
         if (previous) {
           changeStage(app, itemId, d.id, "skipped", {}, host, `继续「${previous.direction.goal}」：还剩 ${previous.remaining} 个试验`);
@@ -737,7 +751,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       }
       // A stage carried by an object keeps following it while its run said it waits for that object
       // (a delegation still coding): only the owner's own turn stops it.
-      const following = s.state === "blocked" && prerequisitesDone(d, itemStages(app, itemId)) && typeof d.by === "object" && "object" in d.by && s.waitingOn !== "owner" && !s.control.budgetExceeded && !!stageObject(app, item, s, d.by.object);
+      const following = s.state === "blocked" && typeof d.by === "object" && "object" in d.by && s.waitingOn !== "owner" && !s.control.budgetExceeded && !missing() && !!stageObject(app, item, s, d.by.object);
       if (s.state !== "doing" && !following) continue;
       if (s.by === "owner" && !s.control.reported && (!s.askId || s.control.question === "owner")) {
         const onCard = pendingPushConfirmation(app, item, d);
@@ -966,12 +980,11 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
       await advanceNow(app, itemId, "拿不准，升档重做");
       return flowView(app, itemId);
     }
-    // What only the owner can settle stays the owner's: an agent saying "the owner has done it" becomes a
-    // question to the owner, and an agent cannot skip a stage whose start or end waits for the owner.
-    const ownerOnly = d.gate === "confirm" || d.done === "confirm" || d.by === "owner";
-    if (report.state === "skip" && by.actor !== "owner" && ownerOnly) throw new HttpError(403, "这一段要本人确认或由本人承担，不能由你跳过：把理由告诉本人，由本人在卡片或事项页上跳过");
+    const settledOwner = fromReconcile && observableOwnerTurn(d, s);
+    if (report.state === "skip" && by.actor !== "owner" && (d.gate === "confirm" || d.done === "confirm" || d.by === "owner")
+      && !(settledOwner && d.gate !== "confirm" && hasFocusedOwnerWords(app, by.runId!, stageId, evidence))) throw new HttpError(403, "这一段要本人确认或由本人承担，不能由你跳过：由本人明确说明，或在卡片或事项页上跳过");
     const missingRedoWork = typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" && s.control.objectAfter && !stageObject(app, getItem(app, itemId), s, "code-work");
-    const asksOwner = report.state === "done" && !missingRedoWork && (d.done === "confirm" || d.by === "owner" && by.actor !== "owner");
+    const asksOwner = report.state === "done" && !missingRedoWork && (d.done === "confirm" || d.by === "owner" && by.actor !== "owner" && !settledOwner);
     if (asksOwner && pendingPushConfirmation(app, getItem(app, itemId), d)) return flowView(app, itemId);
     if (report.state === "done" && !asksOwner && (!evidence.length || evidence.some((r) => !validEvidence(app, r)))) throw new HttpError(400, "做完需要至少一项依据（src: 引用、运行 id 或对象引用）");
     if (by.actor === "owner") resetStreak(app, itemId);
@@ -1017,6 +1030,7 @@ async function enrichReconcileAsk(app: App, s: StageRow, report: StageReport, st
   return true;
 }
 function validEvidence(app: App, ref: string) {
+  if (ref.startsWith("msg:")) return !!one(app.db, "select 1 from messages where id=?", ref.slice(4));
   if (/^src:[\w-]+(?:#L\d+(?:-L?\d+)?)?$/.test(ref)) return !!one(app.db, "select 1 from sources where id=? and deleted_at is null", ref.slice(4).split("#")[0]);
   if (/^design:/.test(ref)) return !!one(app.db, "select 1 from designs where id=?", ref.slice(7));
   // A plugin object linked to the item (a merge request), as its material brief names it.
@@ -1297,7 +1311,7 @@ registerAskHandler("flow-plugin-gate", async (app, ask, ctx) => {
   // or an out-of-order record. Only a later reopen can invalidate its upstream inputs.
   // Older cards could survive an unanswered upstream question. Recover explicit decisions from their log.
   if ((ctx.completion === "regular" || ctx.completion === undefined) && !s.control.recorded
-      && !prerequisitesDone(d,itemStages(app,item)) && !continuedUpstream(app,s))
+      && unmetNeed(f.definition.stages, d.needs, itemStages(app, item)) && !continuedUpstream(app,s))
     throw new HttpError(409, "旧结果需要复核");
   const upstream = new Set(d.needs);
   for (const stage of [...f.definition.stages].reverse()) {
@@ -1407,6 +1421,10 @@ export function flowStageCards(app: App, itemId: string, userId: string) {
   for (const s of itemStages(app, itemId)) {
     const ask = pendingReconcileAsk(app, f, s) ?? (s.askId ? getAsk(app, s.askId) : undefined);
     if (ask?.stageCard && ask.status === "pending") cards.set(s.id, { ...ask.stageCard, ...stageCardActions(ask), askId: ask.id });
+    else if (observableOwnerTurn(definition(f, s.id), s)) {
+      const d = definition(f, s.id);
+      cards.set(s.id, { ...questionCard(app, f, d, s, "owner-turn", { ask: ownerTaskLine(d), before: true }), options: [], askId: null });
+    }
     else if (s.state === "blocked" && !s.control.gateReview) cards.set(s.id, { ...blockerCard(app, item, definition(f, s.id), s), options: [], askId: null });
   }
   return cards;
@@ -1431,11 +1449,12 @@ export async function flowReminders(app: App, at = new Date()) {
       if (at.getTime() - Date.parse(s.control.reminderAt ?? s.since) < app.config.flows.staleDays * 86400_000 * 2 ** n) continue;
       if (["gated", "blocked"].includes(s.state) && (activeToday ??= ownerActiveToday(app, item, at))) continue;
       const f = itemFlow(app, id)!, d = definition(f, s.id);
+      if (observableOwnerTurn(d, s)) continue;
       const card = pendingReconcileAsk(app, f, s)?.stageCard ?? (s.askId ? getAsk(app, s.askId).stageCard : undefined) ?? (s.state === "blocked" ? blockerCard(app, item, d, s) : undefined);
       notify(app, { userId: item.userId, title: card ? `${card.title} · ${item.title}` : `「${item.title}」还停在「${d.name}」`, body: [card ? stageCardText(card) : s.note, reconcileReminder(app, f, s)].filter(Boolean).join("\n\n"), urgency: "later", link: `#/items/${id}/flow?stage=${encodeURIComponent(s.id)}` });
       changeStage(app, id, s.id, s.state, { control: { ...s.control, reminders: n + 1, reminderAt: at.toISOString() } }, host, s.note);
     }
-    queueReconcile(app, id, at);
+    if (!queueTimedOwnerReconcile(app, id, at)) queueReconcile(app, id, at);
   });
 }
 

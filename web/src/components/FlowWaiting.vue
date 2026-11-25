@@ -151,6 +151,13 @@ async function answer(s: FlowStage, choice?: number) {
             <button type="button" class="btn ghost sm" @click="discuss(s)"><Icon name="chat" :size="14" />在对话里讨论</button>
           </div>
         </template>
+        <template v-else-if="may && s.state === 'doing' && s.by === 'owner'">
+          <textarea v-model="replies[s.id]" class="textarea" rows="2" :aria-label="`给「${s.name}」写的话`" :placeholder="placeholder(s)" />
+          <div class="row wrap">
+            <button v-for="(a, i) in buttons(s)" :key="a.label" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button>
+            <button type="button" class="btn ghost sm" @click="discuss(s)"><Icon name="chat" :size="14" />在对话里讨论</button>
+          </div>
+        </template>
         <template v-else-if="may && !s.waitUntil">
           <textarea v-model="replies[s.id]" class="textarea" rows="2" :aria-label="`给「${s.name}」写的话`" placeholder="写下你希望这一段怎么处理" />
           <div class="row wrap">

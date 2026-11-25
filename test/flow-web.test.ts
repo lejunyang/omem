@@ -49,4 +49,11 @@ describe("流程呈现", () => {
     expect(evidenceLink("design:d123")).toBe("#/code/designs/d123");
     expect(evidenceLink("run:r123")).toBe("#/runs/r123");
   });
+  it("没有飞书问卡的本人阶段，网页仍显示做完和跳过，不提示做完要回来点", () => {
+    const words = "跟着发布单上线。做完不用回来点。";
+    const stage = s({ state: "doing", by: "owner", waitingOn: "owner", card: { title: "上线：到你了", itemTitle: "项目 A", flowUrl: "", discussUrl: "",
+      sections: [{ label: "这一段要做什么", text: words }], options: [], askId: null } });
+    expect(nextWords(stage)).toBe(words);
+    expect(stageActions(stage)).toEqual([{ action: "done", label: "我做完了" }, { action: "skip", label: "跳过这一段", reason: true }]);
+  });
 });

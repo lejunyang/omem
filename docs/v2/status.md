@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 普通本人阶段只发合并进展；新事实或到计划时间只读核实，带依据完成；跳过传递检查前提，收回旧规则提前打开且没人动过的阶段 | 已实现（2026-11-26）；`test/flows.test.ts`、`test/flow-blocker-review.test.ts` | `src/flows/owner-turn.ts`、`blocker-review.ts`、`reconcile.ts`、`prerequisites.ts`、`engine.ts` |
 | 新事实触发流程卡点复核，决策模型逐个判断；命中后只核对相关卡点，按结果退避，达到每日上限或模型不可用时沿用巡检 | 已实现（2026-11-25）；假决策和假对账覆盖批处理、回退及限额 | `src/flows/blocker-review.ts`、`blocker-facts.ts`、`reconcile.ts`；`test/flow-blocker-review.test.ts` |
 | 流程在交付后自动核对：撤回前置失效的开始卡，本人信号段不问开始；编码返工可跟正在做的轮次；新增交付触发久等阶段对账，有依据补记并撤卡；本人当天在处理则顺延提醒 | 已实现（2026-11-25）；流程回归、临时 Git 远端和假对账 | `src/flows/engine.ts`、`code-rework.ts`、`delivery.ts`、`reconcile.ts`；`test/flows.test.ts`、`test/flow-signals.test.ts`、`test/flow-reconcile.test.ts` |
 | 本人承担的流程阶段不问“开始吗”，只发一张“轮到你了”；已有交办确认并推送卡时复用该决定，推送后立即核对 Git 信号；交办、阶段和对账卡片正文带链接 | 已实现（2026-11-25）；临时 Git 远端和假客户端覆盖 | `src/flows/owner-turn.ts`、`src/agents/review-card.ts`；`test/flows.test.ts`、`test/flow-signals.test.ts`、`test/flow-reconcile.test.ts` |

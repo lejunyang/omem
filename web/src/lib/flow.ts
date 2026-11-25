@@ -180,7 +180,7 @@ export function stageActions(s: FlowStage): FlowAction[] {
   if (s.question === "refuse" && ownerTurn(s)) return [{ action: "reopen", label: "还不行", reason: true }];
   if (s.question === "done" && ["doing", "gated"].includes(s.state)) return [{ action: "confirm", label: "确认" }, { action: "reopen", label: "还不行", reason: true }];
   if (s.state === "gated") return [{ action: "confirm", label: "开始" }, { action: "hold", label: "先别做" }, { action: "skip", label: "跳过这一段", reason: true }];
-  if (s.state === "doing" && s.by === "owner") return [{ action: "done", label: "做完了" }, { action: "skip", label: "跳过这一段", reason: true }];
+  if (s.state === "doing" && s.by === "owner") return [{ action: "done", label: s.card?.askId === null ? "我做完了" : "做完了" }, { action: "skip", label: "跳过这一段", reason: true }];
   return [];
 }
 export function nextWords(s: FlowStage, who?: string | null) {
@@ -202,6 +202,7 @@ export function nextWords(s: FlowStage, who?: string | null) {
   if (s.state === "gated") return `要开始这一段了：${task}。你同意才开始。`;
   if (s.waitingSignal?.type.includes(":")) return `轮到你：${task}。${s.waitingSignal.available === false ? "等的信号现在没人能判断，做完以后点一下。" : "插件看到信号后这一段会自己完成；也可以直接点做完。"}`;
   if (s.waitingSignal) return `轮到你：${task}。${s.waitingSignal.type === "git.merged" ? "合进目标分支" : "推到远端"}以后这一段会自己完成，后面的阶段接着走；也可以直接点做完。`;
+  if (s.card?.askId === null && s.state === "doing" && s.by === "owner") return s.card.sections.find(section => section.label === "这一段要做什么")?.text ?? task;
   return `轮到你：${task}。做完点一下，后面的阶段会接着走。`;
 }
 /**

@@ -74,6 +74,7 @@ export const flowSchema = z.object({
 }).transform((f) => ({ ...f, stages: f.stages.map((s, i) => ({ ...s, needs: s.needs ?? (i ? [f.stages[i - 1].id] : []) })) }));
 export type FlowDefinition = z.infer<typeof flowSchema>;
 export type FlowStage = FlowDefinition["stages"][number];
+export const ordinaryOwnerTurn = (stage: FlowStage) => stage.by === "owner" && stage.done !== "confirm" && typeof stage.done !== "object";
 
 const OBJECT_NAMES: Record<string, string> = { design: "方案", "code-work": "编码交办" };
 const objectWords = (kind: string) => pluginObjectKind(kind)?.label ?? OBJECT_NAMES[kind] ?? kind;
@@ -96,8 +97,8 @@ export function describeStage(s: FlowStage) {
   const run = typeof s.by === "object" && "run" in s.by ? s.by.run : null;
   return {
     carrier: typeof s.by === "object" && "runner" in s.by ? `这个阶段会由插件 ${s.by.runner} 执行：${stageRunners.get(s.by.runner)?.def.describe ?? "运行器已停用"}` : fixes ? "逐条改缺陷，评审通过后重跑" : typeof s.by === "object" && "object" in s.by && s.by.object === "trials" ? "按确认的方向逐个去试" : s.by === "owner" ? "你来做" : s.by === "wait" ? "只等进展" : object ? `跟着${object}走` : `${!run?.agent || run.agent === "assistant" ? "助手来做" : `交给 ${run.agent}`}${run?.skill ? `，用技能 ${run.skill}` : ""}`,
-    gate: s.gate === "confirm" ? "开始前先问你" : s.by === "owner" ? "轮到就来找你" : s.by === "wait" ? "轮到就开始等" : "轮到就自己开始",
-    done: typeof s.done === "object" ? "signal" in s.done ? s.done.signal === "git.pushed" ? "改动推到远端就算做完（你也可以自己点做完）" : s.done.signal === "git.merged" ? "改动合进目标分支就算做完" : (flowSignals.get(s.done.signal)?.def.describe ?? "等的信号现在没人能判断") + "（你也可以自己点做完）" : `${objectWords(s.done.object)}到了 ${[s.done.status].flat().map((status) => statusWords(typeof s.done === "object" && "object" in s.done ? s.done.object : "", status)).join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : fixes ? "改完并重跑或预算用满就算做完" : trials ? "队列做完或本轮预算用满就算做完" : object ? `${object}完成就算做完` : s.by === "owner" ? "你说做完就算做完" : "交了结果就算做完",
+    gate: s.gate === "confirm" ? "开始前先问你" : ordinaryOwnerTurn(s) ? "轮到时记入事项进展" : s.by === "owner" ? "轮到就来找你" : s.by === "wait" ? "轮到就开始等" : "轮到就自己开始",
+    done: typeof s.done === "object" ? "signal" in s.done ? s.done.signal === "git.pushed" ? "改动推到远端就算做完（你也可以自己点做完）" : s.done.signal === "git.merged" ? "改动合进目标分支就算做完" : (flowSignals.get(s.done.signal)?.def.describe ?? "等的信号现在没人能判断") + "（你也可以自己点做完）" : `${objectWords(s.done.object)}到了 ${[s.done.status].flat().map((status) => statusWords(typeof s.done === "object" && "object" in s.done ? s.done.object : "", status)).join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : fixes ? "改完并重跑或预算用满就算做完" : trials ? "队列做完或本轮预算用满就算做完" : object ? `${object}完成就算做完` : s.by === "owner" ? "助手核实完成后记下，不用回来点" : "交了结果就算做完",
     when: s.when ? `只在需要时做：${bare(s.when)}` : "",
     ai: s.ai || s.escalate ? `${aiWords(s.ai)}${s.escalate ? `；拿不准时最多请${aiWords(s.escalate.to).replace(/^用/, "")}看 ${s.escalate.max} 次` : ""}` : "",
     time: [s.at ? `这一轮 ${s.at} 以后开始` : "", s.window ? `只在 ${s.window.replace("-", "–")} 之间开始` : ""].filter(Boolean).join("；"),

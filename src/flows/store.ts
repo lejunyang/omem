@@ -30,6 +30,7 @@ export type StageControl = {
   reminderAt?: string; reminders?: number;
   waitUntil?: string; tierFallback?: string[]; execution?: Execution; escalations?: number; escalated?: boolean;
   externalRetry?: { attempts: number; instruction: string };
+  ownerPlanAt?: string; ownerCheckAt?: string; ownerAsked?: boolean;
   budgetStartedAt?: string; usedMinutes?: number;
   runnerDeadline?: number;
   budgetExceeded?: boolean;

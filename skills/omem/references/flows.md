@@ -113,6 +113,12 @@
 
 ## 对账时
 
+普通本人阶段轮到时只进事项进展，不用本人找卡报完成。用 `read_flow_object`、只读工具或技能核对相关对象、群里的通知和本人的原话；核实是本事项本次结果时，用 `stage_report(state="done", note, evidence)` 带可核实的时间和原件、对象、`msg:` 原话或运行引用。显式结果确认仍须本人答。到计划时间只看目标阶段，不收口整条流程；查到预计时间用 `submit_flow_reconcile` 的 `kind: external` 和 `retry_at` 记录下次核对。确实查不到且已晚至少一小时，用 `kind: owner` 写一句具体问题进事项进展，不附草稿，也不重复问。
+
+定向对账只有重读到本人明确说本事项这次不做哪一段时，才用 `stage_report(state="skip", note, evidence)` 带原话补记普通本人阶段；显式确认不代过。
+
+跳过不是替上游报完成：有 `needs` 的阶段被跳过后，它的前提仍要满足，下游才能开始。
+
 - 等接口恢复或别人交结果：`steps: [{ kind: "external", stage, action, retry_at, evidence? }]`；`retry_at` 是带时区的 ISO 8601 时间，`action` 写恢复后怎么核对、怎么只补缺失步骤。承担运行也可用 `stage_report(state="blocked", waiting_on, note, retry_at)`；写已做的部分和最后的错误。系统按至少 15、30、60 分钟重试，三次仍失败才问本人；不借此等本人的权限或决定。
 - 承担者有权限能自己做：`steps: [{ kind: "assistant", stage, action, evidence? }]`，把写文档、补字段、回填结果的具体指示交回原阶段，不发提问。
 - 确实要本人做或拍板：`steps: [{ kind: "owner", stage, action, why_owner, evidence?, person?, draft?, chat? }]`。`why_owner` 解释为什么原助手做不了；联系别人时才加群和草稿。本人可从网页或飞书回复文字让阶段按指示继续。下文旧示例的 `steps` 参数以这三种为准。

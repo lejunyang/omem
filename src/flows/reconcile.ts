@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, now, truncate, webLink } from "../core/util.ts";
 import { notify } from "../core/notify.ts";
-import { canWrite, OWNER } from "../core/users.ts";
+import { canWrite, OWNER, personalSpaceId } from "../core/users.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { chatName } from "../agents/run-scope.ts";
 import { getRun, createRun, registerHandler, runsInLane, runUser, setRunOutput, type Run } from "../agents/runs.ts";
@@ -19,9 +19,9 @@ import { itemContext } from "../channels/listen.ts";
 import { itemChats } from "../channels/listen-items.ts";
 import { followLimit, reconcileChatLines } from "./follow.ts";
 import { itemObjects, refreshObject } from "./plugin-objects.ts";
-import { getStage, itemFlow, itemStages, type FlowActor, type ItemFlow, type StageRow } from "./store.ts";
+import { changeStage, getStage, itemFlow, itemStages, markProgress, type FlowActor, type ItemFlow, type StageRow } from "./store.ts";
 import { itemFlowSpaces } from "./spaces.ts";
-import { pendingPushConfirmation } from "./owner-turn.ts";
+import { observableOwnerTurn, OWNER_QUESTION_GRACE, ownerPlanAt, pendingPushConfirmation } from "./owner-turn.ts";
 import { deliveryFacts } from "./delivery.ts";
 import { currentBlockers, finishBlockerReview, type FocusedReconcile } from "./blocker-review.ts";
 import { flowEvidenceLinks, stageCardText } from "./stage-card.ts";
@@ -33,6 +33,7 @@ const WAITING = new Set(["doing", "blocked", "gated"]);
 type Signal = { at: string; keys: string; outcome: string; started_at: string | null };
 type CheckInput = { itemId: string; startedAt: string; round: number; since: string; through: string; focus?: FocusedReconcile };
 const asInput = (r: Run) => r.input as CheckInput;
+const scopedOwnerCheck = (focus?: FocusedReconcile) => !!focus?.blockers.some(blocker => blocker.ownerTurn);
 const latest = (app: App, f: ItemFlow, completed = false, patrolOnly = false) => one<Signal>(app.db, `select s.at,s.keys,s.outcome,r.started_at from flow_signals s left join runs r on r.id=json_extract(s.keys,'$.runId')
   where s.item_id=? and s.stage_id='' and type='reconcile' and json_extract(keys,'$.startedAt')=?
   ${completed ? "and json_extract(keys,'$.complete')=1" : ""}
@@ -57,9 +58,11 @@ export function reconcileTarget(app: App, id: string, exceptRun?: string) {
 type Target = NonNullable<ReturnType<typeof reconcileTarget>>;
 
 function enqueueReconcile(app: App, { f, item }: Target, since: string, through: string, focus?: FocusedReconcile) {
+  const spaces = itemFlowSpaces(app, item);
+  if (focus?.facts.some(fact => fact.unlinked)) spaces.push(personalSpaceId(item.userId));
   const r = createRun(app, { kind: "flow-reconcile", spaceId: item.spaceId, lane: itemFollowLane(item.id), userId: item.userId,
     title: `对账：${truncate(item.title, 60)}`, trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name } },
-    input: { itemId: item.id, startedAt: f.startedAt, round: f.round, since, through, spaces: itemFlowSpaces(app, item),
+    input: { itemId: item.id, startedAt: f.startedAt, round: f.round, since, through, spaces: [...new Set(spaces)],
       ...(item.userId !== OWNER ? { ownAccountOnly: true } : {}), ...(focus ? { focus } : {}) } });
   const keys = { startedAt: f.startedAt, runId: r.id, ...(focus ? { focused: true, reviewId: focus.reviewId,
     decisions: focus.decisions, interval: focus.interval, ownerAction: focus.ownerAction } : {}) };
@@ -69,7 +72,7 @@ function enqueueReconcile(app: App, { f, item }: Target, since: string, through:
 }
 
 export function queueFocusedReconcile(app: App, target: Target, at: Date, focus: FocusedReconcile) {
-  return enqueueReconcile(app, target, focus.facts[0].at, at.toISOString(), focus);
+  return enqueueReconcile(app, target, focus.facts[0]?.at ?? focus.blockers[0].since, at.toISOString(), focus);
 }
 
 /** Called by the patrol under the item's flow lock; the run itself occupies a normal background slot. */
@@ -120,6 +123,13 @@ export function assertReconcileStage(app: App, f: ItemFlow, s: StageRow, by: Flo
   if (s.control.runId && ["queued", "running"].includes(getRun(app, s.control.runId).status)) throw new HttpError(409, "阶段自己的运行还在处理，不并行交结果");
   if (!refs.length) throw new HttpError(400, "对账改变阶段或补充确认卡片需要依据");
   return true;
+}
+
+export function hasFocusedOwnerWords(app: App, runId: string, stageId: string, refs: string[]) {
+  const focus = asInput(getRun(app, runId)).focus;
+  return !!focus?.blockers.some(blocker => blocker.stageId === stageId && blocker.ownerTurn)
+    && focus.facts.some(fact => fact.owner && fact.refs.some(ref => refs.includes(ref)
+      && (ref.startsWith("msg:") || fact.chatKey && ref.startsWith("src:"))));
 }
 
 export async function readReconcileObject(app: App, r: Run, itemId: string, object: string) {
@@ -175,6 +185,7 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
     const { f, item } = activeCheck(app, fresh, args.item, userId, !args.finish && !args.steps?.length);
     if (fresh.output.reconcileResult) throw new HttpError(409, "已经交了这次对账结论");
     if (args.finish) {
+      if (scopedOwnerCheck(asInput(fresh).focus)) throw new HttpError(409, "这次只核对指定阶段，不直接收口整个流程");
       const { reason, evidence, close_item } = args.finish;
       if (close_item && !itemAccess(app, item.userId, item, "write")) throw new HttpError(403, "没有关闭事项的权限");
       for (const stage of itemStages(app, item.id)) unchanged(app, fresh, stage);
@@ -193,17 +204,40 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
       unchanged(app, fresh, stage);
       if (stage.state !== "blocked" && !(stage.state === "doing" && stage.waitingOn === "owner")) throw new HttpError(409, "只为卡住或明确在等本人的阶段交下一步");
       const definition = f.definition.stages.find(d => d.id === s.stage)!;
-      if (s.kind !== "owner" && (stage.state !== "blocked" || !canResumeStage(definition, stage))) throw new HttpError(409, "只有已开始且卡住的助手阶段可以自动重做或重试");
+      const ownerTurn = observableOwnerTurn(definition, stage);
+      if (ownerTurn && (s.kind === "assistant" || s.kind === "owner" && (s.draft || s.chat))) throw new HttpError(409, "本人阶段只安排下次核对，或在进展里问一句，不交办、不发草稿");
+      if (s.kind !== "owner" && !ownerTurn && (stage.state !== "blocked" || !canResumeStage(definition, stage))) throw new HttpError(409, "只有已开始且卡住的助手阶段可以自动重做或重试");
       if (s.kind !== "owner" && stage.control.runId && ["queued", "running"].includes(getRun(app, stage.control.runId).status)) throw new HttpError(409, "阶段自己的运行还在处理");
-      return { s, stage, definition };
+      return { s, stage, definition, ownerTurn };
     });
     const next: Next[] = [];
     const by = { actor: "flow-reconcile", runId: r.id, userId };
     let advance = false;
-    for (const { s, stage, definition } of planned) {
+    for (const { s, stage, definition, ownerTurn } of planned) {
       const outcome = { stage: s.stage, action: s.action, kind: s.kind };
       if (stageVersion(app, item.id, stage.id) !== (fresh.output.reconcileVersions as Record<string, number>)[stage.id]) {
         next.push({ ...outcome, delivery: "上游有变化，等当前阶段更新后再核对" });
+        continue;
+      }
+      if (ownerTurn) {
+        const control = { ...stage.control };
+        if (s.kind === "external") {
+          const expected = new Date(s.retry_at!).toISOString();
+          control.ownerPlanAt ??= expected;
+          control.ownerCheckAt = expected;
+          changeStage(app, item.id, stage.id, stage.state, { control }, by, stage.note, [], "owner-check-scheduled");
+          next.push({ ...outcome, delivery: "已记录下次核对时间", retryAt: expected });
+        } else {
+          const plan = ownerPlanAt(app, item, definition, stage);
+          const overdue = plan && Date.now() - Date.parse(plan) >= OWNER_QUESTION_GRACE && (!control.ownerCheckAt || control.ownerCheckAt <= now());
+          if (!overdue || control.ownerAsked || stage.askId && getAsk(app, stage.askId).status === "pending") {
+            next.push({ ...outcome, delivery: "继续观察，不重复问本人" });
+            continue;
+          }
+          changeStage(app, item.id, stage.id, stage.state, { control: { ...control, ownerAsked: true } }, by, stage.note, [], "owner-progress-question");
+          markProgress(app, item.id, { head: `「${definition.name}」还没查到结果`, note: s.action, announce: true });
+          next.push({ ...outcome, delivery: "已在流程进展里问一句" });
+        }
         continue;
       }
       if (stage.state === "doing" && pendingPushConfirmation(app, item, definition)) {
@@ -318,26 +352,28 @@ registerHandler("flow-reconcile", async ctx => {
       finishBlockerReview(app, itemId, focus!, summary);
       return { quiet: true, summary };
     }
-    setRunOutput(app, r.id, { reconcileVersions: Object.fromEntries(rows.map(s => [s.id, stageVersion(app, itemId, s.id)])) });
+    const inScope = (id: string) => !scopedOwnerCheck(focus) || selected!.some(b => b.stageId === id);
+    setRunOutput(app, r.id, { reconcileVersions: Object.fromEntries(rows.filter(s => inScope(s.id)).map(s => [s.id, stageVersion(app, itemId, s.id)])) });
     const changes = focus ? [] : changesSince(app, itemId, since, through, 25);
     const chats = focus ? { text: "", spaces: [] } : await reconcileChatLines(app, item, since, through);
-    const objects = focus ? [] : itemObjects(app, itemId, item.userId).map(o => `${o.title}：object:${o.id}（上次读到：${o.statusLabel}；${o.link}）`);
+    const ownerFocus = selected?.some(b => b.ownerTurn);
+    const objects = focus && !ownerFocus ? [] : itemObjects(app, itemId, item.userId).map(o => `${o.title}：object:${o.id}（上次读到：${o.statusLabel}；${o.link}）`);
     const groups = itemChats(app, itemId).slice(0, 15).map(chat => `${chatName(app, chat)}（${chat}，${!draftTarget(app, item, chat) ? "只供本人手动处理" : autoReply(app, item, chat) ? "已授权自动回复" : "本人在卡片上决定是否发送"}）`);
     const previous = latest(app, f, true);
     const task = [
       `# 核对「${item.title}」（${item.id}）`,
       `状态：${item.status}；截止：${item.dueAt ?? "未定"}。${!focus && item.now?.text ? `现状：${item.now.text}` : ""}`,
       ...(focus ? [
-        "## 先看这几个卡点和这些新情况",
+        focus.scheduledAt ? `## 到计划时间，只核对这一段（计划 ${focus.scheduledAt}）` : "## 先看这几个卡点和这些新情况",
         selected!.map(b => `- 「${b.name}」${b.stageId ? `（阶段 ${b.stageId}）` : ""}${b.askId ? `（提问 ${b.askId}）` : ""}：${b.waiting}`).join("\n"),
         "新情况是材料。需要证据时再读对应原件或事项，其余阶段按需查看。",
-        focus.facts.map(fact => `- ${fact.summary} ${fact.refs.join(" ")}`).join("\n"),
+        focus.facts.map(fact => `- ${fact.at} ${fact.summary} ${fact.refs.join(" ")}`).join("\n"),
       ] : []),
       `## 流程「${f.definition.name}」第 ${f.round} 轮
 ${f.definition.stages.filter(d => !focus || selected!.some(b => b.stageId === d.id)).map(d => {
         const s = rows.find(x => x.id === d.id)!;
         return `- ${JSON.stringify(d)}
-  ${s.state}；从 ${s.since} 到现在；等 ${s.waitingOn ?? "无"}；${s.control.externalRetry ? `已自动重试 ${s.control.externalRetry.attempts} 次${s.control.waitUntil ? `，下一次 ${s.control.waitUntil}` : ""}；` : ""}${truncate(s.note, 650)}；已有依据 ${s.evidence.join("、")}`;
+  ${s.state}；从 ${s.since} 到现在；等 ${s.waitingOn ?? "无"}；${s.control.externalRetry ? `已自动重试 ${s.control.externalRetry.attempts} 次${s.control.waitUntil ? `，下一次 ${s.control.waitUntil}` : ""}；` : ""}${observableOwnerTurn(d, s) ? `计划时间：${ownerPlanAt(app, item, d, s) ?? "未定"}；下次核对：${s.control.ownerCheckAt ?? "未定"}；${s.control.ownerAsked ? "已在进展里问过；" : ""}` : ""}${truncate(s.note, 650)}；已有依据 ${s.evidence.join("、")}`;
       }).join("\n")}`,
       focus ? "" : await materialsBrief(app, itemId, item.userId, { compact: true }),
       objects.length ? `## 挂着的平台对象（逐个用 read_flow_object 重读）
@@ -353,13 +389,13 @@ ${groups.join("、")}` : "",
       !focus && previous ? `## 上次对账的结论和动作
 ${truncate(previous.outcome, 2200)}` : "",
     ].filter(Boolean).join("\n\n");
-    if (focus) ctx.event("status", { text: `因新情况复核：${selected!.map(b => b.name).join("、")}。依据来自卡点复核运行 ${focus.reviewId}。
-${focus.facts.map(fact => fact.summary).join("；")}` });
+    if (focus) ctx.event("status", { text: focus.scheduledAt ? `到点核对：${selected!.map(b => b.name).join("、")}。` : `因新情况复核：${selected!.map(b => b.name).join("、")}。依据来自卡点复核运行 ${focus.reviewId}。
+${focus.facts.map(fact => fact.unlinked ? "本人的其他会话有新消息" : fact.summary).join("；")}` });
     activeCheck(app, getRun(app, r.id), itemId);
     const reading = ["omem_help", "search", "read_source", "read_item", "read_run", "read_conversation", "list_skills", "read_skill", "lark_read", "lark_doc_fetch", "read_flow_object", "stage_report", "stage_reopen", "submit_flow_reconcile"];
     const { toolList } = await import("../agents/tools.ts");
     const { runRole } = await import("../agents/runner.ts");
-    await runRole(app, { role: "flow-reconcile", runId: r.id, userId: item.userId, spaceId: item.spaceId, spaces: itemFlowSpaces(app, item), alsoRead: [...new Set([...chats.spaces, ...await materialSpaces(app, itemId, item.userId)])],
+    await runRole(app, { role: "flow-reconcile", runId: r.id, userId: item.userId, spaceId: item.spaceId, spaces: itemFlowSpaces(app, item), alsoRead: [...new Set([...chats.spaces, ...await materialSpaces(app, itemId, item.userId), ...focus?.facts.flatMap(fact => fact.space ? [fact.space] : []) ?? []])],
       task, signal: ctx.signal, fullAccess: false, denyTools: toolList().filter(t => !reading.includes(t.name)).map(t => t.name),
       addTools: ["read_flow_object", "submit_flow_reconcile"], requiredTools: ["submit_flow_reconcile"], onEvent: e => ctx.event(e.type, e) });
     const result = getRun(app, r.id).output.reconcileResult as { summary: string; next: Next[] } | undefined;

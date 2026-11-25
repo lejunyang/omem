@@ -37,7 +37,8 @@ export type StageEvent =
   | "upstream-ask"
   /** The owner said stop (stale until the upstream is done), go on, or it finished before the owner answered (stale). */
   | "upstream-stop" | "upstream-continue" | "upstream-done"
-  | "external-retry-wait" | "external-retry-exhausted";
+  | "external-retry-wait" | "external-retry-exhausted"
+  | "premature-start" | "owner-check-scheduled" | "owner-progress-question";
 
 /** One row of item_stage_log, oldest first; `waitingOn` and `event` are null on rows written before they were kept. */
 export type ReviewLogRow = { stageId: string; at: string; fromState: StageState | null; toState: StageState; actor: string; note: string; round: number; waitingOn?: string | null; event?: string | null };

@@ -7,13 +7,21 @@ import { deliveryCodeRounds } from "./delivery.ts";
 import { itemChats } from "../channels/listen-items.ts";
 import type { Item } from "../items/store.ts";
 
-export type ItemFact = { at: string; summary: string; refs: string[]; owner?: boolean; chatKey?: string };
-type FactRow = { at: string; summary: string; refs: string; owner: number; chatKey?: string; source?: string | null; space?: string | null };
+export type ItemFact = { at: string; summary: string; refs: string[]; owner?: boolean; chatKey?: string; unlinked?: boolean; space?: string };
+type FactRow = { at: string; summary: string; refs: string; owner: number; chatKey?: string; source?: string | null; space?: string | null; unlinked?: number };
 export const shortFact = (s: string, max = 160) => truncate(s.replace(/\s+/g, " ").trim(), max);
+const ownerMessage = `msg.role='user' and trim(msg.text)!=''
+  and coalesce(json_extract(msg.meta,'$.command'),0)=0 and json_extract(msg.meta,'$.speaker') is null
+  and json_extract(msg.meta,'$.asker') is null and coalesce(json_extract(msg.meta,'$.backlog'),0)=0
+  and (c.channel not like 'lark%' or json_extract(msg.meta,'$.externalId') is null or exists (
+    select 1 from lark_messages l where l.message_id=json_extract(msg.meta,'$.externalId') and (
+      exists(select 1 from identities i where i.channel like 'lark%' and i.external_id=l.sender_id and i.user_id=c.user_id)
+      or c.user_id='owner' and l.sender_kind='owner' and not exists(
+        select 1 from identities i where i.channel like 'lark%' and i.external_id=l.sender_id and i.user_id!='owner'))))`;
 
 // These queries read the same records used by the work timeline, materials, conversation history,
 // and delivery checks. They never refresh an object, fetch a document, or read its body.
-export function itemFacts(app: App, item: Item, since: string, through: string, chatSince = since): ItemFact[] {
+export function itemFacts(app: App, item: Item, since: string, through: string, chatSince = since, ownerTurns = false): ItemFact[] {
   const args = { item: item.id, user: item.userId, since, through };
   const local = app.db.prepare(`select * from (
     select coalesce(json_extract(c.added,'$[#-1].at'),c.at) at, substr(c.summary,1,300) summary, c.refs, c.origin='owner' owner, null source, null space
@@ -57,15 +65,20 @@ export function itemFacts(app: App, item: Item, since: string, through: string, 
       from item_materials m join req_nodes n on m.kind='req' and n.id=m.ref
       where m.item_id=$item and n.updated_at>max($since,m.created_at) and n.updated_at<=$through
     union all
+    select max(coalesce(o.revised_at,''),coalesce(o.changed_at,'')),'关联对象有更新：' || substr(o.title || ' · ' || o.status,1,180),json_array('object:' || o.id),0,null,null
+      from item_materials m join flow_objects o on m.kind='object' and o.id=m.ref
+      where m.item_id=$item and max(coalesce(o.revised_at,''),coalesce(o.changed_at,''))>max($since,m.created_at)
+        and max(coalesce(o.revised_at,''),coalesce(o.changed_at,''))<=$through
+    union all
+    select q.at,'阶段信号：' || substr(q.outcome,1,180),'[]',0,null,null
+      from flow_signals q where q.item_id=$item and q.stage_id!='' and q.at>$since and q.at<=$through
+        and json_extract(q.keys,'$.nextAt') is not null
+        and q.outcome is not (select p.outcome from flow_signals p where p.item_id=q.item_id and p.stage_id=q.stage_id and p.type=q.type and p.id<q.id order by p.id desc limit 1)
+    union all
     select msg.created_at,'本人在关联会话说：' || substr(msg.text,1,200),json_array('msg:' || msg.id),1,null,c.space_id
       from item_materials m join conversations c on m.kind='conversation' and c.id=m.ref and c.user_id=$user
       join messages msg on msg.conversation_id=c.id
-      where m.item_id=$item and msg.created_at>$since and msg.created_at<=$through and msg.role='user'
-        and coalesce(json_extract(msg.meta,'$.command'),0)=0 and json_extract(msg.meta,'$.speaker') is null
-        and json_extract(msg.meta,'$.asker') is null and coalesce(json_extract(msg.meta,'$.backlog'),0)=0
-        and (c.channel not like 'lark%' or not exists(
-          select 1 from lark_messages l where l.message_id=json_extract(msg.meta,'$.externalId') and l.sender_kind='owner' and $user='owner'
-          and not exists(select 1 from identities i where i.channel like 'lark%' and i.external_id=l.sender_id and i.user_id!=$user)))
+      where m.item_id=$item and msg.created_at>$since and msg.created_at<=$through and ${ownerMessage}
     union all
     select a.answered_at,'本人已处理提问：' || substr(coalesce(nullif(a.answer,''),a.question),1,180),'[]',1,null,null
       from asks a where a.status='answered' and a.user_id=$user and a.answered_at>$since and a.answered_at<=$through
@@ -76,26 +89,31 @@ export function itemFacts(app: App, item: Item, since: string, through: string, 
     const outcome = r.status === "done" && r.verdict === "approved" ? "评审通过" : ({ done: "结束", cancelled: "取消" }[r.status] ?? "失败");
     return { at: r.at, summary: `编码第 ${r.round} 轮${outcome}：${r.summary}`, refs: JSON.stringify([r.id]), owner: 0, space: r.space };
   });
-  return visibleFacts(app, item, [...local, ...coding, ...chatFacts(app, item, chatSince, through)]);
+  const words = ownerTurns ? all<FactRow>(app.db, `select msg.created_at at, '本人在其他会话' || case when c.title='' then '' else '「' || substr(c.title,1,45) || '」' end || '说：' || substr(msg.text,1,200) summary,
+    json_array('msg:' || msg.id) refs, 1 owner, c.space_id space, 1 unlinked
+    from conversations c join messages msg on msg.conversation_id=c.id
+    where c.user_id=? and msg.created_at>? and msg.created_at<=? and ${ownerMessage}
+      and not exists(select 1 from item_materials m where m.item_id=? and m.kind='conversation' and m.ref=c.id)
+    order by msg.created_at desc limit 24`, item.userId, since, through, item.id) : [];
+  return visibleFacts(app, item, [...local, ...coding, ...chatFacts(app, item, chatSince, through, ownerTurns), ...words]);
 }
 
-function chatFacts(app: App, item: Item, since: string, through: string): FactRow[] {
+function chatFacts(app: App, item: Item, since: string, through: string, ownerTurns: boolean): FactRow[] {
   const chats = itemChats(app, item.id);
   if (!chats.length) return [];
   const ownIds = identitiesOf(app, item.userId).filter(i => i.channel.startsWith("lark")).map(i => i.external_id);
   if (item.userId === OWNER && app.config.lark.ownerOpenId) ownIds.push(app.config.lark.ownerOpenId);
   for (const bot of app.config.lark.bots) if ((bot.userId ?? OWNER) === item.userId && bot.ownerOpenId) ownIds.push(bot.ownerOpenId);
-  return chats.flatMap(chat => all<FactRow>(app.db, `select
+  return chats.flatMap(chat => all<FactRow>(app.db, `with scoped as (select *, (sender_id in (select value from json_each(?)) or (?='owner' and sender_kind='owner'
+      and not exists(select 1 from identities i where i.channel like 'lark%' and i.external_id=l.sender_id and i.user_id!='owner'))) own
+    from lark_messages l where chat_id=? and create_ms>? and create_ms<=?) select
     strftime('%Y-%m-%dT%H:%M:%fZ',create_ms/1000.0,'unixepoch') at,
-    '本人在关联群说：' || substr(content,1,200) summary,
+    (case when own then '本人在关联群说：' when sender_kind='bot' then '关联群的机器人通知：' else '关联群有消息：' end) || substr(content,1,200) summary,
     case when source_id is not null and line is not null then json_array('src:' || source_id || '#L' || line)
-      else json_array('lark:' || message_id) end refs,1 owner,source_id source,message_id chatKey
-    from lark_messages l where chat_id=? and create_ms>? and create_ms<=?
-      and msg_type in ('text','post') and trim(content)!=''
-      and (sender_id in (select value from json_each(?)) or (?='owner' and sender_kind='owner'
-        and not exists(select 1 from identities i where i.channel like 'lark%' and i.external_id=l.sender_id and i.user_id!='owner')))
+      else json_array('lark:' || message_id) end refs,own owner,source_id source,message_id chatKey
+    from scoped where (own or ?=1) and trim(content)!='' and (msg_type in ('text','post') or ?=1 and sender_kind='bot')
       and (?='owner' or source_id is not null)
-    order by create_ms desc limit 30`, chat, Date.parse(since), Date.parse(through), JSON.stringify(ownIds), item.userId, item.userId));
+    order by create_ms desc limit 30`, JSON.stringify(ownIds), item.userId, chat, Date.parse(since), Date.parse(through), Number(ownerTurns), Number(ownerTurns), item.userId));
 }
 
 function visibleFacts(app: App, item: Item, rows: FactRow[]) {
@@ -110,7 +128,7 @@ function visibleFacts(app: App, item: Item, rows: FactRow[]) {
     const key = `${r.at}:${summary}`;
     if (!summary || seen.has(key)) return [];
     seen.add(key);
-    return [{ at: r.at, summary, refs: refs.slice(0, 4), ...(r.owner ? { owner: true } : {}), ...(r.chatKey ? { chatKey: r.chatKey } : {}) }];
+    return [{ at: r.at, summary, refs: refs.slice(0, 4), ...(r.owner ? { owner: true } : {}), ...(r.chatKey ? { chatKey: r.chatKey } : {}), ...(r.unlinked ? { unlinked: true, space: r.space ?? undefined } : {}) }];
   });
 }
 

@@ -4,11 +4,12 @@ import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { setKey } from "../src/core/ai-keys.ts";
 import { resetDecisionCooldownForTests, setDecisionFetchForTests } from "../src/core/decision.ts";
+import { createSpace } from "../src/core/spaces.ts";
 import { __testHandlers, createRun, getRun, listRuns, runEvents } from "../src/agents/runs.ts";
 import { createAsk } from "../src/agents/asks.ts";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import * as runner from "../src/agents/runner.ts";
-import { callTool } from "../src/agents/tools.ts";
+import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { addChange, lineTimeline } from "../src/items/changes.ts";
 import { addLocalMaterials, addMaterials } from "../src/items/materials.ts";
@@ -17,6 +18,7 @@ import { queueBlockerReviews } from "../src/flows/blocker-review.ts";
 import { recordFlowPush } from "../src/flows/delivery.ts";
 import { reportStage, startFlow } from "../src/flows/engine.ts";
 import { queueReconcile } from "../src/flows/reconcile.ts";
+import { getStage } from "../src/flows/store.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { testApp } from "./helpers.ts";
@@ -28,7 +30,7 @@ const minute = 60_000;
 const moveTo = (m: number) => vi.setSystemTime(new Date(start + m * minute));
 const wait = (id: string) => ({ id, name: id === "verify" ? "复测" : "交付", by: "wait" as const, fixed: false, needs: [] });
 
-async function setup({ judge = true, blocked = true, dueAt }: { judge?: boolean; blocked?: boolean; dueAt?: string } = {}) {
+async function setup({ judge = true, blocked = true, dueAt, ownerStage, shared }: { judge?: boolean; blocked?: boolean; dueAt?: string; ownerStage?: { at?: string; window?: string }; shared?: boolean } = {}) {
   vi.useFakeTimers({ toFake: ["Date"] });
   moveTo(0);
   const app = testApp(); apps.push(app);
@@ -38,9 +40,10 @@ async function setup({ judge = true, blocked = true, dueAt }: { judge?: boolean;
     app.config.ai.providers = [{ id: "test", name: "测试决策", kind: "openai", backends: [] }];
     setKey(app.home, "test", "fake-key");
   }
-  const item = upsertItem(app, undefined, { title: "项目 A", ...(dueAt ? { dueAt } : {}) }, "user");
-  await startFlow(app, item.id, { stages: [wait("verify"), wait("deliver")] }, owner);
-  if (blocked) await reportStage(app, item.id, "verify", { state: "blocked", waitingOn: "复测记录", note: "等复测通过的证据" }, { actor: "agent" });
+  if (shared) createSpace(app, { id: "project-a", name: "项目 A" });
+  const item = upsertItem(app, undefined, { title: "项目 A", ...(dueAt ? { dueAt } : {}), ...(shared ? { spaceId: "project-a" } : {}) }, "user");
+  await startFlow(app, item.id, { stages: [ownerStage ? { ...wait("verify"), ...ownerStage, by: "owner", effect: "read", note: "核对复测结果" } : wait("verify"), wait("deliver")] }, owner);
+  if (blocked && !ownerStage) await reportStage(app, item.id, "verify", { state: "blocked", waitingOn: "复测记录", note: "等复测通过的证据" }, { actor: "agent" });
   return { app, item };
 }
 
@@ -77,18 +80,124 @@ async function review(app: App, at: number) {
   await execute(app, queued[0].id);
   return queued[0];
 }
-function fakeReconcile(app: App, complete?: () => Promise<unknown>) {
+function fakeReconcile(app: App, complete?: (ctx: ToolContext, task: string) => Promise<unknown>, steps?: object[]) {
   return vi.spyOn(runner, "runRole").mockImplementationOnce(async (_, req) => {
     const runId = req.runId!;
-    if (complete) await complete();
-    const res = await callTool({ app, spaceId: "personal", tools: null, actor: "agent", role: "flow-reconcile", runId, spaces: ["personal"], userId: "owner" },
-      "submit_flow_reconcile", { item: getRun(app, runId).input.itemId, summary: "已核对新材料" });
+    const ctx: ToolContext = { app, spaceId: req.spaceId, tools: null, actor: "agent", role: "flow-reconcile", runId, spaces: [...new Set([...(req.spaces ?? []), ...req.alsoRead ?? []])], userId: "owner" };
+    if (complete) await complete(ctx, req.task);
+    const res = await callTool(ctx, "submit_flow_reconcile", { item: getRun(app, runId).input.itemId, summary: "已核对新材料", ...(steps ? { steps } : {}) });
     expect(res.isError).not.toBe(true);
     return { text: "已核对", agent: "fake", stopReason: "end_turn", profileId: "fake", ai: { profile: "fake" } };
   });
 }
 const focusWindow = (app: App, id: string) => one<{ wait: number; changed: number }>(app.db, `select json_extract(keys,'$.interval') wait,
   json_extract(keys,'$.blockerChanged') changed from flow_signals where type='reconcile' and json_extract(keys,'$.runId')=?`, id);
+
+it("本人在未挂接会话里说明已复测：先过决策门槛，重读原话后带依据完成", async () => {
+  const { app, item } = await setup({ ownerStage: {}, shared: true });
+  const fetch = fakeDecision(0.95);
+  moveTo(1);
+  const thread = createThread(app, { channel: "web", spaceId: "personal", title: "项目 A" });
+  const message = addMessage(app, thread.id, "user", "项目 A 的复测在 01:01 做完了，全部通过。");
+  const ref = `msg:${message}`;
+  const check = await review(app, 4);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const focused = recentReconcile(app)!;
+  expect(focused.input.spaces).toEqual(expect.arrayContaining(["personal", "project-a"]));
+  expect(check.input.spaces).toEqual(expect.arrayContaining(["personal", "project-a"]));
+  expect(focused.input.focus).toMatchObject({ reviewId: check.id, blockers: [{ stageId: "verify", ownerTurn: true }], facts: [expect.objectContaining({ refs: [ref] })] });
+  fakeReconcile(app, async (ctx, task) => {
+    expect(task).toContain(ref);
+    expect(task).not.toContain('"id":"deliver"');
+    const report = (evidence: string[]) => callTool(ctx, "stage_report", { item: item.id, stage: "verify", state: "done", note: "项目 A 复测在 01:01 通过", evidence });
+    expect((await report([])).isError).toBe(true);
+    expect(getStage(app, item.id, "verify").state).toBe("doing");
+    expect((await callTool(ctx, "stage_report", { item: item.id, stage: "deliver", state: "done", note: "其他阶段", evidence: [ref] })).isError).toBe(true);
+    expect((await callTool(ctx, "read_source", { source: ref })).isError).not.toBe(true);
+    expect((await report([ref])).isError).not.toBe(true);
+  });
+  await execute(app, focused.id);
+  expect(getStage(app, item.id, "verify")).toMatchObject({ state: "done", askId: null, evidence: [ref], note: "项目 A 复测在 01:01 通过" });
+  expect(all(app.db, "select id from asks")).toEqual([]);
+});
+
+it("普通本人阶段只按定向复核中的本人原话补记跳过", async () => {
+  const { app, item } = await setup({ ownerStage: {} });
+  fakeDecision(0.95);
+  moveTo(1);
+  const thread = createThread(app, { channel: "web", spaceId: "personal", title: "项目 A" });
+  const ref = `msg:${addMessage(app, thread.id, "user", "项目 A 这一轮的复测不用做，跳过吧。")}`;
+  const other = `msg:${addMessage(app, thread.id, "assistant", "可以不用复测。")}`;
+  await review(app, 4);
+  fakeReconcile(app, async (ctx) => {
+    const report = (evidence: string[]) => callTool(ctx, "stage_report", { item: item.id, stage: "verify", state: "skip", note: "本人决定这次不做复测", evidence });
+    expect((await report([other])).isError).toBe(true);
+    expect(getStage(app, item.id, "verify").state).toBe("doing");
+    expect((await report([ref])).isError).not.toBe(true);
+  });
+  await execute(app, recentReconcile(app)!.id);
+  expect(getStage(app, item.id, "verify")).toMatchObject({ state: "skipped", askId: null, evidence: [ref] });
+});
+
+it("只有其他会话的新消息时，沿用复核间隔合批，即使上一批没有安排对账", async () => {
+  const { app } = await setup({ ownerStage: {} });
+  const fetch = fakeDecision(0.05);
+  const thread = createThread(app, { channel: "web", spaceId: "personal", title: "另一件事" });
+  moveTo(1);
+  addMessage(app, thread.id, "user", "我已看过另一份说明。");
+  await review(app, 4);
+  expect(recentReconcile(app)).toBeUndefined();
+  moveTo(7);
+  addMessage(app, thread.id, "user", "我已更新另一件事项。");
+  moveTo(12);
+  expect(queueBlockerReviews(app)).toEqual([]);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  await review(app, 64);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it.each([{ timing: "事项截止时间", dueAt: new Date(start + 15 * minute).toISOString() }, { timing: "阶段时间窗结束", window: "00:55-01:15" }])("到 $timing 后只排这段，没查到不动，继续按间隔退避", async ({ dueAt, window }) => {
+  const { app, item } = await setup({ judge: false, dueAt, ownerStage: { window } });
+  moveTo(14);
+  expect(queueBlockerReviews(app)).toHaveLength(0);
+  moveTo(15);
+  const queued = queueBlockerReviews(app);
+  expect(queued).toHaveLength(1);
+  expect(queued[0].input.focus).toMatchObject({ scheduledAt: new Date().toISOString(), blockers: [{ stageId: "verify" }], facts: [] });
+  expect(queueBlockerReviews(app)).toHaveLength(0);
+  fakeReconcile(app, async (ctx, task) => {
+    expect(task).toContain("到计划时间，只核对这一段");
+    expect(task).not.toContain('"id":"deliver"');
+    expect((await callTool(ctx, "stage_report", { item: item.id, stage: "deliver", state: "done", note: "其它段完成", evidence: [ctx.runId!] })).isError).toBe(true);
+  }, [{ stage: "verify", kind: "owner", why_owner: "只有本人能查看", action: "复测通过了吗？" }]);
+  await execute(app, queued[0].id);
+  expect(getStage(app, item.id, "verify")).toMatchObject({ state: "doing", askId: null, evidence: [] });
+  expect(all(app.db, "select body from notifications where body like '%复测通过了吗%' ")).toHaveLength(0);
+  moveTo(16);
+  expect(queueBlockerReviews(app)).toHaveLength(0);
+});
+
+it("对账给出的预计时间触发定向核对；确实查不到且过时，只在进展里问一次", async () => {
+  const { app, item } = await setup({ judge: false, ownerStage: { at: "01:00" } });
+  const initial = queueBlockerReviews(app);
+  expect(initial).toHaveLength(1);
+  const expected = new Date(start + 5 * 60 * minute).toISOString();
+  fakeReconcile(app, undefined, [{ stage: "verify", kind: "external", action: "到时只读核对复测记录", retry_at: expected }]);
+  await execute(app, initial[0].id);
+  moveTo(299);
+  expect(queueBlockerReviews(app)).toHaveLength(0);
+  const steps = [{ stage: "verify", kind: "owner", why_owner: "记录无法读取，只有本人看到结果", action: "复测通过了吗？" }];
+  for (const minute of [300, 600]) {
+    moveTo(minute);
+    const [check] = queueBlockerReviews(app);
+    expect(check.kind).toBe("flow-reconcile");
+    fakeReconcile(app, undefined, steps);
+    await execute(app, check.id);
+  }
+  expect(getStage(app, item.id, "verify")).toMatchObject({ state: "doing", askId: null, control: { ownerAsked: true } });
+  expect(all(app.db, "select body from notifications where body like '%复测通过了吗%'")).toHaveLength(1);
+  expect(all(app.db, "select id from asks")).toHaveLength(0);
+});
 
 it("三分钟内的新事实合批，判是后越过巡检的六小时限制并把范围交给对账", async () => {
   const { app, item } = await setup();

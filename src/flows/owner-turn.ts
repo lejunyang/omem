@@ -1,8 +1,33 @@
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
+import { truncate } from "../core/util.ts";
 import type { Item } from "../items/store.ts";
-import type { FlowStage } from "./definitions.ts";
+import { ordinaryOwnerTurn, type FlowStage } from "./definitions.ts";
 import { latestCodeWork } from "./objects.ts";
+import type { StageRow } from "./store.ts";
+import { stageTiming } from "./timing.ts";
+
+export const OWNER_QUESTION_GRACE = 3600_000;
+
+export function observableOwnerTurn(stage: FlowStage, row: StageRow) {
+  return ordinaryOwnerTurn(stage) && row.state === "doing" && row.waitingOn === "owner" && !row.control.reported
+    && !row.control.upstream && !row.control.gateReview && (!row.control.question || row.control.question === "owner");
+}
+
+const recognition = "做完不用回来点，助手会从群里的消息、事项上挂的对象和你说的话里认出来；这次不做就说一声。";
+
+const ownerTask = (stage: FlowStage) => stage.note?.split(/[。！？\n]/).find(line => line.trim() && !/(?:^|后|再|请|回来|卡片上|[\s，,])点(?:击)?[“「\s]*(?:我做完|做完|完成)/.test(line))?.trim() || stage.name;
+export const ownerTaskLine = (stage: FlowStage) => `${truncate(ownerTask(stage), 160)}。${recognition}`;
+
+export function ownerTimingAt(app: App, stage: FlowStage, entered: string) {
+  if (stage.window) return stageTiming(new Date(entered), app.config.timezone, { window: stage.window.split("-").reverse().join("-") }).nextAt ?? entered;
+  return stage.at ? entered : undefined;
+}
+
+export function ownerPlanAt(app: App, item: Item, stage: FlowStage, row: StageRow) {
+  return [item.dueAt, row.control.ownerPlanAt ?? ownerTimingAt(app, stage, row.enteredAt ?? row.since)]
+    .filter((value): value is string => !!value && Number.isFinite(Date.parse(value))).map(value => new Date(value).toISOString()).sort()[0];
+}
 
 export function pendingPushConfirmation(app: App, item: Item, stage: FlowStage) {
   if (stage.by !== "owner" || typeof stage.done !== "object" || !("signal" in stage.done) || stage.done.signal !== "git.pushed") return false;
@@ -13,5 +38,5 @@ export function pendingPushConfirmation(app: App, item: Item, stage: FlowStage) 
 }
 
 export function ownerTurnNote(stage: FlowStage, pushConfirmation: boolean) {
-  return pushConfirmation ? "在『交办完成』那张卡片上点确认并推送，这一段随之完成。" : `等你：${stage.note?.trim() || stage.name}`;
+  return pushConfirmation ? "在『交办完成』那张卡片上点确认并推送，这一段随之完成。" : `等你：${ordinaryOwnerTurn(stage) ? ownerTask(stage) : stage.note?.trim() || stage.name}`;
 }

@@ -241,11 +241,9 @@ describe("重开上游时正在做的下游", () => {
     const app = appFor(); saveFlow(app, flow([stages[0], { id: "publish", name: "发布", by: "owner" }]), "owner");
     const i = await item(app);
     await ownerAction(app, i.id, "plan", "done", "方案定了");
-    const askId = getStage(app, i.id, "publish").askId!;
-    expect(getStage(app, i.id, "publish")).toMatchObject({ state: "doing", waitingOn: "owner" });
+    expect(getStage(app, i.id, "publish")).toMatchObject({ state: "doing", waitingOn: "owner", askId: null });
     await reopenStage(app, i.id, "plan", "范围变了", [], owner);
     expect(getStage(app, i.id, "publish")).toMatchObject({ state: "stale", by: "owner", askId: null, attempt: 1 });
-    expect(getAsk(app, askId).status).toBe("cancelled");
     expect(listAsks(app).filter(ask => ask.status === "pending")).toEqual([]);
   });
 });
