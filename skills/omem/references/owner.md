@@ -90,3 +90,5 @@
 - `start_situation(name, about)`：本人明确开始一回；`name` 是现有情境名或 id，`about` 是这次的范围。
 - `update_situation(current?, extend_minutes?, summary?)`：仅实例处理会话；更新现状、延长窗口或用小结结束。复查用窗口内的 `wake`，异常用 `notify` 私下说。
 - `propose_situation(item_id, name, note, recognize, steps, until)`：仅事项收尾的教学轮；依据本人逐步指挥的至少三轮，给出步骤及下次自主做到哪一步。提议由本人处理，不自动启用。
+- `save_situation` 可选 `reply`：`none` 不发群消息（默认）、`draft` 先给本人看、`auto` 直接发。不填不改，自己提议改档时卡片会列出变化；只在本人明确要求时传 `owner_requested=true` 直接保存。
+- `update_situation` 可选 `chat`：本回说明要求往群里发且允许发时，先确认本回对应的群，用群的 `chat_id` 绑定。只接受本人所在的群，每回只绑一个，重新绑定替换。绑定不发送；用 `lark_send(chat_id=…)` 发说明要求群里看的内容，只该本人知道的用 `notify`。机器人不在群里且有 `lark_invite` 时，只能邀请 omem 自己的机器人进本回群。小结提交不发送；说明要求群里看，就在结束前发。

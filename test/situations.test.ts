@@ -207,12 +207,13 @@ describe("情境", () => {
 
   it("仅本人对话可设，提议等确认，改说明返回前后对照", async () => {
     const ctx = await asOwner();
-    const draft = await callTool(ctx, "save_situation", { name: "项目 A 提测", note: "先看提测范围", recognize: "群里说演练开始" });
+    const draft = await callTool(ctx, "save_situation", { name: "项目 A 提测", note: "先看提测范围", recognize: "群里说演练开始", reply: "auto" });
     expect(draft.text).toContain("等待本人启用");
     const ask = one<{ id: string; contextId: string }>(app.db, "select id,json_extract(context,'$.contextId') contextId from asks where run_id=?", ctx.runId)!;
-    expect(requireSituation(app, "owner", ask.contextId).status).toBe("paused");
+    expect(requireSituation(app, "owner", ask.contextId)).toMatchObject({ status: "paused", knobs: { reply: "none" } });
     await answerAsk(app, ask.id, { choice: 0, by: "owner" });
     expect(findRule(app, situationRuleId(ask.contextId))?.enabled).toBe(true);
+    expect(requireSituation(app, "owner", ask.contextId).knobs.reply).toBe("auto");
     const edit = await callTool(ctx, "save_situation", { id: ask.contextId, note: "提测还要看已知限制", owner_requested: true });
     expect(edit.text).toContain("原说明：先看提测范围");
     expect(edit.text).toContain("新说明：提测还要看已知限制");

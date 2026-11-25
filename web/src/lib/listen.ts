@@ -239,19 +239,22 @@ export function byChat(items: ListenView[]) {
 }
 
 /** A 情境's form (components/SituationForm) from its view, and what saving it sends (POST / PUT /api/listen). */
-export type SituationFormValue = { name: string; note: string; recognize: string; spec: string; spaceId: string; fast: { firstLook?: boolean; probes?: string[]; firstTo?: ListenKnobs["firstTo"] }; active: boolean };
+export type SituationFormValue = { name: string; note: string; recognize: string; spec: string; spaceId: string; reply: ListenKnobs["reply"]; fast: { firstLook?: boolean; probes?: string[]; firstTo?: ListenKnobs["firstTo"] }; active: boolean };
+export const SITUATION_REPLY_OPTIONS: Opt<ListenKnobs["reply"]>[] = [
+  { value: "none", label: "不发" }, { value: "draft", label: "先给我看" }, { value: "auto", label: "直接发" },
+];
 export function situationForm(v: ListenView | null, defaults: Partial<SituationFormValue> = {}): SituationFormValue {
   const k = v?.knobs;
   return {
     name: v?.name ?? "", note: v?.note ?? "", recognize: v?.recognize ?? "", spec: v?.spec ?? "assistant", spaceId: v?.spaceId ?? "personal",
     fast: { ...(k?.firstLook ? { firstLook: true } : {}), ...(k?.probes?.length ? { probes: [...k.probes] } : {}), ...(k?.firstTo ? { firstTo: k.firstTo } : {}) },
-    active: v ? v.status === "active" : true,
+    reply: k?.reply ?? "none", active: v ? v.status === "active" : true,
     ...defaults,
   };
 }
 /** The body to save: everything for a new one; for an existing one only what changed (the server keeps the rest). */
 export function situationBody(f: SituationFormValue, was?: SituationFormValue) {
-  const knobs = { firstLook: f.fast.firstLook ?? false, probes: f.fast.probes?.length ? f.fast.probes : null, firstTo: f.fast.firstTo ?? null };
+  const knobs = { reply: f.reply, firstLook: f.fast.firstLook ?? false, probes: f.fast.probes?.length ? f.fast.probes : null, firstTo: f.fast.firstTo ?? null };
   const all = { name: f.name.trim(), note: f.note.trim(), recognize: f.recognize.trim(), spec: f.spec, spaceId: f.spaceId, knobs, status: f.active ? "active" : "paused" };
   if (!was) return { kind: "situation", ...all };
   const before = situationBody(was) as typeof all;

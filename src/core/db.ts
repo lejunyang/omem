@@ -1,4 +1,4 @@
-import { SITUATIONS_MIGRATION } from "../situations/schema.ts";
+import { SITUATIONS_MIGRATION, SITUATION_CHAT_MIGRATION } from "../situations/schema.ts";
 import { migrateItemProviders } from "../items/provider-schema.ts";
 import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -2497,6 +2497,7 @@ export const migrations: readonly string[] = [
    create index item_change_steps_change on item_change_steps(change_id,id);
    create index item_change_steps_batch on item_change_steps(batch_id,id);
    create index item_change_steps_ready on item_change_steps(check_at,batch_id) where state in ('pending','waiting');`,
+  SITUATION_CHAT_MIGRATION,
 ];
 
 export type Db = DatabaseSync;

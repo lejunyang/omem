@@ -226,8 +226,9 @@ export function contextOfConversation(app: App, conversationId: string | null | 
 }
 
 /** Where the handler may post: its groups (none when it only reads), as drafts unless replies are direct. */
-export function larkScopeOf(c: ListenContext) {
-  return { chats: c.knobs.reply === "none" ? [] : c.chats, draft: c.knobs.reply !== "auto" };
+export function larkScopeOf(c: ListenContext, situationChat?: string | null) {
+  const chats = c.kind === "situation" ? (situationChat ? [situationChat] : []) : c.chats;
+  return { chats: c.knobs.reply === "none" ? [] : chats, draft: c.knobs.reply !== "auto" };
 }
 
 export type ContextInput = {

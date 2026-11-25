@@ -35,3 +35,5 @@ export const SITUATIONS_MIGRATION = `
       from situation_instances where item_id=new.item_id and status='active' and json_array_length(new.added)>0;
   end;
 `;
+
+export const SITUATION_CHAT_MIGRATION = `alter table situation_instances add column chat_id text;`;

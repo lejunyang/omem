@@ -2,18 +2,18 @@
 import { computed, onMounted, ref } from "vue";
 import { get } from "../api";
 import { state } from "../store";
-import type { FirstLookFields as FirstLook } from "../lib/first-look";
+import { SITUATION_REPLY_OPTIONS, type SituationFormValue } from "../lib/listen";
 import FirstLookFields from "./FirstLookFields.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
+import UiSegmented from "./UiSegmented.vue";
 
 /**
  * A 情境's fields (docs/v2/situations.md), for a new one (SituationDialog) and on its page's 设置: the name,
  * what the owner cares about when it happens, one sentence on how to recognize it (compiled into a rule
  * when saved), who handles it, in which space, 快速通道's three settings, and on or off.
  */
-export type SituationFields = { name: string; note: string; recognize: string; spec: string; spaceId: string; fast: FirstLook; active: boolean };
-const model = defineModel<SituationFields>({ required: true });
+const model = defineModel<SituationFormValue>({ required: true });
 defineProps<{ withName?: boolean }>();
 
 /** The Agent profiles that may handle it, 主助手 first. */
@@ -44,6 +44,11 @@ const spaceOptions = computed(() => state.spaces.map((s) => ({ value: s.id, labe
     <div class="two">
       <div class="field"><span>处理者</span><UiSelect v-model="model.spec" :options="specOptions" :search-at="8" aria-label="处理者" /></div>
       <div class="field"><span>空间</span><UiSelect v-model="model.spaceId" :options="spaceOptions" aria-label="空间" /><span class="hint">每一回的事项和资料放在这里。</span></div>
+    </div>
+    <div class="field">
+      <span>这一回的群里</span>
+      <UiSegmented v-model="model.reply" size="sm" aria-label="这一回的群里" :options="SITUATION_REPLY_OPTIONS" />
+      <span class="hint">助手找到这一回对应的群后，把说明里要发到群里的内容发过去；不发时只私下告诉你。</span>
     </div>
     <div class="field">
       <span>快速通道</span>

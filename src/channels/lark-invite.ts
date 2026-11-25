@@ -147,7 +147,7 @@ function resolveBot(app: App, ref: string, seen: Record<string, string>): BotInv
 }
 
 /** A group the owner is in, with its name. */
-async function readChat(chatId: string): Promise<string> {
+export async function readChat(chatId: string, verifyMembership = false): Promise<string> {
   if (!/^oc_[A-Za-z0-9]+$/.test(chatId)) throw new Error(`${chatId} 不是群的 chat_id（oc_…）：用 lark_read 的 im +chat-search 查`);
   let v: any;
   try {
@@ -156,10 +156,15 @@ async function readChat(chatId: string): Promise<string> {
     throw new Error(`读不到群 ${chatId}（${(e as Error).message}）：本人要在群里`);
   }
   const d = v?.data ?? v;
-  if (d?.chat_mode === "p2p") throw new Error(`${chatId} 是单聊，不能拉人`);
+  if (d?.chat_mode === "p2p") throw new Error(`${chatId} 是单聊，${verifyMembership ? "不能绑定" : "不能拉人"}`);
   if (d?.chat_status && d.chat_status !== "normal") throw new Error(`群 ${chatId} 已解散`);
   const name = String(d?.name ?? "").trim();
   if (!name && !d?.chat_mode) throw new Error(`读不到群 ${chatId} 的信息：本人要在群里`);
+  if (verifyMembership) {
+    if (d?.chat_mode !== "group" && d?.chat_mode !== "topic") throw new Error(`无法确认 ${chatId} 是群`);
+    const member = await larkCli(["api", "GET", `/open-apis/im/v1/chats/${chatId}/members/is_in_chat`, "--as", "user"], 60_000).catch(() => null);
+    if ((member?.data ?? member)?.is_in_chat !== true) throw new Error(`无法确认本人在群 ${chatId} 里，不能绑定`);
+  }
   return name || chatId;
 }
 

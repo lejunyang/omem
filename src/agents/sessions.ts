@@ -1,5 +1,6 @@
 import { instanceOfThread } from "../situations/instances.ts";
 import { situationLookMaterial, situationPrompt } from "../situations/prompt.ts";
+import { getContext } from "../channels/listen.ts";
 import { credentialSucceeded, selectedCredential } from "./credentials.ts";
 import { recordWatchMaterial, summaryOrigins } from "../core/message-origins.ts";
 import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
@@ -149,6 +150,7 @@ export function maybeSummarize(app: App, threadId: string, minNew = 10) {
 function larkScope(t: Thread, userId: string): { chats: string[] | null; draft?: boolean; bot?: string } {
   // A conversation with one of lark.bots posts as that bot (channel lark:<id>).
   const bot = t.channel.startsWith("lark:") ? { bot: t.channel.slice(5) } : {};
+  if (t.channel === "listen" && t.settings.situation) return { chats: [], draft: true, bot: "main" };
   if (t.settings.lark) return { ...t.settings.lark, ...bot };
   if (userId === "owner") return { chats: null, ...bot };
   // Members: only the chat they are talking in.
@@ -378,9 +380,11 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // Someone who cannot read the conversation's space still gets their turn, in a space of theirs.
   const space = turnSpaceFor(app, userId, t.spaceId);
   const denyTools = situationClosing ? [...new Set([...(ctx.run.input.denyTools as string[] ?? []), "wake", "run_agent", "ask_agent", "delegate_code", "upsert_item"])] : (ctx.run.input as { denyTools?: string[] }).denyTools;
+  const situationReply = situation && getContext(app, situation.contextId)?.knobs.reply;
   // One agent session serves every kind of turn, so it always has stay_quiet; the tool refuses a turn
   // that answers someone (quiet.ts), and only the turns allowed to stay quiet mention it.
-  const addTools = ["stay_quiet", ...(situation ? ["update_situation"] : t.channel === "listen" ? ["track_problem"] : []), ...(approvedStep ? ["submit_item_step"] : [])];
+  const addTools = ["stay_quiet", ...(situation ? ["update_situation"] : t.channel === "listen" ? ["track_problem"] : []),
+    ...((situationReply === "draft" || situationReply === "auto") && !denyTools?.includes("lark_send") ? ["lark_send"] : []), ...(approvedStep ? ["submit_item_step"] : [])];
   // A turn answering a colleague in a group (ownerPresent gated / free) runs with the guest setting.
   const guestTurn = messages.some((m) => typeof m.meta?.asker === "string");
   const fullAccess = guestTurn ? app.config.lark.guests.fullAccess : undefined;

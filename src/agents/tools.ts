@@ -2,6 +2,7 @@ import { inlineStages } from "../flows/inline.ts";
 import { reconcileResultSchema } from "../flows/reconcile-schema.ts";
 import { beforeBehavior, changeWords, noteBehavior } from "./behavior-changes.ts";
 import { saveSituationArgs, startSituationArgs, updateSituationArgs, proposeSituationArgs, saveFromChat, startFromChat, updateFromTurn, proposeFromSettle } from "../situations/tools.ts";
+import { allowSituationInvite, situationChatScope, situationOfRun, situationSendError } from "../situations/chat.ts";
 import { changeSchema, stepReportSchema, type StepOperation } from "../items/change-step-store.ts";
 import { boardLarkCommand, boardLarkDocument, requireBoardLarkMessages } from "./board-lark-read.ts";
 import { knownKind, checkKind } from "../plugins/formats.ts";
@@ -3401,6 +3402,12 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     if (why) throw new HttpError(409, why);
   }
   const textual = !("card" in content) && !("image" in content) && !("file" in content);
+  const situation = situationOfRun(ctx.app, ctx.runId, ctx.userId ?? OWNER);
+  if (situation) {
+    const { chats, draft } = situationChatScope(ctx.app, situation);
+    if (!chat || !chats.includes(chat)) throw new HttpError(403, "本次任务不能往这个飞书会话发消息：这一回的群或回复档已改");
+    ctx = { ...ctx, larkDraft: draft };
+  }
   if (watched && textual && (ctx.larkDraft || trial.mustDraft(ctx.app, watched, target.replyTo))) {
     // A card only the owner sees, editable, and what they decide is learned from.
     await trial.draftWatchReply(ctx.app, { contextId: watched.id, chatId: chat!, runId: ctx.runId ?? null, target, content, delivery });
@@ -3417,7 +3424,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
       blocks: [{ markdown: `将发到 ${chat ?? t.user_id}${t.reply_to && !delivery.onlyTo ? `，回复 ${t.reply_to}${t.in_thread ? "（话题内）" : ""}` : ""}${deliveryNote(delivery)}：` }, { markdown: preview.slice(0, 6000) }, { buttons: [{ text: "发送", value: "send", style: "primary" }, { text: "不发", value: "drop" }] }],
     });
     const sent = await send.sendLark({ userId: ownerTarget }, { card });
-    send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: null, conversationId: runThread(ctx), runId: ctx.runId, purpose: "draft", allowed: [ownerTarget], payload: { target, content, delivery } });
+    send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: null, conversationId: runThread(ctx), runId: ctx.runId, purpose: "draft", allowed: [ownerTarget], payload: { target, content, delivery, ...(situation && { situationChat: chat }) } });
     return `已作为草稿发给本人确认（还没有发出）。${skippedNote}`;
   }
   const sent = await send.deliverLark({ ...target, runId: ctx.runId ?? null, conversationId: runThread(ctx) }, content, delivery);
@@ -3446,7 +3453,10 @@ def({
   schema: larkTarget.extend({ text: z.string().optional(), markdown: z.string().optional(), title: z.string().optional() }),
   handler: async (ctx, a) => {
     if (!a.text && !a.markdown) throw new HttpError(400, "需要 text 或 markdown");
-    return larkPost(ctx, a, a.markdown ? { markdown: a.markdown, title: a.title } : { text: a.text! });
+    return larkPost(ctx, a, a.markdown ? { markdown: a.markdown, title: a.title } : { text: a.text! }).catch(error => {
+      if (!situationOfRun(ctx.app, ctx.runId, ctx.userId ?? OWNER)) throw error;
+      throw situationSendError(error, !ctx.tools || ctx.tools.has("lark_invite"));
+    });
   },
 });
 
@@ -3863,12 +3873,14 @@ def({
   handler: async (ctx, a) => {
     if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以用本人身份拉人进群");
     ownerOnly(ctx, "messages");
+    allowSituationInvite(ctx.app, ctx.runId, ctx.userId ?? OWNER, a);
     const empty = a.invites.filter((i) => !i.people?.length && !i.bots?.length).map((i) => i.chat_id);
     if (empty.length) throw new HttpError(400, `这些群没有要拉的人或机器人：${empty.join("、")}`);
     const total = a.invites.reduce((n, i) => n + (i.people?.length ?? 0) + (i.bots?.length ?? 0), 0);
     if (total > INVITE_MAX_MEMBERS) throw new HttpError(400, `一次最多拉 ${INVITE_MAX_MEMBERS} 个成员（这次 ${total} 个）：分几次调用`);
     const inv = await import("../channels/lark-invite.ts");
     const resolved = await inv.resolveInvites(ctx.app, a.invites, a.bots_seen_in ?? []);
+    allowSituationInvite(ctx.app, ctx.runId, ctx.userId ?? OWNER, a);
     const hasPeople = resolved.some((r) => r.people.length > 0);
     const ownAppId = ctx.app.config.lark.appId;
     const onlySelf = !hasPeople && resolved.every((r) => r.bots.every((b) => b.appId === ownAppId));
@@ -4043,13 +4055,13 @@ def({
 });
 
 def({ name: "save_situation", write: true, schema: saveSituationArgs,
-  description: "保存一类反复发生的事：名字、本人给的说明、怎么认出开始信号；修改提供 id。只有本人明确要求才传 owner_requested=true，否则回复后等本人确认。",
+  description: "保存一类反复发生的事：名字、本人给的说明、怎么认出开始信号、在每一回群里的回复档；修改提供 id。只有本人明确要求才传 owner_requested=true，否则回复后等本人确认。",
   handler: (ctx, a) => saveFromChat(ctx, a, ownerAskedThisTurn(ctx), sp => writeSpace(ctx, sp, "rules.edit"), runLarkChat(ctx)) });
 def({ name: "start_situation", write: true, schema: startSituationArgs,
   description: "本人明确说已经开始或现在要开始某一回时，用已有情境的名字或 id 和这次的范围手动开一回。不要把假设或询问当开始。",
   handler: (ctx, a) => startFromChat(ctx, a, ownerAskedThisTurn(ctx), sp => writeSpace(ctx, sp, "items.edit")) });
 def({ name: "update_situation", write: true, schema: updateSituationArgs,
-  description: "更新当前这一回情境的现状；extend_minutes 从现在至少盯多久；summary 交小结并结束这一回。",
+  description: "更新当前这一回情境的现状；chat 绑定本回对应的群；extend_minutes 从现在至少盯多久；summary 交小结并结束这一回，不发群消息。",
   handler: (ctx, a) => updateFromTurn(ctx, a, sp => writeSpace(ctx, sp, "items.edit")) });
 def({ name: "propose_situation", write: true, schema: proposeSituationArgs,
   description: "事项收尾交情境提议：三条以上本人教过的步骤、下次自主做到哪一步，再加名字、说明、怎么认出来。只把提议交给本人，不直接启用。",
@@ -7463,7 +7475,7 @@ export const LARK_TOOL_IDENTITIES: Readonly<Partial<Record<string, "user" | "bot
   lark_send: "bot-with-user-read", lark_card: "bot-with-user-read",
   lark_send_file: "bot-with-user-read", lark_react: "bot",
   lark_chat_history: "bot", meeting_suggest: "bot",
-  lark_invite: "owner", reply_to_asker: "owner",
+  lark_invite: "owner", reply_to_asker: "owner", update_situation: "owner",
   set_lark_subscription: "owner", set_lark_capture_policy: "owner", set_lark_backfill: "owner",
   propose_knowledge_mapping: "owner", save_rule: "owner",
 };
@@ -7665,6 +7677,13 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
     // A background run about to post, and the owner spoke in its scope since it began: its words go back to it first (awareness.ts).
     const recheck = await preSendCheck(ctx.app, ctx.runId, name, data as Record<string, unknown>);
     if (recheck) return recheck;
+    if (name === "lark_send") {
+      const situation = situationOfRun(ctx.app, ctx.runId, ctx.userId ?? OWNER);
+      if (situation) {
+        const scope = situationChatScope(ctx.app, situation);
+        ctx = { ...ctx, larkChats: scope.chats, larkDraft: scope.draft, larkBot: "main", larkPowers: undefined };
+      }
+    }
     const text = await runWithLarkIdentity(ctx, tool, parsed.data as Record<string, unknown>);
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
     const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : tool.write ? followWork(ctx, parsed.data as Record<string, unknown>) : "";

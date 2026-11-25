@@ -250,10 +250,16 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);
-    const p = inter.payload as { target: Target; content: Content; delivery?: Delivery };
+    const p = inter.payload as { target: Target; content: Content; delivery?: Delivery; situationChat?: string };
     if (choice === "send") {
       try {
-        await deliverLark(p.target, p.content, p.delivery);
+        if (p.situationChat) {
+          const { situationOfRun, situationChatScope, situationSendError } = await import("../situations/chat.ts");
+          const situation = situationOfRun(app, inter.runId, OWNER);
+          if (!situation || !situationChatScope(app, situation, true).chats.includes(p.situationChat))
+            throw new Error("这一回的群或回复档已改，请不要发这条草稿");
+          await deliverLark(p.target, p.content, p.delivery).catch(error => { throw situationSendError(error); });
+        } else await deliverLark(p.target, p.content, p.delivery);
       } catch (e) {
         // Not sent: the buttons stay usable for another try.
         run(app.db, "update card_interactions set status = 'open', handled_at = null, handled_by = null where id = ?", inter.id);

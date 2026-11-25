@@ -9,6 +9,8 @@ import { deleteRule, findRule, saveRule } from "../rules/store.ts";
 import { currentChatIn } from "../rules/conditions.ts";
 import { ruleInputSchema, type Rule } from "../rules/types.ts";
 
+const REPLY_LABEL = { none: "不发", draft: "先给你看", auto: "直接发" } as const;
+
 export const situationRuleId = (id: string) => `situation:${id}`;
 export type SituationInput = Pick<ContextInput, "id" | "name" | "note" | "recognize" | "spec" | "spaceId" | "knobs" | "status" | "expiresAt">;
 
@@ -51,18 +53,21 @@ export async function saveSituation(app: App, userId: string, input: SituationIn
   if (!["message", "doc", "object", "omem"].includes(compiled.trigger.event)) throw new HttpError(422, "开始信号要来自新消息、文档变化、对象变化或 omem 里的事件");
   const desired: ContextInput = { ...input, id, kind: "situation", name, note, recognize, spaceId,
     status: input.status ?? before?.status ?? "active", ...(input.expiresAt ? { expiresAt: new Date(input.expiresAt).toISOString() } : {}) };
+  const reply = desired.knobs?.reply;
+  const previousReply = before?.knobs.reply ?? "none";
+  const replyLine = `在这一回的群里：${reply !== undefined && reply !== previousReply ? `${REPLY_LABEL[previousReply]} → ` : ""}${REPLY_LABEL[reply ?? previousReply]}`;
   const c = withinTx(app.db, () => {
     if (before && revision(requireSituation(app, userId, id)) !== revision(before)) throw new HttpError(409, "情境已改，请重读再保存");
     if (before && opts.confirmation) return before;
-    return persist(app, userId, opts.confirmation ? { ...desired, status: "paused" } : desired, compiled);
+    return persist(app, userId, opts.confirmation ? { ...desired, status: "paused", knobs: { ...desired.knobs, reply: "none" } } : desired, compiled);
   });
   for (const { id: askId } of all<{ id: string }>(app.db, `select id from asks where status='pending' and json_extract(context,'$.handler')='situation-enable' and json_extract(context,'$.contextId')=?`, id)) cancelAsk(app, askId);
   const confirmation = opts.confirmation ? createAsk(app, {
-    ...opts.confirmation, userId, question: [before ? `应用情境「${name}」的改动吗？` : `启用情境「${name}」吗？`, `说明：${note}`, `怎么认出来：${recognize}`, ...(before ? [`原说明：${before.note}`] : [])].join("\n\n"),
+    ...opts.confirmation, userId, question: [before ? `应用情境「${name}」的改动吗？` : `启用情境「${name}」吗？`, replyLine, `说明：${note}`, `怎么认出来：${recognize}`, ...(before ? [`原说明：${before.note}`] : [])].join("\n\n"),
     options: before ? [{ label: "应用改动" }, { label: "保留原版" }] : [{ label: "启用情境" }, { label: "先不启用" }], allowText: false,
-    context: { handler: "situation-enable", contextId: id, revision: revision(c), ...(before ? { change: desired, compiled: { trigger: compiled.trigger, conditions: compiled.conditions, judge: compiled.judge, judgeWith: compiled.judgeWith } } : {}), afterReply: true, spaceId },
+    context: { handler: "situation-enable", contextId: id, revision: revision(c), ...(before ? { change: desired, compiled: { trigger: compiled.trigger, conditions: compiled.conditions, judge: compiled.judge, judgeWith: compiled.judgeWith } } : { reply }), afterReply: true, spaceId },
   }) : null;
-  return { context: c, proposed: { name, note, recognize }, previousNote: before?.note ?? null, confirmation };
+  return { context: c, proposed: { name, note, recognize }, previousNote: before?.note ?? null, replyLine, confirmation };
 }
 
 function persist(app: App, userId: string, desired: ContextInput, compiled: Pick<Rule, "trigger" | "conditions" | "judge" | "judgeWith">) {
@@ -92,8 +97,9 @@ registerAskAction("situation-enable", (app, ask, ctx) => {
   }
   const rule = findRule(app, situationRuleId(c.id));
   if (!rule?.origin) throw new HttpError(409, "情境的规则不见了，请重新保存");
+  const reply = ctx.reply === "draft" || ctx.reply === "auto" ? ctx.reply : undefined;
   withinTx(app.db, () => {
-    saveContext(app, { id: c.id, kind: "situation", status: "active", ...(c.expiresAt && c.expiresAt <= now() ? { expiresAt: null } : {}) });
+    saveContext(app, { id: c.id, kind: "situation", status: "active", ...(reply && { knobs: { reply } }), ...(c.expiresAt && c.expiresAt <= now() ? { expiresAt: null } : {}) });
     saveRule(app, { ...rule, temporary: undefined, enabled: true }, "user", OWNER, { origin: rule.origin });
   });
   return `情境「${c.name}」已启用。`;

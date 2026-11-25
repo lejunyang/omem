@@ -88,24 +88,24 @@ function resolve(app: App, kind: MaterialKind, ref: string): { spaceId: string |
  * Add materials to an item; the reader must be able to see each one (its space), and only its own
  * conversations and runs. Adding one that is there already updates its label and note.
  */
-export async function addMaterials(app: App, itemId: string, list: MaterialInput[], userId: string, by: "user" | "agent" = "agent") {
+export async function addMaterials(app: App, itemId: string, list: MaterialInput[], userId: string, by: "user" | "agent" = "agent", runId?: string) {
   requireItem(app, itemId, userId, "write");
-  const attach = await prepareMaterials(app, list, userId, by);
+  const attach = await prepareMaterials(app, list, userId, by, runId);
   return attach(itemId);
 }
 
 /** Resolve remote permissions before entering the transaction that may create the item. */
-export async function prepareMaterials(app: App, list: MaterialInput[], userId: string, by: "user" | "agent") {
+export async function prepareMaterials(app: App, list: MaterialInput[], userId: string, by: "user" | "agent", runId?: string) {
   for (const m of list) {
     if (m.kind === "source" && !(await sourceReadable(app, userId, normalize(m)))) throw new HttpError(403, "不能访问这份原件");
   }
-  return (itemId: string) => persistMaterials(app, itemId, list, userId, by);
+  return (itemId: string) => persistMaterials(app, itemId, list, userId, by, runId);
 }
 
 // References without a remote source can participate in a synchronous database transaction.
 export const addLocalMaterials: (app: App, itemId: string, list: (MaterialInput & { kind: Exclude<MaterialKind, "source"> })[], userId: string, by?: "user" | "agent") => Material[] = persistMaterials;
 
-function persistMaterials(app: App, itemId: string, list: MaterialInput[], userId: string, by: "user" | "agent" = "agent") {
+function persistMaterials(app: App, itemId: string, list: MaterialInput[], userId: string, by: "user" | "agent" = "agent", runId?: string) {
   requireItem(app, itemId, userId, "write");
   const allowed = accessibleSpaces(app, userId);
   const added: Material[] = [];
@@ -127,7 +127,7 @@ function persistMaterials(app: App, itemId: string, list: MaterialInput[], userI
       on conflict(item_id, kind, ref) do update set label = excluded.label, meta = excluded.meta`, itemId, m.kind, ref, label, JSON.stringify(meta), by, now());
     added.push(toMaterial(one<Row>(app.db, "select * from item_materials where item_id = ? and kind = ? and ref = ?", itemId, m.kind, ref)!));
   }
-  if (added.length) addItemEvent(app, itemId, "updated", `加入材料：${added.map((m) => m.label).join("、")}`, by);
+  if (added.length) addItemEvent(app, itemId, "updated", `加入材料：${added.map((m) => m.label).join("、")}`, by, [], runId);
   return added;
 }
 

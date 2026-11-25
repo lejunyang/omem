@@ -19,11 +19,11 @@ export const CLOSE_GRACE_MS = 2 * 60_000;
 const canRead = (app: App, userId: string, spaceId: string) => accessibleSpaces(app, userId)?.includes(spaceId) ?? true;
 const iso = (ms: number) => new Date(ms).toISOString();
 const columns = `id, context_id contextId, user_id userId, item_id itemId, conversation_id conversationId, space_id spaceId,
- title,status,started_at startedAt,window_until windowUntil,current,summary,ended_at endedAt,closing_run closingRun,closing_deadline closingDeadline`;
+ title,status,started_at startedAt,window_until windowUntil,current,summary,ended_at endedAt,closing_run closingRun,closing_deadline closingDeadline,chat_id chatId`;
 export type SituationInstance = {
   id: string; contextId: string; userId: string; itemId: string; conversationId: string; spaceId: string; title: string;
   status: "active" | "ended"; startedAt: string; windowUntil: string; current: string; summary: string | null;
-  endedAt: string | null; closingRun: string | null; closingDeadline: string | null;
+  endedAt: string | null; closingRun: string | null; closingDeadline: string | null; chatId: string | null;
 };
 
 export function listSituations(app: App, userId: string, opts: { contextId?: string; status?: SituationInstance["status"]; limit?: number } = {}) {
