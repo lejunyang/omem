@@ -1,4 +1,4 @@
-import { SITUATIONS_MIGRATION, SITUATION_CHAT_MIGRATION, SITUATION_RULE_NAME_MIGRATION } from "../situations/schema.ts";
+import { SITUATIONS_MIGRATION, SITUATION_CHAT_MIGRATION, SITUATION_RULE_NAME_MIGRATION, SITUATION_SPEAKER_MIGRATION } from "../situations/schema.ts";
 import { migrateItemProviders } from "../items/provider-schema.ts";
 import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
 import { HOOK_BODY_HASH_MIGRATION, HOOK_INBOX_MIGRATION } from "../plugins/hook-schema.ts";
@@ -2502,6 +2502,7 @@ export const migrations: readonly string[] = [
   SITUATION_RULE_NAME_MIGRATION,
   HOOK_INBOX_MIGRATION,
   HOOK_BODY_HASH_MIGRATION,
+  SITUATION_SPEAKER_MIGRATION,
 ];
 
 export type Db = DatabaseSync;

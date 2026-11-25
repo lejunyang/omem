@@ -40,3 +40,10 @@ export const SITUATION_CHAT_MIGRATION = `alter table situation_instances add col
 
 /** 持续跟进 rules are named like any rule: drop the old “情境：” prefix the host used to add. */
 export const SITUATION_RULE_NAME_MIGRATION = `update rules set name = substr(name, 4) where json_extract(origin,'$.kind') = 'situation' and name like '情境：%' and length(name) > 3;`;
+
+/**
+ * Follow-ups begun before the rename kept the old speaker name on their runs (a follow-up or a wake
+ * inherits its chain's trigger), so the runs page went on showing and filtering by it.
+ */
+export const SITUATION_SPEAKER_MIGRATION = `update runs set trigger = json_set(trigger,'$.by.key','name:持续跟进','$.by.name','持续跟进'), trigger_by = 'name:持续跟进' where trigger_by = 'name:情境';
+  update messages set meta = json_set(meta,'$.speaker','持续跟进') where meta like '%"situation"%' and json_extract(meta,'$.speaker') = '情境';`;
