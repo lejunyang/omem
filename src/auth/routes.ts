@@ -123,6 +123,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/hooks/:plugin/:name": "public",
   "POST /api/hooks/:plugin/:name/:secret": "public",
   "GET /api/plugins/:id/hooks/:name/deliveries": "owner",
+  "GET /api/plugins/:id/hooks/:name/refused": "owner",
 
   // sources
   "GET /api/sources": cap("sources.view", "q.space"),
