@@ -12,6 +12,7 @@ import { resolveCitationsSync } from "./common.ts";
 import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, decidedBlocks, decidedColor, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, resultSummary, sendEphemeral, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
 import { getTask } from "../agents/code-tasks.ts";
+import { stageCardLabels } from "../flows/stage-card.ts";
 
 /**
  * Asks in Feishu: a card in the conversation's chat or topic (or the person's private chat with
@@ -87,6 +88,13 @@ function briefBlocks(app: App, text: string, head = "", rest?: { title: string; 
 
 /** A decision needs its question up front; the investigation stays in the run and a closed fold. */
 function questionBlocks(app: App, ask: Ask): CardBlock[] {
+  if (ask.stageCard) {
+    const { sections, flowUrl } = ask.stageCard;
+    const link = /^https?:/.test(flowUrl) ? [{ markdown: `[事项流程页](${flowUrl})` }] : [];
+    return [...link, ...sections.map(({ label, text }): CardBlock => label === "依据" && sections.reduce((size, section) => size + section.text.length, 0) > OPEN
+      ? { fold: { title: label, markdown: resolveCitationsSync(app, text) } }
+      : { markdown: resolveCitationsSync(app, `**${label}**\n${text}`) })];
+  }
   const row = one<{ context: string | null }>(app.db, "select context from asks where id = ?", ask.id);
   const ctx = JSON.parse(row?.context ?? "{}") as { handler?: string; workId?: string; seq?: number };
   if (ctx.handler !== "code-task" || !ctx.workId || !ctx.seq) return ask.question ? briefBlocks(app, ask.question) : [];
@@ -146,11 +154,12 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null; not
     else blocks.push({ markdown: `要填的：\n${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` }, { note: "在 omem 网页上填写，或直接回复文字（设置 → 设备 填网页地址后这里会有链接）。" });
     return buildCard({ title: TITLE.question, color: "blue", blocks });
   }
-  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: opts.title ?? TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
+  const stage = ask.stageCard;
+  const card = buildCard({ ...(stage ? { title: stage.title, subtitle: stage.itemTitle, color: "orange" } : ask.kind === "suggestion" ? {} : { title: opts.title ?? TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
   const elements = (card.body as { elements: unknown[] }).elements;
   const choices = ask.kind === "approval" ? [row([button("批准", "approve", "primary", ask.allowText, "approve"), button("拒绝", "reject", "danger", ask.allowText, "reject")])] : optionRows(ask);
   if (withText(ask)) {
-    const lines = ask.kind === "question" && manyPoints(ask.question);
+    const lines = !!stage || ask.kind === "question" && manyPoints(ask.question);
     const placeholder = ask.kind === "approval" ? "理由或附言（可不填）" : ask.kind === "suggestion" ? "也可以写你要它做的，或在选的项后面补充" : lines ? "可以整体回答，也可以按编号逐条写" : ask.options.length ? "也可以写别的回答" : "你的回答";
     elements.push({
       tag: "form",
@@ -159,10 +168,14 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null; not
       elements: [
         ...(ask.kind === "approval" ? [] : choices),
         { tag: "input", name: "text", width: "fill", placeholder: { tag: "plain_text", content: placeholder }, ...(lines ? { input_type: "multiline_text", rows: 3, auto_resize: true, max_rows: 8 } : {}) },
-        ...(ask.kind === "approval" ? choices : ask.kind === "question" ? [row([button(ask.options.length ? "用文字回答" : "回答", "answer", ask.options.length ? "default" : "primary", true, "")])] : ask.kind === "suggestion" ? [row([button("按我写的做", "answer", "default", true, "")])] : []),
+        ...(ask.kind === "approval" ? choices : ask.kind === "question" && (!stage || stage.textAction) ? [row([button(stage?.textAction || (ask.options.length ? "用文字回答" : "回答"), "answer", ask.options.length ? "default" : "primary", true, "")])] : ask.kind === "suggestion" ? [row([button("按我写的做", "answer", "default", true, "")])] : []),
       ],
     });
   } else elements.push(...choices);
+  if (stage && /^https?:/.test(stage.discussUrl)) {
+    const discussion = buildCard({ blocks: [{ buttons: [{ text: stageCardLabels.discuss, url: stage.discussUrl }] }] });
+    elements.push(...(discussion.body as { elements: unknown[] }).elements);
+  }
   return card;
 }
 

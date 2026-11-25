@@ -113,6 +113,10 @@
 
 ## 对账时
 
+- 等接口恢复或别人交结果：`steps: [{ kind: "external", stage, action, retry_at, evidence? }]`；`retry_at` 是带时区的 ISO 8601 时间，`action` 写恢复后怎么核对、怎么只补缺失步骤。承担运行也可用 `stage_report(state="blocked", waiting_on, note, retry_at)`；写已做的部分和最后的错误。系统按至少 15、30、60 分钟重试，三次仍失败才问本人；不借此等本人的权限或决定。
+- 承担者有权限能自己做：`steps: [{ kind: "assistant", stage, action, evidence? }]`，把写文档、补字段、回填结果的具体指示交回原阶段，不发提问。
+- 确实要本人做或拍板：`steps: [{ kind: "owner", stage, action, why_owner, evidence?, person?, draft?, chat? }]`。`why_owner` 解释为什么原助手做不了；联系别人时才加群和草稿。本人可从网页或飞书回复文字让阶段按指示继续。下文旧示例的 `steps` 参数以这三种为准。
+
 新交付可能提前排对账，仍受六小时节流和每日限额约束。已有可复核的依据表明卡住或等开始的助手阶段已完成或不需要补做，用 `stage_report(state="done" 或 "skip", already_resolved=true, note, evidence)` 补记，写出谁做了什么，原卡撤回；不代答已发出的结果确认，不绕过预算、插件检查或本人要拍板的决定。卡住的助手运行所需材料后来给齐时，用 `stage_reopen` 带新依据（`refs`）重做。编码返工如果已交给正在跑的一轮，就跟着那一轮，不要求再起新轮，不报卡住；下文所说的「新交办或续轮」也包括这种情况。
 
 **收口与草稿（2026-11-25 更新）**：`submit_flow_reconcile(item, summary, steps?, finish?)` 只给对账角色。目的已达到或不再成立时传 `finish: { reason, evidence, close_item? }`。`evidence` 至少一项：原件行引用、这次重读的关联对象或可读运行。收口不交 `steps`，不用完成或跳过最后一段来结束循环；事项也已完成时才填 `close_item: true`。草稿用 `steps: [{ stage, action, person, draft, chat }]`，`chat` 写要发到的关联群。机器人在群且能发时，本人在卡片上点发送即可，不依赖关注回复档；`auto` 仍然直发。下面关于旧草稿档的说明以这段为准。

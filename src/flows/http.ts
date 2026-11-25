@@ -7,7 +7,7 @@ import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
 import { itemScope, requireItem } from "../items/access.ts";
 import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, parseFlowForSave, unavailableFlowReferences, summarizeStage, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
-import { proposeFlow, flowView, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
+import { proposeFlow, flowView, flowStageCards, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { settleChange } from "./follow.ts";
 import { all } from "../core/db.ts";
@@ -51,9 +51,10 @@ export function flowBoard(app: App, userId: string, only?: "mine" | "blocked") {
 }
 
 /** The engine's question kind is needed to distinguish an entry gate from completion approval. */
-function view(app: App, id: string, payload = flowView(app, id)) {
+function view(app: App, id: string, userId: string, payload = flowView(app, id)) {
   const rows = itemStages(app, id);
-  return { ...payload, stages: payload.stages.map((s) => ({ ...s, question: rows.find((r) => r.id === s.id)?.control.question ?? null })) };
+  const cards = flowStageCards(app, id, userId);
+  return { ...payload, stages: payload.stages.map((s) => ({ ...s, question: rows.find((r) => r.id === s.id)?.control.question ?? null, card: cards.get(s.id) })) };
 }
 
 function body<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
@@ -113,38 +114,38 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     return saveFlow(app, raw, "owner");
   });
   server.delete("/api/flows/:id", async (req) => { removeFlow(app, (req.params as { id: string }).id, "owner"); return { ok: true }; });
-  server.get("/api/items/:id/flow", async (req) => view(app, itemId(req, false)));
-  server.post("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, await startFlow(app, id, body(z.object({ flow: z.string() }), req.body).flow, { actor: "owner", userId: who(req) })); });
-  server.delete("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, await stopFlow(app, id, who(req))); });
+  server.get("/api/items/:id/flow", async (req) => view(app, itemId(req, false), who(req)));
+  server.post("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, who(req), await startFlow(app, id, body(z.object({ flow: z.string() }), req.body).flow, { actor: "owner", userId: who(req) })); });
+  server.delete("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, who(req), await stopFlow(app, id, who(req))); });
   server.post("/api/items/:id/flow/round", async (req) => {
     const id = itemId(req, true);
     const note = body(z.object({ note: z.string().max(4000).optional() }), req.body ?? {}).note ?? "";
-    return view(app, id, await startRound(app, id, { actor: "owner", userId: who(req) }, new Date(), note));
+    return view(app, id, who(req), await startRound(app, id, { actor: "owner", userId: who(req) }, new Date(), note));
   });
   // The owner settles one change the follow-up found: fold it in, make it its own item, or leave it.
   server.post("/api/items/:id/flow/changes/:change", async (req) => {
     const id = itemId(req, true), b = body(z.object({ choice: z.enum(["merge", "split", "dismiss"]) }), req.body);
     await settleChange(app, id, (req.params as { change: string }).change, b.choice, who(req));
-    return view(app, id);
+    return view(app, id, who(req));
   });
   server.post("/api/items/:id/flow/stages/:stage/budget", async (req) => {
     const id = itemId(req, true), { stage } = req.params as { stage: string };
     const patch = body(z.object({ budget: budgetSchema.optional(), escalate: z.object({ max: z.number().int().min(0).max(100) }).strict().optional() }).strict(), req.body);
-    return view(app, id, await updateStageBudget(app, id, stage, patch, who(req)));
+    return view(app, id, who(req), await updateStageBudget(app, id, stage, patch, who(req)));
   });
   server.post("/api/items/:id/flow/stages/:stage/record", async (req) => {
     const id = itemId(req, true), { stage } = req.params as { stage: string };
     const b = body(z.object({ note: z.string().trim().min(1).max(4000), refs: z.array(z.string()).max(100).optional() }), req.body);
-    return view(app, id, await recordStage(app, id, stage, b.note, b.refs, who(req)));
+    return view(app, id, who(req), await recordStage(app, id, stage, b.note, b.refs, who(req)));
   });
   server.post("/api/items/:id/flow/stages/:stage/tests/:test", async (req) => {
     const id = itemId(req, true), { stage, test } = req.params as { stage: string; test: string };
     const b = body(z.object({ verdict: z.enum(["ok", "wrong"]).nullable(), note: z.string().max(4000).optional() }), req.body);
-    return view(app, id, await signStageTest(app, id, stage, test, b.verdict, b.note, who(req)));
+    return view(app, id, who(req), await signStageTest(app, id, stage, test, b.verdict, b.note, who(req)));
   });
   for (const action of ["confirm", "hold", "skip", "done", "reopen"] as OwnerAction[]) server.post(`/api/items/:id/flow/stages/:stage/${action}`, async (req) => {
     const id = itemId(req, true), { stage } = req.params as { stage: string };
     const b = body(z.object({ note: z.string().max(4000).optional() }), req.body ?? {});
-    return view(app, id, await ownerAction(app, id, stage, action, b.note, who(req)));
+    return view(app, id, who(req), await ownerAction(app, id, stage, action, b.note, who(req)));
   });
 }

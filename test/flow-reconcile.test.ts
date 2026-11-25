@@ -13,7 +13,7 @@ import { addChange } from "../src/items/changes.ts";
 import { pendingActions } from "../src/items/pending.ts";
 import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { listFlows, saveFlow } from "../src/flows/definitions.ts";
-import { advance, flowReminders, flowView, reportStage, startFlow, ownerAction } from "../src/flows/engine.ts";
+import { advance, flowReminders, flowStageCards, flowView, reportStage, startFlow, ownerAction } from "../src/flows/engine.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
 import { itemFollowLane, queueReconcile, reconcileReminder } from "../src/flows/reconcile.ts";
 import { recordFlowPush } from "../src/flows/delivery.ts";
@@ -21,6 +21,7 @@ import * as runner from "../src/agents/runner.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { startServer } from "../src/server/http.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
+import { askCard, handleAskAction } from "../src/channels/lark-asks.ts";
 import { setItemListening } from "../src/channels/listen-items.ts";
 import { attachObject } from "../src/flows/plugin-objects.ts";
 import { forgetPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
@@ -234,10 +235,11 @@ it("卡住先留可处理的草稿；提醒带最近结论，流程进展后撤�
   await reportStage(app, item.id, "verify", { state: "blocked", waitingOn: "小王", note: "缺少复测结果" }, owner);
   const rid = queueReconcile(app, item.id, clock(7))!;
   await execute(app, rid, async (ctx) => {
-    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "未找到复测记录", steps: [{ stage: "verify", action: "请贴复测记录的链接", person: "小王", draft: "小王，能发一下项目 A 的复测记录吗？" }] })).isError).not.toBe(true);
+    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "未找到复测记录", steps: [{ kind: "owner", why_owner: "只有本人能查看该记录", stage: "verify", action: "请贴复测记录的链接", person: "小王", draft: "小王，能发一下项目 A 的复测记录吗？" }] })).isError).not.toBe(true);
   });
   expect(s().state).toBe("blocked");
-  const card = (await pendingActions(app, "owner")).find(a => a.via === "ask" && a.title.includes("请贴复测记录"))!;
+  const card = (await pendingActions(app, "owner")).find(a => a.via === "ask" && a.title.includes("卡住了"))!;
+  expect(card?.href).toBe(`#/items/${item.id}/flow?stage=verify`);
   expect(getAsk(app, card.askId!).question).toContain("小王，能发一下");
   expect(getAsk(app, card.askId!).question.split("\n\n")[1]).toContain(`https://omem.example.test/#/items/${item.id}/flow?stage=verify`);
   expect(reconcileReminder(app, itemFlow(app, item.id)!, s())).toContain("最小一步：请贴复测记录的链接");
@@ -264,7 +266,7 @@ it.each([true, false])("有证据则直接停止循环第 2 轮（关闭事项=%
   await reportStage(app, item.id, "last", { state: "blocked", note: "等作者更新" }, owner);
   const first = queueReconcile(app, item.id, new Date(Date.now() + 8 * HOUR))!;
   await execute(app, first, async ctx => {
-    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "缺记录", steps: [{ stage: "last", action: "补查发布记录" }] })).isError).not.toBe(true);
+    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "缺记录", steps: [{ kind: "owner", why_owner: "仅本人可访问发布记录", stage: "last", action: "补查发布记录" }] })).isError).not.toBe(true);
   });
   const nextAsk = listAsks(app).find(ask => ask.handler === "flow-reconcile-step")!;
   const finishRun = queueReconcile(app, item.id, new Date(Date.now() + 16 * HOUR))!;
@@ -299,15 +301,15 @@ it.each([[true, "none"], [false, "none"], [true, "auto"]] as const)("关联群�
   await reportStage(app, item.id, "verify", { state: "blocked", waitingOn: "小王", note: "没有复测结果" }, owner);
   const draft = "小王，能发一下复测记录吗？";
   await execute(app, queueReconcile(app, item.id, clock(8))!, async ctx => {
-    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "需要补充复测记录", steps: [{ stage: "verify", action: "请发复测记录", person: "小王", draft, chat }] })).isError).not.toBe(true);
+    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "需要补充复测记录", steps: [{ kind: "owner", why_owner: "需要本人确认能否催收", stage: "verify", action: "请发复测记录", person: "小王", draft, chat }] })).isError).not.toBe(true);
   });
   const card = listAsks(app).find(ask => ask.handler === "flow-reconcile-step");
   const deliveries = () => sent.mock.calls.map(([request]) => request).filter(request => request.data.receive_id === chat);
   if (reply === "auto") { expect(card).toBeUndefined(); expect(deliveries()).toHaveLength(1); return; }
   expect(deliveries()).toHaveLength(0);
-  expect(card?.options.map(option => option.label)).toEqual([...(member ? ["把草稿发到群里"] : []), "我已处理", "先不处理"]);
+  expect(card?.options.map(option => option.label)).toEqual(["我已处理，继续", "先不处理", ...(member ? ["把草稿发到群里"] : [])]);
   if (member) {
-    await answerAsk(app, card!.id, { by: "owner", choice: 0 });
+    await answerAsk(app, card!.id, { by: "owner", choice: 2 });
     expect(deliveries()).toHaveLength(1);
     expect(deliveries()[0].data.content).toContain(draft);
   } else {
@@ -315,6 +317,118 @@ it.each([[true, "none"], [false, "none"], [true, "auto"]] as const)("关联群�
     await answerAsk(app, card!.id, { by: "owner", choice: 0 });
     expect(deliveries()).toHaveLength(0);
   }
+});
+
+it.each(["文字", "接着做", "在原阶段卡接着做"])("对账仅在需要本人时发统一卡；%s能把卡点交回助手", async operation => {
+  const { app, item, s, clock } = await setup([wait("verify", { by: { run: {} }, effect: "local", note: "补写技术文档并核对字段", done: "confirm" })]);
+  app.config.webUrl = "https://omem.example.test";
+  const carrier = s().by!;
+  await reportStage(app, item.id, "verify", { state: "blocked", note: "草稿已写。提交接口超时。", waitingOn: operation === "在原阶段卡接着做" ? "owner" : "接口恢复", evidence: [`run:${carrier}`] }, { actor: "assistant", runId: carrier });
+  run(app.db, "update runs set status='done' where id=?", carrier);
+  const original = listAsks(app)[0];
+  expect(listAsks(app)).toHaveLength(operation === "在原阶段卡接着做" ? 1 : 0);
+  const reconcile = queueReconcile(app, item.id, clock(7))!;
+  const decision = `请决定是否接受这份对外承诺${"，范围还没定".repeat(25)}`;
+  await execute(app, reconcile, async ctx => {
+    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "仍需决定范围", steps: [{ kind: "owner", stage: "verify", action: decision, why_owner: "需要本人作对外承诺" }] })).isError).not.toBe(true);
+  });
+  const questions = listAsks(app);
+  expect(questions).toHaveLength(1);
+  const ask = questions[0];
+  if (original) expect(ask.id).toBe(original.id);
+  else expect(ask.handler).toBe("flow-reconcile-step");
+  expect(ask.allowText).toBe(true);
+  const web = flowStageCards(app, item.id, "owner").get("verify")!;
+  expect(flowStageCards(app, item.id, "other").size).toBe(0);
+  expect(web).toMatchObject({ askId: ask.id, ...ask.stageCard, textAction: "按这句话处理" });
+  expect(web.sections).toEqual([
+    { label: "现在", text: "草稿已写。提交接口超时。" },
+    { label: "卡点", text: `${decision}\n\n助手做不了：需要本人作对外承诺` },
+    { label: "建议的做法", text: "补写技术文档并核对字段" },
+    { label: "依据", text: expect.stringContaining(carrier) },
+  ]);
+  const lark = JSON.stringify(askCard(app, ask));
+  for (const section of web.sections) expect(lark).toContain(section.label);
+  for (const option of web.options) expect(lark).toContain(option.label);
+  for (const value of [web.title, web.itemTitle, web.textAction!, "在对话里讨论", "\"name\":\"text\"", decision]) expect(lark).toContain(value);
+  const withMoreEvidence = { ...ask.stageCard!, sections: web.sections.map(section => section.label === "依据" ? { ...section, text: `${section.text}\n${"已核对记录。".repeat(250)}` } : section) };
+  const folded = JSON.stringify(askCard(app, { ...ask, stageCard: withMoreEvidence }));
+  expect(folded).toContain("collapsible_panel");
+  expect(folded).toContain(decision);
+  const instruction = "不作承诺，只把草稿和回归结果补齐";
+  if (operation === "文字") await handleAskAction(app, "fixture", ask.id, { name: "answer", formValue: { text: instruction } }, "owner");
+  else await answerAsk(app, ask.id, { by: "owner", choice: web.options.find(option => option.label === "让助手接着做")!.choice });
+  expect(s()).toMatchObject({ state: "doing", attempt: 2 });
+  expect(getRun(app, s().by!).input.task).toContain(operation === "文字" ? instruction : "不替本人拍板");
+  if (operation !== "文字") expect(getRun(app, s().by!).input.task).toContain(decision);
+  expect(getRun(app, s().by!).input.task).toContain("草稿已写。提交接口超时。");
+  expect(getAsk(app, ask.id).status).toBe("answered");
+});
+
+it.each(["assistant", "external"] as const)("对账的 %s 不发卡，复用阶段承担者", async kind => {
+  const { app, item, s, clock } = await setup([wait("verify", { by: { run: {} }, effect: "local", done: "confirm" })]);
+  const carrier = s().by!;
+  await reportStage(app, item.id, "verify", { state: "blocked", note: "已经建单，回填超时", waitingOn: kind === "external" ? "owner" : "接口恢复" }, { actor: "assistant", runId: carrier });
+  const previous = listAsks(app, { status: "pending" })[0];
+  run(app.db, "update runs set status='done' where id=?", carrier);
+  const requestedAt = clock(0.5).toISOString();
+  const reconcile = queueReconcile(app, item.id, clock(7))!;
+  const action = "回读技术文档，缺少就自行写好再填，核对是否已提交";
+  await execute(app, reconcile, async ctx => {
+    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "完成原阶段", steps: [{ kind, stage: "verify", action, ...(kind === "external" ? { retry_at: requestedAt } : {}) }] })).isError).not.toBe(true);
+  });
+  expect(listAsks(app, { status: "pending" })).toHaveLength(0);
+  if (kind === "external") {
+    expect(getAsk(app, previous.id).status).toBe("cancelled");
+    expect(s()).toMatchObject({ state: "blocked", waitingOn: "外部条件恢复", control: { waitUntil: requestedAt, externalRetry: { attempts: 0 } } });
+    await flowReminders(app, new Date(Date.parse(requestedAt) - 1));
+    expect(s().by).toBe(carrier);
+    await flowReminders(app, new Date(requestedAt));
+  } else {
+    expect(one<{ body: string }>(app.db, "select body from notifications where id=?", itemFlow(app, item.id)!.card!)?.body).toContain(action);
+  }
+  expect(s()).toMatchObject({ state: "doing", attempt: 2 });
+  expect(getRun(app, s().by!).input.task).toContain(action);
+  expect(listAsks(app, { status: "pending" })).toHaveLength(0);
+});
+
+it("阶段自行安排的外部等待最多重试三次，依次退避，到上限才问本人", async () => {
+  const { app, item, s, clock } = await setup([wait("verify", { by: { run: {} }, gate: "confirm", done: "confirm" })]);
+  await ownerAction(app, item.id, "verify", "confirm");
+  for (const [attempts, minutes] of [15, 30, 60, 0].entries()) {
+    const carrier = s().by!, earliest = clock(0).toISOString();
+    const note = `已经建单，回读时接口超时（第 ${attempts + 1} 次检查）`;
+    await reportStage(app, item.id, "verify", { state: "blocked", note, waitingOn: "接口恢复", retry_at: earliest }, { actor: "assistant", runId: carrier });
+    run(app.db, "update runs set status='done' where id=?", carrier);
+    expect(s().control.externalRetry?.attempts).toBe(attempts);
+    if (!minutes) {
+      const pending = listAsks(app, { status: "pending" });
+      expect(pending).toHaveLength(1);
+      expect(pending[0].question).toContain(`自动重试 3 次仍未恢复。最后一次：${note}`);
+      expect(s().control.waitUntil).toBeUndefined();
+      await flowReminders(app, clock(2));
+      expect(listAsks(app, { status: "pending" })).toHaveLength(1);
+      expect(s().by).toBe(carrier);
+    } else {
+      const until = Date.parse(s().control.waitUntil!);
+      expect(until - Date.parse(earliest)).toBeGreaterThanOrEqual(minutes * 60_000);
+      expect(until - Date.parse(earliest)).toBeLessThan(minutes * 60_000 + 5000);
+      expect(listAsks(app, { status: "pending" })).toHaveLength(0);
+      expect(itemFlow(app, item.id)!.card).toBeNull();
+      await flowReminders(app, new Date(until));
+      expect(s()).toMatchObject({ state: "doing", attempt: attempts + 2 });
+      expect(getRun(app, s().by!).input.task).toContain(note);
+    }
+  }
+});
+
+it("已经发出的旧对账卡仍用原选项处理", async () => {
+  const { app, item, s } = await setup();
+  await reportStage(app, item.id, "verify", { state: "blocked", note: "缺少记录", waitingOn: "外部结果" }, owner);
+  const ask = createAsk(app, { runId: null, question: "需要你补一条记录", allowText: false,
+    options: [{ label: "我已处理" }, { label: "先不处理" }], context: { handler: "flow-reconcile-step", itemId: item.id, stageId: "verify", startedAt: itemFlow(app, item.id)!.startedAt, key: `${s().round}:${s().attempt}:${s().state}:${s().since}` } });
+  expect((await answerAsk(app, ask.id, { choice: 0, by: "owner" })).status).toBe("answered");
+  expect(s().state).toBe("blocked");
 });
 
 it("内联清单复用前提校验与推进，强制外部动作确认，走完才建议存成模板", async () => {

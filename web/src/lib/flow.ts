@@ -40,6 +40,7 @@ export type FlowStage = {
   upstream?: { askId: string; stage: string; name: string; reason: string } | null;
   /** The card asking the owner about this stage, answered by a button or in words. */
   askId?: string;
+  card?: { title: string; itemTitle: string; flowUrl: string; discussUrl: string; sections: { label: string; text: string }[]; options: { choice: number; label: string }[]; textAction?: string; askId: string | null };
   /** What the stage's carrier last wrote in full, when its line is now something else ("本人确认"). */
   result?: string;
 };

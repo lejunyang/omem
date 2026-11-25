@@ -162,11 +162,9 @@ describe("工作线：时间线", () => {
     expect(t.find((x) => x.origin === "problem")).toMatchObject({ type: "resolved", itemId: line.id });
     expect(t.every((x) => x.status === "noted")).toBe(true);
     expect(t.map((x) => x.at)).toEqual([...t.map((x) => x.at)].sort().reverse());
-    // No card asks about any of these; only the stage waiting on the owner sends the progress card.
-    expect(listAsks(app, { status: "pending" }).filter((a) => a.handler === "item-follow")).toHaveLength(0);
-    const cards = all<{ body: string; link: string }>(app.db, "select body, link from notifications where json_extract(context, '$.view') = 'flow'");
-    expect(cards).toHaveLength(1);
-    expect(cards[0].link).toBe(`#/work/${req.id}`);
+    const cards = listAsks(app, { status: "pending" }).filter((ask) => ["item-follow", "flow-stage"].includes(ask.handler ?? ""));
+    expect(cards.map((ask) => ask.stageCard)).toEqual([expect.objectContaining({ title: "「测试」卡住了", flowUrl: `#/items/${req.id}/flow?stage=test` })]);
+    expect(all(app.db, "select id from notifications where json_extract(context, '$.view') = 'flow'")).toHaveLength(0);
   });
 });
 

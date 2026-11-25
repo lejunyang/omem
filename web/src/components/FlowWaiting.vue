@@ -97,9 +97,21 @@ function pluginChanged(v: FlowView | null) {
 }
 /** Take the stage into a conversation: the assistant gets the item and stage to read, the owner writes the rest. */
 function discuss(s: FlowStage) {
+  if (s.card) return void router.push(s.card.discussUrl.slice(s.card.discussUrl.indexOf("#") + 1));
   const i = props.item;
   const said = text(s) ? `\n\n> ${text(s).slice(0, 600).replace(/\n+/g, "\n> ")}` : "";
   void router.push({ path: "/ask", query: { draft: `关于事项「${i.title}」（${i.id}）流程里的「${s.name}」（${stageWords[s.state]}）${said}\n\n`, space: i.spaceId } });
+}
+
+async function answer(s: FlowStage, choice?: number) {
+  if (!s.card?.askId || busy.value || !may.value) return;
+  busy.value = true; error.value = "";
+  try {
+    await post(`/api/asks/${encodeURIComponent(s.card.askId)}/answer`, { choice, text: replies.value[s.id]?.trim() || undefined });
+    replies.value[s.id] = "";
+    await load();
+  } catch (e) { error.value = (e as Error).message; }
+  finally { busy.value = false; }
 }
 </script>
 
@@ -110,6 +122,32 @@ function discuss(s: FlowStage) {
     </p>
     <p v-if="error" class="error small" role="alert">{{ error }}</p>
     <section v-for="s in waiting" :key="`w-${s.id}`" class="turn" :aria-label="`等你：${s.name}`">
+      <template v-if="s.card">
+        <div class="turn-head"><Icon :name="s.state === 'blocked' ? 'alert' : 'check'" :size="16" /><strong>{{ s.card.title }}</strong></div>
+        <router-link class="small" :to="s.card.flowUrl.slice(s.card.flowUrl.indexOf('#') + 1)">事项流程页：{{ s.card.itemTitle }}</router-link>
+        <div v-for="section in s.card.sections" :key="section.label" class="words">
+          <strong class="small">{{ section.label }}</strong>
+          <Markdown :source="section.text" :space="item.spaceId" compact />
+        </div>
+        <template v-if="may && s.card.askId">
+          <textarea v-if="!s.gateReview" v-model="replies[s.id]" class="textarea" rows="2" :aria-label="`给「${s.name}」写的话`" placeholder="写下你的指示，或给按钮补充说明" />
+          <div class="row wrap">
+            <button v-for="(option, index) in s.card.options" :key="option.choice" type="button" class="btn sm" :class="index === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="answer(s, option.choice)">{{ option.label }}</button>
+            <button v-if="s.card.textAction" type="button" class="btn sm" :disabled="busy || !replies[s.id]?.trim()" @click="answer(s)">{{ s.card.textAction }}</button>
+            <span class="spacer" />
+            <button type="button" class="btn ghost sm" @click="discuss(s)"><Icon name="chat" :size="14" />在对话里讨论</button>
+          </div>
+        </template>
+        <template v-else-if="may && !s.waitUntil">
+          <textarea v-model="replies[s.id]" class="textarea" rows="2" :aria-label="`给「${s.name}」写的话`" placeholder="写下你希望这一段怎么处理" />
+          <div class="row wrap">
+            <button v-if="s.state === 'blocked'" type="button" class="btn sm" :disabled="busy || !replies[s.id]?.trim()" @click="act(s, { action: 'done', label: '标记阶段完成', reason: true })">标记阶段完成</button>
+            <button type="button" class="btn sm" :disabled="busy || !replies[s.id]?.trim()" @click="reply(s)">按这句话处理</button>
+            <button type="button" class="btn ghost sm" @click="discuss(s)"><Icon name="chat" :size="14" />在对话里讨论</button>
+          </div>
+        </template>
+      </template>
+      <template v-else>
       <div class="turn-head"><Icon :name="s.state === 'blocked' ? 'alert' : 'check'" :size="16" /><strong>{{ s.gateReview ? "被检查拦下" : s.state === "blocked" ? "卡住了" : "等你" }}：{{ s.name }}</strong></div>
       <div class="words">
         <RichText tag="p" class="small" :text="readableIds(nextWords(s))" :space="item.spaceId" :lines="opened[s.id] ? undefined : 2" />
@@ -126,6 +164,7 @@ function discuss(s: FlowStage) {
           <button type="button" class="btn ghost sm" @click="discuss(s)"><Icon name="chat" :size="14" />在对话里讨论</button>
         </div>
       </template>
+      </template>
     </section>
   </div>
 </template>
@@ -133,7 +172,7 @@ function discuss(s: FlowStage) {
 <style scoped>
 .flow-waiting { display: grid; gap: 10px; }
 .head { margin: 0; }
-.turn { border: 1px solid var(--warn); border-left-width: 3px; border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; background: var(--warn-soft); min-width: 0; }
+.turn { border: 1px solid var(--warn); border-left-width: 3px; border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; background: var(--warn-soft); min-width: 0; overflow-wrap: anywhere; }
 .turn-head { display: flex; gap: 6px; align-items: center; }
 .turn p { margin: 0; }
 .words { display: grid; gap: 2px; justify-items: start; color: var(--ink-2); min-width: 0; }

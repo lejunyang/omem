@@ -28,6 +28,7 @@ export const forOwner = (text: string) => text.split("\n").filter((l) => !l.star
 export type AskKind = "question" | "suggestion" | "approval";
 export type AskOption = { label: string; message?: string };
 export type Ask = {
+  stageCard?: import("../flows/stage-card.ts").StageCard;
   id: string;
   runId: string | null;
   conversationId: string | null;
@@ -91,11 +92,12 @@ type Row = {
 };
 
 export function toAsk(r: Row, requester?: string): Ask {
-  const context = JSON.parse(r.context ?? "{}") as { operationApproval?: unknown; askedBy?: string; toName?: string; lapsed?: string; handler?: string };
+  const context = JSON.parse(r.context ?? "{}") as { operationApproval?: unknown; askedBy?: string; toName?: string; lapsed?: string; handler?: string; stageCard?: Ask["stageCard"] };
   // A delegated approver sees the decision, not data returned using the requester's privileges.
   const hidePayload = context.operationApproval && context.askedBy !== r.user_id && requester !== context.askedBy;
   return {
     id: r.id,
+    ...(context.stageCard ? { stageCard: context.stageCard } : {}),
     runId: r.run_id,
     conversationId: r.conversation_id,
     userId: r.user_id,
@@ -231,7 +233,7 @@ async function show(app: App, ask: Ask) {
     await deliverToThread(app, ask.conversationId!, askText(ask, app), { ask: ask.id });
   } else if (!ask.conversationId && ask.kind !== "suggestion") {
     const { notify } = await import("../core/notify.ts");
-    notify(app, { askId: ask.id, userId: ask.userId, title: ask.kind === "approval" ? "有操作等你批准" : "有问题等你回答", body: askText(ask), link: ask.ui ? `#/ui/${ask.id}` : "#/" });
+    notify(app, { askId: ask.id, userId: ask.userId, title: ask.stageCard ? `${ask.stageCard.title} · ${ask.stageCard.itemTitle}` : ask.kind === "approval" ? "有操作等你批准" : "有问题等你回答", body: askText(ask), link: ask.stageCard ? `#${ask.stageCard.flowUrl.split("#").at(-1)}` : ask.ui ? `#/ui/${ask.id}` : "#/" });
   }
 }
 
@@ -355,12 +357,13 @@ export function nudgePlugin(app: App, conversationId: string | null) {
  * A question still waiting, shown again where it was shown. The answer path and old button
  * indices stay the same; a host handler can append one choice it understands.
  */
-export async function reviseAsk(app: App, id: string, question: string, addOption?: AskOption): Promise<Ask> {
+export async function reviseAsk(app: App, id: string, question: string, addOption?: AskOption, stageCard?: Ask["stageCard"], stageAction?: string): Promise<Ask> {
   const before = getAsk(app, id);
   if (before.status !== "pending") throw new HttpError(409, "这个提问已经结束了");
   if (addOption && before.options.length < 6 && !before.options.some(o => o.label === addOption.label))
     run(app.db, "update asks set question=?,options=? where id=?", question, JSON.stringify([...before.options, addOption]), id);
   else run(app.db, "update asks set question=? where id=?", question, id);
+  if (stageCard) run(app.db, "update asks set context=json_patch(context,json(?)) where id=?", JSON.stringify({ stageCard, ...(stageAction ? { action: stageAction } : {}) }), id);
   const ask = getAsk(app, id);
   app.emit({ type: "ask", id, status: ask.status, conversationId: ask.conversationId });
   for (const s of sinks) await s.revised?.(app, ask).catch(() => {});

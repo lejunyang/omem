@@ -40,11 +40,14 @@ import { atomic, changeStage, flushProgress, markProgress, getStage, itemFlow, i
 import { saveReview, storedReview, type FlowEnd } from "./review.ts";
 import { stopCodeWork } from "../agents/code-steer.ts";
 import { inlineDefinition, inlineId, inlineTemplate, type InlineStart } from "./inline.ts";
-import { assertReconcileStage, queueReconcile, reconcileReminder, withdrawReconcileAsks } from "./reconcile.ts";
+import { assertReconcileStage, pendingReconcileAsk, queueReconcile, reconcileReminder, withdrawReconcileAsks } from "./reconcile.ts";
 import { itemFlowSpaces } from "./spaces.ts";
 import { ownerTurnNote, pendingPushConfirmation } from "./owner-turn.ts";
 import { attachBlockerReviews, queueDeliveryFallback } from "./blocker-review.ts";
 import { ownerActiveToday } from "./delivery.ts";
+import { appendCardEvidence, flowEvidenceLinks, stageCard, stageCardActions, stageCardLabels, stageCardText, type StageCard } from "./stage-card.ts";
+import { canResumeStage, externalRetry } from "./stage-retry.ts";
+import { addChange } from "../items/changes.ts";
 
 const host: FlowActor = { actor: "host" };
 // This is an execution lock, not a projection/cache: each pass reads the item's own rows.
@@ -155,30 +158,26 @@ type AskParts = { ask: string; result?: string; evidence?: string[]; plan?: bool
  * then only what bears on it (the result, what the stage will do, what is done before it, what starts
  * after it, how much evidence) as short labelled paragraphs. Internal ids stay on the item page.
  */
-function askText(app: App, f: ItemFlow, d: FlowStage, s: StageRow, p: AskParts) {
+function questionCard(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: string, p: AskParts) {
   const rows = itemStages(app, f.itemId), item = getItem(app, f.itemId);
   const ups = d.needs.map((id) => ({ def: f.definition.stages.find((x) => x.id === id), row: rows.find((r) => r.id === id) })).filter((u) => u.def && u.row && ["done", "skipped"].includes(u.row.state));
   const next = f.definition.stages.filter((x) => x.needs.includes(d.id)).map((x) => x.name);
   const w = describeStage(d);
-  const flow = webLink(app, `#/items/${item.id}/flow?stage=${encodeURIComponent(d.id)}`);
   const work = [s.by, ...(p.evidence ?? [])].find((ref) => ref?.startsWith("code-work:"));
   const codeStage = [d.by, d.done].some(spec => typeof spec === "object" && "object" in spec && spec.object === "code-work")
     || typeof d.done === "object" && "signal" in d.done && ["git.pushed", "git.merged"].includes(d.done.signal);
   const workId = work ? work.slice("code-work:".length) : codeStage ? latestCodeWork(app, item)?.latestId : undefined;
-  const links = [`[事项流程页](${flow})`,
+  const links = [
     s.control.runId ? `[承担者运行](${webLink(app, `#/runs/${s.control.runId}`)})` : "",
     workId ? `[交办运行](${webLink(app, `#/runs/${workId}`)})` : "",
   ].filter(Boolean).join("　");
-  return [
-    // What is asked comes first (src/agents/brief.ts); which item it is about, right under it.
-    `**「${d.name}」${p.ask}**`,
-    `事项：${item.title}　${links}`,
-    p.result ? `**结果**\n${askNote(p.result, 800)}` : "",
-    p.plan && d.note ? `**这一段做什么**\n${askNote(d.note, 400)}\n（${w.carrier}；${w.done}）` : "",
-    p.before && ups.length ? `**前面**\n${ups.map((u) => { const note = resultNote(app, f.itemId, u.row!); return `- ${u.def!.name}：${u.row!.state === "skipped" ? "跳过" : "已完成"}${note ? `，${askNote(note, 120)}` : ""}`; }).join("\n")}` : "",
-    p.after && next.length ? `**之后**\n确认后接着：${next.join("、")}` : "",
-    p.evidence?.length ? `**依据**\n${p.evidence.length} 项` : "",
-  ].filter(Boolean).join("\n\n");
+  return stageCard(app, item, d, kind, {
+    problem: p.ask,
+    current: [p.result && askNote(p.result), p.before && ups.length ? ups.map(({ def, row }) => `${def!.name}：${row!.state === "skipped" ? "跳过" : "已完成"}${row!.note ? `，${askNote(resultNote(app, f.itemId, row!), 120)}` : ""}`).join("\n") : ""].filter(Boolean).join("\n\n"),
+    plan: [p.plan && d.note ? `${askNote(d.note, 400)}\n（${w.carrier}；${w.done}）` : "", p.after && next.length ? `确认后接着：${next.join("、")}` : ""].filter(Boolean).join("\n\n"),
+    evidence: [links, flowEvidenceLinks(app, item.id, p.evidence ?? []), stageLinks(s)].filter(Boolean).join("\n\n"),
+    textAction: kind === "gate" || kind === "when" ? "按这句话开始" : kind === "done" || kind === "refuse" ? "按这句话重做" : kind === "skip" ? "按这句话跳过" : "",
+  });
 }
 // The owner's "确认" overwrites a stage's latest line; what the stage produced is the last thing its
 // carrier said, falling back to that line.
@@ -195,19 +194,97 @@ function stageResult(app: App, itemId: string, row: StageRow) {
   const r = resultNote(app, itemId, row);
   return r && r !== row.note && !ROUTINE.has(r) && !WAITING_NOTE.test(r) ? r : "";
 }
-const askNote = (note: string, max: number) => truncate(note.replace(/\s*[（(]?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b[）)]?/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(), max);
+const askNote = (note: string, max = Infinity) => truncate(note.replace(/\s*[（(]?`?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b`?[）)]?/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(), max);
 
 function question(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: NonNullable<StageRow["control"]["question"]>, parts: AskParts, labels: string[]) {
   if (s.askId && getAsk(app, s.askId).status === "pending" && s.control.question === kind) return s.askId;
   withdraw(app, s);
-  const text = askText(app, f, d, s, parts);
-  return createAsk(app, { runId: null, userId: getItem(app, f.itemId).userId, question: text, options: labels.map((label) => ({ label })), allowText: true,
-    context: { handler: "flow-stage", itemId: f.itemId, stageId: d.id, startedAt: f.startedAt, kind } }).id;
+  const card = questionCard(app, f, d, s, kind, parts);
+  return createAsk(app, { runId: null, userId: getItem(app, f.itemId).userId, question: stageCardText(card), options: labels.map((label) => ({ label })), allowText: true,
+    context: { handler: "flow-stage", itemId: f.itemId, stageId: d.id, startedAt: f.startedAt, kind, stageCard: card } }).id;
 }
-function reviseCompletionAsk(app: App, askId: string, text: string) {
+function reviseCompletionAsk(app: App, askId: string, card: StageCard) {
   const old = getAsk(app, askId).question;
   const supplement = old.indexOf("\n\n**对账查到的依据**\n");
-  return reviseAsk(app, askId, text + (supplement < 0 ? "" : old.slice(supplement)));
+  return reviseAsk(app, askId, stageCardText(card) + (supplement < 0 ? "" : old.slice(supplement)), undefined, supplement < 0 ? card : appendCardEvidence(card, old.slice(supplement).trim()));
+}
+
+function stageLinks(stage: StageRow) {
+  return (stage.control.links ?? []).map(({ label, url }) => `[${label.replace(/[[\]]/g, "")}](${url})`).join("　");
+}
+
+export function blockerCard(app: App, item: Item, d: FlowStage, s: StageRow, step?: { action: string; why?: string; evidence?: string[]; extra?: string }) {
+  const wait = s.waitingOn && s.waitingOn !== "owner" ? `等${s.waitingOn.replace(/^等+/, "")}` : "";
+  const refs = [...new Set([...s.evidence, ...step?.evidence ?? [], ...s.control.runId ? [s.control.runId] : []])];
+  const plan = s.control.waitUntil && s.control.externalRetry ? `到 ${timeLabel(s.control.waitUntil, app.config.timezone)} 后自动重试。`
+    : s.control.budgetExceeded ? "要继续，可以在事项流程页调整这一段的预算；不再做也可以在流程页结束这一段。" : d.note;
+  return stageCard(app, item, d, "blocked", {
+    current: ROUTINE.has(s.note) ? "" : askNote(s.note),
+    problem: step ? [step.action, step.why && `助手做不了：${step.why}`].filter(Boolean).join("\n\n") : s.control.budgetExceeded ? "阶段预算用完了，要决定是否继续。" : wait || "这一段尚未完成。",
+    plan: [plan, step?.extra].filter(Boolean).join("\n\n"),
+    evidence: [flowEvidenceLinks(app, item.id, refs), stageLinks(s)].filter(Boolean).join("\n\n"),
+  });
+}
+
+export function blockerOptions(d: FlowStage, s: StageRow) {
+  return [...(s.state === "blocked" && canResumeStage(d, s) ? [stageCardLabels.resume] : []), stageCardLabels.handled, stageCardLabels.hold].map(label => ({ label }));
+}
+
+function stageRunActive(app: App, s: StageRow) {
+  return !!s.control.runId && ["queued", "running"].includes(getRun(app, s.control.runId).status);
+}
+
+export function scheduleStageRetry(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: string, action: string, refs: string[], by: FlowActor) {
+  if (!canResumeStage(d, s) || isTrials(d) || isFixes(d)) throw new HttpError(409, "这一段不能自动重试");
+  const current = new Date();
+  const { waitUntil, retry } = externalRetry(s, at, action, current);
+  const note = waitUntil ? s.note : `自动重试 ${retry.attempts} 次仍未恢复。最后一次：${s.note}`;
+  const waitingOn = s.waitingOn && !ownerWait(s.waitingOn) ? s.waitingOn : "外部条件恢复";
+  withdraw(app, s);
+  withdrawReconcileAsks(app, f.itemId, s.id);
+  changeStage(app, f.itemId, s.id, "blocked", { askId: null, waitingOn: waitUntil ? waitingOn : "owner",
+    evidence: [...new Set([...s.evidence, ...refs])], control: { ...finishUsage(app, s, current), reported: true, question: undefined, waitUntil, externalRetry: retry } }, by, note, refs, waitUntil ? "external-retry-wait" : "external-retry-exhausted");
+  if (!waitUntil) askBlocker(app, getItem(app, f.itemId), f, d, getStage(app, f.itemId, s.id));
+  return waitUntil;
+}
+
+export async function resumeBlockedNow(app: App, f: ItemFlow, d: FlowStage, s: StageRow, action: string, refs: string[], by: FlowActor, retry?: StageControl["externalRetry"]) {
+  if (s.state !== "blocked" || !canResumeStage(d, s) || isTrials(d) || isFixes(d)) throw new HttpError(409, "这一段不能交回助手自动处理");
+  if (stageRunActive(app, s) && by.actor !== "owner") throw new HttpError(409, "阶段自己的运行还在处理");
+  const feedback = [action, `上次做到或卡在：${s.note}`, s.waitingOn && s.waitingOn !== "owner" ? `等：${s.waitingOn}` : "", refs.length ? `已有依据：${refs.join("、")}` : ""].filter(Boolean).join("\n\n");
+  await reopenNow(app, f.itemId, s.id, action, refs, by, feedback, { retry });
+}
+
+export async function answerBlockerNow(app: App, f: ItemFlow, d: FlowStage, s: StageRow, ask: Ask, instruction: string) {
+  const choice = ask.options[ask.choice ?? -1]?.label;
+  const text = answerText(ask);
+  const by = { actor: "owner", userId: ask.userId };
+  const canResume = s.state === "blocked" && canResumeStage(d, s);
+  if (choice === stageCardLabels.hold) return;
+  if (canResume && (ask.choice === null || choice === stageCardLabels.resume || choice === stageCardLabels.handled)) {
+    const action = text || (choice === stageCardLabels.handled ? `本人已处理卡点，先核对再继续。${instruction}` : instruction);
+    resetStreak(app, f.itemId);
+    await resumeBlockedNow(app, f, d, s, action, s.evidence, by);
+    await advanceNow(app, f.itemId, "本人处理卡点");
+  } else if (ask.choice === null && text) {
+    await actionNow(app, f.itemId, s.id, "reopen", text, by);
+  } else if (choice === stageCardLabels.handled) {
+    addChange(app, { itemId: f.itemId, type: "info", origin: "flow", summary: "本人已处理卡点，等下次核对", detail: text || null, stages: [s.id] });
+    await advanceNow(app, f.itemId, "本人已处理卡点");
+  }
+}
+
+export async function advanceFlowNow(app: App, id: string) {
+  await advanceNow(app, id, "对账安排下一步");
+}
+
+function askBlocker(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow) {
+  if (!ownerWait(s.waitingOn) || s.askId || s.control.upstream || d.tools?.includes("propose_directions") || isTrials(d) || isFixes(d) || pendingReconcileAsk(app, f, s)) return;
+  if (s.control.runId && one(app.db, "select 1 from asks where run_id=? and status='pending' limit 1", s.control.runId)) return;
+  const card = blockerCard(app, item, d, s);
+  const ask = createAsk(app, { runId: null, userId: item.userId, question: stageCardText(card), options: blockerOptions(d, s), allowText: true,
+    context: { handler: "flow-stage", itemId: item.id, stageId: d.id, startedAt: f.startedAt, kind: "blocked", stageCard: card, action: d.note || "先核对卡点，只在原有权限内补做没完成的部分。" } });
+  changeStage(app, item.id, d.id, s.state, { askId: ask.id }, host, s.note);
 }
 function gate(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: "when" | "gate") {
   const askId = question(app, f, d, s, kind, kind === "when" ? { ask: `这一段要做吗？条件是：${d.when}`, plan: true, before: true } : { ask: "轮到这一段了，开始吗？", plan: true, before: true }, kind === "when" ? ["要做", "跳过"] : ["开始", "先别做", "跳过这一段"]);
@@ -580,6 +657,12 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
     for (const d of itemFlow(app, itemId)!.definition.stages) {
       const f = itemFlow(app, itemId)!;
       let s = getStage(app, itemId, d.id);
+      if (s.state === "blocked" && s.control.externalRetry && s.control.waitUntil) {
+        if (s.control.waitUntil > at.toISOString() || !prerequisitesDone(d, itemStages(app, itemId)) || stageRunActive(app, s)) continue;
+        await resumeBlockedNow(app, f, d, s, s.control.externalRetry.instruction, s.evidence, host, { ...s.control.externalRetry, attempts: s.control.externalRetry.attempts + 1 });
+        s = getStage(app, itemId, d.id);
+        changed = true;
+      }
       if (s.state === "doing" && !s.control.reported && s.control.runId && typeof d.by === "object" && "runner" in d.by
         && (deadlineAt(s.enteredAt!, d) ?? Infinity) <= at.getTime()) {
         const note = "已到阶段时限";
@@ -716,7 +799,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
             const result = pending ? resultNote(app, itemId, s) : undefined;
             const parts = { ask: `${obj.title}已完成，确认这一段做完了吗？`, result, evidence, after: true };
             const askId = question(app, f, d, s, "done", parts, ["确认", "还不行"]);
-            if (pending) await reviseCompletionAsk(app, askId, askText(app, f, d, s, parts));
+            if (pending) await reviseCompletionAsk(app, askId, questionCard(app, f, d, s, "done", parts));
             changeStage(app, itemId, d.id, "doing", { askId, waitingOn: "owner", evidence, control: { ...s.control, question: "done", reported: true } }, host, result ?? "对象已完成，等本人确认", [obj.ref]);
             changed = true;
           }
@@ -777,7 +860,11 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       roundNow(app, closed, host, at);
       changed = true;
     }
-    if (!changed) { queueDeliveryFallback(app, itemId, _cause === "例行检查" ? at : new Date()); return; }
+    if (!changed) {
+      const f = itemFlow(app, itemId)!;
+      for (const s of rows) if (s.state === "blocked" && !s.control.gateReview) askBlocker(app, item, f, definition(f, s.id), s);
+      queueDeliveryFallback(app, itemId, _cause === "例行检查" ? at : new Date()); return;
+    }
   }
 }
 function objectDone(d: FlowStage, obj: NonNullable<ReturnType<typeof findObject>>) {
@@ -827,7 +914,7 @@ function escalateStage(app: App, f: ItemFlow, d: FlowStage, s: StageRow, feedbac
   return true;
 }
 
-export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; pluginEvidence?: StageControl["pluginEvidence"]; links?: StageLink[]; note: string; waitingOn?: string; unsure?: boolean; already_resolved?: boolean };
+export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; pluginEvidence?: StageControl["pluginEvidence"]; links?: StageLink[]; note: string; waitingOn?: string; unsure?: boolean; already_resolved?: boolean; retry_at?: string };
 export function reportStage(app: App, itemId: string, stageId: string, report: StageReport, by: FlowActor) {
   return serial(app, itemId, async () => {
     const f = running(app, itemId), d = definition(f, stageId);
@@ -895,12 +982,15 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
       if (report.links.some((l) => !/^https?:\/\//i.test(l.url))) throw new HttpError(400, "链接要以 http:// 或 https:// 开头");
       s.control.links = report.links.length ? report.links : undefined;
     }
-    if (asksOwner) {
+    if (report.retry_at) {
+      if (report.state !== "blocked" || s.state !== "doing" || !by.runId || s.control.runId !== by.runId || ownerWait(report.waitingOn) || !report.waitingOn?.trim()) throw new HttpError(409, "只有阶段自己的运行可为暂时的外部卡点安排重试");
+      scheduleStageRetry(app, f, d, { ...s, waitingOn: report.waitingOn, note: report.note }, report.retry_at, "先重新核对外部状态和写入结果，只补还没完成的部分，不重复提交。", evidence, by);
+    } else if (asksOwner) {
       const pending = s.control.question === "done" && s.askId && getAsk(app, s.askId).status === "pending";
       const refs = pending ? [...new Set([...s.evidence, ...evidence])] : evidence;
       const parts = { ask: d.by === "owner" ? "这一段是你来做的，助手说已经做完了。是这样吗？" : "助手说这一段做完了，确认吗？不对就点“还不行”写意见。", result: report.note, evidence: refs, after: true };
       const askId = question(app, f, d, s, "done", parts, ["确认", "还不行"]);
-      if (pending) await reviseCompletionAsk(app, askId, askText(app, f, d, s, parts));
+      if (pending) await reviseCompletionAsk(app, askId, questionCard(app, f, d, s, "done", parts));
       changeStage(app, itemId, stageId, "doing", { askId, evidence: refs, waitingOn: "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
       if (fromReconcile) await enrichReconcileAsk(app, { ...s, askId }, report);
     } else if (report.state === "done" && (typeof d.done === "object" || typeof d.by === "object" && "object" in d.by)) {
@@ -916,16 +1006,14 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
   });
 }
 const RECONCILED_DONE = "确认已做完";
-export function flowEvidenceLinks(app: App, itemId: string, evidence: string[]) {
-  return evidence.map(ref => ref.startsWith("src:") ? `[看原文](${ref})` : ref.startsWith("object:") ? `[看事项上的对象](${webLink(app, `#/work/${itemId}`)})` : ref.startsWith("design:") ? `[看方案](${webLink(app, `#/designs/${ref.slice(7)}`)})` : `[看运行](${webLink(app, `#/runs/${ref.replace(/^(run:|code-work:)/, "")}`)})`).join("　");
-}
 async function enrichReconcileAsk(app: App, s: StageRow, report: StageReport, startGate = false) {
   const ask = getAsk(app, s.askId!);
   if (ask.status !== "pending") throw new HttpError(409, "这张确认卡已经失效");
   const current = ask.question.split("\n\n**对账查到的依据**\n")[0];
   const text = `${current}\n\n**对账查到的依据**\n${askNote(report.note, 800)}${startGate ? "\n如果已做完，点“确认已做完”，不用再开始。" : ""}\n${flowEvidenceLinks(app, s.itemId, report.evidence!)}`;
   if (ask.question === text) return false;
-  await reviseAsk(app, ask.id, text, startGate ? { label: RECONCILED_DONE } : undefined);
+  await reviseAsk(app, ask.id, text, startGate ? { label: RECONCILED_DONE } : undefined,
+    ask.stageCard ? appendCardEvidence({ ...ask.stageCard, sections: ask.stageCard.sections.map(section => ({ ...section, text: section.text.split("\n\n**对账查到的依据**")[0] })) }, text.slice(current.length).trim()) : undefined);
   return true;
 }
 function validEvidence(app: App, ref: string) {
@@ -1060,7 +1148,7 @@ export function reopenStage(app: App, itemId: string, stageId: string, reason: s
     return flowView(app, itemId);
   });
 }
-async function reopenNow(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor, feedback?: string) {
+async function reopenNow(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor, feedback?: string, resume?: { retry?: StageControl["externalRetry"] }) {
   const f = itemFlow(app, itemId);
   if (!f) throw new HttpError(409, "事项没有流程");
   const stage = definition(f, stageId);
@@ -1073,8 +1161,8 @@ async function reopenNow(app: App, itemId: string, stageId: string, reason: stri
   withdraw(app, s);
   run(app.db, "update item_flows set ended_at=null,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", now(), itemId);
   if (s.control.runId) await stopStageRun(app, s.itemId, s.control.runId);
-  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, recorded: undefined, gateReview: undefined, gateReviewResult: undefined, pluginEvidence: undefined, objectAfter: now(), grantedGate: undefined, gateLimit: undefined, reported: false, confirmed: undefined, question: undefined, feedback: feedback ?? (by.actor !== "owner" ? reason : undefined), waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined, rework } }, by, reason, refs, "reopen");
-  markProgress(app, itemId, { head: `「${stage.name}」已重开`, note: reason });
+  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, recorded: undefined, gateReview: undefined, gateReviewResult: undefined, pluginEvidence: undefined, objectAfter: now(), grantedGate: undefined, gateLimit: undefined, reported: false, confirmed: undefined, question: undefined, feedback: feedback ?? (by.actor !== "owner" ? reason : undefined), waitUntil: undefined, externalRetry: resume?.retry, budgetExceeded: undefined, escalated: undefined, admitted: resume ? true : undefined, rework: !!resume || rework } }, by, reason, refs, "reopen");
+  if (!resume?.retry) markProgress(app, itemId, { head: `「${stage.name}」已重开`, note: reason, announce: by.actor === "flow-reconcile" });
   const affected = new Set([stageId]);
   for (const d of f.definition.stages) {
     if (!d.needs.some((n) => affected.has(n))) continue;
@@ -1151,6 +1239,11 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
   const itemId = String(ctx.itemId), stageId = String(ctx.stageId);
   const f = running(app, itemId), d = definition(f, stageId), s = getStage(app, itemId, stageId);
   if (ctx.kind === "upstream") return answerUpstream(app, f, d, s, ask.choice === 0);
+  if (ctx.kind === "blocked") {
+    await answerBlockerNow(app, f, d, s, ask, String(ctx.action || d.note || s.note));
+    app.emit({ type: "changed", entity: "item", id: itemId });
+    return;
+  }
   if ((ctx.kind === "gate" || ctx.kind === "when") && ask.options[ask.choice ?? -1]?.label === RECONCILED_DONE)
     return actionNow(app, itemId, stageId, "done", `本人确认已做完：${s.note.replace(/^对账依据：/, "")}`, { actor: "owner", userId: ask.userId });
   let text = answerText(ask);
@@ -1185,7 +1278,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
   if (requireItem(app, itemId, by, "flow").userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");
   const f = running(app, itemId);
   const s = getStage(app, itemId, String(ctx.stageId));
-  const current = ctx.kind === "upstream" ? s.control.upstream?.askId === ask.id && s.state === "doing" : s.askId === ask.id && s.control.question === ctx.kind;
+  const current = ctx.kind === "upstream" ? s.control.upstream?.askId === ask.id && s.state === "doing" : s.askId === ask.id && (ctx.kind === "blocked" ? s.state === "blocked" && !s.control.gateReview : s.control.question === ctx.kind);
   if (f.startedAt !== ctx.startedAt || !current) throw new HttpError(409, "流程关卡已变化");
 }, (app, ctx, answer) => serial(app, String(ctx.itemId), answer));
 
@@ -1307,6 +1400,18 @@ export function flowView(app: App, id: string) {
   };
 }
 
+export function flowStageCards(app: App, itemId: string, userId: string) {
+  const item = getItem(app, itemId), f = itemFlow(app, itemId);
+  const cards = new Map<string, Omit<StageCard, "textAction"> & ReturnType<typeof stageCardActions> & { askId: string | null }>();
+  if (item.userId !== userId || !f || f.endedAt) return cards;
+  for (const s of itemStages(app, itemId)) {
+    const ask = pendingReconcileAsk(app, f, s) ?? (s.askId ? getAsk(app, s.askId) : undefined);
+    if (ask?.stageCard && ask.status === "pending") cards.set(s.id, { ...ask.stageCard, ...stageCardActions(ask), askId: ask.id });
+    else if (s.state === "blocked" && !s.control.gateReview) cards.set(s.id, { ...blockerCard(app, item, definition(f, s.id), s), options: [], askId: null });
+  }
+  return cards;
+}
+
 export async function flowReminders(app: App, at = new Date()) {
   attachFlows(app);
   await checkGitSignals(app);
@@ -1320,11 +1425,14 @@ export async function flowReminders(app: App, at = new Date()) {
     let activeToday: boolean | undefined;
     for (const s of itemStages(app, id)) {
       if (!["gated", "blocked"].includes(s.state) && !(s.state === "doing" && (s.by === "owner" || s.control.question === "done"))) continue;
+      if (s.control.externalRetry && s.control.waitUntil) continue;
+      if (s.state === "blocked" && !ownerWait(s.waitingOn) && !pendingReconcileAsk(app, itemFlow(app, id)!, s)) continue;
       const n = s.control.reminders ?? 0;
       if (at.getTime() - Date.parse(s.control.reminderAt ?? s.since) < app.config.flows.staleDays * 86400_000 * 2 ** n) continue;
       if (["gated", "blocked"].includes(s.state) && (activeToday ??= ownerActiveToday(app, item, at))) continue;
       const f = itemFlow(app, id)!, d = definition(f, s.id);
-      notify(app, { userId: item.userId, title: `「${item.title}」还停在「${d.name}」`, body: [s.note, reconcileReminder(app, f, s)].filter(Boolean).join("\n\n"), urgency: "later", link: `#/items/${id}` });
+      const card = pendingReconcileAsk(app, f, s)?.stageCard ?? (s.askId ? getAsk(app, s.askId).stageCard : undefined) ?? (s.state === "blocked" ? blockerCard(app, item, d, s) : undefined);
+      notify(app, { userId: item.userId, title: card ? `${card.title} · ${item.title}` : `「${item.title}」还停在「${d.name}」`, body: [card ? stageCardText(card) : s.note, reconcileReminder(app, f, s)].filter(Boolean).join("\n\n"), urgency: "later", link: `#/items/${id}/flow?stage=${encodeURIComponent(s.id)}` });
       changeStage(app, id, s.id, s.state, { control: { ...s.control, reminders: n + 1, reminderAt: at.toISOString() } }, host, s.note);
     }
     queueReconcile(app, id, at);

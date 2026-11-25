@@ -8,7 +8,7 @@ import { canWrite, OWNER } from "../core/users.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { chatName } from "../agents/run-scope.ts";
 import { getRun, createRun, registerHandler, runsInLane, runUser, setRunOutput, type Run } from "../agents/runs.ts";
-import { cancelAsk, createAsk, registerAskHandler } from "../agents/asks.ts";
+import { cancelAsk, createAsk, getAsk, registerAskHandler, reviseAsk } from "../agents/asks.ts";
 import { itemAccess } from "../items/access.ts";
 import { addChange } from "../items/changes.ts";
 import { materialSpaces, materialsBrief } from "../items/materials.ts";
@@ -24,6 +24,8 @@ import { itemFlowSpaces } from "./spaces.ts";
 import { pendingPushConfirmation } from "./owner-turn.ts";
 import { deliveryFacts } from "./delivery.ts";
 import { currentBlockers, finishBlockerReview, type FocusedReconcile } from "./blocker-review.ts";
+import { flowEvidenceLinks, stageCardText } from "./stage-card.ts";
+import { canResumeStage } from "./stage-retry.ts";
 
 const INTERVAL = 6 * 3600_000;
 export const itemFollowLane = (id: string) => `item-follow:${id}`;
@@ -135,9 +137,10 @@ export async function readReconcileObject(app: App, r: Run, itemId: string, obje
 }
 
 type Step = NonNullable<z.infer<typeof reconcileResultSchema>["steps"]>[number];
-type Next = { stage: string; action: string; delivery: string };
+type Next = { stage: string; action: string; delivery: string; kind?: "external" | "assistant" | "owner"; retryAt?: string };
 const HANDLER = "flow-reconcile-step";
 const stageKey = (s: StageRow) => `${s.round}:${s.attempt}:${s.state}:${s.since}`;
+const resumeInstruction = (action: unknown) => `先核对卡点，只在已有权限内做，不替本人拍板。建议：${action}`;
 
 function draftTarget(app: App, item: Item, chat: string) {
   return itemChats(app, item.id).includes(chat) && toolAllowed(app, item.userId, "lark_send");
@@ -154,6 +157,11 @@ async function botInGroup(chat: string): Promise<boolean | null> {
   } catch { return null; }
 }
 const forStage = "json_extract(context,'$.handler')=? and json_extract(context,'$.itemId')=? and json_extract(context,'$.stageId')=?";
+export function pendingReconcileAsk(app: App, f: ItemFlow, s: StageRow) {
+  if (s.state !== "blocked" && s.state !== "doing") return;
+  const row = one<{ id: string }>(app.db, `select id from asks where status='pending' and ${forStage} and json_extract(context,'$.startedAt')=? and json_extract(context,'$.key')=? limit 1`, HANDLER, f.itemId, s.id, f.startedAt, stageKey(s));
+  return row && getAsk(app, row.id);
+}
 export function withdrawReconcileAsks(app: App, itemId: string, stageId?: string) {
   for (const a of all<{ id: string }>(app.db, `select id from asks where status='pending' and json_extract(context,'$.handler')=? and json_extract(context,'$.itemId')=? ${stageId ? "and json_extract(context,'$.stageId')=?" : ""}`, HANDLER, itemId, ...(stageId ? [stageId] : []))) cancelAsk(app, a.id, "阶段已有新的状态");
 }
@@ -161,7 +169,7 @@ export function withdrawReconcileAsks(app: App, itemId: string, stageId?: string
 /** The Agent supplies the smallest next action. The host decides only where it may be delivered. */
 export async function submitReconcile(app: App, r: Run, args: z.infer<typeof reconcileResultSchema>, userId: string, send: (chat: string, draft: string) => Promise<string>) {
   // Shared with stage/owner mutations, so neither an outdated draft nor a late next step replaces a finished stage.
-  const { flowOperation, stopFlowNow, flowEvidenceLinks } = await import("./engine.ts");
+  const { flowOperation, stopFlowNow, blockerCard, blockerOptions, scheduleStageRetry, resumeBlockedNow, advanceFlowNow } = await import("./engine.ts");
   return flowOperation(app, args.item, async () => {
     const fresh = getRun(app, r.id);
     const { f, item } = activeCheck(app, fresh, args.item, userId, !args.finish && !args.steps?.length);
@@ -184,13 +192,41 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
       const stage = getStage(app, args.item, s.stage);
       unchanged(app, fresh, stage);
       if (stage.state !== "blocked" && !(stage.state === "doing" && stage.waitingOn === "owner")) throw new HttpError(409, "只为卡住或明确在等本人的阶段交下一步");
-      return { s, stage };
+      const definition = f.definition.stages.find(d => d.id === s.stage)!;
+      if (s.kind !== "owner" && (stage.state !== "blocked" || !canResumeStage(definition, stage))) throw new HttpError(409, "只有已开始且卡住的助手阶段可以自动重做或重试");
+      if (s.kind !== "owner" && stage.control.runId && ["queued", "running"].includes(getRun(app, stage.control.runId).status)) throw new HttpError(409, "阶段自己的运行还在处理");
+      return { s, stage, definition };
     });
     const next: Next[] = [];
-    for (const { s, stage } of planned) {
-      const definition = f.definition.stages.find(d => d.id === s.stage);
-      if (stage.state === "doing" && definition && pendingPushConfirmation(app, item, definition)) {
-        next.push({ stage: s.stage, action: s.action, delivery: "等本人在交办完成卡片确认并推送" });
+    const by = { actor: "flow-reconcile", runId: r.id, userId };
+    let advance = false;
+    for (const { s, stage, definition } of planned) {
+      const outcome = { stage: s.stage, action: s.action, kind: s.kind };
+      if (stageVersion(app, item.id, stage.id) !== (fresh.output.reconcileVersions as Record<string, number>)[stage.id]) {
+        next.push({ ...outcome, delivery: "上游有变化，等当前阶段更新后再核对" });
+        continue;
+      }
+      if (stage.state === "doing" && pendingPushConfirmation(app, item, definition)) {
+        next.push({ ...outcome, delivery: "等本人在交办完成卡片确认并推送" });
+        continue;
+      }
+      if (stage.control.gateReview || stage.control.upstream || stage.control.question && stage.control.question !== "owner") {
+        next.push({ ...outcome, delivery: "沿用已发出的阶段确认" });
+        continue;
+      }
+      if (s.kind === "external" && stage.control.externalRetry) {
+        next.push({ ...outcome, delivery: stage.control.waitUntil ? "已安排重试" : "由阶段承担者核对最新状态，不增加重试次数", retryAt: stage.control.waitUntil });
+        continue;
+      }
+      if (s.kind === "external") {
+        const retryAt = scheduleStageRetry(app, f, definition, stage, s.retry_at!, s.action, s.evidence ?? [], by);
+        next.push({ ...outcome, delivery: "已安排重试", retryAt });
+        continue;
+      }
+      if (s.kind === "assistant") {
+        await resumeBlockedNow(app, f, definition, stage, s.action, [...new Set([...stage.evidence, ...s.evidence ?? []])], by);
+        advance = true;
+        next.push({ ...outcome, delivery: "已交回阶段助手处理" });
         continue;
       }
       const key = stageKey(stage);
@@ -204,19 +240,30 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
         try {
           await send(target, s.draft);
           setRunOutput(app, r.id, { reconcileSent: [...(getRun(app, r.id).output.reconcileSent as string[] | undefined ?? []), `${stage.id}:${key}`] });
-          next.push({ stage: s.stage, action: s.action, delivery: "已由机器人发到关联群" }); continue;
+          next.push({ ...outcome, delivery: "已由机器人发到关联群" }); continue;
         } catch { unavailable = "自动发送失败，草稿未确认发出。"; }
       }
       const member = target ? await botInGroup(target) : null;
       if (target && member !== true) unavailable = member === false ? "机器人不在这个群，发不了。" : "未能确认机器人在群里，不能从卡片发送。";
       const maySend = member === true;
-      const name = definition?.name ?? stage.id;
-      createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
-        question: `「${name}」需要${s.person ? `找${s.person}` : "你"}：${s.action}\n\n事项：[${item.title.replace(/[\[\]]/g, "")}](${webLink(app, `#/items/${item.id}/flow?stage=${encodeURIComponent(stage.id)}`)})${s.draft ? `\n\n给${s.person}的草稿（未发送）：\n${s.draft}` : ""}${unavailable ? `\n\n${unavailable}` : ""}`,
-        options: [...(maySend ? [{ label: "把草稿发到群里" }] : []), { label: "我已处理" }, { label: "先不处理" }],
-        context: { handler: HANDLER, itemId: item.id, stageId: stage.id, startedAt: f.startedAt, key, action: s.action, ...(maySend ? { chat: target, draft: s.draft } : {}) } });
-      next.push({ stage: s.stage, action: s.action, delivery: s.draft ? "草稿等本人处理" : "最小一步等本人处理" });
+      const card = blockerCard(app, item, definition, stage, { action: s.action, why: s.why_owner, evidence: s.evidence,
+        extra: [s.draft && `给${s.person}的草稿（未发送）：\n${s.draft}`, unavailable].filter(Boolean).join("\n\n") });
+      const original = stage.state === "blocked" && stage.askId ? getAsk(app, stage.askId) : undefined;
+      if (original?.stageCard && original.handler === "flow-stage" && original.status === "pending" && !maySend) {
+        await reviseAsk(app, original.id, stageCardText(card), undefined, card, resumeInstruction(s.action));
+        setRunOutput(app, r.id, { reconcileSent: [...(getRun(app, r.id).output.reconcileSent as string[] | undefined ?? []), `${stage.id}:${key}`] });
+        app.emit({ type: "changed", entity: "item", id: item.id });
+        next.push({ ...outcome, delivery: "已补到原阶段卡片" });
+        continue;
+      }
+      if (stage.askId) cancelAsk(app, stage.askId, "对账补齐了这一段的最新卡点");
+      createAsk(app, { runId: r.id, userId: item.userId, allowText: true, question: stageCardText(card),
+        options: [...blockerOptions(definition, stage), ...(maySend ? [{ label: "把草稿发到群里" }] : [])],
+        context: { handler: HANDLER, itemId: item.id, stageId: stage.id, startedAt: f.startedAt, key, action: s.action, stageCard: card, ...(maySend ? { chat: target, draft: s.draft } : {}) } });
+      app.emit({ type: "changed", entity: "item", id: item.id });
+      next.push({ ...outcome, delivery: s.draft ? "草稿等本人处理" : "最小一步等本人处理" });
     }
+    if (advance) await advanceFlowNow(app, item.id);
     setRunOutput(app, r.id, { reconcileResult: { summary: args.summary, next } });
     return next;
   });
@@ -224,8 +271,15 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
 
 registerAskHandler(HANDLER, async (app, ask, ctx) => {
   const choice = ask.options[ask.choice ?? -1]?.label;
-  if (choice !== "把草稿发到群里" && choice !== "我已处理") return;
   const id = String(ctx.itemId);
+  if (ask.stageCard && choice !== "把草稿发到群里") {
+    const { answerBlockerNow } = await import("./engine.ts");
+    const flow = itemFlow(app, id)!, stage = getStage(app, id, String(ctx.stageId));
+    await answerBlockerNow(app, flow, flow.definition.stages.find(d => d.id === stage.id)!, stage, ask, resumeInstruction(ctx.action));
+    app.emit({ type: "changed", entity: "item", id });
+    return;
+  }
+  if (choice !== "把草稿发到群里" && choice !== "我已处理") return;
   if (choice === "把草稿发到群里" && typeof ctx.chat === "string" && typeof ctx.draft === "string") {
     const { deliverLark } = await import("../channels/lark-send.ts");
     await deliverLark({ chatId: ctx.chat, runId: ask.runId, bot: "main" }, { text: ctx.draft });
@@ -244,7 +298,7 @@ export function reconcileReminder(app: App, f: ItemFlow, s: StageRow) {
   const result = json<{ summary?: string; next?: Next[] }>(last.keys, {});
   const pending = one<{ action: string }>(app.db, `select json_extract(context,'$.action') action from asks where status='pending' and ${forStage}
     and json_extract(context,'$.startedAt')=? and json_extract(context,'$.key')=? limit 1`, HANDLER, f.itemId, s.id, f.startedAt, stageKey(s));
-  const next = pending?.action ?? result.next?.find(n => n.stage === s.id)?.action;
+  const next = pending?.action ?? result.next?.find(n => n.stage === s.id && (!n.kind || n.kind === "owner"))?.action;
   return [`最近一次对账：${result.summary ?? last.outcome}`, next ? `最小一步：${next}` : ""].filter(Boolean).join("\n");
 }
 
@@ -283,7 +337,7 @@ registerHandler("flow-reconcile", async ctx => {
 ${f.definition.stages.filter(d => !focus || selected!.some(b => b.stageId === d.id)).map(d => {
         const s = rows.find(x => x.id === d.id)!;
         return `- ${JSON.stringify(d)}
-  ${s.state}；从 ${s.since} 到现在；等 ${s.waitingOn ?? "无"}；${truncate(s.note, 650)}；已有依据 ${s.evidence.join("、")}`;
+  ${s.state}；从 ${s.since} 到现在；等 ${s.waitingOn ?? "无"}；${s.control.externalRetry ? `已自动重试 ${s.control.externalRetry.attempts} 次${s.control.waitUntil ? `，下一次 ${s.control.waitUntil}` : ""}；` : ""}${truncate(s.note, 650)}；已有依据 ${s.evidence.join("、")}`;
       }).join("\n")}`,
       focus ? "" : await materialsBrief(app, itemId, item.userId, { compact: true }),
       objects.length ? `## 挂着的平台对象（逐个用 read_flow_object 重读）

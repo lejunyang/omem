@@ -17,6 +17,7 @@ import { audit, can } from "../auth/permissions.ts";
 import { readFlow } from "./definitions.ts";
 import { evidenceSchema } from "./plugin-signals.ts";
 import { changeStage, getStage, itemFlow, type FlowActor, type StageRow, type StageState } from "./store.ts";
+import { flowEvidenceLinks, stageCard, stageCardText } from "./stage-card.ts";
 
 export const gateChecksSchema = z.array(z.object({
   id: z.string().regex(/^[a-z][a-z0-9]*:[a-z][a-z0-9-]{0,47}$/),
@@ -188,9 +189,12 @@ export async function finishStage(app: App, itemId: string, stageId: string, sta
   }
   if (s.askId) cancelAsk(app, s.askId, "完成结果重新检查");
   const review: GateReview = { summary, refs, failed };
-  const ask = createAsk(app, { userId: "owner", runId: by.runId ?? null, question: `「${d.name}」被检查拦下，是否仍然通过？\n\n${failed.map(v => `${v.id}：${v.reason}`).join("\n")}`,
+  const card = stageCard(app, item, d, "blocked", { current: summary, problem: `有 ${failed.length} 项检查未通过。是否仍然通过？`,
+    plan: "没有确认前不继续；可以先处理检查指出的问题。",
+    evidence: [...failed.map(v => `${v.id}：${v.reason}`), flowEvidenceLinks(app, itemId, refs)].filter(Boolean).join("\n\n") });
+  const ask = createAsk(app, { userId: "owner", runId: by.runId ?? null, question: stageCardText(card), allowText: false,
     options: [{ label: "仍然通过" }, { label: "等处理" }], context: { handler: "flow-plugin-gate", itemId, stageId, completion: completion === "accepted" && d.needs.length && continuedUpstream(app,s) ? "continued" : completion,
-      logId: one<{id:number}>(app.db, "select max(id) id from item_stage_log")!.id } });
+      logId: one<{id:number}>(app.db, "select max(id) id from item_stage_log")!.id, stageCard: card } });
   changeStage(app, itemId, stageId, "blocked", { ...patch, askId: ask.id, waitingOn: "owner", control: { ...s.control, ...patch.control, gateReview: review, gateReviewResult: undefined } }, by,
     failed.map(v => `${v.id}：${v.reason}`).join("\n"), refs);
 }

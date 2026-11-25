@@ -29,6 +29,7 @@ export type StageControl = {
   confirmed?: boolean; reported?: boolean; feedback?: string;
   reminderAt?: string; reminders?: number;
   waitUntil?: string; tierFallback?: string[]; execution?: Execution; escalations?: number; escalated?: boolean;
+  externalRetry?: { attempts: number; instruction: string };
   budgetStartedAt?: string; usedMinutes?: number;
   runnerDeadline?: number;
   budgetExceeded?: boolean;
@@ -89,7 +90,8 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
     next.control = { ...next.control, reminders: 0, reminderAt: at };
     next.doneAt = state === "done" || state === "skipped" ? at : null;
   }
-  const name = f.definition.stages.find((s) => s.id === id)?.name ?? id;
+  const definition = f.definition.stages.find((s) => s.id === id);
+  const name = definition?.name ?? id;
   atomic(app, () => {
     run(app.db, `insert into item_stages(item_id,stage_id,state,attempt,entered_at,done_at,"by",waiting_on,evidence,note,ask_id,since,control,updated_at,round) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       on conflict(item_id,stage_id) do update set state=excluded.state,attempt=excluded.attempt,entered_at=excluded.entered_at,done_at=excluded.done_at,"by"=excluded."by",waiting_on=excluded.waiting_on,evidence=excluded.evidence,note=excluded.note,ask_id=excluded.ask_id,since=excluded.since,control=excluded.control,updated_at=excluded.updated_at,round=excluded.round`,
@@ -130,7 +132,10 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
   // What it handed the owner to open goes on the card as links, not only on the work page.
   const links = state === "done" || state === "blocked" ? (next.control.links ?? []).map((l) => `[${l.label.replace(/[[\]]/g, "")}](${l.url})`).join("　") : "";
   const text = [note ? cardText(note, state === "done" || state === "blocked" ? 3000 : 300) : "", links && `交给你看：${links}`].filter(Boolean).join("\n\n");
-  if (what && !asked) markProgress(app, itemId, { head: `「${name}」${what}`, note: text, announce: by.actor === "flow-reconcile" && (state === "done" || state === "skipped") }, state === "blocked" && ownerWait(next.waitingOn), images);
+  const byObject = definition?.by;
+  const study = definition?.tools?.includes("propose_directions") || typeof byObject === "object" && "object" in byObject && ["trials", "fixes"].includes(byObject.object);
+  const stageCardOwnsBlock = state === "blocked" && (next.control.gateReview || next.control.externalRetry && next.control.waitUntil || ownerWait(next.waitingOn) && !study);
+  if (what && !asked && !stageCardOwnsBlock) markProgress(app, itemId, { head: `「${name}」${what}`, note: text, announce: state === "done" && images.length > 0 || by.actor === "flow-reconcile" && (state === "done" || state === "skipped") }, state === "blocked" && ownerWait(next.waitingOn), images);
   return next;
 }
 

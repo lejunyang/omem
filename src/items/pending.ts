@@ -113,7 +113,7 @@ export async function pendingView(app: App, userId: string) {
   for (const [n, ask] of asks.entries()) {
     const { itemId, deadline } = askRows[n];
     const [group, label] = askCategory(ask);
-    add("ask", ask.id, group, label, ask.question, ask.createdAt, { askId: ask.id, href: `#/ui/${ask.id}`, ...(itemId && { itemId }), ...(deadline && { deadline }) });
+    add("ask", ask.id, group, label, ask.stageCard ? `${ask.stageCard.title} · ${ask.stageCard.itemTitle}` : ask.question, ask.createdAt, { askId: ask.id, href: ask.stageCard ? `#${ask.stageCard.flowUrl.split("#").at(-1)}` : `#/ui/${ask.id}`, ...(itemId && { itemId }), ...(deadline && { deadline }) });
   }
 
   const gates = rows<{ itemId: string; title: string; flowName: string; stageId: string; name: string; state: string; since: string; askId: string | null }>(
@@ -125,7 +125,7 @@ export async function pendingView(app: App, userId: string) {
        and (s.state='gated' or s.waiting_on='owner' or (s.state='doing' and s."by"='owner'))
      order by s.since limit 100`, userId)
     .map(r => ({ itemId: r.itemId, title: r.title, flowName: r.flowName ?? "", stage: { id: r.stageId, name: r.name ?? r.stageId, state: r.state }, since: r.since, askId: r.askId }));
-  for (const g of gates) if (!g.askId || !askIds.has(g.askId))
+  for (const g of gates) if ((!g.askId || !askIds.has(g.askId)) && !actions.some(a => a.via === "ask" && a.href === `#/items/${g.itemId}/flow?stage=${encodeURIComponent(g.stage.id)}`))
     add("stage", `${g.itemId}:${g.stage.id}`, "work", "流程", `${g.title} · ${g.stage.name}`, g.since, { itemId: g.itemId });
 
   const changes = rows<Parameters<typeof changeLite>[1]>(`select ${CHANGE_COLS} from item_changes c join items i on i.id=c.item_id

@@ -2671,6 +2671,7 @@ def({
 def({
   name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段不会直接完成，而是变成一个问本人的确认。blocked：做不下去，waiting_on 写等谁或等什么；等本人看、改或确认某份东西（表格、文档、预览页）时，把它的地址放进 links，卡片上直接能点开；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：这一段不需要，写原因；要本人确认或由本人承担的阶段不能由你跳过，把理由告诉本人。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), links: z.array(z.object({ label: z.string().trim().min(1).max(80).describe("一句话说是什么，如“埋点核对表”"), url: z.string().trim().max(2000).describe("http(s) 地址") })).max(10).optional().describe("要本人打开的产物：表格、文档、预览页。传了就替换这一段之前交的链接，传空数组清掉"), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional(),
+    retry_at: z.string().min(1).max(40).optional().describe("仅 blocked：暂时等外部恢复时填带时区的 ISO 8601 最早重试时间；note 写已做的步骤和最后的错误，宿主最多自动重试三次，到上限才问本人。"),
     already_resolved: z.boolean().optional().describe("只供流程对账：确有依据说明卡住或等开始的助手阶段已在别处完成或被现实越过时，随 done / skip 补记，不再问要不要开始。note 写谁做了什么，evidence 附依据。不能替本人拍板或绕过宿主检查。") }), handler: async (ctx, a) => {
     checkBrief(a.note, "note ");
     flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.evidence ?? [], a.item);
@@ -2697,12 +2698,13 @@ def({
   },
 });
 def({
-  name: "submit_flow_reconcile", description: "交一行对账结论（summary）。目的已达成或不再成立时用 finish（reason、evidence、可选 close_item），停止流程，不开下一轮、不问本人；不要同时交 steps。否则可交最多五个卡住阶段的最小动作（steps）：找别人时填 person、draft、要发到的关联群 chat；本人可在卡片上直接发草稿，已有自动回复授权时由机器人直接发。只有本人能做时只填 stage、action。没有变化只交结论，不通知。",
+  name: "submit_flow_reconcile", description: "交一行结论。目的已达成或不再成立用 finish（reason、evidence、可选 close_item），不与 steps 同交。每个卡住阶段最多一个下一步：external（等外部恢复，填 retry_at 和恢复后核对什么）、assistant（原助手能完成，action 写具体指示）、owner（只有本人有权限或需要本人决策，why_owner 写明原因，action 写最小的一步）。有依据就填 evidence；要本人代联系时可附 person、draft、关联群 chat。已有自动回复授权时机器人经关联群发。没变化不交 steps，不通知。",
   write: true, schema: reconcileResultSchema,
   handler: async (ctx, a) => {
     if (ctx.role !== "flow-reconcile" || !ctx.runId) throw new HttpError(403, "只有对账运行可以交结论");
     const item = flowItem(ctx, a.item, "flow");
     if (a.finish) await flowRefs(ctx, a.finish.evidence, a.item);
+    for (const step of a.steps ?? []) if (step.evidence?.length) await flowRefs(ctx, step.evidence, a.item);
     const next = await (await import("../flows/reconcile.ts")).submitReconcile(ctx.app, getRun(ctx.app, ctx.runId), a, item.userId,
       (chat, draft) => larkPost({ ...ctx, larkChats: [chat], larkDraft: false }, { chat_id: chat }, { text: draft }));
     return JSON.stringify({ ok: true, next });
