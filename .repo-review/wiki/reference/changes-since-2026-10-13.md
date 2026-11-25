@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-25
 ---
 
+## 插件凭据的登录卡片就地收尾（2026-11-25）
+
+`credentials.ts` 的 `startCredentialLogin` 发出的“omem 正在为你登录 …”带 `tone: "warning"`（黄色），记下通知 id；登录结束时 `settleLoginCard` 用 `replaces` 改同一张卡片：完成为绿色“已登录”，过期、失败或取消为“没有登录成功”并写上插件给的原因，链接换成 `loginLink`（打开即重新登录），旧通知的 `link` 清空，网页通知里不再留着失效的官方链接。登录进行中 `reminder` 不另发“过期 / 失败”；`expireCommandCredential` 排在登录后面执行时，若登录在命令报错之后完成（`loggedInAt`）就不再把新登录标成过期。插件登录失败的原因写进日志。插件的 `check` 可返回 `expiresAt: null` 清掉记下的到期时间（自己续签短期令牌的工具用，免得按短期令牌提醒“三天内到期”或判过期）。
+
 ## 网页：预查库、先看一眼、情境和新的待处理（2026-11-25）
 
 - 规则页加“预查”页签（`/rules/probes`，`web/src/views/Probes.vue`）：列表、编辑、删除和试跑（没保存的代码也能试）。“交给 Agent”动作和关注、情境共用 `components/FirstLookFields` 设“先快速看一眼”、预查和第一条发到哪；规则可加“预查”动作；情境生成的规则只读并链回情境。

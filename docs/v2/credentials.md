@@ -43,7 +43,7 @@ api.credential({
   login(ctx, show): Promise<{ user: string; expiresAt?: number }>,   // show({ url, code? })：给这个人看的授权链接
   ownerLogin?(ctx, show): Promise<{ user: string; expiresAt?: number }>,  // 本人在这台机器上的登录，走工具自己的官方流程（ctx.home 是本机 HOME，不能写 secret）；没有它时本人只能在本机登录
   refresh?(ctx): Promise<{ expiresAt?: number } | null>,              // null：续不了，要重新登录
-  check?(ctx): Promise<{ state: "ok" | "expired" | "missing"; user?: string; expiresAt?: number }>,  // 只读
+  check?(ctx): Promise<{ state: "ok" | "expired" | "missing"; user?: string; expiresAt?: number | null }>,  // 只读；expiresAt 不写时沿用已知的，null 清掉
   logout?(ctx): Promise<void>,
   provide?(ctx): Promise<void>,     // 登录和每次续签后调用：把凭据写到这个人账号目录里各工具认的位置
   provides: {
@@ -140,7 +140,7 @@ R 缺少有效持有时，宿主先按运行身份检查操作规则，再匹配
 
 本机登录供 AI 后端和只读命令借用。没有 `check`、尚未检查、初次检查抛错或超时，都沿用本人的出借设置。检查失败会在持有上记下错误，同一份持有每天只提醒一次。明确返回 `missing` 或 `expired` 后停止出借，后续检查失败仍保留该状态，直到检查确认登录恢复。命令代跑仍须匹配只读声明并由资源服务实时确认发起人的读取权。插件重新登记后，宿主在下一分钟重查。
 
-宿主通过插件的只读 `check` 检查本机登录，续签由本机登录工具负责。`check` 返回的 `expiresAt` 要写本机登录真正失效的时间（例如 refresh token 的到期），不要写一两个小时的短期令牌的到期，否则过了那个时间宿主就当本人的登录已过期，要等第二天的检查才恢复，这期间成员借不到。
+宿主通过插件的只读 `check` 检查本机登录，续签由本机登录工具负责。`check` 返回的 `expiresAt` 要写本机登录真正失效的时间（例如 refresh token 的到期），不要写一两个小时的短期令牌的到期，否则刚登录就提醒“三天内到期”，过了那个时间宿主还会当登录已过期，要等第二天的检查才恢复，这期间成员借不到。工具自己用刷新令牌续短期令牌、又不知道刷新令牌何时失效时，`login` / `refresh` 不写 `expiresAt`，`check` 返回 `expiresAt: null`（清掉之前记下的到期时间），刷新令牌真的失效时由命令的结果分类（`outcomes`）报出。
 
 ## 第二期已接入的命令结果
 

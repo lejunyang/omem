@@ -82,7 +82,11 @@ export type CredentialDef = {
   /** 10 minutes before `expiresAt` (at most once a minute) and when the person presses 检查: the new `expiresAt`, or null to ask them to log in again. */
   refresh?(ctx: CredentialContext): Promise<{ expiresAt?: number } | null>;
   /** Read-only: is this person still logged in? */
-  check?(ctx: CredentialContext): Promise<{ state: "ok" | "expired" | "missing"; user?: string; expiresAt?: number }>;
+  /**
+   * `expiresAt`: when the login itself ends. Leave it out of login and refresh results, and give null here,
+   * when the tool renews a short-lived token on its own (omem then neither reminds nor marks it expired by date).
+   */
+  check?(ctx: CredentialContext): Promise<{ state: "ok" | "expired" | "missing"; user?: string; expiresAt?: number | null }>;
   /** When they log out (revoke what you hold); omem removes the secret and the declared state directories afterwards. */
   logout?(ctx: CredentialContext): Promise<void>;
   /** After a login or a refresh: write the credential where this person's tools look for it. */

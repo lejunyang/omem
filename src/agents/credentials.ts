@@ -25,7 +25,9 @@ const THREE_DAYS = 3 * 86400_000;
 const COMMAND_EXPIRED = "命令报告登录已失效，需要重新登录";
 const loginResult = z.object({ user: z.string().trim().min(1).max(200), expiresAt: z.number().finite().positive().optional() }).strict();
 const refreshResult = loginResult.omit({ user: true });
-const checkResult = refreshResult.extend({ state: z.enum(["ok", "expired", "missing"]), user: z.string().trim().min(1).max(200).optional() });
+// `expiresAt: null`: no expiry worth showing (the tool renews a short-lived token itself); left out keeps the one known.
+const checkResult = refreshResult.extend({ state: z.enum(["ok", "expired", "missing"]), user: z.string().trim().min(1).max(200).optional(),
+  expiresAt: z.number().finite().positive().nullable().optional() });
 const sharingSchema = z.object({ scope: z.enum(["self", "members", "all"]), members: z.array(z.string()).max(200).default([]) }).strict();
 export type CredentialSharing = z.infer<typeof sharingSchema>;
 type Provision = { backends: string[]; commands: string[]; paths: string[] };
@@ -206,7 +208,8 @@ export const canStartLogin = (app: App, id: string, m: CredentialMethod) => id =
 export const loginLink = (kind: string) => `#/account?login=${encodeURIComponent(kind)}`;
 function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | "expiring" | "failed") {
   const hold = credentialHold(app, id, m.kind), today = day(app);
-  if (hold.notified[state] === today) return;
+  // A login is under way: its own card says how it ends.
+  if (hold.notified[state] === today || logins.has(keyOf(app, id, m.kind))) return;
   const startable = canStartLogin(app, id, m);
   notify(app, { userId: id, title: `${m.name} ${state === "expired" ? "登录过期了" : state === "failed" ? "授权或检查失败" : "三天内到期"}`,
     body: startable ? `打开这条通知会开始重新登录 ${m.name}，在官方页面确认即可。${id === OWNER ? "" : "此前的账号文件会保留。"}`
@@ -216,9 +219,11 @@ function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | 
 }
 /** `remind` false: the caller asks them itself (inviteCredential), with the login link. */
 export function expireCommandCredential(app: App, id: string, m: CredentialMethod, remind = true) {
-  return serial(keyOf(app, id, m.kind), async () => {
+  const key = keyOf(app, id, m.kind), reported = Date.now();
+  return serial(key, async () => {
     const hold = credentialHold(app, id, m.kind);
-    if (!canCheck(id, hold.state) || m.signal.aborted) return;
+    // A login that finished after the command failed replaced the login it failed with.
+    if (!canCheck(id, hold.state) || m.signal.aborted || (loggedInAt.get(key) ?? 0) >= reported) return;
     save(app, id, m.kind, { ...hold, state: "expired", refreshAt: undefined, error: COMMAND_EXPIRED });
     if (remind) reminder(app, id, m, "expired");
   });
@@ -256,8 +261,10 @@ function remindHold(app: App, id: string, m: CredentialMethod) {
   else if (s.state === "logged-in" && s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS) reminder(app, id, m, "expiring");
 }
 type LoginReply = { url?: string; code?: string; done?: boolean };
-type Pending = { method: CredentialMethod; abort: AbortController; reply: Promise<LoginReply>; url?: string; code?: string };
+type Pending = { method: CredentialMethod; abort: AbortController; reply: Promise<LoginReply>; url?: string; code?: string; notice?: string };
 const logins = new Map<string, Pending>();
+/** When each hold's last login through omem finished (expireCommandCredential). */
+const loggedInAt = new Map<string, number>();
 /** `why`: said before the link when omem starts the login on its own (inviteCredential). */
 export function startCredentialLogin(app: App, id: string, kind: string, why?: string, notifyPrivate = true): Promise<LoginReply> {
   const m = requireCredential(kind);
@@ -286,8 +293,8 @@ export function startCredentialLogin(app: App, id: string, kind: string, why?: s
         const l = z.object({ url: z.httpUrl().max(2000), code: z.string().max(64).optional() }).parse(link);
         p.url = l.url; p.code = l.code;
         // The card opens the official page itself: no stop at the account page on the way.
-        if (notifyPrivate) notify(app, { userId: id, title: `omem 正在为你登录 ${m.name}`,
-          body: `${why ? why + "\n" : ""}打开链接${l.code ? `，验证码 ${l.code}` : ""}，在官方页面确认。11 分钟内完成授权${credentialWaits(app, id, kind).length ? "，完成后助手会接着做刚才的事" : ""}。`, link: l.url, urgency: "urgent" });
+        if (notifyPrivate) p.notice = notify(app, { userId: id, title: `omem 正在为你登录 ${m.name}`, tone: "warning",
+          body: `${why ? why + "\n" : ""}打开链接${l.code ? `，验证码 ${l.code}` : ""}，在官方页面确认。11 分钟内完成授权${credentialWaits(app, id, kind).length ? "，完成后助手会接着做刚才的事" : ""}。`, link: l.url, urgency: "urgent" }).id;
         answer(() => resolve(l));
       };
       const result = loginResult.parse(await untilAbort(signal, () => owner ? m.ownerLogin!(ctx, show) : m.login(ctx, show)));
@@ -295,22 +302,51 @@ export function startCredentialLogin(app: App, id: string, kind: string, why?: s
       signal.throwIfAborted();
       save(app, id, kind, { ...credentialHold(app, id, kind), ...result, suppliedBackends: m.provides.backends, expiresAt: result.expiresAt, state: "logged-in",
         refreshAt: owner ? undefined : refreshAt(result.expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined, notified: {} });
+      loggedInAt.set(key, Date.now());
+      settleLoginCard(app, id, m, p, "done");
       remindHold(app, id, m);
       credentialReady(app, id, kind, m.name);
       for (const backend of m.provides.backends) backendLoginReady(app, id, backend);
       answer(() => resolve({ done: true }));
-    } catch {
+    } catch (e) {
+      const reason = e instanceof Error ? e.message.replace(/\s+/g, " ").slice(0, 200) : "";
+      if (!signal.aborted) console.warn(`[omem] ${m.name} 登录没有完成（${id}）：${reason}`);
       if (!signal.aborted || timeout.aborted || !replied) {
         const hold = credentialHold(app, id, kind);
         // The owner's login on this machine is what it was: only the attempt failed.
         save(app, id, kind, { ...hold, ...(owner ? {} : { state: "expired" as const }), error: "授权或供给失败，请重新登录", checkedAt: now() });
-        if (notifyPrivate && (!owner || hold.state !== "logged-in")) reminder(app, id, m, "failed");
-      }
+        if (p.notice) settleLoginCard(app, id, m, p, timeout.aborted || abort.signal.aborted ? "expired" : "failed", signal.aborted ? "" : reason);
+        else if (notifyPrivate && (!owner || hold.state !== "logged-in")) reminder(app, id, m, "failed");
+      } else if (p.notice) settleLoginCard(app, id, m, p, "cancelled");
       answer(() => reject(new HttpError(502, signal.aborted ? "登录取消或超时，请重试" : "授权或供给失败，请重新登录")));
     } finally { clearTimeout(first); abort.abort(); if (logins.get(key) === p) logins.delete(key); }
   });
   return p.reply;
 }
+/**
+ * The login card says how this login ended, on the same card (green when done; otherwise its link is
+ * gone and opening it starts a new login), so an expired link is not left to be tried in Feishu or in
+ * the web list.
+ */
+function settleLoginCard(app: App, id: string, m: CredentialMethod, p: Pending, end: "done" | "expired" | "failed" | "cancelled", reason = "") {
+  const asked = p.notice;
+  if (!asked) return;
+  p.notice = undefined;
+  const again = canStartLogin(app, id, m);
+  const why = end === "expired" ? "授权链接已过期" : end === "failed" ? `授权没有完成${reason ? `（${reason}）` : ""}` : "这次登录已取消";
+  try {
+    notify(app, end === "done"
+      ? { userId: id, replaces: asked, tone: "done", title: `${m.name} 已登录`, body: "授权完成，之后用到它时直接用这次的登录。", link: null }
+      : { userId: id, replaces: asked, tone: "warning", title: `${m.name} 没有登录成功`, body: `${why}，原来的链接不能再用。${again ? "打开这条通知会重新发起登录。" : "请重新授权。"}`, link: again ? loginLink(m.kind) : "#/account" });
+    run(app.db, "update notifications set link = null where id = ?", asked);
+    if (end !== "done") {
+      const hold = credentialHold(app, id, m.kind);
+      // It already asks them to log in again: today's 过期 / 失败 reminders are this card.
+      save(app, id, m.kind, { ...hold, notified: { ...hold.notified, failed: day(app), expired: day(app) } });
+    }
+  } catch (e) { console.warn(`[omem] 更新 ${m.name} 的登录卡片失败：${(e as Error).message}`); }
+}
+
 export function refreshCredential(app: App, id: string, kind: string) {
   const m = requireCredential(kind);
   if (id === OWNER) return checkCredential(app, id, kind);
@@ -345,7 +381,7 @@ export function checkCredential(app: App, id: string, kind: string) {
     if (!m.check || !canCheck(id, s.state)) return s;
     try {
       const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, "check"))));
-      const expiresAt = result.state === "missing" ? undefined : result.expiresAt ?? s.expiresAt;
+      const expiresAt = result.state === "missing" || result.expiresAt === null ? undefined : result.expiresAt ?? s.expiresAt;
       let state: Hold["state"] = result.state === "missing" ? "missing" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in";
       // The same login on disk the service already turned down: still expired until a new login.
       const unchanged = s.state === "expired" && s.error === COMMAND_EXPIRED && expiresAt === s.expiresAt && (result.user ?? s.user) === s.user;
