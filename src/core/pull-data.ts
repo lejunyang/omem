@@ -19,6 +19,8 @@ export const pullTables: Table[] = [
   { name: "memory_folders", key: ["space_id", "path"], newer: "updated_at" },
   { name: "memories", key: ["id"], newer: "updated_at", local: ["embedding"] },
   { name: "items", key: ["id"], newer: "updated_at" },
+  { name: "item_chat_follow", key: ["item_id", "chat_id"], newer: "updated_at",
+    local: ["empty_batches", "last_batch", "checked_at", "clues", "evidence"] },
   { name: "flow_objects", key: ["id"], newer: "updated_at" },
   { name: "item_flows", key: ["item_id"], newer: "updated_at" },
   { name: "flow_gate_grants", key: ["flow_id", "stage_id", "user_id"], newer: "updated_at" },

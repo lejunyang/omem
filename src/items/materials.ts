@@ -3,13 +3,14 @@ import { canReadRun } from "../auth/permissions.ts";
 import { sourceReadable, sourceVisible } from "../auth/visibility.ts";
 import { requireItem } from "./access.ts";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError, json, now } from "../core/util.ts";
 import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { reqBrief, findReq, pathText, reqPath } from "./requirements.ts";
 import { addItemEvent, getItem } from "./store.ts";
 import { objectMaterialBrief } from "../flows/plugin-objects.ts";
+import { materialChat, setMaterialChatFollow } from "./chat-follow-state.ts";
 
 /**
  * What an item is about, kept with it (docs/v2/review.md §5.1): originals (documents, chats),
@@ -99,7 +100,7 @@ export async function prepareMaterials(app: App, list: MaterialInput[], userId: 
   for (const m of list) {
     if (m.kind === "source" && !(await sourceReadable(app, userId, normalize(m)))) throw new HttpError(403, "不能访问这份原件");
   }
-  return (itemId: string) => persistMaterials(app, itemId, list, userId, by, runId);
+  return (itemId: string) => withinTx(app.db, () => persistMaterials(app, itemId, list, userId, by, runId));
 }
 
 // References without a remote source can participate in a synchronous database transaction.
@@ -124,7 +125,15 @@ function persistMaterials(app: App, itemId: string, list: MaterialInput[], userI
     };
     const label = m.label?.trim() || r.title;
     run(app.db, `insert into item_materials(item_id, kind, ref, label, meta, added_by, created_at) values(?,?,?,?,?,?,?)
-      on conflict(item_id, kind, ref) do update set label = excluded.label, meta = excluded.meta`, itemId, m.kind, ref, label, JSON.stringify(meta), by, now());
+      on conflict(item_id, kind, ref) do update set label = excluded.label, meta = excluded.meta,
+      added_by = case when excluded.added_by='user' then 'user' else item_materials.added_by end`, itemId, m.kind, ref, label, JSON.stringify(meta), by, now());
+    const chat = materialChat(app, { kind: m.kind, ref });
+    if (chat) {
+      if (one(app.db, "select 1 from item_chat_follow where item_id=? and chat_id=? and state!='active'", itemId, chat))
+        setMaterialChatFollow(app, itemId, chat, "active");
+      else if (by === "user")
+        run(app.db, "update item_chat_follow set empty_batches=0 where item_id=? and chat_id=?", itemId, chat);
+    }
     added.push(toMaterial(one<Row>(app.db, "select * from item_materials where item_id = ? and kind = ? and ref = ?", itemId, m.kind, ref)!));
   }
   if (added.length) addItemEvent(app, itemId, "updated", `加入材料：${added.map((m) => m.label).join("、")}`, by, [], runId);
@@ -134,18 +143,22 @@ function persistMaterials(app: App, itemId: string, list: MaterialInput[], userI
 /** Remove by material id or by `kind:ref`. */
 export function removeMaterials(app: App, itemId: string, keys: (number | string)[], userId: string, by: "user" | "agent" = "agent") {
   requireItem(app, itemId, userId, "write");
-  const gone: string[] = [];
-  for (const key of keys) {
-    const row = typeof key === "number" || /^\d+$/.test(key)
-      ? one<Row>(app.db, "select * from item_materials where item_id = ? and id = ?", itemId, Number(key))
-      : one<Row>(app.db, "select * from item_materials where item_id = ? and kind = ? and ref = ?", itemId, key.split(":")[0], key.split(":").slice(1).join(":"));
-    if (!row) continue;
-    run(app.db, "delete from item_materials where id = ?", row.id);
-    if (row.kind === "conversation") run(app.db, "update conversations set settings=json_remove(settings,'$.itemId') where id=? and json_extract(settings,'$.itemId')=?", row.ref, itemId);
-    gone.push(row.label);
-  }
-  if (gone.length) addItemEvent(app, itemId, "updated", `移除材料：${gone.join("、")}`, by);
-  return gone.length;
+  return withinTx(app.db, () => {
+    const gone: string[] = [];
+    for (const key of keys) {
+      const row = typeof key === "number" || /^\d+$/.test(key)
+        ? one<Row>(app.db, "select * from item_materials where item_id = ? and id = ?", itemId, Number(key))
+        : one<Row>(app.db, "select * from item_materials where item_id = ? and kind = ? and ref = ?", itemId, key.split(":")[0], key.split(":").slice(1).join(":"));
+      if (!row) continue;
+      const chat = materialChat(app, row);
+      if (chat) setMaterialChatFollow(app, itemId, chat, "removed");
+      run(app.db, "delete from item_materials where id = ?", row.id);
+      if (row.kind === "conversation") run(app.db, "update conversations set settings=json_remove(settings,'$.itemId') where id=? and json_extract(settings,'$.itemId')=?", row.ref, itemId);
+      gone.push(row.label);
+    }
+    if (gone.length) addItemEvent(app, itemId, "updated", `移除材料：${gone.join("、")}`, by);
+    return gone.length;
+  });
 }
 
 /** Materials with their current state, limited to what this reader may see. */

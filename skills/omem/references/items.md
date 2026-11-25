@@ -13,6 +13,7 @@
 - `list_items(space: "*")` 在本次可发现空间内查已有事项，查询在分页前限定空间；`read_item(item_id)` 返回一件事的全貌：完整事项、时间线、材料、工作文件、`places`（它在哪些会话和群里进行，每处最近的一句话或摘要）和 `runs`（碰过它、或在它的会话里正在进行的运行）。
 - 一个需求这类要反复回来看的事，用 `upsert_item` 的 `materials_add`（`kind`：source 原件 / conversation 会话 / repo 仓库加 `branch` / space 空间 / run 运行 / req 需求点，可写 `note`）把文档、群聊、分支、要对照的仓库和这次要做的需求点挂上，`materials_remove` 移除；只改材料不会动事项本身。
 - 会话和群聊材料就是“这件事在哪里进行”：运行用 `upsert_item` 写了事项，宿主自动把它关联到这次运行所在的会话或群（结果里会说关联到了哪里）；同一件事在别的会话里也在谈，用 `materials_add`（`conversation` 或群聊原件 `source`）关联过去，不是同一件事用 `materials_remove` 取消。任务后面的“可能是同一件事的在办事项”是宿主按引用、链接或单号、人和共同的词猜的，读过确认再关联。
+- 跟进会自动找正在谈这件事的会话。用 `materials_remove` 移除某个聊天材料后，它不会被自动挂回；要恢复就显式 `materials_add`。助手自动放下的群仍在材料里，显式加一次可重新开始跟进。
 - 事项会自己收尾：一段时间没有新进展会变成 `expired`（`list_items` 的 active 不含它）。工作线和显示成线的顶层事项不过期：它们先进入观察，观察期满没有新问题由宿主结束（`read_item` 里 `item.phase`、`item.watchUntil`；结束后的收尾小结在 `item.now.summary`）。新材料和一件已过期的事项有关时用 `list_items(status: "expired")` 找到它再 `upsert_item` 记进展，它会重新打开，不要另建；不用为了“一直没动静”去关事项。
 - 后台 ingest 的事项发现可覆盖本人可访问空间，普通原件检索与写权限仍保持原范围。
 

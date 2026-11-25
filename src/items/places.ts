@@ -2,12 +2,13 @@ import { canAccessRun, runAudience } from "../auth/permissions.ts";
 import { runPredicate } from "../auth/run-scope.ts";
 import { restrictedSourceFilter } from "../auth/visibility.ts";
 import type { App } from "../core/app.ts";
-import { all, one } from "../core/db.ts";
+import { all, one, withinTx } from "../core/db.ts";
 import { json, truncate } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { chatName, conclusionOf, scopeOf } from "../agents/run-scope.ts";
 import { itemScope } from "./access.ts";
-import { addMaterials } from "./materials.ts";
+import { prepareMaterials } from "./materials.ts";
+import { chatFollowChoices, materialChat } from "./chat-follow-state.ts";
 import { getItem, toItem, type Item, type ItemRow } from "./store.ts";
 
 /**
@@ -53,10 +54,20 @@ export async function linkRunPlaces(app: App, runId: string, itemId: string, use
   if (item.userId !== userId) return [];
   const linked: Place[] = [];
   for (const p of placesOfRun(app, runId)) {
-    if (one(app.db, "select 1 from item_materials where item_id = ? and kind = ? and ref = ?", itemId, p.kind, p.ref)) continue;
+    const skip = () => {
+      if (one(app.db, "select 1 from item_materials where item_id = ? and kind = ? and ref = ?", itemId, p.kind, p.ref)) return true;
+      const chat = materialChat(app, p);
+      return chat && (chatFollowChoices(app, itemId).dropped.has(chat) ||
+        !!one(app.db, "select 1 from item_chat_follow where item_id=? and chat_id=? and state!='active'", itemId, chat));
+    };
+    if (skip()) continue;
     try {
-      await addMaterials(app, itemId, [{ kind: p.kind, ref: p.ref, note: `运行 ${runId} 在这里处理过这件事（自动关联）` }], userId, "agent");
-      linked.push(p);
+      const attach = await prepareMaterials(app, [{ kind: p.kind, ref: p.ref, note: `运行 ${runId} 在这里处理过这件事（自动关联）` }], userId, "agent");
+      withinTx(app.db, () => {
+        if (skip()) return;
+        attach(itemId);
+        linked.push(p);
+      });
     } catch {
       // Not the item owner's conversation, or a space they cannot read: no link.
     }

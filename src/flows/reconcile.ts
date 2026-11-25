@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { reconcileResultSchema } from "./reconcile-schema.ts";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError, json, now, truncate, webLink } from "../core/util.ts";
 import { notify } from "../core/notify.ts";
 import { canWrite, OWNER, personalSpaceId } from "../core/users.ts";
@@ -17,7 +17,8 @@ import { getItem, isClosed, upsertItem, type Item } from "../items/store.ts";
 import { rootOf } from "../items/tree.ts";
 import { itemContext } from "../channels/listen.ts";
 import { itemChats } from "../channels/listen-items.ts";
-import { followLimit, reconcileChatLines } from "./follow.ts";
+import { reconcileChatLines } from "./follow.ts";
+import { extraFollowNote, followLimit } from "./follow-budget.ts";
 import { itemObjects, refreshObject } from "./plugin-objects.ts";
 import { changeStage, getStage, itemFlow, itemStages, markProgress, type FlowActor, type ItemFlow, type StageRow } from "./store.ts";
 import { itemFlowSpaces } from "./spaces.ts";
@@ -41,7 +42,7 @@ const latest = (app: App, f: ItemFlow, completed = false, patrolOnly = false) =>
 
 function changesSince(app: App, id: string, since: string, through: string, limit: number) {
   return all<{ updated_at: string; type: string; status: string; summary: string; refs: string }>(app.db, `select c.updated_at,c.type,c.status,c.summary,c.refs
-    from item_changes c left join runs r on r.id=c.run_id where c.item_id=? and c.updated_at>? and c.updated_at<=?
+    from item_changes c left join runs r on r.id=c.run_id where c.item_id=? and c.updated_at>? and c.updated_at<=? and c.origin!='context'
       and coalesce(r.kind,'') not in ('flow-reconcile','flow-blocker-check') order by c.updated_at desc limit ?`, id, since, through, limit);
 }
 
@@ -57,18 +58,20 @@ export function reconcileTarget(app: App, id: string, exceptRun?: string) {
 
 type Target = NonNullable<ReturnType<typeof reconcileTarget>>;
 
-function enqueueReconcile(app: App, { f, item }: Target, since: string, through: string, focus?: FocusedReconcile) {
-  const spaces = itemFlowSpaces(app, item);
-  if (focus?.facts.some(fact => fact.unlinked)) spaces.push(personalSpaceId(item.userId));
-  const r = createRun(app, { kind: "flow-reconcile", spaceId: item.spaceId, lane: itemFollowLane(item.id), userId: item.userId,
-    title: `对账：${truncate(item.title, 60)}`, trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name } },
-    input: { itemId: item.id, startedAt: f.startedAt, round: f.round, since, through, spaces: [...new Set(spaces)],
-      ...(item.userId !== OWNER ? { ownAccountOnly: true } : {}), ...(focus ? { focus } : {}) } });
-  const keys = { startedAt: f.startedAt, runId: r.id, ...(focus ? { focused: true, reviewId: focus.reviewId,
-    decisions: focus.decisions, interval: focus.interval, ownerAction: focus.ownerAction } : {}) };
-  run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,'reconcile',?,?,'',?)", through, JSON.stringify(keys), item.id,
-    focus ? `已排队，先核对${focus.blockers.map(b => `「${b.name}」`).join("、")}` : "已排队，等对账");
-  return r;
+function enqueueReconcile(app: App, { f, item }: Target, since: string, through: string, focus?: FocusedReconcile, extra = false) {
+  return withinTx(app.db, () => {
+    const spaces = itemFlowSpaces(app, item);
+    if (focus?.facts.some(fact => fact.unlinked)) spaces.push(personalSpaceId(item.userId));
+    const r = createRun(app, { kind: "flow-reconcile", spaceId: item.spaceId, lane: itemFollowLane(item.id), userId: item.userId,
+      title: `对账：${truncate(item.title, 60)}`, trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name } },
+      input: { itemId: item.id, startedAt: f.startedAt, round: f.round, since, through, spaces: [...new Set(spaces)],
+        ...(item.userId !== OWNER ? { ownAccountOnly: true } : {}), ...(focus ? { focus } : {}) } });
+    const keys = { startedAt: f.startedAt, runId: r.id, ...(extra ? { extra: true } : {}), ...(focus ? { focused: true, reviewId: focus.reviewId,
+      decisions: focus.decisions, interval: focus.interval, ownerAction: focus.ownerAction } : {}) };
+    run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,'reconcile',?,?,'',?)", through, JSON.stringify(keys), item.id,
+      focus ? `已排队，先核对${focus.blockers.map(b => `「${b.name}」`).join("、")}` : extra ? `已排队，等对账。${extraFollowNote}` : "已排队，等对账");
+    return r;
+  });
 }
 
 export function queueFocusedReconcile(app: App, target: Target, at: Date, focus: FocusedReconcile) {
@@ -78,7 +81,9 @@ export function queueFocusedReconcile(app: App, target: Target, at: Date, focus:
 /** Called by the patrol under the item's flow lock; the run itself occupies a normal background slot. */
 export function queueReconcile(app: App, id: string, at: Date, deliveryOnly = false, exceptRun?: string) {
   const target = reconcileTarget(app, id, exceptRun);
-  if (!target || followLimit(app, id, at).capped || target.stages.every(s => s.state === "done" || s.state === "skipped")) return;
+  if (!target || target.stages.every(s => s.state === "done" || s.state === "skipped")) return;
+  const limit = followLimit(app, id, at);
+  if (limit.capped) return;
   const { f, item, stages } = target;
   const last = latest(app, f);
   if (last && at.getTime() - Math.max(Date.parse(last.at), last.started_at ? Date.parse(last.started_at) : 0) < INTERVAL) return;
@@ -95,7 +100,7 @@ export function queueReconcile(app: App, id: string, at: Date, deliveryOnly = fa
     where m.item_id=? and (m.created_at>? and m.created_at<=? or s.updated_at>? and s.updated_at<=? or o.changed_at>? and o.changed_at<=? or o.revised_at>? and o.revised_at<=?) limit 1`, id, since, through, since, through, since, through, since, through)
     || itemChats(app, id).some(chat => one(app.db, `select 1 from lark_messages where chat_id=? and create_ms>? and create_ms<=? and sender_kind in ('user','owner') limit 1`, chat, Date.parse(since), at.getTime())));
   if (!changed) return;
-  return enqueueReconcile(app, target, since, through);
+  return enqueueReconcile(app, target, since, through, undefined, limit.extra);
 }
 
 function activeCheck(app: App, r: Run, itemId: string, userId?: string, allowEnded = false) {
@@ -339,8 +344,9 @@ export function reconcileReminder(app: App, f: ItemFlow, s: StageRow) {
 registerHandler("flow-reconcile", async ctx => {
   const { app, run: r } = ctx;
   const { itemId, since, through, focus } = asInput(r);
-  const writeOutcome = (outcome: string, data: Record<string, unknown> = {}) => run(app.db, `update flow_signals set outcome=?,keys=json_patch(keys,?)
-    where type='reconcile' and item_id=? and json_extract(keys,'$.runId')=?`, outcome, JSON.stringify(data), itemId, r.id);
+  const writeOutcome = (outcome: string, data: Record<string, unknown> = {}) => run(app.db, `update flow_signals
+    set outcome=? || case when json_extract(keys,'$.extra')=1 then ? else '' end,keys=json_patch(keys,?)
+    where type='reconcile' and item_id=? and json_extract(keys,'$.runId')=?`, outcome, `。${extraFollowNote}`, JSON.stringify(data), itemId, r.id);
   try {
     const { f, item } = activeCheck(app, r, itemId);
     const rows = itemStages(app, itemId);

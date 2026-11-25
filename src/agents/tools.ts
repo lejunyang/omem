@@ -2888,7 +2888,7 @@ def({
       parentLine = implicit ? `\n已挂到《${implicit.title}》下，不属于它的话用 parent: null 移出。` : parent ? `\n归到 ${parent}「${getItem(ctx.app, parent).title}」下面。` : "\n已从上层移出。";
     }
     const { addMaterials, removeMaterials } = await import("../items/materials.ts");
-    const added = materialsAdd?.length ? await addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
+    const added = materialsAdd?.length ? await addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, !existing && !onItsOwn ? "user" : ctx.actor) : [];
     const removed = materialsRemove?.length ? removeMaterials(ctx.app, item.id, materialsRemove, ctx.userId ?? OWNER, ctx.actor) : 0;
     const materialsLine = added.length || removed ? `\n材料：${added.length ? `加入 ${added.map((m) => `#${m.id} ${m.label}`).join("、")}` : ""}${added.length && removed ? "；" : ""}${removed ? `移除 ${removed} 项` : ""}` : "";
     // A problem worked through over several steps is worth keeping as a case (see roles/_common.md).

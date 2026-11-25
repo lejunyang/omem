@@ -17,6 +17,7 @@ import { CHANGE_TYPES, stepBrief, stepViews } from "./change-step-store.ts";
  * - `owner`: what the owner settled themselves;
  * - `line`: the line's own life (items/lifecycle.ts): it went into 观察, its watch was extended, it
  *   ended (with its closing summary) or opened again.
+ * - `context`: the host started or stopped following a chat (flows/follow-places.ts).
  *
  * - `meeting`: a decision, a to-do or an open question a meeting's summary handed in for an item it is
  *   linked to (agents/meeting-outcomes.ts);
@@ -48,7 +49,7 @@ import { CHANGE_TYPES, stepBrief, stepViews } from "./change-step-store.ts";
  * lines by a hash of their text (an edit that only moves them keeps the key). The row keeps who noted it
  * first (`origin`, `run_id`, `at`) and who added to it later (`added`).
  */
-export type ChangeOrigin = "follow" | "flow" | "metric" | "problem" | "owner" | "line" | "meeting" | "review" | "commit" | "member";
+export type ChangeOrigin = "follow" | "flow" | "metric" | "problem" | "owner" | "line" | "meeting" | "review" | "commit" | "member" | "context";
 export { CHANGE_TYPES } from "./change-step-store.ts";
 export type ChangeType = (typeof CHANGE_TYPES)[number];
 
@@ -218,7 +219,7 @@ function sameChange(rows: LedgerRow[], c: ChangeInput, summary: string): LedgerR
  */
 export function recordChange(app: App, c: ChangeInput): Recorded | null {
   if (!one(app.db, "select 1 from items where id = ?", c.itemId)) return null;
-  const cited = sourceKeys(app, c.refs ?? []).sort();
+  const cited = c.origin === "context" ? [] : sourceKeys(app, c.refs ?? []).sort();
   // A host event names itself: only that key finds the row (its evidence lines are kept, not matched on).
   const keys = [...new Set([...(c.source ? [c.source] : []), ...cited])];
   const match = c.source ? [c.source] : cited;

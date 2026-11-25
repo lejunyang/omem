@@ -867,6 +867,7 @@ export const configSchema = z.object({
           firstlook: z.number().min(0.5).max(0.99).default(DECISION_SCENES.firstlook.default),
           "notify-known": z.number().min(0.5).max(0.99).default(DECISION_SCENES["notify-known"].default),
           "flow-blocker": z.number().min(0.5).max(0.99).default(DECISION_SCENES["flow-blocker"].default),
+          "item-place": z.number().min(0.5).max(0.99).default(DECISION_SCENES["item-place"].default),
         }).optional(),
         /** The guest gatekeeper (lark-guest.ts) asks the decision model first. */
         gatekeeper: z.boolean().default(true),

@@ -55,7 +55,7 @@ const source = (app: App) => upsertSource(app, { spaceId: "personal", kind: "not
 describe("决策门槛和记录", () => {
   it("旧配置加载默认值；提供的门槛逐项校验", () => {
     const app = setup();
-    expect(app.config.ai.decision.thresholds).toEqual({ heartbeat: 0.6, watch: 0.6, follow: 0.6, meeting: 0.6, triage: 0.6, progress: 0.7, item: 0.6, firstlook: 0.7, "notify-known": 0.8, "flow-blocker": 0.7 });
+    expect(app.config.ai.decision.thresholds).toEqual({ heartbeat: 0.6, watch: 0.6, follow: 0.6, meeting: 0.6, triage: 0.6, progress: 0.7, item: 0.6, firstlook: 0.7, "notify-known": 0.8, "flow-blocker": 0.7, "item-place": 0.8 });
     for (const n of [0.49, 1, NaN]) expect(configSchema.safeParse({ ai: { decision: { thresholds: { triage: n } } } }).success).toBe(false);
   });
   it.each([0.41, 0.58, 0.59, 0.6, 0.8])("不用管的把握 %s 按门槛执行", async (p) => {
@@ -66,10 +66,10 @@ describe("决策门槛和记录", () => {
     expect(row(app, r.id)).toMatchObject({ choice: "ignore", taken: r.taken, threshold: 0.6, ref: "run-demo", by: "决策 · gpt-6-luna", label: null });
     if (r.lowered) expect(describeScene(r, { ignore: "不用管", notify: "简短提醒" })).toContain("把握不到 0.6，按简短提醒处理");
   });
-  it.each(["heartbeat", "watch", "follow", "meeting", "progress", "flow-blocker"] as const)("%s 的风险答案低于、等于门槛与谨慎答案", async (scene) => {
+  it.each(["heartbeat", "watch", "follow", "meeting", "progress", "flow-blocker", "item-place"] as const)("%s 的风险答案低于、等于门槛与谨慎答案", async (scene) => {
     const app = setup();
-    const risky = scene === "progress" || scene === "flow-blocker" ? "yes" : "no", cautious = risky === "yes" ? "no" : "yes";
-    const threshold = risky === "yes" ? 0.7 : 0.6;
+    const risky = ["progress", "flow-blocker", "item-place"].includes(scene) ? "yes" : "no", cautious = risky === "yes" ? "no" : "yes";
+    const threshold = scene === "item-place" ? 0.8 : risky === "yes" ? 0.7 : 0.6;
     expect((await record(app, scene, risky, { [risky]: threshold - 0.01 })).taken).toBe(cautious);
     expect((await record(app, scene, risky, { [risky]: threshold })).taken).toBe(risky);
     expect((await record(app, scene, cautious, { [cautious]: 0.51 })).taken).toBe(cautious);

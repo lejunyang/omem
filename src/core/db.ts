@@ -2503,6 +2503,13 @@ export const migrations: readonly string[] = [
   HOOK_INBOX_MIGRATION,
   HOOK_BODY_HASH_MIGRATION,
   SITUATION_SPEAKER_MIGRATION,
+  `create table item_chat_follow (
+     item_id text not null references items(id) on delete cascade,
+     chat_id text not null, state text not null default 'active',
+     empty_batches integer not null default 0, last_batch text,
+     after_ms integer not null default 0, checked_at integer, clues text,
+     evidence text, updated_at text not null, primary key(item_id,chat_id)
+   );`,
 ];
 
 export type Db = DatabaseSync;

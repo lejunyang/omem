@@ -14,7 +14,7 @@ import { testApp } from "./helpers.ts";
 const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground: number, noneChat: number, noneBackground: number]> = {
   "commit-claim": ["commit-claim", 4630, 4735, 2206, 2206],
   // The item-follow role now classifies actual next steps and records their completion conditions.
-  "item-follow": ["item-follow", 5978, 6083, 3576, 3576],
+  "item-follow": ["item-follow", 6004, 6109, 3602, 3602],
   // 实测：加上三种下一步的分法，以及本人自己做的阶段由对账认结果之后。
   "flow-reconcile": ["flow-reconcile", 6296, 6296, 3616, 3616],
   // Mid-round branch sync: the assistant passes `sync` and waits on the round, the coder calls sync_branch.

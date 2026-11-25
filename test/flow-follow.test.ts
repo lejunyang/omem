@@ -81,6 +81,7 @@ describe("流程上下文跟进", () => {
   });
   it("按配置时区数起过运行的批次，跨 UTC 日期仍属同一天；无关和上限提示不占额度", async () => {
     const t = await setup(); t.app.config.timezone = "America/Los_Angeles"; t.app.config.flows.follow.maxRunsPerDay = 2;
+    upsertItem(t.app, t.item.id, { dueAt: null }, "user");
     for (const [at, keys] of [
       ["2026-11-30T23:00:00.000Z", { runId: "first" }], ["2026-12-01T00:00:00.000Z", { runId: "second" }],
       ["2026-12-01T00:10:00.000Z", {}], ["2026-12-01T00:20:00.000Z", { capped: true }],

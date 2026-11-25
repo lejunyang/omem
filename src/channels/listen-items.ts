@@ -6,6 +6,7 @@ import { HttpError, truncate, zonedParts } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { getItem, isClosed, type Item } from "../items/store.ts";
 import { descendantIds, rootOf } from "../items/tree.ts";
+import { chatFollowStates, chatMaterials } from "../items/chat-follow-state.ts";
 import { itemContext, listContexts, saveContext, type ContextInput, type ListenContext, type ListenKnobs } from "./listen.ts";
 
 /**
@@ -24,25 +25,24 @@ import { itemContext, listContexts, saveContext, type ContextInput, type ListenC
 /** Chats that are no group (a private chat, a bot's): an item's 关注 never reads those. */
 const PRIVATE = new Set(["p2p", "bot", "own-bot"]);
 
-/** The groups an item goes on in, with those of everything under it, as its person may see them. */
-export function itemChats(app: App, itemId: string): string[] {
+/** The active material groups of the item and its descendants, before the owner's list edits. */
+function linkedItemChats(app: App, itemId: string): string[] {
   const item = getItem(app, itemId), allowed = accessibleSpaces(app, item.userId);
   const out = new Set<string>();
-  const ids = [itemId, ...descendantIds(app, itemId)];
-  for (const m of all<{ kind: string; ref: string }>(app.db, `select kind, ref from item_materials where item_id in (${ids.map(() => "?").join(",")}) and kind in ('source','conversation') order by id`, ...ids)) {
-    let chat: string | undefined;
-    if (m.kind === "source") {
-      const s = one<{ uri: string; space_id: string }>(app.db, "select uri, space_id from sources where id = ? and kind = 'chat' and deleted_at is null", m.ref);
-      if (s && (!allowed || allowed.includes(s.space_id)) && s.uri.startsWith("lark:oc_")) chat = s.uri.slice(5);
-    } else {
-      const c = one<{ channel: string; external_id: string | null; user_id: string }>(app.db, "select channel, external_id, user_id from conversations where id = ?", m.ref);
-      if (c && c.user_id === item.userId && c.channel.startsWith("lark") && c.external_id?.startsWith("oc_")) chat = c.external_id.split("#")[0];
-    }
-    if (!chat) continue;
+  const ids = [itemId, ...descendantIds(app, itemId, allowed ?? undefined)];
+  const states = new Map(ids.map(id => [id, chatFollowStates(app, id)]));
+  for (const { chat, item_id } of chatMaterials(app, ids, item.userId)) {
+    const state = states.get(item_id)?.get(chat)?.state;
+    if (state && state !== "active") continue;
     const kind = one<{ kind: string }>(app.db, "select kind from lark_cursors where chat_id = ?", chat)?.kind;
     if (!kind || !PRIVATE.has(kind)) out.add(chat);
   }
   return [...out];
+}
+
+export function itemChats(app: App, itemId: string): string[] {
+  const dropped = new Set(itemContext(app, rootOf(app, itemId))?.dropped);
+  return linkedItemChats(app, itemId).filter(chat => !dropped.has(chat));
 }
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
@@ -50,25 +50,26 @@ const same = (a: string[], b: string[]) => a.length === b.length && a.every((x) 
 /** The groups a matter's 关注 reads: its items' linked chats, with what the owner added there and without what they took out. */
 export function contextChats(app: App, itemId: string, c?: Pick<ListenContext, "added" | "dropped"> | null): string[] {
   const dropped = new Set(c?.dropped ?? []);
-  return [...new Set([...itemChats(app, itemId), ...(c?.added ?? [])])].filter((x) => !dropped.has(x));
+  return [...new Set([...linkedItemChats(app, itemId), ...(c?.added ?? [])])].filter((x) => !dropped.has(x));
 }
 
 /**
  * The owner sets which groups a matter's 关注 reads (the line page's 人和群, PUT /api/listen/:id, set_chat_watch):
- * what the items do not link is kept as added, what they link but is left out as dropped, so the next sync
- * with the items keeps the choice. An added group must be a group capture knows (not a private chat).
+ * Keep their additions and removals even if the backing materials change later.
+ * An added group must be a group capture knows (not a private chat).
  */
 export function itemChatsPatch(app: App, itemId: string, chats: string[]): { chats: string[]; added: string[]; dropped: string[] } {
   const want = [...new Set(chats.map((x) => x.trim()).filter(Boolean))];
-  const base = itemChats(app, itemId);
-  const added = want.filter((x) => !base.includes(x));
-  for (const chat of added) {
+  const base = linkedItemChats(app, itemId);
+  const prev = itemContext(app, itemId);
+  const added = want.filter(x => !base.includes(x) || prev?.added?.includes(x) || prev?.dropped?.includes(x));
+  for (const chat of added.filter(x => !base.includes(x))) {
     const kind = one<{ kind: string }>(app.db, "select kind from lark_cursors where chat_id = ?", chat)?.kind;
     const known = kind !== undefined || !!one(app.db, "select 1 from sources where uri = ? and kind = 'chat' and deleted_at is null", `lark:${chat}`);
     if (!/^oc_[\w-]+$/.test(chat) || !known) throw new HttpError(400, `没有采集过这个群：${chat}`);
     if (kind && PRIVATE.has(kind)) throw new HttpError(400, `${chat} 是私聊，关注只读群`);
   }
-  return { chats: want, added, dropped: base.filter((x) => !want.includes(x)) };
+  return { chats: want, added, dropped: [...new Set([...base, ...prev?.chats ?? [], ...prev?.dropped ?? []])].filter(x => !want.includes(x)) };
 }
 
 /** Make the item's 关注 or change it; its groups are always the item's (with the owner's additions and removals). */
@@ -107,6 +108,11 @@ export function syncItemContexts(app: App) {
   let changed = 0;
   for (const c of listContexts(app, { kind: "item", activeOnly: true })) if (syncItemContext(app, c) !== c) changed++;
   return changed;
+}
+
+export function syncFollowGroups(app: App, itemId: string) {
+  const c = itemContext(app, rootOf(app, itemId));
+  if (c?.status === "active") syncItemContext(app, c);
 }
 
 /**
