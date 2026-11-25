@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-25
 ---
 
+## 只给一个人看的群内卡片 @ 这个人（2026-11-25）
+
+- 关注的回复草稿、先看一眼、要本人批准的卡片在群里以“仅本人可见”发出，混在群消息里容易被划过去：一条草稿等了两小时没人看见。`sendEphemeral` 现在在卡片顶部 @ 收卡片的人（卡片里已经 @ 过的不重复）。`src/channels/lark-send.ts`；`test/lark-wiki.test.ts`。
+
 ## 先看一眼不在已有答复之上再答一遍（2026-11-25）
 
 - 关注的草稿等了两小时，同事催问的同时本人点了发送；先看一眼只看“这一批开始处理没有”，于是一分钟后又给本人一条说法不同的答复。现在开始时和发出第一条前都查：这几条进来后群里已有回复（`lark_sent` 的 answer，或本人自己发的）、或这个关注给这个群的草稿还在等本人（一天内），就让开并记 `yield:watch`，这几条留给这一批。`src/channels/listen-first-look.ts` 的 `answeredMeanwhile`、`src/rules/first-look.ts`；`test/first-look.test.ts`。

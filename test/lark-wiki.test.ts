@@ -592,6 +592,10 @@ describe("urgent and members-only messages", () => {
     const eph = sent.filter((s) => s.kind === "ephemeral");
     expect(eph.map((s) => s.args.data.open_id)).toEqual(["ou_wang", "ou_li"]);
     expect(eph[0].args).toMatchObject({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: "oc_team", msg_type: "interactive" } });
+    // A card only one person sees @s that person, each their own.
+    expect(JSON.stringify(eph[0].args.data.card)).toContain("<at id=ou_wang></at>");
+    expect(JSON.stringify(eph[1].args.data.card)).toContain("<at id=ou_li></at>");
+    expect(JSON.stringify(eph[1].args.data.card)).not.toContain("<at id=ou_wang></at>");
     expect((await callTool(allowed, "lark_send", { chat_id: "oc_team", text: "x", urgent: ["all"] })).text).toMatch(/不能用 all/);
   });
 });

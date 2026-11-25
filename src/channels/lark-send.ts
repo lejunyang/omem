@@ -500,7 +500,8 @@ const idField = (id: string) => (id.startsWith("ou_") ? "open_id" : "user_id");
  * call, both the bot and that person in the group; it cannot be a reply or open a topic).
  */
 export async function sendEphemeral(chatId: string, person: string, card: Record<string, unknown>, bot?: string | null): Promise<{ messageId: string }> {
-  const r = await larkClientFor(bot).request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card: larkCardMarkdown(card) } });
+  // A card only one person sees sits in the group's stream like any other message: it @s them, so it is not scrolled past.
+  const r = await larkClientFor(bot).request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card: larkCardMarkdown(Array.isArray((card.body as { elements?: unknown } | undefined)?.elements) ? mentionInCard(card, [person]) : card) } });
   const d = check(r, "发送仅部分人可见的卡片");
   reportSent({ chatId, bot, purpose: "card" }, null, d);
   return { messageId: d?.message_id };
