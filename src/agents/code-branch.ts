@@ -176,6 +176,7 @@ const idle = (app: App) => (id: string) => {
     const run = getRun(app, id);
     if (one(app.db, "select 1 from study_directions where workspace_run_id=?", id)) return false;
     const root = run.input.continueFrom ? getRun(app, String(run.input.continueFrom)) : run;
+    if (root.output.activeBranchSync) return false;
     if ((root.input as { peerCoder?: unknown }).peerCoder && !root.output.appliedAt && !root.output.discardedAt) return false;
     return !["queued", "running"].includes(run.status);
   } catch {
@@ -512,7 +513,7 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
   if (run.status !== "done") throw new HttpError(400, "只能确认已完成的交办");
   if (firstRun.output.appliedAt) throw new HttpError(409, "这次交办已经确认过");
   if (firstRun.output.discardedAt) throw new HttpError(409, "这次交办已经丢弃");
-  if ((firstRun.output.syncPending as unknown[] | undefined)?.length) throw new HttpError(409, "还有没处理完的 Git 冲突，先在提醒卡片里继续或放弃这次同步");
+  if (firstRun.output.activeBranchSync || (firstRun.output.syncPending as unknown[] | undefined)?.length) throw new HttpError(409, "还有没处理完的 Git 冲突，先在提醒卡片里继续或放弃这次同步");
   const every = ((firstRun.output.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits);
   if (opts.spaces) {
     const unknown = opts.spaces.filter((id) => !every.some((w) => w.space === id));
@@ -626,7 +627,7 @@ export async function settleCodeWorks(app: App) {
     const lastAt = list.reduce((t, x) => (x.at > t ? x.at : t), r.created_at);
     if (Date.now() - Date.parse(lastAt) < SETTLE_AFTER_MS) continue;
     const first = getRun(app, r.id);
-    if ((first.output.syncPending as unknown[] | undefined)?.length) continue;
+    if (first.output.activeBranchSync || (first.output.syncPending as unknown[] | undefined)?.length) continue;
     const wts = (first.output.worktrees ?? []) as WorktreeRef[];
     if (!wts.length) continue;
     const settle = (patch: Record<string, unknown>) => {

@@ -32,6 +32,8 @@ export const WORK_BOARD_TOOLS = ["dispatch_work", "work_status", "work_review", 
 
 export const ROLE_TOOLS = ["name_work_branch", "claim_commits", "note_item_change", "submit_item_step", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest", "submit_playbook", "review_reply_outcomes", "submit_line_state", "propose_lines", "meeting_outcomes", "read_flow_object", "submit_flow_reconcile", "update_situation", "propose_situation", "sync_assigned_item", "first_look_outcome"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
+ROLE_TOOLS.push("sync_branch");
+CORE_TOOLS.add("sync_branch");
 /**
  * A run allowed this few tools gets every one of them directly: a background role or profile
  * with an exact list just over the line otherwise spends a turn on omem_help for each tool it
@@ -65,7 +67,7 @@ export const TOOL_GROUPS: { capability: ToolCapability; id: string; label: strin
   { id: "coding", capability: "code.delegate", label: "编码交办与跟进", doc: "code", tools: ["propose_repo_lesson", "delegate_code", "review_branch", "share_review", "continue_code_run", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
   { id: "improve", capability: "code.delegate", label: "改进循环：度量、留下或回退", doc: "code", tools: ["improve_start", "improve_round", "improve_status"] },
   { id: "design", capability: "owner", label: "方案：读、评估别人的方案、确认", doc: "code", tools: ["read_design", "assess_design", "settle_design"] },
-  { id: "git", capability: "code.delegate", label: "代码仓库与 Git", doc: "code", tools: ["name_work_branch", "list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "code_history"] },
+  { id: "git", capability: "code.delegate", label: "代码仓库与 Git", doc: "code", tools: ["name_work_branch", "list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "code_history", "sync_branch"] },
   { id: "code-handin", capability: "code.delegate", label: "编码与评审角色交结果", doc: "code", tools: ["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "submit_brief", "submit_design"] },
   { id: "code-results", capability: "code.delegate", label: "编码的验证结果：截图、报告与测试结果", doc: "code", tools: ["attach_artifact", "report_tests"] },
   { id: "lark-msg", capability: "owner", label: "飞书消息与卡片", doc: "lark", tools: ["lark_send", "lark_react", "meeting_suggest", "lark_card", "lark_send_file", "lark_message_file", "lark_chat_history", "reply_to_asker"] },

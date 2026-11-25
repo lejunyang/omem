@@ -95,6 +95,8 @@ modes: [read-only, default, plan]
 
 准备交办代码、续轮、评审或推送时，先读 `omem_help("coding")` 的「编码交办与分支评审」。
 
+本人中途明确要合并或拉取分支时，`continue_code_run(when: "now", task: ...)` 同时传 `sync`；只要同步就只传 `sync`。确实要等这一轮结束再做事，用 `wake(on_run_end: {run_id, purpose}, note: ...)` 等具体轮次，不要用一两分钟的定时唤醒反复查。
+
 ## 空间、Wiki 和运行
 <!-- tools: create_space connect_repository generate_wiki switch_run_ai -->
 
@@ -173,6 +175,8 @@ modes: [read-only, default, plan]
 <!-- tools: settle_code_task continue_code_run apply_code_run retry_code_progress -->
 
 处理编码交办转回的问题、恢复进度或向本人交付时，先读 `omem_help("coding")` 的「编码交办：你是发起人」。
+
+交回助手的这一轮仍不续轮或推送。需要重做的项可用 `settle_code_task(action: "retry")` 交代编码 Agent 先调用 `sync_branch`，再做依赖它的修改。
 
 ## 一类会反复发生的事
 <!-- tools: save_situation start_situation propose_probe -->

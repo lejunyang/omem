@@ -86,12 +86,14 @@ git config core.fsmonitor false
 git config user.name omem
 git config user.email omem@localhost
 git merge-base --is-ancestor "$2" HEAD || { echo '成员提交没有从预期基点快进' >&2; exit 1; }
-git read-tree HEAD
-git add -A -- .
-if ! git diff --cached --quiet --; then
-  git -c gc.auto=0 commit -qm "$3"
-  cp /view/index /member/index.next
-  mv -fT /member/index.next /member/index
+if test "$5" != committed; then
+  git read-tree HEAD
+  git add -A -- .
+  if ! git diff --cached --quiet --; then
+    git -c gc.auto=0 commit -qm "$3"
+    cp /view/index /member/index.next
+    mv -fT /member/index.next /member/index
+  fi
 fi
 tip=$(git rev-parse --verify 'HEAD^{commit}')
 if test "$tip" != "$2"; then
@@ -100,7 +102,7 @@ if test "$tip" != "$2"; then
 fi
 `;
 
-function gitNamespace(state: State, root: string, readOnly = false) {
+function gitNamespace(state: State, root: string, readOnly = false, extra: string[] = []) {
   const support = sandboxSupport();
   if (!support.ok || !support.bwrap) throw new Error("接收成员提交需要可用的 bubblewrap");
   // The trusted binary and runtime libraries, the worktree, and the base objects are read-only.
@@ -110,13 +112,13 @@ function gitNamespace(state: State, root: string, readOnly = false) {
     ...["/usr", "/bin", "/lib", "/lib64"].flatMap(p => ["--ro-bind-try", p, p]), "--dev", "/dev", "--tmpfs", "/view",
     readOnly ? "--ro-bind" : "--bind", join(root, "git"), "/member", "--ro-bind", state.tree, "/work", "--ro-bind", join(state.common, "objects"), "/base",
     "--ro-bind", join(state.common, "objects"), join(state.common, "objects"),
-    "--chdir", "/work", "--"];
+    ...extra, "--chdir", "/work", "--"];
   return { file: support.bwrap, args };
 }
 
-async function exportPack(state: State, root: string, message: string, file: string) {
-  const ns = gitNamespace(state, root);
-  const args = [...ns.args, "/bin/sh", "-c", exportScript, "git-export", state.ref || "refs/heads/work", state.base, message, state.format];
+async function exportPack(state: State, root: string, message: string, file: string, committedOnly: boolean) {
+  const ns = gitNamespace(state, root, committedOnly);
+  const args = [...ns.args, "/bin/sh", "-c", exportScript, "git-export", state.ref || "refs/heads/work", state.base, message, state.format, committedOnly ? "committed" : "all"];
   const fd = openSync(file, "wx", 0o600);
   try {
     await new Promise<void>((ok, fail) => {
@@ -228,7 +230,43 @@ export async function inspectUnreceivedMemberGit(app: App, actor: string, space:
 
 const receiving = new Set<string>();
 
-export async function receiveMemberGit(app: App, actor: string, space: string, tree: string, message: string) {
+export function projectMemberSync(app: App, actor: string, space: string, tree: string, phase: "start" | "conflict" | "done" | "abort") {
+  const receipt = readState(app, actor, space);
+  if (!receipt) return;
+  const { root, file, state } = receipt;
+  if (realpathSync(tree) !== state.tree || state.renameTo || state.pending) throw new Error("成员工作树或分支正在交接，不能同步");
+  const args = ["--git-dir", state.admin, "--work-tree", state.tree];
+  const tip = checked(state.common, [...args, "rev-parse", "HEAD"]);
+  const ref = git(state.common, [...args, "symbolic-ref", "-q", "HEAD"]).stdout.trim();
+  if ((phase !== "conflict" || ref) && ref !== state.ref) throw new Error("同步没有停在交办自己的分支上");
+  const ns = gitNamespace(state, root, false, ["--ro-bind", join(state.admin, "index"), "/host-index"]);
+  const script = `
+set -eu
+test "$(cat /member/HEAD)" = "ref: $1" || { echo '成员工作区已切换分支' >&2; exit 1; }
+if test "$4" = start; then
+  rm -f /member/omem-sync-index
+  cp /member/index /member/omem-sync-index
+  exit
+fi
+git init -q --template= --bare --object-format="$3" /view
+export GIT_DIR=/view GIT_OBJECT_DIRECTORY=/member/objects GIT_ALTERNATE_OBJECT_DIRECTORIES=/base GIT_NO_REPLACE_OBJECTS=1
+rm -r /view/refs
+ln -s /member/refs /view/refs
+ln -s /member/packed-refs /view/packed-refs
+git update-ref --no-deref "$1" "$2"
+index=/host-index
+if test "$4" = abort && test -f /member/omem-sync-index; then index=/member/omem-sync-index; fi
+rm -f /member/index.next
+cp "$index" /member/index.next
+mv -fT /member/index.next /member/index
+if test "$4" != conflict; then rm -f /member/omem-sync-index; fi
+`;
+  const result = spawnSync(ns.file, [...ns.args, "/bin/sh", "-c", script, "git-sync", state.ref || "refs/heads/work", tip, state.format, phase], { encoding: "utf8", timeout: 10000 });
+  if (result.status !== 0) throw new Error(result.stderr?.trim() || "成员工作树没有接到同步结果");
+  if (phase === "done" || phase === "abort") save(file, { ...state, base: tip });
+}
+
+export async function receiveMemberGit(app: App, actor: string, space: string, tree: string, message: string, committedOnly = false) {
   const receipt = readState(app, actor, space);
   if (!receipt) return false;
   const { root, file, state } = receipt;
@@ -250,7 +288,7 @@ export async function receiveMemberGit(app: App, actor: string, space: string, t
     };
     verify();
     rmSync(pack, { force: true });
-    await exportPack(state, root, message, pack);
+    await exportPack(state, root, message, pack, committedOnly);
     if (!statSync(pack).size) {
       if (verify() !== state.base) throw new Error("成员分支与待接收的提交不一致");
       return true;

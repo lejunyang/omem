@@ -36,6 +36,7 @@ function identity(path: string) {
   return git(path, ["config", "user.email"]).stdout.trim() ? [] : ID;
 }
 const head = (path: string) => git(path, ["rev-parse", "HEAD"]).stdout.trim();
+const syncGit = (path: string, args: string[]) => git(path, ["-c", "core.hooksPath=/dev/null", "-c", "submodule.recurse=false", ...args]);
 
 /**
  * Pulling origin into a reused branch (`diffBase`, code-branch.ts) moves its comparison on to the
@@ -80,31 +81,53 @@ export function syncInProgress(path: string): SyncOperation | null {
   return null;
 }
 
-/** Only a regular file inside the checkout can be host-staged as a resolved text conflict. */
-function hasMarkers(root: string, file: string, size: number): boolean | undefined {
+function regularText(root: string, file: string): string | undefined {
   const path = join(root, file);
   if (!lstatSync(path, { throwIfNoEntry: false })?.isFile() || realpathSync(path) !== path) return;
-  return Array.from(readFileSync(path, "utf8").matchAll(/^(<+|>+|\|+) /gm)).some(m => m[1].length === size);
+  return readFileSync(path, "utf8");
+}
+
+const hasMarkers = (text: string, size: number) => Array.from(text.matchAll(/^(<+|>+|\|+) /gm)).some(m => m[1].length === size);
+
+function markerSizes(path: string, files: string[]) {
+  const sizes = new Map<string, number>();
+  for (let start = 0; start < files.length; start += 32) {
+    const attrs = git(path, ["check-attr", "-z", "conflict-marker-size", "--", ...files.slice(start, start + 32)]);
+    if (!attrs.ok) throw new Error(attrs.stderr);
+    const fields = attrs.stdout.split("\0");
+    for (let i = 0; i + 2 < fields.length; i += 3) sizes.set(fields[i], Number(fields[i + 2]) || 7);
+  }
+  return sizes;
+}
+
+export function markedConflicts(path: string, files: string[]) {
+  const root = realpathSync(path);
+  const sizes = markerSizes(path, files);
+  return files.filter(file => hasMarkers(regularText(root, file) ?? "", sizes.get(file) ?? 7));
+}
+
+export function stageResolvedConflicts(path: string, files: string[], marked: string[], resolved: string[] = []) {
+  const root = realpathSync(path);
+  const sizes = markerSizes(path, files);
+  const text = new Map(files.map(file => [file, regularText(root, file)]));
+  const remainingMarkers = files.filter(file => hasMarkers(text.get(file) ?? "", sizes.get(file) ?? 7));
+  const ready = [...new Set([...marked.filter(file => text.get(file) !== undefined), ...resolved])].filter(file => !remainingMarkers.includes(file));
+  if (ready.length) {
+    const result = git(path, ["--literal-pathspecs", "add", "-A", "--", ...ready]);
+    if (!result.ok) throw new Error(result.stderr);
+  }
+  for (const file of marked) {
+    if (text.get(file) !== undefined || ready.includes(file)) continue;
+    const staged = git(path, ["show", `:0:${file}`]);
+    if (staged.ok && hasMarkers(staged.stdout, sizes.get(file) ?? 7)) remainingMarkers.push(file);
+  }
+  return [...new Set([...unmerged(path), ...remainingMarkers])];
 }
 
 export async function resolveConflicts(path: string, files: string[], label: string, resolver: Resolver) {
-  const root = realpathSync(path);
-  const attrs = git(path, ["check-attr", "-z", "--stdin", "conflict-marker-size"], files.join("\0") + "\0");
-  if (!attrs.ok) throw new Error(attrs.stderr);
-  const fields = attrs.stdout.split("\0");
-  const sizes = new Map<string, number>();
-  for (let i = 0; i + 2 < fields.length; i += 3) sizes.set(fields[i], Number(fields[i + 2]) || 7);
-  const markers = (f: string) => hasMarkers(root, f, sizes.get(f)!);
-  const marked = files.filter(markers);
+  const marked = markedConflicts(path, files);
   await resolver(files, label);
-  const after = new Map(files.map(f => [f, markers(f)]));
-  const remainingMarkers = files.filter(f => after.get(f));
-  const ready = marked.filter(f => after.get(f) === false);
-  if (ready.length) {
-    const result = git(path, ["--literal-pathspecs", "add", "--", ...ready]);
-    if (!result.ok) throw new Error(result.stderr);
-  }
-  return [...new Set([...unmerged(path), ...remainingMarkers])];
+  return stageResolvedConflicts(path, files, marked);
 }
 
 /** The newest of a branch's local and origin copies: the remote one when the local is behind it. */
@@ -118,10 +141,10 @@ function freshest(root: string, name: string): { ref: string; commit: string } |
 }
 
 function start(path: string, op: SyncMode, commit: string) {
-  return op === "merge" ? git(path, [...identity(path), "merge", "--no-ff", "--no-edit", commit]) : git(path, [...identity(path), "rebase", "--rebase-merges", commit]);
+  return op === "merge" ? syncGit(path, [...identity(path), "merge", "--no-ff", "--no-edit", commit]) : syncGit(path, [...identity(path), "rebase", "--rebase-merges", "--no-update-refs", commit]);
 }
 function proceed(path: string, op: SyncOperation) {
-  return op === "merge" ? git(path, [...identity(path), "commit", "--no-edit"]) : git(path, [...identity(path), "-c", "core.editor=true", op, "--continue"]);
+  return op === "merge" ? syncGit(path, [...identity(path), "commit", "--no-edit"]) : syncGit(path, [...identity(path), "-c", "core.editor=true", op, "--continue"]);
 }
 
 /**
@@ -140,7 +163,7 @@ export async function finishSync(path: string, label: string, resolver: Resolver
     }
     const r = proceed(path, op);
     // Nothing left to commit in this step (the resolution took one side entirely): skip it.
-    if (!r.ok && op === "rebase" && !unmerged(path).length && /nothing to commit|empty/i.test(r.stderr + r.stdout)) git(path, ["-c", "core.editor=true", "rebase", "--skip"]);
+    if (!r.ok && op === "rebase" && !unmerged(path).length && /nothing to commit|empty/i.test(r.stderr + r.stdout)) syncGit(path, ["-c", "core.editor=true", "rebase", "--skip"]);
     else if (!r.ok && (op === "cherry-pick" || op === "revert") && !unmerged(path).length && git(path, ["diff", "--cached", "--quiet", "HEAD"]).ok) {
       const skip = git(path, [...identity(path), "-c", "core.editor=true", op, "--skip"]);
       if (!skip.ok && !unmerged(path).length && syncInProgress(path)) throw new HttpError(409, `${label}没能跳过空提交：${(skip.stderr || skip.stdout).slice(0, 600)}`);
@@ -165,7 +188,7 @@ async function step(path: string, op: SyncMode, target: { ref: string; commit: s
  * origin copy is what `pull` brings in). Returns the steps taken and, when conflicts were left,
  * where it stopped.
  */
-export async function syncWorktree(root: string, wt: WorktreeRef, req: SyncRequest, resolver: Resolver, status: (text: string) => void) {
+export async function syncWorktree(root: string, wt: WorktreeRef, req: SyncRequest, resolver: Resolver, status: (text: string) => void, holdStash = false) {
   const path = wt.path;
   const recovered: SyncStep[] = [];
   const op = syncInProgress(path);
@@ -175,16 +198,18 @@ export async function syncWorktree(root: string, wt: WorktreeRef, req: SyncReque
     const from = head(path), conflicts: string[] = [];
     const stopped = await finishSync(path, label, resolver, conflicts);
     recovered.push({ label, from, to: head(path), conflicts });
-    if (stopped) return { steps: recovered, stopped, stashed: hasSyncStash(path) };
+    if (stopped) return { steps: recovered, stopped, stashed: hasSyncStash(path), remaining: req };
   }
   // Work already in the worktree (a later round) waits in the stash while Git merges or rebases.
-  const stashed = !!git(path, ["status", "--porcelain"]).stdout.trim();
-  if (stashed) pushSyncStash(path);
+  const retained = hasSyncStash(path);
+  const dirty = !retained && !!git(path, ["status", "--porcelain"]).stdout.trim();
+  if (dirty) pushSyncStash(path);
+  const stashed = retained || dirty;
   const r = await syncSteps(root, wt, req, resolver, status);
   r.steps.unshift(...recovered);
   if (r.stopped || !stashed) return { ...r, stashed };
-  const left = await popStash(path, resolver);
-  return { ...r, stopped: left, stashed: !!left };
+  const left = await popStash(path, resolver, holdStash);
+  return { ...r, stopped: left, restoring: !!left, stashed: !!left || holdStash };
 }
 
 const STASH = "omem: 同步前未提交的改动";
@@ -200,7 +225,7 @@ const stashMark = (path: string) => resolve(path, git(path, ["rev-parse", "--git
 
 /** Set aside the worktree's uncommitted work for a sync, remembering which stash entry it is. */
 export function pushSyncStash(path: string) {
-  const st = git(path, [...identity(path), "stash", "push", "-q", "--include-untracked", "-m", STASH]);
+  const st = syncGit(path, [...identity(path), "stash", "push", "-q", "--include-untracked", "-m", STASH]);
   if (!st.ok) throw new HttpError(409, `暂存未提交的改动失败：${st.stderr.slice(0, 600)}`);
   writeFileSync(stashMark(path), git(path, ["rev-parse", "stash@{0}"]).stdout.trim());
 }
@@ -216,19 +241,40 @@ function ownStash(path: string): string | null {
 }
 
 /** Put the stashed work back on top of the synced code; its conflicts go to the resolver. */
-export async function popStash(path: string, resolver: Resolver): Promise<SyncState | null> {
+export async function popStash(path: string, resolver: Resolver, hold = false): Promise<SyncState | null> {
   const ref = ownStash(path);
   if (!ref) return null;
-  const again = git(path, ["stash", "apply", ref]);
+  const again = syncGit(path, ["stash", "apply", ref]);
   if (!again.ok) {
     const files = unmerged(path);
     if (!files.length) throw new HttpError(409, `放回未提交的改动失败：${again.stderr.slice(0, 600)}`);
     const left = await resolveConflicts(path, files, "放回同步前的改动", resolver);
     if (left.length) return { op: "merge", label: "放回同步前的改动", conflicts: left };
   }
-  git(path, ["stash", "drop", "-q", ref]);
-  rmSync(stashMark(path), { force: true });
+  if (!hold) dropSyncStash(path);
   return null;
+}
+
+export function dropSyncStash(path: string) {
+  const ref = ownStash(path);
+  if (!ref) return;
+  const dropped = git(path, ["stash", "drop", "-q", ref]);
+  if (!dropped.ok) throw new HttpError(409, `清理同步暂存失败：${dropped.stderr.slice(0, 600)}`);
+  rmSync(stashMark(path), { force: true });
+}
+
+export function rollbackSync(path: string, from: string) {
+  const op = syncInProgress(path);
+  const args = [...(op ? [[op, "--abort"]] : []), ["reset", "--hard", from], ["clean", "-fd"]];
+  for (const command of args) {
+    const r = syncGit(path, command);
+    if (!r.ok) throw new HttpError(409, `恢复同步前的工作区失败：${r.stderr.slice(0, 600)}`);
+  }
+  const ref = ownStash(path);
+  if (!ref) return;
+  const restored = syncGit(path, ["stash", "apply", "--index", ref]);
+  if (!restored.ok) throw new HttpError(409, `恢复未提交的改动失败，已保留暂存：${restored.stderr.slice(0, 600)}`);
+  dropSyncStash(path);
 }
 
 /** Fetch the target branch and tell whether origin has commits the worktree does not (a failed fetch counts as no). */
@@ -256,12 +302,12 @@ async function syncSteps(root: string, wt: WorktreeRef, req: SyncRequest, resolv
     if (!remote) status(`origin 上没有 ${wt.targetBranch}，跳过拉取`);
     else if (remote.commit === at || git(path, ["merge-base", "--is-ancestor", remote.commit, at]).ok) status(`${wt.targetBranch} 已经包含 origin 的最新提交`);
     else if (git(path, ["merge-base", "--is-ancestor", at, remote.commit]).ok) {
-      const ff = git(path, ["merge", "--ff-only", remote.commit]);
+      const ff = syncGit(path, ["merge", "--ff-only", remote.commit]);
       if (!ff.ok) throw new HttpError(409, `快进到 origin/${wt.targetBranch} 失败：${ff.stderr.slice(0, 600)}`);
       steps.push({ label: `拉取 origin/${wt.targetBranch}（快进）`, from: at, to: head(path), conflicts: [] });
     } else {
       const left = await step(path, mode, remote, `${mode === "merge" ? "合并" : "变基到"} origin/${wt.targetBranch}`, resolver, steps);
-      if (left) return { steps, stopped: left };
+      if (left) return { steps, stopped: left, remaining: { onto: req.onto, mode, fetch: false } };
     }
   }
   if (req.onto) {

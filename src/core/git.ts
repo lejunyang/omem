@@ -174,8 +174,8 @@ export function fetchBranch(dir: string, name: string, timeoutMs = 120_000): Git
 }
 
 const fetchArgs = (name: string) => {
-  const short = name.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
-  return ["fetch", "-q", "--no-tags", "origin", `+refs/heads/${short}:refs/remotes/origin/${short}`];
+  const short = name.replace(/^(refs\/remotes\/origin\/|refs\/heads\/|origin\/)/, "");
+  return ["fetch", "-q", "--no-tags", "--no-recurse-submodules", "--refmap=", "origin", `+refs/heads/${short}:refs/remotes/origin/${short}`];
 };
 
 /** `fetchBranch` off the main thread (prefer it wherever the caller can wait). */

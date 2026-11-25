@@ -84,6 +84,7 @@ import { checkSlug, confirmPage, folderOf, folderOverview, listPages, movePages,
 import { keepOwnerSection } from "./work-state.ts";
 import { addRunEvent, cancelRun, createRun, getRun, listRuns, runEvents, runUser, setRunOutput, stopRequested } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
+import { abortBranchSyncForBlock, assertBranchSyncIdle, checkSyncBranch, normalizeBranchSync, queueBranchSync, syncBranchTool, takeBranchSyncSteering, type BranchSync } from "./code-round-sync.ts";
 import { afterToolCall, isBackgroundNotification, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillsOutsideScope, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
@@ -4463,23 +4464,33 @@ async function wakeOnMessageRule(ctx: ToolContext, note: string, agent: string |
 def({
   name: "wake",
   description:
-    "之后再唤醒自己（或另一个 Agent 档案）接着做，二选一：after 过一段时间（等 CI 跑完再看、半小时后看看对方回了没有、明早再查一次）；on_message 某个飞书群或会话里出现符合条件的新消息时（等某人回复、等报警恢复、等对方发来文件），条件至少给一个：contains、from、mentions_owner，会建一条临时规则（规则页“临时”里可见），默认触发一次就删除、24 小时后失效。" +
+    "之后再唤醒自己（或另一个 Agent 档案）接着做，三选一：after 过一段时间；on_run_end 某一次编码轮次结束（包括失败、取消）时；on_message 某个飞书群或会话里出现符合条件的新消息时，条件至少给一个：contains、from、mentions_owner，会建一条临时规则，默认触发一次就删除、24 小时后失效。" +
     "唤醒时你所在的会话会开新一轮（接着你的会话），备注作为这一轮的任务；没东西要说时调用 stay_quiet，本人不会收到消息。agent 填档案名时改为唤醒那个 Agent，备注就是交给它的任务，结果发回本会话。只用于你自己的后续工作，消息唤醒只在本人交代的事需要等外部消息时用；提醒本人的事用事项的 remind_at。每个会话最多 5 个待触发的唤醒，最远 7 天。不需要了用 cancel_wake 取消。",
   write: true,
   schema: z.object({
     note: z.string().describe("醒来后要做什么：查看什么、依据什么判断、接下来怎么办；写清楚，醒来时你可能已经不记得细节"),
     after: z.string().optional().describe("多久以后：20m、2h、1d，或带时区的 ISO 时间"),
     on_message: wakeOnMessage.optional().describe("出现符合条件的消息时唤醒"),
+    on_run_end: z.object({ run_id: z.string().min(1), purpose: z.string().trim().min(1).max(250).optional() }).optional().describe("等这个具体编码轮次结束；同会话同轮次同 purpose 合并，不填 purpose 用备注去重"),
     agent: z.string().optional().describe("唤醒另一个 Agent 档案（默认唤醒自己）"),
     skip_if_owner_replies: z.boolean().optional().describe("after 用：这期间本人在会话里说过话就不唤醒（如“半小时没回就跟进”）"),
   }),
   handler: async (ctx, a) => {
-    if (!a.after === !a.on_message) throw new HttpError(400, "after 和 on_message 二选一：过一段时间唤醒传 after，等消息唤醒传 on_message");
+    if ([a.after, a.on_message, a.on_run_end].filter(Boolean).length !== 1) throw new HttpError(400, "after、on_message、on_run_end 三选一");
     const conversation = ctx.runId && getRun(ctx.app, ctx.runId).input.conversationId;
     const instance = typeof conversation === "string" && (await import("../situations/instances.ts")).instanceOfThread(ctx.app, conversation);
-    if (instance && (a.agent || a.on_message || instance.status !== "active" || instance.closingRun)) throw new HttpError(409, "情境只可在窗口内唤醒本会话复查");
+    if (instance && (a.agent || a.on_message || a.on_run_end || instance.status !== "active" || instance.closingRun)) throw new HttpError(409, "情境只可在窗口内唤醒本会话复查");
     if (a.on_message) return wakeOnMessageRule(ctx, a.note, a.agent, a.on_message);
-    const { scheduleWake, wakeTime } = await import("./wakes.ts");
+    const { scheduleWake, wakeTime, scheduleRoundWake } = await import("./wakes.ts");
+    if (a.on_run_end) {
+      const id = a.on_run_end.run_id;
+      if (!canReadRun(ctx.app, ctx.userId ?? OWNER, id)) throw new HttpError(404, "没有可读的这个编码轮次");
+      const code = getRun(ctx.app, id);
+      for (const space of [code.spaceId, ...((code.input.repos as string[] | undefined) ?? [])]) if (space) inScope(ctx, space, "运行");
+      const { target, setBy } = await wakeOrigin(ctx, a.agent);
+      const r = scheduleRoundWake(ctx.app, { target, setBy, note: a.note }, id, a.on_run_end.purpose);
+      return r.existing ? `已经设过同目的的唤醒 ${r.id}，不会重复唤醒。` : `已设唤醒 ${r.id}：编码轮次 ${id} 结束后唤醒。`;
+    }
     const at = wakeTime(a.after!);
     if (instance && at >= instance.windowUntil) throw new HttpError(400, "复查时间超出情境窗口，先用 update_situation 延长窗口");
     const { target, setBy } = await wakeOrigin(ctx, a.agent);
@@ -5244,12 +5255,46 @@ def({
 });
 
 /** Git work before coding (src/agents/code-sync.ts). */
-const syncSchema = z.object({
+const branchSyncFields = {
   pull: z.boolean().optional().describe("先拉取目标分支在 origin 上的新提交（能快进就快进，分叉了按 mode 合并或变基）"),
-  onto: z.string().optional().describe("再合并或变基到这个分支的最新提交（如 main；本地落后 origin 时用 origin 的）"),
+  onto: z.string().trim().min(1).max(250).optional().describe("合并或变基到这个分支的最新提交（如 main）；不填则拉取目标分支"),
   mode: z.enum(["merge", "rebase"]).optional().describe("merge（默认，产生合并提交）或 rebase"),
   fetch: z.boolean().optional().describe("先从 origin 拉取（默认 true）"),
-}).refine((x) => x.pull || x.onto, "sync 至少要 pull 或 onto 之一").describe("编码前的 Git 同步：冲突交给编码 Agent 解决，拿不准的它会问本人，解决不了的停下来交给本人；同步产生的提交在应用时快进到目标分支，之后可用 code_git_action 推送（变基过的分支推送要 force）");
+  space: z.string().optional().describe("只同步交办中的这个仓库；主编码的多仓库同步须指定仓库"),
+};
+const syncSchema = z.strictObject(branchSyncFields).refine((x) => x.pull !== false || x.onto, "pull=false 时须指定 onto");
+
+function checkedBranchSync(ctx: ToolContext, repos: string[], request: BranchSync) {
+  if (request.space && !repos.includes(request.space)) throw new HttpError(400, "space 只能指定这次交办里的仓库");
+  const spaces = request.space ? [request.space] : repos;
+  for (const id of spaces) {
+    codeSpace(ctx, id);
+    const root = findSpace(ctx.app, id)?.rootPath;
+    if (!root) throw new HttpError(400, `${id} 没有登记的仓库目录`);
+    checkSyncBranch(root, request.onto);
+  }
+  return spaces;
+}
+
+def({
+  name: "sync_branch",
+  description: "主编码 Agent 请宿主拉取、合并或变基此次交办的工作分支，不推送。本人有待同步请求时用 request_id。冲突改完用 continue: true；删文件或二进制冲突需宿主暂存时在 resolved 里列出。解决不了用 abort: true 恢复同步前，不要做依赖这次同步的修改。",
+  write: true,
+  schema: z.strictObject({
+    ...branchSyncFields,
+    request_id: z.string().optional(),
+    continue: z.boolean().optional(),
+    abort: z.boolean().optional(),
+    resolved: z.array(z.string()).max(500).optional(),
+  }).refine(a => {
+    const action = Number(!!a.request_id) + Number(!!a.continue) + Number(!!a.abort);
+    return action <= 1 && (!a.resolved || a.continue) && (action ? a.onto === undefined && a.pull === undefined && a.mode === undefined && a.fetch === undefined : a.pull !== false || !!a.onto);
+  }, "开始同步、执行待同步请求、继续和中止须分开调用"),
+  handler: (ctx, a) => {
+    if (ctx.role !== "coder" || !ctx.runId || runUser(ctx.app, ctx.runId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只有本轮主编码可以同步工作分支");
+    return syncBranchTool(ctx.app, ctx.runId, a, id => { codeSpace(ctx, id); });
+  },
+});
 
 /** The review a delegation's rounds get from now on (code-steer.ts RoundReview). */
 /** The AI per part of a review (review.ts namedReviewAI): a check's name, `review-lead`, or `split`. */
@@ -5341,10 +5386,11 @@ def({
         throw new HttpError(400, `方案 ${baseline.id} 不能作为基线：要本人确认过的自己的方案，或评估完的别人的方案（现在：${baseline.origin}，${baseline.status}）`);
       if (baseline.origin === "own" && baseline.workId) throw new HttpError(409, `方案 ${baseline.id} 已经是交办 ${baseline.workId} 的基线`);
     }
+    if (a.sync) checkedBranchSync(ctx, ids, a.sync);
     const r = queueCodeWork(ctx.app, {
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, reviewExecutions: await reviewAIsOf(ctx, a.review_executions), ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, contextItemId: scoped.contextItemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, execution, reviewExecution, reviewExecutions: await reviewAIsOf(ctx, a.review_executions), ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, contextItemId: scoped.contextItemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: { ...a.sync, ...normalizeBranchSync(a.sync) }, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
@@ -5561,7 +5607,7 @@ def({
     review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择"),
     new_item: z.boolean().optional().describe("按修改项推进的交办：本人提了一件新的、能单独验证的修改时 true，记成修改项；只是让它接着推进、提醒注意什么、告诉它环境已经好了时不填"),
     item_id: z.string().optional().describe("when=now：这段修改是为另一个事项做的（同一分支上别的事项的交办正在进行，把这件的修改并进去），填那个事项，交办会记到它上面，它的流程跟着这次交办走"),
-    sync: syncSchema.optional().describe("这一轮编码前先做的 Git 同步（如先合并最新的 main）；工作区里未提交的改动会先收起、同步后放回"),
+    sync: syncSchema.optional().describe("Git 同步；正在编码就交给本轮，正在评审则记到下一轮编码前；已结束则随新轮执行"),
     onto_latest_target: z.boolean().optional().describe("只把改动移到目标分支的最新提交上（目标分支有了新提交、应用失败时用），task 可简单写原因；冲突交给编码 Agent，解决不了会问本人"),
     onto_latest_target_mode: z.enum(["merge", "rebase"]).optional().describe("配合 onto_latest_target：默认 merge，集中处理合并冲突；本人要求逐提交重放时才选 rebase"),
     apply_first: z.boolean().optional().describe("本人说“先应用到原分支再继续改”时 true：上一轮的改动先应用到目标分支（未提交，可再 code_git_action 提交），这一轮在同一个工作区接着改"),
@@ -5570,7 +5616,20 @@ def({
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution, ctx.userId);
     const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId);
-    if (a.when === "now") return messageRound(ctx, a);
+    if (a.sync && !a.apply_first && !a.onto_latest_target && !a.fix?.length && !a.later?.length && !a.wontfix?.length) {
+      const { latestRound, roundStage } = await import("./code-steer.ts");
+      const round = latestRound(ctx.app, a.run_id);
+      steerable(ctx, round.id);
+      const spaces = checkedBranchSync(ctx, (round.input.repos as string[] | undefined) ?? [round.spaceId!], a.sync);
+      const stage = roundStage(round);
+      if (stage !== "ended" || (a.when === "now" && a.task?.trim())) {
+        const added = queueBranchSync(ctx.app, round, spaces, a.sync);
+        const detail = stage === "coding" && !round.input.peerCoder && !round.input.syncOnly && round.output.reviewStage !== "design" ? "主编码 Agent 下次调用 omem 工具时收到；未执行的请求随下一轮" : "宿主在下一次开始编码前自动同步";
+        const message = `${added ? "已登记待同步请求" : "同样的同步已登记，没有重复添加"}（${round.id}）：${detail}。`;
+        return a.task?.trim() ? `${message}\n${await messageRound(ctx, a)}` : message;
+      }
+    }
+    if (a.when === "now" && (!a.sync || a.task?.trim())) return messageRound(ctx, a);
     const seedRun = getRun(ctx.app, a.run_id);
     const reviewOfBranch = seedRun.kind === "code" && !!(seedRun.input as { branches?: unknown }).branches;
     if (a.fix?.length || a.later?.length || a.wontfix?.length || (reviewOfBranch && a.task?.trim())) return fixFindings(ctx, a, execution, reviewExecution);
@@ -5610,7 +5669,7 @@ def({
       return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，这一轮结束后接着做"}。${switched}`;
     }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
-    const extraInput = a.onto_latest_target ? { moveToTarget: true, moveToTargetMode: a.onto_latest_target_mode ?? "merge" } : a.sync ? { sync: a.sync, ...(gitOnly ? { syncOnly: true } : {}) } : undefined;
+    const extraInput = a.onto_latest_target ? { moveToTarget: true, moveToTargetMode: a.onto_latest_target_mode ?? "merge" } : a.sync ? { sync: { ...a.sync, ...normalizeBranchSync(a.sync) }, ...(gitOnly ? { syncOnly: true } : {}) } : undefined;
     const roundReview = await roundReviewOf(ctx, a);
     if (a.apply_first) (await import("./code.ts")).applyCodeRun(ctx.app, last.id, { keepWorking: true });
     const next = queueNextCodeRound(ctx.app, chain, task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution, roundReview, extraInput });
@@ -6178,6 +6237,7 @@ def({
     inScope(ctx, a.space, "工作分支");
     if (ctx.role !== "coder" || !ctx.runId || runUser(ctx.app, ctx.runId) !== (ctx.userId ?? OWNER))
       throw new HttpError(403, "只有本轮主编码可以命名工作分支");
+    assertBranchSyncIdle(ctx.app, ctx.runId);
     return JSON.stringify((await import("./code-branch.ts")).nameCodingBranch(ctx.app, ctx.runId, a.space, a.name));
   },
 });
@@ -6737,6 +6797,7 @@ def({
   }),
   handler: async (ctx, a) => {
     const { rootId, actor, worktrees, helper } = await taskRound(ctx, "finish_task");
+    assertBranchSyncIdle(ctx.app, actor);
     const t = await import("./code-tasks.ts");
     const seq = t.parseTaskRef(a.task);
     const task = t.getTask(ctx.app, rootId, seq);
@@ -7103,6 +7164,7 @@ def({
     }
     // Held up, or objecting to a task no check raised (the assistant or the owner wrote it): the assistant looks first.
     if (a.kind === "blocked" || a.kind === "disputed") {
+      if (a.kind === "blocked") abortBranchSyncForBlock(ctx.app, actor);
       const said = a.kind === "blocked" ? "被挡住了" : "认为这一项不该做";
       const { lead, body } = (await import("./brief.ts")).briefParts(a.reason);
       const after = t.toAssistant(ctx.app, rootId, seq, `编码 Agent ${said}：${lead}${body ? `\n\n${body}` : ""}`, { by: "coder", kind: "coder", text: `${said}：${a.reason}` });
@@ -7129,7 +7191,7 @@ def({
     task: z.union([z.string(), z.number()]).optional().describe("修改项编号，如 T3；add 时不填"),
     action: z.enum(["retry", "skip", "owner", "later", "add"]),
     title: z.string().max(200).optional().describe("add：新的一项要做成什么，一句话"),
-    note: z.string().min(1).max(3000).describe("retry：查到的原因、编码 Agent 这次具体怎么做；skip：为什么不做、在等什么；later：为什么现在不值得改、什么情况下才会碰到；owner：你查过什么、为什么只有本人能定；add：完成标准，以及为什么需要（需求哪里要求的、谁漏了）"),
+    note: z.string().min(1).max(3000).describe("retry：查到的原因和具体做法，可让编码 Agent 先调用 sync_branch 同步再重做；skip：为什么不做、在等什么；later：为什么现在不值得改、什么情况下才会碰到；owner：你查过什么、为什么只有本人能定；add：完成标准，以及为什么需要（需求哪里要求的、谁漏了）"),
     question: z.string().max(2500).optional().describe("owner：给本人的问题：第一段一句话写要定什么，之后分段写现在、问题、各个做法的影响、依据，不写调查过程"),
     options: z.array(z.string().min(1).max(60)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
@@ -7168,6 +7230,7 @@ def({
   handler: async (ctx, a) => {
     const { run: r, helper } = await taskRound(ctx, "dispatch_tasks");
     if (helper) throw new HttpError(400, "编码助手不能再分给别的助手");
+    assertBranchSyncIdle(ctx.app, r.id);
     const t = await import("./code-tasks.ts");
     const { dispatchTasks } = await import("./code-helpers.ts");
     return dispatchTasks(ctx.app, r.id, a.groups.map((g) => ({ tasks: g.tasks.map((x) => t.parseTaskRef(x)), note: g.note })));
@@ -7495,7 +7558,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   if (name === "omem_help" || name === "omem_call") {
     const parsed = metaArgs[name].safeParse(args ?? {});
     if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
-    if (name === "omem_help") return { text: helpText(toolSchemas(contextToolNames(ctx)), (parsed.data as { topic?: string }).topic), isError: false };
+    if (name === "omem_help") return { text: helpText(toolSchemas(contextToolNames(ctx)), (parsed.data as { topic?: string }).topic) + branchSyncSteering(ctx), isError: false };
     const call = parsed.data as { tool: string; args?: Record<string, unknown> };
     if (call.tool === "omem_help" || call.tool === "omem_call") return { text: "omem_call 不能调用它自己或 omem_help", isError: true };
     return callTool(ctx, call.tool, call.args ?? {});
@@ -7646,12 +7709,17 @@ function runWithLarkIdentity(ctx: ToolContext, tool: Tool, args: Record<string, 
   return asLarkUser(app, userId, invoke, runId);
 }
 
+function branchSyncSteering(ctx: ToolContext) {
+  const sync = ctx.runId && ctx.role === "coder" && ctx.tools?.has("sync_branch") ? takeBranchSyncSteering(ctx.app, ctx.runId) : "";
+  return sync ? `\n\n---\n${sync}` : "";
+}
+
 /** Messages that arrived for this turn's conversation while it runs (steer.ts). */
 async function steering(ctx: ToolContext) {
   if (!ctx.runId) return "";
   try {
     // …and what the owner said in a background run's scope meanwhile (awareness.ts), each message once.
-    return ((await import("./steer.ts")).takeSteering(ctx.app, ctx.runId) ?? takeCodeSteering(ctx.app, ctx.runId) ?? "") + (ctx.shadow || ctx.view ? "" : ownerNews(ctx.app, ctx.runId));
+    return branchSyncSteering(ctx) + ((await import("./steer.ts")).takeSteering(ctx.app, ctx.runId) ?? takeCodeSteering(ctx.app, ctx.runId) ?? "") + (ctx.shadow || ctx.view ? "" : ownerNews(ctx.app, ctx.runId));
   } catch (e) {
     console.warn("[omem] 补充消息没能交给正在进行的一轮：", (e as Error).message);
     return "";

@@ -44,7 +44,7 @@ export function latestRound(app: App, runId: string): Run {
   if (fresh?.lastCodeRunId) return getRun(app, fresh.lastCodeRunId);
   if (r.kind === "code") {
     const root = String(r.input.continueFrom ?? r.id);
-    const last = one<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at desc limit 1", root, root);
+    const last = one<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at desc, rowid desc limit 1", root, root);
     return getRun(app, last!.id);
   }
   throw new HttpError(400, "这不是一次编码交办");

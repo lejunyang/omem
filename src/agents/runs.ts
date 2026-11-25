@@ -496,6 +496,8 @@ export function queueReason(app: App, r: Run): string | null {
   if (r.status !== "queued") return null;
   const row = one<Row>(app.db, "select * from runs where id = ?", r.id);
   if (!row) return null;
+  const end = r.kind === "wake" ? (r.input as import("./wakes.ts").WakeInput).onRunEnd : undefined;
+  if (end && end.expiresAt > now() && one(app.db, "select 1 from runs where id = ? and status in ('queued','running')", end.runId)) return `等编码轮次 ${end.runId} 结束`;
   const login = r.input.aiLoginWait as import("./credential-wait.ts").AiLoginWait | undefined;
   if (login && !login.ready && row.not_before && row.not_before > now()) return "等待成员登录 " + login.name;
   if (row.not_before && row.not_before > now()) return `定时，${localStamp(row.not_before, app.config.timezone)} 开始`;
@@ -542,13 +544,16 @@ function nextRunnable(app: App): Row | undefined {
   const candidates = all<Row>(
     app.db,
     `select * from runs q where q.status = 'queued' and json_extract(q.input,'$.boardDevice.mode') is not 'remote' and (q.not_before is null or q.not_before <= ?)
+       and (q.kind != 'wake' or json_extract(q.input, '$.onRunEnd.runId') is null
+         or json_extract(q.input, '$.onRunEnd.expiresAt') <= ?
+         or exists (select 1 from runs target where target.id = json_extract(q.input, '$.onRunEnd.runId') and target.status in ('done','failed','cancelled')))
        and ${boardSlot}
        and (${open.map((c) => classSql(c, "q.kind")).join(" or ")})
        and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'running'))
        and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'queued'
          and (r.created_at < q.created_at or (r.created_at = q.created_at and r.rowid < q.rowid))))
      order by q.created_at limit 100`,
-    now(), app.config.agents.workBoard.concurrency, now(),
+    now(), now(), app.config.agents.workBoard.concurrency, now(),
   );
   const seenLanes = new Set<string>();
   for (const c of candidates) {

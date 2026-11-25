@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { saveAgentSpec } from "../src/agents/specs.ts";
+import { __testHandlers, createRun, getRun, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
 import { expireTemporaryRules, fireWake, pendingWakes, wakeTime, type WakeInput } from "../src/agents/wakes.ts";
@@ -31,6 +32,39 @@ const message = (text: string, sender: RuleEvent["sender"] = { name: "小王", k
 const inputOf = (app: ReturnType<typeof testApp>, id: string) => JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", id)!.input);
 
 describe("wake-ups", () => {
+  it("waits for the exact coding round, deduplicates by purpose, and wakes on failure", async () => {
+    const { app, thread, runId, ctx } = working();
+    const code = createRun(app, { kind: "code", title: "项目 A", spaceId: "personal" });
+    const other = createRun(app, { kind: "code", title: "项目 B", spaceId: "personal" });
+    const notify = { run_id: code.id, purpose: "核对检查结果" };
+    const first = await callTool(ctx, "wake", { note: "看检查结果", on_run_end: notify });
+    const id = /已设唤醒 (\S+)：/.exec(first.text)![1];
+    expect((await callTool(ctx, "wake", { note: "再看一遍", on_run_end: notify })).text).toContain(id);
+    expect(await callTool(ctx, "wake", { note: "等其他交办", on_run_end: { ...notify, run_id: other.id } })).toMatchObject({ isError: false });
+    expect((await callTool(ctx, "wake", { note: "看进展", on_run_end: { run_id: runId } })).isError).toBe(true);
+    const waits = pendingWakes(app, { conversationId: thread.id });
+    expect(waits).toHaveLength(2);
+    expect(waits.every(w => w.kind === "event")).toBe(true);
+    await callTool(ctx, "cancel_wake", { id: waits.find(w => w.id !== id)!.id });
+    run(app.db, "update runs set status='done' where id in (?,?)", runId, other.id);
+    let release!: () => void;
+    const gate = new Promise<void>(done => { release = done; });
+    __testHandlers.set("code", async () => { await gate; throw new Error("虚构的检查失败"); });
+    __testHandlers.set("ask", async () => ({ quiet: true }));
+    try {
+      startWorker(app);
+      await vi.waitFor(() => expect(getRun(app, code.id).status).toBe("running"));
+      expect(getRun(app, id).status).toBe("queued");
+      expect(threadMessages(app, thread.id)).toHaveLength(0);
+      release();
+      const wake = await waitForRun(app, id);
+      expect(wake.status).toBe("done");
+      expect(getRun(app, code.id).status).toBe("failed");
+      expect(threadMessages(app, thread.id).map(m => m.text)).toEqual([expect.stringContaining(`编码轮次 ${code.id} 已结束（failed）`)]);
+      expect((await waitForRun(app, String(wake.output.runId))).status).toBe("done");
+    } finally { release(); stopWorker(); }
+  });
+
   it.each(["alert-checker", "assistant"])("keeps %s own follow-up in its original space and authorized topic", async (spec) => {
     const { app, ctx, runId } = working();
     createSpace(app, { id: "project-a", name: "项目 A" });

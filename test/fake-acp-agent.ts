@@ -663,6 +663,34 @@ new AgentSideConnection(
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      if (process.env.FAKE_MODE === "round-sync") {
+        const cwd = cwds.get(p.sessionId)!;
+        const gate = process.env.FAKE_SYNC_GATE!;
+        if (prompt.includes("只输出一个 JSON") || prompt.includes("你负责的评审项：")) {
+          await say("{}");
+          return { stopReason: "end_turn" as const };
+        }
+        if (prompt.includes("核对轮前同步")) {
+          await say(`编码前已读取：${readFileSync(join(cwd, "integration.txt"), "utf8").trim()}`);
+          return { stopReason: "end_turn" as const };
+        }
+        writeFileSync(gate + ".ready", "ready");
+        while (!existsSync(gate)) await new Promise(done => setTimeout(done, 20));
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-sync", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const tools = (await client.listTools()).tools.map(tool => tool.name);
+          const steering = await client.callTool({ name: "list_pages", arguments: {} });
+          const text = (steering.content as { text?: string }[]).map(item => item.text ?? "").join("\n");
+          const request = /"request_id":"([^"]+)"/.exec(text)?.[1];
+          if (!request || !tools.includes("sync_branch")) throw new Error("未收到待同步请求或没有工具");
+          const result = await client.callTool({ name: "sync_branch", arguments: { request_id: request } });
+          if (result.isError) throw new Error(JSON.stringify(result.content));
+          await say(JSON.stringify(result.content));
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
       // FAKE_MODE=review: the coder edits a file in its worktree; a review check reports with
       // submit_review — the "业务" check asks for a change, the others approve.
       if (process.env.FAKE_MODE === "review") {

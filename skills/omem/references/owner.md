@@ -31,6 +31,8 @@
 
 ## 唤醒
 
+- 等具体编码轮次结束用 `wake(note, on_run_end: {run_id, purpose?})`，不和 `after` 或 `on_message` 一起传。`run_id` 是这一轮的编码运行 id，不是会话 id；完成、失败和取消都触发。相同会话、同一轮、同一目的的待触发唤醒只保留一个；没传 `purpose` 时按完整备注去重。超过 7 天没结束就不再等。
+
 - `wake(note, after? | on_message?: {chat_id, contains?, from?, mentions_owner?, include_bots?, expires?, once?}, agent?, skip_if_owner_replies?)` / `cancel_wake(id?)`：过一段时间（after）、或某个飞书群出现符合条件的消息时（on_message）唤醒，二选一。omem 里的会话由它的 Agent 接着做；在外部 Agent 里调用要用 `agent` 指定唤醒哪个档案。
 - 最远 7 天，每处最多 5 个待触发。规则触发的档案不传 agent 时唤醒自己，延续原空间、话题和回复权限（含草稿 / 静默），没有新变化就调用 `stay_quiet`；交给其他档案不会继承原运行的渠道权限。
 - note 写足复查对象、口径和工作文件，醒来时未必记得细节。提醒本人做事用事项的 remind_at，不用唤醒。

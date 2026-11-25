@@ -197,7 +197,7 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
  * (conflicts to the lead, through `resolve`), give their workspaces back. Tasks whose commits do not
  * merge go back to do. Returns the helpers' run ids (their tasks settle with the round's).
  */
-export async function joinHelpers(app: App, roundRunId: string, resolve: (wt: WorktreeRef, files: string[], label: string) => Promise<void>): Promise<string[]> {
+export async function joinHelpers(app: App, roundRunId: string, resolve: (wt: WorktreeRef, files: string[], label: string) => Promise<void>, syncStopped = false): Promise<string[]> {
   const round = rounds.get(roundRunId);
   if (!round) return [];
   rounds.delete(roundRunId);
@@ -229,13 +229,13 @@ export async function joinHelpers(app: App, roundRunId: string, resolve: (wt: Wo
         for (const c of changes) for (const seq of c.tasks) problems.set(seq, `${wt.space}：${refusal.reason}（未归属改动待核对）`);
       }
       if (!shas.length) continue;
-      const merged = await pick(wt, shas, `合并编码助手 ${h.n} 的提交`, resolve, round.signal);
+      const merged = !syncStopped && await pick(wt, shas, `合并编码助手 ${h.n} 的提交`, resolve, round.signal);
       if (merged) picked += shas.length;
       else keep.add(wt.space);
       for (const c of changes) {
         for (const seq of c.tasks.length ? c.tasks : h.tasks) {
           if (merged) landed.add(seq);
-          else problems.set(seq, `${wt.space}：助手提交拣选冲突`);
+          else problems.set(seq, syncStopped ? `${wt.space}：工作分支同步尚未完成，未拣选助手提交` : `${wt.space}：助手提交拣选冲突`);
         }
       }
     }

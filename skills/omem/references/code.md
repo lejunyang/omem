@@ -91,6 +91,10 @@
 
 ## 同步
 
+- 本人中途明确要合并或拉取分支时，`continue_code_run(when: "now", task: ..., sync: ...)` 的 `task` 写其余要求，`sync` 写分支；只要求同步就不写 `task`。运行中不会另开一轮：主编码在下一次 omem 工具调用收到 `request_id`，排队、评审中或没执行的请求由宿主在下一次编码前处理。对同一仓库重复登记相同的待同步请求只留一条。
+- 主编码用 `sync_branch(request_id)` 执行请求，也可以直接传 `onto`、`pull`、`mode`、`fetch`；不填 `onto` 时拉取目标分支的远端最新，多仓库直接发起时要填 `space`。只动本次交办的工作树，不推送。返回冲突时改工作区文件，再用 `sync_branch(continue: true)`；删文件、二进制等需宿主暂存的已解决文件放进 `resolved`。放回未提交改动也可能再有冲突。解决不了就 `sync_branch(abort: true)`，恢复到同步前再如实报卡点。
+- 交回助手时不能用 `continue_code_run` 续轮；可在 `settle_code_task(action: "retry")` 的交代里让编码 Agent 先同步。需要等具体轮次结束，用 `wake(on_run_end: {run_id, purpose}, note)`，不要设短定时轮询。
+
 - `delegate_code` 可传 `sync: {pull?, onto?, mode?: "merge"|"rebase", fetch?}`（编码前先拉取目标分支的远端提交、再合并或变基到 `onto`），`sync_only: true` 只做同步不编码。
 - `continue_code_run` 可传 `sync`（这一轮编码前同步，工作区里未提交的改动先收起再放回）或 `onto_latest_target: true`（目标分支有新提交、应用失败时，把改动移到它的最新提交上）；默认合并，也可传 `onto_latest_target_mode: "rebase"` 逐个重放提交。目标已包含在工作区时直接跳过，保留暂存、未暂存和未跟踪文件。
 - 冲突先交给编码 Agent（它可用 `ask_user` 问业务取舍），解决不了的停下来，给本人一张“已解决，继续 / 放弃这次同步”的卡片。同步产生的提交在应用时快进到目标分支，之后的编码改动照常作为未提交修改应用。

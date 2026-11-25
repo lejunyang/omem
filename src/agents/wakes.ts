@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { all, one, run as exec } from "../core/db.ts";
+import { all, one, run as exec, withinTx } from "../core/db.ts";
 import { HttpError, now, truncate, localStamp } from "../core/util.ts";
 import { addMessage, findThread } from "./threads.ts";
 import { homeFor } from "./home.ts";
@@ -13,7 +13,7 @@ import { cancelRun, createRun, getRun, queuedInLane, registerHandler, updateQueu
  * session continues), or an agent profile gets a run with the note as its task.
  */
 export type WakeTarget = { conversationId?: string; spec?: string; resumeRunId?: string };
-export type WakeInput = { note: string; target: WakeTarget; setBy: { runId: string | null; agent: string }; setAt: string; skipIfOwnerSpoke?: boolean };
+export type WakeInput = { note: string; target: WakeTarget; setBy: { runId: string | null; agent: string }; setAt: string; skipIfOwnerSpoke?: boolean; onRunEnd?: { runId: string; purpose: string; expiresAt: string } };
 
 export const MAX_PENDING = 5;
 export const MAX_DAYS = 7;
@@ -34,9 +34,11 @@ const ownerKey = (t: WakeTarget, setBy: WakeInput["setBy"]) => t.conversationId 
 export type PendingWake = { id: string; kind: "timed" | "event"; note: string; at: string | null; expiresAt: string | null; target: WakeTarget; setBy: WakeInput["setBy"]; detail: string };
 
 export function pendingWakes(app: App, opts: { conversationId?: string; spec?: string } = {}): PendingWake[] {
-  const timed = all<{ id: string; input: string; not_before: string }>(app.db, "select id, input, not_before from runs where kind = 'wake' and status = 'queued' order by not_before").map((r) => {
+  const timed = all<{ id: string; input: string; not_before: string | null }>(app.db, "select id, input, not_before from runs where kind = 'wake' and status = 'queued' order by not_before").map((r) => {
     const w = JSON.parse(r.input) as WakeInput;
-    return { id: r.id, kind: "timed" as const, note: w.note, at: r.not_before, expiresAt: null, target: w.target, setBy: w.setBy, detail: `${localStamp(r.not_before, app.config.timezone)} 唤醒` };
+    return w.onRunEnd
+      ? { id: r.id, kind: "event" as const, note: w.note, at: null, expiresAt: w.onRunEnd.expiresAt, target: w.target, setBy: w.setBy, detail: `编码轮次 ${w.onRunEnd.runId} 结束` }
+      : { id: r.id, kind: "timed" as const, note: w.note, at: r.not_before, expiresAt: null, target: w.target, setBy: w.setBy, detail: r.not_before ? `${localStamp(r.not_before, app.config.timezone)} 唤醒` : "等待唤醒" };
   });
   const events = all<{ id: string; description: string; temporary: string; actions: string }>(app.db, "select id, description, temporary, actions from rules where temporary is not null and enabled = 1 order by created_at").map((r) => {
     const t = JSON.parse(r.temporary) as { expiresAt: string; setBy: WakeInput["setBy"]; watch: string };
@@ -56,6 +58,24 @@ export function scheduleWake(app: App, input: Omit<WakeInput, "setAt"> & { at: s
   checkPending(app, input.target, input.setBy);
   const w: WakeInput = { note: input.note, target: input.target, setBy: input.setBy, setAt: now(), ...(input.skipIfOwnerSpoke ? { skipIfOwnerSpoke: true } : {}) };
   return createRun(app, { kind: "wake", title: truncate(`唤醒：${input.note.replace(/\s+/g, " ")}`, 80), input: w, notBefore: input.at, parentId: input.setBy.runId });
+}
+
+export function scheduleRoundWake(app: App, input: Omit<WakeInput, "setAt" | "onRunEnd">, runId: string, purpose?: string) {
+  return withinTx(app.db, () => {
+    const code = getRun(app, runId);
+    if (code.kind !== "code") throw new HttpError(400, "on_run_end.run_id 要写这一次编码轮次的运行 id，不写交办会话 id");
+    const key = (purpose ?? input.note).trim().replace(/\s+/g, " ");
+    if (!key) throw new HttpError(400, "要写清醒来后做什么");
+    const existing = one<{ id: string }>(app.db, `select id from runs where kind = 'wake' and status = 'queued'
+      and json_extract(input, '$.onRunEnd.runId') = ? and json_extract(input, '$.onRunEnd.purpose') = ?
+      and coalesce(json_extract(input, '$.target.conversationId'), '') = ? and coalesce(json_extract(input, '$.target.spec'), '') = ?
+      and json_extract(input, '$.onRunEnd.expiresAt') > ? limit 1`, runId, key, input.target.conversationId ?? "", input.target.spec ?? "", now());
+    if (existing) return { id: existing.id, existing: true };
+    checkPending(app, input.target, input.setBy);
+    const w: WakeInput = { ...input, setAt: now(), onRunEnd: { runId, purpose: key, expiresAt: new Date(Date.now() + MAX_DAYS * 86400_000).toISOString() } };
+    const r = createRun(app, { kind: "wake", title: truncate(`唤醒：${input.note.replace(/\s+/g, " ")}`, 80), input: w, parentId: input.setBy.runId });
+    return { id: r.id, existing: false };
+  });
 }
 
 export function cancelWake(app: App, id: string) {
@@ -135,7 +155,8 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
 
 registerHandler("wake", async (ctx) => {
   const w = ctx.run.input as WakeInput;
-  const r = fireWake(ctx.app, w);
+  const code = w.onRunEnd && one<{ id: string; status: string }>(ctx.app.db, "select id, status from runs where id = ? and finished_at <= ? and status in ('done','failed','cancelled')", w.onRunEnd.runId, w.onRunEnd.expiresAt);
+  const r = w.onRunEnd && !code ? { skipped: "等待编码轮次结束已到期" } : fireWake(ctx.app, w, code ? `编码轮次 ${code.id} 已结束（${code.status}）` : undefined);
   // Bookkeeping: the turn it starts is listed on its own.
   return { quiet: true, summary: r.skipped ? `没有唤醒：${r.skipped}` : `已唤醒，运行 ${r.runId}`, runId: r.runId };
 });
