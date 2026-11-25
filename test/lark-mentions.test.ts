@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prepareRun } from "../src/agents/runner.ts";
-import { createRun, getRun, waitForRun } from "../src/agents/runs.ts";
+import { cancelRun, createRun, getRun, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { toolContextForToken } from "../src/agents/tools.ts";
 import { setKey } from "../src/core/ai-keys.ts";
@@ -206,6 +206,27 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     const told = notifiedBy(half.id)!;
     expect(told.body).toContain("这个开关今天能打开吗");
     expect(told.body).not.toContain("发错了");
+  }, 30000);
+
+  it("waits for the ingest run that was queued when it first looked, not for later ones on the same chat", async () => {
+    useDecision(true);
+    decision.action = "ignore";
+    const m = msg("@勒 这个配置在哪改？", { thread_id: "omt_ingest" });
+    store([m]);
+    const source = one<{ source_id: string }>(app.db, "select source_id from lark_messages where message_id = ?", m.message_id)!.source_id;
+    const pending = createRun(app, { kind: "ingest", title: "整理新材料", notBefore: new Date(Date.now() + 10 * 86400_000).toISOString(), input: { sourceIds: [source] } });
+    const first = queueMention(app, group, [m], "ou_owner")!;
+    await waitForRun(app, first.id);
+    expect(getRun(app, first.id).output.summary).toBe("这几条消息的整理还没做完，一分钟后再看");
+    const next = one<{ id: string; input: string }>(app.db, "select id, input from runs where kind = 'mention' and status = 'queued' and json_extract(input, '$.waited') = 1 and input like ?", `%${m.message_id}%`)!;
+    expect(JSON.parse(next.input).ingestBy).toBeTruthy();
+    cancelRun(app, next.id);
+    // The same look, had the ingest run been queued after it: not waited for.
+    const calls = decision.calls;
+    const again = createRun(app, { kind: "mention", title: "再看", input: { ...getRun(app, first.id).input, ingestBy: new Date(Date.parse(pending.createdAt) - 1000).toISOString() } });
+    await waitForRun(app, again.id);
+    expect(decision.calls).toBe(calls + 1);
+    cancelRun(app, pending.id);
   }, 30000);
 
   it("the decision model triages: ignore, a short reminder, or a handling by the assistant; the triage is on the run", async () => {

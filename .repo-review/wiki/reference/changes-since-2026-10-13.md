@@ -7,7 +7,7 @@ updated: 2026-11-25
 
 ## “有人找你”不再提醒已撤回的消息（2026-11-25）
 
-- 对方发错又撤回的消息，过了等待时间仍会分诊并发提醒。现在分诊前、以及交给助手查之前，先向渠道核对消息还在不在（飞书：`im +messages-mget` 返回的 `deleted`）；全被撤回就安静结束，只撤回了其中几条就只处理剩下的。读不到状态时按还在处理。`MentionChannel.gone`（`src/mentions/channel.ts`）、`src/channels/lark-mentions.ts`、`src/mentions/mentions.ts`；`test/lark-mentions.test.ts`。
+- 对方发错又撤回的消息，过了等待时间仍会分诊并发提醒。现在分诊前、以及交给助手查之前，先向渠道核对消息还在不在（飞书：`im +messages-mget` 返回的 `deleted`）；全被撤回就安静结束，只撤回了其中几条就只处理剩下的。读不到状态时按还在处理。另外，等“整理新材料”时只等第一次看这条消息时已经排着的那次（`ingestBy`），同一个会话后来又排的整理是给后面的消息的，不再跟着等满 8 分钟。`MentionChannel.gone`（`src/mentions/channel.ts`）、`src/channels/lark-mentions.ts`、`src/mentions/mentions.ts`；`test/lark-mentions.test.ts`。
 
 ## 会话续用时按这一轮的工具清单（2026-11-25）
 

@@ -53,7 +53,7 @@ const HANDED_MS = 6 * 3600_000;
 /** What a handling may not do: no coding, no rules or watches, no other agents, nothing written to Feishu as the owner. */
 export const MENTION_DENY = [...CODE_STARTERS, "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action", "save_rule", "set_chat_watch", "run_agent", "ask_agent", "lark_write", "lark_invite","lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"];
 
-type Input = { channel?: string; chatId: string; chatName: string; chatKind: "p2p" | "group"; topicId: string | null; messageIds: string[]; waited?: number };
+type Input = { channel?: string; chatId: string; chatName: string; chatKind: "p2p" | "group"; topicId: string | null; messageIds: string[]; waited?: number; ingestBy?: string };
 /** A message the channel picked: someone (not the owner, not a bot) looking for the owner, fresh. */
 export type PickedMessage = { id: string; topicId: string | null; sender: string; atMs: number };
 
@@ -104,12 +104,13 @@ function ruleOn(app: App, channel: MentionChannel, chatId: string, m: MentionMes
 }
 
 /** The ingest run reading these lines, still to come or under way. */
-function ingestPending(app: App, sourceIds: string[]) {
+/** An ingest run on these sources queued by `by` (the first look here): later ones are about later lines, not waited for. */
+function ingestPending(app: App, sourceIds: string[], by: string) {
   if (!sourceIds.length) return false;
   return !!one(app.db,
-    `select 1 from runs where kind = 'ingest' and status in ('queued','running')
+    `select 1 from runs where kind = 'ingest' and status in ('queued','running') and created_at <= ?
       and exists (select 1 from json_each(runs.input, '$.sourceIds') j where j.value in (${sourceIds.map(() => "?").join(",")}))`,
-    ...sourceIds);
+    by, ...sourceIds);
 }
 
 // ---- daily limits -------------------------------------------------------------------------
@@ -199,8 +200,9 @@ registerHandler("mention", async (ctx: RunContext) => {
   const channel = mentionChannel(input.channel);
   const stored = channel.messages(app, input.messageIds);
   const waited = input.waited ?? 0;
+  const ingestBy = input.ingestBy ?? new Date().toISOString();
   const later = (summary: string) => {
-    createRun(app, { kind: "mention", spaceId: ctx.run.spaceId, lane: ctx.run.lane ?? laneOf(input.chatId, input.topicId), notBefore: new Date(Date.now() + 60_000).toISOString(), title: ctx.run.title, input: { ...input, waited: waited + 1 }, trigger: ctx.run.trigger });
+    createRun(app, { kind: "mention", spaceId: ctx.run.spaceId, lane: ctx.run.lane ?? laneOf(input.chatId, input.topicId), notBefore: new Date(Date.now() + 60_000).toISOString(), title: ctx.run.title, input: { ...input, waited: waited + 1, ingestBy }, trigger: ctx.run.trigger });
     return { quiet: true, summary };
   };
   // Rules first: while they are still judging these messages, wait for their answer.
@@ -233,7 +235,7 @@ registerHandler("mention", async (ctx: RunContext) => {
   if (!open.length) return { quiet: true, summary: taken.length ? `${[...new Set(taken)].join("；")}，这里不再处理` : "本人已经看过或回复了，或者已经有别的处理者在管，不用提醒" };
   // The ingest run on these lines first: its items are what the triage and the handler see, not duplicates.
   const sources = [...new Set(open.map((m) => m.sourceId).filter((s): s is string => !!s))];
-  if (waited < WAITS && ingestPending(app, sources)) return later("这几条消息的整理还没做完，一分钟后再看");
+  if (waited < WAITS && ingestPending(app, sources, ingestBy)) return later("这几条消息的整理还没做完，一分钟后再看");
   // The same person in the same topic, a handling still around: the new messages go to it, no new triage.
   const earlier = recentHandling(app, input, [...new Set(open.map((m) => m.senderId).filter((s): s is string => !!s))]);
   if (earlier) {
