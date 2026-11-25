@@ -14,7 +14,7 @@ import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { refAction } from "../lib/refs";
 import { parsePatches } from "../lib/reviews";
 import {
-  changeLine, concernTally, countParts, DECISION_FIELDS, DONE_LABELS, draftingText, hasChange, KIND_CLS, KIND_LABELS, ORIGIN_LABELS, statusText, STATUS_CLS,
+  changeLine, concernTally, countParts, DECISION_FIELDS, DONE_LABELS, draftingText, fileGroups, hasChange, KIND_CLS, KIND_LABELS, ORIGIN_LABELS, reqPoints, statusText, STATUS_CLS,
   type Concern, type ConcernState, type Decision, type DesignDetail, type Table,
 } from "../lib/designs";
 import { fmtTime, openCitation, relTime, state, toast } from "../store";
@@ -91,15 +91,10 @@ const refOpen = (r: string) => refAction(r, workRun.value);
 
 // ---- requirement points: picking one highlights its decisions ----------------------------------
 const activeReq = ref<string | null>(null);
-const reqList = computed(() => {
-  const d = detail.value;
-  if (!d) return [];
-  const known = d.reqs.map((r) => ({ key: r.id, title: r.title, link: `/code/reqs/${r.id}` as string | null }));
-  const ids = new Set(known.map((r) => r.key));
-  const loose = [...new Set(d.body.decisions.flatMap((x) => x.reqs).filter((r) => !ids.has(r)))].map((r) => ({ key: r, title: r, link: null }));
-  return [...known, ...loose].map((r) => ({ ...r, n: d.body.decisions.filter((x) => x.reqs.includes(r.key)).length }));
-});
-const reqTitle = (key: string) => reqList.value.find((r) => r.key === key)?.title ?? key;
+// Each with its own title and how many decisions it has; the item's requirements no decision names are only counted.
+const reqInfo = computed(() => (detail.value ? reqPoints(detail.value) : { list: [], idle: 0 }));
+const reqList = computed(() => reqInfo.value.list);
+const reqTitle = (key: string) => reqList.value.find((r) => r.key === key)?.title ?? "需求点";
 const dimmed = (d: Decision) => !!activeReq.value && !d.reqs.includes(activeReq.value);
 
 // ---- decision cards -----------------------------------------------------------------------------
@@ -240,6 +235,18 @@ async function showDiff(key: string, title: string) {
 }
 const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k) ? n.delete(k) : n.add(k); openFiles.value = n; };
 const fileCount = (s: Shown) => s.files.reduce((n, d) => n + d.files.length, 0);
+// Outside every decision: folded by default, by directory, with images, data and logs in one line.
+const outsideOpen = ref(false);
+const outsideRows = computed(() => {
+  const { groups, other } = fileGroups(detail.value?.outside ?? []);
+  return [
+    ...groups.map((g) => ({ ...g, key: g.dir || "~root", label: g.dir ? `${g.dir}/` : "仓库根目录", other: false })),
+    ...(other ? [{ ...other, key: "~other", label: "其他文件（图片、数据、日志）", other: true }] : []),
+  ];
+});
+const groupOpen = ref(new Set<string>());
+const toggleGroup = (k: string) => { const n = new Set(groupOpen.value); n.has(k) ? n.delete(k) : n.add(k); groupOpen.value = n; };
+const inGroup = (dir: string, path: string) => (dir && path.startsWith(`${dir}/`) ? path.slice(dir.length + 1) : path);
 const outsideStat = computed(() => {
   const o = detail.value?.outside ?? [];
   const add = o.reduce((n, f) => n + f.add, 0), del = o.reduce((n, f) => n + f.del, 0);
@@ -331,9 +338,10 @@ watch(() => props.designId, () => {
         <div class="main" :class="{ 'with-reqs': reqList.length }">
           <aside v-if="reqList.length" class="reqs" aria-label="需求点">
             <div class="section-title">需求点</div>
-            <button v-for="r in reqList" :key="r.key" type="button" class="req" :class="{ on: activeReq === r.key }" :aria-pressed="activeReq === r.key" :title="r.title" @click="activeReq = activeReq === r.key ? null : r.key">
-              <span class="ellipsis grow">{{ r.title }}</span><span class="muted small">{{ r.n }}</span>
+            <button v-for="r in reqList" :key="r.key" type="button" class="req" :class="{ on: activeReq === r.key }" :aria-pressed="activeReq === r.key" :title="r.under ? `${r.under} · ${r.title}` : r.title" @click="activeReq = activeReq === r.key ? null : r.key">
+              <span class="ellipsis grow">{{ r.title }}</span><span class="muted small" :title="`${r.n} 个决定`">{{ r.n }}</span>
             </button>
+            <p v-if="reqInfo.idle" class="muted small">另有 {{ reqInfo.idle }} 个需求没有涉及</p>
             <p v-if="activeReq" class="muted small">只亮出挂在它下面的决定。<button class="lnk" @click="activeReq = null">全部</button></p>
           </aside>
 
@@ -444,12 +452,21 @@ watch(() => props.designId, () => {
             <!-- changes outside every decision -->
             <section v-if="detail.outside.length" class="card dcard outside">
               <div class="dhead static">
-                <span class="dt">方案之外的改动</span>
+                <button class="otoggle" :aria-expanded="outsideOpen" @click="outsideOpen = !outsideOpen"><Icon :name="outsideOpen ? 'down' : 'right'" :size="14" /><span class="dt">方案之外的改动</span></button>
                 <span class="muted small">{{ outsideStat }}</span>
                 <span class="spacer" />
                 <button class="lnk small" :aria-expanded="shown?.key === 'outside'" @click="showDiff('outside', '方案之外的改动')">{{ shown?.key === "outside" ? "收起 diff" : "看 diff" }}</button>
               </div>
-              <ul class="small mono files"><li v-for="f in detail.outside" :key="`${f.space}/${f.path}`" :title="f.path"><span class="ellipsis">{{ fileLabel(f) }}</span><span v-if="f.add || f.del" class="muted"> +{{ f.add }} −{{ f.del }}</span></li></ul>
+              <ul v-if="outsideOpen" class="small groups">
+                <li v-for="g in outsideRows" :key="g.key">
+                  <button class="ghead" :aria-expanded="groupOpen.has(g.key)" @click="toggleGroup(g.key)">
+                    <Icon :name="groupOpen.has(g.key) ? 'down' : 'right'" :size="12" />
+                    <span class="ellipsis grow" :class="{ mono: !g.other && g.dir }" :title="g.label">{{ g.label }}</span>
+                    <span class="muted nowrap">{{ g.files.length }} 个<template v-if="g.add || g.del"> +{{ g.add }} −{{ g.del }}</template></span>
+                  </button>
+                  <ul v-if="groupOpen.has(g.key)" class="mono files"><li v-for="f in g.files" :key="`${f.space}/${f.path}`" :title="fileLabel(f)"><span class="ellipsis">{{ g.other ? fileLabel(f) : inGroup(g.dir, f.path) }}</span><span v-if="f.add || f.del" class="muted"> +{{ f.add }} −{{ f.del }}</span></li></ul>
+                </li>
+              </ul>
               <div v-if="shown?.key === 'outside'" class="shown">
                 <Skeleton v-if="shown.loading" variant="lines" :rows="3" />
                 <p v-else-if="shown.missing" class="muted small">还没有关联的代码。</p>
@@ -551,11 +568,18 @@ watch(() => props.designId, () => {
 .fhead { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 7px 12px; border: 0; background: var(--sunken); color: inherit; font: inherit; cursor: pointer; text-align: left; }
 .add { color: var(--ok); }
 .rm { color: var(--danger); }
-.files { margin: 0; padding: 0 12px 10px 28px; display: grid; gap: 2px; }
+.files { margin: 0; padding: 2px 0 6px 22px; display: grid; gap: 2px; }
+.groups { list-style: none; margin: 0; padding: 0 12px 10px; display: grid; gap: 1px; min-width: 0; }
+.groups > li { min-width: 0; }
+.ghead { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 4px 4px; border: 0; border-radius: 6px; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.ghead:hover { background: var(--hover); }
+.otoggle { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; min-width: 0; }
+.nowrap { white-space: nowrap; flex: none; }
 .files li { min-width: 0; overflow-wrap: anywhere; }
 .outside .shown { padding: 0 12px 12px; }
 .more { justify-self: start; }
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; }
+.lnk.small { font-size: 12px; }
 .decide { position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow); }
 @container (max-width: 680px) {
   .main.with-reqs { grid-template-columns: minmax(0, 1fr); }

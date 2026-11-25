@@ -22,12 +22,23 @@ export type WorkStage = { key: string; text: string; cls: "" | "ok" | "warn" | "
 export type WorkAction = "stop" | "retry" | "discard" | "confirm" | "apply" | "move" | "code-here" | "clean" | "branch";
 export type WorkRepo = { space: string; branch: string | null; base: string | null; cutFrom: string | null; newBranch: boolean; pushedAt: string | null };
 export type WorkRound = { id: string; round: number; status: string; title: string; verdict: string | null; createdAt: string; finishedAt: string | null };
+/**
+ * What the latest round is doing while it runs: the stage badge, the next step and the round's
+ * activity all read it, so they never disagree. `checking`: the host runs the repositories' check
+ * commands after the coder; `plan` / `review` / `lead`: the stage review (review-lead picks the checks,
+ * the checks run, review-lead rules); `verify`: checks verify finished tasks after the coder.
+ */
+export type WorkPhase = "queued" | "design" | "coding" | "checking" | "verify" | "look" | "arbitrate" | "plan" | "review" | "lead" | "peer";
 export type CodeWork = {
   rootId: string;
   latestId: string;
   title: string;
   spaceId: string | null;
   stage: WorkStage;
+  /** The latest round's phase while it is queued or running; null otherwise. */
+  phase: WorkPhase | null;
+  /** The stage review under way in the latest round: how many checks it runs and how many have handed in. */
+  review: { checks: number; done: number } | null;
   /** One line under the badge: what is going on now. */
   now: string;
   next: { text: string; actions: WorkAction[] };
@@ -72,7 +83,7 @@ type RootRow = {
   worktrees: string | null; applied_at: string | null; discarded_at: string | null; pushed: string | null; paused: string | null; until: number | null;
   settled: string | null; superseded: string | null;
 };
-type RoundRow = { id: string; root: string; status: string; title: string; round: number | null; verdict: string | null; applied_at: string | null; discarded_at: string | null; stopped: string | null; stage: string | null; design_by: string | null; created_at: string; finished_at: string | null };
+type RoundRow = { id: string; root: string; status: string; title: string; round: number | null; verdict: string | null; applied_at: string | null; discarded_at: string | null; stopped: string | null; stage: string | null; design_by: string | null; plan_checks: number | null; created_at: string; finished_at: string | null };
 
 const ROOT_COLS = `id, space_id, user_id, status, title, created_at,
   substr(json_extract(input, '$.task'), 1, 4000) task, json_extract(input, '$.itemId') item_id, json_extract(input, '$.contextItemId') context_item_id, json_extract(input, '$.repos') repos,
@@ -152,7 +163,8 @@ function roundsOf(app: App, roots: string[]): RoundRow[] {
   const marks = roots.map(() => "?").join(",");
   return all<RoundRow>(app.db, `select id, coalesce(json_extract(input, '$.continueFrom'), id) root, status, title, json_extract(input, '$.round') round,
       json_extract(output, '$.verdict') verdict, json_extract(output, '$.appliedAt') applied_at, json_extract(output, '$.discardedAt') discarded_at,
-      json_extract(output, '$.stoppedByOwner') stopped, json_extract(output, '$.reviewStage') stage, json_extract(output, '$.designWait.by') design_by, created_at, finished_at
+      json_extract(output, '$.stoppedByOwner') stopped, json_extract(output, '$.reviewStage') stage, json_extract(output, '$.designWait.by') design_by,
+      json_array_length(json_extract(output, '$.reviewPlan.checks')) plan_checks, created_at, finished_at
     from runs where kind = 'code' and (id in (${marks}) or json_extract(input, '$.continueFrom') in (${marks})) order by created_at`, ...roots, ...roots);
 }
 
@@ -165,6 +177,14 @@ function buildWorks(app: App, roots: RootRow[]): CodeWork[] {
   const latest = [...rounds.values()].map((l) => l.at(-1)!.id);
   const lastMarks = latest.map(() => "?").join(",");
   const reviewing = new Set(all<{ parent_id: string }>(app.db, `select distinct parent_id from runs where kind = 'review' and status in ('queued', 'running') and parent_id in (${lastMarks})`, ...latest).map((x) => x.parent_id));
+  // Rounds running now (a handful at most): whether the host is running the check commands, and how
+  // many checks of a stage review have handed in.
+  const runningRounds = [...rounds.values()].map((l) => l.at(-1)!).filter((x) => x.status === "running");
+  const checking = new Set(runningRounds.filter((x) => !x.stage).filter((x) => {
+    const last = all<{ type: string }>(app.db, `select type from run_events where run_id = ? and (type = 'check' or (type = 'status' and json_extract(data, '$.text') like '运行检查%')) order by seq desc limit 1`, x.id)[0];
+    return last?.type === "status";
+  }).map((x) => x.id));
+  const handedIn = new Map(runningRounds.filter((x) => x.plan_checks).map((x) => [x.id, all<{ n: number }>(app.db, "select count(*) n from reviews where code_run_id = ? and round = ?", x.id, x.round ?? 1)[0]?.n ?? 0]));
   const open = new Map(all<{ id: string; n: number }>(app.db, `select r.code_run_id id, count(*) n from review_findings f join reviews r on r.id = f.review_id
     where r.code_run_id in (${lastMarks}) and f.state in ('open', 'accepted') and f.severity != 'nit' and f.decision is null group by r.code_run_id`, ...latest).map((x) => [x.id, x.n]));
   const tasks = new Map<string, { kind: string; state: string; later: number; n: number }[]>();
@@ -193,11 +213,12 @@ function buildWorks(app: App, roots: RootRow[]): CodeWork[] {
     const branchWork = !branchReview && json<{ commits?: boolean }[]>(root.worktrees, []).some((w) => w.commits);
     const updatedAt = list.reduce((t, x) => [t, x.created_at, x.finished_at ?? ""].reduce((a, b) => (a > b ? a : b)), root.created_at);
     const work: CodeWork = {
-      rootId: root.id, latestId: last.id, title: root.title, spaceId: root.space_id, stage: { key: "", text: "", cls: "", group: "idle" }, now: "", next: { text: "", actions: [] },
+      rootId: root.id, latestId: last.id, title: root.title, spaceId: root.space_id, stage: { key: "", text: "", cls: "", group: "idle" }, phase: null, review: null, now: "", next: { text: "", actions: [] },
       branchReview, branchWork, taskMode: !!root.task_mode, rounds: list.length, progress, open: open.get(last.id) ?? 0,
       item: root.item_id ? items.get(root.item_id) ?? null : null, background: root.context_item_id ? items.get(root.context_item_id) ?? null : null, reqs: root.item_id ? reqs.get(root.item_id) ?? [] : [], repos, peer: root.peer, createdAt: root.created_at, updatedAt,
     };
-    describe(work, root, list, reviewing.has(last.id), nowMs - Date.parse(updatedAt));
+    if (last.plan_checks && handedIn.has(last.id) && ["plan", "checks", "lead"].includes(last.stage ?? "")) work.review = { checks: last.plan_checks, done: Math.min(handedIn.get(last.id)!, last.plan_checks) };
+    describe(work, root, list, reviewing.has(last.id), nowMs - Date.parse(updatedAt), checking.has(last.id));
     return work;
   });
 }
@@ -234,7 +255,17 @@ function progressOf(rows?: { kind: string; state: string; later: number; n: numb
 const PAUSED: Record<string, string> = { budget: "暂停：自动推进的轮数用完了", owner: "你暂停了", paused: "已暂停", "not-converging": "暂停：修改没有收敛", polishing: "暂停：需求早已做完，评审还在一轮轮提问题" };
 
 /** Stage, the line under it and the next step, from the latest round and the tasks. */
-function describe(w: CodeWork, root: RootRow, list: RoundRow[], reviewing: boolean, idleMs: number) {
+/** The phase of a round that is queued or running, from what it recorded (code-loop.ts, review-chain.ts). */
+export function roundPhase(status: string, stage: string | null, checking = false): WorkPhase | null {
+  if (status === "queued") return "queued";
+  if (status !== "running") return null;
+  if (stage === "checks") return "review";
+  if (stage && ["design", "verify", "look", "arbitrate", "plan", "lead", "peer"].includes(stage)) return stage as WorkPhase;
+  return checking ? "checking" : "coding";
+}
+const PHASE_TEXT: Record<WorkPhase, string> = { queued: "排队中", design: "写方案中", coding: "编码中", checking: "宿主检查中", verify: "逐项验证中", look: "等复看做完", arbitrate: "裁决异议中", plan: "阶段评审中", review: "阶段评审中", lead: "阶段评审中", peer: "等外部评审" };
+
+function describe(w: CodeWork, root: RootRow, list: RoundRow[], reviewing: boolean, idleMs: number, checking = false) {
   const last = list.at(-1)!;
   const set = (key: string, text: string, cls: WorkStage["cls"], group: WorkGroup, now: string, next: string, actions: WorkAction[] = []) => {
     w.stage = { key, text, cls, group };
@@ -256,8 +287,22 @@ function describe(w: CodeWork, root: RootRow, list: RoundRow[], reviewing: boole
   }
   if (discarded) return set("ended", w.branchReview ? "已清理" : "已丢弃", "", "ended", `${round}后丢弃`, "已结束。");
   if (last.status === "queued" || last.status === "running") {
-    const text = last.status === "queued" ? "排队中" : w.branchReview ? "评审中" : last.stage === "design" ? "写方案中" : last.stage === "verify" ? "逐项验证中" : ["plan", "checks", "lead"].includes(last.stage ?? "") ? "阶段评审中" : "编码中";
-    return set("running", text, "accent", "active", `${round}${what ? `：${what}` : ""}`, w.branchReview ? "评审完成后在这里看结论。" : "编码 Agent 在做这一轮；有补充可以直接写给它，或者停下这一轮。", w.branchReview ? [] : ["stop"]);
+    const phase = roundPhase(last.status, last.stage, checking)!;
+    w.phase = phase;
+    const text = phase !== "queued" && w.branchReview ? "评审中" : PHASE_TEXT[phase];
+    const r = w.review;
+    const next = w.branchReview ? "评审完成后在这里看结论。"
+      : phase === "queued" ? "排上后开始编码；有补充可以先写下，开始时一起交给它。"
+      : phase === "checking" ? "宿主在跑仓库的检查命令，跑完交给评审；不想等可以停下这一轮。"
+      : phase === "verify" ? "评审项在逐项验证这一轮做完的修改项，没解决的交回编码 Agent。"
+      : phase === "look" ? "另一个模型在复看上一次评审的改动，做完再接着评审。"
+      : phase === "arbitrate" ? "评审负责人在裁决编码 Agent 不同意的问题。"
+      : phase === "plan" ? "评审负责人在定这次评审看什么，定好后各评审项一起开始。"
+      : phase === "review" ? `阶段评审在进行${r ? `：${r.checks} 个评审项，已完成 ${r.done} 个` : ""}；都做完后评审负责人汇总，要改的变成修改项。`
+      : phase === "lead" ? "各评审项已交，评审负责人在汇总问题，要改的变成修改项。"
+      : phase === "design" ? "在写方案，写好后请你确认。"
+      : "编码 Agent 在做这一轮；有补充可以直接写给它，或者停下这一轮。";
+    return set("running", text, "accent", "active", `${round}${what ? `：${what}` : ""}`, next, w.branchReview ? [] : ["stop"]);
   }
   if (reviewing) return set("reviewing", "评审中", "accent", "active", `${round}的改动在评审`, "评审完成后自动接着做。");
   if (last.verdict === "awaiting-peer" || last.verdict === "awaiting-peer-code") {

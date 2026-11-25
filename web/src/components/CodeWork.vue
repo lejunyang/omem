@@ -19,20 +19,21 @@ import FixBasket from "./FixBasket.vue";
 import OpenInIde from "./OpenInIde.vue";
 import WorkPreview from "./WorkPreview.vue";
 import QuoteDock from "./QuoteDock.vue";
-import ReviewChecks from "./ReviewChecks.vue";
-import ReviewProcess from "./ReviewProcess.vue";
+import ReviewRounds from "./ReviewRounds.vue";
 import ReviewSummary from "./ReviewSummary.vue";
-import RunActivity from "./RunActivity.vue";
+import RoundPhases from "./RoundPhases.vue";
 import RunArtifacts from "./RunArtifacts.vue";
 import PreCheckCard from "./PreCheckCard.vue";
 import { ApiError } from "../api";
 import { confirmDialog } from "../lib/dialog";
 import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
 import { refAction } from "../lib/refs";
-import { findingWhere, parsePatches, pointCount, pointQuote, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
+import { CHECK_STATE, checkRows, findingWhere, parsePatches, pointCount, pointQuote, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
 import { progressText, stripAnsi, type CodeWorkDetail, type WorkAction } from "../lib/works";
 import { countLine } from "../lib/designs";
+import { plainLine } from "../lib/plain";
 import { fmtTime, openCitation, relTime, state, statusLabel, toast } from "../store";
+import { useRoute, useRouter } from "vue-router";
 
 /**
  * One delegation or branch review (编码 → 交办, docs/v2/coding-work.md): what it is for, where it
@@ -267,6 +268,19 @@ const openArtifacts = (seq: number | null) => {
   artifactTask.value = seq;
   tab.value = "artifacts";
 };
+// A task named elsewhere on the page (a finding that became T12, a verification): 概览 opens it (`?task=T12`).
+const route = useRoute();
+const router = useRouter();
+function goTask(seq: number) {
+  localTab.value = "overview";
+  void router.replace({ path: route.path, query: { ...route.query, tab: undefined, task: `T${seq}` } });
+}
+// The stage review under way in the latest round, check by check: 下一步 names them.
+const LIVE_REVIEW = ["plan", "review", "lead"];
+const liveChecks = computed(() => (latest.value && LIVE_REVIEW.includes(work.value?.phase ?? "") && rv.current.value ? checkRows(rv.current.value, rv.reviews.value) : []));
+const roundChecks = computed(() => (rv.current.value ? checkRows(rv.current.value, rv.reviews.value) : []));
+/** What the round is doing now, in the words of its stage (the same source as the badge). */
+const phaseNow = computed(() => (latest.value && busy.value ? work.value?.phase ?? null : null));
 const localTab = ref<WorkTab>("overview");
 const tab = computed<WorkTab>({ get: () => props.tab ?? localTab.value, set: (t) => { localTab.value = t; emit("update:tab", t); } });
 // A work with a design shows it in place of 需求点 and 变更 (docs/v2/coding-plan.md §5); a change
@@ -394,6 +408,9 @@ const ctx = computed(() => detail.value?.context ?? null);
         <dt>下一步</dt>
         <dd>
           <div class="line">{{ work.next.text }}</div>
+          <div v-if="liveChecks.length" class="line live-checks small" aria-label="正在评审">
+            <button v-for="c in liveChecks" :key="c.name" class="chip" :title="c.ai ? `${rv.label(c.name)} · ${c.ai}` : rv.label(c.name)" @click="tab = 'review'"><span class="cdot" :class="c.state" />{{ rv.label(c.name) }}<span class="muted">{{ CHECK_STATE[c.state].text }}</span></button>
+          </div>
           <div v-if="actions.length" class="line">
             <template v-for="a in actions" :key="a">
               <UiSelect v-if="a === 'move'" v-model="moveMode" :options="[{ value: 'merge', label: '合并（merge）' }, { value: 'rebase', label: '变基（rebase）' }]" size="sm" width="auto" aria-label="同步目标分支的方式" />
@@ -423,7 +440,7 @@ const ctx = computed(() => detail.value?.context ?? null);
       </dl>
 
       <!-- A round coding now: the owner's words for the coding Agent, and the review from now on. -->
-      <CodeSteer v-if="canEdit && !branchReview && latest && busy" :run-id="run.id" :coding="typeof out.coderSummary !== 'string'" :notes="out.notes ?? []" :review="(run.input as { roundReview?: { tier?: string; split?: boolean } }).roundReview" :tasks="work.taskMode" @changed="load" />
+      <CodeSteer v-if="canEdit && !branchReview && latest && busy" :run-id="run.id" :coding="typeof out.coderSummary !== 'string'" :notes="out.notes ?? []" :space="run.spaceId ?? undefined" :review="(run.input as { roundReview?: { tier?: string; split?: boolean } }).roundReview" :tasks="work.taskMode" @changed="load" />
 
       <nav class="tabs" role="tablist" aria-label="交办详情">
         <button v-for="t in tabs" :key="t.id" role="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
@@ -499,12 +516,12 @@ const ctx = computed(() => detail.value?.context ?? null);
       </template>
 
       <template v-else-if="tab === 'review'">
-        <ReviewChecks v-if="hasReview" :rv="rv" :run-id="run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
-        <p v-else class="empty-tab">{{ work.taskMode ? "还没有阶段评审：待做的项做完后，评审负责人决定这次看什么。逐项验证的结论在“概览”的修改项上。" : busy ? "编码结束后开始评审。" : "这一轮没有评审。" }}</p>
+        <Skeleton v-if="!rv.data.value" :rows="4" />
+        <ReviewRounds v-else :rv="rv" :run-id="run.id" :task-mode="work.taskMode" :rounds="work.roundList" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" @task="goTask" />
       </template>
 
       <template v-else-if="tab === 'artifacts'">
-        <RunArtifacts :run-id="run.id" :task="artifactTask" @count="(n) => (shotCount = n)" @task="(s) => (artifactTask = s)" />
+        <RunArtifacts :run-id="run.id" :focus="artifactTask" @count="(n) => (shotCount = n)" @task="(s) => (artifactTask = s)" />
       </template>
 
       <template v-else-if="tab === 'activity'">
@@ -520,17 +537,17 @@ const ctx = computed(() => detail.value?.context ?? null);
           <div v-if="ctx.conversation" class="row wrap small"><span class="muted">会话</span><router-link :to="`/ask/${ctx.conversation.id}`">{{ ctx.conversation.title || ctx.conversation.id }}</router-link><span class="badge">{{ ctx.conversation.work ? "多 Agent 工作会话" : ctx.conversation.topic ? "飞书话题" : ctx.conversation.channel === "lark" ? "飞书会话" : ctx.conversation.channel }}</span></div>
           <div v-if="ctx.parent" class="row wrap small"><span class="muted">由</span><router-link class="ellipsis" :to="`/runs/${ctx.parent.id}`" :title="ctx.parent.title">{{ ctx.parent.title }}</router-link></div>
         </section>
-        <div class="row small muted round-head">第 {{ roundNo }} 轮 · {{ statusLabel[run.status] ?? run.status }} · {{ fmtTime(run.createdAt) }}<template v-if="run.finishedAt"> → {{ fmtTime(run.finishedAt) }}</template></div>
+        <div class="row small muted round-head">第 {{ roundNo }} 轮 · {{ phaseNow ? work.stage.text : statusLabel[run.status] ?? run.status }} · {{ fmtTime(run.createdAt) }}<template v-if="run.finishedAt"> → {{ fmtTime(run.finishedAt) }}</template></div>
         <ContextUsage :events="detail!.events" />
-        <ReviewProcess v-if="hasReview" :rv="rv" :focus="processFocus" />
-        <section class="block"><RunActivity :run-id="run.id" :link="false" :open="busy" /></section>
-        <section v-if="out.coderSummary && (work.taskMode || hasReview)" class="block">
-          <div class="section-title">{{ branchReview ? "要评审的分支" : "编码 Agent 这一轮的说明" }}</div>
-          <div class="card pad"><Markdown :source="out.coderSummary" :space="run.spaceId ?? undefined" /></div>
-        </section>
-        <section v-for="(c, ci) in checks" :key="`${c.space}:${ci}`" class="block">
+        <RoundPhases :run-id="run.id" :events="detail!.events" :busy="busy" :checks="roundChecks" :label="rv.label" :review-runs="(rv.current.value?.reviewRuns ?? []).map((r) => r.id)" :task-mode="work.taskMode" :focus="processFocus" data-ask-label="这一轮的过程" />
+        <details v-if="out.coderSummary && (work.taskMode || hasReview)" class="card pad block summary-card">
+          <summary class="small"><strong>{{ branchReview ? "要评审的分支" : "编码 Agent 这一轮的说明" }}</strong><span class="muted"> · {{ plainLine(out.coderSummary, 80) }}</span></summary>
+          <Markdown compact :source="out.coderSummary" :space="run.spaceId ?? undefined" />
+        </details>
+        <!-- Checks of rounds that recorded no check event (older rounds, the improvement loop's). -->
+        <section v-for="(c, ci) in checks.filter(() => !detail!.events.some((e) => e.type === 'check'))" :key="`${c.space}:${ci}`" class="block">
           <div class="section-title">检查<template v-if="c.space"> · {{ spaceName(c.space) }}</template>：<span class="mono">{{ c.check.command }}</span> <span class="badge" :class="c.check.code === 0 ? 'ok' : 'danger'">退出码 {{ c.check.code }}</span> <span v-if="c.check.commit || c.check.ms" class="muted small"><template v-if="c.check.commit">提交 <span class="mono">{{ c.check.commit.slice(0, 8) }}</span></template><template v-if="c.check.commit && c.check.ms"> · </template><template v-if="c.check.ms">{{ Math.round(c.check.ms / 1000) }} 秒</template></span></div>
-          <pre class="log">{{ stripAnsi(c.check.output ?? "") }}</pre>
+          <details class="small"><summary class="muted">输出</summary><pre class="log">{{ stripAnsi((c.check.output ?? "").slice(-20000)) }}</pre></details>
         </section>
         <p v-if="unchecked.length && !branchReview" class="muted small block">{{ unchecked.map(spaceName).join("、") }} 没有设检查命令：评审只能看编码 Agent 自己写的验证。在 设置 → 空间 里给仓库设检查命令后，宿主每轮都会跑并交给评审。</p>
         <section v-if="detail!.children.filter((c) => c.kind !== 'code').length" class="block">
@@ -608,6 +625,16 @@ const ctx = computed(() => detail.value?.context ?? null);
 .round .no { width: 1.8em; text-align: right; flex: none; }
 .round .grow { flex: 1; min-width: 0; }
 .round-head { margin-top: 4px; }
+.summary-card summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-card[open] summary { margin-bottom: 8px; }
+.live-checks { gap: 4px 6px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); font: inherit; cursor: pointer; white-space: nowrap; }
+.chip:hover { background: var(--hover); }
+.cdot { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); flex: none; }
+.cdot.running { background: var(--accent); }
+.cdot.approved { background: var(--ok); }
+.cdot.changes_requested { background: var(--warn); }
+.cdot.failed { background: var(--danger); }
 .ctx { display: grid; gap: 6px; }
 .st { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); flex: none; }
 .st.running, .st.queued { background: var(--accent); }

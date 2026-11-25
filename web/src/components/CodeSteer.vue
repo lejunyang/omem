@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { get, post, put } from "../api";
+import Markdown from "./Markdown.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
+import { plainLine } from "../lib/plain";
 import { fmtTime, toast } from "../store";
 
 /**
@@ -13,8 +15,18 @@ import { fmtTime, toast } from "../store";
 type Note = { id: string; text: string; at: string; deliveredAt?: string };
 type RoundReview = { tier?: string; checks?: string[]; split?: boolean; rotate?: boolean };
 /** `tasks`: a delegation driven by tasks, where another model takes a second look instead of each round switching. */
-const props = defineProps<{ runId: string; coding: boolean; notes: Note[]; review: RoundReview | undefined; tasks?: boolean }>();
+const props = defineProps<{ runId: string; coding: boolean; notes: Note[]; review: RoundReview | undefined; tasks?: boolean; space?: string }>();
 const emit = defineEmits<{ changed: [] }>();
+
+// What the owner added so far: the latest two by their first line, older ones folded; one opens in full
+// (its paragraphs and lists kept), so the input stays on the first screen.
+const RECENT = 2;
+const latestFirst = computed(() => [...props.notes].reverse());
+const olderOpen = ref(false);
+const shownNotes = computed(() => (olderOpen.value ? latestFirst.value : latestFirst.value.slice(0, RECENT)));
+const openNote = ref<string | null>(null);
+const headLine = (n: Note) => plainLine(n.text, 160);
+const longNote = (n: Note) => n.text.trim().includes("\n") || n.text.length > 160;
 
 const text = ref("");
 const sending = ref(false);
@@ -74,13 +86,21 @@ async function saveReview() {
       <span class="spacer" />
       <span class="muted small">{{ coding ? "它下一次调用 omem 工具时收到，最晚在这一轮检查之前" : "这一轮已写完代码，补充随下一轮交给它" }}</span>
     </div>
-    <ul v-if="notes.length" class="notes small">
-      <li v-for="n in notes" :key="n.id"><span class="muted">{{ fmtTime(n.at) }}</span> {{ n.text }} <span class="badge" :class="{ ok: n.deliveredAt }">{{ n.deliveredAt ? "已交给它" : "等待交付" }}</span></li>
-    </ul>
     <div class="row">
       <input v-model="text" class="input sm grow" placeholder="新要求或纠正，原话就行" aria-label="补充给编码 Agent" @keydown.enter="send" />
       <button class="btn sm" :disabled="sending || !text.trim()" @click="send">发送</button>
     </div>
+    <ul v-if="notes.length" class="notes small" aria-label="已补充的要求">
+      <li v-for="n in shownNotes" :key="n.id" :class="{ open: openNote === n.id }">
+        <button class="nhead" :aria-expanded="longNote(n) ? openNote === n.id : undefined" :disabled="!longNote(n)" @click="openNote = openNote === n.id ? null : n.id">
+          <span class="ntext">{{ headLine(n) }}</span>
+          <span class="nmeta muted">{{ fmtTime(n.at) }}</span>
+          <span class="badge" :class="{ ok: n.deliveredAt }">{{ n.deliveredAt ? "已交给它" : "等待交付" }}</span>
+        </button>
+        <Markdown v-if="openNote === n.id" class="nfull" compact :source="n.text" :space="space" />
+      </li>
+      <li v-if="notes.length > RECENT" class="more"><button class="lnk" :aria-expanded="olderOpen" @click="olderOpen = !olderOpen">{{ olderOpen ? "只看最近 2 条" : `更早的 ${notes.length - RECENT} 条` }}</button></li>
+    </ul>
     <button class="lnk small review-toggle" :aria-expanded="reviewOpen" @click="reviewOpen = !reviewOpen">之后的评审：{{ reviewSummary }} {{ reviewOpen ? "▴" : "▾" }}</button>
     <div v-if="reviewOpen" class="row wrap small choices">
       <UiSelect v-model="tier" :options="tierOptions" size="sm" width="170px" aria-label="之后各轮的评审档位" @change="saveReview" />
@@ -94,8 +114,17 @@ async function saveReview() {
 .steer { display: grid; gap: 8px; }
 .flat { margin: 0; }
 .grow { flex: 1; min-width: 0; }
-.notes { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
-.notes li { overflow-wrap: anywhere; }
+.notes { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.notes li { min-width: 0; border-top: 1px solid var(--line); }
+.nhead { display: flex; align-items: center; gap: 4px 10px; width: 100%; min-width: 0; padding: 5px 2px; border: 0; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.nhead:disabled { cursor: default; opacity: 1; }
+.nhead:not(:disabled):hover { background: var(--hover); }
+.ntext { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.open .ntext { white-space: normal; }
+.nmeta { flex: none; white-space: nowrap; }
+.nhead .badge { flex: none; }
+.nfull { padding: 2px 2px 8px; max-height: 420px; overflow: auto; }
+.notes .more { border-top: 0; padding: 2px; }
 .review-toggle { justify-self: start; }
 .choices { gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--sunken); }
 </style>

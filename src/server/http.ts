@@ -2357,6 +2357,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getAsk } = await import("../agents/asks.ts");
     // The owner's open decision on a round (plan to confirm, stopped review), answered from the run page.
     const askOf = (id: unknown) => { try { const a = typeof id === "string" ? getAsk(app, id) : null; return a ? { id: a.id, status: a.status, question: a.question, options: a.options, answer: a.answer, handler: one<{ h: string | null }>(app.db, "select json_extract(context, '$.handler') h from asks where id = ?", a.id)?.h ?? null } : null; } catch { return null; } };
+    // A stage review under way: per check, when it started and the AI it runs on (the host's status lines
+    // tagged with the check; mid-round verifications carry `verify` and are left out). Only for running rounds.
+    const liveChecks = (roundId: string, reviewRuns: { id: string }[]) => {
+      const out: Record<string, { startedAt?: string; ai?: string }> = {};
+      const ids = [roundId, ...reviewRuns.map((c) => c.id)];
+      for (const e of all<{ c: string; t: string; at: string }>(app.db, `select json_extract(data, '$.check') c, json_extract(data, '$.text') t, at from run_events
+          where run_id in (select value from json_each(?)) and type = 'status' and json_extract(data, '$.phase') = 'reviewer' and json_extract(data, '$.verify') is null order by at`, JSON.stringify(ids))) {
+        if (!e.c) continue;
+        const o = (out[e.c] ??= {});
+        o.startedAt ??= e.at;
+        const m = /^使用 AI：([^（(]+)/.exec(e.t ?? "");
+        if (m) o.ai = m[1].trim();
+      }
+      return out;
+    };
     // A review that waited for the owner (a confirmed plan, a retry, a later split) ran in runs of its own.
     return {
       estimate: rounds[0]?.output.reviewEstimate ?? null,
@@ -2365,6 +2380,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null, stage: x.output.reviewStage ?? null,
         lead: x.output.reviewLead ?? null, stop: x.output.reviewStop ?? null, changePoints: (x.output.changePoints as { points?: unknown[] } | undefined)?.points ?? null, ask: askOf(x.output.reviewAskId), acceptedByOwner: !!x.output.acceptedByOwner,
         reviewRuns: children.get(x.id) ?? [],
+        ...(["plan", "checks", "lead"].includes(String(x.output.reviewStage ?? "")) ? { live: liveChecks(x.id, children.get(x.id) ?? []) } : {}),
       })),
       reviews: reviewsOf(app, rounds.map((x) => x.id)),
       labels,

@@ -4,6 +4,7 @@
  */
 import type { DesignCounts, DesignOrigin, DesignStatus } from "./designs";
 export type WorkGroup = "owner" | "active" | "assistant" | "idle" | "ended";
+export type WorkPhase = "queued" | "design" | "coding" | "checking" | "verify" | "look" | "arbitrate" | "plan" | "review" | "lead" | "peer";
 export type WorkAction = "stop" | "retry" | "discard" | "confirm" | "apply" | "move" | "code-here" | "clean" | "branch";
 export type WorkRepo = { space: string; branch: string | null; base: string | null; cutFrom: string | null; newBranch: boolean; pushedAt: string | null };
 export type CodeWork = {
@@ -12,6 +13,10 @@ export type CodeWork = {
   title: string;
   spaceId: string | null;
   stage: { key: string; text: string; cls: string; group: WorkGroup };
+  /** The latest round's phase while it runs (src/agents/code-works.ts WorkPhase); older servers send none. */
+  phase?: WorkPhase | null;
+  /** A stage review under way: how many checks it runs and how many handed in. */
+  review?: { checks: number; done: number } | null;
   now: string;
   next: { text: string; actions: WorkAction[] };
   branchReview: boolean;

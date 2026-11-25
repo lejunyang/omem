@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { codeWork, listCodeWorks } from "../src/agents/code-works.ts";
 import { addTask } from "../src/agents/code-tasks.ts";
-import { createRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
+import { addRunEvent, createRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
+import { recordReview } from "../src/agents/review.ts";
 import { run } from "../src/core/db.ts";
 import { OWNER } from "../src/core/users.ts";
 import { addLocalMaterials } from "../src/items/materials.ts";
@@ -77,6 +78,33 @@ describe("coding work for the run page", () => {
       expect(w.points).toEqual([{ id: keys.f, title: "可退金额只算未发货的行", status: null, at: null }]);
       // Someone else sees only their own work and the spaces they may read.
       expect(codeWork(app, root.id, { userId: "u-guest", spaces: [] })).toBeNull();
+    } finally { app.db.close(); }
+  });
+
+  it("says the same phase in the badge and the next step: the host's check, the stage review with its checks", () => {
+    const app = testApp();
+    try {
+      const w = createRun(app, { kind: "code", spaceId: "personal", title: "退款按行算", input: { task: "退款按行算", taskMode: true } });
+      run(app.db, "update runs set status = 'running' where id = ?", w.id);
+      expect(codeWork(app, w.id)).toMatchObject({ phase: "coding", stage: { text: "编码中" } });
+      // The coder is done; the host runs the check command.
+      addRunEvent(app, w.id, "status", { text: "运行检查：npm test" });
+      expect(codeWork(app, w.id)).toMatchObject({ phase: "checking", stage: { text: "宿主检查中" } });
+      expect(codeWork(app, w.id)!.next.text).toContain("检查命令");
+      addRunEvent(app, w.id, "check", { command: "npm test", code: 0, output: "ok" });
+      expect(codeWork(app, w.id)!.phase).toBe("coding");
+      // The stage review: three checks, one handed in.
+      setRunOutput(app, w.id, { reviewStage: "checks", reviewPlan: { tier: "ai", tierName: "按改动定", checks: ["reviewer", "review-business", "review-arch"], reasons: [], metrics: {} } });
+      recordReview(app, { codeRunId: w.id, round: 1, check: "reviewer", verdict: "approved", summary: "没有问题", findings: [] });
+      const reviewing = codeWork(app, w.id)!;
+      expect(reviewing).toMatchObject({ phase: "review", stage: { text: "阶段评审中" }, review: { checks: 3, done: 1 } });
+      expect(reviewing.next.text).toContain("3 个评审项，已完成 1 个");
+      expect(reviewing.next.text).not.toContain("编码 Agent 在做");
+      setRunOutput(app, w.id, { reviewStage: "lead" });
+      expect(codeWork(app, w.id)!.next.text).toContain("评审负责人在汇总");
+      // Ended: no phase.
+      run(app.db, "update runs set status = 'done' where id = ?", w.id);
+      expect(codeWork(app, w.id)!.phase).toBeNull();
     } finally { app.db.close(); }
   });
 

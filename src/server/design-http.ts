@@ -49,6 +49,14 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
     const reqs = d.itemId
       ? all<{ id: string; title: string; kind: string }>(app.db, "select n.id, n.title, n.kind from item_materials m join req_nodes n on n.id = m.ref where m.kind = 'req' and n.status = 'active' and m.item_id = ? order by m.id", d.itemId)
       : [];
+    // The requirement points the decisions name (usually feature points under the item's modules): their
+    // own titles and the requirement they sit under, so the page never shows a bare id.
+    const named = [...new Set(body.decisions.flatMap((x) => x.reqs))].filter((r) => !reqs.some((n) => n.id === r));
+    const readable = accessibleSpaces(app, who(req));
+    const reqNodes = named.length
+      ? all<{ id: string; title: string; kind: string; parentTitle: string | null; space: string }>(app.db, `select n.id, n.title, n.kind, p.title parentTitle, n.space_id space from req_nodes n left join req_nodes p on p.id = n.parent_id
+          where n.id in (select value from json_each(?))`, JSON.stringify(named)).filter((n) => !readable || readable.includes(n.space)).map(({ space: _, ...n }) => n)
+      : [];
     const review = !d.workId || canAccessRun(app, who(req), d.workId, "code.review.view");
     const workRow = d.workId && review ? one<{ id: string; title: string; branches: string | null }>(app.db, "select id, title, json_extract(input, '$.branches') branches from runs where id = ?", d.workId) : undefined;
     const work = workRow ? { rootId: workRow.id, title: workRow.title, branchReview: !!workRow.branches } : null;
@@ -58,7 +66,7 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
       revision: o.revision ?? d.revision,
       sources: d.sources, repos: d.repos, body,
       revisions: designRevisions(app, d.id).map((r) => ({ revision: r.revision, at: r.at, note: r.note, runId: r.runId })),
-      item, reqs, work, changes, outside,
+      item, reqs, reqNodes, work, changes, outside,
       // The run writing or assessing it now, else the one that wrote the current version.
       runId: one<{ id: string }>(app.db, "select id from runs where status in ('queued', 'running') and json_extract(input, '$.designId') = ? order by created_at desc limit 1", d.id)?.id ?? d.runId,
     };

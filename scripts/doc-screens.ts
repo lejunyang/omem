@@ -344,6 +344,11 @@ const tools: Record<string, string[]> = {
   "review-history": ["recall 满减 负数", "读原件 退款改造讨论群"],
   "review-style": ["读原件 AGENTS.md"],
 };
+// The coder first, then the review. The 上下文 card: how each agent got its instructions and the context its model calls carried (made-up figures).
+const demoParts = (role: number, lessons: number) => ({ common: role > 800 ? 1950 : 1540, role, environment: 260, lessons: lessons * 40, lessonCount: lessons, skills: 60 });
+const usage = (who: Record<string, string>, from: number, steps: number[]) => { let used = from; for (const s of steps) addRunEvent(app, r.id, "usage", { used: (used += s), size: 475000, ...who }); };
+addRunEvent(app, r.id, "prompt", { via: "system", instructions: 3400, message: 620, parts: demoParts(910, 5), phase: "coder" });
+usage({ phase: "coder" }, 33800, [1200, 4100, 2600, 5200, 3800, 900]);
 addRunEvent(app, r.id, "status", { text: "独立评审中：「完整」档，功能、业务、架构、历史、规范" });
 for (const c of checks) {
   tools[c].forEach((title, i) => {
@@ -353,11 +358,6 @@ for (const c of checks) {
 }
 addRunEvent(app, r.id, "tool", { id: "lead-0", title: "rule_review", status: "completed", phase: "lead" });
 addRunEvent(app, r.id, "text", { text: "接受两个严重问题，驳回规范项的注释建议；下一轮只复审功能和业务。", phase: "lead" });
-// The 上下文 card: how each agent got its instructions and the context its model calls carried (made-up figures).
-const demoParts = (role: number, lessons: number) => ({ common: role > 800 ? 1950 : 1540, role, environment: 260, lessons: lessons * 40, lessonCount: lessons, skills: 60 });
-const usage = (who: Record<string, string>, from: number, steps: number[]) => { let used = from; for (const s of steps) addRunEvent(app, r.id, "usage", { used: (used += s), size: 475000, ...who }); };
-addRunEvent(app, r.id, "prompt", { via: "system", instructions: 3400, message: 620, parts: demoParts(910, 5), phase: "coder" });
-usage({ phase: "coder" }, 33800, [1200, 4100, 2600, 5200, 3800, 900]);
 for (const c of checks) {
   addRunEvent(app, r.id, "prompt", { via: "system", instructions: 2900, message: 9800, parts: demoParts(c === "review-style" ? 1580 : 900, 3), phase: "reviewer", check: c });
   usage({ phase: "reviewer", check: c }, 41000, [2600, 3100, 1800]);
@@ -738,6 +738,200 @@ for (const [i, d] of delivery.stages.entries()) {
   recordTests(app, { runId: flowRun.id, workId: flowRun.id, spaceId: "shop", round: 1, by: "agent", tests: [{ req: requirementPages.apply, name: "只退已发货的行", file: "test.js", status: "passed" }, { req: requirementPages.apply, name: "尾差归最后一行", file: "test.js", status: "passed" }] });
   run(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,round,work_id,created_at,updated_at) values(?,?,'defect',?,?,'[]','confirmed',1,?,?,?)",
     "sf_demo_negative", flowItem.id, "满减分摊到最后一行出现负数", "大额满减券、三行都已发货的订单申请退款，最后一行可退金额是负数。", r.id, flowAt(30), flowAt(30));
+}
+
+// ---- a long delegation (shots code-work-live, code-work-review): nine rounds, the stage review under way,
+// thirty-odd tasks, about three hundred artifacts, five long notes from the owner and a change description
+// whose decisions name feature points under two requirements of the same name.
+let longWork = "";
+{
+  const { addTask, updateTask } = await import("../src/agents/code-tasks.ts");
+  const { artifactInbox, collectInbox } = await import("../src/agents/artifacts.ts");
+  const { crc32, deflateSync } = await import("node:zlib");
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const codex = { profile: "codex", model: "gpt-6.2-sol", effort: "high" };
+  // A made-up page screenshot (a PNG drawn here): a header, a side list and a few blocks, different per seed.
+  const shot = (seed: number) => {
+    const w = 320, h = 200, px = Buffer.alloc((w * 4 + 1) * h);
+    const fill = (x0: number, y0: number, x1: number, y1: number, [r, g, b]: number[]) => {
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const o = y * (w * 4 + 1) + 1 + x * 4; px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255; }
+    };
+    fill(0, 0, w, h, [248, 247, 244]);
+    fill(0, 0, w, 22, [44, 52, 60]);
+    fill(0, 22, 64, h, [236, 234, 228]);
+    for (let i = 0; i < 4; i++) fill(80, 36 + i * 38, 300 - ((seed * 37 + i * 53) % 90), 60 + i * 38, [222, 220, 214]);
+    fill(80 + ((seed * 29) % 120), 36 + ((seed * 13) % 4) * 38, 140 + ((seed * 29) % 120), 60 + ((seed * 13) % 4) * 38, [64, 120, 128]);
+    fill(240, 176, 300, 192, seed % 3 ? [64, 120, 128] : [190, 96, 64]);
+    const chunk = (type: string, data: Buffer) => { const b = Buffer.concat([Buffer.from(type), data]); const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(b) >>> 0); return Buffer.concat([len, b, crc]); };
+    const head = Buffer.alloc(13); head.writeUInt32BE(w, 0); head.writeUInt32BE(h, 4); head[8] = 8; head[9] = 6;
+    return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", head), chunk("IDAT", deflateSync(px)), chunk("IEND", Buffer.alloc(0))]);
+  };
+
+  // The requirement: two modules of the same name (one moved over from an older page tree), feature points under the first.
+  const reqs = saveReqs(app, [
+    { op: "add", key: "m", kind: "module", title: "售后退款" },
+    { op: "add", key: "m2", kind: "module", title: "售后退款" },
+    { op: "add", key: "f1", parent: "$m", kind: "feature", title: "售后入口按商家权限展示" },
+    { op: "add", key: "f2", parent: "$m", kind: "feature", title: "退款记录页显示分摊明细" },
+    { op: "add", key: "f3", parent: "$m", kind: "feature", title: "导入旧订单后退款金额不变" },
+  ], { by: "user", label: "本人" }, { defaultSpace: "shop", canWrite: () => {}, canRead: () => {} }).keys;
+  const longItem = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "售后退款：入口权限和分摊明细", detail: "售后入口按商家权限展示，退款记录页显示每行分摊，导入旧订单后金额不变。", priority: 1 }, "user");
+  await addMaterials(app, longItem.id, [{ kind: "req", ref: reqs.m }, { kind: "req", ref: reqs.m2 }], "owner");
+
+  // The work branch, with real commits for the first three tasks (their changes open under their rows).
+  const root = createRun(app, { kind: "code", spaceId: "shop", title: "售后入口按权限展示并补退款分摊明细", input: { task: "售后入口按商家权限展示；退款记录页显示每行的分摊明细；导入旧订单后退款金额不变。按功能分别提交，补回归用例和截图。", repos: ["shop"], itemId: longItem.id, taskMode: true } });
+  const wt = join(app.runsDir, root.id, "work", "shop");
+  sh(repo, "worktree", "add", "-q", "-b", "feat/after-sale", wt, base);
+  const commit = (files: Record<string, string | Buffer>, message: string) => {
+    for (const [path, text] of Object.entries(files)) { mkdirSync(join(wt, path, ".."), { recursive: true }); writeFileSync(join(wt, path), text); }
+    sh(wt, "add", "-A"); sh(wt, "commit", "-qm", message);
+    return sh(wt, "rev-parse", "HEAD");
+  };
+  const c1 = commit({ "src/after-sale/entry.js": "// 售后入口：有售后权限的商家才显示\nexport function showAfterSale(merchant) {\n  return merchant.roles.includes(\"after-sale\") && !merchant.staffOnly;\n}\n" }, "售后入口按商家权限展示");
+  const c2 = commit({ "src/refund/records.js": "// 退款记录页：每行的分摊明细\nexport function splitRows(refund) {\n  return refund.lines.map((line) => ({ name: line.name, paid: line.paid, share: line.share, refund: line.paid - line.share }));\n}\n", "refund.js": REFUND_AFTER }, "退款记录页显示分摊明细");
+  // The third reached well beyond the plan: test data exports, screenshots and logs got committed with it.
+  const extra: Record<string, string | Buffer> = {};
+  for (const name of ["list", "detail", "filter", "export", "empty"]) extra[`src/after-sale/pages/${name}.js`] = `// 售后${name} 页\nexport default {};\n`;
+  for (const name of ["lines", "share", "rounding"]) extra[`src/refund/import/${name}.js`] = `// 导入旧订单：${name}\nexport default {};\n`;
+  for (let i = 1; i <= 6; i++) extra[`test/import/case-${i}.test.js`] = `// 导入旧订单回归 ${i}\n`;
+  for (let i = 1; i <= 8; i++) extra[`.work/screens/import-${i}.png`] = shot(i);
+  for (let i = 1; i <= 5; i++) { extra[`.work/exports/orders-${i}.ndjson`] = `{"order":"A10${i}","refund":12.5}\n`; extra[`.work/exports/orders-${i}.csv`] = "order,refund\nA101,12.5\n"; }
+  for (const name of ["import", "replay", "build"]) extra[`.work/logs/${name}.log`] = `${name} ok\n`;
+  const c3 = commit(extra, "导入旧订单后退款金额不变");
+
+  // Nine rounds: the first failed, two were stopped, the ninth is in its stage review now.
+  const rounds = [root];
+  const span: [number, number][] = [[400, 372], [370, 362], [360, 330], [328, 250], [248, 214], [212, 180], [178, 170], [168, 112], [100, 0]];
+  const status = ["failed", "cancelled", "done", "done", "done", "done", "cancelled", "done", "running"];
+  const verdicts = ["continuing", null, "synced", "changes-requested", "continuing", "continuing", null, "continuing", null];
+  const picks = ["", "T1、T2", "T3", "T4、T5、T6、T7、T8", "T9、T10、T11", "T12、T13、T17", "T18", "T19、T20、T21、T22", "T11、T12、T15、T16、T23、T24、T25、T26、T27"];
+  for (let i = 1; i < 9; i++) rounds.push(createRun(app, { kind: "code", spaceId: "shop", title: `交办第 ${i + 1} 轮：修改项 ${picks[i]}`, input: { continueFrom: root.id, round: i + 1, taskMode: true, repos: ["shop"], itemId: longItem.id, task: `修改项 ${picks[i]}` } }));
+  const worktrees = [{ space: "shop", path: wt, branch: "feat/after-sale", targetBranch: "feat/after-sale", base, start: base, cutFrom: "main", newBranch: true, commits: true }];
+  setRunOutput(app, root.id, { worktrees });
+  rounds.forEach((x, i) => {
+    run(app.db, "update runs set status=?, created_at=?, started_at=?, finished_at=?, ai=? where id=?", status[i], ago(span[i][0]), ago(span[i][0]), status[i] === "running" ? null : ago(span[i][1]), JSON.stringify(codex), x.id);
+    if (verdicts[i]) setRunOutput(app, x.id, { verdict: verdicts[i] });
+  });
+  // The chain every round keeps (code-chain.ts): the page and the review tab read the rounds from it.
+  const chain = { askRunId: root.id, conversationId: "", larkKey: null, larkMessageId: null, round: 9, rounds: rounds.map((x) => x.id), lastCodeRunId: rounds[8].id, awaitingUser: false };
+  for (const x of rounds) run(app.db, "update runs set output = json_set(coalesce(output, '{}'), '$.codeChain', json(?)) where id = ?", JSON.stringify(chain), x.id);
+  const plan = (checks: string[], reasons: string[]) => ({ tier: "ai", tierName: "按改动定", checks, maxRounds: 10, lead: true, reasons, metrics: {} });
+  const fourth = rounds[3], ninth = rounds[8];
+  longWork = ninth.id;
+  setRunOutput(app, fourth.id, { reviewStage: "done", reviewPlan: plan(["review-simplify", "review-business", "reviewer", "review-arch", "review-history"], ["这一段改了入口权限、退款记录和导入三块，业务和历史看规则，架构看权限放在哪一层。"]),
+    reviewLead: { round: 4, verdict: "revise", by: "lead", summary: "入口权限少判断了员工号，导入旧订单的尾差和新算法不一致，这两处要改；注释和命名的问题记成以后再做。", changeRequest: "1. 售后入口排除员工号\n2. 导入旧订单时尾差归最后一行，和新算法一致", rerun: ["review-business"] } });
+
+  // Thirty-one tasks: the split, fixes from the fourth round's review, and what came up later.
+  const titles = [
+    "售后入口按商家权限展示", "退款记录页显示每行分摊明细", "导入旧订单后退款金额不变", "退款申请页显示可退金额的计算说明", "售后列表按申请时间倒序",
+    "售后详情补退款进度", "导出退款表加“分摊方式”一列", "部分发货订单补回放用例", "退款失败的提示改成可重试", "售后入口的埋点补上来源",
+    "入口注释写清权限条件", "员工号不该看到售后入口", "两份入口判断收成一处", "权限常量换成具名常量", "导入旧订单时尾差归最后一行",
+    "导入失败时保留原金额并提示", "退款记录页空状态", "分摊明细在窄屏换行", "售后详情的金额对齐", "退款申请页的错误码映射",
+    "回放用例换成真实的部分发货订单", "导出任务读日志里的分摊方式", "切换商家后旧权限不串用", "售后入口在没有订单时也显示", "导入后刷新页面金额不变",
+    "退款记录页翻页保留筛选", "售后入口的帮助链接", "退款申请页的金额输入限制两位小数", "退款失败重试只退一次", "检查没通过", "撤回提交了的被忽略文件",
+  ];
+  const verifier = ["review-business", "review-arch", "review-style", "reviewer", "review-history", "review-simplify"];
+  const notes: Record<number, { at: number; by: string; kind: string; text: string }[]> = {};
+  titles.forEach((title, i) => {
+    const seq = i + 1;
+    addTask(app, root.id, { title, doneWhen: `${title}；有回归用例，截图放在 T${seq}/ 下。`, kind: seq >= 11 && seq <= 16 ? "fix" : "build" }, seq >= 11 && seq <= 16 ? "review-lead" : "coder");
+    const round = Math.min(7, Math.max(1, Math.ceil(seq / 3.6)));
+    const inNinth = [11, 12, 15, 16, 23, 24, 25, 26, 27].includes(seq);
+    const doneAt = inNinth ? 92 - ([11, 12, 15, 16, 23, 24, 25, 26, 27].indexOf(seq) * 6) : span[round][1] + 6;
+    notes[seq] = [{ at: doneAt, by: "coder", kind: "coder", text: `提交了 T${seq}：${title}。改了对应页面和用例，本地跑过 \`node test.js\`，截图放在 T${seq}/ 下。` }];
+    if (seq % 2 === 1 || inNinth) notes[seq].push({ at: doneAt - 3, by: verifier[seq % verifier.length], kind: "verify", text: seq === 11 ? "问题撤回：重新看过，入口的注释已经写清三个条件，不需要再改。" : seq === 24 ? "没改好：切回旧商家后入口还按上一个商家的权限显示，缓存要按商家 id 分开。" : `验证通过：对照 T${seq} 的完成标准和截图逐条核对，行为一致。` });
+  });
+  // T13, T14 put off; T21 dropped; the rest done.
+  const later = new Set([13, 14]);
+  const commits: Record<number, string[]> = { 1: [c1], 2: [c2], 3: [c3] };
+  for (const [seq, list] of Object.entries(notes)) {
+    const n = Number(seq);
+    run(app.db, "update code_tasks set state=?, origin=?, verifier=?, commits=?, notes=?, checkpoint=?, attempts=? where work_id=? and seq=?",
+      later.has(n) ? "wontdo" : n === 21 ? "wontdo" : "done", JSON.stringify(later.has(n) ? { later: true } : n >= 11 && n <= 16 ? { findings: [] } : {}), verifier[n % verifier.length],
+      JSON.stringify(commits[n] ? { shop: commits[n] } : {}), JSON.stringify(list.map((x) => ({ at: ago(x.at), by: x.by, kind: x.kind, text: x.text }))), Math.min(9, Math.ceil(n / 3.5)), n === 24 ? 1 : 0, root.id, n);
+  }
+  for (let cp = 1; cp <= 9; cp++) run(app.db, "insert into code_checkpoints(work_id, seq, heads, tasks, by, label, created_at) values(?,?,?,?,?,?,?)", root.id, cp, JSON.stringify({ shop: c3 }), "[]", "host", `完成 ${picks[cp - 1] || "T1"}`, ago(span[cp - 1][1]));
+
+  // The fourth round's review: its problems became T11–T16.
+  const f4: Record<string, { severity: "major" | "minor" | "nit"; title: string; task: number }[]> = {
+    "review-business": [{ severity: "major", title: "员工号也能看到售后入口", task: 12 }, { severity: "major", title: "导入旧订单的尾差和新算法不一致", task: 15 }],
+    "review-arch": [{ severity: "minor", title: "入口判断在页面和接口各写了一份", task: 13 }],
+    "review-style": [{ severity: "minor", title: "入口注释没写清权限条件", task: 11 }, { severity: "nit", title: "权限用了裸数字", task: 14 }],
+    "review-history": [{ severity: "minor", title: "导入失败时金额被清空，以前出过同样的问题", task: 16 }],
+    "review-simplify": [],
+  };
+  for (const [check, list] of Object.entries(f4)) {
+    recordReview(app, { codeRunId: fourth.id, round: 4, check, tier: "ai", verdict: list.some((f) => f.severity === "major") ? "changes_requested" : "approved", summary: list.length ? `提了 ${list.length} 个问题。` : "没有发现问题。", findings: list.map((f) => ({ severity: f.severity, title: f.title, detail: "", suggestion: "", evidence: [], confidence: "high" })) as never, ai: codex });
+    for (const f of list) {
+      const fid = one<{ id: number }>(app.db, "select f.id from review_findings f join reviews v on v.id = f.review_id where v.code_run_id = ? and f.title = ?", fourth.id, f.title)!.id;
+      const tid = one<{ id: number }>(app.db, "select id from code_tasks where work_id = ? and seq = ?", root.id, f.task)!.id;
+      run(app.db, "update review_findings set state = 'accepted', task_id = ? where id = ?", tid, fid);
+    }
+  }
+
+  // The ninth round: coding with checks verifying beside it, the host's check, then the stage review under way.
+  const checks9 = ["review-simplify", "review-business", "review-arch", "reviewer", "review-history"];
+  const ev: [number, string, Record<string, unknown>][] = [[100, "prompt", { phase: "coder", via: "resumed", message: 2_400 }]];
+  for (let i = 0; i < 60; i++) ev.push([99 - i, "tool", { phase: "coder", id: `c${i}`, title: ["读文件 src/after-sale/entry.js", "改文件 src/refund/records.js", "运行 node test.js", "搜索 showAfterSale", "读原件 退款改造需求"][i % 5], status: "completed" }]);
+  ev.push([88, "status", { text: "规范验证 T11（编码 Agent 接着做别的项）" }], [87, "status", { phase: "reviewer", check: "review-style", verify: true, text: "使用 AI：codex · gpt-6.2-sol · high" }]);
+  for (let i = 0; i < 6; i++) ev.push([86 - i, "tool", { phase: "reviewer", check: "review-style", verify: true, id: `v${i}`, title: "读文件 src/after-sale/entry.js", status: "completed" }]);
+  ev.push([70, "status", { text: "业务（复看）验证 T23、T24、T25（编码 Agent 接着做别的项）" }], [64, "status", { text: "本人补充：切换商家后入口要按新商家的权限显示（编码已结束，下一轮带上）" }]);
+  ev.push([58, "text", { phase: "coder", text: "T24 的缓存改成按商家 id 分开，切换商家时清掉上一个商家的入口权限；补了切换商家的回归用例。" }]);
+  for (let i = 0; i < 12; i++) ev.push([98 - i * 5, "usage", { phase: "coder", used: 38_000 + i * 9_500, size: 272_000 }]);
+  ev.push([40, "status", { text: "运行检查：node test.js" }]);
+  const log = Array.from({ length: 160 }, (_, i) => `✓ 售后与退款回归 ${i + 1}：${titles[i % titles.length]}`).join("\n");
+  ev.push([35, "check", { command: "node test.js", code: 0, ms: 284_000, output: `${log}\n\n160 个用例全部通过`, space: "shop" }], [35, "status", { text: "检查点 9：完成 T12、T15、T16、T23、T24、T26、T27" }]);
+  ev.push([34, "status", { text: "评审负责人决定这次评审看什么" }], [34, "session", { phase: "lead" }], [32, "status", { text: "阶段评审：review-simplify、review-business、review-arch、reviewer、review-history（这一段看入口权限能否收成一处，再核对导入旧订单的金额和切换商家）" }]);
+  checks9.forEach((c, k) => {
+    ev.push([31, "status", { phase: "reviewer", check: c, text: `开始评审：${c}` }], [31, "status", { phase: "reviewer", check: c, text: "使用 AI：codex · gpt-6.2-sol · high（本人指定）" }]);
+    for (let i = 0; i < 8 + k * 3; i++) ev.push([30 - i, "tool", { phase: "reviewer", check: c, id: `${c}-${i}`, title: ["读文件 src/after-sale/entry.js", "find_symbol showAfterSale", "读原件 退款改造需求", "运行 node test.js"][i % 4], status: i === 7 + k * 3 && k > 1 ? "in_progress" : "completed" }]);
+  });
+  ev.sort((a, b) => b[0] - a[0]);
+  for (const [min, type, data] of ev) {
+    const seq = addRunEvent(app, ninth.id, type, data);
+    if (seq != null) run(app.db, "update run_events set at = ? where run_id = ? and seq = ?", ago(min), ninth.id, seq);
+  }
+  recordReview(app, { codeRunId: ninth.id, round: 9, check: "review-simplify", tier: "ai", verdict: "approved", summary: "入口判断已经收成一处；两处小的重复可以以后再收。", findings: [{ severity: "minor", title: "导入的金额换算和 refund.js 各有一份 toCents", detail: "", suggestion: "", evidence: [], confidence: "medium" }, { severity: "minor", title: "售后页面的空状态写了三遍", detail: "", suggestion: "", evidence: [], confidence: "medium" }] as never, ai: codex });
+  recordReview(app, { codeRunId: ninth.id, round: 9, check: "review-business", tier: "ai", verdict: "changes_requested", summary: "切换商家后入口权限已经分开；但导入旧订单时运费没有按已发货行分摊。", findings: [{ severity: "major", file: "src/refund/import/share.js", line: 12, title: "导入旧订单时运费没有按已发货行分摊", detail: "", suggestion: "", evidence: [], confidence: "high" }] as never, ai: codex });
+  const steer = (min: number, text: string) => ({ id: `note_demo_${min}`, at: ago(min), deliveredAt: ago(min - 1), by: "owner", text });
+  setRunOutput(app, ninth.id, {
+    worktrees, reviewStage: "checks", reviewHeads: { shop: c3 },
+    reviewPlan: plan(checks9, ["这一段先看入口权限能否收成一处，再核对导入旧订单的金额和切换商家；规范这次不单派，注释的问题由精简一起看。"]),
+    coderSummary: "这一轮改完了 T12、T15、T16、T23–T27：员工号看不到售后入口，导入旧订单时尾差归最后一行，切换商家后入口按新商家的权限显示。`node test.js` 160 个用例通过，截图在各项的 T<编号>/ 下。",
+    check: { command: "node test.js", code: 0, output: "160 个用例全部通过", ms: 284_000 },
+    notes: [
+      steer(96, "**以这一条为准**：售后入口的权限只看商家角色和员工号两项，不再看灰度名单。\n\n1. 员工号一律不显示入口；\n2. 有售后角色的商家显示，没有的不显示；\n3. 灰度名单相关的判断和用例都删掉。\n\n改完在 T12 下放一张员工号登录后的截图。"),
+      steer(90, "导入旧订单的金额：\n\n- 尾差归最后一行，和新算法一致；\n- 导入失败时保留原金额，页面提示“导入没完成，金额是原来的”；\n- 不要为导入单独写一份 toCents。\n\n回放用例用上月那 5 笔部分发货的订单。"),
+      steer(76, "切换商家后入口还按上一个商家的权限显示，这是缓存没按商家分开。按商家 id 分开缓存，切换时清掉；补一个切换商家的回归用例。"),
+      steer(66, "退款记录页的分摊明细在手机上挤成一行了：窄屏时每行的金额换到名字下面。截图放 T18。"),
+      steer(52, "这一轮做完就停下来等我看，不要自动开下一轮。推送之前我要先在测试环境点一遍：\n\n1. 员工号登录；\n2. 有售后角色的商家登录；\n3. 导入一笔旧订单再刷新。"),
+    ],
+  });
+  run(app.db, "update runs set input = json_set(input, '$.roundReview', json(?)) where id = ?", JSON.stringify({ ais: Object.fromEntries(checks9.map((c) => [c, codex])) }), ninth.id);
+
+  // About three hundred artifacts: per task a few screenshots and a report now and then, and many logs, scripts and exports.
+  for (let seq = 1; seq <= 27; seq++) {
+    const dir = join(artifactInbox(app, ninth.id), `T${seq}`);
+    mkdirSync(dir, { recursive: true });
+    for (let i = 1; i <= 3; i++) writeFileSync(join(dir, `${titles[seq - 1].slice(0, 8)}-${["修改前", "修改后", "窄屏"][i - 1]}.png`), shot(seq * 3 + i));
+    if (seq % 4 === 0) writeFileSync(join(dir, "复验说明.md"), `# T${seq} 复验\n\n- 完成标准逐条核对\n- 截图见同目录\n`);
+    for (const name of ["单元测试", "回放", "构建", "lint", "全量回归", "定向用例"]) writeFileSync(join(dir, `${name}.log`), `${name}：通过\n`);
+    writeFileSync(join(dir, "验收脚本.mjs"), "// 打开页面、截图\n");
+    writeFileSync(join(dir, "接口回放.json"), "{\"ok\":true}\n");
+    await collectInbox(app, ninth.id, { source: "agent", by: "coder" });
+  }
+
+  // The change description written after the code: three decisions on the feature points, the rest outside it.
+  const desc = createDesign(app, { spaceId: "shop", itemId: longItem.id, title: "售后入口和退款分摊明细：变更说明", origin: "derived", repos: ["shop"], workId: root.id, userId: "owner" });
+  submitRevision(app, desc.id, {
+    facts: [],
+    decisions: [
+      { kind: "change", title: "售后入口只看商家角色和员工号", reqs: [reqs.f1], tasks: [1], fields: { behavior: { brief: "有售后角色、不是员工号才显示入口" }, where: { brief: "src/after-sale/entry.js 一处" } } },
+      { kind: "add", title: "退款记录页列出每行分摊", reqs: [reqs.f2, reqs.f1], tasks: [2], fields: { entry: { brief: "退款记录页" }, behavior: { brief: "每行显示实付、分到的优惠和可退" } } },
+      { kind: "change", title: "导入旧订单按新算法算尾差", reqs: [reqs.f3], fields: { behavior: { brief: "尾差归最后一行" } } },
+    ],
+  } as never, { note: "编码后整理" });
+  run(app.db, "update designs set status = 'recorded' where id = ?", desc.id);
 }
 
 // ---- 流程里的插件 (examples/plugins/stagekit): a signal, a job and a check on one flow ---------------
@@ -1484,7 +1678,7 @@ const url = app.baseUrl;
 if (serveOnly) {
   const fl = await fastLane();
   console.log(`快速通道：${url}/#/rules/probes；${url}/#/rules?id=${FAST_RULE}；先看一眼 ${url}/#/runs/${fl?.lookRun}；持续跟进 ${url}/#/rules?id=situation:${DRILL}&tab=rounds、事项 ${url}/#/items/${fl?.drillItem}`);
-  console.log(`演示数据：${url}/#/code/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
+  console.log(`演示数据：${url}/#/code/${r.id}（Ctrl+C 结束）；九轮的长交办 ${url}/#/code/${longWork}；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   console.log(`向量和重排的假云端接口：${fakeApiUrl}（模型名写 missing-model 会失败）`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);
   const cleanup = async () => { await server.close(); for (const id of ["stagekit", "helperkit", "acmeauth"]) forgetPlugin(id); app.events.emit("close"); app.db.close(); closeVault(home); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); process.exit(); };
@@ -1671,10 +1865,13 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.locator("main.detail [aria-busy='true']").waitFor();
   } },
   { name: "review-overview", path: `/code/${r.id}` },
-  { name: "review-checks", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "评审" }).click(); await p.locator(".check-head").nth(1).click(); await p.waitForTimeout(300); } },
+  { name: "review-checks", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "评审" }).click(); await p.locator(".chead").nth(1).click(); await p.waitForTimeout(300); } },
   { name: "review-change", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick", { hasText: "补测试与说明" }).click(); await p.waitForTimeout(900); await p.getByRole("button", { name: "下一处" }).click(); await p.waitForTimeout(1200); } },
   { name: "review-split-diff", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.getByRole("radio", { name: "左右" }).click(); await p.getByRole("radio", { name: "文件" }).click(); await p.locator(".tree .row-btn.file").first().click(); await p.waitForTimeout(1200); } },
-  { name: "review-activity", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); await p.locator(".sec-head").nth(1).click(); await p.waitForTimeout(300); } },
+  { name: "review-activity", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); await p.locator(".seg-head").last().click(); await p.waitForTimeout(300); await p.locator(".sess-head").nth(1).click(); await p.waitForTimeout(300); } },
+  // A long delegation in its ninth round: the stage review check by check, and the round split into coding, the host's check and the review.
+  { name: "code-work-stage-review", path: `/code/${longWork}`, prepare: async (p) => { await p.getByRole("tab", { name: "评审" }).click(); await p.waitForTimeout(600); await p.evaluate(() => document.querySelector("nav.tabs")?.scrollIntoView({ block: "start" })); await p.waitForTimeout(200); } },
+  { name: "code-work-round", path: `/code/${longWork}`, prepare: async (p) => { await p.getByRole("tab", { name: /活动/ }).click(); await p.waitForTimeout(600); await p.locator(".seg-head").first().click(); await p.waitForTimeout(300); await p.evaluate(() => document.querySelector(".seg-head")?.scrollIntoView({ block: "start" })); await p.waitForTimeout(200); } },
   { name: "run-context", path: `/code/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); const s = p.locator("details.usage summary"); await s.click(); await s.scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
   { name: "review-quotes", path: `/code/${r.id}`, prepare: async (p) => {
     await p.getByRole("tab", { name: /变更/ }).click();

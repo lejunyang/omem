@@ -49,6 +49,8 @@ export type DesignDetail = DesignSummary & {
   revisions: { revision: number; at: string; note: string; runId: string | null }[];
   item: { id: string; title: string } | null;
   reqs: { id: string; title: string; kind: string }[];
+  /** The requirement points the decisions name that are not among `reqs`, with the requirement above them (not sent by every server yet). */
+  reqNodes?: { id: string; title: string; kind: string; parentTitle: string | null }[];
   work: { rootId: string; title: string; branchReview: boolean } | null;
   changes: DecisionChange[];
   outside: ChangedFile[];
@@ -134,3 +136,72 @@ export function changeLine(c: DecisionChange | undefined) {
   return parts.join(" · ");
 }
 export const hasChange = (c: DecisionChange | undefined) => !!c && (c.tasks.length > 0 || c.commits > 0 || c.files.length > 0 || c.findings.total > 0);
+
+/** An omem id (`q0mvv50jyh711f6bc1cc`): a prefix, nine base-36 characters of time, ten hex. */
+export const looksLikeId = (s: string) => /^[a-z]{1,4}[0-9a-z]{9}[0-9a-f]{10}$/.test(s);
+
+export type ReqPoint = { key: string; title: string; n: number; link: string | null; under: string | null };
+/**
+ * The requirement points beside the decisions: each with its own title and how many decisions it has.
+ * A point with no title the page knows falls back to the requirement it belongs to and a number, never
+ * the bare id; titles that repeat get the requirement above them or a number to tell them apart. The
+ * item's requirements no decision names are only counted (`idle`).
+ */
+export function reqPoints(d: Pick<DesignDetail, "reqs" | "reqNodes"> & { body: Pick<DesignBody, "decisions"> }): { list: ReqPoint[]; idle: number } {
+  const nodes = new Map<string, { title: string; under: string | null }>();
+  for (const r of d.reqs) nodes.set(r.id, { title: r.title, under: null });
+  for (const r of d.reqNodes ?? []) nodes.set(r.id, { title: r.title, under: r.parentTitle });
+  const keys = [...new Set([...d.reqs.map((r) => r.id), ...d.body.decisions.flatMap((x) => x.reqs)])];
+  const count = (k: string) => d.body.decisions.filter((x) => x.reqs.includes(k)).length;
+  const owner = d.reqs.length === 1 || new Set(d.reqs.map((r) => r.title)).size === 1 ? d.reqs[0]?.title ?? null : null;
+  let unnamed = 0;
+  const list: ReqPoint[] = keys.map((k) => {
+    const node = nodes.get(k);
+    if (node) return { key: k, title: node.title.trim() || `需求点 ${++unnamed}`, n: count(k), link: `/code/reqs/${k}`, under: node.under };
+    if (looksLikeId(k)) return { key: k, title: `${owner ? `${owner} · ` : ""}需求点 ${++unnamed}`, n: count(k), link: `/code/reqs/${k}`, under: null };
+    // No requirement page: the decision quotes the task's own words.
+    return { key: k, title: k, n: count(k), link: null, under: null };
+  });
+  const used = list.filter((r) => r.n > 0);
+  // The same title twice: say which requirement each is under, else number them.
+  const groups = new Map<string, ReqPoint[]>();
+  for (const r of used) groups.set(r.title, [...(groups.get(r.title) ?? []), r]);
+  for (const [title, same] of groups) {
+    if (same.length < 2) continue;
+    const unders = same.map((r) => r.under);
+    const byUnder = unders.every((u) => u && u !== title) && new Set(unders).size === same.length;
+    same.forEach((r, i) => (r.title = byUnder ? `${r.under} · ${title}` : `${title}（${i + 1}）`));
+  }
+  return { list: used, idle: list.length - used.length };
+}
+
+/** Files that are not code: images, data exports, logs (by extension). */
+const NOT_CODE = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif", "mp4", "webm", "mov", "ndjson", "jsonl", "csv", "tsv", "xlsx", "xls", "parquet", "sqlite", "db", "log", "out", "zip", "tar", "gz"]);
+export const isCodeFile = (path: string) => {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return !NOT_CODE.has(dot > 0 ? base.slice(dot + 1).toLowerCase() : "");
+};
+export type FileGroup = { dir: string; files: ChangedFile[]; add: number; del: number };
+/**
+ * Changed files by directory (the first `depth` levels), largest group first; files that are not code
+ * go into one last group (`dir` empty) whatever directory they are in.
+ */
+export function fileGroups(files: ChangedFile[], depth = 2): { groups: FileGroup[]; other: FileGroup | null } {
+  const by = new Map<string, FileGroup>();
+  const other: FileGroup = { dir: "", files: [], add: 0, del: 0 };
+  const multi = new Set(files.map((f) => f.space)).size > 1;
+  for (const f of files) {
+    const dir = [multi ? f.space : "", dirOf(f, depth)].filter(Boolean).join("/");
+    if (isCodeFile(f.path) && !by.has(dir)) by.set(dir, { dir, files: [], add: 0, del: 0 });
+    const g = isCodeFile(f.path) ? by.get(dir)! : other;
+    g.files.push(f);
+    g.add += f.add;
+    g.del += f.del;
+  }
+  return { groups: [...by.values()].sort((a, b) => b.files.length - a.files.length || a.dir.localeCompare(b.dir)), other: other.files.length ? other : null };
+}
+function dirOf(f: ChangedFile, depth: number) {
+  const parts = f.path.split("/").slice(0, -1);
+  return parts.slice(0, depth).join("/");
+}

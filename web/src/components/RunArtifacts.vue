@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { del, get, onServerEvent } from "../api";
+import { classCounts, splitArtifacts } from "../lib/artifacts";
 import { confirmDialog } from "../lib/dialog";
+import { landing } from "../lib/flow-hooks";
+import { landOn } from "../lib/landing";
 import { relTime, toast } from "../store";
 import Icon from "./Icon.vue";
 import Skeleton from "./Skeleton.vue";
@@ -17,8 +21,13 @@ export type Artifact = {
 };
 type Data = { workId: string | null; artifacts: Artifact[]; perTask: Record<string, number>; tasks?: Record<string, string> };
 
-/** `items`: show these (a test point's results) instead of loading a run's; no grouping by task. */
-const props = defineProps<{ runId?: string; task?: number | null; items?: Artifact[] }>();
+/**
+ * `items`: show these (a test point's results) instead of loading a run's; no grouping by task.
+ * `task` with `inline`: only that task's, under its row (screenshots, recordings, reports and test
+ * results; logs, scripts and intermediate files folded). `focus`: on the whole list, scroll to that
+ * task's group (also `?task=T12` in the address).
+ */
+const props = defineProps<{ runId?: string; task?: number | null; items?: Artifact[]; inline?: boolean; focus?: number | null }>();
 const emit = defineEmits<{ count: [n: number]; task: [seq: number | null]; changed: [] }>();
 
 const data = ref<Data | null>(null);
@@ -61,6 +70,9 @@ const folder = (name: string) => (name.includes("/") ? name.slice(0, name.lastIn
 const base = (name: string) => name.slice(name.lastIndexOf("/") + 1);
 
 const shown = computed(() => (data.value?.artifacts ?? []).filter((a) => props.task == null || a.task === props.task));
+/** Groups whose logs, scripts and intermediate files are unfolded. */
+const othersOpen = ref(new Set<string>());
+const toggleOthers = (k: string) => { const n = new Set(othersOpen.value); n.has(k) ? n.delete(k) : n.add(k); othersOpen.value = n; };
 /**
  * By task (in task order), then those of no task; inside, side by side by name (folders first, as
  * they were put in), each tile naming its folder.
@@ -72,15 +84,32 @@ const groups = computed(() => {
     if (!by.has(key)) by.set(key, { key, task: a.task, label: a.task != null ? `T${a.task}${data.value?.tasks?.[a.task] ? ` ${data.value.tasks[a.task]}` : ""}` : "没有归到修改项", list: [] });
     by.get(key)!.list.push(a);
   }
-  return [...by.values()].sort((x, y) => (x.task ?? 1e9) - (y.task ?? 1e9)).map((g) => ({ ...g, list: [...g.list].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) }));
+  return [...by.values()].sort((x, y) => (x.task ?? 1e9) - (y.task ?? 1e9)).map((g) => {
+    const list = [...g.list].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    // A test point's own results are shown as they are; a run's are split into what is worth opening and the rest.
+    const split = props.items ? { worth: list, other: [] as Artifact[] } : splitArtifacts(list);
+    return { ...g, list, worth: split.worth, other: split.other, counts: classCounts(list) };
+  });
 });
+
+// Landing on one task's group: `focus` from the page, or `?task=T12`.
+const route = useRoute();
+let landed = "";
+watch(() => [data.value, props.focus, route.query.task] as const, ([d, focus]) => {
+  if (!d || props.inline || props.items) return;
+  const t = focus ?? (landing(route.query)?.kind === "task" ? (landing(route.query) as { seq: number }).seq : null);
+  const key = `${props.runId}:${t}`;
+  if (t == null || landed === key || !groups.value.some((g) => g.task === t)) return;
+  landed = key;
+  void landOn(`art-task-${t}`);
+}, { immediate: true });
 
 // ---- the viewer: one artifact at a time, ← → through the ones shown ------------------------------
 const open = ref<Artifact | null>(null);
 const text = ref<string | null>(null);
 let opener: HTMLElement | null = null;
 const viewer = ref<HTMLElement>();
-const flat = computed(() => groups.value.flatMap((g) => g.list));
+const flat = computed(() => groups.value.flatMap((g) => [...g.worth, ...(othersOpen.value.has(g.key) ? g.other : [])]));
 async function show(a: Artifact) {
   if (a.kind === "file") return void window.open(a.url, "_blank", "noopener");
   if (!open.value) opener = document.activeElement as HTMLElement | null;
@@ -132,11 +161,11 @@ async function remove(a: Artifact) {
       <template v-else>还没有截图、录屏或报告。编码 Agent 和检查命令把文件放进 <code>$OMEM_ARTIFACTS</code>（放在 <code>T&lt;编号&gt;/</code> 下就归到那一项），或用 <code>attach_artifact</code> 交上来，这里就能看到。</template>
     </p>
     <template v-else>
-      <div v-if="task != null" class="row small muted filter">只看 T{{ task }} 的 <button class="btn ghost sm" @click="emit('task', null)">看全部</button></div>
-      <section v-for="g in groups" :key="g.key" class="group">
-        <div v-if="!items" class="section-title">{{ g.label }} · {{ g.list.length }}</div>
-        <div class="grid">
-            <article v-for="a in g.list" :key="a.id" class="tile">
+      <section v-for="g in groups" :id="inline || items ? undefined : `art-task-${g.task ?? 'rest'}`" :key="g.key" class="group" :class="{ inline }">
+        <div v-if="!items && !inline" class="section-title">{{ g.label }}<span class="muted small cnt">{{ g.counts || `${g.list.length} 个文件` }}</span></div>
+        <p v-if="inline && !g.worth.length" class="muted small none">没有截图、录屏或报告，只有下面这些文件。</p>
+        <div v-if="g.worth.length" class="grid" :class="{ small: inline }">
+            <article v-for="a in g.worth" :key="a.id" class="tile">
               <button class="thumb" :class="{ flat: a.kind !== 'image' && a.kind !== 'video' }" :aria-label="`打开 ${base(a.name)}`" @click="show(a)">
                 <img v-if="a.kind === 'image'" :src="a.url" :alt="a.caption || base(a.name)" loading="lazy" />
                 <video v-else-if="a.kind === 'video'" :src="`${a.url}#t=0.1`" preload="metadata" muted playsinline />
@@ -151,7 +180,17 @@ async function remove(a: Artifact) {
               </div>
             </article>
         </div>
+        <div v-if="g.other.length" class="others">
+          <button class="lnk small" :aria-expanded="othersOpen.has(g.key)" @click="toggleOthers(g.key)">{{ othersOpen.has(g.key) ? "收起" : "" }}其他 {{ g.other.length }} 个（日志、脚本、中间文件）</button>
+          <ul v-if="othersOpen.has(g.key)" class="olist small">
+            <li v-for="a in g.other" :key="a.id">
+              <button class="oname" :title="a.name" @click="show(a)"><Icon :name="KIND[a.kind].icon" :size="13" /><span class="ellipsis">{{ a.name }}</span></button>
+              <span class="muted nowrap">{{ size(a.size) }} · {{ relTime(a.createdAt) }}</span>
+            </li>
+          </ul>
+        </div>
       </section>
+      <div v-if="inline && runId" class="row small"><button class="lnk" @click="emit('task', task ?? null)">在“产物”里看</button></div>
     </template>
 
     <Teleport to="body">
@@ -182,7 +221,21 @@ async function remove(a: Artifact) {
 <style scoped>
 .artifacts { display: grid; gap: 14px; }
 .filter { gap: 8px; align-items: center; }
-.group { display: grid; gap: 8px; }
+.group { display: grid; gap: 8px; min-width: 0; }
+.group .cnt { margin-left: 8px; font-weight: 400; }
+.grid.small { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.none { margin: 0; }
+.others { display: grid; gap: 4px; min-width: 0; }
+.others > .lnk { justify-self: start; }
+.lnk { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+.lnk.small { font-size: 12px; }
+.lnk:hover { text-decoration: underline; }
+.olist { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.olist li { display: flex; align-items: center; gap: 10px; padding: 4px 8px; min-width: 0; }
+.olist li + li { border-top: 1px solid var(--line); }
+.oname { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; border: 0; background: none; padding: 0; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.oname:hover .ellipsis { text-decoration: underline; }
+.nowrap { white-space: nowrap; flex: none; }
 .fold { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
 .tile { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; min-width: 0; display: grid; grid-template-rows: auto 1fr; }

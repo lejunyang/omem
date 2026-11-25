@@ -38,7 +38,9 @@ export type ChangePoint = { id: string; parent?: string; req?: string; title: st
 export type Review = { independence?: "other" | "same" | "unknown" | null; id: string; round: number; check_name: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; profile_id: string | null; model: string | null; effort: string | null; created_at: string; findings: Finding[]; change_points: ChangePoint[] };
 export type Lead = { verdict: "approve" | "revise" | "escalate"; summary: string; changeRequest: string; rerun: string[]; by: "lead" | "host"; stop?: string; escalation?: { summary: string } };
 export type AskInfo = { id: string; status: string; question: string; options: { label: string }[]; answer: string | null; handler?: string | null };
-export type Round = { runId: string; round: number; status: string; plan: { tier: string; tierName: string; checks: string[]; reasons: string[]; lead?: boolean; looks?: string[] } | null; verdict: string | null; stage: string | null; lead: Lead | null; stop: string | null; ask: AskInfo | null; acceptedByOwner: boolean; changePoints: ChangePoint[] | null; reviewRuns?: { id: string; status: string; title: string }[] };
+export type Round = { runId: string; round: number; status: string; plan: { tier: string; tierName: string; checks: string[]; reasons: string[]; lead?: boolean; looks?: string[] } | null; verdict: string | null; stage: string | null; lead: Lead | null; stop: string | null; ask: AskInfo | null; acceptedByOwner: boolean; changePoints: ChangePoint[] | null; reviewRuns?: { id: string; status: string; title: string }[];
+  /** A stage review under way: per check, when it started and the AI it runs on (not sent by every server yet). */
+  live?: Record<string, { startedAt?: string; ai?: string }> };
 type Data = { estimate: { tierName: string; reason: string } | null; rounds: Round[]; reviews: Review[]; labels: Record<string, string> };
 
 export const SEV: Record<Severity, { text: string; cls: string }> = { blocker: { text: "阻断", cls: "danger" }, major: { text: "严重", cls: "danger" }, minor: { text: "一般", cls: "warn" }, nit: { text: "提示", cls: "" } };
@@ -134,3 +136,5 @@ export type NewerWork = { rootId: string; latestId: string; title: string; branc
 export type LatestState = { fixedBy: Record<string, FixInfo>; newer: NewerWork | null };
 /** How a handed-over finding stands: being fixed, fixed, or fixed and applied. */
 export const fixLabel = (i: FixInfo) => (i.applied ? "已修改并应用" : ["queued", "running"].includes(i.status) ? "修改中" : i.status === "done" ? "已修改" : "修改没完成");
+
+export { CHECK_STATE, checkRows, type CheckRow, type CheckState } from "./review-checks";

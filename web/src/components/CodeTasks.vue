@@ -1,18 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { parsePatches } from "../lib/reviews";
-import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { relTime, toast } from "../store";
 import { useRoute } from "vue-router";
 import { landing } from "../lib/flow-hooks";
 import { landOn } from "../lib/landing";
-import DiffFile from "./DiffFile.vue";
+import CodeChangeBlock, { type ShownChange } from "./CodeChangeBlock.vue";
 import Markdown from "./Markdown.vue";
-import DiffName from "./DiffName.vue";
-import DiffTree from "./DiffTree.vue";
-import UiSegmented from "./UiSegmented.vue";
+import RunArtifacts from "./RunArtifacts.vue";
 
 /**
  * A delegation driven by tasks (docs/v2/coding-loop.md): where it stands and how much budget is left,
@@ -73,6 +70,14 @@ const groups = computed(() => [
   { id: "later", label: "以后再做", list: tasks.value.filter((t) => t.state === "wontdo" && t.origin.later) },
   { id: "other", label: "不做与回退", list: tasks.value.filter((t) => (t.state === "wontdo" && !t.origin.later) || t.state === "reverted") },
 ].filter((g) => g.list.length));
+// A long delegation's finished tasks: the last few, the earlier ones behind one line (unless one of them is open).
+const DONE_SHOWN = 5;
+const doneAll = ref(false);
+function listOf(g: { id: string; list: Task[] }) {
+  if (g.id !== "done" || doneAll.value || g.list.length <= DONE_SHOWN + 3) return g.list;
+  const hidden = g.list.slice(0, -DONE_SHOWN);
+  return hidden.some((t) => open.value.has(t.seq)) ? g.list : g.list.slice(-DONE_SHOWN);
+}
 const busy = computed(() => !!w.value && ["queued", "running"].includes(w.value.status));
 const status = computed(() => {
   const x = w.value;
@@ -89,6 +94,8 @@ const lastCp = computed(() => data.value?.checkpoints?.at(-1)?.seq ?? 0);
 const fixCount = (t: Task) => Object.values(t.commits).reduce((n, l) => n + l.length, 0);
 const source = (t: Task) => t.origin.findings?.length ? `评审问题 ${t.origin.findings.map((f) => `#${f}`).join("、")}${t.verifier ? ` · ${who(t.verifier)}验证` : ""}` : t.kind === "owner" ? "你的要求" : t.kind === "redo" ? "回退后重做" : "拆分";
 
+const noteOpen = ref(new Set<string>());
+const toggleNote = (k: string) => { const n = new Set(noteOpen.value); n.has(k) ? n.delete(k) : n.add(k); noteOpen.value = n; };
 const open = ref(new Set<number>());
 const toggle = (seq: number) => { const n = new Set(open.value); n.has(seq) ? n.delete(seq) : n.add(seq); open.value = n; };
 /** Opened from the progress view (`?task=T3`): that task, unfolded and marked once; an unknown one is ignored. */
@@ -148,27 +155,26 @@ async function reviewAgain() {
 }
 
 // ---- changes ------------------------------------------------------------------------------------
-// `from`: per repository, the revision the change shown starts at (what a file is restored to).
-// `base`: the branch against another one, where a whole file back to the parting point would also
-// drop what others did on the branch before this work: only hunks can be taken back there.
-type Shown = { title: string; files: ReturnType<typeof parsePatches>; loading: boolean; from: Record<string, string>; base?: boolean };
-const shown = ref<Shown | null>(null);
-const openFiles = ref(new Set<string>());
-async function showChanges(title: string, query: string, after?: () => void) {
+// A task's own change opens right under its row (再点收起); a stretch (since the owner last looked,
+// everything, against a branch, a checkpoint) opens under the bar that asked for it.
+const shown = ref<ShownChange | null>(null);
+let showSeq = 0;
+async function showChanges(title: string, query: string, after?: () => void, task?: number) {
   const base = query.startsWith("base=");
-  shown.value = { title, files: [], loading: true, from: {}, base };
-  openFiles.value = new Set();
-  picked.value = null;
+  const mine = ++showSeq;
+  shown.value = { title, files: [], loading: true, from: {}, base, task };
   try {
     const r = await get<{ patches: { space: string; patch: string; from?: string }[] }>(`/api/runs/${props.runId}/task-diff?${query}`);
-    shown.value = { title, files: parsePatches(r.patches), loading: false, from: Object.fromEntries(r.patches.filter((p) => p.from).map((p) => [p.space, p.from!])), base };
+    if (mine !== showSeq) return;
+    shown.value = { title, files: parsePatches(r.patches), loading: false, from: Object.fromEntries(r.patches.filter((p) => p.from).map((p) => [p.space, p.from!])), base, task };
     after?.();
   } catch (e) {
+    if (mine !== showSeq) return;
     shown.value = null;
     toast((e as Error).message, "error");
   }
 }
-const showTask = (t: Task) => showChanges(`T${t.seq} ${t.title} 的改动`, `tasks=${t.seq}`);
+const showTask = (t: Task) => (shown.value?.task === t.seq ? void (shown.value = null) : showChanges(`T${t.seq} 的改动`, `tasks=${t.seq}`, undefined, t.seq));
 const showSince = () => {
   const from = w.value?.viewed ?? 0;
   void showChanges(from ? `检查点 ${from} 以后的改动` : "从开始到现在的改动", "since=viewed", () => void post(`/api/runs/${props.runId}/work`, { viewed: lastCp.value }).then(load).catch(() => {}));
@@ -185,7 +191,6 @@ async function compareBase() {
   try { localStorage.setItem(baseKey(), ref); } catch {}
   await showChanges(`和 ${ref} 比较：工作分支的全部改动`, `base=${encodeURIComponent(ref)}`);
 }
-const fileKey = (space: string, name: string) => `${space}:${name}`;
 
 // ---- taking back a stretch, a file or a hunk ----------------------------------------------------
 const revertWork = (body: Record<string, unknown>, done: string) => act(`/api/runs/${props.runId}/revert`, body, done);
@@ -195,20 +200,10 @@ const backTo = (seq: number) => withReason(seq ? `回到检查点 ${seq}` : "回
 const showStep = (c: Checkpoint) => showChanges(`检查点 ${c.seq}：${c.label}`, `from=${c.seq - 1}&to=${c.seq}`);
 const showSinceCp = (c: Checkpoint) => showChanges(`检查点 ${c.seq} 以后到现在`, `from=${c.seq}`);
 const cpsOpen = ref(false);
-const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k) ? n.delete(k) : n.add(k); openFiles.value = n; };
-// The files as a tree beside the list, as on the run page: picking one opens it and scrolls to it.
-const treeFiles = computed(() => {
-  const repos = shown.value?.files ?? [];
-  return repos.flatMap((d) => d.files.map((f) => ({ key: fileKey(d.space, f.name), path: repos.length > 1 ? `${d.space}/${f.name}` : f.name, add: f.add, rm: f.rm, status: f.status })));
-});
-const picked = ref<string | null>(null);
-const listEl = ref<HTMLElement | null>(null);
-async function pickFile(key: string) {
-  picked.value = key;
-  openFiles.value = new Set([...openFiles.value, key]);
-  await nextTick();
-  listEl.value?.querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
-}
+
+// ---- a task's screenshots and reports, right under it ------------------------------------------
+const artsOpen = ref<number | null>(null);
+const toggleArts = (t: Task) => (artsOpen.value = artsOpen.value === t.seq ? null : t.seq);
 </script>
 
 <template>
@@ -257,9 +252,12 @@ async function pickFile(key: string) {
       <li class="row wrap"><span class="mono muted">0</span><span class="grow muted">开始</span><button class="lnk danger" :disabled="working" @click="backTo(0)">回到开始的样子</button></li>
     </ol>
 
+    <CodeChangeBlock v-if="shown && shown.task === undefined" :shown="shown" :run-id="runId" :working="working" @close="shown = null" @revert-file="revertFile" @revert-hunk="revertHunk" />
+
     <div v-for="g in groups" :key="g.id" class="group">
       <div class="section-title">{{ g.label }} · {{ g.list.length }}</div>
-      <div v-for="t in g.list" :id="`code-task-${t.seq}`" :key="t.seq" class="task" :class="{ on: open.has(t.seq) }">
+      <button v-if="listOf(g).length < g.list.length" class="lnk small more-done" @click="doneAll = true">更早完成的 {{ g.list.length - listOf(g).length }} 项</button>
+      <div v-for="t in listOf(g)" :id="`code-task-${t.seq}`" :key="t.seq" class="task" :class="{ on: open.has(t.seq) }">
         <button class="trow" :aria-expanded="open.has(t.seq)" @click="toggle(t.seq)">
           <span class="seq mono">T{{ t.seq }}</span>
           <span class="title">{{ t.title }}</span>
@@ -271,11 +269,11 @@ async function pickFile(key: string) {
           <p v-if="t.state === 'assistant' && t.question"><span class="muted">交给助手的原因：</span>{{ t.question }}</p>
           <p v-if="t.answer"><span class="muted">你的决定：</span>{{ t.answer }}</p>
           <ol v-if="t.notes.length" class="notes">
-            <li v-for="(n, i) in t.notes" :key="i"><span class="muted">{{ relTime(n.at) }} · {{ who(n.by) }}：</span>{{ n.text }}</li>
+            <li v-for="(n, i) in t.notes" :key="i"><div class="ntext" :class="{ clamp: n.text.length > 240 && !noteOpen.has(`${t.seq}:${i}`) }"><span class="muted">{{ relTime(n.at) }} · {{ who(n.by) }}：</span>{{ n.text }}</div><button v-if="n.text.length > 240" class="lnk" @click="toggleNote(`${t.seq}:${i}`)">{{ noteOpen.has(`${t.seq}:${i}`) ? "收起" : "展开全部" }}</button></li>
           </ol>
           <div class="row wrap">
-            <button v-if="fixCount(t)" class="btn ghost sm" @click="showTask(t)">看改动（{{ fixCount(t) }} 个提交）</button>
-            <button v-if="shots(t)" class="btn ghost sm" @click="emit('artifacts', t.seq)">看截图和报告（{{ shots(t) }}）</button>
+            <button v-if="fixCount(t)" class="btn ghost sm" :aria-expanded="shown?.task === t.seq" @click="showTask(t)">{{ shown?.task === t.seq ? "收起改动" : `看改动（${fixCount(t)} 个提交）` }}</button>
+            <button v-if="shots(t)" class="btn ghost sm" :aria-expanded="artsOpen === t.seq" @click="toggleArts(t)">{{ artsOpen === t.seq ? "收起截图和报告" : "看截图和报告" }}</button>
             <button v-if="['done', 'wontdo', 'reverted'].includes(t.state)" class="btn ghost sm" :disabled="working" @click="reopen(t)">重做</button>
             <button v-if="['todo', 'assistant', 'owner'].includes(t.state)" class="btn ghost sm" :disabled="working" @click="drop(t)">不做了</button>
             <template v-if="fixCount(t) && ['done', 'verify'].includes(t.state) && !data.work?.reverts.includes(t.seq)">
@@ -283,35 +281,14 @@ async function pickFile(key: string) {
               <button class="btn ghost sm danger" :disabled="working" @click="revert(t, false)">回退</button>
             </template>
           </div>
+          <CodeChangeBlock v-if="shown?.task === t.seq" :shown="shown" :run-id="runId" :working="working" inline @close="shown = null" @revert-file="revertFile" @revert-hunk="revertHunk" />
+          <div v-if="artsOpen === t.seq" class="arts">
+            <RunArtifacts :run-id="runId" :task="t.seq" inline @task="() => emit('artifacts', t.seq)" />
+          </div>
         </div>
       </div>
     </div>
 
-    <div v-if="shown" class="shown block">
-      <div class="row wrap shown-head">
-        <strong class="small">{{ shown.title }}</strong>
-        <span v-if="treeFiles.length" class="muted small">{{ treeFiles.length }} 个文件</span>
-        <span class="spacer" />
-        <UiSegmented v-if="treeFiles.length" v-model="diffLayout" size="sm" :options="diffLayoutOptions" aria-label="差异的排列" />
-        <button class="btn ghost sm" @click="shown = null">收起</button>
-      </div>
-      <p v-if="shown.loading" class="muted small">正在取改动…</p>
-      <p v-else-if="!treeFiles.length" class="muted small">没有改动。</p>
-      <div v-else class="diff-cols">
-      <DiffTree v-if="treeFiles.length > 1" class="diff-tree" :files="treeFiles" :active="picked" @pick="pickFile" />
-      <div ref="listEl" class="diff-list">
-      <template v-for="d in shown.files" :key="d.space">
-        <div v-for="f in d.files" :key="fileKey(d.space, f.name)" class="file" :class="{ picked: picked === fileKey(d.space, f.name) }" :data-key="fileKey(d.space, f.name)">
-          <div class="fbar">
-            <button class="fhead mono small" :aria-expanded="openFiles.has(fileKey(d.space, f.name))" @click="toggleFile(fileKey(d.space, f.name))"><DiffName :file="f" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></button>
-            <button v-if="!shown.base && shown.from[d.space] && f.status !== 'renamed' && f.status !== 'copied'" class="lnk small restore" :disabled="working" @click="revertFile(d.space, f.name)">恢复成改动前</button>
-          </div>
-          <DiffFile v-if="openFiles.has(fileKey(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :expandable="false" revertable @revert-hunk="(p) => revertHunk(d.space, p)" />
-        </div>
-      </template>
-      </div>
-      </div>
-    </div>
   </section>
 </template>
 
@@ -331,9 +308,11 @@ async function pickFile(key: string) {
 .grow { flex: 1; min-width: 160px; }
 .changes-bar { gap: 6px; align-items: center; }
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0 2px; }
+.lnk.small { font-size: 12px; }
 .lnk:hover { text-decoration: underline; }
 .group { display: grid; gap: 4px; }
 .group .section-title { margin: 4px 0 2px; }
+.more-done { justify-self: start; padding: 4px 0; }
 .task { border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
 .task.on { border-color: var(--line-strong); }
 .trow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; padding: 7px 10px; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
@@ -344,26 +323,15 @@ async function pickFile(key: string) {
 .more { display: grid; gap: 6px; padding: 4px 12px 10px 44px; overflow-wrap: anywhere; }
 .more p { margin: 0; }
 .notes { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.notes .ntext { white-space: pre-line; }
+.notes .ntext.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.notes .lnk { padding: 0; }
 .danger { color: var(--danger); }
-.shown { display: grid; gap: 8px; min-width: 0; }
-.shown-head { gap: 8px; align-items: center; }
-.diff-cols { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; align-items: start; }
-.diff-cols:not(:has(.diff-tree)) { grid-template-columns: minmax(0, 1fr); }
-.diff-tree { position: sticky; top: 0; max-height: calc(100vh - 120px); overflow: auto; }
-.diff-list { display: grid; gap: 8px; min-width: 0; }
-.file { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; }
-.file.picked { border-color: var(--accent); }
-.fbar { display: flex; align-items: center; background: var(--sunken); min-width: 0; }
-.fhead { display: flex; gap: 10px; flex: 1; padding: 7px 12px; background: none; border: 0; color: var(--ink); cursor: pointer; text-align: left; min-width: 0; }
-.restore { flex: none; padding: 0 10px; }
 .pending { margin: 0; }
+.arts { padding: 6px 0 2px; }
 .cps { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
 .cps li { gap: 4px 10px; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--line); }
-.add { color: var(--ok); }
-.rm { color: var(--danger); }
 @media (max-width: 760px) {
-  .diff-cols { grid-template-columns: minmax(0, 1fr); }
-  .diff-tree { position: static; max-height: 240px; }
   .meta { padding-left: 0; }
   .more { padding-left: 12px; }
 }
