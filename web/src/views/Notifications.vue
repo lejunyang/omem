@@ -65,19 +65,6 @@ function bodyOf(n: N) {
     return `${pre}[${name}](${href})`;
   });
 }
-/**
- * A change an agent made (src/agents/behavior-changes.ts) comes as paragraphs, each file's before and after
- * as an indented block of “− 旧的一段” / “+ 新的一段”: those blocks read as a two-colour comparison with the
- * lines wrapped, the rest as text.
- */
-type Part = { kind: "md"; text: string } | { kind: "diff"; lines: { sign: "del" | "add" | ""; text: string }[] };
-function changeParts(body: string): Part[] {
-  return body.split(/\n[ \t]*\n/).map((p): Part => {
-    const lines = p.split("\n");
-    if (!lines.every((l) => l.startsWith("    "))) return { kind: "md", text: p };
-    return { kind: "diff", lines: lines.map((l) => l.slice(4)).map((l) => ({ sign: l.startsWith("− ") || l.startsWith("- ") ? "del" : l.startsWith("+ ") ? "add" : "", text: /^[−+-] /.test(l) ? l.slice(2) : l })) };
-  });
-}
 onMounted(async () => {
   await Promise.all([load(), state.me?.id === "owner" ? loadRules() : Promise.resolve()]);
 });
@@ -120,15 +107,8 @@ onMounted(async () => {
       </div>
       <ul v-if="n.bundleItems?.length"><li v-for="item in n.bundleItems" :key="item.id"><a v-if="item.link" :href="item.link">{{ item.title }}</a><span v-else>{{ item.title }}</span></li></ul>
       <template v-else-if="n.body">
-        <div v-if="n.behaviorChange" class="body change" :class="{ clip: long(n) && !opened[n.id] }">
-          <template v-for="(p, i) in changeParts(n.body)" :key="i">
-            <Markdown v-if="p.kind === 'md'" :source="bodyOf({ ...n, body: p.text })" compact />
-            <div v-else class="diff" role="group" aria-label="改动前后">
-              <div v-for="(l, j) in p.lines" :key="j" class="dl" :class="l.sign"><span class="sign" aria-hidden="true">{{ l.sign === "del" ? "−" : l.sign === "add" ? "+" : "" }}</span><span class="sr">{{ l.sign === "del" ? "删去：" : l.sign === "add" ? "加上：" : "" }}</span><span class="txt">{{ l.text }}</span></div>
-            </div>
-          </template>
-        </div>
-        <div v-else class="body" :class="{ clip: long(n) && !opened[n.id] }"><Markdown :source="bodyOf(n)" compact /></div>
+        <!-- A change the assistant made (src/agents/behavior-changes.ts): its summary, with the full comparison a link away. -->
+        <div class="body" :class="{ clip: long(n) && !opened[n.id] }"><Markdown :source="bodyOf(n)" compact /></div>
         <button v-if="long(n)" type="button" class="lnk small" :aria-expanded="!!opened[n.id]" @click="opened[n.id] = !opened[n.id]">{{ opened[n.id] ? "收起" : "展开全文" }}</button>
       </template>
       <div v-if="n.behaviorChange" class="row">
@@ -167,18 +147,6 @@ onMounted(async () => {
 }
 .n li { overflow-wrap: anywhere; }
 .body { min-width: 0; overflow-wrap: anywhere; }
-.body.change { display: grid; gap: 8px; }
-.diff { display: grid; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font-size: 13px; line-height: 1.55; }
-.dl { display: grid; grid-template-columns: 18px minmax(0, 1fr); padding: 3px 10px 3px 4px; }
-.dl + .dl { border-top: 1px solid var(--line); }
-.dl.del { background: color-mix(in srgb, var(--danger) 7%, transparent); }
-.dl.add { background: color-mix(in srgb, var(--ok) 8%, transparent); }
-.dl .sign { text-align: center; font-family: var(--mono); color: var(--muted); }
-.dl.del .sign { color: var(--danger); }
-.dl.add .sign { color: var(--ok); }
-.dl:not(.del):not(.add) .txt { color: var(--muted); }
-.txt { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
-.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .body.clip {
   max-height: 7.2em;
   overflow: hidden;

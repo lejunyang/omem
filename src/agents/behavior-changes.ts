@@ -6,7 +6,7 @@ import { all, one, run } from "../core/db.ts";
 import { commitLibrary, git } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { OWNER } from "../core/users.ts";
-import { HttpError, json, now, truncate } from "../core/util.ts";
+import { HttpError, json, now, truncate, webLink } from "../core/util.ts";
 import { findRule, saveRule, deleteRule } from "../rules/store.ts";
 import { contextRevision, getContext, restoreContextRevision } from "../channels/listen.ts";
 import { playbookPath } from "../channels/listen-cases.ts";
@@ -14,7 +14,7 @@ import { workUri, writeWorkFile } from "../sources/work.ts";
 import { deleteSource } from "../sources/store.ts";
 import { addMessage, findThread } from "./threads.ts";
 import { listSkillFiles } from "./specs.ts";
-import { cancelAsk, conversationOfRun, createAsk, registerAskHandler } from "./asks.ts";
+import { cancelAsk, conversationOfRun, createAsk, registerAskHandler, uiLink } from "./asks.ts";
 import type { ToolContext } from "./tools.ts";
 
 export const BEHAVIOR_CHANGE = "behavior-change";
@@ -111,15 +111,6 @@ function wasRequested(app: App, id: string, quote: string | undefined, target: T
 
 const redact = (s: string) => s.replace(/^([^\n]*(?:api[-_]?key|token|secret|password|authorization|headers|env)\s*[:=]).*$/gim, "$1 [已省略]");
 function paragraphs(s: string) { return s.trim().split(/\n[ \t]*\n/).flatMap((p) => p.length <= 320 ? [p] : p.split("\n")).filter(Boolean); }
-function difference(a: string[], b: string[]) {
-  const count = new Map<string, number>();
-  for (const line of b) count.set(line, (count.get(line) ?? 0) + 1);
-  return a.filter((line) => {
-    const n = count.get(line) ?? 0;
-    if (n) count.set(line, n - 1);
-    return !n;
-  });
-}
 function display(value: Text, path: string) {
   if (value.text === null) return "";
   if (path === "playbook") return redact(json<{ text: string }>(value.text, { text: "" }).text);
@@ -140,14 +131,182 @@ function display(value: Text, path: string) {
   });
   return redact(parts(obj).join("\n\n"));
 }
-function diffBody(files: Change["files"]) {
-  return truncate(Object.entries(files).filter(([path]) => !path.startsWith("_roles/.base/")).map(([path, { before, after }]) => {
-    const old = paragraphs(display(before, path)), next = paragraphs(display(after, path));
-    const removed = difference(old, next), added = difference(next, old);
-    const side = (lines: string[], sign: string) => lines.slice(0, 4).map((p) => `${sign} ${oneline(p, 150)}`).concat(lines.length > 4 ? [`…另有 ${lines.length - 4} 段`] : []).join("\n");
-    const text = [side(removed, "−"), side(added, "+")].filter(Boolean).join("\n") || "段落顺序、格式或省略的内容有变化。";
-    return `${path === "settings" ? "设置" : path === "playbook" ? "经验" : oneline(path, 100)}\n\n    ${text.replace(/\n/g, "\n    ")}`;
-  }).join("\n\n"), 1800);
+/** One paragraph of a file's before/after comparison. `rewrite`: a deleted paragraph and the added one that rewrites it. */
+type Block = { kind: "same" | "del" | "add"; text: string; rewrite?: boolean; section?: string | null };
+const HEADING = /^#{1,6}[ \t]+(.+?)[ \t#]*$/;
+/** The nearest `#` heading above each paragraph (its own first line when it is one); fenced code doesn't count. */
+function sectionsOf(ps: string[]) {
+  let current: string | null = null, fenced = false;
+  return ps.map((p) => {
+    const lines = p.split("\n");
+    const own = !fenced && HEADING.exec(lines[0])?.[1];
+    const at = own || current;
+    for (const line of lines) {
+      if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+      else if (!fenced && HEADING.test(line)) current = HEADING.exec(line)![1];
+    }
+    return at;
+  });
+}
+const bigrams = (s: string) => { const t = s.replace(/\s+/g, ""); return Array.from({ length: Math.max(t.length - 1, 0) }, (_, i) => t.slice(i, i + 2)); };
+/** Character-bigram overlap: a paragraph counts as rewritten only when about half of it is kept. */
+function similar(a: string, b: string) {
+  const x = bigrams(a), y = bigrams(b);
+  if (!x.length || !y.length) return false;
+  const count = new Map<string, number>();
+  for (const g of x) count.set(g, (count.get(g) ?? 0) + 1);
+  let shared = 0;
+  for (const g of y) { const n = count.get(g) ?? 0; if (n) { shared++; count.set(g, n - 1); } }
+  return (2 * shared) / (x.length + y.length) >= 0.5;
+}
+/** Paragraph diff in document order (longest common subsequence, after the shared head and tail). */
+function diffParagraphs(a: string[], b: string[]): Block[] {
+  const secA = sectionsOf(a), secB = sectionsOf(b);
+  let s = 0, e = 0;
+  while (s < a.length && s < b.length && a[s] === b[s]) s++;
+  while (e < a.length - s && e < b.length - s && a[a.length - 1 - e] === b[b.length - 1 - e]) e++;
+  const n = a.length - s - e, m = b.length - s - e;
+  const steps: ["same" | "del" | "add", number, number][] = [];
+  if (n * m > 4_000_000) {
+    for (let i = 0; i < n; i++) steps.push(["del", s + i, -1]);
+    for (let j = 0; j < m; j++) steps.push(["add", -1, s + j]);
+  } else {
+    const L = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = a[s + i] === b[s + j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && a[s + i] === b[s + j]) steps.push(["same", s + i++, s + j++]);
+      else if (j >= m || (i < n && L[i + 1][j] >= L[i][j + 1])) steps.push(["del", s + i++, -1]);
+      else steps.push(["add", -1, s + j++]);
+    }
+  }
+  const out: Block[] = a.slice(0, s).map((text, i) => ({ kind: "same", text, section: secB[i] }));
+  // Each run of changes: deleted paragraphs in order, each followed by the added one that rewrites it.
+  for (let k = 0; k < steps.length;) {
+    if (steps[k][0] === "same") { out.push({ kind: "same", text: b[steps[k][2]], section: secB[steps[k][2]] }); k++; continue; }
+    const dels: number[] = [], adds: number[] = [];
+    for (; k < steps.length && steps[k][0] !== "same"; k++) steps[k][0] === "del" ? dels.push(steps[k][1]) : adds.push(steps[k][2]);
+    let next = 0;
+    for (const i of dels) {
+      const hit = adds.slice(next, next + 3).findIndex((j) => similar(a[i], b[j]));
+      if (hit < 0) { out.push({ kind: "del", text: a[i], section: secA[i] }); continue; }
+      for (const j of adds.slice(next, next + hit)) out.push({ kind: "add", text: b[j], section: secB[j] });
+      const j = adds[next + hit];
+      out.push({ kind: "del", text: a[i], rewrite: true, section: secA[i] }, { kind: "add", text: b[j], rewrite: true, section: secB[j] });
+      next += hit + 1;
+    }
+    for (const j of adds.slice(next)) out.push({ kind: "add", text: b[j], section: secB[j] });
+  }
+  for (let i = a.length - e; i < a.length; i++) out.push({ kind: "same", text: a[i], section: secB[b.length - (a.length - i)] });
+  return out;
+}
+
+/** Card wording drops Markdown marks: a line of what changed, not its source. */
+function plain(s: string, n: number) {
+  const t = s.replace(/```[^\n]*\n?/g, "").replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+(?:\[[ xX]\][ \t]+)?|\d+[.)][ \t]+)/gm, "").replace(/(\*\*|__|~~|`)/g, "").replace(/(^|[^\w*])\*([^*\n]+)\*/g, "$1$2");
+  return oneline(t, n) || "（空白）";
+}
+const fileLabel = (t: Target, path: string) =>
+  path === "settings" ? "设置" : path === "playbook" ? "经验" : path.startsWith(`_skills/${t.id}/`) ? path.slice(`_skills/${t.id}/`.length)
+    : path === `_agents/${t.id}.md` ? "档案文件" : path === `_roles/${t.id}.md` ? "角色说明文件" : path === `_roles/${t.id}.overlay.yaml` ? "挂载设置" : path;
+/** Structured text gets a summary by section; settings, YAML and JSON line by line. */
+const code = (path: string) => path === "settings" || /\.(ya?ml|json)$/.test(path);
+const structured = (path: string, blocks: Block[]) => !code(path) && blocks.some((b) => b.section);
+function counts(blocks: Block[]) {
+  const rewrite = blocks.filter((b) => b.kind === "add" && b.rewrite).length;
+  return { removed: blocks.filter((b) => b.kind === "del" && !b.rewrite).length, added: blocks.filter((b) => b.kind === "add" && !b.rewrite).length, rewrite };
+}
+function countText(c: ReturnType<typeof counts>) {
+  return [c.removed && `删了 ${c.removed} 段`, c.added && `加了 ${c.added} 段`, c.rewrite && `改写 ${c.rewrite} 段`].filter(Boolean).join("、");
+}
+
+type FileView = { path: string; name: string; status: "added" | "removed" | "changed"; counts: ReturnType<typeof counts>; blocks: Block[] };
+function fileViews(change: Change): FileView[] {
+  return Object.entries(change.files).filter(([path]) => !path.startsWith("_roles/.base/")).map(([path, { before, after }]) => {
+    const blocks = diffParagraphs(paragraphs(display(before, path)), paragraphs(display(after, path)));
+    return { path, name: fileLabel(change.target, path), status: before.text === null ? "added" : after.text === null ? "removed" : "changed", counts: counts(blocks), blocks };
+  });
+}
+
+const SHOWN = 6;
+/** What changed in one file, a few lines; whatever is left out points at the full comparison. */
+function fileSummary(f: FileView, more: string) {
+  const changed = f.blocks.filter((b) => b.kind !== "same" && !(b.kind === "del" && b.rewrite));
+  if (!changed.length) return f.status === "changed" ? ["- 只有格式、段落顺序或不显示的内容（密钥、脚本）有变化"] : [];
+  if (structured(f.path, f.blocks)) {
+    // A rewrite counts once, under the section its new text is in.
+    const by = new Map<string, ReturnType<typeof counts>>();
+    for (const b of changed) {
+      const key = b.section ? `「${plain(b.section, 30)}」` : "开头（第一个标题之前）";
+      const c = by.get(key) ?? { removed: 0, added: 0, rewrite: 0 };
+      c[b.rewrite ? "rewrite" : b.kind === "del" ? "removed" : "added"]++;
+      by.set(key, c);
+    }
+    const lines = [...by].slice(0, SHOWN).map(([key, c]) => `- ${key}：${countText(c)}`);
+    return by.size > SHOWN ? [...lines, `- 另有 ${by.size - SHOWN} 个小节${more}`] : lines;
+  }
+  // Settings values (a cron, a pattern) are not Markdown: keep their characters.
+  const flat = (s: string, n: number) => (code(f.path) ? oneline(s, n) : plain(s, n));
+  const lines = changed.map((b) => {
+    if (!b.rewrite) return `- ${b.kind === "del" ? "删去" : "加上"}：${flat(b.text, 80)}`;
+    const old = f.blocks[f.blocks.indexOf(b) - 1].text;
+    const key = /^([\w.-]+):\s/.exec(b.text)?.[1];
+    return key && old.startsWith(`${key}: `) ? `- ${key}：${flat(old.slice(key.length + 2), 50)} → ${flat(b.text.slice(key.length + 2), 50)}` : `- 改写：${flat(old, 50)} → ${flat(b.text, 50)}`;
+  });
+  return lines.length > SHOWN ? [...lines.slice(0, SHOWN), `- 另有 ${lines.length - SHOWN} 处${more}`] : lines;
+}
+function scale(f: FileView) {
+  const n = f.blocks.filter((b) => b.kind !== "same").length;
+  return f.status === "added" ? `新建，共 ${n} 段` : f.status === "removed" ? `删除了这个文件（原有 ${n} 段）` : countText(f.counts) || "格式有变化";
+}
+
+/** “现在的全文”: the page that shows this thing now; none for something deleted. */
+function currentLink(change: Change) {
+  const { kind, id } = change.target, q = encodeURIComponent(id);
+  if (Object.values(change.files).every((d) => d.after.text === null)) return null;
+  return { skill: `#/agents?tab=skills&name=${q}`, agent: `#/agents?tab=agents&name=${q}`, role: `#/agents?tab=agents&role=${q}`, "skill-groups": "#/agents?tab=skills",
+    rule: `#/rules?id=${q}`, watch: `#/listen/${q}?tab=settings`, playbook: `#/listen/${q}?tab=lessons` }[kind];
+}
+
+/**
+ * The notice: links first, who changed it and why, how big, then where (by section, or line by line for
+ * settings). `link` turns an in-app address into what this text is read in; null drops the link.
+ */
+function changeBody(askId: string, change: Change, intro: string, link: (path: string) => string | null) {
+  const files = fileViews(change);
+  const full = link(`#/ui/${encodeURIComponent(askId)}`), now = currentLink(change), current = now && link(now);
+  const more = full ? `，[看完整对照](${full})` : "";
+  const head = [full && `[看完整对照](${full})`, current && `[现在的全文](${current})`].filter(Boolean).join("　");
+  const total = files.reduce((c, f) => ({ removed: c.removed + f.counts.removed, added: c.added + f.counts.added, rewrite: c.rewrite + f.counts.rewrite }), { removed: 0, added: 0, rewrite: 0 });
+  const parts = [head, intro];
+  if (files.length === 1) parts.push(`改动：${files[0].name} · ${scale(files[0])}`, fileSummary(files[0], more).join("\n"));
+  else {
+    parts.push(`改动：${files.length} 个文件 · ${countText(total) || "格式有变化"}`);
+    for (const f of files.slice(0, 4)) parts.push([`**${plain(f.name, 60)}**：${scale(f)}`, ...fileSummary(f, more)].join("\n"));
+    if (files.length > 4) parts.push(`另有 ${files.length - 4} 个文件${more}`);
+  }
+  return parts.filter(Boolean).join("\n\n");
+}
+
+/**
+ * The full comparison for the question's page (`#/ui/<askId>`): every paragraph of every file, already
+ * through `display()` (decoded, settings spread out, keys and MCP sections left out). Null for other asks.
+ */
+export function behaviorChangeView(app: App, askId: string) {
+  const row = one<{ question: string; context: string | null }>(app.db, "select question, context from asks where id=?", askId);
+  const ctx = json<{ handler?: string; change?: Change; title?: string; runTitle?: string; reason?: string; name?: string }>(row?.context ?? null, {});
+  if (!row || ctx.handler !== BEHAVIOR_CHANGE || !ctx.change) return null;
+  const { change } = ctx;
+  // Cards sent before these fields were stored: the title and reason are in the question text.
+  const title = ctx.title ?? row.question.split(/\n[ \t]*\n/)[0].trim();
+  const reason = ctx.reason ?? /^原因：(.*)$/m.exec(row.question)?.[1]?.replace(/（合并 \d+ 次运行的改动）$/, "") ?? null;
+  return {
+    title, runTitle: ctx.runTitle ?? null, reason, runs: change.runIds.length, explicit: change.explicit,
+    target: { kind: change.target.kind, label: label[change.target.kind], name: ctx.name ?? change.target.id },
+    current: currentLink(change),
+    files: fileViews(change).map(({ path, name, status, counts, blocks }) => ({ path, name, status, format: code(path) ? "text" : "md", counts, blocks: blocks.map(({ kind, text, rewrite }) => ({ kind, text, ...(rewrite ? { rewrite } : {}) })) })),
+  };
 }
 
 export function noteBehavior(ctx: Pick<ToolContext, "app" | "runId" | "actor" | "shadow">, target: Target, name: string, before: Snapshot | undefined, words: Words = {}, files: string[] = []) {
@@ -179,10 +338,22 @@ export function noteBehavior(ctx: Pick<ToolContext, "app" | "runId" | "actor" | 
   if (!Object.keys(change.files).length) return;
   const titleOfRun = one<{ title: string }>(app.db, "select title from runs where id=?", runId)?.title || "助手运行";
   const why = words.change_reason || (explicit ? words.owner_request : undefined) || "更新本次用到的做法";
-  const title = `${oneline(titleOfRun, 35)}：${change.explicit ? "按你说的改成了这样" : "改了"} · ${label[target.kind]}「${oneline(name, 30)}」 · ${oneline(redact(why), 32)}`;
-  const body = `原因：${oneline(redact(why), 180)}${change.runIds.length > 1 ? `（合并 ${change.runIds.length} 次运行的改动）` : ""}\n\n${diffBody(change.files)}`;
-  const ask = createAsk(app, { runId: null, conversationId: null, userId: OWNER, question: `${title}\n\n${body}`, options: [{ label: "保留" }, { label: "撤回" }], allowText: false,
-    context: { handler: BEHAVIOR_CHANGE, notificationOnly: true, changeKey: key, change } });
+  // A short, whole title: what and that it changed. Who and why go in the body.
+  const what = `${label[target.kind]}「${oneline(name, 30)}」`;
+  const whole = ["skill", "agent", "rule", "watch", "playbook"].includes(target.kind);
+  const verb = whole && Object.values(change.files).every((d) => d.before.text === null) ? "新建了" : whole && Object.values(change.files).every((d) => d.after.text === null) ? "删除了" : null;
+  const title = change.explicit ? `按你说的${verb ?? "改了"}${what}` : verb ? `${verb}${what}` : `${what}更新了`;
+  const reason = oneline(redact(why), 400), runTitle = oneline(titleOfRun, 60);
+  const intro = `${runTitle}：${reason}${change.runIds.length > 1 ? `（合并 ${change.runIds.length} 次运行的改动）` : ""}`;
+  const ask = createAsk(app, { runId: null, conversationId: null, userId: OWNER, question: title, options: [{ label: "保留" }, { label: "撤回" }], allowText: false,
+    context: { handler: BEHAVIOR_CHANGE, notificationOnly: true, changeKey: key, change, title, runTitle, reason, name } });
+  // The web list opens in-app addresses; the Feishu card needs the full web address, or no link.
+  const body = changeBody(ask.id, change, intro, (path) => path);
+  const card = changeBody(ask.id, change, intro, (path) => {
+    const link = path.startsWith("#/ui/") ? uiLink(app, ask.id) : webLink(app, path);
+    return /^https?:/.test(link) ? link : null;
+  });
+  run(app.db, "update asks set question=? where id=?", `${title}\n\n${card}`, ask.id);
   notify(app, { title, body, askId: ask.id, runId, urgency: "later", link: `#/ui/${ask.id}` });
 }
 

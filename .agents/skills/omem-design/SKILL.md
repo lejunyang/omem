@@ -65,6 +65,8 @@ Agent 档案和任务选型的后端、模型、强度使用 `AiDefaults`：可�
 
 从很多项里选一批、且这些项有分组时（Agent 档案的 omem 工具），不用一个长下拉逐个加：用 `components/ToolPicker` 的做法——已选的显示成可移除的小标签，“按分组选择”展开一个面板，分组一行一个，勾分组名是整组、展开后逐个勾，面板里可搜索，并把结果按文件里的写法原样显示出来（`group:<分组>`、`-<排除的工具>`、工具名），让本人看得出它和档案文件是一回事。
 
+文字设置（技能、档案、经验、规则）的前后对照按段落排：`components/BehaviorChange` 的做法——删去的段 `--danger-soft` 底、加上的 `--ok-soft` 底，左边一列 −/+，段落用 `Markdown` 加 `compact` 渲染（设置、YAML 和 front matter 用等宽原文），连着两段以上没变的折叠成“N 段没变 · 展开”，改动上方最近的小节标题保留在外面；长行换行，不横向滚动。通知和卡片里只写摘要并链到这页，不贴源码片段。
+
 代码改动统一用 `components/DiffFile`（新旧行号、未改动代码可上下展开，行带 `data-line`）。差异的排列（上下 / 左右）用 `lib/diffLayout` 的全局设置，不在组件里各存一份；改动文件多时配 `components/DiffTree`。运行详情里选中文字后“加入提问 / 加入修改点”：可引用的区域加 `data-quotable`，标题放 `data-ask-label`，行号放 `data-line`；引用进 `lib/quotes` 按运行编号保存，提问走 `AskAboutRun`（`basket`，可缩小到 `QuoteDock`），修改点走 `FixBasket`。回答只读，同一运行沿用一个问答会话。条件写不出来的设置（评审档位、评审项）在条件编辑器下面放一句话说明，由 AI 判断。
 
 配置项不让人手写 JSON：有序清单（如排队兜底）一行一项，用 UiSelect 选后端 / 模型 / 强度，带上移和移除；数值有常用档位的用 UiSelect 列出档位。`styles.css` 已把 `.stack` / `.card` / `.field` 里直接的 `<p>` 外边距清零，间距由 gap 决定；textarea 全局只能纵向拖动。卡片里的长标题、长路径、长 id 要能换行或省略（网格子项加 `min-width: 0`），路径只显示最后一级、悬停看全路径。

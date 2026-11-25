@@ -12,6 +12,10 @@ import { larkNotificationOutlet } from "../src/channels/lark-bot.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { findRule, saveRule } from "../src/rules/store.ts";
+import { behaviorChangeView } from "../src/agents/behavior-changes.ts";
+import { run } from "../src/core/db.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
+import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 describe("Agent behavior changes", () => {
@@ -38,7 +42,10 @@ describe("Agent behavior changes", () => {
     await tool(ctxFor({ conversationId: conv.id, messageIds: [m] }), "save_skill", { ...args, body: "保持不变\n\n最终写法", files: { "references/b.md": "新附件" } });
     const [n] = pending();
     expect(pending()).toHaveLength(1);
-    expect(n).toMatchObject({ urgency: "later", held: 1, title: expect.stringContaining("按你说的改成了这样") });
+    expect(n).toMatchObject({ urgency: "later", held: 1, title: "按你说的改了技能「project-a」" });
+    expect(n.body.split("\n")[0]).toBe(`[看完整对照](#/ui/${n.askId})　[现在的全文](#/agents?tab=skills&name=project-a)`);
+    expect(n.body).toContain("测试这轮的处理：检查放在结论前（合并 2 次运行的改动）");
+    expect(n.body).not.toMatch(/^ {4}/m);
     expect(n.body).toContain("起初写法");
     expect(n.body).toContain("最终写法");
     expect(n.body).toContain("references/b.md");
@@ -114,5 +121,61 @@ describe("Agent behavior changes", () => {
     expect(playbookOf(app, getContext(app, watch.id)!)).toContain("新场景");
     await click(pending()[0].askId!);
     expect(playbookOf(app, getContext(app, watch.id)!)).toBe("");
+  });
+
+  it("sums up a long change by section, links the full comparison, and serves it only to the owner", async () => {
+    app.config.webUrl = "https://omem.example.test";
+    const section = (i: number, word: string) => `## 第 ${i} 节\n\n${Array.from({ length: 6 }, (_, k) => `- **要点 ${i}.${k}**：${word}这一条的说明写得足够长，看得出是同一段话被改写了`).join("\n\n")}`;
+    const doc = (word: string) => Array.from({ length: 9 }, (_, i) => section(i + 1, word)).join("\n\n");
+    saveSkill(app, { name: "long-notes", description: "做法", body: `${doc("原先")}\n\ntoken: sk-old-secret`, files: {} }, "user");
+    await tool(ctxFor(), "save_skill", { name: "long-notes", description: "做法", body: `${doc("后来")}\n\n## 新加的一节\n\n新的一段。\n\ntoken: sk-new-secret`, attach: false, change_reason: "按最近几次的结果重写" });
+    const [n] = pending();
+    expect(n.title).toBe("技能「long-notes」更新了");
+    const lines = n.body.split("\n");
+    expect(lines[0]).toBe(`[看完整对照](#/ui/${n.askId})　[现在的全文](#/agents?tab=skills&name=long-notes)`);
+    expect(n.body).toContain("测试这轮的处理：按最近几次的结果重写");
+    expect(n.body).toContain("改动：SKILL.md · 加了 2 段、改写 54 段");
+    expect(lines.filter((l) => l.startsWith("- 「"))).toHaveLength(6);
+    expect(n.body).toContain(`- 另有 4 个小节，[看完整对照](#/ui/${n.askId})`);
+    expect(n.body).not.toMatch(/^ {4}|^#|\*\*要点|另有 \d+ 段|sk-(old|new)-secret/m);
+    // The Feishu card links to the web address.
+    const ask = getAsk(app, n.askId!);
+    expect(ask.question.split("\n\n")[0]).toBe(n.title);
+    expect(ask.question).toContain(`[看完整对照](https://omem.example.test/#/ui/${n.askId})`);
+    expect(ask.question).toContain("[现在的全文](https://omem.example.test/#/agents?tab=skills&name=long-notes)");
+
+    createUser(app, { id: "member", name: "成员", role: "member" });
+    const tokens = { owner: createApiToken(app, "owner", "t-owner"), member: createApiToken(app, "member", "t-member") };
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const get = (who: keyof typeof tokens) => server.inject({ url: `/api/ui/${n.askId}`, headers: { authorization: `Bearer ${tokens[who]}` } });
+      expect((await get("member")).statusCode).toBe(404);
+      const page = (await get("owner")).json();
+      expect(page.change).toMatchObject({ title: n.title, runTitle: "测试这轮的处理", reason: "按最近几次的结果重写", current: "#/agents?tab=skills&name=long-notes", target: { label: "技能", name: "long-notes" } });
+      const [file] = page.change.files;
+      expect(file).toMatchObject({ path: "_skills/long-notes/SKILL.md", name: "SKILL.md", status: "changed", counts: { removed: 0, added: 2, rewrite: 54 } });
+      const text = JSON.stringify(file.blocks);
+      expect(text).toContain("**要点 9.5**：原先");
+      expect(text).toContain("**要点 9.5**：后来");
+      expect(file.blocks.filter((b: { kind: string }) => b.kind === "same").length).toBeGreaterThan(0);
+      expect(text).not.toMatch(/sk-(old|new)-secret/);
+      expect(text).toContain("token: [已省略]");
+    } finally { await server.close(); }
+  });
+
+  it("lists settings line by line and still opens the comparison of a card sent in the old format", async () => {
+    const rule = saveRule(app, { name: "定时检查", description: "旧做法", enabled: true, judge: "code", trigger: { event: "schedule", cron: "0 8 * * *", once: "event", waitMinutes: 0, unless: [] }, conditions: null, actions: [{ type: "notify", urgent: false }] });
+    await tool(ctxFor(), "save_rule", { id: rule.id, description: "新做法", rule: { trigger: { ...rule.trigger, cron: "0 9 * * *" } } });
+    const [n] = pending();
+    expect(n.title).toBe("规则「定时检查」更新了");
+    expect(n.body).toContain("- trigger.cron：0 8 * * * → 0 9 * * *");
+    expect(n.body).toContain(`[现在的全文](#/rules?id=${rule.id})`);
+    // Sent before: the title and reason only in the question text.
+    run(app.db, "update asks set question=?, context=json_remove(context,'$.title','$.reason','$.runTitle','$.name') where id=?", "测试这轮的处理：改了 · 规则「定时检查」 · 换时间\n\n原因：换时间\n\n设置\n\n    − trigger.cron: 0 8 * * *", n.askId!);
+    const view = behaviorChangeView(app, n.askId!)!;
+    expect(view).toMatchObject({ title: "测试这轮的处理：改了 · 规则「定时检查」 · 换时间", reason: "换时间", target: { name: rule.id } });
+    expect(view.files[0].blocks).toEqual(expect.arrayContaining([{ kind: "del", text: "trigger.cron: 0 8 * * *", rewrite: true }, { kind: "add", text: "trigger.cron: 0 9 * * *", rewrite: true }]));
+    await click(n.askId!);
+    expect(findRule(app, rule.id)?.trigger).toMatchObject({ cron: "0 8 * * *" });
   });
 });

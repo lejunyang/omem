@@ -3,6 +3,7 @@ import { onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { get, onServerEvent, type Ask, type UiViewItem } from "../api";
 import AskCard from "../components/AskCard.vue";
+import BehaviorChange, { type BehaviorChangeView } from "../components/BehaviorChange.vue";
 import Markdown from "../components/Markdown.vue";
 import Skeleton from "../components/Skeleton.vue";
 import UiView from "../components/UiView.vue";
@@ -12,7 +13,7 @@ import { fmt } from "../lib/time";
  * One question or view on its own page (`#/ui/<id>`, docs/v2/interactive-ui.md): where a Feishu
  * card or a text chat sends the person to fill in a form or see a table drawn.
  */
-type Item = { type: "ask"; ask: Ask } | { type: "view"; view: UiViewItem };
+type Item = { type: "ask"; ask: Ask; change?: BehaviorChangeView } | { type: "view"; view: UiViewItem };
 const route = useRoute();
 const item = ref<Item | null>(null);
 const error = ref("");
@@ -46,6 +47,7 @@ onBeforeUnmount(off);
       <UiView :components="item.view.components" :title="item.view.title || '展示'" />
       <p class="muted small">{{ fmt(item.view.createdAt, { hour12: false }) }}</p>
     </template>
+    <BehaviorChange v-else-if="item?.type === 'ask' && item.change" :ask="item.ask" :change="item.change" @answered="load" />
     <template v-else-if="item?.type === 'ask'">
       <AskCard v-if="item.ask.status === 'pending'" :ask="item.ask" @answered="load" />
       <section v-else class="done card pad">

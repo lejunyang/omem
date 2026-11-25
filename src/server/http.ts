@@ -2708,7 +2708,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getAsk, draftOf } = await import("../agents/asks.ts");
     const a = getAsk(app, id);
     if (a.userId !== who(req)) throw new HttpError(404, "没有这个内容");
-    return { type: "ask", ask: { ...a, draft: draftOf(app, id), ...(a.askedBy ? { askedByName: userName(app, a.askedBy) } : {}) } };
+    // A change the assistant made to how it works: the full before/after, already decoded and with keys left out.
+    const change = a.handler === "behavior-change" ? (await import("../agents/behavior-changes.ts")).behaviorChangeView(app, id) : null;
+    return { type: "ask", ask: { ...a, draft: draftOf(app, id), ...(a.askedBy ? { askedByName: userName(app, a.askedBy) } : {}) }, ...(change ? { change } : {}) };
   });
 
   server.get("/api/approvals/ladder", async () => [...new Set([...app.config.approvals.tools, ...(app.config.approvals.report ?? [])])].map((tool) => ({ tool, rung: toolAlwaysApproves(tool) ? "ask" : rungOf(app, tool), streak: approvalStreak(app, tool) })));
