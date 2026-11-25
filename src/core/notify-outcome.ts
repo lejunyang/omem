@@ -37,7 +37,7 @@ export function labelOutcomes(app: App, { limit = 300 } = {}) {
     const until = new Date(Date.parse(n.at) + 24 * 3600_000).toISOString();
     const signature = app.config.lark.commands.signature.trim();
     let outcome: Outcome;
-    if (c.pushed?.channel === "bundle") outcome = "bundled";
+    if (c.pushed?.channel === "bundle" && c.quiet !== QUIET_HANDLED) outcome = "bundled";
     else if (message && one(app.db, "select 1 from feedback where message_id = ? and actor_kind = 'owner' and polarity = 'negative' and removed_at is null limit 1", message)) outcome = "negative";
     else {
       const acted = (message && (

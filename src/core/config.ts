@@ -865,6 +865,7 @@ export const configSchema = z.object({
           progress: z.number().min(0.5).max(0.99).default(DECISION_SCENES.progress.default),
           item: z.number().min(0.5).max(0.99).default(DECISION_SCENES.item.default),
           firstlook: z.number().min(0.5).max(0.99).default(DECISION_SCENES.firstlook.default),
+          "notify-known": z.number().min(0.5).max(0.99).default(DECISION_SCENES["notify-known"].default),
         }).optional(),
         /** The guest gatekeeper (lark-guest.ts) asks the decision model first. */
         gatekeeper: z.boolean().default(true),

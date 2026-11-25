@@ -19,7 +19,8 @@ import { addNotificationSink, deferNotification, markPushed, markQuiet, markRead
 import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
-import { deliveryPlan, inQuietHours, QUIET_HANDLED } from "../core/notify.ts";
+import { bundledNotifications, deliveryPlan, inQuietHours, laterSummary, QUIET_HANDLED } from "../core/notify.ts";
+import { quietHandledNotification } from "./notify-gate.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress } from "./lark-code-progress.ts";
@@ -283,15 +284,18 @@ export function larkNotificationOutlet(app: App) {
       const hit = await aiIgnoreMatch(app, n).catch(() => null);
       if (hit) { console.info(`[omem] 通知按忽略规则静默：${hit.rule.id}（${hit.reason}）`); markQuiet(app, n.id, "按你的免提醒规则没有推到飞书"); return; }
     }
-    // Suppress when the owner has clearly seen/handled the triggering chat:
-    // read status, an OK/DONE reaction, or a later reply in the same topic.
-    // A run that already went through the same check before it posted (agents/awareness.ts) decided with it; only a push held overnight is checked again.
-    if (app.config.notify.onlyUnread && n.sourceRefs?.length) {
-      const { ownerAlreadyHandled } = await import("./notify-gate.ts");
-      // The owner is already on it in Feishu: read as well as not pushed. A run that went through the
-      // check before sending (awareness.ts) has had this looked at already.
-      const { checkedBeforeSend } = await import("../agents/awareness.ts");
-      if ((deferred || !checkedBeforeSend(app, n.runId)) && await ownerAlreadyHandled(app, n).catch(() => false)) { markQuiet(app, n.id, QUIET_HANDLED); markReadIds(app, [n.id]); return; }
+    if (await quietHandledNotification(app, n, deferred)) return;
+    if (n.bundle?.length) {
+      const items = bundledNotifications(app, n.bundle, n.userId);
+      const kept = await withoutKnownConclusions(app, items);
+      if (kept.length < items.length) {
+        if (!kept.length) {
+          markQuiet(app, n.id, "汇总里的结论你已经知道，没有再推");
+          markReadIds(app, [n.id]);
+          return;
+        }
+        n = { ...n, ...laterSummary(kept), bundle: kept.map(item => item.id) };
+      }
     }
     // A handling's reminder with the reply it drafted: one card, the reminder on top and the draft to send under it.
     if (n.replyDraft && n.runId) {
@@ -338,6 +342,11 @@ export function larkNotificationOutlet(app: App) {
   };
 }
 
+async function withoutKnownConclusions(app: App, items: Notification[]) {
+  const quiet = await Promise.all(items.map(n => n.quiet === QUIET_HANDLED || (n.agentInitiated && quietHandledNotification(app, n))));
+  return items.filter((_, i) => !quiet[i]);
+}
+
 /** Morning delivery. A batch snapshot can become stale while the previous card is in flight. */
 async function sendDeferredLark(app: App, push: (n: Notification, deferred: boolean) => Promise<void>, targetOf: (n: Notification) => Target | null) {
   if (inQuietHours(app)) return;
@@ -353,11 +362,13 @@ async function sendDeferredLark(app: App, push: (n: Notification, deferred: bool
       const pending = new Set(all<{ id: string }>(app.db, `select id from notifications where id in (select value from json_each(?))
         and read_at is null and json_extract(context,'$.pushed') is null and json_extract(context,'$.quiet') is null and at>?`,
         JSON.stringify(ids), new Date(Date.now() - 86400000).toISOString()).map(row => row.id));
-      const remaining = items.filter(n => pending.has(n.id));
+      let remaining = items.filter(n => pending.has(n.id));
       if (remaining.length <= 3) {
         for (const n of remaining) await push(n, true).catch(e => console.warn("[omem] 夜间通知补发失败", e));
         return;
       }
+      remaining = await withoutKnownConclusions(app, remaining);
+      if (!remaining.length) return;
       const target = targetOf(remaining[0]);
       if (!target) return;
       const lines = remaining.map(n => `- ${n.title}`).join("\n");
@@ -366,7 +377,7 @@ async function sendDeferredLark(app: App, push: (n: Notification, deferred: bool
     }).catch(e => console.warn("[omem] 夜间通知补发失败", e));
   };
   for (const items of byUser.values()) {
-    const ownCard = (n: Notification) => !!n.replyDraft || (n.link ?? "").startsWith("#/ui/");
+    const ownCard = (n: Notification) => !!(n.replyDraft || n.askId || n.bundle?.length) || (n.link ?? "").startsWith("#/ui/");
     for (const n of items.filter(ownCard)) await sendCard([n]);
     const rest = items.filter(n => !ownCard(n));
     if (rest.length > 3) await sendCard(rest);

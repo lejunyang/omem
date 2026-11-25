@@ -84,7 +84,7 @@ import { checkSlug, confirmPage, folderOf, folderOverview, listPages, movePages,
 import { keepOwnerSection } from "./work-state.ts";
 import { addRunEvent, cancelRun, createRun, getRun, listRuns, runEvents, runUser, setRunOutput, stopRequested } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
-import { afterToolCall, ownerNews, preSendCheck } from "./awareness.ts";
+import { afterToolCall, isBackgroundNotification, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillsOutsideScope, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
@@ -4557,6 +4557,7 @@ def({
       sourceRefs: a.source_refs,
       eventId: a.event_id,
       runId: ctx.runId,
+      ...(ctx.actor === "agent" && ctx.runId && isBackgroundNotification(ctx.app, getRun(ctx.app, ctx.runId)) ? { agentInitiated: true } : {}),
       replaces: a.replaces,
       ...(a.tone ? { tone: a.tone } : {}),
       ...(a.urgency ? { urgency: a.urgency } : {}),

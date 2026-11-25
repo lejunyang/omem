@@ -53,6 +53,11 @@ export function isBackground(app: App, r: Run) {
   }
 }
 
+/** Some library-maintenance jobs can choose to report a conclusion as well. */
+export function isBackgroundNotification(app: App, r: Run) {
+  return isBackground(app, r) || r.kind === "dream" || r.kind === "curate";
+}
+
 // ---- what a run is told when it starts --------------------------------------------------------------
 
 /**

@@ -68,6 +68,8 @@ export type Notification = {
   sourceRefs?: string[];
   eventId?: number;
   runId?: string | null;
+  /** The background Agent chose to report this conclusion. */
+  agentInitiated?: boolean;
   /** The tool this report-rung completion is about (approval-ladder.ts). */
   reportTool?: string;
   /** Negative feedback was applied once; a null rule means a one-off, not a reusable lesson. */
@@ -119,6 +121,7 @@ export function notify(
   input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; plain?: boolean; digest?: { closed: string[]; soon: string[]; candidates?: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
     /** The host already gave the owner their time before this run started (mentions/mentions.ts): no first-nudge grace. */
     askId?: string;
+    agentInitiated?: boolean;
     graceDone?: boolean;
     reportTool?: string;
     replyDraft?: string;
@@ -176,6 +179,7 @@ export function notify(
     sourceRefs: [...new Set(sourceRefs)],
     eventId: input.eventId,
     runId: input.runId,
+    ...(input.agentInitiated ? { agentInitiated: true } : {}),
     ...(input.reportTool ? { reportTool: input.reportTool } : {}),
     at: now(),
     title: input.title,
@@ -200,7 +204,7 @@ export function notify(
   // straight to the channels, which edit that card without a ping.)
   const held = deliveryPlan(app, { ...n, outlet: "notify" }).when === "later";
   if (held) n.held = true;
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ dedupKey: n.dedupKey, askId: n.askId, entity: n.entity, entityId: n.entityId, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, plain: n.plain, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ dedupKey: n.dedupKey, askId: n.askId, entity: n.entity, entityId: n.entityId, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, agentInitiated: n.agentInitiated, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, plain: n.plain, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, view: n.view, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
   // The earlier one is now history: read, and no longer waiting for the morning.
   if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });
@@ -221,6 +225,12 @@ const LATER_SINGLY = 2;
 const LATER_LISTED = 12;
 /** A held notification older than this is no longer worth a push (it stays in the list). */
 const LATER_KEEP_MS = 48 * 3600_000;
+
+export function laterSummary(list: Pick<Notification, "title">[]) {
+  const listed = list.slice(-LATER_LISTED);
+  const more = list.length - listed.length;
+  return { title: `这段时间的 ${list.length} 条进展`, body: `${listed.map((n) => `- ${n.title}`).join("\n")}\n\n${more ? `更早的 ${more} 条和详情` : "详情"}在网页的通知里。` };
+}
 
 /** The latest of the set times of day that has passed today (the owner's `config.timezone`, as quiet hours), as a key; null before the first. */
 export function laterSlot(app: App, at = new Date()): string | null {
@@ -266,9 +276,7 @@ export function releaseLater(app: App, at = new Date(), opts: { now?: boolean } 
       continue;
     }
     // A long day does not become a wall of lines: the newest ones are named, the rest counted.
-    const listed = list.slice(-LATER_LISTED);
-    const more = list.length - listed.length;
-    const bundle = notify(app, { title: `这段时间的 ${list.length} 条进展`, body: `${listed.map((n) => `- ${n.title}`).join("\n")}\n\n${more ? `更早的 ${more} 条和详情` : "详情"}在网页的通知里。`, link: "#/notifications", userId, bundle: list.map((n) => n.id) }, { push: false });
+    const bundle = notify(app, { ...laterSummary(list), link: "#/notifications", userId, bundle: list.map((n) => n.id) }, { push: false });
     deliver(app, bundle, "later");
     for (const n of list) markPushed(app, n.id, "bundle");
   }
@@ -314,6 +322,12 @@ export function listNotifications(app: App, limit = 50, userId = "owner") {
     const n = { ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: r.read_at };
     return { ...n, unread: countsAsUnread(n) };
   });
+}
+
+export function bundledNotifications(app: App, bundle: string[], userId: string): Notification[] {
+  return all<{ id: string; at: string; title: string; body: string; link: string | null; read_at: string | null; context: string }>(app.db,
+    `select n.* from json_each(?) b join notifications n on n.id=b.value where n.user_id=? order by b.key`, JSON.stringify(bundle), userId
+  ).map(r => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: r.read_at, userId }));
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
+import { markQuiet, markReadIds, QUIET_HANDLED, type Notification } from "../core/notify.ts";
 import { readMessageIds } from "./lark-read.ts";
 import { larkCli } from "./lark-cli.ts";
 import { ownerReactionsSeen } from "./lark-feedback.ts";
@@ -53,6 +54,25 @@ function refChatLines(app: App, ref: string): ChatLine[] {
 
 /** Which of the owner's signals count as handled (有人找你 lets each be turned off: mentions.skipWhen); all by default. */
 export type HandledSignals = { read?: boolean; reacted?: boolean; replied?: boolean };
+
+/** The send-time gate can see the conclusion as well as the original trigger. */
+export async function quietHandledNotification(app: App, n: Notification, deferred = false): Promise<boolean> {
+  if (n.askId || n.urgency === "urgent") return false;
+  let handled = false;
+  if (n.agentInitiated) {
+    const { ownerKnowsBackgroundNotification } = await import("./owner-notification-knowledge.ts");
+    handled = await ownerKnowsBackgroundNotification(app, n).catch(() => false);
+  } else if (app.config.notify.onlyUnread && n.sourceRefs?.length) {
+    // An overnight delay gives the owner time to act even if the run already checked before sending.
+    const { checkedBeforeSend } = await import("../agents/awareness.ts");
+    handled = (deferred || !checkedBeforeSend(app, n.runId)) && await ownerAlreadyHandled(app, n).catch(() => false);
+  }
+  if (handled) {
+    markQuiet(app, n.id, QUIET_HANDLED);
+    markReadIds(app, [n.id]);
+  }
+  return handled;
+}
 
 export async function ownerAlreadyHandled(app: App, n: NotificationLike, signals: HandledSignals = {}): Promise<boolean> {
   const { read: byRead = true, reacted: byReaction = true, replied: byReply = true } = signals;
