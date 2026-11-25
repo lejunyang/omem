@@ -43,7 +43,7 @@ import { accessibleSpaces, activeUser, identityOwner, findUser, requireMembershi
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema, reviseStudyFindingSchema, queueStudyFixesSchema } from "../studies/schema.ts";
 import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
-import { featuresOf, LARK_DOMAIN_FEATURES } from "../auth/features.ts";
+import { featuresOf, larkDomainFeature } from "../auth/features.ts";
 import { audit, can, canAccessRun, canReadRun, runAudience, requirePerm } from "../auth/permissions.ts";
 import { asLarkUser, asRuleLarkUser, canActOnLark } from "../auth/lark-user.ts";
 import { larkActor } from "../channels/lark-cli.ts";
@@ -4836,9 +4836,8 @@ def({
  * with their own connection (src/auth/lark-user.ts) — the call runs as whoever the run works for.
  */
 /** Which connection feature a lark-cli command uses (one the account page can turn off), or null. */
-const DOMAIN_FEATURES = LARK_DOMAIN_FEATURES;
 function commandFeature(command: string[], write = false) {
-  const f = DOMAIN_FEATURES[command[0] ?? ""] ?? null;
+  const f = larkDomainFeature(command);
   return write && f === "docs" ? "doc-write" : f;
 }
 /** A member who turned this feature off in omem (auth/connections.ts featuresOff): not used, though Feishu still grants it. */

@@ -366,6 +366,83 @@ describe("connections", async () => {
     expect(one(app.db, "select 1 from kv where key = 'connect_wait:wu'")).toBeUndefined();
   });
 
+  it("offers the full sheets feature to a connected member and resumes on the required scope", async () => {
+    const { callTool } = await import("../src/agents/tools.ts");
+    const { createRun } = await import("../src/agents/runs.ts");
+    const { connectionGranted } = await import("../src/auth/connect-wait.ts");
+    const { createThread } = await import("../src/agents/threads.ts");
+    const userId = "sheet-reader", spaceId = "personal-sheet-reader";
+    createUser(app, { name: "小许", id: userId });
+    const thread = createThread(app, { spaceId, channel: "lark", userId });
+    const r = createRun(app, { kind: "agent", spaceId, title: "读表格", input: { conversationId: thread.id }, userId });
+    const grant = (scopes: string[]) => storeConnection(app, { userId, provider: "lark", accountId: "on_xu", accountName: "小许", scopes, accessToken: "at_xu", refreshToken: "rt_ok", expiresIn: 7200 });
+    const missing = "sheets:spreadsheet:read";
+    grant(["offline_access"]);
+    setLarkCliForTests(async (args) => {
+      if (args.includes("--help")) return "Risk: read";
+      throw new LarkScopeError(["sheets:spreadsheet", missing], "缺少权限");
+    });
+    onTestFinished(() => setLarkCliForTests(null));
+    const ctx = { app, runId: r.id, spaceId, spaces: null, tools: null, actor: "agent" as const, userId, larkChats: [] };
+    const read = () => callTool(ctx, "lark_read", { command: ["sheets", "+workbook-info", "--spreadsheet-token", "example"] });
+    const link = "http://omem.test/#/login?provider=lark&features=sheets";
+    for (let i = 0; i < 2; i++) {
+      const refused = await read();
+      expect(refused.isError).toBe(true);
+      expect(refused.text).toContain(`授权链接：${link}。`);
+    }
+    const notices = () => app.db.prepare("select link from notifications where user_id = ?").all(userId);
+    expect(notices()).toEqual([{ link }]);
+    const login = new URL((await remote(`/api/auth/lark/start?${new URL(link).hash.split("?")[1]}`)).headers.get("location")!);
+    expect(login.searchParams.get("scope")!.split(" ").sort()).toEqual([...scopesFor("lark", ["sheets"]), "contact:user.email:readonly"].sort());
+    grant(["base:record:read"]);
+    connectionGranted(app, userId, "lark");
+    const pending = () => one(app.db, "select 1 from kv where key = ?", `connect_wait:${userId}`);
+    expect(pending()).toBeDefined();
+    grant([missing]);
+    connectionGranted(app, userId, "lark");
+    expect(pending()).toBeUndefined();
+    await expect.poll(() => one(app.db, "select 1 from messages where conversation_id = ? and text like '[授权]%'", thread.id)).toBeDefined();
+    expect((await read()).text).toContain(`当前连接已授权 ${missing}`);
+    expect(notices()).toEqual([{ link }]);
+  });
+
+  it("uses the relevant member feature for other CLI domains and leaves uncatalogued scopes specific", async () => {
+    const { callTool } = await import("../src/agents/tools.ts");
+    const { setFeatureOff } = await import("../src/auth/connections.ts");
+    const userId = "cli-reader", spaceId = "personal-cli-reader";
+    createUser(app, { name: "小何", id: userId });
+    storeConnection(app, { userId, provider: "lark", accountId: "on_he", accountName: "小何", scopes: ["offline_access"], accessToken: "at_he", refreshToken: "rt_ok", expiresIn: 7200 });
+    let missing: string[];
+    setLarkCliForTests(async (args) => {
+      if (args.includes("--help")) return "Risk: read";
+      throw new LarkScopeError(missing, "缺少权限");
+    });
+    onTestFinished(() => setLarkCliForTests(null));
+    const ctx = { app, runId: null, spaceId, spaces: null, tools: null, actor: "agent" as const, userId, larkChats: [] };
+    const read = (command: string[]) => callTool(ctx, "lark_read", { command });
+    const cases = [
+      { command: ["base", "+record-list"], scopes: ["base:record:read"], query: "features=sheets" },
+      { command: ["calendar", "+agenda"], scopes: ["calendar:calendar.event:read"], query: "features=calendar" },
+      { command: ["minutes", "+info"], scopes: ["minutes:minutes:readonly"], query: "features=minutes" },
+      { command: ["wiki", "+node-get"], scopes: ["wiki:wiki", "wiki:node:read"], query: "features=docs" },
+      { command: ["im", "+chat-list"], scopes: ["im:chat:readonly", "im:chat:read"], query: "features=messages" },
+      { command: ["im", "+messages-search", "--chat-type=p2p"], scopes: ["im:message:readonly"], query: "features=messages-p2p" },
+      { command: ["im", "+messages-mget"], scopes: ["im:message.p2p_msg:get_as_user"], query: "features=messages-p2p" },
+      { command: ["im", "+messages-search"], scopes: ["search:message"], query: "scopes=search%3Amessage" },
+      { command: ["task", "+list"], scopes: ["task:task:read"], query: "scopes=task%3Atask%3Aread" },
+    ];
+    for (const { command, scopes, query } of cases) {
+      missing = scopes;
+      expect((await read(command)).text).toContain(`授权链接：http://omem.test/#/login?provider=lark&${query}。`);
+    }
+    setFeatureOff(app, userId, "lark", "messages-p2p", true);
+    missing = ["im:message.p2p_msg:get_as_user"];
+    const paused = await read(["im", "+messages-mget"]);
+    expect(paused.text).toContain("关掉了「单聊消息」");
+    expect(paused.text).not.toContain("授权链接");
+  });
+
   it("offers the read-only docs feature for a doc fetch and resumes old waits with the new scope", async () => {
     const { callTool } = await import("../src/agents/tools.ts");
     const { createRun } = await import("../src/agents/runs.ts");

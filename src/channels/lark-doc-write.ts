@@ -54,7 +54,7 @@ async function spaceName(app: App, spaceId: string) {
 async function ownedByCaller(app: App, token: string, type: string) {
   const me = await actingOpenId(app);
   if (!me) return false;
-  const v = await asOwner(app, "读取云空间文件信息", () => larkCli(["drive", "metas", "batch_query", "--data", JSON.stringify({ request_docs: [{ doc_token: token, doc_type: type }] }), "--as", "user"], 60_000));
+  const v = await asOwner(app, "读取云空间文件信息", () => larkCli(["drive", "metas", "batch_query", "--data", JSON.stringify({ request_docs: [{ doc_token: token, doc_type: type }] }), "--as", "user"], 60_000), { feature: "docs" });
   const m = (v?.data?.metas ?? [])[0] as { owner_id?: string } | undefined;
   return m?.owner_id === me;
 }

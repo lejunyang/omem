@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { larkDomainFeature } from "../auth/features.ts";
 import type { App } from "../core/app.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { actingOpenId, asOwner } from "./lark-auth.ts";
@@ -64,7 +65,9 @@ const isGuide = (args: string[]) => (args[0] === "skills" && (args[1] === "read"
 async function run(app: App, args: string[], label: string, execute = larkCli) {
   const dir = mkdtempSync(join(tmpdir(), "omem-lark-"));
   try {
-    const v = await asOwner(app, label, () => execute([...args, "--as", "user"], 180_000, dir));
+    const feature = larkDomainFeature(args);
+    // The generic write tool may need a scope from the read feature. Its write scopes are separate.
+    const v = await asOwner(app, label, () => execute([...args, "--as", "user"], 180_000, dir), feature ? { feature } : undefined);
     const files = readdirSync(dir).map((f) => `${f}（${statSync(join(dir, f)).size} 字节）`);
     return { value: v?.data ?? v, files };
   } finally {
@@ -129,7 +132,7 @@ export async function writeTarget(app: App, args: string[], target: string | und
   let personal = false;
   let title = "";
   if (me) {
-    const v = await asOwner(app, "读取云空间文件信息", () => larkCli(["drive", "metas", "batch_query", "--data", JSON.stringify({ request_docs: [{ doc_token: m[2], doc_type: type }] }), "--as", "user"], 60_000));
+    const v = await asOwner(app, "读取云空间文件信息", () => larkCli(["drive", "metas", "batch_query", "--data", JSON.stringify({ request_docs: [{ doc_token: m[2], doc_type: type }] }), "--as", "user"], 60_000), { feature: "docs" });
     const meta = (v?.data?.metas ?? [])[0] as { owner_id?: string; title?: string } | undefined;
     personal = meta?.owner_id === me;
     title = meta?.title ?? "";

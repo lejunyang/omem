@@ -59,10 +59,14 @@ export const FEATURES: Record<string, Feature[]> = {
 };
 
 /** Which Feishu feature a lark-cli command family uses (one the account page can turn off). */
-export const LARK_DOMAIN_FEATURES: Record<string, string> = { im: "messages", contact: "messages", docs: "docs", docx: "docs", wiki: "docs", drive: "docs", markdown: "docs", sheets: "sheets", base: "sheets", calendar: "calendar", minutes: "minutes", vc: "minutes" };
+const LARK_DOMAIN_FEATURES: Record<string, string> = { im: "messages", contact: "messages", docs: "docs", docx: "docs", wiki: "docs", drive: "docs", markdown: "docs", sheets: "sheets", base: "sheets", calendar: "calendar", minutes: "minutes", vc: "minutes" };
+export function larkDomainFeature(args: string[]) {
+  if (args[0] === "im" && args.some((arg, i) => arg === "--chat-type=p2p" || (arg === "--chat-type" && args[i + 1] === "p2p"))) return "messages-p2p";
+  return LARK_DOMAIN_FEATURES[args[0] ?? ""] ?? null;
+}
 /** What a lark-cli call needs, to ask for when someone has not connected yet: a document write needs writing too. */
 export function larkCommandFeatures(args: string[]): string[] {
-  const f = LARK_DOMAIN_FEATURES[args[0] ?? ""];
+  const f = larkDomainFeature(args);
   if (!f) return [];
   const write = f === "docs" && args.slice(1, 3).some((a) => /^\+?(?:node-)?(update|create|write|append|replace|insert|delete|move|copy|upload)/.test(a));
   return write ? ["doc-write"] : [f];

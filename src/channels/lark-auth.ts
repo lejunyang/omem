@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
-import { LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE } from "../auth/features.ts";
+import { featuresOf, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE } from "../auth/features.ts";
+import { featuresOff } from "../auth/connections.ts";
 import { findConnection } from "../auth/vault.ts";
 import { inQuietHours, notify } from "../core/notify.ts";
 import { HttpError, zonedParts } from "../core/util.ts";
@@ -112,14 +113,15 @@ export async function requestUserScopes(app: App, scopes: string[], reason: stri
  * Run a lark-cli call as the owner; a missing scope becomes a login link for the owner and an error
  * the agent can act on (wait, tell the owner) instead of an opaque failure.
  */
-export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>, permission?: { feature: "docs" | "doc-write"; alternatives: string[] }): Promise<T> {
+export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>, permission?: { feature: string; alternatives?: string[] }): Promise<T> {
   try {
     return await fn();
   } catch (e) {
     if (!(e instanceof LarkScopeError)) throw e;
     // Feishu often lists broad legacy scopes first. Prefer the permission for the actual operation.
-    const preferred = permission && e.scopes.some((s) => permission.alternatives.includes(s)) ? permission : null;
-    const scope = preferred?.alternatives[0] ?? e.scopes[0];
+    const alternatives = permission?.alternatives;
+    const preferred = alternatives?.some((s) => e.scopes.includes(s)) ? alternatives[0] : undefined;
+    const scope = preferred ?? e.scopes[0];
     // Someone else's connection (src/auth/lark-user.ts): they authorize the scope on their own connection, from the account page.
     const actor = larkActing();
     // A colleague's grant (auth/grants.ts) lacks it: dropped, so the next try gives them a fresh link with what is needed.
@@ -128,13 +130,26 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>,
       throw new HttpError(403, `对方的飞书授权少了 ${scope}：再用 identity=bot 试一次会拿到新的授权链接，发给他重新同意。`);
     }
     if (actor) {
-      if (preferred && findConnection(app, actor.userId, "lark")?.scopes.includes(scope))
-        throw new HttpError(403, `${reason}被飞书拒绝。当前连接已授权 ${scope}，请检查具体文档或知识库的访问权限。`);
+      const candidates = preferred ? [preferred] : e.scopes;
+      const features = featuresOf("lark");
+      let feature = features.find((f) => f.id === permission?.feature);
+      let required = candidates.find((s) => feature?.scopes.includes(s));
+      // Only ask for private chat access if the command or the missing scope identifies it.
+      if (!required && feature?.id === "messages") {
+        const privateChats = features.find((f) => f.id === "messages-p2p");
+        required = candidates.find((s) => privateChats?.scopes.includes(s));
+        if (required) feature = privateChats;
+      }
+      if (feature && required && featuresOff(app, actor.userId, "lark").includes(feature.id))
+        throw new HttpError(403, `你在 omem 的账号页关掉了「${feature.label}」，要用请在账号页重新打开。`);
+      const have = findConnection(app, actor.userId, "lark")?.scopes ?? [];
+      const granted = required && candidates.find((s) => feature?.scopes.includes(s) && have.includes(s));
+      if (granted) throw new HttpError(403, `${reason}被飞书拒绝。当前连接已授权 ${granted}，请检查飞书里的资源访问权限。`);
       const { needConnection } = await import("../auth/connect-wait.ts");
-      const request = preferred ? { features: [preferred.feature], requiredScopes: [scope] } : { scopes: [scope] };
-      throw new HttpError(403, needConnection(app, actor.userId, actor.ruleId ? null : actor.runId, { ...request, reason: `${reason}缺少飞书权限 ${scope}` }));
+      const request = feature && required ? { features: [feature.id], requiredScopes: [required] } : { scopes: [scope] };
+      throw new HttpError(403, needConnection(app, actor.userId, actor.ruleId ? null : actor.runId, { ...request, reason: `${reason}缺少飞书权限 ${required ?? scope}` }));
     }
-    const missing = preferred ? scope : e.scopes.join(" 或 ");
+    const missing = preferred ?? e.scopes.join(" 或 ");
     let link = "";
     try {
       link = (await requestUserScopes(app, [scope], reason)).url;
