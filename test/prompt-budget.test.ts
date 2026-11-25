@@ -53,7 +53,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "review-style": ["review", 4958, 4958, 2785, 2785],
   "review-history": ["review", 4629, 4629, 2070, 2070],
   "review-simplify": ["review", 5562, 5562, 3389, 3389],
-  "review-lead": ["review", 6541, 6541, 3982, 3982],
+  // 实测：共同说明加了“什么算评审问题”、负责人接受前先核对触发前提之后。
+  "review-lead": ["review", 6712, 6712, 4138, 4138],
   "replay-judge": ["replay-judge", 3442, 3442, 2442, 2442],
   "kb-scout": ["kb-scout", 4766, 4766, 2728, 2728],
   "req-splitter": ["req-split", 5988, 5988, 3429, 3429],
