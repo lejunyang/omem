@@ -4,7 +4,7 @@ import { Resolver } from "node:dns/promises";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { networkPolicySchema, agentProfileSchema, configSchema } from "../src/core/config.ts";
-import { beginNetworkAttempt, networkPoliciesView, networkProfile, networkReason, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies, withNetworkPolicy } from "../src/agents/network-policy.ts";
+import { beginNetworkAttempt, networkPoliciesView, networkProfile, networkReason, pollNetworkPolicies, refreshForRun, refreshNetworkPolicies, stopNetworkPolicies, withNetworkPolicy } from "../src/agents/network-policy.ts";
 import { candidateProfiles } from "../src/agents/choose-ai.ts";
 import { runRole } from "../src/agents/runner.ts";
 import { createRun, addRunEvent, flushRunText, type RunContext } from "../src/agents/runs.ts";
@@ -61,6 +61,23 @@ it("shares concurrent probes, caches success for an hour, and refreshes after ex
   await refreshNetworkPolicies(app); expect(hits()).toBe(1);
   vi.mocked(Date.now).mockReturnValue(before + 3601_000);
   await refreshNetworkPolicies(app); expect(hits()).toBe(2);
+});
+
+it("runs resumed together after a start all wait for the first probe, not only the one that started it", async () => {
+  const { app, first, policy } = await fixture();
+  let hits = 0;
+  const slow = await listen(createServer((_req, res) => { hits++; setTimeout(() => res.end("ip=203.0.113.10\nloc=JP\n"), 300); }));
+  app.config.agents.networkPolicies = [{ ...policy, probe: { ...policy.probe, url: slow } }];
+  const one = refreshForRun(app, 50);
+  // The second run arrives while the first probe is in flight.
+  await new Promise((r) => setTimeout(r, 20));
+  const two = refreshForRun(app, 50);
+  await two;
+  expect(networkReason(app, first)).toBeNull();
+  await one;
+  expect(hits).toBe(1);
+  // Later checks keep the short wait: an expired result does not hold a run for the first-check allowance.
+  expect(networkPoliciesView(app)[0].status).toBe("ready");
 });
 
 it("filters automatic candidates and never lets a named backend bypass country or IP requirements", async () => {

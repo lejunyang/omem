@@ -266,15 +266,23 @@ export async function refreshNetworkPolicies(app: App, id?: string, force = fals
  * whose check expired), at most `waitMs`. A ready one is left to the poller; a failing one is retried in
  * the background on its own schedule, so runs of other backends no longer sit through its probes.
  */
+const FIRST_CHECK_WAIT_MS = 20_000;
 export async function refreshForRun(app: App, waitMs = 4000) {
   if (!app.config.agents.networkPolicies?.length) return;
   const waits: Promise<void>[] = [];
+  let first = false;
   for (const e of state(app).entries.values()) {
     if (e.status === "ready" && e.validUntil > Date.now()) continue;
+    // Read before check() flips the status: several runs resumed by a restart arrive together, and
+    // all but the first would otherwise see "checking" and go on without an answer.
+    const never = !e.checkedAt && (e.status === "unchecked" || e.status === "checking");
+    const expired = e.status === "ready" && e.validUntil <= Date.now();
     const p = check(app, e).catch(() => {});
-    if (e.status === "unchecked" || (e.status === "ready" && e.validUntil <= Date.now())) waits.push(p);
+    if (never || expired) waits.push(p);
+    first ||= never;
   }
-  if (waits.length) await Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, waitMs).unref())]);
+  // The first check after a start has no earlier result to fall back on: give it longer.
+  if (waits.length) await Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, first ? Math.max(waitMs, FIRST_CHECK_WAIT_MS) : waitMs).unref())]);
 }
 function entryFor(app: App, profile: AgentProfile) {
   // Remote backends are governed on their execution host, never by this host's TUN.
