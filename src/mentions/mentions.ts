@@ -140,6 +140,15 @@ function capNote(app: App, kind: "triage" | "handle", link: boolean) {
 const whereOf = (input: { chatKind: "p2p" | "group"; chatName: string }) => (input.chatKind === "p2p" ? "私聊" : `在「${input.chatName}」`);
 
 /** The short reminder: who, where, what they said (and what they want, when the triage said), with the message to open. */
+/** Drops the messages their sender has recalled since (channel.gone) from `open`; how many went. */
+async function stillThere(app: App, channel: MentionChannel, open: MentionMessage[]) {
+  const gone = new Set(await channel.gone?.(app, open).catch(() => []) ?? []);
+  if (!gone.size) return 0;
+  for (const m of open.filter((m) => gone.has(m.id))) noteYield(app, { event: m.id, actor: "mention", to: "没有处理", reason: "对方撤回了这条消息" });
+  open.splice(0, open.length, ...open.filter((m) => !gone.has(m.id)));
+  return gone.size;
+}
+
 function shortReminder(app: App, input: { chatKind: "p2p" | "group"; chatName: string }, messages: MentionMessage[], runId: string, note: string, what = "", urgency: "normal" | "urgent" = "normal") {
   const senders = [...new Set(messages.map((m) => m.sender))];
   const title = `${senders.join("、")} ${whereOf(input)}找你${what ? `：${truncate(what, 40)}` : ""}`;
@@ -215,9 +224,12 @@ registerHandler("mention", async (ctx: RunContext) => {
     if (await channel.ownerSeen(app, m, app.config.mentions.skipWhen)) continue;
     open.push(m);
   }
+  // Recalled meanwhile (sent by mistake, taken back): nothing is left to answer, and nothing to tell.
+  const recalled = open.length ? await stillThere(app, channel, open) : 0;
   // A sample of what the owner does with such messages (reply-learn.ts): also the ones they had already seen or answered.
   settleSamples(app);
   noteAsk(app, ctx.run.id, channel, input, open.length ? open : stored.filter((m) => !ruleOn(app, channel, input.chatId, m)));
+  if (!open.length && recalled) return { quiet: true, summary: "对方已经撤回了消息，不用提醒" };
   if (!open.length) return { quiet: true, summary: taken.length ? `${[...new Set(taken)].join("；")}，这里不再处理` : "本人已经看过或回复了，或者已经有别的处理者在管，不用提醒" };
   // The ingest run on these lines first: its items are what the triage and the handler see, not duplicates.
   const sources = [...new Set(open.map((m) => m.sourceId).filter((s): s is string => !!s))];
@@ -406,6 +418,9 @@ export async function runMentionHandling(ctx: RunContext, inner: (ctx: RunContex
   const timeout = AbortSignal.timeout(minutes * 60_000);
   const notified = () => !!one(app.db, "select 1 from notifications where json_extract(context, '$.runId') = ?", ctx.run.id);
   const found = () => channel.messages(app, m.messageIds);
+  // Every message it was asked about was recalled before it started: nothing to look into.
+  const asked = found();
+  if (asked.length && await stillThere(app, channel, asked) && !asked.length) return { quiet: true, summary: "对方已经撤回了消息，没有再查" };
   try {
     const out = await inner({ ...ctx, signal: AbortSignal.any([ctx.signal, timeout]) });
     // A reply drafted for the owner (reply_to_asker in draft mode), not sent yet.

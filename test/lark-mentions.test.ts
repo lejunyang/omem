@@ -86,6 +86,7 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
   };
 
   const read = new Set<string>();
+  const recalled = new Set<string>();
   const cli: string[][] = [];
   let botIn = false;
   const sent: { to: string; content: string; inThread?: boolean }[] = [];
@@ -97,6 +98,10 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
       if (args.includes("+messages-read-status")) {
         const ids = args[args.indexOf("--message-ids") + 1].split(",");
         return { data: { items: ids.map((id) => ({ message_id: id, is_read: read.has(id) })) } };
+      }
+      if (args.includes("+messages-mget")) {
+        const ids = args[args.indexOf("--message-ids") + 1].split(",");
+        return { data: { messages: ids.map((id) => ({ message_id: id, chat_id: "oc_team", msg_type: "text", content: "", deleted: recalled.has(id) })) } };
       }
       if (args[0] === "auth") return { data: { identities: { user: { openId: "ou_owner" } } } };
       if (args.includes("+chat-members-list")) return { data: { bots: botIn ? [{ app_id: "cli_bot", name: "omem" }] : [] } };
@@ -177,6 +182,30 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     const done = await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id);
     expect(done.quiet).toBe(true);
     expect(decision.calls).toBe(calls);
+  }, 30000);
+
+  it("a message its sender recalled meanwhile: no triage, no reminder; of two, only the one still there is asked about", async () => {
+    useDecision(true);
+    const calls = decision.calls;
+    const gone = msg("@勒 13800000000", { thread_id: "omt_recalled" });
+    store([gone]);
+    recalled.add(gone.message_id);
+    const done = await waitForRun(app, queueMention(app, group, [gone], "ou_owner")!.id);
+    expect(done.quiet).toBe(true);
+    expect(getRun(app, done.id).output.summary).toBe("对方已经撤回了消息，不用提醒");
+    expect(decision.calls).toBe(calls);
+    expect(notifiedBy(done.id)).toBeUndefined();
+    expect(one(app.db, "select 1 from notifications where body like '%13800000000%'")).toBeUndefined();
+
+    const kept = msg("@勒 这个开关今天能打开吗？", { thread_id: "omt_half" }), taken = msg("@勒 发错了", { thread_id: "omt_half" });
+    store([kept, taken]);
+    recalled.add(taken.message_id);
+    decision.action = "notify";
+    const half = queueMention(app, group, [kept, taken], "ou_owner")!;
+    await waitForRun(app, half.id);
+    const told = notifiedBy(half.id)!;
+    expect(told.body).toContain("这个开关今天能打开吗");
+    expect(told.body).not.toContain("发错了");
   }, 30000);
 
   it("the decision model triages: ignore, a short reminder, or a handling by the assistant; the triage is on the run", async () => {

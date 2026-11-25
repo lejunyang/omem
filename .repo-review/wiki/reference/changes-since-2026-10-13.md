@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-25
 ---
 
+## “有人找你”不再提醒已撤回的消息（2026-11-25）
+
+- 对方发错又撤回的消息，过了等待时间仍会分诊并发提醒。现在分诊前、以及交给助手查之前，先向渠道核对消息还在不在（飞书：`im +messages-mget` 返回的 `deleted`）；全被撤回就安静结束，只撤回了其中几条就只处理剩下的。读不到状态时按还在处理。`MentionChannel.gone`（`src/mentions/channel.ts`）、`src/channels/lark-mentions.ts`、`src/mentions/mentions.ts`；`test/lark-mentions.test.ts`。
+
 ## 会话续用时按这一轮的工具清单（2026-11-25）
 
 - 续用同一个 Agent 会话的一轮沿用开会话那一轮的工具令牌，工具清单也跟着被固定：服务重启后某个会话的第一轮恰好是“编码交办交回给助手”（不能续轮、推送）时，本人随后在同一会话里说的话也用不了 `continue_code_run`；反过来由普通一轮开的会话里，交回的一轮没有被限制。现在续用时令牌换成这一轮自己的工具清单。`src/agents/tools.ts` 的 `retargetToolToken`、`src/agents/sessions.ts`；`test/live-session-tools.test.ts`。

@@ -71,6 +71,11 @@ export type MentionChannel = {
   spaceOf(app: App, chatId: string, messageId: string): string;
   /** The owner read the message, reacted to it or answered after it (only the signals `skipWhen` counts). */
   ownerSeen(app: App, m: MentionMessage, skipWhen?: { read?: boolean; reacted?: boolean; replied?: boolean }): Promise<boolean>;
+  /**
+   * Which of these messages are gone by now (recalled or deleted by their sender); a channel that
+   * cannot tell leaves it out or returns none. Asked right before the owner would be told.
+   */
+  gone?(app: App, messages: MentionMessage[]): Promise<string[]>;
   /** Something of the channel's own took the message (a watched chat, the bot answering it directly). */
   takenElsewhere(app: App, chatId: string, m: MentionMessage): boolean;
   /** The key rules know the message by (rule_firings.event_key, rule_handled.key). */

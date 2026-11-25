@@ -7,7 +7,8 @@ import { addressed } from "../rules/store.ts";
 import { handledKey, registerMentionChannel, type MentionChannel, type MentionChat, type MentionMessage } from "../mentions/channel.ts";
 import { queueMentions } from "../mentions/mentions.ts";
 import { LIMITS, localTime } from "../mentions/triage.ts";
-import { isApp, mentionIds, messageText, timeMs, type LarkMessage } from "./lark-messages.ts";
+import { flattenReplies, isApp, mentionIds, messageText, timeMs, type LarkMessage } from "./lark-messages.ts";
+import { larkCli } from "./lark-cli.ts";
 import { ownerAlreadyHandled } from "./notify-gate.ts";
 import { contextsOfChat } from "./listen.ts";
 
@@ -107,6 +108,15 @@ const lark: MentionChannel = {
   spaceOf: (app, chatId, messageId) =>
     one<{ space_id: string }>(app.db, "select s.space_id from lark_messages m join sources s on s.id = m.source_id where m.message_id = ? and s.deleted_at is null", messageId)?.space_id ?? captureSpace(app, chatId),
   ownerSeen: async (app, m, skipWhen) => !!m.ref && (await ownerAlreadyHandled(app, { sourceRefs: [m.ref] }, skipWhen)),
+  // Recalled since it was collected: Feishu still returns the message, marked deleted. Unknown (no CLI, no access) counts as there.
+  gone: async (_app, messages) => {
+    const ids = messages.map((m) => m.id).filter((id) => id.startsWith("om_")).slice(0, 50);
+    if (!ids.length) return [];
+    try {
+      const v = await larkCli(["im", "+messages-mget", "--message-ids", ids.join(","), "--no-reactions", "--as", "user", "--format", "json"], 20_000);
+      return flattenReplies((v.data?.messages ?? []) as LarkMessage[]).filter((m) => m.deleted && ids.includes(m.message_id)).map((m) => m.message_id);
+    } catch { return []; }
+  },
   // A watch's handler (channel `lark` in handled_messages, lark-watch.ts; the bots' own rows only record
   // delivery), or the bot answering someone who @-ed it (rules/store.ts markAddressed).
   takenElsewhere: (app, chatId, m) => repliedByContext(app, chatId) || !!one(app.db, "select 1 from handled_messages where message_id = ? and channel = 'lark' and coalesce(rule, '') not like 'read:%'", m.id) || addressed(app, `lark:${m.id}`),
