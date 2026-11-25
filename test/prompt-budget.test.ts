@@ -15,7 +15,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "commit-claim": ["commit-claim", 4630, 4735, 2206, 2206],
   // The item-follow role now classifies actual next steps and records their completion conditions.
   "item-follow": ["item-follow", 5978, 6083, 3576, 3576],
-  "flow-reconcile": ["flow-reconcile", 5142, 5142, 2462, 2462],
+  // 实测：补了“已经从别的路做完 / 现实已越过的阶段带依据收掉”和“先看被点到的卡点”之后。
+  "flow-reconcile": ["flow-reconcile", 5347, 5347, 2667, 2667],
   // Mid-round branch sync: the assistant passes `sync` and waits on the round, the coder calls sync_branch.
   // 情境 became 持续跟进的规则: the assistant's note on save_situation says what to call it with the owner.
   "assistant": ["agent", 20504, 19805, 1679, 1581],

@@ -40,7 +40,7 @@ function save(event: Event, scene: DecisionScene) {
 <template>
   <div class="card pad stack">
     <strong>决策门槛与结果</strong>
-    <HelpText>把握不够时，多看一眼或先问你。门槛只限制跳过、忽略和直接答复；报告按已经发生的结果统计，建议不会自动修改设置。记录保留 90 天，材料只留在当前设备；离线回放会把保存的材料交给指定模型。</HelpText>
+    <HelpText>把握不够时，按场景继续查看、先问你或等例行巡检。报告按已经发生的结果统计，建议不会自动修改设置。记录保留 90 天，材料只留在当前设备；离线回放会把保存的材料交给指定模型。</HelpText>
     <label v-for="(s, scene) in DECISION_SCENES" :key="scene" class="field">
       <span>{{ s.label }}</span>
       <input class="input threshold" type="number" min="0.5" max="0.99" step="0.01" :value="thresholds?.[scene] ?? s.default" @change="save($event, scene)" />
@@ -55,7 +55,7 @@ function save(event: Event, scene: DecisionScene) {
           <tbody><tr v-for="s in report.scenes" :key="s.scene"><th scope="row">{{ s.label }}</th><td>{{ s.records }}</td><td>{{ s.risky }}</td><td>{{ s.lowered }}</td><td :title="`需要 ${s.needed} / 不需要 ${s.unneeded} / 不明确 ${s.unclear}`">{{ s.labelled }}</td><td>{{ s.misses }}</td><td>{{ s.wasted }}</td></tr></tbody>
         </table>
       </div>
-      <p class="hint">放行指跳过巡检或这批群聊、不提醒你、直接答复对方；改判指模型想放行但把握不到门槛，改按要看、要提醒、要你拍板处理。漏看是放行后发现其实需要你，多看是谨慎处理后发现不需要；不明确的结果不参与漏看率。</p>
+      <p class="hint">放行指跳过巡检或这批群聊、不提醒你、直接答复对方，或为卡点排对账。改判指模型想放行但把握不到门槛，按各场景的保守做法处理。漏看是放行后发现其实需要你，多看是谨慎处理后发现不需要；不明确的结果不参与漏看率。</p>
       <div v-for="s in report.scenes" :key="s.scene" class="stack small">
         <div>{{ s.label }}：{{ s.suggestion }}</div>
         <div v-if="s.labelsEnabled" class="report-table"><table><caption>假设门槛变化（放行条数 / 已知漏看）</caption><thead><tr><th v-for="t in s.thresholds" :key="t.threshold">{{ t.threshold }}</th></tr></thead><tbody><tr><td v-for="t in s.thresholds" :key="t.threshold">{{ t.risky }} / {{ t.misses }}</td></tr></tbody></table></div>

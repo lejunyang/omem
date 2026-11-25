@@ -2670,14 +2670,15 @@ def({
 });
 def({
   name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段不会直接完成，而是变成一个问本人的确认。blocked：做不下去，waiting_on 写等谁或等什么；等本人看、改或确认某份东西（表格、文档、预览页）时，把它的地址放进 links，卡片上直接能点开；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：这一段不需要，写原因；要本人确认或由本人承担的阶段不能由你跳过，把理由告诉本人。",
-  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), links: z.array(z.object({ label: z.string().trim().min(1).max(80).describe("一句话说是什么，如“埋点核对表”"), url: z.string().trim().max(2000).describe("http(s) 地址") })).max(10).optional().describe("要本人打开的产物：表格、文档、预览页。传了就替换这一段之前交的链接，传空数组清掉"), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional() }), handler: async (ctx, a) => {
+  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), links: z.array(z.object({ label: z.string().trim().min(1).max(80).describe("一句话说是什么，如“埋点核对表”"), url: z.string().trim().max(2000).describe("http(s) 地址") })).max(10).optional().describe("要本人打开的产物：表格、文档、预览页。传了就替换这一段之前交的链接，传空数组清掉"), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional(),
+    already_resolved: z.boolean().optional().describe("只供流程对账：确有依据说明卡住或等开始的助手阶段已在别处完成或被现实越过时，随 done / skip 补记，不再问要不要开始。note 写谁做了什么，evidence 附依据。不能替本人拍板或绕过宿主检查。") }), handler: async (ctx, a) => {
     checkBrief(a.note, "note ");
     flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.evidence ?? [], a.item);
     return JSON.stringify(await (await import("../flows/engine.ts")).reportStage(ctx.app, a.item, a.stage, { ...a, waitingOn: a.waiting_on }, flowActor(ctx)));
   },
 });
 def({
-  name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过。正在做的下游助手阶段先停下，等新结果再做；本人承担的阶段只标待复核。",
+  name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游等开始的卡片撤回，已完成阶段变成待复核，已跳过的保持跳过。正在做的下游助手阶段先停下，等新结果再做；本人承担的阶段只标待复核。对账发现卡住的助手运行已拿到原来缺的材料，可附新依据重做。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), reason: z.string().trim().min(1).max(4000), refs: z.array(z.string()).max(50).optional() }), handler: async (ctx, a) => {
     const item = flowItem(ctx, a.item, "flow"), refs = a.refs ?? [], by = flowActor(ctx);
     await flowRefs(ctx, refs, a.item);
@@ -5678,14 +5679,15 @@ def({
       const loop = await import("./code-loop.ts");
       if (!a.new_item) return [loop.workNote(ctx.app, last.id, task, ctx.userId ?? OWNER), switched].filter(Boolean).join("\n");
       const made = loop.ownerNote(ctx.app, last.id, task, ctx.userId ?? OWNER, { asTask: true })!;
-      return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，这一轮结束后接着做"}。${switched}`;
+      return `${revisionHandoff(made, taskLabel(made.task.seq))}${switched}`;
     }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
     const extraInput = a.onto_latest_target ? { moveToTarget: true, moveToTargetMode: a.onto_latest_target_mode ?? "merge" } : a.sync ? { sync: { ...a.sync, ...normalizeBranchSync(a.sync) }, ...(gitOnly ? { syncOnly: true } : {}) } : undefined;
     const roundReview = await roundReviewOf(ctx, a);
     if (a.apply_first) (await import("./code.ts")).applyCodeRun(ctx.app, last.id, { keepWorking: true });
-    const next = queueNextCodeRound(ctx.app, chain, task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution, roundReview, extraInput });
+    const next = queueNextCodeRound(ctx.app, chain, task, { resumeSessionId: execution ? undefined : sessionId, manual: true, handOffBy: !extraInput && !a.apply_first && !execution && !reviewExecution && !roundReview ? ctx.userId ?? OWNER : undefined, execution, reviewExecution, roundReview, extraInput });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续；请查看 read_run");
+    if (next.handedOff) return followingRound(next.run);
     return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
   },
 });
@@ -5714,6 +5716,14 @@ function steerable(ctx: ToolContext, runId: string) {
   return r;
 }
 
+function followingRound(round: ReturnType<typeof getRun>) {
+  return `已交给第 ${round.input.round ?? 1} 轮 ${round.id}，跟着它；不用再起一轮，不是卡住。`;
+}
+
+function revisionHandoff(made: NonNullable<ReturnType<typeof import("./code-loop.ts").ownerNote>>, label: string) {
+  return `已记成修改项 ${label}「${made.task.title}」${made.handedTo ? `。${followingRound(made.handedTo)}` : made.next ? `，第 ${made.next.input.round ?? 1} 轮 ${made.next.id} 开始做。` : "，下一轮做。"}`;
+}
+
 /** continue_code_run with when=now: the owner's words to the round in progress (code-steer.ts addCodeNote). */
 async function messageRound(ctx: ToolContext, a: ContinueArgs) {
   if (!a.task?.trim()) throw new HttpError(400, "when=now 要写 task：交给编码 Agent 的话");
@@ -5729,17 +5739,16 @@ async function messageRound(ctx: ToolContext, a: ContinueArgs) {
     // A task-driven delegation between rounds: a new change becomes a task (code-loop.ts); other words wait for the next round.
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
     if (isTaskWork(ctx.app, a.run_id) && a.new_item) {
-      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER, { item: joinedItem });
-      if (made) return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，下一轮做"}。`;
+      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER, { asTask: true, item: joinedItem })!;
+      return revisionHandoff(made, taskLabel(made.task.seq));
     }
     const { addCodeNote } = await import("./code-steer.ts");
-    const r = addCodeNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER);
+    const r = addCodeNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER, joinedItem);
     if (getRun(ctx.app, r.runId).output.verdict === "awaiting-design") {
       const wait = getRun(ctx.app, r.runId).output.designWait as { designId?: string } | undefined;
       return `交办在等方案${wait?.designId ? ` ${wait.designId}` : ""} 确认，还没开始编码：这段补充记下了，开始编码时交给编码 Agent。是对方案的意见就用 settle_design（comment）转达，写方案的会话会改一版；本人要不等方案直接改，用 continue_code_run（不带 when）。`;
     }
-    return r.stage === "coding" ? `已交给正在编码的 ${r.runId}：它下一次调用 omem 工具时收到，最晚在这一轮检查之前。`
-      : r.stage === "queued" ? `${r.runId} 还在排队，开始编码时一起交给它。`
+    return r.stage === "coding" || r.stage === "queued" ? followingRound(getRun(ctx.app, r.runId))
       : r.stage === "review" ? `${r.runId} 已经写完代码、在评审中：补充记下了，随下一轮的任务交给编码 Agent。评审结束后要马上改就用 continue_code_run（不带 when）。`
       : `${r.runId} 这一轮已经结束：补充记下了，下一轮（continue_code_run）开始时交给编码 Agent。`;
 }

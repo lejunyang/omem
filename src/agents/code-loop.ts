@@ -13,7 +13,7 @@ import {
   addTask, followDepth, getTask, headsAt, listCheckpoints, listTasks, SIMPLIFY_LINES, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, tasksFromRuling, isLater, deferTask, deliverableStage, POLISH_STAGES,
   ownerQuestionText, stranded, taskLabel, toAssistant, toDecide, hasAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
-import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
+import { checkArgs, checkScope, joinRound, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
 import { reviewCardLinks } from "./review-card.ts";
 import { queueStandaloneFix } from "./review-fix.ts";
@@ -436,7 +436,11 @@ export async function deliverWork(app: App, rootId: string, opts: { force?: bool
   const reviewed = checkpoints.find((c) => c.seq === w.stageAt) ?? checkpoints.at(-1);
   const coding = ["queued", "running"].includes(last.status);
   const res = deliverBranchWork(app, last.id, { force: opts.force, ...(coding && reviewed ? { heads: reviewed.heads } : {}) });
-  if (res.pushed.length) setWorkState(app, rootId, { delivered: [...(w.delivered ?? []), { at: new Date().toISOString(), branches: res.pushed.map((p) => ({ space: p.space, branch: p.branch, head: p.head })) }] });
+  if (res.pushed.length) {
+    setWorkState(app, rootId, { delivered: [...(w.delivered ?? []), { at: new Date().toISOString(), branches: res.pushed.map((p) => ({ space: p.space, branch: p.branch, head: p.head })) }] });
+    (await import("../flows/delivery.ts")).recordFlowPush(app, last.id, "owner");
+    await (await import("../flows/signals.ts")).checkGitSignalsAfterPush(app).catch(err => console.warn("推送后核对流程信号失败", err));
+  }
   return res;
 }
 
@@ -832,16 +836,18 @@ registerAskHandler("code-task", async (app: App, ask: Ask, ctx) => {
 /**
  * The owner's words for a task-driven delegation (continue_code_run, the run
  * page): while the coder is coding they reach it at once (code-steer.ts) and null is returned;
- * otherwise, or when `asTask`, they become a task, coded in the next round, which starts now when
- * nothing is running.
+ * otherwise, or when `asTask`, they become a task for the current round if it can take the task,
+ * or for the next round, which starts now when nothing is running.
  */
-export function ownerNote(app: App, runId: string, text: string, by: string, opts: { asTask?: boolean; item?: string } = {}): { task: CodeTask; next: Run | null } | null {
+export function ownerNote(app: App, runId: string, text: string, by: string, opts: { asTask?: boolean; item?: string } = {}): { task: CodeTask; next: Run | null; handedTo?: Run } | null {
   const rootId = workRootOf(app, runId);
   const last = lastRound(app, rootId);
   const coding = last.status === "queued" || (last.status === "running" && typeof last.output.coderSummary !== "string");
   if (coding && !opts.asTask) return null;
   const first = text.trim().split("\n")[0];
   const task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: "owner", origin: { note: text.trim(), ...(opts.item ? { item: opts.item } : {}) } }, by);
+  const queuedToCode = last.status === "queued" && !last.input.syncOnly && !last.input.moveToTarget && !last.input.peerCoder && !last.input.branches;
+  if (queuedToCode || coding && joinRound(app, rootId, [task], "新增修改项")) return { task, next: null, handedTo: last };
   return { task, next: advanceWork(app, rootId, { owner: true }) };
 }
 
@@ -869,7 +875,7 @@ export function setWorkAI(app: App, runId: string, ai: { execution?: Execution; 
 export function workNote(app: App, runId: string, text: string, by: string): string {
   const rootId = workRootOf(app, runId);
   const { stage, runId: at } = addCodeNote(app, runId, text, by);
-  if (stage === "coding" || stage === "queued") return `已交给正在做的 ${at}：编码 Agent 在这一轮收到。`;
+  if (stage === "coding" || stage === "queued") return `已交给第 ${roundOf(getRun(app, at))} 轮 ${at}，跟着它；不用再起一轮，不是卡住。`;
   const next = advanceWork(app, rootId, { owner: true });
   if (next) return `第 ${next.input.round ?? "?"} 轮 ${next.id} 开始做，这段话作为这一轮的交代交给编码 Agent。`;
   const waiting = listTasks(app, rootId).filter((t) => t.state === "owner" || t.state === "assistant");

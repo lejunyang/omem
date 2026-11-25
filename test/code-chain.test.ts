@@ -87,7 +87,7 @@ describe("delegated coding chains", () => {
     expect(chain.round).toBe(MAX_AUTO_ROUNDS);
     expect(queueNextCodeRound(app, { ...chain, awaitingUser: true }, "x")).toBeNull();
   });
-  it("continues round four through the tool and rejects concurrent duplicate requests", async () => {
+  it("continues round four through the tool and hands the concurrent request to the same round", async () => {
     const { app, code, ask } = fixture();
     let chain = codeChainFor(app, getRun(app, code.id))!;
     for (let round = 2; round <= 3; round++) {
@@ -98,12 +98,17 @@ describe("delegated coding chains", () => {
     settleCodeChain(app, chain.lastCodeRunId!);
     expect(getRun(app, ask.id).output.codeChain).toMatchObject({ awaitingUser: true, waitReason: "auto-limit" });
     const ctx = { app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent" as const };
-    const results = await Promise.all([1, 2].map(() => callTool(ctx, "continue_code_run", { run_id: chain.lastCodeRunId, task: "修复评审的两处问题" })));
-    expect(results.filter((r) => !r.isError)).toHaveLength(1);
-    expect(results.find((r) => r.isError)?.text).toContain("queued");
+    const results = await Promise.all(["修复评审的问题", "补充退款验证"].map(task => callTool(ctx, "continue_code_run", { run_id: chain.lastCodeRunId, task })));
+    expect(results.every(result => !result.isError)).toBe(true);
+    expect(results.filter(result => result.text.includes("已交给第 4 轮"))).toHaveLength(1);
     const latest = getRun(app, (getRun(app, ask.id).output.codeChain as typeof chain).lastCodeRunId!);
     expect(latest.input).toMatchObject({ round: 4, continueFrom: code.id, resumeSessionId: "coder-session" });
-    expect(getRun(app, ask.id).output.codeChain).toMatchObject({ awaitingUser: false });
+    expect(getRun(app, ask.id).output.codeChain).toMatchObject({ awaitingUser: false, round: 4 });
+    expect(latest.output.notes).toMatchObject([{ acceptedInRound: true }]);
+    expect([latest.input.task, ...(latest.output.notes as { text: string }[]).map(note => note.text)]).toEqual(expect.arrayContaining(["修复评审的问题", "补充退款验证"]));
+    run(app.db, "update runs set status='running' where id=?", latest.id);
+    setRunOutput(app, latest.id, { coderSummary: "已交评审" });
+    expect((await callTool(ctx, "continue_code_run", { run_id: latest.id, task: "再补一项" })).isError).toBe(true);
     expect(queueNextCodeRound(app, chain, "自动再试")).toBeNull();
   });
 

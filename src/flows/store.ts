@@ -130,7 +130,7 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
   // What it handed the owner to open goes on the card as links, not only on the work page.
   const links = state === "done" || state === "blocked" ? (next.control.links ?? []).map((l) => `[${l.label.replace(/[[\]]/g, "")}](${l.url})`).join("　") : "";
   const text = [note ? cardText(note, state === "done" || state === "blocked" ? 3000 : 300) : "", links && `交给你看：${links}`].filter(Boolean).join("\n\n");
-  if (what && !asked) markProgress(app, itemId, { head: `「${name}」${what}`, note: text }, state === "blocked" && ownerWait(next.waitingOn), images);
+  if (what && !asked) markProgress(app, itemId, { head: `「${name}」${what}`, note: text, announce: by.actor === "flow-reconcile" && (state === "done" || state === "skipped") }, state === "blocked" && ownerWait(next.waitingOn), images);
   return next;
 }
 
@@ -148,7 +148,7 @@ const cardText = (note: string, max = 300) => {
 };
 
 /** One thing that happened to a stage: `「评审结论」卡住了，等你` and what was said about it. */
-export type ProgressLine = { head: string; note?: string };
+export type ProgressLine = { head: string; note?: string; announce?: boolean };
 // One operation of the engine changes several stages: what happened is collected and sent as one card
 // when the operation ends (engine.ts serial), not once per change.
 const stale = new WeakMap<App, Map<string, { lines: ProgressLine[]; ownerWaiting: boolean; images: string[] }>>();
@@ -180,7 +180,7 @@ const MARK: Partial<Record<StageState, string>> = { done: "✓", skipped: "跳�
 export function progress(app: App, id: string, lines: ProgressLine[], ownerWaiting = false, images: string[] = []) {
   const f = itemFlow(app, id);
   if (!f) return;
-  if (!ownerWaiting && !f.card) return;
+  if (!ownerWaiting && !f.card && !lines.some(line => line.announce)) return;
   const item = getItem(app, id);
   const rows = itemStages(app, id);
   const stateOf = (stageId: string) => rows.find((r) => r.id === stageId)?.state ?? "pending";

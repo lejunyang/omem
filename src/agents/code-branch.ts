@@ -555,6 +555,7 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
     return { space: wt.space, path: checkedOutAt(root, wt.branch) ?? root, branch: wt.branch, base: changeBase(root, wt, `refs/heads/${wt.branch}`), head: tipOf(root, wt.branch)! };
   });
   for (const id of new Set([first, runId])) setRunOutput(app, id, { appliedAt, appliedTo, pushed, confirmNotes: notes });
+  if (pushed.length) void import("../flows/delivery.ts").then(({ recordFlowPush }) => recordFlowPush(app, runId, "owner")).catch(err => console.warn("推送后记录流程进展失败", err));
   for (const r of rounds(app, first)) cancelHostAsks(app, r.id, [...ROUND_ASKS, "work-deliver"]);
   return { applied: true, spaces: wts.map((w) => w.space), targets: appliedTo, pushed, notes };
 }

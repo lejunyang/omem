@@ -16,7 +16,7 @@ import { askCard } from "../src/channels/lark-asks.ts";
 import { addLocalMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { describeStage, parseFlow, saveFlow } from "../src/flows/definitions.ts";
-import { flowReminders, flowView, ownerAction, reopenStage, reportStage, startFlow, stopFlow } from "../src/flows/engine.ts";
+import { advance, flowReminders, flowView, ownerAction, reopenStage, reportStage, startFlow, stopFlow } from "../src/flows/engine.ts";
 import { checkGitSignals, type GitSignal } from "../src/flows/signals.ts";
 import { getStage, stageLog } from "../src/flows/store.ts";
 import { testApp } from "./helpers.ts";
@@ -29,7 +29,7 @@ function git(path: string, args: string[]) {
   return r.stdout.trim();
 }
 const signals = (app: App) => all<{ type: string; outcome: string; keys: string }>(app.db, "select * from flow_signals order by id");
-async function setup(options: { count?: number; type?: GitSignal; by?: "owner" | "wait"; applied?: boolean; pushedBefore?: boolean; confirmation?: boolean } = {}) {
+async function setup(options: { count?: number; type?: GitSignal; by?: "owner" | "wait"; applied?: boolean; pushedBefore?: boolean; confirmation?: boolean; reviewedHead?: boolean } = {}) {
   const app = testApp(); apps.push(app);
   app.config.flows.autoAdvance = options.confirmation ? 1 : 20;
   const item = upsertItem(app, undefined, { title: "示例商城退款", spaceId: "personal" }, "user");
@@ -57,6 +57,7 @@ async function setup(options: { count?: number; type?: GitSignal; by?: "owner" |
   addLocalMaterials(app, item.id, [{ kind: "run", ref: work.id }], "owner");
   run(app.db, "update runs set status='done' where id=?", work.id);
   setRunOutput(app, work.id, { verdict: "approved", worktrees: repos.map((r) => ({ ...r, commits: true, newBranch: true, cutFrom: "main", targetBranch: r.branch })),
+    ...(options.reviewedHead ? { repos: repos.map(repo => ({ space: repo.space, check: { commit: repo.head } })) } : {}),
     ...(options.applied === false ? {} : { appliedAt: new Date().toISOString(), appliedTo: repos.map(({ space, path, branch, base, head }) => ({ space, path, branch, base, head })) }) });
   saveFlow(app, YAML.stringify({ id: "demo", name: "示例交付", stages: [
     ...(options.confirmation ? [{ id: "fix", name: "修复", by: { object: "code-work" } }] : []),
@@ -101,13 +102,21 @@ describe("Git 完成信号", () => {
   });
   it("轮到本人推送时先查一次：已经推了就直接完成、不问本人；没推才问一张“轮到你了”", async () => {
     let t0 = await setup({ pushedBefore: true });
-    expect(t0.s()).toMatchObject({ state: "doing", askId: null });
-    await vi.waitFor(() => expect(t0.s().state).toBe("done"));
+    expect(t0.s()).toMatchObject({ state: "done", askId: null });
     expect(listAsks(t0.app)).toHaveLength(0);
     t0 = await setup();
     await vi.waitFor(() => expect(t0.s().askId).toBeTruthy());
     expect(t0.s()).toMatchObject({ state: "doing", waitingOn: "owner" });
     expect(listAsks(t0.app).map((a) => a.question.includes("轮到你了"))).toEqual([true]);
+  });
+  it("本人推送重验不受自动推进上限限制：未应用但远端已有本轮评审的提交", async () => {
+    const t = await setup({ confirmation: true, applied: false, pushedBefore: true, reviewedHead: true });
+    expect(t.s()).toMatchObject({ state: "done", askId: null });
+    expect(t.s("deploy")).toMatchObject({ state: "gated", control: { gateLimit: true } });
+    run(t.app.db, "update item_stages set state='stale' where item_id=? and stage_id='push'", t.item.id);
+    await advance(t.app, t.item.id);
+    expect(t.s()).toMatchObject({ state: "done", askId: null });
+    expect(stageLog(t.app, t.item.id).filter(entry => entry.stageId === "push").map(entry => entry.toState)).not.toContain("gated");
   });
   it("交办确认卡已能推送，流程只提示在哪里操作；答卡后按 Git 信号推进", async () => {
     const t = await setup({ confirmation: true, applied: false, count: 2 });

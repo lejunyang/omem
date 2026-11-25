@@ -7,7 +7,7 @@ import type { Run } from "./runs.ts";
 import { createRun, getRun, setRunOutput, updateQueuedRun } from "./runs.ts";
 import { refreshWork, workForChild } from "./agent-work.ts";
 import { homeOf, moveHome } from "./home.ts";
-import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
+import { addCodeNote, markNotesDelivered, notesText, pendingNotes, roundStage, type RoundReview } from "./code-steer.ts";
 import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { goalText, isTaskWork, listTasks, POLISH_STAGES, workOwner, waitingText, workRootOf, workState } from "./code-tasks.ts";
 
@@ -86,8 +86,8 @@ export function queueNextCodeRound(
   app: App,
   chain: CodeChain,
   task: string,
-  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; reviewOnly?: string[]; roundReview?: RoundReview; extraInput?: Record<string, unknown> } = {},
-): { run: Run; chain: CodeChain } | null {
+  opts: { resumeSessionId?: string; manual?: boolean; handOffBy?: string; execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; reviewOnly?: string[]; roundReview?: RoundReview; extraInput?: Record<string, unknown> } = {},
+): { run: Run; chain: CodeChain; handedOff?: true } | null {
   // Round 1 + automatic continuations up to maxCodeRounds; further rounds need continue_code_run.
   // Reload under a write lock: stale callers and separate MCP processes cannot queue duplicates.
   const expectedLastRunId = chain.lastCodeRunId;
@@ -100,8 +100,14 @@ export function queueNextCodeRound(
       throw new HttpError(409, "宿主正在度量或回退这次交办，结束后再续轮");
     if (chain.rounds.some((id) => { const out = getRun(app, id).output; return out.appliedAt || out.discardedAt; }))
       throw new HttpError(409, "原交办已应用或丢弃，工作区已释放，不能续轮");
-    if (opts.manual && ["queued", "running"].includes(current.status))
+    if (opts.manual && ["queued", "running"].includes(current.status)) {
+      if (opts.handOffBy && ["queued", "coding"].includes(roundStage(current))) {
+        addCodeNote(app, current.id, task, opts.handOffBy);
+        app.db.exec("COMMIT");
+        return { run: current, chain, handedOff: true };
+      }
       throw new HttpError(409, `第 ${chain.round} 轮 ${current.id} 仍为 ${current.status}，不能重复启动`);
+    }
     if (!opts.manual && (chain.awaitingUser || chain.round >= maxCodeRounds(app, chain))) return null;
     if (!opts.manual && current.id !== expectedLastRunId) return null;
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;

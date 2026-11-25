@@ -220,7 +220,7 @@ export function followLimit(app: App, id: string, at = new Date()) {
   const max = app.config.flows.follow.maxRunsPerDay;
   if (!max) return { capped: false, count: 0, noted: false };
   const day = localStamp(at, app.config.timezone).slice(0, 10);
-  const rows = all<{ at: string; keys: string }>(app.db, "select at,keys from flow_signals where item_id=? and type in ('context.batch','reconcile') and at>=? and at<=?", id, new Date(at.getTime() - 36 * 3600000).toISOString(), new Date(at.getTime() + 36 * 3600000).toISOString())
+  const rows = all<{ at: string; keys: string }>(app.db, "select at,keys from flow_signals where item_id=? and type in ('context.batch','reconcile') and json_extract(keys,'$.focused') is null and at>=? and at<=?", id, new Date(at.getTime() - 36 * 3600000).toISOString(), new Date(at.getTime() + 36 * 3600000).toISOString())
     .filter((r) => localStamp(r.at, app.config.timezone).slice(0, 10) === day).map((r) => json<{ runId?: string; capped?: boolean }>(r.keys, {}));
   const count = rows.filter((r) => !!r.runId).length;
   return { capped: count >= max, count, noted: rows.some((r) => r.capped) };

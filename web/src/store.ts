@@ -166,6 +166,7 @@ export const runKindLabel: Record<string, string> = {
   probe: "预查",
   "item-takeover": "接手下一步",
   "flow-reconcile": "流程对账",
+  "flow-blocker-check": "卡点复核",
   "item-deadline-check": "临期预查",
 };
 export const statusLabel: Record<string, string> = {

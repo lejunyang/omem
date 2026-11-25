@@ -579,12 +579,12 @@ async function lookRuling(app: App, rootId: string, reviewed: Run, round: number
 }
 
 /** New tasks join the round coding now (the coder hears at its next omem tool call); false when none is. */
-function joinRound(app: App, rootId: string, tasks: CodeTask[]): boolean {
+export function joinRound(app: App, rootId: string, tasks: CodeTask[], source?: string): boolean {
   if (!tasks.length) return false;
   const last = lastRound(app, rootId);
   const r = open.get(last.id);
   if (!r || !r.accepting) return false;
-  for (const t of tasks) bringBack(app, last.id, r, t.seq, "复看新发现，交给正在编码的这一轮");
-  addRoundFeedback(last.id, `- 复看（另一个模型）新发现：${tasks.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 60)}」`).join("、")}，已经加给你这一轮，和别的项一样逐项改、提交、finish_task。`);
+  for (const t of tasks) bringBack(app, last.id, r, t.seq, `${source ?? "复看新发现"}，交给正在编码的这一轮`);
+  addRoundFeedback(last.id, `- ${source ?? "复看（另一个模型）新发现"}：${tasks.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 60)}」`).join("、")}，已经加给你这一轮，和别的项一样逐项改、提交、finish_task。`);
   return true;
 }

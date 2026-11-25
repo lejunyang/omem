@@ -4,18 +4,19 @@ import { afterEach, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import type { App } from "../src/core/app.ts";
 import { one, run } from "../src/core/db.ts";
-import { getRun, listRuns, __testHandlers } from "../src/agents/runs.ts";
+import { createRun, getRun, listRuns, setRunOutput, __testHandlers } from "../src/agents/runs.ts";
 import { answerAsk, createAsk, getAsk, listAsks } from "../src/agents/asks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
-import { addMaterials } from "../src/items/materials.ts";
+import { addMaterials, addLocalMaterials } from "../src/items/materials.ts";
 import { addChange } from "../src/items/changes.ts";
 import { pendingActions } from "../src/items/pending.ts";
 import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { listFlows, saveFlow } from "../src/flows/definitions.ts";
-import { flowView, reportStage, startFlow, ownerAction } from "../src/flows/engine.ts";
+import { advance, flowReminders, flowView, reportStage, startFlow, ownerAction } from "../src/flows/engine.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
 import { itemFollowLane, queueReconcile, reconcileReminder } from "../src/flows/reconcile.ts";
+import { recordFlowPush } from "../src/flows/delivery.ts";
 import * as runner from "../src/agents/runner.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { startServer } from "../src/server/http.ts";
@@ -96,6 +97,96 @@ it("仅阶段停满六小时也排队；和上下文跟进共用当日上限", a
   run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,'context.batch',?,?,'','已提炼')", at.toISOString(), JSON.stringify({ runId: "fake" }), item.id);
   expect(queueReconcile(app, item.id, at)).toBeUndefined();
   expect(queueReconcile(app, item.id, new Date(at.getTime() + 26 * HOUR))?.kind).toBe("flow-reconcile");
+});
+
+it.each(["stage", "approved", "push"])("新交付 %s 触发卡住事项对账，节流且没有新交付不重复排", async type => {
+  const { app, item, clock } = await setup([wait(), wait("delivery", { needs: [] })]);
+  await reportStage(app, item.id, "verify", { state: "blocked", note: "等复测" }, owner);
+  const old = clock(-8).toISOString(), fresh = clock(0.01).toISOString();
+  run(app.db, "update item_stages set since=? where item_id=? and stage_id='verify'", old, item.id);
+  run(app.db, "update item_stage_log set at=? where item_id=? and stage_id='verify'", old, item.id);
+  expect(queueReconcile(app, item.id, new Date(), true)).toBeUndefined();
+  const work = createRun(app, { kind: "code", title: "项目 A 修复", input: { itemId: item.id }, userId: "owner" });
+  addLocalMaterials(app, item.id, [{ kind: "run", ref: work.id }], "owner");
+  run(app.db, "update item_flows set started_at=? where item_id=?", clock(-1).toISOString(), item.id);
+  if (type === "stage") await ownerAction(app, item.id, "delivery", "done", "复测完毕");
+  if (type === "approved") {
+    const newer = createRun(app, { kind: "code", title: "其他修改", input: { itemId: item.id }, userId: "owner" });
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: newer.id }], "owner");
+    run(app.db, "update runs set created_at=? where id=?", fresh, newer.id);
+    setRunOutput(app, work.id, { verdict: "approved" });
+    run(app.db, "update runs set status='done',finished_at=? where id=?", new Date().toISOString(), work.id);
+    app.emit({ type: "run", runId: work.id, status: "done" });
+  }
+  if (type === "push") recordFlowPush(app, work.id, "owner");
+  await advance(app, item.id);
+  const queued = one<{ id: string }>(app.db, "select id from runs where kind='flow-reconcile'");
+  expect(queued).toBeTruthy();
+  const check = getRun(app, queued!.id);
+  await execute(app, check, async (ctx, task) => {
+    expect(task).toContain("最近交付");
+    expect(task).toContain(type === "stage" ? "复测完毕" : type === "approved" ? "轮评审通过" : "已推到远端");
+    await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "已核对" });
+  });
+  run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor,run_id) values(?,?,'git-push','再次推送','[]','owner',?)", item.id, fresh, work.id);
+  expect(queueReconcile(app, item.id, clock(2), true)).toBeUndefined();
+  const next = queueReconcile(app, item.id, clock(7), true)!;
+  expect(next).toBeTruthy();
+  await execute(app, next, async ctx => { await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "已核对第二次推送" }); });
+  expect(queueReconcile(app, item.id, clock(14), true)).toBeUndefined();
+});
+
+it("对账补记已做完和已越过的阶段，收回原卡，不代答结果确认", async () => {
+  const { app, item, s, clock } = await setup([wait("verify", { by: { run: {} }, effect: "read", done: "confirm" }), wait("accept", { gate: "confirm", needs: [] }), wait("later", { needs: [] })]);
+  await reportStage(app, item.id, "verify", { state: "blocked", waitingOn: "owner", note: "等核对表" }, owner);
+  const carrier = s("verify").control.runId!;
+  run(app.db, "update runs set status='done' where id=?", carrier);
+  const checklistAsk = createAsk(app, { runId: carrier, question: "能否提供核对表？", options: [], userId: "owner" });
+  const rid = queueReconcile(app, item.id, clock(7))!;
+  const card = s("accept").askId!;
+  const source = upsertSource(app, { spaceId: "personal", kind: "note", uri: "demo:delivery", title: "交付记录", text: "小王随交办完成核对并评审通过，验收结果也已归档" });
+  await execute(app, rid, async ctx => {
+    const report = (stage: string, state: string, evidence: string[]) => call(ctx, "stage_report", { item: item.id, stage, state, already_resolved: true, note: "小王的交付已包含这段产出", evidence });
+    expect((await report("verify", "done", [])).isError).toBe(true);
+    expect((await report("verify", "done", [`src:${source.id}#L1`])).isError).not.toBe(true);
+    expect((await report("accept", "skip", [`src:${source.id}#L1`])).isError).not.toBe(true);
+    await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "已核对交付记录" });
+  });
+  expect(s("verify")).toMatchObject({ state: "done", askId: null });
+  expect(s("accept")).toMatchObject({ state: "skipped", askId: null });
+  expect(getAsk(app, card).status).toBe("cancelled");
+  expect(getAsk(app, checklistAsk.id).status).toBe("cancelled");
+  expect(listAsks(app).filter(ask => ask.status === "pending")).toHaveLength(0);
+  expect(one(app.db, "select 1 from notifications where body like '%小王的交付%' and json_extract(context,'$.urgency')='later'")).toBeDefined();
+});
+
+it("对账用后来给到的材料重开助手阶段，保留结果确认", async () => {
+  const { app, item, s, clock } = await setup([wait("verify", { by: { run: {} }, effect: "read", done: "confirm" })]);
+  await reportStage(app, item.id, "verify", { state: "blocked", waitingOn: "owner", note: "等核对表" }, owner);
+  run(app.db, "update runs set status='done' where id=?", s().control.runId!);
+  const source = upsertSource(app, { spaceId: "personal", kind: "note", uri: "demo:checklist", title: "核对表", text: "小王已补齐核对表" });
+  await execute(app, queueReconcile(app, item.id, clock(7))!, async ctx => {
+    const args = { item: item.id, stage: "verify", reason: "核对表已补齐，按表重新核对" };
+    expect((await call(ctx, "stage_reopen", args)).isError).toBe(true);
+    const reopened = await call(ctx, "stage_reopen", { ...args, refs: [`src:${source.id}#L1`] });
+    expect(reopened.isError, reopened.text).not.toBe(true);
+    await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "核对表已补齐，已重做" });
+  });
+  expect(s()).toMatchObject({ state: "doing", askId: null });
+  expect(getRun(app, s().control.runId!).input.task).toContain("核对表已补齐，按表重新核对");
+  await reportStage(app, item.id, "verify", { state: "done", note: "核对完成" }, { actor: "assistant", userId: "owner", runId: s().control.runId });
+  expect(s().control.question).toBe("done");
+  expect(getAsk(app, s().askId!).status).toBe("pending");
+});
+
+it.each(["stage", "git-push", "note"])("当天本人有动作 %s，停留提醒顺延且不消耗下次提醒次数", async kind => {
+  const { app, item, s, clock } = await setup([wait("verify", { gate: "confirm" })]);
+  const at = clock(50);
+  run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor) values(?,?,?,'本人已给出新意见','[]',?)", item.id, at.toISOString(), kind, kind === "note" ? "user" : "owner");
+  await flowReminders(app, at);
+  expect(s().control.reminders).toBe(0);
+  await flowReminders(app, clock(75));
+  expect(s().control.reminders).toBe(1);
 });
 
 it("核对回归后推进普通阶段，完成确认卡补证据仍等本人，开始关卡也不由对账通过", async () => {

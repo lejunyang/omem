@@ -14,7 +14,7 @@ import { addRunEvent, cancelRun, getRun, setRunOutput, type Run } from "./runs.t
 /** The owner's choice for a round's review and the rounds after it: a tier (lighter than before is fine), the exact checks, no requirement split, another model each round. */
 /** `ais`: the AI per review check, `review-lead` or `split` from this round on (review.ts namedReviewAI). */
 export type RoundReview = { tier?: string; checks?: string[]; split?: boolean; rotate?: boolean; ais?: Record<string, import("./execution.ts").Execution> };
-export type CodeNote = { id: string; text: string; at: string; by: string; deliveredAt?: string };
+export type CodeNote = { id: string; text: string; at: string; by: string; deliveredAt?: string; acceptedInRound?: boolean; item?: string };
 
 const notesOf = (r: Run) => ((r.output.notes ?? []) as CodeNote[]);
 export const pendingNotes = (app: App, runId: string) => notesOf(getRun(app, runId)).filter((n) => !n.deliveredAt);
@@ -58,14 +58,15 @@ export function roundStage(r: Run): "queued" | "coding" | "review" | "ended" {
 }
 
 /** Add the owner's words to the delegation's current round. */
-export function addCodeNote(app: App, runId: string, text: string, by: string) {
+export function addCodeNote(app: App, runId: string, text: string, by: string, item?: string) {
   const r = latestRound(app, runId);
   if ((r.input as { branches?: unknown }).branches) throw new HttpError(400, "分支评审不编码，没有编码 Agent 可以补充；要按评审修改用 continue_code_run 带 fix");
   if (r.output.appliedAt || r.output.discardedAt) throw new HttpError(409, "这次交办已经应用或丢弃，工作区已释放；新的要求请重新交办");
-  const note: CodeNote = { id: newId("note"), text: text.trim(), at: now(), by };
+  const stage = roundStage(r);
+  const note: CodeNote = { id: newId("note"), text: text.trim(), at: now(), by,
+    ...(stage === "coding" || stage === "queued" ? { acceptedInRound: true } : {}), ...(item ? { item } : {}) };
   if (!note.text) throw new HttpError(400, "补充的内容不能为空");
   setRunOutput(app, r.id, { notes: [...notesOf(r), note] });
-  const stage = roundStage(r);
   addRunEvent(app, r.id, "status", { text: `本人补充：${truncate(note.text, 200)}${stage === "coding" ? "" : stage === "queued" ? "（这一轮开始编码时带上）" : "（编码已结束，下一轮带上）"}` });
   return { runId: r.id, stage, note };
 }

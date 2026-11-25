@@ -10,6 +10,7 @@ import { findSpace } from "../core/spaces.ts";
 import { getRun } from "../agents/runs.ts";
 import { codePatches, type AppliedTarget } from "../agents/code.ts";
 import type { WorktreeRef } from "../agents/worktree-index.ts";
+import { listCheckpoints } from "../agents/code-tasks.ts";
 import { getItem } from "../items/store.ts";
 import { signalIdentity, describeStage, type FlowStage } from "./definitions.ts";
 import { completeBySignal } from "./engine.ts";
@@ -67,7 +68,7 @@ async function patchCommit(path: string, base: string, tip: string, patch: strin
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
-export async function commitsOf(app: App, rootId: string, latestId: string, target: AppliedTarget, path: string): Promise<string[]> {
+export async function commitsOf(app: App, rootId: string, latestId: string, target: Omit<AppliedTarget, "path">, path: string): Promise<string[]> {
   const root = getRun(app, rootId), latest = getRun(app, latestId);
   const wt = (root.output.worktrees as WorktreeRef[] | undefined)?.find((w) => w.space === target.space);
   if (target.head) return /^[a-f0-9]{40,64}$/.test(target.head) ? [target.head] : [];
@@ -170,48 +171,57 @@ async function checkNow(app: App) {
     const s = getStage(app, itemId, stageId), since = s.enteredAt ?? s.since;
     if (s.state !== "doing") continue;
     if (type !== "git.pushed" && type !== "git.merged") continue;
-    const object = findObject(app, getItem(app, itemId), "code-work");
-    const keys: TargetKey[] = [], missing: string[] = [], evidence: string[] = [];
-    let note = "", ready = false;
-    if (!object) note = "没有关联的编码交办，继续等本人";
-    else {
-      const rootId = object.ref.slice("code-work:".length), root = getRun(app, rootId);
-      const latestId = object.link.slice("#/runs/".length), latest = getRun(app, latestId);
-      const applied = root.output.appliedAt ? root : latest.output.appliedAt ? latest : null;
-      const targets = applied?.output.appliedTo as AppliedTarget[] | undefined;
-      evidence.push(rootId, ...(latestId !== rootId ? [latestId] : []));
-      if (!targets?.length) note = "编码交办还没应用到仓库，继续等本人";
-      else {
-        for (const target of targets) {
-          // Spaces supply the current device's repository location, including after a portable pull.
-          const path = findSpace(app, target.space)?.rootPath;
-          if (!path || !existsSync(path)) { keys.push({ space: target.space, branch: target.branch, commits: [] }); missing.push(`${target.space}：本机没有仓库`); continue; }
-          const commits = await commitsOf(app, rootId, latestId, target, path);
-          keys.push({ space: target.space, branch: target.branch, commits });
-          if (!commits.length) { missing.push(`${target.space}：还没有能核对的应用提交`); continue; }
-          const remotes = git(path, ["remote"]).stdout.trim().split("\n").filter(Boolean);
-          if (!remotes.length) { missing.push(`${target.space}：仓库没有远端`); continue; }
-          const wt = (root.output.worktrees as WorktreeRef[] | undefined)?.find((w) => w.space === target.space);
-          const targetBranch = wt?.commits ? wt.cutFrom : target.branch ?? undefined;
-          let refs = remoteRefs(path, remotes, type, targetBranch);
-          if (!(await contained(path, commits, refs))) {
-            await refreshRemote(app, path, remotes, type === "git.merged" && !targetBranch, type === "git.merged" ? targetBranch : target.branch ?? undefined);
-            refs = remoteRefs(path, remotes, type, targetBranch);
-          }
-          if (!(await contained(path, commits, refs))) missing.push(`${target.space}@${target.branch ?? "游离 HEAD"}：提交还没在${type === "git.merged" ? "目标分支的远端" : "远端"}引用里`);
-        }
-        ready = !missing.length;
-        note = ready ? `改动已${type === "git.merged" ? "合进目标分支" : "在远端"}：${keys.map((k) => `${k.space}@${k.branch ?? "游离 HEAD"}（${k.commits.map((c) => c.slice(0, 7)).join("、")}）`).join("；")}` : `还在等：${missing.join("；")}`;
-      }
-    }
-    // An owner action, restart or reopen while fetching cannot finish a different attempt.
+    const checked = await inspectGitSignal(app, itemId, type);
+    const { object, note, evidence } = checked;
     const currentFlow = itemFlow(app, itemId);
     if (!currentFlow || currentFlow.endedAt || currentFlow.startedAt !== f.startedAt) continue;
     const current = getStage(app, itemId, stageId);
     if (current.state !== "doing" || current.attempt !== s.attempt || current.enteredAt !== s.enteredAt) continue;
-    if (ready) ready = await completeBySignal(app, itemId, stageId, note, evidence, { startedAt: f.startedAt, attempt: s.attempt, enteredAt: s.enteredAt, type, work: object!.ref });
-    if (!ready && !missing.length && note.startsWith("改动已")) continue;
-    const encoded = JSON.stringify(keys), last = lastCheck(app, itemId, stageId, type, since);
-    if (last?.outcome !== note || last.keys !== encoded) run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,?,?,?,?,?)", new Date().toISOString(), type, encoded, itemId, stageId, note);
+    if (checked.ready && !await completeBySignal(app, itemId, stageId, note, evidence, { startedAt: f.startedAt, attempt: s.attempt, enteredAt: s.enteredAt, type, work: object!.ref, current: () => findObject(app, getItem(app, itemId), "code-work")?.link === object!.link })) continue;
+    recordGitSignal(app, itemId, stageId, type, since, checked);
   }
+}
+
+export function recordGitSignal(app: App, itemId: string, stageId: string, type: GitSignal, since: string, { keys, note }: Awaited<ReturnType<typeof inspectGitSignal>>) {
+  const encoded = JSON.stringify(keys), last = lastCheck(app, itemId, stageId, type, since);
+  if (last?.outcome !== note || last.keys !== encoded) run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,?,?,?,?,?)", new Date().toISOString(), type, encoded, itemId, stageId, note);
+}
+
+export async function inspectGitSignal(app: App, itemId: string, type: GitSignal, fetch = true) {
+  const object = findObject(app, getItem(app, itemId), "code-work");
+  const keys: TargetKey[] = [], missing: string[] = [], evidence: string[] = [];
+  if (!object) return { object, keys, note: "没有关联的编码交办，继续等本人", evidence, ready: false };
+  const rootId = object.ref.slice("code-work:".length), root = getRun(app, rootId);
+  const latestId = object.link.slice("#/runs/".length), latest = getRun(app, latestId);
+  const applied = root.output.appliedAt ? root : latest.output.appliedAt ? latest : null;
+  const worktrees = (root.output.worktrees ?? []) as WorktreeRef[];
+  const heads = !applied && object.done ? listCheckpoints(app, rootId).findLast(checkpoint => checkpoint.by === latestId)?.heads : undefined;
+  const branches = worktrees.filter(wt => wt.commits && wt.branch);
+  const checkedRepos = (latest.output.repos ?? []) as { space: string; check?: { commit?: string } }[];
+  const checkedBranches = !applied && object.done ? branches.map(wt => ({ space: wt.space, branch: wt.branch!, head: heads?.[wt.space] ?? checkedRepos.find(repo => repo.space === wt.space)?.check?.commit })) : [];
+  const targets = (applied?.output.appliedTo as AppliedTarget[] | undefined) ?? (checkedBranches.every(target => target.head) ? checkedBranches : []);
+  evidence.push(rootId, ...(latestId !== rootId ? [latestId] : []));
+  if (!targets.length) return { object, keys, note: "编码交办还没应用到仓库，继续等本人", evidence, ready: false };
+  for (const target of targets) {
+    const path = findSpace(app, target.space)?.rootPath;
+    if (!path || !existsSync(path)) { keys.push({ space: target.space, branch: target.branch, commits: [] }); missing.push(`${target.space}：本机没有仓库`); continue; }
+    const commits = await commitsOf(app, rootId, latestId, target, path);
+    keys.push({ space: target.space, branch: target.branch, commits });
+    if (!commits.length) { missing.push(`${target.space}：还没有能核对的应用提交`); continue; }
+    const remotes = git(path, ["remote"]).stdout.trim().split("\n").filter(Boolean);
+    if (!remotes.length) { missing.push(`${target.space}：仓库没有远端`); continue; }
+    const wt = worktrees.find(w => w.space === target.space);
+    const targetBranch = wt?.commits ? wt.cutFrom : target.branch ?? undefined;
+    let refs = remoteRefs(path, remotes, type, targetBranch);
+    let hasCommits = await contained(path, commits, refs);
+    if (fetch && !hasCommits) {
+      await refreshRemote(app, path, remotes, type === "git.merged" && !targetBranch, type === "git.merged" ? targetBranch : target.branch ?? undefined);
+      refs = remoteRefs(path, remotes, type, targetBranch);
+      hasCommits = await contained(path, commits, refs);
+    }
+    if (!hasCommits) missing.push(`${target.space}@${target.branch ?? "游离 HEAD"}：提交还没在${type === "git.merged" ? "目标分支的远端" : "远端"}引用里`);
+  }
+  const ready = !missing.length;
+  const note = ready ? `改动已${type === "git.merged" ? "合进目标分支" : "在远端"}：${keys.map(k => `${k.space}@${k.branch ?? "游离 HEAD"}（${k.commits.map(c => c.slice(0, 7)).join("、")}）`).join("；")}` : `还在等：${missing.join("；")}`;
+  return { object, keys, note, evidence, ready };
 }

@@ -7,9 +7,10 @@ import { addItemEvent, type Item } from "../items/store.ts";
 import { continuing } from "../studies/store.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
 import { findPluginObject } from "./plugin-objects.ts";
+import { codeRework } from "./code-rework.ts";
 
 /** `updated`: a plugin object whose revision moved after the time asked about (a stage done on `status: "updated"`). */
-export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; changedAt?: string; disabled?: boolean; updated?: boolean; dropped?: string };
+export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; changedAt?: string; disabled?: boolean; updated?: boolean; dropped?: string; reworkRound?: number; reworkBlocked?: string };
 export type ObjectKind = { kind: string; label: string; find: (app: App, item: Item) => FlowObject | null };
 
 /** Per-item run materials bound the lookup; codeWork uses the existing continuation indexes. */
@@ -20,10 +21,7 @@ export function latestCodeWork(app: App, item: Item, after?: string): CodeWorkDe
     const w = codeWork(app, r.id);
     // Its own delegation, or one of another item on the same branch this item's change went into (joinCodeWork).
     if (!w || (w.item?.id !== item.id && !r.joined)) continue;
-    if (after) {
-      const created = one<{ at: string }>(app.db, "select created_at at from runs where id=?", w.latestId)?.at;
-      if (!created || created <= after) continue;
-    }
+    if (after && !codeRework(app, item, w, after)) continue;
     const ids = w.roundList.map((x) => x.id);
     if (all<{ id: string }>(app.db, `select id from runs where id in (${ids.map(() => "?").join(",")}) and (json_extract(output,'$.discardedAt') is not null or json_extract(output,'$.supersededBy') is not null)`, ...ids).length) continue;
     return w;
@@ -38,7 +36,11 @@ export function latestCodeWork(app: App, item: Item, after?: string): CodeWorkDe
 export function codeWorkSince(app: App, item: Item, since: string, newRoundOnly = false): FlowObject | null {
   const w = latestCodeWork(app, item, newRoundOnly ? since : undefined);
   if (!w) return null;
-  if (newRoundOnly) return codeWorkObject(app, item, w);
+  if (newRoundOnly) {
+    const rework = codeRework(app, item, w, since)!;
+    const obj = codeWorkObject(app, item, w);
+    return { ...obj, done: rework.verified || obj.done && !rework.blocked, dropped: rework.verified ? undefined : obj.dropped, reworkRound: rework.round, reworkBlocked: rework.blocked };
+  }
   const at = one<{ c: string }>(app.db, "select created_at c from runs where id = ?", w.latestId)?.c;
   const joined = one<{ c: string }>(app.db, "select created_at c from item_materials where item_id = ? and kind = 'run' and ref = ?", item.id, w.rootId)?.c;
   return at && at >= since || joined && joined >= since ? codeWorkObject(app, item, w) : null;

@@ -23,6 +23,8 @@ import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
 import { artifactInbox, collectInbox } from "../src/agents/artifacts.ts";
 import { recordTests } from "../src/items/req-tests.ts";
 import { findObject } from "../src/flows/objects.ts";
+import { addTask, updateTask } from "../src/agents/code-tasks.ts";
+import { addCodeNote, markNotesDelivered } from "../src/agents/code-steer.ts";
 
 vi.mock("../src/core/decision.ts", async (original) => ({ ...await original<typeof import("../src/core/decision.ts")>(), decisionReady: vi.fn(() => false), decide: vi.fn() }));
 const apps: App[] = [];
@@ -301,6 +303,23 @@ describe("只有本人能定的事", () => {
     expect(s("owner")).toMatchObject({ state: "doing", waitingOn: "owner", control: { question: "owner" } });
     expect(getAsk(app, s("owner").askId!).question).toContain("轮到你了");
   });
+  it("上游重开收回下游的开始卡，等上游完成后再按原关卡重发", async () => {
+    const { app, item, s } = await setup([stage("coding", { name: "编码", by: "wait" }), stage("verify", { gate: "confirm" })]);
+    await done(app, item.id, "coding");
+    const before = s("verify").askId!;
+    expect(s("verify").state).toBe("gated");
+    await reopenStage(app, item.id, "coding", "按新稿改", [], owner);
+    expect(s("verify")).toMatchObject({ state: "pending", askId: null, note: "上游「编码」重开，收回了开始确认" });
+    expect(getAsk(app, before).status).not.toBe("pending");
+    const old = createAsk(app, { runId: null, question: "旧的开始确认", options: [{ label: "开始" }] });
+    run(app.db, "update item_stages set state='gated',ask_id=?,control=json_set(control,'$.question','gate') where item_id=? and stage_id='verify'", old.id, item.id);
+    await advance(app, item.id);
+    expect(getAsk(app, old.id).status).not.toBe("pending");
+    await done(app, item.id, "coding");
+    expect(s("verify").state).toBe("gated");
+    expect(s("verify").askId).not.toBe(before);
+    expect(getAsk(app, s("verify").askId!).status).toBe("pending");
+  });
   it("进度卡只说发生了什么：开始流程、本人自己的操作不发；助手一次推进几段是一张卡，新卡替换旧卡", async () => {
     const { app, item, s } = await setup([stage("a", { gate: "confirm" }), stage("b"), stage("c"), stage("d")]);
     const cards = () => all<{ id: string; body: string }>(app.db, "select id, body from notifications where json_extract(context, '$.entityId') = ?", item.id);
@@ -574,6 +593,35 @@ describe("对象与工具", () => {
     setRunOutput(app, next.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", next.id);
     await advance(app, item.id);
     expect(s("a")).toMatchObject({ state: "done", by: `code-work:${direct.id}` });
+  });
+  it.each(["done", "wontdo", "unfinished", "review-failed", "handoff"])("返工跟随已在运行的第九轮，按新修改项和评审结果推进：%s", async (outcome) => {
+    const { app, item, s } = await setup([stage("code", { by: { object: "code-work" } }), stage("later", { by: "wait" })]);
+    const work = createRun(app, { kind: "code", spaceId: "personal", title: "改退款单", input: { itemId: item.id, repos: ["personal"], round: 9 }, userId: "owner" });
+    run(app.db, "update runs set status='running',created_at=? where id=?", new Date(Date.now() - 60000).toISOString(), work.id);
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: work.id }], "owner");
+    await advance(app, item.id);
+    await reopenStage(app, item.id, "code", "补充退款原因", [], owner, { feedback: true });
+    const stageRun = s("code").control.runId!;
+    expect(getRun(app, stageRun).input.task).toContain("不报 blocked，也不要再起一轮");
+    const after = s("code").control.objectAfter!;
+    if (outcome === "handoff") {
+      const { note } = addCodeNote(app, work.id, "补充退款原因", "owner");
+      markNotesDelivered(app, work.id, [note]);
+    } else {
+      const task = addTask(app, work.id, { title: "补充退款原因", kind: "owner" }, "owner");
+      run(app.db, "update code_tasks set created_at=? where id=?", new Date(Date.parse(after) + 1).toISOString(), task.id);
+      updateTask(app, work.id, task.seq, { coderRun: work.id, state: outcome === "unfinished" ? "owner" : outcome === "wontdo" ? "wontdo" : "done", ...(outcome === "wontdo" ? { answer: "字段已经由通用表单提供" } : {}) });
+    }
+    await reportStage(app, item.id, "code", { state: "blocked", waitingOn: "下一轮", note: "等下一轮" }, { actor: "assistant", runId: stageRun });
+    expect(s("code")).toMatchObject({ state: "doing", by: `code-work:${work.id}`, note: expect.stringContaining("第 9 轮") });
+    run(app.db, "update runs set status='done' where id=?", stageRun);
+    setRunOutput(app, work.id, { verdict: outcome === "review-failed" ? "changes" : "approved" });
+    run(app.db, "update runs set status='done',finished_at=? where id=?", new Date(Date.parse(after) + 5000).toISOString(), work.id);
+    await advance(app, item.id);
+    const blocked = outcome === "unfinished" ? "补充退款原因" : outcome === "review-failed" ? "评审没有通过" : null;
+    expect(s("code").state).toBe(blocked ? "blocked" : "done");
+    if (blocked) expect(s("code").note).toContain(blocked);
+    expect(one<{ n: number }>(app.db, "select count(*) n from runs where kind='code'")?.n).toBe(1);
   });
   it("跟着分支评审的段按本人意见重做：任务是带 rereview_of 复审，不发起编码交办", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);
