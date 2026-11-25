@@ -26,7 +26,8 @@ import UiCheckbox from "./UiCheckbox.vue";
 type Delivery = { id: string; receivedAt: number; status: string; attempts: number; durationMs: number | null; error: string | null; retryAt: number | null; duplicates: number };
 type Hook = { name: string; label: string | null; headerPath: string; url: string | null; secretHeader: string; ack: "first" | null;
   rateLimit: { perMinute: number; burst?: number }; secret: { createdAt: string; usedAt: string | null } | null;
-  lastDelivery: { at: number; status: string; error: string | null } | null };
+  lastDelivery: { at: number; status: string; error: string | null } | null;
+  lastRefused?: { at: number; status: number; count: number } | null };
 type Service = { name: string; description: string; command: string; running: boolean; startedAt: string | null; streams: number; log: string[] };
 type Plugin = {
   id: string;
@@ -341,12 +342,17 @@ function deliveryNote(d: Delivery) {
   return [d.attempts > 1 ? `第 ${d.attempts} 次尝试` : "", d.durationMs != null && d.status === "done" ? `用时 ${d.durationMs} ms` : ""].filter(Boolean).join(" · ");
 }
 
+/** Why a request was refused before it became a delivery, in the owner's words. */
+const refusedWhy = (status: number) => status === 401 ? "密钥不对" : status === 429 ? "来得太频繁" : status === 409 ? "同一个投递编号、内容不同"
+  : status === 413 || status === 431 || status === 414 ? "请求太大" : status >= 500 ? "当时没能收下" : "请求不符合这个回调的约定";
 async function loadDeliveries(p: Plugin, h: Hook) {
   const key = hookKey(p, h), seq = (deliverySeq[key] = (deliverySeq[key] ?? 0) + 1);
   if (!deliveries.value[key]) deliveries.value[key] = null;
   try {
-    const list = await get<Delivery[]>(`/api/plugins/${p.id}/hooks/${h.name}/deliveries`);
+    const [list, refused] = await Promise.all([get<Delivery[]>(`/api/plugins/${p.id}/hooks/${h.name}/deliveries`),
+      get<{ lastRefused: Hook["lastRefused"] }>(`/api/plugins/${p.id}/hooks/${h.name}/refused`).catch(() => null)]);
     if (deliverySeq[key] !== seq) return;
+    if (refused) h.lastRefused = refused.lastRefused;
     deliveries.value[key] = list;
     const last = list.find((d) => d.status !== "duplicate");
     h.lastDelivery = last ? { at: last.receivedAt, status: last.status, error: last.error } : null;
@@ -673,6 +679,7 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
                   <span class="d-note" :title="deliveryNote(d) || undefined">{{ deliveryNote(d) }}</span>
                 </li>
               </ul>
+              <p v-if="h.lastRefused" class="small warn-text">最近一次没收下：{{ when(h.lastRefused.at) }}，{{ refusedWhy(h.lastRefused.status) }}（{{ h.lastRefused.status }}）<template v-if="h.lastRefused.count > 1">，重启以来共 {{ h.lastRefused.count }} 次</template></p>
               <button v-if="(deliveries[hookKey(p, h)]?.length ?? 0) > 5" class="lnk small" @click="allDeliveries[hookKey(p, h)] = !allDeliveries[hookKey(p, h)]">
                 {{ allDeliveries[hookKey(p, h)] ? "只看最近 5 条" : `看全部 ${deliveries[hookKey(p, h)]!.length} 条` }}
               </button>

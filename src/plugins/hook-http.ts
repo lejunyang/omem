@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { App } from "../core/app.ts";
 import { hookBodyHash, hookInbox } from "./hook-inbox.ts";
 import { HOOK_BODY_MAX, HOOK_HEADER_BYTES, HOOK_HEADER_MAX, HOOK_QUERY_BYTES, hookDeliveryKey, hookEvent, hookReceipt, hookRequestHeaders, parseHookEvent } from "./hook-request.ts";
-import { checkHookSecret, hookRetryAfter, pluginHook, type RegisteredHook } from "./hooks.ts";
+import { checkHookSecret, hookRetryAfter, noteHookRefused, pluginHook, type RegisteredHook } from "./hooks.ts";
 import type { PluginHookJson } from "./types.ts";
 
 type Params = { plugin: string; name: string; secret?: string };
@@ -43,7 +43,11 @@ export async function registerHookRoutes(server: FastifyInstance, app: App) {
         if (queryAt >= 0 && Buffer.byteLength(req.url.slice(queryAt + 1)) > HOOK_QUERY_BYTES)
           return reply.status(414).send({ error: "回调查询参数过大" });
       },
-      async onResponse(_req, reply) { if (reply.statusCode >= 200 && reply.statusCode < 300) inbox.schedule(); },
+      async onResponse(req, reply) {
+        if (reply.statusCode >= 200 && reply.statusCode < 300) return inbox.schedule();
+        const params = req.params as Params;
+        if (reply.statusCode >= 400) noteHookRefused(params.plugin, params.name, reply.statusCode);
+      },
       async handler(req, reply) {
         const params = req.params as Params;
         const hook = pluginHook(params.plugin, params.name);

@@ -21,7 +21,7 @@ import { setTrust } from "./trust.ts";
 import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
 import { savePluginSettings } from "./settings.ts";
 import { pluginStore } from "./store.ts";
-import { createHookSecret, pluginHook, revokeHookSecret } from "./hooks.ts";
+import { createHookSecret, describeHooks, pluginHook, revokeHookSecret } from "./hooks.ts";
 import { recentHookDeliveries } from "./hook-inbox.ts";
 import { hookKeyHeader, hookPath } from "./hook-request.ts";
 import { liveConnect, PLUGIN_INSTRUCTIONS_MAX, realtimeSecret, voiceStatus } from "../core/voice.ts";
@@ -92,6 +92,12 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   server.delete("/api/plugins/:id/hooks/:name/secret", async (req) => {
     const h = hookOf(req);
     return { revoked: revokeHookSecret(app, h.plugin, h.name) };
+  });
+  /** The last request this callback refused before it became a delivery (hooks.ts noteHookRefused); null: none since the service started. */
+  server.get("/api/plugins/:id/hooks/:name/refused", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看回调投递");
+    const p = plugin(req), name = (req.params as { name: string }).name;
+    return { lastRefused: describeHooks(app, p.manifest.id).find((h) => h.name === name)?.lastRefused ?? null };
   });
   server.get("/api/plugins/:id/hooks/:name/deliveries", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看回调投递");

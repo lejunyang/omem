@@ -70,6 +70,18 @@ export function checkHookSecret(app: App, plugin: string, name: string, secret: 
   return true;
 }
 /**
+ * The last request a callback refused before it became a delivery (wrong secret, too many, a malformed or
+ * mismatched request, the plugin's own refusal): the page shows it so "the platform says it sent, nothing
+ * arrived" can be told from "it arrived and was refused". In memory, one entry per registered callback.
+ */
+const refused = new Map<string, { at: number; status: number; count: number }>();
+export function noteHookRefused(plugin: string, name: string, status: number) {
+  if (!pluginHooks(plugin).some((h) => h.name === name)) return;
+  const key = `${plugin}/${name}`;
+  refused.set(key, { at: Date.now(), status, count: (refused.get(key)?.count ?? 0) + 1 });
+}
+
+/**
  * The plugin's callbacks as its page shows them: whether a secret is set, when it was last used, the last
  * delivery (repeats of an earlier one left out) and, with `webUrl` configured, the address to give the
  * platform (`url`; null: the page falls back to where it was opened from).
@@ -83,7 +95,8 @@ export function describeHooks(app: App | null, plugin: string) {
       where plugin=? and name=? and status!='duplicate' order by received_at desc,rowid desc limit 1`, plugin, h.name) ?? null : null;
     return { name: h.name, label: h.label ?? null, path: `${headerPath}/`, headerPath, url: base ? `${base}${headerPath}` : null,
       secretHeader: hookKeyHeader(h), ack: h.ack ?? null, rateLimit: h.rateLimit ?? { perMinute: HOOK_PER_MINUTE },
-      secret: s ? { createdAt: s.createdAt, usedAt: s.usedAt ?? null } : null, lastDelivery: last };
+      secret: s ? { createdAt: s.createdAt, usedAt: s.usedAt ?? null } : null, lastDelivery: last,
+      lastRefused: refused.get(`${plugin}/${h.name}`) ?? null };
   });
 }
 export function forgetPluginHooks(app: App, plugin: string) {

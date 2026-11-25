@@ -402,7 +402,7 @@ describe("插件回调", () => {
     expect(pluginHook("hookprobe", "change")).toBeTruthy();
     expect(() => registerHook("hookprobe", { name: "change", handle: () => ({}) })).toThrow("重复");
     expect(() => registerHook("hookprobe", { name: "Bad Name", handle: () => ({}) })).toThrow("不合法");
-    expect(describePlugin(getPlugin("hookprobe")).hooks.find(hook => hook.name === "change")).toEqual({ name: "change", label: "合并请求有变化", path: "/api/hooks/hookprobe/change/", headerPath: "/api/hooks/hookprobe/change", url: null, secret: null, secretHeader: "authorization", ack: null, rateLimit: { perMinute: 60 }, lastDelivery: null });
+    expect(describePlugin(getPlugin("hookprobe")).hooks.find(hook => hook.name === "change")).toEqual({ name: "change", label: "合并请求有变化", path: "/api/hooks/hookprobe/change/", headerPath: "/api/hooks/hookprobe/change", url: null, secret: null, secretHeader: "authorization", ack: null, rateLimit: { perMinute: 60 }, lastDelivery: null, lastRefused: expect.toSatisfy((v: unknown) => v === null || typeof v === "object") });
     const sdk: SdkHook = { name: "mr", handle: () => ({ refresh: [{ kind: "change", key: "1" }] }) };
     expect(sdk.name).toBe("mr");
     expect(ROUTE_RULES["POST /api/hooks/:plugin/:name/:secret"]).toBe("public");
@@ -451,6 +451,10 @@ describe("插件回调", () => {
     expect((await call(`/api/hooks/hookprobe/change/omk_wrong`)).statusCode).toBe(401);
     expect((await call(`/api/hooks/hookprobe/other/${first}`)).statusCode).toBe(401);
     expect((await call(`/api/hooks/nobody/change/${first}`)).statusCode).toBe(401);
+    // A refused request leaves a trace on the callback it named (the page tells "never arrived" from "arrived and refused"); unknown callbacks keep none.
+    const refused = (await s.inject({ method: "GET", url: "/api/plugins/hookprobe/hooks/change/refused" })).json() as { lastRefused: { status: number; count: number; at: number } | null };
+    expect(refused.lastRefused).toMatchObject({ status: 401, count: expect.any(Number), at: expect.any(Number) });
+    expect((await s.inject({ method: "GET", url: "/api/plugins/hookprobe/hooks/other/refused" })).json()).toEqual({ lastRefused: null });
     expect(one<{ value: string }>(app.db, "select value from kv where key='plugin-hook:hookprobe/change'")!.value).not.toContain(first);
     expect(describePlugin(getPlugin("hookprobe")).hooks[0].secret).toMatchObject({ createdAt: expect.any(String), usedAt: expect.any(String) });
     const { path: second } = await secret(s);
