@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-25
 ---
 
+## 会话续用时按这一轮的工具清单（2026-11-25）
+
+- 续用同一个 Agent 会话的一轮沿用开会话那一轮的工具令牌，工具清单也跟着被固定：服务重启后某个会话的第一轮恰好是“编码交办交回给助手”（不能续轮、推送）时，本人随后在同一会话里说的话也用不了 `continue_code_run`；反过来由普通一轮开的会话里，交回的一轮没有被限制。现在续用时令牌换成这一轮自己的工具清单。`src/agents/tools.ts` 的 `retargetToolToken`、`src/agents/sessions.ts`；`test/live-session-tools.test.ts`。
+
 ## 重启后一起恢复的运行都等第一次出口检查（2026-11-25）
 
 - 配了网络出口策略时，服务重启后同时恢复的几个运行里，只有发起检查的那个会等结果，其余的看到“检查中”就直接选 AI，自动选型的会以“还没查过出口”失败。现在启动后第一次检查还没有结果时，后到的运行也等同一次检查，最多等 20 秒；之后的检查仍只等 4 秒。`src/agents/network-policy.ts` 的 `refreshForRun`，`test/network-policy.test.ts`。

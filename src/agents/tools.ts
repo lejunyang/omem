@@ -7756,9 +7756,17 @@ export function issueToolToken(ctx: Omit<ToolContext, "app">) {
   return token;
 }
 /** A live agent session keeps its token; each turn points it at the current run. */
-export function retargetToolToken(token: string, runId: string | null) {
+/**
+ * A live session keeps the token it was opened with. `turn`: the token prepared for the turn now using
+ * it: that turn's tool set applies (a handoff turn cannot start rounds, the owner's next message can),
+ * not the set of whichever turn happened to open the session.
+ */
+export function retargetToolToken(token: string, runId: string | null, turn?: string) {
   const ctx = tokens.get(token);
-  if (ctx) ctx.runId = runId;
+  if (!ctx) return;
+  ctx.runId = runId;
+  const next = turn && turn !== token ? tokens.get(turn) : undefined;
+  if (next) ctx.tools = next.tools;
 }
 export function beginCommandTurn(token: string) {
   const ctx = tokens.get(token);

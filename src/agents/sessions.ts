@@ -754,8 +754,8 @@ ${WAKE_NOTE}`
         l = undefined;
       }
       if (l) {
+        retargetToolToken(l.token, ctx.run.id, curPrep.token);
         revokeToolToken(curPrep.token);
-        retargetToolToken(l.token, ctx.run.id);
         mode = "live";
         emit({ type: "status", text: `继续会话中的 ${l.handle.agent}` });
       } else {
