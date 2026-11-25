@@ -89,6 +89,19 @@ async function reply(s: FlowStage) {
   } catch (e) { error.value = (e as Error).message; }
   finally { busy.value = false; }
 }
+/** The blocked stage goes back to its assistant with the card's plan (and the owner's words, when written) — no card was sent for it. */
+async function resume(s: FlowStage) {
+  if (busy.value || !may.value) return;
+  const plan = s.card?.sections.find((x) => x.label === "建议的做法")?.text;
+  const note = [replies.value[s.id]?.trim(), "本人让助手接着做：先核对卡点现在的状态，再照建议的做法处理。", plan && `建议的做法：${plan}`].filter(Boolean).join("\n");
+  busy.value = true; error.value = "";
+  try {
+    await post(`/api/items/${props.item.id}/flow/stages/${encodeURIComponent(s.id)}/reopen`, { note });
+    replies.value[s.id] = "";
+    await load();
+  } catch (e) { error.value = (e as Error).message; }
+  finally { busy.value = false; }
+}
 /** A plugin's block answered (仍然通过 / 等处理) or the stage finished by hand. */
 function pluginChanged(v: FlowView | null) {
   if (!v) return void load();
@@ -141,6 +154,7 @@ async function answer(s: FlowStage, choice?: number) {
         <template v-else-if="may && !s.waitUntil">
           <textarea v-model="replies[s.id]" class="textarea" rows="2" :aria-label="`给「${s.name}」写的话`" placeholder="写下你希望这一段怎么处理" />
           <div class="row wrap">
+            <button v-if="s.state === 'blocked' && s.carrier.kind === 'run'" type="button" class="btn primary sm" :disabled="busy" @click="resume(s)">让助手接着做</button>
             <button v-if="s.state === 'blocked'" type="button" class="btn sm" :disabled="busy || !replies[s.id]?.trim()" @click="act(s, { action: 'done', label: '标记阶段完成', reason: true })">标记阶段完成</button>
             <button type="button" class="btn sm" :disabled="busy || !replies[s.id]?.trim()" @click="reply(s)">按这句话处理</button>
             <button type="button" class="btn ghost sm" @click="discuss(s)"><Icon name="chat" :size="14" />在对话里讨论</button>
