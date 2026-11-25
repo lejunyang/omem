@@ -9,7 +9,7 @@ import { isBranchWork } from "./code-branch.ts";
 import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
 import { createRun, getRun, runUser, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
-import type { RoundReview } from "./code-steer.ts";
+import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { workOwner } from "./code-tasks.ts";
 import { OWNER } from "../core/users.ts";
 
@@ -470,13 +470,16 @@ export function queueStandaloneFix(app: App, rootId: string, expectedLastId: str
     if (!worktrees.length || worktrees.some(w => !existsSync(w.path)))
       throw new HttpError(409, "原工作区缺失，不能续轮；请重新交办");
     const sessionId = rounds.map(r => r.output.coderSessionId).filter(Boolean).at(-1);
+    const notes = pendingNotes(app, last.id);
+    const roundNotes = notes.length ? notesText(notes, app.config.timezone) : undefined;
     const next = createRun(app, {
       kind: "code", spaceId: last.spaceId, userId: workOwner(app, rootId, userId),
       title: truncate(`交办第 ${rounds.length + 1} 轮：${task.split("\n")[0]}`, 80),
       // The last round's Git work is its own; this round does only what it is asked.
-      input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, moveToTargetMode: undefined, reviewOnly: undefined, peerFinished: undefined, ...extraInput, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
+      input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, moveToTargetMode: undefined, reviewOnly: undefined, peerFinished: undefined, roundNotes, ...extraInput, task: roundNotes && !last.input.taskMode ? `${task}\n\n${roundNotes}` : task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
       parentId: last.parentId,
     });
+    if (notes.length) markNotesDelivered(app, last.id, notes);
     app.db.exec("COMMIT");
     // The work moved on: what the earlier rounds asked the owner (plan, result, a stop) is answered.
     for (const r of rounds) cancelHostAsks(app, r.id, ROUND_ASKS);

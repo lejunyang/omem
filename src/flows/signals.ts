@@ -9,6 +9,7 @@ import { git, gitAsync } from "../core/git.ts";
 import { findSpace } from "../core/spaces.ts";
 import { getRun } from "../agents/runs.ts";
 import { codePatches, type AppliedTarget } from "../agents/code.ts";
+import { workState } from "../agents/code-tasks.ts";
 import type { WorktreeRef } from "../agents/worktree-index.ts";
 import { listCheckpoints } from "../agents/code-tasks.ts";
 import { getItem } from "../items/store.ts";
@@ -199,7 +200,9 @@ export async function inspectGitSignal(app: App, itemId: string, type: GitSignal
   const branches = worktrees.filter(wt => wt.commits && wt.branch);
   const checkedRepos = (latest.output.repos ?? []) as { space: string; check?: { commit?: string } }[];
   const checkedBranches = !applied && object.done ? branches.map(wt => ({ space: wt.space, branch: wt.branch!, head: heads?.[wt.space] ?? checkedRepos.find(repo => repo.space === wt.space)?.check?.commit })) : [];
-  const targets = (applied?.output.appliedTo as AppliedTarget[] | undefined) ?? (checkedBranches.every(target => target.head) ? checkedBranches : []);
+  // A batch pushed while the work goes on (code-delivery.ts) is what the owner asked to see on the remote.
+  const delivered = !applied && type === "git.pushed" ? workState(app, rootId).delivered?.at(-1)?.branches : undefined;
+  const targets = (applied?.output.appliedTo as AppliedTarget[] | undefined) ?? (checkedBranches.length && checkedBranches.every(target => target.head) ? checkedBranches : delivered ?? []);
   evidence.push(rootId, ...(latestId !== rootId ? [latestId] : []));
   if (!targets.length) return { object, keys, note: "编码交办还没应用到仓库，继续等本人", evidence, ready: false };
   for (const target of targets) {

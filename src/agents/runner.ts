@@ -51,7 +51,8 @@ import { accountBlocked, accountPolicy, accountFor, isAiMember, memberAccountPla
 import { memberAi } from "./member-ai.ts";
 import { selectMemberRunAccount } from "./member-run-ai.ts";
 import { aiLoginWait } from "./credential-wait.ts";
-import { addRunEvent, runUser } from "./runs.ts";
+import { addRunEvent, ResumeRunAt, runUser } from "./runs.ts";
+import type { CodingRecovery } from "./code-recovery.ts";
 import { SandboxStartError } from "./spawn.ts";
 import { canonical, runAccess, under } from "./own-sandbox.ts";
 import { ownRun } from "./own-run.ts";
@@ -317,6 +318,7 @@ export type RoleRunInput = {
   effort?: string;
   /** Continue this coding Agent's previous session (code delegation rounds reuse one session). */
   resumeSessionId?: string;
+  codingRecovery?: CodingRecovery;
   /** Keep the agent session resumable afterwards (multi-agent work rounds continue it). */
   persistSession?: boolean;
   /** Reuse a measured, live ACP session for recurring background work. */
@@ -889,11 +891,26 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const personal = member && !ownAI && !input.borrow && !input.resumeSessionId && !input.profileId && !input.model && !input.effort ? memberAi(app, member) : {};
   const specified = !!(personal.profile || personal.model || personal.effort);
   const requested = input.execution ?? (ownAI ? undefined : runInput.ai);
-  const execution = input.borrow || login || (specified && requested?.source === "auto") ? undefined : validateExecution(app, requested, input.userId);
+  const coding = input.codingRecovery;
+  const execution = input.borrow || login || (specified && requested?.source === "auto") ? undefined : validateExecution(app, requested, input.userId, !!coding);
   input = { ...input, ...executionArgs(execution) };
   if (login) input = { ...input, profileId: login.pick.profile, model: login.pick.model, effort: login.pick.effort, resumeSessionId: undefined };
   else if (!execution && specified) input = { ...input, profileId: personal.profile, model: personal.model, effort: personal.effort };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
+  const tierProfiles = coding ? (["cheap", "standard", "strong"] as const).map(tier => {
+    const pick = app.config.agents.tiers[tier];
+    if (!pick) return undefined;
+    try { return resolveRunProfile(app, { actor, profileId: pick.profile, model: pick.model, effort: pick.effort }); }
+    catch { return undefined; }
+  }) : [];
+  const meetsFloor = coding ? (await import("./code-recovery.ts")).codingCandidateFloor(resolveRunProfile(app, { ...input, actor }), tierProfiles) : (_profile: AgentProfile) => true;
+  if (coding?.resumeAI && input.resumeSessionId) {
+    const { profile, model, effort } = coding.resumeAI;
+    const resumed = { profileId: profile, model, effort };
+    let usable = false;
+    try { usable = meetsFloor(resolveRunProfile(app, { actor, ...resumed })); } catch { /* The saved backend was removed. */ }
+    input = usable ? { ...input, ...resumed } : { ...input, resumeSessionId: undefined };
+  }
   const declared = input.spec ? (input.spec.tools.length ? expandTools(input.spec.tools) : DEFAULT_SPEC_TOOLS) : loadRole(input.role, app).tools;
   const selectedTools = [...declared.filter(t => !input.denyTools?.includes(t)), ...(input.addTools ?? [])];
   const handIn = input.reviewLead ? ["rule_review"] : input.reviewCheck ? ["submit_review"] : selectedTools.filter(t => ROLE_TOOLS.includes(t) && (!input.replay || input.replay.tools.includes(t)));
@@ -954,7 +971,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     id: `peer:${borrowed.device}:${borrowed.backend}`, peer: { id: borrowed.device, agent: borrowed.backend },
     transport: "acp", command: "omem", args: [], env: { OMEM_HOME: app.home }, idleTimeoutMs: 600000,
     model: input.execution?.model, effort: input.execution?.effort,
-  }) : member && raw ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, member).slice(1).filter(supports) })
+  }) : member && raw ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, member).slice(1).filter(p => supports(p) && meetsFloor(p)) })
     : accountProfile(app, { ...input, actor });
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : undefined;
@@ -970,7 +987,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     scene: { kind: runKind, chat: !internal && (runKind === "ask" || runKind === "guest" || runKind === "lark-command"), awareness: !internal && !!runInput.turnContext },
     awarenessNote: internal ? undefined : withTools => awarenessNote(app, input.runId, withTools),
   });
-  if (execution && primary.id === execution.profile) validateExecution(app, { ...execution, model: primary.model, effort: primary.effort }, input.userId);
+  if (execution && primary.id === execution.profile) validateExecution(app, { ...execution, model: primary.model, effort: primary.effort }, input.userId, !!coding);
   // A run (a role's or an Agent 档案's) may move to its other configured backends when its model is
   // full, and to the fallbacks when the backend is busy, out of quota, or breaks down (failoverProfiles).
   // An AI the owner or the assistant named for this run is used first and alone while it can take the
@@ -980,9 +997,10 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // The order to move on in: the chooser's ranking by the owner's routing notes when it ran, then the
   // static order (the role's other backends, the fallbacks, the candidates) for whatever it did not rank.
   const single = !!input.boardAccess || !!input.shadow || execution?.source === "flow" || ((execution || specified || login) && app.config.agents.routing.pinnedFallback === "never");
-  const fallbacks = single ? [] : failoverProfiles(app, actor, primary, own, member);
+  const fallbacks = single ? [] : [...failoverProfiles(app, actor, primary, own, member), ...tierProfiles.filter((p): p is AgentProfile => !!p && backendAvailable(p, app.home))];
   const candidates = distinctProfiles([primary, ...(single ? [] : chosen?.order ?? []), ...fallbacks]).flatMap((p, i) => {
     if (i === 0) return [p];
+    if (!meetsFloor(p)) return [];
     if (!member) return !excluded(app, p) && !accountBlocked(app, input.userId ?? OWNER, p) ? [accountFor(app, input.userId, p)] : [];
     const plan = memberAccountPlan(app, member, p, runInput.ownAccountOnly);
     return plan.kind === "ready" && !excluded(app, plan.profile) ? [plan.profile] : [];
@@ -1040,6 +1058,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let carry = "";
   let acted = false;
   let writesBefore = 0;
+  let retrySame: { index: number; sessionId?: string } | undefined;
   // The default account's plan limit is nearly used: acquire puts it after the others.
   const nearlySpent = chain.length > 1 ? quotaAvoid(app, chain[0]) : null;
   const writes = () => (input.runId ? one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", input.runId)!.n : 0);
@@ -1065,8 +1084,10 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const restarted = input.runId && !input.shadow && !input.replay ? takeRestart(app, input.runId) : null;
   try {
     for (let i = 0; i < chain.length; i++) {
+      const retry = retrySame?.index === i ? retrySame : undefined;
+      retrySame = undefined;
       // The named AI is out of quota or past the owner's daily cap: go straight to the next.
-      if (pinned && i === 0 && chain.length > 1) {
+      if (!retry && pinned && i === 0 && chain.length > 1) {
         const until = outOfQuotaUntil(app, chain[0]);
         const why = networkReason(app, chain[0]) ?? (until ? `额度用完（${new Date(until).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 恢复）` : dailyCapReached(app, chain[0]));
         if (why) {
@@ -1084,26 +1105,33 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       }
       let slot;
       try {
-        slot = await acquire(app, pinned && i === 0 ? [chain[0]] : chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
+        slot = await acquire(app, retry || (coding || pinned) && i === 0 ? [chain[i]] : chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
       } catch (e) {
         if (i === 0) revokeToolToken(base.token);
+        if (coding && !input.signal?.aborted && isBackendDown(e) && i < chain.length - 1) {
+          leftBecause = { busy: false, untouched: true, why: (e as Error).message, first: i === 0 };
+          await reorder(i + 1, (e as Error).message);
+          continue;
+        }
         throw e;
       }
       if (i === 0 && slot.index > 0) revokeToolToken(base.token);
       const moved = slot.index > 0;
       i += slot.index;
       const profile = chain[i];
-      const prep = i === 0 ? base : prepare(profile);
+      const prep = i === 0 && !retry ? base : prepare(profile);
       // A check may fall back inside the code run: its AI belongs on the review, not over the coder's.
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       acted = false;
       writesBefore = writes();
+      let attemptSession: string | undefined;
+      let requestedSession: string | undefined;
       try {
         recordIsolation(app, input.runId, input.userId!, prep.profile);
         if (prep.isolation.note) emit({ type: "status", text: prep.isolation.note });
         const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
         const workspace = prep.workspace;
-        let resumeSessionId = primaryKept && i === 0 ? input.resumeSessionId ?? (restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined;
+        let resumeSessionId = retry ? retry.sessionId : primaryKept && i === 0 ? input.resumeSessionId ?? (!coding && restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined;
         if (member && resumeSessionId && prep.profile.transport === "acp") {
           const { sessionMatchesAccount } = await import("./session-cleanup.ts");
           if (!sessionMatchesAccount(app, resumeSessionId, prep.profile)) {
@@ -1111,7 +1139,9 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
             resumeSessionId = undefined;
           }
         }
+        requestedSession = resumeSessionId;
         const sceneUpdate = resumeSessionId && prep.sceneGuide ? `\n\n## 本轮适用的场景说明\n\n${prep.sceneGuide}` : "";
+        const codingPrompt = coding && `${turnHeader(prep)}\n\n# 任务\n\n${coding.freshTask()}${prep.awareness}`;
         const req = {
           runId: input.runId,
           selection: pinned && i === 0 ? execution : undefined,
@@ -1124,7 +1154,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           capabilities: prep.capabilities,
           parts: prep.parts,
           scene: prep.scene,
-          prompt: `${turnHeader(prep)}\n\n${carry ? `${carry}\n\n---\n\n` : ""}${primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${prep.awareness}${sceneUpdate}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
+          prompt: codingPrompt && (retry || !resumeSessionId) ? codingPrompt : `${turnHeader(prep)}\n\n${carry ? `${carry}\n\n---\n\n` : ""}${!coding && primaryKept && i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${prep.awareness}${sceneUpdate}${workspace?.pointers?.length ? "\n\n成员沙箱中的 Git 目录属于本轮。请在分配的分支上直接提交，宿主按登记的分支接收提交。临时分支需要命名时用分支说明中指定的宿主工具。" : ""}`,
+          freshPrompt: codingPrompt || undefined,
           allowWrites: prep.allowWrites, doubaoPermission: prep.doubaoPermission,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
@@ -1136,7 +1167,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           persistSession: input.persistSession ?? !!input.resumeSessionId,
           queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
         };
-        if (i > 0) {
+        if (i > 0 && !retry) {
           const network = networkReason(app, chain[0]);
           const why = network ? `${firstWho}网络受限（${network}）` : leftBecause && !leftBecause.busy && !moved
             ? `${leftBecause.first ? firstWho : "上一个后端"}${leftBecause.untouched ? "没有开始工作就失败了" : "中途出错"}（${leftBecause.why}）`
@@ -1151,11 +1182,15 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           emit({ type: "status", text: aiUsageText(profile, prep.fullAccess ? "完全访问" : undefined, req.selection) });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         const quietBefore = quietSet(app, input.runId);
+        const ai = { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort };
         const watch = (e: AgentEvent) => {
           if (e.type === "tool") acted = true;
+          if (coding && e.type === "session") {
+            attemptSession = e.sessionId;
+            coding.onSession({ sessionId: e.sessionId, ai });
+          }
           emit(e);
         };
-        const ai = { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort };
         let result: AgentResult;
         try {
           if (input.reuseSession && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp") {
@@ -1182,6 +1217,13 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         // The backend broke down (crash, dropped connection, silent past the watchdog, the upstream
         // stream cut off): another one takes over even midway, told what this attempt already wrote.
         const down = !busy && isBackendDown(e);
+        const resumeLost = !!requestedSession && !attemptSession && e instanceof Error && /(?:session|thread|会话).*(?:not found|does not exist|no rollout|missing|不存在|找不到)|no (?:session|thread|rollout)/i.test(e.message);
+        if (coding && !retry && !input.signal?.aborted && (down || resumeLost || (busy && !!(attemptSession || requestedSession)))) {
+          retrySame = { index: i, sessionId: resumeLost ? undefined : attemptSession ?? requestedSession };
+          emit({ type: "status", text: resumeLost ? "原编码会话已不在，先在同一后端带上已有进展开新会话" : "编码后端中途出错，先在同一后端重试一次，能恢复就沿用原会话" });
+          i--;
+          continue;
+        }
         // Set it (or its model) aside for a while, so the next runs go elsewhere first.
         noteBreakdown(app, prep.profile, e, emit);
         const untouched = !acted && writes() === writesBefore;
@@ -1195,9 +1237,13 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           continue;
         }
         // The AI named for the run moves on only when it cannot take it (busy or broke down).
-        const movable = e instanceof SandboxStartError || (pinned && i === 0 ? busy || down : busy || untouched || down);
-        if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !movable || i === chain.length - 1) throw e;
-        if (!untouched) carry = (await import("./retry.ts")).partialAttemptNote(app, input.runId, writesBefore, e, aiLabel({ profile: prep.profile.id, model: prep.profile.model }));
+        const movable = e instanceof SandboxStartError || (pinned && i === 0 ? busy || down || resumeLost : busy || untouched || down);
+        if (e instanceof ResumeRunAt || (e as Error).message === "CANCELLED" || input.signal?.aborted || !movable) throw e;
+        if (i === chain.length - 1) {
+          if (coding) throw new Error(`没有可用且确认不低于原编码档位的后端，已停止，不降档：${(e as Error).message}`, { cause: e });
+          throw e;
+        }
+        if (!untouched && !coding) carry = (await import("./retry.ts")).partialAttemptNote(app, input.runId, writesBefore, e, aiLabel({ profile: prep.profile.id, model: prep.profile.model }));
         leftBecause = { busy, untouched, why: (e as Error).message.slice(0, 120), first: i === 0 };
         await reorder(i + 1, (e as Error).message);
         lastError = e;

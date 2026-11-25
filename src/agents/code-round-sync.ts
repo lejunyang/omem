@@ -15,6 +15,7 @@ type Active = {
   branch: string;
   steps: SyncStep[];
   stopped?: SyncState;
+  mergeParents?: string[];
   marked: string[];
   remaining?: SyncRequest;
   restoring?: boolean;
@@ -27,6 +28,7 @@ type Args = BranchSync & { request_id?: string; continue?: boolean; abort?: bool
 export const codeRoot = (run: Run) => String(run.input.continueFrom ?? run.id);
 const requests = (app: App, root: string) => (getRun(app, root).output.branchSyncRequests ?? []) as Request[];
 export const activeBranchSync = (app: App, root: string) => getRun(app, root).output.activeBranchSync as Active | null | undefined;
+export const hasBranchSyncRequests = (app: App, root: string) => !!activeBranchSync(app, root) || requests(app, root).length > 0;
 export const roundSyncReport = (app: App, runId: string) => (getRun(app, runId).output.roundBranchSync ?? []) as Summary[];
 
 export function normalizeBranchSync(sync: SyncRequest) {
@@ -81,9 +83,14 @@ export function openBranchSyncRound(round: Omit<Running, "delivered">) {
 export function takeBranchSyncSteering(app: App, runId: string) {
   const live = running.get(runId);
   if (!live || live.app !== app) return "";
-  const pending = requests(app, codeRoot(live.run)).filter(x => !live.delivered.has(x.id));
+  const root = codeRoot(live.run);
+  const active = activeBranchSync(app, root);
+  const pending = requests(app, root).filter(x => !live.delivered.has(x.id) && x.id !== active?.request.id);
   for (const item of pending) live.delivered.add(item.id);
-  return pending.length ? `## 本人要求先同步\n\n${pending.map(x => `- ${x.space}：${JSON.stringify(x.sync)} → 调用 sync_branch(${JSON.stringify({ request_id: x.id })})`).join("\n")}\n\n依赖同步结果的修改先不要做。` : "";
+  const resume = active?.stopped && !live.delivered.has(active.request.id) ? `- ${active.request.space} 的同步停在 ${active.stopped.label}，先解决冲突，再调用 sync_branch({"continue":true})。` : "";
+  if (resume) live.delivered.add(active!.request.id);
+  const lines = [resume, ...pending.map(x => `- ${x.space}：${JSON.stringify(x.sync)} → 调用 sync_branch(${JSON.stringify({ request_id: x.id })})`)].filter(Boolean);
+  return lines.length ? `## 本人要求先同步\n\n${lines.join("\n")}\n\n依赖同步结果的修改先不要做。` : "";
 }
 
 const head = (path: string) => git(path, ["rev-parse", "--verify", "HEAD"]).stdout.trim();
@@ -144,6 +151,10 @@ async function perform(round: Omit<Running, "delivered">, request: Request, reso
       const left = stageResolvedConflicts(path, old.conflicts, active.marked, resolved);
       if (left.length) return { head: head(path), stopped: { ...old, conflicts: left } };
       if (!active.restoring) {
+        if (active.mergeParents && !syncInProgress(path)) {
+          const parents = git(path, ["show", "-s", "--format=%P", "HEAD"]).stdout.trim().split(" ");
+          if (parents.join(" ") !== active.mergeParents.join(" ")) throw new HttpError(409, "当前提交不是这次同步的合并提交；不能登记，先核对或放弃同步");
+        }
         const last = active.steps.at(-1);
         const later = await finishSync(path, old.label, pause, last?.conflicts);
         if (last) last.to = head(path);
@@ -155,6 +166,7 @@ async function perform(round: Omit<Running, "delivered">, request: Request, reso
         }
       }
       delete active.stopped;
+      delete active.mergeParents;
       save();
     }
     if (!active.restoring) {
@@ -165,6 +177,10 @@ async function perform(round: Omit<Running, "delivered">, request: Request, reso
         active.stopped = result.stopped;
         active.restoring = "restoring" in result && result.restoring;
         if (active.restoring) active.restoreConflicts = result.stopped.conflicts;
+        if (!active.restoring && syncInProgress(path) === "merge") {
+          const incoming = git(path, ["rev-parse", "--verify", "MERGE_HEAD"]).stdout.trim();
+          if (incoming) active.mergeParents = [head(path), incoming];
+        }
         active.remaining = "remaining" in result ? result.remaining : undefined;
         save();
         projectMemberSync(app, run.id, wt.space, path, "conflict");
@@ -245,7 +261,8 @@ export async function syncBranchTool(app: App, runId: string, args: Args, allow:
   try {
     const result = await operation;
     if (!result.stopped) return result.summary!.summary;
-    return `${live.conflictText(wt, result.stopped)}\n\n解决后调用 sync_branch(continue: true)，不要提交。删文件、解决二进制冲突等需要宿主暂存时，把已解决的文件加进 resolved。实在解决不了用 sync_branch(abort: true) 恢复同步前，再如实报告卡点；先不要做依赖这次同步的修改。`;
+    const merge = activeBranchSync(app, root)?.mergeParents;
+    return `${live.conflictText(wt, result.stopped)}\n\n${merge ? "合并冲突解决后，自己暂存并提交这次合并，再调用 sync_branch(continue: true) 登记。如果工作区不允许直接提交，也可用该调用完成。" : "解决后调用 sync_branch(continue: true)，不要另提普通提交。"}删文件、解决二进制冲突等需要宿主暂存时，把已解决的文件加进 resolved。实在解决不了用 sync_branch(abort: true) 恢复同步前，再如实报告卡点；先不要做依赖这次同步的修改。`;
   } finally {
     delete live.busy;
   }

@@ -1,5 +1,5 @@
 import { receiveMemberGit } from "./member-git.ts";
-import { abortBranchSync, activeBranchSync, openBranchSyncRound, roundSyncReport, runQueuedBranchSync, takeBranchSyncSteering, type BranchSync } from "./code-round-sync.ts";
+import { abortBranchSync, activeBranchSync, checkSyncBranch, hasBranchSyncRequests, openBranchSyncRound, queueBranchSync, roundSyncReport, runQueuedBranchSync, takeBranchSyncSteering, type BranchSync } from "./code-round-sync.ts";
 import { checkLessons, lessonsText } from "./code-lessons.ts";
 import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
@@ -18,12 +18,13 @@ import { businessOf, childSpaces, findSpace, getSpace, type Space } from "../cor
 import { HttpError, stripAnsi, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
-import { addRunEvent, createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
+import { addRunEvent, createRun, getRun, ResumeRunAt, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { leasedTo, leaseWorkspace, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "./workspaces.ts";
 import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, temporaryWorkBranch, siblingsText, withDiffBase } from "./code-branch.ts";
 import { replyOf } from "./types.ts";
-import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
+import { latestRound, markNotesDelivered, notesText, pendingNotes, roundStage, type RoundReview } from "./code-steer.ts";
+import { codingAttemptOf, priorCodingRun, recoveryBrief, type CodingAI } from "./code-recovery.ts";
 import { isSourceFile } from "../sources/chunk.ts";
 import { OWNER } from "../core/users.ts";
 import { retireRecordedSession } from "./session-cleanup.ts";
@@ -239,10 +240,7 @@ export async function repositoryCommand(app: App, run: Run, wt: WorktreeRef, com
 }
 
 /** The check command a round of a delegation runs in a repository: named for it, for all, or the repository's own. */
-export function checkCommandOf(app: App, run: Run, space: string): string | undefined {
-  const input = run.input as { checks?: Record<string, string>; checkCommand?: string };
-  return input.checks?.[space] ?? input.checkCommand ?? ((findSpace(app, space)?.settings.checkCommand as string | undefined) || undefined);
-}
+export { checkCommandOf } from "./code-check-state.ts";
 
 /** The host's last check of a repository in a delegation (any round), newest first. */
 export function latestCheck(app: App, rootId: string, space: string): Check | null {
@@ -420,12 +418,20 @@ ${input.task}
   // work onto the target branch's latest commit. Conflicts go to the coding Agent (code-sync.ts).
   const branchSyncRound = {
     app, run, trees: worktrees, roots: new Map(repos.map(repo => [repo.id, repo.rootPath!])), event: ctx.event,
-    conflictText: (wt: WorktreeRef, stopped: import("./code-sync.ts").SyncState) => conflictTask(wt, stopped.conflicts, stopped.label, input.task),
+    conflictText: (wt: WorktreeRef, stopped: import("./code-sync.ts").SyncState) => conflictTask(wt, stopped.conflicts, stopped.label, input.task, true),
   };
+  const taskWork = !!getRun(app, rootRunId).input.taskMode && !input.branches && !input.peerCoder;
+  const hasWork = taskWork && (await import("./code-tasks.ts")).listTasks(app, rootRunId).some(task => task.state === "todo" || task.state === "coding");
+  const skipCoder = !!(input.moveToTarget || (input.syncOnly && !hasWork));
+  const inlineSync = taskWork && !skipCoder && !input.syncResume ? input.sync : undefined;
+  if (inlineSync && !run.output.explicitSyncQueued) {
+    queueBranchSync(app, run, worktrees.filter(tree => !inlineSync.space || tree.space === inlineSync.space).map(tree => tree.space), inlineSync);
+    ctx.output({ explicitSyncQueued: true });
+  }
   const recoveringBranchSync = activeBranchSync(app, rootRunId);
   const synced = recoveringBranchSync ? null : await syncPhase();
   if (synced === "stopped") return { verdict: "sync-conflict" };
-  if (!input.branches && !input.peerFinished && !input.moveToTarget) {
+  if (!input.branches && !input.peerFinished && !input.moveToTarget && (skipCoder || input.syncResume || input.peerCoder)) {
     try {
       if (await runQueuedBranchSync(branchSyncRound, resolverFor)) return pauseBranchSync();
     } catch (error) {
@@ -469,7 +475,6 @@ ${input.task}
       coderTask = `${coderTask}\n\n（宿主在 ${repo.id} 运行准备命令 \`${command}\` 失败，退出码 ${r.code}，依赖可能不全；需要时自己修好再继续。输出末尾：\n${fence("", tail)}）`;
     }
   }
-  const skipCoder = !!(input.syncOnly || input.moveToTarget);
   // A task-driven delegation: what to revert first, then the tasks this round codes (code-tasks.ts).
   const taskMode = !!getRun(app, rootRunId).input.taskMode && !input.branches && !skipCoder && !input.peerCoder;
   // A round that only takes things back (the owner reverted, nothing to code): no coding Agent.
@@ -488,10 +493,11 @@ ${input.task}
       ctx.output({ lessonBases });
     }
     const reverted = tasks.applyReverts(app, rootRunId, worktrees, (text) => ctx.event("status", { text }), identity);
+    if (!run.output.deliveryBases) ctx.output({ deliveryBases: Object.fromEntries(worktrees.map(wt => [wt.space, git(workDirOf(wt), ["rev-parse", "HEAD"]).stdout.trim()])) });
     const taken = tasks.takeTasks(app, rootRunId, run.id);
     // This run coded before a restart stopped it (its tasks are done or being verified): it goes on
     // to verification and review with what it wrote, not as a round with nothing to code.
-    if (continueFrom && !taken.length && !ranBefore) {
+    if (continueFrom && !taken.length && !ranBefore && !input.roundNotes && !pendingNotes(app, run.id).length && !hasBranchSyncRequests(app, rootRunId)) {
       gitOnly = reverted.length ? `这一轮只做了回退：${reverted.join("；")}` : "这一轮没有要编码的修改项";
       // Only a round that reverted skips the stage review (what it took back had been reviewed).
       ctx.output({ gitOnly: reverted.length > 0 });
@@ -503,7 +509,8 @@ ${input.task}
     coderTask = [
       head,
       continueFrom ? list : taken.length && taken.every((t) => t.origin.carried) ? `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”）。先用 \`plan_tasks\` 拆分上面的任务${w.budgetBy === "owner" ? `（本人给的预算：最多自动推进 ${w.budget} 轮）` : "，并估计要几轮"}，再逐项做；同一分支上之前的交办留下的这几项也在这一轮做（任务里已经要求的不要再拆一遍）：\n\n${list}` : taken.length ? `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”），这些已经列好，逐项做：\n\n${list}` : `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”）。先用 \`plan_tasks\` 拆分${w.budgetBy === "owner" ? `（本人给的预算：最多自动推进 ${w.budget} 轮）` : "，并估计要几轮"}，再逐项做。`,
-      continueFrom ? "继续在原来的工作区里改，这些项都在这一轮做完，不要做一两项就停下；已完成和不做的项不要动。每项照角色说明里“修改项”的做法提交，并用 finish_task 说明。" : "",
+      continueFrom ? "继续在原工作区做待做项，已完成和不做的项不要重做。每项单独提交并用 finish_task 说明；可先交已验证的一批。" : "",
+      (await import("./code-helpers.ts")).parallelTaskHint(app, run.id, taken, repos),
       continueFrom && typeof input.roundNotes === "string" ? input.roundNotes : "",
       outside ? `## ${outside.owner ? "本人在这一轮之前改过代码" : "分支上有别人的新提交"}\n\n${outside.owner ? "本人" : "分支上"}改过这些文件（检查点 ${outside.checkpoint.seq}）：${outside.files.slice(0, 30).join("、")}${outside.files.length > 30 ? ` 等 ${outside.files.length} 个` : ""}。这些改动保留，不要覆盖或回退；和你要做的冲突时先用 report_task 交给本人。` : "",
       where.trim(),
@@ -548,7 +555,7 @@ ${input.task}
     coderTask = `${coderTask}\n\n## 宿主已做的 Git 同步\n\n${[beforeCodingSync, heads].filter(Boolean).join("\n")}\n\n拉取、合并、变基用 sync_branch，不要自己 fetch / pull / merge；推送仍由宿主做。`;
   }
   // What the owner added while this round waited in the queue.
-  const early =input.branches || skipCoder || input.peerCoder ? [] : pendingNotes(app, run.id);
+  const early = input.branches || skipCoder || input.peerCoder ? [] : pendingNotes(app, run.id);
   if (early.length) {
     coderTask = `${coderTask}\n\n${notesText(early, app.config.timezone)}`;
     markNotesDelivered(app, run.id, early);
@@ -565,8 +572,11 @@ ${input.task}
   try {
     coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : gitOnly ?? (input.peerFinished ? input.task : coded ? String(coded.coderSummary) : await code());
   } catch (error) {
-    if (!activeBranchSync(app, rootRunId)?.stopped) throw error;
-    return pauseBranchSync();
+    if (activeBranchSync(app, rootRunId)?.stopped) return pauseBranchSync();
+    if (!ctx.signal.aborted && !(error instanceof ResumeRunAt) && error instanceof Error && error.message !== "CANCELLED") {
+      notify(app, { userId: owner, title: `编码停下：${run.title}`, body: truncate(error.message, 650), link: `#/runs/${run.id}` });
+    }
+    throw error;
   }
   if (activeBranchSync(app, rootRunId)?.stopped) return pauseBranchSync();
   if (gitOnly) ctx.output({ coderSummary: gitOnly });
@@ -591,10 +601,10 @@ ${input.task}
     if (input.branches) return null;
     // Every coding round starts from the target branch's latest commits on origin, asked or not:
     // coding on an old commit leaves the work to be merged by hand later. Nothing to pull, no trace.
-    const implicit = !input.sync && !input.syncResume && !input.moveToTarget && !input.syncOnly && !retryOf && !input.peerFinished && worktrees.some((w) => w.targetBranch);
+    const implicit = !input.sync && !hasBranchSyncRequests(app, rootRunId) && !input.syncResume && !input.moveToTarget && !input.syncOnly && !retryOf && !run.input.restarted && !run.output.coderStartedAt && !input.peerFinished && worktrees.some((w) => w.targetBranch);
     const cs = await import("./code-sync.ts");
     const unfinished = worktrees.some((w) => cs.syncInProgress(w.path));
-    const req: BranchSync | undefined = input.sync ?? (implicit ? { pull: true } : unfinished ? { fetch: false } : undefined);
+    const req: BranchSync | undefined = (inlineSync ? undefined : input.sync) ?? (implicit ? { pull: true } : unfinished ? { fetch: false } : undefined);
     if (!req && !input.syncResume && !input.moveToTarget) return null;
     type Pending = { space: string; kind: "sync" | "move"; start?: string; label: string; conflicts: string[] };
     const before = ((getRun(app, rootRunId).output.syncPending ?? []) as Pending[]);
@@ -678,45 +688,62 @@ ${input.task}
     };
   }
   async function code() {
-    let resumeCoder = (input as { resumeSessionId?: string }).resumeSessionId;
+    if (!run.output.coderStartedAt) ctx.output({ coderStartedAt: new Date().toISOString() });
+    const prior = priorCodingRun(app, run, rootRunId, (input as { resumeSessionId?: string }).resumeSessionId);
+    const interrupted = !!run.input.restarted || !!retried;
+    const attempt = codingAttemptOf(run) ?? (retried ? codingAttemptOf(retried) : undefined);
+    const resumed = (input as { restarted?: { sessionId?: string; profileId?: string } }).restarted;
+    let resumeCoder = attempt?.sessionId ?? resumed?.sessionId ?? (input as { resumeSessionId?: string }).resumeSessionId;
+    const resumeAI = attempt?.ai ?? (resumed?.profileId ? { profile: resumed.profileId } : prior?.output.coderAI as CodingAI | undefined);
+    if (!interrupted && input.execution && (input.execution.profile !== (prior?.input.execution as CodeInput["execution"])?.profile ||
+      input.execution.model !== (prior?.input.execution as CodeInput["execution"])?.model ||
+      input.execution.effort !== (prior?.input.execution as CodeInput["execution"])?.effort)) resumeCoder = undefined;
     const previousSession = resumeCoder;
-    const previousId = chain?.rounds.filter((id) => id !== run.id).at(-1);
-    if (resumeCoder && previousId) {
-      const previous = getRun(app, previousId);
-      const profile = resolveRunProfile(app, { actor: { role: "coder" }, ...executionArgs(input.execution) });
-      const expected = { profile: profile.id, model: profile.model, effort: profile.effort };
-      if (previous.output.coderAI && JSON.stringify(previous.output.coderAI) !== JSON.stringify(expected)) resumeCoder = undefined;
+    if (resumeCoder && prior && !interrupted) {
       // Every call of a resumed round carries the session's whole history (files read, checks, earlier
       // rounds): past the limit a new session reads the branch instead.
-      const held = previous.output.coderContext as { used: number; size: number } | undefined;
+      const held = prior.output.coderContext as { used: number; size: number } | undefined;
       const limit = app.config.sessions.codeResumeMaxTokens;
       if (resumeCoder && held && held.used > limit) {
         resumeCoder = undefined;
         ctx.event("status", { phase: "coder", text: `上一轮的编码会话已有 ${Math.round(held.used / 1000)}K 上下文（超过 ${Math.round(limit / 1000)}K），这一轮换新会话，从工作分支接着做` });
       }
     }
-    // Later rounds resume this session, so it is kept even on backends that would discard it.
-    const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
+    const runCoder = async (task: string, resumeSessionId?: string, ai?: CodingAI, startup = false) => {
+      const recoveryTask = () => {
+        const current = getRun(app, run.id);
+        const within = interrupted || !!codingAttemptOf(current) || !startup;
+        if (!within && !prior && !continueFrom) return task;
+        const progress = recoveryBrief(app, rootRunId, current, worktrees, retried ?? prior);
+        const brief = within && taskMode && progress.taskCount ? `接着做被中断的本轮，不重新拆原任务。${where}${startup ? `\n\n${syncFirst}` : `\n\n${task}`}` : startup ? [syncFirst, freshTask].filter(Boolean).join("\n\n") : task;
+        return `${brief}\n\n${progress.markdown}`;
+      };
+      const result = await runRole(app, {
       role: "coder",
       addTools: ["sync_branch", ...(nameable.size ? ["name_work_branch"] : []), ...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests", ...(describes ? ["submit_design"] : [])],
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,
-      task: [task, lessonsText(app, repos.map(r => r.id))].filter(Boolean).join("\n\n"),
+      task: interrupted && startup ? recoveryTask() : withLessons(task),
       runId: run.id,
       cwd,
       worktrees,
       worktreeAccess: "commit",
       signal: ctx.signal,
       resumeSessionId,
+      codingRecovery: { resumeAI: ai, freshTask: () => withLessons(recoveryTask()), onSession: value => ctx.output({ coderAttempt: value }) },
       persistSession: true,
       artifacts: true,
       onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
-    });
+      });
+      ctx.output({ coderProgress: truncate(replyOf(result), 3500), ...(result.sessionId ? { coderAttempt: { ai: result.ai, sessionId: result.sessionId } } : {}) });
+      return result;
+    };
+    const withLessons = (text: string) => [text, lessonsText(app, repos.map(r => r.id))].filter(Boolean).join("\n\n");
     // A new session on a later round has not seen the original task: give it along with this round's.
-    const first = continueFrom && !retried && chain?.rounds[0] && chain.rounds[0] !== run.id ? String(getRun(app, chain.rounds[0]).input.task ?? "") : "";
+    const first = continueFrom && !retried ? String(getRun(app, rootRunId).input.task ?? "") : "";
     // …and what the earlier rounds did, which it reads from the branch rather than from their history.
-    const before = previousId ? String(getRun(app, previousId).output.coderSummary ?? "") : "";
+    const before = String(prior?.output.coderSummary ?? "");
     const commits = worktrees.map((wt) => {
       const log = git(workDirOf(wt), ["log", "--oneline", "-30", `${wt.commits ? changeBase(workDirOf(wt), wt) : wt.start ?? wt.base}..HEAD`]);
       return log.ok && log.stdout.trim() ? `${multi ? `${wt.space}：\n` : ""}${log.stdout.trim()}` : "";
@@ -748,28 +775,21 @@ ${input.task}
     let coder: Awaited<ReturnType<typeof runCoder>>;
     let reply: string;
     const closeBranchSync = openBranchSyncRound(branchSyncRound);
+    const syncFirst = takeBranchSyncSteering(app, run.id);
     try {
-      try {
-        coder = await runCoder(resumeCoder ? coderTask : freshTask, resumeCoder);
-      } catch (e) {
-        if (!resumeCoder || ctx.signal.aborted) throw e;
-        // The previous session is gone (cleaned up, or the backend cannot resume it): the worktree
-        // still has the changes, so a new session carries on from there.
-        ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
-        coder = await runCoder(freshTask);
-      }
+      coder = await runCoder([syncFirst, coderTask].filter(Boolean).join("\n\n"), resumeCoder, resumeAI, true);
       if (previousSession && coder.sessionId && previousSession !== coder.sessionId)
         await retireRecordedSession(app, previousSession, e => ctx.event(e.type, { ...e, phase: "coder" }));
       // What the owner added while it worked and it did not pick up at an omem tool call: one more turn
       // in the same session, before the checks (code-steer.ts).
       reply = replyOf(coder);
-      for (let i = 0; i < 3 && !ctx.signal.aborted && coder.sessionId; i++) {
+      while (!ctx.signal.aborted) {
         const notes = pendingNotes(app, run.id);
         const sync = takeBranchSyncSteering(app, run.id);
         if (!notes.length && !sync) break;
         markNotesDelivered(app, run.id, notes);
         ctx.event("status", { phase: "coder", text: `把 ${notes.length} 条本人补充交给编码 Agent，接着改` });
-        coder = await runCoder([sync, notes.length ? notesText(notes, app.config.timezone) : ""].filter(Boolean).join("\n\n"), coder.sessionId);
+        coder = await runCoder([sync, notes.length ? notesText(notes, app.config.timezone) : ""].filter(Boolean).join("\n\n"), coder.sessionId, coder.ai);
         reply = `${reply}\n\n## 按本人补充继续\n\n${replyOf(coder)}`;
       }
       // Its turn is over: the checks verify what it finished; what is not fixed, what a second look found
@@ -788,7 +808,7 @@ ${input.task}
         const notes = pendingNotes(app, run.id);
         if (notes.length) markNotesDelivered(app, run.id, notes);
         ctx.event("status", { phase: "coder", text: back.includes("## 这一轮还没做的项") ? "这一轮还有项没做，让编码 Agent 在同一会话里接着做" : "把评审的反馈交给编码 Agent，在这一轮接着改" });
-        coder = await runCoder([back, notes.length ? notesText(notes, app.config.timezone) : ""].filter(Boolean).join("\n\n"), coder.sessionId);
+        coder = await runCoder([back, notes.length ? notesText(notes, app.config.timezone) : ""].filter(Boolean).join("\n\n"), coder.sessionId, coder.ai);
         reply = `${reply}\n\n## 接着做\n\n${replyOf(coder)}`;
         const now = progress();
         moved = now !== mark;
@@ -813,7 +833,7 @@ ${input.task}
     const wt = worktrees[i];
     const command = commandFor(repo);
     let check: Check | null = null;
-    if (command) {
+    if (command && !taskMode && !skipCoder) {
       ctx.event("status", { text: `运行检查${multi ? `（${repo.id}）` : ""}：${command}` });
       check = await repositoryCommand(app, run, wt, command, ctx.signal);
     }
@@ -1352,7 +1372,7 @@ function workRoundIds(app: App, rootId: string) {
 }
 
 /** What the coding Agent is told when Git stops on conflicts. */
-export function conflictTask(wt: WorktreeRef, files: string[], label: string, task: string) {
+export function conflictTask(wt: WorktreeRef, files: string[], label: string, task: string, inline = false) {
   return `# 解决 Git 冲突：${label}
 
 仓库 ${wt.space} 的工作区 ${wt.path} 里，下面这些文件有冲突：
@@ -1366,8 +1386,8 @@ ${truncate(task, 3000)}
 要求：
 1. 读两边的改动（\`git diff\`、\`git log --merge\`、\`git show :2:<文件>\` / \`:3:<文件>\`），按两边的意图合并，不要简单地选一边丢掉另一边的功能。
 2. 业务上拿不准取舍的（两边都改了同一个规则、同一个接口）用 ask_user 问本人，给出选项并说明各自的后果；本人没回答前不要猜。
-3. 解决后删掉所有冲突标记，宿主会暂存已清除标记的冲突文件；能跑检查命令就跑一下。
-4. 不要 commit，不要继续或中止 merge / rebase / cherry-pick / revert，宿主会接着做。
+3. 解决后删掉所有冲突标记，只跑和冲突解决相关的检查。
+4. ${inline ? "按同步工具的说明完成提交或登记，留在这个会话接着做。" : "不要 commit，不要继续或中止 merge / rebase / cherry-pick / revert，宿主会接着做。"}
 5. 结束时逐个文件说明怎么解决的；实在解决不了的，说明卡在哪里（会交给本人）。`;
 }
 
@@ -1419,18 +1439,40 @@ registerAskHandler("code-sync", async (app, ask, ctx) => {
 
 /** Queue a round that moves the unapplied work onto the target branch's latest commit. */
 export async function queueMoveToTarget(app: App, runId: string, userId = OWNER, mode: "merge" | "rebase" = "merge") {
-  const run = getRun(app, runId);
+  const run = latestRound(app, runId);
   if (isBranchReview(run)) throw new HttpError(400, "分支评审没有要移动的改动");
+  const tasks = await import("./code-tasks.ts");
+  if (tasks.isTaskWork(app, run.id) && (roundStage(run) !== "ended" || tasks.listTasks(app, tasks.workRootOf(app, run.id)).some(task => task.state === "todo" || tasks.stranded(app, task))))
+    return requestCodeSync(app, run.id, { pull: true, mode }, userId);
   return queueGitRound(app, run, `${mode === "merge" ? "合并目标分支的最新提交，集中处理冲突" : "将改动变基到目标分支的最新提交"}（冲突交给编码 Agent，解决不了找本人）`, { moveToTarget: true, moveToTargetMode: mode }, userId);
 }
 
 /** Queue a round that merges or rebases the work branch onto another branch (conflicts to the coding Agent). */
 export async function queueSyncRound(app: App, runId: string, sync: { onto: string; mode: "merge" | "rebase" }, userId = OWNER) {
-  const run = getRun(app, runId);
+  return requestCodeSync(app, runId, sync, userId);
+}
+
+export async function requestCodeSync(app: App, runId: string, sync: BranchSync, userId = OWNER) {
+  const run = latestRound(app, runId);
   if (isBranchReview(run)) throw new HttpError(400, "分支评审没有工作分支");
-  const first = getRun(app, String(run.input.continueFrom ?? run.id));
+  const root = String(run.input.continueFrom ?? run.id);
+  const first = getRun(app, root);
   if (first.output.appliedAt || first.output.discardedAt) throw new HttpError(409, "这次交办已经确认或丢弃");
-  return queueGitRound(app, run, `把 ${sync.onto} ${sync.mode === "rebase" ? "变基" : "合并"}到工作分支上（冲突交给编码 Agent，解决不了找本人）`, { sync: { onto: sync.onto, mode: sync.mode }, syncOnly: true }, userId);
+  const repos = codeRepos(app, run.spaceId!, (run.input as CodeInput).repos);
+  const selected = sync.space ? repos.filter(repo => repo.id === sync.space) : repos;
+  if (!selected.length) throw new HttpError(400, "space 只能指定这次交办里的仓库");
+  for (const repo of selected) checkSyncBranch(repo.rootPath!, sync.onto);
+  queueBranchSync(app, run, selected.map(repo => repo.id), sync);
+  const tasks = await import("./code-tasks.ts");
+  const taskMode = !!first.input.taskMode;
+  if (userId === OWNER && taskMode) tasks.renewBudget(app, root, Number(run.input.round ?? 1));
+  if (roundStage(run) !== "ended") return getRun(app, run.id);
+  if (taskMode && tasks.listTasks(app, root).some(task => task.state === "todo" || tasks.stranded(app, task))) {
+    const next = (await import("./code-loop.ts")).advanceWork(app, root, { owner: userId === OWNER });
+    if (next) return next;
+    throw new HttpError(409, "已登记待同步请求，但交办目前不能继续编码");
+  }
+  return queueGitRound(app, run, `同步工作分支${sync.onto ? `到 ${sync.onto}` : ""}（只处理冲突）`, { syncOnly: true }, userId);
 }
 
 /** A round of Git work in the same worktrees: in the delegation's conversation, or standalone (web, CLI). */

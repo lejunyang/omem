@@ -838,7 +838,8 @@ export async function runAcp(profile: AgentProfile, req: AgentRequest & { app?: 
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");
-    return await handle.prompt(sessionPrompt(handle, req, req.prompt, emit), emit, req.signal);
+    const prompt = handle.resumed ? req.prompt : req.freshPrompt ?? req.prompt;
+    return await handle.prompt(sessionPrompt(handle, req, prompt, emit), emit, req.signal);
   } finally {
     if (req.signal?.reason instanceof NetworkUnavailableError) { handle.close(); await handle.stopped; }
     else if (!req.persistSession && !handle.resumed) await handle.discard();

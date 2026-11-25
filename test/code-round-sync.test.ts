@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/agents/jobs.ts";
 import { codeChainFor, queueNextCodeRound } from "../src/agents/code-chain.ts";
-import { activeBranchSync, openBranchSyncRound, roundSyncReport, runQueuedBranchSync } from "../src/agents/code-round-sync.ts";
+import { activeBranchSync, openBranchSyncRound, roundSyncReport, runQueuedBranchSync, takeBranchSyncSteering } from "../src/agents/code-round-sync.ts";
 import { hasSyncStash, syncInProgress } from "../src/agents/code-sync.ts";
 import { worktreesOf } from "../src/agents/code.ts";
 import { __testHandlers, addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
@@ -95,6 +95,21 @@ describe("synchronizing a coding round in progress", { timeout: 60_000 }, () => 
     } finally { await close(); }
   });
 
+  it("records a merge that the original coder resolved and committed", async () => {
+    const theirs = commit(repo, "rules.txt", "theirs\n");
+    sh(repo, "push", "-q", "origin", "main");
+    const ours = commit(tree, "rules.txt", "ours\n");
+    const { round, tool, close } = direct();
+    try {
+      expect((await tool({ pull: true })).text).toContain("自己暂存并提交");
+      const merged = commit(tree, "rules.txt", "resolved\n");
+      expect((await tool({ continue: true })).isError).toBe(false);
+      expect(sh(tree, "rev-parse", "HEAD")).toBe(merged);
+      expect(sh(tree, "show", "-s", "--format=%P", merged)).toBe(`${ours} ${theirs}`);
+      expect(roundSyncReport(app, round.id)[0].summary).toContain(merged);
+    } finally { await close(); }
+  });
+
   it.each(["merge", "stash"])("aborts a %s conflict to the exact starting HEAD, index and files", async kind => {
     commit(repo, "rules.txt", "theirs\n");
     if (kind === "merge") commit(tree, "rules.txt", "ours\n");
@@ -132,21 +147,28 @@ describe("synchronizing a coding round in progress", { timeout: 60_000 }, () => 
     } finally { await close(); }
   });
 
-  it("consumes a review-time request before the following round codes", async () => {
+  it("hands a review-time request to the following coder before it continues working", async () => {
     const tip = commit(repo, "integration.txt", "confirmed\n");
     const { round, caller, chain } = setup();
     sql(app.db, "update runs set status='running' where id=?", round.id);
     setRunOutput(app, round.id, { coderSummary: "编码完成，开始评审" });
     expect(await callTool(caller, "continue_code_run", { run_id: round.id, sync: { onto: "main", fetch: false } }))
-      .toMatchObject({ isError: false, text: expect.stringContaining("下一次开始编码前自动同步") });
+      .toMatchObject({ isError: false, text: expect.stringContaining("交给接手的编码会话") });
     sql(app.db, "update runs set status='done' where id=?", round.id);
     const next = queueNextCodeRound(app, chain, "核对轮前同步", { manual: true })!.run;
-    expect(await runQueuedBranchSync({ app, run: next, trees: [wt], roots: new Map([["shop", repo]]), event: () => {}, conflictText: () => "" }, () => async () => {
-      throw new Error("不应有冲突");
-    })).toBeNull();
-    expect(sh(tree, "rev-parse", "HEAD^2")).toBe(tip);
-    expect(roundSyncReport(app, next.id)[0].summary).toContain(sh(tree, "rev-parse", "HEAD"));
-    expect(getRun(app, round.id).output.branchSyncRequests).toEqual([]);
+    sql(app.db, "update runs set status='running' where id=?", next.id);
+    const close = openBranchSyncRound({ app, run: next, trees: [wt], roots: new Map([["shop", repo]]), event: () => {}, conflictText: () => "" });
+    try {
+      const request = /"request_id":"([^"]+)"/.exec(takeBranchSyncSteering(app, next.id))?.[1];
+      expect(request).toBeTruthy();
+      expect((await callTool({ ...caller, role: "coder", runId: next.id, tools: new Set(["sync_branch"]) }, "sync_branch", { request_id: request })).isError).toBe(false);
+      expect(sh(tree, "rev-parse", "HEAD^2")).toBe(tip);
+      const merged = sh(tree, "rev-parse", "HEAD");
+      expect(roundSyncReport(app, next.id)[0].summary).toContain(merged);
+      commit(tree, "pending.txt", "made after sync\n");
+      expect(sh(tree, "rev-parse", "HEAD^1")).toBe(merged);
+      expect(getRun(app, round.id).output.branchSyncRequests).toEqual([]);
+    } finally { await close(); }
   });
 
   it("continues a saved conflict and finishes the remaining sync steps in a later round", async () => {
@@ -241,7 +263,7 @@ describe("synchronizing a coding round in progress", { timeout: 60_000 }, () => 
     sql(app.db, "update runs set status='running' where id=?", round.id);
     setRunOutput(app, round.id, { coderSummary: "编码完成，开始评审" });
     const queued = await callTool(caller, "continue_code_run", { run_id: round.id, sync: { onto: "integration", fetch: false } });
-    expect(queued).toMatchObject({ isError: false, text: expect.stringContaining("下一次开始编码前自动同步") });
+    expect(queued).toMatchObject({ isError: false, text: expect.stringContaining("交给接手的编码会话") });
     sql(app.db, "update runs set status='done' where id=?", round.id);
     const next = queueNextCodeRound(app, chain, "核对轮前同步", { manual: true })!.run;
     const server = await startServer(app, { port: 0, quiet: true });

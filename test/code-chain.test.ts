@@ -108,7 +108,10 @@ describe("delegated coding chains", () => {
     expect([latest.input.task, ...(latest.output.notes as { text: string }[]).map(note => note.text)]).toEqual(expect.arrayContaining(["修复评审的问题", "补充退款验证"]));
     run(app.db, "update runs set status='running' where id=?", latest.id);
     setRunOutput(app, latest.id, { coderSummary: "已交评审" });
-    expect((await callTool(ctx, "continue_code_run", { run_id: latest.id, task: "再补一项" })).isError).toBe(true);
+    // In review the request is no longer refused: it is recorded for the next coding turn, no extra round is queued.
+    const inReview = await callTool(ctx, "continue_code_run", { run_id: latest.id, task: "再补一项" });
+    expect(inReview).toMatchObject({ isError: false, text: expect.stringContaining("在评审中") });
+    expect((getRun(app, latest.id).output.notes as { text: string }[]).map(note => note.text)).toContain("再补一项");
     expect(queueNextCodeRound(app, chain, "自动再试")).toBeNull();
   });
 

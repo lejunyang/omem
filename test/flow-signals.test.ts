@@ -10,6 +10,7 @@ import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { applyCodeRun } from "../src/agents/code.ts";
 import { confirmBranchRun } from "../src/agents/code-branch.ts";
 import { actCodeGit, readCodeGit } from "../src/agents/code-git.ts";
+import { setWorkState } from "../src/agents/code-tasks.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { askConfirm } from "../src/agents/review-chain.ts";
 import { askCard } from "../src/channels/lark-asks.ts";
@@ -142,6 +143,20 @@ describe("Git 完成信号", () => {
     await checkGitSignals(t.app); expect(t.s().state).toBe("doing");
     expect(signals(t.app).at(-1)!.outcome).toContain("shop-1");
     t.push(1); await checkGitSignals(t.app); expect(t.s().state).toBe("done");
+  });
+  it("中途交付推进推送阶段，但不算已合并或结束编码", async () => {
+    for (const type of ["git.pushed", "git.merged"] as const) {
+      const t = await setup({ applied: false, by: "wait", type });
+      run(t.app.db, "update runs set status='running' where id=?", t.work.id);
+      const { space, branch, head } = t.repos[0];
+      await checkGitSignals(t.app);
+      expect(t.s().state).toBe("doing");
+      t.push();
+      setWorkState(t.app, t.work.id, { delivered: [{ at: new Date().toISOString(), branches: [{ space, branch, head }] }] });
+      await checkGitSignals(t.app);
+      expect(t.s().state).toBe(type === "git.pushed" ? "done" : "doing");
+      expect(getRun(t.app, t.work.id)).toMatchObject({ status: "running" });
+    }
   });
   it("交办没应用时不完成，同一个原因只记一次；重新尝试会重新记", async () => {
     const t = await setup({ applied: false }); t.push();

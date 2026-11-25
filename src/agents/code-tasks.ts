@@ -198,7 +198,7 @@ export function estimateBudget(app: App, rootId: string, rounds: number) {
   const w = workState(app, rootId);
   if (w.budgetBy === "owner") return w;
   const budget = clampBudget(app, rounds);
-  return setWorkState(app, rootId, { budget, budgetBy: "coder", until: Math.max(budget, 1) });
+  return setWorkState(app, rootId, { budget, budgetBy: "coder", until: w.until > w.budget ? Math.max(budget, w.until) : budget });
 }
 
 /** The owner acted (answered, added a task, said go on): from the current round there is a whole budget again. */
@@ -516,9 +516,9 @@ function startAt(app: App, worktrees: WorktreeRef[], to: Record<string, string> 
  * Where the work branch is now, as a numbered checkpoint. A ref under refs/omem keeps its commits
  * alive whatever happens to the branch later (squash, rebase, revert).
  */
-export function recordCheckpoint(app: App, rootId: string, worktrees: WorktreeRef[], by: string, tasks: number[], label: string): Checkpoint | null {
-  const heads: Record<string, string> = {};
-  for (const wt of worktrees) {
+export function recordCheckpoint(app: App, rootId: string, worktrees: WorktreeRef[], by: string, tasks: number[], label: string, exactHeads?: Record<string, string>): Checkpoint | null {
+  const heads: Record<string, string> = exactHeads ?? {};
+  for (const wt of exactHeads ? [] : worktrees) {
     const dir = gitDirOf(app, wt);
     const h = dir ? git(dir, ["rev-parse", "HEAD"]).stdout.trim() : "";
     if (h) heads[wt.space] = h;

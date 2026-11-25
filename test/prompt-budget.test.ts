@@ -19,7 +19,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "flow-reconcile": ["flow-reconcile", 5347, 5347, 2667, 2667],
   // Mid-round branch sync: the assistant passes `sync` and waits on the round, the coder calls sync_branch.
   // 情境 became 持续跟进的规则: the assistant's note on save_situation says what to call it with the owner.
-  "assistant": ["agent", 20504, 19805, 1679, 1581],
+  // 实测 2026-11-25：中途交付和编码补充的说明已计入。
+  "assistant": ["agent", 20690, 19991, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   "archive-rule-writer": ["archive-rule-draft", 3091, 3091, 2091, 2091],
@@ -30,7 +31,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "wiki-checker": ["wiki-write", 6403, 6403, 4035, 4035],
   "heartbeat": ["heartbeat", 7546, 7455, 3407, 3407],
   "dreamer": ["dream", 10446, 10250, 4908, 4908],
-  "coder": ["code", 7434, 7434, 3005, 3005],
+  // 实测 2026-11-25：同一会话处理同步冲突后，固定场景为 7344 / 2915 字符（不含专用交办工具）。
+  "coder": ["code", 7344, 7344, 2915, 2915],
   "reviewer": ["review", 4762, 4762, 2589, 2589],
   "tutor": ["tutor", 4513, 4513, 1954, 1954],
   "brief": ["brief", 7971, 7775, 3732, 3732],
@@ -113,7 +115,8 @@ it("bounds the HTTP instructions for each cloud role including every allowed too
     return { text: fakeCloudReceipt(app, nonce, "header"), agent: "test", stopReason: "end_turn" };
   });
   confirmProbe(app, "doubao", probe.id);
-  const http = { assistant: [1756, 1658], gatekeeper: [2328, 2328], summarizer: [1866, 1866], "replay-judge": [2457, 2457], "mention-triage": [2257, 2257] } as const;
+  // 实测 2026-11-25：补充部分推送的说明后，助手的 HTTP 指令为 1796 / 1698 字符。
+  const http = { assistant: [1796, 1698], gatekeeper: [2328, 2328], summarizer: [1866, 1866], "replay-judge": [2457, 2457], "mention-triage": [2257, 2257] } as const;
   for (const role of Object.keys(http) as (keyof typeof http)[]) {
     for (const chat of [true, false]) {
       const scene = { chat, kind: chat ? "ask" as const : measured[role][0], awareness: chat };

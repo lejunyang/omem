@@ -92,6 +92,8 @@
 
 ## 同步
 
+普通合并冲突解完，可由主编码暂存并提交合并，再用 `sync_branch(continue: true)` 登记；工作区不能直接提交时仍可用该调用完成。同一会话继续做待做项，不另开同步回合。
+
 - 本人中途明确要合并或拉取分支时，`continue_code_run(when: "now", task: ..., sync: ...)` 的 `task` 写其余要求，`sync` 写分支；只要求同步就不写 `task`。运行中不会另开一轮：主编码在下一次 omem 工具调用收到 `request_id`，排队、评审中或没执行的请求由宿主在下一次编码前处理。对同一仓库重复登记相同的待同步请求只留一条。
 - 主编码用 `sync_branch(request_id)` 执行请求，也可以直接传 `onto`、`pull`、`mode`、`fetch`；不填 `onto` 时拉取目标分支的远端最新，多仓库直接发起时要填 `space`。只动本次交办的工作树，不推送。返回冲突时改工作区文件，再用 `sync_branch(continue: true)`；删文件、二进制等需宿主暂存的已解决文件放进 `resolved`。放回未提交改动也可能再有冲突。解决不了就 `sync_branch(abort: true)`，恢复到同步前再如实报卡点。
 - 交回助手时不能用 `continue_code_run` 续轮；可在 `settle_code_task(action: "retry")` 的交代里让编码 Agent 先同步。需要等具体轮次结束，用 `wake(on_run_end: {run_id, purpose}, note)`，不要设短定时轮询。
@@ -101,6 +103,9 @@
 - 冲突先交给编码 Agent（它可用 `ask_user` 问业务取舍），解决不了的停下来，给本人一张“已解决，继续 / 放弃这次同步”的卡片。同步产生的提交在应用时快进到目标分支，之后的编码改动照常作为未提交修改应用。
 
 ## 评审角色专用
+
+- `plan_review.repository_checks` 可按仓库空间填写 `{space, mode: "full" | "focused" | "skip", commands?, covers?, reason, reruns_failure?}`。`focused` 点名已有检查命令的子命令或同一测试工具带过滤条件的命令；`covers` 写上次全量通过后覆盖的变更文件，若有未验过的失败项一并补验。`skip` 只用于上次全量通过后仅文档改动或文件树未变。省略按全量；同一提交不重跑已通过的全量。
+- `finish_task(task, validation)` 记逐项真实验证，不必每项跑全量。`finish_task(checkpoint: [{task, validation}])` 可交工作分支上连续、已完成的几项。中途检查点只列这些验证，推送仍走本人确认。本人已明确要求推这一批时可用 `apply_code_run(keep_going: true, checkpoint: 序号)`；不带序号不表示选最新的中途检查点。
 
 `submit_review` 的问题用 `file` 和 `line` 定位。多行问题可加 `startLine`，`line` 表示末行。删除侧用 `side: "LEFT"`，省略时按改动后的行号处理。这些位置用于本人确认后发布行内评论。
 

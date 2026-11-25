@@ -9,13 +9,13 @@ import type { Execution } from "./execution.ts";
 import { addWorktree, recordHostCommand, shell } from "./code.ts";
 import { unmerged, resolveConflicts } from "./code-sync.ts";
 import { identity } from "./code-branch.ts";
-import { commitsByTask, commitTaskNumbers, getTask, taskLabel, taskText, updateTask, workRootOf } from "./code-tasks.ts";
+import { commitsByTask, commitTaskNumbers, getTask, taskLabel, taskText, updateTask, workRootOf, type CodeTask } from "./code-tasks.ts";
 import { runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import { getSpace, type Space } from "../core/spaces.ts";
 import { replyOf } from "./types.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
-import { releaseWorkspace, setupCommandFor, setupDone, setupKey } from "./workspaces.ts";
+import { listWorkspaces, releaseWorkspace, setupCommandFor, setupDone, setupKey } from "./workspaces.ts";
 
 /**
  * Parallel coding inside a round (docs/v2/coding-loop.md §4.2). The round's coder (the lead) hands
@@ -50,6 +50,37 @@ export function roundOpen(runId: string) {
 
 /** How many helpers a round may run at once (agents.autoAdvance.parallelCoders; 0: none). */
 export const helperLimit = (app: App) => app.config.agents.autoAdvance.parallelCoders;
+
+export function independentTaskGroups(tasks: CodeTask[]) {
+  const groups: CodeTask[][] = [];
+  const files = (task: CodeTask) => (task.origin.files ?? []).map(file => file.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, ""));
+  const linked = (left: CodeTask, right: CodeTask) => left.origin.follows === right.seq || right.origin.follows === left.seq ||
+    left.origin.redoOf === right.seq || right.origin.redoOf === left.seq || !!left.origin.decision && left.origin.decision === right.origin.decision ||
+    files(left).some(file => files(right).some(other => file === other || file.startsWith(`${other}/`) || other.startsWith(`${file}/`)));
+  for (const task of tasks) {
+    const overlaps = groups.filter(group => group.some(other => linked(task, other)));
+    for (const group of overlaps) groups.splice(groups.indexOf(group), 1);
+    groups.push([task, ...overlaps.flat()]);
+  }
+  return {
+    independent: groups.filter(group => group.every(task => files(task).length)),
+    unknown: groups.filter(group => group.some(task => !files(task).length)).flat(),
+  };
+}
+
+export function parallelTaskHint(app: App, runId: string, tasks: CodeTask[], repos = rounds.get(runId)?.repos ?? []) {
+  const limit = helperLimit(app);
+  if (!limit || tasks.length < 2) return "";
+  const active = rounds.get(runId)?.helpers.filter(helper => ["queued", "running"].includes(getRun(app, helper.runId).status)).length ?? 0;
+  const { independent, unknown } = independentTaskGroups(tasks);
+  const free = repos.map(repo => `${repo.id} 空闲 ${listWorkspaces(app, repo).filter(slot => slot.state === "free").length} 个`).join("、");
+  return [
+    "## 并行编码的事实（按预计路径，不代替依赖判断）",
+    `当前有 ${Math.max(0, limit - active)} 个编码助手名额${free ? `；可复用工作区：${free}（不够可新建隔离 worktree）` : ""}。`,
+    independent.length >= 2 ? `预计路径不交叠的组：${independent.map(group => group.map(task => taskLabel(task.seq)).join("、")).join(" / ")}。` : "预计路径不足以确认两组独立。",
+    unknown.length ? `没有足够路径信息的项：${unknown.map(task => taskLabel(task.seq)).join("、")}，请先核对，不能当成独立。` : "",
+  ].filter(Boolean).join("\n");
+}
 
 /**
  * Hand groups of the round's own tasks to helpers. Checked: the tasks are this round's and still

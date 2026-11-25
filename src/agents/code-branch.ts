@@ -11,6 +11,7 @@ import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { getRun, setRunOutput } from "./runs.ts";
 import { hasSyncStash, syncInProgress } from "./code-sync.ts";
 import { dropWorktreeSpace, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
+import { checkCommandOf, requireCheckEvidence } from "./code-check-state.ts";
 import { leaseWorkspace, releaseWorkspace, workDirOf } from "./workspaces.ts";
 
 /**
@@ -436,17 +437,22 @@ function releaseWorktree(root: string, first: string, wt: WorktreeRef) {
 }
 
 /** Push one work branch to origin as its upstream; a remote that moved on is refused unless `force` (with a lease). */
-function pushWorkBranch(root: string, wt: WorktreeRef, force: boolean, before: { branch: string }[], rev?: string) {
-  fetchBranch(root, wt.branch);
+function pushWorkBranch(root: string, wt: WorktreeRef, force: boolean, before: { branch: string }[], rev?: string, batchBase?: string) {
+  const fetched = fetchBranch(root, wt.branch);
   const tip = rev ?? tipOf(root, wt.branch)!;
   const known = git(root, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${wt.branch}`]).stdout.trim();
+  const publishedBase = batchBase && !known && (wt.cutFrom ?? wt.targetBranch)
+    ? git(root, ["for-each-ref", "--contains", batchBase, "--format=%(refname)", `refs/remotes/origin/${wt.cutFrom ?? wt.targetBranch}`]).stdout.trim() : "";
+  if (batchBase && (fetched.ok ? !known || !ancestor(root, batchBase, known) : !!known || !wt.newBranch || batchBase !== (wt.start ?? wt.base) || !publishedBase))
+    throw new HttpError(409, `${wt.space} 的远端分支未包含这批的基线；先确认更早的检查点，或等整份交付`);
   if (known && !ancestor(root, known, tip) && !force)
     throw new HttpError(409, `origin/${wt.branch} 有本地没有的提交：先在分支面板“合并到”origin/${wt.branch}，或者确认要覆盖时选“强制推送”`);
-  const lease = known && !ancestor(root, known, tip) ? [`--force-with-lease=refs/heads/${wt.branch}:${known}`] : [];
+  const forced = !!known && !ancestor(root, known, tip);
+  const lease = batchBase || forced ? [`--force-with-lease=refs/heads/${wt.branch}:${known}`] : [];
   const r = git(root, ["-c", "remote.origin.mirror=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", ...lease, "origin", `${rev ?? `refs/heads/${wt.branch}`}:refs/heads/${wt.branch}`]);
   if (!r.ok) throw new HttpError(409, `${before.length ? `${before.map((p) => p.branch).join("、")} 已推送；` : ""}推送 ${wt.space} 的 ${wt.branch} 失败：${(r.stderr || r.stdout).trim().slice(0, 800)}`);
   git(root, ["branch", `--set-upstream-to=origin/${wt.branch}`, wt.branch]);
-  return { space: wt.space, branch: wt.branch, at: new Date().toISOString(), head: tip, ...(lease.length ? { forced: true } : {}) };
+  return { space: wt.space, branch: wt.branch, at: new Date().toISOString(), head: tip, ...(forced ? { forced: true } : {}) };
 }
 
 /**
@@ -455,22 +461,34 @@ function pushWorkBranch(root: string, wt: WorktreeRef, force: boolean, before: {
  * `heads` (a checkpoint the loop reached, so a round coding now does not push half a task), else the
  * branch tips when no round is coding.
  */
-export function deliverBranchWork(app: App, runId: string, opts: { force?: boolean; heads?: Record<string, string> } = {}) {
+export function deliverBranchWork(app: App, runId: string, opts: { force?: boolean; heads?: Record<string, string>; exact?: boolean; bases?: Record<string, string> } = {}) {
   const first = String(getRun(app, runId).input.continueFrom ?? runId);
   const firstRun = getRun(app, first);
   if (firstRun.output.appliedAt || firstRun.output.discardedAt) throw new HttpError(409, "这次交办已经确认或丢弃了");
   const coding = rounds(app, first).some((r) => ["queued", "running"].includes(r.status));
   if (coding && !opts.heads) throw new HttpError(409, "这一轮还在编码，结束后再推送");
-  const wts = ((firstRun.output.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits);
+  const wts = ((firstRun.output.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits && (!opts.heads || !!opts.heads[w.space]));
   if (!wts.length) throw new HttpError(400, "还没有提交，没有可推送的");
+  if (opts.exact) {
+    if (firstRun.output.activeBranchSync || wts.length !== Object.keys(opts.heads ?? {}).length || wts.some(wt => !opts.bases?.[wt.space])) throw new HttpError(409, "工作分支在同步或已变化，先核对检查点");
+    for (const wt of wts) {
+      const { root } = targetOf(app, runId, wt.space, { idle: false });
+      const tip = tipOf(root, wt.branch);
+      const checkout = existsSync(wt.path) ? head(workDirOf(wt)) : null;
+      const rev = opts.heads![wt.space];
+      if (!tip || !(ancestor(root, rev, tip) || checkout && ancestor(root, tip, checkout) && ancestor(root, rev, checkout)))
+        throw new HttpError(409, `${wt.space} 的检查点已不在工作分支的历史上，请重新交付`);
+      if (!git(root, ["remote", "get-url", "origin"]).ok) throw new HttpError(409, `${wt.space} 没有 origin，不能推送检查点`);
+    }
+  }
   const pushed: ReturnType<typeof pushWorkBranch>[] = [];
   const notes: string[] = [];
   for (const wt of wts) {
     const rev = opts.heads?.[wt.space];
     if (wt.pending && !rev) throw new HttpError(409, `${wt.space} 有一轮的提交没能放回分支 ${wt.branch}（${wt.pending.slice(0, 8)}，在工作区里）：等下一轮合并进来再推送`);
-    const t = targetOf(app, runId, wt.space);
+    const t = targetOf(app, runId, wt.space, { idle: !opts.heads });
     if (!git(t.root, ["remote", "get-url", "origin"]).ok) { notes.push(`${wt.space}：没有 origin，只在本地`); continue; }
-    pushed.push(pushWorkBranch(t.root, wt, !!opts.force, pushed, rev));
+    pushed.push(pushWorkBranch(t.root, wt, !!opts.force, pushed, rev, opts.bases?.[wt.space]));
   }
   return { pushed, notes };
 }
@@ -511,6 +529,7 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
   const first = String(run.input.continueFrom ?? run.id);
   const firstRun = getRun(app, first);
   if (run.status !== "done") throw new HttpError(400, "只能确认已完成的交办");
+  if (firstRun.input.taskMode && rounds(app, first).some(round => round.status === "queued" || round.status === "running")) throw new HttpError(409, "还有编码回合在进行，请等待整份交付或确认单独的中途检查点");
   if (firstRun.output.appliedAt) throw new HttpError(409, "这次交办已经确认过");
   if (firstRun.output.discardedAt) throw new HttpError(409, "这次交办已经丢弃");
   if (firstRun.output.activeBranchSync || (firstRun.output.syncPending as unknown[] | undefined)?.length) throw new HttpError(409, "还有没处理完的 Git 冲突，先在提醒卡片里继续或放弃这次同步");
@@ -521,6 +540,14 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
     if (!opts.spaces.length) throw new HttpError(400, "至少选一个要推送的仓库");
   }
   const wts = opts.spaces ? every.filter((w) => opts.spaces!.includes(w.space)) : every;
+  if (firstRun.input.taskMode) for (const wt of wts) {
+    const command = checkCommandOf(app, run, wt.space);
+    const path = findSpace(app, wt.space)?.rootPath;
+    if (command) {
+      if (opts.squash?.trim()) throw new HttpError(409, "确认时压缩会改写已检查的提交；先压缩，再重新评审或直接确认现有提交");
+      requireCheckEvidence(app, first, wt.space, command, path ? tipOf(path, wt.branch) ?? "" : "");
+    }
+  }
   const pushed: { space: string; branch: string; at: string; forced?: boolean }[] = [];
   const notes: string[] = every.filter((w) => !wts.includes(w)).map((w) => `${w.space}：没动（分支 ${w.branch} 保留，没有推送）`);
   if (opts.squash?.trim()) for (const wt of wts) squashRange(targetOf(app, runId, wt.space));

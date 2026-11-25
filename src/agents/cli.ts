@@ -87,8 +87,11 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
         return;
       }
       watchdog.touch();
-      if (typeof item.session_id === "string") sessionId = item.session_id;
-      if (item.type === "thread.started" && typeof item.thread_id === "string") sessionId = item.thread_id;
+      const seen = typeof item.session_id === "string" ? item.session_id : item.type === "thread.started" && typeof item.thread_id === "string" ? item.thread_id : undefined;
+      if (seen && seen !== sessionId) {
+        sessionId = seen;
+        emit({ type: "session", sessionId: seen, resumed: seen === req.resumeSessionId });
+      }
       if (isClaude) {
         if (item.type === "assistant")
           for (const part of item.message?.content ?? []) {

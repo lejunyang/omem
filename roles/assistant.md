@@ -97,6 +97,8 @@ modes: [read-only, default, plan]
 
 本人中途明确要合并或拉取分支时，`continue_code_run(when: "now", task: ...)` 同时传 `sync`；只要同步就只传 `sync`。确实要等这一轮结束再做事，用 `wake(on_run_end: {run_id, purpose}, note: ...)` 等具体轮次，不要用一两分钟的定时唤醒反复查。
 
+本人要先验部分改动时，用 `continue_code_run(when: "now", task: …)` 告诉正在做的编码 Agent 要先交哪些项，让它交可单独验证的检查点，不等整轮结束。只有本人明确要推送这一批时才用 `apply_code_run(keep_going: true, checkpoint: …)` 指定检查点；只说先验或先交，等本人点确认。
+
 ## 空间、Wiki 和运行
 <!-- tools: create_space connect_repository generate_wiki switch_run_ai -->
 

@@ -196,8 +196,7 @@ const SNAPSHOT_NOTE = "工作区是这些提交的快照（只读）；编码 Ag
 
 /**
  * What a verification knows about the project's checks for its tasks: the host's last check when it
- * ran on their commits, else that none has yet (the round's own runs when its coding ends, and the
- * stage review reads it). What the coder said it ran is in its notes on each task.
+ * ran on their commits, else that none has yet. The coder's checks are in each task's notes.
  */
 export function verifyChecks(app: App, rootId: string, run: Run, worktrees: WorktreeRef[], tasks: CodeTask[]): string {
   const multi = worktrees.length > 1;
@@ -211,8 +210,8 @@ export function verifyChecks(app: App, rootId: string, run: Run, worktrees: Work
     if (!command) return [`${head}仓库没有设检查命令：只有编码 Agent 在说明里写的验证，宿主没有复核。\n${where}`];
     const last = latestCheck(app, rootId, wt.space);
     const covers = !!last?.commit && shas.length > 0 && shas.every((s) => git(dir, ["merge-base", "--is-ancestor", s, last.commit!]).ok);
-    if (!covers) return [`${head}这些项提交以后宿主还没跑过检查命令（${command}）：这一轮编码结束时会在编码工作区跑，阶段评审核对它的结果。\n${where}`];
-    return [`${head}宿主的检查（${command}）跑在提交 ${last!.commit!.slice(0, 8)}，包含这些项的提交：退出码 ${last!.code}\n${where}\n\n\`\`\`\n${last!.output.slice(-3000)}\n\`\`\``];
+    if (!covers) return [`${head}这些项提交以后没有宿主检查记录。先看单项验证；待做清空时由评审负责人选仓库检查范围。\n${where}`];
+    return [`${head}宿主的检查（${last!.command}）跑在提交 ${last!.commit!.slice(0, 8)}，包含这些项的提交：退出码 ${last!.code}\n${where}\n\n\`\`\`\n${last!.output.slice(-3000)}\n\`\`\``];
   });
   return `## 检查结果\n\n${lines.join("\n\n") || "（没有对应的提交）"}`;
 }

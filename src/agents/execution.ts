@@ -19,12 +19,12 @@ export const executionSchema = z.object({
 export type Execution = z.infer<typeof executionSchema>;
 
 /** `userId`: whose run it is: a member logged in to the backend is checked against their own account's models. */
-export function validateExecution(app: App, choice?: Execution, userId?: string): Execution | undefined {
+export function validateExecution(app: App, choice?: Execution, userId?: string, recorded = false): Execution | undefined {
   if (!choice) return undefined;
   const e = executionSchema.parse(choice);
   if (e.source === "auto" && !app.config.agents.routing.automatic) throw new HttpError(403, "已关闭助手自主选型；使用档案默认值，只有本人明确指定才能临时更换");
   const backend = allProfiles(app.config).find((p) => p.id === e.profile);
-  if (!backend || !backendAvailable(backend, app.home)) throw new HttpError(400, `后端 ${e.profile} 不可用，请先 list_ai_backends 核对`);
+  if (!backend || (!recorded && !backendAvailable(backend, app.home))) throw new HttpError(400, `后端 ${e.profile} 不可用，请先 list_ai_backends 核对`);
   const candidate = { ...backend, model: e.model ?? backend.model };
   const plan = userId && isAiMember(app, userId) ? memberAccountPlan(app, userId, candidate) : null;
   const probe = plan ? plan.kind === "ready" ? probeFor(app, plan.profile) : null : userProbe(app, userId, e.profile);
@@ -34,7 +34,7 @@ export function validateExecution(app: App, choice?: Execution, userId?: string)
     e.model = resolved.value;
   }
   const effective = plan?.kind === "ready" ? { ...plan.profile, model: e.model ?? backend.model } : candidate;
-  if (e.source === "auto" && (plan?.kind === "blocked" || (plan?.kind !== "login" && excluded(app, effective))))
+  if (!recorded && e.source === "auto" && (plan?.kind === "blocked" || (plan?.kind !== "login" && excluded(app, effective))))
     throw new HttpError(400, `${e.profile}${e.model ? ` · ${e.model}` : ""} 当前不可自动使用：${plan?.kind === "blocked" ? plan.reason : excludedReason(app, effective) ?? "不可用"}，换一个`);
   const levels = e.model ? effortsFor(probe, e.model) : [];
   const knownEmpty = e.model && probe?.effortsByModel && Object.hasOwn(probe.effortsByModel, e.model ?? backend.model ?? "") && !levels.length;

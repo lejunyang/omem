@@ -52,6 +52,7 @@ export type AgentRequest = {
   cleanup?: SessionCleanup;
   /** This turn's text. */
   prompt: string;
+  freshPrompt?: string;
   /**
    * Standing instructions (shared rules, role, environment, learned context). The agent's system
    * prompt when it takes one (ACP `systemPrompt`); otherwise the head of a new session's first

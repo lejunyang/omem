@@ -2,6 +2,8 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { HttpError, newId, now, truncate, localStamp } from "../core/util.ts";
 import { addRunEvent, cancelRun, getRun, setRunOutput, type Run } from "./runs.ts";
+import { isTaskWork, renewBudget, workRootOf } from "./code-tasks.ts";
+import { OWNER } from "../core/users.ts";
 
 /**
  * The owner (or the assistant on their word) steering a coding delegation while it runs, the way
@@ -67,6 +69,7 @@ export function addCodeNote(app: App, runId: string, text: string, by: string, i
     ...(stage === "coding" || stage === "queued" ? { acceptedInRound: true } : {}), ...(item ? { item } : {}) };
   if (!note.text) throw new HttpError(400, "补充的内容不能为空");
   setRunOutput(app, r.id, { notes: [...notesOf(r), note] });
+  if (by === OWNER && isTaskWork(app, r.id)) renewBudget(app, workRootOf(app, r.id), Number(r.input.round ?? 1));
   addRunEvent(app, r.id, "status", { text: `本人补充：${truncate(note.text, 200)}${stage === "coding" ? "" : stage === "queued" ? "（这一轮开始编码时带上）" : "（编码已结束，下一轮带上）"}` });
   return { runId: r.id, stage, note };
 }

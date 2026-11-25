@@ -267,7 +267,7 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   if (!token) throw new Error("豆包还没有授权：在运行 omem 的电脑上执行 omem doubao login（或网页 Agent 页的豆包授权）");
   // The standing instructions open a new session; a resumed one already has them. What went is
   // reported once the session is known (a resume that fails becomes a new session).
-  const userMessage = (resumed: boolean) => ({ type: "user.message", contents: [{ type: "text", text: withInstructions({ resumed }, req.system, req.prompt) }] });
+  const userMessage = (resumed: boolean) => ({ type: "user.message", contents: [{ type: "text", text: withInstructions({ resumed }, req.system, resumed ? req.prompt : req.freshPrompt ?? req.prompt) }] });
   let sessionId = req.resumeSessionId;
   let queryId: string;
   if (sessionId) {
@@ -299,7 +299,7 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
     // 读取回复前交出 ID，单次运行失败后也能清理会话。
     emit({ type: "session", sessionId, resumed: false });
     queryId = d.messages[0].id;
-    sessionPrompt({ resumed: false }, req, req.prompt, emit);
+    sessionPrompt({ resumed: false }, req, req.freshPrompt ?? req.prompt, emit);
   }
   emit({ type: "status", text: "已连接 豆包" });
 

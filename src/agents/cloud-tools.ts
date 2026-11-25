@@ -80,7 +80,11 @@ export async function cloudTurn(app: App, profile: AgentProfile, ctx: ToolContex
     };
     const turn = { ...req, mcp: undefined, extraMcp: undefined };
     if (cfg.credentialIn === "channel") turn.cloudChannel = channel;
-    else turn.prompt += "\n\n本轮工具连接（仅用于请求，不要复述）\n" + JSON.stringify(channel);
+    else {
+      const connection = "\n\n本轮工具连接（仅用于请求，不要复述）\n" + JSON.stringify(channel);
+      turn.prompt += connection;
+      if (turn.freshPrompt) turn.freshPrompt += connection;
+    }
     const result = await execute(turn, event => {
       if (event.type === "session") g.session = event.sessionId;
       // A streamed echo can split the token across frames. Emit the redacted, assembled reply once.

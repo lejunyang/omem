@@ -4,9 +4,12 @@ import { all, one } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { git } from "../core/git.ts";
 import { HttpError, truncate } from "../core/util.ts";
+import { OWNER } from "../core/users.ts";
 import { cancelAsk, createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { codeChainFor, queueNextCodeRound, reportConversation, saveCodeChain, wakeAssistantForTasks, type CodeChain } from "./code-chain.ts";
-import { addCodeNote } from "./code-steer.ts";
+import { addCodeNote, latestRound, pendingNotes, roundStage } from "./code-steer.ts";
+import { assertStageCoverage, checkEvidenceText, returnFailedTasks, reviewCheckFacts, runStageChecks, type RepositoryCheckChoice } from "./code-check-plan.ts";
+import { hasBranchSyncRequests } from "./code-round-sync.ts";
 import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
 import { changeBase } from "./code-branch.ts";
 import {
@@ -19,7 +22,7 @@ import { reviewCardLinks } from "./review-card.ts";
 import { queueStandaloneFix } from "./review-fix.ts";
 import { checkLabel, namedReviewAI, planReview, reviewChecks, roundFindings, independenceWarnings, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
-import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
+import { addRunEvent, getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import { reviewWorkspace, workDirOf } from "./workspaces.ts";
 import { designDigest } from "../designs/work.ts";
 
@@ -72,13 +75,6 @@ export async function taskReview(app: App, codeRunId: string, rc: RoundContext):
     rc.event("status", { text: "等复看做完" });
     await untilDone(look, rc.signal);
   }
-  // Only reverts this round: what was taken back had been reviewed; a check it breaks is a task.
-  if (run.output.gitOnly) {
-    const broken = brokenChecks(run);
-    if (broken.length) addTask(app, rootId, { title: "回退之后检查没通过", doneWhen: checkFailure(broken), kind: "fix" }, "host");
-    else setWorkState(app, rootId, { stageAt: listCheckpoints(app, rootId).at(-1)?.seq ?? 0 });
-    return nextStep(app, getRun(app, run.id), rc);
-  }
   const toVerify = listTasks(app, rootId).filter((t) => t.state === "verify" && t.verifier);
   if (toVerify.length) {
     setRunOutput(app, run.id, { reviewStage: "verify" });
@@ -92,7 +88,10 @@ export async function taskReview(app: App, codeRunId: string, rc: RoundContext):
   const open = listTasks(app, rootId).filter((t) => ["todo", "coding", "verify", "disputed"].includes(t.state));
   const w = workState(app, rootId);
   const latest = listCheckpoints(app, rootId).at(-1)?.seq ?? 0;
-  if (!open.length && !(w.reverts ?? []).length && latest > (w.stageAt ?? 0)) await stageReview(app, run, rc);
+  if (!open.length && !(w.reverts ?? []).length && !pendingNotes(app, run.id).length && !hasBranchSyncRequests(app, rootId) && latest > (w.stageAt ?? 0)) {
+    if (brokenChecks(run).length) hostFindings(app, rootId, run);
+    else await stageReview(app, run, rc);
+  }
   // A second look the stage asked for goes on beside the next round; with nothing to code it is waited for here.
   const after = workState(app, rootId);
   const again = after.paused ? null : startLook(app, rootId);
@@ -236,6 +235,7 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
     `## 修改项\n\n${taskList(app, rootId) || "（没有）"}`,
     `## 可用的评审项\n\n${checks.map((c) => { const h = history.get(c.name) ?? { raised: 0, accepted: 0, rejected: 0 }; const r = recent.get(c.name) ?? { raised: 0, accepted: 0, rejected: 0 }; return `- ${c.name}（${c.label}）：${c.about}${c.guide ? `；本人说：${c.guide}` : ""}；这次交办里提过 ${h.raised} 条，采纳 ${h.accepted}，驳回 ${h.rejected}；这个仓库近 30 天提过 ${r.raised} 条，采纳 ${r.accepted}，驳回 ${r.rejected}`; }).join("\n")}`,
     ownerSaid,
+    reviewCheckFacts(app, run),
     `## 交办任务（本人的原话）\n\n${truncate(String(input.task ?? ""), 6000)}`,
   ].filter(Boolean).join("\n\n");
   setRunOutput(app, run.id, { reviewPlanDraft: null, reviewStage: "plan" });
@@ -282,6 +282,18 @@ async function stageReview(app: App, run: Run, rc: RoundContext) {
   const latest = listCheckpoints(app, rootId).at(-1)?.seq ?? 0;
   const plan = await planStage(app, run, rc, since);
   setRunOutput(app, run.id, { reviewPlan: plan });
+  const workArrived = () => pendingNotes(app, run.id).length || hasBranchSyncRequests(app, rootId) || listTasks(app, rootId).some(task => ["todo", "coding", "verify", "disputed"].includes(task.state));
+  if (workArrived()) return;
+  const draft = getRun(app, run.id).output.reviewPlanDraft as { repositoryChecks?: RepositoryCheckChoice[] } | null;
+  if (!await runStageChecks(app, run, draft?.repositoryChecks ?? [], rc.signal, rc.event)) {
+    returnFailedTasks(app, run);
+    return;
+  }
+  if (run.output.gitOnly) {
+    setWorkState(app, rootId, { stageAt: latest });
+    return;
+  }
+  if (workArrived()) return;
   rc.event("status", { text: `阶段评审：${plan.checks.join("、")}（${plan.reasons[0] ?? ""}）` });
   // The requirement split once per work (later stages keep it unless the owner asks again).
   const split = !one(app.db, "select 1 from runs where (id = ? or json_extract(input, '$.continueFrom') = ?) and json_extract(output, '$.changePoints') is not null", rootId, rootId);
@@ -336,7 +348,7 @@ async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict
     setRunOutput(app, run.id, { verdict, reviewStage: "done", ...extra });
     return { verdict };
   };
-  if (todo.length || (w.reverts ?? []).length) {
+  if (todo.length || (w.reverts ?? []).length || pendingNotes(app, run.id).length || hasBranchSyncRequests(app, rootId)) {
     if (w.paused) return finish("paused", { reviewStop: "paused" });
     // Only review fixes left, POLISH_STAGES stage reviews after the requirement was done (and as many
     // after each such stop): stop, and let the assistant judge what is still worth doing.
@@ -370,9 +382,21 @@ async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict
   // The assistant is woken for its tasks when this round's run ends (code-chain.ts): the work waits on it, not on the owner.
   if (mine.length) return finish("awaiting-assistant", { reviewStop: "assistant" });
   if (owner.length) return finish("awaiting-owner", { reviewStop: "owner" });
+  if (!canConfirmWork(app, rootId, run)) return finish("paused", { reviewStop: "check" });
   const result = finish("approved", { reviewStop: null });
   completed(app, rootId, getRun(app, run.id));
   return result;
+}
+
+function canConfirmWork(app: App, rootId: string, run: Run) {
+  try {
+    assertStageCoverage(app, run);
+    return true;
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    if (run.output.reviewStop !== "check") notifyOwner(app, rootId, run, "交办还不能确认推送", error.message);
+    return false;
+  }
 }
 
 /** The work is done: what was done and what the owner decided not to, and the confirm card. */
@@ -384,6 +408,7 @@ function completed(app: App, rootId: string, run: Run) {
   const design = designDigest(app, rootId);
   const digest = [
     design,
+    checkEvidenceText(app, run),
     independenceWarnings(app, run.id, roundOf(run)),
     `**修改项**：完成 ${count("done")} 项${fixes ? `（其中评审问题 ${fixes} 个）` : ""}${count("wontdo") ? `，不做 ${count("wontdo")} 项` : ""}${count("reverted") ? `，回退 ${count("reverted")} 项` : ""}`,
     tasks.filter((t) => t.state === "done").slice(0, 8).map((t) => `- ${taskLabel(t.seq)} ${t.title}`).join("\n"),
@@ -428,14 +453,17 @@ function askDeliver(app: App, rootId: string, run: Run, todo: CodeTask[]) {
  * Push the work branches and keep the work open (deliverBranchWork), noted on the work. While a round
  * codes, what goes out is the checkpoint the last stage review saw, not the round's half-done commits.
  */
-export async function deliverWork(app: App, rootId: string, opts: { force?: boolean } = {}) {
+export async function deliverWork(app: App, rootId: string, opts: { force?: boolean; checkpoint?: number } = {}) {
   const { deliverBranchWork } = await import("./code-branch.ts");
+  const { offeredHeads } = await import("./code-delivery.ts");
   const w = workState(app, rootId);
   const last = lastRound(app, rootId);
-  const checkpoints = listCheckpoints(app, rootId);
-  const reviewed = checkpoints.find((c) => c.seq === w.stageAt) ?? checkpoints.at(-1);
+  const reviewed = listCheckpoints(app, rootId).find((checkpoint) => checkpoint.seq === w.stageAt);
   const coding = ["queued", "running"].includes(last.status);
-  const res = deliverBranchWork(app, last.id, { force: opts.force, ...(coding && reviewed ? { heads: reviewed.heads } : {}) });
+  const seq = opts.checkpoint;
+  if (seq !== undefined && opts.force) throw new HttpError(400, "中途交付不能强制覆盖远端历史");
+  if (seq === undefined && !coding) assertStageCoverage(app, last);
+  const res = deliverBranchWork(app, last.id, { force: opts.force, ...(seq !== undefined ? { exact: true, ...offeredHeads(app, rootId, seq) } : coding && reviewed ? { heads: reviewed.heads } : {}) });
   if (res.pushed.length) {
     setWorkState(app, rootId, { delivered: [...(w.delivered ?? []), { at: new Date().toISOString(), branches: res.pushed.map((p) => ({ space: p.space, branch: p.branch, head: p.head })) }] });
     (await import("../flows/delivery.ts")).recordFlowPush(app, last.id, "owner");
@@ -445,14 +473,14 @@ export async function deliverWork(app: App, rootId: string, opts: { force?: bool
 }
 
 registerAskHandler("work-deliver", async (app: App, ask: Ask, ctx) => {
-  const { rootId } = ctx as { rootId: string };
+  const { rootId, checkpoint } = ctx as { rootId: string; checkpoint?: number };
   const picked = ask.choice !== null ? ask.options[ask.choice]?.label : DELIVER.find((l) => (ask.answer ?? "").trim().startsWith(l));
   const run = lastRound(app, rootId);
   try {
-    if (picked === DELIVER[0]) {
-      const res = await deliverWork(app, rootId);
+    if (checkpoint !== undefined ? ask.answeredBy === OWNER && ask.choice === 0 : picked === DELIVER[0]) {
+      const res = await deliverWork(app, rootId, { checkpoint });
       notify(app, { userId: ask.userId, title: `已推送：${getRun(app, rootId).title}`, body: [res.pushed.map((p) => `${p.branch}（${p.head.slice(0, 8)}）`).join("、"), ...res.notes].filter(Boolean).join("\n") || "没有要推送的分支", link: `#/runs/${run.id}` });
-    } else if (picked === DELIVER[1]) {
+    } else if (checkpoint === undefined && picked === DELIVER[1]) {
       for (const t of listTasks(app, rootId).filter((x) => x.kind === "fix" && x.state === "todo")) deferTask(app, rootId, t.seq, "本人：先交付，以后再改", { by: ask.userId, kind: "owner", text: "本人选了先交付，这一项以后再做" });
       // Nothing left to code once the round in progress ends: the work comes to its usual confirm.
       advanceWork(app, rootId, { owner: true });
@@ -460,6 +488,10 @@ registerAskHandler("work-deliver", async (app: App, ask: Ask, ctx) => {
   } catch (e) {
     notify(app, { userId: ask.userId, title: `没能${picked ?? "处理"}：${getRun(app, rootId).title}`, body: (e as Error).message, link: `#/runs/${run.id}` });
   }
+}, (_app, _ask, ctx, by, answer) => {
+  if (ctx.checkpoint === undefined) return;
+  if (by !== OWNER) throw new HttpError(403, "只有本人能确认推送检查点");
+  if (answer.choice === null) throw new HttpError(400, "请选择确认并推送或暂不推送");
 });
 
 function notifyOwner(app: App, rootId: string, run: Run, title: string, body: string) {
@@ -518,6 +550,10 @@ export function advanceWork(app: App, rootId: string, opts: { owner?: boolean } 
   // the assistant too: a pause holds back rounds, not the confirm of work with nothing left to do).
   if (!tasks.some((t) => ["assistant", "owner", "verify", "coding"].includes(t.state)) && ["awaiting-owner", "awaiting-assistant", "paused"].includes(String(last.output.verdict))) {
     if (w.paused) setWorkState(app, rootId, { paused: null });
+    if (!canConfirmWork(app, rootId, last)) {
+      setRunOutput(app, last.id, { verdict: "paused", reviewStop: "check" });
+      return null;
+    }
     setRunOutput(app, last.id, { verdict: "approved", reviewStop: null });
     completed(app, rootId, getRun(app, last.id));
   }
@@ -839,15 +875,23 @@ registerAskHandler("code-task", async (app: App, ask: Ask, ctx) => {
  * otherwise, or when `asTask`, they become a task for the current round if it can take the task,
  * or for the next round, which starts now when nothing is running.
  */
-export function ownerNote(app: App, runId: string, text: string, by: string, opts: { asTask?: boolean; item?: string } = {}): { task: CodeTask; next: Run | null; handedTo?: Run } | null {
+export function ownerNote(app: App, runId: string, text: string, by: string, opts: { asTask?: boolean; item?: string } = {}): { task: CodeTask; next: Run | null; handedTo?: Run; current?: boolean } | null {
   const rootId = workRootOf(app, runId);
-  const last = lastRound(app, rootId);
-  const coding = last.status === "queued" || (last.status === "running" && typeof last.output.coderSummary !== "string");
+  const last = latestRound(app, rootId);
+  const stage = roundStage(last);
+  const coding = stage === "queued" || stage === "coding";
   if (coding && !opts.asTask) return null;
+  if (by === OWNER) renewBudget(app, rootId, roundOf(last));
+  const current = coding && !last.input.peerCoder && !last.input.syncOnly && !last.input.moveToTarget;
   const first = text.trim().split("\n")[0];
-  const task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: "owner", origin: { note: text.trim(), ...(opts.item ? { item: opts.item } : {}) } }, by);
-  const queuedToCode = last.status === "queued" && !last.input.syncOnly && !last.input.moveToTarget && !last.input.peerCoder && !last.input.branches;
-  if (queuedToCode || coding && joinRound(app, rootId, [task], "新增修改项")) return { task, next: null, handedTo: last };
+  let task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: "owner", origin: { note: text.trim(), ...(opts.item ? { item: opts.item } : {}) } }, by);
+  if (current) {
+    task = updateTask(app, rootId, task.seq, { state: "coding", coderRun: last.id });
+    addCodeNote(app, last.id, `本人补充修改项 ${taskLabel(task.seq)}：${text}`, by);
+    return { task, next: null, current, handedTo: last };
+  }
+  addRunEvent(app, last.id, "status", { text: `本人补充记为待做项 ${taskLabel(task.seq)}：${truncate(first, 120)}` });
+  if (stage !== "ended") return { task, next: null };
   return { task, next: advanceWork(app, rootId, { owner: true }) };
 }
 

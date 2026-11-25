@@ -8,6 +8,7 @@ import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, reportConversation, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
 import { codeDiffView, ignoredText, isBranchReview, worktreesOf, type Check, type CodeInput, type IgnoredFiles, type PeerReviewer } from "./code.ts";
+import { checkCommandOf } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
   blocksAt, checkBrief, FINDING_FORMAT, namedReviewAI, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
@@ -116,7 +117,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     const wt = worktrees.find((w) => w.space === r.space);
     const where = wt ? `编码工作区（依赖和构建产物在这里）：${workDirOf(wt)}` : "";
     const c = r.check;
-    if (!c) return `${head(r)}仓库没有设检查命令：宿主没有替这次改动跑检查，编码 Agent 说明里写的验证没有经过复核。${where ? `\n${where}` : ""}`;
+    if (!c) return `${head(r)}${checkCommandOf(app, run, r.space) ? "宿主没有替这段改动运行仓库检查；看编码 Agent 的单项验证和阶段决定。" : "仓库没有设检查命令：宿主没有替这次改动跑检查，编码 Agent 说明里写的验证没有经过复核。"}${where ? `\n${where}` : ""}`;
     const seen = opts.to?.[r.space] ?? (wt ? git(workDirOf(wt), ["rev-parse", "HEAD"]).stdout.trim() : "");
     const commit = !c.commit ? "" : !seen || seen === c.commit ? `跑在提交 ${c.commit.slice(0, 8)}，就是这次看的代码` : `跑在提交 ${c.commit.slice(0, 8)}；这次看的是 ${seen.slice(0, 8)}，两者之间的改动没有经过检查`;
     return [

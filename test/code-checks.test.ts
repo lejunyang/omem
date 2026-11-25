@@ -54,7 +54,7 @@ describe("the host's checks as the reviewers' evidence", () => {
       setRunOutput(app, withCommand.id, { repos: [{ space: "shop-api", diffStat: "", diffBytes: 0, check: { command: "npm test", code: 0, output: "3 passed", ms: 1000, commit: t1 } }] });
       expect(latestCheck(app, r.id, "shop-api")?.commit).toBe(t1);
       const later = verifyChecks(app, r.id, getRun(app, withCommand.id), [wt], [task(2, t2)]);
-      expect(later).toContain("这些项提交以后宿主还没跑过检查命令（npm test）");
+      expect(later).toContain("这些项提交以后没有宿主检查记录");
       expect(later).toContain(`编码工作区（依赖和构建产物在这里）：${dir}`);
       // The check ran on a commit that holds the task's: its result goes along.
       const covered = verifyChecks(app, r.id, getRun(app, withCommand.id), [wt], [task(1, t1)]);
