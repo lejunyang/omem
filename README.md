@@ -128,10 +128,10 @@ flowchart LR
 | Kimi CLI / Mistral Vibe | `uv tool install kimi-cli` / `mistral-vibe` | `kimi` / `vibe` |
 | goose、Kilo、Auggie、Cline、Factory Droid、Grok、MiniMax、Amp、Junie、Devin、pi、DeepAgents、TraeX | 见 `omem agents --all` | 同名 |
 | Claude / Codex / TraeX 命令行（非 ACP 兜底） | `claude`、`codex` 或 `traex` 在 PATH 中 | `claude-cli` / `codex-cli` / `traex-cli` |
-| 豆包 CLI（本机运行，omem 工具经 `omem tool`） | `npm i -g @bytedance/doubao-cli`，再 `doubao login` | `doubao-cli` |
+| 豆包 CLI（本机运行；2.38 起经 ACP 用 MCP 工具，更早的版本经 `omem tool`） | `npm i -g @bytedance/doubao-cli`，再 `doubao login` | `doubao-cli` |
 | 豆包 OpenAPI（云端 Managed Agent，无需本地程序） | 飞书应用开了豆包用户权限并授权：`omem doubao status` / `omem doubao login` | `doubao` |
 
-豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。
+豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。omem 按 `doubao --help` 判断版本能做什么：有 `doubao acp serve` 的走 ACP（omem 工具经 MCP、过程逐步显示、模型按名字选），有 `doubao delete` 的单次任务会话用它删除（成员自己的账号也能删），旧版仍用 `-p` 和 OpenAPI 清理。
 
 Antigravity CLI 按 PATH 中的 `agy` 识别，以 `agy acp` 启动并复用 CLI 登录。额度通过 CLI 自己的 `/usage` 读取，不消耗模型额度；后端页显示各模型组的已用比例和重置时间，快用完时按模型组避让。ACP 注册表下载的 `antigravity-acp` 是另一份独立运行包，认证配置与 CLI 分开；已经装好并登录 `agy` 时直接选 `antigravity`；原先手动添加、同样以 `agy acp` 启动的后端会顶替它，保留原名和设置并共用额度。成员可以在“我的 AI 账号”里用网页登录自己的 agy；本人可以在后端卡片上“再加一个账号”，同一个后端登录多个号，各有登录目录和额度（Codex、Claude Code、TraeX、Copilot 也可以）。
 

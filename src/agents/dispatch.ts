@@ -1,12 +1,12 @@
 import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { credentialSucceeded } from "./credentials.ts";
-import { runAcp } from "./acp.ts";
+import { findAcpSession, runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
 import { retireRecordedSession, sessionCleanup } from "./session-cleanup.ts";
 import { backendCapabilities } from "./capabilities.ts";
-import { runDoubaoCli } from "./doubao-cli.ts";
+import { doubaoAcpProfile, doubaoAcpSessionId, doubaoFeatures, doubaoRetry, runDoubaoCli } from "./doubao-cli.ts";
 import { probeFor } from "./probe.ts";
 import { resolveModelOption } from "./models.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
@@ -35,6 +35,22 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
 
 async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   if (profile.transport === "acp") return runAcp(profile, { ...req, app, cleanup: await sessionCleanup(app, profile, req, emit) }, emit);
+  if (profile.transport === "doubao-cli" && doubaoFeatures(profile).acp) {
+    // A Doubao CLI that speaks ACP runs as an ACP agent. Its sessions stay under the Doubao CLI's cleanup
+    // (it has no session/delete): deleted with `doubao delete`, or through the OpenAPI on older installs.
+    if (profile.model) profile = { ...profile, model: resolveModelOption(profile.model, probeFor(app, profile)?.models ?? []).value };
+    const cleanup = await sessionCleanup(app, profile, req, emit);
+    const acpProfile = doubaoAcpProfile(profile);
+    const resumeSessionId = req.resumeSessionId && doubaoAcpSessionId(req.resumeSessionId);
+    // It loads a conversation from before ACP only once its session list has shown it.
+    if (resumeSessionId?.startsWith("conversation-"))
+      await doubaoRetry(() => findAcpSession(acpProfile, resumeSessionId, req.cwd, req.signal), req.signal).catch(() => null);
+    return doubaoRetry(() => runAcp(acpProfile, {
+      ...req, app,
+      resumeSessionId,
+      cleanup: { ...cleanup, discard: (id) => cleanup.discard(id) },
+    }, emit), req.signal, () => emit({ type: "status", text: "豆包 CLI 的后台服务正在退出，稍后重新连接" }));
+  }
   if (profile.transport === "doubao" || profile.transport === "doubao-cli") {
     // Doubao keeps every conversation in the owner's account: a one-off turn's session is deleted
     // once the turn is over, failed or not (ACP agents do the same with session/delete).

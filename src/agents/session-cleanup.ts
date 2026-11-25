@@ -7,6 +7,7 @@ import { json, now } from "../core/util.ts";
 import { PluginBackendUnavailable, requirePluginBackend, referencedPluginProfiles } from "./catalog.ts";
 import { cleanupAcpSession } from "./acp.ts";
 import { disposableChildren } from "./session-children.ts";
+import { deleteDoubaoCliSession, doubaoFeatures } from "./doubao-cli.ts";
 import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoSessionStatus, doubaoTokenExists } from "./doubao.ts";
 import type { AgentEvent, AgentRequest, SessionCleanup } from "./types.ts";
 import { MENTION_FOLLOW_MS } from "../mentions/channel.ts";
@@ -45,16 +46,18 @@ export function sessionMatchesAccount(app: App, sessionId: string, profile: Agen
 /** One lifecycle for temporary turns, pooled ACP sessions and explicitly replaced sessions. */
 export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<AgentRequest, "cwd" | "runId" | "persistSession" | "resumeSessionId">, emit: Emit): Promise<SessionCleanup> {
   const acp = profile.transport === "acp";
-  const appId = acp ? null : (profile.env.DOUBAO_APP_ID ?? doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config))?.appId ?? null);
+  // A Doubao CLI with `doubao delete` deletes its own conversations, under whichever account made them.
+  const cli = profile.transport === "doubao-cli" && doubaoFeatures(profile).delete;
+  const appId = acp || cli ? null : (profile.env.DOUBAO_APP_ID ?? doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config))?.appId ?? null);
   // Runtime proxy variables are derived from the network policy, not a change of backend identity.
   const configured = allProfiles(app.config).find((p) => p.id === profile.id);
   const original = configured && fingerprint(networkProfile(app, configured)) === fingerprint(profile) ? configured : profile;
-  const hash = acp ? fingerprint(original) : null;
+  const hash = acp || cli ? fingerprint(original) : null;
   // A member's own account (agents/accounts.ts): its sessions are cleaned up with that account.
   const account = accountOf(profile);
-  // The Doubao CLI's conversations are deleted through the owner's OpenAPI login, which cannot reach a member's own.
-  if (account && !acp) return { created() {}, active() {}, async children() {}, async discard() {} };
-  const backend = acp ? `acp:${hash}${account ? `@acct:${account.userId}` : ""}` : `doubao:${appId ?? ""}`;
+  // Without `doubao delete`, the CLI's conversations are deleted through the owner's OpenAPI login, which cannot reach a member's own.
+  if (account && !acp && !cli) return { created() {}, active() {}, async children() {}, async discard() {} };
+  const backend = acp || cli ? `${acp ? "acp" : "doubao-cli"}:${hash}${account ? `@acct:${account.userId}` : ""}` : `doubao:${appId ?? ""}`;
   const record = (id: string, ready: number) => {
     run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,?,?)
       on conflict(backend_key,session_id) do update set run_id = coalesce(excluded.run_id, session_cleanup.run_id), owner_pid = excluded.owner_pid, ready = excluded.ready`, backend, id, profile.transport, profile.id, hash, appId, req.cwd, req.runId ?? null, process.pid, ready, now());
@@ -140,10 +143,20 @@ async function cleanAcp(app: App, profile: AgentProfile, id: string, cwd: string
   await withNetworkPolicy(app, profile, {}, (p, signal) => cleanupAcpSession(p, id, cwd, signal));
 }
 
+async function cleanDoubaoCli(app: App, profile: AgentProfile, id: string, cwd: string) {
+  const reason = networkReason(app, profile);
+  if (reason) throw new NetworkUnavailableError(reason);
+  await withNetworkPolicy(app, profile, {}, (p, signal) => deleteDoubaoCliSession(p, id, cwd, signal));
+}
+
 async function perform(app: App, p: Pending, recovering: boolean): Promise<boolean> {
   if (p.transport === "acp") {
     const profile = recordedProfile(app, p);
     await cleanAcp(app, profile, p.session_id, existsSync(p.cwd) ? p.cwd : app.home);
+    return true;
+  }
+  if (p.backend_key.startsWith("doubao-cli:")) {
+    await cleanDoubaoCli(app, recordedProfile(app, p), p.session_id, existsSync(p.cwd) ? p.cwd : app.home);
     return true;
   }
   if (!doubaoTokenExists(app.home)) throw new Error("豆包 OpenAPI 没有在这台机器上授权，会话留在豆包历史里（omem doubao login 后重试）");

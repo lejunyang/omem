@@ -12,6 +12,14 @@ if (args.includes("--help")) {
   console.log(process.env.FAKE_CWD_HELP ?? "  -C <dir>  工作目录，必须放在业务参数之前");
   process.exit(0);
 }
+if (args[args.length - 3] === "delete" && args[args.length - 1] === "--yes") {
+  const id = args[args.length - 2];
+  if (process.env.FAKE_DELETE_LOG) appendFileSync(process.env.FAKE_DELETE_LOG, `${id}\n`);
+  if (id === "404") { console.error("not_found: 会话不存在或已删除。"); process.exit(1); }
+  if (id === "500") { console.error("internal_error: 删除失败"); process.exit(1); }
+  console.log(`已删除会话 ${id}。`);
+  process.exit(0);
+}
 // Even -p with an inline prompt reads non-terminal stdin. The native bridge cannot read /dev/null.
 const input = fstatSync(0);
 if (input.isCharacterDevice()) {

@@ -3375,6 +3375,13 @@ Linux 本机另以新实现检查两个目标站点：默认出口符合预期�
 
 - 假帮助分别声明 -C、--cwd、--directory 或无目录参数，核对参数在 --resume/-p 之前。连续运行只读帮助一次；无参数时假进程收到正确 cwd。升级二进制或改变启动配置后重新探测。
 
+### 豆包 CLI 新版：ACP 与删除会话（2026-11-25）
+
+- 帮助识别：同时含 `doubao acp serve`、`doubao model list`、`doubao delete <会话ID>` 的帮助得到三项能力，只有 `-p` 的旧帮助都没有；新版后端的 `omemAccess` 为 `mcp`，旧版仍为 `shell-bridge`。替身 `delete` 对 `conversation-42` 删除编号 42，`not_found` 算已删，其他失败报“删除会话失败”。覆盖见 `test/doubao-cli.test.ts`。
+- 真机（CLI 2.38.2，`Doubao 2.1 Turbo / low`）：临时库里一个虚构空间，单次任务让它调用 `list_spaces`。运行事件有 `omem / list_spaces` 工具步骤、`prompt` 事件 `omemAccess=mcp`，结束后状态为“已清理后端会话”，`doubao --list` 里没有这次的会话。再开保留会话记一个暗号，续问能答出，`retireSession` 后同样从列表消失。
+- 升级前的会话：用 `doubao -p` 开一轮记暗号，拿到数字会话编号，再以它为 `resumeSessionId` 走新版：事件为“已恢复”、会话 ID 为 `conversation-<编号>`，能答出暗号；`retireSession` 后从 `doubao --list` 消失。
+- 旧版 CLI（帮助里没有 `acp serve`）照旧走 `-p`：本节之前的豆包 CLI 用例不变。
+
 ### 豆包 CLI 标准输入（2026-11-22）
 
 - 替身在标准输入是字符设备时返回退出码 2 和“无法以 UTF-8 格式读取标准输入”，在 Node socket 时返回“无法连接标准输入”；普通文件内容会追加到提示。分别传短提示和超过内联上限的提示，核对原提示完整到达、stdin 没有额外上下文、回复及会话事件正常。运行结束及模型探测结束后，临时输入文件均已删除。覆盖见 `test/doubao-cli.test.ts`。

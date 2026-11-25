@@ -469,6 +469,7 @@
 - 档案和技能列表按 agents.view 返回，逐项带 canEdit/canDelete；无管理能力的删除请求拒绝。插件自带档案没有本地副本时不可删。入口 `src/server/http.ts`、`src/auth/routes.ts`。
 
 - 豆包 CLI 目录参数按帮助探测并缓存，原生参数前置；不支持时使用进程 cwd。入口 `src/agents/doubao-cli.ts`；假帮助和假进程测过。
+- 豆包 CLI 新版接入（2026-11-25）：帮助里有 `doubao acp serve` 的版本按 ACP 运行（`doubaoAcpProfile`，Linux/macOS 经 `sh -c 'cat | doubao acp serve'` 让标准输入是真管道），omem 工具经 MCP stdio 桥，能力为 `mcp`，不再加终端工具说明；模型按选项名匹配（豆包的选项值是数字编号），探测用 `doubao model list --json`；`-p` 留下的数字会话编号续接时换成 `conversation-<编号>`，并先经 `session/list` 列出一次（豆包只在列出过后才能 load 这类会话）。有 `doubao delete` 的版本用它删除临时会话（`deleteDoubaoCliSession`，清理记录键 `doubao-cli:<指纹>[@acct:成员]`，成员自己的账号也清理），ACP 会话 ID 经 `session/list` 与 `doubao --list` 按目录、标题、更新时间对上编号，`not_found` 算已删；共享后台正在退出（`service_unavailable`）时重试。旧版仍走 `-p` 与 OpenAPI 清理。CLI 2.38.2 真机：一轮 MCP 工具调用、保留会话续问、单次与替换会话的删除均通过；替身覆盖帮助识别、能力切换、删除与模型列表解析。
 
 - 向量状态增加 embedded.chunks/memories/total，关闭提供者仍可看已有数量；复用 chunks_vector_space 与 memories_embedded 覆盖索引。入口 `src/search/embedding-index.ts`、`embeddings.ts`。
 

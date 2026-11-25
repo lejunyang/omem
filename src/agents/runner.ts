@@ -33,7 +33,7 @@ import { quotaAvoid, quotaPressure } from "./quota.ts";
 import { catalogEntry, installHint, PluginBackendUnavailable, pluginBackendStatus, referencedPluginProfiles } from "./catalog.ts";
 import { cloudAccess } from "./cloud-probe.ts";
 import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
-import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE } from "./doubao-cli.ts";
+import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE, doubaoFeatures } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
 import { aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
@@ -1147,7 +1147,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
           emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
         }
-        if (profile.transport !== "doubao-cli")
+        if (profile.transport !== "doubao-cli" || doubaoFeatures(profile).acp)
           emit({ type: "status", text: aiUsageText(profile, prep.fullAccess ? "完全访问" : undefined, req.selection) });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         const quietBefore = quietSet(app, input.runId);

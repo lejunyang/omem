@@ -5,6 +5,11 @@ kind: reference
 updated: 2026-11-25
 ---
 
+## 豆包 CLI 新版走 ACP，会话用 doubao delete 删除（2026-11-25）
+
+- 豆包 CLI 2.38 起有 `doubao acp serve`：`doubao-cli` 后端按帮助判断，新版按 ACP 运行，omem 工具经 MCP 调用、过程逐步显示，不再在提示里教它用 `omem tool`；旧版仍用 `-p`。原生程序只接受终端、管道或普通文件作标准输入，而 Node 的管道是 socket，Linux/macOS 上经 `sh -c 'cat | …'` 转成真管道。模型探测改用 `doubao model list --json`，ACP 里按选项名匹配模型（选项值是数字编号，这一条对所有 ACP 后端生效）。
+- 有 `doubao delete` 的版本由 CLI 删除临时会话，成员自己的豆包账号也能清理；ACP 没有 `session/delete`，会话 ID 是 UUID，按 `session/list` 和 `doubao --list` 的目录、标题、更新时间对上会话编号再删。共享后台正在退出时报 `service_unavailable`，启动和清理都重试几次。ACP 启动失败时错误里带上 Agent 自己的输出，不再只有“ACP connection closed”。`src/agents/doubao-cli.ts`、`dispatch.ts`、`session-cleanup.ts`、`capabilities.ts`、`acp.ts`；`test/doubao-cli.test.ts`。
+
 ## 「先看一眼」的个人卡片可点接着查（2026-11-25）
 
 - 规则和关注答完或等本人拍板时，私聊和群里仅本人可见的第一张卡片有“接着查”。由原处理者带着结论、依据和待查点接手；沿用每日上限和关注回复档。卡片显示交接人和时间、可停深查，运行和消息处理记录也记一笔。公开回复和情境不加入口。

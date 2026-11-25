@@ -30,6 +30,24 @@ function optionValues(option: SessionConfigOption): string[] {  if (option.type 
   return out;
 }
 
+/** Option names → values, for a model chosen by the name the agent shows (Doubao's ids are numbers). */
+function optionNames(option: SessionConfigOption): Map<string, string> {
+  const out = new Map<string, string>();
+  if (option.type !== "select") return out;
+  for (const o of option.options as unknown[]) {
+    const group = o as { options?: { value: string; name?: string }[]; value?: string; name?: string };
+    for (const x of Array.isArray(group.options) ? group.options : [group]) if (typeof x.value === "string" && typeof x.name === "string" && x.name) out.set(x.name, x.value);
+  }
+  return out;
+}
+/** A model by its value first, then by the name shown for it. */
+function resolveModelChoice(typed: string, values: string[], names: Map<string, string>) {
+  const byValue = resolveModelOption(typed, values);
+  if (byValue.matched) return byValue;
+  const name = resolveModelOption(typed, [...names.keys()]);
+  return name.matched ? { value: names.get(name.value)!, matched: true } : byValue;
+}
+
 /**
  * What the agent tells about each model besides its id: the entry's description and `_meta` (a
  * provider may put a model's daily limit or what is left of it there). Kept as text, not parsed:
@@ -545,7 +563,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       }
       if (!option && key === "model" && session.models?.availableModels?.length) {
         const ids = session.models.availableModels.map((m) => m.modelId);
-        const chosen = resolveModelOption(value, ids);
+        const chosen = resolveModelChoice(value, ids, new Map(session.models.availableModels.flatMap(m => m.name ? [[m.name, m.modelId] as const] : [])));
         if (!chosen.matched) {
           cutDown("model", value, ids);
           if (opts.strictSelection?.model) throw new Error(`指定模型 ${value} 不可用，可选：${ids.join(", ")}`);
@@ -568,7 +586,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
         continue;
       }
       const values = optionValues(option);
-      const chosen = key === "model" ? resolveModelOption(value, values) : { value, matched: values.includes(value) };
+      const chosen = key === "model" ? resolveModelChoice(value, values, optionNames(option)) : { value, matched: values.includes(value) };
       if (!chosen.matched) {
         cutDown(key, value, values);
         if (opts.strictSelection?.[key]) throw new Error(`指定 ${key}=${value} 不可用，可选：${values.join(", ")}`);
@@ -711,7 +729,9 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
     if (!(opts.signal?.reason instanceof NetworkUnavailableError) && !keepSession) await discard?.();
     close();
     await stopped;
-    throw sandboxStartError(accountOf(profile), stderr) ?? explain(error, profile);
+    // The agent quit while starting: what it printed says why better than the closed connection.
+    const why = dead && error instanceof Error && /connection closed/i.test(error.message) && stderr.trim() ? exitError(child.exitCode) : error;
+    throw sandboxStartError(accountOf(profile), stderr) ?? explain(why, profile);
   }
 }
 
@@ -739,14 +759,15 @@ function explain(error: unknown, profile: AgentProfile) {
   return new Error(text + hint);
 }
 
-/** Delete a session through a connection of its own: start the agent, `session/delete`, stop it. */
-export async function deleteAcpSession(profile: AgentProfile, sessionId: string, cwd: string, env?: Record<string, string>, signal?: AbortSignal) {
+/** A short connection of its own: start the agent, initialize, run `work`, stop it. */
+async function withAcpConnection<T>(profile: AgentProfile, cwd: string, env: Record<string, string> | undefined, signal: AbortSignal | undefined, work: (connection: ClientSideConnection, caps: { sessionCapabilities?: { delete?: unknown; list?: unknown } } | undefined) => Promise<T>): Promise<T> {
   if (signal?.aborted) throw new Error("CANCELLED");
   requirePluginBackend(profile);
   const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...keyEnv(profile), ...env }, sandbox: accountOf(profile) });
   const onAbort = () => stop(child);
   signal?.addEventListener("abort", onAbort, { once: true });
-  child.stderr.resume();
+  let stderr = "";
+  child.stderr.on("data", (d: Buffer) => { stderr = (stderr + d.toString()).slice(-2000); });
   const output = new WritableStream<Uint8Array>({ write: (chunk) => new Promise((resolve, reject) => child.stdin.write(chunk, (e) => (e ? reject(e) : resolve()))) });
   const input = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
   const connection = new ClientSideConnection(
@@ -757,14 +778,13 @@ export async function deleteAcpSession(profile: AgentProfile, sessionId: string,
     ndJsonStream(output, input),
   );
   let timer: NodeJS.Timeout | undefined;
-  const exited = new Promise<never>((_, reject) => child.once("exit", (code) => reject(new Error(`Agent 进程退出（${code}）`))));
+  const exited = new Promise<never>((_, reject) => child.once("exit", (code) => reject(new Error(`Agent 进程退出（${code}）${stderr.trim() ? `：${stderr.trim().slice(-300)}` : ""}`))));
   exited.catch(() => {});
   try {
-    await Promise.race([
+    return await Promise.race([
       (async () => {
         const init = await connection.initialize({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "omem", version: "0.0.1" } });
-        if (!(init.agentCapabilities as { sessionCapabilities?: { delete?: unknown } } | undefined)?.sessionCapabilities?.delete) throw Object.assign(new Error("该后端不支持自动清理会话：未声明 session/delete"), { unsupportedCleanup: true });
-        await connection.deleteSession({ sessionId }).catch(e => { throw promptError(e); });
+        return work(connection, init.agentCapabilities as { sessionCapabilities?: { delete?: unknown; list?: unknown } } | undefined);
       })(),
       exited,
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("会话清理超时")), 30_000); }),
@@ -774,6 +794,32 @@ export async function deleteAcpSession(profile: AgentProfile, sessionId: string,
     signal?.removeEventListener("abort", onAbort);
     stop(child);
   }
+}
+
+/** Delete a session through a connection of its own: start the agent, `session/delete`, stop it. */
+export async function deleteAcpSession(profile: AgentProfile, sessionId: string, cwd: string, env?: Record<string, string>, signal?: AbortSignal) {
+  await withAcpConnection(profile, cwd, env, signal, async (connection, caps) => {
+    if (!caps?.sessionCapabilities?.delete) throw Object.assign(new Error("该后端不支持自动清理会话：未声明 session/delete"), { unsupportedCleanup: true });
+    await connection.deleteSession({ sessionId }).catch(e => { throw promptError(e); });
+  });
+}
+
+/** Look one session up in the agent's `session/list` (in `cwd`, then anywhere); null when it is not listed. */
+export async function findAcpSession(profile: AgentProfile, sessionId: string, cwd: string, signal?: AbortSignal): Promise<{ sessionId: string; cwd?: string | null; title?: string | null; updatedAt?: string | null } | null> {
+  return withAcpConnection(profile, cwd, undefined, signal, async (connection, caps) => {
+    if (!caps?.sessionCapabilities?.list) throw new Error("该后端没有 session/list");
+    for (const scope of [{ cwd }, {}]) {
+      let cursor: string | undefined;
+      for (let page = 0; page < 5; page++) {
+        const r = await connection.listSessions({ ...scope, ...(cursor ? { cursor } : {}) });
+        const hit = r.sessions.find(s => s.sessionId === sessionId);
+        if (hit) return hit;
+        cursor = r.nextCursor ?? undefined;
+        if (!cursor) break;
+      }
+    }
+    return null;
+  });
 }
 
 /** Negotiate protocol deletion first; an archive command is only a fallback for unsupported agents. */

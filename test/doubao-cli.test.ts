@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync, readdirSync, rmSy
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { doubaoCommand, doubaoCwdOptionFromHelp, doubaoCwdOption, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
+import { deleteDoubaoCliSession, doubaoAcpSessionId, doubaoCommand, doubaoCwdOptionFromHelp, doubaoFeatures, doubaoFeaturesFromHelp, modelList, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
 import { agentProfileSchema, type AgentProfile } from "../src/core/config.ts";
 import { agentRunError, type AgentEvent } from "../src/agents/types.ts";
 import { runBackend } from "../src/agents/dispatch.ts";
@@ -13,6 +13,7 @@ import { testApp } from "./helpers.ts";
 import { all } from "../src/core/db.ts";
 import { saveProbe } from "../src/agents/probe.ts";
 import { askModel } from "../src/agents/oneshot.ts";
+import { backendCapabilities } from "../src/agents/capabilities.ts";
 import * as acp from "../src/agents/acp.ts";
 import { threadTurn } from "../src/agents/sessions.ts";
 import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
@@ -80,12 +81,43 @@ describe("doubao cli", () => {
     vi.stubEnv("FAKE_CWD_HELP",help);vi.stubEnv("FAKE_HELP_LOG",log);vi.stubEnv("FAKE_DIRECTORY","1");
     const profile={...fake,args:[...fake.args,"--fixture",help]};
     try {
-      const selected=await doubaoCwdOption(profile);
-      expect(await doubaoCwdOption(profile)).toBe(selected);
+      const selected=doubaoFeatures(profile).cwdOption;
+      expect(doubaoFeatures(profile).cwdOption).toBe(selected);
       const result=await runDoubaoCli(profile,{cwd,prompt:"fixture"},()=>{});
       expect(JSON.parse(result.text)).toEqual({cwd,...selected?{directory:cwd}:{}});
       expect(readFileSync(log,"utf8")).toBe("help\n");
     } finally {vi.unstubAllEnvs();rmSync(cwd,{recursive:true,force:true});}
+  });
+
+  it("从帮助认出 ACP 和删除会话（旧版没有这两项）", () => {
+    const now = "用法：doubao [选项]\n      doubao acp serve [--model <模型>]\n      doubao model list [输出选项]\n      doubao delete <会话ID> [--yes]\n通用选项：\n  -C <目录>                  设置工作区";
+    expect(doubaoFeaturesFromHelp(now)).toEqual({ cwdOption: "-C", acp: true, delete: true, modelList: true });
+    expect(doubaoFeaturesFromHelp("用法：doubao -p <提示词>\n  -C <目录>  工作区")).toEqual({ cwdOption: "-C", acp: false, delete: false, modelList: false });
+    expect(doubaoAcpSessionId("38456421390398210")).toBe("conversation-38456421390398210");
+    expect(doubaoAcpSessionId("a4191a4d-c10a-4417-b0a9-3a6dfd8330fb")).toBe("a4191a4d-c10a-4417-b0a9-3a6dfd8330fb");
+  });
+  it("新版的 ACP 后端经 MCP 用 omem 工具，旧版仍走终端", () => {
+    vi.stubEnv("FAKE_CWD_HELP", "  doubao acp serve\n  doubao delete <会话ID> [--yes]\n  -C <dir> 工作目录");
+    try {
+      const profile = { ...fake, args: [...fake.args, "--fixture", "acp"] };
+      expect(backendCapabilities(profile).omemAccess).toBe("mcp");
+      expect(backendCapabilities(fake).omemAccess).toBe("shell-bridge");
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("model list --json 给出模型名和各自的思考强度", () => {
+    const out = '[cli-chat] {"level":"info"}\n{"type":"result","result":{"type":"model_list","models":[{"id":"9","name":"Auto","efforts":["low","high"]},{"id":"5","name":"Doubao 2.1 Pro","efforts":[]}]}}';
+    expect(modelList(out)).toEqual({ models: ["Auto", "Doubao 2.1 Pro"], effortsByModel: { Auto: ["low", "high"], "Doubao 2.1 Pro": [] } });
+    expect(modelList("Error: unknown command")).toBeNull();
+  });
+  it("用 doubao delete 删除会话编号，已经不存在的算删掉了", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "doubao-delete-")), log = join(dir, "delete.log");
+    vi.stubEnv("FAKE_DELETE_LOG", log);
+    try {
+      await deleteDoubaoCliSession(fake, "conversation-42", dir);
+      await deleteDoubaoCliSession(fake, "404", dir);
+      await expect(deleteDoubaoCliSession(fake, "500", dir)).rejects.toThrow(/删除会话失败/);
+      expect(readFileSync(log, "utf8")).toBe("42\n404\n500\n");
+    } finally { vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("passes model, effort, a permission mode by whether it may write, and the working directory", () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, openSync, statSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -81,19 +81,71 @@ export function doubaoCwdOptionFromHelp(help: string): CwdOption | null {
   const options = Array.from(help.matchAll(/^\s*(-C|--cwd|--directory|--workdir|--working-directory)(?=[\s,=])/gm), m => m[1] as CwdOption);
   return options.find(option => option === "-C") ?? options[0] ?? null;
 }
-const cwdOptions = new Map<string, Promise<CwdOption | null>>();
-/** Only help is invoked. A replaced executable or a different launcher/account gets its own cache. */
-export function doubaoCwdOption(profile: AgentProfile) {
-  const exe = doubaoExecutable(profile), resolved = resolveCommand(exe), account = accountOf(profile);
-  const stat = resolved && statSync(resolved.file, { throwIfNoEntry: false });
-  const key = JSON.stringify([resolved?.file ?? exe, stat?.mtimeMs, stat?.size, profile.args, account?.home]);
-  let option = cwdOptions.get(key);
-  if (!option) {
-    if (cwdOptions.size >= 64) cwdOptions.clear();
-    option = check(exe, [...profile.args, "--help"], account, 5000).then(r => r.code === 0 ? doubaoCwdOptionFromHelp(r.out) : null);
-    cwdOptions.set(key, option);
+
+/**
+ * What this install of the CLI can do, from its help (no login needed):
+ * - `acp`: `doubao acp serve` (2.38+): turns go through ACP (MCP tools, streamed replies, model options);
+ * - `delete`: `doubao delete <会话ID> --yes`: omem's one-off conversations are deleted with the CLI itself,
+ *   also under a member's own account, instead of through the owner's OpenAPI login;
+ * - `modelList`: `doubao model list --json` lists models and their levels for the probe.
+ * Older installs keep `-p` and the OpenAPI cleanup.
+ */
+export type DoubaoFeatures = { cwdOption: CwdOption | null; acp: boolean; delete: boolean; modelList: boolean };
+export function doubaoFeaturesFromHelp(help: string): DoubaoFeatures {
+  return {
+    cwdOption: doubaoCwdOptionFromHelp(help),
+    acp: /^\s*doubao\s+acp\s+serve\b/m.test(help),
+    delete: /^\s*doubao\s+delete\s+<[^>]+>/m.test(help),
+    modelList: /^\s*doubao\s+model\s+list\b/m.test(help),
+  };
+}
+const NONE: DoubaoFeatures = { cwdOption: null, acp: false, delete: false, modelList: false };
+const features = new Map<string, DoubaoFeatures>();
+let ignoreInstalled = false;
+/** Tests: the `doubao` installed on this machine counts as an old one (fakes with their own command are still asked). */
+export function ignoreInstalledDoubaoForTests() { ignoreInstalled = true; }
+/**
+ * Cached per executable (path, mtime, size) and launcher arguments, so an update of the CLI is seen
+ * on the next turn. Synchronous: which interface a turn uses decides its capabilities (backendCapabilities).
+ */
+export function doubaoFeatures(profile: Pick<AgentProfile, "command" | "args" | "peer">): DoubaoFeatures {
+  if (profile.peer || (ignoreInstalled && profile.command === "doubao")) return NONE;
+  const exe = doubaoExecutable(profile as AgentProfile), resolved = resolveCommand(exe);
+  if (!resolved) return NONE;
+  const stat = statSync(resolved.file, { throwIfNoEntry: false });
+  const key = JSON.stringify([resolved.file, stat?.mtimeMs, stat?.size, profile.args]);
+  let found = features.get(key);
+  if (!found) {
+    const dir = join(tmpdir(), "omem-doubao");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${randomUUID()}.stdin`);
+    writeFileSync(file, "", { mode: 0o600, flag: "wx" });
+    const fd = openSync(file, "r");
+    try {
+      const r = spawnSync(resolved.file, [...resolved.prefix, ...profile.args, "--help"], { stdio: [fd, "pipe", "pipe"], encoding: "utf8", timeout: 5000, windowsHide: true, cwd: tmpdir() });
+      found = r.status === 0 ? doubaoFeaturesFromHelp(`${r.stdout}\n${r.stderr}`) : NONE;
+    } finally { closeSync(fd); rmSync(file, { force: true }); }
+    if (features.size >= 64) features.clear();
+    // A failed check is not cached for good: the next turn asks again.
+    if (found !== NONE) features.set(key, found);
   }
-  return option;
+  return found;
+}
+
+/**
+ * The profile as an ACP agent (`doubao acp serve`); same id, account and settings. The CLI takes only
+ * a terminal, pipe or regular file as stdin, and Node's stdio pipes are sockets on Linux and macOS:
+ * there `cat` hands it the messages through a real pipe (the process group is stopped as one).
+ */
+export function doubaoAcpProfile(profile: AgentProfile, platform = process.platform): AgentProfile {
+  const args = [...profile.args, "acp", "serve"], exe = doubaoExecutable(profile);
+  if (platform === "win32") return { ...profile, transport: "acp", command: exe, args };
+  return { ...profile, transport: "acp", command: "/bin/sh", args: ["-c", 'cat | "$0" "$@"', exe, ...args] };
+}
+
+/** A session id from `-p` (the conversation number) as ACP names it, so a thread started before the update resumes. */
+export function doubaoAcpSessionId(id: string) {
+  return /^\d+$/.test(id) ? `conversation-${id}` : id;
 }
 
 export function doubaoCommand(profile: AgentProfile, req: AgentRequest, prompt: string, cwdOption: CwdOption | null = null) {
@@ -136,7 +188,7 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
     const box = req.ownSandbox;
     const extra = [file, toolsDir].filter((path): path is string => !!path && !box?.hidden.some(hidden => under(path, hidden)));
     const ownSandbox = box ? { ...box, plan: { ...box.plan, ro: [...box.plan.ro, ...extra] } } : box;
-    const { args, permission } = doubaoCommand(profile, req, prompt, await doubaoCwdOption(profile));
+    const { args, permission } = doubaoCommand(profile, req, prompt, doubaoFeatures(profile).cwdOption);
     const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => emptyStdin(stdin => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin, sandbox })));
     emit({ type: "status", text: aiUsageText(profile, permission === "always_allow" ? "完全访问" : "风险审批", req.selection) });
     emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
@@ -205,15 +257,40 @@ function errorText(stdout: string, stderr: string) {
   return lines.join("\n").replace(/^Error:\s*/m, "").slice(-800) || "没有输出";
 }
 
+/**
+ * The CLIs on a machine share one background service, which shuts down a moment after the last one exits:
+ * a command started in that moment fails at once with `service_unavailable` and works when started again.
+ */
+export const DOUBAO_SERVICE_BUSY = /service_unavailable:/;
+async function check(exe: string, args: string[], account?: ReturnType<typeof accountOf>, timeoutMs = 60_000, env?: Record<string, string>): Promise<{ code: number | null; out: string }> {
+  for (let attempt = 1; ; attempt++) {
+    const r = await checkOnce(exe, args, account, timeoutMs, env);
+    if (r.code === 0 || attempt >= 4 || !DOUBAO_SERVICE_BUSY.test(r.out)) return r;
+    await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+  }
+}
+
+/** Runs `start` again while the shared service is shutting down (nothing was done yet when it says so). */
+export async function doubaoRetry<T>(start: () => Promise<T>, signal?: AbortSignal, onRetry?: () => void): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await start(); }
+    catch (e) {
+      if (attempt >= 4 || signal?.aborted || !DOUBAO_SERVICE_BUSY.test((e as Error).message)) throw e;
+      onRetry?.();
+      await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+    }
+  }
+}
+
 /** One short invocation that fails during argument checks; returns what it printed. */
-function check(exe: string, args: string[], account?: ReturnType<typeof accountOf>, timeoutMs = 60_000): Promise<{ code: number | null; out: string }> {
+function checkOnce(exe: string, args: string[], account?: ReturnType<typeof accountOf>, timeoutMs = 60_000, env?: Record<string, string>): Promise<{ code: number | null; out: string }> {
   const r = resolveCommand(exe);
   if (!r) return Promise.resolve({ code: null, out: `找不到命令 ${exe}` });
   return new Promise((resolve) => {
     // A user's own account: in their sandbox, from their account folder.
     let child: ReturnType<typeof spawn>;
     try {
-      child = emptyStdin(stdin => account ? launch(exe, args, { cwd: account.home, stdin, sandbox: account }) : spawn(r.file, [...r.prefix, ...args], { stdio: [stdin, "pipe", "pipe"], windowsHide: true, cwd: tmpdir() }));
+      child = emptyStdin(stdin => account ? launch(exe, args, { cwd: account.home, stdin, sandbox: account, env }) : spawn(r.file, [...r.prefix, ...args], { stdio: [stdin, "pipe", "pipe"], windowsHide: true, cwd: tmpdir(), ...(env && { env: { ...process.env, ...env } }) }));
     } catch (e) {
       return resolve({ code: null, out: (e as Error).message });
     }
@@ -241,8 +318,11 @@ const LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
  */
 export async function probeDoubaoCli(profile: AgentProfile): Promise<{ models: string[]; effortsByModel: Record<string, string[]> }> {
   const exe = doubaoExecutable(profile);
-  const base = [...profile.args, "--resume", "1", "-p", "x"];
   const account = accountOf(profile);
+  // Newer CLIs list them: names (what `--model` takes and the ACP model option shows) and each one's levels.
+  const listed = doubaoFeatures(profile).modelList ? modelList((await check(exe, [...profile.args, "model", "list", "--json"], account)).out) : null;
+  if (listed) return listed;
+  const base = [...profile.args, "--resume", "1", "-p", "x"];
   const first = await check(exe, [...base, "--model", "__omem_probe__"], account);
   const models = listAfter(first.out, "Available models");
   if (!models?.length) throw new Error(errorText(first.out, "") || "豆包 CLI 没有报出模型列表（先运行 doubao login）");
@@ -260,4 +340,59 @@ export async function probeDoubaoCli(profile: AgentProfile): Promise<{ models: s
     }),
   );
   return { models, effortsByModel };
+}
+
+/** `doubao model list --json`: one result line among log lines; null when this CLI has no such command. */
+export function modelList(out: string): { models: string[]; effortsByModel: Record<string, string[]> } | null {
+  for (const line of out.split("\n")) {
+    if (!line.startsWith("{")) continue;
+    try {
+      const models = JSON.parse(line)?.result?.models;
+      if (!Array.isArray(models) || !models.length) continue;
+      const named = models.filter((m): m is { name: string; efforts?: unknown } => typeof m?.name === "string" && !!m.name);
+      return {
+        models: named.map(m => m.name),
+        effortsByModel: Object.fromEntries(named.map(m => [m.name, Array.isArray(m.efforts) ? m.efforts.filter((e): e is string => typeof e === "string") : []])),
+      };
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Delete one of omem's conversations with the CLI (`doubao delete <会话编号> --yes`), under the account that
+ * made it. `-p` reports the conversation number; an ACP session id is matched to it by the session's
+ * folder, title and last update in `session/list` and `doubao --list` (ACP has no delete and no number).
+ * A conversation that is gone, or a session that never got one, is done.
+ */
+export async function deleteDoubaoCliSession(profile: AgentProfile, sessionId: string, cwd: string, signal?: AbortSignal) {
+  const conversation = /^\d+$/.test(sessionId) ? sessionId : /^conversation-(\d+)$/.exec(sessionId)?.[1] ?? await conversationOf(profile, sessionId, cwd, signal);
+  if (!conversation) return;
+  if (signal?.aborted) throw new Error("CANCELLED");
+  const r = await check(doubaoExecutable(profile), [...profile.args, "delete", conversation, "--yes"], accountOf(profile), 60_000, profile.env);
+  if (r.code === 0 || /^not_found:/m.test(r.out)) return;
+  throw new Error(`豆包 CLI 删除会话失败：${errorText(r.out, "")}`);
+}
+
+async function conversationOf(profile: AgentProfile, sessionId: string, cwd: string, signal?: AbortSignal): Promise<string | null> {
+  const { findAcpSession } = await import("./acp.ts");
+  const session = await doubaoRetry(() => findAcpSession(doubaoAcpProfile(profile), sessionId, cwd, signal), signal);
+  if (!session) return null;
+  const at = session.updatedAt ? Date.parse(session.updatedAt) : NaN;
+  if (!session.title || Number.isNaN(at)) throw new Error("豆包没有给出这个会话的标题和更新时间，认不出它的会话编号");
+  const r = await check(doubaoExecutable(profile), [...profile.args, "--list", "--limit", "200", "--json"], accountOf(profile), 60_000, profile.env);
+  const hits = listedSessions(r.out).filter(s => s.title === session.title && Date.parse(s.updated_at ?? "") === at && (!s.cwd || !session.cwd || s.cwd === session.cwd));
+  if (hits.length === 1) return hits[0].session_id;
+  throw new Error(hits.length ? "豆包会话列表里有几条同名同时间的会话，认不出是哪一条" : `豆包会话列表里还找不到这个会话${r.code === 0 ? "" : `：${errorText(r.out, "")}`}`);
+}
+
+function listedSessions(out: string): { session_id: string; title?: string; updated_at?: string; cwd?: string }[] {
+  for (const line of out.split("\n")) {
+    if (!line.startsWith("{")) continue;
+    try {
+      const sessions = JSON.parse(line)?.result?.sessions;
+      if (Array.isArray(sessions)) return sessions.filter(s => typeof s?.session_id === "string");
+    } catch {}
+  }
+  return [];
 }

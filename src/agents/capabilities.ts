@@ -1,4 +1,5 @@
 import type { AgentProfile } from "../core/config.ts";
+import { doubaoFeatures } from "./doubao-cli.ts";
 
 export type BackendCapabilities = {
   omemAccess: "mcp" | "shell-bridge" | "http" | "none";
@@ -17,6 +18,8 @@ const transports = {
   doubao: { omemAccess: "none", cloudHttp: false, localTools: false, where: "cloud" },
 } satisfies Record<AgentProfile["transport"], BackendCapabilities>;
 
-export function backendCapabilities(profile: Pick<AgentProfile, "transport">): BackendCapabilities {
+/** The Doubao CLI has omem's tools over MCP once it speaks ACP (`doubao acp serve`); older ones through the shell. */
+export function backendCapabilities(profile: Pick<AgentProfile, "transport"> & Partial<Pick<AgentProfile, "command" | "args" | "peer">>): BackendCapabilities {
+  if (profile.transport === "doubao-cli" && profile.command && doubaoFeatures({ command: profile.command, args: profile.args ?? [], peer: profile.peer }).acp) return local;
   return transports[profile.transport];
 }
