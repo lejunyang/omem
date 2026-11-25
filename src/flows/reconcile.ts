@@ -21,6 +21,7 @@ import { followLimit, reconcileChatLines } from "./follow.ts";
 import { itemObjects, refreshObject } from "./plugin-objects.ts";
 import { getStage, itemFlow, itemStages, type FlowActor, type ItemFlow, type StageRow } from "./store.ts";
 import { itemFlowSpaces } from "./spaces.ts";
+import { pendingPushConfirmation } from "./owner-turn.ts";
 
 const INTERVAL = 6 * 3600_000;
 export const itemFollowLane = (id: string) => `item-follow:${id}`;
@@ -147,7 +148,7 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
       if (close_item) upsertItem(app, item.id, { status: "done", note: reason }, "agent", r.id);
       notify(app, { userId: item.userId, title: `已收口：${item.title}`, urgency: "later", entity: "item", entityId: item.id,
         link: `#/work/${item.id}`, sourceRefs: [], graceDone: true, replaces: f.card ?? undefined, runId: r.id,
-        body: `${reason}\n\n依据：${flowEvidenceLinks(app, item.id, evidence)}\n\n${close_item ? "事项已标为完成。" : "事项仍保留，未关闭。"}要再开始，可以对助手说，或在[事项页](${webLink(app, `#/work/${item.id}`)})${close_item ? "先重开事项，再开始流程" : "重新开始流程"}。` });
+        body: `${reason}\n\n[事项页](${webLink(app, `#/work/${item.id}`)})\n\n依据：${flowEvidenceLinks(app, item.id, evidence)}\n\n${close_item ? "事项已标为完成。" : "事项仍保留，未关闭。"}要再开始，可以对助手说，或在事项页${close_item ? "先重开事项，再开始流程" : "重新开始流程"}。` });
       setRunOutput(app, r.id, { reconcileResult: { summary: args.summary, next: [], finish: args.finish } });
       return [];
     }
@@ -161,6 +162,11 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
     });
     const next: Next[] = [];
     for (const { s, stage } of planned) {
+      const definition = f.definition.stages.find(d => d.id === s.stage);
+      if (stage.state === "doing" && definition && pendingPushConfirmation(app, item, definition)) {
+        next.push({ stage: s.stage, action: s.action, delivery: "等本人在交办完成卡片确认并推送" });
+        continue;
+      }
       const key = stageKey(stage);
       const previous = one<{ id: string }>(app.db, `select id from asks where ${forStage} and json_extract(context,'$.startedAt')=? and json_extract(context,'$.key')=? limit 1`, HANDLER, item.id, stage.id, f.startedAt, key);
       const asked = one(app.db, `select 1 from runs where kind='flow-reconcile' and json_extract(input,'$.itemId')=? and json_extract(input,'$.startedAt')=?
@@ -178,9 +184,9 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
       const member = target ? await botInGroup(target) : null;
       if (target && member !== true) unavailable = member === false ? "机器人不在这个群，发不了。" : "未能确认机器人在群里，不能从卡片发送。";
       const maySend = member === true;
-      const name = f.definition.stages.find(d => d.id === s.stage)?.name ?? stage.id;
+      const name = definition?.name ?? stage.id;
       createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
-        question: `「${name}」需要${s.person ? `找${s.person}` : "你"}：${s.action}\n\n事项：${item.title}${s.draft ? `\n\n给${s.person}的草稿（未发送）：\n${s.draft}` : ""}${unavailable ? `\n\n${unavailable}` : ""}`,
+        question: `「${name}」需要${s.person ? `找${s.person}` : "你"}：${s.action}\n\n事项：[${item.title.replace(/[\[\]]/g, "")}](${webLink(app, `#/items/${item.id}/flow?stage=${encodeURIComponent(stage.id)}`)})${s.draft ? `\n\n给${s.person}的草稿（未发送）：\n${s.draft}` : ""}${unavailable ? `\n\n${unavailable}` : ""}`,
         options: [...(maySend ? [{ label: "把草稿发到群里" }] : []), { label: "我已处理" }, { label: "先不处理" }],
         context: { handler: HANDLER, itemId: item.id, stageId: stage.id, startedAt: f.startedAt, key, action: s.action, ...(maySend ? { chat: target, draft: s.draft } : {}) } });
       next.push({ stage: s.stage, action: s.action, delivery: s.draft ? "草稿等本人处理" : "最小一步等本人处理" });

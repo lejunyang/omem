@@ -137,6 +137,12 @@ async function refreshRemote(app: App, path: string, remotes: string[], defaultN
 }
 
 const checks = new WeakMap<App, Promise<void>>();
+export async function checkGitSignalsAfterPush(app: App) {
+  // A patrol already reading refs may have observed the branch before the push.
+  await checks.get(app)?.catch(() => {});
+  await checkGitSignals(app);
+}
+
 export function checkGitSignals(app: App): Promise<void> {
   const active = checks.get(app);
   if (active) return active;

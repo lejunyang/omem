@@ -10,10 +10,13 @@ import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { applyCodeRun } from "../src/agents/code.ts";
 import { confirmBranchRun } from "../src/agents/code-branch.ts";
 import { actCodeGit, readCodeGit } from "../src/agents/code-git.ts";
+import { answerAsk, listAsks } from "../src/agents/asks.ts";
+import { askConfirm } from "../src/agents/review-chain.ts";
+import { askCard } from "../src/channels/lark-asks.ts";
 import { addLocalMaterials } from "../src/items/materials.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { describeStage, parseFlow, saveFlow } from "../src/flows/definitions.ts";
-import { flowReminders, flowView, ownerAction, reopenStage, startFlow, stopFlow } from "../src/flows/engine.ts";
+import { flowReminders, flowView, ownerAction, reopenStage, reportStage, startFlow, stopFlow } from "../src/flows/engine.ts";
 import { checkGitSignals, type GitSignal } from "../src/flows/signals.ts";
 import { getStage, stageLog } from "../src/flows/store.ts";
 import { testApp } from "./helpers.ts";
@@ -26,9 +29,9 @@ function git(path: string, args: string[]) {
   return r.stdout.trim();
 }
 const signals = (app: App) => all<{ type: string; outcome: string; keys: string }>(app.db, "select * from flow_signals order by id");
-async function setup(options: { count?: number; type?: GitSignal; by?: "owner" | "wait"; applied?: boolean; pushedBefore?: boolean } = {}) {
+async function setup(options: { count?: number; type?: GitSignal; by?: "owner" | "wait"; applied?: boolean; pushedBefore?: boolean; confirmation?: boolean } = {}) {
   const app = testApp(); apps.push(app);
-  app.config.flows.autoAdvance = 20;
+  app.config.flows.autoAdvance = options.confirmation ? 1 : 20;
   const item = upsertItem(app, undefined, { title: "示例商城退款", spaceId: "personal" }, "user");
   const repos = Array.from({ length: options.count ?? 1 }, (_, i) => {
     const space = `shop-${i}`, path = join(app.home, space), remote = join(app.home, `${space}.git`);
@@ -56,9 +59,16 @@ async function setup(options: { count?: number; type?: GitSignal; by?: "owner" |
   setRunOutput(app, work.id, { verdict: "approved", worktrees: repos.map((r) => ({ ...r, commits: true, newBranch: true, cutFrom: "main", targetBranch: r.branch })),
     ...(options.applied === false ? {} : { appliedAt: new Date().toISOString(), appliedTo: repos.map(({ space, path, branch, base, head }) => ({ space, path, branch, base, head })) }) });
   saveFlow(app, YAML.stringify({ id: "demo", name: "示例交付", stages: [
+    ...(options.confirmation ? [{ id: "fix", name: "修复", by: { object: "code-work" } }] : []),
     { id: "push", name: "推送", by: options.by ?? "owner", done: { signal: options.type ?? "git.pushed" } },
     { id: "deploy", name: "部署", by: "wait" },
   ] }), "owner");
+  if (options.confirmation) {
+    app.config.webUrl = "https://omem.example.test/";
+    // The disposable branch is in the repository; its returned workspace is already gone.
+    setRunOutput(app, work.id, { worktrees: repos.map(r => ({ ...r, path: join(app.home, "returned-worktree", r.space), commits: true, newBranch: true, cutFrom: "main", targetBranch: r.branch })) });
+    askConfirm(app, getRun(app, work.id), null, "交办完成：实现退款", "复测通过");
+  }
   if (options.pushedBefore) for (const r of repos) git(r.path, ["push", "-q", "origin", "feat/refund"]);
   await startFlow(app, item.id, "demo", owner);
   return { app, item, repos, work, s: (id = "push") => getStage(app, item.id, id), push: (i = 0) => git(repos[i].path, ["push", "-q", "origin", "feat/refund"]) };
@@ -89,19 +99,34 @@ describe("Git 完成信号", () => {
     expect(stageLog(t.app, t.item.id).filter((l) => l.stageId === "push" && l.toState === "done")).toMatchObject([{ actor: "host", refs: [t.work.id], note: expect.stringContaining(`shop-0@feat/refund（${t.repos[0].head.slice(0, 7)}）`) }]);
     expect(JSON.parse(signals(t.app).at(-1)!.keys)).toEqual([{ space: "shop-0", branch: "feat/refund", commits: [t.repos[0].head] }]);
   });
-  it("轮到本人推送时先查一次：已经推了就直接完成、不问本人；没推才问", async () => {
-    const settle = async (t: Awaited<ReturnType<typeof setup>>) => {
-      for (let i = 0; i < 60 && t.s().state !== "done" && !t.s().askId; i++) await new Promise((r) => setTimeout(r, 50));
-    };
+  it("轮到本人推送时先查一次：已经推了就直接完成，没推就在流程进度等本人", async () => {
     let t0 = await setup({ pushedBefore: true });
     expect(t0.s()).toMatchObject({ state: "doing", askId: null });
-    await settle(t0);
-    expect(t0.s().state).toBe("done");
-    expect(all(t0.app.db, "select id from asks where json_extract(context,'$.kind')='owner'")).toHaveLength(0);
+    await vi.waitFor(() => expect(t0.s().state).toBe("done"));
+    expect(listAsks(t0.app)).toHaveLength(0);
     t0 = await setup();
-    await settle(t0);
-    expect(t0.s().state).toBe("doing");
-    expect(t0.s().askId).toBeTruthy();
+    await vi.waitFor(() => expect(one(t0.app.db, "select id from notifications where body like '%等你：推送%'")).toBeDefined());
+    expect(t0.s()).toMatchObject({ state: "doing", waitingOn: "owner", askId: null });
+    expect(listAsks(t0.app)).toHaveLength(0);
+  });
+  it("交办确认卡已能推送，流程只提示在哪里操作；答卡后按 Git 信号推进", async () => {
+    const t = await setup({ confirmation: true, applied: false, count: 2 });
+    expect(t.s("fix").state).toBe("done");
+    expect(t.s()).toMatchObject({ state: "doing", waitingOn: "owner", askId: null, note: "在『交办完成』那张卡片上点确认并推送，这一段随之完成。" });
+    await reportStage(t.app, t.item.id, "push", { state: "done", note: "交办已准备好" }, { actor: "assistant" });
+    const [card] = listAsks(t.app);
+    expect(listAsks(t.app)).toHaveLength(1);
+    expect(card.handler).toBe("review-done");
+    const links = card.question.split("\n\n")[1];
+    expect(links).toContain(`[看改动](https://omem.example.test/#/code/${t.work.id}?tab=change)`);
+    expect(links).toContain(`[所属事项](https://omem.example.test/#/items/${t.item.id})`);
+    expect(links).toContain("shop-0 `feat/refund`、shop-1 `feat/refund`");
+    expect(JSON.stringify(askCard(t.app, card))).toContain(`[看改动](https://omem.example.test/#/code/${t.work.id}?tab=change)`);
+    const choice = card.options.findIndex(o => o.label === "确认并推送");
+    await answerAsk(t.app, card.id, { by: "owner", choice });
+    expect(t.s()).toMatchObject({ state: "done", evidence: [t.work.id], askId: null });
+    expect(git(t.repos[0].remote, ["rev-parse", "refs/heads/feat/refund"])).toBe(t.repos[0].head);
+    expect(t.s("deploy")).toMatchObject({ state: "gated", control: { gateLimit: true } });
   });
   it("两个仓库只推一个继续等，全部推送才完成", async () => {
     const t = await setup({ count: 2 }); t.push();

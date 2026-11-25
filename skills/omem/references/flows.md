@@ -119,4 +119,6 @@
 
 `read_flow_object(item, object)` 与 `submit_flow_reconcile(item, summary, steps?)` 只给对账角色。前者用事项自己的连接重读挂接的 `object:<id>`，`read: false` 表示没核对，不引用缓存当现状。用 `stage_report` 和 `stage_reopen` 时每次附可复核的依据；若已在等本人过开始关卡或确认结果，`stage_report(state="done")` 只补原卡片的依据和结论。正在由另一个运行处理的阶段不要代交，也不能跳过本人关卡。
 
+本人承担的推送段若已有交办的“确认并推送”卡，等卡上的推送操作和 `git.pushed` 信号。对账填了下一步或报告做完时，宿主沿用这张交办卡。
+
 `steps` 每段最多一条、总共最多五条：`{stage, action}` 写只有本人能做的最小一步；找别人配合另填 `person, draft`，确认知道关联群时可加 `chat`（群 id）。能直接发的按事项关注档发，其他情况由宿主留在待处理。没有动作时只交 `summary`，不上卡片。不要另用发消息或通知工具。

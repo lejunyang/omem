@@ -15,6 +15,7 @@ import {
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
+import { reviewCardLinks } from "./review-card.ts";
 import { queueStandaloneFix } from "./review-fix.ts";
 import { checkLabel, namedReviewAI, planReview, reviewChecks, roundFindings, independenceWarnings, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
@@ -413,6 +414,7 @@ function askDeliver(app: App, rootId: string, run: Run, todo: CodeTask[]) {
     ...(chain ? { conversationId: reportConversation(app, chain) } : {}),
     question: [
       `**需求做完了：${getRun(app, rootId).title}**`,
+      reviewCardLinks(app, run),
       `需求拆出的 ${own.length} 项都已完成并通过检查：\n${own.slice(0, 8).map((t) => `- ${t.title}`).join("\n")}`,
       `评审还提了 ${todo.length} 个问题待改：\n${todo.slice(0, 5).map((t) => `- ${t.title}`).join("\n")}${todo.length > 5 ? `\n- ……共 ${todo.length} 个` : ""}`,
       `这些问题照常在改，不用回复。${branch ? "想先实际试一下，可以把评审过的版本推上去（之后的修改接着提交在同一分支）；" : ""}觉得剩下的不值得这次改，可以记成以后再做，同一分支下次交办会接上。`,

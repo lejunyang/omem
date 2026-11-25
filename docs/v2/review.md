@@ -185,6 +185,8 @@ review:
 
 计划存在发起 run 的 `output.reviewPlan`：`{tier, reasons, checks, estimatedRounds, briefRunId, createdAt}`，网页和飞书卡片都能看到；`confirmPlan` 的档位等本人点“开始”或改档后开始。
 
+编码交办的决定卡在问题下方列出“看改动”、所属事项（如果已关联）和各仓库分支名。分支交办确认推送成功后，宿主立即用流程原有的 Git 信号规则核对远端提交。
+
 ### 4.2 结构化结论
 
 评审项第一行仍写结论，随后用新工具 `submit_review(verdict, findings[])` 提交（评审项名由运行上下文决定，不让模型自报）。`findings` 每条：

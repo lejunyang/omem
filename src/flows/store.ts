@@ -199,7 +199,11 @@ export function progress(app: App, id: string, lines: ProgressLine[], ownerWaiti
     ...waitingOwner.map((d) => `「${d.name}」等你：在流程页写一句话让它重做，或直接标做完、跳过。`),
     ...blocked.filter((d) => !waitingOwner.includes(d)).map((d) => `「${d.name}」${waitText(rows.find((r) => r.id === d.id)?.waitingOn ?? "")}；有了以后流程接着走。`),
     ...gated.map((d) => `「${d.name}」等你开始：在流程页点开始，或先别做。`),
-    ...doing.map((d) => `「${d.name}」在做，有结果再告诉你。`),
+    ...doing.map((d) => {
+      const s = rows.find((r) => r.id === d.id)!;
+      if (s.waitingOn !== "owner") return `「${d.name}」在做，有结果再告诉你。`;
+      return d.by === "owner" && !s.askId ? s.note : `「${d.name}」等你在流程页处理。`;
+    }),
   ];
   const body = [`**${lead}**`, ...said, `${PROGRESS_TAIL[0]}\n${chain}`, next.length ? `${PROGRESS_TAIL[1]}\n${next.map((x) => `- ${x}`).join("\n")}` : ""].filter(Boolean).join("\n\n");
   const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/work/${id}`, images: images.slice(-4), view: "flow", ...(ownerWaiting ? { tone: "warning" as const } : {}) });

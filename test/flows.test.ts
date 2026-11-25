@@ -129,7 +129,8 @@ describe("阶段推进", () => {
     await expect(startFlow(app, item.id, "demo", owner)).rejects.toThrow("已经");
     await done(app, item.id, "a"); expect(s("b").state).toBe("doing");
     await done(app, item.id, "b"); expect(s("c")).toMatchObject({ state: "doing", by: "owner" });
-    await answerAsk(app, s("c").askId!, { choice: 0, by: "owner" });
+    expect(s("c")).toMatchObject({ waitingOn: "owner", askId: null });
+    await ownerAction(app, item.id, "c", "done");
     expect(itemFlow(app, item.id)!.endedAt).toBeTruthy();
     expect(one(app.db, "select status from items where id=?", item.id)).toMatchObject({ status: "open" });
     const n = all(app.db, "select * from notifications where title=?", item.title).length;
@@ -268,6 +269,35 @@ describe("阶段推进", () => {
 function jsonContext(app: App, id: string): Record<string, unknown> { return JSON.parse(one<{ context: string }>(app.db, "select context from notifications where id=?", id)!.context); }
 
 describe("只有本人能定的事", () => {
+  it("已到自动上限时，本人阶段在流程进度等你，显式关卡和条件仍照常询问", async () => {
+    const { app, item, s } = await setup([
+      stage("prep", { by: "wait" }),
+      stage("manual", { by: "owner", note: "抽查退款记录" }),
+      stage("explicit", { by: "owner", gate: "confirm" }),
+      stage("conditional", { by: "owner", when: "需要补发通知吗" }),
+    ], { autoAdvance: 1 });
+    await done(app, item.id, "prep");
+    expect(s("manual")).toMatchObject({ state: "doing", waitingOn: "owner", askId: null, note: "等你：抽查退款记录" });
+    const card = one<{ body: string }>(app.db, "select body from notifications where id=?", itemFlow(app, item.id)!.card!);
+    expect(card?.body).toContain("等你：抽查退款记录");
+    expect(all(app.db, "select id from asks")).toHaveLength(0);
+    await ownerAction(app, item.id, "manual", "done");
+    expect(s("explicit")).toMatchObject({ state: "gated", control: { gateLimit: false } });
+    const gate = getAsk(app, s("explicit").askId!);
+    expect(gate.question).toContain("轮到这一段了，开始吗？");
+    await answerAsk(app, gate.id, { by: "owner", choice: 0 });
+    expect(s("explicit")).toMatchObject({ state: "doing", waitingOn: "owner", askId: null });
+    await ownerAction(app, item.id, "explicit", "done");
+    expect(getAsk(app, s("conditional").askId!).question).toContain("这一段要做吗？");
+  });
+  it("仍可回答旧的本人开始关卡", async () => {
+    const { app, item, s } = await setup([stage("prep", { by: "wait" }), stage("owner", { by: "owner" })]);
+    const ask = createAsk(app, { runId: null, question: "轮到这一段了，开始吗？", options: [{ label: "开始" }], context: { handler: "flow-stage", itemId: item.id, stageId: "owner", startedAt: itemFlow(app, item.id)!.startedAt, kind: "gate" } });
+    run(app.db, "update item_stages set state='gated', ask_id=?, waiting_on='owner', control=? where item_id=? and stage_id='owner'", ask.id, JSON.stringify({ question: "gate", gateLimit: true }), item.id);
+    await done(app, item.id, "prep");
+    await answerAsk(app, ask.id, { by: "owner", choice: 0 });
+    expect(s("owner")).toMatchObject({ state: "doing", waitingOn: "owner", askId: null });
+  });
   it("进度卡只说发生了什么：开始流程、本人自己的操作不发；助手一次推进几段是一张卡，新卡替换旧卡", async () => {
     const { app, item, s } = await setup([stage("a", { gate: "confirm" }), stage("b"), stage("c"), stage("d")]);
     const cards = () => all<{ id: string; body: string }>(app.db, "select id, body from notifications where json_extract(context, '$.entityId') = ?", item.id);
@@ -291,10 +321,14 @@ describe("只有本人能定的事", () => {
   });
   it("流程的提问卡片自己说得清：哪件事哪一段、要定什么、结果和之后接着什么，不带内部编号", async () => {
     const { app, item, s } = await setup([stage("a", { done: "confirm", note: "核对需求点。拿不准的问本人" }), stage("b", { gate: "confirm", note: "在测试环境逐条验收。截图留证" })]);
+    app.config.webUrl = "https://omem.example.test/";
+    const carrier = s("a").by!;
     const r = createRun(app, { kind: "agent", spaceId: "personal", title: "依据" }).id;
     await reportStage(app, item.id, "a", { state: "done", note: "需求点核对完了，改名入口另排（ask0mabcdefgh1234567）", evidence: [r] }, { actor: "assistant", runId: s("a").by!, userId: "owner" });
     const done = getAsk(app, s("a").askId!).question;
     expect(done.split("\n\n")[0]).toMatch(/^\*\*「a」.*确认吗/); expect(done).toContain("事项：示例商城退款");
+    expect(done.split("\n\n")[1]).toContain(`[事项流程页](https://omem.example.test/#/items/${item.id}/flow?stage=a)`);
+    expect(done.split("\n\n")[1]).toContain(`[承担者运行](https://omem.example.test/#/runs/${carrier})`);
     expect(done).toContain("**结果**\n需求点核对完了，改名入口另排");
     expect(done).not.toContain("ask0");
     expect(done).toContain("确认后接着：b");
@@ -447,9 +481,29 @@ describe("对象与工具", () => {
     setRunOutput(app, code.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", code.id);
     await advance(app, item.id); expect(s("a").state).toBe("done");
     expect(s("b")).toMatchObject({ state: "doing", waitingOn: "owner" });
+    const confirmation = s("b").askId!;
+    expect(getAsk(app, confirmation).question.split("\n\n")[1]).toContain(`[交办运行](#/runs/${code.id})`);
+    await reportStage(app, item.id, "b", { state: "done", note: "退款修改已核对", evidence: [carrier] }, { actor: "assistant" });
+    expect(s("b")).toMatchObject({ askId: confirmation, evidence: [`code-work:${code.id}`, carrier] });
+    expect(getAsk(app, confirmation).question).toContain("退款修改已核对");
+    expect(all(app.db, "select id from asks where json_extract(context,'$.stageId')='b'")).toEqual([{ id: confirmation }]);
     await answerAsk(app, s("b").askId!, { choice: 1, text: "还需要补充测试", by: "owner" });
     expect(s("b")).toMatchObject({ state: "doing", attempt: 2 }); expect(s("b").by).not.toBe(`code-work:${code.id}`);
     expect(getRun(app, s("b").by!).input.task).toContain("还需要补充测试");
+  });
+  it("承担者先报完成、随后交办完成时，原确认卡补上交办依据", async () => {
+    const { app, item, s } = await setup([stage("fix", { by: { object: "code-work" }, done: "confirm" })]);
+    const code = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { itemId: item.id } });
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: code.id }], "owner");
+    const carrier = s("fix").control.runId!;
+    await reportStage(app, item.id, "fix", { state: "done", note: "已核对退款改动", evidence: [carrier] }, { actor: "assistant", runId: carrier });
+    const confirmation = s("fix").askId!;
+    setRunOutput(app, code.id, { verdict: "approved" });
+    run(app.db, "update runs set status='done' where id=?", code.id);
+    await advance(app, item.id);
+    expect(s("fix")).toMatchObject({ askId: confirmation, evidence: [carrier, `code-work:${code.id}`] });
+    expect(getAsk(app, confirmation).question).toContain("已核对退款改动");
+    expect(getAsk(app, confirmation).question).toContain("2 项");
   });
   it("编码对象从 run 材料找交办，评审 approved 后完成（无需应用）；事件能找到关联事项", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
@@ -575,7 +629,7 @@ describe("对象与工具", () => {
     vi.mocked(decide).mockResolvedValue({ choice: "yes", probabilities: { yes: 0.55, no: 0.45 }, confidence: 0.55, by: "test" });
     await ownerAction(unsure.app, unsure.item.id, "a", "done", "先看看");
     expect(unsure.s("pick")).toMatchObject({ state: "doing", by: "owner", waitingOn: "owner" });
-    expect(unsure.s("pick").askId).toBeTruthy();
+    expect(unsure.s("pick")).toMatchObject({ askId: null, note: "等你：在评审概览里定每个问题" });
     // The owner's own step is done without having to write why.
     await ownerAction(unsure.app, unsure.item.id, "pick", "done", "");
     expect(unsure.s("pick")).toMatchObject({ state: "done", note: "本人做完了" });

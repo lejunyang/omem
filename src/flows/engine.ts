@@ -42,6 +42,7 @@ import { stopCodeWork } from "../agents/code-steer.ts";
 import { inlineDefinition, inlineId, inlineTemplate, type InlineStart } from "./inline.ts";
 import { assertReconcileStage, queueReconcile, reconcileReminder, withdrawReconcileAsks } from "./reconcile.ts";
 import { itemFlowSpaces } from "./spaces.ts";
+import { ownerTurnNote, pendingPushConfirmation } from "./owner-turn.ts";
 
 const host: FlowActor = { actor: "host" };
 // This is an execution lock, not a projection/cache: each pass reads the item's own rows.
@@ -143,20 +144,29 @@ type AskParts = { ask: string; result?: string; evidence?: string[]; plan?: bool
  * then only what bears on it (the result, what the stage will do, what is done before it, what starts
  * after it, how much evidence) as short labelled paragraphs. Internal ids stay on the item page.
  */
-function askText(app: App, f: ItemFlow, d: FlowStage, p: AskParts) {
+function askText(app: App, f: ItemFlow, d: FlowStage, s: StageRow, p: AskParts) {
   const rows = itemStages(app, f.itemId), item = getItem(app, f.itemId);
   const ups = d.needs.map((id) => ({ def: f.definition.stages.find((x) => x.id === id), row: rows.find((r) => r.id === id) })).filter((u) => u.def && u.row && ["done", "skipped"].includes(u.row.state));
   const next = f.definition.stages.filter((x) => x.needs.includes(d.id)).map((x) => x.name);
   const w = describeStage(d);
+  const flow = webLink(app, `#/items/${item.id}/flow?stage=${encodeURIComponent(d.id)}`);
+  const work = [s.by, ...(p.evidence ?? [])].find((ref) => ref?.startsWith("code-work:"));
+  const codeStage = [d.by, d.done].some(spec => typeof spec === "object" && "object" in spec && spec.object === "code-work")
+    || typeof d.done === "object" && "signal" in d.done && ["git.pushed", "git.merged"].includes(d.done.signal);
+  const workId = work ? work.slice("code-work:".length) : codeStage ? latestCodeWork(app, item)?.latestId : undefined;
+  const links = [`[事项流程页](${flow})`,
+    s.control.runId ? `[承担者运行](${webLink(app, `#/runs/${s.control.runId}`)})` : "",
+    workId ? `[交办运行](${webLink(app, `#/runs/${workId}`)})` : "",
+  ].filter(Boolean).join("　");
   return [
     // What is asked comes first (src/agents/brief.ts); which item it is about, right under it.
     `**「${d.name}」${p.ask}**`,
-    `事项：${item.title}`,
+    `事项：${item.title}　${links}`,
     p.result ? `**结果**\n${askNote(p.result, 800)}` : "",
     p.plan && d.note ? `**这一段做什么**\n${askNote(d.note, 400)}\n（${w.carrier}；${w.done}）` : "",
     p.before && ups.length ? `**前面**\n${ups.map((u) => { const note = resultNote(app, f.itemId, u.row!); return `- ${u.def!.name}：${u.row!.state === "skipped" ? "跳过" : "已完成"}${note ? `，${askNote(note, 120)}` : ""}`; }).join("\n")}` : "",
     p.after && next.length ? `**之后**\n确认后接着：${next.join("、")}` : "",
-    p.evidence?.length ? `**依据**\n${p.evidence.length} 项，在这件事的流程页「${d.name}」一段下面可以打开。` : "",
+    p.evidence?.length ? `**依据**\n${p.evidence.length} 项` : "",
   ].filter(Boolean).join("\n\n");
 }
 // The owner's "确认" overwrites a stage's latest line; what the stage produced is the last thing its
@@ -175,13 +185,18 @@ const askNote = (note: string, max: number) => truncate(note.replace(/\s*[（(]?
 function question(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: NonNullable<StageRow["control"]["question"]>, parts: AskParts, labels: string[]) {
   if (s.askId && getAsk(app, s.askId).status === "pending" && s.control.question === kind) return s.askId;
   withdraw(app, s);
-  const text = askText(app, f, d, parts);
+  const text = askText(app, f, d, s, parts);
   return createAsk(app, { runId: null, userId: getItem(app, f.itemId).userId, question: text, options: labels.map((label) => ({ label })), allowText: true,
     context: { handler: "flow-stage", itemId: f.itemId, stageId: d.id, startedAt: f.startedAt, kind } }).id;
 }
+function reviseCompletionAsk(app: App, askId: string, text: string) {
+  const old = getAsk(app, askId).question;
+  const supplement = old.indexOf("\n\n**对账查到的依据**\n");
+  return reviseAsk(app, askId, text + (supplement < 0 ? "" : old.slice(supplement)));
+}
 function gate(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: "when" | "gate") {
   const askId = question(app, f, d, s, kind, kind === "when" ? { ask: `这一段要做吗？条件是：${d.when}`, plan: true, before: true } : { ask: "轮到这一段了，开始吗？", plan: true, before: true }, kind === "when" ? ["要做", "跳过"] : ["开始", "先别做", "跳过这一段"]);
-  const limit = kind === "gate" && !s.control.rework && f.autoStreak >= app.config.flows.autoAdvance;
+  const limit = kind === "gate" && d.by !== "owner" && !s.control.rework && f.autoStreak >= app.config.flows.autoAdvance;
   changeStage(app, f.itemId, d.id, "gated", { askId, waitingOn: "owner", control: { ...s.control, question: kind, gateLimit: limit } }, host, kind === "when" ? "等本人判断这一段是否需要" : "等本人确认开始", [], kind === "when" ? "when-ask" : limit ? "limit-ask" : "gate-ask");
 }
 
@@ -192,8 +207,6 @@ function placesBrief(app: App, item: Item) {
   return `进行的地方（最近 ${shown.length} 处${all_.length > shown.length ? `，共 ${all_.length} 处，用 read_item 看全部` : ""}）：\n${shown.map((p) => `- ${p.title.slice(0, 80)}（${p.ref}）：${p.summary.slice(0, 200)}`).join("\n")}`;
 }
 
-const ownerTurn = (app: App, f: ItemFlow, d: FlowStage, s: StageRow) =>
-  question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
 /** What the owner wrote in this round when they finished, skipped or redid stages, newest first ("将问题发到 MR 吧"). */
 function ownerWords(app: App, f: ItemFlow, stages?: string[]) {
   return all<{ stage_id: string; note: string; at: string }>(app.db, `select stage_id, note, at from item_stage_log where item_id=? and round=? and actor='owner' and (to_state in ('done','skipped') or event in ('refuse','round-note')) and note<>''
@@ -224,13 +237,14 @@ async function ownerAlreadySaid(app: App, item: Item, f: ItemFlow, d: FlowStage)
     return answer?.choice === "yes" && (answer.probabilities.yes ?? 1) >= 0.7 ? { from, note: said.note } : null;
   } catch { return null; }
 }
-/** The owner's turn, asked once its signal check found the stage not done yet. */
-function askOwnerNow(app: App, itemId: string, stageId: string, startedAt: string, attempt: number) {
+/** A push that already happened can finish the stage before the owner needs an update. */
+function announceOwnerTurn(app: App, itemId: string, stageId: string, startedAt: string, attempt: number) {
   const f = itemFlow(app, itemId);
   if (!f || f.endedAt || f.startedAt !== startedAt) return;
   const s = getStage(app, itemId, stageId);
-  if (s.state !== "doing" || s.attempt !== attempt || s.askId) return;
-  changeStage(app, itemId, stageId, "doing", { askId: ownerTurn(app, f, definition(f, stageId), s) }, host, s.note);
+  if (s.state !== "doing" || s.attempt !== attempt || s.askId || s.control.reported) return;
+  const d = definition(f, stageId);
+  markProgress(app, itemId, { head: `「${d.name}」等你` }, !pendingPushConfirmation(app, getItem(app, itemId), d));
 }
 
 async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedback?: string) {
@@ -389,8 +403,6 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
     return false;
   }
   let carrier: string | null = null;
-  let askId: string | null = null;
-  let waitingOn: string | null = null;
   const control: StageControl = { ...s.control, question: undefined, confirmed: undefined, reported: false, waitUntil: undefined, admitted: undefined, execution: ai.execution, budgetStartedAt: typeof d.by === "object" && "run" in d.by ? at : undefined };
   withdraw(app, s);
   if (typeof d.by === "object") {
@@ -414,19 +426,17 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       addLocalMaterials(app, item.id, [{ kind: "run", ref: r.id, label: r.title }], item.userId);
     }
   } else if (d.by === "owner") {
-    carrier = "owner";
-    waitingOn = "owner";
-    control.question = "owner";
-    // A stage a push or merge completes may already be done (the owner pushed before the flow got
-    // here): look first, and only ask when the signal is not there yet.
-    if (typeof d.done === "object" && "signal" in d.done) {
+    const onCard = pendingPushConfirmation(app, item, d);
+    started("owner", "owner", null, control, ownerTurnNote(d, onCard));
+    if (!onCard && typeof d.done === "object" && "signal" in d.done) {
       const attempt = s.attempt + 1, startedAt = f.startedAt;
-      setImmediate(() => void checkGitSignals(app).catch(() => undefined).then(() => serial(app, item.id, async () => askOwnerNow(app, item.id, d.id, startedAt, attempt))));
-    } else askId = ownerTurn(app, f, d, s);
+      setImmediate(() => void checkGitSignals(app).catch(() => undefined).then(() => serial(app, item.id, async () => announceOwnerTurn(app, item.id, d.id, startedAt, attempt))));
+    } else markProgress(app, item.id, { head: `「${d.name}」等你` }, !onCard);
+    return true;
   }
   const missing = typeof d.by === "object" && "object" in d.by && d.by.object.includes(":") && !carrier;
   const label = typeof d.by === "object" && "object" in d.by ? objectKind(d.by.object)?.label ?? d.by.object : "";
-  started(carrier, waitingOn, askId, control, missing ? `还没有关联${label}：把链接发给助手，或在事项页挂上` : confirmed ? "本人确认，开始这一段" : "开始这一段");
+  started(carrier, null, null, control, missing ? `还没有关联${label}：把链接发给助手，或在事项页挂上` : confirmed ? "本人确认，开始这一段" : "开始这一段");
   return true;
 }
 
@@ -580,7 +590,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
           changed = true;
           if (!yes) continue;
         }
-        if ((d.gate === "confirm" && (s.control.rework || !gateGranted(app, f.id, d, item.userId)) || !s.control.rework && !isFixes(d) && f.autoStreak >= app.config.flows.autoAdvance) && !s.control.confirmed && !s.control.admitted) { gate(app, f, d, s, "gate"); changed = true; continue; }
+        if ((d.gate === "confirm" && (s.control.rework || !gateGranted(app, f.id, d, item.userId)) || d.by !== "owner" && !s.control.rework && !isFixes(d) && f.autoStreak >= app.config.flows.autoAdvance) && !s.control.confirmed && !s.control.admitted) { gate(app, f, d, s, "gate"); changed = true; continue; }
         try { changed = await start(app, item, f, d, s, !!s.control.confirmed, at) || changed; }
         catch (e) { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `无法开始：${(e as Error).message}`); }
       }
@@ -597,6 +607,13 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       // (a delegation still coding): only the owner's own turn stops it.
       const following = s.state === "blocked" && typeof d.by === "object" && "object" in d.by && s.waitingOn !== "owner" && !s.control.budgetExceeded && !!stageObject(app, item, s, d.by.object);
       if (s.state !== "doing" && !following) continue;
+      if (s.by === "owner" && !s.askId && !s.control.reported && [ownerTurnNote(d, false), ownerTurnNote(d, true)].includes(s.note)) {
+        const note = ownerTurnNote(d, pendingPushConfirmation(app, item, d));
+        if (note !== s.note) {
+          s = changeStage(app, itemId, d.id, "doing", {}, host, note);
+          markProgress(app, itemId, { head: `「${d.name}」等你` });
+        }
+      }
       if (isFixes(d)) {
         try { changed = await tickFixes(app, item, f, d, s, at, stageAI) || changed; }
         catch (e) { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `无法改：${(e as Error).message}`); }
@@ -629,9 +646,17 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       if (obj) {
         if (objectDone(d, obj) && (!s.control.objectAfter || carrierKind !== "code-work" || !!followed) && (!kind?.includes(":") || !obj.disabled && (obj.updated || !s.control.objectAfter || !!obj.changedAt && obj.changedAt > s.control.objectAfter))) {
           await finishStage(app, itemId, d.id, "done", { by: followed?.ref ?? s.by, waitingOn: null, askId: null, evidence: [...new Set([...s.evidence, obj.ref])] }, host, obj.updated ? `${objectKind(kind!)?.label}有更新` : `${objectKind(kind!)?.label}已完成（${obj.status}）`, [obj.ref]); withdraw(app, s); changed = true;
-        } else if (d.done === "confirm" && obj.done && !["done", "refuse"].includes(s.control.question ?? "")) {
-          const askId = question(app, f, d, s, "done", { ask: `${obj.title}已完成，确认这一段做完了吗？`, evidence: [obj.ref], after: true }, ["确认", "还不行"]);
-          changeStage(app, itemId, d.id, "doing", { askId, waitingOn: "owner", evidence: [obj.ref], control: { ...s.control, question: "done", reported: true } }, host, "对象已完成，等本人确认", [obj.ref]); changed = true;
+        } else if (d.done === "confirm" && obj.done && s.control.question !== "refuse") {
+          const evidence = [...new Set([...s.evidence, obj.ref])];
+          const pending = s.control.question === "done" && s.askId && getAsk(app, s.askId).status === "pending";
+          if (!pending || !s.evidence.includes(obj.ref)) {
+            const result = pending ? resultNote(app, itemId, s) : undefined;
+            const parts = { ask: `${obj.title}已完成，确认这一段做完了吗？`, result, evidence, after: true };
+            const askId = question(app, f, d, s, "done", parts, ["确认", "还不行"]);
+            if (pending) await reviseCompletionAsk(app, askId, askText(app, f, d, s, parts));
+            changeStage(app, itemId, d.id, "doing", { askId, waitingOn: "owner", evidence, control: { ...s.control, question: "done", reported: true } }, host, result ?? "对象已完成，等本人确认", [obj.ref]);
+            changed = true;
+          }
         }
         if (followed || getStage(app, itemId, d.id).state === "done") continue;
       }
@@ -781,10 +806,10 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     if (report.state === "skip" && by.actor !== "owner" && ownerOnly) throw new HttpError(403, "这一段要本人确认或由本人承担，不能由你跳过：把理由告诉本人，由本人在卡片或事项页上跳过");
     const missingRedoWork = typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" && s.control.objectAfter && !stageObject(app, getItem(app, itemId), s, "code-work");
     const asksOwner = report.state === "done" && !missingRedoWork && (d.done === "confirm" || d.by === "owner" && by.actor !== "owner");
+    if (asksOwner && pendingPushConfirmation(app, getItem(app, itemId), d)) return flowView(app, itemId);
     if (report.state === "done" && !asksOwner && (!evidence.length || evidence.some((r) => !validEvidence(app, r)))) throw new HttpError(400, "做完需要至少一项依据（src: 引用、运行 id 或对象引用）");
     if (by.actor === "owner") resetStreak(app, itemId);
     s = { ...s, control: finishUsage(app, s, new Date()) };
-    withdraw(app, s);
     if (report.pluginEvidence) s.control.pluginEvidence = report.pluginEvidence;
     // A later report without links keeps the earlier ones: the sheet the owner is asked to confirm stays on the stage.
     if (report.links) {
@@ -792,12 +817,18 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
       s.control.links = report.links.length ? report.links : undefined;
     }
     if (asksOwner) {
-      const askId = question(app, f, d, { ...s, askId: null }, "done", d.by === "owner" ? { ask: "这一段是你来做的，助手说已经做完了。是这样吗？", result: report.note, evidence, after: true } : { ask: "助手说这一段做完了，确认吗？不对就点“还不行”写意见。", result: report.note, evidence, after: true }, ["确认", "还不行"]);
-      changeStage(app, itemId, stageId, "doing", { askId, evidence, waitingOn: "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
+      const pending = s.control.question === "done" && s.askId && getAsk(app, s.askId).status === "pending";
+      const refs = pending ? [...new Set([...s.evidence, ...evidence])] : evidence;
+      const parts = { ask: d.by === "owner" ? "这一段是你来做的，助手说已经做完了。是这样吗？" : "助手说这一段做完了，确认吗？不对就点“还不行”写意见。", result: report.note, evidence: refs, after: true };
+      const askId = question(app, f, d, s, "done", parts, ["确认", "还不行"]);
+      if (pending) await reviseCompletionAsk(app, askId, askText(app, f, d, s, parts));
+      changeStage(app, itemId, stageId, "doing", { askId, evidence: refs, waitingOn: "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
       if (fromReconcile) await enrichReconcileAsk(app, { ...s, askId }, report);
     } else if (report.state === "done" && (typeof d.done === "object" || typeof d.by === "object" && "object" in d.by)) {
+      withdraw(app, s);
       changeStage(app, itemId, stageId, "doing", { askId: null, evidence, control: { ...s.control, reported: true } }, by, report.note, evidence);
     } else {
+      withdraw(app, s);
       await finishStage(app, itemId, stageId, report.state === "skip" ? "skipped" : report.state, { askId: null, evidence, waitingOn: report.state === "blocked" ? report.waitingOn?.trim() || "待处理" : null, control: { ...s.control, question: undefined, reported: true } }, by, report.note, evidence);
       if (report.state === "skip") notify(app, { userId: getItem(app, itemId).userId, title: `「${d.name}」已跳过`, body: report.note, urgency: "later" });
     }
@@ -1224,7 +1255,7 @@ export function attachFlows(app: App) {
       if (f && !f.endedAt && isClosed(getItem(app, e.id).status)) void advance(app, e.id, "事项关闭").catch((err) => console.warn(`[omem] 事项关闭时结束流程失败：${(err as Error).message}`));
       return;
     }
-    if (e.type !== "run" && !(e.type === "changed" && ["code-task", "design"].includes(e.entity))) return;
+    if (e.type !== "run" && e.type !== "ask" && !(e.type === "changed" && ["code-task", "design"].includes(e.entity))) return;
     const ids = new Set<string>();
     const runIds = new Set<string>();
     if (e.type === "run") {
@@ -1233,6 +1264,12 @@ export function attachFlows(app: App) {
       runIds.add(r.id);
       if (typeof r.input.continueFrom === "string") runIds.add(r.input.continueFrom);
       if (r.parentId) runIds.add(r.parentId);
+    } else if (e.type === "ask") {
+      if (e.status !== "pending") return;
+      const ask = getAsk(app, e.id);
+      if (ask.handler !== "review-done" || !ask.runId || !ask.options.some(o => o.label === "确认并推送")) return;
+      const work = getRun(app, ask.runId);
+      runIds.add(String(work.input.continueFrom ?? work.id));
     } else if (e.entity === "code-task") runIds.add(e.id);
     else {
       const d = one<{ item_id: string | null; work_id: string | null }>(app.db, "select item_id,work_id from designs where id=?", e.id);
@@ -1240,7 +1277,7 @@ export function attachFlows(app: App) {
       if (d?.work_id) runIds.add(d.work_id);
     }
     for (const r of runIds) for (const m of all<{ item_id: string }>(app.db, "select m.item_id from item_materials m join item_flows f on f.item_id=m.item_id where m.kind='run' and m.ref=? and f.ended_at is null", r)) ids.add(m.item_id);
-    for (const id of ids) if (itemFlow(app, id)?.endedAt === null) void advance(app, id, e.type === "run" ? `运行 ${e.status}` : e.entity).catch((err) => console.warn(`[omem] 流程推进失败：${(err as Error).message}`));
+    for (const id of ids) if (itemFlow(app, id)?.endedAt === null) void advance(app, id, e.type === "run" ? `运行 ${e.status}` : e.type === "ask" ? "交办等确认推送" : e.entity).catch((err) => console.warn(`[omem] 流程推进失败：${(err as Error).message}`));
   };
   // Due jobs are taken directly from the deadline index even when every background slot is busy.
   let sweeping = false;

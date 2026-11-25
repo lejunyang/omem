@@ -139,6 +139,7 @@ it("核对回归后推进普通阶段，完成确认卡补证据仍等本人，�
 
 it("卡住先留可处理的草稿；提醒带最近结论，流程进展后撤回旧卡片", async () => {
   const { app, item, s, clock } = await setup();
+  app.config.webUrl = "https://omem.example.test/";
   await reportStage(app, item.id, "verify", { state: "blocked", waitingOn: "小王", note: "缺少复测结果" }, owner);
   const rid = queueReconcile(app, item.id, clock(7))!;
   await execute(app, rid, async (ctx) => {
@@ -147,6 +148,7 @@ it("卡住先留可处理的草稿；提醒带最近结论，流程进展后撤�
   expect(s().state).toBe("blocked");
   const card = (await pendingActions(app, "owner")).find(a => a.via === "ask" && a.title.includes("请贴复测记录"))!;
   expect(getAsk(app, card.askId!).question).toContain("小王，能发一下");
+  expect(getAsk(app, card.askId!).question.split("\n\n")[1]).toContain(`https://omem.example.test/#/items/${item.id}/flow?stage=verify`);
   expect(reconcileReminder(app, itemFlow(app, item.id)!, s())).toContain("最小一步：请贴复测记录的链接");
   await ownerAction(app, item.id, "verify", "done", "已经复测", "owner");
   expect(getAsk(app, card.askId!).status).toBe("cancelled");
@@ -189,6 +191,7 @@ it.each([true, false])("有证据则直接停止循环第 2 轮（关闭事项=%
   expect(getStage(app, item.id, "start")).toMatchObject({ askId: null, waitingOn: null });
   const notice = one<{ body: string; urgency: string }>(app.db, "select body,json_extract(context,'$.urgency') urgency from notifications where title like '已收口：%'");
   expect(notice).toMatchObject({ urgency: "later", body: expect.stringContaining(`[看原文](src:${source.id}#L1)`) });
+  expect(notice?.body.split("\n\n")[1]).toBe(`[事项页](#/work/${item.id})`);
   expect(notice?.body).toContain(closeItem ? "事项已标为完成" : "事项仍保留，未关闭");
   expect(signal(app)).toContain("评审目的已达到");
 });

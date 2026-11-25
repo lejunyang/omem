@@ -27,6 +27,7 @@ import { replyOf } from "./types.ts";
 import { reviewWorkspace, workDirOf } from "./workspaces.ts";
 import { git } from "../core/git.ts";
 import { designDigest, designReviewText } from "../designs/work.ts";
+import { reviewCardLinks } from "./review-card.ts";
 
 /**
  * One review round of a coding delegation (docs/v2/review.md §4): the planned checks run in their
@@ -622,7 +623,7 @@ export function askPlan(app: App, run: Run, chain: CodeChain | null, plan: Revie
   return createAsk(app, {
     runId: run.id,
     conversationId: chain ? reportConversation(app, chain) : null,
-    question: `「${truncate(run.title, 40)}」${isBranchReview(run) ? "分支已检出" : "第 1 轮编码完成"}，按下面的计划评审。开始评审吗？也可以直接回一句补充要求。`,
+    question: `「${truncate(run.title, 40)}」${isBranchReview(run) ? "分支已检出" : "第 1 轮编码完成"}，按下面的计划评审。开始评审吗？也可以直接回一句补充要求。\n\n${reviewCardLinks(app, run)}`,
     options,
     context: { handler: "review-plan", codeRunId: run.id, tiers: [plan.tier, ...tiers.slice(0, 4).map((t) => t.id)] },
     ui: { view },
@@ -652,12 +653,13 @@ function askRetry(app: App, run: Run, chain: CodeChain | null, failed: { name: s
     runId: run.id,
     conversationId: chain ? reportConversation(app, chain) : null,
     question: [
-      `「${truncate(run.title, 40)}」的评审${all ? "没有完成" : `有 ${failed.length} 项没有完成，其余已出结论`}，自动重试一次后仍然失败：`,
+      `「${truncate(run.title, 40)}」的评审${all ? "没有完成" : `有 ${failed.length} 项没有完成，其余已出结论`}，自动重试一次后仍然失败。要重试吗？`,
+      reviewCardLinks(app, run),
       failed.map((f) => `- ${f.check}：${truncate(f.error, 160)}`).join("\n"),
       partial
-        ? "要重试吗？只重试没完成的项时，已出结论的项沿用这一轮的结果；也可以整轮重新评审。直接回一句补充要求的话，只重试没完成的项。"
-        : "要再评审一次吗？（会重新跑这一轮的全部评审项）",
-    ].join("\n"),
+        ? "只重试没完成的项时，已出结论的项沿用这一轮的结果；也可以整轮重新评审。直接回一句补充要求的话，只重试没完成的项。"
+        : "重试会重新跑这一轮的全部评审项。",
+    ].join("\n\n"),
     options: labels.map((label) => ({ label })),
     context: { handler: "review-retry", codeRunId: run.id, ...(partial ? { failed: failed.map((f) => f.name), labels } : {}) },
   });
@@ -739,7 +741,7 @@ export function askDone(app: App, run: Run, chain: CodeChain | null, d: { title:
   return createAsk(app, {
     runId: run.id,
     ...(chain ? { conversationId: reportConversation(app, chain) } : {}),
-    question: `**${d.title}**\n\n${digest}\n\n${hint}`,
+    question: `**${d.title}**\n\n${reviewCardLinks(app, run)}\n\n${digest}\n\n${hint}`,
     options: labels.map((label) => ({ label })),
     context: { handler: "review-done", codeRunId: run.id, labels },
     ...(view ? { ui: { view } } : {}),
@@ -753,7 +755,7 @@ export function askConfirm(app: App, run: Run, chain: CodeChain | null, title: s
   return createAsk(app, {
     runId: run.id,
     ...(chain ? { conversationId: reportConversation(app, chain) } : {}),
-    question: `**${title}**\n\n${digest}\n\n${branch ? "改动已经按修改项提交在工作分支上；确认后推到 origin，归还工作区。还要改就直接说，或在网页上加修改项。" : "改动在独立的工作区里，应用后成为仓库里未提交的修改。"}`,
+    question: `**${title}**\n\n${reviewCardLinks(app, run)}\n\n${digest}\n\n${branch ? "改动已经按修改项提交在工作分支上；确认后推到 origin，归还工作区。还要改就直接说，或在网页上加修改项。" : "改动在独立的工作区里，应用后成为仓库里未提交的修改。"}`,
     options: labels.map((label) => ({ label })),
     context: { handler: "review-done", codeRunId: run.id, labels },
   });
@@ -773,6 +775,10 @@ async function onDoneAnswer(app: App, ask: Ask, ctx: { codeRunId: string; labels
       notify(app, picked === CONFIRM
         ? { userId: ask.userId, title: `已确认：${run.title}`, body: [res.pushed?.length ? `已推送 ${res.pushed.map((p) => p.branch).join("、")}。` : "", ...(res.notes ?? [])].filter(Boolean).join("\n") || "工作区已归还，分支保留。", link: `#/runs/${run.id}` }
         : { userId: ask.userId, title: `已应用到仓库：${run.title}`, body: "改动成为仓库工作区里未提交的修改，请在仓库里检查后提交。", link: `#/runs/${run.id}` });
+      if (picked === CONFIRM && res.pushed?.length) {
+        const { checkGitSignalsAfterPush } = await import("../flows/signals.ts");
+        await checkGitSignalsAfterPush(app).catch((err) => console.warn("[omem] 推送成功后检查流程信号失败", err));
+      }
     } else if (picked === DISCARD) {
       const { discardCodeRun } = await import("./code.ts");
       discardCodeRun(app, run.id);
@@ -793,10 +799,11 @@ function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult, digest
     runId: run.id,
     conversationId: reportConversation(app, chain),
     question: [
-      `「${truncate(run.title, 40)}」第 ${lead.round} 轮评审后停了下来：${STOP_LABEL[lead.stop!]}。`,
+      `「${truncate(run.title, 40)}」第 ${lead.round} 轮评审后停了下来：${STOP_LABEL[lead.stop!]}。怎么继续？`,
+      reviewCardLinks(app, run),
       lead.escalation?.summary ?? lead.summary,
       digest,
-      "怎么继续？也可以在卡片的输入框里写新的要求，作为下一轮的任务（在会话里直接说的话交给助手，不当作这里的回答）。",
+      "也可以在卡片的输入框里写新的要求，作为下一轮的任务（在会话里直接说的话交给助手，不当作这里的回答）。",
     ].filter(Boolean).join("\n\n"),
     options: options.slice(0, 6),
     context: { handler: "review-escalation", codeRunId: run.id, labels: options.map((o) => o.label) },
