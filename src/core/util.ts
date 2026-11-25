@@ -66,9 +66,14 @@ export class HttpError extends Error {
  * another device or a Feishu card; otherwise left as it is (opens only inside omem's own pages).
  */
 export function webLink(app: { config: { webUrl?: string } }, link: string) {
-  const base = app.config.webUrl?.trim().replace(/\/+$/, "");
+  const base = webBase(app);
   if (!base || !link.startsWith("#/")) return link;
   return `${base}/${link}`;
+}
+
+/** The address others reach omem at (`webUrl`, without a trailing slash), or null when none is configured. */
+export function webBase(app: { config: { webUrl?: string } }) {
+  return app.config.webUrl?.trim().replace(/\/+$/, "") || null;
 }
 
 /**

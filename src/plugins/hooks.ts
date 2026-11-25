@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { App } from "../core/app.ts";
 import { one, run, tx } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
-import { HttpError, json, now } from "../core/util.ts";
+import { HttpError, json, now, webBase } from "../core/util.ts";
 import { runHookAccept, type HookResponder } from "./hook-accept.ts";
 import { HOOK_PER_MINUTE, hookKeyHeader, hookPath, validateHookOptions } from "./hook-request.ts";
 import type { PluginHook, PluginHookOptions, PluginHookRequest, PluginHookResult } from "./types.ts";
@@ -69,13 +69,21 @@ export function checkHookSecret(app: App, plugin: string, name: string, secret: 
   if (markUsed) run(app.db, "update kv set value=? where key=?", JSON.stringify({ ...s, usedAt: now() }), kvKey(plugin, name));
   return true;
 }
-/** The plugin's callbacks as its page shows them: whether a secret is set, when it was last used. */
+/**
+ * The plugin's callbacks as its page shows them: whether a secret is set, when it was last used, the last
+ * delivery (repeats of an earlier one left out) and, with `webUrl` configured, the address to give the
+ * platform (`url`; null: the page falls back to where it was opened from).
+ */
 export function describeHooks(app: App | null, plugin: string) {
+  const base = app ? webBase(app) : null;
   return pluginHooks(plugin).map((h) => {
     const s = app ? stored(app, plugin, h.name) : null;
     const headerPath = hookPath(plugin, h.name);
-    return { name: h.name, label: h.label ?? null, path: `${headerPath}/`, headerPath, secretHeader: hookKeyHeader(h), ack: h.ack ?? null,
-      rateLimit: h.rateLimit ?? { perMinute: HOOK_PER_MINUTE }, secret: s ? { createdAt: s.createdAt, usedAt: s.usedAt ?? null } : null };
+    const last = app ? one<{ at: number; status: string; error: string | null }>(app.db, `select received_at as at,status,error from plugin_hook_deliveries
+      where plugin=? and name=? and status!='duplicate' order by received_at desc,rowid desc limit 1`, plugin, h.name) ?? null : null;
+    return { name: h.name, label: h.label ?? null, path: `${headerPath}/`, headerPath, url: base ? `${base}${headerPath}` : null,
+      secretHeader: hookKeyHeader(h), ack: h.ack ?? null, rateLimit: h.rateLimit ?? { perMinute: HOOK_PER_MINUTE },
+      secret: s ? { createdAt: s.createdAt, usedAt: s.usedAt ?? null } : null, lastDelivery: last };
   });
 }
 export function forgetPluginHooks(app: App, plugin: string) {

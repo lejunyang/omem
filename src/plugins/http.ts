@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { OWNER, userForToken } from "../core/users.ts";
-import { HttpError } from "../core/util.ts";
+import { HttpError, webBase } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { cookies, SESSION_COOKIE, sessionFor } from "../auth/sessions.ts";
 import { callTool } from "../agents/tools.ts";
@@ -84,8 +84,10 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   };
   server.post("/api/plugins/:id/hooks/:name/secret", async (req) => {
     const h = hookOf(req), secret = createHookSecret(app, h.plugin, h.name);
-    const headerPath = hookPath(h.plugin, h.name);
-    return { secret, path: `${headerPath}/${secret}`, headerPath, secretHeader: hookKeyHeader(h) };
+    const headerPath = hookPath(h.plugin, h.name), base = webBase(app);
+    // url / legacyUrl: absolute at `webUrl` when one is configured (null: the page uses where it was opened from).
+    return { secret, path: `${headerPath}/${secret}`, headerPath, secretHeader: hookKeyHeader(h),
+      url: base ? `${base}${headerPath}` : null, legacyUrl: base ? `${base}${headerPath}/${secret}` : null };
   });
   server.delete("/api/plugins/:id/hooks/:name/secret", async (req) => {
     const h = hookOf(req);

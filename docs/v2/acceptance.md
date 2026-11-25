@@ -737,6 +737,8 @@ npx vitest run test/item-providers.test.ts test/platform-packs.test.ts test/plug
 | omem-rule-08 | GET `/api/rule-options` | `omemTypes` 有子类型和中文名；`eventFields.omem` 只有 omem 字段；`eventFields.object` 有 `object.change` | 同上 |
 | page-rule-omem-01 | 规则页选“omem 里发生的事”，勾几种事；对象规则勾“有更新” | 出“哪些事”勾选和说明，条件下拉只有 omem 字段；对象规则多“哪些变化”；1440 和 390 宽不横向溢出 | `node scripts/screens.ts` 截图看过 |
 | page-plugin-hook-01 | 设置 → 插件，有回调的插件卡；生成地址、复制、撤销 | 显示回调名、说明、生成时间和上次调用；生成后只显示一次完整地址 | 截图看过 |
+| page-plugin-card-01 | 设置 → 插件（演示数据：`scripts/doc-screens.ts --serve`，示例事件平台是链接的开发插件，示例工单同步等信任），1440 和 390 宽度 | 卡片正面只有图标、名字、说明、来源小标签、启用开关和“带来什么”的计数；等信任、回调没有密钥、最近投递失败放在暖色提示里并带按钮；工具只在详情里列一次并标出会写入的，链接插件的目录只出现一次 | 截图看过，`scripts/screens.ts` 无溢出 |
+| page-plugin-hook-02 | 详情里的回调块：没有密钥、生成后、有投递、有失败；配置了 `webUrl` 和没配置时各看一次地址 | 地址用 `webUrl` 算好（没配置时用当前页面地址，回环地址旁有提示）；新密钥只显示一次可复制；最近投递按时间列结果和失败原因，“刷新”重新取；接入说明默认收起 | 截图看过；`test/plugin-hooks.test.ts`（地址与最近一次投递） |
 
 没验：真实平台的 webhook（签名、重试）、真实模型按 omem 事件规则做事、复审链调用 `reviewFinished`（等复审那边接上）。
 

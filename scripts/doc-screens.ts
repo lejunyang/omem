@@ -22,6 +22,8 @@ import { callTool, issueToolToken, toolContextForToken } from "../src/agents/too
 import { createSession, pluginContext } from "../src/plugins/blocks.ts";
 import { forgetPlugin, getPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
 import { embedders, itemProviders, notifiers, rerankers, retrievers } from "../src/plugins/process-hooks.ts";
+import { linkPlugin } from "../src/plugins/links.ts";
+import { checkHookSecret, createHookSecret } from "../src/plugins/hooks.ts";
 import { createServer as createHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { invite, savePeers } from "../src/core/peers.ts";
@@ -444,10 +446,40 @@ writeFileSync(join(home, "plugins", "helperkit", "plugin.yaml"), ["id: helperkit
 // is started in the demo, so nothing is actually sandboxed.
 cpSync(new URL("../examples/plugins/acmeauth", import.meta.url), join(home, "plugins", "acmeauth"), { recursive: true });
 setSandboxSupportForTests({ ok: true, bwrap: "bwrap" });
+// 设置 → 插件: a linked plugin in development with two callbacks (one with a secret and a few deliveries, one
+// still without), and a hand-made one whose code waits for trust. Both are fictional.
+const eventhubDir = join(home, "dev", "eventhub");
+mkdirSync(eventhubDir, { recursive: true });
+writeFileSync(join(eventhubDir, "plugin.yaml"), ["id: eventhub", "name: 示例事件平台", "version: 0.3.0", "description: 示例事件平台的订阅事件推过来时马上处理，不用等轮询。", "icon: zap", "permissions: { write: true }"].join("\n"));
+writeFileSync(join(eventhubDir, "server.mjs"), `export default function register(api) {
+  api.tool({ name: "eventhub_events", description: "列出最近收到的事件", schema: api.z.object({}), async handler() { return "[]"; } });
+  api.tool({ name: "eventhub_ack", description: "把一条事件标成已处理", write: true, schema: api.z.object({ id: api.z.string() }), async handler() { return "ok"; } });
+  api.hook({ name: "updates", label: "订阅事件", ack: "first", rateLimit: { perMinute: 600, burst: 100 }, handle() {} });
+  api.hook({ name: "alerts", label: "告警", handle() { return {}; } });
+}
+`);
+await linkPlugin(app, eventhubDir);
+const ticketDir = join(home, "plugins", "ticketsync");
+mkdirSync(ticketDir, { recursive: true });
+writeFileSync(join(ticketDir, "plugin.yaml"), ["id: ticketsync", "name: 示例工单同步", "description: 把示例工单系统里分给你的工单同步成事项。", "icon: inbox", "permissions: { write: true }"].join("\n"));
+writeFileSync(join(ticketDir, "server.mjs"), "export default function register() {}\n");
 await loadPlugins(app);
 await trustPlugin(app, "stagekit", "isolated");
 await trustPlugin(app, "helperkit", "isolated");
 await trustPlugin(app, "acmeauth", "inprocess");
+await trustPlugin(app, "eventhub", "inprocess");
+{
+  const secret = createHookSecret(app, "eventhub", "updates");
+  checkHookSecret(app, "eventhub", "updates", secret);
+  const at = Date.now();
+  const delivery = (id: string, ago: number, status: string, extra: { error?: string; attempts?: number; durationMs?: number; key?: string } = {}) => run(app.db,
+    "insert into plugin_hook_deliveries(id,plugin,name,key,received_at,status,format,attempts,duration_ms,error) values(?,?,?,?,?,?,?,?,?,?)",
+    id, "eventhub", "updates", extra.key ?? null, at - ago, status, "webhook", extra.attempts ?? 1, extra.durationMs ?? null, extra.error ?? null);
+  delivery("demo-d1", 3 * 3600_000, "done", { durationMs: 42, key: "evt-1001" });
+  delivery("demo-d2", 2 * 3600_000, "done", { durationMs: 38, key: "evt-1002" });
+  delivery("demo-d3", 2 * 3600_000 - 60_000, "duplicate", { attempts: 0, key: "evt-1002" });
+  delivery("demo-d4", 40 * 60_000, "failed", { attempts: 3, durationMs: 15_020, error: "签名不对：X-Signature 和正文对不上", key: "evt-1003" });
+}
 // A second, optional kind from a fictional plugin: a code host's command line, logged in on a page with a
 // code (a login shows its link and code for about 8 seconds, then completes).
 const demoWait = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {

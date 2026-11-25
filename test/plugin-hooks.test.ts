@@ -402,10 +402,27 @@ describe("插件回调", () => {
     expect(pluginHook("hookprobe", "change")).toBeTruthy();
     expect(() => registerHook("hookprobe", { name: "change", handle: () => ({}) })).toThrow("重复");
     expect(() => registerHook("hookprobe", { name: "Bad Name", handle: () => ({}) })).toThrow("不合法");
-    expect(describePlugin(getPlugin("hookprobe")).hooks.find(hook => hook.name === "change")).toEqual({ name: "change", label: "合并请求有变化", path: "/api/hooks/hookprobe/change/", headerPath: "/api/hooks/hookprobe/change", secret: null, secretHeader: "authorization", ack: null, rateLimit: { perMinute: 60 } });
+    expect(describePlugin(getPlugin("hookprobe")).hooks.find(hook => hook.name === "change")).toEqual({ name: "change", label: "合并请求有变化", path: "/api/hooks/hookprobe/change/", headerPath: "/api/hooks/hookprobe/change", url: null, secret: null, secretHeader: "authorization", ack: null, rateLimit: { perMinute: 60 }, lastDelivery: null });
     const sdk: SdkHook = { name: "mr", handle: () => ({ refresh: [{ kind: "change", key: "1" }] }) };
     expect(sdk.name).toBe("mr");
     expect(ROUTE_RULES["POST /api/hooks/:plugin/:name/:secret"]).toBe("public");
+  });
+
+  it("设置页拿到按网页地址算好的回调地址和最近一次投递（重投不算）", async () => {
+    const s = await server();
+    expect((await secret(s))).toMatchObject({ url: null, legacyUrl: null });
+    app.config.webUrl = "https://omem.example.test/ ";
+    const made = await secret(s) as Awaited<ReturnType<typeof secret>> & { url: string; legacyUrl: string };
+    expect(made.url).toBe("https://omem.example.test/api/hooks/hookprobe/change");
+    expect(made.legacyUrl).toBe(`https://omem.example.test/api/hooks/hookprobe/change/${made.secret}`);
+    const listed = (await s.inject({ method: "GET", url: "/api/plugins" })).json() as { id: string; hooks: { name: string; url: string | null; lastDelivery: unknown }[] }[];
+    expect(listed.find(p => p.id === "hookprobe")!.hooks.find(h => h.name === "change")).toMatchObject({ url: "https://omem.example.test/api/hooks/hookprobe/change", lastDelivery: null });
+    const insert = (id: string, at: number, status: string, error: string | null) => run(app.db,
+      "insert into plugin_hook_deliveries(id,plugin,name,received_at,status,format,error) values(?,?,?,?,?,?,?)", id, "hookprobe", "change", at, status, "webhook", error);
+    insert("d1", 1_000, "done", null);
+    insert("d2", 2_000, "failed", "签名不对");
+    insert("d3", 3_000, "duplicate", null);
+    expect(describePlugin(getPlugin("hookprobe")).hooks.find(h => h.name === "change")!.lastDelivery).toEqual({ at: 2_000, status: "failed", error: "签名不对" });
   });
 
   it("回调叫醒重读：修订变了记 updated，规则按 objectChanges 命中；不认识的对象跳过；写审计", async () => {
