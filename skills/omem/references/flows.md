@@ -113,6 +113,10 @@
 
 ## 对账时
 
+**收口与草稿（2026-11-25 更新）**：`submit_flow_reconcile(item, summary, steps?, finish?)` 只给对账角色。目的已达到或不再成立时传 `finish: { reason, evidence, close_item? }`。`evidence` 至少一项：原件行引用、这次重读的关联对象或可读运行。收口不交 `steps`，不用完成或跳过最后一段来结束循环；事项也已完成时才填 `close_item: true`。草稿用 `steps: [{ stage, action, person, draft, chat }]`，`chat` 写要发到的关联群。机器人在群且能发时，本人在卡片上点发送即可，不依赖关注回复档；`auto` 仍然直发。下面关于旧草稿档的说明以这段为准。
+
+`stage_reopen` 带依据重开已批准或完成过的助手阶段，不触发自动推进上限；显式开始确认和本人阶段不变。正在做的下游助手段会先停下再重做，不再问“停下 / 继续做”；本人的段只标待复核。编码返工只跟新的交办或续轮，不用旧交办结果代替。
+
 `read_flow_object(item, object)` 与 `submit_flow_reconcile(item, summary, steps?)` 只给对账角色。前者用事项自己的连接重读挂接的 `object:<id>`，`read: false` 表示没核对，不引用缓存当现状。用 `stage_report` 和 `stage_reopen` 时每次附可复核的依据；若已在等本人过开始关卡或确认结果，`stage_report(state="done")` 只补原卡片的依据和结论。正在由另一个运行处理的阶段不要代交，也不能跳过本人关卡。
 
 `steps` 每段最多一条、总共最多五条：`{stage, action}` 写只有本人能做的最小一步；找别人配合另填 `person, draft`，确认知道关联群时可加 `chat`（群 id）。能直接发的按事项关注档发，其他情况由宿主留在待处理。没有动作时只交 `summary`，不上卡片。不要另用发消息或通知工具。

@@ -115,7 +115,7 @@ describe("流程结束时存回顾", () => {
     expect(code).toMatchObject({ starts: 2, reopened: 1, reworks: 1, state: "done" });
     expect(push).toMatchObject({ skipped: true, skipNote: "这次不用推送" });
     expect(flowView(app, i.id).review).toMatchObject({ how: "completed" });
-    expect(all(app.db, "select event from item_stage_log where item_id=? and event is not null order by id", i.id).map((x) => (x as { event: string }).event)).toEqual(["gate-ask", "gate-agree", "reopen", "upstream-ask"]);
+    expect(all(app.db, "select event from item_stage_log where item_id=? and event is not null order by id", i.id).map((x) => (x as { event: string }).event)).toEqual(["gate-ask", "gate-agree", "reopen", "stale"]);
   });
   it("本人停止和事项关闭也存，关闭会结束任何流程", async () => {
     const app = appFor(); saveFlow(app, flow(stages), "owner");
@@ -225,56 +225,28 @@ describe("重开上游时正在做的下游", () => {
     const runId = getStage(app, i.id, "code").control.runId!;
     await reopenStage(app, i.id, "plan", "范围变了：部分发货也退运费", [], owner);
     const s = () => getStage(app, i.id, "code");
-    return { app, i, runId, s, ask: () => getAsk(app, s().control.upstream!.askId) };
+    return { app, i, runId, s };
   }
-  it("不停，问本人；回答者只能是事项本人", async () => {
+  it("直接取消运行、标待复核、记录缘由，不问本人；上游做完后重新开始", async () => {
     const t = await setup();
-    expect(t.s()).toMatchObject({ state: "doing" });
-    expect(getRun(t.app, t.runId).status).not.toBe("cancelled");
-    expect(t.ask()).toMatchObject({ status: "pending", options: [{ label: "停下" }, { label: "继续做" }] });
-    expect(t.ask().question).toContain("「方案」重开了：范围变了");
-    expect(flowView(t.app, t.i.id).stages.find((x) => x.id === "code")!.upstream).toMatchObject({ stage: "plan", name: "方案" });
-    await expect(answerAsk(t.app, t.ask().id, { choice: 0, by: "another" })).rejects.toThrow("本人");
-    expect(t.s().state).toBe("doing");
-  });
-  it("停下：取消运行、标待复核，上游做完后带着原因重新开始", async () => {
-    const t = await setup();
-    await answerAsk(t.app, t.ask().id, { choice: 0, by: "owner" });
-    expect(t.s()).toMatchObject({ state: "stale" }); expect(t.s().control.upstream).toBeUndefined();
+    expect(t.s()).toMatchObject({ state: "stale", askId: null });
+    expect(listAsks(t.app).filter(ask => ask.status === "pending")).toEqual([]);
+    expect(t.s().note).toContain("因为「方案」重开，停下了「编码」，「方案」做完后会重新开始");
     expect(getRun(t.app, t.runId).status).toBe("cancelled");
+    expect(getStage(t.app, t.i.id, "test").state).toBe("pending");
     await ownerAction(t.app, t.i.id, "plan", "done", "新方案定了");
     expect(t.s()).toMatchObject({ state: "doing", attempt: 2 });
     expect(getRun(t.app, t.s().control.runId!).input.task).toContain("上游「方案」重开了：范围变了");
   });
-  it("继续做：不动，时间线记一笔，做完照常完成", async () => {
-    const t = await setup();
-    await answerAsk(t.app, t.ask().id, { choice: 1, by: "owner" });
-    expect(t.s()).toMatchObject({ state: "doing" }); expect(t.s().control.upstream).toBeUndefined();
-    expect(getRun(t.app, t.runId).status).not.toBe("cancelled");
-    expect(itemEvents(t.app, t.i.id).some((e) => e.text.includes("本人让这一段接着做"))).toBe(true);
-    await finish(t.app, t.i.id, "code");
-    expect(t.s().state).toBe("done");
-  });
-  it("没答就做完：撤回卡片、标待复核，下游的下游不开始", async () => {
-    const t = await setup(); const askId = t.ask().id;
-    await finish(t.app, t.i.id, "code");
-    expect(t.s().state).toBe("stale"); expect(t.s().note).toContain("按重开前的「方案」做的");
-    expect(getAsk(t.app, askId).status).toBe("cancelled");
-    expect(getStage(t.app, t.i.id, "test").state).toBe("pending");
-    await ownerAction(t.app, t.i.id, "plan", "done", "新方案定了");
-    expect(t.s()).toMatchObject({ state: "doing", attempt: 2 });
-  });
-  it("上游又被重开换一张新卡；流程结束撤回卡片", async () => {
-    const t = await setup(); const first = t.ask().id;
-    await ownerAction(t.app, t.i.id, "plan", "done", "先这样");
-    // Still doing after the upstream was done again: a new reopen replaces the card.
-    await reopenStage(t.app, t.i.id, "plan", "又改了", [], owner);
-    expect(getAsk(t.app, first).status).toBe("cancelled");
-    const second = t.ask().id; expect(second).not.toBe(first);
-    expect(t.ask().question).toContain("又改了");
-    await stopFlow(t.app, t.i.id);
-    expect(getAsk(t.app, second).status).toBe("cancelled");
-    expect(t.s().control.upstream).toBeUndefined();
+  it("本人做的下游只标待复核，不发停下卡片", async () => {
+    const app = appFor(); saveFlow(app, flow([stages[0], { id: "publish", name: "发布", by: "owner" }]), "owner");
+    const i = await item(app);
+    await ownerAction(app, i.id, "plan", "done", "方案定了");
+    const askId = getStage(app, i.id, "publish").askId!;
+    await reopenStage(app, i.id, "plan", "范围变了", [], owner);
+    expect(getStage(app, i.id, "publish")).toMatchObject({ state: "stale", by: "owner", askId: null, attempt: 1 });
+    expect(getAsk(app, askId).status).toBe("cancelled");
+    expect(listAsks(app).filter(ask => ask.status === "pending")).toEqual([]);
   });
 });
 

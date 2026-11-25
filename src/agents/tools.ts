@@ -2675,7 +2675,7 @@ def({
   },
 });
 def({
-  name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过，正在做的照做并问本人要不要停下。",
+  name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过。正在做的下游助手阶段先停下，等新结果再做；本人承担的阶段只标待复核。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), reason: z.string().trim().min(1).max(4000), refs: z.array(z.string()).max(50).optional() }), handler: async (ctx, a) => {
     const item = flowItem(ctx, a.item, "flow"), refs = a.refs ?? [], by = flowActor(ctx);
     await flowRefs(ctx, refs, a.item);
@@ -2694,11 +2694,12 @@ def({
   },
 });
 def({
-  name: "submit_flow_reconcile", description: "交一行对账结论（summary）和最多五个卡住阶段的最小动作（steps）。需找别人时填 person、draft；有确切的关联群可填 chat，按关注档位发或留给本人。只有本人能做时只填 stage、action。没有变化或动作就只交结论，不通知。",
+  name: "submit_flow_reconcile", description: "交一行对账结论（summary）。目的已达成或不再成立时用 finish（reason、evidence、可选 close_item），停止流程，不开下一轮、不问本人；不要同时交 steps。否则可交最多五个卡住阶段的最小动作（steps）：找别人时填 person、draft、要发到的关联群 chat；本人可在卡片上直接发草稿，已有自动回复授权时由机器人直接发。只有本人能做时只填 stage、action。没有变化只交结论，不通知。",
   write: true, schema: reconcileResultSchema,
   handler: async (ctx, a) => {
     if (ctx.role !== "flow-reconcile" || !ctx.runId) throw new HttpError(403, "只有对账运行可以交结论");
     const item = flowItem(ctx, a.item, "flow");
+    if (a.finish) await flowRefs(ctx, a.finish.evidence, a.item);
     const next = await (await import("../flows/reconcile.ts")).submitReconcile(ctx.app, getRun(ctx.app, ctx.runId), a, item.userId,
       (chat, draft) => larkPost({ ...ctx, larkChats: [chat], larkDraft: false }, { chat_id: chat }, { text: draft }));
     return JSON.stringify({ ok: true, next });

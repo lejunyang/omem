@@ -2,7 +2,8 @@ import type { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run, withinTx } from "../core/db.ts";
 import { handlingOf } from "../core/handling.ts";
-import { accessibleSpaces, canWrite, OWNER } from "../core/users.ts";
+import { canWrite, OWNER } from "../core/users.ts";
+import { itemFlowSpaces } from "./spaces.ts";
 import { HttpError, json, localStamp, now, truncate } from "../core/util.ts";
 import { createAsk, getAsk, registerAskAction, registerAskHandler } from "../agents/asks.ts";
 import { ownerMoves } from "../agents/awareness.ts";
@@ -401,11 +402,8 @@ export async function runTakeover(ctx: RunContext) {
     const target = proposal.operationNote ? noteBody(proposal.operationNote) : proposal.operation ? operationBody(proposal.operation) : "";
     return `- ${s.id} ${s.step}；做到：${s.done_when}\n${target}\n  上次：${s.result}\n  依据：${json<string[]>(s.refs, []).join(" ")}`;
   }).join("\n")}` : "";
-  const spaces = (() => {
-    const parent = getRun(app, steps[0].batch_id);
-    const allowed = accessibleSpaces(app, item.userId);
-    return [...new Set([item.spaceId, ...((parent.input.spaces as string[] | undefined) ?? [])])].filter(id => !allowed || allowed.includes(id));
-  })();
+  const parent = getRun(app, steps[0].batch_id);
+  const spaces = itemFlowSpaces(app, item, (parent.input.spaces as string[] | undefined) ?? []);
   const [{ runRole }, { toolList }] = await Promise.all([import("../agents/runner.ts"), import("../agents/tools.ts")]);
   const result = await runRole(app, { role: "assistant", runId: r.id, userId: item.userId, spaceId: item.spaceId, spaces,
     itemTakeoverRead: true, addTools: [REPORT, "stay_quiet"], requiredTools: [REPORT],

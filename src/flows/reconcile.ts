@@ -2,7 +2,8 @@ import type { z } from "zod";
 import type { reconcileResultSchema } from "./reconcile-schema.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, json, now, truncate } from "../core/util.ts";
+import { HttpError, json, now, truncate, webLink } from "../core/util.ts";
+import { notify } from "../core/notify.ts";
 import { canWrite, OWNER } from "../core/users.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { chatName } from "../agents/run-scope.ts";
@@ -12,13 +13,14 @@ import { itemAccess } from "../items/access.ts";
 import { addChange } from "../items/changes.ts";
 import { materialSpaces, materialsBrief } from "../items/materials.ts";
 import { mayRunRoutine } from "../items/member-routine.ts";
-import { getItem, isClosed, type Item } from "../items/store.ts";
+import { getItem, isClosed, upsertItem, type Item } from "../items/store.ts";
 import { rootOf } from "../items/tree.ts";
 import { itemContext } from "../channels/listen.ts";
 import { itemChats } from "../channels/listen-items.ts";
 import { followLimit, reconcileChatLines } from "./follow.ts";
 import { itemObjects, refreshObject } from "./plugin-objects.ts";
 import { getStage, itemFlow, itemStages, type FlowActor, type ItemFlow, type StageRow } from "./store.ts";
+import { itemFlowSpaces } from "./spaces.ts";
 
 const INTERVAL = 6 * 3600_000;
 export const itemFollowLane = (id: string) => `item-follow:${id}`;
@@ -59,7 +61,7 @@ export function queueReconcile(app: App, id: string, at: Date) {
   if (!changed) return;
   const r = createRun(app, { kind: "flow-reconcile", spaceId: item.spaceId, lane: itemFollowLane(id), userId: item.userId,
     title: `对账：${truncate(item.title, 60)}`, trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name } },
-    input: { itemId: id, startedAt: f.startedAt, round: f.round, since, through, spaces: [item.spaceId], ...(item.userId !== OWNER ? { ownAccountOnly: true } : {}) } });
+    input: { itemId: id, startedAt: f.startedAt, round: f.round, since, through, spaces: itemFlowSpaces(app, item), ...(item.userId !== OWNER ? { ownAccountOnly: true } : {}) } });
   run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,'reconcile',?,?,'','已排队，等对账')", through, JSON.stringify({ startedAt: f.startedAt, runId: r.id }), id);
   return r;
 }
@@ -110,11 +112,19 @@ type Next = { stage: string; action: string; delivery: string };
 const HANDLER = "flow-reconcile-step";
 const stageKey = (s: StageRow) => `${s.round}:${s.attempt}:${s.state}:${s.since}`;
 
-function replyMode(app: App, item: Item, chat: string | undefined) {
-  if (!chat || !itemChats(app, item.id).includes(chat) || !toolAllowed(app, item.userId, "lark_send")) return "none";
+function draftTarget(app: App, item: Item, chat: string) {
+  return itemChats(app, item.id).includes(chat) && toolAllowed(app, item.userId, "lark_send");
+}
+function autoReply(app: App, item: Item, chat: string) {
   const watch = itemContext(app, rootOf(app, item.id));
-  if (!watch || watch.status !== "active" || watch.expiresAt && watch.expiresAt <= now() || !watch.chats.includes(chat)) return "none";
-  return watch.knobs.reply;
+  return watch?.knobs.reply === "auto" && watch.status === "active" && (!watch.expiresAt || watch.expiresAt > now()) && watch.chats.includes(chat);
+}
+async function botInGroup(chat: string): Promise<boolean | null> {
+  try {
+    const { larkClientFor } = await import("../channels/lark-send.ts");
+    const response = await larkClientFor("main").im.chatMembers.isInChat({ path: { chat_id: chat } });
+    return response?.code === 0 && typeof response.data?.is_in_chat === "boolean" ? response.data.is_in_chat : null;
+  } catch { return null; }
 }
 const forStage = "json_extract(context,'$.handler')=? and json_extract(context,'$.itemId')=? and json_extract(context,'$.stageId')=?";
 export function withdrawReconcileAsks(app: App, itemId: string, stageId?: string) {
@@ -124,11 +134,23 @@ export function withdrawReconcileAsks(app: App, itemId: string, stageId?: string
 /** The Agent supplies the smallest next action. The host decides only where it may be delivered. */
 export async function submitReconcile(app: App, r: Run, args: z.infer<typeof reconcileResultSchema>, userId: string, send: (chat: string, draft: string) => Promise<string>) {
   // Shared with stage/owner mutations, so neither an outdated draft nor a late next step replaces a finished stage.
-  const { flowOperation } = await import("./engine.ts");
+  const { flowOperation, stopFlowNow, flowEvidenceLinks } = await import("./engine.ts");
   return flowOperation(app, args.item, async () => {
     const fresh = getRun(app, r.id);
-    const { f, item } = activeCheck(app, fresh, args.item, userId, !args.steps?.length);
+    const { f, item } = activeCheck(app, fresh, args.item, userId, !args.finish && !args.steps?.length);
     if (fresh.output.reconcileResult) throw new HttpError(409, "已经交了这次对账结论");
+    if (args.finish) {
+      const { reason, evidence, close_item } = args.finish;
+      if (close_item && !itemAccess(app, item.userId, item, "write")) throw new HttpError(403, "没有关闭事项的权限");
+      for (const stage of itemStages(app, item.id)) unchanged(app, fresh, stage);
+      await stopFlowNow(app, item.id, item.userId, { reason, evidence, runId: r.id });
+      if (close_item) upsertItem(app, item.id, { status: "done", note: reason }, "agent", r.id);
+      notify(app, { userId: item.userId, title: `已收口：${item.title}`, urgency: "later", entity: "item", entityId: item.id,
+        link: `#/work/${item.id}`, sourceRefs: [], graceDone: true, replaces: f.card ?? undefined, runId: r.id,
+        body: `${reason}\n\n依据：${flowEvidenceLinks(app, item.id, evidence)}\n\n${close_item ? "事项已标为完成。" : "事项仍保留，未关闭。"}要再开始，可以对助手说，或在[事项页](${webLink(app, `#/work/${item.id}`)})${close_item ? "先重开事项，再开始流程" : "重新开始流程"}。` });
+      setRunOutput(app, r.id, { reconcileResult: { summary: args.summary, next: [], finish: args.finish } });
+      return [];
+    }
     const steps = args.steps ?? [];
     if (new Set(steps.map(s => s.stage)).size !== steps.length) throw new HttpError(400, "每个阶段最多交一个最小动作");
     const planned = steps.map(s => {
@@ -144,20 +166,23 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
       const asked = one(app.db, `select 1 from runs where kind='flow-reconcile' and json_extract(input,'$.itemId')=? and json_extract(input,'$.startedAt')=?
         and exists(select 1 from json_each(runs.output,'$.reconcileSent') where value=?) limit 1`, item.id, f.startedAt, `${stage.id}:${key}`);
       if (previous || asked) { next.push({ stage: s.stage, action: s.action, delivery: "这一次已交过动作，不重复问或发" }); continue; }
-      const mode = replyMode(app, item, s.chat);
-      if (s.chat && s.draft && mode === "auto") {
+      const target = s.chat && s.draft && draftTarget(app, item, s.chat) ? s.chat : undefined;
+      let unavailable = "";
+      if (target && s.draft && autoReply(app, item, target)) {
         try {
-          await send(s.chat, s.draft);
+          await send(target, s.draft);
           setRunOutput(app, r.id, { reconcileSent: [...(getRun(app, r.id).output.reconcileSent as string[] | undefined ?? []), `${stage.id}:${key}`] });
           next.push({ stage: s.stage, action: s.action, delivery: "已由机器人发到关联群" }); continue;
-        } catch { /* Keep a draft for the owner when the bot could not send. */ }
+        } catch { unavailable = "自动发送失败，草稿未确认发出。"; }
       }
-      const maySend = !!s.chat && !!s.draft && mode === "draft";
+      const member = target ? await botInGroup(target) : null;
+      if (target && member !== true) unavailable = member === false ? "机器人不在这个群，发不了。" : "未能确认机器人在群里，不能从卡片发送。";
+      const maySend = member === true;
       const name = f.definition.stages.find(d => d.id === s.stage)?.name ?? stage.id;
       createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
-        question: `「${name}」需要${s.person ? `找${s.person}` : "你"}：${s.action}\n\n事项：${item.title}${s.draft ? `\n\n给${s.person}的草稿（未发送）：\n${s.draft}` : ""}`,
-        options: [{ label: maySend ? "把草稿发到群里" : "我已处理" }, { label: "先不处理" }],
-        context: { handler: HANDLER, itemId: item.id, stageId: stage.id, startedAt: f.startedAt, key, action: s.action, ...(maySend ? { chat: s.chat, draft: s.draft } : {}) } });
+        question: `「${name}」需要${s.person ? `找${s.person}` : "你"}：${s.action}\n\n事项：${item.title}${s.draft ? `\n\n给${s.person}的草稿（未发送）：\n${s.draft}` : ""}${unavailable ? `\n\n${unavailable}` : ""}`,
+        options: [...(maySend ? [{ label: "把草稿发到群里" }] : []), { label: "我已处理" }, { label: "先不处理" }],
+        context: { handler: HANDLER, itemId: item.id, stageId: stage.id, startedAt: f.startedAt, key, action: s.action, ...(maySend ? { chat: target, draft: s.draft } : {}) } });
       next.push({ stage: s.stage, action: s.action, delivery: s.draft ? "草稿等本人处理" : "最小一步等本人处理" });
     }
     setRunOutput(app, r.id, { reconcileResult: { summary: args.summary, next } });
@@ -166,18 +191,19 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
 }
 
 registerAskHandler(HANDLER, async (app, ask, ctx) => {
-  if (ask.choice !== 0) return;
+  const choice = ask.options[ask.choice ?? -1]?.label;
+  if (choice !== "把草稿发到群里" && choice !== "我已处理") return;
   const id = String(ctx.itemId);
-  if (typeof ctx.chat === "string" && typeof ctx.draft === "string") {
+  if (choice === "把草稿发到群里" && typeof ctx.chat === "string" && typeof ctx.draft === "string") {
     const { deliverLark } = await import("../channels/lark-send.ts");
-    await deliverLark({ chatId: ctx.chat, runId: ask.runId }, { text: ctx.draft });
+    await deliverLark({ chatId: ctx.chat, runId: ask.runId, bot: "main" }, { text: ctx.draft });
   }
-  addChange(app, { itemId: id, type: "info", origin: "flow", summary: ctx.chat ? "本人已发送解除阻塞的草稿" : "本人说已处理对账提出的这一步，等下次核对", stages: [String(ctx.stageId)] });
-}, (app, ask, ctx, by) => {
+  addChange(app, { itemId: id, type: "info", origin: "flow", summary: choice === "把草稿发到群里" ? "本人已发送解除阻塞的草稿" : "本人说已处理对账提出的这一步，等下次核对", stages: [String(ctx.stageId)] });
+}, (app, ask, ctx, by, answer) => {
   const item = getItem(app, String(ctx.itemId)), f = itemFlow(app, item.id), s = getStage(app, item.id, String(ctx.stageId));
   if (ask.userId !== by || item.userId !== by || !itemAccess(app, by, item, "flow")) throw new HttpError(403, "只能处理自己的事项");
   if (!f || f.endedAt || isClosed(item.status) || f.startedAt !== ctx.startedAt || stageKey(s) !== ctx.key) throw new HttpError(409, "这一步已有变化");
-  if (typeof ctx.chat === "string" && replyMode(app, item, ctx.chat) === "none") throw new HttpError(403, "这个群已不允许回复，请手动处理");
+  if (answer.options[answer.choice ?? -1]?.label === "把草稿发到群里" && (typeof ctx.chat !== "string" || !draftTarget(app, item, ctx.chat))) throw new HttpError(403, "这个群已不允许回复，请手动处理");
 }, async (app, ctx, answer) => (await import("./engine.ts")).flowOperation(app, String(ctx.itemId), answer));
 
 export function reconcileReminder(app: App, f: ItemFlow, s: StageRow) {
@@ -202,7 +228,7 @@ registerHandler("flow-reconcile", async ctx => {
     const changes = changesSince(app, itemId, since, through, 25);
     const chats = await reconcileChatLines(app, item, since, through);
     const objects = itemObjects(app, itemId, item.userId).map(o => `${o.title}：object:${o.id}（上次读到：${o.statusLabel}；${o.link}）`);
-    const groups = itemChats(app, itemId).slice(0, 15).map(chat => `${chatName(app, chat)}（${chat}，${{ auto: "可直接发", draft: "先交草稿", none: "只供本人手动处理" }[replyMode(app, item, chat)]}）`);
+    const groups = itemChats(app, itemId).slice(0, 15).map(chat => `${chatName(app, chat)}（${chat}，${!draftTarget(app, item, chat) ? "只供本人手动处理" : autoReply(app, item, chat) ? "已授权自动回复" : "本人在卡片上决定是否发送"}）`);
     const previous = latest(app, f, true);
     const task = [
       `# 核对「${item.title}」（${item.id}）`,
@@ -222,7 +248,7 @@ registerHandler("flow-reconcile", async ctx => {
     const reading = ["omem_help", "search", "read_source", "read_item", "read_run", "read_conversation", "list_skills", "read_skill", "lark_read", "lark_doc_fetch", "read_flow_object", "stage_report", "stage_reopen", "submit_flow_reconcile"];
     const { toolList } = await import("../agents/tools.ts");
     const { runRole } = await import("../agents/runner.ts");
-    await runRole(app, { role: "flow-reconcile", runId: r.id, userId: item.userId, spaceId: item.spaceId, spaces: [item.spaceId], alsoRead: [...new Set([...chats.spaces, ...await materialSpaces(app, itemId, item.userId)])],
+    await runRole(app, { role: "flow-reconcile", runId: r.id, userId: item.userId, spaceId: item.spaceId, spaces: itemFlowSpaces(app, item), alsoRead: [...new Set([...chats.spaces, ...await materialSpaces(app, itemId, item.userId)])],
       task, signal: ctx.signal, fullAccess: false, denyTools: toolList().filter(t => !reading.includes(t.name)).map(t => t.name),
       addTools: ["read_flow_object", "submit_flow_reconcile"], requiredTools: ["submit_flow_reconcile"], onEvent: e => ctx.event(e.type, e) });
     const result = getRun(app, r.id).output.reconcileResult as { summary: string; next: Next[] } | undefined;

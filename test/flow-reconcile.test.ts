@@ -1,23 +1,26 @@
 import { join, resolve } from "node:path";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
+import YAML from "yaml";
 import type { App } from "../src/core/app.ts";
 import { one, run } from "../src/core/db.ts";
 import { getRun, listRuns, __testHandlers } from "../src/agents/runs.ts";
-import { answerAsk, getAsk } from "../src/agents/asks.ts";
+import { answerAsk, createAsk, getAsk, listAsks } from "../src/agents/asks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { upsertItem } from "../src/items/store.ts";
+import { getItem, upsertItem } from "../src/items/store.ts";
 import { addMaterials } from "../src/items/materials.ts";
 import { addChange } from "../src/items/changes.ts";
 import { pendingActions } from "../src/items/pending.ts";
 import { appendToSource, upsertSource } from "../src/sources/store.ts";
-import { listFlows } from "../src/flows/definitions.ts";
+import { listFlows, saveFlow } from "../src/flows/definitions.ts";
 import { flowView, reportStage, startFlow, ownerAction } from "../src/flows/engine.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
 import { itemFollowLane, queueReconcile, reconcileReminder } from "../src/flows/reconcile.ts";
 import * as runner from "../src/agents/runner.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { startServer } from "../src/server/http.ts";
+import { setLarkClient } from "../src/channels/lark-send.ts";
+import { setItemListening } from "../src/channels/listen-items.ts";
 import { attachObject } from "../src/flows/plugin-objects.ts";
 import { forgetPlugin, loadPlugins, trustPlugin } from "../src/plugins/registry.ts";
 import { pluginStore } from "../src/plugins/store.ts";
@@ -48,6 +51,7 @@ async function execute(app: App, r: NonNullable<ReturnType<typeof queueReconcile
 }
 const call = (ctx: ToolContext, name: string, args: object) => callTool(ctx, name, args);
 afterEach(async () => {
+  setLarkClient(null);
   vi.restoreAllMocks();
   await new Promise(setImmediate); await new Promise(setImmediate);
   for (const app of apps.splice(0)) { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
@@ -146,6 +150,77 @@ it("卡住先留可处理的草稿；提醒带最近结论，流程进展后撤�
   expect(reconcileReminder(app, itemFlow(app, item.id)!, s())).toContain("最小一步：请贴复测记录的链接");
   await ownerAction(app, item.id, "verify", "done", "已经复测", "owner");
   expect(getAsk(app, card.askId!).status).toBe("cancelled");
+});
+
+it.each([true, false])("有证据则直接停止循环第 2 轮（关闭事项=%s），撤回卡片和取消排队阶段", async closeItem => {
+  const app = testApp(); apps.push(app);
+  app.config.flows.autoAdvance = 20;
+  const item = upsertItem(app, undefined, { title: "项目 A 评审" }, "user");
+  const source = upsertSource(app, { spaceId: "personal", kind: "note", uri: "fixture:release", title: "发布记录", text: "两组合并请求已合并并上线" });
+  saveFlow(app, YAML.stringify({ id: "loop", name: "评审", repeat: { from: "start", every: "done" }, stages: [
+    { id: "start", name: "发起评审", by: "wait", gate: "confirm" },
+    { id: "work", name: "核对分支", by: { run: {} }, needs: [] },
+    { id: "last", name: "等作者", by: "wait", needs: [] },
+  ] }), "owner");
+  await startFlow(app, item.id, "loop", owner);
+  for (const id of ["start", "work", "last"]) await ownerAction(app, item.id, id, "done", "第一轮已做完");
+  expect(itemFlow(app, item.id)?.round).toBe(2);
+  const gate = getStage(app, item.id, "start").askId!;
+  const work = getStage(app, item.id, "work").control.runId!;
+  const runAsk = createAsk(app, { runId: work, userId: "owner", question: "继续核对这条分支？", options: [{ label: "继续" }] });
+  await reportStage(app, item.id, "last", { state: "blocked", note: "等作者更新" }, owner);
+  const first = queueReconcile(app, item.id, new Date(Date.now() + 8 * HOUR))!;
+  await execute(app, first, async ctx => {
+    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "缺记录", steps: [{ stage: "last", action: "补查发布记录" }] })).isError).not.toBe(true);
+  });
+  const nextAsk = listAsks(app).find(ask => ask.handler === "flow-reconcile-step")!;
+  const finishRun = queueReconcile(app, item.id, new Date(Date.now() + 16 * HOUR))!;
+  await execute(app, finishRun, async ctx => {
+    const submit = (evidence: string[]) => call(ctx, "submit_flow_reconcile", { item: item.id, summary: "评审目的已达到", finish: { reason: "两组改动均已合并并上线", evidence, close_item: closeItem } });
+    for (const evidence of [[], [`src:${source.id}#L99`], ["object:fo_unread"]]) expect((await submit(evidence)).isError).toBe(true);
+    expect(itemFlow(app, item.id)?.endedAt).toBeNull();
+    expect((await submit([`src:${source.id}#L1`])).isError).not.toBe(true);
+  });
+  expect(itemFlow(app, item.id)).toMatchObject({ round: 2, endedAt: expect.any(String), nextRoundAt: null });
+  expect(getItem(app, item.id).status).toBe(closeItem ? "done" : "open");
+  expect(getRun(app, work).status).toBe("cancelled");
+  for (const id of [gate, nextAsk.id, runAsk.id]) expect(getAsk(app, id).status).toBe("cancelled");
+  expect(listAsks(app).filter(ask => ask.status === "pending")).toEqual([]);
+  expect(getStage(app, item.id, "start")).toMatchObject({ askId: null, waitingOn: null });
+  const notice = one<{ body: string; urgency: string }>(app.db, "select body,json_extract(context,'$.urgency') urgency from notifications where title like '已收口：%'");
+  expect(notice).toMatchObject({ urgency: "later", body: expect.stringContaining(`[看原文](src:${source.id}#L1)`) });
+  expect(notice?.body).toContain(closeItem ? "事项已标为完成" : "事项仍保留，未关闭");
+  expect(signal(app)).toContain("评审目的已达到");
+});
+
+it.each([[true, "none"], [false, "none"], [true, "auto"]] as const)("关联群草稿：机器人在群=%s，关注档=%s", async (member, reply) => {
+  const { app, item, clock } = await setup();
+  const chat = "oc_example_group";
+  const source = appendToSource(app, { spaceId: "personal", kind: "chat", uri: `lark:${chat}`, title: "示例群", lines: ["[小王] 待补复测"] });
+  await addMaterials(app, item.id, [{ kind: "source", ref: source.id }], "owner");
+  setItemListening(app, item.id, true, { reply });
+  const sent = vi.fn(async (_request: { data: { receive_id: string; content: string } }) => ({ code: 0, data: { message_id: "om_example" } }));
+  const membership = vi.fn(async () => ({ code: 0, data: { is_in_chat: member } }));
+  setLarkClient({ im: { message: { create: sent }, chatMembers: { isInChat: membership } } });
+  await reportStage(app, item.id, "verify", { state: "blocked", waitingOn: "小王", note: "没有复测结果" }, owner);
+  const draft = "小王，能发一下复测记录吗？";
+  await execute(app, queueReconcile(app, item.id, clock(8))!, async ctx => {
+    expect((await call(ctx, "submit_flow_reconcile", { item: item.id, summary: "需要补充复测记录", steps: [{ stage: "verify", action: "请发复测记录", person: "小王", draft, chat }] })).isError).not.toBe(true);
+  });
+  const card = listAsks(app).find(ask => ask.handler === "flow-reconcile-step");
+  const deliveries = () => sent.mock.calls.map(([request]) => request).filter(request => request.data.receive_id === chat);
+  if (reply === "auto") { expect(card).toBeUndefined(); expect(deliveries()).toHaveLength(1); return; }
+  expect(deliveries()).toHaveLength(0);
+  expect(card?.options.map(option => option.label)).toEqual([...(member ? ["把草稿发到群里"] : []), "我已处理", "先不处理"]);
+  if (member) {
+    await answerAsk(app, card!.id, { by: "owner", choice: 0 });
+    expect(deliveries()).toHaveLength(1);
+    expect(deliveries()[0].data.content).toContain(draft);
+  } else {
+    expect(card?.question).toContain("机器人不在这个群，发不了");
+    await answerAsk(app, card!.id, { by: "owner", choice: 0 });
+    expect(deliveries()).toHaveLength(0);
+  }
 });
 
 it("内联清单复用前提校验与推进，强制外部动作确认，走完才建议存成模板", async () => {

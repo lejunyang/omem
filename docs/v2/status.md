@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 流程对账收口、草稿与返工：有依据停止并可完成事项；关联群草稿可直接批准发送；重开停下受影响的助手阶段，编码只认新交办；阶段、对账、接手可读已关联且有权限的仓库与业务空间 | 已实现（2026-11-25）；假客户端覆盖收口和草稿，流程测试覆盖返工与仓库范围 | `src/flows/reconcile.ts`、`engine.ts`、`spaces.ts`；`test/flow-reconcile.test.ts`、`test/flow-review.test.ts`、`test/flows.test.ts` |
 | 在线流程对账与解除阻塞：巡检最多每六小时一次，与跟进共用每日限额和事项通道；对照阶段、挂接对象和群材料；确认卡补证据，最小动作进待处理 | 已实现（2026-11-25）；`test/flow-reconcile.test.ts`，未接真实平台 | `src/flows/reconcile.ts`、`engine.ts`、`roles/flow-reconcile.md` |
 | 一次性流程：`flow_start` 接受内联清单，使用实例副本，外部动作先确认，走完建议存成模板 | 已实现（2026-11-25）；`test/flow-reconcile.test.ts` | `src/flows/inline.ts`、`engine.ts`、`review.ts`、`roles/assistant.md` |
 | Antigravity 官方 CLI 内置后端：识别 PATH 中的 `agy`，后端 id `antigravity`，以 `agy acp` 启动并复用 CLI 登录；`agy -p /usage --output-format json` 读取各模型组的额度与重置时间，复用额度缓存、展示和避让；按 CLI 报告的模型范围匹配，不明范围只展示。注册表独立包 `antigravity-acp` 保留，认证与 CLI 分开，不自动替换已有配置 | 已实现（2026-11-23）；`test/catalog.test.ts`、`test/antigravity-quota.test.ts`；真实 CLI 1.5.15 读到 9 个模型、4 档思考强度；额度命令无模型回合和 token 消耗；登录在终端完成 | `src/agents/catalog.ts`、`antigravity-quota.ts`、`quota.ts`、`src/core/config.ts` |

@@ -5,11 +5,14 @@ import YAML from "yaml";
 import { testApp } from "./helpers.ts";
 import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
+import { saveRole } from "../src/auth/permissions.ts";
 import { decide, decisionReady } from "../src/core/decision.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { createUser } from "../src/core/users.ts";
+import { addMember, createUser } from "../src/core/users.ts";
+import { ensureLibraryRepo } from "../src/core/git.ts";
 import { answerAsk, createAsk, getAsk } from "../src/agents/asks.ts";
-import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { createRun, getRun, setRunOutput, __testHandlers } from "../src/agents/runs.ts";
+import * as runner from "../src/agents/runner.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { addLocalMaterials } from "../src/items/materials.ts";
 import { itemEvents, upsertItem } from "../src/items/store.ts";
@@ -42,6 +45,7 @@ async function done(app: App, itemId: string, id: string) {
 }
 beforeEach(() => { vi.mocked(decisionReady).mockReturnValue(false); vi.mocked(decide).mockReset(); });
 afterEach(async () => {
+  vi.restoreAllMocks();
   // Drain asynchronous ask display/event callbacks before removing their temporary libraries.
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
@@ -178,6 +182,27 @@ describe("阶段推进", () => {
     expect(s("c").state).toBe("gated"); expect(itemFlow(app, item.id)!.autoStreak).toBe(2);
     await answerAsk(app, s("c").askId!, { choice: 0, by: "owner" });
     expect(s("c").state).toBe("doing"); expect(itemFlow(app, item.id)!.autoStreak).toBe(0);
+  });
+  it.each(["auto", "confirm"])("带依据重开已批准的阶段（关卡=%s），只有新阶段受自动上限约束", async gate => {
+    const { app, item, s } = await setup([stage("prep"), stage("fix", { gate }), stage("verify"), stage("last")], { autoAdvance: 1 });
+    await done(app, item.id, "prep");
+    expect(s("fix").state).toBe("gated");
+    await answerAsk(app, s("fix").askId!, { choice: 0, by: "owner" });
+    const evidence = [s("fix").control.runId!];
+    await done(app, item.id, "fix");
+    const verify = s("verify").control.runId!;
+    const result = await callTool({ app, userId: "owner", actor: "agent", role: "assistant", runId: null, spaceId: "personal", spaces: ["personal"], tools: null },
+      "stage_reopen", { item: item.id, stage: "fix", reason: "验证没有通过", refs: evidence });
+    expect(result.isError).not.toBe(true);
+    expect(s("verify")).toMatchObject({ state: "stale", askId: null });
+    expect(getRun(app, verify).status).toBe("cancelled");
+    if (gate === "confirm") { expect(s("fix").state).toBe("gated"); return; }
+    expect(s("fix")).toMatchObject({ state: "doing", askId: null, attempt: 2 });
+    expect(itemFlow(app, item.id)?.autoStreak).toBe(1);
+    await done(app, item.id, "fix");
+    expect(s("verify")).toMatchObject({ state: "doing", askId: null, attempt: 2 });
+    await done(app, item.id, "verify");
+    expect(s("last")).toMatchObject({ state: "gated", control: { gateLimit: true } });
   });
   it("完成要依据；done: confirm 被拒时带意见重跑，第三次拒绝后卡住", async () => {
     const plain = await setup([stage("a")]);
@@ -436,7 +461,8 @@ describe("对象与工具", () => {
     expect(s("a").state).toBe("done"); expect(s("b").state).toBe("doing");
     await reopenStage(app, item.id, "b", "重新核验", [], owner);
     await reopenStage(app, item.id, "a", "回看", [], owner);
-    expect(s("a").state).toBe("done");
+    expect(s("a").state).toBe("doing");
+    expect(s("a").by).not.toBe(`code-work:${r.id}`);
     setRunOutput(app, r.id, { discardedAt: "2026-11-15" }); expect(findObject(app, item, "code-work")).toBeNull();
   });
   it("跟着交办的段被自己的运行报成等交办，交办评审通过后照样完成；等本人的不跟", async () => {
@@ -472,22 +498,25 @@ describe("对象与工具", () => {
     setRunOutput(app, next.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", next.id);
     await advance(app, item.id); expect(s("a").state).toBe("done");
   });
-  it("本人先直接交办了，变化再并进：运行确认改动已在那次交办里后结束，段跟着它走，不报卡住", async () => {
+  it("重开前的交办不算返工结果；重开后继续交办才推进", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
     const old = createRun(app, { kind: "code", spaceId: "personal", title: "第一次交办", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
     addLocalMaterials(app, item.id, [{ kind: "run", ref: old.id }], "owner");
     setRunOutput(app, old.id, { verdict: "approved" }); run(app.db, "update runs set status='done', created_at='2026-01-01T00:00:00.000Z' where id=?", old.id);
     await advance(app, item.id); expect(s("a").state).toBe("done");
-    // The owner asked the assistant for the change directly: a new delegation of this item, while the stage is done.
     const direct = createRun(app, { kind: "code", spaceId: "personal", title: "退款单加运费说明", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
     addLocalMaterials(app, item.id, [{ kind: "run", ref: direct.id }], "owner");
+    setRunOutput(app, direct.id, { verdict: "approved" }); run(app.db, "update runs set status='done',created_at=? where id=?", new Date(Date.now() - 1000).toISOString(), direct.id);
     await advance(app, item.id); expect(s("a").state).toBe("done");
     await reopenStage(app, item.id, "a", "本人要求退款单加运费说明", [], owner, { feedback: true });
     const stageRun = s("a").by!;
     setRunOutput(app, stageRun, { text: "运费说明已在现有交办里" }); run(app.db, "update runs set status='done' where id=?", stageRun);
     await advance(app, item.id);
-    expect(s("a")).toMatchObject({ state: "doing", by: `code-work:${direct.id}` });
-    expect(String(getRun(app, stageRun).input.task)).toContain("要改的已经在里面");
+    expect(s("a")).toMatchObject({ state: "blocked", note: expect.stringContaining("旧交办不能作为这一次的结果") });
+    const next = createRun(app, { kind: "code", spaceId: "personal", title: "继续改退款单", input: { itemId: item.id, repos: ["personal"], continueFrom: direct.id }, userId: "owner" });
+    setRunOutput(app, next.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", next.id);
+    await advance(app, item.id);
+    expect(s("a")).toMatchObject({ state: "done", by: `code-work:${direct.id}` });
   });
   it("跟着分支评审的段按本人意见重做：任务是带 rereview_of 复审，不发起编码交办", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);
@@ -500,7 +529,7 @@ describe("对象与工具", () => {
     expect(task).toContain("不要发起 delegate_code");
     expect(task).not.toContain("按这件事的需求点发起交办");
   });
-  it("跟着评审的段卡住以后评审才出结论：按结论完成，不再停在卡住；本人自己的卡住不动", async () => {
+  it("评审段重开后卡住：只跟新复审的结论，本人自己的卡住不动", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } }), stage("b", { by: "wait" })]);
     const review = createRun(app, { kind: "code", spaceId: "personal", title: "同事分支的评审", input: { itemId: item.id, repos: ["personal"], branches: { personal: "feature/refund" } }, userId: "owner" });
     addLocalMaterials(app, item.id, [{ kind: "run", ref: review.id }], "owner");
@@ -509,13 +538,15 @@ describe("对象与工具", () => {
     const stageRun = s("a").by!;
     run(app.db, "update runs set status='done' where id=?", stageRun);
     await advance(app, item.id); expect(s("a").state).toBe("blocked");
-    // The review that was running all along concludes afterwards, in a review run under the delegation.
     const later = new Date(Date.now() + 60_000).toISOString();
     setRunOutput(app, review.id, { verdict: "changes-requested" }); run(app.db, "update runs set status='done', finished_at=? where id=?", later, review.id);
-    const child = createRun(app, { kind: "review", spaceId: "personal", title: "评审", parentId: review.id, userId: "owner" });
-    run(app.db, "update runs set status='done', finished_at=? where id=?", later, child.id);
     await advance(app, item.id);
-    expect(s("a")).toMatchObject({ state: "done", by: `code-work:${review.id}` });
+    expect(s("a").state).toBe("blocked");
+    const fresh = createRun(app, { kind: "code", spaceId: "personal", title: "重新评审同事分支", input: { itemId: item.id, repos: ["personal"], branches: { personal: "feature/refund" }, rereviewOf: review.id }, userId: "owner" });
+    addLocalMaterials(app, item.id, [{ kind: "run", ref: fresh.id }], "owner");
+    setRunOutput(app, fresh.id, { verdict: "changes-requested" }); run(app.db, "update runs set status='done', finished_at=? where id=?", later, fresh.id);
+    await advance(app, item.id);
+    expect(s("a")).toMatchObject({ state: "done", by: `code-work:${fresh.id}` });
     expect(s("a").note).toContain("有了结果");
     expect(s("b").state).toBe("doing");
     const other = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);
@@ -549,9 +580,8 @@ describe("对象与工具", () => {
     await ownerAction(unsure.app, unsure.item.id, "pick", "done", "");
     expect(unsure.s("pick")).toMatchObject({ state: "done", note: "本人做完了" });
   });
-  it("运行没交结果也没发起交办：卡片分段写，内部编号连同代码引号一起去掉", async () => {
-    const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } })]);
-    await reopenStage(app, item.id, "a", "按新稿改", [], owner, { feedback: true });
+  it("运行没交结果：卡片分段写，内部编号连同代码引号一起去掉", async () => {
+    const { app, item, s } = await setup([stage("a")]);
     const stageRun = s("a").by!;
     setRunOutput(app, stageRun, { text: "查过了。\n\n已交办：`r0mabcdefghijk12`" }); run(app.db, "update runs set status='done' where id=?", stageRun);
     await advance(app, item.id);
@@ -590,6 +620,40 @@ describe("对象与工具", () => {
     expect((await callTool(ctx, "stage_report", { item: item.id, stage: "a", state: "blocked", note: "待权限", waiting_on: "owner" })).isError).toBe(false);
     const read = await callTool(ctx, "read_item", { item_id: item.id }); expect(JSON.parse(read.text).flow.stages[0]).toMatchObject({ state: "blocked", waitingOn: "owner" });
     expect((await callTool(ctx, "list_flows", { item: item.id })).isError).toBe(false);
+  });
+  it("阶段可访问材料挂的仓库及业务空间，不能访问本人无权读取的仓库", async () => {
+    const app = appFor();
+    const role = saveRole(app, { id: "delegator", name: "编码交办", scope: "global", permissions: ["code.delegate"] });
+    const userId = createUser(app, { id: "member-a", name: "小王", role: role.id }).id;
+    createSpace(app, { id: "business", name: "项目 A" });
+    for (const id of ["repo-b", "repo-private"]) {
+      const rootPath = join(app.home, id);
+      mkdirSync(rootPath);
+      ensureLibraryRepo(rootPath);
+      createSpace(app, { id, name: id, rootPath, ...(id === "repo-b" ? { parentId: "business" } : {}) });
+    }
+    addMember(app, "business", userId, "editor");
+    const item = upsertItem(app, undefined, { title: "核对退款", userId, spaceId: "personal-member-a" }, "user");
+    addLocalMaterials(app, item.id, [{ kind: "repo", ref: "repo-b", branch: "main" }, { kind: "repo", ref: "repo-private", branch: "main" }], "owner");
+    await startFlow(app, item.id, { stages: [{ id: "work", name: "修改", by: { run: {} }, fixed: false }] }, { actor: "owner", userId });
+    await ownerAction(app, item.id, "work", "confirm", "", userId);
+    const stageRun = getStage(app, item.id, "work").control.runId!;
+    vi.spyOn(runner, "runRole").mockImplementationOnce(async (_app, request) => {
+      expect(request.spaces).toEqual([item.spaceId, "repo-b", "business"]);
+      const ctx: ToolContext = { app, userId, actor: "agent", role: "assistant", runId: stageRun, spaceId: item.spaceId, spaces: request.spaces!, writable: request.spaces!, tools: null };
+      const delegate = (repo: string) => callTool(ctx, "delegate_code", { repo_spaces: [repo], space: "repo-b", item_id: item.id, task: "修复退款说明" });
+      const denied = await delegate("repo-private");
+      expect(denied.isError).toBe(true);
+      expect(denied.text).toContain("空间 repo-private");
+      const work = await delegate("repo-b");
+      expect(work.isError, work.text).not.toBe(true);
+      const code = one<{ id: string }>(app.db, "select id from runs where kind='code' and parent_id=?", stageRun)!;
+      expect(getRun(app, code.id).input.repos).toEqual(["repo-b"]);
+      expect((await callTool(ctx, "read_run", { run_id: code.id })).isError).not.toBe(true);
+      return { text: "已交办", agent: "fake", stopReason: "end_turn", profileId: "fake", ai: { profile: "fake" } };
+    });
+    await __testHandlers.get("flow-stage")!({ app, run: getRun(app, stageRun), signal: new AbortController().signal, event: () => {}, output: () => {} });
+    expect(runner.runRole).toHaveBeenCalledOnce();
   });
   it("save_flow 是待确认草稿，非本人的回答不落盘，启用才保存", async () => {
     const app = appFor(), raw = yaml([stage("a", { by: "owner" })]);

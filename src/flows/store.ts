@@ -20,6 +20,7 @@ export type StageControl = {
   /** What the carrier handed the owner to open (a sheet to fill in, a doc to confirm, a preview), shown on the stage. */
   links?: StageLink[];
   objectAfter?: string;
+  rework?: boolean;
   recorded?: boolean;
   gateLimit?: boolean; grantedGate?: boolean;
   runId?: string;

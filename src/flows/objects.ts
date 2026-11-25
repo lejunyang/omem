@@ -13,13 +13,17 @@ export type FlowObject = { ref: string; title: string; status: string; done: boo
 export type ObjectKind = { kind: string; label: string; find: (app: App, item: Item) => FlowObject | null };
 
 /** Per-item run materials bound the lookup; codeWork uses the existing continuation indexes. */
-export function latestCodeWork(app: App, item: Item): CodeWorkDetail | null {
+export function latestCodeWork(app: App, item: Item, after?: string): CodeWorkDetail | null {
   const runs = all<{ id: string; joined: number | null }>(app.db, `select r.id, json_extract(m.meta, '$.joined') joined from item_materials m join runs r on r.id=m.ref
     where m.item_id=? and m.kind='run' and r.kind='code' and coalesce(r.user_id,'owner')=? order by r.created_at desc, m.id desc`, item.id, item.userId);
   for (const r of runs) {
     const w = codeWork(app, r.id);
     // Its own delegation, or one of another item on the same branch this item's change went into (joinCodeWork).
     if (!w || (w.item?.id !== item.id && !r.joined)) continue;
+    if (after) {
+      const created = one<{ at: string }>(app.db, "select created_at at from runs where id=?", w.latestId)?.at;
+      if (!created || created <= after) continue;
+    }
     const ids = w.roundList.map((x) => x.id);
     if (all<{ id: string }>(app.db, `select id from runs where id in (${ids.map(() => "?").join(",")}) and (json_extract(output,'$.discardedAt') is not null or json_extract(output,'$.supersededBy') is not null)`, ...ids).length) continue;
     return w;
@@ -31,20 +35,28 @@ export function latestCodeWork(app: App, item: Item): CodeWorkDetail | null {
  * The delegation this item follows, when it moved since `since`: started then, or given a new round
  * (continue_code_run, a change joined into it). A stage's run that handed its work over leaves this.
  */
-export function codeWorkSince(app: App, item: Item, since: string): FlowObject | null {
-  const w = latestCodeWork(app, item);
-  const at = w ? one<{ c: string }>(app.db, "select created_at c from runs where id = ?", w.latestId)?.c : undefined;
-  const joined = w ? one<{ c: string }>(app.db, "select created_at c from item_materials where item_id = ? and kind = 'run' and ref = ?", item.id, w.rootId)?.c : undefined;
-  if (!w || !(at && at >= since || joined && joined >= since)) return null;
-  return objectKind("code-work")!.find(app, item);
+export function codeWorkSince(app: App, item: Item, since: string, newRoundOnly = false): FlowObject | null {
+  const w = latestCodeWork(app, item, newRoundOnly ? since : undefined);
+  if (!w) return null;
+  if (newRoundOnly) return codeWorkObject(app, item, w);
+  const at = one<{ c: string }>(app.db, "select created_at c from runs where id = ?", w.latestId)?.c;
+  const joined = one<{ c: string }>(app.db, "select created_at c from item_materials where item_id = ? and kind = 'run' and ref = ?", item.id, w.rootId)?.c;
+  return at && at >= since || joined && joined >= since ? codeWorkObject(app, item, w) : null;
+}
+
+function codeWorkObject(app: App, item: Item, work: CodeWorkDetail): FlowObject {
+  const last = work.roundList.at(-1);
+  const done = last?.status === "done" && last.verdict === "approved" && ["done", "review-ok", "ended"].includes(work.stage.key);
+  const dropped = done ? droppedFor(app, item, work.rootId) : null;
+  return { ref: `code-work:${work.rootId}`, title: work.title, status: work.stage.key, done: done && !dropped, link: `#/runs/${work.latestId}`, ...(dropped ? { dropped } : {}) };
 }
 
 /**
  * When the delegation this item follows last finished something: a round, or a review of one (a branch
  * review's conclusion comes from its review runs). A stage stuck before that is behind the object.
  */
-export function codeWorkSettledAt(app: App, item: Item): string | null {
-  const w = latestCodeWork(app, item);
+export function codeWorkSettledAt(app: App, item: Item, after?: string): string | null {
+  const w = latestCodeWork(app, item, after);
   if (!w) return null;
   const ids = w.roundList.map((x) => x.id);
   const marks = ids.map(() => "?").join(",");
@@ -84,12 +96,7 @@ export const flowObjects: readonly ObjectKind[] = [
   } },
   { kind: "code-work", label: "编码交办", find: (app, item) => {
     const w = latestCodeWork(app, item);
-    if (!w) return null;
-    const last = w.roundList.at(-1);
-    // `stage.key` is the view's state; the verdict in roundList preserves review approval after apply.
-    const done = last?.status === "done" && last.verdict === "approved" && ["done", "review-ok", "ended"].includes(w.stage.key);
-    const dropped = done ? droppedFor(app, item, w.rootId) : null;
-    return { ref: `code-work:${w.rootId}`, title: w.title, status: w.stage.key, done: done && !dropped, link: `#/runs/${w.latestId}`, ...(dropped ? { dropped } : {}) };
+    return w ? codeWorkObject(app, item, w) : null;
   } },
   { kind: "design", label: "方案", find: (app, item) => {
     const w = latestCodeWork(app, item);
