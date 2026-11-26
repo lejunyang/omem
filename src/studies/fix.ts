@@ -40,16 +40,23 @@ export async function queueFindingFix(app: App, itemId: string, finding: string,
   if (!scope.repos.length) throw new HttpError(409, "先在研究范围里登记仓库");
   const evidence = json<string[]>(f.trials, []).map((id) => trial(app, id));
   const startCommits = evidence.length ? json<Record<string, string>>(direction(app, evidence[0].direction_id).baseline, {}) : {};
-  const current = await captureBaseline(app, itemId), fallback: string[] = [];
-  for (const repo of scope.repos) {
-    if (!startCommits[repo.id]) { startCommits[repo.id] = current[repo.id]; fallback.push(repo.name); }
-    if (!startCommits[repo.id]) throw new HttpError(409, `${repo.name} 没有可用的提交`);
+  const missing = scope.repos.filter((repo) => !startCommits[repo.id]);
+  let fallbackNote = "";
+  if (missing.length) {
+    const { baseline, headFallbacks } = await captureBaseline(app, itemId);
+    for (const repo of missing) {
+      if (!baseline[repo.id]) throw new HttpError(409, `${repo.name} 没有可用的提交`);
+      startCommits[repo.id] = baseline[repo.id];
+    }
+    fallbackNote = `这些仓库没有方向基线，改用发起时的当前提交：${missing.map((repo) => repo.name).join("、")}`;
+    const fromHead = missing.filter((repo) => headFallbacks.has(repo.id));
+    if (fromHead.length) fallbackNote += `\n${fromHead.map((repo) => repo.name).join("、")} 的代码索引基线引用不可用，使用本地 HEAD。`;
   }
   const task = [
     `## 发现：${f.title}\n${f.repro}`,
     `## 依据的试验\n${evidence.map((t) => `${t.id}\n对象：${t.object}\n检查：${t.check}\n结果：${t.result}\n摘要：${t.summary}\n证据引用：${t.evidence}`).join("\n\n")}`,
     note?.trim() ? `## 本人的要求\n${note.trim()}` : "",
-    fallback.length ? `这些仓库没有方向基线，改用发起时的当前提交：${fallback.join("、")}` : "",
+    fallbackNote,
     "改动只留在这次交办的分支上。\n改完照复现办法验证，交代改之前和改之后各是什么结果。\n不合并、不推送。",
   ].filter(Boolean).join("\n\n");
   // Called under studyOperation's per-item lock, so two clicks cannot create two works.

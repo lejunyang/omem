@@ -1,12 +1,14 @@
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { gitAsync } from "../core/git.ts";
+import { getSpace } from "../core/spaces.ts";
 import { studyRepos } from "./scope.ts";
 import { sourceText } from "../sources/store.ts";
 import { workUri } from "../sources/work.ts";
 import type { Item } from "../items/store.ts";
 import { json } from "../core/util.ts";
 import { directions, findings, normalize, trials } from "./store.ts";
+import { currentStudyCommit } from "./workspace.ts";
 
 export const capabilitiesPath = (item: string) => `work/studies/${item}/capabilities.md`;
 /**
@@ -55,10 +57,13 @@ export async function planningMaterials(app: App, item: Item) {
   const repos = studyRepos(app, item);
   const commits: string[] = [];
   for (const repo of repos) {
-    if (!repo.root_path) continue;
     try {
-      const r = await gitAsync(repo.root_path, ["log", "-20", "--format=%s"], { timeoutMs: 5000 });
-      if (r.ok) commits.push(`${repo.name}：\n${r.stdout.trim()}`);
+      const space = getSpace(app, repo.id);
+      if (!space.rootPath) continue;
+      const current = await currentStudyCommit(app, space);
+      if (!current) continue;
+      const r = await gitAsync(space.rootPath, ["log", "-20", "--format=%s", current.commit, "--"], { timeoutMs: 5000 });
+      if (r.ok) commits.push(`${repo.name}${current.usedHeadFallback ? "（代码索引基线引用不可用，使用本地 HEAD）" : ""}：\n${r.stdout.trim()}`);
     } catch { /* Unavailable repositories contribute no material. */ }
   }
   return [

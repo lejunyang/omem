@@ -8,7 +8,7 @@ import type { App } from "../src/core/app.ts";
 import { gitAsync } from "../src/core/git.ts";
 import { all, run } from "../src/core/db.ts";
 import { now } from "../src/core/util.ts";
-import { createSpace, getSpace } from "../src/core/spaces.ts";
+import { createSpace, getSpace, updateSpace } from "../src/core/spaces.ts";
 import { createApiToken, createUser, addMember } from "../src/core/users.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
@@ -25,6 +25,9 @@ import { markOutOfQuota } from "../src/agents/capacity.ts";
 import { putScope } from "../src/studies/scope.ts";
 import { chooseDirection, proposeDirections, reportTrial, studyView, readLedger } from "../src/studies/service.ts";
 import { closeDirection, direction, directions, recordFinding, setFindingState, trials } from "../src/studies/store.ts";
+import { captureBaseline } from "../src/studies/workspace.ts";
+import { planningMaterials } from "../src/studies/materials.ts";
+import { fixFinding } from "../src/studies/fix.ts";
 import { startServer } from "../src/server/http.ts";
 
 const apps: App[] = [], servers: FastifyInstance[] = [];
@@ -42,7 +45,7 @@ async function git(dir: string, ...args: string[]) { const r = await gitAsync(di
 async function setup(n = 2, configure?: (a: App) => void, home?: string) {
   const app = testApp(home); apps.push(app); app.config.flows.autoAdvance = 20;
   const root = join(app.home, "original"); mkdirSync(root);
-  await git(root, "init", "-q"); await git(root, "config", "user.name", "test"); await git(root, "config", "user.email", "test@example.com");
+  await git(root, "init", "-qb", "main"); await git(root, "config", "user.name", "test"); await git(root, "config", "user.email", "test@example.com");
   writeFileSync(join(root, "entry.txt"), "before"); await git(root, "add", "entry.txt"); await git(root, "commit", "-qm", "first");
   const base = await git(root, "rev-parse", "HEAD"); writeFileSync(join(root, "owner-untracked.txt"), "keep");
   createSpace(app, { id: "project", name: "项目 A" }); createSpace(app, { id: "repo", name: "仓库 A", kind: "repo", rootPath: root, parentId: "project" });
@@ -64,7 +67,72 @@ async function setup(n = 2, configure?: (a: App) => void, home?: string) {
   return { app, item, root, base, stage, select, finish };
 }
 
+async function managedClone(f: Awaited<ReturnType<typeof setup>>, name: string) {
+  const parent = join(f.app.home, "repos");
+  mkdirSync(parent, { recursive: true });
+  const root = join(parent, name);
+  await git(parent, "clone", "-q", f.root, root);
+  return root;
+}
+
 describe("研究的工作区", () => {
+  it.each([
+    { branch: "main", ref: "" },
+    { branch: "release", ref: "origin/release" },
+  ])("托管克隆的 $branch 基线与最近提交都跟代码索引走", async ({ branch, ref }) => {
+    const f = await setup(1);
+    const root = await managedClone(f, "example");
+    updateSpace(f.app, "repo", { rootPath: root, settings: { codeIndex: { mode: "baseline", ref } } });
+    if (ref) await git(f.root, "checkout", "-qb", branch);
+    writeFileSync(join(f.root, "entry.txt"), "远端改动");
+    await git(f.root, "commit", "-qam", "远端新增提交");
+    const remote = await git(f.root, "rev-parse", "HEAD");
+    await git(root, "fetch", "-q", "origin", `refs/heads/${branch}:refs/remotes/origin/${branch}`);
+    writeFileSync(join(root, "entry.txt"), "检出目录改动");
+
+    expect.soft((await captureBaseline(f.app, f.item.id)).baseline).toEqual({ repo: remote });
+    expect.soft(await planningMaterials(f.app, f.item)).toContain("仓库 A：\n远端新增提交\nfirst");
+    await f.select();
+    expect.soft(JSON.parse(directions(f.app, f.item.id)[0].baseline)).toEqual({ repo: remote });
+    expect.soft(JSON.parse(trials(f.app, f.item.id)[0].commits)).toEqual({ repo: remote });
+    const cwd = String(getRun(f.app, f.stage().by!).input.cwd);
+    expect.soft(readFileSync(join(cwd, "entry.txt"), "utf8")).toBe("远端改动");
+    expect(await git(root, "rev-parse", "HEAD")).toBe(f.base);
+    expect(readFileSync(join(root, "entry.txt"), "utf8")).toBe("检出目录改动");
+  });
+
+  it("本人检出用有未推送提交的 HEAD", async () => {
+    const f = await setup(1);
+    const remote = await managedClone(f, "example");
+    await git(f.root, "remote", "add", "origin", remote);
+    await git(f.root, "fetch", "-q", "origin");
+    await git(f.root, "commit", "--allow-empty", "-qm", "本地未推送提交");
+    const head = await git(f.root, "rev-parse", "HEAD");
+
+    expect((await captureBaseline(f.app, f.item.id)).baseline).toEqual({ repo: head });
+    expect(await planningMaterials(f.app, f.item)).toContain("仓库 A：\n本地未推送提交\nfirst");
+  });
+
+  it.each([false, true])("托管克隆缺远端引用时使用并注明本地 HEAD（有 origin：%s）", async (withOrigin) => {
+    const f = await setup(1);
+    const root = await managedClone(f, "example");
+    updateSpace(f.app, "repo", { rootPath: root });
+    await git(root, "remote", "remove", "origin");
+    if (withOrigin) await git(root, "remote", "add", "origin", f.root);
+    await git(root, "checkout", "-qb", "local");
+    await git(root, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-qm", "本地 HEAD 提交");
+    const head = await git(root, "rev-parse", "HEAD");
+
+    expect((await captureBaseline(f.app, f.item.id)).baseline).toEqual({ repo: head });
+    const materials = await planningMaterials(f.app, f.item);
+    expect.soft(materials).toContain("使用本地 HEAD");
+    expect(materials).toContain("本地 HEAD 提交\nfirst");
+    await f.select();
+    expect(JSON.parse(directions(f.app, f.item.id)[0].baseline)).toEqual({ repo: head });
+    expect(getStage(f.app, f.item.id, "plan").note).toContain("使用本地 HEAD");
+    expect(await git(root, "for-each-ref", "refs/remotes/origin")).toBe("");
+  });
+
   it("运行拿到数据目录的工作区，试验间清理，基线不随原仓库 HEAD 改变", async () => {
     const f = await setup(), enqueued: ReturnType<typeof getRun>[] = [];
     f.app.events.on("event", (e) => { if (e.type === "run" && e.status === "queued") { const r = getRun(f.app, e.runId); if (r.kind === "study-trial") enqueued.push(r); } });
@@ -159,6 +227,24 @@ describe("研究的工作区", () => {
 });
 
 describe("从发现发起编码交办", () => {
+  it("新增托管仓库没有方向基线时用远端提交，缺远端引用时注明用本地 HEAD", async () => {
+    const f = await setup(1); await f.select(); await f.finish();
+    const tracked = await managedClone(f, "tracked"), untracked = await managedClone(f, "untracked");
+    await git(untracked, "remote", "remove", "origin");
+    await git(f.root, "commit", "--allow-empty", "-qm", "远端新增提交");
+    const remote = await git(f.root, "rev-parse", "HEAD");
+    await git(tracked, "fetch", "-q", "origin");
+    createSpace(f.app, { id: "tracked", name: "仓库 B", rootPath: tracked, parentId: "project" });
+    createSpace(f.app, { id: "untracked", name: "仓库 C", rootPath: untracked, parentId: "project" });
+    putScope(f.app, f.item.id, { allowCode: true }, "owner");
+    const id = recordFinding(f.app, { item: f.item.id, kind: "defect", title: "异常退出码", repro: "执行示例命令", trials: [trials(f.app, f.item.id)[0].id] });
+
+    const fix = await fixFinding(f.app, f.item.id, id, undefined, "owner");
+    const work = getRun(f.app, fix!.workId);
+    expect.soft(work.input.startCommits).toEqual({ repo: f.base, tracked: remote, untracked: f.base });
+    expect(work.input.task).toContain("仓库 C 的代码索引基线引用不可用，使用本地 HEAD");
+  });
+
   it("HTTP 授权、状态、重复点击、交办视图和记录；起点是试验方向基线", async () => {
     const f = await setup(1); await f.select(); await f.finish();
     const t = trials(f.app, f.item.id)[0], id = recordFinding(f.app, { item: f.item.id, kind: "defect", title: "异常退出码", repro: "执行示例命令，预期 1，实际 0", trials: [t.id] });

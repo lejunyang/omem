@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-27
 ---
 
+## 研究的托管克隆跟随代码索引基线（2026-11-27）
+
+托管克隆的方向基线和定方向材料的最近 20 条提交都按代码索引的基线引用读取。引用不可用时取本地 HEAD，在方向确认记录和缺方向基线的交办里写明。本人自己的检出取 HEAD。已有方向仍用确认时记下的提交。回归见 `test/study-workspace.test.ts`。
+
 ## 第三方 key 的模型显示名、多模态和完全接管（2026-11-27）
 
 - 接入点 ID 只用来调用：API key 页、通用页模型下拉、运行记录和选型说明都显示它背后的模型名（`ai-keys.ts` 的 `modelDisplayName`，运行的 `ai.modelName`）。
@@ -396,22 +400,4 @@ Agent 动作新增 `runAs`（`src/rules/types.ts`，只有本人能加人，`sto
 
 入口：`src/agents/command-gate.ts`、`credential-execution.ts`、`src/server/http.ts`、`src/core/config.ts`（`allProfiles`）、`src/agents/session-cleanup.ts`、`web/src/styles.css`（`.pg-res`）；回归：`test/command-gate.test.ts`、`test/catalog.test.ts`、`test/acp-cleanup.test.ts`。
 
-## Antigravity 官方 CLI 内置后端（2026-11-23）
-
-内置目录新增 `antigravity`，按 PATH 中的 `agy` 识别，以 `agy acp` 启动，复用在终端通过 `agy acp --login` 完成的 CLI 登录。Web、`omem agents` 和 `omem setup` 共用目录，不再需要手写启动配置。注册表的 `antigravity-acp` 仍是独立运行包，认证与 CLI 分开，已有配置保留。额度用 CLI 本地处理的 `agy -p /usage --output-format json` 读取，把剩余比例换算为已用比例，保留分组和重置时间，接入现有缓存、展示和调度避让；模型范围从 CLI 的分组说明读取，不明范围只展示。真实 CLI 1.5.15 已读到 9 个模型，额度命令没有模型回合和 token 消耗。入口：`src/agents/catalog.ts`、`antigravity-quota.ts`、`quota.ts`；回归：`test/catalog.test.ts`、`test/antigravity-quota.test.ts`。使用说明在 README 和文档站的 Agent 页。
-
-## 机器人文档调用与豆包每轮工具的凭据（2026-11-23）
-
-机器人文档调用此前只把 App ID 与 App Secret 交给 lark-cli，环境变量凭据通道不会换取租户令牌。现由 SDK 缓存、刷新机器人的租户令牌，再显式传给 CLI；不继承用户令牌与认证代理。豆包 CLI 共享后台可能沿用前轮的环境，每轮改用私有临时命令绑定自己的工具地址、令牌和环境，通过本轮提示给出；并发运行互不覆盖，结束及启动失败后回收。入口：`src/channels/lark-cli.ts`、`src/agents/doubao-cli.ts`、`tool-cli.ts`；回归：`test/lark-cli-auth.test.ts`、`test/doubao-cli.test.ts`。
-
-## 命令垫片不再通过路径别名递归启动（2026-11-23）
-
-数据目录可以有符号链接别名。生成的命令垫片此前只按路径字符串排除 guarded 目录，Node 解析后的脚本目录与 PATH 使用不同别名时，会再次找到自身。现按真实路径核对目录与候选文件，跳过垫片别名，原权限判断不变。入口：`src/agents/command-gate.ts`；回归：`test/command-gate.test.ts`（目录别名、文件别名）。类型检查、构建和 7 个关联测试文件共 44 项通过。
-
-## 远程浏览器按资料目录识别占用（2026-11-23）
-
-Web 远程的“先关闭”仍由 `src/remote/sessions.ts` 传给 aad。含修复的 aad 会检查 Chrome、Edge 和 Brave 的进程属于哪份资料，识别 Linux 上升级后仍在运行的旧浏览器。浏览器进程的默认目录读不到时，核对本机锁里的 PID 是否持有对应的监听套接字。只有核对了进程和资料目录才关闭。Linux 上勾选“先关闭”时也可清理本机已退出进程留下、无活动套接字的锁。验收见 [远程浏览器的占用与显示环境](../../../docs/v2/acceptance.md#远程浏览器的占用与显示环境2026-11-13)。
-
-## 成员飞书工具的身份与权限（2026-11-23）
-
-从 `src/agents/tool-help.ts` 的飞书分组和 `src/auth/tools.ts` 的单工具权限读起。成员有连接权限时可以用自己的飞书读数据、读写文档，缺授权时回到原会话续办。通用写入、拉人进群和目录长期授权只给本人。云空间文档的归属按本次连接的 open_id 核对，编辑共享文档由发起成员批准。成员工具身份和日程、妙记采集的验收在 `test/connections.test.ts`。
+[2026-11-23 的变化](./changes-2026-11-23.md)

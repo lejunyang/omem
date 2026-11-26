@@ -2,9 +2,11 @@ import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, run } from "../core/db.ts";
-import { gitAsync } from "../core/git.ts";
+import { gitAsync, resolveRef } from "../core/git.ts";
+import { managedCheckout } from "../core/repositories.ts";
 import { getSpace, type Space } from "../core/spaces.ts";
 import { json, now } from "../core/util.ts";
+import { baselineRef, codeIndexConfig } from "../sources/code-baseline.ts";
 import { getRun } from "../agents/runs.ts";
 import { worktreesOf } from "../agents/code.ts";
 import { codeWork } from "../agents/code-works.ts";
@@ -18,14 +20,35 @@ async function checked(dir: string, args: string[]) {
   if (!r.ok) throw new Error(`Git ${args[0]}：${r.stderr.trim().slice(0, 500)}`);
   return r.stdout.trim();
 }
+
+export async function currentStudyCommit(app: App, repo: Space) {
+  const root = repo.rootPath;
+  if (!root) return null;
+  const managed = managedCheckout(app, root);
+  if (managed) {
+    const config = codeIndexConfig(repo);
+    const ref = baselineRef(root, config);
+    const tip = ref ? resolveRef(root, ref) : null;
+    // Without an explicit ref, baselineRef can return a local main or master when origin is unavailable.
+    if (tip && (config.ref?.trim() || tip.ref.startsWith("refs/remotes/origin/"))) {
+      return { commit: tip.commit, usedHeadFallback: false };
+    }
+  }
+  const head = await gitAsync(root, ["rev-parse", "HEAD"], { timeoutMs: 5000 });
+  return head.ok ? { commit: head.stdout.trim(), usedHeadFallback: managed } : null;
+}
+
 export async function captureBaseline(app: App, item: string) {
   const baseline: Record<string, string> = {};
+  const headFallbacks = new Map<string, string>();
   for (const repo of studyScope(app, item).repos) {
-    const root = getSpace(app, repo.id).rootPath;
     // A missing checkout must block the trial, not the owner's direction selection.
-    if (root) { const r = await gitAsync(root, ["rev-parse", "HEAD"], { timeoutMs: 5000 }); if (r.ok) baseline[repo.id] = r.stdout.trim(); }
+    const current = await currentStudyCommit(app, getSpace(app, repo.id));
+    if (!current) continue;
+    baseline[repo.id] = current.commit;
+    if (current.usedHeadFallback) headFallbacks.set(repo.id, repo.name);
   }
-  return baseline;
+  return { baseline, headFallbacks };
 }
 /** Never reset or clean a code work's checkout during verification. */
 export async function fixWorkspace(app: App, item: string, work: string) {

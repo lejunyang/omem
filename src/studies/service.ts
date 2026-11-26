@@ -72,13 +72,15 @@ registerAskHandler("study-plan", async (app, ask, ctx) => {
     const ids = ctx.directions as string[], id = ids[ask.choice];
     const label = ask.options[ask.choice ?? -1]?.label ?? "";
     const note = (ask.answer ?? "").startsWith(label) ? (ask.answer ?? "").slice(label.length).replace(/^[：:，,\s]+/, "") : ask.answer ?? "";
+    let baselineNote = "";
     if (id) {
       const allowCode = checkDirectionChoice(app, itemId, direction(app, id), typeof ctx.allowCode === "boolean" ? ctx.allowCode : undefined);
-      const baseline = await captureBaseline(app, itemId);
+      const { baseline, headFallbacks } = await captureBaseline(app, itemId);
       confirmDirection(app, id, note, baseline, allowCode);
+      if (headFallbacks.size) baselineNote = `\n${[...headFallbacks.values()].join("、")} 的代码索引基线引用不可用，使用本地 HEAD。`;
     }
     for (const other of ids.filter((x) => x !== id)) run(app.db, "update study_directions set state='dropped',conclusion='本轮未选',updated_at=? where id=? and state='proposed'", now(), other);
-    await finishStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, control: { ...s.control, reported: true } }, { actor: "owner", userId: item.userId }, id ? `本人确认方向：${direction(app, id).goal}${note ? `；${note}` : ""}` : "本人确认这一轮不跑");
+    await finishStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, control: { ...s.control, reported: true } }, { actor: "owner", userId: item.userId }, id ? `本人确认方向：${direction(app, id).goal}${note ? `；${note}` : ""}${baselineNote}` : "本人确认这一轮不跑");
     if (!id) {
       const start = f.definition.stages.findIndex((d) => d.id === stageId);
       for (const d of f.definition.stages.slice(start + 1)) changeStage(app, itemId, d.id, "skipped", { control: { reported: true } }, { actor: "owner" }, ids.length ? "本人选择这一轮不跑" : "这一轮没有提出方向，本人已知晓");
