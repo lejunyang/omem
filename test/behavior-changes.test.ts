@@ -163,12 +163,27 @@ describe("Agent behavior changes", () => {
     } finally { await server.close(); }
   });
 
+  it("names the steps of a rule and only counts what changed in a long text", async () => {
+    const long = (tail: string) => `每周四复制上一期周报，按总目录找到它，补上本期的数据、指标和工单，核对每一张图，最后提醒大家。\n\n${tail}`;
+    const rule = saveRule(app, { name: "周报", description: "旧", enabled: true, judge: "code", trigger: { event: "schedule", cron: "0 15 * * 4", once: "event", waitMinutes: 0, unless: [] }, conditions: null,
+      actions: [{ type: "agent", spec: "assistant", reply: "none", task: long("固定从 11 月 6 日那一期复制。") }, { type: "notify", urgent: false }] });
+    await tool(ctxFor(), "save_rule", { id: rule.id, description: "旧", rule: { actions: [{ type: "agent", spec: "assistant", reply: "none", task: long("复制紧邻上一周的正式版。") }, { type: "notify", urgent: true }] } });
+    const [n] = pending();
+    expect(n.body).toContain("- 第 1 步的任务：");
+    expect(n.body).not.toContain("[{");
+    expect(n.body).not.toContain("每周四复制上一期周报");
+    expect(n.body).toContain("- 第 2 步的加急：false → true");
+    const view = behaviorChangeView(app, n.askId!)!;
+    expect(JSON.stringify(view.files)).toContain("actions.1.task: 每周四复制上一期周报");
+  });
+
   it("lists settings line by line and still opens the comparison of a card sent in the old format", async () => {
     const rule = saveRule(app, { name: "定时检查", description: "旧做法", enabled: true, judge: "code", trigger: { event: "schedule", cron: "0 8 * * *", once: "event", waitMinutes: 0, unless: [] }, conditions: null, actions: [{ type: "notify", urgent: false }] });
     await tool(ctxFor(), "save_rule", { id: rule.id, description: "新做法", rule: { trigger: { ...rule.trigger, cron: "0 9 * * *" } } });
     const [n] = pending();
     expect(n.title).toBe("规则「定时检查」更新了");
-    expect(n.body).toContain("- trigger.cron：0 8 * * * → 0 9 * * *");
+    expect(n.body).toContain("- 定时：0 8 * * * → 0 9 * * *");
+    expect(n.body).toContain("- 说明：旧做法 → 新做法");
     expect(n.body).toContain(`[现在的全文](#/rules?id=${rule.id})`);
     // Sent before: the title and reason only in the question text.
     run(app.db, "update asks set question=?, context=json_remove(context,'$.title','$.reason','$.runTitle','$.name') where id=?", "测试这轮的处理：改了 · 规则「定时检查」 · 换时间\n\n原因：换时间\n\n设置\n\n    − trigger.cron: 0 8 * * *", n.askId!);

@@ -126,8 +126,10 @@ function display(value: Text, path: string) {
     if (["id", "conversation_id", "createdBy", "playbookAt", "since", "at", "confirmedAt"].includes(k)) return [];
     const key = `${prefix}${k}`;
     if (v && typeof v === "object" && !Array.isArray(v)) return parts(v as Record<string, unknown>, `${key}.`);
-    const safe = k === "actions" && Array.isArray(v) ? v.map((a) => a?.type === "script" ? { ...a, code: "[已省略]" } : a) : v;
-    return [`${key}: ${Array.isArray(safe) ? JSON.stringify(safe) : safe ?? ""}`];
+    // A list of steps (a rule's actions): each field of each step on its own, so a change is found in its field.
+    if (Array.isArray(v) && v.length && v.every((x) => x && typeof x === "object" && !Array.isArray(x)))
+      return v.flatMap((x: Record<string, unknown>, i) => parts(k === "actions" && x.type === "script" ? { ...x, code: "[已省略]" } : x, `${key}.${i + 1}.`));
+    return [`${key}: ${Array.isArray(v) ? JSON.stringify(v) : v ?? ""}`];
   });
   return redact(parts(obj).join("\n\n"));
 }
@@ -210,6 +212,24 @@ function plain(s: string, n: number) {
 const fileLabel = (t: Target, path: string) =>
   path === "settings" ? "设置" : path === "playbook" ? "经验" : path.startsWith(`_skills/${t.id}/`) ? path.slice(`_skills/${t.id}/`.length)
     : path === `_agents/${t.id}.md` ? "档案文件" : path === `_roles/${t.id}.md` ? "角色说明文件" : path === `_roles/${t.id}.overlay.yaml` ? "挂载设置" : path;
+/** What a setting is called on a card (the full comparison keeps the key): the usual ones of rules and 关注. */
+const KEY_NAMES: Record<string, string> = { name: "名字", description: "说明", enabled: "开关", judge: "判断方式", conditions: "条件", note: "说明", "trigger.event": "触发", "trigger.cron": "定时", "trigger.once": "触发一次", "trigger.waitMinutes": "等几分钟", "trigger.unless": "例外" };
+const STEP_FIELDS: Record<string, string> = { type: "动作", task: "任务", spec: "交给", reply: "回复方式", to: "发到", name: "名字", ai: "用的 AI", "ai.profile": "用的 AI", "ai.model": "模型", probes: "预查", firstLook: "先看一眼", firstTo: "第一条发到", urgent: "加急", minutes: "等几分钟", question: "判断的问题", runAs: "以谁的身份", space: "空间", fullAccess: "完全权限" };
+function keyName(key: string) {
+  const step = /^actions\.(\d+)\.([\w.-]+)$/.exec(key);
+  if (step) return `第 ${step[1]} 步的${STEP_FIELDS[step[2]] ?? step[2]}`;
+  return KEY_NAMES[key] ?? key;
+}
+const KEY = /^([\w.-]+):\s/;
+/** The setting a paragraph belongs to: its own key, or the key of the paragraph it continues (a value with blank lines). */
+function keyOf(blocks: Block[], at: number) {
+  for (let i = at; i >= 0; i--) {
+    if (blocks[i].kind !== blocks[at].kind && blocks[i].kind !== "same") continue;
+    const k = KEY.exec(blocks[i].text)?.[1];
+    if (k) return { key: k, own: i === at };
+  }
+  return null;
+}
 /** Structured text gets a summary by section; settings, YAML and JSON line by line. */
 const code = (path: string) => path === "settings" || /\.(ya?ml|json)$/.test(path);
 const structured = (path: string, blocks: Block[]) => !code(path) && blocks.some((b) => b.section);
@@ -230,6 +250,8 @@ function fileViews(change: Change): FileView[] {
 }
 
 const SHOWN = 6;
+/** A setting value this long or shorter is shown whole, old → new. */
+const SHORT = 60;
 /** What changed in one file, a few lines; whatever is left out points at the full comparison. */
 function fileSummary(f: FileView, more: string) {
   const changed = f.blocks.filter((b) => b.kind !== "same" && !(b.kind === "del" && b.rewrite));
@@ -248,10 +270,28 @@ function fileSummary(f: FileView, more: string) {
   }
   // Settings values (a cron, a pattern) are not Markdown: keep their characters.
   const flat = (s: string, n: number) => (code(f.path) ? oneline(s, n) : plain(s, n));
+  if (f.path === "settings") {
+    // By setting: a short value as old → new; a long text (a description, a step's task) only says which
+    // setting and how much changed — excerpts of it read as the same first words twice.
+    const by = new Map<string, Block[]>();
+    for (const b of changed) {
+      const key = keyOf(f.blocks, f.blocks.indexOf(b))?.key ?? "";
+      by.set(key, [...(by.get(key) ?? []), b]);
+    }
+    const lines = [...by].map(([key, bs]) => {
+      const name = key ? keyName(key) : "其他";
+      const value = (t: string) => (key && t.startsWith(`${key}: `) ? t.slice(key.length + 2) : t);
+      const b = bs[0], old = b.rewrite ? f.blocks[f.blocks.indexOf(b) - 1].text : "";
+      if (bs.length === 1 && KEY.exec(b.text)?.[1] === key && value(b.text).length <= SHORT && value(old).length <= SHORT)
+        return b.rewrite ? `- ${name}：${flat(value(old), SHORT)} → ${flat(value(b.text), SHORT)}` : `- ${b.kind === "del" ? "删去" : "加上"} ${name}：${flat(value(b.text), SHORT)}`;
+      return `- ${name}：${countText(counts(bs))}`;
+    });
+    return lines.length > SHOWN ? [...lines.slice(0, SHOWN), `- 另有 ${lines.length - SHOWN} 项${more}`] : lines;
+  }
   const lines = changed.map((b) => {
     if (!b.rewrite) return `- ${b.kind === "del" ? "删去" : "加上"}：${flat(b.text, 80)}`;
     const old = f.blocks[f.blocks.indexOf(b) - 1].text;
-    const key = /^([\w.-]+):\s/.exec(b.text)?.[1];
+    const key = KEY.exec(b.text)?.[1];
     return key && old.startsWith(`${key}: `) ? `- ${key}：${flat(old.slice(key.length + 2), 50)} → ${flat(b.text.slice(key.length + 2), 50)}` : `- 改写：${flat(old, 50)} → ${flat(b.text, 50)}`;
   });
   return lines.length > SHOWN ? [...lines.slice(0, SHOWN), `- 另有 ${lines.length - SHOWN} 处${more}`] : lines;
