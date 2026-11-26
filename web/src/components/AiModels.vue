@@ -22,7 +22,7 @@ type ErrKind = "rate" | "daily" | "quota" | "auth" | "config" | "server" | "inpu
 type RelayView = { counts: Partial<Record<ErrKind, number>>; last: { at: number; status: number; kind: ErrKind; code: string; message: string } } | null;
 type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; anthropicUrl?: string; models?: string[]; model?: string; accountId?: string; backends: string[] };
 type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean };
-type ProviderView = Provider & { keyHint: string; hasKey: boolean; offers: string[]; relay?: RelayView; paused?: { until: string; message: string } | null; listed: { at: number; count: number; models: string[]; info: Record<string, ModelInfo>; error?: string } | null };
+type ProviderView = Provider & { keyHint: string; hasKey: boolean; offers: string[]; relay?: RelayView; paused?: { until: string; message: string } | null; listed: { at: number; count: number; models: string[]; info: Record<string, ModelInfo>; error?: string; endpointOnly?: boolean; endpoints?: Record<string, string> } | null };
 type Choice = { default: string; models: string[] };
 type Status = { ready: boolean; detail: string; media?: ("images" | "audio" | "videos")[] };
 type AiView = { decisionModels: Status[]; providers: ProviderView[]; status: Record<"voice" | "decision" | "image", Status>; choices: Record<string, Record<string, Choice>>; kinds: Record<string, string[]>; inherited: string[] };
@@ -147,12 +147,16 @@ const namedModels = (p: Provider) => (p.models?.length ? p.models : p.model ? [p
 function setModels(p: ProviderView, models: string[], note: string) {
   editProvider(p, { models, model: undefined }, note);
 }
-const addChoice = (p: ProviderView) => ({ default: "", models: backendModelChoice(p).models.filter((m) => !namedModels(p).includes(m)) });
+/** The key takes endpoint IDs only (a check found model names refused): the listing offers nothing to pick. */
+const endpointOnly = (p: ProviderView) => !!p.listed?.endpointOnly;
+const addChoice = (p: ProviderView) => ({ default: "", models: endpointOnly(p) ? [] : backendModelChoice(p).models.filter((m) => !namedModels(p).includes(m)) });
 /** What the named models cannot do for the chosen backends, from what the listing says. */
 function modelWarning(p: ProviderView) {
   const out: string[] = [];
+  const names = endpointOnly(p) ? namedModels(p).filter((m) => p.listed?.models.includes(m)) : [];
+  if (names.length) return `${names.join("、")} 是模型名，这个 key 用不了：换成对应的接入点 ID`;
   for (const m of namedModels(p)) {
-    const f = p.listed?.info?.[m]?.formats;
+    const f = p.listed?.info?.[m]?.formats ?? p.listed?.info?.[p.listed?.endpoints?.[m] ?? ""]?.formats;
     if (!f) continue;
     const lacks: string[] = [];
     if (p.backends.some((b) => b.startsWith("codex")) && !f.includes("responses")) lacks.push("Codex 要 Responses 接口");
@@ -285,16 +289,17 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
           <div v-if="p.relay" class="small muted">{{ relayLine(p.relay) }}</div>
           <template v-if="thirdParty(p.kind)">
             <div class="field small be-block">
-              <span>后端可用的模型</span>
+              <span>{{ endpointOnly(p) ? "后端用的接入点" : "后端可用的模型" }}</span>
               <div class="row wrap model-chips">
                 <span v-for="(m, i) in namedModels(p)" :key="m" class="mchip mono">
-                  {{ m }}<span v-if="i === 0" class="muted">（默认）</span>
+                  {{ m }}<span v-if="p.listed?.endpoints?.[m]" class="muted">→ {{ p.listed.endpoints[m] }}</span><span v-if="i === 0" class="muted">（默认）</span>
                   <button v-if="i > 0" type="button" class="linkish" :aria-label="`把 ${m} 设为默认`" @click="setModels(p, [m, ...namedModels(p).filter((x) => x !== m)], `默认模型改为 ${m}`)">设为默认</button>
                   <button type="button" class="mchip-x" :aria-label="`去掉 ${m}`" @click="setModels(p, namedModels(p).filter((x) => x !== m), `已去掉 ${m}`)"><Icon name="x" :size="12" /></button>
                 </span>
-                <AiModelPick :key="namedModels(p).length" class="add-pick" model-value="" :choice="addChoice(p)" empty-label="添加模型…" label="添加后端可用的模型" @change="(v) => v && setModels(p, [...namedModels(p), v], `已添加 ${v}`)" />
+                <AiModelPick :key="namedModels(p).length" class="add-pick" model-value="" :choice="addChoice(p)" empty-label="添加模型…" :placeholder="endpointOnly(p) ? 'ep-… 接入点 ID' : undefined" :label="endpointOnly(p) ? '添加接入点 ID' : '添加后端可用的模型'" @change="(v) => v && setModels(p, [...namedModels(p), v], `已添加 ${v}`)" />
               </div>
-              <p class="hint">{{ namedModels(p).length ? "生成的后端只用这些，第一个是默认；运行时也可以按任务选其中一个。" : `没添加时用列表里能用的全部 ${backendModelChoice(p).models.length} 个模型。账号只允许接入点时，在“手填其他…”里填接入点 ID。` }}</p>
+              <p v-if="endpointOnly(p)" class="hint">这个 key 不能直接用模型名，只能用接入点 ID：到提供方控制台（方舟是“在线推理”）给要用的模型建接入点，把 ep-… 填在这里，第一个是默认。点“检查”后会标出每个接入点背后的模型。</p>
+              <p v-else class="hint">{{ namedModels(p).length ? "生成的后端只用这些，第一个是默认；运行时也可以按任务选其中一个。" : `没添加时用列表里能用的全部 ${backendModelChoice(p).models.length} 个模型。账号只允许接入点时，在“手填其他…”里填接入点 ID。` }}</p>
             </div>
             <label class="field small be-block">
                 <span>Anthropic 格式地址（Claude Code 用）</span>

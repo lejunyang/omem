@@ -1687,7 +1687,7 @@ function sameProgramBuiltin(p: AgentProfile): AgentProfile | undefined {
  * direct address for the egress allowance (agents/egress-policy.ts); the relay is this service's own.
  */
 /** The models a key's provider listed (ai-keys.ts reads its cache): set by ai-keys, which imports this file. */
-type Listed = { models: string[]; info?: Record<string, { formats?: string[]; type?: string; tools?: boolean; efforts?: string[] }> } | null;
+type Listed = { models: string[]; info?: Record<string, { formats?: string[]; type?: string; tools?: boolean; efforts?: string[] }>; endpointOnly?: boolean; endpoints?: Record<string, string> } | null;
 let listedFor: (provider: string) => Listed = () => null;
 export function useListedModels(f: (provider: string) => Listed) {
   listedFor = f;
@@ -1709,7 +1709,8 @@ function keyModelsFor(pr: { id: string; models?: string[]; model?: string }, bac
   const named = providerModels(pr);
   if (named.length) return named;
   const listed = listedFor(pr.id);
-  if (!listed) return [];
+  // A key that takes endpoint IDs only: the listing's names would all be refused.
+  if (!listed || listed.endpointOnly) return [];
   const want = LISTED_FORMAT[backend] ?? (fmt === "anthropic" ? "anthropic" : "chat");
   return listed.models.filter((m) => {
     const i = listed.info?.[m];

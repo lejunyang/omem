@@ -110,7 +110,9 @@ async function probeOn(profile: AgentProfile, app?: App, signal?: AbortSignal): 
   if (profile.keyModels) {
     const own = app ? cachedProbe(app, profile.id.split("@")[0]) : null;
     const info = profile.keyRef ? listedModelsOf(profile.keyRef)?.info ?? {} : {};
-    const effortsByModel = Object.fromEntries(profile.keyModels.map((m) => [m, info[m]?.efforts ?? []]));
+    const listed = profile.keyRef ? listedModelsOf(profile.keyRef) : null;
+    // An endpoint ID: the levels of the listed model it answered as when checked.
+    const effortsByModel = Object.fromEntries(profile.keyModels.map((m) => [m, (info[m] ?? info[listed?.endpoints?.[m] ?? ""])?.efforts ?? []]));
     const efforts = [...new Set(Object.values(effortsByModel).flat())];
     return { at: new Date().toISOString(), agent: profile.name ?? profile.id, models: profile.keyModels, efforts, effortsByModel, modes: own?.modes ?? [],
       ...(profile.keyModels.length ? {} : { error: "这个 key 还没有可用的模型：到 API key 页点“检查”读模型列表，或手动添加模型" }) };

@@ -153,24 +153,37 @@ export async function findAnthropicUrl(baseUrl: string, key: string, fetcher: ty
  * reply of at most one token. Services often list models the account cannot call by that name (Ark
  * accounts that must use an endpoint ID): this is where that shows.
  */
-export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUrl" | "model">, key: string, fetcher: typeof fetch = fetch, kind = "openai-compatible"): Promise<{ ok: boolean; detail: string }> {
+export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUrl" | "model">, key: string, fetcher: typeof fetch = fetch, kind = "openai-compatible"): Promise<{ ok: boolean; detail: string; endpointOnly?: boolean; served?: string }> {
   if (!p.model) return { ok: false, detail: "还没有填写后端用的模型" };
   const calls: [string, string, Record<string, string>, unknown][] = [];
   if (p.baseUrl) calls.push(["OpenAI 格式", `${p.baseUrl.replace(/\/+$/, "")}/chat/completions`, { authorization: `Bearer ${key}` }, { model: p.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }]);
   if (p.anthropicUrl) calls.push(["Anthropic 格式", `${p.anthropicUrl.replace(/\/+$/, "")}/v1/messages`, { authorization: `Bearer ${key}`, "x-api-key": key, "anthropic-version": "2023-06-01" }, { model: p.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }]);
   const bad: string[] = [];
+  let endpointOnly: boolean | undefined, served: string | undefined;
   for (const [label, url, headers, body] of calls) {
     try {
       const r = await fetcher(url, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });
-      if (r.ok) continue;
-      const c = classifyError(kind, r.status, await r.text().catch(() => ""));
+      const text = await r.text().catch(() => "");
+      if (r.ok) {
+        // The name it answered as: for an endpoint ID, the model behind it.
+        try { served ??= String((JSON.parse(text) as { model?: unknown }).model ?? "") || undefined; } catch {}
+        continue;
+      }
+      const c = classifyError(kind, r.status, text);
+      // Model names refused, endpoint IDs only (Ark's ModelIDAccessDisabled): a fact about the key, not this model.
+      if (/ModelIDAccessDisabled|use a custom endpoint ID/i.test(`${c.code} ${c.message}`)) {
+        endpointOnly = true;
+        bad.push(`${label}：这个 key 不能直接用模型名，只能用接入点 ID`);
+        continue;
+      }
       const msg = `${c.code ? `${c.code}：` : ""}${c.message}`;
       bad.push(`${label} ${r.status}${msg ? `：${msg}` : ""}（${ERROR_WORD[c.kind]}）`);
     } catch (e) {
       bad.push(`${label}连不上：${(e as Error).message}`);
     }
   }
-  return bad.length ? { ok: false, detail: `模型 ${p.model} 调不通（${bad.join("；")}）` } : { ok: true, detail: `模型 ${p.model} 可以调用` };
+  const more = { ...(endpointOnly ? { endpointOnly } : {}), ...(served ? { served } : {}) };
+  return bad.length ? { ok: false, detail: `模型 ${p.model} 调不通（${[...new Set(bad)].join("；")}）`, ...more } : { ok: true, detail: `模型 ${p.model} 可以调用${served && served !== p.model ? `（背后是 ${served}）` : ""}`, ...more };
 }
 /** The kinds of provider error (core/ai-errors.ts) in a few words. */
 export const ERROR_WORD: Record<ErrorKind, string> = { rate: "限流，稍后自动恢复", daily: "今天的用量到上限了", quota: "额度用完或欠费", auth: "key 被拒绝", config: "模型或接入点不对", server: "提供方出错", input: "这次请求被拒", other: "其他错误" };
@@ -287,7 +300,12 @@ export type ModelField = "image" | "voice.live" | "voice.realtime" | "voice.tran
  */
 /** What a listing says about one model: API formats, domain, tool calls, and the thinking levels it takes (default first). */
 export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean; efforts?: string[] };
-type ModelCache = Record<string, { at: number; models: string[]; info?: Record<string, ModelInfo>; error?: string }>;
+/**
+ * One key's listing, and what calling it taught: `endpointOnly` when the provider refuses model names
+ * and takes only endpoint IDs (Ark: `ModelIDAccessDisabled`), `endpoints` the listed model each
+ * endpoint answered as (its levels and formats come from there).
+ */
+type ModelCache = Record<string, { at: number; models: string[]; info?: Record<string, ModelInfo>; error?: string; endpointOnly?: boolean; endpoints?: Record<string, string> }>;
 const cacheFile = (home: string) => join(home, "cache", "ai-models.json");
 /** The listing kept for each key, for config.ts to pick a key's backend models from; read again when the file changes. */
 let listedMemo: { file: string; mtime: number; cache: ModelCache } | null = null;
@@ -297,7 +315,7 @@ useListedModels((provider) => {
   try { mtime = statSync(file).mtimeMs; } catch { return null; }
   if (!listedMemo || listedMemo.file !== file || listedMemo.mtime !== mtime) listedMemo = { file, mtime, cache: readModelCache(keyHome ?? omemHome()) };
   const e = listedMemo.cache[provider];
-  return e && !e.error ? { models: e.models, info: e.info } : null;
+  return e && !e.error ? { models: e.models, info: e.info, endpointOnly: e.endpointOnly, endpoints: e.endpoints } : null;
 });
 export function readModelCache(home: string): ModelCache {
   try {
@@ -353,15 +371,34 @@ export async function listModels(p: Provider, key: string, fetcher: typeof fetch
 }
 
 /** Refresh one provider's cached list; failures are kept (with the old list) for the settings page. */
+const learned = (old: ModelCache[string] | undefined) => ({ ...(old?.endpointOnly !== undefined ? { endpointOnly: old.endpointOnly } : {}), ...(old?.endpoints ? { endpoints: old.endpoints } : {}) });
+
+/**
+ * What a check's calls showed about a key (`tryBackendModel`): whether model names are refused, and
+ * the listed model behind each endpoint that answered (matched by the name it answered with).
+ */
+export function noteModelAccess(home: string, provider: string, seen: { endpointOnly?: boolean; served?: [string, string][] }) {
+  const c = readModelCache(home);
+  const e = c[provider];
+  if (!e) return;
+  if (seen.endpointOnly !== undefined) e.endpointOnly = seen.endpointOnly;
+  for (const [asked, answered] of seen.served ?? []) {
+    if (e.models.includes(asked)) continue;
+    const listed = e.models.includes(answered) ? answered : [...e.models].sort((a, b) => b.length - a.length).find((m) => answered.startsWith(m));
+    if (listed) e.endpoints = { ...e.endpoints, [asked]: listed };
+  }
+  writeModelCache(home, c);
+}
+
 export async function refreshModels(home: string, p: Provider, fetcher: typeof fetch = listFetch) {
   const key = keyOf(p.id, home);
   const old = readModelCache(home)[p.id];
   let entry: ModelCache[string] | null;
   try {
     const listed = await listModelEntries(p, key, fetcher);
-    entry = listed ? { at: Date.now(), models: listed.models, ...(Object.keys(listed.info).length ? { info: listed.info } : {}) } : null;
+    entry = listed ? { at: Date.now(), models: listed.models, ...(Object.keys(listed.info).length ? { info: listed.info } : {}), ...learned(old) } : null;
   } catch (e) {
-    entry = { at: Date.now(), models: old?.models ?? [], ...(old?.info ? { info: old.info } : {}), error: (e as Error).message.slice(0, 200) };
+    entry = { at: Date.now(), models: old?.models ?? [], ...(old?.info ? { info: old.info } : {}), ...learned(old), error: (e as Error).message.slice(0, 200) };
   }
   const c = readModelCache(home);
   if (entry) c[p.id] = entry;

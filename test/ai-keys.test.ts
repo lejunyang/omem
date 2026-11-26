@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { boot } from "../src/main.ts";
-import { categoryStatus, defaultFor, findAnthropicUrl, keyEnv, listModelEntries, modelChoices, tryBackendModel, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
+import { categoryStatus, defaultFor, findAnthropicUrl, keyEnv, listModelEntries, modelChoices, noteModelAccess, tryBackendModel, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
 import { allProfiles, configSchema, keyedProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
 import { backendHosts } from "../src/agents/egress-policy.ts";
@@ -96,6 +96,11 @@ describe("API-key providers", () => {
     // Each model's thinking levels are what the listing says; an endpoint ID it does not name gets none.
     const listedOnly = keyedProfiles(withProviders([pr])).find((p) => p.id === "codex@ark")!;
     expect(await probeProfile(listedOnly)).toMatchObject({ models: ["glm-5", "plain"], effortsByModel: { "glm-5": ["minimal", "low", "high"], plain: [] }, efforts: ["minimal", "low", "high"] });
+    // A key that takes endpoint IDs only: nothing from the listing; an endpoint gets the levels of the model it answered as.
+    noteModelAccess(home, "ark", { endpointOnly: true, served: [["ep-9", "glm-5-260101"]] });
+    expect(keyedProfiles(withProviders([pr])).find((p) => p.id === "codex@ark")!.keyModels).toEqual([]);
+    const ep = keyedProfiles(withProviders([{ ...pr, models: ["ep-9"] }])).find((p) => p.id === "codex@ark")!;
+    expect(await probeProfile(ep)).toMatchObject({ models: ["ep-9"], effortsByModel: { "ep-9": ["minimal", "low", "high"] } });
   });
 
   it("reads what a listing says about each model, finds the Anthropic address and calls the model once", async () => {
@@ -116,8 +121,11 @@ describe("API-key providers", () => {
     expect(asked[0]).toBe("https://ark.example.com/api/compatible/v1/models");
     expect(await findAnthropicUrl("https://other.example.com/v1", "k", (async () => new Response("", { status: 404 })) as unknown as typeof fetch)).toBeNull();
     const refuse = (async () => Response.json({ error: { code: "ModelIDAccessDisabled", message: "use an endpoint ID. Request id: 42" } }, { status: 404 })) as unknown as typeof fetch;
-    expect(await tryBackendModel({ ...p, model: "glm-5" }, "k", refuse)).toEqual({ ok: false, detail: "模型 glm-5 调不通（OpenAI 格式 404：ModelIDAccessDisabled：use an endpoint ID.（模型或接入点不对））" });
-    expect(await tryBackendModel({ ...p, model: "ep-1", anthropicUrl: "https://ark.example.com/api/compatible" }, "k", (async () => Response.json({})) as unknown as typeof fetch)).toEqual({ ok: true, detail: "模型 ep-1 可以调用" });
+    // Model names refused: the key takes endpoint IDs only.
+    expect(await tryBackendModel({ ...p, model: "glm-5" }, "k", refuse)).toEqual({ ok: false, detail: "模型 glm-5 调不通（OpenAI 格式：这个 key 不能直接用模型名，只能用接入点 ID）", endpointOnly: true });
+    // An endpoint answers as the model behind it.
+    expect(await tryBackendModel({ ...p, model: "ep-1", anthropicUrl: "https://ark.example.com/api/compatible" }, "k", (async () => Response.json({ model: "glm-5-260101" })) as unknown as typeof fetch)).toEqual({ ok: true, detail: "模型 ep-1 可以调用（背后是 glm-5-260101）", served: "glm-5-260101" });
+    expect(await tryBackendModel({ ...p, model: "x" }, "k", (async () => Response.json({ error: { code: "ModelNotOpen", message: "not open" } }, { status: 404 })) as unknown as typeof fetch)).toMatchObject({ ok: false, detail: "模型 x 调不通（OpenAI 格式 404：ModelNotOpen：not open（模型或接入点不对））" });
   });
 
   it("adds the key at launch and refuses a keyed profile without one", () => {

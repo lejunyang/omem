@@ -25,7 +25,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 第三方（方舟和 OpenAI 兼容）的 key 检查通过后再做两件事（`/api/ai/providers/:id/test`）：
 
 - 没填 Anthropic 格式地址时，按顺序试 `GET <候选>/v1/models`（带 Bearer 和 `x-api-key`），返回模型列表的就是（`findAnthropicUrl`）：OpenAI 地址去掉末尾 `/v数字` 后加 `/compatible`（火山方舟：`…/api/v3` → `…/api/compatible`）、加 `/anthropic`、去掉后的根地址。找到后网页存进 `anthropicUrl`，Claude Code 后端随之出现。都不应时手填。
-- 用后端可用的模型（添加过的前三个；没添加就用后端默认的那个）在每种格式各发一次最多 1 个 token 的请求（`tryBackendModel`），把服务的报错原样写出来。火山方舟有的账号不允许直接用模型 ID，只能用接入点 ID（`ep-…`），这一步会看到 `ModelIDAccessDisabled`。
+- 用后端可用的模型（添加过的前三个；没添加就用后端默认的那个）在每种格式各发一次最多 1 个 token 的请求（`tryBackendModel`），把服务的报错原样写出来。火山方舟有的账号不允许直接用模型 ID，只能用接入点 ID（`ep-…`，在方舟控制台“在线推理”里建；API key 列不出接入点，查接入点要火山引擎的 AK/SK）。检查时添加的全是接入点（或什么都没添加）的话，还会用列表里的一个模型名试一次：被拒（`ModelIDAccessDisabled`，不计费）就把这个 key 记为“只能用接入点”（模型列表缓存的 `endpointOnly`），模型名调通了就记为可以用模型名。只能用接入点的 key 不再从列表里取模型，API key 页那一块改叫“后端用的接入点”，只能手填 `ep-…`。接入点调通时，回答里的 `model` 是它背后的模型，按名字前缀对到列表里的模型（`endpoints`），接入点的思考强度和格式取自那个模型（`noteModelAccess`）。
 
 ### 用 API key 生成后端
 

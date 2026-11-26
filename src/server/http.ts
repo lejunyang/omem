@@ -117,7 +117,7 @@ import { MAX_INPUT, parserList, kindList, checkKind } from "../plugins/formats.t
 import { APPEND_ONLY, pageExists, deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
 import { mark } from "../core/loop-monitor.ts";
-import { CATEGORY_KINDS, categoryStatus, decisionStatus, decisionStatuses, findAnthropicUrl, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider, tryBackendModel } from "../core/ai-keys.ts";
+import { CATEGORY_KINDS, categoryStatus, decisionStatus, decisionStatuses, findAnthropicUrl, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, noteModelAccess, readModelCache, refreshModels, setKey, testProvider, tryBackendModel } from "../core/ai-keys.ts";
 
 /** GET /api/share/<token>: exactly this, no query, no other path under it. */
 const SHARE_ROUTE = /^\/api\/share\/[A-Za-z0-9_-]{43}$/;
@@ -3820,7 +3820,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       providers: app.config.ai.providers.map((p) => ({
         ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id], offers: keyBackendsOf(p),
         relay: relayStats(app, p.id), paused: keyPaused(app, p.id),
-        listed: cache[p.id] ? { at: cache[p.id].at, count: cache[p.id].models.length, models: cache[p.id].models, info: cache[p.id].info ?? {}, error: cache[p.id].error } : null,
+        listed: cache[p.id] ? { at: cache[p.id].at, count: cache[p.id].models.length, models: cache[p.id].models, info: cache[p.id].info ?? {}, error: cache[p.id].error, endpointOnly: cache[p.id].endpointOnly, endpoints: cache[p.id].endpoints ?? {} } : null,
       })),
       decisionModels: decisionStatuses(app.config, app.home),
       status: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, categoryStatus(app.config, c, app.home)])),
@@ -3926,12 +3926,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (found) r.anthropicUrl = found;
     }
     // The models the backends run on: those named (the first three), else the default the listing gave them.
+    // One listed model name is tried as well while the named ones are all something else (endpoint IDs):
+    // whether the key takes model names at all decides what the page offers (a refusal costs nothing).
     const named = providerModels(p);
+    const cache = readModelCache(app.home)[p.id];
+    const listedName = cache?.models.find((m) => (cache.info?.[m]?.type ?? "LLM").match(/LLM|VLM/) && cache.info?.[m]?.tools !== false);
     const models = named.length ? named.slice(0, 3) : [keyedProfiles(app.config).find((k) => k.keyRef === p.id && k.model)?.model].filter((m): m is string => !!m);
-    if (!models.length) return r;
+    const probeName = listedName && !models.some((m) => cache?.models.includes(m)) ? listedName : undefined;
+    if (!models.length && !probeName) return r;
     const at = providerFormats(p);
-    const tried = await Promise.all(models.map((model) => tryBackendModel({ model, baseUrl: at.openai?.url, anthropicUrl: at.anthropic?.url ?? r.anthropicUrl }, key, fetch, p.kind)));
-    return { ...r, ok: tried.every((m) => m.ok), detail: [r.detail, ...tried.map((m) => m.detail)].join("；") };
+    const call = (model: string) => tryBackendModel({ model, baseUrl: at.openai?.url, anthropicUrl: at.anthropic?.url ?? r.anthropicUrl }, key, fetch, p.kind);
+    const [tried, nameCheck] = await Promise.all([Promise.all(models.map(call)), probeName ? call(probeName) : Promise.resolve(null)]);
+    const names = [...models, ...(probeName ? [probeName] : [])];
+    const all = [...tried, ...(nameCheck ? [nameCheck] : [])];
+    // Refused names: endpoint IDs only. A listed name that answered: names work. Neither: unknown.
+    const endpointOnly = all.some((m) => m.endpointOnly) ? true : names.some((m, i) => all[i].ok && cache?.models.includes(m)) ? false : undefined;
+    noteModelAccess(app.home, p.id, { endpointOnly, served: tried.flatMap((m, i) => (m.ok && m.served ? [[models[i], m.served] as [string, string]] : [])) });
+    const notes = endpointOnly ? ["这个 key 只能通过接入点调用：到提供方控制台（方舟是“在线推理”）建接入点，把 ep-… 加到“后端可用的模型”"] : [];
+    return { ...r, ok: tried.every((m) => m.ok) && (tried.length > 0 || !endpointOnly), detail: [r.detail, ...tried.map((m) => m.detail), ...notes].join("；"), endpointOnly };
   });
 
   // ---------------------------------------------------------------- plugins
