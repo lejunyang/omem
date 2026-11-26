@@ -36,6 +36,12 @@ export function json<T>(text: string | null | undefined, fallback: T): T {
   }
 }
 
+/**
+ * How much of a message a run's or a conversation's title keeps. Pages show long titles in two lines
+ * with the whole on hover, and a turn's page shows its messages whole; the cut only keeps lists light.
+ */
+export const RUN_TITLE_MAX = 200;
+export const CONVERSATION_TITLE_MAX = 120;
 export function truncate(text: string, max: number) {
   return text.length <= max ? text : text.slice(0, max - 1) + "…";
 }

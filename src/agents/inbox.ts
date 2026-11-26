@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { requireReadableItem } from "../items/store.ts";
 import { mayJoinTurn } from "./steer.ts";
 import { canWrite, OWNER, personalSpaceId, turnSpaceFor } from "../core/users.ts";
-import { HttpError, now, truncate } from "../core/util.ts";
+import { HttpError, now, RUN_TITLE_MAX, truncate } from "../core/util.ts";
 import { all, one, run } from "../core/db.ts";
 import { injectionScore } from "../sources/guard.ts";
 import { reviewReply, runCommand } from "./commands.ts";
@@ -186,7 +186,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     // A fixed window (a watched chat's batch) is never pushed back, only brought forward.
     const due = inb.fixedWindow ? app.db.prepare("select not_before from runs where id = ?").get(waiting.id) as { not_before: string | null } | undefined : undefined;
     const later = !!due?.not_before && due.not_before <= notBefore;
-    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids, ...(inb.fromAsk ? { fromAsk: true } : {}) }, notBefore: mergeMs && !later ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, 80) })) {
+    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids, ...(inb.fromAsk ? { fromAsk: true } : {}) }, notBefore: mergeMs && !later ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, RUN_TITLE_MAX) })) {
       app.db.prepare("update messages set run_id = ? where id = ?").run(waiting.id, messageId);
       steerSoon(app, thread.id);
       return { thread, messageId, runId: waiting.id, merged: true, reply: null, started };
@@ -198,7 +198,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   const run = createRun(app, {
     kind: "ask",
     spaceId: turnSpaceFor(app, userId, thread.spaceId),
-    title: truncate(text.replace(/\s+/g, " "), 60),
+    title: truncate(text.replace(/\s+/g, " "), RUN_TITLE_MAX),
     input: { conversationId: thread.id, messageIds: [messageId], ...(thread.settings.situation && thread.settings.itemId ? { itemId: thread.settings.itemId } : {}), ...(inb.fromAsk ? { fromAsk: true } : {}), ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
     lane: thread.id,
     userId,

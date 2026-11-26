@@ -77,6 +77,8 @@ const statusOptions = [{ value: "" as const, label: "全部" }, { value: "queued
 type Brief = { id: string; kind: string; title: string; status: string };
 type RunContextInfo = {
   items: { id: string; title: string; status: string }[];
+  /** An ask turn's own messages, whole (its title is the start of them). */
+  question?: string;
   conversation: { id: string; title: string; channel: string; topic: boolean; work: boolean; parentId: string | null; parentTitle: string | null; own: boolean; turnCount: number; turns: { id: string; title: string; status: string; createdAt: string }[] } | null;
   parent: Brief | null;
   source: Brief | null;
@@ -259,7 +261,7 @@ const ctxInfo = computed(() => detail.value?.context ?? null);
 // The full task as given to the agent (agent rounds, digests); ask turns carry their messages.
 const taskText = computed(() => {
   const i = (detail.value?.run.input ?? {}) as { task?: string; text?: string };
-  return String(i.task ?? i.text ?? "");
+  return String(i.task ?? i.text ?? detail.value?.context?.question ?? "");
 });
 // Titles are cut to a short label when the run is made; the hover shows the task's own text.
 function hintOf(r: { title: string; input?: Record<string, unknown> }) {
@@ -324,7 +326,7 @@ const kindOptions = computed(() => [
             <router-link :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }" :title="hintOf(r)">
               <span class="st" :class="r.status" />
               <div class="grow">
-                <div class="ellipsis">{{ r.title }}</div>
+                <div class="clamp2" :title="hintOf(r)">{{ r.title }}</div>
                 <div class="muted small ellipsis">{{ runKindLabel[r.kind] ?? r.kind }}<template v-if="r.status !== 'done'"> · {{ statusLabel[r.status] }}</template> · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template><template v-if="aiShort(r)"> · <span :title="[aiLabel(r), accountLabel(r, state.me)].filter(Boolean).join(' · ')">{{ aiShort(r) }}</span></template></div>
                 <div v-if="r.trigger && (r.trigger.via !== 'chat' || r.trigger.by?.key !== 'user:owner')" class="muted small ellipsis by" :title="triggerLabel(r.trigger, true)"><Icon :name="r.trigger.by ? 'user' : r.trigger.via === 'schedule' ? 'clock' : 'zap'" :size="11" />{{ triggerLabel(r.trigger) }}</div>
                 <div v-if="r.waiting" class="muted small ellipsis" :title="r.waiting">{{ r.waiting }}</div>
@@ -436,7 +438,7 @@ const kindOptions = computed(() => [
         </section>
 
         <section v-if="taskText" class="card pad block" data-ask-label="任务原文">
-          <div class="section-title row">任务<span class="spacer" /><button v-if="taskLong" class="btn ghost sm" @click="taskOpen = !taskOpen">{{ taskOpen ? "收起" : "展开全部" }}</button></div>
+          <div class="section-title row">{{ detail.run.input?.task ?? detail.run.input?.text ? "任务" : "提问" }}<span class="spacer" /><button v-if="taskLong" class="btn ghost sm" @click="taskOpen = !taskOpen">{{ taskOpen ? "收起" : "展开全部" }}</button></div>
           <div class="pre task" :class="{ clipped: taskLong && !taskOpen }">{{ taskText }}</div>
         </section>
 
@@ -465,7 +467,7 @@ const kindOptions = computed(() => [
         <section v-if="detail.children.length" class="block">
           <div class="section-title">后续任务</div>
           <div class="list">
-            <router-link v-for="c in detail.children" :key="c.id" :to="`/runs/${c.id}`" class="li"><span class="st" :class="c.status" /><span class="grow ellipsis">{{ c.title }}</span><span class="muted small">{{ statusLabel[c.status] }}</span></router-link>
+            <router-link v-for="c in detail.children" :key="c.id" :to="`/runs/${c.id}`" class="li"><span class="st" :class="c.status" /><span class="grow ellipsis" :title="c.title">{{ c.title }}</span><span class="muted small">{{ statusLabel[c.status] }}</span></router-link>
           </div>
         </section>
       </template>
@@ -580,6 +582,7 @@ const kindOptions = computed(() => [
 }
 .dh h1 {
   font-size: 21px;
+  overflow-wrap: anywhere;
 }
 .dh .waiting {
   margin: 0;

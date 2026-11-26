@@ -432,6 +432,15 @@ input[type="number"].input::-webkit-outer-spin-button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A title that may be long (a run's, a conversation's): up to two lines, the hover shows it whole. */
+.clamp2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 
 .badge {
   display: inline-flex;

@@ -4010,8 +4010,14 @@ function runContext(app: App, r: ReturnType<typeof getRun>, userId: string) {
   const root = (r.input as { continueFrom?: string; codeRunId?: string }).continueFrom ?? (r.input as { codeRunId?: string }).codeRunId ?? r.id;
   const own = (r.input as { itemId?: string }).itemId;
   const itemIds = [...new Set([...(own ? [own] : []), ...itemsOfRun(app, root).map((i) => i.id), ...itemsOfRun(app, r.id).map((i) => i.id)])];
+  // An ask turn's title is the start of its messages: the page shows them whole.
+  const messageIds = conv && r.kind === "ask" ? ((r.input as { messageIds?: unknown }).messageIds as string[] | undefined) ?? [] : [];
+  const question = messageIds.length
+    ? all<{ text: string }>(app.db, `select text from messages where conversation_id = ? and role = 'user' and id in (${messageIds.map(() => "?").join(",")}) order by created_at`, conv!.id, ...messageIds).map((m) => m.text).join("\n\n")
+    : "";
   return {
     conversation,
+    ...(question ? { question } : {}),
     items: itemIds.filter(id => can(app, userId, "items.view", { kind: "item", id })).flatMap((id) => one<{ id: string; title: string; status: string }>(app.db, "select id, title, status from items where id = ?", id) ?? []),
     parent: parent ? { id: parent.id, kind: parent.kind, title: parent.title, status: parent.status } : null,
     source: input.sourceRunId ? brief(input.sourceRunId) ?? null : null,

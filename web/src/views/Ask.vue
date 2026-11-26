@@ -301,7 +301,7 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
       <div class="list">
         <router-link v-for="c in conversations" :key="c.id" :to="`/ask/${c.id}`" class="li conv" :class="{ active: c.id === id }">
           <div class="grow">
-            <div class="ellipsis">{{ c.title || "新对话" }}</div>
+            <div class="clamp2" :title="c.title || ''">{{ c.title || "新对话" }}</div>
             <div class="muted small" :title="c.summary || ''">{{ relTime(c.updated_at) }}<span v-if="c.channel !== 'web'"> · {{ channelLabel(c) }}</span><span v-if="c.status === 'archived'"> · 已归档</span></div>
           </div>
           <button class="btn ghost sm icon del" title="删除" @click.prevent="remove(c)"><Icon name="trash" :size="14" /></button>

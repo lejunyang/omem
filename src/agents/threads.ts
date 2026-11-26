@@ -2,7 +2,7 @@ import { captureSpace } from "../core/capture-space.ts";
 import { noteReply } from "./reply-outcomes.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, json, newId, now, truncate, localStamp } from "../core/util.ts";
+import { CONVERSATION_TITLE_MAX, HttpError, json, newId, now, truncate, localStamp } from "../core/util.ts";
 import { recordCites } from "../sources/cites.ts";
 import { appendToSource } from "../sources/store.ts";
 
@@ -369,7 +369,7 @@ export function addMessage(app: App, conversationId: string, role: "user" | "ass
     now(),
     role,
     meta.command ? 1 : 0,
-    truncate(text.replace(/\s+/g, " "), 40),
+    truncate(text.replace(/\s+/g, " "), CONVERSATION_TITLE_MAX),
     conversationId,
   );
   // Keep one-turn approvals in the conversation, not as reusable instructions in the search index.
