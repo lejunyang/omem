@@ -67,9 +67,9 @@ export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> 
   if (!key) throw new Error(`后端 ${profile.id} 用的 API key（${profile.keyRef}）还没有填写：设置 → 后端与模型 → API key`);
   // Through the relay the agent holds the relay's token; omem adds the key on the way out.
   const value = profile.keyRelay ? relayToken(profile.id) : key;
-  // A third party's key: the model this run is on goes in at launch too (config.ts keyedModelEnv), and Codex
-  // gets a home of its own (thirdPartyCodexHome) so nothing it does reaches OpenAI.
-  if (profile.keyVars?.length) return { ...keyedModelEnv(profile), ...thirdPartyCodexHome(profile), ...Object.fromEntries(profile.keyVars.map((v) => [v, value])) };
+  // A third party's key: the model this run is on goes in at launch too (config.ts keyedModelEnv), and Codex /
+  // Claude Code get a config directory of their own (thirdPartyHome) so nothing they do reaches their vendor.
+  if (profile.keyVars?.length) return { ...keyedModelEnv(profile), ...thirdPartyHome(profile), ...Object.fromEntries(profile.keyVars.map((v) => [v, value])) };
   const s = `${profile.id} ${profile.command}`;
   return keyVars(/claude/.test(s) ? "anthropic" : /codex/.test(s) ? "openai" : "", key);
 }
@@ -82,14 +82,22 @@ export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> 
  * proxy: none left). It also keeps these runs out of the owner's own ~/.codex and its login.
  * codex-acp passes only hooks from CODEX_CONFIG to the app server at start, so this has to be a file.
  */
+/**
+ * Claude Code the same way: CLAUDE_CONFIG_DIR of its own whose settings.json skips WebFetch's domain check
+ * (a call to api.anthropic.com before each fetch; with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC the rest is
+ * already quiet). WebSearch is a server tool of the Anthropic format: Ark runs it (checked 2026-11-27).
+ */
+const KEYED_CLAUDE_SETTINGS = JSON.stringify({ skipWebFetchPreflight: true }, null, 2) + "\n";
 const KEYED_CODEX_TOML = ["# Written by omem for Codex on a third party's API key: nothing beyond the model's own API.", "check_for_update_on_startup = false", "", "[analytics]", "enabled = false", "", "[features]", "plugins = false", "remote_models = false", ""].join("\n");
-function thirdPartyCodexHome(profile: Pick<AgentProfile, "id" | "command"> & { keyModels?: string[] }): Record<string, string> {
-  if (!profile.keyModels || !/^codex/.test(profile.id)) return {};
+function thirdPartyHome(profile: Pick<AgentProfile, "id" | "command"> & { keyModels?: string[] }): Record<string, string> {
+  const codex = /^codex/.test(profile.id);
+  if (!profile.keyModels || !(codex || /^claude/.test(profile.id))) return {};
   const dir = join(keyHome ?? omemHome(), "agents", "keyed", profile.id.replace(/[^\w@.-]/g, "_"));
   mkdirSync(dir, { recursive: true });
-  const file = join(dir, "config.toml");
-  if (!existsSync(file) || readFileSync(file, "utf8") !== KEYED_CODEX_TOML) writeFileSync(file, KEYED_CODEX_TOML);
-  return { CODEX_HOME: dir };
+  const [name, text] = codex ? ["config.toml", KEYED_CODEX_TOML] : ["settings.json", KEYED_CLAUDE_SETTINGS];
+  const file = join(dir, name);
+  if (!existsSync(file) || readFileSync(file, "utf8") !== text) writeFileSync(file, text);
+  return codex ? { CODEX_HOME: dir } : { CLAUDE_CONFIG_DIR: dir };
 }
 
 export const DEFAULT_BASE: Record<string, string> = {

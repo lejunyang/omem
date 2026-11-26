@@ -42,6 +42,8 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 - 接入点 ID 不给人看：调通时记下它背后的模型（缓存的 `endpoints`），API key 页的模型、通用页的模型下拉、运行记录（`runs` 的 `ai.modelName`）、选型说明和“已连接”状态都显示模型名，启动和请求仍用接入点 ID（`modelDisplayName`）。
 - 模型列表的 `modalities.input_modalities` 存为 `inputs`：API key 页的模型和模型下拉标“能看图片、视频”或“只读文字”；运行用的模型只读文字时，环境说明里告诉 Agent 遇到图片别用图片工具打开，直接说看不了。
 - 第三方 key 的 Codex 用自己的 CODEX_HOME（数据目录 `agents/keyed/<后端>`），`config.toml` 关掉插件市场（启动时从 github.com 同步 `openai/plugins`）、远程模型目录、统计和更新检查；codex-acp 只把 `CODEX_CONFIG` 里的 hooks 传给 app-server 启动参数，这些开关只能写文件。出网白名单也不再放 OpenAI 自家的地址。2026-11-27 用记录代理核对：只读、可写、完全访问三种模式下 Codex 都只连转发地址，Claude Code（带 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`）也只连转发地址；两者没有审批或自动复核类的模型请求，附带请求只有起标题（Codex 的 `codex_output_schema`、Claude Code 的 json_schema），都转到 key 的模型。
+- 第三方 key 的 Claude Code 同样用自己的配置目录（`CLAUDE_CONFIG_DIR`，`settings.json` 里 `skipWebFetchPreflight`）：WebFetch 每次抓取前会先问 api.anthropic.com 这个域名能不能抓，关掉后只连目标网页。它的 auto 模式要到 Anthropic 的服务器上逐个检查动作，经第三方 key 连不上，所有要检查的动作都被拒绝（“Classifier unavailable”），所以这类后端落到 auto 时改用 default。
+- 联网工具（2026-11-27 在方舟接入点上实测）：Codex 的 `web_search` 是 Responses 接口的服务端工具，方舟照常执行并返回结果；Codex 没有读网页的工具。Claude Code 的 WebSearch 是 Anthropic 格式的服务端工具，方舟同样能执行；WebFetch 由 Claude Code 自己下载网页、再让模型摘要，也可用。换用不支持这些服务端工具的提供方时搜索会失败，读网页仍可用 omem 的 `import_url`。
 - Agent 自己发的附带请求点名的是它那家的模型（Codex 给会话起标题固定用 `gpt-5.6-luna`），第三方的 key 没有，转发时改成这个后端的默认模型（`ai-relay.ts` 的 `onKeyModels`）。
 - 2026-11-27 实测（方舟的两个接入点，背后分别是 doubao-seed-evolving 和 deepseek-v4-1-flash）：Codex 发出的 `reasoning.effort`、Claude Code 发出的 `output_config.effort` 都是选的强度；两者都能用自己的图片工具把本地图片发给模型并答对颜色。
 - 来源是 `key:<编号>`：额度、并发和“额度用完”跟本机登录的那个分开算；它没有套餐额度，设置 → 后端与模型 → 并行 的“账号额度”只列本机登录的 Codex、Claude Code。

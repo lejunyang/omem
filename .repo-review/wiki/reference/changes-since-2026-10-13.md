@@ -10,6 +10,7 @@ updated: 2026-11-27
 - 接入点 ID 只用来调用：API key 页、通用页模型下拉、运行记录和选型说明都显示它背后的模型名（`ai-keys.ts` 的 `modelDisplayName`，运行的 `ai.modelName`）。
 - 模型列表的输入类型存为 `inputs`，页面标“能看图片、视频”或“只读文字”；只读文字的模型跑时环境说明让 Agent 遇到图片直接说看不了。
 - 第三方 key 的 Codex 用数据目录 `agents/keyed/<后端>` 作 CODEX_HOME，关掉插件市场同步（github.com）、远程模型目录、统计和更新检查（chatgpt.com），出网白名单不再放 OpenAI 的地址；实测三种访问模式下只连 omem 转发。
+- 第三方 key 的 Claude Code 也用自己的配置目录，WebFetch 不再先问 api.anthropic.com；落到 auto 模式时改用 default（auto 的检查在 Anthropic 服务器上，连不上会拒绝所有动作）。实测方舟上 Codex 的 web_search、Claude Code 的 WebSearch 和 WebFetch 都能用。
 - API key 页每个 key 的说明从一行圆点连接改成“key / 地址 / 可用于 / 模型列表”的标签和值，长地址在自己的格子里换行。
 
 ## 流程卡片好读一些（2026-11-27）

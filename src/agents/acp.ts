@@ -494,7 +494,11 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
     const modes = session.modes?.availableModes ?? [];
     const full = opts.fullAccess && !opts.probe ? pickMode(["full-access"], modes.map((m) => m.id)) : undefined;
     if (opts.fullAccess && !opts.probe) emit({ type: "status", text: full ? `完全访问：${full}（${opts.ownSandbox || accountOf(profile) ? "后端自己的沙箱和审批关了，边界是 omem 的沙箱" : "命令不进沙箱、不审批"}）` : "这个后端没有完全访问模式，仍按沙箱和审批运行" });
-    const wanted = full ?? pickMode(opts.modes ?? [], modes.map((m) => m.id));
+    // Claude Code's auto mode checks each action on Anthropic's servers: on a third party's key that check
+    // is unreachable and every action needing it is refused ("Classifier unavailable"). Ask as default does.
+    const picked = full ?? pickMode(opts.modes ?? [], modes.map((m) => m.id));
+    const noAuto = !!profile.keyModels && (picked ?? session.modes?.currentModeId) === "auto";
+    const wanted = noAuto ? pickMode(["default"], modes.map((m) => m.id)) ?? picked : picked;
     if (wanted && session.modes?.currentModeId !== wanted) await Promise.race([connection.setSessionMode({ sessionId, modeId: wanted }), failed]);
     let options = session.configOptions ?? [];
     const agentName = init.agentInfo?.name ?? profile.command;

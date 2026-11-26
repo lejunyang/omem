@@ -115,6 +115,9 @@ describe("API-key providers", () => {
     expect(env.CODEX_HOME).toBe(join(home, "agents", "keyed", "codex@ark"));
     expect(readFileSync(join(env.CODEX_HOME, "config.toml"), "utf8")).toMatch(/\[features\]\nplugins = false\nremote_models = false/);
     expect([...backendHosts(ep)].some((h) => /openai|chatgpt/.test(h))).toBe(false);
+    // Claude Code likewise: its own config directory, WebFetch without the domain check on api.anthropic.com.
+    const claudeEnv = keyEnv(keyedProfiles(withProviders([{ ...pr, models: ["ep-9"] }])).find((p) => p.id === "claude@ark")!);
+    expect(JSON.parse(readFileSync(join(claudeEnv.CLAUDE_CONFIG_DIR, "settings.json"), "utf8"))).toEqual({ skipWebFetchPreflight: true });
   });
 
   it("reads what a listing says about each model, finds the Anthropic address and calls the model once", async () => {
