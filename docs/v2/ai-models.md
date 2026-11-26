@@ -25,7 +25,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 第三方（方舟和 OpenAI 兼容）的 key 检查通过后再做两件事（`/api/ai/providers/:id/test`）：
 
 - 没填 Anthropic 格式地址时，按顺序试 `GET <候选>/v1/models`（带 Bearer 和 `x-api-key`），返回模型列表的就是（`findAnthropicUrl`）：OpenAI 地址去掉末尾 `/v数字` 后加 `/compatible`（火山方舟：`…/api/v3` → `…/api/compatible`）、加 `/anthropic`、去掉后的根地址。找到后网页存进 `anthropicUrl`，Claude Code 后端随之出现。都不应时手填。
-- 用后端可用的模型（添加过的前三个；没添加就用后端默认的那个）在每种格式各发一次最多 1 个 token 的请求（`tryBackendModel`），把服务的报错原样写出来。火山方舟有的账号不允许直接用模型 ID，只能用接入点 ID（`ep-…`，在方舟控制台“在线推理”里建；API key 列不出接入点，查接入点要火山引擎的 AK/SK）。检查时添加的全是接入点（或什么都没添加）的话，还会用列表里的一个模型名试一次：被拒（`ModelIDAccessDisabled`，不计费）就把这个 key 记为“只能用接入点”（模型列表缓存的 `endpointOnly`），模型名调通了就记为可以用模型名。只能用接入点的 key 不再从列表里取模型，API key 页那一块改叫“后端用的接入点”，只能手填 `ep-…`。接入点调通时，回答里的 `model` 是它背后的模型，按名字前缀对到列表里的模型（`endpoints`），接入点的思考强度和格式取自那个模型（`noteModelAccess`）。
+- 用后端可用的模型（添加过的前三个；没添加就用后端默认的那个）在每种格式各发一次最多 1 个 token 的请求（`tryBackendModel`），把服务的报错原样写出来。方舟的默认地址也不算“官方”：Codex、Claude Code 照第三方配置（自定义提供方、Bearer），不会连到 OpenAI。火山方舟有的账号不允许直接用模型 ID，只能用接入点 ID（`ep-…`，在方舟控制台“在线推理”里建；API key 列不出接入点，查接入点要火山引擎的 AK/SK）。检查时添加的全是接入点（或什么都没添加）的话，还会用列表里的一个模型名试一次：被拒（`ModelIDAccessDisabled`，不计费）就把这个 key 记为“只能用接入点”（模型列表缓存的 `endpointOnly`），模型名调通了就记为可以用模型名。只能用接入点的 key 不再从列表里取模型，API key 页那一块改叫“后端用的接入点”，只能手填 `ep-…`。接入点调通时，回答里的 `model` 是它背后的模型，按名字前缀对到列表里的模型（`endpoints`），接入点的思考强度和格式取自那个模型（`noteModelAccess`）。
 
 ### 用 API key 生成后端
 
@@ -38,7 +38,9 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 - 服务运行时，这些后端一律经 omem 转发（见下文）：地址是 `<omem>/api/ai/relay/<编号>/<后端>/<openai|anthropic>`，后端拿到的是 omem 发的令牌，不是 key（后端配置带 `keyRelay`）。没有服务时（测试、一次性命令）直接连提供方，地址写在 `env` 里（`ANTHROPIC_BASE_URL`，Codex 和 OpenCode 的另写 `OMEM_AI_BASE_URL`），出网策略据此放行（`egress-policy.ts` 的 `backendHosts`）。
 - 第三方的 Claude Code 另设 `CLAUDE_CODE_MAX_RETRIES=3`：它默认重试十次、等好几分钟，限流时这段时间不如交给下一个后端。
 - 第三方的后端只在这个 key 的模型上跑（`keyedProfiles` 给后端配置带上 `keyModels`），不用 Agent 自己那家的模型：API key 页那一行的“后端可用的模型”添加过的（可以多个，从列表里挑或手填接入点 ID，第一个是默认，可改），没添加就用模型列表里适合这个后端的全部模型（文字模型、不排除工具调用；列表写了格式时，Codex 要 Responses，Claude Code 要 Anthropic 格式，OpenCode 要 Chat），默认是其中第一个。列表写明了格式时，添加的模型不支持勾选的后端，页面直接提示。
-- 通用页这些后端的“检测模型”返回的就是这些模型，不启动 Agent；每个模型的思考强度取自模型列表（方舟写在 `effort.supported_levels`，按 minimal、low、medium、high 排），列表没写的模型（例如接入点 ID）不列强度，用提供方的默认；在通用页选的默认模型只要还在其中就保留，其余配置始终跟着 key 生成。运行时选中的模型在启动时给出：Codex 经 `CODEX_CONFIG`，Claude Code 经 `ANTHROPIC_MODEL` 等变量，OpenCode 经 `OPENCODE_CONFIG_CONTENT`（`keyedModelEnv`），不再经 Agent 自己的模型列表切换。
+- 通用页这些后端的“检测模型”返回的就是这些模型，不启动 Agent；每个模型的思考强度取自模型列表（方舟写在 `effort.supported_levels`，按 minimal、low、medium、high 排），列表没写的模型（例如接入点 ID）不列强度，用提供方的默认；在通用页选的默认模型只要还在其中就保留，其余配置始终跟着 key 生成。运行时选中的模型在启动时给出：Codex 经 `CODEX_CONFIG`，Claude Code 经 `ANTHROPIC_MODEL` 等变量，OpenCode 经 `OPENCODE_CONFIG_CONTENT`（`keyedModelEnv`），不再经 Agent 自己的模型列表切换。Codex 另外拿到模型列表里的上下文长度（`model_context_window`，ACP 版写进 `CODEX_CONFIG`，命令行版 `-c`）：它没有第三方模型的元数据，仍会提示“Model metadata … not found”，但压缩按这个长度来。试过给 Codex 写一份模型目录（`model_catalog_json`），提示照旧，还要带上 websocket、工具模式等一批 OpenAI 模型的设定，没有采用。
+- Agent 自己发的附带请求点名的是它那家的模型（Codex 给会话起标题固定用 `gpt-5.6-luna`），第三方的 key 没有，转发时改成这个后端的默认模型（`ai-relay.ts` 的 `onKeyModels`）。
+- 2026-11-27 实测（方舟的两个接入点，背后分别是 doubao-seed-evolving 和 deepseek-v4-1-flash）：Codex 发出的 `reasoning.effort`、Claude Code 发出的 `output_config.effort` 都是选的强度；两者都能用自己的图片工具把本地图片发给模型并答对颜色。
 - 来源是 `key:<编号>`：额度、并发和“额度用完”跟本机登录的那个分开算；它没有套餐额度，设置 → 后端与模型 → 并行 的“账号额度”只列本机登录的 Codex、Claude Code。
 - key 被删掉时这个后端算“未安装”，选了它的运行直接报错，不会悄悄改用本机登录。
 

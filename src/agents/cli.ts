@@ -1,3 +1,4 @@
+import { keyedModelInfo } from "../core/config.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
@@ -32,6 +33,9 @@ export function codexArgs(profile: AgentProfile, req: AgentRequest) {
   if (!req.persistSession && !req.resumeSessionId) args.push("--ephemeral");
   if (profile.model) args.push("-m", profile.model);
   if (profile.effort) args.push("-c", `model_reasoning_effort=${tomlString(profile.effort)}`);
+  // A third party's model: its context length from the key's listing (Codex has no metadata for it).
+  const context = profile.keyModels ? keyedModelInfo(profile)?.context : undefined;
+  if (context) args.push("-c", `model_context_window=${context}`);
   if (req.mcp) {
     args.push("-c", `mcp_servers.omem.command=${tomlString(req.mcp.stdio.command)}`);
     args.push("-c", `mcp_servers.omem.args=[${req.mcp.stdio.args.map(tomlString).join(",")}]`);

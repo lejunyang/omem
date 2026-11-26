@@ -299,7 +299,7 @@ export type ModelField = "image" | "voice.live" | "voice.realtime" | "voice.tran
  * Messages), what it is for (`LLM`, `ImageGeneration`…), and whether it calls tools.
  */
 /** What a listing says about one model: API formats, domain, tool calls, and the thinking levels it takes (default first). */
-export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean; efforts?: string[] };
+export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean; efforts?: string[]; context?: number };
 /**
  * One key's listing, and what calling it taught: `endpointOnly` when the provider refuses model names
  * and takes only endpoint IDs (Ark: `ModelIDAccessDisabled`), `endpoints` the listed model each
@@ -337,7 +337,8 @@ export function setModelListFetchForTests(f: typeof fetch | null) {
   listFetch = f ?? ((...a) => fetch(...a));
 }
 
-type Listed = { id?: string; name?: string; domain?: string; api_supported?: Record<string, boolean>; features?: { tools?: { function_calling?: boolean } }; effort?: { default_level?: string; supported_levels?: string[] } };
+type Listed = { id?: string; name?: string; domain?: string; api_supported?: Record<string, boolean>; features?: { tools?: { function_calling?: boolean } }; effort?: { default_level?: string; supported_levels?: string[] }; context_window?: number; token_limits?: { context_window?: number } };
+const contextOf = (m: Listed) => { const n = Number(m.token_limits?.context_window ?? m.context_window); return Number.isFinite(n) && n > 0 ? n : 0; };
 const LEVEL_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 /** A listing's thinking levels in the usual order (Ark lists `effort.supported_levels`). */
 const levelsOf = (e: Listed["effort"]) => [...new Set((e?.supported_levels ?? []).map(String))].sort((a, b) => (LEVEL_ORDER.indexOf(a) + 1 || 99) - (LEVEL_ORDER.indexOf(b) + 1 || 99));
@@ -361,7 +362,7 @@ export async function listModelEntries(p: Provider, key: string, fetcher: typeof
     const id = String(m.id ?? "");
     if (!id) continue;
     const formats = m.api_supported ? Object.entries(m.api_supported).flatMap(([k, on]) => (on && FORMAT_OF[k] ? [FORMAT_OF[k]] : [])) : [];
-    const one: ModelInfo = { ...(formats.length ? { formats } : {}), ...(m.domain ? { type: m.domain } : {}), ...(m.features?.tools?.function_calling !== undefined ? { tools: !!m.features.tools.function_calling } : {}), ...(levelsOf(m.effort).length ? { efforts: levelsOf(m.effort) } : {}) };
+    const one: ModelInfo = { ...(formats.length ? { formats } : {}), ...(m.domain ? { type: m.domain } : {}), ...(m.features?.tools?.function_calling !== undefined ? { tools: !!m.features.tools.function_calling } : {}), ...(levelsOf(m.effort).length ? { efforts: levelsOf(m.effort) } : {}), ...(contextOf(m) ? { context: contextOf(m) } : {}) };
     if (Object.keys(one).length) info[id] = one;
   }
   return { models: [...new Set((body.data ?? []).map((m) => String(m.id ?? "")).filter(Boolean))].sort(), info };

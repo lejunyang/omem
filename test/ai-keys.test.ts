@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { boot } from "../src/main.ts";
 import { categoryStatus, defaultFor, findAnthropicUrl, keyEnv, listModelEntries, modelChoices, noteModelAccess, tryBackendModel, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
-import { allProfiles, configSchema, keyedProfiles } from "../src/core/config.ts";
+import { allProfiles, configSchema, keyedModelEnv, keyedProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
 import { backendHosts } from "../src/agents/egress-policy.ts";
 import { probeProfile } from "../src/agents/probe.ts";
@@ -71,7 +71,7 @@ describe("API-key providers", () => {
     setKey(home, "ark", "k");
     mkdirSync(join(home, "cache"), { recursive: true });
     writeFileSync(join(home, "cache", "ai-models.json"), JSON.stringify({ ark: { at: Date.now(), models: ["chat-only", "glm-5", "plain", "seedream"], info: {
-      "glm-5": { formats: ["chat", "responses", "anthropic"], type: "LLM", tools: true, efforts: ["minimal", "low", "high"] },
+      "glm-5": { formats: ["chat", "responses", "anthropic"], type: "LLM", tools: true, efforts: ["minimal", "low", "high"], context: 200000 },
       "chat-only": { formats: ["chat"], type: "LLM" },
       seedream: { type: "ImageGeneration" },
     } } }));
@@ -96,6 +96,8 @@ describe("API-key providers", () => {
     // Each model's thinking levels are what the listing says; an endpoint ID it does not name gets none.
     const listedOnly = keyedProfiles(withProviders([pr])).find((p) => p.id === "codex@ark")!;
     expect(await probeProfile(listedOnly)).toMatchObject({ models: ["glm-5", "plain"], effortsByModel: { "glm-5": ["minimal", "low", "high"], plain: [] }, efforts: ["minimal", "low", "high"] });
+    // Codex has no metadata for a third party's model: the listing's context length goes into its config.
+    expect(JSON.parse(keyedModelEnv(listedOnly).CODEX_CONFIG).model_context_window).toBe(200000);
     // A key that takes endpoint IDs only: nothing from the listing; an endpoint gets the levels of the model it answered as.
     noteModelAccess(home, "ark", { endpointOnly: true, served: [["ep-9", "glm-5-260101"]] });
     expect(keyedProfiles(withProviders([pr])).find((p) => p.id === "codex@ark")!.keyModels).toEqual([]);

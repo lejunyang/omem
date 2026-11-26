@@ -14,7 +14,7 @@ updated: 2026-11-27
 
 ## API key 的后端经 omem 转发，按提供方错误码处理（2026-11-27）
 
-- 第三方 key 生成的后端用 key 的模型：API key 页的“后端可用的模型”可添加多个（第一个是默认），不添加就用模型列表里适合这个后端的全部模型；通用页“检测模型”直接返回它们，默认模型不再是 OpenAI 的；每个模型的思考强度取自模型列表（方舟的 `effort.supported_levels`）。“检查”用一个模型名试调，被拒（方舟 `ModelIDAccessDisabled`）就把 key 记为只能用接入点，页面改为手填 `ep-…`，接入点调通后按回答里的模型名对到列表，取它的强度和格式。运行时的模型在启动时给出（`config.ts` 的 `keyModelsFor`、`keyedModelEnv`），在通用页改默认模型只保存模型和强度，其余配置跟着 key。API key 页的“生成的后端”单独一块、一行一个，“看 N 个模型”改为“查看”。
+- 第三方 key 生成的后端用 key 的模型：API key 页的“后端可用的模型”可添加多个（第一个是默认），不添加就用模型列表里适合这个后端的全部模型；通用页“检测模型”直接返回它们，默认模型不再是 OpenAI 的；每个模型的思考强度取自模型列表（方舟的 `effort.supported_levels`）。“检查”用一个模型名试调，被拒（方舟 `ModelIDAccessDisabled`）就把 key 记为只能用接入点，页面改为手填 `ep-…`，接入点调通后按回答里的模型名对到列表，取它的强度和格式。Codex 启动时带上列表里的上下文长度；Agent 附带请求点名它那家的模型（Codex 起标题用 `gpt-5.6-luna`）时，转发改成后端的默认模型；方舟默认地址不再被当成官方地址。运行时的模型在启动时给出（`config.ts` 的 `keyModelsFor`、`keyedModelEnv`），在通用页改默认模型只保存模型和强度，其余配置跟着 key。API key 页的“生成的后端”单独一块、一行一个，“看 N 个模型”改为“查看”。
 
 - 设置 → 后端与模型 → API key 新增“火山方舟”一类（`ark`），和“OpenAI 兼容”分开：默认地址、Anthropic 格式地址按方舟的规则，认得方舟的错误码；以前按兼容接口加的方舟 key 那一行可点“改成火山方舟”。
 - API key 生成的后端在服务运行时都经 omem 转发（`src/core/ai-relay.ts`，`/api/ai/relay/…`）：后端拿 omem 发的令牌，omem 换上 key 原样转发，回答以流的方式原样传回。错误按提供方码表分类（`src/core/ai-errors.ts`：方舟、OpenAI、Anthropic、Cloudflare，其他按状态码和字眼）：限流在转发处等几秒重试，仍限流就交还 429 并让这个 key 退后 1 分钟；每日用量、额度、欠费改成 400 交还，让 Agent 立刻停下，key 暂停到午夜或检查通过，额度和 key 被拒通知本人一次。运行失败时按转发看到的错误改写为 `rate-limit` / `quota`（`relayFailure`）。

@@ -6,7 +6,7 @@ import { boot } from "../src/main.ts";
 import { classifyError } from "../src/core/ai-errors.ts";
 import { keyEnv, setKey, useKeyHome } from "../src/core/ai-keys.ts";
 import { relayToken, useRelayBase } from "../src/core/ai-relay-addr.ts";
-import { relayFailure, setRelayFetchForTests, setRelayWaitForTests } from "../src/core/ai-relay.ts";
+import { onKeyModels, relayFailure, setRelayFetchForTests, setRelayWaitForTests } from "../src/core/ai-relay.ts";
 import { configSchema, keyedProfiles } from "../src/core/config.ts";
 import { downReason, outOfQuotaUntil } from "../src/agents/capacity.ts";
 import { codexErrorReply } from "../src/agents/acp.ts";
@@ -60,6 +60,14 @@ describe("provider errors by kind", () => {
     expect(classifyError("openai-compatible", 429, body({ error: { message: "too many requests" } })).kind).toBe("rate");
     expect(classifyError("openai-compatible", 402, "Payment Required").kind).toBe("quota");
     expect(classifyError("openai-compatible", 502, "<html>bad gateway</html>").kind).toBe("server");
+  });
+
+  it("sends an agent's side calls for its vendor's model to the key's model", () => {
+    const p = { keyModels: ["ep-1", "ep-2"], model: "ep-2" };
+    const out = (b: unknown) => JSON.parse(onKeyModels(p, Buffer.from(JSON.stringify(b)))!.toString());
+    expect(out({ model: "gpt-5.6-luna", input: "title" })).toEqual({ model: "ep-2", input: "title" });
+    expect(out({ model: "ep-1" })).toEqual({ model: "ep-1" });
+    expect(onKeyModels({ model: "x" }, Buffer.from('{"model":"gpt"}'))!.toString()).toBe('{"model":"gpt"}');
   });
 
   it("turns Codex's error replies into failures", () => {

@@ -90,7 +90,8 @@ export function providerFormats(pr: { kind: string; baseUrl?: string; anthropicU
   // Ark: the Anthropic-shaped API sits beside the OpenAI one (…/api/v3 → …/api/compatible).
   if (pr.kind === "ark") {
     const openai = trim(pr.baseUrl ?? ARK_BASE);
-    return { openai: { url: openai, official: !pr.baseUrl }, anthropic: { url: trim(pr.anthropicUrl ?? openai.replace(/\/v3$/, "/compatible")), official: !pr.baseUrl && !pr.anthropicUrl } };
+    // Not a vendor's own API even at its default address: Codex and Claude Code go there as to any third party.
+    return { openai: { url: openai, official: false }, anthropic: { url: trim(pr.anthropicUrl ?? openai.replace(/\/v3$/, "/compatible")), official: false } };
   }
   if (pr.kind === "openai-compatible") return { ...(pr.baseUrl ? { openai: { url: trim(pr.baseUrl), official: false } } : {}), ...(pr.anthropicUrl ? { anthropic: { url: trim(pr.anthropicUrl), official: false } } : {}) };
   return {};
@@ -1687,7 +1688,7 @@ function sameProgramBuiltin(p: AgentProfile): AgentProfile | undefined {
  * direct address for the egress allowance (agents/egress-policy.ts); the relay is this service's own.
  */
 /** The models a key's provider listed (ai-keys.ts reads its cache): set by ai-keys, which imports this file. */
-type Listed = { models: string[]; info?: Record<string, { formats?: string[]; type?: string; tools?: boolean; efforts?: string[] }>; endpointOnly?: boolean; endpoints?: Record<string, string> } | null;
+type Listed = { models: string[]; info?: Record<string, { formats?: string[]; type?: string; tools?: boolean; efforts?: string[]; context?: number }>; endpointOnly?: boolean; endpoints?: Record<string, string> } | null;
 let listedFor: (provider: string) => Listed = () => null;
 export function useListedModels(f: (provider: string) => Listed) {
   listedFor = f;
@@ -1725,10 +1726,28 @@ function keyModelsFor(pr: { id: string; models?: string[]; model?: string }, bac
  * The environment that puts a key's backend on one of its models at launch: Claude Code reads its
  * model from variables, OpenCode from its config (Codex takes it through catalog.ts launchConfig).
  */
-export function keyedModelEnv(profile: Pick<AgentProfile, "id"> & Partial<Pick<AgentProfile, "model" | "env" | "keyModels">>): Record<string, string> {
+/** What a key's listing says about the model a backend runs on (an endpoint ID: the model it answered as when checked). */
+export function keyedModelInfo(profile: Pick<AgentProfile, "keyRef" | "model">) {
+  const listed = profile.keyRef && profile.model ? listedFor(profile.keyRef) : null;
+  if (!listed) return undefined;
+  return listed.info?.[profile.model!] ?? listed.info?.[listed.endpoints?.[profile.model!] ?? ""];
+}
+
+export function keyedModelEnv(profile: Pick<AgentProfile, "id"> & Partial<Pick<AgentProfile, "model" | "env" | "keyModels" | "keyRef">>): Record<string, string> {
   const model = profile.model;
   if (!profile.keyModels || !model) return {};
   const b = profile.id.split("@")[0];
+  // Codex has no metadata for a third party's model ("Model metadata … not found") and would guess its
+  // window: the listing's context length tells it when to compact.
+  if (b === "codex" && profile.env?.CODEX_CONFIG) {
+    const context = keyedModelInfo(profile)?.context;
+    if (!context) return {};
+    try {
+      return { CODEX_CONFIG: JSON.stringify({ ...JSON.parse(profile.env.CODEX_CONFIG), model_context_window: context }) };
+    } catch {
+      return {};
+    }
+  }
   if (b === "claude" || b === "claude-cli") return { ANTHROPIC_MODEL: model, ANTHROPIC_DEFAULT_OPUS_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model, CLAUDE_CODE_SUBAGENT_MODEL: model };
   if (b === "opencode" && profile.env?.OPENCODE_CONFIG_CONTENT) {
     try {

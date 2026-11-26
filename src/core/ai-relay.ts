@@ -132,6 +132,24 @@ export function setRelayWaitForTests(f: ((ms: number, signal: AbortSignal) => Pr
   }));
 }
 
+/**
+ * A request for a model the key does not have, from a backend that runs on a third party's models: the
+ * agent's own side calls name its vendor's model (Codex titles a session with a built-in model whatever
+ * the provider), which this provider would refuse. They go to the backend's default model instead.
+ */
+export function onKeyModels(profile: Pick<AgentProfile, "keyModels" | "model">, body: Buffer | undefined) {
+  const models = profile.keyModels;
+  if (!body?.length || !models?.length || body[0] !== 0x7b) return body;
+  try {
+    const j = JSON.parse(body.toString("utf8")) as { model?: unknown };
+    if (typeof j.model !== "string" || models.includes(j.model)) return body;
+    j.model = profile.model && models.includes(profile.model) ? profile.model : models[0];
+    return Buffer.from(JSON.stringify(j));
+  } catch {
+    return body;
+  }
+}
+
 export async function relayRequest(app: App, req: FastifyRequest, reply: FastifyReply) {
   const { provider, backend, format } = req.params as { provider: string; backend: string; format: string };
   const rest = (req.params as Record<string, string>)["*"] ?? "";
@@ -150,7 +168,7 @@ export async function relayRequest(app: App, req: FastifyRequest, reply: Fastify
   // A vendor's own Anthropic API takes the key as x-api-key; third parties (Ark and the like) want Bearer.
   if (format === "anthropic" && p.kind === "anthropic") headers["x-api-key"] = key;
   else headers.authorization = `Bearer ${key}`;
-  const body = req.method === "GET" || req.method === "HEAD" ? undefined : (req.body as Buffer | undefined);
+  const body = onKeyModels(profile, req.method === "GET" || req.method === "HEAD" ? undefined : (req.body as Buffer | undefined));
   const gone = new AbortController();
   reply.raw.on("close", () => { if (!reply.raw.writableFinished) gone.abort(); });
 

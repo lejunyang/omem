@@ -1,3 +1,4 @@
+import { keyedModelEnv } from "../core/config.ts";
 import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigOption } from "@agentclientprotocol/sdk";
 import { Readable } from "node:stream";
 import type { App } from "../core/app.ts";
@@ -193,7 +194,8 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
   // The model and level go in at launch where the backend takes them (catalog.ts launchConfig): the session then
   // runs on them even while its catalog lists neither. A level the backend is known not to have for the model is left out.
   const levelKnown = !profile.effort || !probes || !known || !!known.error || probes.effortsFor(known, profile.model).includes(profile.effort);
-  const atLaunch = opts.probe ? {} : launchConfigEnv(profile, { model: profile.model, effort: levelKnown ? profile.effort : null });
+  // A key's model settings (Codex's context window in its CODEX_CONFIG) are the base the launch config adds to.
+  const atLaunch = opts.probe ? {} : launchConfigEnv({ ...profile, env: { ...profile.env, ...keyedModelEnv(profile) } }, { model: profile.model, effort: levelKnown ? profile.effort : null });
   const env = { ...profile.env, ...keyEnv(profile), ...atLaunch, ...opts.mcp?.env, ...opts.env };
   const child = await (await import("./egress-run.ts")).launchRun(profile, opts, sandbox => {
     requirePluginBackend(profile);
