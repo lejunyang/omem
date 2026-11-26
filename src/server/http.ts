@@ -3942,7 +3942,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Refused names: endpoint IDs only. A listed name that answered: names work. Neither: unknown.
     const endpointOnly = all.some((m) => m.endpointOnly) ? true : names.some((m, i) => all[i].ok && cache?.models.includes(m)) ? false : undefined;
     noteModelAccess(app.home, p.id, { endpointOnly, served: tried.flatMap((m, i) => (m.ok && m.served ? [[models[i], m.served] as [string, string]] : [])) });
-    const notes = endpointOnly ? ["这个 key 只能通过接入点调用：到提供方控制台（方舟是“在线推理”）建接入点，把 ep-… 加到“后端可用的模型”"] : [];
+    const notes = endpointOnly ? ["这个 key 只能通过接入点调用：到提供方控制台（方舟是“在线推理”）建接入点，把 ep-… 填到“后端用的接入点”"] : [];
     return { ...r, ok: tried.every((m) => m.ok) && (tried.length > 0 || !endpointOnly), detail: [r.detail, ...tried.map((m) => m.detail), ...notes].join("；"), endpointOnly };
   });
 
