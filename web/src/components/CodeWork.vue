@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import FlowWaiting from "./FlowWaiting.vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { aiLabel, get, onServerEvent, onServerResync, post, type Run, type RunEvent } from "../api";
+import { accountLabel, aiLabel, get, onServerEvent, onServerResync, post, type Run, type RunEvent } from "../api";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import Skeleton from "./Skeleton.vue";
@@ -396,7 +396,7 @@ const ctx = computed(() => detail.value?.context ?? null);
         <router-link v-else-if="work.background" :to="`/items/${work.background.id}`" :title="`做「${work.background.title}」时顺带改的：只用它的材料作背景，不归它的需求点和流程`" class="ellipsis link muted">为事项：{{ work.background.title }}</router-link>
         <span v-else class="muted">没归到事项</span>
         <router-link v-for="r in work.reqs.slice(0, 3)" :key="r.id" :to="`/code/reqs/${r.id}`" class="ellipsis link" :title="r.title">需求：{{ r.title }}</router-link>
-        <span class="muted">{{ work.spaceId ? spaceName(work.spaceId) : "" }} · 开始于 {{ fmtTime(work.createdAt) }}<template v-if="aiLabel(run)"> · <span class="mono">{{ aiLabel(run) }}</span></template></span>
+        <span class="muted">{{ work.spaceId ? spaceName(work.spaceId) : "" }} · 开始于 {{ fmtTime(work.createdAt) }}<template v-if="aiLabel(run)"> · <span class="mono">{{ aiLabel(run) }}</span></template><template v-if="accountLabel(run, state.me)"> · {{ accountLabel(run, state.me) }}</template></span>
       </div>
 
       <dl class="facts">

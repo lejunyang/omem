@@ -28,7 +28,7 @@ export type Run = {
   output: Record<string, unknown>;
   profileId: string | null;
   /** Backend, model and effort the run used (its first successful Agent call). */
-  ai: { profile: string; model?: string; effort?: string } | null;
+  ai: { profile: string; model?: string; effort?: string; account?: import("./run-account.ts").RunAccount } | null;
   parentId: string | null;
   error: string | null;
   createdAt: string;

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { idQuery } from "../../../src/core/id-query";
 import { useRoute, useRouter } from "vue-router";
-import { aiLabel, get, onServerEvent, onServerResync, post, triggerLabel, type Run, type RunEvent } from "../api";
+import { accountLabel, aiLabel, get, onServerEvent, onServerResync, post, triggerLabel, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
@@ -325,7 +325,7 @@ const kindOptions = computed(() => [
               <span class="st" :class="r.status" />
               <div class="grow">
                 <div class="ellipsis">{{ r.title }}</div>
-                <div class="muted small ellipsis">{{ runKindLabel[r.kind] ?? r.kind }}<template v-if="r.status !== 'done'"> · {{ statusLabel[r.status] }}</template> · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template><template v-if="aiShort(r)"> · <span :title="aiLabel(r)">{{ aiShort(r) }}</span></template></div>
+                <div class="muted small ellipsis">{{ runKindLabel[r.kind] ?? r.kind }}<template v-if="r.status !== 'done'"> · {{ statusLabel[r.status] }}</template> · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template><template v-if="aiShort(r)"> · <span :title="[aiLabel(r), accountLabel(r, state.me)].filter(Boolean).join(' · ')">{{ aiShort(r) }}</span></template></div>
                 <div v-if="r.trigger && (r.trigger.via !== 'chat' || r.trigger.by?.key !== 'user:owner')" class="muted small ellipsis by" :title="triggerLabel(r.trigger, true)"><Icon :name="r.trigger.by ? 'user' : r.trigger.via === 'schedule' ? 'clock' : 'zap'" :size="11" />{{ triggerLabel(r.trigger) }}</div>
                 <div v-if="r.waiting" class="muted small ellipsis" :title="r.waiting">{{ r.waiting }}</div>
               </div>
@@ -353,6 +353,7 @@ const kindOptions = computed(() => [
             <span class="badge" :class="{ ok: detail.run.status === 'done', danger: detail.run.status === 'failed', warn: detail.run.status === 'running' }">{{ statusLabel[detail.run.status] }}</span>
             <span class="muted">{{ fmtTime(detail.run.createdAt) }}<template v-if="detail.run.finishedAt"> → {{ fmtTime(detail.run.finishedAt) }}</template></span>
             <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· {{ aiLabel(detail.run) }}</span>
+            <span v-if="accountLabel(detail.run, state.me)" class="muted" :title="detail.run.ai?.account?.reason ?? '这次运行用的 AI 账号'">· {{ accountLabel(detail.run, state.me) }}</span>
             <span v-if="detail.run.spaceId" class="muted">· {{ spaceName(detail.run.spaceId) }}</span>
             <span v-if="detail.run.trigger" class="muted">· 触发：<button v-if="detail.run.trigger.by" class="linkish" type="button" title="看这个人触发的全部运行" @click="filterBy(personKey(detail.run.trigger.by))">{{ detail.run.trigger.by.name }}</button><template v-if="detail.run.trigger.by"> · </template><router-link v-if="detail.run.trigger.via === 'flow' && detail.run.input.itemId" :to="`/items/${detail.run.input.itemId}`">{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</router-link><template v-else>{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</template></span>
             <router-link v-for="it in ctxInfo?.items ?? []" :key="it.id" :to="`/items/${it.id}`" class="item-link" :title="it.title">事项：{{ it.title }}</router-link>

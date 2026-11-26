@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { App } from "../core/app.ts";
+import { run as runSql, one } from "../core/db.ts";
 import { HttpError, now } from "../core/util.ts";
 import { accountEntry, clean, cliOf, type AccountEntry } from "./accounts.ts";
 import { forgetAvailability } from "./availability.ts";
@@ -87,7 +88,19 @@ export async function checkMachineLogin(app: App, backend: string): Promise<Mach
   known.set(key(app, backend), r.code === 0
     ? { state: "logged-in", ...(user ? { user } : {}), checkedAt: now() }
     : { state: "none", error: r.out.replace(/\s+/g, " ").trim().slice(-300) || `退出码 ${r.code}`, checkedAt: now() });
+  rememberUser(app, backend, r.code === 0 ? user : undefined);
   return machineLogin(app, backend);
+}
+
+const USER_KV = (backend: string) => `machine_login_user:${backend}`;
+/** The account name the last check saw, kept past a restart: runs record whose login they used (run-account.ts). */
+function rememberUser(app: App, backend: string, user: string | undefined) {
+  if (user) runSql(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", USER_KV(backend), user.trim().slice(0, 200));
+  else runSql(app.db, "delete from kv where key = ?", USER_KV(backend));
+}
+/** Who this machine's login of a backend (an account source, `<base>#<n>` for an extra login) is, if a check said. */
+export function machineLoginUser(app: App, backend: string): string | undefined {
+  return known.get(key(app, backend))?.user ?? one<{ value: string }>(app.db, "select value from kv where key = ?", USER_KV(backend))?.value;
 }
 
 /** Start the backend's screenless login here; resolves once it has printed the link (and code / prompt). */

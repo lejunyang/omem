@@ -116,11 +116,12 @@ describe.skipIf(process.platform !== "linux")("成员的 AI 选择和飞书登�
 
   it("有自己的登录也先借额度充足的本人账号，额度紧张时下一轮换到自己的沙箱", async () => {
     ensureAccountHome(app, "ann", accountEntry(app, "codex")!);
-    run(app.db, "insert into kv(key,value) values('agent_account:ann:codex','{\"state\":\"logged-in\"}')");
+    run(app.db, "insert into kv(key,value) values('agent_account:ann:codex','{\"state\":\"logged-in\",\"user\":\"ann@example.test\"}')");
     used(12);
     const first = await ask("room", "第一条");
     await answer(first.runId!);
     account(first.runId!, "owner", "本人额度充足");
+    expect(getRun(app, first.runId!)!.ai).toMatchObject({ profile: "codex", account: { holder: "owner", borrowed: true, reason: expect.stringContaining("本人额度充足") } });
     const machineSession = getThread(app, first.thread.id).agentProfile;
     expect(machineSession).not.toContain("@ann");
     used(96);
@@ -128,6 +129,9 @@ describe.skipIf(process.platform !== "linux")("成员的 AI 选择和飞书登�
     const second = await ask("room", "第二条");
     await answer(second.runId!);
     account(second.runId!, "ann", "本人额度紧张");
+    const own = getRun(app, second.runId!)!.ai!;
+    expect(own.account).toMatchObject({ holder: "ann", login: "ann@example.test" });
+    expect(own.account?.borrowed).toBeUndefined();
     expect(getThread(app, second.thread.id).agentProfile).not.toBe(machineSession);
     expect(card.mock.calls.map(c => JSON.stringify(c[0])).join()).toContain("本人额度紧张");
     expect(runEvents(app, second.runId!).map(e => e.data)).toContainEqual(expect.objectContaining({

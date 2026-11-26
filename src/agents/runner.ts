@@ -58,6 +58,7 @@ import { canonical, runAccess, under } from "./own-sandbox.ts";
 import { ownRun } from "./own-run.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
+import { runAccount } from "./run-account.ts";
 import { accountOf, egressRequested, egressSupport } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -439,12 +440,13 @@ export function resolveRunProfile(app: App, input: { actor: Actor; profileId?: s
  * a role or agent spec. The caller owns the token (revoke it when done).
  */
 /**
- * What a run runs on (backend, model, effort), shown with the run. The first preparation is its
+ * What a run runs on (backend, model, effort, whose account: run-account.ts), shown with the run. The first preparation is its
  * main actor (a coder before its reviewers); falling back to another backend replaces it.
  */
 export function recordRunAI(app: App, runId: string | null, profile: AgentProfile, replace: boolean) {
   if (!runId) return;
-  const ai = JSON.stringify({ profile: profile.id, model: profile.model ?? undefined, effort: profile.effort ?? undefined });
+  const account = runAccount(app, profile, runUser(app, runId));
+  const ai = JSON.stringify({ profile: profile.id, model: profile.model ?? undefined, effort: profile.effort ?? undefined, ...(account ? { account } : {}) });
   run(app.db, replace ? "update runs set ai = ?, profile_id = ? where id = ?" : "update runs set ai = coalesce(ai, ?), profile_id = coalesce(profile_id, ?) where id = ?", ai, profile.id, runId);
 }
 

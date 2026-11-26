@@ -2,7 +2,9 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { cancelMachineLogin, checkMachineLogin, machineLogin, sendMachineLoginInput, startMachineLogin } from "../src/agents/machine-login.ts";
+import { cancelMachineLogin, checkMachineLogin, machineLogin, machineLoginUser, sendMachineLoginInput, startMachineLogin } from "../src/agents/machine-login.ts";
+import { runAccount } from "../src/agents/run-account.ts";
+import { run } from "../src/core/db.ts";
 import { testApp } from "./helpers.ts";
 
 const app = testApp();
@@ -64,6 +66,16 @@ describe("this machine's own login from settings", () => {
     expect(existsSync(marker)).toBe(true);
     expect(readFileSync(marker, "utf8")).toBe("someone@example.test");
     expect(machineLogin(app, "fakeagent")).toMatchObject({ state: "logged-in", user: "someone@example.test", pending: null });
+    // A run on this login records whose account it was; the name outlives a restart (kept in kv).
+    const p = app.config.agents.profiles.find((x) => x.id === "fakeagent")!;
+    expect(runAccount(app, p)).toEqual({ holder: "owner", login: "someone@example.test" });
+    expect(runAccount(app, p, "ann")).toMatchObject({ holder: "owner", borrowed: true });
+    expect(runAccount(app, { ...p, keyRef: "k" })).toEqual({ holder: "owner", key: true });
+    expect(runAccount(app, { ...p, peer: { id: "laptop", agent: "codex" } })).toBeUndefined();
+    expect(machineLoginUser(app, "fakeagent")).toBe("someone@example.test");
+    run(app.db, "delete from kv where key = 'machine_login_user:fakeagent'");
+    expect(await checkMachineLogin(app, "fakeagent")).toMatchObject({ user: "someone@example.test" });
+    expect(machineLoginUser(app, "fakeagent")).toBe("someone@example.test");
   }, 30_000);
 
   it("cancels a login that is waiting, and refuses a backend the catalog has no login for", async () => {

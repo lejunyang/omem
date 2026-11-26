@@ -79,7 +79,7 @@ describe("temporary AI choices", () => {
     const write = createRun(app, { kind: "wiki-write", spaceId: "personal", title: "写作", input: { ai: choice }, parentId: plan.id });
     const r = await runRole(app, { role: "wiki-writer", spaceId: "personal", task: "写", runId: write.id });
     expect(r.ai).toMatchObject({ profile: "second", model: "m3", effort: "xhigh" });
-    expect(getRun(app, write.id).ai).toEqual({ profile: "second", model: "m3", effort: "xhigh" }); // shown with the run
+    expect(getRun(app, write.id).ai).toEqual({ profile: "second", model: "m3", effort: "xhigh", account: { holder: "owner" } }); // shown with the run
     const { queueReason } = await import("../src/agents/runs.ts");
     expect(queueReason(app, getRun(app, plan.id))).toMatch(/等后台任务空位：同时最多 [0-9]+ 个/);
     const later = createRun(app, { kind: "wiki-lint", spaceId: "personal", title: "稍后", notBefore: new Date(Date.now() + 3600_000).toISOString() });
