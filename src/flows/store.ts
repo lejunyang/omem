@@ -175,7 +175,7 @@ export function flushProgress(app: App, id: string) {
 
 /** The sections every progress card ends with; channels keep them open and fold what is above them. */
 export const PROGRESS_TAIL = ["**流程**", "**接下来**"];
-const MARK: Partial<Record<StageState, string>> = { done: "✓", skipped: "跳过", doing: "进行中", gated: "等你开始", blocked: "卡住", stale: "待复核" };
+const STATE_WORDS: Record<StageState, string> = { pending: "还没到", done: "已完成", skipped: "跳过了", doing: "进行中", gated: "等你开始", blocked: "卡住了", stale: "待复核" };
 
 /**
  * A card in sections: what happened in one bold line, what each stage said, where the flow stands
@@ -195,11 +195,11 @@ export function progress(app: App, id: string, lines: ProgressLine[], ownerWaiti
   const lead = lines.length ? lines.map((l) => l.head).join("；") : "流程有了新进展";
   // One stage: its note sits right under the bold line. Several: each under its own heading.
   const said = lines.length === 1 ? [lines[0].note ?? ""] : lines.filter((l) => l.note).map((l) => `**${l.head}**\n${l.note}`);
-  const chain = f.definition.stages.map((d) => {
-    const st = stateOf(d.id), mark = MARK[st];
-    const text = `${d.name}${mark ? ` ${mark}` : ""}`;
-    return ["blocked", "gated", "doing", "stale"].includes(st) ? `**${text}**` : text;
-  }).join(" → ");
+  // Every stage on its own numbered line with its state in words; the ones in motion are bold.
+  const chain = f.definition.stages.map((d, i) => {
+    const st = stateOf(d.id), text = `${d.name}：${STATE_WORDS[st]}`;
+    return `${i + 1}. ${["blocked", "gated", "doing", "stale"].includes(st) ? `**${text}**` : text}`;
+  }).join("\n");
   const waitingOwner = blocked.filter((d) => rows.find((r) => r.id === d.id)?.waitingOn === "owner");
   const next = f.endedAt ? [rows.every((s) => ["done", "skipped"].includes(s.state)) ? "流程走完了；事项要不要关由你定。" : "流程已停止。"] : [
     ...waitingOwner.map((d) => `「${d.name}」等你：在流程页写一句话让它重做，或直接标做完、跳过。`),

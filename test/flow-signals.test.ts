@@ -108,7 +108,7 @@ describe("Git 完成信号", () => {
     t0 = await setup();
     await vi.waitFor(() => expect(t0.s().askId).toBeTruthy());
     expect(t0.s()).toMatchObject({ state: "doing", waitingOn: "owner" });
-    expect(listAsks(t0.app).map((a) => a.question.includes("轮到你了"))).toEqual([true]);
+    expect(listAsks(t0.app).map((a) => a.question.includes("到你了"))).toEqual([true]);
   });
   it("本人推送重验不受自动推进上限限制：未应用但远端已有本轮评审的提交", async () => {
     const t = await setup({ confirmation: true, applied: false, pushedBefore: true, reviewedHead: true });

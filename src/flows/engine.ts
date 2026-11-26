@@ -172,10 +172,20 @@ function questionCard(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: st
     s.control.runId ? `[承担者运行](${webLink(app, `#/runs/${s.control.runId}`)})` : "",
     workId ? `[交办运行](${webLink(app, `#/runs/${workId}`)})` : "",
   ].filter(Boolean).join("　");
+  // Who does it and when it counts as done are sentences of their own, not a bracket after the plan;
+  // the default "交了结果就算做完" says nothing and is left out.
+  const doneLine = w.done && w.done !== "交了结果就算做完" ? `怎样算做完：${w.done}` : "";
   return stageCard(app, item, d, kind, {
     problem: p.ask,
-    current: [p.result && askNote(p.result), p.before && ups.length ? ups.map(({ def, row }) => `${def!.name}：${row!.state === "skipped" ? "跳过" : "已完成"}${row!.note ? `，${askNote(resultNote(app, f.itemId, row!), 120)}` : ""}`).join("\n") : ""].filter(Boolean).join("\n\n"),
-    plan: [p.plan && d.note ? `${askNote(d.note, 400)}\n（${w.carrier}；${w.done}）` : "", p.after && next.length ? `确认后接着：${next.join("、")}` : ""].filter(Boolean).join("\n\n"),
+    result: p.result ? askNote(p.result) : "",
+    // Each stage before, by its one-line summary (a stage note's first paragraph, rules in roles/_common.md);
+    // its full report stays on the flow page.
+    before: p.before && ups.length ? ups.map(({ def, row }) => {
+      const said = row!.note ? leadSentence(resultNote(app, f.itemId, row!)) : "";
+      return `${def!.name}（${row!.state === "skipped" ? "跳过了" : "已完成"}）${said ? `：${said}` : ""}`;
+    }).join("\n") : "",
+    plan: p.plan ? [/[。！？]$/.test(w.carrier) ? w.carrier : `${w.carrier}。`, d.note ? askNote(d.note, 400) : "", doneLine].filter(Boolean).join("\n") : "",
+    next: p.after && next.length ? `${kind === "done" ? "确认后" : "做完后"}接着：${next.join("、")}` : "",
     evidence: [links, flowEvidenceLinks(app, item.id, p.evidence ?? []), stageLinks(s)].filter(Boolean).join("\n\n"),
     textAction: kind === "gate" || kind === "when" ? "按这句话开始" : kind === "done" || kind === "refuse" ? "按这句话重做" : kind === "skip" ? "按这句话跳过" : "",
   });
@@ -194,6 +204,17 @@ function resultNote(app: App, itemId: string, row: StageRow) {
 function stageResult(app: App, itemId: string, row: StageRow) {
   const r = resultNote(app, itemId, row);
   return r && r !== row.note && !ROUTINE.has(r) && !WAITING_NOTE.test(r) ? r : "";
+}
+/**
+ * A stage note's opening paragraph, which is its one-sentence summary; a heading the carrier put first
+ * is dropped. Over 200 characters it ends at the last full sentence that fits, never mid-word.
+ */
+function leadSentence(note: string) {
+  const first = askNote(note).split(/\n\s*\n/).map((p) => p.replace(/^\*\*[^*\n]{1,12}\*\*[：:]?\s*/, "").trim()).find(Boolean) ?? "";
+  const line = first.replace(/\s*\n\s*/g, " ");
+  if (line.length <= 200) return line;
+  const end = Math.max(...["。", "；", "！", "？"].map((m) => line.lastIndexOf(m, 200)));
+  return end > 40 ? line.slice(0, end + 1) : truncate(line, 200);
 }
 const askNote = (note: string, max = Infinity) => truncate(note.replace(/\s*[（(]?`?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b`?[）)]?/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(), max);
 
@@ -288,8 +309,12 @@ function askBlocker(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow
   changeStage(app, item.id, d.id, s.state, { askId: ask.id }, host, s.note);
 }
 function gate(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: "when" | "gate") {
-  const askId = question(app, f, d, s, kind, kind === "when" ? { ask: `这一段要做吗？条件是：${d.when}`, plan: true, before: true } : { ask: "轮到这一段了，开始吗？", plan: true, before: true }, kind === "when" ? ["要做", "跳过"] : ["开始", "先别做", "跳过这一段"]);
   const limit = kind === "gate" && d.by !== "owner" && !s.control.rework && f.autoStreak >= app.config.flows.autoAdvance;
+  // The title already says it waits for the owner to start; the card says why only when that is not
+  // simply how the stage was set up.
+  const why = kind === "when" ? `这一段要做吗？条件是：${d.when}` : d.gate === "confirm" ? s.control.rework ? "这一段要重做，按设定开始前先问你。" : ""
+    : limit ? `前面已经连着自动推进了 ${f.autoStreak} 段，再往下先问你一次。` : "";
+  const askId = question(app, f, d, s, kind, { ask: why, plan: true, before: true }, kind === "when" ? ["要做", "跳过"] : ["开始", "先别做", "跳过这一段"]);
   changeStage(app, f.itemId, d.id, "gated", { askId, waitingOn: "owner", control: { ...s.control, question: kind, gateLimit: limit } }, host, kind === "when" ? "等本人判断这一段是否需要" : "等本人确认开始", [], kind === "when" ? "when-ask" : limit ? "limit-ask" : "gate-ask");
 }
 
@@ -332,7 +357,7 @@ async function ownerAlreadySaid(app: App, item: Item, f: ItemFlow, d: FlowStage)
 }
 /** The action card for explicit owner confirmation and the push fallback. */
 const ownerTurn = (app: App, f: ItemFlow, d: FlowStage, s: StageRow) =>
-  question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
+  question(app, f, d, { ...s, askId: null }, "owner", { ask: "", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
 /** The owner's turn, asked once its signal check found the stage not done yet; a pending “确认并推送” card is that question already. */
 function askOwnerNow(app: App, itemId: string, stageId: string, startedAt: string, attempt: number) {
   const f = itemFlow(app, itemId);

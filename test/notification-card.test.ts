@@ -55,7 +55,7 @@ it("a flow progress card: bold line, long note folded, flow and next steps open,
   app.config.webUrl = "https://omem.example.com";
   const item = upsertItem(app, undefined, { title: "评审退款改造" });
   const long = Array.from({ length: 8 }, (_, i) => `第 ${i + 1} 段：${"核对退款回调和重试。".repeat(14)}`).join("\n\n");
-  const body = `**「评审结论」卡住了，等你**\n\n${long}\n\n**流程**\n上下文 ✓ → **评审结论 卡住** → 挑问题\n\n**接下来**\n- 「评审结论」等你：在流程页写一句话让它重做，或直接标做完、跳过。`;
+  const body = `**「评审结论」卡住了，等你**\n\n${long}\n\n**流程**\n1. 上下文：已完成\n2. **评审结论：卡住了**\n3. 挑问题：还没到\n\n**接下来**\n- 「评审结论」等你：在流程页写一句话让它重做，或直接标做完、跳过。`;
   const n = notify(app, { title: item.title, body, entityId: item.id, link: `#/items/${item.id}/flow`, view: "flow", tone: "warning" });
   const card = notificationCard(app, n) as { header: { template: string }; body: { elements: Record<string, unknown>[] } };
   const text = JSON.stringify(card);
