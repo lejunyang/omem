@@ -40,6 +40,8 @@ function headers(input: http.IncomingHttpHeaders) {
   return copy;
 }
 const callbackPath = /^\/(?:mcp|api\/(?:tools(?:\/[a-zA-Z0-9_-]+)?|command-gate|credentials\/outcome|operation-gate\/http|remote\/agent-browser))$/;
+/** The API-key relay (core/ai-relay.ts): a backend's own token, checked by the route, not the run's. */
+const relayPath = /^\/api\/ai\/relay\/[^/]+\/[^/]+\/(?:openai|anthropic)\//;
 const hostName = (url: URL) => url.hostname.replace(/^\[|\]$/g, "");
 class Refused extends Error { }
 /** `listen`: a socket path (a run's sandbox) or a loopback TCP port (a browser, which cannot use a path). */
@@ -117,7 +119,7 @@ export async function startProxy(listen: string | { host: string; port: number }
     url.hostname = url.hostname.replace(/\.$/, "");
     const callback = !inside && opts.callback && url.origin === opts.callback.origin;
     if (url.username || url.password || (inside ? inside.origin !== url.origin : url.protocol !== "http:") || (raw.startsWith("/") && !inside && !callback)) throw new Refused("请求地址无效");
-    if (callback && (!callbackPath.test(url.pathname) || req.headers.authorization !== "Bearer " + opts.callback!.token)) throw new Refused("需要本次运行的入口与令牌");
+    if (callback && !relayPath.test(url.pathname) && (!callbackPath.test(url.pathname) || req.headers.authorization !== "Bearer " + opts.callback!.token)) throw new Refused("需要本次运行的入口与令牌");
     if (callback && opts.callback?.target) {
       const target = new URL(opts.callback.target);
       url.host = target.host;

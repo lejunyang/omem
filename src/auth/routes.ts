@@ -119,6 +119,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/code-index/hook": "owner",
   "DELETE /api/code-index/hook": "owner",
   "POST /api/code-index/notify": "public",
+  // The API-key relay: a backend's own token in the handler (core/ai-relay.ts).
+  "GET /api/ai/relay/:provider/:backend/:format/*": "public",
+  "POST /api/ai/relay/:provider/:backend/:format/*": "public",
   // Plugin callbacks authenticate with their own secret (src/plugins/hook-http.ts).
   "POST /api/hooks/:plugin/:name": "public",
   "POST /api/hooks/:plugin/:name/:secret": "public",

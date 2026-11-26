@@ -17,10 +17,12 @@ import UiSelect from "./UiSelect.vue";
  * decision, image). Keys go to secrets/ai-keys.json through /api/ai/keys and come back only as
  * their last four characters; everything else is part of config `ai` (saved by the parent).
  */
-type Kind = "openai" | "anthropic" | "typesafe" | "openrouter" | "cloudflare" | "openai-compatible";
+type Kind = "openai" | "anthropic" | "typesafe" | "openrouter" | "cloudflare" | "ark" | "openai-compatible";
+type ErrKind = "rate" | "daily" | "quota" | "auth" | "config" | "server" | "input" | "other";
+type RelayView = { counts: Partial<Record<ErrKind, number>>; last: { at: number; status: number; kind: ErrKind; code: string; message: string } } | null;
 type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; anthropicUrl?: string; model?: string; accountId?: string; backends: string[] };
 type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean };
-type ProviderView = Provider & { keyHint: string; hasKey: boolean; offers: string[]; listed: { at: number; count: number; models: string[]; info: Record<string, ModelInfo>; error?: string } | null };
+type ProviderView = Provider & { keyHint: string; hasKey: boolean; offers: string[]; relay?: RelayView; paused?: { until: string; message: string } | null; listed: { at: number; count: number; models: string[]; info: Record<string, ModelInfo>; error?: string } | null };
 type Choice = { default: string; models: string[] };
 type Status = { ready: boolean; detail: string; media?: ("images" | "audio" | "videos")[] };
 type AiView = { decisionModels: Status[]; providers: ProviderView[]; status: Record<"voice" | "decision" | "image", Status>; choices: Record<string, Record<string, Choice>>; kinds: Record<string, string[]>; inherited: string[] };
@@ -40,21 +42,30 @@ onMounted(load);
 // The parent saves config `ai`; status depends on it.
 watch(() => JSON.stringify(props.config.ai), () => void load());
 
-const KIND_LABEL: Record<Kind, string> = { openai: "OpenAI", anthropic: "Anthropic（Claude）", typesafe: "TypeSafe（Jev）", openrouter: "OpenRouter", cloudflare: "Cloudflare（Clef）", "openai-compatible": "第三方（OpenAI 兼容）" };
+const KIND_LABEL: Record<Kind, string> = { openai: "OpenAI", anthropic: "Anthropic（Claude）", typesafe: "TypeSafe（Jev）", openrouter: "OpenRouter", cloudflare: "Cloudflare（Clef）", ark: "火山方舟", "openai-compatible": "第三方（OpenAI 兼容）" };
 const KIND_USES: Record<Kind, string> = {
   openai: "Codex、OpenCode 后端，语音、决策、图片",
   anthropic: "Claude Code、OpenCode 后端",
   typesafe: "决策（Jev）",
   openrouter: "决策（Jev 等）",
   cloudflare: "决策（Clef 系列）",
-  "openai-compatible": "Codex、Claude Code、OpenCode 后端（例如火山方舟、各家代理）",
+  ark: "Codex、Claude Code、OpenCode 后端，认得方舟的错误码（限流、每日用量、额度）",
+  "openai-compatible": "Codex、Claude Code、OpenCode 后端（各家代理、自建的兼容服务）",
 };
 const BACKEND_LABEL: Record<string, string> = { claude: "Claude Code（ACP）", "claude-cli": "Claude Code（命令行）", codex: "Codex（ACP）", "codex-cli": "Codex（命令行）", opencode: "OpenCode" };
 /** What the add form offers before the server says (`offers`): a third party's Claude Code needs its Anthropic address, found when checked. */
-const BACKENDS_OF: Record<string, string[]> = { anthropic: ["claude", "claude-cli", "opencode"], openai: ["codex", "codex-cli", "opencode"], "openai-compatible": ["codex", "codex-cli", "claude", "claude-cli", "opencode"] };
-const DEFAULT_BACKENDS: Record<string, string[]> = { anthropic: ["claude", "claude-cli"], openai: ["codex", "codex-cli"], "openai-compatible": ["codex", "claude"] };
+const BACKENDS_OF: Record<string, string[]> = { anthropic: ["claude", "claude-cli", "opencode"], openai: ["codex", "codex-cli", "opencode"], ark: ["codex", "codex-cli", "claude", "claude-cli", "opencode"], "openai-compatible": ["codex", "codex-cli", "claude", "claude-cli", "opencode"] };
+const DEFAULT_BACKENDS: Record<string, string[]> = { anthropic: ["claude", "claude-cli"], openai: ["codex", "codex-cli"], ark: ["codex", "claude"], "openai-compatible": ["codex", "claude"] };
 const FORMAT_LABEL = { chat: "Chat", responses: "Responses", anthropic: "Anthropic" } as const;
 const keyTail = (hint: string) => hint.replace(/^…/, "");
+/** Keys whose backends run on a model the owner names (a third party's own model or endpoint name). */
+const thirdParty = (k: Kind) => k === "openai-compatible" || k === "ark";
+const ERR_WORD: Record<ErrKind, string> = { rate: "限流", daily: "每日用量到顶", quota: "额度或欠费", auth: "key 被拒", config: "模型或接入点不对", server: "提供方出错", input: "请求被拒", other: "其他" };
+const clock = (t: number | string) => new Date(t).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+function relayLine(r: NonNullable<RelayView>) {
+  const counts = (Object.entries(r.counts) as [ErrKind, number][]).map(([k, n]) => `${ERR_WORD[k]} ${n} 次`).join("、");
+  return `最近 1 小时：${counts}；最近一次 ${clock(r.last.at)} ${r.last.code || r.last.status}${r.last.message ? `：${r.last.message}` : ""}`;
+}
 
 const providers = computed<ProviderView[]>(() => view.value?.providers ?? []);
 const plain = ({ id, name, kind, baseUrl, anthropicUrl, model, accountId, backends }: Provider) => ({ id, name, kind, ...(baseUrl ? { baseUrl } : {}), ...(anthropicUrl ? { anthropicUrl } : {}), ...(model ? { model } : {}), ...(accountId ? { accountId } : {}), backends });
@@ -81,7 +92,7 @@ async function addProvider() {
   if (!d.key.trim()) return toast("填写 API key", "error");
   busy.value = true;
   try {
-    const third = d.kind === "openai-compatible";
+    const third = thirdParty(d.kind);
     const list: Provider[] = [...providers.value, { id, name: d.name.trim(), kind: d.kind, baseUrl: d.baseUrl.trim() || undefined, anthropicUrl: third ? d.anthropicUrl.trim() || undefined : undefined, model: d.model.trim() || undefined, accountId: d.kind === "cloudflare" ? d.accountId.trim() || undefined : undefined, backends: d.backends }];
     // Config first (the key endpoint only takes known providers), then the key.
     await put("/api/settings", { ai: { ...props.config.ai, providers: list.map(plain) } });
@@ -162,7 +173,7 @@ async function remove(p: ProviderView) {
   emit("changed");
 }
 function setBackends(p: ProviderView, backends: string[]) {
-  if (p.kind === "openai-compatible" && backends.length && !p.model) toast("还要填写后端用的模型，生成的后端才能用", "info");
+  if (thirdParty(p.kind) && backends.length && !p.model) toast("还要填写后端用的模型，生成的后端才能用", "info");
   saveProviders(providers.value.map((x) => (x.id === p.id ? { ...x, backends } : x)), "已更新生成的后端");
   emit("changed");
 }
@@ -261,7 +272,9 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
             </ul>
           </div>
           <div v-if="tests[p.id] && !tests[p.id].loading" class="small" :class="tests[p.id].ok ? 'ok-text' : 'err-text'">{{ tests[p.id].detail }}</div>
-          <template v-if="p.kind === 'openai-compatible'">
+          <div v-if="p.paused" class="small err-text">已暂停到 {{ clock(p.paused.until) }}（{{ p.paused.message }}）：用它的后端先不用，处理好后点“检查”恢复</div>
+          <div v-if="p.relay" class="small muted">{{ relayLine(p.relay) }}</div>
+          <template v-if="thirdParty(p.kind)">
             <div class="grid2 be-row">
               <div class="field small">
                 <span>后端用的模型</span>
@@ -269,13 +282,13 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
               </div>
               <label class="field small">
                 <span>Anthropic 格式地址（Claude Code 用）</span>
-                <input :value="p.anthropicUrl ?? ''" class="input mono" placeholder="留空时点“检查”自动找" @change="editProvider(p, { anthropicUrl: ($event.target as HTMLInputElement).value.trim() || undefined }, '已保存 Anthropic 格式地址')" />
+                <input :value="p.anthropicUrl ?? ''" class="input mono" :placeholder="p.kind === 'ark' ? '留空按方舟的规则（…/api/compatible）' : '留空时点“检查”自动找'" @change="editProvider(p, { anthropicUrl: ($event.target as HTMLInputElement).value.trim() || undefined }, '已保存 Anthropic 格式地址')" />
               </label>
             </div>
             <div v-if="modelWarning(p)" class="small err-text">{{ modelWarning(p) }}</div>
             <div v-else-if="p.backends.length && !p.model" class="small muted">填写模型后生成的后端才能用：这家服务的模型名，账号只允许接入点时填接入点 ID。</div>
           </template>
-          <div v-if="p.offers?.length || (p.kind === 'openai-compatible' && p.backends.length)" class="row wrap small be-row">
+          <div v-if="p.offers?.length || (thirdParty(p.kind) && p.backends.length)" class="row wrap small be-row">
             <span class="muted">生成后端：</span>
             <UiCheckbox v-for="b in BACKENDS_OF[p.kind]" :key="b" size="sm" :model-value="p.backends" :value="b" :disabled="!p.offers?.includes(b) && !p.backends.includes(b)" @update:model-value="(v) => setBackends(p, v as string[])">{{ BACKEND_LABEL[b] }}<span v-if="p.offers?.includes(b)" class="muted mono be-id">{{ b }}@{{ p.id }}</span><span v-else class="muted">（要 Anthropic 格式地址）</span></UiCheckbox>
           </div>
@@ -288,6 +301,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
         <div class="pacts">
           <button class="btn ghost sm" :disabled="tests[p.id]?.loading" @click="test(p.id)">{{ tests[p.id]?.loading ? "检查中…" : "检查" }}</button>
           <button class="btn ghost sm" @click="replacing[p.id] = ''">更换 key</button>
+          <button v-if="p.kind === 'openai-compatible'" class="btn ghost sm" title="方舟的 key 按方舟处理：认得它的错误码，Anthropic 格式地址按它的规则" @click="editProvider(p, { kind: 'ark' }, '已改成火山方舟')">改成火山方舟</button>
           <button class="btn ghost sm icon" :aria-label="`移除 ${p.name || p.id}`" title="移除" @click="remove(p)"><Icon name="x" :size="14" /></button>
         </div>
       </div>
@@ -302,12 +316,12 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       <label class="field"><span>{{ draft.kind === "cloudflare" ? "API token（要有 Workers AI 权限）" : "API key" }}</span><input v-model="draft.key" class="input mono" type="password" autocomplete="off" required /></label>
       <label v-if="draft.kind === 'cloudflare'" class="field"><span>账号 ID</span><input v-model="draft.accountId" class="input mono" maxlength="32" placeholder="32 位，在 Cloudflare 控制台右侧栏或网址里" /></label>
       <label class="field">
-        <span>{{ draft.kind === "openai-compatible" ? "OpenAI 格式地址" : draft.kind === "cloudflare" ? "接口地址（可选，替换 …/accounts/<账号>/ai 这一段）" : "接口地址（可选，默认官方地址）" }}</span>
-        <input v-model="draft.baseUrl" class="input mono" :required="draft.kind === 'openai-compatible'" :placeholder="draft.kind === 'openai-compatible' ? '例如 https://ark.cn-beijing.volces.com/api/v3' : '留空用官方地址'" />
+        <span>{{ draft.kind === "openai-compatible" ? "OpenAI 格式地址" : draft.kind === "ark" ? "接口地址（可选，OpenAI 格式的 …/api/v3）" : draft.kind === "cloudflare" ? "接口地址（可选，替换 …/accounts/<账号>/ai 这一段）" : "接口地址（可选，默认官方地址）" }}</span>
+        <input v-model="draft.baseUrl" class="input mono" :required="draft.kind === 'openai-compatible'" :placeholder="draft.kind === 'openai-compatible' ? 'https://example.com/v1' : draft.kind === 'ark' ? '留空用 https://ark.cn-beijing.volces.com/api/v3' : '留空用官方地址'" />
       </label>
-      <div v-if="draft.kind === 'openai-compatible'" class="grid2">
+      <div v-if="thirdParty(draft.kind)" class="grid2">
         <label class="field"><span>后端用的模型（可选，添加后可从列表选）</span><input v-model="draft.model" class="input mono" placeholder="模型名或接入点 ID" /></label>
-        <label class="field"><span>Anthropic 格式地址（可选）</span><input v-model="draft.anthropicUrl" class="input mono" placeholder="Claude Code 用，留空时添加后自动找" /></label>
+        <label class="field"><span>Anthropic 格式地址（可选）</span><input v-model="draft.anthropicUrl" class="input mono" :placeholder="draft.kind === 'ark' ? '留空按方舟的规则（…/api/compatible）' : 'Claude Code 用，留空时添加后自动找'" /></label>
       </div>
       <div v-if="BACKENDS_OF[draft.kind]" class="row wrap small">
         <span class="muted">同时生成后端：</span>

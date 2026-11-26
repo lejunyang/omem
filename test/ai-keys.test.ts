@@ -82,7 +82,7 @@ describe("API-key providers", () => {
     expect(asked[0]).toBe("https://ark.example.com/api/compatible/v1/models");
     expect(await findAnthropicUrl("https://other.example.com/v1", "k", (async () => new Response("", { status: 404 })) as unknown as typeof fetch)).toBeNull();
     const refuse = (async () => Response.json({ error: { code: "ModelIDAccessDisabled", message: "use an endpoint ID. Request id: 42" } }, { status: 404 })) as unknown as typeof fetch;
-    expect(await tryBackendModel({ ...p, model: "glm-5" }, "k", refuse)).toEqual({ ok: false, detail: "模型 glm-5 调不通（OpenAI 格式 404：ModelIDAccessDisabled：use an endpoint ID.）" });
+    expect(await tryBackendModel({ ...p, model: "glm-5" }, "k", refuse)).toEqual({ ok: false, detail: "模型 glm-5 调不通（OpenAI 格式 404：ModelIDAccessDisabled：use an endpoint ID.（模型或接入点不对））" });
     expect(await tryBackendModel({ ...p, model: "ep-1", anthropicUrl: "https://ark.example.com/api/compatible" }, "k", (async () => Response.json({})) as unknown as typeof fetch)).toEqual({ ok: true, detail: "模型 ep-1 可以调用" });
   });
 

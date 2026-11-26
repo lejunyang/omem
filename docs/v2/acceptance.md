@@ -2637,6 +2637,10 @@ TraeX 与其他 ACP 的清理补验：
 | 添加第三方（OpenAI 兼容）的 key，填火山方舟的 `…/api/v3`，勾 Codex（ACP）和 Claude Code（ACP），点“检查” | 一行显示“key 尾号 xxxx”；“看 N 个模型”展开后每个模型标出 Chat / Responses / Anthropic 和用途，可筛选；Anthropic 格式地址自动填成 `…/api/compatible`，Claude Code 的勾选可用；没填模型时提示要填 | 测试覆盖（假接口），真机待验 |
 | 在这一行的“后端用的模型”选一个只支持 Chat 的模型 | 红字写明 Codex 要 Responses、Claude Code 要 Anthropic 格式 | 待验 |
 | 填上接入点 ID（或允许直接用模型 ID 的模型名），点“检查”，再让助手用 `codex@<编号>`、`claude@<编号>` 各问一句 | 检查写“模型 … 可以调用”（账号不允许用模型 ID 时写出服务的报错 `ModelIDAccessDisabled`）；两个后端都正常回答，请求打到方舟 | codex-acp、claude-agent-acp 对着本地假接口实测请求地址、Bearer、模型；真机待验 |
+| API key 页添加“火山方舟”的 key（地址留空或填 `…/api/v3`），勾 Codex 和 Claude Code，填接入点 ID，点“检查” | Claude Code 后端直接出现（Anthropic 格式地址按 `…/api/compatible`），检查写“模型 … 可以调用”；以前按 OpenAI 兼容添加的方舟 key 那一行有“改成火山方舟” | 测试覆盖，真机待验 |
+| 方舟的接入点限流（`RateLimitExceeded.Endpoint*`）时让 `codex@<编号>` 做一件事 | omem 转发处等几秒重试；还限流则运行以“限流”结束、换下一个后端，key 那一行写“最近 1 小时：限流 1 次……” | 真实 codex-acp / claude-agent-acp 对假接口实测 |
+| 方舟返回 `SetLimitExceeded` / `AccountOverdueError` / `ModelAccountTpdRateLimitExceeded` | 运行几秒内以“额度用完”结束；前两种收到一条通知，key 那一行写“已暂停到 …”（每日用量到午夜，其余一天）；点“检查”通过后恢复 | 真实 codex-acp / claude-agent-acp 对假接口实测 |
+| 决策模型（例如 Cloudflare）返回每日额度用完（3036） | 换下一个决策模型，它排到最后直到午夜；API key 页那一行记下这条错误 | 测试覆盖 |
 | 设置 → 后端与模型 → 决策，提供方选 OpenAI | 模型下拉只有 `gpt-6-luna`（Decisions API 只接受它），页面不再列各家接口说明 | 测试覆盖 |
 | 在 设置 的“通用”和“API key”之间来回切，左侧菜单切换分类（包括刚打开还在加载时） | 页面不左右跳：滚动条的位置一直留着 | 1440 宽度下量过内容宽度不再变化 |
 | 语音 / 决策 / 图片生成 各选 OpenAI 提供方；决策再改选本机 StartLux | 状态分别显示“可用 · gpt-live-1 / gpt-6-luna / gpt-image-2”；StartLux 没装时写明要先 `omem setup` | 测试覆盖，网页待验 |

@@ -15,11 +15,14 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 | `typesafe` | `https://api.typesafe.ai` | 决策（Jev） |
 | `openrouter` | `https://openrouter.ai/api` | 决策（Jev 等） |
 | `cloudflare` | `https://api.cloudflare.com/client/v4/accounts/<账号 ID>/ai`（要填账号 ID；填了接口地址就替换这一整段） | 决策（Clef） |
-| `openai-compatible`（页面上叫“第三方（OpenAI 兼容）”，例如火山方舟、各家代理） | 必须填写 OpenAI 格式地址；Anthropic 格式地址可选 | Codex、OpenCode 后端；填了 Anthropic 格式地址时还有 Claude Code。服务也实现了 OpenAI 的图片、语音接口时，图片和语音也能选它 |
+| `ark`（火山方舟） | `https://ark.cn-beijing.volces.com/api/v3`；Anthropic 格式地址按方舟的规则（`…/api/v3` → `…/api/compatible`），也可手填 | Codex、Claude Code、OpenCode 后端；认得方舟的错误码（见下文“提供方的错误”） |
+| `openai-compatible`（页面上叫“第三方（OpenAI 兼容）”，各家代理、自建的兼容服务） | 必须填写 OpenAI 格式地址；Anthropic 格式地址可选 | Codex、OpenCode 后端；填了 Anthropic 格式地址时还有 Claude Code。服务也实现了 OpenAI 的图片、语音接口时，图片和语音也能选它 |
 
-“检查”只发不花钱的请求：OpenAI 和兼容接口用 `GET /models`，Anthropic 用 `GET /v1/models`，OpenRouter 用 `GET /v1/key`，Cloudflare 用 `GET …/ai/models/search`（同时确认 token 和账号）。TypeSafe 没有已知的免费检查接口，只看 key 是否填写。
+以前按“OpenAI 兼容”添加的方舟 key，这一行有“改成火山方舟”按钮。
 
-第三方的 key 检查通过后再做两件事（`/api/ai/providers/:id/test`）：
+“检查”只发不花钱的请求：OpenAI、方舟和兼容接口用 `GET /models`，Anthropic 用 `GET /v1/models`，OpenRouter 用 `GET /v1/key`，Cloudflare 用 `GET …/ai/models/search`（同时确认 token 和账号）。TypeSafe 没有已知的免费检查接口，只看 key 是否填写。
+
+第三方（方舟和 OpenAI 兼容）的 key 检查通过后再做两件事（`/api/ai/providers/:id/test`）：
 
 - 没填 Anthropic 格式地址时，按顺序试 `GET <候选>/v1/models`（带 Bearer 和 `x-api-key`），返回模型列表的就是（`findAnthropicUrl`）：OpenAI 地址去掉末尾 `/v数字` 后加 `/compatible`（火山方舟：`…/api/v3` → `…/api/compatible`）、加 `/anthropic`、去掉后的根地址。找到后网页存进 `anthropicUrl`，Claude Code 后端随之出现。都不应时手填。
 - 填了后端用的模型时，用它在每种格式各发一次最多 1 个 token 的请求（`tryBackendModel`），把服务的报错原样写出来。火山方舟有的账号不允许直接用模型 ID，只能用接入点 ID（`ep-…`），这一步会看到 `ModelIDAccessDisabled`。
@@ -32,10 +35,29 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
   - Claude Code：官方或 Anthropic 的 key 用 `ANTHROPIC_API_KEY`；第三方用 `ANTHROPIC_AUTH_TOKEN`（按 Bearer 发，方舟这类服务要这样），另设 `ANTHROPIC_BASE_URL`、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`，填了模型时 `ANTHROPIC_MODEL` 和 `ANTHROPIC_DEFAULT_OPUS/SONNET/HAIKU_MODEL`、`CLAUDE_CODE_SUBAGENT_MODEL` 都设成它。
   - Codex：官方地址同时设 `CODEX_API_KEY` 和 `OPENAI_API_KEY`（codex-acp 先读前者，`codex exec` 读前者）。其他地址（第三方，或改了地址的 OpenAI key）配成 Codex 自己的模型提供方 `omem-key`（Responses 接口，key 在 `OMEM_AI_KEY`）：ACP 版经 `CODEX_CONFIG` 和 `MODEL_PROVIDER`，命令行版经 `-c model_provider=… -c model_providers.omem-key={…}`。Codex 0.169 已经不读 `OPENAI_BASE_URL`（2026-11-26 实测仍发往 api.openai.com），以前写这个变量的做法不起作用。模型用后端配置的 `model`。
   - OpenCode：`OPENCODE_CONFIG_CONTENT` 里写一个提供方 `omem-key`（第三方用 `@ai-sdk/openai-compatible`，OpenAI 官方 `@ai-sdk/openai`，Anthropic `@ai-sdk/anthropic`）和模型，`apiKey` 写成 `{env:OMEM_AI_KEY}`，不动它自己的配置文件。没有模型时（第三方没填、Anthropic 的 key）不生成；OpenAI 的 key 默认用内置 Codex 的模型。
-- 地址写在后端的 `env` 里（`ANTHROPIC_BASE_URL`，Codex 和 OpenCode 的另写 `OMEM_AI_BASE_URL`），出网策略据此放行后端自己的地址（`egress-policy.ts` 的 `backendHosts`）。
+- 服务运行时，这些后端一律经 omem 转发（见下文）：地址是 `<omem>/api/ai/relay/<编号>/<后端>/<openai|anthropic>`，后端拿到的是 omem 发的令牌，不是 key（后端配置带 `keyRelay`）。没有服务时（测试、一次性命令）直接连提供方，地址写在 `env` 里（`ANTHROPIC_BASE_URL`，Codex 和 OpenCode 的另写 `OMEM_AI_BASE_URL`），出网策略据此放行（`egress-policy.ts` 的 `backendHosts`）。
+- 第三方的 Claude Code 另设 `CLAUDE_CODE_MAX_RETRIES=3`：它默认重试十次、等好几分钟，限流时这段时间不如交给下一个后端。
 - 第三方的模型名在 API key 页那一行的“后端用的模型”里选（从列表里挑或手填）；列表写明了模型支持的格式时，选了不支持 Responses 的模型又勾了 Codex、或不支持 Anthropic 格式又勾了 Claude Code，页面直接提示。
 - 来源是 `key:<编号>`：额度、并发和“额度用完”跟本机登录的那个分开算；它没有套餐额度，设置 → 后端与模型 → 并行 的“账号额度”只列本机登录的 Codex、Claude Code。
 - key 被删掉时这个后端算“未安装”，选了它的运行直接报错，不会悄悄改用本机登录。
+
+### 提供方的错误
+
+Agent 拿到提供方的报错后，往往不带原来的错误码，只用自己的话说：Codex 把每个 429 变成回复里的一句“exceeded retry limit, last status: 429”，把 403 写成“unexpected status 403 …”，都算正常结束；Claude Code 对 429、5xx 要重试几分钟。所以 API key 生成的后端都经 omem 转发（`src/core/ai-relay.ts`，路由 `/api/ai/relay/…`，不经登录检查，只认这个后端的令牌；出网隔离的运行也放行这个路径）。omem 换上真正的 key，请求原样发出，回答以流的方式原样传回。遇到错误时，按提供方自己的错误码分类（`src/core/ai-errors.ts` 的 `classifyError`）：方舟、OpenAI、Anthropic、Cloudflare 各有一张码表，其他提供方按状态码和常见字眼判断。
+
+| 类别 | 例子 | omem 怎么做 |
+| --- | --- | --- |
+| `rate` 限流 | 方舟 `RateLimitExceeded.EndpointRPMExceeded`、`ModelAccountTpmRateLimitExceeded`、`ServerOverloaded`；OpenAI `rate_limit_exceeded`；Anthropic `overloaded_error`；Cloudflare 3040 | 在 omem 这里等 2、5、10 秒各重试一次（提供方给了不超过 15 秒的 `Retry-After` 就按它）；仍然限流就把 429 交给 Agent，这个 key 的后端放到最后 1 分钟，运行算“限流”，换下一个后端 |
+| `daily` 每日用量 | 方舟 `ModelAccountTpdRateLimitExceeded`；OpenAI 写明 per day 的限流；Cloudflare 3036 | 改成 400 交给 Agent（没有 Agent 会重试 400，几秒内结束），这个 key 的后端停到本人时区的午夜 |
+| `quota` 额度或欠费 | 方舟 `SetLimitExceeded`、`AccountQuotaExceeded`、`QuotaExceeded.*`、`AccountOverdueError`；OpenAI `insufficient_quota`；Anthropic `billing_error` | 改成 400；停到点“检查”通过为止（最多一天）；通知本人一次（同一个 key 6 小时内不重复） |
+| `auth` key 被拒 | 方舟 `AuthenticationError`；OpenAI `invalid_api_key` | 同上，状态码不改 |
+| `config` / `server` / `input` | 接入点不对、提供方出错、内容被拒 | 原样交给 Agent，只记录 |
+
+运行失败时，dispatch 用转发在本次运行期间看到的错误改写失败原因（`relayFailure`）：限流算 `rate-limit`，每日用量、额度、key 被拒算 `quota` 并带恢复时间，额度和续跑沿用原有的“额度用完”处理。Codex 把 400 的报错原文当回复交回时，同样按这次运行转发看到的错误判为失败。另外，ACP 回合结束时，回复以 Codex 的那几句报错开头的，也算失败（`acp.ts` 的 `codexErrorReply`：429、5xx 和“high demand”算限流，其余算其他错误）。
+
+API key 页每个 key 那一行写最近一小时各类错误的次数和最近一条，暂停时写“已暂停到 …”。点“检查”通过后，暂停和记录一起清掉（决策模型的暂停也清掉）。没有 RPM / TPM 设置：限多少由提供方说了算，omem 只看它返回什么。
+
+决策模型（`src/core/decision.ts`）出错时用同一套分类：以前统一排到后面 5 分钟，现在限流 1 分钟、每日用量到午夜、额度和 key 被拒一天（检查通过即恢复）、提供方出错 5 分钟；错误也记进 API key 页的那一行。
 
 服务的环境里本来就有 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `CODEX_API_KEY` 时，所有 Agent 都会继承它，API key 页会提示。
 

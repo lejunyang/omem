@@ -13,6 +13,7 @@ import { afterTurn, quotaEvents } from "./quota.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { networkEnvironment, withNetworkPolicy } from "./network-policy.ts";
 import { cloudTurn } from "./cloud-tools.ts";
+import { relayFailure } from "../core/ai-relay.ts";
 import { toolContextForToken, revokeToolToken } from "./tools.ts";
 
 /** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
@@ -21,10 +22,23 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
     const result = await withNetworkPolicy(app, profile, { signal: req.signal, runId: req.runId, stop: () => { if (req.mcp) revokeToolToken(req.mcp.token); } }, (p, signal) => {
       const turn = { ...req, capabilities: req.capabilities ?? backendCapabilities(p), signal, env: { ...req.env, ...networkEnvironment(app, p) } };
       const events = quotaEvents(app, p, emit);
-      if (turn.capabilities.omemAccess !== "http") return runOn(app, p, turn, events);
-      const ctx = req.mcp && toolContextForToken(app, req.mcp.token);
-      if (!ctx) throw new Error("缺少本轮的工具权限");
-      return cloudTurn(app, profile, ctx, turn, events, (request, watch) => runOn(app, p, request, watch));
+      const run = () => {
+        if (turn.capabilities.omemAccess !== "http") return runOn(app, p, turn, events);
+        const ctx = req.mcp && toolContextForToken(app, req.mcp.token);
+        if (!ctx) throw new Error("缺少本轮的工具权限");
+        return cloudTurn(app, profile, ctx, turn, events, (request, watch) => runOn(app, p, request, watch));
+      };
+      if (!p.keyRelay) return run();
+      // On an API key through omem's relay: the provider's own error, as the relay read it, says why the
+      // run failed (a rate limit, a spent quota) better than the agent's words do (core/ai-relay.ts).
+      const started = Date.now();
+      return run().then((r) => {
+        // An agent may hand the provider's refusal back as its answer (Codex shows the 400 body as text):
+        // a spent quota or a refused key the relay saw in this run means the turn did not happen.
+        const seen = relayFailure(app, p, started);
+        if (seen && (seen as { kind?: string }).kind === "quota") throw seen;
+        return r;
+      }, (e) => { throw (e as Error).message === "CANCELLED" ? e : relayFailure(app, p, started) ?? e; });
     });
     credentialSucceeded(app, profile);
     return result;

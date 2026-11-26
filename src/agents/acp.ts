@@ -19,6 +19,19 @@ const QUEUE_END_TEXT = /(?:已排到|轮到你|队列已结束|(?:no longer|out 
 // Housekeeping lines some CLIs print as message text before the model answers.
 // Also the agent's own warnings about its setup (a model its catalog has no metadata for, features under development).
 const AGENT_NOTICE = /^\s*(?:Skill descriptions were shortened|Disable unused skills or plugins|Warning: (?:Model metadata for\b|Under-development features enabled))/i;
+/**
+ * Codex hands a provider's error back as the turn's last message instead of failing it: "exceeded
+ * retry limit, last status: 429 Too Many Requests", "unexpected status 403 Forbidden: …", "We're
+ * currently experiencing high demand…". Such a turn is a failure (`codexErrorReply`).
+ */
+const CODEX_ERROR_REPLY = /^(?:exceeded retry limit, last status: (\d{3})\b|unexpected status (\d{3})\b|We[’']re currently experiencing high demand\b)/i;
+export function codexErrorReply(last: string): Error | null {
+  const m = CODEX_ERROR_REPLY.exec(last.trim());
+  if (!m) return null;
+  const status = Number(m[1] ?? m[2] ?? 503);
+  // Busy or failing upstream: worth another backend. A refusal (403, 404…): not retried as busy.
+  return agentRunError(`后端报错：${last.trim().slice(0, 300)}`, status === 429 || status >= 500 ? "rate-limit" : "other");
+}
 const STREAM_QUOTA_NOTICE = /^⚠\uFE0F? Individual quota reached\. Please upgrade your subscription to increase your limits\.(?: Resets in (?:\d+[dhms]\s*)+\.)?$/i;
 
 function optionValues(option: SessionConfigOption): string[] {  if (option.type !== "select") return [];
@@ -711,6 +724,8 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
           if (signal?.aborted) throw new Error("CANCELLED");
           const last = segments.at(-1)!.trim();
           if (STREAM_QUOTA_NOTICE.test(last)) throw agentRunError(last, "quota");
+          const codexError = codexErrorReply(last);
+          if (codexError) throw codexError;
           return { text, reply: replyFromSegments(segments), stopReason: result.stopReason, sessionId, agent: agentName, contextUsage };
         } finally {
           endCommandTurn?.();

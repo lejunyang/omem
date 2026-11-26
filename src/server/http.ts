@@ -69,7 +69,9 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewR
 import { callTool, contextToolNames, mcpTools, onToolTokenRevoked, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, keyBackendsOf, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
+import { forgetRelayErrors, keyPaused, relayRequest, relayStats } from "../core/ai-relay.ts";
+import { useRelayBase } from "../core/ai-relay-addr.ts";
+import { allProfiles, keyBackendsOf, providerFormats, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
 import { credentialExecution, memberExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
@@ -181,7 +183,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).
     if (req.routeOptions.url === "/api/credentials/outcome" || req.routeOptions.url === "/api/remote/agent-browser") return; // Authenticated by gateCaller.
-    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|operation-gate|code-index\/notify|hooks)(\/|\?|$)/.test(req.url)) return;
+    // The API-key relay checks its own per-backend token (core/ai-relay.ts).
+    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|operation-gate|code-index\/notify|hooks|ai\/relay)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
     await checkBearer(app, bearerToken(req));
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
@@ -3816,6 +3819,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return {
       providers: app.config.ai.providers.map((p) => ({
         ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id], offers: keyBackendsOf(p),
+        relay: relayStats(app, p.id), paused: keyPaused(app, p.id),
         listed: cache[p.id] ? { at: cache[p.id].at, count: cache[p.id].models.length, models: cache[p.id].models, info: cache[p.id].info ?? {}, error: cache[p.id].error } : null,
       })),
       decisionModels: decisionStatuses(app.config, app.home),
@@ -3897,21 +3901,33 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       throw new HttpError(502, (e as Error).message);
     }
   });
+  // Backends on a third party's key reach it through here (core/ai-relay.ts): the body as it came, the answer streamed back.
+  await server.register(async (relay) => {
+    relay.removeAllContentTypeParsers();
+    relay.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: 64 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+    relay.route({ method: ["GET", "POST"], url: "/api/ai/relay/:provider/:backend/:format/*", handler: (req, reply) => relayRequest(app, req, reply) });
+  });
   server.post("/api/ai/providers/:id/test", async (req) => {
     const p = app.config.ai.providers.find((x) => x.id === (req.params as { id: string }).id);
     if (!p) throw new HttpError(404, "没有这个提供方");
     const key = keyOf(p.id, app.home);
     const r: { ok: boolean; detail: string; anthropicUrl?: string } = await testProvider(p, key);
     if (!r.ok) return r;
+    // Checked and fine: its backends are used again (a spent quota or a refused key the relay noted is over).
+    const { clearOutOfQuota } = await import("../agents/capacity.ts");
+    clearOutOfQuota(app, `key:${p.id}`);
+    forgetRelayErrors(app, p.id);
+    (await import("../core/decision.ts")).clearDecisionPause(p.id);
     await freshModels(p.id);
-    if (p.kind !== "openai-compatible") return r;
-    // A third party: find its Anthropic-shaped address (Claude Code needs one) and call the backends' model once.
-    if (!p.anthropicUrl && p.baseUrl) {
+    if (p.kind !== "openai-compatible" && p.kind !== "ark") return r;
+    // A third party: find its Anthropic-shaped address (Claude Code needs one; Ark's is known) and call the backends' model once.
+    if (p.kind === "openai-compatible" && !p.anthropicUrl && p.baseUrl) {
       const found = await findAnthropicUrl(p.baseUrl, key);
       if (found) r.anthropicUrl = found;
     }
     if (p.model) {
-      const m = await tryBackendModel({ ...p, anthropicUrl: p.anthropicUrl ?? r.anthropicUrl }, key);
+      const at = providerFormats(p);
+      const m = await tryBackendModel({ model: p.model, baseUrl: at.openai?.url, anthropicUrl: at.anthropic?.url ?? r.anthropicUrl }, key, fetch, p.kind);
       return { ...r, ok: m.ok, detail: `${r.detail}；${m.detail}` };
     }
     return r;
@@ -3944,6 +3960,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const address = await server.listen({ port: opts.port ?? app.config.port, host });
   const url = new URL(address);
   app.baseUrl = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${url.port}`;
+  useRelayBase(app.baseUrl);
   if (!opts.quiet) console.log(`omem 已启动：${app.baseUrl}${dist ? "" : "（未找到网页构建产物，仅 API）"}`);
   // HTTPS (HTTP/2) for browsers beside the plain port (src/server/secure.ts). Not starting it does
   // not stop omem: the plain port is still there.

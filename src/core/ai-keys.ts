@@ -2,6 +2,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join, resolve } from "node:path";
 import type { AgentProfile, Config } from "./config.ts";
 import { omemHome } from "./config.ts";
+import { relayToken } from "./ai-relay-addr.ts";
+import { classifyError, type ErrorKind } from "./ai-errors.ts";
 
 /**
  * API keys of the AI providers (`ai.providers`), in secrets/ai-keys.json beside the other secrets:
@@ -59,11 +61,13 @@ export function keyVars(kind: string, key: string, baseUrl?: string): Record<str
  * and models are not secret and are already in the profile's env: config.ts `keyedProfiles`, which
  * also names the variables the key goes in.)
  */
-export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> & { keyVars?: string[] }): Record<string, string> {
+export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> & { keyVars?: string[]; keyRelay?: boolean }): Record<string, string> {
   if (!profile.keyRef) return {};
   const key = keyOf(profile.keyRef);
   if (!key) throw new Error(`后端 ${profile.id} 用的 API key（${profile.keyRef}）还没有填写：设置 → 后端与模型 → API key`);
-  if (profile.keyVars?.length) return Object.fromEntries(profile.keyVars.map((v) => [v, key]));
+  // Through the relay the agent holds the relay's token; omem adds the key on the way out.
+  const value = profile.keyRelay ? relayToken(profile.id) : key;
+  if (profile.keyVars?.length) return Object.fromEntries(profile.keyVars.map((v) => [v, value]));
   const s = `${profile.id} ${profile.command}`;
   return keyVars(/claude/.test(s) ? "anthropic" : /codex/.test(s) ? "openai" : "", key);
 }
@@ -73,6 +77,7 @@ export const DEFAULT_BASE: Record<string, string> = {
   anthropic: "https://api.anthropic.com",
   typesafe: "https://api.typesafe.ai",
   openrouter: "https://openrouter.ai/api",
+  ark: "https://ark.cn-beijing.volces.com/api/v3",
 };
 /**
  * Where a provider's API is. Cloudflare's is per account: Workers AI under
@@ -108,6 +113,7 @@ export async function testProvider(p: Provider, key: string, fetcher: typeof fet
     return { ok: true, detail: "已填写（TypeSafe 没有免费的检查接口，第一次判断时才知道是否可用）" };
   } else {
     if (!base) return { ok: false, detail: "OpenAI 兼容的提供方要填写接口地址" };
+    // Ark and OpenAI-compatible services: listing the models is free and checks the key.
     url = `${base}/models`;
     headers = { authorization: `Bearer ${key}` };
   }
@@ -146,7 +152,7 @@ export async function findAnthropicUrl(baseUrl: string, key: string, fetcher: ty
  * reply of at most one token. Services often list models the account cannot call by that name (Ark
  * accounts that must use an endpoint ID): this is where that shows.
  */
-export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUrl" | "model">, key: string, fetcher: typeof fetch = fetch): Promise<{ ok: boolean; detail: string }> {
+export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUrl" | "model">, key: string, fetcher: typeof fetch = fetch, kind = "openai-compatible"): Promise<{ ok: boolean; detail: string }> {
   if (!p.model) return { ok: false, detail: "还没有填写后端用的模型" };
   const calls: [string, string, Record<string, string>, unknown][] = [];
   if (p.baseUrl) calls.push(["OpenAI 格式", `${p.baseUrl.replace(/\/+$/, "")}/chat/completions`, { authorization: `Bearer ${key}` }, { model: p.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }]);
@@ -156,19 +162,17 @@ export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUr
     try {
       const r = await fetcher(url, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });
       if (r.ok) continue;
-      const text = await r.text().catch(() => "");
-      let msg = text.slice(0, 300);
-      try {
-        const e = (JSON.parse(text) as { error?: { message?: string; code?: string } }).error;
-        if (e?.message) msg = `${e.code ? `${e.code}：` : ""}${e.message}`.replace(/\s*Request id:.*$/i, "").slice(0, 300);
-      } catch {}
-      bad.push(`${label} ${r.status}${msg ? `：${msg}` : ""}`);
+      const c = classifyError(kind, r.status, await r.text().catch(() => ""));
+      const msg = `${c.code ? `${c.code}：` : ""}${c.message}`;
+      bad.push(`${label} ${r.status}${msg ? `：${msg}` : ""}（${ERROR_WORD[c.kind]}）`);
     } catch (e) {
       bad.push(`${label}连不上：${(e as Error).message}`);
     }
   }
   return bad.length ? { ok: false, detail: `模型 ${p.model} 调不通（${bad.join("；")}）` } : { ok: true, detail: `模型 ${p.model} 可以调用` };
 }
+/** The kinds of provider error (core/ai-errors.ts) in a few words. */
+export const ERROR_WORD: Record<ErrorKind, string> = { rate: "限流，稍后自动恢复", daily: "今天的用量到上限了", quota: "额度用完或欠费", auth: "key 被拒绝", config: "模型或接入点不对", server: "提供方出错", input: "这次请求被拒", other: "其他错误" };
 
 export type Category = "voice" | "decision" | "image";
 /** Which provider kinds can serve a category. startlux (decision) is the local judge, not a provider. */
@@ -310,7 +314,7 @@ const FORMAT_OF: Record<string, "chat" | "responses" | "anthropic"> = { "chat/co
 export async function listModelEntries(p: Provider, key: string, fetcher: typeof fetch = listFetch): Promise<{ models: string[]; info: Record<string, ModelInfo> } | null> {
   const base = baseOf(p);
   let url: string;
-  if (p.kind === "openai" || p.kind === "openai-compatible") url = `${base}/models`;
+  if (p.kind === "openai" || p.kind === "openai-compatible" || p.kind === "ark") url = `${base}/models`;
   else if (p.kind === "openrouter") url = `${base}/v1/models`;
   else if (p.kind === "cloudflare") url = `${base}/models/search?search=clef&per_page=50`;
   else return null;

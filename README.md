@@ -151,7 +151,7 @@ Antigravity CLI 按 PATH 中的 `agy` 识别，以 `agy acp` 启动并复用 CLI
 
 云端会话可以按运行授权检索、读原文，研究的阶段也能交给云端后端跑并用工具交结果。默认关闭。本人探测并确认后端后，可指定它能使用的工具；云端和这台机器在同一个内网时，可以允许用内网的 http 地址。每次调用沿用成员和运行的空间权限。[配置云端工具](docs/v2/external-access.md#云端后端调工具)。
 
-`omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → 后端与模型 → 添加 Agent”做同样的事；内置目录里有 npm 包的，在“其他支持的 Agent”里点“安装”就在后台装好（有 osdk 和 Node 时用 osdk 装）。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → 后端与模型 → API key 添加 OpenAI、Anthropic 或第三方（OpenAI 兼容，例如火山方舟）的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>`、`opencode@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；第三方的 key 选好模型（列表里点开能看到每个模型支持哪些格式），Claude Code 要的 Anthropic 格式地址检查时自动找；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → 后端与模型 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。
+`omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → 后端与模型 → 添加 Agent”做同样的事；内置目录里有 npm 包的，在“其他支持的 Agent”里点“安装”就在后台装好（有 osdk 和 Node 时用 osdk 装）。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → 后端与模型 → API key 添加 OpenAI、Anthropic、火山方舟或其他第三方（OpenAI 兼容）的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>`、`opencode@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；第三方的 key 选好模型（列表里点开能看到每个模型支持哪些格式），Claude Code 要的 Anthropic 格式地址检查时自动找；这些后端经 omem 转发，限流、每日用量、额度用完和欠费按提供方的错误码认出来，限流换后端，额度类暂停这个 key 并通知你；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → 后端与模型 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。
 
 设置 → 后端与模型 → 决策 可配置多个模型，按顺序或每次随机先问一个；不可用、拒答或出错会换下一个，刚出错的 5 分钟内排到最后，判断记录显示由谁回答及换用情况。 巡检、盯群、有人找你和直接答复分别设最低把握，按后续结果记录漏看、多看；同页可看报告，也可用命令离线比较其他决策模型。
 
@@ -715,7 +715,7 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 
 ```
 src/auth      登录：登录方（providers.ts，飞书在 lark.ts）、登录与绑定、邀请、机器人登录链接（login.ts）、会话 cookie（sessions.ts）、谁在请求与相关接口（http.ts）；权限（permissions.ts、routes.ts、tools.ts）；连接器：令牌保管（vault.ts）、刷新与续期（connections.ts）、功能与 scope（features.ts）、主人填的平台应用配置（apps.ts）、以某人身份用 lark-cli（lark-user.ts）
-src/core      配置、组网（mesh.ts：节点名片、请教别的 omem 的 Agent、借出 AI）、运行的触发方式和触发人（run-trigger.ts）、AI 提供方与 API key（ai-keys.ts）、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知（notify-reactions.ts：负反馈退回审批、学习忽略规则）、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）、进程监听的端口（listening.ts）与预览的本机转发（preview-forward.ts）
+src/core      配置、组网（mesh.ts：节点名片、请教别的 omem 的 Agent、借出 AI）、运行的触发方式和触发人（run-trigger.ts）、AI 提供方与 API key（ai-keys.ts；后端经 omem 转发与提供方错误码分类：ai-relay.ts、ai-errors.ts）、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知（notify-reactions.ts：负反馈退回审批、学习忽略规则）、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）、进程监听的端口（listening.ts）与预览的本机转发（preview-forward.ts）
 src/rules     任务规则、条件判断、执行动作与触发记录；预查库和先看一眼（快速通道）
 src/mentions  有人找你：学本人怎么回（reply-learn.ts）、回复档位的升降（reply-ladder.ts）、预筛、等规则和整理、每日上限、分诊、处理与兜底、回复对方的检查（和渠道无关，channel.ts 是渠道接口；飞书的实现在 channels/lark-mentions.ts、mention-reply.ts，经豆包以本人身份发私聊在 doubao-send.ts）
 src/remote    远程操作：aad 的进程（assist、mcp、record）、会话与画面转发（/remote）、录制、演示（demos.ts）

@@ -838,8 +838,10 @@ export function isRetryableAgentError(e: unknown): boolean {
 export function noteQuota(app: App, profile: AgentProfile, e: unknown, emit: (e: AgentEvent) => void) {
   if (!(e instanceof Error) || !(isAgentRunError(e) ? e.kind === "quota" : isQuotaMessage(e.message))) return false;
   // A user's own account is set aside for that user's runs only (capacity.ts keeps it apart from the owner's).
-  const until = markOutOfQuota(app, profile, e.message);
-  const one = !!profile.model && isModelQuotaMessage(e.message, profile.model);
+  // An API key's relay says when (core/ai-relay.ts `relayFailure`), and that the whole key is spent.
+  const known = (e as { resetAt?: Date }).resetAt;
+  const until = known ? markOutOfQuota(app, profile, e.message, new Date(), known, false) : markOutOfQuota(app, profile, e.message);
+  const one = !known && !!profile.model && isModelQuotaMessage(e.message, profile.model);
   emit({ type: "status", text: `${accountOf(profile) ? "你自己的 " : ""}${profile.name ?? profile.id}${accountOf(profile) ? " 账号" : ""}${one ? ` 的模型 ${profile.model}` : ""} 的额度用完了，${until.toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 前自动改用${one ? "其他模型和后端" : "其他后端"}` });
   return true;
 }

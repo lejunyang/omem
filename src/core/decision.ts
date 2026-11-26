@@ -1,4 +1,6 @@
 import type { App } from "./app.ts";
+import { classifyError, pauseFor } from "./ai-errors.ts";
+import { noteProviderError, resumeAt } from "./ai-relay.ts";
 import { baseOf, categoryStatus, clefModel, decisionStatus, decisionStatuses, type CategoryStatus, type DecisionChoice, type DecisionMedia, keyOf } from "./ai-keys.ts";
 
 /**
@@ -53,6 +55,10 @@ const MAX_QUESTIONS = 8;
 const COOL_MS = 5 * 60_000;
 const down = new Map<string, number>();
 const choiceKey = (c: DecisionChoice) => `${c.provider}\n${c.model}`;
+/** The owner checked a key and it works: its decision models are asked in their usual place again. */
+export function clearDecisionPause(provider: string) {
+  for (const k of down.keys()) if (k.startsWith(`${provider}\n`)) down.delete(k);
+}
 /** Tests start from a clean slate. */
 export function resetDecisionCooldownForTests() {
   down.clear();
@@ -115,11 +121,23 @@ async function decideQuestions(app: App, material: Material, questions: Question
       if (opts.signal?.aborted) throw e;
       last = e;
       passed.push(s.detail);
-      // A refusal is about this question; anything else about the model: keep it out of the way for a while.
-      if (!(e instanceof DecisionRefused)) down.set(choiceKey(s), Date.now() + COOL_MS);
+      // A refusal is about this question; anything else about the model: keep it out of the way for a
+      // while, as long as the kind of error says (a per-minute limit a minute, a daily one till midnight,
+      // spent credit a day or until the key is checked again; core/ai-errors.ts).
+      if (!(e instanceof DecisionRefused)) down.set(choiceKey(s), pauseAfter(app, s, e));
     }
   }
   throw last;
+}
+
+function pauseAfter(app: App, s: Usable, e: unknown) {
+  const now = Date.now();
+  const { status, body } = e as { status?: number; body?: string };
+  const p = app.config.ai.providers.find((x) => x.id === s.provider);
+  if (!status || !p) return now + COOL_MS;
+  const c = classifyError(p.kind, status, body ?? "");
+  noteProviderError(app, p.id, status, c);
+  return pauseFor(c.kind, now, (at) => resumeAt(app, "daily", at).getTime()) ?? now + COOL_MS;
 }
 
 async function ask(app: App, s: Usable, material: Material, questions: Questions, signal: AbortSignal, media: DecisionMediaInput, single: boolean) {
@@ -136,7 +154,7 @@ async function ask(app: App, s: Usable, material: Material, questions: Questions
 async function post(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal) {
   const r = await fetcher(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
   const text = await r.text();
-  if (!r.ok) throw new Error(`决策模型返回 ${r.status}：${text.slice(0, 300)}`);
+  if (!r.ok) throw Object.assign(new Error(`决策模型返回 ${r.status}：${text.slice(0, 300)}`), { status: r.status, body: text });
   try {
     return JSON.parse(text);
   } catch {

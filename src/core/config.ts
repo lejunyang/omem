@@ -6,6 +6,7 @@ import { acpCatalog, catalogProfile, referencedPluginProfiles, upgradeProfileArg
 import { omemHome } from "./home.ts";
 import { systemZone, validZone } from "./util.ts";
 import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
+import { relayUrl } from "./ai-relay-addr.ts";
 import { isIP } from "node:net";
 
 /**
@@ -75,6 +76,8 @@ type ApiFormat = "openai" | "anthropic";
 /** The API format each of them speaks: OpenCode either (OpenAI's first). */
 const BACKEND_FORMATS: Record<KeyBackend, ApiFormat[]> = { claude: ["anthropic"], "claude-cli": ["anthropic"], codex: ["openai"], "codex-cli": ["openai"], opencode: ["openai", "anthropic"] };
 type ProviderAddr = { url: string; official: boolean };
+/** Volcengine Ark's public OpenAI-shaped address (Beijing region). */
+export const ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3";
 /**
  * Where a provider takes each API format: OpenAI and Anthropic keys their own vendor's (official
  * unless `baseUrl` says otherwise); a third-party (`openai-compatible`) key its OpenAI-shaped
@@ -84,6 +87,11 @@ export function providerFormats(pr: { kind: string; baseUrl?: string; anthropicU
   const trim = (u: string) => u.replace(/\/+$/, "");
   if (pr.kind === "openai") return { openai: { url: trim(pr.baseUrl ?? "https://api.openai.com/v1"), official: !pr.baseUrl } };
   if (pr.kind === "anthropic") return { anthropic: { url: trim(pr.baseUrl ?? "https://api.anthropic.com"), official: !pr.baseUrl } };
+  // Ark: the Anthropic-shaped API sits beside the OpenAI one (…/api/v3 → …/api/compatible).
+  if (pr.kind === "ark") {
+    const openai = trim(pr.baseUrl ?? ARK_BASE);
+    return { openai: { url: openai, official: !pr.baseUrl }, anthropic: { url: trim(pr.anthropicUrl ?? openai.replace(/\/v3$/, "/compatible")), official: !pr.baseUrl && !pr.anthropicUrl } };
+  }
   if (pr.kind === "openai-compatible") return { ...(pr.baseUrl ? { openai: { url: trim(pr.baseUrl), official: false } } : {}), ...(pr.anthropicUrl ? { anthropic: { url: trim(pr.anthropicUrl), official: false } } : {}) };
   return {};
 }
@@ -159,6 +167,8 @@ export const agentProfileSchema = z.object({
   keyRef: z.string().optional(),
   /** The environment variables that key goes in at launch (set by `keyedProfiles`). */
   keyVars: z.array(z.string()).optional(),
+  /** Reaches the provider through omem's relay (core/ai-relay.ts): those variables get the relay's token, not the key. */
+  keyRelay: z.boolean().optional(),
   /** Another login of the owner's (agents/login-slots.ts): the folder its `env` points the backend's login at. */
   loginDir: z.string().optional(),
   /**
@@ -843,9 +853,10 @@ export const configSchema = z.object({
         name: z.string().trim().max(40).default(""),
         /**
          * typesafe: Jev (TypeSafe's own API); openrouter: OpenRouter (Jev and others); cloudflare: Workers AI
-         * (the Clef decision models, Jev-shaped); openai-compatible: any OpenAI-shaped API.
+         * (the Clef decision models, Jev-shaped); ark: Volcengine Ark (火山方舟), OpenAI- and Anthropic-shaped
+         * at known places, its own error codes; openai-compatible: any other OpenAI-shaped API.
          */
-        kind: z.enum(["openai", "anthropic", "typesafe", "openrouter", "cloudflare", "openai-compatible"]),
+        kind: z.enum(["openai", "anthropic", "typesafe", "openrouter", "cloudflare", "ark", "openai-compatible"]),
         baseUrl: z.string().url().optional(),
         /** openai-compatible: the same service's Anthropic-shaped address (Claude Code goes there), when it has one. */
         anthropicUrl: z.string().url().optional(),
@@ -1656,7 +1667,10 @@ function sameProgramBuiltin(p: AgentProfile): AgentProfile | undefined {
  *   (`omem-key`, Responses API), since Codex no longer reads `OPENAI_BASE_URL`.
  * - OpenCode: an inline config (`OPENCODE_CONFIG_CONTENT`) with one provider and the model.
  *
- * `OMEM_AI_BASE_URL` carries the address for the egress allowance (agents/egress-policy.ts).
+ * Every one goes through omem's relay (core/ai-relay.ts) while the service runs: the agent gets the
+ * relay's address and a token of its own, omem adds the key and sees every error the provider
+ * returns (its rate limits and quotas). Without the service (tests, a one-off command) they go direct. `OMEM_AI_BASE_URL` carries a
+ * direct address for the egress allowance (agents/egress-policy.ts); the relay is this service's own.
  */
 export function keyedProfiles(config: Config): AgentProfile[] {
   const out: AgentProfile[] = [];
@@ -1669,7 +1683,9 @@ export function keyedProfiles(config: Config): AgentProfile[] {
       if (!base) continue;
       const label = (base.name ?? base.id).replace(/\)$/, ` · ${pr.name || pr.id})`);
       const fmt = BACKEND_FORMATS[b].find((f) => formats[f])!;
-      const at = formats[fmt]!;
+      const direct = formats[fmt]!;
+      const relayed = relayUrl(pr.id, `${b}@${pr.id}`, fmt);
+      const at = relayed ? { url: relayed, official: false } : direct;
       const model = pr.model || undefined;
       let env: Record<string, string> = {};
       let args = base.args;
@@ -1682,28 +1698,33 @@ export function keyedProfiles(config: Config): AgentProfile[] {
           env.ANTHROPIC_MODEL = model;
           if (pr.kind !== "anthropic") Object.assign(env, { ANTHROPIC_DEFAULT_OPUS_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model, CLAUDE_CODE_SUBAGENT_MODEL: model });
         }
-        if (pr.kind !== "anthropic") env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+        if (pr.kind !== "anthropic") {
+          env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+          // A third party's short rate limits: give up after a few tries so the run can move on, not
+          // after Claude Code's own ten (minutes of silence). The relay already waits out short ones.
+          env.CLAUDE_CODE_MAX_RETRIES = "3";
+        }
       } else if (b === "codex" || b === "codex-cli") {
         if (model) profileModel = model;
         if (at.official) keyVars = ["CODEX_API_KEY", "OPENAI_API_KEY"];
         else {
           keyVars = ["OMEM_AI_KEY"];
           const provider = { name: pr.name || pr.id, base_url: at.url, env_key: "OMEM_AI_KEY", wire_api: "responses" };
-          env.OMEM_AI_BASE_URL = at.url;
+          if (!relayed) env.OMEM_AI_BASE_URL = at.url;
           if (b === "codex") Object.assign(env, { MODEL_PROVIDER: "omem-key", CODEX_CONFIG: JSON.stringify({ model_provider: "omem-key", model_providers: { "omem-key": provider } }) });
           else args = [...base.args, "-c", `model_provider="omem-key"`, "-c", `model_providers.omem-key={${Object.entries(provider).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(",")}}`];
         }
       } else {
         // OpenCode: one provider of its own and the model, nothing written to its config files.
         keyVars = ["OMEM_AI_KEY"];
-        const name = model || (fmt === "openai" && at.official ? builtinProfiles.find((p) => p.id === "codex")?.model : undefined);
+        const name = model || (fmt === "openai" && direct.official ? builtinProfiles.find((p) => p.id === "codex")?.model : undefined);
         if (!name) continue;
-        const npm = fmt === "anthropic" ? "@ai-sdk/anthropic" : at.official ? "@ai-sdk/openai" : "@ai-sdk/openai-compatible";
+        const npm = fmt === "anthropic" ? "@ai-sdk/anthropic" : direct.official ? "@ai-sdk/openai" : "@ai-sdk/openai-compatible";
         const baseURL = fmt === "anthropic" ? `${at.url}/v1` : at.url;
-        env.OMEM_AI_BASE_URL = at.url;
+        if (!relayed) env.OMEM_AI_BASE_URL = at.url;
         env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ model: `omem-key/${name}`, provider: { "omem-key": { npm, name: pr.name || pr.id, options: { baseURL, apiKey: "{env:OMEM_AI_KEY}" }, models: { [name]: {} } } } });
       }
-      out.push({ ...base, id: `${b}@${pr.id}`, name: label, args, model: profileModel, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, source: `key:${pr.id}` });
+      out.push({ ...base, id: `${b}@${pr.id}`, name: label, args, model: profileModel, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, ...(relayed ? { keyRelay: true } : {}), source: `key:${pr.id}` });
     }
   }
   return out;

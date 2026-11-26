@@ -155,8 +155,8 @@ const downMap = (app: App) => {
   if (!m) { m = new Map(); downs.set(app, m); }
   return m;
 };
-export function markDown(app: App, p: AgentProfile, why: string, now = Date.now(), scope: "backend" | "model" = "backend") {
-  downMap(app).set(scope === "model" ? keyOf(p) : sourceOf(p), { until: now + DOWN_MS, why: why.slice(0, 200) });
+export function markDown(app: App, p: AgentProfile, why: string, now = Date.now(), scope: "backend" | "model" = "backend", ms = DOWN_MS) {
+  downMap(app).set(scope === "model" ? keyOf(p) : sourceOf(p), { until: now + ms, why: why.slice(0, 200) });
 }
 /**
  * One failure of a kind that says the backend is not usable right now. `crash` and `queue` set it
@@ -226,10 +226,9 @@ export function outOfQuotaUntil(app: App, p: AgentProfile, at = new Date()): str
   }
   return null;
 }
-export function markOutOfQuota(app: App, p: AgentProfile, message: string, at = new Date()) {
+/** `until`: when the provider's own words do not say (an API key's relay knows the kind of limit, not the time). */
+export function markOutOfQuota(app: App, p: AgentProfile, message: string, at = new Date(), until = quotaResetAt(message, at, app.config.timezone), perModel = !!p.model && isModelQuotaMessage(message, p.model)) {
   const st = Object.fromEntries(Object.entries(quotaState(app)).filter(([, e]) => Date.parse(e.until) > at.getTime()));
-  const perModel = !!p.model && isModelQuotaMessage(message, p.model);
-  const until = quotaResetAt(message, at, app.config.timezone);
   st[accountScope(p) + (perModel ? keyOf(p) : sourceOf(p))] = { until: until.toISOString(), message: message.slice(0, 300) };
   run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", QUOTA_KEY, JSON.stringify(st));
   return until;

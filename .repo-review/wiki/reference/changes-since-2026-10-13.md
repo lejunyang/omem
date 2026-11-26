@@ -2,8 +2,15 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，这里只留最近的；更早的按时间段放在同目录的归档文件里。读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-26
+updated: 2026-11-27
 ---
+
+## API key 的后端经 omem 转发，按提供方错误码处理（2026-11-27）
+
+- 设置 → 后端与模型 → API key 新增“火山方舟”一类（`ark`），和“OpenAI 兼容”分开：默认地址、Anthropic 格式地址按方舟的规则，认得方舟的错误码；以前按兼容接口加的方舟 key 那一行可点“改成火山方舟”。
+- API key 生成的后端在服务运行时都经 omem 转发（`src/core/ai-relay.ts`，`/api/ai/relay/…`）：后端拿 omem 发的令牌，omem 换上 key 原样转发，回答以流的方式原样传回。错误按提供方码表分类（`src/core/ai-errors.ts`：方舟、OpenAI、Anthropic、Cloudflare，其他按状态码和字眼）：限流在转发处等几秒重试，仍限流就交还 429 并让这个 key 退后 1 分钟；每日用量、额度、欠费改成 400 交还，让 Agent 立刻停下，key 暂停到午夜或检查通过，额度和 key 被拒通知本人一次。运行失败时按转发看到的错误改写为 `rate-limit` / `quota`（`relayFailure`）。
+- Codex 把提供方报错当回复交回（“exceeded retry limit, last status: 429”等）的回合现在算失败（`acp.ts` 的 `codexErrorReply`）；第三方的 Claude Code 只重试 3 次（`CLAUDE_CODE_MAX_RETRIES`）。
+- 决策模型出错用同一套分类决定排到后面多久（以前一律 5 分钟），错误也记在 API key 页那一行。
 
 ## 第三方 API key 也能生成后端（2026-11-26）
 
