@@ -71,7 +71,7 @@ describe("API-key providers", () => {
     setKey(home, "ark", "k");
     mkdirSync(join(home, "cache"), { recursive: true });
     writeFileSync(join(home, "cache", "ai-models.json"), JSON.stringify({ ark: { at: Date.now(), models: ["chat-only", "glm-5", "plain", "seedream"], info: {
-      "glm-5": { formats: ["chat", "responses", "anthropic"], type: "LLM", tools: true },
+      "glm-5": { formats: ["chat", "responses", "anthropic"], type: "LLM", tools: true, efforts: ["minimal", "low", "high"] },
       "chat-only": { formats: ["chat"], type: "LLM" },
       seedream: { type: "ImageGeneration" },
     } } }));
@@ -93,16 +93,19 @@ describe("API-key providers", () => {
     expect(JSON.parse(keyEnv({ ...by["opencode@ark"], model: "ep-2" }).OPENCODE_CONFIG_CONTENT).model).toBe("omem-key/ep-2");
     // “检测模型” on the general page lists the key's models without starting the agent.
     expect((await probeProfile(by["codex@ark"])).models).toEqual(["ep-1", "ep-2"]);
+    // Each model's thinking levels are what the listing says; an endpoint ID it does not name gets none.
+    const listedOnly = keyedProfiles(withProviders([pr])).find((p) => p.id === "codex@ark")!;
+    expect(await probeProfile(listedOnly)).toMatchObject({ models: ["glm-5", "plain"], effortsByModel: { "glm-5": ["minimal", "low", "high"], plain: [] }, efforts: ["minimal", "low", "high"] });
   });
 
   it("reads what a listing says about each model, finds the Anthropic address and calls the model once", async () => {
     const p = { id: "ark", name: "", kind: "openai-compatible" as const, baseUrl: "https://ark.example.com/api/v3", backends: [] };
     const listing = (async () => Response.json({ data: [
-      { id: "glm-5", domain: "LLM", api_supported: { "chat/completions": true, responses: true, messages: true }, features: { tools: { function_calling: true } } },
+      { id: "glm-5", domain: "LLM", api_supported: { "chat/completions": true, responses: true, messages: true }, features: { tools: { function_calling: true } }, effort: { default_level: "high", supported_levels: ["low", "medium", "high", "minimal"] } },
       { id: "seedream", domain: "ImageGeneration" },
       { id: "plain" },
     ] })) as unknown as typeof fetch;
-    expect(await listModelEntries(p, "k", listing)).toEqual({ models: ["glm-5", "plain", "seedream"], info: { "glm-5": { formats: ["chat", "responses", "anthropic"], type: "LLM", tools: true }, seedream: { type: "ImageGeneration" } } });
+    expect(await listModelEntries(p, "k", listing)).toEqual({ models: ["glm-5", "plain", "seedream"], info: { "glm-5": { formats: ["chat", "responses", "anthropic"], type: "LLM", tools: true, efforts: ["minimal", "low", "medium", "high"] }, seedream: { type: "ImageGeneration" } } });
     const asked: string[] = [];
     const probe = (async (url: string, init: { headers: Record<string, string> }) => {
       asked.push(url);

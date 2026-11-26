@@ -5,7 +5,7 @@ import { runAcp } from "./acp.ts";
 import { probeDoubaoCli } from "./doubao-cli.ts";
 import { all } from "../core/db.ts";
 import type { App } from "../core/app.ts";
-import { allProfiles } from "../core/config.ts";
+import { allProfiles, listedModelsOf } from "../core/config.ts";
 import { OWNER } from "../core/users.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
 import { accountFor } from "./accounts.ts";
@@ -105,10 +105,14 @@ export async function probeProfile(profile: AgentProfile, app?: App): Promise<Pr
 
 async function probeOn(profile: AgentProfile, app?: App, signal?: AbortSignal): Promise<ProbeInfo> {
   // A third party's key: its models are the key's (config.ts keyedProfiles), not what the agent lists for its
-  // vendor. Nothing to start: the levels are the ones the same agent showed on its own account.
+  // vendor, and each model's thinking levels are what the key's listing says (Ark: `effort.supported_levels`).
+  // Nothing to start. A model the listing says nothing about (an endpoint ID) gets none: the provider's default.
   if (profile.keyModels) {
     const own = app ? cachedProbe(app, profile.id.split("@")[0]) : null;
-    return { at: new Date().toISOString(), agent: profile.name ?? profile.id, models: profile.keyModels, efforts: own?.efforts ?? [], modes: own?.modes ?? [],
+    const info = profile.keyRef ? listedModelsOf(profile.keyRef)?.info ?? {} : {};
+    const effortsByModel = Object.fromEntries(profile.keyModels.map((m) => [m, info[m]?.efforts ?? []]));
+    const efforts = [...new Set(Object.values(effortsByModel).flat())];
+    return { at: new Date().toISOString(), agent: profile.name ?? profile.id, models: profile.keyModels, efforts, effortsByModel, modes: own?.modes ?? [],
       ...(profile.keyModels.length ? {} : { error: "这个 key 还没有可用的模型：到 API key 页点“检查”读模型列表，或手动添加模型" }) };
   }
   if (profile.transport === "doubao")

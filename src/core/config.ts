@@ -1687,11 +1687,12 @@ function sameProgramBuiltin(p: AgentProfile): AgentProfile | undefined {
  * direct address for the egress allowance (agents/egress-policy.ts); the relay is this service's own.
  */
 /** The models a key's provider listed (ai-keys.ts reads its cache): set by ai-keys, which imports this file. */
-type Listed = { models: string[]; info?: Record<string, { formats?: string[]; type?: string; tools?: boolean }> } | null;
+type Listed = { models: string[]; info?: Record<string, { formats?: string[]; type?: string; tools?: boolean; efforts?: string[] }> } | null;
 let listedFor: (provider: string) => Listed = () => null;
 export function useListedModels(f: (provider: string) => Listed) {
   listedFor = f;
 }
+export const listedModelsOf = (provider: string) => listedFor(provider);
 const isThirdParty = (kind: string) => kind === "ark" || kind === "openai-compatible";
 /** The models an owner named for a key's backends, first the default (`models`, or the older single `model`). */
 export function providerModels(pr: { models?: string[]; model?: string }) {

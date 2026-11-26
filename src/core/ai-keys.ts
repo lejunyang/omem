@@ -285,7 +285,8 @@ export type ModelField = "image" | "voice.live" | "voice.realtime" | "voice.tran
  * does not): the API formats it answers (`chat` = Chat Completions, `responses`, `anthropic` =
  * Messages), what it is for (`LLM`, `ImageGeneration`…), and whether it calls tools.
  */
-export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean };
+/** What a listing says about one model: API formats, domain, tool calls, and the thinking levels it takes (default first). */
+export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean; efforts?: string[] };
 type ModelCache = Record<string, { at: number; models: string[]; info?: Record<string, ModelInfo>; error?: string }>;
 const cacheFile = (home: string) => join(home, "cache", "ai-models.json");
 /** The listing kept for each key, for config.ts to pick a key's backend models from; read again when the file changes. */
@@ -318,7 +319,10 @@ export function setModelListFetchForTests(f: typeof fetch | null) {
   listFetch = f ?? ((...a) => fetch(...a));
 }
 
-type Listed = { id?: string; name?: string; domain?: string; api_supported?: Record<string, boolean>; features?: { tools?: { function_calling?: boolean } } };
+type Listed = { id?: string; name?: string; domain?: string; api_supported?: Record<string, boolean>; features?: { tools?: { function_calling?: boolean } }; effort?: { default_level?: string; supported_levels?: string[] } };
+const LEVEL_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+/** A listing's thinking levels in the usual order (Ark lists `effort.supported_levels`). */
+const levelsOf = (e: Listed["effort"]) => [...new Set((e?.supported_levels ?? []).map(String))].sort((a, b) => (LEVEL_ORDER.indexOf(a) + 1 || 99) - (LEVEL_ORDER.indexOf(b) + 1 || 99));
 const FORMAT_OF: Record<string, "chat" | "responses" | "anthropic"> = { "chat/completions": "chat", responses: "responses", messages: "anthropic" };
 
 /** Models a provider lists, with what the listing says about each; null when it has no listing we know of (TypeSafe, Anthropic here). */
@@ -339,7 +343,7 @@ export async function listModelEntries(p: Provider, key: string, fetcher: typeof
     const id = String(m.id ?? "");
     if (!id) continue;
     const formats = m.api_supported ? Object.entries(m.api_supported).flatMap(([k, on]) => (on && FORMAT_OF[k] ? [FORMAT_OF[k]] : [])) : [];
-    const one: ModelInfo = { ...(formats.length ? { formats } : {}), ...(m.domain ? { type: m.domain } : {}), ...(m.features?.tools?.function_calling !== undefined ? { tools: !!m.features.tools.function_calling } : {}) };
+    const one: ModelInfo = { ...(formats.length ? { formats } : {}), ...(m.domain ? { type: m.domain } : {}), ...(m.features?.tools?.function_calling !== undefined ? { tools: !!m.features.tools.function_calling } : {}), ...(levelsOf(m.effort).length ? { efforts: levelsOf(m.effort) } : {}) };
     if (Object.keys(one).length) info[id] = one;
   }
   return { models: [...new Set((body.data ?? []).map((m) => String(m.id ?? "")).filter(Boolean))].sort(), info };
