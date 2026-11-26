@@ -21,6 +21,8 @@ import * as runner from "../src/agents/runner.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { startServer } from "../src/server/http.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
+import { notificationCard } from "../src/channels/item-notification.ts";
+import { listNotifications } from "../src/core/notify.ts";
 import { askCard, handleAskAction } from "../src/channels/lark-asks.ts";
 import { setItemListening } from "../src/channels/listen-items.ts";
 import { attachObject } from "../src/flows/plugin-objects.ts";
@@ -286,6 +288,13 @@ it.each([true, false])("有证据则直接停止循环第 2 轮（关闭事项=%
   expect(notice).toMatchObject({ urgency: "later", body: expect.stringContaining(`[看原文](src:${source.id}#L1)`) });
   expect(notice?.body.split("\n\n")[1]).toBe(`[事项页](#/work/${item.id})`);
   expect(notice?.body).toContain(closeItem ? "事项已标为完成" : "事项仍保留，未关闭");
+  // An update on the flow, not a nudge about the item: no 已处理 / 忽略, and its evidence opens.
+  app.config.webUrl = "https://omem.example.com";
+  const [n] = listNotifications(app).filter((x) => x.title.startsWith("已收口："));
+  const card = JSON.stringify(notificationCard(app, { ...n, userId: n.userId ?? "owner" }));
+  expect(card).not.toContain("item:done:");
+  expect(card).not.toContain("item:cancel:");
+  expect(card).toMatch(/\[看原文\]\(https:\/\/omem\.example\.com\/[^)]+\)/);
   expect(signal(app)).toContain("评审目的已达到");
 });
 

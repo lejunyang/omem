@@ -196,7 +196,8 @@ export async function submitReconcile(app: App, r: Run, args: z.infer<typeof rec
       for (const stage of itemStages(app, item.id)) unchanged(app, fresh, stage);
       await stopFlowNow(app, item.id, item.userId, { reason, evidence, runId: r.id });
       if (close_item) upsertItem(app, item.id, { status: "done", note: reason }, "agent", r.id);
-      notify(app, { userId: item.userId, title: `已收口：${item.title}`, urgency: "later", entity: "item", entityId: item.id,
+      // An update on the flow it closes (the card it replaces is that flow's): no 已处理 / 忽略, its evidence as links.
+      notify(app, { userId: item.userId, title: `已收口：${item.title}`, urgency: "later", entity: "item", entityId: item.id, view: "flow", tone: "done",
         link: `#/work/${item.id}`, sourceRefs: [], graceDone: true, replaces: f.card ?? undefined, runId: r.id,
         body: `${reason}\n\n[事项页](${webLink(app, `#/work/${item.id}`)})\n\n依据：${flowEvidenceLinks(app, item.id, evidence)}\n\n${close_item ? "事项已标为完成。" : "事项仍保留，未关闭。"}要再开始，可以对助手说，或在事项页${close_item ? "先重开事项，再开始流程" : "重新开始流程"}。` });
       setRunOutput(app, r.id, { reconcileResult: { summary: args.summary, next: [], finish: args.finish } });

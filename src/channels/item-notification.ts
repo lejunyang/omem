@@ -85,6 +85,13 @@ export async function cardImages(app: App, n: Pick<Notification, "images">): Pro
 }
 const imageBlocks = (images: CardImage[]) => images.flatMap((i) => [{ image: i.key, alt: i.alt }, ...(i.alt ? [{ note: i.alt }] : [])]);
 
+/**
+ * A notification a run sent cites what that run read: a citation with no address outside omem (a
+ * working file, a run's notes) opens as a read-only share of the cited part (channels/citations.ts),
+ * instead of being left as its bare label.
+ */
+const cite = (n: Pick<Notification, "runId">) => (n.runId ? { runId: n.runId } : {});
+
 export function notificationCard(app: App, n: Notification, images: CardImage[] = []) {
   if (n.digest) return itemDigestCard(app, n);
   if (n.entity === "item" && n.entityId) return itemNotificationCard(app, n, images);
@@ -93,7 +100,7 @@ export function notificationCard(app: App, n: Notification, images: CardImage[] 
     title: n.title,
     ...(n.tone ? { color: n.tone === "warning" ? "orange" : "green" } : {}),
     blocks: [
-      { markdown: resolveCitationsSync(app, n.body) || " " },
+      { markdown: resolveCitationsSync(app, n.body, cite(n)) || " " },
       ...imageBlocks(images),
       ...(buttons.length ? [{ buttons }] : []),
     ],
@@ -120,7 +127,7 @@ const FLOW_OPEN = 900;
  * opens the flow page: 已处理 / 忽略 would close or drop the whole item, not answer this card.
  */
 export function flowProgressCard(app: App, n: Notification, images: CardImage[] = []) {
-  const ps = paragraphs(resolveCitationsSync(app, n.body));
+  const ps = paragraphs(resolveCitationsSync(app, n.body, cite(n)));
   const tailAt = ps.findIndex((p, i) => i > 0 && p.startsWith(PROGRESS_TAIL[0]));
   const head = ps[0] ?? n.title, middle = ps.slice(1, tailAt < 0 ? undefined : tailAt), tail = tailAt < 0 ? [] : ps.slice(tailAt);
   const open: string[] = [], folded: string[] = [];
@@ -152,7 +159,7 @@ export function itemNotificationCard(app: App, n: Notification, images: CardImag
     urls.add(url);
     return link;
   });
-  const body = uniqueLinks(resolveCitationsSync(app, scopedBody));
+  const body = uniqueLinks(resolveCitationsSync(app, scopedBody, cite(n)));
   const links = uniqueLinks(notificationOrigins(app, n.sourceRefs ?? []));
   const origin = links ? `**来源**\n${links}` : "";
   return buildCard({
