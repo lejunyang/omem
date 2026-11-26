@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { AgentProfile, Config } from "./config.ts";
-import { omemHome } from "./config.ts";
+import { keyedModelEnv, omemHome, useListedModels } from "./config.ts";
 import { relayToken } from "./ai-relay-addr.ts";
 import { classifyError, type ErrorKind } from "./ai-errors.ts";
 
@@ -61,13 +61,14 @@ export function keyVars(kind: string, key: string, baseUrl?: string): Record<str
  * and models are not secret and are already in the profile's env: config.ts `keyedProfiles`, which
  * also names the variables the key goes in.)
  */
-export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> & { keyVars?: string[]; keyRelay?: boolean }): Record<string, string> {
+export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> & Partial<Pick<AgentProfile, "model" | "env" | "keyModels">> & { keyVars?: string[]; keyRelay?: boolean }): Record<string, string> {
   if (!profile.keyRef) return {};
   const key = keyOf(profile.keyRef);
   if (!key) throw new Error(`后端 ${profile.id} 用的 API key（${profile.keyRef}）还没有填写：设置 → 后端与模型 → API key`);
   // Through the relay the agent holds the relay's token; omem adds the key on the way out.
   const value = profile.keyRelay ? relayToken(profile.id) : key;
-  if (profile.keyVars?.length) return Object.fromEntries(profile.keyVars.map((v) => [v, value]));
+  // A third party's key: the model this run is on goes in at launch too (config.ts keyedModelEnv).
+  if (profile.keyVars?.length) return { ...keyedModelEnv(profile), ...Object.fromEntries(profile.keyVars.map((v) => [v, value])) };
   const s = `${profile.id} ${profile.command}`;
   return keyVars(/claude/.test(s) ? "anthropic" : /codex/.test(s) ? "openai" : "", key);
 }
@@ -287,6 +288,16 @@ export type ModelField = "image" | "voice.live" | "voice.realtime" | "voice.tran
 export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean };
 type ModelCache = Record<string, { at: number; models: string[]; info?: Record<string, ModelInfo>; error?: string }>;
 const cacheFile = (home: string) => join(home, "cache", "ai-models.json");
+/** The listing kept for each key, for config.ts to pick a key's backend models from; read again when the file changes. */
+let listedMemo: { file: string; mtime: number; cache: ModelCache } | null = null;
+useListedModels((provider) => {
+  const file = cacheFile(keyHome ?? omemHome());
+  let mtime = 0;
+  try { mtime = statSync(file).mtimeMs; } catch { return null; }
+  if (!listedMemo || listedMemo.file !== file || listedMemo.mtime !== mtime) listedMemo = { file, mtime, cache: readModelCache(keyHome ?? omemHome()) };
+  const e = listedMemo.cache[provider];
+  return e && !e.error ? { models: e.models, info: e.info } : null;
+});
 export function readModelCache(home: string): ModelCache {
   try {
     const v = JSON.parse(readFileSync(cacheFile(home), "utf8"));

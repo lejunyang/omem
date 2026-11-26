@@ -532,7 +532,8 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       throw agentRunError(`指定的${key === "model" ? "模型" : "思考强度"} ${value} 这次不可用：${agentName} 上次检测时有它，${now}（多半是它这会儿没取到模型目录；一直这样就在 设置 → AI 里重新检测）`, "catalog");
     };
     for (const [key, value] of [
-      ["model", profile.model],
+      // A third party's key: the model went in at launch; the agent's own list has only its vendor's models.
+      ["model", profile.keyModels ? undefined : profile.model],
       ["effort", profile.effort],
     ] as const) {
       if (!value) continue;

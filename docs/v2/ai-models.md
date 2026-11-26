@@ -6,7 +6,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 ## API key 与提供方
 
-`config.ai.providers`：编号、名称、类型、接口地址（可选）、要生成的后端；第三方的 key 另有 Anthropic 格式地址（`anthropicUrl`）和后端用的模型（`model`）。key 不进 config.json，存在 `secrets/ai-keys.json`（权限 600，不随快照和拉取同步），网页只拿到后 4 位（`src/core/ai-keys.ts`）。删掉提供方时一起删掉它的 key。
+`config.ai.providers`：编号、名称、类型、接口地址（可选）、要生成的后端；第三方的 key 另有 Anthropic 格式地址（`anthropicUrl`）和后端可用的模型（`models`，第一个是默认；旧设置的单个 `model` 当作只有它一个）。key 不进 config.json，存在 `secrets/ai-keys.json`（权限 600，不随快照和拉取同步），网页只拿到后 4 位（`src/core/ai-keys.ts`）。删掉提供方时一起删掉它的 key。
 
 | 类型 | 默认地址 | 能用于 |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 第三方（方舟和 OpenAI 兼容）的 key 检查通过后再做两件事（`/api/ai/providers/:id/test`）：
 
 - 没填 Anthropic 格式地址时，按顺序试 `GET <候选>/v1/models`（带 Bearer 和 `x-api-key`），返回模型列表的就是（`findAnthropicUrl`）：OpenAI 地址去掉末尾 `/v数字` 后加 `/compatible`（火山方舟：`…/api/v3` → `…/api/compatible`）、加 `/anthropic`、去掉后的根地址。找到后网页存进 `anthropicUrl`，Claude Code 后端随之出现。都不应时手填。
-- 填了后端用的模型时，用它在每种格式各发一次最多 1 个 token 的请求（`tryBackendModel`），把服务的报错原样写出来。火山方舟有的账号不允许直接用模型 ID，只能用接入点 ID（`ep-…`），这一步会看到 `ModelIDAccessDisabled`。
+- 用后端可用的模型（添加过的前三个；没添加就用后端默认的那个）在每种格式各发一次最多 1 个 token 的请求（`tryBackendModel`），把服务的报错原样写出来。火山方舟有的账号不允许直接用模型 ID，只能用接入点 ID（`ep-…`），这一步会看到 `ModelIDAccessDisabled`。
 
 ### 用 API key 生成后端
 
@@ -37,7 +37,8 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
   - OpenCode：`OPENCODE_CONFIG_CONTENT` 里写一个提供方 `omem-key`（第三方用 `@ai-sdk/openai-compatible`，OpenAI 官方 `@ai-sdk/openai`，Anthropic `@ai-sdk/anthropic`）和模型，`apiKey` 写成 `{env:OMEM_AI_KEY}`，不动它自己的配置文件。没有模型时（第三方没填、Anthropic 的 key）不生成；OpenAI 的 key 默认用内置 Codex 的模型。
 - 服务运行时，这些后端一律经 omem 转发（见下文）：地址是 `<omem>/api/ai/relay/<编号>/<后端>/<openai|anthropic>`，后端拿到的是 omem 发的令牌，不是 key（后端配置带 `keyRelay`）。没有服务时（测试、一次性命令）直接连提供方，地址写在 `env` 里（`ANTHROPIC_BASE_URL`，Codex 和 OpenCode 的另写 `OMEM_AI_BASE_URL`），出网策略据此放行（`egress-policy.ts` 的 `backendHosts`）。
 - 第三方的 Claude Code 另设 `CLAUDE_CODE_MAX_RETRIES=3`：它默认重试十次、等好几分钟，限流时这段时间不如交给下一个后端。
-- 第三方的模型名在 API key 页那一行的“后端用的模型”里选（从列表里挑或手填）；列表写明了模型支持的格式时，选了不支持 Responses 的模型又勾了 Codex、或不支持 Anthropic 格式又勾了 Claude Code，页面直接提示。
+- 第三方的后端只在这个 key 的模型上跑（`keyedProfiles` 给后端配置带上 `keyModels`），不用 Agent 自己那家的模型：API key 页那一行的“后端可用的模型”添加过的（可以多个，从列表里挑或手填接入点 ID，第一个是默认，可改），没添加就用模型列表里适合这个后端的全部模型（文字模型、不排除工具调用；列表写了格式时，Codex 要 Responses，Claude Code 要 Anthropic 格式，OpenCode 要 Chat），默认是其中第一个。列表写明了格式时，添加的模型不支持勾选的后端，页面直接提示。
+- 通用页这些后端的“检测模型”返回的就是这些模型，不启动 Agent（思考强度沿用同一个 Agent 本机账号检测到的）；在通用页选的默认模型只要还在其中就保留，其余配置始终跟着 key 生成。运行时选中的模型在启动时给出：Codex 经 `CODEX_CONFIG`，Claude Code 经 `ANTHROPIC_MODEL` 等变量，OpenCode 经 `OPENCODE_CONFIG_CONTENT`（`keyedModelEnv`），不再经 Agent 自己的模型列表切换。
 - 来源是 `key:<编号>`：额度、并发和“额度用完”跟本机登录的那个分开算；它没有套餐额度，设置 → 后端与模型 → 并行 的“账号额度”只列本机登录的 Codex、Claude Code。
 - key 被删掉时这个后端算“未安装”，选了它的运行直接报错，不会悄悄改用本机登录。
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { categoryStatus, defaultFor, findAnthropicUrl, keyEnv, listModelEntries,
 import { allProfiles, configSchema, keyedProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
 import { backendHosts } from "../src/agents/egress-policy.ts";
+import { probeProfile } from "../src/agents/probe.ts";
 
 const servers: { close(): Promise<unknown> }[] = [];
 afterAll(async () => {
@@ -50,7 +51,7 @@ describe("API-key providers", () => {
     expect(keyEnv(by["codex@ark"])).toEqual({ OMEM_AI_KEY: "ark-key-1" });
     // Claude Code: Bearer token, the model for every tier.
     expect(by["claude@ark"].env).toMatchObject({ ANTHROPIC_BASE_URL: "https://ark.example.com/api/compatible", ANTHROPIC_MODEL: "ep-123", ANTHROPIC_DEFAULT_SONNET_MODEL: "ep-123", CLAUDE_CODE_SUBAGENT_MODEL: "ep-123" });
-    expect(keyEnv(by["claude@ark"])).toEqual({ ANTHROPIC_AUTH_TOKEN: "ark-key-1" });
+    expect(keyEnv(by["claude@ark"])).toMatchObject({ ANTHROPIC_AUTH_TOKEN: "ark-key-1", ANTHROPIC_MODEL: "ep-123" });
     // OpenCode: an inline config naming the key by variable, not the key.
     const oc = JSON.parse(by["opencode@ark"].env.OPENCODE_CONFIG_CONTENT);
     expect(oc).toEqual({ model: "omem-key/ep-123", provider: { "omem-key": { npm: "@ai-sdk/openai-compatible", name: "方舟", options: { baseURL: "https://ark.example.com/api/v3", apiKey: "{env:OMEM_AI_KEY}" }, models: { "ep-123": {} } } } });
@@ -62,6 +63,36 @@ describe("API-key providers", () => {
     expect(custom.keyVars).toEqual(["OMEM_AI_KEY"]);
     expect(official.keyVars).toEqual(["CODEX_API_KEY", "OPENAI_API_KEY"]);
     expect(official.env.CODEX_CONFIG).toBeUndefined();
+  });
+
+  it("takes a third party's backend models from the key: the named ones, else the listing's that suit", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omem-keys-"));
+    useKeyHome(home);
+    setKey(home, "ark", "k");
+    mkdirSync(join(home, "cache"), { recursive: true });
+    writeFileSync(join(home, "cache", "ai-models.json"), JSON.stringify({ ark: { at: Date.now(), models: ["chat-only", "glm-5", "plain", "seedream"], info: {
+      "glm-5": { formats: ["chat", "responses", "anthropic"], type: "LLM", tools: true },
+      "chat-only": { formats: ["chat"], type: "LLM" },
+      seedream: { type: "ImageGeneration" },
+    } } }));
+    const pr = { id: "ark", name: "", kind: "ark", backends: ["codex", "claude", "opencode"] };
+    let by = Object.fromEntries(keyedProfiles(withProviders([pr])).map((p) => [p.id, p]));
+    // Nothing named: the listing's text models that take the backend's format; never the agent's own vendor model.
+    expect(by["codex@ark"].keyModels).toEqual(["glm-5", "plain"]);
+    expect(by["codex@ark"].model).toBe("glm-5");
+    expect(by["opencode@ark"].keyModels).toEqual(["chat-only", "glm-5", "plain"]);
+    expect(by["claude@ark"].keyModels).toEqual(["glm-5", "plain"]);
+    // Named (several): those only, the first the default; a default picked on the general page counts while it is one of them.
+    const cfg = withProviders([{ ...pr, models: ["ep-1", "ep-2"] }]);
+    cfg.agents.profiles = [{ ...by["codex@ark"], model: "ep-2" }, { ...by["claude@ark"], model: "gpt-6.1-sol" }] as never;
+    by = Object.fromEntries(allProfiles(cfg).filter((p) => p.keyRef).map((p) => [p.id, p]));
+    expect(by["codex@ark"]).toMatchObject({ keyModels: ["ep-1", "ep-2"], model: "ep-2" });
+    expect(by["claude@ark"].model).toBe("ep-1");
+    // A run on another of them gets it at launch.
+    expect(keyEnv({ ...by["claude@ark"], model: "ep-2" })).toMatchObject({ ANTHROPIC_MODEL: "ep-2", CLAUDE_CODE_SUBAGENT_MODEL: "ep-2" });
+    expect(JSON.parse(keyEnv({ ...by["opencode@ark"], model: "ep-2" }).OPENCODE_CONFIG_CONTENT).model).toBe("omem-key/ep-2");
+    // “检测模型” on the general page lists the key's models without starting the agent.
+    expect((await probeProfile(by["codex@ark"])).models).toEqual(["ep-1", "ep-2"]);
   });
 
   it("reads what a listing says about each model, finds the Anthropic address and calls the model once", async () => {

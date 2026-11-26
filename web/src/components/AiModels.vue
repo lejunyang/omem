@@ -20,7 +20,7 @@ import UiSelect from "./UiSelect.vue";
 type Kind = "openai" | "anthropic" | "typesafe" | "openrouter" | "cloudflare" | "ark" | "openai-compatible";
 type ErrKind = "rate" | "daily" | "quota" | "auth" | "config" | "server" | "input" | "other";
 type RelayView = { counts: Partial<Record<ErrKind, number>>; last: { at: number; status: number; kind: ErrKind; code: string; message: string } } | null;
-type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; anthropicUrl?: string; model?: string; accountId?: string; backends: string[] };
+type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; anthropicUrl?: string; models?: string[]; model?: string; accountId?: string; backends: string[] };
 type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean };
 type ProviderView = Provider & { keyHint: string; hasKey: boolean; offers: string[]; relay?: RelayView; paused?: { until: string; message: string } | null; listed: { at: number; count: number; models: string[]; info: Record<string, ModelInfo>; error?: string } | null };
 type Choice = { default: string; models: string[] };
@@ -49,7 +49,7 @@ const KIND_USES: Record<Kind, string> = {
   typesafe: "决策（Jev）",
   openrouter: "决策（Jev 等）",
   cloudflare: "决策（Clef 系列）",
-  ark: "Codex、Claude Code、OpenCode 后端，认得方舟的错误码（限流、每日用量、额度）",
+  ark: "Codex、Claude Code、OpenCode 后端",
   "openai-compatible": "Codex、Claude Code、OpenCode 后端（各家代理、自建的兼容服务）",
 };
 const BACKEND_LABEL: Record<string, string> = { claude: "Claude Code（ACP）", "claude-cli": "Claude Code（命令行）", codex: "Codex（ACP）", "codex-cli": "Codex（命令行）", opencode: "OpenCode" };
@@ -68,12 +68,12 @@ function relayLine(r: NonNullable<RelayView>) {
 }
 
 const providers = computed<ProviderView[]>(() => view.value?.providers ?? []);
-const plain = ({ id, name, kind, baseUrl, anthropicUrl, model, accountId, backends }: Provider) => ({ id, name, kind, ...(baseUrl ? { baseUrl } : {}), ...(anthropicUrl ? { anthropicUrl } : {}), ...(model ? { model } : {}), ...(accountId ? { accountId } : {}), backends });
+const plain = ({ id, name, kind, baseUrl, anthropicUrl, models, model, accountId, backends }: Provider) => ({ id, name, kind, ...(baseUrl ? { baseUrl } : {}), ...(anthropicUrl ? { anthropicUrl } : {}), ...(models ? (models.length ? { models } : {}) : model ? { models: [model] } : {}), ...(accountId ? { accountId } : {}), backends });
 const saveProviders = (list: Provider[], note: string) => emit("save", { ...props.config.ai, providers: list.map(plain) }, note);
 const MEDIA_LABEL = { images: "图片", audio: "音频", videos: "视频" } as const;
 
 // ------------------------------------------------------------------ keys
-const draft = ref<{ kind: Kind; name: string; id: string; baseUrl: string; anthropicUrl: string; model: string; accountId: string; key: string; backends: string[] }>({ kind: "openai", name: "", id: "", baseUrl: "", anthropicUrl: "", model: "", accountId: "", key: "", backends: [] });
+const draft = ref<{ kind: Kind; name: string; id: string; baseUrl: string; anthropicUrl: string; accountId: string; key: string; backends: string[] }>({ kind: "openai", name: "", id: "", baseUrl: "", anthropicUrl: "", accountId: "", key: "", backends: [] });
 const busy = ref(false);
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
 const suggestedId = computed(() => {
@@ -93,11 +93,11 @@ async function addProvider() {
   busy.value = true;
   try {
     const third = thirdParty(d.kind);
-    const list: Provider[] = [...providers.value, { id, name: d.name.trim(), kind: d.kind, baseUrl: d.baseUrl.trim() || undefined, anthropicUrl: third ? d.anthropicUrl.trim() || undefined : undefined, model: d.model.trim() || undefined, accountId: d.kind === "cloudflare" ? d.accountId.trim() || undefined : undefined, backends: d.backends }];
+    const list: Provider[] = [...providers.value, { id, name: d.name.trim(), kind: d.kind, baseUrl: d.baseUrl.trim() || undefined, anthropicUrl: third ? d.anthropicUrl.trim() || undefined : undefined, accountId: d.kind === "cloudflare" ? d.accountId.trim() || undefined : undefined, backends: d.backends }];
     // Config first (the key endpoint only takes known providers), then the key.
     await put("/api/settings", { ai: { ...props.config.ai, providers: list.map(plain) } });
     view.value = await put<AiView>(`/api/ai/keys/${encodeURIComponent(id)}`, { key: d.key.trim() });
-    draft.value = { kind: d.kind, name: "", id: "", baseUrl: "", anthropicUrl: "", model: "", accountId: "", key: "", backends: [...(DEFAULT_BACKENDS[d.kind] ?? [])] };
+    draft.value = { kind: d.kind, name: "", id: "", baseUrl: "", anthropicUrl: "", accountId: "", key: "", backends: [...(DEFAULT_BACKENDS[d.kind] ?? [])] };
     emit("changed");
     toast(`已添加 ${d.name.trim() || id}`, "ok");
     void test(id);
@@ -142,14 +142,24 @@ function backendModelChoice(p: ProviderView) {
   const models = (p.listed?.models ?? []).filter((m) => !info[m] || /LLM|VLM/.test(info[m].type ?? "") || info[m].formats?.some((f) => f !== "chat"));
   return { default: "", models };
 }
-/** What the chosen model cannot do for the chosen backends, from what the listing says. */
+/** The models the owner named for a key's backends, first the default. */
+const namedModels = (p: Provider) => (p.models?.length ? p.models : p.model ? [p.model] : []);
+function setModels(p: ProviderView, models: string[], note: string) {
+  editProvider(p, { models, model: undefined }, note);
+}
+const addChoice = (p: ProviderView) => ({ default: "", models: backendModelChoice(p).models.filter((m) => !namedModels(p).includes(m)) });
+/** What the named models cannot do for the chosen backends, from what the listing says. */
 function modelWarning(p: ProviderView) {
-  const f = p.model ? p.listed?.info?.[p.model]?.formats : undefined;
-  if (!f) return "";
-  const lacks: string[] = [];
-  if (p.backends.some((b) => b.startsWith("codex")) && !f.includes("responses")) lacks.push("Codex 要 Responses 接口");
-  if (p.backends.some((b) => b.startsWith("claude")) && !f.includes("anthropic")) lacks.push("Claude Code 要 Anthropic 格式");
-  return lacks.length ? `列表说这个模型只支持 ${f.map((x) => FORMAT_LABEL[x]).join("、")}：${lacks.join("，")}` : "";
+  const out: string[] = [];
+  for (const m of namedModels(p)) {
+    const f = p.listed?.info?.[m]?.formats;
+    if (!f) continue;
+    const lacks: string[] = [];
+    if (p.backends.some((b) => b.startsWith("codex")) && !f.includes("responses")) lacks.push("Codex 要 Responses 接口");
+    if (p.backends.some((b) => b.startsWith("claude")) && !f.includes("anthropic")) lacks.push("Claude Code 要 Anthropic 格式");
+    if (lacks.length) out.push(`${m} 只支持 ${f.map((x) => FORMAT_LABEL[x]).join("、")}（${lacks.join("，")}）`);
+  }
+  return out.length ? `列表里写着：${out.join("；")}` : "";
 }
 const replacing = ref<Record<string, string>>({});
 async function replaceKey(id: string) {
@@ -173,7 +183,6 @@ async function remove(p: ProviderView) {
   emit("changed");
 }
 function setBackends(p: ProviderView, backends: string[]) {
-  if (thirdParty(p.kind) && backends.length && !p.model) toast("还要填写后端用的模型，生成的后端才能用", "info");
   saveProviders(providers.value.map((x) => (x.id === p.id ? { ...x, backends } : x)), "已更新生成的后端");
   emit("changed");
 }
@@ -257,7 +266,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
         <div class="pmain">
           <div><strong>{{ p.name || p.id }}</strong> <span class="muted small mono">{{ p.id }}</span> <span class="badge">{{ KIND_LABEL[p.kind] }}</span></div>
           <div class="muted small">
-            {{ p.hasKey ? `key 尾号 ${keyTail(p.keyHint)}` : "没有 key" }}<template v-if="p.baseUrl"> · <span class="mono">{{ p.baseUrl }}</span></template><template v-else-if="p.accountId"> · 账号 <span class="mono">{{ p.accountId }}</span></template> · 可用于：{{ KIND_USES[p.kind] }}<template v-if="p.listed"> · <span v-if="p.listed.error" class="err-text" :title="p.listed.error">模型列表读取失败</span><button v-else type="button" class="linkish" :aria-expanded="!!openList[p.id]" @click="openList[p.id] = !openList[p.id]">{{ openList[p.id] ? "收起" : "看" }} {{ p.listed.count }} 个模型</button></template>
+            {{ p.hasKey ? `key 尾号 ${keyTail(p.keyHint)}` : "没有 key" }}<template v-if="p.baseUrl"> · <span class="mono">{{ p.baseUrl }}</span></template><template v-else-if="p.accountId"> · 账号 <span class="mono">{{ p.accountId }}</span></template> · 可用于：{{ KIND_USES[p.kind] }}<template v-if="p.listed"> · <span v-if="p.listed.error" class="err-text" :title="p.listed.error">模型列表读取失败</span><button v-else type="button" class="linkish" :aria-expanded="!!openList[p.id]" @click="openList[p.id] = !openList[p.id]">{{ openList[p.id] ? "收起模型列表" : `查看 ${p.listed.count} 个模型` }}</button></template>
           </div>
           <div v-if="openList[p.id] && p.listed" class="model-list small">
             <input v-model="listFilter[p.id]" class="input sm" :aria-label="`筛选 ${p.name || p.id} 的模型`" placeholder="筛选模型名" />
@@ -275,22 +284,29 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
           <div v-if="p.paused" class="small err-text">已暂停到 {{ clock(p.paused.until) }}（{{ p.paused.message }}）：用它的后端先不用，处理好后点“检查”恢复</div>
           <div v-if="p.relay" class="small muted">{{ relayLine(p.relay) }}</div>
           <template v-if="thirdParty(p.kind)">
-            <div class="grid2 be-row">
-              <div class="field small">
-                <span>后端用的模型</span>
-                <AiModelPick :model-value="p.model ?? ''" :choice="backendModelChoice(p)" empty-label="不指定" label="后端用的模型" @change="(v) => editProvider(p, { model: v || undefined }, v ? `后端改用 ${v}` : '已清空后端用的模型')" />
+            <div class="field small be-block">
+              <span>后端可用的模型</span>
+              <div class="row wrap model-chips">
+                <span v-for="(m, i) in namedModels(p)" :key="m" class="mchip mono">
+                  {{ m }}<span v-if="i === 0" class="muted">（默认）</span>
+                  <button v-if="i > 0" type="button" class="linkish" :aria-label="`把 ${m} 设为默认`" @click="setModels(p, [m, ...namedModels(p).filter((x) => x !== m)], `默认模型改为 ${m}`)">设为默认</button>
+                  <button type="button" class="mchip-x" :aria-label="`去掉 ${m}`" @click="setModels(p, namedModels(p).filter((x) => x !== m), `已去掉 ${m}`)"><Icon name="x" :size="12" /></button>
+                </span>
+                <AiModelPick :key="namedModels(p).length" class="add-pick" model-value="" :choice="addChoice(p)" empty-label="添加模型…" label="添加后端可用的模型" @change="(v) => v && setModels(p, [...namedModels(p), v], `已添加 ${v}`)" />
               </div>
-              <label class="field small">
-                <span>Anthropic 格式地址（Claude Code 用）</span>
-                <input :value="p.anthropicUrl ?? ''" class="input mono" :placeholder="p.kind === 'ark' ? '留空按方舟的规则（…/api/compatible）' : '留空时点“检查”自动找'" @change="editProvider(p, { anthropicUrl: ($event.target as HTMLInputElement).value.trim() || undefined }, '已保存 Anthropic 格式地址')" />
-              </label>
+              <p class="hint">{{ namedModels(p).length ? "生成的后端只用这些，第一个是默认；运行时也可以按任务选其中一个。" : `没添加时用列表里能用的全部 ${backendModelChoice(p).models.length} 个模型。账号只允许接入点时，在“手填其他…”里填接入点 ID。` }}</p>
             </div>
+            <label class="field small be-block">
+                <span>Anthropic 格式地址（Claude Code 用）</span>
+                <input :value="p.anthropicUrl ?? ''" class="input mono url-input" :placeholder="p.kind === 'ark' ? '留空按方舟的规则（…/api/compatible）' : '留空时点“检查”自动找'" @change="editProvider(p, { anthropicUrl: ($event.target as HTMLInputElement).value.trim() || undefined }, '已保存 Anthropic 格式地址')" />
+              </label>
             <div v-if="modelWarning(p)" class="small err-text">{{ modelWarning(p) }}</div>
-            <div v-else-if="p.backends.length && !p.model" class="small muted">填写模型后生成的后端才能用：这家服务的模型名，账号只允许接入点时填接入点 ID。</div>
           </template>
-          <div v-if="p.offers?.length || (thirdParty(p.kind) && p.backends.length)" class="row wrap small be-row">
-            <span class="muted">生成后端：</span>
+          <div v-if="p.offers?.length || (thirdParty(p.kind) && p.backends.length)" class="field small be-block">
+            <span>生成的后端</span>
+            <div class="be-list">
             <UiCheckbox v-for="b in BACKENDS_OF[p.kind]" :key="b" size="sm" :model-value="p.backends" :value="b" :disabled="!p.offers?.includes(b) && !p.backends.includes(b)" @update:model-value="(v) => setBackends(p, v as string[])">{{ BACKEND_LABEL[b] }}<span v-if="p.offers?.includes(b)" class="muted mono be-id">{{ b }}@{{ p.id }}</span><span v-else class="muted">（要 Anthropic 格式地址）</span></UiCheckbox>
+            </div>
           </div>
           <div v-if="replacing[p.id] !== undefined" class="row wrap be-row">
             <input v-model="replacing[p.id]" class="input mono key-input" type="password" autocomplete="off" placeholder="新的 API key" @keydown.enter="replaceKey(p.id)" />
@@ -320,7 +336,6 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
         <input v-model="draft.baseUrl" class="input mono" :required="draft.kind === 'openai-compatible'" :placeholder="draft.kind === 'openai-compatible' ? 'https://example.com/v1' : draft.kind === 'ark' ? '留空用 https://ark.cn-beijing.volces.com/api/v3' : '留空用官方地址'" />
       </label>
       <div v-if="thirdParty(draft.kind)" class="grid2">
-        <label class="field"><span>后端用的模型（可选，添加后可从列表选）</span><input v-model="draft.model" class="input mono" placeholder="模型名或接入点 ID" /></label>
         <label class="field"><span>Anthropic 格式地址（可选）</span><input v-model="draft.anthropicUrl" class="input mono" :placeholder="draft.kind === 'ark' ? '留空按方舟的规则（…/api/compatible）' : 'Claude Code 用，留空时添加后自动找'" /></label>
       </div>
       <div v-if="BACKENDS_OF[draft.kind]" class="row wrap small">
@@ -460,8 +475,49 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
   margin-top: 6px;
   gap: 4px 14px;
 }
+.be-block {
+  margin-top: 10px;
+}
+/* One backend per line: the name and its id stay together and line up. */
+.be-list {
+  display: grid;
+  gap: 6px;
+}
+.url-input {
+  width: min(480px, 100%);
+}
 .be-id {
   margin-left: 6px;
+}
+.model-chips {
+  gap: 6px;
+  align-items: center;
+}
+.mchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--sunken);
+  overflow-wrap: anywhere;
+}
+.mchip-x {
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mchip-x:hover {
+  color: var(--text);
+}
+.add-pick {
+  width: min(260px, 100%);
 }
 .linkish {
   border: 0;

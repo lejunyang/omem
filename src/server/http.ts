@@ -71,7 +71,7 @@ import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { forgetRelayErrors, keyPaused, relayRequest, relayStats } from "../core/ai-relay.ts";
 import { useRelayBase } from "../core/ai-relay-addr.ts";
-import { allProfiles, keyBackendsOf, providerFormats, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
+import { allProfiles, keyBackendsOf, keyedProfiles, providerFormats, providerModels, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
 import { credentialExecution, memberExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
@@ -3260,7 +3260,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const p = allProfiles(app.config).find((x) => x.id === id);
     if (!p) throw new HttpError(404, "没有这个 Agent 配置");
     if (userId !== OWNER) return { agent: id, ...(cachedProbeViews(app, [id], userId).get(id) ?? { models: [], efforts: [] }), cached: true, readOnly: true };
-    const cached = cachedProbe(app, id);
+    const cached = p.keyModels ? null : cachedProbe(app, id);
     if (cached && !body?.refresh) return { ...cached, cached: true };
     const probe = await probeProfile(p, app);
     if (!probe.error) saveProbe(app, id, probe);
@@ -3925,12 +3925,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       const found = await findAnthropicUrl(p.baseUrl, key);
       if (found) r.anthropicUrl = found;
     }
-    if (p.model) {
-      const at = providerFormats(p);
-      const m = await tryBackendModel({ model: p.model, baseUrl: at.openai?.url, anthropicUrl: at.anthropic?.url ?? r.anthropicUrl }, key, fetch, p.kind);
-      return { ...r, ok: m.ok, detail: `${r.detail}；${m.detail}` };
-    }
-    return r;
+    // The models the backends run on: those named (the first three), else the default the listing gave them.
+    const named = providerModels(p);
+    const models = named.length ? named.slice(0, 3) : [keyedProfiles(app.config).find((k) => k.keyRef === p.id && k.model)?.model].filter((m): m is string => !!m);
+    if (!models.length) return r;
+    const at = providerFormats(p);
+    const tried = await Promise.all(models.map((model) => tryBackendModel({ model, baseUrl: at.openai?.url, anthropicUrl: at.anthropic?.url ?? r.anthropicUrl }, key, fetch, p.kind)));
+    return { ...r, ok: tried.every((m) => m.ok), detail: [r.detail, ...tried.map((m) => m.detail)].join("；") };
   });
 
   // ---------------------------------------------------------------- plugins

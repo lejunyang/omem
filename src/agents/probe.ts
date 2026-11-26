@@ -104,6 +104,13 @@ export async function probeProfile(profile: AgentProfile, app?: App): Promise<Pr
 }
 
 async function probeOn(profile: AgentProfile, app?: App, signal?: AbortSignal): Promise<ProbeInfo> {
+  // A third party's key: its models are the key's (config.ts keyedProfiles), not what the agent lists for its
+  // vendor. Nothing to start: the levels are the ones the same agent showed on its own account.
+  if (profile.keyModels) {
+    const own = app ? cachedProbe(app, profile.id.split("@")[0]) : null;
+    return { at: new Date().toISOString(), agent: profile.name ?? profile.id, models: profile.keyModels, efforts: own?.efforts ?? [], modes: own?.modes ?? [],
+      ...(profile.keyModels.length ? {} : { error: "这个 key 还没有可用的模型：到 API key 页点“检查”读模型列表，或手动添加模型" }) };
+  }
   if (profile.transport === "doubao")
     return { at: new Date().toISOString(), agent: "豆包 OpenAPI", models: [], efforts: [], error: "豆包后端没有可选模型和思考强度；授权状态用 omem doubao status 查看" };
   if (profile.transport === "doubao-cli" && commandExists(profile.command))

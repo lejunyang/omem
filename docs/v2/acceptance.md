@@ -2634,8 +2634,10 @@ TraeX 与其他 ACP 的清理补验：
 | 把助手的后端换成 `codex@<编号>`，问一句话 | 正常回答；运行页后端是 `codex@<编号>`；OpenAI 后台能看到这次的 API 用量，本机登录的 Codex 额度不变 | 待验 |
 | 同样添加 Anthropic 的 key、生成 `claude@<编号>` 并让助手用它 | 正常回答，按 API 计费 | 待验 |
 | 移除这个提供方 | key 和生成的后端一起消失；之前选了它的角色报“后端不存在” | 测试覆盖 |
-| 添加第三方（OpenAI 兼容）的 key，填火山方舟的 `…/api/v3`，勾 Codex（ACP）和 Claude Code（ACP），点“检查” | 一行显示“key 尾号 xxxx”；“看 N 个模型”展开后每个模型标出 Chat / Responses / Anthropic 和用途，可筛选；Anthropic 格式地址自动填成 `…/api/compatible`，Claude Code 的勾选可用；没填模型时提示要填 | 测试覆盖（假接口），真机待验 |
-| 在这一行的“后端用的模型”选一个只支持 Chat 的模型 | 红字写明 Codex 要 Responses、Claude Code 要 Anthropic 格式 | 待验 |
+| 添加第三方（OpenAI 兼容）的 key，填火山方舟的 `…/api/v3`，勾 Codex（ACP）和 Claude Code（ACP），点“检查” | 一行显示“key 尾号 xxxx”；“查看 N 个模型”展开后每个模型标出 Chat / Responses / Anthropic 和用途，可筛选；Anthropic 格式地址自动填成 `…/api/compatible`，Claude Code 的勾选可用；“生成的后端”单独一块，一行一个 | 测试覆盖（假接口），真机待验 |
+| 在这一行的“后端可用的模型”添加一个只支持 Chat 的模型 | 红字写明 Codex 要 Responses、Claude Code 要 Anthropic 格式 | 待验 |
+| 第三方的 key 不添加模型，到 通用 页展开 `codex@<编号>` 点“重新检测” | 列出的是 key 的模型列表里支持 Responses 的文字模型，默认模型是其中第一个，不是 OpenAI 的模型 | 测试覆盖；演示数据里看过 |
+| “后端可用的模型”添加两个（如两个接入点 ID），把第二个“设为默认”；再在 通用 页把默认改回第一个 | 通用页的检测结果只有这两个；两边改默认都生效；按任务选另一个模型时，Claude Code 的请求带的是那个模型 | 测试覆盖 |
 | 填上接入点 ID（或允许直接用模型 ID 的模型名），点“检查”，再让助手用 `codex@<编号>`、`claude@<编号>` 各问一句 | 检查写“模型 … 可以调用”（账号不允许用模型 ID 时写出服务的报错 `ModelIDAccessDisabled`）；两个后端都正常回答，请求打到方舟 | codex-acp、claude-agent-acp 对着本地假接口实测请求地址、Bearer、模型；真机待验 |
 | API key 页添加“火山方舟”的 key（地址留空或填 `…/api/v3`），勾 Codex 和 Claude Code，填接入点 ID，点“检查” | Claude Code 后端直接出现（Anthropic 格式地址按 `…/api/compatible`），检查写“模型 … 可以调用”；以前按 OpenAI 兼容添加的方舟 key 那一行有“改成火山方舟” | 测试覆盖，真机待验 |
 | 方舟的接入点限流（`RateLimitExceeded.Endpoint*`）时让 `codex@<编号>` 做一件事 | omem 转发处等几秒重试；还限流则运行以“限流”结束、换下一个后端，key 那一行写“最近 1 小时：限流 1 次……” | 真实 codex-acp / claude-agent-acp 对假接口实测 |

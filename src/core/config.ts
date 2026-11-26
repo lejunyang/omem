@@ -169,6 +169,12 @@ export const agentProfileSchema = z.object({
   keyVars: z.array(z.string()).optional(),
   /** Reaches the provider through omem's relay (core/ai-relay.ts): those variables get the relay's token, not the key. */
   keyRelay: z.boolean().optional(),
+  /**
+   * A third party's key: the models this backend may run on, from the key (`keyedProfiles`). The
+   * model goes in at launch (`keyedModelEnv`, catalog.ts launchConfig, the CLI's --model), not
+   * through the agent's own model list, which knows only its vendor's models.
+   */
+  keyModels: z.array(z.string()).optional(),
   /** Another login of the owner's (agents/login-slots.ts): the folder its `env` points the backend's login at. */
   loginDir: z.string().optional(),
   /**
@@ -860,7 +866,12 @@ export const configSchema = z.object({
         baseUrl: z.string().url().optional(),
         /** openai-compatible: the same service's Anthropic-shaped address (Claude Code goes there), when it has one. */
         anthropicUrl: z.string().url().optional(),
-        /** The model the backends made from this key run on (a third party's own model or endpoint name); empty: the backend's default. */
+        /**
+         * Third parties: the models the backends made from this key may run on, the first the default
+         * (model names or endpoint IDs). Empty: every model the key's listing names that suits the
+         * backend's API format. `model` is the single one older settings named.
+         */
+        models: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
         model: z.string().trim().max(200).optional(),
         /** cloudflare: the account whose Workers AI is called (not secret; the API token is the key). */
         accountId: z.string().trim().regex(/^[0-9a-f]{32}$/i, "Cloudflare 账号 ID 是 32 位十六进制").optional(),
@@ -1627,8 +1638,11 @@ export function allProfiles(config: Config): AgentProfile[] {
   ].filter((v): v is string => !!v));
   for (const p of referencedPluginProfiles(referenced)) byId.set(p.id, p);
   for (const e of acpCatalog.filter(e => e.plugin)) byId.set(e.id, catalogProfile(e));
-  for (const p of keyedProfiles(config)) byId.set(p.id, p);
+  const keyed = keyedProfiles(config);
+  for (const p of keyed) byId.set(p.id, p);
   for (const p of config.agents.profiles) {
+    // A key's backend saved from the general page: its model and level are already taken in above; the rest follows the key.
+    if (keyed.some((k) => k.id === p.id)) continue;
     const profile = p.peer ? peerProfile(p) : upgradeProfileArgs(p);
     const twin = p.peer ? undefined : sameProgramBuiltin(profile);
     // A saved backend that runs a built-in entry's program the same way is that backend under
@@ -1672,6 +1686,61 @@ function sameProgramBuiltin(p: AgentProfile): AgentProfile | undefined {
  * returns (its rate limits and quotas). Without the service (tests, a one-off command) they go direct. `OMEM_AI_BASE_URL` carries a
  * direct address for the egress allowance (agents/egress-policy.ts); the relay is this service's own.
  */
+/** The models a key's provider listed (ai-keys.ts reads its cache): set by ai-keys, which imports this file. */
+type Listed = { models: string[]; info?: Record<string, { formats?: string[]; type?: string; tools?: boolean }> } | null;
+let listedFor: (provider: string) => Listed = () => null;
+export function useListedModels(f: (provider: string) => Listed) {
+  listedFor = f;
+}
+const isThirdParty = (kind: string) => kind === "ark" || kind === "openai-compatible";
+/** The models an owner named for a key's backends, first the default (`models`, or the older single `model`). */
+export function providerModels(pr: { models?: string[]; model?: string }) {
+  return pr.models?.length ? pr.models : pr.model ? [pr.model] : [];
+}
+/** The API format each backend speaks, as the model listing names it. */
+const LISTED_FORMAT: Record<string, string> = { codex: "responses", "codex-cli": "responses", claude: "anthropic", "claude-cli": "anthropic" };
+/**
+ * The models one backend made from a third party's key may run on: those the owner named, else the
+ * listing's models that suit it (a text model, tool calls not ruled out, the backend's API format
+ * when the listing says which it takes).
+ */
+function keyModelsFor(pr: { id: string; models?: string[]; model?: string }, backend: string, fmt: ApiFormat) {
+  const named = providerModels(pr);
+  if (named.length) return named;
+  const listed = listedFor(pr.id);
+  if (!listed) return [];
+  const want = LISTED_FORMAT[backend] ?? (fmt === "anthropic" ? "anthropic" : "chat");
+  return listed.models.filter((m) => {
+    const i = listed.info?.[m];
+    if (!i) return true;
+    if (i.type && !/LLM|VLM|chat|text/i.test(i.type)) return false;
+    if (i.tools === false) return false;
+    return !i.formats?.length || i.formats.includes(want);
+  });
+}
+
+/**
+ * The environment that puts a key's backend on one of its models at launch: Claude Code reads its
+ * model from variables, OpenCode from its config (Codex takes it through catalog.ts launchConfig).
+ */
+export function keyedModelEnv(profile: Pick<AgentProfile, "id"> & Partial<Pick<AgentProfile, "model" | "env" | "keyModels">>): Record<string, string> {
+  const model = profile.model;
+  if (!profile.keyModels || !model) return {};
+  const b = profile.id.split("@")[0];
+  if (b === "claude" || b === "claude-cli") return { ANTHROPIC_MODEL: model, ANTHROPIC_DEFAULT_OPUS_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model, CLAUDE_CODE_SUBAGENT_MODEL: model };
+  if (b === "opencode" && profile.env?.OPENCODE_CONFIG_CONTENT) {
+    try {
+      const c = JSON.parse(profile.env.OPENCODE_CONFIG_CONTENT);
+      c.model = `omem-key/${model}`;
+      c.provider["omem-key"].models = { [model]: {} };
+      return { OPENCODE_CONFIG_CONTENT: JSON.stringify(c) };
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 export function keyedProfiles(config: Config): AgentProfile[] {
   const out: AgentProfile[] = [];
   for (const pr of config.ai?.providers ?? []) {
@@ -1686,11 +1755,17 @@ export function keyedProfiles(config: Config): AgentProfile[] {
       const direct = formats[fmt]!;
       const relayed = relayUrl(pr.id, `${b}@${pr.id}`, fmt);
       const at = relayed ? { url: relayed, official: false } : direct;
-      const model = pr.model || undefined;
+      // A third party's models come from the key; a default the owner picked on the general page
+      // (saved as a profile of this id) counts while it is still one of them.
+      const keyModels = isThirdParty(pr.kind) ? keyModelsFor(pr, b, fmt) : undefined;
+      const saved = config.agents?.profiles?.find((x) => x.id === `${b}@${pr.id}`);
+      const picked = saved?.model && (!keyModels || keyModels.includes(saved.model)) ? saved.model : undefined;
+      const model = picked ?? keyModels?.[0] ?? (isThirdParty(pr.kind) ? undefined : providerModels(pr)[0]);
       let env: Record<string, string> = {};
       let args = base.args;
       let keyVars: string[];
-      let profileModel = base.model;
+      // The default the general page shows: the key's model; an official key without one keeps the agent's own.
+      const profileModel = model ?? (isThirdParty(pr.kind) ? undefined : base.model);
       if (b === "claude" || b === "claude-cli") {
         keyVars = [at.official || pr.kind === "anthropic" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"];
         if (!at.official) env.ANTHROPIC_BASE_URL = at.url;
@@ -1705,7 +1780,6 @@ export function keyedProfiles(config: Config): AgentProfile[] {
           env.CLAUDE_CODE_MAX_RETRIES = "3";
         }
       } else if (b === "codex" || b === "codex-cli") {
-        if (model) profileModel = model;
         if (at.official) keyVars = ["CODEX_API_KEY", "OPENAI_API_KEY"];
         else {
           keyVars = ["OMEM_AI_KEY"];
@@ -1724,7 +1798,7 @@ export function keyedProfiles(config: Config): AgentProfile[] {
         if (!relayed) env.OMEM_AI_BASE_URL = at.url;
         env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ model: `omem-key/${name}`, provider: { "omem-key": { npm, name: pr.name || pr.id, options: { baseURL, apiKey: "{env:OMEM_AI_KEY}" }, models: { [name]: {} } } } });
       }
-      out.push({ ...base, id: `${b}@${pr.id}`, name: label, args, model: profileModel, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, ...(relayed ? { keyRelay: true } : {}), source: `key:${pr.id}` });
+      out.push({ ...base, id: `${b}@${pr.id}`, name: label, args, model: profileModel, effort: saved?.effort ?? base.effort, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, ...(relayed ? { keyRelay: true } : {}), ...(keyModels ? { keyModels } : {}), source: `key:${pr.id}` });
     }
   }
   return out;
