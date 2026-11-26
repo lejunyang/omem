@@ -1,3 +1,4 @@
+import { modelDisplayName } from "../core/ai-keys.ts";
 import { keyedModelEnv } from "../core/config.ts";
 import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigOption } from "@agentclientprotocol/sdk";
 import { Readable } from "node:stream";
@@ -615,7 +616,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       const reply = await Promise.race([connection.setSessionConfigOption({ sessionId, configId: option.id, value: chosen.value }), failed]);
       options = reply.configOptions ?? options;
     }
-    emitSetup({ type: "status", text: `${resumed ? "已恢复" : "已连接"} ${agentName}${profile.model ? ` · ${profile.model}` : ""}` });
+    emitSetup({ type: "status", text: `${resumed ? "已恢复" : "已连接"} ${agentName}${profile.model ? ` · ${modelDisplayName(profile.model)}` : ""}` });
     setupWatch.close();
     opts.signal?.removeEventListener("abort", onSetupAbort);
     let busy = false;

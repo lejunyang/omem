@@ -1,3 +1,4 @@
+import { modelDisplayName } from "../core/ai-keys.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { decide, decisionReady, describeDecision } from "../core/decision.ts";
@@ -54,7 +55,8 @@ export type ChoiceRecord = {
   left?: string[];
 };
 
-const label = (c: AiPick) => [c.profile, c.model, c.effort].filter(Boolean).join(" · ");
+// An endpoint ID is shown as the model behind it (core/ai-keys.ts modelDisplayName).
+const label = (c: AiPick) => [c.profile, c.model && modelDisplayName(c.model), c.effort].filter(Boolean).join(" · ");
 
 type Candidate = { profile: string; model?: string; effort?: string; when: string };
 /**

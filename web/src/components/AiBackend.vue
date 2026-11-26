@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, post } from "../api";
 import { followAdapterJob, jobElapsed, lastLine, type AdapterJob } from "../lib/adapter-job";
 import { confirmDialog } from "../lib/dialog";
-import { detectProbe, probes } from "../lib/probes";
+import { detectProbe, modelName, probes } from "../lib/probes";
 import { networkBlock } from "../lib/network-status";
 import { state, toast } from "../store";
 import { fmt } from "../lib/time";
@@ -161,7 +161,7 @@ const routingDirty = computed(() => {
   const s = savedRouting();
   return shape(when.value, modelWhens.value) !== shape(s.when, s.models);
 });
-const modelChoices = (current: string) => [...new Set([...(current ? [current] : []), ...models.value])].map((m) => ({ value: m, label: m, hint: modelWhens.value.some((x) => x.model === m && x.model !== current) ? "已写过" : undefined, disabled: modelWhens.value.some((x) => x.model === m && x.model !== current) }));
+const modelChoices = (current: string) => [...new Set([...(current ? [current] : []), ...models.value])].map((m) => ({ value: m, label: modelName(probe.value, m), hint: modelWhens.value.some((x) => x.model === m && x.model !== current) ? "已写过" : undefined, disabled: modelWhens.value.some((x) => x.model === m && x.model !== current) }));
 function addModelWhen() {
   const free = models.value.find((m) => !modelWhens.value.some((x) => x.model === m));
   modelWhens.value.push({ model: free ?? "", when: "" });
@@ -246,7 +246,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
     <button type="button" class="be-head" :aria-expanded="open" @click="open = !open">
       <Icon name="right" :size="14" class="chev" />
       <span class="be-name"><strong>{{ name }}</strong><span class="muted small">（{{ kinds }}）</span></span>
-      <span class="be-meta small muted mono">{{ [primary.model, primary.effort].filter(Boolean).join(" · ") || "后端默认模型" }}</span>
+      <span class="be-meta small muted mono">{{ [primary.model && modelName(probe, primary.model), primary.effort].filter(Boolean).join(" · ") || "后端默认模型" }}</span>
       <span class="be-tags">
         <span v-if="running" class="badge">在用 {{ running }}</span>
         <span v-if="chosen" class="badge">候选</span>
@@ -266,7 +266,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
         <h4>默认模型</h4>
         <div v-if="models.length" class="row wrap small">
           <span class="muted lbl">模型</span>
-          <button v-for="m in models" :key="m" type="button" class="chip" :class="{ on: primary.model === m }" @click="setDefault('model', m)">{{ m }}</button>
+          <button v-for="m in models" :key="m" type="button" class="chip" :class="{ on: primary.model === m }" @click="setDefault('model', m)">{{ modelName(probe, m) }}</button>
         </div>
         <div v-if="efforts.length" class="row wrap small">
           <span class="muted lbl">强度</span>
@@ -336,7 +336,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
         <h4>用量</h4>
         <div v-if="now.length" class="lines small">
           <template v-for="n in now" :key="n.model">
-            <span class="mono">{{ n.model || "默认模型" }}</span>
+            <span class="mono">{{ n.model ? modelName(probe, n.model) : "默认模型" }}</span>
             <span>正在用 {{ n.used }}<template v-if="n.waiting">，等 {{ n.waiting }}</template><span v-if="recent(n.model)" class="muted">（近 7 天完成 {{ recent(n.model)!.done }}、失败 {{ recent(n.model)!.failed }}）</span></span>
           </template>
         </div>
@@ -365,7 +365,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
           <p class="small muted">留空用并行设置里的默认值。排到最后时后台任务先用别的后端，你自己的对话和点名用它的任务不受影响。</p>
         </template>
         <div v-for="q in spent" :key="q.source" class="row wrap small">
-          <span class="danger-text">{{ q.model ? `${q.model} ` : "" }}额度用完，{{ when2(q.until) }} 恢复</span><span class="spacer" />
+          <span class="danger-text">{{ q.model ? `${modelName(probe, q.model)} ` : "" }}额度用完，{{ when2(q.until) }} 恢复</span><span class="spacer" />
           <button class="btn ghost sm" @click="useAgain(q.source)">现在恢复使用</button>
         </div>
         <div class="row wrap">

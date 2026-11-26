@@ -26,6 +26,10 @@ export type ProbeInfo = {
   effortsByModel?: Record<string, string[]>;
   /** The agent's permission modes (ACP); whether it has a full-access one decides 完全访问. */
   modes?: string[];
+  /** The name to show for a model whose value means nothing to a person (an endpoint ID → the model behind it). */
+  modelNames?: Record<string, string>;
+  /** A key's model: what it takes besides text (image, video, audio), from the key's listing. */
+  inputsByModel?: Record<string, string[]>;
   /** The agent's own words about each model (description, _meta), when it gives any. */
   modelNotes?: Record<string, string>;
   error?: string;
@@ -112,9 +116,13 @@ async function probeOn(profile: AgentProfile, app?: App, signal?: AbortSignal): 
     const info = profile.keyRef ? listedModelsOf(profile.keyRef)?.info ?? {} : {};
     const listed = profile.keyRef ? listedModelsOf(profile.keyRef) : null;
     // An endpoint ID: the levels of the listed model it answered as when checked.
-    const effortsByModel = Object.fromEntries(profile.keyModels.map((m) => [m, (info[m] ?? info[listed?.endpoints?.[m] ?? ""])?.efforts ?? []]));
+    const of = (m: string) => info[m] ?? info[listed?.endpoints?.[m] ?? ""];
+    const effortsByModel = Object.fromEntries(profile.keyModels.map((m) => [m, of(m)?.efforts ?? []]));
+    const modelNames = Object.fromEntries(profile.keyModels.flatMap((m) => (listed?.endpoints?.[m] ? [[m, listed.endpoints[m]]] : [])));
+    const inputsByModel = Object.fromEntries(profile.keyModels.flatMap((m) => (of(m)?.inputs ? [[m, of(m)!.inputs!]] : [])));
     const efforts = [...new Set(Object.values(effortsByModel).flat())];
     return { at: new Date().toISOString(), agent: profile.name ?? profile.id, models: profile.keyModels, efforts, effortsByModel, modes: own?.modes ?? [],
+      ...(Object.keys(modelNames).length ? { modelNames } : {}), ...(Object.keys(inputsByModel).length ? { inputsByModel } : {}),
       ...(profile.keyModels.length ? {} : { error: "这个 key 还没有可用的模型：到 API key 页点“检查”读模型列表，或手动添加模型" }) };
   }
   if (profile.transport === "doubao")

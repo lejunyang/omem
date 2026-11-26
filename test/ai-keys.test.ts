@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { boot } from "../src/main.ts";
-import { categoryStatus, defaultFor, findAnthropicUrl, keyEnv, listModelEntries, modelChoices, noteModelAccess, tryBackendModel, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
+import { categoryStatus, defaultFor, findAnthropicUrl, keyEnv, listModelEntries, modelChoices, modelDisplayName, noteModelAccess, tryBackendModel, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
 import { allProfiles, configSchema, keyedModelEnv, keyedProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
 import { backendHosts } from "../src/agents/egress-policy.ts";
@@ -48,7 +48,7 @@ describe("API-key providers", () => {
     expect(by["codex@ark"].env.MODEL_PROVIDER).toBe("omem-key");
     expect(JSON.parse(by["codex@ark"].env.CODEX_CONFIG)).toEqual({ model_provider: "omem-key", model_providers: { "omem-key": { name: "方舟", base_url: "https://ark.example.com/api/v3", env_key: "OMEM_AI_KEY", wire_api: "responses" } } });
     expect(by["codex-cli@ark"].args).toEqual(expect.arrayContaining(["-c", 'model_provider="omem-key"', 'model_providers.omem-key={name="方舟",base_url="https://ark.example.com/api/v3",env_key="OMEM_AI_KEY",wire_api="responses"}']));
-    expect(keyEnv(by["codex@ark"])).toEqual({ OMEM_AI_KEY: "ark-key-1" });
+    expect(keyEnv(by["codex@ark"])).toEqual({ OMEM_AI_KEY: "ark-key-1", CODEX_HOME: expect.stringMatching(/agents\/keyed\/codex@ark$/) });
     // Claude Code: Bearer token, the model for every tier.
     expect(by["claude@ark"].env).toMatchObject({ ANTHROPIC_BASE_URL: "https://ark.example.com/api/compatible", ANTHROPIC_MODEL: "ep-123", ANTHROPIC_DEFAULT_SONNET_MODEL: "ep-123", CLAUDE_CODE_SUBAGENT_MODEL: "ep-123" });
     expect(keyEnv(by["claude@ark"])).toMatchObject({ ANTHROPIC_AUTH_TOKEN: "ark-key-1", ANTHROPIC_MODEL: "ep-123" });
@@ -103,6 +103,18 @@ describe("API-key providers", () => {
     expect(keyedProfiles(withProviders([pr])).find((p) => p.id === "codex@ark")!.keyModels).toEqual([]);
     const ep = keyedProfiles(withProviders([{ ...pr, models: ["ep-9"] }])).find((p) => p.id === "codex@ark")!;
     expect(await probeProfile(ep)).toMatchObject({ models: ["ep-9"], effortsByModel: { "ep-9": ["minimal", "low", "high"] } });
+    // An endpoint ID is shown as the model behind it, and says what that model reads.
+    expect(modelDisplayName("ep-9")).toBe("glm-5");
+    expect(modelDisplayName("other")).toBe("other");
+    const cache = JSON.parse(readFileSync(join(home, "cache", "ai-models.json"), "utf8"));
+    cache.ark.info["glm-5"].inputs = ["text", "image"];
+    writeFileSync(join(home, "cache", "ai-models.json"), JSON.stringify(cache));
+    expect(await probeProfile(ep)).toMatchObject({ modelNames: { "ep-9": "glm-5" }, inputsByModel: { "ep-9": ["text", "image"] } });
+    // Codex on a third party's key: a home of its own that turns off what it fetches from OpenAI and GitHub, and no vendor hosts let through.
+    const env = keyEnv(ep);
+    expect(env.CODEX_HOME).toBe(join(home, "agents", "keyed", "codex@ark"));
+    expect(readFileSync(join(env.CODEX_HOME, "config.toml"), "utf8")).toMatch(/\[features\]\nplugins = false\nremote_models = false/);
+    expect([...backendHosts(ep)].some((h) => /openai|chatgpt/.test(h))).toBe(false);
   });
 
   it("reads what a listing says about each model, finds the Anthropic address and calls the model once", async () => {

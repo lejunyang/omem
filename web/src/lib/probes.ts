@@ -2,7 +2,18 @@ import { reactive } from "vue";
 import { post } from "../api";
 
 /** The models and effort levels a backend offers (src/agents/probe.ts). */
-export type Probe = { agent?: string; models: string[]; efforts: string[]; effortsByModel?: Record<string, string[]>; modes?: string[]; error?: string; at?: string };
+export type Probe = { agent?: string; models: string[]; efforts: string[]; effortsByModel?: Record<string, string[]>; modelNames?: Record<string, string>; inputsByModel?: Record<string, string[]>; modes?: string[]; error?: string; at?: string };
+
+/** What to show for a model: an endpoint ID (`ep-…`) as the model behind it. */
+export const modelName = (probe: { modelNames?: Record<string, string> } | null | undefined, m: string) => probe?.modelNames?.[m] ?? m;
+/** A hint for a model's option: what it reads besides text, by its key's listing. */
+export function inputsHint(probe: { inputsByModel?: Record<string, string[]> } | null | undefined, m: string) {
+  const inputs = probe?.inputsByModel?.[m];
+  if (!inputs) return undefined;
+  const more = inputs.filter((x) => x !== "text").map((x) => INPUT_LABEL[x] ?? x);
+  return more.length ? `能看${more.join("、")}` : "只读文字";
+}
+export const INPUT_LABEL: Record<string, string> = { image: "图片", video: "视频", audio: "音频", file: "文件" };
 
 /**
  * Probe results per backend, shared by every page for the life of the tab. They change rarely and

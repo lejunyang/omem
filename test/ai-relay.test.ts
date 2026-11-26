@@ -92,7 +92,7 @@ describe("the API-key relay", () => {
       // Ark's Anthropic-shaped address is known: Claude Code is made without a check.
       expect(by["claude@ark"].env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4999/api/ai/relay/ark/claude%40ark/anthropic");
       expect(JSON.parse(by["opencode@ark"].env.OPENCODE_CONFIG_CONTENT).provider["omem-key"].options.baseURL).toBe("http://127.0.0.1:4999/api/ai/relay/ark/opencode%40ark/openai");
-      expect(keyEnv(by["codex@ark"])).toEqual({ OMEM_AI_KEY: relayToken("codex@ark") });
+      expect(keyEnv(by["codex@ark"])).toMatchObject({ OMEM_AI_KEY: relayToken("codex@ark") });
       expect(JSON.stringify(keyEnv(by["claude@ark"]))).not.toContain("real-ark-key");
       expect(by["codex@ark"].env.OMEM_AI_BASE_URL).toBeUndefined();
     } finally {

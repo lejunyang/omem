@@ -2643,6 +2643,9 @@ TraeX 与其他 ACP 的清理补验：
 | “后端可用的模型”添加两个（如两个接入点 ID），把第二个“设为默认”；再在 通用 页把默认改回第一个 | 通用页的检测结果只有这两个；两边改默认都生效；按任务选另一个模型时，Claude Code 的请求带的是那个模型 | 测试覆盖 |
 | 填上接入点 ID（或允许直接用模型 ID 的模型名），点“检查”，再让助手用 `codex@<编号>`、`claude@<编号>` 各问一句 | 检查写“模型 … 可以调用”（账号不允许用模型 ID 时写出服务的报错 `ModelIDAccessDisabled`）；两个后端都正常回答，请求打到方舟 | codex-acp、claude-agent-acp 对着本地假接口实测请求地址、Bearer、模型；真机待验 |
 | API key 页添加“火山方舟”的 key（地址留空或填 `…/api/v3`），勾 Codex 和 Claude Code，填接入点 ID，点“检查” | Claude Code 后端直接出现（Anthropic 格式地址按 `…/api/compatible`），检查写“模型 … 可以调用”；以前按 OpenAI 兼容添加的方舟 key 那一行有“改成火山方舟” | 测试覆盖，真机待验 |
+| 方舟 key 填两个接入点 ID 点“检查”，再到通用页看 `codex@<编号>` 的模型下拉，让它跑一次后看运行记录 | API key 页每个接入点显示背后的模型名（接入点 ID 小字跟在后面）并标“能看图片、视频”；下拉和运行记录显示模型名，不显示 `ep-…` |
+| 用代理记录 `codex@<编号>` 在只读 / 可写 / 完全访问下各跑一次的出网连接 | 只有 omem 转发地址；没有 github.com、chatgpt.com；数据目录有 `agents/keyed/codex@<编号>/config.toml` |
+| 后端模型的列表写着只读文字时给它发一张图片 | Agent 直接说这个模型看不了图，不调用图片工具 |
 | 方舟的接入点限流（`RateLimitExceeded.Endpoint*`）时让 `codex@<编号>` 做一件事 | omem 转发处等几秒重试；还限流则运行以“限流”结束、换下一个后端，key 那一行写“最近 1 小时：限流 1 次……” | 真实 codex-acp / claude-agent-acp 对假接口实测 |
 | 方舟返回 `SetLimitExceeded` / `AccountOverdueError` / `ModelAccountTpdRateLimitExceeded` | 运行几秒内以“额度用完”结束；前两种收到一条通知，key 那一行写“已暂停到 …”（每日用量到午夜，其余一天）；点“检查”通过后恢复 | 真实 codex-acp / claude-agent-acp 对假接口实测 |
 | 决策模型（例如 Cloudflare）返回每日额度用完（3036） | 换下一个决策模型，它排到最后直到午夜；API key 页那一行记下这条错误 | 测试覆盖 |

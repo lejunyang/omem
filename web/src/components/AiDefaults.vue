@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
-import { detectProbe, probes, seedProbe, type Probe } from "../lib/probes";
+import { detectProbe, inputsHint, modelName, probes, seedProbe, type Probe } from "../lib/probes";
 import UiSelect from "./UiSelect.vue";
 import { relTime } from "../store";
 
@@ -39,7 +39,7 @@ function inherited(key: "model" | "effort") {
 }
 function choices(key: "model" | "effort", offered: string[]) {
   const saved = props.modelValue[key];
-  return [{ value: "", label: `跟随默认${inherited(key) ? `（${inherited(key)}）` : ""}` }, ...(saved && !offered.includes(saved) ? [{ value: saved, label: saved, hint: "当前保存值，检测未列出" }] : []), ...offered.map((v) => ({ value: v, label: v }))];
+  return [{ value: "", label: `跟随默认${inherited(key) ? `（${inherited(key)}）` : ""}` }, ...(saved && !offered.includes(saved) ? [{ value: saved, label: saved, hint: "当前保存值，检测未列出" }] : []), ...offered.map((v) => (key === "model" ? { value: v, label: modelName(probe.value, v), hint: inputsHint(probe.value, v) } : { value: v, label: v }))];
 }
 function update(key: keyof Choice, value: string) {
   const next = { ...props.modelValue, [key]: value };

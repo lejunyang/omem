@@ -1,3 +1,4 @@
+import { modelDisplayName } from "../core/ai-keys.ts";
 import { runPredicate, type RunAudience } from "../auth/run-scope.ts";
 import { cancelBoard, maintainBoards, settleBoardRun } from "./work-board.ts";
 import { releaseRun } from "./capacity.ts";
@@ -58,6 +59,12 @@ type Row = {
   quiet: number;
   trigger: string | null;
 };
+/** A run on an endpoint ID (`ep-…`) also says which model that is, for showing. */
+function withModelName<T extends { model?: string } | null>(ai: T): T {
+  if (!ai?.model) return ai;
+  const name = modelDisplayName(ai.model);
+  return name === ai.model ? ai : { ...ai, modelName: name };
+}
 const toRun = (r: Row): Run => ({
   id: r.id,
   kind: r.kind as RunKind,
@@ -67,7 +74,7 @@ const toRun = (r: Row): Run => ({
   input: json(r.input, {}),
   output: json(r.output, {}),
   profileId: r.profile_id,
-  ai: r.ai ? json(r.ai, null) : null,
+  ai: r.ai ? withModelName(json(r.ai, null)) : null,
   parentId: r.parent_id,
   error: r.error,
   createdAt: r.created_at,

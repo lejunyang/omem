@@ -67,10 +67,29 @@ export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> 
   if (!key) throw new Error(`后端 ${profile.id} 用的 API key（${profile.keyRef}）还没有填写：设置 → 后端与模型 → API key`);
   // Through the relay the agent holds the relay's token; omem adds the key on the way out.
   const value = profile.keyRelay ? relayToken(profile.id) : key;
-  // A third party's key: the model this run is on goes in at launch too (config.ts keyedModelEnv).
-  if (profile.keyVars?.length) return { ...keyedModelEnv(profile), ...Object.fromEntries(profile.keyVars.map((v) => [v, value])) };
+  // A third party's key: the model this run is on goes in at launch too (config.ts keyedModelEnv), and Codex
+  // gets a home of its own (thirdPartyCodexHome) so nothing it does reaches OpenAI.
+  if (profile.keyVars?.length) return { ...keyedModelEnv(profile), ...thirdPartyCodexHome(profile), ...Object.fromEntries(profile.keyVars.map((v) => [v, value])) };
   const s = `${profile.id} ${profile.command}`;
   return keyVars(/claude/.test(s) ? "anthropic" : /codex/.test(s) ? "openai" : "", key);
+}
+
+/**
+ * Codex on a third party's key: a CODEX_HOME of its own (`agents/keyed/<backend>` in the data
+ * directory), its config.toml turning off what Codex fetches from OpenAI and GitHub besides the
+ * model (the plugin marketplace sync from github.com, the model catalog, analytics and the update
+ * check, all to chatgpt.com / github.com; checked 2026-11-27 with codex 0.169 through a logging
+ * proxy: none left). It also keeps these runs out of the owner's own ~/.codex and its login.
+ * codex-acp passes only hooks from CODEX_CONFIG to the app server at start, so this has to be a file.
+ */
+const KEYED_CODEX_TOML = ["# Written by omem for Codex on a third party's API key: nothing beyond the model's own API.", "check_for_update_on_startup = false", "", "[analytics]", "enabled = false", "", "[features]", "plugins = false", "remote_models = false", ""].join("\n");
+function thirdPartyCodexHome(profile: Pick<AgentProfile, "id" | "command"> & { keyModels?: string[] }): Record<string, string> {
+  if (!profile.keyModels || !/^codex/.test(profile.id)) return {};
+  const dir = join(keyHome ?? omemHome(), "agents", "keyed", profile.id.replace(/[^\w@.-]/g, "_"));
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "config.toml");
+  if (!existsSync(file) || readFileSync(file, "utf8") !== KEYED_CODEX_TOML) writeFileSync(file, KEYED_CODEX_TOML);
+  return { CODEX_HOME: dir };
 }
 
 export const DEFAULT_BASE: Record<string, string> = {
@@ -299,7 +318,7 @@ export type ModelField = "image" | "voice.live" | "voice.realtime" | "voice.tran
  * Messages), what it is for (`LLM`, `ImageGeneration`…), and whether it calls tools.
  */
 /** What a listing says about one model: API formats, domain, tool calls, and the thinking levels it takes (default first). */
-export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean; efforts?: string[]; context?: number };
+export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean; efforts?: string[]; context?: number; inputs?: string[] };
 /**
  * One key's listing, and what calling it taught: `endpointOnly` when the provider refuses model names
  * and takes only endpoint IDs (Ark: `ModelIDAccessDisabled`), `endpoints` the listed model each
@@ -309,12 +328,22 @@ type ModelCache = Record<string, { at: number; models: string[]; info?: Record<s
 const cacheFile = (home: string) => join(home, "cache", "ai-models.json");
 /** The listing kept for each key, for config.ts to pick a key's backend models from; read again when the file changes. */
 let listedMemo: { file: string; mtime: number; cache: ModelCache } | null = null;
-useListedModels((provider) => {
+/** The name to show for a model: an endpoint ID (`ep-…`) means nothing, the listed model it answered as does. */
+export function modelDisplayName(model: string | undefined | null): string {
+  if (!model) return model ?? "";
+  const cache = listedCache();
+  for (const e of Object.values(cache ?? {})) if (e.endpoints?.[model]) return e.endpoints[model];
+  return model;
+}
+function listedCache(): ModelCache | null {
   const file = cacheFile(keyHome ?? omemHome());
   let mtime = 0;
   try { mtime = statSync(file).mtimeMs; } catch { return null; }
   if (!listedMemo || listedMemo.file !== file || listedMemo.mtime !== mtime) listedMemo = { file, mtime, cache: readModelCache(keyHome ?? omemHome()) };
-  const e = listedMemo.cache[provider];
+  return listedMemo.cache;
+}
+useListedModels((provider) => {
+  const e = listedCache()?.[provider];
   return e && !e.error ? { models: e.models, info: e.info, endpointOnly: e.endpointOnly, endpoints: e.endpoints } : null;
 });
 export function readModelCache(home: string): ModelCache {
@@ -337,7 +366,7 @@ export function setModelListFetchForTests(f: typeof fetch | null) {
   listFetch = f ?? ((...a) => fetch(...a));
 }
 
-type Listed = { id?: string; name?: string; domain?: string; api_supported?: Record<string, boolean>; features?: { tools?: { function_calling?: boolean } }; effort?: { default_level?: string; supported_levels?: string[] }; context_window?: number; token_limits?: { context_window?: number } };
+type Listed = { id?: string; name?: string; domain?: string; api_supported?: Record<string, boolean>; features?: { tools?: { function_calling?: boolean } }; effort?: { default_level?: string; supported_levels?: string[] }; context_window?: number; token_limits?: { context_window?: number }; modalities?: { input_modalities?: string[] } };
 const contextOf = (m: Listed) => { const n = Number(m.token_limits?.context_window ?? m.context_window); return Number.isFinite(n) && n > 0 ? n : 0; };
 const LEVEL_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 /** A listing's thinking levels in the usual order (Ark lists `effort.supported_levels`). */
@@ -362,7 +391,7 @@ export async function listModelEntries(p: Provider, key: string, fetcher: typeof
     const id = String(m.id ?? "");
     if (!id) continue;
     const formats = m.api_supported ? Object.entries(m.api_supported).flatMap(([k, on]) => (on && FORMAT_OF[k] ? [FORMAT_OF[k]] : [])) : [];
-    const one: ModelInfo = { ...(formats.length ? { formats } : {}), ...(m.domain ? { type: m.domain } : {}), ...(m.features?.tools?.function_calling !== undefined ? { tools: !!m.features.tools.function_calling } : {}), ...(levelsOf(m.effort).length ? { efforts: levelsOf(m.effort) } : {}), ...(contextOf(m) ? { context: contextOf(m) } : {}) };
+    const one: ModelInfo = { ...(formats.length ? { formats } : {}), ...(m.domain ? { type: m.domain } : {}), ...(m.features?.tools?.function_calling !== undefined ? { tools: !!m.features.tools.function_calling } : {}), ...(levelsOf(m.effort).length ? { efforts: levelsOf(m.effort) } : {}), ...(contextOf(m) ? { context: contextOf(m) } : {}), ...(m.modalities?.input_modalities?.length ? { inputs: m.modalities.input_modalities.map(String) } : {}) };
     if (Object.keys(one).length) info[id] = one;
   }
   return { models: [...new Set((body.data ?? []).map((m) => String(m.id ?? "")).filter(Boolean))].sort(), info };

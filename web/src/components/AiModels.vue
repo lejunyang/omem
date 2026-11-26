@@ -21,7 +21,7 @@ type Kind = "openai" | "anthropic" | "typesafe" | "openrouter" | "cloudflare" | 
 type ErrKind = "rate" | "daily" | "quota" | "auth" | "config" | "server" | "input" | "other";
 type RelayView = { counts: Partial<Record<ErrKind, number>>; last: { at: number; status: number; kind: ErrKind; code: string; message: string } } | null;
 type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; anthropicUrl?: string; models?: string[]; model?: string; accountId?: string; backends: string[] };
-type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean };
+type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean; inputs?: string[] };
 type ProviderView = Provider & { keyHint: string; hasKey: boolean; offers: string[]; relay?: RelayView; paused?: { until: string; message: string } | null; listed: { at: number; count: number; models: string[]; info: Record<string, ModelInfo>; error?: string; endpointOnly?: boolean; endpoints?: Record<string, string> } | null };
 type Choice = { default: string; models: string[] };
 type Status = { ready: boolean; detail: string; media?: ("images" | "audio" | "videos")[] };
@@ -150,6 +150,17 @@ function setModels(p: ProviderView, models: string[], note: string) {
 /** The key takes endpoint IDs only (a check found model names refused): the listing offers nothing to pick. */
 const endpointOnly = (p: ProviderView) => !!p.listed?.endpointOnly;
 const addChoice = (p: ProviderView) => ({ default: "", models: endpointOnly(p) ? [] : backendModelChoice(p).models.filter((m) => !namedModels(p).includes(m)) });
+/** A named model's listing entry: its own, or the model an endpoint answered as. */
+const infoOf = (p: ProviderView, m: string) => p.listed?.info?.[m] ?? p.listed?.info?.[p.listed?.endpoints?.[m] ?? ""];
+/** The name to show: an endpoint ID means nothing, the model behind it does. */
+const shown = (p: ProviderView, m: string) => p.listed?.endpoints?.[m] ?? m;
+const INPUT_WORD: Record<string, string> = { image: "图片", video: "视频", audio: "音频", file: "文件" };
+/** What a model reads besides text, by the listing (nothing said: nothing shown). */
+function inputsText(info: ModelInfo | undefined) {
+  if (!info?.inputs) return "";
+  const more = info.inputs.filter((x) => x !== "text").map((x) => INPUT_WORD[x] ?? x);
+  return more.length ? `能看${more.join("、")}` : "只读文字";
+}
 /** What the named models cannot do for the chosen backends, from what the listing says. */
 function modelWarning(p: ProviderView) {
   const out: string[] = [];
@@ -161,7 +172,7 @@ function modelWarning(p: ProviderView) {
     const lacks: string[] = [];
     if (p.backends.some((b) => b.startsWith("codex")) && !f.includes("responses")) lacks.push("Codex 要 Responses 接口");
     if (p.backends.some((b) => b.startsWith("claude")) && !f.includes("anthropic")) lacks.push("Claude Code 要 Anthropic 格式");
-    if (lacks.length) out.push(`${m} 只支持 ${f.map((x) => FORMAT_LABEL[x]).join("、")}（${lacks.join("，")}）`);
+    if (lacks.length) out.push(`${shown(p, m)} 只支持 ${f.map((x) => FORMAT_LABEL[x]).join("、")}（${lacks.join("，")}）`);
   }
   return out.length ? `列表里写着：${out.join("；")}` : "";
 }
@@ -269,9 +280,13 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       <div v-for="p in providers" :key="p.id" class="prow">
         <div class="pmain">
           <div><strong>{{ p.name || p.id }}</strong> <span class="muted small mono">{{ p.id }}</span> <span class="badge">{{ KIND_LABEL[p.kind] }}</span></div>
-          <div class="muted small">
-            {{ p.hasKey ? `key 尾号 ${keyTail(p.keyHint)}` : "没有 key" }}<template v-if="p.baseUrl"> · <span class="mono">{{ p.baseUrl }}</span></template><template v-else-if="p.accountId"> · 账号 <span class="mono">{{ p.accountId }}</span></template> · 可用于：{{ KIND_USES[p.kind] }}<template v-if="p.listed"> · <span v-if="p.listed.error" class="err-text" :title="p.listed.error">模型列表读取失败</span><button v-else type="button" class="linkish" :aria-expanded="!!openList[p.id]" @click="openList[p.id] = !openList[p.id]">{{ openList[p.id] ? "收起模型列表" : `查看 ${p.listed.count} 个模型` }}</button></template>
-          </div>
+          <dl class="pfacts small">
+            <dt>key</dt><dd>{{ p.hasKey ? `尾号 ${keyTail(p.keyHint)}` : "还没有填" }}</dd>
+            <template v-if="p.baseUrl"><dt>地址</dt><dd class="mono">{{ p.baseUrl }}</dd></template>
+            <template v-else-if="p.accountId"><dt>账号</dt><dd class="mono">{{ p.accountId }}</dd></template>
+            <dt>可用于</dt><dd>{{ KIND_USES[p.kind] }}</dd>
+            <template v-if="p.listed"><dt>模型列表</dt><dd><span v-if="p.listed.error" class="err-text" :title="p.listed.error">读取失败</span><button v-else type="button" class="linkish" :aria-expanded="!!openList[p.id]" @click="openList[p.id] = !openList[p.id]">{{ openList[p.id] ? "收起" : `查看 ${p.listed.count} 个模型` }}</button></dd></template>
+          </dl>
           <div v-if="openList[p.id] && p.listed" class="model-list small">
             <input v-model="listFilter[p.id]" class="input sm" :aria-label="`筛选 ${p.name || p.id} 的模型`" placeholder="筛选模型名" />
             <ul>
@@ -279,6 +294,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
                 <span class="mono">{{ m }}</span>
                 <span v-for="f in p.listed.info[m]?.formats ?? []" :key="f" class="tag">{{ FORMAT_LABEL[f] }}</span>
                 <span v-if="p.listed.info[m]?.type" class="muted">{{ p.listed.info[m].type }}</span>
+                <span v-if="inputsText(p.listed.info[m])" class="muted">{{ inputsText(p.listed.info[m]) }}</span>
               </li>
               <li v-if="!listedModels(p).length" class="muted">没有符合的模型</li>
               <li v-else-if="listedModels(p).length > LIST_CAP" class="muted">还有 {{ listedModels(p).length - LIST_CAP }} 个，输入名字筛选</li>
@@ -292,9 +308,9 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
               <span>{{ endpointOnly(p) ? "后端用的接入点" : "后端可用的模型" }}</span>
               <div class="row wrap model-chips">
                 <span v-for="(m, i) in namedModels(p)" :key="m" class="mchip mono">
-                  {{ m }}<span v-if="p.listed?.endpoints?.[m]" class="muted">→ {{ p.listed.endpoints[m] }}</span><span v-if="i === 0" class="muted">（默认）</span>
-                  <button v-if="i > 0" type="button" class="linkish" :aria-label="`把 ${m} 设为默认`" @click="setModels(p, [m, ...namedModels(p).filter((x) => x !== m)], `默认模型改为 ${m}`)">设为默认</button>
-                  <button type="button" class="mchip-x" :aria-label="`去掉 ${m}`" @click="setModels(p, namedModels(p).filter((x) => x !== m), `已去掉 ${m}`)"><Icon name="x" :size="12" /></button>
+                  <span :title="p.listed?.endpoints?.[m] ? `接入点 ${m}` : undefined">{{ p.listed?.endpoints?.[m] ?? m }}</span><span v-if="p.listed?.endpoints?.[m]" class="muted ep-id">{{ m }}</span><span v-if="inputsText(infoOf(p, m))" class="tag">{{ inputsText(infoOf(p, m)) }}</span><span v-if="i === 0" class="muted">（默认）</span>
+                  <button v-if="i > 0" type="button" class="linkish" :aria-label="`把 ${shown(p, m)} 设为默认`" @click="setModels(p, [m, ...namedModels(p).filter((x) => x !== m)], `默认模型改为 ${shown(p, m)}`)">设为默认</button>
+                  <button type="button" class="mchip-x" :aria-label="`去掉 ${shown(p, m)}`" @click="setModels(p, namedModels(p).filter((x) => x !== m), `已去掉 ${shown(p, m)}`)"><Icon name="x" :size="12" /></button>
                 </span>
                 <AiModelPick :key="namedModels(p).length" class="add-pick" model-value="" :choice="addChoice(p)" empty-label="添加模型…" :placeholder="endpointOnly(p) ? 'ep-… 接入点 ID' : undefined" :label="endpointOnly(p) ? '添加接入点 ID' : '添加后端可用的模型'" @change="(v) => v && setModels(p, [...namedModels(p), v], `已添加 ${v}`)" />
               </div>
@@ -479,6 +495,26 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
 .be-row {
   margin-top: 6px;
   gap: 4px 14px;
+}
+/* The key's facts as label and value, one per line: a long address wraps inside its own cell. */
+.pfacts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+.pfacts dt {
+  color: var(--muted);
+}
+.pfacts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.ep-id {
+  font-size: 11px;
 }
 .be-block {
   margin-top: 10px;

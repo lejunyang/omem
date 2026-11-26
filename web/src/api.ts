@@ -264,7 +264,7 @@ export type MemoryQuality = {
 };
 export type Item = { id: string; userId?: string; spaceId: string; /** The line or work item it hangs under (src/items/tree.ts). */ parentId?: string | null; kind: string; title: string; detail: string; status: string; priority: number; dueAt: string | null; remindAt: string | null; waitingOn: string | null; watch: any; sourceRefs: string[]; createdAt: string; updatedAt: string; closedAt: string | null; flow?: { stage: string; name: string; waiting: boolean } | null; /** When it closes by itself, and why then (open items). */ expiresAt?: string; expiryText?: string; /** Made by the assistant on its own (a candidate): why, and by which run kind. */ auto?: { why: string; by: string } };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
-export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; ai?: { profile: string; model?: string; effort?: string; account?: RunAccount } | null; waiting?: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean; trigger?: RunTrigger | null };
+export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; ai?: { profile: string; model?: string; modelName?: string; effort?: string; account?: RunAccount } | null; waiting?: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean; trigger?: RunTrigger | null };
 /** How a run came about and who was behind it (src/core/run-trigger.ts). */
 export type RunTrigger = { via: "chat" | "guest" | "mention" | "rule" | "schedule" | "peer" | "member" | "flow"; by?: { key: string; name: string }; where?: string; source?: { kind: string; id: string; name: string }; followUp?: "wake" | "child" };
 const VIA: Record<RunTrigger["via"], string> = { chat: "对话", guest: "访客提问", mention: "有人找你", rule: "规则", schedule: "定时", peer: "同伴设备", member: "成员操作", flow: "流程" };
@@ -287,7 +287,7 @@ export function accountLabel(r: Pick<Run, "ai">, me: { id: string; ownerName?: s
   const whose = a.holder === me?.id ? (me?.id === "owner" ? "" : "自己的账号") : a.holder === "owner" ? `${me?.ownerName ?? "本人"}的账号` : `${a.name ?? a.holder}的账号`;
   return [a.borrowed && whose ? `借用${whose}` : whose, a.login].filter(Boolean).join(" · ");
 }
-export const aiLabel = (r: Pick<Run, "ai" | "profileId">) => (r.ai ? [r.ai.profile, r.ai.model, r.ai.effort].filter(Boolean).join(" · ") : r.profileId ?? "");
+export const aiLabel = (r: Pick<Run, "ai" | "profileId">) => (r.ai ? [r.ai.profile, r.ai.modelName ?? r.ai.model, r.ai.effort].filter(Boolean).join(" · ") : r.profileId ?? "");
 export type RunEvent = { seq: number; at: string; type: string; data: any };
 export type Source = { id: string; spaceId: string; kind: string; uri: string; title: string; mime: string | null; meta: any; capturedAt: string; updatedAt: string; deletedAt: string | null; lines?: number; attention?: "focus" | "reference" | "ignore" | null; attentionBy?: "owner" | "agent" | "rule" | null; level?: { level: string; by: string | null; inherited: boolean } };
 export type Card = { id: string; spaceId: string; front: string; back: string; sourceRefs: string[]; dueAt: string; reps: number; lapses: number; state: number; suspended: boolean };

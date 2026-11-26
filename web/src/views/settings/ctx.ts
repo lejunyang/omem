@@ -5,7 +5,7 @@ import { state, toast } from "../../store";
 import { setSettingsSections, settingsSections } from "../../lib/caps";
 import { saveRefusal, type SettingsSections } from "../../lib/settings-access";
 import { network } from "../../lib/network-status";
-import { detectProbe, probes as shared, seedProbe, type Probe } from "../../lib/probes";
+import { detectProbe, modelName, probes as shared, seedProbe, type Probe } from "../../lib/probes";
 
 /**
  * What the settings tabs share (views/Settings.vue provides it, each tab in views/settings/ injects it):
@@ -85,7 +85,7 @@ export function useSettings(): SettingsCtx {
   return ctx;
 }
 
-type ProbeData = { agent: string; models: string[]; efforts: string[]; effortsByModel?: Record<string, string[]>; error?: string; at?: string };
+type ProbeData = { agent: string; models: string[]; efforts: string[]; effortsByModel?: Record<string, string[]>; modelNames?: Record<string, string>; error?: string; at?: string };
 
 /** The installed backends and what each offers (models, effort levels): the pickers of several tabs use them. */
 export function useBackends(profiles: Ref<Profile[]>) {
@@ -110,7 +110,8 @@ export function useBackends(profiles: Ref<Profile[]>) {
   function modelOptionsFor(profileId: string | undefined, key: "model" | "effort", current?: string, model?: string) {
     const offered = (key === "model" ? probes.value[profileId ?? ""]?.data?.models : effortsOf(profileId, model ?? profiles.value.find((x) => x.id === profileId)?.model)) ?? [];
     const list = current && !offered.includes(current) ? [current, ...offered] : offered;
-    return [{ value: "", label: "跟随默认" }, ...list.map((v) => ({ value: v, label: v }))];
+    const probe = probes.value[profileId ?? ""]?.data;
+    return [{ value: "", label: "跟随默认" }, ...list.map((v) => ({ value: v, label: key === "model" ? modelName(probe, v) : v }))];
   }
   /** Backends that can report their models and effort levels. */
   const probeable = (p: Profile) => p.transport === "acp" || p.transport === "doubao-cli";
