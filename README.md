@@ -147,6 +147,8 @@ flowchart LR
 
 Antigravity CLI 按 PATH 中的 `agy` 识别，以 `agy acp` 启动并复用 CLI 登录。额度通过 CLI 自己的 `/usage` 读取，不消耗模型额度；后端页显示各模型组的已用比例和重置时间，快用完时按模型组避让。ACP 注册表下载的 `antigravity-acp` 是另一份独立运行包，认证配置与 CLI 分开；已经装好并登录 `agy` 时直接选 `antigravity`；原先手动添加、同样以 `agy acp` 启动的后端会顶替它，保留原名和设置并共用额度。成员可以在“我的 AI 账号”里用网页登录自己的 agy；本人可以在后端卡片上“再加一个账号”，同一个后端登录多个号，各有登录目录和额度（Codex、Claude Code、TraeX、Copilot 也可以）。
 
+自动选型的对话每轮开始前也看已缓存的额度；原后端接近上限且有可用替代时，在原对话换后端接着答。手动指定的后端不因额度接近上限而换。
+
 云端会话可以按运行授权检索、读原文，研究的阶段也能交给云端后端跑并用工具交结果。默认关闭。本人探测并确认后端后，可指定它能使用的工具；云端和这台机器在同一个内网时，可以允许用内网的 http 地址。每次调用沿用成员和运行的空间权限。[配置云端工具](docs/v2/external-access.md#云端后端调工具)。
 
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → 后端与模型 → 添加 Agent”做同样的事；内置目录里有 npm 包的，在“其他支持的 Agent”里点“安装”就在后台装好（有 osdk 和 Node 时用 osdk 装）。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → 后端与模型 → API key 添加 OpenAI 或 Anthropic 的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → 后端与模型 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。

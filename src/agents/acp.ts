@@ -19,6 +19,7 @@ const QUEUE_END_TEXT = /(?:已排到|轮到你|队列已结束|(?:no longer|out 
 // Housekeeping lines some CLIs print as message text before the model answers.
 // Also the agent's own warnings about its setup (a model its catalog has no metadata for, features under development).
 const AGENT_NOTICE = /^\s*(?:Skill descriptions were shortened|Disable unused skills or plugins|Warning: (?:Model metadata for\b|Under-development features enabled))/i;
+const STREAM_QUOTA_NOTICE = /^⚠\uFE0F? Individual quota reached\. Please upgrade your subscription to increase your limits\.(?: Resets in (?:\d+[dhms]\s*)+\.)?$/i;
 
 function optionValues(option: SessionConfigOption): string[] {  if (option.type !== "select") return [];
   const out: string[] = [];
@@ -302,7 +303,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
               gotOutput = true;
               text += update.content.text;
               segments[segments.length - 1] += update.content.text;
-              emit({ type: "text", text: update.content.text });
+              if (!STREAM_QUOTA_NOTICE.test(update.content.text.trim())) emit({ type: "text", text: update.content.text });
               // Some agents show provider queue state as ordinary message text.
               const q = QUEUE_TEXT.exec(update.content.text);
               if (q) {
@@ -708,6 +709,8 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
         try {
           const result = await Promise.race([connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] }), failed]).catch((e) => { throw promptError(e); });
           if (signal?.aborted) throw new Error("CANCELLED");
+          const last = segments.at(-1)!.trim();
+          if (STREAM_QUOTA_NOTICE.test(last)) throw agentRunError(last, "quota");
           return { text, reply: replyFromSegments(segments), stopReason: result.stopReason, sessionId, agent: agentName, contextUsage };
         } finally {
           endCommandTurn?.();

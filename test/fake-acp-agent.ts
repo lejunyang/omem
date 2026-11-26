@@ -211,6 +211,14 @@ new AgentSideConnection(
         await say(`${message}\n\n`);
         throw RequestError.internalError({ message, codexErrorInfo: "usageLimitExceeded" });
       }
+      if (process.env.FAKE_QUOTA === "text" || process.env.FAKE_QUOTA === "text-split") {
+        const notice = "⚠ Individual quota reached. Please upgrade your subscription to increase your limits.";
+        if (process.env.FAKE_QUOTA === "text-split") {
+          await say(notice);
+          await say(" Resets in 1h9m34s.");
+        } else await say(`${notice} Resets in 1h9m34s.`);
+        return { stopReason: "end_turn" };
+      }
       // FAKE_DIE=1: the agent process dies in the middle of a turn (a crash, OOM kill).
       if (process.env.FAKE_TLS_DISCONNECT === "1") {
         await say("我先看一下……");

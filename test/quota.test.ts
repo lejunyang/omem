@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { receive } from "../src/agents/inbox.ts";
 import { runEvents, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
+import { getThread, updateThread } from "../src/agents/threads.ts";
 import { boot } from "../src/main.ts";
 import { clearOutOfQuota, dailyCapReached, excluded, isQuotaMessage, markOutOfQuota, outOfQuotaList, perDayOf, quotaResetAt, usedToday } from "../src/agents/capacity.ts";
 import { createRun } from "../src/agents/runs.ts";
@@ -22,6 +23,7 @@ describe("usage quota", () => {
     expect(quotaResetAt("try again at 9:05 AM.", at)).toEqual(new Date(2026, 10, 5, 9, 5));
     expect(quotaResetAt("try again at Nov 6th, 2026 2:36 PM.", at)).toEqual(new Date(2026, 10, 6, 14, 36));
     expect(quotaResetAt("try again in 2 hours 5 minutes.", at)).toEqual(new Date(2026, 10, 4, 12, 35));
+    expect(quotaResetAt("⚠ Individual quota reached. Resets in 1h9m34s.", at)).toEqual(new Date(2026, 10, 4, 11, 39, 34));
     // Nothing usable: an hour.
     expect(quotaResetAt("You've hit your usage limit.", at)).toEqual(new Date(2026, 10, 4, 11, 30));
     expect(isRetryableAgentError(new Error("Internal error：{\"codexErrorInfo\":\"usageLimitExceeded\"}"))).toBe(true);
@@ -91,24 +93,71 @@ describe("usage quota", () => {
     expect(excluded(app, spent)).toBe(false);
   }, 60_000);
 
-  it("answers a conversation turn on the fallback, and starts the next turn there", async () => {
+  it.each(["1", "text", "text-split"])("answers a conversation turn on the fallback (%s quota signal), and starts the next turn there", async (quotaSignal) => {
     const home = mkdtempSync(join(tmpdir(), "omem-quota-"));
     const agent = (id: string, env: Record<string, string>) => ({ id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "thread", ...env } });
-    writeFileSync(join(home, "config.json"), JSON.stringify({ agents: { default: "spent", fallback: [{ profile: "spare" }], profiles: [agent("spent", { FAKE_QUOTA: "1" }), agent("spare", {})] } }));
+    writeFileSync(join(home, "config.json"), JSON.stringify({ agents: { default: "spent", fallback: [{ profile: "spare" }], profiles: [agent("spent", { FAKE_QUOTA: quotaSignal }), agent("spare", {})] } }));
     const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
     try {
       const turn = async (text: string) => {
         const { runId } = await receive(app, { channel: "web", chatId: "quota", text, mergeMs: 0 });
         const r = await waitForRun(app, runId!);
         expect(r.error).toBeNull();
+        expect(r.ai?.profile).toBe("spare");
+        expect(JSON.parse(String(r.output.answer)).msgs).toContain(text);
         return runEvents(app, runId!).filter((e) => e.type === "status").map((e) => String((e.data as { text?: string }).text ?? ""));
       };
       const first = await turn("你好");
       expect(first.some((t) => /spent 的额度用完了/.test(t))).toBe(true);
       expect(first.some((t) => /改用 spare/.test(t))).toBe(true);
+      expect(outOfQuotaList(app)[0]).toMatchObject({ source: "spent" });
       releaseAll();
       const second = await turn("再问一句");
       expect(second.some((t) => /额度用完了/.test(t))).toBe(false);
+    } finally {
+      releaseAll();
+      server.close();
+    }
+  }, 60_000);
+
+  it.each(["auto", "pinned", "no alternative"])("checks cached quota before continuing an existing conversation (%s)", async (selection) => {
+    const home = mkdtempSync(join(tmpdir(), "omem-quota-"));
+    const agent = (id: string) => ({ id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "thread" } });
+    const primary = { ...agent("primary"), source: "antigravity", model: "m1" };
+    writeFileSync(join(home, "config.json"), JSON.stringify({ agents: {
+      default: "primary", profiles: [primary, agent("spare")], routing: { automatic: false }, capacity: { quotaAvoidAbove: 95 },
+    } }));
+    const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
+    try {
+      const turn = async (text: string) => {
+        const { runId, thread } = await receive(app, { channel: "web", chatId: "quota-continue", text, mergeMs: 0 });
+        const result = await waitForRun(app, runId!);
+        expect(result.error).toBeNull();
+        return { result, threadId: thread.id, answer: JSON.parse(String(result.output.answer)), events: runEvents(app, runId!) };
+      };
+      const setQuota = (usedPercent: number) => {
+        const at = new Date().toISOString();
+        const windows = [{ name: "Gemini Models · 5h", models: ["m1"], usedPercent }];
+        run(app.db, "insert or replace into kv(key,value) values ('agent_quota', ?)", JSON.stringify({ antigravity: { at, via: "antigravity-usage", windows } }));
+      };
+      setQuota(62);
+      const first = await turn("第一轮");
+      expect(first.result.ai?.profile).toBe("primary");
+      const settings = getThread(app, first.threadId).settings;
+      updateThread(app, first.threadId, { settings: selection === "pinned" ? { ...settings, profile: "primary" } : { ...settings, auto: { profile: "primary", model: "m1" } } });
+      if (selection !== "no alternative") app.config.agents.default = "spare";
+      setQuota(97.6);
+      const next = await turn("继续核对");
+      if (selection === "auto") {
+        expect(next.result.ai?.profile).toBe("spare");
+        expect(next.answer).toMatchObject({ cold: true, turn: 1 });
+        expect(next.events.find((event) => event.type === "status" && "failover" in (event.data as object))?.data)
+          .toMatchObject({ failover: { why: "Gemini Models · 5h 已用 98%" } });
+        expect((await turn("再次追问")).answer.session).toBe(next.answer.session);
+      } else {
+        expect(next.result.ai?.profile).toBe("primary");
+        expect(next.answer).toMatchObject({ session: first.answer.session, turn: 2 });
+      }
     } finally {
       releaseAll();
       server.close();

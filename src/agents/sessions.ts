@@ -5,6 +5,7 @@ import { credentialSucceeded, selectedCredential } from "./credentials.ts";
 import { recordWatchMaterial, summaryOrigins } from "../core/message-origins.ts";
 import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
 import { all, one } from "../core/db.ts";
+import { backendAvailable } from "./availability.ts";
 import { hostToldOwner } from "./code-chain.ts";
 import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
 import { aiLabel, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type OrderSource } from "./choose-ai.ts";
@@ -33,7 +34,7 @@ import { selectMemberRunAccount } from "./member-run-ai.ts";
 import { aiLoginWait } from "./credential-wait.ts";
 import { SandboxStartError } from "./spawn.ts";
 import { accountTag, egressRequested } from "./sandbox.ts";
-import { afterTurn, noteRateLimit } from "./quota.ts";
+import { afterTurn, noteRateLimit, quotaPressure } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
 import { awarenessNote } from "./awareness.ts";
 import { attachmentText } from "./attachments.ts";
@@ -416,7 +417,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   } else if (pinned && !promptOverride && (!t.agentSession || specified)) {
     const p = resolveRunProfile(app, { actor, profileId: choice.profile, model: choice.model, effort: choice.effort });
     ctx.event("status", choiceEvent({ scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: login ? "继续等待登录前的 AI 选择" : specified ? "成员指定了 AI" : "这个会话用 /model 或会话设置指定了 AI" }));
-  }
+  } else if (auto) own = resolveRunProfile(app, { actor });
   const watched = messages.some((m) => typeof m.meta.speaker === "string");
   const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
   const handoff = (ctx.run.input as { handoff?: { kind: string } }).handoff;
@@ -579,9 +580,21 @@ ${WAKE_NOTE}`
     actor, profileId: p.id, model: p.model, effort: p.effort,
   }), memberOptions);
   const canSwitchAccount = (p: AgentProfile) => member && selectedMemberAccount(p)?.holder === "owner" && !ctx.signal.aborted && !promptOverride && !writeCount();
+  const fallback = failoverProfiles(app, actor, prep.profile, own, member ? userId : undefined);
+  const chain = distinctProfiles([prep.profile, ...(chosen?.order ?? []), ...fallback]).flatMap((p, i) => {
+    if (i === 0) return [p];
+    if (!member) return !excluded(app, p) && !accountBlocked(app, userId, p) ? [accountFor(app, userId, p)] : [];
+    const plan = memberAccountPlan(app, userId, p, !!login && p.id === login.pick.profile);
+    return plan.kind === "ready" && !excluded(app, plan.profile) ? [plan.profile] : [];
+  });
+  if (member && (specified || login) && app.config.agents.routing.pinnedFallback === "never") chain.splice(1);
+  const skip = (p: AgentProfile) => excluded(app, p) || !!downReason(app, p);
+  const quotaReady = (p: AgentProfile) => !skip(p) && backendAvailable(p, app.home) && !quotaPressure(app, p).reason;
+  const quotaWhy = !pinned && !promptOverride && !approvedStep && chain.length > 1 ? quotaPressure(app, prep.profile).reason : null;
+  const avoidPrimary = !!quotaWhy && chain.slice(1).some(quotaReady);
   let firstFailure: Error | undefined;
   let firstReplacement: AgentProfile | undefined;
-  if (prep.profile.transport !== "acp") {
+  if (prep.profile.transport !== "acp" && !avoidPrimary) {
     // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
     try {
       checkAccount(prep);
@@ -640,17 +653,6 @@ ${WAKE_NOTE}`
 
   // ACP: reuse the live process when it is the same agent in the same place.
   // Provider queue/rate-limit failures fall through the configured fallback chain once.
-  // Where the turn goes when its AI cannot answer: the thread's own AI when another was chosen, the
-  // role's other backends, the fallbacks, the routing candidates (runner.ts failoverProfiles).
-  // The chooser's ranking by the owner's routing notes first (on the turn that chose), then the static order.
-  const fallback = failoverProfiles(app, actor, prep.profile, own, member ? userId : undefined);
-  const chain = distinctProfiles([prep.profile, ...(chosen?.order ?? []), ...fallback]).flatMap((p, i) => {
-    if (i === 0) return [p];
-    if (!member) return !excluded(app, p) && !accountBlocked(app, userId, p) ? [accountFor(app, userId, p)] : [];
-    const plan = memberAccountPlan(app, userId, p, !!login && p.id === login.pick.profile);
-    return plan.kind === "ready" && !excluded(app, plan.profile) ? [plan.profile] : [];
-  });
-  if (member && (specified || login) && app.config.agents.routing.pinnedFallback === "never") chain.splice(1);
   if (firstReplacement) chain.splice(1, 0, firstReplacement);
   let orderBy: OrderSource = chosen ? chosen.by : "static";
   let orderReason = chosen?.reason ?? "";
@@ -667,17 +669,16 @@ ${WAKE_NOTE}`
   let mode: TurnResult["mode"] = "fresh";
   let curPrep = prep;
   let answer: string | null = null;
-  // An account out of quota, or a backend that broke down minutes ago, is skipped while another can take the turn.
-  const skip = (p: AgentProfile) => excluded(app, p) || !!downReason(app, p);
-  const usable = (i: number) => !skip(chain[i]) || !chain.slice(i + 1).some((p) => !skip(p));
+  const usable = (i: number) => avoidPrimary && chain.slice(i + 1).some(quotaReady) ? quotaReady(chain[i])
+    : !skip(chain[i]) || !chain.slice(i + 1).some((p) => !skip(p));
   const hasNext = (i: number) => chain.slice(i + 1).some((_, k) => usable(i + 1 + k));
   /** Why the previous backend was left, and what it already wrote (for the one taking over). */
   if (firstFailure && !hasNext(0)) throw firstFailure;
-  let left = firstFailure?.message ?? "";
+  let left = firstFailure?.message ?? (avoidPrimary ? quotaWhy : "") ?? "";
   let carry = "";
   let writesBefore = 0;
   let quietBefore = false;
-  for (let step = firstFailure ? 1 : 0; step < chain.length; step++) {
+  for (let step = firstFailure || avoidPrimary ? 1 : 0; step < chain.length; step++) {
     if (!usable(step)) continue;
     writesBefore = writeCount();
     quietBefore = quietSet(app, ctx.run.id);

@@ -255,8 +255,7 @@ const DAILY = /\bdaily\b|per[ -]day|\btoday\b|今日|今天|每日|每天|单日
  * Whether an error says a usage quota is spent (not a short rate limit): the account's plan, or one
  * model's own limit ("daily limit reached for this model", "该模型今日额度已用完").
  */
-export const isQuotaMessage = (text: string) =>
-  /usage limit|usageLimitExceeded|quota_exhausted|insufficient_quota|exceeded your current quota|out of credits|额度(已)?(用(完|尽)|耗尽)|(daily|per[ -]day) (usage |request |token )?(limit|quota)|(limit|quota) (has been |was )?(reached|exceeded|exhausted) for (this |the )?model|(今日|今天|每日|每天|单日|当日)[^。\n]{0,12}(上限|限额|额度|次数)[^。\n]{0,8}(已|用|达|超)/i.test(text);
+export const isQuotaMessage = (text: string) =>  /usage limit|usageLimitExceeded|quota_exhausted|insufficient_quota|exceeded your current quota|individual quota reached|out of credits|额度(已)?(用(完|尽)|耗尽)|(daily|per[ -]day) (usage |request |token )?(limit|quota)|(limit|quota) (has been |was )?(reached|exceeded|exhausted) for (this |the )?model|(今日|今天|每日|每天|单日|当日)[^。\n]{0,12}(上限|限额|额度|次数)[^。\n]{0,8}(已|用|达|超)/i.test(text);
 
 /** The spent limit is one model's (it is named, or the limit is per day): only that model is left out. */
 export function isModelQuotaMessage(text: string, model: string) {
@@ -272,11 +271,13 @@ export function quotaResetAt(message: string, at = new Date(), timeZone?: string
   const fallback = DAILY.test(message) && timeZone ? new Date(at.getTime() + 86_400_000 - msSinceMidnight(timeZone, at.getTime())) : null;
   const ok = (d: Date) => d.getTime() > at.getTime() && d.getTime() - at.getTime() < 8 * 86_400_000;
   const tail = /try again (at|in) ([^.\n]+)/i.exec(message);
+  const resets = /resets in ((?:\d+[dhms]\s*)+)(?=[.\s]|$)/i.exec(message);
   let d: Date | null = null;
-  if (tail?.[1].toLowerCase() === "in") {
-    const unit: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000 };
+  if (tail?.[1].toLowerCase() === "in" || (!tail && resets)) {
+    const unit: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1000 };
     let ms = 0;
-    for (const m of tail[2].matchAll(/(\d+)\s*(day|hour|hr|minute|min)/gi)) ms += Number(m[1]) * unit[m[2][0].toLowerCase()];
+    const parts = tail ? tail[2].matchAll(/(\d+)\s*(day|hour|hr|minute|min)/gi) : resets![1].matchAll(/(\d+)([dhms])/gi);
+    for (const part of parts) ms += Number(part[1]) * unit[part[2][0].toLowerCase()];
     if (ms) d = new Date(at.getTime() + ms);
   } else if (tail) {
     const text = tail[2].replace(/(\d)(st|nd|rd|th)\b/g, "$1").trim();
