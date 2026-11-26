@@ -816,7 +816,7 @@ ${JSON.stringify({ check, tools })}`);
         try {
           const direct = new Set((await client.listTools()).tools.map((t) => t.name));
           const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
-          const outcome = prompt.includes("[answered]") ? "answered" : prompt.includes("[owner]") ? "owner" : "escalate";
+          const outcome = prompt.includes("[answered]") ? "answered" : prompt.includes("[owner]") ? "owner" : prompt.includes("[quiet]") ? "quiet" : "escalate";
           const seen = /PROBE-OUT:(\w+)/.exec(prompt)?.[1];
           const r = await call("first_look_outcome", { outcome, text: `快速结论 ${outcome}${seen ? ` 看到 ${seen}` : ""}`, ...(outcome === "answered" ? { evidence: "预查输出第一行" } : {}), ...(outcome === "escalate" ? { next: "查日志" } : {}) });
           if (r.isError) throw new Error(JSON.stringify(r.content));

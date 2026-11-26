@@ -501,16 +501,21 @@ const idField = (id: string) => (id.startsWith("ou_") ? "open_id" : "user_id");
  */
 export async function sendEphemeral(chatId: string, person: string, card: Record<string, unknown>, bot?: string | null): Promise<{ messageId: string }> {
   // A card only one person sees sits in the group's stream like any other message: it @s them, so it is not scrolled past.
-  const r = await larkClientFor(bot).request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card: larkCardMarkdown(Array.isArray((card.body as { elements?: unknown } | undefined)?.elements) ? mentionInCard(card, [person]) : card) } });
+  const r = await larkClientFor(bot).request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card: larkCardMarkdown(withPersonAt(card, person)) } });
   const d = check(r, "发送仅部分人可见的卡片");
   reportSent({ chatId, bot, purpose: "card" }, null, d);
   return { messageId: d?.message_id };
 }
 
+/** A card only `person` sees keeps its @ of them when it is rebuilt (a click's new card, a late update). */
+export function withPersonAt(card: Record<string, unknown>, person: string | null | undefined) {
+  return person && Array.isArray((card.body as { elements?: unknown } | undefined)?.elements) ? mentionInCard(card, [person]) : card;
+}
+
 /** After a slow callback, update the exclusive card using its token and recipient. */
 export async function updateEphemeralCard(token: string, openId: string, card: Record<string, unknown>, bot?: string | null) {
   check(await larkClientFor(bot).request({ method: "POST", url: "/open-apis/interactive/v1/card/update",
-    data: { token, open_ids: [openId], card: larkCardMarkdown(card) } }), "更新临时卡片");
+    data: { token, open_ids: [openId], card: larkCardMarkdown(withPersonAt(card, openId)) } }), "更新临时卡片");
 }
 
 /** Buzz people about a message the bot sent (in-app urgent; they must be in its chat). */

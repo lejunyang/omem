@@ -92,12 +92,12 @@ export type ProbeStage = { name: string; ok: boolean; skipped?: string; ms: numb
 export type FirstLookStages = {
   prefilter?: string;
   probes?: { ms: number; results: ProbeStage[] };
-  look?: { ms: number; outcome: "answered" | "escalate" | "owner"; by: "model" | "host" | "probe"; reason?: string; ai?: { profile?: string; model?: string; effort?: string } | string };
+  look?: { ms: number; outcome: "answered" | "escalate" | "owner" | "quiet"; by: "model" | "host" | "probe"; reason?: string; ai?: { profile?: string; model?: string; effort?: string } | string };
   decision?: { taken?: string; threshold?: number; probabilities?: Record<string, number>; said?: string; skipped?: string };
   first?: { at?: string; to: FirstTo | "none"; why?: string[] };
   deep?: { runId: string | null; at?: string; detail?: string };
 };
-export const OUTCOME_TEXT: Record<string, string> = { answered: "答完了", escalate: "要接着查", owner: "要你定" };
+export const OUTCOME_TEXT: Record<string, string> = { answered: "答完了", escalate: "要接着查", owner: "要你定", quiet: "不用处理" };
 export const DEST_TEXT: Record<string, string> = { chat: "发到群里", dm: "私聊发给你", ephemeral: "群里只有你看得到的卡片", none: "没有发" };
 /** 830 毫秒 / 4.2 秒 / 1 分 5 秒. */
 export function msText(ms: number | undefined) {

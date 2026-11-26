@@ -7,7 +7,7 @@ import { markReadIds } from "../core/notify.ts";
 import { currentBot } from "../core/bot-context.ts";
 import { larkUser } from "./lark-bots.ts";
 import { larkCardMarkdown } from "./lark-markdown.ts";
-import { bindInteraction, buildCard, closeInteraction, decidedBlocks, deliverLark, describeAction, getInteraction, interactionForMessage, sendLark, updateEphemeralCard, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, closeInteraction, decidedBlocks, deliverLark, describeAction, getInteraction, interactionForMessage, sendLark, updateEphemeralCard, updateLarkCard, withPersonAt, type Content, type Delivery, type Target } from "./lark-send.ts";
 
 /**
  * A button press, select or form submit on one of the bot's cards
@@ -27,7 +27,7 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([work, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), CALLBACK_WAIT_MS); })]);
-    if (result) return result;
+    if (result) return keepAt(app, data, result);
     // Slow remote actions continue once; the completed card is patched after the callback closes.
     void work.then(async (late) => {
       const messageId = data.context?.open_message_id ?? data.open_message_id;
@@ -43,6 +43,15 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The new card for a click on a card only the clicker sees keeps its @ of them (lark-send.ts sendEphemeral). */
+function keepAt(app: App, data: any, result: CardActionResult): CardActionResult {
+  const card = result.card as { type?: string; data?: Record<string, unknown> } | undefined;
+  const messageId = data.context?.open_message_id ?? data.open_message_id;
+  const person = data.operator?.open_id;
+  if (card?.type !== "raw" || !card.data || !messageId || !person || interactionForMessage(app, messageId)?.payload.ephemeral !== true) return result;
+  return { ...result, card: { ...card, data: withPersonAt(card.data, person) } };
 }
 
 /** A name lookup may call the contacts API: inside the callback it gets a short budget, then the id stands in. */

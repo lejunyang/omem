@@ -18,8 +18,8 @@ import { briefText } from "./watch-trial.ts";
  * joined — what comes meanwhile waits for the next). The first look screens them first (prefilterBatch,
  * skipped without a decision model), then the probes, then the fast model:
  *
- * - answered / owner: the messages leave the batch (a batch left empty is cancelled), and a note in the
- *   关注's conversation says what was answered and where;
+ * - answered / owner / quiet: the messages leave the batch (a batch left empty is cancelled), and a note in the
+ *   关注's conversation says what was answered and where (quiet: that nothing needed doing, nothing sent);
  * - escalate: what the probes and the first look found joins the batch as a message of its own, and the
  *   batch runs now (its own handling and reply mode, unchanged).
  *
@@ -158,7 +158,7 @@ export function yieldToBatch(app: App, runId: string, messages: LookMessage[], b
   for (const m of messages) noteYield(app, { event: m.id, actor: "watch", to: `关注的这一批（${batchId}）`, reason: "先看一眼还没发，这一批已经开始处理这条，先看一眼让开", runId });
 }
 
-/** answered / owner: the messages are done with; they leave the batch, and the conversation says what came of them. */
+/** answered / owner / quiet: the messages are done with; they leave the batch, and the conversation says what came of them. */
 export function settle(app: App, r: Run, input: FirstLookInput, messages: LookMessage[], o: Outcome, d: Delivered, held: Held) {
   const l = input.listen!;
   const rows = rowsOf(app, l.conversationId, messages).filter((x) => x.row);
@@ -176,7 +176,8 @@ export function settle(app: App, r: Run, input: FirstLookInput, messages: LookMe
   }
   for (const id of ids) sql(app.db, "update messages set run_id = ? where id = ?", r.id, id);
   const where = d.to === "none" ? "没有发出去" : `发到${DEST_TEXT[d.to]}`;
-  addMessage(app, l.conversationId, "assistant", `（先看一眼${o.outcome === "owner" ? "把这几条交给本人定" : "已经答了这几条"}，${where}：${truncate(o.text || o.reason || "", 600)}）`, r.id, { replyTo: [...ids], firstLook: r.id });
+  const what = o.outcome === "owner" ? `把这几条交给本人定，${where}` : o.outcome === "quiet" ? "看过这几条，不用处理，没有发" : `已经答了这几条，${where}`;
+  addMessage(app, l.conversationId, "assistant", `（先看一眼${what}：${truncate(o.text || o.reason || "", 600)}）`, r.id, { replyTo: [...ids], firstLook: r.id });
   if (o.outcome === "owner") for (const m of messages) noteHandling(app, { event: m.id, actor: "watch", decision: "handed", by: l.contextId, runId: r.id, reason: "先看一眼：要本人定" });
 }
 

@@ -41,7 +41,7 @@ export function probeMaterial(results: ProbeResult[]) {
 
 export function lookMaterial(o: Outcome, d: Delivered) {
   return [o.by === "host" ? `先看一眼没有结论：${o.reason ?? "未交结果"}`
-    : `先看一眼的结论（供核对，仍须跟进这一次；${{ answered: "答完了", owner: "要本人定", escalate: "要接着查" }[o.outcome]}）：${o.text}`,
+    : `先看一眼的结论（供核对，仍须跟进这一次；${{ answered: "答完了", owner: "要本人定", escalate: "要接着查", quiet: "看来不用处理，没有发" }[o.outcome]}）：${o.text}`,
     o.evidence && `依据：${o.evidence}`, o.next && `还要查：${o.next}`,
     d.to === "none" ? "第一条没有发出去。" : `第一条已发到${DEST_TEXT[d.to]}。`,
   ].filter(Boolean).join("\n");

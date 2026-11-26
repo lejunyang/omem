@@ -16,9 +16,10 @@ import type { Rule, RuleAction, RuleEvent } from "./types.ts";
  *
  * 1. 预查 — the probes named for it (rules/probes.ts), each a run of its own under this one;
  * 2. 先看一眼 — the built-in role `first-look` on a cheap model at a low effort, a few tool calls at most,
- *    handing in one of answered / escalate / owner (`first_look_outcome`) within FIRST_LOOK_BUDGET_MS;
+ *    handing in one of answered / escalate / owner / quiet (`first_look_outcome`) within FIRST_LOOK_BUDGET_MS;
  *    running out of time, failing or handing in nothing is escalate. An `answered` is checked by the
- *    decision model (scene `firstlook`) when there is one: below its threshold it is escalate after all;
+ *    decision model (scene `firstlook`) when there is one: below its threshold it is escalate after all.
+ *    A `quiet` (nothing to answer, nothing the user needs to see) sends nothing;
  * 3. 深查 — on escalate or the owner's request: the rule's agent run (or the 关注's batch, at once), with the probe output
  *    and the first look's words in its task.
  *
@@ -39,7 +40,7 @@ export function setFirstLookBudgetForTests(ms: number | null) {
 export const RULE_FIRST_LOOKS_PER_DAY = 30;
 
 export type Dest = "chat" | "dm" | "ephemeral";
-export type OutcomeKind = "answered" | "escalate" | "owner";
+export type OutcomeKind = "answered" | "escalate" | "owner" | "quiet";
 /** What the first look found: `by` model (its hand-in), probe (a `direct` probe's output as is), host (no hand-in, a time-out, an error). */
 export type Outcome = { outcome: OutcomeKind; text: string; evidence?: string; next?: string; by: "model" | "probe" | "host"; reason?: string };
 export type LookMessage = { id: string; text: string; sender: string; topicId?: string | null; at: string };
@@ -101,7 +102,7 @@ export async function firstLookAI(app: App): Promise<{ profileId: string; model?
 
 // ------------------------------------------------------------------ the run
 
-const KIND_TEXT: Record<OutcomeKind, string> = { answered: "答完了", escalate: "要接着查", owner: "要本人定" };
+const KIND_TEXT: Record<OutcomeKind, string> = { answered: "答完了", escalate: "要接着查", owner: "要本人定", quiet: "不用处理" };
 
 /** The event a probe gets: the message (the last of a merged few, all of them in `messages`) and where it was said. */
 function probeEvent(input: FirstLookInput, messages: LookMessage[]) {
@@ -404,13 +405,19 @@ async function sendTo(app: App, run: Run, input: FirstLookInput, to: Dest, body:
  * (host-made escalate) tells only the user, never the group.
  */
 export async function deliverFirst(app: App, r: Run, input: FirstLookInput, messages: LookMessage[], o: Outcome): Promise<Delivered> {
+  const replyTo = messages.at(-1)?.id ?? "";
+  // Nothing to answer and nothing the user needs to see: no card, only the run and the handling ledger say so
+  // (a situation's handler follows this time up all the same).
+  if (o.outcome === "quiet") {
+    if (!input.situation) for (const m of messages) noteHandling(app, { event: m.id, actor: input.source === "rule" ? "rule" : "watch", decision: "ignored", by: input.rule?.id ?? input.listen?.contextId ?? null, runId: r.id, reason: `先看一眼：不用处理${o.text ? `（${truncate(o.text, 120)}）` : ""}` });
+    return { to: "none", why: ["先看一眼认为不用处理，不发"], messageId: null, interactionId: null, chatId: input.chat?.id ?? "", replyTo, at: now() };
+  }
   const { to: wanted, why } = resolveDest(input, o.outcome);
   let to: Dest = wanted;
   if (o.by === "host" && to === "chat") {
     to = "ephemeral";
     why.push("快模型没给出结论，只告诉本人");
   }
-  const replyTo = messages.at(-1)?.id ?? "";
   const body = await firstBody(app, input, messages, o);
   const share = o.text ? shareText(o) : "";
   const continueDeep = to !== "chat" && (o.outcome === "answered" || o.outcome === "owner") && (input.source === "rule" ? !!input.rule : input.source === "listen" && !!input.listen);

@@ -298,6 +298,19 @@ describe("规则：先看一眼", () => {
     expect(listRuns(app, { parentId: look.id, kind: "agent" })).toHaveLength(0);
   }, 120_000);
 
+  it("quiet: nothing to answer — no card, no deep run, the handling ledger says it was let go", async () => {
+    useClient();
+    setOwnerInChatForTests("oc_oncall", true);
+    const r = rule("报 UID 没事别吵", [{ type: "agent", spec: "assistant", reply: "auto", firstLook: true, firstTo: "ephemeral" }]);
+    const [res] = await runActions(app, r, event("om_q1", "UID 6 已经好了，谢谢 [quiet]"), "");
+    const look = await waitForRun(app, res.runId!);
+    expect(look.status, look.error ?? "").toBe("done");
+    expect(look.output).toMatchObject({ outcome: "quiet", delivered: { to: "none" }, stages: { look: { outcome: "quiet", by: "model" }, first: { to: "none" } } });
+    expect(client.calls).toHaveLength(0);
+    expect(listRuns(app, { parentId: look.id, kind: "agent" })).toHaveLength(0);
+    expect(handlingOf(app, "om_q1")).toEqual([expect.objectContaining({ decision: "ignored", runId: look.id })]);
+  }, 120_000);
+
   it("probe and script steps hand their output to the actions after them", async () => {
     useClient();
     const r = rule("报 UID 通知我", [{ type: "probe", name: "uid" }, { type: "notify" }]);
@@ -361,8 +374,12 @@ describe("第一条发到哪", () => {
     const l = look();
     await deliverFirst(app, l, input({ to: "ephemeral" }), input().messages, answered);
     const card = cardOf("first-look");
+    expect(JSON.stringify(client.calls.find((c) => c.op === "ephemeral")!.args.data.card)).toContain("<at id=ou_owner></at>");
     expect((await click(card, "share", "ou_someone")).toast.type).toBe("error");
-    expect((await click(card, "share")).toast.content).toBe("已发到群里");
+    const shared = await click(card, "share");
+    expect(shared.toast.content).toBe("已发到群里");
+    // The card that replaces it, only the owner sees as well: it still @s them.
+    expect(JSON.stringify(shared.card)).toContain("<at id=ou_owner></at>");
     expect(client.calls.at(-1)).toMatchObject({ op: "reply", args: { path: { message_id: "om_dest" } } });
     expect(JSON.stringify(client.calls.at(-1)!.args)).toContain("是缓存没刷新");
     expect((await click(card, "share")).toast.content).toBe("已经处理过了");
@@ -407,6 +424,23 @@ describe("关注：先看一眼", () => {
     expect(threadMessages(app, c.conversationId!).some((m) => m.text.includes("先看一眼已经答了这几条"))).toBe(true);
     expect(one(app.db, "select decision from handled_messages where channel = 'handled:watch' and message_id = 'om_l2'")).toMatchObject({ decision: "drafted" });
     expect(client.calls.filter((x) => x.op === "reply")).toHaveLength(0);
+  }, 120_000);
+
+  it("quiet takes the messages out of the batch without a card, and the conversation says so", async () => {
+    useClient();
+    setOwnerInChatForTests("oc_listen_q", true);
+    const c = saveContext(app, { kind: "place", name: "值班群静", chats: ["oc_listen_q"], brief: { ...BRIEF, at: now(), confirmedAt: now() }, knobs: { reply: "draft", listen: "all", batchMinutes: 10, firstLook: true, firstTo: "ephemeral" } });
+    await route("om_lq1", "小李 joined the group [quiet]", "oc_listen_q");
+    const [look] = looksIn(c.id);
+    const [batch] = batchOf(c.conversationId!);
+    updateQueuedRun(app, look.id, { notBefore: now() });
+    const done = await waitForRun(app, look.id);
+    expect(done.status, done.error ?? "").toBe("done");
+    expect(done.output).toMatchObject({ outcome: "quiet", delivered: { to: "none" } });
+    expect(client.calls).toHaveLength(0);
+    expect(getRun(app, batch.id).status).toBe("cancelled");
+    expect(threadMessages(app, c.conversationId!).some((m) => m.text.includes("先看一眼看过这几条，不用处理"))).toBe(true);
+    expect(one(app.db, "select decision from handled_messages where channel = 'handled:watch' and message_id = 'om_lq1'")).toMatchObject({ decision: "ignored" });
   }, 120_000);
 
   it("关注答完后接着查另起一批，配额拦住时不消耗卡片", async () => {
